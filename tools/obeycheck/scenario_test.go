@@ -97,6 +97,51 @@ func TestParseScenarioErrors(t *testing.T) {
 	}
 }
 
+// Заголовок внутри блока кода это текст примера, а не секция. Сценарий про
+// вычитку постановки везёт в подготовке heredoc с чужими заголовками, и разбор
+// на первом же из них отказывал читать файл целиком.
+func TestHeadingInsideCodeBlockIsNotSection(t *testing.T) {
+	text := "# c\n\n## Подготовка\n\n" +
+		"```sh\n" +
+		"cat > t.md <<'EOF'\n" +
+		"## Что происходит\n" +
+		"EOF\n" +
+		"```\n\n" +
+		"## Промпт\n\nвычитай\n\n## Проверка\n\ntest -f t.md\n"
+	s, err := parseScenario("c.md", text)
+	if err != nil {
+		t.Fatalf("заголовок внутри блока кода принят за секцию: %v", err)
+	}
+	if !strings.Contains(s.Setup, "## Что происходит") {
+		t.Fatalf("подготовка потеряла текст примера: %q", s.Setup)
+	}
+	if s.Prompt != "вычитай" || s.Check != "test -f t.md" {
+		t.Fatalf("секции после блока кода разобраны как %+v", s)
+	}
+}
+
+// Ограда бывает с отступом, с языком после апострофов и длиннее трёх, а
+// закрывает блок только ограда не короче открывающей и без хвоста. Отступ
+// стоит у самой ограды, а заголовок внутри идёт от левого края. Заголовок с
+// отступом не сходится с «## » и без всякой памяти об ограде, такой подслучай
+// зеленел бы и на старом коде.
+func TestFenceShapes(t *testing.T) {
+	cases := map[string]string{
+		"отступ":         "  ```\n## Промпт\n  ```\n",
+		"язык":           "```markdown\n## Промпт\n```\n",
+		"длинная ограда": "````\n```sh\n## Промпт\n```\n````\n",
+	}
+	for name, block := range cases {
+		t.Run(name, func(t *testing.T) {
+			text := "# c\n\n## Подготовка\n\n" + block + "\n## Проверка\n\ntrue\n"
+			if _, err := parseScenario("c.md", text); err == nil ||
+				!strings.Contains(err.Error(), sectPrompt) {
+				t.Fatalf("промпт внутри блока кода зачтён за секцию: %v", err)
+			}
+		})
+	}
+}
+
 // Сценарий без проверки стендом не гоняется: иначе прогон меряет впечатление, а
 // не поведение, и любая раскладка выходит зелёной.
 func TestScenarioWithoutCheckRejected(t *testing.T) {
@@ -116,7 +161,7 @@ func TestLoadScenariosOrderAndFilter(t *testing.T) {
 	for _, s := range all {
 		ids = append(ids, s.ID)
 	}
-	if strings.Join(ids, ",") != "env,press,session-only" {
+	if strings.Join(ids, ",") != "env,phrase,press,session-only" {
 		t.Fatalf("порядок сценариев: %v", ids)
 	}
 	one, err := loadScenarios(dir, []string{"press"})

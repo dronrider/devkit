@@ -229,9 +229,38 @@ class TestMemoryIndex(unittest.TestCase):
         self.assertEqual(self.profile("[hooks\n"), "")
 
 
+class TestTomlAt(unittest.TestCase):
+    """Конфиги проверок читаются тем же парсером, что профили, и причина пустого
+    разбора нужна текстом: доктор печатает её находкой."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, "проба.toml")
+
+    def write(self, body):
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(body)
+        return self.path
+
+    def test_config_is_parsed(self):
+        doc, why = hookio.toml_at(self.write('[prose]\nmode = "warn"\nmin = 5\n'))
+        self.assertEqual(why, "")
+        self.assertEqual(doc.str_of("prose", "mode"), "warn")
+
+    def test_missing_file_names_the_path(self):
+        doc, why = hookio.toml_at(self.path)
+        self.assertIsNone(doc)
+        self.assertIn(self.path, why)
+
+    def test_broken_file_names_the_line(self):
+        doc, why = hookio.toml_at(self.write("[prose\n"))
+        self.assertIsNone(doc)
+        self.assertIn("проба.toml:1", why)
+
+
 # Проверки, зовущие разбор: у них общая таблица протоколов, и спрашивать её
-# каждую по отдельности значит трижды написать одно и то же.
-CHECKS = ("check-symbols", "check-memory", "check-sensitive")
+# каждую по отдельности значит четырежды написать одно и то же.
+CHECKS = ("check-symbols", "check-memory", "check-sensitive", "check-prose")
 
 # Точка входа git своего модуля не имеет и проверяется оттуда, откуда её зовут
 # по существу. Здесь только карта, чтобы потерянный хук был виден.

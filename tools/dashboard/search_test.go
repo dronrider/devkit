@@ -24,7 +24,7 @@ func searchEnv(t *testing.T) (*testEnv, *http.Client) {
 	e, c, _ := tasksEnv(t)
 	runTaskctl(t, e.proj, "add", "--id", "XR-010", "--title", "Поиск задач по доске и архиву",
 		"--rank", "25+7+3+0+2", "--cost", "M", "--accept", "agent")
-	runTaskctl(t, e.proj, "draft", "поиск с телефона: лупа рядом с колокольчиком")
+	runTaskctl(t, e.proj, "draft", "--prio", "mid", "поиск с телефона: лупа рядом с колокольчиком")
 	arch := "# Архив (префикс XR)\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
 		"|--------|--------|-----|---|---------|--------|\n" +
 		"| XR-900 | Поиск по архиву | task | P2 | 2026-08-01 | - |\n"

@@ -458,6 +458,76 @@ class TestRulesBacklink(SkillTree):
         self.assertTrue(any("test-standard: скилл не называет правило" in f for f in fails), fails)
 
 
+class TestProse(SkillTree):
+    """DK-523: скилл письма с горячим списком из пяти примет и четырьмя
+    точками вызова. Три точки лежат файлами, четвёртая (правка README) названа
+    в самом скилле."""
+
+    HOT = "\n".join("%d. Примета %d." % (i, i) for i in range(1, 6))
+    CALL = "python3 ~/projects/devkit/kit/skills/prose/prose.py sample --genre task"
+
+    def add_prose(self, hot=None, readme=True):
+        body = "## Горячий список\n\n%s\n\n## Кто зовёт\n\nПравка %s.\n" % (
+            self.HOT if hot is None else hot, "README" if readme else "входной страницы")
+        self.add_skill("prose", body=body)
+
+    def add_points(self, groom=True, task=True, xhigh=True):
+        self.add_skill("board-groom", body=self.CALL if groom else "без выборки")
+        self.add_skill("board-task", body=self.CALL if task else "без выборки")
+        d = os.path.join(self.root, "kit", "agents")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "exec-xhigh.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: exec-xhigh\ndescription: роль.\n---\n\n%s\n"
+                    % (self.CALL if xhigh else "без выборки"))
+
+    def test_полный_расклад_проходит(self):
+        self.add_prose()
+        self.add_points()
+        self.assertEqual(check_skills.check_prose(self.root), [])
+
+    def test_скилла_нет(self):
+        fails = check_skills.check_prose(self.root)
+        self.assertEqual(fails, ["prose: скилл письма не заведён"])
+
+    def test_горячего_списка_нет(self):
+        self.add_skill("prose", body="## Кто зовёт\n\nПравка README.\n")
+        self.add_points()
+        fails = check_skills.check_prose(self.root)
+        self.assertTrue(any("нет горячего списка" in f for f in fails), fails)
+
+    def test_примет_меньше_пяти(self):
+        self.add_prose(hot="\n".join("%d. Примета %d." % (i, i) for i in range(1, 5)))
+        self.add_points()
+        fails = check_skills.check_prose(self.root)
+        self.assertTrue(any("примет в горячем списке 4" in f for f in fails), fails)
+
+    def test_readme_не_названа_точкой(self):
+        self.add_prose(readme=False)
+        self.add_points()
+        fails = check_skills.check_prose(self.root)
+        self.assertTrue(any("правка README не названа" in f for f in fails), fails)
+
+    def test_точка_без_выборки(self):
+        self.add_prose()
+        self.add_points(groom=False)
+        fails = check_skills.check_prose(self.root)
+        self.assertEqual(fails, ["board-groom: не зовёт выборку эталонов, "
+                                 "текст пишется без корпуса"])
+
+    def test_каждая_точка_ловится_своя(self):
+        self.add_prose()
+        self.add_points(groom=False, task=False, xhigh=False)
+        fails = check_skills.check_prose(self.root)
+        self.assertEqual(len(fails), 3, fails)
+        for who in ("board-groom", "board-task", "exec-xhigh"):
+            self.assertTrue(any(f.startswith(who + ":") for f in fails), fails)
+
+    def test_пропажа_файла_точки_не_дублируется(self):
+        self.add_prose()
+        fails = check_skills.check_prose(self.root)
+        self.assertEqual(fails, [])
+
+
 class TestRunAndMain(SkillTree):
     def test_run_reports_all_categories(self):
         # Пустой каталог валит сразу несколько проверок разом: свой скилл не
@@ -582,6 +652,52 @@ class TestSyncSpawn(SkillTree):
         self.add_board_skills("Спавн одним сообщением, чтобы субагенты шли параллельно")
         fails, _ = check_skills.run(self.here, self.root)
         self.assertTrue(any("спавн субагента не назван синхронным" in f for f in fails), fails)
+
+
+class TestProofreadSpawn(SkillTree):
+    """DK-548: вычитку делает субагент, и поднимает его тот, кто позвал скилл.
+    Без этих слов сессия принимает скилл за фоновую задачу, отвечает «вычитка
+    запущена» и кончает ход, оставив файл нетронутым."""
+
+    GOOD = ("Субагента поднимает позвавший, синхронным спавном инструментом "
+            "`Agent`, и ждёт отчёта в том же ходе.")
+
+    def write_proofread(self, body):
+        self.add_skill("proofread", body=body + "\n" + "\n".join(["тело"] * 12))
+
+    def test_passes_when_caller_spawns_synchronously(self):
+        self.write_proofread(self.GOOD)
+        self.assertEqual(check_skills.check_proofread_spawn(self.here), [])
+
+    def test_fails_when_spawn_not_named_sync(self):
+        # Текст до правки DK-548: субагент назван, порядок его запуска нет.
+        self.write_proofread("Вычитку гонит субагент со свежим контекстом, "
+                             "инструмент `Agent`.")
+        fails = check_skills.check_proofread_spawn(self.here)
+        self.assertEqual(len(fails), 1)
+        self.assertTrue(any("не назван синхронным" in f for f in fails), fails)
+
+    def test_fails_when_tool_missing(self):
+        self.write_proofread("Субагента поднимает позвавший, синхронным спавном.")
+        fails = check_skills.check_proofread_spawn(self.here)
+        self.assertEqual(len(fails), 1)
+        self.assertTrue(any("не назван инструмент" in f for f in fails), fails)
+
+    def test_async_word_is_not_the_rule(self):
+        self.write_proofread("Спавн асинхронный, инструмент `Agent`.")
+        fails = check_skills.check_proofread_spawn(self.here)
+        self.assertEqual(len(fails), 1)
+        self.assertTrue(any("не назван синхронным" in f for f in fails), fails)
+
+    def test_skill_missing_is_not_double_reported(self):
+        # Пропажу скилла ловит check_proofread, здесь молчание.
+        self.assertEqual(check_skills.check_proofread_spawn(self.here), [])
+
+    def test_run_reports_proofread_spawn(self):
+        self.write_proofread("Вычитку гонит субагент со свежим контекстом.")
+        fails, _ = check_skills.run(self.here, self.root)
+        self.assertTrue(any("proofread: спавн субагента не назван синхронным" in f
+                            for f in fails), fails)
 
 
 class TestLiveReply(SkillTree):

@@ -55,22 +55,33 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               agentctl budget, как у batch
   kinds                                       сводка по видам приёмки: счёт,
                                               ошибки назначения, пересмотры
+  closable                                    кого из Check вправе закрыть
+                                              автоматика: вид приёмки agent,
+                                              отметка smoke на последний выкат,
+                                              непустой раздел «Проверка».
+                                              Готовые идут голыми ID по строке,
+                                              остальные под строкой «отказано:»
+                                              с причиной
 
 Менять доску:
-  draft ["текст"]                             записать сырую идею мимо доски:
+  draft --prio high|mid|low ["текст"]         записать сырую идею мимо доски:
                                               файл docs/tasks/drafts/<ID>.md,
                                               ID берётся сам, без текста читается
                                               stdin; первая строка идёт
                                               заголовком, её потолок 72 символа
-                                              (форма в TASKFORM.md); оформляет
-                                              черновик потом add --id <ID>
-                                              (файл переезжает в docs/tasks сам)
+                                              (форма в TASKFORM.md); уровень
+                                              разбора обязателен и ставится на
+                                              глаз, дальше его правит draft prio;
+                                              оформляет черновик потом add --id
+                                              <ID> (файл переезжает в docs/tasks
+                                              сам)
   draft defer <ID> "причина"                  отложить разобранный черновик:
                                               раздел «Грумминг» в его файле
   draft defer <ID> --clear                    снять пометку об отложенном
-  draft prio <ID> high|mid|low                пометить черновик уровнем разбора:
-                                              строка в шапке файла, сортировка
-                                              накопителя от высокого к низкому
+  draft prio <ID> high|mid|low                пересмотреть уровень разбора
+                                              записанного черновика: строка в
+                                              шапке файла, сортировка накопителя
+                                              от высокого к низкому
   draft prio <ID> --clear                     снять метку уровня разбора
   draft attach <ID> <TASK-ID>                 приписать черновик к стоящей
                                               строке: текст разделом в файл
@@ -115,7 +126,8 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   dep list [ID]                               кто после кого; без ID вся доска
   sort                                        пересортировать Backlog по R
   lint                                        проверить инварианты доски и архива
-  init --prefix XR [--name "..."]             скелет доски в корне репозитория
+  init --prefix XR [--name "..."] [--here]   скелет доски в корне репозитория,
+                                             с --here в названной директории
 
 Держать дерево доски свежим:
   catchup [--hook]                            догнать боковое дерево (detached HEAD,
@@ -287,7 +299,9 @@ func main() {
 		var p InitParams
 		fs.StringVar(&p.Prefix, "prefix", "", "префикс ID задач, заглавными (XR)")
 		fs.StringVar(&p.Name, "name", "", "название проекта в шапке, по умолчанию имя директории")
-		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "init --prefix XR [--name \"...\"]")
+		fs.BoolVar(&p.Here, "here", false,
+			"завести доску в названной директории, не поднимаясь к вершине репозитория")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "init --prefix XR [--name \"...\"] [--here]")
 		msg, err = cmdInit(*dir, p)
 	case "add":
 		fs := flag.NewFlagSet("add", flag.ExitOnError)
@@ -372,6 +386,7 @@ func main() {
 		default:
 			fs := flag.NewFlagSet("draft", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
+			prio := fs.String("prio", "", "уровень разбора high|mid|low, обязателен")
 			var c CommitOpts
 			commitFlags(fs, &c)
 			pos := frame.ParseArgs(fs, args[1:])
@@ -383,7 +398,7 @@ func main() {
 					fail(gerr)
 				}
 			}
-			needArgs(pos, 0, 1, "draft [\"текст\"]")
+			needArgs(pos, 0, 1, "draft --prio high|mid|low [\"текст\"]")
 			text, viaStdin := "", false
 			if len(pos) == 1 {
 				text = pos[0]
@@ -395,7 +410,7 @@ func main() {
 				}
 				viaStdin = true
 			}
-			msg, err = cmdDraftFrom(root(*dir), text, viaStdin, c)
+			msg, err = cmdDraftFrom(root(*dir), text, *prio, viaStdin, c)
 		}
 	case "move":
 		fs := flag.NewFlagSet("move", flag.ExitOnError)
@@ -612,6 +627,11 @@ func main() {
 		resource := fs.String("resource", "slot", "дефицитный ресурс: slot или quota")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "slot [--limit N] [--resource slot|quota]")
 		msg, err = cmdSlot(root(*dir), *limit, *resource)
+	case "closable":
+		fs := flag.NewFlagSet("closable", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "closable")
+		msg, err = cmdClosable(root(*dir))
 	case "kinds":
 		fs := flag.NewFlagSet("kinds", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

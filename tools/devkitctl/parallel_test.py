@@ -45,9 +45,30 @@ class ComponentsTest(unittest.TestCase):
         # него местный прогон молча не покрывал модуль.
         self.assertIn("go:cmdout", go_names)
         for name in ("hooks", "devkitctl", "skills", "check-skills",
-                     "check-exec-bit", "goal-loop", "doctor"):
+                     "check-exec-bit", "doctor"):
             self.assertIn(name, names)
-        self.assertEqual(len(names), len(go_names) + 7)
+        skills = parallel.skill_suites()
+        self.assertIn("goal-loop", skills)
+        self.assertIn("prose", skills)
+        for name in skills:
+            self.assertIn(name, names)
+        self.assertEqual(len(names), len(go_names) + 6 + len(skills))
+
+    def test_skill_suites_discovers_by_test_file_not_by_hand(self):
+        # Перечень каталогов со скилловыми тестами хранился в коде руками, и
+        # тесты нового скилла не гонялись бы, пока кто-то не вспомнит про
+        # раннер. Открытие по факту `*_test.py` ловит любой новый скилл и не
+        # берёт скилл без тестов.
+        root = Path(tempfile.mkdtemp(prefix="devkitctl-skill-suites-test-"))
+        self.addCleanup(shutil.rmtree, str(root), True)
+        for name in ("zeta", "alpha"):
+            d = root / "kit" / "skills" / name
+            d.mkdir(parents=True)
+            (d / (name + "_test.py")).write_text("", encoding="utf-8")
+            (d / (name + "2_test.py")).write_text("", encoding="utf-8")
+        (root / "kit" / "skills" / "no-tests").mkdir(parents=True)
+        (root / "kit" / "skills" / "check_skills_test.py").write_text("", encoding="utf-8")
+        self.assertEqual(parallel.skill_suites(root), ["alpha", "zeta"])
 
     def test_go_tools_discovers_by_gomod_not_by_hand(self):
         # Прежний список хранился в коде руками и разошёлся с деревом молча

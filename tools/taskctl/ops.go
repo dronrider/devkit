@@ -290,9 +290,13 @@ func normalizeStatus(s string) string {
 var barePathRe = regexp.MustCompile(`^[0-9A-Za-z._/~-]+$`)
 
 // wrapLink оборачивает голый путь вида tasks/XR-001.md в markdown-ссылку,
-// иначе ячейка не кликается и выпадает из проверки ссылок в lint.
+// иначе ячейка не кликается и выпадает из проверки ссылок в lint. Путь,
+// написанный естественно от корня репозитория (docs/tasks/XR-001.md), режется
+// до docs-относительного вида: checkLinks резолвит цель от docs/, и голый
+// префикс docs/ разворачивался бы в несуществующий docs/docs/... (DK-176).
 func wrapLink(link string) string {
 	if barePathRe.MatchString(link) && (strings.Contains(link, "/") || strings.HasSuffix(link, ".md")) {
+		link = strings.TrimPrefix(link, "docs/")
 		return fmt.Sprintf("[%s](%s)", link, link)
 	}
 	return link
@@ -947,7 +951,27 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if len(depTouched) > 0 {
 		msg += ", маркер «после» снят у: " + strings.Join(depTouched, ", ")
 	}
-	return msg + tail + "\n" + nextAfterClose(), nil
+	return msg + tail + shipDrainNote(root) + "\n" + nextAfterClose(), nil
+}
+
+// shipDrainNote зовёт разлив поезда сразу после закрытия задачи (LLD DK-306,
+// решение 4): очередь выката освободилась, и копящийся поезд надо увозить,
+// пока есть кому увидеть его вывод. close не держит ship.lock (его держат
+// только команды shipctl), поэтому дедлока нет. Вызов best-effort: доска уже
+// записана и запушена, и держать закрытие ради чужого выката нельзя, провал
+// дописывается в отчёт close предупреждением, а не ошибкой.
+func shipDrainNote(root string) string {
+	if _, err := exec.LookPath("shipctl"); err != nil {
+		return "\nразлив не позван: shipctl не найден в PATH, поставить набор утилит devkit (python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update)"
+	}
+	out, err := exec.Command("shipctl", "-C", root, "ship", "--drain").CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("\nпредупреждение: разлив упал: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	if note := strings.TrimSpace(string(out)); note != "" {
+		return "\n" + note
+	}
+	return ""
 }
 
 // gitMv переносит файл через git mv, а вне git-репозитория (или для

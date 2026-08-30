@@ -12689,6 +12689,12 @@ const ACCEPT_VALUES = ["agent", "mixed", "user"];
 // барьером «глаза», которого человек не называл.
 const BARRIER_PLACEHOLDER = "выбрать барьер";
 const BARRIER_VALUES = ["", "глаза", "доступ", "необратимость", "секрет", "согласие", "событие"];
+// Уровень разбора спрашивается прямо на записи (DK-520): груминг заходит по
+// накопителю сверху, и метка, поставленная им, появлялась бы тогда, когда
+// разбор уже идёт. Значение по умолчанию средний: обычная очередь.
+const PRIO_VALUES = ["high", "mid", "low"];
+const PRIO_HINT = "уровень разбора на глаз: high разбирать ближайшим заходом, " +
+  "mid обычная очередь, low когда-нибудь; потом его правит груминг";
 const ACCEPT_HINT = "Вид приёмки решает, кто проверяет задачу: агентский вид " +
   "закрывается прогоном, у остальных часть шагов остаётся человеку.";
 const ACCEPT_BARRIER_HINT = "Барьер называется из шести, и у каждого своя причина: " +
@@ -12705,7 +12711,8 @@ const DRAFT_OFF_PARTS = "поля те же, что у задачи, но пок
 // тоже одно: у задачи это заголовок строки, у черновика текст записи, и
 // переключатель их не теряет.
 const newForm = { project: "", draft: false, title: "", type: "task", cost: "-",
-  parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "", seeded: false };
+  parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "", prio: "mid",
+  seeded: false };
 
 function resetNewForm(project) {
   newForm.project = project;
@@ -12717,6 +12724,7 @@ function resetNewForm(project) {
   newForm.accept = "agent";
   newForm.barrier = "";
   newForm.reason = "";
+  newForm.prio = "mid";
   newForm.seeded = false;
 }
 
@@ -12758,8 +12766,8 @@ async function makeNew(project, tail, body, btns, saying) {
   });
 }
 
-function makeDraft(project, text, btns) {
-  return makeNew(project, "/drafts", { text }, btns, "запись черновика...");
+function makeDraft(project, text, prio, btns) {
+  return makeNew(project, "/drafts", { text, prio }, btns, "запись черновика...");
 }
 
 function makeTask(project, body, btns) {
@@ -12795,6 +12803,17 @@ function renderNew(project, kind) {
   // чего у него нет, и кто это выдаст.
   const note = el("div", "dnote");
   note.append(el("b", "", DRAFT_NOTE_HEAD), document.createTextNode(" " + DRAFT_NOTE));
+
+  // Уровень стоит у самого верха формы, рядом с пометкой про груминг: это
+  // единственное, что черновик спрашивает сверх текста (DK-520).
+  const prioBox = el("div", "accbox");
+  const prioPick = pickField("уровень разбора", PRIO_VALUES, newForm.prio, (v) => {
+    newForm.prio = v;
+    view.touch();
+  });
+  prioPick.querySelector("select").setAttribute("aria-label", "уровень разбора записи накопителя");
+  prioBox.append(prioPick);
+  const prioHint = el("div", "hint", PRIO_HINT);
 
   // Вид приёмки, барьер и причина (DK-301): вид закрытым списком из трёх,
   // барьер из шести показывается только у не агентского вида, и причина без
@@ -12866,7 +12885,7 @@ function renderNew(project, kind) {
     // сама, а снятый или добавленный рукой раздел это дело автора.
     const text = newForm.title.trim();
     const btns = [view.save, view.saveMore].filter(Boolean);
-    makeDraft(project, text, btns).then(async (done) => {
+    makeDraft(project, text, newForm.prio, btns).then(async (done) => {
       if (!done) return;
       resetNewForm(project);
       // Записанное ищут в накопителе, и метка ведёт туда глаз: свежая запись
@@ -12887,7 +12906,7 @@ function renderNew(project, kind) {
     // пользователя).
     // У черновика на экране только он сам: ни карточки приёмки, ни полей
     // строки доски. У задачи наоборот, ни слова про груминг.
-    lead: draft ? [note] : [], extra: draft ? [] : [card],
+    lead: draft ? [note, prioBox, prioHint] : [], extra: draft ? [] : [card],
     // Форма заведения это та же правка задачи с пустыми полями: правка тут
     // включена всегда, и выключать её нечем, экран для неё и открыт.
     has: draft ? { title: true } : { title: true, type: true, cost: true, rank: true },

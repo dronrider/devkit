@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/accept"
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 const runLogPath = ".devkit/log"
@@ -19,9 +20,47 @@ const runLogPath = ".devkit/log"
 type pipelineState struct {
 	inProgress []string
 	check      []string
-	train      []string
-	failed     []string
-	autonomous bool
+	// Строки Check, разобранные по тому, кто их сдаёт: waiting это виды user
+	// и mixed вместе с видом в скобках, agentSmoked это агентские строки с
+	// прогнанным smoke и вложенным выводом (тик сторожка доводит их до Done),
+	// agentStuck это агентские с прогнанным smoke, но пустым разделом
+	// «Проверка» (тик такую не закроет), agentRest это агентские, сценарий
+	// которых после выката ещё не прогнан.
+	waiting     []string
+	agentSmoked []string
+	agentStuck  []string
+	agentRest   []string
+	train       []string
+	failed      []string
+	autonomous  bool
+}
+
+// checkParts делит строки Check по виду приёмки и отметке smoke. Строка с
+// непогашенным провалом не попадает никуда: её называет отдельная строка
+// status, а закрыть её не даст ни человек, ни тик, пока прод не починен.
+// Вид читается из заголовка строки (LLD DK-292, решение 3), а прогнанный smoke
+// значит, что агентскую строку закроет тик сторожка (DK-516), и звать по ней
+// человека незачем.
+func checkParts(root string, b *board, smoked []string) (waiting, agentSmoked, agentStuck, agentRest []string) {
+	for _, r := range b.sects["check"] {
+		switch kind := accept.KindOf(r.Title); {
+		case failSufRe.MatchString(r.Title):
+			// Непогашенный провал держит очередь целиком, и про такую строку
+			// status кричит своей строкой. Ни человеку в приёмку, ни тику она
+			// сейчас не принадлежит: сперва чинится прод.
+		case kind != accept.Agent:
+			waiting = append(waiting, r.ID+" ("+kind+")")
+		case !slices.Contains(smoked, r.ID):
+			agentRest = append(agentRest, r.ID)
+		case strings.TrimSpace(strings.Join(sectionLines(readTaskDoc(root, r.ID), taskform.Verification), "\n")) == "":
+			// Тот же рубеж, что у ворот close: без вложенного вывода прогона
+			// агентская задача не закрывается ни руками, ни тиком.
+			agentStuck = append(agentStuck, r.ID)
+		default:
+			agentSmoked = append(agentSmoked, r.ID)
+		}
+	}
+	return waiting, agentSmoked, agentStuck, agentRest
 }
 
 // nextStep называет следующий шаг конвейера одной строкой. Знание «что
@@ -37,14 +76,43 @@ func nextStep(st pipelineState) string {
 		return "следующий шаг: чинить прод по " + strings.Join(st.failed, ", ") +
 			" (shipctl revert <ID> либо форвард-фикс), очередь стоит целиком, пока висит признак провала"
 	case len(st.check) > 0:
-		return "следующий шаг: прогнать сценарий проверки " + strings.Join(st.check, ", ") +
-			" и закрыть задачу (taskctl close <ID>); агентский сценарий агент прогоняет сам, пользовательский ждёт слова пользователя"
+		return checkStep(st)
 	case len(st.train) > 0:
 		return "следующий шаг: выкатить поезд (shipctl ship), в нём " + strings.Join(st.train, ", ")
 	case len(st.inProgress) > 0:
 		return mergeFork(st.inProgress, st.autonomous)
 	}
 	return "следующий шаг: взять задачу с доски (taskctl list, дальше taskctl move <ID> in-progress)"
+}
+
+// checkStep называет, что делать с Check, помечая каждую строку по её виду
+// приёмки. Прежняя общая фраза «прогнать сценарий и закрыть» не различала
+// виды приёмки и не упоминала тик сторожка: строка вида agent с прогнанным
+// smoke стояла в Check до утра с тем же советом «закрыть задачу», хотя
+// закрывать было некому (DK-516).
+func checkStep(st pipelineState) string {
+	var parts []string
+	if len(st.agentRest) > 0 {
+		parts = append(parts, "прогнать сценарий проверки "+strings.Join(st.agentRest, ", ")+
+			" и закрыть задачу (taskctl close <ID>)")
+	}
+	if len(st.agentSmoked) > 0 {
+		parts = append(parts, "агентские "+strings.Join(st.agentSmoked, ", ")+
+			" доведёт до Done тик devkitctl watch, руками их закрывать не нужно")
+	}
+	if len(st.agentStuck) > 0 {
+		parts = append(parts, "вложить вывод прогона в раздел «Проверка» файла задачи "+
+			strings.Join(st.agentStuck, ", ")+": без вывода такую строку не закроет ни тик, ни taskctl close")
+	}
+	if len(st.waiting) > 0 {
+		parts = append(parts, "приёмка за человеком по "+strings.Join(st.waiting, ", ")+
+			", закрытия они ждут от пользователя")
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "прогнать сценарий проверки "+strings.Join(st.check, ", ")+
+			" и закрыть задачу (taskctl close <ID>)")
+	}
+	return "следующий шаг: " + strings.Join(parts, "; ")
 }
 
 // mergeFork это развилка «кто нажимает кнопку» перед слиянием. Ветка

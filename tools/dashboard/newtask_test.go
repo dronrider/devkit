@@ -39,7 +39,7 @@ func TestDraftCreate(t *testing.T) {
 	}
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "мысль с телефона: доска не заводится с дашборда"}`)
+		`{"text": "мысль с телефона: доска не заводится с дашборда", "prio": "mid"}`)
 	got := newResp(t, resp, "запись черновика")
 	id, _ := got["id"].(string)
 	if id != "XR-005" {
@@ -76,7 +76,7 @@ func TestDraftAwkwardText(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	for i, text := range []string{"fix", "-p не работает после обновления"} {
 		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-			`{"text": `+strconv.Quote(text)+`}`)
+			`{"text": `+strconv.Quote(text)+`, "prio": "mid"}`)
 		got := newResp(t, resp, "запись черновика "+text)
 		id, _ := got["id"].(string)
 		if id == "" {
@@ -98,7 +98,7 @@ func TestDraftTextLimit(t *testing.T) {
 
 	long := strings.Repeat("мысль без конца, ", draftTextLimit/8)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": `+strconv.Quote(long)+`}`)
+		`{"text": `+strconv.Quote(long)+`, "prio": "mid"}`)
 	text := body(t, resp)
 	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "длиннее предела") {
 		t.Fatalf("текст за пределом: %d %s, ожидал 400 со словами про предел", resp.StatusCode, text)
@@ -117,7 +117,7 @@ func TestDraftTextLimit(t *testing.T) {
 	tail := strings.TrimSpace(strings.Repeat("мысль с телефона, ", 64))
 	fits := "мысль с телефона\n\n" + tail
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": `+strconv.Quote(fits)+`}`)
+		`{"text": `+strconv.Quote(fits)+`, "prio": "mid"}`)
 	got := newResp(t, resp, "запись длинного черновика в пределе")
 	id, _ := got["id"].(string)
 	if id == "" {
@@ -126,7 +126,7 @@ func TestDraftTextLimit(t *testing.T) {
 	// Простыня одной строкой отбивается порогом первой строки утилиты, и отказ
 	// приходит без совета про stdin: с дашборда текст и так идёт на stdin.
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": `+strconv.Quote(strings.TrimSpace(strings.Repeat("мысль с телефона, ", 8)))+`}`)
+		`{"text": `+strconv.Quote(strings.TrimSpace(strings.Repeat("мысль с телефона, ", 8)))+`, "prio": "mid"}`)
 	text = body(t, resp)
 	if resp.StatusCode == http.StatusOK || !strings.Contains(text, "72") || strings.Contains(text, "stdin") {
 		t.Fatalf("отказ по первой строке: %d %s, ожидал отказ с порогом и без совета про stdin", resp.StatusCode, text)
@@ -240,8 +240,25 @@ func TestTaskCreateRefusals(t *testing.T) {
 			t.Errorf("%s: %d %s, ожидал 400 со словами %q", tc.name, resp.StatusCode, text, tc.want)
 		}
 	}
+	// Черновик без уровня разбора отбивается на сервере, не доходя до утилиты:
+	// уровень спрашивается на записи (DK-520), и отказ говорит про шкалу, а не
+	// про форму команды taskctl.
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"text": "мысль без уровня"}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
+		!strings.Contains(text, "уровень разбора") {
+		t.Errorf("черновик без уровня: %d %s, ожидал 400 со словами про уровень", resp.StatusCode, text)
+	}
+	if _, err := os.Stat(filepath.Join(e.proj, "docs", "tasks", "drafts")); !os.IsNotExist(err) {
+		t.Errorf("черновик без уровня завёл накопитель: %v", err)
+	}
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"text": "мысль", "prio": "срочно"}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
+		!strings.Contains(text, "уровень разбора") {
+		t.Errorf("уровень мимо шкалы: %d %s, ожидал 400", resp.StatusCode, text)
+	}
+
 	// Пустой черновик отбивается там же и не заводит файла.
-	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"text": "   "}`)
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"text": "   ", "prio": "mid"}`)
 	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
 		!strings.Contains(text, "пустой черновик") {
 		t.Errorf("пустой черновик: %d %s", resp.StatusCode, text)
@@ -343,7 +360,7 @@ func TestNewTaskAuthAndOrigin(t *testing.T) {
 	before := readFile(t, boardPath)
 	calls := []struct{ url, body string }{
 		{e.srv.URL + "/api/projects/demo/tasks", `{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0]}`},
-		{e.srv.URL + "/api/projects/demo/drafts", `{"text": "мысль"}`},
+		{e.srv.URL + "/api/projects/demo/drafts", `{"text": "мысль", "prio": "mid"}`},
 	}
 	for _, call := range calls {
 		resp := doReq(t, plainClient(), "POST", call.url, call.body)

@@ -86,6 +86,18 @@ type server struct {
 	// записью, в работе поле пустое. Корень репозитория приходит аргументом,
 	// чтобы тест мог держать один проект и смотреть на остальные.
 	inboxProbe func(root string)
+
+	// Секрет входа перечитывается из cfg.Path по mtime (DK-481): dashboard
+	// secret --rotate меняет только файл, и без переоценки живой демон сверял
+	// бы вход и куки со стартовым токеном до рестарта. secretTok это
+	// последний удачно прочитанный секрет, secretAt его mtime на тот момент,
+	// secretErr причина последнего провала перечитывания (пусто, когда всё
+	// хорошо). Свой замок, а не общий s.mu: проверка идёт на каждом запросе, и
+	// незачем ждать за ней сканы корней и harnesses.
+	secretMu  sync.Mutex
+	secretTok string
+	secretAt  time.Time
+	secretErr string
 }
 
 // inboxLock отдаёт замок «Входящих» этого репозитория, заводя его при первом
@@ -112,9 +124,69 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 	}
 	return &server{cfg: cfg, static: static, logf: logf, now: time.Now, started: time.Now(),
 		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, deaf: map[string]deafEntry{},
-		busy:  map[string]busyEntry{},
-		heal:  map[string]healEntry{},
-		probe: peerProbe}
+		busy:      map[string]busyEntry{},
+		heal:      map[string]healEntry{},
+		probe:     peerProbe,
+		secretTok: cfg.Token}
+}
+
+// refreshToken отдаёт действующий секрет входа, при нужде перечитывая его из
+// cfg.Path: dashboard secret --rotate пишет новый токен только в файл, и без
+// этого демон сверял бы вход со стартовым секретом до рестарта. Stat дешёвый
+// и идёт на каждой проверке, а сам LoadConfig (дороже: разбор всего файла)
+// зовётся только при изменившемся mtime. Пустой Path это синтетический
+// конфиг теста без файла на диске: перечитывать нечего, отдаётся то, что
+// заведено при старте.
+func (s *server) refreshToken() string {
+	if s.cfg.Path == "" {
+		return s.secretTok
+	}
+	fi, err := os.Stat(s.cfg.Path)
+	if err != nil {
+		s.secretMu.Lock()
+		defer s.secretMu.Unlock()
+		s.noteSecretErrLocked(fmt.Sprintf(
+			"secret: %s недоступен (%v), действует прежний токен", s.cfg.Path, err))
+		return s.secretTok
+	}
+	s.secretMu.Lock()
+	if fi.ModTime().Equal(s.secretAt) {
+		tok := s.secretTok
+		s.secretMu.Unlock()
+		return tok
+	}
+	s.secretMu.Unlock()
+
+	// Файл менялся: полный разбор дороже stat, но только тут он и нужен.
+	// Между snapshot mtime и этим чтением файл может обновиться ещё раз (две
+	// быстрые ротации подряд), тогда следующая проверка увидит новый mtime
+	// и перечитает снова, потерь не будет.
+	cfg, err := LoadConfig(s.cfg.Home)
+	s.secretMu.Lock()
+	defer s.secretMu.Unlock()
+	if err != nil {
+		s.noteSecretErrLocked(fmt.Sprintf(
+			"secret: перечитать %s не удалось (%v), действует прежний токен", s.cfg.Path, err))
+		return s.secretTok
+	}
+	s.secretAt = fi.ModTime()
+	s.secretErr = ""
+	if cfg.Token != "" {
+		s.secretTok = cfg.Token
+	}
+	return s.secretTok
+}
+
+// noteSecretErrLocked запоминает причину провала перечитывания секрета для
+// /healthz и журнала; зовётся под s.secretMu. Лог пишется только при смене
+// сообщения, иначе каждая проверка входа заливала бы журнал одной и той же
+// строкой.
+func (s *server) noteSecretErrLocked(msg string) {
+	if s.secretErr == msg {
+		return
+	}
+	s.secretErr = msg
+	s.logf("%s", msg)
 }
 
 func (s *server) handler() http.Handler {
@@ -208,7 +280,7 @@ func headers(next http.Handler) http.Handler {
 
 func (s *server) loggedIn(r *http.Request) bool {
 	c, err := r.Cookie(cookieName)
-	return err == nil && cookieValid(s.cfg.Token, c.Value, s.now())
+	return err == nil && cookieValid(s.refreshToken(), c.Value, s.now())
 }
 
 // auth заворачивает API-ручку: без входа 401 и ни одной строки данных.
@@ -321,6 +393,12 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // потому что тихая деградация неотличима от «проектов нет».
 func (s *server) healthErrs() ([]Project, []string) {
 	errs := append([]string{}, s.cfg.Errs...)
+	s.refreshToken()
+	s.secretMu.Lock()
+	if s.secretErr != "" {
+		errs = append(errs, s.secretErr)
+	}
+	s.secretMu.Unlock()
 	projects, scanErrs := s.projects()
 	errs = append(errs, scanErrs...)
 	if m := taskctlMissing(); m != "" {
@@ -389,7 +467,10 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"token\": \"...\"}"})
 		return
 	}
-	if !tokenMatch(s.cfg.Token, body.Token) {
+	// Секрет спрашивается один раз на запрос: перечитан он или нет, вход и
+	// подпись куки идут с тем же значением.
+	token := s.refreshToken()
+	if !tokenMatch(token, body.Token) {
 		// Пауза гасит перебор: провал входа стоит секунду, а не тысячи попыток
 		// в секунду.
 		time.Sleep(loginPause)
@@ -399,7 +480,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	expiry := s.now().Add(cookieAge)
 	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: cookieValue(s.cfg.Token, expiry),
+		Name: cookieName, Value: cookieValue(token, expiry),
 		Path: "/", Expires: expiry, HttpOnly: true, SameSite: http.SameSiteLaxMode,
 	})
 	s.logf("вход с %s", r.RemoteAddr)

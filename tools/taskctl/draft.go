@@ -48,6 +48,22 @@ var (
 	draftPrioKeys  = map[string]string{"высокий": "high", "средний": "mid", "низкий": "low"}
 )
 
+// draftPrioWord переводит уровень в слово файла и отбивает запись без уровня.
+// Грубая оценка спрашивается на записи, а не в грумминге: метка задаёт очередь
+// разбора, и поставленная грумингом она появляется тогда, когда разбор уже
+// идёт (DK-520).
+func draftPrioWord(prio string) (string, error) {
+	switch {
+	case strings.TrimSpace(prio) == "":
+		return "", fmt.Errorf("жду уровень разбора: taskctl draft --prio high|mid|low \"текст идеи\"\n" +
+			"  high это разбирать в ближайший заход, mid обычная очередь, low когда-нибудь;\n" +
+			"  оценка грубая и на глаз, пересматривается потом через taskctl draft prio <ID>")
+	case draftPrioWords[prio] == "":
+		return "", fmt.Errorf("уровень %q не из шкалы: taskctl draft --prio high|mid|low \"текст идеи\"", prio)
+	}
+	return draftPrioWords[prio], nil
+}
+
 // draftSubs это слова, которые case "draft" узнаёт за подкоманду, а не за
 // текст черновика. Черновика из одного такого слова не записать, но ограничение
 // это давно действует для list и стоит того: без узнавания «draft defer DK-116
@@ -264,16 +280,21 @@ func readStdin() (string, error) {
 }
 
 // cmdDraft записывает сырую идею файлом и выдаёт ей ID. Метаданные не
-// спрашиваются вовсе: грумминг в момент, когда мысль только проявилась, стоит
-// дороже самой мысли, и на этом она теряется.
-func cmdDraft(root, text string, c CommitOpts) (string, error) {
-	return cmdDraftFrom(root, text, false, c)
+// спрашиваются вовсе, кроме грубого уровня разбора: грумминг в момент, когда
+// мысль только проявилась, стоит дороже самой мысли, и на этом она теряется, а
+// уровень это один флаг и ответ на вопрос «разбирать ли это сегодня».
+func cmdDraft(root, text, prio string, c CommitOpts) (string, error) {
+	return cmdDraftFrom(root, text, prio, false, c)
 }
 
 // cmdDraftFrom это cmdDraft со знанием, откуда пришёл текст: отказ по первой
 // строке советует stdin только тому, кто пришёл аргументом.
-func cmdDraftFrom(root, text string, viaStdin bool, c CommitOpts) (string, error) {
+func cmdDraftFrom(root, text, prio string, viaStdin bool, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
+		return "", err
+	}
+	word, err := draftPrioWord(prio)
+	if err != nil {
 		return "", err
 	}
 	// Номер черновика это та же сквозная нумерация, что у доски, поэтому
@@ -314,6 +335,11 @@ func cmdDraftFrom(root, text string, viaStdin bool, c CommitOpts) (string, error
 	}
 	body := fmt.Sprintf("# %s: %s\n\n%s%s\n\n%s",
 		id, title, draftWrittenPrefix, time.Now().Format(draftDateLayout), draftBodySection(rest))
+	// Метку кладёт та же setPrio, что и draft prio: место строки в шапке
+	// описано в одном месте, и запись с пересмотром не расходятся.
+	t := &draftText{path: abs, lines: strings.Split(body, "\n")}
+	t.setPrio(word)
+	body = strings.Join(t.lines, "\n")
 	if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
 		return "", err
 	}

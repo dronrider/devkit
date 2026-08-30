@@ -161,6 +161,30 @@ func TestQuotaBrokenLines(t *testing.T) {
 	}
 }
 
+// Пометка неполноты, которую кладёт agentctl, до экрана остатка не доходит и
+// разбор не ломает. Дашборд читает снимок сам (LLD DK-112), и всё, что не
+// taken, он держит за бакет: приди пометка ключом, человек увидел бы «бакет
+// partial не разобран» вместо цифры. Строка снимка тут дословная, из
+// agentctl/quota.go.
+func TestQuotaPartialNoteIgnored(t *testing.T) {
+	e := newTestEnv(t)
+	e.s.now = func() time.Time { return quotaNow }
+	writeQuota(t, e.home, "harness-one", "taken = 2026-08-11T13:23\n"+
+		"week_all = 12% сброс 2026-08-17T15:00\n"+
+		"# partial week_max: свежей разбивки клиент не получил, на панели она из его кеша\n")
+
+	h := getQuota(t, e).Harnesses[0]
+	if len(h.Warns) != 0 {
+		t.Fatalf("пометка прочиталась как битая строка: %+v", h.Warns)
+	}
+	if len(h.Buckets) != 1 || h.Buckets[0].Name != "week_all" {
+		t.Fatalf("пометка попала на экран бакетом: %+v", h.Buckets)
+	}
+	if strings.Contains(h.Note, "partial") {
+		t.Fatalf("пометка вылезла подписью подписки: %q", h.Note)
+	}
+}
+
 // Бакет без даты сброса читается: сброс это подпись, а не условие показа.
 func TestQuotaBucketWithoutReset(t *testing.T) {
 	e := newTestEnv(t)

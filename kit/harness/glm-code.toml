@@ -25,8 +25,11 @@ global_file = "{home}/CLAUDE.md"
 # аргументом, effort у клиента свой флаг с теми же четырьмя уровнями, что у
 # маппинга devkit. Права неинтерактивной сессии во флаги не выносятся, их
 # раскладывает devkitctl doctor в settings.json каталога (tools/devkitctl/perms.py).
+# Имя сессии подпроцессу даёт run: по нему он находит транскрипт делегата под
+# {home} и кладёт его боковым журналом в разговор, раздавший работу, иначе ход
+# работы второй подписки не виден нигде (DK-581).
 mode = "cli"
-command = ["claude", "-p", "{prompt}", "--model", "{model}", "--effort", "{effort}"]
+command = ["claude", "-p", "{prompt}", "--model", "{model}", "--effort", "{effort}", "--session-id", "{session}"]
 agents_dir = "{home}/agents"
 agents_format = "claude-code"
 # Подписка отдаёт две модели, дешёвую и сильную, поэтому верхние три яруса

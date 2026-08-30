@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -196,6 +197,155 @@ func TestLoginWrongToken(t *testing.T) {
 	if len(resp.Cookies()) != 0 {
 		t.Fatal("провал входа не должен ставить куку")
 	}
+}
+
+// Ротация секрета живым демоном (DK-481): dashboard secret --rotate меняет
+// только файл конфига, а сервер, не перечитывая его, вечно сверяет вход и
+// куки со стартовым токеном. Без перечитывания по mtime этот тест краснеет:
+// вход по новому токену получает 403, старая кука продолжает пускать.
+func TestSecretRotateLiveReload(t *testing.T) {
+	loginPause = 0
+	home := t.TempDir()
+	writeConf(t, home, "root = /x\ntoken = old-secret\n")
+	cfg, err := LoadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newServer(cfg, os.DirFS("static"), nil)
+	srv := httptest.NewServer(s.handler())
+	t.Cleanup(srv.Close)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+	login := func(token string) int {
+		resp, err := client.Post(srv.URL+"/api/login", "application/json",
+			strings.NewReader(`{"token": "`+token+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := login("old-secret"); got != http.StatusOK {
+		t.Fatalf("вход старым секретом: %d, ожидал 200", got)
+	}
+	resp, err := client.Get(srv.URL + "/api/projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("кука сразу после входа не пускает: %d", resp.StatusCode)
+	}
+
+	if _, err := cmdSecret(home, true); err != nil {
+		t.Fatal(err)
+	}
+	// mtime может совпасть с прежним на грубых файловых системах: явно
+	// отодвигаем его в будущее, чтобы сравнение mtime увидело перемену
+	// детерминированно, а не по случайности гонки часов.
+	future := time.Now().Add(time.Minute)
+	if err := os.Chtimes(cfg.Path, future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err = client.Get(srv.URL + "/api/projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("кука с доротационным секретом ещё жива после ротации: %d, ожидал 401", resp.StatusCode)
+	}
+
+	newToken, err := cmdSecret(home, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := login(newToken); got != http.StatusOK {
+		t.Fatalf("вход новым токеном без рестарта демона: %d, ожидал 200", got)
+	}
+}
+
+// Провал перечитывания (файл конфига пропал) не роняет вход и не открывает
+// его посторонним: действует последний удачно прочитанный секрет, а причина
+// видна в /healthz.
+func TestSecretRereadFailureKeepsOldToken(t *testing.T) {
+	loginPause = 0
+	home := t.TempDir()
+	path := writeConf(t, home, "root = /x\ntoken = keep-me\n")
+	cfg, err := LoadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newServer(cfg, os.DirFS("static"), nil)
+	srv := httptest.NewServer(s.handler())
+	t.Cleanup(srv.Close)
+
+	// Первый запрос читает файл и запоминает его mtime.
+	if resp, err := http.Get(srv.URL + "/healthz"); err != nil {
+		t.Fatal(err)
+	} else {
+		resp.Body.Close()
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Post(srv.URL+"/api/login", "application/json",
+		strings.NewReader(`{"token": "keep-me"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("пропавший файл конфига не должен ронять вход прежним токеном: %d", resp.StatusCode)
+	}
+
+	hz, err := http.Get(srv.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hz.Body.Close()
+	var got struct {
+		Errors []string `json:"errors"`
+	}
+	if err := json.NewDecoder(hz.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range got.Errors {
+		if strings.Contains(e, "secret") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("healthz не назвал причину провала перечитывания секрета: %v", got.Errors)
+	}
+}
+
+// Проверка входа идёт на каждом запросе и должна выдерживать параллельные
+// вызовы без гонки данных: тест ловится флагом -race, а не своей проверкой.
+func TestSecretRefreshTokenConcurrent(t *testing.T) {
+	home := t.TempDir()
+	writeConf(t, home, "root = /x\ntoken = concurrent-secret\n")
+	cfg, err := LoadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newServer(cfg, os.DirFS("static"), nil)
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.refreshToken()
+		}()
+	}
+	wg.Wait()
 }
 
 func TestProjectsAfterLogin(t *testing.T) {

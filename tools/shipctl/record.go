@@ -53,19 +53,13 @@ func mergedShas(root, id string) ([]string, error) {
 	return shas, nil
 }
 
-// smokeNote это начало строки отметки прогона smoke в разделе «Выкат»:
-// «smoke прогнан, <дата>». Пишет её cmdSmoke, здесь довольно префикса,
-// чтобы отличить отметку от строк записи слияния и прозы.
-const smokeNote = "smoke прогнан"
+// smokeNote это начало строки отметки прогона smoke в разделе «Выкат». Разбор
+// самой отметки живёт в форме файла задачи: по ней считает очередь выката
+// shipctl и отбирает строки на закрытие taskctl.
+const smokeNote = taskform.SmokeNote
 
 // smokeDone говорит, действует ли на последний выкат отметка прогона smoke.
-// Круг доработки после возврата из Check дописывает в раздел новую строку
-// слияния, и отметка прошлого круга новый выкат не прикрывает: считается
-// отметка, стоящая после последней строки с коммитами. Раздела или файла нет
-// значит выкат непроверенный, как и раздел без отметки. Читается мимо
-// ограждённых блоков, как и сама запись: в сценарий проверки вкладывается
-// реальный вывод команд, и процитированная отметка освобождала бы очередь
-// чужой задаче.
+// Файла нет значит выкат непроверенный.
 func smokeDone(root, id string) (bool, error) {
 	data, err := os.ReadFile(taskFilePath(root, id))
 	if err != nil {
@@ -74,49 +68,12 @@ func smokeDone(root, id string) (bool, error) {
 		}
 		return false, err
 	}
-	lastMerge, smoke := -1, -1
-	for i, ln := range sectionLines(string(data), mergedSection) {
-		t := strings.TrimSpace(ln)
-		if !strings.HasPrefix(t, "- ") {
-			continue
-		}
-		if strings.HasPrefix(strings.TrimPrefix(t, "- "), smokeNote) {
-			smoke = i
-			continue
-		}
-		if _, list, ok := strings.Cut(t, ":"); ok && hasSha(list) {
-			lastMerge = i
-		}
-	}
-	return smoke > lastMerge, nil
-}
-
-// hasSha говорит, есть ли в перечне через запятую хотя бы один коммит:
-// строкой записи слияния считается строка с коммитами, а не любая проза
-// с двоеточием.
-func hasSha(list string) bool {
-	for _, part := range strings.Split(list, ",") {
-		if isSha(strings.TrimSpace(part)) {
-			return true
-		}
-	}
-	return false
+	return taskform.SmokeCovers(string(data)), nil
 }
 
 // isSha отсеивает прозу в строке записи: коммит это семь и больше знаков
 // шестнадцатеричного числа.
-func isSha(s string) bool {
-	if len(s) < 7 {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
+func isSha(s string) bool { return taskform.IsSha(s) }
 
 // inRecord сверяет полный sha из лога с записанным сокращённым.
 func inRecord(rec []string, sha string) bool {

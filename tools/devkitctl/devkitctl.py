@@ -6,13 +6,14 @@
       включённые харнесы, git-хуки, доска через taskctl init, болванка
       .devkit/deploy.local для shipctl; --no-board для внешнего трекера
 
-  devkitctl corp [--prefix XX] [--name "..."] [-C dir]
+  devkitctl corp [--prefix XX] [--name "..."] [--local dir] [-C dir]
       подключить корп-проект: первый прогон спрашивает недостающее сам (префикс
       доски с предложением по имени клона, адрес трекера и пользователя нового
       контура компании), без tty вопросов нет и недоделанное едет в хвост;
-      боковая директория ../<проект>-local со скелетом
-      доски и своим git-репозиторием, редирект git config devkit.local в клоне,
-      тонкий файл контекста харнеса с импортом на AGENTS.md боковой директории и
+      боковая директория со скелетом доски (по умолчанию общая на контур
+      ../<контур>-local/<проект>, репозиторий один на всю директорию контура),
+      ссылка .devkit из клона на неё, редирект git config devkit.local, тонкий
+      файл контекста харнеса с импортом на AGENTS.md боковой директории и
       строкой в .git/info/exclude, обёртки хуков на pre-commit и commit-msg.
       Прогон повторяемый: боковая директория не трогается, доводится обвязка
       клона, поэтому он же восстанавливает обвязку после переклонирования
@@ -153,6 +154,7 @@
 Выход 0 всё в порядке, 1 есть находки, 2 ошибка запуска.
 """
 import argparse
+import board
 import build
 import codemap
 import context
@@ -184,7 +186,11 @@ from say import human_age
 from pathlib import Path
 
 DEVKIT = Path(__file__).resolve().parent.parent.parent
-POST_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py")
+POST_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py",
+                "check-prose.py")
+# Конфиг порогов сторожа прозы (DK-521). Полноту его смотрит сам хук режимом
+# --config: список метрик живёт в коде хука, и второй копии тут не заводится.
+PROSE_HOOK = "check-prose.py"
 # Хук чтения секретов через Bash (DK-228): PreToolUse на Bash, отдельной
 # категорией от пост-проверок текстов, и в hook_gaps сообщение про него своё.
 PRE_SCRIPTS = ("check-read-secret.py",)
@@ -225,6 +231,13 @@ BOARD_HOOK = "board-catchup.sh"
 # сообщения в hook_gaps своя: своё событие, свой матчер и своё «что идёт не
 # так», иначе неподключённый канал чата остаётся неотличим от штатной тишины.
 CHAT_HOOK = "chat-in.py"
+# Сторож фоновых субагентов (DK-519): три события, потому что счёт работам
+# ведётся с их запуска (PostToolUse на инструменте делегирования), закрывается
+# их концом (SubagentStop), а сдаётся сессии на конце хода (Stop), пока она не
+# ушла спать с незабранным отчётом. Категория сообщения в hook_gaps своя:
+# потерянный отчёт субагента виден иначе, чем молчащий баннер уведомителя.
+WATCH_HOOK = "agent-watch.py"
+WATCH_EVENTS = ("PostToolUse", "SubagentStop", "Stop")
 # Хуки, переименованные в devkit: прежнее имя файла и нынешнее (DK-440). Строка
 # с прежним именем зовёт файл, которого в чекауте уже нет, и харнес спотыкается
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
@@ -254,10 +267,14 @@ HOOK_LAYOUT = (
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-symbols.py --hook"),
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-memory.py --hook"),
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-sensitive.py --hook"),
+    ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-prose.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-read-secret.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
+    ("PostToolUse", "Agent", "python3 %s/hooks/agent-watch.py --hook claude-code"),
+    ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
+    ("Stop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
     ("SessionStart", "", "python3 %s/hooks/session-task.py --hook claude-code"),
     ("PostToolUse", "", "python3 %s/hooks/session-task.py --touch claude-code"),
@@ -742,13 +759,22 @@ def log_run(root, cmd, code):
         pass
 
 
+def worktree_top(root):
+    """Вершина рабочего дерева. Относительный core.hooksPath git считает от неё,
+    а корень проекта devkit бывает и подкаталогом: боковая директория контура
+    лежит внутри его репозитория (DK-583)."""
+    rc, out = run(["git", "rev-parse", "--show-toplevel"], cwd=root)
+    return Path(out.strip()) if rc == 0 and out.strip() else Path(root)
+
+
 def check_git_hooks(root):
     hooks_dir = (DEVKIT / "hooks").resolve()
+    top = worktree_top(root)
     rc, hp = run(["git", "config", "core.hooksPath"], cwd=root)
     if rc == 0 and hp:
         cand = Path(os.path.expanduser(hp))
         if not cand.is_absolute():
-            cand = root / cand
+            cand = top / cand
         if cand.exists() and cand.resolve() == hooks_dir:
             return None
     else:
@@ -756,7 +782,7 @@ def check_git_hooks(root):
         pre = (Path(gp) if os.path.isabs(gp) else root / gp) / "pre-commit"
         if pre.exists() and Path(os.path.realpath(pre)).parent == hooks_dir:
             return None
-    rel = os.path.relpath(hooks_dir, root)
+    rel = os.path.relpath(hooks_dir, top)
     return "git-хуки devkit не подключены; из корня проекта: git config core.hooksPath %s" % rel
 
 
@@ -772,7 +798,7 @@ def connect_git_hooks(root):
     if custom:
         return None, ("в хуках проекта уже есть свои (%s), core.hooksPath не трогается; "
                       "симлинки на хуки devkit по hooks/README.md" % ", ".join(custom))
-    hooks_rel = os.path.relpath((DEVKIT / "hooks").resolve(), root)
+    hooks_rel = os.path.relpath((DEVKIT / "hooks").resolve(), worktree_top(root))
     run(["git", "config", "core.hooksPath", hooks_rel], cwd=root)
     return "git-хуки: core.hooksPath = %s" % hooks_rel, None
 
@@ -1121,34 +1147,62 @@ def check_agent_defs(fix, dst_dir):
     return findings, fixed
 
 
+def skill_files(skill):
+    """Файлы скилла относительными путями: каталог едет на машину целиком.
+
+    Разбирать `SKILL.md` в поисках имён спутников доктор не берётся: имена
+    названы там прозой, и парсер прозы отставал бы от каждой правки скилла, а
+    отставание видно только в чужом проекте, где чекаута devkit нет. Каталог
+    как единица раскладки проверяется тем, что файл в нём лежит.
+
+    Служебное (`__pycache__`, точечные файлы вроде `.DS_Store`) отсеивается:
+    оно заводится прогоном тестов и файловым менеджером, а не автором скилла, и
+    уехав на машину, давало бы находку про расхождение на ровном месте.
+    """
+    out = []
+    for path in sorted(skill.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(skill)
+        if any(part == "__pycache__" or part.startswith(".") for part in rel.parts):
+            continue
+        out.append(rel)
+    return out
+
+
 def check_skills(fix, dst_dir):
     # Скиллы едут на машину тем же каналом, что определения субагентов: эталон
     # это основной чекаут, из worktree ветки задачи идёт только сверка. Скилл
-    # это директория с SKILL.md, по нему он и опознаётся, соседняя проза в
-    # kit/skills/ на машину не уезжает. Каталог назначения из профиля харнеса
-    # ([skills] dir), у каждого включённого он свой.
+    # это директория с SKILL.md, по нему он и опознаётся, а едет директория
+    # целиком: у proofread рядом со SKILL.md лежат пары, словарь и корпус, и без
+    # них вычитка в чужом проекте идёт по одним названиям пунктов (DK-331).
+    # Каталог назначения из профиля харнеса ([skills] dir), у каждого
+    # включённого он свой.
     findings, fixed = [], []
     laid, again, none, stale = [], [], [], []
     main, from_main = devkit_checkout()
     src_dir = main / "kit" / "skills" if (main / "kit" / "skills").is_dir() else DEVKIT / "kit" / "skills"
     how = fix_hint(main, from_main, "скиллы")
     for src in sorted(src_dir.glob("*/SKILL.md")):
-        name = src.parent.name
-        dst = dst_dir / name / "SKILL.md"
-        if dst.exists():
-            if dst.read_text(encoding="utf-8", errors="replace") != src.read_text(encoding="utf-8"):
-                if fix and from_main:
-                    shutil.copyfile(src, dst)
-                    again.append(name)
-                else:
-                    stale.append(name)
+        skill = src.parent
+        name = skill.name
+        dst = dst_dir / name
+        # Скилл, у которого нет на машине даже SKILL.md, не разложен вовсе;
+        # у остального недостающий или разошедшийся спутник это то же
+        # расхождение с devkit, что правка самого SKILL.md руками. Сравнение
+        # побайтовое: в каталоге скилла лежит и python (оболочка goal-loop).
+        fresh = not (dst / "SKILL.md").exists()
+        apart = [rel for rel in skill_files(skill)
+                 if not (dst / rel).is_file() or (dst / rel).read_bytes() != (skill / rel).read_bytes()]
+        if not apart:
             continue
         if fix and from_main:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src, dst)
-            laid.append(name)
+            for rel in apart:
+                (dst / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(skill / rel, dst / rel)
+            (laid if fresh else again).append(name)
             continue
-        none.append(name)
+        (none if fresh else stale).append(name)
     if none:
         findings.append("%s; сессия соберёт процедуру на глаз, а не по скиллу devkit; %s"
                         % (say.folded(("не разложен", "не разложено"), SKILL_WORD, none, dst_dir),
@@ -1230,7 +1284,11 @@ def hook_gaps(text, settings):
         # Настройки не разобрались, судить остаётся по подстроке: тогда либо
         # уведомитель там есть на всех событиях, либо нет ни на одном.
         notify_events = set(NOTIFY_EVENTS) if NOTIFY_HOOK in text else set()
+    watch_events = hook_events(text, WATCH_HOOK)
+    if watch_events is None:
+        watch_events = set(WATCH_EVENTS) if WATCH_HOOK in text else set()
     missing_notify, missing_post, missing_pre, missing_pre_read = [], [], [], []
+    missing_watch = []
     for event, matcher, cmd in HOOK_LAYOUT:
         parts = cmd.split()
         script = os.path.basename(parts[1])
@@ -1243,6 +1301,10 @@ def hook_gaps(text, settings):
             if event in notify_events:
                 continue
             missing_notify.append(event)
+        elif script == WATCH_HOOK:
+            if event in watch_events:
+                continue
+            missing_watch.append(event)
         elif key in text:
             continue
         gaps.append((event, matcher, cmd))
@@ -1297,6 +1359,11 @@ def hook_gaps(text, settings):
                         "разрешения, и не говорит, что закончила ход или что субагент "
                         "отработал (hooks/README.md)"
                         % (NOTIFY_HOOK, ", ".join(missing_notify), settings))
+    if missing_watch:
+        findings.append("сторож %s не подключён на события %s в %s: отчёт фонового субагента "
+                        "теряется по дороге, и сессия уходит спать, считая его работающим "
+                        "(hooks/README.md)"
+                        % (WATCH_HOOK, ", ".join(missing_watch), settings))
     for old in sorted(n for n in RETIRED_HOOKS if n in text):
         stale.append(old)
         findings.append("хук %s в %s переименован в %s: строка зовёт файл, которого в чекауте "
@@ -1900,6 +1967,28 @@ def check_cmdout(root, fix):
             % len(stale)], []
 
 
+def check_prose_config():
+    """Конфиг порогов сторожа прозы (DK-521).
+
+    Смотрит не доктор, а сам хук режимом --config: перечень метрик и их ключи
+    живут в hooks/check-prose.py, и второй список тут разъехался бы с ним на
+    первой же новой метрике. Выход 1 это неполный конфиг, и хук печатает
+    строками, чего в нём нет. Без конфига сторож молчит на каждой записи, и
+    отличить это молчание от чистой прозы можно только отсюда.
+    """
+    hook = DEVKIT / "hooks" / PROSE_HOOK
+    if not hook.is_file():
+        return []
+    rc, out = run([sys.executable, str(hook), "--config"])
+    if rc == 0:
+        return []
+    # В выводе хука первая строка это шапка, а пробелы идут пунктами перечня:
+    # находке нужны пункты, шапку доктор говорит своими словами.
+    lines = [ln.strip()[2:] for ln in out.splitlines() if ln.strip().startswith("- ")]
+    return ["сторож прозы молчит на каждой записи, %s (hooks/README.md)"
+            % ("; ".join(lines) if lines else "конфиг порогов не читается")]
+
+
 def check_map_freshness(root, fix=False):
     """Проверка свежести карты проекта (DK-375).
 
@@ -2032,6 +2121,9 @@ def doctor(start, fix=False):
     # находится до того, как кто-то на него переключится, а починить его
     # автоматике нечем, это правка в devkit.
     findings += harness.check_profiles(str(DEVKIT / "kit" / "harness"))
+    # Конфиг порогов прозы того же формата и той же судьбы: чинится он правкой
+    # в devkit, а не автоматикой, поэтому идёт находкой рядом с профилями.
+    findings += check_prose_config()
     # Вес резидента считается и проекту (DK-190): карманы одни и те же, а судятся
     # в них разные. В чекауте devkit это его собственные карманы (ядро, ядро
     # доски, итог) и тело скилла, всё общее для всех проектов и проекту не
@@ -2073,6 +2165,10 @@ def doctor(start, fix=False):
             rc, out = run([tc, "-C", str(root), "lint"])
             if rc != 0:
                 findings.append("taskctl lint: %s" % out)
+        # Связи, названные входом в файле задачи, обязаны стоять маркером
+        # «после», иначе диспетчер их не видит (DK-168). Разбор свой, а не
+        # через taskctl: находка нужна и там, где бинаря в PATH нет.
+        findings += board.check(root)
         # Линкованное дерево (worktree от shipctl start) отличается тем же
         # способом, что check_agent_defs различает исполнение из ветки задачи:
         # main_checkout это родитель git-common-dir, from_main_checkout ложно,
@@ -2086,6 +2182,10 @@ def doctor(start, fix=False):
         # чекаута, независимо от того, есть там файл или нет.
         main_checkout = corp.checkout(root)
         from_main_checkout = not main_checkout or Path(main_checkout).resolve() == Path(root).resolve()
+        # Боковая директория корп-контура лежит подкаталогом репозитория контура
+        # (DK-583), и родитель git-common-dir там не она: линкованным деревом
+        # она от этого не становится, конфиг выката её собственный.
+        from_main_checkout = from_main_checkout or bool(local)
         if from_main_checkout:
             deploy, test, autonomous = read_deploy(root)
             if deploy is None and fix:
@@ -2512,7 +2612,7 @@ def ask_contour(contour):
             "user": corp.ask("имя пользователя в трекере, от него идут assign и ворклоги")}
 
 
-def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
+def corp_connect(start, prefix, name, contour="", key="", branch="", remote="", local_arg=""):
     # Подключение корп-проекта и оно же восстановление обвязки: заведённое не
     # переписывается, доводится только недостающее, поэтому повторный прогон
     # после переклонирования возвращает клон в рабочее состояние, а доску в
@@ -2523,7 +2623,15 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
                          "обычный проект подключает devkitctl new\n" % root)
         return 2
     clone = Path(corp.checkout(root) or root)
-    local = Path(corp.local_dir(clone, DEVKIT) or (clone.parent / (clone.name + "-local")))
+    # Путь боковой директории: сказанный флагом, иначе тот, куда уже ведёт
+    # редирект (повторный прогон и восстановление обвязки), иначе общая
+    # директория контура. Подключённый до DK-583 клон остаётся на своей
+    # ../<проект>-local: редирект называет её явно, и переезжать ему незачем.
+    # Путь разрешается по диску: сказанный флагом приезжает как есть, а клон
+    # git уже отдаёт разрешённым, и относительный редирект между ними иначе
+    # выходит через корень файловой системы.
+    local = Path(os.path.realpath(local_arg or corp.local_dir(clone, DEVKIT)
+                                  or corp.contour_local(clone, contour)))
     board = local / "docs" / "TASKS.md"
     # Про место рабочих файлов первый прогон говорит до вопросов, а не строкой
     # отчёта в конце: человек зовёт corp из клона и вправе ждать, что доска
@@ -2563,13 +2671,24 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
     if not local.is_dir():
         local.mkdir(parents=True)
         done.append("боковая директория %s заведена" % local)
-    if not (local / ".git").exists():
-        rc, out = run(["git", "init", "-q", str(local)])
+    # Репозиторий заводится один на контур, а не на проект: боковая директория
+    # контура держит проекты подкаталогами, и второй git внутри чужого рабочего
+    # дерева был бы вложенным репозиторием (DK-583). Уже накрытый репозиторием
+    # путь не трогается вовсе.
+    top = corp.repo_top(local)
+    if not top:
+        # Общая раскладка кладёт проект подкаталогом ../<контур>-local, и
+        # репозиторий заводится на самой директории контура; прежняя
+        # ../<проект>-local лежит сиблингом клона, и репозиторий её собственный.
+        init_at = local if corp.same_path(local.parent, clone.parent) else local.parent
+        rc, out = run(["git", "init", "-q", str(init_at)])
         if rc != 0:
-            sys.stderr.write("git init %s: %s\n" % (local, out))
+            sys.stderr.write("git init %s: %s\n" % (init_at, out))
             return 1
-        done.append("git-репозиторий боковой директории заведён: доска пушится в личный "
-                    "приватный remote, а не в корп-origin")
+        done.append("git-репозиторий %s заведён: доска пушится в личный приватный remote, "
+                    "а не в корп-origin" % init_at)
+    elif not corp.same_path(top, str(local)):
+        done.append("доска ложится подкаталогом репозитория %s: он один на весь контур" % top)
     (local / "docs" / "tasks").mkdir(parents=True, exist_ok=True)
     (local / ".devkit").mkdir(exist_ok=True)
     if not (local / rules.AGENTS_FILE).exists():
@@ -2585,7 +2704,11 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
             sys.stderr.write("taskctl не в PATH, доску заводить нечем: собрать утилиты "
                              "(python3 %s/tools/devkitctl/devkitctl.py build) и повторить\n" % DEVKIT)
             return 1
-        rc, out = run([tc, "-C", str(local), "init", "--prefix", prefix, "--name", name or clone.name])
+        # Доску заводит --here: боковая директория контура это подкаталог его
+        # репозитория, а init без флага поднялся бы к вершине и положил доску
+        # одну на все проекты контура.
+        rc, out = run([tc, "-C", str(local), "init", "--here",
+                       "--prefix", prefix, "--name", name or clone.name])
         if rc != 0:
             sys.stderr.write("taskctl init: %s\n" % out)
             return 1
@@ -2599,6 +2722,9 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
     done += ["боковая директория: %s" % g for g in generated]
     rel = corp.ensure_redirect(clone, local)
     done.append("редирект корня: git config devkit.local %s" % rel)
+    linked = corp.ensure_tree_link(clone, local)
+    if linked:
+        done.append(linked)
     for bkey, bval in corp.ensure_binding(local, clone,
                                           {"contour": contour, "key": key, "branch": branch}):
         why = (" (по нему обвязка клона находится после переклонирования)"
@@ -2622,6 +2748,8 @@ def corp_connect(start, prefix, name, contour="", key="", branch="", remote=""):
     done += thin_fixed
     for n in corp.ensure_exclude(clone, corp.hidden_names(corp_thin_names(imports))):
         done.append(".git/info/exclude: спрятан %s" % n)
+    for n in corp.drop_exclude(clone, [corp.LINK_DIR]):
+        done.append(".git/info/exclude: строка %s убрана, доска видна поиску клона" % n)
     for hook, state, chained in corp.ensure_hooks(clone, DEVKIT):
         done.append("хук %s: цепочка %s%s"
                     % (hook, state, " (чужой хук переехал в %s.chained)" % hook if chained else ""))
@@ -2656,6 +2784,9 @@ def main(argv):
     c.add_argument("--key", default="", help="ключ проекта в трекере (ABC), отличный от --prefix")
     c.add_argument("--branch", default="", help="шаблон ветки, по умолчанию решает shipctl")
     c.add_argument("--remote", default="", help="личный приватный remote доски боковой директории")
+    c.add_argument("--local", default="",
+                   help="путь боковой директории с доской; по умолчанию общая на контур "
+                        "../<контур>-local/<проект>, а без --contour прежняя ../<проект>-local")
     b = sub.add_parser("build", help="собрать бинари devkit с зашитой версией")
     b.add_argument("--release", action="store_true",
                    help="четыре пары GOOS/GOARCH, тарболлы и SHA256SUMS")
@@ -2708,7 +2839,7 @@ def main(argv):
         rc = new(a.dir, a.prefix.upper(), a.name, a.no_board)
     elif a.cmd == "corp":
         rc = corp_connect(a.dir, a.prefix.upper(), a.name, a.contour, a.key.upper(),
-                          a.branch, a.remote)
+                          a.branch, a.remote, a.local)
     elif a.cmd == "weigh":
         rc = weigh_resident(a.dir, a.runs, a.limit, a.model, a.prompt)
     elif a.cmd == "build":

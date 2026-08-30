@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,13 @@ import (
 )
 
 const lockPath = ".devkit/ship.lock"
+
+// errLockBusy отличает отказ занятости от аномальных отказов замка (не
+// открылся, не устоялся за N попыток). Занятость под ship --drain это
+// штатная состыковка с чужим заходом (LLD DK-306, решение 2) и уходит в
+// тихий no-op, а аномалия остаётся ошибкой и в разливе, поэтому вызывающий
+// код проверяет её errors.Is, а не разбирает текст.
+var errLockBusy = errors.New("конвейер занят")
 
 // Замок конвейера. Предусловия merge, ship и revert проверяются одно за
 // другим, а между проверкой и checkout с fast-forward помещается целый чужой
@@ -59,7 +67,7 @@ func acquireLock(root string) (func(), error) {
 		}
 		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 			f.Close()
-			return nil, fmt.Errorf("конвейер занят: замок %s держит другой запуск shipctl (merge, ship, revert или start); файл лежит пустым и когда свободен, и когда занят, само его наличие ни о чём не говорит, занятость проверяется повторным запуском, а не ожиданием, пока файл исчезнет; ничего не сделано, повторить позже", lockPath)
+			return nil, fmt.Errorf("%w: замок %s держит другой запуск shipctl (merge, ship, revert или start); файл лежит пустым и когда свободен, и когда занят, само его наличие ни о чём не говорит, занятость проверяется повторным запуском, а не ожиданием, пока файл исчезнет; ничего не сделано, повторить позже", errLockBusy, lockPath)
 		}
 		stale, err := lockStale(f, path)
 		if err != nil {

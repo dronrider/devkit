@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -120,8 +122,8 @@ func TestParseUsagePanel(t *testing.T) {
 		if err == nil {
 			t.Fatal("жду отказ: общий бакет обязателен")
 		}
-		if !strings.Contains(err.Error(), "не тронут") {
-			t.Fatalf("отказ без обещания не трогать снимок: %v", err)
+		if !strings.Contains(err.Error(), "week_all") {
+			t.Fatalf("отказ не называет недостающий бакет: %v", err)
 		}
 	})
 
@@ -196,8 +198,8 @@ func TestParseUsagePanel(t *testing.T) {
 		if err == nil {
 			t.Fatal("жду отказ: записывать в снимок нечего")
 		}
-		if !strings.Contains(err.Error(), "не тронут") {
-			t.Fatalf("отказ без обещания не трогать снимок: %v", err)
+		if !strings.Contains(err.Error(), "week_all") {
+			t.Fatalf("отказ не называет недостающий бакет: %v", err)
 		}
 	})
 
@@ -281,48 +283,33 @@ func TestPaneBlocker(t *testing.T) {
 	}
 }
 
-// TestPanelWhy: отказ по таймауту называет, обо что споткнулся разбор. Одна
-// фраза на любую поломку разметки оставляла человека без единой зацепки: панель
-// приходится открывать руками, чтобы увидеть, какой строки не хватило.
-func TestPanelWhy(t *testing.T) {
-	var w panelWaiter
-	if why := w.why(); !strings.Contains(why, "ни на одном кадре") {
-		t.Fatalf("до первого разбора причина %q", why)
-	}
-	_, err := parseUsagePanel(specAt(t, ""), "Current week (all models)\n [полоска без цифр]\n Resets in 2d\n", testNow)
-	if err == nil {
-		t.Fatal("панель без процента разобралась")
-	}
-	w.reject(err)
-	if why := w.why(); why != "у бакета week_all в панели не нашлось процента" {
-		t.Fatalf("причина отказа %q", why)
-	}
-}
 
 // TestPanelWaiter: панель приезжает не одним кадром, и первый успешный разбор
-// это ещё не повод писать снимок.
+// это ещё не повод писать снимок. Ждём не секунды, а слово самой панели.
 func TestPanelWaiter(t *testing.T) {
-	partial, err := parseUsagePanel(specAt(t, ""), readFixture(t, "usage-panel-partial.txt"), testNow)
+	partialPane := readFixture(t, "usage-panel-partial.txt")
+	fullPane := readFixture(t, "usage-panel-fable.txt")
+	partial, err := parseUsagePanel(specAt(t, ""), partialPane, testNow)
 	if err != nil {
 		t.Fatalf("недорисованный кадр панели не разобран: %v", err)
 	}
 	if len(partial.Buckets) != 1 {
 		t.Fatalf("в кадре ждали один общий бакет, вижу %+v", partial.Buckets)
 	}
-	full, err := parseUsagePanel(specAt(t, ""), readFixture(t, "usage-panel-fable.txt"), testNow)
+	full, err := parseUsagePanel(specAt(t, ""), fullPane, testNow)
 	if err != nil {
 		t.Fatalf("дорисованная панель не разобрана: %v", err)
 	}
 
-	t.Run("кадр без дорогого бакета в снимок не идёт", func(t *testing.T) {
+	t.Run("кадр с недосчитанной панелью в снимок не идёт", func(t *testing.T) {
 		var w panelWaiter
-		if w.accept(partial, testNow) {
-			t.Fatal("снимок записан по кадру, где дорогой бакет ещё не дорисован")
+		for i := 0; i < 20; i++ {
+			if w.accept(partial, partialPane) {
+				t.Fatalf("снимок записан по кадру, где панель ещё считает (проход %d)", i)
+			}
 		}
-		if w.accept(partial, testNow.Add(usagePartialGrace/2)) {
-			t.Fatal("выдержка кончилась раньше срока")
-		}
-		if !w.accept(full, testNow.Add(usagePartialGrace/2)) {
+		w.accept(full, fullPane)
+		if !w.accept(full, fullPane) {
 			t.Fatal("дорисованная панель не принята")
 		}
 		if _, ok := w.snap.bucket("week_max"); !ok {
@@ -330,25 +317,177 @@ func TestPanelWaiter(t *testing.T) {
 		}
 	})
 
-	t.Run("панель без дорогого бакета принимается по выдержке", func(t *testing.T) {
-		// Такая панель бывает и настоящей: свой тариф, своя версия клиента.
-		// Ждать её вечно нельзя, иначе refresh отказывает там, где данные есть.
+	t.Run("одного досчитанного кадра мало", func(t *testing.T) {
+		// capture-pane снимает экран в любой момент и может застать панель на
+		// середине перерисовки.
 		var w panelWaiter
-		w.accept(partial, testNow)
-		if !w.accept(partial, testNow.Add(usagePartialGrace)) {
-			t.Fatal("одинокий общий бакет не принят и после выдержки")
+		if w.accept(full, fullPane) {
+			t.Fatal("снимок записан по первому же кадру")
 		}
-		if len(w.snap.Buckets) != 1 {
-			t.Fatalf("снимок: %+v", w.snap.Buckets)
+		if !w.accept(full, fullPane) {
+			t.Fatal("вторым кадром панель так и не принята")
 		}
 	})
 
-	t.Run("дорисованная панель принимается сразу", func(t *testing.T) {
+	t.Run("недосчитанный кадр посреди досчитанных сбрасывает счёт", func(t *testing.T) {
 		var w panelWaiter
-		if !w.accept(full, testNow) {
-			t.Fatal("полная панель ждёт непонятно чего")
+		w.accept(full, fullPane)
+		if w.accept(partial, partialPane) {
+			t.Fatal("кадр с недосчитанной панелью принят")
+		}
+		if w.accept(full, fullPane) {
+			t.Fatal("счёт досчитанных кадров не сброшен")
 		}
 	})
+
+	t.Run("досчитанная панель без разбивки принимается", func(t *testing.T) {
+		// Такая панель бывает и настоящей: свой тариф, своя версия клиента.
+		// Ждать её вечно нельзя, иначе refresh отказывает там, где данные есть.
+		pane := readFixture(t, "usage-panel-settled.txt")
+		s, err := parseUsagePanel(specAt(t, ""), pane, testNow)
+		if err != nil {
+			t.Fatalf("панель не разобрана: %v", err)
+		}
+		var w panelWaiter
+		w.accept(s, pane)
+		if !w.accept(s, pane) {
+			t.Fatal("панель без дорогого бакета не принята")
+		}
+	})
+}
+
+// TestPanelConfirm: правило подтверждения одно на весь цикл, отказной экран
+// принимается не с первого кадра, как и готовая панель.
+func TestPanelConfirm(t *testing.T) {
+	stale := readFixture(t, "usage-panel-laststale.txt")
+	full := readFixture(t, "usage-panel-fable.txt")
+	snap, err := parseUsagePanel(specAt(t, ""), full, testNow)
+	if err != nil {
+		t.Fatalf("панель не разобрана: %v", err)
+	}
+
+	t.Run("отказной экран подтверждается вторым кадром", func(t *testing.T) {
+		var w panelWaiter
+		if w.blocked(stale) {
+			t.Fatal("отказ принят с одного кадра")
+		}
+		if !w.blocked(stale) {
+			t.Fatal("отказ не принят и со второго кадра")
+		}
+	})
+
+	t.Run("разовый отказной кадр посреди готовых счёта не даёт", func(t *testing.T) {
+		var w panelWaiter
+		w.accept(snap, full)
+		if w.blocked(stale) {
+			t.Fatal("отказ принят по кадру, который сменил исход")
+		}
+		if w.accept(snap, full) {
+			t.Fatal("готовая панель принята, хотя счёт сбросил отказной кадр")
+		}
+	})
+}
+
+// TestPanelUnheard: ожидание держится на словах клиента, а слова меняются с его
+// версией. Не услышав ни одного знакомого, съёмщик не знает про панель ничего,
+// и снимок уходит с оговоркой вместо тихого «всё на месте».
+func TestPanelUnheard(t *testing.T) {
+	q := specAt(t, "")
+	settled := readFixture(t, "usage-panel-settled.txt")
+	drawing := readFixture(t, "usage-panel-partial.txt")
+	snap, err := parseUsagePanel(q, settled, testNow)
+	if err != nil {
+		t.Fatalf("панель не разобрана: %v", err)
+	}
+
+	t.Run("незнакомый словарь оставляет след в снимке", func(t *testing.T) {
+		var w panelWaiter
+		w.accept(snap, settled)
+		w.accept(snap, settled)
+		why := w.gap(settled)
+		if !strings.Contains(why, "знакомого слова") {
+			t.Fatalf("молчание панели ничем не помечено: %q", why)
+		}
+		marked := w.snap.markPartial(q, why)
+		if got := marked.partial("week_max"); got != why {
+			t.Fatalf("след до снимка не доехал: %+v", marked.Partial)
+		}
+	})
+
+	t.Run("услышанное слово оговорку снимает", func(t *testing.T) {
+		var w panelWaiter
+		w.accept(snap, drawing)
+		w.accept(snap, settled)
+		w.accept(snap, settled)
+		if why := w.gap(settled); why != "" {
+			t.Fatalf("панель говорила знакомо, а снимок с оговоркой: %q", why)
+		}
+	})
+
+	t.Run("слова панели идут раньше оговорки", func(t *testing.T) {
+		var w panelWaiter
+		v2251 := readFixture(t, "usage-panel-v2251.txt")
+		w.accept(snap, v2251)
+		if why := w.gap(v2251); !strings.Contains(why, "из его кеша") {
+			t.Fatalf("точная причина заменена оговоркой: %q", why)
+		}
+	})
+}
+
+// TestPanelSettled: признак ожидания это слово панели, а не счёт секунд.
+func TestPanelSettled(t *testing.T) {
+	if panelSettled(readFixture(t, "usage-panel-partial.txt")) {
+		t.Fatal("кадр со строкой Refreshing принят за досчитанный")
+	}
+	if panelSettled("   Loading usage data\u2026\n   Esc to cancel\n") {
+		t.Fatal("кадр без цифр принят за досчитанный")
+	}
+	for _, name := range []string{"usage-panel-fable.txt", "usage-panel-v2251.txt"} {
+		if !panelSettled(readFixture(t, name)) {
+			t.Fatalf("досчитанная панель %s принята за недосчитанную", name)
+		}
+	}
+}
+
+// TestPanelNoBreakdown: неполный кадр называет себя неполным словами панели, и
+// это отличимо от подписки, у которой дорогого бакета нет вовсе.
+func TestPanelNoBreakdown(t *testing.T) {
+	why := panelNoBreakdown(readFixture(t, "usage-panel-v2251.txt"))
+	if !strings.Contains(why, "из его кеша") {
+		t.Fatalf("причина неполноты не названа: %q", why)
+	}
+	if why := panelNoBreakdown(readFixture(t, "usage-panel-fable.txt")); why != "" {
+		t.Fatalf("целая панель помечена неполной: %q", why)
+	}
+	if why := panelNoBreakdown(readFixture(t, "usage-panel-settled.txt")); why != "" {
+		t.Fatalf("панель без дорогого бакета помечена неполной: %q", why)
+	}
+	if why := panelNoBreakdown("   Could not refresh usage data\n"); !strings.Contains(why, "не обновила") {
+		t.Fatalf("отказ обновления не узнан: %q", why)
+	}
+}
+
+// TestMarkPartial: пометка ложится на бакеты лестницы трат и только тогда,
+// когда панель сама сказала, что разбивки не будет.
+func TestMarkPartial(t *testing.T) {
+	q := specAt(t, "")
+	s, err := parseUsagePanel(q, readFixture(t, "usage-panel-v2251.txt"), testNow)
+	if err != nil {
+		t.Fatalf("панель не разобрана: %v", err)
+	}
+	marked := s.markPartial(q, panelNoBreakdown(readFixture(t, "usage-panel-v2251.txt")))
+	if why := marked.partial("week_max"); !strings.Contains(why, "из его кеша") {
+		t.Fatalf("week_max не помечен: %+v", marked.Partial)
+	}
+	if why := marked.partial("week_all"); why != "" {
+		t.Fatalf("помечен бакет, который в снимке есть: %q", why)
+	}
+	if why := marked.partial("week_opus"); why != "" {
+		t.Fatalf("помечен бакет вне лестницы трат: %q", why)
+	}
+	if len(s.markPartial(q, "").Partial) != 0 {
+		t.Fatal("пометка легла без слов панели")
+	}
 }
 
 func TestParseResetTime(t *testing.T) {
@@ -432,6 +571,11 @@ func TestParseResetYearRollover(t *testing.T) {
 // tmux поднимался бы по десятку раз в день впустую.
 func TestCmdQuotaRefreshIfStale(t *testing.T) {
 	q := specAt(t, filepath.Join(t.TempDir(), ".devkit", "quota", "claude-code.local"))
+	// Дом у стенда подставной (specAt), кеша клиента в нём нет, и за порогом
+	// съёмщик уходит на панель. Пустой PATH обрывает эту дорогу сразу: иначе
+	// стенд поднимал бы на машине разработчика настоящую сессию tmux с
+	// настоящим клиентом и ждал её таймаутом.
+	t.Setenv("PATH", t.TempDir())
 	fresh := snapOf(freshAge, bucketAt("week_all", 40, halfWindow))
 	if err := q.write(fresh); err != nil {
 		t.Fatal(err)
@@ -656,11 +800,11 @@ func TestGlmCodeSnapScript(t *testing.T) {
 		}
 	})
 
-	t.Run("нетронутое окно ложится в снимок без времени сброса", func(t *testing.T) {
-		// Пока из окна не потратили ни кредита, отсчёт до сброса не начат, и
-		// поле приезжает пустым. Прежде это было отказом, и снимок подписки не
-		// обновлялся целиком, пока в пятичасовом окне не появится расход: у
-		// пользователя он так и стоял рукописным (живой случай выката).
+	t.Run("нетронутое окно с null вместо сброса ложится в снимок", func(t *testing.T) {
+		// Пока из окна не потратили ни кредита, отсчёт до сброса не начат.
+		// Поле при этом не всегда пропадает: живой ответ приезжал и с
+		// "nextResetTime": null (случай выката), и обе формы читаются
+		// одинаково, сбросом от длины окна.
 		fresh := readFixture(t, "glm-quota-fresh-window.json")
 		quiet := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(fresh))
@@ -683,11 +827,12 @@ func TestGlmCodeSnapScript(t *testing.T) {
 		if five.Used != 0 {
 			t.Errorf("у нетронутого окна расход %.2f, жду ноль", five.Used)
 		}
-		if !five.Reset.IsZero() {
-			t.Errorf("у нетронутого окна взялось время сброса: %v", five.Reset)
+		now := time.Now()
+		if !five.Reset.After(now) || five.Reset.After(now.Add(6*time.Hour)) {
+			t.Errorf("сброс нетронутого окна %v, жду примерно пять часов вперёд от %v", five.Reset, now)
 		}
-		// Соседнее окно при этом на месте со своим сбросом: отсутствие одного
-		// поля не должно ронять весь снимок.
+		// Соседнее окно при этом на месте со своим сбросом: null одного
+		// поля не должен ронять весь снимок.
 		week, ok := snap.bucket("week_all")
 		if !ok || week.Reset.IsZero() {
 			t.Errorf("недельное окно пострадало: %+v", snap.Buckets)
@@ -734,6 +879,57 @@ func TestGlmCodeSnapScript(t *testing.T) {
 		}
 		sameFile(t, q.Path, before)
 	})
+
+	// Нетронутому окну z.ai времени сброса не присылает вовсе: часы окна пускает
+	// первая трата. Прежде этот штатный ответ уносил снимок целиком, и остаток
+	// второй подписки застывал на сутки, а человек шёл смотреть его во второй
+	// кабинет руками (живой случай пользователя).
+	untouched := func(t *testing.T) func() {
+		t.Helper()
+		kept := body
+		body = strings.Replace(kept, `"currentValue":198,"remaining":11801,"percentage":1,"nextResetTime":1787537529792`,
+			`"currentValue":0,"remaining":12000,"percentage":0`, 1)
+		if body == kept {
+			t.Fatal("образец сменился, нетронутое окно из него не собирается")
+		}
+		return func() { body = kept }
+	}
+
+	t.Run("нетронутое окно снимок не уносит", func(t *testing.T) {
+		defer untouched(t)()
+		snap, err := snapByScript(quotaHome(t, token), testNow)
+		if err != nil {
+			t.Fatalf("окно без трат уронило снимок целиком: %v", err)
+		}
+		five, ok := snap.bucket("window5h_all")
+		if !ok || five.Used != 0 {
+			t.Fatalf("нетронутого окна в снимке нет: %+v", snap.Buckets)
+		}
+		if week, ok := snap.bucket("week_all"); !ok || week.Used != 0.09 {
+			t.Fatalf("недельное окно уехало вместе с пятичасовым: %+v", snap.Buckets)
+		}
+		// Сброс считается от длины окна и от часов съёмщика: своих часов у
+		// стенда тут нет, поэтому проверяется коридор, а не минута.
+		now := time.Now()
+		if !five.Reset.After(now) || five.Reset.After(now.Add(6*time.Hour)) {
+			t.Fatalf("сброс нетронутого окна %v, жду примерно пять часов вперёд от %v", five.Reset, now)
+		}
+	})
+
+	t.Run("потраченное окно без сброса это отказ", func(t *testing.T) {
+		// Тратили, а сброса нет: подписка заговорила незнакомо, и считать дату
+		// от длины окна больше не из чего.
+		kept := body
+		body = strings.Replace(kept, `,"nextResetTime":1787537529792`, "", 1)
+		defer func() { body = kept }()
+		q := quotaHome(t, token)
+		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
+		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+			!strings.Contains(err.Error(), "window5h_all") {
+			t.Fatalf("окно с тратами и без сброса разобралось молча: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
 }
 
 // seedSnapshot кладёт прежний снимок и возвращает его содержимое: отказ съёмщика
@@ -765,5 +961,260 @@ func sameFile(t *testing.T, path string, want []byte) {
 	}
 	if len(ents) != 1 {
 		t.Fatalf("в %s остался мусор от записи: %v", dir, ents)
+	}
+}
+
+// Панель клиента 2.1.251: недельный бакет на месте, а разбивки по моделям на
+// экране нет, её клиент подтягивает отдельно и в этом кадре не дождался.
+func TestParseUsagePanelV2251(t *testing.T) {
+	s, err := parseUsagePanel(specAt(t, ""), readFixture(t, "usage-panel-v2251.txt"), testNow)
+	if err != nil {
+		t.Fatalf("панель не разобрана: %v", err)
+	}
+	if len(s.Buckets) != 1 {
+		t.Fatalf("бакетов %d, ждали один: %+v", len(s.Buckets), s.Buckets)
+	}
+	b := s.Buckets[0]
+	if b.Name != "week_all" || b.Used != 0.61 {
+		t.Fatalf("бакет разобран неверно: %+v", b)
+	}
+	if got := b.Reset.Format("2006-01-02T15:04"); got != "2026-08-31T15:00" {
+		t.Fatalf("сброс %s, ждали 2026-08-31T15:00", got)
+	}
+}
+
+// Отказ съёмщика показывают человеку, и по нему должно быть видно, что делать.
+func TestPanelFailure(t *testing.T) {
+	snapPath := filepath.Join(t.TempDir(), "claude-code.local")
+	framePath := filepath.Join(filepath.Dir(snapPath), "claude-code.pane.txt")
+
+	t.Run("верх панели уехал за край окна", func(t *testing.T) {
+		pane := readFixture(t, "usage-panel-cropped.txt")
+		q := specAt(t, snapPath)
+		_, err := parseUsagePanel(q, pane, testNow)
+		if err == nil {
+			t.Fatal("срезанная панель разобралась, тест бесполезен")
+		}
+		msg := panelFailure(q, pane, err).Error()
+		for _, want := range []string{"week_all", "не поместился в окно", framePath, "Снимок не тронут"} {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("в отказе нет %q: %s", want, msg)
+			}
+		}
+		frame, ferr := os.ReadFile(framePath)
+		if ferr != nil {
+			t.Fatalf("кадр панели не сохранён: %v", ferr)
+		}
+		if !strings.Contains(string(frame), "your limits usage") {
+			t.Fatalf("в кадре не тот экран: %.80s", frame)
+		}
+	})
+
+	t.Run("клиент упёрся в частоту обращений", func(t *testing.T) {
+		pane := readFixture(t, "usage-panel-ratelimit.txt")
+		msg := panelFailure(specAt(t, snapPath), pane, nil).Error()
+		if !strings.Contains(msg, "частоту обращений") {
+			t.Fatalf("отказ не называет причину: %s", msg)
+		}
+		if !strings.Contains(msg, framePath) {
+			t.Fatalf("отказ не ведёт к кадру панели: %s", msg)
+		}
+	})
+
+	t.Run("целая панель за отказ клиента не считается", func(t *testing.T) {
+		// Про частоту обращений панель пишет и внутри рабочего экрана, когда не
+		// дождалась одной только разбивки по моделям.
+		if why := panelBlocked(readFixture(t, "usage-panel-v2251.txt")); why != "" {
+			t.Fatalf("рабочая панель принята за отказ: %s", why)
+		}
+	})
+
+	t.Run("панель с цифрами прошлого раза в снимок не идёт", func(t *testing.T) {
+		// Кадр настоящий: клиент 2.1.251 с недоступной сетью нарисовал бакеты
+		// из своей памяти и подписал их возрастом. Разбивка по моделям в кадре
+		// есть, и тем опаснее записать его снимком: свежий момент снятия над
+		// цифрами получасовой давности это молчащая ложь, а прежний снимок
+		// хотя бы честно показывает свой возраст.
+		pane := readFixture(t, "usage-panel-laststale.txt")
+		if !strings.Contains(pane, "Current week (Fable)") {
+			t.Fatal("в образце нет разбивки по моделям, случай не тот")
+		}
+		why := panelBlocked(pane)
+		if !strings.Contains(why, "прошлого раза") {
+			t.Fatalf("панель с прошлыми цифрами принята за рабочую: %q", why)
+		}
+		if panelBlocked(readFixture(t, "usage-panel-v2251.txt")) != "" {
+			t.Fatal("свежая панель без разбивки принята за панель с прошлыми цифрами")
+		}
+	})
+
+	t.Run("панель не открылась вовсе", func(t *testing.T) {
+		msg := panelFailure(specAt(t, snapPath), readFixture(t, "pane-ready.txt"), nil).Error()
+		if !strings.Contains(msg, "не нарисовал панель") {
+			t.Fatalf("отказ не про пустой экран: %s", msg)
+		}
+		if strings.Contains(msg, "не поместился в окно") {
+			t.Fatalf("отказ выдумал срезанный верх: %s", msg)
+		}
+	})
+
+	t.Run("целая панель за срезанную не считается", func(t *testing.T) {
+		if panelCropped(readFixture(t, "usage-panel-v2251.txt")) {
+			t.Fatal("целая панель принята за срезанную")
+		}
+	})
+}
+
+// Окно съёмщика должно вмещать панель целиком: на шестидесяти строках недельный
+// бакет уезжал выше видимой части, и снимок переставал вставать.
+func TestUsagePaneRows(t *testing.T) {
+	panel := strings.Count(readFixture(t, "usage-panel-v2251.txt"), "\n")
+	if usagePaneRows < panel*2 {
+		t.Fatalf("окно съёмщика %d строк при панели в %d, запаса на рост нет", usagePaneRows, panel)
+	}
+}
+
+// TestQuotaRefreshKeepsNewer: источник расхода бывает откатным, и снятое иногда
+// старше того, что уже лежит на диске. Записать такое значит откатить экран
+// человека назад по времени и по процентам, а поводом объявить дашборд.
+func TestQuotaRefreshKeepsNewer(t *testing.T) {
+	older := testNow.Add(-2 * time.Hour)
+	snapText := func(taken time.Time, pct int) string {
+		return "#!/bin/sh\nprintf 'taken = %s\\nweek_all = " + strconv.Itoa(pct) + "%% сброс %s\\n' \"" +
+			at(taken) + "\" \"" + at(testNow.Add(halfWindow)) + "\"\n"
+	}
+
+	t.Run("снятое старше лежащего в файл не идёт", func(t *testing.T) {
+		q := scriptSpec(t, snapText(older, 79))
+		if err := q.write(snapOf(0, bucketAt("week_all", 82, halfWindow))); err != nil {
+			t.Fatalf("прежний снимок не лёг: %v", err)
+		}
+		out, err := cmdQuotaRefresh(q, testNow, false)
+		if err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		if !strings.Contains(out, "откатился назад") {
+			t.Fatalf("пропуск записи прошёл молча: %q", out)
+		}
+		s, err := q.read()
+		if err != nil {
+			t.Fatalf("снимок не прочитан: %v", err)
+		}
+		if b, _ := s.bucket("week_all"); b.Used != 0.82 {
+			t.Fatalf("свежие цифры затёрты старыми: %+v", s.Buckets)
+		}
+		if !s.Taken.Equal(testNow) {
+			t.Fatalf("момент снятия %v, жду прежний %v", s.Taken, testNow)
+		}
+	})
+
+	t.Run("снятое свежее лежащего файл переписывает", func(t *testing.T) {
+		q := scriptSpec(t, snapText(testNow, 79))
+		if err := q.write(snapOf(2*time.Hour, bucketAt("week_all", 82, halfWindow))); err != nil {
+			t.Fatalf("прежний снимок не лёг: %v", err)
+		}
+		out, err := cmdQuotaRefresh(q, testNow, false)
+		if err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		if strings.Contains(out, "откатился назад") {
+			t.Fatalf("свежее снятое приняли за откат: %q", out)
+		}
+		s, err := q.read()
+		if err != nil {
+			t.Fatalf("снимок не прочитан: %v", err)
+		}
+		if b, _ := s.bucket("week_all"); b.Used != 0.79 {
+			t.Fatalf("свежее снятое в файл не легло: %+v", s.Buckets)
+		}
+	})
+
+	t.Run("снимок из будущего обновление не запирает", func(t *testing.T) {
+		// Часы машины и метка источника расходятся штатно, и файл с датой
+		// вперёд иначе держал бы оборону до самого сброса.
+		q := scriptSpec(t, snapText(testNow, 79))
+		if err := q.write(snapOf(-3*time.Hour, bucketAt("week_all", 82, halfWindow))); err != nil {
+			t.Fatalf("прежний снимок не лёг: %v", err)
+		}
+		if _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		s, err := q.read()
+		if err != nil {
+			t.Fatalf("снимок не прочитан: %v", err)
+		}
+		if b, _ := s.bucket("week_all"); b.Used != 0.79 {
+			t.Fatalf("снимок из будущего запер обновление: %+v", s.Buckets)
+		}
+	})
+}
+
+// TestSnapUsagePanelRetriesRateLimit: эндпоинт расхода общий на все живые
+// сессии машины, и отказ по частоте обращений ловится легко. Панель предлагает
+// пережать его на месте («r to retry»), а съёмщик уходил с первого раза, и
+// человек оставался с застывшим экраном (живой случай пользователя). Стенд
+// поднимает настоящую сессию tmux с подложным клиентом: разговор идёт клавишами
+// через терминал, и проверять его иначе как терминалом нечем.
+func TestSnapUsagePanelRetriesRateLimit(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux в PATH нет, панель снимать нечем")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 в PATH нет, подложного клиента поднять нечем")
+	}
+	bin := t.TempDir()
+	screens := map[string]string{
+		"ready": readFixture(t, "pane-ready.txt"),
+		"rate":  readFixture(t, "usage-panel-ratelimit.txt"),
+		"panel": readFixture(t, "usage-panel-v2251.txt"),
+	}
+	for name, text := range screens {
+		if err := os.WriteFile(filepath.Join(bin, name+".screen"), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	client := "#!/usr/bin/env python3\n" + `
+import sys, termios, tty, pathlib
+
+here = pathlib.Path(__file__).parent
+
+
+def draw(name):
+    sys.stdout.write("\x1b[2J\x1b[H" + (here / (name + ".screen")).read_text())
+    sys.stdout.flush()
+
+
+tty.setcbreak(sys.stdin.fileno())
+draw("ready")
+state, typed = "ready", ""
+while True:
+    c = sys.stdin.read(1)
+    if not c:
+        break
+    if state == "ready":
+        # Эхо набранного рисует сам клиент: cbreak его отключает, а съёмщик ждёт
+        # набранное на экране, прежде чем отправить Enter.
+        sys.stdout.write(c)
+        sys.stdout.flush()
+        typed += c
+        if c in "\r\n" and "/usage" in typed:
+            draw("rate")
+            state = "blocked"
+    elif state == "blocked" and c == "r":
+        draw("panel")
+        state = "panel"
+`
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(client), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	q := specAt(t, filepath.Join(t.TempDir(), "quota.local"))
+	s, err := snapUsagePanel(q, testNow)
+	if err != nil {
+		t.Fatalf("съёмщик ушёл с отказа по частоте обращений, не пережав его: %v", err)
+	}
+	if _, ok := s.bucket("week_all"); !ok {
+		t.Fatalf("после повтора панель разобралась не до бакетов: %+v", s.Buckets)
 	}
 }

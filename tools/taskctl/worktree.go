@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -21,15 +22,37 @@ func gitRevParse(root string, args ...string) (string, error) {
 // и при недоступном git отвечает false, иначе доски на временных директориях
 // без git (а таких большинство тестов) ловили бы отказ на ровном месте.
 func linkedWorktree(root string) bool {
-	gitDir, err := gitRevParse(root, "--git-dir")
+	gitDir, err := gitDirAbs(root, "--git-dir")
 	if err != nil {
 		return false
 	}
-	commonDir, err := gitRevParse(root, "--git-common-dir")
+	commonDir, err := gitDirAbs(root, "--git-common-dir")
 	if err != nil {
 		return false
 	}
 	return gitDir != commonDir
+}
+
+// gitDirAbs отдаёт путь rev-parse абсолютным. Из поддиректории git печатает
+// --git-dir абсолютным, а --git-common-dir относительным («../../.git»), и
+// голое сравнение строк объявляло бы линкованным деревом любую поддиректорию
+// обычного репозитория (DK-583).
+func gitDirAbs(root, arg string) (string, error) {
+	out, err := gitRevParse(root, arg)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(out) {
+		out = filepath.Join(root, out)
+	}
+	out = filepath.Clean(out)
+	// Симлинки по дороге разводят одну и ту же директорию на два написания:
+	// временные каталоги на macOS лежат под /var, который сам ведёт в
+	// /private/var, а git печатает то одно, то другое.
+	if real, err := filepath.EvalSymlinks(out); err == nil {
+		out = real
+	}
+	return out, nil
 }
 
 // boardGuard отказывает изменяющей доску команде, запущенной из линкованного

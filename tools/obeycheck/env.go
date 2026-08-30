@@ -18,6 +18,7 @@ type runEnv struct {
 	Project    string // синтетический проект, он же рабочая директория агента
 	Origin     string // фиктивный origin: голый репозиторий рядом с проектом
 	Transcript string // сюда пишется вывод прогона, по нему работают проверки
+	Bin        string // команды, которые стенд даёт проверке сценария
 	Seed       string // коммит, с которого агент начал: по нему видно, что он сделал
 }
 
@@ -93,12 +94,75 @@ func copyTree(from, to string, skip func(rel string) bool) error {
 		if d.IsDir() {
 			return os.MkdirAll(dst, 0o755)
 		}
+		// Ссылку переносим ссылкой, а не содержимым: затравка может принести
+		// свою связку ключей, и копировать связку целиком было бы и дорого, и
+		// не тем, чего от затравки ждут.
+		if d.Type()&fs.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return err
+			}
+			return os.Symlink(target, dst)
+		}
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
 		return copyFile(path, dst, info.Mode())
 	})
+}
+
+// Связка ключей дома пользователя. Харнес авторизуется через неё, и временный
+// дом получает на связку ссылку, а не копию ключей: дамп связки пришлось бы
+// снимать командой security, а она из неинтерактивной сессии поднимает
+// системный диалог доступа и вешает прогон.
+const keychainRel = "Library/Keychains"
+
+// userHomeDir отдаёт дом пользователя, откуда берётся связка. Непустое
+// значение приходит из теста: живая связка машины тесту не нужна, и зависеть
+// от того, залогинен ли пользователь, он не должен.
+func userHomeDir(override string) (string, error) {
+	if override != "" {
+		return override, nil
+	}
+	return os.UserHomeDir()
+}
+
+// checkAuth смотрит, поднимется ли сессия во временном доме, до того как
+// собрано хоть одно окружение. Без этой проверки негодная авторизация видна
+// только пробным прогоном, и выглядит она как поведение агента: сессия не
+// стартует, проверки на отрицание зеленеют, а клетки краснеют не по делу.
+func checkAuth(userHome, homeSeed string) error {
+	kc := filepath.Join(userHome, keychainRel)
+	if homeSeed != "" {
+		if !dirExists(homeSeed) {
+			return fmt.Errorf("затравки HOME %s нет или это не каталог, а временный дом собирается из неё; "+
+				"починить: дать существующий каталог флагом --home-seed или убрать флаг, "+
+				"тогда временный дом сошлётся на связку ключей %s", homeSeed, kc)
+		}
+		return nil
+	}
+	fi, err := os.Lstat(kc)
+	if err != nil {
+		return fmt.Errorf("связки ключей %s нет, а временный дом ссылается на неё, иначе харнес в нём не авторизуется; "+
+			"починить: залогиниться харнесом на этой машине (claude, дальше /login) "+
+			"или дать готовый дом флагом --home-seed <каталог>", kc)
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		if _, err := os.Stat(kc); err != nil {
+			target, _ := os.Readlink(kc)
+			return fmt.Errorf("связка ключей %s это ссылка в никуда, ведёт на %s, и авторизации во временном доме не будет; "+
+				"починить: поправить ссылку или дать готовый дом флагом --home-seed <каталог>", kc, target)
+		}
+	}
+	if !dirExists(kc) {
+		return fmt.Errorf("связка ключей %s это не каталог, и сослаться временному дому не на что; "+
+			"починить: поправить раскладку дома или дать готовый дом флагом --home-seed <каталог>", kc)
+	}
+	return nil
 }
 
 const hookSettings = `{
@@ -119,13 +183,17 @@ const hookSettings = `{
 // makeEnv собирает окружение одного прогона: синтетический проект под гитом с
 // доской, парой файлов кода и хуками devkit, поверх него раскладка правил, и
 // временный HOME с настройками харнеса и определениями субагентов.
-func makeEnv(root, devkit, layout, homeSeed string) (*runEnv, error) {
+func makeEnv(root, devkit, layout, homeSeed, userHome string) (*runEnv, error) {
 	e := &runEnv{
 		Root:       root,
 		Home:       filepath.Join(root, "home"),
 		Project:    filepath.Join(root, "project"),
 		Origin:     filepath.Join(root, "origin.git"),
 		Transcript: filepath.Join(root, "transcript"),
+		Bin:        filepath.Join(root, "bin"),
+	}
+	if err := writePhrase(e.Bin); err != nil {
+		return nil, err
 	}
 	for _, d := range []string{e.Home, e.Project} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -154,6 +222,18 @@ func makeEnv(root, devkit, layout, homeSeed string) (*runEnv, error) {
 		}
 		if err := copyTree(homeSeed, e.Home, nil); err != nil {
 			return nil, fmt.Errorf("затравка HOME %s: %v", homeSeed, err)
+		}
+	}
+	// Ссылка на связку ключей кладётся после затравки: у затравки свой готовый
+	// дом, и перекрывать его нечем. Уборка отдельного шага не просит, каталог
+	// прогона сносится целиком, а os.RemoveAll идёт по ссылке не внутрь, а
+	// мимо, и связка пользователя остаётся цела.
+	if link := filepath.Join(e.Home, keychainRel); !pathExists(link) {
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.Symlink(filepath.Join(userHome, keychainRel), link); err != nil {
+			return nil, fmt.Errorf("ссылка на связку ключей: %v", err)
 		}
 	}
 	if lh := filepath.Join(layout, "home"); dirExists(lh) {
@@ -204,12 +284,46 @@ func makeEnv(root, devkit, layout, homeSeed string) (*runEnv, error) {
 			return nil, err
 		}
 	}
+	// Скиллы едут тем же порядком, что и определения субагентов: готовому дому
+	// из --home-seed есть чем их принести самому, и раскладка тогда уступает.
+	skills := filepath.Join(claude, "skills")
+	if !dirExists(skills) {
+		if err := copyTree(filepath.Join(devkit, "kit", "skills"), skills, skipSkillNoise); err != nil {
+			return nil, err
+		}
+	}
 	return e, nil
 }
 
 func dirExists(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
+}
+
+// skipSkillNoise отсеивает при раскладке в дом прогона то же самое, что
+// skill_files() в tools/devkitctl/devkitctl.py отсеивает на боевой машине:
+// служебное (__pycache__, точечные файлы вроде .DS_Store) заводит прогон
+// тестов и файловый менеджер, а не автор скилла. Заодно снимает самопроверку
+// kit/skills/check-skills.py с её тестом: она лежит прямо в kit/skills, не в
+// подкаталоге со своим SKILL.md, скиллом не является, и реальная раскладка её
+// тоже не копирует.
+func skipSkillNoise(rel string) bool {
+	if rel == "check-skills.py" || rel == "check_skills_test.py" {
+		return true
+	}
+	for _, part := range strings.Split(rel, "/") {
+		if part == "__pycache__" || strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+// pathExists отвечает и про битую ссылку: она в раскладке дома значит «занято»
+// ровно так же, как живой каталог.
+func pathExists(p string) bool {
+	_, err := os.Lstat(p)
+	return err == nil
 }
 
 // seedRepo заводит историю синтетического проекта: три коммита с разными
@@ -274,4 +388,23 @@ func (e *runEnv) environ(devkit, layout, scenario string, repeat int) []string {
 		// secretctl: см. tools/secretctl/backend.go, defaultBackend.
 		"SECRETCTL_BACKEND=file",
 	)
+}
+
+// checkEnviron это окружение проверки сценария: то же, что у прогона, плюс
+// каталог с командами стенда в начале PATH. Агенту эти команды не достаются:
+// проверка судит его работу, и знать про судью он не должен.
+func (e *runEnv) checkEnviron(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	seen := false
+	for _, kv := range env {
+		if name, val, _ := strings.Cut(kv, "="); name == "PATH" {
+			kv = "PATH=" + e.Bin + string(os.PathListSeparator) + val
+			seen = true
+		}
+		out = append(out, kv)
+	}
+	if !seen {
+		out = append(out, "PATH="+e.Bin)
+	}
+	return out
 }

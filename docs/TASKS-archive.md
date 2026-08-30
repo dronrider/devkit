@@ -324,3 +324,50 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-506 | taskctl elapsed: минуты открытого этапа «разработка» против лимита жизненного цикла | task | P2 | 2026-08-24 | [tasks/archive/2026/DK-506.md](tasks/archive/2026/DK-506.md) |
 | DK-459 | LLD: режим POC для работы с высокой неопределённостью результата [приёмка: user] | LLD | P1 | 2026-08-24 | [tasks/archive/2026/DK-459.md](tasks/archive/2026/DK-459.md) |
 | DK-512 | dashboard: память обхода корней не держит цепочку экрана, main красный | bug | P1 | 2026-08-24 | [tasks/archive/2026/DK-512.md](tasks/archive/2026/DK-512.md), `ff7a4ae7` |
+| DK-503 | LLD: лимит жизненного цикла агента и передача хвоста работы [приёмка: user] | LLD | P2 | 2026-08-25 | [tasks/archive/2026/DK-503.md](tasks/archive/2026/DK-503.md) |
+| DK-176 | taskctl add и set молча кладут в строку битую ссылку на путь от корня репозитория | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-176.md](tasks/archive/2026/DK-176.md), `a3cd642c`, `a66102eb`, `f0710f3d` |
+| DK-331 | Раскладка скиллов везёт один SKILL.md, вычитка на машине без пар и словаря | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-331.md](tasks/archive/2026/DK-331.md) |
+| DK-481 | dashboard: живой демон не видит токен после secret --rotate | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-481.md](tasks/archive/2026/DK-481.md) |
+| DK-311 | shipctl ship --drain: идемпотентный разлив поезда, не падает на пустом и занятом | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-311.md](tasks/archive/2026/DK-311.md) |
+| DK-463 | doctor --fix в дереве задачи заводит болванку deploy.local и сам её находит | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-463.md](tasks/archive/2026/DK-463.md) |
+| DK-514 | taskctl review: замечание с цитатой слова «исправлено» закрывается само | bug | P2 | 2026-08-25 | [tasks/archive/2026/DK-514.md](tasks/archive/2026/DK-514.md), `51c506b1`, `cde635bd`, `6c095574` |
+| DK-520 | Метка уровня разбора обязательна при записи черновика | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-520.md](tasks/archive/2026/DK-520.md) |
+| DK-521 | Сторож прозы check-prose.py: метрики замера, пороги конфигом, хук записи | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-521.md](tasks/archive/2026/DK-521.md) |
+| DK-526 | Мера прозы: десять новых текстов проходят пороги check-prose.py | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-526.md](tasks/archive/2026/DK-526.md) |
+| DK-533 | Сторож прозы: хвост не ловит защищённую форму, пороги без RULES v1 | task | P2 | 2026-08-25 | [tasks/archive/2026/DK-533.md](tasks/archive/2026/DK-533.md) |
+| DK-313 | devkitctl watch зовёт ship --drain на тике, board-batch и нештат в RULES.board.md | task | P2 | 2026-08-26 | [tasks/archive/2026/DK-313.md](tasks/archive/2026/DK-313.md) |
+| DK-522 | Корпус эталонов прозы: фрагменты из журналов и трекеров, словарь, жанры [приёмка: mixed] | task | P2 | 2026-08-27 | [tasks/archive/2026/DK-522.md](tasks/archive/2026/DK-522.md) |
+| DK-525 | Мимикрия в правилах шлёт к корпусу эталонов, а не к текстам проекта | task | P2 | 2026-08-27 | [tasks/archive/2026/DK-525.md](tasks/archive/2026/DK-525.md) |
+| DK-523 | Скилл prose подмешивает эталоны в момент письма, зовут четыре точки | task | P2 | 2026-08-27 | [tasks/archive/2026/DK-523.md](tasks/archive/2026/DK-523.md) |
+| DK-545 | Парсер obeycheck принимает за секцию заголовок внутри блока кода | bug | P1 | 2026-08-27 | [tasks/archive/2026/DK-545.md](tasks/archive/2026/DK-545.md) |
+| DK-546 | Стенд кладёт скиллы в дом прогона, сценарии про них перестают молчать | bug | P1 | 2026-08-27 | [tasks/archive/2026/DK-546.md](tasks/archive/2026/DK-546.md) |
+| DK-547 | Проверки сценариев стенда краснеют от переноса строк, а не от поведения агента | bug | P1 | 2026-08-27 | [tasks/archive/2026/DK-547.md](tasks/archive/2026/DK-547.md) |
+| DK-524 | proofread перекалиброван по замеру: пять пунктов остатка, старые убраны | task | P2 | 2026-08-27 | [tasks/archive/2026/DK-524.md](tasks/archive/2026/DK-524.md) |
+| DK-530 | Стенд obeycheck авторизуется сам и ловит негодную затравку до раскладки | bug | P2 | 2026-08-27 | [tasks/archive/2026/DK-530.md](tasks/archive/2026/DK-530.md) |
+| DK-548 | Вычитка зовётся не всегда: правило про proofread не срабатывает в живой сессии | task | P1 | 2026-08-27 | [tasks/archive/2026/DK-548.md](tasks/archive/2026/DK-548.md) |
+| DK-550 | Сторож прозы считает машинные записи файла задачи наравне с прозой | bug | P2 | 2026-08-28 | [tasks/archive/2026/DK-550.md](tasks/archive/2026/DK-550.md) |
+| DK-446 | Цель: долгоживущие тексты пишутся живой прозой с первого раза | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-446.md](tasks/archive/2026/DK-446.md) |
+| DK-372 | Лента черновика: LLD DK-354 сводится с чат-контуром, склейка под тестом | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-372.md](tasks/archive/2026/DK-372.md) |
+| DK-540 | LLD DK-430 сводится с чат-контуром POC: носитель цели и словарь канала | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-540.md](tasks/archive/2026/DK-540.md) |
+| DK-373 | Живой вопрос грумера: вход разговора, draft ask, ручка реплики, блок пачки, скилл | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-373.md](tasks/archive/2026/DK-373.md) |
+| DK-374 | Реплика в работающий заход: подхват получает адрес черновика | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-374.md](tasks/archive/2026/DK-374.md) |
+| DK-353 | dashboard: черновики свежими вниз, выбора сортировки нет | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-353.md](tasks/archive/2026/DK-353.md) |
+| DK-370 | Форма записи: кнопки «Сохранить» и «Сохранить и грумить», промежуточный экран уходит | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-370.md](tasks/archive/2026/DK-370.md) |
+| DK-411 | dashboard: экран задачи и колонка проектов пересобираются на каждый фокус окна | bug | P2 | 2026-08-28 | [tasks/archive/2026/DK-411.md](tasks/archive/2026/DK-411.md) |
+| DK-539 | Отметка работы по факту правки не доезжает: --touch нет в шаблонах раскладки | bug | P2 | 2026-08-28 | [tasks/archive/2026/DK-539.md](tasks/archive/2026/DK-539.md) |
+| DK-549 | Поднятая дашбордом сессия берёт утилиты кита из каталога экземпляра | bug | P1 | 2026-08-28 | [tasks/archive/2026/DK-549.md](tasks/archive/2026/DK-549.md) |
+| DK-486 | Интерактивный вопрос клиента виден в чате дашборда и отвечается оттуда [приёмка: mixed] | task | P1 | 2026-08-28 | [tasks/archive/2026/DK-486.md](tasks/archive/2026/DK-486.md) |
+| DK-369 | Правка текста черновика: ручка PUT с замком разбора и редактор экрана записи | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-369.md](tasks/archive/2026/DK-369.md) |
+| DK-168 | Связь из груминга обязательна: вход без маркера «после» это находка doctor | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-168.md](tasks/archive/2026/DK-168.md) |
+| DK-519 | Сессия не узнаёт о завершении фонового субагента | bug | P1 | 2026-08-28 | [tasks/archive/2026/DK-519.md](tasks/archive/2026/DK-519.md) |
+| DK-312 | taskctl close зовёт ship --drain после закрытия задачи | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-312.md](tasks/archive/2026/DK-312.md) |
+| DK-516 | Тик watch закрывает вид agent из Check, status называет ждущих человека | task | P2 | 2026-08-28 | [tasks/archive/2026/DK-516.md](tasks/archive/2026/DK-516.md) |
+| DK-574 | Снимок квоты не встаёт, а отказ не говорит, что делать | bug | P2 | 2026-08-29 | [tasks/archive/2026/DK-574.md](tasks/archive/2026/DK-574.md) |
+| DK-366 | Вычитка пропускает блатную лексику: класс типологии, пары и корпус | task | P2 | 2026-08-29 | [tasks/archive/2026/DK-366.md](tasks/archive/2026/DK-366.md) |
+| DK-584 | Снимок квоты встаёт без разбивки по моделям и молчит об этом | bug | P2 | 2026-08-29 | [tasks/archive/2026/DK-584.md](tasks/archive/2026/DK-584.md) |
+| DK-606 | LLD: приёмы прозы по типу страницы, разметка и счёт переживают правку скиллом prose [приёмка: user] | LLD | P2 | 2026-08-30 | [tasks/archive/2026/DK-606.md](tasks/archive/2026/DK-606.md), `fca4db66`, `5ae964e4`, `ec892c39`, `f8369ffb` |
+| DK-466 | Дашборд: истёкший логин чата виден состоянием и чинится перезапуском [приёмка: mixed] | task | P1 | 2026-08-30 | [tasks/archive/2026/DK-466.md](tasks/archive/2026/DK-466.md) |
+| DK-577 | Вход в клиент проходит с телефона: ссылка в чате, код отдельным полем [приёмка: mixed] | task | P2 | 2026-08-30 | [tasks/archive/2026/DK-577.md](tasks/archive/2026/DK-577.md) |
+| DK-581 | Дашборд: ходы работы второй подписки видны в раздавшем разговоре [приёмка: mixed] | task | P1 | 2026-08-30 | [tasks/archive/2026/DK-581.md](tasks/archive/2026/DK-581.md) |
+| DK-583 | Корп-контур одним окном: ссылка .devkit в клоне, боковая директория на контур [приёмка: mixed] | task | P2 | 2026-08-30 | [tasks/archive/2026/DK-583.md](tasks/archive/2026/DK-583.md) |
+| DK-605 | Снимок квоты читает кеш клиента, а не разбирает панель | task | P2 | 2026-08-30 | [tasks/archive/2026/DK-605.md](tasks/archive/2026/DK-605.md) |

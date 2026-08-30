@@ -61,7 +61,10 @@ resp=$(printf 'header = "Authorization: Bearer %s"\n' "$token" | \
 python3 - "$resp" <<'PY'
 import datetime, json, sys
 
-windows = {(3, 5): "window5h_all", (6, 1): "week_all"}
+# Длина окна нужна нетронутому: пока по окну не потрачено ни кредита, z.ai
+# времени сброса не присылает вовсе, и посчитать его больше не из чего.
+windows = {(3, 5): ("window5h_all", datetime.timedelta(hours=5)),
+           (6, 1): ("week_all", datetime.timedelta(days=7))}
 try:
     limits = json.loads(sys.argv[1])["data"]["limits"]
 except (ValueError, KeyError, TypeError):
@@ -72,29 +75,30 @@ seen = set()
 for lim in limits:
     if lim.get("type") != "CREDIT_LIMIT":
         continue
-    name = windows.get((lim.get("unit"), lim.get("number")))
-    if name is None:
+    window = windows.get((lim.get("unit"), lim.get("number")))
+    if window is None:
         sys.exit("в ответе незнакомое окно unit=%s number=%s, разбор отказан"
                  % (lim.get("unit"), lim.get("number")))
+    name, span = window
     if name in seen:
         sys.exit("окно %s приехало в ответе дважды" % name)
     ceiling, used = lim.get("usage"), lim.get("currentValue")
     if not ceiling or used is None:
         sys.exit("у окна %s нет расходов (usage=%s currentValue=%s)" % (name, ceiling, used))
     pct = min(100, int(used * 100 / ceiling + 0.5))
-    # Нетронутое окно времени сброса не имеет вовсе: пока из него не потратили
-    # ни кредита, отсчёт не начат, и поле приезжает пустым. Прежде это было
-    # отказом, и снимок подписки не обновлялся целиком, пока в пятичасовом окне
-    # не появится расход (живой случай выката). Бакет без сброса формат снимка
-    # держит, и остаток тут известен точно: он полный.
-    when = lim.get("nextResetTime")
-    if when is None:
-        print("%s = %d%%" % (name, pct))
-        seen.add(name)
-        continue
-    reset = datetime.datetime.fromtimestamp(when / 1000)
+    # Часы окна пускает первая трата, до неё сброс не назначен и в ответе его
+    # нет: ключ пропадает либо приезжает с null, обе формы живые. Отказывать
+    # тут нельзя: одно нетронутое окно уносило снимок целиком, и остаток второй
+    # подписки застывал на сутки. Нетронутому окну сброс считается от его
+    # длины, потраченному без даты сброса верить нечему.
+    if lim.get("nextResetTime") is None:
+        if used:
+            sys.exit("у окна %s потрачено %s, а времени сброса нет" % (name, used))
+        reset = now + span
+    else:
+        reset = datetime.datetime.fromtimestamp(lim["nextResetTime"] / 1000)
     print("%s = %d%% сброс %s" % (name, pct, reset.strftime("%Y-%m-%dT%H:%M")))
     seen.add(name)
-if seen != set(windows.values()):
+if seen != {name for name, _ in windows.values()}:
     sys.exit("в ответе не оба окна подписки: %s" % ", ".join(sorted(seen)))
 PY

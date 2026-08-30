@@ -20,9 +20,13 @@ import (
 // Реестр после этого забывал имя tmux живой сессии, и дашборд переставал
 // видеть, чем её снимать (живой случай chat-DK-397-1, замечание
 // пользователя). Без ID отметка работы не пишется никуда вовсе.
+//
+// Тем же ходом глохнет shipctl: с DK-312 close зовёт разлив, и без стаба
+// close-тесты звали бы настоящий shipctl с машины (drain_test.go).
 func TestMain(m *testing.M) {
 	os.Setenv("DEVKIT_NOTIFY_OFF", "1")
 	os.Unsetenv("CLAUDE_CODE_SESSION_ID")
+	muteShipctlInTests()
 	os.Exit(m.Run())
 }
 

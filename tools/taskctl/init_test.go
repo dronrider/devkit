@@ -75,6 +75,33 @@ func TestInitFindsGitTop(t *testing.T) {
 	}
 }
 
+// TestInitHereStaysInTheDirectory: с --here доска ложится в названную
+// директорию, а не в корне репозитория. Так подключается проект корп-контура:
+// боковая директория контура лежит подкаталогом его репозитория, и досок там
+// столько, сколько проектов (DK-583).
+func TestInitHereStaysInTheDirectory(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("нет git")
+	}
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	sub := filepath.Join(dir, "проект")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdInit(sub, InitParams{Prefix: "HR", Here: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(boardPath(sub)); err != nil {
+		t.Fatal("доска не в названной директории:", err)
+	}
+	if _, err := os.Stat(boardPath(dir)); err == nil {
+		t.Fatal("доска легла ещё и в корень репозитория")
+	}
+}
+
 func TestNextIDWithoutHeaderPrefix(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {

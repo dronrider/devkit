@@ -55,6 +55,45 @@ func unfence(lines []string) string {
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
 }
 
+// fence следит за оградами блоков кода. Внутри блока строка «## ...» это
+// текст примера, а не заголовок секции: сценарий про вычитку постановки везёт
+// в подготовке heredoc с чужими заголовками, и разбор на них спотыкался.
+type fence struct {
+	open int // длина открытой ограды, ноль когда блока нет
+}
+
+// backticks считает обратные апострофы в начале строки, разрешая отступ.
+// Ограда это три апострофа и больше, после открывающей может стоять язык.
+func backticks(l string) int {
+	t := strings.TrimLeft(l, " \t")
+	n := 0
+	for n < len(t) && t[n] == '`' {
+		n++
+	}
+	if n < 3 {
+		return 0
+	}
+	return n
+}
+
+// step прогоняет строку и отвечает, лежит ли она внутри блока кода. Сами
+// ограды считаются частью блока. Закрывает блок только ограда не короче
+// открывающей и без хвоста, поэтому вложенный блок с более длинной оградой
+// внешний не рвёт.
+func (f *fence) step(l string) bool {
+	n := backticks(l)
+	if f.open == 0 {
+		if n > 0 {
+			f.open = n
+		}
+		return n > 0
+	}
+	if n >= f.open && strings.TrimSpace(strings.TrimLeft(l, " \t`")) == "" {
+		f.open = 0
+	}
+	return true
+}
+
 func parseScenario(path, text string) (Scenario, error) {
 	s := Scenario{
 		ID:   strings.TrimSuffix(filepath.Base(path), ".md"),
@@ -80,10 +119,12 @@ func parseScenario(path, text string) (Scenario, error) {
 
 	body := map[string][]string{}
 	sect := ""
+	var f fence
 	for ; i < len(lines); i++ {
 		ln := i + 1
 		l := lines[i]
-		if strings.HasPrefix(l, "## ") {
+		inCode := f.step(l)
+		if !inCode && strings.HasPrefix(l, "## ") {
 			sect = strings.TrimSpace(l[3:])
 			switch sect {
 			case sectPrompt, sectSetup, sectCheck:

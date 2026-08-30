@@ -28,6 +28,9 @@ HUNK = re.compile(r"^@@ -\S+ \+([0-9]+)")
 ADVICE = ("следы devkit остаются на машине: локальный ID и путь боковой "
           "директории в корп-репозитории не нужны никому, кроме вас\n"
           "осознанный обход: git commit --no-verify")
+RIG_ADVICE = ("обвязка devkit живёт в дереве клона открыто, чтобы доску видели поиск "
+              "редактора и сессия, но чужому репозиторию она не нужна\n"
+              "снять из индекса: git rm --cached %s")
 
 
 def staged_diff():
@@ -71,6 +74,17 @@ def message_lines(path):
     return out
 
 
+def report_rig(paths):
+    """Обвязка devkit в индексе. Отдельно от следов: тут дело не в словах, а в
+    самих файлах, и снимается это не правкой текста, а git rm --cached."""
+    if not paths:
+        return 0
+    sys.stderr.write("обвязка devkit в индексе корп-коммита:\n")
+    sys.stderr.write("\n".join(paths) + "\n")
+    sys.stderr.write(RIG_ADVICE % " ".join(paths) + "\n")
+    return 1
+
+
 def report(rules, items):
     findings = []
     for where, text in items:
@@ -90,7 +104,8 @@ def main(argv):
         return 0
     rules = corp.patterns(local)
     if argv[:1] == ["--staged"]:
-        return report(rules, added_lines(staged_diff()))
+        rc = report_rig(corp.staged_rig("."))
+        return rc or report(rules, added_lines(staged_diff()))
     if argv[:1] == ["--msg"] and len(argv) > 1:
         items = message_lines(argv[1])
         if items is None:

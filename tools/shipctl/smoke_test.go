@@ -188,3 +188,86 @@ func TestSmokeDoneParse(t *testing.T) {
 		t.Errorf("задача без файла: %v, %v", got, err)
 	}
 }
+
+// TestStatusNamesWhoWaitsForHuman: после smoke status называет ждущих человека
+// поимённо и с видом приёмки, а агентскую строку отдаёт тику сторожка. До
+// DK-516 обе строки шли одной фразой «приёмка глазами за пользователем», и
+// совет «закрыть задачу» стоял над строкой, закрывать которую было некому.
+func TestStatusNamesWhoWaitsForHuman(t *testing.T) {
+	userRow := "| XR-008 | Ждёт глаз [приёмка: user] | task | P2 | 30 (25+5+0+0+0) |  |\n"
+	root, _ := setup(t, rowInProg, rowCheck+userRow)
+	deployedCheckTask(t, root, "XR-009", "2026-08-02")
+	write(t, root, "docs/tasks/XR-009.md", readDoc(t, root, "XR-009")+"\n## Проверка\n\n- прогон пройден, вывод вложен.\n")
+	deployedCheckTask(t, root, "XR-008", "2026-08-02")
+
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st, "ждут человека в Check: XR-008 (user)") {
+		t.Fatalf("status не называет ждущего человека поимённо и с видом:\n%s", st)
+	}
+	if !strings.Contains(st, "агентские XR-009 закроет тик devkitctl watch") {
+		t.Fatalf("status не отдаёт агентскую строку тику:\n%s", st)
+	}
+	if strings.Contains(st, "приёмка глазами за пользователем") {
+		t.Fatalf("общая фраза про приёмку глазами осталась:\n%s", st)
+	}
+	last := st[strings.LastIndex(st, "\n")+1:]
+	if !strings.Contains(last, "приёмка за человеком по XR-008 (user)") {
+		t.Fatalf("совет не называет, за кем приёмка: %q", last)
+	}
+	if !strings.Contains(last, "XR-009 доведёт до Done тик") {
+		t.Fatalf("совет зовёт закрывать руками то, что закрывает тик: %q", last)
+	}
+}
+
+// TestStatusNamesEmptyVerification: агентская строка с прогнанным smoke, но
+// пустым разделом «Проверка», тику не по зубам (ворота close требуют вывода),
+// и status зовёт вложить вывод, а не ждать закрытия.
+func TestStatusNamesEmptyVerification(t *testing.T) {
+	root, _ := setup(t, rowInProg, rowCheck)
+	deployedCheckTask(t, root, "XR-009", "2026-08-02")
+
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st, "вложить вывод прогона в раздел «Проверка» файла задачи XR-009") {
+		t.Fatalf("status молчит про пустой раздел «Проверка»:\n%s", st)
+	}
+	if strings.Contains(st, "XR-009 доведёт до Done тик") {
+		t.Fatalf("status обещает закрытие тиком там, где ворота close откажут:\n%s", st)
+	}
+}
+
+// readDoc читает файл задачи стенда.
+func readDoc(t *testing.T, root, id string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", id+".md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// TestStatusSilentOnFailedCheck: строку с непогашенным провалом status тику не
+// обещает. Отбор `taskctl closable` её не отдаёт (сначала чинится прод), и
+// обещание закрытия расходилось бы с тем, что тик сделает на самом деле.
+func TestStatusSilentOnFailedCheck(t *testing.T) {
+	failRow := "| XR-009 | Ждёт проверки [провал: упал вход] | task | P2 | 30 (25+5+0+0+0) |  |\n"
+	root, _ := setup(t, rowInProg, failRow)
+	deployedCheckTask(t, root, "XR-009", "2026-08-02")
+	write(t, root, "docs/tasks/XR-009.md", readDoc(t, root, "XR-009")+"\n## Проверка\n\n- прогон пройден, вывод вложен.\n")
+
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(st, "закроет тик devkitctl watch") {
+		t.Fatalf("status обещает закрытие тиком строке с непогашенным провалом:\n%s", st)
+	}
+	if !strings.Contains(st, "провал проверки за XR-009") {
+		t.Fatalf("строка провала пропала из status:\n%s", st)
+	}
+}

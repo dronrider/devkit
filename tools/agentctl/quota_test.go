@@ -34,6 +34,9 @@ func specAt(t *testing.T, path string) *quotaSpec {
 		t.Fatal("у claude-code нет объявления квоты")
 	}
 	q.Path, q.From = path, path
+	// Дом пустым не остаётся: съёмщик читает под ним кеш клиента, и на пустом
+	// доме стенд ушёл бы в настоящий ~/.claude.json машины, где гоняются тесты.
+	q.Home = t.TempDir()
 	return q
 }
 
@@ -45,6 +48,15 @@ func snapOf(age time.Duration, buckets ...bucket) snapshot {
 // вторая подписка снимается сменным съёмщиком, и тестам важен сам профиль,
 // копия здесь разъехалась бы с тем, по чему работает машина.
 func glmSpec(t *testing.T, path string) *quotaSpec {
+	t.Helper()
+	q, _ := glmSpecHome(t, path)
+	return q
+}
+
+// glmSpecHome отдаёт вдобавок каталог, который был записан в машинный профиль:
+// дорогу «home из профиля доезжает до объявления квоты» проверяют сверкой с
+// ним, а не проверкой на пустоту.
+func glmSpecHome(t *testing.T, path string) (*quotaSpec, string) {
 	t.Helper()
 	home := t.TempDir()
 	machine := writeFile(t, t.TempDir(), "harness.local", `default = "claude-code"
@@ -68,7 +80,7 @@ home = "`+home+`"
 		t.Fatal("у glm-code нет объявления квоты: профиль вернулся к пустой секции [quota]")
 	}
 	q.Path, q.From = path, path
-	return q
+	return q, home
 }
 
 // TestGlmCodeQuotaProfile: у второй подписки две шкалы, пятичасовая и недельная,
@@ -76,7 +88,7 @@ home = "`+home+`"
 // замечал пользователь по отказам, а не корректор; тест стоит на том, чтобы
 // секция не опустела снова и обе шкалы в ней остались.
 func TestGlmCodeQuotaProfile(t *testing.T) {
-	q := glmSpec(t, filepath.Join(t.TempDir(), "quota", "glm-code.local"))
+	q, home := glmSpecHome(t, filepath.Join(t.TempDir(), "quota", "glm-code.local"))
 	if q.Snap != snapScript || q.Script != "snap/glm-code.sh" {
 		t.Fatalf("остаток снимает не съёмщик из kit/harness/snap: %+v", q)
 	}
@@ -91,8 +103,8 @@ func TestGlmCodeQuotaProfile(t *testing.T) {
 			t.Fatalf("ярус %s тратит не из обоих окон: %v", tier, q.Spend[tier])
 		}
 	}
-	if q.Home == "" {
-		t.Fatal("каталог машинного хозяйства не доехал до объявления квоты: съёмщику не найти токен")
+	if q.Home != home {
+		t.Fatalf("каталог машинного хозяйства доехал до объявления квоты как %q, а в профиле стоит %q: съёмщику не найти токен", q.Home, home)
 	}
 }
 
@@ -528,6 +540,165 @@ func TestQuotaFacts(t *testing.T) {
 		got = quotaFactsOf(q, snap, c, false, testNow, "claude-code").note()
 		if !strings.Contains(got, "glm-code/week_all 30%") {
 			t.Fatalf("чужой бакет не квалифицирован: %q", got)
+		}
+	})
+}
+
+// TestSnapshotPartial: неполный снимок называет себя неполным, и причина
+// доезжает до вывода pick. Без этого «week_max в снимке нет» звучит одинаково у
+// подписки без дорогого бакета и у панели, которая отказала по частоте
+// обращений.
+func TestSnapshotPartial(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude-code.local")
+	q := specAt(t, path)
+
+	t.Run("пометка переживает запись и чтение", func(t *testing.T) {
+		s := snapOf(freshAge, bucketAt("week_all", 50, halfWindow))
+		s = s.markPartial(q, "свежей разбивки клиент не получил, на панели она из его кеша")
+		if err := q.write(s); err != nil {
+			t.Fatalf("запись снимка: %v", err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "# partial week_max: свежей разбивки клиент не получил, на панели она из его кеша") {
+			t.Fatalf("пометки в файле нет:\n%s", raw)
+		}
+		// Пометка обязана быть комментарием: всё, что не taken, читатели снимка
+		// помимо agentctl принимают за бакет и показывают человеку разбор
+		// вместо остатка.
+		for _, ln := range strings.Split(string(raw), "\n") {
+			if strings.Contains(ln, "week_max:") && !strings.HasPrefix(ln, "#") {
+				t.Fatalf("пометка ушла в файл ключом, а не комментарием: %q", ln)
+			}
+		}
+		back, err := q.read()
+		if err != nil {
+			t.Fatalf("чтение снимка: %v", err)
+		}
+		if len(back.Warns) != 0 {
+			t.Fatalf("пометка прочиталась как мусор: %v", back.Warns)
+		}
+		if why := back.partial("week_max"); why != "свежей разбивки клиент не получил, на панели она из его кеша" {
+			t.Fatalf("причина не прочиталась: %q", why)
+		}
+	})
+
+	t.Run("битая пометка ничего не ломает", func(t *testing.T) {
+		// Пометка это подпись для человека. Бакеты от неё не зависят, и разбор
+		// снимка об неё спотыкаться не должен ни у кого.
+		s := q.parse("taken = " + at(testNow) + "\n" +
+			"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n" +
+			"# partial week_max\n# partial неведомый: причина\n# просто комментарий\n")
+		if len(s.Warns) != 0 {
+			t.Fatalf("комментарий прочитался как мусор: %v", s.Warns)
+		}
+		if len(s.Buckets) != 1 || len(s.Partial) != 0 {
+			t.Fatalf("разбор поехал: %+v %+v", s.Buckets, s.Partial)
+		}
+	})
+
+	t.Run("снимок прежней правки читается ключом", func(t *testing.T) {
+		// Файлы с ключом partial лежат на машинах, пока refresh не переписал
+		// каждый.
+		s := q.parse("taken = " + at(testNow) + "\npartial = week_max: панель отказала\n")
+		if why := s.partial("week_max"); why != "панель отказала" {
+			t.Fatalf("старый снимок не прочитан: %q, %v", why, s.Warns)
+		}
+		if len(s.Warns) != 0 {
+			t.Fatalf("старый снимок ругается: %v", s.Warns)
+		}
+	})
+
+	t.Run("pick называет причину, а не только пропажу", func(t *testing.T) {
+		s := snapOf(freshAge, bucketAt("week_all", 50, halfWindow))
+		c := correction{From: "max", Tier: "max"}
+		bare := quotaFactsOf(q, s, c, false, testNow, q.Harness).note()
+		if !strings.Contains(bare, "week_max в снимке нет,") {
+			t.Fatalf("непомеченный снимок звучит иначе: %q", bare)
+		}
+		marked := quotaFactsOf(q, s.markPartial(q, "свежей разбивки клиент не получил, на панели она из его кеша"), c, false, testNow, q.Harness).note()
+		if !strings.Contains(marked, "week_max в снимке нет, свежей разбивки клиент не получил, на панели она из его кеша") {
+			t.Fatalf("причина неполноты до вердикта не доехала: %q", marked)
+		}
+	})
+
+	t.Run("quota печатает пометку строкой", func(t *testing.T) {
+		content := "taken = " + at(testNow) + "\n" +
+			"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n" +
+			"# partial week_max: свежей разбивки клиент не получил, на панели она из его кеша\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdQuota(specAt(t, path), testNow)
+		if err != nil {
+			t.Fatalf("quota: %v", err)
+		}
+		if !strings.Contains(out, "week_max: в панели его не было, свежей разбивки клиент не получил, на панели она из его кеша") {
+			t.Fatalf("вывод молчит о неполноте:\n%s", out)
+		}
+	})
+}
+
+// Пометка занятой цифры отделена от пометки пропажи, и держат её порознь оба
+// читателя снимка. Слить их в одну значило бы либо печатать под цифрой строку
+// «его не было», либо потерять возраст: обе фразы у пропажи, а живёт пометка на
+// бакете, который в снимке есть.
+func TestSnapshotBorrowed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "quota.local")
+	q := specAt(t, path)
+	why := "панель разбивку не дала, цифра из кеша клиента возрастом 3ч 0м назад"
+
+	t.Run("пометка переживает запись и чтение", func(t *testing.T) {
+		s := snapOf(freshAge, bucketAt("week_all", 50, halfWindow), bucketAt("week_max", 17, halfWindow))
+		s.Borrowed = map[string]string{"week_max": why}
+		if err := q.write(s); err != nil {
+			t.Fatalf("запись снимка: %v", err)
+		}
+		back, err := q.read()
+		if err != nil {
+			t.Fatalf("чтение снимка: %v", err)
+		}
+		if got := back.borrowed("week_max"); got != why {
+			t.Fatalf("пометка не доехала через файл: %q, %v", got, back.Warns)
+		}
+		if got := back.partial("week_max"); got != "" {
+			t.Fatalf("занятая цифра прочиталась пропажей: %q", got)
+		}
+		if _, ok := back.bucket("week_max"); !ok {
+			t.Fatalf("бакет с занятой цифрой из файла пропал: %+v", back.Buckets)
+		}
+	})
+
+	t.Run("quota печатает возраст занятой цифры при бакете", func(t *testing.T) {
+		content := "taken = " + at(testNow) + "\n" +
+			"week_all = 50% сброс " + at(testNow.Add(halfWindow)) + "\n" +
+			"week_max = 17% сброс " + at(testNow.Add(halfWindow)) + "\n" +
+			borrowedNote + "week_max: " + why + "\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdQuota(specAt(t, path), testNow)
+		if err != nil {
+			t.Fatalf("quota: %v", err)
+		}
+		if !strings.Contains(out, "week_max: потрачено 17%") || !strings.Contains(out, why) {
+			t.Fatalf("возраст занятой цифры не при бакете:\n%s", out)
+		}
+		if strings.Contains(out, "week_max: в панели его не было") {
+			t.Fatalf("под цифрой напечатано, что цифры нет:\n%s", out)
+		}
+	})
+
+	t.Run("pick видит, что цифра занята", func(t *testing.T) {
+		s := snapOf(freshAge, bucketAt("week_all", 50, halfWindow), bucketAt("week_max", 17, halfWindow))
+		s.Borrowed = map[string]string{"week_max": why}
+		got := quotaFactsOf(q, s, correction{From: "max", Tier: "max"}, false, testNow, q.Harness).note()
+		if !strings.Contains(got, why) {
+			t.Fatalf("возраст занятой цифры до вердикта не доехал: %q", got)
 		}
 	})
 }

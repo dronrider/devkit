@@ -30,6 +30,10 @@ func fakeKit(t *testing.T) string {
 	t.Setenv(harnessEnv, "")
 	t.Setenv(runDepthEnv, "")
 	t.Setenv("DEVKIT_HOME", home)
+	// Тесты гоняются и изнутри сессии агента, а она называет себя в окружении:
+	// не сними её имя, и боковой журнал делегирования поехал бы в настоящий
+	// транскрипт настоящего разговора.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	agents := filepath.Join(home, "kit", "agents")
 	if err := os.MkdirAll(agents, 0o755); err != nil {
 		t.Fatal(err)

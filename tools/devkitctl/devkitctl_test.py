@@ -199,6 +199,23 @@ class ProjectFindingsTest(SandboxCase):
                        "нет находки про неподключённый уведомитель")
         write(self.settings, full)
 
+    def test_5c_agent_watchdog_events(self):
+        # Сторож фоновых субагентов висит на трёх событиях, и пропажа любого это
+        # находка: без запуска счёт работам не ведётся, без конца хода сдавать
+        # нечего, а сессия уходит спать с незабранным отчётом (DK-519).
+        full = read(self.settings)
+        drop_lines(self.settings, "agent-watch.py")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("сторож agent-watch.py не подключён на события PostToolUse, "
+                       "SubagentStop, Stop", out,
+                       "нет находки про неподключённого сторожа субагентов")
+        self.assertIn_("сессия уходит спать, считая его работающим", out,
+                       "находка не говорит, что ломается без сторожа")
+        write(self.settings, full)
+        _, out = self.box.doctor(self.proj)
+        self.assertNotIn_("agent-watch.py не подключён", out,
+                          "подключённый сторож попал в находку")
+
     def test_5b_retry_watchdog_key(self):
         # Без env-ключа недокументированного ретрай-вотчдога доктор называет
         # это находкой (стенд DK-172 разницы в поведении с ключом не нашёл, но
@@ -840,6 +857,16 @@ class MachineContourTest(SandboxCase):
         for s in sorted((self.box.dk / "kit" / "skills").glob("*/SKILL.md")):
             self.assertTrue((skills / s.parent.name / "SKILL.md").is_file(),
                             "doctor --fix не разложил скилл %s" % s.parent.name)
+        # Каталог скилла едет целиком: у proofread рядом со SKILL.md лежат
+        # пары, словарь и корпус, и без них вычитка в чужом проекте идёт по
+        # одним названиям пунктов типологии (DK-331).
+        for sat in ("pairs.md", "dictionary.md", "corpus.md"):
+            self.assertTrue((skills / "proofread" / sat).is_file(),
+                            "doctor --fix не разложил спутник скилла %s" % sat)
+        # Оболочка goal-loop доезжает тем же каталогом, звать её всё равно
+        # положено из чекаута, но на машине она обязана совпадать с devkit.
+        self.assertTrue((skills / "goal-loop" / "goal-run.py").is_file(),
+                        "doctor --fix не разложил оболочку скилла goal-loop")
         # Однотипное свёрнуто в строку с числом и именами (DK-157): строка на
         # каждый скилл, агента и хук делала вывод установки нечитаемым.
         self.assertRegex(out, r"починено: установлено \d+ скиллов в[^\n]*board-batch",
@@ -905,6 +932,35 @@ class MachineContourTest(SandboxCase):
         self.assertNotIn("своя строка", read(skill), "--fix не переложил разошедшийся скилл")
         _, out = self.docm("--fix")
         self.assertNotIn_("починено", out, "повторный --fix после перекладки скилла не должен менять")
+
+    def test_04b_missing_skill_companion(self):
+        # Спутник скилла пришёл в devkit позже самого SKILL.md (так вышло с
+        # парами и словарём proofread), и на машине его нет. Это то же
+        # расхождение с devkit, что правка SKILL.md руками: находка с командой
+        # починки, а --fix докладывает недостающее.
+        pairs = self.mhome / ".claude" / "skills" / "proofread" / "pairs.md"
+        pairs.unlink()
+        _, out = self.docm()
+        self.assertRegex(out, r"разошёлся скилл в[^\n]*proofread",
+                         "нет находки про скилл без спутника")
+        self.assertIn_("разложить: devkitctl doctor --fix", out,
+                       "находка про спутника не зовёт починку")
+        self.assertFalse(pairs.exists(), "doctor без --fix положил спутника")
+        _, out = self.docm("--fix")
+        self.assertRegex(out, r"починено: обновлён скилл в[^\n]*proofread",
+                         "--fix не отчитался о доложенном спутнике")
+        self.assertTrue(pairs.is_file(), "--fix не положил недостающего спутника")
+        # Правка спутника руками откатывается так же, как правка SKILL.md:
+        # devkit источник правды для промптов целиком, а не заголовком.
+        dic = self.mhome / ".claude" / "skills" / "proofread" / "dictionary.md"
+        write(dic, read(dic) + "\nсвоя строка\n")
+        _, out = self.docm()
+        self.assertRegex(out, r"разошёлся скилл в[^\n]*proofread",
+                         "нет находки про разошедшегося спутника")
+        _, out = self.docm("--fix")
+        self.assertNotIn("своя строка", read(dic), "--fix не переложил разошедшегося спутника")
+        _, out = self.docm("--fix")
+        self.assertNotIn_("починено", out, "повторный --fix после спутника не должен менять")
 
     def snap(self, taken):
         write(self.mhome / ".devkit" / "quota" / "claude-code.local",
@@ -1891,6 +1947,8 @@ class HarnessHooksTest(SandboxCase):
         self.assertRegex(out,
                          r"включено \d+ хуков харнеса в[^\n]*session-task\.py на SessionStart, PostToolUse",
                          "--fix не разложил хук отметки работы")
+        self.assertRegex(out, r"включено \d+ хуков харнеса в[^\n]*agent-watch\.py на PostToolUse",
+                         "--fix не разложил сторожа фоновых субагентов")
         data = json.loads(read(self.settings))
         self.assertEqual(data.get("model"), "opus", "рукописное в настройках потерялось")
         hooks = data["hooks"]
@@ -1898,13 +1956,15 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual(len([c for c in post if "check-symbols.py" in c]), 1, post)
         self.assertEqual(len([c for c in post if "chat-in.py" in c]), 1, post)
         self.assertEqual(len([c for c in post if "session-task.py --touch" in c]), 1, post)
-        # PostToolUse: две группы, проверки текстов на своём матчере и подхват
-        # реплики с отметкой работы на пустом. Матчер у неё пустой не по
-        # недосмотру: реплику надо доставлять на любом ходе идущего витка, а не
-        # на записи файла, и отметку работы (DK-539) режет своим списком
-        # WORK_TOOLS сам скрипт, а не матчер.
+        # PostToolUse: три группы, проверки текстов на своём матчере, подхват
+        # реплики с отметкой работы на пустом и сторож фоновых субагентов на
+        # инструменте делегирования. Матчер у подхвата пустой не по недосмотру:
+        # реплику надо доставлять на любом ходе идущего витка, а не на записи
+        # файла, и отметку работы (DK-539) режет своим списком WORK_TOOLS сам
+        # скрипт, а не матчер.
         self.assertEqual([g.get("matcher") for g in hooks["PostToolUse"]],
-                         ["Edit|Write|NotebookEdit", None], hooks["PostToolUse"])
+                         ["Edit|Write|NotebookEdit", None, "Agent"], hooks["PostToolUse"])
+        self.assertEqual(len([c for c in post if "agent-watch.py" in c]), 1, post)
         chat = [h["command"] for g in hooks["PostToolUse"] if not g.get("matcher")
                 for h in g["hooks"]]
         self.assertEqual(len(chat), 2, chat)
@@ -1922,6 +1982,12 @@ class HarnessHooksTest(SandboxCase):
         for event in ("Notification", "Stop", "StopFailure", "SubagentStop", "UserPromptSubmit"):
             cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
             self.assertEqual(len([c for c in cmds if "notify.py" in c]), 1, (event, cmds))
+        # Сторож фоновых субагентов (DK-519) стоит рядом с уведомителем на конце
+        # хода и на конце субагента: уведомитель говорит наружу человеку, сторож
+        # внутрь сессии.
+        for event in ("SubagentStop", "Stop"):
+            cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
+            self.assertEqual(len([c for c in cmds if "agent-watch.py" in c]), 1, (event, cmds))
         # Ретрай-вотчдог (DK-172) ложится тем же --fix: env-ключ, с которым
         # обрыв сети ретраится, а не останавливает ход до ручного «продолжай».
         self.assertEqual(data.get("env", {}).get(devkitctl.WATCHDOG_KEY),
@@ -1938,7 +2004,7 @@ class HarnessHooksTest(SandboxCase):
         self.assertNotIn_("env-ключ", out, "повторный --fix вписал вотчдог второй раз")
         post = [h["command"] for g in json.loads(read(self.settings))["hooks"]["PostToolUse"]
                 for h in g["hooks"]]
-        self.assertEqual(len(post), 5, post)
+        self.assertEqual(len(post), 7, post)
 
 
 GLM_PROFILE = """# Профиль стенда: близнец claude-code с путями от {home}.
@@ -2490,6 +2556,40 @@ class GoWorkFindingTest(SandboxCase):
         _, out = self.sysdoctor(proj)
         self.assertIn_("go.work", out,
                        "комментарий в use-блоке закрыл находку, хотя проект не перечислен")
+
+
+class ProseConfigTest(unittest.TestCase):
+    """Пропавший конфиг порогов прозы виден доктором. Без этой находки сторож
+    молчит на каждой записи, а молчание не отличить от чистого текста."""
+
+    def setUp(self):
+        self.was = os.environ.get("DEVKIT_PROSE_CONFIG")
+
+    def tearDown(self):
+        if self.was is None:
+            os.environ.pop("DEVKIT_PROSE_CONFIG", None)
+        else:
+            os.environ["DEVKIT_PROSE_CONFIG"] = self.was
+
+    def test_missing_config_is_a_finding(self):
+        os.environ["DEVKIT_PROSE_CONFIG"] = os.path.join(tempfile.mkdtemp(),
+                                                         "prose.toml")
+        found = devkitctl.check_prose_config()
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("сторож прозы молчит", found[0])
+
+    def test_config_without_a_metric_is_a_finding(self):
+        path = os.path.join(tempfile.mkdtemp(), "prose.toml")
+        write(path, '[prose]\nmode = "warn"\nmin_words = 120\n'
+                    'suffixes = [".md"]\n[warn]\n[block]\n')
+        os.environ["DEVKIT_PROSE_CONFIG"] = path
+        found = devkitctl.check_prose_config()
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("colon_mid", found[0])
+
+    def test_shipped_config_keeps_the_doctor_quiet(self):
+        os.environ.pop("DEVKIT_PROSE_CONFIG", None)
+        self.assertEqual(devkitctl.check_prose_config(), [])
 
 
 if __name__ == "__main__":

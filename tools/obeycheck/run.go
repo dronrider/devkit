@@ -20,6 +20,7 @@ type Params struct {
 	AgentDef  string   // определение исполнителя для субагентского конца
 	Devkit    string   // чекаут devkit
 	HomeSeed  string   // что положить во временный HOME до раскладки
+	UserHome  string   // дом пользователя, откуда берётся связка ключей; пусто это дом машины
 	Work      string   // куда класть прогоны, пусто это временная директория
 	Keep      bool     // не убирать директории прогонов
 	Preflight bool     // пробный прогон перед полным проходом
@@ -79,7 +80,7 @@ func trimNote(s string) string {
 // сделать работу, а мог отчитаться бодро и не сделать ничего.
 func (p Params) runOnce(s Scenario, layout string, repeat int, dir string) (attempt, error) {
 	a := attempt{Repeat: repeat}
-	e, err := makeEnv(dir, p.Devkit, layout, p.HomeSeed)
+	e, err := makeEnv(dir, p.Devkit, layout, p.HomeSeed, p.UserHome)
 	if err != nil {
 		return a, err
 	}
@@ -114,7 +115,7 @@ func (p Params) runOnce(s Scenario, layout string, repeat int, dir string) (atte
 	if runErr != nil && cmd.ProcessState == nil {
 		return a, fmt.Errorf("команда прогона %q не запустилась: %v", strings.Join(p.Agent, " "), runErr)
 	}
-	out, err := shOut(e.Project, env, s.Check, p.Timeout)
+	out, err := shOut(e.Project, e.checkEnviron(env), s.Check, p.Timeout)
 	if err == nil {
 		a.Green = true
 		// Зелёная проверка при упавшей команде прогона это повод посмотреть
@@ -142,7 +143,7 @@ func (p Params) runOnce(s Scenario, layout string, repeat int, dir string) (atte
 // проверки на отрицание, и двести сессий уходят впустую.
 func (p Params) preflight(work string) error {
 	dir := filepath.Join(work, "preflight")
-	e, err := makeEnv(dir, p.Devkit, p.Layouts[0], p.HomeSeed)
+	e, err := makeEnv(dir, p.Devkit, p.Layouts[0], p.HomeSeed, p.UserHome)
 	if err != nil {
 		return err
 	}
@@ -219,6 +220,14 @@ func (p Params) validate() error {
 // в чужой конвейер, а не читается глазами.
 func Run(p Params) (string, bool, error) {
 	if err := p.validate(); err != nil {
+		return "", false, err
+	}
+	userHome, err := userHomeDir(p.UserHome)
+	if err != nil {
+		return "", false, err
+	}
+	p.UserHome = userHome
+	if err := checkAuth(userHome, p.HomeSeed); err != nil {
 		return "", false, err
 	}
 	work := p.Work

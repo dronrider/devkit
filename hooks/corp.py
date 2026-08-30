@@ -35,6 +35,14 @@ MARKER_LINES = 3
 
 BOARD = os.path.join("docs", "TASKS.md")
 TRACKER = os.path.join(".devkit", "tracker.local")
+# Каталог обвязки клона это ссылка на боковую директорию (DK-583). В дереве она
+# лежит открыто, чтобы доску видели поиск редактора и сессия, поэтому в индекс
+# она попадает одним «git add .», и стережёт её тут pre-commit.
+LINK_DIR = ".devkit"
+# Шапка блока, которым devkit пишет свои строки в .git/info/exclude. Тонкие
+# файлы харнесов зависят от включённых профилей, и перечислять их в хуке нечем:
+# что спрятано этим блоком, то и есть обвязка.
+EXCLUDE_MARK = "# devkit: обвязка корп-контура, в индекс не едет."
 
 PREFIX_RE = re.compile(r"\(префикс ([A-ZА-Я]+)\)")
 
@@ -95,6 +103,60 @@ def local_dir(start="."):
     if not base:
         return ""
     return os.path.normpath(os.path.join(base, val))
+
+
+def git_common(start):
+    """Каталог .git репозитория (общий у всех деревьев ветки)."""
+    common = git(start, "rev-parse", "--git-common-dir")
+    if not common:
+        return ""
+    if not os.path.isabs(common):
+        common = os.path.join(os.path.abspath(start), common)
+    return os.path.normpath(common)
+
+
+def hidden_names(start="."):
+    """Имена, спрятанные блоком devkit в .git/info/exclude: тонкие файлы
+    контекста харнесов. Читается ровно блок, чужие строки exclude не наши."""
+    common = git_common(start)
+    if not common:
+        return []
+    path = os.path.join(common, "info", "exclude")
+    out, inside = [], False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                line = raw.strip()
+                if line == EXCLUDE_MARK:
+                    inside = True
+                    continue
+                if not line or line.startswith("#"):
+                    inside = False
+                    continue
+                if inside:
+                    out.append(line)
+    except OSError:
+        return []
+    return out
+
+
+def staged_rig(start="."):
+    """Обвязка devkit, оказавшаяся в индексе корп-коммита. Ссылка .devkit и
+    тонкий файл контекста живут в дереве клона, а чужому репозиторию не нужны:
+    «git add .» кладёт их в индекс молча, и это последнее место, где видно."""
+    out = git(start, "diff", "--cached", "--name-only")
+    if not out:
+        return []
+    watch = set(hidden_names(start)) | {LINK_DIR}
+    found = []
+    for path in out.split("\n"):
+        path = path.strip()
+        if not path:
+            continue
+        head = path.split("/")[0]
+        if (path in watch or head in watch) and path not in found:
+            found.append(path)
+    return found
 
 
 def board_prefix(local):
@@ -159,9 +221,19 @@ def patterns(local):
     if prefix and not prefix_collision(local):
         out.append(("локальный ID доски", re.compile(r"\b%s-[0-9]+\b" % re.escape(prefix))))
     names = [local]
-    base = os.path.basename(local)
-    if base:
-        names.append(base)
+    # Коротким именем зовётся директория контура («acme-local»), а не проект
+    # внутри неё: боковая директория теперь общая на контур, и её последнее
+    # звено это имя самого проекта, слово в корп-репозитории обычное (DK-583).
+    parts = [p for p in os.path.normpath(local).split(os.sep) if p]
+    mark = ""
+    for part in reversed(parts):
+        if part.endswith("-local"):
+            mark = part
+            break
+    if not mark and parts:
+        mark = parts[-1]
+    if mark:
+        names.append(mark)
     out.append(("путь боковой директории",
                 re.compile("|".join(re.escape(n) for n in names))))
     for word in tracker_value(local, "traces").split(","):

@@ -3,16 +3,26 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
+// devkitRoot отдаёт корень того дерева, в котором лежит сам тест. Боевой
+// findDevkit сюда не годится: он первым делом смотрит на DEVKIT_HOME, а в
+// сессиях машины эта переменная показывает на соседний worktree. Тест тогда
+// читает чужие сценарии и чужую раскладку и зеленеет ровно там, где дерево от
+// соседнего отличается.
 func devkitRoot(t *testing.T) string {
 	t.Helper()
-	root, err := findDevkit(".")
-	if err != nil {
-		t.Fatal(err)
+	_, self, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("не узнал путь до собственного файла теста")
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(self)))
+	if _, err := os.Stat(filepath.Join(root, devkitMarker)); err != nil {
+		t.Fatalf("корень дерева теста не похож на devkit: %v", err)
 	}
 	return root
 }
@@ -47,6 +57,7 @@ func params(t *testing.T, scen []Scenario, first, second string) Params {
 		End:       endSession,
 		AgentDef:  "exec-medium",
 		Devkit:    devkitRoot(t),
+		UserHome:  fakeHome(t),
 		Timeout:   time.Minute,
 	}
 }
@@ -156,12 +167,13 @@ func TestRunEnvironment(t *testing.T) {
 		t.Fatalf("в прогон уехал живой HOME:\n%s", got)
 	}
 	for _, want := range []string{
-		filepath.Join(dir, "project", "rules", "RULES.md"),                // раскладка легла в проект
-		filepath.Join(dir, "home", ".claude", "CLAUDE.md"),                // и её часть для HOME
-		filepath.Join(dir, "home", ".claude", "settings.json"),            // хуки харнеса
-		filepath.Join(dir, "home", ".claude", "agents", "exec-medium.md"), // определения субагентов
-		filepath.Join(dir, "origin.git", "HEAD"),                          // фиктивный origin
-		filepath.Join(dir, "project", ".devkit"),                          // журнал запусков утилит
+		filepath.Join(dir, "project", "rules", "RULES.md"),                       // раскладка легла в проект
+		filepath.Join(dir, "home", ".claude", "CLAUDE.md"),                       // и её часть для HOME
+		filepath.Join(dir, "home", ".claude", "settings.json"),                   // хуки харнеса
+		filepath.Join(dir, "home", ".claude", "agents", "exec-medium.md"),        // определения субагентов
+		filepath.Join(dir, "home", ".claude", "skills", "proofread", "SKILL.md"), // скиллы
+		filepath.Join(dir, "origin.git", "HEAD"),                                 // фиктивный origin
+		filepath.Join(dir, "project", ".devkit"),                                 // журнал запусков утилит
 		filepath.Join(dir, "transcript"),
 	} {
 		if _, err := os.Stat(want); err != nil {
@@ -297,6 +309,46 @@ func TestHomeSeed(t *testing.T) {
 	}
 	if strings.Contains(string(rules), "затравочная") {
 		t.Fatalf("раскладка не перекрыла затравку: %q", rules)
+	}
+}
+
+// Готовый дом со своими скиллами раскладку перекрывает целиком, тем же
+// порядком, что и для определений субагентов (DK-546): каталог .claude/skills
+// уже занят затравкой, и copyTree из kit/skills в него не идёт.
+func TestHomeSeedOverridesSkills(t *testing.T) {
+	seed := t.TempDir()
+	skill := filepath.Join(seed, ".claude", "skills", "proofread")
+	if err := os.MkdirAll(skill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("затравочный скилл"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := params(t, scenarios(t, "press"), "full", "core")
+	p.Repeats = 1
+	p.HomeSeed = seed
+	p.Work = t.TempDir()
+	p.Keep = true
+	if _, _, err := Run(p); err != nil {
+		t.Fatal(err)
+	}
+	work, err := filepath.EvalSymlinks(p.Work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skillFile := filepath.Join(work, "press-full-1", "home", ".claude", "skills", "proofread", "SKILL.md")
+	got, err := os.ReadFile(skillFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "затравочный скилл" {
+		t.Fatalf("раскладка перезаписала затравочный скилл: %q", got)
+	}
+	// devkit сам по себе привозит другие скиллы (board-task и подобные), их
+	// затравка не заводила: раз каталог .claude/skills занят, раскладка
+	// уступает ему целиком, а не докладывает недостающее рядом.
+	if _, err := os.Stat(filepath.Join(work, "press-full-1", "home", ".claude", "skills", "board-task")); err == nil {
+		t.Fatal("раскладка докладывала скиллы devkit в занятый затравкой каталог")
 	}
 }
 

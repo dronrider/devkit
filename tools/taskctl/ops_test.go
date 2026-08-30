@@ -520,6 +520,44 @@ func TestSetTitleAndLink(t *testing.T) {
 	}
 }
 
+// TestSetLinkFromRepoRootIsNormalized: DK-176. Путь, переданный в --link
+// естественно от корня репозитория (docs/tasks/XR-002.md), не должен
+// оборачиваться голым, иначе ссылка резолвится в docs/ дважды и lint находит
+// битую ссылку.
+func TestSetLinkFromRepoRootIsNormalized(t *testing.T) {
+	root := setup(t)
+	msg, err := cmdSet(root, SetParams{ID: "XR-001", Link: "docs/tasks/XR-002.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg != "XR-001: ссылка" {
+		t.Fatalf("сообщение: %q", msg)
+	}
+	board, _ := os.ReadFile(boardPath(root))
+	if !strings.Contains(string(board), "[tasks/XR-002.md](tasks/XR-002.md)") {
+		t.Fatalf("путь от корня репозитория не нормализован в строке:\n%s", board)
+	}
+	if strings.Contains(string(board), "docs/tasks/XR-002.md") {
+		t.Fatalf("в строке остался путь от корня репозитория, lint найдёт битую ссылку:\n%s", board)
+	}
+}
+
+// TestAddLinkFromRepoRootIsNormalized: тот же путь от корня репозитория в
+// --link команды add, где он уезжает в болванку файла задачи строкой «Цель:».
+func TestAddLinkFromRepoRootIsNormalized(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdAdd(root, AddParams{ID: "XR-100", Title: "Путь от корня", Type: "bug", Rank: "0+1+1+0+1", Link: "docs/tasks/XR-002.md", Accept: "agent"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-100.md"))
+	if err != nil {
+		t.Fatalf("файл задачи не создан: %v", err)
+	}
+	if !strings.Contains(string(data), "Цель: [tasks/XR-002.md](tasks/XR-002.md)") {
+		t.Fatalf("путь от корня репозитория не нормализован в болванке:\n%s", data)
+	}
+}
+
 func TestSetCost(t *testing.T) {
 	root := setup(t)
 	msg, err := cmdSet(root, SetParams{ID: "XR-005", Cost: "L"})
@@ -568,7 +606,7 @@ func TestSetTitleKeepsBlockSuffix(t *testing.T) {
 // в дизайн-документе (LLD DK-133, решение 4).
 func TestAddDraftWithoutDoDRefused(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdDraft(root, "разобрать, но не до конца", CommitOpts{}); err != nil {
+	if _, err := cmdDraft(root, "разобрать, но не до конца", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Оформляемая", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"})

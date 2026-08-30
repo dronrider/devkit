@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -158,6 +159,46 @@ func taskFailClear(root, id string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// drainOr решает исход одного из четырёх чистых отказов cmdShip под --drain:
+// без флага err уходит как обычная ошибка, под флагом печатается «разлив не
+// нужен: <причина>» и ship выходит нулём (LLD DK-306, решение 2). Чистые
+// отказы это пустой поезд, занятая очередь, сломанный прод и занятый чужим
+// заходом конвейер. Аномальные отказы замка (не открылся, не устоялся) в их
+// числе не являются: из отказов замка под флагом глушится только занятость.
+func drainOr(drain bool, err error) (string, error) {
+	if drain {
+		return "разлив не нужен: " + err.Error(), nil
+	}
+	return "", err
+}
+
+// taskFailSet ставит признак провала на строку id тем же путём, что taskctl
+// fail: shipctl только зовёт команду и коммитит результат. Notify уходит
+// изнутри cmdFail, отдельно его звать не нужно (LLD DK-306, решение 2).
+func taskFailSet(root, id, reason string, push bool) (string, error) {
+	args := []string{"-C", root, "fail", id, "--reason", reason, "-m",
+		fmt.Sprintf("docs(tasks): %s провал проверки, разлив упал", id)}
+	if push {
+		args = append(args, "--push")
+	}
+	out, err := exec.Command("taskctl", args...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("taskctl fail: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// failNote строит приписку к ошибке провала деплоя под --drain: провал
+// постановки признака не должен прятать сам провал деплоя, поэтому идёт
+// строкой-припиской, тем же приёмом, что notify() в notify.go.
+func failNote(root, id, reason string, push bool) string {
+	out, err := taskFailSet(root, id, reason, push)
+	if err != nil {
+		return "\nпризнак провала не поставлен: " + err.Error()
+	}
+	return "\n" + out
+}
+
 // commitBoard коммитит доску вместе с файлами задач, которых коснулся перевод
 // статуса. Файл задачи тут не для красоты: на смене статуса taskctl уносит в
 // раздел «Ход работы» пакет отмеченных этапов (DK-338), и оставленная
@@ -311,7 +352,7 @@ func cmdStatus(root string) (string, error) {
 	case len(b.sects["check"]) > 0:
 		if len(smoked) > 0 {
 			free := "очередь свободна: smoke прогнан за " + strings.Join(smoked, ", ") +
-				", приёмка глазами за пользователем, выкат очередь не держит"
+				", выкат очередь не держит"
 			if len(b.sects["check"]) > len(smoked) {
 				free += "; остальные в Check без выкаченного кода"
 			}
@@ -322,6 +363,21 @@ func cmdStatus(root string) (string, error) {
 	default:
 		out = append(out, "очередь свободна, сливать и выкатывать можно")
 	}
+	// Кто из Check ждёт человека, называется поимённо и с видом приёмки: до
+	// DK-516 status говорил про приёмку глазами одной фразой на всех, и по
+	// ней нельзя было отличить строку, за которой стоит пользователь, от
+	// строки, которую доведёт до Done тик сторожка.
+	waiting, agentSmoked, agentStuck, agentRest := checkParts(root, b, smoked)
+	if len(waiting) > 0 {
+		line := "ждут человека в Check: " + strings.Join(waiting, ", ") + ", приёмка глазами и закрытие за пользователем"
+		if len(agentSmoked) > 0 {
+			line += "; агентские " + strings.Join(agentSmoked, ", ") + " закроет тик devkitctl watch"
+		}
+		out = append(out, line)
+	} else if len(agentSmoked) > 0 {
+		out = append(out, "человека в Check никто не ждёт: агентские "+strings.Join(agentSmoked, ", ")+" закроет тик devkitctl watch")
+	}
+
 	// Решение по выкату берётся из resolveDeploy, а не из сырого конфига:
 	// иначе status и merge разъезжаются, как только логика меняется.
 	plan, err := resolveDeploy(root, "")
@@ -351,6 +407,7 @@ func cmdStatus(root string) (string, error) {
 	for _, r := range b.sects["check"] {
 		st.check = append(st.check, r.ID)
 	}
+	st.waiting, st.agentSmoked, st.agentStuck, st.agentRest = waiting, agentSmoked, agentStuck, agentRest
 	for _, f := range fails {
 		st.failed = append(st.failed, f.ID)
 	}
@@ -999,12 +1056,24 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 type ShipParams struct {
 	Deploy string // явная команда выката; пустую подхватывает .devkit/deploy.local
 	Push   bool
+	Drain  bool // разлив: чистые отказы молчат нулём вместо ошибки (LLD DK-306)
 }
 
 // cmdShip выкатывает поезд: один деплой на все задачи, слитые после точки
 // последнего выката, разом переводит их в Check и двигает тег. Проверка идёт
 // на одном билде, каждая задача по своему сценарию; провал одной чинится
 // точечным revert, остальной поезд остаётся на проде.
+//
+// Drain это разлив (LLD DK-306, решение 2): close и watch зовут задачу без
+// сессии, получателя у ошибки «разливать нечего» нет, и четыре чистых отказа
+// (пустой поезд, занятая очередь, сломанный прод, занятый чужим заходом
+// конвейер) под --drain выходят нулём с сообщением вместо error. Провал
+// деплоя в их число не входит: это не «нечего разливать», а поломка, и
+// --drain сам ставит признак провала на первую задачу состава тем же
+// суффиксом, что taskctl fail, чтобы следующий разлив
+// упёрся в failedChecks и промолчал сам. Собственный notify() тут не зовётся:
+// его шлёт taskFailSet через taskctl fail, и звать оба значило бы дублировать
+// уведомление на одно и то же событие.
 func cmdShip(root string, p ShipParams) (string, error) {
 	// Запуск из worktree допустим, но выкат и доска живут в основном дереве.
 	root, _, err := primaryRoot(root)
@@ -1016,6 +1085,12 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	}
 	unlock, err := acquireLock(root)
 	if err != nil {
+		// Занятость конвейера под --drain это состыковка с чужим заходом
+		// (merge, ship, разлив от close), а не поломка: сторожок, чей тик
+		// попал в чужое окно, отступает тихо. Аномалии замка глушить нельзя.
+		if errors.Is(err, errLockBusy) {
+			return drainOr(p.Drain, err)
+		}
 		return "", err
 	}
 	defer unlock()
@@ -1031,14 +1106,14 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		return "", err
 	}
 	if fs := failedChecks(b); len(fs) > 0 {
-		return "", fmt.Errorf("%s; поезд не выкатывается, пока прод сломан", brokenProd(fs[0]))
+		return drainOr(p.Drain, fmt.Errorf("%s; поезд не выкатывается, пока прод сломан", brokenProd(fs[0])))
 	}
 	busy, err := checkQueue(root, main, b)
 	if err != nil {
 		return "", err
 	}
 	if len(busy) > 0 {
-		return "", fmt.Errorf("очередь занята: %s в Check с выкатом без отметки smoke; по RULES.board.md непроверенный выкат один, сначала прогон агентской части сценария и shipctl smoke %s либо проверка и taskctl close", strings.Join(busy, ", "), busy[0])
+		return drainOr(p.Drain, fmt.Errorf("очередь занята: %s в Check с выкатом без отметки smoke; по RULES.board.md непроверенный выкат один, сначала прогон агентской части сценария и shipctl smoke %s либо проверка и taskctl close", strings.Join(busy, ", "), busy[0]))
 	}
 	train, strays, err := trainTasks(root, main, b)
 	if err != nil {
@@ -1048,7 +1123,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		return "", fmt.Errorf("код в окне выката, а задача не в In progress: %s; вернуть задачу в In progress или откатить её коммиты, иначе они уедут на прод без Check", strayList(strays))
 	}
 	if len(train) == 0 {
-		return "", fmt.Errorf("поезд пуст: после точки последнего выката нет слитых задач (копит их merge --train)")
+		return drainOr(p.Drain, fmt.Errorf("поезд пуст: после точки последнего выката нет слитых задач (копит их merge --train)"))
 	}
 	deploy, err := resolveDeploy(root, p.Deploy)
 	if err != nil {
@@ -1084,6 +1159,10 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout); err != nil {
 			short, full := deployProblem(deploy.run, timedOut, deploy.timeout)
 			outSummary := cmdoutFrame(root, "deploy", out)
+			if p.Drain {
+				note := failNote(root, train[0], short, doPush)
+				return "", fmt.Errorf("выкат поезда %s, задачи остаются в In progress:\n%s%s", full, outSummary, note)
+			}
 			note := notify(root, train[0], fmt.Sprintf("%s: выкат поезда %s (%s)", filepath.Base(root), short, list), full+"\n"+outSummary)
 			return "", fmt.Errorf("выкат поезда %s, задачи остаются в In progress:\n%s%s", full, outSummary, note)
 		}

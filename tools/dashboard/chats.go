@@ -3296,4 +3296,3 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text stri
 	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "fresh", "tmux": sess,
 		"message": "чата не было: поднят новый в tmux-сессии " + sess})
 }
-

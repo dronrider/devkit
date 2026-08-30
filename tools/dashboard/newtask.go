@@ -30,6 +30,10 @@ func draftFileRel(id string) string {
 	return filepath.ToSlash(filepath.Join("docs", "tasks", "drafts", id+".md"))
 }
 
+// draftPrios это шкала уровня разбора черновика: латинские имена те же, что у
+// флага taskctl draft --prio, русские слова живут на экране накопителя.
+var draftPrios = map[string]bool{"high": true, "mid": true, "low": true}
+
 // handleDraftPost записывает сырую мысль черновиком. Каталога накопителя на
 // проекте может не быть вовсе, и это не отказ: заводит его первая же команда
 // draft сама.
@@ -44,6 +48,7 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Text string `json:"text"`
+		Prio string `json:"prio"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, draftTextLimit)).Decode(&body); err != nil {
 		var mbe *http.MaxBytesError
@@ -58,13 +63,22 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 	text := strings.TrimSpace(body.Text)
 	if text == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "пустой черновик записывать нечего: жду JSON {\"text\": \"...\"}"})
+			"error": "пустой черновик записывать нечего: жду JSON {\"text\": \"...\", \"prio\": \"mid\"}"})
+		return
+	}
+	// Уровень разбора спрашивается на записи, а не в грумминге (DK-520): без
+	// него taskctl отказал бы уже из подпроцесса, и отказ пришёл бы на экран
+	// строкой про форму команды, которую с дашборда никто не набирает.
+	prio := strings.TrimSpace(body.Prio)
+	if !draftPrios[prio] {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "жду уровень разбора: prio high|mid|low, оценка грубая и на глаз"})
 		return
 	}
 	// Текст едет на вход подпроцесса, а не аргументом: аргумент проходит разбор
 	// флагов и стража подкоманд taskctl, и мысль из одного слова латиницей либо
 	// начатая с дефиса потерялась бы там целиком.
-	out, code, err := s.taskctlWriteIn(found.Path, text, "draft")
+	out, code, err := s.taskctlWriteIn(found.Path, text, "draft", "--prio", prio)
 	if err != nil {
 		s.logf("черновик в %s не записался: %v", found.Name, err)
 		writeJSON(w, code, map[string]string{"error": err.Error()})

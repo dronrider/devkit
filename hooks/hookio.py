@@ -8,9 +8,11 @@
   hookio.session_event(protocol)   событие сессии для уведомителя
   hookio.tool_event(protocol)      завершённый ход инструмента для подхвата реплики
   hookio.start_event(protocol)     старт сессии для реестра чатов
+  hookio.agent_event(protocol)     фоновый субагент для сторожа завершений
   hookio.reply(protocol)           канал находки: чем сказать, что что-то не так
   hookio.context(protocol)         канал добавки: чем сказать без рамки провала
   hookio.memory_index(protocol)    хвост пути индекса памяти из профиля
+  hookio.toml_at(path)             конфиг проверки разобранным Doc и причина
   hookio.append_capped(path, line) строка в машинный журнал хука с обрезкой
   hookio.tree_root(cwd)            дерево работы: ближайший предок с .git
 
@@ -23,6 +25,7 @@ claude-code, иначе команды, прописанные в settings.json 
 import collections
 import json
 import os
+import re
 import sys
 
 DEFAULT = "claude-code"
@@ -48,6 +51,13 @@ PROMPT_SUBMIT = "prompt-submit"
 TOOL_DONE = "tool-done"
 # Ось рождения сессии, ею живёт реестр чатов задачи.
 SESSION_START = "session-start"
+# Ось запуска фонового субагента: ход инструмента делегирования, вернувший
+# запущенную работу вместо отчёта. Своей строки в профиле харнеса у неё нет, она
+# снимается с той же оси tool-done, что и остальные ходы инструментов.
+AGENT_LAUNCHED = "agent-launched"
+# Имя инструмента делегирования и признак фонового запуска в его ответе.
+AGENT_TOOL = "Agent"
+AGENT_ASYNC = "async_launched"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -67,6 +77,16 @@ Tool = collections.namedtuple("Tool", "session cwd tool agent")
 # (startup, resume, clear, compact). ID тут тоже не режется: реестр чатов
 # сводит запись с файлом транскрипта, а тот назван полным ID.
 Start = collections.namedtuple("Start", "session cwd transcript source")
+# Фоновая работа сессии из перечня события: субагент или команда оболочки. Пока
+# работа в перечне, харнес считает её незакрытой.
+Job = collections.namedtuple("Job", "id kind status description")
+# Фоновый субагент глазами сторожа завершений: ось события, сессия, дерево,
+# транскрипт, ID работы, роль, чем названа, куда сложен отчёт, последняя реплика
+# и перечень фоновых работ сессии на этот момент. Признак active это отметка
+# харнеса о том, что ход уже продолжен стоп-хуком. Поле, которого событие не
+# несёт, приходит пустым: у конца хода нет ни ID работы, ни роли.
+Agent = collections.namedtuple(
+    "Agent", "kind session cwd transcript agent_id agent_type description output message jobs active")
 
 
 class Unknown(Exception):
@@ -180,14 +200,72 @@ def claude_code_start(event):
                  source=text_of(event.get("source")))
 
 
+# Поле ответа инструмента делегирования. Ответ приходит не объектом, а строкой
+# с питоньим репром словаря ('agentId': '...'), и разобрать его json'ом нельзя:
+# там одинарные кавычки и True. Форма эта на стороне харнеса, поэтому нужное
+# снимается регуляркой, а объект, если он однажды придёт объектом, читается
+# ключом.
+def response_field(response, key):
+    if isinstance(response, dict):
+        return text_of(response.get(key))
+    if not isinstance(response, str):
+        return ""
+    m = re.search(r"'%s':\s*'([^']*)'" % re.escape(key), response)
+    return m.group(1) if m else ""
+
+
+def claude_code_jobs(event):
+    """Фоновые работы сессии из события: субагенты и команды оболочки, которые
+    харнес считает незакрытыми."""
+    out = []
+    for item in event.get("background_tasks") or []:
+        if isinstance(item, dict):
+            out.append(Job(text_of(item.get("id")), text_of(item.get("type")),
+                           text_of(item.get("status")), text_of(item.get("description"))))
+    return tuple(out)
+
+
+def claude_code_agent(event):
+    """Событие про фонового субагента: его запуск, его конец либо конец хода
+    сессии с перечнем незакрытых работ. None значит, что сторожу тут смотреть
+    нечего, и хук на таком входе уходит нулём."""
+    name = text_of(event.get("hook_event_name"))
+    kind = {"SubagentStop": SUBAGENT_DONE, "Stop": TURN_DONE}.get(name)
+    if name == "PostToolUse":
+        if text_of(event.get("tool_name")) != AGENT_TOOL:
+            return None
+        if response_field(event.get("tool_response"), "status") != AGENT_ASYNC:
+            # Синхронный субагент отчитывается ходом инструмента, и терять его
+            # сессии негде: сторожить тут нечего.
+            return None
+        kind = AGENT_LAUNCHED
+    elif kind is None:
+        return None
+    ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
+    response = event.get("tool_response")
+    return Agent(kind=kind,
+                 session=text_of(event.get("session_id")),
+                 cwd=text_of(event.get("cwd")),
+                 transcript=text_of(event.get("transcript_path")),
+                 agent_id=text_of(event.get("agent_id")) or response_field(response, "agentId"),
+                 agent_type=text_of(event.get("agent_type")) or text_of(ti.get("subagent_type")),
+                 description=text_of(ti.get("description")) or response_field(response, "description"),
+                 output=response_field(response, "outputFile"),
+                 message=text_of(event.get("last_assistant_message")),
+                 jobs=claude_code_jobs(event),
+                 active=bool(event.get("stop_hook_active")))
+
+
 # Таблица разборщиков: протокол, разбор записи, разбор события сессии, разбор
-# хода инструмента, разбор старта сессии и два канала ответа. Новый инструмент
-# добавляется строкой сюда и директорией образцов.
-Protocol = collections.namedtuple("Protocol", "write session tool start reply context")
+# хода инструмента, разбор старта сессии, разбор события про фонового субагента
+# и два канала ответа. Новый инструмент добавляется строкой сюда и директорией
+# образцов.
+Protocol = collections.namedtuple("Protocol", "write session tool start agent reply context")
 
 PROTOCOLS = {
     "claude-code": Protocol(claude_code_write, claude_code_session,
                             claude_code_tool, claude_code_start,
+                            claude_code_agent,
                             Reply(2), Context("PostToolUse")),
 }
 
@@ -245,6 +323,10 @@ def parse_start(name, event):
     return entry(name).start(event)
 
 
+def parse_agent(name, event):
+    return entry(name).agent(event)
+
+
 def write_event(name, stream=None):
     """Фрагменты записи из события на stdin. None значит смотреть нечего."""
     try:
@@ -264,6 +346,15 @@ def start_event(name, stream=None):
     таком входе молчит и уходит нулём."""
     try:
         return parse_start(name, load(stream))
+    except BadEvent:
+        return None
+
+
+def agent_event(name, stream=None):
+    """Событие про фонового субагента со stdin. None значит, что событие не про
+    него: сторож на таком входе молчит и уходит нулём."""
+    try:
+        return parse_agent(name, load(stream))
     except BadEvent:
         return None
 
@@ -316,22 +407,33 @@ def harness_dir():
     return os.environ.get("DEVKIT_HARNESS_DIR") or os.path.join(ROOT, "kit", "harness")
 
 
-def profile(name, directory=None):
-    """Профиль харнеса разобранным Doc, None если файла нет или он битый.
-    Парсер один на весь devkit, второй копии формата тут не заводится."""
-    path = os.path.join(directory or harness_dir(), "%s.toml" % name)
+def toml_at(path):
+    """Файл формата профилей разобранным Doc и причина, если Doc пустой.
+    Парсер один на весь devkit, второй копии формата тут не заводится.
+
+    Кроме профилей харнеса этим же форматом живут конфиги проверок
+    (kit/prose.toml у сторожа прозы), и причина им нужна текстом: доктор
+    печатает её находкой, а «файла нет» и «файл битый» это разные починки."""
     sys.path.insert(0, os.path.join(ROOT, "tools", "devkitctl"))
     try:
         import harness
     except ImportError:
-        return None
+        return None, "парсер формата не найден рядом с devkit"
     finally:
         sys.path.pop(0)
     try:
         with open(path, encoding="utf-8") as f:
-            return harness.parse(os.path.basename(path), f.read())
-    except (OSError, harness.TomlError):
-        return None
+            return harness.parse(os.path.basename(path), f.read()), ""
+    except OSError:
+        return None, "файла нет: %s" % path
+    except harness.TomlError as e:
+        return None, "%s" % e
+
+
+def profile(name, directory=None):
+    """Профиль харнеса разобранным Doc, None если файла нет или он битый."""
+    path = os.path.join(directory or harness_dir(), "%s.toml" % name)
+    return toml_at(path)[0]
 
 
 def memory_index(name, directory=None):

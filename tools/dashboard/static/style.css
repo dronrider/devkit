@@ -1519,6 +1519,15 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .fwide svg{width:13px;height:13px;display:block}
 .fwide:hover{border-color:var(--acc);color:var(--tx)}
 .fpanel.wide{position:absolute;left:16px;right:16px;top:12px;bottom:12px;z-index:22;overflow-y:auto;box-shadow:0 18px 50px -20px rgba(0,0,0,0.7)}
+/* В режиме чтения на странице остаётся одно описание. Слоями это не решается:
+   командная панель строки статуса стоит своим слоем выше развёрнутого описания
+   и рисовалась поверх текста, а кнопка «Выполнить» ложилась на первые строки
+   постановки (замечание пользователя, узкий экран). Убрано из потока, а не
+   спрятано прозрачностью: прямоугольник спрятанного узла остаётся на месте и
+   ловит нажатия. Высоту колонка держит сама (.bmain и .groups растянуты
+   флексом), поэтому развёрнутое описание не схлопывается вместе с остальным. */
+.tpage.reading>:not(.tgrid){display:none}
+.tpage.reading .tgrid>:not(.fpanel){display:none}
 .bmain{position:relative}
 /* приложенное к реплике выделение */
 .selq.fold{margin:7px 0 0;background:var(--bg2)}

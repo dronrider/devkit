@@ -147,6 +147,12 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 	deps = append(deps, p.DepID)
 	row.Title = joinTitle(base, deps, acceptSuf, failSuf, blockSuf)
 	b.Lines[row.LineIdx] = formatRow(row)
+	// Свежее ребро тянет ранг предпосылки вверх по инварианту зависимости, и
+	// строки затронутых задач переезжают тут же (DK-428).
+	moves, b, err := rehydrate(b)
+	if err != nil {
+		return "", err
+	}
 	if err := b.Save(); err != nil {
 		return "", err
 	}
@@ -154,7 +160,7 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s: после %s%s", p.ID, p.DepID, tail), nil
+	return fmt.Sprintf("%s: после %s%s%s", p.ID, p.DepID, movesTail(moves), tail), nil
 }
 
 // cmdDepRm снимает зависимость руками (обычно это делает close, когда B
@@ -188,6 +194,10 @@ func cmdDepRm(root string, p DepParams) (string, error) {
 	deps = append(deps[:idx], deps[idx+1:]...)
 	row.Title = joinTitle(base, deps, acceptSuf, failSuf, blockSuf)
 	b.Lines[row.LineIdx] = formatRow(row)
+	moves, b, err := rehydrate(b)
+	if err != nil {
+		return "", err
+	}
 	if err := b.Save(); err != nil {
 		return "", err
 	}
@@ -195,7 +205,7 @@ func cmdDepRm(root string, p DepParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s: зависимость от %s снята%s", p.ID, p.DepID, tail), nil
+	return fmt.Sprintf("%s: зависимость от %s снята%s%s", p.ID, p.DepID, movesTail(moves), tail), nil
 }
 
 // depSides возвращает по каждой задаче с доски, после кого она делается

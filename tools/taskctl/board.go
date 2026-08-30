@@ -44,8 +44,12 @@ type Row struct {
 	Title   string
 	Type    string
 	P       string
-	RTotal  int
+	RTotal  int    // итог R_eff, посчитанный по поправкам
+	ROwn    int    // сумма пяти слагаемых
+	RBase   int    // own плюс аддитивные поправки
 	RParts  [5]int
+	RAdj    []Adjustment // поправки в порядке печати
+	RCell   string       // ячейка R, как она записана в файле
 	Cost    string
 	Link    string
 }
@@ -70,7 +74,6 @@ type Board struct {
 
 var (
 	idRe          = regexp.MustCompile(`^([A-ZА-Я]+)-([0-9]+)$`)
-	rRe           = regexp.MustCompile(`^([0-9]+) \(([0-9]+)\+([0-9]+)\+([0-9]+)\+([0-9]+)\+([0-9]+)\)$`)
 	dateRe        = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`)
 	boardPrefixRe = regexp.MustCompile(`\(префикс ([A-ZА-Я]+)\)`)
 )
@@ -157,6 +160,7 @@ func parseLines(path string, lines []string) (*Board, error) {
 			return nil, fmt.Errorf("%s: не найдена секция %q", path, key)
 		}
 	}
+	computeRanks(b)
 	return b, nil
 }
 
@@ -220,10 +224,11 @@ func parseBoardRow(line string) (*Row, bool, error) {
 	if err := checkType(r.Type); err != nil {
 		return nil, false, err
 	}
-	rm := rRe.FindStringSubmatch(cells[4])
+	rm := rankCellRe.FindStringSubmatch(cells[4])
 	if rm == nil {
-		return nil, false, fmt.Errorf("не разобрана колонка R %q, жду вид «N (а+б+в+г+д)»", cells[4])
+		return nil, false, fmt.Errorf("не разобрана колонка R %q, жду вид «N (а+б+в+г+д)» с необязательным хвостом поправок", cells[4])
 	}
+	r.RCell = cells[4]
 	r.RTotal, _ = strconv.Atoi(rm[1])
 	sum := 0
 	for i := 0; i < 5; i++ {
@@ -231,7 +236,16 @@ func parseBoardRow(line string) (*Row, bool, error) {
 		r.RParts[i] = v
 		sum += v
 	}
-	if sum != r.RTotal {
+	r.ROwn, r.RBase = sum, sum
+	adjs, err := parseAdjTail(rm[7])
+	if err != nil {
+		return nil, false, err
+	}
+	r.RAdj = adjs
+	// Без хвоста поправок итог обязан сойтись с разбивкой прямо тут: это
+	// опечатка в числах, а не расхождение производного хвоста, которое
+	// считается по всей доске и остаётся находкой lint.
+	if len(adjs) == 0 && sum != r.RTotal {
 		return nil, false, fmt.Errorf("R=%d не сходится с разбивкой, сумма слагаемых %d", r.RTotal, sum)
 	}
 	return r, legacy, nil
@@ -272,8 +286,7 @@ func bucket(r int) string {
 }
 
 func formatRow(r *Row) string {
-	rcell := fmt.Sprintf("%d (%d+%d+%d+%d+%d)",
-		r.RTotal, r.RParts[0], r.RParts[1], r.RParts[2], r.RParts[3], r.RParts[4])
+	rcell := rankCell(r)
 	return fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s |", r.ID, r.Title, r.Type, r.P, rcell, r.Cost, r.Link)
 }
 

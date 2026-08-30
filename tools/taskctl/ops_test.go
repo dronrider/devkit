@@ -201,7 +201,7 @@ func TestAddWithCost(t *testing.T) {
 		t.Fatal(err)
 	}
 	board, _ := os.ReadFile(boardPath(root))
-	if !strings.Contains(string(board), "| XR-008 | Оценённая | task | P3 | 3 (0+1+1+0+1) | M | [tasks/XR-008.md](tasks/XR-008.md) |") {
+	if !strings.Contains(string(board), "| XR-008 | Оценённая | task | P3 | 4 (0+1+1+0+1, M+1) | M | [tasks/XR-008.md](tasks/XR-008.md) |") {
 		t.Fatalf("нет строки с ценой:\n%s", board)
 	}
 }
@@ -473,7 +473,7 @@ func TestSetRankResortsBacklog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if msg != "XR-004: R 9 -> 76, P P3 -> P0" {
+	if msg != "XR-004: разбивка 9 -> 76" {
 		t.Fatalf("сообщение: %q", msg)
 	}
 	got := strings.Join(backlogIDs(t, root), " ")

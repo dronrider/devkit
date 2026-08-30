@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 )
@@ -459,6 +458,11 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err := insertRowLine(b, sec, row, formatRow(row)); err != nil {
 		return "", err
 	}
+	// Свежая строка получает свой хвост поправок сразу: бонус за цену
+	// производный, и строка без него легла бы на доску уже красной по lint.
+	if _, b, err = rehydrate(b); err != nil {
+		return "", err
+	}
 	if err := b.Save(); err != nil {
 		return "", err
 	}
@@ -745,40 +749,28 @@ func cmdSet(root string, p SetParams) (string, error) {
 			row.Link = link
 		}
 	}
-	rankChanged := false
 	if p.Rank != "" {
 		total, parts, err := parseRank(p.Rank)
 		if err != nil {
 			return "", err
 		}
-		if total != row.RTotal || parts != row.RParts {
-			changes = append(changes, fmt.Sprintf("R %d -> %d", row.RTotal, total))
-			row.RTotal, row.RParts = total, parts
-			if np := bucket(total); np != row.P {
-				changes = append(changes, fmt.Sprintf("P %s -> %s", row.P, np))
-				row.P = np
-			}
-			rankChanged = true
+		// Сравнивается собственная сумма: итог в ячейке несёт ещё и поправки,
+		// и сверка с ним объявляла бы изменением каждый повтор той же разбивки.
+		if total != row.ROwn || parts != row.RParts {
+			changes = append(changes, fmt.Sprintf("разбивка %d -> %d", row.ROwn, total))
+			row.RTotal, row.ROwn, row.RParts = total, total, parts
 		}
 	}
 	if len(changes) == 0 {
 		return "", fmt.Errorf("у %s уже такие значения, менять нечего", p.ID)
 	}
-	line := formatRow(row)
-	// В Backlog позиция строки зависит от ранга, поэтому при его смене строка
-	// переставляется; в остальных секциях порядок ручной, ячейки меняются на месте.
-	if rankChanged && row.Sect == SectBacklog {
-		b.remove(row.LineIdx)
-		b2, err := parseLines(b.Path, b.Lines)
-		if err != nil {
-			return "", err
-		}
-		if err := insertRowLine(b2, b2.Sects[SectBacklog], row, line); err != nil {
-			return "", err
-		}
-		b = b2
-	} else {
-		b.Lines[row.LineIdx] = line
+	b.Lines[row.LineIdx] = formatRow(row)
+	// В Backlog позиция строки зависит от ранга, и правка ранга или цены
+	// двигает не только эту строку: поправки считаются по всей доске, поэтому
+	// пересчёт и перестановку ведёт rehydrate, а не вставка одной строки.
+	moves, b, err := rehydrate(b)
+	if err != nil {
+		return "", err
 	}
 	if err := b.Save(); err != nil {
 		return "", err
@@ -787,7 +779,7 @@ func cmdSet(root string, p SetParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s: %s%s", p.ID, strings.Join(changes, ", "), tail), nil
+	return fmt.Sprintf("%s: %s%s%s", p.ID, strings.Join(changes, ", "), movesTail(moves), tail), nil
 }
 
 var commitRe = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
@@ -932,6 +924,12 @@ func cmdClose(root string, p CloseParams) (string, error) {
 		depTouched = append(depTouched, r.ID)
 	}
 	b.remove(row.LineIdx)
+	// Закрытая задача больше никого не подтягивает: наследовавшие её ранг
+	// строки переезжают вниз тем же заходом (DK-428).
+	moves, b, err := rehydrate(b)
+	if err != nil {
+		return "", err
+	}
 	if err := b.Save(); err != nil {
 		return "", err
 	}
@@ -951,6 +949,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if len(depTouched) > 0 {
 		msg += ", маркер «после» снят у: " + strings.Join(depTouched, ", ")
 	}
+	msg += movesTail(moves)
 	return msg + tail + shipDrainNote(root) + "\n" + nextAfterClose(), nil
 }
 
@@ -1160,32 +1159,24 @@ func cmdSort(root string, c CommitOpts) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sec := b.Sects[SectBacklog]
-	idxs := make([]int, len(sec.Rows))
-	for i, r := range sec.Rows {
-		idxs[i] = r.LineIdx
-	}
-	sorted := append([]*Row{}, sec.Rows...)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		if sorted[i].RTotal != sorted[j].RTotal {
-			return sorted[i].RTotal > sorted[j].RTotal
-		}
-		return sorted[i].Num < sorted[j].Num
-	})
-	contents := make([]string, len(sorted))
-	for i, r := range sorted {
-		contents[i] = b.Lines[r.LineIdx]
+	before := append([]string{}, b.Lines...)
+	legacy := b.Legacy
+	// Сортировка это же и пересчёт поправок: хвост скобки производный, и
+	// команда, переставляющая Backlog по R_eff, обязана сперва этот R_eff
+	// посчитать (DK-428).
+	moves, b, err := rehydrate(b)
+	if err != nil {
+		return "", err
 	}
 	changed := 0
-	for i := range idxs {
-		if b.Lines[idxs[i]] != contents[i] {
+	for i, ln := range b.Lines {
+		if i < len(before) && before[i] != ln {
 			changed++
 		}
-		b.Lines[idxs[i]] = contents[i]
 	}
 	// Разбор доски старого формата уже перевёл строки в памяти, sort тогда
 	// сохраняет файл даже без перестановок: это штатный способ миграции.
-	if changed == 0 && !b.Legacy {
+	if changed == 0 && !legacy {
 		return "Backlog уже отсортирован", nil
 	}
 	if err := b.Save(); err != nil {
@@ -1198,7 +1189,7 @@ func cmdSort(root string, c CommitOpts) (string, error) {
 	if changed == 0 {
 		return "доска переведена в формат с колонкой «Цена»" + tail, nil
 	}
-	return fmt.Sprintf("Backlog пересортирован, строк переставлено: %d%s", changed, tail), nil
+	return fmt.Sprintf("Backlog пересортирован, строк переставлено: %d%s%s", changed, movesTail(moves), tail), nil
 }
 
 func cmdID(root string) (string, error) {

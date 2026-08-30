@@ -53,15 +53,17 @@ func cmdLint(root string) ([]string, error) {
 		if _, _, err := parseRank(rank); err != nil {
 			finds = append(finds, fmt.Sprintf("%s: разбивка ранга вне шкалы: %v", where, err))
 		}
+		finds = append(finds, lintRankCell(r, where)...)
 		finds = append(finds, checkLinks(root, bp, r.LineIdx, b.Lines[r.LineIdx])...)
 	}
 
 	rows := b.Sects[SectBacklog].Rows
-	for i := 1; i < len(rows); i++ {
-		prev, cur := rows[i-1], rows[i]
-		if prev.RTotal < cur.RTotal || (prev.RTotal == cur.RTotal && prev.Num > cur.Num) {
-			finds = append(finds, fmt.Sprintf("%s:%d: Backlog не отсортирован: %s (R=%d) стоит ниже положенного",
-				bp, cur.LineIdx+1, cur.ID, cur.RTotal))
+	want := backlogOrder(root, b)
+	for i := range rows {
+		if rows[i].ID != want[i].ID {
+			finds = append(finds, fmt.Sprintf("%s:%d: Backlog не отсортирован: тут ждали %s (R=%d), а стоит %s (R=%d)",
+				bp, rows[i].LineIdx+1, want[i].ID, want[i].RTotal, rows[i].ID, rows[i].RTotal))
+			break
 		}
 	}
 
@@ -340,6 +342,29 @@ func checkLinks(root, file string, lineIdx int, line string) []string {
 			finds = append(finds, fmt.Sprintf("%s:%d: битая ссылка %s (нет файла docs/%s)",
 				file, lineIdx+1, m[1], target))
 		}
+	}
+	return finds
+}
+
+// lintRankCell сверяет ячейку R с пересчётом: хвост поправок производный от
+// колонки цены и рёбер наследования, и рукописный хвост расходится с ним так
+// же молча, как расходился бы P, посчитанный на глаз (DK-428). Незнакомое имя
+// поправки называется отдельно: пересчёт его просто не напишет, а читателю
+// строки надо знать, что имени такого в таблице нет.
+func lintRankCell(r *Row, where string) []string {
+	var finds []string
+	if m := rankCellRe.FindStringSubmatch(r.RCell); m != nil {
+		if adjs, err := parseAdjTail(m[7]); err == nil {
+			for _, a := range adjs {
+				if a.From == "" && !knownAdj(a.Name) {
+					finds = append(finds, fmt.Sprintf("%s: поправка «%s» не из таблицы", where, a.Name))
+				}
+			}
+		}
+	}
+	if want := rankCell(r); want != r.RCell {
+		finds = append(finds, fmt.Sprintf("%s: ячейка R «%s» не сходится с пересчётом, ждали «%s», пересчитать: taskctl sort",
+			where, r.RCell, want))
 	}
 	return finds
 }

@@ -59,7 +59,9 @@ func TestDepAddRmList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if msg != "XR-002: после XR-001" {
+	// Ребро подтягивает предпосылку под ранг зависимой, и переезд печатается
+	// строкой (DK-428).
+	if msg != "XR-002: после XR-001\nXR-001: 30 -> 55 от XR-002" {
 		t.Fatalf("сообщение: %q", msg)
 	}
 	if got := backlogTitle(t, root, "XR-002"); got != "Верхняя [после XR-001]" {
@@ -101,7 +103,7 @@ func TestDepAddRmList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if msg != "XR-002: зависимость от XR-001 снята" {
+	if msg != "XR-002: зависимость от XR-001 снята\nXR-001: 55 -> 30" {
 		t.Fatalf("сообщение rm: %q", msg)
 	}
 	if got := backlogTitle(t, root, "XR-002"); got != "Верхняя" {

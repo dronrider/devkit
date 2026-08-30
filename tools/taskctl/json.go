@@ -26,11 +26,31 @@ type jsonRow struct {
 	Type   string   `json:"type"`
 	P      string   `json:"p"`
 	R      int      `json:"r"`
+	ROwn   int      `json:"r_own"`
 	RParts [5]int   `json:"r_parts"`
-	Cost   string   `json:"cost"`
-	Link   string   `json:"link"`
-	Moved  string   `json:"moved,omitempty"`
-	Notes  []string `json:"notes,omitempty"`
+	// Поправки к рангу списком: у аддитивной имя и дельта, у подтягивающей
+	// задача, от которой подтянут итог (DK-428). Дашборд хвост не разбирает,
+	// правит ручкой пять слагаемых, а читает готовые r и r_own.
+	Adjustments []jsonAdj `json:"adjustments,omitempty"`
+	Cost        string    `json:"cost"`
+	Link        string    `json:"link"`
+	Moved       string    `json:"moved,omitempty"`
+	Notes       []string  `json:"notes,omitempty"`
+}
+
+// jsonAdj это одна поправка машинным видом: имя с дельтой либо ссылка «от».
+type jsonAdj struct {
+	Name  string `json:"name,omitempty"`
+	Delta int    `json:"delta,omitempty"`
+	From  string `json:"from,omitempty"`
+}
+
+func jsonAdjs(adjs []Adjustment) []jsonAdj {
+	var out []jsonAdj
+	for _, a := range adjs {
+		out = append(out, jsonAdj{Name: a.Name, Delta: a.Delta, From: a.From})
+	}
+	return out
 }
 
 type jsonSection struct {
@@ -61,8 +81,9 @@ func makeJSONRow(root string, r *Row, times map[int]int64, clean bool) jsonRow {
 		Accept: sufText(acceptSuf, "приёмка"),
 		Fail:   sufText(failSuf, "провал"),
 		Block:  sufText(blockSuf, "блок"),
-		Type:  r.Type, P: r.P, R: r.RTotal, RParts: r.RParts,
-		Cost: r.Cost, Link: r.Link,
+		Type:   r.Type, P: r.P, R: r.RTotal, ROwn: r.ROwn, RParts: r.RParts,
+		Adjustments: jsonAdjs(r.RAdj),
+		Cost:        r.Cost, Link: r.Link,
 		// Дата последней правки строки: перевод в статус двигает строку между
 		// секциями доски, то есть правит её, и отдельной даты перевода в доске
 		// нет. Возраст днями остаётся в notes, дашборд показывает дату.

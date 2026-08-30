@@ -93,13 +93,21 @@ func rowOf(rows []row, id string) *row {
 
 // uncertainty достаёт третье слагаемое из ячейки ранга вида «8 (0+3+1+0+4)».
 // Нечитаемая разбивка (старая доска, прочерк) даёт -1: неизвестность, а не ноль.
+// После пяти слагаемых в скобке идёт хвост поправок через запятую
+// («40 (25+8+1+0+4, S+2, от DK-473)», DK-428). Слагаемые считаются до первой
+// запятой, иначе последнее из них склеивается с первой поправкой и вся ячейка
+// становится нечитаемой.
 func uncertainty(rank string) int {
 	i := strings.Index(rank, "(")
 	j := strings.Index(rank, ")")
 	if i < 0 || j < i {
 		return -1
 	}
-	parts := strings.Split(rank[i+1:j], "+")
+	inner := rank[i+1 : j]
+	if c := strings.Index(inner, ","); c >= 0 {
+		inner = inner[:c]
+	}
+	parts := strings.Split(inner, "+")
 	if len(parts) != 5 {
 		return -1
 	}

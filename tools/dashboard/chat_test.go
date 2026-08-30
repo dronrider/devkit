@@ -2231,6 +2231,23 @@ func TestStaticChatDropRow(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Кнопка разговоров в шапке открывает разговор, а не чат открытой задачи:
+// «по идее эта кнопка просто открывает чат, для открытия чата задачи есть
+// отдельная кнопка на ней же» (замечание пользователя). Сторожит стенд
+// testdata/poc_chatsbtn.mjs.
+func TestStaticChatsButtonFree(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд кнопки разговоров пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatsbtn.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("кнопка разговоров в шапке: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Разговор без процесса и уборка в архив: одна и та же пара, снимающая и
 // поднимающая сессию. Живой случай: «чат, который я вернул из архива, больше не
 // работает, при написании в него никакой реакции» (замечание пользователя).

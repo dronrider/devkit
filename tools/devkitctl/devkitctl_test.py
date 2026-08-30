@@ -2385,6 +2385,24 @@ class SecondSubscriptionLayoutTest(SandboxCase):
         self.assertIn_("CLAUDE.md", out, "находка не назвала файл, за который спор")
         write(self.box.dk / "kit" / "harness" / "glm-code.toml", GLM_PROFILE)
 
+    def test_06_stray_hook_tree_is_found_in_both_harnesses(self):
+        # Дерево, из которого зовётся хук, сверяется у каждого включённого
+        # харнеса. На машине DK-582 путь дерева ветки стоял в обоих файлах, и
+        # находка про один из них закрывала бы половину беды.
+        stray = str(self.box.root / "devkit-branch")
+        dkreal = os.path.realpath(str(self.box.dk))
+        files = (self.home / ".claude" / "settings.json", self.alt / "settings.json")
+        for f in files:
+            write(f, read(f).replace("%s/hooks/notify.py" % dkreal,
+                                     "%s/hooks/notify.py" % stray))
+        _, out = self.doc()
+        for f in files:
+            self.assertRegex(out, r"%s[^\n]*не из выкаченного дерева" % re.escape(str(f)),
+                             "доктор не заметил хук из чужого дерева в %s" % f)
+        self.doc("--fix")
+        for f in files:
+            self.assertNotIn(stray, read(f), "путь чужого дерева остался в %s" % f)
+
     @classmethod
     def tearDownClass(cls):
         (cls.box.dk / "kit" / "harness" / "glm-code.toml").unlink(missing_ok=True)

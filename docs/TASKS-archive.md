@@ -389,3 +389,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-642 | Сценарий проверки прогоняет не автор правки, прогонявший записан машинно | task | P1 | 2026-08-31 | [tasks/archive/2026/DK-642.md](tasks/archive/2026/DK-642.md) |
 | DK-677 | Тесты notify в hooks падают в чистом окружении прогона merge | bug | P0 | 2026-09-01 | [tasks/archive/2026/DK-677.md](tasks/archive/2026/DK-677.md) |
 | DK-643 | Сценарий без выката обкатывается в чистом окружении до перевода в Check | task | P1 | 2026-09-01 | [tasks/archive/2026/DK-643.md](tasks/archive/2026/DK-643.md) |
+| DK-678 | Рубеж синхронности: headless-сессии отказано в фоновом ходе | task | P1 | 2026-09-01 | [tasks/archive/2026/DK-678.md](tasks/archive/2026/DK-678.md) |

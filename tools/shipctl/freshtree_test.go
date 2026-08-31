@@ -14,6 +14,8 @@ func TestMergeTestEnv(t *testing.T) {
 	home := "/fake/home"
 	t.Setenv("CLAUDE_CODE_TEST_MARKER", "1")
 	t.Setenv("SHIPCTL_KEEP_ME", "yes")
+	t.Setenv("GOPATH", home+"/go")
+	t.Setenv("VIRTUAL_ENV", home+"/.venv")
 	// /fake/homework проверяет границу: общий префикс строки это не вложенность.
 	t.Setenv("PATH", home+"/bin:/usr/bin:/fake/homework:"+home)
 	env := mergeTestEnv(home, "/tmp/newhome")
@@ -26,6 +28,9 @@ func TestMergeTestEnv(t *testing.T) {
 	}
 	if strings.Contains(joined, "CLAUDE_CODE_TEST_MARKER") {
 		t.Fatalf("переменная харнеса протекла:\n%s", joined)
+	}
+	if strings.Contains(joined, "\nGOPATH=") || strings.Contains(joined, "\nVIRTUAL_ENV=") {
+		t.Fatalf("указатель внутрь живого дома протёк:\n%s", joined)
 	}
 	if !strings.Contains(joined, "\nSHIPCTL_KEEP_ME=yes\n") {
 		t.Fatalf("обычная переменная потеряна:\n%s", joined)

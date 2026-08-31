@@ -86,14 +86,19 @@ func runShellLimit(root, cmdStr string, limit time.Duration, env []string) (stri
 // mergeTestEnv собирает окружение прогона тестов слияния. Живой HOME сессии
 // подменяется временным, каталоги из-под него уходят из PATH, переменные
 // харнеса CLAUDE* уносятся: тесты обязаны зеленеть на чужой машине, а не на
-// прогретой раскладке дома исполнителя. Тулчейны вне дома (/usr/bin,
-// /opt/homebrew) остаются, иначе команде теста нечем работать.
+// прогретой раскладке дома исполнителя. Уносятся и указатели внутрь дома
+// (GOPATH, GOMODCACHE, PYTHONPATH, VIRTUAL_ENV): формально это не HOME и не
+// PATH, но живую раскладку они возвращают в прогон тем же путём. Тулчейны вне
+// дома (/usr/bin, /opt/homebrew) остаются, иначе команде теста нечем работать.
 func mergeTestEnv(home, tmpHome string) []string {
+	homePointers := map[string]bool{
+		"GOPATH": true, "GOMODCACHE": true, "PYTHONPATH": true, "VIRTUAL_ENV": true,
+	}
 	var out []string
 	for _, kv := range os.Environ() {
 		name, val, _ := strings.Cut(kv, "=")
 		switch {
-		case name == "HOME" || strings.HasPrefix(name, "CLAUDE"):
+		case name == "HOME" || strings.HasPrefix(name, "CLAUDE") || homePointers[name]:
 			continue
 		case name == "PATH":
 			kv = "PATH=" + trimHomePath(val, home)

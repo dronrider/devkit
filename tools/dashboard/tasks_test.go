@@ -175,7 +175,7 @@ func sandboxRealNotifier(t *testing.T, e *testEnv) {
 // дом песочницы прогона, а не куда-то ещё.
 func TestTaskctlMoveNotifiesIntoSandboxHome(t *testing.T) {
 	e, _, _ := tasksEnv(t)
-	goalDoc(t, e, "XR-004", "# XR-004: Четвёртая\n\n## Сценарий проверки\n\nАгентский: прогнать тесты.\n")
+	goalDoc(t, e, "XR-004", agentTaskDoc)
 	runTaskctl(t, e.proj, "move", "XR-004", "check")
 
 	logPath := filepath.Join(e.home, ".devkit", "notify.log")

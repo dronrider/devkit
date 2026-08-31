@@ -151,6 +151,7 @@ a:hover{text-decoration:underline}
 .qrow{display:flex;align-items:center;gap:8px;margin-bottom:8px;font:500 11px var(--mono);color:var(--tx2)}
 .qrow em{font-style:normal;width:62px;flex:none;color:var(--tx3)}
 .qrow b{font-weight:500;min-width:30px;text-align:right}
+.qrow.expired b,.qrow.expired .meter i{opacity:.45}
 .qres{color:var(--tx3);white-space:nowrap}
 .meter{flex:1;min-width:24px;height:4px;border-radius:2px;background:var(--bg3);overflow:hidden}
 .meter i{display:block;height:100%;border-radius:2px;background:var(--acc)}

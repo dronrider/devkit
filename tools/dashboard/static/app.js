@@ -927,7 +927,8 @@ function harnessRow(h, pin) {
     one.append(el("b", "", b.used_pct + "%"));
     row.append(one);
     const when = quotaWhen(b.reset);
-    said.push(bucketWord(b.name) + " " + b.used_pct + "%" + (when ? ", сброс " + when : ""));
+    said.push(bucketWord(b.name) + " " + b.used_pct + "%" +
+      (when ? (b.expired ? ", окно сбросилось " : ", сброс ") + when : ""));
   }
   // Остатка нет вовсе: молчание тут неотличимо от нуля, и причина названа
   // словами прямо в строке.
@@ -14306,7 +14307,7 @@ function bucketWord(name) {
 }
 
 function quotaRow(b) {
-  const row = el("div", "qrow");
+  const row = el("div", "qrow" + (b.expired ? " expired" : ""));
   const name = el("em", "", bucketWord(b.name));
   name.title = b.name;
   row.append(name);
@@ -14318,8 +14319,14 @@ function quotaRow(b) {
   row.append(el("b", "", b.used_pct + "%"));
   const when = quotaWhen(b.reset);
   if (when) {
-    const res = el("span", "qres", "до " + when);
-    res.title = "сброс " + b.reset;
+    // Прошедший сброс подписывается словами: окно уже сбросилось, процент в
+    // снимке со времени до сброса, и рисовать его как живой «до даты» значило
+    // бы показывать потраченным то, что подписка уже вернула (DK-633).
+    const res = el("span", "qres" + (b.expired ? " stale" : ""),
+      (b.expired ? "сброшен " : "до ") + when);
+    res.title = b.expired
+      ? "окно сбросилось " + b.reset + ", цифра со времени до сброса и ждёт пересъёма"
+      : "сброс " + b.reset;
     row.append(res);
   }
   return row;

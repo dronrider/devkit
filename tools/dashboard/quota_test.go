@@ -603,3 +603,28 @@ func TestQuotaRefreshRunCoversAllSubscriptions(t *testing.T) {
 		}
 	}
 }
+
+// Бакет со временем сброса в прошлом помечается expired (замечание 2 приёмки
+// DK-633): окно уже сбросилось, процент в снимке со времени до сброса, и без
+// пометки экран рисовал его наравне с живым («37% до 31.08» после сброса
+// недели). По пометке строка показа подписывает дату словом «сброшен» и глушит
+// процент.
+func TestQuotaBucketExpired(t *testing.T) {
+	now := time.Date(2026, 8, 31, 16, 0, 0, 0, time.Local)
+	text := "taken = 2026-08-31T15:30\n" +
+		"week_all = 5% сброс 2026-09-07T15:00\n" +
+		"week_max = 37% сброс 2026-08-31T14:59\n"
+	h := parseQuotaSnapshot("claude-code", text, now)
+	if len(h.Buckets) != 2 {
+		t.Fatalf("бакетов %d: %+v", len(h.Buckets), h.Buckets)
+	}
+	if h.Buckets[0].Expired {
+		t.Fatalf("живой бакет помечен сброшенным: %+v", h.Buckets[0])
+	}
+	if !h.Buckets[1].Expired {
+		t.Fatalf("бакет с прошедшим сбросом не помечен: %+v", h.Buckets[1])
+	}
+	if !strings.Contains(readFile(t, "static/app.js"), "сброшен ") {
+		t.Fatal("строка показа не подписывает прошедший сброс словом «сброшен»")
+	}
+}

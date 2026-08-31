@@ -50,6 +50,12 @@ type QuotaBucket struct {
 	Name  string `json:"name"`
 	Used  int    `json:"used_pct"`
 	Reset string `json:"reset,omitempty"`
+	// Expired значит, что время сброса бакета уже прошло: окно сбросилось, а
+	// цифра в снимке со времени до сброса и живой больше не является. Такой
+	// процент экран обязан подписывать, а не рисовать наравне со свежим
+	// (замечание 2 приёмки DK-633: занятая у кеша разбивка пережила сброс
+	// недели и читалась как живые 37%).
+	Expired bool `json:"expired,omitempty"`
 }
 
 // QuotaHarness это одна подписка. Age идёт словами, а не секундами: возраст
@@ -173,6 +179,11 @@ func parseQuotaSnapshot(name, text string, now time.Time) QuotaHarness {
 		if err != nil {
 			h.Warns = append(h.Warns, fmt.Sprintf("бакет %s не разобран: %v", key, err))
 			continue
+		}
+		if b.Reset != "" {
+			if reset, err := parseQuotaTime(b.Reset); err == nil && reset.Before(now) {
+				b.Expired = true
+			}
 		}
 		h.Buckets = append(h.Buckets, b)
 	}

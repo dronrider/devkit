@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Рубеж синхронности (DK-678): PreToolUse-хук отбивает фоновый запуск там, где
+фон не доживает до отчёта.
+
+Сессия без окна (`claude -p`, ею дашборд поднимает работу с экрана) кончает ход
+финальным текстом, и харнес добивает недождавшихся фоновых детей примерно через
+десять минут после него (замер DK-136, три прогона дали десять минут и одну
+секунду). Всё, что уехало в фон, гибнет на середине: работа остаётся
+незакоммиченным диффом в дереве задачи, задача висит в работе, а провал выходит
+тихим, без ошибки и без строки в журнале. Так за один день 31 августа встали
+три сессии конвейера, DK-661 на фоновом `shipctl merge`, DK-652 на асинхронном
+субагенте и XR-285 на headless `agentctl run`. В живом окне фон законен, там
+ребёнок переживает конец хода и будит сессию уведомлением, и такой вызов рубеж
+пропускает молча.
+
+Признак фона лежит во входе инструмента: и Bash, и делегирование зовутся с
+`run_in_background: true`, и на PreToolUse это видно до запуска, поэтому отказ
+жёсткий, а не находка вдогонку. Синхронные вызовы рубеж не трогает вовсе, в том
+числе несколько разом одним сообщением: параллельность пачки держится ими.
+
+Вида сессии в событии хука нет, и считается он по окружению клиента, которое
+хук наследует:
+
+  CLAUDE_CODE_ENTRYPOINT со значением sdk-cli, sdk-ts или sdk-py
+      этими значениями клиент метит печатный режим и сессии SDK сам. `claude -p`
+      ставит sdk-cli, когда переменной нет вовсе или в ней стоит cli (разбор
+      бинаря 2.1.252, там же снят живой замер), живому окну достаётся cli или
+      claude-vscode.
+  DEVKIT_RUN_DEPTH
+      сессию подняла команда `agentctl run`, а она зовёт клиента печатным
+      режимом всегда. Переменная нужна отдельно от первой: окружение уезжает в
+      подпроцесс целиком, и headless-ребёнок живого окна донесёт до себя
+      claude-vscode родителя.
+
+Режимы:
+  check-background.py --hook [протокол]
+                          хук на PreToolUse: JSON события на stdin, смотрится
+                          tool_input.run_in_background. Разбор входа и канал
+                          ответа по имени протокола из hookio.py, голый --hook
+                          это claude-code, ответ exit 2
+  check-background.py --why
+                          чем рубеж считает эту сессию и что из этого следует
+"""
+import os
+import sys
+
+import hookio
+
+ENTRYPOINT = "CLAUDE_CODE_ENTRYPOINT"
+# Значения, которыми клиент метит печатный режим и сессии SDK. Живое окно
+# ставит cli или claude-vscode, и в этот список они не попадают.
+SDK_ENTRYPOINTS = ("sdk-cli", "sdk-ts", "sdk-py")
+RUN_DEPTH = "DEVKIT_RUN_DEPTH"
+BACKGROUND = "run_in_background"
+
+
+def headless(env):
+    """Чем сессия опознана как headless, либо пустая строка у живой. Признак
+    возвращается строкой, а не флагом: отказ называет его человеку, иначе
+    спорить с рубежом нечем и чинить ложное срабатывание не с чего."""
+    point = env.get(ENTRYPOINT, "")
+    if point in SDK_ENTRYPOINTS:
+        return "%s=%s" % (ENTRYPOINT, point)
+    depth = env.get(RUN_DEPTH, "")
+    if depth:
+        return "%s=%s, сессию подняла команда agentctl run" % (RUN_DEPTH, depth)
+    return ""
+
+
+def wants_background(tool_input):
+    """Фоновый ли это запуск. Пропущенное поле и ложь означают синхронный вызов;
+    строка сравнивается со словом на случай, если харнес однажды положит в поле
+    «true» текстом."""
+    value = tool_input.get(BACKGROUND)
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return bool(value)
+
+
+def report(tool, sign):
+    return "\n".join([
+        "фоновый запуск отбит рубежом синхронности DK-678: инструмент %s зван с "
+        "%s: true," % (tool, BACKGROUND),
+        "а сессия эта headless (%s)." % sign,
+        "Ход такой сессии кончается финальным текстом, и харнес добивает "
+        "недождавшихся фоновых детей примерно через десять минут после него: "
+        "отчёта не увидит никто, а провал выйдет тихим.",
+        "Работай синхронно. Bash зови без %s и с timeout по размеру прогона "
+        "(потолок харнеса 600000 мс, прогон длиннее дробится на куски), "
+        "субагента обычным синхронным вызовом." % BACKGROUND,
+        "Параллельность рубеж не трогает: синхронные вызовы, посланные одним "
+        "сообщением, идут разом.",
+    ]) + "\n"
+
+
+def run_hook(protocol):
+    try:
+        event = hookio.load()
+    except hookio.BadEvent:
+        return 0
+    ti = event.get("tool_input")
+    if not isinstance(ti, dict):
+        return 0
+    if not wants_background(ti):
+        return 0
+    sign = headless(os.environ)
+    if not sign:
+        return 0
+    tool = hookio.text_of(event.get("tool_name")) or "без имени"
+    return hookio.reply(protocol).found(report(tool, sign))
+
+
+def run_why(env, out):
+    """Вид сессии словами. Рубеж молчит, когда пропускает, и человеку иначе
+    нечем отличить живое окно от headless без фонового вызова наугад."""
+    sign = headless(env)
+    if sign:
+        out.write("сессия headless (%s): фоновый запуск отбивается, "
+                  "работать надо синхронно\n" % sign)
+        return 0
+    out.write("сессия живая (%s=%s): фоновый запуск проходит, ребёнок "
+              "переживает конец хода\n" % (ENTRYPOINT, env.get(ENTRYPOINT) or "пусто"))
+    return 0
+
+
+def main(argv):
+    if argv[:1] == ["--hook"]:
+        try:
+            return run_hook(hookio.protocol(argv[1:]))
+        except hookio.Unknown as e:
+            sys.stderr.write("check-background: %s\n" % e)
+            return 2
+    if argv[:1] == ["--why"]:
+        return run_why(os.environ, sys.stdout)
+    sys.stderr.write(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

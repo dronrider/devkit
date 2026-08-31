@@ -383,3 +383,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-666 | Ярус mini второй подписки зовёт glm-5.3-flash вместо ушедшей glm-4.7 | task | P2 | 2026-08-31 | [tasks/archive/2026/DK-666.md](tasks/archive/2026/DK-666.md) |
 | DK-633 | Снимок квоты обеих подписок обновляется сам, а не застывает на часы [приёмка: mixed] | bug | P1 | 2026-08-31 | [tasks/archive/2026/DK-633.md](tasks/archive/2026/DK-633.md) |
 | DK-649 | Полный прогон тестов dashboard виснет на TestChatStopDropEndsLiveSession | bug | P0 | 2026-08-31 | [tasks/archive/2026/DK-649.md](tasks/archive/2026/DK-649.md) |
+| DK-652 | Вопрос агента в чате задачи: виджет с вариантами вместо подсказки [приёмка: mixed] | bug | P1 | 2026-08-31 | [tasks/archive/2026/DK-652.md](tasks/archive/2026/DK-652.md), `a113c76c`, `d2c768b9`, `b4138006`, `ed320a59`, `05c8f890`, `eac18473` |

@@ -459,3 +459,13 @@ func TestCloseVerifyGateReadsPendingStage(t *testing.T) {
 		t.Fatalf("свежий чужой прогон обязан открывать ворота: %v", err)
 	}
 }
+
+func TestCloseVerifyGateCaseInsensitive(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := setup(t)
+	stagedDoc(t, root, "XR-005", devStageLine("opus"), verifyStageLine("Opus"))
+	err := closeVerifyGate(root, "XR-005")
+	if err == nil || !strings.Contains(err.Error(), "Opus") {
+		t.Fatalf("«Opus» против «opus» прошёл за чужой прогон: %v", err)
+	}
+}

@@ -174,7 +174,9 @@ func closeVerifyGate(root, id string) error {
 	if !ok {
 		return nil
 	}
-	if runner == dev {
+	// Сверка без регистра: --by принимает любой текст, и «Opus» против «opus»
+	// в точной сверке проходил бы за чужой прогон.
+	if strings.EqualFold(runner, dev) {
 		return fmt.Errorf("%s: сценарий прогнал %s, он же исполнитель последнего этапа «разработка»: сценарий прогоняет не автор правки, прогон другой моделью отмечается «agentctl stage %s %s --by <модель>»",
 			id, runner, id, stage.Verify)
 	}

@@ -34,6 +34,10 @@ func fakeKit(t *testing.T) string {
 	// не сними её имя, и боковой журнал делегирования поехал бы в настоящий
 	// транскрипт настоящего разговора.
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	// Вид сессии тоже снимается: тесты гоняет и живое окно, и делегат в
+	// печатном режиме, а предупреждение про раздачу без окна проверяется
+	// отдельно и от вида запустившей сессии зависеть не должно.
+	t.Setenv(entrypointEnv, "cli")
 	agents := filepath.Join(home, "kit", "agents")
 	if err := os.MkdirAll(agents, 0o755); err != nil {
 		t.Fatal(err)
@@ -420,5 +424,74 @@ func TestRunBadWorkdir(t *testing.T) {
 	_, err := cmdRun(root, "T-001", false, roleExec, "", filepath.Join(root, "нет-такого"), &out, &errw)
 	if err == nil || !strings.Contains(err.Error(), "рабочей директории") {
 		t.Fatalf("жду отказ про рабочую директорию, вышло: %v", err)
+	}
+}
+
+// TestRunHeadlessWarning: раздача из сессии без окна получает предупреждение, а
+// из живого окна нет. Подпроцесс живёт столько, сколько живёт зовущий, и в
+// сессии без окна длинный делегат обрывается на середине молча.
+func TestRunHeadlessWarning(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "echocli", echoProfile)
+	writeMachine(t, kit, "enabled = [\"echocli\"]\ndefault = \"echocli\"\n\n[echocli]\nmini = \"cheap\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
+	root := writeBoard(t)
+	work := realPath(t, t.TempDir())
+	for _, point := range sdkEntrypoints {
+		t.Setenv(entrypointEnv, point)
+		code, out := runOut(t, root, "T-001", roleExec, work)
+		if code != 0 {
+			t.Fatalf("код возврата %d, жду 0: %s", code, out)
+		}
+		for _, want := range []string{"делегирование из сессии без окна", entrypointEnv + "=" + point, "T-001"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("при %s=%s в выводе нет %q:\n%s", entrypointEnv, point, want, out)
+			}
+		}
+	}
+	for _, point := range []string{"cli", "claude-vscode", ""} {
+		t.Setenv(entrypointEnv, point)
+		if _, out := runOut(t, root, "T-001", roleExec, work); strings.Contains(out, "сессии без окна") {
+			t.Fatalf("при %s=%q фон законен, предупреждать не о чем:\n%s", entrypointEnv, point, out)
+		}
+	}
+}
+
+// TestRunReportsReturn: конец делегата называется строкой. Из живого окна
+// раздача уходит фоновым вызовом, и уведомление о его конце само по себе не
+// говорит ни кода выхода, ни того, чья подписка заплатила.
+func TestRunReportsReturn(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "echocli", echoProfile)
+	writeMachine(t, kit, "enabled = [\"echocli\"]\ndefault = \"echocli\"\n\n[echocli]\nmini = \"cheap\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
+	root := writeBoard(t)
+	code, out := runOut(t, root, "T-001", roleExec, realPath(t, t.TempDir()))
+	if code != 0 {
+		t.Fatalf("код возврата %d, жду 0: %s", code, out)
+	}
+	for _, want := range []string{"делегат вернулся: задача T-001", "харнес echocli", "код выхода 0"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("в выводе нет %q:\n%s", want, out)
+		}
+	}
+	// Провал называется тем же местом: молчание после ненулевого кода
+	// неотличимо от сделанной работы.
+	t.Setenv("EXIT_CODE", "7")
+	if _, out := runOut(t, root, "T-001", roleExec, realPath(t, t.TempDir())); !strings.Contains(out, "код выхода 7") {
+		t.Fatalf("код выхода делегата не назван:\n%s", out)
+	}
+}
+
+// TestDelegateReturnQuota: у харнеса с объявленной квотой строка возврата
+// называет и снимок, по которому виден прирост расхода. Без объявления
+// называть нечего, и хвоста нет.
+func TestDelegateReturnQuota(t *testing.T) {
+	got := delegateReturn("T-001", "glm-code", 0, &quotaSpec{Path: "/home/me/.devkit/quota/glm-code.local"})
+	for _, want := range []string{"подпиской glm-code", "/home/me/.devkit/quota/glm-code.local"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("в строке возврата нет %q: %s", want, got)
+		}
+	}
+	if strings.Contains(delegateReturn("T-001", "echocli", 1, nil), "снимок") {
+		t.Fatalf("харнес без объявления квоты снимка не имеет: %s", delegateReturn("T-001", "echocli", 1, nil))
 	}
 }

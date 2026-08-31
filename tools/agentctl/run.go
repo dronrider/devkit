@@ -21,6 +21,11 @@ import (
 const (
 	harnessEnv  = "DEVKIT_HARNESS"
 	runDepthEnv = "DEVKIT_RUN_DEPTH"
+	// Вид сессии клиента: печатный режим и сессии SDK клиент метит сам, живому
+	// окну достаётся cli или claude-vscode. Тем же признаком считает вид рубеж
+	// синхронности (hooks/check-background.py), и второго определения
+	// «headless» тут не заводится.
+	entrypointEnv = "CLAUDE_CODE_ENTRYPOINT"
 	// Код «делегировать нечем». Ненулевой сознательно: скрипт поверх run не
 	// должен принять отказ за сделанную работу. Тройка, а не единица, чтобы
 	// отличаться от ошибок самого run (нет задачи, битый профиль, вложенный
@@ -43,6 +48,37 @@ func runDepthRefusal(value, id string) error {
 		return nil
 	}
 	return fmt.Errorf("вложенное делегирование запрещено: эту сессию подняли через run (%s=%s), и делегировать дальше нельзя, иначе выйдет воронка сессий; задачу %s исполняй сам", runDepthEnv, v, id)
+}
+
+// sdkEntrypoints это значения, которыми клиент метит печатный режим и сессии
+// SDK. Живое окно ставит cli или claude-vscode, и сюда они не попадают.
+var sdkEntrypoints = []string{"sdk-cli", "sdk-ts", "sdk-py"}
+
+// headlessWarning предупреждает про раздачу из сессии без окна. Подпроцесс
+// живёт столько, сколько живёт зовущий, а ход сессии без окна кончается
+// финальным текстом: делегат, работающий дольше потолка хода, обрывается на
+// середине, и провал выходит тихим. Отказом это не делается: короткая ступень
+// из такой сессии доезжает, и запрет отнял бы работающий случай. Пустая строка
+// значит живое окно, там ребёнок конец хода переживает.
+func headlessWarning(point, id string) string {
+	for _, p := range sdkEntrypoints {
+		if point != p {
+			continue
+		}
+		return fmt.Sprintf("делегирование из сессии без окна (%s=%s): ход зовущего кончается финальным текстом, и подпроцесс длиннее потолка хода обрывается на середине, а работа остаётся незакоммиченной в дереве задачи; задачу %s раздают из живого окна, где делегат конец хода переживает", entrypointEnv, point, id)
+	}
+	return ""
+}
+
+// delegateReturn это возврат делегата словами. Из живого окна раздача уходит
+// фоновым вызовом, и уведомление о его конце говорит только, что команда
+// кончилась. Чем кончилась и чья подписка за неё заплатила, видно этой строкой.
+func delegateReturn(id, harness string, code int, q *quotaSpec) string {
+	s := fmt.Sprintf("делегат вернулся: задача %s, харнес %s, код выхода %d", id, harness, code)
+	if q == nil {
+		return s
+	}
+	return s + fmt.Sprintf("; расход посчитан подпиской %s, снимок %s", harness, q.Path)
 }
 
 func roleWord(role string) string {
@@ -347,6 +383,9 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 		tail = ", окружение: " + strings.Join(envNames(pairs), ", ")
 	}
 	fmt.Fprintf(out, "делегирование: cli (харнес %s, профиль %s), подпроцесс %s в %s%s\n", who, prof.Path, argv[0], workdir, tail)
+	if w := headlessWarning(os.Getenv(entrypointEnv), id); w != "" {
+		fmt.Fprintln(errw, w)
+	}
 	if side != nil {
 		fmt.Fprintf(out, "ход работы едет в ленту разговора %s, боковой журнал %s\n", os.Getenv(parentSessionEnv), side.path)
 	}
@@ -373,7 +412,12 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 			side.finish(timeNow())
 		}()
 	}
-	return runChild(cmd, errw, "команду объявляет [delegate] command профиля "+prof.Path)
+	code, err := runChild(cmd, errw, "команду объявляет [delegate] command профиля "+prof.Path)
+	if err != nil {
+		return 0, err
+	}
+	fmt.Fprintln(out, delegateReturn(id, who, code, quotaSpecOf(hc.L, who)))
+	return code, nil
 }
 
 // hasMark говорит, назван ли плейсхолдер в шаблоне команды. Подстановка идёт

@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/dronrider/devkit/internal/frame"
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 const usageText = `agentctl: выбор исполнителя под задачу по метаданным доски (RULES.board.md)
@@ -46,6 +48,14 @@ const usageText = `agentctl: выбор исполнителя под задач
                           файла цели. Расход считается суммой пошаговых дельт
                           между снимками квоты из раздела «Журнал» и текущим
                           снимком; --record дописывает текущий снимок в «Журнал»
+  lap --goal <файл>       строка витка в «Журнал» файла цели: начало берётся из
+      --note <текст>      последнего снимка квоты (его кладёт гейт первым шагом
+      --marker <маркер>   витка), конец это момент вызова, --start ставит начало
+      [--start <время>]   руками. Маркер стопа (done, over, wait-human, stuck)
+                          добавляет к строке время цикла и число витков
+  tally --goal <файл>     сводка итога: куда ушло время задач цели. Состав
+                          берётся из раздела «Задачи цели», времена из «Хода
+                          работы» файлов задач, разбивка идёт по видам этапов
   quota [refresh]         снимок остатка лимитов: без аргумента печатает
        [--harness <имя>]  разобранный ~/.devkit/quota/<харнес>.local активного
        [--if-stale]       харнеса (бакеты, возраст, pace,
@@ -255,6 +265,44 @@ func main() {
 		// заметить и тогда, когда сам гейт кончился ошибкой.
 		watchRegister(root, *goal, timeNow())
 		msg, err = cmdSpend(root, *goal, *record, timeNow())
+	case "lap":
+		fs := flag.NewFlagSet("lap", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		goal := fs.String("goal", "", "файл цели с разделом «Журнал»")
+		note := fs.String("note", "", "что виток сделал")
+		marker := fs.String("marker", "", "маркер выхода витка")
+		from := fs.String("start", "", "начало витка, 2006-01-02 15:04; по умолчанию момент последнего снимка квоты")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 0, 0, "lap --goal <файл цели> --note <текст> --marker <маркер> [--start <время>]")
+		if *goal == "" || *note == "" || *marker == "" {
+			fail(fmt.Errorf("жду: lap --goal <файл цели> --note <текст> --marker <маркер>"))
+		}
+		var start time.Time
+		if *from != "" {
+			start, err = time.ParseInLocation(stage.LineStamp, *from, time.Local)
+			if err != nil {
+				fail(fmt.Errorf("начало витка %q не разобрано, жду «2006-01-02 15:04»", *from))
+			}
+		}
+		root, rerr := findRoot(*dir)
+		if rerr != nil {
+			fail(rerr)
+		}
+		msg, err = cmdLap(root, *goal, *note, *marker, start, timeNow())
+	case "tally":
+		fs := flag.NewFlagSet("tally", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		goal := fs.String("goal", "", "файл цели с разделом «Задачи цели»")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 0, 0, "tally --goal <файл цели>")
+		if *goal == "" {
+			fail(fmt.Errorf("жду: tally --goal <файл цели>"))
+		}
+		root, rerr := findRoot(*dir)
+		if rerr != nil {
+			fail(rerr)
+		}
+		msg, err = cmdTally(root, *goal)
 	case "quota":
 		// Корень с доской команде не нужен: снимок лежит на уровне машины, а не
 		// проекта. Профиль харнеса при этом нужен: он говорит, чем снимать,

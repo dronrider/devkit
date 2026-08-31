@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // goalFile кладёт файл цели в docs/tasks корня доски и возвращает путь.
@@ -611,5 +613,270 @@ func TestCmdPickGoalCapRecord(t *testing.T) {
 	}
 	if !strings.Contains(text, "маппинг opus, потолок цели: base, pro -> base") {
 		t.Fatalf("в записи нет исходного маппинга и причины среза:\n%s", text)
+	}
+}
+
+// lapAt пишет момент так, как его читает строка витка.
+func lapAt(t time.Time) string { return t.Format("2006-01-02 15:04") }
+
+// TestCmdLapTakesStartFromSnapshot: начало витка команда берёт из последнего
+// снимка квоты, его кладёт гейт первым шагом витка, а конец это момент вызова.
+func TestCmdLapTakesStartFromSnapshot(t *testing.T) {
+	root := writeBoard(t)
+	start := testNow.Add(-90 * time.Minute)
+	goal := goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n",
+		"- снимок "+at(testNow.Add(-5*time.Hour))+": week_all 10%\n- снимок "+at(start)+": week_all 12%\n"))
+	out, err := cmdLap(root, goal, "нарезка: 4 задачи DK-101..DK-104", goalGoOn, time.Time{}, testNow)
+	if err != nil {
+		t.Fatalf("lap: %v", err)
+	}
+	line := "- " + lapAt(start) + "-" + testNow.Format("15:04") + ", нарезка: 4 задачи DK-101..DK-104; continue"
+	if !strings.Contains(out, line) || !strings.Contains(out, "виток занял 1ч 30м") {
+		t.Fatalf("вывод:\n%s", out)
+	}
+	data, err := os.ReadFile(goal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	journal, total := strings.Index(text, goalJournalSection), strings.Index(text, "## Итог")
+	if at := strings.Index(text, line); at < journal || at > total {
+		t.Fatalf("строка витка не в «Журнале»:\n%s", text)
+	}
+	if !strings.Contains(text, "## Итог\n\nПока пусто.\n") {
+		t.Fatalf("соседний раздел задет:\n%s", text)
+	}
+}
+
+// TestCmdLapStopCarriesCycle: стоп несёт длительность цикла и число витков,
+// иначе на вопрос «куда ушёл день» отвечать нечем.
+func TestCmdLapStopCarriesCycle(t *testing.T) {
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n",
+		"- снимок "+at(testNow.Add(-4*time.Hour))+": week_all 10%\n"+
+			"- "+lapAt(testNow.Add(-4*time.Hour))+"-"+testNow.Add(-3*time.Hour).Format("15:04")+", нарезка; continue\n"+
+			"- снимок "+at(testNow.Add(-time.Hour))+": week_all 18%\n"))
+	out, err := cmdLap(root, goal, "T-101 закрыта, выкат проверен", "done", time.Time{}, testNow)
+	if err != nil {
+		t.Fatalf("lap done: %v", err)
+	}
+	want := "- " + lapAt(testNow.Add(-time.Hour)) + "-12:00, T-101 закрыта, выкат проверен, цикл 4ч 00м, витков 2; done"
+	if !strings.Contains(out, want) {
+		t.Fatalf("строка стопа:\n%s", out)
+	}
+	for _, marker := range []string{"over", "wait-human", "stuck"} {
+		out, err := cmdLap(root, goal, "стоп", marker, testNow.Add(-30*time.Minute), testNow)
+		if err != nil {
+			t.Fatalf("lap %s: %v", marker, err)
+		}
+		if !strings.Contains(out, "цикл 4ч 00м") || !strings.HasSuffix(strings.SplitN(out, "\n", 2)[0], "; "+marker) {
+			t.Fatalf("маркер %s:\n%s", marker, out)
+		}
+	}
+}
+
+// TestCmdLapWithoutSnapshot: гейт снимка не записал, значит начала витка не
+// видно, и команда говорит это вслух, а не выдаёт момент вызова за начало.
+func TestCmdLapWithoutSnapshot(t *testing.T) {
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+	out, err := cmdLap(root, goal, "виток без гейта", goalGoOn, time.Time{}, testNow)
+	if err != nil {
+		t.Fatalf("lap: %v", err)
+	}
+	if !strings.Contains(out, "- "+lapAt(testNow)+", виток без гейта; continue") ||
+		!strings.Contains(out, "начала витка не видно") {
+		t.Fatalf("вывод:\n%s", out)
+	}
+}
+
+// TestCmdLapRefusals: пустой текст и незнакомый маркер это отказ, а не строка
+// журнала, которую потом некому разобрать.
+func TestCmdLapRefusals(t *testing.T) {
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+	if _, err := cmdLap(root, goal, "  .;  ", goalGoOn, time.Time{}, testNow); err == nil ||
+		!strings.Contains(err.Error(), "жду --note") {
+		t.Fatalf("пустой текст витка: %v", err)
+	}
+	if _, err := cmdLap(root, goal, "виток", "готово", time.Time{}, testNow); err == nil ||
+		!strings.Contains(err.Error(), "неизвестный маркер") {
+		t.Fatalf("чужой маркер: %v", err)
+	}
+	if _, err := cmdLap(root, "docs/tasks/T-999.md", "виток", goalGoOn, time.Time{}, testNow); err == nil ||
+		!strings.Contains(err.Error(), "файла цели нет") {
+		t.Fatalf("отсутствующий файл цели: %v", err)
+	}
+	data, err := os.ReadFile(goal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "виток") {
+		t.Fatalf("отказ всё же записал строку:\n%s", data)
+	}
+}
+
+// TestCmdLapCrossesMidnight: виток через полночь получает конец с датой, иначе
+// строка читалась бы как виток отрицательной длины.
+func TestCmdLapCrossesMidnight(t *testing.T) {
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+	start := time.Date(2026, 7, 30, 23, 30, 0, 0, time.Local)
+	end := start.Add(100 * time.Minute)
+	out, err := cmdLap(root, goal, "ночная пачка", goalGoOn, start, end)
+	if err != nil {
+		t.Fatalf("lap: %v", err)
+	}
+	if !strings.Contains(out, "- 2026-07-30 23:30-2026-07-31 01:10, ночная пачка; continue") ||
+		!strings.Contains(out, "виток занял 1ч 40м") {
+		t.Fatalf("вывод:\n%s", out)
+	}
+}
+
+// TestCmdSpendReadsJournalWithLaps: гейт бюджета на файле со строками витков
+// считает расход по тем же снимкам, что и раньше, и на новую строку не ругается.
+func TestCmdSpendReadsJournalWithLaps(t *testing.T) {
+	quota := isolateQuota(t)
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n",
+		"- снимок "+at(testNow.Add(-4*time.Hour))+": week_all 10%\n"+
+			"- "+lapAt(testNow.Add(-4*time.Hour))+"-11:00, нарезка; continue\n"+
+			"- "+lapAt(testNow.Add(-time.Hour))+"-12:00, T-101 закрыта, цикл 4ч 00м, витков 2; done\n"))
+	writeSnapshot(t, quota, testNow.Add(-freshAge), bucketAt("week_all", 20, halfWindow))
+	out, err := cmdSpend(root, goal, false, testNow)
+	if err != nil {
+		t.Fatalf("spend: %v", err)
+	}
+	if !strings.Contains(out, "gate: ok") || !strings.Contains(out, "потрачено 10 из 25") {
+		t.Fatalf("гейт сбился на строках витков:\n%s", out)
+	}
+	if strings.Contains(out, "не разобрана") {
+		t.Fatalf("строка витка принята за битый снимок:\n%s", out)
+	}
+}
+
+// taskFile кладёт файл задачи с разделом «Ход работы» рядом с файлом цели.
+func taskFile(t *testing.T, root, id, stages string) {
+	t.Helper()
+	text := "# " + id + ": проба\n\n## Что происходит\n\nТекст.\n\n## Ход работы\n\n" + stages + "\n## Сценарий проверки\n\nАгентский.\n"
+	goalFile(t, root, id, text)
+}
+
+// TestCmdTallyAddsUpStagesOfGoalTasks: сводка итога складывает время задач цели
+// и называет разбивку по видам этапов.
+func TestCmdTallyAddsUpStagesOfGoalTasks(t *testing.T) {
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100",
+		"# T-100: Цель\n\n## Цель\n\nТекст.\n\n## Задачи цели\n\n"+
+			"- кандидат 1, T-101 (task, M). Первая.\n- кандидат 2, T-102 (task, S). Вторая.\n"+
+			"- кандидат 3, T-103 (task, S). Третья, файла ещё нет.\n- кандидат 4, T-104 (task, S). Четвёртая.\n\n"+
+			"## Журнал\n\n## Итог\n\nПока пусто.\n")
+	taskFile(t, root, "T-101", "- Разработка: opus/medium по вердикту pick, 2026-07-30 09:00-11:00.\n"+
+		"- Ревью: sonnet/medium по вердикту pick, 2026-07-30 11:00-11:30.\n")
+	taskFile(t, root, "T-102", "- Разработка: opus/high по вердикту pick, 2026-07-30 12:00-12:45.\n"+
+		"- Снаружи: проверка на проде, 2026-07-30 12:45-13:00.\n")
+	taskFile(t, root, "T-104", "")
+	out, err := cmdTally(root, goal)
+	if err != nil {
+		t.Fatalf("tally: %v", err)
+	}
+	for _, want := range []string{
+		"время задач цели: всего 3ч 30м, этапов 4, задач 4",
+		"- разработка: 2ч 45м, этапов 2",
+		"- ревью: 30м, этапов 1",
+		"- снаружи: 15м, этапов 1",
+		"- уточнение: 0м, этапов 0",
+		"- дольше прочих: T-101 2ч 30м, T-102 1ч 00м",
+		"- без записей «Хода работы»: T-104",
+		"- файла задачи нет: T-103",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("в сводке нет %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestCmdTallyFollowsKindsDictionary: строк разбивки ровно столько, сколько
+// видов в словаре stage, и перечня видов у сводки своего нет.
+func TestCmdTallyFollowsKindsDictionary(t *testing.T) {
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100",
+		"# T-100: Цель\n\n## Задачи цели\n\n- кандидат 1, T-101 (task, S).\n\n## Итог\n\n")
+	taskFile(t, root, "T-101", "- Разработка: проба, 2026-07-30 09:00-10:00.\n")
+	out, err := cmdTally(root, goal)
+	if err != nil {
+		t.Fatalf("tally: %v", err)
+	}
+	for _, k := range stage.Kinds {
+		if !strings.Contains(out, "- "+k+": ") {
+			t.Fatalf("вид %q в сводке не назван:\n%s", k, out)
+		}
+	}
+	kinds := 0
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.HasPrefix(ln, "- ") && strings.Contains(ln, ", этапов ") {
+			kinds++
+		}
+	}
+	if kinds != len(stage.Kinds) {
+		t.Fatalf("строк разбивки %d при %d видах словаря:\n%s", kinds, len(stage.Kinds), out)
+	}
+}
+
+// TestCmdTallyWithoutTasks: у цели, вставшей до нарезки, складывать нечего, и
+// это ответ команды, а не её поломка.
+func TestCmdTallyWithoutTasks(t *testing.T) {
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100", "# T-100: Цель\n\n## Задачи цели\n\nЗаводит нарезка первым витком.\n\n## Итог\n\n")
+	out, err := cmdTally(root, goal)
+	if err != nil {
+		t.Fatalf("tally: %v", err)
+	}
+	if !strings.Contains(out, "не называет ни одной задачи") {
+		t.Fatalf("вывод:\n%s", out)
+	}
+}
+
+// TestLapTallyCLI: обе команды зарегистрированы в main, путь цели берётся
+// относительно корня доски, и обе названы в общей справке.
+func TestLapTallyCLI(t *testing.T) {
+	home := t.TempDir()
+	root := writeBoard(t)
+	goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+	env := append(os.Environ(), "HOME="+home, "DEVKIT_HOME="+repoRoot(t), "DEVKIT_HARNESS=")
+
+	cmd := exec.Command("go", "run", ".", "-C", root, "lap", "--goal", "docs/tasks/T-100.md",
+		"--note", "проба витка", "--marker", "continue", "--start", "2026-07-30 09:00")
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("lap: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "- 2026-07-30 09:00-") {
+		t.Fatalf("вывод lap:\n%s", out)
+	}
+
+	cmd = exec.Command("go", "run", ".", "-C", root, "lap", "--goal", "docs/tasks/T-100.md", "--marker", "continue")
+	cmd.Env = env
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("lap без --note должен отказывать:\n%s", out)
+	}
+
+	cmd = exec.Command("go", "run", ".", "-C", root, "tally", "--goal", "docs/tasks/T-100.md")
+	cmd.Env = env
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("tally: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "время задач цели") {
+		t.Fatalf("вывод tally:\n%s", out)
+	}
+
+	out, err = exec.Command("go", "run", ".", "--help").CombinedOutput()
+	if err != nil {
+		t.Fatalf("справка: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "lap --goal") || !strings.Contains(string(out), "tally --goal") {
+		t.Fatalf("в общей справке нет новых команд:\n%s", out)
 	}
 }

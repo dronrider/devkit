@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -250,6 +251,279 @@ func recordGoalSnap(path string, s goalSnap) error {
 	}
 	line := fmt.Sprintf("- %s%s: %s", goalSnapPrefix, s.Taken.Format(quotaTimeLayout), strings.Join(parts, ", "))
 	return os.WriteFile(path, []byte(stage.InsertIntoSection(string(data), goalJournalSection, line)), 0o644)
+}
+
+// Разделы файла цели, откуда сводка берёт состав работы, и её собственный
+// заголовок в файле.
+const (
+	goalTasksSection = "## Задачи цели"
+	goalStagesLabel  = "## Ход работы"
+)
+
+// Маркеры выхода витка. Список тот же, что у скилла goal-loop и у оболочки
+// goal-run: строку витка пишет команда, и опечатка в маркере оставила бы
+// журнал без признака, которым цикл кончился.
+const goalGoOn = "continue"
+
+var goalStops = []string{"done", "over", "wait-human", "stuck"}
+
+// goalLapRe ловит начало витка в уже записанной строке журнала: сводка стопа
+// считает время цикла от первого витка, а снимков квоты в журнале может не
+// быть вовсе.
+var goalLapRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})`)
+
+// goalTaskRe ловит ID задачи в разделе «Задачи цели». Раздел это проза с
+// пунктами кандидатов, а не машинный список, и ID в нём лежат по тексту.
+var goalTaskRe = regexp.MustCompile(`\b[A-Z][A-Z0-9]*-\d+\b`)
+
+// humanDur пишет длительность так, как её читают в журнале: минуты до часа,
+// дальше часы с минутами. Секунд нет нигде, ими не меряется ни виток, ни этап.
+func humanDur(d time.Duration) string {
+	m := int(d.Round(time.Minute) / time.Minute)
+	if m < 0 {
+		m = 0
+	}
+	if m < 60 {
+		return fmt.Sprintf("%dм", m)
+	}
+	return fmt.Sprintf("%dч %02dм", m/60, m%60)
+}
+
+// goalLapNote чистит текст витка до одной строки: перевод строки развалил бы
+// пункт журнала, а хвостовая точка с запятой спорила бы с маркером.
+func goalLapNote(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	return strings.TrimRight(strings.TrimSpace(s), ".;, ")
+}
+
+// goalLapSpan собирает часы витка. День один, значит конец пишется часами, а
+// перешагнувший полночь виток получает конец с датой: иначе строка читалась бы
+// как виток длиной минус двадцать часов.
+func goalLapSpan(start, end time.Time) string {
+	head := start.Format(stage.LineStamp)
+	if end.Format(stage.LineStamp) == head {
+		return head
+	}
+	if start.Format("2006-01-02") == end.Format("2006-01-02") {
+		return head + "-" + end.Format("15:04")
+	}
+	return head + "-" + end.Format(stage.LineStamp)
+}
+
+// goalLaps считает записанные витки и находит начало первого. Виток это
+// содержательная строка журнала, снимки квоты витками не считаются, тем же
+// правилом их отличает детектор воронки в оболочке goal-run.
+func goalLaps(lines []string) (int, time.Time) {
+	n := 0
+	var first time.Time
+	for _, ln := range lines {
+		t := goalLine(ln)
+		if t == "" || strings.HasPrefix(t, goalSnapPrefix) {
+			continue
+		}
+		n++
+		m := goalLapRe.FindStringSubmatch(t)
+		if m == nil {
+			continue
+		}
+		at, err := time.ParseInLocation(stage.LineStamp, m[1]+" "+m[2], time.Local)
+		if err != nil || (!first.IsZero() && !at.Before(first)) {
+			continue
+		}
+		first = at
+	}
+	return n, first
+}
+
+// goalCycleStart отвечает, когда начался цикл: раньше первого витка снимка
+// быть не может, гейт стоит первым шагом, но журнал правят и руками, поэтому
+// берётся самый ранний из двух известных моментов.
+func goalCycleStart(snaps []goalSnap, firstLap time.Time) time.Time {
+	start := firstLap
+	for _, s := range snaps {
+		if start.IsZero() || s.Taken.Before(start) {
+			start = s.Taken
+		}
+	}
+	return start
+}
+
+// cmdLap дописывает строку витка в «Журнал» файла цели. Времена ставит
+// команда, а не рука пишущего: до этого в журнале была одна машинная метка,
+// момент снимка квоты, и на вопрос «куда ушёл день» журнал не отвечал. Начало
+// витка берётся из последнего снимка, его кладёт гейт первым шагом витка;
+// явное --start нужен там, где гейт не звали.
+func cmdLap(root, goalPath, note, marker string, start, now time.Time) (string, error) {
+	note = goalLapNote(note)
+	if note == "" {
+		return "", fmt.Errorf("жду --note с тем, что виток сделал: пустая строка журнала неотличима от штатной работы")
+	}
+	stop := false
+	for _, m := range goalStops {
+		if marker == m {
+			stop = true
+		}
+	}
+	if !stop && marker != goalGoOn {
+		return "", fmt.Errorf("неизвестный маркер %q, жду один из: %s, %s", marker, goalGoOn, strings.Join(goalStops, ", "))
+	}
+	path, err := goalPathOf(root, goalPath)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	journal := goalSection(string(data), goalJournalSection)
+	snaps, _ := parseGoalJournal(journal)
+	laps, firstLap := goalLaps(journal)
+
+	var warn string
+	if start.IsZero() {
+		if len(snaps) > 0 {
+			start = snaps[len(snaps)-1].Taken
+		} else {
+			start, warn = now, "начала витка не видно: гейт не записал снимок, и виток встал в журнал одним моментом"
+		}
+	}
+	if start.After(now) {
+		start = now
+	}
+	line := "- " + goalLapSpan(start, now) + ", " + note
+	if stop {
+		cycle := goalCycleStart(snaps, firstLap)
+		if cycle.IsZero() || cycle.After(start) {
+			cycle = start
+		}
+		line += fmt.Sprintf(", цикл %s, витков %d", humanDur(now.Sub(cycle)), laps+1)
+	}
+	line += "; " + marker
+	if err := os.WriteFile(path, []byte(stage.InsertIntoSection(string(data), goalJournalSection, line)), 0o644); err != nil {
+		return "", err
+	}
+	out := line + "\nвиток занял " + humanDur(now.Sub(start))
+	if warn != "" {
+		out += "; " + warn
+	}
+	return out, nil
+}
+
+// goalTaskIDs собирает состав цели из раздела «Задачи цели». Порядок
+// сохраняется, повторы отбрасываются, а ID самой цели пропускается: раздел
+// ссылается и на неё.
+func goalTaskIDs(lines []string, self string) []string {
+	var out []string
+	seen := map[string]bool{self: true}
+	for _, ln := range lines {
+		for _, id := range goalTaskRe.FindAllString(goalLine(ln), -1) {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// goalTaskSpan складывает время этапов одной задачи по видам. Виды берутся
+// словарём stage.Kinds, а не перечнем: словарь растёт, и сводка обязана
+// показывать новый вид сама.
+func goalTaskSpan(dir, id string) (map[string]time.Duration, map[string]int, bool) {
+	data, err := os.ReadFile(filepath.Join(dir, id+".md"))
+	if err != nil {
+		return nil, nil, false
+	}
+	spans, counts := map[string]time.Duration{}, map[string]int{}
+	for _, ln := range goalSection(string(data), goalStagesLabel) {
+		s, d, ok := stage.ParseLine(ln)
+		if !ok {
+			continue
+		}
+		spans[s.Kind] += d
+		counts[s.Kind]++
+	}
+	return spans, counts, true
+}
+
+// cmdTally собирает сводку итога цели: куда ушло время задач цели, с разбивкой
+// по видам деятельности и по самим задачам. Источник это разделы «Ход работы»
+// файлов задач, куда этапы уезжают пакетом при смене статуса: живая запись
+// stage к моменту итога уже стёрта, а файл задачи остаётся.
+func cmdTally(root, goalPath string) (string, error) {
+	path, err := goalPathOf(root, goalPath)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Dir(path)
+	self := strings.TrimSuffix(filepath.Base(path), ".md")
+	ids := goalTaskIDs(goalSection(string(data), goalTasksSection), self)
+	if len(ids) == 0 {
+		return fmt.Sprintf("время задач цели: раздел «Задачи цели» файла %s не называет ни одной задачи, складывать нечего", path), nil
+	}
+
+	total := time.Duration(0)
+	stages := 0
+	spans, counts := map[string]time.Duration{}, map[string]int{}
+	byTask := map[string]time.Duration{}
+	var lost, empty []string
+	for _, id := range ids {
+		ts, tc, ok := goalTaskSpan(dir, id)
+		if !ok {
+			lost = append(lost, id)
+			continue
+		}
+		task := time.Duration(0)
+		for _, k := range stage.Kinds {
+			spans[k] += ts[k]
+			counts[k] += tc[k]
+			task += ts[k]
+			stages += tc[k]
+		}
+		if len(tc) == 0 {
+			empty = append(empty, id)
+			continue
+		}
+		byTask[id] = task
+		total += task
+	}
+
+	out := []string{fmt.Sprintf("время задач цели: всего %s, этапов %d, задач %d", humanDur(total), stages, len(ids))}
+	for _, k := range stage.Kinds {
+		out = append(out, fmt.Sprintf("- %s: %s, этапов %d", k, humanDur(spans[k]), counts[k]))
+	}
+	if len(byTask) > 0 {
+		names := make([]string, 0, len(byTask))
+		for id := range byTask {
+			names = append(names, id)
+		}
+		sort.Slice(names, func(i, j int) bool {
+			if byTask[names[i]] != byTask[names[j]] {
+				return byTask[names[i]] > byTask[names[j]]
+			}
+			return names[i] < names[j]
+		})
+		var parts []string
+		for _, id := range names {
+			if len(parts) == 3 {
+				break
+			}
+			parts = append(parts, id+" "+humanDur(byTask[id]))
+		}
+		out = append(out, "- дольше прочих: "+strings.Join(parts, ", "))
+	}
+	if len(empty) > 0 {
+		out = append(out, "- без записей «Хода работы»: "+strings.Join(empty, ", "))
+	}
+	if len(lost) > 0 {
+		out = append(out, "- файла задачи нет: "+strings.Join(lost, ", "))
+	}
+	return strings.Join(out, "\n"), nil
 }
 
 const (

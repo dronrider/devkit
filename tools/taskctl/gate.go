@@ -390,9 +390,37 @@ func rehearsalGate(root, id string) error {
 	if err != nil || head == "" {
 		return nil
 	}
-	if !strings.HasPrefix(head, mark) {
-		return fmt.Errorf("%s: отметка обкатки стоит на коммите %s, а HEAD уже %s: после прогона в ветку приехал код, которого обкатка не видела, прогнать «taskctl rehearse %s» заново и повторить move",
-			id, mark, head[:min(len(head), 12)], id)
+	if strings.HasPrefix(head, mark) || onlyTaskDocSince(root, id, mark) {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("%s: отметка обкатки стоит на коммите %s, а HEAD уже %s: после прогона в ветку приехал код, которого обкатка не видела, прогнать «taskctl rehearse %s» заново и повторить move",
+		id, mark, head[:min(len(head), 12)], id)
+}
+
+// onlyTaskDocSince отвечает, что после обкатки в ветку приехали одни правки
+// файла самой задачи. Сама запись прогона это такой коммит: обкатка пишет
+// вывод и отметку в файл задачи, коммит с ними уезжает следом, и отметка
+// устаревала бы ровно в ту минуту, когда её положили. Правку кода такой
+// разбор не прощает: там в диффе коммита стоят чужие пути.
+func onlyTaskDocSince(root, id, mark string) bool {
+	rel := path.Join("docs", "tasks", id+".md")
+	out, err := exec.Command("git", "-C", root, "log", "--format=%H", mark+"..HEAD").Output()
+	if err != nil {
+		return false
+	}
+	shas := strings.Fields(string(out))
+	if len(shas) == 0 {
+		return false
+	}
+	files, err := exec.Command("git", append([]string{"-C", root, "show", "--name-only",
+		"--format=", "--no-renames"}, shas...)...).Output()
+	if err != nil {
+		return false
+	}
+	for _, p := range strings.Fields(string(files)) {
+		if p != rel {
+			return false
+		}
+	}
+	return true
 }

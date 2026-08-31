@@ -594,3 +594,19 @@ func TestMoveToCheckRejectsStaleRehearsal(t *testing.T) {
 		t.Fatalf("повторная обкатка ворота не открыла: %v", err)
 	}
 }
+
+// TestMoveToCheckKeepsRehearsalAfterTaskDocCommit: коммит с самой записью
+// прогона отметку не отменяет. Обкатка пишет вывод в файл задачи, и коммит с
+// ним уезжает следом; считай его чужим кодом, отметка устаревала бы в ту же
+// минуту, когда её положили.
+func TestMoveToCheckKeepsRehearsalAfterTaskDocCommit(t *testing.T) {
+	root := setupRehearse(t, "echo проба")
+	if _, err := cmdRehearse(root, "XR-005", RehearseParams{Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", filepath.Join("docs", "tasks", "XR-005.md"))
+	gitOut(t, root, "commit", "-q", "-m", "docs(tasks): XR-005 вывод обкатки")
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatalf("коммит записи прогона отбил свою же отметку: %v", err)
+	}
+}

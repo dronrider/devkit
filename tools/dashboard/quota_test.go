@@ -575,3 +575,31 @@ func getQuotaRaw(t *testing.T, e *testEnv) string {
 	}
 	return body(t, resp)
 }
+
+// Тик демона обходит обе подписки и снимает только протухшее (DK-633): без
+// --all он освежал лишь активный харнес, и снимок второй подписки стоял
+// часами при живом демоне, а без --if-stale дёргал панель /usage каждые
+// десять минут. Проверяется настоящий quotaRefreshRun с подставным бинарём,
+// который записывает свои аргументы вместо подъёма клиента.
+func TestQuotaRefreshRunCoversAllSubscriptions(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "agentctl")
+	got := filepath.Join(dir, "args")
+	script := "#!/bin/sh\nprintf '%s ' \"$@\" > " + got + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := quotaRefreshRun(dir, bin); err != nil {
+		t.Fatalf("вызов подставного бинаря: %v", err)
+	}
+	data, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatalf("подставной бинарь не позван: %v", err)
+	}
+	args := string(data)
+	for _, part := range []string{"quota", "refresh", "--all", "--if-stale"} {
+		if !strings.Contains(args, part) {
+			t.Fatalf("в аргументах тика нет %q: %q", part, args)
+		}
+	}
+}

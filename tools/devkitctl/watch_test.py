@@ -1059,7 +1059,7 @@ class QuotaTick(unittest.TestCase):
     def test_tick_calls_refresh_all_if_stale(self):
         # Красный на старом коде: тик вовсе не звал agentctl, и снимок между
         # заходами стоял часами.
-        fake = Fake(code=0, out="подписок 2: снято 0, свежих 2, отказов 0")
+        fake = Fake(code=0, out="подписок 2: снято 0, свежих 2, оставлено 0, отказов 0")
         out = self.tick(fake)
         quota = fake.argv_with("--all")
         self.assertEqual(len(quota), 1, fake.calls)
@@ -1069,16 +1069,25 @@ class QuotaTick(unittest.TestCase):
 
     def test_fresh_snapshots_stay_out_of_the_journal(self):
         # «Всё свежо» капало бы в журнал каждые пять минут, ничего не добавляя.
-        self.tick(Fake(code=0, out="подписок 2: снято 0, свежих 2, отказов 0"))
+        self.tick(Fake(code=0, out="подписок 2: снято 0, свежих 2, оставлено 0, отказов 0"))
         self.assertNotIn("снимок квоты", self.journal())
 
     def test_actual_snap_reaches_the_journal(self):
-        out = self.tick(Fake(code=0, out="подписок 2: снято 1, свежих 1, отказов 0\n"
+        out = self.tick(Fake(code=0, out="подписок 2: снято 1, свежих 1, оставлено 0, отказов 0\n"
                                          "харнес glm-code:\nснимок ..."))
         self.assertIn("снято 1", self.journal())
-        # Разбор по харнесам остаётся выводу тика, журналу хватает счёта.
+        # Разбор по харнесам остаётся отчёту тика, журналу хватает счёта.
         self.assertNotIn("glm-code", self.journal())
-        self.assertIn("снято 1", out)
+        self.assertIn("харнес glm-code", out)
+
+    def test_kept_snapshot_reaches_the_journal(self):
+        # Живой случай 15:59 (DK-633): панель не далась, сторож отката оставил
+        # цифры, и такой исход обязан быть виден в журнале, а не сойти за снятый.
+        out = self.tick(Fake(code=0, out="подписок 2: снято 0, свежих 1, оставлено 1, отказов 0\n"
+                                         "харнес claude-code: снимок не посвежел, съём будет повторён следующим тиком\n"
+                                         "панель не далась (вопрос про доверие)"))
+        self.assertIn("оставлено 1", self.journal())
+        self.assertIn("панель не далась", out)
 
     def test_failure_reaches_the_journal(self):
         out = self.tick(Fake(code=1, out="ошибка: харнес glm-code: запрос остатка не прошёл"))
@@ -1087,9 +1096,9 @@ class QuotaTick(unittest.TestCase):
         self.assertIn("кодом 1", out)
 
     def test_missing_agentctl_is_reported(self):
-        line, notable = watch.quota_snap(call=Fake(), agentctl="")
-        self.assertTrue(notable)
-        self.assertIn("agentctl нет", line)
+        report, note = watch.quota_snap(call=Fake(), agentctl="")
+        self.assertTrue(note)
+        self.assertIn("agentctl нет", report)
 
 
 if __name__ == "__main__":

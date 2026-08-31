@@ -54,8 +54,10 @@ in-progress`. Будит сторожок и только он, а будить 
 
 Тем же тиком свежеет снимок квоты обеих подписок (DK-633): тик зовёт
 `agentctl quota refresh --all --if-stale`, и протухший снимок переснимается и
-тогда, когда на машине не идёт ни одной сессии, а дашборд выключен. Съём и
-отказ видны строкой в журнале сторожка, свежие снимки журнал не трогают.
+тогда, когда на машине не идёт ни одной сессии, а дашборд выключен. Съём,
+оставленный без свежего снимка исход и отказ видны строкой со счётом в журнале
+сторожка, разбор по харнесам идёт в отчёт тика, а свежие снимки журнал не
+трогают.
 
 Тем же тиком закрываются агентские задачи из Check (DK-516): строка вида agent
 с прогнанным smoke и непустым разделом «Проверка» доходит до Done без живой
@@ -620,13 +622,17 @@ def quota_snap(call=None, agentctl=None):
     собирается как у launchd-агента дашборда: системное умолчание launchd не
     знает ни tmux, ни claude, которыми снимается панель первой подписки.
 
-    Возврат это строка отчёта и признак значимости: в журнал сторожка идут
-    съём и отказ, а «всё свежо» капало бы туда каждые пять минут."""
+    Возврат это отчёт тика целиком и строка для журнала сторожка либо None.
+    В отчёт идёт разбор по харнесам как есть: живой случай 15:59 из DK-633
+    разбирался вслепую ровно потому, что деталь резалась до счёта. В журнал
+    идёт счёт исходов, и только когда что-то снялось, оставлено или отказало,
+    а «всё свежо» капало бы туда каждые пять минут."""
     call = subprocess.run if call is None else call
     bin = devkit_bin("agentctl") if agentctl is None else agentctl
     if not bin:
-        return ("снимок квоты: бинаря agentctl нет ни в PATH, ни в каталогах "
-                "релиза, снимки стареют до ручного refresh"), True
+        line = ("снимок квоты: бинаря agentctl нет ни в PATH, ни в каталогах "
+                "релиза, снимки стареют до ручного refresh")
+        return line, line
     import dashboard
     env = dict(os.environ)
     env["PATH"] = dashboard.agent_path(bin)
@@ -634,12 +640,18 @@ def quota_snap(call=None, agentctl=None):
         p = call([bin, "quota", "refresh", "--all", "--if-stale"],
                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     except OSError as e:
-        return "снимок квоты: съём не запустился, %s" % e, True
-    text = " ".join((p.stdout or "").split())
+        line = "снимок квоты: съём не запустился, %s" % e
+        return line, line
+    text = (p.stdout or "").strip()
     if p.returncode != 0:
-        return "снимок квоты: съём кончился кодом %d: %s" % (p.returncode, text[:500]), True
-    first = text.split(" харнес ")[0]
-    return "снимок квоты: %s" % first, bool(re.search(r"снято [1-9]", first))
+        flat = " ".join(text.split())
+        return ("снимок квоты: съём кончился кодом %d\n%s" % (p.returncode, text),
+                "снимок квоты: съём кончился кодом %d: %s" % (p.returncode, flat[:500]))
+    first = text.splitlines()[0] if text else ""
+    note = None
+    if re.search(r"(снято|оставлено) [1-9]", first):
+        note = "снимок квоты: %s" % first
+    return "снимок квоты: %s" % text, note
 
 
 NO_DRAIN = "разлив не нужен"
@@ -830,10 +842,10 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     out = sys.stdout if out is None else out
     # Съём квоты идёт до обхода реестра и не зависит от него: снимок лежит на
     # уровне машины, и свежеть он обязан и там, где целей под надзором нет.
-    qline, qnotable = quota_snap(call)
-    out.write(qline + "\n")
-    if qnotable:
-        log_line(qline, home)
+    qreport, qnote = quota_snap(call)
+    out.write(qreport + "\n")
+    if qnote:
+        log_line(qnote, home)
     found, watched = 0, 0
     swept = set()
     for path in entries(home):

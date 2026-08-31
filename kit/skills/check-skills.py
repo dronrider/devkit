@@ -219,6 +219,35 @@ def check_groom(here):
     return fails
 
 
+# Формулировка прогона сценария чужими руками (DK-642). Совпадение дословное:
+# перефразированное правило сторож перестал бы видеть, а прогон сценария молча
+# вернулся бы к автору правки.
+VERIFY_PHRASE = "прогоняет не автор правки"
+
+# Тексты, которые обязаны нести формулировку: правила доски и четыре скилла её
+# конвейера. Ключ это имя в находке, значение путь от каталога скиллов или от
+# корня репозитория.
+VERIFY_TEXTS = ("board-task", "board-ship", "board-batch", "goal-loop")
+
+
+def check_verify_runner(here, root):
+    # DK-642: сценарий проверки прогоняет не автор правки, ворота taskctl close
+    # сверяют прогонявшего с исполнителем разработки. Ворота держат механику, а
+    # текст держит поведение: без фразы в правилах и скиллах агент прогон не
+    # отметит вовсе, и воротам будет нечего сверять.
+    fails = []
+    files = [(name, os.path.join(here, name, "SKILL.md")) for name in VERIFY_TEXTS]
+    files.append(("RULES.board.md", os.path.join(root, "RULES.board.md")))
+    for name, path in files:
+        text = read(path)
+        if text is None:
+            fails.append("%s: текста нет, формулировку прогона сверять не с чем" % name)
+            continue
+        if VERIFY_PHRASE not in text:
+            fails.append("%s: нет формулировки «%s», прогон сценария вернётся к автору правки" % (name, VERIFY_PHRASE))
+    return fails
+
+
 def check_team(here):
     # Командная работа по одной доске (DK-174): у скилла два несущих куска,
     # захват с немедленным пушем и перечень столкновений. Столкновение, выпавшее
@@ -444,6 +473,7 @@ def run(here, root):
     fails += check_goal_cut(here)
     fails += check_live_reply(here)
     fails += check_groom(here)
+    fails += check_verify_runner(here, root)
     fails += check_team(here)
     fails += check_proofread(here)
     fails += check_proofread_spawn(here)

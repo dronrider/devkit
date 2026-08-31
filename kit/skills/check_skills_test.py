@@ -332,6 +332,45 @@ class TestGroom(SkillTree):
         self.assertIn("board-groom: скилл грумминга не заведён", fails)
 
 
+class TestVerifyRunner(SkillTree):
+    """DK-642: формулировка «прогоняет не автор правки» стоит в правилах доски
+    и четырёх скиллах конвейера, и пропажа её из любого текста это находка."""
+
+    def seed(self):
+        for name in check_skills.VERIFY_TEXTS:
+            self.add_skill(name, body="\n".join(
+                ["сценарий " + check_skills.VERIFY_PHRASE] * 15))
+        self.append("RULES.board.md", "сценарий %s\n" % check_skills.VERIFY_PHRASE)
+
+    def test_phrase_everywhere_passes(self):
+        self.seed()
+        self.assertEqual(check_skills.check_verify_runner(self.here, self.root), [])
+
+    def test_phrase_dropped_from_any_text_fails(self):
+        self.seed()
+        with open(os.path.join(self.here, "board-ship", "SKILL.md"), "w",
+                  encoding="utf-8") as f:
+            f.write(FRONTMATTER % ("board-ship", "Звать, когда нужно.",
+                                   "\n".join(["сценарий гоняет кто-то"] * 15)))
+        fails = check_skills.check_verify_runner(self.here, self.root)
+        self.assertTrue(any("board-ship" in f for f in fails), fails)
+        self.assertEqual(len(fails), 1, fails)
+
+    def test_phrase_dropped_from_rules_fails(self):
+        self.seed()
+        with open(os.path.join(self.root, "RULES.board.md"), "w",
+                  encoding="utf-8") as f:
+            f.write("правила доски без формулировки\n")
+        fails = check_skills.check_verify_runner(self.here, self.root)
+        self.assertTrue(any("RULES.board.md" in f for f in fails), fails)
+
+    def test_missing_text_named(self):
+        self.seed()
+        shutil.rmtree(os.path.join(self.here, "goal-loop"))
+        fails = check_skills.check_verify_runner(self.here, self.root)
+        self.assertTrue(any("goal-loop" in f and "текста нет" in f for f in fails), fails)
+
+
 class TestTeam(SkillTree):
     NEIGHBOURS = "рядом board-task, board-ship и board-batch"
     CLASHES = "\n".join("**столкновение %d.** разбор" % i for i in range(1, 5))

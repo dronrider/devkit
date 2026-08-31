@@ -834,7 +834,8 @@ def heartbeat(home=None):
     return None
 
 
-def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipctl=None):
+def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipctl=None,
+        agentctl=None):
     """Обход реестра. Возврат 0 всё движется, 1 нашёлся вставший цикл."""
     now = datetime.now() if now is None else now
     home = default_home() if home is None else home
@@ -842,7 +843,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     out = sys.stdout if out is None else out
     # Съём квоты идёт до обхода реестра и не зависит от него: снимок лежит на
     # уровне машины, и свежеть он обязан и там, где целей под надзором нет.
-    qreport, qnote = quota_snap(call)
+    qreport, qnote = quota_snap(call, agentctl)
     out.write(qreport + "\n")
     if qnote:
         log_line(qnote, home)

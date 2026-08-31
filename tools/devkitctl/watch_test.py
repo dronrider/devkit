@@ -255,6 +255,7 @@ class RunTest(Stand):
 
 TASKCTL = "/bin/подставной-taskctl"
 SHIPCTL = "/bin/подставной-shipctl"
+AGENTCTL = "/bin/подставной-agentctl"
 
 PARK_HEAD = """# Задачи стенда
 
@@ -1046,10 +1047,14 @@ class QuotaTick(unittest.TestCase):
         self.home = self.dir / "дом"
         (self.home / ".devkit").mkdir(parents=True)
 
-    def tick(self, fake):
+    def tick(self, fake, agentctl=AGENTCTL):
+        # agentctl подставной и по умолчанию: без него run() искал бы бинарь
+        # живым PATH и каталогами релиза (devkit_bin), и в чистом окружении
+        # прогона merge (временный HOME, урезанный PATH) его там нет, а Fake
+        # тогда вовсе не звался (DK-677).
         out = io.StringIO()
         watch.run(now=datetime.now(), idle=45 * 60, home=self.home, out=out,
-                  call=fake, taskctl=TASKCTL, shipctl=SHIPCTL)
+                  call=fake, taskctl=TASKCTL, shipctl=SHIPCTL, agentctl=agentctl)
         return out.getvalue()
 
     def journal(self):
@@ -1099,6 +1104,16 @@ class QuotaTick(unittest.TestCase):
         report, note = watch.quota_snap(call=Fake(), agentctl="")
         self.assertTrue(note)
         self.assertIn("agentctl нет", report)
+
+    def test_missing_agentctl_reaches_the_journal_through_the_tick(self):
+        # Штатный случай тика целиком, не только quota_snap напрямую: бинаря
+        # нет, съём не запускается вовсе, причина всё равно доезжает и до
+        # отчёта, и до журнала.
+        fake = Fake()
+        out = self.tick(fake, agentctl="")
+        self.assertEqual(fake.calls, [])
+        self.assertIn("agentctl нет", out)
+        self.assertIn("agentctl нет", self.journal())
 
 
 if __name__ == "__main__":

@@ -178,3 +178,83 @@ func readFileT(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+// TestScenarioStepsTakesOnlyShellBlocks: блок чужого языка это иллюстрация
+// (пример конфига, кусок вывода), командой она не считается. Прогон такого
+// блока стрелял бы наугад от имени автора сценария.
+func TestScenarioStepsTakesOnlyShellBlocks(t *testing.T) {
+	text := "\nАгентский.\n\n```json\n{\"rm\": \"-rf /\"}\n```\n\n```\necho безъязыкий\n```\n" +
+		"\n```console\ntaskctl show XR-005\n```\n\n```bash\ntaskctl list\n```\n"
+	got := scenarioSteps(text)
+	want := []string{"taskctl show XR-005", "taskctl list"}
+	if len(got) != len(want) {
+		t.Fatalf("взяты не те блоки: %q", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("шаг %d: %q, ждали %q", i+1, got[i], want[i])
+		}
+	}
+}
+
+// TestRehearseWithoutShellBlockRefuses: сценарий с одной иллюстрацией и без
+// shell-блока обкатывать нечем, и отказ называет выход.
+func TestRehearseWithoutShellBlockRefuses(t *testing.T) {
+	root := setup(t)
+	writeTask(t, root, "XR-005", "# XR-005\n\n## Сценарий проверки\n\n```json\n{\"шаг\": 1}\n```\n")
+	gitSetup(t, root)
+	_, err := cmdRehearse(root, "XR-005", RehearseParams{Now: rehearseAt})
+	if err == nil {
+		t.Fatal("сценарий без shell-блока должен отказывать")
+	}
+	if !strings.Contains(err.Error(), "--step") {
+		t.Fatalf("отказ не называет выход: %v", err)
+	}
+}
+
+// TestRehearseReplacesOwnRecord: повторный прогон не копит блоки, а заменяет
+// свою прошлую запись. Отметка в файле остаётся одна, и она про нынешний
+// коммит; вложенное руками остаётся на месте.
+func TestRehearseReplacesOwnRecord(t *testing.T) {
+	root := setupRehearse(t, "echo первый-прогон")
+	writeTask(t, root, "XR-005", rehearseDoc(t, root, "XR-005")+"\n## Проверка\n\n- вывод smoke вложен руками.\n")
+	gitOut(t, root, "add", ".")
+	gitOut(t, root, "commit", "-q", "-m", "правка сценария")
+	if _, err := cmdRehearse(root, "XR-005", RehearseParams{Now: rehearseAt}); err != nil {
+		t.Fatal(err)
+	}
+	writeTask(t, root, "XR-005", strings.Replace(rehearseDoc(t, root, "XR-005"),
+		"echo первый-прогон", "echo второй-прогон", 1))
+	if _, err := cmdRehearse(root, "XR-005", RehearseParams{Now: rehearseAt}); err != nil {
+		t.Fatal(err)
+	}
+	doc := rehearseDoc(t, root, "XR-005")
+	if n := strings.Count(doc, taskform.RehearsalNote); n != 1 {
+		t.Fatalf("отметок в файле %d, а должна остаться одна:\n%s", n, doc)
+	}
+	if strings.Contains(doc, "первый-прогон\n```") {
+		t.Fatalf("вывод прошлого прогона не унесён:\n%s", doc)
+	}
+	if !strings.Contains(doc, "второй-прогон") {
+		t.Fatalf("вывод нынешнего прогона не записан:\n%s", doc)
+	}
+	if !strings.Contains(doc, "- вывод smoke вложен руками.") {
+		t.Fatalf("вложенное руками унесено вместе с записью:\n%s", doc)
+	}
+}
+
+// TestRehearseMarkCarriesHeadSha: отметка называет коммит, на котором шёл
+// прогон, и это HEAD ветки. По нему ворота отличают свежую обкатку от старой.
+func TestRehearseMarkCarriesHeadSha(t *testing.T) {
+	root := setupRehearse(t, "echo проба")
+	if _, err := cmdRehearse(root, "XR-005", RehearseParams{Now: rehearseAt}); err != nil {
+		t.Fatal(err)
+	}
+	mark, ok := taskform.RehearsalSha(rehearseDoc(t, root, "XR-005"))
+	if !ok {
+		t.Fatal("отметка без коммита")
+	}
+	if head := gitOut(t, root, "rev-parse", "HEAD"); !strings.HasPrefix(head, mark) {
+		t.Fatalf("коммит отметки %s не от HEAD %s", mark, head)
+	}
+}

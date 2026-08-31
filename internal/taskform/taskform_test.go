@@ -132,3 +132,22 @@ func TestRehearsed(t *testing.T) {
 		t.Fatal("отметки нет, а Rehearsed говорит обратное")
 	}
 }
+
+// TestRehearsalSha: из отметки достаётся коммит прогона, из нескольких отметок
+// берётся последняя, а отметка без коммита за прогон не считается.
+func TestRehearsalSha(t *testing.T) {
+	doc := "# XR-001\n\n## Проверка\n\n" +
+		RehearsalNote + " 2026-08-30 10:00, свежее дерево aaaaaaaaaaaa, шагов 1, все зелёные.\n" +
+		RehearsalNote + " 2026-08-31 12:00, свежее дерево bbbbbbbbbbbb, шагов 2, все зелёные.\n"
+	sha, ok := RehearsalSha(doc)
+	if !ok || sha != "bbbbbbbbbbbb" {
+		t.Fatalf("взята не последняя отметка: %q, %v", sha, ok)
+	}
+	if _, ok := RehearsalSha("## Проверка\n\n" + RehearsalNote + " 2026-08-31 12:00, шагов 2.\n"); ok {
+		t.Fatal("отметка без коммита сошла за прогон")
+	}
+	if _, ok := RehearsalSha("## Проверка\n\n" + RehearsalFailNote +
+		" 2026-08-31 12:00, свежее дерево cccccccccccc, шагов 2, красных 1, ворота закрыты.\n"); ok {
+		t.Fatal("красный прогон сошёл за зачтённый")
+	}
+}

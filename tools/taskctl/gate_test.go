@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,33 @@ func sect(t *testing.T, root, id string) string {
 	}
 	return r.Sect
 }
+
+// markRehearsed переписывает отметки обкатки в файлах задач на нынешний HEAD:
+// ворота сверяют коммит отметки с ним, и фикстурный коммит устаревал бы после
+// каждого нового коммита теста (DK-643).
+func markRehearsed(t *testing.T, root string) {
+	t.Helper()
+	head := gitOut(t, root, "rev-parse", "--short=12", "HEAD")
+	paths, err := filepath.Glob(filepath.Join(root, "docs", "tasks", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := fixtureShaRe.ReplaceAllString(string(b), "свежее дерево "+head)
+		if body == string(b) {
+			continue
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+var fixtureShaRe = regexp.MustCompile(`свежее дерево [0-9a-f]{7,}`)
 
 func TestMoveToCheckNeedsScenarioSection(t *testing.T) {
 	root := setup(t)
@@ -128,6 +156,7 @@ func TestMoveToCheckRefusesUnmergedBranch(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
 	branchWithCommit(t, root, "xr-005-gate")
+	markRehearsed(t, root)
 	_, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
 	if err == nil {
 		t.Fatal("move в Check при неслитой ветке должен падать")
@@ -147,6 +176,7 @@ func TestMoveToCheckPassesMergedBranch(t *testing.T) {
 	gitSetup(t, root)
 	branchWithCommit(t, root, "xr-005-gate")
 	gitOut(t, root, "merge", "-q", "--ff-only", "xr-005-gate")
+	markRehearsed(t, root)
 	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
 		t.Fatalf("слитая ветка воротам не помеха: %v", err)
 	}
@@ -158,6 +188,7 @@ func TestMoveToCheckIgnoresForeignBranch(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
 	branchWithCommit(t, root, "xr-0051-other")
+	markRehearsed(t, root)
 	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
 		t.Fatalf("чужая ветка не должна держать строку: %v", err)
 	}
@@ -166,6 +197,7 @@ func TestMoveToCheckIgnoresForeignBranch(t *testing.T) {
 func TestLintFindsUnmergedCheckBranch(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
+	markRehearsed(t, root)
 	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -314,6 +346,7 @@ func TestMoveToCheckHintsPromptDiff(t *testing.T) {
 	gitSetup(t, root)
 	commitFile(t, root, "kit/skills/board-draft/SKILL.md", "feat(skills): XR-005 черновик доски")
 	commitFile(t, root, "RULES.md", "docs: XR-005 правило выноса")
+	markRehearsed(t, root)
 	out, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
 	if err != nil {
 		t.Fatalf("подсказка не должна отказывать: %v", err)
@@ -335,6 +368,7 @@ func TestMoveToCheckSilentWithoutPromptDiff(t *testing.T) {
 	gitSetup(t, root)
 	commitFile(t, root, "tools/taskctl/ops.go", "feat(taskctl): XR-005 подсказка ворот")
 	commitFile(t, root, "tools/taskctl/README.md", "docs(taskctl): XR-005 строка про подсказку")
+	markRehearsed(t, root)
 	out, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
@@ -350,6 +384,7 @@ func TestMoveToCheckIgnoresLongerTaskID(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
 	commitFile(t, root, "kit/skills/board-draft/SKILL.md", "feat(skills): XR-0051 чужой скилл")
+	markRehearsed(t, root)
 	out, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
@@ -529,5 +564,33 @@ func TestMoveToCheckSkipsRehearsalForUserKind(t *testing.T) {
 		"\n## Приёмка\n\n- барьер «глаза»:\n  - слепок не годится: правится вёрстка\n  - разметка не годится: смотрят на глаз\n  - метрика не годится: судит человек\n")
 	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
 		t.Fatalf("вид user отметку обкатки спрашивать не должен: %v", err)
+	}
+}
+
+// TestMoveToCheckRejectsStaleRehearsal: отметка от прогона, после которого в
+// ветку приехал код, ворота не открывает, и отказ называет оба коммита.
+func TestMoveToCheckRejectsStaleRehearsal(t *testing.T) {
+	root := setupRehearse(t, "echo проба")
+	if _, err := cmdRehearse(root, "XR-005", RehearseParams{Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	stale := gitOut(t, root, "rev-parse", "--short=12", "HEAD")
+	if err := os.WriteFile(filepath.Join(root, "after.txt"), []byte("код после обкатки\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", "after.txt")
+	gitOut(t, root, "commit", "-q", "-m", "правка после обкатки")
+	_, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
+	if err == nil {
+		t.Fatal("устаревшая отметка обкатки открыла ворота")
+	}
+	if !strings.Contains(err.Error(), stale) || !strings.Contains(err.Error(), "rehearse") {
+		t.Fatalf("отказ не называет старый коммит и команду: %v", err)
+	}
+	if _, err := cmdRehearse(root, "XR-005", RehearseParams{Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatalf("повторная обкатка ворота не открыла: %v", err)
 	}
 }

@@ -313,23 +313,60 @@ func Exception(doc, gate string) bool {
 	return false
 }
 
-// RehearsalNote это начало строки отметки обкатки сценария в разделе
-// «Проверка»: «- Обкатка: <дата>, свежее дерево <коммит>, ...». Пишет её
-// `taskctl rehearse`, читают ворота перевода в Check, и префикса довольно,
-// чтобы отличить отметку от вложенного вывода и прозы.
-const RehearsalNote = "- Обкатка:"
+// Начала строк, которыми `taskctl rehearse` отмечает в разделе «Проверка» свой
+// прогон: зачтённый («- Обкатка: <дата>, свежее дерево <коммит>, ...») и
+// красный, который ворота не открывает. Читают отметку ворота перевода в
+// Check, и префикса довольно, чтобы отличить её от вложенного вывода и прозы.
+const (
+	RehearsalNote     = "- Обкатка:"
+	RehearsalFailNote = "- Обкатка не зачтена:"
+)
 
-// Rehearsed отвечает, стоит ли в файле задачи отметка обкатки сценария.
-// Читается мимо ограждённых блоков по той же причине, что и отметка smoke:
-// в «Проверку» вкладывается реальный вывод команд, и процитированная там
-// отметка чужой задачи открывала бы ворота без прогона.
-func Rehearsed(doc string) bool {
+// treeWord это слово перед коммитом в строке отметки: по нему из неё достаётся
+// дерево, на котором шёл прогон.
+const treeWord = "свежее дерево "
+
+// RehearsalSha достаёт коммит из отметки обкатки. Одного факта отметки воротам
+// мало: ветка уезжает вперёд после прогона, и вчерашняя обкатка открывала бы
+// Check сегодняшнему коду. Отметок в разделе может лежать несколько (круг
+// доработки после возврата из Check), берётся последняя. Читается мимо
+// ограждённых блоков по той же причине, что и отметка smoke: в «Проверку»
+// вкладывается реальный вывод команд, и процитированная там отметка чужой
+// задачи открывала бы ворота без прогона.
+func RehearsalSha(doc string) (string, bool) {
 	lines := strings.Split(doc, "\n")
 	mask, _ := FenceMask(lines)
+	sha, found := "", false
 	for i, ln := range lines {
-		if !mask[i] && strings.HasPrefix(strings.TrimSpace(ln), RehearsalNote) {
-			return true
+		t := strings.TrimSpace(ln)
+		if mask[i] || !strings.HasPrefix(t, RehearsalNote) {
+			continue
 		}
+		rest, ok := cutAfter(t, treeWord)
+		if !ok {
+			continue
+		}
+		v := strings.TrimRight(strings.Fields(rest)[0], ",.")
+		if !IsSha(v) {
+			continue
+		}
+		sha, found = v, true
 	}
-	return false
+	return sha, found
+}
+
+// Rehearsed отвечает, стоит ли в файле задачи зачтённая отметка обкатки.
+func Rehearsed(doc string) bool {
+	_, ok := RehearsalSha(doc)
+	return ok
+}
+
+// cutAfter отдаёт хвост строки после первого вхождения sep вместе с непустым
+// остатком: пустой хвост это отметка без коммита, и разбирать в ней нечего.
+func cutAfter(s, sep string) (string, bool) {
+	_, rest, ok := strings.Cut(s, sep)
+	if !ok || len(strings.Fields(rest)) == 0 {
+		return "", false
+	}
+	return rest, true
 }

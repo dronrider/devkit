@@ -374,9 +374,25 @@ func rehearsalGate(root, id string) error {
 		return nil
 	}
 	doc := string(data)
-	if taskform.Rehearsed(doc) || taskform.Exception(doc, taskform.GateRehearsal) {
+	if taskform.Exception(doc, taskform.GateRehearsal) {
 		return nil
 	}
-	return fmt.Errorf("%s: сценарий не обкатан в чистом окружении, а Check значит, что проверять по нему будут всерьёз: прогнать «taskctl rehearse %s» (свежее дерево, временный HOME, вывод ляжет в «Проверку») и повторить move; где шаги без выката не гоняются, загасить ворот пометкой «- Исключение: обкатка (причина)» в docs/tasks/%s.md",
-		id, id, id)
+	mark, ok := taskform.RehearsalSha(doc)
+	if !ok {
+		return fmt.Errorf("%s: сценарий не обкатан в чистом окружении, а Check значит, что проверять по нему будут всерьёз: прогнать «taskctl rehearse %s» (свежее дерево, временный HOME, вывод ляжет в «Проверку») и повторить move; где шаги без выката не гоняются, загасить ворот пометкой «- Исключение: обкатка (причина)» в docs/tasks/%s.md",
+			id, id, id)
+	}
+	// Отметка привязана к коммиту, на котором шёл прогон. После обкатки ветка
+	// уезжает вперёд, и вчерашняя отметка открывала бы Check сегодняшнему коду.
+	// Вне git сверять не с чем, и ворот довольствуется самой отметкой: доска
+	// живёт и в корп-контуре, где код лежит отдельно.
+	head, err := gitRevParse(root, "HEAD")
+	if err != nil || head == "" {
+		return nil
+	}
+	if !strings.HasPrefix(head, mark) {
+		return fmt.Errorf("%s: отметка обкатки стоит на коммите %s, а HEAD уже %s: после прогона в ветку приехал код, которого обкатка не видела, прогнать «taskctl rehearse %s» заново и повторить move",
+			id, mark, head[:min(len(head), 12)], id)
+	}
+	return nil
 }

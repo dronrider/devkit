@@ -80,7 +80,11 @@ func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 		now = time.Now()
 	}
 	block := rehearsalBlock(runs, sha, now, failed)
-	if err := os.WriteFile(path, []byte(taskform.InsertIntoSection(doc, taskform.Verification, block...)), 0o644); err != nil {
+	// Прошлая запись обкатки уносится: повтор прогона иначе копит в «Проверке»
+	// блоки шагов и отметки, и какая из них относится к нынешнему коммиту,
+	// глазами уже не видно.
+	body := taskform.InsertIntoSection(dropRehearsal(doc), taskform.Verification, block...)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return "", fmt.Errorf("%s: вывод обкатки не записан в %s: %v", id, path, err)
 	}
 	rel := "docs/tasks/" + id + ".md"
@@ -155,8 +159,8 @@ func rehearsalBlock(runs []stepRun, sha string, now time.Time, failed int) []str
 	if failed > 0 {
 		// Отметка ворот ставится только зелёной обкаткой, а вывод красной всё
 		// равно нужен глазами: без него разбирать провал нечем.
-		out[1] = fmt.Sprintf("Обкатка %s, свежее дерево %s, шагов %d, %s (отметки нет, ворота закрыты).",
-			now.Format("2006-01-02 15:04"), shortSha(sha), len(runs), verdict)
+		out[1] = fmt.Sprintf("%s %s, свежее дерево %s, шагов %d, %s, ворота закрыты.",
+			taskform.RehearsalFailNote, now.Format("2006-01-02 15:04"), shortSha(sha), len(runs), verdict)
 	}
 	for i, r := range runs {
 		mark := "зелёный"
@@ -171,23 +175,93 @@ func rehearsalBlock(runs []stepRun, sha string, now time.Time, failed int) []str
 	return out
 }
 
-// scenarioSteps собирает команды шагов из ограждённых блоков раздела «Сценарий
-// проверки». Проза раздела командой не считается: обратное значило бы гонять
-// всё, что автор взял в обратные кавычки, включая пути и имена команд посреди
-// объяснения. Строка приглашения («$ ») отбрасывается, комментарии и пустые
-// строки пропускаются.
+// shellLangs это языки ограждённого блока, чьё содержимое считается командами.
+// Блок без языка и блок чужого языка (json, text, вывод примера) обкатка не
+// трогает: сценарий сплошь и рядом иллюстрируют конфигом или куском вывода, и
+// прогонять такое как команды значит стрелять наугад.
+var shellLangs = map[string]bool{
+	"sh": true, "bash": true, "shell": true, "zsh": true, "console": true,
+}
+
+// scenarioSteps собирает команды шагов из shell-блоков раздела «Сценарий
+// проверки». Проза раздела командой не считается: в обратных кавычках там
+// ходят пути, имена файлов и куски объяснения. Строка приглашения («$ »)
+// отбрасывается, комментарии и пустые строки пропускаются.
 func scenarioSteps(text string) []string {
-	lines := strings.Split(text, "\n")
-	mask, _ := taskform.FenceMask(lines)
 	var steps []string
-	for i, ln := range lines {
+	fence, take := "", false
+	for _, ln := range strings.Split(text, "\n") {
 		t := strings.TrimSpace(ln)
-		if !mask[i] || t == "" || strings.HasPrefix(t, "#") || strings.HasPrefix(t, "```") {
+		if mark := fenceMarker(t); mark != "" {
+			if fence == "" {
+				fence, take = mark, shellLangs[strings.ToLower(strings.TrimSpace(t[len(mark):]))]
+				continue
+			}
+			if mark[0] == fence[0] && len(mark) >= len(fence) && strings.TrimSpace(t[len(mark):]) == "" {
+				fence, take = "", false
+			}
+			continue
+		}
+		if !take || t == "" || strings.HasPrefix(t, "#") {
 			continue
 		}
 		steps = append(steps, strings.TrimPrefix(t, "$ "))
 	}
 	return steps
+}
+
+// fenceMarker отдаёт ограждение в начале строки (три и больше знака ` или ~) и
+// пустую строку, когда строка не ограждение.
+func fenceMarker(line string) string {
+	for _, c := range []byte{'`', '~'} {
+		n := 0
+		for n < len(line) && line[n] == c {
+			n++
+		}
+		if n >= 3 {
+			return line[:n]
+		}
+	}
+	return ""
+}
+
+// dropRehearsal уносит из файла задачи прошлую запись обкатки: строку отметки
+// (зачтённую или красную) и всё, что писала та же команда, то есть заголовки
+// «Шаг N» с их ограждёнными блоками. Первая посторонняя строка запись кончает,
+// так что вложенный руками вывод и проза раздела остаются на месте.
+func dropRehearsal(doc string) string {
+	lines := strings.Split(doc, "\n")
+	mask, _ := taskform.FenceMask(lines)
+	var out []string
+	for i := 0; i < len(lines); i++ {
+		t := strings.TrimSpace(lines[i])
+		if mask[i] || !(strings.HasPrefix(t, taskform.RehearsalNote) || strings.HasPrefix(t, taskform.RehearsalFailNote)) {
+			out = append(out, lines[i])
+			continue
+		}
+		for i++; i < len(lines); i++ {
+			t := strings.TrimSpace(lines[i])
+			if t == "" || strings.HasPrefix(t, "Шаг ") {
+				continue
+			}
+			if mark := fenceMarker(t); mark != "" && mask[i] {
+				for i++; i < len(lines) && mask[i]; i++ {
+				}
+				i--
+				continue
+			}
+			break
+		}
+		i--
+		// Хвостовые пустые строки съедены вместе с записью, а разделу нужна
+		// пустая строка перед следующим заголовком: её вернёт вставка новой
+		// записи, здесь же остаётся не приклеить прозу к заголовку раздела.
+		for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+			out = out[:len(out)-1]
+		}
+		out = append(out, "")
+	}
+	return strings.Join(out, "\n")
 }
 
 // shortSha режет коммит до двенадцати знаков: столько же показывают отказы

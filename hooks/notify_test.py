@@ -932,6 +932,12 @@ DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                     "testdata", "claude-code")
 REASONS = ("permission_prompt", "agent_needs_input", "elicitation_dialog",
            "idle_prompt")
+# Свой cwd для cli(), не унаследованный от процесса теста: без cwd подпроцесс
+# notify.py получал бы рабочую директорию раннера, а в свежем дереве прогона
+# слияния (DK-641) она сама лежит под TMPDIR и sandbox_reason читает её
+# песочницей (DK-069), из-за чего deliver() молча не звался и sent() пустел
+# (DK-677). Каталог python3 гарантированно лежит вне TMP_ROOTS.
+CLI_CWD = os.path.dirname(sys.executable)
 
 
 class HookCase(unittest.TestCase):
@@ -996,7 +1002,7 @@ class HookCase(unittest.TestCase):
     def cli(self, *args, **env):
         env.setdefault("HOME", self.home)
         env.setdefault("DEVKIT_NOTIFY_BACKEND", self.stub)
-        cwd = env.pop("cwd", None)
+        cwd = env.pop("cwd", None) or CLI_CWD
         return subprocess.run([sys.executable, NOTIFY] + list(args), env=env,
                               cwd=cwd, capture_output=True, text=True)
 
@@ -1370,6 +1376,22 @@ class TestArgumentMode(HookCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(self.sent(), ["выкат|прод обновлён"])
         self.assertIn("уровень громкий", self.journal())
+
+    # regcheck:test-begin
+    def test_reaches_the_backend_even_when_the_suite_itself_runs_from_tmp(self):
+        # cli() раньше не задавал cwd подпроцессу и тот наследовал рабочую
+        # директорию самого раннера тестов. В свежем дереве прогона слияния
+        # (DK-641) раннер сам стоит под TMPDIR, sandbox_reason (DK-069) читал
+        # это песочницей, deliver() не звался и sent() пустел (DK-677).
+        cwd = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            r = self.cli("выкат", "прод обновлён")
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.sent(), ["выкат|прод обновлён"])
+    # regcheck:test-end
 
     def test_loud_by_default(self):
         r = self.cli("выкат", "прод обновлён", DEVKIT_NOTIFY_BACKEND=self.tn)

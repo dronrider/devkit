@@ -762,6 +762,20 @@ func taskFile(t *testing.T, root, id, stages string) {
 	goalFile(t, root, id, text)
 }
 
+// archiveTaskFile кладёт файл закрытой задачи в docs/tasks/archive/<год>, как
+// его там оставляет taskctl close, а не рядом с файлом цели.
+func archiveTaskFile(t *testing.T, root, year, id, stages string) {
+	t.Helper()
+	dir := filepath.Join(root, "docs", "tasks", "archive", year)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	text := "# " + id + ": проба\n\n## Что происходит\n\nТекст.\n\n## Ход работы\n\n" + stages + "\n## Сценарий проверки\n\nАгентский.\n"
+	if err := os.WriteFile(filepath.Join(dir, id+".md"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestCmdTallyAddsUpStagesOfGoalTasks: сводка итога складывает время задач цели
 // и называет разбивку по видам этапов.
 func TestCmdTallyAddsUpStagesOfGoalTasks(t *testing.T) {
@@ -834,6 +848,52 @@ func TestCmdTallyWithoutTasks(t *testing.T) {
 	}
 	if !strings.Contains(out, "не называет ни одной задачи") {
 		t.Fatalf("вывод:\n%s", out)
+	}
+}
+
+// TestCmdTallyFindsArchivedTaskFile воспроизводит DK-682: задача цели закрыта,
+// её файл лежит в docs/tasks/archive/<год>, а не рядом с файлом цели. tally
+// обязан найти его и сложить этапы, а не увести задачу в хвост «файла задачи
+// нет».
+func TestCmdTallyFindsArchivedTaskFile(t *testing.T) {
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100",
+		"# T-100: Цель\n\n## Задачи цели\n\n- кандидат 1, T-101 (task, M). Первая.\n\n## Итог\n\n")
+	archiveTaskFile(t, root, "2026", "T-101", "- Разработка: opus/medium по вердикту pick, 2026-07-30 09:00-10:00.\n")
+	out, err := cmdTally(root, goal)
+	if err != nil {
+		t.Fatalf("tally: %v", err)
+	}
+	if strings.Contains(out, "файла задачи нет") {
+		t.Fatalf("архивная задача не найдена:\n%s", out)
+	}
+	if !strings.Contains(out, "время задач цели: всего 1ч 00м, этапов 1, задач 1") {
+		t.Fatalf("сводка не сложила этапы архивной задачи:\n%s", out)
+	}
+}
+
+// TestCmdTallyIgnoresProseMentions воспроизводит DK-682: раздел «Задачи цели»
+// упоминает чужие ID и в скобках сверки («T-900 (ворота готовности)»), и в
+// обороте «кандидат N ID» без материализации («кандидат 7 T-901»). Ни один из
+// них не строка состава, и в сводку попасть не должен.
+func TestCmdTallyIgnoresProseMentions(t *testing.T) {
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100",
+		"# T-100: Цель\n\n## Задачи цели\n\n"+
+			"Пробная нарезка, материализована строками: T-101 (кандидат 1).\n\n"+
+			"- кандидат 1, T-101 (task, M). Первая.\n\n"+
+			"Пересечения: T-900 (ворота готовности) метит туда же, а кандидат 7 T-901 "+
+			"ставит ворота в том же месте.\n\n## Итог\n\n")
+	taskFile(t, root, "T-101", "- Разработка: opus/medium по вердикту pick, 2026-07-30 09:00-10:00.\n")
+	out, err := cmdTally(root, goal)
+	if err != nil {
+		t.Fatalf("tally: %v", err)
+	}
+	if strings.Contains(out, "T-900") || strings.Contains(out, "T-901") {
+		t.Fatalf("прозаические ID попали в сводку:\n%s", out)
+	}
+	if !strings.Contains(out, "время задач цели: всего 1ч 00м, этапов 1, задач 1") {
+		t.Fatalf("состав шире одной материализованной задачи:\n%s", out)
 	}
 }
 

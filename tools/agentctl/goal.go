@@ -272,9 +272,20 @@ var goalStops = []string{"done", "over", "wait-human", "stuck"}
 // быть вовсе.
 var goalLapRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})`)
 
-// goalTaskRe ловит ID задачи в разделе «Задачи цели». Раздел это проза с
-// пунктами кандидатов, а не машинный список, и ID в нём лежат по тексту.
-var goalTaskRe = regexp.MustCompile(`\b[A-Z][A-Z0-9]*-\d+\b`)
+// goalCandidateRe ловит ID материализованного кандидата в начале
+// строки-пункта раздела «Задачи цели»: «- кандидат N, DK-NNN ...», форма
+// строки задана скиллом goal-cut (kit/skills/goal-cut/SKILL.md, «Список
+// кандидатов»). У кандидата пробной нарезки, ещё не заведённого строкой
+// доски («- кандидат N (...)»), своего ID нет, и такой пункт состав не
+// пополняет.
+var goalCandidateRe = regexp.MustCompile(`^кандидат\s+\d+,\s*([A-Z][A-Z0-9]*-\d+)\b`)
+
+// goalMaterializedRe ловит перечисление материализации во вводном абзаце
+// раздела: «DK-641 (кандидат 1), DK-642 (кандидат 2), ...» (тот же скилл).
+// Признак состава это ID сразу перед «(кандидат N)»: прозе сверок с чужими
+// ID («DK-092 (ворота готовности...)», «кандидат 7 DK-565») это сочетание не
+// достаётся, а обратный порядок («кандидат N DK-NNN») в тексте не встречается.
+var goalMaterializedRe = regexp.MustCompile(`\b([A-Z][A-Z0-9]*-\d+)\s*\(кандидат\s+\d+`)
 
 // humanDur пишет длительность так, как её читают в журнале: минуты до часа,
 // дальше часы с минутами. Секунд нет нигде, ими не меряется ни виток, ни этап.
@@ -409,29 +420,64 @@ func cmdLap(root, goalPath, note, marker string, start, now time.Time) (string, 
 	return out, nil
 }
 
-// goalTaskIDs собирает состав цели из раздела «Задачи цели». Порядок
-// сохраняется, повторы отбрасываются, а ID самой цели пропускается: раздел
-// ссылается и на неё.
+// goalTaskIDs собирает состав цели из раздела «Задачи цели»: строки-пункты
+// материализованных кандидатов и вводное перечисление материализации, не вся
+// проза раздела. Порядок сохраняется, повторы отбрасываются, а ID самой цели
+// пропускается: раздел ссылается и на неё.
 func goalTaskIDs(lines []string, self string) []string {
 	var out []string
 	seen := map[string]bool{self: true}
-	for _, ln := range lines {
-		for _, id := range goalTaskRe.FindAllString(goalLine(ln), -1) {
-			if seen[id] {
-				continue
+	add := func(id string) {
+		if seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	for _, raw := range lines {
+		t := strings.TrimSpace(raw)
+		if strings.HasPrefix(t, "```") {
+			continue
+		}
+		if strings.HasPrefix(t, "- ") {
+			if m := goalCandidateRe.FindStringSubmatch(strings.TrimPrefix(t, "- ")); m != nil {
+				add(m[1])
 			}
-			seen[id] = true
-			out = append(out, id)
+			continue
+		}
+		for _, m := range goalMaterializedRe.FindAllStringSubmatch(t, -1) {
+			add(m[1])
 		}
 	}
 	return out
+}
+
+// goalTaskFile ищет файл задачи цели: сперва рядом с файлом цели, как у
+// живой задачи, а не нашлось, тогда в архиве закрытых по году
+// (docs/tasks/archive/<год>/<ID>.md) тем же путём, что taskctl считает файл
+// закрытой задачи (readKindsTask, tools/taskctl/kinds.go): год заранее
+// неизвестен, отсюда glob по каталогам архива.
+func goalTaskFile(dir, id string) (string, bool) {
+	path := filepath.Join(dir, id+".md")
+	if _, err := os.Stat(path); err == nil {
+		return path, true
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "archive", "*", id+".md"))
+	if len(matches) > 0 {
+		return matches[0], true
+	}
+	return "", false
 }
 
 // goalTaskSpan складывает время этапов одной задачи по видам. Виды берутся
 // словарём stage.Kinds, а не перечнем: словарь растёт, и сводка обязана
 // показывать новый вид сама.
 func goalTaskSpan(dir, id string) (map[string]time.Duration, map[string]int, bool) {
-	data, err := os.ReadFile(filepath.Join(dir, id+".md"))
+	path, ok := goalTaskFile(dir, id)
+	if !ok {
+		return nil, nil, false
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, false
 	}

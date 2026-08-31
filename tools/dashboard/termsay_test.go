@@ -239,6 +239,34 @@ func TestChatSayFrozenTerminalRefusesKeys(t *testing.T) {
 	}
 }
 
+// Замороженный терминал с запертым диалогом: ответ «да» клавишами не подаётся,
+// tmux написал бы в мёртвый pty без ошибки, и 200 «вопрос отпущен» стало бы
+// молчанием, неотличимым от работы (замечание ревью DK-480). Ручка отвечает
+// отказом с именем клина до первой клавиши.
+func TestChatSayFrozenTerminalRefusesDialogAnswer(t *testing.T) {
+	sid := "caca7777-9999-4999-8999-999999999999"
+	e, c, sent := termSayEnv(t, sid, trustPane)
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
+	// Транскрипт стоит дольше срока клина: свежий снял бы вопрос без зонда.
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now().Add(-10*time.Minute))
+	writePeerSock(t, e.home, sid, os.Getpid(), deafSock(t))
+	// Общий стенд глушит зонд удачей, здесь он обязан молчать, как настоящий.
+	e.s.probe = peerProbe
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text": "да"}`)
+	said := body(t, resp)
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("ответ в замороженный диалог сошёл за отпущенный: %s", said)
+	}
+	if !strings.Contains(said, stuckDeafWord) {
+		t.Fatalf("клин не назван словами: %s", said)
+	}
+	if data, _ := os.ReadFile(sent); strings.Contains(string(data), "Enter") {
+		t.Fatalf("клавиши ушли в замороженный терминал: %s", data)
+	}
+}
+
 // Дорога в терминал есть только у человека с дашборда: запрос без входа и
 // запрос с чужим Origin отбиваются до того, как хоть одна клавиша уедет в
 // tmux. Агент с машины куки входа не имеет, и писать в канал ему нечем.

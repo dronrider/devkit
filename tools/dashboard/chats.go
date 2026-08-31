@@ -2069,6 +2069,21 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// отпускает диалог: сообщению соседней сессии харнес одобрением не верит,
 	// и это правильно, чинится доставка, а не правила доверия.
 	term := s.sayTermOf(sid, recs)
+	// Замороженный терминал глотает send-keys без эха (клин 69975): tmux
+	// пишет в pty без ошибки, а событийный цикл клиента мёртв, и клавиши не
+	// доходят никуда. Живость цикла спрашивает зонд сокета с памятью до любой
+	// посылки клавиш, ответа на запертый диалог в том числе: успех тут был бы
+	// молчанием, неотличимым от работы. Свежий транскрипт снимает вопрос без
+	// зонда.
+	if term != "" {
+		if p, ok := s.peers()[sid]; ok && s.peerDeaf(p.Sock, info.mod) {
+			s.logf("терминал чата %s заморожен, клавиши туда не едут (%s)", sid, stuckDeafWord)
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error": "клиент не отвечает на зонд: событийный цикл стоит, и клавиши ушли бы в никуда",
+				"stuck": stuckDeafWord})
+			return
+		}
+	}
 	stuckDialog := false
 	if term != "" && s.chatStuck(sid) != "" {
 		ask := tmuxAskOf(term)
@@ -2101,16 +2116,6 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if term != "" && !stuckDialog {
-		// Замороженный терминал глотает send-keys без эха (клин 69975):
-		// живость событийного цикла спрашивает зонд сокета с памятью, когда
-		// сокет у клиента есть. Свежий транскрипт снимает вопрос без зонда.
-		if p, ok := s.peers()[sid]; ok && s.peerDeaf(p.Sock, info.mod) {
-			s.logf("терминал чата %s заморожен, клавиши туда не едут (%s)", sid, stuckDeafWord)
-			writeJSON(w, http.StatusBadGateway, map[string]any{
-				"error": "клиент не отвечает на зонд: событийный цикл стоит, и клавиши ушли бы в никуда",
-				"stuck": stuckDeafWord})
-			return
-		}
 		if err := chatSend(term, text); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
 				"реплика не подалась в tmux-сессию %s: %s", term, procErr(err))})

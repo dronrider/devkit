@@ -52,6 +52,11 @@ in-progress`. Будит сторожок и только он, а будить 
 проде и занятом чужим заходом конвейере, а провал деплоя не поднимает код
 тика: уведомление шлёт сам shipctl через признак провала и taskctl fail.
 
+Тем же тиком свежеет снимок квоты обеих подписок (DK-633): тик зовёт
+`agentctl quota refresh --all --if-stale`, и протухший снимок переснимается и
+тогда, когда на машине не идёт ни одной сессии, а дашборд выключен. Съём и
+отказ видны строкой в журнале сторожка, свежие снимки журнал не трогают.
+
 Тем же тиком закрываются агентские задачи из Check (DK-516): строка вида agent
 с прогнанным smoke и непустым разделом «Проверка» доходит до Done без живой
 сессии, а тех, кто из Check ждёт человека, тик не трогает вовсе. Отбор идёт
@@ -605,6 +610,38 @@ def wake(root, now, call=None, taskctl=None, hook=LOAD_HOOK):
     return lines
 
 
+def quota_snap(call=None, agentctl=None):
+    """Съём остатка подписок тем же тиком (DK-633): снимок квоты обязан свежеть
+    и без живых сессий, иначе между заходами он стоит часами, а корректор
+    вердикта слепнет ровно к началу следующей задачи. Снимает
+    `agentctl quota refresh --all --if-stale`: перечень подписок, порог
+    свежести и замок живут в agentctl, тик его только будит, а панель
+    /usage и кабинет z.ai дёргаются не чаще протухания снимка. PATH
+    собирается как у launchd-агента дашборда: системное умолчание launchd не
+    знает ни tmux, ни claude, которыми снимается панель первой подписки.
+
+    Возврат это строка отчёта и признак значимости: в журнал сторожка идут
+    съём и отказ, а «всё свежо» капало бы туда каждые пять минут."""
+    call = subprocess.run if call is None else call
+    bin = devkit_bin("agentctl") if agentctl is None else agentctl
+    if not bin:
+        return ("снимок квоты: бинаря agentctl нет ни в PATH, ни в каталогах "
+                "релиза, снимки стареют до ручного refresh"), True
+    import dashboard
+    env = dict(os.environ)
+    env["PATH"] = dashboard.agent_path(bin)
+    try:
+        p = call([bin, "quota", "refresh", "--all", "--if-stale"],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    except OSError as e:
+        return "снимок квоты: съём не запустился, %s" % e, True
+    text = " ".join((p.stdout or "").split())
+    if p.returncode != 0:
+        return "снимок квоты: съём кончился кодом %d: %s" % (p.returncode, text[:500]), True
+    first = text.split(" харнес ")[0]
+    return "снимок квоты: %s" % first, bool(re.search(r"снято [1-9]", first))
+
+
 NO_DRAIN = "разлив не нужен"
 
 
@@ -791,6 +828,12 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     home = default_home() if home is None else home
     idle = conf_idle(home) if idle is None else idle
     out = sys.stdout if out is None else out
+    # Съём квоты идёт до обхода реестра и не зависит от него: снимок лежит на
+    # уровне машины, и свежеть он обязан и там, где целей под надзором нет.
+    qline, qnotable = quota_snap(call)
+    out.write(qline + "\n")
+    if qnotable:
+        log_line(qline, home)
     found, watched = 0, 0
     swept = set()
     for path in entries(home):

@@ -230,7 +230,9 @@ class RunTest(Stand):
         rc, out, call = self.sweep()
         self.assertEqual(rc, 0)
         self.assertIn("целей под надзором нет", out)
-        self.assertEqual(call.calls, [])
+        # Единственный вызов пустого тика это съём квоты (DK-633): снимок
+        # свежеет и на машине, где целей под надзором нет.
+        self.assertEqual([c for c in call.calls if "quota" not in c], [])
 
     def test_heartbeat_written(self):
         # По этой строке доктор судит, работает ли носитель сторожка.
@@ -1032,6 +1034,62 @@ class CommandTest(testenv.SandboxCase):
         # Уведомитель позван настоящий, и он молчит про корень во временной
         # директории: стенд ему песочница, а не рабочий проект.
         self.assertIn("уведомление пропущено", out)
+
+
+class QuotaTick(unittest.TestCase):
+    """Съём квоты тем же тиком (DK-633): снимок обеих подписок свежеет и без
+    живых сессий, а журнал сторожка видит съём и отказ, но не «всё свежо»."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="watch-quota-"))
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.home = self.dir / "дом"
+        (self.home / ".devkit").mkdir(parents=True)
+
+    def tick(self, fake):
+        out = io.StringIO()
+        watch.run(now=datetime.now(), idle=45 * 60, home=self.home, out=out,
+                  call=fake, taskctl=TASKCTL, shipctl=SHIPCTL)
+        return out.getvalue()
+
+    def journal(self):
+        path = self.home / ".devkit" / "goal-watch.log"
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def test_tick_calls_refresh_all_if_stale(self):
+        # Красный на старом коде: тик вовсе не звал agentctl, и снимок между
+        # заходами стоял часами.
+        fake = Fake(code=0, out="подписок 2: снято 0, свежих 2, отказов 0")
+        out = self.tick(fake)
+        quota = fake.argv_with("--all")
+        self.assertEqual(len(quota), 1, fake.calls)
+        for part in ("quota", "refresh", "--if-stale"):
+            self.assertIn(part, quota[0])
+        self.assertIn("снимок квоты", out)
+
+    def test_fresh_snapshots_stay_out_of_the_journal(self):
+        # «Всё свежо» капало бы в журнал каждые пять минут, ничего не добавляя.
+        self.tick(Fake(code=0, out="подписок 2: снято 0, свежих 2, отказов 0"))
+        self.assertNotIn("снимок квоты", self.journal())
+
+    def test_actual_snap_reaches_the_journal(self):
+        out = self.tick(Fake(code=0, out="подписок 2: снято 1, свежих 1, отказов 0\n"
+                                         "харнес glm-code:\nснимок ..."))
+        self.assertIn("снято 1", self.journal())
+        # Разбор по харнесам остаётся выводу тика, журналу хватает счёта.
+        self.assertNotIn("glm-code", self.journal())
+        self.assertIn("снято 1", out)
+
+    def test_failure_reaches_the_journal(self):
+        out = self.tick(Fake(code=1, out="ошибка: харнес glm-code: запрос остатка не прошёл"))
+        self.assertIn("кодом 1", self.journal())
+        self.assertIn("glm-code", self.journal())
+        self.assertIn("кодом 1", out)
+
+    def test_missing_agentctl_is_reported(self):
+        line, notable = watch.quota_snap(call=Fake(), agentctl="")
+        self.assertTrue(notable)
+        self.assertIn("agentctl нет", line)
 
 
 if __name__ == "__main__":

@@ -33,6 +33,52 @@ func TestKnownAndSession(t *testing.T) {
 	}
 }
 
+func TestVerifyKindKnown(t *testing.T) {
+	if !Known(Verify) {
+		t.Fatal("вид «проверка» не признан своим")
+	}
+	if !NeedsSession(Verify) {
+		t.Fatal("прогон сценария объявлен не требующим сессии")
+	}
+}
+
+func TestVerifyNoteRoundTrip(t *testing.T) {
+	for _, name := range []string{"sonnet", "glm:glm-5.2"} {
+		got, ok := VerifyRunner(VerifyNote(name))
+		if !ok || got != name {
+			t.Fatalf("прогонявший %q не вернулся из записи: %q, %v", name, got, ok)
+		}
+	}
+}
+
+func TestVerifyRunnerFromFlushedLine(t *testing.T) {
+	line := "- Проверка: сценарий прогнал glm:glm-5.2, 2026-08-31 12:00-12:05."
+	got, ok := VerifyRunner(line)
+	if !ok || got != "glm:glm-5.2" {
+		t.Fatalf("из строки «Хода работы» прогонявший не достался: %q, %v", got, ok)
+	}
+	if _, ok := VerifyRunner("- Проверка: вывод вложен в раздел."); ok {
+		t.Fatal("строка без записи прогона отдала прогонявшего")
+	}
+}
+
+func TestExecutorFromPickNote(t *testing.T) {
+	cases := map[string]string{
+		"субагент opus/high по вердикту pick (квота: week_all 93%)":           "opus",
+		"- Разработка: opus/medium по вердикту pick, 2026-08-18 14:01-15:20.": "opus",
+		"грумминговый вердикт, делегат glm:glm-5.2/high по вердикту pick":     "glm:glm-5.2",
+	}
+	for text, want := range cases {
+		got, ok := Executor(text)
+		if !ok || got != want {
+			t.Fatalf("из %q исполнитель не достался: %q, %v", text, got, ok)
+		}
+	}
+	if _, ok := Executor("- Разработка: руками, 2026-08-18 14:01."); ok {
+		t.Fatal("строка без вердикта pick отдала исполнителя")
+	}
+}
+
 func TestSlugSplitsSameNamedProjects(t *testing.T) {
 	a := Slug("/Users/rider/projects/devkit")
 	b := Slug("/Users/rider/work/devkit")

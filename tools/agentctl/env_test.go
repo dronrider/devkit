@@ -245,7 +245,7 @@ enabled = ["claude-code"]
 
 [claude-code]
 mini = "haiku"
-base = "glm-code:glm-4.7"
+base = "glm-code:glm-5.3-flash"
 pro = "opus"
 max = "fable"
 

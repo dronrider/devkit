@@ -308,7 +308,7 @@ home = "`+home+`"
 		t.Fatalf("harness: %v", err)
 	}
 	for _, part := range []string{
-		"маппинг ярусов: mini = glm-4.7, base = glm-5.3, pro = glm-5.3, max = glm-5.3",
+		"маппинг ярусов: mini = glm-5.3-flash, base = glm-5.3, pro = glm-5.3, max = glm-5.3",
 		"предложение профиля, в секции [glm-code] ярусов нет",
 	} {
 		if !strings.Contains(shown, part) {

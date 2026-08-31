@@ -7,6 +7,8 @@
 package taskform
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"regexp"
 	"strings"
 )
@@ -322,9 +324,50 @@ const (
 	RehearsalFailNote = "- Обкатка не зачтена:"
 )
 
-// treeWord это слово перед коммитом в строке отметки: по нему из неё достаётся
-// дерево, на котором шёл прогон.
-const treeWord = "свежее дерево "
+// Слова перед машинными полями строки отметки: по ним из неё достаются дерево,
+// на котором шёл прогон, и отпечаток обкатанного сценария.
+const (
+	treeWord     = "свежее дерево "
+	scenarioWord = "сценарий "
+)
+
+// ScenarioPrint это отпечаток текста раздела «Сценарий проверки»: восемь знаков
+// sha256 от нормализованного тела раздела. Отпечаток едет в отметку обкатки, и
+// ворота по нему видят, что после прогона сценарий переписали. Одних путей
+// коммитов для этого мало: правка сценария лежит в том же файле задачи, что и
+// запись прогона, и по именам файлов эти два коммита неразличимы. Нормализация
+// снимает хвостовые пробелы и пустые строки: перевёрстка абзаца сценария не
+// меняет ни одного шага и отметку отменять не должна. Ограждённые блоки в тело
+// входят, в них и живут команды.
+func ScenarioPrint(doc string) string {
+	var kept []string
+	for _, ln := range scenarioBody(doc) {
+		if t := strings.TrimRight(ln, " \t"); t != "" {
+			kept = append(kept, t)
+		}
+	}
+	sum := sha256.Sum256([]byte(strings.Join(kept, "\n")))
+	return hex.EncodeToString(sum[:])[:8]
+}
+
+// scenarioBody отдаёт строки раздела «Сценарий проверки» вместе с ограждёнными
+// блоками. Заголовок внутри блока разделом не считается: там лежит чужой вывод.
+func scenarioBody(doc string) []string {
+	lines := strings.Split(doc, "\n")
+	mask, _ := FenceMask(lines)
+	var out []string
+	in := false
+	for i, ln := range lines {
+		if !mask[i] && strings.HasPrefix(ln, "## ") {
+			in = strings.HasPrefix(ln, Scenario)
+			continue
+		}
+		if in {
+			out = append(out, ln)
+		}
+	}
+	return out
+}
 
 // RehearsalSha достаёт коммит из отметки обкатки. Одного факта отметки воротам
 // мало: ветка уезжает вперёд после прогона, и вчерашняя обкатка открывала бы
@@ -334,25 +377,46 @@ const treeWord = "свежее дерево "
 // вкладывается реальный вывод команд, и процитированная там отметка чужой
 // задачи открывала бы ворота без прогона.
 func RehearsalSha(doc string) (string, bool) {
+	sha, _, ok := RehearsalStamp(doc)
+	return sha, ok
+}
+
+// RehearsalStamp достаёт из отметки обкатки коммит прогона и отпечаток
+// сценария, на котором он шёл. Отметка старого образца, без отпечатка, за
+// прогон не считается: сценарий под ней мог смениться, и доказать обратное
+// нечем.
+func RehearsalStamp(doc string) (sha, print string, ok bool) {
 	lines := strings.Split(doc, "\n")
 	mask, _ := FenceMask(lines)
-	sha, found := "", false
+	found := false
 	for i, ln := range lines {
 		t := strings.TrimSpace(ln)
 		if mask[i] || !strings.HasPrefix(t, RehearsalNote) {
 			continue
 		}
-		rest, ok := cutAfter(t, treeWord)
-		if !ok {
+		tree, okTree := markField(t, treeWord)
+		mark, okPrint := markField(t, scenarioWord)
+		if !okTree || !okPrint {
 			continue
 		}
-		v := strings.TrimRight(strings.Fields(rest)[0], ",.")
-		if !IsSha(v) {
-			continue
-		}
-		sha, found = v, true
+		sha, print, found = tree, mark, true
 	}
-	return sha, found
+	return sha, print, found
+}
+
+// markField достаёт из строки отметки значение поля, названного словом word:
+// первое слово после него, очищенное от запятой и точки. Значение обязано быть
+// шестнадцатеричным, иначе это проза, а не машинное поле.
+func markField(line, word string) (string, bool) {
+	rest, ok := cutAfter(line, word)
+	if !ok {
+		return "", false
+	}
+	v := strings.TrimRight(strings.Fields(rest)[0], ",.")
+	if !IsSha(v) {
+		return "", false
+	}
+	return v, true
 }
 
 // Rehearsed отвечает, стоит ли в файле задачи зачтённая отметка обкатки.

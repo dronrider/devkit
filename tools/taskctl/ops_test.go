@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 func setup(t *testing.T) string {
@@ -48,9 +50,19 @@ const fixtureScenario = "\n## Сценарий проверки\n\n1. Запус
 // Отметка обкатки стоит тут же: ворота move check спрашивают её у агентского
 // вида (DK-643), а через Check ходит половина тестов. Тесты про сами ворота
 // файл переписывают своим.
-const fixtureVerification = "\n## Проверка\n\n" + fixtureRehearsal + "- прогон пройден, вывод вложен.\n"
+var fixtureVerification = verificationFor(fixtureScenario)
 
-const fixtureRehearsal = "- Обкатка: 2026-01-01 10:00, свежее дерево 1a2b3c4d5e6f, шагов 1, все зелёные.\n"
+// rehearsalFor собирает строку отметки обкатки под сценарий файла: в отметке
+// стоит отпечаток текста раздела, и ворота сверяют его с нынешним текстом.
+func rehearsalFor(doc string) string {
+	return "- Обкатка: 2026-01-01 10:00, свежее дерево 1a2b3c4d5e6f, сценарий " +
+		taskform.ScenarioPrint(doc) + ", шагов 1, все зелёные.\n"
+}
+
+// verificationFor собирает раздел «Проверка» с отметкой под сценарий файла.
+func verificationFor(doc string) string {
+	return "\n## Проверка\n\n" + rehearsalFor(doc) + "- прогон пройден, вывод вложен.\n"
+}
 
 // giveScenario заводит задаче файл со сценарием проверки там, где фикстура
 // доски его не кладёт.

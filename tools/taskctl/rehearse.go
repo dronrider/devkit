@@ -79,7 +79,10 @@ func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	block := rehearsalBlock(runs, sha, now, failed)
+	// Отпечаток берётся с того текста сценария, который обкатка только что
+	// прогнала: раздел «Проверка» в него не входит, и запись прогона отметку
+	// не отменяет.
+	block := rehearsalBlock(runs, sha, taskform.ScenarioPrint(doc), now, failed)
 	// Прошлая запись обкатки уносится: повтор прогона иначе копит в «Проверке»
 	// блоки шагов и отметки, и какая из них относится к нынешнему коммиту,
 	// глазами уже не видно.
@@ -149,18 +152,18 @@ func runCollect(cmd *exec.Cmd, limit time.Duration) (string, error) {
 // отметки, по которой ворота узнают прогон, и вывод каждого шага целиком.
 // Вывод идёт ограждённым блоком, иначе разметка файла задачи ломается о первую
 // же строку вывода, начатую решёткой или маркером списка.
-func rehearsalBlock(runs []stepRun, sha string, now time.Time, failed int) []string {
+func rehearsalBlock(runs []stepRun, sha, print string, now time.Time, failed int) []string {
 	verdict := "все зелёные"
 	if failed > 0 {
 		verdict = fmt.Sprintf("красных %d", failed)
 	}
-	out := []string{"", fmt.Sprintf("%s %s, свежее дерево %s, временный HOME, шагов %d, %s.",
-		taskform.RehearsalNote, now.Format("2006-01-02 15:04"), shortSha(sha), len(runs), verdict)}
+	out := []string{"", fmt.Sprintf("%s %s, свежее дерево %s, сценарий %s, временный HOME, шагов %d, %s.",
+		taskform.RehearsalNote, now.Format("2006-01-02 15:04"), shortSha(sha), print, len(runs), verdict)}
 	if failed > 0 {
 		// Отметка ворот ставится только зелёной обкаткой, а вывод красной всё
 		// равно нужен глазами: без него разбирать провал нечем.
-		out[1] = fmt.Sprintf("%s %s, свежее дерево %s, шагов %d, %s, ворота закрыты.",
-			taskform.RehearsalFailNote, now.Format("2006-01-02 15:04"), shortSha(sha), len(runs), verdict)
+		out[1] = fmt.Sprintf("%s %s, свежее дерево %s, сценарий %s, шагов %d, %s, ворота закрыты.",
+			taskform.RehearsalFailNote, now.Format("2006-01-02 15:04"), shortSha(sha), print, len(runs), verdict)
 	}
 	for i, r := range runs {
 		mark := "зелёный"

@@ -115,7 +115,8 @@ func TestMoveToCheckPassesWithScenario(t *testing.T) {
 func TestMoveToCheckAcceptsAgentScenario(t *testing.T) {
 	root := setup(t)
 	p := filepath.Join(root, "docs", "tasks", "XR-005.md")
-	if err := os.WriteFile(p, []byte("# XR-005\n\n## Сценарий проверки (агентский)\n\n1. Прогнать.\n"+fixtureVerification), 0o644); err != nil {
+	doc := "# XR-005\n\n## Сценарий проверки (агентский)\n\n1. Прогнать.\n"
+	if err := os.WriteFile(p, []byte(doc+verificationFor(doc)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
@@ -525,7 +526,7 @@ func TestMoveToCheckNeedsRehearsal(t *testing.T) {
 // TestMoveToCheckPassesAfterRehearsal: отметка от rehearse открывает ворота.
 func TestMoveToCheckPassesAfterRehearsal(t *testing.T) {
 	root := setup(t)
-	writeTask(t, root, "XR-005", "# XR-005\n"+fixtureScenario+"\n## Проверка\n\n"+fixtureRehearsal)
+	writeTask(t, root, "XR-005", "# XR-005\n"+fixtureScenario+"\n## Проверка\n\n"+rehearsalFor(fixtureScenario))
 	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
 		t.Fatalf("обкатанный сценарий ворота держать не должны: %v", err)
 	}
@@ -547,7 +548,7 @@ func TestMoveToCheckRehearsalException(t *testing.T) {
 func TestMoveToCheckQuotedRehearsalDoesNotPass(t *testing.T) {
 	root := setup(t)
 	writeTask(t, root, "XR-005", "# XR-005\n"+fixtureScenario+
-		"\n## Проверка\n\n```console\n$ taskctl show XR-002\n"+fixtureRehearsal+"```\n")
+		"\n## Проверка\n\n```console\n$ taskctl show XR-002\n"+rehearsalFor(fixtureScenario)+"```\n")
 	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err == nil {
 		t.Fatal("процитированная отметка открыла ворота")
 	}
@@ -608,5 +609,52 @@ func TestMoveToCheckKeepsRehearsalAfterTaskDocCommit(t *testing.T) {
 	gitOut(t, root, "commit", "-q", "-m", "docs(tasks): XR-005 вывод обкатки")
 	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
 		t.Fatalf("коммит записи прогона отбил свою же отметку: %v", err)
+	}
+}
+
+// TestMoveToCheckRejectsSwappedScenario: подмена шага отдельным коммитом, где
+// тронут один файл задачи, отметку отменяет. Так ревью воспроизвело дыру:
+// обкатка шла на «echo шаг-раз», а в Check уезжал сценарий, которого прогон не
+// видел (замечание 4). Отказ называет причину, повторная обкатка ворота
+// открывает.
+func TestMoveToCheckRejectsSwappedScenario(t *testing.T) {
+	root := setupRehearse(t, "echo шаг-раз")
+	if _, err := cmdRehearse(root, "XR-005", RehearseParams{Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", filepath.Join("docs", "tasks", "XR-005.md"))
+	gitOut(t, root, "commit", "-q", "-m", "docs(tasks): XR-005 вывод обкатки")
+	writeTask(t, root, "XR-005", strings.Replace(rehearseDoc(t, root, "XR-005"),
+		"echo шаг-раз\n```", "echo шаг-другой\n```", 1))
+	gitOut(t, root, "add", filepath.Join("docs", "tasks", "XR-005.md"))
+	gitOut(t, root, "commit", "-q", "-m", "docs(tasks): XR-005 правка сценария")
+	_, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
+	if err == nil {
+		t.Fatal("подменённый сценарий уехал в Check под старой отметкой")
+	}
+	if !strings.Contains(err.Error(), "сценарий менялся после обкатки") {
+		t.Fatalf("отказ не называет причину: %v", err)
+	}
+	if _, err := cmdRehearse(root, "XR-005", RehearseParams{Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatalf("повторная обкатка ворота не открыла: %v", err)
+	}
+}
+
+// TestMoveToCheckKeepsRehearsalAfterProseEdit: правка прозы файла вне раздела
+// сценария отметку не трогает. Отпечаток снят с шагов, а не с файла целиком.
+func TestMoveToCheckKeepsRehearsalAfterProseEdit(t *testing.T) {
+	root := setupRehearse(t, "echo шаг-раз")
+	if _, err := cmdRehearse(root, "XR-005", RehearseParams{Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	writeTask(t, root, "XR-005", rehearseDoc(t, root, "XR-005")+
+		"\n## Развилки\n\nдописано после обкатки, шагов не касается.\n")
+	gitOut(t, root, "add", filepath.Join("docs", "tasks", "XR-005.md"))
+	gitOut(t, root, "commit", "-q", "-m", "docs(tasks): XR-005 развилка")
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatalf("правка прозы отбила отметку: %v", err)
 	}
 }

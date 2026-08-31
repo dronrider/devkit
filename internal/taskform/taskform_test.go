@@ -120,7 +120,7 @@ func TestException(t *testing.T) {
 // TestRehearsed: отметка обкатки видна воротам, цитата отметки внутри
 // ограждённого блока не считается, а файл без отметки её не показывает.
 func TestRehearsed(t *testing.T) {
-	mark := RehearsalNote + " 2026-08-31 12:00, свежее дерево 1a2b3c4d5e6f, шагов 2, все зелёные."
+	mark := RehearsalNote + " 2026-08-31 12:00, свежее дерево 1a2b3c4d5e6f, сценарий 1234abcd, шагов 2, все зелёные."
 	if !Rehearsed("# XR-001\n\n## Проверка\n\n" + mark + "\n") {
 		t.Fatal("отметка обкатки не найдена")
 	}
@@ -137,17 +137,48 @@ func TestRehearsed(t *testing.T) {
 // берётся последняя, а отметка без коммита за прогон не считается.
 func TestRehearsalSha(t *testing.T) {
 	doc := "# XR-001\n\n## Проверка\n\n" +
-		RehearsalNote + " 2026-08-30 10:00, свежее дерево aaaaaaaaaaaa, шагов 1, все зелёные.\n" +
-		RehearsalNote + " 2026-08-31 12:00, свежее дерево bbbbbbbbbbbb, шагов 2, все зелёные.\n"
+		RehearsalNote + " 2026-08-30 10:00, свежее дерево aaaaaaaaaaaa, сценарий 1234abcd, шагов 1, все зелёные.\n" +
+		RehearsalNote + " 2026-08-31 12:00, свежее дерево bbbbbbbbbbbb, сценарий 1234abcd, шагов 2, все зелёные.\n"
 	sha, ok := RehearsalSha(doc)
 	if !ok || sha != "bbbbbbbbbbbb" {
 		t.Fatalf("взята не последняя отметка: %q, %v", sha, ok)
 	}
-	if _, ok := RehearsalSha("## Проверка\n\n" + RehearsalNote + " 2026-08-31 12:00, шагов 2.\n"); ok {
+	if _, ok := RehearsalSha("## Проверка\n\n" + RehearsalNote + " 2026-08-31 12:00, сценарий 1234abcd, шагов 2.\n"); ok {
 		t.Fatal("отметка без коммита сошла за прогон")
 	}
 	if _, ok := RehearsalSha("## Проверка\n\n" + RehearsalFailNote +
-		" 2026-08-31 12:00, свежее дерево cccccccccccc, шагов 2, красных 1, ворота закрыты.\n"); ok {
+		" 2026-08-31 12:00, свежее дерево cccccccccccc, сценарий 1234abcd, шагов 2, красных 1, ворота закрыты.\n"); ok {
 		t.Fatal("красный прогон сошёл за зачтённый")
+	}
+}
+
+// TestScenarioPrint: отпечаток снят с шагов раздела «Сценарий проверки».
+// Подмена команды его меняет, перевёрстка пустыми строками нет, а текст
+// соседних разделов в него не входит.
+func TestScenarioPrint(t *testing.T) {
+	doc := "# XR-001\n\n" + Scenario + "\n\nАгентский.\n\n```sh\necho шаг-раз\n```\n"
+	base := ScenarioPrint(doc)
+	if base == ScenarioPrint(strings.Replace(doc, "шаг-раз", "шаг-другой", 1)) {
+		t.Fatal("подмена команды отпечаток не сменила")
+	}
+	if base != ScenarioPrint(strings.Replace(doc, "Агентский.\n\n", "Агентский.\n\n\n", 1)) {
+		t.Fatal("пустая строка сменила отпечаток")
+	}
+	if base != ScenarioPrint(doc+"\n"+Verification+"\n\nвывод прогона.\n") {
+		t.Fatal("раздел «Проверка» попал в отпечаток сценария")
+	}
+}
+
+// TestRehearsalStampNeedsPrint: отметка старого образца, без отпечатка
+// сценария, за прогон не считается.
+func TestRehearsalStampNeedsPrint(t *testing.T) {
+	old := "## Проверка\n\n" + RehearsalNote + " 2026-08-31 12:00, свежее дерево aaaaaaaaaaaa, шагов 1, все зелёные.\n"
+	if _, _, ok := RehearsalStamp(old); ok {
+		t.Fatal("отметка без отпечатка сошла за прогон")
+	}
+	fresh := "## Проверка\n\n" + RehearsalNote + " 2026-08-31 12:00, свежее дерево aaaaaaaaaaaa, сценарий 1234abcd, шагов 1, все зелёные.\n"
+	sha, print, ok := RehearsalStamp(fresh)
+	if !ok || sha != "aaaaaaaaaaaa" || print != "1234abcd" {
+		t.Fatalf("отметка разобрана неверно: %q, %q, %v", sha, print, ok)
 	}
 }

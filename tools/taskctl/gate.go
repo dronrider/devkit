@@ -377,10 +377,18 @@ func rehearsalGate(root, id string) error {
 	if taskform.Exception(doc, taskform.GateRehearsal) {
 		return nil
 	}
-	mark, ok := taskform.RehearsalSha(doc)
+	mark, print, ok := taskform.RehearsalStamp(doc)
 	if !ok {
 		return fmt.Errorf("%s: сценарий не обкатан в чистом окружении, а Check значит, что проверять по нему будут всерьёз: прогнать «taskctl rehearse %s» (свежее дерево, временный HOME, вывод ляжет в «Проверку») и повторить move; где шаги без выката не гоняются, загасить ворот пометкой «- Исключение: обкатка (причина)» в docs/tasks/%s.md",
 			id, id, id)
+	}
+	// Отпечаток обкатанного сценария сверяется первым. Правка шагов лежит в том
+	// же файле задачи, что и запись прогона, и по именам файлов эти коммиты
+	// неразличимы: подменённый шаг проезжал в Check под отметкой прогона,
+	// который его не видел.
+	if now := taskform.ScenarioPrint(doc); now != print {
+		return fmt.Errorf("%s: сценарий менялся после обкатки (отпечаток отметки %s, у нынешнего текста %s): прогнать «taskctl rehearse %s» заново и повторить move",
+			id, print, now, id)
 	}
 	// Отметка привязана к коммиту, на котором шёл прогон. После обкатки ветка
 	// уезжает вперёд, и вчерашняя отметка открывала бы Check сегодняшнему коду.

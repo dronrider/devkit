@@ -322,15 +322,20 @@ base = "sonnet"
 pro = "opus"
 max = "fable"
 `)
-	taken := time.Now().Add(-5 * time.Minute).Format("2006-01-02T15:04")
-	writeFile(t, home, ".devkit/quota/claude-code.local",
-		"taken = "+taken+"\nweek_all = 10% сброс 2099-01-01T00:00\n")
 	run := func(args ...string) (string, error) {
 		cmd := exec.Command("go", append([]string{"run", "."}, args...)...)
 		cmd.Env = append(os.Environ(), "HOME="+home, "DEVKIT_HOME="+repoRoot(t), "DEVKIT_HARNESS=")
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
+	// Прогрев: первый go run компилирует пакет, и на холодном кэше (свежий
+	// worktree, ребейз) сборка идёт дольше минуты. Снимок, записанный до неё,
+	// успевал состариться с 5м до 6м, и свежесть судилась по скорости
+	// компиляции, а не по порогу (красный прогон на слиянии DK-642).
+	run("quota")
+	taken := time.Now().Add(-5 * time.Minute).Format("2006-01-02T15:04")
+	writeFile(t, home, ".devkit/quota/claude-code.local",
+		"taken = "+taken+"\nweek_all = 10% сброс 2099-01-01T00:00\n")
 
 	out, err := run("quota")
 	if err != nil || !strings.Contains(out, "возраст 5м") || strings.Contains(out, "протух") {

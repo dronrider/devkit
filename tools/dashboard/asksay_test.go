@@ -82,9 +82,9 @@ func TestChatSayGoesToInputWhileAskWaits(t *testing.T) {
 	}
 }
 
-// Признак протух: ждущего за ним нет, и реплика идёт обычной дорогой в сокет
-// клиента. Без срока всякий брошенный признак уводил бы разговор во вход, где
-// реплику никто не читает до следующего хода.
+// Признак протух: ждущего за ним нет, и реплика идёт обычной дорогой, клавишами
+// в живую tmux-сессию разговора (DK-480). Без срока всякий брошенный признак
+// уводил бы разговор во вход, где реплику никто не читает до следующего хода.
 func TestChatSayIgnoresStaleAsk(t *testing.T) {
 	sid := "eeee5555-5555-4555-8555-555555555555"
 	e, c, frames := askSayEnv(t, sid)
@@ -92,11 +92,15 @@ func TestChatSayIgnoresStaleAsk(t *testing.T) {
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
 		sayBody("ответ на протухший вопрос", "m-2"))
+	said := body(t, resp)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("реплика отбита: %d %s", resp.StatusCode, body(t, resp))
+		t.Fatalf("реплика отбита: %d %s", resp.StatusCode, said)
 	}
-	if got := frames(); len(got) != 1 {
-		t.Fatalf("реплика не поехала сокетом: кадров %d, %q", len(got), got)
+	if !strings.Contains(said, `"send-keys"`) {
+		t.Fatalf("реплика не поехала терминальной дорогой: %s", said)
+	}
+	if got := frames(); len(got) != 0 {
+		t.Fatalf("реплика ушла в сокет мимо терминала: %q", got)
 	}
 	if lines := chatLines(t, e.proj, "task-XR-4"); len(lines) != 0 {
 		t.Fatalf("реплика легла во вход, где её никто не ждёт: %q", lines)
@@ -104,7 +108,7 @@ func TestChatSayIgnoresStaleAsk(t *testing.T) {
 }
 
 // Вопрос задала другая сессия того же разговора: реплика этой сессии едет
-// сокетом, а не во вход. Иначе ответ одному собеседнику забрал бы ждущий
+// своей дорогой, а не во вход. Иначе ответ одному собеседнику забрал бы ждущий
 // сосед, и оба разговора получили бы не своё.
 func TestChatSayIgnoresAskOfOtherSession(t *testing.T) {
 	sid := "ffff6666-6666-4666-8666-666666666666"
@@ -114,11 +118,15 @@ func TestChatSayIgnoresAskOfOtherSession(t *testing.T) {
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
 		sayBody("это ответ не тому, кто ждёт", "m-3"))
+	said := body(t, resp)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("реплика отбита: %d %s", resp.StatusCode, body(t, resp))
+		t.Fatalf("реплика отбита: %d %s", resp.StatusCode, said)
 	}
-	if got := frames(); len(got) != 1 {
-		t.Fatalf("реплика не поехала сокетом: кадров %d, %q", len(got), got)
+	if !strings.Contains(said, `"send-keys"`) {
+		t.Fatalf("реплика не поехала терминальной дорогой: %s", said)
+	}
+	if got := frames(); len(got) != 0 {
+		t.Fatalf("реплика ушла в сокет мимо терминала: %q", got)
 	}
 	if lines := chatLines(t, e.proj, "task-XR-4"); len(lines) != 0 {
 		t.Fatalf("реплика легла во вход чужого ожидания: %q", lines)

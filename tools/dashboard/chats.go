@@ -2062,9 +2062,79 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, done)
 		return
 	}
-	// Первым делом канал самого клиента: живая сессия принимает реплику прямо в
-	// свой сокет и просыпается за секунды, чем бы она ни была поднята. Окно
-	// vscode отсюда тоже слышно, и отказывать ему больше не за что.
+	// Терминальная дорога первая (DK-480): реплика в свою живую tmux-сессию
+	// подаётся клавишами и приходит агенту вводом человека, без рамки
+	// межсессионного канала. Только на этой дороге строка с `!` исполняется
+	// терминалом без витка модели, а ответ на запертый вопрос разрешения
+	// отпускает диалог: сообщению соседней сессии харнес одобрением не верит,
+	// и это правильно, чинится доставка, а не правила доверия.
+	term := s.sayTermOf(sid, recs)
+	stuckDialog := false
+	if term != "" && s.chatStuck(sid) != "" {
+		ask := tmuxAskOf(term)
+		if opt := askOptionOf(ask, text); opt > 0 {
+			if err := tmuxAnswer(term, ask, opt, ""); err != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
+					"ответ не подался в tmux-сессию %s: %s", term, procErr(err))})
+				return
+			}
+			pick := strings.TrimSpace(ask.Options[opt-1].Text)
+			s.chatSayDone(sid, claim, "answer")
+			s.saidSay(saidSessionKey(sid), text, "answer")
+			s.logf("реплика чата %s отпустила запертый вопрос: пункт %d (%s)", sid, opt, pick)
+			writeJSON(w, http.StatusOK, map[string]any{"way": "answer", "tmux": term, "option": opt,
+				"note":    fmt.Sprintf("ответ подан клавишами в запертый вопрос: пункт %d (%s)", opt, pick),
+				"message": "запертый вопрос отпущен: работа идёт дальше без терминала"})
+			return
+		}
+		// Свободные слова в модальный вопрос не печатаются: латинская буква в
+		// них сработала бы горячей клавишей диалога, и реплика человека нажала
+		// бы кнопку за него. Сокет кладёт такую реплику в очередь клиента
+		// (дорога ниже), а без сокета она остаётся у панели с причиной и
+		// кнопкой повтора, а не теряется в диалоге молча.
+		stuckDialog = true
+		if _, ok := s.peers()[sid]; !ok {
+			s.logf("реплика чата %s не поехала: %s", sid, stuckAskSayWord)
+			writeJSON(w, http.StatusOK, map[string]any{"way": "held", "tmux": term,
+				"stuck": stuckAskSayWord})
+			return
+		}
+	}
+	if term != "" && !stuckDialog {
+		// Замороженный терминал глотает send-keys без эха (клин 69975):
+		// живость событийного цикла спрашивает зонд сокета с памятью, когда
+		// сокет у клиента есть. Свежий транскрипт снимает вопрос без зонда.
+		if p, ok := s.peers()[sid]; ok && s.peerDeaf(p.Sock, info.mod) {
+			s.logf("терминал чата %s заморожен, клавиши туда не едут (%s)", sid, stuckDeafWord)
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error": "клиент не отвечает на зонд: событийный цикл стоит, и клавиши ушли бы в никуда",
+				"stuck": stuckDeafWord})
+			return
+		}
+		if err := chatSend(term, text); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
+				"реплика не подалась в tmux-сессию %s: %s", term, procErr(err))})
+			return
+		}
+		s.chatSayDone(sid, claim, "send-keys")
+		s.saidSay(saidSessionKey(sid), text, "send-keys")
+		s.logf("реплика подана в чат %s (tmux-сессия %s)", sid, term)
+		out := map[string]any{"way": "send-keys", "tmux": term,
+			"message": "реплика подана прямо в процесс агента: ответ придёт в ленту"}
+		if bangLine(text) {
+			out["note"] = "строка с ! ушла терминалу сессии: команда исполнится без витка модели, вывод ляжет в ленту"
+		}
+		if why := s.chatStuck(sid); why != "" {
+			out["stuck"] = why
+			s.logf("реплика чата %s легла в очередь: %s", sid, why)
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	// Канал самого клиента: сессия без своей tmux (окно vscode, чужой
+	// терминал) слышна только сокетом. Реплика там приходит межсессионным
+	// сообщением с подписью дашборда, а не вводом человека: текст доезжает, а
+	// терминальные механики не работают, и про них дорога говорит словами.
 	if p, ok := s.peers()[sid]; ok {
 		err := peerSay(p.Sock, text)
 		if err == nil {
@@ -2072,6 +2142,9 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			s.saidSay(saidSessionKey(sid), text, "socket")
 			s.logf("реплика ушла в сокет чата %s (pid %d, %s)", sid, p.PID, peerWord(p))
 			out := map[string]any{"way": "socket", "pid": p.PID, "where": peerWord(p)}
+			if bangLine(text) {
+				out["note"] = "терминального входа у сессии нет: строка с ! уехала агенту текстом, терминал её не исполнит"
+			}
 			// Клиент с пропавшим терминалом берёт реплику сокетом так же
 			// охотно, как живой, и кладёт её в очередь, которую уже некому
 			// разобрать: про клин надо сказать здесь, иначе доставка выглядит
@@ -2111,38 +2184,18 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		// причина остаётся в журнале, а не пропадает молча.
 		s.logf("сокет чата %s не взял реплику, иду запасной дорогой: %v", sid, err)
 	}
+	if term != "" {
+		// Живой терминал есть, а доставка не случилась: сюда доходит только
+		// реплика, которую держал запертый вопрос, когда её не взял и сокет.
+		// Резюм поднял бы второго агента рядом с живым, отказ честнее.
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error": "реплика не доставлена: клиент стоит на запертом вопросе, а его сокет не отвечает",
+			"stuck": stuckAskSayWord})
+		return
+	}
 	alive := tmuxAliveFn()
 	if m := tmuxMissingCheck(); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
-		return
-	}
-	// Имя tmux адресом не работает без сверки хозяина: конвейер задачи снимает
-	// сессию и поднимает новую тем же именем, реестр при снятии не правится, а
-	// свёртка sessions.Last тянет Tmux из прежних записей. Живое имя, которое
-	// реестр отдал другому разговору, значит занятое имя, и send-keys по нему
-	// уехал бы в чужую сессию (DK-397 POC). Тогда процесса у диалога нет, и
-	// дальше идёт обычный резюм той же сессии.
-	held := sessions.TmuxOwner(recs, last.Tmux)
-	if held != "" && held != sid {
-		s.logf("имя tmux %s занято разговором %s, а не %s: реплика идёт резюмом, а не в чужую сессию",
-			last.Tmux, held, sid)
-	}
-	if last.Tmux != "" && alive(last.Tmux) && (held == "" || held == sid) {
-		if err := chatSend(last.Tmux, text); err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
-				"реплика не подалась в tmux-сессию %s: %s", last.Tmux, procErr(err))})
-			return
-		}
-		s.chatSayDone(sid, claim, "send-keys")
-		s.saidSay(saidSessionKey(sid), text, "send-keys")
-		s.logf("реплика подана в чат %s (tmux-сессия %s)", sid, last.Tmux)
-		out := map[string]any{"way": "send-keys", "tmux": last.Tmux,
-			"message": "реплика подана прямо в процесс агента: ответ придёт в ленту"}
-		if why := s.chatStuck(sid); why != "" {
-			out["stuck"] = why
-			s.logf("реплика чата %s легла в очередь: %s", sid, why)
-		}
-		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	// Отказа «разговор идёт в vscode» тут больше нет: канал клиента достаёт
@@ -2196,9 +2249,92 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	s.chatSayDone(sid, claim, "resume")
 	s.saidSay(saidSessionKey(sid), text, "resume")
 	s.logf("чат %s продолжен резюмом в tmux-сессии %s (модель %s)", sid, sess, model)
-	writeJSON(w, http.StatusOK, map[string]any{"way": "resume", "tmux": sess, "model": model,
+	out := map[string]any{"way": "resume", "tmux": sess, "model": model,
 		"message": fmt.Sprintf(
-			"процесса у чата не было: поднят claude --resume в tmux-сессии %s, история продолжена", sess)})
+			"процесса у чата не было: поднят claude --resume в tmux-сессии %s, история продолжена", sess)}
+	if bangLine(text) {
+		out["note"] = "живого терминала у сессии не было: строка с ! уехала вводной резюма текстом, терминал её не исполнит"
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// stuckAskSayWord это слова недоставленной реплики при запертом вопросе без
+// сокета: панель держит пузырь с этой причиной и кнопкой повтора.
+const stuckAskSayWord = "агент ждёт разрешения в своём окне: свободная реплика в запертый вопрос не едет, " +
+	"ответьте пунктом вопроса в ленте или словом варианта"
+
+// sayTermOf находит терминальный вход разговора: имя живой tmux-сессии, чьим
+// хозяином реестр называет этот же разговор. Пустой ответ значит, что дороги
+// клавишами нет: сессию подняли не мы (окно vscode, чужой терминал), tmux на
+// машине нет вовсе либо имя из реестра успел забрать другой разговор (DK-397
+// POC: конвейер снимает сессию и поднимает новую тем же именем, а send-keys по
+// нему уехал бы в чужую сессию).
+func (s *server) sayTermOf(sid string, recs map[string][]sessionBind) string {
+	last := sessions.Last(recs[sid])
+	if last.Tmux == "" || tmuxMissingCheck() != "" || !tmuxAliveFn()(last.Tmux) {
+		return ""
+	}
+	if held := sessions.TmuxOwner(recs, last.Tmux); held != "" && held != sid {
+		s.logf("имя tmux %s занято разговором %s, а не %s: клавишами туда нельзя",
+			last.Tmux, held, sid)
+		return ""
+	}
+	return last.Tmux
+}
+
+// bangLine узнаёт строку терминальной команды: `!` первым знаком включает у
+// клиента bash-режим, и строка исполняется без витка модели. Многострочная
+// реплика едет скобками вставки и bash-режима не включает, поэтому она не в
+// счёт.
+func bangLine(text string) bool {
+	return strings.HasPrefix(strings.TrimSpace(text), "!") && !strings.Contains(text, "\n")
+}
+
+// askOptionOf сопоставляет свободную реплику человека с вариантами запертого
+// вопроса. Совпадение строгое нарочно: реплика превращается в нажатие, и
+// угадывать за человека дороже, чем отказать. Понимаются номер пункта, слова
+// согласия и отказа («да» это первый пункт Yes, «нет» это первый пункт No) и
+// однозначное начало текста варианта. Служебные пункты виджета (свободный
+// ответ, кнопки Next и Submit) так не выбираются: свободный ответ без слов
+// открыл бы у клиента пустое поле, и человек думал бы, что ответил.
+func askOptionOf(ask tmuxAsk, text string) int {
+	said := strings.TrimRight(strings.ToLower(strings.TrimSpace(text)), ".!")
+	if said == "" || len(ask.Options) == 0 {
+		return 0
+	}
+	plain := func(n int) int {
+		if n >= 1 && n <= len(ask.Options) && ask.Options[n-1].Kind == "" {
+			return n
+		}
+		return 0
+	}
+	if n, err := strconv.Atoi(said); err == nil {
+		return plain(n)
+	}
+	prefix := ""
+	switch said {
+	case "да", "yes", "y", "ок", "ok", "можно", "давай", "разрешаю", "подтверждаю":
+		prefix = "yes"
+	case "нет", "no", "n", "нельзя", "запрещаю", "отмена":
+		prefix = "no"
+	}
+	hit := 0
+	for i, o := range ask.Options {
+		word := strings.ToLower(strings.TrimSpace(o.Text))
+		if prefix != "" {
+			if strings.HasPrefix(word, prefix) {
+				return plain(i + 1)
+			}
+			continue
+		}
+		if strings.HasPrefix(word, said) {
+			if hit != 0 {
+				return 0
+			}
+			hit = i + 1
+		}
+	}
+	return plain(hit)
 }
 
 // lostSaid собирает реплики, сказанные после того, как транскрипт замолчал:

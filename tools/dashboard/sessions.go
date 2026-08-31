@@ -1343,6 +1343,13 @@ var svcTags = []svcTag{
 	// пузырём человека он был бы враньём. В ленте смену называет разделитель
 	// из журнала разговора, и второй записи об одном и том же там не надо.
 	{name: "devkit-remodel", show: false},
+	// Терминальная команда из чата (DK-480): строку с `!` клиент исполняет без
+	// витка модели, а в транскрипт кладёт её и вывод тегами в реплики роли
+	// user. Пузырём человека они были бы враньём, а без вывода команда из
+	// панели выглядела бы ушедшей в никуда.
+	{name: "bash-input", show: true, word: "команда терминала"},
+	{name: "bash-stdout", show: true, word: "вывод терминала"},
+	{name: "bash-stderr", show: true, word: "stderr терминала"},
 }
 
 // svcRe собирает вырезалку на каждый известный тег: тело берётся нежадно до
@@ -1394,6 +1401,15 @@ func svcNote(tag svcTag, body string) svcLine {
 		return svcLine{head: said, mark: "agent"}
 	case "command-name":
 		return svcLine{head: "Команда " + truncate(strings.Join(strings.Fields(body), " "), 80)}
+	case "bash-input":
+		return svcLine{head: "! " + truncate(strings.Join(strings.Fields(body), " "), 80)}
+	case "bash-stdout", "bash-stderr":
+		// Пустой поток это не событие: у большинства команд stderr молчит, и
+		// строка о пустоте только разбавляла бы ленту.
+		if body == "" {
+			return svcLine{}
+		}
+		return svcLine{head: tag.word, body: truncate(body, toolBodyLimit)}
 	}
 	return svcLine{head: tag.word}
 }
@@ -1688,7 +1704,9 @@ func splitService(text string) (string, []svcLine) {
 			}
 			body := out[m[2]:m[3]]
 			if tag.show {
-				notes = append(notes, svcNote(tag, body))
+				if n := svcNote(tag, body); n.head != "" {
+					notes = append(notes, n)
+				}
 			}
 			out = out[:m[0]] + out[m[1]:]
 		}

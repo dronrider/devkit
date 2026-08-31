@@ -94,7 +94,7 @@ def called_with(tool_input):
     пропущенное поле отличается от проставленного."""
     if tool_input.get(BACKGROUND) is None:
         return "без поля %s (такой вызов харнес поднимает фоном)" % BACKGROUND
-    return "%s: true" % BACKGROUND
+    return "с %s: true" % BACKGROUND
 
 
 def advice(tool):

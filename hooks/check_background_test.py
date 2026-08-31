@@ -96,6 +96,9 @@ class TestHookRefusal(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("синхронно", r.stderr)
         self.assertIn("sdk-cli", r.stderr)
+        # Предлог тут не украшение: без него первая строка отказа читается
+        # обрубком («инструмент Bash зван run_in_background: true»).
+        self.assertIn("зван с run_in_background: true", r.stderr)
 
     def test_refusal_names_the_replacement(self):
         r = run("--hook", env=HEADLESS,

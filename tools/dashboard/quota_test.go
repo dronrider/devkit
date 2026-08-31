@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/quotaconf"
 )
 
 // Снимки квоты сняты с живого каталога ~/.devkit/quota: формат «key = value»,
@@ -100,7 +102,7 @@ func TestQuotaStale(t *testing.T) {
 	view := getQuota(t, e)
 	h := view.Harnesses[0]
 	if !h.Stale {
-		t.Fatalf("снимок трёхчасовой давности при пороге %s не помечен протухшим: %+v", quotaMaxAge, h)
+		t.Fatalf("снимок трёхчасовой давности при пороге %s не помечен протухшим: %+v", quotaconf.Default, h)
 	}
 	if h.Age != "3ч 7м" {
 		t.Fatalf("возраст протухшего снимка %q, жду 3ч 7м", h.Age)
@@ -614,7 +616,7 @@ func TestQuotaBucketExpired(t *testing.T) {
 	text := "taken = 2026-08-31T15:30\n" +
 		"week_all = 5% сброс 2026-09-07T15:00\n" +
 		"week_max = 37% сброс 2026-08-31T14:59\n"
-	h := parseQuotaSnapshot("claude-code", text, now)
+	h := parseQuotaSnapshot("claude-code", text, now, quotaconf.Default)
 	if len(h.Buckets) != 2 {
 		t.Fatalf("бакетов %d: %+v", len(h.Buckets), h.Buckets)
 	}
@@ -626,5 +628,48 @@ func TestQuotaBucketExpired(t *testing.T) {
 	}
 	if !strings.Contains(readFile(t, "static/app.js"), "сброшен ") {
 		t.Fatal("строка показа не подписывает прошедший сброс словом «сброшен»")
+	}
+}
+
+// Порог свежести на экране настраивается тем же ~/.devkit/quota.local, что и в
+// agentctl (DK-633): источник один, пакет internal/quotaconf. Кривое значение
+// демону валить нечего, поэтому причина едет словами в Note при действующем
+// умолчании, а не молчит.
+func TestQuotaStaleThresholdConfigured(t *testing.T) {
+	home := t.TempDir()
+	now := time.Date(2026, 8, 31, 16, 0, 0, 0, time.Local)
+	dir := filepath.Join(home, ".devkit", "quota")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	snap := "taken = " + now.Add(-10*time.Minute).Format(quotaTimeLayout) +
+		"\nweek_all = 10% сброс 2099-01-01T00:00\n"
+	if err := os.WriteFile(filepath.Join(dir, "claude-code.local"), []byte(snap), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if v := readQuota(home, now); len(v.Harnesses) != 1 || v.Harnesses[0].Stale {
+		t.Fatalf("десятиминутный снимок без настройки должен быть свежим: %+v", v.Harnesses)
+	}
+
+	conf := filepath.Join(home, ".devkit", "quota.local")
+	if err := os.WriteFile(conf, []byte("stale = 5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if v := readQuota(home, now); len(v.Harnesses) != 1 || !v.Harnesses[0].Stale {
+		t.Fatalf("порог из quota.local не подействовал на пометку свежести: %+v", v.Harnesses)
+	}
+
+	if err := os.WriteFile(conf, []byte("stale = сорок\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v := readQuota(home, now)
+	for _, part := range []string{"quota.local", "умолчание"} {
+		if !strings.Contains(v.Note, part) {
+			t.Fatalf("кривое значение не названо в Note (%q): %+v", part, v)
+		}
+	}
+	if len(v.Harnesses) != 1 || v.Harnesses[0].Stale {
+		t.Fatalf("при кривом значении должно действовать умолчание: %+v", v.Harnesses)
 	}
 }

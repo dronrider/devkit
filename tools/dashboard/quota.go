@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/quotaconf"
 )
 
 // Остаток подписок: GET /api/quota отдаёт снимки квоты из каталога
@@ -37,12 +39,13 @@ const (
 	quotaSuffix = ".local"
 	// Момент снятия и даты сброса пишутся местным временем без секунд.
 	quotaTimeLayout = "2006-01-02T15:04"
-	// quotaMaxAge это порог, за которым снимок протух. Величина взята из
-	// agentctl (snapshotMaxAge): по такому снимку он уже не двигает вердикт
-	// вверх, и показывать остаток свежим, пока сам выбор моделей ему не верит,
-	// значило бы врать разными словами в двух местах.
-	quotaMaxAge = 45 * time.Minute
 )
+
+// Порог, за которым снимок протух, у дашборда общий с agentctl: пакет
+// internal/quotaconf, строка `stale = <минуты>` в ~/.devkit/quota.local,
+// умолчание 45 минут. По протухшему снимку agentctl не двигает вердикт вверх,
+// и показывать остаток свежим, пока сам выбор моделей ему не верит, значило
+// бы врать разными словами в двух местах.
 
 // QuotaBucket это строка снимка: сколько процентов бакета потрачено на момент
 // снятия и когда он сбрасывается.
@@ -117,9 +120,25 @@ func quotaDir(home string) string {
 
 // readQuota собирает снимки каталога. Битый файл не уносит соседей: своё он
 // теряет предупреждениями, а подписка остаётся на экране.
-func readQuota(home string, now time.Time) QuotaView {
+func readQuota(home string, now time.Time) (view QuotaView) {
 	dir := quotaDir(home)
-	view := QuotaView{Dir: dir, Harnesses: []QuotaHarness{}}
+	view = QuotaView{Dir: dir, Harnesses: []QuotaHarness{}}
+	// Порог свежести читается на каждый запрос: файл настройки меняют рукой, и
+	// перезапускать демон ради него незачем. Кривое значение демону валить
+	// нечего, запрос к ручке не команда, поэтому отказ здесь это причина на
+	// экране при действующем умолчании, а не молчаливый съезд на 45 минут.
+	maxAge, confErr := quotaconf.StaleAge(home)
+	if confErr != nil {
+		maxAge = quotaconf.Default
+		note := fmt.Sprintf("%v; действует умолчание %s", confErr, humanAge(quotaconf.Default))
+		defer func() {
+			if view.Note != "" {
+				view.Note = note + "; " + view.Note
+				return
+			}
+			view.Note = note
+		}()
+	}
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		view.Note = "каталога " + dir + " нет: снимки кладёт agentctl quota refresh"
@@ -140,7 +159,7 @@ func readQuota(home string, now time.Time) QuotaView {
 				Buckets: []QuotaBucket{}, Note: "снимок не прочитался: " + err.Error()})
 			continue
 		}
-		view.Harnesses = append(view.Harnesses, parseQuotaSnapshot(name, string(data), now))
+		view.Harnesses = append(view.Harnesses, parseQuotaSnapshot(name, string(data), now, maxAge))
 	}
 	sort.Slice(view.Harnesses, func(i, j int) bool { return view.Harnesses[i].Name < view.Harnesses[j].Name })
 	if len(view.Harnesses) == 0 {
@@ -152,7 +171,7 @@ func readQuota(home string, now time.Time) QuotaView {
 // parseQuotaSnapshot разбирает текст снимка: строки «key = value», «#» это
 // комментарий. Ключ taken это момент снятия, любой другой ключ это бакет, и
 // список бакетов держит снимок, а не код: у каждой подписки лимиты свои.
-func parseQuotaSnapshot(name, text string, now time.Time) QuotaHarness {
+func parseQuotaSnapshot(name, text string, now time.Time, maxAge time.Duration) QuotaHarness {
 	h := QuotaHarness{Name: name, Buckets: []QuotaBucket{}}
 	var taken time.Time
 	for _, ln := range strings.Split(text, "\n") {
@@ -190,7 +209,7 @@ func parseQuotaSnapshot(name, text string, now time.Time) QuotaHarness {
 	if !taken.IsZero() {
 		h.Taken = taken.Format(quotaTimeLayout)
 	}
-	h.Age, h.Stale, h.Note = quotaAge(taken, now)
+	h.Age, h.Stale, h.Note = quotaAge(taken, now, maxAge)
 	if !taken.IsZero() && now.After(taken) {
 		h.AgeSec = int64(now.Sub(taken).Seconds())
 	}
@@ -203,13 +222,13 @@ func parseQuotaSnapshot(name, text string, now time.Time) QuotaHarness {
 // quotaAge говорит про возраст снимка. Случаи, где возрасту верить нельзя,
 // называются отдельно: без них «снимок свежий» читалось бы одинаково и там,
 // где момент снятия не пришёл вовсе, и там, где часы машины разошлись.
-func quotaAge(taken, now time.Time) (age string, stale bool, note string) {
+func quotaAge(taken, now time.Time, maxAge time.Duration) (age string, stale bool, note string) {
 	switch d := now.Sub(taken); {
 	case taken.IsZero():
 		return "", true, "момента снятия в снимке нет, возраст неизвестен"
 	case d < 0:
 		return "", true, "снимок из будущего, часы разошлись"
-	case d > quotaMaxAge:
+	case d > maxAge:
 		return humanAge(d), true, ""
 	default:
 		return humanAge(d), false, ""

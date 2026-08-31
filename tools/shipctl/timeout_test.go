@@ -15,7 +15,7 @@ import (
 // прогон не должен зависеть от нагрузки машины и не должен её ждать.
 func TestRunShellLimit(t *testing.T) {
 	root := t.TempDir()
-	out, timedOut, err := runShellLimit(root, "echo готово", 5*time.Second)
+	out, timedOut, err := runShellLimit(root, "echo готово", 5*time.Second, nil)
 	if err != nil || timedOut || !strings.Contains(out, "готово") {
 		t.Fatalf("быстрая команда в пределе: %q %v %v", out, timedOut, err)
 	}
@@ -24,7 +24,7 @@ func TestRunShellLimit(t *testing.T) {
 	// ssh, и переживший предел потомок держал бы прод в неизвестном состоянии.
 	pidFile := filepath.Join(root, "child.pid")
 	start := time.Now()
-	_, timedOut, err = runShellLimit(root, "sleep 600 & echo $! > "+pidFile+"; wait", time.Second)
+	_, timedOut, err = runShellLimit(root, "sleep 600 & echo $! > "+pidFile+"; wait", time.Second, nil)
 	if err == nil || !timedOut {
 		t.Fatalf("вставшая команда должна кончиться пределом: %v %v", timedOut, err)
 	}

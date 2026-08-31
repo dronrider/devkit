@@ -40,7 +40,7 @@ func git(root string, args ...string) (string, error) {
 // runShell выполняет команду теста или выката: они приходят строкой из флага
 // и могут содержать пайпы, поэтому sh -c, а не argv. Без предела времени.
 func runShell(root, cmdStr string) (string, error) {
-	out, _, err := runShellLimit(root, cmdStr, 0)
+	out, _, err := runShellLimit(root, cmdStr, 0, nil)
 	return out, err
 }
 
@@ -50,10 +50,13 @@ func runShell(root, cmdStr string) (string, error) {
 // сборку или ssh, и смерть оболочки оставила бы потомков висеть дальше
 // (инцидент DK-153: сборка ждала неподнятый демон Docker). Нулевой limit это
 // прежнее поведение без предела, по нему гоняются тесты: их ограничивает
-// собственный таймаут прогона, и предел выката им не указ.
-func runShellLimit(root, cmdStr string, limit time.Duration) (string, bool, error) {
+// собственный таймаут прогона, и предел выката им не указ. Нулевой env это
+// наследование окружения сессии, им живёт выкат; тесты слияния приходят сюда
+// с собранным окружением, где живые HOME и PATH внутрь не протекают.
+func runShellLimit(root, cmdStr string, limit time.Duration, env []string) (string, bool, error) {
 	cmd := exec.Command("sh", "-c", cmdStr)
 	cmd.Dir = root
+	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
@@ -78,6 +81,70 @@ func runShellLimit(root, cmdStr string, limit time.Duration) (string, bool, erro
 		<-done
 		return buf.String(), true, fmt.Errorf("команда не кончилась за %s и убита", limit)
 	}
+}
+
+// mergeTestEnv собирает окружение прогона тестов слияния. Живой HOME сессии
+// подменяется временным, каталоги из-под него уходят из PATH, переменные
+// харнеса CLAUDE* уносятся: тесты обязаны зеленеть на чужой машине, а не на
+// прогретой раскладке дома исполнителя. Тулчейны вне дома (/usr/bin,
+// /opt/homebrew) остаются, иначе команде теста нечем работать.
+func mergeTestEnv(home, tmpHome string) []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		name, val, _ := strings.Cut(kv, "=")
+		switch {
+		case name == "HOME" || strings.HasPrefix(name, "CLAUDE"):
+			continue
+		case name == "PATH":
+			kv = "PATH=" + trimHomePath(val, home)
+		}
+		out = append(out, kv)
+	}
+	return append(out, "HOME="+tmpHome)
+}
+
+// trimHomePath убирает из PATH каталоги под home: там живут обвязки сессии
+// вроде ~/bin и ~/.local/bin, которых на чужой машине нет.
+func trimHomePath(path, home string) string {
+	if home == "" {
+		return path
+	}
+	var kept []string
+	for _, p := range filepath.SplitList(path) {
+		if p == home || strings.HasPrefix(p, home+string(os.PathSeparator)) {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return strings.Join(kept, string(os.PathListSeparator))
+}
+
+// freshTestTree выкладывает коммит во временное detached-дерево и заводит
+// рядом пустой временный HOME. Прогретый worktree ветки несёт следы работы
+// исполнителя (артефакты сборки, __pycache__), и зелень в нём не доказывает
+// зелень свежего чекаута: на этой разнице дефект 98b43e7 проехал слияние и
+// всплыл после выката. Уборка на вызывающем: cleanup зовётся и при провале
+// тестов, отказ слияния временных деревьев не копит.
+func freshTestTree(root, sha string) (tree, home string, cleanup func(), err error) {
+	tmp, err := os.MkdirTemp("", "shipctl-merge-")
+	if err != nil {
+		return "", "", nil, err
+	}
+	tree = filepath.Join(tmp, "tree")
+	home = filepath.Join(tmp, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		os.RemoveAll(tmp)
+		return "", "", nil, err
+	}
+	if _, err := git(root, "worktree", "add", "--detach", tree, sha); err != nil {
+		os.RemoveAll(tmp)
+		return "", "", nil, err
+	}
+	cleanup = func() {
+		git(root, "worktree", "remove", "--force", tree)
+		os.RemoveAll(tmp)
+	}
+	return tree, home, cleanup, nil
 }
 
 // deployProblem говорит, что стряслось с выкатом: короткое для заголовка
@@ -873,8 +940,21 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			return "", fmt.Errorf("ребейз на %s не прошёл, разбирать конфликт руками:\n%s", main, cmdoutFrame(workDir, "git-rebase", out))
 		}
 	}
-	if out, err := runShell(workDir, test); err != nil {
-		return "", fmt.Errorf("тесты после ребейза красные, ветка остаётся несшитой:\n%s", cmdoutFrame(workDir, "test", out))
+	// Тесты идут не в workDir, а в свежем дереве на ребейзнутом коммите и в
+	// собранном окружении: прогретый чекаут и живые HOME с PATH прячут
+	// дефекты класса «зелено у исполнителя, красно на чужой машине».
+	sha, err := git(workDir, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	testTree, testHome, cleanTree, err := freshTestTree(root, sha)
+	if err != nil {
+		return "", err
+	}
+	out, _, err := runShellLimit(testTree, test, 0, mergeTestEnv(os.Getenv("HOME"), testHome))
+	cleanTree()
+	if err != nil {
+		return "", fmt.Errorf("тесты после ребейза красные в свежем дереве (чистый чекаут %s, без следов работы в worktree), ветка остаётся несшитой:\n%s", sha[:min(len(sha), 12)], cmdoutFrame(workDir, "test", out))
 	}
 	if wt == "" {
 		if _, err := git(root, "checkout", main); err != nil {
@@ -935,6 +1015,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if testFromConfig {
 		msg = append(msg, "тесты гнались командой из "+deployConfigPath+": "+test)
 	}
+	msg = append(msg, "тесты гнались в свежем дереве на "+sha[:min(len(sha), 12)]+" с временным HOME")
 	if catchUps > 0 {
 		msg = append(msg, fmt.Sprintf("за время прогона %s уехал на коммиты доски, ff добран повторным ребейзом, заходов %d, тесты не перегонялись", main, catchUps))
 	}
@@ -1018,7 +1099,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	switch {
 	case deploy.run != "":
-		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout); err != nil {
+		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout, nil); err != nil {
 			short, full := deployProblem(deploy.run, timedOut, deploy.timeout)
 			outSummary := cmdoutFrame(root, "deploy", out)
 			note := notify(root, p.ID, fmt.Sprintf("%s: выкат %s %s", filepath.Base(root), p.ID, short), full+"\n"+outSummary)
@@ -1163,7 +1244,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	}
 	switch {
 	case deploy.run != "":
-		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout); err != nil {
+		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout, nil); err != nil {
 			short, full := deployProblem(deploy.run, timedOut, deploy.timeout)
 			outSummary := cmdoutFrame(root, "deploy", out)
 			if p.Drain {
@@ -1589,7 +1670,7 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	case inTrain:
 		out = append(out, "задача была в поезде и до прода не доехала, повторный выкат не нужен")
 	case plan.run != "":
-		if o, timedOut, err := runShellLimit(root, plan.run, plan.timeout); err != nil {
+		if o, timedOut, err := runShellLimit(root, plan.run, plan.timeout, nil); err != nil {
 			short, full := deployProblem(plan.run, timedOut, plan.timeout)
 			oSummary := cmdoutFrame(root, "deploy", o)
 			note := notify(root, p.ID, fmt.Sprintf("%s: повторный выкат %s %s", filepath.Base(root), p.ID, short), full+"\n"+oSummary)

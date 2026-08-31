@@ -39,7 +39,9 @@ func TestResolveTest(t *testing.T) {
 // .devkit/deploy.local, реально гоняется, и отчёт называет её источник.
 func TestMergeTestFromConfig(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
-	writeDeployCfg(t, root, "test = touch tested.marker\n")
+	// Путь абсолютный: тесты слияния идут в свежем дереве, и относительный
+	// маркер остался бы в нём и умер вместе с уборкой.
+	writeDeployCfg(t, root, "test = touch "+filepath.Join(root, "tested.marker")+"\n")
 	branchWithFix(t, root)
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001"})
 	if err != nil {
@@ -65,9 +67,9 @@ func TestMergeTestFromConfig(t *testing.T) {
 // TestMergeTestFlagBeatsConfig: явный --test сильнее ключа в конфиге.
 func TestMergeTestFlagBeatsConfig(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
-	writeDeployCfg(t, root, "test = touch fromconfig.marker\n")
+	writeDeployCfg(t, root, "test = touch "+filepath.Join(root, "fromconfig.marker")+"\n")
 	branchWithFix(t, root)
-	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "touch fromflag.marker"})
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "touch " + filepath.Join(root, "fromflag.marker")})
 	if err != nil {
 		t.Fatal(err)
 	}

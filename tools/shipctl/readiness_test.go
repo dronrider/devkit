@@ -42,6 +42,23 @@ func TestMergeTestsGateAcceptance(t *testing.T) {
 	}
 }
 
+// TestMergeTestsGateRustLayout: ветка Rust-проекта, где тест лежит по
+// соглашению Cargo в tests/ рядом с src, сливается. Ворот знал только имена
+// файлов Go, Python и shell, и на xr-proxy отбивал слияние правки с честным
+// интеграционным тестом, предлагая загасить себя пометкой-исключением.
+func TestMergeTestsGateRustLayout(t *testing.T) {
+	root, _ := setup(t, rowInProg3, "")
+	taskWithScenario(t, root, "XR-003")
+	gitT(t, root, "checkout", "-qb", "xr-003-fix", "main")
+	write(t, root, "xr-core/src/presets.rs", "fn apply() {}\n")
+	write(t, root, "xr-core/tests/preset_signature.rs", "#[test]\nfn rejects() {}\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: XR-003 правка с тестом в tests/")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true"}); err != nil {
+		t.Fatalf("ветка с тестом в tests/ должна сливаться: %v", err)
+	}
+}
+
 // TestMergeTestsGateOverride: пометка-исключение в файле задачи гасит ворот
 // тестов. Так сливаются правки, к которым тест неприменим (правка конфигурации,
 // перенос константы), не снимая ворот для остальных задач.
@@ -99,6 +116,20 @@ func TestIsTestFile(t *testing.T) {
 		{"helpers_test.py", true},
 		{"test_run.sh", true},
 		{"run_test.sh", true},
+		// Rust держит интеграционный тест не в имени файла, а в каталоге
+		// tests/ рядом с src: xr-proxy на этом ловил ложный отказ ворота.
+		{"xr-core/tests/preset_signature.rs", true},
+		{"tests/smoke.rs", true},
+		{"crate/src/lib_test.rs", true},
+		// JVM кладёт тест в src/test, соседний src/main тестом не считается.
+		{"app/src/test/java/com/xrproxy/app/GroupsTest.kt", true},
+		{"app/src/test/java/com/xrproxy/app/Groups.java", true},
+		{"app/src/main/java/com/xrproxy/app/Groups.kt", false},
+		// Каталог опознаётся вместе с расширением: заглушка стенда и данные
+		// примера рядом с тестом сами тестом не становятся.
+		{"xr-setup/tests/fixtures/nft.sh", false},
+		{"xr-core/tests/data/preset.json", false},
+		{"tests", false},
 		{"advice.go", false},
 		{"code.txt", false},
 		{"README.md", false},

@@ -352,11 +352,37 @@ func isTestFile(path string) bool {
 	}
 	if strings.HasSuffix(base, "_test.go") ||
 		strings.HasSuffix(base, "_test.py") ||
-		strings.HasSuffix(base, "_test.sh") {
+		strings.HasSuffix(base, "_test.sh") ||
+		strings.HasSuffix(base, "_test.rs") {
 		return true
 	}
 	if strings.HasPrefix(base, "test_") && (strings.HasSuffix(base, ".py") || strings.HasSuffix(base, ".sh")) {
 		return true
+	}
+	// Rust и JVM кладут тест не по имени файла, а по месту: у Cargo это
+	// tests/ рядом с src, у Gradle и Maven src/test. Без этого ворот врал бы
+	// на любом Rust-проекте с честными интеграционными тестами.
+	return inTestDir(path, base)
+}
+
+// inTestDir опознаёт тест по каталогу, в котором тот лежит. Каталог берётся
+// вместе с расширением файла: голое имя каталога считало бы тестом и
+// заглушку стенда, и данные примера, лежащие там же.
+func inTestDir(path, base string) bool {
+	dirs := strings.Split(path, "/")
+	if len(dirs) < 2 {
+		return false
+	}
+	dirs = dirs[:len(dirs)-1]
+	rust := strings.HasSuffix(base, ".rs")
+	jvm := strings.HasSuffix(base, ".kt") || strings.HasSuffix(base, ".java")
+	for i, d := range dirs {
+		if rust && d == "tests" {
+			return true
+		}
+		if jvm && d == "test" && i > 0 && dirs[i-1] == "src" {
+			return true
+		}
 	}
 	return false
 }

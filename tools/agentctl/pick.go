@@ -38,6 +38,8 @@ func pickTier(r row) verdict {
 		return verdict{Tier: tierMini, Reason: "совсем атомарная правка с очевидным подходом, дешёвой модели хватает"}
 	case r.Cost == "S" && unc == 1:
 		return verdict{Tier: tierBase, Reason: "небольшая задача, подход уже выбран, дешёвая модель справится"}
+	case strings.EqualFold(r.Type, "task") && r.Cost == "M" && (unc == 1 || unc == 2):
+		return verdict{Tier: tierBase, Reason: "полоса задач ценой M с выбранным подходом, дешёвая модель справится, просадку ловят счётчики слияний"}
 	case r.Cost == "" || r.Cost == "-":
 		return verdict{Tier: tierPro, Reason: "цена не оценена, до оценки модель по умолчанию, не забыть оценить"}
 	default:

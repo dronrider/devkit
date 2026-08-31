@@ -30,9 +30,10 @@ func TestPick(t *testing.T) {
 		{"S с неопределённостью 1 это base, effort подтянут полом", row{Type: "task", Rank: "6 (0+3+1+0+2)", Cost: "S"}, tierBase, "high", "экономить глубину смысла нет"},
 		{"S с неопределённостью 3 верхняя граница диапазона", row{Type: "task", Rank: "10 (0+3+3+0+4)", Cost: "S"}, tierPro, "high", "сильной"},
 		{"M с неопределённостью 0 уходит в дефолт", row{Type: "task", Rank: "33 (25+4+0+0+4)", Cost: "M"}, tierPro, "low", "сильной"},
-		{"M с неопределённостью 1 уходит в дефолт", row{Type: "task", Rank: "34 (25+4+1+0+4)", Cost: "M"}, tierPro, "medium", "сильной"},
+		{"M с неопределённостью 1 это полоса base", row{Type: "task", Rank: "34 (25+4+1+0+4)", Cost: "M"}, tierBase, "high", "полоса задач ценой M"},
 		{"S с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "8 (0+3+2+0+2)", Cost: "S"}, tierPro, "medium", "сильной"},
-		{"M с неопределённостью 2 уходит в дефолт", row{Type: "task", Rank: "35 (25+4+2+0+4)", Cost: "M"}, tierPro, "medium", "сильной"},
+		{"M с неопределённостью 2 это полоса base", row{Type: "task", Rank: "35 (25+4+2+0+4)", Cost: "M"}, tierBase, "high", "полоса задач ценой M"},
+		{"баг ценой M полосу не занимает", row{Type: "bug", Rank: "34 (25+0+1+5+4)", Cost: "M"}, tierPro, "medium", "сильной"},
 		{"M с неопределённостью 3 уходит в дефолт", row{Type: "task", Rank: "36 (25+4+3+0+4)", Cost: "M"}, tierPro, "high", "сильной"},
 		{"баг L с неопределённостью 1 это дефолт", row{Type: "bug", Rank: "35 (25+0+1+5+4)", Cost: "L"}, tierPro, "medium", "сильной"},
 		{"LLD сильнее дешевизны", row{Type: "LLD", Rank: "10 (0+5+1+0+4)", Cost: "S"}, tierPro, "xhigh", "дизайн"},
@@ -159,7 +160,7 @@ const sampleBoard = `# demo: задачи (префикс T)
 
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |---|---|---|---|---|---|---|
-| T-002 | фича в работе | task | P2 | 34 (25+4+1+0+4) | M | - |
+| T-002 | фича в работе | task | P2 | 34 (25+4+1+0+4) | L | - |
 
 ## Check
 
@@ -174,6 +175,7 @@ const sampleBoard = `# demo: задачи (префикс T)
 | T-004 | неразобранная задача | task | P1 | 64 (50+6+5+0+3) | M | - |
 | T-005 | задача поменьше | task | P3 | 6 (0+3+1+0+2) | S | - |
 | T-006 | задача ценой L | task | P3 | 7 (0+5+1+0+1) | L | - |
+| T-007 | задача ценой M | task | P2 | 34 (25+4+1+0+4) | M | - |
 
 ## Blocked
 
@@ -262,11 +264,14 @@ func TestCmdPick(t *testing.T) {
 		part   string
 	}{
 		{"T-001", "model: haiku", "effort: low", "цена S"},
-		{"T-002", "model: opus", "effort: medium", "неопределённость 1"},
+		{"T-002", "model: opus", "effort: medium", "сильной"},
 		{"T-003", "model: opus", "effort: xhigh", "дизайн"},
 		// Сквозной путь без override и без снимка квоты: T-005 маппингом
 		// sonnet (S/1), effort из пола видно прямо в человеческой строке.
 		{"T-005", "model: sonnet", "effort: high", "экономить глубину смысла нет"},
+		// Полоса DK-661: задача типа task ценой M с выбранным подходом идёт
+		// ярусом base, пол подтягивает effort до high.
+		{"T-007", "model: sonnet", "effort: high", "полоса задач ценой M"},
 	}
 	for _, c := range cases {
 		out, err := cmdPick(root, c.id, false, roleExec, "")
@@ -286,6 +291,46 @@ func TestCmdPick(t *testing.T) {
 		if !strings.Contains(lines[2], c.part) {
 			t.Fatalf("pick %s: в человеческой строке нет %q: %q", c.id, c.part, out)
 		}
+	}
+}
+
+// TestPickMBandSameVerdictAcrossHarnesses: полоса цены M это решение ярусной
+// оси, а харнес разворачивает ярус в модель последним шагом, поэтому вердикт
+// по одной задаче обязан совпасть на профилях обеих подписок вплоть до строк
+// tier и effort, и разойтись только строкой model (DK-661).
+func TestPickMBandSameVerdictAcrossHarnesses(t *testing.T) {
+	root := writeBoard(t)
+	home := t.TempDir()
+	setupLadder(t, `default = "claude-code"
+enabled = ["claude-code", "glm-code"]
+
+[claude-code]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+
+[glm-code]
+home = "`+home+`"
+`)
+	for _, c := range []struct{ harness, model string }{
+		{"claude-code", "sonnet"},
+		{"glm-code", "glm-5.3"},
+	} {
+		t.Run(c.harness, func(t *testing.T) {
+			t.Setenv("DEVKIT_HARNESS", c.harness)
+			out, err := cmdPick(root, "T-007", false, roleExec, "")
+			if err != nil {
+				t.Fatalf("pick: %v", err)
+			}
+			prefix := "model: " + c.model + "\neffort: high\ntier: base\nvia: " + c.harness + "\n"
+			if !strings.HasPrefix(out, prefix) {
+				t.Fatalf("вердикт на %s ушёл не в полосу base: %q", c.harness, out)
+			}
+			if !strings.Contains(out, "полоса задач ценой M") {
+				t.Fatalf("причина не называет полосу по цене: %q", out)
+			}
+		})
 	}
 }
 

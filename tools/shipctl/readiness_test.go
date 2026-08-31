@@ -129,6 +129,11 @@ func TestIsTestFile(t *testing.T) {
 		// примера рядом с тестом сами тестом не становятся.
 		{"xr-setup/tests/fixtures/nft.sh", false},
 		{"xr-core/tests/data/preset.json", false},
+		// Cargo .rs в подпапке tests/ это модули-хелперы, не интеграционные
+		// тесты. Верхний уровень tests/ собирается в отдельный крейт.
+		{"tests/common/mod.rs", false},
+		{"tests/fixtures/data.rs", false},
+		{"tests/helpers/mock_server.rs", false},
 		{"tests", false},
 		{"advice.go", false},
 		{"code.txt", false},

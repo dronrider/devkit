@@ -368,6 +368,11 @@ func isTestFile(path string) bool {
 // inTestDir опознаёт тест по каталогу, в котором тот лежит. Каталог берётся
 // вместе с расширением файла: голое имя каталога считало бы тестом и
 // заглушку стенда, и данные примера, лежащие там же.
+// У Cargo отдельным тестовым крейтом собирается только .rs на верхнем
+// уровне tests/, всё, что глубже, это модули-хелперы для тестов. У Gradle
+// и Maven расходная ветка по пакетам позволяет оставить проверку по пути:
+// компиляция src/test/kotlin идёт отдельно, реорганизация пакетов меняет
+// путь ввода.
 func inTestDir(path, base string) bool {
 	dirs := strings.Split(path, "/")
 	if len(dirs) < 2 {
@@ -377,7 +382,8 @@ func inTestDir(path, base string) bool {
 	rust := strings.HasSuffix(base, ".rs")
 	jvm := strings.HasSuffix(base, ".kt") || strings.HasSuffix(base, ".java")
 	for i, d := range dirs {
-		if rust && d == "tests" {
+		if rust && d == "tests" && i == len(dirs)-1 {
+			// Для Cargo: только верхний уровень tests/, не подпапки
 			return true
 		}
 		if jvm && d == "test" && i > 0 && dirs[i-1] == "src" {

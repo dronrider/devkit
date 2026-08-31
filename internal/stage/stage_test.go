@@ -402,3 +402,65 @@ func TestInsertNothingKeepsFile(t *testing.T) {
 		t.Fatalf("пустой пакет тронул файл: %q", got)
 	}
 }
+
+func TestParseLineReadsBackWhatLinesWrote(t *testing.T) {
+	stages := []Stage{
+		{Kind: Dev, Start: at(10, 0), Note: "opus/high по вердикту pick"},
+		{Kind: Review, Start: at(12, 30), Note: "sonnet/medium по вердикту pick"},
+	}
+	lines := Lines(stages, at(13, 15))
+	want := []time.Duration{150 * time.Minute, 45 * time.Minute}
+	for i, ln := range lines {
+		got, span, ok := ParseLine(ln)
+		if !ok {
+			t.Fatalf("строка %q не прочиталась обратно", ln)
+		}
+		if got.Kind != stages[i].Kind || !got.Start.Equal(stages[i].Start) || got.Note != stages[i].Note {
+			t.Fatalf("этап %d прочитан как %+v", i, got)
+		}
+		if span != want[i] {
+			t.Fatalf("длительность этапа %d: %v, жду %v", i, span, want[i])
+		}
+	}
+}
+
+// Пятое слово словаря читается наравне с четырьмя нынешними: сводка цели
+// перечня видов у себя не держит, и новый вид ей достаётся сам.
+func TestParseLineFollowsKindsDictionary(t *testing.T) {
+	for _, k := range Kinds {
+		ln := Lines([]Stage{{Kind: k, Start: at(9, 0)}}, at(9, 40))[0]
+		got, span, ok := ParseLine(ln)
+		if !ok || got.Kind != k || span != 40*time.Minute {
+			t.Fatalf("вид %q прочитан как %+v (%v, ok=%v)", k, got, span, ok)
+		}
+	}
+	if _, _, ok := ParseLine("- Деплой: чужой ярлык, 2026-08-15 10:00-11:00."); ok {
+		t.Fatal("строка с чужим видом принята за этап")
+	}
+}
+
+func TestParseLineSkipsProse(t *testing.T) {
+	for _, ln := range []string{
+		"",
+		"Разработка шла долго.",
+		"- Разработка: без часов вовсе.",
+		"- Разработка: 2026-13-40 10:00-11:00.",
+		"- Ревью: 2026-08-15 25:00.",
+	} {
+		if _, _, ok := ParseLine(ln); ok {
+			t.Fatalf("проза %q принята за этап", ln)
+		}
+	}
+}
+
+func TestParseLineWithoutSpanAndOverMidnight(t *testing.T) {
+	s, span, ok := ParseLine("- Снаружи: 2026-08-15 14:00.")
+	if !ok || span != 0 || !s.Start.Equal(at(14, 0)) || s.Note != "" {
+		t.Fatalf("этап без конца прочитан как %+v (%v, ok=%v)", s, span, ok)
+	}
+	// Дату Lines пишет одну, начала, и перешагнувший полночь этап без переноса
+	// дал бы отрицательную длительность.
+	if _, span, ok = ParseLine("- Разработка: ночная пачка, 2026-08-15 23:30-01:00."); !ok || span != 90*time.Minute {
+		t.Fatalf("этап через полночь: %v, ok=%v", span, ok)
+	}
+}

@@ -102,6 +102,10 @@ func NeedsSession(kind string) bool { return kind != Outside }
 // Stamp это формат времени в записи: секунды без зоны, как у реестра целей.
 const Stamp = "2006-01-02T15:04:05"
 
+// LineStamp это формат момента в строке «Хода работы»: минуты, читает их и
+// человек. Им пишет Lines и по нему же читает ParseLine.
+const LineStamp = "2006-01-02 15:04"
+
 // Stage это один этап: вид деятельности, момент начала и текст записи, который
 // уедет в «Ход работы». Текст собирает тот, кто этап открыл: pick знает про
 // модель, маппинг и квоту, а taskctl про статус.
@@ -380,6 +384,53 @@ func Lines(stages []Stage, end time.Time) []string {
 		out = append(out, fmt.Sprintf("- %s: %s%s %s.", label, note, s.Start.Format("2006-01-02"), span))
 	}
 	return out
+}
+
+// spanRe ловит хвост строки «Хода работы»: дату и часы этапа, которые собрал
+// Lines. Конца может не быть, у этапа нулевой длины Lines его не пишет.
+var spanRe = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?:-(\d{2}:\d{2}))?\.?\s*$`)
+
+// ParseLine читает строку раздела «Ход работы» обратно в этап и его
+// длительность: сводке цели нужно знать, куда ушло время закрытых задач, а
+// живая запись к тому моменту уже уехала в файл задачи и стёрта Flush. Вид
+// берётся по словарю Kinds, так что пятое слово словаря читается наравне с
+// четырьмя нынешними, а строка с чужим ярлыком или без часов это не находка,
+// а обычная проза раздела, и второе значение у неё false.
+func ParseLine(ln string) (Stage, time.Duration, bool) {
+	t := strings.TrimSpace(ln)
+	t = strings.TrimPrefix(t, "- ")
+	label, rest, ok := strings.Cut(t, ": ")
+	if !ok {
+		return Stage{}, 0, false
+	}
+	kind := strings.ToLower(strings.TrimSpace(label))
+	if !Known(kind) {
+		return Stage{}, 0, false
+	}
+	m := spanRe.FindStringSubmatch(rest)
+	if m == nil {
+		return Stage{}, 0, false
+	}
+	start, err := time.ParseInLocation(LineStamp, m[1]+" "+m[2], time.Local)
+	if err != nil {
+		return Stage{}, 0, false
+	}
+	note := strings.TrimSuffix(strings.TrimSpace(rest[:len(rest)-len(m[0])]), ",")
+	span := time.Duration(0)
+	if m[3] != "" {
+		fin, err := time.ParseInLocation(LineStamp, m[1]+" "+m[3], time.Local)
+		if err != nil {
+			return Stage{}, 0, false
+		}
+		// Часы конца меньше часов начала значит этап перешёл через полночь:
+		// дату Lines пишет одну, начала, и без переноса такой этап дал бы
+		// отрицательную длительность и съел бы чужое время в сводке.
+		if fin.Before(start) {
+			fin = fin.Add(24 * time.Hour)
+		}
+		span = fin.Sub(start)
+	}
+	return Stage{Kind: kind, Start: start, Note: strings.TrimSpace(note)}, span, true
 }
 
 // FenceMask и InsertIntoSection живут в пакете taskform вместе с порядком

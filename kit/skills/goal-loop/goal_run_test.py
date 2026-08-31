@@ -1031,14 +1031,20 @@ class SkillInboxTests(unittest.TestCase):
 
 
 class SkillRecordTests(unittest.TestCase):
-    """Формат строки витка (DK-644): времена ставит команда, и держится это
-    здесь. Уехавшая формулировка вернула бы журнал к строке без часов, а на
-    вопрос «куда ушёл день» такой журнал не отвечает."""
+    """Формат строки витка (DK-644): времена ставит команда. В скилле от этого
+    норма и вызов, а разбор формата живёт в README agentctl, куда скилл и
+    показывает (DK-211, скиллы не разбухают). Держатся оба конца здесь: без них
+    журнал вернулся бы к строке без часов, и на вопрос «куда ушёл день» такой
+    журнал не отвечает."""
 
     @classmethod
     def setUpClass(cls):
         with open(os.path.join(HERE, "SKILL.md"), encoding="utf-8") as f:
             cls.skill = f.read()
+        readme = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools",
+                                               "agentctl", "README.md"))
+        with open(readme, encoding="utf-8") as f:
+            cls.readme = f.read()
 
     def record(self):
         return self.skill[self.skill.index("5. Запись витка"):self.skill.index("7. Выход маркером")]
@@ -1048,18 +1054,21 @@ class SkillRecordTests(unittest.TestCase):
         self.assertIn("agentctl lap --goal", record, "строку витка снова пишут руками")
         self.assertIn("--marker", record)
         self.assertIn("--note", record)
-        self.assertIn("времена не ставить", record)
+        self.assertIn("README agentctl", record, "разбор формата потерял адрес")
 
     def test_turn_line_example_carries_hours(self):
-        # Пример это то, по чему формат читают на самом деле: строка без часов
-        # в нём стоит дороже любого абзаца.
-        for line in self.record().split("\n"):
+        # Пример это то, по чему формат читают на самом деле, и строка без часов
+        # в нём стоит дороже любого абзаца. Лежит пример в README, скилл на него
+        # ссылается.
+        head = self.readme.index("## Время витка и сводка итога")
+        section = self.readme[head:self.readme.index("\n## ", head + 1)]
+        for line in section.split("\n"):
             line = line.strip()
             if line.startswith("- 20") and line.endswith("continue"):
                 self.assertRegex(line, r"^- \d{4}-\d{2}-\d{2} \d{2}:\d{2}-\d{2}:\d{2}, .+; continue$")
                 break
         else:
-            self.fail("в шаге записи нет примера строки витка")
+            self.fail("в README нет примера строки витка")
 
     def test_summary_of_the_stop_comes_from_the_command(self):
         # Сводка итога считается по этапам задач цели, и собирает её команда:

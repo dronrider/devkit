@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -156,23 +157,22 @@ func TestPulseOwnAskKeepsScanAndOptions(t *testing.T) {
 	}
 }
 
-// Проводка виджета в статике: панель спрашивает ручку без живого tmux, вопрос
-// агента рисуется своим ходом рисовалки, а ответ уезжает той же дорогой, что
-// написанная руками реплика. Плашки с плоскими строками больше нет.
+// Стенд фронта: блок вопроса рисуется из фикстуры признака, варианты видны
+// кнопками, пачка идёт шагами, а ответ уезжает репликой разговора, не
+// клавишами в чужое окно. Проверка по тексту static/app.js тут не годится, и
+// постановка называет этот класс дыры прямо: разметку держал и прежний тест, а
+// человек вопроса не видел. Стенд рисует блок в поддельном DOM
+// (testdata/poc_agentask.mjs), вид кнопок меряет testdata/poc_caskopt.mjs. Без
+// node шаг пропускается: узел стенда, а не рабочей части.
 func TestStaticAgentAskWidget(t *testing.T) {
-	text := readFile(t, filepath.Join("static", "app.js"))
-	for _, want := range []string{
-		`if (ask.kind === "agent")`,
-		"paintAgentAsk(st, box, ask)",
-		"st.askSay = (text) => post(text, null, null, null, null)",
-		"askOptLine(",
-		"askFreeField(",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("в статике нет проводки %q", want)
-		}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд вопроса агента пропущен")
 	}
-	if strings.Contains(text, "paintHandedAsks") {
-		t.Errorf("плашка плоских строк осталась в статике")
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_agentask.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("вопрос агента в панели: %v\n%s", err, out)
 	}
+	t.Log(strings.TrimSpace(string(out)))
 }

@@ -347,7 +347,11 @@ const showAsk = async (next) => {
   if (box && !box.hidden) fail("блок вопроса стоит у молчащего клиента: " + dump(box));
 }
 
-// --- у чужого окна вопрос не спрашивается вовсе ---
+// --- у чужого окна вопрос спрашивается, а блока без вопроса нет ---
+// Прежде панель не ходила к ручке вовсе, пока у разговора не было нашей
+// tmux-сессии. Вопрос агента лежит признаком ожидания, и чужому окну он
+// приходит наравне с нашим (DK-652), поэтому опрос идёт всегда, а дорогой
+// разбор панели остался на сервере.
 {
   const asked = [];
   const { sandbox: other } = makeSandbox(app, (path) => {
@@ -357,11 +361,13 @@ const showAsk = async (next) => {
     return {};
   });
   const alien = Object.assign({}, st, { entry: { id: SID, state: "vscode", tmux: "" } });
-  other.chatPanel("demo", alien);
+  const panel = other.chatPanel("demo", alien);
   await settle();
-  if (asked.some((p) => p.includes("/ask"))) {
-    fail("панель спросила вопрос у окна без нашей tmux: " + JSON.stringify(asked));
+  if (!asked.some((p) => p.includes("/ask"))) {
+    fail("панель не спросила вопрос у окна без нашей tmux: " + JSON.stringify(asked));
   }
+  const box = byClass(panel, "cask");
+  if (box && !box.hidden) fail("блок вопроса стоит у молчащей ручки: " + dump(box));
 }
 
 console.log("poc_clientask: вопрос блоком в панели, опрос табами и списком, " +

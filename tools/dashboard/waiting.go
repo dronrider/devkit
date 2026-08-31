@@ -81,12 +81,11 @@ func askWaiting(tree, id string, now time.Time) (Waiting, bool) {
 		return Waiting{}, false
 	}
 	w := Waiting{State: waitAskState, Source: waitAsk, Note: waitAskNote,
-		Until: a.Until.Unix(), Session: a.Session, Task: id}
-	for _, q := range a.Questions {
-		if text := strings.TrimSpace(q.Text); text != "" {
-			w.Questions = append(w.Questions, text)
-		}
-	}
+		Until: a.Until.Unix(), Session: a.Session, Task: id,
+		// Варианты идут теми же строками, что у розданного вопроса. Прежде тут
+		// брался один q.Text, и вопрос своей задачи приезжал на экран без
+		// вариантов: человек видел «куда катить» и ни одного ответа (DK-652).
+		Questions: askLines(a.Questions)}
 	// Начало берётся у самого файла: своего поля старта в признаке нет, а
 	// положен он ровно в тот момент, когда заход встал.
 	if fi, err := os.Stat(path); err == nil {
@@ -165,6 +164,91 @@ func askLines(qs []chat.Question) []string {
 		}
 	}
 	return out
+}
+
+// askKindAgent называет вид экрана «вопрос агента»: тот же виджет, что у
+// вопроса клиента, но собран из признака ожидания, а не из снимка панели tmux.
+// Виду тут не украшение: способ ответа у него другой, ответ уезжает во вход
+// разговора, а не клавишами в чужое окно.
+const askKindAgent = "agent"
+
+// askFreeWord это подпись пункта со свободным ответом. Виджет клиента печатает
+// её сам, а вопросу агента её пишем мы: пункт нужен там же, где у клиента, и
+// называться должен теми же словами.
+const askFreeWord = "свой ответ"
+
+// askAdviceWord помечает вариант, который агент назвал рекомендованным.
+// Звёздочка строк экрана тут не годится: у кнопки пояснение стоит словами.
+const askAdviceWord = "советует агент"
+
+// askStepCut это длина имени шага в полосе табов. Полный вопрос в таб не
+// влезает, а первых слов хватает, чтобы узнать, куда переключаешься.
+const askStepCut = 28
+
+// agentAsk это вопрос агента для виджета панели. Поля повторяют снимок панели
+// клиента (kind, text, options, steps), и рисует их та же рисовалка; своего тут
+// три поля, и все три про то, чего у клиентского вопроса нет: чья задача ждёт,
+// до какого срока и какие вопросы стоят за этим следующими.
+type agentAsk struct {
+	Kind    string      `json:"kind"`
+	Task    string      `json:"task,omitempty"`
+	Until   int64       `json:"until,omitempty"`
+	Rest    []string    `json:"rest,omitempty"`
+	Text    string      `json:"text,omitempty"`
+	Options []tmuxPick  `json:"options,omitempty"`
+	Steps   []agentStep `json:"steps,omitempty"`
+}
+
+// agentStep это один вопрос пачки. Вопросы едут на экран все разом, а не по
+// одному: переход между шагами у вопроса агента ничего не отправляет и никуда
+// не ходит, ответы копятся в самой панели и уезжают одной репликой.
+type agentStep struct {
+	Name    string     `json:"name"`
+	Now     bool       `json:"now,omitempty"`
+	Text    string     `json:"text,omitempty"`
+	Options []tmuxPick `json:"options,omitempty"`
+}
+
+// agentAskOf собирает виджет из признака ожидания. Пустой вид значит, что
+// показывать нечего: вопрос без текста и без вариантов рисовать не на чем.
+func agentAskOf(h handedAsk) agentAsk {
+	out := agentAsk{Kind: askKindAgent, Task: h.Ask.Task, Until: h.Ask.Until.Unix()}
+	for i, q := range h.Ask.Questions {
+		text := strings.TrimSpace(q.Text)
+		if text == "" {
+			continue
+		}
+		step := agentStep{Name: fmt.Sprintf("%d. %s", i+1, truncate(text, askStepCut)),
+			Text: text, Options: agentPicks(q.Options)}
+		out.Steps = append(out.Steps, step)
+	}
+	if len(out.Steps) == 0 {
+		return agentAsk{}
+	}
+	out.Steps[0].Now = true
+	out.Text, out.Options = out.Steps[0].Text, out.Steps[0].Options
+	if len(out.Steps) == 1 {
+		out.Steps = nil
+	}
+	return out
+}
+
+// agentPicks переводит варианты вопроса в пункты виджета. Пункт свободного
+// ответа стоит последним и у вопроса без вариантов тоже: сказать своими словами
+// человек вправе всегда.
+func agentPicks(opts []chat.Option) []tmuxPick {
+	var out []tmuxPick
+	for _, o := range opts {
+		pick := tmuxPick{Text: strings.TrimSpace(o.Label), Desc: strings.TrimSpace(o.Note)}
+		if pick.Text == "" {
+			continue
+		}
+		if o.Recommended {
+			pick.Desc = strings.TrimSpace(askAdviceWord + ". " + pick.Desc)
+		}
+		out = append(out, pick)
+	}
+	return append(out, tmuxPick{Kind: pickFree, Text: askFreeWord})
 }
 
 // handedWaiting переводит найденный признак в состояние ожидания для экрана:

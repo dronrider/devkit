@@ -1935,11 +1935,13 @@ exit 0`)
 		!strings.Contains(text, "вариантов") {
 		t.Errorf("выбор мимо вариантов: %d %s", resp.StatusCode, text)
 	}
-	// Разговор без нашей tmux-сессии спрашивать нечем, и это сказано словами.
+	// Разговор без нашей tmux-сессии спрашивать нечем, и это сказано словами, а
+	// не отказом: панель спрашивает всякий открытый разговор, и молчание такой
+	// же ответ, как сам вопрос (DK-652).
 	other := "bbbb2222-2222-4222-8222-222222222222"
 	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats/"+other+"/ask", "")
-	if text := body(t, resp); resp.StatusCode != http.StatusConflict ||
-		!strings.Contains(text, "не живёт в нашей tmux") {
+	if text := body(t, resp); resp.StatusCode != http.StatusOK ||
+		!strings.Contains(text, "не живёт в нашей tmux") || strings.Contains(text, `"ask"`) {
 		t.Errorf("вопрос у чужого окна: %d %s", resp.StatusCode, text)
 	}
 }

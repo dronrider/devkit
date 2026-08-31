@@ -188,18 +188,20 @@ func TestChatSaySettlesDelegateAsk(t *testing.T) {
 	}
 }
 
-// Проводка плашки в статике: пульс несёт own_asks, панель держит узел плашки,
-// стили строк вопроса лежат в style.css. Без этой проводки сервер говорил бы
-// в пустоту.
-func TestStaticHandedAskPlate(t *testing.T) {
+// Проводка вопроса розданной работы в статике: ожидание разговора приезжает
+// полем own_wait, а сам вопрос рисуется виджетом с кнопками
+// (TestStaticAgentAskWidget). Плашки с плоскими строками больше нет: она
+// показывала варианты текстом и не показывала вопрос своей задачи вовсе
+// (DK-652).
+func TestStaticHandedAskWiring(t *testing.T) {
 	js := readFile(t, filepath.Join("static", "app.js"))
-	for _, want := range []string{"own_asks", "paintHandedAsks(st, p)", "st.handAskBox = handBox"} {
+	for _, want := range []string{"own_wait", "paintAgentAsk"} {
 		if !strings.Contains(js, want) {
-			t.Errorf("в static/app.js нет %q: плашка вопроса не соберётся", want)
+			t.Errorf("в static/app.js нет %q: вопрос агента не соберётся", want)
 		}
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	for _, want := range []string{".caskq{", ".caskopt{"} {
+	for _, want := range []string{".caskopt{", ".casklist{"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет %q", want)
 		}

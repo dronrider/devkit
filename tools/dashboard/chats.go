@@ -2413,8 +2413,30 @@ func (s *server) chatStuck(sid string) string {
 // стоит подпроцесса, поэтому ручка своя и зовётся она только там, где ленты
 // нет: разбирать панель на каждый список чатов было бы дорого.
 func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
-	found, sid, name, ok := s.chatTmuxOf(w, r)
+	found, sid, ok := s.chatSidOf(w, r)
 	if !ok {
+		return
+	}
+	// Вопрос агента идёт первым и снимка панели не стоит: признак ожидания это
+	// файл, а живой tmux ему не нужен вовсе. Спрашивает тут заход, который сам
+	// же и ждёт ответа, значит клиент занят нашим инструментом, а не своим
+	// вопросом, и разбирать его панель незачем.
+	if agent, ok := s.agentAsk(found.Path, sid); ok {
+		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "task": agent.Task, "ask": agent})
+		return
+	}
+	name := sessions.Last(s.bindsAll()[sid]).Tmux
+	if name == "" {
+		// Разговор без нашей tmux-сессии это обычный случай, а не поломка:
+		// панель спрашивает всякий открытый разговор, и «ни на чём не стоит»
+		// такой же ответ, как сам вопрос. Отказом тут стоял 409, и панель
+		// получала его по кругу каждые несколько секунд (DK-652).
+		writeJSON(w, http.StatusOK, map[string]any{"session": sid,
+			"note": fmt.Sprintf("разговор %s не живёт в нашей tmux и вопросов агента за ним нет", sid)})
+		return
+	}
+	if m := tmuxMissingCheck(); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
 	ask := tmuxAskOf(name)
@@ -2440,6 +2462,26 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name, "ask": ask})
+}
+
+// agentAsk собирает вопрос агента, адресованный этому разговору. Скан тот же,
+// каким пульс находит вопросы розданной работы, и своей задачи он тоже: сессией
+// в признаке названа эта сессия, под каким бы именем признак ни лежал.
+// Отвечают ближнему по сроку, остальные названы в поле rest, чтобы человек знал
+// про очередь.
+func (s *server) agentAsk(projPath, sid string) (agentAsk, bool) {
+	asks := handedAsks(projPath, sid, s.binds(), s.now())
+	if len(asks) == 0 {
+		return agentAsk{}, false
+	}
+	out := agentAskOf(asks[0])
+	if len(out.Steps) == 0 && out.Text == "" {
+		return agentAsk{}, false
+	}
+	for _, rest := range asks[1:] {
+		out.Rest = append(out.Rest, rest.Ask.Task)
+	}
+	return out, true
 }
 
 // askQuietWindow это как часто один и тот же молчащий виджет попадает в
@@ -2618,16 +2660,27 @@ func (s *server) askPassReview(name string) string {
 	return "ответы отправлены"
 }
 
-// chatTmuxOf находит tmux-сессию разговора: имя лежит записью реестра, и без
-// него ни спросить клиента, ни ответить ему нечем.
-func (s *server) chatTmuxOf(w http.ResponseWriter, r *http.Request) (*Project, string, string, bool) {
+// chatSidOf разбирает адрес разговора: проект и сессию. Дальше дороги две, и
+// tmux нужен только одной из них: вопрос агента лежит признаком ожидания, и
+// чужое окно ему ни к чему.
+func (s *server) chatSidOf(w http.ResponseWriter, r *http.Request) (*Project, string, bool) {
 	found := s.findProject(w, r, "вопрос клиента")
 	if found == nil {
-		return nil, "", "", false
+		return nil, "", false
 	}
 	sid := r.PathValue("sid")
 	if !sessionIDRe.MatchString(sid) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
+		return nil, "", false
+	}
+	return found, sid, true
+}
+
+// chatTmuxOf находит tmux-сессию разговора: имя лежит записью реестра, и без
+// него ни спросить клиента, ни ответить ему нечем.
+func (s *server) chatTmuxOf(w http.ResponseWriter, r *http.Request) (*Project, string, string, bool) {
+	found, sid, ok := s.chatSidOf(w, r)
+	if !ok {
 		return nil, "", "", false
 	}
 	if m := tmuxMissingCheck(); m != "" {

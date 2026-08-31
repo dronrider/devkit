@@ -8673,44 +8673,6 @@ function ringBlockSay(slot, p) {
   slot.blockChip = chip;
 }
 
-// Плашка вопроса от розданной работы. Субагент или делегат этого разговора
-// спросил человека инструментом ожидания, и его заход стоит, пока ответа нет:
-// вопрос обязан быть виден там, где человек сидит, а не только в разговоре
-// задачи (живые случаи DK-517, DK-543 и слияние цели DK-397, где срок выходил
-// молча). Вопросы приносит пульс полем own_asks, ближний срок первым; ответ
-// пишется в обычное поле ввода, второго поля тут нет нарочно (см. chatWay),
-// а ручка реплики сама кладёт его во вход, который слушает инструмент
-// ожидания. Пересборка на каждом тике безопасна: своего ввода у плашки нет,
-// а отсчёт срока как раз обязан тикать.
-function paintHandedAsks(st, p) {
-  const box = st.handAskBox;
-  if (!box) return;
-  const asks = (p && p.own_asks) || [];
-  if (!asks.length) {
-    box.hidden = true;
-    box.replaceChildren();
-    return;
-  }
-  const now = Date.now();
-  box.replaceChildren();
-  asks.forEach((w, i) => {
-    const q = el("div", "caskq");
-    const left = waitLeft(w.until, now);
-    q.append(el("div", "caskh", "Вопрос от " + (w.task || "работы") +
-      (left === "срок вышел" ? ", срок вышел" : left ? ", осталось " + left : "")));
-    for (const line of w.questions || []) {
-      q.append(el("div", /^[-*] /.test(line) ? "caskopt" : "caskt", line));
-    }
-    if (i === 0) {
-      q.append(el("div", "caskhint", asks.length > 1
-        ? "Вопросов несколько: ответ из поля ниже уедет этому, остальные ждут своей очереди"
-        : "Работа стоит до ответа: напишите его в поле ниже, он уедет ждущему заходу"));
-    }
-    box.append(q);
-  });
-  box.hidden = false;
-}
-
 function wireRing(project, st, slot) {
   const put = (p) => {
     // Узел кольца переживает тик: пересборка снимала бы открытый список.
@@ -8718,7 +8680,6 @@ function wireRing(project, st, slot) {
     if (has && has.ringFill) has.ringFill(p);
     else slot.replaceChildren(pulseRing(project, p));
     ringBlockSay(slot, p);
-    paintHandedAsks(st, p);
   };
   const load = async () => {
     const r = await api(pulseURL(project, st));
@@ -10443,16 +10404,12 @@ function chatPanel(project, st) {
   // в tmux (замечание пользователя: «не хочу каждый раз чинить что-то через
   // тебя»). Блок стоит над полем ввода и обновляется опросом, пока панель
   // открыта.
+  // Тем же блоком приходит вопрос агента: заход спросил человека инструментом
+  // ожидания и стоит, пока ответа нет. Прежде такой вопрос стоял плашкой без
+  // кнопок, а свой собственный не показывался вовсе (DK-652).
   const askBox = el("div", "cask");
   askBox.hidden = true;
   wrap.append(askBox);
-  // Вопрос от розданной работы стоит тем же местом, что вопрос клиента: под
-  // лентой, над полем ввода. Кормит его пульс (paintHandedAsks), а отвечают
-  // ему обычным полем ввода.
-  const handBox = el("div", "cask");
-  handBox.hidden = true;
-  wrap.append(handBox);
-  st.handAskBox = handBox;
   // Разговор без процесса называет это словами и даёт себя поднять. Стоит
   // строка там же, где стоят остальные слова о состоянии: над полем ввода.
   if (way.kind === "resume") wrap.append(chatNoSessRow(project, st));
@@ -10832,6 +10789,11 @@ function chatPanel(project, st) {
       });
   };
 
+  // Ответ на вопрос агента уезжает той же дорогой, что реплика из поля: тот же
+  // пузырь в ленте, тот же выбор дороги, та же ручка. Второго способа отправки
+  // виджет не заводит (DK-652).
+  st.askSay = (text) => post(text, null, null, null, null);
+
   const fire = () => {
     const text = ta.value.trim();
     if (!text || send.disabled) return;
@@ -11020,7 +10982,11 @@ const ASK_MOVE = 400;
 // спрашивать нечего и нечем.
 function watchClientAsk(project, st, box) {
   const sid = st.sid;
-  if (!sid || !st.entry || !st.entry.tmux) return;
+  // Живой tmux тут больше не условие. Вопрос агента лежит признаком ожидания, и
+  // разговору с чужим окном он приходит наравне с нашим: спрашивал заход, а не
+  // клиент. Дорогой разбор панели остался на сервере и заводится только там,
+  // где tmux-сессия и правда есть (DK-652).
+  if (!sid) return;
   let stop = false;
   chatLive.push(() => { stop = true; });
   const tick = async () => {
@@ -11078,6 +11044,65 @@ function askStepShell(box, name) {
   box.dataset.ask = "";
 }
 
+// Строка варианта: отметка слева, слова рядом, пояснение второй строкой
+// мельче. Рисуется она одинаково у вопроса клиента и у вопроса агента, и
+// разница между ними только в том, куда уходит нажатие.
+function askOptLine(opt, pick) {
+  const line = el("button", "caskopt" + (opt.mark === "on" ? " on" : ""));
+  line.type = "button";
+  // Отмеченный вариант виден отметкой, а не словом «отмечено» в тексте.
+  if (opt.mark) line.append(el("span", "caskbox"));
+  const words = el("span", "caskwords");
+  words.append(el("span", "casklabel", opt.text));
+  if (opt.desc) words.append(el("span", "caskwhy", opt.desc));
+  line.append(words);
+  line.setAttribute("aria-pressed", opt.mark === "on" ? "true" : "false");
+  line.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    pick();
+  });
+  return line;
+}
+
+// Свободный ответ: пункт списка, а поле под списком и только после выбора.
+// Прежде поле стояло в ряду вариантов и просилось быть заполненным всегда
+// (замечание пользователя).
+function askFreeField(list, box, hint, say) {
+  const pick = el("button", "caskopt caskown");
+  pick.type = "button";
+  pick.append(el("span", "caskwords", ASK_WORD.free));
+  const free = el("div", "caskfree");
+  free.hidden = true;
+  const field = el("input", "dwhyin");
+  field.type = "text";
+  field.placeholder = "Свой ответ";
+  const go = el("button", "btn btn-sm btn-acc", "Отправить");
+  const fire = () => {
+    const said = String(field.value || "").trim();
+    if (!said) {
+      sayResult(hint, true);
+      return;
+    }
+    say(said);
+  };
+  go.addEventListener("click", (ev) => { ev.stopPropagation(); fire(); });
+  field.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      fire();
+    }
+  });
+  free.append(field, go);
+  pick.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    free.hidden = !free.hidden;
+    pick.classList.toggle("on", !free.hidden);
+    if (!free.hidden && field.focus) field.focus();
+  });
+  list.append(pick);
+  box.append(free);
+}
+
 function paintClientAsk(project, st, box, ask, again) {
   // Блок пересобирается только тогда, когда снимок и правда сменился: опрос
   // ходит по кругу, и сборка на каждый заход стирала бы набранное в поле
@@ -11091,6 +11116,17 @@ function paintClientAsk(project, st, box, ask, again) {
     return;
   }
   box.hidden = false;
+  // Вопрос агента рисуется тем же виджетом, а отвечается по-своему: не
+  // клавишами в чужое окно, а репликой во вход разговора, откуда её берёт
+  // ждущий заход.
+  if (ask.kind === "agent") {
+    // Сюда заходят только со сменившимся снимком, и отмеченное на узле
+    // относилось к прежнему вопросу. Открытый шаг тоже свой у каждой пачки.
+    box.askStep = 0;
+    box.askSaid = null;
+    paintAgentAsk(st, box, ask);
+    return;
+  }
   const review = ask.kind === "review";
   const head = el("div", "caskh");
   head.append(el("b", "", review ? "Ответы опроса" : "Клиент ждёт ответа"));
@@ -11217,62 +11253,122 @@ function paintClientAsk(project, st, box, ask, again) {
       row.append(btn);
       return;
     }
-    const line = el("button", "caskopt" + (opt.mark === "on" ? " on" : ""));
-    line.type = "button";
-    // Отмеченный вариант виден отметкой, а не словом «отмечено» в тексте.
-    if (opt.mark) line.append(el("span", "caskbox"));
-    const words = el("span", "caskwords");
-    words.append(el("span", "casklabel", opt.text));
-    if (opt.desc) words.append(el("span", "caskwhy", opt.desc));
-    line.append(words);
-    line.setAttribute("aria-pressed", opt.mark === "on" ? "true" : "false");
-    line.addEventListener("click", (ev) => {
-      ev.stopPropagation();
+    list.append(askOptLine(opt, () => {
       send({ option: i + 1 }).then(afterMove).catch(console.error);
-    });
-    list.append(line);
+    }));
   });
   box.append(list);
 
-  // Свободный ответ: пункт списка, а поле под списком и только после выбора.
-  // Прежде поле стояло в ряду вариантов и просилось быть заполненным всегда
-  // (замечание пользователя).
   if (freeAt >= 0) {
-    const pick = el("button", "caskopt caskown");
-    pick.type = "button";
-    pick.append(el("span", "caskwords", ASK_WORD.free));
-    const free = el("div", "caskfree");
-    free.hidden = true;
-    const field = el("input", "dwhyin");
-    field.type = "text";
-    field.placeholder = "Свой ответ";
-    const say = el("button", "btn btn-sm btn-acc", "Отправить");
-    const fire = () => {
-      const said = String(field.value || "").trim();
-      if (!said) {
-        sayResult("свой ответ пустой: напишите словами, что передать клиенту", true);
-        return;
-      }
-      send({ option: freeAt + 1, text: said }).then(afterMove).catch(console.error);
-    };
-    say.addEventListener("click", (ev) => { ev.stopPropagation(); fire(); });
-    field.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") {
-        ev.preventDefault();
-        fire();
-      }
-    });
-    free.append(field, say);
-    pick.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      free.hidden = !free.hidden;
-      pick.classList.toggle("on", !free.hidden);
-      if (!free.hidden && field.focus) field.focus();
-    });
-    list.append(pick);
-    box.append(free);
+    askFreeField(list, box, "свой ответ пустой: напишите словами, что передать клиенту",
+      (said) => { send({ option: freeAt + 1, text: said }).then(afterMove).catch(console.error); });
   }
   box.append(row);
+}
+
+// Вопрос агента над полем ввода. Заход спросил человека инструментом ожидания
+// и стоит, пока ответа нет: вопрос обязан быть виден сразу, без наведения мыши
+// и без терминала сессии (живой случай DK-650, где восемь минут ожидания
+// кончились парковкой). Прежде свой вопрос доезжал одной подсказкой на поле
+// ввода, а варианты терялись по дороге вовсе.
+//
+// Отвечается он не как вопрос клиента: реплика уходит той же дорогой, что
+// написанная руками, ручкой разговора, и ложится во вход, откуда её забирает
+// ждущий заход. Умерший заход ответа не теряет: строка остаётся во входе, и её
+// берёт тот, кто задачу продолжит.
+function paintAgentAsk(st, box, ask) {
+  const steps = ask.steps || [];
+  const many = steps.length > 1;
+  // Отмеченное человеком живёт на самом узле: опрос перерисовывает блок только
+  // тогда, когда вопрос сменился, и до отправки отметки обязаны стоять.
+  if (!box.askSaid) box.askSaid = {};
+  const said = box.askSaid;
+  const at = many ? Math.min(box.askStep || 0, steps.length - 1) : 0;
+  const open = many ? steps[at] : ask;
+  box.replaceChildren();
+  const head = el("div", "caskh");
+  head.append(el("b", "", ask.task ? "Вопрос от задачи " + ask.task : "Вопрос агента"));
+  const left = waitLeft(ask.until, Date.now());
+  if (left) head.append(el("span", "n", left === "срок вышел" ? left : "осталось " + left));
+  box.append(head);
+  box.append(el("div", "caskhint", (many
+    ? "Спрашивает агент задачи, вопросов несколько. Пройдите шаги и отправьте ответ одной репликой."
+    : "Спрашивает агент задачи. Пока ответа нет, его заход стоит.") +
+    ((ask.rest || []).length ? " Следом ждут ответа " + ask.rest.join(", ") + "." : "")));
+
+  // Ответ уезжает одной репликой: инструмент ожидания снимается первой же
+  // строкой во входе, и второй ответ ему уже некому забрать.
+  let sent = false;
+  const answer = (text) => {
+    if (sent || !text) return;
+    sent = true;
+    box.classList.add("busy");
+    if (st.askSay) st.askSay(text);
+    else sayResult("ответить некуда: разговор не собран", true);
+  };
+
+  if (many) {
+    const bar = el("div", "ktabs caskst");
+    steps.forEach((step, i) => {
+      const tab = el("button", "ktab" + (i === at ? " onktab" : ""), step.name);
+      tab.type = "button";
+      if (said[i]) tab.append(el("span", "n", "ответ есть"));
+      withTip(tab, i === at ? "Этот шаг открыт"
+        : (said[i] ? "Шаг отвечен: можно вернуться и поменять ответ" : "Перейти к этому шагу"));
+      tab.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        // Переход тут ничего никуда не шлёт: вопросы приехали все разом, и
+        // ждать снимка соседнего шага не от кого.
+        box.askStep = i;
+        paintAgentAsk(st, box, ask);
+      });
+      bar.append(tab);
+    });
+    box.append(bar);
+  }
+  box.append(el("div", "casks", open.text || ""));
+
+  const list = el("div", "casklist");
+  for (const opt of open.options || []) {
+    if (opt.kind === "free") continue;
+    const mark = many ? { text: opt.text, desc: opt.desc, mark: said[at] === opt.text ? "on" : "off" } : opt;
+    list.append(askOptLine(mark, () => {
+      if (!many) {
+        answer(opt.text);
+        return;
+      }
+      said[at] = said[at] === opt.text ? "" : opt.text;
+      paintAgentAsk(st, box, ask);
+    }));
+  }
+  box.append(list);
+  askFreeField(list, box, "свой ответ пустой: напишите словами, что передать агенту", (text) => {
+    if (!many) {
+      answer(text);
+      return;
+    }
+    said[at] = text;
+    paintAgentAsk(st, box, ask);
+  });
+
+  if (many) {
+    const row = el("div", "caskr");
+    const go = el("button", "btn btn-sm btn-acc", "Отправить ответ");
+    withTip(go, "Ответы всех шагов уедут одной репликой");
+    go.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const lines = steps
+        .map((step, i) => (said[i] ? step.text + ": " + said[i] : ""))
+        .filter(Boolean);
+      if (!lines.length) {
+        sayResult("отвечать нечем: отметьте вариант хотя бы на одном шаге", true);
+        return;
+      }
+      answer(lines.join("\n"));
+    });
+    row.append(go);
+    box.append(row);
+  }
 }
 
 // Какой разговор сейчас стоит в панели: «проект|адрес».

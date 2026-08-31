@@ -272,8 +272,11 @@ a:hover{text-decoration:underline}
 .fab{position:relative}
 .fab .pmenu{bottom:52px;top:auto;right:0}
 /* вопрос клиента в панели: он встал на выборе и до ответа не делает ни хода,
-   а человек видел пустую ленту и шёл отвечать руками в tmux */
-.cask{margin-top:10px;padding:12px 14px;border:1px solid var(--wait);border-radius:11px;background:color-mix(in oklab,var(--wait) 8%,transparent)}
+   а человек видел пустую ленту и шёл отвечать руками в tmux. Тем же блоком
+   приходит вопрос агента, и пачка вопросов с вариантами вырастает выше экрана
+   телефона, поэтому у блока свой потолок высоты: под ним обязаны остаться
+   лента и поле ввода */
+.cask{margin-top:10px;padding:12px 14px;border:1px solid var(--wait);border-radius:11px;background:color-mix(in oklab,var(--wait) 8%,transparent);max-height:52vh;overflow-y:auto}
 .caskh{font:600 12.5px var(--sans);color:var(--tx);margin-bottom:6px}
 /* строка под заголовком: чей это вопрос и что до ответа сессия стоит */
 .caskhint{font:400 11.5px/1.45 var(--sans);color:var(--tx3);margin-bottom:8px}
@@ -2183,7 +2186,4 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .arow .aacts{grid-column:3;grid-row:1}
   .arow .ab{grid-column:1 / -1;grid-row:2}
 }
-.caskq{margin-bottom:10px}
-.caskq:last-child{margin-bottom:0}
-.caskt{font:400 12.5px/1.5 var(--sans);color:var(--tx);margin-bottom:4px}
 .caskopt{font:400 12px/1.5 var(--sans);color:var(--tx2);margin-left:10px}

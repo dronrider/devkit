@@ -657,10 +657,12 @@ class TestBackgroundRule(SkillTree):
 class TestSyncSpawn(SkillTree):
     """DK-314: спавн исполнителя и ревьювера назван синхронным вместе с
     причиной (headless-сессия дашборда кончает ход финальным текстом и добивает
-    фоновые задачи через десять минут). Правило живёт в board-batch и
-    board-ship, синтетический каталог кладёт их в kit/skills/ рядом с корнем."""
+    фоновые задачи через десять минут). DK-678 добавил к правилу рубеж, и скилл
+    называет его вместе с причиной. Правило живёт в board-batch и board-ship,
+    синтетический каталог кладёт их в kit/skills/ рядом с корнем."""
 
-    REASON = "headless-сессия добивает фоновое через десять минут"
+    REASON = ("headless-сессия добивает фоновое через десять минут, "
+              "фоновый вызов отбивает рубеж check-background.py")
 
     def add_board_skills(self, body):
         for skill in ("board-batch", "board-ship"):
@@ -674,17 +676,25 @@ class TestSyncSpawn(SkillTree):
         # Тексты до правки DK-314: спавн описан, синхронность не названа.
         self.add_board_skills("Спавн одним сообщением, чтобы субагенты шли параллельно")
         fails = check_skills.check_sync_spawn(self.root)
-        self.assertEqual(len(fails), 4)
+        self.assertEqual(len(fails), 6)
         self.assertTrue(any("board-batch: спавн субагента не назван синхронным" in f
                             for f in fails), fails)
         self.assertTrue(any("board-ship: спавн субагента не назван синхронным" in f
                             for f in fails), fails)
 
     def test_fails_when_reason_missing(self):
-        self.add_board_skills("Спавн синхронный, так надо")
+        self.add_board_skills("Спавн синхронный по рубежу check-background.py, так надо")
         fails = check_skills.check_sync_spawn(self.root)
         self.assertEqual(len(fails), 2)
         self.assertTrue(all("синхронный спавн назван без причины" in f for f in fails), fails)
+
+    def test_fails_when_barrier_not_named(self):
+        # DK-678: причина названа, рубеж нет. Текст с одной причиной переживёт
+        # правку рубежа и разъедется с ней молча.
+        self.add_board_skills("Спавн синхронный: headless-сессия добивает фоновое")
+        fails = check_skills.check_sync_spawn(self.root)
+        self.assertEqual(len(fails), 2)
+        self.assertTrue(all("не назвал рубеж check-background.py" in f for f in fails), fails)
 
     def test_async_word_is_not_the_rule(self):
         # «Асинхронный» это отмена правила, а не его формулировка: подстрока

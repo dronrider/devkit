@@ -238,6 +238,10 @@ def check_verify_runner(here, root):
     fails = []
     files = [(name, os.path.join(here, name, "SKILL.md")) for name in VERIFY_TEXTS]
     files.append(("RULES.board.md", os.path.join(root, "RULES.board.md")))
+    # Резидентное ядро несёт ту же строку: полный текст правил сессия читает по
+    # надобности, а закрытие задачи идёт и без него. Прогон стенда DK-642
+    # показал закрытие без отметки прогона при фразе только в полном тексте.
+    files.append(("RULES.board.core.md", os.path.join(root, "RULES.board.core.md")))
     for name, path in files:
         text = read(path)
         if text is None:

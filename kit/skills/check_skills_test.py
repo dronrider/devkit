@@ -341,6 +341,9 @@ class TestVerifyRunner(SkillTree):
             self.add_skill(name, body="\n".join(
                 ["сценарий " + check_skills.VERIFY_PHRASE] * 15))
         self.append("RULES.board.md", "сценарий %s\n" % check_skills.VERIFY_PHRASE)
+        with open(os.path.join(self.root, "RULES.board.core.md"), "w",
+                  encoding="utf-8") as f:
+            f.write("ядро доски, сценарий %s\n" % check_skills.VERIFY_PHRASE)
 
     def test_phrase_everywhere_passes(self):
         self.seed()
@@ -369,6 +372,14 @@ class TestVerifyRunner(SkillTree):
         shutil.rmtree(os.path.join(self.here, "goal-loop"))
         fails = check_skills.check_verify_runner(self.here, self.root)
         self.assertTrue(any("goal-loop" in f and "текста нет" in f for f in fails), fails)
+
+    def test_phrase_dropped_from_core_fails(self):
+        self.seed()
+        with open(os.path.join(self.root, "RULES.board.core.md"), "w",
+                  encoding="utf-8") as f:
+            f.write("ядро доски без формулировки\n")
+        fails = check_skills.check_verify_runner(self.here, self.root)
+        self.assertTrue(any("RULES.board.core.md" in f for f in fails), fails)
 
 
 class TestTeam(SkillTree):

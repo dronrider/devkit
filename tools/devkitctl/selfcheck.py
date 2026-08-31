@@ -114,6 +114,22 @@ def deploy_stub(root):
     return dep
 
 
+def commit_ignores(cmd_run, proj):
+    """Коммит .gitignore подключения в синтетическом проекте.
+
+    Подключение кладёт файл, но не коммитит: чужие файлы проекта в первый
+    коммит не едут. Настоящий проект коммитит его сам, а круг до DK-643 жил и
+    без этого. С обкаткой сценария в дереве задачи заводится журнал запусков
+    .devkit/log, и без унаследованных игноров он лежит там untracked: слияние
+    после этого не убирает дерево задачи, и круг оставляет за собой след.
+    """
+    cmd_run(["git", "-C", str(proj), "add", "--", ".gitignore"])
+    # ID задачи в subject спрашивает хук commit-msg на проекте с доской, и круг
+    # зовёт хуки настоящие: коммит без ID он отбил бы.
+    return cmd_run(["git", "-C", str(proj), "commit", "-q", "-m",
+                    "chore: %s игноры машинных файлов devkit" % TASK])
+
+
 def bare_origin(cmd_run, proj):
     """Голый репозиторий под origin и первое выталкивание в него.
 
@@ -156,8 +172,12 @@ def write_scenario(cmd_run, tree, task):
     if not re.search(r"^%s\b" % re.escape(SCENARIO_HEADER), text, flags=re.M):
         text += ("\n%s\n\n1. devkitctl selfcheck во временном каталоге.\n"
                  "2. Каждый шаг круга отвечает «ок», итог «связка жива».\n\n"
+                 "Шаг, выполнимый без выката, лежит блоком: его гоняет обкатка\n"
+                 "круга, и ворота перевода в Check спрашивают её отметку.\n\n"
+                 "```sh\ntest -f docs/TASKS.md && grep -q %s docs/TASKS.md\n```\n\n"
                  "Ожидаемый итог: круг закрыл временную задачу и не оставил "
-                 "после себя ни проекта, ни дерева задачи.\n" % SCENARIO_HEADER)
+                 "после себя ни проекта, ни дерева задачи.\n"
+                 % (SCENARIO_HEADER, task))
     if not re.search(r"^%s\b" % re.escape(VERIFY_HEADER), text, flags=re.M):
         text += ("\n%s\n\nвыкат круга оставляет метку .devkit/selfcheck-deployed, "
                  "круг проверяет её после слияния\n" % VERIFY_HEADER)
@@ -165,6 +185,24 @@ def write_scenario(cmd_run, tree, task):
     cmd_run(["git", "-C", str(tree), "add", "--", "docs/tasks/%s.md" % task])
     return cmd_run(["git", "-C", str(tree), "commit", "-q", "-m",
                     "docs(tasks): %s сценарий проверки" % task])
+
+
+def rehearse_scenario(cmd_run, tree, task):
+    """Обкатка сценария в дереве задачи и коммит её записи.
+
+    Ворота перевода в Check спрашивают у агентского вида отметку обкатки
+    (DK-643), и круг проходит их тем же способом, каким их проходит человек:
+    живым прогоном шага в свежем дереве. Пометка-исключение закрыла бы шаг
+    молчанием, а круг на то и заведён, чтобы звать утилиты по-настоящему.
+    Запись прогона уезжает своим коммитом: отметку такой коммит не отменяет,
+    он трогает один файл задачи.
+    """
+    rc, out = cmd_run(["taskctl", "-C", str(tree), "rehearse", task])
+    if rc != 0:
+        return rc, out
+    cmd_run(["git", "-C", str(tree), "add", "--", "docs/tasks/%s.md" % task])
+    return cmd_run(["git", "-C", str(tree), "commit", "-q", "-m",
+                    "docs(tasks): %s обкатка сценария" % task])
 
 
 def stamp_result(proj, task):
@@ -210,6 +248,7 @@ def circle(cmd_run, proj, log):
     if go("подключение", ["devkitctl", "new", "--prefix", PREFIX,
                           "-C", str(proj)]) != 0:
         return steps
+    commit_ignores(cmd_run, proj)
     bare_origin(cmd_run, proj)
     deploy_stub(proj)
     # Коммит с -m берёт доску вместе с файлом задачи: без него файл оставался
@@ -237,6 +276,11 @@ def circle(cmd_run, proj, log):
     rc, out = write_scenario(cmd_run, task_tree(proj, TASK), TASK)
     steps.append({"name": "сценарий задачи", "rc": rc, "out": out})
     log("  сценарий задачи: %s" % ("ок" if rc == 0 else "не прошёл"))
+    if rc != 0:
+        return steps
+    rc, out = rehearse_scenario(cmd_run, task_tree(proj, TASK), TASK)
+    steps.append({"name": "обкатка сценария", "rc": rc, "out": out})
+    log("  обкатка сценария: %s" % ("ок" if rc == 0 else "не прошёл"))
     if rc != 0:
         return steps
     if go("слияние с выкатом", ["shipctl", "-C", str(proj), "merge", TASK]) != 0:

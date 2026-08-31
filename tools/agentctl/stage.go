@@ -14,11 +14,27 @@ import (
 // задаёт сессия, и своей команды у неё нет. Ею же смотрят состояние: без
 // команды, печатающей запись, бездействующая отметка неотличима от штатной
 // работы, и разбираться пришлось бы чтением файла в домашней директории.
-func cmdStage(root, id, kind, note string, now time.Time) (string, error) {
+// Прогон сценария (вид «проверка») требует --by с именем прогнавшей модели:
+// по этой записи ворота taskctl close сверяют прогонявшего с исполнителем
+// разработки (DK-642), и запись без имени оставила бы их слепыми.
+func cmdStage(root, id, kind, note, by string, now time.Time) (string, error) {
 	main := stage.MainRoot(root)
 	home := stage.Home()
 	if kind == "" {
 		return stageShow(home, main, id)
+	}
+	if kind == stage.Verify && by == "" {
+		return "", fmt.Errorf("вид %s требует --by <модель>: прогонявший сценарий записывается машинно", stage.Verify)
+	}
+	if by != "" && kind != stage.Verify {
+		return "", fmt.Errorf("--by ставится только у вида %s: остальным этапам имя кладёт вердикт pick", stage.Verify)
+	}
+	if by != "" {
+		v := stage.VerifyNote(by)
+		if note != "" {
+			v += ", " + note
+		}
+		note = v
 	}
 	if err := stage.Open(home, main, id, kind, note, now); err != nil {
 		return "", err

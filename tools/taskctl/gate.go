@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/stage"
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // branchOfTask повторяет опознание ветки задачи из shipctl
@@ -89,6 +91,14 @@ func checkGate(root string, row *Row) error {
 			return fmt.Errorf("%s: в Check пускают только с готовым сценарием проверки, а файла %s нет: завести «taskctl file %s», описать шаги и ожидаемый итог разделом «Сценарий проверки» и повторить move", id, rel, id)
 		case !has:
 			return fmt.Errorf("%s: в %s нет раздела «Сценарий проверки», без него в Check нельзя: описать шаги и ожидаемый итог (RULES.board.md, «Трекинг задач» п. 6) и повторить move", id, rel)
+		}
+	}
+	// Обкатка спрашивается у агентского вида: там каждый шаг выполним с машины
+	// агента, и прогнать сценарий до Check ничего не стоит. У mixed и user
+	// часть шагов держит человек, требовать от них машинную отметку не о чем.
+	if acceptOf(row.Title) == acceptAgent {
+		if err := rehearsalGate(root, id); err != nil {
+			return err
 		}
 	}
 	if br, ahead := unmergedTaskBranch(root, id); br != "" {
@@ -347,4 +357,26 @@ func promptHint(root, id string) string {
 	}
 	return fmt.Sprintf("подсказка: задача правила промпты (%s%s), а такая правка меняет поведение агентов: проверить её стендом по скиллу prompt-test и вложить прогон в раздел «Проверка» файла задачи",
 		strings.Join(shown, ", "), tail)
+}
+
+// rehearsalGate держит третий рубеж перевода в Check: сценарий обкатан до
+// того, как задача уехала на проверку. Прогон на месте, в прогретом чекауте с
+// живым HOME и PATH, зеленеет там, где на чужой машине красно, и находится это
+// уже после слияния (RULES.board.md, «Трекинг задач» п. 6; повод из цикла
+// DK-138). Отметку ставит `taskctl rehearse`, гасится ворот пометкой-
+// исключением по образцу ворот слияния: где шаги без выката не гоняются
+// (проверка идёт на проде, шаги держит соседняя задача), молчание неотличимо
+// от прогона, а пометка называет причину. Файла задачи нет значит и отметке
+// негде стоять: рубеж выше уже отказал за сценарий, второй раз ронять не о чем.
+func rehearsalGate(root, id string) error {
+	data, err := os.ReadFile(taskFilePath(root, id))
+	if err != nil {
+		return nil
+	}
+	doc := string(data)
+	if taskform.Rehearsed(doc) || taskform.Exception(doc, taskform.GateRehearsal) {
+		return nil
+	}
+	return fmt.Errorf("%s: сценарий не обкатан в чистом окружении, а Check значит, что проверять по нему будут всерьёз: прогнать «taskctl rehearse %s» (свежее дерево, временный HOME, вывод ляжет в «Проверку») и повторить move; где шаги без выката не гоняются, загасить ворот пометкой «- Исключение: обкатка (причина)» в docs/tasks/%s.md",
+		id, id, id)
 }

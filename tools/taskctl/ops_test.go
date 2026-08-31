@@ -45,14 +45,19 @@ const fixtureScenario = "\n## Сценарий проверки\n\n1. Запус
 // у агентского вида (DK-300), а XR-005 в фикстуре идёт без суффикса, то есть
 // агентский. Тем же разделом пользуются тесты, где close гоняется на агентской
 // строке напрямую.
-const fixtureVerification = "\n## Проверка\n\n- прогон пройден, вывод вложен.\n"
+// Отметка обкатки стоит тут же: ворота move check спрашивают её у агентского
+// вида (DK-643), а через Check ходит половина тестов. Тесты про сами ворота
+// файл переписывают своим.
+const fixtureVerification = "\n## Проверка\n\n" + fixtureRehearsal + "- прогон пройден, вывод вложен.\n"
+
+const fixtureRehearsal = "- Обкатка: 2026-01-01 10:00, свежее дерево 1a2b3c4d5e6f, шагов 1, все зелёные.\n"
 
 // giveScenario заводит задаче файл со сценарием проверки там, где фикстура
 // доски его не кладёт.
 func giveScenario(t *testing.T, root, id string) {
 	t.Helper()
 	p := filepath.Join(root, "docs", "tasks", id+".md")
-	if err := os.WriteFile(p, []byte("# "+id+"\n"+fixtureScenario), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("# "+id+"\n"+fixtureScenario+fixtureVerification), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

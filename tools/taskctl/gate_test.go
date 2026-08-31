@@ -87,7 +87,7 @@ func TestMoveToCheckPassesWithScenario(t *testing.T) {
 func TestMoveToCheckAcceptsAgentScenario(t *testing.T) {
 	root := setup(t)
 	p := filepath.Join(root, "docs", "tasks", "XR-005.md")
-	if err := os.WriteFile(p, []byte("# XR-005\n\n## Сценарий проверки (агентский)\n\n1. Прогнать.\n"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("# XR-005\n\n## Сценарий проверки (агентский)\n\n1. Прогнать.\n"+fixtureVerification), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
@@ -467,5 +467,67 @@ func TestCloseVerifyGateCaseInsensitive(t *testing.T) {
 	err := closeVerifyGate(root, "XR-005")
 	if err == nil || !strings.Contains(err.Error(), "Opus") {
 		t.Fatalf("«Opus» против «opus» прошёл за чужой прогон: %v", err)
+	}
+}
+
+// TestMoveToCheckNeedsRehearsal: агентскую задачу без отметки обкатки в Check
+// не пускают, отказ называет команду, и строка остаётся на месте.
+func TestMoveToCheckNeedsRehearsal(t *testing.T) {
+	root := setup(t)
+	writeTask(t, root, "XR-005", "# XR-005\n"+fixtureScenario)
+	_, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{})
+	if err == nil {
+		t.Fatal("move в Check без обкатки должен падать")
+	}
+	if !strings.Contains(err.Error(), "taskctl rehearse XR-005") {
+		t.Fatalf("отказ не называет команду обкатки: %v", err)
+	}
+	if s := sect(t, root, "XR-005"); s != SectInProgress {
+		t.Fatalf("строка уехала при отказе: %s", s)
+	}
+}
+
+// TestMoveToCheckPassesAfterRehearsal: отметка от rehearse открывает ворота.
+func TestMoveToCheckPassesAfterRehearsal(t *testing.T) {
+	root := setup(t)
+	writeTask(t, root, "XR-005", "# XR-005\n"+fixtureScenario+"\n## Проверка\n\n"+fixtureRehearsal)
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatalf("обкатанный сценарий ворота держать не должны: %v", err)
+	}
+}
+
+// TestMoveToCheckRehearsalException: пометка-исключение гасит ворот тем же
+// порядком, что у ворот слияния.
+func TestMoveToCheckRehearsalException(t *testing.T) {
+	root := setup(t)
+	writeTask(t, root, "XR-005", "# XR-005\n"+fixtureScenario+
+		"\n## Ход работы\n\n- Исключение: обкатка (шаги проверяются на проде)\n")
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatalf("пометка-исключение ворот не погасила: %v", err)
+	}
+}
+
+// TestMoveToCheckQuotedRehearsalDoesNotPass: отметка, процитированная в
+// ограждённом блоке вместе с чужим выводом, ворота не открывает.
+func TestMoveToCheckQuotedRehearsalDoesNotPass(t *testing.T) {
+	root := setup(t)
+	writeTask(t, root, "XR-005", "# XR-005\n"+fixtureScenario+
+		"\n## Проверка\n\n```console\n$ taskctl show XR-002\n"+fixtureRehearsal+"```\n")
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err == nil {
+		t.Fatal("процитированная отметка открыла ворота")
+	}
+}
+
+// TestMoveToCheckSkipsRehearsalForUserKind: у не агентского вида часть шагов
+// держит человек, машинной отметки с него не спрашивают.
+func TestMoveToCheckSkipsRehearsalForUserKind(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdSet(root, SetParams{ID: "XR-005", Accept: "user"}); err != nil {
+		t.Fatal(err)
+	}
+	writeTask(t, root, "XR-005", "# XR-005\n"+fixtureScenario+
+		"\n## Приёмка\n\n- барьер «глаза»:\n  - слепок не годится: правится вёрстка\n  - разметка не годится: смотрят на глаз\n  - метрика не годится: судит человек\n")
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatalf("вид user отметку обкатки спрашивать не должен: %v", err)
 	}
 }

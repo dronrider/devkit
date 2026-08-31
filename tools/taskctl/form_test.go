@@ -150,7 +150,7 @@ func TestDraftPromotedByForm(t *testing.T) {
 	if body != want {
 		t.Fatalf("файл из черновика не по форме:\n%s\nждал:\n%s", body, want)
 	}
-	if err := os.WriteFile(path, append(data, []byte(fixtureScenario)...), 0o644); err != nil {
+	if err := os.WriteFile(path, append(data, []byte(fixtureScenario+fixtureVerification)...), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	openStages(t, root, "XR-008", stage.Dev)

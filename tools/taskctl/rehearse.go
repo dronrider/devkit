@@ -1,0 +1,215 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/dronrider/devkit/internal/freshtree"
+	"github.com/dronrider/devkit/internal/taskform"
+)
+
+// RehearseParams это ключи обкатки сценария: шаги, названные руками, и предел
+// на шаг. Пустые Steps значат «взять шаги из файла задачи».
+type RehearseParams struct {
+	Steps   []string
+	Timeout time.Duration
+	Now     time.Time
+}
+
+// stepLimit это предел на один шаг обкатки. Сценарий пишется под живую
+// проверку, шаг в нём быстрый, а вставший шаг иначе держит заход исполнителя до
+// упора и возвращает работу незакоммиченной.
+const stepLimit = 10 * time.Minute
+
+// cmdRehearse обкатывает сценарий задачи в свежем дереве и собранном
+// окружении: то, что зелено в прогретом чекауте с живым HOME, на чужой машине
+// краснеет, и всплывает это уже после слияния (DK-138, DK-641). Шаги берутся из
+// ограждённых блоков раздела «Сценарий проверки» либо приходят ключом --step,
+// каждый гоняется своим прогоном, вывод целиком ложится в раздел «Проверка», а
+// отметка обкатки открывает ворота перевода в Check. Красный шаг отметки не
+// ставит, но вывод пишет: разбирать провал надо по реальному выводу, а не по
+// пересказу.
+func cmdRehearse(root, id string, p RehearseParams) (string, error) {
+	path := taskFilePath(root, id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("%s: файла задачи нет (%s): завести «taskctl file %s» и описать сценарий", id, path, id)
+	}
+	doc := string(data)
+	steps := p.Steps
+	if len(steps) == 0 {
+		text, found, _ := readSectionFromPath(path, scenarioSection)
+		if !found {
+			return "", fmt.Errorf("%s: в docs/tasks/%s.md нет раздела «Сценарий проверки», обкатывать нечего: описать шаги (%s) и повторить", id, id, taskform.Doc)
+		}
+		steps = scenarioSteps(text)
+	}
+	if len(steps) == 0 {
+		return "", fmt.Errorf("%s: в разделе «Сценарий проверки» нет ограждённого блока с командами: положить команды шагов в блок ```sh либо назвать их ключом --step \"команда\" (по ключу на шаг)", id)
+	}
+	sha, err := gitRevParse(root, "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("%s: не узнать коммит для свежего дерева: %v", id, err)
+	}
+	sha = strings.TrimSpace(sha)
+	tree, home, cleanup, err := freshtree.Make(root, sha, "taskctl-rehearse-")
+	if err != nil {
+		return "", fmt.Errorf("%s: свежее дерево на %s не выложилось: %v", id, shortSha(sha), err)
+	}
+	defer cleanup()
+	limit := p.Timeout
+	if limit <= 0 {
+		limit = stepLimit
+	}
+	env := freshtree.Env(os.Getenv("HOME"), home)
+	var runs []stepRun
+	failed := 0
+	for _, s := range steps {
+		r := runStep(tree, s, env, limit)
+		runs = append(runs, r)
+		if !r.ok {
+			failed++
+		}
+	}
+	now := p.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	block := rehearsalBlock(runs, sha, now, failed)
+	if err := os.WriteFile(path, []byte(taskform.InsertIntoSection(doc, taskform.Verification, block...)), 0o644); err != nil {
+		return "", fmt.Errorf("%s: вывод обкатки не записан в %s: %v", id, path, err)
+	}
+	rel := "docs/tasks/" + id + ".md"
+	if failed > 0 {
+		return "", fmt.Errorf("%s: обкатка красная, шагов упало %d из %d, вывод лежит в %s разделом «Проверка»: разбирать провал и повторить rehearse, отметки для move check нет",
+			id, failed, len(runs), rel)
+	}
+	return fmt.Sprintf("%s: обкатка зелёная, шагов %d, свежее дерево %s, вывод и отметка в %s; дальше taskctl move %s check",
+		id, len(runs), shortSha(sha), rel, id), nil
+}
+
+// stepRun это один прогнанный шаг: команда, её вывод и исход.
+type stepRun struct {
+	cmd  string
+	out  string
+	ok   bool
+	note string
+}
+
+// runStep гоняет шаг в свежем дереве и с собранным окружением. Убивается шаг
+// по группе процессов: команда сценария поднимает и служебные процессы
+// (сервер, хук), и убитый в одиночку шелл оставил бы их держать дерево.
+func runStep(dir, step string, env []string, limit time.Duration) stepRun {
+	cmd := exec.Command("sh", "-c", step)
+	cmd.Dir, cmd.Env = dir, env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	out, err := runCollect(cmd, limit)
+	switch {
+	case err == nil:
+		return stepRun{cmd: step, out: out, ok: true}
+	case strings.HasPrefix(err.Error(), "предел"):
+		return stepRun{cmd: step, out: out, note: err.Error()}
+	default:
+		return stepRun{cmd: step, out: out, note: "провал: " + err.Error()}
+	}
+}
+
+// runCollect ждёт команду до предела и отдаёт её вывод. Буфер читается только
+// после Wait: до него в него льют горутины exec.Cmd, и чтение вперёд Wait это
+// гонка, а не просто неполный вывод.
+func runCollect(cmd *exec.Cmd, limit time.Duration) (string, error) {
+	var buf strings.Builder
+	cmd.Stdout, cmd.Stderr = &buf, &buf
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	timer := time.NewTimer(limit)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return buf.String(), err
+	case <-timer.C:
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+		return buf.String(), fmt.Errorf("предел %s пройден, шаг убит", limit)
+	}
+}
+
+// rehearsalBlock складывает запись обкатки для раздела «Проверка»: строка
+// отметки, по которой ворота узнают прогон, и вывод каждого шага целиком.
+// Вывод идёт ограждённым блоком, иначе разметка файла задачи ломается о первую
+// же строку вывода, начатую решёткой или маркером списка.
+func rehearsalBlock(runs []stepRun, sha string, now time.Time, failed int) []string {
+	verdict := "все зелёные"
+	if failed > 0 {
+		verdict = fmt.Sprintf("красных %d", failed)
+	}
+	out := []string{"", fmt.Sprintf("%s %s, свежее дерево %s, временный HOME, шагов %d, %s.",
+		taskform.RehearsalNote, now.Format("2006-01-02 15:04"), shortSha(sha), len(runs), verdict)}
+	if failed > 0 {
+		// Отметка ворот ставится только зелёной обкаткой, а вывод красной всё
+		// равно нужен глазами: без него разбирать провал нечем.
+		out[1] = fmt.Sprintf("Обкатка %s, свежее дерево %s, шагов %d, %s (отметки нет, ворота закрыты).",
+			now.Format("2006-01-02 15:04"), shortSha(sha), len(runs), verdict)
+	}
+	for i, r := range runs {
+		mark := "зелёный"
+		if !r.ok {
+			mark = r.note
+		}
+		out = append(out, "", fmt.Sprintf("Шаг %d (%s):", i+1, mark), "", "```console",
+			"$ "+r.cmd)
+		out = append(out, strings.Split(strings.TrimRight(r.out, "\n"), "\n")...)
+		out = append(out, "```")
+	}
+	return out
+}
+
+// scenarioSteps собирает команды шагов из ограждённых блоков раздела «Сценарий
+// проверки». Проза раздела командой не считается: обратное значило бы гонять
+// всё, что автор взял в обратные кавычки, включая пути и имена команд посреди
+// объяснения. Строка приглашения («$ ») отбрасывается, комментарии и пустые
+// строки пропускаются.
+func scenarioSteps(text string) []string {
+	lines := strings.Split(text, "\n")
+	mask, _ := taskform.FenceMask(lines)
+	var steps []string
+	for i, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if !mask[i] || t == "" || strings.HasPrefix(t, "#") || strings.HasPrefix(t, "```") {
+			continue
+		}
+		steps = append(steps, strings.TrimPrefix(t, "$ "))
+	}
+	return steps
+}
+
+// shortSha режет коммит до двенадцати знаков: столько же показывают отказы
+// слияния, и глазами они сходятся.
+func shortSha(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
+}
+
+// stepList это повторяемый ключ --step: шаг на ключ, порядок ключей это
+// порядок шагов. Своя реализация flag.Value нужна потому, что flag держит одно
+// значение на имя, а сценарий это список.
+type stepList []string
+
+func (l *stepList) String() string { return strings.Join(*l, "; ") }
+
+func (l *stepList) Set(v string) error {
+	if strings.TrimSpace(v) == "" {
+		return fmt.Errorf("пустой шаг")
+	}
+	*l = append(*l, v)
+	return nil
+}

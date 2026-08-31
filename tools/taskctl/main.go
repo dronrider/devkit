@@ -118,6 +118,15 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   set <ID> [--title "..."] [--type ...] [--rank "..."] [--cost ...] [--link "..."]
       [--accept agent|mixed|user]             поправить ячейки строки
   file <ID>                                   создать docs/tasks/<ID>.md и ссылку в строке
+  rehearse <ID> [--step "команда"] [--timeout 10m]
+                                              обкатать сценарий до Check: шаги из
+                                              ограждённых блоков раздела «Сценарий
+                                              проверки» (или названные --step)
+                                              гоняются в свежем дереве на HEAD и с
+                                              временным HOME, вывод целиком ложится
+                                              в раздел «Проверка», зелёный прогон
+                                              ставит отметку, которую спрашивает
+                                              move check
   close <ID> [--commit sha1,sha2] [--date ГГГГ-ММ-ДД] [--link "..."]
                                               в архив + файл задачи в tasks/archive/<год>/,
                                               со всех строк снимается «[после <ID>]»
@@ -455,6 +464,15 @@ func main() {
 		needArgs(pos, 1, 1, "set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...] [--accept ...]")
 		p.ID = pos[0]
 		msg, err = cmdSet(root(*dir), p)
+	case "rehearse":
+		fs := flag.NewFlagSet("rehearse", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		var p RehearseParams
+		fs.Var((*stepList)(&p.Steps), "step", "шаг обкатки; ключ повторяется, тогда раздел «Сценарий проверки» не читается")
+		fs.DurationVar(&p.Timeout, "timeout", stepLimit, "предел на один шаг")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "rehearse <ID> [--step \"команда\"] [--timeout 10m]")
+		msg, err = cmdRehearse(root(*dir), pos[0], p)
 	case "file":
 		fs := flag.NewFlagSet("file", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

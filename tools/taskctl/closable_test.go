@@ -195,3 +195,28 @@ func TestClosableEmptyBoard(t *testing.T) {
 		t.Fatalf("пустой список должен начинаться прозой, а не готовым ID:\n%s", out)
 	}
 }
+
+// TestClosableRefusesAuthorVerifyRun: прогон сценария под исполнителем
+// разработки уводит строку в отказы (DK-642). Тик сторожка по отказу молчит,
+// а строка ждёт прогона другой моделью.
+func TestClosableRefusesAuthorVerifyRun(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := closableBoard(t, checkRow("XR-010", "Агентская с прогоном автора"))
+	doc := "# XR-010\n\n## Ход работы\n\n" +
+		devStageLine("opus") + "\n" + verifyStageLine("opus") + "\n" +
+		fixtureScenario + "\n## Выкат\n\n- 2026-08-20 слито: a1b2c3d4\n- smoke прогнан, 2026-08-21\n" +
+		fixtureVerification
+	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-010.md"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdClosable(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ready(out); len(got) != 0 {
+		t.Fatalf("строка с прогоном автора названа готовой:\n%s", out)
+	}
+	if !strings.Contains(out, "нужен прогон другой моделью") {
+		t.Fatalf("в отказе нет причины про прогон:\n%s", out)
+	}
+}

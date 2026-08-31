@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // dropScenario оставляет задаче файл без раздела сценария: так выглядит файл,
@@ -370,5 +373,89 @@ func TestPromptPath(t *testing.T) {
 		if promptPath(p) {
 			t.Fatalf("%s промптом не считается", p)
 		}
+	}
+}
+
+// Прогон сценария чужими руками (DK-642): closeVerifyGate сверяет прогонявшего
+// с исполнителем последнего этапа «разработка», и совпадение имён закрытия не
+// даёт. Задача без записи прогона проходит молча, на этом держится
+// автозакрытие тиком (DK-516).
+
+// stagedDoc кладёт файл задачи с разделом «Ход работы» из данных строк, дальше
+// сценарий и непустая «Проверка», чтобы ворота агентского вида не мешали.
+func stagedDoc(t *testing.T, root, id string, lines ...string) {
+	t.Helper()
+	doc := "# " + id + "\n\n## Ход работы\n\n" + strings.Join(lines, "\n") + "\n" +
+		fixtureScenario + fixtureVerification
+	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", id+".md"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func devStageLine(model string) string {
+	return "- Разработка: субагент " + model + "/high по вердикту pick, 2026-08-30 10:00-11:00."
+}
+
+func verifyStageLine(model string) string {
+	return "- Проверка: сценарий прогнал " + model + ", 2026-08-31 12:00."
+}
+
+func TestCloseRefusesAuthorVerifyRun(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := setup(t)
+	stagedDoc(t, root, "XR-005", devStageLine("opus"), verifyStageLine("opus"))
+	_, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-07-08"})
+	if err == nil {
+		t.Fatal("закрытие с прогоном под исполнителем разработки прошло")
+	}
+	for _, want := range []string{"opus", "не автор"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("в отказе нет %q: %v", want, err)
+		}
+	}
+}
+
+func TestClosePassesForeignVerifyRun(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := setup(t)
+	stagedDoc(t, root, "XR-005", devStageLine("opus"), verifyStageLine("sonnet"))
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-07-08"}); err != nil {
+		t.Fatalf("закрытие с чужим прогоном: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "archive", "2026", "XR-005.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "сценарий прогнал sonnet") {
+		t.Fatal("строка прогона не доехала до архивного файла задачи")
+	}
+}
+
+func TestCloseVerifyGateSilentWithoutRecord(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := setup(t)
+	stagedDoc(t, root, "XR-005", devStageLine("opus"))
+	if err := closeVerifyGate(root, "XR-005"); err != nil {
+		t.Fatalf("задача без записи прогона обязана проходить: %v", err)
+	}
+}
+
+func TestCloseVerifyGateReadsPendingStage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := setup(t)
+	stagedDoc(t, root, "XR-005", devStageLine("opus"))
+	if err := stage.Open(stage.Home(), root, "XR-005", stage.Verify, stage.VerifyNote("opus"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	err := closeVerifyGate(root, "XR-005")
+	if err == nil || !strings.Contains(err.Error(), "opus") {
+		t.Fatalf("незакрытый пакет с прогоном автора не остановил ворота: %v", err)
+	}
+	// Чужое имя в том же пакете свежее записи автора: закрытие проходит.
+	if err := stage.Open(stage.Home(), root, "XR-005", stage.Verify, stage.VerifyNote("sonnet"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeVerifyGate(root, "XR-005"); err != nil {
+		t.Fatalf("свежий чужой прогон обязан открывать ворота: %v", err)
 	}
 }

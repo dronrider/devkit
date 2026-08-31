@@ -56,6 +56,10 @@ func closable(root string, b *Board) []closableRow {
 			out = append(out, closableRow{r.ID, "раздел «Проверка» пуст: вывода прогона в файле задачи нет"})
 			continue
 		}
+		if err := closeVerifyGate(root, r.ID); err != nil {
+			out = append(out, closableRow{r.ID, "сценарий прогнал исполнитель разработки: нужен прогон другой моделью"})
+			continue
+		}
 		out = append(out, closableRow{ID: r.ID})
 	}
 	return out

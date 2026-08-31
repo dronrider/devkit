@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // branchOfTask повторяет опознание ветки задачи из shipctl
@@ -152,6 +154,89 @@ func closeAgentGate(root, id string) error {
 		return fmt.Errorf("%s: вид agent требует непустой раздел «Проверка» в %s: выкатить код и вложить туда реальный вывод прогона (RULES.board.md, «Трекинг задач» п. 6), пустое закрытие агентской задачи запрещено", id, rel)
 	}
 	return nil
+}
+
+// closeVerifyGate сверяет прогонявшего сценарий с исполнителем последнего
+// этапа «разработка» (DK-642): в цикле DK-138 три дефекта проехали ревью, и
+// поймал их только прогон сценария чужими руками, поэтому прогон под тем же
+// именем закрытия не даёт. Задача без записи прогона проходит молча: на этом
+// держатся автозакрытие тиком (DK-516) и задачи, закрытые до записи
+// прогонявшего. Оба имени ищутся в двух местах: в разделе «Ход работы» файла
+// задачи, куда этапы уносит смена статуса, и в незакрытом пакете этапов, где
+// запись прогона лежит до самого закрытия.
+func closeVerifyGate(root, id string) error {
+	lines, pending := stageSources(root, id)
+	runner, ok := lastVerifyRunner(lines, pending)
+	if !ok {
+		return nil
+	}
+	dev, ok := lastDevExecutor(lines, pending)
+	if !ok {
+		return nil
+	}
+	if runner == dev {
+		return fmt.Errorf("%s: сценарий прогнал %s, он же исполнитель последнего этапа «разработка»: сценарий прогоняет не автор правки, прогон другой моделью отмечается «agentctl stage %s %s --by <модель>»",
+			id, runner, id, stage.Verify)
+	}
+	return nil
+}
+
+// stageSources собирает оба источника записей об этапах: строки раздела «Ход
+// работы» и незакрытый пакет из ~/.devkit/runs. Отсутствие файла или раздела
+// это пустой список, ворота по нему молчат.
+func stageSources(root, id string) ([]string, []stage.Stage) {
+	var lines []string
+	if text, found, ok := readTaskSection(root, id, stageSection); ok && found {
+		lines = strings.Split(text, "\n")
+	}
+	rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), id))
+	if err != nil {
+		return lines, nil
+	}
+	return lines, rec.Stages
+}
+
+// lastVerifyRunner находит последнюю запись прогона сценария: сперва в
+// незакрытом пакете, он свежее файла, потом в строках «Хода работы».
+func lastVerifyRunner(lines []string, pending []stage.Stage) (string, bool) {
+	for i := len(pending) - 1; i >= 0; i-- {
+		if pending[i].Kind != stage.Verify {
+			continue
+		}
+		if name, ok := stage.VerifyRunner(pending[i].Note); ok {
+			return name, true
+		}
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if name, ok := stage.VerifyRunner(lines[i]); ok {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// lastDevExecutor находит модель исполнителя последнего этапа «разработка».
+// В строках файла этап узнаётся по ярлыку строки: текст ревью тоже несёт
+// вердикт pick, и без ярлыка ревьювер сошёл бы за исполнителя.
+func lastDevExecutor(lines []string, pending []stage.Stage) (string, bool) {
+	for i := len(pending) - 1; i >= 0; i-- {
+		if pending[i].Kind != stage.Dev {
+			continue
+		}
+		if name, ok := stage.Executor(pending[i].Note); ok {
+			return name, true
+		}
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		ln := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(ln, "- Разработка:") {
+			continue
+		}
+		if name, ok := stage.Executor(ln); ok {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // lintUnmerged ловит обратную сторону того же рубежа: строка уже в Check, а

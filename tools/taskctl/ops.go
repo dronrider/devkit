@@ -826,6 +826,11 @@ func cmdClose(root string, p CloseParams) (string, error) {
 			return "", err
 		}
 	}
+	// Сценарий прогоняет не автор правки (DK-642): прогон под именем
+	// исполнителя разработки закрытия не даёт, отказ называет имя.
+	if err := closeVerifyGate(root, p.ID); err != nil {
+		return "", err
+	}
 	date := p.Date
 	if date == "" {
 		date = time.Now().Format("2006-01-02")

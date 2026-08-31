@@ -70,15 +70,23 @@ class TestSessionKind(unittest.TestCase):
 
 class TestBackgroundField(unittest.TestCase):
     def test_true_is_background(self):
-        self.assertTrue(hook.wants_background({"run_in_background": True}))
+        self.assertTrue(hook.wants_background("Bash", {"run_in_background": True}))
 
     def test_word_true_is_background(self):
-        self.assertTrue(hook.wants_background({"run_in_background": "true"}))
+        self.assertTrue(hook.wants_background("Bash", {"run_in_background": "true"}))
 
-    def test_false_and_missing_are_synchronous(self):
-        self.assertFalse(hook.wants_background({"run_in_background": False}))
-        self.assertFalse(hook.wants_background({"run_in_background": "false"}))
-        self.assertFalse(hook.wants_background({"command": "ls"}))
+    def test_false_is_synchronous_for_both_tools(self):
+        for tool in ("Bash", "Agent"):
+            self.assertFalse(hook.wants_background(tool, {"run_in_background": False}), tool)
+            self.assertFalse(hook.wants_background(tool, {"run_in_background": "false"}), tool)
+
+    def test_missing_field_is_synchronous_for_bash(self):
+        self.assertFalse(hook.wants_background("Bash", {"command": "ls"}))
+
+    def test_missing_field_is_background_for_delegation(self):
+        # Замер на ревью DK-678: вызов делегирования без поля возвращает
+        # status = "async_launched", то есть дефолт харнеса тут асинхронный.
+        self.assertTrue(hook.wants_background("Agent", {"subagent_type": "exec-high"}))
 
 
 class TestHookRefusal(unittest.TestCase):
@@ -124,6 +132,17 @@ class TestHookRefusal(unittest.TestCase):
                 input=event("Agent", subagent_type="exec-high", run_in_background=False))
         self.assertEqual(r.returncode, 0)
 
+    def test_delegation_without_field_is_refused(self):
+        r = run("--hook", env=HEADLESS, input=event("Agent", subagent_type="exec-high"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("без поля run_in_background", r.stderr)
+        self.assertIn("run_in_background: false", r.stderr)
+
+    def test_delegation_without_field_passes_in_live_session(self):
+        r = run("--hook", env=LIVE, input=event("Agent", subagent_type="exec-high"))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stderr, "")
+
     def test_event_without_input_passes(self):
         r = run("--hook", env=HEADLESS, input=json.dumps({"tool_name": "Bash"}))
         self.assertEqual(r.returncode, 0)
@@ -158,6 +177,13 @@ class TestSampleEvents(unittest.TestCase):
     def test_live_synchronous_bash_passes(self):
         r = run("--hook", env=HEADLESS, input=sample("pre-tool-use-bash.json"))
         self.assertEqual(r.returncode, 0)
+
+    def test_live_plain_delegation_is_refused(self):
+        # Образец снят с headless-прогона, в котором про фон не было сказано ни
+        # слова, а харнес всё равно вернул async_launched.
+        r = run("--hook", env=HEADLESS, input=sample("pre-tool-use-agent-plain.json"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("Agent", r.stderr)
 
 
 class TestWhy(unittest.TestCase):

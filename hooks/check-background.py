@@ -18,6 +18,14 @@
 жёсткий, а не находка вдогонку. Синхронные вызовы рубеж не трогает вовсе, в том
 числе несколько разом одним сообщением: параллельность пачки держится ими.
 
+У двух инструментов разный ответ на пропущенное поле, и разводит их имя
+инструмента. У Bash пропуск это синхронный запуск. У делегирования пропуск это
+фон: харнес поднимает субагента асинхронно по умолчанию, вызов без поля
+возвращает `status = "async_launched"` (замер на ревью DK-678, три прогона
+подряд и снятый живьём образец `pre-tool-use-agent-plain.json`). Синхронное
+делегирование в headless поэтому зовётся с `run_in_background: false` явно, чего
+скиллы `board-batch` и `board-ship` и требуют.
+
 Вида сессии в событии хука нет, и считается он по окружению клиента, которое
 хук наследует:
 
@@ -67,27 +75,46 @@ def headless(env):
     return ""
 
 
-def wants_background(tool_input):
-    """Фоновый ли это запуск. Пропущенное поле и ложь означают синхронный вызов;
-    строка сравнивается со словом на случай, если харнес однажды положит в поле
-    «true» текстом."""
+def wants_background(tool, tool_input):
+    """Фоновый ли это запуск. Ложь в поле означает синхронный вызов у любого
+    инструмента, строка сравнивается со словом на случай, если харнес однажды
+    положит в поле «true» текстом. Пропущенное поле разбирается по имени
+    инструмента: у Bash это синхронный запуск, у делегирования фоновый, потому
+    что таков дефолт харнеса."""
     value = tool_input.get(BACKGROUND)
+    if value is None:
+        return tool == hookio.AGENT_TOOL
     if isinstance(value, str):
         return value.strip().lower() == "true"
     return bool(value)
 
 
-def report(tool, sign):
+def called_with(tool_input):
+    """Как вызов выглядел во входе. Отказ называет это первой строкой, и
+    пропущенное поле отличается от проставленного."""
+    if tool_input.get(BACKGROUND) is None:
+        return "без поля %s (такой вызов харнес поднимает фоном)" % BACKGROUND
+    return "%s: true" % BACKGROUND
+
+
+def advice(tool):
+    if tool == hookio.AGENT_TOOL:
+        return ("Работай синхронно. Субагента зови с `%s: false` явно: вызов "
+                "без поля харнес запускает асинхронно." % BACKGROUND)
+    return ("Работай синхронно. Bash зови без %s и с timeout по размеру прогона "
+            "(потолок харнеса 600000 мс, прогон длиннее дробится на куски), "
+            "субагента с `%s: false`." % (BACKGROUND, BACKGROUND))
+
+
+def report(tool, sign, called):
     return "\n".join([
-        "фоновый запуск отбит рубежом синхронности DK-678: инструмент %s зван с "
-        "%s: true," % (tool, BACKGROUND),
+        "фоновый запуск отбит рубежом синхронности DK-678: инструмент %s зван "
+        "%s," % (tool, called),
         "а сессия эта headless (%s)." % sign,
         "Ход такой сессии кончается финальным текстом, и харнес добивает "
         "недождавшихся фоновых детей примерно через десять минут после него: "
         "отчёта не увидит никто, а провал выйдет тихим.",
-        "Работай синхронно. Bash зови без %s и с timeout по размеру прогона "
-        "(потолок харнеса 600000 мс, прогон длиннее дробится на куски), "
-        "субагента обычным синхронным вызовом." % BACKGROUND,
+        advice(tool),
         "Параллельность рубеж не трогает: синхронные вызовы, посланные одним "
         "сообщением, идут разом.",
     ]) + "\n"
@@ -101,13 +128,13 @@ def run_hook(protocol):
     ti = event.get("tool_input")
     if not isinstance(ti, dict):
         return 0
-    if not wants_background(ti):
+    tool = hookio.text_of(event.get("tool_name")) or "без имени"
+    if not wants_background(tool, ti):
         return 0
     sign = headless(os.environ)
     if not sign:
         return 0
-    tool = hookio.text_of(event.get("tool_name")) or "без имени"
-    return hookio.reply(protocol).found(report(tool, sign))
+    return hookio.reply(protocol).found(report(tool, sign, called_with(ti)))
 
 
 def run_why(env, out):

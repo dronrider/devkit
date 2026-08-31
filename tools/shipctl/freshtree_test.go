@@ -7,47 +7,9 @@ import (
 	"testing"
 )
 
-// TestMergeTestEnv: окружение прогона собрано явно. Живой HOME подменён
-// временным, каталоги из-под него ушли из PATH, переменные харнеса CLAUDE*
-// унесены, а тулчейны вне дома и прочие переменные остались.
-func TestMergeTestEnv(t *testing.T) {
-	home := "/fake/home"
-	t.Setenv("CLAUDE_CODE_TEST_MARKER", "1")
-	t.Setenv("SHIPCTL_KEEP_ME", "yes")
-	t.Setenv("GOPATH", home+"/go")
-	t.Setenv("VIRTUAL_ENV", home+"/.venv")
-	// /fake/homework проверяет границу: общий префикс строки это не вложенность.
-	t.Setenv("PATH", home+"/bin:/usr/bin:/fake/homework:"+home)
-	env := mergeTestEnv(home, "/tmp/newhome")
-	joined := "\n" + strings.Join(env, "\n") + "\n"
-	if !strings.Contains(joined, "\nHOME=/tmp/newhome\n") {
-		t.Fatalf("нет временного HOME:\n%s", joined)
-	}
-	if strings.Count(joined, "\nHOME=") != 1 {
-		t.Fatalf("HOME должен быть один:\n%s", joined)
-	}
-	if strings.Contains(joined, "CLAUDE_CODE_TEST_MARKER") {
-		t.Fatalf("переменная харнеса протекла:\n%s", joined)
-	}
-	if strings.Contains(joined, "\nGOPATH=") || strings.Contains(joined, "\nVIRTUAL_ENV=") {
-		t.Fatalf("указатель внутрь живого дома протёк:\n%s", joined)
-	}
-	if !strings.Contains(joined, "\nSHIPCTL_KEEP_ME=yes\n") {
-		t.Fatalf("обычная переменная потеряна:\n%s", joined)
-	}
-	if !strings.Contains(joined, "\nPATH=/usr/bin:/fake/homework\n") {
-		t.Fatalf("PATH урезан неверно:\n%s", joined)
-	}
-}
-
-func TestTrimHomePath(t *testing.T) {
-	if got := trimHomePath("/a:/b", ""); got != "/a:/b" {
-		t.Fatalf("пустой home не должен резать PATH: %q", got)
-	}
-	if got := trimHomePath("/h/bin:/usr/bin:/h", "/h"); got != "/usr/bin" {
-		t.Fatalf("каталоги под home остались: %q", got)
-	}
-}
+// Разбор окружения и выкладки дерева переехал в internal/freshtree вместе с
+// их собственными тестами (DK-643): здесь остаётся то, что проверяется только
+// через слияние, а именно что merge гонит тесты в свежем дереве и убирает его.
 
 // TestMergeRunsTestsInFreshTree: прогон идёт в свежем дереве на ребейзнутом
 // коммите и с временным HOME. Незакоммиченный артефакт работы исполнителя

@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/dronrider/devkit/internal/frame"
+	"github.com/dronrider/devkit/internal/freshtree"
 )
 
 // pushEnv выдаёт разрешение на пуш хуку pre-push. Правила разрешают пуш доске
@@ -83,73 +84,16 @@ func runShellLimit(root, cmdStr string, limit time.Duration, env []string) (stri
 	}
 }
 
-// mergeTestEnv собирает окружение прогона тестов слияния. Живой HOME сессии
-// подменяется временным, каталоги из-под него уходят из PATH, переменные
-// харнеса CLAUDE* уносятся: тесты обязаны зеленеть на чужой машине, а не на
-// прогретой раскладке дома исполнителя. Уносятся и указатели внутрь дома
-// (GOPATH, GOMODCACHE, PYTHONPATH, VIRTUAL_ENV): формально это не HOME и не
-// PATH, но живую раскладку они возвращают в прогон тем же путём. Тулчейны вне
-// дома (/usr/bin, /opt/homebrew) остаются, иначе команде теста нечем работать.
-func mergeTestEnv(home, tmpHome string) []string {
-	homePointers := map[string]bool{
-		"GOPATH": true, "GOMODCACHE": true, "PYTHONPATH": true, "VIRTUAL_ENV": true,
-	}
-	var out []string
-	for _, kv := range os.Environ() {
-		name, val, _ := strings.Cut(kv, "=")
-		switch {
-		case name == "HOME" || strings.HasPrefix(name, "CLAUDE") || homePointers[name]:
-			continue
-		case name == "PATH":
-			kv = "PATH=" + trimHomePath(val, home)
-		}
-		out = append(out, kv)
-	}
-	return append(out, "HOME="+tmpHome)
-}
+// mergeTestEnv и freshTestTree это кирпичи чистого прогона (internal/freshtree):
+// временное дерево на нужном коммите и окружение без следов дома сессии. За
+// ними пришёл второй читатель (обкатка сценария в taskctl), поэтому разбор
+// живёт в общем пакете, а здесь остались имена, под которыми его знает слияние.
+func mergeTestEnv(home, tmpHome string) []string { return freshtree.Env(home, tmpHome) }
 
-// trimHomePath убирает из PATH каталоги под home: там живут обвязки сессии
-// вроде ~/bin и ~/.local/bin, которых на чужой машине нет.
-func trimHomePath(path, home string) string {
-	if home == "" {
-		return path
-	}
-	var kept []string
-	for _, p := range filepath.SplitList(path) {
-		if p == home || strings.HasPrefix(p, home+string(os.PathSeparator)) {
-			continue
-		}
-		kept = append(kept, p)
-	}
-	return strings.Join(kept, string(os.PathListSeparator))
-}
+func trimHomePath(path, home string) string { return freshtree.TrimHomePath(path, home) }
 
-// freshTestTree выкладывает коммит во временное detached-дерево и заводит
-// рядом пустой временный HOME. Прогретый worktree ветки несёт следы работы
-// исполнителя (артефакты сборки, __pycache__), и зелень в нём не доказывает
-// зелень свежего чекаута: на этой разнице дефект 98b43e7 проехал слияние и
-// всплыл после выката. Уборка на вызывающем: cleanup зовётся и при провале
-// тестов, отказ слияния временных деревьев не копит.
 func freshTestTree(root, sha string) (tree, home string, cleanup func(), err error) {
-	tmp, err := os.MkdirTemp("", "shipctl-merge-")
-	if err != nil {
-		return "", "", nil, err
-	}
-	tree = filepath.Join(tmp, "tree")
-	home = filepath.Join(tmp, "home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		os.RemoveAll(tmp)
-		return "", "", nil, err
-	}
-	if _, err := git(root, "worktree", "add", "--detach", tree, sha); err != nil {
-		os.RemoveAll(tmp)
-		return "", "", nil, err
-	}
-	cleanup = func() {
-		git(root, "worktree", "remove", "--force", tree)
-		os.RemoveAll(tmp)
-	}
-	return tree, home, cleanup, nil
+	return freshtree.Make(root, sha, "shipctl-merge-")
 }
 
 // deployProblem говорит, что стряслось с выкатом: короткое для заголовка

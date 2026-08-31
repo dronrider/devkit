@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/stage"
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // В файл задачи по RULES.board.md вкладывается реальный вывод команд, а вывод
@@ -153,43 +154,12 @@ func reviewOutcome(item string) string {
 	return ""
 }
 
-// Имена ворот готовности, как они пишутся в пометке-исключении. regcheck это
-// имя инструмента, остаётся латиницей; тесты и сценарий по-русски, как и сам
-// текст файла задачи. Совпадение с именем нестрогим регистром (см. hasException).
+// Имена ворот готовности и разбор пометки-исключения общие с воротами перевода
+// в Check (internal/taskform): пометку пишет один человек в один файл.
 const (
-	gateRegcheck = "regcheck"
-	gateTests    = "тесты"
-	gateScenario = "сценарий"
+	gateRegcheck = taskform.GateRegcheck
+	gateTests    = taskform.GateTests
+	gateScenario = taskform.GateScenario
 )
 
-// hasException говорит, гасит ли файл задачи ворот именем gate пометкой-
-// исключением. Формат тот же, что у override в pick.go («Модель:»/«Эффорт:»):
-// маркерная строка «- Исключение: <ворота>» с необязательным поясняющим хвостом
-// в скобках, который отбрасывается. Ворота независимы, строк в файле может быть
-// несколько, по каждой берётся своё. Строка внутри ограждённого блока не
-// считается: в файл задачи вкладывается реальный вывод команд, и процитированная
-// пометка не должна гасить ворот. Регистр нестрогий: «тесты» и «Тесты» одно и то
-// же, писать надо имя ворот из списка выше, а не синоним.
-func hasException(doc, gate string) bool {
-	lines := strings.Split(doc, "\n")
-	mask, _ := fenceMask(lines)
-	gate = strings.ToLower(gate)
-	for i, ln := range lines {
-		if mask[i] {
-			continue
-		}
-		t := strings.TrimLeft(ln, " \t")
-		rest, ok := strings.CutPrefix(strings.ToLower(t), "- исключение:")
-		if !ok {
-			continue
-		}
-		v := strings.TrimSpace(rest)
-		if i := strings.Index(v, "("); i >= 0 {
-			v = strings.TrimSpace(v[:i])
-		}
-		if v == gate {
-			return true
-		}
-	}
-	return false
-}
+func hasException(doc, gate string) bool { return taskform.Exception(doc, gate) }

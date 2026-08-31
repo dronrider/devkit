@@ -176,6 +176,25 @@ exit 0`)
 	return d
 }
 
+// slowDownTmuxOnce тормозит ровно первый send-keys фикстуры tmux после
+// fakeTmuxLogin на delay, дальше она отвечает как обычно. send-keys, а не
+// первый вызов вообще: тот раньше уходил на new-session, поднимающий сессию
+// ещё до отсчёта deadline у loginAwaitLink, и заминка там бюджет ожидания
+// ссылки не трогала. Так проверяется заминка внешнего процесса под живой
+// нагрузкой (DK-677) внутри самого опроса панели, а не постоянно медленная
+// машина: реальная заминка тоже разовая, не на каждый вызов.
+func slowDownTmuxOnce(t *testing.T, e *testEnv, d string, delay time.Duration) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(e.bin, scriptBody("tmux")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.TrimSuffix(strings.TrimPrefix(string(raw), "#!/bin/sh\n"), "\n")
+	guard := fmt.Sprintf("if [ \"$1\" = send-keys ] && [ ! -f \"%s/slowed\" ]; then "+
+		"sleep %g; touch \"%s/slowed\"; fi\n", d, delay.Seconds(), d)
+	writeScript(t, e.bin, "tmux", guard+body)
+}
+
 // fastLoginWait сжимает ожидания входа до тестовых. Прогон со стендом занимает
 // миллисекунды, а боевые двадцать секунд превращали бы отказ в вечность.
 func fastLoginWait(t *testing.T, link time.Duration) {
@@ -580,7 +599,10 @@ func TestClientLoginHashAfterLinkNotGlued(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(pane), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	fastLoginWait(t, 300*time.Millisecond)
+	// Деадлайн тот же, что у соседних тестов входа (DK-677): 300ms не
+	// переживали разбор под живой нагрузкой прогона слияния, цепочка
+	// send-keys/capture-pane фикстуры не успевала дойти до стадии url.
+	fastLoginWait(t, 2*time.Second)
 	c := e.loggedClient(t)
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	if resp.StatusCode == http.StatusOK {
@@ -790,7 +812,9 @@ func TestClientLoginLinkRefusalSaysFrame(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(pane), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	fastLoginWait(t, 300*time.Millisecond)
+	// Деадлайн тот же, что у соседних тестов входа (DK-677): см. комментарий
+	// у TestClientLoginHashAfterLinkNotGlued.
+	fastLoginWait(t, 2*time.Second)
 	c := e.loggedClient(t)
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	if resp.StatusCode == http.StatusOK {
@@ -801,6 +825,37 @@ func TestClientLoginLinkRefusalSaysFrame(t *testing.T) {
 	}
 	if !strings.Contains(text, "Paste code here") {
 		t.Fatalf("кадра панели в отказе нет: %s", text)
+	}
+}
+
+// Заминка внешнего процесса на 300ms не переживала: единственная задержка в
+// половину секунды (сравнимая с загрузкой машины при слиянии, а не с холодным
+// стартом macOS, тот гасит общий переходник DK-649) уводила разбор в общий
+// «клиент не напечатал ссылку» вместо разобранной причины, хотя панель со
+// ссылкой в итоге дошла (DK-677).
+func TestClientLoginLinkRefusalSurvivesASlowTmuxCall(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	first := "https://claude.ai/oauth/authorize?client_id=test&state=abc123"
+	pane := strings.Join([]string{
+		"Please visit the following URL to log in:", "",
+		first,
+		strings.Repeat("7", len(first)),
+		"",
+		"Paste code here if prompted >", "", paneCursor + " ",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(pane), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	slowDownTmuxOnce(t, e, d, 500*time.Millisecond)
+	fastLoginWait(t, 2*time.Second)
+	c := e.loggedClient(t)
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("каша отдана за ссылку: %d, %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "разобрать не вышло") {
+		t.Fatalf("одна заминка внешнего процесса увела разбор в общий таймаут: %s", text)
 	}
 }
 

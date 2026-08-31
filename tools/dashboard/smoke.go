@@ -12,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -1710,6 +1711,19 @@ func (s *smoke) stepDragRank() (string, error) {
 		v.Message, got, v.Place.Sect, refusal.Error), nil
 }
 
+// realHomeDir называет дом машины мимо переменной окружения HOME:
+// os.UserCacheDir читает её из процесса, а прогон тестов слияния подставляет
+// вместо неё временный каталог (DK-641/643), сам лежащий под TMPDIR. user.Current
+// идёт в системную базу учётных записей и называет настоящий дом, даже когда
+// HOME процесса подменена (DK-677).
+func realHomeDir() (string, error) {
+	u, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+	return u.HomeDir, nil
+}
+
 // smokeBase это корень рабочих каталогов прогона: кеш пользователя, а не
 // системный temp. hooks/notify.py метит корень под /tmp, /var/folders и
 // TMPDIR песочницей и гасит баннер ещё до выбора бэкенда (sandbox_reason,
@@ -1717,10 +1731,29 @@ func (s *smoke) stepDragRank() (string, error) {
 // чтобы шаг «уведомление о стопе в ленте» проверял настоящую доставку через
 // бэкенд, а не пропуск по песочнице: под системным temp сам пропуск гасил бы
 // строку в ленте и там, где лента её как раз обязана показать (DK-283).
+//
+// Кеш ищется от настоящего дома (realHomeDir), не от HOME процесса: в
+// прогоне тестов слияния HOME подменена временным каталогом под TMPDIR, и
+// os.UserCacheDir от неё вернул бы кеш там же, под той же песочницей, которую
+// этот корень и должен обходить (DK-677). HOME процесса подменяется только на
+// время самого вызова и сразу восстанавливается.
 func smokeBase() (string, error) {
-	cache, err := os.UserCacheDir()
+	home, err := realHomeDir()
 	if err != nil {
 		return "", err
+	}
+	old, had := os.LookupEnv("HOME")
+	if err := os.Setenv("HOME", home); err != nil {
+		return "", err
+	}
+	cache, cacheErr := os.UserCacheDir()
+	if had {
+		os.Setenv("HOME", old)
+	} else {
+		os.Unsetenv("HOME")
+	}
+	if cacheErr != nil {
+		return "", cacheErr
 	}
 	dir := filepath.Join(cache, "devkit-dashboard-smoke")
 	return dir, os.MkdirAll(dir, 0o755)

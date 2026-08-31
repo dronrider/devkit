@@ -51,7 +51,8 @@ DoD: стенд отработал.
 
 # Стаб клиента стенда: играет очередную строку сценария. Строка сценария это
 # «маркер что-делает-с-журналом»: «запись» дописывает содержательную строку в
-# «Журнал» цели, «снимок» строку снимка квоты, «парковка» уводит строку
+# «Журнал» цели в том формате, что пишет agentctl lap (часы витка, что сделано,
+# маркер), «снимок» строку снимка квоты, «парковка» уводит строку
 # доски в Blocked с причиной-вопросом и пишет ход, «выбор» пишет ход о взятой
 # новой работе, всё остальное молчит. Особые
 # маркеры: none (ответ без маркера), fenced (маркер в ограде), crash (ненулевой
@@ -102,7 +103,7 @@ marker = parts[0] if parts else ""
 
 entry = ""
 if "запись" in parts:
-    entry = "- виток %d, задача цели закрыта; %s" % (turn, marker)
+    entry = "- 2026-08-0%d 09:00-11:30, виток %d, задача цели закрыта; %s" % (turn, turn, marker)
 elif "снимок" in parts:
     entry = "- снимок 2026-08-0%d: week_all %d%%" % (turn, turn)
 if entry:
@@ -380,6 +381,21 @@ class GoalRunTests(Stand, unittest.TestCase):
         p = self.goal_run(root, "DK-100", "--foreground")
         self.assertEqual(p.returncode, 0, p.stdout)
         self.assertEqual(self.turns_done(root), 6)
+
+    def test_turn_line_with_times_counts_as_progress(self):
+        # Формат строки витка: часы витка, что сделано, маркер. Времена в начале
+        # строки продвижением витка быть не мешают, а снимок квоты им остаётся
+        # снимком: считает воронка не по началу строки, а по префиксу «снимок ».
+        root = self.stand("continue запись", "continue молчок", "continue молчок",
+                          "continue запись", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.turns_done(root), 5)
+        with open(os.path.join(root, "proj", "docs", "tasks", "DK-100.md"),
+                  encoding="utf-8") as f:
+            journal = f.read()
+        self.assertIn("- 2026-08-01 09:00-11:30, виток 1, задача цели закрыта; continue",
+                      journal)
 
     def test_quota_snapshot_does_not_count_as_progress(self):
         # Строка снимка квоты продвижением не считается: её дописывает гейт
@@ -1009,9 +1025,49 @@ class SkillInboxTests(unittest.TestCase):
         # теряет только себя, и сообщение дожидается следующего.
         state = self.skill[self.skill.index("1. Состояние"):self.skill.index("2. Гейт бюджета")]
         self.assertIn("запись витка", state)
-        record = self.skill[self.skill.index("5. Запись витка"):self.skill.index("6. Выход маркером")]
+        record = self.skill[self.skill.index("5. Запись витка"):self.skill.index("6. Итог")]
         self.assertIn("убирает из «Входящих»", record)
         self.assertIn("ждёт витка", record, "надпись дашборда не привязана к лежащей строке")
+
+
+class SkillRecordTests(unittest.TestCase):
+    """Формат строки витка (DK-644): времена ставит команда, и держится это
+    здесь. Уехавшая формулировка вернула бы журнал к строке без часов, а на
+    вопрос «куда ушёл день» такой журнал не отвечает."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(HERE, "SKILL.md"), encoding="utf-8") as f:
+            cls.skill = f.read()
+
+    def record(self):
+        return self.skill[self.skill.index("5. Запись витка"):self.skill.index("7. Выход маркером")]
+
+    def test_turn_line_is_written_by_the_command(self):
+        record = self.record()
+        self.assertIn("agentctl lap --goal", record, "строку витка снова пишут руками")
+        self.assertIn("--marker", record)
+        self.assertIn("--note", record)
+        self.assertIn("времена не ставить", record)
+
+    def test_turn_line_example_carries_hours(self):
+        # Пример это то, по чему формат читают на самом деле: строка без часов
+        # в нём стоит дороже любого абзаца.
+        for line in self.record().split("\n"):
+            line = line.strip()
+            if line.startswith("- 20") and line.endswith("continue"):
+                self.assertRegex(line, r"^- \d{4}-\d{2}-\d{2} \d{2}:\d{2}-\d{2}:\d{2}, .+; continue$")
+                break
+        else:
+            self.fail("в шаге записи нет примера строки витка")
+
+    def test_summary_of_the_stop_comes_from_the_command(self):
+        # Сводка итога считается по этапам задач цели, и собирает её команда:
+        # руками такую разбивку виток не соберёт, живая запись этапов к моменту
+        # итога уже уехала в файлы задач.
+        summary = self.skill[self.skill.index("6. Итог"):self.skill.index("7. Выход маркером")]
+        self.assertIn("agentctl tally --goal", summary)
+        self.assertIn("по видам этапов", summary)
 
 
 class SkillMarkerTests(unittest.TestCase):

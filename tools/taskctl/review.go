@@ -157,6 +157,54 @@ func taskFileAbs(root, id string) string {
 	return filepath.Join(root, "docs", "tasks", id+".md")
 }
 
+// reviewItem дописывает в раздел «Ревью» готовую строку элемента и заводит
+// файл задачи, когда его ещё нет. Общий ход у add и clean: разница между ними
+// только в тексте элемента и в проверках до записи.
+func reviewItem(root, id, line string, c CommitOpts) (rf *reviewFile, created bool, linkHint string, paths []string, err error) {
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		return nil, false, "", nil, err
+	}
+	row := b.find(id)
+	if row == nil {
+		return nil, false, "", nil, fmt.Errorf("%s нет на доске", id)
+	}
+	paths = []string{filepath.Join("docs", "tasks", id+".md")}
+	created, err = ensureTaskFile(root, id, row)
+	if err != nil {
+		return nil, false, "", nil, err
+	}
+	// Запись ревью остаётся разрешена из worktree (в отличие от file), а вот
+	// ссылку в строке доски там не чинит: доску правит только диспетчер в
+	// основном чекауте (RULES.board.md, «Доска в руках диспетчера»).
+	if created {
+		rel := fmt.Sprintf("tasks/%s.md", id)
+		switch {
+		case linkedWorktree(root):
+			linkHint = fmt.Sprintf(", ссылку на docs/%s поправь в основном чекауте: taskctl file %s", rel, id)
+		default:
+			if want := fmt.Sprintf("[%s](%s)", rel, rel); row.Link != want {
+				row.Link = want
+				b.Lines[row.LineIdx] = formatRow(row)
+				if err := b.Save(); err != nil {
+					return nil, false, "", nil, err
+				}
+				paths = append(paths, filepath.Join("docs", "TASKS.md"))
+			}
+		}
+	}
+	rf, err = loadReview(taskFileAbs(root, id))
+	if err != nil {
+		return nil, false, "", nil, err
+	}
+	rf.ensureSection()
+	rf.insert(rf.insertAt, line)
+	if err := rf.save(); err != nil {
+		return nil, false, "", nil, err
+	}
+	return rf, created, linkHint, paths, nil
+}
+
 func cmdReviewAdd(root, id, note string, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
@@ -168,46 +216,8 @@ func cmdReviewAdd(root, id, note string, c CommitOpts) (string, error) {
 	if strings.Contains(note, "\n") {
 		return "", fmt.Errorf("замечание пишется одной строкой")
 	}
-	b, err := LoadBoard(boardPath(root))
+	rf, created, linkHint, paths, err := reviewItem(root, id, "- "+note, c)
 	if err != nil {
-		return "", err
-	}
-	row := b.find(id)
-	if row == nil {
-		return "", fmt.Errorf("%s нет на доске", id)
-	}
-	paths := []string{filepath.Join("docs", "tasks", id+".md")}
-	created, err := ensureTaskFile(root, id, row)
-	if err != nil {
-		return "", err
-	}
-	// review add остаётся разрешён из worktree (в отличие от file), а вот
-	// ссылку в строке доски там не чинит: доску правит только диспетчер в
-	// основном чекауте (RULES.board.md, «Доска в руках диспетчера»).
-	linkHint := ""
-	if created {
-		rel := fmt.Sprintf("tasks/%s.md", id)
-		switch {
-		case linkedWorktree(root):
-			linkHint = fmt.Sprintf(", ссылку на docs/%s поправь в основном чекауте: taskctl file %s", rel, id)
-		default:
-			if want := fmt.Sprintf("[%s](%s)", rel, rel); row.Link != want {
-				row.Link = want
-				b.Lines[row.LineIdx] = formatRow(row)
-				if err := b.Save(); err != nil {
-					return "", err
-				}
-				paths = append(paths, filepath.Join("docs", "TASKS.md"))
-			}
-		}
-	}
-	rf, err := loadReview(taskFileAbs(root, id))
-	if err != nil {
-		return "", err
-	}
-	rf.ensureSection()
-	rf.insert(rf.insertAt, "- "+note)
-	if err := rf.save(); err != nil {
 		return "", err
 	}
 	tail, err := c.apply(root, paths)
@@ -215,6 +225,57 @@ func cmdReviewAdd(root, id, note string, c CommitOpts) (string, error) {
 		return "", err
 	}
 	msg := fmt.Sprintf("%s: замечание %d записано", id, len(rf.notes)+1)
+	if created {
+		msg += ", файл задачи создан"
+	}
+	return msg + linkHint + tail, nil
+}
+
+// cleanVerdictLine это канон формы записи: голова «Вердикт: без замечаний.»
+// узнаётся критерием исхода (cleanVerdictRe и его копия в shipctl), а
+// пояснение живёт за ней и на разбор не влияет.
+const cleanVerdictHead = "Вердикт: без замечаний."
+
+// cmdReviewClean записывает вердикт ревью, прошедшего без замечаний. Раздел
+// «Ревью» с таким элементом машинно отличим от отсутствия ревью, ради чего
+// команда и заводится (LLD DK-460, «Что меняется в строках», п. 1): раньше
+// чистый исход изображали замечанием с текстом «замечаний нет».
+func cmdReviewClean(root, id, note string, c CommitOpts) (string, error) {
+	if err := c.validate(); err != nil {
+		return "", err
+	}
+	note = strings.TrimSpace(note)
+	if strings.Contains(note, "\n") {
+		return "", fmt.Errorf("пояснение пишется одной строкой")
+	}
+	// Открытое замечание и чистый вердикт в одном разделе противоречат друг
+	// другу: ворот замечаний увидел бы открытый пункт, а ворот следа ревью
+	// чистый итог. Замечание закрывают резолвом, а не вердиктом поверх.
+	if rf, err := loadReview(taskFileAbs(root, id)); err == nil {
+		for i, n := range rf.notes {
+			switch n.outcome() {
+			case "":
+				return "", fmt.Errorf("замечание %d в ревью %s открыто, чистый вердикт ему противоречит: закрой его через review resolve", i+1, id)
+			case "чисто":
+				return "", fmt.Errorf("чистый вердикт в ревью %s уже записан: %s", id, n.Text)
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	line := "- " + cleanVerdictHead
+	if note != "" {
+		line += " " + note
+	}
+	rf, created, linkHint, paths, err := reviewItem(root, id, line, c)
+	if err != nil {
+		return "", err
+	}
+	tail, err := c.apply(root, paths)
+	if err != nil {
+		return "", err
+	}
+	msg := fmt.Sprintf("%s: вердикт без замечаний записан, элементов в ревью %d", id, len(rf.notes)+1)
 	if created {
 		msg += ", файл задачи создан"
 	}

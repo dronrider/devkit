@@ -383,3 +383,140 @@ func TestReviewCommitFlag(t *testing.T) {
 		t.Fatalf("в коммите не только файл задачи: %q", files)
 	}
 }
+
+// TestReviewCleanWritesVerdict: чистый вердикт ложится в раздел «Ревью»
+// готовой формой, и критерий исхода узнаёт его как «чисто». Ради этого
+// команда и заведена: раньше чистое ревью изображали замечанием с текстом
+// «замечаний нет» (DK-471).
+func TestReviewCleanWritesVerdict(t *testing.T) {
+	root := setup(t)
+	msg, err := cmdReviewClean(root, "XR-005", "Путь от симптома пройден по ops.go.", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "вердикт без замечаний записан") {
+		t.Fatalf("сообщение: %q", msg)
+	}
+	want := "# XR-005\n\n## Ревью\n\n- Вердикт: без замечаний. Путь от симптома пройден по ops.go.\n" +
+		fixtureScenario + fixtureVerification
+	if got := readTaskFile(t, root, "XR-005"); got != want {
+		t.Fatalf("файл задачи:\n%q\nожидал:\n%q", got, want)
+	}
+	rf, err := loadReview(taskFileAbs(root, "XR-005"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rf.notes) != 1 || rf.notes[0].outcome() != "чисто" {
+		t.Fatalf("исход элемента: %+v", rf.notes)
+	}
+}
+
+// TestReviewCleanWithoutNote: пояснение необязательно, и без него запись
+// кончается точкой, за которую цепляется критерий исхода.
+func TestReviewCleanWithoutNote(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdReviewClean(root, "XR-005", "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTaskFile(t, root, "XR-005"); !strings.Contains(got, "- Вердикт: без замечаний.\n") {
+		t.Fatalf("файл задачи:\n%s", got)
+	}
+	show, err := cmdReviewShow(root, "XR-005")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(show, "[чисто]") {
+		t.Fatalf("show не показал чистый исход:\n%s", show)
+	}
+}
+
+// TestReviewCleanRefusesOpenNote: открытое замечание и чистый вердикт в одном
+// разделе противоречат друг другу, и вердикт поверх открытого замечания
+// отбивается подсказкой про resolve.
+func TestReviewCleanRefusesOpenNote(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cmdReviewClean(root, "XR-005", "", CommitOpts{})
+	if err == nil {
+		t.Fatal("вердикт поверх открытого замечания должен отбиваться")
+	}
+	if !strings.Contains(err.Error(), "review resolve") {
+		t.Fatalf("отказ без подсказки: %v", err)
+	}
+	if got := readTaskFile(t, root, "XR-005"); strings.Contains(got, "без замечаний") {
+		t.Fatalf("отбитый вердикт всё-таки записан:\n%s", got)
+	}
+}
+
+// TestReviewCleanAfterResolved: закрытые замечания вердикту не мешают, это
+// второй круг ревью, кончившийся чисто.
+func TestReviewCleanAfterResolved(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdReviewAdd(root, "XR-005", "нейминг", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdReviewResolve(root, "XR-005", 1, "fixed", "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdReviewClean(root, "XR-005", "Правки по замечанию приняты.", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	got := readTaskFile(t, root, "XR-005")
+	if !strings.Contains(got, "- нейминг: исправлено\n- Вердикт: без замечаний. Правки по замечанию приняты.\n") {
+		t.Fatalf("файл задачи:\n%s", got)
+	}
+	// Второй вердикт поверх первого это уже дубль, и он отбивается.
+	if _, err := cmdReviewClean(root, "XR-005", "", CommitOpts{}); err == nil {
+		t.Fatal("повторный вердикт должен отбиваться")
+	}
+}
+
+// TestReviewCleanCreatesFile: файл задачи заводится сам, как у add, и ссылка
+// в строке доски чинится тем же порядком.
+func TestReviewCleanCreatesFile(t *testing.T) {
+	root := setup(t)
+	dropTaskFile(t, root, "XR-001")
+	msg, err := cmdReviewClean(root, "XR-001", "", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "файл задачи создан") {
+		t.Fatalf("сообщение: %q", msg)
+	}
+	if got := readTaskFile(t, root, "XR-001"); !strings.Contains(got, "- Вердикт: без замечаний.") {
+		t.Fatalf("файл задачи:\n%s", got)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link := b.find("XR-001").Link; !strings.Contains(link, "tasks/XR-001.md") {
+		t.Fatalf("ссылка в строке не обновилась: %q", link)
+	}
+}
+
+// TestReviewCleanCLI: подкоманда доезжает до разбора аргументов, а не живёт
+// одной функцией, и справка её называет.
+func TestReviewCleanCLI(t *testing.T) {
+	root := setup(t)
+	out, err := exec.Command("go", "run", ".", "-C", root, "review", "clean", "XR-005", "Дифф прочитан целиком.").CombinedOutput()
+	if err != nil {
+		t.Fatalf("review clean: %v\n%s", err, out)
+	}
+	if got := readTaskFile(t, root, "XR-005"); !strings.Contains(got, "- Вердикт: без замечаний. Дифф прочитан целиком.\n") {
+		t.Fatalf("файл задачи:\n%s", got)
+	}
+	help, _ := exec.Command("go", "run", ".", "-C", root, "help").CombinedOutput()
+	if !strings.Contains(string(help), "review clean <ID>") {
+		t.Fatalf("справка без подкоманды:\n%s", help)
+	}
+	bad, err := exec.Command("go", "run", ".", "-C", root, "review", "clea", "XR-005").CombinedOutput()
+	if err == nil {
+		t.Fatalf("опечатка в подкоманде должна отбиваться:\n%s", bad)
+	}
+	if !strings.Contains(string(bad), "clean") {
+		t.Fatalf("отказ не называет подкоманду:\n%s", bad)
+	}
+}

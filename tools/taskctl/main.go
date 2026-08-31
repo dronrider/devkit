@@ -163,6 +163,13 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               stdin: текст с обратными кавычками
                                               передаётся heredoc с одинарными
                                               кавычками (<<'EOF'), а не аргументом
+  review clean <ID> ["пояснение"]             записать вердикт ревью без
+                                              замечаний: строка «Вердикт: без
+                                              замечаний.» с пояснением за ней,
+                                              по ней «ревью прошло чисто»
+                                              отличимо от «ревью не гонялось»;
+                                              открытое замечание в разделе
+                                              отбивает запись
   review resolve <ID> <N> fixed|rejected [--reason "..."]
                                               зафиксировать исход замечания N
   review show <ID>                            замечания с номерами и исходами
@@ -535,7 +542,7 @@ func main() {
 		msg, err = cmdElapsed(root(*dir), pos[0])
 	case "review":
 		if len(args) < 2 {
-			fail(fmt.Errorf("жду: review add|resolve|show|stats ..."))
+			fail(fmt.Errorf("жду: review add|clean|resolve|show|stats ..."))
 		}
 		switch args[1] {
 		case "add":
@@ -559,6 +566,18 @@ func main() {
 				}
 			}
 			msg, err = cmdReviewAdd(root(*dir), pos[0], note, c)
+		case "clean":
+			fs := flag.NewFlagSet("review clean", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 2, "review clean <ID> [\"пояснение\"]")
+			note := ""
+			if len(pos) == 2 {
+				note = pos[1]
+			}
+			msg, err = cmdReviewClean(root(*dir), pos[0], note, c)
 		case "resolve":
 			fs := flag.NewFlagSet("review resolve", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
@@ -584,7 +603,7 @@ func main() {
 			needArgs(frame.ParseArgs(fs, args[2:]), 0, 0, "review stats")
 			msg, err = cmdReviewStats(root(*dir))
 		default:
-			fail(fmt.Errorf("неизвестная подкоманда review %q, жду add / resolve / show / stats", args[1]))
+			fail(fmt.Errorf("неизвестная подкоманда review %q, жду add / clean / resolve / show / stats", args[1]))
 		}
 	case "close":
 		fs := flag.NewFlagSet("close", flag.ExitOnError)

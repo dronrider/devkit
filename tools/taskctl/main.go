@@ -55,6 +55,15 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               agentctl budget, как у batch
   kinds                                       сводка по видам приёмки: счёт,
                                               ошибки назначения, пересмотры
+  pilot --since 2026-09-01 [--runs DIR]       счётчики пилота полосы base:
+                                              доля возвратов с ревью, заходы до
+                                              слияния, краснота Check, откаты
+                                              выката по окну задач от даты
+                                              старта и вердикт отката против
+                                              истории до старта; читает файлы
+                                              задач, записи runs и историю
+                                              коммитов доски, --runs подменяет
+                                              каталог записей для стендов
   closable                                    кого из Check вправе закрыть
                                               автоматика: вид приёмки agent,
                                               отметка smoke на последний выкат,
@@ -673,6 +682,13 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "kinds")
 		msg, err = cmdKinds(root(*dir))
+	case "pilot":
+		fs := flag.NewFlagSet("pilot", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		since := fs.String("since", "", "дата начала пилота, срез окна, вид 2026-09-01")
+		runs := fs.String("runs", "", "каталог записей runs вместо ~/.devkit/runs, для стендов")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "pilot --since 2026-09-01 [--runs DIR]")
+		msg, err = cmdPilot(root(*dir), *since, *runs)
 	case "id":
 		fs := flag.NewFlagSet("id", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

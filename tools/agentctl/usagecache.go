@@ -82,6 +82,50 @@ func usageCachePath(q *quotaSpec) (string, error) {
 	return filepath.Join(home, usageCacheFile), nil
 }
 
+// panelDir выбирает каталог, в котором подниматься клиенту для съёма панели.
+// В каталоге без подтверждённого доверия клиент вместо панели показывает
+// вопрос про доверие, и съём кончается блокером. Живой случай DK-633: тик
+// сторожка живёт под launchd с рабочим каталогом «/», и панель из него не
+// давалась никогда, а снимок бесконечно падал на протухший кеш. Подтверждения
+// лежат в том же .claude.json, что и кеш расхода. Текущий каталог с доверием
+// остаётся как есть, это дорога ручного запуска. Пустой возврат значит
+// «каталог не менять»: доверенных не нашлось, и блокер панели назовёт вопрос
+// доверия словами.
+func panelDir(q *quotaSpec) string {
+	path, err := usageCachePath(q)
+	if err != nil {
+		return ""
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var conf struct {
+		Projects map[string]struct {
+			Trusted bool `json:"hasTrustDialogAccepted"`
+		} `json:"projects"`
+	}
+	if json.Unmarshal(raw, &conf) != nil {
+		return ""
+	}
+	if cwd, err := os.Getwd(); err == nil && conf.Projects[cwd].Trusted {
+		return ""
+	}
+	var dirs []string
+	for dir, p := range conf.Projects {
+		if p.Trusted {
+			dirs = append(dirs, dir)
+		}
+	}
+	sort.Strings(dirs)
+	for _, d := range dirs {
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			return d
+		}
+	}
+	return ""
+}
+
 // snapUsageCache собирает снимок из кеша клиента. Отказ тут не беда: дорога у
 // снимка остаётся вторая, поэтому причина возвращается словами и уходит в
 // вывод, а не теряется.

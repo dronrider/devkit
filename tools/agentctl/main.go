@@ -287,7 +287,7 @@ func main() {
 			msg, err = cmdQuota(q, timeNow())
 			break
 		}
-		msg, err = cmdQuotaRefresh(q, timeNow(), *ifStale)
+		msg, _, err = cmdQuotaRefresh(q, timeNow(), *ifStale)
 	case "harness":
 		fs := flag.NewFlagSet("harness", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

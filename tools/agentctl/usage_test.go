@@ -580,7 +580,7 @@ func TestCmdQuotaRefreshIfStale(t *testing.T) {
 	if err := q.write(fresh); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdQuotaRefresh(q, testNow, true)
+	out, _, err := cmdQuotaRefresh(q, testNow, true)
 	if err != nil {
 		t.Fatalf("свежий снимок не должен ронять refresh: %v", err)
 	}
@@ -593,7 +593,7 @@ func TestCmdQuotaRefreshIfStale(t *testing.T) {
 	if err := q.write(stale); err != nil {
 		t.Fatal(err)
 	}
-	out, err = cmdQuotaRefresh(q, testNow, true)
+	out, _, err = cmdQuotaRefresh(q, testNow, true)
 	if err == nil && strings.Contains(out, "не снимаем") {
 		t.Fatalf("протухший снимок не пошёл на съём панели: %q", out)
 	}
@@ -624,7 +624,7 @@ func TestQuotaRefreshScript(t *testing.T) {
 
 	t.Run("валидный вывод ложится в файл", func(t *testing.T) {
 		q := scriptSpec(t, "#!/bin/sh\nprintf '%s' \""+snapText+"\"\n")
-		out, err := cmdQuotaRefresh(q, testNow, false)
+		out, _, err := cmdQuotaRefresh(q, testNow, false)
 		if err != nil {
 			t.Fatalf("refresh: %v", err)
 		}
@@ -647,7 +647,7 @@ func TestQuotaRefreshScript(t *testing.T) {
 			"printf 'taken = %s\\n' \""+at(testNow)+"\"\n"+
 			"printf 'week_all = %s%% сброс %s\\n' \"$DEVKIT_QUOTA_BUDGET\" \""+at(testNow.Add(halfWindow))+"\"\n")
 		q.BudgetBased, q.Budget = true, 20
-		if _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
 			t.Fatalf("refresh: %v", err)
 		}
 		data, err := os.ReadFile(q.Path)
@@ -667,7 +667,7 @@ func TestQuotaRefreshScript(t *testing.T) {
 		q := scriptSpec(t, "#!/bin/sh\n[ \"$DEVKIT_HARNESS_HOME\" = \""+home+"\" ] || { echo \"каталог харнеса не доехал: $DEVKIT_HARNESS_HOME\" >&2; exit 1; }\n"+
 			"printf '%s' \""+snapText+"\"\n")
 		q.Home = home
-		if _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
 			t.Fatalf("refresh: %v", err)
 		}
 	})
@@ -675,7 +675,7 @@ func TestQuotaRefreshScript(t *testing.T) {
 	t.Run("бюджет не задан", func(t *testing.T) {
 		q := scriptSpec(t, "#!/bin/sh\nprintf '%s' \""+snapText+"\"\n")
 		q.BudgetBased = true
-		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
 			!strings.Contains(err.Error(), "бюджета в машинном конфиге нет") {
 			t.Fatalf("расход в деньгах без бюджета прошёл молча: %v", err)
 		}
@@ -684,7 +684,7 @@ func TestQuotaRefreshScript(t *testing.T) {
 	t.Run("мусор на stdout файл не трогает", func(t *testing.T) {
 		q := scriptSpec(t, "#!/bin/sh\necho 'Traceback (most recent call last):'\n")
 		before := seedSnapshot(t, q, snapText)
-		_, err := cmdQuotaRefresh(q, testNow, false)
+		_, _, err := cmdQuotaRefresh(q, testNow, false)
 		if err == nil || !strings.Contains(err.Error(), "не разобран") {
 			t.Fatalf("мусор принят за снимок: %v", err)
 		}
@@ -694,7 +694,7 @@ func TestQuotaRefreshScript(t *testing.T) {
 	t.Run("вывод без обязательного бакета файл не трогает", func(t *testing.T) {
 		q := scriptSpec(t, "#!/bin/sh\nprintf 'taken = %s\\n' \""+at(testNow)+"\"\n")
 		before := seedSnapshot(t, q, snapText)
-		_, err := cmdQuotaRefresh(q, testNow, false)
+		_, _, err := cmdQuotaRefresh(q, testNow, false)
 		if err == nil || !strings.Contains(err.Error(), "нет обязательного бакета week_all") {
 			t.Fatalf("снимок без общего бакета принят: %v", err)
 		}
@@ -706,7 +706,7 @@ func TestQuotaRefreshScript(t *testing.T) {
 		// принять такой от съёмщика значит молча потерять половину его работы.
 		q := scriptSpec(t, "#!/bin/sh\nprintf 'week_all = 40%% сброс %s\\n' \""+at(testNow.Add(halfWindow))+"\"\n")
 		before := seedSnapshot(t, q, snapText)
-		_, err := cmdQuotaRefresh(q, testNow, false)
+		_, _, err := cmdQuotaRefresh(q, testNow, false)
 		if err == nil || !strings.Contains(err.Error(), "нет момента снятия") {
 			t.Fatalf("снимок без момента снятия принят: %v", err)
 		}
@@ -717,7 +717,7 @@ func TestQuotaRefreshScript(t *testing.T) {
 		q := scriptSpec(t, "#!/bin/sh\necho 'токен протух, обновить: sometool login' >&2\n"+
 			"printf '%s'\nexit 3\n")
 		before := seedSnapshot(t, q, snapText)
-		_, err := cmdQuotaRefresh(q, testNow, false)
+		_, _, err := cmdQuotaRefresh(q, testNow, false)
 		if err == nil {
 			t.Fatal("отказ съёмщика прошёл как успех")
 		}
@@ -732,7 +732,7 @@ func TestQuotaRefreshScript(t *testing.T) {
 		// скрипт, ждущий ввода, повесил бы её.
 		q := scriptSpec(t, "#!/bin/sh\nif [ -n \"$(cat)\" ]; then echo 'мне дали stdin' >&2; exit 1; fi\n"+
 			"printf '%s' \""+snapText+"\"\n")
-		if _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
 			t.Fatalf("refresh: %v", err)
 		}
 	})
@@ -740,7 +740,7 @@ func TestQuotaRefreshScript(t *testing.T) {
 	t.Run("съёмщика нет на месте", func(t *testing.T) {
 		q := scriptSpec(t, "#!/bin/sh\nexit 0\n")
 		q.Script = filepath.Join("snap", "нет-такого.sh")
-		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
 			!strings.Contains(err.Error(), "снимок не тронут") {
 			t.Fatalf("пропавший съёмщик прошёл молча: %v", err)
 		}
@@ -842,7 +842,7 @@ func TestGlmCodeSnapScript(t *testing.T) {
 	t.Run("чужой токен это отказ, файл не тронут", func(t *testing.T) {
 		q := quotaHome(t, "не-тот-токен")
 		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
-		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
 			!strings.Contains(err.Error(), "не прошёл") {
 			t.Fatalf("отказ эндпоинта прошёл как снимок: %v", err)
 		}
@@ -858,7 +858,7 @@ func TestGlmCodeSnapScript(t *testing.T) {
 		defer func() { body = kept }()
 		q := quotaHome(t, token)
 		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
-		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
 			!strings.Contains(err.Error(), "незнакомое окно") {
 			t.Fatalf("незнакомая разметка принята за снимок: %v", err)
 		}
@@ -873,7 +873,7 @@ func TestGlmCodeSnapScript(t *testing.T) {
 		defer func() { body = kept }()
 		q := quotaHome(t, token)
 		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
-		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
 			!strings.Contains(err.Error(), "дважды") {
 			t.Fatalf("повтор окна принят за снимок: %v", err)
 		}
@@ -924,7 +924,7 @@ func TestGlmCodeSnapScript(t *testing.T) {
 		defer func() { body = kept }()
 		q := quotaHome(t, token)
 		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
-		if _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
 			!strings.Contains(err.Error(), "window5h_all") {
 			t.Fatalf("окно с тратами и без сброса разобралось молча: %v", err)
 		}
@@ -1089,7 +1089,7 @@ func TestQuotaRefreshKeepsNewer(t *testing.T) {
 		if err := q.write(snapOf(0, bucketAt("week_all", 82, halfWindow))); err != nil {
 			t.Fatalf("прежний снимок не лёг: %v", err)
 		}
-		out, err := cmdQuotaRefresh(q, testNow, false)
+		out, _, err := cmdQuotaRefresh(q, testNow, false)
 		if err != nil {
 			t.Fatalf("refresh: %v", err)
 		}
@@ -1113,7 +1113,7 @@ func TestQuotaRefreshKeepsNewer(t *testing.T) {
 		if err := q.write(snapOf(2*time.Hour, bucketAt("week_all", 82, halfWindow))); err != nil {
 			t.Fatalf("прежний снимок не лёг: %v", err)
 		}
-		out, err := cmdQuotaRefresh(q, testNow, false)
+		out, _, err := cmdQuotaRefresh(q, testNow, false)
 		if err != nil {
 			t.Fatalf("refresh: %v", err)
 		}
@@ -1136,7 +1136,7 @@ func TestQuotaRefreshKeepsNewer(t *testing.T) {
 		if err := q.write(snapOf(-3*time.Hour, bucketAt("week_all", 82, halfWindow))); err != nil {
 			t.Fatalf("прежний снимок не лёг: %v", err)
 		}
-		if _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
 			t.Fatalf("refresh: %v", err)
 		}
 		s, err := q.read()
@@ -1217,4 +1217,116 @@ while True:
 	if _, ok := s.bucket("week_all"); !ok {
 		t.Fatalf("после повтора панель разобралась не до бакетов: %+v", s.Buckets)
 	}
+}
+
+// TestQuotaRefreshAllKept: съём без ошибки, после которого свежего снимка на
+// диске нет, идёт разрядом «оставлено», а не «снято» (замечание 2 приёмки
+// DK-633). Живой случай: панель не далась, в файл поехал протухший кеш, сторож
+// отката оставил цифры прежними, а тик отчитался «снято 2, отказов 0» и
+// успокоился, хотя снимок протух по-прежнему и его надо переснимать.
+func TestQuotaRefreshAllKept(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	t.Run("протухший источник это оставлено", func(t *testing.T) {
+		stale := "taken = " + at(testNow.Add(-2*time.Hour)) +
+			"\nweek_all = 40% сброс " + at(testNow.Add(halfWindow)) + "\n"
+		q := scriptSpec(t, "#!/bin/sh\nprintf '%s' \""+stale+"\"\n")
+		out, err := cmdQuotaRefreshAll([]*quotaSpec{q}, testNow, false)
+		if err != nil {
+			t.Fatalf("оставленный исход не отказ: %v", err)
+		}
+		for _, part := range []string{"снято 0", "оставлено 1", "отказов 0",
+			"снимок не посвежел", "повторён следующим тиком"} {
+			if !strings.Contains(out, part) {
+				t.Fatalf("в счёте исходов нет %q:\n%s", part, out)
+			}
+		}
+	})
+
+	t.Run("оставленный сторожем отката диск тоже оставлено", func(t *testing.T) {
+		older := "taken = " + at(testNow.Add(-3*time.Hour)) +
+			"\nweek_all = 40% сброс " + at(testNow.Add(halfWindow)) + "\n"
+		q := scriptSpec(t, "#!/bin/sh\nprintf '%s' \""+older+"\"\n")
+		disk := "taken = " + at(testNow.Add(-time.Hour)) +
+			"\nweek_all = 41% сброс " + at(testNow.Add(halfWindow)) + "\n"
+		if err := os.MkdirAll(filepath.Dir(q.Path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(q.Path, []byte(disk), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := cmdQuotaRefreshAll([]*quotaSpec{q}, testNow, false)
+		if err != nil {
+			t.Fatalf("оставленный исход не отказ: %v", err)
+		}
+		if !strings.Contains(out, "оставлено 1") || !strings.Contains(out, "снято 0") {
+			t.Fatalf("исход сторожа отката сошёл за снятый:\n%s", out)
+		}
+		data, err := os.ReadFile(q.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != disk {
+			t.Fatalf("сторож отката не удержал диск:\n%s", data)
+		}
+	})
+
+	t.Run("свежий источник это по-прежнему снято", func(t *testing.T) {
+		fresh := "taken = " + at(testNow) +
+			"\nweek_all = 40% сброс " + at(testNow.Add(halfWindow)) + "\n"
+		q := scriptSpec(t, "#!/bin/sh\nprintf '%s' \""+fresh+"\"\n")
+		out, err := cmdQuotaRefreshAll([]*quotaSpec{q}, testNow, false)
+		if err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		if !strings.Contains(out, "снято 1") || !strings.Contains(out, "оставлено 0") {
+			t.Fatalf("свежий съём перестал считаться снятым:\n%s", out)
+		}
+	})
+}
+
+// TestPanelDir: клиент для съёма панели поднимается в каталоге, которому он
+// уже доверяет, иначе вместо панели встаёт вопрос про доверие. Живой случай
+// DK-633: тик сторожка живёт под launchd с рабочим каталогом «/», клиент
+// каталогу не доверял, панель не давалась никогда, и снимок бесконечно падал
+// на протухший кеш.
+func TestPanelDir(t *testing.T) {
+	home := t.TempDir()
+	trusted := t.TempDir()
+	gone := filepath.Join(home, "снесённый")
+	q := specAt(t, filepath.Join(home, ".devkit", "quota", "claude-code.local"))
+	q.Home = home
+
+	t.Run("без файла клиента каталог не меняется", func(t *testing.T) {
+		if dir := panelDir(q); dir != "" {
+			t.Fatalf("без .claude.json каталог сменился на %q", dir)
+		}
+	})
+
+	conf := `{"projects": {"` + gone + `": {"hasTrustDialogAccepted": true},
+		"` + trusted + `": {"hasTrustDialogAccepted": true},
+		"` + home + `": {"hasTrustDialogAccepted": false}}}`
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(conf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("берётся живой доверенный каталог", func(t *testing.T) {
+		if dir := panelDir(q); dir != trusted {
+			t.Fatalf("жду %q, получил %q", trusted, dir)
+		}
+	})
+
+	t.Run("доверенный текущий каталог остаётся как есть", func(t *testing.T) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		conf := `{"projects": {"` + cwd + `": {"hasTrustDialogAccepted": true}}}`
+		if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(conf), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if dir := panelDir(q); dir != "" {
+			t.Fatalf("доверенный текущий каталог сменился на %q", dir)
+		}
+	})
 }

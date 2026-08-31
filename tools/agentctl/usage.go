@@ -318,12 +318,18 @@ func tmuxRun(args ...string) (string, error) {
 // pick живёт по прежнему снимку либо без корректора. Флаг ifStale это режим для
 // хука старта сессии: снимать на каждой сессии незачем, а порог свежести
 // остаётся здесь же, второй копии в хуке нет.
-func cmdQuotaRefresh(q *quotaSpec, now time.Time, ifStale bool) (string, error) {
+//
+// Второй возврат говорит, посвежел ли снимок на диске. Съём, где панель не
+// далась и в файл поехал протухший кеш, и съём, где сторож отката оставил
+// цифры прежними, выходят без ошибки, но свежего снимка после них нет, и
+// считать такой исход снятым нельзя (DK-633): периодический съём успокаивался
+// бы на нём, а снимок старел бы бесконечно.
+func cmdQuotaRefresh(q *quotaSpec, now time.Time, ifStale bool) (string, bool, error) {
 	if ifStale {
 		s, err := q.read()
 		if err == nil && !s.empty() && s.fresh(now) {
 			return fmt.Sprintf("снимок свежий (возраст %s при пороге %s), не снимаем",
-				humanAge(now.Sub(s.Taken)), humanAge(snapshotMaxAge)), nil
+				humanAge(now.Sub(s.Taken)), humanAge(snapshotMaxAge)), true, nil
 		}
 	}
 	var snap snapshot
@@ -338,23 +344,23 @@ func cmdQuotaRefresh(q *quotaSpec, now time.Time, ifStale bool) (string, error) 
 		err = fmt.Errorf("харнес %s объявил snap = %q, снимать таким способом devkit не умеет", q.Harness, q.Snap)
 	}
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	snap, back := q.keepNewer(snap, now)
 	if back != "" {
 		notes = append(notes, back)
 	}
 	if err := q.write(snap); err != nil {
-		return "", err
+		return "", false, err
 	}
 	out, err := cmdQuota(q, now)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	if len(notes) == 0 {
-		return out, nil
+	if len(notes) > 0 {
+		out = strings.Join(notes, "\n") + "\n" + out
 	}
-	return strings.Join(notes, "\n") + "\n" + out, nil
+	return out, snap.fresh(now), nil
 }
 
 // cmdQuotaRefreshAll освежает снимки всех подписок машины разом: на этом
@@ -366,6 +372,13 @@ func cmdQuotaRefresh(q *quotaSpec, now time.Time, ifStale bool) (string, error) 
 // нём отказы идут первыми, чтобы читателю плашки досталась причина, а не счёт.
 // При успехе первая строка это счёт исходов: по ней тик решает, писать ли
 // прогон в свой журнал.
+//
+// Исходов у подписки четыре, и «оставлено» среди них своё (DK-633): съём
+// прошёл без ошибки, а свежего снимка на диске после него нет, потому что
+// панель не далась и источником был протухший кеш либо сторож отката оставил
+// цифры прежними. Считать такое за «снято» значило бы врать журналу: снимок
+// при этом протух по-прежнему, и следующий тик обязан переснимать, что он по
+// --if-stale и делает.
 func cmdQuotaRefreshAll(specs []*quotaSpec, now time.Time, ifStale bool) (string, error) {
 	lock := refreshLockPath()
 	if !takeRefreshLock(lock, now) {
@@ -373,7 +386,7 @@ func cmdQuotaRefreshAll(specs []*quotaSpec, now time.Time, ifStale bool) (string
 	}
 	defer os.Remove(lock)
 	var oks, fails []string
-	var snapped, fresh int
+	var snapped, fresh, kept int
 	for _, q := range specs {
 		if ifStale {
 			if s, err := q.read(); err == nil && !s.empty() && s.fresh(now) {
@@ -383,16 +396,21 @@ func cmdQuotaRefreshAll(specs []*quotaSpec, now time.Time, ifStale bool) (string
 				continue
 			}
 		}
-		out, err := cmdQuotaRefresh(q, now, false)
+		out, freshened, err := cmdQuotaRefresh(q, now, false)
 		if err != nil {
 			fails = append(fails, fmt.Sprintf("харнес %s: %v", q.Harness, err))
+			continue
+		}
+		if !freshened {
+			kept++
+			oks = append(oks, fmt.Sprintf("харнес %s: снимок не посвежел, съём будет повторён следующим тиком\n%s", q.Harness, out))
 			continue
 		}
 		snapped++
 		oks = append(oks, fmt.Sprintf("харнес %s:\n%s", q.Harness, out))
 	}
-	head := fmt.Sprintf("подписок %d: снято %d, свежих %d, отказов %d",
-		len(specs), snapped, fresh, len(fails))
+	head := fmt.Sprintf("подписок %d: снято %d, свежих %d, оставлено %d, отказов %d",
+		len(specs), snapped, fresh, kept, len(fails))
 	if len(fails) > 0 {
 		return "", errors.New(strings.Join(append(append(fails, head), oks...), "\n"))
 	}
@@ -459,7 +477,14 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 		return snapshot{}, fmt.Errorf("claude в PATH нет, снимать панель /usage нечем; снимок пишется и руками: %s", path)
 	}
 	session := fmt.Sprintf("agentctl-usage-%d", os.Getpid())
-	if out, err := tmuxRun("new-session", "-d", "-s", session, "-x", strconv.Itoa(usagePaneCols), "-y", strconv.Itoa(usagePaneRows), "claude"); err != nil {
+	args := []string{"new-session", "-d", "-s", session, "-x", strconv.Itoa(usagePaneCols), "-y", strconv.Itoa(usagePaneRows)}
+	// Клиент поднимается в каталоге, которому он уже доверяет (panelDir):
+	// из недоверенного он вместо панели спрашивает про доверие, и таким
+	// каталогом оказывается рабочий каталог всякого launchd-агента.
+	if dir := panelDir(q); dir != "" {
+		args = append(args, "-c", dir)
+	}
+	if out, err := tmuxRun(append(args, "claude")...); err != nil {
 		return snapshot{}, fmt.Errorf("tmux не поднял сессию: %v %s", err, out)
 	}
 	defer tmuxRun("kill-session", "-t", session)

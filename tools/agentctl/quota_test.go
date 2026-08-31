@@ -112,7 +112,7 @@ const halfWindow = weekWindow / 2
 
 // Возрасты снимка по обе стороны порога свежести: от них зависит только сдвиг
 // вверх, поэтому таблицы корректора берут их отсюда, а не пишут числа руками.
-const (
+var (
 	freshAge = snapshotMaxAge / 2
 	staleAge = snapshotMaxAge * 2
 )

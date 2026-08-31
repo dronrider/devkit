@@ -158,6 +158,12 @@ func main() {
 	if versionRequested() {
 		return
 	}
+	// Порог свежести снимка настраивается машинным файлом, и подтягивается он
+	// до разбора команды: порог держат и съём, и корректор вердикта, а кривое
+	// значение валит команду с причиной, не съезжая молча на умолчание.
+	if err := loadSnapshotMaxAge(); err != nil {
+		fail(err)
+	}
 	gdir, args, gerr := globalDir(os.Args[1:])
 	if gerr != nil {
 		fail(gerr)

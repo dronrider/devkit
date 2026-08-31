@@ -306,3 +306,54 @@ func TestQuotaAllFlagGuards(t *testing.T) {
 		}
 	}
 }
+
+// TestQuotaStaleConfigured: порог свежести снимка настраивается строкой
+// `stale = <минуты>` в ~/.devkit/quota.local (DK-633). Порог один на съём,
+// корректор и подпись возраста, копий константы нет, а кривое значение валит
+// команду с причиной, не съезжая молча на умолчание в 45 минут.
+func TestQuotaStaleConfigured(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, home, ".devkit/harness.local", `default = "claude-code"
+enabled = ["claude-code"]
+
+[claude-code]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+`)
+	taken := time.Now().Add(-5 * time.Minute).Format("2006-01-02T15:04")
+	writeFile(t, home, ".devkit/quota/claude-code.local",
+		"taken = "+taken+"\nweek_all = 10% сброс 2099-01-01T00:00\n")
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command("go", append([]string{"run", "."}, args...)...)
+		cmd.Env = append(os.Environ(), "HOME="+home, "DEVKIT_HOME="+repoRoot(t), "DEVKIT_HARNESS=")
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	out, err := run("quota")
+	if err != nil || !strings.Contains(out, "возраст 5м") || strings.Contains(out, "протух") {
+		t.Fatalf("пятиминутный снимок без настройки должен быть свежим (%v):\n%s", err, out)
+	}
+
+	writeFile(t, home, ".devkit/quota.local", "stale = 3\n")
+	out, err = run("quota")
+	if err != nil {
+		t.Fatalf("quota с настроенным порогом: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "при пороге 3м") || !strings.Contains(out, "протух") {
+		t.Fatalf("порог из quota.local не подействовал:\n%s", out)
+	}
+
+	writeFile(t, home, ".devkit/quota.local", "stale = сорок\n")
+	out, err = run("quota")
+	if err == nil {
+		t.Fatalf("кривое значение stale прошло молча:\n%s", out)
+	}
+	for _, part := range []string{"quota.local", "минут"} {
+		if !strings.Contains(out, part) {
+			t.Fatalf("в причине отказа нет %q:\n%s", part, out)
+		}
+	}
+}

@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/quotaconf"
 )
 
 // Снимок остатка лимитов лежит на уровне машины, а не проекта: лимиты общие на
@@ -105,7 +107,27 @@ func bucketWindow(name string) time.Duration {
 // статуса. Асимметрия при этом никуда не делась: дефицит возрастом не
 // ограничен вовсе, снятый остаток это верхняя граница текущего, и вниз сдвиг
 // идёт по снимку любой давности, лишь бы не прошла дата сброса.
-const snapshotMaxAge = 45 * time.Minute
+//
+// Величина перебивается строкой `stale = <минуты>` в ~/.devkit/quota.local
+// (пакет internal/quotaconf, тот же порог читает демон дашборда): подтягивает
+// её main до разбора команды, и кривое значение валит команду с причиной, а
+// не съезжает молча на умолчание.
+var snapshotMaxAge = quotaconf.Default
+
+// loadSnapshotMaxAge подтягивает настроенный порог свежести. Дом не нашёлся,
+// значит и файла настройки нет, действует умолчание.
+func loadSnapshotMaxAge() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	d, err := quotaconf.StaleAge(home)
+	if err != nil {
+		return err
+	}
+	snapshotMaxAge = d
+	return nil
+}
 
 const (
 	statusSurplus = "профицит"

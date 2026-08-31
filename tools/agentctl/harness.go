@@ -1198,6 +1198,34 @@ func quotaSpecFor(start, want string) (*quotaSpec, error) {
 	return hc.Quota, nil
 }
 
+// quotaSpecsAll собирает объявления квоты всех включённых харнесов машины: по
+// ним периодический съём (quota refresh --all) освежает каждый снимок, не
+// спрашивая, какой харнес активен, у тика сторожка и демона дашборда сессии
+// нет. Харнес с пустой секцией [quota] пропускается молча: снимать у него
+// нечего по построению, и отказ тут был бы только шумом. Пустой итог это
+// отказ: на машине без единой объявленной квоты периодическому съёму делать
+// нечего, и молчание выглядело бы работой.
+func quotaSpecsAll(start string) ([]*quotaSpec, error) {
+	dir, err := harnessDir(start)
+	if err != nil {
+		return nil, err
+	}
+	l, err := mergeLayers(dir, machineConfigPath(), projectConfigPath(start))
+	if err != nil {
+		return nil, err
+	}
+	var specs []*quotaSpec
+	for _, name := range l.Enabled {
+		if q := quotaSpecOf(l, name); q != nil {
+			specs = append(specs, q)
+		}
+	}
+	if len(specs) == 0 {
+		return nil, fmt.Errorf("ни у одного включённого харнеса не объявлена секция [quota], снимать нечего")
+	}
+	return specs, nil
+}
+
 // harnessJSON это одна подписка машинным видом. Значений окружения тут нет
 // никогда, только имена: в env лежат каталог конфигурации, base URL и токен, а
 // ответ уезжает по HTTP в дашборд и в логи.

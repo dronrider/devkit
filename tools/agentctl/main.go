@@ -54,7 +54,10 @@ const usageText = `agentctl: выбор исполнителя под задач
                           переписывает файл; --if-stale снимает только протухший
                           снимок, на этом режиме стоит хук старта сессии
                           (hooks/README.md); --harness читает и снимает чужую
-                          подписку, не поднимая её сессию
+                          подписку, не поднимая её сессию; refresh --all
+                          обходит все включённые харнесы с объявленной квотой,
+                          на этом режиме стоит периодический съём (тик
+                          сторожка цикла цели и демон дашборда)
   harness [--harness      окно в резолв харнеса: активный инструмент и чем он
            <имя>]         определён, включённый список после слияния слоёв,
           [--json]        маппинг ярусов, режим делегирования, снимок квоты;
@@ -254,9 +257,24 @@ func main() {
 		fs := flag.NewFlagSet("quota", flag.ExitOnError)
 		name := fs.String("harness", "", "имя харнеса, чей остаток читает команда, перебивает детект")
 		ifStale := fs.Bool("if-stale", false, "снимать, только если снимок протух")
+		all := fs.Bool("all", false, "снять остаток всех включённых харнесов с объявленной квотой")
 		pos := frame.ParseArgs(fs, args[1:])
 		if len(pos) > 1 || (len(pos) == 1 && pos[0] != "refresh") {
-			fail(fmt.Errorf("жду: quota [refresh] [--harness <имя>] [--if-stale]"))
+			fail(fmt.Errorf("жду: quota [refresh] [--harness <имя>] [--if-stale] [--all]"))
+		}
+		if *all {
+			if *name != "" {
+				fail(fmt.Errorf("флаги --all и --harness вместе не работают: --all и так обходит все включённые харнесы"))
+			}
+			if len(pos) == 0 {
+				fail(fmt.Errorf("флаг --all идёт вместе с refresh: quota refresh --all"))
+			}
+			specs, serr := quotaSpecsAll(gdir)
+			if serr != nil {
+				fail(serr)
+			}
+			msg, err = cmdQuotaRefreshAll(specs, timeNow(), *ifStale)
+			break
 		}
 		q, qerr := quotaSpecFor(gdir, *name)
 		if qerr != nil {

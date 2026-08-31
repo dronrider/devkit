@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGlobalDirParse(t *testing.T) {
@@ -193,6 +194,115 @@ home = "`+home+`"
 		}
 		if strings.Contains(string(out), "claude-code") || !strings.Contains(string(out), c.want) {
 			t.Fatalf("%v: флаг не привёл команду к снимку второй подписки:\n%s", c.args, out)
+		}
+	}
+}
+
+// TestQuotaRefreshAll: периодическому съёму (тик сторожка, демон дашборда)
+// активный харнес не указ, и режим --all обходит обе подписки за один вызов
+// (DK-633). Гоняется собранным бинарём с урезанным PATH: без tmux и claude
+// панель первой подписки честно отказывает, а не поднимает живого клиента из
+// теста. Проверяются три исхода: отказ обеих подписок не глушит друг друга и
+// называет каждую, свежие снимки при --if-stale не переснимаются и не
+// трогаются на диске, а занятый замок кончается тихим нулём.
+func TestQuotaRefreshAll(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, home, ".devkit/harness.local", `default = "claude-code"
+enabled = ["claude-code", "glm-code"]
+
+[claude-code]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+
+[glm-code]
+home = "`+home+`"
+`)
+	bin := filepath.Join(t.TempDir(), "agentctl")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("сборка бинаря: %v\n%s", err, out)
+	}
+	run := func(args ...string) (string, int) {
+		cmd := exec.Command(bin, args...)
+		cmd.Env = append(os.Environ(), "HOME="+home, "DEVKIT_HOME="+repoRoot(t),
+			"DEVKIT_HARNESS=", "PATH=/usr/bin:/bin")
+		out, _ := cmd.CombinedOutput()
+		return string(out), cmd.ProcessState.ExitCode()
+	}
+
+	out, code := run("quota", "refresh", "--all")
+	if code != 1 {
+		t.Fatalf("отказ обеих подписок должен кончаться кодом 1, а не %d:\n%s", code, out)
+	}
+	for _, part := range []string{"харнес claude-code", "харнес glm-code", "отказов 2"} {
+		if !strings.Contains(out, part) {
+			t.Fatalf("в разборе отказа нет %q:\n%s", part, out)
+		}
+	}
+
+	taken := time.Now().Format("2006-01-02T15:04")
+	claude := writeFile(t, home, ".devkit/quota/claude-code.local",
+		"taken = "+taken+"\nweek_all = 10% сброс 2099-01-01T00:00\nweek_max = 5% сброс 2099-01-01T00:00\n")
+	glm := writeFile(t, home, ".devkit/quota/glm-code.local",
+		"taken = "+taken+"\nwindow5h_all = 0% сброс 2099-01-01T00:00\nweek_all = 7% сброс 2099-01-01T00:00\n")
+	before := map[string]string{}
+	for _, p := range []string{claude, glm} {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[p] = string(data)
+	}
+	out, code = run("quota", "refresh", "--all", "--if-stale")
+	if code != 0 {
+		t.Fatalf("свежие снимки должны кончаться нулём, а не %d:\n%s", code, out)
+	}
+	for _, part := range []string{"свежих 2", "снято 0", "отказов 0"} {
+		if !strings.Contains(out, part) {
+			t.Fatalf("в счёте исходов нет %q:\n%s", part, out)
+		}
+	}
+	for p, was := range before {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != was {
+			t.Fatalf("свежий снимок %s переписан:\n%s", p, data)
+		}
+	}
+
+	lock := filepath.Join(home, ".devkit", "quota-refresh.lock")
+	if err := os.Mkdir(lock, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, code = run("quota", "refresh", "--all")
+	if code != 0 || !strings.Contains(out, "съём уже идёт") {
+		t.Fatalf("занятый замок должен кончаться тихим нулём, код %d:\n%s", code, out)
+	}
+	if _, err := os.Stat(lock); err != nil {
+		t.Fatalf("чужой замок снят: %v", err)
+	}
+}
+
+// TestQuotaAllFlagGuards: --all не сочетается с --harness и без refresh не
+// работает, причина в обоих случаях человеческая.
+func TestQuotaAllFlagGuards(t *testing.T) {
+	home := t.TempDir()
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"quota", "refresh", "--all", "--harness", "glm-code"}, "--all и --harness вместе не работают"},
+		{[]string{"quota", "--all"}, "--all идёт вместе с refresh"},
+	}
+	for _, c := range cases {
+		cmd := exec.Command("go", append([]string{"run", "."}, c.args...)...)
+		cmd.Env = append(os.Environ(), "HOME="+home, "DEVKIT_HOME="+repoRoot(t), "DEVKIT_HARNESS=")
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), c.want) {
+			t.Fatalf("%v: жду отказ с %q, получил (%v):\n%s", c.args, c.want, err, out)
 		}
 	}
 }

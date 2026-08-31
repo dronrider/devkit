@@ -357,6 +357,48 @@ func cmdQuotaRefresh(q *quotaSpec, now time.Time, ifStale bool) (string, error) 
 	return strings.Join(notes, "\n") + "\n" + out, nil
 }
 
+// cmdQuotaRefreshAll освежает снимки всех подписок машины разом: на этом
+// режиме стоит периодический съём (тик сторожка цикла цели и демон дашборда),
+// которому активный харнес не указ. Замок общий с SessionStart-хуком
+// (hooks/quota-refresh.sh): съём первой подписки поднимает клиента, старт
+// клиента дёргает хук, и без замка вышла бы воронка. Отказ одной подписки не
+// глушит остальные: снятое пишется, а причины собираются в общий разбор, и в
+// нём отказы идут первыми, чтобы читателю плашки досталась причина, а не счёт.
+// При успехе первая строка это счёт исходов: по ней тик решает, писать ли
+// прогон в свой журнал.
+func cmdQuotaRefreshAll(specs []*quotaSpec, now time.Time, ifStale bool) (string, error) {
+	lock := refreshLockPath()
+	if !takeRefreshLock(lock, now) {
+		return fmt.Sprintf("съём уже идёт (замок %s), второй раз не снимаем", lock), nil
+	}
+	defer os.Remove(lock)
+	var oks, fails []string
+	var snapped, fresh int
+	for _, q := range specs {
+		if ifStale {
+			if s, err := q.read(); err == nil && !s.empty() && s.fresh(now) {
+				fresh++
+				oks = append(oks, fmt.Sprintf("харнес %s: снимок свежий (возраст %s при пороге %s), не снимаем",
+					q.Harness, humanAge(now.Sub(s.Taken)), humanAge(snapshotMaxAge)))
+				continue
+			}
+		}
+		out, err := cmdQuotaRefresh(q, now, false)
+		if err != nil {
+			fails = append(fails, fmt.Sprintf("харнес %s: %v", q.Harness, err))
+			continue
+		}
+		snapped++
+		oks = append(oks, fmt.Sprintf("харнес %s:\n%s", q.Harness, out))
+	}
+	head := fmt.Sprintf("подписок %d: снято %d, свежих %d, отказов %d",
+		len(specs), snapped, fresh, len(fails))
+	if len(fails) > 0 {
+		return "", errors.New(strings.Join(append(append(fails, head), oks...), "\n"))
+	}
+	return strings.Join(append([]string{head}, oks...), "\n"), nil
+}
+
 // snapByScript зовёт сменный съёмщик из kit/harness/snap/. Контракт разобран в
 // docs/lld/DK-033-universal-kit.md, раздел «Контракт съёмщика»: stdin не даётся,
 // в окружении имя харнеса, бюджет и каталог машинного хозяйства, stdout это

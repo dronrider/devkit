@@ -247,6 +247,12 @@ CHAT_HOOK = "chat-in.py"
 # потерянный отчёт субагента виден иначе, чем молчащий баннер уведомителя.
 WATCH_HOOK = "agent-watch.py"
 WATCH_EVENTS = ("PostToolUse", "SubagentStop", "Stop")
+# Рубеж синхронности (DK-678): PreToolUse на Bash и на инструменте
+# делегирования, потому что фоном зовутся оба, и признак фона у обоих лежит во
+# входе. Матчер свой, поэтому и категория сообщения в hook_gaps своя: без этого
+# рубежа headless-сессия уводит долгое дело в фон, а харнес добивает его через
+# десять минут, и это не то же самое, что чтение секретов мимо рубежа.
+SYNC_HOOK = "check-background.py"
 # Хуки, переименованные в devkit: прежнее имя файла и нынешнее (DK-440). Строка
 # с прежним именем зовёт файл, которого в чекауте уже нет, и харнес спотыкается
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
@@ -269,6 +275,7 @@ NOTIFY_MATCHER = "permission_prompt|agent_needs_input|elicitation_dialog|idle_pr
 POST_MATCHER = "Edit|Write|NotebookEdit"
 PRE_MATCHER = "Bash"
 PRE_READ_MATCHER = "Read"
+SYNC_MATCHER = "Bash|Agent"
 # Раскладка хуков харнеса: событие, матчер, команда с местом под чекаут devkit.
 # Тот же перечень нарисован в hooks/README.md, но раскладывает его отсюда
 # доктор: список ручных шагов в README это перекладывание раскладки на человека.
@@ -279,6 +286,7 @@ HOOK_LAYOUT = (
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-prose.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-read-secret.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-subst.py --hook"),
+    ("PreToolUse", SYNC_MATCHER, "python3 %s/hooks/check-background.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
@@ -1326,6 +1334,11 @@ def hook_gaps(text, settings):
             missing_pre.append(script)
         elif script in PRE_READ_SCRIPTS:
             missing_pre_read.append(script)
+        elif script == SYNC_HOOK:
+            findings.append("рубеж %s не подключён на событии PreToolUse в %s: headless-сессия "
+                            "уводит долгое дело в фон, харнес добивает фонового ребёнка через "
+                            "десять минут после конца хода, и провал выходит тихим "
+                            "(hooks/README.md)" % (SYNC_HOOK, settings))
         elif script == CHAT_HOOK:
             findings.append("подхват реплики %s не подключён на событии PostToolUse в %s: реплика "
                             "человека из чата цели ждёт следующего витка вместо идущего "

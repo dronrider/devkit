@@ -116,10 +116,14 @@ func shareText(s pilotShare) string {
 }
 
 // growthText печатает рост доли окна против доли истории. Нулевая история
-// это деление на ноль, и рост тогда называется без предела.
+// это деление на ноль: возвраты в окне растут без предела, а их отсутствие
+// даёт рост 0.0, NaN на живой доске неотличим от поломки.
 func growthText(w, h pilotShare) string {
 	if h.ratio() == 0 && w.ratio() > 0 {
 		return "не ограничен"
+	}
+	if h.ratio() == 0 {
+		return "0.0"
 	}
 	return fmt.Sprintf("%.1f", w.ratio()/h.ratio())
 }

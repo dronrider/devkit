@@ -161,6 +161,26 @@ func TestPilotRollbackVerdict(t *testing.T) {
 	}
 }
 
+// TestPilotZeroReturns: в начале пилота возвратов нет ни в окне, ни в истории,
+// и рост это 0.0, а не деление нуля на ноль.
+func TestPilotZeroReturns(t *testing.T) {
+	root := pilotRepo(t)
+	writePilotTask(t, root, "PL-1", []string{"2026-09-03"}, []string{"2026-09-01"})
+	writePilotTask(t, root, "PL-2", []string{"2026-09-05"}, []string{"2026-09-02"})
+	writePilotTask(t, root, "PL-3", []string{"2026-08-20"}, []string{"2026-08-18"})
+	writePilotTask(t, root, "PL-4", []string{"2026-08-25"}, []string{"2026-08-22"})
+	out, err := cmdPilot(root, "2026-09-01", t.TempDir())
+	if err != nil {
+		t.Fatalf("pilot: %v", err)
+	}
+	if !strings.Contains(out, "возвраты с ревью: 0/2 (0.0%) против 0/2 (0.0%) у истории, рост 0.0") {
+		t.Fatalf("рост на нуле возвратов не напечатан нулём:\n%s", out)
+	}
+	if !strings.Contains(out, "вердикт: возвратов в окне нет, полоса держится") {
+		t.Fatalf("вердикт на нуле возвратов не прозвучал:\n%s", out)
+	}
+}
+
 // TestPilotEmptyWindow: до первого слияния после даты старта счётчики пусты, и
 // вывод обязан это сказать, а не делить нули.
 func TestPilotEmptyWindow(t *testing.T) {

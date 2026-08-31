@@ -587,10 +587,7 @@ func TestQuotaRefreshRunCoversAllSubscriptions(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "agentctl")
 	got := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s ' \"$@\" > " + got + "\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeScript(t, dir, "agentctl", "printf '%s ' \"$@\" > "+got)
 	if err := quotaRefreshRun(dir, bin); err != nil {
 		t.Fatalf("вызов подставного бинаря: %v", err)
 	}

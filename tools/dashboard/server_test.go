@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,9 +25,85 @@ const boardFixtureJSON = `{"prefix":"XR","sections":[` +
 	`{"key":"backlog","title":"Backlog","rows":[{"id":"XR-002","title":"Верхняя","type":"bug","p":"P1","r":55,"r_parts":[50,0,0,5,0],"cost":"-","link":"-"}]},` +
 	`{"key":"blocked","title":"Blocked","rows":[]}]}`
 
+// Фикстура утилиты зовётся настоящим подпроцессом, а свежий исполняемый файл
+// macOS проверяет на первом запуске: проверка стоит от десятых долей секунды до
+// нескольких секунд, повторный запуск того же файла идёт за миллисекунды. Своя
+// фикстура у каждого теста складывала эту проверку сотни раз, и пакет тянулся
+// шесть минут вместо одной, а под нагрузкой соседних прогонов срывал срок
+// слияния (DK-649). Поэтому исполняемым остаётся один неизменный переходник на
+// всю машину, а тело фикстуры ложится рядом обычным файлом: его не исполняют, и
+// проверять в нём нечего.
+const scriptShimBody = "#!/bin/sh\nexec /bin/sh \"$0.sh\" \"$@\"\n"
+
+// scriptBody это имя файла с телом фикстуры рядом со ссылкой на переходник.
+func scriptBody(name string) string { return name + ".sh" }
+
+var (
+	shimOnce sync.Once
+	shimPath string
+	shimErr  error
+)
+
+// scriptShim кладёт переходник в постоянный каталог временных файлов
+// пользователя. Отпечаток тела стоит в имени каталога, поэтому правка тела
+// берёт новый путь, а проверка macOS переживает не только тест, но и весь
+// прогон вместе с соседними.
+func scriptShim() (string, error) {
+	shimOnce.Do(func() {
+		sum := sha256.Sum256([]byte(scriptShimBody))
+		dir := filepath.Join(os.TempDir(), "dashboard-test-shim-"+hex.EncodeToString(sum[:8]))
+		if shimErr = os.MkdirAll(dir, 0o755); shimErr != nil {
+			return
+		}
+		path := filepath.Join(dir, "shim")
+		if fi, err := os.Stat(path); err == nil && fi.Mode()&0o111 != 0 && fi.Size() == int64(len(scriptShimBody)) {
+			shimPath = path
+			return
+		}
+		// Переходник кладётся переименованием: за тот же путь могут взяться
+		// соседние прогоны пакета, и дописываемый файл они поймали бы на бегу.
+		tmp, err := os.CreateTemp(dir, "shim-*")
+		if err != nil {
+			shimErr = err
+			return
+		}
+		defer os.Remove(tmp.Name())
+		if _, err := tmp.WriteString(scriptShimBody); err != nil {
+			tmp.Close()
+			shimErr = err
+			return
+		}
+		if err := tmp.Close(); err != nil {
+			shimErr = err
+			return
+		}
+		if err := os.Chmod(tmp.Name(), 0o755); err != nil {
+			shimErr = err
+			return
+		}
+		if err := os.Rename(tmp.Name(), path); err != nil {
+			shimErr = err
+			return
+		}
+		shimPath = path
+	})
+	return shimPath, shimErr
+}
+
 func writeScript(t testing.TB, dir, name, body string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, scriptBody(name)), []byte("#!/bin/sh\n"+body+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, name)
+	if _, err := os.Lstat(link); err == nil {
+		return
+	}
+	shim, err := scriptShim()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shim, link); err != nil {
 		t.Fatal(err)
 	}
 }

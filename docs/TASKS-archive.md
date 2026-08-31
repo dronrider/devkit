@@ -385,3 +385,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-649 | Полный прогон тестов dashboard виснет на TestChatStopDropEndsLiveSession | bug | P0 | 2026-08-31 | [tasks/archive/2026/DK-649.md](tasks/archive/2026/DK-649.md) |
 | DK-652 | Вопрос агента в чате задачи: виджет с вариантами вместо подсказки [приёмка: mixed] | bug | P1 | 2026-08-31 | [tasks/archive/2026/DK-652.md](tasks/archive/2026/DK-652.md), `a113c76c`, `d2c768b9`, `b4138006`, `ed320a59`, `05c8f890`, `eac18473` |
 | DK-644 | Журнал цели несёт время витка, итог называет, где время ушло | task | P1 | 2026-08-31 | [tasks/archive/2026/DK-644.md](tasks/archive/2026/DK-644.md) |
+| DK-641 | Слияние гоняет тесты в свежем дереве и чистом окружении | task | P1 | 2026-08-31 | [tasks/archive/2026/DK-641.md](tasks/archive/2026/DK-641.md) |

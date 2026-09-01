@@ -18,7 +18,7 @@ obey=$(command -v obeycheck || true)
 if [ -z "$obey" ]; then
 	command -v go >/dev/null ||
 		fail "шаг 2: провал, нет ни obeycheck в PATH, ни go для сборки из дерева"
-	GOWORK=off go build -o "$work/obeycheck" ./tools/obeycheck ||
+	( cd tools/obeycheck && GOWORK=off go build -o "$work/obeycheck" . ) ||
 		fail "шаг 2: провал, obeycheck из дерева не собрался"
 	obey="$work/obeycheck"
 fi

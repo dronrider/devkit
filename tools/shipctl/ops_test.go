@@ -1036,6 +1036,7 @@ func TestLoadBoardAndReview(t *testing.T) {
 // пушем. Окружение вызова собирает общий пакет (DK-697), и проверяется оно
 // здесь так, как его видит рубеж: хук отбивает пуш без переменной.
 func TestPushCarriesGateEnv(t *testing.T) {
+	isolateGit(t)
 	root, _ := setup(t, rowInProg, "")
 	addRemote(t, root)
 	hook := filepath.Join(root, ".git", "hooks", "pre-push")

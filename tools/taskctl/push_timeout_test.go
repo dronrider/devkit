@@ -10,6 +10,18 @@ import (
 	"time"
 )
 
+// isolateGit уносит тест из дома машины. Настоящий глобальный credential.helper
+// (тот же osxkeychain) встал бы в цепочку помощников впереди тестового спящего и
+// полез бы в живую связку ключей прямо во время теста, который чинит ровно этот
+// класс поломки. Образец в internal/gitrun, функция initRepo.
+func isolateGit(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, "gitconfig"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(home, "gitconfig"))
+}
+
 // hangingCredentials поднимает remote, который просит представиться, и
 // помощника учётки, который вместо ответа спит. Так себя ведёт связка ключей
 // macOS в сессии без человека: диалог висит, git ждёт его вечно.
@@ -35,6 +47,7 @@ func hangingCredentials(t *testing.T, root string) {
 // вставала намертво, коммиты копились локально и соседи ловили конфликты на
 // отставшем remote.
 func TestPushDoesNotHangOnCredentials(t *testing.T) {
+	isolateGit(t)
 	root := setup(t)
 	gitSetup(t, root)
 	hangingCredentials(t, root)

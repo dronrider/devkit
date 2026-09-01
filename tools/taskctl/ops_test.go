@@ -1423,6 +1423,7 @@ func TestAddBlockedRejected(t *testing.T) {
 // пушем. Окружение вызова собирает общий пакет (DK-697), и проверяется оно
 // здесь так, как его видит рубеж: хук отбивает пуш без переменной.
 func TestPushCarriesGateEnv(t *testing.T) {
+	isolateGit(t)
 	root := setup(t)
 	gitSetup(t, root)
 	remote := t.TempDir()

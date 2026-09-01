@@ -22,6 +22,14 @@ _spec.loader.exec_module(hook)
 
 HEADLESS = {"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}
 LIVE = {"CLAUDE_CODE_ENTRYPOINT": "claude-vscode"}
+# Окружение окна конвейера, снятое замером DK-691: entrypoint и имя сессии тут
+# чужие, они достались от той сессии, из которой однажды завели tmux-сервер, а
+# своя тут только метка подъёмщика.
+PIPELINE = {"CLAUDE_CODE_ENTRYPOINT": "claude-vscode",
+            "CLAUDECODE": "1",
+            "CLAUDE_CODE_SESSION_ID": "8d1da496-0c87-450c-b62e-da1d0759e152",
+            "DEVKIT_HEADLESS": "дашборд",
+            "DEVKIT_TMUX": "task-DK-658"}
 
 
 def run(*args, **kw):
@@ -66,6 +74,20 @@ class TestSessionKind(unittest.TestCase):
         sign = hook.headless({"CLAUDE_CODE_ENTRYPOINT": "claude-vscode",
                               "DEVKIT_RUN_DEPTH": "1"})
         self.assertIn("agentctl run", sign)
+
+    def test_pipeline_window_is_headless(self):
+        # Окружение снято замером DK-691 с окна, поднятого в tmux ровно так, как
+        # его поднимает дашборд: tmux-сервер раздаёт новым окнам окружение той
+        # сессии, из которой его завели, вместе с её entrypoint и её именем
+        # сессии. Метку подъёмщика такое наследство не подделывает, и по ней
+        # конвейер опознаётся headless.
+        sign = hook.headless({"CLAUDE_CODE_ENTRYPOINT": "claude-vscode",
+                              "CLAUDECODE": "1",
+                              "CLAUDE_CODE_SESSION_ID": "8d1da496-0c87-450c-b62e-da1d0759e152",
+                              "DEVKIT_HEADLESS": "дашборд",
+                              "DEVKIT_TMUX": "task-DK-658"})
+        self.assertIn("DEVKIT_HEADLESS", sign)
+        self.assertIn("дашборд", sign)
 
 
 class TestBackgroundField(unittest.TestCase):
@@ -118,6 +140,22 @@ class TestHookRefusal(unittest.TestCase):
                 input=event("Bash", command="sleep 300", run_in_background=True))
         self.assertEqual(r.returncode, 2)
         self.assertIn("DEVKIT_RUN_DEPTH", r.stderr)
+
+    def test_pipeline_background_bash_is_refused(self):
+        # Канал DK-658: фоновый прогон, поднятый головой конвейера за полминуты
+        # до её выхода. Рубеж пропустил его молча, и прогон умер на середине.
+        r = run("--hook", env=PIPELINE,
+                input=event("Bash", command="obeycheck -k 3", run_in_background=True))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("DEVKIT_HEADLESS", r.stderr)
+
+    def test_pipeline_plain_delegation_is_refused(self):
+        # Канал DK-655: исполнитель, поднятый без поля run_in_background, то
+        # есть асинхронно по дефолту харнеса. Голова вышла раньше его отчёта.
+        r = run("--hook", env=PIPELINE,
+                input=event("Agent", subagent_type="exec-high", description="DK-655"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("Agent", r.stderr)
 
     def test_live_session_keeps_background(self):
         r = run("--hook", env=LIVE,
@@ -208,6 +246,12 @@ class TestWhy(unittest.TestCase):
         r = run("--why", env=HEADLESS)
         self.assertEqual(r.returncode, 0)
         self.assertIn("headless", r.stdout)
+
+    def test_pipeline_session_is_named_headless(self):
+        r = run("--why", env=PIPELINE)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("headless", r.stdout)
+        self.assertIn("DEVKIT_HEADLESS", r.stdout)
 
     def test_bare_call_shows_usage(self):
         r = run(env=HEADLESS)

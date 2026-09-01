@@ -259,14 +259,14 @@ func TestDashboardSmokeChatGroupOrder(t *testing.T) {
 	if !res.OK {
 		t.Fatalf("смоук списка чатов упал: %s\nrows=%+v\nheads=%v", res.Error, res.Rows, res.Heads)
 	}
-	if got := strings.Join(res.Heads, "|"); got != "текущий разговор|живые|сегодня" {
-		t.Errorf("заголовки групп: %q, ожидал «текущий разговор|живые|сегодня»", got)
+	if got := strings.Join(res.Heads, "|"); got != "открытый чат|активные|сегодня" {
+		t.Errorf("заголовки групп: %q, ожидал «открытый чат|активные|сегодня»", got)
 	}
 	if len(res.Rows) != 3 {
 		t.Fatalf("строк списка: %d, ожидал 3: %+v", len(res.Rows), res.Rows)
 	}
 	if !res.Rows[0].On || res.Rows[0].Title != dead2Title {
-		t.Errorf("первая строка не текущий разговор: %+v", res.Rows[0])
+		t.Errorf("первая строка не открытый чат: %+v", res.Rows[0])
 	}
 	if res.Rows[1].Title != live1Title {
 		t.Errorf("вторая строка не живая трёхдневная сессия: %+v", res.Rows[1])

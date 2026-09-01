@@ -1222,8 +1222,8 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .cdrow:hover{border-color:var(--line2);background:var(--bg2)}
 .cdrow.on{border-color:var(--acc);background:var(--bg2)}
 .cdrow b{font:600 12px/1.35 var(--sans);color:var(--tx);overflow-wrap:anywhere;padding-right:24px}
-.cdday{padding:5px 2px 1px;font:600 10.5px var(--sans);color:var(--tx3);text-transform:uppercase;letter-spacing:0.04em}
-.cdrows .cdday:first-child{padding-top:1px}
+.cdday{padding:2px 2px 0;font:600 10px var(--sans);color:var(--tx3);text-transform:uppercase;letter-spacing:0.04em}
+.cdrows .cdday:first-child{padding-top:0}
 .cdmore{margin-top:2px;padding:7px 9px;border:1px dashed var(--line2);border-radius:9px;background:transparent;color:var(--tx2);font:400 12px var(--sans);cursor:pointer}
 .cdmore:hover{border-color:var(--acc);color:var(--tx)}
 .csub{width:100%;display:flex;align-items:center;flex-wrap:wrap;gap:8px;font:400 11px var(--mono);color:var(--tx3);overflow-wrap:anywhere;margin-top:6px}

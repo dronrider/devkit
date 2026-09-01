@@ -7666,19 +7666,19 @@ function chatDayHead(day) {
   return Number(parts[0]) === now.getFullYear() ? said : said + " " + parts[0];
 }
 
-// chatGroups раскладывает список по группам: текущий разговор своей группой
-// сверху, до него не надо долистывать, под ним подписанная группа живых, а
-// дальше группы по дням, сегодня, вчера и датой. Подпись у живых не лишняя:
-// без неё трёхдневный живой чат вставал выше сегодняшнего мёртвого, и
+// chatGroups раскладывает список по группам: открытый чат своей группой
+// сверху, до него не надо долистывать, под ним подписанная группа активных,
+// а дальше группы по дням, сегодня, вчера и датой. Подпись у активных не
+// лишняя: без неё трёхдневный живой чат вставал выше сегодняшнего мёртвого, и
 // заголовок «сегодня» уезжал вниз, будто сортировка сбоила, хотя порядок по
 // времени был верным всегда (замечание пользователя, разбор DK-656).
 function chatGroups(list, current) {
   const out = [];
   const rest = current ? list.filter((c) => c.id !== current) : list;
   const top = current ? list.find((c) => c.id === current) : null;
-  if (top) out.push({ head: "текущий разговор", rows: [top] });
+  if (top) out.push({ head: "открытый чат", rows: [top] });
   const live = rest.filter((c) => c.state === "live");
-  if (live.length) out.push({ head: "живые", rows: live });
+  if (live.length) out.push({ head: "активные", rows: live });
   let day = null;
   let bag = null;
   for (const c of rest) {

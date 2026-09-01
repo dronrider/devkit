@@ -1510,6 +1510,45 @@ func (s *smoke) stepHarnessRun() (string, error) {
 		v.Message, smokeClientTwo, sess.Sessions[0].ID, refusal.Error), nil
 }
 
+// stepStopHook: замечание стоп-хука (DK-693) харнес кладёт в транскрипт
+// репликой роли user с префиксом, а лента обязана отдать её служебкой с
+// подписью «стоп-хук», а не безымянной серой строкой. Шаг идёт после запуска
+// работы: транскрипт headless-сессии к этому времени уже написан клиентом, и
+// реплика дописывается в него хвостом, как дописал бы её настоящий стоп-хук.
+func (s *smoke) stepStopHook() (string, error) {
+	const said = "Остановись и прогони тесты"
+	line := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},"timestamp":"2026-08-10T10:00:03.000Z"}`,
+		stopHookPrefix+said)
+	path := filepath.Join(s.harnessJournal(), smokeHeadlessID+".jsonl")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", fmt.Errorf("транскрипта headless-сессии нет: %v", err)
+	}
+	if _, err := f.WriteString(line + "\n"); err != nil {
+		f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	var talk struct {
+		Items []reply `json:"items"`
+	}
+	if err := s.call("GET", "/api/projects/demo/sessions/"+smokeHeadlessID, "", http.StatusOK, &talk); err != nil {
+		return "", err
+	}
+	for _, it := range talk.Items {
+		if it.Note == stopHookWord {
+			if it.Role != roleNote || it.Text != said {
+				return "", fmt.Errorf("стоп-хук разобрался, но показан не тем блоком: %+v", it)
+			}
+			return "реплика с префиксом «" + strings.TrimSuffix(stopHookPrefix, " ") +
+				"» стоит в ленте служебкой с подписью «" + stopHookWord + "»", nil
+		}
+	}
+	return "", fmt.Errorf("записи стоп-хука в ленте нет: %+v", talk.Items)
+}
+
 // stepChatStart: новый чат по задаче поднимается поверх живого конвейера той же
 // задачи и получает своё имя chat-<ID>-<n> (DK-436). Шаг идёт после запуска
 // задачи нарочно: tmux-сессия task-<ID> к этому времени жива, и по ответу
@@ -1802,6 +1841,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"сообщение при стоящем цикле", s.stepIdleMessage},
 		{"закрытие принятой задачи без витка", s.stepCloseAccepted},
 		{"выбор подписки доезжает до команды", s.stepHarnessRun},
+		{"реплика стоп-хука стоит служебкой с подписью", s.stepStopHook},
 		{"новый чат по задаче поверх живого конвейера", s.stepChatStart},
 		{"удаление черновика с причиной", s.stepDropDraft},
 		{"пересчёт ранга перетаскиванием доехал до доски", s.stepDragRank},

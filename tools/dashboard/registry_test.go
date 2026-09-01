@@ -436,7 +436,8 @@ func TestLaunchEnvSameForEveryOrder(t *testing.T) {
 	}
 	orders := map[string]string{
 		"разговор": chatCmd(env, "opus", "", "привет", execRotateDefault, nil, "agentctl"),
-		"конвейер": sessionCommand("agentctl", nil, env, "выполни XR-7", "XR-7", "task-XR-7", "opus"),
+		"конвейер": sessionCommand("agentctl", "task-run.py", nil, env, "выполни XR-7",
+			"продолжай XR-7", "XR-7", "/тмп/проект", "проект", "opus"),
 		"разбор":   groomCmd(env, "разбери XR-7", nil, "opus"),
 	}
 	for name, cmd := range orders {

@@ -47,6 +47,21 @@ func writeGoalRunFake(t *testing.T, root, pyBody string) {
 	}
 }
 
+// writeTaskRunFake кладёт фикстуру оболочки конвейера задачи в тот же
+// синтетический чекаут devkit. Настоящей оболочке тут работать не даёт стенд:
+// tmux фиктивный, и до запуска команды сессии дело не доходит, а искомость
+// файла дашборд проверяет до подъёма окна.
+func writeTaskRunFake(t *testing.T, root string) {
+	t.Helper()
+	dir := filepath.Join(root, "devkit", "kit", "skills", "board-task")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "task-run.py"), []byte("import sys\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // goalRunOKBody отвечает как настоящая оболочка при удачном подъёме цикла.
 func goalRunOKBody(callsLog string) string {
 	return fmt.Sprintf(`import sys
@@ -68,6 +83,9 @@ func runsEnv(t *testing.T, sessions string) (*testEnv, *http.Client, string) {
 	// Раскладка подписок и вердикт приезжают фикстурой: живой agentctl отвечал
 	// бы по машине разработчика, и ярус запуска ездил бы от неё.
 	writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
+	// Оболочка конвейера кладётся каждому стенду: без неё запуск задачи
+	// отказывает, и это отдельный случай со своим тестом.
+	writeTaskRunFake(t, filepath.Dir(e.proj))
 	return e, e.loggedClient(t), tmuxLog
 }
 
@@ -216,30 +234,47 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 				}
 			}
 			got := readFile(t, tmuxLog)
-			// Промпт уходит одной заквоченной строкой: tmux склеивает хвост
+			// Заказ уходит одной заквоченной строкой: tmux склеивает хвост
 			// new-session пробелами и отдаёт шеллу.
-			// Пары окружения едут в начале команды те же, что у диалога: их
-			// собирает одна сборка на все дороги подъёма (launchEnv). Имя
-			// сессии для реестра чатов, настоящий HOME (без него agentctl exec
-			// разворачивал тильду раскладки в подложном доме демона, и клиент
-			// второй подписки отвечал «Not logged in») и заглушка опроса
-			// фокуса.
-			want := "new-session -d -s task-" + tc.id + " -c " + e.proj +
-				" DEVKIT_NO_FOCUS=1 HOME='" + realHome() + "'" +
-				" DEVKIT_TASK='" + tc.id + "' DEVKIT_TMUX='task-" + tc.id + "'" +
-				// Правило плана едет в том же заказе: по нему дашборд рисует
-				// деления кольца и блок «План агента». Запасной адрес называет
-				// имя tmux-сессии дословно: в контуре второй подписки
-				// CLAUDE_CODE_SESSION_ID пуст, и агент DK-269 разыскивал свой
-				// ID десяток ходов.
-				// Ярус вердикта называется явной моделью: без флага клиент
-				// брал свой дефолт, а он бывает верхним ярусом, которого
-				// задаче никто не назначал.
-				" claude --model 'модель-pro' -p '" + tc.prompt + " " + planRule +
+			// Правило плана едет в том же заказе: по нему дашборд рисует
+			// деления кольца и блок «План агента». Запасной адрес называет имя
+			// tmux-сессии дословно: в контуре второй подписки
+			// CLAUDE_CODE_SESSION_ID пуст, и агент DK-269 разыскивал свой ID
+			// десяток ходов.
+			rules := " " + planRule +
 				" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-" + tc.id + ".json. " +
-				channelRule + "'"
-			if !strings.Contains(got, want) {
-				t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
+				channelRule
+			for _, want := range []string{
+				// Пары окружения едут в начале команды те же, что у диалога: их
+				// собирает одна сборка на все дороги подъёма (launchEnv). Метка
+				// печатного режима впереди них, а за нею чистка чужого
+				// наследства: tmux-сервер раздаёт новым окнам окружение той
+				// сессии, из которой его завели, и рубеж синхронности считал
+				// конвейер живым окном (DK-691).
+				"new-session -d -s task-" + tc.id + " -c " + e.proj + " " + headlessMark,
+				dropForeign(),
+				// Имя сессии для реестра чатов, настоящий HOME (без него
+				// agentctl exec разворачивал тильду раскладки в подложном доме
+				// демона, и клиент второй подписки отвечал «Not logged in») и
+				// заглушка опроса фокуса.
+				"DEVKIT_NO_FOCUS=1 HOME='" + realHome() + "'" +
+					" DEVKIT_TASK='" + tc.id + "' DEVKIT_TMUX='task-" + tc.id + "'",
+				// Голову поднимает оболочка проходов, а не клиент напрямую:
+				// печатная сессия живёт один ход, и без оболочки конвейер
+				// кончался на первом же ожидании.
+				"kit/skills/board-task/task-run.py' '" + tc.id + "' -C '" + e.proj + "' --project 'demo'",
+				" --order '" + tc.prompt + rules + "'",
+				// Заказ следующих проходов всегда «продолжай»: строку к тому
+				// времени уже двигали, и начинать её заново нельзя.
+				" --again 'Продолжай выполнение " + tc.id + rules + "'",
+				// Ярус вердикта называется явной моделью: без флага клиент брал
+				// свой дефолт, а он бывает верхним ярусом, которого задаче никто
+				// не назначал.
+				" -- claude --model 'модель-pro'",
+			} {
+				if !strings.Contains(got, want) {
+					t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
+				}
 			}
 		})
 	}
@@ -290,14 +325,18 @@ func TestRunStartOnChosenHarness(t *testing.T) {
 	// launchd он системный, и утилит devkit в нём может не быть. HOME в заказе
 	// настоящий: exec разворачивает тильду раскладки харнеса, и в подложном
 	// доме демона CLAUDE_CONFIG_DIR второй подписки указывал в пустой каталог.
-	want := "new-session -d -s task-XR-002 -c " + e.proj +
-		" DEVKIT_NO_FOCUS=1 HOME='" + realHome() + "'" +
-		" DEVKIT_TASK='XR-002' DEVKIT_TMUX='task-XR-002' '" + filepath.Join(e.bin, "agentctl") +
-		"' exec --harness 'втораяtest' -- 'клиент-2' --permission-mode auto -p 'Выполни XR-002 " + planRule +
-		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-002.json. " +
-		channelRule + "'"
-	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
+	// Клиент подписки стоит хвостом за оболочкой проходов: заказ ему приставляет
+	// она, и обвязка подписки от этого не меняется.
+	want := "-- '" + filepath.Join(e.bin, "agentctl") +
+		"' exec --harness 'втораяtest' -- 'клиент-2' --permission-mode auto"
+	got := readFile(t, tmuxLog)
+	if !strings.Contains(got, want) {
 		t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
+	}
+	if !strings.Contains(got, "--order 'Выполни XR-002 "+planRule+
+		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-002.json. "+
+		channelRule+"'") {
+		t.Errorf("заказ подписки собран не так:\n%s", got)
 	}
 }
 
@@ -323,8 +362,8 @@ func TestRunStartRecordsHarnessModel(t *testing.T) {
 	}
 }
 
-// Без выбора всё остаётся как было: прежний клиент и прежняя команда, без
-// обёртки. Экран, который списка не прочитал, работает ровно как до задачи.
+// Без выбора клиент остаётся прежним, без обвязки подписки: экран, который
+// списка не прочитал, работает ровно как до задачи про подписки.
 func TestRunStartWithoutHarnessKeepsOldWay(t *testing.T) {
 	e, c, tmuxLog := runsEnv(t, "")
 	writeAgentctlFake(t, e.bin, harnessJSONFixture)
@@ -333,10 +372,13 @@ func TestRunStartWithoutHarnessKeepsOldWay(t *testing.T) {
 		t.Fatalf("запуск без выбора: %d %s", resp.StatusCode, text)
 	}
 	got := readFile(t, tmuxLog)
-	if !strings.Contains(got, " claude -p 'Выполни XR-002 "+planRule+
+	if !strings.Contains(got, "--order 'Выполни XR-002 "+planRule+
 		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-002.json. "+
 		channelRule+"'") {
 		t.Errorf("запуск без выбора пошёл не прежней дорогой:\n%s", got)
+	}
+	if !strings.Contains(got, "-- claude") {
+		t.Errorf("клиент без подписки собран не так:\n%s", got)
 	}
 	if strings.Contains(got, "agentctl exec") {
 		t.Errorf("запуск без выбора завернулся в exec:\n%s", got)
@@ -1064,6 +1106,7 @@ func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
 			writeTmuxFake(t, e.bin, tmuxLog, "")
 			writeScript(t, e.bin, "claude", "exit 0")
 			writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
+			writeTaskRunFake(t, filepath.Dir(e.proj))
 			c := e.loggedClient(t)
 
 			resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", fmt.Sprintf(`{"id": %q}`, tc.id))
@@ -1074,7 +1117,7 @@ func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
 			if !strings.Contains(text, `"kind":"task"`) {
 				t.Errorf("вид приёмки увёл запуск мимо сессии: %s", text)
 			}
-			if got := readFile(t, tmuxLog); !strings.Contains(got, "claude --model 'модель-pro' -p '"+tc.prompt+" "+planRule+
+			if got := readFile(t, tmuxLog); !strings.Contains(got, "--order '"+tc.prompt+" "+planRule+
 				" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-"+tc.id+".json. "+
 				channelRule+"'") {
 				t.Errorf("сессия поднята не с тем заказом:\n%s\nждал %q", got, tc.prompt)
@@ -1135,7 +1178,7 @@ func TestRunStartTierFromVerdict(t *testing.T) {
 			t.Errorf("ответ не назвал ярус вердикта и его источник: %s", text)
 		}
 		got := readFile(t, tmuxLog)
-		if !strings.Contains(got, "claude --model 'модель-base' -p") {
+		if !strings.Contains(got, "-- claude --model 'модель-base'") {
 			t.Errorf("команда конвейера поехала не ярусом вердикта: %s", got)
 		}
 	})
@@ -1154,7 +1197,7 @@ func TestRunStartTierFromVerdict(t *testing.T) {
 		if !strings.Contains(text, "яруса не назвал") {
 			t.Errorf("подмена яруса прошла молча, а её обязано быть видно: %s", text)
 		}
-		if got := readFile(t, tmuxLog); !strings.Contains(got, "claude --model 'модель-pro' -p") {
+		if got := readFile(t, tmuxLog); !strings.Contains(got, "-- claude --model 'модель-pro'") {
 			t.Errorf("откатный ярус не доехал до команды: %s", got)
 		}
 	})

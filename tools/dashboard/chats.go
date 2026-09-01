@@ -1557,6 +1557,49 @@ func chatCmd(env, model, resume, text string, rotate int, h *Harness, agentctl s
 // Задачу и имя tmux-сессии поднятая сессия
 // называет о себе в реестре сама, хуком старта.
 func (s *server) launchEnv(id, sess string) string {
+	// Метка подъёмщика едет впереди общих пар: сессия, поднятая с экрана, это
+	// печатный режим, и сказать про это обязан тот, кто её поднял. Клиентской
+	// переменной тут мало, разбор в launchPairs и в рубеже синхронности
+	// (hooks/check-background.py).
+	return headlessMark + " " + s.launchPairs(id, sess)
+}
+
+// headlessMark это признак печатной сессии для рубежа синхронности. Значение
+// называет подъёмщика: отказ рубежа читает человек, и «поднял дашборд» ему
+// говорит больше, чем голая единица.
+const headlessMark = "DEVKIT_HEADLESS=дашборд"
+
+// foreignVars это переменные чужой агентской сессии, которые поднятая сессия
+// обязана не унаследовать. Дорога наследства одна и неочевидная: окно
+// поднимается в tmux, а tmux-сервер переживает ту сессию, из которой его завели
+// однажды, и раздаёт её окружение всем новым окнам. Замер DK-691 снял с нового
+// окна CLAUDE_CODE_ENTRYPOINT=claude-vscode, CLAUDECODE=1,
+// CLAUDE_CODE_CHILD_SESSION=1 и CLAUDE_CODE_SESSION_ID сессии, кончившейся
+// сутками раньше. Ценой этому были две умершие работы: рубеж синхронности
+// считал конвейер живым окном и пропускал фоновые вызовы, а голова уносила их с
+// собой. Пустой entrypoint тут и лечение: клиент печатного режима ставит себе
+// sdk-cli сам, когда переменной нет вовсе.
+var foreignVars = []string{
+	"CLAUDE_CODE_ENTRYPOINT", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID",
+	"CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_MESSAGING_SOCKET",
+	"CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_ENV_FILE",
+	"CLAUDE_PROJECT_DIR", "AI_AGENT",
+}
+
+// dropForeign это голова команды, вычищающая чужое наследство. Пары окружения
+// после неё ставятся как прежде: `env` их и передаёт дальше.
+func dropForeign() string {
+	head := "/usr/bin/env"
+	for _, name := range foreignVars {
+		head += " -u " + name
+	}
+	return head
+}
+
+// launchPairs это общие пары окружения поднятой сессии, без метки печатного
+// режима: ими же поднимается окно входа клиента, а оно живое и фон в нём
+// законен.
+func (s *server) launchPairs(id, sess string) string {
 	env := "DEVKIT_TMUX=" + shQuote(sess) + " "
 	if id != "" {
 		env = "DEVKIT_TASK=" + shQuote(id) + " " + env
@@ -1589,7 +1632,7 @@ func (s *server) launchEnv(id, sess string) string {
 	// разрешение на управление компьютером, заново после каждой пересборки
 	// (находка одиннадцатого круга POC). Уведомления от такой сессии идут как
 	// при неопределённом фокусе, то есть приходят.
-	return noFocusEnv + " " + env
+	return dropForeign() + " " + noFocusEnv + " " + env
 }
 
 // kitBins это утилиты кита, которые поднятая сессия зовёт по имени. По ним

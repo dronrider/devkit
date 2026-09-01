@@ -277,13 +277,6 @@ func claudeMissing() string {
 	return clientMissing(defaultClient)
 }
 
-// sessionCommand собирает команду tmux-сессии конвейера. Без выбранной подписки
-// это прежний `claude -p '<заказ>'`. С выбранной команда заворачивается в
-// `agentctl exec`: пары окружения подписки кладёт он, и значения при этом
-// никуда не уезжают, ни в веб-сервер, ни в панель сессии, которую дашборд
-// показывает на экране (LLD DK-328, решение 3). Собирать пары тут самому нельзя
-// по той же причине: токен и base URL второй подписки поселились бы в процессе,
-// который эти панели и раздаёт.
 // harnessTail это хвост строки журнала про выбранную подписку: по журналу
 // разбирают, куда ушла квота, и запуск без имени от запуска с именем там обязан
 // отличаться.
@@ -303,7 +296,53 @@ func harnessTail(h *Harness) string {
 // отвечал «Not logged in» (живой случай, запуск DK-269 на второй подписке).
 // Окружение приходит доводом, а не собирается тут: собирает его одно место на
 // все дороги подъёма (launchEnv), и звать его в обход сервера некому.
-func sessionCommand(agentctl string, h *Harness, env, prompt, id, sess, model string) string {
+
+// taskRunRel это путь оболочки конвейера задачи внутри чекаута devkit. Ищется
+// она там же и тем же порядком, что оболочка цикла цели.
+const taskRunRel = "kit/skills/board-task/task-run.py"
+
+const taskRunMissing = "task-run.py не нашёлся в корнях конфига (" + taskRunRel +
+	"): поднимать конвейер задачи нечем, нужен чекаут devkit в одном из корней"
+
+func taskRunPath(roots []string) string {
+	if tree := devkitOwnTree(); tree != "" {
+		if p := filepath.Join(tree, filepath.FromSlash(taskRunRel)); isFile(p) {
+			return p
+		}
+	}
+	return inRoots(roots, taskRunRel)
+}
+
+// taskRunHead это голова команды конвейера: оболочка с задачей, корнем и
+// заказами обоих сортов. Заказ первого прохода зависит от статуса строки, заказ
+// следующих всегда «продолжай»: строку к тому времени уже двигали, и начинать
+// её заново нельзя. Слова обоих заказов сочиняет дашборд и только он, оболочка
+// их не пересказывает.
+func taskRunHead(runner, id, root, order, again, project string) string {
+	return "python3 " + shQuote(runner) + " " + shQuote(id) +
+		" -C " + shQuote(root) +
+		" --project " + shQuote(project) +
+		" --order " + shQuote(order) +
+		" --again " + shQuote(again) + " --"
+}
+
+// sessionCommand собирает команду tmux-сессии конвейера: оболочка проходов, а за
+// нею клиент без заказа. Заказ каждому проходу оболочка приставляет сама, теми
+// словами, что пришли ей отсюда. Прежде тут стоял голый `claude -p '<заказ>'`, и
+// конвейер жил ровно один ход головы: ход кончался, процесс выходил, окно
+// закрывалось, а задача оставалась в работе (DK-691).
+func sessionCommand(agentctl, runner string, h *Harness, env, order, again, id, root, project, model string) string {
+	return env + taskRunHead(runner, id, root, order, again, project) + " " +
+		clientCommand(agentctl, h, model)
+}
+
+// clientCommand это клиент с флагами и без заказа. Без выбранной подписки это
+// `claude`, с выбранной команда заворачивается в `agentctl exec`: пары окружения
+// подписки кладёт он, и значения при этом никуда не уезжают, ни в веб-сервер, ни
+// в панель сессии, которую дашборд показывает на экране (LLD DK-328, решение 3).
+// Собирать пары тут самому нельзя по той же причине: токен и base URL второй
+// подписки поселились бы в процессе, который эти панели и раздаёт.
+func clientCommand(agentctl string, h *Harness, model string) string {
 	if h == nil {
 		client := defaultClient
 		// Ярус называется явно: без флага клиент берёт свой дефолт, и работа
@@ -311,7 +350,7 @@ func sessionCommand(agentctl string, h *Harness, env, prompt, id, sess, model st
 		if model != "" {
 			client += " --model " + shQuote(model)
 		}
-		return env + client + " -p " + shQuote(prompt)
+		return client
 	}
 	// agentctl зовётся полным путём: сессия наследует PATH дашборда, а под
 	// launchd он системный, и утилиты devkit в нём может не быть вовсе. Клиент
@@ -329,8 +368,8 @@ func sessionCommand(agentctl string, h *Harness, env, prompt, id, sess, model st
 	if model != "" {
 		tier = " --model " + shQuote(model)
 	}
-	return env + shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
-		shQuote(h.Bin) + " --permission-mode auto" + tier + " -p " + shQuote(prompt)
+	return shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
+		shQuote(h.Bin) + " --permission-mode auto" + tier
 }
 
 func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
@@ -522,9 +561,20 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if own != nil && own.Default {
 		model = own.tierModel(tier)
 	}
+	// Оболочка проходов ищется до подъёма окна: без неё конвейер прожил бы один
+	// ход головы, и отказать тут честнее, чем поднять работу, которая умрёт на
+	// первом же ожидании.
+	tr := taskRunPath(s.cfg.Roots)
+	if tr == "" {
+		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, taskRunMissing)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": taskRunMissing})
+		return
+	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		sessionCommand(binPath(agentctlBin), harness, s.launchEnv(id, sess),
-			runPrompt(row.Sect, id)+" "+orderRules(sess), id, sess, model)); err != nil {
+		sessionCommand(binPath(agentctlBin), tr, harness, s.launchEnv(id, sess),
+			runPrompt(row.Sect, id)+" "+orderRules(sess),
+			runPrompt("in-progress", id)+" "+orderRules(sess),
+			id, found.Path, found.Name, model)); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})

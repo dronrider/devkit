@@ -396,8 +396,26 @@ else:
         f.write("%%s цикл цели %%s начат прогоном smoke\n" %% (stamp, gid))
     print("цикл цели %%s поднят в tmux-сессии goal-%%s" %% (gid, gid))
 `, pyQuote(sessions))
-	return smokeWrite(filepath.Join(s.root, "devkit", "kit", "skills", "goal-loop", "goal-run.py"),
-		goalRun, 0o755)
+	if err := smokeWrite(filepath.Join(s.root, "devkit", "kit", "skills", "goal-loop", "goal-run.py"),
+		goalRun, 0o755); err != nil {
+		return err
+	}
+	// Оболочка конвейера: на стенде она поднимает голову один раз и заказом
+	// первого прохода. Проходы, доска и журнал у настоящей оболочки проверяются
+	// своей самопроверкой, а тут смотрят, что подписка и заказ доезжают до
+	// клиента через неё.
+	taskRun := `#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+
+args = sys.argv[1:]
+tail = args[args.index("--") + 1:] if "--" in args else []
+order = args[args.index("--order") + 1] if "--order" in args else ""
+sys.exit(subprocess.run(tail + ["-p", order]).returncode)
+`
+	return smokeWrite(filepath.Join(s.root, "devkit", "kit", "skills", "board-task", "task-run.py"),
+		taskRun, 0o755)
 }
 
 // smokeHarnessJSON это машинный вид agentctl harness --json: две включённые

@@ -785,6 +785,21 @@ func suggestMap(l *layers, name string) {
 	s.Map, s.Suggested = m, true
 }
 
+// awayReach это хвост строки назначения про достижимость чужого харнеса.
+// Уехавшая ступень поднимается только командой: спавн субагента живёт внутри
+// сессии инструмента, и снаружи его не дёрнуть. Достижимость поэтому видна
+// заранее, до первого отказа run, а профиль без команды называется прямо.
+func awayReach(p *profile) string {
+	if p == nil {
+		return ""
+	}
+	d := p.section("delegate")
+	if len(d.arr("command")) > 0 {
+		return "поднимается командой [delegate] его профиля"
+	}
+	return fmt.Sprintf("а поднять его снаружи нечем: [delegate] mode = %s, команды профиль не назвал, и делегирование в него отказное", quoteTOML(d.str("mode")))
+}
+
 // unmapHint это хвост хинта про ненастроенную лестницу: чинится она по-разному,
 // смотря стоит ли секция харнеса в машинном конфиге.
 func unmapHint(l *layers, name string) string {
@@ -1004,7 +1019,11 @@ type tierModels struct {
 	// Режим делегирования по харнесам назначения: им выбирается слово записи в
 	// файле задачи, субагент или подпроцесс.
 	Delegate map[string]string
-	Note     string
+	// Кто из харнесов назначения назвал команду внешнего подъёма. Режим один
+	// достижимости не решает: харнес со спавном внутри сессии выходит наружу
+	// этой командой, и уехавшая ступень уходит в него подпроцессом.
+	Command map[string]bool
+	Note    string
 }
 
 // assign отдаёт назначение яруса, если разворачивать его есть чем. Битое
@@ -1083,7 +1102,15 @@ func (m tierModels) shiftBlock(tier string) string {
 // word это слово записи в файле задачи: режим делегирования харнеса-исполнителя
 // говорит, субагентом работа уходит или подпроцессом.
 func (m tierModels) word(tier string) string {
-	if a, ok := m.assign(tier); ok && m.Delegate[a.Harness] == "cli" {
+	a, ok := m.assign(tier)
+	switch {
+	case !ok:
+		return "субагент"
+	case m.Delegate[a.Harness] == "cli":
+		return "подпроцесс"
+	case m.away(tier) && m.Command[a.Harness]:
+		// Уехавшая ступень харнеса со спавном внутри сессии поднимается той же
+		// командой снаружи, то есть подпроцессом, как бы ни звался режим.
 		return "подпроцесс"
 	}
 	return "субагент"
@@ -1170,10 +1197,13 @@ func resolveHarnessContext(start, want string) harnessContext {
 	}
 	if s := l.Setup[r.Name]; s.mapped() {
 		modes := map[string]string{}
+		cmds := map[string]bool{}
 		for name, p := range l.Profiles {
-			modes[name] = p.section("delegate").str("mode")
+			d := p.section("delegate")
+			modes[name] = d.str("mode")
+			cmds[name] = len(d.arr("command")) > 0
 		}
-		hc.Models = tierModels{Map: s.Map, Active: r.Name, Delegate: modes}
+		hc.Models = tierModels{Map: s.Map, Active: r.Name, Delegate: modes, Command: cmds}
 	} else {
 		hc.Models = tierModels{Note: fmt.Sprintf("харнес %s не настроен, маппинга ярусов нет; %s", r.Name, unmapHint(l, r.Name))}
 	}
@@ -1421,6 +1451,9 @@ func cmdHarness(start, want string) (string, error) {
 				line := fmt.Sprintf("назначение: ярус %s уезжает в %s", tier, a.Harness)
 				if !inList(l.Enabled, a.Harness) {
 					line += ", а он не в списке включённых: правила, хуки и скиллы devkit ему не раскладываются"
+				}
+				if tail := awayReach(l.Profiles[a.Harness]); tail != "" {
+					line += ", " + tail
 				}
 				fmt.Fprintf(&b, "%s\n", line)
 			}

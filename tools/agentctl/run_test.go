@@ -122,6 +122,17 @@ mode = "native"
 [quota]
 `
 
+// nativeCmdProfile это харнес, назвавший обе дороги сразу: спавн внутри своей
+// сессии для домашней ступени и команду для подъёма снаружи.
+const nativeCmdProfile = `[delegate]
+mode = "native"
+command = ["/bin/sh", "-c", "echo model={model} effort={effort} harness=$DEVKIT_HARNESS pwd=$(pwd)"]
+
+[hooks]
+
+[quota]
+`
+
 const noneProfile = `[delegate]
 mode = "none"
 
@@ -227,8 +238,9 @@ func TestRunNative(t *testing.T) {
 	}
 }
 
-// TestRunNativeAway: уехавшая ступень на native отказная по построению, спавн
-// субагента есть только внутри самого инструмента.
+// TestRunNativeAway: уехавшая ступень отказная у профиля, который назвал один
+// спавн: внутри сессии инструмента он есть, а снаружи дёрнуть его нечем, и
+// команды подъёма профиль не дал.
 func TestRunNativeAway(t *testing.T) {
 	kit := fakeKit(t)
 	writeProfile(t, kit, "echocli", echoProfile)
@@ -239,10 +251,58 @@ func TestRunNativeAway(t *testing.T) {
 	if code != codeNothingToDelegate {
 		t.Fatalf("код возврата %d, жду %d: %s", code, codeNothingToDelegate, out)
 	}
-	for _, want := range []string{"делегировать нечем", "уезжает в nativeone", "native"} {
+	for _, want := range []string{"делегировать нечем", "уезжает в nativeone", "native", "профиль", "не назвал"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("в выводе нет %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestRunNativeAwayCommand: ступень уезжает в харнес, который назвал и спавн, и
+// команду. Режим достижимости не решает: снаружи такой харнес поднимается
+// командой, и работа уходит в подпроцесс, а не в отказ.
+func TestRunNativeAwayCommand(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "echocli", echoProfile)
+	writeProfile(t, kit, "nativecmd", nativeCmdProfile)
+	writeMachine(t, kit, "enabled = [\"echocli\"]\ndefault = \"echocli\"\n\n[echocli]\nmini = \"nativecmd:чужая\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
+	root := writeBoard(t)
+	work := realPath(t, t.TempDir())
+	code, out := runOut(t, root, "T-001", roleExec, work)
+	if code != 0 {
+		t.Fatalf("код возврата %d, жду 0: %s", code, out)
+	}
+	for _, want := range []string{"делегирование: команда снаружи (харнес nativecmd",
+		"model=чужая", "effort=low", "harness=nativecmd", "pwd=" + work,
+		"делегат вернулся: задача T-001, харнес nativecmd"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("в выводе нет %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "спавнить субагента") {
+		t.Fatalf("уехавшая ступень уходит подпроцессом, а не инструкцией спавна:\n%s", out)
+	}
+}
+
+// TestRunNativeHomeCommand: у того же профиля домашняя ступень остаётся за
+// спавном. Команда это дорога наружу, и поднимать ею свою же сессию значило бы
+// платить второй сессией за работу, которую диспетчер делает субагентом.
+func TestRunNativeHomeCommand(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "nativecmd", nativeCmdProfile)
+	writeMachine(t, kit, "enabled = [\"nativecmd\"]\ndefault = \"nativecmd\"\n\n[nativecmd]\nmini = \"cheap\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
+	root := writeBoard(t)
+	code, out := runOut(t, root, "T-001", roleExec, "")
+	if code != 0 {
+		t.Fatalf("код возврата %d, жду 0: %s", code, out)
+	}
+	for _, want := range []string{"делегирование: native", "спавнить субагента: модель cheap"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("в выводе нет %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "подпроцесс") {
+		t.Fatalf("домашняя ступень подпроцессом не поднимается:\n%s", out)
 	}
 }
 

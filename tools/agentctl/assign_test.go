@@ -60,6 +60,19 @@ pro = "opus"
 max = "fable"
 `
 
+// backMachine это лестница, у которой дорогая ступень уезжает обратно на первую
+// подписку: диспетчер сидит на второй, где окно отрастает само, а недельную
+// квоту тратит только то, что без неё не делается.
+const backMachine = `default = "glm-code"
+enabled = ["claude-code", "glm-code"]
+
+[glm-code]
+mini = "glm-5.3-flash"
+base = "claude-code:opus"
+pro = "glm-5.3"
+max = "glm-5.3"
+`
+
 const homeMachine = `default = "claude-code"
 enabled = ["claude-code"]
 
@@ -329,14 +342,22 @@ func TestRecordAssignment(t *testing.T) {
 	path := filepath.Join(root, "docs", "tasks", "T-005.md")
 
 	cases := []struct {
-		name, machine, want string
+		name, machine, active, want string
 	}{
-		{"домашняя ступень", homeMachine, "- Разработка: субагент sonnet/high по вердикту pick"},
-		{"уехавшая ступень", ladderMachine, "- Разработка: подпроцесс glm-code:glm-5.2/high по вердикту pick"},
+		{"домашняя ступень", homeMachine, "claude-code", "- Разработка: субагент sonnet/high по вердикту pick"},
+		{"уехавшая ступень", ladderMachine, "claude-code", "- Разработка: подпроцесс glm-code:glm-5.2/high по вердикту pick"},
+		// Ступень, уехавшая в харнес со спавном внутри сессии, поднимается его
+		// же командой снаружи, то есть подпроцессом: слово записи идёт по
+		// дороге, которой работа уходит, а не по имени режима.
+		{"ступень уехала обратно", backMachine, "glm-code", "- Разработка: подпроцесс claude-code:opus/high по вердикту pick"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			setupLadder(t, c.machine)
+			// Активный харнес называется явно: прогон идёт и внутри сессии
+			// агента, а она метит себя в окружении, и детект увёл бы лестницу к
+			// той подписке, в которой гоняют тесты.
+			t.Setenv("DEVKIT_HARNESS", c.active)
 			if err := os.WriteFile(path, []byte("# T-005\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -405,6 +426,45 @@ func TestAltSubProfile(t *testing.T) {
 	}
 }
 
+// TestHomeSubProfileCommand: профиль первой подписки называет обе дороги сразу.
+// Тест смотрит на коммитируемый файл, а не на подставной: без команды ступень,
+// уехавшая сюда со второй подписки, встала бы на живой машине, а не в прогоне,
+// и диспетчеру пришлось бы возвращаться в окно первой подписки.
+func TestHomeSubProfileCommand(t *testing.T) {
+	setupLadder(t, backMachine)
+	dir := filepath.Join(os.Getenv("DEVKIT_HOME"), profileDirGroup, profileDirName)
+	l, err := mergeLayers(dir, machineConfigPath(), "")
+	if err != nil {
+		t.Fatalf("слои с профилем первой подписки не сложились: %v", err)
+	}
+	prof := l.Profiles["claude-code"]
+	if prof == nil {
+		t.Fatal("профиль первой подписки не загрузился")
+	}
+	del := prof.section("delegate")
+	if got := del.str("mode"); got != "native" {
+		t.Fatalf("режим делегирования первой подписки %q, жду native: внутри своей сессии субагент рождается спавном", got)
+	}
+	tmpl := del.arr("command")
+	if len(tmpl) == 0 {
+		t.Fatal("первая подписка не назвала команды: снаружи её поднять нечем, и уехавшая сюда ступень отказная")
+	}
+	if !hasMark(tmpl, sessionMark) {
+		t.Fatalf("в команде нет %s: без имени сессии ход работы делегата не попадёт в ленту раздавшего разговора: %q", sessionMark, tmpl)
+	}
+	argv := substituteCommand(tmpl, map[string]string{
+		"model": "opus", "effort": "medium", "prompt": "тело определения", "session": "с-1",
+	})
+	if argv[0] != "claude" {
+		t.Fatalf("команда подпроцесса поднимает не клиента подписки: %q", argv)
+	}
+	for _, want := range []string{"-p", "тело определения", "opus", "medium", "с-1"} {
+		if !inList(argv, want) {
+			t.Fatalf("в команде подпроцесса нет %q: %q", want, argv)
+		}
+	}
+}
+
 // TestCmdHarnessAssignments: подписку перепутать легко, а замечается это по
 // счёту, то есть поздно, поэтому команда называет и назначения, и неполную
 // раскладку, и битое имя.
@@ -420,8 +480,25 @@ func TestCmdHarnessAssignments(t *testing.T) {
 		if !strings.Contains(out, "маппинг ярусов: mini = haiku, base = glm-code:glm-5.2, pro = opus, max = fable") {
 			t.Fatalf("маппинг без назначений: %q", out)
 		}
-		if !strings.Contains(out, "назначение: ярус base уезжает в glm-code\n") {
+		if !strings.Contains(out, "назначение: ярус base уезжает в glm-code, поднимается командой [delegate] его профиля\n") {
 			t.Fatalf("назначение не названо: %q", out)
+		}
+	})
+
+	// Достижимость чужого харнеса видна до первого отказа run: команда,
+	// которой его поднимают снаружи, у профиля либо есть, либо нет, и второй
+	// случай называется прямо.
+	t.Run("назначение в недостижимый харнес", func(t *testing.T) {
+		kit := fakeKit(t)
+		writeProfile(t, kit, "echocli", echoProfile)
+		writeProfile(t, kit, "nativeone", nativeProfile)
+		writeMachine(t, kit, "enabled = [\"echocli\"]\ndefault = \"echocli\"\n\n[echocli]\nmini = \"nativeone:чужая\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
+		out, err := cmdHarness(writeBoard(t), "")
+		if err != nil {
+			t.Fatalf("harness: %v", err)
+		}
+		if !strings.Contains(out, "поднять его снаружи нечем") || !strings.Contains(out, "команды профиль не назвал") {
+			t.Fatalf("недостижимое назначение прошло молча: %q", out)
 		}
 	})
 

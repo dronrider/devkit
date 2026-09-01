@@ -13,7 +13,10 @@ import (
 )
 
 // agentctl run это точка входа делегирования: печатается тот же вердикт, что у
-// pick, а дальше работу забирает режим [delegate] харнеса назначения ступени.
+// pick, а дальше работу забирает секция [delegate] харнеса назначения ступени.
+// Дорог у неё две, и профиль вправе назвать обе: mode это спавн внутри своей
+// сессии, command это подъём снаружи. Домашняя ступень идёт первой дорогой,
+// уехавшая второй, потому что чужой спавн снаружи не дёрнуть.
 // Дизайн в docs/lld/DK-033-universal-kit.md (раздел «Делегирование: agentctl
 // run») и в docs/lld/DK-090-heterogeneous-ladder.md (раздел «Делегирование: run
 // отдаёт работу харнесу назначения»).
@@ -314,30 +317,35 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 	}
 	del := prof.section("delegate")
 	mode := del.str("mode")
+	tmpl := del.arr("command")
+	road := "cli"
 	switch mode {
 	case "native":
-		// Пара «уехавшая ступень плюс native» отказная по построению: native
-		// значит, что спавн субагента есть только внутри самого инструмента, и
-		// снаружи, из чужой сессии, дёрнуть его нечем.
-		if hc.Models.away(v.Tier) {
-			fmt.Fprintf(errw, "делегировать нечем: ступень %s уезжает в %s, а он делегирует режимом native, то есть спавном субагента внутри своей же сессии, и снаружи дёрнуть его нечем; либо сменить назначение яруса в %s, либо исполнять задачу сессией %s\n",
-				v.Tier, who, machineConfigPath(), who)
+		if !hc.Models.away(v.Tier) {
+			fmt.Fprintf(out, "делегирование: native (харнес %s, профиль %s)\n", who, prof.Path)
+			fmt.Fprintf(out, "спавнить субагента: модель %s, определение %s-%s, рабочая директория %s, постановка docs/tasks/%s.md\n",
+				v.Model, role, v.Effort, workdir, id)
+			return 0, nil
+		}
+		// Спавн внутри сессии уехавшей ступени не годится: дёрнуть его снаружи
+		// нечем. Дорога у неё вторая, команда профиля, и профиль вправе назвать
+		// обе сразу. Не назвал команды, значит наружу инструмент не выходит и
+		// делегировать в него правда нечем.
+		if len(tmpl) == 0 {
+			fmt.Fprintf(errw, "делегировать нечем: ступень %s уезжает в %s, он делегирует режимом native, то есть спавном субагента внутри своей же сессии, а команды, которой его поднимают снаружи, профиль %s не назвал; либо вписать в него [delegate] command, либо сменить назначение яруса в %s, либо исполнять задачу сессией %s\n",
+				v.Tier, who, prof.Path, machineConfigPath(), who)
 			return codeNothingToDelegate, nil
 		}
-		fmt.Fprintf(out, "делегирование: native (харнес %s, профиль %s)\n", who, prof.Path)
-		fmt.Fprintf(out, "спавнить субагента: модель %s, определение %s-%s, рабочая директория %s, постановка docs/tasks/%s.md\n",
-			v.Model, role, v.Effort, workdir, id)
-		return 0, nil
+		road = "команда снаружи"
 	case "none":
 		fmt.Fprintf(errw, "делегировать нечем: харнес %s объявил delegate.mode = \"none\" (профиль %s), ни субагента, ни команды у него нет; задачу исполняет тот, кто это умеет\n", who, prof.Path)
 		return codeNothingToDelegate, nil
 	case "cli":
+		if len(tmpl) == 0 {
+			return 0, fmt.Errorf("профиль %s: [delegate] mode = \"cli\", а command пуст, поднимать нечего", prof.Path)
+		}
 	default:
 		return 0, fmt.Errorf("профиль %s: [delegate] mode = %s, run такого режима не знает", prof.Path, quoteTOML(mode))
-	}
-	tmpl := del.arr("command")
-	if len(tmpl) == 0 {
-		return 0, fmt.Errorf("профиль %s: [delegate] mode = \"cli\", а command пуст, поднимать нечего", prof.Path)
 	}
 	prompt, err := agentPrompt(filepath.Dir(hc.L.Dir), role, v.Effort, id, workdir)
 	if err != nil {
@@ -382,7 +390,7 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 	if len(pairs) > 0 {
 		tail = ", окружение: " + strings.Join(envNames(pairs), ", ")
 	}
-	fmt.Fprintf(out, "делегирование: cli (харнес %s, профиль %s), подпроцесс %s в %s%s\n", who, prof.Path, argv[0], workdir, tail)
+	fmt.Fprintf(out, "делегирование: %s (харнес %s, профиль %s), подпроцесс %s в %s%s\n", road, who, prof.Path, argv[0], workdir, tail)
 	if w := headlessWarning(os.Getenv(entrypointEnv), id); w != "" {
 		fmt.Fprintln(errw, w)
 	}

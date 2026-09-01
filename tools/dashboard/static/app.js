@@ -3132,9 +3132,7 @@ function mdRenderSections(text) {
     }
     flushPlain();
     const fold = el("div", "ffold fold");
-    const top = el("div", "foldh");
-    top.append(el("b", "", sec.name));
-    top.append(el("span", "", lineWord(sec.lines.length)));
+    const top = foldHead(sec.name, lineWord(sec.lines.length));
     const car = foldCar();
     top.append(car);
     const bodyEl = el("div", "ffoldb");
@@ -4660,16 +4658,29 @@ function foldCar() {
   return car;
 }
 
+// Шапка свёрнутого блока: короткая подпись, длинный хвост с обрезкой и кнопки,
+// прижатые к правому краю. Одна на все свёрнутые блоки ленты, чтобы разворот и
+// копирование стояли в одних и тех же местах у размышлений, ходов и вестей о
+// фоновой работе, каким бы длинным ни был заголовок (замечание пользователя по
+// снимку чата DK-656). Хвост пустым всё равно присутствует: он растягивается и
+// прижимает кнопки вправо.
+function foldHead(name, sub, copy) {
+  const top = el("div", "foldh");
+  top.append(el("b", "", name));
+  const tail = el("span", "", sub || "");
+  if (sub) tail.title = sub;
+  top.append(tail);
+  if (copy) top.append(copyBtn(copy));
+  return top;
+}
+
 // Свёрнутый блок с разворотом по клику: заголовок остаётся строкой ленты, а
 // тело раскрывается на месте. Так показываются размышления и вызовы
 // инструментов, которых на экране бывает больше, чем самого разговора. copy это
 // текст для кнопки копирования; без него кнопки нет.
 function foldEl(cls, head, text, sub, copy) {
   const box = el("div", cls + " fold");
-  const top = el("div", "foldh");
-  top.append(el("b", "", head));
-  if (sub) top.append(el("span", "", sub));
-  if (copy) top.append(copyBtn(copy));
+  const top = foldHead(head, sub, copy);
   const car = foldCar();
   top.append(car);
   const body = el("pre", "foldb", text);
@@ -5629,11 +5640,15 @@ function bashCard(name, call, out, lead) {
 
 // Блок завершения фоновой работы: заголовок с сутью и свёрнутый отчёт внутри.
 // Отчёт это обычный текст агента, и рисуется он разметкой, как реплика, а не
-// сырой простынёй в моноширинном блоке.
+// сырой простынёй в моноширинном блоке. Шапка собирается общим сборщиком:
+// подпись до двоеточия стоит жирным, сводка после него уходит в хвост с
+// обрезкой, а копирование и разворот прижаты справа, как у прочих блоков.
 function reportCard(head, text) {
   const box = el("div", "svc fold");
-  const top = el("div", "foldh");
-  top.append(el("b", "", head));
+  const cut = head.indexOf(": ");
+  const name = cut < 0 ? head : head.slice(0, cut);
+  const sub = cut < 0 ? "" : head.slice(cut + 2);
+  const top = foldHead(name, sub, text);
   const car = foldCar();
   if (text) top.append(car);
   const body = el("div", "foldb fmd");

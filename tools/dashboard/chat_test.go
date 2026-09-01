@@ -2813,6 +2813,24 @@ func TestStaticClientAskOptionsLookClickable(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Единая шапка свёрнутых блоков ленты. Пользователь по снимку чата задачи:
+// у блока «Фоновый агент: killed» кнопка разворота стояла вплотную к заголовку
+// и без копирования, у вести с длинной сводкой шеврон уезжал за край экрана, а
+// сводка не резалась многоточием, как у блоков команд. Шапки всех свёрнутых
+// блоков собирает один сборщик (стенд testdata/poc_feedhead.mjs). Без node шаг
+// пропускается: узел стенда, а не рабочей части.
+func TestStaticFoldHeadsShareBase(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд шапок свёрнутых блоков пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_feedhead.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("шапки свёрнутых блоков: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
 
 // Нить бокового журнала субагента: отрезок её это вся работа, от вызова Agent
 // до вести о том, что фоновый агент закончил, и по дороге нить не рвётся.

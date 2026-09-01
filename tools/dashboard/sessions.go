@@ -1328,6 +1328,18 @@ const stopHookPrefix = "Stop hook feedback:"
 
 const stopHookWord = "стоп-хук"
 
+// Автоматическое уведомление харнеса о событии фоновой работы подъезжает
+// репликой роли user с преамбулой-дисклеймером на английском, а сам смысл
+// записи сидит в тегах ниже преамбулы. Слова преамбулы адресованы модели, и в
+// ленте они стояли безымянной портянкой между блоками (замечание пользователя
+// по снимку чата DK-656).
+const sysNoteMark = "[SYSTEM NOTIFICATION - NOT USER INPUT]"
+
+// sysNoteWord подписывает такое уведомление, когда внутри не нашлось ни одного
+// знакомого тега: показать событие надо, а выдумывать разбор неизвестного
+// текста дороже.
+const sysNoteWord = "системное уведомление"
+
 // svcTag это одна известная вставка: имя тега, показывать ли её строкой и как
 // её подписать.
 type svcTag struct {
@@ -1710,6 +1722,19 @@ func splitService(text string) (string, []svcLine) {
 	if body, ok := strings.CutPrefix(out, stopHookPrefix); ok {
 		if body = strings.TrimSpace(body); body != "" {
 			notes = append(notes, svcLine{head: stopHookWord, body: truncate(body, toolBodyLimit)})
+			out = ""
+		}
+	}
+	// Преамбула под маркером это дисклеймер одними и теми же словами, и смысл
+	// записи начинается с первого тега. Слова до тега уходят вовсе, а запись
+	// без тегов остаётся подписанным блоком вместо безымянной строки.
+	if rest, ok := strings.CutPrefix(out, sysNoteMark); ok {
+		if i := strings.IndexByte(rest, '<'); i >= 0 {
+			out = rest[i:]
+		} else {
+			if body := strings.TrimSpace(rest); body != "" {
+				notes = append(notes, svcLine{head: sysNoteWord, body: truncate(body, toolBodyLimit)})
+			}
 			out = ""
 		}
 	}

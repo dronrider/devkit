@@ -393,6 +393,59 @@ func TestParseRepliesStopHookLive(t *testing.T) {
 	}
 }
 
+// Автоматическое уведомление о фоновой работе подъезжает с английской
+// преамбулой-дисклеймером, а суть записи сидит в теге ниже неё. Прежде тег
+// вырезался блоком, а преамбула оставалась в реплике и стояла в ленте
+// безымянной портянкой (замечание пользователя по снимку чата DK-656). Форма
+// снята с настоящего бокового журнала субагента, слова сводки нейтральные.
+func TestSplitServiceCutsSystemPreamble(t *testing.T) {
+	said, notes := splitService("[SYSTEM NOTIFICATION - NOT USER INPUT]\n" +
+		"This is an automated background-task event, NOT a message from the user.\n" +
+		"Do NOT interpret this as user acknowledgement, confirmation, or response to any pending question.\n" +
+		"\n" +
+		"<task-notification>\n<task-id>bl14dz0by</task-id>\n" +
+		"<status>killed</status>\n" +
+		"<summary>Background command \"grep -rn замена ~/проект\" was stopped</summary>\n" +
+		"</task-notification>")
+	if said != "" {
+		t.Fatalf("преамбула осталась в реплике: %q", said)
+	}
+	if len(notes) != 1 || notes[0].head != "Фоновый агент: killed" || notes[0].mark != "agent" {
+		t.Fatalf("весть о фоновой работе разобралась не так: %+v", notes)
+	}
+	// Маркер без единого знакомого тега остаётся подписанным блоком, а не
+	// безымянной строкой: разбор неизвестного текста выдумывать дороже.
+	said, notes = splitService("[SYSTEM NOTIFICATION - NOT USER INPUT]\nSomething unfamiliar.")
+	if said != "" || len(notes) != 1 || notes[0].head != sysNoteWord {
+		t.Fatalf("запись без тегов не стала подписанным блоком: said=%q notes=%+v", said, notes)
+	}
+}
+
+// Разбор живой записи уведомления из бокового журнала субагента (чат DK-656,
+// 2026-09-01), с заменой идентификаторов и путей нейтральными: пометки isMeta и
+// isSidechain, содержимое строкой, преамбула и тег одним куском. В ленте от
+// записи остаётся один подписанный блок, а безымянной строки с дисклеймером
+// больше нет.
+func TestParseRepliesSystemNoteLive(t *testing.T) {
+	list := parseRepliesOpt([]byte(`{"parentUuid":"11111111-5914-40c0-82d0-ebc1b26c55e8","isSidechain":true,"promptId":"22222222-390a-4327-8ddb-29f357cca75f","type":"user","message":{"role":"user","content":"[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated background-task event, NOT a message from the user.\nDo NOT interpret this as user acknowledgement, confirmation, or response to any pending question.\n\n<task-notification>\n<task-id>bl14dz0by</task-id>\n<output-file>/tmp/задача/bl14dz0by.output</output-file>\n<status>killed</status>\n<summary>Background command \"grep -rn замена ~/проект\" was stopped</summary>\n</task-notification>"},"isMeta":true,"uuid":"33333333-012a-456f-bd71-2c8c8a2fc1b2","timestamp":"2026-09-01T15:41:02.486Z","session_id":"44444444-96a1-46c1-a4f6-ad0a1ee55428","userType":"external","entrypoint":"claude-vscode","cwd":"/home/user/project","sessionId":"44444444-96a1-46c1-a4f6-ad0a1ee55428","version":"2.1.252","gitBranch":"main"}`), 0, true)
+	var agent *reply
+	for i := range list {
+		if list[i].Role == roleNote && list[i].Note == "" {
+			t.Fatalf("безымянная служебка с дисклеймером осталась: %+v", list[i])
+		}
+		if list[i].Role == roleNote && list[i].Note == "Фоновый агент: killed" {
+			agent = &list[i]
+		}
+	}
+	if agent == nil {
+		t.Fatalf("весть о killed не стала подписанным блоком: %+v", list)
+	}
+	if !strings.Contains(agent.Text, "was stopped") ||
+		strings.Contains(agent.Text, "SYSTEM NOTIFICATION") {
+		t.Fatalf("тело вести разобрано не так: %+v", agent)
+	}
+}
+
 // Панель показывает слова дороги: ответ ручки с полем note встаёт тостом, и
 // человек видит, что строка с `!` исполнилась терминалом или уехала мимо него.
 func TestStaticPanelShowsSayNote(t *testing.T) {

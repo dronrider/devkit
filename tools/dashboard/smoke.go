@@ -1552,6 +1552,54 @@ func (s *smoke) stepStopHook() (string, error) {
 	return "", fmt.Errorf("записи стоп-хука в ленте нет: %+v", talk.Items)
 }
 
+// stepSystemNote: автоматическое уведомление о фоновой работе (чат DK-656)
+// харнес кладёт репликой роли user с английской преамбулой и тегом, а лента
+// обязана отдать его одним блоком «Фоновый агент», без безымянной строки с
+// дисклеймером. Запись пишется того же вида, что пишет харнес: маркер,
+// преамбула, пустая строка, тег со сводкой и статусом.
+func (s *smoke) stepSystemNote() (string, error) {
+	const sum = "Background command \"go test\" was stopped"
+	note := sysNoteMark + "\n" +
+		"This is an automated background-task event, NOT a message from the user.\n" +
+		"Do NOT interpret this as user acknowledgement, confirmation, or response to any pending question.\n" +
+		"\n" +
+		"<task-notification>\n<task-id>smoke1</task-id>\n<status>killed</status>\n" +
+		"<summary>" + sum + "</summary>\n</task-notification>"
+	line := fmt.Sprintf(`{"type":"user","isMeta":true,"message":{"role":"user","content":%q},"timestamp":"2026-08-10T10:00:04.000Z"}`, note)
+	path := filepath.Join(s.harnessJournal(), smokeHeadlessID+".jsonl")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", fmt.Errorf("транскрипта headless-сессии нет: %v", err)
+	}
+	if _, err := f.WriteString(line + "\n"); err != nil {
+		f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	var talk struct {
+		Items []reply `json:"items"`
+	}
+	if err := s.call("GET", "/api/projects/demo/sessions/"+smokeHeadlessID, "", http.StatusOK, &talk); err != nil {
+		return "", err
+	}
+	for _, it := range talk.Items {
+		if it.Role == roleNote && it.Note == "" {
+			return "", fmt.Errorf("дисклеймер уведомления остался безымянной строкой: %+v", it)
+		}
+	}
+	for _, it := range talk.Items {
+		if it.Note == "Фоновый агент: killed" {
+			if it.Role != roleNote || it.Mark != "agent" || it.Text != sum {
+				return "", fmt.Errorf("уведомление разобралось, но показано не тем блоком: %+v", it)
+			}
+			return "уведомление с преамбулой стоит в ленте одним блоком «Фоновый агент: killed»", nil
+		}
+	}
+	return "", fmt.Errorf("блока «Фоновый агент: killed» в ленте нет: %+v", talk.Items)
+}
+
 // stepChatStart: новый чат по задаче поднимается поверх живого конвейера той же
 // задачи и получает своё имя chat-<ID>-<n> (DK-436). Шаг идёт после запуска
 // задачи нарочно: tmux-сессия task-<ID> к этому времени жива, и по ответу
@@ -1845,6 +1893,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"закрытие принятой задачи без витка", s.stepCloseAccepted},
 		{"выбор подписки доезжает до команды", s.stepHarnessRun},
 		{"реплика стоп-хука стоит служебкой с подписью", s.stepStopHook},
+		{"уведомление о фоновой работе без портянки дисклеймера", s.stepSystemNote},
 		{"новый чат по задаче поверх живого конвейера", s.stepChatStart},
 		{"удаление черновика с причиной", s.stepDropDraft},
 		{"пересчёт ранга перетаскиванием доехал до доски", s.stepDragRank},

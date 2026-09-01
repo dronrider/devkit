@@ -1511,14 +1511,17 @@ func (s *smoke) stepHarnessRun() (string, error) {
 }
 
 // stepStopHook: замечание стоп-хука (DK-693) харнес кладёт в транскрипт
-// репликой роли user с префиксом, а лента обязана отдать её служебкой с
-// подписью «стоп-хук», а не безымянной серой строкой. Шаг идёт после запуска
-// работы: транскрипт headless-сессии к этому времени уже написан клиентом, и
-// реплика дописывается в него хвостом, как дописал бы её настоящий стоп-хук.
+// репликой роли user с префиксом и пометкой isMeta, а лента обязана отдать её
+// служебкой с подписью «стоп-хук», а не безымянной серой строкой. Запись
+// пишется того же вида, что пишет харнес: двоеточие, перевод строки, много
+// строк текста, без них шаг проверял бы выдуманную форму. Шаг идёт после
+// запуска работы: транскрипт headless-сессии к этому времени уже написан
+// клиентом, и реплика дописывается в него хвостом, как дописал бы её
+// настоящий стоп-хук.
 func (s *smoke) stepStopHook() (string, error) {
 	const said = "Остановись и прогони тесты"
-	line := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},"timestamp":"2026-08-10T10:00:03.000Z"}`,
-		stopHookPrefix+said)
+	line := fmt.Sprintf(`{"type":"user","isMeta":true,"message":{"role":"user","content":%q},"timestamp":"2026-08-10T10:00:03.000Z"}`,
+		stopHookPrefix+"\n"+said)
 	path := filepath.Join(s.harnessJournal(), smokeHeadlessID+".jsonl")
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -1542,7 +1545,7 @@ func (s *smoke) stepStopHook() (string, error) {
 			if it.Role != roleNote || it.Text != said {
 				return "", fmt.Errorf("стоп-хук разобрался, но показан не тем блоком: %+v", it)
 			}
-			return "реплика с префиксом «" + strings.TrimSuffix(stopHookPrefix, " ") +
+			return "реплика с префиксом «" + stopHookPrefix +
 				"» стоит в ленте служебкой с подписью «" + stopHookWord + "»", nil
 		}
 	}

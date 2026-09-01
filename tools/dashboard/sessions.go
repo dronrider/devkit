@@ -1322,8 +1322,9 @@ const roleNote = "note"
 
 // Замечание стоп-хука (DK-693): харнес кладёт его репликой роли user с
 // префиксом «Stop hook feedback:» и без тегов, а адресовано оно модели, и
-// пузырём человека оно было бы враньём.
-const stopHookPrefix = "Stop hook feedback: "
+// пузырём человека оно было бы враньём. После двоеточия харнес ставит
+// перевод строки.
+const stopHookPrefix = "Stop hook feedback:"
 
 const stopHookWord = "стоп-хук"
 

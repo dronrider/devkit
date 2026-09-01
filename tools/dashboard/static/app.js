@@ -7666,17 +7666,22 @@ function chatDayHead(day) {
   return Number(parts[0]) === now.getFullYear() ? said : said + " " + parts[0];
 }
 
-// chatGroups раскладывает список по группам: живые сверху, дальше по дням,
-// сегодня, вчера и датой. Группа живых идёт без подписи: она и так первая, а
-// идущий разговор виден по состоянию в самой строке. Отделяет её заголовок
-// следующей группы, слова в узком списке заняли бы строку впустую.
-function chatGroups(list) {
+// chatGroups раскладывает список по группам: текущий разговор своей группой
+// сверху, до него не надо долистывать, под ним подписанная группа живых, а
+// дальше группы по дням, сегодня, вчера и датой. Подпись у живых не лишняя:
+// без неё трёхдневный живой чат вставал выше сегодняшнего мёртвого, и
+// заголовок «сегодня» уезжал вниз, будто сортировка сбоила, хотя порядок по
+// времени был верным всегда (замечание пользователя, разбор DK-656).
+function chatGroups(list, current) {
   const out = [];
-  const live = list.filter((c) => c.state === "live");
-  if (live.length) out.push({ head: "", rows: live });
+  const rest = current ? list.filter((c) => c.id !== current) : list;
+  const top = current ? list.find((c) => c.id === current) : null;
+  if (top) out.push({ head: "текущий разговор", rows: [top] });
+  const live = rest.filter((c) => c.state === "live");
+  if (live.length) out.push({ head: "живые", rows: live });
   let day = null;
   let bag = null;
-  for (const c of list) {
+  for (const c of rest) {
     if (c.state === "live") continue;
     const key = c.mtime ? isoDay(new Date(c.mtime)) : "";
     if (!bag || key !== day) {
@@ -7759,13 +7764,16 @@ function chatArchBtn(project, c, done) {
     }
     const on = !c.archived;
     // Строка уходит сразу, не дожидаясь ответа: ответ тут только про запись,
-    // а список уже показывает то, что человек попросил.
+    // а список уже показывает то, что человек попросил. Кличка перемены
+    // (archived или restored) идёт вместе с ID: список держит строку на месте
+    // до следующего открытия, а панель текущего разговора при уборке
+    // переключается на следующий (развилки DK-656).
     c.archived = on;
-    if (done) done();
+    if (done) done(c.id, on ? "archived" : "restored");
     archiveChat(project, c.id, on).then((ok) => {
       if (ok) return;
       c.archived = !on;
-      if (done) done();
+      if (done) done(c.id, on ? "restored" : "archived");
     });
   });
   return put;
@@ -7803,7 +7811,7 @@ function chatDropBtn(project, c, done) {
     btn.disabled = true;
     dropChat(project, c.id).then((ok) => {
       btn.disabled = false;
-      if (ok && done) done(c.id);
+      if (ok && done) done(c.id, "dropped");
     }).catch(console.error);
   });
   return btn;
@@ -7871,6 +7879,19 @@ function chatDropSet(node) {
   chatDropHeld = popupHold(node, chatDropShut);
 }
 
+// chatPanelNext выбирает разговор для панели, когда открытый ею чат ушёл в
+// архив: свой список задачи, если панель к ней привязана, иначе видимый
+// список, тем же проектом, что и сама панель, без только что убранного и без
+// архивных. Нет ни одного, значит панели открывать нечего, и она уходит на
+// новый чат (развилка DK-656: второй заход в список после уборки не нужен).
+function chatPanelNext(project, st, goneId) {
+  const scoped = st.task ? st.chats.filter((c) => (c.tasks || []).includes(st.task))
+    : chatVisible(st);
+  const rest = scoped.filter((c) => (!c.project || c.project === project) &&
+    c.id !== goneId && !c.archived);
+  return rest.length ? rest[0].id : CHAT_NEW;
+}
+
 // Список с поиском: поле сверху, дальше строки всех диалогов машины. Поиск
 // идёт по заголовку, по ID сессии, по задачам и по имени проекта, потому что
 // ищут диалог всеми четырьмя способами. Фильтр по задаче панели это стартовое
@@ -7906,18 +7927,58 @@ function chatDropOpen(project, st, anchor, again) {
   // Перечитывание списка тем же окном идёт своим счётом и словами о себе не
   // говорит: человек открыл список, а не просил искать.
   let fresh = false;
+  // Порядок строк замирает, пока список открыт: без замера уборка пачкой
+  // переставляла соседей под курсором на каждое нажатие («уборка гасит строку
+  // на месте», развилка автора DK-656). Место замеряется первой отрисовкой, а
+  // новое (поиск, «показать раньше») встаёт в конец своей группы.
+  let order = null;
+  const freezeOrder = (list) => {
+    if (order) return;
+    order = new Map();
+    list.forEach((c, i) => order.set(c.id, i));
+  };
+  // ID, тронутый уборкой в этом открытии, с тем значением архива, что видел
+  // человек: строка остаётся в списке гашёной (клеймом «в архиве» и
+  // потускневшей рамкой) до следующего открытия, каким бы ни было положение
+  // кнопки архива, а не выкидывается сразу. Значение держит клиент, а не
+  // свежий ответ сервера: перечитка списка идёт следом за уборкой, не дожидаясь
+  // её собственного ответа, и более быстрый GET мог обогнать ещё не
+  // подтверждённый POST, вернув старое значение и погасив строку раньше
+  // времени.
+  const justToggled = new Map();
   const draw = () => {
     const q = find.value.trim().toLowerCase();
     paintArch();
-    const list = chatArchShown(st.chats, chatArchMode()).filter((c) => {
+    for (const [id, wanted] of justToggled) {
+      const c = st.chats.find((x) => x.id === id);
+      if (c) c.archived = wanted;
+    }
+    let list = chatArchShown(st.chats, chatArchMode());
+    if (!q) {
+      const have = new Set(list.map((c) => c.id));
+      const pin = (id) => {
+        if (!id || have.has(id)) return;
+        const c = st.chats.find((x) => x.id === id);
+        if (c) { list.push(c); have.add(id); }
+      };
+      for (const id of justToggled.keys()) pin(id);
+      pin(st.sid);
+    }
+    list = list.filter((c) => {
       if (!q) return true;
       return (c.title || "").toLowerCase().includes(q) ||
         c.id.toLowerCase().includes(q) ||
         (c.tasks || []).join(" ").toLowerCase().includes(q) ||
         (c.project || project).toLowerCase().includes(q);
     });
+    if (!q) {
+      freezeOrder(list);
+      list = list.slice().sort((a, b) =>
+        (order.has(a.id) ? order.get(a.id) : Infinity) -
+        (order.has(b.id) ? order.get(b.id) : Infinity));
+    }
     rows.replaceChildren();
-    for (const g of chatGroups(list)) {
+    for (const g of chatGroups(list, st.sid)) {
       if (g.head) rows.append(el("div", "cdday", g.head));
       for (const c of g.rows) rows.append(chatOption(project, c, st.sid, done));
     }
@@ -7969,9 +8030,18 @@ function chatDropOpen(project, st, anchor, again) {
     }).catch((e) => { fresh = false; console.error(e); });
   };
   // Строка закрыта или убрана в архив: список перерисовывается сразу, не
-  // дожидаясь ответа, а свежий перечень подтверждает это следом.
-  function done(gone) {
-    if (gone) st.chats = st.chats.filter((c) => c.id !== gone);
+  // дожидаясь ответа, а свежий перечень подтверждает это следом. Закрытие
+  // (kind "dropped") стирает запись насовсем, уборка ("archived"/"restored")
+  // держит её на месте гашёной до следующего открытия. Убрали в архив тот
+  // самый разговор, что открыт в панели, значит панель уходит на следующий:
+  // второй заход в список для этого не нужен (развилка автора DK-656).
+  function done(id, kind) {
+    if (kind === "dropped") {
+      if (id) st.chats = st.chats.filter((c) => c.id !== id);
+    } else if (id && (kind === "archived" || kind === "restored")) {
+      justToggled.set(id, kind === "archived");
+    }
+    if (kind === "archived" && id === st.sid) switchChat(chatPanelNext(project, st, id));
     draw();
     refresh();
   }
@@ -7991,6 +8061,11 @@ function chatDropOpen(project, st, anchor, again) {
   arch.addEventListener("click", (ev) => {
     ev.stopPropagation();
     chatArchSet(chatArchNext(chatArchMode()));
+    // Смена положения это другой список не хуже нового открытия: три набора
+    // должны остаться настоящими три (положения кнопки задача DK-656 не
+    // трогает), а не подмешанным прежним замером.
+    order = null;
+    justToggled.clear();
     draw();
   });
   draw();

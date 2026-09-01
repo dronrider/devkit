@@ -2908,3 +2908,41 @@ func TestStaticChatMakeTask(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// Группировка списка чатов: текущий разговор своей подписанной группой сверху,
+// под ним подписанная группа живых, дальше дни. Пока список открыт, уборка
+// гасит строку на месте, не переставляя соседей, и новый порядок берётся
+// только следующим открытием (жалоба пользователя: строки убегали под
+// курсором при уборке пачкой, а живой чат трёхдневной давности стоял выше
+// сегодняшнего мёртвого без подписи, читаясь поломкой сортировки). Стенд
+// testdata/poc_chatgroup.mjs. Без node шаг пропускается: узел стенда, а не
+// рабочей части.
+func TestStaticChatListGroups(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд группировки списка чатов пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatgroup.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("группировка списка чатов: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Уборка текущего разговора в архив переводит панель на следующий из
+// оставшихся, без второго захода в список (жалоба пользователя: «после
+// закрытия чата диалог сам не закрывается»). Стенд testdata/poc_chatnext.mjs.
+// Без node шаг пропускается: узел стенда, а не рабочей части.
+func TestStaticChatArchiveCurrentSwitchesPanel(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд переключения панели пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatnext.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("переключение панели после уборки текущего разговора: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}

@@ -2832,6 +2832,25 @@ func TestStaticFoldHeadsShareBase(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Вертикальный шаг ленты: у всякой записи поле сверху одним токеном, снизу
+// поля нет. Живой случай из чата «Выполнение задачи DK-656»: колонка ленты
+// флексовая, поля соседей в ней складываются, и две капсулы фоновой работы
+// стояли друг к другу вдвое просторнее, чем к соседним репликам (стенд
+// testdata/poc_feedstep.mjs). Без node шаг пропускается: узел стенда, а не
+// рабочей части.
+func TestStaticFeedStepUniform(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд шага ленты пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_feedstep.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("шаг ленты: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Нить бокового журнала субагента: отрезок её это вся работа, от вызова Agent
 // до вести о том, что фоновый агент закончил, и по дороге нить не рвётся.
 // Пользователь с экрана: «синяя нить начинается не с сообщения субагента, а со

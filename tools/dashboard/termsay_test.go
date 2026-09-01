@@ -348,6 +348,23 @@ func TestSplitServiceShowsBashRun(t *testing.T) {
 	}
 }
 
+// Замечание стоп-хука стоит в ленте подписанным блоком служебки, а не серой
+// строкой во всю высоту: реплика с префиксом разбирается в записку, реплика
+// без него остаётся словами человека.
+func TestSplitServiceShowsStopHook(t *testing.T) {
+	said, notes := splitService("Stop hook feedback: Остановись и проверь тесты")
+	if said != "" || len(notes) != 1 {
+		t.Fatalf("стоп-хук не разобрался: said=%q notes=%+v", said, notes)
+	}
+	if notes[0].head != "стоп-хук" || notes[0].body != "Остановись и проверь тесты" {
+		t.Fatalf("стоп-хук показан не так: %+v", notes[0])
+	}
+	said, notes = splitService("Стоп-хук это не про меня, просто слова человека")
+	if said == "" || len(notes) != 0 {
+		t.Fatalf("слова человека уехали в служебку: said=%q notes=%+v", said, notes)
+	}
+}
+
 // Панель показывает слова дороги: ответ ручки с полем note встаёт тостом, и
 // человек видит, что строка с `!` исполнилась терминалом или уехала мимо него.
 func TestStaticPanelShowsSayNote(t *testing.T) {

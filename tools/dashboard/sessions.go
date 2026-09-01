@@ -1320,6 +1320,13 @@ func sendToTarget(input map[string]any) string {
 // значило бы чинить каждый новый тег дважды.
 const roleNote = "note"
 
+// Замечание стоп-хука (DK-693): харнес кладёт его репликой роли user с
+// префиксом «Stop hook feedback:» и без тегов, а адресовано оно модели, и
+// пузырём человека оно было бы враньём.
+const stopHookPrefix = "Stop hook feedback: "
+
+const stopHookWord = "стоп-хук"
+
 // svcTag это одна известная вставка: имя тега, показывать ли её строкой и как
 // её подписать.
 type svcTag struct {
@@ -1695,6 +1702,16 @@ func cutSelection(text string) (sel, file, rest string) {
 func splitService(text string) (string, []svcLine) {
 	var notes []svcLine
 	out := text
+	// Замечание стоп-хука едет префиксом без тегов и обёрток, и теговые узоры
+	// его не узнают: запись оставалась безымянной служебкой, и лента рисовала
+	// её серой строкой во всю высоту (DK-693). С подписью она рисуется тем же
+	// блоком, что и прочая служебка с телом.
+	if body, ok := strings.CutPrefix(out, stopHookPrefix); ok {
+		if body = strings.TrimSpace(body); body != "" {
+			notes = append(notes, svcLine{head: stopHookWord, body: truncate(body, toolBodyLimit)})
+			out = ""
+		}
+	}
 	for _, tag := range svcTags {
 		re := svcRe[tag.name]
 		for {

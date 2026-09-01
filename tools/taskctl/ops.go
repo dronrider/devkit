@@ -8,17 +8,19 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/gitrun"
 )
 
-// pushEnv выдаёт разрешение на пуш хуку pre-push. Коммит доски пушится сразу и
-// без просьбы, и путь у него один, через taskctl: рубеж отличает этот пуш от
-// самовольного пуша агента только по переменной. Нулевое окружение это
-// наследование родительского, поэтому обычным командам git оно и остаётся.
-func pushEnv(args []string) []string {
-	if len(args) == 0 || args[0] != "push" {
-		return nil
+// gitRun это единственная дорога к git из taskctl: закрытый запрос учётки и
+// предел времени на разговоре с remote живут в общем пакете (DK-697), и второй
+// копии списка переменных тут заводить незачем.
+func gitRun(root string, args ...string) (string, error) {
+	limit, err := gitrun.Timeout()
+	if err != nil {
+		return "", err
 	}
-	return append(os.Environ(), "DEVKIT_PUSH_OK=1")
+	return gitrun.Run(root, args, limit)
 }
 
 func boardPath(root string) string   { return filepath.Join(root, "docs", "TASKS.md") }
@@ -239,13 +241,11 @@ func (c CommitOpts) apply(root string, paths []string) (string, error) {
 		return "", nil
 	}
 	git := func(args ...string) (string, error) {
-		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
-		cmd.Env = pushEnv(args)
-		out, err := cmd.CombinedOutput()
+		out, err := gitRun(root, args...)
 		if err != nil {
-			return "", fmt.Errorf("git %s: %v (%s)", args[0], err, strings.TrimSpace(string(out)))
+			return "", err
 		}
-		return strings.TrimSpace(string(out)), nil
+		return out, nil
 	}
 	// В add идут только существующие пути: файл, уехавший через git mv, уже
 	// в индексе, а pathspec по нему упал бы. В pathspec коммита нужны все

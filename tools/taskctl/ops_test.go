@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -1420,21 +1419,35 @@ func TestAddBlockedRejected(t *testing.T) {
 	}
 }
 
-// Разрешение на пуш едет хуку pre-push только с самим пушем: обычные команды
-// git остаются на наследованном окружении, иначе рубеж пропускал бы всё, что
-// taskctl запускает попутно.
-func TestPushEnv(t *testing.T) {
-	if env := pushEnv([]string{"commit", "-m", "x"}); env != nil {
-		t.Fatalf("окружение подменено не на пуше: %v", env)
+// TestPushCarriesGateEnv: разрешение на пуш едет хуку pre-push вместе с самим
+// пушем. Окружение вызова собирает общий пакет (DK-697), и проверяется оно
+// здесь так, как его видит рубеж: хук отбивает пуш без переменной.
+func TestPushCarriesGateEnv(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	remote := t.TempDir()
+	gitOut(t, remote, "init", "-q", "--bare", "-b", "main")
+	gitOut(t, root, "remote", "add", "origin", remote)
+	gitOut(t, root, "push", "-q", "-u", "origin", "main")
+	writeHook(t, root, "pre-push", "#!/bin/sh\n[ \"$DEVKIT_PUSH_OK\" = 1 ] || exit 1\n")
+
+	board := boardPath(root)
+	body, _ := os.ReadFile(board)
+	if err := os.WriteFile(board, append(body, []byte("\n<!-- правка -->\n")...), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if env := pushEnv(nil); env != nil {
-		t.Fatalf("окружение подменено на пустых аргументах: %v", env)
+	if _, err := (CommitOpts{Msg: "docs(tasks): XR-004 правка", Push: true}).apply(root, []string{"docs/TASKS.md"}); err != nil {
+		t.Fatalf("рубеж pre-push отбил пуш доски: %v", err)
 	}
-	env := pushEnv([]string{"push"})
-	if !slices.Contains(env, "DEVKIT_PUSH_OK=1") {
-		t.Fatalf("пуш без разрешения для pre-push: %v", env)
+	if subj := gitOut(t, remote, "log", "-1", "--pretty=%s"); subj != "docs(tasks): XR-004 правка" {
+		t.Fatalf("коммит не доехал до remote: %q", subj)
 	}
-	if !slices.Contains(env, "PATH="+os.Getenv("PATH")) {
-		t.Fatalf("родительское окружение потерялось: %v", env)
+}
+
+func writeHook(t *testing.T, root, name, body string) {
+	t.Helper()
+	path := filepath.Join(root, ".git", "hooks", name)
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
 	}
 }

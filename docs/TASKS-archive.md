@@ -399,3 +399,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-471 | Чистый вердикт ревью записывается командой taskctl review | task | P1 | 2026-09-01 | [tasks/archive/2026/DK-471.md](tasks/archive/2026/DK-471.md) |
 | DK-658 | Разбор в RULES.md называет, чему в комментарии не место | task | P2 | 2026-09-01 | [tasks/archive/2026/DK-658.md](tasks/archive/2026/DK-658.md) |
 | DK-655 | Тексты в корп-гит, трекер и вики без специфики devkit | task | P2 | 2026-09-01 | [tasks/archive/2026/DK-655.md](tasks/archive/2026/DK-655.md) |
+| DK-693 | Лента: реплика стоп-хука ложится портянкой текста | bug | P2 | 2026-09-01 | [tasks/archive/2026/DK-693.md](tasks/archive/2026/DK-693.md) |

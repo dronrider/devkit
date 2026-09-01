@@ -14,28 +14,19 @@ import (
 	"unicode"
 
 	"github.com/dronrider/devkit/internal/frame"
+	"github.com/dronrider/devkit/internal/gitrun"
 	"github.com/dronrider/devkit/internal/freshtree"
 )
 
-// pushEnv выдаёт разрешение на пуш хуку pre-push. Правила разрешают пуш доске
-// и автономному режиму, оба пути идут через shipctl, а рубеж отличает их от
-// самовольного пуша агента только по этой переменной. Нулевое окружение это
-// наследование родительского, поэтому обычным командам git оно и остаётся.
-func pushEnv(args []string) []string {
-	if len(args) == 0 || args[0] != "push" {
-		return nil
-	}
-	return append(os.Environ(), "DEVKIT_PUSH_OK=1")
-}
-
+// git это единственная дорога к git из shipctl: закрытый запрос учётки и
+// предел времени на разговоре с remote живут в общем пакете (DK-697), и второй
+// копии списка переменных тут заводить незачем.
 func git(root string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
-	cmd.Env = pushEnv(args)
-	out, err := cmd.CombinedOutput()
+	limit, err := gitrun.Timeout()
 	if err != nil {
-		return strings.TrimSpace(string(out)), fmt.Errorf("git %s: %v (%s)", args[0], err, strings.TrimSpace(string(out)))
+		return "", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	return gitrun.Run(root, args, limit)
 }
 
 // runShell выполняет команду теста или выката: они приходят строкой из флага

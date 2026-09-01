@@ -1654,18 +1654,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .foldcp.bad{color:var(--block);opacity:1}
 .foldar svg{width:13px;height:13px;display:block}
 
-/* Вертикальный ритм ленты: записи стоят детьми одной флексовой колонки, где
-   поля соседей не схлопываются, а складываются. Реплика несла поле только
-   сверху, капсула служебки с обеих сторон, и две соседние капсулы
-   расходились вдвое шире, чем реплика с капсулой (замечание пользователя по
-   снимку ленты DK-656). У всех видов записей поле только сверху и одним
-   токеном. Селектор берёт прямых детей списка, поэтому вложенные блоки при
-   пузырях и в рядах сессий сохраняют свои поля. */
-.mlist>.msg,.mlist>.tool,.mlist>.day,.mlist>.fold,.mlist>.think,
-.mlist>.trow2,.mlist>.tline,.mlist>.svcline,.mlist>.turn{margin:var(--feedgap) 0 0}
-/* первая запись ленты воздуха сверху не просит: он там ничего не отделяет */
-.mlist>:first-child{margin-top:0}
-
 /* 6: подпись сообщения внутри пузыря, справа внизу */
 .msg .bb{position:relative;padding-bottom:6px}
 .msg .bb .mm{margin-top:4px;text-align:right;font:400 10.5px var(--mono);color:var(--tx3)}
@@ -1762,10 +1750,25 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    заканчивается», замечание пользователя). Цвет меняется ровно на кружке:
    верхний кусок красится концом предыдущего отрезка, нижний своим. Середина
    кружка по видам записи это --dotc, поля группы --mt и --mb. */
-.frow{--dotc:9.5px;--mt:0px;--mb:0px;--thin:var(--line2);--thout:var(--line2)}
-.frow.f-bub{--dotc:29px}
-.frow.f-fold{--dotc:17px}
+.frow{--dotc:7.5px;--mt:0px;--mb:0px;--thin:var(--line2);--thout:var(--line2)}
+.frow.f-bub{--dotc:23px}
+.frow.f-fold{--dotc:14px}
 .frow.f-tline{--dotc:14.3px}
+/* Вертикальный ритм ленты: шаг несёт строка целиком. Сборка кладёт всякую
+   запись ленты в обёртку frow с кружком нити, и зазор между соседями
+   набирался полями самих записей, а они у видов разные: реплика несла шесть
+   сверху, капсула служебки по три с обеих сторон, карточки инструмента по
+   два, и соседние виды записей расходились чуть ли не вдвое (замечание
+   пользователя по снимку ленты DK-656). Теперь строка несёт поле только
+   сверху и одним токеном, запись внутри строки полей по вертикали не несёт
+   (гашение стоит в конце секции), а нить идёт сквозь шаг парой --mt, тем же
+   приёмом, что и сквозь поле группы. Строки локальных записей (разговор
+   входа, местный пузырь отправки) живут той же мерой: колонка та же, и
+   записи входа обязаны не отличаться от записей ленты (DK-577). До правил
+   gtop и gend: разрыв группы сильнее общего шага. */
+.mlist>.frow,.mlocal>.frow{margin:var(--feedgap) 0 0;--mt:var(--feedgap)}
+/* первая строка ленты воздуха сверху не просит: он там ничего не отделяет */
+.mlist>:first-child{margin-top:0}
 .frow.gtop{--mt:18px}
 .frow.gend{--mb:18px}
 .frow::before{content:"";position:absolute;left:6px;width:1px;
@@ -1787,20 +1790,22 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    от края строки), так что вложенность показывает цвет нити, а контуры записей
    встают на один край. */
 .frowb{flex:1;min-width:0;padding:0}
-.fdot{position:absolute;left:1px;top:4px;width:11px;height:11px;box-sizing:border-box;border-radius:50%;background:var(--tx3);border:3px solid var(--bg);z-index:1}
+.fdot{position:absolute;left:1px;top:2px;width:11px;height:11px;box-sizing:border-box;border-radius:50%;background:var(--tx3);border:3px solid var(--bg);z-index:1}
 .fdot.ok{background:var(--run)}
 .fdot.bad{background:var(--block)}
 /* 14: делегирование субагенту и конец его работы одной синей меткой */
 .fdot.deleg{background:var(--deleg)}
 /* Кружок стоит по середине первой строки записи, а высота её задаётся не ролью,
-   а видом записи: у пузыря сверху свой отступ и поля, у свёрнутого блока рамка
-   с полями, у строки инструмента и голой строки текста ни того, ни другого.
+   а видом записи: у пузыря свои поля и рамка, у свёрнутого блока рамка с
+   полями, у строки инструмента и голой строки текста ни того, ни другого.
    По роли это считалось неверно: размышление с текстом рисуется свёрнутым
-   блоком, а без текста строкой, и кружок у второго уезжал вниз (замечание 1) */
-.frow.f-bub .fdot{top:23.5px}
-.frow.f-fold .fdot{top:11.5px}
-.frow.f-head .fdot{top:4px}
-.frow.f-line .fdot{top:4px}
+   блоком, а без текста строкой, и кружок у второго уезжал вниз (замечание 1).
+   Запись стоит в строке без верхнего поля, и вертикали отсчитываются от края
+   строки до первой строки записи. */
+.frow.f-bub .fdot{top:17.5px}
+.frow.f-fold .fdot{top:8.5px}
+.frow.f-head .fdot{top:2px}
+.frow.f-line .fdot{top:2px}
 .frow.f-tline .fdot{top:8.8px}
 /* Границы работы: нить связывает события одного захода и рвётся щелью там, где
    работа сделана. Щель делает поле строки: линия рисуется по коробке строки и
@@ -1823,9 +1828,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* Работа в одну запись: от кружка до того же кружка рисовать нечего. */
 
 /* Плотность как в ленте vscode: записи идут подряд, дышат только смысловые
-   куски. Прежние отступы приезжали от чужого правила и от полей пузыря */
-.frow .trow2{margin:2px 0}
-.frow .msg{margin-top:6px;gap:3px}
+   куски. Шаг между записями несёт строка (правило у .mlist>.frow), а эти
+   правила задают вид записи в строке: без них отступы приезжали от чужих
+   правил и от полей пузыря. */
+.frow .msg{gap:3px}
 /* Текст записи ленты начинается на одном отступе у всех видов. Пузырь задаёт
    его своими полями и рамкой, а прочим видам он дан явно: без этого размышление
    и ходы инструментов начинались левее пузыря и тянулись шире, и человек видел
@@ -1841,12 +1847,23 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .frow .trow2>.tdiff .dline{padding-left:16px;padding-right:16px}
 .frow .msg>.mshot{margin-left:17px}
 .frow .trow2>.thline{padding-left:17px;padding-right:17px}
-.frow .think{padding-left:17px;padding-right:17px}
-.frow .think{margin:2px 0;font:400 12px/1.35 var(--sans)}
-.frow .svcline{margin:2px 0;padding:0 17px 0 15px;font:400 12px/1.35 var(--sans)}
-.frow .svc.fold{margin:3px 0}
+.frow .think{padding-left:17px;padding-right:17px;font:400 12px/1.35 var(--sans)}
+.frow .svcline{padding:0 17px 0 15px;font:400 12px/1.35 var(--sans)}
 .frow .tbox{margin-top:3px}
 .frow .tsaid{margin:2px 0 3px}
+/* Шаг ленты несёт строка (правило у .mlist>.frow), и запись внутри строки
+   полей сверху и снизу не несёт: свои поля видов складывались бы с полем
+   строки и опять разводили соседей. Гасятся только прямые записи строки,
+   вложенные блоки внутри пузырей и свёрнутых карт свои поля сохраняют.
+   Стоит после правил видов, чтобы разрешиться последним. */
+.mlist>.frow>.frowb>.msg,.mlist>.frow>.frowb>.svc,
+.mlist>.frow>.frowb>.fold,.mlist>.frow>.frowb>.think,
+.mlist>.frow>.frowb>.trow2,.mlist>.frow>.frowb>.tline,
+.mlist>.frow>.frowb>.svcline,.mlist>.frow>.frowb>.turn,
+.mlocal>.frow>.frowb>.msg,.mlocal>.frow>.frowb>.svc,
+.mlocal>.frow>.frowb>.fold,.mlocal>.frow>.frowb>.think,
+.mlocal>.frow>.frowb>.trow2,.mlocal>.frow>.frowb>.tline,
+.mlocal>.frow>.frowb>.svcline,.mlocal>.frow>.frowb>.turn{margin-top:0;margin-bottom:0}
 
 /* правка файла: строка «инструмент файл», подпись о сделанном и дифф с
    подсветкой снятых и поставленных строк */

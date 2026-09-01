@@ -448,6 +448,38 @@ func TestLaunchEnvSameForEveryOrder(t *testing.T) {
 	}
 }
 
+// Метку печатного режима носит одна дорога, конвейер задачи. Разговор, разбор
+// черновика и окно входа поднимают живой REPL, там фоновый ход законен
+// (контракт DK-678), и метка стоила бы им отказа рубежа с выдуманной причиной.
+func TestHeadlessMarkOnlyForPipeline(t *testing.T) {
+	s := newServer(&Config{Home: t.TempDir()}, nil, nil)
+	env := s.launchEnv("XR-7", "task-XR-7")
+	if strings.Contains(env, "DEVKIT_HEADLESS=") {
+		t.Fatalf("общая сборка окружения несёт метку печатного режима: %s", env)
+	}
+	for name, cmd := range map[string]string{
+		"разговор": chatCmd(env, "opus", "", "привет", execRotateDefault, nil, "agentctl"),
+		"разбор":   groomCmd(env, "разбери XR-7", nil, "opus"),
+		"вход":     env + " " + defaultClient,
+	} {
+		if strings.Contains(cmd, "DEVKIT_HEADLESS=") {
+			t.Errorf("живая дорога %q помечена печатным режимом:\n%s", name, cmd)
+		}
+	}
+	head := s.headlessEnv("XR-7", "task-XR-7")
+	if !strings.Contains(head, headlessMark) {
+		t.Fatalf("окружение конвейера без метки печатного режима: %s", head)
+	}
+	// Метка стоит после чистки, а не перед нею: парой впереди команды её снял бы
+	// собственный `-u`, и рубеж снова считал бы конвейер живым окном.
+	if strings.Index(head, headlessMark) < strings.Index(head, dropForeign()) {
+		t.Errorf("метка стоит впереди чистки и снимется ею же:\n%s", head)
+	}
+	if !strings.Contains(dropForeign(), "-u DEVKIT_HEADLESS") {
+		t.Errorf("унаследованная метка не снимается чисткой: %s", dropForeign())
+	}
+}
+
 // Каталог самого дашборда поднятой сессии не раздаётся, а утилиты кита она
 // берёт из штатного каталога машины. Экземпляр держит рядом с дашбордом свои
 // копии agentctl и taskctl, plist ставит его каталог в PATH первым, и сессия

@@ -666,11 +666,11 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 	sess := loginSessName(tmuxAliveFn())
 	// Каталог входа это дом машины, а не проект: вход не принадлежит разговору,
 	// токен лежит в связке ключей машины, и REPL клиента в проекте ему не нужен.
-	// Пары тут общие, а метки печатного режима нет: окно входа это живой REPL, и
-	// врать про него рубежу синхронности незачем.
+	// Пары тут общие, и метки печатного режима среди них нет: окно входа это
+	// живой REPL, и врать про него рубежу синхронности незачем.
 	dir := realHomeOr(s.cfg.Home)
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		s.launchPairs("", sess)+" "+defaultClient); err != nil {
+		s.launchEnv("", sess)+" "+defaultClient); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию входа %s: %s", sess, procErr(err))
 		s.logf("подъём входа клиента в %s не удался: %s", found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})

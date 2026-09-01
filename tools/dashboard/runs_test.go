@@ -246,19 +246,18 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 				channelRule
 			for _, want := range []string{
 				// Пары окружения едут в начале команды те же, что у диалога: их
-				// собирает одна сборка на все дороги подъёма (launchEnv). Метка
-				// печатного режима впереди них, а за нею чистка чужого
-				// наследства: tmux-сервер раздаёт новым окнам окружение той
+				// собирает одна сборка на все дороги подъёма (launchEnv).
+				// Впереди пар чистка чужого наследства, а метка печатного режима
+				// стоит за ними: tmux-сервер раздаёт новым окнам окружение той
 				// сессии, из которой его завели, и рубеж синхронности считал
 				// конвейер живым окном (DK-691).
-				"new-session -d -s task-" + tc.id + " -c " + e.proj + " " + headlessMark,
-				dropForeign(),
+				"new-session -d -s task-" + tc.id + " -c " + e.proj + " " + dropForeign(),
 				// Имя сессии для реестра чатов, настоящий HOME (без него
 				// agentctl exec разворачивал тильду раскладки в подложном доме
 				// демона, и клиент второй подписки отвечал «Not logged in») и
 				// заглушка опроса фокуса.
 				"DEVKIT_NO_FOCUS=1 HOME='" + realHome() + "'" +
-					" DEVKIT_TASK='" + tc.id + "' DEVKIT_TMUX='task-" + tc.id + "'",
+					" DEVKIT_TASK='" + tc.id + "' DEVKIT_TMUX='task-" + tc.id + "' " + headlessMark,
 				// Голову поднимает оболочка проходов, а не клиент напрямую:
 				// печатная сессия живёт один ход, и без оболочки конвейер
 				// кончался на первом же ожидании.
@@ -504,6 +503,25 @@ func TestRunStartGoalRunMissing(t *testing.T) {
 	text := body(t, resp)
 	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(text, "goal-run.py не нашёлся") {
 		t.Fatalf("без goal-run: %d %s, ожидал 502 с именем пропажи", resp.StatusCode, text)
+	}
+}
+
+// Оболочки конвейера нет ни в одном корне, и отказ тут такой же названный, как
+// у цикла цели. Молча поднять голову напрямую нельзя: она прожила бы один ход, а
+// второй раз её никто не поднял бы (DK-691).
+func TestRunStartTaskRunMissing(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "")
+	if err := os.Remove(filepath.Join(filepath.Dir(e.proj), "devkit", "kit", "skills",
+		"board-task", "task-run.py")); err != nil {
+		t.Fatal(err)
+	}
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(text, "task-run.py не нашёлся") {
+		t.Fatalf("без task-run: %d %s, ожидал 502 с именем пропажи", resp.StatusCode, text)
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("сессия поднялась вопреки отказу:\n%s", got)
 	}
 }
 

@@ -571,7 +571,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		sessionCommand(binPath(agentctlBin), tr, harness, s.launchEnv(id, sess),
+		sessionCommand(binPath(agentctlBin), tr, harness, s.headlessEnv(id, sess),
 			runPrompt(row.Sect, id)+" "+orderRules(sess),
 			runPrompt("in-progress", id)+" "+orderRules(sess),
 			id, found.Path, found.Name, model)); err != nil {

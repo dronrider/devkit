@@ -1,6 +1,7 @@
 package gitrun
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -90,68 +91,126 @@ func TestRunLocal(t *testing.T) {
 	}
 }
 
-// TestPushHangingCredentialHelper: главный дефект DK-697. Помощник учётки,
-// который ждёт человека, вешал пуш навсегда, коммиты копились локально, а
-// конвейер вставал. Теперь пуш кончается отказом по пределу, отказ называет
-// причину и ход руками, а спящий помощник умирает вместе с git.
-func TestPushHangingCredentialHelper(t *testing.T) {
-	root := initRepo(t)
-	pidFile := filepath.Join(t.TempDir(), "helper.pid")
-	helper := filepath.Join(t.TempDir(), "sleepy-helper.sh")
-	write(t, helper, "#!/bin/sh\necho $$ > "+pidFile+"\nsleep 60\n")
+// sleepyHelper поднимает remote, который просит представиться, и помощника
+// учётки, который вместо ответа спит. Так себя ведёт связка ключей macOS в
+// сессии без человека. Помощник отмечается стартом: пишет свой pid в файл, имя
+// которого и возвращается.
+func sleepyHelper(t *testing.T, root string) string {
+	t.Helper()
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "helper.pid")
+	helper := filepath.Join(dir, "sleepy-helper.sh")
+	write(t, helper, "#!/bin/sh\necho $$ > "+pidFile+"\nsleep 600\n")
 	if err := os.Chmod(helper, 0o755); err != nil {
 		t.Fatal(err)
 	}
-
 	// Сервер отвечает на запрос ссылок отказом с просьбой представиться:
 	// ровно на этом ответе git и зовёт помощника учётки.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="devkit"`)
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	gitT(t, root, "remote", "add", "origin", srv.URL+"/repo.git")
 	gitT(t, root, "config", "credential.helper", helper)
+	return pidFile
+}
 
-	type result struct {
-		err error
+// waitFile ждёт отметки о старте помощника. Опрос тут не сон на глаз: файл
+// появляется от чужого процесса, ждать его больше нечем, а срок стоит потолком
+// на случай, когда помощник не позван вовсе.
+func waitFile(t *testing.T, path string, limit time.Duration) int {
+	t.Helper()
+	deadline := time.Now().Add(limit)
+	for {
+		raw, err := os.ReadFile(path)
+		if err == nil {
+			pid, cerr := strconv.Atoi(strings.TrimSpace(string(raw)))
+			if cerr == nil {
+				return pid
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("помощник учётки не отметился стартом за %s", limit)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	done := make(chan result, 1)
+}
+
+// TestPushTimeoutOnCredentials: главный дефект DK-697. Помощник учётки, который
+// ждёт человека, вешал пуш навсегда, коммиты копились локально, а конвейер
+// вставал. Теперь пуш кончается отказом по пределу, и отказ называет причину и
+// ход руками.
+//
+// Гонки тут нет по устройству. Сервер представиться не даёт, помощник не
+// отвечает никогда, так что выход из Run один, по пределу. Отметку помощника о
+// старте этот тест не спрашивает, её проверяет TestKillsProcessGroup.
+func TestPushTimeoutOnCredentials(t *testing.T) {
+	root := initRepo(t)
+	sleepyHelper(t, root)
+
+	done := make(chan error, 1)
 	start := time.Now()
 	go func() {
 		_, err := Run(root, []string{"push", "origin", "HEAD:main"}, 2*time.Second)
-		done <- result{err}
+		done <- err
 	}()
 	select {
-	case r := <-done:
-		if r.err == nil {
+	case err := <-done:
+		if err == nil {
 			t.Fatal("пуш к отказавшему серверу должен провалиться")
 		}
 		for _, want := range []string{"не кончился за 2s", "учётк", "связку ключей", TimeoutEnv} {
-			if !strings.Contains(r.err.Error(), want) {
-				t.Fatalf("в отказе нет %q:\n%v", want, r.err)
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("в отказе нет %q:\n%v", want, err)
 			}
 		}
-	case <-time.After(20 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatalf("пуш не вернулся за %s: предел времени не сработал", time.Since(start))
 	}
+}
 
-	// Помощник это потомок git, и убивать надо группу: переживший предел
-	// помощник держал бы диалог связки ключей открытым дальше.
-	raw, rerr := os.ReadFile(pidFile)
-	if rerr != nil {
-		t.Fatalf("помощник учётки не был позван: %v", rerr)
+// TestKillsProcessGroup: обрыв уносит всю группу процессов, а не один git.
+// Помощник учётки это потомок, и переживший обрыв помощник держал бы диалог
+// связки ключей открытым дальше.
+//
+// Обрыв тут идёт контекстом, а не пределом времени. Предел и старт помощника
+// иначе делили бы одно окно: SIGKILL успевал прилететь раньше, чем git доходил
+// до вызова помощника, и тест краснел на ровном месте примерно в одном прогоне
+// из шести. Порядок задан отметкой: сначала тест дожидается pid помощника,
+// потом рвёт разговор.
+func TestKillsProcessGroup(t *testing.T) {
+	root := initRepo(t)
+	pidFile := sleepyHelper(t, root)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := RunContext(ctx, root, []string{"push", "origin", "HEAD:main"}, 0)
+		done <- err
+	}()
+
+	pid := waitFile(t, pidFile, 30*time.Second)
+	if syscall.Kill(pid, 0) != nil {
+		t.Fatalf("помощник %d умер сам, до обрыва", pid)
 	}
-	pid, cerr := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if cerr != nil {
-		t.Fatalf("pid помощника не разобран: %q", raw)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "оборван") {
+			t.Fatalf("обрыв по контексту не назван: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run не вернулся после обрыва контекста")
 	}
 	alive := func() bool { return syscall.Kill(pid, 0) == nil }
-	for i := 0; i < 50 && alive(); i++ {
+	for i := 0; i < 100 && alive(); i++ {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if alive() {
-		t.Fatalf("помощник %d пережил предел", pid)
+		t.Fatalf("помощник %d пережил обрыв", pid)
 	}
 }
 

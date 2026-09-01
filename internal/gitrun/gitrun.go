@@ -10,6 +10,7 @@ package gitrun
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -93,6 +94,14 @@ func Env(args []string) []string {
 // обёрнута именем команды, так что обёртки утилит остаются тонкими. Нулевой
 // или отрицательный limit снимает предел, им пользуются тесты.
 func Run(root string, args []string, limit time.Duration) (string, error) {
+	return RunContext(context.Background(), root, args, limit)
+}
+
+// RunContext это Run со вторым поводом оборвать разговор. Предел времени
+// стережёт вызов вслепую, по часам, а контекст приходит от того, кто знает про
+// обрыв больше часов. Обрыв по контексту убивает ту же группу процессов, что и
+// предел.
+func RunContext(ctx context.Context, root string, args []string, limit time.Duration) (string, error) {
 	if len(args) == 0 {
 		return "", fmt.Errorf("git позван без команды")
 	}
@@ -128,18 +137,27 @@ func Run(root string, args []string, limit time.Duration) (string, error) {
 		}
 		return out, nil
 	}
-	if !limited {
-		return wait(<-done)
+	kill := func() {
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
 	}
-	timer := time.NewTimer(limit)
-	defer timer.Stop()
+	// Нулевой канал в select блокирует навсегда, поэтому снятый предел и
+	// пустой контекст обходятся без второй ветки кода.
+	var fired <-chan time.Time
+	if limited {
+		timer := time.NewTimer(limit)
+		defer timer.Stop()
+		fired = timer.C
+	}
 	select {
 	case err := <-done:
 		return wait(err)
-	case <-timer.C:
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		<-done
+	case <-fired:
+		kill()
 		return strings.TrimSpace(buf.String()), hangErr(root, args, limit)
+	case <-ctx.Done():
+		kill()
+		return strings.TrimSpace(buf.String()), fmt.Errorf("git %s оборван: %v", args[0], ctx.Err())
 	}
 }
 

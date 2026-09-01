@@ -390,3 +390,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-677 | Тесты notify в hooks падают в чистом окружении прогона merge | bug | P0 | 2026-09-01 | [tasks/archive/2026/DK-677.md](tasks/archive/2026/DK-677.md) |
 | DK-643 | Сценарий без выката обкатывается в чистом окружении до перевода в Check | task | P1 | 2026-09-01 | [tasks/archive/2026/DK-643.md](tasks/archive/2026/DK-643.md) |
 | DK-678 | Рубеж синхронности: headless-сессии отказано в фоновом ходе | task | P1 | 2026-09-01 | [tasks/archive/2026/DK-678.md](tasks/archive/2026/DK-678.md) |
+| DK-682 | Сводка tally слепа к архиву и читает чужие ID из прозы раздела | bug | P2 | 2026-09-01 | [tasks/archive/2026/DK-682.md](tasks/archive/2026/DK-682.md) |

@@ -753,6 +753,16 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 	alive := tmuxAliveFn()
 	names := harnessRoots(s.harnesses())
 	live := s.peers()
+	// Слово живого клиента старше записи реестра. Запись кладёт хук старта из
+	// унаследованной переменной, и печатный подъём чужой сессии изнутри окна
+	// уводит имя мёртвому разговору: панель после этого рисует его живым, а
+	// живой работе соседа приписывает снятие (DK-673). Клиент же называет своё
+	// окно о себе и только пока жив.
+	for sid, p := range live {
+		if n := peerTmux(p); n != "" {
+			tmuxClaim[n] = sid
+		}
+	}
 	cutoff := s.now().Add(-sessionLiveTTL)
 	// Префикс доски нужен ровно затем, чтобы отличить чужую задачу от своей:
 	// сессия соседнего проекта попадает в список по общему каталогу
@@ -2002,6 +2012,15 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 				"чат %s не в нашей tmux: его окно поднимал не дашборд, снимать отсюда нечего", sid)})
 			return
 		}
+		// Снятие под перезапуск идёт по тому же правилу, что и уборка в архив:
+		// чужую живую работу под тем же именем трогать нельзя (DK-673).
+		if held := tmuxHeld(s.peers(), last.Tmux); held != "" && held != sid {
+			s.logf("сессия чата %s не снята: в окне %s идёт разговор %s", sid, last.Tmux, held)
+			writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
+				"в окне %s идёт разговор %s, а не этот: снимать чужую работу нельзя",
+				last.Tmux, held)})
+			return
+		}
 		if err := chatKill(last.Tmux); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
 				"tmux-сессия %s не снялась: %s", last.Tmux, procErr(err))})
@@ -2332,6 +2351,17 @@ func (s *server) sayTermOf(sid string, recs map[string][]sessionBind) string {
 	}
 	if held := sessions.TmuxOwner(recs, last.Tmux); held != "" && held != sid {
 		s.logf("имя tmux %s занято разговором %s, а не %s: клавишами туда нельзя",
+			last.Tmux, held, sid)
+		return ""
+	}
+	// Второй барьер стоит на слове живых клиентов, и он старше реестра. Запись
+	// реестра врёт целиком: печатный подъём чужой сессии из окна панели
+	// наследует имя окна и становится по ней хозяином, а сверка выше проходит,
+	// потому что испорченная запись принадлежит тому самому разговору. Ровно
+	// так реплика человека уехала клавишами в окно диспетчера цели, пока он
+	// вёл там свою работу (DK-673, чат XR-207).
+	if held := tmuxHeld(s.peers(), last.Tmux); held != "" && held != sid {
+		s.logf("в окне %s идёт разговор %s, а не %s: реплика поедет резюмом",
 			last.Tmux, held, sid)
 		return ""
 	}
@@ -2894,6 +2924,17 @@ func (s *server) chatArchive(sid string, on bool) (archDone, error) {
 	if last.Tmux == "" || !tmuxAliveFn()(last.Tmux) {
 		s.logf("чат %s убран в архив", sid)
 		return archDone{message: "разговор убран в архив"}, nil
+	}
+	// Имя окна в записи бывает чужим, и уборка по нему снимала живую работу
+	// соседа: убери человек мёртвый разговор, чьё имя занял диспетчер цели, и
+	// вместе с ним ушёл бы весь цикл (DK-673). Снимается поэтому не имя из
+	// записи, а окно, в котором этот разговор и идёт.
+	if held := tmuxHeld(s.peers(), last.Tmux); held != "" && held != sid {
+		s.logf("чат %s убран в архив, сессия %s осталась жить: в этом окне идёт разговор %s",
+			sid, last.Tmux, held)
+		return archDone{tmux: last.Tmux, message: fmt.Sprintf(
+			"разговор убран в архив, а сессия %s осталась жить: в этом окне идёт разговор %s",
+			last.Tmux, held)}, nil
 	}
 	if err := chatKill(last.Tmux); err != nil {
 		s.logf("чат %s убран в архив, но tmux-сессия %s не снялась: %v", sid, last.Tmux, err)

@@ -221,6 +221,35 @@ func peerProbe(sock string, wait time.Duration) error {
 	return peerAwaitClose(conn, wait)
 }
 
+// peerTmux это имя tmux-сессии, которое живой клиент называет о себе сам:
+// реестр клиента пишет его вместе с окном и панелью ("chat-DK-161-1:@997.%997"),
+// а нужна тут только сессия. Пусто значит, что клиент идёт не в tmux.
+func peerTmux(p peer) string {
+	if p.Tmux == "" {
+		return ""
+	}
+	return strings.SplitN(p.Tmux, ":", 2)[0]
+}
+
+// tmuxHeld называет живой разговор, который сейчас идёт в окне name. Слово тут
+// за самими клиентами, а не за реестром чатов: запись реестра кладёт хук
+// старта из унаследованной переменной, и промахнуться она может (DK-673), а
+// клиент называет своё окно о себе и только пока жив.
+//
+// Пустой ответ значит, что живого хозяина у имени нет: окно ведёт клиент
+// старой версии, кончившийся разговор или не наш процесс вовсе.
+func tmuxHeld(live map[string]peer, name string) string {
+	if name == "" {
+		return ""
+	}
+	for sid, p := range live {
+		if peerTmux(p) == name {
+			return sid
+		}
+	}
+	return ""
+}
+
 // peerWord называет сессию словами для экрана: окно vscode отличается от
 // tmux-сессии и от простого окна терминала, и человеку это видно.
 func peerWord(p peer) string {
@@ -228,8 +257,8 @@ func peerWord(p peer) string {
 	case "claude-vscode":
 		return "окно vscode"
 	case "cli":
-		if p.Tmux != "" {
-			return "tmux " + strings.SplitN(p.Tmux, ":", 2)[0]
+		if n := peerTmux(p); n != "" {
+			return "tmux " + n
 		}
 		return "окно терминала"
 	}

@@ -153,8 +153,17 @@ func cmdSmoke(root string, p SmokeParams) (string, error) {
 		return "", err
 	}
 	defer unlock()
-	main, err := preflight(root)
+	main, err := preflightMain(root)
 	if err != nil {
+		return "", err
+	}
+	// Сужение до файлов задачи, как у merge (DK-720): к моменту отметки ветки
+	// уже нет, файлы задачи известны по её слитым коммитам в истории main.
+	taskPaths, err := taskTouchedPaths(root, main, p.ID)
+	if err != nil {
+		return "", err
+	}
+	if err := requireCleanScoped(root, taskPaths); err != nil {
 		return "", err
 	}
 	b, err := loadBoard(root)

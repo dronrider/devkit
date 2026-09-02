@@ -141,6 +141,36 @@ func TestSmokeCommand(t *testing.T) {
 	}
 }
 
+// TestSmokeIgnoresForeignDirty: чужое незакоммиченное мимо файлов задачи не
+// должно отбивать smoke, той же сужением предусловия, что у merge (DK-720).
+func TestSmokeIgnoresForeignDirty(t *testing.T) {
+	root, _ := setup(t, rowInProg, rowCheck)
+	write(t, root, "docs/tasks/XR-777.md", "# XR-777: чужая задача\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-777 заведена")
+	codeCommit(t, root, "XR-009", "nine.txt")
+	write(t, root, "docs/tasks/XR-777.md", "# XR-777: чужая задача\n\nправка соседней сессии\n")
+	msg, err := cmdSmoke(root, SmokeParams{ID: "XR-009"})
+	if err != nil {
+		t.Fatalf("чужая правка мимо файлов задачи не должна отбивать smoke: %v", err)
+	}
+	if !strings.Contains(msg, "очередь выката задача больше не держит") {
+		t.Fatalf("отметка не прошла: %q", msg)
+	}
+}
+
+// TestSmokeRefusedOnOwnFileDirty: незакоммиченное по файлу самой задачи
+// по-прежнему отбивает smoke, и отказ называет именно этот путь.
+func TestSmokeRefusedOnOwnFileDirty(t *testing.T) {
+	root, _ := setup(t, rowInProg, rowCheck)
+	codeCommit(t, root, "XR-009", "nine.txt")
+	write(t, root, "nine.txt", "недокоммиченное\n")
+	_, err := cmdSmoke(root, SmokeParams{ID: "XR-009"})
+	if err == nil || !strings.Contains(err.Error(), "nine.txt") {
+		t.Fatalf("smoke должен отбиться по своему файлу и назвать его: %v", err)
+	}
+}
+
 // TestSmokeRefusedWithoutDeploy: отметка нужна ровно задаче в Check с
 // непроверенным выкатом. Бескодовой задаче в Check и задаче вне Check она не
 // ставится: освобождать нечего, а лишняя отметка только путала бы запись.

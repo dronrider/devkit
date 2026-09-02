@@ -125,24 +125,147 @@ func mainBranch(root string) (string, error) {
 	return "", fmt.Errorf("не нашёл ветку main или master")
 }
 
-// preflight проверяет то, без чего нельзя начинать ни merge, ни revert:
-// доску двигает taskctl, дерево должно быть чистым (untracked не мешают).
-func preflight(root string) (string, error) {
+// preflightMain проверяет то, без чего нельзя начинать ни одну команду ship:
+// доску двигает taskctl, ветка main или master должна найтись. Чистоту
+// дерева проверяет отдельно вызывающий: ship, push и revert требуют её по
+// всему чекауту (preflight), а merge и smoke сужают её до файлов задачи,
+// которые известны только позже, когда определена ветка (DK-720).
+func preflightMain(root string) (string, error) {
 	if _, err := exec.LookPath("taskctl"); err != nil {
 		return "", fmt.Errorf("taskctl не найден в PATH, доску двигает он: поставить набор утилит devkit (python3 ~/projects/devkit/tools/devkitctl/devkitctl.py update)")
 	}
-	main, err := mainBranch(root)
-	if err != nil {
-		return "", err
-	}
+	return mainBranch(root)
+}
+
+// requireClean отказывает на любом незакоммиченном в root (untracked не
+// мешают). Ship, push и revert требуют её как предусловие.
+func requireClean(root string) error {
 	st, err := git(root, "status", "--porcelain", "--untracked-files=no")
 	if err != nil {
-		return "", err
+		return err
 	}
 	if st != "" {
-		return "", fmt.Errorf("в рабочем дереве незакоммиченное, сначала закоммить:\n%s", cmdoutFrame(root, "git-status", st))
+		return fmt.Errorf("в рабочем дереве незакоммиченное, сначала закоммить:\n%s", cmdoutFrame(root, "git-status", st))
+	}
+	return nil
+}
+
+// preflight это preflightMain с требованием полной чистоты дерева.
+func preflight(root string) (string, error) {
+	main, err := preflightMain(root)
+	if err != nil {
+		return "", err
+	}
+	if err := requireClean(root); err != nil {
+		return "", err
 	}
 	return main, nil
+}
+
+// pathLines разбирает многострочный вывод git (diff --name-only, show
+// --name-only) в список непустых путей.
+func pathLines(out string) []string {
+	var paths []string
+	for _, p := range strings.Split(out, "\n") {
+		if p = strings.TrimSpace(p); p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+// mergeRangePaths это пути, которые тронет предстоящее слияние: диапазон
+// main..branch (двухточечный, сравнение снимков), а не дифф ветки от точки её
+// ответвления (main...branch). Диапазон слияния шире дифф-от-ответвления: он
+// тянет за собой файлы чужих коммитов, легших на main после ответвления,
+// если ветка их ещё не забрала себе. Сузить предусловие чистоты на нём
+// получится меньше, чем на дифф-от-ответвления, и это осознанный выбор в
+// пользу более осторожной проверки (DK-720, решение по «Развилкам»).
+func mergeRangePaths(root, main, branch string) ([]string, error) {
+	out, err := git(root, "diff", "--name-only", main+".."+branch)
+	if err != nil {
+		return nil, err
+	}
+	return pathLines(out), nil
+}
+
+// taskTouchedPaths это пути уже слитых коммитов задачи id: тот же отбор, что
+// у revert (taskCommits), только вместо самого отката собираются файлы её
+// коммитов. Нужен smoke: к моменту отметки ветки уже нет, и файлы задачи
+// известны только по истории main.
+func taskTouchedPaths(root, main, id string) ([]string, error) {
+	shas, err := taskCommits(root, main, id)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, sha := range shas {
+		out, err := git(root, "show", "--name-only", "--pretty=", sha)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, pathLines(out)...)
+	}
+	return paths, nil
+}
+
+// dirtyPaths это незакоммиченные пути root, staged и unstaged вместе,
+// untracked не в счёт (как у --untracked-files=no). git diff --name-only
+// вместо разбора git status --porcelain: у status двухбуквенный код статуса
+// стоит перед путём, а git() трогает весь вывод командой TrimSpace целиком.
+// На первой строке, где код статуса начинается с пробела (правка только в
+// рабочем дереве, индекс не тронут), это съедает первый символ кода и сдвигает
+// путь, ловя разбор по фиксированному отступу.
+func dirtyPaths(root string) ([]string, error) {
+	unstaged, err := git(root, "diff", "--name-only")
+	if err != nil {
+		return nil, err
+	}
+	staged, err := git(root, "diff", "--name-only", "--cached")
+	if err != nil {
+		return nil, err
+	}
+	return append(pathLines(unstaged), pathLines(staged)...), nil
+}
+
+// requireCleanScoped сужает требование чистоты до файлов задачи: несколько
+// сессий по одной доске держат в общем чекауте чужое незакоммиченное (правки
+// docs/tasks/*.md и docs/TASKS.md других задач), и полная чистота ложно
+// отбивала бы merge и smoke на нём (DK-720). Пустой taskPaths (файлы задачи
+// определить не удалось) равносилен полной проверке: сузить не на чем, и
+// любая грязь тогда отбивает, как раньше.
+func requireCleanScoped(root string, taskPaths []string) error {
+	st, err := git(root, "status", "--porcelain", "--untracked-files=no")
+	if err != nil {
+		return err
+	}
+	if st == "" {
+		return nil
+	}
+	if len(taskPaths) == 0 {
+		return fmt.Errorf("в рабочем дереве незакоммиченное, сначала закоммить:\n%s", cmdoutFrame(root, "git-status", st))
+	}
+	own := make(map[string]bool, len(taskPaths))
+	for _, p := range taskPaths {
+		own[p] = true
+	}
+	dirty, err := dirtyPaths(root)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(dirty))
+	var hit []string
+	for _, p := range dirty {
+		if own[p] && !seen[p] {
+			seen[p] = true
+			hit = append(hit, p)
+		}
+	}
+	if len(hit) == 0 {
+		return nil
+	}
+	return fmt.Errorf("в рабочем дереве незакоммиченное по файлам задачи, сначала закоммить:\n%s",
+		cmdoutFrame(root, "git-status", strings.Join(hit, "\n")))
 }
 
 func taskMove(root, id, target string) (string, error) {
@@ -659,7 +782,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if test == "" {
 		return "", fmt.Errorf("нужен --test с командой тестов проекта либо ключ test в %s: ветка сливается только зелёной", deployConfigPath)
 	}
-	main, err := preflight(root)
+	main, err := preflightMain(root)
 	if err != nil {
 		return "", err
 	}
@@ -727,6 +850,16 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		if st != "" {
 			return "", fmt.Errorf("в worktree %s незакоммиченное, сначала закоммить:\n%s", wt, cmdoutFrame(wt, "git-status", st))
 		}
+	}
+	// Основной чекаут сужает требование чистоты до файлов предстоящего
+	// слияния: он общий на несколько сессий одной доски, и чужие правки в нём
+	// не должны отбивать слияние своей задачи (DK-720).
+	mergePaths, err := mergeRangePaths(root, main, branch)
+	if err != nil {
+		return "", err
+	}
+	if err := requireCleanScoped(root, mergePaths); err != nil {
+		return "", err
 	}
 	b, err := loadBoard(root)
 	if err != nil {
@@ -1500,6 +1633,10 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 		return "", err
 	}
 	defer unlock()
+	// Полная чистота, а не сужение до файлов задачи, как у merge и smoke
+	// (DK-720): revert коммитит без явных путей (git commit -m msg ниже, без
+	// --), в один коммит с тем, что revert --no-commit застал в индексе.
+	// Чужое незакоммиченное уехало бы в этот коммит вместе с откатом.
 	main, err := preflight(root)
 	if err != nil {
 		return "", err

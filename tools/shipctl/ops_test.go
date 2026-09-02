@@ -475,6 +475,55 @@ func TestMergePreconditions(t *testing.T) {
 	}
 }
 
+// foreignTaskFile заводит трекнутый файл соседней задачи и коммитит его:
+// нужен для чужой правки, не пересекающейся с файлами текущего слияния.
+// Untracked git status с --untracked-files=no не видит, поэтому файл должен
+// быть закоммичен до того, как его правят мимо коммита.
+func foreignTaskFile(t *testing.T, root string) {
+	t.Helper()
+	write(t, root, "docs/tasks/XR-777.md", "# XR-777: чужая задача\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-777 заведена")
+}
+
+// TestMergeIgnoresForeignDirty: несколько сессий по одной доске держат в
+// общем чекауте чужое незакоммиченное, и оно не должно отбивать merge, если
+// не пересекается с диапазоном слияния (DK-720).
+func TestMergeIgnoresForeignDirty(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	foreignTaskFile(t, root)
+	branchWithFix(t, root)
+	write(t, root, "docs/tasks/XR-777.md", "# XR-777: чужая задача\n\nправка соседней сессии\n")
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err != nil {
+		t.Fatalf("чужая правка мимо файлов слияния не должна отбивать merge: %v", err)
+	}
+	if !strings.Contains(msg, "слита в main fast-forward") {
+		t.Fatalf("слияние не прошло: %q", msg)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-777.md")); !strings.Contains(string(got), "правка соседней сессии") {
+		t.Fatalf("чужая незакоммиченная правка потерялась: %q", got)
+	}
+}
+
+// TestMergeRefusedOnOwnFileDirty: незакоммиченное по файлу самой задачи
+// по-прежнему отбивает merge, и отказ называет именно этот путь, а не весь
+// git status (в дереве рядом лежит чужая правка мимо задачи).
+func TestMergeRefusedOnOwnFileDirty(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	foreignTaskFile(t, root)
+	branchWithFix(t, root)
+	write(t, root, "code.txt", "недокоммиченное\n")
+	write(t, root, "docs/tasks/XR-777.md", "# XR-777: чужая задача\n\nправка соседней сессии\n")
+	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err == nil || !strings.Contains(err.Error(), "code.txt") {
+		t.Fatalf("merge должен отбиться по своему файлу и назвать его: %v", err)
+	}
+	if strings.Contains(err.Error(), "XR-777") {
+		t.Fatalf("отказ не должен упоминать чужую правку мимо задачи: %v", err)
+	}
+}
+
 func TestStatus(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	msg, err := cmdStatus(root)

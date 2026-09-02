@@ -56,6 +56,17 @@ const usageText = `shipctl: слияние и откат задач по пра�
                                   возврат задачи в In progress и снятие
                                   признака провала проверки; задачу из
                                   невыкаченного поезда снимает без деплоя
+  push [--check-only <remote_sha> пуш main калиткой DK-602: пропускает
+        <local_sha>]              диапазон, где каждый код-коммит (дифф вне
+                                  docs/TASKS.md, docs/TASKS-archive.md и
+                                  docs/tasks/) несёт в subject ID задачи не из
+                                  Backlog, а голый код без такого ID отбивает
+                                  как раньше; мелочь, слитая в main мимо
+                                  ship/merge (однокоммитный багфикс), больше не
+                                  запирает следующий пуш чистой доски.
+                                  --check-only только проверяет названную пару
+                                  sha и ничего не пушит, этим флагом её зовёт
+                                  hooks/pre-push вместо своего разбора диапазона
 
 Команды тестов и выката передаются строкой и выполняются через sh -c. Без
 --test команда тестов берётся из ключа test в .devkit/deploy.local, а нет ни
@@ -232,6 +243,19 @@ func main() {
 		needArgs(pos, 1, 1, "revert <ID> [--test \"cmd\"] [-m \"...\"] [--push]")
 		p.ID = pos[0]
 		msg, err = cmdRevert(root(*dir), p)
+	case "push":
+		fs := flag.NewFlagSet("push", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		p := PushParams{}
+		fs.BoolVar(&p.CheckOnly, "check-only", false, "только проверить диапазон remote_sha local_sha, не пушить (для hooks/pre-push)")
+		pos := frame.ParseArgs(fs, args[1:])
+		if p.CheckOnly {
+			needArgs(pos, 2, 2, "push --check-only <remote_sha> <local_sha>")
+			p.RemoteSHA, p.LocalSHA = pos[0], pos[1]
+		} else {
+			needArgs(pos, 0, 0, "push")
+		}
+		msg, err = cmdPush(root(*dir), p)
 	case "help":
 		fmt.Print(usageText)
 		return

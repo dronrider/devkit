@@ -1,0 +1,162 @@
+package main
+
+import (
+	"strings"
+	"testing"
+)
+
+// boardCommit кладёт коммит, трогающий только файл задачи: то, что рубеж
+// DK-602 обязан считать чистой доской вне зависимости от ID в subject.
+func boardCommit(t *testing.T, root, id, note string) {
+	t.Helper()
+	write(t, root, "docs/tasks/"+id+".md", "# "+id+"\n"+note+"\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): "+id+" "+note)
+}
+
+// TestPushMixedRangePasses: диапазон с кодом, у которого легитимный ID (XR-001
+// в In progress), и с чистой доской рядом проходит целиком. Это и есть исход
+// DK-602: мелочь, слитая в main мимо ship/merge, больше не запирает пуш
+// доски.
+func TestPushMixedRangePasses(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	bare := addRemote(t, root)
+	codeCommit(t, root, "XR-001", "feature.txt")
+	boardCommit(t, root, "XR-001", "ход")
+
+	msg, err := cmdPush(root, PushParams{})
+	if err != nil {
+		t.Fatalf("смешанный диапазон с легитимным ID должен пройти: %v", err)
+	}
+	if !strings.Contains(msg, "запушен") {
+		t.Fatalf("сообщение не называет пуш: %q", msg)
+	}
+	local := gitT(t, root, "rev-parse", "main")
+	if remote := gitT(t, bare, "rev-parse", "main"); remote != local {
+		t.Fatalf("origin не сдвинулся: origin=%s local=%s", remote, local)
+	}
+}
+
+// TestPushPureBoardRangePasses: чистая доска без единого кода проходит, как и
+// раньше до DK-602.
+func TestPushPureBoardRangePasses(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	bare := addRemote(t, root)
+	boardCommit(t, root, "XR-001", "ход")
+
+	if _, err := cmdPush(root, PushParams{}); err != nil {
+		t.Fatalf("чистая доска должна пройти: %v", err)
+	}
+	local := gitT(t, root, "rev-parse", "main")
+	if remote := gitT(t, bare, "rev-parse", "main"); remote != local {
+		t.Fatalf("origin не сдвинулся: origin=%s local=%s", remote, local)
+	}
+}
+
+// TestPushBareCodeWithoutIDRefused: голый код без ID задачи в subject рубеж
+// отбивает по-старому, origin остаётся нетронутым.
+func TestPushBareCodeWithoutIDRefused(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	bare := addRemote(t, root)
+	before := gitT(t, bare, "rev-parse", "main")
+	write(t, root, "tools/app.txt", "правка\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "правка без ID задачи")
+
+	_, err := cmdPush(root, PushParams{})
+	if err == nil {
+		t.Fatal("голый код без ID должен отбить пуш")
+	}
+	if !strings.Contains(err.Error(), "без ID задачи") {
+		t.Fatalf("отказ не называет причину: %v", err)
+	}
+	if after := gitT(t, bare, "rev-parse", "main"); after != before {
+		t.Fatalf("origin сдвинулся при отказе: было %s стало %s", before, after)
+	}
+}
+
+// TestPushCodeWithBacklogIDRefused: код с ID задачи, которая ещё в Backlog
+// (XR-002 в setup), рубеж тоже отбивает: работа над ней не начата.
+func TestPushCodeWithBacklogIDRefused(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	bare := addRemote(t, root)
+	before := gitT(t, bare, "rev-parse", "main")
+	codeCommit(t, root, "XR-002", "backlog.txt")
+
+	_, err := cmdPush(root, PushParams{})
+	if err == nil {
+		t.Fatal("код с ID из Backlog должен отбить пуш")
+	}
+	if !strings.Contains(err.Error(), "XR-002") || !strings.Contains(err.Error(), "Backlog") {
+		t.Fatalf("отказ не называет задачу и Backlog: %v", err)
+	}
+	if after := gitT(t, bare, "rev-parse", "main"); after != before {
+		t.Fatalf("origin сдвинулся при отказе: было %s стало %s", before, after)
+	}
+}
+
+// TestPushCheckOnlyDoesNotPush: --check-only только отвечает вердиктом по
+// названной паре sha и не трогает origin, тем самым флагом её зовёт
+// hooks/pre-push.
+func TestPushCheckOnlyDoesNotPush(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	bare := addRemote(t, root)
+	before := gitT(t, bare, "rev-parse", "main")
+	remoteSHA := gitT(t, root, "rev-parse", "origin/main")
+	codeCommit(t, root, "XR-001", "feature.txt")
+	localSHA := gitT(t, root, "rev-parse", "main")
+
+	if _, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: remoteSHA, LocalSHA: localSHA}); err != nil {
+		t.Fatalf("check-only с легитимным ID должен пройти: %v", err)
+	}
+	if after := gitT(t, bare, "rev-parse", "main"); after != before {
+		t.Fatalf("--check-only не должен пушить: было %s стало %s", before, after)
+	}
+
+	write(t, root, "tools/bare.txt", "код\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "код без ID")
+	localSHA2 := gitT(t, root, "rev-parse", "main")
+	if _, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: remoteSHA, LocalSHA: localSHA2}); err == nil {
+		t.Fatal("check-only с голым кодом должен отказать")
+	}
+	if after := gitT(t, bare, "rev-parse", "main"); after != before {
+		t.Fatalf("--check-only не должен пушить и при отказе: было %s стало %s", before, after)
+	}
+}
+
+// TestPushRenameIntoBoardIsRefused: перенос кода в docs/tasks/ не должен
+// сходить за доску, --no-renames в rangeVerdict держит ту же дыру закрытой,
+// что и старый разбор в hooks/pre-push (DK-119).
+func TestPushRenameIntoBoardIsRefused(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	bare := addRemote(t, root)
+	before := gitT(t, bare, "rev-parse", "main")
+	write(t, root, "tools/movable.txt", "код\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "код перед переносом")
+	gitT(t, root, "mv", "tools/movable.txt", "docs/tasks/movable.md")
+	gitT(t, root, "commit", "-qm", "перенос кода в доску без ID")
+
+	if _, err := cmdPush(root, PushParams{}); err == nil {
+		t.Fatal("перенос кода в docs/tasks/ не должен сходить за доску")
+	}
+	if after := gitT(t, bare, "rev-parse", "main"); after != before {
+		t.Fatalf("origin сдвинулся при отказе: было %s стало %s", before, after)
+	}
+}
+
+// TestPushNothingToPush: main и origin/main совпадают, команда молчит без
+// ошибки и без пуша.
+func TestPushNothingToPush(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+
+	msg, err := cmdPush(root, PushParams{})
+	if err != nil {
+		t.Fatalf("нечего пушить не должно быть ошибкой: %v", err)
+	}
+	if !strings.Contains(msg, "пушить нечего") {
+		t.Fatalf("сообщение не называет пустой диапазон: %q", msg)
+	}
+}

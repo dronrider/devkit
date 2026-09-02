@@ -23,8 +23,33 @@ var sectByPrefix = []struct{ prefix, key string }{
 // на файл задачи, и никто её не читает.
 type row struct{ ID, Title, Type, Cost, Link string }
 
+// boardPrefixRe вытаскивает префикс ID из шапки доски («# devkit: задачи
+// (префикс DK)»), тем же способом, что и taskctl. Нужен калитке DK-602: она
+// ищет ID задачи в subject коммита и обязана знать, каким префиксом он
+// начинается, а не гадать по любым заглавным буквам.
+var boardPrefixRe = regexp.MustCompile(`\(префикс ([A-ZА-Я]+)\)`)
+
 type board struct {
-	sects map[string][]row
+	sects  map[string][]row
+	prefix string
+}
+
+// prefixOr возвращает префикс доски: из шапки, а без неё из первой попавшейся
+// строки любой секции. def отдаётся только для пустой доски без единой
+// строки, на голом дереве это не бывает в бою, но тесты его заводят.
+func (b *board) prefixOr(def string) string {
+	if b.prefix != "" {
+		return b.prefix
+	}
+	for _, rows := range b.sects {
+		if len(rows) == 0 {
+			continue
+		}
+		if pref, _, ok := strings.Cut(rows[0].ID, "-"); ok && pref != "" {
+			return pref
+		}
+	}
+	return def
 }
 
 // findRoot перед подъёмом смотрит редирект корп-контура: в корп-клоне доска
@@ -65,6 +90,11 @@ func loadBoard(root string) (*board, error) {
 				}
 			}
 			continue
+		}
+		if sect == "" && b.prefix == "" {
+			if m := boardPrefixRe.FindStringSubmatch(ln); m != nil {
+				b.prefix = m[1]
+			}
 		}
 		t := strings.TrimSpace(ln)
 		if sect == "" || !strings.HasPrefix(t, "|") {

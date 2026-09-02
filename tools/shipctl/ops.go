@@ -75,16 +75,13 @@ func runShellLimit(root, cmdStr string, limit time.Duration, env []string) (stri
 	}
 }
 
-// mergeTestEnv и freshTestTree это кирпичи чистого прогона (internal/freshtree):
-// временное дерево на нужном коммите и окружение без следов дома сессии. За
-// ними пришёл второй читатель (обкатка сценария в taskctl), поэтому разбор
-// живёт в общем пакете, а здесь остались имена, под которыми его знает слияние.
-func mergeTestEnv(home, tmpHome string) []string { return freshtree.Env(home, tmpHome) }
-
-func trimHomePath(path, home string) string { return freshtree.TrimHomePath(path, home) }
-
-func freshTestTree(root, sha string) (tree, home string, cleanup func(), err error) {
-	return freshtree.Make(root, sha, "shipctl-merge-")
+// freshTestRun это чистый прогон слияния (internal/freshtree): временное дерево
+// на нужном коммите, окружение без следов дома сессии, утилиты проверяемого
+// дерева и тулчейны из-под настоящего дома. За кирпичом пришёл второй читатель
+// (обкатка сценария в taskctl), поэтому разбор живёт в общем пакете, а здесь
+// осталось имя, под которым его знает слияние.
+func freshTestRun(root, sha string) (*freshtree.Run, error) {
+	return freshtree.Start(root, sha, "shipctl-merge-")
 }
 
 // deployProblem говорит, что стряслось с выкатом: короткое для заголовка
@@ -887,14 +884,18 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	testTree, testHome, cleanTree, err := freshTestTree(root, sha)
+	run, err := freshTestRun(root, sha)
 	if err != nil {
 		return "", err
 	}
-	out, _, err := runShellLimit(testTree, test, 0, mergeTestEnv(os.Getenv("HOME"), testHome))
-	cleanTree()
+	out, _, err := runShellLimit(run.Tree, test, 0, run.Env)
+	run.Cleanup()
 	if err != nil {
-		return "", fmt.Errorf("тесты после ребейза красные в свежем дереве (чистый чекаут %s, без следов работы в worktree), ветка остаётся несшитой:\n%s", sha[:min(len(sha), 12)], cmdoutFrame(workDir, "test", out))
+		why := ""
+		if d := run.Diagnose(out); d != "" {
+			why = "\n" + d
+		}
+		return "", fmt.Errorf("тесты после ребейза красные в свежем дереве (чистый чекаут %s, без следов работы в worktree), ветка остаётся несшитой:%s\n%s", sha[:min(len(sha), 12)], why, cmdoutFrame(workDir, "test", out))
 	}
 	if wt == "" {
 		if _, err := git(root, "checkout", main); err != nil {

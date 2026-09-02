@@ -71,3 +71,49 @@ func readTrim(t *testing.T, path string) string {
 	}
 	return strings.TrimSpace(string(b))
 }
+
+// TestMergeSeesHomeToolchain: тулчейн, поставленный под домом, прогону тестов
+// виден. Подменённый HOME до DK-684 уводил rustup от ~/.rustup, а обрезка PATH
+// уносила ~/.cargo/bin, и команда тестов на rust отбивала слияние дважды,
+// пока её не переписали абсолютными путями с RUSTUP_HOME и CARGO_HOME.
+func TestMergeSeesHomeToolchain(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	branchWithFix(t, root)
+	home := t.TempDir()
+	cargo := filepath.Join(home, ".cargo", "bin")
+	if err := os.MkdirAll(cargo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".rustup"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cargo, "cargo"), []byte("#!/bin/sh\necho cargo 1.0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", cargo+string(os.PathListSeparator)+os.Getenv("PATH"))
+	msg, err := cmdMerge(root, MergeParams{ID: "XR-001",
+		Test: `cargo --version && test -n "$CARGO_HOME" && test -n "$RUSTUP_HOME"`})
+	if err != nil {
+		t.Fatalf("команда тестов на rust должна проходить слияние: %v", err)
+	}
+	if !strings.Contains(msg, "слит") {
+		t.Fatalf("отчёт не называет слияние: %q", msg)
+	}
+}
+
+// TestMergeRedTestNamesMissingCommand: отказ красных тестов по нехватке
+// команды называет её саму и места, где прогон искал.
+func TestMergeRedTestNamesMissingCommand(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	branchWithFix(t, root)
+	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "xrmissingtool --version"})
+	if err == nil {
+		t.Fatal("тесты с несуществующей командой должны краснеть")
+	}
+	for _, want := range []string{"команды `xrmissingtool` в прогоне нет", "искали в PATH прогона"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("отказ не называет %q: %v", want, err)
+		}
+	}
+}

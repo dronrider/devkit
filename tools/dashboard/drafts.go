@@ -453,7 +453,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// сессию не знает, поиск молчит, и умерший грумер вешает на панели ту же
 	// немую петлю ожидания, ради которой затевалась DK-728. Разговора у разбора
 	// пока нет, поэтому смерть поедет в журнал задачи.
-	s.chatRaised(sess, "", id)
+	s.chatRaised(sess, "", id, found.Name)
 	s.logf("грумминг %s в %s поднят (tmux-сессия %s%s)", id, found.Name, sess, harnessTail(harness))
 	message := fmt.Sprintf("грумминг %s поднят в tmux-сессии %s: разбор доведёт черновик до строки Backlog либо снимет его с причиной", id, sess)
 	if ask != "" {

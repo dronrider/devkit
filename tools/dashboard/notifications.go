@@ -50,7 +50,10 @@ var notifyKinds = map[string]string{
 	// task_ask шлёт инструмент ожидания taskctl ask: вопрос задан, и заход
 	// стоит с ним прямо сейчас. Тип тот же, что у стопа с вопросом, потому что
 	// ждут тут человека, а не машину.
-	"task_ask":     "wait",
+	"task_ask": "wait",
+	// task_nolead шлёт сам дашборд: сессия конвейера кончилась, а строка
+	// осталась стоять в разработке (nolead.go).
+	"task_nolead":  "task",
 	"task_check":   "task",
 	"task_blocked": "task",
 	"task_fail":    "task",

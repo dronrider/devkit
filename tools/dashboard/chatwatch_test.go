@@ -218,11 +218,14 @@ exit 0`)
 // Остаток разговора снимает и запуск конвейера: имя сессии у разбора и у
 // работы задачи одно, и кнопка «Выполнить» ставит работу на место досчитавшего
 // разбора. Смерти тут нет, сессию сняли под живую работу.
+//
+// Присмотр после этого не пустует: поднятый конвейер встаёт под сторожа сам
+// (DK-660), и запись имени с этой минуты говорит уже о нём.
 func TestRunStartOverLeftoverNoDeathSaid(t *testing.T) {
 	e, c, tmuxLog := runsEnv(t, "task-XR-004\\n")
 	// Запись, какую оставляет за собой разбор черновика: имя сессии у разбора и
 	// у конвейера одно, и присмотр за ней стоит с той минуты, как её подняли.
-	e.s.chatRaised("task-XR-004", "", "XR-004")
+	e.s.chatRaised("task-XR-004", "", "XR-004", "demo")
 	writePeerTmux(t, e.home, "cccc4444-4444-4444-8444-444444444444", "task-XR-004:@2.%2", "idle")
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-004"}`)
@@ -234,9 +237,12 @@ func TestRunStartOverLeftoverNoDeathSaid(t *testing.T) {
 		t.Fatalf("остаток разговора не снят, стенд проверяет не ту ветку: %s", got)
 	}
 
-	tmuxWatchFake(t, e, "", "")
+	tmuxWatchFake(t, e, "task-XR-004", "конвейер идёт")
 	e.s.chatWatchTick()
 	if marks := saidMarks(t, e.home, "task-XR-004"); len(marks) != 0 {
 		t.Fatalf("снятый под работу остаток объявили умершим: %v", marks)
+	}
+	if st := e.s.chatStoreRead("tmux-task-XR-004"); st.Raised == 0 || st.Dead != 0 {
+		t.Fatalf("поднятый конвейер остался без присмотра: %+v", st)
 	}
 }

@@ -80,6 +80,17 @@ const smokeBoardJSON = smokeBoardHead +
 
 const smokeBoardClosedJSON = smokeBoardHead + `{"key":"check","title":"Check","rows":[]},` + smokeBoardTail
 
+// smokeBoardRunJSON это та же доска после переезда соседки в разработку: строка
+// в Backlog осиротеть не может, работы за ней и не заводили, а шаг оборванного
+// конвейера меряет именно стоящую в разработке (DK-660).
+const smokeBoardRunJSON = `{"prefix":"XR","sections":[` +
+	`{"key":"in-progress","title":"In progress","rows":[` +
+	`{"id":"XR-100","title":"Цель: пробный цикл smoke","type":"task","p":"P2","r":41,"r_parts":[25,9,3,0,4],"cost":"XL","link":"[tasks/XR-100.md](tasks/XR-100.md)"},` +
+	`{"id":"XR-002","title":"Соседка по доске","type":"task","p":"P2","r":30,"r_parts":[25,2,1,0,2],"cost":"S","link":"-"}]},` +
+	`{"key":"check","title":"Check","rows":[]},` +
+	`{"key":"backlog","title":"Backlog","rows":[]},` +
+	`{"key":"blocked","title":"Blocked","rows":[]}]}`
+
 const smokeBoardHead = `{"prefix":"XR","sections":[` +
 	`{"key":"in-progress","title":"In progress","rows":[{"id":"XR-100","title":"Цель: пробный цикл smoke","type":"task","p":"P2","r":41,"r_parts":[25,9,3,0,4],"cost":"XL","link":"[tasks/XR-100.md](tasks/XR-100.md)"}]},`
 
@@ -1683,6 +1694,70 @@ func (s *smoke) stepRaiseDeath() (string, error) {
 	return dead.Dead.Why, nil
 }
 
+// stepNoLead: конвейер задачи оборвался, а строка осталась стоять в разработке.
+// Живой случай стоил полутора часов простоя: исполнитель погиб на середине
+// хода, чат задачи стоял без ведущей сессии, реплика человека лежала во входе
+// недоставленной, и снаружи это ничем не отличалось от штатной очереди (DK-660).
+// Шаг идёт последним: сессию конвейера поднял шаг выбора подписки, и до этой
+// минуты она нужна живой остальным шагам.
+func (s *smoke) stepNoLead() (string, error) {
+	// Соседка переезжает в разработку той же дорогой, какой прогон правит доску
+	// при закрытии: строки приезжают фикстурой taskctl из файла, а помнить
+	// прежний ответ утилиты серверу запрещает отпечаток самой доски.
+	if err := smokeWrite(s.boardFile(), smokeBoardRunJSON+"\n", 0o644); err != nil {
+		return "", err
+	}
+	if err := os.Chtimes(s.boardDoc(), time.Now(), time.Now()); err != nil {
+		return "", fmt.Errorf("отпечаток доски не сдвинулся, сервер ответит прежней: %v", err)
+	}
+	sess := "task-" + smokeTask
+	// Клиент конвейера вышел сам: имя уходит из списка живых сессий, как оно
+	// уходит у tmux, когда клиент умер на середине хода.
+	if err := s.tmuxDrop(sess); err != nil {
+		return "", err
+	}
+	// Сторож демона ходит по поднятым сессиям сам, но ждать его обход прогону
+	// незачем: тот же разбор ведёт поиск разговора по имени сессии.
+	var dead struct {
+		Dead struct {
+			Why string `json:"why"`
+		} `json:"dead"`
+	}
+	if err := s.call("GET", "/api/projects/demo/chats?tmux="+sess, "", http.StatusOK, &dead); err != nil {
+		return "", err
+	}
+	if dead.Dead.Why == "" {
+		return "", fmt.Errorf("смерть сессии %s не названа, и звать человека не с чего", sess)
+	}
+	// Лента спрашивается своим запросом, а не живым потоком прогона: тот открыт
+	// под стоп и события про задачи отсеивает фильтром.
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		var feed struct {
+			Items []Notification `json:"items"`
+		}
+		if err := s.call("GET", "/api/notifications?kind=task", "", http.StatusOK, &feed); err != nil {
+			return "", err
+		}
+		for _, n := range feed.Items {
+			// Повод назван словом, а не константой кода: стенд меряет то, что
+			// уехало в журнал уведомителя, и с ним же сверяется лента.
+			if n.Reason != "task_nolead" {
+				continue
+			}
+			if n.Kind != "task" || n.ID != smokeTask || n.Project != "demo" {
+				return "", fmt.Errorf("событие пришло не про строку доски: %+v", n)
+			}
+			return fmt.Sprintf("«%s» (задача %s проекта %s, повод %s)",
+				n.Title, n.ID, n.Project, n.Reason), nil
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("оборванный конвейер %s прошёл молча: уведомления в ленте нет за 30с", smokeTask)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
 // tmuxDrop убирает имя из списка живых сессий фикстуры: так выглядит клиент,
 // вышедший сам, без kill-session от дашборда.
 func (s *smoke) tmuxDrop(name string) error {
@@ -2102,6 +2177,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"удаление черновика с причиной", s.stepDropDraft},
 		{"пересчёт ранга перетаскиванием доехал до доски", s.stepDragRank},
 		{"смерть поднятой сессии названа исходом", s.stepRaiseDeath},
+		{"оборванный конвейер зовёт человека", s.stepNoLead},
 	}
 	for i, st := range steps {
 		note, err := st.run()

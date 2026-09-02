@@ -1847,7 +1847,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.chatBlankLift(blank, sess, model)
-	s.chatRaised(sess, blank, id)
+	s.chatRaised(sess, blank, id, found.Name)
 	s.logf("чат поднят в %s (tmux-сессия %s, модель %s, дерево %s)", found.Name, sess, model, dir)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"way": "new", "tmux": sess, "model": model, "tree": dir,
@@ -2341,7 +2341,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	sessions.Append(sessions.Path(s.cfg.Home),
 		sessions.Line(s.now(), sid, sessions.Bind{Task: task, Source: "заказ",
 			Project: found.Name, Tree: dir, Tmux: sess}, "резюм чата"))
-	s.chatRaised(sess, sid, task)
+	s.chatRaised(sess, sid, task, found.Name)
 	// Резюм увёз реплику вводной: дожимать её после этого нечем, иначе тот же
 	// текст приедет и вводной, и повтором.
 	s.chatSayDone(sid, claim, "resume")
@@ -2839,7 +2839,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		return
 	}
 	s.chatBlankLift(sid, sess, model)
-	s.chatRaised(sess, sid, task)
+	s.chatRaised(sess, sid, task, found.Name)
 	s.chatSayDone(sid, claim, "start")
 	s.saidSay(saidSessionKey(sid), text, "start")
 	s.logf("чат %s без сессии поднят репликой человека (tmux-сессия %s, модель %s)", sid, sess, model)
@@ -3163,7 +3163,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sessions.Append(sessions.Path(s.cfg.Home),
 		sessions.Line(s.now(), sid, sessions.Bind{Task: id, Source: "заказ",
 			Project: found.Name, Tree: dir, Tmux: sess}, "продолжение работы"))
-	s.chatRaised(sess, sid, id)
+	s.chatRaised(sess, sid, id, found.Name)
 	s.logf("работа %s продолжена резюмом чата %s в tmux-сессии %s", id, sid, sess)
 	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "resume",
 		"session": sid, "tmux": sess})
@@ -3604,7 +3604,7 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text stri
 			"error": fmt.Sprintf("tmux не поднял новый чат %s: %s", id, procErr(err))})
 		return
 	}
-	s.chatRaised(sess, "", id)
+	s.chatRaised(sess, "", id, found.Name)
 	s.logf("работа %s поднята новым чатом в tmux-сессии %s", id, sess)
 	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "fresh", "tmux": sess,
 		"message": "чата не было: поднят новый в tmux-сессии " + sess})

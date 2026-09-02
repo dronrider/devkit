@@ -139,3 +139,45 @@ func TestGroomSweepSkipsOtherChats(t *testing.T) {
 		t.Errorf("заказ груминга не узнан: %q", got)
 	}
 }
+
+// Уборка разбора не трогает сессию конвейера, занявшую то же имя (DK-660).
+// Имя task-<ID> у разбора и у работы задачи одно, и живой случай сложился так:
+// запуск задачи снял остаток груминга и поднял исполнителя под тем же именем, а
+// пришедшая через полторы минуты уборка сняла его вместе с работой. Сверку
+// хозяина имени по живым клиентам поставила DK-673, и стенд держит её со
+// стороны самой уборки: снимается окно, в котором идёт убираемый разговор, а не
+// имя из его записи.
+func TestGroomSweepKeepsPipelineSession(t *testing.T) {
+	e, _ := chatEnv(t)
+	groom := "aaaa1111-6666-4666-8666-111111111111"
+	exec := "bbbb2222-6666-4666-8666-222222222222"
+	groomChat(t, e, groom, "XR-4", time.Now().Add(-2*time.Hour))
+	e.s.chatSeenMark(groom)
+	// Две привязки на одно имя: разбор назвался первым, конвейер полчаса
+	// спустя. Уборке видна только своя, и по ней она снимала чужое окно.
+	writeBinds(t, e.home, "2026-08-31T16:20:00 сессия "+groom+
+		" задача XR-4 проект demo дерево "+e.proj+" транскрипт /tmp/g.jsonl "+
+		"источник заказ повод startup tmux task-XR-4\n"+
+		"2026-08-31T16:50:20 сессия "+exec+
+		" задача XR-4 проект demo дерево "+e.proj+" транскрипт /tmp/e.jsonl "+
+		"источник заказ повод startup tmux task-XR-4\n")
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) printf 'task-XR-4\t1\t1754770421\n';;
+capture-pane) printf '';;
+esac
+exit 0`)
+	writePeerWindow(t, e.home, exec, "task-XR-4")
+	killed := ""
+	was := chatKill
+	chatKill = func(name string) error { killed = name; return nil }
+	defer func() { chatKill = was }()
+
+	e.s.groomSweep(e.proj)
+
+	if !archived(t, e.s, groom) {
+		t.Fatal("разбор с твёрдым исходом остался в списке")
+	}
+	if killed != "" {
+		t.Fatalf("уборка разбора сняла сессию конвейера %q: работа задачи погибла на середине хода", killed)
+	}
+}

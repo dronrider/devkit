@@ -64,7 +64,11 @@ var chatSecretRe = regexp.MustCompile(`[A-Za-z0-9_-]{28,}`)
 // для сторожа не существует, и провалившийся подъём смертью не считается.
 // Разговор sid называется, когда он уже есть (резюм, реплика в незачатую
 // запись): в его ленту и приедет строка о смерти.
-func (s *server) chatRaised(sess, sid, task string) {
+//
+// Проект нужен смерти, а не подъёму: по нему она находит доску и зовёт
+// человека к осиротевшей строке (nolead.go). Реестр сессий тут не помощник,
+// умерший клиент в него мог и не успеть назваться.
+func (s *server) chatRaised(sess, sid, task, proj string) {
 	if sess == "" || !chatKeyRe.MatchString(sess) {
 		return
 	}
@@ -77,6 +81,9 @@ func (s *server) chatRaised(sess, sid, task string) {
 	}
 	if task != "" {
 		st.Task = task
+	}
+	if proj != "" {
+		st.Project = proj
 	}
 	if err := s.chatStoreWrite(key, st); err != nil {
 		s.logf("подъём сессии %s не запомнился: %v", sess, err)
@@ -274,6 +281,10 @@ func (s *server) chatDeathSay(name string, st chatStore) chatStore {
 	delete(s.watch, name)
 	delete(s.tails, name)
 	s.watchMu.Unlock()
+	// Строка в ленте разговора ждёт, пока человек откроет карточку, а
+	// оборванная работа ждать не должна: задачу, оставшуюся без ведущей
+	// сессии, уведомитель доносит до человека сам (nolead.go, DK-660).
+	s.noLeadSay(st.Task, st.Project, why)
 	return st
 }
 

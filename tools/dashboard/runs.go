@@ -395,6 +395,10 @@ func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, mo
 			id, proj.Path, proj.Name, model)); err != nil {
 		return fmt.Errorf("tmux не поднял сессию %s: %s", sess, procErr(err))
 	}
+	// Конвейер встаёт под того же сторожа, что и разговор (chatwatch.go): без
+	// отметки его смерть не замечал никто, и оборванная работа стояла до тех
+	// пор, пока человек сам не напишет задаче (DK-660).
+	s.chatRaised(sess, "", id, proj.Name)
 	return nil
 }
 

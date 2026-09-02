@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dronrider/devkit/internal/deployconf"
 	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskform"
 )
@@ -70,11 +71,20 @@ type checkRunReport struct {
 	Raised bool
 }
 
-// needCheckRun решает, нужен ли строке прогон, по тем же признакам, по которым
-// taskctl отбирает строки Check в закрытие автоматикой: секция, вид приёмки,
-// непогашенный провал и отметка smoke на последний выкат. Пустой ответ значит
-// «прогон нужен», непустой это причина, по которой поднимать нечего.
+// needCheckRun решает, нужен ли строке прогон. Первым спрашивается проект:
+// подъём заводит только конвейер, доверенный агенту целиком (`autonomous = true`
+// в обвязке выката). Проект с выкатом за пользователем проверяющего не
+// поднимает вовсе. Там человек в окне, до Check строка доходит с его рук, и
+// сессия поверх его работы встала бы каждым тиком сторожка. Дальше идут те же
+// признаки, по которым taskctl отбирает строки Check в закрытие автоматикой:
+// секция, вид приёмки, непогашенный провал и отметка smoke на последний выкат.
+// Пустой ответ значит «прогон нужен», непустой это причина, по которой
+// поднимать нечего.
 func needCheckRun(root string, row boardRow) string {
+	if !deployconf.Autonomous(root) {
+		return "выкат за пользователем (autonomous = false в " + deployconf.Rel +
+			"): проверяющего поднимает человек"
+	}
 	if row.Sect != "check" {
 		return "строка не в Check (" + row.Section + ")"
 	}

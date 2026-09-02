@@ -33,6 +33,28 @@ func writeCheckTask(t *testing.T, proj, id, doc string) {
 	}
 }
 
+// checkEnv это стенд запуска с автономной обвязкой выката: подъём заводит
+// только конвейер, доверенный агенту целиком, и без обвязки любой стенд
+// упирался бы в первый же барьер решения.
+func checkEnv(t *testing.T, sessions string) (*testEnv, string) {
+	t.Helper()
+	e, _, tmuxLog := runsEnv(t, sessions)
+	writeDeployLocal(t, e.proj, "deploy = true\nautonomous = true\n")
+	return e, tmuxLog
+}
+
+// writeDeployLocal кладёт обвязку выката в корень синтетического проекта.
+func writeDeployLocal(t *testing.T, proj, body string) {
+	t.Helper()
+	dir := filepath.Join(proj, ".devkit")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "deploy.local"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // checkRunOne гоняет подъём по одной строке на готовом стенде запуска.
 func checkRunOne(t *testing.T, e *testEnv, id string) checkRunReport {
 	t.Helper()
@@ -50,7 +72,7 @@ func checkRunOne(t *testing.T, e *testEnv, id string) checkRunReport {
 // Строка Check без отметки smoke получает сессию проверяющего: та же
 // tmux-сессия task-<ID>, что у кнопки экрана, с заказом прогона и отметок.
 func TestCheckRunRaisesSession(t *testing.T) {
-	e, _, tmuxLog := runsEnv(t, "")
+	e, tmuxLog := checkEnv(t, "")
 	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc)
 
 	rep := checkRunOne(t, e, "XR-003")
@@ -80,7 +102,7 @@ func TestCheckRunRaisesSession(t *testing.T) {
 // прогонявшего с исполнителем разработки, и узнать имя после отказа дороже,
 // чем получить его до прогона.
 func TestCheckRunOrderNamesDeveloper(t *testing.T) {
-	e, _, tmuxLog := runsEnv(t, "")
+	e, tmuxLog := checkEnv(t, "")
 	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc+
 		"\n## Ход работы\n\n- Разработка: субагент модель-base/high по вердикту pick, 2026-09-02 10:00-11:00.\n")
 
@@ -100,7 +122,7 @@ func TestCheckRunOrderNamesDeveloper(t *testing.T) {
 // же модель, что вела разработку, и подъём отказывает словами, а не жжёт квоту
 // на прогон, который ворота закрытия всё равно не примут.
 func TestCheckRunRefusesDeveloperModel(t *testing.T) {
-	e, _, tmuxLog := runsEnv(t, "")
+	e, tmuxLog := checkEnv(t, "")
 	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc+
 		"\n## Ход работы\n\n- Разработка: субагент модель-pro/high по вердикту pick, 2026-09-02 10:00-11:00.\n")
 
@@ -129,7 +151,7 @@ func TestCheckRunSkipsWhatNeedsNoRun(t *testing.T) {
 		{"не в Check", "XR-004", checkTaskDoc, "не в Check"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e, _, tmuxLog := runsEnv(t, "")
+			e, tmuxLog := checkEnv(t, "")
 			if tc.doc != "" {
 				writeCheckTask(t, e.proj, tc.id, tc.doc)
 			}
@@ -147,10 +169,44 @@ func TestCheckRunSkipsWhatNeedsNoRun(t *testing.T) {
 	}
 }
 
+// Проект с выкатом за пользователем прогон не поднимает. Строка сидит в Check
+// без отметки smoke, все остальные признаки за подъём, но конвейер этого
+// проекта человеку и принадлежит: до Check строка дошла с его рук, и сессия
+// поверх его работы вставала бы каждым тиком сторожка.
+func TestCheckRunSkipsUserDeployProject(t *testing.T) {
+	for _, tc := range []struct{ name, cfg string }{
+		{"обвязки нет", ""},
+		{"автономия снята", "deploy = true\nautonomous = false\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, tmuxLog := checkEnv(t, "")
+			if tc.cfg == "" {
+				if err := os.Remove(filepath.Join(e.proj, ".devkit", "deploy.local")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeDeployLocal(t, e.proj, tc.cfg)
+			}
+			writeCheckTask(t, e.proj, "XR-003", checkTaskDoc)
+
+			rep := checkRunOne(t, e, "XR-003")
+			if rep.Raised || rep.Failed {
+				t.Fatalf("выкат за пользователем прогон не поднимает: %+v", rep)
+			}
+			if !strings.Contains(rep.Line, "autonomous = false") {
+				t.Errorf("отказ не называет причину: %q", rep.Line)
+			}
+			if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+				t.Errorf("сессия подниматься не должна: %s", got)
+			}
+		})
+	}
+}
+
 // Пользовательская приёмка агентской половины не имеет: прогонять там нечего, и
 // подъём такую строку не трогает. Вид приезжает полем строки доски.
 func TestCheckRunSkipsUserAccept(t *testing.T) {
-	e, _, _ := runsEnv(t, "")
+	e, _ := checkEnv(t, "")
 	writeScript(t, e.bin, "taskctl", "echo '"+strings.Replace(runsBoardJSON,
 		`{"id":"XR-003","title":"Задача на проверке"`,
 		`{"id":"XR-003","title":"Задача на проверке","accept":"user"`, 1)+"'")
@@ -165,7 +221,7 @@ func TestCheckRunSkipsUserAccept(t *testing.T) {
 // Смешанный вид приёмки прогоняется наполовину: агентская часть идёт сессией, а
 // закрывать строку заказ не велит, последний шаг остаётся человеку.
 func TestCheckRunMixedLeavesCloseToHuman(t *testing.T) {
-	e, _, tmuxLog := runsEnv(t, "")
+	e, tmuxLog := checkEnv(t, "")
 	writeScript(t, e.bin, "taskctl", "echo '"+strings.Replace(runsBoardJSON,
 		`{"id":"XR-003","title":"Задача на проверке"`,
 		`{"id":"XR-003","title":"Задача на проверке","accept":"mixed"`, 1)+"'")
@@ -186,7 +242,7 @@ func TestCheckRunMixedLeavesCloseToHuman(t *testing.T) {
 // Поверх живой работы сессия не поднимается: у задачи уже идёт свой конвейер,
 // и второй разбирался бы с той же строкой.
 func TestCheckRunSkipsLiveSession(t *testing.T) {
-	e, _, _ := runsEnv(t, "task-XR-003\n")
+	e, _ := checkEnv(t, "task-XR-003\n")
 	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc)
 
 	rep := checkRunOne(t, e, "XR-003")
@@ -198,7 +254,7 @@ func TestCheckRunSkipsLiveSession(t *testing.T) {
 // Без имён берётся вся секция Check, и на каждую строку приходится своя строка
 // отчёта: зовущий уносит слова в журнал, молчащего исхода нет.
 func TestCheckRunsWholeCheckSection(t *testing.T) {
-	e, _, _ := runsEnv(t, "")
+	e, _ := checkEnv(t, "")
 	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc)
 
 	lines, raised, failed := e.s.checkRuns(&Project{Name: "demo", Path: e.proj}, nil)
@@ -213,7 +269,7 @@ func TestCheckRunsWholeCheckSection(t *testing.T) {
 // Команда печатает строки отчёта и отвечает кодом: провал нужного подъёма это
 // выход 1, а «поднимать нечего» это ноль.
 func TestCmdCheckPrintsAndCodes(t *testing.T) {
-	e, _, _ := runsEnv(t, "")
+	e, _ := checkEnv(t, "")
 	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc+
 		"\n## Ход работы\n\n- Разработка: субагент модель-pro/high по вердикту pick, 2026-09-02 10:00-11:00.\n")
 

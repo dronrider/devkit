@@ -224,8 +224,12 @@ const fallbackTier = "pro"
 // agentctl pick, а не выбирать глазом. Вторая строка это слова про то, откуда
 // ярус взялся: молчащий вердикт откатывает на pro, и молчать об откате нельзя,
 // иначе подмена яруса ничем не видна.
-func (s *server) pickTier(dir, id string) (string, string) {
-	out, err := runProcQuiet(dir, true, binPath(agentctlBin), "pick", id)
+func (s *server) pickTier(dir, id, role string) (string, string) {
+	args := []string{"pick", id}
+	if role != "" {
+		args = append(args, "--role", role)
+	}
+	out, err := runProcQuiet(dir, true, binPath(agentctlBin), args...)
 	if err != nil {
 		return fallbackTier, fmt.Sprintf("вердикт agentctl pick не ответил (%s): ярус %s",
 			procErr(err), fallbackTier)
@@ -257,7 +261,7 @@ func (s *server) runTier(dir, id, want string, h *Harness, goal bool) (string, s
 	if goal {
 		return fallbackTier, "ярус " + fallbackTier + " по умолчанию цикла цели", ""
 	}
-	tier, said := s.pickTier(dir, id)
+	tier, said := s.pickTier(dir, id, "")
 	return tier, said, ""
 }
 
@@ -370,6 +374,28 @@ func clientCommand(agentctl string, h *Harness, model string) string {
 	}
 	return shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
 		shQuote(h.Bin) + " --permission-mode auto" + tier
+}
+
+// startTaskSession поднимает tmux-сессию конвейера задачи: оболочка проходов,
+// клиент и заказы обоих сортов. Дорога сюда не одна: кнопка экрана и подъём
+// прогона после выката (checkrun.go) поднимают одно и то же окно, и правила
+// заказа (план, канал ответа) обоим приставляются тут, а не пересказываются
+// каждым зовущим.
+func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again string) error {
+	// Оболочка проходов ищется до подъёма окна: без неё конвейер прожил бы один
+	// ход головы, и отказать тут честнее, чем поднять работу, которая умрёт на
+	// первом же ожидании.
+	tr := taskRunPath(s.cfg.Roots)
+	if tr == "" {
+		return errors.New(taskRunMissing)
+	}
+	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", proj.Path,
+		sessionCommand(binPath(agentctlBin), tr, h, s.headlessEnv(id, sess),
+			order+" "+orderRules(sess), again+" "+orderRules(sess),
+			id, proj.Path, proj.Name, model)); err != nil {
+		return fmt.Errorf("tmux не поднял сессию %s: %s", sess, procErr(err))
+	}
+	return nil
 }
 
 func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
@@ -561,23 +587,10 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if own != nil && own.Default {
 		model = own.tierModel(tier)
 	}
-	// Оболочка проходов ищется до подъёма окна: без неё конвейер прожил бы один
-	// ход головы, и отказать тут честнее, чем поднять работу, которая умрёт на
-	// первом же ожидании.
-	tr := taskRunPath(s.cfg.Roots)
-	if tr == "" {
-		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, taskRunMissing)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": taskRunMissing})
-		return
-	}
-	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		sessionCommand(binPath(agentctlBin), tr, harness, s.headlessEnv(id, sess),
-			runPrompt(row.Sect, id)+" "+orderRules(sess),
-			runPrompt("in-progress", id)+" "+orderRules(sess),
-			id, found.Path, found.Name, model)); err != nil {
-		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
-		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, text)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
+	if err := s.startTaskSession(found, id, sess, harness, model,
+		runPrompt(row.Sect, id), runPrompt("in-progress", id)); err != nil {
+		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
 	// Строка результата называет подписку: подмена квоты иначе ничем не видна, а

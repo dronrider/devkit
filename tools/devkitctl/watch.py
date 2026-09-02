@@ -34,7 +34,7 @@ launchd-агент, его кладёт `devkitctl doctor --fix`.
 решение 2): строка в Blocked с причиной «вопрос:» и лежащим ответом в разговоре
 задачи возвращается в In progress вызовом `taskctl -C <корень> move <ID>
 in-progress`. Будит сторожок и только он, а будить значит вернуть строку в
-кандидаты планировщика, сессию поверх доски он не поднимает.
+кандидаты планировщика: сессии поверх разбуженной строки не встаёт.
 
 Тем же тиком идёт страховка ожидания (LLD DK-430, решение 3). Инструмент
 `taskctl ask` паркует задачу сам, не дождавшись ответа, но SIGKILL от харнеса
@@ -58,6 +58,13 @@ in-progress`. Будит сторожок и только он, а будить 
 оставленный без свежего снимка исход и отказ видны строкой со счётом в журнале
 сторожка, разбор по харнесам идёт в отчёт тика, а свежие снимки журнал не
 трогают.
+
+Тем же тиком поднимается прогон сценария (DK-718): по каждому корню обхода тик
+зовёт `dashboard check -C <корень>`, и строка Check, выкаченная без человека в
+окне, получает сессию проверяющего. Первым делом подъём зовёт сам выкат, а тик
+страхует то, что проехало мимо: провалившийся подъём, пачку с закрывшимся
+диспетчером и строки, ушедшие в Check раньше самого подъёма. Тут же и
+единственное место, где сторожок поднимает сессию поверх доски.
 
 Тем же тиком закрываются агентские задачи из Check (DK-516): строка вида agent
 с прогнанным smoke и непустым разделом «Проверка» доходит до Done без живой
@@ -687,6 +694,44 @@ def drain(root, call=None, shipctl=None):
     return ("корень %s: %s" % (name, text)), NO_DRAIN not in (p.stdout or "")
 
 
+NO_CHECK_RUN = "подъём не нужен"
+
+
+def check_run(root, call=None, dashboard=None):
+    """Страховка подъёма прогона сценария (DK-718): по строкам Check корня тик
+    зовёт `dashboard check -C <корень>`, и строка, выкаченная без человека в
+    окне, получает сессию проверяющего.
+
+    Поднимает прогон сам выкат, merge при autonomous и ship после выката, а тик
+    добирает то, что мимо него проехало: выкат, у которого подъём не вышел,
+    пачку, чей диспетчер закрылся раньше перевода в Check, и строки, ушедшие в
+    Check до появления самого подъёма. Решает, кому прогон нужен и кому его не
+    отдавать, одна команда дашборда: вторая копия этих правил тут разошлась бы
+    с первой на первой правке, как разошлась бы копия ворот закрытия.
+
+    Возврат тот же, что у разлива: строка отчёта и признак значимости. Значимо
+    поднятое и провалившееся, а «поднимать нечего» идёт только в отчёт тика,
+    иначе журнал тонул бы отметками каждые пять минут."""
+    call = subprocess.run if call is None else call
+    name = os.path.basename(root.rstrip("/"))
+    if not section_rows(root, CHECK):
+        return ("корень %s: в Check пусто, %s" % (name, NO_CHECK_RUN)), False
+    bin = devkit_bin("dashboard") if dashboard is None else dashboard
+    if not bin:
+        return ("корень %s: бинаря dashboard нет ни в PATH, ни в каталогах релиза: "
+                "прогон сценария поднимать нечем, строки Check ждут человека" % name), True
+    try:
+        p = call([bin, "check", "-C", root],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        return ("корень %s: подъём прогона не вышел, %s" % (name, e)), True
+    text = " ".join((p.stdout or "").split())
+    if p.returncode != 0:
+        return ("корень %s: подъём прогона отказал с кодом %d: %s"
+                % (name, p.returncode, text)), True
+    return ("корень %s: %s" % (name, text)), "поднят" in (p.stdout or "")
+
+
 def shout(title, body, root, call=None, task=None):
     """Громкий зов уведомителем. Зовётся он из корня проекта, как из оболочки
     goal-run: по рабочему дереву уведомитель собирает заголовок баннера и цель
@@ -835,7 +880,7 @@ def heartbeat(home=None):
 
 
 def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipctl=None,
-        agentctl=None):
+        agentctl=None, dashboard=None):
     """Обход реестра. Возврат 0 всё движется, 1 нашёлся вставший цикл."""
     now = datetime.now() if now is None else now
     home = default_home() if home is None else home
@@ -891,6 +936,13 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         if not board_present(root):
             continue
         line, notable = drain(root, call, shipctl)
+        out.write(line + "\n")
+        if notable:
+            log_line(line, home)
+        # Подъём прогона идёт следом за разливом: строки, которые разлив только
+        # что увёл в Check, свой прогон уже получили от самого ship, и тик
+        # доберёт остальные.
+        line, notable = check_run(root, call, dashboard)
         out.write(line + "\n")
         if notable:
             log_line(line, home)

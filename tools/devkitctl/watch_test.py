@@ -640,6 +640,100 @@ class DrainTest(Stand):
             [SHIPCTL, "-C", str(self.proj), "ship", "--drain"]], self.call.calls)
 
 
+DASHBOARD = "/bin/подставной-dashboard"
+
+
+class CheckFake(Fake):
+    """Запускатель, отвечающий по команде: подъёму своё, соседям по тику
+    штатную тишину. Один ответ на все вызовы путал бы источник строки в
+    журнале: разлив и закрытие идут тем же тиком."""
+
+    def __init__(self, code=0, out=""):
+        super().__init__()
+        self.check = subprocess.CompletedProcess([], code, out, None)
+
+    def __call__(self, argv, **kw):
+        self.calls.append(list(argv))
+        if "check" in argv:
+            return subprocess.CompletedProcess(argv, self.check.returncode,
+                                               self.check.stdout, None)
+        if "closable" in argv:
+            return subprocess.CompletedProcess(argv, 0, "закрывать автоматике нечего", None)
+        return subprocess.CompletedProcess(argv, 0, "разлив не нужен: поезд пуст", None)
+
+
+class CheckRunTest(Stand):
+    """Страховка подъёма прогона сценария (DK-718): строку Check, выкаченную
+    без человека в окне, тик отдаёт дашборду, а тот решает, нужен ли ей прогон
+    и кому его не отдавать."""
+
+    def setUp(self):
+        super().setUp()
+        self.call = CheckFake(out="DK-900: прогон сценария поднят в tmux-сессии task-DK-900")
+        self.entry(seen_minutes=1)
+
+    def sweep(self, call=None, dashboard=DASHBOARD):
+        if call is not None:
+            self.call = call
+        out = io.StringIO()
+        rc = watch.run(now=self.now, idle=45 * 60, home=self.home, out=out,
+                       call=self.call, taskctl=TASKCTL, shipctl=SHIPCTL,
+                       dashboard=dashboard)
+        return rc, out.getvalue()
+
+    def raised(self):
+        return [c for c in self.call.calls if "check" in c]
+
+    def journal(self):
+        return (self.home / ".devkit" / "goal-watch.log").read_text(encoding="utf-8")
+
+    def test_check_row_goes_to_the_dashboard(self):
+        # Строка в Check значит вопрос «нужен ли прогон», и задаёт его тик
+        # одним вызовом на корень, а не разбором доски своими руками.
+        self.board(in_progress=False)
+        rc, out = self.sweep()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.raised(), [[DASHBOARD, "check", "-C", str(self.proj)]],
+                         self.call.calls)
+        self.assertIn("прогон сценария поднят", out)
+        self.assertIn("прогон сценария поднят", self.journal())
+
+    def test_empty_check_asks_nobody(self):
+        # Пустой Check это самый частый тик: спрашивать там нечего, и лишний
+        # подпроцесс каждые пять минут не нужен.
+        rc, out = self.sweep()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.raised(), [], self.call.calls)
+        self.assertIn("в Check пусто", out)
+
+    def test_nothing_to_raise_stays_out_of_the_journal(self):
+        # «Подъём не нужен» это норма, а не событие: строка идёт в отчёт тика,
+        # но не в журнал, иначе журнал тонул бы отметками каждые пять минут.
+        self.board(in_progress=False)
+        rc, out = self.sweep(call=CheckFake(out="DK-900: подъём не нужен, отметка «smoke прогнан» стоит"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("подъём не нужен", out)
+        self.assertNotIn("подъём не нужен", self.journal())
+
+    def test_refusal_reaches_the_journal_and_keeps_the_tick_alive(self):
+        # Отказ подъёма не поднимает код тика и не глушит остальную работу, но
+        # молчать о нём нельзя: неподнятый прогон это стоящая очередь.
+        self.board(in_progress=False)
+        rc, out = self.sweep(call=CheckFake(
+            code=1, out="DK-900: прогон не поднят, ярусом pro он достался бы исполнителю разработки"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("подъём прогона отказал с кодом 1", out)
+        self.assertIn("исполнителю разработки", self.journal())
+
+    def test_missing_dashboard_is_reported(self):
+        self.board(in_progress=False)
+        rc, out = self.sweep(dashboard="")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.raised(), [], self.call.calls)
+        self.assertIn("бинаря dashboard нет", out)
+        self.assertIn("бинаря dashboard нет", self.journal())
+
+
 class ParkStaleTest(Stand):
     """Страховка ожидания: брошенный ход паркует сторожок, живую сессию не
     трогает."""

@@ -15,6 +15,18 @@
 # оставался бы обход DEVKIT_PUSH_OK (DK-119). Всё, что не разобрать как
 # движение вперёд от известного ремоута (новая ветка, удаление, дивергенция,
 # неизвестный sha), доской не считается и идёт под отбой ниже.
+#
+# DK-602: критерий внутри диапазона не «весь диапазон это доска», а «каждый
+# код-коммит (дифф вне docs/TASKS.md, docs/TASKS-archive.md и docs/tasks/)
+# несёт в subject ID задачи, которая сейчас не в Backlog». Без этого мелочь,
+# слитая в main мимо ship/merge (однокоммитный багфикс по правилу доски),
+# запирала пуш чистой доски всем сессиям до следующего выката: один код-коммит
+# в диапазоне ронял весь диапазон в отбой, хотя коммит доски рядом с ним
+# требовалось пустить сразу же. Разбор общий с командой shipctl push
+# (tools/shipctl/push.go, rangeVerdict), дублировать его в shell незачем:
+# зовём `shipctl push --check-only` и решаем по коду выхода. Без shipctl в
+# PATH (например хук стоит в проекте без установленного devkit) калитка
+# откатывается к прежнему правилу «весь диапазон это доска».
 zero=0000000000000000000000000000000000000000
 board=
 while read -r local_ref local_sha remote_ref remote_sha; do
@@ -24,14 +36,19 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     [ "$remote_sha" = "$zero" ] && break
     git cat-file -e "$remote_sha" 2>/dev/null || break
     git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null || break
-    # --no-renames: у переименования --name-only печатает только путь
-    # назначения, и перенос кода в docs/tasks/ сошёл бы за доску; заодно
-    # исход не зависит от diff.renames в конфиге пользователя.
-    files=$(git diff --no-renames --name-only "$remote_sha" "$local_sha" 2>/dev/null) || break
-    [ -n "$files" ] || break
-    printf '%s\n' "$files" |
-        grep -qvE '^docs/TASKS\.md$|^docs/TASKS-archive\.md$|^docs/tasks/' && break
-    board=y
+    if command -v shipctl >/dev/null 2>&1; then
+        shipctl push --check-only "$remote_sha" "$local_sha" >/dev/null 2>&1 || break
+        board=y
+    else
+        # --no-renames: у переименования --name-only печатает только путь
+        # назначения, и перенос кода в docs/tasks/ сошёл бы за доску; заодно
+        # исход не зависит от diff.renames в конфиге пользователя.
+        files=$(git diff --no-renames --name-only "$remote_sha" "$local_sha" 2>/dev/null) || break
+        [ -n "$files" ] || break
+        printf '%s\n' "$files" |
+            grep -qvE '^docs/TASKS\.md$|^docs/TASKS-archive\.md$|^docs/tasks/' && break
+        board=y
+    fi
 done
 [ -n "$board" ] && exit 0
 
@@ -40,10 +57,11 @@ cat >&2 <<'EOF'
 создание MR делает пользователь.
 что делать: остановиться на локальном коммите и сказать, что ветка готова к
   пушу, не предлагая «дай команду, я запушу»;
-коммит доски пушится сразу: пуш, где в диффе только docs/TASKS.md,
-  docs/TASKS-archive.md и docs/tasks/, рубеж пропускает сам, а смешанный с
-  кодом идёт через taskctl ... --push и shipctl ... --push, они выдают
-  разрешение сами;
+коммит доски пушится сразу: пуш, где каждый код-коммит диапазона (дифф вне
+  docs/TASKS.md, docs/TASKS-archive.md и docs/tasks/) несёт в subject ID
+  задачи не из Backlog, рубеж пропускает сам (shipctl push --check-only),
+  а голый код без такого ID идёт через taskctl ... --push и shipctl ...
+  --push, они выдают разрешение сами;
 автономный режим (слияние, пуш кода, выкат) идёт тем же shipctl;
 по прямой команде пользователя: DEVKIT_PUSH_OK=1 git push ... либо
   git push --no-verify.

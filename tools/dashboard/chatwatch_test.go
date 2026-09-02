@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -141,5 +142,32 @@ func TestChatDeathWordTellsLife(t *testing.T) {
 	}
 	if !strings.Contains(turn, "chat-2") {
 		t.Errorf("слова о смерти после хода: %q", turn)
+	}
+}
+
+// Разбор черновика, снятый кнопкой стопа, смертью не считается. Имя сессии у
+// разбора и у конвейера задачи одно (`task-<ID>`), стоп ходит ручкой работ, и
+// без снятия с присмотра сторож объявил бы снятое рукой смертью.
+func TestDraftGroomStopNoDeathSaid(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	writeAgentctlFake(t, e.bin, harnessTiersFixture)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "исход подъёма виден человеку", "prio": "mid"}`).Body.Close()
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("груминг черновика: %d %s", resp.StatusCode, body(t, resp))
+	}
+
+	tmuxWatchFake(t, e, "task-XR-005", `> разбираю черновик\n`)
+	stop := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-005", "")
+	if stop.StatusCode != http.StatusOK {
+		t.Fatalf("стоп разбора: %d %s", stop.StatusCode, body(t, stop))
+	}
+	tmuxWatchFake(t, e, "", "")
+	e.s.chatWatchTick()
+	if marks := saidMarks(t, e.home, "task-XR-005"); len(marks) != 0 {
+		t.Fatalf("снятый рукой разбор объявили умершим: %v", marks)
 	}
 }

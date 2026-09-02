@@ -477,6 +477,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		// обещать кнопкой то, чего ручка не делает: остаток снимается, а на его
 		// месте поднимается заказанная работа.
 		s.logf("запуск %s в %s: остаток разговора в tmux-сессии %s снят", id, found.Name, name)
+		s.chatWatchOff(name)
 		runProc("tmux", "kill-session", "-t", name)
 	}
 	// Выбранная подписка сверяется с раскладкой машины: имени, которого в ней
@@ -688,6 +689,9 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 			s.logf("стоп %s в %s: %s", id, found.Name, resp["note"])
 		}
 	}
+	// Имя сессии задачи одно на конвейер и на разбор черновика, и разбор ходит
+	// под присмотром: снятое кнопкой стопа смертью не считается.
+	s.chatWatchOff(sess)
 	if _, err := runProc("tmux", "kill-session", "-t", "="+sess); err != nil {
 		text := fmt.Sprintf("tmux не снял сессию %s: %s", sess, procErr(err))
 		s.logf("стоп %s в %s не удался: %s", id, found.Name, text)

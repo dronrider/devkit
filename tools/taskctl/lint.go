@@ -101,6 +101,7 @@ func cmdLint(root string) ([]string, error) {
 	finds = append(finds, lintFailed(b, bp)...)
 	finds = append(finds, lintAcceptance(root, b, bp)...)
 	finds = append(finds, lintFormOrder(root, b)...)
+	finds = append(finds, mainAheadFinds(root)...)
 	return finds, nil
 }
 

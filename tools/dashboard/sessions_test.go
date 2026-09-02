@@ -2808,3 +2808,78 @@ func TestMetaLineNotHumanReply(t *testing.T) {
 		t.Fatalf("строка харнеса выдана за реплику человека: role=%q", got[0].Role)
 	}
 }
+
+// Планы субагентов одной сессии видны все. CLAUDE_CODE_SESSION_ID у субагентов
+// пачки общий, и по адресу <sid>-sub.json два исполнителя писали план поверх
+// соседского: у DK-641 и DK-642 ход работы снаружи пропал вовсе (DK-527).
+// Теперь адрес несёт метку субагента, а кольцо собирается по маске.
+func TestPlanShowsEachSubagentPlan(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	sid := "aaa-пачка"
+	path := writeSession(t, home, proj, "", "chat-пачка", transcriptFixture, time.Now())
+	if err := os.MkdirAll(planDir(home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(planDir(home), name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(sid+".json", `[{"text":"Пачка задач","state":"in_progress"}]`)
+	write(sid+"-sub-DK-641.json", `[{"text":"Правка кольца","state":"in_progress"}]`)
+	write(sid+"-sub-DK-642.json", `[{"text":"Правка ленты","state":"completed"}]`)
+	// Старый адрес без метки читается по-прежнему: план, написанный до правила,
+	// с экрана не пропадает.
+	write(sid+"-sub.json", `[{"text":"Работа без метки","state":"pending"}]`)
+	// Сосед по маске, чей план про другое, в кольцо не попадает.
+	write(sid+"-submit.json", `[{"text":"Чужая запись","state":"pending"}]`)
+
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.Local)
+	plan := planOf(home, sid, "", path, now)
+	seen := map[string]planItem{}
+	for _, it := range plan {
+		seen[it.Text] = it
+	}
+	for _, want := range []string{"DK-641: Правка кольца", "DK-642: Правка ленты", "Работа без метки"} {
+		it, ok := seen[want]
+		if !ok {
+			t.Fatalf("плана субагента %q в кольце нет: %+v", want, plan)
+		}
+		if it.Src != planSrcSub {
+			t.Errorf("пункт субагента %q не помечен источником: %+v", want, it)
+		}
+	}
+	if seen["DK-641: Правка кольца"].State != "in_progress" {
+		t.Errorf("состояние пункта субагента потерялось: %+v", seen["DK-641: Правка кольца"])
+	}
+	if _, bad := seen["Чужая запись"]; bad {
+		t.Errorf("под маску планов субагентов попал сосед: %+v", plan)
+	}
+	if it, ok := seen["Пачка задач"]; !ok || it.Src != "" {
+		t.Errorf("план самой сессии потерялся или помечен субагентом: %+v", plan)
+	}
+}
+
+// Метка потока считает и планы субагентов: исполнитель пачки пишет свой файл, а
+// транскрипт диспетчера при этом молчит, и без счёта правка доезжала бы до
+// экрана только следующим тиком.
+func TestPlanStampWatchesSubagentPlans(t *testing.T) {
+	home := t.TempDir()
+	sid := "bbb-пачка"
+	if err := os.MkdirAll(planDir(home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(planDir(home), sid+"-sub-DK-700.json")
+	if err := os.WriteFile(file, []byte(`[{"text":"Шаг","state":"in_progress"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	was := planStamp(home, sid, "")
+	later := time.Date(2026, 9, 2, 13, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(file, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if now := planStamp(home, sid, ""); now == was {
+		t.Errorf("правка плана субагента метку не двинула: %q", now)
+	}
+}

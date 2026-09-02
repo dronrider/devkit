@@ -2258,13 +2258,19 @@ func planStamp(home, sid, tmux string) string {
 		}
 		if fi, err := os.Stat(planPath(dir, sid)); err == nil {
 			out += fi.ModTime().String()
-			continue
-		}
-		// Запасной адрес по имени tmux смотрится тем же порядком, что в planOf:
-		// иначе план, выполненный по запасному правилу, менялся бы незаметно
-		// для потока.
-		if tmux != "" {
+		} else if tmux != "" {
+			// Запасной адрес по имени tmux смотрится тем же порядком, что в
+			// planOf: иначе план, выполненный по запасному правилу, менялся бы
+			// незаметно для потока.
 			if fi, err := os.Stat(planPath(dir, tmux)); err == nil {
+				out += fi.ModTime().String()
+			}
+		}
+		// Планы субагентов метятся тем же счётом: исполнитель пачки пишет свой
+		// файл, а транскрипт диспетчера при этом молчит, и без метки правка
+		// доезжала бы до экрана только следующим тиком.
+		for _, file := range subPlanFiles(dir, sid) {
+			if fi, err := os.Stat(file); err == nil {
 				out += fi.ModTime().String()
 			}
 		}
@@ -2729,6 +2735,81 @@ func planDir(home string) string {
 // planPath это файл плана одной сессии.
 func planPath(home, sid string) string {
 	return filepath.Join(planDir(home), sid+".json")
+}
+
+// subPlanFiles это файлы планов субагентов сессии: имя начинается с адреса
+// сессии и хвоста sub, а дальше идёт метка самого субагента. Метка тут потому,
+// что CLAUDE_CODE_SESSION_ID у субагентов один на всех, своего признака
+// окружение им не даёт, и пачкой они писали план поверх соседского (DK-527).
+// Старое имя без метки читается той же маской: план, написанный до правила,
+// с экрана не пропадает.
+func subPlanFiles(home, sid string) []string {
+	if sid == "" {
+		return nil
+	}
+	dir := planDir(home)
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	pre := sid + "-sub"
+	var out []string
+	for _, e := range ents {
+		name := e.Name()
+		if !strings.HasPrefix(name, pre) || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		// Метку от хвоста sub отделяет дефис. Без этой проверки под маску
+		// попал бы сосед вроде <sid>-submit.json, чей план про другое.
+		if rest := strings.TrimSuffix(name[len(pre):], ".json"); rest != "" &&
+			!strings.HasPrefix(rest, "-") {
+			continue
+		}
+		out = append(out, filepath.Join(dir, name))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// subPlanMark достаёт метку субагента из имени файла его плана. У старого
+// имени без метки она пустая.
+func subPlanMark(file, sid string) string {
+	name := strings.TrimSuffix(filepath.Base(file), ".json")
+	return strings.TrimPrefix(strings.TrimPrefix(name, sid+"-sub"), "-")
+}
+
+// subPlans собирает пункты планов субагентов сессии. Пункт помечен источником
+// sub наравне с работами из журналов: своими словами плана сессии он не
+// является. Метка встаёт перед текстом, иначе шаги двух исполнителей пачки
+// сливаются в один список, где не видно, кто чем занят.
+func subPlans(home, sid string) []planItem {
+	var out []planItem
+	seen := map[string]bool{}
+	for _, dir := range []string{realHome(), home} {
+		if dir == "" {
+			continue
+		}
+		for _, file := range subPlanFiles(dir, sid) {
+			base := filepath.Base(file)
+			if seen[base] {
+				continue
+			}
+			plan, _, _ := readPlanFile(file)
+			if plan == nil {
+				continue
+			}
+			seen[base] = true
+			mark := subPlanMark(file, sid)
+			for _, it := range plan {
+				if mark != "" {
+					it.Text = truncate(mark+": "+it.Text, 200)
+				}
+				it.Src = planSrcSub
+				out = append(out, it)
+			}
+		}
+	}
+	return out
 }
 
 // planFileItem это пункт плана, как его пишет агент. Основная пара это text и
@@ -3200,7 +3281,14 @@ func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 			Src:   planSrcErr,
 		}}
 	}
-	return planOrdered(withSubWorks(said, subs))
+	out := withSubWorks(said, subs)
+	// Планы субагентов встают в кольцо своими пунктами. Журнал знает, что
+	// работа роздана, а чем она занята прямо сейчас, знает только план того,
+	// кто её делает.
+	if own := subPlans(home, sid); len(own) > 0 {
+		out = append(append([]planItem{}, out...), own...)
+	}
+	return planOrdered(out)
 }
 
 // planRank это место состояния в списке: сделанное сверху, идущее следом,

@@ -56,20 +56,19 @@ func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 		return "", fmt.Errorf("%s: не узнать коммит для свежего дерева: %v", id, err)
 	}
 	sha = strings.TrimSpace(sha)
-	tree, home, cleanup, err := freshtree.Make(root, sha, "taskctl-rehearse-")
+	run, err := freshtree.Start(root, sha, "taskctl-rehearse-")
 	if err != nil {
 		return "", fmt.Errorf("%s: свежее дерево на %s не выложилось: %v", id, shortSha(sha), err)
 	}
-	defer cleanup()
+	defer run.Cleanup()
 	limit := p.Timeout
 	if limit <= 0 {
 		limit = stepLimit
 	}
-	env := freshtree.Env(os.Getenv("HOME"), home)
 	var runs []stepRun
 	failed := 0
 	for _, s := range steps {
-		r := runStep(tree, s, env, limit)
+		r := runStep(run, s, limit)
 		runs = append(runs, r)
 		if !r.ok {
 			failed++
@@ -82,7 +81,7 @@ func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 	// Отпечаток берётся с того текста сценария, который обкатка только что
 	// прогнала: раздел «Проверка» в него не входит, и запись прогона отметку
 	// не отменяет.
-	block := rehearsalBlock(runs, sha, taskform.ScenarioPrint(doc), now, failed)
+	block := rehearsalBlock(runs, sha, taskform.ScenarioPrint(doc), now, failed, len(run.Tools))
 	// Прошлая запись обкатки уносится: повтор прогона иначе копит в «Проверке»
 	// блоки шагов и отметки, и какая из них относится к нынешнему коммиту,
 	// глазами уже не видно.
@@ -109,10 +108,13 @@ type stepRun struct {
 
 // runStep гоняет шаг в свежем дереве и с собранным окружением. Убивается шаг
 // по группе процессов: команда сценария поднимает и служебные процессы
-// (сервер, хук), и убитый в одиночку шелл оставил бы их держать дерево.
-func runStep(dir, step string, env []string, limit time.Duration) stepRun {
+// (сервер, хук), и убитый в одиночку шелл оставил бы их держать дерево. Отказ
+// по нехватке команды дополняется разбором прогона: в чистом окружении «command
+// not found» это первое, обо что спотыкается сценарий, и по одному коду
+// возврата не видно ни имени команды, ни того, где её искали.
+func runStep(run *freshtree.Run, step string, limit time.Duration) stepRun {
 	cmd := exec.Command("sh", "-c", step)
-	cmd.Dir, cmd.Env = dir, env
+	cmd.Dir, cmd.Env = run.Tree, run.Env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	out, err := runCollect(cmd, limit)
 	switch {
@@ -121,7 +123,11 @@ func runStep(dir, step string, env []string, limit time.Duration) stepRun {
 	case strings.HasPrefix(err.Error(), "предел"):
 		return stepRun{cmd: step, out: out, note: err.Error()}
 	default:
-		return stepRun{cmd: step, out: out, note: "провал: " + err.Error()}
+		note := "провал: " + err.Error()
+		if why := run.Diagnose(out); why != "" {
+			note += ", " + why
+		}
+		return stepRun{cmd: step, out: out, note: note}
 	}
 }
 
@@ -152,18 +158,20 @@ func runCollect(cmd *exec.Cmd, limit time.Duration) (string, error) {
 // отметки, по которой ворота узнают прогон, и вывод каждого шага целиком.
 // Вывод идёт ограждённым блоком, иначе разметка файла задачи ломается о первую
 // же строку вывода, начатую решёткой или маркером списка.
-func rehearsalBlock(runs []stepRun, sha, print string, now time.Time, failed int) []string {
+func rehearsalBlock(runs []stepRun, sha, print string, now time.Time, failed, tools int) []string {
 	verdict := "все зелёные"
 	if failed > 0 {
 		verdict = fmt.Sprintf("красных %d", failed)
 	}
-	out := []string{"", fmt.Sprintf("%s %s, свежее дерево %s, сценарий %s, временный HOME, шагов %d, %s.",
-		taskform.RehearsalNote, now.Format("2006-01-02 15:04"), shortSha(sha), print, len(runs), verdict)}
+	// Число собранных утилит стоит в отметке рядом с коммитом: по нему видно,
+	// что шагам досталась ветка, а не установленные бинари машины.
+	out := []string{"", fmt.Sprintf("%s %s, свежее дерево %s, сценарий %s, временный HOME, утилит дерева %d, шагов %d, %s.",
+		taskform.RehearsalNote, now.Format("2006-01-02 15:04"), shortSha(sha), print, tools, len(runs), verdict)}
 	if failed > 0 {
 		// Отметка ворот ставится только зелёной обкаткой, а вывод красной всё
 		// равно нужен глазами: без него разбирать провал нечем.
-		out[1] = fmt.Sprintf("%s %s, свежее дерево %s, сценарий %s, шагов %d, %s, ворота закрыты.",
-			taskform.RehearsalFailNote, now.Format("2006-01-02 15:04"), shortSha(sha), print, len(runs), verdict)
+		out[1] = fmt.Sprintf("%s %s, свежее дерево %s, сценарий %s, утилит дерева %d, шагов %d, %s, ворота закрыты.",
+			taskform.RehearsalFailNote, now.Format("2006-01-02 15:04"), shortSha(sha), print, tools, len(runs), verdict)
 	}
 	for i, r := range runs {
 		mark := "зелёный"

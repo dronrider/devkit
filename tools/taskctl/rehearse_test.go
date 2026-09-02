@@ -258,3 +258,57 @@ func TestRehearseMarkCarriesHeadSha(t *testing.T) {
 		t.Fatalf("коммит отметки %s не от HEAD %s", mark, head)
 	}
 }
+
+// TestRehearseStepSeesTreeUtility: шаг зовёт утилиту проверяемого дерева по
+// имени и получает ту, что собрана из ветки. Из PATH прогона каталоги дома
+// убраны, установленных на машине утилит devkit там нет, и до DK-684 такой шаг
+// падал с command not found, а сценарий вместо проверки собирал бинарь сам.
+func TestRehearseStepSeesTreeUtility(t *testing.T) {
+	root := setup(t)
+	writeTool(t, root, "xrhello", "go.mod", "module xrhello\n\ngo 1.26\n")
+	writeTool(t, root, "xrhello", "main.go",
+		"package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"утилита ветки\") }\n")
+	writeTool(t, root, "xrpy", "xrpy.py", "print(\"питон ветки\")\n")
+	writeTask(t, root, "XR-005", "# XR-005\n\n## Сценарий проверки\n\nАгентский.\n\n```sh\nxrhello\nxrpy\n```\n")
+	gitSetup(t, root)
+	msg, err := cmdRehearse(root, "XR-005", RehearseParams{Now: rehearseAt})
+	if err != nil {
+		t.Fatalf("шаг с утилитой дерева должен проходить обкатку: %v\n%s", err, rehearseDoc(t, root, "XR-005"))
+	}
+	doc := rehearseDoc(t, root, "XR-005")
+	for _, want := range []string{"утилита ветки", "питон ветки", "утилит дерева 2"} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("в записи обкатки нет %q:\n%s", want, doc)
+		}
+	}
+	if !strings.Contains(msg, "обкатка зелёная") {
+		t.Fatalf("отчёт не называет исход: %q", msg)
+	}
+}
+
+// TestRehearseNamesMissingCommand: красный шаг по нехватке команды называет её
+// саму и места, где прогон искал. В чистом окружении это первое, обо что
+// спотыкается сценарий, и голый «exit status 127» разбирать нечем.
+func TestRehearseNamesMissingCommand(t *testing.T) {
+	root := setupRehearse(t, "xrmissingtool --help")
+	if _, err := cmdRehearse(root, "XR-005", RehearseParams{Now: rehearseAt}); err == nil {
+		t.Fatal("шаг с несуществующей командой должен краснеть")
+	}
+	doc := rehearseDoc(t, root, "XR-005")
+	for _, want := range []string{"команды `xrmissingtool` в прогоне нет", "искали в PATH прогона", "утилит дерево не несёт"} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("разбор отказа не называет %q:\n%s", want, doc)
+		}
+	}
+}
+
+func writeTool(t *testing.T, root, tool, name, body string) {
+	t.Helper()
+	dir := filepath.Join(root, "tools", tool)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -664,8 +664,8 @@ class CheckFake(Fake):
 
 class CheckRunTest(Stand):
     """Страховка подъёма прогона сценария (DK-718): строку Check, выкаченную
-    без человека в окне, тик отдаёт дашборду, а тот решает, нужен ли ей прогон
-    и кому его не отдавать."""
+    без человека в окне, тик отдаёт дашборду. Нужен ли ей прогон, поднимает ли
+    подъём этот проект вовсе и кому прогон не отдавать, решает дашборд."""
 
     def setUp(self):
         super().setUp()
@@ -714,6 +714,21 @@ class CheckRunTest(Stand):
         self.assertEqual(rc, 0, out)
         self.assertIn("подъём не нужен", out)
         self.assertNotIn("подъём не нужен", self.journal())
+
+    def test_user_deploy_project_answers_without_raise(self):
+        # Проект с выкатом за пользователем прогон не поднимает, и решает это
+        # дашборд, а не тик: вид приёмки, отметка smoke и автономия проекта
+        # живут у утилит, а тик только задаёт вопрос и уносит ответ. Сам рубеж
+        # автономии проверяет TestCheckRunSkipsUserDeployProject в дашборде,
+        # тут стоит его половина, тик отвечает строкой и молчит в журнале.
+        self.board(in_progress=False)
+        rc, out = self.sweep(call=CheckFake(
+            out="DK-900: подъём не нужен, выкат за пользователем "
+                "(autonomous = false в .devkit/deploy.local): проверяющего поднимает человек"))
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(len(self.raised()), 1, self.call.calls)
+        self.assertIn("выкат за пользователем", out)
+        self.assertNotIn("выкат за пользователем", self.journal())
 
     def test_refusal_reaches_the_journal_and_keeps_the_tick_alive(self):
         # Отказ подъёма не поднимает код тика и не глушит остальную работу, но

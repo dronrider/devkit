@@ -87,6 +87,33 @@ func TestShipDrainRaisesCheckRunForTrain(t *testing.T) {
 	}
 }
 
+// Ручной ship без флагов прогон не поднимает даже на автономном проекте:
+// границу задачи держит признак вызова, а не флаг конфига. Разлив зовёт тик, у
+// него окна нет; голый ship зовёт тот, кто сидит в окне и проверяющего
+// поднимает сам. Оставшееся без отметки доберёт следующий тик.
+func TestShipByHandRaisesNothing(t *testing.T) {
+	root, callLog := setup(t, rowInProg, "")
+	writeDeployCfg(t, root, autonomousCfg(root))
+	addRemote(t, root)
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdShip(root, ShipParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "deployed.marker")); err != nil {
+		t.Fatalf("выкат не запускался: %q", msg)
+	}
+	if calls := readCalls(t, callLog); strings.Contains(calls, "dashboard") {
+		t.Fatalf("ручной ship прогон не поднимает: %q", calls)
+	}
+	if strings.Contains(msg, "прогон сценария поднят") {
+		t.Fatalf("отчёт ручного ship обещает подъём: %q", msg)
+	}
+}
+
 // Ручной выкат поезда командой человека прогон не поднимает: явный --deploy это
 // указание прямо сейчас, и окно у него есть.
 func TestShipManualDeployRaisesNothing(t *testing.T) {

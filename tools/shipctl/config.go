@@ -1,84 +1,21 @@
 package main
 
 import (
-	"bufio"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/deployconf"
 )
 
-const deployConfigPath = ".devkit/deploy.local"
+// deployConfigPath, deployConfig и loadDeployConfig это обвязка выката проекта.
+// Разбор файла живёт в internal/deployconf: тот же флаг автономии читает
+// дашборд, решая, поднимать ли прогон сценария после выката (DK-718).
+const deployConfigPath = deployconf.Rel
 
-// deployConfig это проектная обвязка выката из .devkit/deploy.local. Файл
-// гитигнорнут: в команде выката обычно адрес или роль машины, а её место в
-// локальном, а не коммитимом (RULES.board.md, «Трекинг задач» п. 8). shipctl
-// читает отсюда команду, чтобы не передавать --deploy на каждый merge, и флаг
-// автономии: разрешает ли проект агенту катить на прод сам, без отдельного
-// слова пользователя. Команда тестов лежит там же и по той же причине: она
-// такая же принадлежность проекта, как команда выката, и без неё процедуре
-// пачки пришлось бы сочинять --test под каждый репозиторий.
-type deployConfig struct {
-	Deploy     string
-	Test       string
-	Autonomous bool
-	Timeout    time.Duration
-}
+type deployConfig = deployconf.Config
 
-// defaultDeployTimeout это предел времени на шаг выката, когда ключа
-// deploy_timeout в конфиге нет. Запас взят к самому долгому штатному выкату,
-// какой встречался: кросс-сборка релизных бинарей с нуля идёт единицы минут,
-// получасовой предел её не режет, зато вставшая команда (сборка ждёт
-// неподнятый демон Docker) кончается провалом, а не вечным молчанием (DK-154).
-const defaultDeployTimeout = 30 * time.Minute
+const defaultDeployTimeout = deployconf.DefaultTimeout
 
-// loadDeployConfig читает .devkit/deploy.local, если он есть. Формат простой:
-// строки вида key = value, # это комментарий, пустые строки пропускаются.
-// Отсутствие файла не ошибка: выкат тогда остаётся за пользователем, как и до
-// появления конфига.
-func loadDeployConfig(root string) (deployConfig, error) {
-	c := deployConfig{Timeout: defaultDeployTimeout}
-	f, err := os.Open(filepath.Join(root, deployConfigPath))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return c, nil
-		}
-		return c, err
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, val, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key, val = strings.TrimSpace(key), unquote(strings.TrimSpace(val))
-		switch key {
-		case "deploy":
-			c.Deploy = val
-		case "test":
-			c.Test = val
-		case "autonomous":
-			c.Autonomous, _ = strconv.ParseBool(val)
-		case "deploy_timeout":
-			// Молча вернуться к умолчанию нельзя: опечатка в пределе оставила бы
-			// выкат с чужим временем ожидания, а заметить это можно только на
-			// вставшей команде.
-			d, err := time.ParseDuration(val)
-			if err != nil || d <= 0 {
-				return c, fmt.Errorf("%s: deploy_timeout = %q не читается как предел времени, ждал длительность вида 90s, 30m, 2h", deployConfigPath, val)
-			}
-			c.Timeout = d
-		}
-	}
-	return c, sc.Err()
-}
+func loadDeployConfig(root string) (deployConfig, error) { return deployconf.Load(root) }
 
 // deployPlan разводит два исхода: run это команда, которую shipctl выполнит
 // сам, manual это пояснение, почему выкат остаётся за пользователем (команда
@@ -147,15 +84,6 @@ func resolveTest(root, flag string) (string, bool, error) {
 	return cfg.Test, cfg.Test != "", nil
 }
 
-// unquote снимает одну окружающую пару кавычек, если значение целиком в них
-// завёрнуто. Кавычки внутри команды (ssh host 'systemctl restart foo') не
-// трогаются: снимается ровно внешняя пара, не все подряд.
-func unquote(s string) string {
-	if len(s) >= 2 {
-		q := s[0]
-		if (q == '"' || q == '\'') && s[len(s)-1] == q {
-			return s[1 : len(s)-1]
-		}
-	}
-	return s
-}
+// unquote снимает окружающую пару кавычек значения. Разбор корп-конфига
+// (corp.go) читает свои ключи тем же приёмом, что обвязка выката.
+func unquote(s string) string { return deployconf.Unquote(s) }

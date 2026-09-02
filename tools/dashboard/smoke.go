@@ -1695,6 +1695,112 @@ func (s *smoke) stepChatStart() (string, error) {
 		first.Message, second.Tmux, refusal.Error), nil
 }
 
+// smokeHeldChat это кончившийся разговор, чьё имя окна увёл печатный подъём,
+// smokeHeldAlien живой сосед, который в этом окне идёт на самом деле, а
+// smokeHeldName само имя. Номер имени взят с запасом: резюм берёт первый
+// свободный, и занятая девятка ему не мешает.
+const (
+	smokeHeldChat  = "smoke-held-1"
+	smokeHeldAlien = "smoke-alien-1"
+	smokeHeldName  = "chat-" + smokeTask + "-9"
+)
+
+// stepHeldWindow: разговор с чужим окном (DK-673). Реестр чатов отдаёт имя
+// окна кончившемуся разговору, а идёт в этом окне живой сосед. Так выглядит
+// машина после печатного подъёма чужой сессии из окна панели. Прогон
+// спрашивает три вещи. Реплика уезжает резюмом в своё окно, а не клавишами в
+// чужое. Уборка в архив чужую сессию не снимает и называет, чей это разговор.
+// Список чатов показывает разговор снятым и называет занявшего имя.
+func (s *smoke) stepHeldWindow() (string, error) {
+	said := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"разбор кончился"},`+
+		`"timestamp":%q,"gitBranch":"main"}`+"\n",
+		time.Now().Add(-time.Hour).UTC().Format(time.RFC3339))
+	tr := filepath.Join(s.harnessJournal(), smokeHeldChat+".jsonl")
+	if err := smokeWrite(tr, said, 0o644); err != nil {
+		return "", err
+	}
+	line := sessions.Line(time.Now(), smokeHeldChat, sessions.Bind{
+		Task: smokeTask, Project: "demo", Tree: s.proj, Transcript: tr,
+		Source: "заказ", Tmux: smokeHeldName}, "startup")
+	if err := sessions.Append(s.bindsFile(), line); err != nil {
+		return "", err
+	}
+	// Живой клиент называет своё окно сам, и запись эта живёт, пока жив
+	// процесс. Pid тут свой, прогонный: чужой живости взять негде.
+	peer := fmt.Sprintf(`{"pid":%d,"sessionId":%q,"name":"сосед","kind":"interactive",`+
+		`"entrypoint":"cli","tmux":"%s:@9.%%9"}`, os.Getpid(), smokeHeldAlien, smokeHeldName)
+	if err := smokeWrite(filepath.Join(s.home, ".claude", "sessions",
+		fmt.Sprintf("%d.json", os.Getpid())), peer, 0o644); err != nil {
+		return "", err
+	}
+	list := filepath.Join(s.dir, "tmux.sessions")
+	live, err := os.ReadFile(list)
+	if err != nil {
+		return "", err
+	}
+	if err := smokeWrite(list, string(live)+smokeHeldName+"\n", 0o644); err != nil {
+		return "", err
+	}
+
+	var seen struct {
+		Chats []chatEntry `json:"chats"`
+	}
+	if err := s.call("GET", "/api/projects/demo/chats?all=1", "", http.StatusOK, &seen); err != nil {
+		return "", err
+	}
+	var held *chatEntry
+	for i := range seen.Chats {
+		if seen.Chats[i].ID == smokeHeldChat {
+			held = &seen.Chats[i]
+		}
+	}
+	if held == nil {
+		return "", fmt.Errorf("разговор %s пропал из списка чатов", smokeHeldChat)
+	}
+	if held.GoneTo != smokeHeldAlien {
+		return "", fmt.Errorf("список не назвал занявшего имя: gone %q, goneTo %q, tmux %q",
+			held.Gone, held.GoneTo, held.Tmux)
+	}
+
+	var arch struct {
+		Dropped bool   `json:"dropped"`
+		Message string `json:"message"`
+	}
+	if err := s.call("POST", "/api/projects/demo/chats/"+smokeHeldChat+"/archive",
+		`{"archived": true}`, http.StatusOK, &arch); err != nil {
+		return "", err
+	}
+	if arch.Dropped {
+		return "", fmt.Errorf("уборка сняла чужую живую сессию: %s", arch.Message)
+	}
+	after, err := os.ReadFile(list)
+	if err != nil {
+		return "", err
+	}
+	if !strings.Contains(string(after), smokeHeldName) {
+		return "", fmt.Errorf("окно %s снято уборкой чужого разговора:\n%s", smokeHeldName, after)
+	}
+	var say struct {
+		Way     string `json:"way"`
+		Tmux    string `json:"tmux"`
+		Message string `json:"message"`
+	}
+	if err := s.call("POST", "/api/projects/demo/chats/"+smokeHeldChat+"/say",
+		`{"text": "Довёл?"}`, http.StatusOK, &say); err != nil {
+		return "", err
+	}
+	if say.Way != "resume" {
+		return "", fmt.Errorf("реплика поехала дорогой %q, а окно %s занято чужим разговором",
+			say.Way, smokeHeldName)
+	}
+	if say.Tmux == smokeHeldName {
+		return "", fmt.Errorf("резюм поднят в чужом окне %s", say.Tmux)
+	}
+
+	return fmt.Sprintf("реплика уехала резюмом в %s, список назвал занявшего имя (%s), уборка сказала: %s",
+		say.Tmux, held.GoneTo, arch.Message), nil
+}
+
 // stepDropDraft: черновик снимается с экрана, а не из терминала. Причина
 // обязательна и здесь, и у утилиты: файла после команды нет, и живёт причина
 // сообщением коммита доски, поэтому шаг сначала жмёт удаление без причины и
@@ -1913,6 +2019,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"реплика стоп-хука стоит служебкой с подписью", s.stepStopHook},
 		{"уведомление о фоновой работе без портянки дисклеймера", s.stepSystemNote},
 		{"новый чат по задаче поверх живого конвейера", s.stepChatStart},
+		{"реплика и уборка при занятом окне", s.stepHeldWindow},
 		{"удаление черновика с причиной", s.stepDropDraft},
 		{"пересчёт ранга перетаскиванием доехал до доски", s.stepDragRank},
 	}

@@ -31,8 +31,9 @@ FETCH_TIMEOUT = 10
 BRANCH = "main"
 REMOTE = "origin"
 # Каталоги, чья правка не действует сама по себе: скиллы, определения субагентов
-# и хуки живут копиями в каталогах харнесов, и раскладывает их доктор.
-RELAYOUT_DIRS = ("kit/", "hooks/")
+# и хуки живут копиями в каталогах харнесов, утилиты бинарями в PATH, и
+# раскладывает то и другое доктор.
+RELAYOUT_DIRS = ("kit/", "hooks/", "tools/", "internal/")
 COMMITS = ("коммит", "коммита", "коммитов")
 
 
@@ -119,8 +120,13 @@ def relayout(devkit, doctor):
     бы простынёй из находок про машину. Наружу отсюда идёт только сделанное.
     """
     buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        doctor(str(devkit), fix=True)
+    try:
+        with contextlib.redirect_stdout(buf):
+            doctor(str(devkit), fix=True)
+    except Exception as exc:  # noqa: BLE001
+        # Подтяг уже случился, и его строка важнее упавшей раскладки: без неё
+        # старт сессии не узнает ни о том, ни о другом.
+        return ["devkit: раскладка не прошла: %s" % one_line(str(exc))]
     return [ln for ln in buf.getvalue().splitlines() if ln.startswith("починено")]
 
 
@@ -159,15 +165,19 @@ def run(devkit, hook=False, doctor=None):
     if counts is None:
         return quiet("указателя %s/%s в клоне нет" % (REMOTE, BRANCH))
     ours, theirs = counts
+    if not theirs:
+        if ours:
+            return quiet("main впереди %s/%s на %s, подтягивать нечего"
+                         % (REMOTE, BRANCH, say.counted(ours, COMMITS)))
+        return quiet("main вровень с %s/%s" % (REMOTE, BRANCH))
     if ours:
-        # Видимый сигнал, а не отказ гарда: своя работа в main лежит
-        # незапушенной, и молчание тут читалось бы как исправный подтяг.
+        # Видимый сигнал, а не отказ гарда: чужая правка лежит в origin, а своя
+        # незапушенная работа в main не даёт её взять, и молчание тут
+        # читалось бы как исправный подтяг.
         out.append("devkit: main разошёлся с %s/%s, подтянуть нечего: своих %s, чужих %s"
                    % (REMOTE, BRANCH, say.counted(ours, COMMITS),
                       say.counted(theirs, COMMITS)))
         return _say(out)
-    if not theirs:
-        return quiet("main вровень с %s/%s" % (REMOTE, BRANCH))
     old = update.head_commit(devkit)
     rc, text = update.git(devkit, "merge", "--ff-only", "%s/%s" % (REMOTE, BRANCH))
     if rc != 0:

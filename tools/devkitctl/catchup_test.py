@@ -187,6 +187,35 @@ class PullTest(CatchupCase):
         self.assertEqual(self.fixed, [], "доктор позван на правке доки")
         self.assertNotIn("починено", out.text)
 
+    def test_tools_change_also_calls_doctor(self):
+        # Утилиты живут бинарями в PATH, их тоже пересобирает доктор.
+        self.push_from_other("tools/taskctl/main.go", "// правка\n")
+        with self.printed("devkit подтянут до"):
+            self.run_catchup(hook=True)
+        self.assertEqual(len(self.fixed), 1, "правка tools/ прошла мимо раскладки")
+
+    def test_doctor_failure_keeps_the_pull_line(self):
+        self.push_from_other("kit/skills/prose/SKILL.md")
+
+        def broken(start, fix=False):
+            raise RuntimeError("go не найден")
+
+        with self.printed("devkit подтянут до") as out:
+            catchup.run(self.dk, hook=True, doctor=broken)
+        self.assertIn("раскладка не прошла: go не найден", out.text)
+
+    def test_own_unpushed_commits_alone_are_quiet_in_hook(self):
+        # Незапушенная своя работа при origin вровень это обычное состояние
+        # машины разработки, и шуметь о ней на каждом старте незачем.
+        write(self.dk / "docs" / "mine.md", "своё\n")
+        self.commit(self.dk, "своя правка")
+        self.age_fetch_head()
+        with self.printed("") as out:
+            self.run_catchup(hook=True)
+        self.assertEqual(out.text, "")
+        with self.printed("main впереди origin/main на 1 коммит"):
+            self.run_catchup()
+
     def test_diverged_main_is_loud_in_hook(self):
         # Своя незапушенная работа в main: подтягивать нечего, и молчание тут
         # читалось бы как исправный подтяг.

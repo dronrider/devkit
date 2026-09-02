@@ -180,6 +180,32 @@ func (b *board) sectOf(id string) string {
 	return ""
 }
 
+// archiveHas сообщает, стоит ли ID строкой в docs/TASKS-archive.md. Архив это
+// нормальный источник легитимного ID код-коммита (DK-602): фикс уже
+// закрытой и заархивированной задачи попадает в main тем же путём, что и
+// код задачи из работы, а loadBoard архив не читает вовсе. Отсутствие файла
+// архива (голая тестовая доска) не ошибка, значит id в нём просто нет.
+func archiveHas(root, id string) (bool, error) {
+	data, err := os.ReadFile(filepath.Join(root, "docs", "TASKS-archive.md"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, ln := range strings.Split(string(data), "\n") {
+		t := strings.TrimSpace(ln)
+		if !strings.HasPrefix(t, "|") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(t, "|"), "|")
+		if len(cells) > 0 && strings.TrimSpace(cells[0]) == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // rowOf возвращает строку задачи, nil если её нет на доске.
 func (b *board) rowOf(id string) *row {
 	for _, rows := range b.sects {

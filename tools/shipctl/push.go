@@ -120,8 +120,23 @@ func rangeVerdict(root, remoteSHA, localSHA string) error {
 		if id == "" {
 			return fmt.Errorf("код без ID задачи в subject у %s %q: рубеж пускает диапазон, только когда каждый код-коммит несёт ID вида %s-NNN не из Backlog", short(sha), subj, pref)
 		}
-		if b.sectOf(id) == "backlog" {
+		switch b.sectOf(id) {
+		case "backlog":
 			return fmt.Errorf("%s ещё в Backlog у %s %q: код с её ID до взятия задачи в работу рубеж считает чужим", id, short(sha), subj)
+		case "":
+			// Живой доски мало: loadBoard не видит docs/TASKS-archive.md, а
+			// фикс уже закрытой и заархивированной задачи это обычный,
+			// ожидаемый код-коммит (сама DK-602 сюда попадёт после своего
+			// закрытия). Отбой только когда ID не найден нигде, ни в
+			// работе, ни в архиве: тогда это опечатка, выдуманный номер или
+			// задача, которую ещё не завели.
+			inArchive, err := archiveHas(root, id)
+			if err != nil {
+				return err
+			}
+			if !inArchive {
+				return fmt.Errorf("%s не найдена ни на доске, ни в архиве у %s %q: похоже на опечатку, выдуманный номер или незаведённую задачу; легитимный код закрытой задачи нашёлся бы в docs/TASKS-archive.md", id, short(sha), subj)
+			}
 		}
 	}
 	return nil

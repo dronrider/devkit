@@ -95,6 +95,63 @@ func TestPushCodeWithBacklogIDRefused(t *testing.T) {
 	}
 }
 
+// archiveCommit заводит строку архива для ID: доска (docs/TASKS-archive.md)
+// это тоже boardOnly, не код, а рубеж обязан считать такой ID легитимным для
+// последующего код-коммита с ним же (DK-602, замечание ревью: фикс уже
+// закрытой и заархивированной задачи это обычный код-коммит, а не дыра).
+func archiveCommit(t *testing.T, root, id string) {
+	t.Helper()
+	row := "| " + id + " | Тест | task | P3 | 2026-01-01 | [tasks/archive/2026/" + id + ".md](tasks/archive/2026/" + id + ".md) |\n"
+	write(t, root, "docs/TASKS-archive.md",
+		"# devkit: сделано\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n|--------|--------|-----|---|---|--------|\n"+row)
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): "+id+" закрыта, строка в архив")
+}
+
+// TestPushCodeWithUnknownIDRefused: ID задачи, которой на доске нет вообще
+// (не в живом docs/TASKS.md и не в docs/TASKS-archive.md, опечатка,
+// выдуманный номер, незаведённая задача), рубеж отбивает явно, а не
+// пропускает молча (DK-602, замечание ревью на rangeVerdict/sectOf).
+func TestPushCodeWithUnknownIDRefused(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	bare := addRemote(t, root)
+	before := gitT(t, bare, "rev-parse", "main")
+	codeCommit(t, root, "XR-404", "unknown.txt")
+
+	_, err := cmdPush(root, PushParams{})
+	if err == nil {
+		t.Fatal("код с ID, которого нет ни на доске, ни в архиве, должен отбить пуш")
+	}
+	if !strings.Contains(err.Error(), "XR-404") || !strings.Contains(err.Error(), "архив") {
+		t.Fatalf("отказ не называет задачу и архив: %v", err)
+	}
+	if after := gitT(t, bare, "rev-parse", "main"); after != before {
+		t.Fatalf("origin сдвинулся при отказе: было %s стало %s", before, after)
+	}
+}
+
+// TestPushCodeWithArchivedIDPasses: ID задачи, закрытой и заархивированной
+// (есть в docs/TASKS-archive.md, но не в живом docs/TASKS.md), рубеж
+// пускает: это обычный фикс уже слитой задачи, а не дыра.
+func TestPushCodeWithArchivedIDPasses(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	archiveCommit(t, root, "XR-050")
+	bare := addRemote(t, root)
+	codeCommit(t, root, "XR-050", "fix-after-close.txt")
+
+	msg, err := cmdPush(root, PushParams{})
+	if err != nil {
+		t.Fatalf("код с ID закрытой и заархивированной задачи должен пройти: %v", err)
+	}
+	if !strings.Contains(msg, "запушен") {
+		t.Fatalf("сообщение не называет пуш: %q", msg)
+	}
+	local := gitT(t, root, "rev-parse", "main")
+	if remote := gitT(t, bare, "rev-parse", "main"); remote != local {
+		t.Fatalf("origin не сдвинулся: origin=%s local=%s", remote, local)
+	}
+}
+
 // TestPushCheckOnlyDoesNotPush: --check-only только отвечает вердиктом по
 // названной паре sha и не трогает origin, тем самым флагом её зовёт
 // hooks/pre-push.

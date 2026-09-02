@@ -27,9 +27,13 @@ import sys
 from pathlib import Path
 
 import harness
+import user
 
 AGENTS_FILE = "AGENTS.md"
 MACHINE_CONFIG = "~/.devkit/harness.local"
+# Страница настроек пользователя, которую глобальная точка зовёт вторым
+# импортом. Пишет её модуль user, а генератору правил нужен только путь.
+USER_PAGE = user.PAGE
 PROJECT_CONFIG = ".devkit/harness.local"
 # Машинного конфига нет, значит включён claude-code: то же умолчание, по
 # которому резолвит харнес agentctl (harness.go, mergeLayers), и оно же
@@ -688,6 +692,12 @@ def check_imports(path, root):
         ln = ln.strip()
         if not IMPORT_RE.match(ln):
             continue
+        if ln[1:] == USER_PAGE:
+            # Страницу настроек пользователя кладёт не генератор правил, а
+            # доктор через модуль user, и её нехватку называет своя находка
+            # вместе с командой. Тут о том же пробеле говорилось бы вторым
+            # голосом, да ещё про переехавший devkit, который ни при чём.
+            continue
         target = Path(os.path.expanduser(ln[1:]))
         if not target.is_absolute():
             target = Path(path).parent / target
@@ -874,9 +884,15 @@ def global_target(devkit):
 def global_thin_text(profile, devkit):
     # Глобальная точка ловит любую сессию на машине, а не только проект
     # devkit: AGENTS.md и правила доски ей взять неоткуда, поэтому тело не
-    # тонкий файл проекта, а короткая шапка плюс один импорт. Прозы ровно на
+    # тонкий файл проекта, а короткая шапка плюс два импорта. Прозы ровно на
     # случай, когда импорт почему-то не развернулся (devkit не склонирован
     # либо переехал): куда смотреть и что делать до тех пор.
+    #
+    # Второй импорт это настройки самого пользователя (DK-704): они машинные, а
+    # не проектные, и другой дороги в контекст каждой сессии у них нет. Страница
+    # генерится всегда, и заданного рода в теле точки нет вовсе: тело переписывает
+    # генератор целиком, а настройку пишет `devkitctl user`, и общая рука на этих
+    # файлах затирала бы раскладку стенда послушания.
     tpl = profile.str_of("rules", "import_line") or "@{path}"
     body = (
         "Ядро правил работы живёт в devkit (`%s`), подключено импортом ниже.\n"
@@ -885,7 +901,13 @@ def global_thin_text(profile, devkit):
         "задач, тексты коммитов и сообщения в чат.\n"
         "\n"
         "%s\n"
-    ) % (tilde_path(devkit), tpl.replace("{path}", tilde_path(global_target(devkit))))
+        "\n"
+        "Рядом настройки пользователя этой машины, их пишет `devkitctl user`.\n"
+        "\n"
+        "%s\n"
+    ) % (tilde_path(devkit),
+         tpl.replace("{path}", tilde_path(global_target(devkit))),
+         tpl.replace("{path}", USER_PAGE))
     return "%s\n%s" % (gen_marker(DEPTH_FULL, body), body)
 
 
@@ -955,7 +977,9 @@ def check_global(devkit, fix, machine_path=None, whence=""):
         # неотличимо от чужого CLAUDE.md.
         for i, ln in enumerate(read_text(path).split("\n"), 1):
             ln = ln.strip()
-            if not IMPORT_RE.match(ln):
+            if not IMPORT_RE.match(ln) or ln[1:] == USER_PAGE:
+                # Страница настроек пользователя тут молчит по той же причине,
+                # что и в check_imports: её нехватку называет своя находка.
                 continue
             target = Path(os.path.expanduser(ln[1:]))
             if not target.is_absolute():
@@ -1233,6 +1257,14 @@ def layout(root, devkit, dst, depth):
         (home / rel).parent.mkdir(parents=True, exist_ok=True)
         (home / rel).write_text(text, encoding="utf-8")
         out.append("  home/%s" % rel)
+        # Страница настроек пользователя ложится заглушкой поверх того, что
+        # притащил put_home с машины: род тут свойство прогона, а не сборщика
+        # раскладки. Стенд задаёт его сам, вызовом `devkitctl user` в подготовке
+        # сценария, и раскладка у всех выходит одна.
+        page = home / USER_PAGE[2:]
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text(user.page_text(""), encoding="utf-8")
+        out.append("  home/%s (род задаёт прогон)" % USER_PAGE[2:])
     return "\n".join(out) + "\n"
 
 

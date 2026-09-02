@@ -180,6 +180,7 @@ import shutil
 import subprocess
 import sys
 import update
+import user
 import watch
 import weigh
 import workflow
@@ -1798,6 +1799,12 @@ def check_machine(fix):
     gf, gd = rules.check_global(devkit_src, fix and from_main, whence=whence)
     findings += gf
     fixed += gd
+    # Настройки пользователя сразу за глобальной точкой: страницу зовёт её
+    # импорт, и на прогоне с --fix точка успевает встать строкой выше. Рубеж
+    # основного чекаута тут не нужен, текста правил страница не везёт вовсе.
+    uf, ud = user.check(fix)
+    findings += uf
+    fixed += ud
     if not shutil.which("tmux"):
         tf, td = ensure_package("tmux", "tmux не в PATH: agentctl quota refresh не снимет "
                                         "панель /usage, и корректор pick останется без снимка", fix)
@@ -2977,6 +2984,9 @@ def main(argv):
     m.add_argument("-C", dest="dir", default=".", help="директория проекта")
     m.add_argument("--write", action="store_true",
                    help="писать docs/map.md, иначе печатать в stdout")
+    u = sub.add_parser("user", help="настройки пользователя машины: род первого лица")
+    u.add_argument("--gender", choices=user.GENDERS,
+                   help="род, в котором агент пишет о себе; без ключа печатается заданный")
     sub.add_parser("selfcheck",
                    help="живой круг связки во временном проекте, с уборкой за собой")
     a = ap.parse_args(argv)
@@ -3002,6 +3012,8 @@ def main(argv):
         rc = update_devkit(a.pin, a.check, a.restarted)
     elif a.cmd == "watch":
         rc = watch.run(idle=a.idle * 60 if a.idle else None)
+    elif a.cmd == "user":
+        rc = user.main(["--gender", a.gender] if a.gender else [])
     elif a.cmd == "selfcheck":
         rc = selfcheck.main()
     elif a.cmd == "drain":

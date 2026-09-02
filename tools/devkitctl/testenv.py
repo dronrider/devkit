@@ -426,6 +426,7 @@ import perms  # noqa: E402
 import rules  # noqa: E402
 import sessions  # noqa: E402
 import update  # noqa: E402
+import user  # noqa: E402
 import dashboard  # noqa: E402
 import watch  # noqa: E402
 import weigh  # noqa: E402
@@ -532,8 +533,16 @@ class Sandbox:
         self.watch_agent(home)
         self.dashboard_agent(home)
         self.global_rules(home)
+        self.user_page(home)
         self.alt_sub(home)
         return home
+
+    def user_page(self, home, value="мужской"):
+        """Род первого лица в подставном HOME: настройка машинная, и умолчания у
+        неё нет, поэтому на чистой машине она задана, как её задаёт человек.
+        Незаданный род это своя находка, и проверяется он своими тестами."""
+        with fake_home(home):
+            return user.set_gender(value)
 
     def alt_sub(self, home):
         """Конфиг второй подписки в машинном слое: заполненный, как на машине,

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Задача без ведущей сессии (DK-660). Конвейер задачи поднимался и умирал
@@ -76,7 +78,9 @@ func TestTaskNoLeadSilentWhenRowMoved(t *testing.T) {
 // среди прочих, куда сложены поводы хуков сессии, и фильтр задач её бы не
 // нашёл.
 func TestNoLeadLineReadsAsTaskEvent(t *testing.T) {
-	line := "2026-08-31T16:52:08 сессия - повод " + noLeadReason +
+	// Повод назван словом, а не константой кода: стенд меряет строку журнала,
+	// какой её пишет уведомитель, и с ней же сверяется лента.
+	line := "2026-08-31T16:52:08 сессия - повод task_nolead" +
 		" уровень громкий бэкенд terminal-notifier цель - задача XR-004 проект demo " +
 		"код возврата: 0 текст «demo: XR-004 осталась без ведущей сессии» " +
 		"«сессия task-XR-004 прожила 2 мин и кончилась. Строка стоит в разработке.»"
@@ -84,10 +88,80 @@ func TestNoLeadLineReadsAsTaskEvent(t *testing.T) {
 	if !ok {
 		t.Fatal("строка про осиротевшую задачу не разобралась")
 	}
-	if n.Kind != "task" || n.Reason != noLeadReason {
+	if n.Kind != "task" || n.Reason != "task_nolead" {
 		t.Errorf("тип события: %q (повод %q), ожидал task", n.Kind, n.Reason)
 	}
 	if n.ID != "XR-004" || n.Project != "demo" {
 		t.Errorf("лента не ведёт к строке доски: задача %q, проект %q", n.ID, n.Project)
 	}
+}
+
+// Стоп рукой человека тревоги не поднимает. Сессию снял сам человек, о своём
+// стопе он знает по строке `run_stop` рядом, и второе уведомление про ту же
+// работу было бы шумом. Держится это на порядке: `chatWatchOff` снимает
+// сессию с присмотра до `kill-session`.
+func TestTaskNoLeadSilentAfterHandStop(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "")
+	calls := filepath.Join(e.home, "notify.calls")
+	writeNotifyFake(t, filepath.Dir(e.proj), calls)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-004"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск XR-004: %d %s", resp.StatusCode, body(t, resp))
+	}
+	// Стоп ищет работу среди живых, и до нажатия сессия конвейера жива.
+	writeTmuxFake(t, e.bin, tmuxLog, `task-XR-004\n`)
+	stop := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", "")
+	if stop.StatusCode != http.StatusOK {
+		t.Fatalf("стоп XR-004: %d %s", stop.StatusCode, body(t, stop))
+	}
+	// Снятая сессия ушла из списка живых, и обход сторожа видит имя пропавшим.
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+
+	e.s.chatWatchTick()
+
+	got := readFile(t, calls)
+	if strings.Contains(got, "task_nolead") {
+		t.Fatalf("человека позвали к работе, которую он снял сам: %q", got)
+	}
+	// Стоп о себе сказал, и это предусловие стенда: без строки run_stop он
+	// проверял бы не ту ветку.
+	if !strings.Contains(got, "run_stop") {
+		t.Fatalf("стоп прошёл без уведомления, стенд стоит не на той ветке: %q", got)
+	}
+}
+
+// Живая работа за строкой тревоги не поднимает. Окно конвейера пропало, а
+// задачу ведёт сессия человека, поднятая мимо дашборда: работа по строке идёт,
+// и звать к ней некого.
+func TestTaskNoLeadSilentWhileWorkLives(t *testing.T) {
+	e, c, _ := runsEnv(t, "")
+	calls := filepath.Join(e.home, "notify.calls")
+	writeNotifyFake(t, filepath.Dir(e.proj), calls)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-004"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск XR-004: %d %s", resp.StatusCode, body(t, resp))
+	}
+	writeSession(t, e.home, e.proj, "", "worker", sessionLine("правлю XR-004", "main"), time.Now())
+	writeBinds(t, e.home, bindRecord("2026-09-03T01:00:00", "worker", "XR-004", bindOrder))
+	// Предусловие стенда: строка помечена живой работой, и помечена не чатом.
+	works := e.s.liveWorks(e.proj, "XR", boardRaw(t, e))
+	if runMarks(works)["XR-004"] == "" {
+		t.Fatalf("живой работы за строкой нет, стенд проверяет не ту ветку: %+v", works)
+	}
+
+	e.s.chatWatchTick()
+
+	if got := readFile(t, calls); strings.Contains(got, "task_nolead") {
+		t.Fatalf("человека позвали к строке, по которой идёт работа: %q", got)
+	}
+}
+
+// boardRaw отдаёт доску проекта тем же ответом taskctl, каким её читает сервер.
+func boardRaw(t *testing.T, e *testEnv) json.RawMessage {
+	t.Helper()
+	raw, err := e.s.projectBoard(e.proj)
+	if err != nil {
+		t.Fatalf("доска фикстуры не прочиталась: %v", err)
+	}
+	return raw
 }

@@ -35,10 +35,28 @@ def start(cwd, session=SID, transcript="/home/t/.claude/projects/p/%s.jsonl" % S
     return hookio.Start(session=session, cwd=cwd, transcript=transcript, source=source)
 
 
+REG_KEYS = ("сессия", "задача", "проект", "дерево", "транскрипт", "источник",
+            "повод", "tmux", "родитель")
+
+
 def fields(line):
-    """Строка журнала парами «ключ значение», как её читает дашборд."""
+    """Строка журнала парами «ключ значение», как её читает дашборд: значение
+    идёт до следующего ключевого слова, и пробел в пути дерева или в поводе
+    строку не рассыпает."""
     parts = line.rstrip("\n").split(" ")
-    return dict(zip(parts[1::2], parts[2::2])), parts[0]
+    out, key = {}, None
+    for tok in parts[1:]:
+        # Ключевое слово переключает поле только на непустом значении, иначе
+        # «источник дерево» читалось бы как второй ключ (правило то же, что у
+        # ParseLine на go).
+        if tok in REG_KEYS and out.get(key):
+            key = tok
+            continue
+        if key is None:
+            key = tok
+            continue
+        out[key] = (out.get(key, "") + " " + tok).strip()
+    return out, parts[0]
 
 
 class Tree:
@@ -131,6 +149,65 @@ class TestRecord(unittest.TestCase):
         self.assertEqual(f["tmux"], "chat-DK-431-2")
         f, _ = fields(session_task.record(start(tree.root), env={}))
         self.assertEqual(f["tmux"], "-")
+
+    def test_headless_start_does_not_take_the_window(self):
+        # DK-673, живой случай с чатом XR-207. Агент выполнил из своего окна
+        # `claude -p --resume` чужой сессии, та унаследовала DEVKIT_TMUX, и
+        # хозяином имени стал мёртвый разговор: реплики панели поехали
+        # клавишами в окно диспетчера, а уборка того разговора сняла бы его
+        # живую работу. Клиент печатного подъёма поднят без терминала, и по
+        # этому он и отличается от клиента, которого поднял дашборд.
+        tree = Tree(self.tmp, "devkit")
+        client = subprocess.Popen(["sleep", "30"], start_new_session=True,
+                                  stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL)
+        self.addCleanup(client.wait)
+        self.addCleanup(client.kill)
+        f, _ = fields(session_task.record(
+            start(tree.root), env={"DEVKIT_TMUX": "chat-DK-161-1",
+                                   "CLAUDE_PID": str(client.pid)}))
+        self.assertEqual(f["tmux"], "-")
+        # Отказ назван в самом журнале: без него потеря имени неотличима от
+        # сессии, поднятой мимо дашборда.
+        self.assertEqual(f["повод"],
+                         "startup, имя окна chat-DK-161-1 не принято "
+                         "(клиент без терминала)")
+
+    def test_window_of_a_client_with_a_terminal_is_written(self):
+        # Обратная сторона той же меры: дашборд поднимает клиента в панели
+        # tmux, терминал у него есть, и имя окна ложится в реестр как прежде.
+        tree = Tree(self.tmp, "devkit")
+        f, _ = fields(session_task.record(
+            start(tree.root), env={"DEVKIT_TMUX": "chat-DK-431-2"},
+            terminal=lambda env: "ttys004"))
+        self.assertEqual((f["tmux"], f["повод"]), ("chat-DK-431-2", "startup"))
+
+    def test_client_without_a_terminal_is_told_apart(self):
+        # Сама мера: процесс своей сессии ps показывает вопросительными
+        # знаками, и это единственный ответ, по которому имя отбирается.
+        client = subprocess.Popen(["sleep", "30"], start_new_session=True,
+                                  stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL)
+        self.addCleanup(client.wait)
+        self.addCleanup(client.kill)
+        self.assertEqual(session_task.client_terminal(
+            {"CLAUDE_PID": str(client.pid)}), "")
+
+    def test_unknown_client_is_not_a_verdict(self):
+        # Незнание именем не распоряжается: чужой харнес своего pid не
+        # называет, а мёртвый процесс ps не покажет вовсе. Имя в обоих случаях
+        # остаётся, дыру закрывает знание, а не догадка.
+        self.assertIsNone(session_task.client_terminal({}))
+        self.assertIsNone(session_task.client_terminal({"CLAUDE_PID": "нет"}))
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        self.assertIsNone(session_task.client_terminal({"CLAUDE_PID": str(dead.pid)}))
+        f, _ = fields(session_task.record(
+            start(Tree(self.tmp, "devkit").root),
+            env={"DEVKIT_TMUX": "chat-DK-431-2", "CLAUDE_PID": str(dead.pid)}))
+        self.assertEqual(f["tmux"], "chat-DK-431-2")
 
     def test_fields_go_in_the_written_order(self):
         # Порядок полей это договор с читателем на go, и сползание любого из

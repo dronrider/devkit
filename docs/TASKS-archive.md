@@ -406,3 +406,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-697 | git push доски виснет на osxkeychain, коммиты копятся локально | bug | P1 | 2026-09-02 | [tasks/archive/2026/DK-697.md](tasks/archive/2026/DK-697.md) |
 | DK-608 | Сторож повторного чтения отбивает субагенту первое чтение файла | bug | P1 | 2026-09-02 | [tasks/archive/2026/DK-608.md](tasks/archive/2026/DK-608.md) |
 | DK-602 | Мелочь в main без пуша запирает пуш доски всем сессиям | task | P1 | 2026-09-02 | [tasks/archive/2026/DK-602.md](tasks/archive/2026/DK-602.md) |
+| DK-684 | Чистый прогон обкатки и слияния не видит утилит devkit и тулчейнов | bug | P1 | 2026-09-02 | [tasks/archive/2026/DK-684.md](tasks/archive/2026/DK-684.md) |

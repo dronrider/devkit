@@ -113,7 +113,8 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
 ]}], "SessionStart": [{"hooks": [
   {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/session-task.py --hook claude-code"},
-  {"type": "command", "command": "sh ~/projects/devkit/hooks/board-catchup.sh"}
+  {"type": "command", "command": "sh ~/projects/devkit/hooks/board-catchup.sh"},
+  {"type": "command", "command": "sh ~/projects/devkit/hooks/devkit-catchup.sh"}
 ]}], "Notification": [{"hooks": [
   {"type": "command", "command": "%s"}
 ]}], "Stop": [{"hooks": [

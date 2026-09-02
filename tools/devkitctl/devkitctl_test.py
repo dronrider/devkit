@@ -178,6 +178,16 @@ class ProjectFindingsTest(SandboxCase):
         self.assertIn_("устаревшая доска читается как свежая", out,
                        "находка не говорит, что ломается без хука")
 
+    def test_4d_devkit_catchup_hook(self):
+        # Догон самого чекаута devkit стоит там же, и находка про него своя: без
+        # хука правка со второй машины лежит в origin невостребованной.
+        drop_lines(self.settings, "devkit-catchup")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("SessionStart-хук devkit-catchup.sh", out,
+                       "нет находки про хук догона чекаута devkit")
+        self.assertIn_("правка со второй машины", out,
+                       "находка не говорит, что ломается без хука")
+
     def test_5_notifier_events(self):
         # Уведомитель висит на четырёх событиях сразу, и пропажа любого это
         # находка: без SubagentStop сессия молчит про отработавшего субагента, а
@@ -2036,6 +2046,9 @@ class HarnessHooksTest(SandboxCase):
         # Догон бокового дерева доски (DK-269) ложится туда же, третьим
         # SessionStart-хуком, и повторный --fix его не дублирует.
         self.assertEqual(len([c for c in start if "board-catchup.sh" in c]), 1, start)
+        # Догон самого чекаута devkit ложится четвёртым, и повторный --fix его
+        # тоже не дублирует.
+        self.assertEqual(len([c for c in start if "devkit-catchup.sh" in c]), 1, start)
         # Повторный --fix хуки второй раз не раскладывает.
         _, out = self.box.doctor(self.proj, "--fix", home=self.home2)
         self.assertNotIn_("хук харнеса на", out, "повторный --fix разложил хуки второй раз")

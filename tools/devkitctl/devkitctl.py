@@ -89,6 +89,14 @@
       ключом --pin. --check тянет только релизные теги и только рассказывает:
       на каком теге машина, какой вышел, что поставит обычный update
 
+  devkitctl catchup [--hook]
+      подтянуть чекаут devkit до origin/main и разложить свежий kit по
+      харнесам: правка со второй машины иначе лежит в origin, пока клон её не
+      попросит. Действует только на основном чекауте, стоящем на ветке main, и
+      только fast-forward; в сеть ходит не чаще раза в десять минут. --hook это
+      режим старта сессии: гард молчит, а подтяг, расхождение с origin и отказ
+      слияния печатаются
+
   devkitctl build [--release] [--out dir]
       собрать бинари devkit с зашитой версией: что собирать, выводится из
       дерева (каталоги tools/*/ с go.mod), версия и коммит из git этого
@@ -158,6 +166,7 @@
 import argparse
 import board
 import build
+import catchup
 import codemap
 import context
 import corp
@@ -236,6 +245,10 @@ NOTIFY_HOOK = "notify.py"
 # сообщения в hook_gaps своя: без хука отставание не видно вовсе, а это не то
 # же самое, что пустой реестр чатов.
 BOARD_HOOK = "board-catchup.sh"
+# Догон самого чекаута devkit (тот же старт сессии, своя категория сообщения):
+# клон двигают только релизные теги, main никто не подтягивает руками, и правка
+# со второй машины доезжает до скиллов и правил через раз.
+SELF_HOOK = "devkit-catchup.sh"
 # Подхват реплики (DK-341): PostToolUse на пустом матчере, потому что реплику
 # надо доставлять на любом ходе идущего витка, а не на записи файла. Категория
 # сообщения в hook_gaps своя: своё событие, свой матчер и своё «что идёт не
@@ -298,6 +311,7 @@ HOOK_LAYOUT = (
     ("SessionStart", "", "python3 %s/hooks/session-task.py --hook claude-code"),
     ("PostToolUse", "", "python3 %s/hooks/session-task.py --touch claude-code"),
     ("SessionStart", "", "sh %s/hooks/board-catchup.sh"),
+    ("SessionStart", "", "sh %s/hooks/devkit-catchup.sh"),
     ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/notify.py --hook claude-code"),
     ("StopFailure", "", "python3 %s/hooks/notify.py --hook claude-code"),
@@ -1357,6 +1371,11 @@ def hook_gaps(text, settings):
             findings.append("SessionStart-хук %s не подключён в %s: снимок квоты сам не освежается, "
                             "и корректор pick рано или поздно останется с протухшим "
                             "(hooks/README.md)" % (SESSION_HOOK, settings))
+        elif script == SELF_HOOK:
+            findings.append("SessionStart-хук %s не подключён в %s: чекаут devkit не "
+                            "догоняется до origin/main, и правка со второй машины лежит "
+                            "в origin невостребованной (hooks/README.md)"
+                            % (SELF_HOOK, settings))
         elif script == BOARD_HOOK:
             findings.append("SessionStart-хук %s не подключён в %s: боковое дерево доски не "
                             "догоняется на старте сессии, и устаревшая доска читается как свежая "
@@ -2954,6 +2973,9 @@ def main(argv):
     b.add_argument("--out", default="",
                    help="каталог назначения: по умолчанию тот же, куда ставит update, "
                         "а под --release dist")
+    cu = sub.add_parser("catchup", help="подтянуть чекаут devkit до origin/main")
+    cu.add_argument("--hook", action="store_true",
+                    help="режим старта сессии: гард молчит, код возврата всегда 0")
     u = sub.add_parser("update", help="поставить или обновить devkit бинарями релиза")
     u.add_argument("--pin", action="store_true",
                    help="перевести чекаут с ветки на новейший тег (первая установка)")
@@ -3008,6 +3030,10 @@ def main(argv):
         rc = weigh_resident(a.dir, a.runs, a.limit, a.model, a.prompt)
     elif a.cmd == "build":
         rc = build_binaries(a.release, a.out)
+    elif a.cmd == "catchup":
+        # Чекаут тут DEVKIT, а не devkit_checkout(): из дерева ветки задачи
+        # команда обязана промолчать, а не увести основной чекаут вперёд.
+        rc = catchup.run(DEVKIT, hook=a.hook)
     elif a.cmd == "update":
         rc = update_devkit(a.pin, a.check, a.restarted)
     elif a.cmd == "watch":

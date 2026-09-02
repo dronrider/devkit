@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -184,4 +185,73 @@ func TestChatSpawnSlowStartAlive(t *testing.T) {
 	if marks := saidMarks(t, e.home, "sess-"+sid); len(marks) != 0 {
 		t.Fatalf("в ленте живого подъёма стоят пометки: %v", marks)
 	}
+}
+
+// Шестая дорога подъёма это разбор черновика (drafts.go). Экран ждёт его тем же
+// опросом, что и чат: groomDraft зовёт chatSewHere, та chatSewLoop, а он ходит в
+// поиск по имени tmux-сессии. Без отметки подъёма поиск про эту сессию молчит, и
+// умерший грумер вешает ту же немую петлю ожидания (замечание ревью DK-728).
+func TestDraftGroomDeathSaid(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	writeAgentctlFake(t, e.bin, harnessTiersFixture)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "дашборд не показывает исход подъёма", "prio": "mid"}`).Body.Close()
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("груминг черновика: %d %s", resp.StatusCode, text)
+	}
+	var raise struct {
+		Session string `json:"session"`
+	}
+	if err := json.Unmarshal([]byte(text), &raise); err != nil {
+		t.Fatal(err)
+	}
+	if raise.Session == "" {
+		t.Fatalf("груминг не назвал сессии: %s", text)
+	}
+
+	tmuxWatchFake(t, e, raise.Session, `Invalid API key. Please run /login\n`)
+	if dead := chatDeadOf(t, e, c, raise.Session); dead.Why != "" {
+		t.Fatalf("живой разбор объявили мёртвым: %+v", dead)
+	}
+
+	tmuxWatchFake(t, e, "", "")
+	dead := chatDeadOf(t, e, c, raise.Session)
+	if dead.Why == "" {
+		t.Fatal("смерть сессии разбора не названа: экран ждёт разговор, которого не будет")
+	}
+	if !strings.Contains(dead.Tail, "Invalid API key") {
+		t.Errorf("в исходе разбора нет хвоста терминала: %q", dead.Tail)
+	}
+	// Разговора у разбора ещё нет, и смерть едет в журнал задачи: её читает
+	// лента той сессии, которая задачу продолжит.
+	marks := saidMarks(t, e.home, "task-XR-005")
+	if len(marks) == 0 {
+		t.Fatal("смерть разбора не легла в журнал задачи")
+	}
+	if !strings.Contains(marks[len(marks)-1], raise.Session) {
+		t.Errorf("строка журнала не называет сессию: %q", marks[len(marks)-1])
+	}
+}
+
+// Панельная сторона исхода: ожидание кончается смертью, плашка подъёма гаснет,
+// а в пустой ленте вместо обещания встаёт причина с хвостом терминала.
+// Сторожит стенд testdata/poc_deadraise.mjs: настоящий static/app.js
+// поднимается в node с заглушкой DOM, и проверяется собранная разметка, а не
+// текст исходника. Без node шаг пропускается, как у остальных стендов статики.
+func TestStaticChatDeadRaiseTellsThePanel(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд смерти подъёма пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_deadraise.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("смерть подъёма в панели: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }

@@ -7,7 +7,12 @@ offset/limit/pages) это не повтор: окно у записи своё,
 
 История чтений своя, а не транскрипт сессии: журналы растут на десятки
 мегабайт, и каждое чтение гонять их через парсер накладнее самой пользы.
-Состояние лежит в ~/.devkit/reread/<session_id>.json, по окну на запись.
+Состояние лежит в ~/.devkit/reread/<контекст>.json, по окну на запись. Контекст
+это не сессия: субагент делит session_id с диспетчером, а контекст у него свой
+и пустой, и подсказка про «уже прочитанное» резала бы ему первое чтение
+(DK-608). Различает их поле agent_id, которое харнес кладёт в событие только
+под субагентом, поэтому у диспетчера имя файла это session_id, а у субагента
+session_id с приписанным agent_id.
 Неизменность файла проверяется парой (mtime_ns, size) из одного stat: любая
 правка файла (Edit, Write, git checkout, echo >) меняет mtime, а size
 подстрахует на файловых системах с грубым разрешением времени. mtime без
@@ -65,10 +70,26 @@ def state_dir(override=None):
     return where
 
 
-def state_path(session, override=None):
-    # Имя файла из session_id: UUID, безопасных символов в имени ради. Каталог
-    # один на все сессии машины, поэтому session_id целиком, без обрезки.
-    return os.path.join(state_dir(override), session + ".json")
+def safe_name(value):
+    # Имя файла собирается из значений события, и чужой символ в нём уводил бы
+    # запись из каталога состояния. Настоящие session_id и agent_id это UUID и
+    # hex, под фильтр они проходят как есть.
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in value)
+
+
+def context_id(session, agent):
+    """Имя контекста чтения. У диспетчера это сессия целиком, без обрезки:
+    каталог один на все сессии машины. У субагента к ней приписан agent_id, и
+    свой контекст он получает даже там, где session_id общий с диспетчером.
+    Разделителем стоит точка: в session_id (UUID) и agent_id (hex) её нет, и
+    пара разбирается на части однозначно."""
+    if not agent:
+        return safe_name(session)
+    return safe_name(session) + "." + safe_name(agent)
+
+
+def state_path(context, override=None):
+    return os.path.join(state_dir(override), context + ".json")
 
 
 def sweep(directory, now):
@@ -89,8 +110,8 @@ def sweep(directory, now):
             pass
 
 
-def load_state(session, override=None):
-    path = state_path(session, override)
+def load_state(context, override=None):
+    path = state_path(context, override)
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -103,8 +124,8 @@ def load_state(session, override=None):
     return data
 
 
-def save_state(session, state, override=None):
-    path = state_path(session, override)
+def save_state(context, state, override=None):
+    path = state_path(context, override)
     tmp = path + ".tmp"
     # Атомарная запись через rename: параллельный PreToolUse на Read у
     # субагента не портит файл частичной записью. Состояния записей теряться
@@ -166,6 +187,10 @@ def run_hook(protocol, override=None):
         # Без session_id историю не привязать ни к какой сессии, и рубить
         # нельзя: пусть Read проходит как есть.
         return 0
+    # agent_id есть в событии только под субагентом, у хода самой сессии этого
+    # поля нет вовсе (снято живым прогоном, docs/tasks/DK-608.md). Транскрипт
+    # на эту роль не годится: у субагента он тот же, что у диспетчера.
+    context = context_id(session, text_of(event.get("agent_id")))
     window = read_window(event)
     if window is None:
         return 0
@@ -175,14 +200,14 @@ def run_hook(protocol, override=None):
     except OSError:
         # Файл недоступен или его нет. Read сам скажет, и подсказка тут лишняя.
         return 0
-    state = load_state(session, override)
+    state = load_state(context, override)
     key = window_key(path, offset, limit, pages)
     prev = state.get(key)
     if prev is not None and prev.get("m") == st.st_mtime_ns \
             and prev.get("s") == st.st_size:
         return hookio.reply(protocol).found(hint(path))
     state[key] = {"m": st.st_mtime_ns, "s": st.st_size}
-    save_state(session, state, override)
+    save_state(context, state, override)
     # Уборка идёт после записи, а не до: новое состояние не должно попасть под
     # нож, если порог подобран неудачно, и видно это по свежему файлу.
     sweep(state_dir(override), time.time())

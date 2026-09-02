@@ -5,9 +5,11 @@
 проходит тоже, чтение другого окна (другие offset/limit/pages) того же файла
 не считается повтором.
 
-История чтений своя (~/.devkit/reread/<session_id>.json), неизменность файла
-проверяется парой mtime_ns + size. Развилки и их обоснование в docs/tasks/DK-146.md
-и шапке check-reread.py."""
+История чтений своя (~/.devkit/reread/<контекст>.json), неизменность файла
+проверяется парой mtime_ns + size. Контекст это не сессия: субагент делит
+session_id с диспетчером, но своё окно чтения у него отдельное (DK-608).
+Развилки и их обоснование в docs/tasks/DK-146.md, docs/tasks/DK-608.md и шапке
+check-reread.py."""
 import importlib.util
 import json
 import os
@@ -20,6 +22,8 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL = os.path.join(HERE, "check-reread.py")
 SAMPLE = os.path.join(HERE, "testdata", "claude-code", "pre-tool-use-read.json")
+SUB_SAMPLE = os.path.join(HERE, "testdata", "claude-code",
+                          "pre-tool-use-read-subagent.json")
 
 # Дефис в имени скрипта не годится для import, поэтому модуль грузится по пути.
 _spec = importlib.util.spec_from_file_location("check_reread", TOOL)
@@ -32,16 +36,20 @@ def run(*args, **kw):
                           capture_output=True, text=True, **kw)
 
 
-def read_event(path, **window):
+def read_event(path, agent=None, **window):
     """Событие PreToolUse на Read по пути и параметрам окна. Параметры окна
     опускаются, если их не передали: тогда их нет и в событии, которое
-    разбирает хук."""
+    разбирает хук. agent это роль субагента: харнес кладёт agent_id в событие
+    только под ним, у хода самой сессии этого поля нет вовсе."""
     ti = {"file_path": path}
     ti.update(window)
-    return json.dumps({"session_id": "s1",
-                       "hook_event_name": "PreToolUse",
-                       "tool_name": "Read",
-                       "tool_input": ti})
+    event = {"session_id": "s1",
+             "hook_event_name": "PreToolUse",
+             "tool_name": "Read",
+             "tool_input": ti}
+    if agent:
+        event["agent_id"] = agent
+    return json.dumps(event)
 
 
 class RereadCase(unittest.TestCase):
@@ -221,6 +229,62 @@ class TestSessions(RereadCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
+class TestSubagentContext(RereadCase):
+    """Субагент делит session_id с диспетчером, а контекст у него свой и
+    пустой: прочитанное диспетчером в нём не лежит, и подсказка вместо
+    содержимого режет ему нужный источник (DK-608). Различает контексты поле
+    agent_id, которое есть в событии только под субагентом."""
+
+    def test_subagent_reads_what_dispatcher_read(self):
+        # Регрессия DK-608: диспетчер прочитал файл, субагент читает его
+        # первый раз в своём контексте и получает содержимое, а не подсказку.
+        self.hook(read_event(self.file))
+        r = self.hook(read_event(self.file, agent="a1"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_repeat_inside_subagent_is_hint(self):
+        # Рубеж внутри одного контекста стоит как стоял: то же окно тем же
+        # субагентом это повтор.
+        self.hook(read_event(self.file, agent="a1"))
+        r = self.hook(read_event(self.file, agent="a1"))
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn(self.file, r.stderr)
+
+    def test_two_subagents_isolated(self):
+        # Два субагента одной сессии читают независимо: контекст у каждого свой.
+        self.hook(read_event(self.file, agent="a1"))
+        r = self.hook(read_event(self.file, agent="a2"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_dispatcher_after_subagent_passes(self):
+        # Обратный ход: субагент прочитал, у диспетчера файла в контексте нет.
+        self.hook(read_event(self.file, agent="a1"))
+        r = self.hook(read_event(self.file))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_dispatcher_repeat_still_hint(self):
+        # Чужие контексты состояние диспетчера не затирают: его собственный
+        # повтор режется по-прежнему.
+        self.hook(read_event(self.file))
+        self.hook(read_event(self.file, agent="a1"))
+        r = self.hook(read_event(self.file))
+        self.assertEqual(r.returncode, 2, r.stdout)
+
+    def test_state_files_named_by_context(self):
+        # Диспетчеру файл по сессии, субагенту по сессии с приписанным
+        # agent_id через точку.
+        self.hook(read_event(self.file))
+        self.hook(read_event(self.file, agent="a1"))
+        self.assertEqual(sorted(os.listdir(self.state)), ["s1.a1.json", "s1.json"])
+
+    def test_agent_id_with_separator_stays_in_state_dir(self):
+        # Имя файла собирается из значений события, и разделитель пути в них
+        # не должен уводить запись из каталога состояния.
+        r = self.hook(read_event(self.file, agent="../beyond"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(os.listdir(self.state), ["s1.___beyond.json"])
+
+
 class TestBadInput(RereadCase):
     def test_bad_json_passes(self):
         r = run("--hook", "--state", self.state, input="not json")
@@ -256,6 +320,14 @@ class TestSampleEvent(RereadCase):
     события на стороне инструмента, и в образце хранится её реальный вид, а
     не пересозданный по памяти."""
 
+    def sample_on(self, path, name):
+        """Образец с подставленным путём читаемого файла: сам путь в снимке
+        частный (/private/tmp/proj/note.md), и файла там нет."""
+        with open(name, encoding="utf-8") as f:
+            event = json.load(f)
+        event["tool_input"]["file_path"] = path
+        return json.dumps(event)
+
     def test_sample_records_state(self):
         # Путь в образце частный (/private/tmp/proj/note.md), и файла там нет:
         # хук уходит нулём, не падая на плохом пути.
@@ -264,6 +336,37 @@ class TestSampleEvent(RereadCase):
         r = run("--hook", "--state", self.state, input=text)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("Traceback", r.stderr)
+
+    def test_live_subagent_sample_reads_after_dispatcher(self):
+        # Живой снимок субагента и он же без пары полей, которые харнес кладёт
+        # только под субагентом: так выглядел бы тот же ход у самого
+        # диспетчера. Всё остальное, включая session_id и transcript_path, у
+        # них общее, и второе чтение всё равно проходит (DK-608).
+        with open(SUB_SAMPLE, encoding="utf-8") as f:
+            sub = json.load(f)
+        sub["tool_input"]["file_path"] = self.file
+        plain = dict(sub)
+        del plain["agent_id"], plain["agent_type"]
+        r = run("--hook", "--state", self.state, input=json.dumps(plain))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = run("--hook", "--state", self.state, input=json.dumps(sub))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # Пара сверяется и на обратном ходе: повтор у диспетчера режется, то
+        # есть первый ход состояние записал и тест не проходит вхолостую.
+        r = run("--hook", "--state", self.state, input=json.dumps(plain))
+        self.assertEqual(r.returncode, 2, r.stdout)
+
+    def test_live_samples_share_session_and_transcript(self):
+        # Снимки сверяются на то, ради чего взяты: сессия и транскрипт у
+        # диспетчера с субагентом одни, различает их только agent_id.
+        with open(SAMPLE, encoding="utf-8") as f:
+            plain = json.load(f)
+        with open(SUB_SAMPLE, encoding="utf-8") as f:
+            sub = json.load(f)
+        self.assertNotIn("agent_id", plain)
+        self.assertTrue(sub["agent_id"])
+        self.assertEqual(sub["session_id"],
+                         os.path.basename(sub["transcript_path"])[:-len(".jsonl")])
 
 
 class TestSweep(unittest.TestCase):

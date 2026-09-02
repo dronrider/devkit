@@ -206,6 +206,10 @@ type smokeResult struct {
 	After  string     `json:"after"`
 	Before string     `json:"before"`
 	Pulses int        `json:"pulses"`
+	// Marked и Found несёт смоук поиска чата (DK-726): найденная строка
+	// целиком и признак её клейма «в архиве».
+	Marked bool   `json:"marked"`
+	Found  string `json:"found"`
 }
 
 // smokeLine это строка транскрипта с заданным временем реплики: своя, а не

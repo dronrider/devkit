@@ -130,21 +130,26 @@ const has = (rows, what) => titles(rows).some((said) => said.includes(what));
   store.set("devkit.chat.arch", "off");
 }
 
-// --- поиск считается с положением ---
+// --- поиск идёт мимо положения кнопки (DK-726), сама кнопка правит только
+// пустой список ---
 {
   const { drop, rows } = open();
   const find = tag(drop, "INPUT");
   find.value = "черновик";
   find.handlers.input();
   await settle();
-  if (has(rows, "разобранный черновик")) {
-    fail("поиск вытащил убранный разговор в положении «не показывать»: " + dump(rows).slice(0, 300));
-  }
-  byClass(drop, "cdarchbtn").handlers.click({ stopPropagation: () => {} });
   if (!has(rows, "разобранный черновик")) {
-    fail("поиск не нашёл убранный разговор в положении «показывать все»: " + dump(rows).slice(0, 300));
+    fail("поиск не нашёл убранный разговор в положении «не показывать»: " + dump(rows).slice(0, 300));
   }
-  store.set("devkit.chat.arch", "off");
+  if (!dump(rows).includes("в архиве")) {
+    fail("найденная архивная строка не помечена клеймом: " + dump(rows).slice(0, 300));
+  }
+  find.value = "";
+  find.handlers.input();
+  await settle();
+  if (has(rows, "разобранный черновик")) {
+    fail("стёртый запрос не вернул кнопке прежнюю власть над списком: " + dump(rows).slice(0, 300));
+  }
 }
 
 // --- уборка идёт из строки списка и уносит строку ---

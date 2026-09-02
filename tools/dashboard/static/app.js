@@ -7437,9 +7437,10 @@ function chatArchNext(mode) {
   return CHAT_ARCH_MODES[(at + 1) % CHAT_ARCH_MODES.length];
 }
 
-// chatArchShown режет список по выбранному положению. Через него же проходит
-// поиск: ищут в том наборе, который сейчас на экране, иначе запрос вытаскивал
-// бы убранное обратно.
+// chatArchShown режет список по выбранному положению кнопки. Пустой поиск
+// (draw при !q) идёт через него, а набранный запрос (DK-726) режет список сам,
+// мимо этой функции: положение кнопки прячет разговор только для глаза, а не
+// от поиска, иначе убранное было бы недостижимо без кругового нажатия кнопки.
 function chatArchShown(list, mode) {
   if (mode === "all") return list;
   if (mode === "only") return list.filter((c) => c.archived);
@@ -7990,7 +7991,10 @@ function chatDropOpen(project, st, anchor, again) {
       const c = st.chats.find((x) => x.id === id);
       if (c) c.archived = wanted;
     }
-    let list = chatArchShown(st.chats, chatArchMode());
+    // Положение кнопки архива режет список только при пустом запросе: набранный
+    // текст ищет по всей машине мимо кнопки (DK-726), а найденную архивную
+    // строку помечает клеймом «в архиве» сам chatOption.
+    let list = q ? st.chats : chatArchShown(st.chats, chatArchMode());
     if (!q) {
       const have = new Set(list.map((c) => c.id));
       const pin = (id) => {
@@ -8025,8 +8029,23 @@ function chatDropOpen(project, st, anchor, again) {
       // Пустой архив это свой случай: разговоры есть, просто убранных среди них
       // нет, и молчать об этом значит показывать пустоту без причины.
       let said = st.note || "чатов тут нет";
-      if (st.chats.length && q) said = "по запросу ничего не нашлось";
-      else if (st.chats.length && chatArchMode() === "only") said = "в архиве пусто";
+      if (st.chats.length && q) {
+        said = "по запросу ничего не нашлось";
+      } else if (st.chats.length && chatArchMode() === "only") {
+        said = "в архиве пусто";
+      } else if (st.chats.length && !q) {
+        // Загруженный набор есть, а показать нечего: положение кнопки спрятало
+        // его целиком, например единственный разговор задачи убран в архив.
+        // Молчать тут значит читаться как «такого разговора нет», хотя он есть
+        // и находится поиском или другим положением кнопки.
+        const hidden = st.chats.filter((c) =>
+          chatArchMode() === "only" ? !c.archived : c.archived).length;
+        if (hidden) {
+          const noun = plural(hidden, "разговор", "разговора", "разговоров");
+          const verb = hidden === 1 ? "скрыт" : "скрыты";
+          said = hidden + " " + noun + " " + verb + " кнопкой архива, ищите запросом";
+        }
+      }
       rows.append(el("div", "hint", said));
     }
     if (loading) rows.append(el("div", "hint", "ищем по всей машине..."));

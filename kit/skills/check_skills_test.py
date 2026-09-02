@@ -851,5 +851,74 @@ class TestLiveReply(SkillTree):
         self.assertTrue(any("нет раздела про живую реплику" in f for f in fails), fails)
 
 
+class ReviewSkill(SkillTree):
+    """Скилл ревью: разделы, четыре уровня, три яруса, конфиг и определения."""
+
+    SKILL = ("---\nname: review\ndescription: Ревью. Звать, когда ревьюят.\n---\n\n"
+             "# Ревью\n\nбюджет в .devkit/review.conf\n\n"
+             "## Сколько ревью нужно\n\n| 0, пропуск |\n| 1, ворота |\n| 2, обычное |\n| 3, глубокое |\n\n"
+             "## Замечания и три яруса\n\n- Блокирующее: правит.\n- Неблокирующее: отвечает.\n- Мелочь: сам.\n\n"
+             "## Бюджет и стоп\n\nстоп\n\n## Разговор с автором\n\nкоротко\n")
+    CONF = "level1 = 5 минут, 20 ходов\nlevel2 = 20 минут, 70 ходов\nlevel3 = 40 минут, 100 ходов\ncritical_paths = tools\n"
+    AGENT = "---\nname: %s\neffort: high\n---\n\nТы ревьювер, читай скилл `review`.\n"
+
+    def write_review(self, skill=None, conf=None, agent=None):
+        d = os.path.join(self.here, "review")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write(self.SKILL if skill is None else skill)
+        if conf is not False:
+            os.makedirs(os.path.join(self.root, ".devkit"), exist_ok=True)
+            with open(os.path.join(self.root, ".devkit", "review.conf"), "w", encoding="utf-8") as f:
+                f.write(self.CONF if conf is None else conf)
+        agents = os.path.join(self.root, "kit", "agents")
+        os.makedirs(agents, exist_ok=True)
+        for name in ("review-low", "review-medium", "review-high", "review-xhigh"):
+            with open(os.path.join(agents, name + ".md"), "w", encoding="utf-8") as f:
+                f.write((self.AGENT if agent is None else agent) % name)
+
+    def test_full_review_passes(self):
+        self.write_review()
+        self.assertEqual(check_skills.check_review(self.here, self.root), [])
+
+    def test_review_not_set_up(self):
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("не заведён" in f for f in fails), fails)
+
+    def test_lost_section(self):
+        self.write_review(skill=self.SKILL.replace("## Бюджет и стоп", "## Бюджет"))
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("нет раздела «Бюджет и стоп»" in f for f in fails), fails)
+
+    def test_lost_level(self):
+        self.write_review(skill=self.SKILL.replace("| 0, пропуск |\n", ""))
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("нет уровня 0" in f for f in fails), fails)
+
+    def test_lost_tier(self):
+        self.write_review(skill=self.SKILL.replace("- Мелочь: сам.\n", ""))
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("ярус «Мелочь» не описан" in f for f in fails), fails)
+
+    def test_budget_hardcoded(self):
+        self.write_review(skill=self.SKILL.replace(".devkit/review.conf", "20 минут"))
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("не отданы конфигу" in f for f in fails), fails)
+
+    def test_conf_missing_and_key_lost(self):
+        self.write_review(conf=False)
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("образца .devkit/review.conf" in f for f in fails), fails)
+        self.write_review(conf=self.CONF.replace("critical_paths = tools\n", ""))
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("нет ключа critical_paths" in f for f in fails), fails)
+
+    def test_agent_not_calling_skill_or_forbidding_fix(self):
+        self.write_review(agent="---\nname: %s\neffort: high\n---\n\nкод ревьювер не правит\n")
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("не зовёт скилл review" in f for f in fails), fails)
+        self.assertTrue(any("запрет править код" in f for f in fails), fails)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=0)

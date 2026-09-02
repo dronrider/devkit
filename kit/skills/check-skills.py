@@ -278,6 +278,54 @@ def check_team(here):
     return fails
 
 
+REVIEW_SECTIONS = ("## Сколько ревью нужно", "## Замечания и три яруса",
+                   "## Бюджет и стоп", "## Разговор с автором")
+REVIEW_TIERS = ("Блокирующее", "Неблокирующее", "Мелочь")
+REVIEW_KEYS = ("level1", "level2", "level3", "critical_paths")
+
+
+def check_review(here, root):
+    # Скилл ревью один на все входы (доска, MR, дифф без трекера), и цифры
+    # бюджетов он читает из конфига, а не из своего текста. Без раздела уровней
+    # ревьювер читает дифф целиком на любой мелочи, без ярусов всякое замечание
+    # снова гонит задачу на круг, а определение ревьювера, которое всё ещё
+    # запрещает править код, спорит со скиллом молча.
+    fails = []
+    text = read(os.path.join(here, "review", "SKILL.md"))
+    if text is None:
+        fails.append("review: скилл ревью не заведён")
+        return fails
+    body = "\n" + text
+    for section in REVIEW_SECTIONS:
+        if "\n" + section not in body:
+            fails.append("review: нет раздела «%s»" % section[3:])
+    for level in range(4):
+        if "| %d," % level not in text:
+            fails.append("review: в таблице уровней нет уровня %d" % level)
+    for tier in REVIEW_TIERS:
+        if "- %s:" % tier not in text:
+            fails.append("review: ярус «%s» не описан" % tier)
+    if ".devkit/review.conf" not in text:
+        fails.append("review: бюджеты не отданы конфигу .devkit/review.conf")
+    conf = read(os.path.join(root, ".devkit", "review.conf"))
+    if conf is None:
+        fails.append("review: образца .devkit/review.conf в devkit нет")
+    else:
+        for key in REVIEW_KEYS:
+            if not re.search(r"^%s\s*=" % key, conf, re.M):
+                fails.append("review: в .devkit/review.conf нет ключа %s" % key)
+    agents = os.path.join(root, "kit", "agents")
+    for prompt in ("review-low", "review-medium", "review-high", "review-xhigh"):
+        agent = read(os.path.join(agents, prompt + ".md"))
+        if agent is None:
+            continue  # отдельно ловится check_background_rule
+        if "`review`" not in agent:
+            fails.append("%s: определение не зовёт скилл review" % prompt)
+        if "код ревьювер не правит" in agent:
+            fails.append("%s: запрет править код спорит со скиллом review" % prompt)
+    return fails
+
+
 def check_proofread(here):
     # Скилл вычитки (DK-184): процедуре нужен материал, и без него он теряет
     # смысл. pairs.md держит восемь пар по типологии DK-173, dictionary.md
@@ -488,6 +536,7 @@ def run(here, root):
     fails += check_groom(here)
     fails += check_verify_runner(here, root)
     fails += check_team(here)
+    fails += check_review(here, root)
     fails += check_proofread(here)
     fails += check_proofread_spawn(here)
     fails += check_prose(root)

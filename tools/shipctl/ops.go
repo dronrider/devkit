@@ -1146,6 +1146,11 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 				"перевод в Check прошёл, но пуш доски не прошёл, повторить git push руками"); err != nil {
 				return "", err
 			}
+			if deploy.autonomous {
+				if note := checkRunNote(root, []string{p.ID}); note != "" {
+					msg = append(msg, note)
+				}
+			}
 			if note := syncWindowTree(root, main); note != "" {
 				msg = append(msg, note)
 			}
@@ -1207,6 +1212,14 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err := push("доска запушена",
 		"выкат и перевод в Check прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
 		return "", err
+	}
+	// Прогон сценария поднимается тут же: человека в окне у автономного выката
+	// нет, и без подъёма строка стояла бы в Check до следующей живой сессии,
+	// держа очередь непроверенного выката.
+	if deploy.autonomous {
+		if note := checkRunNote(root, []string{p.ID}); note != "" {
+			msg = append(msg, note)
+		}
 	}
 	if note := syncWindowTree(root, main); note != "" {
 		msg = append(msg, note)
@@ -1364,6 +1377,14 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	if err := push("доска запушена",
 		"выкат и перевод в Check прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
 		return "", err
+	}
+	// Прогон поднимается на весь состав: выкат был автономный, и получателя
+	// события «поезд в Check» иначе нет ни одного, ни у разлива тиком, ни у
+	// пачки, чей диспетчер к этому моменту обычно закрыт.
+	if deploy.autonomous {
+		if note := checkRunNote(root, train); note != "" {
+			msg = append(msg, note)
+		}
 	}
 	if note := syncWindowTree(root, main); note != "" {
 		msg = append(msg, note)

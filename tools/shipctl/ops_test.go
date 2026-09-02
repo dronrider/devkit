@@ -62,6 +62,15 @@ func setup(t *testing.T, inProg, check string) (root, callLog string) {
 	if err := os.Chmod(filepath.Join(bin, "taskctl"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Подъём прогона сценария после выката (DK-718) зовёт дашборд, и фикстура
+	// стоит в стенде с самого начала: без неё автономный выкат дотянулся бы до
+	// живого бинаря машины, а тот пошёл бы читать настоящий конфиг и живые
+	// tmux-сессии.
+	write(t, bin, checkRunBin, "#!/bin/sh\necho \"dashboard $@\" >> \""+callLog+
+		"\"\necho 'прогон сценария поднят в tmux-сессии task-XR-001'\n")
+	if err := os.Chmod(filepath.Join(bin, checkRunBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return root, callLog
 }

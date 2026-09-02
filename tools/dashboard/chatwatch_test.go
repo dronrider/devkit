@@ -171,3 +171,72 @@ func TestDraftGroomStopNoDeathSaid(t *testing.T) {
 		t.Fatalf("снятый рукой разбор объявили умершим: %v", marks)
 	}
 }
+
+// Остаток прошлого разбора снимает сам разбор, и снятое рукой смертью не
+// считается. Случай тонкий: сессию сняли, а новая не поднялась (tmux отказал),
+// и без снятия с присмотра сторож объявил бы смертью то, что закончил человек.
+func TestDraftGroomOverLeftoverNoDeathSaid(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	writeAgentctlFake(t, e.bin, harnessTiersFixture)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "исход подъёма виден человеку", "prio": "mid"}`).Body.Close()
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("первый разбор: %d %s", resp.StatusCode, body(t, resp))
+	}
+
+	// Предусловие стенда: за именем стоит присмотр, и снимать его есть с чего.
+	if st := e.s.chatStoreRead("tmux-task-XR-005"); st.Raised == 0 {
+		t.Fatal("разбор не встал под присмотр, снимать нечего и стенду проверять нечего")
+	}
+	// Клиент прошлого разбора жив, а хода в нём нет: повторный разбор снимает
+	// такой остаток и поднимается на его месте.
+	writePeerTmux(t, e.home, "eeee5555-5555-4555-8555-555555555555", "task-XR-005:@2.%2", "idle")
+	// tmux снимает сессию, а новую не поднимает: подъём кончается отказом уже
+	// после снятия остатка.
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) printf 'task-XR-005\t1\t1754770421\n';;
+capture-pane) printf 'разбор досчитал\n';;
+new-session) exit 1;;
+esac
+exit 0`)
+	again := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
+	if again.StatusCode != http.StatusBadGateway {
+		t.Fatalf("подъём поверх остатка: %d %s, ждал отказ tmux", again.StatusCode, body(t, again))
+	}
+
+	tmuxWatchFake(t, e, "", "")
+	e.s.chatWatchTick()
+	if marks := saidMarks(t, e.home, "task-XR-005"); len(marks) != 0 {
+		t.Fatalf("снятый разбором остаток объявили умершим: %v", marks)
+	}
+}
+
+// Остаток разговора снимает и запуск конвейера: имя сессии у разбора и у
+// работы задачи одно, и кнопка «Выполнить» ставит работу на место досчитавшего
+// разбора. Смерти тут нет, сессию сняли под живую работу.
+func TestRunStartOverLeftoverNoDeathSaid(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "task-XR-004\\n")
+	// Запись, какую оставляет за собой разбор черновика: имя сессии у разбора и
+	// у конвейера одно, и присмотр за ней стоит с той минуты, как её подняли.
+	e.s.chatRaised("task-XR-004", "", "XR-004")
+	writePeerTmux(t, e.home, "cccc4444-4444-4444-8444-444444444444", "task-XR-004:@2.%2", "idle")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-004"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск поверх остатка разговора: %d %s", resp.StatusCode, text)
+	}
+	if got := readFile(t, tmuxLog); !strings.Contains(got, "kill-session -t task-XR-004") {
+		t.Fatalf("остаток разговора не снят, стенд проверяет не ту ветку: %s", got)
+	}
+
+	tmuxWatchFake(t, e, "", "")
+	e.s.chatWatchTick()
+	if marks := saidMarks(t, e.home, "task-XR-004"); len(marks) != 0 {
+		t.Fatalf("снятый под работу остаток объявили умершим: %v", marks)
+	}
+}

@@ -8,15 +8,25 @@
 //
 // Зовётся: node testdata/poc_deadraise.mjs static/app.js
 
-import { makeSandbox, settle, dump, byClass, fail, appPathArg } from "./poc_dom.mjs";
+import { makeSandbox, makeNode, settle, dump, byClass, fail, appPathArg }
+  from "./poc_dom.mjs";
 
 const app = appPathArg();
 const board = { prefix: "DK", sections: [{ key: "check", rows: [] }] };
 const models = [{ model: "fable", tier: "max", harness: "claude-code" }];
 
+// Разговор, в котором сессия умерла после первого хода: смерть приезжает в его
+// ленту пометкой, и рисует её лента, а не панель нового чата.
+const LIVE = "b7cc7ae5-1111-4111-8111-000000000002";
 const WHY = "сессия chat-7 прожила 3 с и умерла, не начав хода: клиент вышел, " +
   "не назвавшись в реестре, и реплика до агента не доехала";
 const TAIL = "Invalid API key. Please run /login\nдо свидания";
+
+const MARK = {
+  seq: 0, key: "said-sess:0", role: "mark", time: "2026-09-02T21:00:00+03:00",
+  text: "сессия chat-7 прожила 2 ч 5 мин и кончилась: терминала у разговора " +
+    "больше нет\nПоследние строки терминала:\nInvalid API key. Please run /login",
+};
 
 // Память подъёма прошлой вкладки: панель обещает по ней сессию, и снять
 // обещание обязана именно смерть.
@@ -28,6 +38,9 @@ const { sandbox, store } = makeSandbox(app, (path) => {
   }
   if (p.includes("tmux=chat-9")) {
     return { chats: [], dead: { tmux: "chat-9", why: "сессия chat-9 прожила 1 с и умерла, не начав хода", tail: "" } };
+  }
+  if (p.includes("/sessions/" + LIVE)) {
+    return { session: LIVE, head: { id: LIVE }, total: 1, items: [MARK] };
   }
   if (p.includes("/sessions/")) return { session: "", head: {}, items: [], total: 0 };
   if (p.includes("/chats")) return { chats: [], models, days: 3, older: false };
@@ -90,5 +103,18 @@ if (!busy.hidden) fail("плашка подъёма мигает над мёрт
 // адресом, затирая прежнюю.
 const waited = await sandbox.chatWait("devkit", "chat-9", "new");
 if (waited !== "dead") fail("ожидание первой реплики не кончилось смертью: " + waited);
+
+// Лента открытого разговора рисует ту же пометку сама, сборщиком wireFeed: у
+// смерти после первого хода панель нового чата ни при чём, человек смотрит в
+// ленту и хвост терминала обязан стоять в ней тем же блоком.
+const feedBox = makeNode("div");
+sandbox.wireChatFeed("devkit", feedBox, LIVE);
+await settle();
+if (!byClass(feedBox, "marktail")) {
+  fail("лента разговора нарисовала пометку без хвоста терминала: " + dump(feedBox).slice(0, 300));
+}
+if (!dump(feedBox).includes("прожила 2 ч 5 мин")) {
+  fail("в ленте разговора нет строки о смерти: " + dump(feedBox).slice(0, 300));
+}
 
 console.log("смерть подъёма кончает ожидание, гасит плашку и стоит в ленте с хвостом терминала");

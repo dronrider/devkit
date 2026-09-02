@@ -20,7 +20,14 @@ import { makeSandbox, makeNode, settle, dump, byClass, allByClass, fail, appPath
 const app = appPathArg();
 const board = { prefix: "XR", sections: [] };
 const hour = 3600 * 1000;
-const stamp = (ms) => new Date(Date.now() - ms).toISOString();
+// Отсчёт от местного полудня сегодняшнего дня, а не от текущего момента:
+// chatDayHead в app.js сам решает «сегодня» и «вчера» настоящим часом
+// запуска, и фикстура в пару часов от полуночи (стенд гонялся и в час ночи)
+// перескакивала день, хотя дело было не в коде, а в отсчёте. Полдень стоит
+// от границы суток дальше всех сдвигов фикстуры.
+const today = new Date();
+const noon = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0, 0);
+const stamp = (ms) => new Date(noon.getTime() - ms).toISOString();
 
 const CUR = "aaaa1111-1111";
 const LIVE = "bbbb2222-2222";

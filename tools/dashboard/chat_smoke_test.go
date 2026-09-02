@@ -351,14 +351,20 @@ func TestDashboardSmokeChatGroupOrder(t *testing.T) {
 		dead1Title = "мёртвый разговор сегодня DK-656"
 		dead2Title = "текущий мёртвый разговор сегодня DK-656"
 	)
+	// Отсчёт от местного полудня сегодняшнего дня, а не от текущего момента:
+	// заголовок «сегодня» в app.js решает настоящий час запуска (chatDayHead),
+	// и фикстура в паре часов от полуночи перескакивала день, хотя падение
+	// было не про код, а про отсчёт (падало около часа ночи на DK-726 и
+	// DK-660). Полдень стоит от границы суток дальше всех сдвигов фикстуры.
 	now := time.Now()
+	noon := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
 	writeSession(t, e.home, e.proj, "", "live1",
-		smokeLine(live1Title, now.Add(-72*time.Hour)), now.Add(-72*time.Hour))
+		smokeLine(live1Title, noon.Add(-72*time.Hour)), noon.Add(-72*time.Hour))
 	writeBinds(t, e.home, listedBind("live1", "-", "chat-live-1"))
 	writeSession(t, e.home, e.proj, "", "dead1",
-		smokeLine(dead1Title, now.Add(-2*time.Hour)), now.Add(-2*time.Hour))
+		smokeLine(dead1Title, noon.Add(-2*time.Hour)), noon.Add(-2*time.Hour))
 	writeSession(t, e.home, e.proj, "", "dead2",
-		smokeLine(dead2Title, now.Add(-1*time.Hour)), now.Add(-1*time.Hour))
+		smokeLine(dead2Title, noon.Add(-1*time.Hour)), noon.Add(-1*time.Hour))
 
 	base, resultCh := smokeWrap(t, e, smokeDriverJS)
 	url := base + "/__smoke__#" + filepath.Base(e.proj) + "/chat/dead2"

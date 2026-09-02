@@ -98,17 +98,114 @@ const smokeDriverJS = `
 })();
 `
 
+// ringWakeDriverJS это агентская часть сквозного прогона DK-711: кольцо
+// хода работ замирало до обновления страницы, потому что опрос /pulse гас
+// вместе с chatLive уходящего разговора, а возврат из пула поднимал заново
+// только живое панели. Водитель повторяет путь человека на настоящей
+// странице: разговор с идущей работой открыт адресом, уход в соседний
+// разговор и возврат идут сменой хвоста адреса, как это делает живая
+// навигация. Смена снимка работы за спиной происходит ручкой /__smoke_flip__
+// того же сервера смоука: транскрипт трогать нельзя, свежий транскрипт
+// держал бы состояние «работает» и конец работы был бы нечему заметить.
+// План сессии лежит в файле, и переписывание файла это тот же путь, каким
+// план меняет сам агент. Спрос кольца виден странице её же учётом ресурсов,
+// и возврат обязан принести новый запрос /pulse с именем возвращённой
+// сессии, а не только перерисовать дробь.
+const ringWakeDriverJS = `
+(async function () {
+  function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+  async function waitFor(fn, timeout) {
+    const t0 = Date.now();
+    for (;;) {
+      let v = null;
+      try { v = fn(); } catch (e) { v = null; }
+      if (v) return v;
+      if (Date.now() - t0 > timeout) throw new Error("не дождался условия");
+      await sleep(40);
+    }
+  }
+  function liveSlot() {
+    const pin = document.getElementById("cpin");
+    if (!pin) return null;
+    return Array.from(pin.querySelectorAll(".cslot")).find(
+      (n) => !n.className.includes("off")) || null;
+  }
+  function ring() {
+    const s = liveSlot();
+    return (s && s.querySelector(".ringwrap")) || null;
+  }
+  function fraction(w) {
+    return Array.from(w.querySelectorAll(".rnum")).map((n) => n.textContent).join("/");
+  }
+  function pulses() {
+    return performance.getEntriesByType("resource")
+      .filter((r) => r.name.indexOf("/pulse") >= 0 && r.name.indexOf("sid=work1") >= 0).length;
+  }
+  const result = { ok: false };
+  try {
+    const first = await waitFor(() => {
+      const w = ring();
+      return w && w.classList.contains("r-working") ? w : null;
+    }, 10000);
+    result.before = fraction(first);
+    if (!first.querySelectorAll(".seg.here").length) {
+      throw new Error("на кольце нет идущего пункта: " + result.before);
+    }
+    if (pulses() < 1) throw new Error("опрос кольца не виден странице");
+    const base = location.hash.split("/chat/")[0];
+    const wasTitle = (liveSlot().querySelector(".cdpick b") || {}).textContent || "";
+    location.hash = base + "/chat/neighbor";
+    await waitFor(() => {
+      const t = liveSlot().querySelector(".cdpick b");
+      return t && t.textContent && t.textContent !== wasTitle;
+    }, 10000);
+    // Таймер уходящего разговора гаснет в момент ухода, и через паузу счёт
+    // опросов уже не растёт: дальше сравниваем с неподвижным числом.
+    await sleep(300);
+    const away = pulses();
+    const flip = await fetch("/__smoke_flip__", { method: "POST" });
+    if (!flip.ok) throw new Error("смена плана не прошла: " + flip.status);
+    location.hash = base + "/chat/work1";
+    const back = await waitFor(() => {
+      const w = ring();
+      return w && fraction(w) === "3/3" ? w : null;
+    }, 10000);
+    if (back.querySelectorAll(".seg.here").length) {
+      throw new Error("идущий пункт остался на кольце закрытой работы");
+    }
+    result.pulses = pulses() - away;
+    if (result.pulses < 1) throw new Error("возврат в разговор не спросил пульс кольца");
+    result.after = fraction(back);
+    result.ok = true;
+  } catch (e) {
+    result.error = String((e && e.message) || e);
+  }
+  try {
+    await fetch("/__smoke_result__", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(result),
+    });
+  } catch (e) {
+    // Сеть смоука отвалилась: тест на своей стороне отметит это таймаутом
+    // ожидания, и запасного пути сказать больше нечем.
+  }
+})();
+`
+
 type smokeRow struct {
 	Title string `json:"title"`
 	On    bool   `json:"on"`
 }
 
 type smokeResult struct {
-	OK    bool       `json:"ok"`
-	Error string     `json:"error"`
-	Heads []string   `json:"heads"`
-	Rows  []smokeRow `json:"rows"`
-	After string     `json:"after"`
+	OK     bool       `json:"ok"`
+	Error  string     `json:"error"`
+	Heads  []string   `json:"heads"`
+	Rows   []smokeRow `json:"rows"`
+	After  string     `json:"after"`
+	Before string     `json:"before"`
+	Pulses int        `json:"pulses"`
 }
 
 // smokeLine это строка транскрипта с заданным временем реплики: своя, а не
@@ -127,8 +224,11 @@ func smokeLine(text string, at time.Time) string {
 // api-ручки списка и архива, идёт тем же обработчиком s.handler(), что и у
 // боевого дашборда: браузер бьёт по-настоящему поднятому серверу, а не по
 // файлу на диске. Готовый результат драйвер шлёт отдельной ручкой того же
-// сервера, /__smoke_result__, и она же отдаёт его тесту каналом.
-func smokeWrap(t *testing.T, e *testEnv) (string, <-chan smokeResult) {
+// сервера, /__smoke_result__, и она же отдаёт его тесту каналом. Водителя
+// передаёт тест: у каждой сквозной проверки свой сценарий. Дополнительные
+// ручки смоука принимает крючками, они встают в тот же mux до общего
+// обработчика.
+func smokeWrap(t *testing.T, e *testEnv, driver string, extra ...func(*http.ServeMux)) (string, <-chan smokeResult) {
 	t.Helper()
 	login, err := http.Post(e.srv.URL+"/api/login", "application/json",
 		strings.NewReader(`{"token":"`+e.cfg.Token+`"}`))
@@ -157,7 +257,7 @@ func smokeWrap(t *testing.T, e *testEnv) (string, <-chan smokeResult) {
 		t.Fatal("разметка index.html разъехалась: тег app.js не найден")
 	}
 	injected := strings.Replace(string(html), appTag,
-		appTag+"\n<script type=\"module\">"+smokeDriverJS+"</script>", 1)
+		appTag+"\n<script type=\"module\">"+driver+"</script>", 1)
 
 	resultCh := make(chan smokeResult, 1)
 	mux := http.NewServeMux()
@@ -177,6 +277,9 @@ func smokeWrap(t *testing.T, e *testEnv) (string, <-chan smokeResult) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+	for _, hook := range extra {
+		hook(mux)
+	}
 	mux.Handle("/", e.s.handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -253,7 +356,7 @@ func TestDashboardSmokeChatGroupOrder(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", "dead2",
 		smokeLine(dead2Title, now.Add(-1*time.Hour)), now.Add(-1*time.Hour))
 
-	base, resultCh := smokeWrap(t, e)
+	base, resultCh := smokeWrap(t, e, smokeDriverJS)
 	url := base + "/__smoke__#" + filepath.Base(e.proj) + "/chat/dead2"
 	res := runChromeSmoke(t, chrome, url, resultCh)
 	if !res.OK {
@@ -279,4 +382,79 @@ func TestDashboardSmokeChatGroupOrder(t *testing.T) {
 			res.After, dead1Title)
 	}
 	t.Logf("smoke: живой сервер %s, группы списка и переключение панели подтверждены настоящим DOM headless-chrome", url)
+}
+
+// TestDashboardSmokeRingWakesOnReturn гоняет багу DK-711 сквозным путём:
+// работа в разговоре закончилась, а кольцо хода работ крутилось с числом
+// оставшихся пунктов до обновления страницы. Стенд testdata/poc_ringwake.mjs
+// проверяет ту же механику синтетическим DOM на файле скрипта, а здесь путь
+// проходит по-настоящему поднятый сервер и настоящий браузер, и прогон
+// осмыслен уже после выката: он спрашивает у живой страницы, а не у дерева
+// исходников. Разговор work1 идёт (свежий транскрипт, задача XR-1, план из
+// трёх пунктов с одним закрытым), соседний разговор пуст. Водитель уходит в
+// соседний разговор адресом, тест за его спиной переписывает файл плана на
+// закрытый, водитель возвращается. Правка DK-711 поднимает опрос кольца
+// возвратом из пула, поэтому кольцо дорисовывает закрытый план и видно
+// новым запросом /pulse; на коде до правки дробь стоит на месте, и прогон
+// валится ожиданием.
+func TestDashboardSmokeRingWakesOnReturn(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		t.Skip("chrome не найден: смоук кольца пропущен")
+	}
+	e := newTestEnv(t)
+	// Доска нужна задачей XR-1 в работе: кольцо спрашивает пульс задачи,
+	// а не одной сессии.
+	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", pulseBoardJSON))
+	writeScript(t, e.bin, "tmux", "exit 1")
+
+	now := time.Now()
+	writeSession(t, e.home, e.proj, "", "work1",
+		pulseTranscript(now.Add(-20*time.Second), "Bash", "go test ./tools/..."),
+		now.Add(-20*time.Second))
+	writeBinds(t, e.home,
+		bindRecord(now.Add(-time.Minute).Format("2006-01-02T15:04:05"), "work1", "XR-1", "заказ"))
+	writeSession(t, e.home, e.proj, "", "neighbor",
+		smokeLine("соседний разговор без работы", now.Add(-3*time.Hour)), now.Add(-3*time.Hour))
+
+	if err := os.MkdirAll(planDir(e.home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	open := `[{"text":"разобрать механизм кольца","state":"completed"},` +
+		`{"text":"написать стенд возврата","state":"in_progress"},` +
+		`{"text":"выехать смоуком","state":"pending"}]`
+	if err := os.WriteFile(planPath(e.home, "work1"), []byte(open), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	flip := func(mux *http.ServeMux) {
+		mux.HandleFunc("POST /__smoke_flip__", func(w http.ResponseWriter, r *http.Request) {
+			defer r.Body.Close()
+			closed := `[{"text":"разобрать механизм кольца","state":"completed"},` +
+				`{"text":"написать стенд возврата","state":"completed"},` +
+				`{"text":"выехать смоуком","state":"completed"}]`
+			if err := os.WriteFile(planPath(e.home, "work1"), []byte(closed), 0o644); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
+
+	base, resultCh := smokeWrap(t, e, ringWakeDriverJS, flip)
+	url := base + "/__smoke__#" + filepath.Base(e.proj) + "/chat/work1"
+	res := runChromeSmoke(t, chrome, url, resultCh)
+	if !res.OK {
+		t.Fatalf("смоук кольца упал: %s (до ухода %q, опросов возврата %d)",
+			res.Error, res.Before, res.Pulses)
+	}
+	if res.Before != "1/3" || res.After != "3/3" {
+		t.Errorf("дробь кольца: до ухода %q, после возврата %q, ждал 1/3 и 3/3",
+			res.Before, res.After)
+	}
+	if res.Pulses < 1 {
+		t.Errorf("опросов пульса на возврате %d, возврат обязан спросить пульс", res.Pulses)
+	}
+	t.Logf("smoke: живой сервер %s, кольцо дорисовало закрытый план после возврата, спрос виден (%d новых опросов)",
+		url, res.Pulses)
 }

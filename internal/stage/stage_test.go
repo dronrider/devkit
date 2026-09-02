@@ -79,6 +79,45 @@ func TestExecutorFromPickNote(t *testing.T) {
 	}
 }
 
+// Исполнителя разработки спрашивают двое: ворота закрытия сверяют с ним
+// прогонявшего сценарий, а подъём прогона после выката решает, кому прогон не
+// отдавать. Ищется он в двух местах, и незакрытый пакет этапов свежее файла.
+func TestLastExecutorPrefersPendingRecord(t *testing.T) {
+	lines := []string{
+		"- Разработка: субагент haiku/low по вердикту pick, 2026-09-01 10:00-10:20.",
+		"- Ревью: субагент opus/high по вердикту pick, 2026-09-01 10:30-10:40.",
+	}
+	if got, ok := LastExecutor(lines, nil); !ok || got != "haiku" {
+		t.Fatalf("из «Хода работы» исполнитель разработки не достался: %q, %v", got, ok)
+	}
+	pending := []Stage{{Kind: Review, Note: "субагент opus/high по вердикту pick"},
+		{Kind: Dev, Note: "субагент sonnet/high по вердикту pick"}}
+	if got, ok := LastExecutor(lines, pending); !ok || got != "sonnet" {
+		t.Fatalf("незакрытый пакет свежее файла: %q, %v", got, ok)
+	}
+	if _, ok := LastExecutor([]string{"- Ревью: субагент opus/high по вердикту pick"}, nil); ok {
+		t.Fatal("ревью с вердиктом pick сошло за разработку")
+	}
+	if _, ok := LastExecutor(nil, nil); ok {
+		t.Fatal("без записей исполнитель взяться неоткуда")
+	}
+}
+
+// Прогонявший сценарий ищется теми же двумя источниками и тем же порядком.
+func TestLastVerifyRunnerPrefersPendingRecord(t *testing.T) {
+	lines := []string{"- Проверка: сценарий прогнал haiku, 2026-09-01 11:00-11:05."}
+	if got, ok := LastVerifyRunner(lines, nil); !ok || got != "haiku" {
+		t.Fatalf("из «Хода работы» прогонявший не достался: %q, %v", got, ok)
+	}
+	pending := []Stage{{Kind: Verify, Note: VerifyNote("sonnet")}}
+	if got, ok := LastVerifyRunner(lines, pending); !ok || got != "sonnet" {
+		t.Fatalf("незакрытый пакет свежее файла: %q, %v", got, ok)
+	}
+	if _, ok := LastVerifyRunner(nil, nil); ok {
+		t.Fatal("без записей прогонявший взяться неоткуда")
+	}
+}
+
 func TestSlugSplitsSameNamedProjects(t *testing.T) {
 	a := Slug("/Users/rider/projects/devkit")
 	b := Slug("/Users/rider/work/devkit")

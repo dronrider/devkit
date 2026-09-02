@@ -92,6 +92,58 @@ func Executor(text string) (string, bool) {
 	return m[len(m)-1][1], true
 }
 
+// devLine это ярлык строки «Хода работы» об этапе разработки. По ярлыку этап и
+// узнаётся: текст ревью тоже несёт вердикт pick, и без ярлыка ревьювер сошёл бы
+// за исполнителя.
+const devLine = "- Разработка:"
+
+// LastExecutor находит модель исполнителя последнего этапа «разработка». На
+// входе строки раздела «Ход работы» файла задачи и этапы незакрытого пакета из
+// ~/.devkit/runs; пакет свежее файла, поэтому спрашивается первым. Второе
+// значение false, когда исполнителя не назвал ни один источник.
+//
+// Спрашивают об этом двое и об одном и том же: ворота закрытия сверяют
+// прогонявшего сценарий с автором правки, а подъём прогона после выката решает,
+// кому прогон не отдавать.
+func LastExecutor(lines []string, pending []Stage) (string, bool) {
+	for i := len(pending) - 1; i >= 0; i-- {
+		if pending[i].Kind != Dev {
+			continue
+		}
+		if name, ok := Executor(pending[i].Note); ok {
+			return name, true
+		}
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !strings.HasPrefix(strings.TrimSpace(lines[i]), devLine) {
+			continue
+		}
+		if name, ok := Executor(lines[i]); ok {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// LastVerifyRunner находит последнюю запись прогона сценария теми же двумя
+// источниками и в том же порядке.
+func LastVerifyRunner(lines []string, pending []Stage) (string, bool) {
+	for i := len(pending) - 1; i >= 0; i-- {
+		if pending[i].Kind != Verify {
+			continue
+		}
+		if name, ok := VerifyRunner(pending[i].Note); ok {
+			return name, true
+		}
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if name, ok := VerifyRunner(lines[i]); ok {
+			return name, true
+		}
+	}
+	return "", false
+}
+
 // NeedsSession отвечает, обязана ли за этапом стоять живая сессия агента.
 // Разработка, ревью и уточнение ведутся сессией, и запись без неё это
 // оборванный этап, тот же случай, что gone у признака Run. Ожидание снаружи

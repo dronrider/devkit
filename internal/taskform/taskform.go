@@ -222,6 +222,12 @@ func SmokeCovers(doc string) bool {
 	return smoke > lastMerge
 }
 
+// SectionLines отдаёт строки названного раздела вне ограждённых блоков. Тем же
+// разбором читают форму сама taskform и её вызывающие: раздел «Ход работы»
+// спрашивают ворота закрытия и подъём прогона после выката, и вторая копия
+// разбора разошлась бы с первой на первой же правке формы.
+func SectionLines(doc, heading string) []string { return sectionLines(doc, heading) }
+
 // sectionLines это строки названного раздела вне ограждённых блоков.
 func sectionLines(doc, heading string) []string {
 	lines := strings.Split(doc, "\n")

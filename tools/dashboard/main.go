@@ -211,6 +211,9 @@ func cmdServe(home, staticDir string) error {
 	defer close(keeperStop)
 	go srv.quotaKeeper(keeperStop)
 	go srv.loginKeeper(keeperStop)
+	// Сторож поднятых сессий: смерть подъёма замечает он, когда на разговор
+	// никто не смотрит (chatwatch.go).
+	go srv.chatWatchKeeper(keeperStop)
 	for _, e := range cfg.Errs {
 		logf("конфиг: %s", e)
 	}

@@ -5101,7 +5101,7 @@ async function wireFeed(project, sid, opts) {
         items.push({
           key: itemKey(item),
           sign: "mark|" + item.text,
-          make: () => dayEl(item.text),
+          make: () => markEl(item.text),
         });
         continue;
       }
@@ -5522,6 +5522,17 @@ function dayEl(date) {
   const day = el("div", "day");
   day.append(el("i"), document.createTextNode(date), el("i"));
   return day;
+}
+
+// Пометка ленты бывает с хвостом терминала: смерть сессии называет причину
+// строками своей панели, и они идут под разделителем моноширинным блоком
+// (DK-728). Одной строкой хвост читался бы простынёй без переносов.
+function markEl(text) {
+  const cut = String(text).indexOf("\n");
+  if (cut < 0) return dayEl(text);
+  const wrap = el("div");
+  wrap.append(dayEl(String(text).slice(0, cut)), el("div", "marktail", String(text).slice(cut + 1)));
+  return wrap;
 }
 
 // Подпись сидит внутри пузыря, справа внизу: снаружи она занимала свою строку
@@ -7587,6 +7598,10 @@ async function chatState(project, addr, board, works) {
     st.lift = chatLiftOf(project, CHAT_NEW + ":" + st.task) ||
       workSession(st.task, works);
   }
+  // Исход подъёма, кончившегося смертью: слова о нём стоят в панели вместо
+  // обещания «сессия вот-вот назовётся». Память подъёма к этому времени уже
+  // снята, и ждать панели больше нечего (DK-728).
+  st.dead = st.sid ? null : chatDeadOf(project, st.addr || addr);
   if (!st.entry) st.entry = st.chats.find((c) => c.id === st.sid) || null;
   // Проект самого разговора: список общий по машине, и открытый чат бывает не
   // из того проекта, что стоит на доске. Все ручки чата (лента, реплика, стоп,
@@ -9684,11 +9699,49 @@ async function chatRaise(project, st, text, model, onTmux) {
   return chatWait(project, r.body.tmux, st.addr);
 }
 
-// chatByTmux спрашивает у сервера диалог по имени tmux-сессии: так дашборд
-// узнаёт ID сессии, родившейся позже команды подъёма.
-async function chatByTmux(project, name) {
+// chatLookTmux спрашивает у сервера диалог по имени tmux-сессии: так дашборд
+// узнаёт ID сессии, родившейся позже команды подъёма. Тем же ответом приезжает
+// исход подъёма: сервер сверяет на этом заходе, жива ли поднятая сессия, и
+// мёртвая называется словами с хвостом её терминала (DK-728). Ожидание кончается
+// либо родившимся диалогом, либо причиной, а не молчанием до конца опроса.
+async function chatLookTmux(project, name) {
   const list = await api(chatsURL(project) + "?tmux=" + encodeURIComponent(name));
-  return (list.ok && (list.body.chats || [])[0]) || null;
+  if (!list.ok) return { hit: null, dead: null };
+  return { hit: (list.body.chats || [])[0] || null, dead: list.body.dead || null };
+}
+
+// Память о смерти подъёма. Сервер помнит её сам и повторит любому заходу, а тут
+// она живёт ради панели: слова о смерти встают на место обещания «сессия
+// вот-вот назовётся», и ждать больше нечего.
+const chatDeadSaid = new Map();
+
+function chatDeadKey(project, addr) {
+  return String(project || "") + "/" + String(addr || "");
+}
+
+// Возврат говорит, новая ли это смерть: повторный заход опроса приносит ту же,
+// и перерисовывать панель на каждый заход незачем.
+function chatDeadSet(project, addr, dead) {
+  if (!dead || !dead.why) return false;
+  const key = chatDeadKey(project, addr);
+  const was = chatDeadSaid.get(key);
+  if (was && was.tmux === dead.tmux) return false;
+  chatDeadSaid.set(key, dead);
+  return true;
+}
+
+function chatDeadOf(project, addr) {
+  return chatDeadSaid.get(chatDeadKey(project, addr)) || null;
+}
+
+// Смерть подъёма разом гасит ожидание: память подъёма снимается, панель
+// перерисовывается словами о смерти, а тому, кто смотрит на другой экран,
+// причина приезжает карточкой.
+function chatDeadTell(project, addr, dead) {
+  chatLiftDrop(project, addr);
+  if (!chatDeadSet(project, addr, dead)) return;
+  sayResult(dead.why, true);
+  if (chatHere(project, addr)) repaintChatOnly();
 }
 
 // chatSewLoop опрашивает реестр, пока человек стоит на адресе addr, и
@@ -9718,7 +9771,12 @@ async function chatSewLoop(project, name, addr, step, tries) {
   for (let i = 0; i < tries; i += 1) {
     await new Promise((ok) => setTimeout(ok, step));
     if (!chatHere(project, addr)) return false;
-    const hit = await chatByTmux(project, name);
+    const look = await chatLookTmux(project, name);
+    if (look.dead) {
+      chatDeadTell(project, addr, look.dead);
+      return "dead";
+    }
+    const hit = look.hit;
     if (hit) {
       chatLiftDrop(project, addr);
       echoMove(project, addr, hit.id);
@@ -9740,11 +9798,17 @@ async function chatSewLoop(project, name, addr, step, tries) {
 // только сессия назовётся (прежний текст «ещё не назвала себя в реестре»
 // читался провалом и хоронил первую реплику). Возврат: true это найденный
 // диалог, "waiting" это ожидание сверх обычного, им пузырь первой реплики
-// помечается причиной, но со счетов не снимается.
+// помечается причиной, но со счетов не снимается, "dead" это смерть поднятой
+// сессии, названная сервером: ждать больше нечего, и причина уже в панели.
 async function chatWait(project, name, addr) {
   for (let i = 0; i < 40; i += 1) {
     await new Promise((ok) => setTimeout(ok, 1500));
-    const hit = await chatByTmux(project, name);
+    const look = await chatLookTmux(project, name);
+    if (look.dead) {
+      chatDeadTell(project, addr || route().chat, look.dead);
+      return "dead";
+    }
+    const hit = look.hit;
     if (hit) {
       // Память адреса подъёма переезжает к найденному диалогу: пузырь первой
       // реплики стоит, пока его не снимет эхо из ленты.
@@ -10833,7 +10897,13 @@ function chatPanel(project, st) {
             // Долгий подъём не хоронит реплику: пузырь остаётся с причиной и
             // ждёт эха, а фоновый опрос chatWait пришьёт ленту сам. Плашку
             // гасит сама причина, хуком onHeld.
-            if (got === "waiting") echo.held(m, CHAT_WAIT_WHY);
+            if (got === "dead") {
+              // Реплика уехала клиенту аргументом запуска и умерла вместе с
+              // ним: доставленной ей не бывать, и причина стоит на пузыре.
+              const dead = chatDeadOf(project, st.addr);
+              echo.held(m, (dead && dead.why) || "сессия подъёма умерла");
+              busy.off();
+            } else if (got === "waiting") echo.held(m, CHAT_WAIT_WHY);
             else echo.sent(m);
           })
           .catch((err) => { echo.bad(m); busy.off(); console.error(err); })
@@ -11027,7 +11097,7 @@ function chatPanel(project, st) {
     chatLive.push(busy.off);
     // Вернувшийся на панель нового чата человек застаёт то же ожидание, что и
     // до ухода: реплика в полёте держит плашку о подъёме сессии, а не пустоту.
-    if (chatIsNew(st.addr) ? (echo.waiting() || st.lift) : (!st.sid && st.lift)) busy.raise();
+    if (!st.dead && (chatIsNew(st.addr) ? (echo.waiting() || st.lift) : (!st.sid && st.lift))) busy.raise();
     // И само ожидание тоже возобновляется: опрос реестра прежней вкладки умер
     // вместе с ней, а реплика в персисте помнит имя tmux своего подъёма. Как
     // только сессия назовётся, панель переедет на живой sid и покажет
@@ -11043,7 +11113,7 @@ function chatPanel(project, st) {
       // работы её живая tmux-сессия. Ждут они одного и того же, сессии,
       // которая вот-вот назовётся.
       const name = names.length ? names[names.length - 1] : st.lift;
-      if (name) chatSewLoop(project, name, st.addr, 2000, 150).catch(console.error);
+      if (name && !st.dead) chatSewLoop(project, name, st.addr, 2000, 150).catch(console.error);
     }
     // Клин лечится сам и молча. Плашки над полем ввода тут больше нет: разговор
     // должен просто работать, а постфактум в ленте остаётся одна спокойная
@@ -11064,7 +11134,9 @@ function chatPanel(project, st) {
         // Слова пустой ленты пишутся до пузырей и после них снимаются: реплика,
         // пережившая перезагрузку, уже стоит в панели, и просить написать её
         // ещё раз экран не вправе.
-        say(feed, "empty", st.lift
+        say(feed, "empty", st.dead
+          ? st.dead.why + (st.dead.tail ? "\n\nПоследние строки терминала:\n" + st.dead.tail : "")
+          : st.lift
           ? "работа поднята, сессия " + st.lift + " вот-вот назовётся в реестре: " +
             "разговор откроется сам, ждать нажатий не надо"
           : st.fresh

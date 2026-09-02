@@ -544,6 +544,15 @@ type chatStore struct {
 	// живёт своим транскриптом, а запись остаётся дорожным знаком для панели,
 	// стоящей на старом адресе, и метётся уборкой.
 	Grown string `json:"grown,omitempty"`
+	// Raised это момент подъёма tmux-сессии в unix-секундах, а Dead момент,
+	// когда её имя пропало (chatwatch.go). Ими живёт сторож подъёма: пока
+	// стоит Raised, за сессией смотрят, а Dead кончает присмотр и ожидание
+	// подъёма в панели. DeadWhy это слова исхода человеку, Tail последние
+	// строки терминала, снятые при жизни.
+	Raised  int64  `json:"raised,omitempty"`
+	Dead    int64  `json:"dead,omitempty"`
+	DeadWhy string `json:"deadWhy,omitempty"`
+	Tail    string `json:"tail,omitempty"`
 	// Draft это набранная, но не отправленная реплика. У начатого разговора
 	// черновик держит вкладка, а у незачатого держать его негде: транскрипта
 	// нет, и с чужого экрана такой разговор выглядел бы пустым. Он же говорит
@@ -1026,6 +1035,7 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 	list = withoutHandedOut(list)
 	// Поиск по имени tmux-сессии: им дашборд узнаёт ID сессии, поднятой минуту
 	// назад, когда хук старта уже успел записать строку реестра.
+	var dead map[string]any
 	if name := strings.TrimSpace(r.URL.Query().Get("tmux")); name != "" {
 		var hit []chatEntry
 		for _, e := range list {
@@ -1034,6 +1044,13 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		list = hit
+		// Этим поиском панель ждёт родившийся диалог, и другого места кончить
+		// ожидание у неё нет. Тут же за поднятой сессией и присматривают: пока
+		// она жива, снимается панель терминала, а пропала значит смерть со
+		// словами, которые панель и покажет вместо вечного «вот-вот назовётся».
+		if st, gone := s.chatWatchOne(name, tmuxAliveFn()); gone {
+			dead = chatDeadResp(name, st)
+		}
 	} else {
 		// Незачатые разговоры едут в список отдельным набором: транскрипта у
 		// них нет, и обход каталогов их не находит. Окно свежести им не указ,
@@ -1066,6 +1083,9 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 	opts := s.chatModelOpts()
 	resp := map[string]any{"project": found.Name, "chats": list, "models": opts,
 		"days": days, "older": older}
+	if dead != nil {
+		resp["dead"] = dead
+	}
 	// Пустая лестница это не «моделей нет», а «выбирать нечем»: список моделей
 	// дашборд не сочиняет, он целиком приезжает от agentctl, и без него
 	// выпадающий список схлопывается в одну строку с текущей моделью. Молча это
@@ -1827,9 +1847,10 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.chatBlankLift(blank, sess, model)
+	s.chatRaised(sess, blank, id)
 	s.logf("чат поднят в %s (tmux-сессия %s, модель %s, дерево %s)", found.Name, sess, model, dir)
 	writeJSON(w, http.StatusOK, map[string]string{
-		"tmux": sess, "model": model, "tree": dir,
+		"way": "new", "tmux": sess, "model": model, "tree": dir,
 		"message": fmt.Sprintf("чат поднят в tmux-сессии %s моделью %s: ID сессии встанет в списке первым её ходом", sess, model)})
 }
 
@@ -2021,6 +2042,7 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 				last.Tmux, held)})
 			return
 		}
+		s.chatWatchOff(last.Tmux)
 		if err := chatKill(last.Tmux); err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
 				"tmux-сессия %s не снялась: %s", last.Tmux, procErr(err))})
@@ -2319,6 +2341,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	sessions.Append(sessions.Path(s.cfg.Home),
 		sessions.Line(s.now(), sid, sessions.Bind{Task: task, Source: "заказ",
 			Project: found.Name, Tree: dir, Tmux: sess}, "резюм чата"))
+	s.chatRaised(sess, sid, task)
 	// Резюм увёз реплику вводной: дожимать её после этого нечем, иначе тот же
 	// текст приедет и вводной, и повтором.
 	s.chatSayDone(sid, claim, "resume")
@@ -2816,6 +2839,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		return
 	}
 	s.chatBlankLift(sid, sess, model)
+	s.chatRaised(sess, sid, task)
 	s.chatSayDone(sid, claim, "start")
 	s.saidSay(saidSessionKey(sid), text, "start")
 	s.logf("чат %s без сессии поднят репликой человека (tmux-сессия %s, модель %s)", sid, sess, model)
@@ -2936,6 +2960,7 @@ func (s *server) chatArchive(sid string, on bool) (archDone, error) {
 			"разговор убран в архив, а сессия %s осталась жить: в этом окне идёт разговор %s",
 			last.Tmux, held)}, nil
 	}
+	s.chatWatchOff(last.Tmux)
 	if err := chatKill(last.Tmux); err != nil {
 		s.logf("чат %s убран в архив, но tmux-сессия %s не снялась: %v", sid, last.Tmux, err)
 		return archDone{tmux: last.Tmux, message: fmt.Sprintf(
@@ -3138,6 +3163,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sessions.Append(sessions.Path(s.cfg.Home),
 		sessions.Line(s.now(), sid, sessions.Bind{Task: id, Source: "заказ",
 			Project: found.Name, Tree: dir, Tmux: sess}, "продолжение работы"))
+	s.chatRaised(sess, sid, id)
 	s.logf("работа %s продолжена резюмом чата %s в tmux-сессии %s", id, sid, sess)
 	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "resume",
 		"session": sid, "tmux": sess})
@@ -3578,6 +3604,7 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text stri
 			"error": fmt.Sprintf("tmux не поднял новый чат %s: %s", id, procErr(err))})
 		return
 	}
+	s.chatRaised(sess, "", id)
 	s.logf("работа %s поднята новым чатом в tmux-сессии %s", id, sess)
 	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "fresh", "tmux": sess,
 		"message": "чата не было: поднят новый в tmux-сессии " + sess})

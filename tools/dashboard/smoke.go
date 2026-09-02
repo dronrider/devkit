@@ -231,7 +231,7 @@ func devkitCheckout() string {
 // сессии файлом: без памяти запуск и стоп не связались бы, а работа не
 // появилась бы в списке живых.
 func (s *smoke) fixtures() error {
-	sessions := filepath.Join(s.dir, "tmux.sessions")
+	sessions := s.tmuxListFile()
 	if err := smokeWrite(s.boardFile(), smokeBoardJSON+"\n", 0o644); err != nil {
 		return err
 	}
@@ -326,6 +326,9 @@ new-session)
   # команды» иначе проверялось бы по строке запроса, а не по тому, кого эта
   # строка подняла.
   sh -c "$cmd" >> "$runs" 2>&1 || true
+  ;;
+capture-pane)
+  printf 'Invalid API key. Please run /login\n'
   ;;
 kill-session)
   name=${3#=}
@@ -500,6 +503,11 @@ func (s *smoke) boardDoc() string   { return filepath.Join(s.proj, "docs", "TASK
 func (s *smoke) archiveDoc() string { return filepath.Join(s.proj, "docs", "TASKS-archive.md") }
 func (s *smoke) draftsDir() string  { return filepath.Join(s.proj, "docs", "tasks", "drafts") }
 func (s *smoke) draftFile() string  { return filepath.Join(s.draftsDir(), smokeDraft+".md") }
+
+// tmuxListFile это список живых сессий фикстуры tmux: подъём дописывает туда
+// имя, kill-session убирает, а шаг смерти подъёма снимает имя сам, изображая
+// клиента, который вышел, не назвавшись в реестре.
+func (s *smoke) tmuxListFile() string { return filepath.Join(s.dir, "tmux.sessions") }
 
 // pyQuote квотит строку для python-фикстуры.
 func pyQuote(s string) string {
@@ -1624,6 +1632,77 @@ func (s *smoke) stepSystemNote() (string, error) {
 // видно, что отказ «работа уже идёт» разговор не задевает, а второй конвейер
 // им по-прежнему отбивается. Занятость задачи от чата не меняется: строка
 // доски остаётся с прежним признаком работы.
+// Молчаливая смерть подъёма (DK-728). Сессия создаётся и тут же уходит: клиент
+// вышел, не назвавшись в реестре, как выходит клиент без входа или с
+// кончившейся квотой. Ожидание панели идёт поиском разговора по имени
+// tmux-сессии, и тем же ответом обязан приехать исход подъёма со словами и
+// хвостом терминала, иначе панель обещает разговор, которого не будет.
+func (s *smoke) stepRaiseDeath() (string, error) {
+	var born struct {
+		Way  string `json:"way"`
+		Tmux string `json:"tmux"`
+	}
+	ask := `{"text": "прогон smoke: подъём, который умрёт"}`
+	if err := s.call("POST", "/api/projects/demo/chats", ask, http.StatusOK, &born); err != nil {
+		return "", err
+	}
+	if born.Way != "new" || born.Tmux == "" {
+		return "", fmt.Errorf("подъём не назвал ни дороги, ни сессии: %+v", born)
+	}
+	look := "/api/projects/demo/chats?tmux=" + born.Tmux
+	var alive struct {
+		Dead struct {
+			Why string `json:"why"`
+		} `json:"dead"`
+	}
+	if err := s.call("GET", look, "", http.StatusOK, &alive); err != nil {
+		return "", err
+	}
+	if alive.Dead.Why != "" {
+		return "", fmt.Errorf("живую сессию объявили мёртвой: %s", alive.Dead.Why)
+	}
+	// Клиент вышел: имя сессии уходит из списка живых, как ушло бы у tmux.
+	if err := s.tmuxDrop(born.Tmux); err != nil {
+		return "", err
+	}
+	var dead struct {
+		Dead struct {
+			Why  string `json:"why"`
+			Tail string `json:"tail"`
+		} `json:"dead"`
+	}
+	if err := s.call("GET", look, "", http.StatusOK, &dead); err != nil {
+		return "", err
+	}
+	if dead.Dead.Why == "" {
+		return "", fmt.Errorf("смерть сессии %s не названа: панель ждёт разговор, которого не будет", born.Tmux)
+	}
+	if !strings.Contains(dead.Dead.Tail, "Invalid API key") {
+		return "", fmt.Errorf("в исходе нет хвоста терминала, причину брать негде: %q", dead.Dead.Tail)
+	}
+	return dead.Dead.Why, nil
+}
+
+// tmuxDrop убирает имя из списка живых сессий фикстуры: так выглядит клиент,
+// вышедший сам, без kill-session от дашборда.
+func (s *smoke) tmuxDrop(name string) error {
+	data, err := os.ReadFile(s.tmuxListFile())
+	if err != nil {
+		return fmt.Errorf("список сессий фикстуры не прочитался: %v", err)
+	}
+	var keep []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) != name && strings.TrimSpace(line) != "" {
+			keep = append(keep, line)
+		}
+	}
+	text := ""
+	if len(keep) > 0 {
+		text = strings.Join(keep, "\n") + "\n"
+	}
+	return os.WriteFile(s.tmuxListFile(), []byte(text), 0o644)
+}
+
 func (s *smoke) stepChatStart() (string, error) {
 	var first, second struct {
 		Tmux    string `json:"tmux"`
@@ -2022,6 +2101,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"реплика и уборка при занятом окне", s.stepHeldWindow},
 		{"удаление черновика с причиной", s.stepDropDraft},
 		{"пересчёт ранга перетаскиванием доехал до доски", s.stepDragRank},
+		{"смерть поднятой сессии названа исходом", s.stepRaiseDeath},
 	}
 	for i, st := range steps {
 		note, err := st.run()

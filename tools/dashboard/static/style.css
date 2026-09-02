@@ -785,6 +785,9 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .mlist{display:flex;flex-direction:column}
 .day{display:flex;align-items:center;gap:12px;font:500 11px var(--sans);color:var(--tx3);margin-top:var(--feedgap)}
 .day i{flex:1;height:1px;background:var(--line)}
+/* хвост терминала под пометкой ленты: строки панели клиента читаются только
+   моноширинным шрифтом и только с сохранёнными переносами */
+.marktail{white-space:pre-wrap;font:400 11.5px/1.5 var(--mono);color:var(--tx3);margin-top:6px;overflow-x:auto}
 /* пузырь реплики шириной со всю запись ленты: соседние блоки ходов инструментов
    занимают колонку целиком, и узкий пузырь рядом с ними ломал общий край */
 .msg{max-width:100%;display:flex;flex-direction:column;gap:5px;margin-top:var(--feedgap)}

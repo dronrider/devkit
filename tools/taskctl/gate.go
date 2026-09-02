@@ -176,11 +176,11 @@ func closeAgentGate(root, id string) error {
 // запись прогона лежит до самого закрытия.
 func closeVerifyGate(root, id string) error {
 	lines, pending := stageSources(root, id)
-	runner, ok := lastVerifyRunner(lines, pending)
+	runner, ok := stage.LastVerifyRunner(lines, pending)
 	if !ok {
 		return nil
 	}
-	dev, ok := lastDevExecutor(lines, pending)
+	dev, ok := stage.LastExecutor(lines, pending)
 	if !ok {
 		return nil
 	}
@@ -206,49 +206,6 @@ func stageSources(root, id string) ([]string, []stage.Stage) {
 		return lines, nil
 	}
 	return lines, rec.Stages
-}
-
-// lastVerifyRunner находит последнюю запись прогона сценария: сперва в
-// незакрытом пакете, он свежее файла, потом в строках «Хода работы».
-func lastVerifyRunner(lines []string, pending []stage.Stage) (string, bool) {
-	for i := len(pending) - 1; i >= 0; i-- {
-		if pending[i].Kind != stage.Verify {
-			continue
-		}
-		if name, ok := stage.VerifyRunner(pending[i].Note); ok {
-			return name, true
-		}
-	}
-	for i := len(lines) - 1; i >= 0; i-- {
-		if name, ok := stage.VerifyRunner(lines[i]); ok {
-			return name, true
-		}
-	}
-	return "", false
-}
-
-// lastDevExecutor находит модель исполнителя последнего этапа «разработка».
-// В строках файла этап узнаётся по ярлыку строки: текст ревью тоже несёт
-// вердикт pick, и без ярлыка ревьювер сошёл бы за исполнителя.
-func lastDevExecutor(lines []string, pending []stage.Stage) (string, bool) {
-	for i := len(pending) - 1; i >= 0; i-- {
-		if pending[i].Kind != stage.Dev {
-			continue
-		}
-		if name, ok := stage.Executor(pending[i].Note); ok {
-			return name, true
-		}
-	}
-	for i := len(lines) - 1; i >= 0; i-- {
-		ln := strings.TrimSpace(lines[i])
-		if !strings.HasPrefix(ln, "- Разработка:") {
-			continue
-		}
-		if name, ok := stage.Executor(ln); ok {
-			return name, true
-		}
-	}
-	return "", false
 }
 
 // lintUnmerged ловит обратную сторону того же рубежа: строка уже в Check, а

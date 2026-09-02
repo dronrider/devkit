@@ -35,6 +35,17 @@ const one = {
   ],
 };
 
+// Следующий вопрос того же захода: ответ снял ожидание, и заход спросил снова.
+// Грумер спрашивает по одному вопросу за раз, и блок обязан работать без
+// перезагрузки страницы.
+const two = {
+  kind: "agent",
+  task: "XR-9",
+  until,
+  text: "теперь куда",
+  options: [{ text: "в стенд" }, freePick],
+};
+
 // Пачка вопросов: шаги едут разом, вопросы соседа стоят рядом с открытым.
 const pack = {
   kind: "agent",
@@ -139,6 +150,38 @@ const settleMove = async () => {
   click(rows[1]);
   await settle();
   if (now.said.length !== 1) fail("второй ответ на тот же вопрос уехал: " + JSON.stringify(now.said));
+}
+
+// --- следующий вопрос захода: блок не наследует занятость отвеченного ---
+{
+  now.said.length = 0;
+  now.ask = one;
+  const panel = sandbox.chatPanel("demo", liveSt());
+  await settle();
+  click(optsOf(panel)[0]);
+  await settle();
+  if (JSON.stringify(now.said) !== JSON.stringify(["в прод"])) {
+    fail("первый ответ не ушёл: " + JSON.stringify(now.said));
+  }
+  // Ответ снял ожидание, и опрос панели принёс тишину, а за ней новый вопрос.
+  now.ask = null;
+  await settleMove();
+  if (boxOf(panel) && !boxOf(panel).hidden) fail("блок не снялся с ответом");
+  now.ask = two;
+  await settleMove();
+  const box = boxOf(panel);
+  if (!box || box.hidden) fail("следующего вопроса в панели нет: " + dump(panel).slice(0, 300));
+  // Занятость это класс busy, а не только вид: он гасит нажатия всему блоку,
+  // и следующий вопрос стоял недоступным до перезагрузки страницы.
+  if (box.classList.contains("busy")) {
+    fail("следующий вопрос унаследовал занятость отвеченного: " + box.className);
+  }
+  if (!dump(box).includes("теперь куда")) fail("блок не перерисовался на новый вопрос");
+  click(optsOf(panel)[0]);
+  await settle();
+  if (JSON.stringify(now.said) !== JSON.stringify(["в прод", "в стенд"])) {
+    fail("ответ на следующий вопрос не ушёл: " + JSON.stringify(now.said));
+  }
 }
 
 // --- свободный ответ: поле под списком и только после выбора ---

@@ -11200,6 +11200,11 @@ function paintClientAsk(project, st, box, ask, again) {
   const sign = ask ? JSON.stringify(ask) : "";
   if (box.dataset.ask === sign) return;
   box.dataset.ask = sign;
+  // Занятость прошлого вопроса снимается вместе с его снимком: класс вешает
+  // отправка ответа, а снять его некому, и следующий вопрос того же захода
+  // стоял приглушённым и без нажатий до перезагрузки страницы (живой случай
+  // в чате груминга).
+  box.classList.remove("busy");
   if (!ask || !(ask.options || []).length) {
     box.hidden = true;
     box.replaceChildren();

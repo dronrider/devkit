@@ -2513,6 +2513,25 @@ func TestStaticChatKeepsProjectOnSwitch(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Возврат в разговор из пула поднимает заново живое панели, а кольцо хода в
+// шапке оставалось мёртвым: его опрос умирал любым уходом из разговора, и
+// законченная работа крутилась на экране оставшимися пунктами до обновления
+// страницы (бага пользователя). Стенд testdata/poc_ringwake.mjs поднимает
+// статику в node с заглушкой DOM и меряет переподъём опроса кольца. Без node
+// шаг пропускается: узел стенда, а не рабочей части.
+func TestStaticChatRingWakesOnReturn(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд переподъёма кольца пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_ringwake.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("кольцо не поднялось возвратом в разговор: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Клиент, вставший на вопросе доверия каталогу, в журнале уведомителя не
 // оставляет ни строки: сессия ещё не родилась, своего ID у неё нет, и хук не
 // сработал ни разу. Прежняя мера тут молчала, и список показывал такой

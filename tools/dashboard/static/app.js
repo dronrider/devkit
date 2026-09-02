@@ -5845,6 +5845,13 @@ let chatFeedBox = null;
 // держит его при себе и зовёт, когда человек возвращается в этот разговор.
 let chatArm = null;
 
+// Переподъём кольца в шапке, тем же порядком: опрос кольца живёт в chatLive и
+// умирает любым уходом из разговора, а возврат из пула поднимает живое панели.
+// Без этой памяти кольцо замирало в состоянии ухода: работа давно кончилась, а
+// кружок крутился с оставшимися пунктами до обновления страницы (бага
+// пользователя).
+let chatRingArm = null;
+
 // Сколько горит подсветка исходной реплики после перехода по цитате.
 const QUOTE_LIT = 1000;
 
@@ -8988,6 +8995,9 @@ function chatHead(project, st) {
     }
   }
   wireRing(project, st, slot);
+  // Шапка отдаёт переподъём кольца наружу, как панель отдаёт свой: слот пула
+  // позовёт его при возврате в разговор.
+  chatRingArm = () => wireRing(project, st, slot);
   return head;
 }
 
@@ -11550,6 +11560,9 @@ async function paintChat(project, addr, board, works) {
     if (kept.arm) {
       chatShown = Object.assign({ project: "", sid: "", task: "" }, kept.shown || {});
       kept.arm(true);
+      // Кольцо поднимается тем же возвратом: его опрос умер вместе с chatLive
+      // уходящего разговора, и заново его никто не поднимал.
+      if (kept.ringArm) kept.ringArm();
       return;
     }
   } else if (!chatPool.size) {
@@ -11583,8 +11596,10 @@ async function paintChat(project, addr, board, works) {
   // Слот помнит, чем поднять своё живое и что в нём стоит: возврат в этот
   // разговор обходится показом и подъёмом, без похода в сеть за состоянием.
   slot.arm = chatArm;
+  slot.ringArm = chatRingArm;
   slot.shown = chatShown;
   chatArm = null;
+  chatRingArm = null;
 }
 
 // Доска панели: над экранами, которые её не читают (накопитель, поиск, лента),

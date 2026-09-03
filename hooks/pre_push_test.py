@@ -43,7 +43,10 @@ class TestPrePush(unittest.TestCase):
         r = run(CLAUDECODE="1")
         self.assertEqual(r.returncode, 1)
         self.assertIn("taskctl", r.stderr)
-        self.assertIn("DEVKIT_PUSH_OK", r.stderr)
+        # DK-763: отказ печатает агенту только то, что он может сделать сам,
+        # человеческий обход из текста убран.
+        self.assertNotIn("DEVKIT_PUSH_OK", r.stderr)
+        self.assertNotIn("--no-verify", r.stderr)
 
     def test_devkit_permission_passes(self):
         self.assertEqual(run(CLAUDECODE="1", DEVKIT_PUSH_OK="1").returncode, 0)
@@ -239,6 +242,9 @@ class TestBoardGateWithShipctl(unittest.TestCase):
         r = self.push(head, self.base, CLAUDECODE="1")
         self.assertEqual(r.returncode, 1)
         self.assertIn("taskctl", r.stderr)
+        # DK-763: код без следа ревью тоже не подсказывает обход рубежа.
+        self.assertNotIn("DEVKIT_PUSH_OK", r.stderr)
+        self.assertNotIn("--no-verify", r.stderr)
 
     def test_review_gate_lifted_by_permission(self):
         """Прямая команда пользователя снимает ворот следа ревью вместе с
@@ -258,6 +264,9 @@ class TestBoardGateWithShipctl(unittest.TestCase):
         r = self.push(head, self.base, CLAUDECODE="1")
         self.assertEqual(r.returncode, 1)
         self.assertIn("taskctl", r.stderr)
+        # DK-763: код-коммит без ID тоже отбивается без подсказки обхода.
+        self.assertNotIn("DEVKIT_PUSH_OK", r.stderr)
+        self.assertNotIn("--no-verify", r.stderr)
 
     def test_pure_board_still_passes(self):
         head = self.commit("docs(tasks): DK-001 ход", {"docs/tasks/DK-001.md": "# DK-001\nход\n"})

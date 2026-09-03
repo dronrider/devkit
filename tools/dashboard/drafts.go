@@ -436,7 +436,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// разговаривает со всеми, а сессия называет себя в реестре записью
 	// накопителя, и найти её потом можно тем же списком чатов.
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		groomCmd(s.launchEnv(id, sess), groomPrompt(id, ask)+" "+orderRules(sess),
+		groomCmd(s.launchEnv(id, sess, ""), groomPrompt(id, ask)+" "+orderRules(sess),
 			harness, model)); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("грумминг %s в %s не удался: %s", id, found.Name, text)

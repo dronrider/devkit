@@ -425,7 +425,7 @@ func TestRunLeavesLiveRegistryAlone(t *testing.T) {
 // пять разборов DK-482..486 работали, а чаты в панели стояли пустыми.
 func TestLaunchEnvSameForEveryOrder(t *testing.T) {
 	s := newServer(&Config{Home: t.TempDir()}, nil, nil)
-	env := s.launchEnv("XR-7", "task-XR-7")
+	env := s.launchEnv("XR-7", "task-XR-7", "")
 	// Набор пар назван поимённо: молчаливое сравнение строк пропустило бы
 	// потерю переменной, о которой никто не помнит.
 	for _, want := range []string{"DEVKIT_NO_FOCUS=1", "HOME=", "DEVKIT_TASK='XR-7'",
@@ -453,7 +453,7 @@ func TestLaunchEnvSameForEveryOrder(t *testing.T) {
 // (контракт DK-678), и метка стоила бы им отказа рубежа с выдуманной причиной.
 func TestHeadlessMarkOnlyForPipeline(t *testing.T) {
 	s := newServer(&Config{Home: t.TempDir()}, nil, nil)
-	env := s.launchEnv("XR-7", "task-XR-7")
+	env := s.launchEnv("XR-7", "task-XR-7", "")
 	if strings.Contains(env, "DEVKIT_HEADLESS=") {
 		t.Fatalf("общая сборка окружения несёт метку печатного режима: %s", env)
 	}
@@ -497,7 +497,7 @@ func TestLaunchEnvNamesMachineKitInPath(t *testing.T) {
 	t.Setenv("PATH", inst+sep+"/usr/bin")
 	s := newServer(&Config{Home: t.TempDir()}, nil, nil)
 
-	env := s.launchEnv("XR-9", "task-XR-9")
+	env := s.launchEnv("XR-9", "task-XR-9", "")
 	want := "PATH='" + kit + sep + "/usr/bin'"
 	if !strings.Contains(env, want) {
 		t.Fatalf("путь поднятой сессии собран не так: %s\nждал %s", env, want)

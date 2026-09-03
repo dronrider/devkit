@@ -11338,6 +11338,66 @@ function askFreeField(list, box, hint, say) {
   box.append(free);
 }
 
+// Блок вопроса помощника пароля askpass (DK-772): sudo или ssh без терминала
+// зовут дашборд вместо своего диалога, и закрытое поле тут же в панели
+// заменяет терминальный ввод. Отвечается вопрос своей дорогой,
+// POST .../askpass, а не общей ask: там текст ответа разбирается как вариант
+// или свободный ответ клиента, и пароль с ними мешать нельзя. Значение поля
+// никуда, кроме тела этого запроса, не уходит: ни в ленту, ни в
+// localStorage.
+function paintAskpassAsk(project, st, box, ask) {
+  const head = el("div", "caskh");
+  head.append(el("b", "", "Пароль просит sudo"));
+  const left = waitLeft(ask.until, Date.now());
+  if (left) head.append(el("span", "n", left === "срок вышел" ? left : "осталось " + left));
+  box.replaceChildren(head);
+  box.append(el("div", "caskhint", ask.text || "sudo просит пароль"));
+
+  const row = el("div", "caskfree");
+  const field = el("input", "dwhyin");
+  field.type = "password";
+  field.autocomplete = "off";
+  field.placeholder = "Пароль";
+  const send = el("button", "btn btn-sm btn-acc", "Отправить");
+  const cancel = el("button", "btn btn-sm", "Отменить");
+  let busy = false;
+  const post = async (body) => {
+    if (busy) return;
+    busy = true;
+    box.classList.add("busy");
+    try {
+      const r = await api(chatsURL(st.project || project) + "/" +
+        encodeURIComponent(st.sid) + "/askpass", { method: "POST", body });
+      if (!r.ok) sayResult(r.body.error || "ответ не ушёл", true);
+      field.value = "";
+    } finally {
+      busy = false;
+      box.classList.remove("busy");
+    }
+  };
+  send.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const typed = field.value;
+    if (!typed) {
+      sayResult("пароль пуст: печатать нечего", true);
+      return;
+    }
+    post({ id: ask.id, text: typed });
+  });
+  cancel.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    post({ id: ask.id, cancel: true });
+  });
+  field.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      send.click();
+    }
+  });
+  row.append(field, send, cancel);
+  box.append(row);
+}
+
 function paintClientAsk(project, st, box, ask, again) {
   // Блок пересобирается только тогда, когда снимок и правда сменился: опрос
   // ходит по кругу, и сборка на каждый заход стирала бы набранное в поле
@@ -11350,6 +11410,14 @@ function paintClientAsk(project, st, box, ask, again) {
   // стоял приглушённым и без нажатий до перезагрузки страницы (живой случай
   // в чате груминга).
   box.classList.remove("busy");
+  // Вопрос помощника askpass идёт до общей проверки на варианты: у него их
+  // нет вовсе, поле пароля не вариант, и раньше этой строки его смахнул бы
+  // guard пустых options ниже.
+  if (ask && ask.kind === "askpass") {
+    box.hidden = false;
+    paintAskpassAsk(project, st, box, ask);
+    return;
+  }
   if (!ask || !(ask.options || []).length) {
     box.hidden = true;
     box.replaceChildren();

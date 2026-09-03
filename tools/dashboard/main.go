@@ -185,6 +185,22 @@ func cmdServe(home, staticDir string) error {
 		cfg.Token = token
 		logf("секрет входа создан в %s, напечатать: dashboard secret", cfg.Path)
 	}
+	// Секрет помощника askpass (DK-772) рождается заново на каждом старте, в
+	// отличие от куки входа: рестарт демона сам собой гасит зависшие ожидания
+	// пароля, а помощник, переживший старый демон, узнаётся по неверному
+	// секрету, а не по протухшей записи в памяти. Пишется он под настоящий дом
+	// машины, а не под cfg.Home: HOME поднятой сессии это именно настоящий дом
+	// (launchEnv), и там же его будет искать помощник.
+	askpassSecret, err := newSecret()
+	if err != nil {
+		return err
+	}
+	askHome := realHomeOr(home)
+	if err := writeAskpassSecret(askHome, askpassSecret); err != nil {
+		logf("секрет помощника askpass не записался в %s: %v, sudo и ssh из чата останутся без пароля",
+			askpassSecretPath(askHome), err)
+		askpassSecret = ""
+	}
 	var static fs.FS
 	if staticDir != "" {
 		static = os.DirFS(staticDir)
@@ -197,6 +213,7 @@ func cmdServe(home, staticDir string) error {
 		static = sub
 	}
 	srv := newServer(cfg, static, logf)
+	srv.askpassSecret = askpassSecret
 	ln, err := net.Listen("tcp", cfg.ListenAddr())
 	if err != nil {
 		logf("старт не удался: %v", err)

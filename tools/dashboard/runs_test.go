@@ -254,9 +254,10 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 				"new-session -d -s task-" + tc.id + " -c " + e.proj + " " + dropForeign(),
 				// Имя сессии для реестра чатов, настоящий HOME (без него
 				// agentctl exec разворачивал тильду раскладки в подложном доме
-				// демона, и клиент второй подписки отвечал «Not logged in») и
-				// заглушка опроса фокуса.
-				"DEVKIT_NO_FOCUS=1 HOME='" + realHome() + "'" +
+				// демона, и клиент второй подписки отвечал «Not logged in»),
+				// адрес демона для помощника askpass (DK-772) и заглушка опроса
+				// фокуса.
+				"DEVKIT_NO_FOCUS=1 HOME='" + realHomeFn() + "' DEVKIT_ADDR='" + e.s.cfg.ListenAddr() + "'" +
 					" DEVKIT_TASK='" + tc.id + "' DEVKIT_TMUX='task-" + tc.id + "' " + headlessMark,
 				// Голову поднимает оболочка проходов, а не клиент напрямую:
 				// печатная сессия живёт один ход, и без оболочки конвейер

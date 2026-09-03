@@ -1119,7 +1119,7 @@ func TestDraftGroomOrderAndVisibility(t *testing.T) {
 	}
 	// Окружение заказа то же, что отдаёт общая сборка: своего набора у разбора
 	// нет ни одной пары.
-	want := e.s.launchEnv("XR-005", "task-XR-005")
+	want := e.s.launchEnv("XR-005", "task-XR-005", "")
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Fatalf("заказ разбора собрал окружение по-своему:\n%s\nждал вхождение %q", got, want)
 	}

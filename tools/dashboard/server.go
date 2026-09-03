@@ -114,6 +114,19 @@ type server struct {
 	// Отдельный замок смерти: под ним идёт сверка записи и запись строки в
 	// ленту, и общий watchMu тут не годится, его берёт снимок панели.
 	deathMu sync.Mutex
+
+	// Вопросы помощника пароля askpass (askpass.go, DK-772): ID запроса ->
+	// ожидание. Пароль живёт тут, в памяти, и в ответе помощнику; в журнал,
+	// транскрипт и ленту он не едет. Свой замок: длинный опрос помощника не
+	// должен ждать за сканами корней и harnesses.
+	askpassMu    sync.Mutex
+	askpassWaits map[string]*askpassWait
+	// Секрет локального входа помощника: демон рождает его на каждом старте,
+	// пишет в файл под настоящим домом машины (writeAskpassSecret) и держит
+	// тут же, чтобы сверять заголовок запроса без похода на диск. Куки
+	// панели он не заменяет: заголовком его предъявляет только помощник,
+	// живущий на той же машине.
+	askpassSecret string
 }
 
 // inboxLock отдаёт замок «Входящих» этого репозитория, заводя его при первом
@@ -209,6 +222,10 @@ func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("POST /api/login", s.handleLogin)
+	// Помощник askpass живёт на той же машине и куки панели не носит: свой
+	// вход у него по секрету заголовком, проверка внутри ручки (askpass.go,
+	// DK-772). Заворачивать в s.auth нельзя, кука тут никогда не придёт.
+	mux.HandleFunc("POST /api/askpass", s.handleAskpassRequest)
 	mux.HandleFunc("POST /api/logout", s.auth(s.handleLogout))
 	mux.HandleFunc("GET /api/projects", s.auth(s.handleProjects))
 	mux.HandleFunc("GET /api/projects/{p}/board", s.auth(s.handleBoard))
@@ -265,6 +282,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /api/harnesses", s.auth(s.handleHarnesses))
 	mux.HandleFunc("GET /api/projects/{p}/chats/{sid}/ask", s.auth(s.handleChatAsk))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/ask", s.auth(s.handleChatAskAnswer))
+	// Ответ на вопрос помощника пароля идёт своей ручкой, а не общей ask: там
+	// разбор вариантов и текст эха ленты, а пароль в эту дорогу попадать не
+	// должен (DK-772).
+	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/askpass", s.auth(s.handleChatAskpassAnswer))
 	mux.HandleFunc("GET /api/tmux", s.auth(s.handleTmuxList))
 	mux.HandleFunc("GET /api/tmux/{name}", s.auth(s.handleTmuxPane))
 	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {

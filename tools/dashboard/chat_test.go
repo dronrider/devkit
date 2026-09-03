@@ -825,7 +825,7 @@ func TestChatCmdSecondHarnessCarriesModel(t *testing.T) {
 // окружения заказа, отдельного параметра у команды нет.
 func TestChatCmdPlanRuleFallbackName(t *testing.T) {
 	srv := newServer(&Config{Home: t.TempDir()}, nil, nil)
-	got := chatCmd(srv.launchEnv("XR-4", "chat-XR-4-1"), "opus", "", "привет", execRotateDefault, nil, "agentctl")
+	got := chatCmd(srv.launchEnv("XR-4", "chat-XR-4-1", ""), "opus", "", "привет", execRotateDefault, nil, "agentctl")
 	if !strings.Contains(got, "Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/chat-XR-4-1.json.") {
 		t.Errorf("в заказе нет запасного адреса плана с именем tmux: %s", got)
 	}

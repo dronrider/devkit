@@ -1607,7 +1607,7 @@ func chatCmd(env, model, resume, text string, rotate int, h *Harness, agentctl s
 // Метка стоит после чистки, а не перед нею: пары `env` разбирает уже после своих
 // ключей, и парой впереди команды она снялась бы своим же `-u`.
 func (s *server) headlessEnv(id, sess string) string {
-	return s.launchEnv(id, sess) + headlessMark + " "
+	return s.launchEnv(id, sess, "") + headlessMark + " "
 }
 
 // headlessMark это признак печатной сессии для рубежа синхронности. Значение
@@ -1656,12 +1656,22 @@ func dropForeign() string {
 // поверх этих пар headlessEnv и только конвейеру.
 //
 // Задачу и имя tmux-сессии поднятая сессия
-// называет о себе в реестре сама, хуком старта.
-func (s *server) launchEnv(id, sess string) string {
+// называет о себе в реестре сама, хуком старта. ID разговора (sid) дороги
+// называют не все: у резюма он известен заранее, у нового чата и нового
+// прохода конвейера сессия ещё не родилась и назовёт себя сама. Пустой sid не
+// беда (DK-772): помощник askpass находит разговор обратным поиском по имени
+// tmux-сессии, а DEVKIT_CHAT это только сокращённый путь, когда ID уже на руках.
+func (s *server) launchEnv(id, sess, sid string) string {
 	env := "DEVKIT_TMUX=" + shQuote(sess) + " "
+	if sid != "" {
+		env = "DEVKIT_CHAT=" + shQuote(sid) + " " + env
+	}
 	if id != "" {
 		env = "DEVKIT_TASK=" + shQuote(id) + " " + env
 	}
+	// Адрес демона нужен помощнику askpass: он ходит в /api/askpass той же
+	// машиной, и без адреса ему некуда стучаться.
+	env = "DEVKIT_ADDR=" + shQuote(s.cfg.ListenAddr()) + " " + env
 	// Дом тут настоящий, машинный, а не дом самого дашборда. Причина в
 	// раскладке подписок: agentctl exec разворачивает тильду ключа home, и под
 	// подложным домом демона CLAUDE_CONFIG_DIR второй подписки указывает в
@@ -1672,7 +1682,11 @@ func (s *server) launchEnv(id, sess string) string {
 	// свой файл. Живой случай DK-482..486: пять сессий разбора работали, а
 	// чаты в панели стояли пустыми. Лечится это чтением обоих домов
 	// (bindHomes в registry.go), а не подменой дома у поднятой сессии.
-	if home := realHome(); home != "" {
+	// realHomeFn, а не realHome напрямую: тому же шву верит askpass-проверка
+	// ниже, и стенду цепочки (askpass_test.go) нужен один подменяемый дом на
+	// обе, не два независимых.
+	home := realHomeFn()
+	if home != "" {
 		env = "HOME=" + shQuote(home) + " " + env
 	}
 	// Путь называется по той же причине, что и дом: своим он у поднятой сессии
@@ -1684,6 +1698,19 @@ func (s *server) launchEnv(id, sess string) string {
 	// наступил на это прямо, проверяя панель квоты чужим бинарём.
 	if p := sessionPath(os.Getenv("PATH"), exeDir(), kitDir()); p != "" {
 		env = "PATH=" + shQuote(p) + " " + env
+	}
+	// Помощник пароля встаёт в окружение только тогда, когда его правда есть
+	// на диске: без файла sudo/ssh молча бы отказали ровно тем же старым
+	// способом, «terminal is required», а причина осела бы только в журнале
+	// (DK-772). Раскладывает помощника devkitctl doctor --fix.
+	if home != "" && s.askpassSecret != "" {
+		if helper := askpassHelperPath(home); isFile(helper) {
+			env = "SUDO_ASKPASS=" + shQuote(helper) + " SSH_ASKPASS=" + shQuote(helper) +
+				" DISPLAY=" + shQuote(askpassDisplay) + " " + env
+		} else {
+			s.logf("подъём %s: помощник пароля не разложен (%s), sudo и ssh из чата останутся "+
+				"без пароля: devkitctl doctor --fix", sess, helper)
+		}
 	}
 	// Опрос фокуса в сессии, поднятой дашбордом, не нужен вовсе: он ходит в
 	// System Events, а macOS приписывает это дашборду и просит у него
@@ -1860,7 +1887,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		s.logf("модель чата %s не записалась: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, ""), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("подъём чата в %s не удался: %s", found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
@@ -2369,7 +2396,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(task, sess), model, sid, text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(task, sess, sid), model, sid, text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял продолжение чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -2559,6 +2586,13 @@ func (s *server) chatStuck(sid string) string {
 func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	found, sid, ok := s.chatSidOf(w, r)
 	if !ok {
+		return
+	}
+	// Вопрос помощника пароля (askpass.go, DK-772) идёт раньше вопроса
+	// клиента: sudo или ssh без терминала висит на отдельном канале ожидания,
+	// а не на диалоге виджета, и снимка панели тут вовсе не стоит.
+	if aw, ok := s.askpassPending(sid); ok {
+		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "ask": aw})
 		return
 	}
 	// Вопрос агента идёт первым и снимка панели не стоит: признак ожидания это
@@ -2872,7 +2906,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", chatTree(found.Path, task),
-		chatCmd(s.launchEnv(task, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(task, sess, sid), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял сессию чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -3195,7 +3229,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess), model, sid, prompt(sess), s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, sid), model, sid, prompt(sess), s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял продолжение работы %s: %s", id, procErr(err))})
 		return
@@ -3639,7 +3673,7 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text stri
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, ""), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял новый чат %s: %s", id, procErr(err))})
 		return

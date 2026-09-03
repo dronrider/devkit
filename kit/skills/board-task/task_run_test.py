@@ -128,6 +128,15 @@ def mark(word, why="-"):
                 % (time.strftime(stamp), sid[:8], word, why, home))
 
 
+def note(why):
+    """Строка журнала уведомителя, тем же форматом, каким её пишет hooks/notify.py.
+    На стенде хука нет, а оболочка читает именно его след."""
+    with open(os.path.join(devkit, "notify.log"), "a", encoding="utf-8") as f:
+        f.write("%s сессия %s повод %s уровень громкий бэкенд стенд цель - "
+                "задача DK-1 проект p код возврата: 0\n"
+                % (time.strftime(stamp), sid[:8], why))
+
+
 def crowd(count):
     """Отметки чужих сессий машины. Журнал общий на всех, и своих строк в нём
     меньшинство."""
@@ -169,6 +178,17 @@ while True:
         sys.exit(1)
     elif step == "вопрос":
         mark("ждёт", "permission_prompt")
+        time.sleep(0.3)
+    elif step == "немой вопрос":
+        # Сессия поднята до того, как хук отметки хода лёг в настройки харнеса:
+        # вопрос разрешения есть, отметки нет ни одной. Так простоял конвейер
+        # DK-724.
+        note("permission_prompt")
+        time.sleep(0.3)
+    elif step == "вопрос дважды":
+        # Один вопрос обоими каналами разом.
+        mark("ждёт", "permission_prompt")
+        note("permission_prompt")
         time.sleep(0.3)
     elif step == "молчит":
         time.sleep(3)
@@ -516,6 +536,27 @@ class TestLiveHead(unittest.TestCase):
         said = [l for l in s.journal() if "ждёт человека" in l]
         self.assertTrue(said, s.journal())
         self.assertIn("permission_prompt", said[0])
+
+    def test_question_without_a_turn_mark_calls_the_human(self):
+        # Отметки хода нет вовсе: хук turn-mark.py не лёг в настройки харнеса к
+        # подъёму сессии. Вопрос разрешения при этом записал уведомитель, и
+        # оболочка обязана позвать человека по его строке, а не молчать до
+        # получаса тишины.
+        s = self.stand(plan="немой вопрос|закрой")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, s.why(got))
+        said = [l for l in s.journal() if "ждёт человека" in l]
+        self.assertTrue(said, s.journal())
+        self.assertIn("permission_prompt", said[0])
+
+    def test_one_question_calls_the_human_once(self):
+        # Каналов у вопроса два, и один запрос разрешения приходит обоими. Зов
+        # об одном и том же вопросе человеку нужен один.
+        s = self.stand(plan="вопрос дважды|закрой")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, s.why(got))
+        said = [l for l in s.journal() if "ждёт человека" in l]
+        self.assertEqual(len(said), 1, s.journal())
 
     def test_mute_session_is_named_aloud(self):
         # Ни одной отметки за срок: хук отметки хода не подключён либо окно

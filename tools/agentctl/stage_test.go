@@ -23,7 +23,7 @@ func stageRoot(t *testing.T) string {
 
 func TestCmdStageVerifyRecordsRunner(t *testing.T) {
 	root := stageRoot(t)
-	if _, err := cmdStage(root, "T-001", stage.Verify, "", "sonnet", stageAt); err != nil {
+	if _, err := cmdStage(root, "T-001", stage.Verify, "", "sonnet", 0, 0, stageAt); err != nil {
 		t.Fatalf("отметка прогона: %v", err)
 	}
 	rec, err := stage.Load(stage.Path(stage.Home(), root, "T-001"))
@@ -42,7 +42,7 @@ func TestCmdStageVerifyRecordsRunner(t *testing.T) {
 
 func TestCmdStageVerifyNeedsBy(t *testing.T) {
 	root := stageRoot(t)
-	_, err := cmdStage(root, "T-001", stage.Verify, "", "", stageAt)
+	_, err := cmdStage(root, "T-001", stage.Verify, "", "", 0, 0, stageAt)
 	if err == nil || !strings.Contains(err.Error(), "--by") {
 		t.Fatalf("проверка без --by прошла: %v", err)
 	}
@@ -50,15 +50,71 @@ func TestCmdStageVerifyNeedsBy(t *testing.T) {
 
 func TestCmdStageByOnlyForVerify(t *testing.T) {
 	root := stageRoot(t)
-	_, err := cmdStage(root, "T-001", stage.Dev, "", "sonnet", stageAt)
+	_, err := cmdStage(root, "T-001", stage.Dev, "", "sonnet", 0, 0, stageAt)
 	if err == nil || !strings.Contains(err.Error(), "--by") {
 		t.Fatalf("--by у разработки прошёл: %v", err)
 	}
 }
 
+// TestCmdStageReviewRecordsWork: --by, --turns и --minutes у ревью кладут
+// ходы и минуты в запись, а VerifyRunner (тот же критерий, что у ворот
+// проверки) не путает ревьювера с прогонявшим сценарий.
+func TestCmdStageReviewRecordsWork(t *testing.T) {
+	root := stageRoot(t)
+	if _, err := cmdStage(root, "T-001", stage.Review, "", "sonnet", 44, 9, stageAt); err != nil {
+		t.Fatalf("отметка ревью с ходами и минутами: %v", err)
+	}
+	rec, err := stage.Load(stage.Path(stage.Home(), root, "T-001"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, ok := rec.Live()
+	if !ok || live.Kind != stage.Review {
+		t.Fatalf("живой этап не ревью: %+v", live)
+	}
+	turns, minutes, ok := stage.ParseWork(live.Note)
+	if !ok || turns != 44 || minutes != 9 {
+		t.Fatalf("ходы и минуты не достались из записи %q: %d, %d, %v", live.Note, turns, minutes, ok)
+	}
+	if _, ok := stage.VerifyRunner(live.Note); ok {
+		t.Fatalf("ревью спутано с прогоном сценария: %q", live.Note)
+	}
+}
+
+// TestCmdStageReviewWorkNeedsBoth: ходы и минуты только парой, поодиночке
+// считать нечего.
+func TestCmdStageReviewWorkNeedsBoth(t *testing.T) {
+	root := stageRoot(t)
+	if _, err := cmdStage(root, "T-001", stage.Review, "", "sonnet", 44, 0, stageAt); err == nil {
+		t.Fatal("ходы без минут прошли")
+	}
+	if _, err := cmdStage(root, "T-001", stage.Review, "", "sonnet", 0, 9, stageAt); err == nil {
+		t.Fatal("минуты без ходов прошли")
+	}
+}
+
+// TestCmdStageReviewWorkNeedsBy: без модели работа обезличена, запись отбита.
+func TestCmdStageReviewWorkNeedsBy(t *testing.T) {
+	root := stageRoot(t)
+	_, err := cmdStage(root, "T-001", stage.Review, "", "", 44, 9, stageAt)
+	if err == nil || !strings.Contains(err.Error(), "--by") {
+		t.Fatalf("ходы и минуты без --by прошли: %v", err)
+	}
+}
+
+// TestCmdStageWorkOnlyForReview: другим видам ходы и минуты не идут, у них
+// нет бюджета ревью, против которого их сверяют.
+func TestCmdStageWorkOnlyForReview(t *testing.T) {
+	root := stageRoot(t)
+	_, err := cmdStage(root, "T-001", stage.Verify, "", "sonnet", 44, 9, stageAt)
+	if err == nil || !strings.Contains(err.Error(), stage.Review) {
+		t.Fatalf("ходы и минуты у проверки прошли: %v", err)
+	}
+}
+
 func TestCmdStageOpensStage(t *testing.T) {
 	root := stageRoot(t)
-	out, err := cmdStage(root, "T-001", stage.Ask, "ждём выбора между двумя раскладками", "", stageAt)
+	out, err := cmdStage(root, "T-001", stage.Ask, "ждём выбора между двумя раскладками", "", 0, 0, stageAt)
 	if err != nil {
 		t.Fatalf("отметка этапа: %v", err)
 	}
@@ -86,7 +142,7 @@ func TestCmdStageOpensStage(t *testing.T) {
 
 func TestCmdStageRejectsUnknownKind(t *testing.T) {
 	root := stageRoot(t)
-	_, err := cmdStage(root, "T-001", "деплой", "", "", stageAt)
+	_, err := cmdStage(root, "T-001", "деплой", "", "", 0, 0, stageAt)
 	if err == nil {
 		t.Fatal("неизвестный вид деятельности принят командой")
 	}
@@ -104,10 +160,10 @@ func TestCmdStageRejectsUnknownKind(t *testing.T) {
 
 func TestCmdStageAccumulatesPack(t *testing.T) {
 	root := stageRoot(t)
-	if _, err := cmdStage(root, "T-001", stage.Dev, "субагент opus/high", "", stageAt); err != nil {
+	if _, err := cmdStage(root, "T-001", stage.Dev, "субагент opus/high", "", 0, 0, stageAt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdStage(root, "T-001", stage.Review, "субагент sonnet/high", "", stageAt.Add(time.Hour)); err != nil {
+	if _, err := cmdStage(root, "T-001", stage.Review, "субагент sonnet/high", "", 0, 0, stageAt.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), "T-001"))
@@ -124,13 +180,13 @@ func TestCmdStageAccumulatesPack(t *testing.T) {
 
 func TestCmdStageShowsLiveAndPack(t *testing.T) {
 	root := stageRoot(t)
-	if _, err := cmdStage(root, "T-001", stage.Dev, "субагент opus/high", "", stageAt); err != nil {
+	if _, err := cmdStage(root, "T-001", stage.Dev, "субагент opus/high", "", 0, 0, stageAt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdStage(root, "T-001", stage.Ask, "ждём ответа", "", stageAt.Add(time.Hour)); err != nil {
+	if _, err := cmdStage(root, "T-001", stage.Ask, "ждём ответа", "", 0, 0, stageAt.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdStage(root, "T-001", "", "", "", stageAt.Add(2*time.Hour))
+	out, err := cmdStage(root, "T-001", "", "", "", 0, 0, stageAt.Add(2*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +208,7 @@ func TestCmdStageShowsLiveAndPack(t *testing.T) {
 
 func TestCmdStageShowsEmptyRecordInWords(t *testing.T) {
 	root := stageRoot(t)
-	out, err := cmdStage(root, "T-404", "", "", "", stageAt)
+	out, err := cmdStage(root, "T-404", "", "", "", 0, 0, stageAt)
 	if err != nil {
 		t.Fatal(err)
 	}

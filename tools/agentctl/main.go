@@ -37,11 +37,15 @@ const usageText = `agentctl: выбор исполнителя под задач
   stage <ID> [<вид>]      этап работы над задачей: без вида печатает живой этап
         [--note <текст>]  и накопленный пакет, с видом отмечает начало нового.
         [--by <модель>]   Виды: разработка, ревью, проверка, снаружи, уточнение.
-                          Первые два ставит pick --record сам, ожидание снаружи
-                          ставит taskctl на смене статуса, руками отмечают
+        [--turns N        Первые два ставит pick --record сам, ожидание снаружи
+         --minutes M]     ставит taskctl на смене статуса, руками отмечают
                           уточнение и проверку. Проверка это прогон сценария не
                           автором правки, --by называет прогнавшую модель, и
-                          taskctl close сверяет её с исполнителем разработки
+                          taskctl close сверяет её с исполнителем разработки.
+                          Ревью сверх кругов pick несёт активную работу:
+                          --turns и --minutes (только вместе, с --by) кладут
+                          ходы и минуты без ожидания, taskctl review stats
+                          сводит их по уровням против бюджета review.conf
   spend --goal <файл>     гейт бюджета цели: первая строка машинная (gate: ok
        [--record]         либо gate: over), вторая называет потраченное по
                           каждому бакету против потолка из раздела «Бюджет»
@@ -234,9 +238,11 @@ func main() {
 		fs := flag.NewFlagSet("stage", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		note := fs.String("note", "", "текст записи, он уедет в «Ход работы» файла задачи")
-		by := fs.String("by", "", "кто прогнал сценарий: имя модели, только у вида проверка")
+		by := fs.String("by", "", "кто прогнал сценарий либо провёл ревью: имя модели")
+		turns := fs.Int("turns", 0, "ходы ревью без ожидания, только с --minutes и видом ревью")
+		minutes := fs.Int("minutes", 0, "минуты ревью без ожидания, только с --turns и видом ревью")
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 2, "stage <ID> [<вид>] [--note <текст>] [--by <модель>]")
+		needArgs(pos, 1, 2, "stage <ID> [<вид>] [--note <текст>] [--by <модель>] [--turns N --minutes M]")
 		root, rerr := findRoot(*dir)
 		if rerr != nil {
 			fail(rerr)
@@ -245,7 +251,7 @@ func main() {
 		if len(pos) == 2 {
 			kind = pos[1]
 		}
-		msg, err = cmdStage(root, pos[0], kind, *note, *by, timeNow())
+		msg, err = cmdStage(root, pos[0], kind, *note, *by, *turns, *minutes, timeNow())
 	case "spend":
 		fs := flag.NewFlagSet("spend", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

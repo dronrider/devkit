@@ -1255,9 +1255,11 @@ class MachineContourTest(SandboxCase):
             "ANTHROPIC_BASE_URL": "https://endpoint.example/anthropic",
             "ANTHROPIC_AUTH_TOKEN": "токен-второй-подписки",
             "ANTHROPIC_MODEL": "модель-подписки",
+            "ANTHROPIC_SMALL_FAST_MODEL": "лёгкая-модель",
             "ANTHROPIC_DEFAULT_SONNET_MODEL": "модель-подписки",
             "ANTHROPIC_DEFAULT_OPUS_MODEL": "модель-подписки",
             "ANTHROPIC_DEFAULT_FABLE_MODEL": "модель-подписки",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "лёгкая-модель",
         }}, ensure_ascii=False) + "\n")
         conf.chmod(0o600)
         _, out = self.docm()
@@ -1285,6 +1287,37 @@ class MachineContourTest(SandboxCase):
         self.assertIn_("не читается как json", out, "нет находки про битый конфиг подписки")
         self.assertEqual(read(conf), "{не json\n", "--fix переписал битый конфиг подписки")
         write(conf, keep)
+
+    def test_18_alt_subscription_no_light_model(self):
+        # Флагман вписан, лёгкой модели нет: мини-ярус лестницы остаётся голым
+        # алиасом, и находка обязана назвать ключ (DK-751). Значение автоматике
+        # взяться неоткуда, --fix его не выдумывает. Вписанный лёгкий якорь
+        # гасит находку и находит дорогу подстановкой лёгкого алиаса.
+        conf = self.mhome / ".devkit" / "claude-glm" / "settings.json"
+        write(conf, json.dumps({"env": {
+            "ANTHROPIC_BASE_URL": "https://endpoint.example/anthropic",
+            "ANTHROPIC_AUTH_TOKEN": "токен-второй-подписки",
+            "ANTHROPIC_MODEL": "модель-подписки",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "модель-подписки",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "модель-подписки",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL": "модель-подписки",
+        }}, ensure_ascii=False) + "\n")
+        conf.chmod(0o600)
+        _, out = self.docm("--fix")
+        self.assertIn_("ANTHROPIC_SMALL_FAST_MODEL", out,
+                       "нет находки про отсутствующую лёгкую модель")
+        self.assertNotIn_("токен-второй-подписки", out, "токен второй подписки напечатан")
+        doc = json.loads(read(conf))
+        self.assertNotIn("ANTHROPIC_SMALL_FAST_MODEL", doc["env"],
+                         "--fix выдумал значение лёгкой модели")
+        doc["env"]["ANTHROPIC_SMALL_FAST_MODEL"] = "лёгкая-модель"
+        write(conf, json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+        _, out = self.docm("--fix")
+        self.assertNotIn_("не задана лёгкая модель", out,
+                          "находка про лёгкую модель не ушла после вписания")
+        doc = json.loads(read(conf))
+        self.assertEqual(doc["env"].get("ANTHROPIC_DEFAULT_HAIKU_MODEL"), "лёгкая-модель",
+                         "--fix не разложил подстановку лёгкого алиаса")
 
 
 class PackagesTest(SandboxCase):

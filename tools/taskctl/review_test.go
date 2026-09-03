@@ -520,3 +520,136 @@ func TestReviewCleanCLI(t *testing.T) {
 		t.Fatalf("отказ не называет подкоманду:\n%s", bad)
 	}
 }
+
+// TestReviewLevelWritesFirstLine: уровень встаёт первой строкой раздела
+// «Ревью» и заводит сам раздел, когда его в файле ещё нет. Sha в строке это
+// HEAD дерева, по которому шло ревью.
+func TestReviewLevelWritesFirstLine(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	msg, err := cmdReviewLevel(root, "XR-005", 2, "неопределённость 1, тронут tools/shipctl", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := gitOut(t, root, "rev-parse", "--short=7", "HEAD")
+	want := "Уровень 2 до " + sha + ": неопределённость 1, тронут tools/shipctl"
+	if !strings.Contains(msg, "уровень ревью 2 до "+sha+" записан") {
+		t.Fatalf("сообщение: %q", msg)
+	}
+	got := readTaskFile(t, root, "XR-005")
+	if !strings.Contains(got, "## Ревью\n\n"+want+"\n") {
+		t.Fatalf("строка уровня не первая в разделе:\n%s", got)
+	}
+	show, err := cmdReviewShow(root, "XR-005")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(show, want) {
+		t.Fatalf("review show без строки уровня: %q", show)
+	}
+}
+
+// TestReviewLevelRewrites: повторный вызов переписывает строку, а не кладёт
+// вторую. Пересмотр уровня по ходу ревью это та же запись с новым основанием.
+func TestReviewLevelRewrites(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdReviewLevel(root, "XR-005", 1, "рутина", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdReviewLevel(root, "XR-005", 3, "тронуты доступы", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "переписан") {
+		t.Fatalf("сообщение: %q", msg)
+	}
+	got := readTaskFile(t, root, "XR-005")
+	if n := strings.Count(got, "Уровень "); n != 1 {
+		t.Fatalf("строк уровня %d, ждём одну:\n%s", n, got)
+	}
+	if !strings.Contains(got, ": тронуты доступы\n") || strings.Contains(got, "рутина") {
+		t.Fatalf("строка не переписана:\n%s", got)
+	}
+}
+
+// TestReviewLevelKeepsNotes: замечания остаются ниже строки уровня и своих
+// исходов не теряют.
+func TestReviewLevelKeepsNotes(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdReviewLevel(root, "XR-005", 2, "тронут tools/taskctl", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	got := readTaskFile(t, root, "XR-005")
+	lvl, note := strings.Index(got, "Уровень 2 до "), strings.Index(got, "- гонка в close")
+	if lvl < 0 || note < 0 || lvl > note {
+		t.Fatalf("уровень и замечание встали не в том порядке:\n%s", got)
+	}
+	if !strings.Contains(got, "\n\n- гонка в close") {
+		t.Fatalf("замечание слиплось со строкой уровня:\n%s", got)
+	}
+	// Нумерация замечаний строкой уровня не сбивается: она не элемент списка.
+	if _, err := cmdReviewResolve(root, "XR-005", 1, "fixed", "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTaskFile(t, root, "XR-005"); !strings.Contains(got, "- гонка в close: исправлено\n") {
+		t.Fatalf("исход замечания:\n%s", got)
+	}
+}
+
+// TestReviewLevelRefuses: причина обязательна на любом уровне, включая нулевой
+// (осознанный пропуск), а уровень вне шкалы 0-3 отбивается. Ни то, ни другое в
+// файл не пишется.
+func TestReviewLevelRefuses(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdReviewLevel(root, "XR-005", 0, "  ", CommitOpts{}); err == nil {
+		t.Fatal("пустая причина должна отбиваться")
+	} else if !strings.Contains(err.Error(), "жду причину уровня") {
+		t.Fatalf("отказ без подсказки: %v", err)
+	}
+	if _, err := cmdReviewLevel(root, "XR-005", 4, "мимо шкалы", CommitOpts{}); err == nil {
+		t.Fatal("уровень 4 должен отбиваться")
+	} else if !strings.Contains(err.Error(), "0-3") {
+		t.Fatalf("отказ без шкалы: %v", err)
+	}
+	if got := readTaskFile(t, root, "XR-005"); strings.Contains(got, "Уровень") {
+		t.Fatalf("отбитая запись всё-таки в файле:\n%s", got)
+	}
+	// Уровень 0 с причиной проходит: это запись осознанного пропуска.
+	if _, err := cmdReviewLevel(root, "XR-005", 0, "мелочь мимо ветки", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTaskFile(t, root, "XR-005"); !strings.Contains(got, "Уровень 0 до ") {
+		t.Fatalf("уровень 0 не записан:\n%s", got)
+	}
+}
+
+// TestReviewLevelCLI: подкоманда доезжает до разбора аргументов, справка её
+// называет, а нечисловой уровень отбивается разбором.
+func TestReviewLevelCLI(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	out, err := exec.Command("go", "run", ".", "-C", root, "review", "level", "XR-005", "2", "тронут tools/shipctl").CombinedOutput()
+	if err != nil {
+		t.Fatalf("review level: %v\n%s", err, out)
+	}
+	if got := readTaskFile(t, root, "XR-005"); !strings.Contains(got, ": тронут tools/shipctl\n") {
+		t.Fatalf("файл задачи:\n%s", got)
+	}
+	help, _ := exec.Command("go", "run", ".", "-C", root, "help").CombinedOutput()
+	if !strings.Contains(string(help), "review level <ID>") {
+		t.Fatalf("справка без подкоманды:\n%s", help)
+	}
+	bad, err := exec.Command("go", "run", ".", "-C", root, "review", "level", "XR-005", "два", "причина").CombinedOutput()
+	if err == nil {
+		t.Fatalf("нечисловой уровень должен отбиваться:\n%s", bad)
+	}
+	if !strings.Contains(string(bad), "не число") {
+		t.Fatalf("отказ без причины:\n%s", bad)
+	}
+}

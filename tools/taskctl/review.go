@@ -3,9 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 const reviewHeading = "## Ревью"
@@ -57,6 +60,8 @@ type reviewFile struct {
 	notes      []reviewNote
 	hasSection bool
 	insertAt   int // строка, перед которой вставлять новое замечание
+	bodyAt     int // первая строка тела раздела: туда встаёт строка уровня
+	levelIdx   int // строка уровня ревью, -1 если её нет
 }
 
 func loadReview(path string) (*reviewFile, error) {
@@ -64,7 +69,7 @@ func loadReview(path string) (*reviewFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	rf := &reviewFile{path: path, lines: strings.Split(string(data), "\n")}
+	rf := &reviewFile{path: path, lines: strings.Split(string(data), "\n"), levelIdx: -1}
 	in := false
 	contOpen := false
 	for i, ln := range rf.lines {
@@ -78,11 +83,19 @@ func loadReview(path string) (*reviewFile, error) {
 				if i+1 < len(rf.lines) && strings.TrimSpace(rf.lines[i+1]) == "" {
 					rf.insertAt = i + 2
 				}
+				rf.bodyAt = rf.insertAt
 			}
 			continue
 		}
 		t := strings.TrimSpace(ln)
 		if !in {
+			continue
+		}
+		// Строка уровня стоит первой в разделе и списком не является: её
+		// пишет review level, а замечания идут ниже. Считается только первая,
+		// повторный вызов её же и переписывает.
+		if rf.levelIdx < 0 && len(rf.notes) == 0 && taskform.IsReviewLevel(t) {
+			rf.levelIdx = i
 			continue
 		}
 		if strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* ") {
@@ -134,6 +147,7 @@ func (rf *reviewFile) ensureSection() {
 		tail := append([]string{}, rf.lines[at:]...)
 		rf.lines = append(rf.lines[:at], append(head, tail...)...)
 		rf.insertAt = at + len(head) - 1
+		rf.bodyAt = rf.insertAt
 		return
 	}
 	// Разделов формы ниже «Ревью» в файле нет, значит место ему в конце, и
@@ -143,6 +157,7 @@ func (rf *reviewFile) ensureSection() {
 	}
 	rf.lines = append(rf.lines, "", reviewHeading, "", "")
 	rf.insertAt = len(rf.lines) - 1
+	rf.bodyAt = rf.insertAt
 }
 
 func (rf *reviewFile) insert(idx int, line string) {
@@ -160,7 +175,14 @@ func taskFileAbs(root, id string) string {
 // reviewItem дописывает в раздел «Ревью» готовую строку элемента и заводит
 // файл задачи, когда его ещё нет. Общий ход у add и clean: разница между ними
 // только в тексте элемента и в проверках до записи.
-func reviewItem(root, id, line string, c CommitOpts) (rf *reviewFile, created bool, linkHint string, paths []string, err error) {
+func reviewItem(root, id, line string, c CommitOpts) (*reviewFile, bool, string, []string, error) {
+	return reviewEdit(root, id, func(rf *reviewFile) { rf.insert(rf.insertAt, line) }, c)
+}
+
+// reviewEdit готовит раздел «Ревью» к правке (строка доски, файл задачи,
+// ссылка в строке) и отдаёт саму правку вызывающему: add и clean дописывают
+// элемент списка, level правит строку уровня в голове раздела.
+func reviewEdit(root, id string, edit func(*reviewFile), c CommitOpts) (rf *reviewFile, created bool, linkHint string, paths []string, err error) {
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return nil, false, "", nil, err
@@ -198,7 +220,7 @@ func reviewItem(root, id, line string, c CommitOpts) (rf *reviewFile, created bo
 		return nil, false, "", nil, err
 	}
 	rf.ensureSection()
-	rf.insert(rf.insertAt, line)
+	edit(rf)
 	if err := rf.save(); err != nil {
 		return nil, false, "", nil, err
 	}
@@ -225,6 +247,80 @@ func cmdReviewAdd(root, id, note string, c CommitOpts) (string, error) {
 		return "", err
 	}
 	msg := fmt.Sprintf("%s: замечание %d записано", id, len(rf.notes)+1)
+	if created {
+		msg += ", файл задачи создан"
+	}
+	return msg + linkHint + tail, nil
+}
+
+// headSha это HEAD дерева, где идёт ревью. Строка уровня несёт его не для
+// красоты: второй круг ревью диффует от него, поэтому запись без sha
+// бессмысленна и нечитаемый HEAD это отказ, а не строка без хвоста.
+func headSha(root string) (string, error) {
+	out, err := exec.Command("git", "-C", root, "rev-parse", "--short=7", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("в %s не читается HEAD (%v), а строка уровня несёт коммит, по которому шло ревью", root, err)
+	}
+	sha := strings.TrimSpace(string(out))
+	if sha == "" {
+		return "", fmt.Errorf("в %s не читается HEAD, а строка уровня несёт коммит, по которому шло ревью", root)
+	}
+	return sha, nil
+}
+
+// cmdReviewLevel пишет уровень тщательности ревью первой строкой раздела
+// «Ревью»: «Уровень 2 до a1b2c3d: неопределённость 1, тронут tools/shipctl».
+// Уровень выбирает скилл review до чтения диффа, и запись эта машинная, по ней
+// ворот слияния отличает ревью, прошедшее мимо скилла, от прошедшего по нему.
+// Уровень 0 значит осознанный пропуск, поэтому причина обязательна на всех
+// уровнях: незаписанный пропуск неотличим от забытого ревью. Повторный вызов
+// переписывает строку, а не кладёт вторую: пересмотр уровня по ходу ревью это
+// та же запись, только с новым основанием.
+func cmdReviewLevel(root, id string, level int, reason string, c CommitOpts) (string, error) {
+	if err := c.validate(); err != nil {
+		return "", err
+	}
+	if level < 0 || level > 3 {
+		return "", fmt.Errorf("уровень %d вне шкалы, жду 0-3 (шкала в скилле review)", level)
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "", fmt.Errorf("жду причину уровня: review level <ID> <0-3> \"причина\"")
+	}
+	if strings.Contains(reason, "\n") {
+		return "", fmt.Errorf("причина пишется одной строкой")
+	}
+	sha, err := headSha(root)
+	if err != nil {
+		return "", err
+	}
+	line := fmt.Sprintf("Уровень %d до %s: %s", level, sha, reason)
+	rewritten := false
+	_, created, linkHint, paths, err := reviewEdit(root, id, func(rf *reviewFile) {
+		if rf.levelIdx >= 0 {
+			rf.lines[rf.levelIdx] = line
+			rewritten = true
+			return
+		}
+		rf.insert(rf.bodyAt, line)
+		// Замечания ниже отделяются пустой строкой: абзац, слипшийся с первым
+		// элементом списка, разметка читает одним куском.
+		if rf.bodyAt+1 < len(rf.lines) && strings.TrimSpace(rf.lines[rf.bodyAt+1]) != "" {
+			rf.insert(rf.bodyAt+1, "")
+		}
+	}, c)
+	if err != nil {
+		return "", err
+	}
+	tail, err := c.apply(root, paths)
+	if err != nil {
+		return "", err
+	}
+	verb := "записан"
+	if rewritten {
+		verb = "переписан"
+	}
+	msg := fmt.Sprintf("%s: уровень ревью %d до %s %s", id, level, sha, verb)
 	if created {
 		msg += ", файл задачи создан"
 	}
@@ -340,10 +436,18 @@ func cmdReviewShow(root, id string) (string, error) {
 		}
 		return "", err
 	}
+	var out []string
+	// Уровень идёт над замечаниями, как и в файле: с него ревьювер начинает и
+	// по нему второй круг понимает, от какого коммита диффовать.
+	if rf.levelIdx >= 0 {
+		out = append(out, strings.TrimSpace(rf.lines[rf.levelIdx]))
+	}
 	if len(rf.notes) == 0 {
+		if len(out) > 0 {
+			return out[0] + "\nзамечаний нет", nil
+		}
 		return fmt.Sprintf("в ревью %s замечаний нет", id), nil
 	}
-	var out []string
 	for i, n := range rf.notes {
 		st := n.outcome()
 		if st == "" {

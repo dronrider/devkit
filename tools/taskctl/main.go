@@ -158,6 +158,13 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               деревьев
 
 Ревью задачи (раздел «Ревью» в docs/tasks/<ID>.md):
+  review level <ID> <0-3> "причина"           записать уровень тщательности
+                                              ревью первой строкой раздела:
+                                              «Уровень 2 до a1b2c3d: причина»,
+                                              где sha это HEAD дерева ревью;
+                                              повторный вызов строку
+                                              переписывает, причина обязательна
+                                              и на уровне 0 (осознанный пропуск)
   review add <ID> ["суть замечания"]          дописать замечание, файл задачи
                                               создаётся сам; без текста читает
                                               stdin: текст с обратными кавычками
@@ -542,7 +549,7 @@ func main() {
 		msg, err = cmdElapsed(root(*dir), pos[0])
 	case "review":
 		if len(args) < 2 {
-			fail(fmt.Errorf("жду: review add|clean|resolve|show|stats ..."))
+			fail(fmt.Errorf("жду: review level|add|clean|resolve|show|stats ..."))
 		}
 		switch args[1] {
 		case "add":
@@ -578,6 +585,18 @@ func main() {
 				note = pos[1]
 			}
 			msg, err = cmdReviewClean(root(*dir), pos[0], note, c)
+		case "level":
+			fs := flag.NewFlagSet("review level", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 3, 3, "review level <ID> <0-3> \"причина\"")
+			lvl, aerr := strconv.Atoi(pos[1])
+			if aerr != nil {
+				fail(fmt.Errorf("уровень %q не число, жду 0-3", pos[1]))
+			}
+			msg, err = cmdReviewLevel(root(*dir), pos[0], lvl, pos[2], c)
 		case "resolve":
 			fs := flag.NewFlagSet("review resolve", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
@@ -603,7 +622,7 @@ func main() {
 			needArgs(frame.ParseArgs(fs, args[2:]), 0, 0, "review stats")
 			msg, err = cmdReviewStats(root(*dir))
 		default:
-			fail(fmt.Errorf("неизвестная подкоманда review %q, жду add / clean / resolve / show / stats", args[1]))
+			fail(fmt.Errorf("неизвестная подкоманда review %q, жду level / add / clean / resolve / show / stats", args[1]))
 		}
 	case "close":
 		fs := flag.NewFlagSet("close", flag.ExitOnError)

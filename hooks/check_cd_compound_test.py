@@ -65,6 +65,11 @@ class TestCompoundIsCaught(unittest.TestCase):
         r = run("--stdin", input="cd /tmp\ncat a.txt\n")
         self.assertEqual(r.returncode, 1, r.stdout)
 
+    def test_escaped_newline_is_caught(self):
+        r = run("--stdin", input="cd /tmp && \\\ncat rel.txt\n")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("cat /tmp/rel.txt", r.stdout)
+
     def test_reader_later_in_chain_is_caught(self):
         r = run("cd /tmp && make && tail -n 5 build.log")
         self.assertEqual(r.returncode, 1)

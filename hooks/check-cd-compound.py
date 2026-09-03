@@ -93,6 +93,10 @@ def strip_heredocs(command):
 def tokens(command):
     """Токены команды, разделители отдельными кусками. None значит, что shell
     не разобрался (незакрытая кавычка и подобное): такой ход рубеж пропускает."""
+    # Экранированный перевод строки это продолжение той же строки: shlex иначе
+    # склеил бы его со следующим словом в один токен, и `cd X && \\<newline>cat f`
+    # прошёл бы мимо рубежа.
+    command = command.replace("\\\n", " ")
     lex = shlex.shlex(command, posix=True, punctuation_chars=PUNCTUATION)
     lex.whitespace_split = True
     lex.whitespace = " \t\r"

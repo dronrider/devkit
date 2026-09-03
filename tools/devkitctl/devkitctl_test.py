@@ -1950,6 +1950,11 @@ class HarnessHooksTest(SandboxCase):
         # отсутствие выдавалось бы за дыру чтения секретов.
         self.assertRegex(out, r"check-subst\.py[^\n]*исполняется до их вызова",
                          "доктор не заметил PreToolUse-хук подстановки DK-452")
+        # Рубеж ревью говорит своей строкой: без неё его отсутствие выдавалось
+        # бы за дыру чтения секретов, а ломается там другое, код уходит наружу
+        # без ревью.
+        self.assertRegex(out, r"check-review\.py[^\n]*без следа\s+ревью",
+                         "доктор не заметил PreToolUse-хук следа ревью")
         # Рубеж синхронности (DK-678) говорит своей категорией: без неё пропажа
         # рубежа выдавалась бы за дыру чтения секретов, а ломается там другое,
         # фоновый ход headless-сессии.
@@ -1980,6 +1985,8 @@ class HarnessHooksTest(SandboxCase):
                          "--fix не разложил PreToolUse-хук чтения секретов")
         self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-subst\.py на PreToolUse",
                          "--fix не разложил PreToolUse-хук подстановки DK-452")
+        self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-review\.py на PreToolUse",
+                         "--fix не разложил PreToolUse-хук следа ревью")
         self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-background\.py на PreToolUse",
                          "--fix не разложил рубеж синхронности DK-678")
         self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-reread\.py на PreToolUse",
@@ -2022,6 +2029,7 @@ class HarnessHooksTest(SandboxCase):
         pre = [h["command"] for g in hooks["PreToolUse"] for h in g["hooks"]]
         self.assertEqual(len([c for c in pre if "check-read-secret.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-subst.py" in c]), 1, pre)
+        self.assertEqual(len([c for c in pre if "check-review.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-background.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-reread.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-longfile.py" in c]), 1, pre)

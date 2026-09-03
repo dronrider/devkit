@@ -104,7 +104,8 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "%s"}
 ]}], "PreToolUse": [{"matcher": "Bash", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-read-secret.py --hook"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-subst.py --hook"}
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-subst.py --hook"},
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-review.py --hook"}
 ]}, {"matcher": "Bash|Agent", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-background.py --hook"}
 ]}, {"matcher": "Read", "hooks": [

@@ -90,6 +90,7 @@ def dispatcher_script(bodies):
 FIXTURE_DEVKIT = "~/projects/devkit"
 NOTIFY = "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"
 WATCH = "python3 ~/projects/devkit/hooks/agent-watch.py --hook claude-code"
+TURN = "python3 ~/projects/devkit/hooks/turn-mark.py --hook claude-code"
 SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
  "hooks": {"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-symbols.py --hook"},
@@ -117,16 +118,20 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "sh ~/projects/devkit/hooks/board-catchup.sh"},
   {"type": "command", "command": "sh ~/projects/devkit/hooks/devkit-catchup.sh"}
 ]}], "Notification": [{"hooks": [
+  {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"}
 ]}], "Stop": [{"hooks": [
   {"type": "command", "command": "%s"},
+  {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"}
 ]}], "StopFailure": [{"hooks": [
+  {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"}
 ]}], "SubagentStop": [{"hooks": [
   {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"}
 ]}], "UserPromptSubmit": [{"hooks": [
+  {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"}
 ]}]},
  "env": {"CLAUDE_CODE_RETRY_WATCHDOG": "1"}}
@@ -521,8 +526,8 @@ class Sandbox:
         (home / ".devkit" / "quota").mkdir(parents=True)
         allow = json.dumps(list(perms.MACHINE_ALLOW), ensure_ascii=False)
         deny = json.dumps(list(perms.SECRET_DENY), ensure_ascii=False)
-        text = SETTINGS % (allow, deny, WATCH, NOTIFY, NOTIFY, WATCH,
-                           NOTIFY, NOTIFY, WATCH, NOTIFY)
+        text = SETTINGS % (allow, deny, WATCH, NOTIFY, TURN, NOTIFY, WATCH, TURN,
+                           NOTIFY, TURN, NOTIFY, WATCH, NOTIFY, TURN)
         write(home / ".claude" / "settings.json",
               text.replace(FIXTURE_DEVKIT, os.path.realpath(str(self.dk))))
         for f in (self.dk / "kit" / "agents").glob("*.md"):

@@ -226,6 +226,24 @@ class ProjectFindingsTest(SandboxCase):
         self.assertNotIn_("agent-watch.py не подключён", out,
                           "подключённый сторож попал в находку")
 
+    def test_5d_turn_mark_events(self):
+        # Отметка хода висит на четырёх событиях, и пропажа любого это находка:
+        # без конца хода оболочка конвейера не знает, звать ли следующий проход,
+        # а без начала хода посылает свой заказ поверх реплики человека
+        # (DK-724).
+        full = read(self.settings)
+        drop_lines(self.settings, "turn-mark.py")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("отметка хода turn-mark.py не подключена на события Stop, "
+                       "StopFailure, Notification, UserPromptSubmit", out,
+                       "нет находки про неподключённую отметку хода")
+        self.assertIn_("не зная, звать ли следующий проход", out,
+                       "находка не говорит, что ломается без отметки")
+        write(self.settings, full)
+        _, out = self.box.doctor(self.proj)
+        self.assertNotIn_("turn-mark.py не подключена", out,
+                          "подключённая отметка хода попала в находку")
+
     def test_5b_retry_watchdog_key(self):
         # Без env-ключа недокументированного ретрай-вотчдога доктор называет
         # это находкой (стенд DK-172 разницы в поведении с ключом не нашёл, но
@@ -2082,6 +2100,12 @@ class HarnessHooksTest(SandboxCase):
         for event in ("SubagentStop", "Stop"):
             cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
             self.assertEqual(len([c for c in cmds if "agent-watch.py" in c]), 1, (event, cmds))
+        # Отметка хода (DK-724) ложится на конец хода, его провал, вопрос
+        # сессии и приход реплики: живой сессии конвейера конца прохода взять
+        # больше неоткуда.
+        for event in ("Stop", "StopFailure", "Notification", "UserPromptSubmit"):
+            cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
+            self.assertEqual(len([c for c in cmds if "turn-mark.py" in c]), 1, (event, cmds))
         # Ретрай-вотчдог (DK-172) ложится тем же --fix: env-ключ, с которым
         # обрыв сети ретраится, а не останавливает ход до ручного «продолжай».
         self.assertEqual(data.get("env", {}).get(devkitctl.WATCHDOG_KEY),

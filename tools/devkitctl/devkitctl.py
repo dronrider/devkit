@@ -273,6 +273,13 @@ WATCH_EVENTS = ("PostToolUse", "SubagentStop", "Stop")
 # рубежа headless-сессия уводит долгое дело в фон, а харнес добивает его через
 # десять минут, и это не то же самое, что чтение секретов мимо рубежа.
 SYNC_HOOK = "check-background.py"
+# Отметка хода (DK-724): четыре события, потому что живой сессии конвейера конца
+# прохода взять больше неоткуда. Процесс интерактивного клиента не выходит ни
+# разу, и оболочка task-run.py читает журнал отметок вместо кода возврата.
+# Категория сообщения в hook_gaps своя: без отметок конвейер идёт одной сессией
+# и молчит, а это не то же самое, что потерянный отчёт субагента.
+TURN_HOOK = "turn-mark.py"
+TURN_EVENTS = ("Stop", "StopFailure", "Notification", "UserPromptSubmit")
 # Хуки, переименованные в devkit: прежнее имя файла и нынешнее (DK-440). Строка
 # с прежним именем зовёт файл, которого в чекауте уже нет, и харнес спотыкается
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
@@ -314,6 +321,10 @@ HOOK_LAYOUT = (
     ("PostToolUse", "Agent", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
+    ("Stop", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
+    ("StopFailure", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
+    ("Notification", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
+    ("UserPromptSubmit", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
     ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
     ("SessionStart", "", "python3 %s/hooks/session-task.py --hook claude-code"),
     ("PostToolUse", "", "python3 %s/hooks/session-task.py --touch claude-code"),
@@ -1332,8 +1343,11 @@ def hook_gaps(text, settings):
     watch_events = hook_events(text, WATCH_HOOK)
     if watch_events is None:
         watch_events = set(WATCH_EVENTS) if WATCH_HOOK in text else set()
+    turn_events = hook_events(text, TURN_HOOK)
+    if turn_events is None:
+        turn_events = set(TURN_EVENTS) if TURN_HOOK in text else set()
     missing_notify, missing_post, missing_pre, missing_pre_read = [], [], [], []
-    missing_watch = []
+    missing_watch, missing_turn = [], []
     for event, matcher, cmd in HOOK_LAYOUT:
         parts = cmd.split()
         script = os.path.basename(parts[1])
@@ -1350,6 +1364,10 @@ def hook_gaps(text, settings):
             if event in watch_events:
                 continue
             missing_watch.append(event)
+        elif script == TURN_HOOK:
+            if event in turn_events:
+                continue
+            missing_turn.append(event)
         elif key in text:
             continue
         gaps.append((event, matcher, cmd))
@@ -1423,6 +1441,11 @@ def hook_gaps(text, settings):
                         "теряется по дороге, и сессия уходит спать, считая его работающим "
                         "(hooks/README.md)"
                         % (WATCH_HOOK, ", ".join(missing_watch), settings))
+    if missing_turn:
+        findings.append("отметка хода %s не подключена на события %s в %s: живая сессия "
+                        "конвейера задачи не говорит, что доработала, и оболочка стоит рядом "
+                        "с нею, не зная, звать ли следующий проход (hooks/README.md)"
+                        % (TURN_HOOK, ", ".join(missing_turn), settings))
     for old in sorted(n for n in RETIRED_HOOKS if n in text):
         stale.append(old)
         findings.append("хук %s в %s переименован в %s: строка зовёт файл, которого в чекауте "

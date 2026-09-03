@@ -444,3 +444,59 @@ pollLoop:
 		t.Fatal("подменный sudo не завершился вовремя")
 	}
 }
+
+// TestAskpassSidByTmuxFallback проходит запасную дорогу разбора разговора
+// (askpassSidByTmux): у нового чата и нового прохода конвейера DEVKIT_CHAT на
+// момент подъёма ещё пуст (launchEnv не знает sid), и помощник называет только
+// DEVKIT_TMUX. Демон обязан найти разговор обратным поиском по реестру и
+// поставить вопрос под настоящим sid, а не потерять его или подставить чужой.
+func TestAskpassSidByTmuxFallback(t *testing.T) {
+	e := newTestEnv(t)
+	e.s.askpassSecret = "cafef00dhhhh8888"
+	c := e.loggedClient(t)
+	const sid, tmux = "hhhh9999-fallback-4888-8888-888888888888", "chat-fallback-1"
+	writeBinds(t, e.home, bindLine(time.Now(), sid, sessionBind{Tmux: tmux}))
+
+	type askResult struct {
+		code int
+		body string
+	}
+	done := make(chan askResult, 1)
+	go func() {
+		// chat пуст нарочно: только tmux, как у только что поднятой сессии.
+		resp, text := askpassPost(t, e.srv.URL, e.s.askpassSecret, "", tmux, "[sudo] Password:")
+		done <- askResult{resp.StatusCode, text}
+	}()
+
+	ask := waitForAskpass(t, c, e.srv.URL, sid)
+	id, _ := ask["id"].(string)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/askpass",
+		`{"id":"`+id+`","text":"пароль-по-tmux"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ответ панели не принят: %d %s", resp.StatusCode, body(t, resp))
+	}
+	select {
+	case r := <-done:
+		if r.code != http.StatusOK || !strings.Contains(r.body, `"password":"пароль-по-tmux"`) {
+			t.Fatalf("пароль не доехал через запасную дорогу tmux: %d %s", r.code, r.body)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("помощник не дождался ответа по запасной дороге tmux")
+	}
+}
+
+// TestAskpassUnknownTmuxRejected: помощник без DEVKIT_CHAT и с именем tmux,
+// которого нет в реестре ни одного разговора, получает внятный отказ, а не
+// вопрос, повисший в никаком чате.
+func TestAskpassUnknownTmuxRejected(t *testing.T) {
+	e := newTestEnv(t)
+	e.s.askpassSecret = "cafef00diiii9999"
+
+	resp, text := askpassPost(t, e.srv.URL, e.s.askpassSecret, "", "chat-без-записи-в-реестре", "[sudo] Password:")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("неизвестный tmux не отбит 404: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "разговор не назвался") {
+		t.Errorf("отказ без причины: %s", text)
+	}
+}

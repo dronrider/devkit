@@ -3,9 +3,10 @@
 
 Живые компоненты для проверки раннера тяжёлые, поэтому здесь синтетический
 каталог с короткими скриптами: проверяется сам раннер, а не компоненты поверх
-него. Хронометраж стенд держит с запасом: на провале занятые компоненты
-убиваются по группе процессов, и стенд следит, чтобы долгий скрипт не дожил
-до своего конца.
+него. На провале занятые компоненты убиваются по группе процессов, и стенд
+следит за этим по факту: долгий скрипт метит свой конец файлом, и стенд ждёт
+отсутствия метки, а не стенных секунд, которые растягиваются под нагрузкой
+соседних прогонов и красили тест при живом инварианте (находка DK-635).
 """
 import contextlib
 import io
@@ -130,15 +131,20 @@ class RunAllTest(Stand):
 
     def test_first_failure_stops_the_rest(self):
         # Занятый на провале компонент убивается по группе процессов: долгий
-        # скрипт обязан не дожить до конца, иначе стоп по первому провалу
-        # молча выродился в «догнать всё и потом ответить».
+        # скрипт обязан не дожить до своей метки, иначе стоп по первому
+        # провалу молча выродился в «догнать всё и потом ответить». Факт
+        # смерти ловится меткой, а не стенными секундами: run_all не
+        # возвращается, пока процесс не завершится (сам ли, по стопу ли), так
+        # что метка правдиво отличает «убит рано» от «дожил до конца», сколько
+        # бы секунд на это ни ушло. Секунды растягиваются под нагрузкой
+        # соседних прогонов и красили тест, хотя инвариант держался (находка
+        # DK-635).
         comps = [self.grow("fail.sh", "sleep 1; echo boom; exit 3"),
-                 self.grow("long.sh", "sleep 30; exit 0")]
-        started = time.monotonic()
+                 self.grow("long.sh", "sleep 30; touch done; exit 0")]
+        marker = self.dir / "done"
         outcomes, first = parallel.run_all(comps, 2, root=self.dir)
-        wall = time.monotonic() - started
         self.assertEqual(first, "fail.sh")
-        self.assertLess(wall, 10, "долгий компонент не был остановлен")
+        self.assertFalse(marker.exists(), "долгий компонент не был остановлен")
         self.assertEqual([o[0] for o in outcomes], ["fail.sh"],
                          "остановленный компонент не обязан попадать в итог")
 
@@ -200,20 +206,23 @@ class RunAllTest(Stand):
         self.assertIn("FileNotFoundError", outcomes[0][3])
 
     def test_term_proof_component_is_killed_harder(self):
-        # Компонент с игнорирующим TERM лидером группы обязан умереть по KILL:
-        # стоп по первому провалу иначе виснет на упрямом подпроцессе.
+        # Компонент с игнорирующим TERM лидером группы обязан умереть по
+        # KILL: стоп по первому провалу иначе виснет на упрямом подпроцессе.
+        # Факт смерти ловится меткой, а не стенными секундами (тот же довод,
+        # что у test_first_failure_stops_the_rest): под нагрузкой соседних
+        # прогонов секунды растягиваются далеко за прежний потолок 10, хотя
+        # подпроцесс всё равно гибнет по KILL, не дожив до метки (находка
+        # DK-635).
         stubborn = "#!/bin/sh\ntrap '' TERM\n(sleep 30; touch done) &\nwait\n"
         path = self.dir / "stubborn.sh"
         path.write_text(stubborn, encoding="utf-8")
         path.chmod(0o755)
         marker = self.dir / "done"
-        started = time.monotonic()
         _, first = parallel.run_all([("stubborn.sh", ".", [str(path)]),
                                      self.grow("fail.sh", "sleep 1; exit 2")],
                                     2, root=self.dir)
-        wall = time.monotonic() - started
         self.assertEqual(first, "fail.sh")
-        self.assertLess(wall, 10, "упрямый компонент пережил и TERM, и KILL")
+        time.sleep(0.5)
         self.assertFalse(marker.exists(), "субпроцесс упрямого компонента дожил до метки")
 
 

@@ -750,8 +750,8 @@ func TestDraftGroomWithoutHarnessStaysPlain(t *testing.T) {
 // Ярус разбора называется явно и по умолчанию это pro. Прежде команда шла
 // клиентом без модели вовсе, то есть дефолтом самого клиента: у пользователя
 // это верхний ярус, самая дорогая подписка, которую он не выбирал (замечание
-// пользователя). Второй подписке явная модель по-прежнему не клеится: её
-// называет профиль подписки, и флаг тут спорил бы с её настройкой.
+// пользователя). Второй подписке ярус доезжает той же дорогой: её клиент
+// принимает имя из своей лестницы (DK-750).
 func TestDraftGroomTier(t *testing.T) {
 	setup := func(t *testing.T) (*testEnv, *http.Client, string, string) {
 		t.Helper()
@@ -792,19 +792,23 @@ func TestDraftGroomTier(t *testing.T) {
 		}
 	})
 
-	t.Run("второй подписке явной модели нет", func(t *testing.T) {
+	t.Run("второй подписке ярус доезжает её же моделью", func(t *testing.T) {
 		e, c, tmuxLog, id := setup(t)
 		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom",
 			`{"harness": "втораяtest"}`)
+		text := body(t, resp)
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("груминг на второй подписке: %d %s", resp.StatusCode, body(t, resp))
+			t.Fatalf("груминг на второй подписке: %d %s", resp.StatusCode, text)
 		}
 		got := readFile(t, tmuxLog)
 		if !strings.Contains(got, "exec --harness 'втораяtest'") {
 			t.Errorf("разбор второй подписки поехал мимо её обвязки: %s", got)
 		}
-		if strings.Contains(got, "--model") {
-			t.Errorf("второй подписке приклеили явную модель: %s", got)
+		if !strings.Contains(got, "--model 'вторая-pro'") {
+			t.Errorf("разбор второй подписки потерял модель её яруса: %s", got)
+		}
+		if !strings.Contains(text, `"model":"вторая-pro"`) {
+			t.Errorf("ответ не назвал модель яруса второй подписки: %s", text)
 		}
 	})
 

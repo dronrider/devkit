@@ -393,11 +393,6 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
 		return
 	}
-	// Второй подписке явная модель не клеится: её заказ модели не несёт вовсе,
-	// имя называет профиль подписки, и флаг тут спорил бы с её же настройкой.
-	if own != nil && !own.Default {
-		model = ""
-	}
 	path, rel := draftPathOf(found.Path, id)
 	if !isFile(path) {
 		s.logf("груминг %s в %s отклонён: файл черновика не найден 404", id, found.Name)
@@ -486,9 +481,12 @@ func groomCmd(env, prompt string, h *Harness, model string) string {
 	if h != nil && !h.Default {
 		client = shQuote(binPath(agentctlBin)) + " exec --harness " + shQuote(h.Name) +
 			" -- " + shQuote(h.Bin) + " --permission-mode auto"
-	} else if model != "" {
-		// Ярус разбора называется явно: без флага клиент берёт свой дефолт, а
-		// он бывает и верхним ярусом, за который человек платить не собирался.
+	}
+	if model != "" {
+		// Ярус разбора называется явно всякой подписке: без флага клиент берёт
+		// свой дефолт, а он бывает и верхним ярусом, за который человек платить
+		// не собирался. Имя из лестницы второй подписки её клиент принимает
+		// той же дорогой, что и чат (DK-750).
 		client += " --model " + shQuote(model)
 	}
 	return env + client + " " + shQuote(prompt)

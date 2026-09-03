@@ -786,23 +786,25 @@ func TestChatPaceRuleInEveryOrder(t *testing.T) {
 	}
 }
 
-// Команда чужой подписки идёт без --model: клиент второй подписки берёт свою
-// модель из настроек её каталога конфигурации, а явное имя чужой лестницы
-// claude не узнаёт ([claude-code:unrecognized_model] в панели запуска DK-269)
-// и рискует увести запросы в квоту первой подписки.
-func TestChatCmdSecondHarnessOmitsModel(t *testing.T) {
+// Команда чужой подписки несёт модель выбранным ярусом: клиент второй
+// подписки принимает имя из своей лестницы, и сессия поднимается выбранной
+// моделью, а не дефолтом профиля (DK-750, проба: заказ под agentctl exec
+// отвечает и выходит нулём). Прежний пропуск флага держался на предупреждении
+// unrecognized_model из панели DK-269, а оно оказалось жалобой клиента на
+// незнание окна контекста и оставлено осознанно.
+func TestChatCmdSecondHarnessCarriesModel(t *testing.T) {
 	h := &Harness{Name: "втораяtest", Bin: "клиент-2"}
-	got := chatCmd("", "glm-5.3", "", "посмотри доску", execRotateDefault, h, "agentctl")
-	if strings.Contains(got, "--model") {
-		t.Errorf("заказ второй подписки несёт явную модель: %s", got)
+	got := chatCmd("", "glm-5.3-flash", "", "посмотри доску", execRotateDefault, h, "agentctl")
+	if !strings.Contains(got, " --model 'glm-5.3-flash'") {
+		t.Errorf("заказ второй подписки потерял модель яруса: %s", got)
 	}
 	if !strings.Contains(got, "exec --harness 'втораяtest'") {
 		t.Errorf("заказ второй подписки потерял обёртку exec: %s", got)
 	}
-	// Резюм на второй подписке идёт той же дорогой: без модели в команде.
-	again := chatCmd("", "glm-5.3", "aaaa-1111", "и что вышло", execRotateDefault, h, "agentctl")
-	if strings.Contains(again, "--model") {
-		t.Errorf("резюм второй подписки несёт явную модель: %s", again)
+	// Резюм на второй подписке идёт той же дорогой: с моделью в команде.
+	again := chatCmd("", "glm-5.3-flash", "aaaa-1111", "и что вышло", execRotateDefault, h, "agentctl")
+	if !strings.Contains(again, " --model 'glm-5.3-flash'") {
+		t.Errorf("резюм второй подписки потерял модель яруса: %s", again)
 	}
 	// Подписка по умолчанию остаётся с моделью: выбор селектора панели работает
 	// как работал.

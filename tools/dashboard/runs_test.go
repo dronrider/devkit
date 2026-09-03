@@ -339,12 +339,12 @@ func TestRunStartOnChosenHarness(t *testing.T) {
 	}
 }
 
-// Модель конвейера чужой подписки оседает в памяти диалога: заказ её не
-// называет (клиент подписки берёт свою по умолчанию), а панель без записи
+// Модель конвейера чужой подписки оседает в памяти диалога: панель без записи
 // показывала бы в селекторе умолчание первой подписки поверх второй (живой
-// случай, запуск DK-269 показывал opus). Пишется ярус pro раскладки.
+// случай, запуск DK-269 показывал opus). Пишется ярус pro раскладки, и он же
+// уезжает в заказ клиенту (DK-750).
 func TestRunStartRecordsHarnessModel(t *testing.T) {
-	e, c, _ := runsEnv(t, "")
+	e, c, tmuxLog := runsEnv(t, "")
 	fixture := strings.Replace(harnessJSONFixture,
 		`"bin": "клиент-2", "env": ["CONFIG_DIR"]`,
 		`"bin": "клиент-2", "env": ["CONFIG_DIR"], "models": [`+
@@ -358,6 +358,9 @@ func TestRunStartRecordsHarnessModel(t *testing.T) {
 	}
 	if got := e.s.chatStoreRead("tmux-task-XR-002").Model; got != "глм-про" {
 		t.Errorf("память диалога конвейера держит модель %q, ждал модель яруса pro подписки", got)
+	}
+	if got := readFile(t, tmuxLog); !strings.Contains(got, "--model 'глм-про'") {
+		t.Errorf("запуск второй подписки потерял модель её яруса: %s", got)
 	}
 }
 
@@ -1251,21 +1254,25 @@ func TestRunStartTierFromVerdict(t *testing.T) {
 		}
 	})
 
-	t.Run("второй подписке явной модели нет", func(t *testing.T) {
+	t.Run("второй подписке ярус доезжает её же моделью", func(t *testing.T) {
 		e, c, tmuxLog := runsEnv(t, "")
 		writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
 		writeScript(t, e.bin, "клиент-2", "exit 0")
 		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
 			`{"id": "XR-002", "harness": "втораяtest"}`)
-		if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("запуск на второй подписке: %d %s", resp.StatusCode, text)
 		}
 		got := readFile(t, tmuxLog)
 		if !strings.Contains(got, "exec --harness 'втораяtest'") {
 			t.Errorf("запуск второй подписки поехал мимо её обвязки: %s", got)
 		}
-		if strings.Contains(got, "--model") {
-			t.Errorf("второй подписке приклеили явную модель: %s", got)
+		if !strings.Contains(got, "--model 'вторая-pro'") {
+			t.Errorf("запуск второй подписки потерял модель её яруса: %s", got)
+		}
+		if !strings.Contains(text, `"model":"вторая-pro"`) {
+			t.Errorf("ответ не назвал модель яруса второй подписки: %s", text)
 		}
 	})
 }

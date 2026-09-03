@@ -350,7 +350,13 @@ const silentEnv = "DEVKIT_SILENT=1"
 // homeEnv собирает окружение подпроцесса с настоящим домом: остальное
 // наследуется как было. silent помечает вызов служебным.
 func homeEnv(silent bool) []string {
-	home := realHome()
+	return homeEnvAt(realHome(), silent)
+}
+
+// homeEnvAt это то же окружение с названным домом. Дом приходит доводом там,
+// где его выбирает зовущий, а не машина: настройки харнеса ищутся под домом
+// пользователя, а стенду нужен свой.
+func homeEnvAt(home string, silent bool) []string {
 	out := []string{}
 	for _, kv := range os.Environ() {
 		// Свои ключи переставляются заново, чтобы унаследованные не спорили с
@@ -386,13 +392,18 @@ func runProcHome(name string, args ...string) ([]byte, error) {
 // служебный вызов из каталога проекта всплыл бы в его списке чатов отдельной
 // сессией. Пустой dir оставляет директорию процесса.
 func runProcQuiet(dir string, silent bool, name string, args ...string) ([]byte, error) {
+	return runProcQuietAt(realHome(), dir, silent, name, args...)
+}
+
+// runProcQuietAt это тот же служебный запуск под названным домом.
+func runProcQuietAt(home, dir string, silent bool, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), procTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	if env := homeEnv(silent); env != nil {
+	if env := homeEnvAt(home, silent); env != nil {
 		cmd.Env = env
 	}
 	cmd.WaitDelay = time.Second

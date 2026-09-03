@@ -104,6 +104,45 @@ func needCheckRun(root string, row boardRow) string {
 	return ""
 }
 
+// permsRel это перечень прав машинного контура внутри чекаута devkit. Ищется
+// он там же и тем же порядком, что оболочка конвейера.
+const permsRel = "tools/devkitctl/perms.py"
+
+func permsPath(roots []string) string {
+	if tree := devkitOwnTree(); tree != "" {
+		if p := filepath.Join(tree, filepath.FromSlash(permsRel)); isFile(p) {
+			return p
+		}
+	}
+	return inRoots(roots, permsRel)
+}
+
+// permsRefusal это предполётная проверка прав, тот же барьер, каким виток цели
+// закрыт от старта без прав. Проход прогона идёт headless, одобрить запрос
+// разрешения в нём некому, и сессия без прав вставала на первом же вызове,
+// паркуя задачу вопросом к человеку: со стороны это неотличимо от молчания, и
+// цель стояла до тех пор, пока человек сам не заглянет в панель (DK-739).
+// Пусто значит «поднимать можно», непустое это слова отказа для отчёта.
+//
+// Права спрашиваются под домом пользователя: демон живёт под launchd с
+// подложным HOME, и разложенных доктором настроек харнеса в нём нет.
+func (s *server) permsRefusal() string {
+	p := permsPath(s.cfg.Roots)
+	if p == "" {
+		return "перечня прав машинного контура не нашлось в корнях конфига (" + permsRel +
+			"): проверить их нечем, а без них сессия без человека встаёт на первом же" +
+			" запросе разрешения; нужен чекаут devkit в одном из корней"
+	}
+	out, err := runProcQuietAt(realHome(), "", true, "python3", p)
+	if err == nil {
+		return ""
+	}
+	if msg := strings.TrimSpace(string(out)); msg != "" {
+		return msg
+	}
+	return "перечень прав " + p + " не ответил: " + procErr(err)
+}
+
 // taskDocPath это файл задачи в корне проекта.
 func taskDocPath(root, id string) string {
 	return filepath.Join(root, "docs", "tasks", id+".md")
@@ -150,6 +189,12 @@ func (s *server) checkRun(proj *Project, id string, rows map[string]boardRow) ch
 	own := s.harnesses().byDefault()
 	if m := claudeMissing(); m != "" {
 		return checkRunReport{Line: id + ": прогон не поднят, " + m, Failed: true}
+	}
+	// Права машинного контура спрашиваются до подъёма: поднять сессию, которая
+	// упрётся в первый же запрос разрешения, дороже, чем отказать словами.
+	if why := s.permsRefusal(); why != "" {
+		return checkRunReport{Failed: true, Line: id +
+			": прогон не поднят, права машинного контура на машине не разложены: " + why}
 	}
 	// Ярус проверяющего берётся ролью ревью, а не исполнительским вердиктом:
 	// прогон это второй взгляд на ту же работу, независимость у него та же, что

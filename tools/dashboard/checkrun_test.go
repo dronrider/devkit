@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -40,7 +41,79 @@ func checkEnv(t *testing.T, sessions string) (*testEnv, string) {
 	t.Helper()
 	e, _, tmuxLog := runsEnv(t, sessions)
 	writeDeployLocal(t, e.proj, "deploy = true\nautonomous = true\n")
+	// Перечень прав спрашивается перед каждым подъёмом, и без него стенд
+	// упирался бы в отказ раньше всякого своего барьера. Фикстура отвечает
+	// «права на месте», а отказ проверяется своим тестом.
+	writePermsFake(t, filepath.Dir(e.proj), false)
 	return e, tmuxLog
+}
+
+// permsFakeDir это каталог перечня прав в синтетическом чекауте devkit.
+func permsFakeDir(root string) string {
+	return filepath.Join(root, "devkit", "tools", "devkitctl")
+}
+
+// writePermsFake кладёт заглушку перечня прав: она пишет в журнал дом вызова и
+// отвечает нехваткой прав, когда стенд просит отказа. Живой perms.py тут не
+// годится, он читает настройки машины, а стенду нужен свой ответ.
+func writePermsFake(t *testing.T, root string, deny bool) string {
+	t.Helper()
+	dir := permsFakeDir(root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(dir, "perms.calls")
+	body := "import os, sys\n" +
+		"open(" + strconv.Quote(log) + ", 'a').write(os.environ.get('HOME', '') + chr(10))\n"
+	if deny {
+		body += "print('в ~/.claude/settings.json не хватает прав машинного контура, " +
+			"2 из 37 (Bash(node:*), Bash(dashboard:*)); разложить: python3 devkitctl.py doctor --fix')\n" +
+			"sys.exit(1)\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, "perms.py"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return log
+}
+
+// Прав машинного контура на машине нет: подъём не начинается вовсе, а отчёт
+// называет причину словами. Раньше сессия поднималась вслепую, упиралась в
+// первый же запрос разрешения, одобрить который некому, и паркой задачи
+// вопросом к человеку останавливала цель на часы (DK-739).
+func TestCheckRunRefusesWithoutPerms(t *testing.T) {
+	e, tmuxLog := checkEnv(t, "")
+	writePermsFake(t, filepath.Dir(e.proj), true)
+	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc)
+
+	rep := checkRunOne(t, e, "XR-003")
+	if !rep.Failed || rep.Raised {
+		t.Fatalf("подъём без прав не отказал: %+v", rep)
+	}
+	for _, want := range []string{"прогон не поднят", "прав машинного контура", "doctor --fix"} {
+		if !strings.Contains(rep.Line, want) {
+			t.Errorf("в отказе нет %q: %s", want, rep.Line)
+		}
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("сессия всё-таки поднята: %s", got)
+	}
+}
+
+// Права спрашиваются под домом пользователя, а не под домом процесса: демон
+// живёт под launchd с подложным HOME, и разложенных доктором настроек в нём
+// нет вовсе.
+func TestCheckRunAsksPermsUnderUserHome(t *testing.T) {
+	e, _ := checkEnv(t, "")
+	log := filepath.Join(permsFakeDir(filepath.Dir(e.proj)), "perms.calls")
+	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc)
+
+	if rep := checkRunOne(t, e, "XR-003"); !rep.Raised {
+		t.Fatalf("прогон не поднят: %+v", rep)
+	}
+	got := strings.TrimSpace(readFile(t, log))
+	if got != realHome() {
+		t.Errorf("перечень прав позван под домом %q, а дом пользователя %q", got, realHome())
+	}
 }
 
 // writeDeployLocal кладёт обвязку выката в корень синтетического проекта.

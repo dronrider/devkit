@@ -269,7 +269,7 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 				// Ярус вердикта называется явной моделью: без флага клиент брал
 				// свой дефолт, а он бывает верхним ярусом, которого задаче никто
 				// не назначал.
-				" -- claude --model 'модель-pro'",
+				" -- claude --permission-mode auto --model 'модель-pro'",
 			} {
 				if !strings.Contains(got, want) {
 					t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
@@ -1196,7 +1196,7 @@ func TestRunStartTierFromVerdict(t *testing.T) {
 			t.Errorf("ответ не назвал ярус вердикта и его источник: %s", text)
 		}
 		got := readFile(t, tmuxLog)
-		if !strings.Contains(got, "-- claude --model 'модель-base'") {
+		if !strings.Contains(got, "-- claude --permission-mode auto --model 'модель-base'") {
 			t.Errorf("команда конвейера поехала не ярусом вердикта: %s", got)
 		}
 	})
@@ -1215,7 +1215,7 @@ func TestRunStartTierFromVerdict(t *testing.T) {
 		if !strings.Contains(text, "яруса не назвал") {
 			t.Errorf("подмена яруса прошла молча, а её обязано быть видно: %s", text)
 		}
-		if got := readFile(t, tmuxLog); !strings.Contains(got, "-- claude --model 'модель-pro'") {
+		if got := readFile(t, tmuxLog); !strings.Contains(got, "-- claude --permission-mode auto --model 'модель-pro'") {
 			t.Errorf("откатный ярус не доехал до команды: %s", got)
 		}
 	})
@@ -1294,5 +1294,23 @@ func TestRunStartGoalCarriesTier(t *testing.T) {
 	}
 	if got := readFile(t, calls); !strings.Contains(got, "--tier base") {
 		t.Errorf("выбранный ярус не доехал до оболочки цели: %q", got)
+	}
+}
+
+// Клиент своей подписки поднимается в том же режиме разрешений, что и клиент
+// чужой: проход идёт headless, окна у него нет, и запрос разрешения одобрить
+// некому. Без флага дашборд перебивал умолчание самой оболочки проходов
+// (task-run.py ставит режим себе сам), и прогон сценария после автономного
+// слияния вставал на первом же требующем подтверждения вызове (DK-739).
+func TestClientCommandOwnHarnessGetsPermissionMode(t *testing.T) {
+	got := clientCommand("agentctl", nil, "opus")
+	if !strings.Contains(got, "--permission-mode auto") {
+		t.Errorf("своя подписка поднята без режима разрешений: %q", got)
+	}
+	if !strings.Contains(got, "--model 'opus'") {
+		t.Errorf("ярус потерялся: %q", got)
+	}
+	if bare := clientCommand("agentctl", nil, ""); !strings.Contains(bare, "--permission-mode auto") {
+		t.Errorf("запуск без яруса поднят без режима разрешений: %q", bare)
 	}
 }

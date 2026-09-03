@@ -256,6 +256,15 @@ func TestPushGateRefusesCodeWithoutReviewTrace(t *testing.T) {
 	if !strings.Contains(err.Error(), "taskctl review level") {
 		t.Fatalf("отказ не говорит, чем поставить след: %v", err)
 	}
+	// DK-763: отказ не подсказывает субагенту обход рубежа, тот читает
+	// подсказку как разрешённую команду, а не как след прямого слова
+	// человека.
+	if strings.Contains(err.Error(), "DEVKIT_PUSH_OK") {
+		t.Fatalf("отказ называет переменную обхода: %v", err)
+	}
+	if strings.Contains(err.Error(), "--no-verify") {
+		t.Fatalf("отказ подсказывает --no-verify: %v", err)
+	}
 }
 
 // TestPushGatePassesWithReviewNote: заметка ревью ровно на HEAD пропускает код.

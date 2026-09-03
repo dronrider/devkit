@@ -177,7 +177,9 @@ func short(sha string) string {
 // Чистая доска без единого код-коммита проходит без следа: правило требует
 // пушить коммит доски сразу, а ревьюить там нечего. Прямая команда пользователя
 // (DEVKIT_PUSH_OK=1) снимает этот ворот вместе с рубежом пуша: она снимается
-// раньше, в самом хуке, и до проверки дело не доходит.
+// раньше, в самом хуке, и до проверки дело не доходит. Имя переменной в текст
+// отказа не идёт (DK-763). Субагент читает отказ как список того, что можно
+// сделать самому, а подсказка человеческого обхода в нём читается инструкцией.
 func reviewTraceGate(root, remoteSHA, localSHA string) error {
 	code, err := hasCodeCommit(root, remoteSHA, localSHA)
 	if err != nil || !code {
@@ -207,7 +209,7 @@ func reviewTraceGate(root, remoteSHA, localSHA string) error {
   вне доски: taskctl review level <ярлык> <0-3> "причина" (заметка git на HEAD, ref %s),
     ревью без замечаний это taskctl review clean <ярлык> "пояснение";
   у ветки задачи доски: taskctl review level <ID> <0-3> "причина", строка встаёт в docs/tasks/<ID>.md.
-Прямая команда пользователя снимает рубеж переменной DEVKIT_PUSH_OK=1`,
+Обход остаётся за человеком, он описан в README shipctl.`,
 		short(remoteSHA), short(localSHA), seen, short(head), reviewnote.Ref)
 }
 

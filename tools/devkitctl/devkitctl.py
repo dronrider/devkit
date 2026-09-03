@@ -207,17 +207,22 @@ POST_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py",
 # --config: список метрик живёт в коде хука, и второй копии тут не заводится.
 PROSE_HOOK = "check-prose.py"
 # Рубежи на PreToolUse Bash: чтение секретов (DK-228), подстановка в свободном
-# тексте у утилит devkit (DK-452) и след ревью у пуша и создания MR. Записей на
-# матчере Bash три, и сообщение в hook_gaps у каждой своё: неподключённый
-# check-subst это дыра инъекции, а не чтение секретов, а неподключённый
-# check-review это код наружу без ревью.
-PRE_SCRIPTS = ("check-read-secret.py", "check-subst.py", "check-review.py")
+# тексте у утилит devkit (DK-452), след ревью у пуша и создания MR и связка cd
+# со второй командой (DK-770). Записей на матчере Bash четыре, и сообщение в
+# hook_gaps у каждой своё: неподключённый check-subst это дыра инъекции, а не
+# чтение секретов, неподключённый check-review это код наружу без ревью, а
+# неподключённый check-cd-compound это стоп автономной сессии на человеке.
+PRE_SCRIPTS = ("check-read-secret.py", "check-subst.py", "check-review.py",
+               "check-cd-compound.py")
 PRE_GAPS = {
     "check-read-secret.py": "чтение секретов через Bash идёт мимо хука",
     "check-subst.py": "подстановка в текстовом аргументе утилит devkit "
                       "исполняется до их вызова (DK-452)",
     "check-review.py": "код агента уходит в origin и становится MR без следа "
                        "ревью, а вне доски ворот слияния его не ловит",
+    "check-cd-compound.py": "связка cd со второй командой доходит до "
+                            "классификатора прав, и автономная сессия встаёт "
+                            "вопросом к человеку (DK-770)",
 }
 # Рубежи на PreToolUse Read. Категория отдельная от проверок текстов и от чтения
 # секретов через Bash, и сообщение про каждый своё. Записей на одном матчере
@@ -314,6 +319,7 @@ HOOK_LAYOUT = (
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-read-secret.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-subst.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-review.py --hook"),
+    ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-cd-compound.py --hook"),
     ("PreToolUse", SYNC_MATCHER, "python3 %s/hooks/check-background.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),

@@ -45,7 +45,7 @@ func setup(t *testing.T, inProg, check string) (root, callLog string) {
 	write(t, root, "docs/TASKS.md", board)
 	write(t, root, "docs/tasks/XR-001.md",
 		"# XR-001: починка бага\n\n## Сценарий проверки\n\nАгентский: `git log -1`, ждём коммит правки.\n"+
-			"\n## Ревью\n\n- гонка в close: исправлено\n- нейминг: отклонено, стиль проекта\n")
+			fixtureReviewLevel+"\n- гонка в close: исправлено\n- нейминг: отклонено, стиль проекта\n")
 	write(t, root, "code.txt", "old\n")
 	// .devkit/cmdout это место, куда DK-266 складывает полные выводы провалившихся
 	// команд из сводки frame.Summarize: в репозитории проекта каталог гитигнорнут
@@ -74,6 +74,11 @@ func setup(t *testing.T, inProg, check string) (root, callLog string) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return root, callLog
 }
+
+// fixtureReviewLevel это раздел «Ревью» со строкой уровня: без неё ворот следа
+// ревью отбивает merge, а предмет почти всех тестов тут не ревью. Замечания в
+// фикстурах дописываются следом за строкой уровня, как их пишет taskctl.
+const fixtureReviewLevel = "\n## Ревью\n\nУровень 1 до 1a2b3c4: рутина, тронут один файл.\n"
 
 func write(t *testing.T, root, name, content string) {
 	t.Helper()
@@ -664,7 +669,7 @@ func branchFor(t *testing.T, root, id, branch, file string) {
 // его содержание. Звать до branchFor, чтобы файл ушёл на main и поднялся веткой.
 func taskWithScenario(t *testing.T, root, id string) {
 	t.Helper()
-	write(t, root, "docs/tasks/"+id+".md", "# "+id+": заголовок\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n")
+	write(t, root, "docs/tasks/"+id+".md", "# "+id+": заголовок\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureReviewLevel)
 	gitT(t, root, "add", "docs/tasks/"+id+".md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): "+id+" файл задачи")
 }
@@ -691,7 +696,7 @@ func TestTrainMergeAndShip(t *testing.T) {
 	// Коммит только по файлам задач попадает в окно тега, но членства в
 	// поезде не даёт: запись «в работу» это не код. Сценарий в файле нужен,
 	// чтобы дальше XR-003 прошла ворот сценария при своём слиянии.
-	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n")
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureReviewLevel)
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 файл")
 	st, err := cmdStatus(root)

@@ -64,7 +64,7 @@ func TestMergeTestsGateRustLayout(t *testing.T) {
 // перенос константы), не снимая ворот для остальных задач.
 func TestMergeTestsGateOverride(t *testing.T) {
 	root, _ := setup(t, rowInProg3, "")
-	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n\n## Ход работы\n\n- Исключение: тесты (правка конфигурации, тест неприменим)\n")
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureReviewLevel+"\n## Ход работы\n\n- Исключение: тесты (правка конфигурации, тест неприменим)\n")
 	gitT(t, root, "add", "docs/tasks/XR-003.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 пометка тестов")
 	branchCodeOnly(t, root, "xr-003-fix", "config.txt")
@@ -77,7 +77,7 @@ func TestMergeTestsGateOverride(t *testing.T) {
 // требует: кода нет, тест не нужен. Ворот снимается, а не падает.
 func TestMergeTestsGateDocsOnly(t *testing.T) {
 	root, _ := setup(t, rowInProg3, "")
-	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n")
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureReviewLevel)
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 файл задачи")
 	gitT(t, root, "checkout", "-qb", "xr-003-docs", "main")
@@ -93,7 +93,7 @@ func TestMergeTestsGateDocsOnly(t *testing.T) {
 // проверка неприменима (задача проверяется вместе с другой, разбор без выката).
 func TestMergeScenarioGateOverride(t *testing.T) {
 	root, _ := setup(t, rowInProg3, "")
-	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Ход работы\n\n- Исключение: сценарий (проверяется вместе с XR-001)\n")
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Ход работы\n\n- Исключение: сценарий (проверяется вместе с XR-001)\n"+fixtureReviewLevel)
 	gitT(t, root, "add", "docs/tasks/XR-003.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 пометка сценария")
 	branchFor(t, root, "XR-003", "xr-003-fix", "feature.txt")
@@ -178,5 +178,70 @@ func TestHasException(t *testing.T) {
 	// другом репо» не расходятся в написании.
 	if hasException("- Исключение: тесты в другом репо\n", "тесты") {
 		t.Error("хвост без скобок не должен подходить под имя ворот")
+	}
+}
+
+// reviewDocFor кладёт файл задачи со сценарием и заданным разделом «Ревью» и
+// коммитит его на main: ветка задачи поднимается отсюда, и ворот читает файл
+// уже в её дереве.
+func reviewDocFor(t *testing.T, root, id, review string) {
+	t.Helper()
+	write(t, root, "docs/tasks/"+id+".md", "# "+id+"\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+review)
+	gitT(t, root, "add", "docs/tasks/"+id+".md")
+	gitT(t, root, "commit", "-qm", "docs(tasks): "+id+" файл задачи")
+}
+
+// TestMergeReviewLevelGateMissingSection: файл задачи без раздела «Ревью»
+// слиянию не годится. Ревью, прошедшее мимо скилла, машинного следа не
+// оставляет, и молчание тут неотличимо от пропущенного ревью.
+func TestMergeReviewLevelGateMissingSection(t *testing.T) {
+	root, _ := setup(t, rowInProg3, "")
+	reviewDocFor(t, root, "XR-003", "")
+	branchFor(t, root, "XR-003", "xr-003-fix", "feature.txt")
+	head := gitT(t, root, "rev-parse", "main")
+	_, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
+	if err == nil || !strings.Contains(err.Error(), "нет строки уровня ревью") {
+		t.Fatalf("задача без раздела «Ревью» должна отбиваться воротом: %v", err)
+	}
+	if gitT(t, root, "rev-parse", "main") != head {
+		t.Fatal("отказ по вороту случился после слияния, а не до него")
+	}
+}
+
+// TestMergeReviewLevelGateNoLevelLine: раздел «Ревью» с одними замечаниями
+// ворот не открывает. Замечания пишет и ревью мимо скилла, уровень пишет
+// только скилл.
+func TestMergeReviewLevelGateNoLevelLine(t *testing.T) {
+	root, _ := setup(t, rowInProg3, "")
+	reviewDocFor(t, root, "XR-003", "\n## Ревью\n\n- нейминг: отклонено, стиль проекта\n")
+	branchFor(t, root, "XR-003", "xr-003-fix", "feature.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true}); err == nil ||
+		!strings.Contains(err.Error(), "нет строки уровня ревью") {
+		t.Fatalf("раздел без строки уровня должен отбиваться: %v", err)
+	}
+}
+
+// TestMergeReviewLevelGatePasses: строка уровня первой строкой раздела ворот
+// открывает, а нулевой уровень проходит наравне с прочими: это записанный с
+// причиной пропуск ревью, а не молчание.
+func TestMergeReviewLevelGatePasses(t *testing.T) {
+	for _, level := range []string{"2", "0"} {
+		root, _ := setup(t, rowInProg3, "")
+		reviewDocFor(t, root, "XR-003", "\n## Ревью\n\nУровень "+level+" до 1a2b3c4: тронут tools/shipctl.\n")
+		branchFor(t, root, "XR-003", "xr-003-fix", "feature.txt")
+		if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true}); err != nil {
+			t.Fatalf("уровень %s должен открывать ворот: %v", level, err)
+		}
+	}
+}
+
+// TestMergeReviewLevelGateOverride: пометка-исключение гасит ворот следа ревью
+// тем же порядком, что и соседние.
+func TestMergeReviewLevelGateOverride(t *testing.T) {
+	root, _ := setup(t, rowInProg3, "")
+	reviewDocFor(t, root, "XR-003", "\n## Ход работы\n\n- Исключение: ревью (правка ведётся в main мимо ветки)\n")
+	branchFor(t, root, "XR-003", "xr-003-fix", "feature.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true}); err != nil {
+		t.Fatalf("пометка-исключение должна гасить ворот следа ревью: %v", err)
 	}
 }

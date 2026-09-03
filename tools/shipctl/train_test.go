@@ -163,7 +163,7 @@ func TestTrainScenarioProseIsNotScenario(t *testing.T) {
 func TestTrainScenarioWarningReadsBranch(t *testing.T) {
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	wt := startTask(t, root, "XR-003", "b.txt")
-	write(t, wt, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: shipctl status.\n")
+	write(t, wt, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: shipctl status.\n"+fixtureReviewLevel)
 	gitT(t, wt, "add", ".")
 	gitT(t, wt, "commit", "-qm", "docs(tasks): XR-003 сценарий проверки")
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})

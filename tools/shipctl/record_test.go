@@ -216,8 +216,8 @@ func TestMergeIgnoresFencedReviewNote(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	write(t, root, "docs/tasks/XR-001.md", "# XR-001: починка бага\n\n"+
 		"## Сценарий проверки\n\nВывод taskctl review show соседней задачи:\n\n"+
-		"```\n## Ревью\n\n- гонка в close без исхода\n```\n\n"+
-		"## Ревью\n\n- нейминг: отклонено, стиль проекта\n")
+		"```\n## Ревью\n\n- гонка в close без исхода\n```\n"+
+		fixtureReviewLevel+"\n- нейминг: отклонено, стиль проекта\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 сценарий проверки")
 	branchWithFix(t, root)

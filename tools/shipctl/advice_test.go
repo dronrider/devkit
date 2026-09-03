@@ -41,7 +41,7 @@ func TestMergeRegcheckGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, root, ".devkit/log", "")
-	write(t, root, "docs/tasks/XR-001.md", "# XR-001: починка бага\n\n## Сценарий проверки\n\nАгентский: `git log -1`.\n\n## Ход работы\n\n- Исключение: regcheck (правка и тест в одном файле)\n")
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001: починка бага\n\n## Сценарий проверки\n\nАгентский: `git log -1`.\n\n## Ход работы\n\n- Исключение: regcheck (правка и тест в одном файле)\n"+fixtureReviewLevel)
 	gitT(t, root, "add", "docs/tasks/XR-001.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 пометка regcheck")
 	branchWithFix(t, root)

@@ -33,13 +33,61 @@ class MachinePermsTest(SandboxCase):
         # tools: право без подтверждения выдаётся разбором, а не тем, что рядом
         # собралась ещё одна утилита.
         need = (
-            ("Bash(dashboard:*)", "сквозной прогон дашборда, `dashboard smoke`"),
+            ("Bash(dashboard check:*)", "подъём прогона сценария после выката"),
+            ("Bash(dashboard smoke:*)", "сквозной прогон дашборда"),
             ("Bash(devkitctl:*)", "обвязка проекта: в PATH стоит обёртка, и Bash(python3:*) её не кроет"),
             ("Bash(node:*)", "стенды дашборда, `node testdata/*.mjs`"),
         )
         for rule, why in need:
             self.assertTrue(perms.covered(rule, perms.MACHINE_ALLOW),
                             "в перечне прав нет %s: %s" % (rule, why))
+
+    # Подкоманды, чей вывод несёт секрет или рвёт человеку вход. Право
+    # машинного контура до них доходить не должно ни строкой, ни шириной маски:
+    # сессия без человека печатает такой вывод себе в контекст, а подтверждения
+    # у неё никто не спрашивает. Список живёт в стенде, а не в perms.py, потому
+    # что это ожидание к раскладке, а не сама раскладка.
+    SECRET_COMMANDS = (
+        ("dashboard secret", "печатает живой токен входа панели, а с --rotate разом "
+                             "разлогинивает все сессии, включая человека за ней"),
+    )
+
+    @staticmethod
+    def masked(rule, cmd):
+        """Кроет ли allow-правило харнеса команду cmd. Правило Bash(x:*)
+        разрешает всё, что начинается со слова x, Bash(x y:*) сужает разрешение
+        до префикса из двух слов, голое Bash разрешает любую команду."""
+        if rule in ("Bash", "Bash(*)"):
+            return True
+        if not (rule.startswith("Bash(") and rule.endswith(")")):
+            return False
+        pat = rule[len("Bash("):-1]
+        for tail in (":*", "*"):
+            if pat.endswith(tail):
+                pat = pat[:-len(tail)]
+                break
+        pat = pat.strip()
+        if not pat:
+            return True
+        return cmd == pat or cmd.startswith(pat + " ") or pat.startswith(cmd + " ")
+
+    def test_masked_reads_rule_prefix(self):
+        # Стенд самого приёма. Без него сторож ниже молчал бы и на широком
+        # праве, а молчание тут читалось бы как порядок.
+        self.assertTrue(self.masked("Bash(dashboard:*)", "dashboard secret"))
+        self.assertTrue(self.masked("Bash", "dashboard secret"))
+        self.assertFalse(self.masked("Bash(dashboard check:*)", "dashboard secret"))
+        self.assertFalse(self.masked("Bash(git:*)", "dashboard secret"))
+        self.assertFalse(self.masked("Read", "dashboard secret"))
+
+    def test_masks_do_not_reach_secret_commands(self):
+        # Ревью DK-739: Bash(dashboard:*) крыло и `dashboard secret`. Ширину
+        # маски глазами не видно, и следующая попытка выдать право на целый
+        # бинарь с секретной подкомандой должна падать тут.
+        for rule in perms.MACHINE_ALLOW:
+            for cmd, why in self.SECRET_COMMANDS:
+                self.assertFalse(self.masked(rule, cmd),
+                                 "право %s кроет «%s»: %s" % (rule, cmd, why))
 
     def test_missing_perms_are_found_and_fixed(self):
         data = json.loads(read(self.settings))

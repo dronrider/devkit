@@ -226,3 +226,70 @@ func TestChatAskSignWithoutSessionStaysInItsTask(t *testing.T) {
 		t.Fatalf("чужой безадресный вопрос приехал в разговор без задачи: %s", text)
 	}
 }
+
+// askPermLine строит строку журнала уведомителя про вопрос разрешения на
+// названное время: вторая такая строка это второй вопрос клиента, и отметка
+// события у сессии меняется.
+func askPermLine(sid string, at time.Time) string {
+	return at.Format("2006-01-02T15:04:05") + " сессия " + sid[:8] +
+		" повод permission_prompt уровень громкий бэкенд terminal-notifier цель - задача - проект demo " +
+		"код возврата: 0 текст «devkit: нужно разрешение» «Claude needs your permission»"
+}
+
+// Замечание ревью DK-695: свежесть ответа панели меряется отметкой события, а не
+// сроком. Живой случай 01.09 держал липкость `chatStuck` 5м50с, дольше окна
+// подавления `askQuietWindow`, и строка на шестой минуте снова винила рабочий
+// разбор. Пока журнал уведомителя про сессию молчит, ответ панели объясняет
+// пустой снимок, сколько бы времени ни прошло.
+func TestAskQuietAfterPanelAnswerOutlivesWindow(t *testing.T) {
+	now := time.Date(2026, 9, 1, 14, 15, 44, 0, time.Local)
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	e, c, lc := askRoadEnv(t, sid, "XR-1", now)
+	askRoadPane(t, e, " Чинить сейчас?\n\n \u276f 1. Починить сейчас\n   2. Отложить\n\n"+
+		" Enter to confirm \u00b7 Esc to cancel\n")
+
+	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/ask"
+	resp := doReq(t, c, "POST", at, `{"option": 1}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("ответ на вопрос: %d %s", resp.StatusCode, text)
+	}
+	// Тот же разрыв, что у девятой строки живого случая: 5м50с, окно подавления
+	// давно вышло, а нового события у сессии не появилось.
+	e.s.now = func() time.Time { return now.Add(5*time.Minute + 50*time.Second) }
+	askRoadPane(t, e, " Работаю дальше.\n\n\u276f \n")
+	body(t, doReq(t, c, "GET", at, ""))
+
+	line := askRoadLine(t, lc)
+	if !strings.Contains(line, "панель ответила виджету") {
+		t.Errorf("строка журнала не назвала ответ панели: %s", line)
+	}
+	if strings.Contains(line, "разбор надо чинить") {
+		t.Errorf("через 5м50с после ответа строка снова винит рабочий разбор: %s", line)
+	}
+}
+
+// Клиент встал на следующем вопросе: в журнале уведомителя появилось второе
+// событие, отметка сменилась, и прошлый ответ панели молчания больше не
+// объясняет. Тут разбор снимка и правда стоит чинить.
+func TestAskQuietBlamesParseAfterNewPrompt(t *testing.T) {
+	now := time.Date(2026, 9, 1, 14, 15, 44, 0, time.Local)
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	e, c, lc := askRoadEnv(t, sid, "XR-1", now)
+	askRoadPane(t, e, " Чинить сейчас?\n\n \u276f 1. Починить сейчас\n   2. Отложить\n\n"+
+		" Enter to confirm \u00b7 Esc to cancel\n")
+
+	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/ask"
+	resp := doReq(t, c, "POST", at, `{"option": 1}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("ответ на вопрос: %d %s", resp.StatusCode, text)
+	}
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid), askPermLine(sid, now.Add(time.Minute))})
+	e.s.now = func() time.Time { return now.Add(5*time.Minute + 50*time.Second) }
+	askRoadPane(t, e, " Работаю дальше.\n\n\u276f \n")
+	body(t, doReq(t, c, "GET", at, ""))
+
+	line := askRoadLine(t, lc)
+	if !strings.Contains(line, "разбор надо чинить") {
+		t.Errorf("новый вопрос клиента списан на прошлый ответ панели: %s", line)
+	}
+}

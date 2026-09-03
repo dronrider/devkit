@@ -2555,9 +2555,19 @@ func withLost(lost []string, text string) string {
 // событие сессии это запрос разрешения, значит с тех пор ход не кончался.
 // Транскрипту тут веры нет, его двигают и сами вставшие в очередь реплики.
 func (s *server) chatStuck(sid string) string {
+	why, _ := s.chatStuckMark(sid)
+	return why
+}
+
+// chatStuckMark отдаёт то же суждение и вдобавок саму строку журнала, на
+// которой оно стоит. Строка это отметка события: пока она не сменилась, в
+// журнале уведомителя про эту сессию ничего нового не произошло. Срока у
+// липкости нет вовсе, и мерить её временем нечем (замечание ревью DK-695:
+// живой случай 01.09 держал липкость 5м50с, то есть дольше окна askQuietWindow).
+func (s *server) chatStuckMark(sid string) (why, mark string) {
 	data, err := os.ReadFile(s.notifyPath())
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	lines := tailLines(data, tailDefault)
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -2566,15 +2576,16 @@ func (s *server) chatStuck(sid string) string {
 			continue
 		}
 		if n.Reason != "permission_prompt" {
-			return ""
+			return "", ""
 		}
+		mark = lines[i]
 		// Время хода тут не судья: запись транскрипта ложится и перед самым
 		// вопросом (вызов инструмента, которым вопрос и вызван), и «ход свежее
 		// вопроса» ответа на вопрос не доказывает. Закрывает запись следующее
 		// событие сессии, и так это работало до сих пор.
-		return "агент ждёт разрешения в своём окне: реплика встала в очередь и хода не даёт"
+		return "агент ждёт разрешения в своём окне: реплика встала в очередь и хода не даёт", mark
 	}
-	return ""
+	return "", ""
 }
 
 // handleChatAsk отдаёт вопрос, на котором стоит клиент разговора. Спрашивает
@@ -2636,7 +2647,7 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		// а не плашкой человеку (решение пользователя). Плашка тут ничего не
 		// объясняла и ничего не предлагала, а вылезала и на уже отвеченном
 		// опросе.
-		s.askQuietLog(sid, name, askSignWhy(found.Path, sid, s.binds(), s.now()), s.askPaneWhy(sid, echo))
+		s.askQuietLog(sid, name, found.Path, echo)
 		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
 			"note": fmt.Sprintf("клиент %s ни о чём не спрашивает", name)})
 		return
@@ -2674,8 +2685,9 @@ const askQuietWindow = 5 * time.Minute
 // каждая отчитывается своими словами: одна строка на обе не давала разложить
 // случай и стоила второго захода (живой случай DK-695, девять строк за двое
 // суток). Человеку тут сказать нечего, он и так видит своё окно.
-func (s *server) askQuietLog(sid, name, sign, pane string) {
-	if s.chatStuck(sid) == "" {
+func (s *server) askQuietLog(sid, name, projPath string, echo bool) {
+	why, mark := s.chatStuckMark(sid)
+	if why == "" {
 		return
 	}
 	s.mu.Lock()
@@ -2691,35 +2703,55 @@ func (s *server) askQuietLog(sid, name, sign, pane string) {
 	s.askQuiet[sid] = now
 	s.mu.Unlock()
 	s.logf("клиент %s похоже ждёт ответа, а показывать нечего: дорога признака ожидания: %s; "+
-		"дорога снимка панели: %s", name, sign, pane)
+		"дорога снимка панели: %s", name, askSignWhy(projPath, sid, s.binds(), now),
+		s.askPaneWhy(sid, echo, mark))
 }
 
 // askPaneWhy рассказывает, что дорога снимка панели увидела. Исходов три, и
 // «разбор надо чинить» из них только один: вопрос бывает и разобран, но отбит
-// рубежом эха, и попросту отвечен минуту назад самой же панелью.
-func (s *server) askPaneWhy(sid string, echo bool) string {
+// рубежом эха, и попросту отвечен самой же панелью.
+//
+// Свежесть ответа меряется не сроком, а отметкой события. Порог askQuietWindow
+// тут стоял и врал: он придуман под другое, под подавление повторной строки, а
+// липкость chatStuck живёт, пока в журнале уведомителя не появится следующее
+// событие сессии. Живой случай 01.09 по chat-13 держал её 5м50с, то есть
+// дольше окна, и строка снова винила работающий разбор (замечание ревью).
+// Совпала отметка со снятой в момент ответа, значит с тех пор журнал про эту
+// сессию молчит и клиент всё ещё в том же ходу.
+func (s *server) askPaneWhy(sid string, echo bool, mark string) string {
 	if echo {
 		return "вопрос собрался, но повторяет ленту разговора: это вывод агента, а не виджет"
 	}
 	s.mu.Lock()
 	done, seen := s.askDone[sid]
 	s.mu.Unlock()
-	if now := s.now(); seen && now.Sub(done) < askQuietWindow {
-		return fmt.Sprintf("вариантов нет, а панель ответила виджету %s назад: клиент в ходу после ответа",
-			now.Sub(done).Truncate(time.Second))
+	if seen && mark != "" && done.Mark == mark {
+		return fmt.Sprintf("вариантов нет, а панель ответила виджету %s назад и с тех пор "+
+			"журнал уведомителя про эту сессию молчит: клиент в ходу после ответа",
+			s.now().Sub(done.At).Truncate(time.Second))
 	}
 	return "вариантов не собралось, разбор надо чинить"
 }
 
+// askDoneEntry это ответ панели виджету: когда он ушёл и на какой отметке
+// журнала уведомителя стояла сессия в ту минуту.
+type askDoneEntry struct {
+	At   time.Time
+	Mark string
+}
+
 // askAnswered запоминает, что панель только что ответила виджету клиента.
 // Память нужна одной строке журнала: без неё жалоба на неразобранный виджет
-// уезжала следом за каждым удачным ответом.
+// уезжала следом за каждым удачным ответом. Отметка снимается тем же чтением,
+// каким липкость меряет chatStuck, и по ней ответ перестаёт объяснять молчание
+// ровно тогда, когда в журнале появляется следующее событие сессии.
 func (s *server) askAnswered(sid string) {
+	_, mark := s.chatStuckMark(sid)
 	s.mu.Lock()
 	if s.askDone == nil {
-		s.askDone = map[string]time.Time{}
+		s.askDone = map[string]askDoneEntry{}
 	}
-	s.askDone[sid] = s.now()
+	s.askDone[sid] = askDoneEntry{At: s.now(), Mark: mark}
 	s.mu.Unlock()
 }
 

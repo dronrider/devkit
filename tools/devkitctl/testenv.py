@@ -543,6 +543,7 @@ class Sandbox:
         self.global_rules(home)
         self.user_page(home)
         self.alt_sub(home)
+        self.askpass_helper(home)
         return home
 
     def user_page(self, home, value="мужской"):
@@ -603,6 +604,19 @@ class Sandbox:
         with fake_home(home):
             text = rules.global_thin_text(prof, str(dk))
         return write(Path(home) / ".claude" / "CLAUDE.md", text)
+
+    def askpass_helper(self, home):
+        """Помощник ввода пароля askpass на подставном HOME (DK-772), тем же
+        текстом и битом запуска, что кладёт doctor --fix. Без него на чистом
+        проекте горела бы находка про отсутствие помощника, а проверяется он
+        своими тестами (check_askpass_helper)."""
+        home = Path(home)
+        src = self.dk / "tools" / "askpass" / "askpass.py"
+        dst = home / ".devkit" / "askpass.py"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(str(src), str(dst))
+        dst.chmod(0o755)
+        return home
 
     def dkctl_run(self, *args, **kw):
         kw.setdefault("home", self.home)

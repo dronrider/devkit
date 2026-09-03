@@ -1095,6 +1095,27 @@ class AgentTest(Stand):
         self.assertIn("<key>EnvironmentVariables</key>",
                       self.plist.read_text(encoding="utf-8"))
 
+    def test_agent_path_makes_children_findable(self):
+        # DK-664: PATH, положенный в plist, это ровно то, что launchd отдаёт
+        # процессу тика, и тем же PATH devkit_bin() находит соседний бинарь
+        # (shipctl) без разбора «не найден в PATH», которым падал разлив.
+        self.check(fix=True)
+        text = self.plist.read_text(encoding="utf-8")
+        agent_path = text.split("<key>PATH</key><string>", 1)[1].split("</string>", 1)[0]
+        shipctl = self.dashboard_bin.parent / "shipctl"
+        shipctl.write_text("#!/bin/sh\n", encoding="utf-8")
+        shipctl.chmod(0o755)
+        old_path = os.environ.get("PATH")
+        os.environ["PATH"] = agent_path
+        try:
+            found = watch.devkit_bin("shipctl")
+        finally:
+            if old_path is None:
+                os.environ.pop("PATH", None)
+            else:
+                os.environ["PATH"] = old_path
+        self.assertEqual(found, str(shipctl))
+
     def test_fix_from_worktree_refuses(self):
         # Агент показывает на чекаут, и класть на машину ветку задачи нельзя.
         f, d, call = self.check(fix=True, from_main=False)

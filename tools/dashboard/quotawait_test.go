@@ -13,13 +13,27 @@ import (
 // сокетом как живой. Единственный след это его собственная строка ретрая в
 // пейне («Weekly limit reached, Retrying in 1h (3pm), attempt 1/300», материал
 // разбора 480 сессий за 10 дней). Правка, от которой стенды краснеют: разбор
-// этой строки (quotaRetryStuck, quotaRetryWeekly), сцепка со снимком квоты
+// этой строки (quotaRetryLine, quotaRetryWeekly), сцепка со снимком квоты
 // (quotaResetOf) и вынос причины со сроком в список разговоров и в ответ
 // ручки say вместо часовой тишины.
 
 const quotaRetryPane = "Weekly limit reached, Retrying in 1h (3pm), attempt 1/300\n"
 
-func TestQuotaRetryStuck(t *testing.T) {
+// quotaTaskFileQuote это копия строки docs/tasks/DK-647.md, которая привела
+// живой случай ревью: агент вывел файл этой же задачи в свой терминал, файл
+// цитирует строку ретрая дословно, и прежняя мера (пара подстрок где угодно в
+// пейне) сочла живую сессию кончившейся подпиской. Строка не читается из
+// самого файла: он переедет в архив после закрытия задачи, а регрессия
+// обязана ловиться и после переезда.
+const quotaTaskFileQuote = "- Чат «Груминг DK-640 с вопросами в чате», сессия 22fb4dce в " +
+	"~/.claude/projects/-Users-rider-projects-devkit/. Ход закрыт в 12:04, в 12:09 " +
+	"сообщение с панели принято очередью (queue-operation dequeue), после него в " +
+	"транскрипте нет ни одной записи: модель не запустилась, недельная квота " +
+	"исчерпана. Единственный след на всей машине это статус-строка окна tmux " +
+	"task-DK-640: «Weekly limit reached, Retrying in 1h (3pm), attempt 1/300». " +
+	"Второе сообщение от 12:22 лежит в очереди за первым.\n"
+
+func TestQuotaRetryLine(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		pane string
@@ -29,22 +43,29 @@ func TestQuotaRetryStuck(t *testing.T) {
 		{"обычный вывод агента", "работаю над задачей\nчитаю файл\n", false},
 		{"пусто", "", false},
 		{"одно из двух слов без второго", "Weekly limit reached\n", false},
-		{"перенос строки посреди фразы", "Weekly limit reached,\nRetrying in 1h (3pm), attempt 1/300\n", true},
-		{"регистр не важен", "WEEKLY LIMIT REACHED, RETRYING IN 62S\n", true},
+		{"регистр не важен", "WEEKLY LIMIT REACHED, RETRYING IN 62S, ATTEMPT 2/300\n", true},
+		{"пятичасовое окно тоже своя строка", "5-hour limit reached, Retrying in 62s, attempt 1/300\n", true},
+		// Живой случай ревью: обе подстроки есть, а строки ретрая нет, цитата
+		// стоит посреди чужой прозы файла задачи с обеих сторон.
+		{"цитата строки ретрая внутри чужого текста", quotaTaskFileQuote, false},
+		{"вывод файла задачи целиком в ленте", quotaTaskFileQuote + quotaRetryPane + "лишний текст ниже\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := quotaRetryStuck(tc.pane); got != tc.want {
-				t.Errorf("quotaRetryStuck(%q) = %v, жду %v", tc.pane, got, tc.want)
+			_, got := quotaRetryLine(tc.pane)
+			if got != tc.want {
+				t.Errorf("quotaRetryLine(%q) = %v, жду %v", tc.pane, got, tc.want)
 			}
 		})
 	}
 }
 
 func TestQuotaRetryWeekly(t *testing.T) {
-	if !quotaRetryWeekly(quotaRetryPane) {
+	line, ok := quotaRetryLine(quotaRetryPane)
+	if !ok || !quotaRetryWeekly(line) {
 		t.Error("недельный ретрай не узнан")
 	}
-	if quotaRetryWeekly("5-hour limit reached, Retrying in 62s, attempt 1/300\n") {
+	other, ok := quotaRetryLine("5-hour limit reached, Retrying in 62s, attempt 1/300\n")
+	if !ok || quotaRetryWeekly(other) {
 		t.Error("пятичасовой ретрай ошибочно назван недельным")
 	}
 }

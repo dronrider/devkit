@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"time"
 )
@@ -38,19 +39,50 @@ func quotaWaitNote(reset string) string {
 	return quotaWaitWord + ", сброс " + reset
 }
 
-// quotaRetryStuck узнаёт строку автоматического ретрая харнеса в тексте
-// пейна. Пара слов, а не фраза целиком. Перенос строки в узком терминале мог
-// разбить фразу пополам, а других версий у клиента разработчик не собирал.
-func quotaRetryStuck(text string) bool {
-	low := strings.ToLower(text)
-	return strings.Contains(low, "limit reached") && strings.Contains(low, "retrying")
+// quotaRetryLineRe узнаёт саму строку ретрая, а не пару слов где-то в пейне.
+// Прежняя мера искала «limit reached» и «retrying» по всему тексту, и ревью
+// поймало живой случай: агент вывел в свой живой терминал файл этой же
+// задачи, docs/tasks/DK-647.md, который цитирует строку ретрая дословно как
+// пример. Обе подстроки нашлись, только в разных абзацах, и живая работающая
+// сессия обзавелась чипом «лимит подписки исчерпан».
+//
+// Строка ретрая переписывается харнесом заново на каждой попытке и всегда
+// несёт «attempt N/M», это и есть её форма, а не подсказка вроде часа или
+// пояса, которым веры нет (см. выше). Якорь по всей строке пейна (после
+// обрезки пробелов) не даёт собрать совпадение из середины чужого текста.
+// У цитаты в файле задачи с обеих сторон стоит обычная проза (пример:
+// «статус-строка окна tmux task-DK-640: Weekly limit reached»), а у
+// настоящей строки харнеса вокруг нет ничего, кроме короткого слова о виде
+// окна («Weekly», «5-hour»). Порог длины префикса и середины фразы отсекает
+// длинные абзацы прозы, не трогая саму строку ретрая, которая коротка сама
+// по себе.
+//
+// Смена языка интерфейса харнеса этой мерой не покрыта: слова английские,
+// и локализованная строка ретрая пройдёт мимо разбора так же, как проходила
+// мимо прежней меры. Молчание в этом случае то же самое, что было до задачи
+// DK-647, а не хуже него, и материал разбора 31.08 такого случая не нашёл ни
+// разу. Отмечено границей в файле задачи, отдельной строкой не закрывается.
+var quotaRetryLineRe = regexp.MustCompile(
+	`(?i)^[a-z0-9][a-z0-9 .-]{0,40}limit reached,?\s+retrying in\s+.{1,60}attempt\s+\d+/\d+\s*$`)
+
+// quotaRetryLine находит строку ретрая в тексте пейна и отдаёт её целиком:
+// weekly читает недельное окно из неё же, а не из всего текста пейна, чтобы
+// «weekly» в соседнем абзаце не приписалось строке пятичасового ретрая.
+func quotaRetryLine(text string) (line string, ok bool) {
+	for _, ln := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(ln)
+		if quotaRetryLineRe.MatchString(trimmed) {
+			return trimmed, true
+		}
+	}
+	return "", false
 }
 
-// quotaRetryWeekly отличает недельное окно от прочих. Срок сброса известен
-// только для него (quotaResetOf), а для прочих строк ретрая (пятичасовая
-// сессия, к примеру) бакет не угадывается.
-func quotaRetryWeekly(text string) bool {
-	return strings.Contains(strings.ToLower(text), "weekly")
+// quotaRetryWeekly отличает недельное окно от прочих в уже найденной строке
+// ретрая. Срок сброса известен только для него (quotaResetOf), а для прочих
+// строк ретрая (пятичасовая сессия, к примеру) бакет не угадывается.
+func quotaRetryWeekly(line string) bool {
+	return strings.Contains(strings.ToLower(line), "weekly")
 }
 
 // quotaWaitTTL держит память снимка пейна. Снимок берётся не на каждую
@@ -68,7 +100,10 @@ type quotaWaitEntry struct {
 // quotaPaneOfFn это шов для тестов. Боевой сервер снимает панель, тест
 // подставляет свой текст и tmux машины не трогает.
 var quotaPaneOfFn = func(name string) string {
-	out, err := runProc("tmux", "capture-pane", "-p", "-t", "="+name+":")
+	// -J склеивает строку, которую терминал перенёс по ширине окна: без него
+	// длинная строка ретрая рвалась бы пополам и якорь `$` не находил бы её
+	// конца (тот же приём у clientlogin.go).
+	out, err := runProc("tmux", "capture-pane", "-J", "-p", "-t", "="+name+":")
 	if err != nil {
 		return ""
 	}
@@ -90,8 +125,8 @@ func (s *server) quotaWaitOf(name string) (retry, weekly bool) {
 		return e.retry, e.weekly
 	}
 	text := quotaPaneOfFn(name)
-	retry = quotaRetryStuck(text)
-	weekly = retry && quotaRetryWeekly(text)
+	line, retry := quotaRetryLine(text)
+	weekly = retry && quotaRetryWeekly(line)
 	s.mu.Lock()
 	if s.quotaSeen == nil {
 		s.quotaSeen = map[string]quotaWaitEntry{}

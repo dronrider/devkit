@@ -2619,6 +2619,7 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	ask := tmuxAskOf(name)
 	info, hasInfo := findSession(s.transcriptRoots(), found.Path, sid)
+	echo := false
 	// Второй барьер после рубежа виджета: вопрос, чьи варианты уже стоят в
 	// ленте репликой человека или ответом агента, это эхо вывода, а не виджет.
 	// Лента тут читается только когда вопрос вообще разобрался, то есть редко.
@@ -2626,6 +2627,7 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		if askEchoesFeed(ask, sessionFeedOf(info.path, askEchoTail).items) {
 			s.logf("вопрос клиента %s повторяет ленту разговора: показывать нечего", name)
 			ask = tmuxAsk{}
+			echo = true
 		}
 	}
 	if len(ask.Options) == 0 {
@@ -2634,7 +2636,7 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		// а не плашкой человеку (решение пользователя). Плашка тут ничего не
 		// объясняла и ничего не предлагала, а вылезала и на уже отвеченном
 		// опросе.
-		s.askQuietLog(sid, name)
+		s.askQuietLog(sid, name, askSignWhy(found.Path, sid, s.binds(), s.now()), s.askPaneWhy(sid, echo))
 		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
 			"note": fmt.Sprintf("клиент %s ни о чём не спрашивает", name)})
 		return
@@ -2667,10 +2669,12 @@ func (s *server) agentAsk(projPath, sid string) (agentAsk, bool) {
 // журнал забило бы одной и той же строкой.
 const askQuietWindow = 5 * time.Minute
 
-// askQuietLog пишет в журнал дашборда, что клиент похоже ждёт ответа, а
-// виджета панель не разобрала. Это наш сигнал чинить разбор: человеку про это
-// сказать нечего, он и так видит своё окно.
-func (s *server) askQuietLog(sid, name string) {
+// askQuietLog пишет в журнал дашборда, что клиент похоже ждёт ответа, а вопроса
+// панель не собрала. Дорог у вопроса две, признак ожидания и снимок панели, и
+// каждая отчитывается своими словами: одна строка на обе не давала разложить
+// случай и стоила второго захода (живой случай DK-695, девять строк за двое
+// суток). Человеку тут сказать нечего, он и так видит своё окно.
+func (s *server) askQuietLog(sid, name, sign, pane string) {
 	if s.chatStuck(sid) == "" {
 		return
 	}
@@ -2686,8 +2690,37 @@ func (s *server) askQuietLog(sid, name string) {
 	}
 	s.askQuiet[sid] = now
 	s.mu.Unlock()
-	s.logf("клиент %s похоже ждёт ответа, а виджета в снимке панели не разобрать: "+
-		"разбор надо чинить, человеку показывать нечего", name)
+	s.logf("клиент %s похоже ждёт ответа, а показывать нечего: дорога признака ожидания: %s; "+
+		"дорога снимка панели: %s", name, sign, pane)
+}
+
+// askPaneWhy рассказывает, что дорога снимка панели увидела. Исходов три, и
+// «разбор надо чинить» из них только один: вопрос бывает и разобран, но отбит
+// рубежом эха, и попросту отвечен минуту назад самой же панелью.
+func (s *server) askPaneWhy(sid string, echo bool) string {
+	if echo {
+		return "вопрос собрался, но повторяет ленту разговора: это вывод агента, а не виджет"
+	}
+	s.mu.Lock()
+	done, seen := s.askDone[sid]
+	s.mu.Unlock()
+	if now := s.now(); seen && now.Sub(done) < askQuietWindow {
+		return fmt.Sprintf("вариантов нет, а панель ответила виджету %s назад: клиент в ходу после ответа",
+			now.Sub(done).Truncate(time.Second))
+	}
+	return "вариантов не собралось, разбор надо чинить"
+}
+
+// askAnswered запоминает, что панель только что ответила виджету клиента.
+// Память нужна одной строке журнала: без неё жалоба на неразобранный виджет
+// уезжала следом за каждым удачным ответом.
+func (s *server) askAnswered(sid string) {
+	s.mu.Lock()
+	if s.askDone == nil {
+		s.askDone = map[string]time.Time{}
+	}
+	s.askDone[sid] = s.now()
+	s.mu.Unlock()
 }
 
 // askEchoTail это сколько последних записей ленты сверяется с вопросом: эхо
@@ -2806,6 +2839,7 @@ func (s *server) handleChatAskAnswer(w http.ResponseWriter, r *http.Request) {
 	if note := s.askPassReview(name); note != "" {
 		said += ", " + note
 	}
+	s.askAnswered(sid)
 	s.logf("ответ на вопрос клиента %s в %s: пункт %d (%s)", name, found.Name, body.Option, said)
 	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
 		"option": body.Option, "said": said,

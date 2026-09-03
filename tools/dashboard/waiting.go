@@ -127,10 +127,10 @@ func handedAsks(projPath, sid string, b sessionBinds, now time.Time) []handedAsk
 		}
 		path := chat.AskPath(projPath, name)
 		a, ok := chat.ReadAsk(path)
-		if !ok || a.Session == "" || !now.Before(a.Until) {
+		if !ok || !now.Before(a.Until) {
 			continue
 		}
-		if a.Session != sid && b[a.Session].Parent != sid {
+		if !askForChat(a, sid, b) {
 			continue
 		}
 		h := handedAsk{Name: name, Ask: a}
@@ -141,6 +141,79 @@ func handedAsks(projPath, sid string, b sessionBinds, now time.Time) []handedAsk
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ask.Until.Before(out[j].Ask.Until) })
 	return out
+}
+
+// askForChat говорит, адресован ли признак ожидания разговору sid. Своя сессия
+// и делегат второй подписки сходятся по реестру, а безадресный признак
+// (сессия не назвалась вовсе) относится к разговору своей задачи: taskctl ask
+// в этом случае прямо говорит, что ждёт безадресные реплики, и панель кладёт
+// ответ ровно такой строкой. Прежде такой признак скан пропускал, и вопрос
+// ждущей сессии до панели не доезжал ни текстом, ни вариантами.
+func askForChat(a chat.Ask, sid string, b sessionBinds) bool {
+	if a.Session == sid {
+		return true
+	}
+	if a.Session != "" {
+		return b[a.Session].Parent == sid
+	}
+	task := strings.TrimSpace(b[sid].Task)
+	return task != "" && strings.EqualFold(task, strings.TrimSpace(a.Task))
+}
+
+// askSignWhy рассказывает, что дорога признака ожидания увидела, когда вопроса
+// для разговора у неё не нашлось. Развилок тут три, и до этой правки все они
+// сходились в одну строку журнала «разбор надо чинить»: вопросов за разговором
+// нет вовсе, признак лежит живым, но ждёт чужую сессию, признак лежит с вышедшим
+// сроком. Разложить их без второго захода это и есть смысл строки.
+func askSignWhy(projPath, sid string, b sessionBinds, now time.Time) string {
+	entries, err := os.ReadDir(chat.Root(projPath))
+	if err != nil && !os.IsNotExist(err) {
+		return "вход разговоров не читается: " + err.Error()
+	}
+	var alien, stale []string
+	for _, e := range entries {
+		name, found := strings.CutSuffix(e.Name(), chat.AskSuffix)
+		if !found || e.IsDir() {
+			continue
+		}
+		a, ok := chat.ReadAsk(chat.AskPath(projPath, name))
+		if !ok {
+			continue
+		}
+		who := a.Task
+		if who == "" {
+			who = name
+		}
+		if !now.Before(a.Until) {
+			stale = append(stale, fmt.Sprintf("%s (срок вышел в %s)", who, a.Until.Format("15:04:05")))
+			continue
+		}
+		if !askForChat(a, sid, b) {
+			alien = append(alien, fmt.Sprintf("%s (ждёт сессию %s)", who, shortSession(a.Session)))
+		}
+	}
+	sort.Strings(alien)
+	sort.Strings(stale)
+	switch {
+	case len(alien) > 0:
+		return "признак лежит, но не за этим разговором: " + strings.Join(alien, ", ")
+	case len(stale) > 0:
+		return "живого признака нет, лежит просроченный: " + strings.Join(stale, ", ")
+	}
+	return "вопросов за разговором нет"
+}
+
+// shortSession режет id сессии до первого куска: в строку журнала целиком он не
+// нужен, а по восьми знакам сессия находится и в реестре, и в журнале
+// уведомителя.
+func shortSession(sid string) string {
+	if sid == "" {
+		return "безадресно"
+	}
+	if head, _, ok := strings.Cut(sid, "-"); ok {
+		return head
+	}
+	return sid
 }
 
 // askLines разворачивает вопросы признака в строки экрана: текст вопроса, под

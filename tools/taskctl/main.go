@@ -182,6 +182,12 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   review show <ID>                            замечания с номерами и исходами
   review stats                                свод по живым задачам и архиву
 
+В репозитории без доски (MR чужого трекера, ветка без трекера) level, clean и
+show работают по git-заметке на HEAD (ref review): ID тут любой ярлык правки,
+он едет строкой «Ярлык: ...» под следом. Заметку читает ворот пуша
+shipctl push --check-only, коммитить её не надо, флаги -m и --push тут
+отказывают.
+
 У list, show, progress, dep list и draft list есть флаг --json: машинный вывод для дашборда и
 прочей автоматики, печатный вывод не меняется; list --json отдаёт Backlog
 целиком, без обрезки.
@@ -584,7 +590,11 @@ func main() {
 			if len(pos) == 2 {
 				note = pos[1]
 			}
-			msg, err = cmdReviewClean(root(*dir), pos[0], note, c)
+			if nroot := noteRoot(*dir); nroot != "" {
+				msg, err = cmdNoteClean(nroot, pos[0], note, c)
+			} else {
+				msg, err = cmdReviewClean(root(*dir), pos[0], note, c)
+			}
 		case "level":
 			fs := flag.NewFlagSet("review level", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
@@ -596,7 +606,11 @@ func main() {
 			if aerr != nil {
 				fail(fmt.Errorf("уровень %q не число, жду 0-3", pos[1]))
 			}
-			msg, err = cmdReviewLevel(root(*dir), pos[0], lvl, pos[2], c)
+			if nroot := noteRoot(*dir); nroot != "" {
+				msg, err = cmdNoteLevel(nroot, pos[0], lvl, pos[2], c)
+			} else {
+				msg, err = cmdReviewLevel(root(*dir), pos[0], lvl, pos[2], c)
+			}
 		case "resolve":
 			fs := flag.NewFlagSet("review resolve", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
@@ -615,7 +629,11 @@ func main() {
 			dir := fs.String("C", gdir, "стартовая директория")
 			pos := frame.ParseArgs(fs, args[2:])
 			needArgs(pos, 1, 1, "review show <ID>")
-			msg, err = cmdReviewShow(root(*dir), pos[0])
+			if nroot := noteRoot(*dir); nroot != "" {
+				msg, err = cmdNoteShow(nroot, pos[0])
+			} else {
+				msg, err = cmdReviewShow(root(*dir), pos[0])
+			}
 		case "stats":
 			fs := flag.NewFlagSet("review stats", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")

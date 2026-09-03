@@ -1157,6 +1157,48 @@ def is_agent_def(path):
     return False
 
 
+def check_askpass_helper(fix, home=None):
+    """Помощник ввода пароля askpass на машине (DK-772, tools/askpass/askpass.py).
+
+    Один файл, не пачка (в отличие от определений агентов), и лежит он не в
+    машинном слое харнеса, а прямо под настоящим домом человека: тем же самым,
+    который launchEnv дашборда кладёт поднятой сессии переменной HOME
+    (tools/dashboard/chats.go), и там его же будет искать SUDO_ASKPASS. Без
+    этого файла sudo и ssh из чата отказывают словами про отсутствие
+    помощника (launchEnv не подставляет переменные, если файла нет), а не
+    молчат.
+    """
+    findings, fixed = [], []
+    main, from_main = devkit_checkout()
+    src = main / "tools" / "askpass" / "askpass.py"
+    if not src.is_file():
+        src = DEVKIT / "tools" / "askpass" / "askpass.py"
+    if not src.is_file():
+        return findings, fixed
+    dst = (home if home is not None else Path.home()) / ".devkit" / "askpass.py"
+    how = fix_hint(main, from_main, "помощника пароля askpass")
+    want = src.read_text(encoding="utf-8")
+    got = dst.read_text(encoding="utf-8", errors="replace") if dst.exists() else None
+    executable = dst.exists() and bool(dst.stat().st_mode & 0o111)
+    if got == want and executable:
+        return findings, fixed
+    if fix and from_main:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(want, encoding="utf-8")
+        dst.chmod(0o755)
+        word = "разложен" if got is None else "обновлён" if got != want else "сделан исполняемым"
+        fixed.append("помощник пароля askpass %s в %s" % (word, dst))
+        return findings, fixed
+    if got is None:
+        findings.append("помощника пароля askpass нет в %s: sudo и ssh из чата откажут без "
+                        "пароля словами про отсутствие помощника; %s" % (dst, how))
+    elif got != want:
+        findings.append("помощник пароля askpass в %s разошёлся с devkit; %s" % (dst, how))
+    else:
+        findings.append("помощник пароля askpass в %s без бита запуска; %s" % (dst, how))
+    return findings, fixed
+
+
 def check_agent_defs(fix, dst_dir):
     # Эталон берётся из основного чекаута, а не из того, откуда запущен doctor:
     # определение с ветки задачи уехало бы на машину во все проекты сразу.
@@ -1834,6 +1876,12 @@ def check_machine(fix):
     f, d = check_binaries(fix)
     findings += f
     fixed += d
+    # Помощник пароля askpass не завязан на харнес и не завязан на носителя
+    # дашборда: пригодится он и ручному `dashboard serve`, поэтому проверка
+    # своя, не внутри dashboard.check.
+    af, ad = check_askpass_helper(fix)
+    findings += af
+    fixed += ad
     # Носитель сторожка цикла цели после бинарей: PATH агента собирается по
     # бинарю dashboard из PATH, тем же якорем, что у соседней проверки ниже, и
     # на прогоне с --fix тот успевает встать на место строкой выше (DK-664).

@@ -850,6 +850,8 @@ class MachineContourTest(SandboxCase):
         self.assertIn_("нет конфига второй подписки", out, "нет находки про вторую подписку")
         self.assertIn_("devkitctl doctor --fix", out, "находка про вторую подписку без команды починки")
         self.assertIn_("SessionStart-хук", out, "нет находки про хук освежения квоты")
+        self.assertRegex(out, r"помощника пароля askpass нет в[^\n]*devkitctl doctor --fix",
+                         "нет находки про помощника askpass с командой починки")
         self.assertFalse((self.mhome / "go" / "bin" / "agentctl").exists(),
                          "doctor без --fix собрал бинарь")
         # Помета «машина» отделяет машинные находки от проектных, на неё
@@ -925,6 +927,15 @@ class MachineContourTest(SandboxCase):
         self.assertEqual(conf.stat().st_mode & 0o777, 0o600,
                          "болванка с токеном разложена с широкими правами")
         self.assertIn_("пустые ключи", out, "--fix не назвал незаполненные ключи второй подписки")
+        # Помощник askpass (DK-772): один файл под настоящим домом машины,
+        # исполняемый, тем же текстом, что и в источнике.
+        helper = self.mhome / ".devkit" / "askpass.py"
+        self.assertTrue(helper.is_file(), "doctor --fix не разложил помощника askpass")
+        self.assertTrue(os.access(str(helper), os.X_OK), "помощник askpass разложен без бита запуска")
+        self.assertEqual(read(helper), read(self.box.dk / "tools" / "askpass" / "askpass.py"),
+                         "помощник askpass разложен не тем текстом, что в devkit")
+        self.assertIn_("помощник пароля askpass разложен в", out,
+                       "--fix не отчитался о раскладке помощника askpass")
         # Повторный --fix по машинному контуру уже ничего не чинит.
         _, out = self.docm("--fix")
         self.assertNotIn_("починено", out, "повторный --fix не должен ничего менять")
@@ -1718,6 +1729,12 @@ class WorktreeTest(SandboxCase):
                          "--fix разложил определения агентов с фичеветки")
         self.assertIn_("из основного чекаута: python3 %s/tools/devkitctl/devkitctl.py doctor --fix"
                        % self.dkreal, self.out, "находка про определения зовёт не в основной чекаут")
+
+    def test_2b_askpass_helper_is_not_laid_out(self):
+        self.assertFalse((self.wthome / ".devkit" / "askpass.py").exists(),
+                         "--fix разложил помощника askpass с фичеветки")
+        self.assertIn_("из основного чекаута: python3 %s/tools/devkitctl/devkitctl.py doctor --fix"
+                       % self.dkreal, self.out, "находка про помощника askpass зовёт не в основной чекаут")
 
     def test_3_skills_keep_the_same_boundary(self):
         self.assertFalse((self.wthome / ".claude" / "skills" / "board-batch" / "SKILL.md").exists(),

@@ -93,9 +93,16 @@ func loadReview(path string) (*reviewFile, error) {
 		}
 		// Строка уровня стоит первой в разделе и списком не является: её
 		// пишет review level, а замечания идут ниже. Считается только первая,
-		// повторный вызов её же и переписывает.
+		// повторный вызов её же и переписывает. insertAt сдвигается следом за
+		// неё: без этого новое замечание, добавленное после level, легло бы
+		// перед строкой уровня, и следующий парс принял бы уровень за
+		// продолжение замечания, слив их в одну строку (DK-760).
 		if rf.levelIdx < 0 && len(rf.notes) == 0 && taskform.IsReviewLevel(t) {
 			rf.levelIdx = i
+			rf.insertAt = i + 1
+			if rf.insertAt < len(rf.lines) && strings.TrimSpace(rf.lines[rf.insertAt]) == "" {
+				rf.insertAt++
+			}
 			continue
 		}
 		if strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* ") {
@@ -176,7 +183,18 @@ func taskFileAbs(root, id string) string {
 // файл задачи, когда его ещё нет. Общий ход у add и clean: разница между ними
 // только в тексте элемента и в проверках до записи.
 func reviewItem(root, id, line string, c CommitOpts) (*reviewFile, bool, string, []string, error) {
-	return reviewEdit(root, id, func(rf *reviewFile) { rf.insert(rf.insertAt, line) }, c)
+	return reviewEdit(root, id, func(rf *reviewFile) {
+		rf.insert(rf.insertAt, line)
+		// Первое замечание, вставленное сразу после строки уровня, отделяется
+		// от следующего раздела пустой строкой: insertAt в этом случае уже
+		// перескочил через пробел-разделитель между уровнем и списком, и без
+		// новой пустой строки список слипся бы со следующим заголовком
+		// (DK-760).
+		if rf.levelIdx >= 0 && len(rf.notes) == 0 &&
+			rf.insertAt+1 < len(rf.lines) && strings.TrimSpace(rf.lines[rf.insertAt+1]) != "" {
+			rf.insert(rf.insertAt+1, "")
+		}
+	}, c)
 }
 
 // reviewEdit готовит раздел «Ревью» к правке (строка доски, файл задачи,

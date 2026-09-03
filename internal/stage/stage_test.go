@@ -62,6 +62,28 @@ func TestVerifyRunnerFromFlushedLine(t *testing.T) {
 	}
 }
 
+// TestWorkNoteRoundTrip: ходы и минуты возвращаются теми же числами что ушли
+// в запись, как и у прогонявшего сценарий (TestVerifyNoteRoundTrip).
+func TestWorkNoteRoundTrip(t *testing.T) {
+	turns, minutes, ok := ParseWork(WorkNote(44, 9))
+	if !ok || turns != 44 || minutes != 9 {
+		t.Fatalf("ходы и минуты не вернулись из записи: %d, %d, %v", turns, minutes, ok)
+	}
+}
+
+// TestParseWorkFromFlushedLine: хвост читается и из уже выгруженной строки
+// «Хода работы», а старая строка без него не выдумывает числа.
+func TestParseWorkFromFlushedLine(t *testing.T) {
+	line := "- Ревью: ревью провёл glm:glm-5.2, ходов 44, минут 9, 2026-08-31 12:00-12:15."
+	turns, minutes, ok := ParseWork(line)
+	if !ok || turns != 44 || minutes != 9 {
+		t.Fatalf("из строки «Хода работы» ходы и минуты не достались: %d, %d, %v", turns, minutes, ok)
+	}
+	if _, _, ok := ParseWork("- Ревью: субагент sonnet/high по вердикту pick, 2026-08-31 12:00-12:15."); ok {
+		t.Fatal("старая строка без хвоста выдумала ходы и минуты")
+	}
+}
+
 func TestExecutorFromPickNote(t *testing.T) {
 	cases := map[string]string{
 		"субагент opus/high по вердикту pick (квота: week_all 93%)":           "opus",

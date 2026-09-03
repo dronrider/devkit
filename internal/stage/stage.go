@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,6 +76,34 @@ func VerifyRunner(text string) (string, bool) {
 		return "", false
 	}
 	return name, true
+}
+
+// WorkNote собирает хвост записи с активной работой ревью: ходы и минуты без
+// ожидания (DK-731). Формат канон, тот же принцип, что у VerifyNote: писатель
+// один, agentctl stage, а читают его ParseWork и review stats из уже
+// выгруженной строки «Хода работы».
+func WorkNote(turns, minutes int) string {
+	return fmt.Sprintf("ходов %d, минут %d", turns, minutes)
+}
+
+// workNoteRe ловит хвост ходов и минут в тексте записи или в строке «Хода
+// работы»: то же место, где VerifyRunner ищет прогонявшего.
+var workNoteRe = regexp.MustCompile(`ходов (\d+), минут (\d+)`)
+
+// ParseWork достаёт ходы и минуты активной работы из текста. Второе значение
+// false, когда хвоста в тексте нет: старая запись без него печатается как
+// раньше, а свод review stats просто пропускает её в счёте.
+func ParseWork(text string) (turns, minutes int, ok bool) {
+	m := workNoteRe.FindStringSubmatch(text)
+	if m == nil {
+		return 0, 0, false
+	}
+	t, err1 := strconv.Atoi(m[1])
+	mm, err2 := strconv.Atoi(m[2])
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return t, mm, true
 }
 
 // executorRe находит модель исполнителя в тексте записи этапа разработки:

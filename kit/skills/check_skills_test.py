@@ -856,17 +856,25 @@ class ReviewSkill(SkillTree):
 
     SKILL = ("---\nname: review\ndescription: Ревью. Звать, когда ревьюят.\n---\n\n"
              "# Ревью\n\nбюджет в .devkit/review.conf\n\n"
+             "рядом examples.md и threads.md\n\n## Вход\n\nпредмет\n\n## Порядок ревью\n\nшаги\n\n"
              "## Сколько ревью нужно\n\n| 0, пропуск |\n| 1, ворота |\n| 2, обычное |\n| 3, глубокое |\n\n"
+             "## Вопросы по уровням\n\nвопросы\n\n"
              "## Замечания и три яруса\n\n- Блокирующее: правит.\n- Неблокирующее: отвечает.\n- Мелочь: сам.\n\n"
-             "## Бюджет и стоп\n\nстоп\n\n## Разговор с автором\n\nкоротко\n")
-    CONF = "level1 = 5 минут, 20 ходов\nlevel2 = 20 минут, 70 ходов\nlevel3 = 40 минут, 100 ходов\ncritical_paths = tools\n"
+             "## Бюджет и стоп\n\nстоп\n\n## Разговор с автором\n\nкоротко\n\n"
+             "## Отработка замечаний автором\n\nшаги\n\n## Второй круг\n\nдельта\n")
+    CONF = ("level1 = 5 минут, 20 ходов\nlevel2 = 20 минут, 70 ходов\nlevel3 = 40 минут, 100 ходов\n"
+            "critical_paths = tools\nchecks = 2: вопрос\n")
     AGENT = "---\nname: %s\neffort: high\n---\n\nТы ревьювер, читай скилл `review`.\n"
+    EXEC = "---\nname: %s\neffort: high\n---\n\nТы исполнитель, замечания по разделу «Отработка замечаний автором».\n"
 
     def write_review(self, skill=None, conf=None, agent=None):
         d = os.path.join(self.here, "review")
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
             f.write(self.SKILL if skill is None else skill)
+        for side in ("examples.md", "threads.md"):
+            with open(os.path.join(d, side), "w", encoding="utf-8") as f:
+                f.write("образцы\n")
         if conf is not False:
             os.makedirs(os.path.join(self.root, ".devkit"), exist_ok=True)
             with open(os.path.join(self.root, ".devkit", "review.conf"), "w", encoding="utf-8") as f:
@@ -876,6 +884,9 @@ class ReviewSkill(SkillTree):
         for name in ("review-low", "review-medium", "review-high", "review-xhigh"):
             with open(os.path.join(agents, name + ".md"), "w", encoding="utf-8") as f:
                 f.write((self.AGENT if agent is None else agent) % name)
+        for name in ("exec-low", "exec-medium", "exec-high", "exec-xhigh"):
+            with open(os.path.join(agents, name + ".md"), "w", encoding="utf-8") as f:
+                f.write(self.EXEC % name)
 
     def test_full_review_passes(self):
         self.write_review()
@@ -912,6 +923,22 @@ class ReviewSkill(SkillTree):
         self.write_review(conf=self.CONF.replace("critical_paths = tools\n", ""))
         fails = check_skills.check_review(self.here, self.root)
         self.assertTrue(any("нет ключа critical_paths" in f for f in fails), fails)
+
+    def test_side_file_missing_or_unnamed(self):
+        self.write_review()
+        os.remove(os.path.join(self.here, "review", "threads.md"))
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("нет файла threads.md" in f for f in fails), fails)
+        self.write_review(skill=self.SKILL.replace("рядом examples.md и threads.md", "рядом файлы"))
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("examples.md лежит рядом" in f for f in fails), fails)
+
+    def test_executor_without_rework_section(self):
+        self.write_review()
+        with open(os.path.join(self.root, "kit", "agents", "exec-low.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: exec-low\neffort: low\n---\n\nисполнитель\n")
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("exec-low: исполнитель не знает" in f for f in fails), fails)
 
     def test_agent_not_calling_skill_or_forbidding_fix(self):
         self.write_review(agent="---\nname: %s\neffort: high\n---\n\nкод ревьювер не правит\n")

@@ -278,10 +278,13 @@ def check_team(here):
     return fails
 
 
-REVIEW_SECTIONS = ("## Сколько ревью нужно", "## Замечания и три яруса",
-                   "## Бюджет и стоп", "## Разговор с автором")
+REVIEW_SECTIONS = ("## Вход", "## Порядок ревью", "## Сколько ревью нужно",
+                   "## Вопросы по уровням", "## Замечания и три яруса",
+                   "## Бюджет и стоп", "## Разговор с автором",
+                   "## Отработка замечаний автором", "## Второй круг")
 REVIEW_TIERS = ("Блокирующее", "Неблокирующее", "Мелочь")
-REVIEW_KEYS = ("level1", "level2", "level3", "critical_paths")
+REVIEW_KEYS = ("level1", "level2", "level3", "critical_paths", "checks")
+REVIEW_SIDE_FILES = ("examples.md", "threads.md")
 
 
 def check_review(here, root):
@@ -307,6 +310,11 @@ def check_review(here, root):
             fails.append("review: ярус «%s» не описан" % tier)
     if ".devkit/review.conf" not in text:
         fails.append("review: бюджеты не отданы конфигу .devkit/review.conf")
+    for side in REVIEW_SIDE_FILES:
+        if read(os.path.join(here, "review", side)) is None:
+            fails.append("review: нет файла %s, скилл на него ссылается" % side)
+        elif side not in text:
+            fails.append("review: файл %s лежит рядом, а скилл его не называет" % side)
     conf = read(os.path.join(root, ".devkit", "review.conf"))
     if conf is None:
         fails.append("review: образца .devkit/review.conf в devkit нет")
@@ -323,6 +331,12 @@ def check_review(here, root):
             fails.append("%s: определение не зовёт скилл review" % prompt)
         if "код ревьювер не правит" in agent:
             fails.append("%s: запрет править код спорит со скиллом review" % prompt)
+    for prompt in ("exec-low", "exec-medium", "exec-high", "exec-xhigh"):
+        agent = read(os.path.join(agents, prompt + ".md"))
+        if agent is None:
+            continue
+        if not re.search(r"Отработка\s+замечаний", agent):
+            fails.append("%s: исполнитель не знает раздел отработки замечаний скилла review" % prompt)
     return fails
 
 

@@ -7,6 +7,7 @@
 """
 import io
 import os
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -419,10 +420,12 @@ class RunTest(Stand):
         self.assertTrue(marks, "окно вызова не записано")
         for beg, end, at in marks:
             self.assertLessEqual(beg, end)
-        # Снимок квоты корню не принадлежит, служебные вызовы по проекту
-        # привязаны к нему.
-        self.assertIn(watch.ANY_ROOT, [m[2] for m in marks])
-        self.assertIn(str(self.proj), [m[2] for m in marks])
+        # Каждое окно названо своим корнем, звёздочки на весь дом нет: съём
+        # квоты привязан к тому проекту, из которого запущен сторожок.
+        roots = [m[2] for m in marks]
+        self.assertNotIn(watch.ANY_ROOT, roots, "окно на весь дом вернулось")
+        self.assertIn(str(self.proj), roots)
+        self.assertIn(watch.here(), roots)
         # Второй прогон дописывает свои окна, прежние остаются: строки прошлых
         # тиков разбираются в следующих прогонах.
         self.sweep()
@@ -463,7 +466,7 @@ class RunTest(Stand):
             self.sweep(call=Dying(), agentctl="/bin/agentctl")
         marks = watch.read_ticks(self.home)
         self.assertTrue(marks, "упавший тик не оставил ни одного окна")
-        self.assertIn(watch.ANY_ROOT, [m[2] for m in marks],
+        self.assertIn(watch.here(), [m[2] for m in marks],
                       "окно съёма квоты пропало вместе с прогоном")
 
     def test_each_root_gets_its_own_window(self):
@@ -774,11 +777,88 @@ class TimedTest(Stand):
         self.assertEqual(len(self.marks()), 1, "окно снятого вызова не записано")
 
     def test_timeout_reaches_the_subprocess(self):
-        # Потолок едет самому запуску: без него сторожок висит вместе с
+        # Потолок и грация едут самому запуску: без них сторожок висит вместе с
         # подпроцессом до убийства launchd.
         call = Fake()
         watch.Timed(call, self.home, str(self.proj))(["shipctl", "ship"])
-        self.assertEqual(call.kwargs[0].get("timeout"), watch.CALL_TIMEOUT)
+        self.assertEqual(call.kwargs[0].get("timeout"), watch.TIMEOUT)
+        self.assertEqual(call.kwargs[0].get("grace"), watch.GRACE)
+
+
+CHILD_SOFT = """
+import signal, sys, time
+signal.signal(signal.SIGTERM, lambda *a: (open(sys.argv[1], 'w').write('отмечено'),
+                                          sys.exit(3)))
+time.sleep(30)
+"""
+CHILD_HARD = """
+import signal, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+time.sleep(30)
+"""
+
+
+class SoftKillTest(Stand):
+    """Мягкое снятие подпроцесса: SIGTERM с грацией, SIGKILL следом."""
+
+    def child(self, code, *args):
+        return [sys.executable, "-c", code] + list(args)
+
+    def test_term_lets_the_child_finish_its_own_way(self):
+        # Разлив очереди при провале выката сам ставит признак провала и зовёт
+        # taskctl fail. Под SIGKILL он не успевает ничего, и провал до доски не
+        # доходит.
+        mark = self.dir / "отметка"
+        p = watch.run_soft(self.child(CHILD_SOFT, str(mark)), timeout=0.5, grace=10,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.assertEqual(p.returncode, 3, "подпроцесс вышел не своим кодом")
+        self.assertTrue(mark.is_file(), "подпроцесс не успел отметить провал")
+        self.assertIn("SIGTERM", p.stdout)
+        self.assertNotIn("SIGKILL", p.stdout)
+
+    def test_child_deaf_to_term_is_killed(self):
+        p = watch.run_soft(self.child(CHILD_HARD), timeout=0.5, grace=0.5,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.assertEqual(p.returncode, -9, "глухой к SIGTERM подпроцесс не снят жёстко")
+        self.assertIn("SIGKILL", p.stdout)
+
+    def test_child_in_time_is_not_touched(self):
+        p = watch.run_soft([sys.executable, "-c", "print('готово')"], timeout=30,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.assertEqual(p.returncode, 0)
+        self.assertNotIn("не уложился", p.stdout)
+
+
+class ConfTest(Stand):
+    """Пороги из ~/.devkit/watch.local."""
+
+    def conf(self, text):
+        (self.home / ".devkit").mkdir(parents=True, exist_ok=True)
+        (self.home / ".devkit" / "watch.local").write_text(text, encoding="utf-8")
+
+    def test_timeout_default_without_the_file(self):
+        self.assertEqual(watch.conf_timeout(self.home), watch.TIMEOUT)
+
+    def test_timeout_from_the_file(self):
+        self.conf("idle = 90\ntimeout = 50\n")
+        self.assertEqual(watch.conf_timeout(self.home), 50 * 60)
+        self.assertEqual(watch.conf_idle(self.home), 90 * 60)
+
+    def test_nonsense_timeout_falls_back(self):
+        self.conf("timeout = вечность\n")
+        self.assertEqual(watch.conf_timeout(self.home), watch.TIMEOUT)
+
+    def test_sweep_takes_the_timeout_from_the_file(self):
+        # Потолок обязан доехать до самого запускателя, иначе строка в файле
+        # ничего не меняет.
+        self.conf("timeout = 7\n")
+        self.entry(seen_minutes=1)
+        call = Fake()
+        out = io.StringIO()
+        watch.run(now=self.now, home=self.home, out=out, call=call, shipctl=SHIPCTL,
+                  agentctl="/bin/agentctl")
+        self.assertTrue(call.kwargs, "тик не сделал ни одного вызова")
+        self.assertEqual(call.kwargs[0].get("timeout"), 7 * 60)
 
 
 class RunRootsTest(Stand):

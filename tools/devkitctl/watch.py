@@ -129,11 +129,15 @@ TICKS_KEEP = 2000
 # Корень, к которому вызов не привязан: снимок квоты живёт на уровне машины и
 # строку журнала оставляет там, откуда сторожок запущен.
 ANY_ROOT = "*"
-# Потолок ожидания подпроцесса. Он против намертво повисшего вызова, а не
-# против долгого выката: в этом проекте `git push` внутри shipctl уже вешался на
-# неинтерактивном keychain, и сторожок, повисший вместе с ним, перестаёт быть
-# страховкой.
-CALL_TIMEOUT = 15 * 60
+# Потолок ожидания подпроцесса и грация мягкого снятия, секунды. Потолок стоит
+# выше собственного предела выката у shipctl (ключ `deploy_timeout`, умолчание
+# 30m): сторожок обязан дать ему упасть по-своему и отметить провал на доске, а
+# не убить раньше времени. Правится ключом `timeout` в ~/.devkit/watch.local.
+# Грация это время между SIGTERM и SIGKILL: отметка провала это вызов
+# `taskctl fail` и зов уведомителя, секунды, и полминуты кроют их с запасом,
+# оставаясь на два порядка ниже потолка.
+TIMEOUT = 35 * 60
+GRACE = 30
 BOARD = "docs/TASKS.md"
 IN_PROGRESS = "In progress"
 CHECK = "Check"
@@ -223,19 +227,45 @@ def write_entry(path, data):
         pass
 
 
-def conf_idle(home=None):
-    """Порог простоя в секундах: строка `idle = <минуты>` в ~/.devkit/watch.local,
-    без файла или с непонятной строкой умолчание."""
+def conf_minutes(key, default, home=None):
+    """Число минут из ~/.devkit/watch.local в секундах. Нет файла, нет строки или
+    строка непонятная, значит умолчание."""
     home = default_home() if home is None else home
-    for key, val in read_entry(home_path(home, CONF)).items():
-        if key != "idle":
+    for name, val in read_entry(home_path(home, CONF)).items():
+        if name != key:
             continue
         try:
             minutes = int(val)
         except ValueError:
-            return IDLE
-        return minutes * 60 if minutes > 0 else IDLE
-    return IDLE
+            return default
+        return minutes * 60 if minutes > 0 else default
+    return default
+
+
+def conf_idle(home=None):
+    """Порог простоя в секундах: строка `idle = <минуты>` в ~/.devkit/watch.local."""
+    return conf_minutes("idle", IDLE, home)
+
+
+def conf_timeout(home=None):
+    """Потолок ожидания подпроцесса в секундах: строка `timeout = <минуты>` там
+    же, где порог простоя."""
+    return conf_minutes("timeout", TIMEOUT, home)
+
+
+def here(start=None):
+    """Корень проекта, из которого запущен сторожок: ближайший каталог вверх по
+    дереву с `.devkit` внутри. Тем же поиском журнал запусков находят сами
+    утилиты. Не нашлось значит строки в журнал никто и не пишет, и окну
+    достаётся сам путь запуска."""
+    path = os.path.abspath(start or os.getcwd())
+    while True:
+        if os.path.isdir(os.path.join(path, ".devkit")):
+            return path
+        up = os.path.dirname(path)
+        if up == path:
+            return os.path.abspath(start or os.getcwd())
+        path = up
 
 
 def read_ticks(home=None):
@@ -283,6 +313,38 @@ def own_tick(when, ticks, root=None):
     return False
 
 
+def run_soft(argv, timeout=None, grace=GRACE, **kw):
+    """Запуск подпроцесса с мягким снятием по времени. Отвечает тем же
+    `CompletedProcess`, что `subprocess.run`, и на месте его же.
+
+    Не уложившемуся вызову сначала идёт SIGTERM, и только не вышедшему за грацию
+    SIGKILL. Разница тут не косметическая: через тот же запускатель катится
+    разлив очереди, а `shipctl` при провале выката сам ставит признак провала и
+    зовёт `taskctl fail`. Под SIGKILL от `subprocess.run(timeout=...)` он не
+    успевает ничего, и провал остаётся строкой в журнале сторожка, до доски не
+    доходя.
+
+    Строка о снятии дописывается в вывод: без неё снятый вызов в отчёте тика
+    неотличим от вызова, упавшего своим кодом."""
+    proc = subprocess.Popen(argv, **kw)
+    snip = ""
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        snip = "по SIGTERM"
+        try:
+            out, err = proc.communicate(timeout=grace)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            snip = "по SIGKILL, за грацию %s не вышел" % say.human_age(grace)
+            out, err = proc.communicate()
+    if snip and isinstance(out, str):
+        out = "%s\nвызов не уложился в %s и снят %s" % (
+            (out or "").rstrip(), say.human_age(timeout or 0), snip)
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+
+
 class Timed:
     """Запускатель служебных вызовов сторожка. Засекает окно каждого вызова и
     кладёт его в файл окон до возврата, в том числе когда вызов упал: строка,
@@ -290,21 +352,23 @@ class Timed:
     окном, иначе следующий тик примет её за движение цикла.
 
     Тут же стоит потолок ожидания. Повисший подпроцесс без него держит сторожок
-    до убийства launchd, и окно не запишется вовсе.
+    до убийства launchd, и окно не запишется вовсе. Снимается вызов мягко, это
+    работа `run_soft`.
 
     Сдвиг `shift` двигает записанное окно вместе с подставленным временем
     прогона: без него сквозной случай проверялся бы ожиданием настоящих часов."""
 
-    def __init__(self, call, home, root=ANY_ROOT, shift=None, timeout=CALL_TIMEOUT):
-        self.call = subprocess.run if call is None else call
+    def __init__(self, call, home, root=ANY_ROOT, shift=None, timeout=None):
+        self.call = run_soft if call is None else call
         self.home = home
         self.root = root
         self.shift = shift or (datetime.now() - datetime.now())
-        self.timeout = timeout
+        self.timeout = TIMEOUT if timeout is None else timeout
 
     def __call__(self, argv, **kw):
         beg = datetime.now() + self.shift
         kw.setdefault("timeout", self.timeout)
+        kw.setdefault("grace", GRACE)
         try:
             return self.call(argv, **kw)
         except subprocess.TimeoutExpired:
@@ -1045,10 +1109,14 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     # время должно двигать окна вместе с журналами.
     shift = now - datetime.now()
     ticks = read_ticks(home)
-    timed = lambda root: Timed(call, home, root, shift)
+    limit = conf_timeout(home)
+    timed = lambda root: Timed(call, home, root, shift, limit)
     # Съём квоты идёт до обхода реестра и не зависит от него: снимок лежит на
     # уровне машины, и свежеть он обязан и там, где целей под надзором нет.
-    qreport, qnote = quota_snap(timed(ANY_ROOT), agentctl)
+    # Корень у окна всё равно свой: строку журнала agentctl пишет в тот проект,
+    # из которого запущен сторожок, и звёздочка на всё время съёма съедала бы
+    # боевой `agentctl quota` соседей.
+    qreport, qnote = quota_snap(timed(here()), agentctl)
     out.write(qreport + "\n")
     if qnote:
         log_line(qnote, home)

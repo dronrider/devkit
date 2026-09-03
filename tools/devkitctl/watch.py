@@ -15,16 +15,17 @@ launchd-агент, его кладёт `devkitctl doctor --fix`.
 
 Что цикл должен идти, сторожок узнаёт из реестра `~/.devkit/goals`: запись туда
 кладёт гейт бюджета `agentctl spend --goal`, который стоит в начале каждого
-витка и у оболочки, и в чате. Движение меряется по `.devkit/log` проекта: туда
-пишет строку каждая утилита devkit при каждом вызове, а виток без вызова
-утилит не обходится. Цель, ушедшая с доски или из In progress, снимается с
-надзора вместе со своей записью.
+витка и у оболочки, и в чате. Движение меряется двумя журналами: строкой хода в
+журнале цикла `.devkit/goal-<ID>.log` и вызовом утилиты в `.devkit/log`
+проекта, за вычетом строк расписания. Цель, ушедшая с доски или из In progress,
+снимается с надзора вместе со своей записью.
 
-Позвав, сторожок ставит в запись отметку `stopped`: второй раз по тому же стопу
-он молчит. Движение свежее отметки её снимает, снимает её и гейт следующего
-витка. Сам цикл сторожок не поднимает, а называет в зове готовую команду
-продолжения: стоп, доживший до порога, оболочка своими попытками уже не
-пережила, а цикл в чате оболочкой не заменяется.
+Позвав, сторожок ставит в запись отметку `stopped` и счёт зовов `shouts`, а
+дальше зовёт снова через тот же порог, пока цикл стоит. Движение свежее отметки
+снимает и её, и счёт, снимает их и гейт следующего витка. Сам цикл сторожок не
+поднимает, а называет в зове готовую команду продолжения: стоп, доживший до
+порога, оболочка своими попытками уже не пережила, а цикл в чате оболочкой не
+заменяется.
 
 Порог простоя берётся из `~/.devkit/watch.local` (строка `idle = <минуты>`), а
 без файла считается умолчанием в 45 минут: виток режет работу вызовами утилит
@@ -105,6 +106,15 @@ HEARTBEAT_MISS = 3
 STAMP = "%Y-%m-%dT%H:%M:%S"
 STAMP_FORMATS = (STAMP, "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S")
 RUN_LOG = ".devkit/log"
+GOAL_LOG = ".devkit/goal-%s.log"
+# Вызовы, которые в журнале запусков есть, а движением цикла не являются: их
+# делает расписание, а не виток. Разлив и снимок квоты тик сторожка гонит сам в
+# каждом корне под надзором, подхват катится хуком по часам сессии, и брошенный
+# цикл по этим строкам неотличим от работающего: простой DK-727 продержался
+# четыре с половиной часа ровно потому, что журнал запусков всё это время
+# выглядел живым.
+IDLE_CALLS = frozenset((("shipctl", "ship"), ("agentctl", "quota"),
+                        ("devkitctl", "catchup"), ("taskctl", "catchup")))
 BOARD = "docs/TASKS.md"
 IN_PROGRESS = "In progress"
 CHECK = "Check"
@@ -134,10 +144,12 @@ REG_KEYS = ("сессия", "задача", "проект", "дерево", "т�
             "родитель")
 # Хвост журнала запусков, из которого берётся последняя метка времени: файл
 # растёт всю жизнь проекта, и читать его целиком каждые пять минут незачем.
-TAIL = 4096
+# Размер тут с запасом на ночь: строки расписания идут каждые пять минут и
+# уносят последний живой вызов далеко от конца файла.
+TAIL = 128 * 1024
 # Порядок ключей записи реестра: сначала то, что пишет гейт, потом отметки
 # сторожка. Незнакомые ключи не теряются, они дописываются в хвост.
-KEYS = ("goal", "root", "file", "seen", "stopped")
+KEYS = ("goal", "root", "file", "seen", "stopped", "shouts")
 
 LABEL = "ru.devkit.goal-watch"
 PLIST = "~/Library/LaunchAgents/%s.plist" % LABEL
@@ -208,8 +220,12 @@ def conf_idle(home=None):
 
 
 def last_run_stamp(root):
-    """Момент последнего вызова утилиты devkit в проекте, None если журнала нет
-    или он пуст. Читается хвост файла: строки идут по возрастанию времени."""
+    """Момент последнего вызова утилиты devkit в проекте, None если журнала нет,
+    он пуст или в хвосте одно расписание. Читается хвост файла: строки идут по
+    возрастанию времени.
+
+    Строки из IDLE_CALLS пропускаются: движением цикла считается вызов, который
+    сделал виток, а не тик сторожка и не хук по часам."""
     try:
         with open(os.path.join(root, RUN_LOG), "rb") as f:
             f.seek(0, os.SEEK_END)
@@ -219,7 +235,29 @@ def last_run_stamp(root):
     except OSError:
         return None
     for ln in reversed(tail.splitlines()):
-        st = stamp_of(ln.split("\t")[0])
+        cells = ln.split("\t")
+        st = stamp_of(cells[0])
+        if st is None:
+            continue
+        if tuple(c.strip() for c in cells[1:3]) in IDLE_CALLS:
+            continue
+        return st
+    return None
+
+
+def last_round_stamp(root, goal):
+    """Момент последней строки журнала цикла `.devkit/goal-<ID>.log`, None если
+    журнала нет. Туда пишет строку каждый виток, и оболочка, и живой чат ключом
+    `--say`, так что это движение самого цикла, а не его окружения."""
+    try:
+        with open(os.path.join(root, GOAL_LOG % goal), "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - TAIL))
+            tail = f.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    for ln in reversed(tail.splitlines()):
+        st = stamp_of(ln.split(" ")[0])
         if st is not None:
             return st
     return None
@@ -761,11 +799,15 @@ def resume_command(goal, root, devkit=None):
 
 
 def moved_at(entry, root, path):
-    """Когда цикл двигался последний раз. Первый источник это журнал запусков
-    проекта, второй строка гейта в самой записи: без `.devkit` журнала нет, а
-    гейт витка есть всегда. Не разобрано ни то, ни другое, значит берётся время
-    самой записи, иначе цель осталась бы без надзора."""
-    marks = [m for m in (last_run_stamp(root), stamp_of(entry.get("seen"))) if m]
+    """Когда цикл двигался последний раз. Источников три: журнал цикла цели,
+    журнал запусков проекта без строк расписания и строка гейта в самой записи.
+    Берётся самый свежий, потому что живого цикла хватает и одного: виток на
+    долгом прогоне в журнал цикла часами не пишет, зато зовёт утилиты, а виток,
+    который только что отчитался строкой хода, утилит пока не звал. Не разобран
+    ни один источник, значит берётся время самой записи, иначе цель осталась бы
+    без надзора."""
+    marks = [m for m in (last_round_stamp(root, entry.get("goal")),
+                         last_run_stamp(root), stamp_of(entry.get("seen"))) if m]
     if marks:
         return max(marks)
     try:
@@ -796,22 +838,34 @@ def look(path, now, idle, call=None):
         return False, "цель %s в %s: движения не измерить, записи нет времени" % (goal, root)
     gap = (now - moved).total_seconds()
     if gap < idle:
-        if entry.get("stopped"):
-            entry.pop("stopped")
+        if entry.pop("stopped", None) or entry.pop("shouts", None):
+            entry.pop("shouts", None)
             write_entry(path, entry)
         return False, "цель %s в %s: движение %s назад, тихо" % (goal, root, say.human_age(gap))
-    if entry.get("stopped"):
-        return False, "цель %s в %s: простой %s, по этому стопу уже позвали в %s" % (
-            goal, root, say.human_age(gap), entry["stopped"])
+    # Зов повторяется, пока цикл стоит: молчание после первого баннера и дало
+    # простой DK-727 длиной в ночь. Между повторами тот же порог, а не тик, иначе
+    # человек выключит сторожок вместе с шумом.
+    since = stamp_of(entry.get("stopped"))
+    if since is not None:
+        quiet = (now - since).total_seconds()
+        if quiet < idle:
+            return False, "цель %s в %s: простой %s, звали в %s, повтор через %s" % (
+                goal, root, say.human_age(gap), entry["stopped"], say.human_age(idle - quiet))
+    try:
+        times = int(entry.get("shouts", "0")) + 1
+    except ValueError:
+        times = 1
     title = "цель %s: цикл стоит %s" % (goal, say.human_age(gap))
-    body = "движения в %s нет с %s при пороге %s; продолжить цикл: %s" % (
+    again = ", зову %d-й раз" % times if times > 1 else ""
+    body = "движения в %s нет с %s при пороге %s%s; продолжить цикл: %s" % (
         os.path.basename(root.rstrip("/")), moved.strftime(STAMP), say.human_age(idle),
-        resume_command(goal, root))
+        again, resume_command(goal, root))
     said = shout(title, body, root, call, goal)
     entry["stopped"] = now.strftime(STAMP)
+    entry["shouts"] = str(times)
     write_entry(path, entry)
-    return True, "цель %s в %s: простой %s при пороге %s, зову; %s" % (
-        goal, root, say.human_age(gap), say.human_age(idle), said)
+    return True, "цель %s в %s: простой %s при пороге %s, зову%s; %s" % (
+        goal, root, say.human_age(gap), say.human_age(idle), again, said)
 
 
 def drop(path):

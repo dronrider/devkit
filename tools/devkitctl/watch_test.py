@@ -74,6 +74,12 @@ class Stand(unittest.TestCase):
         text = BOARD % (row if in_progress else "", "" if in_progress else row)
         (self.proj / "docs" / "TASKS.md").write_text(text, encoding="utf-8")
 
+    def goallog(self, ago_minutes, goal=GOAL):
+        when = stamp(self.now - timedelta(minutes=ago_minutes))
+        with open(str(self.proj / ".devkit" / ("goal-%s.log" % goal)), "a",
+                  encoding="utf-8") as f:
+            f.write("%s виток стенда\n" % when)
+
     def runlog(self, ago_minutes, tool="agentctl", cmd="spend"):
         when = stamp(self.now - timedelta(minutes=ago_minutes))
         with open(str(self.proj / ".devkit" / "log"), "a", encoding="utf-8") as f:
@@ -143,7 +149,7 @@ class LookTest(Stand):
         called, line, call = self.look(path)
         self.assertFalse(called, "по тому же стопу позвали второй раз: %s" % line)
         self.assertEqual(call.calls, [])
-        self.assertIn("уже позвали", line)
+        self.assertIn("повтор через", line)
 
     def test_live_loop_is_silent(self):
         # Живой цикл дёргать нельзя: утилита звалась только что.
@@ -175,6 +181,105 @@ class LookTest(Stand):
         path = self.entry(seen_minutes=200)
         called, line, _ = self.look(path)
         self.assertTrue(called, "без журнала запусков цель осталась без надзора: %s" % line)
+
+    def test_watch_own_tick_is_not_movement(self):
+        # Простой DK-727: цикл встал в 04:26, а журнал запусков четыре с
+        # половиной часа выглядел живым, потому что в него писал сам тик
+        # сторожка. Разлив и снимок квоты движением цикла не считаются.
+        path = self.entry(seen_minutes=270)
+        self.goallog(270)
+        self.runlog(270, tool="taskctl", cmd="move")
+        self.runlog(3, tool="shipctl", cmd="ship")
+        self.runlog(2, tool="agentctl", cmd="quota")
+        called, line, _ = self.look(path)
+        self.assertTrue(called, "тик сторожка сошёл за движение цикла: %s" % line)
+
+    def test_scheduled_catchup_is_not_movement(self):
+        # Подхват катится хуком по часам сессии и идёт в тот же журнал: у
+        # брошенной сессии он тикает ровно так же, как у работающей.
+        path = self.entry(seen_minutes=270)
+        self.goallog(270)
+        self.runlog(270, tool="taskctl", cmd="move")
+        self.runlog(2, tool="devkitctl", cmd="catchup")
+        self.runlog(1, tool="taskctl", cmd="catchup")
+        called, line, _ = self.look(path)
+        self.assertTrue(called, "подхват по расписанию сошёл за движение: %s" % line)
+
+    def test_goal_journal_counts_as_movement(self):
+        # Виток пишет строку в журнал цикла, и это движение самого цикла, а не
+        # окружающего его расписания.
+        path = self.entry(seen_minutes=270)
+        self.runlog(270, tool="taskctl", cmd="move")
+        self.goallog(2)
+        called, line, _ = self.look(path)
+        self.assertFalse(called, "строка витка не сошла за движение: %s" % line)
+
+    def test_long_round_keeps_quiet(self):
+        # Живой виток на долгом прогоне журнала цикла не пишет часами, но
+        # утилиты зовёт: по ним он и отличается от брошенного.
+        path = self.entry(seen_minutes=270)
+        self.goallog(270)
+        self.runlog(2, tool="taskctl", cmd="show")
+        called, line, _ = self.look(path)
+        self.assertFalse(called, "долгий виток принят за вставший: %s" % line)
+
+    def test_stale_goal_journal_deep_in_the_log(self):
+        # Тик сторожка пишет строки каждые пять минут, и за ночь простоя они
+        # уносят последний живой вызов далеко от хвоста журнала.
+        path = self.entry(seen_minutes=270)
+        self.goallog(270)
+        self.runlog(270, tool="taskctl", cmd="move")
+        for i in range(260, 0, -5):
+            self.runlog(i, tool="shipctl", cmd="ship")
+            self.runlog(i, tool="agentctl", cmd="quota")
+        called, line, _ = self.look(path)
+        self.assertTrue(called, "хвост из тиков сторожка спрятал простой: %s" % line)
+
+    def test_shout_repeats_past_the_threshold(self):
+        # Молчание после первого зова и дало четыре с половиной часа простоя:
+        # зов обязан повторяться, пока цикл стоит.
+        path = self.entry(seen_minutes=270,
+                          stopped=stamp(self.now - timedelta(minutes=60)))
+        self.goallog(270)
+        called, line, call = self.look(path)
+        self.assertTrue(called, "по стоящему циклу второй раз не позвали: %s" % line)
+        self.assertEqual(len(call.argv_with("notify.py")), 1, call.calls)
+        self.assertEqual(watch.read_entry(path)["stopped"], stamp(self.now),
+                         "повторный зов не обновил отметку стопа")
+
+    def test_repeat_names_its_number(self):
+        # Человеку по баннеру видно, что зовут не впервые: иначе повтор
+        # неотличим от первого стопа.
+        path = self.entry(seen_minutes=270,
+                          stopped=stamp(self.now - timedelta(minutes=60)),
+                          shouts="1")
+        self.goallog(270)
+        called, line, call = self.look(path)
+        self.assertTrue(called, line)
+        body = call.argv_with("notify.py")[0][5]
+        self.assertIn("2-й раз", body, "повтор не назвал своего номера: %s" % body)
+        self.assertEqual(watch.read_entry(path)["shouts"], "2")
+
+    def test_repeat_waits_out_the_threshold(self):
+        # Повтор идёт по тому же порогу, а не каждым тиком: баннер раз в пять
+        # минут человек выключит вместе со сторожком.
+        path = self.entry(seen_minutes=270,
+                          stopped=stamp(self.now - timedelta(minutes=5)))
+        self.goallog(270)
+        called, line, call = self.look(path)
+        self.assertFalse(called, "повтор пришёл раньше порога: %s" % line)
+        self.assertEqual(call.calls, [])
+        self.assertIn("звали", line)
+
+    def test_movement_clears_the_repeat_count(self):
+        path = self.entry(seen_minutes=270,
+                          stopped=stamp(self.now - timedelta(minutes=60)), shouts="3")
+        self.goallog(1)
+        called, line, _ = self.look(path)
+        self.assertFalse(called, line)
+        entry = watch.read_entry(path)
+        self.assertNotIn("stopped", entry)
+        self.assertNotIn("shouts", entry, "цикл поехал, а счёт зовов остался")
 
     def test_goal_out_of_progress_drops_the_entry(self):
         path = self.entry(seen_minutes=200)

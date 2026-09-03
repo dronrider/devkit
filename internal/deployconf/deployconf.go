@@ -11,13 +11,13 @@
 package deployconf
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/kvconf"
 )
 
 // Rel это путь обвязки внутри корня проекта.
@@ -39,49 +39,39 @@ type Config struct {
 // провалом, а не вечным молчанием (DK-154).
 const DefaultTimeout = 30 * time.Minute
 
-// Load читает обвязку корня, если она есть. Формат простой: строки вида
-// key = value, # это комментарий, пустые строки пропускаются. Отсутствие файла
-// не ошибка. Выкат тогда остаётся за пользователем, как и до появления конфига.
+// Load читает обвязку корня, если она есть. Формат плоский, «ключ = значение»
+// с решёткой под комментарий, и разбирает его kvconf вместе с review.conf.
+// Отсутствие файла не ошибка. Выкат тогда остаётся за пользователем, как и до
+// появления конфига.
 func Load(root string) (Config, error) {
 	c := Config{Timeout: DefaultTimeout}
-	f, err := os.Open(filepath.Join(root, filepath.FromSlash(Rel)))
+	pairs, err := kvconf.Read(filepath.Join(root, filepath.FromSlash(Rel)))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return c, nil
 		}
 		return c, err
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, val, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key, val = strings.TrimSpace(key), Unquote(strings.TrimSpace(val))
-		switch key {
+	for _, p := range pairs {
+		switch p.Key {
 		case "deploy":
-			c.Deploy = val
+			c.Deploy = p.Value
 		case "test":
-			c.Test = val
+			c.Test = p.Value
 		case "autonomous":
-			c.Autonomous, _ = strconv.ParseBool(val)
+			c.Autonomous, _ = strconv.ParseBool(p.Value)
 		case "deploy_timeout":
 			// Молча вернуться к умолчанию нельзя: опечатка в пределе оставила бы
 			// выкат с чужим временем ожидания, а заметить это можно только на
 			// вставшей команде.
-			d, err := time.ParseDuration(val)
+			d, err := time.ParseDuration(p.Value)
 			if err != nil || d <= 0 {
-				return c, fmt.Errorf("%s: deploy_timeout = %q не читается как предел времени, ждал длительность вида 90s, 30m, 2h", Rel, val)
+				return c, fmt.Errorf("%s: deploy_timeout = %q не читается как предел времени, ждал длительность вида 90s, 30m, 2h", Rel, p.Value)
 			}
 			c.Timeout = d
 		}
 	}
-	return c, sc.Err()
+	return c, nil
 }
 
 // Autonomous отвечает на единственный вопрос дашборда: доверен ли конвейер
@@ -93,15 +83,6 @@ func Autonomous(root string) bool {
 	return err == nil && c.Autonomous
 }
 
-// Unquote снимает одну окружающую пару кавычек, если значение целиком в них
-// завёрнуто. Кавычки внутри команды (ssh host 'systemctl restart foo') не
-// трогаются: снимается ровно внешняя пара, не все подряд.
-func Unquote(s string) string {
-	if len(s) >= 2 {
-		q := s[0]
-		if (q == '"' || q == '\'') && s[len(s)-1] == q {
-			return s[1 : len(s)-1]
-		}
-	}
-	return s
-}
+// Unquote снимает одну окружающую пару кавычек у значения. Разбор живёт в
+// kvconf, здесь остаётся имя, по которому его зовут читатели обвязки.
+func Unquote(s string) string { return kvconf.Unquote(s) }

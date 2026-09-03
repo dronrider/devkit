@@ -81,6 +81,15 @@ def secret_file(text):
             askpass.SECRET_PATH = was
 
 
+class ExecutableTest(unittest.TestCase):
+    def test_helper_is_executable_in_the_checkout(self):
+        # sudo и ssh зовут SUDO_ASKPASS/SSH_ASKPASS напрямую, без интерпретатора
+        # перед ним: без бита запуска раскладка devkitctl doctor --fix копирует
+        # мёртвый файл, а sudo из чата отказывает execve, а не разбором пароля.
+        path = Path(askpass.__file__)
+        self.assertTrue(os.access(str(path), os.X_OK), "%s без бита запуска" % path)
+
+
 class AddrOfTest(unittest.TestCase):
     def test_empty_host_becomes_loopback(self):
         # Демон слушает все интерфейсы (addr пуст в конфиге), и DEVKIT_ADDR

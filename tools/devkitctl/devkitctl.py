@@ -1903,7 +1903,7 @@ def check_quota(fix, blocked=""):
     return findings, fixed
 
 
-def alias_folding(env, devkit=None):
+def alias_folding(env):
     """Подстановки алиасов первой лестницы для env второй подписки: алиас ->
     модель подписки.
 
@@ -1918,7 +1918,7 @@ def alias_folding(env, devkit=None):
     не на что, пока человек не вписал модели, и про пустые ключи уже сказала
     находка выше по ходу проверки.
     """
-    path = (Path(devkit) if devkit else DEVKIT) / "kit" / "harness" / "claude-code.toml"
+    path = DEVKIT / "kit" / "harness" / "claude-code.toml"
     try:
         profile = harness.parse(path.name, path.read_text(encoding="utf-8"))
     except (OSError, harness.TomlError):

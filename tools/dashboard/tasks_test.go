@@ -1532,12 +1532,22 @@ func findChrome() string {
 		home = ""
 	}
 	var globs []string
-	if home != "" {
+	// Домов два, и оба нужны. Обкатка сценария гоняет шаги с временным HOME
+	// (`taskctl rehearse`), а браузер стенда лежит в кеше настоящего дома
+	// машины, и по одному HOME сквозной шаг там пропускался молча. Настоящий
+	// дом берётся у системы, а не у окружения, тем же способом, каким его берёт
+	// подъём сессии (`realHome`).
+	seen := map[string]bool{}
+	for _, dir := range []string{home, realHome()} {
+		if dir == "" || seen[dir] {
+			continue
+		}
+		seen[dir] = true
 		globs = append(globs,
-			filepath.Join(home, "Library/Caches/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell"),
-			filepath.Join(home, ".cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell"),
-			filepath.Join(home, "Library/Caches/ms-playwright/chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium"),
-			filepath.Join(home, ".cache/ms-playwright/chromium-*/chrome-linux/chrome"))
+			filepath.Join(dir, "Library/Caches/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell"),
+			filepath.Join(dir, ".cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell"),
+			filepath.Join(dir, "Library/Caches/ms-playwright/chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium"),
+			filepath.Join(dir, ".cache/ms-playwright/chromium-*/chrome-linux/chrome"))
 	}
 	globs = append(globs, "/Applications/Chromium.app/Contents/MacOS/Chromium")
 	for _, glob := range globs {

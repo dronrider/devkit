@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Рубеж связки cd с командой (DK-770): PreToolUse-хук отбивает «cd <каталог> &&
-<команда>» до того, как ход дойдёт до классификатора прав.
-
+<команда>» до того, как ход дойдёт до классификатора прав, и подсказывает
+готовую замену.
 Классификатор авто-режима не вычисляет, куда указывает относительный путь после
 cd, и говорит про «a directory that cannot be determined here». Поверх стоят
 deny-правила на Read (четвёрка SECRET_DENY из perms.py, задача DK-228, рубеж
@@ -9,22 +9,26 @@ deny-правила на Read (четвёрка SECRET_DENY из perms.py, за�
 запрете на чтение и неизвестном адресате разрешение спрашивается у человека, и
 автономная сессия встаёт до его прихода: 3 сентября так разом встали и
 исполнители задач, и ревьюверы. Снять deny нельзя, зато можно не писать связку
-вовсе. Хук отвечает отказом с подсказкой, агент переписывает команду сам, и
-вопрос до человека не доходит.
-
+вовсе. Хук отвечает отказом с готовой заменой, агент повторяет ход ею, и вопрос
+до человека не доходит.
+Рубится не любая связка, а три вида, которые уходят человеку по доке прав
+Claude Code: за cd идёт команда чтения файла (cat, grep, sed и соседи) с
+относительным путём в операнде; за cd идёт git (в новом каталоге он может
+выполнить чужие хуки); за cd идёт редирект вывода в файл, кроме /dev/null.
+Связка с командой, которую классификатор пропускает сам (`cd X && cargo test`,
+`cd X && ls`), проходит: ложный отказ на каждом ходу дороже пропущенной связки.
 Одинокий `cd <путь>` проходит: сменить каталог отдельным вызовом законно, cwd у
-Bash между вызовами сохраняется. Рубится ровно случай, когда за cd в позиции
-команды идёт вторая команда через `&&`, `||`, `;`, `|`, `&` или перевод строки,
-в том числе в подшелле `(cd X && ...)` и в подстановке `$(cd X && ...)`.
-
+Bash между вызовами сохраняется. Подшелл `(cd X && ...)` и подстановка
+`$(cd X && ...)` разбираются наравне с началом строки.
 Команда разбирается токенами, а не поиском подстроки: слово cd внутри кавычек
 (текст промпта у `claude -p '... cd ~/x && grep ...'`) командой не считается, и
 тело heredoc'а снимается до разбора, иначе записанный в файл пример ловил бы сам
 себя. Разбор берёт надёжный минимум: cd за словом другой конструкции (`do cd $d
-&& ls` в цикле) рубеж пропускает, а нераспознанный shell проходит молча. Это
-граница рубежа, а не пробел в нём: хук стоит на каждом ходе Bash и ложным
-отказом сорвал бы работу дороже, чем пропущенной связкой.
-
+&& ls` в цикле) рубеж пропускает, а нераспознанный shell проходит молча.
+Замена в подсказке собирается из самой команды: cd убирается, относительные
+операнды команд чтения и цель редиректа получают префикс каталога, git получает
+`-C <каталог>`. Каталог с подстановкой (`cd $ROOT && ...`) в путь не
+подставляется, тогда подсказка советует одинокий cd отдельным вызовом.
 Режимы:
   check-cd-compound.py <команда>   проверить команду из аргументов, выход 1 если
                                    в ней нашлась связка с cd, иначе 0
@@ -42,27 +46,25 @@ import sys
 import hookio
 
 CD = "cd"
-# Знаки, из которых состоит разделитель команд. Токен, набранный только из них,
-# открывает новую команду; `&&\n` тоже приходит одним токеном, поэтому судится
-# состав, а не точное совпадение со списком.
 SEPARATOR_CHARS = set(";&|\n")
-# Знаки, которые лексер выделяет в отдельные токены. Перевод строки добавлен к
-# набору shlex: он такой же разделитель команд, как `;`, и связку в две строки
-# рубеж обязан видеть.
 PUNCTUATION = "();<>|&\n"
-# Имя разделителя, у которого нет печатного вида: голый перевод строки в отказе
-# надо назвать словами, иначе подсказка выйдет с дырой посередине.
-NEWLINE = "перевод строки"
-# Открывающие скобки: после них снова стоит команда, поэтому `(cd X && ls)` и
-# `$(cd X && ls)` разбираются наравне с началом строки.
 OPENERS = ("(", "{")
-# Заголовок heredoc'а: тело до строки-терминатора это данные, а не команды.
+CLOSERS = (")", "}")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+# Команды чтения файла, которые Claude Code узнаёт в Bash и судит по правилам
+# Read: относительный путь в их операнде после cd и есть случай «каталог не
+# определить». grep-семейство, sed и awk первым операндом несут шаблон, у них
+# файлы идут со второго.
+READERS = {
+    "cat", "head", "tail", "tac", "less", "more", "nl", "wc", "cut", "sort",
+    "uniq", "strings", "xxd", "od", "diff", "cmp", "cp", "stat", "file",
+    "grep", "egrep", "fgrep", "rg", "ugrep", "ag", "sed", "awk",
+}
+PATTERN_FIRST = {"grep", "egrep", "fgrep", "rg", "ugrep", "ag", "sed", "awk"}
+DEVNULL = "/dev/null"
 
 
 def strip_heredocs(command):
-    """Команда без тел heredoc'ов. Записанный в файл пример со связкой это
-    текст, и ловить в нём команды рубежу нечего."""
     out = []
     rest = command
     while True:
@@ -98,51 +100,169 @@ def is_separator(token):
     return bool(token) and set(token) <= SEPARATOR_CHARS
 
 
-def compound_after_cd(command):
-    """Разделитель, которым за cd открывается вторая команда, либо пустая строка.
-    Разделитель возвращается текстом: отказ называет его, иначе спорить с
-    рубежом нечем."""
+def is_redirect(token):
+    return bool(token) and ">" in token and "&" not in token and set(token) <= set("<>0123456789")
+
+
+def split_segments(parts):
+    """Команда как список сегментов: каждый это (список токенов, разделитель
+    после него). Скобки в сегменты не входят, глубина не отслеживается: рубежу
+    хватает знать, где начинается очередная команда."""
+    segments = []
+    cur = []
+    for token in parts:
+        if is_separator(token):
+            segments.append((cur, token))
+            cur = []
+        elif token in OPENERS or token in CLOSERS:
+            if cur:
+                segments.append((cur, ""))
+                cur = []
+        else:
+            cur.append(token)
+    if cur:
+        segments.append((cur, ""))
+    return segments
+
+
+NUMERIC = re.compile(r"^[+]?[0-9][0-9,]*[a-z]?$")
+
+
+def is_relative(path):
+    """Операнд похож на относительный путь: не абсолютный, не с тильдой, не
+    подстановка, не ключ и не число (значение `-n 5` у tail это не файл)."""
+    if not path or path[0] in "/~$-" or path.startswith("${"):
+        return False
+    return not NUMERIC.match(path)
+
+
+def literal_dir(target):
+    """Каталог cd, годный в префикс пути: без подстановок и глоббинга."""
+    if not target or any(ch in target for ch in "$`*?"):
+        return ""
+    return target.rstrip("/") or "/"
+
+
+def join_path(base, rel):
+    if rel == ".":
+        return base
+    if rel.startswith("./"):
+        rel = rel[2:]
+    return base + "/" + rel
+
+
+def rewrite_reader(seg, base):
+    """Сегмент команды чтения с абсолютными операндами, либо None, если
+    относительных операндов у него нет."""
+    name = seg[0]
+    skip_pattern = name in PATTERN_FIRST
+    out = list(seg)
+    changed = False
+    i = 1
+    while i < len(seg):
+        tok = seg[i]
+        if is_redirect(tok):
+            i += 2
+            continue
+        if tok.startswith("-") and tok != "-":
+            if tok in ("-e", "-f", "--file", "--regexp") and i + 1 < len(seg):
+                i += 2
+                continue
+            i += 1
+            continue
+        if skip_pattern:
+            skip_pattern = False
+            i += 1
+            continue
+        if is_relative(tok):
+            changed = True
+            if base:
+                out[i] = join_path(base, tok)
+        i += 1
+    return out if changed else None
+
+
+def rewrite_redirect(seg, base):
+    """Сегмент с абсолютной целью редиректа, либо None, если файлового
+    редиректа в нём нет."""
+    out = list(seg)
+    changed = False
+    for i, tok in enumerate(seg[:-1]):
+        target = seg[i + 1]
+        if is_redirect(tok) and target != DEVNULL and not is_separator(target):
+            changed = True
+            if base and is_relative(target):
+                out[i + 1] = join_path(base, target)
+    return out if changed else None
+
+
+def offending(segments, start, base):
+    """Причина отказа и переписанные сегменты после cd, либо (None, None)."""
+    reason = None
+    rewritten = []
+    for seg, sep in segments[start:]:
+        new = seg
+        if seg:
+            if seg[0] == "git":
+                reason = reason or "git после cd выполняется в чужом каталоге"
+                new = ["git", "-C", base] + seg[1:] if base else seg
+            elif seg[0] in READERS:
+                r = rewrite_reader(seg, base)
+                if r is not None:
+                    reason = reason or "чтение файла по относительному пути после cd"
+                    new = r
+            r = rewrite_redirect(new, base)
+            if r is not None:
+                reason = reason or "редирект вывода в файл после cd"
+                new = r
+        rewritten.append((new, sep))
+    if reason is None:
+        return None, None
+    return reason, rewritten
+
+
+def render(segments):
+    out = []
+    for seg, sep in segments:
+        out.append(" ".join(shlex.quote(t) if " " in t or '"' in t or "'" in t else t for t in seg))
+        if sep:
+            out.append(" " + ("\n" if "\n" in sep else sep) + " " if "\n" not in sep else "\n")
+    return "".join(out).strip()
+
+
+def find_compound(command):
+    """Находка по связке с cd: (причина, каталог cd, замена) либо None."""
     parts = tokens(strip_heredocs(command))
     if parts is None:
-        return ""
-    at_command = True
-    in_cd = False
-    for i, token in enumerate(parts):
-        if is_separator(token):
-            if in_cd:
-                # Разделитель после cd открывает вторую команду только тогда,
-                # когда за ним что-то стоит: хвостовой `cd /x;` это одинокий cd.
-                if any(not is_separator(t) for t in parts[i + 1:]):
-                    return token.strip() or NEWLINE
-                return ""
-            at_command = True
+        return None
+    segments = split_segments(parts)
+    for idx, (seg, sep) in enumerate(segments):
+        if not seg or seg[0] != CD:
             continue
-        if token in OPENERS:
-            at_command = True
-            in_cd = False
+        if not sep or not any(s for s, _ in segments[idx + 1:]):
             continue
-        if token == ")" or token == "}":
-            in_cd = False
-            at_command = False
-            continue
-        if at_command:
-            in_cd = token == CD
-        at_command = False
-    return ""
+        target = seg[1] if len(seg) > 1 else ""
+        base = literal_dir(target)
+        reason, rewritten = offending(segments, idx + 1, base)
+        if reason is None:
+            return None
+        return reason, target, (render(rewritten) if base else "")
+    return None
 
 
-def report(separator):
-    named = separator if separator == NEWLINE else "`%s`" % separator
-    return "\n".join([
-        "связка cd со второй командой через %s отбита рубежом DK-770." % named,
-        "Классификатор авто-режима не вычисляет каталог после cd, поверх стоит "
-        "запрет на чтение секретов (DK-228), и такой ход уходит вопросом к "
-        "человеку: автономная сессия встаёт до его прихода.",
-        "Пиши без cd: абсолютный путь в аргументе, `git -C <путь>`, "
-        "`cargo --manifest-path <путь>`, `go test <путь>`.",
-        "Каталог, когда он всё-таки нужен, меняется одиноким `cd <путь>` "
-        "отдельным вызовом Bash: cwd между вызовами сохраняется.",
-    ]) + "\n"
+def report(found):
+    reason, target, replacement = found
+    lines = []
+    if replacement:
+        lines.append("Связка с cd отбита рубежом DK-770, повтори ход этой командой: %s" % replacement)
+    else:
+        lines.append("Связка с cd отбита рубежом DK-770, смени каталог одиноким `cd %s` "
+                     "отдельным вызовом Bash и повтори остальное следующим вызовом: "
+                     "cwd между вызовами сохраняется." % (target or "<путь>"))
+    lines.append("Причина: %s. Классификатор авто-режима не вычисляет каталог после cd, "
+                 "поверх стоит запрет на чтение секретов (DK-228), и такой ход уходит "
+                 "вопросом к человеку, а автономная сессия встаёт до его прихода." % reason)
+    return "\n".join(lines) + "\n"
 
 
 def run_hook(protocol):
@@ -156,17 +276,17 @@ def run_hook(protocol):
     command = ti.get("command")
     if not isinstance(command, str) or not command:
         return 0
-    separator = compound_after_cd(command)
-    if not separator:
+    found = find_compound(command)
+    if not found:
         return 0
-    return hookio.reply(protocol).found(report(separator))
+    return hookio.reply(protocol).found(report(found))
 
 
 def run_command(command):
-    separator = compound_after_cd(command)
-    if not separator:
+    found = find_compound(command)
+    if not found:
         return 0
-    sys.stdout.write(report(separator))
+    sys.stdout.write(report(found))
     return 1
 
 

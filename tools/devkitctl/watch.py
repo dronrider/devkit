@@ -1053,7 +1053,7 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None, call=N
     import dashboard
     binary = which("dashboard")
     if not binary:
-        return ["бинарей devkit нет в PATH: PATH для сторожка не собрать; поставить бинари "
+        return ["бинаря dashboard нет в PATH: PATH для сторожка не собрать; поставить бинари "
                 "(devkitctl update или build) и повторить doctor --fix"], []
     plist = home_path(home, PLIST)
     log = home_path(home, LOG)

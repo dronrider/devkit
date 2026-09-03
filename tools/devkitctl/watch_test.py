@@ -1059,6 +1059,7 @@ class AgentTest(Stand):
         # не ложится вовсе, вместо этого находка про бинари.
         f, d, call = self.check(binary=False)
         self.assertEqual(len(f), 1, f)
+        self.assertIn("dashboard", f[0])
         self.assertIn("devkitctl update", f[0])
         self.assertEqual(d, [])
         self.assertEqual(call.calls, [])

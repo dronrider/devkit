@@ -861,9 +861,11 @@ class ReviewSkill(SkillTree):
              "## Вопросы по уровням\n\nвопросы\n\n"
              "## Замечания и три яруса\n\n- Блокирующее: правит.\n- Неблокирующее: отвечает.\n- Мелочь: сам.\n\n"
              "## Бюджет и стоп\n\nстоп\n\n## Разговор с автором\n\nкоротко\n\n"
+             "## Ревью чужой задачи\n\nreview draft, потом вопрос человеку и парковка «ждёт "
+             "подтверждения», за ней review publish\n\n"
              "## Отработка замечаний автором\n\nшаги\n\n## Второй круг\n\nдельта\n")
     CONF = ("level1 = 5 минут, 20 ходов\nlevel2 = 20 минут, 70 ходов\nlevel3 = 40 минут, 100 ходов\n"
-            "critical_paths = tools\nchecks = 2: вопрос\n")
+            "critical_paths = tools\nchecks = 2: вопрос\npublish = confirm\npause = 20-60\n")
     AGENT = "---\nname: %s\neffort: high\n---\n\nТы ревьювер, читай скилл `review`.\n"
     EXEC = "---\nname: %s\neffort: high\n---\n\nТы исполнитель, замечания по разделу «Отработка замечаний автором».\n"
 
@@ -923,6 +925,28 @@ class ReviewSkill(SkillTree):
         self.write_review(conf=self.CONF.replace("critical_paths = tools\n", ""))
         fails = check_skills.check_review(self.here, self.root)
         self.assertTrue(any("нет ключа critical_paths" in f for f in fails), fails)
+
+    def test_lost_foreign_review_section(self):
+        self.write_review(skill=self.SKILL.replace("## Ревью чужой задачи", "## Чужое ревью"))
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("нет раздела «Ревью чужой задачи»" in f for f in fails), fails)
+
+    def test_foreign_review_without_publish_step(self):
+        # Раздел на месте, а команды публикации в нём нет: замечания опять
+        # уедут в чужой MR разговором, мимо файла и мимо человека.
+        self.write_review(skill=self.SKILL.replace("за ней review publish", "за ней публикация"))
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("нет «review publish»" in f for f in fails), fails)
+
+    def test_foreign_review_without_parking(self):
+        self.write_review(skill=self.SKILL.replace("«ждёт подтверждения»", "паузой"))
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("нет «ждёт подтверждения»" in f for f in fails), fails)
+
+    def test_conf_without_publish_key(self):
+        self.write_review(conf=self.CONF.replace("publish = confirm\n", ""))
+        fails = check_skills.check_review(self.here, self.root)
+        self.assertTrue(any("нет ключа publish" in f for f in fails), fails)
 
     def test_side_file_missing_or_unnamed(self):
         self.write_review()

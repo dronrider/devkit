@@ -281,9 +281,16 @@ def check_team(here):
 REVIEW_SECTIONS = ("## Вход", "## Порядок ревью", "## Сколько ревью нужно",
                    "## Вопросы по уровням", "## Замечания и три яруса",
                    "## Бюджет и стоп", "## Разговор с автором",
+                   "## Ревью чужой задачи",
                    "## Отработка замечаний автором", "## Второй круг")
 REVIEW_TIERS = ("Блокирующее", "Неблокирующее", "Мелочь")
-REVIEW_KEYS = ("level1", "level2", "level3", "critical_paths", "checks")
+REVIEW_KEYS = ("level1", "level2", "level3", "critical_paths", "checks",
+               "publish", "pause")
+# Чем держится сценарий чужого ревью (LLD DK-756): замечания копятся командой в
+# файл, публикует их отдельная команда, а между ними стоит вопрос человеку с
+# парковкой строки. Раздел без любого из трёх звеньев снова уводит замечания
+# прямо в чужой MR, ради чего сценарий и заводился.
+REVIEW_FOREIGN = ("review draft", "review publish", "ждёт подтверждения")
 REVIEW_SIDE_FILES = ("examples.md", "threads.md")
 
 
@@ -299,9 +306,9 @@ def check_review(here, root):
         fails.append("review: скилл ревью не заведён")
         return fails
     body = "\n" + text
-    for section in REVIEW_SECTIONS:
-        if "\n" + section not in body:
-            fails.append("review: нет раздела «%s»" % section[3:])
+    for heading in REVIEW_SECTIONS:
+        if "\n" + heading not in body:
+            fails.append("review: нет раздела «%s»" % heading[3:])
     for level in range(4):
         if "| %d," % level not in text:
             fails.append("review: в таблице уровней нет уровня %d" % level)
@@ -310,6 +317,11 @@ def check_review(here, root):
             fails.append("review: ярус «%s» не описан" % tier)
     if ".devkit/review.conf" not in text:
         fails.append("review: бюджеты не отданы конфигу .devkit/review.conf")
+    foreign = section(text, "## Ревью чужой задачи")
+    if foreign:
+        for mark in REVIEW_FOREIGN:
+            if mark not in foreign:
+                fails.append("review: в разделе про чужую задачу нет «%s»" % mark)
     for side in REVIEW_SIDE_FILES:
         if read(os.path.join(here, "review", side)) is None:
             fails.append("review: нет файла %s, скилл на него ссылается" % side)

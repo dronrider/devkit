@@ -41,6 +41,12 @@ func cmdSync(root string, ifStale bool) (string, error) {
 		if row.Ticket == "" {
 			continue
 		}
+		if isReviewRow(row) {
+			// У строки ревью своя судьба, не статус тикета: решает её MR, не
+			// sync (LLD DK-756, часть решения 7). Пока эта судьба не считана
+			// (DK-759), sync строку не двигает и в трекер за ней не ходит.
+			continue
+		}
 		seen++
 		line, kind, err := syncRow(root, tr, row)
 		if err != nil {

@@ -1,0 +1,34 @@
+{
+  "id": "10002",
+  "key": "ED-1",
+  "fields": {
+    "summary": "My first example issue",
+    "status": {
+      "name": "In Progress"
+    },
+    "issuetype": {
+      "name": "Bug"
+    },
+    "timetracking": {
+      "originalEstimate": "10m"
+    },
+    "description": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {"type": "text", "text": "первый абзац"}
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {"type": "text", "text": "второй абзац"}
+          ]
+        }
+      ]
+    }
+  }
+}

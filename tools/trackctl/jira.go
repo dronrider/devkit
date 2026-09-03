@@ -205,26 +205,76 @@ type jiraIssue struct {
 		TimeTracking struct {
 			OriginalEstimate string `json:"originalEstimate"`
 		} `json:"timetracking"`
+		// Description приходит строкой на v2 и документом ADF на v3, поэтому
+		// сырой JSON разбирает jiraDescription, а не эта структура.
+		Description json.RawMessage `json:"description"`
 	} `json:"fields"`
 }
 
 func (j *jiraAdapter) fetch(key string) (ticket, error) {
 	var issue jiraIssue
-	path := j.api + "/issue/" + key + "?fields=summary,status,issuetype,timetracking"
+	path := j.api + "/issue/" + key + "?fields=summary,status,issuetype,timetracking,description"
 	if err := j.do(http.MethodGet, path, nil, &issue); err != nil {
 		return ticket{}, err
 	}
 	t := ticket{
-		Key:      issue.Key,
-		Status:   issue.Fields.Status.Name,
-		Type:     issue.Fields.IssueType.Name,
-		Title:    issue.Fields.Summary,
-		Estimate: issue.Fields.TimeTracking.OriginalEstimate,
+		Key:         issue.Key,
+		Status:      issue.Fields.Status.Name,
+		Type:        issue.Fields.IssueType.Name,
+		Title:       issue.Fields.Summary,
+		Estimate:    issue.Fields.TimeTracking.OriginalEstimate,
+		Description: jiraDescription(issue.Fields.Description),
 	}
 	if t.Key == "" {
 		t.Key = key
 	}
+	t.URL = j.base + "/browse/" + t.Key
 	return t, nil
+}
+
+// jiraDescription достаёт текст описания из ответа Jira: v2 отдаёт его
+// строкой, v3 документом ADF (Atlassian Document Format). Без разбора формата
+// `trackctl review` не мог бы вписать постановку тикета в файл задачи,
+// поэтому разбор минимальный: текстовые узлы собираются подряд, абзац
+// заканчивается переводом строки, разметка (жирный, ссылки) не переживает,
+// она тут не нужна.
+func jiraDescription(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return strings.TrimSpace(s)
+	}
+	var doc struct {
+		Content []jiraADFNode `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, n := range doc.Content {
+		writeJiraADFText(&b, n)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+type jiraADFNode struct {
+	Type    string        `json:"type"`
+	Text    string        `json:"text"`
+	Content []jiraADFNode `json:"content"`
+}
+
+func writeJiraADFText(b *strings.Builder, n jiraADFNode) {
+	if n.Text != "" {
+		b.WriteString(n.Text)
+	}
+	for _, c := range n.Content {
+		writeJiraADFText(b, c)
+	}
+	if n.Type == "paragraph" {
+		b.WriteString("\n")
+	}
 }
 
 type jiraTransitions struct {

@@ -26,10 +26,12 @@ var boardSections = []struct{ prefix, sect string }{
 }
 
 // boardRow это разобранная строка доски: то немногое из неё, что нужно
-// командам границ.
+// командам границ. Title нужен только review: он ищет по нему пометку
+// сценария, take и sync заголовок не читают.
 type boardRow struct {
 	ID     string
 	Sect   string
+	Title  string
 	Cost   string
 	Rank   int
 	Ticket string
@@ -67,7 +69,7 @@ func loadBoardRows(root, projKey string) ([]boardRow, error) {
 		if len(cells) < 6 || cells[0] == "ID" || strings.HasPrefix(cells[0], "---") {
 			continue
 		}
-		row := boardRow{ID: cells[0], Sect: sect, Rank: leadingInt(cells[4])}
+		row := boardRow{ID: cells[0], Sect: sect, Title: cells[1], Rank: leadingInt(cells[4])}
 		if len(cells) >= 7 {
 			row.Cost, row.Ticket = cells[5], ticketFrom(keyRe, cells[6])
 		} else {

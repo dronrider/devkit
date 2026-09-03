@@ -8,13 +8,18 @@ import (
 
 // ticket это тикет глазами адаптера: то немногое, что нужно циклу задачи.
 // Постановка и обсуждение остаются в трекере, в devkit они не копируются
-// (docs/lld/DK-074-corp-contour.md, «Граница доски и тикета»).
+// (docs/lld/DK-074-corp-contour.md, «Граница доски и тикета»), кроме одного
+// исключения: `trackctl review` тянет Description в файл задачи строки
+// ревью, у неё постановка своя (LLD DK-756, решение 1). URL нужен той же
+// команде для ссылки зеркальной строки на тикет.
 type ticket struct {
-	Key      string
-	Status   string
-	Type     string
-	Title    string
-	Estimate string
+	Key         string
+	Status      string
+	Type        string
+	Title       string
+	Estimate    string
+	Description string
+	URL         string
 }
 
 // adapter это обязательная часть контракта трекера. Трекер меняется от
@@ -49,6 +54,16 @@ type commenter interface {
 // форма значения это знание трекера, а не команды.
 type updater interface {
 	update(key string, fields map[string]string) error
+}
+
+// mrLister это поиск MR по префиксу ветки: у Jira такой операции нет вовсе, у
+// GitLab она была бы, но живого клиента GitLab в сборке сегодня нет, поэтому
+// реализация лежит только в тестовой заглушке. В optionalOps эта ось не
+// попадает: список там про правку тикета, а поиск MR тикет не трогает и
+// свою честность про отсутствие называет сама команда `trackctl review`, а
+// не общий вывод `status`.
+type mrLister interface {
+	mergeRequests(branchPrefix string) ([]string, error)
 }
 
 // optionalOps перечисляет необязательные операции контракта в порядке вывода.

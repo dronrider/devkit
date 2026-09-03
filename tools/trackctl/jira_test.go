@@ -169,12 +169,40 @@ func TestJiraFetch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := ticket{Key: "ED-1", Status: "In Progress", Type: "Bug", Title: "My first example issue", Estimate: "10m"}
+	want := ticket{Key: "ED-1", Status: "In Progress", Type: "Bug", Title: "My first example issue", Estimate: "10m", URL: st.srv.URL + "/browse/ED-1"}
 	if got != want {
 		t.Fatalf("тикет из образца разобран не так:\nхочу %+v\nимею %+v", want, got)
 	}
-	if q := st.last().Query; !strings.Contains(q, "timetracking") {
+	if q := st.last().Query; !strings.Contains(q, "timetracking") || !strings.Contains(q, "description") {
 		t.Fatalf("fetch не спросил нужные поля: %q", q)
+	}
+}
+
+// Description приезжает по-разному на v2 (строка) и v3 (документ ADF): без
+// разбора обоих форматов файл задачи строки ревью остался бы без постановки
+// на одной из версий Jira молча.
+func TestJiraFetchDescriptionV2String(t *testing.T) {
+	st, j := newJiraStubVer(t, "2")
+	st.on(http.MethodGet, "/rest/api/2/issue/ED-1", jiraResp{file: "issue-v2-desc.json"})
+	got, err := j.fetch("ED-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Description != "просто строка описания" {
+		t.Fatalf("описание v2 разобрано не так: %q", got.Description)
+	}
+}
+
+func TestJiraFetchDescriptionV3ADF(t *testing.T) {
+	st, j := newJiraStub(t)
+	st.on(http.MethodGet, "/rest/api/3/issue/ED-1", jiraResp{file: "issue-v3-desc.json"})
+	got, err := j.fetch("ED-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "первый абзац\nвторой абзац"
+	if got.Description != want {
+		t.Fatalf("описание v3 (ADF) разобрано не так:\nхочу %q\nимею %q", want, got.Description)
 	}
 }
 

@@ -20,6 +20,11 @@ type fake struct {
 	fetchErr  error
 	available []string
 	failStep  string
+	baseURL   string
+	// mrURLs и mrErr это ответ mergeRequests: она есть только у fakeFull,
+	// обычный fake про GitLab ничего не знает, как и живой jira.go сегодня.
+	mrURLs []string
+	mrErr  error
 }
 
 // fakeState это адаптер, который отдаст таблица следующему newAdapter.
@@ -40,6 +45,9 @@ func (f *fake) fetch(key string) (ticket, error) {
 		t = f.ticket
 	}
 	t.Key = key
+	if t.URL == "" {
+		t.URL = strings.TrimRight(f.baseURL, "/") + "/browse/" + key
+	}
 	return t, nil
 }
 
@@ -103,9 +111,20 @@ func (f fakeFull) update(key string, fields map[string]string) error {
 	return nil
 }
 
+// mergeRequests живёт только у fakeFull: обычный fake про поиск MR ничего не
+// знает, как и живой jira.go сегодня, review в этом случае заводит строку без
+// MR и просит ссылку флагом --mr.
+func (f fakeFull) mergeRequests(branchPrefix string) ([]string, error) {
+	f.log("mr %s", branchPrefix)
+	if f.mrErr != nil {
+		return nil, f.mrErr
+	}
+	return f.mrURLs, nil
+}
+
 func init() {
-	registerAdapter("fake", func(c *contour) (adapter, error) { return fakeState, nil })
-	registerAdapter("fake-full", func(c *contour) (adapter, error) { return fakeFull{fakeState}, nil })
+	registerAdapter("fake", func(c *contour) (adapter, error) { fakeState.baseURL = c.BaseURL; return fakeState, nil })
+	registerAdapter("fake-full", func(c *contour) (adapter, error) { fakeState.baseURL = c.BaseURL; return fakeFull{fakeState}, nil })
 }
 
 const contourFile = `adapter = "fake"

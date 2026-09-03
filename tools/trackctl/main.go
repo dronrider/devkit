@@ -34,6 +34,11 @@ const usageText = `trackctl: разговор с трекером задач к�
   sync [--if-stale]               pull статусов: доска догоняет тикеты,
                                   в трекер прогон не пишет; --if-stale
                                   гоняет только по протухшей отметке
+  review <KEY> [--mr <url>]       завести строку ревью чужого тикета:
+                                  зеркальная строка с пометкой сценария,
+                                  файл задачи с постановкой тикета и ссылкой
+                                  на MR; тикет не трогается вовсе, повторный
+                                  вызов находит стоящую строку
 
 Ключ пишется целиком (ABC-12) либо одним номером, префикс тогда берётся из
 привязки. Всё, что ходит в трекер, живёт здесь: taskctl остаётся чистой
@@ -189,6 +194,14 @@ func main() {
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "sync [--if-stale]")
 		logStart = *dir
 		msg, err = cmdSync(root(*dir), *ifStale)
+	case "review":
+		fs := flag.NewFlagSet("review", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		mr := fs.String("mr", "", "ссылка на MR, когда адаптер её не ищет сам либо нашёл не одну")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "review <KEY> [--mr <url>]")
+		logStart = *dir
+		msg, err = cmdReview(root(*dir), pos[0], *mr)
 	case "help":
 		fmt.Print(usageText)
 		return

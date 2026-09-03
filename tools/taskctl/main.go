@@ -107,6 +107,10 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               завести задачу (по умолчанию в Backlog;
                                               без --link и файла в ячейке будет «-»)
   move <ID> <статус> [--reason "..."]         перевести между статусами
+      [--dry-run]                             прогнать ворота перевода и
+                                              оставить строку на месте: так
+                                              shipctl ship проверяет состав
+                                              поезда до выката
   ask <ID> [--question "..."] [--wait N] [--session SID]
                                               спросить человека посреди захода:
                                               вопрос уходит уведомлением и в
@@ -479,11 +483,16 @@ func main() {
 		fs := flag.NewFlagSet("move", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		reason := fs.String("reason", "", "причина блокировки (для blocked)")
+		dry := fs.Bool("dry-run", false, "прогнать ворота перевода и ничего не менять")
 		var c CommitOpts
 		commitFlags(fs, &c)
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 2, 2, "move <ID> <статус> [--reason ...]")
-		msg, err = cmdMove(root(*dir), pos[0], pos[1], *reason, c)
+		needArgs(pos, 2, 2, "move <ID> <статус> [--reason ...] [--dry-run]")
+		if *dry {
+			msg, err = cmdMoveDry(root(*dir), pos[0], pos[1])
+		} else {
+			msg, err = cmdMove(root(*dir), pos[0], pos[1], *reason, c)
+		}
 	case "ask":
 		fs := flag.NewFlagSet("ask", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

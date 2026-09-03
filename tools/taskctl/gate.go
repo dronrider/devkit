@@ -114,6 +114,37 @@ func checkGate(root string, row *Row) error {
 	return nil
 }
 
+// cmdMoveDry прогоняет ворота перевода, не трогая доску: строка остаётся на
+// месте, а вызывающий узнаёт, пустит его move или откажет. Нужно это выкату
+// поезда (DK-781): ship переводит состав уже после деплоя, и отказ ворот на
+// той стороне заставал точку выката сдвинутой. Ворота одни и те же, потому что
+// зовётся тот же checkGate, а не его копия: разъехавшись, копия пропускала бы
+// в поезд ровно те строки, на которых move потом отказывает. Замок worktree
+// (boardGuard) тут не спрашивается: сухой прогон ничего не пишет.
+func cmdMoveDry(root, id, target string) (string, error) {
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		return "", err
+	}
+	target = normalizeStatus(target)
+	if _, ok := b.Sects[target]; !ok {
+		return "", fmt.Errorf("неизвестный статус %q, жду backlog / in-progress / check / blocked", target)
+	}
+	row := b.find(id)
+	if row == nil {
+		return "", fmt.Errorf("%s нет на доске", id)
+	}
+	if err := needTaskFile(root, id); err != nil {
+		return "", err
+	}
+	if target == SectCheck {
+		if err := checkGate(root, row); err != nil {
+			return "", err
+		}
+	}
+	return fmt.Sprintf("%s: ворота перевода в %s пройдены, строка не двигалась", id, target), nil
+}
+
 // acceptGate проверяет, что у не агентского вида в файле задачи стоит раздел
 // «Приёмка» с ключом барьера из шести и строкой перебора на каждый обход этого
 // барьера. Судить убедительность причины обхода машина не берётся, это работа

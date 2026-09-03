@@ -658,3 +658,40 @@ func TestMoveToCheckKeepsRehearsalAfterProseEdit(t *testing.T) {
 		t.Fatalf("правка прозы отбила отметку: %v", err)
 	}
 }
+
+// TestMoveDryRunKeepsRow: сухой прогон ворот перевода отвечает тем же отказом,
+// что и move, но строку не двигает. Им проверяет состав поезда shipctl ship
+// (DK-781): перевод там идёт после выката, и узнать про непроходную строку
+// надо до деплоя.
+func TestMoveDryRunKeepsRow(t *testing.T) {
+	root := setup(t)
+	p := filepath.Join(root, "docs", "tasks", "XR-005.md")
+	if err := os.WriteFile(p, []byte("# XR-005\n\n## Ход работы\n\nСценарий напишу потом.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = cmdMoveDry(root, "XR-005", "check")
+	if err == nil || !strings.Contains(err.Error(), "нет раздела «Сценарий проверки»") {
+		t.Fatalf("строка без сценария должна отбиваться и на сухом прогоне: %v", err)
+	}
+	if err := os.WriteFile(p, []byte("# XR-005\n"+fixtureScenario+fixtureVerification), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdMoveDry(root, "XR-005", "check")
+	if err != nil {
+		t.Fatalf("готовая строка должна проходить ворота: %v", err)
+	}
+	if !strings.Contains(msg, "строка не двигалась") {
+		t.Fatalf("сухой прогон не сказал, что строка на месте: %q", msg)
+	}
+	after, err := os.ReadFile(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("сухой прогон правил доску:\n%s", after)
+	}
+}

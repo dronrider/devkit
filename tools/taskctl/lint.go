@@ -313,7 +313,10 @@ func lintOrphanTaskFiles(root string, b *Board, arch *Archive, bp string) []stri
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		id := strings.TrimSuffix(e.Name(), ".md")
+		// Журнал чужого ревью лежит тут же под именем <ID>.review.md, но
+		// файлом задачи не является: судится он по своему ID, а не по имени
+		// с приставкой.
+		id := strings.TrimSuffix(strings.TrimSuffix(e.Name(), ".md"), ".review")
 		if b.find(id) != nil || arch.has(id) {
 			continue
 		}

@@ -879,6 +879,15 @@ func cmdClose(root string, p CloseParams) (string, error) {
 
 		moved = fmt.Sprintf("tasks/archive/%s/%s.md", year, p.ID)
 	}
+	// Журнал чужого ревью уезжает в архив вместе с файлом задачи (LLD DK-756,
+	// решение 2): оставленный в docs/tasks, он пережил бы закрытую строку и
+	// висел бы там без хозяина.
+	journal := reviewDraftAbs(root, p.ID)
+	if _, err := os.Stat(journal); err == nil {
+		if _, err := gitMv(root, journal, filepath.Join(root, "docs", "tasks", "archive", year, p.ID+".review.md")); err != nil {
+			return "", err
+		}
+	}
 	linkCell := p.Link
 	if linkCell == "" {
 		var parts []string

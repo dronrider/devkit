@@ -182,6 +182,26 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   review show <ID>                            замечания с номерами и исходами
   review stats                                свод по живым задачам и архиву
 
+Ревью чужого MR (журнал в docs/tasks/<ID>.review.md, скилл review, раздел
+«Ревью чужой задачи»):
+  review draft <ID> ["суть"] [--file <путь>] [--line <N>] [--label issue|suggestion|итог]
+                                              дописать замечание черновиком:
+                                              файл, строка, метка, текст
+                                              реплики и состояние; без текста
+                                              читает stdin; метка «итог» это
+                                              комментарий уровня без файла
+  review approve <ID> <N>                     одобрить замечание к публикации
+                                              (в режиме confirm это слово
+                                              человека)
+  review drop <ID> <N>                        снять замечание, в MR оно не
+                                              поедет
+  review publish <ID>                         унести одобренные замечания в MR
+                                              командами трекера с паузой между
+                                              ними и вписать id тредов; ключ
+                                              publish = confirm | auto из
+                                              .devkit/review.conf решает,
+                                              одобряются ли черновики сами
+
 В репозитории без доски (MR чужого трекера, ветка без трекера) level, clean и
 show работают по git-заметке на HEAD (ref review): ID тут любой ярлык правки,
 он едет строкой «Ярлык: ...» под следом. Заметку читает ворот пуша
@@ -555,7 +575,7 @@ func main() {
 		msg, err = cmdElapsed(root(*dir), pos[0])
 	case "review":
 		if len(args) < 2 {
-			fail(fmt.Errorf("жду: review level|add|clean|resolve|show|stats ..."))
+			fail(fmt.Errorf("жду: review level|add|clean|resolve|show|stats|draft|approve|drop|publish ..."))
 		}
 		switch args[1] {
 		case "add":
@@ -634,13 +654,58 @@ func main() {
 			} else {
 				msg, err = cmdReviewShow(root(*dir), pos[0])
 			}
+		case "draft":
+			fs := flag.NewFlagSet("review draft", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			var p reviewDraftParams
+			fs.StringVar(&p.File, "file", "", "файл, к которому идёт замечание")
+			fs.IntVar(&p.Line, "line", 0, "строка файла")
+			fs.StringVar(&p.Label, "label", "", "метка: issue, suggestion или итог")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 2, "review draft <ID> [\"суть\"] (без текста читается stdin)")
+			text := ""
+			if len(pos) == 2 {
+				text = pos[1]
+			} else {
+				text, err = readStdinAs("жду текст замечания: аргументом (review draft <ID> \"суть\") либо на stdin через heredoc с одинарными кавычками")
+				if err != nil {
+					fail(err)
+				}
+			}
+			msg, err = cmdReviewDraft(root(*dir), pos[0], text, p, c)
+		case "approve", "drop":
+			fs := flag.NewFlagSet("review "+args[1], flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 2, 2, "review "+args[1]+" <ID> <N>")
+			num, aerr := strconv.Atoi(pos[1])
+			if aerr != nil {
+				fail(fmt.Errorf("номер замечания %q не число", pos[1]))
+			}
+			if args[1] == "approve" {
+				msg, err = cmdReviewApprove(root(*dir), pos[0], num, c)
+			} else {
+				msg, err = cmdReviewDrop(root(*dir), pos[0], num, c)
+			}
+		case "publish":
+			fs := flag.NewFlagSet("review publish", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "review publish <ID>")
+			msg, err = cmdReviewPublish(root(*dir), pos[0], c)
 		case "stats":
 			fs := flag.NewFlagSet("review stats", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			needArgs(frame.ParseArgs(fs, args[2:]), 0, 0, "review stats")
 			msg, err = cmdReviewStats(root(*dir))
 		default:
-			fail(fmt.Errorf("неизвестная подкоманда review %q, жду level / add / clean / resolve / show / stats", args[1]))
+			fail(fmt.Errorf("неизвестная подкоманда review %q, жду level / add / clean / resolve / show / stats / draft / approve / drop / publish", args[1]))
 		}
 	case "close":
 		fs := flag.NewFlagSet("close", flag.ExitOnError)

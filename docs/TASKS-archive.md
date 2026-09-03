@@ -426,3 +426,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-756 | LLD: ревью чужой задачи в корп-контуре [приёмка: user] | LLD | P2 | 2026-09-03 | [tasks/archive/2026/DK-756.md](tasks/archive/2026/DK-756.md) |
 | DK-757 | trackctl review заводит строку ревью чужого тикета без касания тикета | task | P2 | 2026-09-03 | [tasks/archive/2026/DK-757.md](tasks/archive/2026/DK-757.md) |
 | DK-751 | Модель из вердикта pick доезжает до субагента сессии glm-code | bug | P1 | 2026-09-03 | [tasks/archive/2026/DK-751.md](tasks/archive/2026/DK-751.md) |
+| DK-750 | Выбор яруса в чате панели доезжает до сессии второй подписки | bug | P1 | 2026-09-03 | [tasks/archive/2026/DK-750.md](tasks/archive/2026/DK-750.md) |

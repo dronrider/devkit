@@ -313,20 +313,27 @@ func scenarioGate(id string, docsBranch bool, doc string) error {
 // вердикт идут ниже неё. Где ревью неприменимо, ворот гасится
 // пометкой-исключением, как и соседние.
 func reviewLevelGate(id, doc string) error {
-	for _, ln := range sectionLines(doc, taskform.Review) {
-		if strings.TrimSpace(ln) == "" {
-			continue
-		}
-		if taskform.IsReviewLevel(ln) {
-			return nil
-		}
-		break
+	if hasReviewLevel(doc) {
+		return nil
 	}
 	if hasException(doc, gateReview) {
 		return nil
 	}
 	return fmt.Errorf("нет строки уровня ревью в разделе «Ревью» docs/tasks/%s.md, ревью шло мимо скилла review или не шло вовсе: taskctl review level %s <0-3> \"причина\"; если ревью тут неприменимо, загасить ворот пометкой «- Исключение: ревью (причина)»",
 		id, id)
+}
+
+// hasReviewLevel говорит, стоит ли строка уровня первой непустой строкой
+// раздела «Ревью». Читателей у критерия двое: ворот слияния и ворот пуша, и
+// разойдись они, пуш отбивал бы ветку, которую merge пропускает.
+func hasReviewLevel(doc string) bool {
+	for _, ln := range sectionLines(doc, taskform.Review) {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		return taskform.IsReviewLevel(ln)
+	}
+	return false
 }
 
 // testsGate отказывает слиянию ветки без тестовых файлов в диффе против main.

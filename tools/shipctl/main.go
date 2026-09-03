@@ -252,10 +252,18 @@ func main() {
 		if p.CheckOnly {
 			needArgs(pos, 2, 2, "push --check-only <remote_sha> <local_sha>")
 			p.RemoteSHA, p.LocalSHA = pos[0], pos[1]
+			// Проверка диапазона стоит и в репозитории без доски: ворот следа
+			// ревью там единственный, и отказ поиска доски запирал бы пуш
+			// вместо разбора.
+			checked, cerr := checkRoot(*dir)
+			if cerr != nil {
+				fail(cerr)
+			}
+			msg, err = cmdPush(checked, p)
 		} else {
 			needArgs(pos, 0, 0, "push")
+			msg, err = cmdPush(root(*dir), p)
 		}
-		msg, err = cmdPush(root(*dir), p)
 	case "help":
 		fmt.Print(usageText)
 		return

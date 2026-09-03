@@ -221,10 +221,31 @@ class TestBoardGateWithShipctl(unittest.TestCase):
         env["PATH"] = self.bindir + os.pathsep + os.environ.get("PATH", "")
         return run(stdin=line + extra, cwd=self.repo, **env)
 
+    def note(self, line):
+        """След ревью git-заметкой на HEAD: так его пишет taskctl review level
+        в репозитории без доски, и по нему ворот пропускает код."""
+        self.git("notes", "--ref=review", "add", "-f", "-m", line, "HEAD")
+
     def test_mixed_range_with_legit_id_passes(self):
-        code = self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
+        self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
         head = self.commit("docs(tasks): DK-001 ход", {"docs/tasks/DK-001.md": "# DK-001\nход\n"})
+        self.note("Уровень 1 до %s: рутина" % head[:7])
         self.assertEqual(self.push(head, self.base, CLAUDECODE="1").returncode, 0)
+
+    def test_code_without_review_trace_is_refused(self):
+        """Код с легитимным ID задачи, но без следа ревью, калитка не пускает:
+        ID говорит, чья это правка, а не то, что её кто-то читал."""
+        head = self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
+        r = self.push(head, self.base, CLAUDECODE="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("taskctl", r.stderr)
+
+    def test_review_gate_lifted_by_permission(self):
+        """Прямая команда пользователя снимает ворот следа ревью вместе с
+        рубежом пуша: рубеж уходит нулём раньше, чем зовёт shipctl."""
+        head = self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
+        r = self.push(head, self.base, CLAUDECODE="1", DEVKIT_PUSH_OK="1")
+        self.assertEqual(r.returncode, 0)
 
     def test_code_with_backlog_id_is_refused(self):
         head = self.commit("feat: DK-002 задел", {"tools/app.txt": "правка\n"})

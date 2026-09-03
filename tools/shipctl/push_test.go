@@ -162,6 +162,9 @@ func TestPushCheckOnlyDoesNotPush(t *testing.T) {
 	remoteSHA := gitT(t, root, "rev-parse", "origin/main")
 	codeCommit(t, root, "XR-001", "feature.txt")
 	localSHA := gitT(t, root, "rev-parse", "main")
+	// След ревью на HEAD: без него код диапазона отбивает ворот следа, и
+	// предмет этого теста (что --check-only не пушит) до проверки не доедет.
+	reviewNote(t, root, "Уровень 1 до "+short(localSHA)+": рутина")
 
 	if _, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: remoteSHA, LocalSHA: localSHA}); err != nil {
 		t.Fatalf("check-only с легитимным ID должен пройти: %v", err)
@@ -215,5 +218,139 @@ func TestPushNothingToPush(t *testing.T) {
 	}
 	if !strings.Contains(msg, "пушить нечего") {
 		t.Fatalf("сообщение не называет пустой диапазон: %q", msg)
+	}
+}
+
+// reviewNote кладёт след ревью git-заметкой на HEAD, тем же способом, каким его
+// пишет `taskctl review level` в репозитории без доски.
+func reviewNote(t *testing.T, root, line string) {
+	t.Helper()
+	gitT(t, root, "notes", "--ref=review", "add", "-f", "-m", line, "HEAD")
+}
+
+// checkOnly зовёт проверку диапазона от origin/main до main тем же способом,
+// каким её зовёт hooks/pre-push.
+func checkOnly(t *testing.T, root string) error {
+	t.Helper()
+	remote := gitT(t, root, "rev-parse", "origin/main")
+	local := gitT(t, root, "rev-parse", "HEAD")
+	_, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: remote, LocalSHA: local})
+	return err
+}
+
+// TestPushGateRefusesCodeWithoutReviewTrace: код с легитимным ID задачи, но без
+// следа ревью, ворот отбивает. ID в subject говорит, чья это правка, а не
+// то, что её кто-то читал.
+func TestPushGateRefusesCodeWithoutReviewTrace(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	codeCommit(t, root, "XR-001", "feature.txt")
+
+	err := checkOnly(t, root)
+	if err == nil {
+		t.Fatal("код без следа ревью должен отбиваться")
+	}
+	if !strings.Contains(err.Error(), "нет следа ревью") {
+		t.Fatalf("отказ не называет причину: %v", err)
+	}
+	if !strings.Contains(err.Error(), "taskctl review level") {
+		t.Fatalf("отказ не говорит, чем поставить след: %v", err)
+	}
+}
+
+// TestPushGatePassesWithReviewNote: заметка ревью ровно на HEAD пропускает код.
+func TestPushGatePassesWithReviewNote(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	codeCommit(t, root, "XR-001", "feature.txt")
+	reviewNote(t, root, "Уровень 2 до a1b2c3d: неопределённость 1")
+
+	if err := checkOnly(t, root); err != nil {
+		t.Fatalf("заметка ревью на HEAD должна пропускать код: %v", err)
+	}
+}
+
+// TestPushGateRefusesNoteOnAncestor: заметка на прошлом коммите след с HEAD не
+// снимает, иначе код, дописанный после ревью, уезжал бы под чужим следом.
+func TestPushGateRefusesNoteOnAncestor(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	codeCommit(t, root, "XR-001", "feature.txt")
+	reviewNote(t, root, "Уровень 2 до a1b2c3d: неопределённость 1")
+	codeCommit(t, root, "XR-001", "later.txt")
+
+	if err := checkOnly(t, root); err == nil {
+		t.Fatal("код, дописанный после ревью, должен отбиваться")
+	}
+}
+
+// TestPushGatePassesWithTaskFileLevel: у ветки задачи доски след живёт строкой
+// уровня в файле задачи, и заметки такой ветке не нужно.
+func TestPushGatePassesWithTaskFileLevel(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	gitT(t, root, "checkout", "-q", "-b", "xr-001-worktree")
+	codeCommit(t, root, "XR-001", "feature.txt")
+
+	if err := checkOnly(t, root); err != nil {
+		t.Fatalf("строка уровня в docs/tasks/XR-001.md должна пропускать код ветки: %v", err)
+	}
+}
+
+// TestPushGateRefusesTaskBranchWithoutLevel: та же ветка задачи, но со снятой
+// строкой уровня, отбивается, и отказ называет файл, в котором её нет.
+func TestPushGateRefusesTaskBranchWithoutLevel(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	gitT(t, root, "checkout", "-q", "-b", "xr-001")
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001\n\n## Ревью\n\n- гонка в close: исправлено\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 ревью без уровня")
+	codeCommit(t, root, "XR-001", "feature.txt")
+
+	err := checkOnly(t, root)
+	if err == nil {
+		t.Fatal("ветка задачи без строки уровня должна отбиваться")
+	}
+	if !strings.Contains(err.Error(), "docs/tasks/XR-001.md") {
+		t.Fatalf("отказ не называет файл задачи: %v", err)
+	}
+}
+
+// TestPushGatePassesPureBoard: чистая доска без кода проходит без следа ревью,
+// как и раньше: коммит доски пушится сразу, а ревьюить там нечего.
+func TestPushGatePassesPureBoard(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	boardCommit(t, root, "XR-001", "ход")
+
+	if err := checkOnly(t, root); err != nil {
+		t.Fatalf("чистая доска должна проходить без следа ревью: %v", err)
+	}
+}
+
+// TestPushGateOutsideBoard: в репозитории без доски критерий DK-602 про ID
+// неприменим, а ворот следа ревью работает: голый код отбит, код с заметкой
+// проходит.
+func TestPushGateOutsideBoard(t *testing.T) {
+	root := t.TempDir()
+	gitT(t, root, "init", "-q", "-b", "main")
+	gitT(t, root, "config", "user.email", "test@test")
+	gitT(t, root, "config", "user.name", "test")
+	write(t, root, "code.txt", "первый\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "feat: первая правка")
+	base := gitT(t, root, "rev-parse", "HEAD")
+	write(t, root, "code.txt", "второй\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "feat: правка без ID задачи")
+	head := gitT(t, root, "rev-parse", "HEAD")
+
+	if _, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: base, LocalSHA: head}); err == nil {
+		t.Fatal("код без следа ревью должен отбиваться и вне доски")
+	}
+	reviewNote(t, root, "Круг 1 до "+short(head)+": без замечаний")
+	if _, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: base, LocalSHA: head}); err != nil {
+		t.Fatalf("заметка ревью должна пропускать код вне доски: %v", err)
 	}
 }

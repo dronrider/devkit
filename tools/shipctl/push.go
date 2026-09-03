@@ -2,7 +2,11 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/reviewnote"
 )
 
 // PushParams это параметры команды push.
@@ -32,7 +36,10 @@ func cmdPush(root string, p PushParams) (string, error) {
 		if err := rangeVerdict(root, p.RemoteSHA, p.LocalSHA); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("диапазон %s..%s пропущен: доска либо код с ID задачи не из Backlog",
+		if err := reviewTraceGate(root, p.RemoteSHA, p.LocalSHA); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("диапазон %s..%s пропущен: доска либо код со следом ревью",
 			short(p.RemoteSHA), short(p.LocalSHA)), nil
 	}
 	primary, _, err := primaryRoot(root)
@@ -98,6 +105,13 @@ func rangeVerdict(root, remoteSHA, localSHA string) error {
 	}
 	b, err := loadBoard(root)
 	if err != nil {
+		// Доски в репозитории нет вовсе (MR чужого трекера, ветка без
+		// трекера): ID задачи взять неоткуда, и критерий DK-602 тут
+		// неприменим. Код такого репозитория судит ворот следа ревью, он
+		// стоит следом и доски не требует.
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
 	pref := b.prefixOr("DK")
@@ -149,4 +163,112 @@ func short(sha string) string {
 		return sha[:12]
 	}
 	return sha
+}
+
+// reviewTraceGate требует след ревью у диапазона, в котором есть код. Правило
+// одно на все происхождения правки: код агента не уходит в origin и не
+// становится MR без ревью, а ревью идёт по скиллу review свежим контекстом, не
+// тем, который правку писал. След у ревью бывает двух видов, и вороту довольно
+// любого: git-заметка ревью ровно на HEAD (её пишет `taskctl review level` и
+// `taskctl review clean` там, где доски нет) либо строка уровня в файле задачи
+// ветки доски. Заметка судится по HEAD, а не по любому предку: код, дописанный
+// после ревью, ревью не проходил, и след предка про него ничего не говорит.
+//
+// Чистая доска без единого код-коммита проходит без следа: правило требует
+// пушить коммит доски сразу, а ревьюить там нечего. Прямая команда пользователя
+// (DEVKIT_PUSH_OK=1) снимает этот ворот вместе с рубежом пуша: она снимается
+// раньше, в самом хуке, и до проверки дело не доходит.
+func reviewTraceGate(root, remoteSHA, localSHA string) error {
+	code, err := hasCodeCommit(root, remoteSHA, localSHA)
+	if err != nil || !code {
+		return err
+	}
+	head, err := git(root, "rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	noted, err := reviewnote.Has(root, "HEAD")
+	if err != nil {
+		return err
+	}
+	if noted {
+		return nil
+	}
+	seen := "заметки ревью на HEAD нет"
+	if id := branchTaskID(root); id != "" {
+		if hasReviewLevel(readTaskDoc(root, id)) {
+			return nil
+		}
+		seen = fmt.Sprintf("заметки ревью на HEAD нет, строки уровня в docs/tasks/%s.md тоже", id)
+	}
+	return fmt.Errorf(`нет следа ревью у кода в диапазоне %s..%s (%s, HEAD %s).
+Ревью идёт по скиллу review свежим контекстом, а не тем, который писал правку.
+След ставится одной командой:
+  вне доски: taskctl review level <ярлык> <0-3> "причина" (заметка git на HEAD, ref %s),
+    ревью без замечаний это taskctl review clean <ярлык> "пояснение";
+  у ветки задачи доски: taskctl review level <ID> <0-3> "причина", строка встаёт в docs/tasks/<ID>.md.
+Прямая команда пользователя снимает рубеж переменной DEVKIT_PUSH_OK=1`,
+		short(remoteSHA), short(localSHA), seen, short(head), reviewnote.Ref)
+}
+
+// hasCodeCommit говорит, есть ли в диапазоне хоть один код-коммит, то есть
+// коммит с диффом за пределами доски. Критерий тот же, что у rangeVerdict, и
+// --no-renames тут по той же причине: без него перенос кода в docs/tasks/ сошёл
+// бы за доску.
+func hasCodeCommit(root, remoteSHA, localSHA string) (bool, error) {
+	if remoteSHA == "" || localSHA == "" {
+		return false, fmt.Errorf("пустой sha в диапазоне пуша")
+	}
+	log, err := git(root, "log", "--format=%H", remoteSHA+".."+localSHA)
+	if err != nil {
+		return false, err
+	}
+	for _, sha := range strings.Fields(log) {
+		files, err := git(root, "show", "--no-renames", "--name-only", "--pretty=", sha)
+		if err != nil {
+			return false, err
+		}
+		if !boardOnly(files) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// branchTaskID достаёт ID задачи из имени текущей ветки: ветку задачи зовут
+// строчным ID с хвостом-слагом или без (`dk-005`, `dk-005-worktree`), тем же
+// правилом её узнаёт merge (branchOfTask). Пустая строка значит, что ветка не
+// про задачу доски или доски тут нет вовсе, и след ревью остаётся искать в
+// заметке.
+func branchTaskID(root string) string {
+	b, err := loadBoard(root)
+	if err != nil {
+		return ""
+	}
+	pref := b.prefixOr("DK")
+	branch, err := git(root, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return ""
+	}
+	m := regexp.MustCompile(`(?i)^`+regexp.QuoteMeta(pref)+`-([0-9]+)($|-)`).
+		FindStringSubmatch(strings.TrimSpace(branch))
+	if m == nil {
+		return ""
+	}
+	return pref + "-" + m[1]
+}
+
+// checkRoot находит дерево для проверки диапазона. Доска главнее: в проекте с
+// доской проверка идёт от её корня и ничего не меняется. Без доски берётся
+// вершина git-дерева, потому что ворот следа ревью стоит и там, где задач нет
+// вовсе, а прежний отказ «не нашёл docs/TASKS.md» запирал бы там любой пуш.
+func checkRoot(dir string) (string, error) {
+	if root, err := findRoot(dir); err == nil {
+		return root, nil
+	}
+	top, err := git(dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", fmt.Errorf("ни доски, ни git-дерева вверх от %s: проверять диапазон не в чем", dir)
+	}
+	return strings.TrimSpace(top), nil
 }

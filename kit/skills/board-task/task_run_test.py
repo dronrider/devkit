@@ -122,10 +122,14 @@ turns = os.environ.get("DEVKIT_TURN_MARK_LOG") or os.path.join(devkit, "turns.lo
 stamp = "%Y-%m-%dT%H:%M:%S"
 
 
-def mark(word, why="-"):
+def mark(word, why="-", shift=0):
+    """Отметка хода за хук turn-mark.py. Сдвиг двигает время события в строке:
+    два вопроса, разнесённые по времени, стенд разыгрывает временем журнала, а
+    не сном на столько же секунд."""
+    when = time.strftime(stamp, time.localtime(time.time() + shift))
     with open(turns, "a", encoding="utf-8") as f:
         f.write("%s сессия %s ход %s повод %s дерево %s\n"
-                % (time.strftime(stamp), sid[:8], word, why, home))
+                % (when, sid[:8], word, why, home))
 
 
 def note(why):
@@ -184,6 +188,12 @@ while True:
         # вопрос разрешения есть, отметки нет ни одной. Так простоял конвейер
         # DK-724.
         note("permission_prompt")
+        time.sleep(0.3)
+    elif step == "два вопроса":
+        # Два разных вопроса одной причины подряд. Второй пришёл через полминуты
+        # после первого, и человеку надо знать про оба.
+        mark("ждёт", "permission_prompt")
+        mark("ждёт", "permission_prompt", shift=30)
         time.sleep(0.3)
     elif step == "вопрос дважды":
         # Один вопрос обоими каналами разом.
@@ -557,6 +567,26 @@ class TestLiveHead(unittest.TestCase):
         self.assertEqual(got.returncode, 0, s.why(got))
         said = [l for l in s.journal() if "ждёт человека" in l]
         self.assertEqual(len(said), 1, s.journal())
+
+    def test_second_question_of_the_same_kind_calls_again(self):
+        # Второй вопрос той же причины это другой вопрос. Придержание повтора
+        # держится за время события, и молчать о втором нельзя: его строку
+        # оболочка уже вычитала, и второй раз она ей не попадётся.
+        s = self.stand(plan="два вопроса|закрой")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, s.why(got))
+        said = [l for l in s.journal() if "ждёт человека" in l]
+        self.assertEqual(len(said), 2, s.journal())
+
+    def test_question_after_the_turn_resumed_calls_again(self):
+        # Ход пошёл дальше, значит прошлый вопрос закрыт. Вопрос той же причины
+        # в следующем проходе зовёт человека заново, даже пришедший секундой
+        # позже первого.
+        s = self.stand(plan="вопрос|вопрос|закрой")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, s.why(got))
+        said = [l for l in s.journal() if "ждёт человека" in l]
+        self.assertEqual(len(said), 2, s.journal())
 
     def test_mute_session_is_named_aloud(self):
         # Ни одной отметки за срок: хук отметки хода не подключён либо окно

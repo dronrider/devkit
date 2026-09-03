@@ -140,28 +140,29 @@ func recordMovePending(root, id, reason string) error {
 // recordMoveDone гасит пометку: перевод доведён, и хвост закрыт.
 func recordMoveDone(root, id string) error { return appendRecord(root, id, moveDoneNote) }
 
-// movePending отвечает, висит ли на задаче недоведённый перевод в Check.
+// movePending отвечает, висит ли на задаче недоведённый перевод в Check, и
+// возвращает записанную причину отказа.
 // Файла или раздела нет значит не висит: так живут все задачи, слитые до
 // появления пометки.
-func movePending(root, id string) (bool, error) {
+func movePending(root, id string) (reason string, pending bool, err error) {
 	data, err := os.ReadFile(taskFilePath(root, id))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, nil
+			return "", false, nil
 		}
-		return false, err
+		return "", false, err
 	}
-	pending := false
 	for _, ln := range sectionLines(string(data), mergedSection) {
 		t := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ln), "- "))
 		switch {
 		case strings.Contains(t, movePendingNote):
-			pending = true
+			_, tail, _ := strings.Cut(t, movePendingNote)
+			reason, pending = strings.TrimSpace(tail), true
 		case strings.Contains(t, moveDoneNote):
-			pending = false
+			reason, pending = "", false
 		}
 	}
-	return pending, nil
+	return reason, pending, nil
 }
 
 // appendRecord дописывает строку в раздел «Выкат» файла задачи и оставляет её

@@ -251,3 +251,42 @@ func TestFailedChecksReadsBoard(t *testing.T) {
 		t.Fatalf("провал приписан чужой задаче: %q", got)
 	}
 }
+
+// TestStatusNamesStuckMove: перевод отбили уже после выката, и строка стоит в
+// In progress с пометкой в разделе «Выкат». Код её на проде, Check у неё нет,
+// и между заходами ship узнать об этом больше неоткуда, поэтому status
+// называет строку с причиной отказа и следующим шагом (DK-781). Приёмкой с
+// замечаниями такая строка не считается: там правку вернули в работу
+// осознанно, а тут перевод недоведён.
+func TestStatusNamesStuckMove(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	codeCommit(t, root, "XR-001", "one.txt")
+	if err := recordMovePending(root, "XR-001", "taskctl move: XR-001: у барьера «доступ» обходов 4, а перебор в «Приёмка» имеет строк 0"); err != nil {
+		t.Fatal(err)
+	}
+	st, err := cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(st, "выкачено, перевод в Check отбит: XR-001") ||
+		!strings.Contains(st, "довести: shipctl ship") {
+		t.Fatalf("status молчит про недоведённый перевод:\n%s", st)
+	}
+	if !strings.Contains(st, "у барьера «доступ»") {
+		t.Fatalf("причина отказа в статусе не названа:\n%s", st)
+	}
+	if strings.Contains(st, "выкат на проде за ушедшими из Check") {
+		t.Fatalf("недоведённый перевод это не приёмка с замечаниями:\n%s", st)
+	}
+	// Доведённый перевод пометку гасит, и строка из статуса уходит.
+	if err := recordMoveDone(root, "XR-001"); err != nil {
+		t.Fatal(err)
+	}
+	st, err = cmdStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(st, "перевод в Check отбит") {
+		t.Fatalf("погашенная пометка осталась в статусе:\n%s", st)
+	}
+}

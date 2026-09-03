@@ -464,6 +464,26 @@ func cmdStatus(root string) (string, error) {
 	if len(strays) > 0 {
 		out = append(out, "аномалия: код в окне выката, а задача не в In progress ("+strayList(strays)+"); merge и ship будут отказывать, пока не разобрано")
 	}
+	// Хвост прошлого выката: код уехал на прод, а перевод строки отбили
+	// ворота, и она осталась в In progress с пометкой в разделе «Выкат».
+	// Между заходами ship узнать об этом больше неоткуда, а строка всё это
+	// время стоит на проде без Check.
+	stuck := map[string]bool{}
+	for _, r := range b.sects["in-progress"] {
+		reason, ok, err := movePending(root, r.ID)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			continue
+		}
+		stuck[r.ID] = true
+		line := "выкачено, перевод в Check отбит: " + r.ID
+		if reason != "" {
+			line += ", " + reason
+		}
+		out = append(out, line+"; довести: shipctl ship")
+	}
 	// Задача ушла из Check, а её выкат остался на проде: строка про него
 	// печатается всегда, и провал от приёмки с замечаниями отличается тут же.
 	fails := failedChecks(b)
@@ -474,7 +494,9 @@ func cmdStatus(root string) (string, error) {
 	}
 	var soft []string
 	for _, id := range back {
-		if !failed[id] {
+		// Строка с недоведённым переводом уже названа своей строкой, и
+		// «приёмка с замечаниями» про неё соврала бы.
+		if !failed[id] && !stuck[id] {
 			soft = append(soft, id)
 		}
 	}
@@ -1489,7 +1511,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 func finishPendingMoves(root string, p ShipParams, b *board) (notes, left []string, err error) {
 	var pending []string
 	for _, r := range b.sects["in-progress"] {
-		ok, err := movePending(root, r.ID)
+		_, ok, err := movePending(root, r.ID)
 		if err != nil {
 			return nil, nil, err
 		}

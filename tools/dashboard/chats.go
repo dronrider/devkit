@@ -2180,19 +2180,28 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	if term != "" && s.chatStuck(sid) != "" {
 		ask := tmuxAskOf(term)
 		if opt := askOptionOf(ask, text); opt > 0 {
-			if err := tmuxAnswer(term, ask, opt, ""); err != nil {
+			err := tmuxAnswer(term, ask, opt, "")
+			if err != nil && !errors.Is(err, errAskBlind) {
 				writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
 					"ответ не подался в tmux-сессию %s: %s", term, procErr(err))})
 				return
 			}
-			pick := strings.TrimSpace(ask.Options[opt-1].Text)
-			s.chatSayDone(sid, claim, "answer")
-			s.saidSay(saidSessionKey(sid), text, "answer")
-			s.logf("реплика чата %s отпустила запертый вопрос: пункт %d (%s)", sid, opt, pick)
-			writeJSON(w, http.StatusOK, map[string]any{"way": "answer", "tmux": term, "option": opt,
-				"note":    fmt.Sprintf("ответ подан клавишами в запертый вопрос: пункт %d (%s)", opt, pick),
-				"message": "запертый вопрос отпущен: работа идёт дальше без терминала"})
-			return
+			if err == nil {
+				pick := strings.TrimSpace(ask.Options[opt-1].Text)
+				s.chatSayDone(sid, claim, "answer")
+				s.saidSay(saidSessionKey(sid), text, "answer")
+				s.logf("реплика чата %s отпустила запертый вопрос: пункт %d (%s)", sid, opt, pick)
+				writeJSON(w, http.StatusOK, map[string]any{"way": "answer", "tmux": term, "option": opt,
+					"note":    fmt.Sprintf("ответ подан клавишами в запертый вопрос: пункт %d (%s)", opt, pick),
+					"message": "запертый вопрос отпущен: работа идёт дальше без терминала"})
+				return
+			}
+			// Знака курсора на панели разбор не увидел (кривая перерисовка
+			// клиента): стрелки от неизвестной остановки выбрали бы не тот
+			// пункт, и Enter подтвердил бы чужой выбор. Реплика едет дорогами
+			// ниже, как свободные слова: живой сокет кладёт её в очередь
+			// клиента, и клиент разбирает её после ответа на вопрос.
+			s.logf("ответ чата %s клавишами не подался: %v; реплика едет дорогами ниже", sid, err)
 		}
 		// Свободные слова в модальный вопрос не печатаются: латинская буква в
 		// них сработала бы горячей клавишей диалога, и реплика человека нажала

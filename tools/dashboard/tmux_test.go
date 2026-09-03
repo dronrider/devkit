@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -528,6 +529,26 @@ exit 0`)
 				t.Errorf("клавиши поданы не те: %q, жду %q", got, tc.keys)
 			}
 		})
+	}
+}
+
+// Кривая перерисовка оставляет варианты и подсказку, а знак курсора теряет:
+// ходить стрелками не от чего, и отказ обязан зваться errAskBlind, чтобы
+// дорога реплики отличала его от железного сбоя tmux и вела реплику запасной
+// дорогой (живой случай chat-34).
+func TestTmuxAnswerBlindWidgetRefuses(t *testing.T) {
+	ask := parseTmuxAsk(crookedPane)
+	if ask.Keys != askKeysArrows {
+		t.Fatalf("подсказка не распознана как ход стрелками: %q", ask.Keys)
+	}
+	if len(ask.Options) != 2 {
+		t.Fatalf("вариантов разобрано %d, жду два: %+v", len(ask.Options), ask.Options)
+	}
+	if ask.At != 0 {
+		t.Fatalf("курсор найден на пункте %d, жду слепой виджет", ask.At)
+	}
+	if err := tmuxAnswer("chat-2", ask, 1, ""); !errors.Is(err, errAskBlind) {
+		t.Fatalf("слепой виджет не назван errAskBlind: %v", err)
 	}
 }
 

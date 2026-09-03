@@ -639,6 +639,12 @@ func tmuxStepTo(name string, ask tmuxAsk, step int) error {
 	return nil
 }
 
+// errAskBlind это отказ посчитать ход по виджету: варианты на панели видны, а
+// знака курсора у них не нашлось (кривая перерисовка клиента, съехавший
+// снимок). Слепые стрелки промахиваются мимо пункта, и Enter подтверждает
+// чужой выбор, поэтому дорога называет этот отказ отдельно и едет запасной.
+var errAskBlind = errors.New("курсора в виджете не видно: ходить стрелками не от чего")
+
 // tmuxAnswer отвечает на вопрос клиента. Способ ответа берётся у самого
 // виджета, а не выбирается наугад.
 //
@@ -667,7 +673,7 @@ func tmuxAnswer(name string, ask tmuxAsk, option int, text string) error {
 		return tmuxAnswerText(at, text)
 	}
 	if ask.At < 1 {
-		return fmt.Errorf("курсора в виджете не видно: ходить стрелками не от чего")
+		return errAskBlind
 	}
 	step, key := option-ask.At, "Down"
 	if step < 0 {

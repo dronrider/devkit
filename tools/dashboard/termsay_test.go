@@ -41,6 +41,13 @@ exit 0`)
 const trustPane = " Quick safety check: доверяешь каталогу?\n\n \u276f 1. Yes, I trust this folder\n" +
 	"   2. No, exit\n\n Enter to confirm \u00b7 Esc to cancel\n"
 
+// crookedPane это тот же вопрос после кривой перерисовки клиента: варианты и
+// подсказка на месте, а знака курсора у них нет. Так выглядела панель chat-34,
+// когда ответ «да» падал «курсора в виджете не видно».
+const crookedPane = " Quick safety check: доверяешь каталогу?\n\n" +
+	" 1. Yes, I trust this folder\n 2. No, exit\n\n" +
+	" Enter to select \u00b7 \u2191/\u2193 to navigate \u00b7 Esc to cancel\n"
+
 // Живой сокет клиента больше не перехватывает реплику: у сессии с собственной
 // tmux она едет клавишами и приходит агенту вводом человека, без рамки
 // межсессионного канала. До правки дорога сокета стояла первой, и реплика
@@ -209,6 +216,62 @@ func TestChatSayFreeWordsSkipLockedDialog(t *testing.T) {
 		}
 		if data, _ := os.ReadFile(sent); strings.Contains(string(data), "why") {
 			t.Fatalf("свободные слова напечатались в модальный виджет: %s", data)
+		}
+	})
+}
+
+// Кривая перерисовка оставила на панели варианты и подсказку, а знак курсора
+// потеряла: ответ клавишами не считается, и реплика едет дорогами ниже, как
+// свободные слова. С сокетом она ложится в очередь клиента и разбирается им
+// после ответа на вопрос, без сокета остаётся у панели с причиной. Падать
+// «курсора в виджете не видно» на живом сокете нельзя: вопрос висит, и реплика
+// человека агенту нужна (живой случай chat-34).
+func TestChatSayCrookedWidgetQueuesReply(t *testing.T) {
+	t.Run("с сокетом", func(t *testing.T) {
+		sid := "abab7777-caca-4bbb-8bbb-bbbbbbbbbbbb"
+		e, c, sent := termSayEnv(t, sid, crookedPane)
+		writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
+		sock, frames := countingSock(t)
+		writePeerSock(t, e.home, sid, os.Getpid(), sock)
+
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+			`{"text": "да"}`)
+		said := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("реплика не прошла: %d %s", resp.StatusCode, said)
+		}
+		if !strings.Contains(said, `"socket"`) || !strings.Contains(said, `"stuck"`) {
+			t.Fatalf("очередь за диалогом не названа: %s", said)
+		}
+		if data, _ := os.ReadFile(sent); strings.Contains(string(data), "Enter") {
+			t.Fatalf("клавиши ушли в виджет без курсора: %s", data)
+		}
+		found := false
+		for _, f := range frames() {
+			if strings.Contains(f, "да") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("реплика не доехала сокетом в очередь клиента: %q", frames())
+		}
+	})
+	t.Run("без сокета", func(t *testing.T) {
+		sid := "caca7777-abab-4ccc-8ccc-cccccccccccc"
+		e, c, sent := termSayEnv(t, sid, crookedPane)
+		writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
+
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+			`{"text": "да"}`)
+		said := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("отказ должен быть удачей с причиной, панель повторит: %d %s", resp.StatusCode, said)
+		}
+		if !strings.Contains(said, `"held"`) || !strings.Contains(said, "ждёт разрешения") {
+			t.Fatalf("недоставленная реплика не названа причиной: %s", said)
+		}
+		if data, _ := os.ReadFile(sent); strings.Contains(string(data), "Enter") {
+			t.Fatalf("клавиши ушли в виджет без курсора: %s", data)
 		}
 	})
 }

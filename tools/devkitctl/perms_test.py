@@ -25,6 +25,22 @@ class MachinePermsTest(SandboxCase):
         # руками: разойдись они, чистый проект краснел бы на исправном коде.
         self.assertTrue(list(perms.MACHINE_ALLOW))
 
+    def test_scenario_commands_are_granted(self):
+        # Сторож перечня. Сценарии проверки этого репозитория гоняет сессия без
+        # человека, и команда, которой в перечне нет, упирается в запрос
+        # разрешения: одобрить его некому, прогон встаёт, задача паркуется
+        # вопросом (DK-739). Список тут именной, а не собранный по каталогу
+        # tools: право без подтверждения выдаётся разбором, а не тем, что рядом
+        # собралась ещё одна утилита.
+        need = (
+            ("Bash(dashboard:*)", "сквозной прогон дашборда, `dashboard smoke`"),
+            ("Bash(devkitctl:*)", "обвязка проекта: в PATH стоит обёртка, и Bash(python3:*) её не кроет"),
+            ("Bash(node:*)", "стенды дашборда, `node testdata/*.mjs`"),
+        )
+        for rule, why in need:
+            self.assertTrue(perms.covered(rule, perms.MACHINE_ALLOW),
+                            "в перечне прав нет %s: %s" % (rule, why))
+
     def test_missing_perms_are_found_and_fixed(self):
         data = json.loads(read(self.settings))
         keep = dict(data)

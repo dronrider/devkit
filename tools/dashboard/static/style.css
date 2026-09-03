@@ -231,6 +231,9 @@ a:hover{text-decoration:underline}
 /* ожидание человека: свой цвет, а не цвет блока, потому что припаркованная
    строка носит оба чипа сразу и они не должны сливаться */
 .c-wait{background:color-mix(in oklab,var(--wait) 16%,transparent);color:var(--wait)}
+/* кончившаяся подписка (DK-647): тот же цвет ожидания, чат не сломан, а ждёт
+   срока сброса */
+.c-quota{background:color-mix(in oklab,var(--wait) 16%,transparent);color:var(--wait)}
 .c-p1{background:color-mix(in oklab,var(--block) 20%,transparent);color:var(--block);font-weight:600}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--run);flex:none}
 /* кружок состояния проекта: серый работы нет, зелёный идёт работа, красный

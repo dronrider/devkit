@@ -7880,6 +7880,10 @@ function chatOption(project, c, current, done) {
   const busyNow = c.state === "live" && !c.idle;
   chips.append(el("span", "chip" + (busyNow ? " c-run" : ""),
     busyNow ? LIVE_WORD.busy : CHAT_STATE_WORD[c.state] || c.state));
+  // Кончившаяся подписка (DK-647): выпадающий список это то место, где
+  // человек видит все разговоры разом, и молчащий чат обязан отличаться от
+  // просто занятого агента до открытия панели.
+  if (c.quota) chips.append(el("span", "chip c-quota", c.quota));
   if (c.archived) chips.append(el("span", "chip", "в архиве"));
   if (c.model) chips.append(el("span", "chip", c.model));
   for (const t of (c.tasks || []).slice(0, 4)) chips.append(el("span", "chip", t));
@@ -9211,6 +9215,14 @@ function chatWay(st) {
   // Пузырь честно встаёт недоставленным, а выход это живой чат задачи.
   if (st.entry && st.entry.gone) {
     return { kind: "gone", off: false, why: st.entry.gone, to: st.entry.goneTo || "" };
+  }
+  // Кончившаяся подписка: харнес берёт реплику клавишами так же охотно, как
+  // живой, а хода ей не даёт и не даст до сброса окна (материал разбора
+  // DK-647, немая смерть от ретрая). Причину и срок называет сервер, панель
+  // только повторяет их над лентой, ввод при этом не гасится: реплика всё
+  // равно уедет и встанет в очередь харнеса.
+  if (st.entry && st.entry.quota) {
+    return { kind: "quota", off: false, why: st.entry.quota };
   }
   if (chatWaitsTask(st)) return { kind: "task", off: false, why: "" };
   // Сессия конвейера поднимается: реплика отсюда ушла бы первым аргументом

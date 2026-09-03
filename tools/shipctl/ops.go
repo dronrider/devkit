@@ -276,6 +276,20 @@ func taskMove(root, id, target string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// taskMoveGate прогоняет ворота перевода в Check, не двигая строку: тот же
+// taskctl move, только с --dry-run. Ship зовёт его на весь состав до выката
+// (DK-781): перевод идёт уже после деплоя, и отказ ворот на той стороне
+// оставлял точку выката сдвинутой, а строки в In progress. Своей копии ворот
+// у shipctl нет намеренно: сценарий, обкатка и перебор обходов живут в
+// taskctl, и разошедшаяся копия пускала бы в поезд то, на чём move откажет.
+func taskMoveGate(root, id string) error {
+	out, err := exec.Command("taskctl", "-C", root, "move", id, "check", "--dry-run").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // taskFailClear гасит признак провала проверки. Доску правит taskctl, как и
 // статус: shipctl только зовёт его и коммитит результат.
 func taskFailClear(root, id string) (string, error) {
@@ -1283,25 +1297,73 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	var msg []string
+	// Хвост прошлого выката доводится раньше всего остального: строка с
+	// выкаченным кодом, чей перевод отбили ворота, стоит в In progress с
+	// пометкой в «Выкате», и до перевода она не видна ни очереди, ни составу
+	// поезда. Ответить на такой заход «поезд пуст» значит бросить код на проде
+	// без Check (DK-781).
+	done, left, err := finishPendingMoves(root, p, b)
+	if err != nil {
+		return "", err
+	}
+	msg = append(msg, done...)
+	tailNote := strings.Join(done, "\n")
+	// Хвост уже сделан, и его отчёт не пропадает в дальнейшем отказе: любой
+	// ранний выход ниже уносит эти строки с собой.
+	withTail := func(out string, err error) (string, error) {
+		switch {
+		case tailNote == "":
+			return out, err
+		case err != nil:
+			return "", fmt.Errorf("%s\n%v", tailNote, err)
+		case out == "":
+			return tailNote, nil
+		}
+		return tailNote + "\n" + out, nil
+	}
+	if len(left) > 0 {
+		return withTail("", fmt.Errorf("перевод в Check не доведён: %s; поезд не поедет дальше, пока эти строки стоят на проде без Check: починить причину отказа и повторить shipctl ship",
+			strings.Join(left, ", ")))
+	}
+	if len(done) > 0 {
+		// Доска уехала, а по ней считаются очередь и состав.
+		if b, err = loadBoard(root); err != nil {
+			return "", err
+		}
+	}
 	if fs := failedChecks(b); len(fs) > 0 {
-		return drainOr(p.Drain, fmt.Errorf("%s; поезд не выкатывается, пока прод сломан", brokenProd(fs[0])))
+		return withTail(drainOr(p.Drain, fmt.Errorf("%s; поезд не выкатывается, пока прод сломан", brokenProd(fs[0]))))
 	}
 	busy, err := checkQueue(root, main, b)
 	if err != nil {
 		return "", err
 	}
 	if len(busy) > 0 {
-		return drainOr(p.Drain, fmt.Errorf("очередь занята: %s в Check с выкатом без отметки smoke; по RULES.board.md непроверенный выкат один, сначала прогон агентской части сценария и shipctl smoke %s либо проверка и taskctl close", strings.Join(busy, ", "), busy[0]))
+		return withTail(drainOr(p.Drain, fmt.Errorf("очередь занята: %s в Check с выкатом без отметки smoke; по RULES.board.md непроверенный выкат один, сначала прогон агентской части сценария и shipctl smoke %s либо проверка и taskctl close", strings.Join(busy, ", "), busy[0])))
 	}
 	train, strays, err := trainTasks(root, main, b)
 	if err != nil {
 		return "", err
 	}
 	if len(strays) > 0 {
-		return "", fmt.Errorf("код в окне выката, а задача не в In progress: %s; вернуть задачу в In progress или откатить её коммиты, иначе они уедут на прод без Check", strayList(strays))
+		return withTail("", fmt.Errorf("код в окне выката, а задача не в In progress: %s; вернуть задачу в In progress или откатить её коммиты, иначе они уедут на прод без Check", strayList(strays)))
 	}
 	if len(train) == 0 {
+		if tailNote != "" {
+			return tailNote, nil
+		}
 		return drainOr(p.Drain, fmt.Errorf("поезд пуст: после точки последнего выката нет слитых задач (копит их merge --train)"))
+	}
+	// Ворота перевода спрашиваются до выката, а не после (DK-781): состав
+	// переводится в Check уже с прода, и строка без сценария роняла там перевод
+	// всей пачки, оставляя точку выката сдвинутой. Отказ называет строку, и
+	// точка остаётся на месте: поезд стоит целым, чинить надо файл задачи.
+	for _, id := range train {
+		if err := taskMoveGate(root, id); err != nil {
+			return withTail("", fmt.Errorf("состав поезда (%s) не проходит ворота перевода в Check, выкат не запускался:\n%v",
+				strings.Join(train, ", "), err))
+		}
 	}
 	deploy, err := resolveDeploy(root, p.Deploy)
 	if err != nil {
@@ -1311,7 +1373,6 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		return "", err
 	}
 	list := strings.Join(train, ", ")
-	var msg []string
 	if deploy.warn != "" {
 		msg = append(msg, "предупреждение: "+deploy.warn)
 	}
@@ -1367,16 +1428,36 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	} else {
 		msg = append(msg, "тег "+deployTag+" сдвинут локально, при пуше руками добавить: git push -f origin "+deployTag)
 	}
+	// Перевод идёт построчно, и отказ по одной строке не роняет перевод
+	// остальных (DK-781): код всего состава уже на проде, и строка, оставшаяся
+	// в In progress, там без Check. Отбитая строка получает пометку в «Выкате»,
+	// по ней следующий ship и доводит её перевод.
+	var moved, stuck []string
 	for _, id := range train {
 		if _, err := taskMove(root, id, "check"); err != nil {
-			return "", fmt.Errorf("выкат прошёл, но доска не переведена: %v", err)
+			stuck = append(stuck, id)
+			if e := recordMovePending(root, id, err.Error()); e != nil {
+				msg = append(msg, fmt.Sprintf("пометка о недоведённом переводе %s не записана: %v", id, e))
+			}
+			msg = append(msg, fmt.Sprintf("перевод %s в Check отбит: %v", id, err))
+			continue
 		}
+		moved = append(moved, id)
 	}
-	hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s в Check поездом", list), train...)
+	commitMsg := fmt.Sprintf("docs(tasks): %s в Check поездом", strings.Join(moved, ", "))
+	if len(moved) == 0 {
+		commitMsg = fmt.Sprintf("docs(tasks): %s выкачены, перевод в Check отбит", strings.Join(stuck, ", "))
+	}
+	hash, err := commitBoard(root, commitMsg, train...)
 	if err != nil {
 		return "", err
 	}
-	msg = append(msg, fmt.Sprintf("доска: %s в Check, коммит %s", list, hash))
+	if len(moved) > 0 {
+		msg = append(msg, fmt.Sprintf("доска: %s в Check, коммит %s", strings.Join(moved, ", "), hash))
+	}
+	if len(stuck) > 0 {
+		msg = append(msg, fmt.Sprintf("выкачено, но в In progress осталось: %s (пометка в «Выкате» файла задачи); починить причину отказа и повторить shipctl ship, он доведёт перевод", strings.Join(stuck, ", ")))
+	}
 	if err := push("доска запушена",
 		"выкат и перевод в Check прошли, но пуш доски не прошёл, повторить git push руками"); err != nil {
 		return "", err
@@ -1386,16 +1467,74 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	// ship нет. Поезд, разлитый руками, оставляет получателя события «поезд в
 	// Check» в окне, и он поднимает проверяющего сам. Прогон по строкам,
 	// которые такой ship оставил без отметки, доберёт следующий тик.
-	if p.Drain && deploy.autonomous {
-		if note := checkRunNote(root, train); note != "" {
+	if p.Drain && deploy.autonomous && len(moved) > 0 {
+		if note := checkRunNote(root, moved); note != "" {
 			msg = append(msg, note)
 		}
 	}
 	if note := syncWindowTree(root, main); note != "" {
 		msg = append(msg, note)
 	}
-	msg = append(msg, nextAfterMerge(b, train))
+	if len(moved) > 0 {
+		msg = append(msg, nextAfterMerge(b, moved))
+	}
 	return strings.Join(msg, "\n"), nil
+}
+
+// finishPendingMoves доводит перевод строк, чей код уже на проде, а move
+// отбили ворота: такая строка помечена в разделе «Выкат» своего файла задачи
+// и до перевода не видна ни очереди, ни составу поезда (DK-781). Перевод идёт
+// построчно: прошедшая уезжает в Check и гасит пометку, отбитая остаётся с ней
+// и приходит вторым списком, чтобы ship назвал её и дальше не поехал.
+func finishPendingMoves(root string, p ShipParams, b *board) (notes, left []string, err error) {
+	var pending []string
+	for _, r := range b.sects["in-progress"] {
+		ok, err := movePending(root, r.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if ok {
+			pending = append(pending, r.ID)
+		}
+	}
+	if len(pending) == 0 {
+		return nil, nil, nil
+	}
+	var moved []string
+	for _, id := range pending {
+		if _, e := taskMove(root, id, "check"); e != nil {
+			left = append(left, id)
+			notes = append(notes, fmt.Sprintf("перевод %s в Check снова отбит: %v", id, e))
+			continue
+		}
+		if e := recordMoveDone(root, id); e != nil {
+			notes = append(notes, fmt.Sprintf("пометка о недоведённом переводе %s не снята: %v", id, e))
+		}
+		moved = append(moved, id)
+	}
+	if len(moved) == 0 {
+		return notes, left, nil
+	}
+	list := strings.Join(moved, ", ")
+	hash, err := commitBoard(root, fmt.Sprintf("docs(tasks): %s в Check, хвост прошлого выката", list), pending...)
+	if err != nil {
+		return nil, nil, err
+	}
+	notes = append(notes, fmt.Sprintf("хвост прошлого выката доведён: %s в Check, коммит %s", list, hash))
+	// Коммит доски уезжает в origin сразу: правило доски, а не вежливость,
+	// и вторая машина иначе считает эти строки всё ещё непереведёнными.
+	// Решение о пуше то же, что у самого выката, поэтому автономность
+	// спрашивается у настроек деплоя, а её разбор ниже повторится с отчётом.
+	doPush := p.Push
+	if d, e := resolveDeploy(root, p.Deploy); e == nil && d.autonomous {
+		doPush = true
+	}
+	if doPush {
+		if _, e := git(root, "push"); e != nil {
+			notes = append(notes, fmt.Sprintf("пуш доски после доводки перевода не прошёл, повторить git push руками: %v", e))
+		}
+	}
+	return notes, left, nil
 }
 
 // freshMain ловит отставший клон до необратимых шагов слияния: на origin

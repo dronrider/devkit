@@ -118,6 +118,67 @@ func recordMerge(root, id string, shas []string) (string, error) {
 	return git(root, "rev-parse", "--short", "HEAD")
 }
 
+// Пометки о переводе в Check после выката. Строка «выкачено» без перевода это
+// код на проде без Check, и след этого состояния живёт в файле задачи: по нему
+// следующий ship узнаёт хвост прошлого выката и доводит перевод (DK-781).
+// Пометки идут парой, потому что задача возвращается из Check в работу и её
+// файл переживает несколько кругов: судит не наличие пометки, а последняя из
+// пары в разделе «Выкат».
+const (
+	movePendingNote = "выкачено, перевод в Check отбит: "
+	moveDoneNote    = "перевод в Check доведён"
+)
+
+// recordMovePending помечает выкаченную строку, чей перевод отбили ворота.
+// Причина сжимается до первой строки: отказ move приходит абзацем со
+// следующим шагом, а в записи нужен повод, читаемый одной строкой.
+func recordMovePending(root, id, reason string) error {
+	first, _, _ := strings.Cut(strings.TrimSpace(reason), "\n")
+	return appendRecord(root, id, movePendingNote+strings.TrimSpace(first))
+}
+
+// recordMoveDone гасит пометку: перевод доведён, и хвост закрыт.
+func recordMoveDone(root, id string) error { return appendRecord(root, id, moveDoneNote) }
+
+// movePending отвечает, висит ли на задаче недоведённый перевод в Check.
+// Файла или раздела нет значит не висит: так живут все задачи, слитые до
+// появления пометки.
+func movePending(root, id string) (bool, error) {
+	data, err := os.ReadFile(taskFilePath(root, id))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	pending := false
+	for _, ln := range sectionLines(string(data), mergedSection) {
+		t := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ln), "- "))
+		switch {
+		case strings.Contains(t, movePendingNote):
+			pending = true
+		case strings.Contains(t, moveDoneNote):
+			pending = false
+		}
+	}
+	return pending, nil
+}
+
+// appendRecord дописывает строку в раздел «Выкат» файла задачи и оставляет её
+// незакоммиченной: коммит идёт общий, вместе с доской.
+func appendRecord(root, id, note string) error {
+	path := taskFilePath(root, id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		data = []byte("# " + id + "\n")
+	}
+	line := "- " + time.Now().Format("2006-01-02") + " " + note
+	return os.WriteFile(path, []byte(appendToSection(string(data), line)), 0o644)
+}
+
 // appendToSection дописывает строку в конец раздела «Выкат», заводя сам
 // раздел, если его нет: место ему выбирает форма TASKFORM.md, а не хвост
 // файла, иначе «Выкат» вставал бы после «Проверки», написанной до слияния.

@@ -293,3 +293,147 @@ func TestRevertSkipsNeighbourMention(t *testing.T) {
 		t.Fatalf("свой код не откатился: %q", got)
 	}
 }
+
+// stubTaskctl подменяет стаб taskctl в PATH: body встаёт перед строкой,
+// которая имитирует правку доски, и решает, каким вызовам отказать. Так
+// в стенде проигрывается отказ ворот перевода, живущих в самом taskctl.
+func stubTaskctl(t *testing.T, callLog, body string) {
+	t.Helper()
+	bin := filepath.Dir(callLog)
+	write(t, bin, "taskctl", "#!/bin/sh\necho \"$@\" >> \""+callLog+"\"\n"+body+
+		"printf '<!-- move -->\\n' >> \"$2/docs/TASKS.md\"\n")
+	if err := os.Chmod(filepath.Join(bin, "taskctl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// realMoves считает настоящие переводы в Check в логе стаба: сухой прогон
+// ворот идёт той же командой с --dry-run, и по одному вхождению «move ID
+// check» эти два вызова не различить.
+func realMoves(t *testing.T, callLog, id string) int {
+	t.Helper()
+	calls, _ := os.ReadFile(callLog)
+	n := 0
+	for _, ln := range strings.Split(string(calls), "\n") {
+		if strings.HasSuffix(strings.TrimSpace(ln), "move "+id+" check") {
+			n++
+		}
+	}
+	return n
+}
+
+// TestTrainGateBeforeDeploy воспроизводит разлив 2026-09-03: в составе поезда
+// строка со сценарием и строка без него, и перевод второй отбивают ворота.
+// Пока ворота спрашивались уже после деплоя, выкат проходил, точка выката
+// уезжала вперёд, обе строки оставались в In progress, а повторный ship
+// отвечал «поезд пуст». Теперь состав проверяется до выката: отказ называет
+// строку, деплой не запускается, точка стоит на месте.
+func TestTrainGateBeforeDeploy(t *testing.T) {
+	root, callLog := setup(t, rowInProg+rowInProg3, "")
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003: заголовок\n"+fixtureReviewLevel)
+	gitT(t, root, "add", "docs/tasks/XR-003.md")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 файл задачи")
+	stubTaskctl(t, callLog, `case "$*" in
+  *XR-003*check*) echo "XR-003: в docs/tasks/XR-003.md нет раздела «Сценарий проверки», без него в Check нельзя" >&2; exit 1;;
+  *--dry-run*) exit 0;;
+esac
+`)
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	// Правка XR-003 приезжает на main мимо shipctl, как приезжает срочная
+	// починка: ворот слияния её не видел, а состав поезда её берёт.
+	gitT(t, root, "checkout", "-q", "main")
+	write(t, root, "b.txt", "XR-003\n")
+	gitT(t, root, "add", "b.txt")
+	gitT(t, root, "commit", "-qm", "fix: XR-003 правка")
+	tagBefore := gitT(t, root, "rev-parse", deployTag)
+
+	_, err := cmdShip(root, ShipParams{Deploy: "touch shipped.marker"})
+	if err == nil || !strings.Contains(err.Error(), "XR-003") ||
+		!strings.Contains(err.Error(), "ворота перевода") {
+		t.Fatalf("состав с непроходной строкой должен отбиваться до выката: %v", err)
+	}
+	if _, e := os.Stat(filepath.Join(root, "shipped.marker")); e == nil {
+		t.Fatal("выкат запустился на непроходном составе")
+	}
+	if now := gitT(t, root, "rev-parse", deployTag); now != tagBefore {
+		t.Fatalf("точка выката сдвинулась при отказе: было %s, стало %s", tagBefore, now)
+	}
+	if n := realMoves(t, callLog, "XR-001"); n != 0 {
+		t.Fatalf("строки состава переведены при отказе, настоящих move по XR-001: %d", n)
+	}
+}
+
+// TestTrainRepeatFinishesRefusedMove: перевод отбит уже после выката (ворота
+// прошли, а move отказал на своей стороне). Такая строка стоит на проде без
+// Check, и ship обязан довести её перевод повтором: код всего состава уже
+// выкачен, поезд по коммитам пуст, и «поезд пуст» тут не ответ. Перевод
+// остальных строк отказ по одной не роняет.
+func TestTrainRepeatFinishesRefusedMove(t *testing.T) {
+	root, callLog := setup(t, rowInProg+rowInProg3, "")
+	taskWithScenario(t, root, "XR-003")
+	gate := filepath.Join(t.TempDir(), "refuse")
+	write(t, filepath.Dir(gate), "refuse", "держим отказ\n")
+	stubTaskctl(t, callLog, `case "$*" in
+  *--dry-run*) exit 0;;
+  *"move XR-003 check"*)
+    if [ -f "`+gate+`" ]; then echo "XR-003: перевод в Check отбит воротами" >&2; exit 1; fi;;
+esac
+`)
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := cmdShip(root, ShipParams{Deploy: "touch shipped.marker"})
+	if err != nil {
+		t.Fatalf("отказ перевода по одной строке не должен ронять весь ship: %v", err)
+	}
+	if _, e := os.Stat(filepath.Join(root, "shipped.marker")); e != nil {
+		t.Fatal("выкат не отработал")
+	}
+	if !strings.Contains(msg, "в In progress осталось: XR-003") {
+		t.Fatalf("оставшаяся в In progress строка не названа: %q", msg)
+	}
+	if n := realMoves(t, callLog, "XR-001"); n != 1 {
+		t.Fatalf("перевод XR-001 не доведён, настоящих move: %d", n)
+	}
+	doc, _ := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-003.md"))
+	if !strings.Contains(string(doc), "перевод в Check отбит") {
+		t.Fatalf("следа выката без перевода нет в файле задачи:\n%s", doc)
+	}
+	if st := gitT(t, root, "status", "--porcelain", "--untracked-files=no"); st != "" {
+		t.Fatalf("пометка осталась незакоммиченной:\n%s", st)
+	}
+
+	// Причину отказа починили, и повторный ship доводит перевод хвоста.
+	if err := os.Remove(gate); err != nil {
+		t.Fatal(err)
+	}
+	msg, err = cmdShip(root, ShipParams{Deploy: "touch second.marker"})
+	if err != nil {
+		t.Fatalf("повторный ship должен довести перевод: %v", err)
+	}
+	if strings.Contains(msg, "поезд пуст") {
+		t.Fatalf("выкаченная строка без Check это не пустой поезд: %q", msg)
+	}
+	if !strings.Contains(msg, "хвост прошлого выката доведён: XR-003") {
+		t.Fatalf("доводка перевода не названа: %q", msg)
+	}
+	if n := realMoves(t, callLog, "XR-003"); n != 2 {
+		t.Fatalf("повторный перевод XR-003 не позван, настоящих move: %d", n)
+	}
+	if _, e := os.Stat(filepath.Join(root, "second.marker")); e == nil {
+		t.Fatal("доводка перевода покатила повторный выкат")
+	}
+	doc, _ = os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-003.md"))
+	if !strings.Contains(string(doc), "перевод в Check доведён") {
+		t.Fatalf("пометка не погашена после доводки:\n%s", doc)
+	}
+}

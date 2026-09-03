@@ -283,6 +283,16 @@ def circle(cmd_run, proj, log):
     log("  обкатка сценария: %s" % ("ок" if rc == 0 else "не прошёл"))
     if rc != 0:
         return steps
+    # Ворота слияния (reviewLevelGate) требуют в разделе «Ревью» строку
+    # уровня, а живой конвейер ставит её ревьювером по скиллу review. Круг
+    # ревьювера не зовёт, и синтетическая задача честно берёт нулевой
+    # уровень: мелочь без критичности, решение о пропуске записано с причиной
+    # (шкала уровней в kit/skills/review/SKILL.md).
+    if go("уровень ревью", ["taskctl", "-C", str(task_tree(proj, TASK)), "review",
+                            "level", TASK, "0",
+                            "синтетическая задача круга самопроверки, критичности нет",
+                            "-m", "docs(tasks): %s уровень ревью проставлен кругом" % TASK]) != 0:
+        return steps
     if go("слияние с выкатом", ["shipctl", "-C", str(proj), "merge", TASK]) != 0:
         return steps
     if not stamp_result(proj, TASK):

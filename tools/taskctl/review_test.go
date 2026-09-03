@@ -601,6 +601,44 @@ func TestReviewLevelKeepsNotes(t *testing.T) {
 	}
 }
 
+// TestReviewLevelBeforeAdd: строка уровня, записанная до первого замечания
+// (так диспетчер ставит стартовый уровень перед ревью), не съедает следующее
+// замечание. Без правки DK-760 замечание вставало перед строкой уровня, и
+// повторный разбор принимал строку уровня за перенос замечания, склеивая их в
+// один пункт (было на DK-757). Порядок «level, потом add» должен давать тот
+// же раздел, что и «add, потом level» (TestReviewLevelKeepsNotes).
+func TestReviewLevelBeforeAdd(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdReviewLevel(root, "XR-005", 2, "стартовый уровень от диспетчера", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	got := readTaskFile(t, root, "XR-005")
+	lvl, note := strings.Index(got, "Уровень 2 до "), strings.Index(got, "- гонка в close")
+	if lvl < 0 || note < 0 || lvl > note {
+		t.Fatalf("уровень и замечание встали не в том порядке:\n%s", got)
+	}
+	if !strings.Contains(got, "\n\n- гонка в close") {
+		t.Fatalf("замечание слиплось со строкой уровня:\n%s", got)
+	}
+	if !strings.Contains(got, "\n\n## Сценарий проверки") {
+		t.Fatalf("список замечаний слипся со следующим разделом:\n%s", got)
+	}
+	show, err := cmdReviewShow(root, "XR-005")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(show, "Уровень 2 до ") || !strings.Contains(show, "\n1. [открыто] гонка в close") {
+		t.Fatalf("show не развёл уровень и замечание: %q", show)
+	}
+	if strings.Contains(show, "гонка в close стартовый") || strings.Contains(show, "путьгонка") {
+		t.Fatalf("текст уровня слипся с замечанием: %q", show)
+	}
+}
+
 // TestReviewLevelRefuses: причина обязательна на любом уровне, включая нулевой
 // (осознанный пропуск), а уровень вне шкалы 0-3 отбивается. Ни то, ни другое в
 // файл не пишется.

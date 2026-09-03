@@ -283,7 +283,22 @@ const (
 	GateTests     = "тесты"
 	GateScenario  = "сценарий"
 	GateRehearsal = "обкатка"
+	GateReview    = "ревью"
 )
+
+// reviewLevelRe узнаёт строку уровня ревью, которую пишет `taskctl review
+// level`: «Уровень 2 до a1b2c3d: неопределённость 1, тронут tools/shipctl».
+// Судится голова строки, хвост с sha и причиной свободный. Цифра за уровнем
+// отсекает «Уровень 12» и прозу вроде «Уровень 2 выбран потому...»: за
+// уровнем идёт что угодно, кроме цифры.
+var reviewLevelRe = regexp.MustCompile(`^Уровень [0-3]([^0-9]|$)`)
+
+// IsReviewLevel говорит, что строка это строка уровня ревью. Пишет её taskctl,
+// читают ворота слияния (shipctl), и разойтись двум копиям критерия значило бы
+// отбивать слияние ревью, которое запись сделало.
+func IsReviewLevel(line string) bool {
+	return reviewLevelRe.MatchString(strings.TrimSpace(line))
+}
 
 // Exception говорит, гасит ли файл задачи ворот именем gate пометкой-
 // исключением. Формат тот же, что у override в pick («Модель:»/«Эффорт:»):

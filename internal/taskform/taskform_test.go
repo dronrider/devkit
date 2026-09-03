@@ -182,3 +182,23 @@ func TestRehearsalStampNeedsPrint(t *testing.T) {
 		t.Fatalf("отметка разобрана неверно: %q, %q, %v", sha, print, ok)
 	}
 }
+
+// TestIsReviewLevel: строка уровня узнаётся по голове, а проза про уровень и
+// уровень вне шкалы 0-3 за неё не сходят.
+func TestIsReviewLevel(t *testing.T) {
+	cases := map[string]bool{
+		"Уровень 2 до a1b2c3d: неопределённость 1, тронут tools/shipctl.": true,
+		"  Уровень 0 до a1b2c3d: мелочь мимо ветки.":                      true,
+		"Уровень 3": true,
+		"Уровень 4 до a1b2c3d: мимо шкалы.":              false,
+		"Уровень 12 до a1b2c3d: опечатка.":               false,
+		"- Уровень 2 до a1b2c3d: списком, а не абзацем.": false,
+		"Про уровень 2 тут ни слова.":                    false,
+		"": false,
+	}
+	for line, want := range cases {
+		if got := IsReviewLevel(line); got != want {
+			t.Fatalf("IsReviewLevel(%q) = %v, ждём %v", line, got, want)
+		}
+	}
+}

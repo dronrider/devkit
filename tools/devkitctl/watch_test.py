@@ -74,6 +74,18 @@ class Stand(unittest.TestCase):
         text = BOARD % (row if in_progress else "", "" if in_progress else row)
         (self.proj / "docs" / "TASKS.md").write_text(text, encoding="utf-8")
 
+    def ticks(self, *ago_minutes, **kw):
+        """Окна собственных тиков сторожка: тик длится секунды, и окно тут
+        такое же узкое."""
+        span = kw.get("seconds", 3)
+        lines = []
+        for ago in ago_minutes:
+            beg = self.now - timedelta(minutes=ago)
+            lines.append("%s\t%s" % (stamp(beg), stamp(beg + timedelta(seconds=span))))
+        path = self.home / ".devkit" / "watch.ticks"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
     def goallog(self, ago_minutes, goal=GOAL):
         when = stamp(self.now - timedelta(minutes=ago_minutes))
         with open(str(self.proj / ".devkit" / ("goal-%s.log" % goal)), "a",
@@ -95,9 +107,10 @@ class Stand(unittest.TestCase):
         watch.write_entry(path, data)
         return path
 
-    def look(self, path, idle=45 * 60, call=None):
+    def look(self, path, idle=45 * 60, call=None, ticks=None):
         call = Fake() if call is None else call
-        called, line = watch.look(path, self.now, idle, call)
+        ticks = watch.read_ticks(self.home) if ticks is None else ticks
+        called, line = watch.look(path, self.now, idle, call, ticks)
         return called, line, call
 
 
@@ -185,14 +198,47 @@ class LookTest(Stand):
     def test_watch_own_tick_is_not_movement(self):
         # Простой DK-727: цикл встал в 04:26, а журнал запусков четыре с
         # половиной часа выглядел живым, потому что в него писал сам тик
-        # сторожка. Разлив и снимок квоты движением цикла не считаются.
+        # сторожка. Строка, легшая в окно своего тика, движением не считается.
         path = self.entry(seen_minutes=270)
         self.goallog(270)
         self.runlog(270, tool="taskctl", cmd="move")
         self.runlog(3, tool="shipctl", cmd="ship")
-        self.runlog(2, tool="agentctl", cmd="quota")
+        self.runlog(3, tool="agentctl", cmd="quota")
+        self.ticks(3)
         called, line, _ = self.look(path)
         self.assertTrue(called, "тик сторожка сошёл за движение цикла: %s" % line)
+
+    def test_real_ship_counts_as_movement(self):
+        # Выкат поезда пишется в журнал той же парой, что служебный разлив
+        # тика: `shipctl ship <ID>` против `shipctl -C root ship --drain`,
+        # флагов журнал не хранит. Боевой вызов лёг вне окна тика, и это
+        # движение цикла.
+        path = self.entry(seen_minutes=270)
+        self.goallog(270)
+        self.runlog(2, tool="shipctl", cmd="ship")
+        self.ticks(6, 11)
+        called, line, _ = self.look(path)
+        self.assertFalse(called, "выкат поезда не сошёл за движение: %s" % line)
+
+    def test_real_quota_refresh_counts_as_movement(self):
+        # То же у гейта бюджета: `agentctl quota refresh` на протухшем снимке
+        # неотличим от снимка сторожка по паре, и различает их только окно.
+        path = self.entry(seen_minutes=270)
+        self.goallog(270)
+        self.runlog(2, tool="agentctl", cmd="quota")
+        self.ticks(6, 11)
+        called, line, _ = self.look(path)
+        self.assertFalse(called, "съём квоты витком не сошёл за движение: %s" % line)
+
+    def test_open_window_covers_the_running_tick(self):
+        # Свой снимок квоты идущий тик делает до обхода реестра, а окно
+        # закрывает на выходе. Пока окно открыто, правой границы у него нет.
+        path = self.entry(seen_minutes=270)
+        self.goallog(270)
+        self.runlog(270, tool="taskctl", cmd="move")
+        self.runlog(0, tool="agentctl", cmd="quota")
+        called, line, _ = self.look(path, ticks=[(self.now, None)])
+        self.assertTrue(called, "вызов идущего тика сошёл за движение: %s" % line)
 
     def test_scheduled_catchup_is_not_movement(self):
         # Подхват катится хуком по часам сессии и идёт в тот же журнал: у
@@ -232,6 +278,7 @@ class LookTest(Stand):
         for i in range(260, 0, -5):
             self.runlog(i, tool="shipctl", cmd="ship")
             self.runlog(i, tool="agentctl", cmd="quota")
+        self.ticks(*range(260, 0, -5))
         called, line, _ = self.look(path)
         self.assertTrue(called, "хвост из тиков сторожка спрятал простой: %s" % line)
 
@@ -346,6 +393,37 @@ class RunTest(Stand):
         beat = (self.home / ".devkit" / "goal-watch.log").read_text(encoding="utf-8")
         self.assertIn("целей под надзором 1", beat)
         self.assertIsNotNone(watch.heartbeat(self.home))
+
+    def test_tick_window_written(self):
+        # Окно тика это то, чем сторожок отличает свой служебный вызов от
+        # боевого: без записи оно не переживёт прогон, и разбор снова
+        # свалится на пару «утилита, команда».
+        self.entry(seen_minutes=1)
+        self.sweep()
+        marks = watch.read_ticks(self.home)
+        self.assertEqual(len(marks), 1, "окно тика не записано")
+        beg, end = marks[0]
+        self.assertLessEqual(beg, end)
+        # Второй прогон дописывает своё окно, а первое остаётся: строки
+        # прошлых тиков разбираются в следующих прогонах.
+        self.sweep()
+        self.assertEqual(len(watch.read_ticks(self.home)), 2)
+
+    def test_own_drain_does_not_look_like_movement(self):
+        # Сквозной случай простоя DK-727: цикл стоит, а журнал запусков полон
+        # свежих строк, которые оставил разлив самого сторожка. Первый прогон
+        # эти строки и пишет, второй обязан позвать.
+        self.entry(seen_minutes=270)
+        self.goallog(270)
+        self.runlog(270, tool="taskctl", cmd="move")
+        rc, out, _ = self.sweep()
+        self.assertEqual(rc, 1, "вставший цикл не позвал: %s" % out)
+        # Разлив первого прогона лёг в журнал запусков свежей строкой. Следующий
+        # прогон обязан узнать в ней свой тик и держать цикл вставшим.
+        self.runlog(0, tool="shipctl", cmd="ship")
+        rc, out, _ = self.sweep()
+        self.assertIn("простой", out, "разлив своего тика прикрыл вставший цикл: %s" % out)
+        self.assertNotIn("тихо", out, out)
 
     def test_threshold_from_config(self):
         # Порог настраиваемый: тот же простой при большем пороге зова не даёт.

@@ -9,9 +9,10 @@
 подстановкой строк, а зов уведомителя ловится по `~/.devkit/notify.log` того же
 дома. Настоящий дом и настоящая доска не трогаются.
 
-Стенд гоняет три тика подряд: цикл встал (зов), тот же стоп следом (молчание до
-порога), стоп дожил до второго порога (повторный зов с номером). Печатает одну
-строку итога и выходит 0, любое расхождение это ненулевой выход с разбором.
+Стенд гоняет четыре тика подряд. Цикл встал (зов), тот же стоп следом (молчание
+до порога), стоп дожил до второго порога (повторный зов с номером), в журнал лёг
+боевой выкат вне окна тика (движение, тишина). Печатает одну строку итога и
+выходит 0, любое расхождение это ненулевой выход с разбором.
 """
 import os
 import re
@@ -55,13 +56,19 @@ def stand(root):
     (proj / ".devkit" / ("goal-%s.log" % GOAL)).write_text(
         "%s виток стенда\n" % ago(270), encoding="utf-8")
     lines = ["%s\ttaskctl\tmove\t0" % ago(270)]
+    ticks = []
     for i in range(265, 0, -5):
         lines += ["%s\tshipctl\tship\t1" % ago(i), "%s\tagentctl\tquota\t0" % ago(i)]
+        ticks.append("%s\t%s" % (ago(i), ago(i - 0.05)))
     (proj / ".devkit" / "log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Окна тиков рядом с этими строками: по ним сторожок и узнаёт свой
+    # служебный вызов. Боевой `shipctl ship <ID>` в журнале выглядит так же, и
+    # без окна стенд не отличил бы одно от другого.
+    (home / ".devkit" / "watch.ticks").write_text("\n".join(ticks) + "\n", encoding="utf-8")
     entry = home / ".devkit" / "goals" / ("%s-стенд.watch" % GOAL)
     entry.write_text("goal = %s\nroot = %s\nfile = %s\nseen = %s\n" % (
         GOAL, proj, proj / "docs" / "tasks" / ("%s.md" % GOAL), ago(270)), encoding="utf-8")
-    return home, entry
+    return home, proj, entry
 
 
 def tick(home):
@@ -79,7 +86,7 @@ def die(why, out=""):
 def main():
     root = Path(tempfile.mkdtemp(prefix="poc-goalwatch-"))
     try:
-        home, entry = stand(root)
+        home, proj, entry = stand(root)
         code, out = tick(home)
         if code != 1 or "зову" not in out:
             die("первый тик не позвал по вставшему циклу (код %d)" % code, out)
@@ -92,13 +99,20 @@ def main():
         code, out = tick(home)
         if code != 1 or "зову 2-й раз" not in out:
             die("стоп дожил до второго порога, а повторного зова нет (код %d)" % code, out)
+        # Боевой вызов той же утилиты в окно тика не попадает, и цикл живой.
+        with open(proj / ".devkit" / "log", "a", encoding="utf-8") as f:
+            f.write("%s\tshipctl\tship\t0\n" % ago(2))
+        code, out = tick(home)
+        if code != 0 or "тихо" not in out:
+            die("боевой выкат не сошёл за движение цикла (код %d)" % code, out)
         log = home / ".devkit" / "notify.log"
         said = [ln for ln in log.read_text(encoding="utf-8").splitlines()
                 if GOAL in ln] if log.is_file() else []
         if len(said) < 2:
             die("уведомитель позвал %d раз вместо двух" % len(said), "\n".join(said))
         print("poc_goalwatch: ok, тик 1 позвал, тик 2 смолчал до порога, "
-              "тик 3 позвал 2-й раз; уведомитель отработал %d раза" % len(said))
+              "тик 3 позвал 2-й раз, тик 4 принял боевой выкат за движение; "
+              "уведомитель отработал %d раза" % len(said))
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
 

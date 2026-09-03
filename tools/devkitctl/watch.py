@@ -17,7 +17,8 @@ launchd-агент, его кладёт `devkitctl doctor --fix`.
 кладёт гейт бюджета `agentctl spend --goal`, который стоит в начале каждого
 витка и у оболочки, и в чате. Движение меряется двумя журналами: строкой хода в
 журнале цикла `.devkit/goal-<ID>.log` и вызовом утилиты в `.devkit/log`
-проекта, за вычетом строк расписания. Цель, ушедшая с доски или из In progress,
+проекта, за вычетом подхвата по часам сессии и того, что тик сторожка позвал
+сам (окна тиков лежат в `~/.devkit/watch.ticks`). Цель, ушедшая с доски или из In progress,
 снимается с надзора вместе со своей записью.
 
 Позвав, сторожок ставит в запись отметку `stopped` и счёт зовов `shouts`, а
@@ -107,14 +108,21 @@ STAMP = "%Y-%m-%dT%H:%M:%S"
 STAMP_FORMATS = (STAMP, "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S")
 RUN_LOG = ".devkit/log"
 GOAL_LOG = ".devkit/goal-%s.log"
-# Вызовы, которые в журнале запусков есть, а движением цикла не являются: их
-# делает расписание, а не виток. Разлив и снимок квоты тик сторожка гонит сам в
-# каждом корне под надзором, подхват катится хуком по часам сессии, и брошенный
-# цикл по этим строкам неотличим от работающего: простой DK-727 продержался
-# четыре с половиной часа ровно потому, что журнал запусков всё это время
-# выглядел живым.
-IDLE_CALLS = frozenset((("shipctl", "ship"), ("agentctl", "quota"),
-                        ("devkitctl", "catchup"), ("taskctl", "catchup")))
+# Подхват катится хуком по часам сессии и в журнал запусков пишет ту же строку,
+# что виток. Витку он не принадлежит: у брошенной сессии подхват тикает так же,
+# как у работающей, поэтому движением цикла эта пара не считается. Флаги вызова
+# журнал не хранит (logCmd берёт args[0]), но обеих команд `catchup` у витка нет
+# ни с какими флагами, и пара тут различает всё, что нужно.
+HOOK_CALLS = frozenset((("devkitctl", "catchup"), ("taskctl", "catchup")))
+# Окна собственных тиков сторожка: файл строк «начало\tконец», по строке на тик.
+# Тик зовёт разлив, снимок квоты и таскцтл в каждом корне под надзором, и в
+# журнале запусков эти строки неотличимы от боевых по паре «утилита, команда»:
+# служебный `shipctl -C root ship --drain` и выкат поезда `shipctl ship <ID>`
+# пишутся одинаково. Различает их время. Своё окно сторожок знает точно, потому
+# что сам его и засёк, а вызов витка в трёхсекундное окно тика попадает разве
+# что случайно.
+TICKS = "~/.devkit/watch.ticks"
+TICKS_KEEP = 600
 BOARD = "docs/TASKS.md"
 IN_PROGRESS = "In progress"
 CHECK = "Check"
@@ -219,13 +227,60 @@ def conf_idle(home=None):
     return IDLE
 
 
-def last_run_stamp(root):
+def read_ticks(home=None):
+    """Окна собственных тиков сторожка, парами времён. Незнакомая строка
+    пропускается, нет файла значит нет окон."""
+    home = default_home() if home is None else home
+    try:
+        text = home_path(home, TICKS).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    out = []
+    for ln in text.splitlines():
+        cells = ln.split("\t")
+        if len(cells) < 2:
+            continue
+        beg, end = stamp_of(cells[0].strip()), stamp_of(cells[1].strip())
+        if beg is not None and end is not None:
+            out.append((beg, end))
+    return out
+
+
+def write_tick(beg, end, home=None):
+    """Окно тика в файл. Хвост подрезается, история тиков дальше суток никому не
+    нужна: по ней читается только принадлежность строки журнала."""
+    home = default_home() if home is None else home
+    path = home_path(home, TICKS)
+    line = "%s\t%s\n" % (beg.strftime(STAMP), end.strftime(STAMP))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        old = path.read_text(encoding="utf-8", errors="replace").splitlines(True) \
+            if path.exists() else []
+        path.write_text("".join(old[-(TICKS_KEEP - 1):]) + line, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def own_tick(when, ticks):
+    """Легла ли строка журнала внутрь окна собственного тика сторожка. У
+    открытого окна (конец None) правой границы нет: идущий тик своё окно
+    закрывает только на выходе, а звать он решает в середине."""
+    for beg, end in ticks:
+        if when < beg:
+            continue
+        if end is None or when <= end:
+            return True
+    return False
+
+
+def last_run_stamp(root, ticks=()):
     """Момент последнего вызова утилиты devkit в проекте, None если журнала нет,
     он пуст или в хвосте одно расписание. Читается хвост файла: строки идут по
     возрастанию времени.
 
-    Строки из IDLE_CALLS пропускаются: движением цикла считается вызов, который
-    сделал виток, а не тик сторожка и не хук по часам."""
+    Пропускается два вида строк. Строки HOOK_CALLS оставил подхват по часам
+    сессии, строки внутри окон `ticks` оставил сам сторожок своим тиком.
+    Движением цикла считается то, что осталось."""
     try:
         with open(os.path.join(root, RUN_LOG), "rb") as f:
             f.seek(0, os.SEEK_END)
@@ -239,7 +294,9 @@ def last_run_stamp(root):
         st = stamp_of(cells[0])
         if st is None:
             continue
-        if tuple(c.strip() for c in cells[1:3]) in IDLE_CALLS:
+        if tuple(c.strip() for c in cells[1:3]) in HOOK_CALLS:
+            continue
+        if own_tick(st, ticks):
             continue
         return st
     return None
@@ -798,7 +855,7 @@ def resume_command(goal, root, devkit=None):
         devkit / "kit" / "skills" / "goal-loop" / "goal-run.py", goal, root)
 
 
-def moved_at(entry, root, path):
+def moved_at(entry, root, path, ticks=()):
     """Когда цикл двигался последний раз. Источников три: журнал цикла цели,
     журнал запусков проекта без строк расписания и строка гейта в самой записи.
     Берётся самый свежий, потому что живого цикла хватает и одного: виток на
@@ -807,7 +864,7 @@ def moved_at(entry, root, path):
     ни один источник, значит берётся время самой записи, иначе цель осталась бы
     без надзора."""
     marks = [m for m in (last_round_stamp(root, entry.get("goal")),
-                         last_run_stamp(root), stamp_of(entry.get("seen"))) if m]
+                         last_run_stamp(root, ticks), stamp_of(entry.get("seen"))) if m]
     if marks:
         return max(marks)
     try:
@@ -816,7 +873,7 @@ def moved_at(entry, root, path):
         return None
 
 
-def look(path, now, idle, call=None):
+def look(path, now, idle, call=None, ticks=()):
     """Что сторожок сделал с одной записью реестра: (позвали ли, строка отчёта).
 
     Тут же чинится сам реестр: цель, ушедшая с доски или из In progress, надзора
@@ -833,7 +890,7 @@ def look(path, now, idle, call=None):
             drop(path)
             where = "она стоит в разделе «%s»" % section if section else "её нет на доске"
             return False, "цель %s в %s: %s, запись снята" % (goal, root, where)
-    moved = moved_at(entry, root, path)
+    moved = moved_at(entry, root, path, ticks)
     if moved is None:
         return False, "цель %s в %s: движения не измерить, записи нет времени" % (goal, root)
     gap = (now - moved).total_seconds()
@@ -940,6 +997,14 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     home = default_home() if home is None else home
     idle = conf_idle(home) if idle is None else idle
     out = sys.stdout if out is None else out
+    # Окна прошлых тиков читаются до первого своего вызова, а своё окно
+    # открывается тут же и закрывается на выходе: строки, которые тик оставит в
+    # журналах запусков, движением цикла не считаются ни в этом прогоне, ни в
+    # следующих (DK-740). Начало окна берётся из `now`, а длина замеряется
+    # настенными часами: подставленное время должно двигать окно вместе с
+    # журналами, иначе проверка сквозного случая упирается в ожидание.
+    began, wall = now, datetime.now()
+    ticks = read_ticks(home) + [(began, None)]
     # Съём квоты идёт до обхода реестра и не зависит от него: снимок лежит на
     # уровне машины, и свежеть он обязан и там, где целей под надзором нет.
     qreport, qnote = quota_snap(call, agentctl)
@@ -951,7 +1016,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     for path in entries(home):
         watched += 1
         root = read_entry(path).get("root")
-        called, line = look(path, now, idle, call)
+        called, line = look(path, now, idle, call, ticks)
         found += 1 if called else 0
         out.write(line + "\n")
         if called:
@@ -1000,6 +1065,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         out.write(line + "\n")
         if notable:
             log_line(line, home)
+    write_tick(began, began + (datetime.now() - wall), home)
     log_line("целей под надзором %d, вставших %d" % (watched, found), home)
     if not watched:
         out.write("целей под надзором нет: реестр %s пуст\n" % home_path(home, GOALS_DIR))

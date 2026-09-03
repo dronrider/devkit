@@ -1,34 +1,61 @@
 #!/usr/bin/env python3
-"""Оболочка конвейера задачи: поднимает голову проходами, пока строка задачи не
-закрыта. Живучесть конвейера от живучести сессии тут не зависит, как и у цикла
-цели (goal-run.py): состояние задачи целиком лежит на диске, доска, git и дерево
-задачи, а оболочка только зовёт следующий проход и решает, когда перестать
-звать.
+"""Оболочка конвейера задачи. Ведёт работу по строке доски, пока она не закрыта.
+Живучесть конвейера от живучести сессии тут не зависит, как и у цикла цели
+(goal-run.py). Состояние задачи целиком лежит на диске, доска, git и дерево
+задачи, а оболочка только заказывает следующий проход и решает, когда перестать
+заказывать.
 
   task-run.py <ID> [-C <корень проекта>] [--order <заказ первого прохода>]
               [--again <заказ следующих>] [--passes N] [--project <имя>]
-              -- <команда клиента без -p>
+              [--headless] -- <команда клиента без -p>
 
-Заводится оболочка тем, что головой конвейера была печатная сессия: конец её
-хода это выход процесса, и всё, чего голова ждала, гибнет вместе с ней. Так
-01.09 встали обе сессии конвейера, DK-655 на исполнителе и DK-658 на фоновом
-прогоне, а окна tmux просто пропали с экрана. Рубеж синхронности (DK-678,
-починка признака в DK-691) отбивает саму отдачу работы в фон, а тут закрыт
-второй случай: работа отдана наружу законно (человеку вопросом, сроку паузой)
-либо голова кончила ход раньше, чем задачу, и подъём следующего прохода не
-должен стоить человеку ручного присмотра.
+Голов у конвейера две, и выбирает между ними окружение.
 
-Заказ проходу оболочка не сочиняет: слова приходят флагами от того, кто её
+Живая голова это одна интерактивная сессия в окне tmux, поднятая тут же, в
+панели оболочки. Первый заказ едет клиенту первым аргументом, следующие
+приходят в тот же процесс через `tmux send-keys`, той же дорогой, какой панель
+дашборда подаёт реплику человека. Процесс не выходит между проходами. Поэтому
+долгая команда и фоновый субагент доживают до конца, уведомление доходит до
+головы, разгон не сгорает, а в реестре чатов на задачу приходится одна запись.
+
+Печатная голова это прежняя череда проходов `claude -p`. Каждый проход свой
+процесс, и конец хода это его выход. Она остаётся запасным входом и берётся
+там, где живую вести негде. Нет tmux, нет имени окна в DEVKIT_TMUX либо
+конвейер позвали с флагом `--headless`.
+
+Конец прохода у живой головы оболочка узнаёт отметкой хука Stop
+(hooks/turn-mark.py). Процесс не выходит, кода возврата нет, транскрипт растёт
+и на середине долгого хода, а панель терминала читается глазами, но не
+разбором; харнес же говорит про конец хода прямо, своим событием. Отметки
+ложатся в ~/.devkit/turns.log, оболочка читает оттуда только строки своей
+сессии, а сессию окна называет реестр чатов (~/.devkit/sessions.log, имя окна
+там пишет лишь клиент со своим терминалом, DK-673). Слово «начат» в тех же
+отметках держит оболочку от заказа поверх чужого хода. Реплику человека панель
+подаёт в это же окно.
+
+Три случая, на которых живая голова зовёт человека уведомителем. Сессия
+упёрлась в незнакомый запрос разрешения (отметка «ждёт»), сессия молчит
+получасом без единой отметки (отметка хода не подключена либо окно замёрзло) и
+клиент вышел раньше задачи. Молчаливого стопа у конвейера нет. С экрана
+дашборда закрывшееся окно неотличимо от штатного конца.
+
+Перезагрузка машины разбирается сама собой. Своего замка оболочка не заводит,
+живой сессии после ребута нет ни в tmux, ни в реестре, и та же команда
+дашборда поднимает работу заново, прочитав состояние с доски и из дерева
+задачи.
+
+Заказ проходу оболочка не сочиняет. Слова приходят флагами от того, кто её
 позвал, и лежат в одном месте (у дашборда это runPrompt). Умолчание держится
 только на случай ручного запуска из терминала.
 
-Проход кончается выходом клиента, каким бы он ни был: код возврата тут не
-вердикт, вердикт это статус строки на доске. Закрытая задача останавливает
-цикл, запаркованная тоже (её ждёт человек), а незакрытая поднимает следующий
-проход, и строка о выходе головы уходит в журнал утилит .devkit/log.
+Проход кончается концом хода, каким бы он ни был. Ни код возврата, ни слово
+отметки тут не вердикт, вердикт это статус строки на доске. Закрытая задача
+останавливает цикл, запаркованная тоже (её ждёт человек), а незакрытая ведёт к
+следующему заказу, и строка о конце прохода уходит в журнал утилит .devkit/log.
 
 Коды возврата: 0 штатный стоп (задача закрыта, запаркована или ждёт приёмки),
-1 стоп оболочки (проходы исчерпаны, воронка), 2 ошибка вызова или окружения.
+1 стоп оболочки (проходы исчерпаны, воронка, живая голова вышла), 2 ошибка
+вызова или окружения.
 """
 import os
 import shlex
@@ -52,11 +79,56 @@ IDLE_LIMIT = 3
 # экраном успевает прочесть строку о выходе головы.
 PASS_PAUSE = 10
 PAUSE_ENV = "DEVKIT_TASK_PASS_PAUSE"
+WATCH_ENV = "DEVKIT_TASK_WATCH_STEP"
+SESSION_ENV = "DEVKIT_TASK_SESSION_WAIT"
+MUTE_ENV = "DEVKIT_TASK_MUTE"
 STAMP = "%Y-%m-%dT%H:%M:%S"
 # Статусы, на которых цикл кончается сам. Архив это закрытая задача, blocked
 # парковка: и в том, и в другом случае поднимать голову больше не за чем.
 DONE = "архиве"
 PARKED = "blocked"
+
+# Машинные журналы дома. Реестр чатов называет сессию окна, отметки хода
+# говорят, чем ход кончился. Оба общие на машину, и доска у них не одна.
+HOME_DIR = os.path.join(os.path.expanduser("~"), ".devkit")
+SESSIONS_LOG = os.path.join(HOME_DIR, "sessions.log")
+TURNS_LOG = os.path.join(HOME_DIR, "turns.log")
+# Журнал отметок читается тем же ключом, каким его подменяет себе сам хук.
+# Стенд, разведший записи хука по временной директории, обязан развести и
+# чтение. Иначе оболочка смотрела бы в общий машинный журнал.
+TURNS_ENV = "DEVKIT_TURN_MARK_LOG"
+# Ключевые слова строк обоих журналов. Значение поля собирается до следующего
+# слова, и поэтому пробел в пути дерева строку не рассыпает.
+SESSION_KEYS = ("сессия", "задача", "проект", "дерево", "транскрипт", "источник",
+                "повод", "tmux", "родитель")
+TURN_KEYS = ("сессия", "ход", "повод", "дерево")
+# Слова хода из отметки: чем ход кончился и что он начался.
+TURN_OVER = ("кончен", "упал")
+TURN_STARTED = "начат"
+TURN_WAITS = "ждёт"
+# Поводы вопроса, на которых сессия стоит намертво. Ожидание ввода (idle_prompt)
+# сюда не идёт. Харнес присылает его через минуту после конца хода, и это
+# штатная тишина, а не остановка.
+STANDING = ("permission_prompt", "agent_needs_input", "elicitation_dialog")
+# Метка печатной сессии для рубежа синхронности. Живой голове она не ставится.
+# Окно у сессии есть, фоновый ребёнок переживает конец хода, и отказ рубежа
+# стоил бы конвейеру как раз того, ради чего живая голова заводилась.
+HEADLESS_ENV = "DEVKIT_HEADLESS"
+TMUX_ENV = "DEVKIT_TMUX"
+# Как часто оболочка заглядывает в журнал отметок. Реже держать незачем, файл
+# крошечный, чаще незачем тоже. Между проходами и так стоит пауза.
+WATCH_STEP = 3
+# Сколько ждать записи реестра про поднятую сессию. Хук старта пишет её первой
+# же секундой, и минуты тут с запасом на холодный старт клиента.
+SESSION_WAIT = 180
+# Молчание живой сессии. Ни одной отметки за этот срок. Долгий ход столько
+# молчать не может, отметка «начат» приходит сразу за заказом. Поэтому такая
+# тишина значит неподключённую отметку хода либо замёрзшее окно.
+MUTE_SECONDS = 1800
+# Пауза между текстом реплики и переводом строки при подаче в живой процесс.
+# Клиент читает ввод построчно и рисует его в поле; Enter, пришедший в том же
+# пакете, обгоняет отрисовку, и в поле остаётся половина заказа (chats.go).
+SEND_PAUSE = 0.25
 
 USAGE = __doc__
 
@@ -78,12 +150,19 @@ def parse_args(argv):
     if not head or head[0].startswith("-"):
         die(USAGE)
     opts = {"id": head[0], "proj": os.getcwd(), "order": "", "again": "",
-            "passes": PASS_LIMIT, "project": "", "client": client}
+            "passes": PASS_LIMIT, "project": "", "client": client, "headless": False}
     rest = head[1:]
     keys = {"-C": "proj", "--order": "order", "--again": "again",
             "--project": "project", "--passes": "passes"}
     while rest:
         key = rest[0]
+        if key == "--headless":
+            # Запасной вход называется словом, а не выводится из окружения.
+            # Машина с tmux бывает нужна и для печатной череды, а гадать про
+            # намерение зовущего оболочке не по чину.
+            opts["headless"] = True
+            rest = rest[1:]
+            continue
         if key not in keys:
             die("неизвестный ключ %s\n\n%s" % (key, USAGE))
         if len(rest) < 2:
@@ -117,9 +196,19 @@ class Pipeline:
         self.again = opts["again"]
         self.passes = opts["passes"]
         self.client = opts["client"]
+        self.headless = opts["headless"]
         # Имя окна везёт та же переменная, которой поднятая сессия называет себя
         # в реестре: своего имени у оболочки нет, она живёт внутри этого окна.
-        self.sess = os.environ.get("DEVKIT_TMUX", "") or "без окна"
+        self.name = os.environ.get(TMUX_ENV, "").strip()
+        self.sess = self.name or "без окна"
+        # Живая голова: процесс клиента, ID его сессии и место, с которого
+        # читаются оба журнала. Смещение важнее времени. Строки прошлого
+        # запуска в тех же журналах лежат рядом, и по времени их не отличить от
+        # своих на машине, где часы шагнули назад.
+        self.head = None
+        self.sid = ""
+        self.turns_at = 0
+        self.pending = []
 
     # -- состояние доски ----------------------------------------------------
 
@@ -154,6 +243,13 @@ class Pipeline:
     # -- голос наружу -------------------------------------------------------
 
     def say(self, msg):
+        if self.head is not None:
+            # Панель окна принадлежит живой голове. Её TUI рисуется в этом же
+            # терминале, и строка оболочки поверх него испортила бы экран.
+            # Голос тогда уходит в журнал утилит, туда же, где лежит остальной
+            # след конвейера.
+            self.log(msg, 0)
+            return
         sys.stdout.write("%s task-run %s: %s\n" % (time.strftime(STAMP), self.id, msg))
         sys.stdout.flush()
 
@@ -186,11 +282,274 @@ class Pipeline:
 
     def stop(self, code, sect, why, reason="", loud=True):
         self.say("стоп: %s (задача в %s)" % (why, sect or "неизвестно где"))
+        self.drop_head()
         self.log("конвейер %s встал: %s, %s в %s" % (self.sess, why, self.id, sect or "неизвестно где"), code)
         if loud:
             self.shout(reason or "run_stop",
                        "%s: %s конвейер встал" % (self.project, self.id), why)
         sys.exit(code)
+
+    # -- живая голова -------------------------------------------------------
+
+    def log_path(self, env_name, fallback):
+        """Журнал дома с подменой на стенде: настоящие ~/.devkit/turns.log и
+        sessions.log общие на машину, и самопроверке в них не место."""
+        return (os.environ.get(env_name) or "").strip() or fallback
+
+    def live_ready(self):
+        """Годится ли окружение под живую голову. Нет tmux, нет имени окна или
+        позвали с флагом, значит идём печатной чередой, как шли."""
+        if self.headless or not self.name:
+            return False
+        try:
+            p = subprocess.run(["tmux", "has-session", "-t", "=" + self.name],
+                               capture_output=True, text=True)
+        except OSError:
+            return False
+        return p.returncode == 0
+
+    def tail(self, path, at):
+        """Строки журнала, дописанные после отметки at, и новая отметка.
+        Усохший файл читается сначала. Журналы хуков режутся по размеру, и
+        смещение прошлого чтения после реза указывает в середину строки."""
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return [], at
+        if size < at:
+            at = 0
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                f.seek(at)
+                text = f.read()
+                return [l for l in text.split("\n") if l.strip()], f.tell()
+        except OSError:
+            return [], at
+
+    def fields(self, line, keys):
+        """Строка журнала парами «ключ значение». Значение собирается до
+        следующего ключевого слова, и поэтому пробел в пути строку не рассыпает."""
+        out, key = {}, None
+        for word in line.split()[1:]:
+            if word in keys:
+                key, out[key] = word, ""
+            elif key:
+                out[key] = (out[key] + " " + word).strip()
+        return out
+
+    def head_alive(self):
+        return self.head is not None and self.head.poll() is None
+
+    def raise_head(self, order):
+        """Подъём живой головы в своей же панели. Клиент забирает терминал
+        окна и рисует в нём свой TUI, оболочка остаётся его родителем и дальше
+        только смотрит за отметками. Заказ едет первым аргументом. Интерактивный
+        клиент берёт его как первый вопрос и остаётся стоять."""
+        env = dict(os.environ)
+        # Живой сессии метка печатного режима не ставится. Окно у неё есть,
+        # фоновый ребёнок переживает конец хода, и рубеж синхронности отбивал бы
+        # ей как раз то, ради чего она заведена (DK-678, DK-724).
+        env.pop(HEADLESS_ENV, None)
+        cmd = list(self.client) + [order]
+        self.turns_at = os.path.getsize(self.log_path(TURNS_ENV, TURNS_LOG)) \
+            if os.path.exists(self.log_path(TURNS_ENV, TURNS_LOG)) else 0
+        sess_at = os.path.getsize(SESSIONS_LOG) \
+            if os.path.exists(SESSIONS_LOG) else 0
+        self.say("живая голова поднята: %s" % " ".join(shlex.quote(c) for c in cmd[:-1]))
+        try:
+            self.head = subprocess.Popen(cmd, cwd=self.proj, env=env)
+        except OSError as e:
+            die("клиент не поднялся (%s): %s" % (e, " ".join(self.client)))
+        return sess_at
+
+    def wait_session(self, sess_at):
+        """ID сессии живой головы из реестра чатов. Пустая строка значит, что
+        реестр промолчал. Имя окна пишет только клиент со своим терминалом
+        (DK-673), и без записи оболочке не отличить отметки своей сессии от
+        отметок соседней."""
+        path = SESSIONS_LOG
+        until = time.time() + self.secs(SESSION_ENV, SESSION_WAIT)
+        while time.time() < until:
+            lines, sess_at = self.tail(path, sess_at)
+            for line in lines:
+                got = self.fields(line, SESSION_KEYS)
+                if got.get("tmux") == self.name and got.get("сессия", "-") != "-":
+                    return got["сессия"]
+            if not self.head_alive():
+                return ""
+            time.sleep(1)
+        return ""
+
+    def send_order(self, text):
+        """Заказ в живую голову клавиатурой окна, той же дорогой, какой панель
+        дашборда подаёт реплику человека. Текст идёт литералом (-l). Иначе tmux
+        разобрал бы слова вроде «Enter» как имена клавиш, а многострочный заказ
+        едет в скобках вставки. Без них перенос строки читается как Enter, и
+        клиент отправляет первую строку, а остальные разбирает отдельными
+        репликами."""
+        body = "\033[200~" + text + "\033[201~" if "\n" in text else text
+        target = "=" + self.name + ":"
+        try:
+            p = subprocess.run(["tmux", "send-keys", "-t", target, "-l", body],
+                               capture_output=True, text=True)
+            if p.returncode != 0:
+                return False
+            time.sleep(SEND_PAUSE)
+            p = subprocess.run(["tmux", "send-keys", "-t", target, "Enter"],
+                               capture_output=True, text=True)
+            return p.returncode == 0
+        except OSError:
+            return False
+
+    def marks(self):
+        """Новые отметки хода своей сессии, снятые с журнала и сложенные в
+        очередь. Отметку харнес подписывает первыми восемью знаками ID, а реестр
+        чатов пишет ID целиком. Поэтому сводятся они началом строки, а не
+        равенством. Очередь нужна затем, что заглянуть в отметки приходится и
+        перед заказом. Без неё прочитанный на такой заглядке конец хода пропал
+        бы мимо ожидания."""
+        lines, self.turns_at = self.tail(self.log_path(TURNS_ENV, TURNS_LOG), self.turns_at)
+        for line in lines:
+            got = self.fields(line, TURN_KEYS)
+            sid = got.get("сессия", "")
+            if not self.sid or not sid or not self.sid.startswith(sid):
+                continue
+            self.pending.append((got.get("ход", ""), got.get("повод", "-")))
+        out, self.pending = self.pending, []
+        return out
+
+    def taken(self):
+        """Начат ли ход чужим заказом. Реплику человека панель подаёт в это же
+        окно (DK-430), и свой заказ поверх неё встал бы второй строкой ввода, а
+        сама реплика ушла бы в ход вместе с ним."""
+        self.pending = self.marks() + self.pending
+        return any(word == TURN_STARTED for word, _ in self.pending)
+
+    def wait_turn(self, n):
+        """Ждать конца прохода. Возврат это слово отметки («кончен», «упал») или
+        пустая строка, когда живая голова вышла раньше."""
+        started, mute, said = time.time(), time.time(), False
+        while True:
+            got = self.marks()
+            for i, (word, why) in enumerate(got):
+                mute = time.time()
+                if word in TURN_OVER:
+                    # Хвост пачки кладётся обратно в очередь. За концом хода в
+                    # ней уже может лежать начало следующего, и потерять его
+                    # значило бы послать заказ поверх чужого хода.
+                    self.pending = got[i + 1:] + self.pending
+                    return word
+                if word == TURN_STARTED:
+                    # Заказ дошёл до сессии, свой или человека. Оболочке тут
+                    # разницы нет, ход пошёл в обоих случаях.
+                    said = False
+                if word == TURN_WAITS and why in STANDING:
+                    self.stuck(n, why)
+            if not self.head_alive():
+                # Отметка конца хода и выход клиента приходят почти разом, и
+                # порядок их не обещан. Последние строки журнала дочитываются
+                # перед тем, как назвать проход оборванным.
+                for word, _ in self.marks():
+                    if word in TURN_OVER:
+                        return word
+                return ""
+            if not said and time.time() - mute > self.secs(MUTE_ENV, MUTE_SECONDS):
+                self.mute(n, int(time.time() - started))
+                said = True
+            time.sleep(self.secs(WATCH_ENV, WATCH_STEP))
+
+    def stuck(self, n, why):
+        """Сессия упёрлась в вопрос, на который сама не ответит. Права машинного
+        контура покрывают не всё (DK-739), и такая остановка снаружи неотличима
+        от долгой работы."""
+        self.say("проход %d стоит на вопросе сессии (%s), нужен человек" % (n, why))
+        self.log("живая голова %s ждёт человека: %s, %s" % (self.sess, why, self.id), 0)
+        self.shout("wait_human", "%s: %s ждёт человека" % (self.project, self.id),
+                   "сессия конвейера упёрлась в вопрос (%s) и стоит" % why)
+
+    def mute(self, n, spent):
+        """Полчаса без единой отметки. Отметка «начат» приходит сразу за
+        заказом. Поэтому такая тишина значит неподключённый хук отметки хода
+        либо замёрзшее окно, а не долгий ход."""
+        self.say("проход %d молчит %d с: ни одной отметки хода" % (n, spent))
+        self.log("живая голова %s молчит %d с без отметок хода, %s"
+                 % (self.sess, spent, self.id), 0)
+        self.shout("run_stop", "%s: %s конвейер молчит" % (self.project, self.id),
+                   "живая сессия не отмечает ходы: хук turn-mark.py не подключён "
+                   "либо окно замёрзло")
+
+    def drop_head(self):
+        """Снять живую голову на выходе оболочки. Окно закрывается вместе с
+        нею, и дашборд снова считает задачу свободной. Живая tmux-сессия у него
+        и есть признак идущей работы."""
+        if not self.head_alive():
+            return
+        try:
+            self.head.terminate()
+            self.head.wait(timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            try:
+                self.head.kill()
+            except OSError:
+                pass
+
+    def run_live(self):
+        """Конвейер одной живой сессией: первый заказ аргументом, следующие
+        клавиатурой окна, конец прохода отметкой хука."""
+        sect = self.preflight()
+        sess_at = self.raise_head(self.order)
+        self.sid = self.wait_session(sess_at)
+        if not self.sid:
+            # Без ID сессии отметки не свести с окном, и подпинывать голову
+            # оболочке нечем. Работу это не отменяет. Живая сессия доводит
+            # первый проход сама, а молчание после него будет названо вслух.
+            self.say("реестр чатов не назвал сессию окна %s: заказ следующего "
+                     "прохода подать некому" % self.sess)
+            self.shout("run_stop", "%s: %s конвейер без реестра" % (self.project, self.id),
+                       "реестр чатов не назвал сессию окна %s, проходы дальше первого "
+                       "не заказываются" % self.sess)
+        idle, n, mine = 0, 1, True
+        while True:
+            begun = time.time()
+            word = self.wait_turn(n)
+            spent = time.time() - begun
+            told = self.show()
+            after = self.status(told) or sect
+            self.log("конец прохода живой головы %s (%s), %s в %s, проход %d из %d, %d с"
+                     % (self.sess, word or "голова вышла", self.id, after, n, self.passes,
+                        int(spent)), 0)
+            self.say("проход %d кончился (%s) за %d с, задача в %s"
+                     % (n, word or "голова вышла", int(spent), after))
+            if after == DONE:
+                self.stop(0, after, "задача закрыта", loud=False)
+            if after == PARKED:
+                self.stop(0, after, "задача запаркована и ждёт человека", reason="wait_human")
+            if self.waits_user(told, after):
+                self.stop(0, after, "задача ждёт приёмки человеком", reason="task_check")
+            if not word:
+                self.stop(1, after, "живая голова вышла на проходе %d, задача не закрыта" % n)
+            # Воронка. Ход кончается быстро и строку не двигает. Считаются тут
+            # только свои проходы, короткая реплика человеку законна, и цикл она
+            # останавливать не должна.
+            if mine and after == sect and spent < IDLE_SECONDS:
+                idle += 1
+                self.say("проход %d прошёл вхолостую (%d с, строка на месте), подряд таких %d из %d"
+                         % (n, int(spent), idle, IDLE_LIMIT))
+                if idle >= IDLE_LIMIT:
+                    self.stop(1, after, "%d прохода подряд вхолостую, конвейер жжёт бюджет" % idle)
+            elif mine:
+                idle = 0
+            sect = after
+            if n >= self.passes:
+                self.stop(1, after, "проходы исчерпаны (%d), задача не закрыта" % self.passes)
+            time.sleep(self.pause())
+            if self.taken():
+                self.say("заказ прохода %d не послан: ход уже начат репликой человека" % (n + 1))
+                mine = False
+                continue
+            if not self.send_order(self.again):
+                self.stop(1, after, "заказ прохода %d не дошёл до окна %s" % (n + 1, self.sess))
+            n, mine = n + 1, True
 
     # -- проход -------------------------------------------------------------
 
@@ -207,26 +566,44 @@ class Pipeline:
             die("клиент не поднялся (%s): %s" % (e, " ".join(self.client)))
         return p.returncode, time.time() - started
 
-    def pause(self):
+    def secs(self, name, default):
+        """Срок в секундах с подменой из окружения. Подмена нужна стенду.
+        Самопроверка не должна ждать по три минуты там, где проверяется не срок,
+        а поведение."""
         try:
-            return max(0, int(os.environ.get(PAUSE_ENV, "")))
+            return max(0, int(os.environ.get(name, "")))
         except ValueError:
-            return PASS_PAUSE
+            return default
+
+    def pause(self):
+        return self.secs(PAUSE_ENV, PASS_PAUSE)
+
+    def preflight(self):
+        """Строка доски перед заказом прохода. Возврат это секция строки, а
+        конец работы отсюда уходит стопом. Слепая оболочка не должна поднимать
+        голову вслепую, а закрытой задаче голова не нужна вовсе."""
+        said = self.show()
+        if not said:
+            die("taskctl не сказал про %s ничего: доски тут нет либо строка "
+                "пропала, поднимать голову вслепую нельзя" % self.id)
+        sect = self.status(said)
+        if sect == DONE:
+            self.stop(0, sect, "задача закрыта", loud=False)
+        if sect == PARKED:
+            self.stop(0, sect, "задача запаркована и ждёт человека", reason="wait_human")
+        if self.waits_user(said, sect):
+            self.stop(0, sect, "задача ждёт приёмки человеком", reason="task_check")
+        return sect
 
     def run(self):
+        if self.live_ready():
+            return self.run_live()
+        return self.run_passes()
+
+    def run_passes(self):
         idle = 0
         for n in range(1, self.passes + 1):
-            said = self.show()
-            if not said:
-                die("taskctl не сказал про %s ничего: доски тут нет либо строка "
-                    "пропала, поднимать голову вслепую нельзя" % self.id)
-            sect = self.status(said)
-            if sect == DONE:
-                self.stop(0, sect, "задача закрыта", loud=False)
-            if sect == PARKED:
-                self.stop(0, sect, "задача запаркована и ждёт человека", reason="wait_human")
-            if self.waits_user(said, sect):
-                self.stop(0, sect, "задача ждёт приёмки человеком", reason="task_check")
+            sect = self.preflight()
             code, spent = self.run_pass(self.order if n == 1 else self.again)
             after = self.status(self.show()) or sect
             # Строка о выходе головы пишется всегда, а не только на аварии: до

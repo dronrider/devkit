@@ -51,6 +51,8 @@ state = os.environ["DEVKIT_TEST_STATE"]
 calls = os.environ["DEVKIT_TEST_CALLS"]
 plan = os.environ["DEVKIT_TEST_PLAN"].split("|")
 order = sys.argv[sys.argv.index("-p") + 1] if "-p" in sys.argv else ""
+with open(os.path.join(os.environ["HOME"], "headless"), "w", encoding="utf-8") as f:
+    f.write(os.environ.get("DEVKIT_HEADLESS", ""))
 with open(calls, "a", encoding="utf-8") as f:
     f.write(order + "\n")
 n = 0
@@ -66,6 +68,127 @@ elif step == "падение":
 '''
 
 
+# Стаб tmux: живое окно отвечает на has-session нулём, мёртвое единицей, а
+# send-keys складывает нажатия в файл входа, как настоящий tmux складывает их в
+# терминал панели. Литерал копится в буфере, Enter отправляет накопленное
+# строкой: тем же порядком подаёт реплику дашборд.
+TMUX_STUB = r'''#!/usr/bin/env python3
+import os
+import sys
+
+args = sys.argv[1:]
+inbox = os.environ["DEVKIT_TEST_INBOX"]
+if args[:1] == ["has-session"]:
+    sys.exit(0 if os.environ.get("DEVKIT_TEST_TMUX") == "живая" else 1)
+if args[:1] == ["send-keys"]:
+    if "-l" in args:
+        with open(inbox + ".buf", "a", encoding="utf-8") as f:
+            f.write(args[args.index("-l") + 1])
+    else:
+        body = ""
+        if os.path.exists(inbox + ".buf"):
+            with open(inbox + ".buf", encoding="utf-8") as f:
+                body = f.read()
+            os.remove(inbox + ".buf")
+        with open(inbox, "a", encoding="utf-8") as f:
+            f.write(body + "\n")
+sys.exit(0)
+'''
+
+# Стаб живой головы: интерактивный клиент, который между заказами не выходит.
+# Первый заказ приходит последним аргументом, следующие строками файла входа,
+# куда их складывает стаб tmux. Отметки хода клиент пишет за хук turn-mark.py,
+# а запись реестра чатов за SessionStart-хук: на стенде хуков харнеса нет, а
+# оболочка читает именно их следы.
+LIVE_STUB = r'''#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+import time
+
+home = os.environ["HOME"]
+state = os.environ["DEVKIT_TEST_STATE"]
+calls = os.environ["DEVKIT_TEST_CALLS"]
+plan = os.environ["DEVKIT_TEST_PLAN"].split("|")
+inbox = os.environ["DEVKIT_TEST_INBOX"]
+sid = os.environ["DEVKIT_TEST_SID"]
+devkit = os.path.join(home, ".devkit")
+os.makedirs(devkit, exist_ok=True)
+turns = os.environ.get("DEVKIT_TURN_MARK_LOG") or os.path.join(devkit, "turns.log")
+stamp = "%Y-%m-%dT%H:%M:%S"
+
+
+def mark(word, why="-"):
+    with open(turns, "a", encoding="utf-8") as f:
+        f.write("%s сессия %s ход %s повод %s дерево %s\n"
+                % (time.strftime(stamp), sid[:8], word, why, home))
+
+
+with open(os.path.join(devkit, "sessions.log"), "a", encoding="utf-8") as f:
+    f.write("%s сессия %s задача DK-1 проект p дерево %s транскрипт - "
+            "источник заказ повод startup tmux %s родитель -\n"
+            % (time.strftime(stamp), sid, home, os.environ.get("DEVKIT_TMUX", "-")))
+with open(os.path.join(home, "headless"), "w", encoding="utf-8") as f:
+    f.write(os.environ.get("DEVKIT_HEADLESS", ""))
+
+order, at = sys.argv[-1], 0
+while True:
+    with open(calls, "a", encoding="utf-8") as f:
+        f.write(order + "\n")
+    with open(os.path.join(home, "pids"), "a", encoding="utf-8") as f:
+        f.write("%d\n" % os.getpid())
+    # Шаг сценария считается по числу отработанных заказов, а не по счётчику
+    # процесса: печатная череда поднимает на каждый заказ свой процесс, и
+    # сценарий обязан идти одинаково у обеих голов.
+    with open(calls, encoding="utf-8") as f:
+        n = len([l for l in f if l.strip()])
+    step = plan[min(n, len(plan)) - 1]
+    if step == "закрой":
+        open(state, "w", encoding="utf-8").write("архиве\n")
+    elif step == "паркуй":
+        open(state, "w", encoding="utf-8").write("blocked\n")
+    elif step == "падение":
+        sys.exit(1)
+    elif step == "вопрос":
+        mark("ждёт", "permission_prompt")
+        time.sleep(0.3)
+    elif step == "молчит":
+        time.sleep(3)
+    elif step == "фон":
+        subprocess.Popen([sys.executable, "-c",
+                          "import sys,time;time.sleep(1);"
+                          "open(sys.argv[1],'w',encoding='utf-8').write('готово')",
+                          os.path.join(home, "фон")])
+    mark("кончен")
+    if step == "чужой":
+        # Реплика человека, поданная панелью в это же окно: ход начался не по
+        # заказу оболочки и кончился сам.
+        time.sleep(0.2)
+        mark("начат")
+        time.sleep(0.2)
+        mark("кончен")
+    # Заказа нет и нет: живой голове его подают клавиатурой окна, а печатная
+    # череда ждёт выхода процесса, и висеть в ней вечно клиент не должен.
+    until = time.time() + 10
+    while time.time() < until:
+        if os.path.exists(inbox):
+            with open(inbox, encoding="utf-8") as f:
+                f.seek(at)
+                got = [l for l in f.read().split("\n") if l.strip()]
+                at = f.tell()
+            if got:
+                order = got[-1]
+                mark("начат")
+                break
+        time.sleep(0.05)
+    else:
+        sys.exit(0)
+'''
+
+
+SID = "5a750327-a8b5-4d2f-9aab-46cf862d2c47"
+
+
 def write_stub(path, body):
     with open(path, "w", encoding="utf-8") as f:
         f.write(body)
@@ -75,19 +198,24 @@ def write_stub(path, body):
 class Stand:
     """Временный корень со стабами, доской в файле и своим HOME."""
 
-    def __init__(self, sect="in-progress", plan="работа"):
+    def __init__(self, sect="in-progress", plan="работа", live=False, pause="0"):
         self.root = tempfile.mkdtemp(prefix="task-run-")
         self.bin = os.path.join(self.root, "bin")
         os.makedirs(self.bin)
         os.makedirs(os.path.join(self.root, ".devkit"))
         self.state = os.path.join(self.root, "sect")
         self.calls = os.path.join(self.root, "calls")
+        self.inbox = os.path.join(self.root, "inbox")
         with open(self.state, "w", encoding="utf-8") as f:
             f.write(sect + "\n")
         open(self.calls, "w", encoding="utf-8").close()
         write_stub(os.path.join(self.bin, "taskctl"), TASKCTL_STUB)
         write_stub(os.path.join(self.bin, "claude-stub"), CLAUDE_STUB)
+        write_stub(os.path.join(self.bin, "claude-live"), LIVE_STUB)
+        write_stub(os.path.join(self.bin, "tmux"), TMUX_STUB)
         self.plan = plan
+        self.live = live
+        self.pause = pause
 
     def env(self):
         return {
@@ -96,8 +224,19 @@ class Stand:
             "DEVKIT_TEST_STATE": self.state,
             "DEVKIT_TEST_CALLS": self.calls,
             "DEVKIT_TEST_PLAN": self.plan,
-            "DEVKIT_TASK_PASS_PAUSE": "0",
+            "DEVKIT_TEST_INBOX": self.inbox,
+            "DEVKIT_TEST_SID": SID,
+            # Окно живой головы: стаб tmux отвечает про него has-session, и без
+            # этого слова оболочка идёт печатной чередой, как шла.
+            "DEVKIT_TEST_TMUX": "живая" if self.live else "нет",
+            "DEVKIT_TASK_PASS_PAUSE": self.pause,
+            "DEVKIT_TASK_WATCH_STEP": "0",
+            "DEVKIT_TASK_SESSION_WAIT": "3",
+            "DEVKIT_TASK_MUTE": "1",
             "DEVKIT_TMUX": "task-DK-1",
+            # Метку печатного режима ставит дашборд, и живая голова обязана
+            # снять её с клиента: с нею рубеж синхронности отбивает фоновый ход.
+            "DEVKIT_HEADLESS": "дашборд",
             # Уведомитель на стенде молчит: звать человека к синтетической
             # задаче незачем, а канал его проверяется своей самопроверкой.
             "DEVKIT_NOTIFY_OFF": "1",
@@ -105,8 +244,18 @@ class Stand:
 
     def run(self, *args):
         argv = [sys.executable, RUN, "DK-1", "-C", self.root] + list(args)
-        argv += ["--", os.path.join(self.bin, "claude-stub")]
+        # Печатную череду гоняет печатный стаб: он выходит концом прохода, а
+        # живой между заказами не выходит вовсе.
+        head = "claude-live" if self.live and "--headless" not in args else "claude-stub"
+        argv += ["--", os.path.join(self.bin, head)]
         return subprocess.run(argv, capture_output=True, text=True, env=self.env())
+
+    def lines(self, name):
+        path = os.path.join(self.root, name)
+        if not os.path.isfile(path):
+            return []
+        with open(path, encoding="utf-8") as f:
+            return [l.rstrip("\n") for l in f if l.strip() != ""]
 
     def orders(self):
         with open(self.calls, encoding="utf-8") as f:
@@ -219,6 +368,117 @@ class TestPasses(unittest.TestCase):
         r = subprocess.run(argv, capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 2)
         self.assertEqual(s.orders(), [])
+
+
+class TestLiveHead(unittest.TestCase):
+    """Голова не выходит: проходы приходят репликами в одну живую сессию, а
+    конец прохода оболочка узнаёт отметкой хука."""
+
+    def setUp(self):
+        self.stands = []
+
+    def tearDown(self):
+        for s in self.stands:
+            s.drop()
+
+    def stand(self, **kw):
+        s = Stand(live=True, **kw)
+        self.stands.append(s)
+        return s
+
+    def test_one_process_serves_every_pass(self):
+        # Прежде каждый проход поднимал своего клиента, и всё, чего голова не
+        # дождалась, гибло вместе с процессом (DK-720, шесть проходов подряд).
+        s = self.stand(plan="работа|закрой")
+        got = s.run("--order", "Выполни DK-1", "--again", "Продолжай DK-1")
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(s.orders(), ["Выполни DK-1", "Продолжай DK-1"], s.orders())
+        self.assertEqual(len(set(s.lines("pids"))), 1, s.lines("pids"))
+
+    def test_long_step_lives_through_the_pass(self):
+        # Живучесть долгого шага: работа, отданная первым проходом наружу,
+        # доживает до конца, потому что процесс головы не выходит между
+        # проходами и не уносит её с собой.
+        s = self.stand(plan="фон|работа|закрой", pause="2")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(len(set(s.lines("pids"))), 1, s.lines("pids"))
+        self.assertEqual(s.lines("фон"), ["готово"], "долгий шаг не доработал")
+
+    def test_live_head_drops_the_headless_mark(self):
+        # Метку печатного режима ставит дашборд, а рубеж синхронности по ней
+        # отбивает фоновый ход (DK-678). Живому окну она не по адресу: фоновый
+        # ребёнок тут переживает конец хода.
+        s = self.stand(plan="закрой")
+        s.run()
+        self.assertEqual(s.lines("headless"), [], s.lines("headless"))
+
+    def test_headless_pass_keeps_the_mark(self):
+        s = self.stand(plan="закрой")
+        s.run("--headless")
+        self.assertEqual(s.lines("headless"), ["дашборд"], s.lines("headless"))
+
+    def test_registry_holds_one_record_for_the_task(self):
+        # Предмет DK-723: череда проходов давала по записи на проход, и список
+        # чатов дашборда рисовал задачу столькими строками, сколько было
+        # проходов.
+        s = self.stand(plan="работа|работа|закрой")
+        s.run()
+        rows = [l for l in s.lines(os.path.join(".devkit", "sessions.log"))
+                if " tmux task-DK-1 " in l]
+        self.assertEqual(len(rows), 1, rows)
+
+    def test_headless_flag_returns_the_passes(self):
+        # Запасной вход остаётся рабочим: по флагу конвейер идёт проходами, и
+        # каждый проход это свой процесс со своим заказом через -p.
+        s = self.stand(plan="работа|закрой")
+        got = s.run("--headless", "--order", "Выполни DK-1", "--again", "Продолжай DK-1")
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(s.orders(), ["Выполни DK-1", "Продолжай DK-1"], s.orders())
+
+    def test_no_live_window_returns_the_passes(self):
+        # Машина без tmux и окно, которого нет: живую голову вести негде.
+        s = Stand(plan="работа|закрой")
+        self.stands.append(s)
+        got = s.run()
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(len(s.orders()), 2, s.orders())
+
+    def test_standing_question_calls_the_human(self):
+        # Права машинного контура покрывают не всё, и сессия, вставшая на
+        # незнакомом запросе разрешения, снаружи неотличима от долгой работы.
+        s = self.stand(plan="вопрос|закрой")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, got.stderr)
+        said = [l for l in s.journal() if "ждёт человека" in l]
+        self.assertTrue(said, s.journal())
+        self.assertIn("permission_prompt", said[0])
+
+    def test_mute_session_is_named_aloud(self):
+        # Ни одной отметки за срок: хук отметки хода не подключён либо окно
+        # замёрзло. Молчание тут неотличимо от работы, и назвать его надо вслух.
+        s = self.stand(plan="молчит|закрой")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertTrue([l for l in s.journal() if "молчит" in l], s.journal())
+
+    def test_human_reply_holds_the_order(self):
+        # Реплику человека панель подаёт в это же окно, и свой заказ поверх неё
+        # встал бы второй строкой ввода.
+        s = self.stand(plan="чужой|закрой", pause="1")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertTrue([l for l in s.journal() if "ход уже начат репликой человека" in l],
+                        s.journal())
+        self.assertEqual(len(s.orders()), 2, s.orders())
+
+    def test_dead_head_stops_the_pipeline(self):
+        # Клиент вышел раньше задачи: окно закрывается, и с экрана дашборда это
+        # неотличимо от штатного конца.
+        s = self.stand(plan="падение")
+        got = s.run()
+        self.assertEqual(got.returncode, 1, got.stdout + got.stderr)
+        self.assertTrue([l for l in s.journal() if "живая голова вышла" in l], s.journal())
 
 
 if __name__ == "__main__":

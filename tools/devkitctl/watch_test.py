@@ -44,11 +44,13 @@ class Fake:
 
     def __init__(self, code=0, out=""):
         self.calls = []
+        self.kwargs = []
         self.code = code
         self.out = out
 
     def __call__(self, argv, **kw):
         self.calls.append(list(argv))
+        self.kwargs.append(dict(kw))
         return subprocess.CompletedProcess(argv, self.code, self.out, None)
 
     def argv_with(self, needle):
@@ -75,13 +77,15 @@ class Stand(unittest.TestCase):
         (self.proj / "docs" / "TASKS.md").write_text(text, encoding="utf-8")
 
     def ticks(self, *ago_minutes, **kw):
-        """Окна собственных тиков сторожка: тик длится секунды, и окно тут
-        такое же узкое."""
+        """Окна собственных вызовов сторожка. Вызов длится секунды, и окно тут
+        такое же узкое; корень по умолчанию тот, за которым стенд следит."""
         span = kw.get("seconds", 3)
+        root = kw.get("root", str(self.proj))
         lines = []
         for ago in ago_minutes:
             beg = self.now - timedelta(minutes=ago)
-            lines.append("%s\t%s" % (stamp(beg), stamp(beg + timedelta(seconds=span))))
+            lines.append("%s\t%s\t%s" % (
+                stamp(beg), stamp(beg + timedelta(seconds=span)), root))
         path = self.home / ".devkit" / "watch.ticks"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -230,15 +234,26 @@ class LookTest(Stand):
         called, line, _ = self.look(path)
         self.assertFalse(called, "съём квоты витком не сошёл за движение: %s" % line)
 
-    def test_open_window_covers_the_running_tick(self):
-        # Свой снимок квоты идущий тик делает до обхода реестра, а окно
-        # закрывает на выходе. Пока окно открыто, правой границы у него нет.
+    def test_window_of_another_root_does_not_hide_movement(self):
+        # Разлив соседнего проекта катит выкат две минуты. Боевой `shipctl ship`
+        # этого корня попал в ту же минуту и остаётся движением цикла.
+        path = self.entry(seen_minutes=270)
+        self.goallog(270)
+        self.runlog(2, tool="shipctl", cmd="ship")
+        self.ticks(2, seconds=120, root=str(self.dir / "proj2"))
+        called, line, _ = self.look(path)
+        self.assertFalse(called, "окно чужого корня съело боевой вызов: %s" % line)
+
+    def test_own_window_covers_its_own_call(self):
+        # Свой снимок квоты тик делает до обхода реестра, и окно этого вызова
+        # закрыто раньше, чем тик решает, звать ли.
         path = self.entry(seen_minutes=270)
         self.goallog(270)
         self.runlog(270, tool="taskctl", cmd="move")
         self.runlog(0, tool="agentctl", cmd="quota")
-        called, line, _ = self.look(path, ticks=[(self.now, None)])
-        self.assertTrue(called, "вызов идущего тика сошёл за движение: %s" % line)
+        called, line, _ = self.look(
+            path, ticks=[(self.now - timedelta(seconds=1), self.now, str(self.proj))])
+        self.assertTrue(called, "вызов своего тика сошёл за движение: %s" % line)
 
     def test_scheduled_catchup_is_not_movement(self):
         # Подхват катится хуком по часам сессии и идёт в тот же журнал: у
@@ -363,11 +378,11 @@ class LookTest(Stand):
 
 class RunTest(Stand):
 
-    def sweep(self, idle=None, call=None):
+    def sweep(self, idle=None, call=None, agentctl=None):
         call = Fake() if call is None else call
         out = io.StringIO()
         rc = watch.run(now=self.now, idle=idle, home=self.home, out=out, call=call,
-                       shipctl=SHIPCTL)
+                       shipctl=SHIPCTL, agentctl=agentctl)
         return rc, out.getvalue(), call
 
     def test_exit_code_names_the_find(self):
@@ -401,13 +416,17 @@ class RunTest(Stand):
         self.entry(seen_minutes=1)
         self.sweep()
         marks = watch.read_ticks(self.home)
-        self.assertEqual(len(marks), 1, "окно тика не записано")
-        beg, end = marks[0]
-        self.assertLessEqual(beg, end)
-        # Второй прогон дописывает своё окно, а первое остаётся: строки
-        # прошлых тиков разбираются в следующих прогонах.
+        self.assertTrue(marks, "окно вызова не записано")
+        for beg, end, at in marks:
+            self.assertLessEqual(beg, end)
+        # Снимок квоты корню не принадлежит, служебные вызовы по проекту
+        # привязаны к нему.
+        self.assertIn(watch.ANY_ROOT, [m[2] for m in marks])
+        self.assertIn(str(self.proj), [m[2] for m in marks])
+        # Второй прогон дописывает свои окна, прежние остаются: строки прошлых
+        # тиков разбираются в следующих прогонах.
         self.sweep()
-        self.assertEqual(len(watch.read_ticks(self.home)), 2)
+        self.assertGreater(len(watch.read_ticks(self.home)), len(marks))
 
     def test_own_drain_does_not_look_like_movement(self):
         # Сквозной случай простоя DK-727: цикл стоит, а журнал запусков полон
@@ -424,6 +443,43 @@ class RunTest(Stand):
         rc, out, _ = self.sweep()
         self.assertIn("простой", out, "разлив своего тика прикрыл вставший цикл: %s" % out)
         self.assertNotIn("тихо", out, out)
+
+    def test_dead_tick_keeps_windows_of_done_calls(self):
+        # Тик доходит до конца не всегда: подпроцесс повис, launchd убил
+        # прогон, разлив упал. Окна уже сделанных вызовов обязаны лежать на
+        # диске к этому моменту. Иначе строки, которые эти вызовы оставили в
+        # журнале запусков, следующий тик примет за движение цикла, и простой
+        # DK-727 вернётся через сбой.
+        self.entry(seen_minutes=270)
+        self.goallog(270)
+
+        class Dying(Fake):
+            def __call__(self, argv, **kw):
+                if any("ship" in str(a) for a in argv):
+                    raise RuntimeError("подпроцесс убит на середине")
+                return Fake.__call__(self, argv, **kw)
+
+        with self.assertRaises(RuntimeError):
+            self.sweep(call=Dying(), agentctl="/bin/agentctl")
+        marks = watch.read_ticks(self.home)
+        self.assertTrue(marks, "упавший тик не оставил ни одного окна")
+        self.assertIn(watch.ANY_ROOT, [m[2] for m in marks],
+                      "окно съёма квоты пропало вместе с прогоном")
+
+    def test_each_root_gets_its_own_window(self):
+        # Служебный вызов привязан к своему корню. Одно окно на весь дом
+        # накрыло бы боевой вызов соседнего проекта, попавший в ту же минуту.
+        other = self.dir / "proj2"
+        (other / ".devkit").mkdir(parents=True)
+        (other / "docs" / "tasks").mkdir(parents=True)
+        (other / "docs" / "TASKS.md").write_text(
+            BOARD % (ROW % ("DK-901", "DK-901", "DK-901"), ""), encoding="utf-8")
+        self.entry(seen_minutes=1)
+        self.entry(seen_minutes=1, goal="DK-901", root=other)
+        self.sweep(agentctl="/bin/agentctl")
+        roots = [m[2] for m in watch.read_ticks(self.home)]
+        self.assertIn(str(self.proj), roots)
+        self.assertIn(str(other), roots)
 
     def test_threshold_from_config(self):
         # Порог настраиваемый: тот же простой при большем пороге зова не даёт.
@@ -687,6 +743,42 @@ class WakeTest(Stand):
         update.BIN_DIRS = (str(self.dir / "nowhere"),)
         self.assertEqual(watch.taskctl_bin(which=lambda name: None), "")
 
+
+
+class TimedTest(Stand):
+    """Запускатель служебных вызовов: окно пишется в любом исходе, повисший
+    вызов снимается потолком."""
+
+    def marks(self):
+        return watch.read_ticks(self.home)
+
+    def test_window_written_when_the_call_raises(self):
+        def boom(argv, **kw):
+            raise RuntimeError("подпроцесс убит")
+
+        timed = watch.Timed(boom, self.home, str(self.proj))
+        with self.assertRaises(RuntimeError):
+            timed(["shipctl", "ship", "--drain"])
+        marks = self.marks()
+        self.assertEqual(len(marks), 1, "окно упавшего вызова не записано")
+        self.assertEqual(marks[0][2], str(self.proj))
+
+    def test_hung_call_is_cut_by_the_timeout(self):
+        def hang(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+
+        timed = watch.Timed(hang, self.home, str(self.proj), timeout=90)
+        p = timed(["shipctl", "ship", "--drain"])
+        self.assertEqual(p.returncode, 124)
+        self.assertIn("не уложился", p.stdout)
+        self.assertEqual(len(self.marks()), 1, "окно снятого вызова не записано")
+
+    def test_timeout_reaches_the_subprocess(self):
+        # Потолок едет самому запуску: без него сторожок висит вместе с
+        # подпроцессом до убийства launchd.
+        call = Fake()
+        watch.Timed(call, self.home, str(self.proj))(["shipctl", "ship"])
+        self.assertEqual(call.kwargs[0].get("timeout"), watch.CALL_TIMEOUT)
 
 
 class RunRootsTest(Stand):

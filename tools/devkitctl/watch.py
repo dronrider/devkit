@@ -17,8 +17,8 @@ launchd-агент, его кладёт `devkitctl doctor --fix`.
 кладёт гейт бюджета `agentctl spend --goal`, который стоит в начале каждого
 витка и у оболочки, и в чате. Движение меряется двумя журналами: строкой хода в
 журнале цикла `.devkit/goal-<ID>.log` и вызовом утилиты в `.devkit/log`
-проекта, за вычетом подхвата по часам сессии и того, что тик сторожка позвал
-сам (окна тиков лежат в `~/.devkit/watch.ticks`). Цель, ушедшая с доски или из In progress,
+проекта, за вычетом подхвата по часам сессии и того, что позвал сам сторожок
+(окно каждого своего вызова он кладёт в `~/.devkit/watch.ticks`). Цель, ушедшая с доски или из In progress,
 снимается с надзора вместе со своей записью.
 
 Позвав, сторожок ставит в запись отметку `stopped` и счёт зовов `shouts`, а
@@ -114,15 +114,26 @@ GOAL_LOG = ".devkit/goal-%s.log"
 # журнал не хранит (logCmd берёт args[0]), но обеих команд `catchup` у витка нет
 # ни с какими флагами, и пара тут различает всё, что нужно.
 HOOK_CALLS = frozenset((("devkitctl", "catchup"), ("taskctl", "catchup")))
-# Окна собственных тиков сторожка: файл строк «начало\tконец», по строке на тик.
-# Тик зовёт разлив, снимок квоты и таскцтл в каждом корне под надзором, и в
-# журнале запусков эти строки неотличимы от боевых по паре «утилита, команда»:
-# служебный `shipctl -C root ship --drain` и выкат поезда `shipctl ship <ID>`
-# пишутся одинаково. Различает их время. Своё окно сторожок знает точно, потому
-# что сам его и засёк, а вызов витка в трёхсекундное окно тика попадает разве
-# что случайно.
+# Окна собственных вызовов сторожка: файл строк «начало\tконец\tкорень», по
+# строке на вызов. Тик зовёт разлив, снимок квоты и таскцтл в каждом корне под
+# надзором, и в журнале запусков эти строки неотличимы от боевых по паре
+# «утилита, команда»: служебный `shipctl -C root ship --drain` и выкат поезда
+# `shipctl ship <ID>` пишутся одинаково. Различает их время.
+#
+# Окно ставится на каждый вызов, а не одно на прогон. Так упавший или убитый на
+# середине тик оставляет окна по тем вызовам, что успел сделать, а чужой корень
+# под окно не попадает: окно шириной в минуту, которую разлив потратил на один
+# проект, вычеркнуло бы боевой выкат соседнего.
 TICKS = "~/.devkit/watch.ticks"
-TICKS_KEEP = 600
+TICKS_KEEP = 2000
+# Корень, к которому вызов не привязан: снимок квоты живёт на уровне машины и
+# строку журнала оставляет там, откуда сторожок запущен.
+ANY_ROOT = "*"
+# Потолок ожидания подпроцесса. Он против намертво повисшего вызова, а не
+# против долгого выката: в этом проекте `git push` внутри shipctl уже вешался на
+# неинтерактивном keychain, и сторожок, повисший вместе с ним, перестаёт быть
+# страховкой.
+CALL_TIMEOUT = 15 * 60
 BOARD = "docs/TASKS.md"
 IN_PROGRESS = "In progress"
 CHECK = "Check"
@@ -228,8 +239,8 @@ def conf_idle(home=None):
 
 
 def read_ticks(home=None):
-    """Окна собственных тиков сторожка, парами времён. Незнакомая строка
-    пропускается, нет файла значит нет окон."""
+    """Окна собственных вызовов сторожка, тройками «начало, конец, корень».
+    Незнакомая строка пропускается, нет файла значит нет окон."""
     home = default_home() if home is None else home
     try:
         text = home_path(home, TICKS).read_text(encoding="utf-8", errors="replace")
@@ -242,16 +253,16 @@ def read_ticks(home=None):
             continue
         beg, end = stamp_of(cells[0].strip()), stamp_of(cells[1].strip())
         if beg is not None and end is not None:
-            out.append((beg, end))
+            out.append((beg, end, cells[2].strip() if len(cells) > 2 else ANY_ROOT))
     return out
 
 
-def write_tick(beg, end, home=None):
-    """Окно тика в файл. Хвост подрезается, история тиков дальше суток никому не
-    нужна: по ней читается только принадлежность строки журнала."""
+def write_tick(beg, end, root=ANY_ROOT, home=None):
+    """Окно вызова в файл. Хвост подрезается, история дальше пары суток никому
+    не нужна: по ней читается только принадлежность строки журнала."""
     home = default_home() if home is None else home
     path = home_path(home, TICKS)
-    line = "%s\t%s\n" % (beg.strftime(STAMP), end.strftime(STAMP))
+    line = "%s\t%s\t%s\n" % (beg.strftime(STAMP), end.strftime(STAMP), root or ANY_ROOT)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         old = path.read_text(encoding="utf-8", errors="replace").splitlines(True) \
@@ -261,16 +272,46 @@ def write_tick(beg, end, home=None):
         pass
 
 
-def own_tick(when, ticks):
-    """Легла ли строка журнала внутрь окна собственного тика сторожка. У
-    открытого окна (конец None) правой границы нет: идущий тик своё окно
-    закрывает только на выходе, а звать он решает в середине."""
-    for beg, end in ticks:
-        if when < beg:
+def own_tick(when, ticks, root=None):
+    """Легла ли строка журнала внутрь окна собственного вызова сторожка. Окно
+    чужого корня не в счёт, а окно без корня накрывает любой."""
+    for beg, end, at in ticks:
+        if when < beg or when > end:
             continue
-        if end is None or when <= end:
+        if at == ANY_ROOT or root is None or at == root:
             return True
     return False
+
+
+class Timed:
+    """Запускатель служебных вызовов сторожка. Засекает окно каждого вызова и
+    кладёт его в файл окон до возврата, в том числе когда вызов упал: строка,
+    которую подпроцесс уже оставил в журнале запусков, обязана быть накрыта
+    окном, иначе следующий тик примет её за движение цикла.
+
+    Тут же стоит потолок ожидания. Повисший подпроцесс без него держит сторожок
+    до убийства launchd, и окно не запишется вовсе.
+
+    Сдвиг `shift` двигает записанное окно вместе с подставленным временем
+    прогона: без него сквозной случай проверялся бы ожиданием настоящих часов."""
+
+    def __init__(self, call, home, root=ANY_ROOT, shift=None, timeout=CALL_TIMEOUT):
+        self.call = subprocess.run if call is None else call
+        self.home = home
+        self.root = root
+        self.shift = shift or (datetime.now() - datetime.now())
+        self.timeout = timeout
+
+    def __call__(self, argv, **kw):
+        beg = datetime.now() + self.shift
+        kw.setdefault("timeout", self.timeout)
+        try:
+            return self.call(argv, **kw)
+        except subprocess.TimeoutExpired:
+            return subprocess.CompletedProcess(
+                argv, 124, "вызов не уложился в %s и снят" % say.human_age(self.timeout), None)
+        finally:
+            write_tick(beg, datetime.now() + self.shift, self.root, self.home)
 
 
 def last_run_stamp(root, ticks=()):
@@ -296,7 +337,7 @@ def last_run_stamp(root, ticks=()):
             continue
         if tuple(c.strip() for c in cells[1:3]) in HOOK_CALLS:
             continue
-        if own_tick(st, ticks):
+        if own_tick(st, ticks, root):
             continue
         return st
     return None
@@ -997,17 +1038,17 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     home = default_home() if home is None else home
     idle = conf_idle(home) if idle is None else idle
     out = sys.stdout if out is None else out
-    # Окна прошлых тиков читаются до первого своего вызова, а своё окно
-    # открывается тут же и закрывается на выходе: строки, которые тик оставит в
-    # журналах запусков, движением цикла не считаются ни в этом прогоне, ни в
-    # следующих (DK-740). Начало окна берётся из `now`, а длина замеряется
-    # настенными часами: подставленное время должно двигать окно вместе с
-    # журналами, иначе проверка сквозного случая упирается в ожидание.
-    began, wall = now, datetime.now()
-    ticks = read_ticks(home) + [(began, None)]
+    # Окна своих вызовов читаются один раз, до первого вызова этого прогона.
+    # Каждый служебный вызов пишет своё окно сам, сразу как вернулся, поэтому
+    # строки, оставленные тиком в журналах запусков, накрыты окном и после
+    # падения на середине (DK-740). Начало окна берётся от `now`: подставленное
+    # время должно двигать окна вместе с журналами.
+    shift = now - datetime.now()
+    ticks = read_ticks(home)
+    timed = lambda root: Timed(call, home, root, shift)
     # Съём квоты идёт до обхода реестра и не зависит от него: снимок лежит на
     # уровне машины, и свежеть он обязан и там, где целей под надзором нет.
-    qreport, qnote = quota_snap(call, agentctl)
+    qreport, qnote = quota_snap(timed(ANY_ROOT), agentctl)
     out.write(qreport + "\n")
     if qnote:
         log_line(qnote, home)
@@ -1025,13 +1066,13 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         # бывает несколько, и разговор припаркованной задачи один на всех.
         if root and root not in swept and os.path.isdir(root):
             swept.add(root)
-            for wline in wake(root, now, call, taskctl):
+            for wline in wake(root, now, timed(root), taskctl):
                 out.write(wline + "\n")
                 log_line(wline, home)
-            for pline in park_stale(root, now, call, taskctl, home=home):
+            for pline in park_stale(root, now, timed(root), taskctl, home=home):
                 out.write(pline + "\n")
                 log_line(pline, home)
-            for cline in close_agent(root, call, taskctl):
+            for cline in close_agent(root, timed(root), taskctl):
                 out.write(cline + "\n")
                 log_line(cline, home)
     # Разговор задачи живёт и вне цикла цели, поэтому корни задач обходятся
@@ -1041,9 +1082,9 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         if root in swept:
             continue
         swept.add(root)
-        for line in (wake(root, now, call, taskctl)
-                     + park_stale(root, now, call, taskctl, home=home)
-                     + close_agent(root, call, taskctl)):
+        for line in (wake(root, now, timed(root), taskctl)
+                     + park_stale(root, now, timed(root), taskctl, home=home)
+                     + close_agent(root, timed(root), taskctl)):
             out.write(line + "\n")
             log_line(line, home)
     # Разлив идёт тем же множеством корней отдельным проходом: событие
@@ -1054,18 +1095,17 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     for root in sorted(swept):
         if not board_present(root):
             continue
-        line, notable = drain(root, call, shipctl)
+        line, notable = drain(root, timed(root), shipctl)
         out.write(line + "\n")
         if notable:
             log_line(line, home)
         # Подъём прогона идёт следом за разливом: строки, которые разлив только
         # что увёл в Check, свой прогон уже получили от самого ship, и тик
         # доберёт остальные.
-        line, notable = check_run(root, call, dashboard)
+        line, notable = check_run(root, timed(root), dashboard)
         out.write(line + "\n")
         if notable:
             log_line(line, home)
-    write_tick(began, began + (datetime.now() - wall), home)
     log_line("целей под надзором %d, вставших %d" % (watched, found), home)
     if not watched:
         out.write("целей под надзором нет: реестр %s пуст\n" % home_path(home, GOALS_DIR))

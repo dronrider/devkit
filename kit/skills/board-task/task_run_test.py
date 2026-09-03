@@ -124,12 +124,26 @@ def mark(word, why="-"):
                 % (time.strftime(stamp), sid[:8], word, why, home))
 
 
+def crowd(count):
+    """Отметки чужих сессий машины. Журнал общий на всех, и своих строк в нём
+    меньшинство."""
+    with open(turns, "a", encoding="utf-8") as f:
+        for i in range(count):
+            f.write("%s сессия ffff%04d ход кончен повод - дерево /tmp/чужое\n"
+                    % (time.strftime(stamp), i))
+
+
 with open(os.path.join(devkit, "sessions.log"), "a", encoding="utf-8") as f:
     f.write("%s сессия %s задача DK-1 проект p дерево %s транскрипт - "
             "источник заказ повод startup tmux %s родитель -\n"
             % (time.strftime(stamp), sid, home, os.environ.get("DEVKIT_TMUX", "-")))
 with open(os.path.join(home, "headless"), "w", encoding="utf-8") as f:
     f.write(os.environ.get("DEVKIT_HEADLESS", ""))
+if "ротация" in plan:
+    # Журнал был полон чужими сессиями ещё до нашей: рез его подрезает до
+    # последних пятисот строк, и без этого запаса своя отметка уехала бы вместе
+    # с чужими.
+    crowd(800)
 
 order, at = sys.argv[-1], 0
 while True:
@@ -154,11 +168,32 @@ while True:
         time.sleep(0.3)
     elif step == "молчит":
         time.sleep(3)
+    elif step == "ротация":
+        # Чужие сессии дописали в общий журнал ещё сотню строк, и хук подрезал
+        # его до последних пятисот, как это делает hookio.append_capped. Своя
+        # прочитанная отметка осталась в оставленном хвосте, а файл усох вдвое.
+        crowd(100)
+        with open(turns, encoding="utf-8") as f:
+            tail = [l for l in f.readlines() if l.strip()][-500:]
+        with open(turns, "w", encoding="utf-8") as f:
+            f.writelines(tail)
+        time.sleep(1)
+    elif step == "потеря":
+        # Журнал отметок пропал целиком: снят руками, стёрт уборкой дома.
+        if os.path.exists(turns):
+            os.remove(turns)
+        time.sleep(2)
     elif step == "фон":
         subprocess.Popen([sys.executable, "-c",
                           "import sys,time;time.sleep(1);"
                           "open(sys.argv[1],'w',encoding='utf-8').write('готово')",
                           os.path.join(home, "фон")])
+    # Заказ, пришедший до конца хода, это заказ поверх идущей работы. Живая
+    # голова такого не видит, а оболочка, поверившая старой отметке, шлёт его
+    # именно так.
+    if os.path.exists(inbox) and os.path.getsize(inbox) > at:
+        with open(os.path.join(home, "поверх"), "a", encoding="utf-8") as f:
+            f.write(order + "\n")
     mark("кончен")
     if step == "чужой":
         # Реплика человека, поданная панелью в это же окно: ход начался не по
@@ -471,6 +506,31 @@ class TestLiveHead(unittest.TestCase):
         self.assertTrue([l for l in s.journal() if "ход уже начат репликой человека" in l],
                         s.journal())
         self.assertEqual(len(s.orders()), 2, s.orders())
+
+    def test_trimmed_journal_does_not_repeat_a_turn(self):
+        # Журнал отметок общий на машину и режется по размеру. Оболочка, что
+        # читала его по смещению, после реза перечитывала файл с начала и
+        # принимала свою прошлую отметку за конец текущего прохода. Заказ тогда
+        # уходил поверх идущего хода.
+        s = self.stand(plan="работа|ротация|закрой")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, got.stdout + got.stderr)
+        self.assertEqual(s.lines("поверх"), [], "заказ ушёл поверх идущего хода")
+        self.assertEqual(len(s.orders()), 3, s.orders())
+        # Проходов было три, и строк о конце прохода в журнале ровно три.
+        # Лишняя это призрак: оболочка сочла проход кончившимся по своей же
+        # старой отметке, вернувшейся после реза.
+        ends = [l for l in s.journal() if "конец прохода живой головы" in l]
+        self.assertEqual(len(ends), 3, ends)
+
+    def test_lost_journal_calls_the_human(self):
+        # Журнала отметок нет вовсе: снят руками, стёрт уборкой дома. Ждать
+        # конца прохода тут можно до скончания века, и молчать об этом нельзя.
+        s = self.stand(plan="работа|потеря|закрой")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, got.stdout + got.stderr)
+        self.assertTrue([l for l in s.journal() if "молчит" in l], s.journal())
+        self.assertEqual(len(s.orders()), 3, s.orders())
 
     def test_dead_head_stops_the_pipeline(self):
         # Клиент вышел раньше задачи: окно закрывается, и с экрана дашборда это

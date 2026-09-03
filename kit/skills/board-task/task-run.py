@@ -29,7 +29,10 @@
 разбором; харнес же говорит про конец хода прямо, своим событием. Отметки
 ложатся в ~/.devkit/turns.log, оболочка читает оттуда только строки своей
 сессии, а сессию окна называет реестр чатов (~/.devkit/sessions.log, имя окна
-там пишет лишь клиент со своим терминалом, DK-673). Слово «начат» в тех же
+там пишет лишь клиент со своим терминалом, DK-673). Оба журнала общие на машину и режутся хуком по
+размеру, поэтому позиции в файле оболочка не держит: после реза смещение
+прошлого чтения вернуло бы уже прочитанную отметку второй раз. Вместо этого она
+отбирает свои строки и помнит те, что уже прочла. Слово «начат» в тех же
 отметках держит оболочку от заказа поверх чужого хода. Реплику человека панель
 подаёт в это же окно.
 
@@ -201,13 +204,12 @@ class Pipeline:
         # в реестре: своего имени у оболочки нет, она живёт внутри этого окна.
         self.name = os.environ.get(TMUX_ENV, "").strip()
         self.sess = self.name or "без окна"
-        # Живая голова: процесс клиента, ID его сессии и место, с которого
-        # читаются оба журнала. Смещение важнее времени. Строки прошлого
-        # запуска в тех же журналах лежат рядом, и по времени их не отличить от
-        # своих на машине, где часы шагнули назад.
+        # Живая голова: процесс клиента, ID его сессии, память прочитанных
+        # строк обоих журналов и очередь снятых отметок.
         self.head = None
         self.sid = ""
-        self.turns_at = 0
+        self.turns_seen = set()
+        self.sess_seen = set()
         self.pending = []
 
     # -- состояние доски ----------------------------------------------------
@@ -308,23 +310,47 @@ class Pipeline:
             return False
         return p.returncode == 0
 
-    def tail(self, path, at):
-        """Строки журнала, дописанные после отметки at, и новая отметка.
-        Усохший файл читается сначала. Журналы хуков режутся по размеру, и
-        смещение прошлого чтения после реза указывает в середину строки."""
-        try:
-            size = os.path.getsize(path)
-        except OSError:
-            return [], at
-        if size < at:
-            at = 0
+    def fresh(self, path, seen, keep):
+        """Свои строки журнала, которых оболочка ещё не видела, и пополненная
+        память. Возврат (строки, память). `keep` отбирает свои строки.
+
+        Позиции в файле тут нет нарочно. Журналы хуков общие на машину и
+        режутся по размеру (`hookio.append_capped`), а после реза смещение
+        прошлого чтения указывает в середину чужой строки. Оболочка тогда
+        читает файл заново и принимает свою старую отметку за конец текущего
+        прохода. Поэтому строка узнаётся по себе самой.
+
+        Память держит только свои строки и не забывает их. Чужих на машине
+        тысячи, своих за весь конвейер набирается десяток, и памяти на них
+        уходит меньше килобайта. Сжимать её до того, что лежит в файле, нельзя:
+        рез это перезапись файла целиком, чтение попадает на пустую середину, и
+        сжатая по такому чтению память вернула бы прочитанное второй раз.
+
+        Строка без перевода строки на конце недописана: чтение попало на
+        середину записи. Такой обрывок пропускается и дочитывается следующим
+        заходом.
+
+        Нечитаемый журнал оставляет память нетронутой."""
         try:
             with open(path, encoding="utf-8", errors="replace") as f:
-                f.seek(at)
                 text = f.read()
-                return [l for l in text.split("\n") if l.strip()], f.tell()
         except OSError:
-            return [], at
+            return [], seen
+        lines = [l for l in text.split("\n")[:-1] if l.strip() and keep(l)]
+        out = [l for l in lines if l not in seen]
+        return out, seen | set(out)
+
+    def window_line(self, line):
+        """Своя ли это запись реестра чатов. Своя та, что называет наше окно:
+        имя окна пишет только клиент со своим терминалом (DK-673)."""
+        return self.fields(line, SESSION_KEYS).get("tmux") == self.name
+
+    def own_mark(self, line):
+        """Своя ли это отметка хода. Отметку харнес подписывает первыми восемью
+        знаками ID сессии, а реестр чатов пишет ID целиком, поэтому сводятся они
+        началом строки, а не равенством."""
+        sid = self.fields(line, TURN_KEYS).get("сессия", "")
+        return bool(self.sid) and bool(sid) and self.sid.startswith(sid)
 
     def fields(self, line, keys):
         """Строка журнала парами «ключ значение». Значение собирается до
@@ -351,29 +377,28 @@ class Pipeline:
         # ей как раз то, ради чего она заведена (DK-678, DK-724).
         env.pop(HEADLESS_ENV, None)
         cmd = list(self.client) + [order]
-        self.turns_at = os.path.getsize(self.log_path(TURNS_ENV, TURNS_LOG)) \
-            if os.path.exists(self.log_path(TURNS_ENV, TURNS_LOG)) else 0
-        sess_at = os.path.getsize(SESSIONS_LOG) \
-            if os.path.exists(SESSIONS_LOG) else 0
+        # Память реестра набирается до подъёма. Прошлый запуск конвейера
+        # поднимал окно под тем же именем task-<ID>, и его запись оболочка
+        # приняла бы за свою.
+        _, self.sess_seen = self.fresh(SESSIONS_LOG, set(), self.window_line)
         self.say("живая голова поднята: %s" % " ".join(shlex.quote(c) for c in cmd[:-1]))
         try:
             self.head = subprocess.Popen(cmd, cwd=self.proj, env=env)
         except OSError as e:
             die("клиент не поднялся (%s): %s" % (e, " ".join(self.client)))
-        return sess_at
 
-    def wait_session(self, sess_at):
+    def wait_session(self):
         """ID сессии живой головы из реестра чатов. Пустая строка значит, что
         реестр промолчал. Имя окна пишет только клиент со своим терминалом
         (DK-673), и без записи оболочке не отличить отметки своей сессии от
         отметок соседней."""
-        path = SESSIONS_LOG
         until = time.time() + self.secs(SESSION_ENV, SESSION_WAIT)
         while time.time() < until:
-            lines, sess_at = self.tail(path, sess_at)
+            lines, self.sess_seen = self.fresh(SESSIONS_LOG, self.sess_seen,
+                                               self.window_line)
             for line in lines:
                 got = self.fields(line, SESSION_KEYS)
-                if got.get("tmux") == self.name and got.get("сессия", "-") != "-":
+                if got.get("сессия", "-") != "-":
                     return got["сессия"]
             if not self.head_alive():
                 return ""
@@ -403,17 +428,13 @@ class Pipeline:
 
     def marks(self):
         """Новые отметки хода своей сессии, снятые с журнала и сложенные в
-        очередь. Отметку харнес подписывает первыми восемью знаками ID, а реестр
-        чатов пишет ID целиком. Поэтому сводятся они началом строки, а не
-        равенством. Очередь нужна затем, что заглянуть в отметки приходится и
-        перед заказом. Без неё прочитанный на такой заглядке конец хода пропал
-        бы мимо ожидания."""
-        lines, self.turns_at = self.tail(self.log_path(TURNS_ENV, TURNS_LOG), self.turns_at)
+        очередь. Очередь нужна затем, что заглянуть в отметки приходится и перед
+        заказом. Без неё прочитанный на такой заглядке конец хода пропал бы мимо
+        ожидания."""
+        lines, self.turns_seen = self.fresh(self.log_path(TURNS_ENV, TURNS_LOG),
+                                            self.turns_seen, self.own_mark)
         for line in lines:
             got = self.fields(line, TURN_KEYS)
-            sid = got.get("сессия", "")
-            if not self.sid or not sid or not self.sid.startswith(sid):
-                continue
             self.pending.append((got.get("ход", ""), got.get("повод", "-")))
         out, self.pending = self.pending, []
         return out
@@ -497,8 +518,8 @@ class Pipeline:
         """Конвейер одной живой сессией: первый заказ аргументом, следующие
         клавиатурой окна, конец прохода отметкой хука."""
         sect = self.preflight()
-        sess_at = self.raise_head(self.order)
-        self.sid = self.wait_session(sess_at)
+        self.raise_head(self.order)
+        self.sid = self.wait_session()
         if not self.sid:
             # Без ID сессии отметки не свести с окном, и подпинывать голову
             # оболочке нечем. Работу это не отменяет. Живая сессия доводит

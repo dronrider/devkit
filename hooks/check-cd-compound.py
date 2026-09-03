@@ -11,12 +11,15 @@ deny-правила на Read (четвёрка SECRET_DENY из perms.py, за�
 исполнители задач, и ревьюверы. Снять deny нельзя, зато можно не писать связку
 вовсе. Хук отвечает отказом с готовой заменой, агент повторяет ход ею, и вопрос
 до человека не доходит.
-Рубится не любая связка, а три вида, которые уходят человеку по доке прав
-Claude Code: за cd идёт команда чтения файла (cat, grep, sed и соседи) с
-относительным путём в операнде; за cd идёт git (в новом каталоге он может
+Рубится не любая связка, а три вида, которые уходят человеку (замер
+headless-прогонами 2026-09-03): за cd идёт команда чтения или листинга, которую
+Claude Code узнаёт в Bash (cat, grep, sed, ls, find и соседи), с относительным
+путём в операнде либо листинг без операнда (голый `ls` читает cwd); читатель
+stdin в трубе (`make | head -1`) проходит; за cd идёт git (в новом каталоге он может
 выполнить чужие хуки); за cd идёт редирект вывода в файл, кроме /dev/null.
 Связка с командой, которую классификатор пропускает сам (`cd X && cargo test`,
-`cd X && ls`), проходит: ложный отказ на каждом ходу дороже пропущенной связки.
+`cd X && go test ./...`, `cd X && make`, `cd X && python3 t.py`), проходит:
+ложный отказ на каждом ходу дороже пропущенной связки.
 Одинокий `cd <путь>` проходит: сменить каталог отдельным вызовом законно, cwd у
 Bash между вызовами сохраняется. Подшелл `(cd X && ...)` и подстановка
 `$(cd X && ...)` разбираются наравне с началом строки.
@@ -59,7 +62,10 @@ READERS = {
     "cat", "head", "tail", "tac", "less", "more", "nl", "wc", "cut", "sort",
     "uniq", "strings", "xxd", "od", "diff", "cmp", "cp", "stat", "file",
     "grep", "egrep", "fgrep", "rg", "ugrep", "ag", "sed", "awk",
+    "ls", "find", "tree", "du",
 }
+# Команды, которым без операнда каталог даёт сам cd: в замене он встаёт явно.
+DIR_DEFAULT = {"ls", "find", "tree", "du"}
 PATTERN_FIRST = {"grep", "egrep", "fgrep", "rg", "ugrep", "ag", "sed", "awk"}
 DEVNULL = "/dev/null"
 
@@ -133,6 +139,8 @@ def is_relative(path):
     подстановка, не ключ и не число (значение `-n 5` у tail это не файл)."""
     if not path or path[0] in "/~$-" or path.startswith("${"):
         return False
+    if "/" not in path and any(ch in path for ch in "*?["):
+        return False
     return not NUMERIC.match(path)
 
 
@@ -152,18 +160,23 @@ def join_path(base, rel):
 
 
 def rewrite_reader(seg, base):
-    """Сегмент команды чтения с абсолютными операндами, либо None, если
-    относительных операндов у него нет."""
+    """Сегмент команды чтения с абсолютными операндами: относительные получают
+    префикс каталога, а листингу без операнда каталог дописывается явно."""
     name = seg[0]
     skip_pattern = name in PATTERN_FIRST
     out = list(seg)
     changed = False
+    operands = 0
     i = 1
     while i < len(seg):
         tok = seg[i]
         if is_redirect(tok):
             i += 2
             continue
+        if name == "find" and tok.startswith("-"):
+            # У find пути стоят до первого ключа, дальше идут условия и их
+            # значения (`-name '*.py'`), путями они не являются.
+            break
         if tok.startswith("-") and tok != "-":
             if tok in ("-e", "-f", "--file", "--regexp") and i + 1 < len(seg):
                 i += 2
@@ -174,11 +187,18 @@ def rewrite_reader(seg, base):
             skip_pattern = False
             i += 1
             continue
+        operands += 1
         if is_relative(tok):
             changed = True
             if base:
                 out[i] = join_path(base, tok)
         i += 1
+    if not operands and name in DIR_DEFAULT:
+        # Листинг без операнда читает cwd, который классификатору не виден.
+        changed = True
+        if base:
+            at = next((k for k, t in enumerate(out) if is_redirect(t)), len(out))
+            out.insert(at, base)
     return out if changed else None
 
 
@@ -209,7 +229,7 @@ def offending(segments, start, base):
             elif seg[0] in READERS:
                 r = rewrite_reader(seg, base)
                 if r is not None:
-                    reason = reason or "чтение файла по относительному пути после cd"
+                    reason = reason or "команда чтения после cd с путём, который классификатору не виден"
                     new = r
             r = rewrite_redirect(new, base)
             if r is not None:
@@ -221,10 +241,16 @@ def offending(segments, start, base):
     return reason, rewritten
 
 
+def needs_quote(token):
+    """Токен в замене берётся в кавычки, если shell раскрыл бы его иначе:
+    пробел, кавычка или глоб. Подстановка `$VAR` остаётся как есть."""
+    return any(ch in token for ch in " \t\"'*?[")
+
+
 def render(segments):
     out = []
     for seg, sep in segments:
-        out.append(" ".join(shlex.quote(t) if " " in t or '"' in t or "'" in t else t for t in seg))
+        out.append(" ".join(shlex.quote(t) if needs_quote(t) else t for t in seg))
         if sep:
             out.append(" " + ("\n" if "\n" in sep else sep) + " " if "\n" not in sep else "\n")
     return "".join(out).strip()

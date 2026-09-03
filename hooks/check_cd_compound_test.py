@@ -70,6 +70,17 @@ class TestCompoundIsCaught(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("make && tail -n 5 /tmp/build.log", r.stdout)
 
+    def test_bare_ls_is_caught_with_dir_in_replacement(self):
+        r = run("cd /tmp && ls | head -2")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("ls /tmp | head -2", r.stdout)
+        self.assertEqual(run("cd /tmp; ls").returncode, 1)
+
+    def test_find_keeps_its_conditions(self):
+        r = run("cd /tmp && find . -name '*.py'")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("find /tmp -name '*.py'", r.stdout)
+
     def test_variable_dir_advises_lone_cd(self):
         r = run("cd $ROOT && cat a.txt")
         self.assertEqual(r.returncode, 1)
@@ -89,12 +100,15 @@ class TestHarmlessPasses(unittest.TestCase):
         self.assertEqual(run("cd /tmp && go test ./...").returncode, 0)
         self.assertEqual(run("cd /tmp && python3 t.py").returncode, 0)
 
-    def test_cd_with_ls_passes(self):
-        self.assertEqual(run("cd /tmp && ls").returncode, 0)
-        self.assertEqual(run("cd /tmp; ls").returncode, 0)
-
     def test_reader_with_absolute_path_passes(self):
         self.assertEqual(run("cd /tmp && grep pat /abs/file").returncode, 0)
+
+    def test_stdin_reader_in_pipe_passes(self):
+        self.assertEqual(run("cd /tmp && go test ./... 2>&1 | tail -1").returncode, 0)
+
+    def test_cd_with_echo_and_make_passes(self):
+        self.assertEqual(run("cd /tmp && echo hi").returncode, 0)
+        self.assertEqual(run("cd /tmp && make -n 2>&1 | head -1").returncode, 0)
 
     def test_devnull_redirect_passes(self):
         self.assertEqual(run("cd /tmp && make 2>/dev/null").returncode, 0)
@@ -140,7 +154,7 @@ class TestHookMode(unittest.TestCase):
         self.assertIn("cat /tmp/a.txt", r.stderr.splitlines()[0])
 
     def test_harmless_compound_passes(self):
-        self.assertEqual(run("--hook", input=bash_event("cd /tmp && ls")).returncode, 0)
+        self.assertEqual(run("--hook", input=bash_event("cd /tmp && cargo test")).returncode, 0)
 
     def test_lone_cd_passes(self):
         self.assertEqual(run("--hook", input=bash_event("cd /tmp")).returncode, 0)

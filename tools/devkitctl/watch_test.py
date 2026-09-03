@@ -1032,11 +1032,15 @@ class AgentTest(Stand):
         self.main = self.dir / "devkit"
         (self.main / "tools" / "devkitctl").mkdir(parents=True)
         self.plist = self.home / "Library" / "LaunchAgents" / ("%s.plist" % watch.LABEL)
+        self.dashboard_bin = self.dir / "bin" / "dashboard"
+        self.dashboard_bin.parent.mkdir(parents=True)
+        self.dashboard_bin.write_text("#!/bin/sh\n", encoding="utf-8")
 
-    def check(self, fix=False, call=None, from_main=True, platform="darwin"):
+    def check(self, fix=False, call=None, from_main=True, platform="darwin", binary=True):
         call = Fake() if call is None else call
+        which = (lambda name: str(self.dashboard_bin)) if binary else (lambda name: None)
         f, d = watch.check(fix=fix, main=self.main, from_main=from_main,
-                           home=self.home, platform=platform, call=call)
+                           home=self.home, platform=platform, call=call, which=which)
         return f, d, call
 
     def beat(self, ago_minutes=1):
@@ -1050,6 +1054,16 @@ class AgentTest(Stand):
         self.assertIn("doctor --fix", f[0])
         self.assertEqual(d, [])
 
+    def test_missing_binary_is_a_finding(self):
+        # Без dashboard в PATH собирать PATH агента неоткуда (DK-664): агент
+        # не ложится вовсе, вместо этого находка про бинари.
+        f, d, call = self.check(binary=False)
+        self.assertEqual(len(f), 1, f)
+        self.assertIn("devkitctl update", f[0])
+        self.assertEqual(d, [])
+        self.assertEqual(call.calls, [])
+        self.assertFalse(self.plist.exists())
+
     def test_fix_installs_and_loads(self):
         f, d, call = self.check(fix=True)
         self.assertEqual(f, [])
@@ -1059,7 +1073,27 @@ class AgentTest(Stand):
         self.assertIn(str(self.main / "tools" / "devkitctl" / "devkitctl.py"), text)
         self.assertIn("<string>watch</string>", text)
         self.assertIn("<integer>%d</integer>" % watch.EVERY, text)
+        # PATH агента (DK-664): каталог бинаря dashboard первым, тем же
+        # сборщиком и по тому же якорю, что у launchd-агента дашборда.
+        self.assertIn("<key>EnvironmentVariables</key>", text)
+        self.assertIn("<key>PATH</key><string>%s" % self.dashboard_bin.parent, text)
         self.assertTrue(call.argv_with("bootstrap"), "launchd не позван: %s" % call.calls)
+
+    def test_old_agent_without_path_is_rewritten(self):
+        # Агент, положенный до EnvironmentVariables, это находка, и --fix
+        # переписывает его: иначе дефект PATH пережил бы доводку (DK-664).
+        self.check(fix=True)
+        text = self.plist.read_text(encoding="utf-8")
+        head, tail = text.split("  <key>EnvironmentVariables</key>\n", 1)
+        old = head + tail.split("  </dict>\n", 1)[1]
+        self.plist.write_text(old, encoding="utf-8")
+        f, d, _ = self.check()
+        self.assertEqual(len(f), 1, f)
+        f, d, _ = self.check(fix=True)
+        self.assertEqual(f, [])
+        self.assertEqual(len(d), 1, d)
+        self.assertIn("<key>EnvironmentVariables</key>",
+                      self.plist.read_text(encoding="utf-8"))
 
     def test_fix_from_worktree_refuses(self):
         # Агент показывает на чекаут, и класть на машину ветку задачи нельзя.

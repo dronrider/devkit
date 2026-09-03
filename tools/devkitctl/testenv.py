@@ -563,12 +563,17 @@ class Sandbox:
     def watch_agent(self, home):
         """Носитель сторожка цикла цели: launchd-агент на копию devkit и свежий
         след его прогона. Без него на чистом проекте горела бы находка про
-        неподключённый сторожок, а проверяется он своими тестами."""
+        неподключённый сторожок, а проверяется он своими тестами. PATH собран
+        тем же сборщиком и по тому же якорю, что у дашборда, подставному
+        `dashboard` из self.bin: якорь taskctl тесты, заводящие свой стенд
+        доски (DoctorDepsTest и родня), подделывают в PATH проекта, и агент
+        разъезжался бы с ним (DK-664)."""
         home = Path(home)
         main = Path(os.path.realpath(str(self.dk)))
         log = home / ".devkit" / "goal-watch.log"
         write(home / watch.PLIST[2:],
-              watch.plist_text(PY, main / "tools" / "devkitctl" / "devkitctl.py", log))
+              watch.plist_text(PY, main / "tools" / "devkitctl" / "devkitctl.py", log,
+                               dashboard.agent_path(self.bin / "dashboard")))
         write(log, "%s целей под надзором 0, вставших 0\n"
               % datetime.now().strftime(watch.STAMP))
         return home

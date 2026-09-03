@@ -954,10 +954,15 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
 
 # -- носитель расписания -----------------------------------------------------
 
-def plist_text(python, script, log):
+def plist_text(python, script, log, path):
     """Тело launchd-агента. Интервал тут короче порога простоя намеренно: порог
     решает, когда звать, а агент только просыпается достаточно часто, чтобы
-    любой порог сработал вовремя."""
+    любой порог сработал вовремя.
+
+    PATH задан явно тем же сборщиком, что у агента дашборда (dashboard.agent_path):
+    без него дети тика (taskctl, shipctl, dashboard, agentctl) получают голый
+    системный PATH launchd, не находят себя и молчат, пока в журнал сторожка не
+    заглянут руками (DK-664)."""
     return "\n".join([
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
@@ -971,6 +976,10 @@ def plist_text(python, script, log):
         '    <string>%s</string>' % script,
         '    <string>watch</string>',
         '  </array>',
+        '  <key>EnvironmentVariables</key>',
+        '  <dict>',
+        '    <key>PATH</key><string>%s</string>' % path,
+        '  </dict>',
         '  <key>StartInterval</key><integer>%d</integer>' % EVERY,
         '  <key>RunAtLoad</key><true/>',
         '  <key>StandardOutPath</key><string>%s</string>' % log,
@@ -1019,11 +1028,19 @@ def reload_agent(plist, call=None):
     return "" if code == 0 else out
 
 
-def check(fix=False, main=None, from_main=True, home=None, platform=None, call=None):
+def check(fix=False, main=None, from_main=True, home=None, platform=None, call=None,
+          which=None):
     """Носитель сторожка в машинном контуре доктора: агент стоит, смотрит на
-    основной чекаут и отрабатывает по расписанию."""
+    основной чекаут и отрабатывает по расписанию.
+
+    PATH агента собирается по бинарю dashboard из PATH, тем же сборщиком и по
+    тому же якорю, что у соседней проверки: якорь taskctl тесты подделывают
+    своим стендом (DoctorDepsTest и родня кладут в PATH проекта свой taskctl
+    поверх обычного), и агент разъезжался бы с ним от вызова к вызову. Без
+    бинаря в PATH класть PATH агента неоткуда, и это отдельная находка."""
     home = default_home() if home is None else home
     platform = sys.platform if platform is None else platform
+    which = shutil.which if which is None else which
     main = DEVKIT if main is None else Path(main)
     script = main / "tools" / "devkitctl" / "devkitctl.py"
     watched = entries(home)
@@ -1033,9 +1050,14 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None, call=N
                     "надзором %d: звать python3 %s watch по своему расписанию (cron, systemd)"
                     % (platform, len(watched), script)], []
         return [], []
+    import dashboard
+    binary = which("dashboard")
+    if not binary:
+        return ["бинарей devkit нет в PATH: PATH для сторожка не собрать; поставить бинари "
+                "(devkitctl update или build) и повторить doctor --fix"], []
     plist = home_path(home, PLIST)
     log = home_path(home, LOG)
-    want = plist_text(sys.executable, script, log)
+    want = plist_text(sys.executable, script, log, dashboard.agent_path(binary))
     have = plist.read_text(encoding="utf-8", errors="replace") if plist.exists() else ""
     if have != want:
         why = ("сторожок цикла цели не подключён" if not have else

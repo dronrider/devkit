@@ -1790,15 +1790,15 @@ def check_machine(fix):
     nf, nd = check_notify_hook(fix)
     findings += nf
     fixed += nd
-    # Носитель сторожка цикла цели: тем же рубежом, что хуки и права, потому
-    # что launchd-агент показывает на чекаут, и с ветки задачи ему на машину
-    # ехать нельзя.
-    watchf, watchd = watch.check(fix, main, from_main)
-    findings += watchf
-    fixed += watchd
     f, d = check_binaries(fix)
     findings += f
     fixed += d
+    # Носитель сторожка цикла цели после бинарей: PATH агента собирается по
+    # бинарю dashboard из PATH, тем же якорем, что у соседней проверки ниже, и
+    # на прогоне с --fix тот успевает встать на место строкой выше (DK-664).
+    watchf, watchd = watch.check(fix, main, from_main)
+    findings += watchf
+    fixed += watchd
     # Носитель дашборда после бинарей: агент показывает на бинарь dashboard из
     # PATH, и на прогоне с --fix тот успевает встать на место строкой выше.
     dashf, dashd = dashboard.check(fix, main, from_main)

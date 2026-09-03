@@ -1955,6 +1955,69 @@ func (s *smoke) stepHeldWindow() (string, error) {
 		say.Tmux, held.GoneTo, arch.Message), nil
 }
 
+// smokeFreeChat это кончившийся разговор без задачи: свободный чат, каких
+// набирается за день десяток. Имя окна у него мёртвое, в списке живых сессий
+// фикстуры его нет.
+const (
+	smokeFreeChat = "smoke-free-1"
+	smokeFreeName = "chat-77"
+)
+
+// stepFreeResume: реплика в кончившийся разговор без задачи (DK-727). Решение 6
+// LLD DK-430 обещало тут погашенный ввод, а код резюмит разговор и без задачи.
+// Прогон спрашивает три вещи. Реплика уезжает дорогой `resume`. Продолжение
+// поднято своим именем свободного чата, а не именем чужой задачи. Реестр
+// получает запись подъёма на тот же адрес и с тем же прочерком вместо задачи,
+// иначе следующая реплика подняла бы второго агента рядом с первым.
+func (s *smoke) stepFreeResume() (string, error) {
+	said := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"разговор кончился"},`+
+		`"timestamp":%q,"gitBranch":"main"}`+"\n",
+		time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
+	tr := filepath.Join(s.harnessJournal(), smokeFreeChat+".jsonl")
+	if err := smokeWrite(tr, said, 0o644); err != nil {
+		return "", err
+	}
+	line := sessions.Line(time.Now(), smokeFreeChat, sessions.Bind{
+		Project: "demo", Tree: s.proj, Transcript: tr,
+		Source: "заказ", Tmux: smokeFreeName}, "startup")
+	if err := sessions.Append(s.bindsFile(), line); err != nil {
+		return "", err
+	}
+	var say struct {
+		Way     string `json:"way"`
+		Tmux    string `json:"tmux"`
+		Message string `json:"message"`
+	}
+	if err := s.call("POST", "/api/projects/demo/chats/"+smokeFreeChat+"/say",
+		`{"text": "Ответь одним словом"}`, http.StatusOK, &say); err != nil {
+		return "", err
+	}
+	if say.Way != "resume" {
+		return "", fmt.Errorf("реплика в кончившийся разговор без задачи поехала дорогой %q", say.Way)
+	}
+	if strings.Contains(say.Tmux, smokeTask) {
+		return "", fmt.Errorf("продолжение свободного чата поднято именем задачи: %s", say.Tmux)
+	}
+	runs, err := os.ReadFile(s.runsFile())
+	if err != nil {
+		return "", fmt.Errorf("журнала поднятых сессий нет: %v", err)
+	}
+	if !strings.Contains(string(runs), "--resume "+shQuote(smokeFreeChat)) {
+		return "", fmt.Errorf("клиент поднят без продолжения того же разговора:\n%s", runs)
+	}
+	binds, err := os.ReadFile(s.bindsFile())
+	if err != nil {
+		return "", fmt.Errorf("реестра сессий нет: %v", err)
+	}
+	want := "сессия " + smokeFreeChat + " задача - "
+	if !strings.Contains(string(binds), want) ||
+		!strings.Contains(string(binds), "повод резюм чата tmux "+say.Tmux) {
+		return "", fmt.Errorf("подъём не записан реестром на тот же адрес без задачи:\n%s", binds)
+	}
+	return fmt.Sprintf("реплика уехала резюмом в %s, реестр записал подъём без задачи: %s",
+		say.Tmux, say.Message), nil
+}
+
 // stepDropDraft: черновик снимается с экрана, а не из терминала. Причина
 // обязательна и здесь, и у утилиты: файла после команды нет, и живёт причина
 // сообщением коммита доски, поэтому шаг сначала жмёт удаление без причины и
@@ -2174,6 +2237,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"уведомление о фоновой работе без портянки дисклеймера", s.stepSystemNote},
 		{"новый чат по задаче поверх живого конвейера", s.stepChatStart},
 		{"реплика и уборка при занятом окне", s.stepHeldWindow},
+		{"реплика в кончившийся разговор без задачи", s.stepFreeResume},
 		{"удаление черновика с причиной", s.stepDropDraft},
 		{"пересчёт ранга перетаскиванием доехал до доски", s.stepDragRank},
 		{"смерть поднятой сессии названа исходом", s.stepRaiseDeath},

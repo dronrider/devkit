@@ -369,6 +369,81 @@ func TestReviewStats(t *testing.T) {
 	}
 }
 
+// TestReviewStatsLevels: свод по уровням берёт уровень из строки раздела
+// «Ревью», а ходы и минуты из уже выгруженной строки «Хода работы» (DK-731),
+// живых задач и архива вперемешку. p90 уровня, вышедшего за бюджет
+// review.conf, назван в выводе; уровень без записанной работы и уровень без
+// единого ревью печатаются словами, а не пропадают из свода.
+func TestReviewStatsLevels(t *testing.T) {
+	root := setup(t)
+	tasks := filepath.Join(root, "docs", "tasks")
+	write := func(rel, body string) {
+		p := filepath.Join(tasks, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Уровень 1, две живые задачи: ходы 10 и 20, минуты 3 и 5, обе в вилке
+	// бюджета level1 из конфига теста.
+	write("XR-005.md", "# XR-005\n\n## Ревью\n\nУровень 1 до a1b2c3d: рутина\n\n"+
+		"## Ход работы\n\n- Ревью: ревью провёл sonnet, ходов 10, минут 3, 2026-08-31 12:00-12:07.\n")
+	write("XR-002.md", "# XR-002\n\n## Ревью\n\nУровень 1 до a1b2c3d: рутина\n\n"+
+		"## Ход работы\n\n- Ревью: ревью провёл sonnet, ходов 20, минут 5, 2026-08-31 12:00-12:09.\n")
+	// Уровень 2, задача в архиве: ходы 85 выше бюджета level2 (70), минуты 15
+	// в вилке.
+	write("archive/2025/XR-100.md", "# XR-100\n\n## Ревью\n\nУровень 2 до e5f6a7b: тронут tools/shipctl\n\n"+
+		"## Ход работы\n\n- Ревью: ревью провёл opus, ходов 85, минут 15, 2026-08-31 13:00-13:20.\n")
+	// Уровень 0, задача в архиве: строка уровня есть, работа не записана.
+	write("archive/2025/XR-101.md", "# XR-101\n\n## Ревью\n\nУровень 0 до 1234567: мелочь мимо ветки\n\n"+
+		"## Ход работы\n\n- Разработка: субагент opus/low по вердикту pick, 2026-08-31 09:00-09:10.\n")
+	writeReviewConf(t, root, "level1 = 5 минут, 20 ходов\nlevel2 = 20 минут, 70 ходов\nlevel3 = 40 минут, 100 ходов\n")
+
+	msg, err := cmdReviewStats(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"уровни ревью:",
+		"0: 1 ревью, ходы и минуты не записаны",
+		"1: 2 ревью, ходов медиана 15 p90 19, минут медиана 4 p90 5",
+		"2: 1 ревью, ходов медиана 85 p90 85, минут медиана 15 p90 15",
+		"уровень 2 выше бюджета: ходы p90 85 выше бюджета 70",
+		"3: ревью нет",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("в статистике нет %q:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "уровень 1 выше бюджета") {
+		t.Errorf("уровень 1 внутри бюджета помечен как вышедший:\n%s", msg)
+	}
+}
+
+// TestReviewStatsNoConf: без review.conf сравнение с бюджетом пропускается
+// строкой об этом, а не молчанием и не отказом.
+func TestReviewStatsNoConf(t *testing.T) {
+	root := setup(t)
+	tasks := filepath.Join(root, "docs", "tasks")
+	body := "# XR-005\n\n## Ревью\n\nУровень 1 до a1b2c3d: рутина\n\n" +
+		"## Ход работы\n\n- Ревью: ревью провёл sonnet, ходов 10, минут 3, 2026-08-31 12:00-12:07.\n"
+	if err := os.WriteFile(filepath.Join(tasks, "XR-005.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdReviewStats(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "1: 1 ревью") {
+		t.Fatalf("уровень 1 не посчитан без конфига:\n%s", msg)
+	}
+	if !strings.Contains(msg, reviewConfRel+" нет, сравнение с бюджетом пропущено") {
+		t.Fatalf("нет строки про пропуск сравнения без конфига:\n%s", msg)
+	}
+}
+
 func TestReviewCommitFlag(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)

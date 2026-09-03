@@ -57,6 +57,30 @@ func TestFailReturnsToWorkWithMark(t *testing.T) {
 	if !strings.Contains(msg, "shipctl revert XR-005") {
 		t.Fatalf("в ответе нет способа починить прод: %q", msg)
 	}
+	if !strings.Contains(msg, "ревью шло без уровня") {
+		t.Fatalf("в ответе нет отметки, что ревью прошло без уровня: %q", msg)
+	}
+}
+
+// TestFailPrintsReviewLevel: провал называет уровень ревью и причину его
+// выбора из строки уровня (DK-731), а не только сам факт провала.
+func TestFailPrintsReviewLevel(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdReviewLevel(root, "XR-005", 2, "неопределённость 1, тронут tools/shipctl", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	// XR-005 в фикстуре уже стоит в In progress: провал берёт задачу и оттуда,
+	// а полный ход через Check тут не при чём, дорогу ему сторожит обкатка.
+	msg, err := cmdFail(root, FailParams{ID: "XR-005", Reason: "прод отдаёт 500 на входе"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ревью было уровня 2", "неопределённость 1, тронут tools/shipctl"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("в ответе нет %q: %q", want, msg)
+		}
+	}
 }
 
 // TestFailWithoutReason и TestFailRejectsBracketInReason: причина обязательна

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -29,13 +30,45 @@ const (
 	publishAuto    = "auto"
 )
 
-// reviewConf это те ключи review.conf, которые читает утилита. Бюджеты,
-// критичные пути и проектные вопросы из того же файла читает скилл, разбирать
-// их тут незачем.
+// reviewConf это те ключи review.conf, которые читает утилита. Критичные пути
+// и проектные вопросы из того же файла читает скилл, разбирать их тут незачем;
+// бюджеты уровней читает review stats (DK-731), чтобы сверить накопленные ходы
+// и минуты с потолком, а разбор конфига держать в одном месте.
 type reviewConf struct {
 	Publish  string
 	PauseMin time.Duration
 	PauseMax time.Duration
+	// Budgets это бюджет ходов и минут первого круга по уровню (1-3): ключ
+	// level1..level3. Уровня 0 в конфиге нет, ревью этого уровня бюджет не
+	// считает. Пустая карта значит, что конфиг ключей уровня не назвал.
+	Budgets map[int]levelBudget
+}
+
+// levelBudget это одна строка бюджета: минуты активной работы и ходы.
+type levelBudget struct {
+	Minutes, Turns int
+}
+
+// levelKeyRe узнаёт ключ бюджета уровня («level1», «level2», «level3») и
+// достаёт из него номер уровня.
+var levelKeyRe = regexp.MustCompile(`^level([1-3])$`)
+
+// levelBudgetRe разбирает значение ключа: «5 минут, 20 ходов». Порядок пар
+// фиксирован скиллом review (раздел «Конфиг»), свободный текст вокруг цифр не
+// мешает разбору.
+var levelBudgetRe = regexp.MustCompile(`(\d+)\s*минут\S*,\s*(\d+)\s*ход`)
+
+func parseLevelBudget(val string) (levelBudget, error) {
+	m := levelBudgetRe.FindStringSubmatch(val)
+	if m == nil {
+		return levelBudget{}, fmt.Errorf("не читается, жду «N минут, M ходов»: %q", val)
+	}
+	minutes, err1 := strconv.Atoi(m[1])
+	turns, err2 := strconv.Atoi(m[2])
+	if err1 != nil || err2 != nil {
+		return levelBudget{}, fmt.Errorf("не читается: %q", val)
+	}
+	return levelBudget{Minutes: minutes, Turns: turns}, nil
 }
 
 // Умолчания повторяют «Нештат» LLD DK-756: без конфига ничего в чужой трекер
@@ -67,6 +100,18 @@ func loadReviewConf(root string) (reviewConf, error) {
 				return c, fmt.Errorf("%s: %v", reviewConfRel, err)
 			}
 			c.PauseMin, c.PauseMax = min, max
+		default:
+			if m := levelKeyRe.FindStringSubmatch(p.Key); m != nil {
+				lvl, _ := strconv.Atoi(m[1])
+				b, berr := parseLevelBudget(p.Value)
+				if berr != nil {
+					return c, fmt.Errorf("%s: %s = %q %v", reviewConfRel, p.Key, p.Value, berr)
+				}
+				if c.Budgets == nil {
+					c.Budgets = map[int]levelBudget{}
+				}
+				c.Budgets[lvl] = b
+			}
 		}
 	}
 	return c, nil

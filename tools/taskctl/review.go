@@ -2,12 +2,16 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskform"
 )
 
@@ -476,15 +480,136 @@ func cmdReviewShow(root, id string) (string, error) {
 	return strings.Join(out, "\n"), nil
 }
 
+// reviewLevelOf читает уровень тщательности ревью файла по строке уровня
+// (taskctl review level), а не по наличию замечаний: чистое ревью строку
+// уровня несёт, а замечаний не оставляет, и без этого разбора свод по
+// уровням (DK-731) потерял бы такие задачи молча.
+func reviewLevelOf(rf *reviewFile) (int, bool) {
+	if rf.levelIdx < 0 || rf.levelIdx >= len(rf.lines) {
+		return 0, false
+	}
+	m := reviewLevelLineRe.FindStringSubmatch(strings.TrimSpace(rf.lines[rf.levelIdx]))
+	if m == nil {
+		return 0, false
+	}
+	lvl, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0, false
+	}
+	return lvl, true
+}
+
+// reviewLevelReason читает уровень и причину его выбора из строки уровня
+// файла задачи целиком: taskctl fail печатает их, чтобы петля «провал
+// поднимает уровень» была видна человеку (DK-731), а не спрятана в файле
+// задачи. Второе значение false, когда строки уровня нет вовсе.
+func reviewLevelReason(root, id string) (level int, reason string, ok bool) {
+	rf, err := loadReview(taskFileAbs(root, id))
+	if err != nil {
+		return 0, "", false
+	}
+	lvl, lok := reviewLevelOf(rf)
+	if !lok {
+		return 0, "", false
+	}
+	line := strings.TrimSpace(rf.lines[rf.levelIdx])
+	m := reviewLevelLineRe.FindStringSubmatch(line)
+	if m == nil {
+		return 0, "", false
+	}
+	return lvl, strings.TrimSpace(line[len(m[0]):]), true
+}
+
+// reviewWorkOf собирает ходы и минуты активной работы из раздела «Ход
+// работы» файла задачи: запись кладёт туда agentctl stage (DK-731), а свод
+// читает уже выгруженную строку, живой записи ~/.devkit/runs к моменту стата
+// может и не быть. Строк ревью бывает несколько (второй круг), каждая даёт
+// свою пару чисел.
+func reviewWorkOf(rf *reviewFile) (turns, minutes []int) {
+	doc := strings.Join(rf.lines, "\n")
+	for _, ln := range taskform.SectionLines(doc, stageSection) {
+		s, _, ok := stage.ParseLine(ln)
+		if !ok || s.Kind != stage.Review {
+			continue
+		}
+		t, m, ok := stage.ParseWork(s.Note)
+		if !ok {
+			continue
+		}
+		turns = append(turns, t)
+		minutes = append(minutes, m)
+	}
+	return turns, minutes
+}
+
+// median и percentile считают по копии среза: вызывающий передаёт срез не
+// для переиспользования, но сортировка на месте была бы неожиданной для
+// читателя вызова.
+func median(vals []int) float64 {
+	if len(vals) == 0 {
+		return 0
+	}
+	s := append([]int(nil), vals...)
+	sort.Ints(s)
+	n := len(s)
+	if n%2 == 1 {
+		return float64(s[n/2])
+	}
+	return float64(s[n/2-1]+s[n/2]) / 2
+}
+
+// percentile интерполирует между соседними значениями отсортированного среза:
+// p90 на маленькой выборке (три-четыре задачи в тестах) обязан быть числом, а
+// не средним по ближайшему соседу, иначе сверка с бюджетом гуляла бы от
+// порядка задач.
+func percentile(vals []int, p float64) float64 {
+	if len(vals) == 0 {
+		return 0
+	}
+	s := append([]int(nil), vals...)
+	sort.Ints(s)
+	if len(s) == 1 {
+		return float64(s[0])
+	}
+	idx := p * float64(len(s)-1)
+	lo := int(math.Floor(idx))
+	hi := int(math.Ceil(idx))
+	if lo == hi {
+		return float64(s[lo])
+	}
+	frac := idx - float64(lo)
+	return float64(s[lo]) + frac*float64(s[hi]-s[lo])
+}
+
 func cmdReviewStats(root string) (string, error) {
 	type agg struct{ tasks, notes, fixed, rejected, open int }
 	var live, arch agg
 	var openList []string
+	type levelAgg struct {
+		tasks          int
+		turns, minutes []int
+	}
+	levels := map[int]*levelAgg{}
+	levelAt := func(l int) *levelAgg {
+		a, ok := levels[l]
+		if !ok {
+			a = &levelAgg{}
+			levels[l] = a
+		}
+		return a
+	}
 	count := func(files []string, a *agg) error {
 		for _, f := range files {
 			rf, err := loadReview(f)
 			if err != nil {
 				return err
+			}
+			if lvl, ok := reviewLevelOf(rf); ok {
+				la := levelAt(lvl)
+				la.tasks++
+				t, m := reviewWorkOf(rf)
+				la.turns = append(la.turns, t...)
+				la.minutes = append(la.minutes, m...)
 			}
 			if len(rf.notes) == 0 {
 				continue
@@ -519,16 +644,62 @@ func cmdReviewStats(root string) (string, error) {
 	}
 	total := agg{live.tasks + arch.tasks, live.notes + arch.notes,
 		live.fixed + arch.fixed, live.rejected + arch.rejected, live.open + arch.open}
-	if total.tasks == 0 {
+	if total.tasks == 0 && len(levels) == 0 {
 		return "разделов «Ревью» пока нет ни в живых задачах, ни в архиве", nil
 	}
-	out := []string{
-		fmt.Sprintf("задач с ревью: %d (живых %d, в архиве %d)", total.tasks, live.tasks, arch.tasks),
-		fmt.Sprintf("замечаний %d: исправлено %d, отклонено %d, открыто %d",
-			total.notes, total.fixed, total.rejected, total.open),
+	var out []string
+	if total.tasks > 0 {
+		out = append(out,
+			fmt.Sprintf("задач с ревью: %d (живых %d, в архиве %d)", total.tasks, live.tasks, arch.tasks),
+			fmt.Sprintf("замечаний %d: исправлено %d, отклонено %d, открыто %d",
+				total.notes, total.fixed, total.rejected, total.open),
+		)
+		if closed := total.fixed + total.rejected; closed > 0 {
+			out = append(out, fmt.Sprintf("доля исправленных среди закрытых: %d%%", total.fixed*100/closed))
+		}
 	}
-	if closed := total.fixed + total.rejected; closed > 0 {
-		out = append(out, fmt.Sprintf("доля исправленных среди закрытых: %d%%", total.fixed*100/closed))
+	if len(levels) > 0 {
+		conf, confErr := loadReviewConf(root)
+		if confErr != nil {
+			return "", confErr
+		}
+		_, statErr := os.Stat(filepath.Join(root, filepath.FromSlash(reviewConfRel)))
+		hasConf := statErr == nil
+		out = append(out, "уровни ревью:")
+		for lvl := 0; lvl <= 3; lvl++ {
+			la := levels[lvl]
+			if la == nil || la.tasks == 0 {
+				out = append(out, fmt.Sprintf("  %d: ревью нет", lvl))
+				continue
+			}
+			line := fmt.Sprintf("  %d: %d ревью", lvl, la.tasks)
+			if len(la.turns) == 0 {
+				line += ", ходы и минуты не записаны"
+				out = append(out, line)
+				continue
+			}
+			tMed, tP90 := median(la.turns), percentile(la.turns, 0.9)
+			mMed, mP90 := median(la.minutes), percentile(la.minutes, 0.9)
+			line += fmt.Sprintf(", ходов медиана %.0f p90 %.0f, минут медиана %.0f p90 %.0f", tMed, tP90, mMed, mP90)
+			if hasConf {
+				if b, ok := conf.Budgets[lvl]; ok {
+					var over []string
+					if tP90 > float64(b.Turns) {
+						over = append(over, fmt.Sprintf("ходы p90 %.0f выше бюджета %d", tP90, b.Turns))
+					}
+					if mP90 > float64(b.Minutes) {
+						over = append(over, fmt.Sprintf("минуты p90 %.0f выше бюджета %d", mP90, b.Minutes))
+					}
+					if len(over) > 0 {
+						line += fmt.Sprintf("; уровень %d выше бюджета: %s", lvl, strings.Join(over, ", "))
+					}
+				}
+			}
+			out = append(out, line)
+		}
+		if !hasConf {
+			out = append(out, fmt.Sprintf("%s нет, сравнение с бюджетом пропущено", reviewConfRel))
+		}
 	}
 	if len(openList) > 0 {
 		out = append(out, "открытые:")

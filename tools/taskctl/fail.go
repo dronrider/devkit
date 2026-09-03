@@ -90,6 +90,13 @@ func cmdFail(root string, p FailParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s: %s -> %s, провал проверки (%s); очередь выката стоит, чинить: shipctl revert %s либо форвард-фикс и shipctl merge %s%s%s",
-		p.ID, from, SectInProgress, p.Reason, p.ID, p.ID, tail, note), nil
+	// Уровень ревью и причина его выбора печатаются тут же: провал это тот
+	// самый повод поднять тщательность, и он должен быть виден человеку, а не
+	// только тому, кто полез читать файл задачи (DK-731).
+	levelNote := "ревью шло без уровня"
+	if lvl, reason, ok := reviewLevelReason(root, p.ID); ok {
+		levelNote = fmt.Sprintf("ревью было уровня %d: %s", lvl, reason)
+	}
+	return fmt.Sprintf("%s: %s -> %s, провал проверки (%s), %s; очередь выката стоит, чинить: shipctl revert %s либо форвард-фикс и shipctl merge %s%s%s",
+		p.ID, from, SectInProgress, p.Reason, levelNote, p.ID, p.ID, tail, note), nil
 }

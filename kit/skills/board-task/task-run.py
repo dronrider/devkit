@@ -208,8 +208,8 @@ class Pipeline:
         # строк обоих журналов и очередь снятых отметок.
         self.head = None
         self.sid = ""
-        self.turns_seen = set()
-        self.sess_seen = set()
+        self.turns_seen = {}
+        self.sess_seen = {}
         self.pending = []
 
     # -- состояние доски ----------------------------------------------------
@@ -326,6 +326,12 @@ class Pipeline:
         рез это перезапись файла целиком, чтение попадает на пустую середину, и
         сжатая по такому чтению память вернула бы прочитанное второй раз.
 
+        Помнится не строка, а сколько раз она встречалась. Время харнес пишет до
+        секунды, и два одинаковых слова хода в одну секунду дают две дословно
+        одинаковых строки: конец мгновенно отбитого хода приходит в ту же
+        секунду, что его начало. Память множеством считала бы такую пару одной
+        отметкой и теряла бы вторую.
+
         Строка без перевода строки на конце недописана: чтение попало на
         середину записи. Такой обрывок пропускается и дочитывается следующим
         заходом.
@@ -337,8 +343,15 @@ class Pipeline:
         except OSError:
             return [], seen
         lines = [l for l in text.split("\n")[:-1] if l.strip() and keep(l)]
-        out = [l for l in lines if l not in seen]
-        return out, seen | set(out)
+        out, count = [], {}
+        for line in lines:
+            count[line] = count.get(line, 0) + 1
+            if count[line] > seen.get(line, 0):
+                out.append(line)
+        memo = dict(seen)
+        for line, times in count.items():
+            memo[line] = max(memo.get(line, 0), times)
+        return out, memo
 
     def window_line(self, line):
         """Своя ли это запись реестра чатов. Своя та, что называет наше окно:
@@ -380,7 +393,7 @@ class Pipeline:
         # Память реестра набирается до подъёма. Прошлый запуск конвейера
         # поднимал окно под тем же именем task-<ID>, и его запись оболочка
         # приняла бы за свою.
-        _, self.sess_seen = self.fresh(SESSIONS_LOG, set(), self.window_line)
+        _, self.sess_seen = self.fresh(SESSIONS_LOG, {}, self.window_line)
         self.say("живая голова поднята: %s" % " ".join(shlex.quote(c) for c in cmd[:-1]))
         try:
             self.head = subprocess.Popen(cmd, cwd=self.proj, env=env)

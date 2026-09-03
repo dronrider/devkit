@@ -7,6 +7,7 @@
 директории теста: файлами репозитория они не становятся, как и любая другая
 фикстура, изображающая чужую программу.
 """
+import importlib
 import os
 import shutil
 import subprocess
@@ -16,6 +17,9 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUN = os.path.join(HERE, "task-run.py")
+
+sys.path.insert(0, HERE)
+task_run = importlib.import_module("task-run")
 
 # Стаб доски: печатает строку задачи тем же форматом, каким её печатает taskctl
 # («DK-1 в in-progress»), а секцию читает из файла стенда. Пометку про
@@ -188,6 +192,13 @@ while True:
                           "import sys,time;time.sleep(1);"
                           "open(sys.argv[1],'w',encoding='utf-8').write('готово')",
                           os.path.join(home, "фон")])
+    elif step == "ждать фон":
+        # Долгий шаг доживает до конца внутри живого хода. Ждём его признаком,
+        # готовым файлом, а не паузой между заказами: пауза под нагрузкой
+        # кончается раньше работы.
+        until = time.time() + 20
+        while time.time() < until and not os.path.exists(os.path.join(home, "фон")):
+            time.sleep(0.05)
     # Заказ, пришедший до конца хода, это заказ поверх идущей работы. Живая
     # голова такого не видит, а оболочка, поверившая старой отметке, шлёт его
     # именно так.
@@ -197,10 +208,10 @@ while True:
     mark("кончен")
     if step == "чужой":
         # Реплика человека, поданная панелью в это же окно: ход начался не по
-        # заказу оболочки и кончился сам.
-        time.sleep(0.2)
+        # заказу оболочки и кончился сам. Отметки пишутся подряд, без сна: сон
+        # тут гонка, и под нагрузкой оболочка успевала послать свой заказ
+        # раньше, чем появлялась отметка о чужом ходе.
         mark("начат")
-        time.sleep(0.2)
         mark("кончен")
     # Заказа нет и нет: живой голове его подают клавиатурой окна, а печатная
     # череда ждёт выхода процесса, и висеть в ней вечно клиент не должен.
@@ -217,6 +228,11 @@ while True:
                 break
         time.sleep(0.05)
     else:
+        # Заказа так и не пришло. Живой голове его подают клавиатурой окна, и
+        # молчание тут значит, что оболочка её потеряла: след виден тесту, а не
+        # только кодом возврата.
+        with open(os.path.join(home, "простой"), "a", encoding="utf-8") as f:
+            f.write(order + "\n")
         sys.exit(0)
 '''
 
@@ -233,7 +249,8 @@ def write_stub(path, body):
 class Stand:
     """Временный корень со стабами, доской в файле и своим HOME."""
 
-    def __init__(self, sect="in-progress", plan="работа", live=False, pause="0"):
+    def __init__(self, sect="in-progress", plan="работа", live=False, pause="0",
+                 mute="8"):
         self.root = tempfile.mkdtemp(prefix="task-run-")
         self.bin = os.path.join(self.root, "bin")
         os.makedirs(self.bin)
@@ -251,6 +268,7 @@ class Stand:
         self.plan = plan
         self.live = live
         self.pause = pause
+        self.mute = mute
 
     def env(self):
         return {
@@ -266,8 +284,11 @@ class Stand:
             "DEVKIT_TEST_TMUX": "живая" if self.live else "нет",
             "DEVKIT_TASK_PASS_PAUSE": self.pause,
             "DEVKIT_TASK_WATCH_STEP": "0",
-            "DEVKIT_TASK_SESSION_WAIT": "3",
-            "DEVKIT_TASK_MUTE": "1",
+            # Срок ожидания записи реестра стенд не подрезает. Ждёт оболочка по
+            # признаку, появлению записи, и короткий срок под нагрузкой истекал
+            # раньше, чем стаб успевал завестись: заказы дальше первого тогда
+            # подавать некому, и тест падал на соседях по прогону.
+            "DEVKIT_TASK_MUTE": self.mute,
             "DEVKIT_TMUX": "task-DK-1",
             # Метку печатного режима ставит дашборд, и живая голова обязана
             # снять её с клиента: с нею рубеж синхронности отбивает фоновый ход.
@@ -284,6 +305,13 @@ class Stand:
         head = "claude-live" if self.live and "--headless" not in args else "claude-stub"
         argv += ["--", os.path.join(self.bin, head)]
         return subprocess.run(argv, capture_output=True, text=True, env=self.env())
+
+    def why(self, got):
+        """Слова к провалу прогона. Голый код возврата не говорит ничего:
+        живая голова пишет свой ход в журнал утилит, а стаб оставляет след
+        простоя, когда заказа так и не дождался."""
+        return "код %d, простой %s, журнал:\n%s" % (
+            got.returncode, self.lines("простой"), "\n".join(self.journal()))
 
     def lines(self, name):
         path = os.path.join(self.root, name)
@@ -426,7 +454,7 @@ class TestLiveHead(unittest.TestCase):
         # дождалась, гибло вместе с процессом (DK-720, шесть проходов подряд).
         s = self.stand(plan="работа|закрой")
         got = s.run("--order", "Выполни DK-1", "--again", "Продолжай DK-1")
-        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(got.returncode, 0, s.why(got))
         self.assertEqual(s.orders(), ["Выполни DK-1", "Продолжай DK-1"], s.orders())
         self.assertEqual(len(set(s.lines("pids"))), 1, s.lines("pids"))
 
@@ -434,9 +462,9 @@ class TestLiveHead(unittest.TestCase):
         # Живучесть долгого шага: работа, отданная первым проходом наружу,
         # доживает до конца, потому что процесс головы не выходит между
         # проходами и не уносит её с собой.
-        s = self.stand(plan="фон|работа|закрой", pause="2")
+        s = self.stand(plan="фон|ждать фон|закрой")
         got = s.run()
-        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(got.returncode, 0, s.why(got))
         self.assertEqual(len(set(s.lines("pids"))), 1, s.lines("pids"))
         self.assertEqual(s.lines("фон"), ["готово"], "долгий шаг не доработал")
 
@@ -468,7 +496,7 @@ class TestLiveHead(unittest.TestCase):
         # каждый проход это свой процесс со своим заказом через -p.
         s = self.stand(plan="работа|закрой")
         got = s.run("--headless", "--order", "Выполни DK-1", "--again", "Продолжай DK-1")
-        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(got.returncode, 0, s.why(got))
         self.assertEqual(s.orders(), ["Выполни DK-1", "Продолжай DK-1"], s.orders())
 
     def test_no_live_window_returns_the_passes(self):
@@ -476,7 +504,7 @@ class TestLiveHead(unittest.TestCase):
         s = Stand(plan="работа|закрой")
         self.stands.append(s)
         got = s.run()
-        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(got.returncode, 0, s.why(got))
         self.assertEqual(len(s.orders()), 2, s.orders())
 
     def test_standing_question_calls_the_human(self):
@@ -484,7 +512,7 @@ class TestLiveHead(unittest.TestCase):
         # незнакомом запросе разрешения, снаружи неотличима от долгой работы.
         s = self.stand(plan="вопрос|закрой")
         got = s.run()
-        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(got.returncode, 0, s.why(got))
         said = [l for l in s.journal() if "ждёт человека" in l]
         self.assertTrue(said, s.journal())
         self.assertIn("permission_prompt", said[0])
@@ -492,9 +520,9 @@ class TestLiveHead(unittest.TestCase):
     def test_mute_session_is_named_aloud(self):
         # Ни одной отметки за срок: хук отметки хода не подключён либо окно
         # замёрзло. Молчание тут неотличимо от работы, и назвать его надо вслух.
-        s = self.stand(plan="молчит|закрой")
+        s = self.stand(plan="молчит|закрой", mute="1")
         got = s.run()
-        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(got.returncode, 0, s.why(got))
         self.assertTrue([l for l in s.journal() if "молчит" in l], s.journal())
 
     def test_human_reply_holds_the_order(self):
@@ -502,7 +530,7 @@ class TestLiveHead(unittest.TestCase):
         # встал бы второй строкой ввода.
         s = self.stand(plan="чужой|закрой", pause="1")
         got = s.run()
-        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(got.returncode, 0, s.why(got))
         self.assertTrue([l for l in s.journal() if "ход уже начат репликой человека" in l],
                         s.journal())
         self.assertEqual(len(s.orders()), 2, s.orders())
@@ -514,7 +542,7 @@ class TestLiveHead(unittest.TestCase):
         # уходил поверх идущего хода.
         s = self.stand(plan="работа|ротация|закрой")
         got = s.run()
-        self.assertEqual(got.returncode, 0, got.stdout + got.stderr)
+        self.assertEqual(got.returncode, 0, s.why(got))
         self.assertEqual(s.lines("поверх"), [], "заказ ушёл поверх идущего хода")
         self.assertEqual(len(s.orders()), 3, s.orders())
         # Проходов было три, и строк о конце прохода в журнале ровно три.
@@ -526,9 +554,9 @@ class TestLiveHead(unittest.TestCase):
     def test_lost_journal_calls_the_human(self):
         # Журнала отметок нет вовсе: снят руками, стёрт уборкой дома. Ждать
         # конца прохода тут можно до скончания века, и молчать об этом нельзя.
-        s = self.stand(plan="работа|потеря|закрой")
+        s = self.stand(plan="работа|потеря|закрой", mute="1")
         got = s.run()
-        self.assertEqual(got.returncode, 0, got.stdout + got.stderr)
+        self.assertEqual(got.returncode, 0, s.why(got))
         self.assertTrue([l for l in s.journal() if "молчит" in l], s.journal())
         self.assertEqual(len(s.orders()), 3, s.orders())
 
@@ -537,8 +565,75 @@ class TestLiveHead(unittest.TestCase):
         # неотличимо от штатного конца.
         s = self.stand(plan="падение")
         got = s.run()
-        self.assertEqual(got.returncode, 1, got.stdout + got.stderr)
+        self.assertEqual(got.returncode, 1, s.why(got))
         self.assertTrue([l for l in s.journal() if "живая голова вышла" in l], s.journal())
+
+
+class TestJournal(unittest.TestCase):
+    """Чтение общего журнала: своя строка узнаётся по себе самой, и второй раз
+    оболочка её не читает."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="task-run-journal-")
+        self.path = os.path.join(self.root, "turns.log")
+        self.pipe = task_run.Pipeline(task_run.parse_args(
+            ["DK-1", "-C", self.root, "--", "claude"]))
+        self.pipe.sid = SID
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def write(self, *lines):
+        with open(self.path, "a", encoding="utf-8") as f:
+            for l in lines:
+                f.write(l + "\n")
+
+    def turn(self, word, when="2026-09-03T12:00:00"):
+        return "%s сессия %s ход %s повод - дерево /tmp" % (when, SID[:8], word)
+
+    def read(self, seen):
+        return self.pipe.fresh(self.path, seen, self.pipe.own_mark)
+
+    def test_own_marks_are_read_once(self):
+        self.write(self.turn("кончен"), "2026-09-03T12:00:00 сессия ffff0001 ход кончен повод - дерево /tmp")
+        got, seen = self.read({})
+        self.assertEqual(len(got), 1, got)
+        self.assertEqual(self.read(seen)[0], [], "своя отметка прочиталась второй раз")
+
+    def test_trimmed_journal_gives_nothing_new(self):
+        # Рез журнала это перезапись файла последними строками. Читатель со
+        # смещением брал такой файл сначала и возвращал уже прочитанное.
+        self.write(self.turn("кончен"))
+        _, seen = self.read({})
+        with open(self.path, encoding="utf-8") as f:
+            tail = f.readlines()
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.writelines(tail)
+        self.assertEqual(self.read(seen)[0], [], "усушка вернула прочитанную отметку")
+
+    def test_two_marks_in_one_second_are_two_marks(self):
+        # Время харнес пишет до секунды, и мгновенно отбитый ход даёт две
+        # дословно одинаковых строки. Память множеством считала бы их одной.
+        self.write(self.turn("кончен"), self.turn("кончен"))
+        got, seen = self.read({})
+        self.assertEqual(len(got), 2, got)
+        self.assertEqual(self.read(seen)[0], [], got)
+
+    def test_unfinished_line_waits_for_its_newline(self):
+        # Рез переписывает файл целиком, и чтение попадает на середину записи.
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(self.turn("кончен"))
+        self.assertEqual(self.read({})[0], [], "обрывок прочитан как отметка")
+        self.write("")
+        self.assertEqual(len(self.read({})[0]), 1)
+
+    def test_missing_journal_keeps_the_memory(self):
+        self.write(self.turn("кончен"))
+        _, seen = self.read({})
+        os.remove(self.path)
+        got, after = self.read(seen)
+        self.assertEqual(got, [])
+        self.assertEqual(after, seen, "память забылась на пропавшем журнале")
 
 
 if __name__ == "__main__":

@@ -95,6 +95,16 @@ class TestInlineRustTests(unittest.TestCase):
                              "    #[tokio::test]\n    async fn f_runs() { super::f().await; }\n}\n")
         self.assertEqual(run("--stdin", input="lib.rs\n", cwd=self.repo).returncode, 0)
 
+    def test_async_inline_test_with_args_counts(self):
+        """У атрибута бывают аргументы (flavor, worker_threads), и метка без
+        закрытой скобки обязана их накрывать: коммит с таким тестом не ложный
+        отказ «без единого теста»."""
+        self.stage("lib.rs", "pub async fn f() {}\n\n"
+                             "#[cfg(test)]\nmod tests {\n"
+                             "    #[tokio::test(flavor = \"multi_thread\", worker_threads = 4)]\n"
+                             "    async fn f_runs() { super::f().await; }\n}\n")
+        self.assertEqual(run("--stdin", input="lib.rs\n", cwd=self.repo).returncode, 0)
+
     def test_code_without_inline_test_is_still_caught(self):
         self.stage("lib.rs", "pub fn f() -> u8 { 1 }\n")
         self.assertEqual(run("--stdin", input="lib.rs\n", cwd=self.repo).returncode, 1)

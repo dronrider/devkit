@@ -39,7 +39,7 @@ TEST_MARKS = ("_test.", ".test.", "test_", "_spec.", ".spec.", "spec_")
 # Файлы, где тест лежит рядом с кодом, и атрибуты, по которым он опознаётся в
 # добавленных строках.
 INLINE_TEST_EXT = (".rs",)
-INLINE_TEST_MARKS = ("#[test]", "#[tokio::test]", "#[rstest", "#[test_case",
+INLINE_TEST_MARKS = ("#[test]", "#[tokio::test", "#[rstest", "#[test_case",
                      "#[proptest", "#[quickcheck")
 
 

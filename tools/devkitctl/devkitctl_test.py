@@ -1246,13 +1246,18 @@ class MachineContourTest(SandboxCase):
 
     def test_15_alt_subscription_filled_in(self):
         # Заполненный конфиг второй подписки доктор не трогает и не поминает:
-        # это рабочее состояние, а не пробел. Токен из него в вывод не едет ни
-        # при каком раскладе, у него есть только признак «есть» или «нет».
+        # это рабочее состояние, а не пробел. Подстановки алиасов входят в
+        # заполненное состояние: без них алиас из параметра модели уходит на
+        # провод как есть (DK-751). Токен из него в вывод не едет ни при каком
+        # раскладе, у него есть только признак «есть» или «нет».
         conf = self.mhome / ".devkit" / "claude-glm" / "settings.json"
         write(conf, json.dumps({"env": {
             "ANTHROPIC_BASE_URL": "https://endpoint.example/anthropic",
             "ANTHROPIC_AUTH_TOKEN": "токен-второй-подписки",
             "ANTHROPIC_MODEL": "модель-подписки",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "модель-подписки",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "модель-подписки",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL": "модель-подписки",
         }}, ensure_ascii=False) + "\n")
         conf.chmod(0o600)
         _, out = self.docm()
@@ -2248,6 +2253,69 @@ class AltSubDirTest(unittest.TestCase):
         self.assertTrue([f for f in findings if "пустые ключи" in f],
                         "пустые ключи болванки не названы находкой: %s" % (findings,))
 
+    def stand(self, env):
+        # Объявленная подписка с вписанными ключами: раскладывать болванку нечего,
+        # очередь за подстановками алиасов.
+        home = self.home('enabled = ["claude-code", "glm-code"]\n\n[glm-code]\n'
+                         'home = "~/.devkit/claude-glm"\n')
+        conf = home / ".devkit" / "claude-glm" / "settings.json"
+        write(conf, json.dumps({"env": env}))
+        conf.chmod(0o600)
+        (home / ".devkit" / "claude-glm").chmod(0o700)
+        return home, conf
+
+    LIVE = {"ANTHROPIC_BASE_URL": "https://пример.тест", "ANTHROPIC_AUTH_TOKEN": "токен-стенда",
+            "ANTHROPIC_MODEL": "glm-5.3", "ANTHROPIC_SMALL_FAST_MODEL": "glm-5.3-flash"}
+
+    def test_folding_is_laid_from_the_anchors(self):
+        # Подстановки выводятся из вписанных моделей подписки: сильные алиасы
+        # первой лестницы сворачиваются во флагман, лёгкий в лёгкую. Диспетчер
+        # передаёт модель субагента алиасом, и без подстановки незнакомый серверу
+        # алиас обслуживается лёгкой моделью молча (DK-751).
+        home, conf = self.stand(dict(self.LIVE))
+        with fake_home(home):
+            findings, fixed = devkitctl.check_alt_sub(True)
+        doc = json.loads(read(conf))["env"]
+        for alias in ("SONNET", "OPUS", "FABLE"):
+            self.assertEqual(doc["ANTHROPIC_DEFAULT_%s_MODEL" % alias], "glm-5.3",
+                             "сильный алиас %s не свёрнут во флагман" % alias)
+        self.assertEqual(doc["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "glm-5.3-flash",
+                         "лёгкий алиас не свёрнут в лёгкую модель")
+        self.assertTrue([f for f in fixed if "подстановки алиасов" in f],
+                        "раскладка подстановок прошла молча: %s" % (fixed,))
+        with fake_home(home):
+            self.assertEqual(devkitctl.check_alt_sub(False), ([], []),
+                             "после раскладки доктор всё ещё видит разрыв в подстановках")
+
+    def test_stale_folding_is_a_finding(self):
+        # Разошедшаяся с якорем подстановка опаснее отсутствующей: алиас уходит
+        # на провод и обслуживается старой моделью, а вердикт обещал сегодняшнюю.
+        home, conf = self.stand(dict(self.LIVE, ANTHROPIC_DEFAULT_FABLE_MODEL="glm-5.2",
+                                     ANTHROPIC_DEFAULT_SONNET_MODEL="glm-5.3",
+                                     ANTHROPIC_DEFAULT_OPUS_MODEL="glm-5.3",
+                                     ANTHROPIC_DEFAULT_HAIKU_MODEL="glm-5.3-flash"))
+        with fake_home(home):
+            findings, _ = devkitctl.check_alt_sub(False)
+        stale = [f for f in findings if "ANTHROPIC_DEFAULT_FABLE_MODEL" in f]
+        self.assertTrue(stale, "устаревшая подстановка не названа находкой: %s" % (findings,))
+        self.assertIn("DK-751", stale[0])
+        self.assertFalse([f for f in findings if "ANTHROPIC_DEFAULT_SONNET_MODEL" in f],
+                         "верная подстановка названа находкой: %s" % (findings,))
+
+    def test_folding_from_a_worktree_is_finding_only(self):
+        # Значения подстановок выводятся из машинного слоя, но раскладка меняет
+        # env, который виден каждой сессии подписки: с ветки задачи на машину
+        # не едет и она.
+        home, conf = self.stand(dict(self.LIVE))
+        main = home / "projects" / "devkit"
+        with fake_home(home):
+            findings, fixed = devkitctl.check_alt_sub(True, main, False)
+        self.assertFalse([f for f in fixed if "подстановки" in f],
+                         "подстановки уехали на машину с непроверенной ветки: %s" % (fixed,))
+        self.assertTrue([f for f in findings if "основного чекаута" in f],
+                        "находка не назвала, откуда чинить: %s" % (findings,))
+        self.assertNotIn("ANTHROPIC_DEFAULT_FABLE_MODEL", json.loads(read(conf))["env"])
+
 
 class WindowCopyTest(unittest.TestCase):
     """Окружение копии окна второй подписки против машинного слоя (DK-192).
@@ -2316,6 +2384,28 @@ class WindowCopyTest(unittest.TestCase):
             findings, _ = devkitctl.check_window_copy(root, False)
         self.assertTrue([f for f in findings if str(copy) in f],
                         "копия без окружения второй подписки прошла молча: %s" % (findings,))
+
+    def test_folding_rides_to_the_window_copy(self):
+        # Окно, открытое без CLAUDE_CONFIG_DIR, берёт env из настроек самой
+        # директории, и подстановки алиасов обязаны ехать в копию вместе с
+        # ключами подписки: без них алиас из параметра модели уходил бы на провод
+        # как есть (DK-751).
+        home, root, copy = self.stand(env={
+            "ANTHROPIC_BASE_URL": "https://новый.example",
+            "ANTHROPIC_AUTH_TOKEN": "токен-новый",
+            "ANTHROPIC_MODEL": "glm-4.6",
+            "ANTHROPIC_SMALL_FAST_MODEL": "glm-4.6-air",
+        })
+        with fake_home(home):
+            findings, fixed = devkitctl.check_window_copy(root, True)
+        doc = json.loads(read(copy / devkitctl.WINDOW_ENV_FILE))["env"]
+        self.assertEqual(doc["ANTHROPIC_DEFAULT_FABLE_MODEL"], "glm-4.6",
+                         "сильные алиасы не свёрнуты во флагман в копии окна")
+        self.assertEqual(doc["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "glm-4.6-air",
+                         "лёгкий алиас не свёрнут в лёгкую модель в копии окна")
+        with fake_home(home):
+            self.assertEqual(devkitctl.check_window_copy(root, False), ([], []),
+                             "после синка копия всё ещё расходится с машинным слоем")
 
     def test_doctor_from_the_copy_checks_the_copy(self):
         # Доктора зовут и из самого окна: проверять он обязан ту копию, в

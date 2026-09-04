@@ -195,3 +195,30 @@ func TestSyncMarksFreshness(t *testing.T) {
 		t.Fatalf("status не увидел отметку прогона:\n%s", msg)
 	}
 }
+
+// Строку ревью sync не двигает и в трекер за ней не ходит: судьбу такой строки
+// решает MR, а не статус тикета (LLD DK-756, решение 7). Тикет тут ушёл далеко
+// вперёд доски, и обычную зеркальную строку это подвинуло бы.
+func TestSyncKeepsReviewRow(t *testing.T) {
+	root := setupEnv(t, contourFile, bindingFile)
+	corpWrite(t, filepath.Join(root, boardPath), reviewBoardText(
+		boardRowText{sectBacklog, "XR-777", "3 (0+0+1+0+2)", "L", ticketLink("ABC-12")},
+		"Ревью ABC-12: чужая задача",
+	))
+	moves := captureMoves(t)
+	fakeState.ticket.Status = "Development"
+
+	msg, err := cmdSync(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*moves) != 0 {
+		t.Fatalf("строка ревью подвинута: %v", *moves)
+	}
+	if len(fakeState.calls) != 0 {
+		t.Fatalf("sync сходил в трекер за строкой ревью: %v", fakeState.calls)
+	}
+	if !strings.Contains(msg, "зеркальных строк на доске нет") {
+		t.Fatalf("строка ревью посчитана зеркальной:\n%s", msg)
+	}
+}

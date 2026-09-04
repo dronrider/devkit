@@ -6,6 +6,7 @@
 живой канал уведомлений проверяет notify_test.py.
 """
 import io
+import json
 import os
 import sys
 import shutil
@@ -1634,6 +1635,142 @@ class QuotaTick(unittest.TestCase):
         self.assertEqual(fake.calls, [])
         self.assertIn("agentctl нет", out)
         self.assertIn("agentctl нет", self.journal())
+
+
+DASHBOARD = "/bin/подставной-dashboard"
+
+
+class ReviewPollTest(Stand):
+    """Тик опрашивает треды чужого MR по строкам, ждущим автора: команду доски
+    зовёт `taskctl review poll --json`, второй круг заказывает `dashboard
+    round`, а человека зовёт уведомитель."""
+
+    class Answers:
+        """Подставной запускатель с ответом на каждую команду. Вердикт опроса
+        приходит готовым JSON: живого трекера на стенде нет, а разбирать надо
+        решение тика, а не разговор с GitLab."""
+
+        def __init__(self, verdict, poll_code=0, round_code=0, round_out="второй круг поднят"):
+            self.calls = []
+            self.verdict = verdict
+            self.poll_code = poll_code
+            self.round_code = round_code
+            self.round_out = round_out
+
+        def __call__(self, argv, **kw):
+            self.calls.append(list(argv))
+            if "poll" in argv:
+                return subprocess.CompletedProcess(argv, self.poll_code, self.verdict, None)
+            if "round" in argv:
+                return subprocess.CompletedProcess(argv, self.round_code, self.round_out, None)
+            return subprocess.CompletedProcess(argv, 0, "отправлено", None)
+
+        def argv_with(self, needle):
+            return [a for a in self.calls if any(needle in str(x) for x in a)]
+
+    def board_with(self, blocked):
+        (self.proj / "docs" / "TASKS.md").write_text(
+            PARK_HEAD % (ROW % (GOAL, GOAL, GOAL), "\n".join(blocked)), encoding="utf-8")
+
+    def waiting_row(self, tid="DK-905"):
+        self.board_with([PARK_ROW % (tid, "Ревью ABC-12: чужая правка [блок: автор: ждёт ответа в тредах MR]",
+                                     tid, tid)])
+        return tid
+
+    def poll(self, answers):
+        return watch.review_poll(str(self.proj), self.now, answers, TASKCTL, DASHBOARD)
+
+    def verdict(self, **fields):
+        data = {"id": "DK-905", "skipped": False, "events": [], "fate": "",
+                "noise": False, "silence": False, "finding": "", "quiet": False, "lines": []}
+        data.update(fields)
+        return json.dumps(data, ensure_ascii=False)
+
+    def test_reply_starts_second_round(self):
+        # DoD: событие в тредах снимает парковку (это делает команда доски), а
+        # тик заказывает второй круг той же дорогой, что работа с дашборда.
+        self.waiting_row()
+        a = self.Answers(self.verdict(events=["реплика автора в треде d1"],
+                                      lines=["парковка снята, пометка «автор ответил»"]))
+        lines = self.poll(a)
+        rounds = a.argv_with("round")
+        self.assertEqual(len(rounds), 1, "второй круг не заказан: %s" % a.calls)
+        self.assertEqual(rounds[0][:2], [DASHBOARD, "round"])
+        self.assertIn("DK-905", rounds[0])
+        self.assertEqual(a.argv_with("notify.py"), [], "лишний зов человека: %s" % a.calls)
+        self.assertIn("автор ответил", " ".join(lines))
+
+    def test_poll_asks_taskctl_with_push(self):
+        # Правка доски и журнала ревью уезжает в origin тем же коммитом, что у
+        # остальной работы тика: грязное дерево отбило бы следующий merge.
+        self.waiting_row()
+        a = self.Answers(self.verdict(lines=["автор молчит, парковка стоит"]))
+        self.poll(a)
+        polls = a.argv_with("poll")
+        self.assertEqual(len(polls), 1, "опроса не было: %s" % a.calls)
+        self.assertIn("--json", polls[0])
+        self.assertIn("--push", polls[0])
+        self.assertIn("-C", polls[0])
+
+    def test_board_without_such_rows_stays_offline(self):
+        # Пустая доска и доска без строк, ждущих автора, в сеть не ходят: ни
+        # одного вызова, ни одной строки отчёта.
+        self.board_with([PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                     "DK-901", "DK-901")])
+        a = self.Answers(self.verdict())
+        self.assertEqual(self.poll(a), [])
+        self.assertEqual(a.calls, [], "тик сходил в трекер без повода: %s" % a.calls)
+
+    def test_skipped_row_is_quiet(self):
+        # Шаг опроса держит сама команда доски, тик её ответ только печатает:
+        # ни второго круга, ни зова человека на пропуске не бывает.
+        self.waiting_row()
+        a = self.Answers(self.verdict(skipped=True, lines=["опрошен 2м назад, шаг 5м ещё не вышел"]))
+        lines = self.poll(a)
+        self.assertEqual(a.argv_with("round"), [])
+        self.assertEqual(a.argv_with("notify.py"), [])
+        self.assertIn("шаг 5м", " ".join(lines))
+
+    def test_silence_calls_human_once(self):
+        # Молчание дольше порога это зов человеку. Повтор держит команда доски
+        # (отметка «окликнут»), и второй вердикт без признака молчания тик
+        # проходит молча.
+        self.waiting_row()
+        a = self.Answers(self.verdict(silence=True, noise=True,
+                                      lines=["автор молчит 25ч (порог 24ч)"]))
+        self.poll(a)
+        self.assertEqual(len(a.argv_with("notify.py")), 1, "человека не позвали: %s" % a.calls)
+        b = self.Answers(self.verdict(lines=["автор молчит, парковка стоит"]))
+        self.poll(b)
+        self.assertEqual(b.argv_with("notify.py"), [], "о том же молчании позвали второй раз")
+
+    def test_merged_mr_with_open_issues_shouts(self):
+        # Слитый MR с открытыми блокирующими это зов человеку, закрытый молча.
+        self.waiting_row()
+        a = self.Answers(self.verdict(fate="слит", noise=True,
+                                      lines=["MR слит без апрува ревью, строка ревью закрывается"]))
+        self.poll(a)
+        self.assertEqual(len(a.argv_with("notify.py")), 1, "молчание на слитом MR: %s" % a.calls)
+        b = self.Answers(self.verdict(fate="закрыт", lines=["MR закрыт, строка ревью закрывается"]))
+        self.poll(b)
+        self.assertEqual(b.argv_with("notify.py"), [], "лишний зов на закрытом MR: %s" % b.calls)
+
+    def test_window_without_dashboard_calls_human(self):
+        # Дашборда на машине нет, будить второй круг некому: человек узнаёт об
+        # ответе автора уведомлением, а пометку ему покажет taskctl list.
+        self.waiting_row()
+        a = self.Answers(self.verdict(events=["реплика автора в треде d1"]))
+        lines = watch.review_poll(str(self.proj), self.now, a, TASKCTL, "")
+        self.assertEqual(len(a.argv_with("notify.py")), 1, "человека не позвали: %s" % a.calls)
+        self.assertIn("бинаря dashboard нет", " ".join(lines))
+
+    def test_broken_verdict_is_reported(self):
+        # Вердикт не разобрался: тик говорит об этом строкой, а не падает.
+        self.waiting_row()
+        a = self.Answers("не json вовсе")
+        lines = self.poll(a)
+        self.assertIn("вердикт опроса не разобрался", " ".join(lines))
+        self.assertEqual(a.argv_with("round"), [])
 
 
 if __name__ == "__main__":

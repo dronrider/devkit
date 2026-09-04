@@ -72,8 +72,15 @@ in-progress`. Будит сторожок и только он, а будить 
 с прогнанным smoke и непустым разделом «Проверка» доходит до Done без живой
 сессии, а тех, кто из Check ждёт человека, тик не трогает вовсе. Отбор идёт
 вердиктом `taskctl closable`, закрытие командой `taskctl close`.
+
+Тем же тиком идёт опрос тредов чужого ревью (LLD DK-756, решения 5, 6, 7 и 8):
+строку в Blocked с причиной «автор: ...» опрашивает `taskctl review poll`, а
+тик по его вердикту заказывает второй круг командой `dashboard round` и зовёт
+человека на молчание автора и на слитый поверх замечаний MR. Доска без таких
+строк в трекер не ходит вовсе.
 """
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -149,6 +156,10 @@ CLOSABLE_ID = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
 # (LLD DK-400, решение 2): только такую строку будит лежащий в разговоре ответ,
 # «окружение:» и проза ждут своего молча.
 PARKED = "[блок: вопрос:"
+# Причина блока «автор:» паркует строку чужого ревью, ждущую ответа коллеги в
+# тредах MR (LLD DK-756, решение 5): такую строку тик опрашивает через API
+# трекера, а не ищет ей ответ в разговоре.
+REVIEW_PARKED = "[блок: автор:"
 # Вход разговора задачи и признак ожидания рядом с ним. Прежняя пара DK-440
 # (.devkit/mail, task-<ID>.inbox) читается наравне с новой один выпуск: ответ,
 # написанный до выката, обязан разбудить задачу так же, как написанный после.
@@ -760,6 +771,109 @@ def close_agent(root, call=None, taskctl=None):
     return lines
 
 
+# -- опрос тредов чужого ревью ------------------------------------------------
+
+def review_rows(root):
+    """Строки ревью корня, ждущие ответа автора: список ID. Отбор идёт по
+    машинной причине парковки «автор:», как пробуждение идёт по «вопрос:»
+    (LLD DK-400, решение 2; LLD DK-756, решение 5). Остальные парковки опрос
+    не трогает, и доска без таких строк в сеть не ходит вовсе."""
+    return section_rows(root, BLOCKED, REVIEW_PARKED)
+
+
+def review_round(root, tid, call=None, dashboard=None):
+    """Второй круг по строке: заказ уходит в живую сессию задачи, а без неё
+    поднимается новая. Обе дороги держит `dashboard round`, та же команда, что
+    поднимает работу с экрана: живые сессии, подписки и права машинного контура
+    живут у дашборда, и вторая копия этих правил в питоне разошлась бы с первой
+    на первой правке.
+
+    Возврат это строка отчёта и признак, что второй круг начат. Не начатый
+    круг это повод позвать человека: реплика автора уже лежит в MR, и молчание
+    тут неотличимо от штатной работы."""
+    call = subprocess.run if call is None else call
+    bin = devkit_bin("dashboard") if dashboard is None else dashboard
+    if not bin:
+        return ("задача %s в %s: бинаря dashboard нет ни в PATH, ни в каталогах релиза: "
+                "второй круг начинает человек" % (tid, root)), False
+    try:
+        p = call([bin, "round", "-C", root, tid],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        return ("задача %s в %s: второй круг не начат, %s" % (tid, root, e)), False
+    text = " ".join((p.stdout or "").split())
+    if p.returncode != 0:
+        return ("задача %s в %s: второй круг не начат, dashboard round отказал с кодом %d: %s"
+                % (tid, root, p.returncode, text)), False
+    return ("задача %s в %s: %s" % (tid, root, text)), True
+
+
+def review_poll(root, now, call=None, taskctl=None, dashboard=None):
+    """Опрос тредов чужого MR по строкам, ждущим автора. Возврат это строки
+    отчёта, как у пробуждения.
+
+    Ходит в трекер не тик, а `taskctl review poll <ID> --json`: адрес MR,
+    id тредов, шаг опроса и порог молчания лежат в журнале ревью и в
+    `.devkit/review.conf`, туда же уезжает пометка строки. Тику остаётся то,
+    чего доска не знает: разбудить второй круг и позвать человека."""
+    call = subprocess.run if call is None else call
+    bin = taskctl_bin() if taskctl is None else taskctl
+    rows = review_rows(root)
+    if not rows:
+        return []
+    if not bin:
+        return ["корень %s: строки ревью ждут автора (%d), а бинаря taskctl нет ни в PATH, "
+                "ни в каталогах релиза: треды не опрошены" % (root, len(rows))]
+    lines = []
+    for tid in rows:
+        try:
+            p = call([bin, "-C", root, "review", "poll", tid, "--json",
+                      "-m", "docs(tasks): %s опрос тредов MR" % tid, "--push"],
+                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        except OSError as e:
+            lines.append("задача %s в %s: опрос тредов не вышел, %s" % (tid, root, e))
+            continue
+        out = (p.stdout or "").strip()
+        if p.returncode != 0:
+            lines.append("задача %s в %s: taskctl review poll отказал с кодом %d: %s"
+                         % (tid, root, p.returncode, " ".join(out.split())))
+            continue
+        try:
+            verdict = json.loads(out)
+        except ValueError:
+            lines.append("задача %s в %s: вердикт опроса не разобрался: %s"
+                         % (tid, root, " ".join(out.split())))
+            continue
+        lines += ["задача %s в %s: %s" % (tid, root, ln) for ln in verdict.get("lines") or []]
+        lines += review_act(root, tid, verdict, call, dashboard)
+    return lines
+
+
+def review_act(root, tid, verdict, call, dashboard):
+    """Что тик делает с вердиктом опроса: будит второй круг, зовёт человека
+    либо молчит. Судьбу строки и пометки правит сама команда доски, тику
+    остаётся то, что живёт вне доски."""
+    lines = []
+    if verdict.get("events"):
+        line, started = review_round(root, tid, call, dashboard)
+        lines.append(line)
+        if not started:
+            lines.append(shout("%s: автор ответил в тредах MR" % tid,
+                               "; ".join(verdict["events"]) + ". Второй круг начать некому: " + line,
+                               root, call, tid))
+        return lines
+    if verdict.get("silence"):
+        lines.append(shout("%s: автор молчит" % tid,
+                           "Ответа в тредах MR нет дольше порога, пора потолкать коллегу.",
+                           root, call, tid))
+        return lines
+    if verdict.get("fate") and verdict.get("noise"):
+        lines.append(shout("%s: MR слит поверх замечаний" % tid,
+                           "MR слит, а блокирующие замечания ревью остались открытыми.",
+                           root, call, tid))
+    return lines
+
+
 def wake(root, now, call=None, taskctl=None, hook=LOAD_HOOK):
     """Будит припаркованные вопросом строки корня с лежащим ответом. Возврат
     это строки отчёта, по одной на будимость и итог на корень: тик молчит о
@@ -1143,6 +1257,9 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
             for cline in close_agent(root, timed(root), taskctl):
                 out.write(cline + "\n")
                 log_line(cline, home)
+            for rline in review_poll(root, now, timed(root), taskctl, dashboard):
+                out.write(rline + "\n")
+                log_line(rline, home)
     # Разговор задачи живёт и вне цикла цели, поэтому корни задач обходятся
     # тем же порядком: пробуждение ответом и страховка брошенного ожидания не
     # спрашивают, ведут ли задачу целью.
@@ -1152,7 +1269,8 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         swept.add(root)
         for line in (wake(root, now, timed(root), taskctl)
                      + park_stale(root, now, timed(root), taskctl, home=home)
-                     + close_agent(root, timed(root), taskctl)):
+                     + close_agent(root, timed(root), taskctl)
+                     + review_poll(root, now, timed(root), taskctl, dashboard)):
             out.write(line + "\n")
             log_line(line, home)
     # Разлив идёт тем же множеством корней отдельным проходом: событие

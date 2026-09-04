@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -264,21 +265,35 @@ func usageEntry(t *testing.T, name string) string {
 	return strings.Join(lines[start:end], "\n")
 }
 
-// TestUsageMatchesFlagSet: каждый флаг, объявленный у подкоманды add и set,
-// назван в её блоке шапки. Общие -C, -m и --push описаны абзацем ниже,
-// в блок команды они не входят.
+// usageFlagToken ищет упоминания флагов в блоке шапки (--имя), чтобы поймать
+// не только пропущенный флаг, но и обратное: справка называет флаг, которого
+// у команды больше нет (DK-715, --wait ушёл из askFlags, справка отстала).
+var usageFlagToken = regexp.MustCompile(`--([a-zA-Z][a-zA-Z0-9-]*)`)
+
+// TestUsageMatchesFlagSet: каждый флаг, объявленный у подкоманды, назван в её
+// блоке шапки. Общие -C, -m и --push описаны абзацем ниже, в блок команды они
+// не входят. У ask и draft ask сверка ещё и обратная: блок шапки не должен
+// называть флаг, которого нет в askFlags, иначе устаревшая справка (как
+// [--wait N] после ухода флага) не поймается.
 func TestUsageMatchesFlagSet(t *testing.T) {
 	common := map[string]bool{"C": true, "m": true, "push": true}
-	sets := map[string]func(*flag.FlagSet){
-		"add": func(fs *flag.FlagSet) { addFlags(fs, &AddParams{}) },
-		"set": func(fs *flag.FlagSet) { setFlags(fs, &SetParams{}) },
+	sets := map[string]struct {
+		declare func(*flag.FlagSet)
+		strict  bool
+	}{
+		"add":       {declare: func(fs *flag.FlagSet) { addFlags(fs, &AddParams{}) }},
+		"set":       {declare: func(fs *flag.FlagSet) { setFlags(fs, &SetParams{}) }},
+		"ask":       {declare: func(fs *flag.FlagSet) { askFlags(fs, &AskParams{}) }, strict: true},
+		"draft ask": {declare: func(fs *flag.FlagSet) { askFlags(fs, &AskParams{}) }, strict: true},
 	}
-	for name, declare := range sets {
+	for name, set := range sets {
 		t.Run(name, func(t *testing.T) {
 			fs := flag.NewFlagSet(name, flag.ContinueOnError)
-			declare(fs)
+			set.declare(fs)
 			entry := usageEntry(t, name)
+			declared := map[string]bool{}
 			fs.VisitAll(func(f *flag.Flag) {
+				declared[f.Name] = true
 				if common[f.Name] {
 					return
 				}
@@ -286,6 +301,15 @@ func TestUsageMatchesFlagSet(t *testing.T) {
 					t.Errorf("%s: флаг --%s объявлен, но в блоке шапки его нет:\n%s", name, f.Name, entry)
 				}
 			})
+			if !set.strict {
+				return
+			}
+			for _, m := range usageFlagToken.FindAllStringSubmatch(entry, -1) {
+				if common[m[1]] || declared[m[1]] {
+					continue
+				}
+				t.Errorf("%s: блок шапки называет --%s, а такого флага у команды нет:\n%s", name, m[1], entry)
+			}
 		})
 	}
 }

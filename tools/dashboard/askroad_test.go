@@ -293,3 +293,68 @@ func TestAskQuietBlamesParseAfterNewPrompt(t *testing.T) {
 		t.Errorf("новый вопрос клиента списан на прошлый ответ панели: %s", line)
 	}
 }
+
+// Замечание ревью DK-695: время в журнале уведомителя пишется до секунды, и два
+// вопроса разрешения в одну секунду дают две дословно одинаковых строки. По
+// голому тексту отметка тогда не менялась, и новый вопрос молча прятался за
+// старым ответом. Отметка считает повторы строки, и близнец её сдвигает.
+func TestAskQuietBlamesParseAfterTwinPrompt(t *testing.T) {
+	now := time.Date(2026, 9, 1, 14, 15, 44, 0, time.Local)
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	e, c, lc := askRoadEnv(t, sid, "XR-1", now)
+	askRoadPane(t, e, " Чинить сейчас?\n\n \u276f 1. Починить сейчас\n   2. Отложить\n\n"+
+		" Enter to confirm \u00b7 Esc to cancel\n")
+
+	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/ask"
+	resp := doReq(t, c, "POST", at, `{"option": 1}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("ответ на вопрос: %d %s", resp.StatusCode, text)
+	}
+	// Второй вопрос той же секундой: строка байт в байт та же, событие новое.
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid), permissionNotify(sid)})
+	e.s.now = func() time.Time { return now.Add(5*time.Minute + 50*time.Second) }
+	askRoadPane(t, e, " Работаю дальше.\n\n\u276f \n")
+	body(t, doReq(t, c, "GET", at, ""))
+
+	line := askRoadLine(t, lc)
+	if !strings.Contains(line, "разбор надо чинить") {
+		t.Errorf("второй вопрос той же секундой спрятан за прошлым ответом панели: %s", line)
+	}
+}
+
+// Отметка это счёт повторов и сама строка. Близнец идёт со своим счётом, а
+// усушка журнала счёт занижает, и отметка расходится: ответ панели перестаёт
+// объяснять пустой снимок, строка зовёт чинить разбор. Сторона безопасная,
+// спрятанный вопрос дороже лишней жалобы.
+func TestNotifyMarkCountsTwins(t *testing.T) {
+	one := "2026-09-01T14:15:44 сессия eeee5555 повод permission_prompt"
+	two := "2026-09-01T14:15:45 сессия eeee5555 повод permission_prompt"
+	first := notifyMark([]string{two, one}, one)
+	twin := notifyMark([]string{two, one, one}, one)
+	if first == twin {
+		t.Fatalf("близнец получил ту же отметку, что и первая строка: %q", first)
+	}
+	if got := notifyMark([]string{one, one}, one); got != twin {
+		t.Errorf("усушенный журнал дал отметку %q, а полный %q: счёт должен считаться одинаково", got, twin)
+	}
+	if strings.Contains(first, "|") != true || !strings.HasSuffix(first, one) {
+		t.Errorf("отметка потеряла саму строку: %q", first)
+	}
+}
+
+// Журнала уведомителя нет вовсе: липкости не на чем стоять, и строка в журнал
+// дашборда не идёт. Поведение тут прежнее, правка отметки его не трогает.
+func TestAskQuietSilentWithoutNotifyLog(t *testing.T) {
+	now := time.Date(2026, 9, 1, 14, 15, 44, 0, time.Local)
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	e, c, lc := askRoadEnv(t, sid, "XR-1", now)
+	writeNotifyLog(t, e.home, nil)
+	askRoadPane(t, e, " Работаю дальше.\n\n\u276f \n")
+
+	body(t, doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats/"+sid+"/ask", ""))
+	for _, ln := range lc.lines {
+		if strings.Contains(ln, "похоже ждёт ответа") {
+			t.Fatalf("без журнала уведомителя ушла жалоба на молчащий вопрос: %s", ln)
+		}
+	}
+}

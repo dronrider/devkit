@@ -910,9 +910,9 @@ func TestDraftWaitingFromAsk(t *testing.T) {
 		`{"text": "ссылка на черновик из чата не открывается", "prio": "mid"}`).Body.Close()
 
 	order := draftsResp(t, c, e)["drafts"].([]any)[0].(map[string]any)["order"]
-	if said, _ := order.(string); !strings.Contains(said, "taskctl ask XR-005") ||
-		!strings.Contains(said, "вопросом заход не кончай") {
-		t.Errorf("заказ груминга не велит спрашивать в разговоре: %v", order)
+	if said, _ := order.(string); !strings.Contains(said, "AskUserQuestion") ||
+		!strings.Contains(said, "хук") {
+		t.Errorf("заказ груминга не велит спрашивать штатным AskUserQuestion: %v", order)
 	}
 
 	// Признак кладёт taskctl ask; тут он пишется тем же пакетом, что и у

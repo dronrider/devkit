@@ -1206,8 +1206,8 @@ func TestChatStopDropEndsLiveSession(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(text, `"way":"gone"`) {
 		t.Errorf("прерывание хода в снятой сессии отбито отказом: %d %s", resp.StatusCode, text)
 	}
-	// Разговор, который дашборд не поднимал вовсе, это другой случай: там
-	// снимать и правда нечего, и сказано об этом отказом.
+	// Разговор, который дашборд не поднимал вовсе, но который идёт сейчас в
+	// чужом терминале: транскрипт свеж, и сказано об этом отказом.
 	alien := "cccc3333-3333-4333-8333-333333333333"
 	writeSession(t, e.home, e.proj, "", alien, plainTalk, time.Now())
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+alien+"/stop", `{"drop": true}`)
@@ -1217,6 +1217,29 @@ func TestChatStopDropEndsLiveSession(t *testing.T) {
 	}
 	if !strings.Contains(text, "поднимал не дашборд") {
 		t.Errorf("отказ чужому окну не назвал причины: %s", text)
+	}
+
+	// Мёртвый разговор, который дашборд не поднимал вовсе: окна нет ни у нас,
+	// ни у кого. Живой случай: рабочая сессия из терминала, вставшая на словах
+	// про истёкший вход. Перезапуск после входа обязан пройти резюмом, иначе
+	// чинить такой чат неоткуда (жалоба пользователя: вход прошёл, а дашборд
+	// отвечал «не в нашей tmux» и разговор оставался разлогиненным).
+	dead := "dddd4444-4444-4444-8444-444444444444"
+	writeSession(t, e.home, e.proj, "", dead, plainTalk, time.Now().Add(-time.Hour))
+	before := readFile(t, tmuxLog)
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+dead+"/stop", `{"drop": true}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("снятие мёртвого разговора без окна отбито: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"way":"gone"`) {
+		t.Errorf("исход мёртвого разговора не назван сделанным делом: %s", text)
+	}
+	if strings.Contains(text, "error") || strings.Contains(text, "поднимал не дашборд") {
+		t.Errorf("мёртвый разговор сказан словами отказа: %s", text)
+	}
+	if got := readFile(t, tmuxLog); got != before {
+		t.Errorf("снимать было нечего, а в tmux пошли команды: %s", got)
 	}
 }
 

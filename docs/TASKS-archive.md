@@ -437,3 +437,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-763 | Отказ рубежа пуша не печатает агенту обход через DEVKIT_PUSH_OK | bug | P1 | 2026-09-04 | [tasks/archive/2026/DK-763.md](tasks/archive/2026/DK-763.md) |
 | DK-731 | Ревью оставляет ходы и минуты, review stats сводит их по уровням против бюджета | task | P2 | 2026-09-04 | [tasks/archive/2026/DK-731.md](tasks/archive/2026/DK-731.md) |
 | DK-772 | Строка с ! из чата отдаёт sudo и ssh пароль через askpass дашборда [приёмка: mixed] | task | P1 | 2026-09-04 | [tasks/archive/2026/DK-772.md](tasks/archive/2026/DK-772.md) |
+| DK-759 | Тик опрашивает треды MR, будит второй круг и закрывает строку по судьбе MR [приёмка: mixed] | task | P2 | 2026-09-04 | [tasks/archive/2026/DK-759.md](tasks/archive/2026/DK-759.md) |

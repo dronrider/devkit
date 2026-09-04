@@ -264,6 +264,12 @@ func rowNoteParts(root, sect string, r *Row, times map[int]int64, clean bool) []
 	if a := ageLabel(times, r.LineIdx, clean); a != "" {
 		notes = append(notes, a)
 	}
+	// Пометка строки ревью чужого MR: её ведёт опрос тредов, и без неё
+	// «автор ответил» и «MR закрыт» видны только тому, кто откроет журнал
+	// ревью (LLD DK-756, решения 5 и 7).
+	if m := reviewMark(root, r.ID); m != "" {
+		notes = append(notes, m)
+	}
 	return notes
 }
 

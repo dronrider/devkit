@@ -38,6 +38,12 @@ type reviewConf struct {
 	Publish  string
 	PauseMin time.Duration
 	PauseMax time.Duration
+	// Poll это шаг опроса тредов сторожком, Silence порог молчания автора,
+	// Worklog разрешение писать время ревью в чужой тикет (LLD DK-756,
+	// решения 5 и 8).
+	Poll    time.Duration
+	Silence time.Duration
+	Worklog bool
 	// Budgets это бюджет ходов и минут первого круга по уровню (1-3): ключ
 	// level1..level3. Уровня 0 в конфиге нет, ревью этого уровня бюджет не
 	// считает. Пустая карта значит, что конфиг ключей уровня не назвал.
@@ -77,10 +83,16 @@ func parseLevelBudget(val string) (levelBudget, error) {
 const (
 	defaultPauseMin = 20 * time.Second
 	defaultPauseMax = 60 * time.Second
+	// Шаг опроса и порог молчания оттуда же: пять минут это шаг самого
+	// сторожка, чаще ходить в чужой трекер незачем, а сутки молчания это
+	// повод потолкать коллегу, а не бросить ревью.
+	defaultPoll    = 5 * time.Minute
+	defaultSilence = 24 * time.Hour
 )
 
 func loadReviewConf(root string) (reviewConf, error) {
-	c := reviewConf{Publish: publishConfirm, PauseMin: defaultPauseMin, PauseMax: defaultPauseMax}
+	c := reviewConf{Publish: publishConfirm, PauseMin: defaultPauseMin, PauseMax: defaultPauseMax,
+		Poll: defaultPoll, Silence: defaultSilence}
 	pairs, err := kvconf.Read(filepath.Join(root, filepath.FromSlash(reviewConfRel)))
 	if err != nil {
 		return c, err
@@ -100,6 +112,27 @@ func loadReviewConf(root string) (reviewConf, error) {
 				return c, fmt.Errorf("%s: %v", reviewConfRel, err)
 			}
 			c.PauseMin, c.PauseMax = min, max
+		case "poll", "silence":
+			span, err := parseSpan(p.Value)
+			if err != nil {
+				return c, fmt.Errorf("%s: %s = %v", reviewConfRel, p.Key, err)
+			}
+			if p.Key == "poll" {
+				c.Poll = span
+			} else {
+				c.Silence = span
+			}
+		case "worklog":
+			// Ворклог в чужой тикет это договорённость с командой проекта, и
+			// опечатка в ключе не должна оборачиваться записью времени коллеге.
+			switch p.Value {
+			case "on":
+				c.Worklog = true
+			case "off":
+				c.Worklog = false
+			default:
+				return c, fmt.Errorf("%s: worklog = %q не читается, жду on или off", reviewConfRel, p.Value)
+			}
 		default:
 			if m := levelKeyRe.FindStringSubmatch(p.Key); m != nil {
 				lvl, _ := strconv.Atoi(m[1])
@@ -130,6 +163,23 @@ func parsePause(val string) (min, max time.Duration, err error) {
 		return 0, 0, fmt.Errorf("pause = %q не читается, жду секунды числом (0) или вилкой (20-60)", val)
 	}
 	return time.Duration(a) * time.Second, time.Duration(b) * time.Second, nil
+}
+
+// spanRe узнаёт срок вида «5m», «12h», «1d». Суток у time.ParseDuration нет, а
+// порог молчания в конфиге пишется именно сутками, поэтому разбор свой.
+var spanRe = regexp.MustCompile(`^(\d+)([smhd])$`)
+
+func parseSpan(val string) (time.Duration, error) {
+	m := spanRe.FindStringSubmatch(strings.TrimSpace(val))
+	if m == nil {
+		return 0, fmt.Errorf("%q не читается, жду срок вида 30s, 5m, 12h или 1d", val)
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%q не читается, жду срок вида 30s, 5m, 12h или 1d", val)
+	}
+	unit := map[string]time.Duration{"s": time.Second, "m": time.Minute, "h": time.Hour, "d": 24 * time.Hour}[m[2]]
+	return time.Duration(n) * unit, nil
 }
 
 func (c reviewConf) pause() time.Duration {

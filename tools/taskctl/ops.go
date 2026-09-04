@@ -72,8 +72,11 @@ func checkReason(reason string) error {
 
 // parkPrefixes это первые слова машинных причин blocked (LLD DK-400, решение 2):
 // «вопрос:» паркует задачу вопросом человека, и по ней строку будит сторожок
-// devkitctl watch, «окружение:» ждёт неготовой среды задачи.
-var parkPrefixes = []string{"вопрос", "окружение"}
+// devkitctl watch, «окружение:» ждёт неготовой среды задачи. Ревью чужого MR
+// добавило к ним ещё два (LLD DK-756, решения 5 и 6): «автор:» ждёт ответа
+// коллеги в тредах, и такую строку сторожок опрашивает через API трекера,
+// «спор:» это стоп на отказе автора чинить блокирующее, и его снимает человек.
+var parkPrefixes = []string{"вопрос", "окружение", "автор", "спор"}
 
 // checkParkPrefix отбивает сломанный машинный префикс. «вопрос :», «вопрос -»,
 // заглавная форма и ведущий пробел после неаккуратной вставки разбирались бы
@@ -883,10 +886,12 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	// решение 2): оставленный в docs/tasks, он пережил бы закрытую строку и
 	// висел бы там без хозяина.
 	journal := reviewDraftAbs(root, p.ID)
+	journalMoved := ""
 	if _, err := os.Stat(journal); err == nil {
 		if _, err := gitMv(root, journal, filepath.Join(root, "docs", "tasks", "archive", year, p.ID+".review.md")); err != nil {
 			return "", err
 		}
+		journalMoved = filepath.Join("docs", "tasks", "archive", year, p.ID+".review.md")
 	}
 	linkCell := p.Link
 	if linkCell == "" {
@@ -950,6 +955,12 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	paths := []string{filepath.Join("docs", "TASKS.md"), filepath.Join("docs", "TASKS-archive.md")}
 	if moved != "" {
 		paths = append(paths, filepath.Join("docs", "tasks", p.ID+".md"), filepath.Join("docs", moved))
+	}
+	// Журнал чужого ревью едет в коммит закрытия вместе с файлом задачи: без
+	// своего пути в pathspec переименование осталось бы в индексе, и дерево
+	// доски стояло бы грязным до чужого коммита.
+	if journalMoved != "" {
+		paths = append(paths, reviewDraftRel(p.ID), journalMoved)
 	}
 	paths = append(paths, changedFiles...)
 	tail, err := p.Commit.apply(root, paths)

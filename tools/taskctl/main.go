@@ -205,6 +205,19 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               publish = confirm | auto из
                                               .devkit/review.conf решает,
                                               одобряются ли черновики сами
+  review poll <ID> [--json]                   опросить треды и MR: реплика
+                                              автора, резолв треда и новый
+                                              коммит снимают парковку «автор:»
+                                              и ставят пометку, слитый или
+                                              закрытый MR закрывает строку;
+                                              шаг poll и порог silence из
+                                              .devkit/review.conf, зовёт
+                                              команду сторожок devkitctl watch
+  review approve-mr <ID> [--yes]              поставить апрув в чужом MR:
+                                              открытое блокирующее замечание
+                                              отбивает апрув при любом publish,
+                                              а при publish = confirm нужен
+                                              --yes как слово человека
 
 В репозитории без доски (MR чужого трекера, ветка без трекера) level, clean и
 show работают по git-заметке на HEAD (ref review): ID тут любой ярлык правки,
@@ -584,7 +597,7 @@ func main() {
 		msg, err = cmdElapsed(root(*dir), pos[0])
 	case "review":
 		if len(args) < 2 {
-			fail(fmt.Errorf("жду: review level|add|clean|resolve|show|stats|draft|approve|drop|publish ..."))
+			fail(fmt.Errorf("жду: review level|add|clean|resolve|show|stats|draft|approve|drop|publish|poll|approve-mr ..."))
 		}
 		switch args[1] {
 		case "add":
@@ -708,13 +721,31 @@ func main() {
 			pos := frame.ParseArgs(fs, args[2:])
 			needArgs(pos, 1, 1, "review publish <ID>")
 			msg, err = cmdReviewPublish(root(*dir), pos[0], c)
+		case "poll":
+			fs := flag.NewFlagSet("review poll", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			asJSON := fs.Bool("json", false, "машинный вердикт для сторожка")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "review poll <ID> [--json]")
+			msg, err = cmdReviewPoll(root(*dir), pos[0], time.Now(), "", *asJSON, c)
+		case "approve-mr":
+			fs := flag.NewFlagSet("review approve-mr", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			yes := fs.Bool("yes", false, "слово человека при publish = confirm")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "review approve-mr <ID> [--yes]")
+			msg, err = cmdReviewApproveMR(root(*dir), pos[0], *yes, c)
 		case "stats":
 			fs := flag.NewFlagSet("review stats", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			needArgs(frame.ParseArgs(fs, args[2:]), 0, 0, "review stats")
 			msg, err = cmdReviewStats(root(*dir))
 		default:
-			fail(fmt.Errorf("неизвестная подкоманда review %q, жду level / add / clean / resolve / show / stats / draft / approve / drop / publish", args[1]))
+			fail(fmt.Errorf("неизвестная подкоманда review %q, жду level / add / clean / resolve / show / stats / draft / approve / drop / publish / poll / approve-mr", args[1]))
 		}
 	case "close":
 		fs := flag.NewFlagSet("close", flag.ExitOnError)

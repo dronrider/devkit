@@ -53,7 +53,11 @@ type reviewBlock struct {
 	Label  string
 	State  string
 	Thread string // id треда, вписывается публикацией
-	Text   string
+	// Note это приписка к состоянию: «снято, тред 42, MR закрыт». Судьба MR
+	// снимает опубликованные блоки скопом (LLD DK-756, решение 7), и без
+	// приписки снятое по своей воле не отличить от снятого закрытым MR.
+	Note string
+	Text string
 }
 
 // published говорит, ушёл ли блок в MR: такой блок повторной публикацией не
@@ -61,11 +65,15 @@ type reviewBlock struct {
 func (b reviewBlock) published() bool { return b.State == reviewStatePublished }
 
 type reviewDraft struct {
-	path   string
-	id     string
-	MR     string
-	Sha    string
-	Level  string
+	path  string
+	id    string
+	MR    string
+	Sha   string
+	Level string
+	// Mark это пометка строки ревью: её печатают `taskctl list` и `show` под
+	// строкой, и по ней видно, чего ждёт ревью, не открывая файла («автор
+	// ответил», «автор молчит с 2026-09-02», «MR закрыт»).
+	Mark   string
 	Blocks []reviewBlock
 }
 
@@ -86,6 +94,9 @@ func (d *reviewDraft) render() string {
 	fmt.Fprintf(&b, "- MR: %s\n", d.MR)
 	fmt.Fprintf(&b, "- ревью до: %s\n", d.Sha)
 	fmt.Fprintf(&b, "- уровень: %s\n", d.Level)
+	if d.Mark != "" {
+		fmt.Fprintf(&b, "- пометка: %s\n", d.Mark)
+	}
 	for i, bl := range d.Blocks {
 		fmt.Fprintf(&b, "\n## Замечание %d\n\n", i+1)
 		if bl.File != "" {
@@ -98,6 +109,9 @@ func (d *reviewDraft) render() string {
 		state := bl.State
 		if bl.Thread != "" {
 			state += ", тред " + bl.Thread
+		}
+		if bl.Note != "" {
+			state += ", " + bl.Note
 		}
 		fmt.Fprintf(&b, "- состояние: %s\n\n%s\n", state, bl.Text)
 	}
@@ -119,6 +133,26 @@ func cutReviewField(line string) (key, val string, ok bool) {
 		return strings.TrimSpace(strings.TrimSuffix(body, ":")), "", true
 	}
 	return "", "", false
+}
+
+// cutReviewState разбирает значение поля «состояние»: само состояние, id треда
+// и приписку. Запятая делит части, «тред <id>» узнаётся по первому слову, а
+// всё прочее это приписка судьбы («MR закрыт»). Порядок частей у записи свой,
+// но разбор его не сторожит: файл правят руками.
+func cutReviewState(val string) (state, thread, note string) {
+	var notes []string
+	for i, part := range strings.Split(val, ",") {
+		part = strings.TrimSpace(part)
+		switch {
+		case i == 0:
+			state = part
+		case strings.HasPrefix(part, "тред "):
+			thread = strings.TrimSpace(strings.TrimPrefix(part, "тред "))
+		case part != "":
+			notes = append(notes, part)
+		}
+	}
+	return state, thread, strings.Join(notes, ", ")
 }
 
 func oneOfReview(val string, set []string) bool {
@@ -159,8 +193,10 @@ func loadReviewDraft(path, id string) (*reviewDraft, error) {
 			d.Sha = val
 		case "уровень":
 			d.Level = val
+		case "пометка":
+			d.Mark = val
 		default:
-			return nil, fmt.Errorf("%s, шапка: ключ %q не из списка (MR, ревью до, уровень)", filepath.Base(path), key)
+			return nil, fmt.Errorf("%s, шапка: ключ %q не из списка (MR, ревью до, уровень, пометка)", filepath.Base(path), key)
 		}
 	}
 	for i < len(lines) {
@@ -197,11 +233,7 @@ func loadReviewDraft(path, id string) (*reviewDraft, error) {
 			case "метка":
 				bl.Label = val
 			case "состояние":
-				state, thread, _ := strings.Cut(val, ",")
-				bl.State = strings.TrimSpace(state)
-				if t := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(thread), "тред")); t != "" {
-					bl.Thread = t
-				}
+				bl.State, bl.Thread, bl.Note = cutReviewState(val)
 			default:
 				return nil, fmt.Errorf("%s, %s: ключ %q не из списка (файл, строка, метка, состояние)", filepath.Base(path), name, key)
 			}
@@ -284,6 +316,30 @@ func reviewHeadFromTask(root, id string) (mr, level, sha string) {
 		}
 	}
 	return mr, level, sha
+}
+
+// reviewMark отдаёт пометку строки ревью для печати доски. Файла замечаний у
+// обычной строки нет, и молчание тут норма, а не находка: битый файл тоже
+// молчит, о нём скажет любая команда ревью, а список доски ломать нечем.
+func reviewMark(root, id string) string {
+	d, err := loadReviewDraft(reviewDraftAbs(root, id), id)
+	if err != nil {
+		return ""
+	}
+	return d.Mark
+}
+
+// openIssues считает опубликованные блокирующие замечания: пока такое стоит,
+// апрув не ставится ни в каком режиме (LLD DK-756, решение 6), а слитый MR
+// поверх них это повод позвать человека (решение 7).
+func (d *reviewDraft) openIssues() int {
+	n := 0
+	for _, bl := range d.Blocks {
+		if bl.Label == reviewLabelIssue && bl.published() {
+			n++
+		}
+	}
+	return n
 }
 
 // normalizeReviewLabel принимает метку так, как её пишет человек: короткое

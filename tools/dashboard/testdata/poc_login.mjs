@@ -116,6 +116,10 @@ const stepOf = (what) => asked.findIndex((p) => p.endsWith(what));
   if (stepOf("/say") >= 0) fail("резюм пошёл поверх неснятой сессии: " + JSON.stringify(asked));
   const flash = dump(sandbox.document.getElementById("flashes"));
   if (!flash.includes("снимать")) fail("отказ снятия смолчал: " + flash);
+  // Вход к этому моменту принят, не вышел именно перезапуск: человеку сказана
+  // дорога (живой разговор возьмёт новый вход сам), а не только красный сбой.
+  if (!flash.includes("Вход принят")) fail("не сказано, что вход прошёл: " + flash);
+  if (!flash.includes("реплику ещё раз")) fail("не сказано, что делать дальше: " + flash);
   dropOK = true;
 }
 

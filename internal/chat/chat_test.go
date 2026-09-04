@@ -181,6 +181,54 @@ func TestDropAskTwice(t *testing.T) {
 	}
 }
 
+// Признак без срока (DK-715): хук PreToolUse кладёт вопрос агента без
+// дедлайна, и такой признак живёт до ответа, что бы ни показали часы.
+func TestAskForeverRoundTrip(t *testing.T) {
+	tree := t.TempDir()
+	want := Ask{Session: "aaa-1", Task: "XR-1",
+		Questions: []Question{{Text: "ставим поле или чип"}}}
+	if err := WriteAsk(tree, "task-XR-1", want); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(AskPath(tree, "task-XR-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := strings.SplitN(string(body), "\n", 2)[0]
+	if first != AskForever {
+		t.Fatalf("первой строкой признака без срока обязана стоять метка %q, а стоит %q", AskForever, first)
+	}
+	got, ok := ReadAsk(AskPath(tree, "task-XR-1"))
+	if !ok {
+		t.Fatal("признак без срока не разобрался")
+	}
+	if !got.Until.IsZero() {
+		t.Fatalf("срок обязан остаться нулевым, а стоит %v", got.Until)
+	}
+	if !got.Live(at()) || !got.Live(at().AddDate(10, 0, 0)) {
+		t.Fatal("признак без срока обязан жить и сегодня, и через десять лет")
+	}
+	if got.UnixUntil() != 0 {
+		t.Fatalf("срок на экран без дедлайна обязан быть 0, а стоит %d", got.UnixUntil())
+	}
+}
+
+// Признак с настоящим сроком живёт, пока не вышел, а после выхода мёртв: это
+// прежнее поведение, и новая метка «без срока» его не задевает.
+func TestAskLiveUntilExpiry(t *testing.T) {
+	a := Ask{Until: at()}
+	if !a.Live(at().Add(-time.Minute)) {
+		t.Fatal("до срока признак обязан быть живым")
+	}
+	if a.Live(at().Add(time.Minute)) {
+		t.Fatal("после срока признак обязан считаться мёртвым")
+	}
+	if a.UnixUntil() != at().Unix() {
+		t.Fatalf("срок на экран у настоящего дедлайна обязан быть unix-временем: %d != %d",
+			a.UnixUntil(), at().Unix())
+	}
+}
+
 func TestParsePack(t *testing.T) {
 	qs, err := ParsePack([]byte(`{"questions":[{"text":"так или эдак","options":[{"label":"так"}]}]}`))
 	if err != nil || len(qs) != 1 || qs[0].Options[0].Label != "так" {

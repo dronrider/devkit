@@ -324,11 +324,39 @@ func ParsePack(data []byte) ([]Question, error) {
 // задача и пачка вопросов. Срок стоит первой строкой не для красоты: по нему
 // подхват и сторожок узнают живое ожидание, читая одну строку, и старый
 // однострочный признак цели читается тем же разбором.
+//
+// Нулевой Until значит «без срока» (DK-715): вопрос агента, перехваченный
+// хуком PreToolUse, живёт до ответа, а не до часов, и панель прячет обратный
+// отсчёт. Признак цели и старые записи с настоящим сроком читаются тем же
+// полем: срок либо есть, либо признан вечным, третьего не дано.
 type Ask struct {
 	Until     time.Time
 	Session   string
 	Task      string
 	Questions []Question
+}
+
+// AskForever это метка «без срока» на месте стамп-строки: время нулевого
+// time.Time форматом Stamp читалось бы в разных часовых поясах по-разному
+// (год 1 в Local не всегда год 1 в UTC), а словесная метка разбирается
+// однозначно везде.
+const AskForever = "-"
+
+// Live отвечает, актуален ли признак ожидания на момент now. Без срока
+// ожидание живёт до ответа: часы ему не указ, а обратный отсчёт панель не
+// рисует вовсе.
+func (a Ask) Live(now time.Time) bool {
+	return a.Until.IsZero() || now.Before(a.Until)
+}
+
+// UnixUntil отдаёт срок в unix-секундах для экрана. Ноль значит «без срока»:
+// unix-секунды нулевого time.Time лежат в далёком прошлом и меткой не годятся,
+// а ноль клиент уже умеет читать как пропущенное поле (omitempty).
+func (a Ask) UnixUntil() int64 {
+	if a.Until.IsZero() {
+		return 0
+	}
+	return a.Until.Unix()
 }
 
 // Ключевые слова полей признака. Слова русские по тому же образцу, что у
@@ -340,7 +368,11 @@ const (
 
 // Text собирает тело признака.
 func (a Ask) Text() string {
-	out := []string{a.Until.Format(Stamp)}
+	until := AskForever
+	if !a.Until.IsZero() {
+		until = a.Until.Format(Stamp)
+	}
+	out := []string{until}
 	if a.Session != "" {
 		out = append(out, askSessionKey+a.Session)
 	}
@@ -364,11 +396,16 @@ func ParseAsk(text string) (Ask, bool) {
 	if len(lines) == 0 {
 		return a, false
 	}
-	until, err := time.ParseInLocation(Stamp, strings.TrimSpace(lines[0]), time.Local)
-	if err != nil {
-		return a, false
+	first := strings.TrimSpace(lines[0])
+	if first == AskForever {
+		a.Until = time.Time{}
+	} else {
+		until, err := time.ParseInLocation(Stamp, first, time.Local)
+		if err != nil {
+			return a, false
+		}
+		a.Until = until
 	}
-	a.Until = until
 	var body []string
 	for _, ln := range lines[1:] {
 		s := strings.TrimSpace(ln)

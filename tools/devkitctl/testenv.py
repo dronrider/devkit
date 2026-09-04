@@ -113,6 +113,8 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
 ]}, {"matcher": "Read", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-reread.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-longfile.py --hook"}
+]}, {"matcher": "AskUserQuestion", "hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/ask-panel.py --hook"}
 ]}], "SessionStart": [{"hooks": [
   {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/session-task.py --hook claude-code"},

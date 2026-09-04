@@ -616,6 +616,20 @@ class WakeTest(Stand):
         self.ask(self.proj, "DK-901", stamp(self.now - timedelta(minutes=2)))
         self.assertTrue(self.wake()[-1].endswith("разбужено 1"))
 
+    def test_wake_drops_the_stale_ask(self):
+        # Признак без срока (DK-715) не устареет сам: переживи он пробуждение,
+        # панель рисовала бы вопрос уже не ждущей строке. Пробуждение снимает
+        # признак само, той же уборкой, что и парковка.
+        d = Path(self.proj) / ".devkit" / "chat"
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / "task-DK-901.ask"
+        path.write_text("-\nзадача DK-901\n", encoding="utf-8")
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.said(self.proj, "DK-901")
+        self.assertTrue(self.wake()[-1].endswith("разбужено 1"))
+        self.assertFalse(path.exists(), "признак без срока пережил пробуждение")
+
     def test_answer_in_task_tree_wakes(self):
         # Разговор задачи лежит в её дереве ../<проект>-<id>, а не только в
         # корне: исполнитель спрашивает из своего дерева, и ответ кладётся туда
@@ -1132,6 +1146,23 @@ class ParkStaleTest(Stand):
         (d / ("task-%s.ask" % tid)).write_text("\n".join(body) + "\n", encoding="utf-8")
         return d / ("task-%s.ask" % tid)
 
+    def ask_forever(self, tid, age_seconds, session=""):
+        """Признак без срока (DK-715): первая строка это метка «без срока», а
+        не штамп, и возраст файла у него единственная мера, mtime сдвинут
+        руками."""
+        d = self.proj / ".devkit" / "chat"
+        d.mkdir(parents=True, exist_ok=True)
+        body = ["-"]
+        if session:
+            body.append("сессия " + session)
+        body.append("задача " + tid)
+        body.append('{"questions": [{"text": "нужна схема"}]}')
+        path = d / ("task-%s.ask" % tid)
+        path.write_text("\n".join(body) + "\n", encoding="utf-8")
+        when = (self.now - timedelta(seconds=age_seconds)).timestamp()
+        os.utime(str(path), (when, when))
+        return path
+
     def registry(self, sid, transcript_age_minutes):
         """Запись реестра чатов со свежим или протухшим транскриптом: по ней
         страховка меряет живость сессии."""
@@ -1224,6 +1255,40 @@ class ParkStaleTest(Stand):
         self.park()
         self.assertEqual(len(self.call.argv_with("move")), 1,
                          "признак в дереве задачи пропущен: %s" % self.call.calls)
+
+    def test_forever_ask_is_not_touched_while_young(self):
+        # Признак без срока (DK-715) не устареет сам никогда: молодой такой
+        # признак страховка не трогает, писатель мог просто ещё не успеть
+        # припарковать строку следом.
+        self.board_progress([PARK_ROW % ("DK-901", "Спрашивает", "DK-901", "DK-901")])
+        self.ask_forever("DK-901", 5, session="aaa-1")
+        self.assertEqual(self.park(), [])
+        self.assertEqual(self.call.calls, [])
+
+    def test_forever_ask_is_parked_once_orphaned(self):
+        # Признак без срока лежит дольше щедрого предела, а строка так и не
+        # припаркована и сессии за ней нет: писатель умер между записью
+        # признака и парковкой, и это тот самый брошенный ход, для которого
+        # страховка заведена.
+        self.board_progress([PARK_ROW % ("DK-901", "Спрашивает", "DK-901", "DK-901")])
+        path = self.ask_forever("DK-901", watch.ASK_ORPHAN_AGE + 60, session="aaa-1")
+        self.registry("aaa-1", 30)
+        lines = self.park()
+        moved = self.call.argv_with("move")
+        self.assertEqual(len(moved), 1, "брошенный признак без срока не припаркован: %s" % self.call.calls)
+        self.assertEqual(moved[0][moved[0].index("move"):moved[0].index("--reason")],
+                         ["move", "DK-901", "blocked"])
+        self.assertFalse(path.exists(), "признак остался лежать: следующий тик паркует повторно")
+
+    def test_forever_ask_with_live_session_keeps_the_row(self):
+        # Признак без срока залежался, но сессия за ним жива: убитого хода тут
+        # нет, и страховка молчит, как молчит она у признака со сроком.
+        self.board_progress([PARK_ROW % ("DK-901", "Спрашивает", "DK-901", "DK-901")])
+        self.ask_forever("DK-901", watch.ASK_ORPHAN_AGE + 60, session="aaa-1")
+        self.registry("aaa-1", 2)
+        lines = self.park()
+        self.assertEqual(self.call.calls, [])
+        self.assertIn("сессия aaa-1 жива", lines[0])
 
 
 class CloseAgentTest(Stand):

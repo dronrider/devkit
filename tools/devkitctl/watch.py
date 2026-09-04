@@ -165,6 +165,14 @@ REVIEW_PARKED = "[блок: автор:"
 # написанный до выката, обязан разбудить задачу так же, как написанный после.
 CHAT_DIRS = (("chat", "task-%s.in"), ("mail", "task-%s.inbox"))
 CHAT_ASK = "task-%s.ask"
+# Признак без срока (DK-715) не устаревает по сроку: панель держит его до
+# ответа, а не до часов, и `stale_ask` не может мерить его выходом за дедлайн,
+# которого у него нет. Страховке всё равно нужен предел на тот редкий случай,
+# когда писатель умер между записью признака и парковкой строки (узкое окно
+# внутри одного вызова `taskctl ask`): такая строка осталась бы в In progress
+# с висящим признаком до конца времён. Предел щедрый: живой вопрос решается
+# минутами, а не часами, а тик идёт много чаще этого предела.
+ASK_ORPHAN_AGE = 5 * 60
 # Реестр чатов задачи (LLD DK-430, решение 1): по нему страховка узнаёт сессию,
 # ведущую задачу, и путь её транскрипта.
 SESSIONS_LOG = "~/.devkit/sessions.log"
@@ -562,6 +570,21 @@ def lying_answer(root, task_id, now, hook=None):
     return None, addressed
 
 
+def drop_asks(root, task_id):
+    """Снимает все возможные признаки ожидания задачи, в обоих деревьях и в
+    обеих раскладках имён чата. Пробуждение отвечает и за эту уборку: признак
+    без срока (DK-715) не устаревает сам, и переживи он пробуждение, панель
+    рисовала бы вопрос уже не ждущей строке до второго вопроса или ручного
+    вмешательства."""
+    for base in (root, task_tree(root, task_id)):
+        for sub, _ in CHAT_DIRS:
+            path = os.path.join(base, ".devkit", sub, CHAT_ASK % task_id)
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
 def devkit_bin(name, which=None):
     """Путь бинаря devkit для вызовов тика. launchd даёт сторожку системный
     PATH без каталога бинарей, поэтому за PATH стоят каталоги установки
@@ -633,8 +656,13 @@ def session_alive(sid, now, home=None):
 def stale_ask(root, task_id, now, hook):
     """Протухший признак ожидания задачи: путь, ждущая сессия и суть вопроса.
     Свежий признак значит, что заход ждёт ответа сам, и трогать его нечем.
-    Ищется в обоих деревьях, основном и дереве задачи: инструмент пишет признак
-    в чекаут, а брошенный ход бывает и в дереве задачи."""
+    Признак со сроком устаревает по сроку. Признак без срока (DK-715, поле
+    `until` в разборе `None`) по сроку не устареет никогда, и мерить его
+    приходится возрастом самого файла с потолком `ASK_ORPHAN_AGE`: свежий
+    такой признак трогать нечем, а залежавшийся при мёртвой сессии (второй
+    гейт у звонящего park_stale) это и есть брошенное ожидание. Ищется в обоих
+    деревьях, основном и дереве задачи: инструмент пишет признак в чекаут, а
+    брошенный ход бывает и в дереве задачи."""
     until_now = time.mktime(now.timetuple())
     for base in (root, task_tree(root, task_id)):
         for sub, _ in CHAT_DIRS:
@@ -642,8 +670,16 @@ def stale_ask(root, task_id, now, hook):
             ask = hook.ask_fields(path)
             if ask is None:
                 continue
-            if ask["until"] > until_now:
-                return None
+            if ask["until"] is not None:
+                if ask["until"] > until_now:
+                    return None
+            else:
+                try:
+                    age = until_now - os.path.getmtime(path)
+                except OSError:
+                    continue
+                if age < ASK_ORPHAN_AGE:
+                    return None
             return {"path": path, "session": ask["session"],
                     "question": "; ".join(q for q in ask["questions"] if q)}
     return None
@@ -925,6 +961,7 @@ def wake(root, now, call=None, taskctl=None, hook=LOAD_HOOK):
             lines.append("задача %s в %s: taskctl отказал с кодом %d: %s"
                          % (tid, root, p.returncode, (p.stdout or "").strip()))
             continue
+        drop_asks(root, tid)
         woke += 1
         lines.append("задача %s в %s разбужена: ответ в разговоре, строка вернулась в In progress" % (tid, root))
     if parked:

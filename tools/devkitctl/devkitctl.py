@@ -265,6 +265,13 @@ SELF_HOOK = "devkit-catchup.sh"
 # сообщения в hook_gaps своя: своё событие, свой матчер и своё «что идёт не
 # так», иначе неподключённый канал чата остаётся неотличим от штатной тишины.
 CHAT_HOOK = "chat-in.py"
+# Перехват вопроса агента (DK-715): PreToolUse на AskUserQuestion, своим
+# матчером, потому что рубеж стоит только на этом инструменте, а не на Bash
+# или Read. Категория сообщения в hook_gaps своя: без хука диалог агента в
+# сессии, поднятой панелью, живёт снимком tmux и пропадает через восемь минут,
+# а панель его не показывает вовсе, а это не то же самое, что потерянная
+# реплика чата.
+ASK_HOOK = "ask-panel.py"
 # Сторож фоновых субагентов (DK-519): три события, потому что счёт работам
 # ведётся с их запуска (PostToolUse на инструменте делегирования), закрывается
 # их концом (SubagentStop), а сдаётся сессии на конце хода (Stop), пока она не
@@ -308,6 +315,7 @@ POST_MATCHER = "Edit|Write|NotebookEdit"
 PRE_MATCHER = "Bash"
 PRE_READ_MATCHER = "Read"
 SYNC_MATCHER = "Bash|Agent"
+ASK_MATCHER = "AskUserQuestion"
 # Раскладка хуков харнеса: событие, матчер, команда с местом под чекаут devkit.
 # Тот же перечень нарисован в hooks/README.md, но раскладывает его отсюда
 # доктор: список ручных шагов в README это перекладывание раскладки на человека.
@@ -323,6 +331,7 @@ HOOK_LAYOUT = (
     ("PreToolUse", SYNC_MATCHER, "python3 %s/hooks/check-background.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
+    ("PreToolUse", ASK_MATCHER, "python3 %s/hooks/ask-panel.py --hook"),
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
     ("PostToolUse", "Agent", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
@@ -1436,6 +1445,11 @@ def hook_gaps(text, settings):
             findings.append("подхват реплики %s не подключён на событии PostToolUse в %s: реплика "
                             "человека из чата цели ждёт следующего витка вместо идущего "
                             "(hooks/README.md)" % (CHAT_HOOK, settings))
+        elif script == ASK_HOOK:
+            findings.append("рубеж %s не подключён на событии PreToolUse в %s: вопрос агента в "
+                            "сессии, поднятой панелью, идёт диалогом харнеса, который панель не "
+                            "показывает и который пропадает через восемь минут снимком tmux "
+                            "(hooks/README.md)" % (ASK_HOOK, settings))
         elif script == TASK_HOOK and event == "PostToolUse":
             findings.append("PostToolUse-хук %s --touch не подключён в %s: правка файла в боковом "
                             "дереве задачи не оставляет отметку в журнале сессий, и работа вне "

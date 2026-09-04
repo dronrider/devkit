@@ -2043,6 +2043,13 @@ class HarnessHooksTest(SandboxCase):
                          "доктор не заметил PreToolUse-хук повторных чтений")
         self.assertRegex(out, r"на PreToolUse Read[^\n]*check-longfile\.py|check-longfile\.py[^\n]*на PreToolUse Read",
                          "доктор не заметил PreToolUse-хук длинных чтений")
+        # Перехват вопроса агента (DK-715) говорит своей категорией: без него
+        # пропажа рубежа выдавалась бы за дыру чтения секретов, а ломается там
+        # другое, диалог харнеса в сессии панели.
+        self.assertRegex(out, r"рубеж ask-panel\.py не подключён на событии PreToolUse",
+                         "доктор не заметил неподключённый перехват вопроса агента")
+        self.assertIn_("панель не показывает", out,
+                       "находка не говорит, что ломается без перехвата вопроса агента")
         # Подхват реплики говорит своей категорией: без неё --fix хук положит, а
         # doctor без ключа промолчит, и неподключённый канал чата останется
         # неотличим от штатной тишины.
@@ -2072,6 +2079,8 @@ class HarnessHooksTest(SandboxCase):
                          "--fix не разложил PreToolUse-хук повторных чтений")
         self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-longfile\.py на PreToolUse",
                          "--fix не разложил PreToolUse-хук длинных чтений")
+        self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*ask-panel\.py на PreToolUse",
+                         "--fix не разложил перехват вопроса агента DK-715")
         self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*chat-in\.py на PostToolUse",
                          "--fix не разложил подхват реплики")
         self.assertRegex(out,
@@ -2100,11 +2109,12 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual(len(chat), 2, chat)
         self.assertIn("chat-in.py", chat[0])
         self.assertIn("session-task.py --touch", chat[1])
-        # PreToolUse: три группы на трёх матчерах, Bash (чтение секретов и
-        # подстановка), Bash с инструментом делегирования (рубеж синхронности:
-        # фоном зовутся оба, и матчер у рубежа поэтому свой) и Read (повторные
-        # чтения и длинные чтения). Каждая своим скриптом, порядок как в
-        # HOOK_LAYOUT.
+        # PreToolUse: четыре группы на четырёх матчерах, Bash (чтение секретов
+        # и подстановка), Bash с инструментом делегирования (рубеж
+        # синхронности: фоном зовутся оба, и матчер у рубежа поэтому свой),
+        # Read (повторные чтения и длинные чтения) и AskUserQuestion (перехват
+        # вопроса агента, DK-715, свой матчер: рубеж стоит только на этом
+        # инструменте). Каждая своим скриптом, порядок как в HOOK_LAYOUT.
         pre = [h["command"] for g in hooks["PreToolUse"] for h in g["hooks"]]
         self.assertEqual(len([c for c in pre if "check-read-secret.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-subst.py" in c]), 1, pre)
@@ -2113,8 +2123,9 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual(len([c for c in pre if "check-background.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-reread.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-longfile.py" in c]), 1, pre)
+        self.assertEqual(len([c for c in pre if "ask-panel.py" in c]), 1, pre)
         self.assertEqual([g.get("matcher") for g in hooks["PreToolUse"]],
-                         ["Bash", "Bash|Agent", "Read"], hooks["PreToolUse"])
+                         ["Bash", "Bash|Agent", "Read", "AskUserQuestion"], hooks["PreToolUse"])
         for event in ("Notification", "Stop", "StopFailure", "SubagentStop", "UserPromptSubmit"):
             cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
             self.assertEqual(len([c for c in cmds if "notify.py" in c]), 1, (event, cmds))

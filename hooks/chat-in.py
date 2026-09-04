@@ -114,9 +114,13 @@ BIND_KEYS = ("сессия", "задача", "проект", "дерево", "т
              "источник", "повод", "tmux")
 # Каталог разговоров любой сессии в дереве работы: .devkit/chat/<имя>.in.
 # Поля признака ожидания ниже срока: кто ждёт и по какой задаче. Пишет их
-# инструмент ожидания taskctl ask (internal/chat), читают подхват и сторожок.
+# писатель taskctl ask (internal/chat), зовёт его хук ask-panel.py на вопросе
+# AskUserQuestion (DK-715), читают подхват и сторожок.
 ASK_SESSION = "сессия "
 ASK_TASK = "задача "
+# Метка «без срока» на месте штампа времени (internal/chat.AskForever,
+# DK-715): признак без неё живёт до ответа, а не до часов.
+ASK_FOREVER = "-"
 CHAT_DIR = "chat"
 CHAT_SUFFIX = ".in"
 # Прежние имена того же носителя (DK-440). Каталог читается наравне с новым один
@@ -376,18 +380,25 @@ def ask_stamp(path):
 
 def ask_fields(path):
     """Признак ожидания разбором: срок, ждущая сессия, задача и пачка вопросов
-    JSON. Первой строкой в файле стоит срок, поэтому однострочный признак цели
-    читается тем же разбором, а поля ниже приезжают от инструмента ожидания
-    (internal/chat, LLD DK-430, решение 2). Возврат словарём: читателей у
-    признака трое, и каждому нужны свои поля."""
+    JSON. Первой строкой в файле стоит срок либо метка «без срока» (DK-715,
+    internal/chat.AskForever), поэтому однострочный признак цели читается тем
+    же разбором, а поля ниже приезжают от писателя ожидания (internal/chat,
+    LLD DK-430, решение 2). Возврат словарём: читателей у признака трое, и
+    каждому нужны свои поля. Поле `until` в возврате это `None` у признака без
+    срока, что не то же самое, что возврат `None` целиком: тот значит «файла
+    нет или он не разобрался», этот «признак есть, срока у него нет»."""
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             lines = f.read().split("\n")
     except OSError:
         return None
-    until = stamp_at(lines[0] if lines else "")
-    if until is None:
-        return None
+    first = (lines[0] if lines else "").strip()
+    if first == ASK_FOREVER:
+        until = None
+    else:
+        until = stamp_at(first)
+        if until is None:
+            return None
     out = {"until": until, "session": "", "task": "", "questions": []}
     body = []
     for ln in lines[1:]:
@@ -547,9 +558,13 @@ def serve_chat(d, name, suffix, turn, now, tree=None):
     # заберёт ждущий: безадресные и адресованные ему самому (LLD DK-430,
     # решение 2). Реплики другим сессиям идут как обычно, и два живых чата по
     # одной задаче лежат в одном входе, не глуша друг друга.
+    # Признак без срока (DK-715) тут не держит вовсе: живого процесса, который
+    # читал бы ответ отдельно от подхвата, у него больше нет, --wait и опрос
+    # входа ушли из taskctl ask вместе с этой правкой. Держит только признак с
+    # настоящим, ещё не вышедшим сроком.
     ask = ask_fields(os.path.join(d, name + ".ask"))
     waiting = None
-    if ask is not None and ask["until"] > now:
+    if ask is not None and ask["until"] is not None and ask["until"] > now:
         waiting = ask["session"]
         log(turn.session, name, "частичный отказ: разговор держит вопрос до %s, ждёт инструмент ожидания"
             % time.strftime(STAMP, time.localtime(ask["until"])))

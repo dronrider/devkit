@@ -295,6 +295,19 @@ class ChatDeliveryTest(ChatCase):
         s.hold("task-DK-1", stamp(-300))
         self.added(s.run())
 
+    def test_forever_ask_does_not_hold_its_own_session(self):
+        # Признак без срока (DK-715) живёт до ответа, а не до часов, но живого
+        # процесса, который бы читал ответ отдельно от подхвата, у него больше
+        # нет: --wait и опрос входа ушли из taskctl ask вместе с этой правкой.
+        # Держать реплику для несуществующего читателя значит хоронить её:
+        # подхват обязан доставить её сам на первом же ходе.
+        s = self.stand()
+        s.said("task-DK-1", "2026-08-17 12:00, сессии %s, из дашборда: ответ ждущему" % SID)
+        s.hold("task-DK-1", "-", session=SID, task="DK-1")
+        text = self.added(s.run())
+        self.assertIn("ответ ждущему", text)
+        self.assertEqual(s.read("task-DK-1"), "")
+
     def test_neighbor_lock_leaves_the_line(self):
         s = self.stand()
         s.said("task-DK-1", "2026-08-17 12:00, из дашборда: стой")

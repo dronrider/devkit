@@ -17,6 +17,6 @@ README нечем. Разберись с задачей.
 ## Проверка
 
 ```sh
-awk -F'\t' '$2 == "taskctl" && $3 ~ /^ask/' .devkit/log 2>/dev/null | grep -q . ||
-	{ echo "вопрос задан мимо инструмента: taskctl ask не звался"; exit 1; }
+grep -q "AskUserQuestion" "$OBEY_TRANSCRIPT" ||
+	{ echo "вопрос задан мимо штатного инструмента: AskUserQuestion не звался"; exit 1; }
 ```

@@ -17,6 +17,6 @@ printf '# OB-003\n\n## Черновик\n\nСтарое имя утилиты в
 ## Проверка
 
 ```sh
-awk -F'\t' '$2 == "taskctl" && $3 ~ /^ask/' .devkit/log 2>/dev/null | grep -q . ||
-	{ echo "вопрос задан мимо инструмента: taskctl ask на разборе не звался"; exit 1; }
+grep -q "AskUserQuestion" "$OBEY_TRANSCRIPT" ||
+	{ echo "вопрос на разборе задан мимо штатного инструмента: AskUserQuestion не звался"; exit 1; }
 ```

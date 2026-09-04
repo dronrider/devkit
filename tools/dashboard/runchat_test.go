@@ -218,6 +218,21 @@ func TestRunStopRejectsForeignSession(t *testing.T) {
 	}
 }
 
+// Работы за строкой нет вовсе: останавливать нечего, и ручка говорит это
+// словами. Дорога проверяется отдельно от прочих, потому что стоп теперь
+// разбирает работы строки по её признаку, а не по одному полю ID.
+func TestRunStopWithoutAnyWork(t *testing.T) {
+	e, c, _ := runsEnv(t, "")
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("стоп без работы: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "не идёт") {
+		t.Errorf("отказ не назвал причину словами: %s", text)
+	}
+}
+
 // Стенд фронта: у строки, за которой работает окно разговора, стоит красный
 // «Стоп» со своим исходом, иконка чата ведёт в разговор с идущим ходом, а при
 // нескольких рабочих сессиях стоп спрашивает, в какой прервать ход. Проверка

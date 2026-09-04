@@ -142,3 +142,32 @@ func (s *server) stopChatWork(w http.ResponseWriter, found *Project, id string, 
 		id, found.Name, pick.Tmux, pick.Session)
 	writeJSON(w, http.StatusOK, resp)
 }
+
+// stopWithoutPipeline отвечает на стоп строки, за которой нет конвейерной
+// сессии. Дорог три. Работа идёт в нашем окне разговора, значит прерывается
+// ход. Работы за строкой нет вовсе, значит останавливать нечего. Работа есть, а
+// снять её отсюда нечем: цикл цели ведёт сессия, которую дашборд не поднимал, а
+// чужое окно ведёт человек, и клавиатуры к нему у дашборда нет.
+func (s *server) stopWithoutPipeline(w http.ResponseWriter, r *http.Request, found *Project, id string, rowed []Work) {
+	if chats := stoppableChats(rowed); len(chats) > 0 {
+		s.stopChatWork(w, found, id, chats, strings.TrimSpace(r.URL.Query().Get("session")))
+		return
+	}
+	if len(rowed) == 0 {
+		s.logf("стоп %s отклонён: работа не идёт 404", id)
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("работа %s в проекте %s не идёт: нет ни tmux-сессии "+
+				"с префиксом его доски, ни записи в реестре целей", id, found.Name)})
+		return
+	}
+	if rowed[0].Via == workViaRegistry {
+		s.logf("стоп %s отклонён: цикл ведёт другая сессия 409", id)
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": fmt.Sprintf("цикл цели %s ведёт другая сессия, tmux-сессии дашборда у него нет: "+
+				"стоп отсюда недоступен, снимать там, где цикл поднят", id)})
+		return
+	}
+	s.logf("стоп %s отклонён: интерактивная сессия 409", id)
+	writeJSON(w, http.StatusConflict, map[string]string{
+		"error": fmt.Sprintf("работа %s это интерактивная сессия: её ведёт человек в окне, снимать нечего", id)})
+}

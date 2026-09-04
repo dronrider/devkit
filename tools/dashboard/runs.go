@@ -667,11 +667,10 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	// правило DK-217), а не в общем списке сессий машины. Иначе стоп на
 	// доске demo снимал бы чужую goal-DK-777 и заводил через --say журнал
 	// в чужом корне.
-	var work *Work
-	works := s.liveWorks(found.Path, view.Prefix, raw)
 	// Работы строки ищутся по её признаку, а не по одному полю ID: рабочих
 	// сессий у задачи бывает несколько, и стоп обязан видеть их все (DK-716).
-	rowed := rowWorks(works, id)
+	rowed := rowWorks(s.liveWorks(found.Path, view.Prefix, raw), id)
+	var work *Work
 	for i := range rowed {
 		if rowed[i].Via == workViaTmux {
 			work = &rowed[i]
@@ -679,31 +678,7 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if work == nil {
-		// Конвейерной сессии за строкой нет, а работа идёт: её ведут в окне
-		// разговора. Ход там прерывают, разговор оставляют жить.
-		if chats := stoppableChats(rowed); len(chats) > 0 {
-			s.stopChatWork(w, found, id, chats, strings.TrimSpace(r.URL.Query().Get("session")))
-			return
-		}
-	}
-	if work == nil && len(rowed) == 0 {
-		s.logf("стоп %s отклонён: работа не идёт 404", id)
-		writeJSON(w, http.StatusNotFound, map[string]string{
-			"error": fmt.Sprintf("работа %s в проекте %s не идёт: нет ни tmux-сессии с префиксом его доски, ни записи в реестре целей", id, found.Name)})
-		return
-	}
-	if work == nil {
-		via := rowed[0].Via
-		if via == workViaRegistry {
-			s.logf("стоп %s отклонён: цикл ведёт другая сессия 409", id)
-			writeJSON(w, http.StatusConflict, map[string]string{
-				"error": fmt.Sprintf("цикл цели %s ведёт другая сессия, tmux-сессии дашборда у него нет: "+
-					"стоп отсюда недоступен, снимать там, где цикл поднят", id)})
-			return
-		}
-		s.logf("стоп %s отклонён: интерактивная сессия 409", id)
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": fmt.Sprintf("работа %s это интерактивная сессия: её ведёт человек в окне, снимать нечего", id)})
+		s.stopWithoutPipeline(w, r, found, id, rowed)
 		return
 	}
 	kind := work.Kind

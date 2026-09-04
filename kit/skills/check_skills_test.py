@@ -856,7 +856,8 @@ class ReviewSkill(SkillTree):
 
     SKILL = ("---\nname: review\ndescription: Ревью. Звать, когда ревьюят.\n---\n\n"
              "# Ревью\n\nбюджет в .devkit/review.conf\n\n"
-             "рядом examples.md и threads.md\n\n## Вход\n\nпредмет\n\n## Порядок ревью\n\nшаги\n\n"
+             "рядом examples.md, threads.md и foreign.md\n\n## Вход\n\nпредмет\n\n"
+             "## Порядок ревью\n\nшаги\n\n"
              "## Сколько ревью нужно\n\n| 0, пропуск |\n| 1, ворота |\n| 2, обычное |\n| 3, глубокое |\n\n"
              "## Вопросы по уровням\n\nвопросы\n\n"
              "## Замечания и три яруса\n\n- Блокирующее: правит.\n- Неблокирующее: отвечает.\n- Мелочь: сам.\n\n"
@@ -874,7 +875,9 @@ class ReviewSkill(SkillTree):
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
             f.write(self.SKILL if skill is None else skill)
-        for side in ("examples.md", "threads.md"):
+        # foreign.md кладётся болванкой без меток сценария: порча раздела в
+        # SKILL.md должна краснеть, а не гаснуть о соседний файл.
+        for side in ("examples.md", "threads.md", "foreign.md"):
             with open(os.path.join(d, side), "w", encoding="utf-8") as f:
                 f.write("образцы\n")
         if conf is not False:
@@ -953,7 +956,8 @@ class ReviewSkill(SkillTree):
         os.remove(os.path.join(self.here, "review", "threads.md"))
         fails = check_skills.check_review(self.here, self.root)
         self.assertTrue(any("нет файла threads.md" in f for f in fails), fails)
-        self.write_review(skill=self.SKILL.replace("рядом examples.md и threads.md", "рядом файлы"))
+        self.write_review(skill=self.SKILL.replace(
+            "рядом examples.md, threads.md и foreign.md", "рядом файлы"))
         fails = check_skills.check_review(self.here, self.root)
         self.assertTrue(any("examples.md лежит рядом" in f for f in fails), fails)
 

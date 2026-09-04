@@ -291,7 +291,7 @@ REVIEW_KEYS = ("level1", "level2", "level3", "critical_paths", "checks",
 # парковкой строки. Раздел без любого из трёх звеньев снова уводит замечания
 # прямо в чужой MR, ради чего сценарий и заводился.
 REVIEW_FOREIGN = ("review draft", "review publish", "ждёт подтверждения")
-REVIEW_SIDE_FILES = ("examples.md", "threads.md")
+REVIEW_SIDE_FILES = ("examples.md", "threads.md", "foreign.md")
 
 
 def check_review(here, root):
@@ -319,8 +319,13 @@ def check_review(here, root):
         fails.append("review: бюджеты не отданы конфигу .devkit/review.conf")
     foreign = section(text, "## Ревью чужой задачи")
     if foreign:
+        # Звенья ищутся в двух местах разом: раздел скилла ужат до указателя, а
+        # сам сценарий живёт в foreign.md рядом (DK-797), и метка засчитывается,
+        # где бы из двух ни стояла.
+        side = read(os.path.join(here, "review", "foreign.md")) or ""
+        both = foreign + "\n" + side
         for mark in REVIEW_FOREIGN:
-            if mark not in foreign:
+            if mark not in both:
                 fails.append("review: в разделе про чужую задачу нет «%s»" % mark)
     for side in REVIEW_SIDE_FILES:
         if read(os.path.join(here, "review", side)) is None:

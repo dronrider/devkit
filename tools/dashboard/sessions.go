@@ -617,6 +617,10 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		}
 		// Строки, которые эта сессия присваивает: её рабочие задачи с доски
 		// этого проекта. Их бывает больше одной, и признак получает каждая.
+		// Своя работа это та, чью tmux-сессию поднял дашборд: её имя лежит в
+		// записи реестра. У окна человека имени нет вовсе.
+		tmux := binds[f.ID].Tmux
+		name := strings.SplitN(tmux, ":", 2)[0]
 		claim := ownRows(workTasks(recs[f.ID], f.suffix), prefix)
 		if len(claim) > 0 {
 			// Карточка подписывается рабочей задачей, а не той, о которой в
@@ -631,7 +635,15 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		talk := task != "" && len(claim) == 0
 		kind, title, sect := "session", "", ""
 		if task != "" {
-			if busy[task] {
+			// Два окна одной задачи это одна работа, пока это окна человека:
+			// без дедупликации доска показывала бы двух агентов там, где сидит
+			// один. Наши рабочие окна дедупликации не подлежат: чат дашборда,
+			// взявший задачу, это отдельный агент, у строки их бывает
+			// несколько, и «Стоп» обязан показать человеку выбор, а не первого
+			// попавшегося (DK-716). Разговор о задаче второй карточкой не
+			// встаёт: строку он не ведёт, и считать его вторым агентом не за
+			// что.
+			if busy[task] && (name == "" || talk) {
 				continue
 			}
 			busy[task] = true
@@ -667,10 +679,6 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 				note = said
 			}
 		}
-		// Своя работа это та, чью tmux-сессию поднял дашборд: её имя лежит в
-		// записи реестра. У окна человека имени нет вовсе.
-		tmux := binds[f.ID].Tmux
-		name := strings.SplitN(tmux, ":", 2)[0]
 		live, moved, silent := s.workState(projPath, task, f.ID, name, bySid, byTmux)
 		works = append(works, Work{ID: task, Kind: kind, Title: title, Sect: sect,
 			Via: workViaSession, Session: f.ID, Note: note, Talk: talk, Rows: claim,

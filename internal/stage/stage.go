@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dronrider/devkit/internal/sessions"
 	"github.com/dronrider/devkit/internal/taskform"
 )
 
@@ -190,10 +191,17 @@ const LineStamp = "2006-01-02 15:04"
 // Stage это один этап: вид деятельности, момент начала и текст записи, который
 // уедет в «Ход работы». Текст собирает тот, кто этап открыл: pick знает про
 // модель, маппинг и квоту, а taskctl про статус.
+//
+// Session это разговор, открывший этап. Поля этого у записи не было, и потому
+// от неё нельзя было дойти до чата, который задачу ведёт: экран знал, что идёт
+// разработка, а спросить исполнителя было негде (предмет DK-716). ID приезжает
+// из окружения самой сессии, и пусто оно там, где этап открыли вне харнеса:
+// рукой из терминала, скриптом, стендом.
 type Stage struct {
-	Kind  string
-	Start time.Time
-	Note  string
+	Kind    string
+	Start   time.Time
+	Note    string
+	Session string
 }
 
 // Record это запись задачи целиком: шапка и накопленные этапы в порядке
@@ -288,7 +296,9 @@ func MainRoot(root string) string {
 }
 
 // Open открывает этап: дописывает его в запись задачи, заводя её при первом
-// этапе. Открытый этап закрывает следующий за ним, а весь пакет закрывает
+// этапе. Разговор, открывший этап, записывается сам собой: ID сессии лежит в
+// окружении харнеса, и спрашивать его у вызывающего значило бы протянуть одно
+// и то же значение через десяток точек конвейера. Открытый этап закрывает следующий за ним, а весь пакет закрывает
 // смена статуса. Провал записи не роняет вызывающую команду, как и провал
 // журнала запусков: без отметки конвейер работает, просто молча.
 func Open(home, root, id, kind, note string, now time.Time) error {
@@ -307,7 +317,7 @@ func Open(home, root, id, kind, note string, now time.Time) error {
 		return err
 	}
 	rec.ID, rec.Root = id, root
-	rec.Stages = append(rec.Stages, Stage{Kind: kind, Start: now, Note: note})
+	rec.Stages = append(rec.Stages, Stage{Kind: kind, Start: now, Note: note, Session: sessions.Own()})
 	return os.WriteFile(path, []byte(body(rec)), 0o644)
 }
 
@@ -320,7 +330,8 @@ func body(rec Record) string {
 	fmt.Fprintf(&b, "id = %s\n", rec.ID)
 	fmt.Fprintf(&b, "root = %s\n", rec.Root)
 	for _, s := range rec.Stages {
-		fmt.Fprintf(&b, "этап = %s | %s | %s\n", s.Kind, s.Start.Format(Stamp), clean(s.Note))
+		fmt.Fprintf(&b, "этап = %s | %s | %s | %s\n",
+			s.Kind, s.Start.Format(Stamp), clean(s.Note), clean(s.Session))
 	}
 	return b.String()
 }
@@ -372,9 +383,11 @@ func Load(path string) (Record, error) {
 
 // parseStage разбирает строку этапа. Строка с неизвестным видом или битым
 // временем пропускается: запись правил не только текущий инструмент, и ронять
-// из-за одной строки чтение всей задачи незачем.
+// из-за одной строки чтение всей задачи незачем. Четвёртое поле, разговор,
+// приехало с DK-716, и записи без него читаются по-прежнему: на диске лежат
+// пакеты, открытые прежней сборкой, и терять их из-за нового поля нельзя.
 func parseStage(val string) (Stage, bool) {
-	parts := strings.SplitN(val, "|", 3)
+	parts := strings.SplitN(val, "|", 4)
 	if len(parts) < 2 {
 		return Stage{}, false
 	}
@@ -386,11 +399,14 @@ func parseStage(val string) (Stage, bool) {
 	if err != nil {
 		return Stage{}, false
 	}
-	note := ""
-	if len(parts) == 3 {
+	note, sess := "", ""
+	if len(parts) >= 3 {
 		note = strings.TrimSpace(parts[2])
 	}
-	return Stage{Kind: kind, Start: start, Note: note}, true
+	if len(parts) == 4 {
+		sess = strings.TrimSpace(parts[3])
+	}
+	return Stage{Kind: kind, Start: start, Note: note, Session: sess}, true
 }
 
 // Flush забирает накопленные этапы и убирает запись: пакет уезжает в файл

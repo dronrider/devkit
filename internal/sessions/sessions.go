@@ -383,6 +383,10 @@ func Append(path, line string) error {
 // SessionEnv это ключ окружения, которым харнес называет сессии её же ID.
 const SessionEnv = "CLAUDE_CODE_SESSION_ID"
 
+// Own называет ID сессии, в которой идёт ход: харнес кладёт его в окружение.
+// Пусто вне сессии харнеса, и это штатное молчание, а не поломка.
+func Own() string { return strings.TrimSpace(os.Getenv(SessionEnv)) }
+
 // Touch отмечает в журнале, что сессия работала над задачей. Зовут его утилиты
 // доски из своей main: сессии ID известен только из окружения, и вне сессии
 // харнеса отметки не выходит вовсе, это штатное молчание. Ошибка записи гасится
@@ -397,7 +401,7 @@ func Touch(task, why string) { mark(task, BySrc, why) }
 func Release(task, why string) { mark(task, ByOff, why) }
 
 func mark(task, src, why string) {
-	sid := strings.TrimSpace(os.Getenv(SessionEnv))
+	sid := Own()
 	task = strings.ToUpper(strings.TrimSpace(task))
 	if sid == "" || task == "" {
 		return

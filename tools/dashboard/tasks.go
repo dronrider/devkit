@@ -76,6 +76,10 @@ type boardRow struct {
 	// строки, за которой работы нет вовсе. Признак приезжает готовым: собрать
 	// его на клиенте нечем, состояния сессий у строки нет.
 	RunState string `json:"run_state,omitempty"`
+	// RunChat это разговор с идущим ходом по этой строке: в него и ведёт иконка
+	// чата. Пусто у строки без работающей сессии, и иконка тогда открывает
+	// адрес задачи, как открывала.
+	RunChat string `json:"run_chat,omitempty"`
 	// Harness называет подписку, которой закрывать проверенную строку: ту, на
 	// которой работу начинали.
 	Harness string `json:"harness,omitempty"`
@@ -182,6 +186,36 @@ func stateMarks(works []Work) map[string]string {
 // ожидание старше простоя, простой старше мёртвой сессии.
 var stateRank = map[string]int{workBusy: 4, workWait: 3, workIdle: 2, workDead: 1}
 
+// chatMarks называет разговор, в который ведёт иконка чата у строки: сессию с
+// идущим ходом, а при нескольких свежайшую по последней реплике (DoD DK-716).
+// Прежде иконка открывала адрес задачи, панель показывала список её чатов, и
+// до разговора с идущим ходом человек делал ещё один клик, выбирая его
+// глазами по времени. Пусто у строки, за которой не работает ни одна наша сессия: адрес
+// задачи там и есть правильный вход, он откроет список или заведёт новый чат.
+func chatMarks(works []Work) map[string]string {
+	best := map[string]Work{}
+	for _, w := range works {
+		if w.Talk || w.Session == "" {
+			continue
+		}
+		if w.Live != workBusy && w.Live != workWait {
+			continue
+		}
+		for _, id := range workRows(w) {
+			cur, hit := best[id]
+			if !hit || stateRank[w.Live] > stateRank[cur.Live] ||
+				(w.Live == cur.Live && w.Moved > cur.Moved) {
+				best[id] = w
+			}
+		}
+	}
+	out := map[string]string{}
+	for id, w := range best {
+		out[id] = w.Session
+	}
+	return out
+}
+
 // busyMarks называет строки, по которым ход идёт прямо сейчас.
 func busyMarks(works []Work) map[string]bool {
 	busy := map[string]bool{}
@@ -236,7 +270,7 @@ func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 	if err := json.Unmarshal(doc["sections"], &secs); err != nil {
 		return raw
 	}
-	live, state := runMarks(works), stateMarks(works)
+	live, state, chats := runMarks(works), stateMarks(works), chatMarks(works)
 	for _, sec := range secs {
 		var key string
 		json.Unmarshal(sec["key"], &key)
@@ -296,6 +330,13 @@ func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 					return raw
 				}
 				row["stage_since"] = mark
+			}
+			if sid := chats[id]; sid != "" {
+				mark, err := json.Marshal(sid)
+				if err != nil {
+					return raw
+				}
+				row["run_chat"] = mark
 			}
 			if wait != nil {
 				var block string
@@ -609,6 +650,7 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		row.Run = rowRun(runMarks(works), mine, id, row.Sect)
 		row.RunState = stateMarks(works)[id]
 		row.RunBusy = row.RunState == workBusy
+		row.RunChat = chatMarks(works)[id]
 		if row.Sect == sectCheck {
 			row.Harness = mine[id]
 		}

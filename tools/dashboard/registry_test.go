@@ -38,6 +38,18 @@ func writeBinds(t *testing.T, home string, lines ...string) string {
 	return path
 }
 
+// appendBinds дописывает строки в реестр, не трогая уже лежащих: стенду с
+// несколькими сессиями надо накопить записи, а не переписать файл заново.
+func appendBinds(t *testing.T, home string, lines ...string) {
+	t.Helper()
+	path := sessions.Path(home)
+	for _, ln := range lines {
+		if err := sessions.Append(path, ln); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // bindRecord собирает строку реестра руками, как её пишет хук.
 func bindRecord(stamp, sid, task, source string) string {
 	return fmt.Sprintf("%s сессия %s задача %s проект demo дерево /tmp/demo транскрипт /tmp/t.jsonl "+

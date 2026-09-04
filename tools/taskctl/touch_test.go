@@ -61,3 +61,60 @@ func lines(path string) int {
 	}
 	return n
 }
+
+// Конец работы над задачей отмечается в реестре так же, как её начало
+// (DK-716): закрытие строки и перевод её из In progress кладут «снята», и
+// строка отдаёт «Стоп» обратно кнопке запуска. Возврат в In progress работой
+// и остаётся: строку двигает тот, кто её берёт.
+func TestTouchDoneOnCloseAndMoveOut(t *testing.T) {
+	cases := []struct {
+		args []string
+		done bool
+	}{
+		{[]string{"close", "XR-005"}, true},
+		{[]string{"move", "XR-005", "check"}, true},
+		{[]string{"move", "XR-005", "Backlog"}, true},
+		{[]string{"move", "XR-005", "in-progress"}, false},
+		{[]string{"move", "XR-005", "In progress"}, false},
+		// Ключи встают где угодно, и статусом читается первое слово за ID, а
+		// не третий аргумент подряд.
+		{[]string{"move", "XR-005", "--dry-run", "check"}, true},
+		{[]string{"move", "--dry-run", "XR-005", "in-progress"}, false},
+		{[]string{"ask", "XR-005"}, false},
+	}
+	for _, c := range cases {
+		at := 1
+		for i, a := range c.args[1:] {
+			if touchIDRe.MatchString(a) {
+				at = i + 1
+				break
+			}
+		}
+		if got := touchDone(c.args, at); got != c.done {
+			t.Errorf("%v: конец работы %v, ожидал %v", c.args, got, c.done)
+		}
+	}
+}
+
+// Отметка едет в реестр целиком: сессия, закрывшая задачу, кладёт именную
+// «снята», а не отвязывает себя от всех своих задач разом.
+func TestTouchWorkWritesRelease(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(sessions.SessionEnv, "aaaa1111-1111-4111-8111-111111111111")
+	touchWork([]string{"move", "XR-005", "in-progress"})
+	touchWork([]string{"close", "XR-005"})
+	recs := sessions.LoadAll(home)["aaaa1111-1111-4111-8111-111111111111"]
+	if len(recs) != 2 {
+		t.Fatalf("записей в реестре %d: %+v", len(recs), recs)
+	}
+	if recs[0].Source != sessions.BySrc || recs[1].Source != sessions.ByOff {
+		t.Fatalf("источники записей: %q и %q", recs[0].Source, recs[1].Source)
+	}
+	if recs[1].Task != "XR-005" {
+		t.Errorf("отвязка не назвала задачу: %q, и сняла бы всю сессию", recs[1].Task)
+	}
+	if len(sessions.Works(recs)) != 0 {
+		t.Errorf("после закрытия строка осталась рабочей: %+v", sessions.Works(recs))
+	}
+}

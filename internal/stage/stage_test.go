@@ -525,3 +525,46 @@ func TestParseLineWithoutSpanAndOverMidnight(t *testing.T) {
 		t.Fatalf("этап через полночь: %v, ok=%v", span, ok)
 	}
 }
+
+// Разговор, открывший этап, стоит в записи четвёртым полем (DK-716). Без него
+// от записи нельзя было дойти до чата, который задачу ведёт: экран знал, что
+// идёт разработка, а спросить исполнителя было негде.
+func TestOpenKeepsSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "dff98764-1111-4111-8111-111111111111")
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.Local)
+	if err := Open(home, "/p", "XR-1", Dev, "субагент opus/high по вердикту pick", now); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := Load(Path(home, "/p", "XR-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, ok := rec.Live()
+	if !ok {
+		t.Fatal("этапа в записи нет")
+	}
+	if live.Session != "dff98764-1111-4111-8111-111111111111" {
+		t.Errorf("разговор этапа %q", live.Session)
+	}
+	// Текст записи от нового поля не пострадал: по нему ворота закрытия ищут
+	// исполнителя и прогнавшего сценарий.
+	if _, ok := Executor(live.Note); !ok {
+		t.Errorf("текст записи потерялся: %q", live.Note)
+	}
+}
+
+// Записи прежней сборки читаются по-прежнему: на диске лежат незакрытые пакеты
+// без четвёртого поля, и терять их из-за нового поля нельзя.
+func TestParseStageWithoutSession(t *testing.T) {
+	s, ok := parseStage("разработка | 2026-09-03T12:00:00 | субагент opus/high по вердикту pick")
+	if !ok {
+		t.Fatal("строка прежнего формата не разобралась")
+	}
+	if s.Session != "" {
+		t.Errorf("разговор взялся из ниоткуда: %q", s.Session)
+	}
+	if s.Note != "субагент opus/high по вердикту pick" {
+		t.Errorf("текст записи: %q", s.Note)
+	}
+}

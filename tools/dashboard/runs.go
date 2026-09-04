@@ -128,11 +128,18 @@ func (s *server) sayStop(root, project, id, kind string) string {
 		return notifierMissing
 	}
 	what := "цикл цели"
-	if kind != "goal" {
+	switch kind {
+	case "goal":
+	case "chat":
+		what = "разговор задачи"
+	default:
 		what = "конвейер задачи"
 	}
 	title := fmt.Sprintf("%s: %s стоп из дашборда", project, id)
 	body := fmt.Sprintf("%s снят из дашборда; возобновление это новый запуск, состояние он прочтёт с диска", what)
+	if kind == "chat" {
+		body = "ход разговора прерван из дашборда, работа по задаче снята; разговор жив и следующую реплику возьмёт"
+	}
 	// Задача и проект едут своими ключами: лента ведёт от события к строке
 	// доски по полю, а не по разбору заголовка (DK-323), и «Поднять виток»
 	// поднимает работу того проекта, где стоп случился.
@@ -662,29 +669,41 @@ func (s *server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	// в чужом корне.
 	var work *Work
 	works := s.liveWorks(found.Path, view.Prefix, raw)
-	for i := range works {
-		if works[i].ID == id {
-			work = &works[i]
+	// Работы строки ищутся по её признаку, а не по одному полю ID: рабочих
+	// сессий у задачи бывает несколько, и стоп обязан видеть их все (DK-716).
+	rowed := rowWorks(works, id)
+	for i := range rowed {
+		if rowed[i].Via == workViaTmux {
+			work = &rowed[i]
 			break
 		}
 	}
 	if work == nil {
+		// Конвейерной сессии за строкой нет, а работа идёт: её ведут в окне
+		// разговора. Ход там прерывают, разговор оставляют жить.
+		if chats := stoppableChats(rowed); len(chats) > 0 {
+			s.stopChatWork(w, found, id, chats, strings.TrimSpace(r.URL.Query().Get("session")))
+			return
+		}
+	}
+	if work == nil && len(rowed) == 0 {
 		s.logf("стоп %s отклонён: работа не идёт 404", id)
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("работа %s в проекте %s не идёт: нет ни tmux-сессии с префиксом его доски, ни записи в реестре целей", id, found.Name)})
 		return
 	}
-	if work.Via == "session" {
+	if work == nil {
+		via := rowed[0].Via
+		if via == workViaRegistry {
+			s.logf("стоп %s отклонён: цикл ведёт другая сессия 409", id)
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": fmt.Sprintf("цикл цели %s ведёт другая сессия, tmux-сессии дашборда у него нет: "+
+					"стоп отсюда недоступен, снимать там, где цикл поднят", id)})
+			return
+		}
 		s.logf("стоп %s отклонён: интерактивная сессия 409", id)
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": fmt.Sprintf("работа %s это интерактивная сессия: её ведёт человек в окне, снимать нечего", id)})
-		return
-	}
-	if work.Via == "registry" {
-		s.logf("стоп %s отклонён: цикл ведёт другая сессия 409", id)
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": fmt.Sprintf("цикл цели %s ведёт другая сессия, tmux-сессии дашборда у него нет: "+
-				"стоп отсюда недоступен, снимать там, где цикл поднят", id)})
 		return
 	}
 	kind := work.Kind

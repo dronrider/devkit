@@ -265,12 +265,13 @@ func addFlags(fs *flag.FlagSet, p *AddParams) {
 	commitFlags(fs, &p.Commit)
 }
 
-// askFlags объявляет флаги ожидания отдельно от разбора: вход у команды два,
-// задача и черновик, а набор ключей у них один.
-func askFlags(fs *flag.FlagSet, p *AskParams) *int {
+// askFlags объявляет флаги писателя признака отдельно от разбора: вход у
+// команды два, задача и черновик, а набор ключей у них один. Команда это
+// внутренний писатель для хука ask-panel.py, а не инструмент агента (DK-715):
+// ключа --wait тут больше нет, признак всегда без срока.
+func askFlags(fs *flag.FlagSet, p *AskParams) {
 	fs.StringVar(&p.Question, "question", "", "текст вопроса; без него пачка вопросов JSON читается со stdin")
 	fs.StringVar(&p.Session, "session", "", "ID сессии, чьи реплики считать своими; по умолчанию из окружения хода и реестра чатов")
-	return fs.Int("wait", int(AskWait/time.Second), "сколько секунд ждать ответа; 0 значит «не жду, паркуй сразу»")
 }
 
 func setFlags(fs *flag.FlagSet, p *SetParams) {
@@ -448,11 +449,10 @@ func main() {
 			fs := flag.NewFlagSet("draft ask", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			var p AskParams
-			wait := askFlags(fs, &p)
+			askFlags(fs, &p)
 			pos := frame.ParseArgs(fs, args[2:])
-			needArgs(pos, 1, 1, "draft ask <ID> [--question \"...\"] [--wait N] [--session SID]")
+			needArgs(pos, 1, 1, "draft ask <ID> [--question \"...\"] [--session SID]")
 			p.ID, p.Draft, p.Stdin = pos[0], true, os.Stdin
-			p.Wait = time.Duration(*wait) * time.Second
 			msg, err = cmdAsk(root(*dir), p)
 		case "drop":
 			fs := flag.NewFlagSet("draft drop", flag.ExitOnError)
@@ -510,10 +510,10 @@ func main() {
 		fs := flag.NewFlagSet("ask", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		var p AskParams
-		wait := askFlags(fs, &p)
+		askFlags(fs, &p)
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, "ask <ID> [--question \"...\"] [--wait N] [--session SID]")
-		p.ID, p.Wait, p.Stdin = pos[0], time.Duration(*wait)*time.Second, os.Stdin
+		needArgs(pos, 1, 1, "ask <ID> [--question \"...\"] [--session SID]")
+		p.ID, p.Stdin = pos[0], os.Stdin
 		msg, err = cmdAsk(root(*dir), p)
 	case "fail":
 		fs := flag.NewFlagSet("fail", flag.ExitOnError)

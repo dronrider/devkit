@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
@@ -16,74 +14,58 @@ import (
 	"github.com/dronrider/devkit/internal/stage"
 )
 
-// Инструмент ожидания: исполнитель спрашивает человека посреди захода, а не
-// последней репликой захода. Последняя реплика это возврат диспетчеру, и
-// человек её в дашборде не видит вовсе; вопрос, заданный отсюда, доезжает
-// уведомлением, лентой и панелью, а ответ возвращается прямо в идущий ход.
-// Решение целиком в docs/lld/DK-430-task-chat.md, решение 3.
-//
-// Дождавшись, команда печатает ответ и продолжает заход. Не дождавшись, сама
-// паркует задачу причиной «вопрос: ...»: точка парковки одна, там же, где
-// вопрос (LLD DK-400, решение 2), и рук диспетчера это не ждёт.
-
-// AskWait это срок ожидания по умолчанию. Потолок хода Bash 600 секунд, и
-// запас нужен на сам вызов и на парковку. Потолок хода это не умолчание хода:
-// Bash убивает команду через 120 секунд, поэтому вызов идёт с явным сроком
-// хода на минуту длиннее ожидания (--wait 480 при timeout 540000), и правило
-// это живёт в скиллах exec-* рядом с самим вызовом.
-const AskWait = 480 * time.Second
-
-// askPoll это шаг опроса входа. Секунда тут не цена: ждущий процесс спит, и
-// модельных токенов ожидание не тратит.
-const askPoll = time.Second
-
-// askSessionEnv это переменная харнеса с ID внешней сессии. У субагента своего
-// ID нет, и адрес у него общий с сессией, которая его подняла.
-const askSessionEnv = "CLAUDE_CODE_SESSION_ID"
+// Внутренний писатель признака ожидания: `taskctl ask` больше не команда
+// агента, агент спрашивает штатным AskUserQuestion. В сессии, поднятой
+// панелью, вызов перехватывает хук PreToolUse (hooks/ask-panel.py) и зовёт эту
+// команду, чтобы положить вопрос файлом признака, припарковать строку и
+// уведомить человека. Ждать ответа тут больше нечему: до DK-724 сессии
+// умирали с концом хода, и headless-проходу приходилось сидеть в Bash и
+// опрашивать вход сам, а живая сессия оставляет признак лежать без срока до
+// самого ответа. Решение целиком в docs/lld/DK-430-task-chat.md, решение 3, и
+// в docs/lld/DK-756-foreign-review.md, решение 4.
 
 // reasonAsk это повод уведомителя у заданного вопроса. Парковке остаётся её
 // task_blocked, и два события про один вопрос человек читает как «спросили» и
 // «встали, ответа не дождавшись».
 const reasonAsk = "task_ask"
 
+// askSessionEnv это переменная харнеса с ID внешней сессии. У субагента своего
+// ID нет, и адрес у него общий с сессией, которая его подняла.
+const askSessionEnv = "CLAUDE_CODE_SESSION_ID"
+
 // AskParams это разобранные аргументы команды.
 type AskParams struct {
 	ID       string
 	Question string
 	Session  string
-	Wait     time.Duration
 	Draft    bool
 	Stdin    io.Reader
 }
 
-// askDeps это внешний мир ожидания: часы, сон, уведомитель, отметка этапа и
-// парковка. Своим полем тут каждый, кого тест обязан подменить: ждать по живым
-// часам и звать настоящий уведомитель прогон тестов не может, а проверять надо
-// именно порядок шагов и исход по сроку.
+// askDeps это внешний мир писателя: уведомитель, отметка этапа и парковка.
+// Своим полем тут каждый, кого тест обязан подменить: звать настоящий
+// уведомитель и настоящую парковку прогон тестов не может, а проверять надо
+// именно порядок шагов.
 type askDeps struct {
-	Now    func() time.Time
-	Sleep  func(time.Duration)
 	Notify func(reason, id, title, body string) string
 	Stage  func(id, note string)
 	Park   func(id, reason string) (string, error)
 	// Main это основной чекаут. Поле тут потому, что считает его git по
-	// рабочей директории, а тест гоняет ожидание на временных корнях, где
+	// рабочей директории, а тест гоняет писателя на временных корнях, где
 	// git-дерева нет вовсе.
 	Main string
 	Home string
 	// IsDraft отвечает, стоит ли за ID запись накопителя, а не строка доски.
-	// Полем тут потому же, почему и остальные: тест гоняет ожидание на
+	// Полем тут потому же, почему и остальные: тест гоняет писателя на
 	// временных корнях, где накопителя может не быть вовсе.
 	IsDraft func(id string) bool
 }
 
-// liveDeps собирает боевой набор: часы машины, настоящий сон, уведомитель
-// taskctl, запись этапа и парковка через тот же cmdMove, каким паркуют руками.
+// liveDeps собирает боевой набор: уведомитель taskctl, запись этапа и
+// парковка через тот же cmdMove, каким паркуют руками.
 func liveDeps(root string) askDeps {
 	main := stage.MainRoot(root)
 	return askDeps{
-		Now:   time.Now,
-		Sleep: time.Sleep,
 		Notify: func(reason, id, title, body string) string {
 			return notify(main, reason, id, title, body)
 		},
@@ -143,10 +125,10 @@ func askText(qs []chat.Question) string {
 	return strings.Join(out, "; ")
 }
 
-// askSession называет сессию, чьи реплики ожидание считает своими, и говорит,
-// откуда она взялась. Порядок такой: ключ, переменная харнеса, реестр чатов по
-// задаче. Не нашлось ничего, значит ожидание идёт по безадресным строкам, и это
-// видно первой же строкой вывода, а не скрыто.
+// askSession называет сессию, чьи реплики признак ожидания считает своими, и
+// говорит, откуда она взялась. Порядок такой: ключ, переменная харнеса,
+// реестр чатов по задаче. Не нашлось ничего, значит признак ждёт безадресные
+// строки, и это видно первой же строкой вывода, а не скрыто.
 func askSession(p AskParams, home string, env func(string) string) (sid, note string) {
 	if s := strings.TrimSpace(p.Session); s != "" {
 		return s, "сессия из ключа --session"
@@ -162,30 +144,15 @@ func askSession(p AskParams, home string, env func(string) string) (sid, note st
 	return "", "сессия не назвалась: жду безадресные реплики, адресованные другой сессии пройдут мимо"
 }
 
-// askTrees называет деревья, входы которых опрашивает ожидание. Признак пишется
-// во вход основного чекаута, а опрашиваются оба, своё дерево и чекаут: ответ
-// доезжает и от ручки задачи, и от панели, в какой бы из двух входов он ни лёг
-// (LLD DK-430, решение 2).
-func askTrees(root, main string) []string {
-	if root == "" || root == main {
-		return []string{main}
-	}
-	return []string{main, root}
-}
-
-// cmdAsk это боевой вход команды: подписка на сигналы и живые зависимости.
-// Сигнал тут не украшение: признак ожидания снимается на любом выходе, и
-// брошенный признак запер бы вход подхвата до конца срока.
+// cmdAsk это боевой вход команды.
 func cmdAsk(root string, p AskParams) (string, error) {
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer signal.Stop(sig)
-	return runAsk(root, p, liveDeps(root), os.Getenv, sig)
+	return runAsk(root, p, liveDeps(root), os.Getenv)
 }
 
-// runAsk это ожидание по шагам: признак, зов человека, отметка этапа, опрос
-// входа до срока и парковка, если ответа не дождались.
-func runAsk(root string, p AskParams, d askDeps, env func(string) string, sig <-chan os.Signal) (string, error) {
+// runAsk кладёт вопрос признаком без срока и паркует задачу. Ждать тут
+// нечего: живая сессия, поднявшая вопрос, уже кончила ход хуком, и ответ
+// доедет реплике, а не этому вызову.
+func runAsk(root string, p AskParams, d askDeps, env func(string) string) (string, error) {
 	p.ID = strings.ToUpper(strings.TrimSpace(p.ID))
 	if p.ID == "" {
 		return "", errors.New("кому вопрос: жду ID задачи")
@@ -198,21 +165,19 @@ func runAsk(root string, p AskParams, d askDeps, env func(string) string, sig <-
 	if main == "" {
 		main = stage.MainRoot(root)
 	}
-	// Черновик узнаётся сам, а не по флагу: заказ груминга зовёт ожидание тем
-	// же `taskctl ask <ID>`, что и задача, и требовать от агента помнить про
-	// вид записи значит ловить отказ парковки посреди захода (живой случай
-	// DK-517: два захода по восемь минут, оба кончились «нет на доске», а
-	// вопросы дошли до человека только текстом в чат).
+	// Черновик узнаётся сам, а не по флагу: заказ груминга зовёт писателя тем
+	// же ID, что и задача, и требовать от хука помнить про вид записи значит
+	// ловить отказ парковки посреди захода (живой случай DK-517: два захода
+	// подряд кончились «нет на доске», а вопросы дошли до человека только
+	// текстом в чат).
 	guessed := false
 	if !p.Draft && d.IsDraft != nil && d.IsDraft(p.ID) {
 		p.Draft = true
 		guessed = true
 	}
-	// Вход у ожидания один и тот же и у задачи, и у черновика: панель дашборда
-	// кладёт ответ человека в task-<ID> (sessionChatName), и слушать черновику
-	// свой draft-<ID> значило бы ждать на адресе, куда никто не пишет. Разводит
-	// эти два случая не адрес, а исход по сроку: задача паркуется строкой,
-	// черновик оставляет вопрос файлом исхода.
+	// Вход один и тот же и у задачи, и у черновика: панель дашборда кладёт
+	// ответ человека в task-<ID> (sessionChatName), и слушать черновику свой
+	// draft-<ID> значило бы ждать на адресе, куда никто не пишет.
 	name := chat.TaskName(p.ID)
 	text := askText(qs)
 	sid, note := askSession(p, d.Home, env)
@@ -220,7 +185,7 @@ func runAsk(root string, p AskParams, d askDeps, env func(string) string, sig <-
 	out = append(out, fmt.Sprintf("%s: вопрос человеку, %s", p.ID, note))
 	if guessed {
 		out = append(out, fmt.Sprintf(
-			"%s это запись накопителя, а не строка доски: ждём тем же входом, а не дождавшись, оставим вопрос файлом исхода", p.ID))
+			"%s это запись накопителя, а не строка доски: вопрос лежит в разговоре, парковки не будет", p.ID))
 	}
 	for _, q := range qs {
 		out = append(out, "  ? "+q.Text)
@@ -232,9 +197,14 @@ func runAsk(root string, p AskParams, d askDeps, env func(string) string, sig <-
 			out = append(out, "    "+mark+strings.TrimSpace(o.Label+" "+o.Note))
 		}
 	}
-	// Уведомитель и этап зовутся до опроса: человек узнаёт про вопрос сразу, а
-	// не через минуту, и запись «уточнение» стоит ровно на том времени, когда
-	// заход встал (её и заводили под этот случай, tools/agentctl/stage.go).
+	// Признак без срока: DK-715 меняет саму жизнь ожидания, оно живёт до
+	// ответа, что бы ни показали часы, и панель прячет обратный отсчёт.
+	if err := chat.WriteAsk(main, name, chat.Ask{Session: sid, Task: p.ID, Questions: qs}); err != nil {
+		return "", err
+	}
+	// Уведомитель зовётся сразу: человек узнаёт про вопрос немедленно, а не
+	// когда-нибудь потом, и запись «уточнение» стоит ровно на том времени,
+	// когда заход встал (tools/agentctl/stage.go).
 	if d.Notify != nil {
 		if n := d.Notify(reasonAsk, p.ID, fmt.Sprintf("%s: вопрос по задаче", p.ID), text); n != "" {
 			out = append(out, strings.TrimSpace(n))
@@ -243,70 +213,18 @@ func runAsk(root string, p AskParams, d askDeps, env func(string) string, sig <-
 	if d.Stage != nil && !p.Draft {
 		d.Stage(p.ID, "вопрос: "+text)
 	}
-	if p.Wait <= 0 {
-		// «Не жду, паркуй сразу»: ответ на такой вопрос требует действий
-		// человека в мире (доступ, железо, чужая команда), и караулить его
-		// заходом бессмысленно. Признак тут не пишется вовсе: ждущего нет, а
-		// лежащий признак запер бы вход подхвата на пустом месте.
-		return askPark(main, p, d, qs, out, text, "ожидания не было (--wait 0)")
-	}
-	start := d.Now()
-	deadline := start.Add(p.Wait)
-	ask := chat.Ask{Until: deadline, Session: sid, Task: p.ID, Questions: qs}
-	if err := chat.WriteAsk(main, name, ask); err != nil {
-		return "", err
-	}
-	// Признак снимается на любом выходе, включая падение и сигнал: заперев
-	// вход, ожидание оставило бы подхват без безадресных реплик до конца срока.
-	defer chat.DropAsk(main, name)
-	trees := askTrees(root, main)
-	out = append(out, fmt.Sprintf("жду ответа до %s, вход %s",
-		deadline.Format("15:04:05"), chat.Path(main, name)))
-	for {
-		for _, tree := range trees {
-			lines, err := chat.Take(tree, name, sid)
-			if err != nil && !errors.Is(err, chat.ErrLocked) {
-				return "", err
-			}
-			if len(lines) == 0 {
-				continue
-			}
-			out = append(out, fmt.Sprintf("ответ человека через %s:",
-				d.Now().Sub(start).Truncate(time.Second)))
-			for _, l := range lines {
-				out = append(out, "  "+chat.Said(l))
-			}
-			out = append(out, "ожидание снято, заход продолжается")
-			return strings.Join(out, "\n"), nil
-		}
-		if !d.Now().Before(deadline) {
-			break
-		}
-		select {
-		case <-sig:
-			return "", fmt.Errorf("%s: ожидание прервано сигналом, признак снят, задача не припаркована", p.ID)
-		default:
-		}
-		d.Sleep(askPoll)
-	}
-	return askPark(main, p, d, qs, out, text, fmt.Sprintf("ответа нет %s", p.Wait.Truncate(time.Second)))
+	return askPark(p, d, out, text)
 }
 
 // askPark паркует задачу вопросом и говорит агенту, что заход кончается
-// рубежом. Черновик доски не занимает, и парковать там нечего: вопрос остаётся
-// файлом исхода, из которого его берёт экран черновика (LLD DK-354).
-func askPark(main string, p AskParams, d askDeps, qs []chat.Question, out []string, text, why string) (string, error) {
+// рубежом. Черновик доски не занимает, и парковать там нечего: вопрос уже
+// лежит признаком и репликой в разговоре, отвечать на него можно и без строки
+// доски (LLD DK-354).
+func askPark(p AskParams, d askDeps, out []string, text string) (string, error) {
 	if p.Draft {
-		// Черновик доски не занимает, и парковать нечего. Файла исхода тут
-		// больше нет вовсе: его писали, чтобы экран черновика показал вопрос
-		// после смерти headless-сессии груминга, а груминг давно идёт живым
-		// чатом, карточки исхода с формы снесены и ручка исхода тоже. Читателя
-		// у файла не осталось ни одного, и он лежал мусором в .devkit
-		// (замечание пользователя). Вопрос человеку уже задан: он ушёл
-		// уведомителем и лежит репликой в разговоре.
 		out = append(out, fmt.Sprintf(
-			"%s: %s, запись накопителя доски не занимает: парковать нечего, вопрос остаётся в разговоре",
-			p.ID, why))
+			"%s: запись накопителя доски не занимает, парковать нечего: вопрос лежит в разговоре, "+
+				"ответ снимет признак", p.ID))
 		return strings.Join(out, "\n"), nil
 	}
 	if d.Park == nil {
@@ -318,14 +236,14 @@ func askPark(main string, p AskParams, d askDeps, qs []chat.Question, out []stri
 		// строки, неуехавшая в origin доска. Ронять заход нечем, вопрос уже
 		// задан, но и молчать нельзя: где именно встала парковка, видно по
 		// самой строке, и агент смотрит её сам.
-		out = append(out, fmt.Sprintf("%s: %s, парковка ответила отказом: %v", p.ID, why, err))
+		out = append(out, fmt.Sprintf("%s: парковка ответила отказом: %v", p.ID, err))
 		out = append(out, fmt.Sprintf("строку проверить самому: taskctl show %s", p.ID))
 		return strings.Join(out, "\n"), nil
 	}
 	out = append(out, strings.TrimSpace(msg))
 	out = append(out, fmt.Sprintf(
-		"%s: %s, задача припаркована вопросом: заход кончается рубежом, ответ разбудит строку тиком сторожка",
-		p.ID, why))
+		"%s: задача припаркована вопросом: заход кончается рубежом, ответ снимет признак и разбудит "+
+			"строку тиком сторожка", p.ID))
 	return strings.Join(out, "\n"), nil
 }
 

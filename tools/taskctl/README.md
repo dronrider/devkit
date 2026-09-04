@@ -76,13 +76,14 @@ add --title "..." --type bug|task|LLD --rank "а+б+в+г+д"
     --accept agent|mixed|user [--barrier <ключ>] [--id XR-NNN]
     [--cost S|M|L|XL] [--link "..."] [--status ...]
 move <ID> <backlog|in-progress|check|blocked> [--reason "..."]
-ask <ID> [--question "..."] [--wait N] [--session SID]
-                                            спросить человека посреди захода:
-                                            вопрос уходит уведомлением, ответ
-                                            печатается агенту, не дождавшись,
-                                            команда паркует задачу сама
-draft ask <ID> [--question "..."] [--wait N]
-                                            то же ожидание для черновика
+ask <ID> [--question "..."] [--session SID]
+                                            внутренний писатель признака для
+                                            хука ask-panel.py, не команда
+                                            агента: агент спрашивает штатным
+                                            AskUserQuestion, признак ложится
+                                            без срока и паркует задачу
+draft ask <ID> [--question "..."] [--session SID]
+                                            тот же писатель для черновика
 fail <ID> --reason "..."                    провал проверки: прод сломан
 fail <ID> --clear                           прод починен, признак снят
 set <ID> [--title "..."] [--type ...] [--rank "..."] [--cost ...] [--link "..."]

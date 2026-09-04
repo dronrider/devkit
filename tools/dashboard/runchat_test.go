@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -214,4 +216,24 @@ func TestRunStopRejectsForeignSession(t *testing.T) {
 	if text := body(t, resp); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("стоп чужой сессии: %d %s", resp.StatusCode, text)
 	}
+}
+
+// Стенд фронта: у строки, за которой работает окно разговора, стоит красный
+// «Стоп» со своим исходом, иконка чата ведёт в разговор с идущим ходом, а при
+// нескольких рабочих сессиях стоп спрашивает, в какой прервать ход. Проверка
+// по тексту app.js тут не годится: разметку держал бы и прежний код, а человек
+// на экране видел жёлтое «Продолжить». Стенд рисует колонку действий в
+// поддельном DOM (testdata/poc_rowstop.mjs). Без node шаг пропускается: узел
+// стенда, а не рабочей части.
+func TestStaticRowStopInChatWindow(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд кнопок строки пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_rowstop.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("кнопки строки с работой в окне разговора: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }

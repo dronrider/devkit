@@ -555,15 +555,21 @@ async function startRun(project, id, harness, afterOk, tier) {
   if (r.ok) await refresh();
 }
 
-async function stopRun(project, id) {
+// Стоп строки. Сессию называют, когда по строке работает не одна: сервер тогда
+// отвечает списком, а выбор остаётся за человеком (DK-716). Ответ возвращается
+// целиком: строку таба сессий снимает с экрана тот, кто звал, и делать это по
+// неудавшейся ручке нельзя, а список для выбора читает кнопка стопа.
+async function stopRun(project, id, session) {
   sayResult("стоп " + id + "...");
-  const r = await api("/api/projects/" + encodeURIComponent(project) + "/runs/" + encodeURIComponent(id),
-    { method: "DELETE" });
-  sayResult(r.body.message || r.body.error || "", !r.ok);
+  const tail = session ? "?session=" + encodeURIComponent(session) : "";
+  const r = await api("/api/projects/" + encodeURIComponent(project) + "/runs/"
+    + encodeURIComponent(id) + tail, { method: "DELETE" });
+  // Список сессий это не отказ, а вопрос: слова про него говорит сама кнопка
+  // рядом с выбором, и красная строка результата тут сбивала бы с толку.
+  const asks = !r.ok && r.body && Array.isArray(r.body.sessions) && r.body.sessions.length > 1;
+  if (!asks) sayResult(r.body.message || r.body.error || "", !r.ok);
   if (r.ok) await refresh();
-  // Исход возвращается наружу: строку таба сессий снимает с экрана тот, кто
-  // звал, и делать это по неудавшейся ручке нельзя.
-  return r.ok;
+  return r;
 }
 
 // Полоски «работает N агентов» над доской больше нет вовсе. Она пережила два
@@ -1270,7 +1276,55 @@ function rowOnRun(row) {
 // жива, последняя реплика была две минуты назад) стоял «Стоп», хотя снимать
 // было нечего, а строке нужен был пуск (замечание пользователя).
 function rowOurRun(row) {
-  return Boolean(row) && row.run === "tmux" && rowOnRun(row);
+  return Boolean(row) && (row.run === "tmux" || row.run === "chat") && rowOnRun(row);
+}
+
+// Что сделает «Стоп» у этой строки. Работу конвейера снимают целиком: сессия у
+// него служебная, возобновление это новый запуск, и состояние он прочтёт с
+// диска. Работу, идущую в окне разговора, так снимать нельзя, у неё память
+// человека: там прерывают ход, кладут конец работы в реестр и оставляют
+// разговор жить (DK-716). Кнопка обязана говорить это до нажатия: два разных
+// исхода под одним значком человек различает только подсказкой.
+function stopTip(row) {
+  if (row && row.run === "chat") {
+    return "Стоп: текущий ход агента прервётся, работа по задаче снимется, "
+      + "а разговор останется жить и следующую реплику возьмёт.";
+  }
+  return "Стоп: " + STOP_TIP;
+}
+
+// Выбор рабочей сессии для стопа. По строке работает не одна, и сервер вместо
+// остановки первой попавшейся отвечает списком: какая из них «та самая», знает
+// только человек, а прерванный чужой ход стоит потерянной работы. Всплывашка
+// та же, что у выбора подписки, и закрывается она теми же тремя путями.
+function stopPickShow(box, btn, project, row, r) {
+  const list = (r && r.body && Array.isArray(r.body.sessions)) ? r.body.sessions : [];
+  if (!r || r.ok || list.length < 2) return;
+  // Прошлый выбор снимается: второе нажатие иначе вешало бы вторую всплывашку
+  // поверх первой.
+  for (const gone of (box.children || []).slice()) {
+    if (String(gone.className || "").includes("spick")) gone.remove();
+  }
+  const menu = el("div", "pmenu rmenu spick");
+  let held = null;
+  const shut = () => { menu.hidden = true; held = null; menu.remove(); };
+  for (const one of list) {
+    const when = one.moved ? whenAgo({ at: new Date(one.moved * 1000), exact: true }, Date.now()) : "";
+    const what = one.live === "waiting" ? "ждёт ответа" : "идёт ход";
+    const label = one.tmux || one.session;
+    menu.append(menuRow(label, [one.title, what, when].filter(Boolean).join(", "), () => {
+      popupDrop(held);
+      shut();
+      btn.disabled = true;
+      stopRun(project, row.id, one.session)
+        .catch(console.error).finally(() => { btn.disabled = false; });
+    }));
+  }
+  box.append(menu);
+  popupsShut(null);
+  menu.classList.toggle("up", noRoomBelow(btn));
+  held = popupHold(menu, shut);
+  sayResult(r.body.error || "", false);
 }
 
 function rowAction(project, row, sect) {
@@ -1298,14 +1352,16 @@ function rowAction(project, row, sect) {
     main = el("button", "btn btn-sm btn-danger btn-ico rstop");
     main.append(icon("i-stop"));
     main.setAttribute("aria-label", "Стоп");
-    withTip(main, "Стоп: " + STOP_TIP);
+    withTip(main, stopTip(row));
     pickWhy = "по строке идёт ход нашей сессией, и подписку ему на ходу не сменить";
     main.addEventListener("click", (ev) => {
       ev.stopPropagation();
       // Кнопка гаснет до ответа: пока стоп идёт, строка выглядит прежней, и
       // второе нажатие уходило вторым запросом.
       main.disabled = true;
-      stopRun(project, row.id).catch(console.error).finally(() => { main.disabled = false; });
+      stopRun(project, row.id)
+        .then((r) => { stopPickShow(grp, main, project, row, r); })
+        .catch(console.error).finally(() => { main.disabled = false; });
     });
   } else if (busy) {
     const label = actionLabel(sect);
@@ -9113,8 +9169,15 @@ function chatIconBtn(tip, aria, open, lively) {
 
 function rowChatBtn(project, row, works) {
   const lively = taskLively(project, row.id, works || shownWorks);
+  // Адрес разговора с идущим ходом называет сама строка (run_chat): при
+  // нескольких рабочих сессиях сервер выбрал свежайшую по последней реплике.
+  // Прежде иконка открывала адрес задачи, панель показывала список её чатов, и
+  // до живого разговора человек делал ещё один клик, выбирая его глазами по
+  // времени (DK-716). Работы за строкой нет, значит адрес задачи и есть
+  // правильный вход: он откроет список или заведёт новый чат.
+  const addr = row.run_chat || row.id;
   return chatIconBtn(lively ? "Чат по задаче: работа идёт" : "Чат по задаче",
-    "Чат по задаче " + row.id, () => { openChat(chatAddr(project, row.id)); }, lively);
+    "Чат по задаче " + row.id, () => { openChat(chatAddr(project, addr)); }, lively);
 }
 
 // Кнопка стопа: красный квадрат в кружке рядом с отправкой. Прерывает ход, а не

@@ -247,7 +247,8 @@ func trackerFromMR(link string) (mrTarget, error) {
 }
 
 // body собирает текст реплики так, как он уйдёт в тред: метка conventional
-// comments впереди, у итогового комментария уровня метки нет.
+// comments впереди. Блок «итог» до реплики не доходит, publish снимает его
+// раньше, и ветка без префикса тут осталась страховкой на ручную правку файла.
 func reviewBody(bl reviewBlock) string {
 	if bl.Label == reviewLabelSummary {
 		return bl.Text
@@ -382,6 +383,29 @@ func cmdReviewPublish(root, id string, c CommitOpts) (string, error) {
 		return "", err
 	}
 	var out []string
+	// Блок «итог» это отчёт владельцу строки, а не замечание автору MR: в
+	// трекер он не едет ни при каком publish, а в файле получает снятое
+	// состояние с припиской, чтобы повторный прогон его не поднимал.
+	dropped := 0
+	for i := range d.Blocks {
+		bl := d.Blocks[i]
+		if bl.Label != reviewLabelSummary || bl.published() {
+			continue
+		}
+		if bl.State == reviewStateDropped && bl.Note == reviewSummaryNote {
+			continue
+		}
+		d.Blocks[i].State = reviewStateDropped
+		d.Blocks[i].Note = reviewSummaryNote
+		d.Blocks[i].Thread = ""
+		dropped++
+	}
+	if dropped > 0 {
+		if err := d.save(); err != nil {
+			return "", err
+		}
+		out = append(out, fmt.Sprintf("итог в MR не публикуется, блоков снято %d", dropped))
+	}
 	if conf.Publish == publishAuto {
 		n := 0
 		for i := range d.Blocks {
@@ -404,6 +428,9 @@ func cmdReviewPublish(root, id string, c CommitOpts) (string, error) {
 		}
 	}
 	if len(todo) == 0 {
+		if dropped > 0 {
+			return strings.Join(out, "\n"), nil
+		}
 		if conf.Publish == publishAuto {
 			return "", fmt.Errorf("публиковать нечего: в %s нет ни черновика, ни одобренного замечания", reviewDraftRel(id))
 		}

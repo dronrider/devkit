@@ -23,9 +23,12 @@ import (
 const (
 	reviewLabelIssue      = "issue"
 	reviewLabelSuggestion = "suggestion (non-blocking)"
-	// reviewLabelSummary это итоговый комментарий уровня «что проверено»: блок
-	// без файла и строки, в MR он уходит отдельным тредом без префикса метки.
+	// reviewLabelSummary это отчёт владельцу строки: что прогнано, чего
+	// ревьювер не смог и почему, что осталось открытым. Блок без файла и
+	// строки, в MR он не публикуется (DK-797), publish снимает его с
+	// припиской reviewSummaryNote.
 	reviewLabelSummary = "итог"
+	reviewSummaryNote  = "не публикуется"
 
 	reviewStateNew       = "черновик"
 	reviewStateApproved  = "одобрено"

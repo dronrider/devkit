@@ -52,21 +52,26 @@ func draftStates(t *testing.T, root, id string) []string {
 		if b.Thread != "" {
 			s += " " + b.Thread
 		}
+		if b.Note != "" {
+			s += ", " + b.Note
+		}
 		out = append(out, s)
 	}
 	return out
 }
 
-// twoDrafts кладёт два замечания: первое с привязкой к строке диффа, второе
-// итогом уровня.
+// twoDrafts кладёт два замечания автору: первое с привязкой к строке диффа,
+// второе неблокирующее без позиции. Блок «итог» сюда не кладётся, он в MR не
+// едет и публикацию не проходит (DK-797), его отдельно проверяет
+// TestPublishAutoAll.
 func twoDrafts(t *testing.T, root string) {
 	t.Helper()
 	if _, err := cmdReviewDraft(root, "XR-005", "ворота merge не видят раздел",
 		reviewDraftParams{File: "tools/shipctl/ops.go", Line: 214}, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdReviewDraft(root, "XR-005", "проверен живой путь по DoD",
-		reviewDraftParams{Label: "итог"}, CommitOpts{}); err != nil {
+	if _, err := cmdReviewDraft(root, "XR-005", "имя флага --at читается как время",
+		reviewDraftParams{Label: "suggestion"}, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -140,6 +145,10 @@ func TestPublishAutoAll(t *testing.T) {
 	writeReviewConf(t, root, "publish = auto\npause = 0\n")
 	calls, pauses := stubAPI(t)
 	twoDrafts(t, root)
+	if _, err := cmdReviewDraft(root, "XR-005", "прогнан живой путь по DoD, тесты пакета не завёл",
+		reviewDraftParams{Label: "итог"}, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
 	msg, err := cmdReviewPublish(root, "XR-005", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
@@ -147,18 +156,29 @@ func TestPublishAutoAll(t *testing.T) {
 	if !strings.Contains(msg, "черновиков одобрено 2") || !strings.Contains(msg, "ушло замечаний 2") {
 		t.Fatalf("сообщение: %q", msg)
 	}
-	for i, st := range draftStates(t, root, "XR-005") {
+	states := draftStates(t, root, "XR-005")
+	for i, st := range states[:2] {
 		if !strings.HasPrefix(st, reviewStatePublished+" disc") {
 			t.Fatalf("блок %d не опубликован: %s", i+1, st)
 		}
 	}
+	// Блок «итог» это отчёт владельцу строки: в трекер он не уходит даже при
+	// publish = auto и остаётся в файле снятым с припиской.
+	if states[2] != reviewStateDropped+", "+reviewSummaryNote {
+		t.Fatalf("итог после публикации: %q", states[2])
+	}
 	if *pauses != 1 {
 		t.Fatalf("пауз между двумя публикациями %d, ждём 1", *pauses)
 	}
-	// Итоговый комментарий уровня идёт тредом без позиции и без метки.
+	for _, c := range *calls {
+		if strings.Contains(c, "живой путь по DoD") {
+			t.Fatalf("итог уехал в трекер:\n%s", c)
+		}
+	}
+	// Неблокирующее замечание без позиции идёт тредом без position и с меткой.
 	last := (*calls)[len(*calls)-1]
-	if strings.Contains(last, "position[") || !strings.Contains(last, "'body=проверен живой путь по DoD'") {
-		t.Fatalf("итоговый комментарий ушёл не тем запросом:\n%s", last)
+	if strings.Contains(last, "position[") || !strings.Contains(last, "'body=suggestion (non-blocking): имя флага --at читается как время'") {
+		t.Fatalf("замечание без позиции ушло не тем запросом:\n%s", last)
 	}
 }
 

@@ -1421,10 +1421,15 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .rrow{padding:6px 12px}
 
 /* индикатор живой работы агента: стоит под лентой у самого поля ввода, где на
-   него и смотрят после отправки реплики */
+   него и смотрят после отправки реплики. Модификатор .stop красит его же
+   остановкой вместо отдельной строки с кнопкой «Поднять» (DK-701): дот гаснет
+   без пульса, подпись краснеет тем же цветом, что и «Стоп» строки задачи. */
 .busyrow{display:flex;align-items:center;gap:9px;padding:7px 12px;margin:6px 0 0;border-radius:9px;background:var(--bg2);border:1px solid var(--line)}
 .busyrow[hidden]{display:none}
+.busyrow.stop{border-color:color-mix(in oklab,var(--block) 45%,transparent)}
 .busytext{font:400 12px var(--mono);color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.busyrow.stop .busytext{color:var(--block)}
+.busyrow.stop .dot{background:var(--block);animation:none}
 
 /* ---- шапки одной высоты и одной горизонтали (замечание 1) ----
    Прежде «выровнять» было понято как одна линия рамок, а элементы внутри
@@ -1734,16 +1739,6 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   border-bottom:1px dashed var(--tx3);padding:0;margin-left:6px;cursor:pointer}
 .qwhy-b:hover{color:var(--tx)}
 .qwhy{color:var(--tx3);white-space:normal;overflow-wrap:anywhere;margin-top:4px}
-
-/* Разговор без процесса: строка над полем ввода говорит, что сессии нет, и
-   держит кнопку подъёма. Стоит там же, где остальные слова о состоянии, и на
-   узком экране кнопка попадаема пальцем. */
-.cnosess{display:flex;align-items:center;gap:10px;margin:0 0 6px;padding:0 2px;
-  font:400 11.5px/1.4 var(--sans);color:var(--tx3)}
-.cnosess .btn{flex:none}
-@media (max-width:900px){
-  .cnosess .btn{min-height:38px;padding:0 14px}
-}
 
 /* Записи разговора стоят на общей вертикальной линии: она одна на всю ленту,
    кружок против первой строки записи перекрывает её собой. Цвет кружка это

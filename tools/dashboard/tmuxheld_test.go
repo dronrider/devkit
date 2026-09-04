@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -138,23 +137,6 @@ func TestChatArchiveKeepsAHeldWindowAlive(t *testing.T) {
 	if killed != "" {
 		t.Fatalf("снятие под перезапуск сняло чужую сессию %q", killed)
 	}
-}
-
-// Кнопка «Поднять» повторяет ту дорогу, какую назвала ручка. Сторожит стенд
-// testdata/poc_liftroad.mjs: панель поднимается в node с заглушкой DOM, ручка
-// отвечает клавишами, и слова про резюм тут ложь. Без node шаг пропускается,
-// как и у остальных стендов статики.
-func TestStaticChatLiftNamesTheRoad(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node не найден: стенд кнопки подъёма пропущен")
-	}
-	out, err := exec.Command(node, filepath.Join("testdata", "poc_liftroad.mjs"),
-		filepath.Join("static", "app.js")).CombinedOutput()
-	if err != nil {
-		t.Fatalf("кнопка подъёма: %v\n%s", err, out)
-	}
-	t.Log(strings.TrimSpace(string(out)))
 }
 
 // Панель показывает такой разговор снятым и называет, кто занял имя: живым он

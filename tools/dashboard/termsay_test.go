@@ -276,6 +276,36 @@ func TestChatSayCrookedWidgetQueuesReply(t *testing.T) {
 	})
 }
 
+// Железный сбой tmux при ответе на запертый вопрос остаётся отказом: запасная
+// дорога положена только слепому виджету (errAskBlind), реплика с выбранным
+// пунктом при живом курсоре в очередь клиента молча не перекладывается, иначе
+// вопрос висит без ответа, а дашборд рапортует об успехе.
+func TestChatSayLockedAnswerKeysFailRefuses(t *testing.T) {
+	sid := "baba7777-caca-4bbb-8bbb-bbbbbbbbbbbb"
+	e, c := chatEnv(t)
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
+	writeBinds(t, e.home, "2026-08-30T12:00:00 сессия "+sid+
+		" задача - проект demo дерево "+e.proj+" транскрипт /tmp/t.jsonl "+
+		"источник заказ повод startup tmux chat-9\n")
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) printf 'chat-9\t1\t1754770421\n';;
+capture-pane) printf '%s' `+shQuote(trustPane)+`;;
+send-keys) exit 1;;
+esac
+exit 0`)
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text": "да"}`)
+	said := body(t, resp)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("сбой подачи клавиш должен остаться отказом: %d %s", resp.StatusCode, said)
+	}
+	if !strings.Contains(said, "ответ не подался в tmux-сессию") {
+		t.Fatalf("отказ не назван дорогой клавиш: %s", said)
+	}
+}
+
 // Замороженный терминал глотает send-keys без эха: при молчащем событийном
 // цикле (зонд сокета не дождался закрытия) клавиши не подаются вовсе, а ручка
 // отвечает отказом с именем клина.

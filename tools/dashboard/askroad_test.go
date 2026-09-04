@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -169,6 +170,12 @@ func TestChatAskSignWithoutSessionReachesTaskChat(t *testing.T) {
 	sid := "eeee5555-5555-4555-8555-555555555555"
 	e, c, _ := askRoadEnv(t, sid, "XR-4", now)
 	askRoadPane(t, e, " Работаю дальше, вопросов нет.\n\n\u276f \n")
+	// Ответ на признак без сессии (DK-715) идёт файлом: handedAskReply трогает
+	// его по совпавшей задаче, а не по адресу сессии. Метка «застрял на
+	// разрешении» из askRoadEnv тут посторонняя, терминал этого теста
+	// свободен: без сброса живая дорога ниже читала бы её как запертый
+	// диалог другого вопроса и отбила бы ответ отказом.
+	writeNotifyLog(t, e.home, nil)
 	err := chat.WriteAsk(e.proj, chat.TaskName("XR-4"), chat.Ask{
 		Until: now.Add(5 * time.Minute), Task: "XR-4",
 		Questions: []chat.Question{{Text: "куда катить", Options: []chat.Option{
@@ -189,20 +196,30 @@ func TestChatAskSignWithoutSessionReachesTaskChat(t *testing.T) {
 		t.Fatalf("варианты не доехали: %+v", ask.Options)
 	}
 
-	// Ответ человека ложится во вход разговора безадресной строкой: её и ждёт
-	// признак без сессии.
+	// Сессия живая и терминал у неё есть: ответ едет клавишами дорогой ниже
+	// (DK-715), а не файлом, который никто не прочитает. Признак снимается тем
+	// же ответом, панель не рисовала бы вопрос вечно.
+	sent := filepath.Join(e.home, "sent.log")
+	writeScript(t, e.bin, "tmux", `case "$1" in
+capture-pane) printf ' Работаю дальше, вопросов нет.\n\n\u276f \n';;
+send-keys) shift; echo "$@" >> `+sent+`;;
+ls) printf 'chat-13\t1\t1786000000\n';;
+esac
+exit 0`)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
 		sayBody("в прод", "m-9"))
 	said := body(t, resp)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(said, `"way":"ask"`) {
-		t.Fatalf("ответ не поехал дорогой ожидания: %d %s", resp.StatusCode, said)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(said, `"way":"send-keys"`) {
+		t.Fatalf("ответ не поехал терминальной дорогой: %d %s", resp.StatusCode, said)
 	}
-	lines := chatLines(t, e.proj, chat.TaskName("XR-4"))
-	if len(lines) != 1 || chat.Said(lines[0]) != "в прод" {
-		t.Fatalf("ответ не лёг во вход разговора задачи: %q", lines)
+	if keys := readFile(t, sent); !strings.Contains(keys, "в прод") {
+		t.Fatalf("ответ не подан клавишами: %q", keys)
 	}
-	if a := chat.Addressee(lines[0]); a != "" {
-		t.Errorf("ответ безадресному признаку лёг с адресатом %q: ждущий его не заберёт", a)
+	if lines := chatLines(t, e.proj, chat.TaskName("XR-4")); len(lines) != 0 {
+		t.Fatalf("ответ лёг во вход, который никто не прочитает: %q", lines)
+	}
+	if _, ok := chat.ReadAsk(chat.AskPath(e.proj, chat.TaskName("XR-4"))); ok {
+		t.Fatal("признак пережил ответ клавишами: панель показывала бы вопрос вечно")
 	}
 }
 

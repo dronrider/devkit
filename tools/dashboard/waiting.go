@@ -73,15 +73,16 @@ func askWaiting(tree, id string, now time.Time) (Waiting, bool) {
 	if !ok {
 		return Waiting{}, false
 	}
-	if !now.Before(a.Until) {
+	if !a.Live(now) {
 		// Срок вышел, а признак лежит: ждущего за ним нет, снять признак ему
 		// было нечем (убитый ход, упавший процесс). Брошенное ожидание снимает
 		// страховка сторожка, а показывать его живым нельзя: чип с вышедшим
-		// сроком врал бы, что ответа ещё ждут.
+		// сроком врал бы, что ответа ещё ждут. Признак без срока (DK-715) тут
+		// не попадает вовсе: Live для него всегда true.
 		return Waiting{}, false
 	}
 	w := Waiting{State: waitAskState, Source: waitAsk, Note: waitAskNote,
-		Until: a.Until.Unix(), Session: a.Session, Task: id,
+		Until: a.UnixUntil(), Session: a.Session, Task: id,
 		// Варианты идут теми же строками, что у розданного вопроса. Прежде тут
 		// брался один q.Text, и вопрос своей задачи приезжал на экран без
 		// вариантов: человек видел «куда катить» и ни одного ответа (DK-652).
@@ -127,7 +128,7 @@ func handedAsks(projPath, sid string, b sessionBinds, now time.Time) []handedAsk
 		}
 		path := chat.AskPath(projPath, name)
 		a, ok := chat.ReadAsk(path)
-		if !ok || !now.Before(a.Until) {
+		if !ok || !a.Live(now) {
 			continue
 		}
 		if !askForChat(a, sid, b) {
@@ -139,7 +140,10 @@ func handedAsks(projPath, sid string, b sessionBinds, now time.Time) []handedAsk
 		}
 		out = append(out, h)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Ask.Until.Before(out[j].Ask.Until) })
+	// Порядок по времени файла, а не по сроку: признак без срока (DK-715) не
+	// назовёт, кто спросил раньше, а mtime это тот же момент, когда встал сам
+	// вопрос.
+	sort.Slice(out, func(i, j int) bool { return out[i].Since < out[j].Since })
 	return out
 }
 
@@ -184,7 +188,7 @@ func askSignWhy(projPath, sid string, b sessionBinds, now time.Time) string {
 		if who == "" {
 			who = name
 		}
-		if !now.Before(a.Until) {
+		if !a.Live(now) {
 			stale = append(stale, fmt.Sprintf("%s (срок вышел в %s)", who, a.Until.Format("15:04:05")))
 			continue
 		}
@@ -285,7 +289,7 @@ type agentStep struct {
 // agentAskOf собирает виджет из признака ожидания. Пустой вид значит, что
 // показывать нечего: вопрос без текста и без вариантов рисовать не на чем.
 func agentAskOf(h handedAsk) agentAsk {
-	out := agentAsk{Kind: askKindAgent, Task: h.Ask.Task, Until: h.Ask.Until.Unix()}
+	out := agentAsk{Kind: askKindAgent, Task: h.Ask.Task, Until: h.Ask.UnixUntil()}
 	for i, q := range h.Ask.Questions {
 		text := strings.TrimSpace(q.Text)
 		if text == "" {
@@ -329,7 +333,7 @@ func agentPicks(opts []chat.Option) []tmuxPick {
 func handedWaiting(h handedAsk) Waiting {
 	return Waiting{State: waitAskState, Source: waitAsk, Note: waitAskNote,
 		Task: h.Ask.Task, Questions: askLines(h.Ask.Questions),
-		Since: h.Since, Until: h.Ask.Until.Unix(), Session: h.Ask.Session}
+		Since: h.Since, Until: h.Ask.UnixUntil(), Session: h.Ask.Session}
 }
 
 // parkedWaiting читает второй источник: строку в Blocked с машинным разрядом

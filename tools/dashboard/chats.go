@@ -2190,12 +2190,11 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	}
 	recs := s.bindsAll()
 	last := sessions.Last(recs[sid])
-	// Сессия стоит на вопросе инструмента ожидания: реплика идёт во вход
-	// разговора, а не в сокет клиента. Ждёт её процесс taskctl ask внутри хода
-	// Bash, и сокета он не слышит вовсе: реплика, ушедшая клиенту, легла бы в
-	// очередь следующего хода, а ожидание тем временем добрало бы свой срок и
-	// припарковало задачу с готовым ответом на руках.
-	if done, ok := s.sayToAsk(found, info, sid, text); ok {
+	// Сессия стоит на вопросе агента, а живого терминала у неё нет: реплика
+	// идёт во вход разговора, а не клавишами. Живому терминалу реплика едет
+	// им же, дорогой ниже, тем же путём, что и любой другой чат: с концом
+	// хода, которым хук отбил AskUserQuestion, сессия снова отвечает на ввод.
+	if done, ok := s.sayToAsk(found, info, sid, text, recs); ok {
 		s.chatSayDone(sid, claim, "ask")
 		s.saidSay(saidSessionKey(sid), text, "ask")
 		writeJSON(w, http.StatusOK, done)

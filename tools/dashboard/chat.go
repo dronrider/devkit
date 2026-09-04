@@ -84,44 +84,61 @@ func putChat(tree, name, text, line string) (lying string, code int, err error) 
 }
 
 // sayToAsk кладёт реплику во вход разговора, когда сессия стоит на вопросе
-// инструмента ожидания, и говорит ручке чата, что дорога выбрана. Второй
-// возврат false значит, что никто тут не ждёт и реплика едет обычной дорогой.
+// агента, а живого терминала за ней нет, и говорит ручке чата, что дорога
+// выбрана. Второй возврат false значит, что реплика едет обычной дорогой:
+// либо тут никто не ждёт, либо ждёт, а достать его можно клавишами, и тогда
+// достаётся ими же, чуть ниже по стеку вызова.
 //
-// Дорога выбирается не живостью сессии, а живым признаком ожидания: сокет
-// клиента слышит сам клиент, а ждущий сидит в ходе Bash и читает вход
-// разговора раз в секунду. Признак сверяется по сессии, потому что вопрос
-// одного собеседника не делает ждущими всех: ответ соседу забрал бы ждущий, и
-// оба разговора получили бы не своё.
-func (s *server) sayToAsk(p *Project, info sessionInfo, sid, text string) (map[string]any, bool) {
+// Признак ожидания без срока (DK-715) лежит до ответа, а не до часов, и живого
+// процесса, который читал бы вход разговора сам, у него больше нет: раньше
+// эта дорога была нужна, потому что ждущий сидел в ходе Bash и не слышал
+// сокета клиента, а признак к тому же скоро истекал. Сессия с живым
+// терминалом снова отвечает на любые клавиши, как только её ход кончился
+// (хук отбил AskUserQuestion), и класть в файл, который никто не прочитает,
+// значило бы хоронить реплику: такой сессии текст идёт терминальной дорогой
+// ниже, обычным вводом, а эта функция только снимает признак и возвращает
+// строку в In progress, не трогая сам текст. Файл остаётся дорогой для сессии
+// без живого терминала: делегат-субагент своего терминала не имеет никогда, а
+// у припаркованной задачи от терминала не осталось и следа, и там ответ ждёт
+// тика сторожка.
+func (s *server) sayToAsk(p *Project, info sessionInfo, sid, text string, recs map[string][]sessionBind) (map[string]any, bool) {
+	hasTerm := s.sayTermOf(sid, recs) != ""
 	head := s.sessionHeadCached(info.path, info.stamp)
 	name, _ := s.sessionChatName(p.Path, info, head)
 	// У сессии цели имени разговора нет, её реплики живут «Входящими» файла
 	// цели, но вопрос розданной работы задаётся и ей: скан ниже общий для
 	// всех разговоров.
 	if name != "" {
-		if done, ok := s.ownAskReply(p, info, sid, name, text); ok {
+		if done, ok := s.ownAskReply(p, info, sid, name, text, hasTerm); ok {
 			return done, true
 		}
 	}
-	return s.handedAskReply(p, sid, text)
+	return s.handedAskReply(p, sid, text, hasTerm)
 }
 
 // ownAskReply отвечает на вопрос, который задан в разговоре этой же задачи:
 // признак лежит под именем разговора сессии, и ждёт ровно она.
 // Признак лежит во входе основного чекаута: туда его кладёт taskctl ask,
 // какое бы дерево ни было у самого хода.
-func (s *server) ownAskReply(p *Project, info sessionInfo, sid, name, text string) (map[string]any, bool) {
+func (s *server) ownAskReply(p *Project, info sessionInfo, sid, name, text string, hasTerm bool) (map[string]any, bool) {
 	ask, has := chat.ReadAsk(chat.AskPath(p.Path, name))
-	if !has || !s.now().Before(ask.Until) || ask.Session != sid {
+	if !has || !ask.Live(s.now()) || ask.Session != sid {
+		return nil, false
+	}
+	if hasTerm {
+		// Текст едет клавишами дорогой ниже: тут только снимается признак и
+		// возвращается строка, чтобы доска не осталась висеть «ждёт ответа» у
+		// сессии, которая уже его получила.
+		s.settleAsk(p.Path, name, ask.Task)
 		return nil, false
 	}
 	tree, ok := sessionTree(p.Path, info.suffix)
 	if !ok {
 		return nil, false
 	}
-	// Строка идёт с адресатом и ложится в дерево ждущей сессии: оттуда её
-	// берёт и само ожидание (оно опрашивает своё дерево и чекаут), и подхват,
-	// если ход ожидания к тому времени уже кончился.
+	// Строка идёт с адресатом и ложится в дерево ждущей сессии: живого
+	// опрашивающего процесса больше нет (DK-715), строку заберёт подхват на
+	// следующем ходе сессии, когда бы он ни начался.
 	lying, _, err := putChat(tree, name, text, chat.Line(s.now(), sid, text))
 	if err != nil {
 		// Вход не взял строку: обычная дорога тут лучше отказа, реплика уедет
@@ -129,15 +146,19 @@ func (s *server) ownAskReply(p *Project, info sessionInfo, sid, name, text strin
 		s.logf("ответ ждущей сессии %s во вход %s не лёг, иду обычной дорогой: %v", sid, name, err)
 		return nil, false
 	}
+	// Признак ожидания снимается ответом, а не доставкой: без срока он лежал
+	// бы вечно, и панель показывала бы вопрос, на который человек уже ответил.
+	if err := chat.DropAsk(p.Path, name); err != nil {
+		s.logf("признак ожидания разговора %s не снялся после ответа: %v", name, err)
+	}
 	out := map[string]any{"way": "ask", "chat": name, "task": ask.Task,
-		"until": ask.Until.Unix(),
+		"until": ask.UnixUntil(),
 		"message": fmt.Sprintf(
-			"ответ лёг во вход разговора %s: его ждёт инструмент ожидания и заберёт в тот же ход", name)}
+			"ответ лёг во вход разговора %s: подхват доставит его в идущую сессию", name)}
 	if lying != "" {
 		out["message"] = "эта реплика уже лежит во входе разговора " + name + ", второй раз она не поедет"
 	}
-	s.logf("ответ человека сессии %s ушёл во вход разговора %s: сессия стоит на вопросе до %s",
-		sid, name, ask.Until.Format("15:04:05"))
+	s.logf("ответ человека сессии %s ушёл во вход разговора %s: вопрос снят", sid, name)
 	return out, true
 }
 
@@ -148,12 +169,18 @@ func (s *server) ownAskReply(p *Project, info sessionInfo, sid, name, text strin
 // заход оставляет её сторожку, и та же строка будит припаркованную вопросом
 // задачу. Вопросов бывает несколько, пачка исполнителей спрашивает вразнобой:
 // ответ уезжает ближнему по сроку, остальные названы в ответе ручки.
-func (s *server) handedAskReply(p *Project, sid, text string) (map[string]any, bool) {
+func (s *server) handedAskReply(p *Project, sid, text string, hasTerm bool) (map[string]any, bool) {
 	asks := handedAsks(p.Path, sid, s.binds(), s.now())
 	if len(asks) == 0 {
 		return nil, false
 	}
 	h := asks[0]
+	if hasTerm {
+		// Раздавший разговор жив и отвечает на клавиши сам: текст едет ему
+		// дорогой ниже, а тут только снимается признак и возвращается строка.
+		s.settleAsk(p.Path, h.Name, h.Ask.Task)
+		return nil, false
+	}
 	lying, _, err := putChat(p.Path, h.Name, text, chat.TaskLine(s.now(), text))
 	if err != nil {
 		// Вход не взял строку: обычная дорога тут лучше отказа, реплика уедет
@@ -161,10 +188,16 @@ func (s *server) handedAskReply(p *Project, sid, text string) (map[string]any, b
 		s.logf("ответ раздавшего разговора %s во вход %s не лёг, иду обычной дорогой: %v", sid, h.Name, err)
 		return nil, false
 	}
+	// Признак ожидания снимается ответом (DK-715): строка припаркованной
+	// задачи будит её тиком сторожка, а признак без срока висел бы до второго
+	// вопроса, если бы не снялся тут же.
+	if err := chat.DropAsk(p.Path, h.Name); err != nil {
+		s.logf("признак ожидания разговора %s не снялся после ответа: %v", h.Name, err)
+	}
 	out := map[string]any{"way": "ask", "chat": h.Name, "task": h.Ask.Task,
-		"until": h.Ask.Until.Unix(),
+		"until": h.Ask.UnixUntil(),
 		"message": fmt.Sprintf(
-			"ответ лёг во вход разговора %s: его ждёт инструмент ожидания и заберёт в тот же ход", h.Name)}
+			"ответ лёг во вход разговора %s: пробудит припаркованную задачу тиком сторожка", h.Name)}
 	if lying != "" {
 		out["message"] = "эта реплика уже лежит во входе разговора " + h.Name + ", второй раз она не поедет"
 	}
@@ -176,9 +209,48 @@ func (s *server) handedAskReply(p *Project, sid, text string) (map[string]any, b
 		out["message"] = fmt.Sprintf("%s; следом ждут ответа %s",
 			out["message"], strings.Join(rest, ", "))
 	}
-	s.logf("ответ раздавшего разговора %s ушёл во вход %s: вопрос задачи %s ждёт до %s",
-		sid, h.Name, h.Ask.Task, h.Ask.Until.Format("15:04:05"))
+	s.logf("ответ раздавшего разговора %s ушёл во вход %s: вопрос задачи %s снят", sid, h.Name, h.Ask.Task)
 	return out, true
+}
+
+// settleAsk снимает признак ожидания и возвращает припаркованную им строку в
+// In progress, когда ответ уезжает не файлом, а клавишами в живой терминал
+// (DK-715): текст доставляет терминальная дорога сама, а тут только приводится
+// в порядок то, что признак и парковка оставили за собой. Строка трогается
+// только там, где её и правда припарковал этот же вопрос: чужая причина блока
+// («окружение: ...», спор ревью) остаётся как есть, move её не тронет.
+// Отказ тут не роняет ответ: терминальная дорога ниже всё равно доставит
+// текст, а доска, если не свелась сама, дождётся тика сторожка.
+func (s *server) settleAsk(root, name, task string) {
+	if err := chat.DropAsk(root, name); err != nil {
+		s.logf("признак ожидания разговора %s не снялся после ответа клавишами: %v", name, err)
+	}
+	if task == "" {
+		return
+	}
+	raw, err := s.projectBoard(root)
+	if err != nil {
+		s.logf("задача %s: доска не читается, строку не свести из Blocked: %v", task, err)
+		return
+	}
+	rows, err := parseBoardRows(raw)
+	if err != nil {
+		s.logf("задача %s: доска не разобралась, строку не свести из Blocked: %v", task, err)
+		return
+	}
+	row, ok := rows[task]
+	if !ok || !parkedByAsk(row) {
+		// Строки нет, или её парковка не про этот вопрос (сняли руками, ушла
+		// сама, или блок стоит по другой причине): трогать нечего.
+		return
+	}
+	out, code, err := s.taskctlWrite(root, "move", task, "in-progress",
+		"-m", fmt.Sprintf("docs(tasks): %s разбуждена ответом", task), "--push")
+	if err != nil {
+		s.logf("задача %s: возврат в In progress клавишным ответом не прошёл (%d): %v", task, code, err)
+		return
+	}
+	s.logf("задача %s возвращена в In progress ответом клавишами: %s", task, out)
 }
 
 // handleSessionMessagePost кладёт реплику человека во вход живой сессии.

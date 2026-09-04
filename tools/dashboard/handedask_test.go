@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -96,32 +97,42 @@ func TestPulseHandedAskIgnoresForeignAndStale(t *testing.T) {
 
 // Скан признаков: ближний срок первым, варианты вопроса разворачиваются в
 // строки экрана с пометкой рекомендованного.
+// Порядок вопросов без срока (DK-715) считается по времени файла, а не по
+// дедлайну: срока у признака больше нет, и отвечают тому, кто спросил раньше,
+// а не тому, у кого «горит» сильнее. Время файла тут проставлено руками
+// (os.Chtimes), а не выведено из порядка записи: обе записи в тесте ложатся
+// в одну секунду по живым часам, а mtime у признака секундной точности.
 func TestHandedAsksOrderAndLines(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
-	far := chat.Ask{Until: now.Add(30 * time.Minute), Session: "aaa-1", Task: "XR-2",
+	early := chat.Ask{Session: "aaa-1", Task: "XR-2",
 		Questions: []chat.Question{{Text: "режем строку"}}}
-	near := chat.Ask{Until: now.Add(5 * time.Minute), Session: "aaa-1", Task: "XR-3",
+	late := chat.Ask{Session: "aaa-1", Task: "XR-3",
 		Questions: []chat.Question{{Text: "куда катить", Options: []chat.Option{
 			{Label: "в прод", Note: "сразу", Recommended: true},
 			{Label: "в стенд"},
 		}}}}
-	for _, a := range []chat.Ask{far, near} {
+	stamps := map[string]time.Time{"XR-2": now.Add(-10 * time.Minute), "XR-3": now.Add(-time.Minute)}
+	for _, a := range []chat.Ask{early, late} {
 		if err := chat.WriteAsk(dir, chat.TaskName(a.Task), a); err != nil {
+			t.Fatal(err)
+		}
+		at := stamps[a.Task]
+		if err := os.Chtimes(chat.AskPath(dir, chat.TaskName(a.Task)), at, at); err != nil {
 			t.Fatal(err)
 		}
 	}
 	got := handedAsks(dir, "aaa-1", sessions.Binds{}, now)
-	if len(got) != 2 || got[0].Ask.Task != "XR-3" || got[1].Ask.Task != "XR-2" {
-		t.Fatalf("порядок вопросов не по сроку: %+v", got)
+	if len(got) != 2 || got[0].Ask.Task != "XR-2" || got[1].Ask.Task != "XR-3" {
+		t.Fatalf("порядок вопросов не по времени файла: %+v", got)
 	}
-	w := handedWaiting(got[0])
+	w := handedWaiting(got[1])
 	want := []string{"куда катить", "* в прод сразу", "- в стенд"}
 	if strings.Join(w.Questions, "|") != strings.Join(want, "|") {
 		t.Fatalf("строки вопроса собрались не так: %q", w.Questions)
 	}
-	if w.Task != "XR-3" || w.Until != near.Until.Unix() {
-		t.Fatalf("задача или срок потерялись: %+v", w)
+	if w.Task != "XR-3" || w.Until != 0 {
+		t.Fatalf("задача потерялась или срок не нулевой у признака без дедлайна: %+v", w)
 	}
 	if deleg := handedAsks(dir, "up-1", sessions.Binds{"aaa-1": {Parent: "up-1"}}, now); len(deleg) != 2 {
 		t.Fatalf("вопросы делегата не привелись к родителю: %+v", deleg)
@@ -134,7 +145,7 @@ func TestHandedAsksOrderAndLines(t *testing.T) {
 // срок с готовым ответом на руках.
 func TestChatSaySettlesHandedAsk(t *testing.T) {
 	sid := "abab1111-2222-4333-8444-555566667777"
-	e, c, frames := askSayEnv(t, sid)
+	e, c, frames := askSayEnvNoTerm(t, sid)
 	writeAskSign(t, e.proj, "task-XR-9", sid, "XR-9", time.Now().Add(5*time.Minute))
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
@@ -168,10 +179,10 @@ func TestChatSaySettlesHandedAsk(t *testing.T) {
 func TestChatSaySettlesDelegateAsk(t *testing.T) {
 	sid := "cdcd1111-2222-4333-8444-555566667777"
 	deleg := "efef1111-2222-4333-8444-555566667777"
-	e, c, frames := askSayEnv(t, sid)
+	e, c, frames := askSayEnvNoTerm(t, sid)
 	writeBinds(t, e.home,
 		fmt.Sprintf("2026-08-28T12:00:00 сессия %s задача XR-4 проект demo дерево %s "+
-			"транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-XR-4\n", sid, e.proj),
+			"транскрипт /tmp/t.jsonl источник заказ повод startup tmux -\n", sid, e.proj),
 		handedBind("2026-08-28T12:01:00", deleg, "-", sid))
 	writeAskSign(t, e.proj, "task-XR-9", deleg, "XR-9", time.Now().Add(5*time.Minute))
 

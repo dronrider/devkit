@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -89,10 +90,20 @@ func TestChatAskAgentPackSteps(t *testing.T) {
 		chat.Question{Text: "когда катить", Options: []chat.Option{{Label: "утром"}}})
 	writeAskPack(t, e.proj, "XR-8", sid, time.Now().Add(20*time.Minute),
 		chat.Question{Text: "режем строку"})
+	// Порядок теперь по времени файла, а не по сроку (DK-715: срока у нового
+	// признака нет вовсе), и оба признака легли в один и тот же тест в одну
+	// секунду по живым часам: время файла тут проставлено руками.
+	now := time.Now()
+	if err := os.Chtimes(chat.AskPath(e.proj, chat.TaskName("XR-9")), now.Add(-time.Minute), now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(chat.AskPath(e.proj, chat.TaskName("XR-8")), now, now); err != nil {
+		t.Fatal(err)
+	}
 
 	ask := askOf(t, e, c, sid)
 	if ask.Task != "XR-9" {
-		t.Fatalf("отвечать зовут не ближнему по сроку: %+v", ask)
+		t.Fatalf("отвечать зовут не тому, кто спросил раньше: %+v", ask)
 	}
 	if len(ask.Steps) != 2 || !ask.Steps[0].Now || ask.Steps[1].Text != "когда катить" {
 		t.Fatalf("шаги пачки собрались не так: %+v", ask.Steps)

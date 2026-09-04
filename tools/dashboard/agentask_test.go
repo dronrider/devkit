@@ -176,3 +176,19 @@ func TestStaticAgentAskWidget(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// Шапка вопроса (пароль и агент) собирает заголовок и остаток времени соседними
+// инлайн-элементами, и без правила отступа они слипаются. Стенд проверяет, что
+// правило задано в стиле .caskh .n, а не пробелом в разметке (DK-784).
+func TestStaticAskHeaderGap(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд зазора шапки пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_caskhgap.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("зазор в шапке вопроса: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}

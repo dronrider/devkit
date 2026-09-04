@@ -438,3 +438,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-731 | Ревью оставляет ходы и минуты, review stats сводит их по уровням против бюджета | task | P2 | 2026-09-04 | [tasks/archive/2026/DK-731.md](tasks/archive/2026/DK-731.md) |
 | DK-772 | Строка с ! из чата отдаёт sudo и ssh пароль через askpass дашборда [приёмка: mixed] | task | P1 | 2026-09-04 | [tasks/archive/2026/DK-772.md](tasks/archive/2026/DK-772.md) |
 | DK-759 | Тик опрашивает треды MR, будит второй круг и закрывает строку по судьбе MR [приёмка: mixed] | task | P2 | 2026-09-04 | [tasks/archive/2026/DK-759.md](tasks/archive/2026/DK-759.md) |
+| DK-785 | У скилла review есть вход для новичка: первый запуск и все ключи конфига | task | P2 | 2026-09-04 | [tasks/archive/2026/DK-785.md](tasks/archive/2026/DK-785.md) |

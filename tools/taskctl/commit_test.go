@@ -172,3 +172,59 @@ func TestPush(t *testing.T) {
 		t.Fatalf("коммит не доехал до remote: %q", subj)
 	}
 }
+
+// reviewJournal кладёт журнал чужого ревью рядом с файлом задачи: так его
+// оставляют `review draft` и `publish` к моменту закрытия строки.
+func reviewJournal(t *testing.T, root, id string) {
+	t.Helper()
+	body := "# Замечания ревью " + id + "\n\n" +
+		"- MR: https://gl.example.com/group/proj/-/merge_requests/42\n" +
+		"- ревью до: a1b2c3d\n- уровень: 2\n\n## Замечание 1\n\n" +
+		"- метка: issue\n- состояние: снято, тред d1, MR закрыт\n\nворота merge не видят раздел\n"
+	if err := os.WriteFile(reviewDraftAbs(root, id), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCloseCommitCarriesReviewJournal: журнал чужого ревью уезжает в архив
+// вместе с файлом задачи, и его переименование обязано войти в коммит
+// закрытия. Без своего пути в pathspec `git commit -- <пути>` переименование
+// остаётся в индексе, дерево доски стоит грязным, и следующий merge отбивается
+// предполётом (хвост DK-758, починен DK-759).
+func TestCloseCommitCarriesReviewJournal(t *testing.T) {
+	root := setup(t)
+	reviewJournal(t, root, "XR-005")
+	gitSetup(t, root)
+	p := CloseParams{ID: "XR-005", Date: "2026-07-08", Commit: CommitOpts{Msg: "docs(tasks): XR-005 закрыта"}}
+	if _, err := cmdClose(root, p); err != nil {
+		t.Fatal(err)
+	}
+	files := gitOut(t, root, "show", "--name-status", "--pretty=", "-M")
+	for _, want := range []string{"docs/tasks/XR-005.review.md", "docs/tasks/archive/2026/XR-005.review.md"} {
+		if !strings.Contains(files, want) {
+			t.Errorf("в коммите закрытия нет %s:\n%s", want, files)
+		}
+	}
+	if st := gitOut(t, root, "status", "--porcelain"); st != "" {
+		t.Fatalf("после close -m дерево не чистое: %q", st)
+	}
+}
+
+// TestCloseCommitWithoutJournalUnchanged: у задачи без чужого ревью закрытие
+// осталось прежним. Пути журнала в pathspec появляются только там, где журнал
+// был, иначе `git commit` падал бы на несуществующем пути.
+func TestCloseCommitWithoutJournalUnchanged(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	p := CloseParams{ID: "XR-005", Date: "2026-07-08", Commit: CommitOpts{Msg: "docs(tasks): XR-005 закрыта"}}
+	if _, err := cmdClose(root, p); err != nil {
+		t.Fatal(err)
+	}
+	files := gitOut(t, root, "show", "--name-status", "--pretty=", "-M")
+	if strings.Contains(files, ".review.md") {
+		t.Errorf("в коммите закрытия взялся журнал ревью:\n%s", files)
+	}
+	if st := gitOut(t, root, "status", "--porcelain"); st != "" {
+		t.Fatalf("после close -m дерево не чистое: %q", st)
+	}
+}

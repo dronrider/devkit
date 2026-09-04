@@ -3461,6 +3461,7 @@ var probeLegacy = []string{
 func (s *server) taskChats(projPath string) map[string]string {
 	out := map[string]string{}
 	binds := s.binds()
+	recs := s.bindsAll()
 	view := s.harnesses()
 	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
 		head := s.sessionHeadCached(f.path, f.stamp)
@@ -3474,9 +3475,10 @@ func (s *server) taskChats(projPath string) map[string]string {
 		if task == "" || bound != boundLead || note == handNote {
 			continue
 		}
-		// Разговорный чат задачу не ведёт: подписка Check берётся у той сессии,
-		// на которой работу начинали, а строка от чата своей не становится.
-		if !leadsTask(binds[f.ID].Tmux, f.suffix, note) {
+		// Разговор о задаче её не ведёт: подписка Check берётся у той сессии,
+		// которая по задаче работала, а строка от разговора своей не
+		// становится. Работу называет реестр, а не имя окна (DK-716).
+		if !leadsTask(recs[f.ID], f.suffix, task) {
 			continue
 		}
 		// Подписка задачи это подписка её исполнительской сессии: та, на которой

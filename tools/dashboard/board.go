@@ -218,6 +218,14 @@ type Work struct {
 	// не берётся (leadsTask). На экране «Агенты» такая строка стоит наравне с
 	// остальными, ей нужны те же две дороги.
 	Talk bool `json:"talk,omitempty"`
+	// Rows называет строки доски, которым эта работа даёт признак. У конвейера
+	// и у цикла цели строка одна, своя, и поле пустое: имя сессии её и назвало.
+	// У работы, узнанной транскриптом, строк бывает несколько: сессия двигает
+	// то одну задачу, то другую, и до отвязки работает по всем сразу
+	// (LLD DK-430, решение 8). Признак строки собирается свёрткой по этому
+	// полю, а не по одному ID: карточка на экране «Агенты» подписана главной
+	// задачей работы, и строк за ней стоит больше.
+	Rows []string `json:"rows,omitempty"`
 	// Live это состояние работы словом: busy (ход идёт), waiting (агент
 	// спросил и ждёт человека), idle (сессия жива, а хода нет дольше рубежа),
 	// dead (сессии не видно). Прежде экран красил зелёным всякую живую сессию,
@@ -243,6 +251,15 @@ const (
 	workWait = "waiting"
 	workIdle = "idle"
 	workDead = "dead"
+)
+
+// Чем работа видна. Конвейер и цикл цели называют себя сами, именем
+// tmux-сессии и записью реестра целей, а работу в окне видно только свежим
+// транскриптом.
+const (
+	workViaTmux     = "tmux"
+	workViaRegistry = "registry"
+	workViaSession  = "session"
 )
 
 // workIdleAfter это рубеж простоя: работа, чей последний ход старше него,
@@ -415,7 +432,7 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		}
 		list = append(list, Work{ID: id, Kind: kind,
 			Title: s.workTitle(projectPath, rows[id].Title, sid),
-			Sect:  rows[id].Sect, Via: "tmux", Started: sess.Created,
+			Sect:  rows[id].Sect, Via: workViaTmux, Started: sess.Created,
 			Own: own != "", Tmux: own, Model: s.chatModel(sid, sess.Name), Talk: talk[sess.Name],
 			// Подписка та же, что у транскрипта этой сессии: конвейер второй
 			// подписки пишет журнал в её дом, и по нему она и узнаётся.
@@ -435,7 +452,7 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		// носителя, а поднимал ли работу дашборд, и говорит это запись реестра
 		// о задаче цели.
 		w := Work{ID: goal, Kind: "goal", Title: rows[goal].Title,
-			Sect: rows[goal].Sect, Via: "registry", Live: workDead}
+			Sect: rows[goal].Sect, Via: workViaRegistry, Live: workDead}
 		if l, ok := launched[goal]; ok {
 			w.Session, w.Tmux, w.Own = l.sid, l.tmux, true
 			w.Model = s.chatModel(l.sid, l.tmux)

@@ -580,6 +580,10 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 	roots := s.harnessRootsOwn()
 	cutoff := s.now().Add(-sessionLiveTTL)
 	binds := s.binds()
+	// Записи сессии целиком, а не свёрнутые: рабочих задач у одной сессии
+	// бывает несколько, и свёртка «последняя выигрывает» назвала бы только
+	// свежую (LLD DK-430, решение 8).
+	recs := s.bindsAll()
 	bySid, byTmux := s.livePeers()
 	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
 		// Список идёт свежими сверху, дальше первого протухшего смотреть нечего.
@@ -611,11 +615,20 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 			// ни экрана.
 			task, note = "", aboutTaskNote(task, note)
 		}
+		// Строки, которые эта сессия присваивает: её рабочие задачи с доски
+		// этого проекта. Их бывает больше одной, и признак получает каждая.
+		claim := ownRows(workTasks(recs[f.ID], f.suffix), prefix)
+		if len(claim) > 0 {
+			// Карточка подписывается рабочей задачей, а не той, о которой в
+			// разговоре зашла речь последней: работу человек ищет по строке,
+			// которую она двигает.
+			task = cardTask(claim, task, busy)
+		}
 		// Разговорный чат задачи остаётся её работой на экране «Агенты»: сессия
 		// живая, разговор идёт, и номер задачи у него свой. Строку он при этом
 		// не присваивает, и признак разводит эти два случая: без него чат по
 		// чужой задаче возвращал на неё кнопки конвейера (жалоба на DK-460).
-		talk := task != "" && !leadsTask(binds[f.ID].Tmux, f.suffix, note)
+		talk := task != "" && len(claim) == 0
 		kind, title, sect := "session", "", ""
 		if task != "" {
 			if busy[task] {
@@ -660,7 +673,7 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		name := strings.SplitN(tmux, ":", 2)[0]
 		live, moved, silent := s.workState(projPath, task, f.ID, name, bySid, byTmux)
 		works = append(works, Work{ID: task, Kind: kind, Title: title, Sect: sect,
-			Via: "session", Session: f.ID, Note: note, Talk: talk,
+			Via: workViaSession, Session: f.ID, Note: note, Talk: talk, Rows: claim,
 			Own: name != "", Tmux: name, Model: s.chatModel(f.ID, tmux),
 			Harness: roots[f.root],
 			Live:    live, Moved: moved, Silent: silent})

@@ -70,6 +70,12 @@ type boardRow struct {
 	// идёт. По нему экран решает, предлагать ли строке продолжение: вводная
 	// продолжения, ушедшая в живой ход, сбивает агента.
 	RunBusy bool `json:"run_busy,omitempty"`
+	// RunState это состояние строки свёрткой по её рабочим сессиям: busy (ход
+	// идёт хоть у одной), waiting (кто-то ждёт человека, а хода нет), idle
+	// (сессии на месте, а ход стоит), dead (живой сессии не видно). Пусто у
+	// строки, за которой работы нет вовсе. Признак приезжает готовым: собрать
+	// его на клиенте нечем, состояния сессий у строки нет.
+	RunState string `json:"run_state,omitempty"`
 	// Harness называет подписку, которой закрывать проверенную строку: ту, на
 	// которой работу начинали.
 	Harness string `json:"harness,omitempty"`
@@ -90,15 +96,36 @@ type boardRow struct {
 	Closed string `json:"closed,omitempty"`
 }
 
-// Признак идущей работы словами: tmux это сессия дашборда, её и снимает
-// «Стоп»; registry это цикл цели, поднятый другой сессией; session это
-// интерактивное окно человека; gone это строка в работе, за которой живой
-// сессии нет.
+// Признак идущей работы словами: tmux это сессия конвейера, её «Стоп» снимает
+// убийством; chat это наша же работа, идущая в окне разговора, там «Стоп»
+// прерывает ход и оставляет разговор жить; registry это цикл цели, поднятый
+// другой сессией; session это работа в чужом окне, снимать её отсюда нечем;
+// gone это строка в работе, за которой живой сессии нет.
 const (
+	runTmux   = workViaTmux
+	runChat   = "chat"
 	runGone   = "gone"
 	sectRun   = "in-progress"
 	sectCheck = "check"
 )
+
+// runRank ранжирует признаки: у одной строки бывает и запись реестра, и своя
+// сессия, и решает та, с которой человеку есть что сделать. Снимаемая работа
+// сильнее всех, дальше своё окно разговора, дальше чужая работа.
+var runRank = map[string]int{runTmux: 3, runChat: 2}
+
+// runMarkOf называет признак одной работы. Род тут не про имя окна, а про то,
+// чем работу останавливают: конвейер снимают убийством сессии, а ход в окне
+// разговора прерывают, оставляя разговор жить (DoD DK-716).
+func runMarkOf(w Work) string {
+	if w.Via == workViaTmux {
+		return runTmux
+	}
+	if w.Own && w.Tmux != "" {
+		return runChat
+	}
+	return w.Via
+}
 
 // runMarks собирает живые работы по ID: работа без ID это интерактивная
 // сессия с неузнанной задачей, строки на доске у неё нет.
@@ -114,35 +141,53 @@ func runMarks(works []Work) map[string]string {
 	for _, w := range works {
 		// Разговор о задаче признака работы строке не даёт: чат её не ведёт, и
 		// строка остаётся такой, какой была без него (leadsTask).
-		if w.ID == "" || w.Talk {
+		if w.Talk {
 			continue
 		}
-		mark := w.Via
-		if w.Own && w.Tmux != "" && w.Live == workBusy {
-			mark = "tmux"
+		mark := runMarkOf(w)
+		for _, id := range workRows(w) {
+			// Сильнейший признак выигрывает: у одной строки бывает и запись
+			// реестра, и сессия, и решает та, которую можно снять.
+			if runRank[live[id]] > runRank[mark] {
+				continue
+			}
+			live[id] = mark
 		}
-		// Своя живая сессия сильнее прочих: у одной строки бывает и запись
-		// реестра, и сессия, и решает та, которую можно снять.
-		if live[w.ID] == "tmux" && mark != "tmux" {
-			continue
-		}
-		live[w.ID] = mark
 	}
 	return live
 }
 
-// busyMarks называет строки, по которым ход идёт прямо сейчас. Признак
-// отдельный от того, чем работа видна: запись реестра и транскрипт остаются на
-// месте и после конца хода, а продолжение предлагать можно только стоящей
-// строке.
-func busyMarks(works []Work) map[string]bool {
-	busy := map[string]bool{}
+// stateMarks сводит состояние строки по её рабочим сессиям (DoD DK-716).
+// Свёртка простая: ход идёт, если идёт хоть у одной; ждёт человека, если ждёт
+// хоть одна и никто не работает; иначе строка простаивает. Признак отдельный
+// от того, чем работа видна: запись реестра и транскрипт остаются на месте и
+// после конца хода, а продолжение предлагать можно только стоящей строке.
+func stateMarks(works []Work) map[string]string {
+	state := map[string]string{}
 	for _, w := range works {
-		if w.ID == "" || w.Talk {
+		if w.Talk || w.Live == "" {
 			continue
 		}
-		if w.Live == workBusy {
-			busy[w.ID] = true
+		for _, id := range workRows(w) {
+			if stateRank[state[id]] > stateRank[w.Live] {
+				continue
+			}
+			state[id] = w.Live
+		}
+	}
+	return state
+}
+
+// stateRank ранжирует состояния для свёртки: идущий ход старше ожидания,
+// ожидание старше простоя, простой старше мёртвой сессии.
+var stateRank = map[string]int{workBusy: 4, workWait: 3, workIdle: 2, workDead: 1}
+
+// busyMarks называет строки, по которым ход идёт прямо сейчас.
+func busyMarks(works []Work) map[string]bool {
+	busy := map[string]bool{}
+	for id, st := range stateMarks(works) {
+		if st == workBusy {
+			busy[id] = true
 		}
 	}
 	return busy
@@ -191,7 +236,7 @@ func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 	if err := json.Unmarshal(doc["sections"], &secs); err != nil {
 		return raw
 	}
-	live, busy := runMarks(works), busyMarks(works)
+	live, state := runMarks(works), stateMarks(works)
 	for _, sec := range secs {
 		var key string
 		json.Unmarshal(sec["key"], &key)
@@ -224,15 +269,22 @@ func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 				}
 				row["run"] = mark
 			}
-			// Идёт ли по строке ход прямо сейчас. Признак отдельный от run:
-			// работа бывает видна записью реестра или транскриптом, а ход в ней
-			// не идёт, и продолжение такой строке предлагать можно.
-			if busy[id] {
-				mark, err := json.Marshal(true)
+			// Состояние строки свёрткой по её рабочим сессиям: ход идёт, ждёт
+			// человека, простаивает. Признак отдельный от run: работа бывает
+			// видна записью реестра или транскриптом, а ход в ней не идёт, и
+			// продолжение такой строке предлагать можно.
+			if st := state[id]; st != "" {
+				mark, err := json.Marshal(st)
 				if err != nil {
 					return raw
 				}
-				row["run_busy"] = mark
+				row["run_state"] = mark
+				if st == workBusy {
+					if mark, err = json.Marshal(true); err != nil {
+						return raw
+					}
+					row["run_busy"] = mark
+				}
 			}
 			if kind, since := rowStage(stages, run, id); kind != "" {
 				mark, err := json.Marshal(kind)
@@ -555,7 +607,8 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		// та же задача выглядела бы своей на одном экране и брошенной на
 		// другом.
 		row.Run = rowRun(runMarks(works), mine, id, row.Sect)
-		row.RunBusy = busyMarks(works)[id]
+		row.RunState = stateMarks(works)[id]
+		row.RunBusy = row.RunState == workBusy
 		if row.Sect == sectCheck {
 			row.Harness = mine[id]
 		}

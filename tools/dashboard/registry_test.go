@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -202,18 +203,20 @@ func TestSessionWorksAboutIsNotWork(t *testing.T) {
 	// журнал этой сессии лежит в доме прогона, то есть у подписки по умолчанию.
 	want := Work{Kind: "session", Via: "session", Session: "talker",
 		Note: "а что там с XR-4", Model: chatModelDefault, Harness: "перваяtest"}
-	if bareWorks(works)[0] != want {
+	if !reflect.DeepEqual(bareWorks(works)[0], want) {
 		t.Errorf("работа:\n%+v\nожидал:\n%+v", works[0], want)
 	}
 }
 
-// Запись реестра, наоборот, делает сессию работой задачи: заголовок и секция
-// приезжают со строки доски, и на карточке это живая работа.
+// Запись о работе, наоборот, делает сессию работой задачи: заголовок и секция
+// приезжают со строки доски, и на карточке это живая работа. Строку такой
+// записи кладёт команда доски (taskctl, shipctl, agentctl stage), и работой
+// сессия становится по факту хода, а не по имени своего окна.
 func TestSessionWorksLeadIsWork(t *testing.T) {
 	e := newTestEnv(t)
 	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", runsBoardJSON))
 	writeSession(t, e.home, e.proj, "", "worker", sessionLine("а что там с XR-4?", "main"), time.Now())
-	writeBinds(t, e.home, bindRecord("2026-08-18T12:00:00", "worker", "XR-4", bindOrder))
+	writeBinds(t, e.home, bindRecord("2026-08-18T12:00:00", "worker", "XR-4", sessions.BySrc))
 	rows := map[string]boardRow{"XR-4": {ID: "XR-4", Title: "Начатая задача", Sect: "in-progress"}}
 
 	works := e.s.sessionWorks(e.proj, "XR", rows, map[string]bool{})
@@ -221,8 +224,8 @@ func TestSessionWorksLeadIsWork(t *testing.T) {
 	// мимо дашборда, и в разделе «Агенты» ей место в табе прочих.
 	want := Work{ID: "XR-4", Kind: "task", Via: "session", Session: "worker",
 		Title: "Начатая задача", Sect: "in-progress", Model: chatModelDefault,
-		Harness: "перваяtest"}
-	if len(works) != 1 || bareWorks(works)[0] != want {
+		Harness: "перваяtest", Rows: []string{"XR-4"}}
+	if len(works) != 1 || !reflect.DeepEqual(bareWorks(works)[0], want) {
 		t.Fatalf("работа:\n%+v\nожидал:\n%+v", works, want)
 	}
 }
@@ -376,9 +379,10 @@ func TestBindLineIsReadBack(t *testing.T) {
 	}
 }
 
-// Строку In progress присваивают исполнительские сессии, а не всякий разговор о
+// Строку In progress присваивают рабочие сессии, а не всякий разговор о
 // задаче: груминг черновика и привязка рукой это чтение задачи, и по ним
-// запускать нечего. Жалоба была на живой доске: задачу вели на другой машине, а
+// запускать нечего. Груминг приезжает тем же заказом дашборда, что и чат по
+// строке, и работой ни тот, ни другой не становятся до первой команды доски. Жалоба была на живой доске: задачу вели на другой машине, а
 // строка предлагала кнопку запуска, потому что тут по ней когда-то грумили.
 func TestTaskChatsCountsWorkSessionsOnly(t *testing.T) {
 	e := newTestEnv(t)
@@ -394,7 +398,7 @@ func TestTaskChatsCountsWorkSessionsOnly(t *testing.T) {
 	writeBinds(t, e.home,
 		bindRecord("2026-08-18T12:00:00", "groomer", "XR-7", bindOrder),
 		bindRecord("2026-08-18T12:01:00", "hands", "XR-8", bindHand),
-		bindRecord("2026-08-18T12:02:00", "worker", "XR-9", bindOrder))
+		bindRecord("2026-08-18T12:02:00", "worker", "XR-9", sessions.BySrc))
 	own := e.s.taskChats(e.proj)
 	if _, hit := own["XR-7"]; hit {
 		t.Error("груминг присвоил строку задачи: кнопки запуска вернулись на чужую работу")
@@ -403,7 +407,7 @@ func TestTaskChatsCountsWorkSessionsOnly(t *testing.T) {
 		t.Error("привязка рукой присвоила строку задачи")
 	}
 	if _, hit := own["XR-9"]; !hit {
-		t.Errorf("исполнительская сессия строку не присвоила: %+v", own)
+		t.Errorf("рабочая сессия строку не присвоила: %+v", own)
 	}
 }
 

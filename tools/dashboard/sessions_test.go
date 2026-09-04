@@ -1065,8 +1065,11 @@ func TestLiveWorksSessions(t *testing.T) {
 		// своими они не считаются.
 		{Kind: "session", Via: "session", Session: "live-plain", Note: "поправь вёрстку карточки",
 			Model: chatModelDefault, Harness: "перваяtest"},
+		// Боковое дерево называет задачу именем каталога, и работой сессия
+		// считается по нему же: строка XR-005 у неё своя.
 		{ID: "XR-005", Kind: "task", Title: "Задача в работе", Sect: "in-progress", Via: "session",
-			Session: "live-task", Model: chatModelDefault, Harness: "перваяtest"},
+			Session: "live-task", Model: chatModelDefault, Harness: "перваяtest",
+			Rows: []string{"XR-005"}},
 	}
 	if got := bareWorks(boardWorks(t, e)); !reflect.DeepEqual(got, want) {
 		t.Errorf("живые работы:\n%+v\nожидал:\n%+v", got, want)
@@ -1088,9 +1091,11 @@ func TestLiveWorksSessionsSameTask(t *testing.T) {
 	// работы клиент открывает переписку, и обычной задаче она не положена.
 	want := []Work{
 		{ID: "XR-002", Kind: "task", Title: "Обычная задача", Sect: "backlog", Via: "session",
-			Session: "win-new", Model: chatModelDefault, Harness: "перваяtest"},
+			Session: "win-new", Model: chatModelDefault, Harness: "перваяtest",
+			Rows: []string{"XR-002"}},
 		{ID: "XR-100", Kind: "goal", Title: "Цель: пробный цикл", Sect: "in-progress", Via: "session",
-			Session: "win-goal", Model: chatModelDefault, Harness: "перваяtest"},
+			Session: "win-goal", Model: chatModelDefault, Harness: "перваяtest",
+			Rows: []string{"XR-100"}},
 	}
 	got := boardWorks(t, e)
 	var sessions []Work

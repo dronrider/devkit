@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/sessions"
 )
 
 // Задача без ведущей сессии (DK-660). Конвейер задачи поднимался и умирал
@@ -142,7 +144,7 @@ func TestTaskNoLeadSilentWhileWorkLives(t *testing.T) {
 		t.Fatalf("запуск XR-004: %d %s", resp.StatusCode, body(t, resp))
 	}
 	writeSession(t, e.home, e.proj, "", "worker", sessionLine("правлю XR-004", "main"), time.Now())
-	writeBinds(t, e.home, bindRecord("2026-09-03T01:00:00", "worker", "XR-004", bindOrder))
+	writeBinds(t, e.home, bindRecord("2026-09-03T01:00:00", "worker", "XR-004", sessions.BySrc))
 	// Предусловие стенда: строка помечена живой работой, и помечена не чатом.
 	works := e.s.liveWorks(e.proj, "XR", boardRaw(t, e))
 	if runMarks(works)["XR-004"] == "" {

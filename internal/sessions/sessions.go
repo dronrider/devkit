@@ -177,6 +177,93 @@ func (b Binds) Leads(id string) (string, Bind) {
 // shipctl и agentctl, назвав в поводе саму команду.
 const BySrc = "работа"
 
+// Слова источника целиком. Первые три говорят о работе: сессию подняли под
+// задачу («заказ»), она стартовала в её боковом дереве («дерево»), она двигала
+// строку командой доски («работа»). «Рука» это привязка человеком с экрана, и
+// работой она не считается: человек говорит, о чём разговор, а не что по
+// задаче идёт правка. «Снята» отвязывает.
+const (
+	ByOrder = "заказ"
+	ByTree  = "дерево"
+	ByHand  = "рука"
+	ByOff   = "снята"
+)
+
+// workSrc это слова, по которым сессия считается работой задачи. Их два, и
+// «заказ» сюда не входит нарочно: кнопка чата дашборда поднимает разговор о
+// задаче тем же словом, каким поднимается конвейер (DEVKIT_TASK в launchEnv),
+// и чат, открытый ради вопроса, отбирал бы у строки кнопку запуска. Конвейер и
+// цикл цели строку от этого не теряют: их работа видна списком tmux по
+// собственному имени сессии, а до первой команды доски они всё равно не
+// доживают (границы DK-716, защита DK-460).
+var workSrc = map[string]bool{ByTree: true, BySrc: true}
+
+// Works называет задачи, по которым сессия ведёт работу, свежими первыми
+// (LLD DK-430, решение 8). Работой её делает слово источника, а не имя
+// tmux-сессии: сессия с именем chat-DK-1-2 ведёт задачу ровно так же, как
+// task-DK-1, и строка обязана показать обе.
+//
+// Отвязка читается с двух сторон. Запись «снята» с пустой задачей это отвязка
+// всей сессии, дальше в прошлое смотреть нечего: человек сказал, что работой
+// это не считается, и возвращать её записями задним числом нельзя. Запись
+// «снята» с названной задачей снимает одну эту задачу и накопленного по
+// соседним не трогает: работа по строке кончается своим порядком, у закрытия и
+// у перевода из in-progress, а прочие задачи сессии в этот момент идут дальше.
+func Works(recs []Bind) []string {
+	var out []string
+	seen, off := map[string]bool{}, map[string]bool{}
+	for i := len(recs) - 1; i >= 0; i-- {
+		r := recs[i]
+		if r.Source == ByOff {
+			if r.Task == "" {
+				break
+			}
+			off[r.Task] = true
+			continue
+		}
+		if r.Task == "" || seen[r.Task] || off[r.Task] || !workSrc[r.Source] {
+			continue
+		}
+		seen[r.Task] = true
+		out = append(out, r.Task)
+	}
+	return out
+}
+
+// Off отвечает, снята ли привязка сессии к задаче: отвязка всей сессии либо
+// «снята» с названной задачей. Спрашивают об этом там, где задачу называет не
+// реестр, а имя бокового дерева: запись о работе такой привязке не нужна, а
+// снятие обязано её убирать.
+func Off(recs []Bind, task string) bool {
+	task = strings.ToUpper(strings.TrimSpace(task))
+	for i := len(recs) - 1; i >= 0; i-- {
+		r := recs[i]
+		if r.Source != ByOff {
+			continue
+		}
+		if r.Task == "" || r.Task == task {
+			return true
+		}
+	}
+	return false
+}
+
+// WorksOn отвечает, ведёт ли сессия работу по задаче task. Тот же критерий, что
+// у Works, спрошенный про одну задачу: свёртку строки считают по множеству
+// сессий, и собирать ради одного вопроса весь список незачем.
+func WorksOn(recs []Bind, task string) bool {
+	task = strings.ToUpper(strings.TrimSpace(task))
+	if task == "" {
+		return false
+	}
+	for _, id := range Works(recs) {
+		if id == task {
+			return true
+		}
+	}
+	return false
+}
+
 // All сворачивает журнал в список записей на сессию, порядком записи.
 func All(data []byte) map[string][]Bind {
 	out := map[string][]Bind{}
@@ -197,18 +284,24 @@ func LoadAll(home string) map[string][]Bind {
 	return All(data)
 }
 
-// Touched называет задачи, которых сессия касалась, свежими первыми. Отвязка
-// рукой («снята») стирает накопленное: человек сказал, что работой задачи это
-// не считается, и возвращать её записями задним числом нельзя.
+// Touched называет задачи, которых сессия касалась, свежими первыми. Касание
+// шире работы: сюда идёт и привязка рукой, потому что список чатов подписывает
+// разговор той задачей, о которой в нём говорят. Отвязка читается так же, как
+// в Works: пустая задача у «снята» стирает накопленное целиком, названная
+// снимает одну эту задачу.
 func Touched(recs []Bind) []string {
 	var out []string
-	seen := map[string]bool{}
+	seen, off := map[string]bool{}, map[string]bool{}
 	for i := len(recs) - 1; i >= 0; i-- {
 		r := recs[i]
-		if r.Source == "снята" {
-			break
+		if r.Source == ByOff {
+			if r.Task == "" {
+				break
+			}
+			off[r.Task] = true
+			continue
 		}
-		if r.Task == "" || seen[r.Task] {
+		if r.Task == "" || seen[r.Task] || off[r.Task] {
 			continue
 		}
 		seen[r.Task] = true
@@ -294,7 +387,16 @@ const SessionEnv = "CLAUDE_CODE_SESSION_ID"
 // доски из своей main: сессии ID известен только из окружения, и вне сессии
 // харнеса отметки не выходит вовсе, это штатное молчание. Ошибка записи гасится
 // нарочно: журнал разговора не повод ронять команду доски.
-func Touch(task, why string) {
+func Touch(task, why string) { mark(task, BySrc, why) }
+
+// Release отмечает конец работы сессии над задачей: запись «снята» с названной
+// задачей. Кладут её те же утилиты доски там, где работа по строке кончилась
+// (закрытие, перевод из in-progress), и без неё сессия числилась бы рабочей до
+// собственной смерти, а строка держала бы «Стоп» вместо кнопки запуска.
+// Соседние задачи той же сессии запись не трогает, разбор в Works.
+func Release(task, why string) { mark(task, ByOff, why) }
+
+func mark(task, src, why string) {
 	sid := strings.TrimSpace(os.Getenv(SessionEnv))
 	task = strings.ToUpper(strings.TrimSpace(task))
 	if sid == "" || task == "" {
@@ -305,7 +407,7 @@ func Touch(task, why string) {
 		return
 	}
 	tree, _ := os.Getwd()
-	Append(Path(home), Line(time.Now(), sid, Bind{Task: task, Source: BySrc, Tree: tree}, why))
+	Append(Path(home), Line(time.Now(), sid, Bind{Task: task, Source: src, Tree: tree}, why))
 }
 
 // TmuxOwner называет разговор, которому сейчас принадлежит tmux-сессия name:

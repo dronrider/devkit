@@ -756,12 +756,14 @@ func TestBoardRowRunFromRegistry(t *testing.T) {
 	}
 }
 
-// Живая работа нашей tmux-сессии помечается tmux, каким бы путём её ни узнали.
+// Наша работа в окне разговора помечается chat, каким бы путём её ни узнали.
 // Живой случай: у цели DK-446 ход шёл нашим чатом, работа приезжала записью
 // реестра (via=registry), и по этому пути строка выглядела остановленной: вместо
 // «Стопа» экран предлагал «Продолжить», а нажатие увело бы вводную продолжения
-// в живую сессию посреди её хода.
-func TestRunMarksOwnLiveWorkAsTmux(t *testing.T) {
+// в живую сессию посреди её хода. Признак тут свой, а не tmux конвейера: «Стоп»
+// у разговора прерывает ход и оставляет разговор жить, а у конвейера снимает
+// сессию целиком (DK-716).
+func TestRunMarksOwnWorkInChatWindow(t *testing.T) {
 	list := []Work{
 		{ID: "XR-100", Kind: "goal", Via: "registry", Own: true, Tmux: "chat-XR-100-1",
 			Live: workBusy},
@@ -770,7 +772,7 @@ func TestRunMarksOwnLiveWorkAsTmux(t *testing.T) {
 		{ID: "XR-004", Via: "tmux", Own: true, Tmux: "task-XR-004", Live: workBusy, Talk: true},
 	}
 	marks := runMarks(list)
-	want := map[string]string{"XR-100": "tmux", "XR-002": "registry", "XR-003": "registry"}
+	want := map[string]string{"XR-100": runChat, "XR-002": "registry", "XR-003": runChat}
 	for id, mark := range want {
 		if got := marks[id]; got != mark {
 			t.Errorf("признак работы %s %q, ожидал %q", id, got, mark)
@@ -1391,6 +1393,13 @@ func TestBoardTalkChatDoesNotTakeRow(t *testing.T) {
 	if got := boardRows(t, e)["XR-100"]; got.Run != "" {
 		t.Errorf("строку присвоил разговорный чат: run=%q, ожидал пустой признак", got.Run)
 	}
+	// Имя окна тут ни при чём: тот же разговор под именем конвейера строки
+	// тоже не присваивает, пока по ней не сделано ни одного хода работы
+	// (DK-716, критерий перестал зависеть от имени tmux).
+	bind("task-XR-100")
+	if got := boardRows(t, e)["XR-100"]; got.Run != "" {
+		t.Errorf("строку присвоило имя окна: run=%q, ожидал пустой признак", got.Run)
+	}
 	// Сам разговор при этом остаётся живой работой раздела «Агенты» и знает
 	// свою задачу: у строки там две дороги, в задачу и в чат.
 	talk := workByID(projectWorks(t, e), "XR-100")
@@ -1398,14 +1407,17 @@ func TestBoardTalkChatDoesNotTakeRow(t *testing.T) {
 		t.Fatalf("разговор пропал из работ или не помечен разговором: %+v", projectWorks(t, e))
 	}
 
-	// Исполнительская сессия ту же строку присваивает: имя tmux-сессии и
-	// говорит, кто её ведёт.
-	bind("task-XR-100")
+	// Рабочая сессия ту же строку присваивает: запись о работе по задаче
+	// кладёт команда доски, и она же говорит, кто строку ведёт.
+	writeBinds(t, e.home, fmt.Sprintf("2026-08-22T11:59:00 сессия %s задача XR-100 проект demo "+
+		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-100-1\n"+
+		"2026-08-22T11:59:30 сессия %s задача XR-100 проект demo дерево %s транскрипт - "+
+		"источник работа повод «taskctl move XR-100» tmux -\n", sid, e.proj, sid, e.proj))
 	if got := boardRows(t, e)["XR-100"]; got.Run == "" {
-		t.Errorf("исполнительская сессия строку не присвоила: run=%q", got.Run)
+		t.Errorf("рабочая сессия строку не присвоила: run=%q", got.Run)
 	}
 	if lead := workByID(projectWorks(t, e), "XR-100"); lead == nil || lead.Talk {
-		t.Errorf("работа конвейера потерялась или помечена разговором: %+v", lead)
+		t.Errorf("рабочая сессия потерялась или помечена разговором: %+v", lead)
 	}
 }
 

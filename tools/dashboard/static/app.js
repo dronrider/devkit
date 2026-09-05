@@ -13638,6 +13638,124 @@ async function refreshBellDot() {
   showBellDot(Boolean(last) && last > seen);
 }
 
+// Полка ждущих (DK-696): все задачи и разговоры машины, вставшие на вопросе
+// человеку, одним местом в шапке. Прежде ждущая строка была видна только чипом
+// в Blocked, и после парковки человек искал её глазами среди семи соседей, а
+// свёрнутая секция добавляла к дороге ещё один щелчок. Полка стоит вне секции и
+// открывается с любого экрана, потому что шапка одна на все.
+const WAIT_POLL = 15000;
+
+// Список приезжает машинной ручкой и живёт до следующего захода: полку
+// открывают нажатием, и собирать её ответом сети значило бы показывать пустое
+// место, пока идёт запрос.
+let waitList = { items: [], errors: [] };
+
+async function refreshWaits() {
+  const r = await api("/api/waiting");
+  const body = (r.ok && r.body) || {};
+  waitList = { items: body.items || [], errors: body.errors || [] };
+  paintWaitBadge();
+  // Открытая полка обновляется на месте: закрывать её под рукой человека
+  // значило бы отбирать список ровно тогда, когда он его читает.
+  if (waitShelf) fillWaitShelf(waitShelf);
+}
+
+// Число ждущих клеймом на кнопке. Кнопка стоит всегда, а не появляется с первым
+// вопросом: место, приходящее и уходящее, человек не запоминает, и искать его
+// пришлось бы заново каждый раз.
+function paintWaitBadge() {
+  const btn = document.getElementById("waits");
+  if (!btn) return;
+  const n = waitList.items.length;
+  const dot = document.getElementById("waits-n");
+  if (dot) {
+    dot.textContent = String(n);
+    dot.hidden = !n;
+  }
+  btn.classList.toggle("wsome", Boolean(n));
+  btn.title = n ? n + " " + plural(n, "ждёт", "ждут", "ждут") + " ответа" : "Никто не ждёт ответа";
+  btn.setAttribute("aria-label", btn.title);
+}
+
+// Слова строки полки: состояние и сколько уже ждут. Отсчёт до срока тут не
+// повторяется, его говорит чип самой строки доски; полке важно обратное, как
+// давно человек молчит.
+function waitAgeWords(w, now) {
+  const age = pulseAge(w.since, now);
+  return age ? age + " без ответа" : "";
+}
+
+let waitShelf = null;
+let waitShelfHeld = null;
+
+function waitShelfShut() {
+  popupDrop(waitShelfHeld);
+  waitShelfHeld = null;
+  if (waitShelf) {
+    waitShelf.remove();
+    waitShelf = null;
+  }
+}
+
+// Строка полки ведёт в разговор ждущего: адрес выбрал сервер (сессия точнее
+// задачи), а проект едет в самом адресе, потому что полка машинная и открывают
+// её и с главной, где своего проекта нет вовсе.
+function waitRow(it, now) {
+  const row = el("div", "wsrow");
+  const head = el("div", "wshrow");
+  head.append(el("span", "chip c-proj", it.project));
+  if (it.id) head.append(el("b", "", it.id));
+  const w = it.waiting || {};
+  head.append(el("span", "chip c-wait", w.state || "ждёт ответа"));
+  const age = waitAgeWords(w, now);
+  if (age) head.append(el("span", "wsage", age));
+  row.append(head);
+  if (it.title) row.append(withFull(el("div", "wstitle", it.title), it.title));
+  // Вопрос стоит в самой строке, а не подсказкой: за ним сюда и приходят, и
+  // читать его наведением значило бы открывать разговор ради одной фразы.
+  const qs = w.questions || [];
+  if (qs.length) row.append(el("div", "wsq", qs.join("; ")));
+  row.append(el("div", "wsnote", w.note || "источник не назван"));
+  row.addEventListener("click", () => {
+    waitShelfShut();
+    const at = shownProject || route().proj;
+    openChat(it.project && it.project !== at ? it.project + CHAT_PROJ_SEP + it.addr : it.addr);
+  });
+  return row;
+}
+
+function fillWaitShelf(box) {
+  box.replaceChildren();
+  const now = Date.now();
+  const head = el("div", "wshead", "Ждут ответа");
+  head.append(el("span", "n", String(waitList.items.length)));
+  box.append(head);
+  const rows = el("div", "wsrows");
+  for (const it of waitList.items) rows.append(waitRow(it, now));
+  box.append(rows);
+  if (!waitList.items.length) rows.append(el("div", "hint", "никто не ждёт ответа"));
+  // Отказ доски виден прямо тут: пустая полка при нечитаемой доске это не
+  // «никто не ждёт», и молчать об этом значит врать спокойным видом.
+  for (const why of waitList.errors) box.append(el("div", "hint", "доска не прочиталась, " + why));
+}
+
+function waitShelfOpen(btn, host) {
+  const had = waitShelf;
+  waitShelfShut();
+  // Повторное нажатие по кнопке закрывает полку, а не собирает её заново.
+  if (had) return;
+  popupsShut(null);
+  const box = el("div", "wshelf");
+  fillWaitShelf(box);
+  (host || btn.parentNode).append(box);
+  waitShelf = box;
+  waitShelfHeld = popupHold(box, waitShelfShut);
+  // Список перечитывается открытием: между заходами опроса вопрос успевает и
+  // прийти, и уйти, а человек смотрит на полку ровно затем, чтобы узнать, как
+  // дела сейчас.
+  refreshWaits().catch(console.error);
+}
+
 // Флеш-уведомление в углу окна (макет «05 Лента»): новое событие всплывает
 // поверх любого экрана и гаснет само, полоска под текстом показывает остаток
 // времени. Крестик и смахивание пальцем убирают карточку на месте, не трогая
@@ -15117,6 +15235,9 @@ async function paint() {
   // Точка на колокольчике живёт отдельно от экрана: она нужна и на доске, и на
   // главной, а ждать её ответа экрану незачем.
   refreshBellDot().catch(console.error);
+  // Полка ждущих живёт тем же порядком: она стоит над любым экраном, и держать
+  // экран ради обхода досок незачем.
+  refreshWaits().catch(console.error);
   // Остаток подписок тоже живёт отдельно от экрана: он стоит над любым из них,
   // а держать экран ради чтения пары файлов незачем.
   refreshQuota().catch(console.error);
@@ -15383,6 +15504,19 @@ document.getElementById("chats").addEventListener("click", () => {
   }
   if (shownProject) location.hash = shownProject + "/chat/" + CHAT_BOARD;
 });
+
+// Полка ждущих открывается своей кнопкой в шапке, рядом с колокольчиком: лента
+// говорит, что случилось, а полка кто ждёт прямо сейчас, и своего экрана ей не
+// нужно (DK-696).
+document.getElementById("waits").addEventListener("click", (ev) => {
+  ev.stopPropagation();
+  waitShelfOpen(document.getElementById("waits"));
+});
+
+// Число на кнопке живёт своим кругом: заходы на экран бывают редкими, а вопрос
+// приходит когда угодно, и узнавать о нём только при переходе значило бы
+// молчать ровно тогда, когда человек и так сидит на одном экране.
+setInterval(() => { refreshWaits().catch(console.error); }, WAIT_POLL);
 
 // Кнопка заведения в шапке спрашивает вид тем же меню, что плюс карточки
 // проекта и плавающий плюс телефона. Прежде она вела прямо на форму задачи, и

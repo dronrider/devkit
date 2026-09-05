@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,4 +195,21 @@ func touchAsk(t *testing.T, tree, id string, at time.Time) {
 	if err := os.Chtimes(path, at, at); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Стенд фронта: место ждущих на экране. Проверка по тексту app.js тут не
+// годится, разметку держал бы и поиск по строке, а предмет это собранная
+// полка: число на кнопке шапки, состав строки, порядок сервера и дорога до
+// разговора. Без node шаг пропускается: узел стенда, а не рабочей части.
+func TestStaticWaitShelf(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд полки ждущих пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_waitshelf.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("полка ждущих в шапке: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }

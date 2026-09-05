@@ -2217,7 +2217,12 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 
 /* полка ждущих (DK-696): всплывает из кнопки шапки, стоит поверх экрана и
    держит собственную прокрутку, потому что ждущих бывает и десяток */
-.wnum{position:absolute;top:2px;right:2px;min-width:15px;height:15px;padding:0 3px;border-radius:8px;background:var(--acc);color:var(--bg0);font:600 9.5px/15px var(--sans);text-align:center;border:2px solid var(--bg2);box-sizing:content-box}
+/* Бейдж стоит в углу кнопки, а не поверх часов: прежний бейдж высотой во
+   всю кнопку закрывал значок целиком (замечание человека по приёмке,
+   2026-09-05). Верх кнопки для значка свободен ровно на margin иконки
+   (9.5px у кнопки 38x38), и высота бейджа с отступом наружу подобрана так,
+   чтобы его нижний край не заходил в эту полосу. */
+.wnum{position:absolute;top:-7px;right:-4px;min-width:15px;height:15px;padding:0 4px;box-sizing:border-box;border-radius:999px;background:var(--acc);color:var(--bg0);font:600 9.5px var(--sans);line-height:1;display:flex;align-items:center;justify-content:center;border:2px solid var(--bg2)}
 .wnum[hidden]{display:none}
 .bell.wsome{border-color:var(--acc);color:var(--acc)}
 .wshelf{position:absolute;right:12px;top:52px;z-index:40;width:min(420px,calc(100vw - 24px));max-height:70vh;overflow-y:auto;padding:8px;border:1px solid var(--line2);border-radius:11px;background:var(--bg0);box-shadow:0 12px 32px rgba(0,0,0,0.35)}

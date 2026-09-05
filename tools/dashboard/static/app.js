@@ -13725,7 +13725,10 @@ function waitShelfShut() {
 
 // Строка полки ведёт в разговор ждущего: адрес выбрал сервер (сессия точнее
 // задачи), а проект едет в самом адресе, потому что полка машинная и открывают
-// её и с главной, где своего проекта нет вовсе.
+// её и с главной, где своего проекта нет вовсе. Парковка это исключение: у неё
+// нет ни сессии, ни живого разговора, вопрос лежит в причине блока самой
+// строки, и щелчок ведёт туда же, а не в чат, где вопроса нет и быть не может
+// (замечание человека по приёмке DK-696, 2026-09-05: DK-565).
 function waitRow(it, now) {
   const row = el("div", "wsrow");
   const head = el("div", "wshrow");
@@ -13744,6 +13747,10 @@ function waitRow(it, now) {
   row.append(el("div", "wsnote", w.note || "источник не назван"));
   row.addEventListener("click", () => {
     waitShelfShut();
+    if (w.source === "parked" && it.id) {
+      location.hash = it.project + "/" + it.id;
+      return;
+    }
     const at = shownProject || route().proj;
     openChat(it.project && it.project !== at ? it.project + CHAT_PROJ_SEP + it.addr : it.addr);
   });

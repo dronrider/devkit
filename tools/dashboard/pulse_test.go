@@ -340,6 +340,41 @@ func TestPulseNeighbourWaitsOwnWorks(t *testing.T) {
 	}
 }
 
+// Доска для теста тихой парковки: задача стоит в Blocked с машинным разрядом
+// причины «вопрос: ...», как её паркует сторожок (tools/devkitctl/watch.py).
+const pulseParkedBoardJSON = `{"prefix":"XR","sections":[` +
+	`{"key":"blocked","title":"Blocked","rows":[{"id":"XR-1","title":"Задача припаркована","type":"task","p":"P1","r":40,"r_parts":[25,5,5,5,0],"cost":"-","link":"-","sect":"blocked","block":"вопрос: куда катить дальше"}]}]}`
+
+// Строка припаркована вопросом, а рядом с ней жив неродственный разговор той
+// же задачи: вопрос всё равно лежит в причине блока, а не в его ленте, и
+// живой сосед не делает вопрос доступным ни в одном разговоре. Прежде кольцо
+// считало парковку тихой только при нулевом счёте агентов, и живой сосед
+// включал моргание там, где вопроса нет и быть не может (приёмка человека
+// DK-696, 2026-09-05: DK-565, разговор без вопроса при мигающем кольце).
+func TestPulseParkedRingStaysQuietWithLiveNeighbour(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.Local)
+	e := newTestEnv(t)
+	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", pulseParkedBoardJSON))
+	writeScript(t, e.bin, "tmux", "exit 1")
+	e.s.now = func() time.Time { return now }
+	c := e.loggedClient(t)
+
+	seen := now.Add(-12 * time.Second)
+	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."), seen)
+	writeBinds(t, e.home, bindRecord("2026-09-05T11:59:00", "aaa-1", "XR-1", "заказ"))
+
+	p := getPulse(t, e, c, "task=XR-1")
+	if p.State != pulseWait {
+		t.Fatalf("состояние кольца %q, ждал ожидание", p.State)
+	}
+	if p.Count == 0 {
+		t.Fatal("в кольце нет живого соседа, стенд ничего не проверяет")
+	}
+	if !p.Parked {
+		t.Errorf("кольцо не помечено тихой парковкой при живом соседе: %+v", p)
+	}
+}
+
 // Повод idle_prompt из журнала уведомителя это простой, а не вопрос: сессия
 // жива и её можно спросить, но человека никто не спрашивал. Выданный за
 // ожидание он красил кольцо работающей задачи чужой тревогой.

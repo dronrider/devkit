@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -262,4 +264,23 @@ func TestChatStopSaysBackgroundWork(t *testing.T) {
 	if !e.s.stopWaitOn("chat-XR-004-1") {
 		t.Error("стоп из панели чата заказа дожима не поставил")
 	}
+}
+
+// Стенд фронта: круг обновления заводит живая сессия, у которой строки ещё нет,
+// взятая строка показывает «Стоп» ближайшим заходом круга, возврат на вкладку
+// перечитывает доску, а подсказка «Стопа» во время дожима говорит про фоновых
+// субагентов. Разметку держал бы и прежний код, предмет тут в поведении, и
+// проверить его можно только на настоящем app.js (testdata/poc_rowwake.mjs).
+// Без node шаг пропускается: узел стенда, а не рабочей части.
+func TestStaticRowWakesOnLiveSession(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд пробуждения строки пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_rowwake.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("пробуждение строки живой сессией: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }

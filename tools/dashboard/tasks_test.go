@@ -1270,12 +1270,19 @@ func TestStaticTaskBarIcons(t *testing.T) {
 	// Входа в разговор на полосе задачи нет: окно чатов открывает значок в
 	// шапке, и вторая дорога туда же с полосы снята нарочно.
 	acts := funcBody(t, app, "function taskActions(")
+	// Стоп на форме стоит значком без подписи, как та же кнопка в списке задач
+	// (rowAction): второй приёмки DK-716 не пережила подпись рядом со значком,
+	// единственная из мест, где кнопка стопа вообще встречается.
 	for _, want := range []string{
-		`barBtn("btn btn-danger", "Стоп", "i-stop")`,
+		`el("button", "btn btn-danger btn-ico rstop")`,
+		`icon("i-stop")`,
 		`barBtn("btn btn-acc", name, "i-play")`} {
 		if !strings.Contains(acts, want) {
 			t.Errorf("действие полосы осталось без значка: нет %q", want)
 		}
+	}
+	if strings.Contains(acts, `barBtn("btn btn-danger", "Стоп", "i-stop")`) {
+		t.Error("стоп на форме задачи остался с подписью рядом со значком")
 	}
 	page := readFile(t, filepath.Join("static", "index.html"))
 	for _, want := range []string{`data-ico="i-play"`, `data-ico="i-stop"`,

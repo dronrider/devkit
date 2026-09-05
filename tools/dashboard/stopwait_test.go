@@ -411,6 +411,11 @@ func chatWorkLiveEnv(t *testing.T, sid, tmux string) (*testEnv, *http.Client, st
 // Стоп из самой панели чата бьёт тем же Escape, и дыра у него та же: ход
 // прерван, а фоновая работа жива. Ответ говорит об этом словами, и дожим
 // ставится так же, как со строки доски.
+//
+// Поле state несёт то же слово, что у стопа со строки (stopChatWork), и по
+// нему клиент решает не гасить плашку хода молча, а назвать ею то же самое,
+// что видно в run_stopping строки (замечание ревью 9, вторая приёмка
+// DK-716). Без этого поля клиент читал голый 200 как «ход кончен».
 func TestChatStopSaysBackgroundWork(t *testing.T) {
 	sid := "dff98764-1111-4111-8111-111111111111"
 	e, c, _ := chatWorkLiveEnv(t, sid, "chat-XR-004-1")
@@ -427,8 +432,33 @@ func TestChatStopSaysBackgroundWork(t *testing.T) {
 	if !strings.Contains(text, "фоновые субагенты") {
 		t.Errorf("ответ стопа чата промолчал о живой фоновой работе: %s", text)
 	}
+	if !strings.Contains(text, `"state":"останавливается"`) {
+		t.Errorf("ответ стопа чата не назвал state «останавливается»: %s", text)
+	}
 	if !e.s.stopWaitOn("chat-XR-004-1") {
 		t.Error("стоп из панели чата заказа дожима не поставил")
+	}
+}
+
+// Тот же стоп, но фоновой работы уже нет: state называет обычный «стоп», тем
+// же словом, что у стопа со строки доски вне дожима.
+func TestChatStopStateWithoutBackgroundWork(t *testing.T) {
+	sid := "dff98764-2222-4111-8111-111111111111"
+	e, c, _ := chatWorkLiveEnv(t, sid, "chat-XR-005-1")
+	now := e.s.now()
+	writeSession(t, e.home, e.proj, "", sid, stopTranscript(now, "live", true), now.Add(-3*time.Minute))
+	forgetDigests()
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", "{}")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп чата: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"state":"стоп"`) {
+		t.Errorf("ответ стопа чата без фоновой работы не назвал state «стоп»: %s", text)
+	}
+	if e.s.stopWaitOn("chat-XR-005-1") {
+		t.Error("стоп без фоновой работы всё равно поставил заказ дожима")
 	}
 }
 

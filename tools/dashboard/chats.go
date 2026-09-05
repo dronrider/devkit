@@ -2161,16 +2161,22 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	// его снова. Тот же случай, что у стопа со строки доски, и лечится он тем
 	// же дожимом (stopwait.go). Задачи у стопа из панели нет, снимать нечего:
 	// заказ тут держит только прерывание новых ходов.
+	// Поле state то же самое, что у стопа со строки доски (stopChatWork).
+	// «Останавливается» говорит клиенту не гасить плашку хода молча, а
+	// назвать её тем же словом, что несёт run_stopping строки (замечание
+	// ревью 9, вторая приёмка DK-716). Без него клиент читал голый OK как
+	// «ход кончен» и гасил плашку, пока строка доски ещё стояла под «Стопом»
+	// дожима.
 	if s.chatSubBusy(found.Path, sid) {
 		s.stopWaitSet(last.Tmux, sid, "", found.Name, found.Path)
 		s.logf("ход чата %s прерван (tmux-сессия %s), фоновая работа жива, стоп дожимается", sid, last.Tmux)
-		writeJSON(w, http.StatusOK, map[string]any{"way": "escape", "tmux": last.Tmux,
+		writeJSON(w, http.StatusOK, map[string]any{"way": "escape", "tmux": last.Tmux, "state": "останавливается",
 			"message": "ход прерван, но фоновые субагенты ещё работают: их ходы будут прерваны тем же стопом, " +
 				"пока ты не напишешь в разговор сам"})
 		return
 	}
 	s.logf("ход чата %s прерван (tmux-сессия %s)", sid, last.Tmux)
-	writeJSON(w, http.StatusOK, map[string]any{"way": "escape", "tmux": last.Tmux,
+	writeJSON(w, http.StatusOK, map[string]any{"way": "escape", "tmux": last.Tmux, "state": "стоп",
 		"message": "ход прерван: сессия жива и ждёт следующей реплики"})
 }
 

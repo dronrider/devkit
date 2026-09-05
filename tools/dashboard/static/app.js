@@ -9222,9 +9222,15 @@ function rowChatBtn(project, row, works) {
 //
 // Плашка «думает...» гасится тут же, ответом самого стопа, а не опросом
 // /status. Тот считает занятость и по хвосту транскрипта, где незакрытый
-// вызов инструмента висит до получаса. После явного прерывания плашка
-// зависала бы на весь этот срок, хотя сервер уже знает, что ход кончен
-// (приёмка 2026-09-05).
+// вызов инструмента висит до получаса, и сразу после стопа этот срок не
+// повод молчать о том, что известно уже сейчас (приёмка 2026-09-05).
+//
+// Ответ несёт state тем же словом, что несёт run_stopping строки доски
+// (stopChatWork, замечание ревью 9). Фоновая работа жива, значит гасить
+// плашку рано: сервер сам дожмёт всякий поднявшийся ход и снимет привязку,
+// когда работа встанет, а до тех пор плашка называет то же самое, что видно
+// в строке, и опрос busy.on не снят: он же и погасит её, когда опрос
+// застанет сессию настоящей idle.
 function chatStopBtn(project, st, busy) {
   const stop = el("button", "cstop");
   stop.title = "Прервать текущий ход агента: сессия останется жить";
@@ -9234,7 +9240,10 @@ function chatStopBtn(project, st, busy) {
     ev.stopPropagation();
     stop.disabled = true;
     stopChat(project, st.sid)
-      .then((ok) => { if (ok) busy.off(); })
+      .then((r) => {
+        if (r.state === "останавливается") busy.stopping(st.sid, r.message);
+        else if (r.ok) busy.off();
+      })
       .catch(console.error)
       .finally(() => { stop.disabled = false; });
   });
@@ -9245,7 +9254,7 @@ async function stopChat(project, sid) {
   const r = await api(chatsURL(project) + "/" + encodeURIComponent(sid) + "/stop",
     { method: "POST", body: {} });
   sayResult(r.body.message || r.body.error || (r.ok ? "ход прерван" : "прервать не вышло"), !r.ok);
-  return r.ok;
+  return { ok: r.ok, state: r.body.state, message: r.body.message };
 }
 
 // Палец вместо мыши: у грубого указателя нет ни Shift под большим пальцем, ни
@@ -9914,6 +9923,11 @@ function makeBusy(project, box) {
   box.append(row);
   let poll = null;
   let stop = 0;
+  // Время последней отправленной реплики. Опрос сразу после неё не должен
+  // читать молчащий реестр как «агент закончил» (замечание 18), а без своей
+  // переменной под эту метку опрос падал в try и глушился пустым catch: off()
+  // этим путём не срабатывал никогда, индикатор жил только до своего LIMIT.
+  let shownAt = 0;
   const off = () => {
     row.hidden = true;
     row.classList.remove("stop");
@@ -9933,7 +9947,7 @@ function makeBusy(project, box) {
       // сессий vscode оно пустое всегда. Тишина в журнале в первые секунды
       // после реплики это не «агент закончил», а «агент ещё не начал писать»,
       // и гасить по ней нельзя (замечание 18).
-      const young = shown && Date.now() - shown < 6000;
+      const young = shownAt && Date.now() - shownAt < 6000;
       if (r.ok && r.body.live && !r.body.busy && !young) return off();
     } catch (err) {
       // Обрыв связи не гасит индикатор: работа идёт, видно её просто нечем.
@@ -9946,6 +9960,7 @@ function makeBusy(project, box) {
       row.classList.remove("stop");
       what.textContent = "агент работает...";
       stop = Date.now() + LIMIT;
+      shownAt = Date.now();
       if (poll) clearTimeout(poll);
       // Первый опрос с задержкой: реестр помечает сессию занятой не мгновенно,
       // и мгновенный опрос застал бы ещё idle и погасил индикатор сразу.
@@ -9990,6 +10005,20 @@ function makeBusy(project, box) {
       stop = 0;
       if (poll) clearTimeout(poll);
       poll = null;
+    },
+    // Дожим стопа (замечание ревью 9, DK-716). Ход прерван, а фоновые
+    // субагенты ещё пишут: сервер сам дожмёт всякий поднявшийся ход
+    // (stopwait.go) и снимет привязку, когда работа встанет. Плашка не
+    // гаснет молча, а называет то же самое, что несёт «Стоп» строки доски
+    // (run_stopping), и опрос не снимается: он же и погасит её сам, когда
+    // застанет сессию настоящей idle, без нового нажатия.
+    stopping(sid, text) {
+      row.hidden = false;
+      row.classList.add("stop");
+      what.textContent = text || "стоп: фоновая работа ещё идёт, привязка снимется сама";
+      stop = Date.now() + LIMIT;
+      if (poll) clearTimeout(poll);
+      poll = setTimeout(() => tick(sid), 1500);
     },
     // Запись транскрипта говорит, чем агент занят прямо сейчас: размышления,
     // вызов инструмента, и наконец сам ответ, на котором индикатор гаснет.

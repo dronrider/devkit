@@ -116,35 +116,9 @@ func handedAsks(projPath, sid string, b sessionBinds, now time.Time) []handedAsk
 	if sid == "" {
 		return nil
 	}
-	entries, err := os.ReadDir(chat.Root(projPath))
-	if err != nil {
-		return nil
-	}
-	var out []handedAsk
-	for _, e := range entries {
-		name, found := strings.CutSuffix(e.Name(), chat.AskSuffix)
-		if !found || e.IsDir() {
-			continue
-		}
-		path := chat.AskPath(projPath, name)
-		a, ok := chat.ReadAsk(path)
-		if !ok || !a.Live(now) {
-			continue
-		}
-		if !askForChat(a, sid, b) {
-			continue
-		}
-		h := handedAsk{Name: name, Ask: a}
-		if fi, err := os.Stat(path); err == nil {
-			h.Since = fi.ModTime().Unix()
-		}
-		out = append(out, h)
-	}
-	// Порядок по времени файла, а не по сроку: признак без срока (DK-715) не
-	// назовёт, кто спросил раньше, а mtime это тот же момент, когда встал сам
-	// вопрос.
-	sort.Slice(out, func(i, j int) bool { return out[i].Since < out[j].Since })
-	return out
+	// Обход признаков общий с полкой ждущих (waitshelf.go), разница только в
+	// отборе: разговору нужны свои вопросы, полке все.
+	return askScan(projPath, now, func(a chat.Ask) bool { return askForChat(a, sid, b) })
 }
 
 // askForChat говорит, адресован ли признак ожидания разговору sid. Своя сессия

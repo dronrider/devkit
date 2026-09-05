@@ -284,6 +284,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{p}/sessions/{sid}/message", s.auth(s.handleSessionMessagePost))
 	mux.HandleFunc("POST /api/projects/{p}/sessions/{sid}/task", s.auth(s.handleSessionTaskPost))
 	mux.HandleFunc("GET /api/notifications", s.auth(s.handleNotifications))
+	// Полка ждущих машинная, а не проектная: место ждущих одно на дашборд, и
+	// открывается оно с любого экрана, в том числе с главной (DK-696).
+	mux.HandleFunc("GET /api/waiting", s.auth(s.handleWaitShelf))
 	mux.HandleFunc("GET /api/quota", s.auth(s.handleQuota))
 	mux.HandleFunc("GET /api/harnesses", s.auth(s.handleHarnesses))
 	mux.HandleFunc("GET /api/projects/{p}/chats/{sid}/ask", s.auth(s.handleChatAsk))

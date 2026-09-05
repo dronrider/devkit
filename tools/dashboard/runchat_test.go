@@ -252,3 +252,23 @@ func TestStaticRowStopInChatWindow(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// Плашка «думает...» в панели чата гасилась только опросом /status, а тот
+// считает занятость и по хвосту транскрипта, где незакрытый вызов инструмента
+// висит до получаса (busyNow, sessions.go): после явного стопа хода плашка
+// зависала на весь этот срок, хотя ответ самой ручки /stop уже сказал, что ход
+// кончен (вторая приёмка DK-716, 2026-09-05). Стенд рисует панель чата в
+// поддельном DOM (testdata/poc_chatstopbusy.mjs). Без node шаг пропускается:
+// узел стенда, а не рабочей части.
+func TestStaticChatStopClearsBusyPlate(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд плашки стопа пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatstopbusy.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("плашка работы после стопа хода в панели чата: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}

@@ -3447,7 +3447,12 @@ function taskActions(project, id, row) {
   // фильтрует список по ней. Кнопка рядом с действиями строки заводила ещё
   // одну дорогу в то же место и путала разговор с работой.
   if (rowOurRun(row)) {
-    const stop = barBtn("btn btn-danger", "Стоп", "i-stop");
+    // Значком, без подписи: та же кнопка в списке задач стоит так же
+    // (rowAction), и подпись рядом с иконкой на форме была лишним расхождением
+    // вида одной и той же остановки (приёмка 2026-09-05).
+    const stop = el("button", "btn btn-danger btn-ico rstop");
+    stop.append(icon("i-stop"));
+    stop.setAttribute("aria-label", "Стоп");
     // Последствия остановки живут подсказкой на самой кнопке: надписью рядом
     // они стояли указкой над всей полосой.
     withTip(stop, STOP_TIP);
@@ -9214,7 +9219,13 @@ function rowChatBtn(project, row, works) {
 // Кнопка стопа: красный квадрат в кружке рядом с отправкой. Прерывает ход, а не
 // сессию: следующая реплика попадёт в тот же разговор с его памятью, а полное
 // завершение живёт на экране задачи и в кнопке остановки конвейера.
-function chatStopBtn(project, st) {
+//
+// Плашка «думает...» гасится тут же, ответом самого стопа, а не опросом
+// /status: тот считает занятость и по хвосту транскрипта, где незакрытый
+// вызов инструмента висит до получаса, и после явного прерывания плашка
+// зависала бы на весь этот срок, хотя сервер уже знает, что ход кончен
+// (приёмка 2026-09-05).
+function chatStopBtn(project, st, busy) {
   const stop = el("button", "cstop");
   stop.title = "Прервать текущий ход агента: сессия останется жить";
   stop.setAttribute("aria-label", stop.title);
@@ -9222,7 +9233,10 @@ function chatStopBtn(project, st) {
   stop.addEventListener("click", (ev) => {
     ev.stopPropagation();
     stop.disabled = true;
-    stopChat(project, st.sid).catch(console.error).finally(() => { stop.disabled = false; });
+    stopChat(project, st.sid)
+      .then((ok) => { if (ok) busy.off(); })
+      .catch(console.error)
+      .finally(() => { stop.disabled = false; });
   });
   return stop;
 }
@@ -11136,7 +11150,7 @@ function chatPanel(project, st) {
   // Стоп стоит рядом с отправкой и виден только там, где прерывать есть что и
   // чем: сессия работает и живёт в нашей tmux. У окна vscode и у мёртвой
   // сессии клавиатуры отсюда нет, и кнопка там обещала бы несуществующее.
-  if (chatStoppable(st)) row.append(chatStopBtn(project, st));
+  if (chatStoppable(st)) row.append(chatStopBtn(project, st, busy));
   row.append(send);
   // Порядок узлов и есть положение хвата: полоса стоит первой в коробке, то
   // есть над полем.

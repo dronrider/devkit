@@ -82,7 +82,7 @@ const formActs = async (id) => {
 for (const [id, word] of [["XR-1", "разговор с простаивающей сессией"],
   ["XR-2", "своя простаивающая сессия"]]) {
   const acts = await formActs(id);
-  const stop = deepBtn(acts, "Стоп");
+  const stop = deepBtn(acts, "rstop");
   if (stop) {
     fail(word + ": на форме стоит «Стоп», хотя ход в сессии не идёт и снимать нечего");
   }
@@ -94,12 +94,17 @@ for (const [id, word] of [["XR-1", "разговор с простаивающе
 // --- идущий ход: на форме «Стоп», и он красный ---
 {
   const acts = await formActs("XR-3");
-  const stop = deepBtn(acts, "Стоп");
+  const stop = deepBtn(acts, "rstop");
   if (!stop) fail("у идущего хода на форме нет «Стопа»: " + dump(acts));
   if (!String(stop.className || "").split(" ").includes("btn-danger")) {
     fail("«Стоп» на форме не красный: " + stop.className);
   }
   if (stop.disabled) fail("«Стоп» на форме погашен");
+  // Значком, без подписи: та же кнопка в списке задач стоит так же, задумано
+  // было одинаково (приёмка 2026-09-05).
+  if (dump(stop).includes("Стоп")) {
+    fail("«Стоп» на форме остался с подписью рядом со значком: " + dump(stop));
+  }
   if (deepBtn(acts, "Выполнить") || deepBtn(acts, "Продолжить")) {
     fail("у идущего хода на форме осталось продолжение: " + dump(acts));
   }

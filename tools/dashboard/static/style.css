@@ -453,11 +453,6 @@ a:hover{text-decoration:underline}
 .abar .error{padding:0;flex-basis:100%}
 .abar .error:empty{display:none}
 .tstale{display:flex;align-items:center;gap:12px;margin-top:14px;padding:10px 16px;border-radius:10px;background:var(--bg3);border:1px solid var(--line2);font:500 12.5px var(--sans);color:var(--tx2)}
-/* плашка замка записи накопителя: пока разбор идёт, правка заперта, и плашка
-   говорит, у кого запись и чем её вернуть */
-.dlock{display:flex;align-items:center;gap:10px;margin-top:14px;padding:10px 16px;font:500 12.5px var(--sans);color:var(--tx2)}
-.dlock .gap{flex:1}
-.dlock .btn svg{width:16px;height:16px;flex:none}
 /* запись переписали под правкой: набранное остаётся в поле, а текст с диска
    стоит рядом целиком, читать и сличать */
 .dclash{margin-top:14px}
@@ -1527,6 +1522,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .tpen svg{width:15px;height:15px;display:block}
 .tpen:hover{border-color:var(--acc);color:var(--tx)}
 .tpen.on{border-color:var(--acc);background:color-mix(in oklab,var(--acc) 18%,var(--bg1));color:var(--tx)}
+/* карандаш на запертой записи гаснет, но с экрана не уходит: причина замка
+   живёт его подсказкой, а пропавшая кнопка читалась бы поломкой */
+.tpen.off{opacity:.5;cursor:default}
+.tpen.off:hover{border-color:var(--line2);color:var(--tx2)}
 .tedit.tbig{min-height:96px}
 .tedit.ro{border-color:transparent;background:none;padding-left:0;cursor:default}
 /* разворот блока постановки на всю среднюю колонку */

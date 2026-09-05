@@ -3754,6 +3754,16 @@ function formPage(cfg) {
     };
     pen.addEventListener("click", () => { setEdit(!edit); });
     modes.append(pen);
+  } else if (cfg.penOff) {
+    // Правка заперта не поломкой, и экран обязан это сказать: карандаш стоит
+    // на своём месте погашенным, а причина замка приходит подсказкой. Признак
+    // disabled тут не ставится, браузер не показывает подсказку на выключенной
+    // кнопке, а нажимать нечего и так, обработчика у неё нет.
+    const pen = withTip(el("button", "tpen off"), cfg.penOff);
+    pen.append(icon("i-pen"));
+    pen.setAttribute("aria-disabled", "true");
+    pen.setAttribute("aria-label", cfg.penOff);
+    modes.append(pen);
   }
   // Режим чтения: описание занимает всю колонку, остальное уходит с глаз. Пара
   // к этой кнопке стоит в углу самого описания, иначе развёрнутый текст накрыл
@@ -12998,7 +13008,19 @@ async function renderDraft(project, works, id) {
       // «Чат груминга» вела в тот же самый чат, что и значок рядом, и две
       // двери в одну комнату человек читал как две разные (замечание
       // пользователя).
-      if (!running) {
+      if (running) {
+        // Забрать запись у агента больше нечем, и стоп стоит тут же, в ряду
+        // кнопок шапки: прежде под него уходила отдельная карточка во всю
+        // полосу, а слова её дублировали чип «груминг идёт» (замечание
+        // пользователя). Значок без подписи, как у чата и режима чтения рядом,
+        // слово ушло в подсказку.
+        const stop = withTip(el("button", "btn btn-danger btn-ico dstop"),
+          "Стоп: " + STOP_TIP);
+        stop.append(icon("i-stop"));
+        stop.setAttribute("aria-label", "Стоп");
+        stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
+        actions.push(stop);
+      } else {
         // Пока разбор идёт, поднять второй нечем: кнопка рядом с пометкой
         // «груминг идёт» звала запустить грумера поверх работающего.
         const groom = runControl(project, id,
@@ -13018,25 +13040,6 @@ async function renderDraft(project, works, id) {
             }),
           harnessTiers());
         actions.push(groom);
-      }
-      // Плашка замка: пока разбор идёт, она говорит, у кого запись и чем её
-      // вернуть, а на живом ожидании меняет слова, потому что меняется и сам
-      // замок. Стоп тут тот же, что у строки доски: другого способа забрать
-      // запись у агента нет.
-      const lockNote = [];
-      if (running || waiting) {
-        const note = el("div", "card dlock");
-        note.append(el("span", "dlock-say", locked
-          ? "Разбор идёт, запись у агента."
-          : "Агент ждёт ответа, правка открыта."));
-        if (running) {
-          note.append(el("span", "gap"));
-          const stop = barBtn("btn btn-danger", "Стоп", "i-stop");
-          withTip(stop, STOP_TIP);
-          stop.addEventListener("click", () => { stopRun(project, id).catch(console.error); });
-          note.append(stop);
-        }
-        lockNote.push(note);
       }
       // Карточек исхода разбора на форме нет ни одной. Разговор с агентом у
       // нас всегда идёт в чате, и место исхода там же, а на доске он виден по
@@ -13058,11 +13061,13 @@ async function renderDraft(project, works, id) {
         detail: { file: text.ok ? text.body.file || "" : "", text: said,
           note: text.ok ? "запись пуста" : text.body.error || "текст записи не прочитался" },
         form, chips, actions,
-        // Плашка замка стоит над колонкой текста и говорит, чем поле заперто и
-        // как его отпереть: погашенный карандаш без слов неотличим от поломки.
-        top: lockNote,
         has: { file: true, pencil: !locked, read: true, chat: true },
         penLabel: "Править запись",
+        // Причина замка живёт подсказкой погашенного карандаша: пропавшая
+        // кнопка читалась бы поломкой экрана, а карточки с этими словами на
+        // экране больше нет.
+        penOff: locked ? "Правка заперта: разбор идёт, запись у агента. "
+          + "Вернуть её можно стопом." : "",
         edit: taskDraft.id === id && taskDraft.edit && !locked,
         onEdit: (on) => {
           taskDraft.id = id;

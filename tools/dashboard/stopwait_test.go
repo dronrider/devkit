@@ -243,6 +243,23 @@ func chatWorkLiveEnv(t *testing.T, sid, tmux string) (*testEnv, *http.Client, st
 	return e, c, tmuxLog
 }
 
+// Имя окна дашборд переиспользует, и заказ дожима не должен доставаться
+// следующему жильцу имени: подъём чата его снимает.
+func TestStopWaitDropsOnRaise(t *testing.T) {
+	sid := "dff98764-1111-4111-8111-111111111111"
+	e, c, _ := chatWorkEnv(t, sid, "chat-XR-004-1")
+	now := e.s.now()
+	path := writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-2*time.Minute))
+	subLogAt(t, path, "live", now.Add(-3*time.Second))
+	if resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, body(t, resp))
+	}
+	e.s.chatRaised("chat-XR-004-1", "cccc3333-3333-4333-8333-333333333333", "XR-004", "demo")
+	if e.s.stopWaitOn("chat-XR-004-1") {
+		t.Error("новый разговор под тем же именем окна получил чужой заказ дожима")
+	}
+}
+
 // Стоп из самой панели чата бьёт тем же Escape, и дыра у него та же: ход
 // прерван, а фоновая работа жива. Ответ говорит об этом словами, и дожим
 // ставится так же, как со строки доски.

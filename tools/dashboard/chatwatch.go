@@ -76,6 +76,10 @@ func (s *server) chatRaised(sess, sid, task, proj string) {
 	st := s.chatStoreRead(key)
 	st.Raised = s.now().Unix()
 	st.Dead, st.DeadWhy, st.Tail = 0, "", ""
+	// Имена окон дашборд переиспользует (chat-1, chat-2, task-DK-100), и заказ
+	// дожима, оставшийся от прошлого жильца имени, прервал бы новому разговору
+	// первый же ход.
+	st.StopAt, st.StopSid, st.StopTask, st.StopProject, st.StopPath = 0, "", "", "", ""
 	if sid != "" && chatKeyRe.MatchString(sid) {
 		st.From = sid
 	}

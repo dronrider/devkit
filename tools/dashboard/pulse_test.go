@@ -323,6 +323,12 @@ func TestPulseNeighbourWaitsOwnWorks(t *testing.T) {
 	if p.Waiting != 1 || p.Count != 2 {
 		t.Errorf("в кольце %d агентов и %d ждущих", p.Count, p.Waiting)
 	}
+	// Вопрос тут настоящий и лежит в разговоре bbb-2, а не в причине блока:
+	// тихой парковка (DK-696, ревью второго круга) его не делает, кольцо обязано
+	// моргать.
+	if p.Parked {
+		t.Error("живой вопрос соседней сессии помечен тихой парковкой")
+	}
 	if p.Own == nil || p.Own.State != pulseWork {
 		t.Fatalf("открытый разговор не назван работающим: %+v", p.Own)
 	}

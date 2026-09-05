@@ -136,7 +136,7 @@ func (s *server) stopChatWork(w http.ResponseWriter, found *Project, id string, 
 	// дожима держит и то и другое: строка стоит под «Стопом», а всякий
 	// поднявшийся ход прерывается снова (stopwait.go).
 	if s.chatSubBusy(found.Path, pick.Session) {
-		s.stopWaitSet(pick.Tmux, pick.Session, id, found.Name)
+		s.stopWaitSet(pick.Tmux, pick.Session, id, found.Name, found.Path)
 		s.saidMark(saidSessionKey(pick.Session), stopChatWaitWord(id))
 		resp["state"] = "останавливается"
 		resp["message"] = fmt.Sprintf("стоп: ход разговора %s прерван, но по %s ещё работают "+

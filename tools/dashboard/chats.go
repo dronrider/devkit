@@ -562,10 +562,12 @@ type chatStore struct {
 	Tail    string `json:"tail,omitempty"`
 	// Заказ дожима стопа (stopwait.go). StopAt это время последнего нажатия в
 	// unix-секундах, и пока оно стоит, стоп не кончен: работа сессии живёт
-	// дольше прерванного хода. StopSid с StopPath говорят, чей транскрипт
-	// спрашивать про ход и про фоновую работу, StopTask с StopProject нужны
-	// концу, который снимет привязку и позовёт уведомитель.
+	// дольше прерванного хода. StopFrom это первое нажатие, от него считается
+	// срок заказа. StopSid с StopPath говорят, чей транскрипт спрашивать про
+	// ход и про фоновую работу, StopTask с StopProject нужны концу, который
+	// снимет привязку и позовёт уведомитель.
 	StopAt      int64  `json:"stopAt,omitempty"`
+	StopFrom    int64  `json:"stopFrom,omitempty"`
 	StopSid     string `json:"stopSid,omitempty"`
 	StopTask    string `json:"stopTask,omitempty"`
 	StopProject string `json:"stopProject,omitempty"`
@@ -2160,7 +2162,7 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	// же дожимом (stopwait.go). Задачи у стопа из панели нет, снимать нечего:
 	// заказ тут держит только прерывание новых ходов.
 	if s.chatSubBusy(found.Path, sid) {
-		s.stopWaitSet(last.Tmux, sid, "", found.Name)
+		s.stopWaitSet(last.Tmux, sid, "", found.Name, found.Path)
 		s.logf("ход чата %s прерван (tmux-сессия %s), фоновая работа жива, стоп дожимается", sid, last.Tmux)
 		writeJSON(w, http.StatusOK, map[string]any{"way": "escape", "tmux": last.Tmux,
 			"message": "ход прерван, но фоновые субагенты ещё работают: их ходы будут прерваны тем же стопом, " +
@@ -2235,12 +2237,6 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	}
 	recs := s.bindsAll()
 	last := sessions.Last(recs[sid])
-	// Человек написал в тот же разговор: стоп он передумал, и дожимать в нём
-	// ходы сторожу больше нечего (stopwait.go). Снимается заказ до самой
-	// доставки, а не после неё: реплика, не доехавшая с первого раза, приедет
-	// повтором, и прерванный дожимом ход человек прочитал бы как пропажу
-	// ответа.
-	s.stopWaitOff(last.Tmux)
 	// Сессия стоит на вопросе агента, а живого терминала у неё нет: реплика
 	// идёт во вход разговора, а не клавишами. Живому терминалу реплика едет
 	// им же, дорогой ниже, тем же путём, что и любой другой чат: с концом
@@ -3334,6 +3330,9 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 				"message": "цель " + id + " уже идёт: будить её нечем и незачем"})
 			return
 		}
+		// Продолжение работы это те же слова человека, что и реплика в панель:
+		// заказ дожима снимается и тут, иначе поднятый им ход гасился бы молча.
+		s.stopWaitOff(e.Tmux)
 		err := peerSay(e.Sock, prompt(e.Tmux))
 		if err == nil {
 			s.logf("работа %s продолжена в живом чате %s (pid %d)", id, e.ID, e.PID)

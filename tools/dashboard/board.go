@@ -348,7 +348,7 @@ func (s *server) workState(projPath, id, sid, tmux string, bySid, byTmux map[str
 			// пишут, работа по строке идёт, и объявлять её оконченной нельзя
 			// (живой прогон DK-716, разбор в stopwait.go).
 			if !busy {
-				busy = subBusyOf(info.path, now)
+				busy = s.subBusyOf(info.path, now)
 			}
 		}
 	}

@@ -19,55 +19,135 @@ import (
 // минуты, а привязка сессии к задаче снялась сразу же.
 
 // subLogAt кладёт боковой журнал субагента и ставит ему время правки: живость
-// фоновой работы меряется именно им.
-func subLogAt(t *testing.T, path, id string, at time.Time) string {
+// фоновой работы меряется им и хвостом самого журнала.
+func subLogAt(t *testing.T, path, id, content string, at time.Time) string {
 	t.Helper()
-	log := writeSubLog(t, path, id, "долгий поиск по дереву", "")
+	log := writeSubLog(t, path, id, "долгий поиск по дереву", content)
 	if err := os.Chtimes(log, at, at); err != nil {
 		t.Fatal(err)
 	}
 	return log
 }
 
-// Фоновая работа сессии видна по боковым журналам: пока журнал пишется, работа
-// идёт, даже когда сам разговор молчит. Метка возврата в мете кончает работу
-// раньше срока молчания, а протухший журнал работой не считается.
+// subLogBusyTail это хвост журнала субагента, ушедшего в долгий инструмент:
+// вызов есть, ответа на него нет. Так выглядит журнал всё время сборки или
+// прогона тестов, и трогать файл субагенту в эти минуты нечем.
+const subLogBusyTail = `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"call-1","name":"Bash","input":{"command":"go test ./..."}}]},"timestamp":"2026-08-10T09:57:10.000Z"}
+`
+
+// subLogIdleTail это хвост вернувшейся работы: на вызов пришёл ответ.
+const subLogIdleTail = subLogBusyTail + `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call-1","content":"ok"}]},"timestamp":"2026-08-10T09:57:40.000Z"}
+`
+
+// stopTranscript это транскрипт разговора, чей ход уже кончился: последняя
+// запись старше рубежа занятости, незакрытых вызовов в хвосте нет. Вызов
+// субагента в нём отвечен сразу, как отвечает харнес фоновой работе (живой
+// прогон 2026-09-05: вызов открыт в 11:54:18, ответ пришёл в 11:54:20, а сам
+// субагент работал ещё три минуты).
+func stopTranscript(now time.Time, sub string, answered bool) string {
+	at := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339) }
+	lines := []string{
+		fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"отдай работу субагенту"},"timestamp":%q,"gitBranch":"main"}`, at(-5*time.Minute)),
+		fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"беру"},{"type":"tool_use","id":%q,"name":"Agent","input":{}}]},"timestamp":%q}`, "tool-"+sub, at(-4*time.Minute)),
+	}
+	if answered {
+		lines = append(lines, fmt.Sprintf(
+			`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":"поднят"}]},"timestamp":%q}`,
+			"tool-"+sub, at(-4*time.Minute)))
+	}
+	lines = append(lines, fmt.Sprintf(
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"субагент работает, жду"}]},"timestamp":%q}`, at(-3*time.Minute)))
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// stoppedChatEnv это стенд разговора, чей ход кончился, а фоновая работа жива:
+// строка XR-004 за ним, транскрипт остыл, боковой журнал субагента лежит с
+// названным хвостом и временем молчания.
+func stoppedChatEnv(t *testing.T, quiet time.Duration, tail string, answered bool) (*testEnv, *http.Client, string, string) {
+	t.Helper()
+	sid := "dff98764-1111-4111-8111-111111111111"
+	e, c, _ := chatWorkEnv(t, sid, "chat-XR-004-1")
+	now := e.s.now()
+	path := writeSession(t, e.home, e.proj, "", sid, stopTranscript(now, "live", answered), now.Add(-3*time.Minute))
+	subLogAt(t, path, "live", tail, now.Add(-quiet))
+	forgetDigests()
+	return e, c, sid, path
+}
+
+// Живость фоновой работы: мерок три, и хватает любой. Свежий журнал, вызов без
+// ответа в транскрипте и незакрытый вызов в хвосте самого журнала (субагент
+// ушёл в долгий инструмент и файла не трогает). Метка возврата в мете кончает
+// работу раньше всех трёх, протухший журнал работой не считается.
 func TestSubBusyOfSeesBackgroundWork(t *testing.T) {
 	e := newTestEnv(t)
 	now := time.Date(2026, 8, 10, 10, 0, 10, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
 	sid := "aaaa1111-1111-4111-8111-111111111111"
-	path := writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now)
+	path := writeSession(t, e.home, e.proj, "", sid, stopTranscript(now, "live", true), now.Add(-3*time.Minute))
 
-	subLogAt(t, path, "live", now.Add(-10*time.Second))
-	if !subBusyOf(path, now) {
+	log := subLogAt(t, path, "live", "", now.Add(-10*time.Second))
+	if !e.s.subBusyOf(path, now) {
 		t.Error("свежий боковой журнал работой не считается")
 	}
 
-	markEnded(t, path, "live", now.Add(-5*time.Second))
-	if subBusyOf(path, now) {
-		t.Error("вернувшаяся работа считается идущей: метка возврата старше свежести")
+	// Журнал молчит три минуты, а в хвосте висит вызов без ответа: субагент в
+	// сборке или в прогоне тестов, и работа идёт.
+	if err := os.WriteFile(log, []byte(subLogBusyTail), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	quiet := now.Add(-3 * time.Minute)
+	if err := os.Chtimes(log, quiet, quiet); err != nil {
+		t.Fatal(err)
+	}
+	if !e.s.subBusyOf(path, now) {
+		t.Error("субагент на долгом инструменте считается вставшим: журнал молчит, а вызов в нём без ответа")
 	}
 
-	stale := writeSession(t, e.home, e.proj, "", "bbbb2222-2222-4222-8222-222222222222", transcriptFixture, now)
-	subLogAt(t, stale, "old", now.Add(-10*time.Minute))
-	if subBusyOf(stale, now) {
-		t.Error("протухший боковой журнал считается идущей работой")
+	// Работа вернулась: вызов в журнале закрыт, ответ на её собственный вызов
+	// стоит в транскрипте, молчит она три минуты.
+	if err := os.WriteFile(log, []byte(subLogIdleTail), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(log, quiet, quiet); err != nil {
+		t.Fatal(err)
+	}
+	forgetDigests()
+	if e.s.subBusyOf(path, now) {
+		t.Error("вернувшаяся работа считается идущей")
+	}
+
+	// Ответа на вызов в транскрипте нет вовсе: мерка кольца пульса держит такую
+	// работу идущей до получаса молчания.
+	nosid := "bbbb2222-2222-4222-8222-222222222222"
+	nopath := writeSession(t, e.home, e.proj, "", nosid, stopTranscript(now, "wait", false), now.Add(-3*time.Minute))
+	subLogAt(t, nopath, "wait", subLogIdleTail, quiet)
+	forgetDigests()
+	if !e.s.subBusyOf(nopath, now) {
+		t.Error("работа без ответа на свой вызов считается вставшей раньше получаса")
+	}
+
+	// Метка возврата старше всех мерок.
+	markEnded(t, nopath, "wait", now.Add(-time.Minute))
+	if e.s.subBusyOf(nopath, now) {
+		t.Error("работа с меткой возврата считается идущей")
+	}
+
+	// Журнал молчит дольше получаса: работой это не считается ни по одной
+	// мерке.
+	oldsid := "cccc3333-3333-4333-8333-333333333333"
+	oldpath := writeSession(t, e.home, e.proj, "", oldsid, stopTranscript(now, "old", true), now.Add(-3*time.Minute))
+	subLogAt(t, oldpath, "old", subLogBusyTail, now.Add(-40*time.Minute))
+	forgetDigests()
+	if e.s.subBusyOf(oldpath, now) {
+		t.Error("журнал, молчащий сорок минут, считается идущей работой")
 	}
 }
 
 // Строка доски не гаснет, пока живы фоновые субагенты: ход кончился, транскрипт
-// разговора молчит, а работа по задаче идёт, и объявлять её оконченной нельзя.
-// До правки строка тут простаивала, и с неё поднимался второй исполнитель
-// поверх идущей работы.
+// разговора молчит, а работа по задаче идёт. До правки строка тут простаивала, и
+// с неё поднимался второй исполнитель поверх идущей работы.
 func TestRowStaysBusyWhileSubagentWorks(t *testing.T) {
-	sid := "dff98764-1111-4111-8111-111111111111"
-	e, _, _ := chatWorkEnv(t, sid, "chat-XR-004-1")
-	now := e.s.now()
-	// Ход кончился две минуты назад: транскрипт остыл, незакрытых вызовов в
-	// нём нет.
-	path := writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-2*time.Minute))
-	subLogAt(t, path, "live", now.Add(-3*time.Second))
-
+	e, _, _, _ := stoppedChatEnv(t, 3*time.Second, "", true)
 	got := boardRows(t, e)["XR-004"]
 	if got.RunState != workBusy || !got.RunBusy {
 		t.Errorf("строка с живой фоновой работой простаивает: state=%q busy=%v", got.RunState, got.RunBusy)
@@ -77,16 +157,48 @@ func TestRowStaysBusyWhileSubagentWorks(t *testing.T) {
 	}
 }
 
+// Субагент на долгом инструменте: журнал молчит три минуты, а в хвосте висит
+// вызов без ответа. Строка обязана остаться занятой, а стоп со строки обязан
+// оставить привязку. Мерка по одной свежести журнала объявляла такую работу
+// вставшей, то есть возвращала расхождение приёмки.
+func TestStopWaitsForLongToolSubagent(t *testing.T) {
+	e, c, sid, _ := stoppedChatEnv(t, 3*time.Minute, subLogBusyTail, true)
+	if got := boardRows(t, e)["XR-004"]; got.RunState != workBusy {
+		t.Errorf("строка с субагентом на долгом инструменте простаивает: state=%q", got.RunState)
+	}
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "фоновые субагенты") {
+		t.Errorf("ответ стопа объявил работу оконченной: %s", text)
+	}
+	if !sessions.WorksOn(sessions.LoadAll(e.home)[sid], "XR-004") {
+		t.Error("привязка снята при субагенте на долгом инструменте")
+	}
+}
+
+// Ответа на вызов субагента в транскрипте нет вовсе: кольцо пульса держит такую
+// работу идущей до получаса, и стоп меряет её тем же.
+func TestStopWaitsForUnansweredCall(t *testing.T) {
+	e, c, sid, _ := stoppedChatEnv(t, 3*time.Minute, subLogIdleTail, false)
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, body(t, resp))
+	}
+	if !sessions.WorksOn(sessions.LoadAll(e.home)[sid], "XR-004") {
+		t.Error("привязка снята при работе, чей вызов остался без ответа")
+	}
+}
+
 // Стоп со строки, у которой ход уже кончился, а фоновая работа жива: Escape
 // подаётся, но привязка не снимается, а стоп остаётся заказом. Иначе строка
 // объявляет работу оконченной, пока субагенты дописывают своё, и вернувшийся
 // агент начинает новый ход по свободной с виду строке.
 func TestRunStopWaitsForBackgroundWork(t *testing.T) {
-	sid := "dff98764-1111-4111-8111-111111111111"
-	e, c, tmuxLog := chatWorkEnv(t, sid, "chat-XR-004-1")
-	now := e.s.now()
-	path := writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-2*time.Minute))
-	subLogAt(t, path, "live", now.Add(-3*time.Second))
+	e, c, sid, _ := stoppedChatEnv(t, 3*time.Second, "", true)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
 
 	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", "")
 	text := body(t, resp)
@@ -101,8 +213,7 @@ func TestRunStopWaitsForBackgroundWork(t *testing.T) {
 	}
 	// Привязка держится: работа по строке идёт, и отдавать кнопку запуска
 	// нельзя.
-	recs := sessions.LoadAll(e.home)[sid]
-	if !sessions.WorksOn(recs, "XR-004") {
+	if !sessions.WorksOn(sessions.LoadAll(e.home)[sid], "XR-004") {
 		t.Error("привязка снята при живой фоновой работе: строка объявила работу оконченной")
 	}
 	if got := boardRows(t, e)["XR-004"]; got.Run != runChat || !got.RunStopping {
@@ -117,24 +228,42 @@ func TestRunStopWaitsForBackgroundWork(t *testing.T) {
 	}
 }
 
+// Свой же след прерывания за поднявшийся ход не считается: клиент дописывает
+// запись сразу после Escape, и без тишины сторож дожимал бы в пустоту на первом
+// же заходе, а журнал говорил бы о прерванном ходе, которого не было.
+func TestStopWaitHoldsAfterOwnEscape(t *testing.T) {
+	e, c, _, path := stoppedChatEnv(t, 3*time.Second, "", true)
+	now := e.s.now()
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	if resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, body(t, resp))
+	}
+	appendLine(t, path, fmt.Sprintf(
+		`{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"},"timestamp":%q}`+"\n",
+		now.Add(time.Second).Format(time.RFC3339)))
+	e.s.now = func() time.Time { return now.Add(6 * time.Second) }
+	e.s.stopWaitOne("chat-XR-004-1", func(string) bool { return true })
+	if strings.Count(readFile(t, tmuxLog), "send-keys -t =chat-XR-004-1: Escape") != 2 {
+		t.Errorf("сторож дожал собственный след прерывания: %s", readFile(t, tmuxLog))
+	}
+}
+
 // Субагент вернул работу и поднял агента новым ходом: сторож прерывает и его,
 // теми же двумя Escape. Ровно этот ход человек прерывал вторым нажатием руками,
 // а первое уходило в пустоту.
 func TestStopWaitPressesRisenTurn(t *testing.T) {
-	sid := "dff98764-1111-4111-8111-111111111111"
-	e, c, tmuxLog := chatWorkEnv(t, sid, "chat-XR-004-1")
+	e, c, sid, path := stoppedChatEnv(t, 3*time.Second, "", true)
 	now := e.s.now()
-	path := writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-2*time.Minute))
-	subLogAt(t, path, "live", now.Add(-3*time.Second))
+	tmuxLog := filepath.Join(e.home, "tmux.log")
 	if resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", ""); resp.StatusCode != http.StatusOK {
 		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, body(t, resp))
 	}
 
-	// Ход поднялся снова: в транскрипте появилась запись позже заказа.
+	// Прошла минута, субагент вернулся, и агент пишет снова.
 	appendLine(t, path, fmt.Sprintf(
 		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"иду дальше"}]},"timestamp":%q}`+"\n",
 		now.Add(time.Minute).Format(time.RFC3339)))
-	e.s.now = func() time.Time { return now.Add(90 * time.Second) }
+	e.s.now = func() time.Time { return now.Add(65 * time.Second) }
 	e.s.stopWaitOne("chat-XR-004-1", func(string) bool { return true })
 
 	if strings.Count(readFile(t, tmuxLog), "send-keys -t =chat-XR-004-1: Escape") != 4 {
@@ -152,11 +281,8 @@ func TestStopWaitPressesRisenTurn(t *testing.T) {
 // в ленту разговора и кончает заказ. Строка отдаёт «Стоп» обратно кнопке
 // запуска, а разговор остаётся жить.
 func TestStopWaitReleasesWhenWorkStands(t *testing.T) {
-	sid := "dff98764-1111-4111-8111-111111111111"
-	e, c, _ := chatWorkEnv(t, sid, "chat-XR-004-1")
+	e, c, sid, _ := stoppedChatEnv(t, 3*time.Second, "", true)
 	now := e.s.now()
-	path := writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-2*time.Minute))
-	subLogAt(t, path, "live", now.Add(-3*time.Second))
 	if resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", ""); resp.StatusCode != http.StatusOK {
 		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, body(t, resp))
 	}
@@ -185,14 +311,43 @@ func TestStopWaitReleasesWhenWorkStands(t *testing.T) {
 	}
 }
 
+// Работа не встала за срок заказа: строка не может стоять под «Стопом» вечно, и
+// сторож снимает привязку словами о том, что работа не встала. Срок считается
+// от первого нажатия, а не от последнего дожима.
+func TestStopWaitEndsBySpell(t *testing.T) {
+	e, c, sid, path := stoppedChatEnv(t, 3*time.Second, "", true)
+	now := e.s.now()
+	if resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, body(t, resp))
+	}
+	// Ходы поднимаются один за другим, и каждый дожат: время последнего
+	// нажатия при этом двигается вперёд, а срок заказа нет.
+	for i := 1; i <= 3; i++ {
+		at := now.Add(time.Duration(i*4) * time.Minute)
+		appendLine(t, path, fmt.Sprintf(
+			`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"иду дальше"}]},"timestamp":%q}`+"\n",
+			at.Format(time.RFC3339)))
+		e.s.now = func() time.Time { return at.Add(5 * time.Second) }
+		e.s.stopWaitOne("chat-XR-004-1", func(string) bool { return true })
+	}
+	// Пошла шестнадцатая минута от первого нажатия, а фоновая работа всё жива.
+	at := now.Add(16 * time.Minute)
+	subLogAt(t, path, "live", "", at.Add(-3*time.Second))
+	e.s.now = func() time.Time { return at }
+	e.s.stopWaitOne("chat-XR-004-1", func(string) bool { return true })
+
+	if e.s.stopWaitOn("chat-XR-004-1") {
+		t.Error("заказ пережил свой срок: строка стоит под «Стопом» без конца")
+	}
+	if sessions.WorksOn(sessions.LoadAll(e.home)[sid], "XR-004") {
+		t.Error("по сроку заказа привязка не снялась")
+	}
+}
+
 // Окно разговора закрылось само: работа кончилась вместе с ним, и заказ
 // кончается тем же порядком, что и по вставшей работе.
 func TestStopWaitEndsWithWindow(t *testing.T) {
-	sid := "dff98764-1111-4111-8111-111111111111"
-	e, c, _ := chatWorkEnv(t, sid, "chat-XR-004-1")
-	now := e.s.now()
-	path := writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-2*time.Minute))
-	subLogAt(t, path, "live", now.Add(-3*time.Second))
+	e, c, sid, _ := stoppedChatEnv(t, 3*time.Second, "", true)
 	if resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", ""); resp.StatusCode != http.StatusOK {
 		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, body(t, resp))
 	}
@@ -206,13 +361,10 @@ func TestStopWaitEndsWithWindow(t *testing.T) {
 }
 
 // Человек написал в тот же разговор: стоп он передумал, и дожимать его ход
-// сторожу нечего. Без этого следующий ход человека прерывался бы сам собой.
+// сторожу нечего. Снимается заказ в общей точке доставки человеческих слов, и
+// дорога реплики тут любая.
 func TestStopWaitOffOnHumanReply(t *testing.T) {
-	sid := "dff98764-1111-4111-8111-111111111111"
-	e, c, _ := chatWorkEnv(t, sid, "chat-XR-004-1")
-	now := e.s.now()
-	path := writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-2*time.Minute))
-	subLogAt(t, path, "live", now.Add(-3*time.Second))
+	e, c, sid, _ := stoppedChatEnv(t, 3*time.Second, "", true)
 	if resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", ""); resp.StatusCode != http.StatusOK {
 		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, body(t, resp))
 	}
@@ -223,6 +375,19 @@ func TestStopWaitOffOnHumanReply(t *testing.T) {
 	}
 	if e.s.stopWaitOn("chat-XR-004-1") {
 		t.Error("реплика человека не сняла заказ дожима: его же ход и прервётся")
+	}
+}
+
+// Имя окна дашборд переиспользует, и заказ дожима не должен доставаться
+// следующему жильцу имени: подъём чата его снимает.
+func TestStopWaitDropsOnRaise(t *testing.T) {
+	e, c, _, _ := stoppedChatEnv(t, 3*time.Second, "", true)
+	if resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, body(t, resp))
+	}
+	e.s.chatRaised("chat-XR-004-1", "cccc3333-3333-4333-8333-333333333333", "XR-004", "demo")
+	if e.s.stopWaitOn("chat-XR-004-1") {
+		t.Error("новый разговор под тем же именем окна получил чужой заказ дожима")
 	}
 }
 
@@ -243,23 +408,6 @@ func chatWorkLiveEnv(t *testing.T, sid, tmux string) (*testEnv, *http.Client, st
 	return e, c, tmuxLog
 }
 
-// Имя окна дашборд переиспользует, и заказ дожима не должен доставаться
-// следующему жильцу имени: подъём чата его снимает.
-func TestStopWaitDropsOnRaise(t *testing.T) {
-	sid := "dff98764-1111-4111-8111-111111111111"
-	e, c, _ := chatWorkEnv(t, sid, "chat-XR-004-1")
-	now := e.s.now()
-	path := writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-2*time.Minute))
-	subLogAt(t, path, "live", now.Add(-3*time.Second))
-	if resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", ""); resp.StatusCode != http.StatusOK {
-		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, body(t, resp))
-	}
-	e.s.chatRaised("chat-XR-004-1", "cccc3333-3333-4333-8333-333333333333", "XR-004", "demo")
-	if e.s.stopWaitOn("chat-XR-004-1") {
-		t.Error("новый разговор под тем же именем окна получил чужой заказ дожима")
-	}
-}
-
 // Стоп из самой панели чата бьёт тем же Escape, и дыра у него та же: ход
 // прерван, а фоновая работа жива. Ответ говорит об этом словами, и дожим
 // ставится так же, как со строки доски.
@@ -267,8 +415,9 @@ func TestChatStopSaysBackgroundWork(t *testing.T) {
 	sid := "dff98764-1111-4111-8111-111111111111"
 	e, c, _ := chatWorkLiveEnv(t, sid, "chat-XR-004-1")
 	now := e.s.now()
-	path := writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-2*time.Minute))
-	subLogAt(t, path, "live", now.Add(-3*time.Second))
+	path := writeSession(t, e.home, e.proj, "", sid, stopTranscript(now, "live", true), now.Add(-3*time.Minute))
+	subLogAt(t, path, "live", "", now.Add(-3*time.Second))
+	forgetDigests()
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", "{}")
 	text := body(t, resp)

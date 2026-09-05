@@ -2455,8 +2455,11 @@ type busyEntry struct {
 	open  int
 }
 
-// sessionBusy отвечает, работает ли сессия, и держит разбор в памяти процесса.
-func (s *server) sessionBusy(path string, now time.Time) bool {
+// busyEntryOf отдаёт разбор хвоста журнала из памяти процесса, а при первом
+// заходе и после правки файла читает его заново. Спрашивают этот разбор трое:
+// сам вопрос о ходе сессии, дожим стопа (ход поднялся снова) и живость фоновой
+// работы, которая меряет тем же способом боковой журнал субагента.
+func (s *server) busyEntryOf(path string) busyEntry {
 	stamp := ""
 	if fi, err := os.Stat(path); err == nil {
 		stamp = fmt.Sprintf("%d/%d", fi.ModTime().UnixNano(), fi.Size())
@@ -2465,15 +2468,22 @@ func (s *server) sessionBusy(path string, now time.Time) bool {
 	e, hit := s.busy[path]
 	s.mu.Unlock()
 	if hit && stamp != "" && e.stamp == stamp {
-		return busyNow(e.last, e.open, now)
+		return e
 	}
 	last, open := sessionBusyTail(path)
+	e = busyEntry{stamp: stamp, last: last, open: open}
 	if stamp != "" {
 		s.mu.Lock()
-		s.busy[path] = busyEntry{stamp: stamp, last: last, open: open}
+		s.busy[path] = e
 		s.mu.Unlock()
 	}
-	return busyNow(last, open, now)
+	return e
+}
+
+// sessionBusy отвечает, работает ли сессия, и держит разбор в памяти процесса.
+func (s *server) sessionBusy(path string, now time.Time) bool {
+	e := s.busyEntryOf(path)
+	return busyNow(e.last, e.open, now)
 }
 
 // busyNow это само решение по разобранному хвосту: журнал писался только что

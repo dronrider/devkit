@@ -79,7 +79,7 @@ func (s *server) chatRaised(sess, sid, task, proj string) {
 	// Имена окон дашборд переиспользует (chat-1, chat-2, task-DK-100), и заказ
 	// дожима, оставшийся от прошлого жильца имени, прервал бы новому разговору
 	// первый же ход.
-	st.StopAt, st.StopSid, st.StopTask, st.StopProject, st.StopPath = 0, "", "", "", ""
+	stopWaitClear(&st)
 	if sid != "" && chatKeyRe.MatchString(sid) {
 		st.From = sid
 	}
@@ -113,7 +113,7 @@ func (s *server) chatWatchOff(sess string) {
 	}
 	// Разговор снимают рукой, и дожимать в нём больше нечего: окна не будет, а
 	// оставленный заказ ожил бы на следующем жильце того же имени.
-	st.StopAt, st.StopSid, st.StopTask, st.StopProject, st.StopPath = 0, "", "", "", ""
+	stopWaitClear(&st)
 	st.Raised = 0
 	if err := s.chatStoreWrite(key, st); err != nil {
 		s.logf("снятие сессии %s не запомнилось: %v", sess, err)

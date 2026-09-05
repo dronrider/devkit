@@ -272,3 +272,127 @@ func TestStaticChatStopClearsBusyPlate(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// Живой разговор о строке едет отдельным признаком, а работой не становится
+// (третья приёмка DK-716). Выбирается свежайшая говорящая сессия, работы в
+// признак не попадают, а замолчавший разговор не попадает тоже: строке о нём
+// сказать нечего.
+func TestTalkMarksNamesLiveConversation(t *testing.T) {
+	list := []Work{
+		{ID: "XR-1", Via: workViaSession, Session: "старый", Live: workBusy, Moved: 100, Talk: true},
+		{ID: "XR-1", Via: workViaSession, Session: "свежий", Live: workBusy, Moved: 200, Talk: true},
+		{ID: "XR-1", Via: workViaSession, Session: "молчащий", Live: workIdle, Moved: 300, Talk: true},
+		{ID: "XR-2", Via: workViaSession, Session: "работа", Live: workBusy, Rows: []string{"XR-2"}},
+	}
+	got := talkMarks(list)
+	if got["XR-1"].Session != "свежий" {
+		t.Errorf("признак разговора взят у сессии %q, ожидал свежайшую говорящую", got["XR-1"].Session)
+	}
+	if _, hit := got["XR-2"]; hit {
+		t.Errorf("работа попала в признак разговора: %+v", got["XR-2"])
+	}
+	// Иконка чата от этого не поехала в разговор: у неё своя сторона того же
+	// правила, и работой она считает работу.
+	if _, hit := chatMarks(list)["XR-1"]; hit {
+		t.Errorf("иконка чата взяла разговор за работу: %+v", chatMarks(list))
+	}
+}
+
+// chatTalkEnv поднимает стенд, где по XR-004 говорит наш чат, а работы за
+// строкой не заявлено: в реестре одна запись «заказ» от подъёма чата, команды
+// доски не было. Это и есть живой случай третьей приёмки, человек попросил в
+// чате продолжить работу.
+func chatTalkEnv(t *testing.T, sid, tmux string) (*testEnv, *http.Client) {
+	t.Helper()
+	e, c, _ := runsEnv(t, "")
+	now := time.Date(2026, 8, 10, 10, 0, 10, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now)
+	writeBinds(t, e.home, fmt.Sprintf(
+		"2026-08-10T09:59:00 сессия %s задача XR-004 проект demo дерево %s "+
+			"транскрипт /tmp/t.jsonl источник заказ повод startup tmux %s\n",
+		sid, e.proj, tmux))
+	return e, c
+}
+
+// Строка, по которой идёт живой разговор, говорит об этом отдельным признаком
+// и работой не становится. Первое лечит мутность: человек попросил агента в
+// чате продолжить работу, агент работал, а строка стояла такой же, какой была
+// до просьбы. Второе держит защиту DK-460: чат, открытый по строке, не отбирает
+// у неё кнопку запуска и не выглядит вторым исполнителем.
+func TestBoardRowTalkStateWithoutWork(t *testing.T) {
+	sid := "dff98764-1111-4111-8111-111111111111"
+	e, c := chatTalkEnv(t, sid, "chat-XR-004-1")
+
+	got := boardRows(t, e)["XR-004"]
+	if got.TalkState != workBusy || got.TalkChat != sid {
+		t.Fatalf("строка молчит о живом разговоре: talk_state=%q talk_chat=%q", got.TalkState, got.TalkChat)
+	}
+	if got.Run != "" || got.RunBusy || got.RunState != "" {
+		t.Errorf("разговор присвоил строку: run=%q busy=%v state=%q", got.Run, got.RunBusy, got.RunState)
+	}
+	// Экран задачи судит о строке тем же способом, что список: пустая полоса
+	// действий на форме и молчащая строка это одна и та же слепота.
+	text := body(t, doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/tasks/XR-004", ""))
+	if !strings.Contains(text, `"talk_state":"busy"`) || !strings.Contains(text, `"talk_chat":"`+sid+`"`) {
+		t.Errorf("форма задачи о живом разговоре не узнала: %s", text)
+	}
+}
+
+// Строка с настоящей работой о разговоре не говорит: о ходе там говорит признак
+// работы, и второе слово о том же ходе читалось бы как вторая сессия.
+func TestBoardRowTalkSilentUnderWork(t *testing.T) {
+	sid := "dff98764-1111-4111-8111-111111111111"
+	e, _, _ := chatWorkEnv(t, sid, "chat-XR-004-1")
+	got := boardRows(t, e)["XR-004"]
+	if got.Run != runChat || !got.RunBusy {
+		t.Fatalf("предусловие: строку ведёт разговор с ходом, run=%q busy=%v", got.Run, got.RunBusy)
+	}
+	if got.TalkState != "" || got.TalkChat != "" {
+		t.Errorf("у работающей строки встал второй признак хода: talk_state=%q talk_chat=%q",
+			got.TalkState, got.TalkChat)
+	}
+}
+
+// Живой случай третьей приёмки целиком. Чат по строке брал её этапом, стоп
+// привязку снял, а потом человек попросил в том же чате продолжить работу.
+// Записи о работе с тех пор нет, и строка до этой правки молчала о происходящем
+// вовсе. Теперь она говорит про разговор, а работой по-прежнему не считается:
+// снятую привязку возвращает команда доски, а не реплика.
+func TestBoardRowTalkAfterStopRelease(t *testing.T) {
+	sid := "dff98764-1111-4111-8111-111111111111"
+	e, _, _ := chatWorkEnv(t, sid, "chat-XR-004-1")
+	appendBinds(t, e.home, fmt.Sprintf(
+		"2026-08-10T09:59:40 сессия %s задача XR-004 проект demo дерево %s "+
+			"транскрипт - источник снята повод «стоп со строки» tmux -\n",
+		sid, e.proj))
+
+	got := boardRows(t, e)["XR-004"]
+	if got.Run != "" || got.RunState != "" {
+		t.Fatalf("снятая привязка оставила строку рабочей: run=%q state=%q", got.Run, got.RunState)
+	}
+	if got.TalkState != workBusy || got.TalkChat != sid {
+		t.Errorf("строка молчит о разговоре после стопа: talk_state=%q talk_chat=%q",
+			got.TalkState, got.TalkChat)
+	}
+}
+
+// Стенд фронта: полоса действий формы задачи не пустеет на секции In progress и
+// обещает то же, что строка списка, а живой разговор виден точкой, чипом и
+// подсказкой запуска, кнопки при этом не отбирая. Проверка по тексту app.js тут
+// не годится: условие ветки читалось бы и в прежнем коде, а человек на экране
+// видел пустое место. Стенд рисует обе полосы в поддельном DOM
+// (testdata/poc_rowtalk.mjs). Без node шаг пропускается: узел стенда, а не
+// рабочей части.
+func TestStaticTaskActionsMatchRow(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд полосы действий пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_rowtalk.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("полоса действий формы и признак живого разговора: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}

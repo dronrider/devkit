@@ -578,6 +578,53 @@ async function stopRun(project, id, session) {
 // способом (решение пользователя).
 
 
+// Живой разговор о строке: в чате задачи прямо сейчас идёт ход, а работы за
+// строкой доска не видит (поле talk_state, tasks.go). Это третье состояние
+// строки, не работа и не пустота. Работой разговор не становится нарочно.
+// Строку присваивает запись реестра, и чат, открытый ради вопроса, кнопку
+// запуска у неё не отбирает (развилка 1, защита DK-460). Молчать о разговоре
+// тоже нельзя. Человек попросил агента в чате продолжить работу, агент
+// работал, а строка стояла такой же, какой была до просьбы. Слово человека про
+// итог, «мутно как-то» (третья приёмка).
+function rowTalkLive(row) {
+  return (row && row.talk_state) || "";
+}
+
+// Что говорит признак разговора. Первая фраза про то, что происходит, вторая
+// про то, чего это не значит. Без второй человек читает живой разговор как
+// взятую работу и ждёт от строки «Стопа».
+function talkTip(row) {
+  const st = rowTalkLive(row);
+  if (!st) return "";
+  const what = st === WORK_WAIT ? "агент разговора ждёт ответа человека"
+    : "по задаче идёт ход в разговоре";
+  return "Разговор: " + what + ". Работой строки это не считается: "
+    + "работу заявляет команда доски, а не реплика в чате.";
+}
+
+// Приписка к подсказке запуска у строки с живым разговором. Кнопка остаётся на
+// месте и поднимает исполнителя по вердикту pick, как поднимала. Работы за
+// разговором никто не заявлял. Сказать об этом надо до нажатия, иначе человек
+// заводит второго агента рядом с говорящим и узнаёт об этом после.
+function talkWarn(row) {
+  if (!rowTalkLive(row)) return "";
+  return "По задаче идёт разговор, и запуск поднимет исполнителя рядом с ним: "
+    + "продолжают разговор из него самого, кнопкой чата.";
+}
+
+// Чип живого разговора на форме задачи. В списке о том же говорит кружок у
+// номера, а на форме кружка нет вовсе, и без чипа форма о разговоре молчала бы.
+//
+// Ждущий разговор рядом с чипом ожидания не встаёт. Оба сказали бы одно и то
+// же разными словами, а чип ожидания знает больше: источник вопроса и срок.
+function talkChip(row) {
+  const st = rowTalkLive(row);
+  if (!st) return null;
+  if (st === WORK_WAIT && row.waiting && row.waiting.state) return null;
+  const word = st === WORK_WAIT ? "разговор ждёт ответа" : "разговор идёт";
+  return withTip(el("span", "chip c-talk", word), talkTip(row));
+}
+
 // Кружок состояния перед номером строки: одна точка на все случаи вместо
 // россыпи чипов. Зелёная это живая работа, жёлтая ожидание человека, серая
 // работа не наша (чужая сессия) или ожидание снаружи. Строка, за которой
@@ -604,6 +651,11 @@ function rowDot(project, row) {
   } else if (live) {
     kind = "sd-out";
     tip = "работа идёт снаружи: задачу ведёт чужая сессия";
+  } else if (rowTalkLive(row)) {
+    // Разговор о задаче идёт, а работы за строкой не заявлено. Точка тут
+    // своего цвета, и пульс у неё стоит только под идущий ход.
+    kind = "sd-talk" + (row.talk_state === WORK_BUSY ? " pulse" : "");
+    tip = talkTip(row);
   } else if (row.stage === STAGE_OUTSIDE) {
     kind = "sd-out";
     tip = "ждём снаружи: проверка, блокер или чужая работа";
@@ -613,12 +665,13 @@ function rowDot(project, row) {
   const dot = withTip(el("span", "sdot " + kind), tip);
   dot.setAttribute("aria-label", tip);
   // С кружка идущей работы есть ход в разговор: со строки туда вёл чип
-  // «работает», и вместе с ним дорога бы пропала.
-  if (live) {
+  // «работает», и вместе с ним дорога бы пропала. С точки разговора дорога та
+  // же и нужнее. Посмотреть, чем занят агент, человек идёт именно туда.
+  if (live || rowTalkLive(row)) {
     dot.classList.add("clicky");
     dot.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      location.hash = boardChatHash(project, row.id);
+      location.hash = boardChatHash(project, row.talk_chat || row.id);
     });
   }
   return dot;
@@ -1279,6 +1332,39 @@ function rowOurRun(row) {
   return Boolean(row) && (row.run === "tmux" || row.run === "chat") && rowOnRun(row);
 }
 
+// Что строка предлагает человеку. Ответов пять, и правило одно на список доски
+// и на полосу действий формы задачи:
+//   stop  работа наша и идёт, её снимают;
+//   busy  ход идёт в чужой сессии, снимать нечем и продолжать некуда;
+//   talk  за строкой есть наш разговор, и продолжение идёт в него;
+//   held  строку держит маркер «после DK-NNN», конвейеру её брать рано;
+//   start работы за строкой нет, идёт обычный запуск.
+//
+// Правило вынесено сюда после третьей приёмки DK-716. Форма задачи держала
+// свой список условий и на секции In progress отдавала пустую полосу. Расчёт
+// был на кнопку продолжения в панели разговора, а до неё от пустого места ни
+// подсказки, ни намёка. В списке при тех же данных кнопка стояла, и человек
+// читал два экрана одной задачи как два разных ответа.
+function rowActionKind(row, sect) {
+  if (rowOurRun(row)) return "stop";
+  if (row && row.run_busy) return "busy";
+  if (rowTalks(row)) return "talk";
+  if (row && row.after && row.after.length) return "held";
+  return "start";
+}
+
+// Подсказки кнопки работы. Текст один на оба экрана по той же причине, по
+// какой одно правило. Обещать человеку разное про одну кнопку нельзя.
+function busyTip(label) {
+  return label + ": по строке идёт ход, и вводная продолжения уехала бы в живую "
+    + "сессию посреди него. Сессия эта не наша, и снять её отсюда нечем.";
+}
+
+function talkGoTip(label) {
+  return label + ": сервер поднимет ход в том же разговоре, разбудив живую "
+    + "сессию или подняв резюм. Второго исполнителя конвейером тут не заводят.";
+}
+
 // Что сделает «Стоп» у этой строки. Работу конвейера снимают целиком: сессия у
 // него служебная, возобновление это новый запуск, и состояние он прочтёт с
 // диска. Работу, идущую в окне разговора, так снимать нельзя, у неё память
@@ -1339,11 +1425,12 @@ function rowAction(project, row, sect) {
   // Работа наша и идёт нашей tmux-сессией: её снимают со строки. Спрашивается
   // это общим правилом (rowOurRun): полоса действий задачи выбирает кнопку тем
   // же вопросом, и разойтись им теперь негде.
-  const ours = rowOurRun(row);
+  const kind = rowActionKind(row, sect);
+  const ours = kind === "stop";
   // Ход идёт, но сессия не наша: снимать нечего, а продолжение уехало бы в
   // живой ход посторонней сессии. Кнопка тут стоит погашенной с причиной.
-  const busy = !ours && Boolean(row.run_busy);
-  const talks = rowTalks(row);
+  const busy = kind === "busy";
+  const talks = kind === "talk";
   // Выбор подписки и уровня собирается до кнопки: лежит он под тремя точками,
   // а само нажатие на кнопку запуска идёт умолчанием.
   let pick = null;
@@ -1376,16 +1463,14 @@ function rowAction(project, row, sect) {
     main.append(icon("i-play"));
     main.disabled = true;
     main.setAttribute("aria-label", label);
-    withTip(main, label + ": по строке идёт ход, и вводная продолжения уехала бы в живую "
-      + "сессию посреди него. Сессия эта не наша, и снять её отсюда нечем.");
+    withTip(main, busyTip(label));
     pickWhy = "по строке идёт чужой ход";
   } else if (talks) {
     const label = actionLabel(sect);
     main = el("button", "btn btn-sm btn-acc btn-ico rmain");
     main.append(icon("i-play"));
     main.setAttribute("aria-label", label);
-    withTip(main, label + ": сервер поднимет ход в том же разговоре, разбудив живую "
-      + "сессию или подняв резюм. Второго исполнителя конвейером тут не заводят.");
+    withTip(main, talkGoTip(label));
     pickWhy = "продолжение идёт в том же разговоре, и подписку ему выбрал первый заход";
     main.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -1437,7 +1522,7 @@ function rowAction(project, row, sect) {
       const more = (pickHarness || tierList.length > 1)
         ? "Подписку и уровень модели выбирают под тремя точками."
         : "";
-      withTip(main, [label + ".", hint, why, more].filter(Boolean).join(" "));
+      withTip(main, [label + ".", hint, why, more, talkWarn(row)].filter(Boolean).join(" "));
       const fire = (harness) => {
         main.disabled = true;
         startRun(project, row.id, harness, "", tierOut())
@@ -2317,6 +2402,9 @@ function rowMoves(row, byID) {
   if (!row || !row.id) return false;
   if (row.waiting) return true;
   if (row.run && row.run !== "gone") return true;
+  // Живой разговор о строке двигает её так же, как работа. Первая же команда
+  // доски заявит работу, и признак строки сменится без нашего нажатия.
+  if (rowTalkLive(row)) return true;
   const w = byID.get(row.id);
   return Boolean(w && w.live && w.live !== WORK_DEAD);
 }
@@ -3446,7 +3534,12 @@ function taskActions(project, id, row) {
   // чатов открывает один значок в шапке дашборда, и открытое с задачи оно
   // фильтрует список по ней. Кнопка рядом с действиями строки заводила ещё
   // одну дорогу в то же место и путала разговор с работой.
-  if (rowOurRun(row)) {
+  // Кнопку выбирает то же правило, что в строке доски, rowActionKind. Свой
+  // список условий тут уже расходился со списком задач, и человек читал два
+  // экрана одной задачи как два разных ответа.
+  const label = actionLabel(row.sect);
+  const kind = rowActionKind(row, row.sect);
+  if (kind === "stop") {
     // Кнопка тут значком, без подписи, как та же кнопка в списке задач
     // (rowAction). Подпись рядом с иконкой на форме была лишним расхождением
     // во внешнем виде одной и той же остановки (приёмка 2026-09-05).
@@ -3461,16 +3554,37 @@ function taskActions(project, id, row) {
     return out;
   }
   // Ход идёт, но сессия не наша: снимать нечем, а вводная продолжения уехала бы
-  // в живой ход посторонней сессии. Подписи «ведёт другая сессия» тут больше
-  // нет: она врала про чужую машину (замечание пользователя).
-  if (row.run_busy) return out;
+  // в живой ход посторонней сессии. Кнопка стоит погашенной с причиной, как в
+  // списке: прежде полоса тут пустела, и форма не говорила о чужом ходе вовсе.
+  // Подписи «ведёт другая сессия» рядом с ней нет: она врала про чужую машину
+  // (замечание пользователя).
+  if (kind === "busy") {
+    const wait = barBtn("btn", label, "i-play");
+    wait.disabled = true;
+    out.push(withTip(wait, busyTip(label)));
+    return out;
+  }
+  // За строкой есть наш разговор, и продолжение идёт в него, а не конвейером.
+  // Кнопка эта была снята с формы ради кнопки продолжения в панели разговора
+  // (замечание 10 второго круга), и расчёт на панель не сошёлся: полоса
+  // действий пустела целиком, а дороги от пустого места до панели нет ни
+  // подсказкой, ни намёком (третья приёмка). Панельная кнопка осталась на
+  // своём месте, второй дорогой к тому же ходу.
+  if (kind === "talk") {
+    const go = barBtn("btn btn-acc", label, "i-play");
+    go.addEventListener("click", () => {
+      go.disabled = true;
+      continueTask(project, id).catch(console.error).finally(() => { go.disabled = false; });
+    });
+    out.push(withTip(go, talkGoTip(label)));
+    return out;
+  }
   // Плашки про ненайденного исполнителя тут больше нет. Форму она портила
   // целым абзацем, а говорила неправду: человек вёл задачу из дашборда и
   // читал, что работа идёт где-то ещё (решение пользователя). Запуск такой
   // строке возвращён: живой работы за ней нет, и второму исполнителю взяться
   // неоткуда.
-  const label = actionLabel(row.sect);
-  if (row.after && row.after.length) {
+  if (kind === "held") {
     // Заблокированную маркером задачу конвейер брать не должен: кнопка стоит
     // погашенной с причиной, а не пропадает с полосы.
     const wait = barBtn("btn", label, "i-play");
@@ -3486,14 +3600,6 @@ function taskActions(project, id, row) {
   // сессии агента, и вести после неё некуда.
   const closesWithoutSession = row.sect === "check" && row.accept === "user";
   const afterOk = closesWithoutSession ? "" : project + "/" + id;
-  if (label === ACTION_BY_SECT["in-progress"]) {
-    // Продолжение работы переехало в чат отдельной кнопкой рядом с отправкой
-    // (замечание 10): продолжают её оттуда же, откуда разговаривают, а полоса
-    // с одной кнопкой на экране не нужна. Цель тут не исключение: её
-    // диспетчерскую сессию продолжают той же кнопкой, и до этого круга полоса
-    // у цели оставалась стоять.
-    return out;
-  }
   const pin = checkPin(row);
   // Выбор яруса тот же, что и у строки списка: экран задачи и доска не должны
   // предлагать разное.
@@ -3502,7 +3608,8 @@ function taskActions(project, id, row) {
   // рядом. Спрашивается она по секции, а не по прикреплённой подписке: без
   // подписок на машине приколоть нечего, а закрывать строку всё равно закроют.
   out.push(runControl(project, id, (name) => barBtn("btn btn-acc", name, "i-play"), label, isGoal,
-    row.sect === "check" ? checkTip(row) : orderHint(row.order, row.accept, row.sect, id),
+    [row.sect === "check" ? checkTip(row) : orderHint(row.order, row.accept, row.sect, id),
+      talkWarn(row)].filter(Boolean).join(" "),
     afterOk, pin, null,
     isGoal ? { list: harnessTiers(), now: RUN_TIER }
       : { list: [TIER_VERDICT].concat(harnessTiers()), now: TIER_VERDICT }));
@@ -4163,7 +4270,7 @@ async function renderTask(project, works, id, pre) {
   // строкой над заголовком, рядом со ссылкой на доску, и полоса с типом, ценой
   // и бакетом начиналась мимо него (решение пользователя).
   const chips = [row.section ? el("span", "chip", row.section) : null,
-    liveChip(work), stageChip(row), waitChip(row)].filter(Boolean);
+    liveChip(work), stageChip(row), waitChip(row), talkChip(row)].filter(Boolean);
   if (isGoal) chips.push(el("span", "chip c-goal", "цель"));
   const tail = [withTip(el("span", "chip dashed" +
     (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p), P_HINT)];
@@ -9211,7 +9318,9 @@ function rowChatBtn(project, row, works) {
   // до живого разговора человек делал ещё один клик, выбирая его глазами по
   // времени (DK-716). Работы за строкой нет, значит адрес задачи и есть
   // правильный вход: он откроет список или заведёт новый чат.
-  const addr = row.run_chat || row.id;
+  // Разговор без заявленной работы называет то же поле с другой стороны,
+  // talk_chat. Идущий ход в нём есть, и вход в него нужен тот же.
+  const addr = row.run_chat || row.talk_chat || row.id;
   return chatIconBtn(lively ? "Чат по задаче: работа идёт" : "Чат по задаче",
     "Чат по задаче " + row.id, () => { openChat(chatAddr(project, addr)); }, lively);
 }

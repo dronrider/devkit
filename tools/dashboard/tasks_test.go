@@ -887,7 +887,7 @@ func TestStaticTaskActionBar(t *testing.T) {
 	// Кнопку выбирает то же правило, что и в строке доски, а список работ форма
 	// не перебирает вовсе: живое окно без хода получало «Стоп», хотя снимать в
 	// нём было нечего (живой случай DK-543).
-	if !strings.Contains(acts, "rowOurRun(row)") {
+	if !strings.Contains(acts, "rowActionKind(row, row.sect)") {
 		t.Error("полоса действий задачи судит о работе своим условием, а не общим правилом строки")
 	}
 	if strings.Contains(acts, "works") {
@@ -922,11 +922,16 @@ func TestStaticTaskActionBySection(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	body := funcBody(t, app, "function taskActions(")
 	for _, want := range []string{"actionLabel(row.sect)", "runControl(project, id",
-		"row.after && row.after.length", "wait.disabled = true",
+		`kind === "held"`, "wait.disabled = true",
 		`withTip(wait, "сначала " + row.after.join(", "))`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в полосе действий задачи нет %q", want)
 		}
+	}
+	// Маркер «после DK-NNN» спрашивается общим правилом, и держащая задача
+	// названа в нём: своего условия у формы тут больше нет.
+	if !strings.Contains(funcBody(t, app, "function rowActionKind("), "row.after && row.after.length") {
+		t.Error("общее правило кнопки не спрашивает про маркер зависимости")
 	}
 	if strings.Contains(app, "function taskActionHint(") {
 		t.Error("надпись под полосой действий вернулась на экран задачи")

@@ -85,6 +85,17 @@ type boardRow struct {
 	// чата. Пусто у строки без работающей сессии, и иконка тогда открывает
 	// адрес задачи, как открывала.
 	RunChat string `json:"run_chat,omitempty"`
+	// TalkState это состояние живого разговора о строке: busy (ход идёт) или
+	// waiting (агент разговора ждёт человека). Разговор строку не присваивает,
+	// работой не считается и кнопки у неё не отбирает. Молчать о нём тоже
+	// нельзя. Человек попросил агента в чате продолжить работу, тот работал, а
+	// доска показывала задачу свободной (третья приёмка DK-716). Пусто у
+	// строки, о которой никто не говорит, и у строки с настоящей работой, там о
+	// ходе говорит Run.
+	TalkState string `json:"talk_state,omitempty"`
+	// TalkChat это сессия того разговора. В неё ведут точка у номера строки и
+	// иконка чата, и по ней человек смотрит, чем занят агент.
+	TalkChat string `json:"talk_chat,omitempty"`
 	// Harness называет подписку, которой закрывать проверенную строку: ту, на
 	// которой работу начинали.
 	Harness string `json:"harness,omitempty"`
@@ -198,9 +209,32 @@ var stateRank = map[string]int{workBusy: 4, workWait: 3, workIdle: 2, workDead: 
 // глазами по времени. Пусто у строки, за которой не работает ни одна наша сессия: адрес
 // задачи там и есть правильный вход, он откроет список или заведёт новый чат.
 func chatMarks(works []Work) map[string]string {
+	out := map[string]string{}
+	for id, w := range liveSessions(works, false) {
+		out[id] = w.Session
+	}
+	return out
+}
+
+// talkMarks называет живой разговор о строке, то есть сессию, которая по задаче
+// сейчас говорит, а работы за собой не заявила. Разговор это третье состояние
+// строки, не работа и не пустота (развилка 13 DK-716). Занятой строка от него
+// не становится. Кнопка запуска и вердикт pick остаются на месте, и защита
+// DK-460 держится прежним критерием. Меняется одно, экран перестаёт молчать о
+// том, что по задаче прямо сейчас идёт чей-то ход.
+func talkMarks(works []Work) map[string]Work {
+	return liveSessions(works, true)
+}
+
+// liveSessions выбирает строке самую живую сессию названной стороны, работу
+// (talk=false) либо разговор (talk=true). Свежесть считается тем же рангом
+// состояния, что и свёртка строки, а при равном состоянии выигрывает последняя
+// реплика. Сторон две, а правило выбора одно. Разъехавшись, они водили бы
+// иконку чата и признак разговора в разные сессии одной строки.
+func liveSessions(works []Work, talk bool) map[string]Work {
 	best := map[string]Work{}
 	for _, w := range works {
-		if w.Talk || w.Session == "" {
+		if w.Talk != talk || w.Session == "" {
 			continue
 		}
 		if w.Live != workBusy && w.Live != workWait {
@@ -214,11 +248,7 @@ func chatMarks(works []Work) map[string]string {
 			}
 		}
 	}
-	out := map[string]string{}
-	for id, w := range best {
-		out[id] = w.Session
-	}
-	return out
+	return best
 }
 
 // stopMarks называет строки, по которым стоп уже нажат и дожимается. Признак
@@ -292,7 +322,7 @@ func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 		return raw
 	}
 	live, state, chats := runMarks(works), stateMarks(works), chatMarks(works)
-	stopping := stopMarks(works)
+	stopping, talks := stopMarks(works), talkMarks(works)
 	for _, sec := range secs {
 		var key string
 		json.Unmarshal(sec["key"], &key)
@@ -359,6 +389,20 @@ func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 					return raw
 				}
 				row["run_chat"] = mark
+			}
+			// Разговор о строке едет отдельными полями и только там, где
+			// работы за строкой не видно. У занятой строки о ходе говорит
+			// признак работы, и второе слово о том же ходе путало бы.
+			if w, hit := talks[id]; hit && state[id] == "" {
+				mark, err := json.Marshal(w.Live)
+				if err != nil {
+					return raw
+				}
+				row["talk_state"] = mark
+				if mark, err = json.Marshal(w.Session); err != nil {
+					return raw
+				}
+				row["talk_chat"] = mark
 			}
 			if stopping[id] {
 				mark, err := json.Marshal(true)
@@ -681,6 +725,12 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		row.RunBusy = row.RunState == workBusy
 		row.RunChat = chatMarks(works)[id]
 		row.RunStopping = stopMarks(works)[id]
+		// Живой разговор о строке экран задачи спрашивает так же, как список.
+		// Пустая полоса действий на форме и молчащая строка в списке это одна
+		// и та же слепота, и лечится она в одном месте.
+		if w, hit := talkMarks(works)[id]; hit && row.RunState == "" {
+			row.TalkState, row.TalkChat = w.Live, w.Session
+		}
 		if row.Sect == sectCheck {
 			row.Harness = mine[id]
 		}

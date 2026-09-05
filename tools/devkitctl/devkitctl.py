@@ -292,6 +292,12 @@ SYNC_HOOK = "check-background.py"
 # и молчит, а это не то же самое, что потерянный отчёт субагента.
 TURN_HOOK = "turn-mark.py"
 TURN_EVENTS = ("Stop", "StopFailure", "Notification", "UserPromptSubmit")
+# Сторожок стыка фаз (DK-803): PostToolUse на Bash своим матчером, потому что
+# переход задачи по доске это команда taskctl, а не запись файла. Категория
+# сообщения в hook_gaps своя: без сторожка стык фазы держится на памяти сессии,
+# и хвост задачи попадает на самый занятый контекст, а это не то же самое, что
+# потерянная реплика чата.
+PHASE_HOOK = "phase-budget.py"
 # Хуки, переименованные в devkit: прежнее имя файла и нынешнее (DK-440). Строка
 # с прежним именем зовёт файл, которого в чекауте уже нет, и харнес спотыкается
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
@@ -334,6 +340,7 @@ HOOK_LAYOUT = (
     ("PreToolUse", ASK_MATCHER, "python3 %s/hooks/ask-panel.py --hook"),
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
     ("PostToolUse", "Agent", "python3 %s/hooks/agent-watch.py --hook claude-code"),
+    ("PostToolUse", PRE_MATCHER, "python3 %s/hooks/phase-budget.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
@@ -1450,6 +1457,11 @@ def hook_gaps(text, settings):
                             "сессии, поднятой панелью, идёт диалогом харнеса, который панель не "
                             "показывает и который пропадает через восемь минут снимком tmux "
                             "(hooks/README.md)" % (ASK_HOOK, settings))
+        elif script == PHASE_HOOK:
+            findings.append("сторожок стыка фаз %s не подключён на событии PostToolUse Bash в %s: "
+                            "остаток окна на переходе задачи никто не считает, и хвост задачи "
+                            "попадает на самый занятый контекст (hooks/README.md)"
+                            % (PHASE_HOOK, settings))
         elif script == TASK_HOOK and event == "PostToolUse":
             findings.append("PostToolUse-хук %s --touch не подключён в %s: правка файла в боковом "
                             "дереве задачи не оставляет отметку в журнале сессий, и работа вне "

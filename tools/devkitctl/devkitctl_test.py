@@ -244,6 +244,21 @@ class ProjectFindingsTest(SandboxCase):
         self.assertNotIn_("turn-mark.py не подключена", out,
                           "подключённая отметка хода попала в находку")
 
+    def test_5e_phase_budget_hook(self):
+        # Сторожок стыка фаз (DK-803) стоит на PostToolUse Bash, и его пропажа
+        # это находка: остаток окна на переходе задачи никто не считает.
+        full = read(self.settings)
+        drop_lines(self.settings, "phase-budget.py")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("сторожок стыка фаз phase-budget.py не подключён на событии "
+                       "PostToolUse Bash", out, "нет находки про неподключённый сторожок")
+        self.assertIn_("самый занятый контекст", out,
+                       "находка не говорит, что ломается без сторожка")
+        write(self.settings, full)
+        _, out = self.box.doctor(self.proj)
+        self.assertNotIn_("phase-budget.py не подключён", out,
+                          "подключённый сторожок попал в находку")
+
     def test_5b_retry_watchdog_key(self):
         # Без env-ключа недокументированного ретрай-вотчдога доктор называет
         # это находкой (стенд DK-172 разницы в поведении с ключом не нашёл, но
@@ -2101,9 +2116,12 @@ class HarnessHooksTest(SandboxCase):
         # реплику надо доставлять на любом ходе идущего витка, а не на записи
         # файла, и отметку работы (DK-539) режет своим списком WORK_TOOLS сам
         # скрипт, а не матчер.
+        # Четвёртая группа это сторожок стыка фаз (DK-803) на Bash: переход
+        # задачи по доске это команда taskctl, и ловится он на её ходе.
         self.assertEqual([g.get("matcher") for g in hooks["PostToolUse"]],
-                         ["Edit|Write|NotebookEdit", None, "Agent"], hooks["PostToolUse"])
+                         ["Edit|Write|NotebookEdit", None, "Agent", "Bash"], hooks["PostToolUse"])
         self.assertEqual(len([c for c in post if "agent-watch.py" in c]), 1, post)
+        self.assertEqual(len([c for c in post if "phase-budget.py" in c]), 1, post)
         chat = [h["command"] for g in hooks["PostToolUse"] if not g.get("matcher")
                 for h in g["hooks"]]
         self.assertEqual(len(chat), 2, chat)
@@ -2160,7 +2178,7 @@ class HarnessHooksTest(SandboxCase):
         self.assertNotIn_("env-ключ", out, "повторный --fix вписал вотчдог второй раз")
         post = [h["command"] for g in json.loads(read(self.settings))["hooks"]["PostToolUse"]
                 for h in g["hooks"]]
-        self.assertEqual(len(post), 7, post)
+        self.assertEqual(len(post), 8, post)
 
     def test_hooks_from_a_stray_tree_are_repointed(self):
         # DK-582: строка с путём чужого дерева выглядит подключённым хуком, и по

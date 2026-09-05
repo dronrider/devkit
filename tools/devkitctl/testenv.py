@@ -103,6 +103,8 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/session-task.py --touch claude-code"}
 ]}, {"matcher": "Agent", "hooks": [
   {"type": "command", "command": "%s"}
+]}, {"matcher": "Bash", "hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/phase-budget.py --hook claude-code"}
 ]}], "PreToolUse": [{"matcher": "Bash", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-read-secret.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-subst.py --hook"},

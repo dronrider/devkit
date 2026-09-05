@@ -185,7 +185,7 @@ func TestReviewAddFromWorktreeWritesOnlyTaskFile(t *testing.T) {
 	}
 	// Файл задачи снимаем в самом worktree: review add заведёт его сам.
 	dropTaskFile(t, wt, "XR-001")
-	msg, err := cmdReviewAdd(wt, "XR-001", "замечание из worktree", CommitOpts{})
+	msg, err := cmdReviewAdd(wt, "XR-001", "замечание из worktree", "", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}

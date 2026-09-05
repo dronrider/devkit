@@ -51,14 +51,14 @@ func TestReviewAddStdinEmpty(t *testing.T) {
 
 func TestReviewAddAndResolve(t *testing.T) {
 	root := setup(t)
-	msg, err := cmdReviewAdd(root, "XR-005", "гонка в close", CommitOpts{})
+	msg, err := cmdReviewAdd(root, "XR-005", "гонка в close", "", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(msg, "замечание 1") {
 		t.Fatalf("сообщение: %q", msg)
 	}
-	if _, err := cmdReviewAdd(root, "XR-005", "нейминг", CommitOpts{}); err != nil {
+	if _, err := cmdReviewAdd(root, "XR-005", "нейминг", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	// Раздел встаёт на своё место по форме (TASKFORM.md), выше сценария
@@ -90,7 +90,7 @@ func TestReviewAddAndResolve(t *testing.T) {
 
 func TestReviewResolveValidation(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdReviewAdd(root, "XR-005", "замечание", CommitOpts{}); err != nil {
+	if _, err := cmdReviewAdd(root, "XR-005", "замечание", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdReviewResolve(root, "XR-005", 1, "rejected", "", CommitOpts{}); err == nil ||
@@ -112,7 +112,7 @@ func TestReviewResolveValidation(t *testing.T) {
 		!strings.Contains(err.Error(), "уже закрыто") {
 		t.Fatalf("повторный resolve должен отбиваться: %v", err)
 	}
-	if _, err := cmdReviewAdd(root, "XR-404", "мимо", CommitOpts{}); err == nil ||
+	if _, err := cmdReviewAdd(root, "XR-404", "мимо", "", CommitOpts{}); err == nil ||
 		!strings.Contains(err.Error(), "нет на доске") {
 		t.Fatalf("add по чужому ID должен отбиваться: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestReviewAddCreatesFileAndLink(t *testing.T) {
 	root := setup(t)
 	// У XR-001 снимаем файл: review add заводит и файл, и ссылку в строке.
 	dropTaskFile(t, root, "XR-001")
-	msg, err := cmdReviewAdd(root, "XR-001", "первое замечание", CommitOpts{})
+	msg, err := cmdReviewAdd(root, "XR-001", "первое замечание", "", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestReviewKeepsOtherSections(t *testing.T) {
 	if err := os.WriteFile(taskFileAbs(root, "XR-005"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdReviewAdd(root, "XR-005", "новое", CommitOpts{}); err != nil {
+	if _, err := cmdReviewAdd(root, "XR-005", "новое", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	want := "# XR-005\n\n## Ревью\n\n- старое: исправлено\n- новое\n\n## Проверка\n\nшаги\n"
@@ -331,15 +331,15 @@ func TestReviewResolveWrapped(t *testing.T) {
 
 func TestReviewStats(t *testing.T) {
 	root := setup(t)
-	if msg, err := cmdReviewStats(root); err != nil || !strings.Contains(msg, "пока нет") {
+	if msg, err := cmdReviewStats(root, StatsCut{}); err != nil || !strings.Contains(msg, "пока нет") {
 		t.Fatalf("пустая статистика: %q, %v", msg, err)
 	}
 	for _, step := range []func() (string, error){
-		func() (string, error) { return cmdReviewAdd(root, "XR-005", "раз", CommitOpts{}) },
-		func() (string, error) { return cmdReviewAdd(root, "XR-005", "два", CommitOpts{}) },
+		func() (string, error) { return cmdReviewAdd(root, "XR-005", "раз", "", CommitOpts{}) },
+		func() (string, error) { return cmdReviewAdd(root, "XR-005", "два", "", CommitOpts{}) },
 		func() (string, error) { return cmdReviewResolve(root, "XR-005", 1, "fixed", "", CommitOpts{}) },
 		func() (string, error) { return cmdReviewResolve(root, "XR-005", 2, "rejected", "мелочь", CommitOpts{}) },
-		func() (string, error) { return cmdReviewAdd(root, "XR-002", "открытое", CommitOpts{}) },
+		func() (string, error) { return cmdReviewAdd(root, "XR-002", "открытое", "", CommitOpts{}) },
 	} {
 		if _, err := step(); err != nil {
 			t.Fatal(err)
@@ -353,7 +353,7 @@ func TestReviewStats(t *testing.T) {
 	if err := os.WriteFile(archived, []byte(arch), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := cmdReviewStats(root)
+	msg, err := cmdReviewStats(root, StatsCut{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +401,7 @@ func TestReviewStatsLevels(t *testing.T) {
 		"## Ход работы\n\n- Разработка: субагент opus/low по вердикту pick, 2026-08-31 09:00-09:10.\n")
 	writeReviewConf(t, root, "level1 = 5 минут, 20 ходов\nlevel2 = 20 минут, 70 ходов\nlevel3 = 40 минут, 100 ходов\n")
 
-	msg, err := cmdReviewStats(root)
+	msg, err := cmdReviewStats(root, StatsCut{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +432,7 @@ func TestReviewStatsNoConf(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tasks, "XR-005.md"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := cmdReviewStats(root)
+	msg, err := cmdReviewStats(root, StatsCut{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestReviewStatsNoConf(t *testing.T) {
 func TestReviewCommitFlag(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
-	msg, err := cmdReviewAdd(root, "XR-005", "замечание", CommitOpts{Msg: "docs(tasks): XR-005 замечание ревью"})
+	msg, err := cmdReviewAdd(root, "XR-005", "замечание", "", CommitOpts{Msg: "docs(tasks): XR-005 замечание ревью"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +510,7 @@ func TestReviewCleanWithoutNote(t *testing.T) {
 // отбивается подсказкой про resolve.
 func TestReviewCleanRefusesOpenNote(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", CommitOpts{}); err != nil {
+	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := cmdReviewClean(root, "XR-005", "", CommitOpts{})
@@ -529,7 +529,7 @@ func TestReviewCleanRefusesOpenNote(t *testing.T) {
 // второй круг ревью, кончившийся чисто.
 func TestReviewCleanAfterResolved(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdReviewAdd(root, "XR-005", "нейминг", CommitOpts{}); err != nil {
+	if _, err := cmdReviewAdd(root, "XR-005", "нейминг", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdReviewResolve(root, "XR-005", 1, "fixed", "", CommitOpts{}); err != nil {
@@ -653,7 +653,7 @@ func TestReviewLevelRewrites(t *testing.T) {
 func TestReviewLevelKeepsNotes(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
-	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", CommitOpts{}); err != nil {
+	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdReviewLevel(root, "XR-005", 2, "тронут tools/taskctl", CommitOpts{}); err != nil {
@@ -688,7 +688,7 @@ func TestReviewLevelBeforeAdd(t *testing.T) {
 	if _, err := cmdReviewLevel(root, "XR-005", 2, "стартовый уровень от диспетчера", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", CommitOpts{}); err != nil {
+	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	got := readTaskFile(t, root, "XR-005")

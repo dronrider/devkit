@@ -2,9 +2,13 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
+
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // Признак провала проверки живёт суффиксом заголовка «[провал: причина]», по
@@ -18,6 +22,7 @@ var failSufRe = regexp.MustCompile(`\s*\[провал: [^|\[]*\]\s*$`)
 
 type FailParams struct {
 	ID, Reason string
+	Class      string
 	Clear      bool
 	Commit     CommitOpts
 }
@@ -30,6 +35,9 @@ type FailParams struct {
 // следующим кругом.
 func cmdFail(root string, p FailParams) (string, error) {
 	if err := p.Commit.validate(); err != nil {
+		return "", err
+	}
+	if err := checkReturnClass(p.Class); err != nil {
 		return "", err
 	}
 	b, err := LoadBoard(boardPath(root))
@@ -83,6 +91,7 @@ func cmdFail(root string, p FailParams) (string, error) {
 	if err := b.Save(); err != nil {
 		return "", err
 	}
+	classNote := writeReturnMark(root, p.ID, p.Class, retFromCheck, p.Reason, time.Now(), &paths)
 	// Повод громкий не меньше блокера: прод сломан, и в автономном режиме об
 	// этом иначе некому узнать (RULES.board.md, «Ветки, ревью и деплой» п. 8).
 	note := notify(root, reasonFail, p.ID, fmt.Sprintf("%s: %s провал проверки", filepath.Base(root), p.ID), p.Reason)
@@ -97,6 +106,29 @@ func cmdFail(root string, p FailParams) (string, error) {
 	if lvl, reason, ok := reviewLevelReason(root, p.ID); ok {
 		levelNote = fmt.Sprintf("ревью было уровня %d: %s", lvl, reason)
 	}
-	return fmt.Sprintf("%s: %s -> %s, провал проверки (%s), %s; очередь выката стоит, чинить: shipctl revert %s либо форвард-фикс и shipctl merge %s%s%s",
-		p.ID, from, SectInProgress, p.Reason, levelNote, p.ID, p.ID, tail, note), nil
+	return fmt.Sprintf("%s: %s -> %s, провал проверки (%s), %s; очередь выката стоит, чинить: shipctl revert %s либо форвард-фикс и shipctl merge %s%s%s%s",
+		p.ID, from, SectInProgress, p.Reason, levelNote, p.ID, p.ID, classNote, tail, note), nil
+}
+
+// writeReturnMark кладёт машинную запись возврата в «Ход работы» файла задачи
+// и дописывает путь файла к путям коммита. Запись идёт и без названного
+// класса: возврат, чей класс не назвали, сводка считает отдельно, а пропуск
+// самой записи оставил бы событие невидимым совсем. Файла задачи может не
+// быть (строка без файла, уехавший в архив), и это не повод ронять команду:
+// доска уже переписана, и сказать об этом надо хвостом сообщения.
+func writeReturnMark(root, id, class, source, reason string, now time.Time, paths *[]string) string {
+	path := taskFilePath(root, id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("; класс возврата записывать некуда: %v", err)
+	}
+	body := stage.InsertIntoSection(string(data), stageSection, returnStageLine(class, source, reason, now))
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return fmt.Sprintf("; класс возврата не записан: %v", err)
+	}
+	*paths = append(*paths, filepath.Join("docs", "tasks", id+".md"))
+	if strings.TrimSpace(class) == "" {
+		return "; класс возврата не назван, поставь --class " + strings.Join(returnClasses, "|") + ", иначе возврат не попадёт в долю сводки"
+	}
+	return "; класс возврата: " + class
 }

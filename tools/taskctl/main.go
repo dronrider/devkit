@@ -123,9 +123,12 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               JSON со stdin, признак ложится
                                               без срока и паркует задачу
                                               причиной «вопрос: ...»
-  fail <ID> --reason "..."                    провал проверки: прод сломан,
+  fail <ID> --reason "..." [--class постановка|правила|реализация]
+                                              провал проверки: прод сломан,
                                               задача обратно в In progress,
-                                              очередь выката встаёт
+                                              очередь выката встаёт; класс
+                                              причины уезжает в «Ход работы»
+                                              и считается review stats
   fail <ID> --clear                           прод починен, признак снят (сами
                                               его гасят shipctl merge, ship, revert)
   set <ID> [--title "..."] [--type ...] [--rank "..."] [--cost ...] [--link "..."]
@@ -169,8 +172,12 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               повторный вызов строку
                                               переписывает, причина обязательна
                                               и на уровне 0 (осознанный пропуск)
-  review add <ID> ["суть замечания"]          дописать замечание, файл задачи
-                                              создаётся сам; без текста читает
+  review add <ID> ["суть замечания"] [--class постановка|правила|реализация]
+                                              дописать замечание, файл задачи
+                                              создаётся сам; класс причины
+                                              встаёт маркером в голову строки
+                                              и считается review stats; без
+                                              текста команда читает
                                               stdin: текст с обратными кавычками
                                               передаётся heredoc с одинарными
                                               кавычками (<<'EOF'), а не аргументом
@@ -184,7 +191,10 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   review resolve <ID> <N> fixed|rejected [--reason "..."]
                                               зафиксировать исход замечания N
   review show <ID>                            замечания с номерами и исходами
-  review stats                                свод по живым задачам и архиву
+  review stats [--since 2026-09-01] [--goal DK-565]
+                                              свод по живым задачам и архиву:
+                                              исходы, уровни и доля возвратов
+                                              по постановке за окно и по цели
 
 Ревью чужого MR (журнал в docs/tasks/<ID>.review.md, скилл review, раздел
 «Ревью чужой задачи»):
@@ -520,10 +530,11 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		var p FailParams
 		fs.StringVar(&p.Reason, "reason", "", "чем сломан прод, одна строка")
+		fs.StringVar(&p.Class, "class", "", returnClassFlagHelp())
 		fs.BoolVar(&p.Clear, "clear", false, "снять признак провала: прод починен")
 		commitFlags(fs, &p.Commit)
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, "fail <ID> --reason \"...\" либо fail <ID> --clear")
+		needArgs(pos, 1, 1, "fail <ID> --reason \"...\" [--class ...] либо fail <ID> --clear")
 		p.ID = pos[0]
 		msg, err = cmdFail(root(*dir), p)
 	case "set":
@@ -603,6 +614,7 @@ func main() {
 		case "add":
 			fs := flag.NewFlagSet("review add", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
+			class := fs.String("class", "", returnClassFlagHelp())
 			var c CommitOpts
 			commitFlags(fs, &c)
 			pos := frame.ParseArgs(fs, args[2:])
@@ -610,7 +622,7 @@ func main() {
 			// текст с обратными кавычками, переданный аргументом, bash
 			// разворачивает подстановкой, а heredoc с одинарными кавычками
 			// довозит его дословно.
-			needArgs(pos, 1, 2, "review add <ID> [\"суть замечания\"] (без текста читается stdin)")
+			needArgs(pos, 1, 2, "review add <ID> [\"суть замечания\"] [--class ...] (без текста читается stdin)")
 			note := ""
 			if len(pos) == 2 {
 				note = pos[1]
@@ -620,7 +632,7 @@ func main() {
 					fail(err)
 				}
 			}
-			msg, err = cmdReviewAdd(root(*dir), pos[0], note, c)
+			msg, err = cmdReviewAdd(root(*dir), pos[0], note, *class, c)
 		case "clean":
 			fs := flag.NewFlagSet("review clean", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
@@ -742,8 +754,11 @@ func main() {
 		case "stats":
 			fs := flag.NewFlagSet("review stats", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
-			needArgs(frame.ParseArgs(fs, args[2:]), 0, 0, "review stats")
-			msg, err = cmdReviewStats(root(*dir))
+			var cut StatsCut
+			fs.StringVar(&cut.Since, "since", "", "окно возвратов с даты, 2026-09-01")
+			fs.StringVar(&cut.Goal, "goal", "", "срез по цели, ID строки-цели")
+			needArgs(frame.ParseArgs(fs, args[2:]), 0, 0, "review stats [--since 2026-09-01] [--goal DK-565]")
+			msg, err = cmdReviewStats(root(*dir), cut)
 		default:
 			fail(fmt.Errorf("неизвестная подкоманда review %q, жду level / add / clean / resolve / show / stats / draft / approve / drop / publish / poll / approve-mr", args[1]))
 		}

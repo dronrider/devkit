@@ -91,7 +91,7 @@ func TestReviewSectionGoesByForm(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdReviewAdd(root, "XR-001", "порядок разделов проверен", CommitOpts{}); err != nil {
+	if _, err := cmdReviewAdd(root, "XR-001", "порядок разделов проверен", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)

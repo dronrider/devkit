@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskform"
@@ -249,8 +250,11 @@ func reviewEdit(root, id string, edit func(*reviewFile), c CommitOpts) (rf *revi
 	return rf, created, linkHint, paths, nil
 }
 
-func cmdReviewAdd(root, id, note string, c CommitOpts) (string, error) {
+func cmdReviewAdd(root, id, note, class string, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
+		return "", err
+	}
+	if err := checkReturnClass(class); err != nil {
 		return "", err
 	}
 	note = strings.TrimSpace(note)
@@ -260,7 +264,10 @@ func cmdReviewAdd(root, id, note string, c CommitOpts) (string, error) {
 	if strings.Contains(note, "\n") {
 		return "", fmt.Errorf("замечание пишется одной строкой")
 	}
-	rf, created, linkHint, paths, err := reviewItem(root, id, "- "+note, c)
+	// Маркер класса встаёт в голову замечания, перед сутью: исход дописывает
+	// resolve в хвост той же строки, и голова остаётся единственным местом,
+	// куда машинная пометка ложится, не мешая разбору исхода.
+	rf, created, linkHint, paths, err := reviewItem(root, id, "- "+returnNoteMark(class, time.Now())+note, c)
 	if err != nil {
 		return "", err
 	}
@@ -271,6 +278,11 @@ func cmdReviewAdd(root, id, note string, c CommitOpts) (string, error) {
 	msg := fmt.Sprintf("%s: замечание %d записано", id, len(rf.notes)+1)
 	if created {
 		msg += ", файл задачи создан"
+	}
+	if class != "" {
+		msg += ", класс возврата: " + class
+	} else {
+		msg += ", класс возврата не назван (--class " + strings.Join(returnClasses, "|") + ")"
 	}
 	return msg + linkHint + tail, nil
 }
@@ -581,7 +593,25 @@ func percentile(vals []int, p float64) float64 {
 	return float64(s[lo]) + frac*float64(s[hi]-s[lo])
 }
 
-func cmdReviewStats(root string) (string, error) {
+// StatsCut это срез сводки: окно по дате и цель. Возвраты считаются событиями,
+// у каждого своя дата и своя задача, поэтому окно режет события, а цель режет
+// файлы задач ещё до счёта.
+type StatsCut struct {
+	Since string
+	Goal  string
+}
+
+func cmdReviewStats(root string, cut StatsCut) (string, error) {
+	var since time.Time
+	if cut.Since != "" {
+		s, err := time.Parse(retDateLayout, cut.Since)
+		if err != nil {
+			return "", fmt.Errorf("--since ждёт дату вида 2026-09-01: %v", err)
+		}
+		since = s
+	}
+	inGoal := goalMembership(root, cut.Goal)
+	var events []returnEvent
 	type agg struct{ tasks, notes, fixed, rejected, open int }
 	var live, arch agg
 	var openList []string
@@ -603,6 +633,16 @@ func cmdReviewStats(root string) (string, error) {
 			rf, err := loadReview(f)
 			if err != nil {
 				return err
+			}
+			id := strings.TrimSuffix(filepath.Base(f), ".md")
+			if inGoal != nil && !inGoal(id, rf.lines) {
+				continue
+			}
+			for _, e := range returnsIn(id, rf.lines) {
+				if !since.IsZero() && !returnAfter(e, since) {
+					continue
+				}
+				events = append(events, e)
 			}
 			if lvl, ok := reviewLevelOf(rf); ok {
 				la := levelAt(lvl)
@@ -627,7 +667,6 @@ func cmdReviewStats(root string) (string, error) {
 					a.rejected++
 				default:
 					a.open++
-					id := strings.TrimSuffix(filepath.Base(f), ".md")
 					openList = append(openList, fmt.Sprintf("%s, замечание %d: %s", id, i+1, n.Text))
 				}
 			}
@@ -644,10 +683,17 @@ func cmdReviewStats(root string) (string, error) {
 	}
 	total := agg{live.tasks + arch.tasks, live.notes + arch.notes,
 		live.fixed + arch.fixed, live.rejected + arch.rejected, live.open + arch.open}
-	if total.tasks == 0 && len(levels) == 0 {
+	if total.tasks == 0 && len(levels) == 0 && len(events) == 0 {
+		if cut.Since != "" || cut.Goal != "" {
+			return "в этом срезе нет ни разделов «Ревью», ни возвратов", nil
+		}
 		return "разделов «Ревью» пока нет ни в живых задачах, ни в архиве", nil
 	}
 	var out []string
+	if head := cutText(cut); head != "" {
+		out = append(out, head)
+	}
+	out = append(out, returnsText(events)...)
 	if total.tasks > 0 {
 		out = append(out,
 			fmt.Sprintf("задач с ревью: %d (живых %d, в архиве %d)", total.tasks, live.tasks, arch.tasks),

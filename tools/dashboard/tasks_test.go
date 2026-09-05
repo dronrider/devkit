@@ -1272,7 +1272,7 @@ func TestStaticTaskBarIcons(t *testing.T) {
 	acts := funcBody(t, app, "function taskActions(")
 	// Стоп на форме стоит значком без подписи, как та же кнопка в списке задач
 	// (rowAction): второй приёмки DK-716 не пережила подпись рядом со значком,
-	// единственная из мест, где кнопка стопа вообще встречается.
+	// единственная среди трёх мест, где стоп снимает работу задачи.
 	for _, want := range []string{
 		`el("button", "btn btn-danger btn-ico rstop")`,
 		`icon("i-stop")`,

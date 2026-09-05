@@ -101,18 +101,24 @@ func TestStaticRowRunFromRowData(t *testing.T) {
 	if !strings.Contains(funcBody(t, text, "function rowOnRun("), "row.run_busy") {
 		t.Error("идущий ход строки считается не по признаку сервера: run_busy обязан быть в rowOnRun")
 	}
-	if !strings.Contains(act, "rowActionKind(row, sect)") {
+	if !strings.Contains(act, "rowActionKind(row)") {
 		t.Error("rowAction выбирает кнопку своим условием, а не общим правилом строки и формы")
 	}
 	// Само правило собрано одним местом: стороны его читают, а условий не
 	// повторяют. Разошлись эти списки на третьей приёмке DK-716, и форма задачи
 	// отдала пустую полосу там, где список рисовал кнопку.
 	kind := funcBody(t, text, "function rowActionKind(")
-	for _, want := range []string{"rowOurRun(row)", "row.run_busy", "rowTalks(row)",
-		"row.after && row.after.length"} {
+	for _, want := range []string{"rowOurRun(row)", "row.run_busy", "rowHasRun(row)",
+		`return "resume"`, "row.after && row.after.length"} {
 		if !strings.Contains(kind, want) {
 			t.Errorf("в rowActionKind нет %q: правило кнопки снова разъезжается по экранам", want)
 		}
+	}
+	// Слово talk принадлежит живому разговору без работы, и вид кнопки им не
+	// называется. Одни и те же буквы у двух разных понятий путались три приёмки
+	// подряд (замечание ревью 12).
+	if strings.Contains(kind, "talk") {
+		t.Error("вид кнопки снова назван словом живого разговора: rowActionKind говорит talk")
 	}
 	if strings.Contains(act, "works") {
 		t.Error("rowAction снова ищет работу в списке works: строка обязана знать про себя сама")

@@ -887,7 +887,7 @@ func TestStaticTaskActionBar(t *testing.T) {
 	// Кнопку выбирает то же правило, что и в строке доски, а список работ форма
 	// не перебирает вовсе: живое окно без хода получало «Стоп», хотя снимать в
 	// нём было нечего (живой случай DK-543).
-	if !strings.Contains(acts, "rowActionKind(row, row.sect)") {
+	if !strings.Contains(acts, "rowActionKind(row)") {
 		t.Error("полоса действий задачи судит о работе своим условием, а не общим правилом строки")
 	}
 	if strings.Contains(acts, "works") {

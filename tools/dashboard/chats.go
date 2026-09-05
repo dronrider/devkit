@@ -560,6 +560,16 @@ type chatStore struct {
 	Dead    int64  `json:"dead,omitempty"`
 	DeadWhy string `json:"deadWhy,omitempty"`
 	Tail    string `json:"tail,omitempty"`
+	// Заказ дожима стопа (stopwait.go). StopAt это время последнего нажатия в
+	// unix-секундах, и пока оно стоит, стоп не кончен: работа сессии живёт
+	// дольше прерванного хода. StopSid с StopPath говорят, чей транскрипт
+	// спрашивать про ход и про фоновую работу, StopTask с StopProject нужны
+	// концу, который снимет привязку и позовёт уведомитель.
+	StopAt      int64  `json:"stopAt,omitempty"`
+	StopSid     string `json:"stopSid,omitempty"`
+	StopTask    string `json:"stopTask,omitempty"`
+	StopProject string `json:"stopProject,omitempty"`
+	StopPath    string `json:"stopPath,omitempty"`
 	// Draft это набранная, но не отправленная реплика. У начатого разговора
 	// черновик держит вкладка, а у незачатого держать его негде: транскрипта
 	// нет, и с чужого экрана такой разговор выглядел бы пустым. Он же говорит
@@ -2144,6 +2154,19 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 			"прерывание не подалось в tmux-сессию %s: %s", last.Tmux, procErr(err))})
 		return
 	}
+	// Ход прерван, а работа сессии этим не всегда кончена: субагенты, которым
+	// агент раздал работу фоном, живут отдельно от хода и, вернувшись, поднимут
+	// его снова. Тот же случай, что у стопа со строки доски, и лечится он тем
+	// же дожимом (stopwait.go). Задачи у стопа из панели нет, снимать нечего:
+	// заказ тут держит только прерывание новых ходов.
+	if s.chatSubBusy(found.Path, sid) {
+		s.stopWaitSet(last.Tmux, sid, "", found.Name)
+		s.logf("ход чата %s прерван (tmux-сессия %s), фоновая работа жива, стоп дожимается", sid, last.Tmux)
+		writeJSON(w, http.StatusOK, map[string]any{"way": "escape", "tmux": last.Tmux,
+			"message": "ход прерван, но фоновые субагенты ещё работают: их ходы будут прерваны тем же стопом, " +
+				"пока ты не напишешь в разговор сам"})
+		return
+	}
 	s.logf("ход чата %s прерван (tmux-сессия %s)", sid, last.Tmux)
 	writeJSON(w, http.StatusOK, map[string]any{"way": "escape", "tmux": last.Tmux,
 		"message": "ход прерван: сессия жива и ждёт следующей реплики"})
@@ -2212,6 +2235,12 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	}
 	recs := s.bindsAll()
 	last := sessions.Last(recs[sid])
+	// Человек написал в тот же разговор: стоп он передумал, и дожимать в нём
+	// ходы сторожу больше нечего (stopwait.go). Снимается заказ до самой
+	// доставки, а не после неё: реплика, не доехавшая с первого раза, приедет
+	// повтором, и прерванный дожимом ход человек прочитал бы как пропажу
+	// ответа.
+	s.stopWaitOff(last.Tmux)
 	// Сессия стоит на вопросе агента, а живого терминала у неё нет: реплика
 	// идёт во вход разговора, а не клавишами. Живому терминалу реплика едет
 	// им же, дорогой ниже, тем же путём, что и любой другой чат: с концом

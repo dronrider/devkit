@@ -104,9 +104,12 @@ func (s *server) chatWatchOff(sess string) {
 	s.watchMu.Unlock()
 	key := "tmux-" + sess
 	st := s.chatStoreRead(key)
-	if st.Raised == 0 {
+	if st.Raised == 0 && st.StopAt == 0 {
 		return
 	}
+	// Разговор снимают рукой, и дожимать в нём больше нечего: окна не будет, а
+	// оставленный заказ ожил бы на следующем жильце того же имени.
+	st.StopAt, st.StopSid, st.StopTask, st.StopProject, st.StopPath = 0, "", "", "", ""
 	st.Raised = 0
 	if err := s.chatStoreWrite(key, st); err != nil {
 		s.logf("снятие сессии %s не запомнилось: %v", sess, err)
@@ -148,7 +151,14 @@ func (s *server) chatWatchRestore() {
 			continue
 		}
 		sess := strings.TrimPrefix(name, "tmux-")
-		if st := s.chatStoreRead(name); st.Raised > 0 && st.Dead == 0 {
+		st := s.chatStoreRead(name)
+		if st.Raised > 0 && st.Dead == 0 {
+			s.watchAdd(sess)
+		}
+		// Незаконченный дожим стопа переживает перезапуск демона так же, как
+		// присмотр за подъёмом: выкат меняет бинарь каждый день, а работа,
+		// которую человек остановил, ждать его не станет.
+		if st.StopAt > 0 {
 			s.watchAdd(sess)
 		}
 	}
@@ -181,6 +191,10 @@ func (s *server) chatWatchTick() {
 	alive := tmuxAliveFn()
 	for _, name := range s.chatWatchNames() {
 		s.chatWatchOne(name, alive)
+		// Заказ дожима стопа смотрится тем же обходом: сессия у него та же, шаг
+		// тот же, а второй сторож рядом с этим ходил бы по тому же списку tmux
+		// (разбор в stopwait.go).
+		s.stopWaitOne(name, alive)
 	}
 }
 

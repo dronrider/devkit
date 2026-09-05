@@ -218,6 +218,11 @@ type Work struct {
 	// не берётся (leadsTask). На экране «Агенты» такая строка стоит наравне с
 	// остальными, ей нужны те же две дороги.
 	Talk bool `json:"talk,omitempty"`
+	// Stopping говорит, что стоп по этой работе уже нажат и дожимается: ход
+	// прерван, а фоновые субагенты ещё дописывают своё (stopwait.go). Признак
+	// нужен экрану: без него кнопка выглядит нетронутой, и человек жмёт её
+	// второй раз и третий, а работа тем временем встаёт своим чередом.
+	Stopping bool `json:"stopping,omitempty"`
 	// Rows называет строки доски, которым эта работа даёт признак. У конвейера
 	// и у цикла цели строка одна, своя, и поле пустое: имя сессии её и назвало.
 	// У работы, узнанной транскриптом, строк бывает несколько: сессия двигает
@@ -338,6 +343,13 @@ func (s *server) workState(projPath, id, sid, tmux string, bySid, byTmux map[str
 				moved, _ = saidUnix(head.Born)
 			}
 			busy = s.sessionBusy(info.path, now)
+			// Ход кончился, а работа осталась: фоновые субагенты живут своими
+			// журналами и, вернувшись, поднимают агента новым ходом. Пока они
+			// пишут, работа по строке идёт, и объявлять её оконченной нельзя
+			// (живой прогон DK-716, разбор в stopwait.go).
+			if !busy {
+				busy = subBusyOf(info.path, now)
+			}
 		}
 	}
 	if id != "" {
@@ -463,7 +475,16 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		list = append(list, w)
 		busy[goal] = true
 	}
-	return append(list, s.sessionWorks(projectPath, prefix, rows, busy)...)
+	list = append(list, s.sessionWorks(projectPath, prefix, rows, busy)...)
+	// Заказ дожима стопа спрашивается разом на все работы: он лежит при имени
+	// окна, а не при задаче, и одной работе соответствует один заход в память
+	// разговора.
+	for i := range list {
+		if list[i].Own && list[i].Tmux != "" && s.stopWaitOn(list[i].Tmux) {
+			list[i].Stopping = true
+		}
+	}
+	return list
 }
 
 // workLaunch это подъём работы дашбордом: сессия, которая её ведёт, и имя её

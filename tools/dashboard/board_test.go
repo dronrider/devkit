@@ -652,14 +652,15 @@ func TestLiveWorksSkipsDerivedSession(t *testing.T) {
 // работы, который дописывает сервер, и поля от taskctl, по которым видно, что
 // разметка провезла строку целиком.
 type boardRunRow struct {
-	ID       string `json:"id"`
-	Run      string `json:"run"`
-	RunBusy  bool   `json:"run_busy"`
-	RunState string `json:"run_state"`
-	RunChat  string `json:"run_chat"`
-	Order    string `json:"order"`
-	RParts   []int  `json:"r_parts"`
-	Link     string `json:"link"`
+	ID          string `json:"id"`
+	Run         string `json:"run"`
+	RunBusy     bool   `json:"run_busy"`
+	RunState    string `json:"run_state"`
+	RunChat     string `json:"run_chat"`
+	RunStopping bool   `json:"run_stopping"`
+	Order       string `json:"order"`
+	RParts      []int  `json:"r_parts"`
+	Link        string `json:"link"`
 }
 
 func boardRows(t *testing.T, e *testEnv) map[string]boardRunRow {

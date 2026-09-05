@@ -76,6 +76,11 @@ type boardRow struct {
 	// строки, за которой работы нет вовсе. Признак приезжает готовым: собрать
 	// его на клиенте нечем, состояния сессий у строки нет.
 	RunState string `json:"run_state,omitempty"`
+	// RunStopping говорит, что стоп по строке уже нажат и дожимается: ход
+	// прерван, а фоновая работа сессии ещё идёт (stopwait.go). Кнопка от этого
+	// не меняется, меняется подсказка: работа останавливается, второго нажатия
+	// не нужно.
+	RunStopping bool `json:"run_stopping,omitempty"`
 	// RunChat это разговор с идущим ходом по этой строке: в него и ведёт иконка
 	// чата. Пусто у строки без работающей сессии, и иконка тогда открывает
 	// адрес задачи, как открывала.
@@ -216,6 +221,22 @@ func chatMarks(works []Work) map[string]string {
 	return out
 }
 
+// stopMarks называет строки, по которым стоп уже нажат и дожимается. Признак
+// собирается по тем же работам, что и остальные: заказ дожима лежит при окне
+// разговора, а строка спрашивает про себя.
+func stopMarks(works []Work) map[string]bool {
+	out := map[string]bool{}
+	for _, w := range works {
+		if w.Talk || !w.Stopping {
+			continue
+		}
+		for _, id := range workRows(w) {
+			out[id] = true
+		}
+	}
+	return out
+}
+
 // busyMarks называет строки, по которым ход идёт прямо сейчас.
 func busyMarks(works []Work) map[string]bool {
 	busy := map[string]bool{}
@@ -271,6 +292,7 @@ func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 		return raw
 	}
 	live, state, chats := runMarks(works), stateMarks(works), chatMarks(works)
+	stopping := stopMarks(works)
 	for _, sec := range secs {
 		var key string
 		json.Unmarshal(sec["key"], &key)
@@ -337,6 +359,13 @@ func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 					return raw
 				}
 				row["run_chat"] = mark
+			}
+			if stopping[id] {
+				mark, err := json.Marshal(true)
+				if err != nil {
+					return raw
+				}
+				row["run_stopping"] = mark
 			}
 			if wait != nil {
 				var block string
@@ -651,6 +680,7 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		row.RunState = stateMarks(works)[id]
 		row.RunBusy = row.RunState == workBusy
 		row.RunChat = chatMarks(works)[id]
+		row.RunStopping = stopMarks(works)[id]
 		if row.Sect == sectCheck {
 			row.Harness = mine[id]
 		}

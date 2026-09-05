@@ -77,6 +77,15 @@ func stopChatWord(id string) string {
 		"Разговор живой, следующая реплика придёт сюда же", id)
 }
 
+// stopChatWaitWord это слова агенту, когда стоп ещё дожимается: ход прерван, а
+// его фоновая работа жива, и вернувшись из неё, агент прочитает в ленте, что
+// продолжать нечего.
+func stopChatWaitWord(id string) string {
+	return fmt.Sprintf("работа по задаче %s остановлена человеком со строки доски: "+
+		"текущий ход прерван, а фоновые субагенты дорабатывают своё. "+
+		"Новых заданий не начинай, всякий поднявшийся ход будет прерван снова", id)
+}
+
 // stopChatWorkRelease кладёт в реестр конец работы сессии над задачей. Запись
 // именная: соседние задачи того же разговора она не трогает, разбор в
 // sessions.Works.
@@ -121,6 +130,23 @@ func (s *server) stopChatWork(w http.ResponseWriter, found *Project, id string, 
 	}
 	resp := map[string]any{"id": id, "kind": "chat", "session": pick.Session,
 		"tmux": pick.Tmux, "state": "стоп"}
+	// Фоновая работа переживает прерванный ход, и стоп на ней не кончается.
+	// Субагент допишет своё и поднимет агента новым ходом, а снятая сейчас
+	// привязка объявила бы строку свободной посреди идущей работы. Заказ
+	// дожима держит и то и другое: строка стоит под «Стопом», а всякий
+	// поднявшийся ход прерывается снова (stopwait.go).
+	if s.chatSubBusy(found.Path, pick.Session) {
+		s.stopWaitSet(pick.Tmux, pick.Session, id, found.Name)
+		s.saidMark(saidSessionKey(pick.Session), stopChatWaitWord(id))
+		resp["state"] = "останавливается"
+		resp["message"] = fmt.Sprintf("стоп: ход разговора %s прерван, но по %s ещё работают "+
+			"фоновые субагенты; строка стоит под «Стопом», привязка снимется, когда работа встанет",
+			pick.Tmux, id)
+		s.logf("стоп %s в %s: ход разговора %s (сессия %s) прерван, фоновая работа жива, стоп дожимается",
+			id, found.Name, pick.Tmux, pick.Session)
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	// Привязка снимается после удавшегося прерывания: снятая наперёд, она
 	// вернула бы строке кнопку запуска при живом ходе.
 	if err := s.stopChatWorkRelease(pick.Session, id, found.Name, pick.Tmux); err != nil {

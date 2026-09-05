@@ -1015,10 +1015,14 @@ func boardWaiting(v smokeBoard, id string) *Waiting {
 // источника. Снятый признак ожидание убирает: молчание тут значит «никто
 // никого не ждёт», и отличить его от вечно горящего чипа надо прогоном, а не
 // глазами.
+// shelfAddr это ждущая сессия шага: по ней полка ждущих строит дорогу до
+// разговора, и адрес записи обязан совпасть с ней.
+const shelfAddr = "smoke-headless-1"
+
 func (s *smoke) stepWaiting() (string, error) {
 	until := time.Now().Add(6 * time.Minute).Truncate(time.Second)
 	const asked = "прогон smoke: чинить копией или общим модулем?"
-	ask := chat.Ask{Until: until, Session: "smoke-headless-1", Task: smokeTask,
+	ask := chat.Ask{Until: until, Session: shelfAddr, Task: smokeTask,
 		Questions: []chat.Question{{Text: asked}}}
 	if err := chat.WriteAsk(s.proj, chat.TaskName(smokeTask), ask); err != nil {
 		return "", err
@@ -1040,6 +1044,22 @@ func (s *smoke) stepWaiting() (string, error) {
 	if len(w.Questions) != 1 || w.Questions[0] != asked {
 		return "", fmt.Errorf("вопрос до строки доски не доехал: %q", w.Questions)
 	}
+	// Та же задача обязана стоять на полке ждущих: место ждущих собирается
+	// своей ручкой, и работающая строка доски о нём ничего не говорит (DK-696).
+	item, err := s.shelfItem()
+	if err != nil {
+		return "", err
+	}
+	if item == nil {
+		return "", fmt.Errorf("задача %s ждёт человека, а на полке ждущих её нет", smokeTask)
+	}
+	if item.Addr != shelfAddr {
+		return "", fmt.Errorf("полка ведёт по адресу %q, ждал %q: дорога до разговора это ждущая сессия",
+			item.Addr, shelfAddr)
+	}
+	if len(item.Waiting.Questions) != 1 || item.Waiting.Questions[0] != asked {
+		return "", fmt.Errorf("вопрос до полки ждущих не доехал: %q", item.Waiting.Questions)
+	}
 	if err := chat.DropAsk(s.proj, chat.TaskName(smokeTask)); err != nil {
 		return "", err
 	}
@@ -1049,8 +1069,31 @@ func (s *smoke) stepWaiting() (string, error) {
 	if left := boardWaiting(v, smokeTask); left != nil {
 		return "", fmt.Errorf("снятый признак оставил ожидание на строке: %+v", left)
 	}
-	return fmt.Sprintf("строка %s несёт «%s» до %s, источник: %s; снятый признак ожидание убрал",
-		smokeTask, w.State, until.Format("15:04:05"), w.Note), nil
+	if left, err := s.shelfItem(); err != nil {
+		return "", err
+	} else if left != nil {
+		return "", fmt.Errorf("снятый признак оставил задачу на полке ждущих: %+v", left)
+	}
+	return fmt.Sprintf("строка %s несёт «%s» до %s, источник: %s, полка ждущих ведёт на %s; "+
+		"снятый признак ожидание убрал", smokeTask, w.State, until.Format("15:04:05"), w.Note, shelfAddr), nil
+}
+
+// shelfItem спрашивает у полки ждущих запись про задачу прогона. Полка машинная,
+// и ходит она по всем доскам сразу, поэтому запись отбирается по задаче.
+func (s *smoke) shelfItem() (*WaitItem, error) {
+	var v struct {
+		Items  []WaitItem `json:"items"`
+		Errors []string   `json:"errors"`
+	}
+	if err := s.call("GET", "/api/waiting", "", http.StatusOK, &v); err != nil {
+		return nil, err
+	}
+	for i := range v.Items {
+		if v.Items[i].ID == smokeTask {
+			return &v.Items[i], nil
+		}
+	}
+	return nil, nil
 }
 
 // stepJournal: журнал цели читается из раздела «Журнал» её файла. Шаг идёт до
@@ -2224,7 +2267,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"вид деятельности в строке доски", s.stepStage},
 		{"сообщение цели", s.stepMessage},
 		{"ответ задаче безадресной строкой", s.stepTaskMessage},
-		{"ожидание человека видно строкой доски", s.stepWaiting},
+		{"ожидание человека видно строкой доски и полкой ждущих", s.stepWaiting},
 		{"доставка реплики витку", s.stepDelivered},
 		{"подхват сообщения витком", s.stepTurn},
 		{"живая лента открыта", s.stepFeedOpen},

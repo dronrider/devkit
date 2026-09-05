@@ -122,21 +122,25 @@ def usage_of(path):
 
 def board_row(path, task):
     """(секция, цена) строки задачи на доске или в архиве. Секция у архива
-    зовётся close: строка туда попадает закрытием. None значит, строки нет."""
+    зовётся close: строка туда попадает закрытием. Колонку цены называет шапка
+    таблицы: у архива её нет вовсе, и цена там «-». None значит, строки нет."""
     try:
         with open(path, encoding="utf-8") as f:
             lines = f.read().splitlines()
     except OSError:
         return None
     section = "close" if os.path.basename(path).startswith("TASKS-archive") else ""
+    price_col = None
     for line in lines:
         for prefix, key in SECTIONS:
             if line.startswith(prefix):
                 section = key
         cells = [c.strip() for c in line.split("|")]
-        if len(cells) > 6 and cells[1] == task:
-            price = cells[6] if cells[6] and cells[6] != "-" else "-"
-            return section, price
+        if len(cells) > 2 and cells[1] == "ID":
+            price_col = cells.index("Цена") if "Цена" in cells else None
+        if len(cells) > 2 and cells[1] == task:
+            price = cells[price_col] if price_col and price_col < len(cells) else "-"
+            return section, price or "-"
     return None
 
 
@@ -193,14 +197,16 @@ def num_of(value):
 def growth(prev, session, used):
     """Рост контекста за фазу, которую закрыл переход: разница с прошлой
     записью той же задачи, и только внутри одной сессии. Фаза, прошедшая
-    через другую сессию, роста не даёт: у той сессии своё окно."""
+    через другую сессию, роста не даёт: у той сессии своё окно. Окно меньше
+    прошлой записи значит, что между переходами было сжатие, и замера роста
+    нет: фаза закрывается без числа, а ноль потянул бы оценку вниз."""
     if not prev or prev.get("сессия") != session:
         return None, None
     before = num_of(prev.get("окно"))
     phase = prev.get("фаза") or ""
     if before is None or phase == "-" or not phase:
         return None, None
-    return phase, max(used - before, 0)
+    return phase, (used - before if used >= before else None)
 
 
 def estimate(recs, price, phase):
@@ -275,10 +281,14 @@ def run_hook(protocol, now=None):
     row = find_row(hookio.text_of(event.get("cwd")), task, status)
     if not row:
         return 0
-    price = row[1]
     session = hookio.text_of(event.get("session_id"))
     recs = records()
     prev = [r for r in recs if r.get("задача") == task]
+    # У архива колонки цены нет, и закрытие берёт цену из прошлой записи той же
+    # задачи: без неё запись «закрыл проверка» по цене не нашлась бы никогда.
+    price = row[1]
+    if price == "-" and prev:
+        price = prev[-1].get("цена") or "-"
     closed, grown = growth(prev[-1] if prev else None, session, used)
     phase = PHASE_OF.get(status, "")
     hookio.append_capped(log_path(), record_line(

@@ -55,11 +55,16 @@ BOARD = """# proj: задачи
 | DK-15 | ждёт | task | P2 | 30 (25+2+0+0+3) | M | - |
 """
 
-ARCHIVE = """# proj: архив
+# Шапка и строка сняты с живого docs/TASKS-archive.md: колонки цены в архиве
+# нет, и выдуманная по форме доски фикстура пропустила бы ссылку на месте цены.
+ARCHIVE = """# devkit: сделано
 
-| ID | Задача | Тип | P | R | Цена | Ссылка |
-|--------|--------|-----|---|---|------|--------|
-| DK-16 | закрыта | task | P1 | 60 (50+5+2+0+3) | M | - |
+Append-only журнал закрытых задач, растёт свободно. Файлы закрытых задач лежат
+в tasks/archive/<год закрытия>/, ссылка в строке ведёт туда.
+
+| ID | Задача | Тип | P | Закрыто | Ссылка |
+|--------|--------|-----|---|---------|--------|
+| DK-704 | Род первого лица агента задаёт настройка пользователя | task | P2 | 2026-09-02 | [tasks/archive/2026/DK-704.md](tasks/archive/2026/DK-704.md) |
 """
 
 
@@ -176,8 +181,10 @@ class TestBoard(Box):
         self.assertEqual(hook.board_row(self.board, "DK-13"), ("check", "-"))
         self.assertIsNone(hook.board_row(self.board, "DK-99"))
 
-    def test_archive_row_is_closed(self):
-        self.assertEqual(hook.find_row(self.tmp, "DK-16", "close"), ("close", "M"))
+    def test_archive_row_is_closed_without_price(self):
+        # У живого архива шесть колонок и цены нет: на месте шестой ссылка, и
+        # цена строки это «-», а не ссылка на файл задачи.
+        self.assertEqual(hook.find_row(self.tmp, "DK-704", "close"), ("close", "-"))
         self.assertIsNone(hook.find_row(self.tmp, "DK-12", "close"))
 
     def test_refused_move_is_not_a_junction(self):
@@ -191,10 +198,13 @@ class TestEstimate(unittest.TestCase):
     """Оценка по записям той же цены и той же фазы; медиана и третья четверть
     посчитаны руками по значениям ниже."""
 
+    # Пять значений, а не четыре: на четырёх третья четверть совпадает с
+    # максимумом, и подмена порога максимумом прошла бы незамеченной.
     RECS = [
         {"закрыл": "проверка", "цена": "M", "рост": "10000"},
-        {"закрыл": "проверка", "цена": "M", "рост": "40000"},
+        {"закрыл": "проверка", "цена": "M", "рост": "70000"},
         {"закрыл": "проверка", "цена": "M", "рост": "20000"},
+        {"закрыл": "проверка", "цена": "M", "рост": "40000"},
         {"закрыл": "проверка", "цена": "M", "рост": "30000"},
         {"закрыл": "проверка", "цена": "S", "рост": "5000"},
         {"закрыл": "разработка", "цена": "M", "рост": "90000"},
@@ -202,7 +212,9 @@ class TestEstimate(unittest.TestCase):
     ]
 
     def test_same_price_same_phase(self):
-        self.assertEqual(hook.estimate(self.RECS, "M", "проверка"), (25000, 40000, 4))
+        # Отсортированный ряд 10, 20, 30, 40, 70 тыс: медиана 30, третья
+        # четверть 40, максимум 70 в порог не идёт.
+        self.assertEqual(hook.estimate(self.RECS, "M", "проверка"), (30000, 40000, 5))
 
     def test_single_record(self):
         self.assertEqual(hook.estimate(self.RECS, "S", "проверка"), (5000, 5000, 1))
@@ -217,7 +229,7 @@ class TestEstimate(unittest.TestCase):
         self.assertIn("по умолчанию", source)
         limit, source = hook.threshold(self.RECS, "M", "проверка", 200000)
         self.assertEqual(limit, 40000)
-        self.assertIn("записей 4", source)
+        self.assertIn("записей 5", source)
 
     def test_growth_within_session_only(self):
         prev = {"сессия": "s1", "окно": "100000", "фаза": "разработка"}
@@ -226,8 +238,9 @@ class TestEstimate(unittest.TestCase):
         self.assertEqual(hook.growth(None, "s1", 130000), (None, None))
         self.assertEqual(hook.growth({"сессия": "s1", "окно": "100000", "фаза": "-"}, "s1", 1),
                          (None, None))
-        # Сжатие между переходами уменьшает окно, отрицательный рост не пишется.
-        self.assertEqual(hook.growth(prev, "s1", 50000), ("разработка", 0))
+        # Сжатие между переходами уменьшает окно: фаза закрыта, а замера роста
+        # нет, ноль потянул бы оценку вниз.
+        self.assertEqual(hook.growth(prev, "s1", 50000), ("разработка", None))
 
 
 class TestHook(Box):
@@ -300,13 +313,28 @@ class TestHook(Box):
         self.assertIn("статус blocked фаза - окно %d из 200000 закрыл разработка рост %d"
                       % (SAMPLE_USED, SAMPLE_USED - 100000), lines[1])
 
-    def test_close_records_check_growth(self):
-        self.write_log(["2026-09-01T10:00:00 сессия %s задача DK-16 цена M статус check "
+    def test_close_records_check_growth_with_price_from_previous_record(self):
+        # В архиве цены нет, и закрытие берёт её из записи перехода в Check:
+        # иначе запись «закрыл проверка» по цене M не нашлась бы никогда.
+        self.write_log(["2026-09-01T10:00:00 сессия %s задача DK-704 цена M статус check "
                         "фаза проверка окно 140000 из 200000 закрыл разработка рост 50000" % SESSION])
-        said = self.said(self.run_hook(sample_event("taskctl close DK-16")))
+        said = self.said(self.run_hook(sample_event("taskctl close DK-704")))
         self.assertEqual(said, "")
-        self.assertIn("статус close фаза - окно %d из 200000 закрыл проверка рост %d"
-                      % (SAMPLE_USED, SAMPLE_USED - 140000), self.log_lines()[1])
+        self.assertIn("задача DK-704 цена M статус close фаза - окно %d из 200000 закрыл проверка "
+                      "рост %d" % (SAMPLE_USED, SAMPLE_USED - 140000), self.log_lines()[1])
+        self.assertEqual(hook.estimate(hook.records(self.log), "M", "проверка"),
+                         (SAMPLE_USED - 140000, SAMPLE_USED - 140000, 1))
+
+    def test_close_without_previous_record_keeps_dash(self):
+        said = self.said(self.run_hook(sample_event("taskctl close DK-704")))
+        self.assertEqual(said, "")
+        self.assertIn("задача DK-704 цена - статус close", self.log_lines()[0])
+
+    def test_compaction_between_transitions_records_no_growth(self):
+        self.write_log(["2026-09-01T10:00:00 сессия %s задача DK-12 цена M статус in-progress "
+                        "фаза разработка окно 190000 из 200000 закрыл - рост -" % SESSION])
+        self.said(self.run_hook(sample_event("taskctl move DK-12 check")))
+        self.assertIn("закрыл разработка рост -", self.log_lines()[1])
 
     def test_unknown_protocol_is_refused(self):
         r = self.run_hook(sample_event("taskctl move DK-12 check"), "кодекс")

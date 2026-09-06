@@ -1497,40 +1497,18 @@ func chatNewName(id string, alive func(string) bool) string {
 // planRule это правило плана в заказе любой поднятой работы: чата, конвейерной
 // сессии задачи и груминга черновика. План ведётся файлом, а не инструментом
 // TodoWrite: в обход разрешений (--dangerously-skip-permissions) харнес его не
-// выдаёт вовсе, и у сессий дашборда дороги, кроме файла, нет. Чаты дашборда поднимаются
-// голым клиентом, без определений исполнителей конвейера, и вести план им
-// некому было велеть: кольцо в шапке разговора рисует деления как раз по этому
-// плану, а без него оно остаётся ровной дорожкой.
-const planRule = "Веди план работ файлом ~/.devkit/plans/<ID сессии>.json " +
-	"(ID в CLAUDE_CODE_SESSION_ID): до первого шага список этапов массивом " +
-	"{\"text\",\"state\"}, помечай текущий in_progress, закрывай сделанные, " +
-	"пиши файл целиком."
-
-// planRuleFor приклеивает к правилу плана запасной адрес. В контуре второй
-// подписки CLAUDE_CODE_SESSION_ID пуст (переменную кладёт окружение подписки
-// по умолчанию, а не сам клиент), и агент DK-269 сжёг первый десяток ходов,
-// разыскивая свой ID по printenv и каталогу планов. Имя tmux-сессии заказ
-// знает дословно, им план и ведётся, а читатель плана смотрит оба адреса
-// (planOf).
-func planRuleFor(sess string) string {
-	if sess == "" {
-		return planRule
-	}
-	return planRule + " Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом " +
-		"~/.devkit/plans/" + sess + ".json."
-}
-
-// tmuxVarRe достаёт имя tmux-сессии из пар окружения заказа: правило плана
-// несёт его запасным адресом, а отдельным параметром имя не едет, пары уже
-// собраны launchEnv.
-var tmuxVarRe = regexp.MustCompile(`DEVKIT_TMUX='([^']*)'`)
-
-func envTmux(env string) string {
-	if m := tmuxVarRe.FindStringSubmatch(env); m != nil {
-		return m[1]
-	}
-	return ""
-}
+// выдаёт вовсе, и у сессий дашборда дороги, кроме файла, нет. Чаты дашборда
+// поднимаются голым клиентом, без определений исполнителей конвейера, и вести
+// план им некому было велеть: кольцо в шапке разговора рисует деления как раз
+// по этому плану, а без него оно остаётся ровной дорожкой.
+//
+// Формат файла и его адрес правило больше не пересказывает (DK-613): их держит
+// команда agentctl plan, а порядок ведения лежит в скилле work-plan. Запасной
+// адрес по имени tmux-сессии команда считает сама из DEVKIT_TMUX, который едет
+// в заказе парой окружения.
+const planRule = "План работ веди командой agentctl plan. " +
+	"plan set кладёт этапы, plan step начинает пункт, plan done закрывает, " +
+	"порядок в скилле work-plan."
 
 // paceRule это правило отзывчивости. Разговор с человеком идёт ходами, и
 // длинный ход в нём читается как молчание: агент чата DK-460 полчаса гонял
@@ -1560,7 +1538,7 @@ const channelRule = "Межсессионные сообщения с подпи
 // человеком идёт в любой поднятой работе, значит и правило про него едет в
 // каждый заказ.
 func orderRules(sess string) string {
-	return planRuleFor(sess) + " " + channelRule
+	return planRule + " " + channelRule
 }
 
 // rotateRule это правило ротации исполнителя в заказе поднятой работы.
@@ -1612,7 +1590,7 @@ func chatCmd(env, model, resume, text string, rotate int, h *Harness, agentctl s
 		// говорить за него. Ротация исполнителя едет тем же вагоном и по той
 		// же причине.
 		if resume == "" {
-			text += " " + planRuleFor(envTmux(env)) + " " + rotateRule(rotate)
+			text += " " + planRule + " " + rotateRule(rotate)
 		}
 		// Отзывчивость же нужна и резюму, и подъёму: молчаливый получасовой
 		// прогон случается как раз в длинном разговоре, а он идёт резюмами.
@@ -3649,13 +3627,13 @@ func (s *server) taskChat(projPath, id string) (chatEntry, bool) {
 // как раз резюмами, и порог ему нужен не меньше, чем новой сессии.
 func continuePrompt(id string, rotate int, sess string) string {
 	return "Продолжай работу по " + id + " с того места, где остановился. " +
-		planRuleFor(sess) + " " + rotateRule(rotate) + " " + paceRule + " " + channelRule
+		planRule + " " + rotateRule(rotate) + " " + paceRule + " " + channelRule
 }
 
 // goalContinuePrompt это вводная продолжения цели: правило про живую сессию у
 // цели другое (долгий цикл не подгоняют репликой), а правила заказа те же.
 func goalContinuePrompt(id string, rotate int, sess string) string {
-	return "Продолжай цель " + id + ". " + planRuleFor(sess) + " " +
+	return "Продолжай цель " + id + ". " + planRule + " " +
 		rotateRule(rotate) + " " + paceRule + " " + channelRule
 }
 

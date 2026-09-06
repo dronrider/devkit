@@ -1519,14 +1519,6 @@ var rotateRuleRe = func() *regexp.Regexp {
 	return regexp.MustCompile(strings.Replace(regexp.QuoteMeta(probe), "987654321", `\d+`, 1))
 }()
 
-// planRuleRe узнаёт правило плана с запасным адресом: имя tmux-сессии в нём у
-// каждого заказа своё. Шаблон собирается из самого правила тем же способом,
-// что у ротации; старые заказы без запасного адреса сверяются константой.
-var planRuleRe = func() *regexp.Regexp {
-	probe := planRuleFor("probe987654321")
-	return regexp.MustCompile(strings.Replace(regexp.QuoteMeta(probe), "probe987654321", `[A-Za-z0-9._-]+`, 1))
-}()
-
 // cutOrderRules отрезает от реплики приписки заказа: правила плана, ротации и
 // отзывчивости, которые дашборд приклеивает к тексту человека при подъёме
 // сессии (chatCmd и родня). В ленте они выглядели словами человека одним
@@ -1558,13 +1550,6 @@ func cutOrderRules(text string) (said, rules string) {
 		rest = strings.TrimLeft(rest, " ")
 		if rest == "" {
 			break
-		}
-		// Правило с запасным адресом длиннее голой константы, и первым
-		// сверяется оно: константа съела бы общий префикс, а хвост про запасной
-		// файл остался бы неузнанным, и реплика вернулась бы целиком.
-		if m := planRuleRe.FindStringIndex(rest); m != nil && m[0] == 0 {
-			rest = rest[m[1]:]
-			continue
 		}
 		switch {
 		case strings.HasPrefix(rest, planRule):
@@ -2873,71 +2858,33 @@ func subPlans(home, sid string) []planItem {
 // в ~/.devkit/plans текст лежит в what у 59 пунктов и в title у 8, состояние в
 // status у 15. Пункт с текстом в чужом поле раньше оседал в кольце пустотой.
 type planFileItem struct {
-	Text   string `json:"text"`
-	What   string `json:"what"`
-	Title  string `json:"title"`
-	State  string `json:"state"`
-	Status string `json:"status"`
+	Text  string `json:"text"`
+	State string `json:"state"`
 }
 
-// label это текст пункта: первое непустое из трёх известных полей.
-func (it planFileItem) label() string {
-	for _, s := range []string{it.Text, it.What, it.Title} {
-		if strings.TrimSpace(s) != "" {
-			return s
-		}
-	}
-	return ""
-}
-
-// mark это состояние пункта, сведённое к трём известным кольцу. Слово done
-// живые планы пишут наравне с completed, и без перевода закрытая работа
-// показывалась ждущей.
+// mark это состояние пункта, сведённое к трём известным кольцу. Незнакомое
+// слово читается как ждущий пункт: план пишет команда agentctl plan, и другие
+// состояния в файл попадают только правкой руками.
 func (it planFileItem) mark() string {
-	state := it.State
-	if strings.TrimSpace(state) == "" {
-		state = it.Status
-	}
-	switch state {
-	case "pending", "in_progress", "completed":
-		return state
-	case "done":
-		return "completed"
+	switch it.State {
+	case "in_progress", "completed":
+		return it.State
 	}
 	return "pending"
 }
 
-// planFileFields перечисляет поля, за которыми лежат пункты у плана-объекта.
-// Порядок тут это порядок предпочтения, а сам список взят по живым файлам
-// (stages, steps, items), а не придуман.
-var planFileFields = []string{"stages", "steps", "items"}
-
-// planFileItems достаёт пункты из содержимого файла. Вид у планов два: массив
-// пунктов верхнего уровня, как велит правило, и объект, у которого пункты
-// лежат полем, а рядом стоят пометки самого агента (цель, виток, ветка). Второй
-// вид агенты пишут сами, и разбирать его надо наравне с первым. Второе
-// возвращаемое значение говорит, разобрался ли файл вообще: пустой план это не
-// то же самое, что план нечитаемый.
+// planFileItems достаёт пункты из содержимого файла. Вид у плана один, массив
+// пунктов верхнего уровня, и держит его команда agentctl plan (DK-613): до неё
+// каждая сессия собирала JSON руками, и читателю приходилось терпеть ещё и
+// объект с полем stages, steps или items. Второе возвращаемое значение
+// говорит, разобрался ли файл вообще: пустой план это не то же самое, что план
+// нечитаемый.
 func planFileItems(data []byte) ([]planFileItem, bool) {
 	var arr []planFileItem
-	if json.Unmarshal(data, &arr) == nil {
-		return arr, true
-	}
-	var obj map[string]json.RawMessage
-	if json.Unmarshal(data, &obj) != nil {
+	if json.Unmarshal(data, &arr) != nil {
 		return nil, false
 	}
-	for _, field := range planFileFields {
-		raw, ok := obj[field]
-		if !ok {
-			continue
-		}
-		var list []planFileItem
-		if json.Unmarshal(raw, &list) == nil {
-			return list, true
-		}
-	}
-	return nil, false
+	return arr, true
 }
 
 // readPlanFile читает план сессии из файла. Третье значение это жалоба: файл
@@ -2958,7 +2905,7 @@ func readPlanFile(path string) ([]planItem, time.Time, bool) {
 	}
 	out := make([]planItem, 0, len(raw))
 	for _, it := range raw {
-		text := it.label()
+		text := strings.TrimSpace(it.Text)
 		if text == "" {
 			continue
 		}

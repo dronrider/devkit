@@ -253,11 +253,10 @@ func TestDraftGroomPrompt(t *testing.T) {
 		// Правило плана цепляется к заказу на самом запуске: по этому плану
 		// дашборд рисует деления кольца и блок «План агента». Рядом с ним едет
 		// правило канала: грумер разговаривает с человеком, и узнавать его в
-		// доставке панели обязан так же, как агент чата.
+		// доставке панели обязан так же, как агент чата. Адрес файла правило не
+		// называет, его считает команда agentctl plan (DK-613).
 		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' claude --model 'модель-pro' '" +
-			groomPrompt("XR-005", "") + " " + planRule +
-			" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-XR-005.json. " +
-			channelRule + "'",
+			groomPrompt("XR-005", "") + " " + planRule + " " + channelRule + "'",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("сессия груминга поднята не так:\n%s\nжду %q", got, want)
@@ -547,9 +546,7 @@ func TestDraftGroomAsk(t *testing.T) {
 		t.Errorf("ответ не говорит, что уточнение уехало новой ходкой: %s", text)
 	}
 	want := "claude --model 'модель-pro' '" + groomPrompt(id, "оставить эту, вторую снять") +
-		" " + planRule +
-		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-" + id + ".json. " +
-		channelRule + "'"
+		" " + planRule + " " + channelRule + "'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("уточнение не доехало до заказа сессии:\n%s\nжду %q", got, want)
 	}
@@ -596,9 +593,7 @@ func TestDraftGroomAskQuoting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("заказ с кавычками не разобрался шеллом: %v\n%s", err, quoted)
 	}
-	want := groomPrompt(id, ask) + " " + planRule +
-		" Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/task-" + id + ".json. " +
-		channelRule
+	want := groomPrompt(id, ask) + " " + planRule + " " + channelRule
 	if string(out) != want {
 		t.Errorf("заказ доехал до шелла не тем текстом:\n%s\nжду\n%s", out, want)
 	}

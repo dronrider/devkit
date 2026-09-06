@@ -604,7 +604,7 @@ exit 0`)
 		t.Fatalf("подъём пошёл резюмом несуществующей сессии: %s", log)
 	}
 	// Правило плана приезжает тем же заказом, как у любого подъёма дашборда.
-	if !strings.Contains(log, "план работ файлом") {
+	if !strings.Contains(log, "agentctl plan") {
 		t.Fatalf("в заказе нет правила плана: %s", log)
 	}
 }
@@ -762,7 +762,7 @@ exit 0`)
 	if strings.Contains(log, "DEVKIT_TASK") {
 		t.Fatalf("у разговора без задачи в окружении встала задача: %s", log)
 	}
-	if !strings.Contains(log, "план работ файлом") {
+	if !strings.Contains(log, "agentctl plan") {
 		t.Fatalf("в заказе нет правила плана: %s", log)
 	}
 }
@@ -773,7 +773,7 @@ exit 0`)
 func TestChatPaceRuleInEveryOrder(t *testing.T) {
 	pace := "отдавай субагенту"
 	fresh := chatCmd("", "opus", "", "посмотри доску", execRotateDefault, nil, "agentctl")
-	if !strings.Contains(fresh, pace) || !strings.Contains(fresh, "план работ файлом") {
+	if !strings.Contains(fresh, pace) || !strings.Contains(fresh, "agentctl plan") {
 		t.Errorf("в заказе подъёма нет правил хода: %s", fresh)
 	}
 	// У резюма текст это реплика человека, и правило плана к ней не цепляется:
@@ -783,7 +783,7 @@ func TestChatPaceRuleInEveryOrder(t *testing.T) {
 	if !strings.Contains(again, pace) {
 		t.Errorf("в резюмном заказе нет правила отзывчивости: %s", again)
 	}
-	if strings.Contains(again, "план работ файлом") {
+	if strings.Contains(again, "agentctl plan") {
 		t.Errorf("правило плана уехало в реплику человека: %s", again)
 	}
 	if !strings.Contains(continuePrompt("XR-1", execRotateDefault, ""), pace) {
@@ -825,26 +825,21 @@ func TestChatCmdSecondHarnessCarriesModel(t *testing.T) {
 	}
 }
 
-// Правило плана несёт запасной адрес по имени tmux-сессии: в контуре второй
-// подписки CLAUDE_CODE_SESSION_ID пуст, и агент DK-269 сжёг первый десяток
-// ходов, разыскивая свой ID по printenv и каталогу планов. Имя берётся из пар
-// окружения заказа, отдельного параметра у команды нет.
-func TestChatCmdPlanRuleFallbackName(t *testing.T) {
+// Правило плана зовёт команду agentctl plan и адреса файла не называет
+// (DK-613). Запасной адрес по имени tmux-сессии команда считает сама из
+// DEVKIT_TMUX, который едет в тех же парах окружения заказа.
+func TestChatCmdPlanRule(t *testing.T) {
 	srv := newServer(&Config{Home: t.TempDir()}, nil, nil)
 	got := chatCmd(srv.launchEnv("XR-4", "chat-XR-4-1", ""), "opus", "", "привет", execRotateDefault, nil, "agentctl")
-	if !strings.Contains(got, "Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом ~/.devkit/plans/chat-XR-4-1.json.") {
-		t.Errorf("в заказе нет запасного адреса плана с именем tmux: %s", got)
+	if !strings.Contains(got, planRule) {
+		t.Errorf("в заказе нет правила плана: %s", got)
 	}
-	// Без имени tmux правило остаётся прежним: запасному адресу неоткуда
-	// взяться, и выдуманный он был бы хуже отсутствия.
-	bare := chatCmd("", "opus", "", "привет", execRotateDefault, nil, "agentctl")
-	if strings.Contains(bare, "Если CLAUDE_CODE_SESSION_ID пуст") {
-		t.Errorf("запасной адрес появился без имени tmux: %s", bare)
+	if !strings.Contains(got, "DEVKIT_TMUX='chat-XR-4-1'") {
+		t.Errorf("в заказе нет имени tmux, и запасной адрес плана команде не собрать: %s", got)
 	}
-	// Вводная продолжения несёт тот же запасной адрес.
-	cont := continuePrompt("XR-4", execRotateDefault, "chat-XR-4-2")
-	if !strings.Contains(cont, "~/.devkit/plans/chat-XR-4-2.json") {
-		t.Errorf("вводная продолжения без запасного адреса плана: %s", cont)
+	// Вводная продолжения несёт то же правило.
+	if cont := continuePrompt("XR-4", execRotateDefault, "chat-XR-4-2"); !strings.Contains(cont, planRule) {
+		t.Errorf("вводная продолжения без правила плана: %s", cont)
 	}
 }
 

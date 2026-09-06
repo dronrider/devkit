@@ -1940,16 +1940,14 @@ func TestSessionPlanByTmuxName(t *testing.T) {
 	}
 }
 
-// Приписка заказа с запасным адресом плана режется из пузыря целиком: имя tmux
-// в ней у каждого заказа своё, и константой хвост не узнаётся.
-func TestCutOrderRulesPlanFallback(t *testing.T) {
-	rule := planRule + " Если CLAUDE_CODE_SESSION_ID пуст, веди план файлом " +
-		"~/.devkit/plans/task-DK-269.json."
-	said, rules := cutOrderRules("сделай хорошо " + rule + " " + paceRule)
+// Приписка заказа с правилом плана режется из пузыря целиком. Запасной адрес
+// правило больше не несёт (DK-613), его считает сама команда agentctl plan.
+func TestCutOrderRulesPlan(t *testing.T) {
+	said, rules := cutOrderRules("сделай хорошо " + planRule + " " + paceRule)
 	if said != "сделай хорошо" {
 		t.Errorf("слова человека обрезаны не так: %q", said)
 	}
-	if !strings.Contains(rules, "task-DK-269.json") || !strings.Contains(rules, paceRule) {
+	if !strings.Contains(rules, "agentctl plan") || !strings.Contains(rules, paceRule) {
 		t.Errorf("приписки заказа не собраны: %q", rules)
 	}
 }
@@ -2266,7 +2264,7 @@ func TestSubWorkLabelFromOrder(t *testing.T) {
 	// Пустая строка и маркер списка это разметка, а не слова: подпись начинается
 	// с первой содержательной строки.
 	order := "\n- Ссылка на черновик и переход с телефона\n\nДальше подробности. " +
-		planRuleFor("bbb-2") + " " + paceRule
+		planRule + " " + paceRule
 	plain := writeSubLog(t, path, "ord1", "", sideOrder(order, at)+sideLine("иду", at))
 	// Длинный заказ режется по ширине строки, а не уезжает в кольцо целиком.
 	long := strings.Repeat("очень длинная строка заказа ", 6)
@@ -2603,48 +2601,37 @@ func TestPlanOrderedByState(t *testing.T) {
 	}
 }
 
-// План-объект. Правило велит писать план массивом пунктов, но живые агенты
-// пишут и объектом: пункты полем stages, steps или items, а рядом собственные
-// пометки про цель, виток и ветку. Разбор такой файл ронял целиком, кольцо
-// вставало пустым, и человек видел пустоту у сессии, где этапность есть
-// («кружок этапов не установился», жалоба пользователя по цели XR-286).
-func TestPlanFileReadsObjectShape(t *testing.T) {
+// Формат плана один: массив пунктов верхнего уровня, который кладёт команда
+// agentctl plan (DK-613). До неё каждая сессия собирала JSON руками, и читатель
+// терпел ещё и объект с полем stages, steps или items. Такой файл теперь идёт
+// жалобой на разбор, а не молчанием: план пишет утилита, и объект в каталоге
+// это правка руками.
+func TestPlanFileShape(t *testing.T) {
 	dir := t.TempDir()
 	cases := []struct {
 		name string
 		body string
 		want []planItem
+		bad  bool
 	}{
 		{
-			name: "stages",
-			body: `{"goal":"XR-286","turn":1,"stages":[` +
-				`{"text":"Состояние цели","state":"completed"},` +
-				`{"text":"Нарезка","state":"in_progress"}]}`,
+			name: "массив",
+			body: `[{"text":"своя работа","state":"in_progress"},` +
+				`{"text":"дока","state":"pending"}]`,
 			want: []planItem{
-				{Text: "Состояние цели", State: "completed"},
-				{Text: "Нарезка", State: "in_progress"},
+				{Text: "своя работа", State: "in_progress"},
+				{Text: "дока", State: "pending"},
 			},
 		},
 		{
-			name: "steps",
-			body: `{"task":"DK-397","tree":"poc","steps":[` +
-				`{"id":1,"what":"разбор","state":"done"},` +
-				`{"id":2,"what":"правка","state":"pending"}]}`,
-			want: []planItem{
-				{Text: "разбор", State: "completed"},
-				{Text: "правка", State: "pending"},
-			},
+			name: "незнакомое состояние это ждущий пункт",
+			body: `[{"text":"разбор","state":"done"}]`,
+			want: []planItem{{Text: "разбор", State: "pending"}},
 		},
 		{
-			name: "items",
-			body: `{"title":"шесть работ","items":[` +
-				`{"id":1,"text":"колонка действий","status":"in_progress"}]}`,
-			want: []planItem{{Text: "колонка действий", State: "in_progress"}},
-		},
-		{
-			name: "массив как прежде",
-			body: `[{"text":"своя работа","state":"in_progress"}]`,
-			want: []planItem{{Text: "своя работа", State: "in_progress"}},
+			name: "объект",
+			body: `{"goal":"XR-286","stages":[{"text":"Нарезка","state":"in_progress"}]}`,
+			bad:  true,
 		},
 	}
 	for _, c := range cases {
@@ -2653,8 +2640,11 @@ func TestPlanFileReadsObjectShape(t *testing.T) {
 			t.Fatal(err)
 		}
 		got, at, bad := readPlanFile(path)
-		if bad {
-			t.Errorf("%s: файл прочитан, а разбор жалуется", c.name)
+		if bad != c.bad {
+			t.Errorf("%s: жалоба разбора %v, ждали %v", c.name, bad, c.bad)
+		}
+		if c.bad {
+			continue
 		}
 		if at.IsZero() {
 			t.Errorf("%s: у разобранного плана нет метки времени", c.name)

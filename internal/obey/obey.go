@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -75,6 +76,31 @@ func ParseSubjects(value string) ([]Subject, error) {
 		return nil, fmt.Errorf("пустое значение ключа «%s»", Key)
 	}
 	return out, nil
+}
+
+// Union собирает предметы прогона: объединение предметов всех его сценариев
+// без повторов, в порядке пути и раздела. Отпечаток отметки снят именно с
+// объединения, поэтому ворота слияния обязаны собирать список тем же кодом:
+// сложи они его по одному сценарию, отпечаток мультисценарного прогона не
+// совпал бы никогда.
+func Union(groups ...[]Subject) []Subject {
+	seen := map[string]bool{}
+	var out []Subject
+	for _, g := range groups {
+		for _, sub := range g {
+			if key := sub.String(); !seen[key] {
+				seen[key] = true
+				out = append(out, sub)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Section < out[j].Section
+	})
+	return out
 }
 
 // Reader отдаёт текст файла предмета по пути от корня devkit. Дерево ветки

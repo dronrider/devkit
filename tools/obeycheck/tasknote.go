@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -52,23 +51,11 @@ func taskFile(startDir, id string) (string, error) {
 // порядке путей и разделов, чтобы отпечаток не зависел от порядка сценариев в
 // командной строке.
 func runSubjects(scen []Scenario) []obey.Subject {
-	seen := map[string]bool{}
-	var out []obey.Subject
+	var groups [][]obey.Subject
 	for _, s := range scen {
-		for _, sub := range s.Subjects {
-			if key := sub.String(); !seen[key] {
-				seen[key] = true
-				out = append(out, sub)
-			}
-		}
+		groups = append(groups, s.Subjects)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Path != out[j].Path {
-			return out[i].Path < out[j].Path
-		}
-		return out[i].Section < out[j].Section
-	})
-	return out
+	return obey.Union(groups...)
 }
 
 // liveScenarios отбирает сценарии, которые в прогоне участвовали: пропущенный

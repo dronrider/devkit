@@ -6,19 +6,26 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/obey"
 )
 
 // Сценарий это промпт плюс проверка. Проверка это команда с кодом возврата, а
 // не чтение вывода глазами: иначе стенд меряет впечатление, а не поведение.
 type Scenario struct {
-	ID     string
-	Title  string
-	End    string // на каком конце гоняется: сессия, субагент или любой
-	Prompt string
-	Setup  string
-	Check  string
-	Path   string
+	ID       string
+	Title    string
+	End      string // на каком конце гоняется: сессия, субагент или любой
+	Subjects []obey.Subject
+	Prompt   string
+	Setup    string
+	Check    string
+	Path     string
 }
+
+// Subject собирает предмет сценария обратно в строку ключа: так он печатается
+// в `--list` и в отказах.
+func (s Scenario) Subject() string { return obey.Join(s.Subjects) }
 
 const (
 	endAny     = "любой"
@@ -147,14 +154,22 @@ func parseScenario(path, text string) (Scenario, error) {
 				return fail(ln, "до первой секции жду «ключ: значение», вижу %q", t)
 			}
 			key, val = strings.TrimSpace(key), strings.TrimSpace(val)
-			if key != "конец" {
-				return fail(ln, "неизвестный ключ %q: у сценария есть только «конец»", key)
-			}
-			switch val {
-			case endAny, endSession, endSub:
-				s.End = val
+			switch key {
+			case "конец":
+				switch val {
+				case endAny, endSession, endSub:
+					s.End = val
+				default:
+					return fail(ln, "конец %q неизвестен: %s, %s или %s", val, endAny, endSession, endSub)
+				}
+			case obey.Key:
+				subs, err := obey.ParseSubjects(val)
+				if err != nil {
+					return fail(ln, "%v", err)
+				}
+				s.Subjects = append(s.Subjects, subs...)
 			default:
-				return fail(ln, "конец %q неизвестен: %s, %s или %s", val, endAny, endSession, endSub)
+				return fail(ln, "неизвестный ключ %q: у сценария есть «конец» и «%s»", key, obey.Key)
 			}
 			continue
 		}
@@ -171,6 +186,10 @@ func parseScenario(path, text string) (Scenario, error) {
 		return Scenario{}, fmt.Errorf("%s: нет секции «## %s» или она пуста; сценарий без объективной "+
 			"проверки стендом не гоняется", filepath.Base(path), sectCheck)
 	}
+	if len(s.Subjects) == 0 {
+		return Scenario{}, fmt.Errorf("%s: нет ключа «%s»: сценарий обязан назвать текст, который он "+
+			"меряет, иначе привязку к правилу проверить нечем", filepath.Base(path), obey.Key)
+	}
 	return s, nil
 }
 
@@ -183,8 +202,11 @@ func readScenario(path string) (Scenario, error) {
 }
 
 // loadScenarios читает директорию сценариев целиком, в порядке имён файлов:
-// порядок строк таблицы должен быть один и тот же от прогона к прогону.
-func loadScenarios(dir string, only []string) ([]Scenario, error) {
+// порядок строк таблицы должен быть один и тот же от прогона к прогону. Заодно
+// проверяется привязка каждого сценария к дереву devkit: осиротевший предмет
+// это переименованный раздел или уехавший скилл, и молча гонять такой сценарий
+// значит мерять текст, которого больше нет.
+func loadScenarios(dir, root string, only, forFiles []string) ([]Scenario, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("директория сценариев: %v", err)
@@ -208,10 +230,16 @@ func loadScenarios(dir string, only []string) ([]Scenario, error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := obey.VerifyAll(root, s.Subjects); err != nil {
+			return nil, fmt.Errorf("%s: %v", name, err)
+		}
 		if len(want) > 0 && !want[s.ID] {
 			continue
 		}
 		seen[s.ID] = true
+		if len(forFiles) > 0 && !coversAnyFile(s, forFiles) {
+			continue
+		}
 		out = append(out, s)
 	}
 	for _, id := range only {
@@ -220,7 +248,34 @@ func loadScenarios(dir string, only []string) ([]Scenario, error) {
 		}
 	}
 	if len(out) == 0 {
+		if len(forFiles) > 0 {
+			return nil, fmt.Errorf("сценария с предметом на %s в %s нет: завести сценарий с ключом «%s»",
+				strings.Join(forFiles, ", "), dir, obey.Key)
+		}
 		return nil, fmt.Errorf("в %s не нашлось ни одного сценария", dir)
 	}
 	return out, nil
+}
+
+// coversAnyFile отвечает, покрывает ли предмет сценария хоть один из файлов
+// отбора `--for`. Раздел тут не спрашивается: автор правки называет файлы, а
+// какой раздел тронут, знают ворота слияния по диффу.
+func coversAnyFile(s Scenario, files []string) bool {
+	for _, f := range files {
+		if obey.CoversAny(s.Subjects, f, "") {
+			return true
+		}
+	}
+	return false
+}
+
+// relToDevkit приводит путь отбора к виду «от корня devkit»: автор зовёт стенд
+// из дерева задачи и пишет путь так, как его показал git.
+func relToDevkit(root, p string) string {
+	if filepath.IsAbs(p) {
+		if rel, err := filepath.Rel(root, p); err == nil {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return filepath.ToSlash(filepath.Clean(p))
 }

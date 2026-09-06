@@ -1,6 +1,7 @@
 # спросить человека посреди работы
 
 конец: любой
+предмет: kit/skills/board-task/SKILL.md «Статусы»; kit/agents/exec-medium.md
 
 ## Подготовка
 

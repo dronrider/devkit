@@ -125,7 +125,7 @@ func TestAuthCheckedBeforeLayout(t *testing.T) {
 	p := params(t, scenarios(t, "press"), "full", "core")
 	p.UserHome = t.TempDir()
 	p.Work = t.TempDir()
-	_, _, err := Run(p)
+	_, err := Run(p)
 	wantErr(t, err, "связки ключей")
 	left, err := os.ReadDir(p.Work)
 	if err != nil {
@@ -195,7 +195,7 @@ func TestTempHomeGoesWithTheRun(t *testing.T) {
 	p := params(t, scenarios(t, "press"), "full", "core")
 	p.UserHome = home
 	p.Work = t.TempDir()
-	if _, _, err := Run(p); err != nil {
+	if _, err := Run(p); err != nil {
 		t.Fatal(err)
 	}
 	left, err := os.ReadDir(p.Work)

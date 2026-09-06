@@ -1,6 +1,7 @@
 # долгий прогон в печатной сессии
 
 конец: сессия
+предмет: kit/skills/board-ship/SKILL.md «Как ждать долгий шаг»; kit/agents/exec-medium.md
 
 ## Промпт
 

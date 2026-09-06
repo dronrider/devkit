@@ -38,7 +38,7 @@ func fakeAgent(t *testing.T) []string {
 
 func scenarios(t *testing.T, only ...string) []Scenario {
 	t.Helper()
-	s, err := loadScenarios(filepath.Join("testdata", "scenarios"), only)
+	s, err := loadScenarios(filepath.Join("testdata", "scenarios"), devkitRoot(t), only, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +53,7 @@ func params(t *testing.T, scen []Scenario, first, second string) Params {
 		Scenarios: scen,
 		Layouts:   []string{layout(first), layout(second)},
 		Repeats:   3,
+		Base:      baseOld,
 		Agent:     fakeAgent(t),
 		End:       endSession,
 		AgentDef:  "exec-medium",
@@ -68,20 +69,21 @@ func flat(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func runOK(t *testing.T, p Params) (string, bool) {
 	t.Helper()
-	report, regression, err := Run(p)
+	res, err := Run(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return report, regression
+	return res.Report, res.Failed
 }
 
-// Раскладка, где модель работает, против такой же: провалов нет ни там, ни там.
+// Раскладка, где модель работает, против такой же: зелено и там, и там, и с
+// базой «старый» строка зачтена.
 func TestHoldsOnBothLayouts(t *testing.T) {
-	report, regression := runOK(t, params(t, scenarios(t, "press"), "full", "core-green"))
-	if regression {
-		t.Fatalf("регрессии быть не должно:\n%s", report)
+	report, failed := runOK(t, params(t, scenarios(t, "press"), "full", "core-green"))
+	if failed {
+		t.Fatalf("незачтённых строк быть не должно:\n%s", report)
 	}
-	if !strings.Contains(flat(report), "3/3 3/3") || !strings.Contains(report, verdictHolds) {
+	if !strings.Contains(flat(report), "3/3 3/3") || !strings.Contains(report, verdictBothGreen) {
 		t.Fatalf("таблица:\n%s", report)
 	}
 	if !strings.Contains(report, "full") || !strings.Contains(report, "core-green") {
@@ -89,13 +91,14 @@ func TestHoldsOnBothLayouts(t *testing.T) {
 	}
 }
 
-// На второй раскладке модель бездельничает: это регрессия и код возврата 1.
-func TestRegressionOnSecondLayout(t *testing.T) {
-	report, regression := runOK(t, params(t, scenarios(t, "press"), "full", "core"))
-	if !regression {
-		t.Fatalf("ждал регрессию:\n%s", report)
+// Кандидат идёт первым: раскладка, на которой модель бездельничает, против
+// работающей базы это просадка, незачтённая строка и код возврата 1.
+func TestDropOnCandidate(t *testing.T) {
+	report, failed := runOK(t, params(t, scenarios(t, "press"), "core", "full"))
+	if !failed {
+		t.Fatalf("ждал незачтённую строку:\n%s", report)
 	}
-	if !strings.Contains(flat(report), "3/3 0/3") || !strings.Contains(report, verdictRegress) {
+	if !strings.Contains(flat(report), "0/3 3/3") || !strings.Contains(report, verdictDrop) {
 		t.Fatalf("таблица:\n%s", report)
 	}
 	if !strings.Contains(report, "первый красный прогон") {
@@ -103,12 +106,37 @@ func TestRegressionOnSecondLayout(t *testing.T) {
 	}
 }
 
+// Тот же прогон наоборот: кандидат работает, база бездельничает, и это польза.
+// Она зачтена при любой базе, в том числе при «пусто».
+func TestGainOnCandidate(t *testing.T) {
+	p := params(t, scenarios(t, "press"), "full", "core")
+	p.Base = baseEmpty
+	report, failed := runOK(t, p)
+	if failed {
+		t.Fatalf("польза зачтена и с базой «пусто»:\n%s", report)
+	}
+	if !strings.Contains(flat(report), "3/3 0/3") || !strings.Contains(report, verdictGain) {
+		t.Fatalf("таблица:\n%s", report)
+	}
+}
+
+// С базой «пусто» текст, без которого агент делает то же самое, не зачтён: в
+// резидент такой текст не едет.
+func TestBothGreenNotCountedOnEmptyBase(t *testing.T) {
+	p := params(t, scenarios(t, "press"), "full", "core-green")
+	p.Base = baseEmpty
+	report, failed := runOK(t, p)
+	if !failed {
+		t.Fatalf("«зелёный на обеих» с базой «пусто» зачтён быть не должен:\n%s", report)
+	}
+}
+
 // Красный на обеих раскладках это находка про само правило, а не регрессия:
 // код возврата такой прогон не поднимает.
-func TestBothRedIsNotRegression(t *testing.T) {
-	report, regression := runOK(t, params(t, scenarios(t, "press"), "core", "core"))
-	if regression {
-		t.Fatalf("красный на обеих не должен считаться регрессией:\n%s", report)
+func TestBothRedIsNotCounted(t *testing.T) {
+	report, failed := runOK(t, params(t, scenarios(t, "press"), "core", "core"))
+	if !failed {
+		t.Fatalf("красный на обеих не зачтён при любой базе:\n%s", report)
 	}
 	if !strings.Contains(report, verdictBothRed) {
 		t.Fatalf("таблица:\n%s", report)
@@ -116,13 +144,10 @@ func TestBothRedIsNotRegression(t *testing.T) {
 }
 
 // Считаются все k повторов, а не первый: модель, зелёная на двух повторах из
-// трёх, даёт 2/3 и регрессию против полной раскладки.
+// трёх, даёт в таблице 2/3.
 func TestEveryRepeatCounted(t *testing.T) {
-	report, regression := runOK(t, params(t, scenarios(t, "press"), "full", "flaky"))
-	if !regression {
-		t.Fatalf("ждал регрессию:\n%s", report)
-	}
-	if !strings.Contains(flat(report), "3/3 2/3") {
+	report, _ := runOK(t, params(t, scenarios(t, "press"), "flaky", "full"))
+	if !strings.Contains(flat(report), "2/3 3/3") {
 		t.Fatalf("таблица:\n%s", report)
 	}
 }
@@ -130,8 +155,8 @@ func TestEveryRepeatCounted(t *testing.T) {
 // Зелёность решает проверка, а не код возврата команды прогона: модель может
 // выйти с ошибкой, сделав работу.
 func TestAgentExitCodeIgnored(t *testing.T) {
-	report, regression := runOK(t, params(t, scenarios(t, "press"), "angry", "core"))
-	if !regression || !strings.Contains(flat(report), "3/3 0/3") {
+	report, _ := runOK(t, params(t, scenarios(t, "press"), "angry", "core"))
+	if !strings.Contains(flat(report), "3/3 0/3") {
 		t.Fatalf("таблица:\n%s", report)
 	}
 }
@@ -144,8 +169,8 @@ func TestRunEnvironment(t *testing.T) {
 	p.Repeats = 1
 	p.Work = t.TempDir()
 	p.Keep = true
-	report, regression := runOK(t, p)
-	if regression {
+	report, failed := runOK(t, p)
+	if failed {
 		t.Fatalf("проверка окружения не прошла:\n%s", report)
 	}
 	// Директория прогона живёт по разрешённому пути: стенд снимает симлинки,
@@ -219,9 +244,9 @@ func TestTimeoutIsRed(t *testing.T) {
 	p := params(t, scenarios(t, "press"), "slow", "core")
 	p.Repeats = 1
 	p.Timeout = 200 * time.Millisecond
-	report, regression := runOK(t, p)
-	if regression {
-		t.Fatalf("оба угла красные, регрессии тут нет:\n%s", report)
+	report, _ := runOK(t, p)
+	if !strings.Contains(report, verdictBothRed) {
+		t.Fatalf("оба угла красные:\n%s", report)
 	}
 	if !strings.Contains(report, "не уложился") {
 		t.Fatalf("причина таймаута не названа:\n%s", report)
@@ -235,7 +260,7 @@ func TestPreflightCatchesDeadAgent(t *testing.T) {
 	p := params(t, scenarios(t, "press"), "broken", "core")
 	p.Repeats = 1
 	p.Preflight = true
-	_, _, err := Run(p)
+	_, err := Run(p)
 	if err == nil || !strings.Contains(err.Error(), "пробная сессия") {
 		t.Fatalf("ждал отказ на пробе, получил: %v", err)
 	}
@@ -245,8 +270,8 @@ func TestPreflightPassesOnLiveAgent(t *testing.T) {
 	p := params(t, scenarios(t, "press"), "full", "core")
 	p.Repeats = 1
 	p.Preflight = true
-	report, regression := runOK(t, p)
-	if !regression || !strings.Contains(flat(report), "1/1 0/1") {
+	report, _ := runOK(t, p)
+	if !strings.Contains(flat(report), "1/1 0/1") {
 		t.Fatalf("после пробы прогон должен идти как обычно:\n%s", report)
 	}
 }
@@ -260,9 +285,9 @@ func TestSuspiciousGreenIsNamed(t *testing.T) {
 		Prompt: "неважно", Check: "true",
 	}}, "angry", "angry")
 	p.Repeats = 1
-	report, regression := runOK(t, p)
-	if regression {
-		t.Fatalf("регрессии тут нет:\n%s", report)
+	report, failed := runOK(t, p)
+	if failed {
+		t.Fatalf("зелёный на обеих с базой «старый» зачтён:\n%s", report)
 	}
 	if !strings.Contains(report, "зелёной проверкой при упавшей команде") {
 		t.Fatalf("подозрительная зелень не названа:\n%s", report)
@@ -290,7 +315,7 @@ func TestHomeSeed(t *testing.T) {
 	p.HomeSeed = seed
 	p.Work = t.TempDir()
 	p.Keep = true
-	if _, _, err := Run(p); err != nil {
+	if _, err := Run(p); err != nil {
 		t.Fatal(err)
 	}
 	work, err := filepath.EvalSymlinks(p.Work)
@@ -329,7 +354,7 @@ func TestHomeSeedOverridesSkills(t *testing.T) {
 	p.HomeSeed = seed
 	p.Work = t.TempDir()
 	p.Keep = true
-	if _, _, err := Run(p); err != nil {
+	if _, err := Run(p); err != nil {
 		t.Fatal(err)
 	}
 	work, err := filepath.EvalSymlinks(p.Work)
@@ -356,7 +381,7 @@ func TestHomeSeedMissing(t *testing.T) {
 	p := params(t, scenarios(t, "press"), "full", "core")
 	p.Repeats = 1
 	p.HomeSeed = filepath.Join(t.TempDir(), "нет-такой")
-	if _, _, err := Run(p); err == nil || !strings.Contains(err.Error(), "затравки HOME") {
+	if _, err := Run(p); err == nil || !strings.Contains(err.Error(), "затравки HOME") {
 		t.Fatalf("ждал ошибку про затравку, получил: %v", err)
 	}
 }
@@ -367,7 +392,7 @@ func TestSetupFailureStopsRun(t *testing.T) {
 		Prompt: "неважно", Setup: "exit 7", Check: "true",
 	}}, "full", "core")
 	p.Repeats = 1
-	if _, _, err := Run(p); err == nil || !strings.Contains(err.Error(), "подготовка") {
+	if _, err := Run(p); err == nil || !strings.Contains(err.Error(), "подготовка") {
 		t.Fatalf("ждал ошибку про подготовку, получил: %v", err)
 	}
 }
@@ -376,7 +401,7 @@ func TestAgentCommandNotFound(t *testing.T) {
 	p := params(t, scenarios(t, "press"), "full", "core")
 	p.Repeats = 1
 	p.Agent = []string{filepath.Join(t.TempDir(), "нет-такой-команды")}
-	if _, _, err := Run(p); err == nil || !strings.Contains(err.Error(), "не запустилась") {
+	if _, err := Run(p); err == nil || !strings.Contains(err.Error(), "не запустилась") {
 		t.Fatalf("ждал ошибку про команду прогона, получил: %v", err)
 	}
 }
@@ -397,7 +422,7 @@ func TestValidate(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			p := params(t, scenarios(t, "press"), "full", "core")
 			c.patch(&p)
-			_, _, err := Run(p)
+			_, err := Run(p)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("ждал %q, получил: %v", c.want, err)
 			}

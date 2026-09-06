@@ -11,6 +11,7 @@ import (
 const wholeScenario = `# закоммитить правку
 
 конец: субагент
+предмет: RULES.core.md «Git»; kit/skills/board-task/SKILL.md
 
 ## Промпт
 
@@ -39,6 +40,9 @@ func TestParseScenarioWhole(t *testing.T) {
 	if s.ID != "03-commit-style" || s.Title != "закоммитить правку" || s.End != endSub {
 		t.Fatalf("шапка разобрана как %+v", s)
 	}
+	if s.Subject() != "RULES.core.md «Git»; kit/skills/board-task/SKILL.md" {
+		t.Fatalf("предмет разобран как %q", s.Subject())
+	}
 	if s.Prompt != "Поправь README и закоммить.\n\nВторой абзац промпта." {
 		t.Fatalf("промпт: %q", s.Prompt)
 	}
@@ -51,7 +55,7 @@ func TestParseScenarioWhole(t *testing.T) {
 }
 
 func TestParseScenarioDefaults(t *testing.T) {
-	s, err := parseScenario("press.md", "# нажать кнопку\n\n## Промпт\n\nжми\n\n## Проверка\n\ntest -f done.txt\n")
+	s, err := parseScenario("press.md", "# нажать кнопку\n\nпредмет: RULES.core.md\n\n## Промпт\n\nжми\n\n## Проверка\n\ntest -f done.txt\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,6 +90,9 @@ func TestParseScenarioErrors(t *testing.T) {
 		{"чужой ключ", "# c\n\nмодель: opus\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n", "неизвестный ключ"},
 		{"чужой конец", "# c\n\nконец: оба\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n", "конец"},
 		{"мусор до секций", "# c\n\nпросто строка\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n", "ключ: значение"},
+		{"нет предмета", "# c\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n", "нет ключа «предмет»"},
+		{"предмет без пути", "# c\n\nпредмет: «Мимикрия»\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n", "пустой путь"},
+		{"раздел не закрыт", "# c\n\nпредмет: RULES.core.md «Git\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n", "не закрыт"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -101,7 +108,7 @@ func TestParseScenarioErrors(t *testing.T) {
 // вычитку постановки везёт в подготовке heredoc с чужими заголовками, и разбор
 // на первом же из них отказывал читать файл целиком.
 func TestHeadingInsideCodeBlockIsNotSection(t *testing.T) {
-	text := "# c\n\n## Подготовка\n\n" +
+	text := "# c\n\nпредмет: RULES.core.md\n\n## Подготовка\n\n" +
 		"```sh\n" +
 		"cat > t.md <<'EOF'\n" +
 		"## Что происходит\n" +
@@ -153,7 +160,8 @@ func TestScenarioWithoutCheckRejected(t *testing.T) {
 
 func TestLoadScenariosOrderAndFilter(t *testing.T) {
 	dir := filepath.Join("testdata", "scenarios")
-	all, err := loadScenarios(dir, nil)
+	root := devkitRoot(t)
+	all, err := loadScenarios(dir, root, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,15 +172,69 @@ func TestLoadScenariosOrderAndFilter(t *testing.T) {
 	if strings.Join(ids, ",") != "env,phrase,press,session-only" {
 		t.Fatalf("порядок сценариев: %v", ids)
 	}
-	one, err := loadScenarios(dir, []string{"press"})
+	one, err := loadScenarios(dir, root, []string{"press"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(one) != 1 || one[0].ID != "press" {
 		t.Fatalf("фильтр вернул %v", one)
 	}
-	if _, err := loadScenarios(dir, []string{"нет-такого"}); err == nil {
+	if _, err := loadScenarios(dir, root, []string{"нет-такого"}, nil); err == nil {
 		t.Fatal("ждал ошибку про несуществующий сценарий")
+	}
+}
+
+// Отбор по предмету: сценарии берутся по файлу, который правит автор, и
+// сочетается отбор с --only. Предмет с разделом покрывает свой файл наравне с
+// предметом без раздела: раздел диффа знают ворота слияния, а не автор.
+func TestLoadScenariosForFile(t *testing.T) {
+	dir := filepath.Join("testdata", "scenarios")
+	root := devkitRoot(t)
+	rules, err := loadScenarios(dir, root, nil, []string{"RULES.core.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, s := range rules {
+		ids = append(ids, s.ID)
+	}
+	if strings.Join(ids, ",") != "env,phrase,press" {
+		t.Fatalf("отбор по RULES.core.md дал %v", ids)
+	}
+	both, err := loadScenarios(dir, root, []string{"press"}, []string{"RULES.core.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(both) != 1 || both[0].ID != "press" {
+		t.Fatalf("--for вместе с --only дали %v", both)
+	}
+	if _, err := loadScenarios(dir, root, nil, []string{"README.md"}); err == nil ||
+		!strings.Contains(err.Error(), "нет") {
+		t.Fatalf("ждал отказ на файл без сценария, получил: %v", err)
+	}
+}
+
+// Предмет, указывающий в никуда, ловится на загрузке: переименованный скилл
+// или раздел оставил бы сценарий без привязки молча, и прогон остался бы
+// зелёным на тексте, которого больше нет.
+func TestLoadScenariosOrphanSubject(t *testing.T) {
+	root := devkitRoot(t)
+	cases := map[string]string{
+		"файла нет":   "предмет: kit/skills/нет-такого/SKILL.md",
+		"раздела нет": "предмет: RULES.core.md «Такого раздела нет»",
+	}
+	for name, key := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			text := "# c\n\n" + key + "\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n"
+			if err := os.WriteFile(filepath.Join(dir, "c.md"), []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := loadScenarios(dir, root, nil, nil)
+			if err == nil || !strings.Contains(err.Error(), "c.md") {
+				t.Fatalf("ждал отказ с именем сценария, получил: %v", err)
+			}
+		})
 	}
 }
 
@@ -180,7 +242,7 @@ func TestLoadScenariosOrderAndFilter(t *testing.T) {
 // который стенд не прочитает, обнаружится на прогоне в двести сессий, а не тут.
 func TestFirstWaveScenariosParse(t *testing.T) {
 	root := devkitRoot(t)
-	list, err := loadScenarios(filepath.Join(root, "tools", "obeycheck", "scenarios"), nil)
+	list, err := loadScenarios(filepath.Join(root, "tools", "obeycheck", "scenarios"), root, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,6 +253,9 @@ func TestFirstWaveScenariosParse(t *testing.T) {
 	for _, s := range list {
 		if s.Title == "" || s.Prompt == "" || s.Check == "" {
 			t.Errorf("сценарий %s разобран наполовину: %+v", s.ID, s)
+		}
+		if len(s.Subjects) == 0 {
+			t.Errorf("у сценария %s нет предмета", s.ID)
 		}
 		path := filepath.Join(dir, s.ID+".sh")
 		if err := os.WriteFile(path, []byte(s.Check+"\n"), 0o644); err != nil {

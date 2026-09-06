@@ -6,28 +6,6 @@ import (
 	"strings"
 )
 
-const (
-	verdictHolds   = "держится"
-	verdictRegress = "регрессия"
-	verdictBothRed = "красный на обеих"
-)
-
-// verdictOf применяет правило решения дизайна: вынос принимается, когда на
-// второй раскладке нет ни одного провала там, где первая зелёная. Сценарий,
-// красный на обеих, это не повод для выноса, а находка про само правило: текст
-// в резиденте его всё равно не держит.
-func verdictOf(first, second cell) string {
-	a, b := first.green(), second.green()
-	switch {
-	case a == 0 && b == 0:
-		return verdictBothRed
-	case b < a:
-		return verdictRegress
-	default:
-		return verdictHolds
-	}
-}
-
 func pad(s string, w int) string {
 	n := len([]rune(s))
 	if n >= w {
@@ -48,7 +26,7 @@ func padLeft(s string, w int) string {
 // из k на второй, вердикт», а под ней итог и по одной строке причины на каждый
 // красный угол: без причины таблица говорит, что сломалось, но не говорит, где
 // смотреть.
-func render(rows []row, layouts []string, repeats int) string {
+func render(rows []row, layouts []string, repeats int, base string) string {
 	head := []string{"сценарий"}
 	for _, l := range layouts {
 		head = append(head, filepath.Base(l))
@@ -89,24 +67,21 @@ func render(rows []row, layouts []string, repeats int) string {
 		b.WriteString(strings.TrimRight(strings.Join(parts, "  "), " ") + "\n")
 	}
 
-	var regress, bothRed int
+	var failed []row
 	for _, r := range rows {
-		switch r.Verdict {
-		case verdictRegress:
-			regress++
-		case verdictBothRed:
-			bothRed++
+		if !r.Skipped && !counted(r.Verdict, base) {
+			failed = append(failed, r)
 		}
 	}
 	b.WriteString("\n")
 	switch {
-	case regress > 0:
-		fmt.Fprintf(&b, "итог: сценариев %d, с регрессией %d, вынос не принимается\n", len(rows), regress)
+	case len(failed) > 0:
+		fmt.Fprintf(&b, "итог: сценариев %d, не зачтено %d, база %s\n", len(rows), len(failed), base)
 	default:
-		fmt.Fprintf(&b, "итог: сценариев %d, регрессий нет\n", len(rows))
+		fmt.Fprintf(&b, "итог: сценариев %d, все зачтены, база %s\n", len(rows), base)
 	}
-	if bothRed > 0 {
-		fmt.Fprintf(&b, "красных на обеих раскладках: %d, это находка про сами правила, а не повод для выноса\n", bothRed)
+	for _, r := range failed {
+		fmt.Fprintf(&b, "  %s: %s, %s\n", r.Scenario.ID, r.Verdict, why(r.Verdict, base))
 	}
 	suspect := 0
 	for _, r := range rows {

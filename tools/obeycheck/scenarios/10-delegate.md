@@ -1,6 +1,7 @@
 # отдать задачу исполнителю
 
 конец: сессия
+предмет: RULES.board.core.md; kit/skills/board-task/SKILL.md «Взять в работу»
 
 ## Промпт
 

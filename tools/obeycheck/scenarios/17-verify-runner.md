@@ -1,6 +1,7 @@
 # закрыть проверенную задачу из Check
 
 конец: сессия
+предмет: RULES.board.core.md; kit/skills/board-task/SKILL.md «Закрытие»
 
 ## Подготовка
 

@@ -15,6 +15,7 @@ type Params struct {
 	Scenarios []Scenario
 	Layouts   []string // ровно две раскладки: сравниваются они между собой
 	Repeats   int      // k повторов на раскладку
+	Base      string   // что за вторая раскладка: старый текст или пусто
 	Agent     []string // команда прогона, промпт уходит ей на stdin
 	End       string   // конец прогона: сессия или субагент
 	AgentDef  string   // определение исполнителя для субагентского конца
@@ -212,29 +213,38 @@ func (p Params) validate() error {
 	if p.End != endSession && p.End != endSub {
 		return fmt.Errorf("конец прогона это %s или %s, получил %q", endSession, endSub, p.End)
 	}
-	return nil
+	return checkBase(p.Base)
 }
 
-// Run гоняет все сценарии на обеих раскладках и возвращает таблицу и признак
-// регрессии. Регрессия это код возврата 1 у команды: по нему стенд встраивается
-// в чужой конвейер, а не читается глазами.
-func Run(p Params) (string, bool, error) {
+// Result это исход прогона: таблица для глаз, разобранные строки для отметки в
+// файле задачи и признак незачтённой строки. Незачтённая строка это код
+// возврата 1 у команды: по нему стенд встраивается в чужой конвейер, а не
+// читается глазами.
+type Result struct {
+	Report string
+	Rows   []row
+	Failed bool
+}
+
+// Run гоняет все сценарии на обеих раскладках. Первая раскладка это кандидат,
+// вторая база.
+func Run(p Params) (Result, error) {
 	if err := p.validate(); err != nil {
-		return "", false, err
+		return Result{}, err
 	}
 	userHome, err := userHomeDir(p.UserHome)
 	if err != nil {
-		return "", false, err
+		return Result{}, err
 	}
 	p.UserHome = userHome
 	if err := checkAuth(userHome, p.HomeSeed); err != nil {
-		return "", false, err
+		return Result{}, err
 	}
 	work := p.Work
 	if work == "" {
 		tmp, err := os.MkdirTemp("", "obeycheck-")
 		if err != nil {
-			return "", false, err
+			return Result{}, err
 		}
 		work = tmp
 		if !p.Keep {
@@ -242,7 +252,7 @@ func Run(p Params) (string, bool, error) {
 		}
 	}
 	if err := os.MkdirAll(work, 0o755); err != nil {
-		return "", false, err
+		return Result{}, err
 	}
 	// Симлинки в пути прогона разрешаются сразу: на macOS временная директория
 	// лежит за /var -> /private/var, и тогда pwd проекта не сходится с тем, что
@@ -265,7 +275,7 @@ func Run(p Params) (string, bool, error) {
 		len(live), len(p.Layouts), p.Repeats, total, p.End)
 	if p.Preflight {
 		if err := p.preflight(work); err != nil {
-			return "", false, err
+			return Result{}, err
 		}
 	}
 
@@ -277,7 +287,7 @@ func Run(p Params) (string, bool, error) {
 				dir := filepath.Join(work, fmt.Sprintf("%s-%s-%d", s.ID, filepath.Base(layout), i))
 				a, err := p.runOnce(s, layout, i, dir)
 				if err != nil {
-					return "", false, err
+					return Result{}, err
 				}
 				done++
 				word := "зелено"
@@ -294,16 +304,16 @@ func Run(p Params) (string, bool, error) {
 				}
 			}
 		}
-		r.Verdict = verdictOf(r.Cells[0], r.Cells[1])
+		r.Verdict = verdictOf(r.Cells[0], r.Cells[1], p.Repeats)
 		rows = append(rows, r)
 	}
-	regression := false
+	failed := false
 	for _, r := range rows {
-		if r.Verdict == verdictRegress {
-			regression = true
+		if !r.Skipped && !counted(r.Verdict, p.Base) {
+			failed = true
 		}
 	}
-	return render(rows, p.Layouts, p.Repeats), regression, nil
+	return Result{Report: render(rows, p.Layouts, p.Repeats, p.Base), Rows: rows, Failed: failed}, nil
 }
 
 func (p Params) say(format string, a ...any) {

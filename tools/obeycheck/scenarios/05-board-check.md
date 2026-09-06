@@ -1,5 +1,7 @@
 # перевести задачу в Check
 
+предмет: RULES.board.core.md; kit/skills/board-task/SKILL.md «Статусы»
+
 ## Подготовка
 
 ```sh

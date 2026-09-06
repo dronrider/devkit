@@ -123,6 +123,25 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               JSON со stdin, признак ложится
                                               без срока и паркует задачу
                                               причиной «вопрос: ...»
+  decide <ID> --ask «имя» [--who человек|исполнитель] [--hint "..."] "вопрос"
+                                              завести открытую развилку в
+                                              разделе «Развилки» записи
+                                              (черновик, файл задачи или файл
+                                              цели); по умолчанию решает
+                                              человек, и такая развилка держит
+                                              старт задачи
+  decide <ID> «имя» --by человек|агент|исполнитель "ответ и довод"
+                                              закрыть развилку: строка «решено
+                                              <автором> <дата>» со штампами от
+                                              команды
+  decide <ID> «имя» --leave [--by человек|агент] ["причина"]
+                                              оставить развилку исполнителю:
+                                              поле «решает» правится, след с
+                                              датой дописывается, старт она
+                                              больше не держит
+  decide <ID> [--open]                        напечатать перечень с
+                                              состояниями, --open только
+                                              открытые
   fail <ID> --reason "..." [--class постановка|правила|реализация]
                                               провал проверки: прод сломан,
                                               задача обратно в In progress,
@@ -525,6 +544,33 @@ func main() {
 		needArgs(pos, 1, 1, "ask <ID> [--question \"...\"] [--session SID]")
 		p.ID, p.Stdin = pos[0], os.Stdin
 		msg, err = cmdAsk(root(*dir), p)
+	case "decide":
+		fs := flag.NewFlagSet("decide", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		var p DecideParams
+		fs.StringVar(&p.Ask, "ask", "", "завести развилку с этим именем")
+		fs.StringVar(&p.Who, "who", "", "кто решает: человек (по умолчанию) либо исполнитель")
+		fs.StringVar(&p.Hint, "hint", "", "рекомендация: ответ по умолчанию с доводом")
+		fs.StringVar(&p.By, "by", "", "автор решения: человек, агент либо исполнитель")
+		fs.BoolVar(&p.Leave, "leave", false, "оставить развилку исполнителю")
+		fs.BoolVar(&p.Open, "open", false, "печатать только открытые развилки")
+		commitFlags(fs, &p.Commit)
+		pos := frame.ParseArgs(fs, args[1:])
+		switch {
+		case p.Ask != "":
+			needArgs(pos, 2, 2, "decide <ID> --ask «имя» [--who ...] [--hint \"...\"] \"вопрос\"")
+			p.ID, p.Text = pos[0], pos[1]
+		case p.Leave || p.By != "":
+			needArgs(pos, 2, 3, "decide <ID> «имя» --by человек|агент|исполнитель \"ответ\" либо decide <ID> «имя» --leave [\"причина\"]")
+			p.ID, p.Name = pos[0], pos[1]
+			if len(pos) == 3 {
+				p.Text = pos[2]
+			}
+		default:
+			needArgs(pos, 1, 1, "decide <ID> [--open]")
+			p.ID = pos[0]
+		}
+		msg, err = cmdDecide(root(*dir), p)
 	case "fail":
 		fs := flag.NewFlagSet("fail", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

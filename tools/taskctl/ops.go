@@ -485,7 +485,10 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if promoted {
 		msg += ", черновик перенесён в docs/tasks/" + id + ".md"
 	}
-	return msg + tail, nil
+	// Открытые развилки цели печатаются тут же: условие родителя доезжает до
+	// наследной строки руками того, кто её заводит (LLD DK-552, решение 2), а
+	// молчащий перенос это ровно та ошибка, которую задача снимает.
+	return msg + tail + decideGoalForks(root, wrapLink(p.Link)), nil
 }
 
 func mustNum(id string) int {

@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/stage"
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 var linkRe = regexp.MustCompile(`\]\(([^)]+)\)`)
@@ -101,6 +103,7 @@ func cmdLint(root string) ([]string, error) {
 	finds = append(finds, lintFailed(b, bp)...)
 	finds = append(finds, lintAcceptance(root, b, bp)...)
 	finds = append(finds, lintFormOrder(root, b)...)
+	finds = append(finds, lintForks(root, b)...)
 	finds = append(finds, mainAheadFinds(root)...)
 	return finds, nil
 }
@@ -174,6 +177,38 @@ func lintFormOrder(root string, b *Board) []string {
 				break
 			}
 			prev, prevLine = rank, ln
+		}
+	}
+	return finds
+}
+
+// lintForks судит перечень развилок записей той же формой, какой его читают
+// ворота (LLD DK-552, решение 1): подстрока, начатая словом формы и не
+// подошедшая под неё, повтор имени и строка «оставлена» при «решает: человек».
+// Правка раздела руками законна, и сторож тут вместо отказа: перечень с
+// опечаткой формы читается воротами не так, как его читал писавший.
+func lintForks(root string, b *Board) []string {
+	var finds []string
+	paths := map[string]string{}
+	for _, r := range b.Rows {
+		paths[taskFilePath(root, r.ID)] = filepath.Join("docs", "tasks", r.ID+".md")
+	}
+	drafts, _ := filepath.Glob(filepath.Join(root, "docs", "tasks", "drafts", "*.md"))
+	for _, d := range drafts {
+		paths[d] = filepath.Join("docs", "tasks", "drafts", filepath.Base(d))
+	}
+	var names []string
+	for abs := range paths {
+		names = append(names, abs)
+	}
+	sort.Strings(names)
+	for _, abs := range names {
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			continue
+		}
+		for _, f := range taskform.ForkFinds(string(data)) {
+			finds = append(finds, fmt.Sprintf("%s:%d: %s", paths[abs], f.Line, f.Text))
 		}
 	}
 	return finds

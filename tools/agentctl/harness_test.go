@@ -570,10 +570,10 @@ func TestCmdHarnessJSONEmpty(t *testing.T) {
 }
 
 // TestCmdHarnessJSONExecRotateTokens: верхнеуровневый ключ exec_rotate_tokens
-// машинного конфига уезжает в раскладку как есть, слой тут транспорт (DK-397).
-// Без ключа поля нет, умолчание называет потребитель. Мусор в значении не
-// роняет раскладку целиком: диспетчер обойдётся умолчанием, а причина видна
-// предупреждением.
+// машинного конфига уезжает в раскладку числом, а без ключа туда же едет
+// умолчание agentctl (DK-615): потребитель получает готовый порог и своего
+// умолчания не считает. Мусор в значении не роняет раскладку целиком:
+// раскладка уезжает с умолчанием, а причина видна предупреждением.
 func TestCmdHarnessJSONExecRotateTokens(t *testing.T) {
 	cases := []struct {
 		name, line string
@@ -581,9 +581,9 @@ func TestCmdHarnessJSONExecRotateTokens(t *testing.T) {
 		warn       bool
 	}{
 		{"задан", "exec_rotate_tokens = 640000\n", 640000, false},
-		{"не задан", "", 0, false},
-		{"мусор", "exec_rotate_tokens = \"много\"\n", 0, true},
-		{"ноль", "exec_rotate_tokens = 0\n", 0, true},
+		{"не задан", "", execRotateDefault, false},
+		{"мусор", "exec_rotate_tokens = \"много\"\n", execRotateDefault, true},
+		{"ноль", "exec_rotate_tokens = 0\n", execRotateDefault, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

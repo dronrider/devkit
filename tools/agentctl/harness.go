@@ -625,8 +625,8 @@ type layers struct {
 	Source     string // откуда взялся список включённых
 	// ExecRotateTokens это порог ротации исполнителя-субагента у
 	// чата-диспетчера: верхнеуровневый ключ exec_rotate_tokens машинного
-	// конфига. Ноль значит ключ не задан или бит: умолчание называет
-	// потребитель (дашборд), слой тут только транспорт.
+	// конфига. Ноль значит ключ не задан или бит, и на такой ноль умолчание
+	// ставит execRotate; слой тут только транспорт.
 	ExecRotateTokens int
 	Warns            []string
 }
@@ -1292,9 +1292,10 @@ type harnessesJSON struct {
 	Default   string        `json:"default,omitempty"`
 	Source    string        `json:"source"`
 	Harnesses []harnessJSON `json:"harnesses"`
-	// ExecRotateTokens это порог ротации исполнителя-субагента из машинного
-	// конфига; нет ключа, нет и поля, умолчание ставит потребитель.
-	ExecRotateTokens int      `json:"exec_rotate_tokens,omitempty"`
+	// ExecRotateTokens это порог ротации исполнителя-субагента: ключ
+	// exec_rotate_tokens машинного конфига, а без ключа умолчание agentctl.
+	// Поле всегда заполнено, потребителю считать умолчание не из чего.
+	ExecRotateTokens int      `json:"exec_rotate_tokens"`
 	Note             string   `json:"note,omitempty"`
 	Warns            []string `json:"warns,omitempty"`
 }
@@ -1337,8 +1338,9 @@ func cmdHarnessJSON(start string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	rotate, _ := execRotate(l, machineConfigPath())
 	v := harnessesJSON{Default: l.Default, Source: l.Source, Harnesses: []harnessJSON{},
-		ExecRotateTokens: l.ExecRotateTokens, Warns: l.Warns}
+		ExecRotateTokens: rotate, Warns: l.Warns}
 	var names []string
 	for name := range l.Setup {
 		names = append(names, name)

@@ -108,6 +108,12 @@ const usageText = `agentctl: выбор исполнителя под задач
                           вердикт pick); нет снимка или он протух, значит
                           потолок 3 по умолчанию, а строка зовёт agentctl
                           quota refresh
+  rotate                  порог ротации исполнителя-субагента: первая строка
+                          машинная (rotate: N), вторая называет источник числа.
+                          Порог берётся из ключа exec_rotate_tokens машинного
+                          конфига ~/.devkit/harness.local, а без ключа из
+                          умолчания agentctl; то же число уезжает полем
+                          exec_rotate_tokens в agentctl harness --json
 
 Калибр исполнителя считается ярусами лестницы mini -> base -> pro -> max, а в
 конкретную модель ярус разворачивается последним шагом, маппингом активного
@@ -410,6 +416,11 @@ func main() {
 	case "budget":
 		needArgs(args[1:], 0, 0, "budget")
 		msg, err = cmdBudget(gdir, timeNow())
+	case "rotate":
+		fs := flag.NewFlagSet("rotate", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "rotate")
+		msg, err = cmdRotate(*dir)
 	case "help":
 		fmt.Print(usageText)
 		return

@@ -1869,7 +1869,7 @@ func TestSessionPlanFileWins(t *testing.T) {
 		t.Fatal(err)
 	}
 	file := planPath(e.home, "aaa-1")
-	body := `[{"text":"из файла","state":"completed"},{"text":"второй","state":"in_progress"},{"text":"третий","state":"кривое"}]`
+	body := `[{"text":"из файла","state":"completed"},{"text":"второй","state":"in_progress"},{"text":"третий","state":"pending"}]`
 	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1877,9 +1877,17 @@ func TestSessionPlanFileWins(t *testing.T) {
 	if len(plan) != 3 || plan[0].Text != "из файла" || plan[0].State != "completed" {
 		t.Fatalf("план из файла не победил: %+v", plan)
 	}
-	// Чужое состояние не роняет разбор и читается как «ждёт».
-	if plan[2].State != "pending" {
-		t.Errorf("незнакомое состояние пункта: %q, ждал pending", plan[2].State)
+	// Чужое состояние роняет разбор всего файла, и лента возвращается к
+	// транскрипту с жалобой (замечание ревью DK-613): молча показанный ждущим
+	// пункт съел бы уже пройденный этап.
+	if err := os.WriteFile(file, []byte(`[{"text":"третий","state":"кривое"}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := planOfSession(); len(got) != 1 || got[0].Text != "из транскрипта" {
+		t.Errorf("файл с чужим состоянием прошёл за план: %+v", got)
+	}
+	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	// Битый файл это не поломка ленты: план тогда берётся из транскрипта.
 	if err := os.WriteFile(file, []byte("{не json"), 0o644); err != nil {
@@ -2624,9 +2632,26 @@ func TestPlanFileShape(t *testing.T) {
 			},
 		},
 		{
-			name: "незнакомое состояние это ждущий пункт",
-			body: `[{"text":"разбор","state":"done"}]`,
-			want: []planItem{{Text: "разбор", State: "pending"}},
+			name: "пустое состояние это ждущий пункт",
+			body: `[{"text":"разбор","state":""},{"text":"дока"}]`,
+			want: []planItem{
+				{Text: "разбор", State: "pending"},
+				{Text: "дока", State: "pending"},
+			},
+		},
+		{
+			// Старое слово done лежит в живых файлах машины (55 из 432 на день
+			// правки), и молча показать такой пункт ждущим значит потерять на
+			// глазах у человека уже пройденный этап. Чужое состояние идёт той
+			// же жалобой, что и план-объект (замечание ревью DK-613).
+			name: "старое состояние done это жалоба",
+			body: `[{"text":"разбор","state":"done"},{"text":"дока","state":"pending"}]`,
+			bad:  true,
+		},
+		{
+			name: "выдуманное состояние это жалоба",
+			body: `[{"text":"разбор","state":"идёт"}]`,
+			bad:  true,
 		},
 		{
 			name: "объект",

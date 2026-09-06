@@ -2862,15 +2862,20 @@ type planFileItem struct {
 	State string `json:"state"`
 }
 
-// mark это состояние пункта, сведённое к трём известным кольцу. Незнакомое
-// слово читается как ждущий пункт: план пишет команда agentctl plan, и другие
-// состояния в файл попадают только правкой руками.
-func (it planFileItem) mark() string {
+// mark это состояние пункта, сведённое к трём известным кольцу. Второе
+// значение говорит, узнано ли слово: пустое состояние это ждущий пункт, а
+// непустое чужое (старое done живых файлов, выдумка агента) это жалоба на
+// разбор наравне с нечитаемым файлом. Молча показать такой пункт ждущим значит
+// потерять уже пройденный этап на глазах у человека, и заметить подмену ему
+// нечем (замечание ревью DK-613).
+func (it planFileItem) mark() (string, bool) {
 	switch it.State {
 	case "in_progress", "completed":
-		return it.State
+		return it.State, true
+	case "", "pending":
+		return "pending", true
 	}
-	return "pending"
+	return "", false
 }
 
 // planFileItems достаёт пункты из содержимого файла. Вид у плана один, массив
@@ -2909,7 +2914,14 @@ func readPlanFile(path string) ([]planItem, time.Time, bool) {
 		if text == "" {
 			continue
 		}
-		out = append(out, planItem{Text: truncate(text, 200), State: it.mark()})
+		state, known := it.mark()
+		if !known {
+			// Чужое состояние это жалоба на весь файл, а не на один пункт:
+			// план пишет команда agentctl plan, и такой файл правили руками
+			// либо он остался от прежнего формата.
+			return nil, time.Time{}, true
+		}
+		out = append(out, planItem{Text: truncate(text, 200), State: state})
 	}
 	if len(out) == 0 {
 		// Пустой список пунктов это пустой план, а список, из которого не

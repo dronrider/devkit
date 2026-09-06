@@ -680,18 +680,18 @@ func TestStaticPanelKnowsStartAndStuck(t *testing.T) {
 // от содержимого чужого конфига; сам конфиг подписки дашборд не правит.
 func TestChatCmdSecondHarnessCarriesAutoPermissionMode(t *testing.T) {
 	h := &Harness{Name: "втораяtest", Bin: "клиент-2"}
-	got := chatCmd("", "glm-5.3", "", "посмотри доску", execRotateDefault, h, "agentctl")
+	got := chatCmd("", "glm-5.3", "", "посмотри доску", execRotateFallback, h, "agentctl")
 	if !strings.Contains(got, " --permission-mode auto") {
 		t.Errorf("заказ второй подписки без режима разрешений: %s", got)
 	}
 	// Резюм идёт тем же клиентом и с тем же режимом.
-	again := chatCmd("", "glm-5.3", "aaaa-1111", "и что вышло", execRotateDefault, h, "agentctl")
+	again := chatCmd("", "glm-5.3", "aaaa-1111", "и что вышло", execRotateFallback, h, "agentctl")
 	if !strings.Contains(again, " --permission-mode auto") {
 		t.Errorf("резюм второй подписки без режима разрешений: %s", again)
 	}
 	// Подписке по умолчанию флаг не ставится: её режим настраивает сам человек,
 	// и дашборд в него не лезет.
-	def := chatCmd("", "opus", "", "посмотри доску", execRotateDefault, nil, "agentctl")
+	def := chatCmd("", "opus", "", "посмотри доску", execRotateFallback, nil, "agentctl")
 	if strings.Contains(def, "--permission-mode") {
 		t.Errorf("режим разрешений уехал в заказ подписки по умолчанию: %s", def)
 	}
@@ -772,23 +772,23 @@ exit 0`)
 // дому, и с той стороны разговора это выглядело зависшей сессией, а не работой.
 func TestChatPaceRuleInEveryOrder(t *testing.T) {
 	pace := "отдавай субагенту"
-	fresh := chatCmd("", "opus", "", "посмотри доску", execRotateDefault, nil, "agentctl")
+	fresh := chatCmd("", "opus", "", "посмотри доску", execRotateFallback, nil, "agentctl")
 	if !strings.Contains(fresh, pace) || !strings.Contains(fresh, "agentctl plan") {
 		t.Errorf("в заказе подъёма нет правил хода: %s", fresh)
 	}
 	// У резюма текст это реплика человека, и правило плана к ней не цепляется:
 	// план сессия уже ведёт. Отзывчивость нужна и тут, длинный разговор идёт
 	// как раз резюмами.
-	again := chatCmd("", "opus", "aaaa-1111", "и что вышло", execRotateDefault, nil, "agentctl")
+	again := chatCmd("", "opus", "aaaa-1111", "и что вышло", execRotateFallback, nil, "agentctl")
 	if !strings.Contains(again, pace) {
 		t.Errorf("в резюмном заказе нет правила отзывчивости: %s", again)
 	}
 	if strings.Contains(again, "agentctl plan") {
 		t.Errorf("правило плана уехало в реплику человека: %s", again)
 	}
-	if !strings.Contains(continuePrompt("XR-1", execRotateDefault, ""), pace) {
+	if !strings.Contains(continuePrompt("XR-1", execRotateFallback, ""), pace) {
 		t.Errorf("во вводной продолжения нет правила отзывчивости: %s",
-			continuePrompt("XR-1", execRotateDefault, ""))
+			continuePrompt("XR-1", execRotateFallback, ""))
 	}
 }
 
@@ -800,7 +800,7 @@ func TestChatPaceRuleInEveryOrder(t *testing.T) {
 // незнание окна контекста и оставлено осознанно.
 func TestChatCmdSecondHarnessCarriesModel(t *testing.T) {
 	h := &Harness{Name: "втораяtest", Bin: "клиент-2"}
-	got := chatCmd("", "glm-5.3-flash", "", "посмотри доску", execRotateDefault, h, "agentctl")
+	got := chatCmd("", "glm-5.3-flash", "", "посмотри доску", execRotateFallback, h, "agentctl")
 	if !strings.Contains(got, " --model 'glm-5.3-flash'") {
 		t.Errorf("заказ второй подписки потерял модель яруса: %s", got)
 	}
@@ -808,17 +808,17 @@ func TestChatCmdSecondHarnessCarriesModel(t *testing.T) {
 		t.Errorf("заказ второй подписки потерял обёртку exec: %s", got)
 	}
 	// Резюм на второй подписке идёт той же дорогой: с моделью в команде.
-	again := chatCmd("", "glm-5.3-flash", "aaaa-1111", "и что вышло", execRotateDefault, h, "agentctl")
+	again := chatCmd("", "glm-5.3-flash", "aaaa-1111", "и что вышло", execRotateFallback, h, "agentctl")
 	if !strings.Contains(again, " --model 'glm-5.3-flash'") {
 		t.Errorf("резюм второй подписки потерял модель яруса: %s", again)
 	}
 	// Подписка по умолчанию остаётся с моделью: выбор селектора панели работает
 	// как работал.
-	def := chatCmd("", "opus", "", "посмотри доску", execRotateDefault, nil, "agentctl")
+	def := chatCmd("", "opus", "", "посмотри доску", execRotateFallback, nil, "agentctl")
 	if !strings.Contains(def, " --model 'opus'") {
 		t.Errorf("заказ подписки по умолчанию потерял модель: %s", def)
 	}
-	byDef := chatCmd("", "opus", "", "посмотри доску", execRotateDefault,
+	byDef := chatCmd("", "opus", "", "посмотри доску", execRotateFallback,
 		&Harness{Name: "перваяtest", Bin: "клиент-1", Default: true}, "agentctl")
 	if !strings.Contains(byDef, " --model 'opus'") {
 		t.Errorf("заказ default-харнеса потерял модель: %s", byDef)
@@ -830,7 +830,7 @@ func TestChatCmdSecondHarnessCarriesModel(t *testing.T) {
 // DEVKIT_TMUX, который едет в тех же парах окружения заказа.
 func TestChatCmdPlanRule(t *testing.T) {
 	srv := newServer(&Config{Home: t.TempDir()}, nil, nil)
-	got := chatCmd(srv.launchEnv("XR-4", "chat-XR-4-1", ""), "opus", "", "привет", execRotateDefault, nil, "agentctl")
+	got := chatCmd(srv.launchEnv("XR-4", "chat-XR-4-1", ""), "opus", "", "привет", execRotateFallback, nil, "agentctl")
 	if !strings.Contains(got, planRule) {
 		t.Errorf("в заказе нет правила плана: %s", got)
 	}
@@ -838,7 +838,7 @@ func TestChatCmdPlanRule(t *testing.T) {
 		t.Errorf("в заказе нет имени tmux, и запасной адрес плана команде не собрать: %s", got)
 	}
 	// Вводная продолжения несёт то же правило.
-	if cont := continuePrompt("XR-4", execRotateDefault, "chat-XR-4-2"); !strings.Contains(cont, planRule) {
+	if cont := continuePrompt("XR-4", execRotateFallback, "chat-XR-4-2"); !strings.Contains(cont, planRule) {
 		t.Errorf("вводная продолжения без правила плана: %s", cont)
 	}
 }
@@ -1388,18 +1388,18 @@ func TestChatChannelRuleInEveryOrder(t *testing.T) {
 	if !strings.Contains(rec.Message.Content, sign) {
 		t.Fatalf("кадр канала подписан иначе, правило разъехалось с доставкой: %s", rec.Message.Content)
 	}
-	fresh := chatCmd("", "opus", "", "посмотри доску", execRotateDefault, nil, "agentctl")
+	fresh := chatCmd("", "opus", "", "посмотри доску", execRotateFallback, nil, "agentctl")
 	if !strings.Contains(fresh, sign) {
 		t.Errorf("в заказе подъёма нет правила канала: %s", fresh)
 	}
-	again := chatCmd("", "opus", "aaaa-1111", "и что вышло", execRotateDefault, nil, "agentctl")
+	again := chatCmd("", "opus", "aaaa-1111", "и что вышло", execRotateFallback, nil, "agentctl")
 	if !strings.Contains(again, sign) {
 		t.Errorf("в резюмном заказе нет правила канала: %s", again)
 	}
-	if got := continuePrompt("XR-1", execRotateDefault, ""); !strings.Contains(got, sign) {
+	if got := continuePrompt("XR-1", execRotateFallback, ""); !strings.Contains(got, sign) {
 		t.Errorf("во вводной продолжения нет правила канала: %s", got)
 	}
-	if got := goalContinuePrompt("XR-100", execRotateDefault, ""); !strings.Contains(got, sign) {
+	if got := goalContinuePrompt("XR-100", execRotateFallback, ""); !strings.Contains(got, sign) {
 		t.Errorf("во вводной продолжения цели нет правила канала: %s", got)
 	}
 }

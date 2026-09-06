@@ -106,9 +106,9 @@ func TestOrderRulesCarryChannelEverywhere(t *testing.T) {
 	for name, order := range map[string]string{
 		"груминг черновика":  groomPrompt("XR-1", "") + " " + orderRules(sess),
 		"конвейер задачи":    runPrompt("in-progress", "XR-1") + " " + orderRules(sess),
-		"продолжение задачи": continuePrompt("XR-1", execRotateDefault, sess),
-		"виток цели":         goalContinuePrompt("XR-100", execRotateDefault, sess),
-		"подъём разговора":   chatCmd("", "opus", "", "посмотри доску", execRotateDefault, nil, "agentctl"),
+		"продолжение задачи": continuePrompt("XR-1", execRotateFallback, sess),
+		"виток цели":         goalContinuePrompt("XR-100", execRotateFallback, sess),
+		"подъём разговора":   chatCmd("", "opus", "", "посмотри доску", execRotateFallback, nil, "agentctl"),
 	} {
 		if !strings.Contains(order, channelRule) {
 			t.Errorf("в заказе «%s» нет правила канала: %s", name, order)

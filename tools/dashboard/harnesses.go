@@ -57,9 +57,10 @@ type HarnessView struct {
 	Harnesses []Harness `json:"harnesses"`
 	// ExecRotateTokens это порог ротации исполнителя-субагента: суммарный
 	// контекст, после которого диспетчер отдаёт следующее задание свежему
-	// субагенту. Приезжает ключом exec_rotate_tokens машинного конфига через
-	// agentctl harness --json; без ключа, при мусоре в нём и при недоступном
-	// agentctl тут стоит умолчание execRotateDefault, нуля в поле не бывает.
+	// субагенту. Число целиком считает agentctl (ключ exec_rotate_tokens
+	// машинного конфига либо его умолчание) и отдаёт полем в harness --json.
+	// Своего умолчания дашборд не держит, execRotateFallback стоит только на
+	// случай, когда agentctl не ответил вовсе; нуля в поле не бывает.
 	ExecRotateTokens int      `json:"exec_rotate_tokens"`
 	Note             string   `json:"note,omitempty"`
 	Warns            []string `json:"warns,omitempty"`
@@ -85,12 +86,12 @@ type agentctlHarnesses struct {
 	Warns            []string `json:"warns"`
 }
 
-// execRotateDefault это порог ротации при отсутствии ключа exec_rotate_tokens
-// в машинном конфиге. Число из статистики работы диспетчеров: типовая крупная
-// пачка задач стоит исполнителю ~470-490 тысяч токенов, усталость видна с
-// ~600, деградация с ~900; порог отсекает исполнителя после одной крупной
-// пачки.
-const execRotateDefault = 500000
+// execRotateFallback это запасное число на случай, когда agentctl не нашёлся
+// или не ответил. Источник истины тут agentctl (команда rotate и поле
+// exec_rotate_tokens в harness --json), а запас держится ради одного: заказ
+// подъёма чата собирается и без утилиты, и кнопка запуска не падает из-за
+// недоступного порога. Значение то же, что у умолчания agentctl.
+const execRotateFallback = 500000
 
 const agentctlMissingNote = "agentctl не нашёлся ни рядом с бинарём дашборда, ни в PATH: " +
 	"список подписок читать нечем, запуск идёт на подписке по умолчанию; поставить бинари: devkitctl update"
@@ -99,7 +100,7 @@ const agentctlMissingNote = "agentctl не нашёлся ни рядом с б�
 // причина в Note, а не ошибка ручки: выбор подписки штука необязательная, и
 // уронить из-за неё кнопку запуска было бы дороже, чем остаться без выбора.
 func readHarnesses() HarnessView {
-	view := HarnessView{Harnesses: []Harness{}, ExecRotateTokens: execRotateDefault}
+	view := HarnessView{Harnesses: []Harness{}, ExecRotateTokens: execRotateFallback}
 	bin := binPath(agentctlBin)
 	if bin == "" {
 		view.Note = agentctlMissingNote
@@ -246,10 +247,10 @@ func (s *server) handleHarnesses(w http.ResponseWriter, r *http.Request) {
 }
 
 // rotateTokens отдаёт порог ротации сборщикам заказа: ноль из устаревшего
-// кеша прикрывается умолчанием, правило без числа не уезжает.
+// кеша прикрывается запасным числом, правило без числа не уезжает.
 func (s *server) rotateTokens() int {
 	if n := s.harnesses().ExecRotateTokens; n > 0 {
 		return n
 	}
-	return execRotateDefault
+	return execRotateFallback
 }

@@ -451,7 +451,7 @@ func TestLaunchEnvSameForEveryOrder(t *testing.T) {
 		}
 	}
 	orders := map[string]string{
-		"разговор": chatCmd(env, "opus", "", "привет", execRotateDefault, nil, "agentctl"),
+		"разговор": chatCmd(env, "opus", "", "привет", execRotateFallback, nil, "agentctl"),
 		"конвейер": sessionCommand("agentctl", "task-run.py", nil, env, "выполни XR-7",
 			"продолжай XR-7", "XR-7", "/тмп/проект", "проект", "opus"),
 		"разбор":   groomCmd(env, "разбери XR-7", nil, "opus"),
@@ -474,7 +474,7 @@ func TestHeadlessMarkOnlyForPipeline(t *testing.T) {
 		t.Fatalf("общая сборка окружения несёт метку печатного режима: %s", env)
 	}
 	for name, cmd := range map[string]string{
-		"разговор": chatCmd(env, "opus", "", "привет", execRotateDefault, nil, "agentctl"),
+		"разговор": chatCmd(env, "opus", "", "привет", execRotateFallback, nil, "agentctl"),
 		"разбор":   groomCmd(env, "разбери XR-7", nil, "opus"),
 		"вход":     env + " " + defaultClient,
 	} {

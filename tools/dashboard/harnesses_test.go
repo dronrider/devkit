@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -93,11 +95,11 @@ func TestHarnessesFromAgentctl(t *testing.T) {
 	}
 }
 
-// Порог ротации исполнителя-субагента приезжает из машинного конфига через
-// agentctl harness --json и виден в ответе ручки; без ключа и без agentctl
-// стоит умолчание, нуля снаружи не бывает (DK-397).
+// Порог ротации исполнителя-субагента целиком считает agentctl и отдаёт полем
+// harness --json (DK-615): дашборд берёт число как есть. Своё запасное число
+// он подставляет только там, где ответа нет вовсе, и нуля снаружи не бывает.
 func TestHarnessesExecRotateTokens(t *testing.T) {
-	t.Run("ключ задан", func(t *testing.T) {
+	t.Run("число от agentctl", func(t *testing.T) {
 		e := newTestEnv(t)
 		writeAgentctlFake(t, e.bin, `{"source": "фикстура", "exec_rotate_tokens": 640000,
   "harnesses": [{"name": "перваяtest", "enabled": true, "default": true, "bin": "клиент-1"}]}`)
@@ -105,17 +107,29 @@ func TestHarnessesExecRotateTokens(t *testing.T) {
 			t.Fatalf("порог %d, жду 640000 из конфига", v.ExecRotateTokens)
 		}
 	})
-	t.Run("ключа нет", func(t *testing.T) {
+	t.Run("agentctl числа не прислал", func(t *testing.T) {
 		e := newTestEnv(t)
 		writeAgentctlFake(t, e.bin, harnessJSONFixture)
-		if v := getHarnesses(t, e, e.loggedClient(t)); v.ExecRotateTokens != execRotateDefault {
-			t.Fatalf("порог %d, жду умолчание %d", v.ExecRotateTokens, execRotateDefault)
+		if v := getHarnesses(t, e, e.loggedClient(t)); v.ExecRotateTokens != execRotateFallback {
+			t.Fatalf("порог %d, жду запасное число %d", v.ExecRotateTokens, execRotateFallback)
 		}
 	})
 	t.Run("agentctl не нашёлся", func(t *testing.T) {
 		e := newTestEnv(t)
-		if v := getHarnesses(t, e, e.loggedClient(t)); v.ExecRotateTokens != execRotateDefault {
-			t.Fatalf("порог %d, жду умолчание %d", v.ExecRotateTokens, execRotateDefault)
+		if v := getHarnesses(t, e, e.loggedClient(t)); v.ExecRotateTokens != execRotateFallback {
+			t.Fatalf("порог %d, жду запасное число %d", v.ExecRotateTokens, execRotateFallback)
+		}
+	})
+	// Запасное число не расходится с умолчанием agentctl: две константы в
+	// разных бинарях разъезжаются молча, и заказ чата поехал бы с чужим порогом.
+	t.Run("запас сходится с умолчанием agentctl", func(t *testing.T) {
+		src, err := os.ReadFile(filepath.Join("..", "agentctl", "rotate.go"))
+		if err != nil {
+			t.Fatalf("исходник agentctl не прочитался: %v", err)
+		}
+		want := fmt.Sprintf("execRotateDefault = %d", execRotateFallback)
+		if !strings.Contains(string(src), want) {
+			t.Fatalf("в agentctl нет %q: умолчание разъехалось с запасом дашборда", want)
 		}
 	})
 }

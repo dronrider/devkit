@@ -50,15 +50,6 @@ func corpLevel(t *testing.T, dir, id, level, reason string) {
 	}
 }
 
-func corpTaskText(t *testing.T, root, id string) string {
-	t.Helper()
-	data, err := os.ReadFile(taskFileAbs(root, id))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(data)
-}
-
 // TestReviewLevelCorpTakesCodeHead: ревьювер стоит в клоне кода, и вершина
 // боковой доски в строку уровня не попадает. От вершины доски дифф второго
 // круга не строится вовсе, и до правки строка несла именно её.
@@ -66,7 +57,7 @@ func TestReviewLevelCorpTakesCodeHead(t *testing.T) {
 	clone, local := corpReviewStand(t)
 	corpLevel(t, clone, "XR-005", "2", "тронут разбор диффа")
 
-	got := corpTaskText(t, local, "XR-005")
+	got := readTaskFile(t, local, "XR-005")
 	if !strings.Contains(got, "Уровень 2 до "+corpHead(t, clone)+":") {
 		t.Fatalf("в строке уровня нет вершины кода %s:\n%s", corpHead(t, clone), got)
 	}
@@ -85,7 +76,7 @@ func TestReviewLevelCorpFromSubdir(t *testing.T) {
 	}
 	corpLevel(t, sub, "XR-005", "1", "рутина")
 
-	got := corpTaskText(t, local, "XR-005")
+	got := readTaskFile(t, local, "XR-005")
 	if !strings.Contains(got, "Уровень 1 до "+corpHead(t, clone)+":") {
 		t.Fatalf("в строке уровня не вершина клона:\n%s", got)
 	}
@@ -98,7 +89,7 @@ func TestReviewLevelCorpFromBoardDir(t *testing.T) {
 	corpWrite(t, filepath.Join(local, corpTrackerPath), "key = XR\nrepo = "+clone+"\n")
 	corpLevel(t, local, "XR-005", "2", "тронут разбор диффа")
 
-	got := corpTaskText(t, local, "XR-005")
+	got := readTaskFile(t, local, "XR-005")
 	if !strings.Contains(got, "Уровень 2 до "+corpHead(t, clone)+":") {
 		t.Fatalf("привязка не дала вершину кода:\n%s", got)
 	}
@@ -111,7 +102,7 @@ func TestReviewLevelHomeKeepsBoardHead(t *testing.T) {
 	gitSetup(t, root)
 	corpLevel(t, root, "XR-005", "2", "тронут tools/shipctl")
 
-	got := corpTaskText(t, root, "XR-005")
+	got := readTaskFile(t, root, "XR-005")
 	if !strings.Contains(got, "Уровень 2 до "+corpHead(t, root)+":") {
 		t.Fatalf("в строке уровня не вершина проекта:\n%s", got)
 	}

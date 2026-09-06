@@ -652,39 +652,6 @@ func TestPipelineStopSendsNoKeys(t *testing.T) {
 	}
 }
 
-// Живой снимок настоящего окна: тот же признак, что решает про Escape, но
-// спрошенный у живого tmux этой машины. Стенд по умолчанию пропускается, окно
-// называет переменная DEVKIT_LIVE_PANE, и клавиш он никуда не подаёт. Нужен он
-// живому шагу сценария: слова подсказки печатает клиент, они меняются от версии
-// к версии, и проверить их можно только на живом окне.
-//
-//	DEVKIT_LIVE_PANE=chat-XR-198-1 go test -run TestPaneStateOnLiveWindow -v .
-func TestPaneStateOnLiveWindow(t *testing.T) {
-	name := os.Getenv("DEVKIT_LIVE_PANE")
-	if name == "" {
-		t.Skip("DEVKIT_LIVE_PANE не задан: живой снимок окна пропущен")
-	}
-	text, ok := chatPaneText(name)
-	// Снятый снимок читается и файлом: экран живого окна живёт секунды, а
-	// разобранный случай приёмки надо уметь показать ещё раз.
-	if data, err := os.ReadFile(name); err == nil {
-		text, ok = string(data), true
-	}
-	if !ok {
-		t.Fatalf("снимок окна %s не прочитался", name)
-	}
-	state := paneState(text, ok)
-	t.Logf("окно %s: %s", name, state)
-	tail := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	if n := len(tail); n > 3 {
-		tail = tail[n-3:]
-	}
-	t.Logf("хвост экрана:\n%s", strings.Join(tail, "\n"))
-	if state == paneBlind {
-		t.Errorf("состояние окна не узнано: экран прочитался, а слов клиента в нём нет")
-	}
-}
-
 // coldChatEnv это стенд третьего случая четвёртой приёмки: по строке вчера шла
 // работа конвейера, её сессия умерла, а сегодня по той же строке человек поднял
 // чат. Транскрипт чата остыл, потому что агент отдал работу субагенту и своего

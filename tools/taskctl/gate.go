@@ -402,3 +402,24 @@ func onlyTaskDocSince(root, id, mark string) bool {
 	}
 	return true
 }
+
+// closeForkGate не даёт закрыть задачу, пока в перечне развилок её файла стоит
+// открытая человеческая (LLD DK-552, решение 2). Развилку заводят до старта, но
+// всплывает она и посреди работы, а закрытая задача уезжает в архив, где
+// перечень уже не правят: незакрытый вопрос уехал бы вместе с ней и вернулся
+// переделкой. Отбор развилок и слова отказа общие с воротами `shipctl start`,
+// лежат в internal/taskform.
+//
+// Файла задачи нет, значит и перечня нет, и ворота молчат: так живут строки без
+// файла и все задачи, закрытые до появления раздела.
+func closeForkGate(root, id string) error {
+	data, err := os.ReadFile(taskFilePath(root, id))
+	if err != nil {
+		return nil
+	}
+	held := taskform.HoldingForks(string(data))
+	if len(held) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s", taskform.ForkGateNote(id, "закрытие задачи", held))
+}

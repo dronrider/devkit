@@ -837,6 +837,11 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if err := closeVerifyGate(root, p.ID); err != nil {
 		return "", err
 	}
+	// Открытая человеческая развилка держит и закрытие, тем же чтением
+	// перечня, что и старт (LLD DK-552, решение 2).
+	if err := closeForkGate(root, p.ID); err != nil {
+		return "", err
+	}
 	date := p.Date
 	if date == "" {
 		date = time.Now().Format("2006-01-02")

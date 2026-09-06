@@ -475,7 +475,7 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		list = append(list, w)
 		busy[goal] = true
 	}
-	list = append(list, s.sessionWorks(projectPath, prefix, rows, busy)...)
+	list = append(list, s.sessionWorks(projectPath, prefix, rows, busy, alive)...)
 	// Заказ дожима стопа спрашивается разом на все работы: он лежит при имени
 	// окна, а не при задаче, и одной работе соответствует один заход в память
 	// разговора.

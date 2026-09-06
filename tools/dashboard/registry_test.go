@@ -205,7 +205,7 @@ func TestSessionWorksAboutIsNotWork(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", "talker", sessionLine("а что там с XR-4?", "main"), time.Now())
 	rows := map[string]boardRow{"XR-4": {ID: "XR-4", Title: "Начатая задача", Sect: "in-progress"}}
 
-	works := e.s.sessionWorks(e.proj, "XR", rows, map[string]bool{})
+	works := e.s.sessionWorks(e.proj, "XR", rows, map[string]bool{}, nil)
 	if len(works) != 1 {
 		t.Fatalf("работы: %+v", works)
 	}
@@ -231,7 +231,7 @@ func TestSessionWorksLeadIsWork(t *testing.T) {
 	writeBinds(t, e.home, bindRecord("2026-08-18T12:00:00", "worker", "XR-4", sessions.BySrc))
 	rows := map[string]boardRow{"XR-4": {ID: "XR-4", Title: "Начатая задача", Sect: "in-progress"}}
 
-	works := e.s.sessionWorks(e.proj, "XR", rows, map[string]bool{})
+	works := e.s.sessionWorks(e.proj, "XR", rows, map[string]bool{}, nil)
 	// Своей она не считается: имени tmux-сессии в записи нет, значит подняли её
 	// мимо дашборда, и в разделе «Агенты» ей место в табе прочих.
 	want := Work{ID: "XR-4", Kind: "task", Via: "session", Session: "worker",

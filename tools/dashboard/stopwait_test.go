@@ -684,3 +684,157 @@ func TestPaneStateOnLiveWindow(t *testing.T) {
 		t.Errorf("состояние окна не узнано: экран прочитался, а слов клиента в нём нет")
 	}
 }
+
+// coldChatEnv это стенд третьего случая четвёртой приёмки: по строке вчера шла
+// работа конвейера, её сессия умерла, а сегодня по той же строке человек поднял
+// чат. Транскрипт чата остыл, потому что агент отдал работу субагенту и своего
+// файла не трогает, а боковой журнал субагента пишется прямо сейчас. Окно чата
+// живо, и tmux его называет.
+func coldChatEnv(t *testing.T, window string, quiet time.Duration) (*testEnv, string) {
+	t.Helper()
+	sid := "553547f3-eec0-41a2-b086-0e21896d6c87"
+	sessions := ""
+	if window != "" {
+		sessions = window + "\t1\t1786000000\n"
+	}
+	e, _, _ := runsEnv(t, sessions)
+	now := time.Date(2026, 8, 10, 10, 0, 10, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	writeBinds(t, e.home, fmt.Sprintf(
+		"2026-08-09T18:43:16 сессия %s задача XR-004 проект demo дерево %s "+
+			"транскрипт - источник работа повод «shipctl start» tmux -\n"+
+			"2026-08-10T09:12:28 сессия %s задача XR-004 проект demo дерево %s "+
+			"транскрипт - источник заказ повод «продолжение работы» tmux %s\n",
+		sid, e.proj, sid, e.proj, window))
+	path := writeSession(t, e.home, e.proj, "", sid, stopTranscript(now, "live", true), now.Add(-quiet))
+	subLogAt(t, path, "live", "", now.Add(-time.Minute))
+	forgetDigests()
+	return e, sid
+}
+
+// Живая работа старше мёртвой. Транскрипт разговора остыл на двадцать пять
+// минут, а субагент писал минуту назад: работа идёт, и строка обязана показать
+// её, а не вчерашний признак gone от умершей сессии конвейера. Живой случай
+// DK-818: «задача давно выполняется, а кнопка остановки не появилась».
+func TestLiveWorkBeatsDeadRun(t *testing.T) {
+	e, _ := coldChatEnv(t, "chat-XR-004-1", 25*time.Minute)
+	got := boardRows(t, e)["XR-004"]
+	if got.Run != runChat || !got.RunBusy {
+		t.Errorf("строка показывает вчерашний труп: run=%q busy=%v state=%q",
+			got.Run, got.RunBusy, got.RunState)
+	}
+	if got.RunChat == "" {
+		t.Error("иконка чата не ведёт в живой разговор")
+	}
+}
+
+// Окна у остывшего транскрипта нет: работа и правда кончилась, и строка стоит
+// с признаком gone. Без этой границы всякая старая сессия ходила бы в каталог
+// боковых журналов на каждой сборке доски.
+func TestColdSessionWithoutWindowStaysGone(t *testing.T) {
+	e, _ := coldChatEnv(t, "", 25*time.Minute)
+	got := boardRows(t, e)["XR-004"]
+	if got.Run != runGone {
+		t.Errorf("строка без живого окна: run=%q, ждал gone", got.Run)
+	}
+	if got.RunBusy {
+		t.Error("работа без окна объявлена идущей")
+	}
+}
+
+// Решётка состояний строки: работа живая, работа мёртвая, разговор живой,
+// разговор мёртвый и их сочетания. Разбирается она одним стендом нарочно:
+// сочетание «мёртвая работа плюс живой разговор» никем не было покрыто, и
+// строка молчала о живой работе целые сутки.
+func TestRowStateGrid(t *testing.T) {
+	// Живая работа плюс живой разговор: о ходе говорит признак работы, а поля
+	// разговора молчат, иначе экран называл бы один ход дважды.
+	t.Run("живая работа глушит разговор", func(t *testing.T) {
+		sid := "dff98764-1111-4111-8111-111111111111"
+		e, _, _ := chatWorkEnv(t, sid, "chat-XR-004-1")
+		got := boardRows(t, e)["XR-004"]
+		if got.Run != runChat || got.TalkState != "" {
+			t.Errorf("run=%q talk_state=%q", got.Run, got.TalkState)
+		}
+	})
+	// Мёртвая работа плюс живой разговор, за которым работы не заявлено:
+	// признак работы остаётся gone, а живой разговор виден своими полями.
+	t.Run("мёртвая работа не глушит разговор", func(t *testing.T) {
+		e, _, _ := runsEnv(t, "")
+		now := time.Date(2026, 8, 10, 10, 0, 10, 0, time.UTC)
+		e.s.now = func() time.Time { return now }
+		dead := "553547f3-eec0-41a2-b086-0e21896d6c87"
+		talk := "dff98764-2222-4111-8111-111111111111"
+		writeBinds(t, e.home, fmt.Sprintf(
+			"2026-08-09T18:43:16 сессия %s задача XR-004 проект demo дерево %s "+
+				"транскрипт - источник работа повод «shipctl start» tmux -\n"+
+				"2026-08-10T09:59:00 сессия %s задача XR-004 проект demo дерево %s "+
+				"транскрипт - источник заказ повод startup tmux chat-XR-004-2\n",
+			dead, e.proj, talk, e.proj))
+		writeSession(t, e.home, e.proj, "", dead, transcriptFixture, now.Add(-3*time.Hour))
+		writeSession(t, e.home, e.proj, "", talk, transcriptFixture, now)
+		forgetDigests()
+		got := boardRows(t, e)["XR-004"]
+		if got.Run != runGone {
+			t.Errorf("признак работы: %q, ждал gone", got.Run)
+		}
+		if got.TalkState == "" || got.TalkChat != talk {
+			t.Errorf("живой разговор не виден строке: talk_state=%q talk_chat=%q",
+				got.TalkState, got.TalkChat)
+		}
+	})
+	// Мёртвая работа плюс мёртвый разговор: строке сказать нечего, кроме gone.
+	t.Run("оба мертвы", func(t *testing.T) {
+		e, _, _ := runsEnv(t, "")
+		now := time.Date(2026, 8, 10, 10, 0, 10, 0, time.UTC)
+		e.s.now = func() time.Time { return now }
+		sid := "553547f3-eec0-41a2-b086-0e21896d6c87"
+		writeBinds(t, e.home, fmt.Sprintf(
+			"2026-08-09T18:43:16 сессия %s задача XR-004 проект demo дерево %s "+
+				"транскрипт - источник работа повод «shipctl start» tmux -\n",
+			sid, e.proj))
+		writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-3*time.Hour))
+		forgetDigests()
+		got := boardRows(t, e)["XR-004"]
+		if got.Run != runGone || got.TalkState != "" || got.RunBusy {
+			t.Errorf("run=%q talk_state=%q busy=%v", got.Run, got.TalkState, got.RunBusy)
+		}
+	})
+	// Признак gone держится, пока строка стоит в In progress, а её работа не
+	// снята: он и есть память о том, что исполнитель у строки был. Ушла строка
+	// из In progress, и признака нет.
+	t.Run("gone снимается уходом из In progress", func(t *testing.T) {
+		e, _, _ := runsEnv(t, "")
+		now := time.Date(2026, 8, 10, 10, 0, 10, 0, time.UTC)
+		e.s.now = func() time.Time { return now }
+		sid := "553547f3-eec0-41a2-b086-0e21896d6c87"
+		writeBinds(t, e.home, fmt.Sprintf(
+			"2026-08-09T18:43:16 сессия %s задача XR-003 проект demo дерево %s "+
+				"транскрипт - источник работа повод «shipctl start» tmux -\n",
+			sid, e.proj))
+		writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-3*time.Hour))
+		forgetDigests()
+		// XR-003 стоит в Check, а не в In progress: признака gone у неё нет.
+		if got := boardRows(t, e)["XR-003"]; got.Run != "" {
+			t.Errorf("строка вне In progress несёт признак работы: run=%q", got.Run)
+		}
+	})
+	// Привязка снята: работы за строкой нет вовсе, и gone не встаёт.
+	t.Run("gone снимается снятой привязкой", func(t *testing.T) {
+		e, _, _ := runsEnv(t, "")
+		now := time.Date(2026, 8, 10, 10, 0, 10, 0, time.UTC)
+		e.s.now = func() time.Time { return now }
+		sid := "553547f3-eec0-41a2-b086-0e21896d6c87"
+		writeBinds(t, e.home, fmt.Sprintf(
+			"2026-08-09T18:43:16 сессия %s задача XR-004 проект demo дерево %s "+
+				"транскрипт - источник работа повод «shipctl start» tmux -\n"+
+				"2026-08-09T18:50:00 сессия %s задача XR-004 проект demo дерево %s "+
+				"транскрипт - источник снята повод «стоп со строки» tmux -\n",
+			sid, e.proj, sid, e.proj))
+		writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-3*time.Hour))
+		forgetDigests()
+		if got := boardRows(t, e)["XR-004"]; got.Run != "" {
+			t.Errorf("снятая привязка оставила признак работы: run=%q", got.Run)
+		}
+	})
+}

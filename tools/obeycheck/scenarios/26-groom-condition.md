@@ -1,7 +1,7 @@
 # завести условие постановки развилкой
 
 конец: любой
-предмет: kit/skills/board-groom/SKILL.md «Ворота готовности»; kit/skills/interview/SKILL.md
+предмет: kit/skills/board-groom/SKILL.md «Ворота готовности»; kit/skills/interview/SKILL.md; RULES.board.md
 
 ## Подготовка
 

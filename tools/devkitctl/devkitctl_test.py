@@ -2897,6 +2897,61 @@ class ProseConfigTest(unittest.TestCase):
         self.assertEqual(devkitctl.check_prose_config(), [])
 
 
+class PlansCleanTest(unittest.TestCase):
+    """Планы работ кончившихся сессий (DK-613). Сессия умирает без события:
+    обрыв терминала, стоп сторожка, закрытое окно, и ловить её конец негде.
+    Убирает мёртвые файлы доктор по возрасту, а живой план сессии не трогает.
+    """
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+        self.was = os.environ.get("HOME")
+        os.environ["HOME"] = self.home
+        self.addCleanup(lambda: os.environ.__setitem__("HOME", self.was)
+                        if self.was is not None else os.environ.pop("HOME", None))
+        self.plans = Path(self.home) / ".devkit" / "plans"
+        self.plans.mkdir(parents=True)
+
+    def plan(self, name, days_ago):
+        path = self.plans / name
+        write(path, '[{"text": "работа", "state": "pending"}]\n')
+        when = time.time() - days_ago * 86400
+        os.utime(str(path), (when, when))
+        return path
+
+    def test_no_plans_no_findings(self):
+        self.assertEqual(devkitctl.check_plans(False), ([], []))
+
+    def test_stale_plan_is_a_finding(self):
+        old = self.plan("старая.json", 40)
+        fresh = self.plan("живая.json", 1)
+        found, fixed = devkitctl.check_plans(False)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("сессии их кончились", found[0])
+        self.assertIn("doctor --fix", found[0])
+        self.assertEqual(fixed, [])
+        # Доктор без --fix не удаляет ничего.
+        self.assertTrue(old.exists(), "план убран без --fix")
+        self.assertTrue(fresh.exists(), "свежий план задет без --fix")
+
+    def test_fix_removes_only_the_stale(self):
+        old = self.plan("старая.json", 40)
+        fresh = self.plan("живая.json", 1)
+        found, fixed = devkitctl.check_plans(True)
+        self.assertEqual(found, [])
+        self.assertEqual(len(fixed), 1, fixed)
+        self.assertIn("убрано планов", fixed[0])
+        self.assertFalse(old.exists(), "старый план не убран через --fix")
+        self.assertTrue(fresh.exists(), "--fix задел живой план")
+        # Повторный прогон молчит: убирать больше нечего.
+        self.assertEqual(devkitctl.check_plans(True), ([], []))
+
+    def test_missing_directory_is_not_a_finding(self):
+        shutil.rmtree(self.plans)
+        self.assertEqual(devkitctl.check_plans(False), ([], []))
+
+
 class MachineBuildTest(unittest.TestCase):
     """Сборка на машину: этой дорогой едет выкат, и после укладки победитель
     PATH обязан отвечать свежей сборкой (DK-599). Go тут заглушка, как в

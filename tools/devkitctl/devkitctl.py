@@ -191,6 +191,7 @@ import selfcheck
 import shutil
 import subprocess
 import sys
+import time
 import update
 import user
 import watch
@@ -386,6 +387,12 @@ QUOTA_LEGACY_HARNESS = "claude-code"
 # звала бы переснимать, а вторая молчала.
 QUOTA_MAX_AGE = 45 * 60
 QUOTA_TIME_FORMATS = ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M")
+# Планы работ сессий: файл на сессию, кладёт его agentctl plan, читает дашборд.
+# Сессия умирает без всякого события (обрыв терминала, стоп сторожка), поймать
+# её конец негде, и старые планы копятся в каталоге сотнями. Убирает их доктор
+# по возрасту файла: месяц без правки значит сессии давно нет.
+PLANS_DIR = "~/.devkit/plans"
+PLANS_MAX_AGE = 30 * 24 * 60 * 60
 # Харнес второй подписки. Каталог его конфига девкит из себя не берёт: он лежит
 # в машинном слое ключом home секции [glm-code], и оттуда же его читают
 # раскладка хозяйства ({home} в путях профиля), окружение подпроцесса
@@ -1959,6 +1966,11 @@ def check_machine(fix):
     f, d = check_alt_sub(fix, main, from_main)
     findings += f
     fixed += d
+    # Планы работ сессий рядом со снимком квоты: то же машинное хозяйство
+    # ~/.devkit, и убирать мёртвые файлы больше некому.
+    f, d = check_plans(fix)
+    findings += f
+    fixed += d
     # Нехватку машинного каталога видят и раскладка хозяйства, и глобальная
     # точка правил: пробел один, и повторять его человеку незачем.
     return list(dict.fromkeys(findings)), fixed
@@ -2003,6 +2015,41 @@ def check_quota(fix, blocked=""):
             findings.append("снимок квоты %s протух (возраст %s при пороге %s): профицит по нему уже не считается, "
                             "сдвиг вверх потерян; переснять: agentctl quota refresh"
                             % (quota, human_age(age), human_age(QUOTA_MAX_AGE)))
+    return findings, fixed
+
+
+def check_plans(fix, now=None):
+    # Каталог планов работ. Живой план читает дашборд, а план кончившейся сессии
+    # не читает никто: он лежит мёртвым файлом и путается под ногами у поиска.
+    # Порог возраста берётся у файла, а не у реестра сессий: реестр знает только
+    # родившиеся сессии, и смерть в нём не отмечена.
+    findings, fixed = [], []
+    plans = Path(os.path.expanduser(PLANS_DIR))
+    if not plans.is_dir():
+        return findings, fixed
+    now = now or time.time()
+    old = []
+    for plan in sorted(plans.glob("*.json")):
+        try:
+            age = now - plan.stat().st_mtime
+        except OSError:
+            continue
+        if age > PLANS_MAX_AGE:
+            old.append(plan)
+    if not old:
+        return findings, fixed
+    if fix:
+        for plan in old:
+            try:
+                plan.unlink()
+            except OSError as e:
+                findings.append("план %s не убрался: %s" % (plan, e))
+        fixed.append("убрано планов кончившихся сессий: %d (старше %s)"
+                     % (len(old) - len(findings), human_age(PLANS_MAX_AGE)))
+        return findings, fixed
+    findings.append("в %s лежит %d плана(ов) старше %s: сессии их кончились, читать эти файлы "
+                    "некому; убрать: devkitctl doctor --fix"
+                    % (plans, len(old), human_age(PLANS_MAX_AGE)))
     return findings, fixed
 
 

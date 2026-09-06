@@ -275,3 +275,25 @@ func TestReaderVariants(t *testing.T) {
 		t.Fatal("предмет без файла в дереве обязан отбиваться")
 	}
 }
+
+// Отпечаток отметки снят с объединения предметов всех сценариев прогона, и
+// собирают это объединение двое: стенд, когда пишет отметку, и ворота слияния,
+// когда её сверяют. Порядок сценариев в командной строке на отпечаток влиять не
+// должен, повтор предмета тоже.
+func TestUnion(t *testing.T) {
+	a := []Subject{{Path: "kit/skills/prose/SKILL.md", Section: "Кто зовёт"}, {Path: "RULES.core.md"}}
+	b := []Subject{{Path: "RULES.core.md"}, {Path: "kit/skills/prose/SKILL.md", Section: "Как звать"}}
+	got := Union(a, b)
+	want := []string{"RULES.core.md", "kit/skills/prose/SKILL.md «Как звать»", "kit/skills/prose/SKILL.md «Кто зовёт»"}
+	if len(got) != len(want) {
+		t.Fatalf("объединение из %d предметов, жду %d: %v", len(got), len(want), Join(got))
+	}
+	for i := range want {
+		if got[i].String() != want[i] {
+			t.Fatalf("предмет %d это %q, жду %q", i, got[i].String(), want[i])
+		}
+	}
+	if Join(Union(b, a)) != Join(got) {
+		t.Fatal("порядок сценариев в прогоне не должен менять объединение")
+	}
+}

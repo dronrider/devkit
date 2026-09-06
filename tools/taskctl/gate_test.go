@@ -340,8 +340,9 @@ func commitFile(t *testing.T, root, rel, subject string) {
 }
 
 // Задача правила скилл и файл правил: перевод в Check проходит, а в выводе
-// стоит строка про стенд. Подсказка ищет по коммитам с ID в теме, поэтому
-// работает и на слитой задаче, у которой диффа ветки против main уже нет.
+// стоит строка про стенд с готовой командой прогона. Подсказка ищет по
+// коммитам с ID в теме, поэтому работает и на слитой задаче, у которой диффа
+// ветки против main уже нет.
 func TestMoveToCheckHintsPromptDiff(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
@@ -352,7 +353,7 @@ func TestMoveToCheckHintsPromptDiff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("подсказка не должна отказывать: %v", err)
 	}
-	for _, want := range []string{"prompt-test", "«Проверка»", "kit/skills/board-draft/SKILL.md", "RULES.md"} {
+	for _, want := range []string{"prompt-test", "obeycheck --task XR-005 --for", "kit/skills/board-draft/SKILL.md", "RULES.md"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("в выводе нет %q:\n%s", want, out)
 		}

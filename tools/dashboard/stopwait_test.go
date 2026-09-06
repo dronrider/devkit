@@ -288,6 +288,9 @@ func TestStopWaitReleasesWhenWorkStands(t *testing.T) {
 	}
 
 	// Прошло пять минут: боковой журнал больше не пишется, нового хода не было.
+	// Окно при этом стоит на приглашении, и это говорит сам клиент своим
+	// экраном: заказ кончается по вставшей работе и по молчащему окну разом.
+	writePane(t, filepath.Join(e.home, "tmux.log"), paneIdleScreen)
 	e.s.now = func() time.Time { return now.Add(5 * time.Minute) }
 	e.s.stopWaitOne("chat-XR-004-1", func(string) bool { return true })
 
@@ -331,8 +334,11 @@ func TestStopWaitEndsBySpell(t *testing.T) {
 		e.s.stopWaitOne("chat-XR-004-1", func(string) bool { return true })
 	}
 	// Пошла шестнадцатая минута от первого нажатия, а фоновая работа всё жива.
+	// Ход в окне при этом стоит: срок кончает заказ и по такому окну тоже,
+	// иначе строка стояла бы под «Стопом» без конца.
 	at := now.Add(16 * time.Minute)
 	subLogAt(t, path, "live", "", at.Add(-3*time.Second))
+	writePane(t, filepath.Join(e.home, "tmux.log"), paneIdleScreen)
 	e.s.now = func() time.Time { return at }
 	e.s.stopWaitOne("chat-XR-004-1", func(string) bool { return true })
 
@@ -479,4 +485,202 @@ func TestStaticRowWakesOnLiveSession(t *testing.T) {
 		t.Fatalf("пробуждение строки живой сессией: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Ход в окне не идёт: Escape туда не уходит вовсе. Два Escape прерывают ход,
+// только пока ход идёт, а при остановленном они открывают меню отката, где одно
+// нажатие Enter откатывает разговор человека. Живой случай четвёртой приёмки:
+// человек нажал «Стоп», получил два уведомления об остановке, а клиент стоял в
+// меню Rewind и не делал ничего.
+func TestStopHoldsEscapeWhenTurnIsOver(t *testing.T) {
+	e, c, sid, _ := stoppedChatEnv(t, 3*time.Second, "", true)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writePane(t, tmuxLog, paneIdleScreen)
+
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп по остановленному ходу: %d %s", resp.StatusCode, text)
+	}
+	if strings.Contains(readFile(t, tmuxLog), "Escape") {
+		t.Errorf("Escape ушёл в простаивающее окно: %s", readFile(t, tmuxLog))
+	}
+	if !strings.Contains(text, "не шёл") {
+		t.Errorf("ответ выдал прерывание за сделанное: %s", text)
+	}
+	// Заказ дожима при этом стоит: фоновая работа жива, и поднявшийся ход
+	// прерывать будет кому.
+	if !e.s.stopWaitOn("chat-XR-004-1") {
+		t.Error("заказ дожима не поставлен")
+	}
+	if !sessions.WorksOn(sessions.LoadAll(e.home)[sid], "XR-004") {
+		t.Error("привязка снята при живой фоновой работе")
+	}
+}
+
+// Клиент уже стоит в меню отката: закрывается оно одним Escape, и второго не
+// шлётся. Пара нажатий тут открыла бы его снова, а человек в это меню не
+// заходил, и выйти оттуда, кроме нас, некому.
+func TestStopClosesRewindMenu(t *testing.T) {
+	e, c, _, _ := stoppedChatEnv(t, 3*time.Second, "", true)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writePane(t, tmuxLog, paneRewindScreen)
+
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", "")
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп по запертому клиенту: %d %s", resp.StatusCode, text)
+	}
+	if n := strings.Count(readFile(t, tmuxLog), "send-keys -t =chat-XR-004-1: Escape"); n != 1 {
+		t.Errorf("меню клиента закрыто %d нажатиями, ждал одно: %s", n, readFile(t, tmuxLog))
+	}
+}
+
+// Сторож дожима в простаивающее окно не бьёт: он ждёт поднявшегося хода и
+// прерывает его. Прежде сторож слал Escape по свежести транскрипта шагом в пять
+// секунд и загонял клиента в меню отката, где тот и оставался.
+func TestStopWaitWaitsForRisenTurn(t *testing.T) {
+	e, c, _, path := stoppedChatEnv(t, 3*time.Second, "", true)
+	now := e.s.now()
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	if resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, body(t, resp))
+	}
+	was := strings.Count(readFile(t, tmuxLog), "Escape")
+	// Окно простаивает, а заказ жив: фоновая работа ещё пишет свой журнал.
+	writePane(t, tmuxLog, paneIdleScreen)
+	for i := 1; i <= 3; i++ {
+		at := now.Add(time.Duration(i) * time.Minute)
+		subLogAt(t, path, "live", "", at)
+		e.s.now = func() time.Time { return at }
+		e.s.stopWaitOne("chat-XR-004-1", func(string) bool { return true })
+	}
+	if got := strings.Count(readFile(t, tmuxLog), "Escape"); got != was {
+		t.Errorf("сторож бил Escape в простаивающее окно: было %d нажатий, стало %d", was, got)
+	}
+	if !e.s.stopWaitOn("chat-XR-004-1") {
+		t.Error("заказ снят, пока фоновая работа идёт")
+	}
+	// Клиент, застигнутый в меню отката, выводится оттуда тем же сторожем.
+	writePane(t, tmuxLog, paneRewindScreen)
+	at := now.Add(5 * time.Minute)
+	e.s.now = func() time.Time { return at }
+	e.s.stopWaitOne("chat-XR-004-1", func(string) bool { return true })
+	if got := strings.Count(readFile(t, tmuxLog), "Escape"); got != was+1 {
+		t.Errorf("меню клиента не закрыто одним нажатием: было %d, стало %d", was, got)
+	}
+}
+
+// Вторая беда четвёртой приёмки: агент, чей ход прерывают, успевает открыть
+// этап командой доски, и строка снова считается рабочей уже после стопа. По
+// журналу это видно по часам: стоп в 09:59:55, запись «работа» в 09:59:58.
+// Остановку отменял тот, кого останавливают.
+func TestStopHushesTakeAfterStop(t *testing.T) {
+	sid := "dff98764-1111-4111-8111-111111111111"
+	e, c, tmuxLog := chatWorkEnv(t, sid, "chat-XR-004-1")
+
+	if resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп разговора: %d %s", resp.StatusCode, body(t, resp))
+	}
+	if got := boardRows(t, e)["XR-004"]; got.Run != "" {
+		t.Fatalf("предусловие: после стопа строка свободна, а стоит run=%q", got.Run)
+	}
+	// Через три секунды после стопа агент открыл этап той же командой доски.
+	appendBinds(t, e.home, fmt.Sprintf(
+		"2026-08-10T10:00:13 сессия %s задача XR-004 проект demo дерево %s "+
+			"транскрипт - источник работа повод «agentctl stage XR-004 разработка» tmux -\n",
+		sid, e.proj))
+	if got := boardRows(t, e)["XR-004"]; got.Run != "" || got.RunBusy {
+		t.Errorf("взятие после стопа вернуло строке работу: run=%q busy=%v", got.Run, got.RunBusy)
+	}
+	// Заказ кончается, и последним словом реестра остаётся «снята»: дальше
+	// глушить нечем, и запись обязана пережить заказ.
+	writePane(t, tmuxLog, paneIdleScreen)
+	e.s.now = func() time.Time { return time.Date(2026, 8, 10, 10, 5, 0, 0, time.UTC) }
+	e.s.stopWaitOne("chat-XR-004-1", func(string) bool { return true })
+	recs := sessions.LoadAll(e.home)[sid]
+	last := recs[len(recs)-1]
+	if last.Source != sessions.ByOff || last.Task != "XR-004" {
+		t.Fatalf("последнее слово реестра: источник %q, задача %q", last.Source, last.Task)
+	}
+	if sessions.WorksOn(recs, "XR-004") {
+		t.Error("после конца заказа строка снова считается рабочей")
+	}
+	if got := boardRows(t, e)["XR-004"]; got.Run != "" {
+		t.Errorf("строка ожила после конца заказа: run=%q", got.Run)
+	}
+}
+
+// Стоп из панели чата бьёт тем же Escape, и правило у него то же: в
+// простаивающее окно нажатие не уходит. Проверяется отдельно, потому что дорог
+// у стопа две, а меню отката запирает клиента одинаково с обеих.
+func TestChatStopHoldsEscapeWhenTurnIsOver(t *testing.T) {
+	sid := "dff98764-3333-4111-8111-111111111111"
+	e, c, tmuxLog := chatWorkLiveEnv(t, sid, "chat-XR-004-1")
+	now := e.s.now()
+	writeSession(t, e.home, e.proj, "", sid, stopTranscript(now, "live", true), now.Add(-3*time.Minute))
+	forgetDigests()
+	writePane(t, tmuxLog, paneIdleScreen)
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", "{}")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп чата по остановленному ходу: %d %s", resp.StatusCode, text)
+	}
+	if strings.Contains(readFile(t, tmuxLog), "Escape") {
+		t.Errorf("Escape ушёл в простаивающее окно из панели: %s", readFile(t, tmuxLog))
+	}
+	if !strings.Contains(text, "ход не идёт") {
+		t.Errorf("панель выдала прерывание за сделанное: %s", text)
+	}
+}
+
+// Стоп конвейера меню отката не открывает: его сессию снимают целиком,
+// kill-session, и клавиш в окно не подаётся вовсе. Проверяется ради той же
+// беды с другой стороны: дорог у стопа три, и запирает клиента только Escape.
+func TestPipelineStopSendsNoKeys(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "task-XR-004\t1\t1786000000\n")
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", "")
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп конвейера: %d %s", resp.StatusCode, text)
+	}
+	log := readFile(t, tmuxLog)
+	if !strings.Contains(log, "kill-session") {
+		t.Errorf("конвейер снят не убийством сессии: %s", log)
+	}
+	if strings.Contains(log, "Escape") || strings.Contains(log, "send-keys") {
+		t.Errorf("в окно конвейера ушли клавиши: %s", log)
+	}
+}
+
+// Живой снимок настоящего окна: тот же признак, что решает про Escape, но
+// спрошенный у живого tmux этой машины. Стенд по умолчанию пропускается, окно
+// называет переменная DEVKIT_LIVE_PANE, и клавиш он никуда не подаёт. Нужен он
+// живому шагу сценария: слова подсказки печатает клиент, они меняются от версии
+// к версии, и проверить их можно только на живом окне.
+//
+//	DEVKIT_LIVE_PANE=chat-XR-198-1 go test -run TestPaneStateOnLiveWindow -v .
+func TestPaneStateOnLiveWindow(t *testing.T) {
+	name := os.Getenv("DEVKIT_LIVE_PANE")
+	if name == "" {
+		t.Skip("DEVKIT_LIVE_PANE не задан: живой снимок окна пропущен")
+	}
+	text, ok := chatPaneText(name)
+	// Снятый снимок читается и файлом: экран живого окна живёт секунды, а
+	// разобранный случай приёмки надо уметь показать ещё раз.
+	if data, err := os.ReadFile(name); err == nil {
+		text, ok = string(data), true
+	}
+	if !ok {
+		t.Fatalf("снимок окна %s не прочитался", name)
+	}
+	state := paneState(text, ok)
+	t.Logf("окно %s: %s", name, state)
+	tail := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if n := len(tail); n > 3 {
+		tail = tail[n-3:]
+	}
+	t.Logf("хвост экрана:\n%s", strings.Join(tail, "\n"))
+	if state == paneBlind {
+		t.Errorf("состояние окна не узнано: экран прочитался, а слов клиента в нём нет")
+	}
 }

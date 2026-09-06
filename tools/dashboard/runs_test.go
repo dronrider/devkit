@@ -27,11 +27,40 @@ func writeTmuxFake(t *testing.T, bin, logPath, sessions string) {
 	t.Helper()
 	body := fmt.Sprintf("echo \"$@\" >> %q\ncase \"$1\" in\nls)\n", logPath)
 	if sessions == "" {
-		body += "  exit 1;;\nesac\nexit 0"
+		body += "  exit 1;;\n"
 	} else {
-		body += fmt.Sprintf("  printf '%s';;\nesac\nexit 0", sessions)
+		body += fmt.Sprintf("  printf '%s';;\n", sessions)
 	}
+	// Снимок окна: клиент говорит о своём состоянии сам, и стоп спрашивает его
+	// до всякого Escape (четвёртая приёмка DK-716). Стенд задаёт экран файлом,
+	// а без файла окно показывает идущий ход: так выглядит большинство стендов
+	// стопа, где ход прерывают на ходу.
+	body += fmt.Sprintf("capture-pane)\n  if [ -f %q ]; then cat %q; else printf '%%s\\n' %q; fi;;\n",
+		panePath(logPath), panePath(logPath), paneTurnScreen)
+	body += "esac\nexit 0"
 	writeScript(t, bin, "tmux", body)
+}
+
+// panePath это файл, которым стенд задаёт снимок окна поддельному tmux.
+func panePath(logPath string) string { return logPath + ".pane" }
+
+// Экраны клиента дословно, обрезанные до строки подсказки: по ней и узнаётся
+// состояние окна. Многоточие и разделители тут клавиатурные: живой клиент
+// печатает их своими символами, а искомое слово от этого не меняется.
+const (
+	paneTurnScreen = "  auto mode on (shift+tab to cycle) . esc to interrupt . for agents"
+	paneIdleScreen = "  auto mode on (shift+tab to cycle) . for agents"
+	paneRewindScreen = "   Rewind\n   Restore the code and/or conversation to the point before...\n" +
+		"   Enter to continue . Esc to cancel"
+)
+
+// writePane кладёт стенду экран окна: им стоп и сторож дожима решают, идёт ли
+// ход и не заперт ли клиент в модальном окне.
+func writePane(t *testing.T, logPath, screen string) {
+	t.Helper()
+	if err := os.WriteFile(panePath(logPath), []byte(screen+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // writeGoalRunFake кладёт фикстуру оболочки goal-run.py в синтетический

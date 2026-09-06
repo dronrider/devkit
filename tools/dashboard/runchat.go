@@ -122,11 +122,25 @@ func (s *server) stopChatWork(w http.ResponseWriter, found *Project, id string, 
 				id, len(chats))})
 		return
 	}
-	if err := chatStop(pick.Tmux); err != nil {
+	way, err := chatStop(pick.Tmux)
+	if err != nil {
 		s.logf("стоп %s в %s не удался: прерывание не подалось в %s: %v", id, found.Name, pick.Tmux, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
 			"прерывание не подалось в tmux-сессию %s: %s", pick.Tmux, procErr(err))})
 		return
+	}
+	// Снимок окна не прочитался, и вслепую Escape не идёт: при остановленном
+	// ходе пара нажатий открывает меню отката, откуда одно Enter откатывает
+	// разговор человека (четвёртая приёмка DK-716).
+	if way == stopWayBlind {
+		s.logf("стоп %s в %s: снимок окна %s не прочитался, Escape не послан", id, found.Name, pick.Tmux)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
+			"снимок окна %s не прочитался: вслепую прерывать ход нельзя", pick.Tmux)})
+		return
+	}
+	if way == stopWayRewind {
+		s.logf("стоп %s в %s: окно %s стояло в меню клиента, оно закрыто, хода не было",
+			id, found.Name, pick.Tmux)
 	}
 	resp := map[string]any{"id": id, "kind": "chat", "session": pick.Session,
 		"tmux": pick.Tmux, "state": "стоп"}
@@ -136,12 +150,18 @@ func (s *server) stopChatWork(w http.ResponseWriter, found *Project, id string, 
 	// дожима держит и то и другое: строка стоит под «Стопом», а всякий
 	// поднявшийся ход прерывается снова (stopwait.go).
 	if s.chatSubBusy(found.Path, pick.Session) {
-		s.stopWaitSet(pick.Tmux, pick.Session, id, found.Name, found.Path)
+		s.stopWaitSet(pick.Tmux, pick.Session, id, found.Name, found.Path, false)
 		s.saidMark(saidSessionKey(pick.Session), stopChatWaitWord(id))
 		resp["state"] = "останавливается"
-		resp["message"] = fmt.Sprintf("стоп: ход разговора %s прерван, но по %s ещё работают "+
+		was := "ход разговора " + pick.Tmux + " прерван"
+		if way != stopWayTurn {
+			// Хода не было, и говорить «прерван» нельзя: человек читает эту
+			// строку как отчёт о сделанном.
+			was = "ход в разговоре " + pick.Tmux + " не шёл"
+		}
+		resp["message"] = fmt.Sprintf("стоп: %s, но по %s ещё работают "+
 			"фоновые субагенты; строка стоит под «Стопом», привязка снимется, когда работа встанет",
-			pick.Tmux, id)
+			was, id)
 		s.logf("стоп %s в %s: ход разговора %s (сессия %s) прерван, фоновая работа жива, стоп дожимается",
 			id, found.Name, pick.Tmux, pick.Session)
 		writeJSON(w, http.StatusOK, resp)
@@ -162,10 +182,25 @@ func (s *server) stopChatWork(w http.ResponseWriter, found *Project, id string, 
 		resp["note"] = strings.TrimPrefix(fmt.Sprintf("%v; %s", resp["note"], note), "<nil>; ")
 		s.logf("стоп %s в %s: %s", id, found.Name, note)
 	}
+	// Прерванный ход кончается не сразу: агент дописывает начатое и успевает
+	// открыть этап командой доски, а та кладёт в реестр новую запись о работе.
+	// Живой заход четвёртой приёмки показал это по часам: стоп в 09:59:55,
+	// запись «работа» в 09:59:58, и строка снова считалась рабочей. Остановка
+	// отменялась тем, кого останавливают. Поэтому заказ дожима ставится и здесь,
+	// после снятой привязки: пока он жив, взятия этой же сессии по этой же
+	// строке не считаются, всякий поднявшийся ход прерывается, а последним
+	// словом остаётся «снята» (stopwait.go).
+	if way == stopWayTurn {
+		s.stopWaitSet(pick.Tmux, pick.Session, id, found.Name, found.Path, true)
+	}
 	resp["message"] = fmt.Sprintf("стоп: ход разговора %s прерван, работа по %s снята; "+
 		"разговор жив и следующую реплику возьмёт", pick.Tmux, id)
-	s.logf("стоп %s в %s: ход разговора %s (сессия %s) прерван, привязка снята",
-		id, found.Name, pick.Tmux, pick.Session)
+	if way != stopWayTurn {
+		resp["message"] = fmt.Sprintf("стоп: ход по %s не шёл, работа снята; "+
+			"разговор %s жив и следующую реплику возьмёт", id, pick.Tmux)
+	}
+	s.logf("стоп %s в %s: ход разговора %s (сессия %s) %s, привязка снята",
+		id, found.Name, pick.Tmux, pick.Session, way)
 	writeJSON(w, http.StatusOK, resp)
 }
 

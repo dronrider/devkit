@@ -572,6 +572,11 @@ type chatStore struct {
 	StopTask    string `json:"stopTask,omitempty"`
 	StopProject string `json:"stopProject,omitempty"`
 	StopPath    string `json:"stopPath,omitempty"`
+	// StopFreed говорит, что привязку сняли уже при нажатии: фоновой работы за
+	// сессией не было, и держать строку под «Стопом» было незачем. Заказ у
+	// такой остановки всё равно живёт, но конец его тише: слова в ленту и повод
+	// уведомителю сказаны один раз, при нажатии (четвёртая приёмка DK-716).
+	StopFreed bool `json:"stopFreed,omitempty"`
 	// Draft это набранная, но не отправленная реплика. У начатого разговора
 	// черновик держит вкладка, а у незачатого держать его негде: транскрипта
 	// нет, и с чужого экрана такой разговор выглядел бы пустым. Он же говорит
@@ -2010,14 +2015,99 @@ func chatSend(name, text string) error {
 	return err
 }
 
-// Прерывание хода: два Escape в TUI клиента снимают текущий ход и оставляют
-// сессию жить дальше. Убийство сессии сюда не годится: прерывают ход, а не
-// разговор, и следующая реплика должна попасть в ту же сессию с её памятью.
-// chatStopPause это пауза между двумя Escape. Один клавиатурный ход клиент
+// Прерывание хода: Escape в TUI клиента снимает текущий ход и оставляет сессию
+// жить дальше. Убийство сессии сюда не годится: прерывают ход, а не разговор, и
+// следующая реплика должна попасть в ту же сессию с её памятью.
+// chatStopPause это пауза между нажатиями. Один клавиатурный ход клиент иногда
 // тратит на своё состояние (снимает подсказку, выходит из режима ввода), и ход
 // от него не прерывается: проверено живым прогоном, где после одного Escape
-// журнал субагента продолжал расти, а после второго встал.
+// журнал субагента продолжал расти, а после второго встал. Той же паузы хватает
+// окну на перерисовку, и второй снимок застаёт уже новое состояние.
 const chatStopPause = 400 * time.Millisecond
+
+// Что показывает окно разговора прямо сейчас. Клиент говорит о себе сам, своей
+// же строкой подсказки, и спрашивать его надо до всякого Escape.
+//
+// Четвёртая приёмка DK-716: человек нажал «Стоп», получил два уведомления об
+// остановке, а чат продолжал работать. Снимок окна показал клиента в меню
+// Rewind со словами «Restore the code and/or conversation to the point
+// before...». Два Escape прерывают ход, только пока ход идёт. При остановленном
+// ходе те же два Escape открывают откат, а сторож дожима слал их вслепую шагом
+// в пять секунд и запирал клиента в модальном окне. Работа не шла и не
+// останавливалась. Опаснее того: одно нажатие Enter в этом меню откатывает
+// разговор человека.
+const (
+	// paneTurn это идущий ход: клиент печатает «esc to interrupt» в строке
+	// подсказки ровно тогда, когда Escape прервёт ход, и убирает её, когда ход
+	// кончился. Другого такого же прямого признака у нас нет: свежесть
+	// транскрипта врёт в обе стороны, долгий инструмент пишет в журнал раз в
+	// минуты, а последняя запись хода остаётся свежей ещё двадцать секунд после
+	// его конца.
+	paneTurn = "ход"
+	// paneRewind это меню отката и всякое другое модальное окно клиента: оно
+	// само говорит, что Escape его закроет.
+	paneRewind = "откат"
+	paneIdle   = "простой"
+	// paneBlind это нечитаемый снимок: окна нет, tmux не ответил, экран пуст.
+	// Вслепую в него не шлют ничего.
+	paneBlind = "невидно"
+)
+
+// Слова клиента, по которым узнаётся состояние окна. Держатся они одним местом:
+// подсказка клиента меняется от версии к версии, и искать её по коду в трёх
+// местах значит однажды найти в двух.
+const (
+	paneTurnMark   = "esc to interrupt"
+	paneCancelMark = "esc to cancel"
+)
+
+// chatPaneText снимает видимый экран окна разговора. Подменяется стендами:
+// живого tmux в прогоне нет, а состояние окна стенд задаёт сам.
+var chatPaneText = func(name string) (string, bool) {
+	out, err := runProc("tmux", "capture-pane", "-p", "-t", "="+name+":")
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
+}
+
+// paneState читает снимок. Меню отката спрашивается раньше идущего хода: пока
+// оно открыто, наверху экрана остаётся прежний ход, и по одному слову «esc to
+// interrupt» окно выглядело бы работающим.
+func paneState(text string, ok bool) string {
+	if !ok || strings.TrimSpace(text) == "" {
+		return paneBlind
+	}
+	low := strings.ToLower(text)
+	if strings.Contains(low, paneCancelMark) {
+		return paneRewind
+	}
+	if strings.Contains(low, paneTurnMark) {
+		return paneTurn
+	}
+	return paneIdle
+}
+
+// chatPaneState это состояние окна одним вопросом.
+func chatPaneState(name string) string {
+	return paneState(chatPaneText(name))
+}
+
+// Исходы попытки прервать ход. Их четыре, и каждый значит своё для зовущего:
+// ход прерван, хода не было вовсе, окно стояло в модальном окне и мы его
+// закрыли, окна не видно.
+const (
+	stopWayTurn   = "прерван"
+	stopWayIdle   = "простой"
+	stopWayRewind = "откат"
+	stopWayBlind  = "невидно"
+)
+
+// escape подаёт одно нажатие Escape в окно.
+func escape(name string) error {
+	_, err := runProc("tmux", "send-keys", "-t", "="+name+":", "Escape")
+	return err
+}
 
 // chatKill снимает tmux-сессию разговора целиком. Точка одна на всех зовущих:
 // её зовёт и стоп под перезапуск, и уборка в архив, и подмена в тестах держится
@@ -2027,13 +2117,48 @@ var chatKill = func(name string) error {
 	return err
 }
 
-func chatStop(name string) error {
-	if _, err := runProc("tmux", "send-keys", "-t", "="+name+":", "Escape"); err != nil {
-		return err
+// chatStop прерывает ход в окне разговора и говорит, что там нашёл.
+//
+// Порядок такой. Сначала снимок окна, и вслепую не шлётся ничего. Хода нет,
+// значит и прерывать нечего: Escape в простаивающее окно открывает меню отката,
+// то есть запирает клиента вместо остановки (четвёртая приёмка DK-716). Окно
+// уже стоит в модальном окне, значит одно нажатие его закрывает: разговор
+// человека, брошенный в меню Rewind, никто другой оттуда не выведет.
+//
+// Ход идёт, значит Escape. Второе нажатие уходит только тогда, когда снимок
+// после первого показывает всё тот же ход: первое клиент иногда тратит на своё
+// состояние. Прежде второй Escape шёл всегда, и на удавшемся первом он попадал
+// уже в простаивающее окно, парой открывая тот самый откат. Последним делом
+// снимок спрашивается ещё раз: что открылось нашими нажатиями, тем же нажатием
+// и закрывается.
+func chatStop(name string) (string, error) {
+	switch st := chatPaneState(name); st {
+	case paneIdle:
+		return stopWayIdle, nil
+	case paneBlind:
+		return stopWayBlind, nil
+	case paneRewind:
+		if err := escape(name); err != nil {
+			return stopWayRewind, err
+		}
+		return stopWayRewind, nil
+	}
+	if err := escape(name); err != nil {
+		return stopWayTurn, err
 	}
 	time.Sleep(chatStopPause)
-	_, err := runProc("tmux", "send-keys", "-t", "="+name+":", "Escape")
-	return err
+	if chatPaneState(name) == paneTurn {
+		if err := escape(name); err != nil {
+			return stopWayTurn, err
+		}
+		time.Sleep(chatStopPause)
+	}
+	if chatPaneState(name) == paneRewind {
+		if err := escape(name); err != nil {
+			return stopWayTurn, err
+		}
+	}
+	return stopWayTurn, nil
 }
 
 // chatForeignLive узнаёт, идёт ли разговор сейчас в чужом окне. Пустой tmux в
@@ -2151,10 +2276,23 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 			"чат %s не в нашей tmux: его окно поднимал не дашборд, прервать ход отсюда нечем", sid)})
 		return
 	}
-	if err := chatStop(last.Tmux); err != nil {
+	way, err := chatStop(last.Tmux)
+	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
 			"прерывание не подалось в tmux-сессию %s: %s", last.Tmux, procErr(err))})
 		return
+	}
+	// Снимок окна не прочитался: слать в него Escape вслепую нельзя. При
+	// остановленном ходе пара нажатий открывает меню отката, где одно Enter
+	// откатывает разговор человека (четвёртая приёмка DK-716).
+	if way == stopWayBlind {
+		s.logf("стоп чата %s: снимок окна %s не прочитался, Escape не послан", sid, last.Tmux)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
+			"снимок окна %s не прочитался: вслепую прерывать ход нельзя", last.Tmux)})
+		return
+	}
+	if way == stopWayRewind {
+		s.logf("стоп чата %s: окно %s стояло в меню клиента, оно закрыто, хода не было", sid, last.Tmux)
 	}
 	// Ход прерван, а работа сессии этим не всегда кончена: субагенты, которым
 	// агент раздал работу фоном, живут отдельно от хода и, вернувшись, поднимут
@@ -2168,11 +2306,24 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	// «ход кончен» и гасил плашку, пока строка доски ещё стояла под «Стопом»
 	// дожима.
 	if s.chatSubBusy(found.Path, sid) {
-		s.stopWaitSet(last.Tmux, sid, "", found.Name, found.Path)
+		s.stopWaitSet(last.Tmux, sid, "", found.Name, found.Path, false)
 		s.logf("ход чата %s прерван (tmux-сессия %s), фоновая работа жива, стоп дожимается", sid, last.Tmux)
 		writeJSON(w, http.StatusOK, map[string]any{"way": "escape", "tmux": last.Tmux, "state": "останавливается",
 			"message": "ход прерван, но фоновые субагенты ещё работают: их ходы будут прерваны тем же стопом, " +
 				"пока ты не напишешь в разговор сам"})
+		return
+	}
+	// Хода не было вовсе, и сказать об этом надо словами. Прежде такой стоп
+	// отвечал «ход прерван» и слал Escape в простаивающее окно.
+	if way == stopWayIdle {
+		s.logf("стоп чата %s: ход не шёл, Escape не послан (окно %s)", sid, last.Tmux)
+		writeJSON(w, http.StatusOK, map[string]any{"way": "idle", "tmux": last.Tmux, "state": "стоп",
+			"message": "ход не идёт: прерывать нечего, сессия жива и ждёт следующей реплики"})
+		return
+	}
+	if way == stopWayRewind {
+		writeJSON(w, http.StatusOK, map[string]any{"way": "idle", "tmux": last.Tmux, "state": "стоп",
+			"message": "ход не идёт: окно стояло в меню клиента, оно закрыто, а сессия жива"})
 		return
 	}
 	s.logf("ход чата %s прерван (tmux-сессия %s)", sid, last.Tmux)
@@ -3517,7 +3668,7 @@ var probeLegacy = []string{
 func (s *server) taskChats(projPath string) map[string]string {
 	out := map[string]string{}
 	binds := s.binds()
-	recs := s.bindsAll()
+	recs := s.bindsWork()
 	view := s.harnesses()
 	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
 		head := s.sessionHeadCached(f.path, f.stamp)

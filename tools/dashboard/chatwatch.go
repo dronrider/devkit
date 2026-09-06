@@ -164,6 +164,9 @@ func (s *server) chatWatchRestore() {
 		// которую человек остановил, ждать его не станет.
 		if st.StopAt > 0 {
 			s.watchAdd(sess)
+			// Заказ возвращается и в память процесса: по ней сборка доски
+			// глушит взятия строки, сделанные после нажатия (stopwait.go).
+			s.stopHoldSet(st.StopSid, sess, st.StopTask, time.Unix(st.StopFrom, 0))
 		}
 	}
 }

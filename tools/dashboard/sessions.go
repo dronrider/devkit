@@ -583,7 +583,7 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 	// Записи сессии целиком, а не свёрнутые: рабочих задач у одной сессии
 	// бывает несколько, и свёртка «последняя выигрывает» назвала бы только
 	// свежую (LLD DK-430, решение 8).
-	recs := s.bindsAll()
+	recs := s.bindsWork()
 	bySid, byTmux := s.livePeers()
 	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
 		// Список идёт свежими сверху, дальше первого протухшего смотреть нечего.

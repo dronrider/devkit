@@ -122,12 +122,116 @@ func (s *server) chatSubBusy(projPath, sid string) bool {
 	return s.subBusyOf(info.path, s.now())
 }
 
+// stopHold это живой заказ дожима в памяти процесса. Держится он ради второй
+// беды четвёртой приёмки DK-716: агент, чей ход прерывают, успевает открыть
+// этап командой доски, и строка становится рабочей уже после стопа. Остановка
+// отменялась тем, кого останавливают. Пока заказ жив, такие взятия строке
+// признака работы не дают.
+type stopHold struct {
+	tmux string
+	task string
+	from time.Time
+}
+
+// stopHoldSet запоминает заказ, stopHoldDrop забывает. Диск и память тут ходят
+// парой: на диске заказ переживает перезапуск демона, а из памяти его читает
+// сборка доски, и лезть за ним в файл по десятку раз на заход незачем.
+func (s *server) stopHoldSet(sid, tmux, task string, from time.Time) {
+	if sid == "" || task == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stops == nil {
+		s.stops = map[string]stopHold{}
+	}
+	s.stops[sid] = stopHold{tmux: tmux, task: task, from: from}
+}
+
+func (s *server) stopHoldDrop(sid string) {
+	if sid == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.stops, sid)
+}
+
+// stopHolds отдаёт снимок живых заказов.
+func (s *server) stopHolds() map[string]stopHold {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.stops) == 0 {
+		return nil
+	}
+	out := make(map[string]stopHold, len(s.stops))
+	for sid, h := range s.stops {
+		out[sid] = h
+	}
+	return out
+}
+
+// bindsWork читает реестр для счёта работы. Записи те же, что у bindsAll, минус
+// взятия, легшие под живым заказом дожима: строку остановили, и вернуть её себе
+// командой доски та же сессия не может, пока остановка идёт. Остальные читатели
+// реестра берут его целиком: имя окна и адрес транскрипта нужны и у
+// остановленной сессии.
+func (s *server) bindsWork() map[string][]sessionBind {
+	all := s.bindsAll()
+	holds := s.stopHolds()
+	for sid, h := range holds {
+		recs, ok := all[sid]
+		if !ok {
+			continue
+		}
+		kept := make([]sessionBind, 0, len(recs))
+		for _, r := range recs {
+			if stopHushes(h, r, s.now().Location()) {
+				continue
+			}
+			kept = append(kept, r)
+		}
+		all[sid] = kept
+	}
+	return all
+}
+
+// stopHushes отвечает, глушит ли заказ эту запись реестра. Глушится одно:
+// взятие остановленной строки той же сессией, случившееся после нажатия.
+// Привязка дерева и записи по соседним задачам остаются на месте: стоп снимает
+// одну строку, а не всю работу сессии.
+// Время записи стоит в ней без пояса, и читается оно в поясе тех же часов,
+// какими живёт сервер: писатель и читатель тут одна машина.
+func stopHushes(h stopHold, r sessionBind, loc *time.Location) bool {
+	if r.Source != sessions.BySrc || r.Task != h.task {
+		return false
+	}
+	at, err := time.ParseInLocation(bindStamp, r.Time, loc)
+	return err == nil && !at.Before(h.from)
+}
+
+// stopRetaken отвечает, взяла ли сессия остановленную строку снова, пока шла
+// остановка. Спрашивается это у нетронутого реестра: в bindsWork такие записи
+// как раз и не видны.
+func (s *server) stopRetaken(st chatStore) bool {
+	if st.StopSid == "" || st.StopTask == "" {
+		return false
+	}
+	h := stopHold{task: st.StopTask, from: time.Unix(st.StopFrom, 0)}
+	for _, r := range s.bindsAll()[st.StopSid] {
+		if stopHushes(h, r, s.now().Location()) {
+			return true
+		}
+	}
+	return false
+}
+
 // stopWaitSet ставит заказ дожима на окно разговора. Задача с проектом нужны
 // концу: по ним снимается привязка и зовётся уведомитель. У стопа из самой
 // панели чата задачи нет вовсе, и заказ там держит только дожим хода. Корень
 // проекта приходит параметром от зовущего: он его уже нашёл, а второй поиск по
 // имени отдавал бы заказ без транскрипта там, где имя не сошлось.
-func (s *server) stopWaitSet(tmux, sid, task, project, projPath string) {
+func (s *server) stopWaitSet(tmux, sid, task, project, projPath string, freed bool) {
 	if tmux == "" || !chatKeyRe.MatchString(tmux) {
 		return
 	}
@@ -142,11 +246,12 @@ func (s *server) stopWaitSet(tmux, sid, task, project, projPath string) {
 	key := "tmux-" + tmux
 	st := s.chatStoreRead(key)
 	now := s.now().Unix()
-	st.StopAt, st.StopFrom = now, now
+	st.StopAt, st.StopFrom, st.StopFreed = now, now, freed
 	st.StopSid, st.StopTask, st.StopProject, st.StopPath = sid, task, project, path
 	if err := s.chatStoreWrite(key, st); err != nil {
 		s.logf("заказ дожима стопа для %s не запомнился: %v", tmux, err)
 	}
+	s.stopHoldSet(sid, tmux, task, time.Unix(now, 0))
 	s.watchAdd(tmux)
 }
 
@@ -163,6 +268,7 @@ func (s *server) stopWaitOff(tmux string) {
 		return
 	}
 	s.logf("дожим стопа для %s снят: в разговор пришли слова человека", tmux)
+	s.stopHoldDrop(st.StopSid)
 	stopWaitClear(&st)
 	if err := s.chatStoreWrite(key, st); err != nil {
 		s.logf("снятие дожима стопа для %s не запомнилось: %v", tmux, err)
@@ -185,7 +291,7 @@ func (s *server) stopWaitOffSaid(key string) {
 
 // stopWaitClear стирает заказ из записи разговора.
 func stopWaitClear(st *chatStore) {
-	st.StopAt, st.StopFrom = 0, 0
+	st.StopAt, st.StopFrom, st.StopFreed = 0, 0, false
 	st.StopSid, st.StopTask, st.StopProject, st.StopPath = "", "", "", ""
 }
 
@@ -211,14 +317,31 @@ func (s *server) stopWaitOne(name string, alive func(string) bool) {
 		s.stopWaitDone(name, st, "окно разговора закрылось")
 		return
 	}
+	// Состояние окна спрашивается у самого клиента, снимком экрана. Прежде тут
+	// стояла свежесть транскрипта, и сторож бил Escape по всему, что писалось
+	// последние двадцать секунд. При остановленном ходе пара нажатий открывает
+	// меню отката, и клиент оставался заперт в нём, а сторож долбил дальше
+	// шагом в пять секунд (четвёртая приёмка DK-716).
+	//
+	// Тишина после нажатия остаётся: окно перерисовывается не мгновенно, и
+	// первые секунды снимок показывает прежнее состояние.
+	pane := chatPaneState(name)
+	if pane == paneRewind {
+		// Клиента застали в модальном окне. Закрывается оно тем же Escape, и
+		// сделать это надо: человек в него не заходил, а выйти оттуда некому.
+		if err := escape(name); err != nil {
+			s.logf("меню клиента в %s не закрылось: %v", name, err)
+			return
+		}
+		s.logf("стоп %s: окно %s стояло в меню клиента, оно закрыто", stopWaitWhat(st), name)
+		return
+	}
 	// Ход поднялся снова: субагент вернул работу и разбудил агента. Это и есть
 	// тот случай, ради которого заказ живёт: второй стоп человека, нажатый
-	// руками в эту минуту, срабатывал, а первый уходил в пустоту. Идущим ход
-	// считается по свежей записи транскрипта, и своя запись о прерывании под
-	// эту мерку не попадает, её отделяет тишина stopWaitSettle.
-	tail := s.busyEntryOf(st.StopPath)
-	if now.Sub(since) >= stopWaitSettle && !tail.last.IsZero() && now.Sub(tail.last) < busyFresh {
-		if err := chatStop(name); err != nil {
+	// руками в эту минуту, срабатывал, а первый уходил в пустоту.
+	if pane == paneTurn && now.Sub(since) >= stopWaitSettle {
+		way, err := chatStop(name)
+		if err != nil {
 			s.logf("дожим стопа в %s не подался: %v", name, err)
 			return
 		}
@@ -226,7 +349,11 @@ func (s *server) stopWaitOne(name string, alive func(string) bool) {
 		if err := s.chatStoreWrite("tmux-"+name, st); err != nil {
 			s.logf("дожим стопа для %s не запомнился: %v", name, err)
 		}
-		s.logf("стоп %s: ход разговора %s поднялся снова и прерван дожимом", stopWaitWhat(st), name)
+		s.logf("стоп %s: ход разговора %s поднялся снова и %s дожимом", stopWaitWhat(st), name, way)
+		return
+	}
+	// Ход идёт, а тишина после нажатия ещё не вышла: ждём её и не трогаем окно.
+	if pane == paneTurn {
 		return
 	}
 	if s.subBusyOf(st.StopPath, now) {
@@ -239,7 +366,17 @@ func (s *server) stopWaitOne(name string, alive func(string) bool) {
 		s.stopWaitDone(name, st, fmt.Sprintf("фоновая работа не встала за %s", stopWaitTTL))
 		return
 	}
-	s.stopWaitDone(name, st, "фоновая работа встала")
+	// Снимок окна не читается: заказ не кончается по нему. Мёртвое окно ловит
+	// проверка живости выше, а нечитаемый снимок живого окна это не довод
+	// объявлять работу вставшей.
+	if pane == paneBlind {
+		if now.Sub(time.Unix(st.StopFrom, 0)) < stopWaitTTL {
+			return
+		}
+		s.stopWaitDone(name, st, fmt.Sprintf("снимок окна не прочитался за %s", stopWaitTTL))
+		return
+	}
+	s.stopWaitDone(name, st, "хода нет, фоновая работа встала")
 }
 
 // stopWaitWhat подписывает заказ в журнале: задачей, а при стопе из панели
@@ -256,18 +393,32 @@ func stopWaitWhat(st chatStore) string {
 // этой минуты, потому что раньше неё работа шла.
 func (s *server) stopWaitDone(name string, st chatStore, why string) {
 	if st.StopTask != "" && st.StopSid != "" {
-		if err := s.stopChatWorkRelease(st.StopSid, st.StopTask, st.StopProject, name); err != nil {
-			s.logf("стоп %s: привязка сессии к задаче не снялась: реестр %s не записался: %v",
-				st.StopTask, s.bindsPath(), err)
+		// Привязку сняли ещё при нажатии, и слова об этом уже сказаны. Снимать
+		// её второй раз нужно только тогда, когда сессия успела взять строку
+		// снова: пока заказ жил, такое взятие не считалось, а последним словом
+		// реестра должна остаться «снята» (четвёртая приёмка DK-716).
+		retaken := st.StopFreed && s.stopRetaken(st)
+		if !st.StopFreed || retaken {
+			if err := s.stopChatWorkRelease(st.StopSid, st.StopTask, st.StopProject, name); err != nil {
+				s.logf("стоп %s: привязка сессии к задаче не снялась: реестр %s не записался: %v",
+					st.StopTask, s.bindsPath(), err)
+			}
 		}
-		s.saidMark(saidSessionKey(st.StopSid), stopChatWord(st.StopTask))
-		if p := s.projectNamed(st.StopProject); p != nil {
-			if note := s.sayStop(p.Path, p.Name, st.StopTask, "chat"); note != "" {
-				s.logf("стоп %s: %s", st.StopTask, note)
+		if retaken {
+			s.logf("стоп %s: сессия %s взяла строку снова после нажатия, привязка снята повторно",
+				st.StopTask, st.StopSid)
+		}
+		if !st.StopFreed {
+			s.saidMark(saidSessionKey(st.StopSid), stopChatWord(st.StopTask))
+			if p := s.projectNamed(st.StopProject); p != nil {
+				if note := s.sayStop(p.Path, p.Name, st.StopTask, "chat"); note != "" {
+					s.logf("стоп %s: %s", st.StopTask, note)
+				}
 			}
 		}
 	}
 	s.logf("стоп %s: %s, дожим кончен (окно %s)", stopWaitWhat(st), why, name)
+	s.stopHoldDrop(st.StopSid)
 	stopWaitClear(&st)
 	if err := s.chatStoreWrite("tmux-"+name, st); err != nil {
 		s.logf("конец дожима стопа для %s не запомнился: %v", name, err)

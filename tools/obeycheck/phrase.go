@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Команда проверки сценария. Греп ищет построчно, а проверки сценариев ищут
@@ -65,4 +68,59 @@ func writePhrase(bin string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(bin, phraseName), []byte(phraseScript), 0o755)
+}
+
+// assistantReplies достаёт реплики ассистента из транскрипта: это вход судьи
+// по умолчанию, слово «ответ» в ключе «вход». Транскрипт headless-прогона
+// это поток stream-json по одному событию на строку, и формат его хрупок,
+// поэтому знать его должно одно место. Реплика это текстовые блоки события
+// «assistant», вызовы инструментов и их результаты в счёт не идут. Транскрипт
+// без единой JSON-строки (команда прогона печатает голый текст) отдаётся
+// целиком: там реплика и есть весь вывод.
+func assistantReplies(transcript string) (string, error) {
+	data, err := os.ReadFile(transcript)
+	if err != nil {
+		return "", fmt.Errorf("транскрипт: %v", err)
+	}
+	var parts []string
+	jsonSeen := false
+	for _, line := range strings.Split(string(data), "\n") {
+		t := strings.TrimSpace(line)
+		if !strings.HasPrefix(t, "{") {
+			continue
+		}
+		var ev struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(t), &ev) != nil {
+			continue
+		}
+		jsonSeen = true
+		if ev.Type != "assistant" || len(ev.Message.Content) == 0 {
+			continue
+		}
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(ev.Message.Content, &blocks) == nil {
+			for _, b := range blocks {
+				if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+					parts = append(parts, strings.TrimSpace(b.Text))
+				}
+			}
+			continue
+		}
+		var text string
+		if json.Unmarshal(ev.Message.Content, &text) == nil && strings.TrimSpace(text) != "" {
+			parts = append(parts, strings.TrimSpace(text))
+		}
+	}
+	if !jsonSeen {
+		return strings.TrimSpace(string(data)), nil
+	}
+	return strings.Join(parts, "\n\n"), nil
 }

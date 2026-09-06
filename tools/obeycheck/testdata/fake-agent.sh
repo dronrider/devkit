@@ -27,6 +27,7 @@ angry)
 	exit 3
 	;;
 idle) ;;
+say) cat reply.jsonl ;; # реплика ассистента потоком stream-json, как у claude -p
 *)
 	echo "неизвестное поведение $behaviour" >&2
 	exit 9

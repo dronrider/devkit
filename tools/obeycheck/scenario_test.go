@@ -169,7 +169,7 @@ func TestLoadScenariosOrderAndFilter(t *testing.T) {
 	for _, s := range all {
 		ids = append(ids, s.ID)
 	}
-	if strings.Join(ids, ",") != "env,phrase,press,session-only" {
+	if strings.Join(ids, ",") != "env,judge-file,judge,phrase,press,session-only" {
 		t.Fatalf("порядок сценариев: %v", ids)
 	}
 	one, err := loadScenarios(dir, root, []string{"press"}, nil)
@@ -198,7 +198,7 @@ func TestLoadScenariosForFile(t *testing.T) {
 	for _, s := range rules {
 		ids = append(ids, s.ID)
 	}
-	if strings.Join(ids, ",") != "env,phrase,press" {
+	if strings.Join(ids, ",") != "env,judge-file,judge,phrase,press" {
 		t.Fatalf("отбор по RULES.core.md дал %v", ids)
 	}
 	both, err := loadScenarios(dir, root, []string{"press"}, []string{"RULES.core.md"})

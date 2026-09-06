@@ -12,21 +12,24 @@ import (
 )
 
 type Params struct {
-	Scenarios []Scenario
-	Layouts   []string // ровно две раскладки: сравниваются они между собой
-	Repeats   int      // k повторов на раскладку
-	Base      string   // что за вторая раскладка: старый текст или пусто
-	Agent     []string // команда прогона, промпт уходит ей на stdin
-	End       string   // конец прогона: сессия или субагент
-	AgentDef  string   // определение исполнителя для субагентского конца
-	Devkit    string   // чекаут devkit
-	HomeSeed  string   // что положить во временный HOME до раскладки
-	UserHome  string   // дом пользователя, откуда берётся связка ключей; пусто это дом машины
-	Work      string   // куда класть прогоны, пусто это временная директория
-	Keep      bool     // не убирать директории прогонов
-	Preflight bool     // пробный прогон перед полным проходом
-	Timeout   time.Duration
-	Progress  io.Writer // построчный ход прогона, обычно stderr
+	Scenarios  []Scenario
+	Layouts    []string // ровно две раскладки: сравниваются они между собой
+	Repeats    int      // k повторов на раскладку
+	Base       string   // что за вторая раскладка: старый текст или пусто
+	Agent      []string // команда прогона, промпт уходит ей на stdin
+	Judge      []string // команда судьи, промпт уходит ей на stdin; нужна сценариям с секцией «Судья»
+	JudgeModel string   // модель судьи, как её называть в сообщениях
+	jury       *judge   // собранный судья прогона, живёт от калибровки до последней клетки
+	End        string   // конец прогона: сессия или субагент
+	AgentDef   string   // определение исполнителя для субагентского конца
+	Devkit     string   // чекаут devkit
+	HomeSeed   string   // что положить во временный HOME до раскладки
+	UserHome   string   // дом пользователя, откуда берётся связка ключей; пусто это дом машины
+	Work       string   // куда класть прогоны, пусто это временная директория
+	Keep       bool     // не убирать директории прогонов
+	Preflight  bool     // пробный прогон перед полным проходом
+	Timeout    time.Duration
+	Progress   io.Writer // построчный ход прогона, обычно stderr
 }
 
 // Обёртка субагентского конца. Резидент у исполнителя тот же, а поведение
@@ -43,6 +46,7 @@ type attempt struct {
 	Green   bool
 	Suspect bool   // проверка зелёная, а команда прогона вышла с ошибкой
 	Note    string // чем кончился прогон, если не просто зелено
+	Judge   string // разбор судьи в одну строку, у сценариев с секцией «Судья»
 	Repeat  int
 }
 
@@ -125,6 +129,13 @@ func (p Params) runOnce(s Scenario, layout string, repeat int, dir string) (atte
 		if runErr != nil {
 			a.Suspect = true
 			a.Note = fmt.Sprintf("проверка зелёная, а команда прогона вышла с ошибкой: %v", runErr)
+		}
+		// Судья зовётся только после зелёной проверки: она держит положительное
+		// требование и бесплатна, а клетка зелёная, когда зелены обе.
+		if s.Judge != nil {
+			if err := p.judgeOnce(s, e, &a); err != nil {
+				return a, err
+			}
 		}
 		return a, nil
 	}
@@ -213,6 +224,13 @@ func (p Params) validate() error {
 	if p.End != endSession && p.End != endSub {
 		return fmt.Errorf("конец прогона это %s или %s, получил %q", endSession, endSub, p.End)
 	}
+	if len(p.Judge) == 0 {
+		for _, s := range p.Scenarios {
+			if s.Judge != nil {
+				return fmt.Errorf("у сценария %s есть секция «%s», а команды судьи нет", s.ID, sectJudge)
+			}
+		}
+	}
 	return checkBase(p.Base)
 }
 
@@ -278,6 +296,18 @@ func Run(p Params) (Result, error) {
 			return Result{}, err
 		}
 	}
+	// Калибровка судьи идёт следом за пробой и до первой сессии: судья, который
+	// разошёлся с разметкой человека, не стоит и одной сессии.
+	if needsJudge(live) {
+		j, err := newJudge(work, p.Judge, p.JudgeModel, p.HomeSeed, p.UserHome, p.Timeout)
+		if err != nil {
+			return Result{}, err
+		}
+		p.jury = j
+		if err := p.calibrate(live); err != nil {
+			return Result{}, err
+		}
+	}
 
 	done := 0
 	for _, s := range live {
@@ -297,6 +327,9 @@ func Run(p Params) (Result, error) {
 				if !a.Green {
 					word = "красно: " + a.Note
 				}
+				if a.Judge != "" {
+					word += "; судья: " + a.Judge
+				}
 				p.say("[%d/%d] %s / %s / повтор %d: %s", done, total, s.ID, filepath.Base(layout), i, word)
 				r.Cells[li].Attempts = append(r.Cells[li].Attempts, a)
 				if !p.Keep {
@@ -314,6 +347,15 @@ func Run(p Params) (Result, error) {
 		}
 	}
 	return Result{Report: render(rows, p.Layouts, p.Repeats, p.Base), Rows: rows, Failed: failed}, nil
+}
+
+func needsJudge(scen []Scenario) bool {
+	for _, s := range scen {
+		if s.Judge != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (p Params) say(format string, a ...any) {

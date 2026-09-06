@@ -20,6 +20,7 @@ type Scenario struct {
 	Prompt   string
 	Setup    string
 	Check    string
+	Judge    *Judge // судейская секция, необязательная
 	Path     string
 }
 
@@ -38,6 +39,10 @@ const (
 	sectSetup  = "Подготовка"
 	sectCheck  = "Проверка"
 )
+
+// sectNames это секции сценария в порядке, в котором они перечисляются в
+// отказах разбора.
+var sectNames = []string{sectPrompt, sectSetup, sectCheck, sectJudge}
 
 // runsOn отвечает, гоняется ли сценарий на этом конце. Сценарий про сам спавн
 // исполнителя субагентским концом бессмысленен, поэтому конец объявляется в
@@ -86,6 +91,7 @@ func parseScenario(path, text string) (Scenario, error) {
 	i++
 
 	body := map[string][]string{}
+	start := map[string]int{} // номер строки заголовка секции, для отказов разбора
 	sect := ""
 	var f obey.Fence
 	for ; i < len(lines); i++ {
@@ -95,14 +101,15 @@ func parseScenario(path, text string) (Scenario, error) {
 		if !inCode && strings.HasPrefix(l, "## ") {
 			sect = strings.TrimSpace(l[3:])
 			switch sect {
-			case sectPrompt, sectSetup, sectCheck:
+			case sectPrompt, sectSetup, sectCheck, sectJudge:
 			default:
-				return fail(ln, "неизвестная секция «%s»: жду %s, %s или %s", sect, sectPrompt, sectSetup, sectCheck)
+				return fail(ln, "неизвестная секция «%s»: жду %s", sect, strings.Join(sectNames, ", "))
 			}
 			if _, ok := body[sect]; ok {
 				return fail(ln, "секция «%s» уже была", sect)
 			}
 			body[sect] = nil
+			start[sect] = ln
 			continue
 		}
 		if sect == "" {
@@ -140,6 +147,15 @@ func parseScenario(path, text string) (Scenario, error) {
 	s.Prompt = unfence(body[sectPrompt])
 	s.Setup = unfence(body[sectSetup])
 	s.Check = unfence(body[sectCheck])
+	if raw, ok := body[sectJudge]; ok {
+		j, err := parseJudge(raw, func(i int, format string, a ...any) error {
+			return fmt.Errorf("%s:%d: %s", filepath.Base(path), start[sectJudge]+1+i, fmt.Sprintf(format, a...))
+		})
+		if err != nil {
+			return Scenario{}, err
+		}
+		s.Judge = j
+	}
 	if s.Prompt == "" {
 		return Scenario{}, fmt.Errorf("%s: нет секции «## %s» или она пуста", filepath.Base(path), sectPrompt)
 	}

@@ -117,5 +117,26 @@ func render(rows []row, layouts []string, repeats int, base string) string {
 		b.WriteString("\nпервый красный прогон каждого угла:\n")
 		b.WriteString(strings.Join(notes, "\n") + "\n")
 	}
+	// Разбор судьи печатается по каждой клетке: вердикт без цитаты это слово,
+	// а по цитате видно, что судья прочитал, и видно это без --keep.
+	var judged []string
+	for _, r := range rows {
+		if r.Skipped || r.Scenario.Judge == nil {
+			continue
+		}
+		for i, c := range r.Cells {
+			for _, a := range c.Attempts {
+				if a.Judge == "" {
+					continue
+				}
+				judged = append(judged, fmt.Sprintf("  %s / %s / повтор %d: %s",
+					r.Scenario.ID, filepath.Base(layouts[i]), a.Repeat, a.Judge))
+			}
+		}
+	}
+	if len(judged) > 0 {
+		b.WriteString("\nразбор судьи:\n")
+		b.WriteString(strings.Join(judged, "\n") + "\n")
+	}
 	return strings.TrimRight(b.String(), "\n")
 }

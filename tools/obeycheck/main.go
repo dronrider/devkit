@@ -35,6 +35,10 @@ const usageText = `obeycheck: правда ли правило соблюдае�
   --tier ярус      mini, base, pro или max: в модель ярус разворачивает
                    agentctl harness маппингом активного харнеса
   --model имя      модель прямо, вместо разворота яруса
+  --judge-tier я   ярус судьи для сценариев с секцией «Судья», по умолчанию mini
+  --judge-model и  модель судьи прямо, вместо разворота яруса
+  --judge-cmd ...  команда судьи, промпт уходит ей на stdin, {model} в ней
+                   заменяется на модель судьи; по умолчанию claude -p
   --end конец      сессия (по умолчанию) или субагент: во втором случае промпт
                    отдаётся не сессии, а исполнителю
   --agent-def имя  определение исполнителя для субагентского конца
@@ -56,9 +60,17 @@ const usageText = `obeycheck: правда ли правило соблюдае�
 Фишера при p не больше 0.05. С базой «старый» зачтены «польза», «не хуже» и
 «зелёный на обеих», с базой «пусто» только «польза».
 
+Сценарий с секцией «Судья» после зелёной проверки отдаёт транскрипт или файл
+проекта судье-модели со свежим контекстом, и клетка зелёная, когда судья сказал
+«да». До первой сессии судья калибруется на примерах из файла сценария;
+расхождение хотя бы на одном это код 2. Ошибка вызова судьи (харнес, квота,
+потолок времени, пустой ответ) тоже код 2, без отметки в файле задачи.
+
 Код возврата: 0 все строки зачтены, 1 хотя бы одна не зачтена, 2 ошибка
 прогона или аргументов.
 `
+
+const defaultJudgeCmd = "claude -p --model {model}"
 
 const defaultAgentCmd = "claude -p --output-format stream-json --verbose --dangerously-skip-permissions --model {model}"
 
@@ -92,6 +104,9 @@ func main() {
 	repeats := fs.Int("k", 5, "повторов на раскладку")
 	tier := fs.String("tier", "mini", "ярус модели")
 	model := fs.String("model", "", "модель прямо, вместо разворота яруса")
+	judgeTier := fs.String("judge-tier", "mini", "ярус судьи")
+	judgeModel := fs.String("judge-model", "", "модель судьи прямо, вместо разворота яруса")
+	judgeCmd := fs.String("judge-cmd", defaultJudgeCmd, "команда судьи")
 	end := fs.String("end", endSession, "конец прогона: сессия или субагент")
 	agentDef := fs.String("agent-def", "exec-medium", "определение исполнителя для субагентского конца")
 	agentCmd := fs.String("agent-cmd", defaultAgentCmd, "команда прогона")
@@ -164,21 +179,48 @@ func main() {
 		}
 	}
 
+	// Модель судьи разворачивается только сценариям с секцией «Судья»: прогону
+	// без судьи agentctl звать незачем.
+	var judgeArgv []string
+	jm := *judgeModel
+	if needsJudge(scen) {
+		judgeArgv = strings.Fields(*judgeCmd)
+		if len(judgeArgv) == 0 {
+			fail(fmt.Errorf("пустая команда судьи"))
+		}
+		if strings.Contains(*judgeCmd, "{model}") {
+			if jm == "" {
+				jm, err = resolveModel(*judgeTier)
+				if err != nil {
+					fail(fmt.Errorf("модель судьи: %v", err))
+				}
+			}
+			for i := range judgeArgv {
+				judgeArgv[i] = strings.ReplaceAll(judgeArgv[i], "{model}", jm)
+			}
+		}
+		if jm == "" {
+			jm = *judgeTier
+		}
+	}
+
 	res, err := Run(Params{
-		Scenarios: scen,
-		Layouts:   fs.Args(),
-		Repeats:   *repeats,
-		Base:      *base,
-		Agent:     argv,
-		End:       *end,
-		AgentDef:  *agentDef,
-		Devkit:    root,
-		HomeSeed:  *homeSeed,
-		Work:      *work,
-		Keep:      *keep,
-		Preflight: !*noPreflight,
-		Timeout:   *timeout,
-		Progress:  os.Stderr,
+		Scenarios:  scen,
+		Layouts:    fs.Args(),
+		Repeats:    *repeats,
+		Base:       *base,
+		Agent:      argv,
+		Judge:      judgeArgv,
+		JudgeModel: jm,
+		End:        *end,
+		AgentDef:   *agentDef,
+		Devkit:     root,
+		HomeSeed:   *homeSeed,
+		Work:       *work,
+		Keep:       *keep,
+		Preflight:  !*noPreflight,
+		Timeout:    *timeout,
+		Progress:   os.Stderr,
 	})
 	if err != nil {
 		fail(err)

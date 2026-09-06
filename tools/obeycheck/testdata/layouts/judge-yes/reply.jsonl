@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","model":"fake"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Сейчас посмотрю."},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"docs/tasks/OB-021.md"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"# OB-021"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Я разобрала постановку и сверила её с кодом."}]}}
+{"type":"result","subtype":"success","result":"Я разобрала постановку и сверила её с кодом."}

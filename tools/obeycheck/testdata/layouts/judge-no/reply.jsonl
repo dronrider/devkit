@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","model":"fake"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Я разобрал постановку и сверил её с кодом."}]}}
+{"type":"result","subtype":"success","result":"Я разобрал постановку и сверил её с кодом."}

@@ -228,13 +228,8 @@ func makeEnv(root, devkit, layout, homeSeed, userHome string) (*runEnv, error) {
 	// дом, и перекрывать его нечем. Уборка отдельного шага не просит, каталог
 	// прогона сносится целиком, а os.RemoveAll идёт по ссылке не внутрь, а
 	// мимо, и связка пользователя остаётся цела.
-	if link := filepath.Join(e.Home, keychainRel); !pathExists(link) {
-		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.Symlink(filepath.Join(userHome, keychainRel), link); err != nil {
-			return nil, fmt.Errorf("ссылка на связку ключей: %v", err)
-		}
+	if err := linkKeychain(e.Home, userHome); err != nil {
+		return nil, err
 	}
 	if lh := filepath.Join(layout, "home"); dirExists(lh) {
 		if err := copyTree(lh, e.Home, nil); err != nil {
@@ -293,6 +288,22 @@ func makeEnv(root, devkit, layout, homeSeed, userHome string) (*runEnv, error) {
 		}
 	}
 	return e, nil
+}
+
+// linkKeychain кладёт в дом ссылку на связку ключей пользователя, если дом
+// (затравка) не принёс своей.
+func linkKeychain(home, userHome string) error {
+	link := filepath.Join(home, keychainRel)
+	if pathExists(link) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		return err
+	}
+	if err := os.Symlink(filepath.Join(userHome, keychainRel), link); err != nil {
+		return fmt.Errorf("ссылка на связку ключей: %v", err)
+	}
+	return nil
 }
 
 func dirExists(p string) bool {

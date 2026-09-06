@@ -343,3 +343,37 @@ func AppendToFork(doc, name, sub string) (string, error) {
 	}
 	return "", fmt.Errorf("развилки «%s» в перечне нет: завести её через --ask", name)
 }
+
+// HoldingForks отбирает из перечня развилки, держащие старт задачи. Читают
+// его ворота: `shipctl start` перед заведением ветки и `taskctl close` перед
+// архивацией. Отбор один на обоих: разойдись они, задача заводилась бы с
+// вопросом, который потом не даёт себя закрыть, и наоборот.
+func HoldingForks(doc string) []Fork {
+	var out []Fork
+	for _, f := range ParseForks(doc) {
+		if f.HoldsStart() {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// ForkGateNote собирает отказ ворот: имена развилок с вопросами, рекомендация,
+// если она есть, и обе команды, которыми отказ снимается. Пустой список это
+// пустая строка, и звать ворота на ней незачем.
+func ForkGateNote(id, what string, forks []Fork) string {
+	if len(forks) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s: открытых развилок %d, решает человек, и до ответа %s не идёт:", id, len(forks), what)
+	for _, f := range forks {
+		fmt.Fprintf(&b, "\n- «%s»: %s", f.Name, f.Question)
+		if f.Hint != "" {
+			b.WriteString("\n  рекомендация: " + f.Hint)
+		}
+	}
+	fmt.Fprintf(&b, "\nответ снимает развилку: taskctl decide %s «%s» --by человек \"ответ и довод\"", id, forks[0].Name)
+	fmt.Fprintf(&b, "\nвопрос, на который отвечает исполнитель, передаётся ему: taskctl decide %s «%s» --leave", id, forks[0].Name)
+	return b.String()
+}

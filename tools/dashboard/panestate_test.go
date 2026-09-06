@@ -29,6 +29,9 @@ func TestPaneStateTellsClientScreensApart(t *testing.T) {
 		{"вопрос человеку", paneAskScreen, paneAsk},
 		{"экран входа", paneLoginScreen, paneLogin},
 		{"эхо снимка в ленте", paneEchoScreen, paneIdle},
+		{"эхо слов меню при идущем ходе", paneEchoRewindScreen, paneTurn},
+		{"эхо слов меню на простое", paneEchoRewindIdleScreen, paneIdle},
+		{"эхо слов входа при идущем ходе", paneEchoLoginScreen, paneTurn},
 	}
 	for _, c := range cases {
 		if got := paneState(c.screen, true); got != c.want {
@@ -177,6 +180,33 @@ func TestStopWaitHoldsLoginScreen(t *testing.T) {
 	}
 }
 
+// Слова меню отката, напечатанные агентом в свою ленту, окном не считаются.
+// Они лежат в исходниках самого дашборда и в тексте задачи, и печатает их
+// всякий агент, который тут работает. Прежде такой снимок читался меню отката,
+// и стоп бил Escape по идущему ходу, отвечал «ход не шёл» и снимал работу со
+// строки, пока та шла (замечание ревью 15).
+func TestRowStopReadsEchoOfRewindWords(t *testing.T) {
+	sid := "dff98764-9999-4111-8111-111111111111"
+	e, c, tmuxLog := chatWorkEnv(t, sid, "chat-XR-004-1")
+	writePane(t, tmuxLog, paneEchoRewindScreen)
+
+	resp := doReq(t, c, "DELETE", e.srv.URL+"/api/projects/demo/runs/XR-004", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("стоп строки на эхе слов меню: %d %s", resp.StatusCode, text)
+	}
+	log := readFile(t, tmuxLog)
+	if n := strings.Count(log, "send-keys -t =chat-XR-004-1: Escape"); n != 2 {
+		t.Errorf("ход прерван %d нажатиями, ждал два: %s", n, log)
+	}
+	if !strings.Contains(text, "прерван") {
+		t.Errorf("идущий ход выдан за неидущий: %s", text)
+	}
+	if !e.s.stopWaitOn("chat-XR-004-1") {
+		t.Error("заказ дожима не поставлен на прерванном ходе")
+	}
+}
+
 // Незнакомая подсказка клиента читается простоем, и стоп тогда молчит вместо
 // работы: клавиш он не шлёт, а человеку отвечает «прерывать нечего». Отличить
 // это от честного простоя можно вторым источником: незакрытый вызов в журнале
@@ -190,7 +220,7 @@ func TestChatStopDoubtsUnknownScreen(t *testing.T) {
 	now := e.s.now()
 	// Ход идёт, а клиент подписал окно словами, которых мы не знаем: своей
 	// новой формулировкой или чужим языком.
-	writeSession(t, e.home, e.proj, "", sid, stopTranscript(now, "live", false), now.Add(-3*time.Minute))
+	writeSession(t, e.home, e.proj, "", sid, doubtTranscript(now, 5*time.Second), now.Add(-5*time.Second))
 	forgetDigests()
 	writePane(t, tmuxLog, "  режим работы включён . для агентов")
 
@@ -204,6 +234,42 @@ func TestChatStopDoubtsUnknownScreen(t *testing.T) {
 	}
 	if !lc.contains(t, "подсказки клиента не узнал") {
 		t.Errorf("журнал промолчал о неузнанном экране: %v", lc.lines)
+	}
+}
+
+// doubtTranscript это транскрипт с незакрытым вызовом инструмента: вызов подан
+// и ответа на него нет. Время последней записи задаётся молчанием quiet, им и
+// решается, движется журнал прямо сейчас или вызов давно брошен.
+func doubtTranscript(now time.Time, quiet time.Duration) string {
+	at := func(d time.Duration) string { return now.Add(-d).Format(time.RFC3339) }
+	return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"собери проект"},"timestamp":%q}`+"\n"+
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool-x","name":"Bash","input":{}}]},"timestamp":%q}`+"\n",
+		at(quiet+time.Minute), at(quiet))
+}
+
+// Вызов, брошенный прерванным ходом или несданной работой делегата, висит в
+// хвосте журнала сколько угодно. Одного его мало: над спокойным окном, где всё
+// в порядке, сомнение звучало бы обвинением клиента (замечание ревью 16).
+// Второй довод это движение, журнал должен писаться прямо сейчас.
+func TestChatStopTrustsAbandonedCall(t *testing.T) {
+	sid := "dff98764-aaaa-4111-8111-111111111111"
+	e, c, tmuxLog := chatWorkLiveEnv(t, sid, "chat-XR-004-1")
+	lc := &logCapture{}
+	e.s.logf = lc.log
+	now := e.s.now()
+	writeSession(t, e.home, e.proj, "", sid, doubtTranscript(now, 3*time.Minute), now.Add(-3*time.Minute))
+	forgetDigests()
+	writePane(t, tmuxLog, paneIdleScreen)
+
+	text := body(t, doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/stop", "{}"))
+	if strings.Contains(text, "подсказки клиента не узнал") {
+		t.Errorf("брошенный вызов поднял сомнение над спокойным окном: %s", text)
+	}
+	if !strings.Contains(text, "ход не идёт") {
+		t.Errorf("честный простой назван иначе: %s", text)
+	}
+	if lc.contains(t, "подсказки клиента не узнал") {
+		t.Errorf("журнал обвинил клиента на брошенном вызове: %v", lc.lines)
 	}
 }
 

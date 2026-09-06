@@ -68,6 +68,21 @@ const (
 	paneEchoScreen = " \u276f 1. Красный\n   2. Синий\n" +
 		" Enter to select . Esc to cancel\n" +
 		"-----\n\u276f \n-----\n" + paneIdleScreen
+	// Эхо слов самого меню отката, и ход при этом идёт. Слова эти лежат в
+	// исходниках дашборда и в тексте задачи, и печатает их в свою ленту всякий
+	// агент, который тут работает (замечание ревью 15). Окна на экране нет,
+	// ниже стоят поле ввода и строка режима с признаком идущего хода.
+	paneEchoRewindScreen = "   grep -n paneRewindMarks chats.go\n" +
+		"   // Restore the code and/or conversation to the point before...\n" +
+		"-----\n\u276f \n-----\n" + paneTurnScreen
+	// То же эхо на простаивающем окне: слова меню в ленте, а человек стоит на
+	// приглашении и ничего не ждёт.
+	paneEchoRewindIdleScreen = "   // Restore the code and/or conversation to the point before...\n" +
+		"-----\n\u276f \n-----\n" + paneIdleScreen
+	// Эхо слов экрана входа при идущем ходе: агент прочитал clientlogin.go и
+	// напечатал строку набора в ленту.
+	paneEchoLoginScreen = "   loginScreenWords: select login method, press enter to retry\n" +
+		"-----\n\u276f \n-----\n" + paneTurnScreen
 )
 
 // writePane кладёт стенду экран окна: им стоп и сторож дожима решают, идёт ли

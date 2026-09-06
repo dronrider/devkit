@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Изоляция параллельных сессий: у каждой задачи своё рабочее дерево.
@@ -285,6 +287,24 @@ func switchable(tree, branch string) error {
 	return nil
 }
 
+// forkGate не даёт завести ветку, пока в перечне развилок файла задачи стоит
+// открытая человеческая (LLD DK-552, решение 2). Исполнитель, севший за код с
+// нерешённой развилкой, решает её за человека, и расхождение всплывает уже на
+// ревью, когда правка написана. Отбор развилок и слова отказа лежат в
+// internal/taskform: их же читает `taskctl close`, и второй разбор развёл бы
+// ворота старта и ворота закрытия на первой правке формы.
+//
+// Файла задачи нет, значит и перечня нет: строка до рубежа заведения файла
+// стартует, как стартовала. Ворота говорят о том, что прочитали, а не о том,
+// чего не нашли.
+func forkGate(root, id string) error {
+	held := taskform.HoldingForks(readTaskDoc(root, id))
+	if len(held) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s", taskform.ForkGateNote(id, "старт задачи", held))
+}
+
 // cmdStart берёт задачу в работу в отдельном дереве: ветка по ID в worktree
 // рядом с проектом, задача из Backlog переводится в In progress. Основной
 // чекаут не трогается и остаётся на main.
@@ -319,6 +339,9 @@ func cmdStart(root string, p StartParams) (string, error) {
 		return "", fmt.Errorf("%s нет на доске", p.ID)
 	default:
 		return "", fmt.Errorf("%s в %s, в работу берут из Backlog или In progress", p.ID, sect)
+	}
+	if err := forkGate(root, p.ID); err != nil {
+		return "", err
 	}
 	// Корп-контур держит доску в боковой директории (root), а код проекта в
 	// клоне, на который привязка указывает ключом repo: там и заводится

@@ -77,27 +77,45 @@ func ParseSubjects(value string) ([]Subject, error) {
 	return out, nil
 }
 
+// Reader отдаёт текст файла предмета по пути от корня devkit. Дерево ветки
+// воротам слияния доступно не файлами, а через git, и разбор один на оба
+// источника: разойдись он, ворота отбивали бы прогон, который сами и зачли.
+type Reader func(path string) (string, error)
+
+// OSReader читает предметы из дерева на диске.
+func OSReader(root string) Reader {
+	return func(p string) (string, error) {
+		full := filepath.Join(root, p)
+		fi, err := os.Stat(full)
+		if err != nil {
+			return "", err
+		}
+		if fi.IsDir() {
+			return "", fmt.Errorf("это директория, жду файл")
+		}
+		data, err := os.ReadFile(full)
+		return string(data), err
+	}
+}
+
 // Verify проверяет привязку по дереву: путь обязан существовать, а названный
 // раздел стоять в файле заголовком «## » вне ограждённых блоков.
 // Переименованный скилл или раздел оставил бы сценарий без предмета молча, и
 // прогон остался бы зелёным на тексте, которого больше нет.
 func Verify(root string, s Subject) error {
-	full := filepath.Join(root, s.Path)
-	fi, err := os.Stat(full)
+	return VerifyFrom(OSReader(root), s)
+}
+
+// VerifyFrom проверяет ту же привязку в дереве, которое отдаёт read.
+func VerifyFrom(read Reader, s Subject) error {
+	text, err := read(s.Path)
 	if err != nil {
 		return fmt.Errorf("предмета %s в дереве нет", s.Path)
-	}
-	if fi.IsDir() {
-		return fmt.Errorf("предмет %s это директория, жду файл", s.Path)
 	}
 	if s.Section == "" {
 		return nil
 	}
-	data, err := os.ReadFile(full)
-	if err != nil {
-		return fmt.Errorf("предмет %s: %v", s.Path, err)
-	}
-	if _, ok := SectionBody(string(data), s.Section); !ok {
+	if _, ok := SectionBody(text, s.Section); !ok {
 		return fmt.Errorf("в %s нет раздела «%s»", s.Path, s.Section)
 	}
 	return nil
@@ -105,8 +123,13 @@ func Verify(root string, s Subject) error {
 
 // VerifyAll проверяет по дереву весь список предметов.
 func VerifyAll(root string, subs []Subject) error {
+	return VerifyAllFrom(OSReader(root), subs)
+}
+
+// VerifyAllFrom проверяет весь список в дереве, которое отдаёт read.
+func VerifyAllFrom(read Reader, subs []Subject) error {
 	for _, s := range subs {
-		if err := Verify(root, s); err != nil {
+		if err := VerifyFrom(read, s); err != nil {
 			return err
 		}
 	}
@@ -188,13 +211,18 @@ func SectionBody(text, section string) ([]string, bool) {
 // пробелы и пустые строки, как у отпечатка сценария проверки: перевёрстка
 // абзаца не меняет ни одного шага и след протухать не должна.
 func Text(root string, s Subject) (string, error) {
-	data, err := os.ReadFile(filepath.Join(root, s.Path))
+	return TextFrom(OSReader(root), s)
+}
+
+// TextFrom отдаёт тот же нормализованный текст из дерева, которое отдаёт read.
+func TextFrom(read Reader, s Subject) (string, error) {
+	text, err := read(s.Path)
 	if err != nil {
 		return "", fmt.Errorf("предмет %s: %v", s.Path, err)
 	}
-	lines := strings.Split(string(data), "\n")
+	lines := strings.Split(text, "\n")
 	if s.Section != "" {
-		body, ok := SectionBody(string(data), s.Section)
+		body, ok := SectionBody(text, s.Section)
 		if !ok {
 			return "", fmt.Errorf("в %s нет раздела «%s»", s.Path, s.Section)
 		}
@@ -214,9 +242,14 @@ func Text(root string, s Subject) (string, error) {
 // после прогона текст предмета правили. Правка соседнего раздела того же файла
 // отпечаток не трогает: у предмета с разделом он снят с раздела.
 func Print(root string, subs []Subject) (string, error) {
+	return PrintFrom(OSReader(root), subs)
+}
+
+// PrintFrom считает тот же отпечаток по дереву, которое отдаёт read.
+func PrintFrom(read Reader, subs []Subject) (string, error) {
 	var parts []string
 	for _, s := range subs {
-		t, err := Text(root, s)
+		t, err := TextFrom(read, s)
 		if err != nil {
 			return "", err
 		}

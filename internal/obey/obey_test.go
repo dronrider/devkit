@@ -235,3 +235,43 @@ func TestSectionBody(t *testing.T) {
 		t.Fatalf("ограждённый блок раздела потерялся: %q", joined)
 	}
 }
+
+// Дерево ветки доступно воротам слияния не файлами, а через git, поэтому у
+// проверки привязки, текста и отпечатка есть вариант с чтением через Reader.
+// Отвечать он обязан то же, что и чтение с диска, иначе ворота отбивали бы
+// прогон, который стенд зачёл.
+func TestReaderVariants(t *testing.T) {
+	root := tree(t)
+	read := func(p string) (string, error) {
+		data, err := os.ReadFile(filepath.Join(root, p))
+		return string(data), err
+	}
+	subs := []Subject{{Path: "RULES.core.md", Section: "Мимикрия"}, {Path: "kit/skills/prose/SKILL.md"}}
+	if err := VerifyAllFrom(read, subs); err != nil {
+		t.Fatal(err)
+	}
+	want, err := Print(root, subs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := PrintFrom(read, subs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("отпечаток через Reader %q, с диска %q", got, want)
+	}
+	text, err := TextFrom(read, subs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "неотличим") || strings.Contains(text, "## Символы\nПисать") {
+		t.Fatalf("текст раздела через Reader собран не так: %q", text)
+	}
+	if err := VerifyFrom(read, Subject{Path: "RULES.core.md", Section: "Ранг"}); err == nil {
+		t.Fatal("предмет с несуществующим разделом обязан отбиваться")
+	}
+	if err := VerifyFrom(read, Subject{Path: "kit/skills/нет.md"}); err == nil {
+		t.Fatal("предмет без файла в дереве обязан отбиваться")
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dronrider/devkit/internal/obey"
 	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskform"
 )
@@ -253,25 +254,6 @@ func lintUnmerged(root string, b *Board, bp string) []string {
 	return finds
 }
 
-// promptPages это страницы корня, которые агент читает как контракт: форма
-// задачи, шкала ранга и виды приёмки. Правки правил ловятся отдельно, по
-// началу имени `RULES`.
-var promptPages = map[string]bool{"TASKFORM.md": true, "RANKING.md": true, "ACCEPTANCE.md": true}
-
-// promptPath отвечает, едет ли текст файла в контекст агента: скилл,
-// определение субагента, файл правил или страница-контракт корня. Проза
-// внутри kit/skills (README соседей, вспомогательные скрипты) сюда попадает
-// заодно, и это дешевле разбора расширений: подсказка ничего не запрещает.
-func promptPath(p string) bool {
-	if strings.HasPrefix(p, "kit/skills/") || strings.HasPrefix(p, "kit/agents/") {
-		return true
-	}
-	if strings.Contains(p, "/") {
-		return false
-	}
-	return strings.HasPrefix(p, "RULES") || promptPages[p]
-}
-
 // subjectHasTask отвечает, стоит ли ID задачи в теме коммита. Хвостовая цифра
 // отсекается: иначе коммиты DK-4480 считались бы коммитами DK-448.
 func subjectHasTask(subject, id string) bool {
@@ -319,7 +301,7 @@ func taskPromptFiles(root, id string) []string {
 	var paths []string
 	for _, p := range strings.Split(strings.TrimSpace(string(files)), "\n") {
 		p = strings.TrimSpace(p)
-		if p == "" || seen[p] || !promptPath(p) {
+		if p == "" || seen[p] || !obey.AgentFile(p) {
 			continue
 		}
 		seen[p] = true

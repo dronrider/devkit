@@ -395,23 +395,6 @@ func TestMoveToCheckIgnoresLongerTaskID(t *testing.T) {
 	}
 }
 
-func TestPromptPath(t *testing.T) {
-	yes := []string{"kit/skills/prompt-test/SKILL.md", "kit/agents/exec-high.md",
-		"RULES.md", "RULES.board.core.md", "TASKFORM.md", "RANKING.md", "ACCEPTANCE.md"}
-	no := []string{"tools/taskctl/gate.go", "docs/TASKS.md", "docs/tasks/XR-005.md",
-		"README.md", "docs/RULES.md", "kit/harness/claude-code.toml"}
-	for _, p := range yes {
-		if !promptPath(p) {
-			t.Fatalf("%s это промпт, а не опознан", p)
-		}
-	}
-	for _, p := range no {
-		if promptPath(p) {
-			t.Fatalf("%s промптом не считается", p)
-		}
-	}
-}
-
 // Прогон сценария чужими руками (DK-642): closeVerifyGate сверяет прогонявшего
 // с исполнителем последнего этапа «разработка», и совпадение имён закрытия не
 // даёт. Задача без записи прогона проходит молча, на этом держится

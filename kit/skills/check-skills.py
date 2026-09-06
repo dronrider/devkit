@@ -604,6 +604,50 @@ def check_live_reply(here):
     return fails
 
 
+# Правило плана работ живёт одним скиллом (DK-613): формат файла и адрес держит
+# команда agentctl plan, а порядок ведения текст скилла. До разреза правило
+# стояло пятью копиями (четыре exec-*.md и заказ дашборда), копии расходились
+# формулировкой, и агенты писали файл кто как. Вернувшаяся копия тихая: заметить
+# её можно только сравнив пять текстов подряд.
+PLAN_OLD_RULE = "Веди план работ файлом"
+PLAN_COPY_FILES = (("kit/agents/exec-low.md", "exec-low"),
+                   ("kit/agents/exec-medium.md", "exec-medium"),
+                   ("kit/agents/exec-high.md", "exec-high"),
+                   ("kit/agents/exec-xhigh.md", "exec-xhigh"),
+                   ("hooks/session-task.py", "хук старта сессии"),
+                   ("tools/dashboard/chats.go", "заказ дашборда"))
+
+
+def check_work_plan(here, root):
+    fails = []
+    text = read(os.path.join(here, "work-plan", "SKILL.md"))
+    if text is None:
+        fails.append("work-plan: скилл плана работ не заведён, правило снова разойдётся по копиям")
+        return fails
+    body = "\n" + text
+    if "agentctl plan" not in text:
+        fails.append("work-plan: скилл не зовёт команду agentctl plan, формат файла снова собирается руками")
+    for heading, why in (("## Ритм", "ритм ведения не назван, план ляжет один раз и застынет"),
+                         ("## Адрес файла", "адрес файла не назван, сессия пойдёт искать своё имя по printenv"),
+                         ("## Субагент", "про метку субагента не сказано, пачка напишет план друг поверх друга")):
+        if "\n" + heading not in body:
+            fails.append("work-plan: %s" % why)
+    if "--label" not in text:
+        fails.append("work-plan: метка субагента без флага --label, назвать её команде нечем")
+    core = read(os.path.join(root, "RULES.core.md")) or ""
+    if "work-plan" not in core:
+        fails.append("RULES.core.md: вход в скилл work-plan не назван, про план работ человек не узнает")
+    for path, who in PLAN_COPY_FILES:
+        copy = read(os.path.join(root, path))
+        if copy is None:
+            continue  # пропажу файлов ловят соседние проверки
+        if PLAN_OLD_RULE in copy:
+            fails.append("%s: несёт копию правила плана, отсылки к скиллу work-plan мало" % who)
+        if "work-plan" not in copy:
+            fails.append("%s: не зовёт скилл work-plan, план останется без правила" % who)
+    return fails
+
+
 def run(here, root):
     """Все проверки разом. Возврат (находки, число скиллов)."""
     fails = []
@@ -611,6 +655,7 @@ def run(here, root):
     fails += skill_fails
     fails += check_procedural_rules(here, root)
     fails += check_goal_split(here)
+    fails += check_work_plan(here, root)
     fails += check_goal_cut(here)
     fails += check_live_reply(here)
     fails += check_groom(here)

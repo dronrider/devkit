@@ -135,6 +135,68 @@ class TestProceduralRules(SkillTree):
         self.assertTrue(any("RULES.md не называет путь до скилла test-standard" in f for f in fails), fails)
 
 
+class TestWorkPlan(SkillTree):
+    """План работ ведёт одно правило (DK-613): скилл work-plan плюс команда
+    agentctl plan, а копий текста в промптах и в заказе дашборда нет."""
+
+    SKILL_BODY = ("Команда agentctl plan.\n\n## Ритм\n\nтекст\n\n"
+                  "## Адрес файла\n\nтекст\n\n## Субагент\n\nфлаг --label\n")
+
+    def setUp(self):
+        super().setUp()
+        os.makedirs(os.path.join(self.root, "kit", "agents"))
+        os.makedirs(os.path.join(self.root, "hooks"))
+        os.makedirs(os.path.join(self.root, "tools", "dashboard"))
+        with open(os.path.join(self.root, "RULES.core.md"), "w", encoding="utf-8") as f:
+            f.write("план работ ведёт скилл work-plan\n")
+        for path, _ in check_skills.PLAN_COPY_FILES:
+            with open(os.path.join(self.root, path), "w", encoding="utf-8") as f:
+                f.write("отсылка к скиллу work-plan\n")
+
+    def add_work_plan(self, body=None):
+        d = os.path.join(self.here, "work-plan")
+        os.makedirs(d)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write(FRONTMATTER % ("work-plan", "Звать, когда работа длиннее хода.",
+                                   body if body is not None else self.SKILL_BODY))
+
+    def test_one_rule_passes(self):
+        self.add_work_plan()
+        self.assertEqual(check_skills.check_work_plan(self.here, self.root), [])
+
+    def test_missing_skill(self):
+        fails = check_skills.check_work_plan(self.here, self.root)
+        self.assertTrue(any("скилл плана работ не заведён" in f for f in fails), fails)
+
+    def test_skill_without_sections(self):
+        self.add_work_plan(body="Команда agentctl plan и флаг --label.\n")
+        fails = check_skills.check_work_plan(self.here, self.root)
+        self.assertEqual(len(fails), 3, fails)
+        self.assertTrue(any("ритм ведения не назван" in f for f in fails), fails)
+        self.assertTrue(any("про метку субагента не сказано" in f for f in fails), fails)
+
+    def test_skill_without_the_tool(self):
+        self.add_work_plan(body=self.SKILL_BODY.replace("agentctl plan", "свой JSON"))
+        fails = check_skills.check_work_plan(self.here, self.root)
+        self.assertTrue(any("не зовёт команду agentctl plan" in f for f in fails), fails)
+
+    def test_core_rules_without_the_entry(self):
+        self.add_work_plan()
+        with open(os.path.join(self.root, "RULES.core.md"), "w", encoding="utf-8") as f:
+            f.write("ядро правил без плана\n")
+        fails = check_skills.check_work_plan(self.here, self.root)
+        self.assertTrue(any("вход в скилл work-plan не назван" in f for f in fails), fails)
+
+    def test_copy_of_the_rule_came_back(self):
+        self.add_work_plan()
+        path, who = check_skills.PLAN_COPY_FILES[0]
+        with open(os.path.join(self.root, path), "w", encoding="utf-8") as f:
+            f.write("Веди план работ файлом ~/.devkit/plans/<ID сессии>.json\n")
+        fails = check_skills.check_work_plan(self.here, self.root)
+        self.assertTrue(any(who in f and "копию правила плана" in f for f in fails), fails)
+        self.assertTrue(any(who in f and "не зовёт скилл work-plan" in f for f in fails), fails)
+
+
 class TestGoalSplit(SkillTree):
     def add_goal_skill(self, name, extra="", mentions=""):
         d = os.path.join(self.here, name)

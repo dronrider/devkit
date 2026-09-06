@@ -506,9 +506,13 @@ class CoreBudgetTest(unittest.TestCase):
                             "нет %s: резидентного ядра правил не нарезано" % f)
 
     def test_core_budgets(self):
+        # Потолок ядра поднят с 5500 до 5600 в DK-613: резидентной строкой туда
+        # встало правило плана работ, а взамен из четырёх определений
+        # исполнителей и двух заказов дашборда ушло по двенадцать строк того же
+        # правила. Резидент вырос на строку, а промпты машины стали короче.
         core = len(read(DEVKIT_SRC / "RULES.core.md"))
         board = len(read(DEVKIT_SRC / "RULES.board.core.md"))
-        self.assertLessEqual(core, 5500, "ядро правил длиннее бюджета 5500 символов: %d" % core)
+        self.assertLessEqual(core, 5600, "ядро правил длиннее бюджета 5600 символов: %d" % core)
         self.assertLessEqual(board, 1500,
                              "ядро правил доски длиннее бюджета 1500 символов: %d" % board)
 

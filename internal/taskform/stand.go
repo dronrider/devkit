@@ -154,11 +154,16 @@ func standScenarios(line string) ([]string, bool) {
 	return out, true
 }
 
+// WarnLine это начало строки предупреждения, которое стенд кладёт под отметкой:
+// текст предмета не нашёлся в раскладке-кандидате. Строка идёт вне ограждения,
+// и уборка прошлой записи обязана знать её в лицо.
+const WarnLine = "Предупреждение: "
+
 // DropStandRecord уносит из файла задачи прошлую запись стенда с тем же ключом:
 // строку отметки (зачтённую или красную) и всё, что писал тот же прогон, то
-// есть ограждённый блок с командой и таблицей. Первая посторонняя строка
-// запись кончает, так что вложенный руками вывод и проза раздела остаются на
-// месте.
+// есть предупреждения и ограждённый блок с командой и таблицей. Первая
+// посторонняя строка запись кончает, так что вложенный руками вывод и проза
+// раздела остаются на месте.
 func DropStandRecord(doc string, scenarios []string, base string) string {
 	lines := strings.Split(doc, "\n")
 	mask, _ := FenceMask(lines)
@@ -176,7 +181,8 @@ func DropStandRecord(doc string, scenarios []string, base string) string {
 			continue
 		}
 		for i++; i < len(lines); i++ {
-			if strings.TrimSpace(lines[i]) == "" || mask[i] {
+			t := strings.TrimSpace(lines[i])
+			if t == "" || mask[i] || strings.HasPrefix(t, WarnLine) {
 				continue
 			}
 			break

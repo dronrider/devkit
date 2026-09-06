@@ -120,6 +120,26 @@ func TestStandDropRecord(t *testing.T) {
 	}
 }
 
+// Запись с предупреждением уносится целиком. Предупреждение стоит между
+// отметкой и таблицей вне ограждения, и уборка, которая о нём не знает,
+// оставляет в «Проверке» и старый текст, и старую таблицу.
+func TestStandDropRecordWithWarning(t *testing.T) {
+	old := StandLine(standMark(), when(), "зачтён")
+	doc := standDoc("\n" + old + "\n\n" + WarnLine +
+		"текст предмета RULES.core.md в раскладке-кандидате не найден, раскладка собрана до правки?\n" +
+		"\n```console\n$ obeycheck --task DK-836\nтаблица\n```\n\nПроза после записей.\n")
+	got := DropStandRecord(doc, []string{"14-prose-sample", "15-mimicry-readme"}, "старый")
+	if strings.Contains(got, WarnLine) {
+		t.Fatalf("предупреждение прошлой записи осталось:\n%s", got)
+	}
+	if strings.Contains(got, "таблица") || strings.Contains(got, old) {
+		t.Fatalf("таблица прошлой записи осталась:\n%s", got)
+	}
+	if !strings.Contains(got, "Проза после записей.") {
+		t.Fatalf("проза раздела снесена:\n%s", got)
+	}
+}
+
 // Пометка «- Исключение: стенд» гасит пятые ворота тем же разбором, что и
 // четверо соседних.
 func TestStandGateException(t *testing.T) {

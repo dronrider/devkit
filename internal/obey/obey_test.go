@@ -199,6 +199,26 @@ func TestPrint(t *testing.T) {
 	}
 }
 
+// Ограда бывает и тильдой, и разбор у неё один на пакет и на разбор шапки
+// сценария: заголовок внутри такого блока разделом не считается.
+func TestFenceShapes(t *testing.T) {
+	text := "## Первый\n\n~~~text\n## Символы\n~~~\n\nхвост\n\n## Второй\n\nтело второго\n"
+	body, ok := SectionBody(text, "Первый")
+	if !ok {
+		t.Fatal("раздел не найден")
+	}
+	joined := strings.Join(body, "\n")
+	if !strings.Contains(joined, "## Символы") || !strings.Contains(joined, "хвост") {
+		t.Fatalf("тело раздела с тильдой: %q", joined)
+	}
+	if strings.Contains(joined, "тело второго") {
+		t.Fatalf("заголовок внутри тильды не закончил раздел: %q", joined)
+	}
+	if _, ok := SectionBody(text, "Символы"); ok {
+		t.Fatal("заголовок внутри ограждённого блока принят за раздел")
+	}
+}
+
 func TestSectionBody(t *testing.T) {
 	body, ok := SectionBody(doc, "Мимикрия")
 	if !ok {

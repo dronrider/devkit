@@ -159,9 +159,9 @@ func SectionBody(text, section string) ([]string, bool) {
 	lines := strings.Split(text, "\n")
 	var out []string
 	in, found := false, false
-	var f fence
+	var f Fence
 	for _, ln := range lines {
-		if f.step(ln) {
+		if f.Step(ln) {
 			if in {
 				out = append(out, ln)
 			}
@@ -226,13 +226,20 @@ func Print(root string, subs []Subject) (string, error) {
 	return hex.EncodeToString(sum[:])[:8], nil
 }
 
-// fence следит за оградами блоков кода: внутри блока строка «## ...» это текст
-// примера, а не заголовок раздела.
-type fence struct {
+// Fence следит за оградами блоков кода. Внутри блока строка «## ...» это текст
+// примера, а не заголовок: раздел правил цитирует чужую разметку, а подготовка
+// сценария везёт в heredoc чужую постановку с её заголовками. Разбор один на
+// пакет и на стенд, две копии разошлись бы на первой правке, и на тильде они
+// уже разошлись.
+type Fence struct {
 	open int
 }
 
-func (f *fence) step(l string) bool {
+// Step прогоняет строку и отвечает, лежит ли она внутри блока кода. Сами
+// ограды считаются частью блока. Закрывает блок только ограда не короче
+// открывающей и без хвоста, поэтому вложенный блок с более длинной оградой
+// внешний не рвёт.
+func (f *Fence) Step(l string) bool {
 	n := backticks(l)
 	if f.open == 0 {
 		if n > 0 {

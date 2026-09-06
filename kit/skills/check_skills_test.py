@@ -382,6 +382,79 @@ class TestVerifyRunner(SkillTree):
         self.assertTrue(any("RULES.board.core.md" in f for f in fails), fails)
 
 
+class TestConditionGate(SkillTree):
+    """DK-552: четвёртые ворота готовности стоят одной формулировкой в пяти
+    текстах, а разговор постановки ведёт скилл interview, позванный из четырёх
+    входов."""
+
+    def seed(self):
+        self.add_skill("interview", body="\n".join(["раунд разговора"] * 15))
+        for name in check_skills.INTERVIEW_ENTRIES:
+            if name == "exec-xhigh":
+                continue
+            self.add_skill(name, body="\n".join(
+                ["условий, %s, не нашлось; зовётся interview" % check_skills.CONDITION_PHRASE] * 15))
+        agents = os.path.join(self.root, "kit", "agents")
+        os.makedirs(agents, exist_ok=True)
+        with open(os.path.join(agents, "exec-xhigh.md"), "w", encoding="utf-8") as f:
+            f.write("порядок LLD зовёт interview, условий, %s, не нашлось\n"
+                    % check_skills.CONDITION_PHRASE)
+        self.append("RULES.board.md", "условия, %s\n" % check_skills.CONDITION_PHRASE)
+
+    def test_phrase_and_calls_in_place(self):
+        self.seed()
+        self.assertEqual(check_skills.check_condition_gate(self.here), [])
+
+    def test_phrase_dropped_from_skill_fails(self):
+        self.seed()
+        with open(os.path.join(self.here, "goal-cut", "SKILL.md"), "w",
+                  encoding="utf-8") as f:
+            f.write(FRONTMATTER % ("goal-cut", "Звать, когда нужно.",
+                                   "\n".join(["нарезка зовёт interview"] * 15)))
+        fails = check_skills.check_condition_gate(self.here)
+        self.assertTrue(any("goal-cut" in f and check_skills.CONDITION_PHRASE in f
+                            for f in fails), fails)
+        self.assertEqual(len(fails), 1, fails)
+
+    def test_phrase_dropped_from_rules_fails(self):
+        self.seed()
+        with open(os.path.join(self.root, "RULES.board.md"), "w",
+                  encoding="utf-8") as f:
+            f.write("правила доски без четвёртых ворот\n")
+        fails = check_skills.check_condition_gate(self.here)
+        self.assertTrue(any("RULES.board.md" in f for f in fails), fails)
+
+    def test_phrase_dropped_from_agent_fails(self):
+        self.seed()
+        with open(os.path.join(self.root, "kit", "agents", "exec-xhigh.md"), "w",
+                  encoding="utf-8") as f:
+            f.write("порядок LLD зовёт interview и молчит про условия\n")
+        fails = check_skills.check_condition_gate(self.here)
+        self.assertTrue(any("exec-xhigh" in f for f in fails), fails)
+
+    def test_entry_without_interview_call_fails(self):
+        self.seed()
+        with open(os.path.join(self.here, "goal-start", "SKILL.md"), "w",
+                  encoding="utf-8") as f:
+            f.write(FRONTMATTER % ("goal-start", "Звать, когда нужно.",
+                                   "\n".join(["условий, %s, не нашлось"
+                                              % check_skills.CONDITION_PHRASE] * 15)))
+        fails = check_skills.check_condition_gate(self.here)
+        self.assertTrue(any("goal-start" in f and "interview" in f for f in fails), fails)
+
+    def test_interview_skill_missing_named(self):
+        self.seed()
+        shutil.rmtree(os.path.join(self.here, "interview"))
+        fails = check_skills.check_condition_gate(self.here)
+        self.assertTrue(any("interview" in f and "не заведён" in f for f in fails), fails)
+
+    def test_missing_text_named(self):
+        self.seed()
+        shutil.rmtree(os.path.join(self.here, "board-groom"))
+        fails = check_skills.check_condition_gate(self.here)
+        self.assertTrue(any("board-groom" in f and "текста нет" in f for f in fails), fails)
+
+
 class TestTeam(SkillTree):
     NEIGHBOURS = "рядом board-task, board-ship и board-batch"
     CLASHES = "\n".join("**столкновение %d.** разбор" % i for i in range(1, 5))

@@ -254,6 +254,55 @@ def check_verify_runner(here, root):
     return fails
 
 
+# Формулировка четвёртых ворот готовности (DK-552, решение 5). Совпадение
+# дословное и в одной падежной форме: перефразированные ворота сторож
+# перестал бы видеть, а условие, посильное только человеку, всплывало бы уже
+# на старте задачи.
+CONDITION_PHRASE = "посильных только человеку"
+
+# Тексты, которые обязаны нести формулировку: правила доски, три скилла
+# постановки и определение проектировщика. Значение это путь от каталога
+# скиллов, а начатый на «../» отсчитывается от корня репозитория.
+CONDITION_TEXTS = (
+    ("board-groom", "board-groom/SKILL.md"),
+    ("goal-start", "goal-start/SKILL.md"),
+    ("goal-cut", "goal-cut/SKILL.md"),
+    ("exec-xhigh", "../agents/exec-xhigh.md"),
+    ("RULES.board.md", "../../RULES.board.md"),
+)
+
+# Входы, которые ведут разговор скиллом interview, а не своей процедурой.
+INTERVIEW_ENTRIES = ("board-groom", "goal-start", "goal-cut", "exec-xhigh")
+
+
+def check_condition_gate(here):
+    # DK-552: разговор постановки ведёт один скилл interview, а четвёртые
+    # ворота готовности спрашивают про условия, посильные только человеку.
+    # Ворота держатся текстом, а не машиной (граница DK-133.4), поэтому
+    # пропавшая из любого входа формулировка это ворота, которых на этом входе
+    # нет вовсе.
+    fails = []
+    if not os.path.isfile(os.path.join(here, "interview", "SKILL.md")):
+        fails.append("interview: скилл разговора не заведён, каждый вход спрашивает по-своему")
+    paths = {}
+    for name, rel in CONDITION_TEXTS:
+        path = os.path.normpath(os.path.join(here, rel))
+        paths[name] = path
+        text = read(path)
+        if text is None:
+            fails.append("%s: текста нет, четвёртые ворота сверять не с чем" % name)
+            continue
+        if CONDITION_PHRASE not in text:
+            fails.append("%s: нет формулировки «%s», условие всплывёт на старте задачи" % (name, CONDITION_PHRASE))
+    for name in INTERVIEW_ENTRIES:
+        text = read(paths[name])
+        if text is None:
+            continue
+        if "interview" not in text:
+            fails.append("%s: скилл interview не позван, разговор постановки разъедется своей процедурой" % name)
+    return fails
+
+
 def check_team(here):
     # Командная работа по одной доске (DK-174): у скилла два несущих куска,
     # захват с немедленным пушем и перечень столкновений. Столкновение, выпавшее
@@ -566,6 +615,7 @@ def run(here, root):
     fails += check_live_reply(here)
     fails += check_groom(here)
     fails += check_verify_runner(here, root)
+    fails += check_condition_gate(here)
     fails += check_team(here)
     fails += check_review(here, root)
     fails += check_proofread(here)

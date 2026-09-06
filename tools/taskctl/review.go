@@ -302,6 +302,30 @@ func headSha(root string) (string, error) {
 	return sha, nil
 }
 
+// reviewCodeDir выбирает дерево, чью вершину несёт строка уровня. В домашнем
+// проекте это корень доски, он же дерево кода. В корп-контуре корень приходит
+// редиректом devkit.local и указывает на боковую доску, чья история к коду
+// отношения не имеет: дифф второго круга от такой вершины не строится вовсе
+// (DK-753). Дерево кода там называет рабочая директория вызова, потому что
+// ревьювер стоит в том самом дереве, по которому читает дифф.
+//
+// Вызов из самой боковой доски редиректа не видит, и остаётся привязка
+// tracker.local с путём клона: она называет один клон контура и в худшем
+// случае разойдётся с деревом ревью на несколько коммитов, тогда как вершина
+// доски не годится ни на что.
+func reviewCodeDir(root, start string) string {
+	if start != "" && corpLocal(start) != "" {
+		return start
+	}
+	if repo := corpTrackerRepo(root); repo != "" {
+		if !filepath.IsAbs(repo) {
+			repo = filepath.Join(root, repo)
+		}
+		return repo
+	}
+	return root
+}
+
 // cmdReviewLevel пишет уровень тщательности ревью первой строкой раздела
 // «Ревью»: «Уровень 2 до a1b2c3d: неопределённость 1, тронут tools/shipctl».
 // Уровень выбирает скилл review до чтения диффа, и запись эта машинная, по ней
@@ -309,8 +333,9 @@ func headSha(root string) (string, error) {
 // Уровень 0 значит осознанный пропуск, поэтому причина обязательна на всех
 // уровнях: незаписанный пропуск неотличим от забытого ревью. Повторный вызов
 // переписывает строку, а не кладёт вторую: пересмотр уровня по ходу ревью это
-// та же запись, только с новым основанием.
-func cmdReviewLevel(root, id string, level int, reason string, c CommitOpts) (string, error) {
+// та же запись, только с новым основанием. start это рабочая директория
+// вызова, по ней ищется дерево кода (reviewCodeDir).
+func cmdReviewLevel(root, start, id string, level int, reason string, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
 	}
@@ -324,7 +349,7 @@ func cmdReviewLevel(root, id string, level int, reason string, c CommitOpts) (st
 	if strings.Contains(reason, "\n") {
 		return "", fmt.Errorf("причина пишется одной строкой")
 	}
-	sha, err := headSha(root)
+	sha, err := headSha(reviewCodeDir(root, start))
 	if err != nil {
 		return "", err
 	}

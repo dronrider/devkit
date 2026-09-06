@@ -67,7 +67,7 @@ func TestFailReturnsToWorkWithMark(t *testing.T) {
 func TestFailPrintsReviewLevel(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
-	if _, err := cmdReviewLevel(root, "XR-005", 2, "неопределённость 1, тронут tools/shipctl", CommitOpts{}); err != nil {
+	if _, err := cmdReviewLevel(root, root, "XR-005", 2, "неопределённость 1, тронут tools/shipctl", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	// XR-005 в фикстуре уже стоит в In progress: провал берёт задачу и оттуда,

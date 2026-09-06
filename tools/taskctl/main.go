@@ -663,7 +663,7 @@ func main() {
 			if nroot := noteRoot(*dir); nroot != "" {
 				msg, err = cmdNoteLevel(nroot, pos[0], lvl, pos[2], c)
 			} else {
-				msg, err = cmdReviewLevel(root(*dir), pos[0], lvl, pos[2], c)
+				msg, err = cmdReviewLevel(root(*dir), *dir, pos[0], lvl, pos[2], c)
 			}
 		case "resolve":
 			fs := flag.NewFlagSet("review resolve", flag.ExitOnError)

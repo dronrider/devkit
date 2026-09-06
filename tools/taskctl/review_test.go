@@ -602,7 +602,7 @@ func TestReviewCleanCLI(t *testing.T) {
 func TestReviewLevelWritesFirstLine(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
-	msg, err := cmdReviewLevel(root, "XR-005", 2, "неопределённость 1, тронут tools/shipctl", CommitOpts{})
+	msg, err := cmdReviewLevel(root, root, "XR-005", 2, "неопределённость 1, тронут tools/shipctl", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,10 +629,10 @@ func TestReviewLevelWritesFirstLine(t *testing.T) {
 func TestReviewLevelRewrites(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
-	if _, err := cmdReviewLevel(root, "XR-005", 1, "рутина", CommitOpts{}); err != nil {
+	if _, err := cmdReviewLevel(root, root, "XR-005", 1, "рутина", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := cmdReviewLevel(root, "XR-005", 3, "тронуты доступы", CommitOpts{})
+	msg, err := cmdReviewLevel(root, root, "XR-005", 3, "тронуты доступы", CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +656,7 @@ func TestReviewLevelKeepsNotes(t *testing.T) {
 	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdReviewLevel(root, "XR-005", 2, "тронут tools/taskctl", CommitOpts{}); err != nil {
+	if _, err := cmdReviewLevel(root, root, "XR-005", 2, "тронут tools/taskctl", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	got := readTaskFile(t, root, "XR-005")
@@ -685,7 +685,7 @@ func TestReviewLevelKeepsNotes(t *testing.T) {
 func TestReviewLevelBeforeAdd(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
-	if _, err := cmdReviewLevel(root, "XR-005", 2, "стартовый уровень от диспетчера", CommitOpts{}); err != nil {
+	if _, err := cmdReviewLevel(root, root, "XR-005", 2, "стартовый уровень от диспетчера", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", "", CommitOpts{}); err != nil {
@@ -720,12 +720,12 @@ func TestReviewLevelBeforeAdd(t *testing.T) {
 func TestReviewLevelRefuses(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
-	if _, err := cmdReviewLevel(root, "XR-005", 0, "  ", CommitOpts{}); err == nil {
+	if _, err := cmdReviewLevel(root, root, "XR-005", 0, "  ", CommitOpts{}); err == nil {
 		t.Fatal("пустая причина должна отбиваться")
 	} else if !strings.Contains(err.Error(), "жду причину уровня") {
 		t.Fatalf("отказ без подсказки: %v", err)
 	}
-	if _, err := cmdReviewLevel(root, "XR-005", 4, "мимо шкалы", CommitOpts{}); err == nil {
+	if _, err := cmdReviewLevel(root, root, "XR-005", 4, "мимо шкалы", CommitOpts{}); err == nil {
 		t.Fatal("уровень 4 должен отбиваться")
 	} else if !strings.Contains(err.Error(), "0-3") {
 		t.Fatalf("отказ без шкалы: %v", err)
@@ -734,7 +734,7 @@ func TestReviewLevelRefuses(t *testing.T) {
 		t.Fatalf("отбитая запись всё-таки в файле:\n%s", got)
 	}
 	// Уровень 0 с причиной проходит: это запись осознанного пропуска.
-	if _, err := cmdReviewLevel(root, "XR-005", 0, "мелочь мимо ветки", CommitOpts{}); err != nil {
+	if _, err := cmdReviewLevel(root, root, "XR-005", 0, "мелочь мимо ветки", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := readTaskFile(t, root, "XR-005"); !strings.Contains(got, "Уровень 0 до ") {

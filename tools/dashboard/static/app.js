@@ -735,6 +735,24 @@ function waitChip(row) {
   return withTip(chip, tip);
 }
 
+// Чип открытых развилок: поле forks строки задачи (LLD DK-552, решение 2).
+// Ровно эти развилки держат старт задачи и её закрытие, поэтому чип стоит в
+// одной полосе с состоянием строки, а не в тексте постановки: вопрос адресован
+// человеку, и увидеть его надо до того, как за задачу сядет исполнитель.
+// Вопросы и рекомендации идут подсказкой, на чипе остаётся счёт.
+function forkChip(row) {
+  const forks = row.forks || [];
+  if (!forks.length) return null;
+  const said = forks.length === 1
+    ? "развилка: " + forks[0].name
+    : "развилки: " + forks.length;
+  const chip = el("span", "chip c-wait", said);
+  const tip = "Ждут ответа человека, до ответа задача не стартует и не закрывается. " +
+    forks.map((f) => "«" + f.name + "»: " + (f.question || "вопрос не записан") +
+      (f.hint ? " (рекомендация: " + f.hint + ")" : "")).join("; ");
+  return withTip(chip, tip);
+}
+
 function rowChips(project, row) {
   const chips = [];
   // Своего чипа у признака работы нет: идущую работу говорит кружок у номера,
@@ -4279,7 +4297,7 @@ async function renderTask(project, works, id, pre) {
   // строкой над заголовком, рядом со ссылкой на доску, и полоса с типом, ценой
   // и бакетом начиналась мимо него (решение пользователя).
   const chips = [row.section ? el("span", "chip", row.section) : null,
-    liveChip(work), stageChip(row), waitChip(row), talkChip(row)].filter(Boolean);
+    liveChip(work), stageChip(row), waitChip(row), talkChip(row), forkChip(row)].filter(Boolean);
   if (isGoal) chips.push(el("span", "chip c-goal", "цель"));
   const tail = [withTip(el("span", "chip dashed" +
     (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p), P_HINT)];

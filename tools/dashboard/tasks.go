@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Правка строки и файла задачи с дашборда (LLD DK-112, «Экран задачи»):
@@ -110,6 +112,12 @@ type boardRow struct {
 	// это известно и до какого срока (waiting.go, LLD DK-430, решение 4).
 	// Пусто, когда никто никого не ждёт; у непустого источник назван всегда.
 	Waiting *Waiting `json:"waiting,omitempty"`
+	// Forks это открытые развилки задачи, которые держат её старт и закрытие
+	// (LLD DK-552, решение 2). Экран показывает их рядом с состоянием строки:
+	// иначе отказ ворот `shipctl start` первым сообщает о нерешённом вопросе
+	// тому, кто уже собрался работать, а человек, который на вопрос отвечает,
+	// не видит его вовсе. Пусто у задачи без открытых развилок.
+	Forks []ForkView `json:"forks,omitempty"`
 	// Closed это дата закрытия у строки, собранной из архива: на доске такой
 	// строки уже нет, а экран задачи её всё равно открывает, потому что в
 	// выдачу поиска архив входит наравне с доской.
@@ -660,6 +668,32 @@ func taskDeps(dir, id string) (after, blocks []string, err error) {
 	return v.After, v.Blocks, nil
 }
 
+// ForkView это открытая развилка задачи на экране: имя, вопрос и рекомендация,
+// если она записана. Состояние сюда не едет, потому что отдаются только
+// открытые человеческие: решённая и оставленная исполнителю ворот не держат, и
+// на экране им место в самом файле задачи, а не в полосе состояния.
+type ForkView struct {
+	Name     string `json:"name"`
+	Question string `json:"question,omitempty"`
+	Hint     string `json:"hint,omitempty"`
+}
+
+// openForks читает перечень развилок файла задачи тем же разбором, каким его
+// читают ворота `shipctl start` и `taskctl close` (internal/taskform): экран
+// обязан показывать ровно то, на чём задача встанет. Файла нет, значит и
+// перечня нет, и полоса состояния остаётся прежней.
+func openForks(projectPath, id string) []ForkView {
+	data, err := os.ReadFile(filepath.Join(projectPath, filepath.FromSlash(taskFileRel(id))))
+	if err != nil {
+		return nil
+	}
+	var out []ForkView
+	for _, f := range taskform.HoldingForks(string(data)) {
+		out = append(out, ForkView{Name: f.Name, Question: f.Question, Hint: f.Hint})
+	}
+	return out
+}
+
 func taskFileRel(id string) string {
 	return filepath.ToSlash(filepath.Join("docs", "tasks", id+".md"))
 }
@@ -742,6 +776,7 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		row.Waiting = &w
 	}
 	row.Order = rowOrder(row.Sect, id, row.Accept, row.Title)
+	row.Forks = openForks(found.Path, id)
 	resp := map[string]any{
 		"project": found.Name,
 		"id":      id,

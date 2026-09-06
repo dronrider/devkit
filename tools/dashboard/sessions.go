@@ -2003,6 +2003,10 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	want := n + feedSlack
 	var feed sessionFeed
 	var items []reply
+	// whole тут это «дальше просить нечего»: у разговора с прошлыми заходами
+	// начало не там, где начался его транскрипт, а там, где начался первый
+	// заход (DK-723).
+	whole := false
 	for {
 		feed = sessionFeedOf(path, want)
 		items = feed.items
@@ -2013,7 +2017,12 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		for _, key := range keys {
 			items = saidMerge(items, saidCut(saidLoad(s.cfg.Home, key), from))
 		}
-		if feed.whole || !strings.Contains(before, ":") || keyRoom(items, before, n) || want >= feedMost {
+		// Заходы одного окна склеиваются в одну ленту: остановы у живой головы
+		// конвейера прежние, и после каждого кнопка поднимает новую сессию под
+		// тем же именем. История задачи читается тут сверху вниз, а не по
+		// нескольким записям списка.
+		items, whole = s.passFeed(found.Path, sid, items, want, feed.whole)
+		if whole || !strings.Contains(before, ":") || keyRoom(items, before, n) || want >= feedMost {
 			break
 		}
 		want *= feedGrow
@@ -2023,7 +2032,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	// Начало разговора называет сервер: считать его по номеру первой записи
 	// клиент больше не может, номера у него не свои. Начало это целиком
 	// собранная лента, у которой хвост не обрезан окном.
-	start := feed.whole && len(kept) > 0 && len(kept) <= n
+	start := whole && len(kept) > 0 && len(kept) <= n
 	if len(kept) > n {
 		kept = kept[len(kept)-n:]
 	}

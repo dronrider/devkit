@@ -8094,6 +8094,14 @@ function chatOption(project, c, current, done) {
   if (c.quota) chips.append(el("span", "chip c-quota", c.quota));
   if (c.archived) chips.append(el("span", "chip", "в архиве"));
   if (c.model) chips.append(el("span", "chip", c.model));
+  // Заходы одного окна стоят одной строкой (DK-723). Конвейер задачи
+  // останавливается потолком проходов и воронкой молчания, кнопка поднимает
+  // новую сессию под тем же именем окна, и прежде каждый перезапуск вставал в
+  // список своей строкой с тем же заголовком. Число говорит, что лента строки
+  // склеена из нескольких заходов, а один заход подписи не просит.
+  if ((c.past || []).length) {
+    chips.append(el("span", "chip", "заходов: " + (c.past.length + 1)));
+  }
   for (const t of (c.tasks || []).slice(0, 4)) chips.append(el("span", "chip", t));
   if (c.harness) chips.append(el("span", "chip", c.harness));
   row.append(chips);

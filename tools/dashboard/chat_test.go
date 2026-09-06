@@ -1674,21 +1674,28 @@ exit 0`)
 // отдал другому разговору, то есть работу подняли заново. Прежде имя просто
 // снималось молча, разговор выглядел обычным, и реплика в него уезжала мимо
 // человека. Теперь запись несёт причину и адрес выхода.
+//
+// Имя окна тут занял разговор соседнего проекта: заходы одного окна в одном
+// проекте склеены в одну строку (DK-723), и слова про снятие остаются там, где
+// склеивать нечего. Имя на машине переиспользуется между проектами, живой
+// случай chat-DK-397-2 ровно про это.
 func TestChatEntryNamesRestartedConversation(t *testing.T) {
 	e, c := chatEnv(t)
+	other := filepath.Join(filepath.Dir(e.proj), "other")
+	mkProject(t, other)
 	old := "aaaa5040-1111-4111-8111-111111111111"
 	fresh := "bbbb5041-2222-4222-8222-222222222222"
 	writeSession(t, e.home, e.proj, "", old, plainTalk, time.Now().Add(-time.Hour))
-	writeSession(t, e.home, e.proj, "", fresh, plainTalk, time.Now().Add(-time.Minute))
+	writeSession(t, e.home, other, "", fresh, plainTalk, time.Now().Add(-time.Minute))
 	writeBinds(t, e.home,
 		"2026-08-24T12:42:48 сессия "+old+" задача DK-503 проект demo дерево "+e.proj+
 			" транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-DK-503\n",
-		"2026-08-24T13:55:18 сессия "+fresh+" задача DK-503 проект demo дерево "+e.proj+
+		"2026-08-24T13:55:18 сессия "+fresh+" задача DK-503 проект other дерево "+other+
 			" транскрипт /tmp/t2.jsonl источник заказ повод startup tmux task-DK-503\n")
 	writeScript(t, e.bin, "tmux", `case "$1" in ls) echo "task-DK-503|1|123";; esac
 exit 0`)
 
-	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats", "")
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats?all=1&days=0", "")
 	var got struct {
 		Chats []struct {
 			ID     string `json:"id"`

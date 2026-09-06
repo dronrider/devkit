@@ -7812,6 +7812,20 @@ async function chatState(project, addr, board, works) {
   // снята, и ждать панели больше нечего (DK-728).
   st.dead = st.sid ? null : chatDeadOf(project, st.addr || addr);
   if (!st.entry) st.entry = st.chats.find((c) => c.id === st.sid) || null;
+  // Адрес прошлого захода ведёт на склеенную строку (DK-723). Заходы одного
+  // окна это один разговор, своей строки у прошлого захода больше нет, и
+  // старая ссылка либо память вкладки обязаны открывать голову с полной
+  // историей, а не кончившуюся сессию с её куском.
+  if (st.sid && !st.entry) {
+    const glued = st.chats.find((c) => (c.past || []).some((p) => p.id === st.sid));
+    if (glued) {
+      chatLastSet(glued.id);
+      history.replaceState({ chat: glued.id }, "", "#" + chatBase() + "/chat/" + glued.id);
+      st.addr = glued.id;
+      st.sid = glued.id;
+      st.entry = glued;
+    }
+  }
   // Проект самого разговора: список общий по машине, и открытый чат бывает не
   // из того проекта, что стоит на доске. Все ручки чата (лента, реплика, стоп,
   // модель, вложение) адресуются его проектом, а не проектом доски.

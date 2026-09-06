@@ -150,6 +150,19 @@ def skill_defs(devkit):
     return sorted((Path(devkit) / "kit" / "skills").glob("*/SKILL.md"))
 
 
+HUMAN_FLAG = "disable-model-invocation"
+
+
+def human_only(skill):
+    """Скилл зовёт только человек командой `/имя`: харнес не кладёт его описание
+    в реестр модели, и в резиденте он не стоит ничего (DK-808)."""
+    return frontmatter(skill).get(HUMAN_FLAG, "").lower() == "true"
+
+
+def model_skills(devkit):
+    return [p for p in skill_defs(devkit) if not human_only(p)]
+
+
 def active_profile(root, devkit):
     # Мерится раскладка одного харнеса, того, под которым идёт сессия. Включён
     # обычно один; когда включено несколько, берётся первый, а имя печатается,
@@ -238,7 +251,9 @@ def pockets(root, devkit, profile):
         # Харнес без своих субагентов определений не читает, и описывать себя в
         # его системном промпте им негде.
         out.append(("листинг определений kit/agents/", listing_chars(agent_defs(devkit))))
-    out.append(("листинг скиллов", listing_chars(skill_defs(devkit))))
+    # Человеческий скилл (флаг disable-model-invocation во frontmatter) в реестр
+    # модели не попадает, и платить за его описание сессия не платит.
+    out.append(("листинг скиллов", listing_chars(model_skills(devkit))))
     return out
 
 

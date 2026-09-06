@@ -79,11 +79,14 @@ def fmt(n):
 
 
 def listing(paths):
-    """Длина листинга: имя и описание каждого определения, как их видит харнес."""
+    """Длина листинга: имя и описание каждого определения, как их видит харнес.
+    Скилл с флагом disable-model-invocation харнес модели не показывает."""
     n = 0
     for p in paths:
         parts = read(p).split("---\n")
         head = parts[1] if len(parts) > 1 else ""
+        if re.search(r"^disable-model-invocation: *true$", head, re.M):
+            continue
         for key in ("name", "description"):
             m = re.search(r"^%s: ?(.*)$" % key, head, re.M)
             n += len(m.group(1)) if m else 0
@@ -384,6 +387,33 @@ class MeasureTest(SandboxCase):
         finally:
             (self.box.dk / "kit" / "agents" / "probe-agent.md").unlink()
             (self.whome / ".claude" / "agents" / "probe-agent.md").unlink()
+
+    def test_05b_human_skill_stays_out_of_listing(self):
+        # Скилл, который зовёт только человек, в реестр модели не попадает:
+        # листинг и итог на него не растут, а тот же скилл без флага растит их
+        # ровно на имя и описание (DK-808).
+        desc = ("Звать, когда просит человек. " * 10).strip()
+        head = "---\nname: probe-skill\ndescription: %s\n%s---\n\nтело скилла\n"
+        src = self.box.dk / "kit" / "skills" / "probe-skill"
+        dst = self.whome / ".claude" / "skills" / "probe-skill"
+        try:
+            for d in (src, dst):
+                d.mkdir()
+                write(d / "SKILL.md", head % (desc, "disable-model-invocation: true\n"))
+            _, out = self.weigh_run("--limit", "20000")
+            self.assertRegex(out, r"листинг скиллов .*%s" % fmt(self.wskills),
+                             "человеческий скилл попал в листинг")
+            self.assertRegex(out, r"итого .*%s" % fmt(self.wtotal),
+                             "итог вырос на человеческий скилл")
+            for d in (src, dst):
+                write(d / "SKILL.md", head % (desc, ""))
+            _, out = self.weigh_run("--limit", "20000")
+            grown = self.wskills + len("probe-skill") + len(desc)
+            self.assertRegex(out, r"листинг скиллов .*%s" % fmt(grown),
+                             "тот же скилл без флага листинг не вырастил")
+        finally:
+            for d in (src, dst):
+                shutil.rmtree(str(d), ignore_errors=True)
 
     def test_06_stale_layout_refuses(self):
         # Мерить по вчерашней раскладке значит соврать молча: замер отказан,

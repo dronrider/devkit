@@ -8,17 +8,20 @@ prompt=$(cat)
 {
 	echo "HOME=$HOME"
 	echo "pwd=$(pwd)"
-	echo "obey=$(env | grep '^OBEY_' | tr '\n' ' ')"
+	echo "harness=$(env | grep -E '^(OBEY_|CLAUDE)' | tr '\n' ' ')"
 	echo "промпт: $prompt"
 	echo "---"
 } >>calls.log
 calls=$(grep -c '^---$' calls.log)
-# vague-late отвечает по примете на калибровке (два примера) и не по форме
-# на клетках: так проверяется, что ответ не по форме это красная клетка, а
-# не остановка.
-if [ "$mode" = vague-late ]; then
-	if [ "$calls" -le 2 ]; then mode=word; else mode=vague; fi
-fi
+# Режимы с хвостом -late отвечают по примете на калибровке (два примера) и
+# срываются на клетках: vague-late отвечает не по форме, dead-late отваливается.
+# Так проверяется, что ответ не по форме это красная клетка, а отвал посреди
+# прогона останавливает стенд, как и на калибровке.
+case "$mode" in
+*-late)
+	if [ "$calls" -le 2 ]; then mode=word; else mode=${mode%-late}; fi
+	;;
+esac
 case "$mode" in
 dead)
 	echo "Not logged in" >&2
@@ -28,7 +31,11 @@ empty) exit 0 ;;
 slow) sleep 30 ;;
 vague)
 	echo "цитата: «$(printf '%s' "$prompt" | tail -1)»"
-	echo "скорее да, чем нет"
+	# Последняя строка длиннее потолка oneLine: примечание клетки обязано
+	# её обрезать, а не везти абзац в таблицу и в файл задачи.
+	long="скорее да, чем нет, хотя место спорное"
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do long="$long, и снова спорное место"; done
+	echo "$long"
 	;;
 word)
 	text=${prompt#*Текст:}

@@ -124,7 +124,7 @@ func newJudge(work string, cmd []string, model, homeSeed, userHome string, timeo
 		}
 	}
 	if homeSeed != "" {
-		if err := copyTree(homeSeed, j.Home, nil); err != nil {
+		if err := copyTree(homeSeed, j.Home, seedRules); err != nil {
 			return nil, fmt.Errorf("затравка HOME %s: %v", homeSeed, err)
 		}
 	}
@@ -132,6 +132,19 @@ func newJudge(work string, cmd []string, model, homeSeed, userHome string, timeo
 		return nil, err
 	}
 	return j, nil
+}
+
+// seedRules отсеивает из затравки то, что несёт правила и обвязку харнеса:
+// глобальную точку правил, настройки, определения субагентов и скиллы. В дом
+// судьи из затравки едут только учётные данные, иначе затравка снимала бы с
+// него слепоту.
+func seedRules(rel string) bool {
+	switch rel {
+	case "CLAUDE.md", ".claude/CLAUDE.md", ".claude/settings.json", ".claude/settings.local.json",
+		".claude/agents", ".claude/skills", ".claude/commands":
+		return true
+	}
+	return false
 }
 
 // environ это окружение судьи: без HOME машины, без переменных харнеса и без
@@ -269,7 +282,7 @@ func (p Params) judgeOnce(s Scenario, e *runEnv, a *attempt) error {
 	switch {
 	case !ok:
 		a.Green = false
-		a.Note = fmt.Sprintf("судья ответил не по форме: «%s»", verdict)
+		a.Note = fmt.Sprintf("судья ответил не по форме: «%s»", oneLine(verdict))
 	case verdict == judgeNo:
 		a.Green = false
 		a.Note = "судья: нет"

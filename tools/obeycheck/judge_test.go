@@ -207,6 +207,10 @@ func TestJudgeReadsFileInput(t *testing.T) {
 // указателей стенда, а в промпте критерий и один текст. Калибровка идёт до
 // первой сессии, и в её вызовах нет разметки примеров.
 func TestJudgeIsBlind(t *testing.T) {
+	// Стенд сам этих переменных не несёт, они подставляются, как если бы стенд
+	// звали из живой сессии харнеса или из проверки сценария.
+	t.Setenv("OBEY_TRANSCRIPT", "/чужой/транскрипт")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "чужая-сессия")
 	p := judgeParams(t, scenarios(t, "judge"), "judge-yes", "judge-yes", "word", "разобрала")
 	p.Repeats = 1
 	if _, failed := runOK(t, p); failed {
@@ -231,8 +235,11 @@ func TestJudgeIsBlind(t *testing.T) {
 		if strings.Contains(b, "/project") {
 			t.Errorf("вызов %d знает про проект прогона:\n%s", i, b)
 		}
-		if !strings.Contains(b, "obey= \n") && !strings.Contains(b, "obey=\n") {
-			t.Errorf("вызову %d достались указатели стенда:\n%s", i, b)
+		if !strings.Contains(b, "harness=\n") && !strings.Contains(b, "harness= \n") {
+			t.Errorf("вызову %d достались указатели стенда или переменные харнеса:\n%s", i, b)
+		}
+		if strings.Contains(b, "чужой") || strings.Contains(b, "чужая") {
+			t.Errorf("вызов %d видит подставленные переменные:\n%s", i, b)
 		}
 		if strings.Contains(b, "да:") || strings.Contains(b, "нет:") {
 			t.Errorf("вызов %d видит разметку примеров:\n%s", i, b)
@@ -302,6 +309,21 @@ func TestJudgeErrorStopsRun(t *testing.T) {
 	if _, err := Run(p); err == nil || !strings.Contains(err.Error(), "не уложился") {
 		t.Errorf("потолок времени судьи: %v", err)
 	}
+	// Отвал посреди прогона: калибровка прошла, судья упал на первой клетке.
+	// Это остановка с номером повтора, а не красная клетка в таблице.
+	p = judgeParams(t, scenarios(t, "judge"), "judge-yes", "judge-no", "dead-late", "разобрала")
+	res, err := Run(p)
+	if err == nil {
+		t.Fatalf("отвал судьи на клетке прошёл как вердикт:\n%s", res.Report)
+	}
+	for _, want := range []string{"судья fake-judge недоступен на сценарии judge, повтор 1", "Not logged in", "отметка не писалась"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("в тексте остановки на клетке нет %q: %v", want, err)
+		}
+	}
+	if res.Report != "" || len(res.Rows) != 0 {
+		t.Errorf("после остановки таблицы быть не должно: %+v", res)
+	}
 }
 
 // Ответ не по форме посреди прогона это красная клетка с примечанием: модель
@@ -310,22 +332,69 @@ func TestJudgeOffFormIsRedCell(t *testing.T) {
 	p := judgeParams(t, scenarios(t, "judge"), "judge-yes", "judge-yes", "vague-late", "разобрала")
 	p.Repeats = 1
 	report, failed := runOK(t, p)
-	if !failed || !strings.Contains(report, "судья ответил не по форме: «скорее да, чем нет»") {
+	if !failed || !strings.Contains(report, "судья ответил не по форме: «скорее да, чем нет, хотя место спорное") {
 		t.Fatalf("таблица:\n%s", report)
+	}
+	// Последняя строка ответа длиннее потолка oneLine, и примечание её режет:
+	// абзац в таблицу и в отметку файла задачи не едет.
+	for _, line := range strings.Split(report, "\n") {
+		if !strings.Contains(line, "не по форме") {
+			continue
+		}
+		if !strings.HasSuffix(line, "...»") || len([]rune(line)) > 400 {
+			t.Fatalf("примечание не по форме не обрезано: %s", line)
+		}
 	}
 }
 
 // Судья зовётся только после зелёной проверки: на раскладке, где модель
 // бездельничает и проверка красная, вызовов судьи сверх калибровки нет.
 func TestJudgeSkippedOnRedCheck(t *testing.T) {
-	p := judgeParams(t, scenarios(t, "judge-file"), "core", "judge-yes", "word", "разобрала")
+	// Вход «ответ»: транскрипт есть у любой сессии, и судью от красной клетки
+	// удерживает только порядок «сначала проверка».
+	p := judgeParams(t, scenarios(t, "judge-red"), "core", "core-green", "word", "разобрала")
 	p.Repeats = 1
 	report, _ := runOK(t, p)
-	if !strings.Contains(flat(report), "0/1 1/1") {
+	if !strings.Contains(flat(report), "0/1 0/1") {
 		t.Fatalf("таблица:\n%s", report)
 	}
-	if n := strings.Count(judgeCalls(t, p), "---\n"); n != 2+1 {
-		t.Errorf("жду 2 вызова калибровки и 1 клетку, вижу %d", n)
+	calls := judgeCalls(t, p)
+	if n := strings.Count(calls, "---\n"); n != 2+1 {
+		t.Errorf("жду 2 вызова калибровки и 1 клетку на зелёной проверке, вижу %d:\n%s", n, calls)
+	}
+	if !strings.Contains(report, "judge-red / core / повтор 1: проверка:") {
+		t.Errorf("красная проверка на core названа не проверкой:\n%s", report)
+	}
+}
+
+// Затравка --home-seed везёт судье учётные данные, а правила и обвязку
+// харнеса из неё судья не получает: дом у него пустой.
+func TestJudgeHomeSeedWithoutRules(t *testing.T) {
+	seed := t.TempDir()
+	for _, name := range []string{".claude/.credentials.json", ".claude/CLAUDE.md", ".claude/settings.json",
+		".claude/agents/exec-medium.md", ".claude/skills/prose/SKILL.md", "CLAUDE.md"} {
+		path := filepath.Join(seed, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("затравка"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := judgeParams(t, scenarios(t, "judge"), "judge-yes", "judge-yes", "word", "разобрала")
+	p.Repeats = 1
+	p.HomeSeed = seed
+	if _, failed := runOK(t, p); failed {
+		t.Fatal("ждал зачтённую строку")
+	}
+	home := filepath.Join(p.Work, "judge", "home")
+	if !pathExists(filepath.Join(home, ".claude", ".credentials.json")) {
+		t.Error("учётные данные затравки до дома судьи не доехали")
+	}
+	for _, name := range []string{".claude/CLAUDE.md", ".claude/settings.json", ".claude/agents", ".claude/skills", "CLAUDE.md"} {
+		if pathExists(filepath.Join(home, filepath.FromSlash(name))) {
+			t.Errorf("в доме судьи лежит %s из затравки", name)
+		}
 	}
 }
 

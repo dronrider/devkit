@@ -68,7 +68,7 @@ func planLabelOK(label string) bool {
 // файл с меткой: CLAUDE_CODE_SESSION_ID у субагентов одной пачки общий, своего
 // признака окружение им не даёт, и без метки они писали план поверх соседского
 // (DK-527).
-func planResolve(home, sid, label string, env func(string) string) (planAddr, error) {
+func planResolve(home, sid, label string, env func(string) string, write bool) (planAddr, error) {
 	var a planAddr
 	a.sid = sid
 	if a.sid == "" {
@@ -85,7 +85,7 @@ func planResolve(home, sid, label string, env func(string) string) (planAddr, er
 	if a.label == "" {
 		a.label = strings.TrimSpace(env(planEnvLabel))
 	}
-	if a.label == "" && strings.TrimSpace(env(planEnvChild)) == "1" {
+	if write && a.label == "" && strings.TrimSpace(env(planEnvChild)) == "1" {
 		return a, fmt.Errorf("ты субагент (%s=1), ID сессии у тебя от внешней сессии: назови свою метку флагом --label, иначе план ляжет поверх чужого",
 			planEnvChild)
 	}
@@ -247,7 +247,9 @@ func planSubFiles(home, sid string) []string {
 // cmdPlan это все четыре действия над планом одной командой: положить, начать
 // пункт, закрыть пункт, показать.
 func cmdPlan(home, op string, args []string, sid, label string, env func(string) string) (string, error) {
-	a, err := planResolve(home, sid, label, env)
+	// Смотреть чужой план не запрещено: без метки субагент читает план внешней
+	// сессии, а вот пишет только свой.
+	a, err := planResolve(home, sid, label, env, op != "show")
 	if err != nil {
 		return "", err
 	}

@@ -133,6 +133,10 @@ func TestPlanSubagentNeedsLabel(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".devkit", "plans", "s1-sub-dk614.json")); err != nil {
 		t.Fatalf("метка из окружения в имя файла не уехала: %v", err)
 	}
+	// Читать чужой план субагенту не запрещено: метки требует запись, а не показ.
+	if _, err := cmdPlan(home, "show", nil, "", "", env); err != nil {
+		t.Fatalf("субагент без метки не смог посмотреть план внешней сессии: %v", err)
+	}
 }
 
 func TestPlanAddress(t *testing.T) {
@@ -140,7 +144,7 @@ func TestPlanAddress(t *testing.T) {
 
 	// Запасной адрес: в контуре второй подписки CLAUDE_CODE_SESSION_ID пуст, и
 	// план сессии ведётся именем её tmux-сессии.
-	a, err := planResolve(home, "", "", planEnv(map[string]string{planEnvTmux: "chat-2"}))
+	a, err := planResolve(home, "", "", planEnv(map[string]string{planEnvTmux: "chat-2"}), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,12 +154,12 @@ func TestPlanAddress(t *testing.T) {
 
 	// Нечем назвать сессию, значит команда отказывает словами, а не пишет план
 	// в файл со случайным именем.
-	if _, err := planResolve(home, "", "", planEnv(nil)); err == nil {
+	if _, err := planResolve(home, "", "", planEnv(nil), true); err == nil {
 		t.Fatal("план без ID сессии записан, ждали отказ")
 	}
 
 	// Метка не уводит файл за пределы каталога планов.
-	if _, err := planResolve(home, "s1", "../../beda", planEnv(nil)); err == nil {
+	if _, err := planResolve(home, "s1", "../../beda", planEnv(nil), true); err == nil {
 		t.Fatal("метка с путём принята, ждали отказ")
 	}
 }

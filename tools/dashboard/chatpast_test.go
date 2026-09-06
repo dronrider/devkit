@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -220,4 +221,120 @@ func TestStaticChatPastGlued(t *testing.T) {
 		t.Fatalf("склейка заходов в панели: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Ключ записи в склеенной ленте уникален на всю склейку. Ключ транскрипта это
+// смещение в своём файле, и у первой записи каждого захода он один и тот же
+// («m:0.0»). Панель отсеивает повторы по ключу, и из трёх заходов до ленты
+// доезжал один, а страница истории просилась по чужому ключу (замечание ревью
+// 1). Заход стоит в приставке ключа, и записи расходятся.
+func TestChatFeedPassKeysAreUnique(t *testing.T) {
+	e, c := chatEnv(t)
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) echo "task-XR-4|1|123";;
+esac
+exit 0`)
+	base := time.Now().Add(-3 * time.Hour)
+	two := func(first, second, at1, at2 string) string {
+		return passTalk(first, at1) + passTalk(second, at2)
+	}
+	writeSession(t, e.home, e.proj, "", "aaaa-0001",
+		two("первый заход начал", "первый заход кончил", "2026-09-04T10:00:00.000Z", "2026-09-04T10:05:00.000Z"), base)
+	writeSession(t, e.home, e.proj, "", "bbbb-0002",
+		two("второй заход начал", "второй заход кончил", "2026-09-04T11:00:00.000Z", "2026-09-04T11:05:00.000Z"), base.Add(time.Hour))
+	writeSession(t, e.home, e.proj, "", "cccc-0003",
+		two("этот заход начал", "этот заход идёт", "2026-09-04T12:00:00.000Z", "2026-09-04T12:05:00.000Z"), base.Add(2*time.Hour))
+	writeBinds(t, e.home,
+		passBind("2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
+		passBind("2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"),
+		passBind("2026-09-04T12:00:00", "cccc-0003", "XR-4", e.proj, "task-XR-4"))
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/cccc-0003", "")
+	text := body(t, resp)
+	var got struct {
+		Items []reply `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ не разобрался (%v): %s", err, text)
+	}
+	seen := map[string]string{}
+	for _, it := range got.Items {
+		if it.Key == "" {
+			t.Errorf("запись ленты без ключа: %+v", it)
+			continue
+		}
+		if had, dup := seen[it.Key]; dup {
+			t.Errorf("ключ %q носят две записи (%q и %q): панель оставит одну",
+				it.Key, had, it.Text)
+		}
+		seen[it.Key] = it.Text
+	}
+	// Записи всех заходов доезжают до ленты, и меряется это ключами: число
+	// разделителей ничего про них не говорит.
+	for _, want := range []string{"первый заход начал", "первый заход кончил",
+		"второй заход начал", "второй заход кончил", "этот заход начал", "этот заход идёт"} {
+		found := false
+		for _, it := range got.Items {
+			if it.Text == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("записи %q в склеенной ленте нет: %s", want, text)
+		}
+	}
+}
+
+// Заход старше потолка склейки остаётся своей строкой списка. Прежде поле
+// прошлых заходов потолка не знало: чип считал девять, лента клеила шесть, и
+// дороги к остальным трём не оставалось (замечание ревью 2).
+func TestChatListGlueCapKeepsOlderRows(t *testing.T) {
+	e, c := chatEnv(t)
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) echo "task-XR-4|1|123";;
+esac
+exit 0`)
+	base := time.Now().Add(-24 * time.Hour)
+	ids := []string{"aaaa-0001", "bbbb-0002", "cccc-0003", "dddd-0004", "eeee-0005",
+		"ffff-0006", "gggg-0007", "hhhh-0008", "iiii-0009"}
+	var binds []string
+	for i, id := range ids {
+		at := fmt.Sprintf("2026-09-04T%02d:00:00", 10+i)
+		writeSession(t, e.home, e.proj, "", id, passTalk("заход "+id, at+".000Z"),
+			base.Add(time.Duration(i)*time.Hour))
+		binds = append(binds, passBind(at, id, "XR-4", e.proj, "task-XR-4"))
+	}
+	writeBinds(t, e.home, binds...)
+
+	list := chatsOf(t, e, c)
+	if len(list) != len(ids)-chatPassMax {
+		t.Fatalf("строк списка %d, ждал голову плюс заходы за потолком: %+v", len(list), list)
+	}
+	var head chatEntry
+	rest := map[string]chatEntry{}
+	for _, ch := range list {
+		if ch.ID == "iiii-0009" {
+			head = ch
+			continue
+		}
+		rest[ch.ID] = ch
+	}
+	if len(head.Past) != chatPassMax {
+		t.Errorf("склеено %d заходов при потолке %d: %+v", len(head.Past), chatPassMax, head.Past)
+	}
+	for _, id := range []string{"aaaa-0001", "bbbb-0002"} {
+		got, ok := rest[id]
+		if !ok {
+			t.Errorf("заход %s за потолком пропал из списка молча", id)
+			continue
+		}
+		if got.Gone == "" {
+			t.Errorf("заход %s за потолком стоит строкой без слов о снятии: %+v", id, got)
+		}
+	}
+	// Лента головы держит тот же потолок: склеенное в строке и склеенное в
+	// ленте это одно и то же число.
+	if got := len(e.s.chatPasses("iiii-0009")); got != chatPassMax {
+		t.Errorf("лента тянет %d заходов при потолке %d", got, chatPassMax)
+	}
 }

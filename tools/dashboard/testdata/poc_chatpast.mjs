@@ -11,6 +11,12 @@
 // старшего захода к нынешнему, а границы заходов нарисованы чертой, как
 // граница дня, а не пузырём чьей-то реплики.
 //
+// Ключи записей стенд берёт такими, какими их отдаёт сервер (handleSession и
+// passFeed). Ключ транскрипта это смещение в своём файле, «m:0.0» у первой
+// записи, и у каждого захода файл свой. Стенд с выдуманными ключами был
+// зелёным на сломанном случае, где панель считала записи разных заходов
+// повтором и рисовала одну (замечания ревью 1 и 3).
+//
 // Зовётся: node testdata/poc_chatpast.mjs static/app.js
 
 import { makeSandbox, settle, dump, allByClass, fail, appPathArg } from "./poc_dom.mjs";
@@ -44,12 +50,21 @@ const chats = [{
 // порядку, нынешний заход последним.
 const items = [
   { key: "pass-" + PAST1 + ":0", role: "mark", text: MARK1, time: "2026-09-04T10:00:00+03:00" },
-  { key: "p1:1", role: "assistant", text: FIRST, time: "2026-09-04T10:00:30+03:00" },
+  { key: "pass-" + PAST1 + "/m:0.0", role: "assistant", text: FIRST, time: "2026-09-04T10:00:30+03:00" },
   { key: "pass-" + PAST2 + ":0", role: "mark", text: MARK2, time: "2026-09-04T11:00:00+03:00" },
-  { key: "p2:1", role: "assistant", text: SECOND, time: "2026-09-04T11:00:30+03:00" },
+  { key: "pass-" + PAST2 + "/m:0.0", role: "assistant", text: SECOND, time: "2026-09-04T11:00:30+03:00" },
   { key: "pass-" + HEAD + ":0", role: "mark", text: MARK3, time: "2026-09-04T12:00:00+03:00" },
-  { key: "t:1", role: "assistant", text: NOW, time: "2026-09-04T12:30:00+03:00" },
+  { key: "m:0.0", role: "assistant", text: NOW, time: "2026-09-04T12:30:00+03:00" },
 ];
+
+// Ключи в ленте расходятся: одинаковый ключ у записей разных заходов и есть та
+// поломка, ради которой стенд стоит.
+{
+  const keys = items.map((it) => it.key);
+  if (new Set(keys).size !== keys.length) {
+    fail("фикстура ленты держит одинаковые ключи: " + JSON.stringify(keys));
+  }
+}
 
 const { sandbox, byId } = makeSandbox(appPathArg(), (path) => {
   if (path === "/api/projects") return { projects: [{ name: "demo", prefix: "XR", works: [] }] };

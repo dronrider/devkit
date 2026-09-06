@@ -53,40 +53,64 @@ func chatWin(projPath, tmux string) string {
 // первыми, тем же порядком, каким их читает лента, а задачи их доезжают до
 // строки: заход, двигавший строку доски, назвал её своей записью реестра, и
 // терять эту привязку вместе со строкой нельзя.
+//
+// Склейка держит потолок chatPassMax, тот же, каким мерит себя лента. Заход
+// старше потолка остаётся своей строкой списка со словами про снятый разговор.
+// Иначе история за потолком пропадала бы молча: чип строки считал бы девять
+// заходов, лента показывала бы шесть, а дороги к остальным трём не было бы
+// вовсе (замечание ревью 2).
 func chatGlue(list []chatEntry) []chatEntry {
-	head := map[string]int{}
-	out := make([]chatEntry, 0, len(list))
+	keep := make([]chatEntry, 0, len(list))
+	byWin := map[string][]chatEntry{}
+	wins := []string{}
 	for _, e := range list {
 		if e.win == "" {
-			out = append(out, e)
+			keep = append(keep, e)
 			continue
 		}
-		at, seen := head[e.win]
-		if !seen {
-			head[e.win] = len(out)
-			out = append(out, e)
+		if _, seen := byWin[e.win]; !seen {
+			wins = append(wins, e.win)
+		}
+		byWin[e.win] = append(byWin[e.win], e)
+	}
+	for _, win := range wins {
+		grp := byWin[win]
+		if len(grp) == 1 {
+			keep = append(keep, grp[0])
 			continue
 		}
-		// Имя закреплено за этим заходом, а строка группы уже стоит: голова
-		// меняется местами с прошлым заходом. Свежесть тут не мера, живой
-		// заход бывает и тише мёртвого соседа.
-		if e.Gone == "" && out[at].Gone != "" {
-			e.Past, out[at].Past = out[at].Past, nil
-			e, out[at] = out[at], e
-		}
-		out[at].Past = append(out[at].Past, chatPass{ID: e.ID, Mtime: e.Mtime})
-		for _, id := range e.Tasks {
-			if !hasTask(out[at].Tasks, id) {
-				out[at].Tasks = append(out[at].Tasks, id)
+		at := 0
+		for i, e := range grp {
+			if e.Gone == "" {
+				at = i
+				break
 			}
 		}
+		head := grp[at]
+		rest := make([]chatEntry, 0, len(grp)-1)
+		rest = append(rest, grp[:at]...)
+		rest = append(rest, grp[at+1:]...)
+		sort.SliceStable(rest, func(i, j int) bool { return rest[i].Mtime < rest[j].Mtime })
+		// Заход за потолком остаётся своей строкой списка. Лента головы тянет
+		// столько же заходов, сколько считает строка, и молчаливой пропажи
+		// истории тут нет: строка стоит на месте со словами про снятый
+		// разговор, и лента у неё своя.
+		if len(rest) > chatPassMax {
+			keep = append(keep, rest[:len(rest)-chatPassMax]...)
+			rest = rest[len(rest)-chatPassMax:]
+		}
+		for _, e := range rest {
+			head.Past = append(head.Past, chatPass{ID: e.ID, Mtime: e.Mtime})
+			for _, id := range e.Tasks {
+				if !hasTask(head.Tasks, id) {
+					head.Tasks = append(head.Tasks, id)
+				}
+			}
+		}
+		keep = append(keep, head)
 	}
-	for i := range out {
-		sort.SliceStable(out[i].Past, func(a, b int) bool {
-			return out[i].Past[a].Mtime < out[i].Past[b].Mtime
-		})
-	}
-	return out
+	sortEntries(keep)
+	return keep
 }
 
 // chatPassMax это потолок прошлых заходов, чью ленту разговор тянет за собой.
@@ -147,6 +171,26 @@ func passMark(n, of int, id, at string) reply {
 	}
 }
 
+// passKey уводит ключи записей прошлого захода из-под ключей нынешнего. Ключ
+// записи транскрипта это смещение в своём файле («m:0.0» у первой записи), и у
+// каждого захода файл свой. В склеенной ленте такие ключи совпадали, панель
+// считала запись повтором и рисовала из трёх заходов один, а страница истории
+// просилась по чужому ключу (замечание ревью 1). Заход тут и есть то, чем
+// запись отличается от соседней, поэтому его ID стоит в приставке.
+func passKey(id, key string) string {
+	if key == "" {
+		return ""
+	}
+	return "pass-" + id + "/" + key
+}
+
+// passPart это лента одного прошлого захода: его ID и записи с уже своими
+// ключами.
+type passPart struct {
+	id    string
+	items []reply
+}
+
 // passFeed приклеивает к ленте разговора ленты прошлых заходов, старшими
 // сверху, с разделителем перед каждым. История задачи читается тогда сверху
 // вниз одной лентой, без перехода в другой чат.
@@ -164,9 +208,9 @@ func (s *server) passFeed(projPath, sid string, items []reply, want int, whole b
 		return items, true
 	}
 	roots := s.transcriptRoots()
-	out := make([]reply, 0, len(items)+want)
+	parts := make([]passPart, 0, len(passes))
 	all := true
-	for i, p := range passes {
+	for _, p := range passes {
 		info, ok := findSession(roots, projPath, p.ID)
 		if !ok {
 			// Транскрипта нет: заход шёл в чужом проекте под тем же именем
@@ -183,16 +227,27 @@ func (s *server) passFeed(projPath, sid string, items []reply, want int, whole b
 		if !feed.whole {
 			all = false
 		}
-		out = append(out, passMark(i+1, len(passes)+1, p.ID, part[0].Time))
-		out = append(out, part...)
+		for i := range part {
+			part[i].Key = passKey(p.ID, part[i].Key)
+		}
+		parts = append(parts, passPart{id: p.ID, items: part})
 	}
-	if len(out) == 0 {
+	if len(parts) == 0 {
 		return items, true
+	}
+	// Номер разделителя считается по вставленным заходам, а не по перечню
+	// реестра: пропущенный заход иначе оставлял в ленте дыру в нумерации,
+	// «заход 1 из 4» рядом с «заход 3 из 4» (замечание ревью 4).
+	of := len(parts) + 1
+	out := make([]reply, 0, len(items)+want)
+	for i, part := range parts {
+		out = append(out, passMark(i+1, of, part.id, part.items[0].Time))
+		out = append(out, part.items...)
 	}
 	at := ""
 	if len(items) > 0 {
 		at = items[0].Time
 	}
-	out = append(out, passMark(len(passes)+1, len(passes)+1, sid, at))
+	out = append(out, passMark(of, of, sid, at))
 	return append(out, items...), all
 }

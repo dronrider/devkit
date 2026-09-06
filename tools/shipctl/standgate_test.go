@@ -261,3 +261,86 @@ func TestStandGateSilent(t *testing.T) {
 		t.Fatalf("без сценариев в дереве ворота стенда молчат: %v", err)
 	}
 }
+
+// TestStandGateMultiScenarioMark: один прогон закрывает два сценария разом
+// (`--for` берёт несколько путей), и отпечаток в его отметке снят с объединения
+// предметов обоих. Ворота, считавшие отпечаток по одному покрывающему
+// сценарию, отбивали такое слияние словами про несошедшийся отпечаток.
+func TestStandGateMultiScenarioMark(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	second := "kit/skills/review/SKILL.md"
+	secondText := "# review\n\n## Как читать\n\nЧитают дифф целиком.\n"
+	write(t, root, standSkill, standSkillText)
+	write(t, root, second, secondText)
+	write(t, root, scenarioDir+"/14-prose-sample.md",
+		"# выборка эталонов\n\nконец: любой\nпредмет: "+standSkill+" «Как звать»\n\n## Промпт\n\nНапиши абзац.\n\n## Проверка\n\n```sh\ntrue\n```\n")
+	write(t, root, scenarioDir+"/15-review-order.md",
+		"# порядок ревью\n\nконец: любой\nпредмет: "+second+" «Как читать»\n\n## Промпт\n\nПрочитай дифф.\n\n## Проверка\n\n```sh\ntrue\n```\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "seed: два скилла и два сценария")
+
+	gitT(t, root, "checkout", "-qb", "xr-001-fix")
+	write(t, root, standSkill, strings.Replace(standSkillText, "Команда одна.", "Команда одна, зовут её сразу.", 1))
+	write(t, root, second, strings.Replace(secondText, "Читают дифф целиком.", "Читают дифф целиком, начиная с пути бага.", 1))
+	write(t, root, "fix_test.go", "package main\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: XR-001 правка двух скиллов")
+
+	subsA, err := obey.ParseSubjects(standSkill + " «Как звать»")
+	if err != nil {
+		t.Fatal(err)
+	}
+	subsB, err := obey.ParseSubjects(second + " «Как читать»")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Объединение предметов идёт по пути, и здесь оно совпадает с порядком
+	// сценариев: prose раньше review.
+	print, err := obey.PrintFrom(treeReader(root, "xr-001-fix"), append(subsA, subsB...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	standMark(t, root, taskform.StandMark{
+		Tree: "a1b2c3d", Print: print, Base: "старый", Tier: "mini", Repeats: 5,
+		Scenarios: []string{"14-prose-sample", "15-review-order"},
+	}, "зачтён")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
+		t.Fatalf("отметка одного прогона на два сценария должна открывать ворота: %v", err)
+	}
+}
+
+// TestStandGateHeadSection: правка шапки файла, то есть строк до первого
+// заголовка. Раздела с таким заголовком в файле нет, поэтому покрывает её
+// только предмет на весь файл, а база у шапки прежнего файла это «старый».
+func TestStandGateHeadSection(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	standSeed(t, root, standSkill)
+	standBranch(t, root, strings.Replace(standSkillText, "# prose\n", "# prose\n\nСкилл про выборку эталонов.\n", 1))
+	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err == nil || !strings.Contains(err.Error(), "(шапка файла)") ||
+		!strings.Contains(err.Error(), "--base старый") {
+		t.Fatalf("правка шапки прежнего файла должна требовать прогона с базой «старый»: %v", err)
+	}
+}
+
+// TestStandGateRenamedFile: переименование агентского файла ворота разбирают как
+// новый файл, поэтому базу «пусто» получают все его разделы. Сценарий той же
+// веткой перепривязан на новый путь, иначе он остался бы без предмета.
+func TestStandGateRenamedFile(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	standSeed(t, root, standSkill+" «Как звать»")
+	renamed := "kit/skills/prose-sample/SKILL.md"
+	gitT(t, root, "checkout", "-qb", "xr-001-fix")
+	gitT(t, root, "rm", "-q", standSkill)
+	write(t, root, renamed, standSkillText)
+	write(t, root, scenarioDir+"/14-prose-sample.md",
+		"# выборка эталонов\n\nконец: любой\nпредмет: "+renamed+"\n\n## Промпт\n\nНапиши абзац.\n\n## Проверка\n\n```sh\ntrue\n```\n")
+	write(t, root, "fix_test.go", "package main\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: XR-001 скилл переехал")
+	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
+	if err == nil || !strings.Contains(err.Error(), renamed) ||
+		!strings.Contains(err.Error(), "--base пусто") {
+		t.Fatalf("разделы переехавшего файла должны требовать базу «пусто»: %v", err)
+	}
+}

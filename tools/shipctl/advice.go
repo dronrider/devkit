@@ -820,23 +820,28 @@ func standCovered(read obey.Reader, scens []standScenario, marks []taskform.Stan
 			where(sec), scenarioDir, obey.Key, subjectOf(sec), id)
 	}
 	named, based := false, false
-	for _, s := range covering {
-		print, err := obey.PrintFrom(read, s.subs)
+	for _, m := range marks {
+		if !namesAny(m, covering) {
+			continue
+		}
+		named = true
+		if m.Base != sec.base {
+			continue
+		}
+		based = true
+		subs, ok := markSubjects(scens, m.Scenarios)
+		if !ok {
+			continue
+		}
+		// Отпечаток отметки снят с объединения предметов всех сценариев
+		// прогона, а не одного покрывающего: `--for` берёт несколько путей, и
+		// один прогон закрывает несколько сценариев разом.
+		print, err := obey.PrintFrom(read, subs)
 		if err != nil {
 			continue
 		}
-		for _, m := range marks {
-			if !slices.Contains(m.Scenarios, s.id) {
-				continue
-			}
-			named = true
-			if m.Base != sec.base {
-				continue
-			}
-			based = true
-			if m.Print == print && !m.Failed {
-				return nil
-			}
+		if m.Print == print && !m.Failed {
+			return nil
 		}
 	}
 	why := "сценарий не гонялся"
@@ -848,6 +853,32 @@ func standCovered(read obey.Reader, scens []standScenario, marks []taskform.Stan
 	}
 	return fmt.Errorf("на %s нет зачтённого следа стенда (%s): прогнать `obeycheck --task %s --for %s -k 5 --base %s <раскладка-кандидат> <раскладка-база>` (сценарии: %s) или загасить ворот пометкой «- Исключение: стенд (причина)» в docs/tasks/%s.md",
 		where(sec), why, id, sec.file, sec.base, strings.Join(scenarioIDs(covering), ", "), id)
+}
+
+// namesAny отвечает, назван ли в отметке хоть один из сценариев, покрывающих
+// тронутый раздел.
+func namesAny(m taskform.StandMark, covering []standScenario) bool {
+	for _, s := range covering {
+		if slices.Contains(m.Scenarios, s.id) {
+			return true
+		}
+	}
+	return false
+}
+
+// markSubjects собирает предметы прогона по именам сценариев из самой отметки
+// тем же объединением, каким их считает стенд. Имя, которого в дереве ветки
+// больше нет, оставляет отметку без отпечатка: доказывать ей нечем.
+func markSubjects(scens []standScenario, names []string) ([]obey.Subject, bool) {
+	var groups [][]obey.Subject
+	for _, name := range names {
+		i := slices.IndexFunc(scens, func(s standScenario) bool { return s.id == name })
+		if i < 0 {
+			return nil, false
+		}
+		groups = append(groups, scens[i].subs)
+	}
+	return obey.Union(groups...), true
 }
 
 // where называет тронутый раздел так, как он читается в отказе.

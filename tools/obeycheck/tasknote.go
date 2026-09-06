@@ -156,7 +156,7 @@ func (n note) record(mark taskform.StandMark) []string {
 	}
 	out := []string{"", taskform.StandLine(mark, n.Now, tail)}
 	for _, w := range n.Warnings {
-		out = append(out, "", "Предупреждение: "+w)
+		out = append(out, "", taskform.WarnLine+w)
 	}
 	out = append(out, "", "```console", "$ "+n.Command)
 	out = append(out, strings.Split(strings.TrimRight(n.Table, "\n"), "\n")...)

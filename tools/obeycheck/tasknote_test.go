@@ -127,6 +127,37 @@ func TestTaskNoteReplacesSameKey(t *testing.T) {
 	}
 }
 
+// Повторный прогон заменяет запись и тогда, когда у прошлой было
+// предупреждение о несвежей раскладке. Пара условий разом: ключ тот же, а
+// строка предупреждения стоит между отметкой и таблицей вне ограждения.
+func TestTaskNoteReplacesRecordWithWarning(t *testing.T) {
+	p := taskDoc(t)
+	first := standNote(t, scenarios(t, "press"), baseOld)
+	first.Warnings = []string{"текст предмета RULES.core.md в раскладке-кандидате не найден, раскладка собрана до правки?"}
+	if err := first.write(p); err != nil {
+		t.Fatal(err)
+	}
+	again := standNote(t, scenarios(t, "press"), baseOld)
+	again.Now = first.Now.Add(time.Hour)
+	again.Table = "сценарий  cand  base  вердикт\nнажать кнопку  5/5  5/5  зелёный на обеих"
+	if err := again.write(p); err != nil {
+		t.Fatal(err)
+	}
+	doc := read(t, p)
+	if n := len(taskform.StandMarks(doc)); n != 1 {
+		t.Fatalf("отметок после повторного прогона %d:\n%s", n, doc)
+	}
+	if n := strings.Count(doc, "```console"); n != 1 {
+		t.Fatalf("блоков с таблицей %d, ждал один:\n%s", n, doc)
+	}
+	if strings.Contains(doc, taskform.WarnLine) {
+		t.Fatalf("предупреждение прошлого прогона осталось:\n%s", doc)
+	}
+	if strings.Contains(doc, "1/5  польза") {
+		t.Fatalf("таблица прошлого прогона осталась:\n%s", doc)
+	}
+}
+
 // Разведка следом не считается: одна и две сессии на раскладку не отличают
 // правку от случайности ни при каком тесте.
 func TestTaskNoteRefusesScouting(t *testing.T) {

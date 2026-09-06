@@ -142,6 +142,20 @@ func TestTaskNoteRefusesScouting(t *testing.T) {
 	}
 }
 
+// Три повтора это нижняя граница замера, а не разведки: ровно minTaskRepeats
+// отметку писать не мешает.
+func TestTaskNoteAcceptsMinimumRepeats(t *testing.T) {
+	p := taskDoc(t)
+	n := standNote(t, scenarios(t, "press"), baseOld)
+	n.Repeats = minTaskRepeats
+	if err := n.write(p); err != nil {
+		t.Fatalf("отказ на границе k=%d: %v", minTaskRepeats, err)
+	}
+	if !strings.Contains(read(t, p), taskform.StandNote) {
+		t.Fatal("отметка на границе k не записана")
+	}
+}
+
 // Файл задачи ищется в корне репозитория текущей директории: стенд, позванный
 // не из дерева задачи, следу писать некуда.
 func TestTaskFileMissing(t *testing.T) {

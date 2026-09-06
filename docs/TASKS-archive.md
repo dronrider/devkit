@@ -451,3 +451,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-805 | LLD: правка правил и скиллов измеряется прогоном стенда [приёмка: user] | LLD | P1 | 2026-09-06 | [tasks/archive/2026/DK-805.md](tasks/archive/2026/DK-805.md) |
 | DK-818 | Тесты taskctl пишут записи этапов в боевой ~/.devkit/runs | bug | P2 | 2026-09-06 | [tasks/archive/2026/DK-818.md](tasks/archive/2026/DK-818.md) |
 | DK-817 | Стоп груминга стоит значком в ряду кнопок, плашки замка нет [приёмка: mixed] | bug | P3 | 2026-09-06 | [tasks/archive/2026/DK-817.md](tasks/archive/2026/DK-817.md), `be84a8f07`, `b3d1a6e6d`, `ce2673c4a`, `e771bceff`, `e5ac5b145` |
+| DK-716 | Работа по задаче из любого чата даёт строке «Стоп» и вход в живой чат [приёмка: mixed] | task | P1 | 2026-09-06 | [tasks/archive/2026/DK-716.md](tasks/archive/2026/DK-716.md) |

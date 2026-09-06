@@ -190,6 +190,12 @@ func TestJudgeColoursCell(t *testing.T) {
 	if !strings.Contains(report, "judge / judge-no / повтор 1: судья: нет") {
 		t.Fatalf("красная клетка не названа вердиктом судьи:\n%s", report)
 	}
+	// Разбор красной клетки сверяется целиком, а не одним вердиктом: битая
+	// подстановка в подложном судье красит клетку тем же цветом и проходит мимо
+	// проверки, которая смотрит только на слово «нет».
+	if !strings.Contains(report, "judge / judge-no / повтор 1: слова «разобрала» в тексте нет нет") {
+		t.Fatalf("разбор судьи на красной клетке не сверен:\n%s", report)
+	}
 }
 
 func TestJudgeReadsFileInput(t *testing.T) {

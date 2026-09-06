@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/runsguard"
 )
 
 // TestMain держит уведомитель выключенным по умолчанию (DEVKIT_NOTIFY_OFF):
@@ -23,11 +25,16 @@ import (
 //
 // Тем же ходом глохнет shipctl: с DK-312 close зовёт разлив, и без стаба
 // close-тесты звали бы настоящий shipctl с машины (drain_test.go).
+//
+// runsguard.Guard оборачивает m.Run() сторожем настоящего ~/.devkit/runs
+// (DK-818): setup(t) уводит HOME во временный каталог, но сторож не верит
+// одной этой подмене на слово, а считает файлы боевого каталога до и после
+// всего прогона пакета.
 func TestMain(m *testing.M) {
 	os.Setenv("DEVKIT_NOTIFY_OFF", "1")
 	os.Unsetenv("CLAUDE_CODE_SESSION_ID")
 	muteShipctlInTests()
-	os.Exit(m.Run())
+	os.Exit(runsguard.Guard(m))
 }
 
 // writeNotifyStub кладёт в root/hooks/notify.py поддельный уведомитель:

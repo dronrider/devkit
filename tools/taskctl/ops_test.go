@@ -12,6 +12,12 @@ import (
 
 func setup(t *testing.T) string {
 	t.Helper()
+	// DK-818: этот дом читает stage.Open внутри cmdMove (openOutside), и без
+	// подмены запись этапа уходила в боевой ~/.devkit/runs машины, а не во
+	// временный каталог теста. Тесты, которым нужен свой дом, переопределяют
+	// его дальше своим t.Setenv, и это ничего не ломает: значение просто
+	// перебивается ещё раз.
+	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	tasks := filepath.Join(root, "docs", "tasks")
 	if err := os.MkdirAll(tasks, 0o755); err != nil {
@@ -37,6 +43,56 @@ func setup(t *testing.T) string {
 	}
 	return root
 }
+
+// regcheck:test-begin
+//
+// TestSetupIsolatesRealHome: регрессия DK-818. setup(t) подменял только
+// корень проекта, а HOME оставался настоящим (писатель этапов stage.Open
+// берёт дом через os.UserHomeDir()), и move в Check или Blocked писал через
+// openOutside запись прямо в боевой ~/.devkit/runs. Путь дублирует
+// stage.Dir/stage.Home напрямую, без импорта пакета stage: разметка regcheck
+// переносит этот регион на старый код целиком, а правка блока import там
+// жить не может, только сам регион.
+func TestSetupIsolatesRealHome(t *testing.T) {
+	realHome, _ := os.UserHomeDir()
+	realDir := filepath.Join(realHome, ".devkit", "runs")
+	before := runDirNames(t, realDir)
+
+	root := setup(t)
+	if home, _ := os.UserHomeDir(); home == realHome {
+		t.Fatalf("setup(t) не подменил HOME: осталось %q", realHome)
+	}
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	after := runDirNames(t, realDir)
+	for name := range after {
+		if !before[name] {
+			t.Fatalf("move в Blocked оставил файл в боевом %s: %s", realDir, name)
+		}
+	}
+}
+
+// runDirNames читает имена файлов каталога записей, отсутствие каталога не
+// отличая от пустого.
+func runDirNames(t *testing.T, dir string) map[string]bool {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return map[string]bool{}
+	}
+	names := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		names[e.Name()] = true
+	}
+	return names
+}
+
+// regcheck:test-end
 
 // fixtureScenario это готовый сценарий проверки: без него ворота move не
 // пускают строку в Check (gate.go), а через Check ходит половина тестов.

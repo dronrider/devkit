@@ -48,10 +48,26 @@ func panePath(logPath string) string { return logPath + ".pane" }
 // состояние окна. Многоточие и разделители тут клавиатурные: живой клиент
 // печатает их своими символами, а искомое слово от этого не меняется.
 const (
-	paneTurnScreen = "  auto mode on (shift+tab to cycle) . esc to interrupt . for agents"
-	paneIdleScreen = "  auto mode on (shift+tab to cycle) . for agents"
+	paneTurnScreen   = "  auto mode on (shift+tab to cycle) . esc to interrupt . for agents"
+	paneIdleScreen   = "  auto mode on (shift+tab to cycle) . for agents"
 	paneRewindScreen = "   Rewind\n   Restore the code and/or conversation to the point before...\n" +
 		"   Enter to continue . Esc to cancel"
+	// Виджет вопроса и экран входа подписаны той же подсказкой про отмену, что
+	// и меню отката, и по ней одной оба читались откатом (замечание ревью 13).
+	// Пока такое окно открыто, клиент убирает поле ввода и строку режима, и
+	// ниже подсказки на экране не остаётся ничего.
+	paneAskScreen = " Какой цвет выбрать?\n\n" +
+		" \u276f 1. Красный\n   2. Синий\n\n" +
+		" Enter to select . to navigate . Esc to cancel"
+	paneLoginScreen = "   Login\n\n   Select login method:\n\n" +
+		"   \u276f 1. Claude account with subscription\n     2. Anthropic Console account\n\n" +
+		"   Esc to cancel"
+	// Эхо: агент напечатал в свою ленту снимок соседней панели. Слова виджета
+	// на экране есть, а самого виджета нет, и видно это по тому, что ниже
+	// стоят поле ввода и строка режима клиента.
+	paneEchoScreen = " \u276f 1. Красный\n   2. Синий\n" +
+		" Enter to select . Esc to cancel\n" +
+		"-----\n\u276f \n-----\n" + paneIdleScreen
 )
 
 // writePane кладёт стенду экран окна: им стоп и сторож дожима решают, идёт ли

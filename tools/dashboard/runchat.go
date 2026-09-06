@@ -142,6 +142,12 @@ func (s *server) stopChatWork(w http.ResponseWriter, found *Project, id string, 
 		s.logf("стоп %s в %s: окно %s стояло в меню клиента, оно закрыто, хода не было",
 			id, found.Name, pick.Tmux)
 	}
+	// Окно держит человек вопросом агента или входом клиента: клавиш туда не
+	// послано, и работа со строки снимается молча (замечание ревью 13).
+	if way == stopWayAsk || way == stopWayLogin {
+		s.logf("стоп %s в %s: окно %s держит человек (%s), клавиш не послано",
+			id, found.Name, pick.Tmux, way)
+	}
 	resp := map[string]any{"id": id, "kind": "chat", "session": pick.Session,
 		"tmux": pick.Tmux, "state": "стоп"}
 	// Фоновая работа переживает прерванный ход, и стоп на ней не кончается.
@@ -153,12 +159,9 @@ func (s *server) stopChatWork(w http.ResponseWriter, found *Project, id string, 
 		s.stopWaitSet(pick.Tmux, pick.Session, id, found.Name, found.Path, false)
 		s.saidMark(saidSessionKey(pick.Session), stopChatWaitWord(id))
 		resp["state"] = "останавливается"
-		was := "ход разговора " + pick.Tmux + " прерван"
-		if way != stopWayTurn {
-			// Хода не было, и говорить «прерван» нельзя: человек читает эту
-			// строку как отчёт о сделанном.
-			was = "ход в разговоре " + pick.Tmux + " не шёл"
-		}
+		// Хода не было, и говорить «прерван» нельзя: человек читает эту строку
+		// как отчёт о сделанном.
+		was := stopWayWas(way, pick.Tmux)
 		resp["message"] = fmt.Sprintf("стоп: %s, но по %s ещё работают "+
 			"фоновые субагенты; строка стоит под «Стопом», привязка снимется, когда работа встанет",
 			was, id)
@@ -193,11 +196,15 @@ func (s *server) stopChatWork(w http.ResponseWriter, found *Project, id string, 
 	if way == stopWayTurn {
 		s.stopWaitSet(pick.Tmux, pick.Session, id, found.Name, found.Path, true)
 	}
-	resp["message"] = fmt.Sprintf("стоп: ход разговора %s прерван, работа по %s снята; "+
-		"разговор жив и следующую реплику возьмёт", pick.Tmux, id)
-	if way != stopWayTurn {
-		resp["message"] = fmt.Sprintf("стоп: ход по %s не шёл, работа снята; "+
-			"разговор %s жив и следующую реплику возьмёт", id, pick.Tmux)
+	resp["message"] = fmt.Sprintf("стоп: %s, работа по %s снята; "+
+		"разговор жив и следующую реплику возьмёт", stopWayWas(way, pick.Tmux), id)
+	// Простой окна сверяется со вторым источником: слова клиента чужие, и по
+	// сменившейся подсказке всякое окно выглядело бы простаивающим (замечание
+	// ревью 14).
+	if way == stopWayIdle {
+		if doubt := s.chatIdleDoubt(found.Path, pick.Session, pick.Tmux); doubt != "" {
+			resp["message"] = fmt.Sprintf("стоп: %s, работа по %s снята", doubt, id)
+		}
 	}
 	s.logf("стоп %s в %s: ход разговора %s (сессия %s) %s, привязка снята",
 		id, found.Name, pick.Tmux, pick.Session, way)

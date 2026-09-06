@@ -2044,10 +2044,19 @@ const (
 	// минуты, а последняя запись хода остаётся свежей ещё двадцать секунд после
 	// его конца.
 	paneTurn = "ход"
-	// paneRewind это меню отката и всякое другое модальное окно клиента: оно
-	// само говорит, что Escape его закроет.
+	// paneRewind это меню отката: клиент открывает его парой Escape по
+	// остановленному ходу и сам называет себя заголовком и строкой про
+	// восстановление кода и разговора.
 	paneRewind = "откат"
-	paneIdle   = "простой"
+	// paneAsk это виджет вопроса человеку. На нём стоит половина дашборда:
+	// ожидание ответа, парковка строки и панель вопроса. Клавиш туда не идёт
+	// вовсе: Escape отменяет вопрос, которого человек ещё не читал, а ответить
+	// за него дашборду нечем.
+	paneAsk = "вопрос"
+	// paneLogin это экран входа клиента. Его тоже держит человек, и Escape в
+	// нём бросает начатый вход.
+	paneLogin = "вход"
+	paneIdle  = "простой"
 	// paneBlind это нечитаемый снимок: окна нет, tmux не ответил, экран пуст.
 	// Вслепую в него не шлют ничего.
 	paneBlind = "невидно"
@@ -2056,9 +2065,27 @@ const (
 // Слова клиента, по которым узнаётся состояние окна. Держатся они одним местом:
 // подсказка клиента меняется от версии к версии, и искать её по коду в трёх
 // местах значит однажды найти в двух.
-const (
-	paneTurnMark   = "esc to interrupt"
-	paneCancelMark = "esc to cancel"
+//
+// Подсказка про отмену по Escape общая у трёх разных окон, и по ней одной
+// меню отката узнавалось прежде. Ею же клиент подписывает виджет вопроса и
+// экран входа, так что стоп закрывал вопрос человека и отчитывался о закрытом
+// меню, а сторож дожима отменял тот же вопрос каждые пять секунд (замечание
+// ревью 13). Теперь у каждого окна свои слова.
+const paneTurnMark = "esc to interrupt"
+
+var (
+	// Меню отката зовут его собственные слова: заголовок и строка про
+	// восстановление кода и разговора к точке до выбранного места.
+	paneRewindMarks = []string{"restore the code and/or conversation"}
+	paneRewindHead  = "rewind"
+	// Экран входа зовут слова его стадий: выбор способа, повтор после отказа,
+	// непошедший браузер и поле для кода.
+	paneLoginMarks = []string{"select login method", "press enter to retry",
+		"browser didn't open", "paste code here"}
+	paneLoginHead = "login"
+	// Строка режима клиента стоит под полем ввода и значит, что модального
+	// окна на экране нет: клиент вернул человеку клавиатуру.
+	paneModeRe = regexp.MustCompile(`(?i)(mode on|for shortcuts)`)
 )
 
 // chatPaneText снимает видимый экран окна разговора. Подменяется стендами:
@@ -2071,16 +2098,69 @@ var chatPaneText = func(name string) (string, bool) {
 	return string(out), true
 }
 
-// paneState читает снимок. Меню отката спрашивается раньше идущего хода: пока
-// оно открыто, наверху экрана остаётся прежний ход, и по одному слову «esc to
-// interrupt» окно выглядело бы работающим.
+// paneHintTail отвечает, стоит ли на экране открытое окно клиента с подсказкой
+// навигации. Одной подсказки мало: агент, напечатавший в свою ленту снимок
+// соседней панели, поднял бы ложное окно. Открытое окно выдаёт место подсказки.
+// Пока оно держит клавиатуру, клиент убирает и поле ввода, и свою строку
+// режима, и ниже подсказки на экране не остаётся ничего.
+func paneHintTail(text string) bool {
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		ln := lines[i]
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		if askHintRe.MatchString(ln) {
+			return true
+		}
+		if paneModeRe.MatchString(ln) {
+			return false
+		}
+	}
+	return false
+}
+
+// paneHeadIs узнаёт заголовок окна клиента: он стоит отдельной строкой в рамке,
+// и от строки разговора его отличает ровно это одиночество.
+func paneHeadIs(text, head string) bool {
+	for _, ln := range strings.Split(text, "\n") {
+		if strings.EqualFold(loginPlainLine(ln), head) {
+			return true
+		}
+	}
+	return false
+}
+
+// paneHasAny отвечает, есть ли на экране хоть одно из слов набора.
+func paneHasAny(low string, marks []string) bool {
+	for _, mark := range marks {
+		if strings.Contains(low, mark) {
+			return true
+		}
+	}
+	return false
+}
+
+// paneState читает снимок. Порядок вопросов идёт от узкого к широкому. Свои
+// слова есть у меню отката и у экрана входа, и спрашиваются они первыми: под
+// обоими остаётся прежний ход, и по одному слову про прерывание окно выглядело
+// бы работающим. Дальше идёт виджет вопроса, у которого своих слов нет, а есть
+// открытое окно с подсказкой навигации. Заголовок засчитывается только при
+// такой подсказке: без неё это строка разговора, а не окно клиента.
 func paneState(text string, ok bool) string {
 	if !ok || strings.TrimSpace(text) == "" {
 		return paneBlind
 	}
 	low := strings.ToLower(text)
-	if strings.Contains(low, paneCancelMark) {
+	hint := paneHintTail(text)
+	if paneHasAny(low, paneRewindMarks) || (hint && paneHeadIs(text, paneRewindHead)) {
 		return paneRewind
+	}
+	if paneHasAny(low, paneLoginMarks) || (hint && paneHeadIs(text, paneLoginHead)) {
+		return paneLogin
+	}
+	if hint {
+		return paneAsk
 	}
 	if strings.Contains(low, paneTurnMark) {
 		return paneTurn
@@ -2093,15 +2173,81 @@ func chatPaneState(name string) string {
 	return paneState(chatPaneText(name))
 }
 
-// Исходы попытки прервать ход. Их четыре, и каждый значит своё для зовущего:
-// ход прерван, хода не было вовсе, окно стояло в модальном окне и мы его
-// закрыли, окна не видно.
+// Исходы попытки прервать ход. Каждый значит своё для зовущего: ход прерван,
+// хода не было вовсе, окно стояло в меню отката и мы его закрыли, окно держит
+// человек вопросом или входом, окна не видно.
 const (
 	stopWayTurn   = "прерван"
 	stopWayIdle   = "простой"
 	stopWayRewind = "откат"
+	stopWayAsk    = "вопрос"
+	stopWayLogin  = "вход"
 	stopWayBlind  = "невидно"
 )
+
+// stopHumanWords объясняет человеку, почему стоп ничего не нажал: окно держит
+// он сам, и дашборд туда не лезет.
+func stopHumanWords(way string) string {
+	if way == stopWayLogin {
+		return "ход не идёт: клиент стоит на экране входа, клавиш туда не послано"
+	}
+	return "ход не идёт: агент задал вопрос и ждёт ответа, клавиш туда не послано"
+}
+
+// stopWayWas пересказывает исход стопа человеку: что было в окне и что с ним
+// сделали. Слова одни на обе дороги стопа, панельную и строчную.
+func stopWayWas(way, tmux string) string {
+	switch way {
+	case stopWayTurn:
+		return "ход разговора " + tmux + " прерван"
+	case stopWayAsk:
+		return "ход в разговоре " + tmux + " не шёл: агент ждёт ответа на свой вопрос"
+	case stopWayLogin:
+		return "ход в разговоре " + tmux + " не шёл: клиент стоит на экране входа"
+	}
+	return "ход в разговоре " + tmux + " не шёл"
+}
+
+// chatIdleDoubt сверяет простой окна со вторым источником и отвечает словами
+// сомнения, если они разошлись.
+//
+// Состояние окна читается словами клиента, а слова эти чужие: сменится в них
+// хоть буква, и всякое окно станет для нас простаивающим. Стоп тогда молчит
+// вместо работы, а отличить это от честного простоя нечем (замечание ревью 14).
+// Второй источник тут журнал самой сессии: незакрытый вызов инструмента в его
+// хвосте значит, что агент сейчас в ходе, а окно об этом ходе не сказало.
+// Свежесть записи в счёт не идёт: журнал остаётся свежим ещё двадцать секунд
+// после конца хода, и по ней сомнение звучало бы после каждого удачного стопа.
+func (s *server) chatIdleDoubt(projPath, sid, name string) string {
+	info, ok := findSession(s.transcriptRoots(), projPath, sid)
+	if !ok {
+		return ""
+	}
+	e := s.busyEntryOf(info.path)
+	if e.open <= 0 || s.now().Sub(e.last) >= subStale {
+		return ""
+	}
+	s.logf("стоп чата %s: подсказки клиента не узнал, окно %s кончается словами %q, "+
+		"а в журнале сессии висит незакрытый вызов", sid, name, paneLastWords(name))
+	return "подсказки клиента не узнал: в окне нет ни знакомого признака хода, ни знакомого " +
+		"экрана, а в журнале сессии висит незакрытый вызов; клавиш туда не послано"
+}
+
+// paneLastWords достаёт последнюю живую строку окна. Она едет в журнал рядом с
+// сомнением: по ней и видно, какими словами клиент теперь подписывает себя.
+func paneLastWords(name string) string {
+	text, ok := chatPaneText(name)
+	if !ok {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := loginPlainLine(lines[i]); line != "" {
+			return truncate(line, 120)
+		}
+	}
+	return ""
+}
 
 // escape подаёт одно нажатие Escape в окно.
 func escape(name string) error {
@@ -2137,6 +2283,13 @@ func chatStop(name string) (string, error) {
 		return stopWayIdle, nil
 	case paneBlind:
 		return stopWayBlind, nil
+	case paneAsk:
+		// Вопрос человеку и экран входа держит человек, и клавиш туда не идёт
+		// по той же причине, по какой их не шлют вслепую: Escape отменил бы
+		// вопрос, которого человек ещё не читал, а вход бросил бы на половине.
+		return stopWayAsk, nil
+	case paneLogin:
+		return stopWayLogin, nil
 	case paneRewind:
 		if err := escape(name); err != nil {
 			return stopWayRewind, err
@@ -2294,6 +2447,15 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	if way == stopWayRewind {
 		s.logf("стоп чата %s: окно %s стояло в меню клиента, оно закрыто, хода не было", sid, last.Tmux)
 	}
+	// Окно держит человек: агент спросил и ждёт ответа либо клиент стоит на
+	// входе. Клавиш туда не послано, и заказ дожима не ставится: ход поднимет
+	// сам человек своим ответом, и прерывать этот ход дашборду незачем.
+	if way == stopWayAsk || way == stopWayLogin {
+		s.logf("стоп чата %s: окно %s держит человек (%s), клавиш не послано", sid, last.Tmux, way)
+		writeJSON(w, http.StatusOK, map[string]any{"way": "idle", "tmux": last.Tmux, "state": "стоп",
+			"message": stopHumanWords(way)})
+		return
+	}
 	// Ход прерван, а работа сессии этим не всегда кончена: субагенты, которым
 	// агент раздал работу фоном, живут отдельно от хода и, вернувшись, поднимут
 	// его снова. Тот же случай, что у стопа со строки доски, и лечится он тем
@@ -2317,8 +2479,12 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	// отвечал «ход прерван» и слал Escape в простаивающее окно.
 	if way == stopWayIdle {
 		s.logf("стоп чата %s: ход не шёл, Escape не послан (окно %s)", sid, last.Tmux)
+		words := "ход не идёт: прерывать нечего, сессия жива и ждёт следующей реплики"
+		if doubt := s.chatIdleDoubt(found.Path, sid, last.Tmux); doubt != "" {
+			words = doubt
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"way": "idle", "tmux": last.Tmux, "state": "стоп",
-			"message": "ход не идёт: прерывать нечего, сессия жива и ждёт следующей реплики"})
+			"message": words})
 		return
 	}
 	if way == stopWayRewind {

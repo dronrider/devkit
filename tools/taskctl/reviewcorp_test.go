@@ -84,14 +84,25 @@ func TestReviewLevelCorpFromSubdir(t *testing.T) {
 
 // TestReviewLevelCorpFromBoardDir: команду позвали из самой боковой доски.
 // Редирект оттуда не виден, и дерево кода называет привязка tracker.local.
+// Путь клона в привязке живёт в обеих формах, README trackctl показывает как
+// раз относительную («repo = ../corp-repo»), и разрешение её от боковой
+// директории держит отдельный случай.
 func TestReviewLevelCorpFromBoardDir(t *testing.T) {
-	clone, local := corpReviewStand(t)
-	corpWrite(t, filepath.Join(local, corpTrackerPath), "key = XR\nrepo = "+clone+"\n")
-	corpLevel(t, local, "XR-005", "2", "тронут разбор диффа")
+	for _, form := range []string{"абсолютный", "относительный"} {
+		t.Run(form, func(t *testing.T) {
+			clone, local := corpReviewStand(t)
+			repo := clone
+			if form == "относительный" {
+				repo = "../proj"
+			}
+			corpWrite(t, filepath.Join(local, corpTrackerPath), "key = XR\nrepo = "+repo+"\n")
+			corpLevel(t, local, "XR-005", "2", "тронут разбор диффа")
 
-	got := readTaskFile(t, local, "XR-005")
-	if !strings.Contains(got, "Уровень 2 до "+corpHead(t, clone)+":") {
-		t.Fatalf("привязка не дала вершину кода:\n%s", got)
+			got := readTaskFile(t, local, "XR-005")
+			if !strings.Contains(got, "Уровень 2 до "+corpHead(t, clone)+":") {
+				t.Fatalf("привязка не дала вершину кода:\n%s", got)
+			}
+		})
 	}
 }
 

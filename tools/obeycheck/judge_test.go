@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -367,17 +368,32 @@ func TestJudgeSkippedOnRedCheck(t *testing.T) {
 	}
 }
 
-// Затравка --home-seed везёт судье учётные данные, а правила и обвязку
-// харнеса из неё судья не получает: дом у него пустой.
+// Затравка --home-seed везёт судье только то, чем харнес авторизуется: файл
+// учётных данных, связку и ключи авторизации из настроек. Всё остальное, что
+// бы ни лежало в затравке, до дома судьи не доезжает: список закрыт с обеих
+// сторон, и правила из незнакомого каталога не проскочат.
 func TestJudgeHomeSeedWithoutRules(t *testing.T) {
 	seed := t.TempDir()
-	for _, name := range []string{".claude/.credentials.json", ".claude/CLAUDE.md", ".claude/settings.json",
-		".claude/agents/exec-medium.md", ".claude/skills/prose/SKILL.md", "CLAUDE.md"} {
+	files := map[string]string{
+		".claude/.credentials.json":     "ключи харнеса",
+		".claude/settings.json":         `{"apiKeyHelper": "secretctl exec key", "env": {"X": "1"}, "hooks": {"PostToolUse": []}, "permissions": {"allow": ["Bash"]}}`,
+		".claude/settings.local.json":   `{"permissions": {"allow": ["Bash"]}}`,
+		".claude/CLAUDE.md":             "затравка",
+		".claude/CLAUDE.local.md":       "затравка",
+		".claude/agents/exec-medium.md": "затравка",
+		".claude/skills/prose/SKILL.md": "затравка",
+		".claude/commands/go.md":        "затравка",
+		".claude/plugins/x/SKILL.md":    "затравка",
+		".claude/unknown/rules.md":      "затравка",
+		"CLAUDE.md":                     "затравка",
+		"Library/Keychains/login":       "связка затравки",
+	}
+	for name, body := range files {
 		path := filepath.Join(seed, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte("затравка"), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -388,13 +404,42 @@ func TestJudgeHomeSeedWithoutRules(t *testing.T) {
 		t.Fatal("ждал зачтённую строку")
 	}
 	home := filepath.Join(p.Work, "judge", "home")
-	if !pathExists(filepath.Join(home, ".claude", ".credentials.json")) {
-		t.Error("учётные данные затравки до дома судьи не доехали")
+	creds, err := os.ReadFile(filepath.Join(home, ".claude", ".credentials.json"))
+	if err != nil || string(creds) != "ключи харнеса" {
+		t.Errorf("учётные данные затравки до дома судьи не доехали: %q, %v", creds, err)
 	}
-	for _, name := range []string{".claude/CLAUDE.md", ".claude/settings.json", ".claude/agents", ".claude/skills", "CLAUDE.md"} {
-		if pathExists(filepath.Join(home, filepath.FromSlash(name))) {
-			t.Errorf("в доме судьи лежит %s из затравки", name)
+	kc, err := os.ReadFile(filepath.Join(home, keychainRel, "login"))
+	if err != nil || string(kc) != "связка затравки" {
+		t.Errorf("связка затравки до дома судьи не доехала: %q, %v", kc, err)
+	}
+	settings, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("ключи авторизации из настроек затравки не доехали: %v", err)
+	}
+	for _, want := range []string{"apiKeyHelper", "secretctl exec key", `"X": "1"`} {
+		if !strings.Contains(string(settings), want) {
+			t.Errorf("в настройках судьи нет %q: %s", want, settings)
 		}
+	}
+	for _, drop := range []string{"hooks", "permissions"} {
+		if strings.Contains(string(settings), drop) {
+			t.Errorf("в настройки судьи уехало %q: %s", drop, settings)
+		}
+	}
+	// Проверяется всё дерево дома, а не перечень: мутация «взять из затравки
+	// всё» обязана краснеть на любом незнакомом каталоге.
+	var got []string
+	filepath.WalkDir(home, func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			rel, _ := filepath.Rel(home, path)
+			got = append(got, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	sort.Strings(got)
+	want := []string{".claude/.credentials.json", ".claude/settings.json", "Library/Keychains/login"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("в доме судьи лежит лишнее из затравки: %v, жду %v", got, want)
 	}
 }
 

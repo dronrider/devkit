@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -124,7 +125,7 @@ func newJudge(work string, cmd []string, model, homeSeed, userHome string, timeo
 		}
 	}
 	if homeSeed != "" {
-		if err := copyTree(homeSeed, j.Home, seedRules); err != nil {
+		if err := seedAuth(homeSeed, j.Home); err != nil {
 			return nil, fmt.Errorf("затравка HOME %s: %v", homeSeed, err)
 		}
 	}
@@ -134,17 +135,74 @@ func newJudge(work string, cmd []string, model, homeSeed, userHome string, timeo
 	return j, nil
 }
 
-// seedRules отсеивает из затравки то, что несёт правила и обвязку харнеса:
-// глобальную точку правил, настройки, определения субагентов и скиллы. В дом
-// судьи из затравки едут только учётные данные, иначе затравка снимала бы с
-// него слепоту.
-func seedRules(rel string) bool {
-	switch rel {
-	case "CLAUDE.md", ".claude/CLAUDE.md", ".claude/settings.json", ".claude/settings.local.json",
-		".claude/agents", ".claude/skills", ".claude/commands":
-		return true
+// Что из затравки --home-seed едет в дом судьи. Список закрыт с обеих сторон:
+// перечислено то, чем харнес авторизуется, а всё остальное (точка правил,
+// скиллы, команды, плагины, определения субагентов) остаётся в затравке. Из
+// настроек берутся только ключи авторизации, хуки и разрешения не едут.
+var (
+	seedAuthPaths    = []string{".claude/.credentials.json", keychainRel}
+	seedSettings     = ".claude/settings.json"
+	seedSettingsKeys = []string{"apiKeyHelper", "env"}
+)
+
+// seedAuth переносит из затравки учётные данные харнеса: файл учётных данных,
+// связку ключей и ключи авторизации из настроек.
+func seedAuth(seed, home string) error {
+	for _, rel := range seedAuthPaths {
+		from := filepath.Join(seed, filepath.FromSlash(rel))
+		to := filepath.Join(home, filepath.FromSlash(rel))
+		fi, err := os.Lstat(from)
+		if err != nil {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+			return err
+		}
+		switch {
+		case fi.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(from)
+			if err != nil {
+				return err
+			}
+			if err := os.Symlink(target, to); err != nil {
+				return err
+			}
+		case fi.IsDir():
+			if err := copyTree(from, to, nil); err != nil {
+				return err
+			}
+		default:
+			if err := copyFile(from, to, fi.Mode()); err != nil {
+				return err
+			}
+		}
 	}
-	return false
+	data, err := os.ReadFile(filepath.Join(seed, filepath.FromSlash(seedSettings)))
+	if err != nil {
+		return nil
+	}
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(data, &all); err != nil {
+		return fmt.Errorf("%s: %v", seedSettings, err)
+	}
+	keep := map[string]json.RawMessage{}
+	for _, k := range seedSettingsKeys {
+		if v, ok := all[k]; ok {
+			keep[k] = v
+		}
+	}
+	if len(keep) == 0 {
+		return nil
+	}
+	out, err := json.MarshalIndent(keep, "", "  ")
+	if err != nil {
+		return err
+	}
+	to := filepath.Join(home, filepath.FromSlash(seedSettings))
+	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(to, append(out, '\n'), 0o600)
 }
 
 // environ это окружение судьи: без HOME машины, без переменных харнеса и без

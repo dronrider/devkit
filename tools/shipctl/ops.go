@@ -1013,6 +1013,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err := reviewLevelGate(p.ID, taskDoc); err != nil {
 		return "", err
 	}
+	if err := standGate(root, main, branch, p.ID, taskDoc); err != nil {
+		return "", err
+	}
 	// Предупреждения собираются до ребейза (diff ветки против main ещё
 	// осмысленный) и не валят слияние: это подсказки по правилам, а не
 	// предусловия.

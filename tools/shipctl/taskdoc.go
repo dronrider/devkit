@@ -161,6 +161,7 @@ const (
 	gateTests    = taskform.GateTests
 	gateScenario = taskform.GateScenario
 	gateReview   = taskform.GateReview
+	gateStand    = taskform.GateStand
 )
 
 func hasException(doc, gate string) bool { return taskform.Exception(doc, gate) }

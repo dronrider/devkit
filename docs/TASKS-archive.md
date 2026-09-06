@@ -452,3 +452,5 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-818 | Тесты taskctl пишут записи этапов в боевой ~/.devkit/runs | bug | P2 | 2026-09-06 | [tasks/archive/2026/DK-818.md](tasks/archive/2026/DK-818.md) |
 | DK-817 | Стоп груминга стоит значком в ряду кнопок, плашки замка нет [приёмка: mixed] | bug | P3 | 2026-09-06 | [tasks/archive/2026/DK-817.md](tasks/archive/2026/DK-817.md), `be84a8f07`, `b3d1a6e6d`, `ce2673c4a`, `e771bceff`, `e5ac5b145` |
 | DK-716 | Работа по задаче из любого чата даёт строке «Стоп» и вход в живой чат [приёмка: mixed] | task | P1 | 2026-09-06 | [tasks/archive/2026/DK-716.md](tasks/archive/2026/DK-716.md) |
+| DK-834 | Развилки задачи хранятся машинно: разбор перечня и команда taskctl decide | task | P1 | 2026-09-06 | [tasks/archive/2026/DK-834.md](tasks/archive/2026/DK-834.md) |
+| DK-836 | Стенд меряет правку промпта: ключ предмета, вердикт и след прогона | task | P1 | 2026-09-06 | [tasks/archive/2026/DK-836.md](tasks/archive/2026/DK-836.md) |

@@ -141,7 +141,11 @@ func main() {
 	}
 	if *list {
 		for _, s := range scen {
-			fmt.Printf("%-20s %-52s %s (конец: %s)\n", s.ID, s.Title, s.Subject(), s.End)
+			judge := ""
+			if s.Judge != nil {
+				judge = ", судья"
+			}
+			fmt.Printf("%-20s %-52s %s (конец: %s%s)\n", s.ID, s.Title, s.Subject(), s.End, judge)
 		}
 		logRun(".", 0)
 		return

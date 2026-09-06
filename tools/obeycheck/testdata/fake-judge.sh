@@ -43,7 +43,7 @@ word)
 		echo "цитата: «$(printf '%s' "$text" | grep -F -e "$word" | head -1 | sed 's/^ *//')»"
 		echo "да"
 	else
-		echo "слова «$word» в тексте нет"
+		echo "слова «${word}» в тексте нет"
 		echo "нет"
 	fi
 	;;

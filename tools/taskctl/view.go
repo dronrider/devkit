@@ -305,14 +305,25 @@ func cmdShow(root, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, r := range arch.Rows {
-		if r.ID == id {
-			text := fmt.Sprintf("%s в архиве (закрыта %s)\n%s", id, r.Cells[4], arch.Lines[r.LineIdx])
-			if note != "" {
-				text = note + "\n" + text
-			}
-			return text, nil
+	if r := arch.find(id); r != nil {
+		out := []string{fmt.Sprintf("%s в архиве (закрыта %s)", id, r.Cells[4]), arch.Lines[r.LineIdx]}
+		if note != "" {
+			out = append([]string{note}, out...)
 		}
+		// Зависимости печатаются, как у живой строки: «держит» считается по
+		// доске и у закрытой, а «после» закрытие снимает, и об этом сказано
+		// словами, а не прочерком.
+		blocks := []string(nil)
+		if s := depSides(b)[id]; s != nil {
+			blocks = s.blocks
+		}
+		out = append(out, "после: "+archiveAfterNote, "держит: "+joinOrDash(blocks))
+		if rel, ok := archiveTaskFile(root, id, r.Cells[4]); ok {
+			out = append(out, "файл задачи: "+rel)
+		} else {
+			out = append(out, "файла задачи нет: закрытая задача осталась одной строкой архива")
+		}
+		return strings.Join(out, "\n"), nil
 	}
 	drafts, err := loadDrafts(root)
 	if err != nil {

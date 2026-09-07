@@ -328,3 +328,53 @@ func TestListJSONMovedSilentWithoutGit(t *testing.T) {
 		}
 	}
 }
+
+// TestDepListJSONArchived: машинный dep list по закрытой задаче отдаёт «держит»
+// по доске, признак архива и пояснение вместо «после»: пустой список читался
+// бы дашбордом как «ни после кого».
+func TestDepListJSONArchived(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDepAdd(root, DepParams{ID: "XR-002", DepID: "XR-007"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdDepListJSON(root, "XR-007")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var one jsonDep
+	if err := json.Unmarshal([]byte(out), &one); err != nil {
+		t.Fatal(err)
+	}
+	if one.ID != "XR-007" || strings.Join(one.Blocks, ",") != "XR-002" || len(one.After) != 0 ||
+		!one.Archived || one.AfterNote == "" {
+		t.Fatalf("dep архивной задачи: %+v", one)
+	}
+}
+
+// TestShowJSONArchiveDepsAndFile: show --json по архиву несёт «держит» и путь
+// файла постановки, уехавшего в docs/tasks/archive/<год>/: экран закрытой
+// задачи собирается из того же ответа, что и экран живой.
+func TestShowJSONArchiveDepsAndFile(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDepAdd(root, DepParams{ID: "XR-002", DepID: "XR-007"}); err != nil {
+		t.Fatal(err)
+	}
+	rel := filepath.Join("docs", "tasks", "archive", "2026", "XR-007.md")
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(root, rel)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, rel), []byte("# XR-007\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdShowJSON(root, "XR-007")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got jsonShow
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Sect != "archive" || strings.Join(got.Blocks, ",") != "XR-002" || got.File != "docs/tasks/archive/2026/XR-007.md" {
+		t.Fatalf("show --json по архиву: %+v", got)
+	}
+}

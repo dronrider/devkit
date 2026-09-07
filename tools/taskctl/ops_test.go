@@ -1508,3 +1508,33 @@ func writeHook(t *testing.T, root, name, body string) {
 		t.Fatal(err)
 	}
 }
+
+// TestShowArchiveDepsAndFile: show по архиву печатает зависимости и файл
+// постановки, как для живой строки: «держит» считается по доске, «после»
+// названо неизвестным словами, путь ведёт в docs/tasks/archive/<год>/.
+func TestShowArchiveDepsAndFile(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDepAdd(root, DepParams{ID: "XR-002", DepID: "XR-007"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdShow(root, "XR-007")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"после: неизвестно", "держит: XR-002", "файла задачи нет"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("show по архиву без файла, нет %q:\n%s", want, out)
+		}
+	}
+	dir := filepath.Join(root, "docs", "tasks", "archive", "2026")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "XR-007.md"), []byte("# XR-007\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err = cmdShow(root, "XR-007")
+	if err != nil || !strings.Contains(out, "файл задачи: docs/tasks/archive/2026/XR-007.md") {
+		t.Fatalf("show по архиву с файлом: %q, %v", out, err)
+	}
+}

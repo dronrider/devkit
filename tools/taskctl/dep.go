@@ -231,8 +231,17 @@ func depSides(b *Board) map[string]*struct{ after, blocks []string } {
 	return all
 }
 
+// inArchive говорит, лежит ли ID в архиве.
+func inArchive(root, id string) (bool, error) {
+	arch, err := LoadArchive(archivePath(root))
+	if err != nil {
+		return false, err
+	}
+	return arch.has(id), nil
+}
+
 // cmdDepList без ID печатает зависимости всей доски в обе стороны, с ID
-// печатает только для одной задачи.
+// печатает только для одной задачи; закрытая задача отвечает по архиву.
 func cmdDepList(root, id string) (string, error) {
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
@@ -240,12 +249,22 @@ func cmdDepList(root, id string) (string, error) {
 	}
 	sides := depSides(b)
 	if id != "" {
-		if b.find(id) == nil {
-			return "", fmt.Errorf("%s нет на доске", id)
-		}
 		s := sides[id]
 		if s == nil {
 			s = &struct{ after, blocks []string }{}
+		}
+		if b.find(id) == nil {
+			// Архивная строка отвечает тем же, что и живая, кроме «после»:
+			// после закрытия с её экрана берут в работу тех, кого она держала,
+			// и это направление доска знает (маркеры целят и в архив).
+			archived, err := inArchive(root, id)
+			if err != nil {
+				return "", err
+			}
+			if !archived {
+				return "", fmt.Errorf("%s нет ни на доске, ни в архиве", id)
+			}
+			return fmt.Sprintf("%s после: %s\n%s держит: %s", id, archiveAfterNote, id, joinOrDash(s.blocks)), nil
 		}
 		return fmt.Sprintf("%s после: %s\n%s держит: %s", id, joinOrDash(s.after), id, joinOrDash(s.blocks)), nil
 	}

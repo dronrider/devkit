@@ -166,14 +166,21 @@ func cmdShowJSON(root, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, r := range arch.Rows {
-		if r.ID == id {
-			return marshal(jsonShow{
-				jsonRow: jsonRow{ID: id, Title: r.Cells[1], Type: r.Cells[2], P: r.Cells[3], Link: r.Cells[5]},
-				Sect:    "archive",
-				Closed:  r.Cells[4],
-			})
+	if r := arch.find(id); r != nil {
+		out := jsonShow{
+			jsonRow: jsonRow{ID: id, Title: r.Cells[1], Type: r.Cells[2], P: r.Cells[3], Link: r.Cells[5]},
+			Sect:    "archive",
+			Closed:  r.Cells[4],
 		}
+		// «Держит» у архивной строки считается по доске, как у живой: с её
+		// экрана берут в работу тех, кого она держала.
+		if s := depSides(b)[id]; s != nil {
+			out.Blocks = s.blocks
+		}
+		if rel, ok := archiveTaskFile(root, id, r.Cells[4]); ok {
+			out.File = rel
+		}
+		return marshal(out)
 	}
 	drafts, err := loadDrafts(root)
 	if err != nil {
@@ -230,11 +237,15 @@ func cmdDraftListJSON(root string) (string, error) {
 }
 
 // jsonDep это зависимости одной задачи в обе стороны, как их печатает
-// dep list: после кого она делается и кого держит.
+// dep list: после кого она делается и кого держит. У закрытой задачи стоит
+// признак archived, а вместо списка «после» пояснение after_note: направление
+// в архиве не хранится, и пустой список читался бы как «ни после кого».
 type jsonDep struct {
-	ID     string   `json:"id"`
-	After  []string `json:"after,omitempty"`
-	Blocks []string `json:"blocks,omitempty"`
+	ID        string   `json:"id"`
+	After     []string `json:"after,omitempty"`
+	Blocks    []string `json:"blocks,omitempty"`
+	Archived  bool     `json:"archived,omitempty"`
+	AfterNote string   `json:"after_note,omitempty"`
 }
 
 func cmdDepListJSON(root, id string) (string, error) {
@@ -244,12 +255,19 @@ func cmdDepListJSON(root, id string) (string, error) {
 	}
 	sides := depSides(b)
 	if id != "" {
-		if b.find(id) == nil {
-			return "", fmt.Errorf("%s нет на доске", id)
-		}
 		d := jsonDep{ID: id}
 		if s := sides[id]; s != nil {
 			d.After, d.Blocks = s.after, s.blocks
+		}
+		if b.find(id) == nil {
+			archived, err := inArchive(root, id)
+			if err != nil {
+				return "", err
+			}
+			if !archived {
+				return "", fmt.Errorf("%s нет ни на доске, ни в архиве", id)
+			}
+			d.After, d.Archived, d.AfterNote = nil, true, archiveAfterNote
 		}
 		return marshal(d)
 	}

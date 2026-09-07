@@ -399,3 +399,27 @@ func TestLintDepsFindsBlocked(t *testing.T) {
 		t.Fatalf("нет находки про блокер с зависимостью: %v", finds)
 	}
 }
+
+// TestDepListArchived: dep list отвечает по закрытой задаче. Маркер «[после
+// XR-007]» живёт на доске и целит в архив, и с экрана закрытой задачи берут в
+// работу тех, кого она держала; направление «после» закрытие снимает, и
+// вместо прочерка стоит пояснение. До правки любой ID вне доски получал отказ
+// «нет на доске».
+func TestDepListArchived(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDepAdd(root, DepParams{ID: "XR-002", DepID: "XR-007"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdDepList(root, "XR-007")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"XR-007 после: неизвестно", "XR-007 держит: XR-002"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dep list по архиву без %q:\n%s", want, out)
+		}
+	}
+	if _, err := cmdDepList(root, "XR-404"); err == nil || !strings.Contains(err.Error(), "ни на доске, ни в архиве") {
+		t.Fatalf("dep list по несуществующему ID: %v", err)
+	}
+}

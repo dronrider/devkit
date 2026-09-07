@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -61,12 +62,41 @@ func LoadArchive(path string) (*Archive, error) {
 }
 
 func (a *Archive) has(id string) bool {
+	return a.find(id) != nil
+}
+
+func (a *Archive) find(id string) *ArchRow {
 	for _, r := range a.Rows {
 		if r.ID == id {
-			return true
+			return r
 		}
 	}
-	return false
+	return nil
+}
+
+// archiveAfterNote стоит на месте направления «после» у архивной строки:
+// close снимает маркер и в архив его не переносит (TestCloseStripsDeps), а
+// восстановить его из текстов доски и архива нечем. Обратное направление
+// («кого держит») считается по доске и у архивной строки живёт: маркеры
+// `[после <ID>]` на доске целят и в закрытые задачи.
+const archiveAfterNote = "неизвестно (закрытие снимает маркер «после», в архив он не переезжает)"
+
+// archiveTaskFile ищет постановку закрытой задачи. Закрытие уносит файл в
+// docs/tasks/archive/<год>/, год берётся из даты закрытия; файл, закрытый до
+// этого порядка, лежит на прежнем месте, и оно проверяется вторым. Путь
+// отдаётся от корня проекта, как у show для живой строки.
+func archiveTaskFile(root, id, closed string) (string, bool) {
+	var rels []string
+	if len(closed) >= 4 {
+		rels = append(rels, filepath.Join("docs", "tasks", "archive", closed[:4], id+".md"))
+	}
+	rels = append(rels, filepath.Join("docs", "tasks", id+".md"))
+	for _, rel := range rels {
+		if _, err := os.Stat(filepath.Join(root, rel)); err == nil {
+			return filepath.ToSlash(rel), true
+		}
+	}
+	return "", false
 }
 
 // appendRow дописывает строку в конец файла архива (архив append-only,

@@ -732,7 +732,7 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	after, blocks, afterNote, err := taskDeps(found.Path, id)
-	if err != nil {
+	if err != nil && row.Closed == "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
@@ -741,6 +741,14 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 	// есть: с её экрана берут в работу тех, кого она держала (DK-850), и
 	// направление «после», которого архив не хранит, названо словами.
 	if row.Closed != "" {
+		if err != nil {
+			// Отказ dep list экран закрытой задачи не роняет: taskctl старее
+			// дашборда отвечает по архивному ID «нет на доске», и экран
+			// открывается без зависимостей, а причина едет словами на место
+			// «после». Прежде такой рассинхрон бинарей отдавал 502 (ревью).
+			after, blocks = nil, nil
+			afterNote = "зависимости не прочитались: " + err.Error()
+		}
 		resp := map[string]any{"project": found.Name, "id": id, "row": row,
 			"after": depRefs(after, rows), "blocks": depRefs(blocks, rows)}
 		if afterNote != "" {

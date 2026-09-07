@@ -1857,7 +1857,9 @@ func TestStaticTaskClosedScreen(t *testing.T) {
 	}
 	closed := body[cut : cut+stop]
 	for _, want := range []string{"deps: true", "depsRO: true", "detail.after_note", "links: detail.links",
-		"penOff:", "wireTaskPlan(project, id, view.page)", "row.type", "row.p", "detail.after || []", "detail.blocks || []"} {
+		"penOff:", "wireTaskPlan(project, id, view.page)", "row.type", "row.p", "detail.after || []", "detail.blocks || []",
+		// Закрытая цель помечена целью тем же чипом, что живая (ревью DK-850).
+		`if (closedGoal) chips.push(el("span", "chip c-goal", "цель"))`} {
 		if !strings.Contains(closed, want) {
 			t.Errorf("ветка закрытой задачи без %q", want)
 		}

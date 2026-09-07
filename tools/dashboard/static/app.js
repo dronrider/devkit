@@ -4285,12 +4285,15 @@ async function renderTask(project, works, id, pre) {
   // нет тоже. Прежде экран обрывался на файле, и какие задачи закрытая
   // держала, с него было не узнать.
   if (row.closed) {
+    const closedGoal = /^Цель:/.test(row.title || "");
     const chips = [el("span", "chip c-check", "закрыта " + row.closed)];
     if (row.type && row.type !== "task") chips.push(el("span", "chip", row.type));
+    // Закрытая цель помечена целью тем же чипом, что живая: состав экрана у
+    // них один, а журнал витка ниже без этого чипа стоял бы без объяснения.
+    if (closedGoal) chips.push(el("span", "chip c-goal", "цель"));
     const tail = [];
     if (row.p) tail.push(el("span", "chip dashed" + (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p));
     for (const chip of stateChips) tail.push(chip);
-    const closedGoal = /^Цель:/.test(row.title || "");
     const view = formPage({
       key: "task", project, id, detail,
       chips, tailChips: tail,

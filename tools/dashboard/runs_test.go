@@ -1372,3 +1372,36 @@ func TestClientCommandOwnHarnessGetsPermissionMode(t *testing.T) {
 		t.Errorf("запуск без яруса поднят без режима разрешений: %q", bare)
 	}
 }
+
+// Отказ dep list не роняет экран закрытой задачи (ревью DK-850): taskctl
+// старее дашборда отвечает по архивному ID «нет на доске», и до правки ручка
+// уходила в 502 там, где прежде экран открывался хотя бы обрубком. Экран
+// отдаётся без зависимостей, а причина едет словами в after_note.
+func TestTaskClosedRowSurvivesDepListRefusal(t *testing.T) {
+	e, c, _ := runsEnv(t, "")
+	writeScript(t, e.bin, "taskctl", fmt.Sprintf(
+		"if [ \"$1\" = dep ]; then echo 'XR-009 нет на доске' >&2; exit 1; fi\necho '%s'", runsBoardJSON))
+	arch := "# Архив (префикс XR)\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
+		"|--------|--------|-----|---|---------|--------|\n" +
+		"| XR-009 | Принятая глазами | task | P2 | 2026-08-13 | - |\n"
+	if err := os.WriteFile(filepath.Join(e.proj, "docs", "TASKS-archive.md"), []byte(arch), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/tasks/XR-009", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("экран закрытой задачи при отказе dep list: %d %s", resp.StatusCode, text)
+	}
+	for _, want := range []string{`"closed":"2026-08-13"`, `"after":[]`, `"blocks":[]`,
+		`"after_note":"зависимости не прочитались: `, "нет на доске"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("ответ без %q: %s", want, text)
+		}
+	}
+	// Живой строке тот же отказ по-прежнему отвечает ошибкой: без зависимостей
+	// её экран правит доску вслепую.
+	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/tasks/XR-002", "")
+	if text := body(t, resp); resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("отказ dep list у живой строки: %d %s", resp.StatusCode, text)
+	}
+}

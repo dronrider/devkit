@@ -576,8 +576,11 @@ func (s *server) taskRowOf(w http.ResponseWriter, r *http.Request, archive bool)
 	if !hit {
 		if archive {
 			if arch, closed := archiveRows(found.Path)[id]; closed {
+				// Строка собирается из архива целиком: тип, приоритет и ссылка
+				// там есть, цены и ранга нет, и подставлять на их место
+				// значения живой строки значило бы выдумывать.
 				return found, id, boardRow{ID: id, Title: arch.Title, Closed: arch.Closed,
-					Type: "task", Cost: "-"}, rows, true
+					Type: arch.Type, P: arch.P, Link: arch.Link, Cost: "-"}, rows, true
 			}
 		}
 		gone := map[string]string{"error": rowGone(found, id)}
@@ -648,24 +651,27 @@ func depRefs(ids []string, rows map[string]boardRow) []depRef {
 
 // taskDeps спрашивает зависимости строки в обе стороны у самой утилиты:
 // «после» лежит в заголовке строки, «держит» считается обратным поиском по
-// доске, и оба направления знает dep list --json.
-func taskDeps(dir, id string) (after, blocks []string, err error) {
+// доске, и оба направления знает dep list --json. У закрытой задачи утилита
+// отвечает по архиву, и вместо списка «после» приходит пояснение afterNote:
+// закрытие снимает маркер, и пустой список читался бы как «ни после кого».
+func taskDeps(dir, id string) (after, blocks []string, afterNote string, err error) {
 	bin := taskctlPath()
 	if bin == "" {
-		return nil, nil, errors.New(taskctlMissing())
+		return nil, nil, "", errors.New(taskctlMissing())
 	}
 	out, err := runProc(bin, "dep", "list", id, "--json", "-C", dir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("taskctl dep list %s: %s", id, procErr(err))
+		return nil, nil, "", fmt.Errorf("taskctl dep list %s: %s", id, procErr(err))
 	}
 	var v struct {
-		After  []string `json:"after"`
-		Blocks []string `json:"blocks"`
+		After     []string `json:"after"`
+		Blocks    []string `json:"blocks"`
+		AfterNote string   `json:"after_note"`
 	}
 	if err := json.Unmarshal(out, &v); err != nil {
-		return nil, nil, fmt.Errorf("ответ taskctl dep list не разобрался: %v", err)
+		return nil, nil, "", fmt.Errorf("ответ taskctl dep list не разобрался: %v", err)
 	}
-	return v.After, v.Blocks, nil
+	return v.After, v.Blocks, v.AfterNote, nil
 }
 
 // ForkView это открытая развилка задачи на экране: имя, вопрос и рекомендация,
@@ -725,23 +731,33 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Закрытая задача читается файлом и только: ни зависимостей, ни идущей
-	// работы, ни ожидания человека у неё нет и быть не может.
+	after, blocks, afterNote, err := taskDeps(found.Path, id)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	// Закрытая задача отдаётся тем же составом, что живая, кроме того, чего у
+	// неё нет: идущей работы, ожидания человека и развилок. Зависимости у неё
+	// есть: с её экрана берут в работу тех, кого она держала (DK-850), и
+	// направление «после», которого архив не хранит, названо словами.
 	if row.Closed != "" {
 		resp := map[string]any{"project": found.Name, "id": id, "row": row,
-			"after": []depRef{}, "blocks": []depRef{}}
+			"after": depRefs(after, rows), "blocks": depRefs(blocks, rows)}
+		if afterNote != "" {
+			resp["after_note"] = afterNote
+		}
+		var fileText string
 		if rel, text, hit := archiveFile(found.Path, id); hit {
 			resp["file"] = rel
 			resp["text"] = text
+			fileText = text
 		} else {
 			resp["note"] = fmt.Sprintf("файла задачи %s нет: закрытая задача осталась одной строкой архива", taskFileRel(id))
 		}
+		if links := taskLinks(found.Path, id, row.Link, fileText, rows, after, blocks); links != nil {
+			resp["links"] = links
+		}
 		writeJSON(w, http.StatusOK, resp)
-		return
-	}
-	after, blocks, err := taskDeps(found.Path, id)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
 	// Признак идущей работы едет строкой и сюда: экран задачи спрашивает о ней

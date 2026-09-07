@@ -153,13 +153,18 @@ func goalTasksFromDoc(doc, prefix string) (tasks []goalTask, section bool) {
 	return tasks, true
 }
 
-// archiveRow это строка архива, из которой состав берёт судьбу закрытой
-// задачи: заголовок и дату закрытия. Архив читается файлом, а не утилитой:
-// своего --json у него нет, а спрашивать taskctl show по каждой закрытой
-// задаче значит поднимать подпроцесс на строку состава.
+// archiveRow это строка архива целиком: заголовок, тип, приоритет, дата
+// закрытия и ссылка. Состав цели берёт отсюда судьбу закрытой задачи, а экран
+// закрытой задачи всю строку: цены и ранга в архиве нет, остальное у него то
+// же, что у живой. Архив читается файлом, а не утилитой: своего --json у него
+// нет, а спрашивать taskctl show по каждой закрытой задаче значит поднимать
+// подпроцесс на строку состава.
 type archiveRow struct {
 	Title  string
+	Type   string
+	P      string
 	Closed string
+	Link   string
 }
 
 func archiveRows(projectPath string) map[string]archiveRow {
@@ -181,7 +186,12 @@ func archiveRows(projectPath string) map[string]archiveRow {
 		if !goalIDRe.MatchString(id) {
 			continue
 		}
-		rows[id] = archiveRow{Title: strings.TrimSpace(cells[1]), Closed: strings.TrimSpace(cells[4])}
+		row := archiveRow{Title: strings.TrimSpace(cells[1]), Type: strings.TrimSpace(cells[2]),
+			P: strings.TrimSpace(cells[3]), Closed: strings.TrimSpace(cells[4])}
+		if len(cells) > 5 {
+			row.Link = strings.TrimSpace(cells[5])
+		}
+		rows[id] = row
 	}
 	return rows
 }

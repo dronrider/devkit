@@ -1781,3 +1781,93 @@ func TestStaticReadModeNoOverlap(t *testing.T) {
 			got["r-view-w"])
 	}
 }
+
+// Экран закрытой задачи собирается тем же составом, что экран живой (DK-850):
+// строка из архива целиком (тип, приоритет, дата, ссылка), «держит» по доске,
+// связи и файл постановки из docs/tasks/archive/<год>/. Направление «после»
+// архив не хранит, и вместо пустого списка приходит пояснение. До правки
+// ручка отвечала закрытой строке ранним выходом с пустыми зависимостями и
+// типом task вместо архивного.
+func TestTaskClosedRowFullScreen(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	arch := "# Архив (префикс XR)\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
+		"|--------|--------|-----|---|---------|--------|\n" +
+		"| XR-009 | Закрытая с хвостом | bug | P1 | 2026-08-13 | [tasks/archive/2026/XR-009.md](tasks/archive/2026/XR-009.md) |\n"
+	if err := os.WriteFile(filepath.Join(e.proj, "docs", "TASKS-archive.md"), []byte(arch), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(e.proj, "docs", "tasks", "archive", "2026")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "XR-009.md"), []byte("# XR-009: Закрытая с хвостом\n\nПостановка, следом идёт XR-004.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runTaskctl(t, e.proj, "dep", "add", "XR-004", "XR-009")
+
+	task := getTask(t, c, e, "XR-009")
+	for name, want := range map[string]any{"closed": "2026-08-13", "type": "bug", "p": "P1",
+		"link": "[tasks/archive/2026/XR-009.md](tasks/archive/2026/XR-009.md)"} {
+		if got := taskRowField(t, task, name); got != want {
+			t.Errorf("строка архива, поле %s: %v, ждал %v", name, got, want)
+		}
+	}
+	if got := depIDs(t, task, "blocks"); len(got) != 1 || got[0] != "XR-004 Четвёртая" {
+		t.Errorf("закрытая задача не держит XR-004: %v", got)
+	}
+	if got := depIDs(t, task, "after"); len(got) != 0 {
+		t.Errorf("у закрытой задачи взялось «после»: %v", got)
+	}
+	if note, _ := task["after_note"].(string); !strings.Contains(note, "неизвестно") {
+		t.Errorf("направление «после» без пояснения: %v", task["after_note"])
+	}
+	if got, _ := task["file"].(string); got != "docs/tasks/archive/2026/XR-009.md" {
+		t.Errorf("файл постановки: %v", task["file"])
+	}
+	if got, _ := task["text"].(string); !strings.Contains(got, "Постановка, следом") {
+		t.Errorf("текст постановки не приехал: %v", task["text"])
+	}
+	// Связи считаются по упоминаниям в постановке, а род связи по зависимостям:
+	// у закрытой задачи блок собирается тем же порядком, что у живой.
+	links, _ := task["links"].(map[string]any)
+	tasks, _ := links["tasks"].([]any)
+	if len(tasks) != 1 {
+		t.Fatalf("связи закрытой задачи: %v", task["links"])
+	}
+	if link, _ := tasks[0].(map[string]any); link["id"] != "XR-004" || link["rel"] != "держит" {
+		t.Errorf("связь с XR-004 без рода «держит»: %v", tasks[0])
+	}
+}
+
+// Ветка закрытой задачи в renderTask рисует тот же состав, что у живой
+// (DK-850): карточку зависимостей только чтением с пояснением про «после»,
+// связи, чипы типа и приоритета, план агента и погашенный карандаш со словами
+// об архиве. Прежде ветка собирала экран из файла и обрывалась return до
+// плана.
+func TestStaticTaskClosedScreen(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	body := funcBody(t, app, "async function renderTask(")
+	cut := strings.Index(body, "if (row.closed) {")
+	if cut < 0 {
+		t.Fatal("в renderTask нет ветки закрытой задачи")
+	}
+	stop := strings.Index(body[cut:], "// Черновик формы")
+	if stop < 0 {
+		t.Fatal("ветка закрытой задачи не кончается перед черновиком формы")
+	}
+	closed := body[cut : cut+stop]
+	for _, want := range []string{"deps: true", "depsRO: true", "detail.after_note", "links: detail.links",
+		"penOff:", "wireTaskPlan(project, id, view.page)", "row.type", "row.p", "detail.after || []", "detail.blocks || []"} {
+		if !strings.Contains(closed, want) {
+			t.Errorf("ветка закрытой задачи без %q", want)
+		}
+	}
+	// Карточка зависимостей в чтении: ни поля добавления, ни кнопок «Снять».
+	deps := funcBody(t, app, "function depsCard(")
+	if !strings.Contains(deps, "if (!o.ro)") || !strings.Contains(deps, "o.afterNote") {
+		t.Error("карточка зависимостей не умеет читаться без правки")
+	}
+	if row := funcBody(t, app, "function depRow("); !strings.Contains(row, "if (!ro)") {
+		t.Error("строка зависимости ставит «Снять» и у архивной задачи")
+	}
+}

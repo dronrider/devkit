@@ -3139,7 +3139,10 @@ function pickField(label, values, cur, onPick) {
   return wrap;
 }
 
-function depRow(project, id, side, dep) {
+// Строка соседа в карточке зависимостей. У архивной задачи (ro) кнопки «Снять»
+// нет: маркер живёт на строке доски, и снимать его у закрытой задачи нечем, а
+// дорога на экран соседа остаётся, ради неё карточку и открывают.
+function depRow(project, id, side, dep, ro) {
   const row = el("div", "drow");
   row.append(el("span", "id", dep.id));
   row.append(withFull(el("span", "dt", dep.title || dep.note || ""), dep.title || dep.note || ""));
@@ -3151,15 +3154,17 @@ function depRow(project, id, side, dep) {
     rank.append(el("b", "", String(dep.r)));
     row.append(rank);
   }
-  const drop = el("button", "btn btn-sm", "Снять");
-  drop.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    // Вторая сторона это та же зависимость наоборот: снимается она у той
-    // задачи, в чьём заголовке стоит маркер [после ...].
-    const call = side === "after" ? dropDep(project, id, dep.id) : dropDep(project, dep.id, id);
-    call.catch(console.error);
-  });
-  row.append(drop);
+  if (!ro) {
+    const drop = el("button", "btn btn-sm", "Снять");
+    drop.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      // Вторая сторона это та же зависимость наоборот: снимается она у той
+      // задачи, в чьём заголовке стоит маркер [после ...].
+      const call = side === "after" ? dropDep(project, id, dep.id) : dropDep(project, dep.id, id);
+      call.catch(console.error);
+    });
+    row.append(drop);
+  }
   row.addEventListener("click", () => { goKeepingChat(project + "/" + dep.id); });
   return row;
 }
@@ -3235,29 +3240,36 @@ function linksCard(project, links) {
   return card;
 }
 
-function depsCard(project, id, after, blocks) {
+// Карточка зависимостей. У архивной задачи (opts.ro) она читается, а не
+// правится: поля добавления нет, кнопок «Снять» нет, а на месте пустого
+// «после» стоит слово сервера (opts.afterNote): закрытие снимает маркер, и
+// «никого не ждёт» про закрытую задачу было бы выдумкой.
+function depsCard(project, id, after, blocks, opts) {
+  const o = opts || {};
   const card = el("div", "card dcard");
   card.append(el("div", "dhead", "Заблокировано задачами"));
-  if (!after.length) card.append(el("div", "empty", "Никого не ждёт."));
-  for (const dep of after) card.append(depRow(project, id, "after", dep));
+  if (!after.length) card.append(el("div", "empty", o.afterNote || "Никого не ждёт."));
+  for (const dep of after) card.append(depRow(project, id, "after", dep, o.ro));
 
-  const add = el("div", "dadd");
-  const inp = el("input");
-  inp.placeholder = "DK-NNN";
-  inp.setAttribute("aria-label", "ID задачи, после которой делается эта");
-  const btn = el("button", "btn btn-sm", "Добавить");
-  const send = () => {
-    const dep = inp.value.trim().toUpperCase();
-    if (dep) addDep(project, id, dep).catch(console.error);
-  };
-  btn.addEventListener("click", send);
-  inp.addEventListener("keydown", (ev) => { if (ev.key === "Enter") send(); });
-  add.append(inp, btn);
-  card.append(add);
+  if (!o.ro) {
+    const add = el("div", "dadd");
+    const inp = el("input");
+    inp.placeholder = "DK-NNN";
+    inp.setAttribute("aria-label", "ID задачи, после которой делается эта");
+    const btn = el("button", "btn btn-sm", "Добавить");
+    const send = () => {
+      const dep = inp.value.trim().toUpperCase();
+      if (dep) addDep(project, id, dep).catch(console.error);
+    };
+    btn.addEventListener("click", send);
+    inp.addEventListener("keydown", (ev) => { if (ev.key === "Enter") send(); });
+    add.append(inp, btn);
+    card.append(add);
+  }
 
   card.append(el("div", "dhead", "Блокирует выполнение задач"));
   if (!blocks.length) card.append(el("div", "empty", "Её никто не ждёт."));
-  for (const dep of blocks) card.append(depRow(project, id, "blocks", dep));
+  for (const dep of blocks) card.append(depRow(project, id, "blocks", dep, o.ro));
   return card;
 }
 
@@ -4125,7 +4137,10 @@ function formPage(cfg) {
     grid.append(keyed(file, cfg.key + "-text"));
     out.file = file;
   }
-  if (has.deps) grid.append(depsCard(cfg.project, cfg.id, cfg.after || [], cfg.blocks || []));
+  if (has.deps) {
+    grid.append(depsCard(cfg.project, cfg.id, cfg.after || [], cfg.blocks || [],
+      { ro: Boolean(cfg.depsRO), afterNote: cfg.afterNote || "" }));
+  }
   if (cfg.links && ((cfg.links.lld || []).length || (cfg.links.tasks || []).length)) {
     grid.append(linksCard(cfg.project, cfg.links));
   }
@@ -4262,18 +4277,40 @@ async function renderTask(project, works, id, pre) {
     stateChips.push(withTip(el("span", "stale dashed", row.moved), whenTip(row.moved)));
   }
 
-  // Закрытая задача открывается чтением: строки на доске у неё нет, править
-  // нечего, и экран показывает заголовок с датой закрытия и файл постановки.
-  // Прежде выдача поиска высаживала на такой задаче отказ, и нажатие на
-  // найденную строку выглядело сломанным (замечание 4).
+  // Закрытая задача открывается чтением тем же составом, что живая (DK-850):
+  // тип, приоритет и дата закрытия чипами, зависимости в обе стороны без
+  // кнопок правки, связи, файл постановки, план агента и журнал у цели. Строки
+  // на доске у неё нет, править нечего, и на месте карандаша стоит погашенная
+  // кнопка со словами об архиве. Цены и ранга в архиве нет, и чипов под них
+  // нет тоже. Прежде экран обрывался на файле, и какие задачи закрытая
+  // держала, с него было не узнать.
   if (row.closed) {
-    place(formPage({
+    const chips = [el("span", "chip c-check", "закрыта " + row.closed)];
+    if (row.type && row.type !== "task") chips.push(el("span", "chip", row.type));
+    const tail = [];
+    if (row.p) tail.push(el("span", "chip dashed" + (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p));
+    for (const chip of stateChips) tail.push(chip);
+    const closedGoal = /^Цель:/.test(row.title || "");
+    const view = formPage({
       key: "task", project, id, detail,
-      chips: [el("span", "chip c-check", "закрыта " + row.closed)].concat(stateChips),
+      chips, tailChips: tail,
       num: row.id, titleText: row.title || id,
       form: { text: detail.text || "" },
-      has: { file: true, read: true, chat: true },
-    }).page);
+      links: detail.links || null,
+      has: { file: true, read: true, chat: true, deps: true },
+      after: detail.after || [], blocks: detail.blocks || [],
+      depsRO: true,
+      afterNote: detail.after_note || "",
+      penOff: "Задача в архиве, правки нет: строка закрыта и с доски ушла.",
+    });
+    place(view.page);
+    wireTaskPlan(project, id, view.page);
+    if (closedGoal) {
+      const jp = pane("Журнал витка", "источник назовёт сервер");
+      jp.card.classList.add("jbottom");
+      view.page.append(jp.card);
+      wireJournal(project, id, jp.body, jp.sub);
+    }
     return;
   }
 

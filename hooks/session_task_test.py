@@ -299,7 +299,9 @@ class TestHook(unittest.TestCase):
         # SessionStart с поводом compact приходит после сжатия контекста, и
         # прочитанный скилл из контекста выпадает вместе с остальным. Хук
         # просит перечитать его фразой с ID задачи, а строку доски и файл
-        # задачи не повторяет.
+        # задачи не повторяет. Правила плана и отзывчивости едут той же
+        # фразой: без них план после сжатия не ведётся, и кольцо дашборда
+        # молчит (замечание ревью DK-614).
         event = dict(sample(), source="compact")
         r = self.run_hook(event, {"DEVKIT_TASK": "DK-431"})
         self.assertEqual((r.returncode, r.stderr), (0, ""))
@@ -310,7 +312,8 @@ class TestHook(unittest.TestCase):
         self.assertIn("DK-431", said)
         self.assertNotIn("Строка доски", said)
         self.assertNotIn("Файл задачи", said)
-        self.assertNotIn("agentctl plan", said)
+        self.assertIn("agentctl plan", said)
+        self.assertIn("отдавай субагенту", said)
         # Строка реестра пишется и на этом поводе: повод виден в поле.
         f, _ = fields(self.log()[0])
         self.assertEqual((f["задача"], f["повод"]), ("DK-431", "compact"))

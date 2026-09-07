@@ -138,6 +138,25 @@ if (!order || order.chat !== "blank-1") {
   fail("подъём не назвал запись, из которой пишут: " + JSON.stringify(order));
 }
 
+// --- прежний хозяин имени tmux панель не забирает ---
+// Запись помнит имя chat-1, а в списке это имя пока носит прошлый разговор:
+// хук старта новой сессии реестр ещё не записал. Пришивает запись только
+// слово сервера (grown), и до него панель стоит на записи (DK-851).
+chats.find((c) => c.id === "blank-1").tmux = "chat-1";
+// Персист реплики помнит то же имя: отправка кладёт его туда сразу с ответа
+// подъёма, и запасная дорога пришивания искала по нему тем же порядком.
+sandbox.localStorage.setItem("devkit.chat.pend.demo/blank-1",
+  JSON.stringify([{ text: "почему поезд встал", wire: "почему поезд встал", born: Date.now(),
+    state: "wait", tmux: "chat-1" }]));
+chats.unshift({ id: "sess-old", project: "demo", title: "прошлый разговор chat-1", tmux: "chat-1",
+  mtime: new Date().toISOString(), state: "live", idle: true, tasks: [], model: "opus",
+  archived: true });
+st = await sandbox.chatState("demo", "blank-1", board);
+if (st.sid || st.addr !== "blank-1" || !st.fresh) {
+  fail("панель уехала в прежний разговор того же имени tmux: " + JSON.stringify([st.addr, st.sid]));
+}
+if (st.lift !== "chat-1") fail("панель записи не ждёт подъёма: " + JSON.stringify(st.lift));
+
 // --- поднявшаяся сессия забирает разговор себе ---
 chats.find((c) => c.id === "blank-1").grown = "sess-777";
 chats.unshift({ id: "sess-777", project: "demo", title: "почему поезд встал",

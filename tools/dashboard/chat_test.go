@@ -2810,6 +2810,23 @@ func TestStaticChatLift(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Шов ленты и пришивание застрявшего адреса new: реплика стоит одной копией
+// через переезд панели, а имя tmux из персиста не уводит панель в прежнего
+// жильца имени (стенд testdata/poc_chatsew.mjs, DK-851). Стенд лежал без
+// драйвера. Без node шаг пропускается: узел стенда, а не рабочей части.
+func TestStaticChatSew(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд шва ленты пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatsew.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("шов ленты: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Свежесть списка разговоров: открытие спрашивает перечень заново, поэтому в
 // нём виден и свой новый чат, и заведённый на стороне, и свежий заголовок, а
 // закрытая крестиком запись уходит сразу. Шаги пользователя: завести чат,
@@ -3037,4 +3054,47 @@ func TestStaticChatArchiveCurrentSwitchesPanel(t *testing.T) {
 		t.Fatalf("переключение панели после уборки текущего разговора: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Имя tmux между хозяевами (DK-851). Дашборд поднял окно chat-7 заново, а
+// клиент новой сессии в реестре ещё не назвался: свежайшая запись с этим
+// именем принадлежит прежнему, убранному в архив разговору, и список отдавал
+// имя ему. Панель, ждущая родившийся разговор поиском по имени, уезжала в
+// архивный. Подъём окна дашборд помнит сам (Raised в памяти окна), и запись
+// старше подъёма хозяином имени не считается: имя на этом отрезке ничьё, а
+// прежний хозяин виден снятым.
+func TestChatTmuxNameBetweenOwnersIsNobodys(t *testing.T) {
+	e, c := chatEnv(t)
+	old := "aaaa8510-1111-4111-8111-111111111111"
+	writeSession(t, e.home, e.proj, "", old, plainTalk, time.Now().Add(-time.Hour))
+	writeBinds(t, e.home,
+		"2026-08-24T12:42:48 сессия "+old+" задача DK-851 проект demo дерево "+e.proj+
+			" транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-7\n")
+	writeScript(t, e.bin, "tmux", `case "$1" in ls) echo "chat-7|1|123";; esac
+exit 0`)
+	e.s.chatRaised("chat-7", "", "", "demo")
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats?all=1&days=0", "")
+	var got struct {
+		Chats []chatEntry `json:"chats"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	row := blankRow(got.Chats, old)
+	if row == nil {
+		t.Fatalf("прежнего хозяина нет в списке: %+v", got.Chats)
+	}
+	if row.Tmux != "" || row.Gone == "" {
+		t.Fatalf("прежний хозяин носит переподнятое имя: tmux %q, gone %q", row.Tmux, row.Gone)
+	}
+	if hit := blankList(t, e, c, "?tmux=chat-7"); len(hit) != 0 {
+		t.Fatalf("поиск по имени отдал прежнего хозяина: %+v", hit)
+	}
+	// Присмотр снят (окно закрыли рукой): порога больше нет, и имя по реестру
+	// снова у прежней записи, как и до правки.
+	e.s.chatWatchOff("chat-7")
+	if hit := blankList(t, e, c, "?tmux=chat-7"); len(hit) != 1 || hit[0].ID != old {
+		t.Fatalf("без подъёма имя не вернулось прежней записи: %+v", hit)
+	}
 }

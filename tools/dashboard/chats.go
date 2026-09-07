@@ -120,7 +120,11 @@ type chatEntry struct {
 	// список стоит свежими сверху и им же подписана строка. Время правки файла
 	// сюда больше не едет вовсе, оно двигалось служебщиной (замечание
 	// пользователя про чаты, всплывшие наверх без единой реплики).
-	Mtime   string   `json:"mtime,omitempty"`
+	Mtime string `json:"mtime,omitempty"`
+	// Born это метка первой записи транскрипта: когда разговор заведён. По ней
+	// панель отличает разговор, родившийся от её подъёма, от прежнего жильца
+	// того же имени tmux (DK-851).
+	Born    string   `json:"born,omitempty"`
 	Tasks   []string `json:"tasks,omitempty"`
 	Model   string   `json:"model,omitempty"`
 	Tmux    string   `json:"tmux,omitempty"`
@@ -554,6 +558,11 @@ type chatStore struct {
 	// живёт оно до тех пор, пока сессия не назовётся в реестре: панель по нему
 	// узнаёт свой разговор и после перезагрузки вкладки.
 	Tmux string `json:"tmux,omitempty"`
+	// Lifted это момент подъёма той сессии в unix-секундах. Имя tmux
+	// переиспользуется, и записи реестра старше подъёма принадлежат прежнему
+	// жильцу имени: по этому порогу пришивание отличает родившуюся сессию от
+	// прежней (DK-851).
+	Lifted int64 `json:"lifted,omitempty"`
 	// Grown называет сессию, выросшую из записи. С этого момента разговор
 	// живёт своим транскриптом, а запись остаётся дорожным знаком для панели,
 	// стоящей на старом адресе, и метётся уборкой.
@@ -790,6 +799,15 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			}
 		}
 	}
+	// Имя, поднятое дашбордом заново, до записи хука старта ничьё: свежайшая
+	// запись с ним принадлежит прежнему жильцу, и панель, ждущая родившийся
+	// разговор поиском по имени, уезжала в него (DK-851). Момент подъёма
+	// помнит память окна, и запись старше него хозяином не считается.
+	for name, when := range tmuxWhen {
+		if raised := s.chatStoreRead("tmux-" + name).Raised; raised > 0 && when < bindTimeSince(raised) {
+			delete(tmuxClaim, name)
+		}
+	}
 	alive := tmuxAliveFn()
 	view := s.harnesses()
 	names := harnessRoots(view)
@@ -880,7 +898,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		e := chatEntry{
 			ID: f.ID, Project: f.projName,
 			Title: head.First, First: head.First, Summary: head.Summary,
-			Mtime: saidAt(head, f.sessionInfo), Tasks: tasks,
+			Mtime: saidAt(head, f.sessionInfo), Born: head.Born, Tasks: tasks,
 			Note: note, Bound: bound,
 			LiveModel: modelShort(readSessionModel(f.path)),
 			Own:       last.Tmux != "",
@@ -1244,7 +1262,8 @@ func (s *server) chatBlankList(proj string) []chatEntry {
 			if recs == nil {
 				recs = s.bindsAll()
 			}
-			if owner := sessions.TmuxOwner(recs, st.Tmux); owner != "" && owner != id {
+			owner := sessions.TmuxOwnerSince(recs, st.Tmux, bindTimeSince(st.Lifted))
+			if owner != "" && owner != id {
 				st.Grown = owner
 				if err := s.chatStoreWrite(id, st); err != nil {
 					s.logf("запись чата %s не пришилась к сессии %s: %v", id, owner, err)
@@ -1466,13 +1485,23 @@ func (s *server) chatBlankLift(sid, sess, model string) {
 	if !st.Blank || st.Grown != "" {
 		return
 	}
-	st.Tmux, st.Draft = sess, ""
+	st.Tmux, st.Draft, st.Lifted = sess, "", s.now().Unix()
 	if model != "" {
 		st.Model = model
 	}
 	if err := s.chatStoreWrite(sid, st); err != nil {
 		s.logf("запись чата %s не запомнила сессию %s: %v", sid, sess, err)
 	}
+}
+
+// bindTimeSince переводит момент в unix-секундах в порог для записей реестра:
+// их метка это локальное время без зоны (sessions.Path), и сравниваются они
+// строками. Ноль это отсутствие порога.
+func bindTimeSince(unix int64) string {
+	if unix <= 0 {
+		return ""
+	}
+	return time.Unix(unix, 0).Format("2006-01-02T15:04:05")
 }
 
 // chatNewName выбирает имя tmux-сессии диалога: chat-<ID>-<n> у диалога с

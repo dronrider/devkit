@@ -7522,16 +7522,24 @@ function chatLiftSet(project, addr, tmux) {
 }
 
 function chatLiftOf(project, addr) {
+  const raw = chatLiftRec(project, addr);
+  return raw ? String(raw.tmux) : "";
+}
+
+// Запись памяти подъёма целиком: имя tmux и момент подъёма. По моменту панель
+// отличает разговор, родившийся от этого подъёма, от прежнего жильца того же
+// имени (chatBornOf). Протухшая запись снимается тут же.
+function chatLiftRec(project, addr) {
   try {
     const raw = JSON.parse(localStorage.getItem(liftKey(project, addr)) || "null");
-    if (!raw || !raw.tmux) return "";
+    if (!raw || !raw.tmux) return null;
     if (Date.now() - (raw.born || 0) > LIFT_LIVE) {
       chatLiftDrop(project, addr);
-      return "";
+      return null;
     }
-    return String(raw.tmux);
+    return raw;
   } catch (err) {
-    return "";
+    return null;
   }
 }
 
@@ -7606,22 +7614,38 @@ function workSession(id, works) {
   return (w && w.session) || "";
 }
 
+// chatBornOf ищет в списке разговор, родившийся от подъёма: имя tmux то же,
+// а сам разговор заведён не раньше подъёма. Имя одно на многих жильцов подряд
+// (chat-3 за день носят три разговора), и до записи хука старта список несёт
+// его при прежнем, уже архивном разговоре: первый попавшийся с таким именем
+// уводил панель в него, и реплики после первой шли мимо поднятой сессии
+// (DK-851). Разговор без метки рождения тоже не годится: сверить его нечем.
+// Запас в минуту покрывает расхождение часов вкладки и сервера. Архивная
+// строка приезжает в общем массиве, и в кандидаты она не идёт.
+const BORN_SLACK = 60 * 1000;
+
+function chatBornOf(chats, tmux, lifted) {
+  if (!tmux || !lifted) return null;
+  return (chats || []).find((c) => c.tmux === tmux && !c.archived && !c.blank &&
+    c.born && Date.parse(c.born) >= lifted - BORN_SLACK) || null;
+}
+
 // chatSewn ищет диалог, который родила застрявшая на адресе new реплика.
 // Узнавание двумя ключами по убыванию силы: имя tmux-сессии подъёма, если
-// персист его помнит, и сама первая реплика, ведь она уехала клиенту первым
-// аргументом и легла в транскрипт первой, то есть стала заголовком диалога в
-// списке. Пустой ответ значит, что сессия ещё не родилась либо реплика
-// пропала вместе с tmux, и тогда пузырь честно остаётся held.
+// персист его помнит (со сверкой рождения, chatBornOf), и сама первая реплика,
+// ведь она уехала клиенту первым аргументом и легла в транскрипт первой, то
+// есть стала заголовком диалога в списке. Пустой ответ значит, что сессия ещё
+// не родилась либо реплика пропала вместе с tmux, и тогда пузырь честно
+// остаётся held.
 function chatSewn(project, addr, chats) {
   for (const rec of echoRead(project, addr)) {
     if (rec.state !== "held" && rec.state !== "wait") continue;
-    if (rec.tmux) {
-      const hit = (chats || []).find((c) => c.tmux === rec.tmux);
-      if (hit) return hit.id;
-    }
+    const born = chatBornOf(chats, rec.tmux, rec.born);
+    if (born) return born.id;
     // Первая реплика сверяется со своим полем, а не с заголовком: заголовок
     // у диалога бывает от харнеса и с первой репликой не совпадает.
-    const hit = (chats || []).find((c) => sameSaid(c.first || c.title, rec.wire || rec.text));
+    const hit = (chats || []).find((c) => !c.archived && !c.blank &&
+      sameSaid(c.first || c.title, rec.wire || rec.text));
     if (hit) return hit.id;
   }
   return "";
@@ -7806,19 +7830,30 @@ async function chatState(project, addr, board, works) {
   // Пришивание застрявшего нового адреса: первая реплика уходила в чат,
   // которого ещё не было, сессия родилась позже (клиент стоял на вопросе в
   // своём терминале), а панель возвращалась на эфемерный адрес new и молчала,
-  // хотя транскрипт давно жив. Родившийся диалог узнаётся по имени tmux из
-  // персиста реплики либо по самой первой реплике, и панель переезжает на
-  // живой sid прямо в этой сборке, без перерисовки.
+  // хотя транскрипт давно жив. Родившийся диалог узнаётся по слову сервера,
+  // по имени tmux со сверкой рождения либо по самой первой реплике, и панель
+  // переезжает на живой sid прямо в этой сборке, без перерисовки.
   if (st.fresh) {
     // Подъём конвейера узнаётся тем же ключом, что и подъём с первой реплики:
     // именем tmux-сессии. Разница только в том, откуда имя взялось, из ответа
     // запуска или из персиста реплики.
-    const lift = chatLiftOf(project, addr);
-    const born = lift ? st.chats.find((c) => c.tmux === lift) : null;
+    const liftRec = chatLiftRec(project, addr);
+    const lift = liftRec ? String(liftRec.tmux) : "";
     // Пришивание сервер знает твёрже вкладки: он сам сверяет имя поднятой
     // tmux-сессии с реестром и помнит ID выросшей сессии. Дорога эта работает и
     // после перезагрузки, и в соседней вкладке, где памяти подъёма нет вовсе.
-    const sewn = (rec && rec.grown) || (born ? born.id : chatSewn(project, addr, st.chats));
+    // У записи слово сервера единственное: имя tmux она носит сама, и первый
+    // разговор списка с тем же именем это прежний его жилец, а не она (DK-851,
+    // решение пользователя: панель переезжает кругом опроса позже, зато в
+    // свой разговор). Догадка по имени остаётся подъёму без записи (адрес
+    // new конвейера и чата задачи), и там она сверяет рождение разговора с
+    // моментом подъёма.
+    let sewn = "";
+    if (rec) sewn = rec.grown || "";
+    else {
+      const born = chatBornOf(st.chats, lift, liftRec && liftRec.born);
+      sewn = born ? born.id : chatSewn(project, addr, st.chats);
+    }
     if (!sewn && lift) st.lift = lift;
     if (sewn) {
       chatLiftDrop(project, addr);

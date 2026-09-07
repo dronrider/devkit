@@ -155,10 +155,31 @@ const findTa = (node) => {
   }
 }
 
+// --- прежний хозяин имени: панель на него не уезжает ---
+// Имя task-XR-002 дашборд переиспользует: до подъёма его носил прошлый
+// конвейер, и пока хук старта новой сессии не записал реестр, список несёт
+// имя при старой строке. Панель ждёт дальше, а не пришивается к архивному
+// разговору (DK-851). Строка убрана в архив, но в списке стоит.
+const OLD = "0ld0wner-0001";
+const oldRow = { id: OLD, state: "idle", tmux: SESS, project: "demo", archived: true,
+  tasks: ["XR-002"], title: "прошлый конвейер XR-002",
+  born: new Date(Date.now() - 3600 * 1000).toISOString() };
+{
+  chats.list = [oldRow];
+  const st = await sandbox.chatState("demo", "new:XR-002", board);
+  if (st.sid === OLD || !st.fresh) {
+    fail("панель уехала в прежний разговор того же имени tmux: " + JSON.stringify([st.sid, st.fresh]));
+  }
+  if (st.lift !== SESS) fail("ожидание подъёма снято прежним хозяином имени: " + JSON.stringify(st.lift));
+  if (store.get(liftKey) === undefined) fail("память подъёма вычищена прежним хозяином имени");
+}
+
 // --- сессия назвалась: панель переезжает на неё сама и память вычищена ---
 {
-  chats.list = [{ id: SID, state: "live", tmux: SESS, project: "demo",
-    tasks: ["XR-002"], title: "конвейер XR-002" }];
+  // Прежний хозяин стоит в списке первым, и всё равно панель едет на
+  // родившуюся: та свежее подъёма.
+  chats.list = [oldRow, { id: SID, state: "live", tmux: SESS, project: "demo",
+    tasks: ["XR-002"], title: "конвейер XR-002", born: new Date().toISOString() }];
   const st = await sandbox.chatState("demo", "new:XR-002", board);
   if (st.sid !== SID || st.fresh) {
     fail("панель не пришилась к родившейся сессии: " + JSON.stringify([st.sid, st.fresh]));

@@ -54,12 +54,23 @@ const count = (text) => dump(pin).split(text).length - 1;
 // tmux, реестр назвал сессию, а транскрипт ещё пуст (клиент не дописал).
 sandbox.localStorage.setItem("devkit.chat.pend.demo/new",
   JSON.stringify([{ text: FIRST, wire: FIRST, born: Date.now(), state: "wait", tmux: "chat-abc" }]));
-chats.push({ id: SID, title: "Новый чат", tmux: "chat-abc", tasks: [], state: "live" });
+// Имя chat-abc до подъёма носил другой, архивный разговор, и в списке он стоит
+// первым: имя без сверки времени рождения пришило бы панель к нему (DK-851).
+chats.push({ id: "0ld0wner-abc", title: "прошлый chat-abc", tmux: "chat-abc", tasks: [],
+  state: "idle", archived: true, born: new Date(Date.now() - 3600 * 1000).toISOString() });
+chats.push({ id: SID, title: "Новый чат", tmux: "chat-abc", tasks: [], state: "live",
+  born: new Date().toISOString() });
 
 sandbox.location.hash = "#demo/chat/new";
 await sandbox.refresh();
 await settle();
 
+if (String(sandbox.location.hash).includes("0ld0wner-abc")) {
+  fail("панель пришита к прежнему хозяину имени tmux: " + sandbox.location.hash);
+}
+if (!String(sandbox.location.hash).includes(SID)) {
+  fail("панель не пришита к родившемуся диалогу: " + sandbox.location.hash);
+}
 if (count(FIRST) !== 1) {
   fail("пришивание к диалогу с пустым транскриптом оставило копий: " + count(FIRST) +
     ", реплика обязана пережить переезд панели одним пузырём");

@@ -216,3 +216,26 @@ func TestWorksKeepsEveryTaskUntilRelease(t *testing.T) {
 		t.Error("отвязка рукой не сняла задачу бокового дерева")
 	}
 }
+
+// Имя tmux между хозяевами: прежняя сессия назвала его в реестре раньше, чем
+// имя подняли заново, и до записи новой сессии хозяином выходила она. Порог
+// времени отсекает записи старше подъёма, и на этом отрезке имя ничьё (DK-851:
+// незачатая запись росла бы в прежний, архивный разговор того же имени).
+func TestTmuxOwnerSinceSkipsRecordsBeforeRaise(t *testing.T) {
+	recs := map[string][]Bind{
+		"old": {{Tmux: "chat-3", Time: "2026-09-07T09:01:50"}},
+	}
+	if got := TmuxOwner(recs, "chat-3"); got != "old" {
+		t.Fatalf("без порога хозяин %q, ждал old", got)
+	}
+	if got := TmuxOwnerSince(recs, "chat-3", "2026-09-07T09:14:52"); got != "" {
+		t.Fatalf("запись старше подъёма назвала хозяина %q, ждал пустое", got)
+	}
+	recs["new"] = []Bind{{Tmux: "chat-3", Time: "2026-09-07T09:14:55"}}
+	if got := TmuxOwnerSince(recs, "chat-3", "2026-09-07T09:14:52"); got != "new" {
+		t.Fatalf("после записи новой сессии хозяин %q, ждал new", got)
+	}
+	if got := TmuxOwnerSince(recs, "chat-3", ""); got != "new" {
+		t.Fatalf("пустой порог обязан выбирать по времени: %q", got)
+	}
+}

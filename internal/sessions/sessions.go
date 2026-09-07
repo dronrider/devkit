@@ -427,6 +427,16 @@ func mark(task, src, why string) {
 // значит писать в чужой разговор (DK-397 POC: реплика уехала посторонней живой
 // сессии, занявшей освободившееся имя).
 func TmuxOwner(recs map[string][]Bind, name string) string {
+	return TmuxOwnerSince(recs, name, "")
+}
+
+// TmuxOwnerSince это тот же выбор хозяина, но записи старше since (метка
+// реестра, строка вида 2006-01-02T15:04:05) в счёт не идут. Порог нужен окну,
+// поднятому заново: между командой подъёма и записью хука старта свежайшая
+// запись с этим именем принадлежит прежнему жильцу, и без порога имя уходило
+// ему (DK-851: незачатая запись росла в прежний, архивный разговор). Пустой
+// порог значит выбор по одному времени, как у TmuxOwner.
+func TmuxOwnerSince(recs map[string][]Bind, name, since string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return ""
@@ -434,7 +444,7 @@ func TmuxOwner(recs map[string][]Bind, name string) string {
 	best, at := "", ""
 	for sid, rs := range recs {
 		for _, r := range rs {
-			if r.Tmux != name {
+			if r.Tmux != name || (since != "" && r.Time < since) {
 				continue
 			}
 			if best == "" || r.Time > at {

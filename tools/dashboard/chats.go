@@ -572,8 +572,13 @@ type chatStore struct {
 	// стоит Raised, за сессией смотрят, а Dead кончает присмотр и ожидание
 	// подъёма в панели. DeadWhy это слова исхода человеку, Tail последние
 	// строки терминала, снятые при жизни.
-	Raised  int64  `json:"raised,omitempty"`
-	Dead    int64  `json:"dead,omitempty"`
+	Raised int64 `json:"raised,omitempty"`
+	Dead   int64 `json:"dead,omitempty"`
+	// Since это тот же момент подъёма, но живущий дольше присмотра: Raised
+	// стирает и смерть окна, и снятие рукой, а жильца имени отличать от
+	// прежнего надо и потом. По нему склейка заходов делит разговоры,
+	// носившие одно имя (DK-859).
+	Since   int64  `json:"since,omitempty"`
 	DeadWhy string `json:"deadWhy,omitempty"`
 	Tail    string `json:"tail,omitempty"`
 	// Заказ дожима стопа (stopwait.go). StopAt это время последнего нажатия в
@@ -815,6 +820,21 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			delete(tmuxClaim, name)
 		}
 	}
+	// Порог жильца имени спрашивается по разу на имя: строк списка десятки, а
+	// имён среди них горстка, и память окна лежит отдельным файлом.
+	sinceOf := map[string]string{}
+	winSinceOf := func(tmux string) string {
+		name := strings.SplitN(tmux, ":", 2)[0]
+		if name == "" {
+			return ""
+		}
+		if v, ok := sinceOf[name]; ok {
+			return v
+		}
+		v := s.winSince(name)
+		sinceOf[name] = v
+		return v
+	}
 	alive := tmuxAliveFn()
 	view := s.harnesses()
 	names := harnessRoots(view)
@@ -916,8 +936,11 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			Parent:   last.Parent,
 		}
 		// Ключ склейки заходов считается до того, как устаревшее имя снимут:
-		// прошлый заход узнаётся именно по нему (chatGlue ниже).
-		e.win = chatWin(f.projPath, last.Tmux)
+		// прошлый заход узнаётся именно по нему (chatGlue ниже). Жильцы имени
+		// делятся моментом подъёма окна: номер чата дашборд отдаёт заново, и
+		// без этого деления новый разговор вставал бы одной строкой с прежним
+		// (DK-859).
+		e.win = chatLife(chatWin(f.projPath, last.Tmux), last.Time, winSinceOf(last.Tmux))
 		// Устаревшее имя снимается: живую tmux-сессию под этим именем ведёт
 		// другая, более свежая запись реестра, и мерить ею живость этого
 		// разговора значило бы показывать его живым и ловить его по ?tmux=.
@@ -1516,6 +1539,18 @@ func bindTimeSince(unix int64) string {
 		return ""
 	}
 	return time.Unix(unix, 0).Format(sessions.Stamp)
+}
+
+// winSince это момент подъёма окна порогом для записей реестра: записи старше
+// него оставил прежний жилец имени, а не прошлый заход этого разговора
+// (DK-859). Пустой ответ значит, что порога нет: окно поднимал не дашборд либо
+// присмотр за ним сняли рукой.
+func (s *server) winSince(tmux string) string {
+	name := strings.SplitN(tmux, ":", 2)[0]
+	if name == "" || !chatKeyRe.MatchString(name) {
+		return ""
+	}
+	return bindTimeSince(s.chatStoreRead("tmux-" + name).Since)
 }
 
 // chatNewName выбирает имя tmux-сессии диалога: chat-<ID>-<n> у диалога с

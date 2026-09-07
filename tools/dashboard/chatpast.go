@@ -38,6 +38,28 @@ func chatWin(projPath, tmux string) string {
 	return projPath + "\x00" + name
 }
 
+// chatLife делит ключ окна между его жильцами. Имена дашборд переиспользует:
+// chatNewName отдаёт освободившийся номер следующему чату, а конвейер поднимает
+// task-<ID> заново на каждый прогон. Склейка же сводила в один разговор всех,
+// кто когда-либо носил имя, и новый чат открывался лентой прежнего жильца
+// (DK-859). Момент подъёма окна дашборд помнит сам (Raised в памяти окна, тот
+// же порог, каким DK-851 мерит владение именем), и записи реестра по разные
+// стороны этого момента принадлежат разным разговорам. Заходы одной жизни окна
+// остаются склеенными: перезапуск клиента внутри оболочки конвейера окна не
+// поднимает, и записи его заходов ложатся после подъёма.
+//
+// Порога нет (окно дашборд не поднимал либо присмотр снят) значит склейка по
+// одному имени, как до правки: другой меры у такого имени нет.
+func chatLife(win, when, since string) string {
+	if win == "" || since == "" {
+		return win
+	}
+	if when < since {
+		return win + "\x00прежний"
+	}
+	return win + "\x00нынешний"
+}
+
 // chatGlue склеивает заходы одного окна в одну строку списка (DK-723).
 // Остановы у живой головы конвейера прежние (потолок проходов, воронка
 // молчания, вышедший клиент, перезагрузка машины), и после каждого кнопка
@@ -75,6 +97,22 @@ func chatGlue(list []chatEntry) []chatEntry {
 	}
 	for _, win := range wins {
 		grp := byWin[win]
+		// Убранный в архив разговор заходом не становится никогда (DK-859).
+		// Человек закончил его руками, и приклеивать его ленту к разговору,
+		// который потом занял то же имя, значит открывать новый чат чужой
+		// историей. Своей строкой он остаётся, а список её и так прячет.
+		open := make([]chatEntry, 0, len(grp))
+		for _, e := range grp {
+			if e.Archived {
+				keep = append(keep, e)
+				continue
+			}
+			open = append(open, e)
+		}
+		grp = open
+		if len(grp) == 0 {
+			continue
+		}
 		if len(grp) == 1 {
 			keep = append(keep, grp[0])
 			continue
@@ -124,6 +162,11 @@ const chatPassMax = 6
 // последняя запись реестра носит то же имя окна и легла раньше. Своё имя
 // сессия могла и потерять (его занял следующий заход), поэтому берётся имя из
 // её собственной последней записи, а не владение именем.
+//
+// Мера захода тут та же, что у строки списка: жилец имени отделяется от жильца
+// по моменту подъёма окна (chatLife), а архивный разговор заходом не бывает
+// вовсе. Иначе лента нового чата открывалась историей прежнего номера
+// (DK-859).
 func (s *server) chatPasses(sid string) []chatPass {
 	recs := s.bindsAll()
 	last := sessions.Last(recs[sid])
@@ -131,6 +174,8 @@ func (s *server) chatPasses(sid string) []chatPass {
 	if name == "" {
 		return nil
 	}
+	since := s.winSince(name)
+	life := chatLife(name, last.Time, since)
 	out := []chatPass{}
 	for id, rs := range recs {
 		if id == sid {
@@ -138,6 +183,12 @@ func (s *server) chatPasses(sid string) []chatPass {
 		}
 		rec := sessions.Last(rs)
 		if strings.SplitN(rec.Tmux, ":", 2)[0] != name || rec.Time > last.Time {
+			continue
+		}
+		if chatLife(name, rec.Time, since) != life {
+			continue
+		}
+		if s.chatStoreRead(id).Archived {
 			continue
 		}
 		out = append(out, chatPass{ID: id, Mtime: rec.Time})

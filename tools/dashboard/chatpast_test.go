@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -337,4 +338,99 @@ exit 0`)
 	if got := len(e.s.chatPasses("iiii-0009")); got != chatPassMax {
 		t.Errorf("лента тянет %d заходов при потолке %d", got, chatPassMax)
 	}
+}
+
+// Новый чат в переиспользованном номере окна с прежним жильцом не склеивается
+// (DK-859). Свободный номер chatNewName отдаёт следующему разговору, и склейка
+// заходов сводила в один разговор всех, кто когда-либо носил имя: лента нового
+// чата открывалась чужой историей, а своя реплика лежала в самом низу. Жильцов
+// делит момент подъёма окна: запись реестра старше него оставил прежний.
+func TestChatListSplitsWindowTenants(t *testing.T) {
+	e, c := chatEnv(t)
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) echo "chat-3|1|123";;
+esac
+exit 0`)
+	base := time.Now().Add(-2 * time.Hour)
+	writeSession(t, e.home, e.proj, "", "aaaa-0001", passTalk("прежний жилец номера", "2026-09-04T10:00:00.000Z"), base)
+	writeSession(t, e.home, e.proj, "", "bbbb-0002", passTalk("первая реплика нового чата", "2026-09-04T12:00:00.000Z"), base.Add(time.Hour))
+	// Запись нового жильца легла после подъёма окна, запись прежнего до него.
+	writeBinds(t, e.home,
+		passBind("2026-09-04T10:00:00", "aaaa-0001", "-", e.proj, "chat-3"),
+		passBind(time.Now().Add(time.Minute).Format("2006-01-02T15:04:05"), "bbbb-0002", "-", e.proj, "chat-3"))
+	e.s.chatRaised("chat-3", "", "", "demo")
+
+	byID := map[string]chatEntry{}
+	for _, ch := range chatsOf(t, e, c) {
+		byID[ch.ID] = ch
+	}
+	if len(byID) != 2 {
+		t.Fatalf("строк списка %d, а жильцы номера стоят каждый своей: %+v", len(byID), byID)
+	}
+	if got := byID["bbbb-0002"]; len(got.Past) != 0 {
+		t.Errorf("новый чат утащил заходы прежнего жильца номера: %+v", got.Past)
+	}
+	if _, ok := byID["aaaa-0001"]; !ok {
+		t.Errorf("прежний жилец пропал из списка: %+v", byID)
+	}
+
+	// Лента нового чата начинается со своей первой реплики: разделителя захода
+	// в ней нет вовсе.
+	items := passFeedOf(t, e, c, "bbbb-0002")
+	if len(items) != 1 || items[0].Role != "user" || items[0].Text != "первая реплика нового чата" {
+		t.Fatalf("лента нового чата открылась не своей репликой: %+v", items)
+	}
+}
+
+// Убранный в архив разговор заходом не бывает никогда (DK-859): человек
+// закончил его руками, и его лента к чужому разговору не клеится, чем бы имя
+// окна ни было занято потом.
+func TestChatListKeepsArchivedOutOfPasses(t *testing.T) {
+	e, c := chatEnv(t)
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) echo "task-XR-4|1|123";;
+esac
+exit 0`)
+	base := time.Now().Add(-2 * time.Hour)
+	writeSession(t, e.home, e.proj, "", "aaaa-0001", passTalk("убранный в архив заход", "2026-09-04T10:00:00.000Z"), base)
+	writeSession(t, e.home, e.proj, "", "bbbb-0002", passTalk("нынешний заход", "2026-09-04T11:00:00.000Z"), base.Add(time.Hour))
+	writeBinds(t, e.home,
+		passBind("2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
+		passBind("2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"))
+	if err := e.s.chatStoreWrite("aaaa-0001", chatStore{Archived: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	byID := map[string]chatEntry{}
+	for _, ch := range chatsOf(t, e, c) {
+		byID[ch.ID] = ch
+	}
+	if got := byID["bbbb-0002"]; len(got.Past) != 0 {
+		t.Errorf("архивный разговор приклеился заходом: %+v", got.Past)
+	}
+	if got, ok := byID["aaaa-0001"]; !ok || !got.Archived {
+		t.Errorf("архивный разговор пропал из списка своей строкой: %+v", byID)
+	}
+	items := passFeedOf(t, e, c, "bbbb-0002")
+	if len(items) != 1 || items[0].Text != "нынешний заход" {
+		t.Fatalf("лента втянула архивный заход: %+v", items)
+	}
+}
+
+// passFeedOf достаёт ленту разговора: предмет тут склейка заходов, и от ответа
+// стенду нужны только записи по порядку.
+func passFeedOf(t *testing.T, e *testEnv, c *http.Client, sid string) []reply {
+	t.Helper()
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/"+sid, "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("лента разговора %s: %d", sid, resp.StatusCode)
+	}
+	text := body(t, resp)
+	var got struct {
+		Items []reply `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ не разобрался (%v): %s", err, text)
+	}
+	return got.Items
 }

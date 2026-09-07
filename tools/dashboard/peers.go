@@ -118,14 +118,16 @@ func (s *server) peers() map[string]peer {
 	return out
 }
 
-// peerFrame собирает кадр канала. Класс разрешений называется prompting
+// peerFrame собирает кадр канала. Подпись from-name это слово humanPeer, по
+// нему сессия отличает реплику человека от соседней сессии (скилл board-chat,
+// правило 2). Класс разрешений называется prompting
 // нарочно: это тот же класс, в котором работает окно человека, и на нём
 // сообщение доходит без придержания. Соврать тут нечем, дашборд не сессия
 // клиента вовсе, и любой другой класс он назвал бы с тем же основанием.
 func peerFrame(text, from string) ([]byte, error) {
 	body := fmt.Sprintf(
 		"<cross-session-message from=%q from-name=%q from-mode=%q>\n%s\n</cross-session-message>",
-		from, "dashboard", "prompting", text)
+		from, humanPeer, "prompting", text)
 	frame := map[string]any{
 		"msgV":    1,
 		"msg_id":  msgID(),

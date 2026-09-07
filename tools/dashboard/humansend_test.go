@@ -16,7 +16,7 @@ import (
 // туда харнес, получив её от дашборда.
 func peerLine(sock, text string) string {
 	return `{"type":"user","message":{"role":"user","content":"Another Claude session sent a message:\n` +
-		`<cross-session-message from=\"` + sock + `\" from-name=\"dashboard\" from-mode=\"prompting\">\n` +
+		`<cross-session-message from=\"` + sock + `\" from-name=\"human\" from-mode=\"prompting\">\n` +
 		text + `\n</cross-session-message>"},"timestamp":"2026-08-26T08:28:53.000Z"}` + "\n"
 }
 
@@ -58,6 +58,22 @@ func TestFeedMarksSendToHuman(t *testing.T) {
 	}
 	if toSub.Human {
 		t.Error("реплика субагенту помечена обращением к человеку: пузырём разговора ей не место")
+	}
+}
+
+// Транскрипт до переименования подписи (DK-614) несёт рамку со словом
+// dashboard, и адрес панели по нему читается так же, как по свежей.
+func TestFeedMarksSendToHumanByOldSign(t *testing.T) {
+	sock := "uds:/tmp/cc-socks/52214.sock"
+	old := strings.Replace(peerLine(sock, "Поясни свой вопрос подробнее"),
+		`from-name=\"human\"`, `from-name=\"dashboard\"`, 1)
+	if old == peerLine(sock, "Поясни свой вопрос подробнее") {
+		t.Fatal("подпись в рамке образца не заменилась на прежнюю")
+	}
+	list := parseReplies([]byte(old+sendLine(sock, "Пояснение вопроса", "Поясняю попроще.")), 0)
+	got := toolReply(list, "Пояснение вопроса")
+	if got == nil || !got.Human {
+		t.Fatalf("отправка в сокет панели по старой подписи не помечена обращением к человеку: %+v", list)
 	}
 }
 

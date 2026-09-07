@@ -1154,9 +1154,22 @@ var peerFromRe = regexp.MustCompile(`from-name="([^"]*)"`)
 // этим адресом это реплика, а не служебный ход.
 var peerAddrRe = regexp.MustCompile(`\bfrom="([^"]*)"`)
 
-// dashboardPeer это имя отправителя, каким подписывается сам дашборд: реплику
-// с него пишет человек, дашборд только несёт.
-const dashboardPeer = "dashboard"
+// humanPeer это подпись реплики человека в межсессионном канале: реплику пишет
+// человек, а панель только несёт. Слово одно на любую панель и названо в скилле
+// board-chat (DK-614), имени приложения в нём нет нарочно: по нему агент узнаёт
+// человека, и привязка к дашборду разошлась бы с правилом при первой же другой
+// панели. dashboardPeer это прежняя подпись, ей подписаны транскрипты до
+// переименования, и ленты по ним читаются дальше.
+const (
+	humanPeer     = "human"
+	dashboardPeer = "dashboard"
+)
+
+// isHumanPeer говорит, что реплику канала написал человек: по свежей подписи
+// или по прежней.
+func isHumanPeer(name string) bool {
+	return name == humanPeer || name == dashboardPeer
+}
 
 // Автор реплики словом: «вы» у человека, «агент-диспетчер» у живой сессии
 // клиента, «агент» у всего прочего, что пришло каналом. Слова одни на сервер и
@@ -1241,7 +1254,7 @@ func readPeerKinds() map[string]string {
 // подпись «вы» под чужими словами врала цветом заодно с именем (замечание
 // пользователя).
 func peerAuthor(name string) string {
-	if name == "" || name == dashboardPeer {
+	if name == "" || isHumanPeer(name) {
 		return ""
 	}
 	if peerKind(name) == "interactive" {
@@ -1257,7 +1270,7 @@ func peerSource(name string) string {
 	// Реплика с дашборда это реплика человека, и подписывать её источником
 	// незачем: он и так видит, где написал. Подпись остаётся только у чужой
 	// сессии, вмешавшейся в разговор (замечание 17 двенадцатого круга POC).
-	if name == dashboardPeer {
+	if isHumanPeer(name) {
 		return ""
 	}
 	if name == "" {
@@ -1323,7 +1336,7 @@ func dashSock(text string) string {
 		return ""
 	}
 	f := peerFromRe.FindStringSubmatch(m[1])
-	if f == nil || f[1] != dashboardPeer {
+	if f == nil || !isHumanPeer(f[1]) {
 		return ""
 	}
 	a := peerAddrRe.FindStringSubmatch(m[1])

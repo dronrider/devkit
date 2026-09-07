@@ -1989,16 +1989,21 @@ func TestPeerReplyAuthorBySource(t *testing.T) {
 		return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"%s"},`+
 			`"timestamp":"2026-08-21T10:00:00.000Z"}`, body) + "\n"
 	}
-	data := []byte(line("dashboard", "слова человека") +
+	// Подпись человека это слово human (скилл board-chat, DK-614), а
+	// транскрипты до переименования подписаны словом dashboard, и лента по
+	// ним читается так же.
+	data := []byte(line("human", "слова человека") +
+		line("dashboard", "слова человека из старой ленты") +
 		line("devkit-20", "слова диспетчера") +
 		line("devkit-sub", "слова субагента"))
 
 	got := parseReplies(data, 0)
-	if len(got) != 3 {
-		t.Fatalf("реплик в ленте %d, ждал три: %+v", len(got), got)
+	if len(got) != 4 {
+		t.Fatalf("реплик в ленте %d, ждал четыре: %+v", len(got), got)
 	}
 	for i, want := range []struct{ text, who, note string }{
 		{"слова человека", "", ""},
+		{"слова человека из старой ленты", "", ""},
 		{"слова диспетчера", whoLead, "из сессии devkit-20"},
 		{"слова субагента", whoAgent, "из сессии devkit-sub"},
 	} {

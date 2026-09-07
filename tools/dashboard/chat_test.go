@@ -1367,7 +1367,7 @@ func queued(at string) string {
 // в правиле сверяется с кадром peerFrame: разъедутся, и агент перестанет
 // узнавать канал.
 func TestChatChannelRuleInEveryOrder(t *testing.T) {
-	sign := `from-name="dashboard"`
+	sign := `from-name="` + humanPeer + `"`
 	if !strings.Contains(channelRule, sign) {
 		t.Fatalf("в правиле канала нет дословной подписи %s: %s", sign, channelRule)
 	}

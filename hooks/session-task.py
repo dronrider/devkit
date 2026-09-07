@@ -53,6 +53,12 @@ DK-161). Поэтому имя окна принимается только у �
 Беда любого разбора это тихий ноль: хук стоит в каждой сессии на машине, и
 ронять её ради журнала нельзя. Сессия вне git-дерева всё равно пишет строку с
 пустым деревом: разговор доски идёт как раз из такой.
+
+Сессии с заказом (DEVKIT_TASK) хук вдобавок кладёт контекст задачи полем
+additionalContext: строку доски, файл задачи и строку про скилл board-chat, по
+которому идёт разговор с человеком. На поводе compact (SessionStart после
+сжатия контекста) вместо контекста уходит одна фраза «перечитай скилл
+board-chat» с ID задачи (DK-614).
 """
 import os
 import re
@@ -256,6 +262,25 @@ PACE_RULE = ('Долгие дела (поиск по диску, большие 
              'субагенту, а ход разговора держи отзывчивым: человек ждёт реплики, '
              'а не конца команды.')
 
+# Порядок разговора с человеком по задаче лежит в скилле board-chat (DK-614):
+# ответ в тот же разговор и на «вы», подпись реплики человека в канале,
+# отзывчивость, план и срок жизни исполнителя. Старт сессии называет скилл
+# одной строкой, тело приезжает по вызову.
+CHAT_RULE = 'Порядок разговора с человеком по задаче лежит в скилле board-chat.'
+
+# Повод старта, с которым харнес зовёт SessionStart после сжатия контекста.
+# Сжатие уносит из контекста прочитанный скилл вместе с остальным, и после
+# него сессия отвечала человеку как соседней сессии. На этом поводе хук просит
+# перечитать скилл фразой, а не кладёт тело: развилка DK-614 решена в пользу
+# фразы, тело идёт в ход, когда стенд покажет потерю.
+COMPACT = "compact"
+
+
+def compact_context(task):
+    """Фраза после сжатия контекста: какой разговор идёт и что перечитать."""
+    return ("Контекст сжат. Эта сессия открыта разговором про задачу %s: "
+            "перечитай скилл board-chat, разговор с человеком идёт по нему." % task)
+
 
 def task_context(task, cwd):
     """Контекст задачи для родившейся сессии: строка доски и файл постановки.
@@ -268,7 +293,7 @@ def task_context(task, cwd):
     if not root:
         return ""
     parts = ["Эта сессия открыта разговором про задачу %s." % task,
-             PLAN_RULE + " " + PACE_RULE]
+             PLAN_RULE + " " + PACE_RULE + " " + CHAT_RULE]
     try:
         out = subprocess.run(["taskctl", "-C", root, "show", task],
                              capture_output=True, text=True, timeout=10)
@@ -296,10 +321,15 @@ def run_hook(protocol, path=None, env=None, now=None):
         return 0
     hookio.append_capped(path or LOG, record(start, env, now))
     task = ordered_task(os.environ if env is None else env)
-    if task:
-        said = task_context(task, start.cwd)
-        if said:
-            return hookio.Context("SessionStart").say(said)
+    if not task:
+        return 0
+    if start.source == COMPACT:
+        # Строка доски и файл задачи после сжатия не повторяются: их
+        # выжимка остаётся в сводке харнеса, а скилл из неё выпадает.
+        return hookio.Context("SessionStart").say(compact_context(task))
+    said = task_context(task, start.cwd)
+    if said:
+        return hookio.Context("SessionStart").say(said)
     return 0
 
 

@@ -284,6 +284,45 @@ class TestHook(unittest.TestCase):
         self.assertEqual((f["сессия"], f["задача"], f["источник"], f["повод"]),
                          (SID, "DK-431", "заказ", "startup"))
 
+    def test_start_names_the_chat_skill(self):
+        # Порядок разговора с человеком лежит в скилле board-chat (DK-614), и
+        # старт называет скилл одной строкой: тело приезжает по вызову, а не
+        # каждым стартом.
+        r = self.run_hook(sample(), {"DEVKIT_TASK": "DK-431"})
+        self.assertEqual(r.returncode, 0)
+        said = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("board-chat", said)
+        self.assertIn("DK-431", said)
+        self.assertNotIn("Контекст сжат", said)
+
+    def test_compact_asks_to_reread_the_chat_skill(self):
+        # SessionStart с поводом compact приходит после сжатия контекста, и
+        # прочитанный скилл из контекста выпадает вместе с остальным. Хук
+        # просит перечитать его фразой с ID задачи, а строку доски и файл
+        # задачи не повторяет.
+        event = dict(sample(), source="compact")
+        r = self.run_hook(event, {"DEVKIT_TASK": "DK-431"})
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        data = json.loads(r.stdout)
+        self.assertEqual(data["hookSpecificOutput"]["hookEventName"], "SessionStart")
+        said = data["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("перечитай скилл board-chat", said)
+        self.assertIn("DK-431", said)
+        self.assertNotIn("Строка доски", said)
+        self.assertNotIn("Файл задачи", said)
+        self.assertNotIn("agentctl plan", said)
+        # Строка реестра пишется и на этом поводе: повод виден в поле.
+        f, _ = fields(self.log()[0])
+        self.assertEqual((f["задача"], f["повод"]), ("DK-431", "compact"))
+
+    def test_compact_without_a_task_is_silent(self):
+        # Сессия без разговора по задаче контекста не получает ни на старте,
+        # ни после сжатия: фраза про скилл разговора ей не про что.
+        event = dict(sample(), source="compact")
+        r = self.run_hook(event)
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""))
+        self.assertEqual(len(self.log()), 1)
+
     def test_rebinding_adds_a_second_line(self):
         # Перепривязка это обычная запись, и выигрывает последняя: правкой
         # файла реестр не живёт.

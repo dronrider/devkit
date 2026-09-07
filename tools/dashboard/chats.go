@@ -1501,7 +1501,7 @@ func bindTimeSince(unix int64) string {
 	if unix <= 0 {
 		return ""
 	}
-	return time.Unix(unix, 0).Format("2006-01-02T15:04:05")
+	return time.Unix(unix, 0).Format(sessions.Stamp)
 }
 
 // chatNewName выбирает имя tmux-сессии диалога: chat-<ID>-<n> у диалога с

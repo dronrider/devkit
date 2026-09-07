@@ -1552,6 +1552,9 @@ func cutOrderRules(text string) (said, rules string) {
 	if i := strings.Index(text, channelRule); i >= 0 && (cut < 0 || i < cut) {
 		cut = i
 	}
+	if i := strings.Index(text, oldChannelRule); i >= 0 && (cut < 0 || i < cut) {
+		cut = i
+	}
 	if i := rotateRuleRe.FindStringIndex(text); i != nil && (cut < 0 || i[0] < cut) {
 		cut = i[0]
 	}
@@ -1571,6 +1574,8 @@ func cutOrderRules(text string) (said, rules string) {
 			rest = rest[len(paceRule):]
 		case strings.HasPrefix(rest, channelRule):
 			rest = rest[len(channelRule):]
+		case strings.HasPrefix(rest, oldChannelRule):
+			rest = rest[len(oldChannelRule):]
 		default:
 			m := rotateRuleRe.FindStringIndex(rest)
 			if m == nil || m[0] != 0 {

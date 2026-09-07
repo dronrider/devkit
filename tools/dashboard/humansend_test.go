@@ -77,6 +77,30 @@ func TestFeedMarksSendToHumanByOldSign(t *testing.T) {
 	}
 }
 
+// Заказ сессии, поднятой до переименования подписи (DK-614), несёт прежнюю
+// редакцию правила канала дословно, и вырезка приписок обязана узнавать её
+// наравне с нынешней: иначе хвост из правил плана, отзывчивости и канала целиком
+// остаётся в пузыре человека (замечание ревью DK-614). Правило стоит и швом
+// хвоста, и внутри цикла после соседних приписок.
+func TestCutOrderRulesOldChannelRule(t *testing.T) {
+	if oldChannelRule == channelRule || !strings.Contains(oldChannelRule, `from-name="dashboard"`) {
+		t.Fatalf("прежняя редакция правила канала не про подпись dashboard: %q", oldChannelRule)
+	}
+	for name, text := range map[string]string{
+		"шов":   "Поговорим про DK-509. " + oldChannelRule,
+		"цикл":  "Поговорим про DK-509. " + planRule + " " + paceRule + " " + oldChannelRule,
+		"новый": "Поговорим про DK-509. " + planRule + " " + channelRule,
+	} {
+		said, rules := cutOrderRules(text)
+		if said != "Поговорим про DK-509." {
+			t.Errorf("%s: слова человека обрезаны не так: %q", name, said)
+		}
+		if rules == "" || strings.Contains(said, "from-name") {
+			t.Errorf("%s: приписки заказа не отрезаны от слов человека: rules=%q", name, rules)
+		}
+	}
+}
+
 // Разговор без единой реплики из панели своего адреса не выдумывает: отправка
 // в чужой сокет остаётся служебным ходом.
 func TestFeedSendWithoutDashboardStaysTool(t *testing.T) {

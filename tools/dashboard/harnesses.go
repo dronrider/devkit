@@ -245,12 +245,3 @@ func (s *server) harnesses() HarnessView {
 func (s *server) handleHarnesses(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.harnesses())
 }
-
-// rotateTokens отдаёт порог ротации сборщикам заказа: ноль из устаревшего
-// кеша прикрывается запасным числом, правило без числа не уезжает.
-func (s *server) rotateTokens() int {
-	if n := s.harnesses().ExecRotateTokens; n > 0 {
-		return n
-	}
-	return execRotateFallback
-}

@@ -2238,9 +2238,14 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 .wsrows{display:flex;flex-direction:column;gap:6px}
 .wsrow{display:flex;flex-direction:column;gap:4px;padding:7px 9px;border:1px solid var(--line);border-radius:9px;background:var(--bg1);cursor:pointer}
 .wsrow:hover{border-color:var(--acc);background:var(--bg2)}
-.wshrow{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+/* Строка полки держится в двух строках экрана: шапка с задачей и одна фраза о
+   вопросе под ней. Всё длинное режется многоточием на месте, переносов тут
+   нет: полка это список ждущих, а читают вопрос целиком уже в разговоре. */
+.wshrow{display:flex;align-items:center;gap:6px;min-width:0}
+.wshrow>.chip,.wshrow>b,.wsage{flex:none}
 .wshrow b{font:600 12px var(--sans);color:var(--tx)}
 .wsage{margin-left:auto;font:400 11px var(--sans);color:var(--tx3)}
-.wstitle{font:400 12px/1.35 var(--sans);color:var(--tx)}
-.wsq{font:400 12px/1.4 var(--sans);color:var(--tx2);overflow-wrap:anywhere}
-.wsnote{font:400 10.5px var(--sans);color:var(--tx3)}
+.wstitle{flex:1 1 auto;min-width:0;font:400 12px/1.35 var(--sans);color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wsfoot{display:flex;align-items:baseline;gap:6px;min-width:0}
+.wsq{flex:1 1 auto;min-width:0;font:400 12px/1.4 var(--sans);color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wsmore,.wsnote{flex:none;font:400 10.5px var(--sans);color:var(--tx3)}

@@ -14015,6 +14015,21 @@ function waitShelfShut() {
   }
 }
 
+// Сколько знаков вопроса влезает в строку полки. Ширина полки под четыре сотни
+// пикселей, и на этой длине фраза ещё читается целиком, а дальше её всё равно
+// режет многоточием сам браузер.
+const WAIT_ASK_CUT = 90;
+
+// Вопросы признака без вариантов ответа. Сервер (askLines в waiting.go) кладёт
+// в один массив и текст вопроса, и варианты к нему: тот же массив читает блок
+// вопроса в разговоре, где варианты человеку подсказка. Вариант узнаётся по
+// метке строки, «- » у обычного и «* » у рекомендованного.
+function waitAsks(lines) {
+  return (lines || [])
+    .map((s) => String(s || "").trim())
+    .filter((s) => s && !s.startsWith("- ") && !s.startsWith("* "));
+}
+
 // Строка полки ведёт в разговор ждущего: адрес выбрал сервер (сессия точнее
 // задачи), а проект едет в самом адресе, потому что полка машинная и открывают
 // её и с главной, где своего проекта нет вовсе. Парковка это исключение: у неё
@@ -14027,16 +14042,25 @@ function waitRow(it, now) {
   head.append(el("span", "chip c-proj", it.project));
   if (it.id) head.append(el("b", "", it.id));
   const w = it.waiting || {};
+  if (it.title) head.append(withFull(el("span", "wstitle", it.title), it.title));
   head.append(el("span", "chip c-wait", w.state || "ждёт ответа"));
   const age = waitAgeWords(w, now);
   if (age) head.append(el("span", "wsage", age));
   row.append(head);
-  if (it.title) row.append(withFull(el("div", "wstitle", it.title), it.title));
-  // Вопрос стоит в самой строке, а не подсказкой: за ним сюда и приходят, и
-  // читать его наведением значило бы открывать разговор ради одной фразы.
-  const qs = w.questions || [];
-  if (qs.length) row.append(el("div", "wsq", qs.join("; ")));
-  row.append(el("div", "wsnote", w.note || "источник не назван"));
+  // Полка это список ждущих, а не чат: в строке стоит одна фраза о том, о чём
+  // спрашивают, и счёт остальных вопросов. Варианты ответа сюда не едут вовсе,
+  // за ними человек идёт в разговор щелчком по строке. Живой признак несёт
+  // два-четыре вопроса с вариантами, и целиком они давали строку в две тысячи
+  // знаков: шесть таких подряд читались портянкой чата, а вопроса к себе
+  // человек в них не находил (возврат из архива DK-696, 2026-09-07).
+  const foot = el("div", "wsfoot");
+  const qs = waitAsks(w.questions);
+  if (qs.length) {
+    foot.append(withFull(el("span", "wsq", foldPeek(qs[0], WAIT_ASK_CUT)), qs.join("\n")));
+    if (qs.length > 1) foot.append(el("span", "wsmore", "и ещё " + (qs.length - 1)));
+  }
+  foot.append(el("span", "wsnote", w.note || "источник не назван"));
+  row.append(foot);
   row.addEventListener("click", () => {
     waitShelfShut();
     if (w.source === "parked" && it.id) {

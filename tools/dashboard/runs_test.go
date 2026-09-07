@@ -295,11 +295,9 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 			}
 			got := readFile(t, tmuxLog)
 			// Заказ уходит одной заквоченной строкой: tmux склеивает хвост
-			// new-session пробелами и отдаёт шеллу.
-			// Правило плана едет в том же заказе: по нему дашборд рисует
-			// деления кольца и блок «План агента». Адрес файла правило не
-			// называет вовсе, его считает команда agentctl plan (DK-613).
-			rules := " " + planRule + " " + channelRule
+			// new-session пробелами и отдаёт шеллу. Правила плана, отзывчивости
+			// и канала в текст заказа больше не приписываются (DK-612): их
+			// доставляет хук старта сессии.
 			for _, want := range []string{
 				// Пары окружения едут в начале команды те же, что у диалога: их
 				// собирает одна сборка на все дороги подъёма (launchEnv).
@@ -319,10 +317,10 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 				// печатная сессия живёт один ход, и без оболочки конвейер
 				// кончался на первом же ожидании.
 				"kit/skills/board-task/task-run.py' '" + tc.id + "' -C '" + e.proj + "' --project 'demo'",
-				" --order '" + tc.prompt + rules + "'",
+				" --order '" + tc.prompt + "'",
 				// Заказ следующих проходов всегда «продолжай»: строку к тому
 				// времени уже двигали, и начинать её заново нельзя.
-				" --again 'Продолжай выполнение " + tc.id + rules + "'",
+				" --again 'Продолжай выполнение " + tc.id + "'",
 				// Ярус вердикта называется явной моделью: без флага клиент брал
 				// свой дефолт, а он бывает верхним ярусом, которого задаче никто
 				// не назначал.
@@ -389,7 +387,7 @@ func TestRunStartOnChosenHarness(t *testing.T) {
 	if !strings.Contains(got, want) {
 		t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
 	}
-	if !strings.Contains(got, "--order 'Выполни XR-002 "+planRule+" "+channelRule+"'") {
+	if !strings.Contains(got, "--order 'Выполни XR-002'") {
 		t.Errorf("заказ подписки собран не так:\n%s", got)
 	}
 }
@@ -429,7 +427,7 @@ func TestRunStartWithoutHarnessKeepsOldWay(t *testing.T) {
 		t.Fatalf("запуск без выбора: %d %s", resp.StatusCode, text)
 	}
 	got := readFile(t, tmuxLog)
-	if !strings.Contains(got, "--order 'Выполни XR-002 "+planRule+" "+channelRule+"'") {
+	if !strings.Contains(got, "--order 'Выполни XR-002'") {
 		t.Errorf("запуск без выбора пошёл не прежней дорогой:\n%s", got)
 	}
 	if !strings.Contains(got, "-- claude") {
@@ -1191,7 +1189,7 @@ func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
 			if !strings.Contains(text, `"kind":"task"`) {
 				t.Errorf("вид приёмки увёл запуск мимо сессии: %s", text)
 			}
-			if got := readFile(t, tmuxLog); !strings.Contains(got, "--order '"+tc.prompt+" "+planRule+" "+channelRule+"'") {
+			if got := readFile(t, tmuxLog); !strings.Contains(got, "--order '"+tc.prompt+"'") {
 				t.Errorf("сессия поднята не с тем заказом:\n%s\nждал %q", got, tc.prompt)
 			}
 		})

@@ -395,9 +395,10 @@ func clientCommand(agentctl string, h *Harness, model string) string {
 
 // startTaskSession поднимает tmux-сессию конвейера задачи: оболочка, клиент и
 // заказы обоих сортов. Дорога сюда не одна: кнопка экрана и подъём
-// прогона после выката (checkrun.go) поднимают одно и то же окно, и правила
-// заказа (план, канал ответа) обоим приставляются тут, а не пересказываются
-// каждым зовущим.
+// прогона после выката (checkrun.go) поднимают одно и то же окно, и заказ
+// (план, канал ответа) обоим собирается тут, а не пересказывается каждым
+// зовущим. Правила плана и канала в текст заказа больше не приписываются
+// (DK-612): их доставляет хук старта сессии.
 func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again string) error {
 	// Оболочка ищется до подъёма окна: без неё конвейер прожил бы один ход
 	// головы, и отказать тут честнее, чем поднять работу, которая умрёт на
@@ -408,7 +409,7 @@ func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, mo
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", proj.Path,
 		sessionCommand(binPath(agentctlBin), tr, h, s.headlessEnv(id, sess),
-			order+" "+orderRules(sess), again+" "+orderRules(sess),
+			order, again,
 			id, proj.Path, proj.Name, model)); err != nil {
 		return fmt.Errorf("tmux не поднял сессию %s: %s", sess, procErr(err))
 	}

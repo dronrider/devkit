@@ -124,30 +124,6 @@ class TestCollect(JournalCase):
         self.assertEqual(stat["service"], 6)
         self.assertEqual([t for _, _, t in got], [HUMAN])
 
-    def test_приписка_хука_режется_а_реплика_остаётся(self):
-        # Приписку про план работ хук добавляет в хвост чужой реплики, и без
-        # отреза её слова («веди», «массивом») лезут в верх словаря.
-        tail = ("\n\nПлан работ веди командой agentctl plan. plan set кладёт "
-                "этапы массивом, plan step начинает пункт, plan done закрывает, "
-                "порядок в скилле work-plan.")
-        long_tail = ("\n\nДолгие дела (поиск по диску, сборка, установка) "
-                     "гоняй фоном, чтобы ход не упирался в ожидание.")
-        self.write("s1.jsonl", [entry(HUMAN + tail), entry(HUMAN2 + long_tail)])
-        got, stat = prose.collect(self.root, 25)
-        self.assertEqual(stat["kept"], 2)
-        self.assertEqual([t for _, _, t in got], [HUMAN, HUMAN2])
-        self.assertEqual([w for w, _ in prose.dictionary(got, 1) if w == "массивом"], [])
-
-    def test_прежняя_редакция_приписки_режется_тоже(self):
-        # Журналы за старые недели несут правило плана в редакции до DK-613, и
-        # корпус собирается по ним наравне со свежими.
-        tail = ("\n\nВеди план работ файлом ~/.devkit/plans/<ID сессии>.json: "
-                "до первого шага положи туда список этапов задачи массивом "
-                "объектов, по ходу помечай текущий пункт.")
-        self.write("s1.jsonl", [entry(HUMAN + tail)])
-        got, _ = prose.collect(self.root, 25)
-        self.assertEqual([t for _, _, t in got], [HUMAN])
-
     def test_перенос_черновика_ассистента_отсеивается(self):
         # Находка ревью DK-522. Ассистент в одном окне пишет промпт для
         # соседнего окна, человек переносит его copy-paste, и в журнале

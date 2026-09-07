@@ -77,30 +77,6 @@ func TestFeedMarksSendToHumanByOldSign(t *testing.T) {
 	}
 }
 
-// Заказ сессии, поднятой до переименования подписи (DK-614), несёт прежнюю
-// редакцию правила канала дословно, и вырезка приписок обязана узнавать её
-// наравне с нынешней: иначе хвост из правил плана, отзывчивости и канала целиком
-// остаётся в пузыре человека (замечание ревью DK-614). Правило стоит и швом
-// хвоста, и внутри цикла после соседних приписок.
-func TestCutOrderRulesOldChannelRule(t *testing.T) {
-	if oldChannelRule == channelRule || !strings.Contains(oldChannelRule, `from-name="dashboard"`) {
-		t.Fatalf("прежняя редакция правила канала не про подпись dashboard: %q", oldChannelRule)
-	}
-	for name, text := range map[string]string{
-		"шов":   "Поговорим про DK-509. " + oldChannelRule,
-		"цикл":  "Поговорим про DK-509. " + planRule + " " + paceRule + " " + oldChannelRule,
-		"новый": "Поговорим про DK-509. " + planRule + " " + channelRule,
-	} {
-		said, rules := cutOrderRules(text)
-		if said != "Поговорим про DK-509." {
-			t.Errorf("%s: слова человека обрезаны не так: %q", name, said)
-		}
-		if rules == "" || strings.Contains(said, "from-name") {
-			t.Errorf("%s: приписки заказа не отрезаны от слов человека: rules=%q", name, rules)
-		}
-	}
-}
-
 // Разговор без единой реплики из панели своего адреса не выдумывает: отправка
 // в чужой сокет остаётся служебным ходом.
 func TestFeedSendWithoutDashboardStaysTool(t *testing.T) {
@@ -126,33 +102,6 @@ func TestFeedSendToOwnSocketIsHuman(t *testing.T) {
 	}
 	if !got.Human {
 		t.Errorf("отправка в свой сокет %s не сочтена обращением к человеку", peerSelfAddr())
-	}
-}
-
-// Правило канала едет в каждый заказ, где агент разговаривает с человеком.
-// Грумер DK-509 выбрал канал как раз потому, что у груминга заказ свой, и
-// правило туда не поехало.
-func TestOrderRulesCarryChannelEverywhere(t *testing.T) {
-	sess := "task-XR-1"
-	got := orderRules(sess)
-	if !strings.Contains(got, channelRule) {
-		t.Fatalf("в общих приписках заказа нет правила канала: %s", got)
-	}
-	if !strings.Contains(got, planRule) {
-		t.Errorf("общие приписки заказа потеряли правило плана: %s", got)
-	}
-	// Текст правила один на все заказы: сверяется он дословной константой, а не
-	// пересказом.
-	for name, order := range map[string]string{
-		"груминг черновика":  groomPrompt("XR-1", "") + " " + orderRules(sess),
-		"конвейер задачи":    runPrompt("in-progress", "XR-1") + " " + orderRules(sess),
-		"продолжение задачи": continuePrompt("XR-1", execRotateFallback, sess),
-		"виток цели":         goalContinuePrompt("XR-100", execRotateFallback, sess),
-		"подъём разговора":   chatCmd("", "opus", "", "посмотри доску", execRotateFallback, nil, "agentctl"),
-	} {
-		if !strings.Contains(order, channelRule) {
-			t.Errorf("в заказе «%s» нет правила канала: %s", name, order)
-		}
 	}
 }
 

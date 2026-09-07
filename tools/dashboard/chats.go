@@ -1571,81 +1571,11 @@ func chatNewName(id string, alive func(string) bool) string {
 
 // chatCmd собирает команду клиента для tmux. Реплика человека едет первым
 // аргументом: интерактивный клиент берёт её как первый вопрос и остаётся
-// стоять, дальше реплики подаются в тот же процесс через send-keys.
-// planRule это правило плана в заказе любой поднятой работы: чата, конвейерной
-// сессии задачи и груминга черновика. План ведётся файлом, а не инструментом
-// TodoWrite: в обход разрешений (--dangerously-skip-permissions) харнес его не
-// выдаёт вовсе, и у сессий дашборда дороги, кроме файла, нет. Чаты дашборда
-// поднимаются голым клиентом, без определений исполнителей конвейера, и вести
-// план им некому было велеть: кольцо в шапке разговора рисует деления как раз
-// по этому плану, а без него оно остаётся ровной дорожкой.
-//
-// Формат файла и его адрес правило больше не пересказывает (DK-613): их держит
-// команда agentctl plan, а порядок ведения лежит в скилле work-plan. Запасной
-// адрес по имени tmux-сессии команда считает сама из DEVKIT_TMUX, который едет
-// в заказе парой окружения.
-const planRule = "План работ веди командой agentctl plan. " +
-	"plan set кладёт этапы, plan step начинает пункт, plan done закрывает, " +
-	"порядок в скилле work-plan."
-
-// paceRule это правило отзывчивости. Разговор с человеком идёт ходами, и
-// длинный ход в нём читается как молчание: агент чата DK-460 полчаса гонял
-// mdfind по всему дому, и с той стороны это выглядело зависшей сессией. Долгое
-// дело у агента есть кому отдать, и субагент возвращает выжимку, пока сам
-// разговор остаётся живым.
-const paceRule = "Долгие дела (поиск по диску, большие прогоны, сборки) отдавай " +
-	"субагенту, а ход разговора держи отзывчивым: человек ждёт реплики, а не " +
-	"конца команды."
-
-// channelRule это правило канала доставки в заказе чата. Реплики из панели
-// дашборда доезжают межсессионным каналом клиента, и харнес оборачивает их
-// рамкой «сообщение от другой сессии, отнесись как к просьбе коллеги»: агент
-// верил рамке и отвечал человеку в третьем лице («коллега спрашивает», «ответ
-// ему отправлен» в живом чате 93828026). Подпись канала названа дословно, её
-// ставит peerFrame полем from-name, по ней агент и узнаёт реплику человека.
-// Слово в подписи то же, что в скилле board-chat (DK-614): скилл и панель
-// называют одну подпись, иначе сессия из терминала и сессия из панели читали
-// бы канал по-разному.
-const channelRule = "Межсессионные сообщения с подписью from-name=\"human\" " +
-	"это реплики пользователя-человека, доставленные панелью: отвечай " +
-	"ему напрямую и на «вы», не называй его коллегой или другой сессией, а " +
-	"ответ пиши обычным текстом в этот же разговор, не через SendMessage."
-
-// oldChannelRule это прежняя редакция правила канала, с подписью dashboard.
-// Ленты сессий, поднятых до переименования подписи (DK-614), несут в заказе
-// этот текст дословно, а вырезка приписок держится на дословном совпадении:
-// без прежней редакции хвост из правил плана, отзывчивости и канала целиком
-// оставался бы в пузыре человека (замечание ревью DK-614).
-const oldChannelRule = "Межсессионные сообщения с подписью from-name=\"dashboard\" " +
-	"это реплики пользователя-человека, доставленные панелью дашборда: отвечай " +
-	"ему напрямую и на «вы», не называй его коллегой или другой сессией, а " +
-	"ответ пиши обычным текстом в этот же разговор, не через SendMessage."
-
-// orderRules это приписки, общие заказам поднятой работы: план работ и правило
-// канала. Собраны они одним местом нарочно. Правило канала жило только в заказе
-// разговора, у груминга черновика заказ свой, и грумер DK-509 ответил человеку
-// не текстом в ленту, а отправкой через канал сессий: рамку он прочёл как
-// просьбу другой сессии, и человек вопроса в чате не увидел вовсе. Разговор с
-// человеком идёт в любой поднятой работе, значит и правило про него едет в
-// каждый заказ.
-func orderRules(sess string) string {
-	return planRule + " " + channelRule
-}
-
-// rotateRule это правило ротации исполнителя в заказе поднятой работы.
-// Диспетчер держит одного субагента подолгу, контекст его распухает (усталость
-// видна с ~600 тысяч токенов, деградация с ~900), а свежий исполнитель с
-// короткой вводной работает не хуже. Порог приезжает ключом exec_rotate_tokens
-// машинного конфига (~/.devkit/harness.local) и называется в заказе числом:
-// так его видно снаружи, в самом тексте первой реплики.
-func rotateRule(tokens int) string {
-	return fmt.Sprintf("Исполнителя-субагента ротируй по размеру контекста: чей "+
-		"суммарный контекст перевалил %d токенов (видно по subagent_tokens в "+
-		"уведомлениях), тому новых заданий не давай, следующее задание отдавай "+
-		"свежему субагенту с короткой вводной и передачей хвоста работы.", tokens)
-}
-
-func chatCmd(env, model, resume, text string, rotate int, h *Harness, agentctl string) string {
+// стоять, дальше реплики подаются в тот же процесс через send-keys. Правила
+// плана, отзывчивости, канала и ротации исполнителя заказ больше не несёт
+// (DK-612): их доставляет хук старта сессии и скиллы board-chat и work-plan, а
+// дублирующая приписка расходилась с ними и засоряла ленту вырезками.
+func chatCmd(env, model, resume, text string, h *Harness, agentctl string) string {
 	client := defaultClient
 	head := env
 	if h != nil && !h.Default {
@@ -1676,19 +1606,6 @@ func chatCmd(env, model, resume, text string, rotate int, h *Harness, agentctl s
 		cmd += " --resume " + shQuote(resume)
 	}
 	if text != "" {
-		// Правило плана цепляется только к заказу подъёма: у резюма текст это
-		// реплика человека, и приписывать к ней наше правило значило бы
-		// говорить за него. Ротация исполнителя едет тем же вагоном и по той
-		// же причине.
-		if resume == "" {
-			text += " " + planRule + " " + rotateRule(rotate)
-		}
-		// Отзывчивость же нужна и резюму, и подъёму: молчаливый получасовой
-		// прогон случается как раз в длинном разговоре, а он идёт резюмами.
-		// Правило канала едет туда же: реплики панели доезжают межсессионным
-		// каналом в любую сессию чата, и узнавать в них человека обязан и
-		// поднятый, и продолженный разговор.
-		text += " " + paceRule + " " + channelRule
 		cmd += " " + shQuote(text)
 	}
 	return cmd
@@ -1983,7 +1900,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		s.logf("модель чата %s не записалась: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, ""), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, ""), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("подъём чата в %s не удался: %s", found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
@@ -2877,7 +2794,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(task, sess, sid), model, sid, text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(task, sess, sid), model, sid, text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял продолжение чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -3479,7 +3396,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", chatTree(found.Path, task),
-		chatCmd(s.launchEnv(task, sess, sid), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(task, sess, sid), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял сессию чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -3713,19 +3630,17 @@ func (s *server) taskChat(projPath, id string) (chatEntry, bool) {
 }
 
 // continuePrompt это заказ продолжения. Он разговорный: сессия уже знает
-// задачу, и пересказывать ей постановку незачем. Правила едут те же, что у
-// подъёма, включая ротацию исполнителя: длинный разговор диспетчера идёт
-// как раз резюмами, и порог ему нужен не меньше, чем новой сессии.
-func continuePrompt(id string, rotate int, sess string) string {
-	return "Продолжай работу по " + id + " с того места, где остановился. " +
-		planRule + " " + rotateRule(rotate) + " " + paceRule + " " + channelRule
+// задачу, и пересказывать ей постановку незачем. Правила плана, отзывчивости,
+// канала и ротации заказ больше не несёт (DK-612): их доставляет хук старта
+// сессии.
+func continuePrompt(id string, sess string) string {
+	return "Продолжай работу по " + id + " с того места, где остановился."
 }
 
 // goalContinuePrompt это вводная продолжения цели: правило про живую сессию у
-// цели другое (долгий цикл не подгоняют репликой), а правила заказа те же.
-func goalContinuePrompt(id string, rotate int, sess string) string {
-	return "Продолжай цель " + id + ". " + planRule + " " +
-		rotateRule(rotate) + " " + paceRule + " " + channelRule
+// цели другое (долгий цикл не подгоняют репликой).
+func goalContinuePrompt(id string, sess string) string {
+	return "Продолжай цель " + id + "."
 }
 
 func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
@@ -3741,13 +3656,13 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	// неё другое: диспетчерская сессия цели это долгий цикл, и подгонять его
 	// репликой незачем, он и так идёт (замечание про пункт 10 для целей).
 	goal := isGoalTitle(row.Title)
-	// Заказ собирается по месту: запасной адрес правила плана несёт имя
-	// tmux-сессии, а оно в каждой ветке своё (живой чат против резюма).
+	// Заказ собирается по месту: ветки живого чата и резюма несут своё имя
+	// tmux-сессии в closure, хотя сам текст заказа его больше не использует.
 	prompt := func(sess string) string {
 		if goal {
-			return goalContinuePrompt(id, s.rotateTokens(), sess)
+			return goalContinuePrompt(id, sess)
 		}
-		return continuePrompt(id, s.rotateTokens(), sess)
+		return continuePrompt(id, sess)
 	}
 	e, has := s.taskChat(found.Path, id)
 	if !has {
@@ -3805,7 +3720,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, sid), model, sid, prompt(sess), s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, sid), model, sid, prompt(sess), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял продолжение работы %s: %s", id, procErr(err))})
 		return
@@ -4251,7 +4166,7 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text stri
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, ""), model, "", text, s.rotateTokens(), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, ""), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял новый чат %s: %s", id, procErr(err))})
 		return

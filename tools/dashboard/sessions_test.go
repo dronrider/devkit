@@ -1948,18 +1948,6 @@ func TestSessionPlanByTmuxName(t *testing.T) {
 	}
 }
 
-// Приписка заказа с правилом плана режется из пузыря целиком. Запасной адрес
-// правило больше не несёт (DK-613), его считает сама команда agentctl plan.
-func TestCutOrderRulesPlan(t *testing.T) {
-	said, rules := cutOrderRules("сделай хорошо " + planRule + " " + paceRule)
-	if said != "сделай хорошо" {
-		t.Errorf("слова человека обрезаны не так: %q", said)
-	}
-	if !strings.Contains(rules, "agentctl plan") || !strings.Contains(rules, paceRule) {
-		t.Errorf("приписки заказа не собраны: %q", rules)
-	}
-}
-
 // Автор реплики, пришедшей каналом живых сессий, читается по отправителю:
 // дашборд несёт слова человека, живая сессия клиента это агент-диспетчер, а
 // всё прочее просто агент. До этого любая такая реплика рисовалась пузырём
@@ -2082,83 +2070,6 @@ func readBytes(t *testing.T, path string) []byte {
 	return data
 }
 
-// Приписки заказа видны отдельно от слов человека: подъём сессии приклеивает к
-// первой реплике правила (план, ротация, отзывчивость), и в ленте они стояли
-// одним пузырём с текстом человека от его имени (живой пример: «Найди черновик
-// или задачу...» плюс простыня правил). Пузырь несёт только сказанное,
-// приписки едут свёрнутой служебной строкой следом, а неузнанный хвост
-// остаётся в пузыре целиком: спрятать кусок реплики человека дороже, чем
-// показать служебное.
-func TestFeedSplitsOrderRules(t *testing.T) {
-	said := "Найди черновик или задачу суть которой в выдаче разрешений агенту."
-	full := said + " " + planRule + " " + rotateRule(500000) + " " + paceRule
-	line := func(text string) []byte {
-		rec := map[string]any{"type": "user",
-			"message":   map[string]any{"role": "user", "content": text},
-			"timestamp": "2026-08-22T10:00:00.000Z"}
-		data, err := json.Marshal(rec)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return append(data, '\n')
-	}
-	got := parseReplies(line(full), 0)
-	if len(got) != 2 {
-		t.Fatalf("реплик %d, ждал пузырь и приписки: %+v", len(got), got)
-	}
-	if got[0].Role != "user" || got[0].Text != said {
-		t.Fatalf("пузырь несёт не только слова человека: %+v", got[0])
-	}
-	if got[1].Role != roleNote || got[1].Note != orderRulesWord {
-		t.Fatalf("приписки не стали служебной строкой: %+v", got[1])
-	}
-	if want := planRule + " " + rotateRule(500000) + " " + paceRule; got[1].Text != want {
-		t.Errorf("в приписках не весь заказ: %q", got[1].Text)
-	}
-	// Резюм приклеивает к реплике человека одно правило отзывчивости: режется
-	// и такой хвост.
-	pace := parseReplies(line("Продолжай. "+paceRule), 0)
-	if len(pace) != 2 || pace[0].Text != "Продолжай." || pace[1].Note != orderRulesWord {
-		t.Errorf("хвост правила отзывчивости не отрезан: %+v", pace)
-	}
-	// Сменившаяся формулировка не режется молча: узнанное начало с незнакомым
-	// продолжением остаётся в пузыре целиком.
-	odd := said + " " + planRule + " и ещё незнакомый хвост"
-	kept := parseReplies(line(odd), 0)
-	if len(kept) != 1 || kept[0].Text != odd {
-		t.Errorf("неузнанный хвост спрятан: %+v", kept)
-	}
-	// Порог ротации в чужом заказе другой: правило узнаётся с любым числом.
-	other := parseReplies(line(said+" "+planRule+" "+rotateRule(120000)+" "+paceRule), 0)
-	if len(other) != 2 || other[0].Text != said {
-		t.Errorf("ротация с другим порогом сломала разрез: %+v", other)
-	}
-}
-
-// Служебный хвост заказа подписан в ленте словами, которые человеку что-то
-// говорят: «приписки заказа» не говорили ничего, а это именно инструкции,
-// которые дашборд даёт агенту поверх реплики (замечание пользователя).
-func TestOrderRulesNoteNamesAgentRules(t *testing.T) {
-	items := []reply{}
-	addUser(func(r reply) { items = append(items, r) }, "user", "2026-08-24T10:00:00Z",
-		"сделай хорошо "+planRule+" "+paceRule, false)
-	var note *reply
-	for i := range items {
-		if items[i].Role == roleNote {
-			note = &items[i]
-		}
-	}
-	if note == nil {
-		t.Fatalf("служебный хвост не отделился от слов человека: %+v", items)
-	}
-	if note.Note != "инструкции агента" {
-		t.Fatalf("хвост заказа подписан %q, человек читает это как загадку", note.Note)
-	}
-	if !strings.Contains(note.Text, paceRule) {
-		t.Fatalf("под подписью не сами инструкции: %q", note.Text)
-	}
-}
-
 // Работы сессии видны по машинному следу, а не по дисциплине агента. Кольцо
 // показывало план из файла, а файл пишет сам агент правилом заказа: раздал
 // работу и не переписал файл, значит кольцо врёт. Так было трижды. Боковые
@@ -2272,12 +2183,12 @@ func TestSubWorkLabelFromOrder(t *testing.T) {
 	at := now.Add(-time.Minute).Format(time.RFC3339)
 	path := writeSession(t, e.home, e.proj, "", "bbb-2", transcriptFixture, now)
 
-	// Заказ с приписками, которые дашборд клеит к тексту человека: в подпись
-	// им не место, режет их тот же разбор, что и в ленте.
+	// Заказ с длинной вводной за первой строкой: в подпись ей не место, подпись
+	// начинается с первой содержательной строки.
 	// Пустая строка и маркер списка это разметка, а не слова: подпись начинается
 	// с первой содержательной строки.
 	order := "\n- Ссылка на черновик и переход с телефона\n\nДальше подробности. " +
-		planRule + " " + paceRule
+		"План работ веди командой agentctl plan. Долгие дела отдавай субагенту."
 	plain := writeSubLog(t, path, "ord1", "", sideOrder(order, at)+sideLine("иду", at))
 	// Длинный заказ режется по ширине строки, а не уезжает в кольцо целиком.
 	long := strings.Repeat("очень длинная строка заказа ", 6)

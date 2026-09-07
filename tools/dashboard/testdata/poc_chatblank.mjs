@@ -145,9 +145,9 @@ if (!order || order.chat !== "blank-1") {
 chats.find((c) => c.id === "blank-1").tmux = "chat-1";
 // Персист реплики помнит то же имя: отправка кладёт его туда сразу с ответа
 // подъёма, и запасная дорога пришивания искала по нему тем же порядком.
+const SAID = "почему поезд слияния встал на второй задаче пачки";
 sandbox.localStorage.setItem("devkit.chat.pend.demo/blank-1",
-  JSON.stringify([{ text: "почему поезд встал", wire: "почему поезд встал", born: Date.now(),
-    state: "wait", tmux: "chat-1" }]));
+  JSON.stringify([{ text: SAID, wire: SAID, born: Date.now(), state: "wait", tmux: "chat-1" }]));
 chats.unshift({ id: "sess-old", project: "demo", title: "прошлый разговор chat-1", tmux: "chat-1",
   mtime: new Date().toISOString(), state: "live", idle: true, tasks: [], model: "opus",
   archived: true });
@@ -156,6 +156,20 @@ if (st.sid || st.addr !== "blank-1" || !st.fresh) {
   fail("панель уехала в прежний разговор того же имени tmux: " + JSON.stringify([st.addr, st.sid]));
 }
 if (st.lift !== "chat-1") fail("панель записи не ждёт подъёма: " + JSON.stringify(st.lift));
+
+// --- без grown запись пришивает совпавшая первая реплика ---
+// Клиент в реестре не назвался (имя разошлось), grown не придёт никогда, а
+// в списке стоит разговор с той же первой репликой: запасная дорога по тексту
+// у записи остаётся (раздел «Границы» постановки, замечание ревью). Прежний
+// жилец имени всё так же первый в списке и панель не берёт.
+chats.splice(1, 0, { id: "sess-said", project: "demo", title: SAID, first: SAID,
+  mtime: new Date().toISOString(), state: "live", idle: true, tasks: [], model: "opus" });
+st = await sandbox.chatState("demo", "blank-1", board);
+if (st.sid !== "sess-said" || st.addr !== "sess-said") {
+  fail("панель без grown не пришилась по первой реплике: " + JSON.stringify([st.addr, st.sid]));
+}
+chats.splice(chats.findIndex((c) => c.id === "sess-said"), 1);
+sandbox.location.hash = "#demo/chat/blank-1";
 
 // --- поднявшаяся сессия забирает разговор себе ---
 chats.find((c) => c.id === "blank-1").grown = "sess-777";

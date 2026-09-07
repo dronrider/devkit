@@ -178,7 +178,11 @@ const oldRow = { id: OLD, state: "idle", tmux: SESS, project: "demo", archived: 
 {
   // Прежний хозяин стоит в списке первым, и всё равно панель едет на
   // родившуюся: та свежее подъёма.
-  chats.list = [oldRow, { id: SID, state: "live", tmux: SESS, project: "demo",
+  // Рядом стоит и жилец, снятый секунды назад: он проходит минутный запас, и
+  // выбирается всё равно родившийся, как самый свежий по рождению.
+  const justGone = { id: "ju5tg0ne-0002", state: "idle", tmux: SESS, project: "demo",
+    tasks: ["XR-002"], title: "снятый секунды назад", born: new Date(Date.now() - 20000).toISOString() };
+  chats.list = [oldRow, justGone, { id: SID, state: "live", tmux: SESS, project: "demo",
     tasks: ["XR-002"], title: "конвейер XR-002", born: new Date().toISOString() }];
   const st = await sandbox.chatState("demo", "new:XR-002", board);
   if (st.sid !== SID || st.fresh) {

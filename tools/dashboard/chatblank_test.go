@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/sessions"
 )
 
 // Незачатый разговор (жалоба пользователя: «новый чат создаётся по сути после
@@ -428,5 +430,40 @@ func TestChatModelsNoteWhenLadderEmpty(t *testing.T) {
 	}
 	if got.Note != "" {
 		t.Fatalf("выбор есть, а причина его пустоты всё равно приехала: %q", got.Note)
+	}
+}
+
+// Запись, заведённая до выката порога, момента подъёма не носит. Порогом ей
+// служит момент заведения: он раньше подъёма, и записи прежнего жильца имени
+// старше него так же не считаются (замечание ревью DK-851).
+func TestChatBlankWithoutLiftedUsesBorn(t *testing.T) {
+	e, c := chatEnv(t)
+	writeScript(t, e.bin, "tmux", `case "$1" in ls) exit 1;; esac
+exit 0`)
+	id := "blank-old-deploy"
+	born := time.Now().Add(-10 * time.Second)
+	data, err := json.Marshal(chatStore{Blank: true, Born: born.Unix(), Project: "demo", Tmux: "chat-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(chatStoreDir(e.home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blankPath(e.home, id), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prior := "cccc5551-2222-4333-8444-555566667777"
+	writeBinds(t, e.home, born.Add(-time.Hour).Format(sessions.Stamp)+" сессия "+prior+" задача XR-4 проект demo "+
+		"дерево "+e.proj+" транскрипт /tmp/t0.jsonl источник заказ повод startup tmux chat-5\n")
+	if row := blankRow(blankList(t, e, c, "?all=1"), id); row == nil || row.Grown != "" {
+		t.Fatalf("запись без момента подъёма выросла в прежнего жильца имени: %+v", row)
+	}
+	fresh := "aaaa5552-2222-4333-8444-555566667777"
+	writeBinds(t, e.home, born.Add(-time.Hour).Format(sessions.Stamp)+" сессия "+prior+" задача XR-4 проект demo "+
+		"дерево "+e.proj+" транскрипт /tmp/t0.jsonl источник заказ повод startup tmux chat-5\n",
+		time.Now().Add(time.Second).Format(sessions.Stamp)+" сессия "+fresh+" задача XR-4 проект demo "+
+			"дерево "+e.proj+" транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-5\n")
+	if row := blankRow(blankList(t, e, c, "?all=1"), id); row == nil || row.Grown != fresh {
+		t.Fatalf("запись не выросла в сессию, названную после заведения: %+v", row)
 	}
 }

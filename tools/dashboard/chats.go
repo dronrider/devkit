@@ -803,7 +803,14 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 	// запись с ним принадлежит прежнему жильцу, и панель, ждущая родившийся
 	// разговор поиском по имени, уезжала в него (DK-851). Момент подъёма
 	// помнит память окна, и запись старше него хозяином не считается.
-	for name, when := range tmuxWhen {
+	// Память окна читается только у окон под присмотром: это окна, поднятые
+	// дашбордом и ещё живые, их горстка, а имён в реестре десятки, и читать
+	// файл на каждое при каждом заходе за списком дорого (замечание ревью).
+	for _, name := range s.chatWatchNames() {
+		when, ok := tmuxWhen[name]
+		if !ok {
+			continue
+		}
 		if raised := s.chatStoreRead("tmux-" + name).Raised; raised > 0 && when < bindTimeSince(raised) {
 			delete(tmuxClaim, name)
 		}
@@ -1262,7 +1269,14 @@ func (s *server) chatBlankList(proj string) []chatEntry {
 			if recs == nil {
 				recs = s.bindsAll()
 			}
-			owner := sessions.TmuxOwnerSince(recs, st.Tmux, bindTimeSince(st.Lifted))
+			// Записи, заведённые до выката, момента подъёма не носят: порогом
+			// им служит момент заведения, он раньше подъёма, и записи прежнего
+			// жильца старше него отсекаются так же.
+			lifted := st.Lifted
+			if lifted == 0 {
+				lifted = st.Born
+			}
+			owner := sessions.TmuxOwnerSince(recs, st.Tmux, bindTimeSince(lifted))
 			if owner != "" && owner != id {
 				st.Grown = owner
 				if err := s.chatStoreWrite(id, st); err != nil {

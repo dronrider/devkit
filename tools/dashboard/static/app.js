@@ -7626,8 +7626,18 @@ const BORN_SLACK = 60 * 1000;
 
 function chatBornOf(chats, tmux, lifted) {
   if (!tmux || !lifted) return null;
-  return (chats || []).find((c) => c.tmux === tmux && !c.archived && !c.blank &&
-    c.born && Date.parse(c.born) >= lifted - BORN_SLACK) || null;
+  // Из подходящих берётся самый свежий по рождению, а не первый в списке:
+  // имя достаётся следующему разговору сразу за снятым, и прежний жилец,
+  // заведённый меньше минуты назад, проходит запас. Порядок списка тут не
+  // порука (замечание ревью).
+  let best = null;
+  for (const c of chats || []) {
+    if (c.tmux !== tmux || c.archived || c.blank || !c.born) continue;
+    const at = Date.parse(c.born);
+    if (!(at >= lifted - BORN_SLACK)) continue;
+    if (!best || at > Date.parse(best.born)) best = c;
+  }
+  return best;
 }
 
 // chatSewn ищет диалог, который родила застрявшая на адресе new реплика.
@@ -7637,10 +7647,13 @@ function chatBornOf(chats, tmux, lifted) {
 // есть стала заголовком диалога в списке. Пустой ответ значит, что сессия ещё
 // не родилась либо реплика пропала вместе с tmux, и тогда пузырь честно
 // остаётся held.
-function chatSewn(project, addr, chats) {
+// Ключ byName отключает первую дорогу: у незачатой записи имя tmux носит она
+// сама, и по имени пришивает только сервер (grown), а сверка по тексту у неё
+// остаётся (раздел «Границы» постановки DK-851).
+function chatSewn(project, addr, chats, byName = true) {
   for (const rec of echoRead(project, addr)) {
     if (rec.state !== "held" && rec.state !== "wait") continue;
-    const born = chatBornOf(chats, rec.tmux, rec.born);
+    const born = byName ? chatBornOf(chats, rec.tmux, rec.born) : null;
     if (born) return born.id;
     // Первая реплика сверяется со своим полем, а не с заголовком: заголовок
     // у диалога бывает от харнеса и с первой репликой не совпадает.
@@ -7842,14 +7855,16 @@ async function chatState(project, addr, board, works) {
     // Пришивание сервер знает твёрже вкладки: он сам сверяет имя поднятой
     // tmux-сессии с реестром и помнит ID выросшей сессии. Дорога эта работает и
     // после перезагрузки, и в соседней вкладке, где памяти подъёма нет вовсе.
-    // У записи слово сервера единственное: имя tmux она носит сама, и первый
-    // разговор списка с тем же именем это прежний его жилец, а не она (DK-851,
-    // решение пользователя: панель переезжает кругом опроса позже, зато в
-    // свой разговор). Догадка по имени остаётся подъёму без записи (адрес
-    // new конвейера и чата задачи), и там она сверяет рождение разговора с
-    // моментом подъёма.
+    // У записи по имени пришивает один сервер: имя tmux она носит сама, и
+    // первый разговор списка с тем же именем это прежний его жилец, а не она
+    // (DK-851, решение пользователя: панель переезжает кругом опроса позже,
+    // зато в свой разговор). Сверка первой реплики по тексту у записи
+    // остаётся запасной дорогой: не назвался клиент в реестре, и grown не
+    // придёт никогда, а панель без неё стояла бы на записи вечно. Догадка по
+    // имени остаётся подъёму без записи (адрес new конвейера и чата задачи),
+    // и там она сверяет рождение разговора с моментом подъёма.
     let sewn = "";
-    if (rec) sewn = rec.grown || "";
+    if (rec) sewn = rec.grown || chatSewn(project, addr, st.chats, false);
     else {
       const born = chatBornOf(st.chats, lift, liftRec && liftRec.born);
       sewn = born ? born.id : chatSewn(project, addr, st.chats);

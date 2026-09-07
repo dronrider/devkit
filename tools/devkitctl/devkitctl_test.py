@@ -2643,6 +2643,34 @@ class SecondSubscriptionLayoutTest(SandboxCase):
         for f in files:
             self.assertNotIn(stray, read(f), "путь чужого дерева остался в %s" % f)
 
+    def test_07_second_home_behind_the_first_is_a_finding(self):
+        # Набор хуков сверяется у каждого включённого харнеса по его дому.
+        # Второй дом (~/.devkit/claude-glm) отстал от первого на один
+        # SessionStart-хук: у первого хук стоит, у второго строку убрали, как
+        # бывает после раскладки нового хука одним домом. Находка называет
+        # хук и файл второго дома, а --fix возвращает строку (DK-614).
+        conf = self.alt / "settings.json"
+        data = json.loads(read(conf))
+        hook = "session-task.py --hook"
+        for group in data["hooks"]["SessionStart"]:
+            group["hooks"] = [h for h in group["hooks"] if hook not in h["command"]]
+        write(conf, json.dumps(data, ensure_ascii=False, indent=2))
+        self.assertNotIn(hook, read(conf), "стенд не снял хук со второго дома")
+        first = self.home / ".claude" / "settings.json"
+        self.assertIn(hook, read(first), "у первого дома хук пропал вместе со вторым")
+        _, out = self.doc()
+        self.assertRegex(out, r"session-task\.py[^\n]*%s" % re.escape(str(conf)),
+                         "доктор не заметил, что второй дом отстал на хук session-task.py")
+        self.assertNotRegex(out, r"session-task\.py[^\n]*%s" % re.escape(str(first)),
+                            "находка про второй дом пришла с именем первого")
+        self.doc("--fix")
+        self.assertIn(hook, read(conf), "--fix не вернул хук второму дому")
+        self.assertEqual(sorted(h["command"] for g in json.loads(read(conf))["hooks"]["SessionStart"]
+                                for h in g["hooks"]),
+                         sorted(h["command"] for g in json.loads(read(first))["hooks"]["SessionStart"]
+                                for h in g["hooks"]),
+                         "после --fix наборы SessionStart двух домов разошлись")
+
     @classmethod
     def tearDownClass(cls):
         (cls.box.dk / "kit" / "harness" / "glm-code.toml").unlink(missing_ok=True)

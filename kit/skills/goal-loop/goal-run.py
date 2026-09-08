@@ -652,7 +652,13 @@ class Loop:
         if self.tier:
             args += ["--tier", self.tier]
         args.append("--foreground")
-        cmd = " ".join(shlex.quote(a) for a in args)
+        # DEVKIT_HIDDEN метит весь цикл сразу в шапке команды, а не отдельным
+        # витком (DK-847): цикл живёт своей строкой на доске, и захламлять
+        # список панели каждым витком незачем, а первый ли это подъём кнопкой
+        # или подхват после стопа, разницы для списка нет. Виток наследует
+        # признак обычным путём процесса, тем же, каким наследует его и claude
+        # -p внутри самого цикла: хук старта сессии читает его из окружения.
+        cmd = "DEVKIT_HIDDEN=1 " + " ".join(shlex.quote(a) for a in args)
         new = subprocess.run(["tmux", "new-session", "-d", "-s", self.sess, cmd])
         if new.returncode != 0:
             die("tmux не поднял сессию %s" % self.sess)

@@ -776,6 +776,24 @@ class GoalRunTests(Stand, unittest.TestCase):
         p = self.goal_run(root, "DK-100")
         self.assertEqual(p.returncode, 3, "оболочка полезла в цель с уже поднятой tmux-сессией")
 
+    def test_tmux_launch_carries_hidden_mark(self):
+        # DK-847: список чатов панели не показывает витки цикла цели вовсе,
+        # они видны строкой задачи и полкой ждущих. Признак ставит сама
+        # оболочка, шапкой команды, и виток наследует его обычным путём
+        # процесса, тем же, каким наследует его сам claude -p.
+        root = self.stand("done запись")
+        write_exec(os.path.join(root, "bin", "tmux"), TMUX_STUB)
+        p = self.goal_run(root, "DK-100")
+        self.assertEqual(p.returncode, 0, "запуск в tmux вернул не 0")
+        with open(os.path.join(root, "tmux-calls"), encoding="utf-8") as f:
+            calls = f.read()
+        self.assertIn("DEVKIT_HIDDEN=1", calls)
+        # Признак стоит перед самой командой, а не как аргумент программе:
+        # он часть строки, которую пришлёт tmux пане своему шеллу.
+        mark_at = calls.index("DEVKIT_HIDDEN=1")
+        py_at = calls.index("goal-run.py")
+        self.assertLess(mark_at, py_at)
+
 
 class GoalAskTests(Stand, unittest.TestCase):
     """Ключ --ask: вопрос человеку с ожиданием ответа. Стенд тот же, что у

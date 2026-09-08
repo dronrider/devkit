@@ -2760,11 +2760,42 @@ func subPlanMark(file, sid string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(name, sid+"-sub"), "-")
 }
 
+// subPlanOwner ищет работу, которой принадлежит план субагента. Своего
+// признака у файла плана нет: метку в имени субагент выбирает сам, и с заказом
+// она не сходится. Зато план пишется по ходу работы, то есть между первой и
+// последней записью её журнала, и по этому окну хозяин и находится. Работ в
+// окне бывает несколько (пачка), и тогда берётся начатая последней.
+func subPlanOwner(subs []subWork, at time.Time) (subWork, bool) {
+	var best subWork
+	found := false
+	for _, w := range subs {
+		if w.start.IsZero() || at.Before(w.start) {
+			continue
+		}
+		if !w.last.IsZero() && at.After(w.last.Add(subFresh)) {
+			continue
+		}
+		if !found || w.start.After(best.start) {
+			best, found = w, true
+		}
+	}
+	return best, found
+}
+
 // subPlans собирает пункты планов субагентов сессии. Пункт помечен источником
 // sub наравне с работами из журналов: своими словами плана сессии он не
 // является. Метка встаёт перед текстом, иначе шаги двух исполнителей пачки
 // сливаются в один список, где не видно, кто чем занят.
-func subPlans(home, sid string) []planItem {
+//
+// Развёрнут план ровно пока работа идёт: тогда по нему и видно, на каком
+// субагент шаге. Работа вернулась, и её план сворачивается, потому что закрыть
+// свои пункты перед отчётом субагент забывает, а чужой список кольцу закрывать
+// нечем: брошенный пункт висел бы в нём вечно, и кольцо законченной задачи
+// никогда не доходило до полного круга (DK-861). Свёрнутый план это один
+// закрытый пункт, и обычно им работает сама работа: она уже стоит в кольце
+// заказом субагента. Отдельный пункт заводится только плану, чьей работы в
+// кольце нет вовсе (журнала не осталось либо старое срезано потолком).
+func subPlans(home, sid string, subs []subWork, now time.Time) []planItem {
 	var out []planItem
 	seen := map[string]bool{}
 	for _, dir := range []string{realHome(), home} {
@@ -2776,12 +2807,31 @@ func subPlans(home, sid string) []planItem {
 			if seen[base] {
 				continue
 			}
-			plan, _, _ := readPlanFile(file)
+			plan, at, _ := readPlanFile(file)
 			if plan == nil {
 				continue
 			}
 			seen[base] = true
 			mark := subPlanMark(file, sid)
+			owner, known := subPlanOwner(subs, at)
+			// План, который правили только что, принадлежит живой работе, даже
+			// когда журнала под него не нашлось: писать его больше некому.
+			live := at.After(now.Add(-subFresh))
+			if known {
+				live = owner.item.State == "in_progress"
+			}
+			if !live {
+				if known {
+					continue
+				}
+				name := "работа субагента"
+				if mark != "" {
+					name += " " + mark
+				}
+				out = append(out, planItem{Text: truncate(name, 200),
+					State: "completed", Src: planSrcSub})
+				continue
+			}
 			for _, it := range plan {
 				if mark != "" {
 					it.Text = truncate(mark+": "+it.Text, 200)
@@ -3051,8 +3101,10 @@ func subWorks(path string, closed map[string]bool, now time.Time) []subWork {
 	list := make([]work, 0, len(logs))
 	for id, log := range logs {
 		quiet := subStale + time.Hour
+		var last time.Time
 		if fi, err := os.Stat(log.File); err == nil {
-			quiet = now.Sub(fi.ModTime())
+			last = fi.ModTime()
+			quiet = now.Sub(last)
 		}
 		// Работа идёт, пока её журнал пишется; ответа на вызов при этом может и
 		// не быть (работа ещё не вернулась) и может быть (её продолжают
@@ -3081,9 +3133,11 @@ func subWorks(path string, closed map[string]bool, now time.Time) []subWork {
 			label = log.Label
 		}
 		label = truncate(label, subOrderLimit)
+		began := subStart(log.File)
 		list = append(list, work{
-			item: subWork{item: planItem{Text: label, State: state}, alias: log.Label},
-			at:   subStart(log.File)})
+			item: subWork{item: planItem{Text: label, State: state}, alias: log.Label,
+				start: began, last: last},
+			at: began})
 	}
 	sort.SliceStable(list, func(i, j int) bool { return list[i].at.Before(list[j].at) })
 	// Закрытое режется, живое остаётся целиком: старая работа это история, а
@@ -3113,6 +3167,11 @@ func subWorks(path string, closed map[string]bool, now time.Time) []subWork {
 type subWork struct {
 	item  planItem
 	alias string
+	// start и last это края работы: время первой записи журнала и время
+	// последней. По ним план субагента находит свою работу, своего признака у
+	// файла плана для этого нет.
+	start time.Time
+	last  time.Time
 }
 
 // planKey сводит текст пункта к сравнимому виду: пункт плана и заказ субагента
@@ -3238,10 +3297,10 @@ func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 		}}
 	}
 	out := withSubWorks(said, subs)
-	// Планы субагентов встают в кольцо своими пунктами. Журнал знает, что
-	// работа роздана, а чем она занята прямо сейчас, знает только план того,
-	// кто её делает.
-	if own := subPlans(home, sid); len(own) > 0 {
+	// Планы субагентов встают в кольцо своими пунктами, пока их работы идут:
+	// журнал знает, что работа роздана, а чем она занята прямо сейчас, знает
+	// только план того, кто её делает. Вернувшаяся работа свой план сворачивает.
+	if own := subPlans(home, sid, subs, now); len(own) > 0 {
 		out = append(append([]planItem{}, out...), own...)
 	}
 	return planOrdered(out)

@@ -2819,3 +2819,105 @@ func TestPlanStampWatchesSubagentPlans(t *testing.T) {
 		t.Errorf("правка плана субагента метку не двинула: %q", now)
 	}
 }
+
+// Кольцо закрытой задачи сходится: план субагента, чья работа вернулась,
+// сворачивается в один закрытый пункт. Закрывать свои пункты перед отчётом
+// субагент забывает, а кольцу закрывать чужой список нечем, и брошенный пункт
+// висел в нём вечно: у чата «План работ DK-851» кольцо стояло на 26 из 32 при
+// закрытой задаче и плане диспетчера, закрытом целиком (DK-861). Пока работа
+// идёт, план стоит своими пунктами: по ним и видно, на каком субагент шаге.
+func TestPlanFoldsClosedSubagentPlan(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	sid := "aaa-кольцо"
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	path := writeSession(t, home, proj, "", sid, transcriptFixture, now)
+	at := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339) }
+
+	// Работа идёт: её журнал пишется прямо сейчас.
+	live := writeSubLog(t, path, "live1", "Правка кольца", sideLine("иду", at(-10*time.Minute)))
+	// Работа вернулась: журнал молчит дольше срока.
+	gone := writeSubLog(t, path, "gone1", "Ревью правки", sideLine("отчитался", at(-2*time.Hour)))
+	for file, mtime := range map[string]time.Time{
+		live: now.Add(-30 * time.Second),
+		gone: now.Add(-90 * time.Minute),
+	} {
+		if err := os.Chtimes(file, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := os.MkdirAll(planDir(home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string, mtime time.Time) {
+		file := filepath.Join(planDir(home), name)
+		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(file, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(sid+".json", `[{"text":"Своя работа","state":"completed"}]`, now.Add(-time.Minute))
+	write(sid+"-sub-жив.json",
+		`[{"text":"Шаг","state":"in_progress"},{"text":"Второй","state":"pending"}]`,
+		now.Add(-time.Minute))
+	write(sid+"-sub-ушёл.json",
+		`[{"text":"Правка","state":"completed"},{"text":"Тест","state":"in_progress"}]`,
+		now.Add(-100*time.Minute))
+	// План, чьей работы в кольце нет вовсе: журнала под него не осталось.
+	write(sid+"-sub-забытый.json", `[{"text":"Разбор","state":"pending"}]`, now.Add(-5*time.Hour))
+
+	plan := planOf(home, sid, "", path, now)
+	seen := map[string]planItem{}
+	for _, it := range plan {
+		seen[it.Text] = it
+	}
+	if it, ok := seen["жив: Шаг"]; !ok || it.State != "in_progress" {
+		t.Errorf("план идущей работы не развёрнут пунктами: %+v", plan)
+	}
+	if _, ok := seen["жив: Второй"]; !ok {
+		t.Errorf("ждущий пункт идущей работы потерян: %+v", plan)
+	}
+	for text := range seen {
+		if strings.HasPrefix(text, "ушёл:") {
+			t.Errorf("план вернувшейся работы остался в кольце пунктами: %+v", plan)
+		}
+	}
+	if it, ok := seen["Ревью правки"]; !ok || it.State != "completed" {
+		t.Errorf("вернувшаяся работа не стоит в кольце закрытым пунктом: %+v", plan)
+	}
+	folded := 0
+	for _, it := range plan {
+		if strings.Contains(it.Text, "забытый") {
+			folded++
+			if it.State != "completed" || it.Src != planSrcSub {
+				t.Errorf("свёрнутый план не закрыт или не помечен источником: %+v", it)
+			}
+		}
+	}
+	if folded != 1 {
+		t.Errorf("план без своей работы свернулся в %d пунктов, ждал один: %+v", folded, plan)
+	}
+	for _, it := range plan {
+		if it.State == "completed" || strings.HasPrefix(it.Text, "жив:") || it.Text == "Правка кольца" {
+			continue
+		}
+		t.Errorf("открытый пункт мимо идущей работы: %+v", it)
+	}
+
+	// Работа кончилась, и её план сворачивается тем же счётом: у задачи с
+	// закрытым планом диспетчера и вернувшимися работами кольцо доходит до
+	// полного круга.
+	later := now.Add(time.Hour)
+	done := planOf(home, sid, "", path, later)
+	if len(done) == 0 {
+		t.Fatal("кольцо опустело")
+	}
+	for _, it := range done {
+		if it.State != "completed" {
+			t.Errorf("у закрытой задачи в кольце висит открытый пункт: %+v (кольцо %+v)", it, done)
+		}
+	}
+}

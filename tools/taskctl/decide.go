@@ -19,14 +19,17 @@ import (
 // DecideParams это разобранные аргументы команды.
 type DecideParams struct {
 	ID     string
-	Name   string // имя развилки, «ёлочки» вокруг него необязательны
-	Ask    string // вопрос заведения
-	Who    string // значение поля «решает» при заведении
-	Hint   string // рекомендация
-	By     string // автор решения или передачи
-	Text   string // ответ с доводом либо причина передачи
-	Leave  bool   // передать развилку исполнителю
-	Open   bool   // печатать только открытые
+	Name   string   // имя развилки, «ёлочки» вокруг него необязательны
+	Ask    string   // вопрос заведения
+	Who    string   // значение поля «решает» при заведении
+	Hint   string   // рекомендация
+	Opts   []string // варианты ответа, кроме рекомендованного
+	By     string   // автор решения или передачи
+	Text   string   // ответ с доводом либо причина передачи
+	Leave  bool     // передать развилку исполнителю
+	Open   bool     // печатать только открытые
+	Chat   bool     // напечатать блок вопроса для реплики в чат
+	Answer string   // ответ человека на блок вопроса
 	Now    time.Time
 	Commit CommitOpts
 }
@@ -72,7 +75,14 @@ func decideName(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// cmdDecide это боевой вход команды. Внешний мир писателя признака собирается
+// лениво: заводить его на каждую печать перечня значило бы звать git ради
+// команды, которая только читает файл.
 func cmdDecide(root string, p DecideParams) (string, error) {
+	return runDecide(root, p, nil, os.Getenv)
+}
+
+func runDecide(root string, p DecideParams, d *askDeps, env func(string) string) (string, error) {
 	if err := p.Commit.validate(); err != nil {
 		return "", err
 	}
@@ -89,7 +99,16 @@ func cmdDecide(root string, p DecideParams) (string, error) {
 	}
 	doc := string(data)
 	name := decideName(p.Name)
+	note := ""
 	switch {
+	case p.Chat:
+		if d == nil {
+			live := liveDeps(root)
+			d = &live
+		}
+		return decideChat(root, doc, p, *d, env)
+	case p.Answer != "":
+		doc, note, err = decideAnswer(doc, p)
 	case p.Ask != "":
 		doc, err = decideAsk(doc, p)
 	case p.Leave:
@@ -115,6 +134,9 @@ func cmdDecide(root string, p DecideParams) (string, error) {
 	}
 	head := fmt.Sprintf("%s (%s): ", p.ID, kind)
 	switch {
+	case p.Answer != "":
+		head = note + "\n"
+		return head + decideShow(doc, DecideParams{ID: p.ID}) + tail, nil
 	case p.Ask != "":
 		head += fmt.Sprintf("развилка «%s» заведена, %s", decideName(p.Ask), decideWho(p.Who))
 	case p.Leave:
@@ -142,7 +164,7 @@ func decideAsk(doc string, p DecideParams) (string, error) {
 	if strings.TrimSpace(p.Text) == "" {
 		return "", fmt.Errorf("у развилки нет вопроса: taskctl decide %s --ask «имя» \"вопрос\"", p.ID)
 	}
-	return taskform.AddFork(doc, decideName(p.Ask), p.Text, who, p.Hint)
+	return taskform.AddFork(doc, decideName(p.Ask), p.Text, who, p.Hint, p.Opts...)
 }
 
 func decideClose(doc, name string, p DecideParams) (string, error) {
@@ -217,6 +239,9 @@ func decideShow(doc string, p DecideParams) string {
 		line := fmt.Sprintf("- «%s» (%s): %s", f.Name, decideState(f), f.Question)
 		if f.Hint != "" {
 			line += "\n  рекомендация: " + f.Hint
+		}
+		for _, o := range f.Options {
+			line += "\n  вариант: " + o
 		}
 		if f.Decided() {
 			line += fmt.Sprintf("\n  решено %s %s: %s", f.By, f.Date, f.Answer)

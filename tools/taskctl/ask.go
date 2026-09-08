@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,11 +15,11 @@ import (
 	"github.com/dronrider/devkit/internal/stage"
 )
 
-// Внутренний писатель признака ожидания: `taskctl ask` больше не команда
-// агента, агент спрашивает штатным AskUserQuestion. В сессии, поднятой
-// панелью, вызов перехватывает хук PreToolUse (hooks/ask-panel.py) и зовёт эту
-// команду, чтобы положить вопрос файлом признака, припарковать строку и
-// уведомить человека. Ждать ответа тут больше нечему: до DK-724 сессии
+// Внутренний писатель признака ожидания: `taskctl ask` это не команда агента,
+// а общий хвост тех, кто спрашивает человека. Зовёт его печать блока вопроса
+// `decide --chat`, когда сессию подняла панель дашборда, и пока ещё зовёт хук
+// PreToolUse на AskUserQuestion (hooks/ask-panel.py). Дело писателя одно:
+// положить вопрос файлом признака, припарковать строку и уведомить человека. Ждать ответа тут больше нечему: до DK-724 сессии
 // умирали с концом хода, и headless-проходу приходилось сидеть в Bash и
 // опрашивать вход сам, а живая сессия оставляет признак лежать без срока до
 // самого ответа. Решение целиком в docs/lld/DK-430-task-chat.md, решение 3, и
@@ -33,6 +34,20 @@ const reasonAsk = "task_ask"
 // ID нет, и адрес у него общий с сессией, которая его подняла.
 const askSessionEnv = "CLAUDE_CODE_SESSION_ID"
 
+// askTmuxEnv это имя tmux-сессии от подъёмщика панели (tools/dashboard/chats.go,
+// launchEnv). Обычный терминал переменную не ставит, и признак ожидания там не
+// нужен: человек читает вопрос прямо в ленте.
+const askTmuxEnv = "DEVKIT_TMUX"
+
+// askPanelRe узнаёт сессию, поднятую панелью: chat-*, goal-* и task-*. Та же
+// форма, по которой признак ставил хук ask-panel.py.
+var askPanelRe = regexp.MustCompile(`^(chat|goal|task)-`)
+
+// AskPanel отвечает, поднята ли сессия панелью дашборда.
+func AskPanel(env func(string) string) bool {
+	return askPanelRe.MatchString(strings.TrimSpace(env(askTmuxEnv)))
+}
+
 // AskParams это разобранные аргументы команды.
 type AskParams struct {
 	ID       string
@@ -40,6 +55,12 @@ type AskParams struct {
 	Session  string
 	Draft    bool
 	Stdin    io.Reader
+	// Pack это пачка, собранная самим звателем: так признак кладёт печать
+	// блока вопроса (`decide --chat`), которой перечень развилок уже разобран.
+	Pack []chat.Question
+	// Quiet гасит эхо вопросов в выводе: блок уже напечатан ниже, и второй
+	// его копией агент завалил бы реплику.
+	Quiet bool
 }
 
 // askDeps это внешний мир писателя: уведомитель, отметка этапа и парковка.
@@ -102,6 +123,9 @@ func liveDeps(root string) askDeps {
 // stdin. Ключ и пачка это два входа одной команды, и вместе они не едут: в
 // признаке лежала бы половина вопроса.
 func askQuestions(p AskParams) ([]chat.Question, error) {
+	if len(p.Pack) > 0 {
+		return p.Pack, nil
+	}
 	if strings.TrimSpace(p.Question) != "" {
 		return []chat.Question{{Text: strings.TrimSpace(p.Question)}}, nil
 	}
@@ -187,14 +211,16 @@ func runAsk(root string, p AskParams, d askDeps, env func(string) string) (strin
 		out = append(out, fmt.Sprintf(
 			"%s это запись накопителя, а не строка доски: вопрос лежит в разговоре, парковки не будет", p.ID))
 	}
-	for _, q := range qs {
-		out = append(out, "  ? "+q.Text)
-		for _, o := range q.Options {
-			mark := "  "
-			if o.Recommended {
-				mark = "* "
+	if !p.Quiet {
+		for _, q := range qs {
+			out = append(out, "  ? "+q.Text)
+			for _, o := range q.Options {
+				mark := "  "
+				if o.Recommended {
+					mark = "* "
+				}
+				out = append(out, "    "+mark+strings.TrimSpace(o.Label+" "+o.Note))
 			}
-			out = append(out, "    "+mark+strings.TrimSpace(o.Label+" "+o.Note))
 		}
 	}
 	// Признак без срока: DK-715 меняет саму жизнь ожидания, оно живёт до

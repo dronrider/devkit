@@ -39,15 +39,16 @@ const (
 
 // Fork это разобранная развилка перечня.
 type Fork struct {
-	Name     string // имя между «ёлочками», уникальное в файле
-	Question string // вопрос после двоеточия в голове
-	Who      string // значение поля «решает»
-	Hint     string // рекомендация, она же ответ по умолчанию у оставленной
-	Answer   string // текст последней строки «решено»
-	By       string // автор последнего решения
-	Date     string // дата последнего решения
-	Left     string // причина последней строки «оставлена»
-	Line     int    // номер строки головы в файле, с единицы
+	Name     string   // имя между «ёлочками», уникальное в файле
+	Question string   // вопрос после двоеточия в голове
+	Who      string   // значение поля «решает»
+	Hint     string   // рекомендация, она же ответ по умолчанию у оставленной
+	Options  []string // варианты ответа, кроме рекомендованного, в порядке записи
+	Answer   string   // текст последней строки «решено»
+	By       string   // автор последнего решения
+	Date     string   // дата последнего решения
+	Left     string   // причина последней строки «оставлена»
+	Line     int      // номер строки головы в файле, с единицы
 }
 
 // Decided говорит, что под головой стоит хотя бы одна строка «решено».
@@ -78,6 +79,7 @@ var (
 	forkSubRe   = regexp.MustCompile(`^\s+-\s+(.*)$`)
 	forkWhoRe   = regexp.MustCompile(`^решает:\s*(человек|исполнитель)$`)
 	forkHintRe  = regexp.MustCompile(`^рекомендация:\s*(\S.*)$`)
+	forkOptRe   = regexp.MustCompile(`^вариант:\s*(\S.*)$`)
 	forkDoneRe  = regexp.MustCompile(`^решено (человеком|агентом|исполнителем) (\d{4}-\d{2}-\d{2}):\s*(\S.*)$`)
 	forkLeaveRe = regexp.MustCompile(`^оставлена (человеком|агентом) (\d{4}-\d{2}-\d{2})(?::\s*(.*))?$`)
 )
@@ -86,7 +88,7 @@ var (
 // начатая таким словом и не подошедшая под форму, это опечатка формы, и её
 // называет lint. Подстрока без этих слов это проза при развилке (довод,
 // ссылка на документ): разбор её пропускает, а писатель сохраняет.
-var forkWords = []string{"решает", "рекомендация", "решено", "оставлена"}
+var forkWords = []string{"решает", "рекомендация", "решено", "оставлена", "вариант"}
 
 // ParseForks читает перечень развилок файла. Читается только тело раздела
 // «## Развилки» и только вне ограждённых блоков: голова вида «- «имя»:» в
@@ -129,6 +131,8 @@ func applyForkSub(f *Fork, text string) {
 		f.Who = forkWhoRe.FindStringSubmatch(text)[1]
 	case forkHintRe.MatchString(text):
 		f.Hint = forkHintRe.FindStringSubmatch(text)[1]
+	case forkOptRe.MatchString(text):
+		f.Options = append(f.Options, strings.TrimSpace(forkOptRe.FindStringSubmatch(text)[1]))
 	case forkDoneRe.MatchString(text):
 		m := forkDoneRe.FindStringSubmatch(text)
 		f.By, f.Date, f.Answer = m[1], m[2], m[3]
@@ -224,7 +228,8 @@ func forkOffForm(text string) (string, bool) {
 		}
 		switch {
 		case forkWhoRe.MatchString(text), forkHintRe.MatchString(text),
-			forkDoneRe.MatchString(text), forkLeaveRe.MatchString(text):
+			forkOptRe.MatchString(text), forkDoneRe.MatchString(text),
+			forkLeaveRe.MatchString(text):
 			return w, false
 		}
 		return w, true
@@ -239,6 +244,8 @@ func ForkFormHint(word string) string {
 		return "«решает: человек» либо «решает: исполнитель»"
 	case "рекомендация":
 		return "«рекомендация: <ответ>, <довод>»"
+	case "вариант":
+		return "«вариант: <ответ>», по строке на вариант"
 	case "решено":
 		return "«решено человеком ГГГГ-ММ-ДД: <ответ и довод>»"
 	default:
@@ -260,6 +267,11 @@ func ForkWhoLine(who string) string { return forkIndent + "решает: " + who
 // ForkHintLine собирает подстроку рекомендации.
 func ForkHintLine(hint string) string {
 	return forkIndent + "рекомендация: " + strings.TrimSpace(hint)
+}
+
+// ForkOptionLine собирает подстроку варианта.
+func ForkOptionLine(text string) string {
+	return forkIndent + "вариант: " + strings.TrimSpace(text)
 }
 
 // ForkDecisionLine собирает подстроку решения.
@@ -286,11 +298,11 @@ func FindFork(doc, name string) (Fork, bool) {
 	return Fork{}, false
 }
 
-// AddFork заводит развилку в перечне: голова, поле «решает» и рекомендация,
-// если она есть. Раздела нет, значит он встаёт на своё место по форме.
-// Занятое имя отказывает: перечень адресуется именем, и второй элемент с тем
+// AddFork заводит развилку в перечне: голова, поле «решает», рекомендация и
+// варианты ответа, если они есть. Раздела нет, значит он встаёт на своё место
+// по форме. Занятое имя отказывает: перечень адресуется именем, и второй элемент с тем
 // же именем сделал бы отказ ворот неразрешимым.
-func AddFork(doc, name, question, who, hint string) (string, error) {
+func AddFork(doc, name, question, who, hint string, opts ...string) (string, error) {
 	if strings.TrimSpace(name) == "" {
 		return "", fmt.Errorf("у развилки нет имени: имя от одного до трёх слов, по нему её называют ворота и человек")
 	}
@@ -306,6 +318,11 @@ func AddFork(doc, name, question, who, hint string) (string, error) {
 	lines := []string{ForkHead(name, question), ForkWhoLine(who)}
 	if strings.TrimSpace(hint) != "" {
 		lines = append(lines, ForkHintLine(hint))
+	}
+	for _, o := range opts {
+		if strings.TrimSpace(o) != "" {
+			lines = append(lines, ForkOptionLine(o))
+		}
 	}
 	return InsertIntoSection(doc, Forks, strings.Join(lines, "\n")), nil
 }
@@ -376,4 +393,28 @@ func ForkGateNote(id, what string, forks []Fork) string {
 	fmt.Fprintf(&b, "\nответ снимает развилку: taskctl decide %s «%s» --by человек \"ответ и довод\"", id, forks[0].Name)
 	fmt.Fprintf(&b, "\nвопрос, на который отвечает исполнитель, передаётся ему: taskctl decide %s «%s» --leave", id, forks[0].Name)
 	return b.String()
+}
+
+// ForkChoice это вариант ответа развилки, каким его получает нумерованный
+// список в чате.
+type ForkChoice struct {
+	Text        string
+	Recommended bool
+}
+
+// Choices собирает варианты по порядку номеров. Первой идёт рекомендация: она
+// уже лежит своей подстрокой, и заводить под тем же текстом второй «вариант»
+// значило бы держать одно решение в двух строках. Развилка без рекомендации
+// нумеруется с первого «варианта», и рекомендованного среди них нет.
+func (f Fork) Choices() []ForkChoice {
+	var out []ForkChoice
+	if hint := strings.TrimSpace(f.Hint); hint != "" {
+		out = append(out, ForkChoice{Text: hint, Recommended: true})
+	}
+	for _, o := range f.Options {
+		if o = strings.TrimSpace(o); o != "" {
+			out = append(out, ForkChoice{Text: o})
+		}
+	}
+	return out
 }

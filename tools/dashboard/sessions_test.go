@@ -2921,3 +2921,109 @@ func TestPlanFoldsClosedSubagentPlan(t *testing.T) {
 		}
 	}
 }
+
+// Работы пачки пересекаются во времени, и хозяин плана ищется не по тому, кто
+// начал позже: ранняя работа уже вернулась, поздняя ещё идёт, и по прежнему
+// правилу план вернувшейся доставался живой. Живой хозяин разворачивал чужой
+// список пунктами, и брошенный пункт снова висел в кольце вечно, то есть
+// симптом DK-861 воспроизводился другим путём.
+func TestPlanOwnerSplitsOverlappingSubWorks(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	sid := "ccc-пересечение"
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339) }
+	// Ответ на вызов ранней работы: она вернулась, хотя её журнал молчит
+	// меньше срока, за который работу закрывают молчанием.
+	answer := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-ранняя","content":"отчёт"}]},"timestamp":"2026-09-06T11:55:00.000Z"}` + "\n"
+	path := writeSession(t, home, proj, "", sid, transcriptFixture+answer, now)
+
+	early := writeSubLog(t, path, "ранняя", "Ранняя правка", sideLine("иду", at(-20*time.Minute)))
+	late := writeSubLog(t, path, "поздняя", "Поздняя правка", sideLine("иду", at(-15*time.Minute)))
+	for file, mtime := range map[string]time.Time{
+		early: now.Add(-5 * time.Minute),
+		late:  now.Add(-20 * time.Second),
+	} {
+		if err := os.Chtimes(file, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := os.MkdirAll(planDir(home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string, mtime time.Time) {
+		file := filepath.Join(planDir(home), name)
+		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(file, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Обе правки плана попадают в окно поздней работы: её журнал пишется до
+	// сих пор. Разводит их близость к краю ранней работы.
+	write(sid+"-sub-ранняя.json",
+		`[{"text":"Правка","state":"completed"},{"text":"Хвост","state":"in_progress"}]`,
+		now.Add(-6*time.Minute))
+	write(sid+"-sub-поздняя.json",
+		`[{"text":"Шаг","state":"in_progress"}]`, now.Add(-time.Minute))
+
+	plan := planOf(home, sid, "", path, now)
+	seen := map[string]planItem{}
+	for _, it := range plan {
+		seen[it.Text] = it
+	}
+	for text := range seen {
+		if strings.HasPrefix(text, "ранняя:") {
+			t.Errorf("план вернувшейся работы отдан живой соседке: %+v", plan)
+		}
+	}
+	if it, ok := seen["поздняя: Шаг"]; !ok || it.State != "in_progress" {
+		t.Errorf("план идущей работы не развёрнут пунктами: %+v", plan)
+	}
+	if it, ok := seen["Ранняя правка"]; !ok || it.State != "completed" {
+		t.Errorf("вернувшаяся работа не стоит в кольце закрытым пунктом: %+v", plan)
+	}
+}
+
+// Краевые случаи выбора хозяина: работа без журнала уступает работе с краем, а
+// одна она хозяином остаётся; план свежее всех работ хозяина не находит.
+func TestSubPlanOwnerEdges(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	mk := func(name string, start, last time.Duration, live bool) subWork {
+		state := "completed"
+		if live {
+			state = "in_progress"
+		}
+		w := subWork{item: planItem{Text: name, State: state}, alias: name,
+			start: now.Add(start)}
+		if last != 0 {
+			w.last = now.Add(last)
+		}
+		return w
+	}
+	early := mk("ранняя", -20*time.Minute, -5*time.Minute, false)
+	late := mk("поздняя", -15*time.Minute, 0, true)
+	late.last = now
+	blind := mk("без журнала", -18*time.Minute, 0, true)
+
+	got, ok := subPlanOwner([]subWork{early, late}, now.Add(-6*time.Minute))
+	if !ok || got.alias != "ранняя" {
+		t.Errorf("хозяином плана в пересечении вышла %q (%v)", got.alias, ok)
+	}
+	got, ok = subPlanOwner([]subWork{blind, early}, now.Add(-6*time.Minute))
+	if !ok || got.alias != "ранняя" {
+		t.Errorf("работа без журнала перебила работу с краем: %q (%v)", got.alias, ok)
+	}
+	got, ok = subPlanOwner([]subWork{blind}, now.Add(-6*time.Minute))
+	if !ok || got.alias != "без журнала" {
+		t.Errorf("одинокая работа без журнала хозяином не стала: %q (%v)", got.alias, ok)
+	}
+	if _, ok := subPlanOwner([]subWork{early}, now.Add(-25*time.Minute)); ok {
+		t.Error("план старше работы нашёл хозяина")
+	}
+	if _, ok := subPlanOwner([]subWork{early}, now); ok {
+		t.Error("план свежее закрытой работы нашёл хозяина")
+	}
+}

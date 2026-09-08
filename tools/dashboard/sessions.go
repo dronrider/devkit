@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -2764,9 +2765,17 @@ func subPlanMark(file, sid string) string {
 // признака у файла плана нет: метку в имени субагент выбирает сам, и с заказом
 // она не сходится. Зато план пишется по ходу работы, то есть между первой и
 // последней записью её журнала, и по этому окну хозяин и находится. Работ в
-// окне бывает несколько (пачка), и тогда берётся начатая последней.
+// окне бывает несколько (пачка): работы пересекаются во времени, и одно окно
+// накрывает план соседа. Тогда берётся та, чей край last ближе ко времени
+// плана. План правят по ходу работы, последняя правка приходится на её конец, и
+// ближний край и есть свой. Прежнее правило «начатая последней» на пересечении
+// путало работы местами: план вернувшейся доставался поздней живой работе, та
+// разворачивала его пунктами, и брошенный пункт снова висел в кольце вечно.
+// Работа без журнала (last пустой) уступает любой другой: своего края у неё нет
+// и сравнивать нечего, а одна она хозяином остаётся.
 func subPlanOwner(subs []subWork, at time.Time) (subWork, bool) {
 	var best subWork
+	var bestGap time.Duration
 	found := false
 	for _, w := range subs {
 		if w.start.IsZero() || at.Before(w.start) {
@@ -2775,8 +2784,16 @@ func subPlanOwner(subs []subWork, at time.Time) (subWork, bool) {
 		if !w.last.IsZero() && at.After(w.last.Add(subFresh)) {
 			continue
 		}
-		if !found || w.start.After(best.start) {
-			best, found = w, true
+		gap := time.Duration(math.MaxInt64)
+		if !w.last.IsZero() {
+			if gap = w.last.Sub(at); gap < 0 {
+				gap = -gap
+			}
+		}
+		// Равный зазор разводится началом работы: выбор не должен зависеть от
+		// порядка файлов в каталоге.
+		if !found || gap < bestGap || (gap == bestGap && w.start.After(best.start)) {
+			best, bestGap, found = w, gap, true
 		}
 	}
 	return best, found

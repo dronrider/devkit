@@ -41,6 +41,17 @@ const block = [
 // нечего, и стенд следит, чтобы панель не вешала их на всякий список подряд.
 const plan = ["Разобрал по порядку.", "", "1. читаю разбор", "2. правлю код"].join("\n");
 
+// Пересказ прошлого вопроса: имя развилки и номера на месте, а последней
+// строки блока нет. Отвечать тут не на что, вопрос давно закрыт, и галочки
+// звали бы к ответу второй раз.
+const retell = [
+  "Напомню, о чём спрашивал вчера.",
+  "",
+  "«печать»: кто собирает текст вопроса в чат?",
+  "1. утилита печатает блок из перечня развилок",
+  "2. агент собирает текст по шаблону скилла",
+].join("\n");
+
 const at = (n) => new Date(Date.now() - (100 - n) * 60000).toISOString();
 const answer = (n, text) => ({ key: "t:" + n, seq: n, role: "assistant", time: at(n), text });
 
@@ -190,6 +201,37 @@ const settleMove = async () => {
 {
   const panel = await panelWith([answer(1, plan)]);
   if (picksOf(panel).length) fail("галочки повесились на список, который вопросом не был");
+}
+
+// --- пересказ прошлого вопроса галочек не получает ---
+{
+  const panel = await panelWith([answer(1, retell)]);
+  if (picksOf(panel).length) {
+    fail("галочки повесились на пересказ вопроса без последней строки блока");
+  }
+}
+
+// --- вопросов в ленте два: галочки идут при последнем ---
+{
+  const second = block.replace("«печать»", "«выкат»").replace("«ответ»", "«срок»");
+  const panel = await panelWith([answer(1, block), answer(2, second)]);
+  const ta = sayOf(panel);
+  const picks = picksOf(panel);
+  if (picks.length !== 5) fail("галочек при последнем вопросе не пять, а " + picks.length);
+  click(picks[0]);
+  if (ta.value !== "выкат 1") {
+    fail("отмечен вариант отвеченного вопроса: " + JSON.stringify(ta.value));
+  }
+}
+
+// --- галочки идут при живом блоке, а не при пересказе выше него ---
+{
+  const panel = await panelWith([answer(1, retell), answer(2, block)]);
+  const picks = picksOf(panel);
+  if (picks.length !== 5) fail("галочек при живом блоке не пять, а " + picks.length);
+  const ta = sayOf(panel);
+  click(picks[0]);
+  if (ta.value !== "печать 1") fail("отмечен вариант не того блока: " + JSON.stringify(ta.value));
 }
 
 // --- ответ снял ожидание: галочки уходят с отвеченного блока ---

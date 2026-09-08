@@ -186,6 +186,39 @@ func TestRunCLI(t *testing.T) {
 	}
 }
 
+// hiddenEchoProfile печатает пары, которыми список чатов панели узнаёт
+// делегата: hidden это признак «поднято без человека» (DK-847), task
+// заказ, а tmux пустая строка, потому что своей tmux-сессии у делегата нет.
+const hiddenEchoProfile = `[delegate]
+mode = "cli"
+command = ["/bin/sh", "-c", "echo hidden=$DEVKIT_HIDDEN task=$DEVKIT_TASK tmux=[$DEVKIT_TMUX]"]
+
+[hooks]
+
+[quota]
+`
+
+// TestRunMarksSubprocessHidden: делегат agentctl run не показывается в
+// списке чатов панели вовсе, его ход виден лентой раздавшего разговора
+// (DK-581), поэтому список и не должен его искать. Признак хук старта
+// подпроцесса прочитает из окружения тем же путём, что и заказ задачи.
+func TestRunMarksSubprocessHidden(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "echocli", hiddenEchoProfile)
+	writeMachine(t, kit, "enabled = [\"echocli\"]\ndefault = \"echocli\"\n\n[echocli]\nmini = \"cheap\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
+	root := writeBoard(t)
+	work := realPath(t, t.TempDir())
+	code, out := runOut(t, root, "T-001", roleExec, work)
+	if code != 0 {
+		t.Fatalf("код возврата %d, жду 0: %s", code, out)
+	}
+	for _, want := range []string{"hidden=1", "task=T-001", "tmux=[]"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("в выводе делегата нет %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestRunCLIExitCode: код выхода подпроцесса проезжает наружу как есть, иначе
 // скрипт поверх run не отличит сделанную работу от провала.
 func TestRunCLIExitCode(t *testing.T) {

@@ -407,7 +407,7 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 	// Заказ поднявшего сессию у делегата свой. Задача это та, которую ему
 	// отдали, а tmux-сессии у подпроцесса нет вовсе, и унаследованные значения
 	// записали бы его в реестр машины чужой работой.
-	cmd.Env = append(cmd.Env, taskEnv+"="+id, tmuxEnv+"=")
+	cmd.Env = append(cmd.Env, taskEnv+"="+id, tmuxEnv+"=", hiddenEnv+"=1")
 	if sid := os.Getenv(parentSessionEnv); sid != "" {
 		cmd.Env = append(cmd.Env, parentEnv+"="+sid)
 	}

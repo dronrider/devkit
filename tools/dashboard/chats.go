@@ -155,6 +155,11 @@ type chatEntry struct {
 	// Archived это убранный в архив разговор: список его прячет, пока человек
 	// не попросит показать архивные, а сам признак живёт памятью диалога.
 	Archived bool `json:"archived,omitempty"`
+	// Hidden это поднятый без человека разговор (DK-847): обычный список его
+	// не отдаёт вовсе, поле появляется только в выдаче поиска (win.includeHidden),
+	// чтобы найденная строка была видна как розданная машиной, а не спутана с
+	// разговором человека.
+	Hidden bool `json:"hidden,omitempty"`
 	// Parent называет разговор, раздавший эту работу: реестр машины пишет его
 	// подпроцессу делегирования (DK-581). Непустое поле значит, что строка это
 	// не разговор человека, а чужая работа, и списку она не нужна: ходы её
@@ -778,6 +783,10 @@ func (s *server) chatEntriesAll(limit int, win chatWindow) ([]chatEntry, bool) {
 type chatWindow struct {
 	since time.Time
 	keep  map[string]bool
+	// includeHidden отдаёт записи с store.Hidden (DK-847): по умолчанию
+	// список их не видит вовсе, а поиску нужно достать и их, иначе спрятанный
+	// прогон было бы не найти никак, кроме полки ждущих и строки задачи.
+	includeHidden bool
 }
 
 // chatEntriesFrom строит строки списка по готовому набору файлов. Общее
@@ -901,7 +910,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		// Служебная сессия суммаризации чатом не является: её завёл сам
 		// дашборд ради заголовка, и в списке ей делать нечего.
 		store := s.chatStoreRead(f.ID)
-		if titleSession(head.First) || store.Hidden {
+		if titleSession(head.First) || (store.Hidden && !win.includeHidden) {
 			continue
 		}
 		// Разговор, в котором никто ничего не сказал, в списке не строка, а
@@ -933,6 +942,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			Harness:  names[f.root],
 			Model:    s.chatModel(f.ID, last.Tmux),
 			Archived: store.Archived,
+			Hidden:   store.Hidden,
 			Parent:   last.Parent,
 		}
 		// Ключ склейки заходов считается до того, как устаревшее имя снимут:
@@ -1112,7 +1122,13 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 				days = n
 			}
 		}
-		win := chatWindow{keep: chatKeepSet(r.URL.Query().Get("keep"))}
+		win := chatWindow{
+			keep: chatKeepSet(r.URL.Query().Get("keep")),
+			// Скрытые отдаются только по явному запросу поиска (?hidden=1,
+			// DK-847): обычный список машины их не видит вовсе, а без этого
+			// параметра поведение остаётся прежним для всех старых клиентов.
+			includeHidden: r.URL.Query().Get("hidden") != "",
+		}
 		if days > 0 {
 			win.since = s.now().AddDate(0, 0, -days)
 		}
@@ -1617,16 +1633,39 @@ func chatCmd(env, model, resume, text string, h *Harness, agentctl string) strin
 // ребёнок переживает конец хода, и метка стоила бы им отказа рубежа на ровном
 // месте, да ещё и с выдуманной причиной.
 //
+// hidden ставит признак списка (DK-847): конвейер задачи поднимает и кнопка
+// экрана, и прогон проверки после выката, и второй круг ревью, и только
+// зовущий знает, каким из них. Признак пишет не сам подъём, а хук старта
+// сессии в файл памяти диалога по настоящему sid: в момент подъёма он ещё не
+// известен, а плейсхолдер по имени tmux-сессии до итоговой записи не доезжает
+// (chatEntriesFrom читает store по f.ID).
+//
 // Метка стоит после чистки, а не перед нею: пары `env` разбирает уже после своих
 // ключей, и парой впереди команды она снялась бы своим же `-u`.
-func (s *server) headlessEnv(id, sess string) string {
-	return s.launchEnv(id, sess, "") + headlessMark + " "
+func (s *server) headlessEnv(id, sess string, hidden bool) string {
+	mark := headlessMark
+	if hidden {
+		// Признак встаёт перед меткой печатного режима, а не перед всей
+		// сборкой: обе они пары `env`, и разбираются они после своих ключей
+		// (`/usr/bin/env -u ...` в launchEnv), той же дорогой, что и
+		// остальные пары. Прежней парой впереди самой команды признак
+		// достался бы своему же `-u`.
+		mark = hiddenEnv + " " + mark
+	}
+	return s.launchEnv(id, sess, "") + mark + " "
 }
 
 // headlessMark это признак печатной сессии для рубежа синхронности. Значение
 // называет подъёмщика: отказ рубежа читает человек, и «поднял дашборд» ему
 // говорит больше, чем голая единица.
 const headlessMark = "DEVKIT_HEADLESS=дашборд"
+
+// hiddenEnv это признак «поднято без человека» для хука старта сессии
+// (session-task.py, DK-847). Хук по нему пишет `hidden: true` в память
+// диалога настоящего sid, и список панели запись не покажет: переключателя на
+// такие в шапке нет, а вопрос и живой статус остаются на полке ждущих и на
+// строке задачи, они этого поля не спрашивают.
+const hiddenEnv = "DEVKIT_HIDDEN=1"
 
 // foreignVars это переменные чужой агентской сессии, которые поднятая сессия
 // обязана не унаследовать. Дорога наследства одна и неочевидная: окно
@@ -1648,7 +1687,7 @@ var foreignVars = []string{
 	"CLAUDE_CODE_ENTRYPOINT", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID",
 	"CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_MESSAGING_SOCKET",
 	"CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_ENV_FILE",
-	"CLAUDE_PROJECT_DIR", "AI_AGENT", "DEVKIT_HEADLESS",
+	"CLAUDE_PROJECT_DIR", "AI_AGENT", "DEVKIT_HEADLESS", "DEVKIT_HIDDEN",
 }
 
 // dropForeign это голова команды, вычищающая чужое наследство. Пары окружения

@@ -399,7 +399,11 @@ func clientCommand(agentctl string, h *Harness, model string) string {
 // (план, канал ответа) обоим собирается тут, а не пересказывается каждым
 // зовущим. Правила плана и канала в текст заказа больше не приписываются
 // (DK-612): их доставляет хук старта сессии.
-func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again string) error {
+//
+// hidden называет зовущего (DK-847): кнопка экрана это человек, а прогон
+// проверки и второй круг ревью поднимаются тиком без него, и запись уходит из
+// списка панели.
+func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again string, hidden bool) error {
 	// Оболочка ищется до подъёма окна: без неё конвейер прожил бы один ход
 	// головы, и отказать тут честнее, чем поднять работу, которая умрёт на
 	// первом же ожидании.
@@ -408,7 +412,7 @@ func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, mo
 		return errors.New(taskRunMissing)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", proj.Path,
-		sessionCommand(binPath(agentctlBin), tr, h, s.headlessEnv(id, sess),
+		sessionCommand(binPath(agentctlBin), tr, h, s.headlessEnv(id, sess, hidden),
 			order, again,
 			id, proj.Path, proj.Name, model)); err != nil {
 		return fmt.Errorf("tmux не поднял сессию %s: %s", sess, procErr(err))
@@ -610,7 +614,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		model = own.tierModel(tier)
 	}
 	if err := s.startTaskSession(found, id, sess, harness, model,
-		runPrompt(row.Sect, id), runPrompt("in-progress", id)); err != nil {
+		runPrompt(row.Sect, id), runPrompt("in-progress", id), false); err != nil {
 		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return

@@ -482,9 +482,12 @@ func TestHeadlessMarkOnlyForPipeline(t *testing.T) {
 			t.Errorf("живая дорога %q помечена печатным режимом:\n%s", name, cmd)
 		}
 	}
-	head := s.headlessEnv("XR-7", "task-XR-7")
+	head := s.headlessEnv("XR-7", "task-XR-7", false)
 	if !strings.Contains(head, headlessMark) {
 		t.Fatalf("окружение конвейера без метки печатного режима: %s", head)
+	}
+	if strings.Contains(head, hiddenEnv) {
+		t.Errorf("окружение кнопки экрана несёт признак hidden: %s", head)
 	}
 	// Метка стоит после чистки, а не перед нею: парой впереди команды её снял бы
 	// собственный `-u`, и рубеж снова считал бы конвейер живым окном.
@@ -493,6 +496,16 @@ func TestHeadlessMarkOnlyForPipeline(t *testing.T) {
 	}
 	if !strings.Contains(dropForeign(), "-u DEVKIT_HEADLESS") {
 		t.Errorf("унаследованная метка не снимается чисткой: %s", dropForeign())
+	}
+	if !strings.Contains(dropForeign(), "-u DEVKIT_HIDDEN") {
+		t.Errorf("унаследованный признак hidden не снимается чисткой: %s", dropForeign())
+	}
+	hiddenHead := s.headlessEnv("XR-7", "task-XR-7", true)
+	if !strings.Contains(hiddenHead, hiddenEnv) {
+		t.Fatalf("окружение прогона без человека без признака hidden: %s", hiddenHead)
+	}
+	if strings.Index(hiddenHead, hiddenEnv) < strings.Index(hiddenHead, dropForeign()) {
+		t.Errorf("признак hidden стоит впереди чистки и снимется ею же:\n%s", hiddenHead)
 	}
 }
 

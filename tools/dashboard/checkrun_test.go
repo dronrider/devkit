@@ -169,6 +169,12 @@ func TestCheckRunRaisesSession(t *testing.T) {
 			t.Errorf("в заказе прогона нет %q: %s", want, got)
 		}
 	}
+	// DK-847: прогон поднимает не человек, ни shipctl, ни тик devkitctl
+	// watch кнопку не нажимали, и список чатов панели эту сессию не
+	// показывает.
+	if !strings.Contains(got, hiddenEnv) {
+		t.Errorf("прогон сценария поднят без признака hidden: %s", got)
+	}
 }
 
 // Кому прогон не отдавать, сказано в самом заказе: ворота закрытия сверяют

@@ -48,6 +48,12 @@ const usageText = `dashboard: веб-дашборд агентской разр�
                               сообщение цели и уведомление о стопе в ленте;
                               пройдя, печатает «dashboard smoke: ok».
                               --keep оставляет временное окружение на месте
+  chatsweep [--apply <ID>...] разовая уборка списка чатов (DK-847): без флага
+                              печатает кандидатов, поднятых конвейером до
+                              признака hidden (разбор первой реплики по
+                              известным заказам), --apply уносит названные ID
+                              в архив; список смотрит и подтверждает человек,
+                              признак hidden эти записи не получают
 
 Вход по токену из конфига: страница /login, кука на 30 дней. Без входа не
 отдаётся ни одна строка данных; открыт один /healthz с версией, аптаймом,
@@ -123,6 +129,19 @@ func main() {
 			// говорит тому, кто гонял прогон руками.
 			fmt.Fprintf(os.Stderr, "dashboard smoke: провал, %v\n", err)
 			os.Exit(1)
+		}
+	case "chatsweep":
+		fs := flag.NewFlagSet("chatsweep", flag.ExitOnError)
+		apply := fs.Bool("apply", false, "унести названные ID в архив вместо печати кандидатов")
+		fs.Parse(args[1:])
+		ids := fs.Args()
+		if !*apply {
+			ids = nil
+		} else if len(ids) == 0 {
+			fatal(fmt.Errorf("--apply ждёт хотя бы один ID: dashboard chatsweep --apply <ID>..."))
+		}
+		if err := cmdChatSweep(home, ids, os.Stdout); err != nil {
+			fatal(err)
 		}
 	case "help", "-h", "--help":
 		fmt.Print(usageText)

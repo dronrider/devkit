@@ -212,7 +212,7 @@ func (s *server) checkRun(proj *Project, id string, rows map[string]boardRow) ch
 			id, tier, model)}
 	}
 	if err := s.startTaskSession(proj, id, sess, nil, model,
-		checkRunOrder(id, dev, row.Accept), runPrompt("in-progress", id)); err != nil {
+		checkRunOrder(id, dev, row.Accept), runPrompt("in-progress", id), true); err != nil {
 		return checkRunReport{Line: id + ": прогон не поднят, " + err.Error(), Failed: true}
 	}
 	line := fmt.Sprintf("%s: прогон сценария поднят в tmux-сессии %s, %s", id, sess, tierWhy)

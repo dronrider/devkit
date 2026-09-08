@@ -8017,9 +8017,13 @@ function chatMoreDays(days) {
 }
 
 // chatLoadWindow перечитывает список другим окном: нулём приезжает весь список
-// машины, им живут и поиск, и последняя ступень «показать раньше».
-async function chatLoadWindow(project, st, days) {
-  const r = await api(chatsURL(project) + "?all=1&days=" + days + chatKeepArg(st));
+// машины, им живут и поиск, и последняя ступень «показать раньше». includeHidden
+// достаёт вдобавок записи, поднятые без человека (DK-847): список их не
+// показывает никогда, а найденные текстом остаются найденными, а не пропадают
+// без следа.
+async function chatLoadWindow(project, st, days, includeHidden) {
+  const r = await api(chatsURL(project) + "?all=1&days=" + days + chatKeepArg(st) +
+    (includeHidden ? "&hidden=1" : ""));
   if (!r.ok) return false;
   st.chats = (r.body.chats || []).filter((c) => !(c.blank && c.grown));
   st.note = r.body.note || "";
@@ -8224,6 +8228,10 @@ function chatOption(project, c, current, done) {
   // просто занятого агента до открытия панели.
   if (c.quota) chips.append(el("span", "chip c-quota", c.quota));
   if (c.archived) chips.append(el("span", "chip", "в архиве"));
+  // Найденный поиском (DK-847): в обычном списке такой строки не бывает, а
+  // без клейма находка читалась бы разговором человека, хотя её поднял
+  // конвейер, прогон проверки или цикл цели.
+  if (c.hidden) chips.append(el("span", "chip", "поднято без человека"));
   if (c.model) chips.append(el("span", "chip", c.model));
   // Заходы одного окна стоят одной строкой (DK-723). Конвейер задачи
   // останавливается потолком проходов и воронкой молчания, кнопка поднимает
@@ -8349,7 +8357,10 @@ function chatDropOpen(project, st, anchor, again) {
     // Положение кнопки архива режет список только при пустом запросе: набранный
     // текст ищет по всей машине мимо кнопки (DK-726), а найденную архивную
     // строку помечает клеймом «в архиве» сам chatOption.
-    let list = q ? st.chats : chatArchShown(st.chats, chatArchMode());
+    // Скрытые (DK-847) попадают в st.chats только заходом поиска (хвост
+    // остаётся в состоянии до следующего открытия панели) и в пустом запросе
+    // им делать нечего: список без q это обычный вид, а не выдача поиска.
+    let list = q ? st.chats : chatArchShown(st.chats, chatArchMode()).filter((c) => !c.hidden);
     if (!q) {
       const have = new Set(list.map((c) => c.id));
       const pin = (id) => {
@@ -8467,7 +8478,7 @@ function chatDropOpen(project, st, anchor, again) {
     // машине. Один заход за панель: догруженное остаётся в состоянии.
     if (find.value.trim() && st.days && !loading) {
       loading = true;
-      chatLoadWindow(project, st, 0).then(() => {
+      chatLoadWindow(project, st, 0, true).then(() => {
         loading = false;
         draw();
       });

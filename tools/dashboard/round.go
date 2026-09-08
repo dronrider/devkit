@@ -66,7 +66,7 @@ func (s *server) reviewRound(proj *Project, id string, rows map[string]boardRow)
 	if own != nil && own.Default {
 		model = own.tierModel(tier)
 	}
-	if err := s.startTaskSession(proj, id, sess, nil, model, order, runPrompt("in-progress", id)); err != nil {
+	if err := s.startTaskSession(proj, id, sess, nil, model, order, runPrompt("in-progress", id), true); err != nil {
 		return checkRunReport{Line: id + ": второй круг не начат, " + err.Error(), Failed: true}
 	}
 	return checkRunReport{Raised: true,

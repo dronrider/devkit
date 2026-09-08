@@ -344,6 +344,10 @@ class ProjectFindingsTest(SandboxCase):
         self.assertNotIn_("Traceback", out, "--fix на странной структуре уронил доктор стеком")
         self.assertEqual(rc, 1, "--fix на странной структуре не дал находки")
         self.assertIn_("структура hooks", out, "нет находки про структуру hooks под --fix")
+        # О матчерах по неразобранным настройкам судить не по чему, и доктор про
+        # них здесь молчит, как молчит про раскладку целиком (DK-571).
+        self.assertNotIn_("с матчером", out,
+                          "доктор судит о матчерах по неразобранным настройкам")
         data = json.loads(read(self.settings))
         self.assertEqual(data.get("hooks"), 42, "--fix починил или убрал поле hooks")
         write(self.settings, full)
@@ -2051,6 +2055,43 @@ class HarnessHooksTest(SandboxCase):
         # Повторный доктор про снятый хук молчит: чинить больше нечего.
         _, out = self.box.doctor(self.proj, home=home)
         self.assertNotIn_("ask-panel.py", out, "повторный доктор всё ещё видит снятый хук")
+
+    def test_watch_matcher_is_rehung(self):
+        # DK-571: на машине, подключённой прежней раскладкой, сторож стоит на
+        # PostToolUse с матчером Agent, и ход Bash до него не доходит. Событие у
+        # хука то же самое, поэтому по одним событиям такую раскладку от нынешней
+        # не отличить, и доктор сверяет матчер, а --fix перевешивает запись.
+        home = self.box.make_home(self.box.root / "home-watch-matcher")
+        settings = home / ".claude" / "settings.json"
+        mine = "python3 ~/mine/own-check.py"
+        data = json.loads(read(settings))
+        for group in data["hooks"]["PostToolUse"]:
+            if any("agent-watch.py" in h["command"] for h in group["hooks"]):
+                group["matcher"] = "Agent"
+                group["hooks"].append({"type": "command", "command": mine})
+        data["hooks"]["PostToolUse"].append(
+            {"matcher": "Grep", "hooks": [{"type": "command", "command": mine}]})
+        write(settings, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+        rc, out = self.box.doctor(self.proj, home=home)
+        self.assertEqual(rc, 1, "доктор не заметил сторожа на чужом матчере: %s" % out)
+        self.assertIn_("agent-watch.py", out, "находка не называет сторожа")
+        self.assertIn_("с матчером «Agent» вместо «Bash|Agent»", out,
+                       "находка не называет ни нынешний матчер, ни нужный")
+        self.assertIn_("до сторожа не доходит", out,
+                       "находка не говорит, что ломается от чужого матчера")
+        _, out = self.box.doctor(self.proj, "--fix", home=home)
+        self.assertIn_("перевешен agent-watch.py", out, "--fix не перевесил сторожа")
+        post = json.loads(read(settings))["hooks"]["PostToolUse"]
+        spots = [((g.get("matcher") or ""), h["command"]) for g in post for h in g["hooks"]]
+        self.assertEqual([m for m, c in spots if "agent-watch.py" in c], ["Bash|Agent"],
+                         "сторож не оказался на матчере раскладки ровно один раз: %s" % post)
+        # Чужие записи в перевешенной группе и в соседней с ещё одним матчером
+        # остаются на месте: доктор снимает строку своего хука, а не группу.
+        self.assertEqual(sorted(m for m, c in spots if c == mine), ["Agent", "Grep"],
+                         "перевешивание задело чужие записи: %s" % post)
+        # Повторный доктор про матчер молчит: перевешивать больше нечего.
+        _, out = self.box.doctor(self.proj, home=home)
+        self.assertNotIn_("с матчером", out, "повторный доктор всё ещё правит матчер сторожа")
 
     def test_hooks_are_laid_out_once(self):
         _, out = self.box.doctor(self.proj, home=self.home2)

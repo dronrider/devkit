@@ -1345,11 +1345,12 @@ def check_skills(fix, dst_dir):
     return findings, fixed
 
 
-def _hooks_table(data):
-    """Событие хука -> список команд из настроек харнеса. None значит, что hooks
-    в настройках структурно необычен и сверять раскладку нельзя: settings.json
-    правят и человек, и чужие инструменты, и доктор на таком обязан находкой, а
-    не стеком, как и на битый JSON. Элемент группы не-словарь, строка вместо
+def _hooks_spots(data):
+    """Событие хука -> список пар (матчер, команда) из настроек харнеса. Группа
+    без матчера даёт пустую строку. None значит, что hooks в настройках
+    структурно необычен и сверять раскладку нельзя: settings.json правят и
+    человек, и чужие инструменты, и доктор на таком обязан находкой, а не
+    стеком, как и на битый JSON. Элемент группы не-словарь, строка вместо
     списка групп или число вместо объекта hooks всё дают None целиком, а не
     падают на первом же шаге итерации."""
     hooks = data.get("hooks")
@@ -1357,19 +1358,28 @@ def _hooks_table(data):
         return {}
     if not isinstance(hooks, dict):
         return None
-    table = {}
+    spots = {}
     for event, groups in hooks.items():
         if not isinstance(groups, list):
             return None
-        cmds = []
+        rows = []
         for group in groups:
             if not isinstance(group, dict):
                 return None
             for h in group.get("hooks") or []:
                 if isinstance(h, dict):
-                    cmds.append(h.get("command") or "")
-        table[event] = cmds
-    return table
+                    rows.append((group.get("matcher") or "", h.get("command") or ""))
+        spots[event] = rows
+    return spots
+
+
+def _hooks_table(data):
+    """Событие хука -> список команд из настроек харнеса, матчер отброшен. None
+    значит то же, что и у разбора с матчерами."""
+    spots = _hooks_spots(data)
+    if spots is None:
+        return None
+    return {event: [cmd for _, cmd in rows] for event, rows in spots.items()}
 
 
 def hook_events(text, script):
@@ -1388,12 +1398,36 @@ def hook_events(text, script):
     return {event for event, cmds in table.items() if any(script in c for c in cmds)}
 
 
+def hook_placements(text, script):
+    """Событие -> матчеры групп, где стоит скрипт. Пустая строка это группа без
+    матчера, событие без скрипта в разбор не попадает. None значит, что
+    настройки не разобрались, и о матчерах судить не по чему: доктор на таком
+    молчит, как молчит на битом JSON."""
+    try:
+        data = json.loads(text or "{}")
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    spots = _hooks_spots(data)
+    if spots is None:
+        return None
+    found = {}
+    for event, rows in spots.items():
+        seen = {matcher for matcher, cmd in rows if script in cmd}
+        if seen:
+            found[event] = seen
+    return found
+
+
 def hook_gaps(text, settings):
-    """Чего не хватает в хуках харнеса. Возврат (пробелы, находки, отставные):
-    пробел это строка HOOK_LAYOUT, которую кладёт --fix, находка это тот же
-    пробел словами для человека, отставной это имя переименованного хука,
-    строку про который --fix из настроек убирает."""
-    gaps, findings, stale = [], [], []
+    """Чего не хватает в хуках харнеса. Возврат (пробелы, находки, отставные,
+    перевешиваемые): пробел это строка HOOK_LAYOUT, которую кладёт --fix,
+    находка это тот же пробел словами для человека, отставной это имя
+    переименованного хука, строку про который --fix из настроек убирает, а
+    перевешиваемый это тройка (событие, скрипт, матчер) для хука, который на
+    своём событии стоит с чужим матчером."""
+    gaps, findings, stale, moved = [], [], [], []
     try:
         data = json.loads(text or "{}")
     except ValueError:
@@ -1405,7 +1439,7 @@ def hook_gaps(text, settings):
         findings.append("структура hooks в %s необычна: элемент группы не словарь, "
                         "группа не список или сам hooks не объект; сверка раскладки "
                         "хуков пропущена, править по hooks/README.md" % settings)
-        return gaps, findings, stale
+        return gaps, findings, stale, moved
     notify_events = hook_events(text, NOTIFY_HOOK)
     if notify_events is None:
         # Настройки не разобрались, судить остаётся по подстроке: тогда либо
@@ -1414,6 +1448,10 @@ def hook_gaps(text, settings):
     watch_events = hook_events(text, WATCH_HOOK)
     if watch_events is None:
         watch_events = set(WATCH_EVENTS) if WATCH_HOOK in text else set()
+    # Матчеры сторожа. Событие у него подключено с DK-519, а матчер запуска
+    # сменился в DK-571, и на машине с прежней раскладкой ход Bash до сторожа не
+    # доходит. Событием такую раскладку от нынешней не отличить.
+    watch_spots = hook_placements(text, WATCH_HOOK)
     turn_events = hook_events(text, TURN_HOOK)
     if turn_events is None:
         turn_events = set(TURN_EVENTS) if TURN_HOOK in text else set()
@@ -1432,9 +1470,22 @@ def hook_gaps(text, settings):
                 continue
             missing_notify.append(event)
         elif script == WATCH_HOOK:
-            if event in watch_events:
+            spots = None if watch_spots is None else watch_spots.get(event, set())
+            stray = sorted(spots - {matcher}) if spots else []
+            if event not in watch_events:
+                missing_watch.append(event)
+            elif not matcher or spots is None or not stray:
                 continue
-            missing_watch.append(event)
+            else:
+                moved.append((event, script, matcher))
+                findings.append("сторож %s стоит на событии %s с матчером «%s» вместо «%s» в %s: "
+                                "ход Bash с фоновой командой до сторожа не доходит, и команда "
+                                "попадает в реестр только концом хода (hooks/README.md)"
+                                % (script, event, "», «".join(stray), matcher, settings))
+                if matcher in spots:
+                    # Нужная запись на событии уже стоит, и перевешивание тут
+                    # только снимет лишнюю: второй такой же строки не надо.
+                    continue
         elif script == TURN_HOOK:
             if event in turn_events:
                 continue
@@ -1532,7 +1583,7 @@ def hook_gaps(text, settings):
         findings.append("хук %s в %s снят из devkit: строка зовёт файл, которого в чекауте "
                         "уже нет, и харнес спотыкается на ней каждым ходом (hooks/README.md)"
                         % (gone, settings))
-    return gaps, findings, stale
+    return gaps, findings, stale, moved
 
 
 def hook_script(command):
@@ -1668,10 +1719,39 @@ def drop_hooks(hooks, names):
     return done
 
 
-def install_hooks(settings, gaps, devkit, stale=()):
-    """Дописать недостающие хуки в настройки харнеса и убрать отставные. Правка
-    additive, как у прав: чужие группы и порядок остаются, команда встаёт в
-    группу со своим матчером либо заводит её. Отдаёт строки о сделанном."""
+def drop_misplaced(hooks, moved):
+    """Снять записи хука, стоящие на своём событии с чужим матчером. Убирается
+    ровно строка этого скрипта, соседи по группе остаются на месте, а опустевшая
+    группа уходит следом. Дальше ту же команду кладёт обычный пробел раскладки,
+    и хук оказывается на событии один раз и с нужным матчером."""
+    done = []
+    for event, script, want in moved:
+        groups = hooks.get(event)
+        if not isinstance(groups, list):
+            continue
+        for group in list(groups):
+            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                continue
+            if (group.get("matcher") or "") == want:
+                continue
+            kept = [h for h in group["hooks"]
+                    if not (isinstance(h, dict) and hook_script(h.get("command")) == script)]
+            if len(kept) == len(group["hooks"]):
+                continue
+            group["hooks"] = kept
+            done.append((script, event, want))
+            if not kept:
+                groups.remove(group)
+        if not groups:
+            hooks.pop(event, None)
+    return done
+
+
+def install_hooks(settings, gaps, devkit, stale=(), moved=()):
+    """Дописать недостающие хуки в настройки харнеса, убрать отставные и
+    перевесить те, что стоят с чужим матчером. Правка additive, как у прав:
+    чужие группы и порядок остаются, команда встаёт в группу со своим матчером
+    либо заводит её. Отдаёт строки о сделанном."""
     data, bad = perms.load(settings)
     if bad is not None:
         return []
@@ -1681,6 +1761,7 @@ def install_hooks(settings, gaps, devkit, stale=()):
         # Структурно необычный hooks раскладкой чинить нельзя: doctor --fix на
         # таком даёт находку раньше, но и прямой вызов не должен ронять стек.
         return []
+    remapped = drop_misplaced(hooks, moved)
     done = []
     for event, matcher, tpl in gaps:
         cmd = tpl % path
@@ -1711,6 +1792,9 @@ def install_hooks(settings, gaps, devkit, stale=()):
                            ", ".join(RETIRED_HOOKS[n] for n in renamed)))
         if gone:
             said.append("убрано из %s: %s, хук снят из devkit" % (settings, ", ".join(gone)))
+    for script, event, want in remapped:
+        said.append("перевешен %s в %s: событие %s, матчер «%s»"
+                    % (script, settings, event, want))
     if not done:
         return said
     # Уведомитель висит на пяти событиях сразу, и пять строк про него это
@@ -1844,9 +1928,9 @@ def check_harness_contour(name, profile, homes, fix, main, from_main):
         text = settings.read_text(encoding="utf-8") if settings.exists() else ""
         # Хуки харнеса раскладываются тем же рубежом, что права и скиллы: с ветки
         # задачи на машину они не едут, там их сверяют и чинят из основного чекаута.
-        gaps, gap_findings, stale = hook_gaps(text, settings)
-        if (gaps or stale) and fix and from_main:
-            fixed += install_hooks(settings, gaps, main, stale)
+        gaps, gap_findings, stale, moved = hook_gaps(text, settings)
+        if (gaps or stale or moved) and fix and from_main:
+            fixed += install_hooks(settings, gaps, main, stale, moved)
             text = settings.read_text(encoding="utf-8") if settings.exists() else ""
         else:
             findings += gap_findings

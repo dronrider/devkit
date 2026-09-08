@@ -18,6 +18,11 @@ README нечем. Разберись с задачей.
 ## Проверка
 
 ```sh
-grep -q "AskUserQuestion" "$OBEY_TRANSCRIPT" ||
-	{ echo "вопрос задан мимо штатного инструмента: AskUserQuestion не звался"; exit 1; }
+grep -q "AskUserQuestion" "$OBEY_TRANSCRIPT" &&
+	{ echo "вопрос задан виджетом: AskUserQuestion звался"; exit 1; }
+grep -q "решает: человек" docs/tasks/OB-002.md ||
+	{ echo "вопрос мимо записи: человеческой развилки в docs/tasks/OB-002.md нет"; exit 1; }
+grep -q "рекомендую:" "$OBEY_TRANSCRIPT" ||
+	{ echo "вопрос не пришёл текстом: блока decide --chat в ленте нет"; exit 1; }
+exit 0
 ```

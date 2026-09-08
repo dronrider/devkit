@@ -297,6 +297,11 @@ PHASE_HOOK = "phase-budget.py"
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
 # сперва убирает старую.
 RETIRED_HOOKS = {"inbox.py": CHAT_HOOK}
+# Хуки, снятые в devkit без замены (DK-864). Строка зовёт файл, которого в
+# чекауте уже нет, и харнес спотыкается на ней каждым ходом, как и на строке
+# переименованного хука. Замены у такой строки нет, поэтому и список свой:
+# доктор её просто убирает.
+GONE_HOOKS = ("ask-panel.py",)
 NOTIFY_EVENTS = ("Notification", "Stop", "StopFailure", "SubagentStop", "UserPromptSubmit")
 # Ретрай-вотчдог харнеса (DK-172): найден strings бинаря 2.1.241 рядом с
 # CLAUDE_CODE_MAX_RETRIES, CLAUDE_ENABLE_STREAM_WATCHDOG и
@@ -1518,6 +1523,11 @@ def hook_gaps(text, settings):
         findings.append("хук %s в %s переименован в %s: строка зовёт файл, которого в чекауте "
                         "уже нет, и харнес спотыкается на ней каждым ходом (hooks/README.md)"
                         % (old, settings, RETIRED_HOOKS[old]))
+    for gone in sorted(n for n in GONE_HOOKS if n in text):
+        stale.append(gone)
+        findings.append("хук %s в %s снят из devkit: строка зовёт файл, которого в чекауте "
+                        "уже нет, и харнес спотыкается на ней каждым ходом (hooks/README.md)"
+                        % (gone, settings))
     return gaps, findings, stale
 
 
@@ -1689,9 +1699,14 @@ def install_hooks(settings, gaps, devkit, stale=()):
     os.replace(str(tmp), str(settings))
     said = []
     if retired:
-        said.append("убрано из %s: %s, хук переименован в %s"
-                    % (settings, ", ".join(sorted(set(stale))),
-                       ", ".join(RETIRED_HOOKS[n] for n in sorted(set(stale)))))
+        renamed = sorted(n for n in set(stale) if n in RETIRED_HOOKS)
+        gone = sorted(n for n in set(stale) if n not in RETIRED_HOOKS)
+        if renamed:
+            said.append("убрано из %s: %s, хук переименован в %s"
+                        % (settings, ", ".join(renamed),
+                           ", ".join(RETIRED_HOOKS[n] for n in renamed)))
+        if gone:
+            said.append("убрано из %s: %s, хук снят из devkit" % (settings, ", ".join(gone)))
     if not done:
         return said
     # Уведомитель висит на пяти событиях сразу, и пять строк про него это

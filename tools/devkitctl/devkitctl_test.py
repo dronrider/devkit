@@ -2028,6 +2028,30 @@ class HarnessHooksTest(SandboxCase):
         _, out = self.box.doctor(self.proj, home=home)
         self.assertNotIn_("inbox.py", out, "повторный доктор всё ещё видит отставное имя")
 
+    def test_gone_hook_is_dropped(self):
+        # Хук, снятый из devkit без замены (DK-864), зовёт из настроек файл,
+        # которого в чекауте нет. Замены у строки нет вовсе, и доктор её просто
+        # убирает, а находка говорит это словами.
+        home = self.box.root / "home-gone"
+        write(home / ".claude" / "settings.json", json.dumps({"hooks": {"PreToolUse": [
+            {"matcher": "AskUserQuestion", "hooks": [{"type": "command",
+                        "command": "python3 ~/projects/devkit/hooks/ask-panel.py --hook"}]}]}},
+            ensure_ascii=False, indent=2) + "\n")
+        _, out = self.box.doctor(self.proj, home=home)
+        self.assertIn_("ask-panel.py", out, "доктор не заметил снятый хук")
+        self.assertIn_("снят из devkit", out, "находка не говорит, что замены у хука нет")
+        _, out = self.box.doctor(self.proj, "--fix", home=home)
+        self.assertIn_("хук снят из devkit", out, "--fix не убрал строку снятого хука")
+        hooks = json.loads(read(home / ".claude" / "settings.json"))["hooks"]
+        pre = [h["command"] for g in hooks["PreToolUse"] for h in g["hooks"]]
+        self.assertEqual([c for c in pre if "ask-panel.py" in c], [],
+                         "строка снятого хука осталась в настройках: %s" % pre)
+        self.assertNotIn("AskUserQuestion", [g.get("matcher") for g in hooks["PreToolUse"]],
+                         "пустая группа матчера осталась в настройках")
+        # Повторный доктор про снятый хук молчит: чинить больше нечего.
+        _, out = self.box.doctor(self.proj, home=home)
+        self.assertNotIn_("ask-panel.py", out, "повторный доктор всё ещё видит снятый хук")
+
     def test_hooks_are_laid_out_once(self):
         _, out = self.box.doctor(self.proj, home=self.home2)
         self.assertRegex(out, r"не подключено \d+ хук\S* харнеса в[^\n]*PostToolUse[^\n]*check-symbols\.py",

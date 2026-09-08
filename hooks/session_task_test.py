@@ -253,6 +253,7 @@ class TestHook(unittest.TestCase):
         env = dict(os.environ, HOME=self.home)
         env.pop("DEVKIT_TASK", None)
         env.pop("DEVKIT_TMUX", None)
+        env.pop("DEVKIT_HIDDEN", None)
         env.update(extra or {})
         return subprocess.run([sys.executable, HOOK] + list(args),
                               input=json.dumps(event), capture_output=True,
@@ -339,6 +340,48 @@ class TestHook(unittest.TestCase):
             r = self.run_hook(json.load(f))
         self.assertEqual(r.returncode, 0)
         self.assertEqual(self.log(), [])
+
+    def chat_store(self, session=SID):
+        path = os.path.join(self.home, ".devkit", "chats", "%s.json" % session)
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_hidden_env_marks_the_chat_store(self):
+        # Признак «поднято без человека» (DK-847) ставит сам поднимающий
+        # переменной DEVKIT_HIDDEN, а хук пишет его в память диалога
+        # настоящего sid: список панели читает это поле оттуда же
+        # (chatEntriesFrom, chats.go).
+        r = self.run_hook(sample(), {"DEVKIT_TASK": "DK-847", "DEVKIT_HIDDEN": "1"})
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        self.assertEqual(self.chat_store(), {"hidden": True})
+
+    def test_without_hidden_env_store_stays_untouched(self):
+        r = self.run_hook(sample(), {"DEVKIT_TASK": "DK-847"})
+        self.assertEqual(r.returncode, 0)
+        self.assertIsNone(self.chat_store())
+
+    def test_hidden_env_keeps_existing_fields(self):
+        # Файл памяти диалога бывает заведён раньше рождения сессии (сервер
+        # кладёт туда модель незачатой записи), и признак не должен стереть
+        # то, что уже лежит рядом.
+        path = os.path.join(self.home, ".devkit", "chats")
+        os.makedirs(path)
+        with open(os.path.join(path, "%s.json" % SID), "w", encoding="utf-8") as f:
+            json.dump({"model": "opus"}, f)
+        r = self.run_hook(sample(), {"DEVKIT_TASK": "DK-847", "DEVKIT_HIDDEN": "1"})
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(self.chat_store(), {"model": "opus", "hidden": True})
+
+    def test_empty_hidden_env_does_not_mark(self):
+        # Унаследованный, но пустой признак не должен читаться как истинный:
+        # devkit гасит эту переменную у чужого наследства тем же путём, что
+        # и метку печатного режима (foreignVars, chats.go), а хук проверяет
+        # это и сам, на пустой строке.
+        r = self.run_hook(sample(), {"DEVKIT_TASK": "DK-847", "DEVKIT_HIDDEN": ""})
+        self.assertEqual(r.returncode, 0)
+        self.assertIsNone(self.chat_store())
 
     def test_broken_input_is_a_silent_zero(self):
         # Хук стоит в каждой сессии на машине, и ронять её ради журнала нельзя.

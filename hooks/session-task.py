@@ -60,6 +60,7 @@ additionalContext: строку доски, файл задачи и строк�
 сжатия контекста) вместо контекста уходит фраза «перечитай скилл board-chat» с
 ID задачи и те же строки про план и отзывчивость (DK-614).
 """
+import json
 import os
 import re
 import subprocess
@@ -95,6 +96,52 @@ PID_ENV = "CLAUDE_PID"
 # человека: работа видна ходом в ленте родителя, своей строки ей не надо
 # (DK-581).
 PARENT_ENV = "DEVKIT_PARENT_SESSION"
+
+# Признак «поднято без человека» (DK-847). Ставит его сам поднимающий: конвейер
+# задачи для прогона проверки и второго круга ревью, оболочка цикла цели для
+# каждого своего витка, `agentctl run` для розданной работы. Хук пишет его в
+# память диалога настоящего sid, который до рождения сессии никому не известен,
+# а список панели читает это поле оттуда же (chats.go, chatEntriesFrom).
+HIDDEN_ENV = "DEVKIT_HIDDEN"
+
+# Каталог памяти диалога: файл на sid, тот же формат и то же место, что пишет
+# сервер дашборда (chatStoreDir/chatStoreWrite, chats.go).
+CHATS_DIR = os.path.join(os.path.expanduser("~"), ".devkit", "chats")
+
+
+def hidden(env=None):
+    env = os.environ if env is None else env
+    return bool((env.get(HIDDEN_ENV) or "").strip())
+
+
+def mark_hidden(session, chats_dir=None):
+    """Ставит hidden: true в файле памяти диалога родившейся сессии. Читает и
+    пишет тем же путём, что и сервер: файл на sid, JSON-объект, поле
+    `hidden`. Чтение перед записью бережёт остальные поля файла, если он уже
+    существует (гонки маловероятны в момент рождения сессии, но дешевле не
+    зависеть от порядка)."""
+    path = os.path.join(chats_dir or CHATS_DIR, "%s.json" % session)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    if data.get("hidden") is True:
+        return
+    data["hidden"] = True
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, path)
+    except OSError as e:
+        # Беда любого разбора это тихий ноль (см. докстринг файла): признак не
+        # записался, но рождение сессии из-за этого падать не должно, разговор
+        # тогда просто останется видимым в списке.
+        sys.stderr.write("session-task: признак hidden не записался в %s: %s\n" % (path, e))
 
 
 def dashless(value):
@@ -325,6 +372,8 @@ def run_hook(protocol, path=None, env=None, now=None):
         # без сессии не сводится ни с транскриптом, ни с ручкой привязки.
         return 0
     hookio.append_capped(path or LOG, record(start, env, now))
+    if hidden(env):
+        mark_hidden(start.session)
     task = ordered_task(os.environ if env is None else env)
     if not task:
         return 0

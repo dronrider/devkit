@@ -2126,15 +2126,17 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual(len([c for c in post if "chat-in.py" in c]), 1, post)
         self.assertEqual(len([c for c in post if "session-task.py --touch" in c]), 1, post)
         # PostToolUse: три группы, проверки текстов на своём матчере, подхват
-        # реплики с отметкой работы на пустом и сторож фоновых субагентов на
-        # инструменте делегирования. Матчер у подхвата пустой не по недосмотру:
+        # реплики с отметкой работы на пустом и сторож фоновых работ на двух
+        # инструментах разом. Матчер у подхвата пустой не по недосмотру:
         # реплику надо доставлять на любом ходе идущего витка, а не на записи
         # файла, и отметку работы (DK-539) режет своим списком WORK_TOOLS сам
-        # скрипт, а не матчер.
+        # скрипт, а не матчер. Сторож стоит на Bash вместе с делегированием
+        # (DK-571): фоном уходит и субагент, и команда оболочки.
         # Четвёртая группа это сторожок стыка фаз (DK-803) на Bash: переход
         # задачи по доске это команда taskctl, и ловится он на её ходе.
         self.assertEqual([g.get("matcher") for g in hooks["PostToolUse"]],
-                         ["Edit|Write|NotebookEdit", None, "Agent", "Bash"], hooks["PostToolUse"])
+                         ["Edit|Write|NotebookEdit", None, "Bash|Agent", "Bash"],
+                         hooks["PostToolUse"])
         self.assertEqual(len([c for c in post if "agent-watch.py" in c]), 1, post)
         self.assertEqual(len([c for c in post if "phase-budget.py" in c]), 1, post)
         chat = [h["command"] for g in hooks["PostToolUse"] if not g.get("matcher")

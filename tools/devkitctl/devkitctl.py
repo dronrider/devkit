@@ -266,13 +266,17 @@ SELF_HOOK = "devkit-catchup.sh"
 # сообщения в hook_gaps своя: своё событие, свой матчер и своё «что идёт не
 # так», иначе неподключённый канал чата остаётся неотличим от штатной тишины.
 CHAT_HOOK = "chat-in.py"
-# Сторож фоновых субагентов (DK-519): три события, потому что счёт работам
-# ведётся с их запуска (PostToolUse на инструменте делегирования), закрывается
-# их концом (SubagentStop), а сдаётся сессии на конце хода (Stop), пока она не
-# ушла спать с незабранным отчётом. Категория сообщения в hook_gaps своя:
-# потерянный отчёт субагента виден иначе, чем молчащий баннер уведомителя.
+# Сторож фоновых работ (DK-519): три события, потому что счёт работам ведётся
+# с их запуска (PostToolUse), закрывается их концом (SubagentStop), а сдаётся
+# сессии на конце хода (Stop), пока она не ушла спать с незабранным отчётом.
+# Матчер запуска называет два инструмента: фоном уходит и субагент, и команда
+# оболочки (DK-571). Раскладка, положенная до разряда команд, зовёт сторожа
+# одним делегированием, и команду он там заводит по перечню работ конца хода.
+# Категория сообщения в hook_gaps своя: потерянный отчёт субагента виден иначе,
+# чем молчащий баннер уведомителя.
 WATCH_HOOK = "agent-watch.py"
 WATCH_EVENTS = ("PostToolUse", "SubagentStop", "Stop")
+WATCH_MATCHER = "Bash|Agent"
 # Рубеж синхронности (DK-678): PreToolUse на Bash и на инструменте
 # делегирования, потому что фоном зовутся оба, и признак фона у обоих лежит во
 # входе. Матчер свой, поэтому и категория сообщения в hook_gaps своя: без этого
@@ -336,7 +340,7 @@ HOOK_LAYOUT = (
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
-    ("PostToolUse", "Agent", "python3 %s/hooks/agent-watch.py --hook claude-code"),
+    ("PostToolUse", WATCH_MATCHER, "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("PostToolUse", PRE_MATCHER, "python3 %s/hooks/phase-budget.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),

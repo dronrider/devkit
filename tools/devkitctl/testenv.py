@@ -101,7 +101,7 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/chat-in.py --hook claude-code"}
 ]}, {"hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/session-task.py --touch claude-code"}
-]}, {"matcher": "Agent", "hooks": [
+]}, {"matcher": "Bash|Agent", "hooks": [
   {"type": "command", "command": "%s"}
 ]}, {"matcher": "Bash", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/phase-budget.py --hook claude-code"}

@@ -926,7 +926,10 @@ function esc(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 class N {
-  constructor(tag) { this.tag = tag; this.kids = []; this.attrs = {}; }
+  // dataset у игрушечного узла свой и в разметку не едет: номер исходной
+  // строки рендер вешает на каждый пункт списка (DK-864), а читает его
+  // панель, не браузер.
+  constructor(tag) { this.tag = tag; this.kids = []; this.attrs = {}; this.dataset = {}; }
   get tagName() { return this.tag.toUpperCase(); }
   set className(v) { if (v) this.attrs.class = v; }
   set textContent(v) { this.kids = [{ text: String(v) }]; }

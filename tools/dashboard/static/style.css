@@ -314,6 +314,18 @@ a:hover{text-decoration:underline}
 .caskbox{flex:none;width:15px;height:15px;margin-top:2px;border:1.5px solid var(--line2);border-radius:4px;background:var(--bg2)}
 .caskopt.on .caskbox{border-color:var(--acc);background:var(--acc);position:relative}
 .caskopt.on .caskbox::after{content:"";position:absolute;left:32%;top:8%;width:26%;height:56%;border:solid var(--bg0);border-width:0 2px 2px 0;transform:rotate(45deg)}
+/* Галочка при строке варианта в самой реплике (DK-864). Панель добавляет к
+   блоку вопроса одну её и больше ничего: рамка вокруг реплики сделала бы из
+   разговора форму, а прежний блок с кнопками ею и был. Отметка та же, что у
+   вариантов виджета клиента, а кнопка вокруг неё прозрачная и ровно с палец
+   шириной: строка списка от неё не расползается. */
+.caskpick{display:inline-flex;align-items:center;justify-content:center;min-width:22px;min-height:22px;margin:0 4px 0 -2px;padding:0;border:0;background:none;vertical-align:-5px;cursor:pointer}
+.caskpick .caskbox{margin-top:0}
+.caskpick.on .caskbox{border-color:var(--acc);background:var(--acc);position:relative}
+.caskpick.on .caskbox::after{content:"";position:absolute;left:32%;top:8%;width:26%;height:56%;border:solid var(--bg0);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.caskpick:hover .caskbox{border-color:var(--acc)}
+.caskpick:focus:not(:focus-visible){outline:none}
+.caskpick:focus-visible{outline:2px solid var(--acc);outline-offset:1px;border-radius:6px}
 .caskwords{display:flex;flex-direction:column;gap:2px;min-width:0}
 .casklabel{font:500 12.5px var(--sans);color:var(--tx)}
 .caskwhy{font:400 11.5px/1.45 var(--sans);color:var(--tx3)}

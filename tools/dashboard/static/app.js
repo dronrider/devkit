@@ -4874,6 +4874,10 @@ function mdRender(text, where) {
         stack.push(top);
       }
       const li = el("li");
+      // Номер строки, из которой собран пункт: по нему панель находит строку
+      // варианта в блоке вопроса и вешает на неё галочку (DK-864). Разбирать
+      // готовую разметку обратно в текст было бы гаданием.
+      li.dataset.mdline = String(i);
       mdInline(item[4], li, where);
       top.box.append(li);
       top.li = li;
@@ -5806,6 +5810,10 @@ function markEl(text) {
 // круга POC). Пустая подпись не рисуется вовсе.
 function chatBubble(who, text, meta, tip, quote) {
   const wrap = el("div", "msg" + (who === "вы" ? " me" : ""));
+  // Слова реплики остаются при пузыре: по ним панель узнаёт блок вопроса и
+  // разбирает его строки вариантов (DK-864). В разметке от блока остаётся
+  // обычный нумерованный список, и обратно из него текст не собрать.
+  wrap.mdText = String(text || "");
   const bb = el("div", "bb");
   // Цитата стоит первой строкой пузыря, над словами: так её ставят
   // мессенджеры, и так она читается ответом на названное.
@@ -10981,6 +10989,11 @@ function chatPanel(project, st) {
   const askBox = el("div", "cask");
   askBox.hidden = true;
   wrap.append(askBox);
+  // Вопрос агента блоком не приходит: он стоит текстом в ленте, а панель по
+  // признаку ожидания вешает галочки при строках вариантов (DK-864). Тут
+  // помнится, ждут ли ответа и что галочки уже дописали в поле ввода: строку
+  // ответа надо не только собрать, но и убрать со снятой отметки.
+  const askPick = { on: false, put: "" };
   // Разговор без процесса красит общий индикатор остановкой вместо отдельной
   // строки с кнопкой (DK-701). Кнопки «Поднять» тут больше нет: молчание не
   // отличалось от живого разговора, и человек нажимал её не зная, поднимется
@@ -11369,15 +11382,13 @@ function chatPanel(project, st) {
       });
   };
 
-  // Ответ на вопрос агента уезжает той же дорогой, что реплика из поля: тот же
-  // пузырь в ленте, тот же выбор дороги, та же ручка. Второго способа отправки
-  // виджет не заводит (DK-652).
-  st.askSay = (text) => post(text, null, null, null, null);
-
   const fire = () => {
     const text = ta.value.trim();
     if (!text || send.disabled) return;
     ta.value = "";
+    // Собранная галочками строка уехала вместе с репликой, и помнить её
+    // больше незачем: следующая отметка дописывает своё в пустое поле.
+    askPick.put = "";
     if (draftTimer) clearTimeout(draftTimer);
     chatDraftWrite(st.addr, "");
     // Отправка уносит и высоту: поле возвращается к своему обычному росту,
@@ -11502,7 +11513,7 @@ function chatPanel(project, st) {
     // Выделение подхватывается, пока человек его держит.
     document.addEventListener("selectionchange", catchSel);
     chatLive.push(() => document.removeEventListener("selectionchange", catchSel));
-    watchClientAsk(project, st, askBox);
+    watchClientAsk(project, st, askBox, feed, ta, askPick);
     if (st.error) {
       if (!again) say(feed, "error", st.error);
     } else if (st.lost) {
@@ -11538,6 +11549,11 @@ function chatPanel(project, st) {
       }, (list) => {
         echo.reconcile(list);
         loginSawAll(bye, list);
+        // Лента перерисована: галочки встают на новых узлах пузырей, не
+        // дожидаясь следующего опроса признака. Реплика с блоком приходит
+        // позже самого признака, и без этого места человек секунды три
+        // смотрел бы на вопрос без единой отметки.
+        askPickWire(feed, ta, askPick);
       }, again).catch(console.error);
     }
   };
@@ -11562,7 +11578,7 @@ const ASK_MOVE = 400;
 // переспрашивает сервер. Снимок панели tmux стоит подпроцесса, поэтому ходит
 // опрос только у разговора с живой tmux-сессией дашборда: у чужого окна
 // спрашивать нечего и нечем.
-function watchClientAsk(project, st, box) {
+function watchClientAsk(project, st, box, feed, ta, pick) {
   const sid = st.sid;
   // Живой tmux тут больше не условие. Вопрос агента лежит признаком ожидания, и
   // разговору с чужим окном он приходит наравне с нашим: спрашивал заход, а не
@@ -11576,6 +11592,10 @@ function watchClientAsk(project, st, box) {
     const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
     if (stop) return;
     const ask = (r.ok && r.body.ask) || null;
+    // Признак ожидания и есть тот повод, по которому панель добавляет галочки:
+    // заход спросил человека текстом и стоит, пока ответа нет.
+    pick.on = Boolean(ask && ask.kind === "agent");
+    askPickWire(feed, ta, pick);
     paintClientAsk(project, st, box, ask, tick);
     // Опрос идёт и при открытом вопросе: виджет меняется не только от наших
     // нажатий (человек вправе ответить и руками в tmux), а перерисовка стоит
@@ -11765,23 +11785,21 @@ function paintClientAsk(project, st, box, ask, again) {
     paintAskpassAsk(project, st, box, ask);
     return;
   }
+  // Вопрос агента блоком не рисуется вовсе: он приходит текстом в ленте, а
+  // панель добавляет к строкам вариантов галочки (askPickWire). Прежний блок
+  // с кнопками и табами стоял формой поверх разговора, запирал чат до ответа
+  // и терял по дороге рекомендацию варианта (DK-864).
+  if (ask && ask.kind === "agent") {
+    box.hidden = true;
+    box.replaceChildren();
+    return;
+  }
   if (!ask || !(ask.options || []).length) {
     box.hidden = true;
     box.replaceChildren();
     return;
   }
   box.hidden = false;
-  // Вопрос агента рисуется тем же виджетом, а отвечается по-своему: не
-  // клавишами в чужое окно, а репликой во вход разговора, откуда её берёт
-  // ждущий заход.
-  if (ask.kind === "agent") {
-    // Сюда заходят только со сменившимся снимком, и отмеченное на узле
-    // относилось к прежнему вопросу. Открытый шаг тоже свой у каждой пачки.
-    box.askStep = 0;
-    box.askSaid = null;
-    paintAgentAsk(st, box, ask);
-    return;
-  }
   const review = ask.kind === "review";
   const head = el("div", "caskh");
   head.append(el("b", "", review ? "Ответы опроса" : "Клиент ждёт ответа"));
@@ -11921,111 +11939,151 @@ function paintClientAsk(project, st, box, ask, again) {
   box.append(row);
 }
 
-// Вопрос агента над полем ввода. Заход спросил человека штатным
-// AskUserQuestion, хук перехватил вызов и кончил ход рубежом: вопрос обязан
-// быть виден сразу, без наведения мыши и без терминала сессии (живой случай
-// DK-650, где восемь минут ожидания кончились парковкой, и цель DK-713,
-// которая простояла четыре часа, потому что панель диалог не показала
-// вовсе). Прежде свой вопрос доезжал одной подсказкой на поле ввода, а
-// варианты терялись по дороге вовсе.
+// Галочки при строках вариантов (DK-864). Вопрос человеку приходит текстом в
+// ленте: блок печатает утилита из перечня развилок записи (taskctl decide
+// --chat), агент вставляет его в реплику как есть. Панель по признаку ожидания
+// добавляет к такой реплике одну только галочку слева от каждой строки
+// варианта. Ни рамки, ни шапки, ни табов, ни своей кнопки отправки тут нет:
+// прежний блок читался формой поверх разговора, работать с чатом до ответа не
+// давал, а рекомендацию варианта терял по дороге (пять претензий пользователя,
+// «совершенно неудобный, даже раздражающий»).
 //
-// Отвечается он не как вопрос клиента: реплика уходит той же дорогой, что
-// написанная руками, ручкой разговора, и ложится во вход, откуда её забирает
-// ждущий заход. Умерший заход ответа не теряет: строка остаётся во входе, и её
-// берёт тот, кто задачу продолжит.
-function paintAgentAsk(st, box, ask) {
-  const steps = ask.steps || [];
-  const many = steps.length > 1;
-  // Отмеченное человеком живёт на самом узле: опрос перерисовывает блок только
-  // тогда, когда вопрос сменился, и до отправки отметки обязаны стоять.
-  if (!box.askSaid) box.askSaid = {};
-  const said = box.askSaid;
-  const at = many ? Math.min(box.askStep || 0, steps.length - 1) : 0;
-  const open = many ? steps[at] : ask;
-  box.replaceChildren();
-  const head = el("div", "caskh");
-  head.append(el("b", "", ask.task ? "Вопрос от задачи " + ask.task : "Вопрос агента"));
-  const left = waitLeft(ask.until, Date.now());
-  if (left) head.append(el("span", "n", left === "срок вышел" ? left : "осталось " + left));
-  box.append(head);
-  box.append(el("div", "caskhint", (many
-    ? "Спрашивает агент задачи, вопросов несколько. Пройдите шаги и отправьте ответ одной репликой."
-    : "Спрашивает агент задачи. Пока ответа нет, его заход стоит.") +
-    ((ask.rest || []).length ? " Следом ждут ответа " + ask.rest.join(", ") + "." : "")));
+// Отвечает человек обычной репликой: отметка дописывает строку ответа в поле
+// ввода, снятая её оттуда убирает, а отправляет обычная кнопка чата. Ответ
+// уезжает той же дорогой, что всякая другая реплика, и признак ожидания
+// снимает та же ручка ответа.
 
-  // Ответ уезжает одной репликой: ручка ответа сама снимает признак ожидания
-  // на сервере, и второй ответ уже некому забрать.
-  let sent = false;
-  const answer = (text) => {
-    if (sent || !text) return;
-    sent = true;
-    box.classList.add("busy");
-    if (st.askSay) st.askSay(text);
-    else sayResult("ответить некуда: разговор не собран", true);
-  };
+// Строка развилки: имя в ёлочках, за ним вопрос.
+const ASK_FORK_RE = /^«([^»]+)»\s*:/;
 
-  if (many) {
-    const bar = el("div", "ktabs caskst");
-    steps.forEach((step, i) => {
-      const tab = el("button", "ktab" + (i === at ? " onktab" : ""), step.name);
-      tab.type = "button";
-      if (said[i]) tab.append(el("span", "n", "ответ есть"));
-      withTip(tab, i === at ? "Этот шаг открыт"
-        : (said[i] ? "Шаг отвечен: можно вернуться и поменять ответ" : "Перейти к этому шагу"));
-      tab.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        // Переход тут ничего никуда не шлёт: вопросы приехали все разом, и
-        // ждать снимка соседнего шага не от кого.
-        box.askStep = i;
-        paintAgentAsk(st, box, ask);
-      });
-      bar.append(tab);
-    });
-    box.append(bar);
-  }
-  box.append(el("div", "casks", open.text || ""));
+// Строка варианта: номер в начале строки. Тем же номером человек называет
+// вариант в ответе, и по нему же панель узнаёт строку.
+const ASK_PICK_RE = /^\s*(\d{1,2})[.)]\s+\S/;
 
-  const list = el("div", "casklist");
-  for (const opt of open.options || []) {
-    if (opt.kind === "free") continue;
-    const mark = many ? { text: opt.text, desc: opt.desc, mark: said[at] === opt.text ? "on" : "off" } : opt;
-    list.append(askOptLine(mark, () => {
-      if (!many) {
-        answer(opt.text);
-        return;
-      }
-      said[at] = said[at] === opt.text ? "" : opt.text;
-      paintAgentAsk(st, box, ask);
-    }));
-  }
-  box.append(list);
-  askFreeField(list, box, "свой ответ пустой: напишите словами, что передать агенту", (text) => {
-    if (!many) {
-      answer(text);
+// Последняя строка блока. По ней блок вопроса отличается от всякого другого
+// нумерованного списка в реплике: галочкам в пересказе плана делать нечего.
+const ASK_PICK_TAIL = "ответ строкой:";
+
+// askChatPicks разбирает блок вопроса в словах реплики: какая развилка, какой
+// номер и на какой строке он стоит. Блока в реплике нет, значит и отмечать
+// нечего.
+function askChatPicks(text) {
+  const lines = String(text || "").split("\n");
+  const out = [];
+  let fork = "";
+  let tail = false;
+  lines.forEach((line, i) => {
+    const head = ASK_FORK_RE.exec(line);
+    if (head) {
+      fork = head[1];
       return;
     }
-    said[at] = text;
-    paintAgentAsk(st, box, ask);
+    if (line.trim().startsWith(ASK_PICK_TAIL)) tail = true;
+    if (fork && ASK_PICK_RE.test(line)) {
+      out.push({ fork, num: Number(ASK_PICK_RE.exec(line)[1]), line: i });
+    }
   });
+  return tail ? out : [];
+}
 
-  if (many) {
-    const row = el("div", "caskr");
-    const go = el("button", "btn btn-sm btn-acc", "Отправить ответ");
-    withTip(go, "Ответы всех шагов уедут одной репликой");
-    go.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      const lines = steps
-        .map((step, i) => (said[i] ? step.text + ": " + said[i] : ""))
-        .filter(Boolean);
-      if (!lines.length) {
-        sayResult("отвечать нечем: отметьте вариант хотя бы на одном шаге", true);
-        return;
-      }
-      answer(lines.join("\n"));
-    });
-    row.append(go);
-    box.append(row);
+// askPickSaid собирает строку ответа из отмеченного: «печать 1, ответ 3». Тот
+// же вид разбирает taskctl decide --answer.
+function askPickSaid(marks) {
+  return marks.filter((own) => own.mark.classList.contains("on"))
+    .map((own) => askPickWord(own.pick)).join(", ");
+}
+
+// askPickWord это кусок ответа про одну развилку: её имя и номер варианта.
+function askPickWord(pick) {
+  return pick.fork + " " + pick.num;
+}
+
+// askPickPut держит строку ответа в поле ввода рядом с тем, что человек
+// написал сам: отметка её дописывает, снятая убирает. Своей отправки у галочек
+// нет, реплику шлёт обычная кнопка чата.
+function askPickPut(ta, state, said) {
+  const had = state.put || "";
+  if (had === said) return;
+  let text = String(ta.value || "");
+  if (had && text.includes(had)) text = text.split(had).join(said);
+  else if (said) text = text.trim() ? text.trim() + " " + said : said;
+  ta.value = text.trim();
+  state.put = said;
+}
+
+// askPickBare снимает галочки с реплики: строки блока остаются словами, уходит
+// одна отметка.
+function askPickBare(msg) {
+  for (const own of msg.askMarks || []) {
+    if (own.mark.remove) own.mark.remove();
   }
+  msg.askMarks = null;
+}
+
+// askPickWire вешает галочки на последнюю реплику с блоком вопроса и снимает
+// их, когда ответа больше не ждут. Зовут её опрос признака и всякая
+// перерисовка ленты: реплика с блоком приходит после признака, а узлы пузырей
+// лента пересобирает своим порядком.
+function askPickWire(feed, ta, state) {
+  if (!feed || !ta) return;
+  const msgs = feed.querySelectorAll(".msg") || [];
+  let at = null;
+  let picks = [];
+  if (state.on) {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const got = askChatPicks(msgs[i].mdText);
+      if (got.length) {
+        at = msgs[i];
+        picks = got;
+        break;
+      }
+    }
+  }
+  // Отвеченный блок остаётся в ленте обычным текстом: галочка при нём соврала
+  // бы, что ответа всё ещё ждут.
+  for (const msg of msgs) {
+    if (msg !== at && msg.askMarks) askPickBare(msg);
+  }
+  if (!at) {
+    askPickPut(ta, state, "");
+    return;
+  }
+  if (at.askMarks) return;
+  const byLine = new Map();
+  for (const li of at.querySelectorAll("li") || []) {
+    const line = li.dataset ? li.dataset.mdline : "";
+    if (line !== undefined && line !== "") byLine.set(String(line), li);
+  }
+  const marks = [];
+  at.askMarks = marks;
+  for (const pick of picks) {
+    const li = byLine.get(String(pick.line));
+    if (!li) continue;
+    const said = askPickWord(pick);
+    const mark = el("button", "caskpick");
+    mark.type = "button";
+    mark.setAttribute("role", "checkbox");
+    mark.setAttribute("aria-label", "Ответить «" + said + "»");
+    // Отмеченное переживает пересборку ленты: узел пузыря собирается заново, а
+    // строка ответа так и стоит в поле ввода, и галочка обязана с ней сойтись.
+    askPickMark(mark, (state.put || "").split(", ").includes(said));
+    mark.append(el("span", "caskbox"));
+    mark.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      askPickMark(mark, !mark.classList.contains("on"));
+      askPickPut(ta, state, askPickSaid(marks));
+    });
+    li.prepend(mark);
+    marks.push({ mark, pick });
+  }
+  askPickPut(ta, state, askPickSaid(marks));
+}
+
+// askPickMark ставит и снимает саму отметку: вид её и слово для чтения с
+// экрана меняются вместе, порознь они разошлись бы.
+function askPickMark(mark, on) {
+  mark.classList.toggle("on", on);
+  mark.setAttribute("aria-checked", on ? "true" : "false");
 }
 
 // Какой разговор сейчас стоит в панели: «проект|адрес».

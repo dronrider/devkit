@@ -200,19 +200,19 @@ func TestChatSaySettlesDelegateAsk(t *testing.T) {
 }
 
 // Проводка вопроса розданной работы в статике: ожидание разговора приезжает
-// полем own_wait, а сам вопрос рисуется виджетом с кнопками
-// (TestStaticAgentAskWidget). Плашки с плоскими строками больше нет: она
-// показывала варианты текстом и не показывала вопрос своей задачи вовсе
-// (DK-652).
+// полем own_wait, а сам вопрос стоит текстом в ленте, и панель вешает при его
+// вариантах галочки (askPickWire, стенд TestStaticAskPicksInReply). Плашки с
+// плоскими строками тут больше нет: она показывала варианты текстом и не
+// показывала вопрос своей задачи вовсе (DK-652).
 func TestStaticHandedAskWiring(t *testing.T) {
 	js := readFile(t, filepath.Join("static", "app.js"))
-	for _, want := range []string{"own_wait", "paintAgentAsk"} {
+	for _, want := range []string{"own_wait", "askPickWire"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("в static/app.js нет %q: вопрос агента не соберётся", want)
 		}
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	for _, want := range []string{".caskopt{", ".casklist{"} {
+	for _, want := range []string{".caskopt{", ".casklist{", ".caskpick{"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет %q", want)
 		}

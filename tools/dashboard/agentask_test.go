@@ -168,24 +168,43 @@ func TestPulseOwnAskKeepsScanAndOptions(t *testing.T) {
 	}
 }
 
-// Стенд фронта: блок вопроса рисуется из фикстуры признака, варианты видны
-// кнопками, пачка идёт шагами, а ответ уезжает репликой разговора, не
-// клавишами в чужое окно. Проверка по тексту static/app.js тут не годится, и
-// постановка называет этот класс дыры прямо: разметку держал и прежний тест, а
-// человек вопроса не видел. Стенд рисует блок в поддельном DOM
-// (testdata/poc_agentask.mjs), вид кнопок меряет testdata/poc_caskopt.mjs. Без
-// node шаг пропускается: узел стенда, а не рабочей части.
-func TestStaticAgentAskWidget(t *testing.T) {
+// Стенд фронта: вопрос агента стоит в ленте текстом, а панель по признаку
+// ожидания добавляет к нему одну галочку слева от каждой строки варианта
+// (DK-864). Отметка собирает строку ответа в поле ввода, снятая её оттуда
+// убирает, отправляет обычная кнопка чата. Проверка по тексту static/app.js
+// тут не годится: разметку держал и прежний тест, а человек вопроса не видел.
+// Стенд рисует ленту в поддельном DOM (testdata/poc_askpick.mjs). Без node шаг
+// пропускается: узел стенда, а не рабочей части.
+func TestStaticAskPicksInReply(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node не найден: стенд вопроса агента пропущен")
+		t.Skip("node не найден: стенд галочек пропущен")
 	}
-	out, err := exec.Command(node, filepath.Join("testdata", "poc_agentask.mjs"),
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_askpick.mjs"),
 		filepath.Join("static", "app.js")).CombinedOutput()
 	if err != nil {
-		t.Fatalf("вопрос агента в панели: %v\n%s", err, out)
+		t.Fatalf("галочки при строках вариантов: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Прежний блок вопроса агента с кнопками и табами убран целиком: он читался
+// формой поверх разговора, запирал чат до ответа и терял рекомендацию по
+// дороге. Разбор снимка панели tmux остался, но за вопросами самого клиента
+// (доверие каталогу, вход по /login), и стенд следит, чтобы вместе с блоком не
+// уехала эта половина.
+func TestStaticAgentAskWidgetGone(t *testing.T) {
+	js := readFile(t, filepath.Join("static", "app.js"))
+	for _, gone := range []string{"paintAgentAsk", "askSay", "box.askSaid", "box.askStep"} {
+		if strings.Contains(js, gone) {
+			t.Errorf("в static/app.js остался прежний блок вопроса агента: %q", gone)
+		}
+	}
+	for _, want := range []string{"function paintClientAsk(", "function askPickWire(", "askStepShell("} {
+		if !strings.Contains(js, want) {
+			t.Errorf("в static/app.js нет %q: вопрос клиента или галочки не соберутся", want)
+		}
+	}
 }
 
 // Шапка вопроса (пароль и агент) собирает заголовок и остаток времени соседними

@@ -76,7 +76,7 @@ func decideName(s string) string {
 }
 
 // cmdDecide это боевой вход команды. Внешний мир писателя признака собирается
-// лениво: заводить его на каждую печать перечня значило бы звать git ради
+// лениво. Заводить его на каждую печать перечня значило бы звать git ради
 // команды, которая только читает файл.
 func cmdDecide(root string, p DecideParams) (string, error) {
 	return runDecide(root, p, nil, os.Getenv)

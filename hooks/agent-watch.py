@@ -1,19 +1,29 @@
 #!/usr/bin/env python3
-"""Сторож фоновых субагентов devkit: сказать сессии, что её субагент отработал.
+"""Сторож фоновых работ devkit: сказать сессии, что её фоновая работа кончилась.
 
-Фоновый субагент отчитывается сессии уведомлением харнеса, и уведомление это
+Фоновая работа отчитывается сессии уведомлением харнеса, и уведомление это
 теряется. Сессия-диспетчер тогда считает отработавшего исполнителя живым,
 задача стоит часами, а итог приходится собирать опросом агентов руками
 (находка DK-519, отчёт по ревью DK-181). Сторож ведёт свой счёт запущенным
 работам и на конце хода сдаёт сессии то, чего она не получила.
 
-Три события, три дела:
+Разрядов работы два, и теряются они по-разному. Субагент кончается своим
+событием, и сторожу остаётся свести его с транскриптом. У команды оболочки,
+уведённой в фон, своего события нет вовсе: сессия, отдавшая в фон слияние,
+ждала вести, которой некому прийти, и так за одну ночь встали две задачи на
+последнем шаге (DK-571, находка DK-168 и DK-516). Конец такой команды виден
+только перечнем работ сессии: команда была в перечне, а на конце хода её там
+нет.
 
-  запуск (ход инструмента делегирования с фоновым ответом)
-      запись в реестр: ID работы, роль субагента, чем названа, куда сложен отчёт
+События и дела:
+
+  запуск (ход делегирования с фоновым ответом, ход Bash с ID фоновой команды)
+      запись в реестр: ID работы, разряд, чем названа, куда сложен отчёт
   конец субагента (SubagentStop)
       отметка в реестре и первая строка отчёта
   конец хода сессии (Stop)
+      перечень работ: команды, которых в нём не стало, кончились, а команды,
+      которых в реестре ещё нет, в него заводятся
       сдача: отработавшие работы, о которых сессия не узнала, уезжают ей
       решением block, и ход продолжается вместо сна
 
@@ -31,9 +41,16 @@
 позже сдачи, стоила бы сессии лишнего хода.
 
 Сторож ловит пропажу перечнем фоновых работ, который харнес кладёт в событие
-конца хода. Работа, которую сессия числит запущенной, а харнес в перечне уже
-не называет, кончилась молча: так выглядит субагент, убитый перезапуском
-процесса. Сторож говорит про такую отдельно, отчёта у неё нет.
+конца хода. Субагент, которого сессия числит запущенным, а харнес в перечне уже
+не называет, кончился молча: так выглядит работа, убитая перезапуском процесса.
+Сторож говорит про такую отдельно, отчёта у неё нет. У команды оболочки тот же
+перечень значит другое: пропав из него, команда просто кончилась, и код
+возврата сторож читает из вести харнеса в транскрипте. Нет там вести, значит
+сессия про конец не знает, и команда уезжает ей сдачей.
+
+Команда, которая идёт, когда ход кончается, остаётся в журнале строкой
+«ожидание»: разбудить сессию нечем, и умрёт такая команда вместе с ней. По этой
+строке и разбирается потом, куда делась работа.
 
 Реестр правится под замком: диспетчер поднимает исполнителей пачкой, ходы
 инструмента идут разом, и два хука одной сессии пишут в один файл. Ожидание
@@ -55,12 +72,13 @@
   DEVKIT_AGENT_WATCH_DIR=..    свой каталог реестра (стенд, прогон проверки)
 
 Реестр лежит по файлу на сессию в ~/.devkit/agents/<сессия>.json, журнал сдач
-в ~/.devkit/agents.log. Жалоба «сессия проспала субагента» разбирается по
-журналу: в нём видно и запуск, и конец, и сдачу с её причиной.
+в ~/.devkit/agents.log. Жалоба «сессия проспала работу» разбирается по
+журналу: в нём видно и разряд, и запуск, и конец, и сдачу с её причиной.
 """
 import fcntl
 import json
 import os
+import re
 import sys
 import time
 
@@ -98,7 +116,12 @@ RUNNING, DONE, LOST = "running", "done", "lost"
 # Статус работы в перечне харнеса, значащий живую работу. Всё остальное
 # (failed и что там ещё придёт) это конец, о котором надо сказать.
 JOB_RUNNING = "running"
-SUBAGENT_JOB = "subagent"
+# Разряды работы, имена те же, что у харнеса в перечне работ сессии.
+SUBAGENT_JOB = hookio.SUBAGENT_JOB
+SHELL_JOB = hookio.SHELL_JOB
+# Метка вести харнеса в транскрипте и код возврата в её тексте.
+MARK = "<task-id>%s</task-id>"
+CODE = re.compile(r"exit code (\d+)")
 
 
 def off(env=None):
@@ -144,12 +167,15 @@ def dashless(value):
     return value or "-"
 
 
-def log(session, agent_id, event, text, env=None):
+def log(session, job_id, event, text, env=None, job=SUBAGENT_JOB):
     """Строка машинного журнала. Формат именованный, как у уведомителя: жалоба
-    разбирается по ключевым словам, а не по счёту полей."""
-    line = "%s сессия %s агент %s событие %s текст «%s»\n" % (
+    разбирается по ключевым словам, а не по счёту полей. Разряд стоит своим
+    полем: субагент и команда оболочки теряются по-разному, и разбирать их
+    порознь надо прямо по журналу."""
+    line = "%s сессия %s разряд %s работа %s событие %s текст «%s»\n" % (
         time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
-        dashless(session)[:8], dashless(agent_id), dashless(event), short(text, 200))
+        dashless(session)[:8], dashless(job), dashless(job_id),
+        dashless(event), short(text, 200))
     hookio.append_capped(log_path(env), line)
 
 
@@ -220,11 +246,28 @@ def sweep(agents, now):
                 if isinstance(v, dict) and now - float(v.get("started") or 0) < LIFETIME)
 
 
+def entry_of(job, kind, description, command, output, now):
+    return {"type": kind, "description": description, "command": command,
+            "output": output, "started": now, "done": 0, "message": "",
+            "state": RUNNING, "told": False, "warned": False, "job": job}
+
+
 def launched(agents, event, now):
-    agents[event.agent_id] = {"type": event.agent_type, "description": event.description,
-                              "output": event.output, "started": now, "done": 0,
-                              "message": "", "state": RUNNING, "told": False}
+    agents[event.agent_id] = entry_of(event.job or SUBAGENT_JOB, event.agent_type,
+                                      event.description, event.command, event.output, now)
     return agents
+
+
+def job_of(entry):
+    """Разряд записи. Записи, сделанные до разряда команд, все до одной про
+    субагентов."""
+    return entry.get("job") or SUBAGENT_JOB
+
+
+def named(entry):
+    """Чем работа названа в журнале и в сдаче: командная строка у команды,
+    данное человеком имя у субагента."""
+    return entry.get("command") or entry.get("description") or ""
 
 
 def finished(agents, event, now):
@@ -239,23 +282,40 @@ def finished(agents, event, now):
     return entry
 
 
-def told_of(transcript, agent_id, tail=TAIL):
-    """Знает ли сессия про конец работы. Весть едет через очередь харнеса, и
-    запись очереди несёт `<task-id>` до того, как реплика доедет до модели:
-    сторожу довольно любой из двух, обе значат весть в пути."""
-    if not transcript or not agent_id:
-        return False
-    mark = "<task-id>%s</task-id>" % agent_id
+def notice(transcript, job_id, tail=TAIL):
+    """Весть харнеса о конце работы из хвоста транскрипта. Весть едет через
+    очередь, и запись очереди несёт `<task-id>` до того, как реплика доедет до
+    модели: сторожу довольно любой из двух, обе значат весть в пути. Пустая
+    строка значит, что вести там нет, и сессия про конец работы не знает.
+
+    Транскрипта нет или он не читается: сдать лишний раз дешевле, чем
+    промолчать про потерянный отчёт, поэтому нечитаемый файл это тоже пусто."""
+    if not transcript or not job_id:
+        return ""
     try:
         with open(transcript, "rb") as f:
             f.seek(0, os.SEEK_END)
-            start = max(0, f.tell() - tail)
-            f.seek(start)
-            return mark.encode("utf-8") in f.read()
+            f.seek(max(0, f.tell() - tail))
+            text = f.read().decode("utf-8", "replace")
     except OSError:
-        # Транскрипта нет или он не читается: сдать лишний раз дешевле, чем
-        # промолчать про потерянный отчёт.
-        return False
+        return ""
+    at = text.find(MARK % job_id)
+    if at < 0:
+        return ""
+    end = text.find("</task-notification>", at)
+    return text[at:end if end >= 0 else len(text)]
+
+
+def told_of(transcript, agent_id, tail=TAIL):
+    """Знает ли сессия про конец работы."""
+    return bool(notice(transcript, agent_id, tail))
+
+
+def code_of(said):
+    """Код возврата команды из вести харнеса. Пусто значит, что вести нет или
+    код в ней не назван: у субагента его не бывает вовсе."""
+    m = CODE.search(said or "")
+    return m.group(1) if m else ""
 
 
 def waited(transcript, pending, seconds, sleep=time.sleep):
@@ -283,13 +343,65 @@ def lost_of(agents, jobs):
     seen = dict((j.id, j) for j in jobs if j.kind == SUBAGENT_JOB)
     out = []
     for agent_id, entry in agents.items():
-        if entry.get("state") != RUNNING:
+        if entry.get("state") != RUNNING or job_of(entry) != SUBAGENT_JOB:
             continue
         job = seen.get(agent_id)
         if job is None or job.status != JOB_RUNNING:
             entry["state"] = LOST
             out.append((agent_id, entry))
     return out
+
+
+def stopped(job_id, jobs, kind):
+    """Кончилась ли работа по перечню харнеса: работы там нет вовсе либо она
+    названа с отказом."""
+    for job in jobs:
+        if job.kind == kind and job.id == job_id:
+            return job.status != JOB_RUNNING
+    return True
+
+
+def shell_ends(agents, event, now):
+    """Команды, которые харнес в перечне работ больше не числит. Своего события
+    про конец команды у харнеса нет, и виден он только так: работа была в
+    перечне, а на конце хода её там нет. Код возврата берётся из вести харнеса,
+    и его отсутствие само по себе новость: значит, вести нет и сессия про конец
+    команды не знает."""
+    out = []
+    for job_id, entry in agents.items():
+        if job_of(entry) != SHELL_JOB or entry.get("state") != RUNNING:
+            continue
+        if not stopped(job_id, event.jobs, SHELL_JOB):
+            continue
+        entry["state"] = DONE
+        entry["done"] = now
+        entry["message"] = code_of(notice(event.transcript, job_id))
+        out.append((job_id, entry))
+    return out
+
+
+def fresh_shells(agents, jobs, now):
+    """Команды из перечня работ, которых в реестре ещё нет. Ход инструмента
+    оболочки доходит до сторожа не на всякой машине: раскладка, положенная до
+    разряда команд, зовёт сторожа одним инструментом делегирования, а перечень
+    конца хода приходит всегда. Через него же попадают в счёт команды, начатые
+    до того, как сторож встал в настройки."""
+    out = []
+    for job in jobs:
+        if job.kind != SHELL_JOB or job.status != JOB_RUNNING or job.id in agents:
+            continue
+        agents[job.id] = entry_of(SHELL_JOB, "", job.description, job.command, "", now)
+        out.append((job.id, agents[job.id]))
+    return out
+
+
+def live_shells(agents):
+    """Команды, которые идут, а ход кончается. Разбудить сессию их концу нечем,
+    и умрут они вместе с ней, поэтому сторож называет их в журнале, пока они
+    ещё живы."""
+    return [(job_id, entry) for job_id, entry in agents.items()
+            if job_of(entry) == SHELL_JOB and entry.get("state") == RUNNING
+            and not entry.get("warned")]
 
 
 def done_word(entry):
@@ -299,26 +411,39 @@ def done_word(entry):
     return "«%s» (%s)" % (name, role) if name else role
 
 
-def report_line(agent_id, entry):
+def shell_line(job_id, entry):
+    """Строка сдачи про команду. Кода возврата в ней может и не быть: он
+    приходит той же вестью харнеса, которая до сессии не дошла."""
+    code = entry.get("message") or ""
+    code = ", код возврата %s" % code if code else ""
+    return ("фоновая команда «%s» (ID %s) кончилась%s, а весть о ней до сессии не дошла: "
+            "харнес больше не числит её среди работ сессии"
+            % (short(named(entry), 120), job_id, code))
+
+
+def report_line(job_id, entry):
+    if job_of(entry) == SHELL_JOB:
+        return shell_line(job_id, entry)
     where = entry.get("output") or ""
     tail = ", отчёт лежит в %s" % where if where else ""
     if entry.get("state") == LOST:
         return ("фоновый субагент %s (ID %s) кончился молча: харнес больше не числит его среди "
-                "работ сессии, а отчёта не прислал%s" % (done_word(entry), agent_id, tail))
+                "работ сессии, а отчёта не прислал%s" % (done_word(entry), job_id, tail))
     said = entry.get("message") or ""
     said = ", первая строка отчёта: «%s»" % said if said else ""
     return ("фоновый субагент %s (ID %s) отработал, а весть о нём до сессии не дошла%s%s"
-            % (done_word(entry), agent_id, tail, said))
+            % (done_word(entry), job_id, tail, said))
 
 
 def handover(lines):
     """Текст сдачи. Сессия читает его вместо сна, поэтому в нём сказано и что
     случилось, и что с этим делать."""
     body = "\n".join("- %s" % line for line in lines)
-    return ("Сторож фоновых субагентов devkit: работа кончилась, а сессия про это не узнала.\n"
+    return ("Сторож фоновых работ devkit: работа кончилась, а сессия про это не узнала.\n"
             "%s\n"
-            "Считать такого субагента работающим нельзя: забери отчёт из его файла и продолжай "
-            "работу. Второй раз сторож про эти работы не скажет." % body)
+            "Считать такую работу идущей нельзя: забери её итог (отчёт субагента из его файла, "
+            "вывод команды из файла её вывода) и продолжай работу. Второй раз сторож про эти "
+            "работы не скажет." % body)
 
 
 def blocked(text, stream=None):
@@ -345,22 +470,35 @@ def update(path, session, change, now, sleep=time.sleep):
 
 
 def handover_lines(agents, event, delivered, env, now):
-    """Что сдать сессии, и заодно отметки в реестре. Пропажи считаются заново,
-    по перечню работ из события: реестр за время ожидания вести мог уехать."""
+    """Что сдать сессии, и заодно отметки в реестре. Концы команд и пропажи
+    считаются заново, по перечню работ из события: реестр за время ожидания
+    вести мог уехать."""
     lines = []
+    for job_id, entry in fresh_shells(agents, event.jobs, now):
+        log(event.session, job_id, "запуск", named(entry), env, SHELL_JOB)
+    for job_id, entry in shell_ends(agents, event, now):
+        code = entry.get("message") or "неизвестен"
+        log(event.session, job_id, "конец", "%s, код возврата %s" % (named(entry), code),
+            env, SHELL_JOB)
     for agent_id, entry in lost_of(agents, event.jobs):
         entry["told"] = True
         lines.append(report_line(agent_id, entry))
         log(event.session, agent_id, "пропажа", entry.get("description") or "", env)
-    for agent_id, entry in sorted(agents.items(), key=lambda kv: kv[1].get("done") or 0):
+    for job_id, entry in sorted(agents.items(), key=lambda kv: kv[1].get("done") or 0):
         if entry.get("state") != DONE or entry.get("told"):
             continue
         entry["told"] = True
-        if agent_id in delivered:
-            log(event.session, agent_id, "весть", "уведомление харнеса дошло само", env)
+        if job_id in delivered:
+            log(event.session, job_id, "весть", "уведомление харнеса дошло само",
+                env, job_of(entry))
             continue
-        lines.append(report_line(agent_id, entry))
-        log(event.session, agent_id, "сдача", entry.get("message") or "", env)
+        lines.append(report_line(job_id, entry))
+        log(event.session, job_id, "сдача", entry.get("message") or "", env, job_of(entry))
+    for job_id, entry in live_shells(agents):
+        entry["warned"] = True
+        log(event.session, job_id, "ожидание",
+            "%s: ход кончился, команда идёт, и вместе с сессией она умрёт" % named(entry),
+            env, SHELL_JOB)
     return lines
 
 
@@ -372,7 +510,8 @@ def handle(event, env=None, now=None, sleep=time.sleep, stream=None):
         if not event.agent_id:
             return 0
         if update(path, event.session, lambda a: launched(a, event, now), now, sleep) is not None:
-            log(event.session, event.agent_id, "запуск", event.description, env)
+            log(event.session, event.agent_id, "запуск",
+                event.command or event.description, env, event.job or SUBAGENT_JOB)
         return 0
     if event.kind == hookio.SUBAGENT_DONE:
         entry = update(path, event.session, lambda a: finished(a, event, now), now, sleep)
@@ -385,7 +524,9 @@ def handle(event, env=None, now=None, sleep=time.sleep, stream=None):
         return 0
     stored = load_registry(path)
     agents = sweep(stored, now)
-    if not agents:
+    fresh = [j for j in event.jobs if j.kind == SHELL_JOB and j.status == JOB_RUNNING
+             and j.id not in agents]
+    if not agents and not fresh:
         if stored:
             # Протухшие записи уехали, и реестр надо переписать даже тогда,
             # когда сдавать нечего: иначе файл сессии живёт вечно.
@@ -394,10 +535,17 @@ def handle(event, env=None, now=None, sleep=time.sleep, stream=None):
     # Весть харнеса пережидается до замка: держать реестр запертым пять секунд
     # значило бы ронять правки соседних ходов той же сессии.
     left = {}
-    for agent_id, entry in agents.items():
-        if entry.get("state") != DONE or entry.get("told"):
+    for job_id, entry in agents.items():
+        if entry.get("told"):
             continue
-        left[agent_id] = grace(env) - max(0.0, now - float(entry.get("done") or 0))
+        if entry.get("state") == DONE:
+            left[job_id] = grace(env) - max(0.0, now - float(entry.get("done") or 0))
+        elif (entry.get("state") == RUNNING and job_of(entry) == SHELL_JOB
+              and stopped(job_id, event.jobs, SHELL_JOB)):
+            # Конец команды виден только тем, что харнес перестал её называть, а
+            # весть о нём ещё в пути: сроку тут столько же, сколько свежему
+            # концу субагента.
+            left[job_id] = grace(env)
     delivered = waited(event.transcript, left, max(left.values()), sleep) if left else set()
     lines = update(path, event.session,
                    lambda a: handover_lines(a, event, delivered, env, now), now, sleep)

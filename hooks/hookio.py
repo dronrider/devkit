@@ -8,7 +8,7 @@
   hookio.session_event(protocol)   событие сессии для уведомителя
   hookio.tool_event(protocol)      завершённый ход инструмента для подхвата реплики
   hookio.start_event(protocol)     старт сессии для реестра чатов
-  hookio.agent_event(protocol)     фоновый субагент для сторожа завершений
+  hookio.agent_event(protocol)     фоновая работа для сторожа завершений
   hookio.reply(protocol)           канал находки: чем сказать, что что-то не так
   hookio.context(protocol)         канал добавки: чем сказать без рамки провала
   hookio.memory_index(protocol)    хвост пути индекса памяти из профиля
@@ -58,6 +58,15 @@ AGENT_LAUNCHED = "agent-launched"
 # Имя инструмента делегирования и признак фонового запуска в его ответе.
 AGENT_TOOL = "Agent"
 AGENT_ASYNC = "async_launched"
+# Имя инструмента оболочки и поле его ответа с ID фоновой команды. Своего
+# статуса у фонового запуска Bash нет, и отличает его именно это поле: у
+# синхронного хода его в ответе не бывает.
+BASH_TOOL = "Bash"
+BASH_ASYNC = "backgroundTaskId"
+# Разряды фоновой работы: субагент и команда оболочки. Этими же словами их
+# называет харнес в перечне работ сессии.
+SUBAGENT_JOB = "subagent"
+SHELL_JOB = "shell"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -78,15 +87,18 @@ Tool = collections.namedtuple("Tool", "session cwd tool agent")
 # сводит запись с файлом транскрипта, а тот назван полным ID.
 Start = collections.namedtuple("Start", "session cwd transcript source")
 # Фоновая работа сессии из перечня события: субагент или команда оболочки. Пока
-# работа в перечне, харнес считает её незакрытой.
-Job = collections.namedtuple("Job", "id kind status description")
-# Фоновый субагент глазами сторожа завершений: ось события, сессия, дерево,
-# транскрипт, ID работы, роль, чем названа, куда сложен отчёт, последняя реплика
-# и перечень фоновых работ сессии на этот момент. Признак active это отметка
-# харнеса о том, что ход уже продолжен стоп-хуком. Поле, которого событие не
-# несёт, приходит пустым: у конца хода нет ни ID работы, ни роли.
+# работа в перечне, харнес считает её незакрытой. У команды оболочки в перечне
+# лежит ещё и сама командная строка, у субагента этого поля нет.
+Job = collections.namedtuple("Job", "id kind status description command")
+# Фоновая работа глазами сторожа завершений: ось события, сессия, дерево,
+# транскрипт, ID работы, разряд работы, роль субагента, чем названа, командная
+# строка, куда сложен отчёт, последняя реплика и перечень фоновых работ сессии
+# на этот момент. Признак active это отметка харнеса о том, что ход уже
+# продолжен стоп-хуком. Поле, которого событие не несёт, приходит пустым: у
+# конца хода нет ни ID работы, ни роли, а у команды оболочки нет роли субагента.
 Agent = collections.namedtuple(
-    "Agent", "kind session cwd transcript agent_id agent_type description output message jobs active")
+    "Agent", "kind session cwd transcript agent_id job agent_type description command "
+             "output message jobs active")
 
 
 class Unknown(Exception):
@@ -221,35 +233,51 @@ def claude_code_jobs(event):
     for item in event.get("background_tasks") or []:
         if isinstance(item, dict):
             out.append(Job(text_of(item.get("id")), text_of(item.get("type")),
-                           text_of(item.get("status")), text_of(item.get("description"))))
+                           text_of(item.get("status")), text_of(item.get("description")),
+                           text_of(item.get("command"))))
     return tuple(out)
 
 
 def claude_code_agent(event):
-    """Событие про фонового субагента: его запуск, его конец либо конец хода
-    сессии с перечнем незакрытых работ. None значит, что сторожу тут смотреть
-    нечего, и хук на таком входе уходит нулём."""
+    """Событие про фоновую работу: её запуск, конец субагента либо конец хода
+    сессии с перечнем незакрытых работ. Разрядов у запуска два, и разводит их
+    имя инструмента: делегирование поднимает субагента, Bash уводит в фон
+    команду оболочки. None значит, что сторожу тут смотреть нечего, и хук на
+    таком входе уходит нулём."""
     name = text_of(event.get("hook_event_name"))
     kind = {"SubagentStop": SUBAGENT_DONE, "Stop": TURN_DONE}.get(name)
+    ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
+    response = event.get("tool_response")
+    job, command, task = SUBAGENT_JOB, "", ""
     if name == "PostToolUse":
-        if text_of(event.get("tool_name")) != AGENT_TOOL:
-            return None
-        if response_field(event.get("tool_response"), "status") != AGENT_ASYNC:
-            # Синхронный субагент отчитывается ходом инструмента, и терять его
-            # сессии негде: сторожить тут нечего.
+        tool = text_of(event.get("tool_name"))
+        if tool == AGENT_TOOL:
+            if response_field(response, "status") != AGENT_ASYNC:
+                # Синхронный субагент отчитывается ходом инструмента, и терять
+                # его сессии негде: сторожить тут нечего.
+                return None
+        elif tool == BASH_TOOL:
+            task = response_field(response, BASH_ASYNC)
+            if not task:
+                # Синхронная команда кончилась тем же ходом, и её вывод сессия
+                # уже прочитала.
+                return None
+            job, command = SHELL_JOB, text_of(ti.get("command"))
+        else:
             return None
         kind = AGENT_LAUNCHED
     elif kind is None:
         return None
-    ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
-    response = event.get("tool_response")
     return Agent(kind=kind,
                  session=text_of(event.get("session_id")),
                  cwd=text_of(event.get("cwd")),
                  transcript=text_of(event.get("transcript_path")),
-                 agent_id=text_of(event.get("agent_id")) or response_field(response, "agentId"),
+                 agent_id=(text_of(event.get("agent_id"))
+                           or response_field(response, "agentId") or task),
+                 job=job,
                  agent_type=text_of(event.get("agent_type")) or text_of(ti.get("subagent_type")),
                  description=text_of(ti.get("description")) or response_field(response, "description"),
+                 command=command,
                  output=response_field(response, "outputFile"),
                  message=text_of(event.get("last_assistant_message")),
                  jobs=claude_code_jobs(event),

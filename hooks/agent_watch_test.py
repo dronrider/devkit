@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Самопроверка сторожа фоновых субагентов (DK-519): реестр запущенных работ и
-сдача сессии того, о чём её не уведомили. Разбор идёт с живых образцов запуска и
-конца хода, стенд это временный каталог реестра и подложный транскрипт, а время
-и ожидание вести подставляются, чтобы прогон не зависел ни от часов, ни от sleep.
+"""Самопроверка сторожа фоновых работ (DK-519, разряд команд DK-571): реестр
+запущенных работ и сдача сессии того, о чём её не уведомили. Разбор идёт с
+живых образцов запуска и конца хода, стенд это временный каталог реестра и
+подложный транскрипт, а время и ожидание вести подставляются, чтобы прогон не
+зависел ни от часов, ни от sleep.
 Хук вдобавок гоняется подпроцессом с подсунутым stdin: важно не только что
 функция считает, но и что команда из settings.json печатает решение и уходит
 нулём.
@@ -26,6 +27,10 @@ watch = importlib.import_module("agent-watch")
 
 SID = "0ebb6e3b-7d4e-4b8b-8a82-a340dd843209"
 AID = "a555b8615fe4588f3"
+# ID фоновой команды и сама команда: ID у харнеса короткий и не похож на ID
+# субагента, и путать их в стенде незачем.
+SHID = "boat3slub"
+CMD = "shipctl merge DK-571"
 NOW = 1787657000.0
 
 
@@ -35,14 +40,26 @@ def sample(name):
 
 
 def event(kind, session=SID, transcript="", agent_id="", agent_type="general-purpose",
-          description="", output="", message="", jobs=(), active=False):
+          description="", output="", message="", jobs=(), active=False,
+          job_kind="subagent", command=""):
     return hookio.Agent(kind=kind, session=session, cwd="/tmp/work", transcript=transcript,
-                        agent_id=agent_id, agent_type=agent_type, description=description,
-                        output=output, message=message, jobs=jobs, active=active)
+                        agent_id=agent_id, job=job_kind, agent_type=agent_type,
+                        description=description, command=command, output=output,
+                        message=message, jobs=jobs, active=active)
 
 
-def job(agent_id=AID, kind="subagent", status="running", description="разбор"):
-    return hookio.Job(id=agent_id, kind=kind, status=status, description=description)
+def job(agent_id=AID, kind="subagent", status="running", description="разбор", command=""):
+    return hookio.Job(id=agent_id, kind=kind, status=status, description=description,
+                      command=command)
+
+
+def notice(job_id=SHID, code=0, name="Слияние ветки"):
+    """Весть харнеса о конце фоновой команды, снятая живьём (DK-571): очередь
+    несёт её в транскрипт целиком, вместе с кодом возврата в тексте."""
+    return ('{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\\n'
+            '<task-id>%s</task-id>\\n<status>completed</status>\\n'
+            '<summary>Background command \\"%s\\" completed (exit code %d)</summary>\\n'
+            '</task-notification>"}\n' % (job_id, name, code))
 
 
 class Sleeper(object):
@@ -85,6 +102,15 @@ class Watch(unittest.TestCase):
     def finish(self, agent_id=AID, message="разобрано три черновика", now=NOW):
         return self.handle(event(hookio.SUBAGENT_DONE, agent_id=agent_id, message=message),
                            now=now)
+
+    def launch_shell(self, job_id=SHID, command=CMD, description="слияние задачи", now=NOW):
+        return self.handle(event(hookio.AGENT_LAUNCHED, agent_id=job_id, agent_type="",
+                                 job_kind="shell", command=command,
+                                 description=description), now=now)
+
+    def journal(self):
+        with open(os.path.join(self.dir, "agents.log"), encoding="utf-8") as f:
+            return f.read()
 
     # Разбор живых образцов
 
@@ -222,6 +248,103 @@ class Watch(unittest.TestCase):
                                  jobs=(job(kind="shell"),)), now=NOW + 60)
         self.assertIsNotNone(said)
 
+    # Разряд команд оболочки (DK-571)
+
+    def test_background_command_sample_is_a_launch(self):
+        ev = hookio.parse_agent("claude-code", sample("tool-done-bash-background"))
+        self.assertEqual(ev.kind, hookio.AGENT_LAUNCHED)
+        self.assertEqual(ev.job, "shell")
+        self.assertEqual(ev.agent_id, "bpmzinhpl")
+        self.assertIn("sleep 8", ev.command)
+
+    def test_shell_turn_sample_carries_the_command(self):
+        ev = hookio.parse_agent("claude-code", sample("turn-done-shell"))
+        self.assertEqual([(j.id, j.kind, j.status) for j in ev.jobs],
+                         [("boat3slub", "shell", "running")])
+        self.assertIn("sleep 40", ev.jobs[0].command)
+
+    def test_command_launch_lands_in_the_registry(self):
+        self.launch_shell()
+        entry = self.registry()[SHID]
+        self.assertEqual(entry["job"], "shell")
+        self.assertEqual(entry["command"], CMD)
+        self.assertEqual(entry["state"], watch.RUNNING)
+        line = self.journal()
+        self.assertIn("разряд shell", line)
+        self.assertIn("событие запуск", line)
+        self.assertIn(CMD, line)
+
+    def test_command_from_the_job_list_is_registered(self):
+        # Раскладка хуков, положенная до разряда команд, зовёт сторожа одним
+        # инструментом делегирования, и запуск команды до него не доходит.
+        # Перечень работ конца хода приходит всегда, и счёт заводится по нему.
+        said = self.handle(event(hookio.TURN_DONE, transcript=self.transcript(""),
+                                 jobs=(job(SHID, kind="shell", command=CMD),)), now=NOW + 60)
+        self.assertIsNone(said)
+        entry = self.registry()[SHID]
+        self.assertEqual(entry["job"], "shell")
+        self.assertEqual(entry["command"], CMD)
+        self.assertEqual(entry["state"], watch.RUNNING)
+        self.assertIn("событие запуск", self.journal())
+
+    def test_running_command_is_not_counted_lost(self):
+        # Команда, которую харнес всё ещё числит своей, идёт, и сдавать про неё
+        # нечего: пропажа считается только по субагентам.
+        self.launch_shell()
+        said = self.handle(event(hookio.TURN_DONE, transcript=self.transcript(""),
+                                 jobs=(job(SHID, kind="shell", command=CMD),)), now=NOW + 60)
+        self.assertIsNone(said)
+        self.assertEqual(self.registry()[SHID]["state"], watch.RUNNING)
+
+    def test_command_alive_at_the_end_of_the_turn_leaves_a_line(self):
+        # Ход кончился, команда идёт: разбудить сессию её концу нечем, и умрёт
+        # она вместе с сессией. Строка журнала это единственный след.
+        self.launch_shell()
+        self.handle(event(hookio.TURN_DONE, transcript=self.transcript(""),
+                          jobs=(job(SHID, kind="shell", command=CMD),)), now=NOW + 60)
+        line = self.journal()
+        self.assertIn("событие ожидание", line)
+        self.assertIn("разряд shell", line)
+        self.assertIn("вместе с сессией", line)
+
+    def test_command_gone_from_the_job_list_is_finished(self):
+        # Своего события про конец команды у харнеса нет, и конец её виден
+        # только тем, что работы в перечне не стало. Код возврата приезжает
+        # вестью харнеса, и она же значит, что сессия про конец знает.
+        path = self.transcript(notice())
+        self.launch_shell()
+        said = self.handle(event(hookio.TURN_DONE, transcript=path), now=NOW + 60)
+        self.assertIsNone(said)
+        entry = self.registry()[SHID]
+        self.assertEqual(entry["state"], watch.DONE)
+        line = self.journal()
+        self.assertIn("событие конец", line)
+        self.assertIn("код возврата 0", line)
+        self.assertIn(CMD, line)
+
+    def test_finished_command_without_a_notice_is_handed_over(self):
+        # Регрессия DK-571: фоновое слияние доехало, весть о нём потерялась, и
+        # сессия ушла бы спать, считая команду идущей.
+        path = self.transcript("")
+        self.launch_shell()
+        said = self.handle(event(hookio.TURN_DONE, transcript=path), now=NOW + 60)
+        self.assertIsNotNone(said)
+        self.assertEqual(said["decision"], "block")
+        self.assertIn("фоновая команда", said["reason"])
+        self.assertIn(CMD, said["reason"])
+        self.assertIn(SHID, said["reason"])
+        self.assertTrue(self.registry()[SHID]["told"])
+        self.assertIn("событие сдача", self.journal())
+
+    def test_failed_command_carries_its_exit_code(self):
+        # Код возврата читается из вести харнеса, а не выдумывается: упавшее
+        # слияние отличается от прошедшего только им.
+        path = self.transcript(notice(code=1))
+        self.launch_shell()
+        self.handle(event(hookio.TURN_DONE, transcript=path), now=NOW + 60)
+        self.assertEqual(self.registry()[SHID]["message"], "1")
+        self.assertIn("код возврата 1", self.journal())
+
     def test_continued_turn_is_not_handed_over_twice(self):
         path = self.transcript("")
         self.launch()
@@ -307,6 +430,21 @@ class Watch(unittest.TestCase):
                              input=json.dumps(turn), capture_output=True, text=True, env=env)
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(json.loads(run.stdout)["decision"], "block")
+
+    def test_hook_counts_a_background_command(self):
+        # Ход Bash с фоновым ответом, снятый живьём: сторож стоит на нём тем же
+        # матчером, что и на делегировании, и команда обязана попасть в реестр.
+        launch = sample("tool-done-bash-background")
+        launch["session_id"] = SID
+        env = dict(os.environ)
+        env[watch.DIR_ENV] = self.dir
+        run = subprocess.run([sys.executable, HOOK, "--hook", "claude-code"],
+                             input=json.dumps(launch), capture_output=True, text=True, env=env)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        entry = self.registry()["bpmzinhpl"]
+        self.assertEqual(entry["job"], "shell")
+        self.assertIn("sleep 8", entry["command"])
+        self.assertIn("разряд shell", self.journal())
 
     def test_unknown_protocol_is_a_refusal(self):
         run = subprocess.run([sys.executable, HOOK, "--hook", "нетакого"],

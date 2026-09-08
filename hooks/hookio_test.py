@@ -30,6 +30,7 @@ WRITES = {
 }
 TOOLS = {
     "tool-done-bash.json": ("Bash", None),
+    "tool-done-bash-background.json": ("Bash", None),
     "tool-done-subagent.json": ("Bash", "general-purpose"),
 }
 SESSIONS = {

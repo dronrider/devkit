@@ -2768,6 +2768,25 @@ func TestStaticChatListFresh(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Прогрев списка разговоров на возврате из пула: возврат в открытый разговор
+// перечитывает перечень в фон, и первый взгляд на список видит настоящий
+// состав, а не память прошлой сборки панели. Перечитка самого открытия, пока
+// она в полёте, говорит о себе строкой под строками (стенд
+// testdata/poc_chatwarm.mjs, DK-872). Без node шаг пропускается: узел стенда,
+// а не рабочей части.
+func TestStaticChatListWarmOnReturn(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд прогрева списка чатов пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatwarm.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("прогрев списка чатов: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Выравнивание записей ленты: у текста всех видов один левый край и одна
 // правая граница. Пользователь на снимке: «позиция блоков сообщений в чате
 // слева или отступ плавает, все блоки чата должны быть одинаковой ширины и

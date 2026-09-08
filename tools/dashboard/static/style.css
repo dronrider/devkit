@@ -310,10 +310,7 @@ a:hover{text-decoration:underline}
 .caskopt:active{filter:brightness(0.92)}
 .caskopt:focus:not(:focus-visible){outline:none}
 .caskopt:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
-.caskopt.on{border-color:var(--acc);background:color-mix(in oklab,var(--acc) 12%,var(--bg2))}
 .caskbox{flex:none;width:15px;height:15px;margin-top:2px;border:1.5px solid var(--line2);border-radius:4px;background:var(--bg2)}
-.caskopt.on .caskbox{border-color:var(--acc);background:var(--acc);position:relative}
-.caskopt.on .caskbox::after{content:"";position:absolute;left:32%;top:8%;width:26%;height:56%;border:solid var(--bg0);border-width:0 2px 2px 0;transform:rotate(45deg)}
 /* Галочка при строке варианта в самой реплике (DK-864). Панель добавляет к
    блоку вопроса одну её и больше ничего: рамка вокруг реплики сделала бы из
    разговора форму, а прежний блок с кнопками ею и был. Отметка та же, что у
@@ -329,15 +326,9 @@ a:hover{text-decoration:underline}
 .caskwords{display:flex;flex-direction:column;gap:2px;min-width:0}
 .casklabel{font:500 12.5px var(--sans);color:var(--tx)}
 .caskwhy{font:400 11.5px/1.45 var(--sans);color:var(--tx3)}
-.caskown .caskwords{font:500 12.5px var(--sans);color:var(--tx2)}
-.caskopt.caskown.on .caskwords{color:var(--acc)}
-/* свободный ответ: поле своей строкой под списком и только после выбора */
+/* поле ввода строкой: помощник пароля askpass */
 .caskfree{display:flex;gap:8px;margin-top:8px}
 .caskfree .dwhyin{flex:1;min-width:0}
-/* сводка ответов опроса: вопрос строкой, ответ под ним */
-.caskdone{display:flex;flex-direction:column;gap:2px;padding:6px 0}
-.caskdone b{font:500 12.5px var(--sans);color:var(--tx)}
-.caskwarn{margin-top:6px;font:500 12px var(--sans);color:var(--block)}
 /* пока ход уезжает клиенту, блок не гаснет и не подменяется словами: он просто
    перестаёт слушать нажатия */
 .cask.busy{opacity:0.7;pointer-events:none}
@@ -1953,20 +1944,9 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 .ktab .n{margin-left:7px;padding:1px 7px;border-radius:9px;background:var(--bg3);font:600 10.5px var(--mono);color:var(--tx2);white-space:nowrap;vertical-align:1px}
 .ktab.onktab .n{background:color-mix(in oklab,var(--acc) 22%,transparent);color:var(--tx)}
 
-/* шаги опроса это та же полоса табов, что у доски: вид и механика общие, а
-   своего тут только отступ, потому что полоса стоит первой в блоке вопроса, а
-   не под шапкой экрана. Правило стоит после .ktabs нарочно: сила у них одна, и
-   заданный выше отступ полоса бы перебила своим верхним */
-.caskst{margin:0 0 8px;flex-wrap:wrap}
-/* каркас соседнего шага: встаёт под переехавшим подчёркиванием, пока едет
-   снимок панели клиента */
 /* текст вопроса клиента приходит его словами, и путь без пробелов в нём
    обычное дело: длинное слово разрывается, а не уносит блок вбок */
 .casks{overflow-wrap:anywhere}
-.caskwait{display:flex;align-items:baseline;gap:7px;padding:8px 0 4px;color:var(--tx3);font:400 12.5px var(--sans)}
-.caskwait b{font:600 12.5px var(--sans);color:var(--tx2)}
-/* «ответ есть» у отвеченного шага это подпись, а не счётчик: цифры у шага нет */
-.caskst .ktab .n{font:500 10px var(--sans)}
 
 /* полоска работ вместо ленты сессий на экране проекта */
 

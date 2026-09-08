@@ -192,7 +192,7 @@ func TestChatAskSignWithoutSessionReachesTaskChat(t *testing.T) {
 	if ask.Text != "куда катить" {
 		t.Errorf("текст вопроса не доехал: %q", ask.Text)
 	}
-	if len(ask.Options) != 3 || ask.Options[0].Text != "в прод" || ask.Options[1].Text != "в стенд" {
+	if len(ask.Options) != 2 || ask.Options[0].Text != "в прод" || ask.Options[1].Text != "в стенд" {
 		t.Fatalf("варианты не доехали: %+v", ask.Options)
 	}
 

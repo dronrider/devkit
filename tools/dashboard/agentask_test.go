@@ -66,14 +66,11 @@ func TestChatAskAgentWithoutTmux(t *testing.T) {
 	if ask.Text != "куда катить" {
 		t.Errorf("текст вопроса потерялся: %q", ask.Text)
 	}
-	if len(ask.Options) != 3 {
-		t.Fatalf("варианты и свободный ответ не приехали: %+v", ask.Options)
+	if len(ask.Options) != 2 {
+		t.Fatalf("варианты не приехали: %+v", ask.Options)
 	}
 	if ask.Options[0].Text != "в прод" || !strings.Contains(ask.Options[0].Desc, askAdviceWord) {
 		t.Errorf("рекомендованный вариант не помечен: %+v", ask.Options[0])
-	}
-	if ask.Options[2].Kind != pickFree {
-		t.Errorf("своими словами ответить нечем: %+v", ask.Options[2])
 	}
 	if ask.Until != 0 && ask.Steps != nil {
 		t.Errorf("одиночный вопрос приехал шагами: %+v", ask.Steps)
@@ -195,12 +192,13 @@ func TestStaticAskPicksInReply(t *testing.T) {
 // уехала эта половина.
 func TestStaticAgentAskWidgetGone(t *testing.T) {
 	js := readFile(t, filepath.Join("static", "app.js"))
-	for _, gone := range []string{"paintAgentAsk", "askSay", "box.askSaid", "box.askStep"} {
+	for _, gone := range []string{"paintAgentAsk", "askSay", "box.askSaid", "box.askStep",
+		"askStepShell", "askFreeField", "ask.steps", "ask.said"} {
 		if strings.Contains(js, gone) {
 			t.Errorf("в static/app.js остался прежний блок вопроса агента: %q", gone)
 		}
 	}
-	for _, want := range []string{"function paintClientAsk(", "function askPickWire(", "askStepShell("} {
+	for _, want := range []string{"function paintClientAsk(", "function askPickWire("} {
 		if !strings.Contains(js, want) {
 			t.Errorf("в static/app.js нет %q: вопрос клиента или галочки не соберутся", want)
 		}

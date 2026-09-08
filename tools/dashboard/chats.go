@@ -2592,7 +2592,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// Сессия стоит на вопросе агента, а живого терминала у неё нет: реплика
 	// идёт во вход разговора, а не клавишами. Живому терминалу реплика едет
 	// им же, дорогой ниже, тем же путём, что и любой другой чат: с концом
-	// хода, которым хук отбил AskUserQuestion, сессия снова отвечает на ввод.
+	// хода, которым агент задал вопрос, сессия снова отвечает на ввод.
 	if done, ok := s.sayToAsk(found, info, sid, text, recs); ok {
 		s.chatSayDone(sid, claim, "ask")
 		s.saidSay(saidSessionKey(sid), text, "ask")
@@ -2868,16 +2868,14 @@ func bangLine(text string) bool {
 // вопроса. Совпадение строгое нарочно: реплика превращается в нажатие, и
 // угадывать за человека дороже, чем отказать. Понимаются номер пункта, слова
 // согласия и отказа («да» это первый пункт Yes, «нет» это первый пункт No) и
-// однозначное начало текста варианта. Служебные пункты виджета (свободный
-// ответ, кнопки Next и Submit) так не выбираются: свободный ответ без слов
-// открыл бы у клиента пустое поле, и человек думал бы, что ответил.
+// однозначное начало текста варианта.
 func askOptionOf(ask tmuxAsk, text string) int {
 	said := strings.TrimRight(strings.ToLower(strings.TrimSpace(text)), ".!")
 	if said == "" || len(ask.Options) == 0 {
 		return 0
 	}
 	plain := func(n int) int {
-		if n >= 1 && n <= len(ask.Options) && ask.Options[n-1].Kind == "" {
+		if n >= 1 && n <= len(ask.Options) {
 			return n
 		}
 		return 0
@@ -3225,12 +3223,6 @@ func (s *server) handleChatAskAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Option int `json:"option"`
-		// Text это свободный ответ: вариант «Type something» открывает у
-		// клиента поле, и слова человека едут туда следом за выбором.
-		Text string `json:"text"`
-		// Step это переход на шаг опроса (счёт с единицы): шаги у клиента табы,
-		// и ходить по ним человек вправе свободно, не отвечая на текущий.
-		Step int `json:"step"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
@@ -3241,91 +3233,23 @@ func (s *server) handleChatAskAnswer(w http.ResponseWriter, r *http.Request) {
 			"клиент %s больше ни о чём не спрашивает: отвечать нечего", name)})
 		return
 	}
-	// Переход по табам это не ответ: он ничего не выбирает, а только открывает
-	// другой шаг опроса. Ответы при этом копятся у самого клиента.
-	if body.Step > 0 {
-		if body.Step > len(ask.Steps) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
-				"у опроса %d шагов, а выбран %d", len(ask.Steps), body.Step)})
-			return
-		}
-		if err := tmuxStepTo(name, ask, body.Step); err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
-				"переход по шагам не подался в tmux-сессию %s: %s", name, procErr(err))})
-			return
-		}
-		s.logf("шаг опроса клиента %s в %s: %d (%s)", name, found.Name, body.Step,
-			ask.Steps[body.Step-1].Name)
-		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
-			"step": body.Step, "message": ""})
-		return
-	}
 	if body.Option < 1 || body.Option > len(ask.Options) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
 			"у вопроса %d вариантов, а выбран %d", len(ask.Options), body.Option)})
 		return
 	}
 	pick := ask.Options[body.Option-1]
-	// Свободный ответ без слов клиенту не нужен: он откроет поле и встанет
-	// ждать, а человек будет думать, что ответил.
-	if pick.Kind == pickFree && strings.TrimSpace(body.Text) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
-			"вариант «%s» это свободный ответ: без слов отправлять нечего", pick.Text)})
-		return
-	}
-	if pick.Kind != pickFree && strings.TrimSpace(body.Text) != "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
-			"вариант «%s» слов не ждёт: текст едет только со свободным ответом", pick.Text)})
-		return
-	}
-	if err := tmuxAnswer(name, ask, body.Option, body.Text); err != nil {
+	if err := tmuxAnswer(name, ask, body.Option, ""); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
 			"ответ не подался в tmux-сессию %s: %s", name, procErr(err))})
 		return
 	}
 	said := pick.Text
-	if pick.Kind == pickFree {
-		said = pick.Text + ": " + truncate(body.Text, 120)
-	}
-	// Отвеченный последним шаг приводит сводку самого виджета, и второе
-	// подтверждение человеку не нужно: последний ответ и есть отправка
-	// (замечание пользователя). Проходит её дашборд сам и только когда
-	// отвечено всё: со своим предупреждением сводка остаётся на экране, иначе
-	// опрос уехал бы неполным.
-	if note := s.askPassReview(name); note != "" {
-		said += ", " + note
-	}
 	s.askAnswered(sid)
 	s.logf("ответ на вопрос клиента %s в %s: пункт %d (%s)", name, found.Name, body.Option, said)
 	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
 		"option": body.Option, "said": said,
 		"message": "ответ отправлен клиенту: " + said})
-}
-
-// askPassReview проходит сводку опроса за человека. Пустая строка значит, что
-// проходить было нечего: либо сводки нет, либо она предупреждает о
-// неотвеченных вопросах, и тогда решать человеку.
-func (s *server) askPassReview(name string) string {
-	ask := tmuxAskOf(name)
-	if ask.Kind != askKindReview || ask.Warn != "" {
-		return ""
-	}
-	at := 0
-	for i, opt := range ask.Options {
-		if opt.Kind == pickSubmit {
-			at = i + 1
-			break
-		}
-	}
-	if at == 0 {
-		return ""
-	}
-	if err := tmuxAnswer(name, ask, at, ""); err != nil {
-		s.logf("сводка опроса %s не отправилась: %s", name, procErr(err))
-		return ""
-	}
-	s.logf("сводка опроса %s отправлена без второго подтверждения", name)
-	return "ответы отправлены"
 }
 
 // chatSidOf разбирает адрес разговора: проект и сессию. Дальше дороги две, и

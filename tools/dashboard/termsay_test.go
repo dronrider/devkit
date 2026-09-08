@@ -403,7 +403,6 @@ func TestAskOptionOf(t *testing.T) {
 	ask := tmuxAsk{Options: []tmuxPick{
 		{Text: "Yes, I trust this folder"},
 		{Text: "No, exit"},
-		{Text: "Type something", Kind: pickFree},
 	}}
 	for _, tc := range []struct {
 		said string
@@ -416,7 +415,6 @@ func TestAskOptionOf(t *testing.T) {
 		{"почему встал", 0},
 		{"9", 0},
 		{"3", 0},
-		{"type something", 0},
 		{"", 0},
 	} {
 		if got := askOptionOf(ask, tc.said); got != tc.want {

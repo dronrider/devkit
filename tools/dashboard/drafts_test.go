@@ -891,7 +891,7 @@ func TestTaskOfDraftIDNamesDraft(t *testing.T) {
 
 // Груминг идёт живым разговором и спрашивает в нём же (решение 1 LLD DK-354):
 // вопросов на форме записи больше нет, а ожидание ответа видно кружком на
-// кнопке чата. Признак тот же, что у строки доски: его кладёт taskctl ask во
+// кнопке чата. Признак тот же, что у строки доски: его кладёт печать блока во
 // вход разговора, и разговор груминга носит имя task-<ID>, туда же кладёт ответ
 // панель. Заодно тут сторожится сам заказ: он обязан звать агента спрашивать в
 // разговоре, а не кончать заход вопросом.
@@ -901,13 +901,13 @@ func TestDraftWaitingFromAsk(t *testing.T) {
 		`{"text": "ссылка на черновик из чата не открывается", "prio": "mid"}`).Body.Close()
 
 	order := draftsResp(t, c, e)["drafts"].([]any)[0].(map[string]any)["order"]
-	if said, _ := order.(string); !strings.Contains(said, "AskUserQuestion") ||
-		!strings.Contains(said, "хук") {
-		t.Errorf("заказ груминга не велит спрашивать штатным AskUserQuestion: %v", order)
+	if said, _ := order.(string); !strings.Contains(said, "decide") ||
+		!strings.Contains(said, "--chat") {
+		t.Errorf("заказ груминга не велит спрашивать блоком decide --chat: %v", order)
 	}
 
-	// Признак кладёт taskctl ask; тут он пишется тем же пакетом, что и у
-	// инструмента, чтобы стенд не расходился с ним форматом.
+	// Признак кладёт печать блока вопроса; тут он пишется тем же пакетом, что
+	// и у утилиты, чтобы стенд не расходился с ней форматом.
 	ask := chat.Ask{Until: time.Now().Add(5 * time.Minute), Task: "XR-005", Session: "sid-1",
 		Questions: []chat.Question{{Text: "резать строку или поднять цену"}}}
 	if err := chat.WriteAsk(e.proj, chat.TaskName("XR-005"), ask); err != nil {

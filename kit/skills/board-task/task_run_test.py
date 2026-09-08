@@ -22,8 +22,10 @@ sys.path.insert(0, HERE)
 task_run = importlib.import_module("task-run")
 
 # Стаб доски: печатает строку задачи тем же форматом, каким её печатает taskctl
-# («DK-1 в in-progress»), а секцию читает из файла стенда. Пометку про
-# пользовательскую приёмку он печатает второй строкой, когда её просят.
+# («DK-1 в in-progress»), а секцию читает из файла стенда. Строке в check он
+# печатает третьей строкой пометку про очередь выката и вид приёмки, ровно тем
+# форматом, каким её собирает checkMarkLabel: «код слит, вид mixed, строка не
+# двигалась 0 дней». Вид приходит стенду хвостом секции («check-user»).
 TASKCTL_STUB = r'''#!/usr/bin/env python3
 import os
 import sys
@@ -34,8 +36,9 @@ with open(state, encoding="utf-8") as f:
 if sys.argv[1:2] != ["show"]:
     sys.exit(0)
 tail = ""
-if sect.startswith("check-user"):
-    sect, tail = "check", "  сценарий пользовательский"
+if sect.startswith("check-"):
+    sect, kind = "check", sect.split("-", 1)[1]
+    tail = "  код слит, вид %s, строка не двигалась 0 дней" % kind
 sys.stdout.write("%s в %s\n" % (sys.argv[2], sect))
 sys.stdout.write("| %s | строка | task | P2 | 10 | S | file |\n" % sys.argv[2])
 if tail:
@@ -105,6 +108,7 @@ sys.exit(0)
 # а запись реестра чатов за SessionStart-хук: на стенде хуков харнеса нет, а
 # оболочка читает именно их следы.
 LIVE_STUB = r'''#!/usr/bin/env python3
+import json
 import os
 import subprocess
 import sys
@@ -119,6 +123,7 @@ sid = os.environ["DEVKIT_TEST_SID"]
 devkit = os.path.join(home, ".devkit")
 os.makedirs(devkit, exist_ok=True)
 turns = os.environ.get("DEVKIT_TURN_MARK_LOG") or os.path.join(devkit, "turns.log")
+agents = os.environ.get("DEVKIT_AGENT_WATCH_DIR") or os.path.join(devkit, "agents")
 stamp = "%Y-%m-%dT%H:%M:%S"
 
 
@@ -139,6 +144,31 @@ def note(why):
         f.write("%s сессия %s повод %s уровень громкий бэкенд стенд цель - "
                 "задача DK-1 проект p код возврата: 0\n"
                 % (time.strftime(stamp), sid[:8], why))
+
+
+def watch(state):
+    """Реестр субагентов сессии за сторожа hooks/agent-watch.py: одна работа,
+    живая или конченная. Каталог тот же, каким его подменяет стенд обоим,
+    сторожу и оболочке."""
+    os.makedirs(agents, exist_ok=True)
+    now = time.time()
+    body = {"session": sid, "updated": now,
+            "agents": {"a1": {"type": "exec-high", "description": "работа",
+                              "output": "", "started": now, "done": 0,
+                              "state": state, "told": False}}}
+    with open(os.path.join(agents, sid + ".json"), "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False)
+
+
+def hits(word):
+    """Сколько раз слово встретилось в журнале утилит проекта. Стенд ждёт по
+    признаку, строке оболочки, а не паузой: пауза под нагрузкой кончается
+    раньше работы."""
+    path = os.path.join(devkit, "log")
+    if not os.path.isfile(path):
+        return 0
+    with open(path, encoding="utf-8") as f:
+        return len([l for l in f if word in l])
 
 
 def crowd(count):
@@ -174,12 +204,18 @@ while True:
     with open(calls, encoding="utf-8") as f:
         n = len([l for l in f if l.strip()])
     step = plan[min(n, len(plan)) - 1]
+    seen = 0
     if step == "закрой":
         open(state, "w", encoding="utf-8").write("архиве\n")
     elif step == "паркуй":
         open(state, "w", encoding="utf-8").write("blocked\n")
     elif step == "падение":
         sys.exit(1)
+    elif step == "субагенты":
+        # Голова раздала работу фоновым субагентам и кончила ход, ничего не
+        # сдвинув. Реестр сторожа при этом держит живую работу.
+        watch("running")
+        seen = hits("живых субагентах")
     elif step == "вопрос":
         mark("ждёт", "permission_prompt")
         time.sleep(0.3)
@@ -236,6 +272,16 @@ while True:
         with open(os.path.join(home, "поверх"), "a", encoding="utf-8") as f:
             f.write(order + "\n")
     mark("кончен")
+    if step == "субагенты":
+        # Заказа на этот проход оболочка подать не должна: голову будит конец
+        # субагента. Ждём её строку об этом, потом играем сам конец работы,
+        # ход по его вести и обычный конец хода.
+        until = time.time() + 10
+        while time.time() < until and hits("живых субагентах") <= seen:
+            time.sleep(0.05)
+        watch("done")
+        mark("начат")
+        mark("кончен")
     if step == "чужой":
         # Реплика человека, поданная панелью в это же окно: ход начался не по
         # заказу оболочки и кончился сам. Отметки пишутся подряд, без сна: сон
@@ -320,6 +366,9 @@ class Stand:
             # подавать некому, и тест падал на соседях по прогону.
             "DEVKIT_TASK_MUTE": self.mute,
             "DEVKIT_TMUX": "task-DK-1",
+            # Реестр субагентов уводится в корень стенда обоим, стабу за
+            # сторожа и оболочке: машинный реестр живых сессий тут ни при чём.
+            "DEVKIT_AGENT_WATCH_DIR": os.path.join(self.root, "agents"),
             # Метку печатного режима ставит дашборд, и живая голова обязана
             # снять её с клиента: с нею рубеж синхронности отбивает фоновый ход.
             "DEVKIT_HEADLESS": "дашборд",
@@ -427,6 +476,25 @@ class TestPasses(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(s.orders(), [])
         self.assertIn("приёмки человеком", r.stdout)
+
+    def test_mixed_acceptance_stops_the_pipeline(self):
+        # Предмет DK-870: вид приёмки show печатает словами «вид mixed» с
+        # DK-298, а оболочка искала в его выводе слово «пользовательск». Задачу,
+        # ждущую человека, она не узнавала и долбила заказами до воронки.
+        s = self.stand(sect="check-mixed")
+        r = s.run()
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(s.orders(), [])
+        self.assertIn("приёмки человеком", r.stdout)
+
+    def test_agent_acceptance_keeps_the_pipeline(self):
+        # Обратная сторона: агентский вид проверяет сама голова, и вставать
+        # оболочке тут не на чем.
+        s = self.stand(sect="check-agent", plan="работа|закрой")
+        r = s.run()
+        self.assertEqual(r.returncode, 0)
+        self.assertNotIn("приёмки человеком", r.stdout)
+        self.assertEqual(len(s.orders()), 2, s.orders())
 
     def test_funnel_stops_after_three_idle_passes(self):
         # Голова выходит быстро и строку не двигает: обычно это сломанное
@@ -605,6 +673,28 @@ class TestLiveHead(unittest.TestCase):
         self.assertTrue([l for l in s.journal() if "ход уже начат репликой человека" in l],
                         s.journal())
         self.assertEqual(len(s.orders()), 2, s.orders())
+
+    def test_live_agents_hold_the_order(self):
+        # Предмет DK-870: голова раздала работу фоновым субагентам и ждёт их
+        # конца. Заказ на такой проход не подаётся, ход поднимает конец
+        # субагента, а не оболочка.
+        s = self.stand(plan="субагенты|закрой", pause="1")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, s.why(got))
+        told = [l for l in s.journal() if "живых субагентах" in l]
+        self.assertTrue(told, s.journal())
+        self.assertIn("exec-high", told[0])
+        self.assertEqual(len(s.orders()), 2, s.orders())
+
+    def test_live_agents_do_not_feed_the_funnel(self):
+        # Три коротких прохода подряд при живых субагентах. До DK-870 воронка
+        # снимала на третьем окно вместе с субагентами, и работа исполнителя
+        # пропадала (так погиб exec-high на седьмой минуте DK-864).
+        s = self.stand(plan="субагенты|субагенты|субагенты|закрой")
+        got = s.run("--passes", "6")
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual([l for l in s.journal() if "вхолостую" in l], [], s.journal())
+        self.assertEqual(len(s.orders()), 4, s.orders())
 
     def test_trimmed_journal_does_not_repeat_a_turn(self):
         # Журнал отметок общий на машину и режется по размеру. Оболочка, что

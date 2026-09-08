@@ -8,6 +8,7 @@
 фикстура, изображающая чужую программу.
 """
 import importlib
+import json
 import os
 import shutil
 import subprocess
@@ -728,6 +729,41 @@ class TestLiveHead(unittest.TestCase):
         got = s.run()
         self.assertEqual(got.returncode, 1, s.why(got))
         self.assertTrue([l for l in s.journal() if "живая голова вышла" in l], s.journal())
+
+
+class TestBusy(unittest.TestCase):
+    """Живая работа сессии по реестру сторожа. Считаются тут субагенты: конца
+    фоновой команды голова не дождётся, и проход, отложенный ради такой записи,
+    встал бы навсегда (DK-571)."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="task-run-busy-")
+        os.environ[task_run.AGENTS_ENV] = self.root
+        self.pipe = task_run.Pipeline(task_run.parse_args(
+            ["DK-1", "-C", self.root, "--", "claude"]))
+        self.pipe.sid = SID
+
+    def tearDown(self):
+        os.environ.pop(task_run.AGENTS_ENV, None)
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def registry(self, agents):
+        with open(os.path.join(self.root, SID + ".json"), "w", encoding="utf-8") as f:
+            json.dump({"session": SID, "updated": 0, "agents": agents}, f, ensure_ascii=False)
+
+    def test_live_subagent_counts(self):
+        self.registry({"a1": {"type": "exec-high", "state": "running", "job": "subagent"}})
+        self.assertEqual(self.pipe.busy(), ["exec-high"])
+
+    def test_old_entry_without_a_kind_counts_as_a_subagent(self):
+        # Записи, сделанные до разряда команд, все до одной про субагентов.
+        self.registry({"a1": {"type": "exec-high", "state": "running"}})
+        self.assertEqual(self.pipe.busy(), ["exec-high"])
+
+    def test_live_command_does_not_hold_the_pass(self):
+        self.registry({"b1": {"type": "", "state": "running", "job": "shell",
+                              "command": "shipctl merge DK-1"}})
+        self.assertEqual(self.pipe.busy(), [])
 
 
 class TestJournal(unittest.TestCase):

@@ -135,6 +135,10 @@ NOTIFY_LOG = os.path.join(HOME_DIR, "notify.log")
 AGENTS_DIR = os.path.join(HOME_DIR, "agents")
 AGENTS_ENV = "DEVKIT_AGENT_WATCH_DIR"
 AGENT_RUNNING = "running"
+# Разряд записи реестра. Считаются тут только субагенты: фоновая команда
+# оболочки тоже лежит в реестре (DK-571), но конца её голова не дождётся, и
+# проход, отложенный ради такой записи, встал бы навсегда.
+AGENT_SUBAGENT = "subagent"
 # Журнал отметок читается тем же ключом, каким его подменяет себе сам хук.
 # Стенд, разведший записи хука по временной директории, обязан развести и
 # чтение. Иначе оболочка смотрела бы в общий машинный журнал.
@@ -568,7 +572,8 @@ class Pipeline:
         if not isinstance(got, dict):
             return []
         return [str(v.get("type") or "-") for v in got.values()
-                if isinstance(v, dict) and v.get("state") == AGENT_RUNNING]
+                if isinstance(v, dict) and v.get("state") == AGENT_RUNNING
+                and (v.get("job") or AGENT_SUBAGENT) == AGENT_SUBAGENT]
 
     def wait_turn(self, n):
         """Ждать конца прохода. Возврат это слово отметки («кончен», «упал») или

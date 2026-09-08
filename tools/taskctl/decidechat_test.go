@@ -109,7 +109,7 @@ func TestChatBlockWithoutForks(t *testing.T) {
 
 // TestChatPanelWritesAsk: в сессии панели та же команда кладёт признак
 // ожидания, зовёт уведомитель и паркует строку (DK-864, решение «печать»).
-// Раньше это делал хук ask-panel.py на вызове AskUserQuestion. Блок при этом
+// Раньше это делал хук ask-panel.py на вызове виджета вопроса. Блок при этом
 // один и тот же: обычный терминал получает те же строки без признака.
 func TestChatPanelWritesAsk(t *testing.T) {
 	root := setup(t)

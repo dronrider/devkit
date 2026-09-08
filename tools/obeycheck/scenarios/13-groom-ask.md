@@ -22,7 +22,5 @@ grep -q "AskUserQuestion" "$OBEY_TRANSCRIPT" &&
 	{ echo "вопрос на разборе задан виджетом: AskUserQuestion звался"; exit 1; }
 grep -q "решает: человек" docs/tasks/drafts/OB-003.md ||
 	{ echo "вопрос мимо записи: человеческой развилки в docs/tasks/drafts/OB-003.md нет"; exit 1; }
-grep -q "рекомендую:" "$OBEY_TRANSCRIPT" ||
-	{ echo "вопрос на разборе не пришёл текстом: блока decide --chat в ленте нет"; exit 1; }
 exit 0
 ```

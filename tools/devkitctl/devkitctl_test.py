@@ -2093,6 +2093,41 @@ class HarnessHooksTest(SandboxCase):
         _, out = self.box.doctor(self.proj, home=home)
         self.assertNotIn_("с матчером", out, "повторный доктор всё ещё правит матчер сторожа")
 
+    def test_lone_watch_group_is_dropped(self):
+        # На живой машине группа сторожа на PostToolUse держит его одного, и
+        # после снятия строки от группы остаётся пустышка. Матчер у пустой
+        # группы ловит ход любого инструмента, поэтому --fix убирает её целиком,
+        # а опустевший ключ события уходит следом (DK-571).
+        home = self.box.make_home(self.box.root / "home-watch-lone")
+        settings = home / ".claude" / "settings.json"
+        data = json.loads(read(settings))
+        for group in data["hooks"]["PostToolUse"]:
+            if any("agent-watch.py" in h["command"] for h in group["hooks"]):
+                self.assertEqual(len(group["hooks"]), 1,
+                                 "раскладка стенда держит в группе сторожа кого-то ещё")
+                group["matcher"] = "Agent"
+        write(settings, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+        _, out = self.box.doctor(self.proj, "--fix", home=home)
+        self.assertIn_("перевешен agent-watch.py", out, "--fix не перевесил одинокого сторожа")
+        post = json.loads(read(settings))["hooks"]["PostToolUse"]
+        self.assertEqual([g for g in post if not g.get("hooks")], [],
+                         "от перевешенной группы осталась пустышка: %s" % post)
+        self.assertNotIn("Agent", [g.get("matcher") for g in post],
+                         "группа с прежним матчером осталась в настройках: %s" % post)
+        spots = [((g.get("matcher") or ""), h["command"]) for g in post for h in g["hooks"]]
+        self.assertEqual([m for m, c in spots if "agent-watch.py" in c], ["Bash|Agent"],
+                         "сторож не оказался на матчере раскладки ровно один раз: %s" % post)
+        # Ключ события на живой раскладке держит и другие группы, поэтому уборка
+        # опустевшего ключа проверяется вызовом.
+        lone = {"PostToolUse": [{"matcher": "Agent", "hooks": [
+            {"type": "command",
+             "command": "python3 ~/projects/devkit/hooks/agent-watch.py --hook claude-code"}]}]}
+        done = devkitctl.drop_misplaced(
+            lone, [("PostToolUse", devkitctl.WATCH_HOOK, devkitctl.WATCH_MATCHER)])
+        self.assertEqual(done, [(devkitctl.WATCH_HOOK, "PostToolUse", devkitctl.WATCH_MATCHER)],
+                         "перевешивание не назвало снятую строку: %s" % done)
+        self.assertEqual(lone, {}, "опустевший ключ события остался в настройках: %s" % lone)
+
     def test_hooks_are_laid_out_once(self):
         _, out = self.box.doctor(self.proj, home=self.home2)
         self.assertRegex(out, r"не подключено \d+ хук\S* харнеса в[^\n]*PostToolUse[^\n]*check-symbols\.py",

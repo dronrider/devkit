@@ -82,3 +82,51 @@ exit 0`)
 		t.Fatalf("живой сессии подняли продолжение резюмом: %q", log)
 	}
 }
+
+// Клиент, вышедший уже после Enter, хода тоже не начинает, а имя его сессии на
+// машине ещё стоит (замечание ревью DK-863). Сверка вплотную к посылке читала
+// такую подачу удачей, и реплика пропадала тем же молчанием. Стенд ставит
+// сессию, которая уходит с машины через треть секунды после подачи, и краснеет
+// на коде без паузы chatSendCheck.
+func TestChatSayClientGoneAfterEnterRidesResume(t *testing.T) {
+	e, c := chatEnv(t)
+	// Подача тут мгновенная, а сверка отложена: стенду нужна не длина сроков, а
+	// порядок событий, и живой tmux с настоящими сроками сюда не годится.
+	pause, check := chatSendPause, chatSendCheck
+	chatSendPause, chatSendCheck = 0, 800*time.Millisecond
+	t.Cleanup(func() { chatSendPause, chatSendCheck = pause, check })
+
+	sid := "eeee8633-5555-4555-8555-555555555555"
+	name := "chat-XR-4-4"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now().Add(-time.Minute))
+	writeBinds(t, e.home, "2026-09-08T00:45:12 сессия "+sid+" задача XR-4 проект demo дерево "+e.proj+
+		" транскрипт /tmp/t.jsonl источник заказ повод startup tmux "+name+"\n")
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	arm := filepath.Join(e.home, "arm")
+	gone := filepath.Join(e.home, "gone")
+	// Первая посылка заводит уход сессии в фоне. Вывод фонового куска отведён,
+	// иначе он держал бы трубу самой фикстуры до конца ожидания.
+	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
+case "$1" in
+ls) if [ -f "`+gone+`" ]; then exit 1; fi; echo "`+name+`|1|123";;
+send-keys) if [ ! -f "`+arm+`" ]; then : > "`+arm+`"; ( sleep 0.3; : > "`+gone+`" ) >/dev/null 2>&1 & fi;;
+esac
+exit 0`)
+	writeScript(t, e.bin, "claude", "exit 0")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		sayBody("по рекомендации", "m-865"))
+	said := body(t, resp)
+	if resp.StatusCode != 200 {
+		t.Fatalf("реплика в уходящую сессию: %d %s", resp.StatusCode, said)
+	}
+	if strings.Contains(said, "send-keys") {
+		t.Fatalf("подача в уходящую сессию сошла за доставку: %s", said)
+	}
+	if !strings.Contains(said, "resume") {
+		t.Fatalf("реплика не поехала продолжением резюмом: %s", said)
+	}
+	if log := readFile(t, tmuxLog); !strings.Contains(log, "по рекомендации") {
+		t.Fatalf("текста реплики нет во вводной продолжения: %q", log)
+	}
+}

@@ -479,3 +479,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-882 | decide дописывает вариант ответа в заведённую развилку | task | P2 | 2026-09-09 | [tasks/archive/2026/DK-882.md](tasks/archive/2026/DK-882.md) |
 | DK-571 | Фоновая команда мимо реестра сторожа: весть о её конце теряется | bug | P1 | 2026-09-09 | [tasks/archive/2026/DK-571.md](tasks/archive/2026/DK-571.md) |
 | DK-588 | doctor --fix из подставного HOME уводит launchd-агентов машины | bug | P1 | 2026-09-09 | [tasks/archive/2026/DK-588.md](tasks/archive/2026/DK-588.md), `f7d9f082`, `de754658` |
+| DK-847 | Список чатов панели держит только разговоры человека [приёмка: mixed] | task | P2 | 2026-09-09 | [tasks/archive/2026/DK-847.md](tasks/archive/2026/DK-847.md) |

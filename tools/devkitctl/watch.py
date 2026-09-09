@@ -78,6 +78,11 @@ in-progress`. Будит сторожок и только он, а будить 
 тик по его вердикту заказывает второй круг командой `dashboard round` и зовёт
 человека на молчание автора и на слитый поверх замечаний MR. Доска без таких
 строк в трекер не ходит вовсе.
+
+Тем же тиком поднимается упавший ход (DK-510): повод `turn_failed` в журнале
+уведомителя называет сессию, реестр чатов даёт её панель, и сторож подаёт туда
+реплику «продолжай», дождавшись сети. Попыток три на сессию, а дальше зов
+человеку. Разбор в README, раздел «Подъём упавшего хода».
 """
 import importlib.util
 import json
@@ -85,6 +90,7 @@ import launchd
 import os
 import re
 import shutil
+import socket
 import say
 import subprocess
 import sys
@@ -185,6 +191,38 @@ SESSION_LIVE = 12 * 60
 # поэтому пробел в пути транскрипта строку не рассыпает.
 REG_KEYS = ("сессия", "задача", "проект", "дерево", "транскрипт", "источник", "повод", "tmux",
             "родитель")
+# Журнал уведомителя: по нему сторож узнаёт про упавший ход (DK-510). Своего
+# журнала падений тут нет, notify.py пишет строку на каждое событие сессии,
+# включая пропущенный баннер, и последняя строка сессии называет её состояние.
+NOTIFY_LOG = "~/.devkit/notify.log"
+# Повод, которым уведомитель метит упавший ход. Слово то же, что в
+# hooks/notify.py и в матчере события StopFailure.
+TURN_FAILED = "turn_failed"
+# Счёт попыток подъёма по сессиям: строки «сессия <ID> падение <метка> попыток
+# <N> исход <слово>».
+RESUME_STATE = "~/.devkit/watch.resume"
+# Потолок попыток подъёма на одну сессию. Три это столько же, сколько харнес
+# тратит внутри хода на ответ 529, и после трёх поданных реплик дело уже не в
+# сети: дальше зовём человека.
+RESUME_TRIES = 3
+# Реплика подъёма. Слово короткое нарочно: оно уезжает в ленту разговора и
+# читается там наравне с репликами человека.
+RESUME_WORD = "продолжай"
+# Грация вокруг метки падения, секунды. Транскрипт пишется за секунду до того,
+# как хук отдаёт строку журналу, и без грации своя же запись падения читалась
+# бы движением разговора.
+RESUME_GRACE = 60
+# Возраст падения, после которого подъём не подаётся, секунды. Панель зовётся
+# по имени, а имя `task-<ID>` переживает свою сессию: через полсуток за ним
+# стоит уже другой разговор, и реплика уехала бы чужому. Инцидент, ради
+# которого сторож заведён, меряется десятками минут.
+RESUME_STALE = 12 * 60 * 60
+# Проба сети: TCP до входа API с коротким потолком. Сети нет, значит подъём
+# ждёт следующего тика и попытки не тратит. Отвалившийся вход в клиента этой
+# пробой не ловится, он живёт задачей DK-578.
+NET_HOST = "api.anthropic.com"
+NET_PORT = 443
+NET_TIMEOUT = 4
 # Хвост журнала запусков, из которого берётся последняя метка времени: файл
 # растёт всю жизнь проекта, и читать его целиком каждые пять минут незачем.
 # Размер тут с запасом на ночь: строки расписания идут каждые пять минут и
@@ -617,19 +655,16 @@ def progress_rows(root):
     return section_rows(root, IN_PROGRESS)
 
 
-def session_alive(sid, now, home=None):
-    """Идёт ли сессия sid прямо сейчас. Мера одна на дашборд и на сторожок:
-    свежесть транскрипта, путь к которому лежит готовым полем в реестре чатов.
-    Незнакомая сессия и пустое поле это «не идёт»: страховке нужен живой
-    собеседник, а не запись о нём."""
-    if not sid:
-        return False
+def session_rows(home=None):
+    """Строки реестра чатов разобранными полями, в порядке записи. Читателей у
+    реестра двое, страховка ожидания и подъём упавшего хода, и разбор у них
+    один."""
     home = default_home() if home is None else home
     try:
         text = home_path(home, SESSIONS_LOG).read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return False
-    path = ""
+        return []
+    rows = []
     for ln in text.splitlines():
         f = ln.split()
         if len(f) < 3 or f[1] != "сессия":
@@ -643,6 +678,19 @@ def session_alive(sid, now, home=None):
                 key = tok
                 continue
             vals[key] = (vals[key] + " " + tok).strip() if vals.get(key) else tok
+        rows.append(vals)
+    return rows
+
+
+def session_alive(sid, now, home=None):
+    """Идёт ли сессия sid прямо сейчас. Мера одна на дашборд и на сторожок:
+    свежесть транскрипта, путь к которому лежит готовым полем в реестре чатов.
+    Незнакомая сессия и пустое поле это «не идёт»: страховке нужен живой
+    собеседник, а не запись о нём."""
+    if not sid:
+        return False
+    path = ""
+    for vals in session_rows(home):
         if vals.get("сессия") == sid:
             path = vals.get("транскрипт", "")
     if not path or path == "-":
@@ -742,6 +790,245 @@ def park_stale(root, now, call=None, taskctl=None, hook=LOAD_HOOK, home=None):
             continue
         lines.append("задача %s в %s припаркована страховкой: ход ожидания убит, живой сессии за строкой нет"
                      % (tid, root))
+    return lines
+
+
+# -- подъём упавшего хода -----------------------------------------------------
+
+def notify_events(home=None, tail=TAIL):
+    """Последнее событие каждой сессии из журнала уведомителя: словарь
+    «начало ID сессии -> поля строки». Журнал пишет первые восемь знаков ID,
+    полный ID и адрес лежат в реестре чатов.
+
+    Ключи строки разбираются по первому вхождению: текст баннера едет хвостом
+    и своё слово «повод» в разбор не заносит."""
+    home = default_home() if home is None else home
+    path = home_path(home, NOTIFY_LOG)
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - tail))
+            text = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return {}
+    last = {}
+    for ln in text.splitlines():
+        f = ln.split()
+        if len(f) < 4:
+            continue
+        when = stamp_of(f[0])
+        if when is None:
+            continue
+        vals = {}
+        for key, tok in zip(f, f[1:]):
+            if key in ("сессия", "повод", "задача", "проект") and key not in vals:
+                vals[key] = tok
+        sid = vals.get("сессия", "-")
+        if sid == "-" or not vals.get("повод"):
+            continue
+        prev = last.get(sid)
+        if prev is None or prev["when"] <= when:
+            last[sid] = {"when": when, "reason": vals["повод"],
+                         "task": vals.get("задача", "-"), "project": vals.get("проект", "-")}
+    return last
+
+
+def net_probe(host=NET_HOST, port=NET_PORT, timeout=NET_TIMEOUT):
+    """Есть ли сеть до входа API. Проба это TCP-соединение с коротким потолком:
+    ответ службы тут не нужен, нужен факт, что пакеты ходят."""
+    try:
+        socket.create_connection((host, port), timeout).close()
+    except OSError:
+        return False
+    return True
+
+
+def chat_address(sid, home=None):
+    """Адрес разговора по началу ID сессии: последняя строка реестра чатов, чей
+    ID начинается на sid. Пустой ответ значит, что сессии в реестре нет."""
+    found = None
+    for vals in session_rows(home):
+        if vals.get("сессия", "").startswith(sid):
+            found = vals
+    return found
+
+
+def field(row, key):
+    """Поле строки реестра без прочерка: незаполненное поле пишется знаком «-»,
+    и читателю оно то же самое, что пустое."""
+    val = (row or {}).get(key, "")
+    return "" if val == "-" else val
+
+
+def read_resume(home=None):
+    """Счёт попыток подъёма по сессиям."""
+    home = default_home() if home is None else home
+    data = {}
+    try:
+        text = home_path(home, RESUME_STATE).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return data
+    for ln in text.splitlines():
+        f = ln.split()
+        if len(f) < 8 or f[0] != "сессия":
+            continue
+        try:
+            tries = int(f[5])
+        except ValueError:
+            continue
+        data[f[1]] = {"stamp": f[3], "tries": tries, "said": f[7]}
+    return data
+
+
+def write_resume(data, home=None):
+    home = default_home() if home is None else home
+    path = home_path(home, RESUME_STATE)
+    lines = ["сессия %s падение %s попыток %d исход %s" % (
+        sid, st["stamp"], st["tries"], st["said"]) for sid, st in sorted(data.items())]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def talking(row, when):
+    """Идёт ли в разговоре ход прямо сейчас. Мера это транскрипт: запись позже
+    метки падения значит, что кто-то уже поднял ход, и вторая реплика легла бы
+    поверх работающего."""
+    path = field(row, "транскрипт")
+    if not path:
+        return False
+    try:
+        mod = os.path.getmtime(path)
+    except OSError:
+        return False
+    return mod > time.mktime(when.timetuple()) + RESUME_GRACE
+
+
+def pane_alive(name, call=None, tmux=None):
+    """Стоит ли панель разговора в tmux. Имя ищется точным («=имя»), иначе tmux
+    берёт первую подходящую по началу."""
+    call = subprocess.run if call is None else call
+    if not tmux or not name:
+        return False
+    try:
+        p = call([tmux, "has-session", "-t", "=" + name],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except OSError:
+        return False
+    return p.returncode == 0
+
+
+def say_pane(name, word, call=None, tmux=None):
+    """Подать реплику в панель разговора. Возврат (получилось, слова).
+
+    Дорога та же, которой agentctl подаёт виток модели (`usage.go`), текст
+    ключом `-l` и ввод отдельным Enter."""
+    call = subprocess.run if call is None else call
+    if not tmux:
+        return False, "бинаря tmux нет в PATH, подать реплику нечем"
+    target = "=%s:" % name
+    for step in (["send-keys", "-t", target, "-l", word],
+                 ["send-keys", "-t", target, "Enter"]):
+        try:
+            p = call([tmux] + step, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        except OSError as e:
+            return False, "tmux не запустился, %s" % e
+        if p.returncode != 0:
+            return False, "tmux отказал на send-keys с кодом %d" % p.returncode
+    return True, "реплика «%s» подана в панель %s" % (word, name)
+
+
+def resume_failed(now, call=None, home=None, tmux=None, probe=None):
+    """Подъём упавшего хода (DK-510). Возврат это строки отчёта, как у
+    пробуждения и страховки.
+
+    Хук StopFailure про упавший ход только кричит. Он выполняется внутри
+    умирающего хода и нового ничего не поднимет. Собственные попытки харнеса
+    короче инцидента, ради которого сторож заведён. Закрытый на переезде
+    ноутбук возвращается в сеть через десятки минут, а ход к тому времени давно
+    упал. Тик видит падение по журналу уведомителя, дожидается сети и подаёт
+    реплику «продолжай» в панель того же разговора, отчего лента продолжается в
+    той же сессии.
+
+    Счёт попыток идёт по сессиям и переживает новое падение. Три подряд значит,
+    что дело уже не в сети, и дальше сторож зовёт человека громко. Снимает счёт
+    любое событие сессии, кроме падения. Закончившийся ход пишет в журнал свой
+    повод, и по нему видно, что разговор ожил."""
+    call = subprocess.run if call is None else call
+    home = default_home() if home is None else home
+    tmux = shutil.which("tmux") if tmux is None else tmux
+    probe = net_probe if probe is None else probe
+    state = read_resume(home)
+    lines, net, live = [], None, set()
+    for sid, ev in sorted(notify_events(home).items()):
+        if ev["reason"] != TURN_FAILED:
+            state.pop(sid, None)
+            continue
+        live.add(sid)
+        prev = state.get(sid, {})
+        mark = ev["when"].strftime(STAMP)
+        tries = prev.get("tries", 0)
+        fresh = prev.get("stamp") != mark
+
+        def keep(said, line=""):
+            state[sid] = {"stamp": mark, "tries": tries, "said": said}
+            if line and (fresh or prev.get("said") != said):
+                lines.append(line)
+
+        age = time.mktime(now.timetuple()) - time.mktime(ev["when"].timetuple())
+        if age > RESUME_STALE:
+            keep("старьё", "сессия %s: ход упал %s назад, подъём не подаётся: имя панели "
+                           "к этому сроку носит уже другой разговор" % (sid, say.human_age(age)))
+            continue
+        row = chat_address(sid, home)
+        if row is None:
+            keep("адрес", "сессия %s: ход упал, а сессии нет в реестре чатов: "
+                          "адреса для подъёма нет" % sid)
+            continue
+        task = field(row, "задача") or (ev["task"] if ev["task"] != "-" else "")
+        root = field(row, "дерево") or here()
+        if tries >= RESUME_TRIES:
+            if prev.get("said") == "зов":
+                keep("зов")
+                continue
+            said = shout("ход упал: подъём не помог",
+                         "разговор %s в %s не поднялся с %d попыток; продолжить руками: "
+                         "claude --resume %s" % (sid, os.path.basename(root.rstrip("/")),
+                                                 RESUME_TRIES, field(row, "сессия") or sid),
+                         root, call, task)
+            keep("зов", "сессия %s: попытки подъёма кончились (%d), зову человека; %s"
+                        % (sid, RESUME_TRIES, said))
+            continue
+        pane = field(row, "tmux")
+        if not pane:
+            keep("панель", "сессия %s: ход упал, а панели у разговора нет: реплику подъёма "
+                           "подать некуда, продолжает человек" % sid)
+            continue
+        if not pane_alive(pane, call, tmux):
+            # Панель ушла вместе с процессом: это уже не упавший ход, а
+            # кончившаяся сессия, и поднимать её сторожу нечем. Попытка на такое
+            # не тратится, а про само падение человеку сказал баннер DK-172.
+            keep("панель", "сессия %s: ход упал, а панели %s в tmux уже нет: "
+                           "разговор кончился вместе с ней" % (sid, pane))
+            continue
+        if talking(row, ev["when"]):
+            keep("идёт", "сессия %s: ход упал, но разговор пишет дальше: подъём не нужен" % sid)
+            continue
+        net = probe() if net is None else net
+        if not net:
+            keep("сеть", "сессия %s: ход упал, а сети нет: подъём ждёт следующего тика, "
+                         "попытка не тратится" % sid)
+            continue
+        ok, note = say_pane(pane, RESUME_WORD, call, tmux)
+        tries += 1
+        state[sid] = {"stamp": mark, "tries": tries, "said": "подъём" if ok else "отказ"}
+        lines.append("сессия %s: ход упал, подъём %d из %d; %s"
+                     % (sid, tries, RESUME_TRIES, note))
+    # Сессия, чьи строки уехали из хвоста журнала, счёта больше не просит:
+    # без уборки её запись лежала бы в файле до конца времён.
+    write_resume({k: v for k, v in state.items() if k in live}, home)
     return lines
 
 
@@ -1248,7 +1535,7 @@ def heartbeat(home=None):
 
 
 def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipctl=None,
-        agentctl=None, dashboard=None):
+        agentctl=None, dashboard=None, tmux=None, probe=None):
     """Обход реестра. Возврат 0 всё движется, 1 нашёлся вставший цикл."""
     now = datetime.now() if now is None else now
     home = default_home() if home is None else home
@@ -1272,6 +1559,12 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     out.write(qreport + "\n")
     if qnote:
         log_line(qnote, home)
+    # Подъём упавшего хода идёт там же, до обхода реестра: падение случается и в
+    # разговоре, за которым нет ни цели, ни строки доски, а журнал уведомителя и
+    # реестр чатов лежат на уровне машины (DK-510).
+    for rline in resume_failed(now, timed(here()), home, tmux, probe):
+        out.write(rline + "\n")
+        log_line(rline, home)
     found, watched = 0, 0
     swept = set()
     for path in entries(home):

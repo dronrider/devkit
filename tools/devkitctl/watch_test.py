@@ -1908,5 +1908,178 @@ class ReviewPollTest(Stand):
         self.assertEqual(a.argv_with("round"), [])
 
 
+class ResumeTest(Stand):
+    """Подъём упавшего хода (DK-510).
+
+    Стенд свой: журнал уведомителя с поводом, реестр чатов с адресом и tmux,
+    подменённый запускателем. Проверяется решение сторожа (подать реплику,
+    ждать сеть, позвать человека), а не то, как выглядит панель."""
+
+    SID = "3d1c4c04"
+    FULL = "3d1c4c04-41c6-4773-9926-abcd2a8ea42a"
+
+    def setUp(self):
+        Stand.setUp(self)
+        self.call = Fake()
+        self.tmux = "/usr/bin/tmux"
+
+    def notify(self, reason, ago_minutes=1, sid=None, task="DK-901"):
+        """Строка журнала уведомителя. Формат тот же, что пишет hooks/notify.py:
+        ключ и значение через пробел, текст баннера хвостом."""
+        when = stamp(self.now - timedelta(minutes=ago_minutes))
+        line = ("%s сессия %s повод %s уровень громкий бэкенд terminal-notifier "
+                "цель - задача %s проект стенд код возврата: 0 текст «стенд» «повод»\n"
+                % (when, sid or self.SID, reason, task))
+        path = self.home / ".devkit" / "notify.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(str(path), "a", encoding="utf-8") as f:
+            f.write(line)
+
+    def chat(self, sid=None, pane="task-DK-901", transcript_ago_minutes=1):
+        """Строка реестра чатов: полный ID, дерево, панель и транскрипт."""
+        tr = self.dir / ("%s.jsonl" % (sid or self.FULL))
+        tr.write_text("{}\n", encoding="utf-8")
+        when = (self.now - timedelta(minutes=transcript_ago_minutes)).timestamp()
+        os.utime(str(tr), (when, when))
+        log = self.home / ".devkit" / "sessions.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with open(str(log), "a", encoding="utf-8") as f:
+            f.write("%s сессия %s задача DK-901 проект стенд дерево %s транскрипт %s "
+                    "источник заказ повод startup tmux %s родитель -\n"
+                    % (stamp(self.now), sid or self.FULL, self.proj, tr, pane or "-"))
+
+    def resume(self, online=True, call=None, tmux=None):
+        call = self.call if call is None else call
+        tmux = self.tmux if tmux is None else tmux
+        return watch.resume_failed(self.now, call, self.home, tmux, lambda: online)
+
+    def keys(self):
+        return [a for a in self.call.calls if a and a[0] == self.tmux]
+
+    def sent(self):
+        """Только поданные реплики: опрос панели идёт и там, где подъёма нет."""
+        return [a for a in self.keys() if a[1] == "send-keys"]
+
+    def state(self):
+        return watch.read_resume(self.home)
+
+    def test_failed_turn_wakes_the_same_pane(self):
+        # Ход упал, сеть есть, панель разговора жива: сторож подаёт в неё
+        # реплику, и лента продолжается в той же сессии.
+        self.notify("turn_failed")
+        self.chat()
+        lines = self.resume()
+        keys = self.keys()
+        self.assertEqual([a[1] for a in keys], ["has-session", "send-keys", "send-keys"],
+                         "реплика в панель не подана: %s" % self.call.calls)
+        self.assertIn(watch.RESUME_WORD, keys[1])
+        self.assertIn("task-DK-901", " ".join(keys[1]))
+        self.assertEqual(keys[2][-1], "Enter", "ввод не отправлен, реплика осталась в строке")
+        self.assertIn("подъём 1 из %d" % watch.RESUME_TRIES, " ".join(lines))
+        self.assertEqual(self.state()[self.SID]["tries"], 1)
+
+    def test_finished_turn_is_left_alone(self):
+        # Последнее событие сессии это конец хода: подниматься нечему.
+        self.notify("turn_done")
+        self.chat()
+        self.assertEqual(self.resume(), [])
+        self.assertEqual(self.keys(), [], "живому разговору подали реплику: %s" % self.call.calls)
+
+    def test_recovered_turn_drops_the_count(self):
+        # Ход упал, был поднят и закончился: счёт попыток снимается, и следующее
+        # падение начинает счёт заново.
+        self.notify("turn_failed", 30)
+        self.chat()
+        self.resume()
+        self.notify("turn_done", 5)
+        self.assertEqual(self.resume(), [])
+        self.assertNotIn(self.SID, self.state(), "счёт попыток пережил ожившую сессию")
+
+    def test_no_network_spends_no_try(self):
+        # Сети нет: подъём ждёт следующего тика, попытка не тратится.
+        self.notify("turn_failed")
+        self.chat()
+        lines = self.resume(online=False)
+        self.assertEqual(self.sent(), [], "реплика ушла в панель без сети: %s" % self.call.calls)
+        self.assertIn("сети нет", " ".join(lines))
+        self.assertEqual(self.state()[self.SID]["tries"], 0)
+
+    def test_tries_run_out_and_call_the_human(self):
+        # Три подъёма не помогли: сторож зовёт человека громко и больше не
+        # подаёт реплик.
+        self.chat(transcript_ago_minutes=40)
+        for n in range(watch.RESUME_TRIES):
+            self.notify("turn_failed", 30 - n * 5)
+            self.resume()
+        self.notify("turn_failed", 10)
+        lines = self.resume()
+        self.assertEqual(len(self.call.argv_with("notify.py")), 1,
+                         "человека не позвали: %s" % self.call.calls)
+        self.assertIn("попытки подъёма кончились", " ".join(lines))
+        self.assertIn("claude --resume", " ".join(str(x) for a in self.call.argv_with("notify.py")
+                                                  for x in a))
+        # Следующий тик молчит: баннер каждые пять минут человек выключит вместе
+        # со сторожком.
+        self.notify("turn_failed", 5)
+        self.assertEqual(self.resume(), [])
+        self.assertEqual(len(self.call.argv_with("notify.py")), 1)
+
+    def test_running_turn_is_not_interrupted(self):
+        # После падения кто-то поднял ход руками: транскрипт пишется дальше, и
+        # вторая реплика легла бы поверх работающего.
+        self.notify("turn_failed", 10)
+        self.chat(transcript_ago_minutes=1)
+        lines = self.resume()
+        self.assertEqual(self.sent(), [], "реплику подали идущему ходу: %s" % self.call.calls)
+        self.assertIn("пишет дальше", " ".join(lines))
+
+    def test_chat_without_pane_is_left_to_the_human(self):
+        # Разговор из окна vscode: панели у него нет, подать реплику некуда.
+        self.notify("turn_failed")
+        self.chat(pane=None)
+        lines = self.resume()
+        self.assertEqual(self.keys(), [])
+        self.assertIn("панели у разговора нет", " ".join(lines))
+
+    def test_session_outside_the_registry(self):
+        # Сессии нет в реестре чатов: адреса для подъёма нет.
+        self.notify("turn_failed")
+        lines = self.resume()
+        self.assertEqual(self.keys(), [])
+        self.assertIn("нет в реестре чатов", " ".join(lines))
+
+    def test_old_failure_is_not_raised(self):
+        # Падение старше потолка: имя панели к этому сроку носит уже другой
+        # разговор, и реплика уехала бы чужому.
+        self.notify("turn_failed", watch.RESUME_STALE // 60 + 60)
+        self.chat()
+        lines = self.resume()
+        self.assertEqual(self.keys(), [])
+        self.assertIn("подъём не подаётся", " ".join(lines))
+
+    def test_dead_pane_spends_no_try(self):
+        # Панель умерла вместе с процессом: tmux отвечает отказом на has-session.
+        # Это уже кончившаяся сессия, а не упавший ход, и попытка на неё не
+        # тратится.
+        self.notify("turn_failed")
+        self.chat()
+        dead = Fake(code=1)
+        lines = watch.resume_failed(self.now, dead, self.home, self.tmux, lambda: True)
+        self.assertIn("панели task-DK-901 в tmux уже нет", " ".join(lines))
+        self.assertEqual(self.state()[self.SID]["tries"], 0)
+        self.assertEqual([a[1] for a in dead.calls], ["has-session"],
+                         "в мёртвую панель подали реплику: %s" % dead.calls)
+
+    def test_tick_carries_the_watchdog(self):
+        # Сквозной прогон: тик поднимает упавший ход сам, без записи цели.
+        self.notify("turn_failed")
+        self.chat()
+        out = io.StringIO()
+        watch.run(now=self.now, idle=45 * 60, home=self.home, out=out, call=self.call,
+                  taskctl=TASKCTL, shipctl=SHIPCTL, agentctl=AGENTCTL, dashboard=DASHBOARD,
+                  tmux=self.tmux, probe=lambda: True)
+        self.assertIn("ход упал, подъём 1", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

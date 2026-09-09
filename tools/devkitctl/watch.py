@@ -955,7 +955,12 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None):
     Счёт попыток идёт по сессиям и переживает новое падение. Три подряд значит,
     что дело уже не в сети, и дальше сторож зовёт человека громко. Снимает счёт
     любое событие сессии, кроме падения. Закончившийся ход пишет в журнал свой
-    повод, и по нему видно, что разговор ожил."""
+    повод, и по нему видно, что разговор ожил.
+
+    Барьер идущего хода стоит раньше счёта попыток. Последняя реплика подъёма
+    могла сработать, а ход длиться дольше тика: своего повода в журнале он ещё
+    не написал, и по одному счёту такой разговор выглядел бы не поднявшимся.
+    Живой транскрипт гасит и подъём, и громкий зов."""
     call = subprocess.run if call is None else call
     home = default_home() if home is None else home
     tmux = shutil.which("tmux") if tmux is None else tmux
@@ -989,10 +994,15 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None):
             continue
         task = field(row, "задача") or (ev["task"] if ev["task"] != "-" else "")
         root = field(row, "дерево") or here()
+        if prev.get("said") == "зов":
+            # Человека уже позвали, и до следующего события сессии сторож про
+            # неё молчит: баннер каждые пять минут человек выключит вместе с ним.
+            keep("зов")
+            continue
+        if talking(row, ev["when"]):
+            keep("идёт", "сессия %s: ход упал, но разговор пишет дальше: подъём не нужен" % sid)
+            continue
         if tries >= RESUME_TRIES:
-            if prev.get("said") == "зов":
-                keep("зов")
-                continue
             said = shout("ход упал: подъём не помог",
                          "разговор %s в %s не поднялся с %d попыток; продолжить руками: "
                          "claude --resume %s" % (sid, os.path.basename(root.rstrip("/")),
@@ -1012,9 +1022,6 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None):
             # не тратится, а про само падение человеку сказал баннер DK-172.
             keep("панель", "сессия %s: ход упал, а панели %s в tmux уже нет: "
                            "разговор кончился вместе с ней" % (sid, pane))
-            continue
-        if talking(row, ev["when"]):
-            keep("идёт", "сессия %s: ход упал, но разговор пишет дальше: подъём не нужен" % sid)
             continue
         net = probe() if net is None else net
         if not net:

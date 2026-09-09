@@ -2024,6 +2024,25 @@ class ResumeTest(Stand):
         self.assertEqual(self.resume(), [])
         self.assertEqual(len(self.call.argv_with("notify.py")), 1)
 
+    def test_running_turn_holds_back_the_call(self):
+        # Последняя реплика подъёма сработала, но ход ещё идёт: своего повода в
+        # журнале уведомителя он не написал, а транскрипт пишется. Живой
+        # разговор гасит громкий зов ровно так же, как гасит подъём.
+        self.chat(transcript_ago_minutes=40)
+        for n in range(watch.RESUME_TRIES):
+            self.notify("turn_failed", 30 - n * 5)
+            self.resume()
+        self.notify("turn_failed", 10)
+        tr = self.dir / ("%s.jsonl" % self.FULL)
+        when = (self.now - timedelta(minutes=1)).timestamp()
+        os.utime(str(tr), (when, when))
+        lines = self.resume()
+        self.assertEqual(self.call.argv_with("notify.py"), [],
+                         "человека позвали поверх идущего хода: %s" % self.call.calls)
+        self.assertIn("пишет дальше", " ".join(lines))
+        self.assertEqual(self.state()[self.SID]["tries"], watch.RESUME_TRIES,
+                         "счёт попыток сбился на живом ходе")
+
     def test_running_turn_is_not_interrupted(self):
         # После падения кто-то поднял ход руками: транскрипт пишется дальше, и
         # вторая реплика легла бы поверх работающего.

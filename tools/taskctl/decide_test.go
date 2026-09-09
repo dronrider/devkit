@@ -280,3 +280,21 @@ func TestDecideOptionRefusals(t *testing.T) {
 		t.Fatal("пустой вариант принят")
 	}
 }
+
+// TestDecideOptionAllDuplicates: пачка из одних дублей файла не трогает и на
+// коммит не идёт. Записать файл тем же текстом мало: следом зовётся коммит, и
+// git падает на пустом диффе вместо внятного ответа (замечание ревью DK-882).
+func TestDecideOptionAllDuplicates(t *testing.T) {
+	root := setup(t)
+	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "область", Hint: "боковая директория контура", Text: "любая доска или контур?"})
+	decideRun(t, root, DecideParams{ID: "XR-005", Name: "область", Opts: []string{"правило по суффиксу пути"}})
+	before := readTask(t, root, "XR-005")
+
+	msg := decideRun(t, root, DecideParams{ID: "XR-005", Name: "область", Opts: []string{"правило по суффиксу пути"}, Commit: CommitOpts{Msg: "второй раз тот же вариант"}})
+	if !strings.Contains(msg, "дописывать нечего") || !strings.Contains(msg, "уже были в перечне 1") {
+		t.Fatalf("ответ на пачку дублей не назвал, что делать нечего: %s", msg)
+	}
+	if got := readTask(t, root, "XR-005"); got != before {
+		t.Fatalf("файл переписан пачкой дублей:\n%s", got)
+	}
+}

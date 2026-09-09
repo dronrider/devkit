@@ -98,6 +98,7 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 		return "", err
 	}
 	doc := string(data)
+	orig := doc
 	name := decideName(p.Name)
 	note := ""
 	switch {
@@ -122,6 +123,12 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	}
 	if err != nil {
 		return "", err
+	}
+	// Дописывание, где все варианты оказались дублями, файла не трогает.
+	// Записать его тем же текстом мало: следом идёт коммит, а git на пустом
+	// диффе падает вместо внятного «новых вариантов нет» (ревью DK-882).
+	if len(p.Opts) > 0 && doc == orig {
+		return fmt.Sprintf("%s (%s): %s", p.ID, kind, note), nil
 	}
 	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
 		return "", err
@@ -214,6 +221,9 @@ func decideOption(doc, name string, p DecideParams) (string, string, error) {
 		return "", "", fmt.Errorf("у --option нет текста варианта: taskctl decide %s «%s» --option \"ответ\"", p.ID, name)
 	}
 	note := fmt.Sprintf("развилке «%s» дописано вариантов %d", name, len(added))
+	if len(added) == 0 {
+		note = fmt.Sprintf("развилке «%s» дописывать нечего", name)
+	}
 	if len(skipped) > 0 {
 		note += fmt.Sprintf(", уже были в перечне %d (%s)", len(skipped), strings.Join(skipped, "; "))
 	}

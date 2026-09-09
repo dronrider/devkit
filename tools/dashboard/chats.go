@@ -2053,11 +2053,42 @@ func chatSend(name, text string) error {
 		body = "\x1b[200~" + text + "\x1b[201~"
 	}
 	if _, err := runProc("tmux", "send-keys", "-t", "="+name+":", "-l", body); err != nil {
-		return err
+		return sendGoneOr(name, err)
 	}
 	time.Sleep(chatSendPause)
-	_, err := runProc("tmux", "send-keys", "-t", "="+name+":", "Enter")
+	if _, err := runProc("tmux", "send-keys", "-t", "="+name+":", "Enter"); err != nil {
+		return sendGoneOr(name, err)
+	}
+	// Успех send-keys говорит о посылке, а не о ходе. Клиент, вышедший в паузе
+	// между текстом и переводом строки, уносит реплику с собой. Клавиши уходят
+	// в брошенный pty, tmux о том молчит, панель читает удачу, а хода не было
+	// (DK-863). Сессия, которой после подачи нет, и есть этот случай.
+	if !tmuxAliveFn()(name) {
+		return errSendGone
+	}
+	return nil
+}
+
+// errSendGone это выход клиента посреди подачи реплики. Ошибка отдельная от
+// отказа посылки. Лечится она не тем же отказом, а другой дорогой: текст
+// едет вводной продолжения резюмом, как всякая реплика в кончившуюся сессию.
+var errSendGone = errors.New("tmux-сессия кончилась посреди подачи реплики")
+
+// sendGoneOr отличает выход клиента от настоящей поломки посылки. Отказ tmux
+// по имени, которого на машине больше нет, это та же смерть сессии, а не
+// сломанный tmux, и человеку про него надо говорить теми же словами.
+func sendGoneOr(name string, err error) error {
+	if !tmuxAliveFn()(name) {
+		return errSendGone
+	}
 	return err
+}
+
+// sendGoneWord это слова о реплике, поданной в вышедшую сессию. Панель
+// ставит их строкой ленты, и пропажа не выглядит молчанием.
+func sendGoneWord(name string) string {
+	return "сессия " + name + " кончилась между текстом реплики и переводом строки, " +
+		"хода реплика не дала и едет вводной продолжения резюмом"
 }
 
 // Прерывание хода: Escape в TUI клиента снимает текущий ход и оставляет сессию
@@ -2710,12 +2741,25 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	sendGone := false
 	if term != "" && !stuckDialog {
-		if err := chatSend(term, text); err != nil {
+		err := chatSend(term, text)
+		switch {
+		case errors.Is(err, errSendGone):
+			// Клиент вышел посреди подачи, и реплика осталась ненабранной
+			// строкой в панели, которой больше нет. Отказ здесь заставил бы
+			// писать реплику заново. Дорога та же, что у мёртвой сессии, и
+			// текст едет вводной резюма ниже.
+			s.logf("реплика чата %s хода не дала: %s", sid, sendGoneWord(term))
+			s.saidMark(saidSessionKey(sid), sendGoneWord(term))
+			term, sendGone = "", true
+		case err != nil:
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
 				"реплика не подалась в tmux-сессию %s: %s", term, procErr(err))})
 			return
 		}
+	}
+	if term != "" && !stuckDialog {
 		s.chatSayDone(sid, claim, "send-keys")
 		s.saidSay(saidSessionKey(sid), text, "send-keys")
 		s.logf("реплика подана в чат %s (tmux-сессия %s)", sid, term)
@@ -2864,6 +2908,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"way": "resume", "tmux": sess, "model": model,
 		"message": fmt.Sprintf(
 			"процесса у чата не было: поднят claude --resume в tmux-сессии %s, история продолжена", sess)}
+	if sendGone {
+		out["message"] = fmt.Sprintf(
+			"сессия вышла посреди подачи реплики: поднят claude --resume в tmux-сессии %s, реплика уехала вводной", sess)
+	}
 	if bangLine(text) {
 		out["note"] = "живого терминала у сессии не было: строка с ! уехала вводной резюма текстом, терминал её не исполнит"
 	}

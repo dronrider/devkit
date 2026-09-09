@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Стенд сторожа подъёма (DK-728). Подъём отвечал удачей по коду возврата tmux,
@@ -254,4 +255,60 @@ func TestStaticChatDeadRaiseTellsThePanel(t *testing.T) {
 		t.Fatalf("смерть подъёма в панели: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Смерть сессии после хода. Лента разговора получает одну строку словами, а
+// снимок панели остаётся в записи (DK-863). Прежде хвост дописывался к словам
+// безусловно, и человек читал посреди разговора повтор последнего ответа
+// агента вместе со служебными строками клиента.
+func TestChatDeathAfterTurnKeepsTailOutOfSaid(t *testing.T) {
+	e := newTestEnv(t)
+	sid := "aaaa8630-1111-4111-8111-111111111111"
+	name := "chat-XR-4-1"
+	// Хозяин имени нашёлся в реестре. Сессия успела назваться, то есть ход у
+	// разговора был, и причину смерти человек уже прочитал словами.
+	writeBinds(t, e.home, "2026-09-08T00:35:12 сессия "+sid+" задача XR-4 проект demo дерево "+e.proj+
+		" транскрипт /tmp/t.jsonl источник заказ повод startup tmux "+name+"\n")
+	tail := "по рекомендации\nCooked for 2m 36s\nauto mode on"
+	e.s.watchMu.Lock()
+	e.s.tails = map[string]chatTail{name: {text: tail, at: time.Now()}}
+	e.s.watchMu.Unlock()
+
+	st := e.s.chatDeathSay(name, chatStore{From: sid, Raised: time.Now().Add(-26 * time.Minute).Unix()})
+	if st.Tail != tail {
+		t.Errorf("хвост не лёг в запись разговора, панель непроросшего чата покажет пустоту: %q", st.Tail)
+	}
+	marks := saidMarks(t, e.home, "sess-"+sid)
+	if len(marks) != 1 {
+		t.Fatalf("строк о смерти в ленте %d, ждал одну: %v", len(marks), marks)
+	}
+	if strings.Contains(marks[0], "Последние строки терминала") || strings.Contains(marks[0], "auto mode on") {
+		t.Errorf("в ленте разговора стоит снимок терминала: %q", marks[0])
+	}
+	if !strings.Contains(marks[0], name) || !strings.Contains(marks[0], "резюмом") {
+		t.Errorf("строка ленты не называет ни сессии, ни дороги дальше: %q", marks[0])
+	}
+}
+
+// Немой подъём не тронут. Сессия умерла, не начав хода, причину читать больше
+// негде, и хвост терминала остаётся строкой ленты.
+func TestChatDeathMuteRaiseKeepsTailInSaid(t *testing.T) {
+	e := newTestEnv(t)
+	sid := "cccc8630-3333-4333-8333-333333333333"
+	name := "chat-XR-4-2"
+	tail := "Invalid API key. Please run /login"
+	e.s.watchMu.Lock()
+	e.s.tails = map[string]chatTail{name: {text: tail, at: time.Now()}}
+	e.s.watchMu.Unlock()
+
+	// Реестр про имя молчит. Клиент вышел, не назвавшись, и заказчик подъёма
+	// это единственный адресат слов о смерти.
+	e.s.chatDeathSay(name, chatStore{From: sid, Raised: time.Now().Add(-3 * time.Second).Unix()})
+	marks := saidMarks(t, e.home, "sess-"+sid)
+	if len(marks) != 1 {
+		t.Fatalf("строк о смерти в ленте %d, ждал одну: %v", len(marks), marks)
+	}
+	if !strings.Contains(marks[0], tail) {
+		t.Errorf("у немого подъёма пропал хвост терминала, причину смерти брать негде: %q", marks[0])
+	}
 }

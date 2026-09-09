@@ -292,7 +292,13 @@ func (s *server) chatDeathSay(name string, st chatStore) chatStore {
 		s.logf("смерть сессии %s не запомнилась: %v", name, err)
 	}
 	line := why
-	if tail != "" {
+	// Хвост терминала едет в ленту только немому подъёму. Там причину смерти
+	// прочитать больше негде. После хода причина известна словами, а снимок
+	// панели повторял в ленте последний ответ агента и служебные строки
+	// клиента, человеку не адресованные вовсе (DK-863). Сам хвост никуда не
+	// делся. Он лежит в записи разговора, панель показывает его в пустом ещё
+	// чате, а разбор читает его в журнале демона ниже.
+	if tail != "" && !named {
 		line += "\nПоследние строки терминала:\n" + tail
 	}
 	switch {
@@ -302,6 +308,9 @@ func (s *server) chatDeathSay(name string, st chatStore) chatStore {
 		s.saidMark(saidTaskKey(st.Task), line)
 	}
 	s.logf("%s", why)
+	if tail != "" {
+		s.logf("хвост терминала сессии %s:\n%s", name, tail)
+	}
 	s.watchMu.Lock()
 	delete(s.watch, name)
 	delete(s.tails, name)

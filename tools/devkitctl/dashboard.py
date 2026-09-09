@@ -19,10 +19,11 @@ launchd его поднял, и /healthz отвечает без ошибок к
 import json
 import os
 import shutil
-import subprocess
 import sys
 import urllib.request
 from pathlib import Path
+
+import launchd
 
 LABEL = "ru.devkit.dashboard"
 PLIST = "~/Library/LaunchAgents/%s.plist" % LABEL
@@ -135,29 +136,13 @@ def binary_of(text):
     return ""
 
 
-def launchctl(args, call=None):
-    call = subprocess.run if call is None else call
-    try:
-        p = call(["launchctl"] + list(args), stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True)
-    except OSError as e:
-        return 127, str(e)
-    return p.returncode, (p.stdout or "").strip()
-
-
 def loaded(call=None):
-    return launchctl(["list", LABEL], call)[0] == 0
+    return launchd.loaded(LABEL, call)
 
 
 def reload_agent(plist, call=None):
     """Перевзвести агента: снять прежнего и поднять заново, как у сторожка."""
-    target = "gui/%d" % os.getuid()
-    launchctl(["bootout", "%s/%s" % (target, LABEL)], call)
-    code, out = launchctl(["bootstrap", target, str(plist)], call)
-    if code == 0:
-        return ""
-    code, out = launchctl(["load", "-w", str(plist)], call)
-    return "" if code == 0 else out
+    return launchd.reload_agent(LABEL, plist, call)
 
 
 def fetch_healthz(port):
@@ -190,12 +175,17 @@ def probe(home, fetch=None):
 
 
 def check(fix=False, main=None, from_main=True, home=None, platform=None,
-          call=None, which=None, fetch=None):
+          call=None, which=None, fetch=None, machine=None):
     """Носитель дашборда в машинном контуре доктора.
 
     Хоть plist и показывает на бинарь из PATH, а не на чекаут, класть его с
     worktree ветки задачи нельзя по общему правилу: на машину едет только
-    проверенное, и доводка отсылает в основной чекаут, как у сторожка."""
+    проверенное, и доводка отсылает в основной чекаут, как у сторожка.
+
+    Под подставным домом launchd не трогается вовсе (DK-588): метка агента
+    одна на машину, и доводка из временного дома уводила живой дашборд
+    пользователя. Дом машины берётся из учётной записи, ключ `machine` тут для
+    тестов."""
     home = default_home() if home is None else home
     platform = sys.platform if platform is None else platform
     which = shutil.which if which is None else which
@@ -223,11 +213,27 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None,
                     "чекаута %s" % (why, main)], []
         plist.parent.mkdir(parents=True, exist_ok=True)
         plist.write_text(want, encoding="utf-8")
+        if not launchd.own_home(home, machine):
+            return [], [launchd.foreign_line("дашборд", home, plist, machine)]
         err = reload_agent(plist, call)
         if err:
             return ["launchd не взял агента дашборда %s: %s" % (plist, err)], []
         return [], ["дашборд подключён launchd-агентом %s (порт %d, журнал %s)"
                     % (LABEL, conf_port(home), log)]
+    # Дальше речь про службы машины, и под подставным домом судить о них не о
+    # чем: поднят там агент пользователя, а не тот, что описан этим plist.
+    if not launchd.own_home(home, machine):
+        return [], []
+    thief = launchd.hijacked(LABEL, plist, call)
+    if thief:
+        why = ("launchd-агент дашборда %s взведён чужим plist %s: доска с телефона "
+               "показывает чужой чекаут, а журнал уходит туда же" % (LABEL, thief))
+        if not fix:
+            return ["%s; вернуть своего: devkitctl doctor --fix" % why], []
+        err = reload_agent(plist, call)
+        if err:
+            return ["launchd не взял агента дашборда %s: %s" % (plist, err)], []
+        return [], ["дашборд отобран у перехватчика %s и поднят из %s" % (thief, plist)]
     if not loaded(call):
         if not fix:
             return ["launchd-агент дашборда %s положен, но не поднят: доска с телефона "

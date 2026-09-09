@@ -27,6 +27,23 @@ class Fake:
         return [a for a in self.calls if any(needle in str(x) for x in a)]
 
 
+class Printer(Fake):
+    """Подставной launchctl, у которого `print` отдаёт заданный путь plist:
+    так выглядит агент, взведённый чужим домом."""
+
+    def __init__(self, path, code=0):
+        super().__init__(code=code)
+        self.path = path
+
+    def __call__(self, argv, **kw):
+        self.calls.append(list(argv))
+        if "print" in argv:
+            out = ("gui/501/x = {\n\tactive count = 1\n\tpath = %s\n"
+                   "\tstate = running\n}" % self.path)
+            return subprocess.CompletedProcess(argv, 0, out, None)
+        return subprocess.CompletedProcess(argv, self.code, self.out, None)
+
+
 def ok_fetch(port):
     return json.dumps({"ok": True, "version": "dashboard dev", "projects": 1,
                        "errors": []})
@@ -44,12 +61,15 @@ class Stand(unittest.TestCase):
         self.plist = self.home / "Library" / "LaunchAgents" / ("%s.plist" % dashboard.LABEL)
 
     def check(self, fix=False, call=None, platform="darwin", binary=True,
-              fetch=ok_fetch, from_main=True):
+              fetch=ok_fetch, from_main=True, machine=None):
+        # Дом стенда объявляется домом машины: без этого проверка шла бы по
+        # ветке подставного дома (DK-588) и launchd не трогала бы вовсе.
         call = Fake() if call is None else call
         which = (lambda name: str(self.binary)) if binary else (lambda name: None)
         f, d = dashboard.check(fix=fix, main=self.dir / "devkit", from_main=from_main,
                                home=self.home, platform=platform,
-                               call=call, which=which, fetch=fetch)
+                               call=call, which=which, fetch=fetch,
+                               machine=self.home if machine is None else machine)
         return f, d, call
 
 
@@ -189,6 +209,62 @@ class AgentTest(Stand):
         f, d, _ = self.check(platform="linux")
         self.assertEqual(len(f), 1, f)
         self.assertIn("systemd", f[0])
+
+
+class ForeignHomeTest(Stand):
+    """Доводка под подставным домом: DK-588, метка агента одна на машину."""
+
+    def foreign(self):
+        return self.dir / "machine-home"
+
+    def test_fix_lays_plist_but_leaves_launchd_alone(self):
+        f, d, call = self.check(fix=True, machine=self.foreign())
+        self.assertEqual(f, [])
+        self.assertEqual(len(d), 1, d)
+        self.assertIn("подставном доме", d[0])
+        self.assertIn(str(self.home), d[0])
+        self.assertEqual(call.calls, [], "launchd тронут из подставного дома")
+        self.assertTrue(self.plist.exists(), "plist в подставной дом не лёг")
+
+    def test_ready_home_is_quiet_and_silent_about_machine(self):
+        # Разложенный подставной дом ничего не говорит про службы машины: там
+        # поднят агент пользователя, а не тот, что описан этим plist.
+        self.check(fix=True, machine=self.foreign())
+        f, d, call = self.check(fix=True, machine=self.foreign())
+        self.assertEqual((f, d), ([], []))
+        self.assertEqual(call.calls, [])
+
+
+class HijackTest(Stand):
+    """Находка перехваченного агента: plist в доме совпадает с эталоном, а
+    поднят launchd чужим файлом (DK-588)."""
+
+    def thief_path(self):
+        return "/private/tmp/чужая-сессия/Library/LaunchAgents/%s.plist" % dashboard.LABEL
+
+    def test_agent_from_another_plist_is_a_finding(self):
+        self.check(fix=True)
+        thief = Printer(self.thief_path())
+        f, d, _ = self.check(call=thief)
+        self.assertEqual(len(f), 1, f)
+        self.assertIn(self.thief_path(), f[0])
+        self.assertEqual(d, [])
+
+    def test_fix_takes_the_agent_back(self):
+        self.check(fix=True)
+        thief = Printer(self.thief_path())
+        f, d, _ = self.check(fix=True, call=thief)
+        self.assertEqual(f, [])
+        self.assertEqual(len(d), 1, d)
+        self.assertIn(self.thief_path(), d[0])
+        self.assertTrue(thief.argv_with("bootstrap"),
+                        "агента не вернули: %s" % thief.calls)
+
+    def test_own_plist_is_quiet(self):
+        self.check(fix=True)
+        own = Printer(str(self.plist))
+        f, d, _ = self.check(call=own)
+        self.assertEqual((f, d), ([], []))
 
 
 class ProbeTest(Stand):

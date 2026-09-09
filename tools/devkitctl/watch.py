@@ -81,6 +81,7 @@ in-progress`. Будит сторожок и только он, а будить 
 """
 import importlib.util
 import json
+import launchd
 import os
 import re
 import shutil
@@ -1383,38 +1384,24 @@ def script_of(text):
     return ""
 
 
-def launchctl(args, call=None):
-    """(код возврата, вывод) launchctl; код 127 значит, что позвать не вышло."""
-    call = subprocess.run if call is None else call
-    try:
-        p = call(["launchctl"] + list(args), stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True)
-    except OSError as e:
-        return 127, str(e)
-    return p.returncode, (p.stdout or "").strip()
-
-
 def loaded(call=None):
-    return launchctl(["list", LABEL], call)[0] == 0
+    return launchd.loaded(LABEL, call)
 
 
 def reload_agent(plist, call=None):
-    """Перевзвести агента: снять прежнего и поднять заново. Домен gui/<uid> это
-    сессия пользователя, в ней агент и живёт."""
-    target = "gui/%d" % os.getuid()
-    launchctl(["bootout", "%s/%s" % (target, LABEL)], call)
-    code, out = launchctl(["bootstrap", target, str(plist)], call)
-    if code == 0:
-        return ""
-    # Старый launchctl bootstrap не знает, а load умеет то же самое.
-    code, out = launchctl(["load", "-w", str(plist)], call)
-    return "" if code == 0 else out
+    """Перевзвести агента: снять прежнего и поднять заново."""
+    return launchd.reload_agent(LABEL, plist, call)
 
 
 def check(fix=False, main=None, from_main=True, home=None, platform=None, call=None,
-          which=None):
+          which=None, machine=None):
     """Носитель сторожка в машинном контуре доктора: агент стоит, смотрит на
     основной чекаут и отрабатывает по расписанию.
+
+    Под подставным домом launchd не трогается вовсе (DK-588). Метка агента одна
+    на машину, и доводка из временного дома сценария уводила живого сторожка на
+    чужой чекаут, а журнал тика в скретчпад. Дом машины берётся из учётной
+    записи, ключ `machine` тут для тестов.
 
     PATH агента собирается по бинарю dashboard из PATH, тем же сборщиком и по
     тому же якорю, что у соседней проверки: якорь taskctl тесты подделывают
@@ -1453,11 +1440,28 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None, call=N
                     % (why, main)], []
         plist.parent.mkdir(parents=True, exist_ok=True)
         plist.write_text(want, encoding="utf-8")
+        if not launchd.own_home(home, machine):
+            return [], [launchd.foreign_line("сторожок цикла цели", home, plist, machine)]
         err = reload_agent(plist, call)
         if err:
             return ["launchd не взял агента сторожка %s: %s" % (plist, err)], []
         return [], ["сторожок цикла цели подключён launchd-агентом %s (раз в %s)"
                     % (LABEL, say.human_age(EVERY))]
+    # Дальше речь про службы машины, и под подставным домом судить о них не о
+    # чем: поднят там агент пользователя, а не тот, что описан этим plist.
+    if not launchd.own_home(home, machine):
+        return [], []
+    thief = launchd.hijacked(LABEL, plist, call)
+    if thief:
+        why = ("launchd-агент сторожка %s взведён чужим plist %s: тик идёт по чужому "
+               "чекауту, а журнал уходит туда же" % (LABEL, thief))
+        if not fix:
+            return ["%s; вернуть своего: devkitctl doctor --fix" % why], []
+        err = reload_agent(plist, call)
+        if err:
+            return ["launchd не взял агента сторожка %s: %s" % (plist, err)], []
+        return [], ["сторожок цикла цели отобран у перехватчика %s и поднят из %s"
+                    % (thief, plist)]
     if not loaded(call):
         if not fix:
             return ["launchd-агент сторожка %s положен, но не поднят: вставший цикл цели "

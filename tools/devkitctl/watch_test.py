@@ -59,6 +59,24 @@ class Fake:
         return [a for a in self.calls if any(needle in str(x) for x in a)]
 
 
+class Printer(Fake):
+    """Подставной launchctl, у которого `print` отдаёт заданный путь plist:
+    так выглядит агент, взведённый чужим домом."""
+
+    def __init__(self, path, code=0):
+        super().__init__(code=code)
+        self.path = path
+
+    def __call__(self, argv, **kw):
+        self.calls.append(list(argv))
+        self.kwargs.append(dict(kw))
+        if "print" in argv:
+            out = ("gui/501/x = {\n\tactive count = 1\n\tpath = %s\n"
+                   "\tstate = running\n}" % self.path)
+            return subprocess.CompletedProcess(argv, 0, out, None)
+        return subprocess.CompletedProcess(argv, self.code, self.out, None)
+
+
 class Stand(unittest.TestCase):
     """Дом с реестром и проект с доской, целью в In progress и журналом."""
 
@@ -1457,11 +1475,15 @@ class AgentTest(Stand):
         self.dashboard_bin.parent.mkdir(parents=True)
         self.dashboard_bin.write_text("#!/bin/sh\n", encoding="utf-8")
 
-    def check(self, fix=False, call=None, from_main=True, platform="darwin", binary=True):
+    def check(self, fix=False, call=None, from_main=True, platform="darwin", binary=True,
+              machine=None):
+        # Дом стенда объявляется домом машины: без этого проверка шла бы по
+        # ветке подставного дома (DK-588) и launchd не трогала бы вовсе.
         call = Fake() if call is None else call
         which = (lambda name: str(self.dashboard_bin)) if binary else (lambda name: None)
         f, d = watch.check(fix=fix, main=self.main, from_main=from_main,
-                           home=self.home, platform=platform, call=call, which=which)
+                           home=self.home, platform=platform, call=call, which=which,
+                           machine=self.home if machine is None else machine)
         return f, d, call
 
     def beat(self, ago_minutes=1):
@@ -1573,6 +1595,54 @@ class AgentTest(Stand):
         self.check(fix=True)
         self.beat()
         f, d, _ = self.check()
+        self.assertEqual((f, d), ([], []))
+
+    def test_fix_in_foreign_home_leaves_launchd_alone(self):
+        # DK-588: доводка из подставного дома кладёт plist и говорит строкой, а
+        # launchd машины не трогает. Метка агента одна на машину, и прежний
+        # прогон уводил живого сторожка на чужой чекаут.
+        f, d, call = self.check(fix=True, machine=self.dir / "machine-home")
+        self.assertEqual(f, [])
+        self.assertEqual(len(d), 1, d)
+        self.assertIn("подставном доме", d[0])
+        self.assertIn(str(self.home), d[0])
+        self.assertEqual(call.calls, [], "launchd тронут из подставного дома")
+        self.assertTrue(self.plist.exists(), "plist в подставной дом не лёг")
+
+    def test_ready_foreign_home_is_silent_about_machine(self):
+        foreign = self.dir / "machine-home"
+        self.check(fix=True, machine=foreign)
+        f, d, call = self.check(fix=True, machine=foreign)
+        self.assertEqual((f, d), ([], []))
+        self.assertEqual(call.calls, [])
+
+    def test_hijacked_agent_is_a_finding(self):
+        # Файл в доме совпадает с эталоном, метку launchctl находит, а поднят
+        # агент чужим plist: видно это только по пути, из которого он взведён.
+        self.check(fix=True)
+        self.beat()
+        thief = "/private/tmp/чужая-сессия/Library/LaunchAgents/%s.plist" % watch.LABEL
+        f, d, _ = self.check(call=Printer(thief))
+        self.assertEqual(len(f), 1, f)
+        self.assertIn(thief, f[0])
+        self.assertEqual(d, [])
+
+    def test_fix_takes_the_agent_back(self):
+        self.check(fix=True)
+        self.beat()
+        thief = "/private/tmp/чужая-сессия/Library/LaunchAgents/%s.plist" % watch.LABEL
+        printer = Printer(thief)
+        f, d, _ = self.check(fix=True, call=printer)
+        self.assertEqual(f, [])
+        self.assertEqual(len(d), 1, d)
+        self.assertIn(thief, d[0])
+        self.assertTrue(printer.argv_with("bootstrap"),
+                        "агента не вернули: %s" % printer.calls)
+
+    def test_own_plist_is_quiet(self):
+        self.check(fix=True)
+        self.beat()
+        f, d, _ = self.check(call=Printer(str(self.plist)))
         self.assertEqual((f, d), ([], []))
 
     def test_other_platform_says_it_has_no_carrier(self):

@@ -418,3 +418,46 @@ func (f Fork) Choices() []ForkChoice {
 	}
 	return out
 }
+
+// AddForkOption дописывает вариант ответа к заведённой развилке. Место у
+// варианта своё: он встаёт после последней машинной подстроки вопроса
+// («решает», «рекомендация», прежние варианты) и раньше следов решения и
+// передачи, иначе перечень читался бы как ответ, дописанный после решения.
+// Незаведённое имя отказывает по той же причине, что у AppendToFork.
+func AddForkOption(doc, name, text string) (string, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", fmt.Errorf("у варианта нет текста: развилка «%s» ждёт ответ строкой", name)
+	}
+	lines := strings.Split(doc, "\n")
+	mask, _ := FenceMask(lines)
+	from, to := forkSection(lines, mask)
+	for i := from; i < to; i++ {
+		if mask[i] {
+			continue
+		}
+		m := forkHeadRe.FindStringSubmatch(lines[i])
+		if m == nil || strings.TrimSpace(m[1]) != name {
+			continue
+		}
+		at := i + 1
+		for j := i + 1; j < to && !mask[j]; j++ {
+			sub := forkSubRe.FindStringSubmatch(lines[j])
+			if sub == nil {
+				if strings.TrimSpace(lines[j]) == "" {
+					continue
+				}
+				break
+			}
+			t := strings.TrimSpace(sub[1])
+			if forkWhoRe.MatchString(t) || forkHintRe.MatchString(t) || forkOptRe.MatchString(t) {
+				at = j + 1
+			}
+		}
+		out := append([]string{}, lines[:at]...)
+		out = append(out, ForkOptionLine(text))
+		out = append(out, lines[at:]...)
+		return strings.Join(out, "\n"), nil
+	}
+	return "", fmt.Errorf("развилки «%s» в перечне нет: завести её через --ask", name)
+}

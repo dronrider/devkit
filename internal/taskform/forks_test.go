@@ -313,3 +313,36 @@ func TestForkOptions(t *testing.T) {
 		t.Fatalf("перечисление одной строкой прошло мимо сторожа: %+v", finds)
 	}
 }
+
+// TestAddForkOptionPlace: дописанный вариант встаёт после машинных подстрок
+// вопроса и раньше следов. Уйди он в конец блока, перечень читался бы как
+// вариант, придуманный после передачи исполнителю.
+func TestAddForkOptionPlace(t *testing.T) {
+	doc := "# T-009\n\n## Что происходит\n\nтекст\n"
+	got, err := AddFork(doc, "область", "любая вложенная доска или контур?", ForkHuman, "только боковая директория контура")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = AppendToFork(got, "область", ForkLeaveLine(ByAgent, "2026-09-09", "решает исполнитель по коду"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = AddForkOption(got, "область", "правило по суффиксу пути")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "  - рекомендация: только боковая директория контура\n  - вариант: правило по суффиксу пути\n  - оставлена агентом 2026-09-09: решает исполнитель по коду"
+	if !strings.Contains(got, want) {
+		t.Fatalf("вариант встал не перед следом:\n%s", got)
+	}
+	f, ok := FindFork(got, "область")
+	if !ok || len(f.Options) != 1 || f.Options[0] != "правило по суффиксу пути" {
+		t.Fatalf("дописанный вариант разобран как %+v", f)
+	}
+	if _, err := AddForkOption(got, "нет такой", "ответ"); err == nil {
+		t.Fatal("вариант лёг в незаведённую развилку")
+	}
+	if _, err := AddForkOption(got, "область", "   "); err == nil {
+		t.Fatal("пустой вариант принят")
+	}
+}

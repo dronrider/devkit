@@ -296,6 +296,18 @@ class TestHook(unittest.TestCase):
         self.assertIn("DK-431", said)
         self.assertNotIn("Контекст сжат", said)
 
+    def test_hidden_task_keeps_plan_but_drops_chat_rule(self):
+        # Скрытая сессия с заказом (виток цикла цели, тиковый прогон
+        # конвейера, делегат agentctl run) ведёт работу, и план с
+        # отзывчивостью ей нужны по-прежнему. Собеседника-человека у неё нет,
+        # и правило разговора она не получает (DK-880).
+        r = self.run_hook(sample(), {"DEVKIT_TASK": "DK-431", "DEVKIT_HIDDEN": "1"})
+        self.assertEqual(r.returncode, 0)
+        said = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertNotIn("board-chat", said)
+        self.assertIn("agentctl plan", said)
+        self.assertIn("отдавай субагенту", said)
+
     def test_compact_asks_to_reread_the_chat_skill(self):
         # SessionStart с поводом compact приходит после сжатия контекста, и
         # прочитанный скилл из контекста выпадает вместе с остальным. Хук
@@ -319,11 +331,44 @@ class TestHook(unittest.TestCase):
         f, _ = fields(self.log()[0])
         self.assertEqual((f["задача"], f["повод"]), ("DK-431", "compact"))
 
-    def test_compact_without_a_task_is_silent(self):
-        # Сессия без разговора по задаче контекста не получает ни на старте,
-        # ни после сжатия: фраза про скилл разговора ей не про что.
+    def test_compact_hidden_keeps_plan_but_drops_reread(self):
+        # После сжатия скрытая сессия план с отзывчивостью восстанавливает
+        # по-прежнему, а просьбу перечитать board-chat не получает: человека
+        # в собеседниках у неё нет (DK-880).
+        event = dict(sample(), source="compact")
+        r = self.run_hook(event, {"DEVKIT_TASK": "DK-431", "DEVKIT_HIDDEN": "1"})
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        said = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertNotIn("board-chat", said)
+        self.assertIn("agentctl plan", said)
+        self.assertIn("отдавай субагенту", said)
+
+    def test_compact_without_a_task_still_names_the_chat_skill(self):
+        # Заказа задачи нет, контекста задачи в фразе нести нечего, но
+        # собеседник у сессии остаётся человек: это чат доски с пустой
+        # привязкой или консольная сессия. Правило разговора едет ей и после
+        # сжатия (DK-880).
         event = dict(sample(), source="compact")
         r = self.run_hook(event)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        said = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("board-chat", said)
+        self.assertEqual(len(self.log()), 1)
+
+    def test_no_task_without_hidden_names_the_chat_skill(self):
+        # Общий чат доски (пустая привязка) и консольная сессия задачи не
+        # заказывают, но человек в собеседниках у них есть: правило
+        # разговора едет и без DEVKIT_TASK (DK-880).
+        r = self.run_hook(sample())
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        said = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("board-chat", said)
+        self.assertNotIn("agentctl plan", said)
+
+    def test_no_task_with_hidden_is_silent(self):
+        # Скрытая сессия без заказа задачи (например, делегат без привязки)
+        # человека в собеседниках не имеет, и правило разговора ей не едет.
+        r = self.run_hook(sample(), {"DEVKIT_HIDDEN": "1"})
         self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""))
         self.assertEqual(len(self.log()), 1)
 

@@ -55,10 +55,15 @@ DK-161). Поэтому имя окна принимается только у �
 пустым деревом: разговор доски идёт как раз из такой.
 
 Сессии с заказом (DEVKIT_TASK) хук вдобавок кладёт контекст задачи полем
-additionalContext: строку доски, файл задачи и строку про скилл board-chat, по
-которому идёт разговор с человеком. На поводе compact (SessionStart после
-сжатия контекста) вместо контекста уходит фраза «перечитай скилл board-chat» с
-ID задачи и те же строки про план и отзывчивость (DK-614).
+additionalContext: строку доски, файл задачи и строки про план и отзывчивость.
+На поводе compact (SessionStart после сжатия контекста) вместо контекста
+уходит фраза с ID задачи и те же строки про план и отзывчивость (DK-614).
+
+Строку про скилл board-chat (порядок разговора с человеком) несёт сессия без
+признака DEVKIT_HIDDEN, а не сессия с заказом задачи: заказ отвечает за
+контекст работы, а собеседник у него отдельный признак (DK-847, DK-880). Без
+заказа и без признака хук зовёт только эту строку, признак и заказ гасят её
+независимо друг от друга.
 """
 import json
 import os
@@ -323,29 +328,40 @@ CHAT_RULE = 'Порядок разговора с человеком по зад
 COMPACT = "compact"
 
 
-def compact_context(task):
+def compact_context(task, is_hidden=False):
     """Фраза после сжатия контекста: какой разговор идёт и что перечитать.
     Правила плана и отзывчивости едут той же фразой: пока сессия не перечитала
     скилл, план после сжатия не ведётся, а по нему дашборд рисует кольцо, и
     молчащее кольцо снаружи неотличимо от работающего (замечание ревью
-    DK-614)."""
+    DK-614). Просьбу перечитать board-chat несёт только сессия без признака
+    DEVKIT_HIDDEN: у неё в собеседниках человек, у скрытой сессии его нет
+    (DK-880)."""
+    if is_hidden:
+        return ("Контекст сжат. Эта сессия открыта разговором про задачу %s. "
+                 % task + PLAN_RULE + " " + PACE_RULE)
     return ("Контекст сжат. Эта сессия открыта разговором про задачу %s: "
             "перечитай скилл board-chat, разговор с человеком идёт по нему. "
             % task + PLAN_RULE + " " + PACE_RULE)
 
 
-def task_context(task, cwd):
+def task_context(task, cwd, is_hidden=False):
     """Контекст задачи для родившейся сессии: строка доски и файл постановки.
 
     Разговор, поднятый из окна с фильтром по задаче, обязан знать её с первой
     реплики, как Claude Code знает открытый в редакторе файл. Иначе человек
     первым ходом пишет «прочитай DK-397», и ход уходит впустую.
+
+    Строку CHAT_RULE несёт только сессия без признака DEVKIT_HIDDEN: план и
+    отзывчивость ведёт любая работающая сессия, а порядок разговора с
+    человеком нужен только той, у которой человек в собеседниках (DK-880).
     """
     root = hookio.tree_root(cwd) or cwd
     if not root:
         return ""
-    parts = ["Эта сессия открыта разговором про задачу %s." % task,
-             PLAN_RULE + " " + PACE_RULE + " " + CHAT_RULE]
+    rule = PLAN_RULE + " " + PACE_RULE
+    if not is_hidden:
+        rule += " " + CHAT_RULE
+    parts = ["Эта сессия открыта разговором про задачу %s." % task, rule]
     try:
         out = subprocess.run(["taskctl", "-C", root, "show", task],
                              capture_output=True, text=True, timeout=10)
@@ -372,16 +388,25 @@ def run_hook(protocol, path=None, env=None, now=None):
         # без сессии не сводится ни с транскриптом, ни с ручкой привязки.
         return 0
     hookio.append_capped(path or LOG, record(start, env, now))
-    if hidden(env):
+    real_env = os.environ if env is None else env
+    is_hidden = hidden(real_env)
+    if is_hidden:
         mark_hidden(start.session)
-    task = ordered_task(os.environ if env is None else env)
+    task = ordered_task(real_env)
     if not task:
-        return 0
+        # Без заказа задачи контекста задачи нет, а порядок разговора всё
+        # равно нужен: это чат доски с пустой привязкой или консольная
+        # сессия, поднятая руками. Скрытой сессии (конвейер, делегат,
+        # виток цели) человека в собеседниках нет, и правило ей не нужно
+        # (DK-880).
+        if is_hidden:
+            return 0
+        return hookio.Context("SessionStart").say(CHAT_RULE)
     if start.source == COMPACT:
         # Строка доски и файл задачи после сжатия не повторяются: их
         # выжимка остаётся в сводке харнеса, а скилл из неё выпадает.
-        return hookio.Context("SessionStart").say(compact_context(task))
-    said = task_context(task, start.cwd)
+        return hookio.Context("SessionStart").say(compact_context(task, is_hidden))
+    said = task_context(task, start.cwd, is_hidden)
     if said:
         return hookio.Context("SessionStart").say(said)
     return 0

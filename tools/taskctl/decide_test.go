@@ -224,3 +224,59 @@ func TestAddLinkPrintsGoalForks(t *testing.T) {
 		t.Fatalf("строка без цели получила чужой перечень:\n%s", msg)
 	}
 }
+
+// TestDecideAddsOptionToOpenFork: вариант дописывается в заведённую развилку,
+// и блок вопроса печатает его своим номером. Вопрос, заведённый без вариантов,
+// печатался человеку одной рекомендацией, выбирать было не из чего, а
+// повторное --ask на занятое имя отказывает.
+func TestDecideAddsOptionToOpenFork(t *testing.T) {
+	root := setup(t)
+	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "область", Hint: "послабление только боковой директории контура", Text: "любой вложенный docs/TASKS.md или доска контура?"})
+	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, nil)
+	if strings.Contains(got, "\n2. ") {
+		t.Fatalf("у развилки без вариантов взялся второй пункт:\n%s", got)
+	}
+
+	msg := decideRun(t, root, DecideParams{ID: "XR-005", Name: "область", Opts: []string{"правило по суффиксу пути, одинаковое всем репозиториям"}})
+	if !strings.Contains(msg, "дописано вариантов 1") {
+		t.Fatalf("ответ не назвал, сколько вариантов дописано: %s", msg)
+	}
+	doc := readTask(t, root, "XR-005")
+	if !strings.Contains(doc, "  - рекомендация: послабление только боковой директории контура\n  - вариант: правило по суффиксу пути, одинаковое всем репозиториям") {
+		t.Fatalf("вариант встал не после рекомендации:\n%s", doc)
+	}
+	got = chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, nil)
+	if !strings.Contains(got, "\n2. правило по суффиксу пути, одинаковое всем репозиториям") {
+		t.Fatalf("дописанный вариант не попал в блок вопроса:\n%s", got)
+	}
+
+	// Дубль не отбивает пачку: команду зовут списком ключей, и повтор одного
+	// варианта не повод потерять остальные. В файле дубля при этом нет.
+	msg = decideRun(t, root, DecideParams{ID: "XR-005", Name: "область", Opts: []string{"правило по суффиксу пути, одинаковое всем репозиториям", "признак корп-контура у проекта-подкаталога"}})
+	if !strings.Contains(msg, "дописано вариантов 1") || !strings.Contains(msg, "уже были в перечне 1") {
+		t.Fatalf("ответ не отделил дубль от дописанного: %s", msg)
+	}
+	f, ok := taskform.FindFork(readTask(t, root, "XR-005"), "область")
+	if !ok || len(f.Options) != 2 {
+		t.Fatalf("дубль лёг в перечень вторым разом: %+v", f)
+	}
+}
+
+// TestDecideOptionRefusals: отказы дописывания. Решённой развилке вариант уже
+// не нужен, незаведённое имя отказывает, как у остальных входов, а пустой ключ
+// зовёт форму команды.
+func TestDecideOptionRefusals(t *testing.T) {
+	root := setup(t)
+	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "хранение", Hint: "команда", Text: "раздел или команда?"})
+	decideRun(t, root, DecideParams{ID: "XR-005", Name: "хранение", By: "человек", Text: "команда, штампы дешевле машиной"})
+	if _, err := cmdDecide(root, DecideParams{ID: "XR-005", Name: "хранение", Opts: []string{"раздел файла задачи"}, Now: decideDay}); err == nil {
+		t.Fatal("решённая развилка приняла вариант")
+	}
+	if _, err := cmdDecide(root, DecideParams{ID: "XR-005", Name: "секрет", Opts: []string{"из secretctl"}, Now: decideDay}); err == nil {
+		t.Fatal("вариант лёг в незаведённую развилку")
+	}
+	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "доступ", Text: "токен положен?"})
+	if _, err := cmdDecide(root, DecideParams{ID: "XR-005", Name: "доступ", Opts: []string{"   "}, Now: decideDay}); err == nil {
+		t.Fatal("пустой вариант принят")
+	}
+}

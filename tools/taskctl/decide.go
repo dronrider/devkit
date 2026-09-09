@@ -111,6 +111,8 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 		doc, note, err = decideAnswer(doc, p)
 	case p.Ask != "":
 		doc, err = decideAsk(doc, p)
+	case len(p.Opts) > 0:
+		doc, note, err = decideOption(doc, name, p)
 	case p.Leave:
 		doc, err = decideLeave(doc, name, p)
 	case p.By != "":
@@ -139,6 +141,8 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 		return head + decideShow(doc, DecideParams{ID: p.ID}) + tail, nil
 	case p.Ask != "":
 		head += fmt.Sprintf("развилка «%s» заведена, %s", decideName(p.Ask), decideWho(p.Who))
+	case len(p.Opts) > 0:
+		head += note
 	case p.Leave:
 		head += fmt.Sprintf("развилка «%s» оставлена исполнителю", name)
 	default:
@@ -165,6 +169,55 @@ func decideAsk(doc string, p DecideParams) (string, error) {
 		return "", fmt.Errorf("у развилки нет вопроса: taskctl decide %s --ask «имя» \"вопрос\"", p.ID)
 	}
 	return taskform.AddFork(doc, decideName(p.Ask), p.Text, who, p.Hint, p.Opts...)
+}
+
+// decideOption дописывает варианты ответа к заведённой развилке. Вариантами
+// перечень обзавёлся позже самой команды, и записи с вопросом, заведённым
+// раньше, остались с одной рекомендацией: блок --chat печатал такой развилке
+// один пункт, и выбирать человеку было не из чего. Повторное --ask тут не
+// годится, занятое имя оно отбивает своим отказом. Дубль варианта не
+// отбивает всю пачку, а называется в ответе: команду зовут списком ключей, и
+// один повтор не повод терять остальные.
+func decideOption(doc, name string, p DecideParams) (string, string, error) {
+	f, ok := taskform.FindFork(doc, name)
+	if !ok {
+		return "", "", fmt.Errorf("развилки «%s» в перечне нет: завести её через --ask", name)
+	}
+	if f.Decided() {
+		return "", "", fmt.Errorf("развилка «%s» решена (%s %s), вариант ей уже не нужен: пересмотр это второе решение под той же головой", name, f.By, f.Date)
+	}
+	have := map[string]bool{}
+	if h := strings.TrimSpace(f.Hint); h != "" {
+		have[h] = true
+	}
+	for _, o := range f.Options {
+		have[strings.TrimSpace(o)] = true
+	}
+	var added, skipped []string
+	for _, o := range p.Opts {
+		o = strings.TrimSpace(o)
+		if o == "" {
+			continue
+		}
+		if have[o] {
+			skipped = append(skipped, o)
+			continue
+		}
+		var err error
+		if doc, err = taskform.AddForkOption(doc, name, o); err != nil {
+			return "", "", err
+		}
+		have[o] = true
+		added = append(added, o)
+	}
+	if len(added) == 0 && len(skipped) == 0 {
+		return "", "", fmt.Errorf("у --option нет текста варианта: taskctl decide %s «%s» --option \"ответ\"", p.ID, name)
+	}
+	note := fmt.Sprintf("развилке «%s» дописано вариантов %d", name, len(added))
+	if len(skipped) > 0 {
+		note += fmt.Sprintf(", уже были в перечне %d (%s)", len(skipped), strings.Join(skipped, "; "))
+	}
+	return doc, note, nil
 }
 
 func decideClose(doc, name string, p DecideParams) (string, error) {

@@ -478,3 +478,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-864 | Вопрос человеку приходит текстом в чате, а не виджетом AskUserQuestion [приёмка: mixed] | task | P2 | 2026-09-09 | [tasks/archive/2026/DK-864.md](tasks/archive/2026/DK-864.md) |
 | DK-882 | decide дописывает вариант ответа в заведённую развилку | task | P2 | 2026-09-09 | [tasks/archive/2026/DK-882.md](tasks/archive/2026/DK-882.md) |
 | DK-571 | Фоновая команда мимо реестра сторожа: весть о её конце теряется | bug | P1 | 2026-09-09 | [tasks/archive/2026/DK-571.md](tasks/archive/2026/DK-571.md) |
+| DK-588 | doctor --fix из подставного HOME уводит launchd-агентов машины | bug | P1 | 2026-09-09 | [tasks/archive/2026/DK-588.md](tasks/archive/2026/DK-588.md), `f7d9f082`, `de754658` |

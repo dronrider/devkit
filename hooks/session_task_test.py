@@ -343,27 +343,36 @@ class TestHook(unittest.TestCase):
         self.assertIn("agentctl plan", said)
         self.assertIn("отдавай субагенту", said)
 
-    def test_compact_without_a_task_still_names_the_chat_skill(self):
+    def test_compact_without_a_task_asks_to_reread_and_keeps_plan(self):
         # Заказа задачи нет, контекста задачи в фразе нести нечего, но
         # собеседник у сессии остаётся человек: это чат доски с пустой
-        # привязкой или консольная сессия. Правило разговора едет ей и после
-        # сжатия (DK-880).
+        # привязкой или консольная сессия. После сжатия она получает ту же
+        # просьбу перечитать скилл и те же строки плана и отзывчивости, что
+        # сессия с заказом (DK-914).
         event = dict(sample(), source="compact")
         r = self.run_hook(event)
         self.assertEqual((r.returncode, r.stderr), (0, ""))
         said = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("board-chat", said)
+        self.assertIn("Перечитай скилл board-chat", said)
+        self.assertIn("agentctl plan", said)
+        self.assertIn("отдавай субагенту", said)
+        self.assertNotIn("по задаче", said)
         self.assertEqual(len(self.log()), 1)
 
-    def test_no_task_without_hidden_names_the_chat_skill(self):
+    def test_no_task_without_hidden_gets_plan_and_pointer(self):
         # Общий чат доски (пустая привязка) и консольная сессия задачи не
-        # заказывают, но человек в собеседниках у них есть: правило
-        # разговора едет и без DEVKIT_TASK (DK-880).
+        # заказывают, но человек в собеседниках у них есть: план, отзывчивость
+        # и указатель на скилл едут и без DEVKIT_TASK, той же веткой, что и
+        # сессии с заказом (DK-914). Слова «по задаче» тут нет: привязки к
+        # задаче тоже нет.
         r = self.run_hook(sample())
         self.assertEqual((r.returncode, r.stderr), (0, ""))
         said = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("board-chat", said)
-        self.assertNotIn("agentctl plan", said)
+        self.assertIn("Позови скилл board-chat", said)
+        self.assertIn("agentctl plan", said)
+        self.assertIn("отдавай субагенту", said)
+        self.assertNotIn("по задаче", said)
 
     def test_no_task_with_hidden_is_silent(self):
         # Скрытая сессия без заказа задачи (например, делегат без привязки)

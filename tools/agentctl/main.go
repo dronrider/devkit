@@ -100,6 +100,16 @@ const usageText = `agentctl: выбор исполнителя под задач
                           <ID>-sub-<метка>.json и метка обязательна, иначе пачка
                           пишет план поверх соседского. Порядок ведения в скилле
                           work-plan, читает план дашборд
+  wait <ID> <условие>     отметка машинного ожидания для оболочки конвейера:
+       [--until <срок>]   ход кончается штатно, а проход с такой отметкой
+       [--note <текст>]   заказа не получает и в воронку с потолком проходов не
+                          идёт. Условия: срок (ждём только время), есть <путь>,
+                          нет <путь>, чисто <путь> (в дереве нет
+                          незакоммиченного). Срок вида 90s, 10m, 1h, потолок два
+                          часа: ожидание длиннее паркует строку доски, а не
+                          оболочку. Отметка ложится файлом на задачу в
+                          ~/.devkit/waits, оболочка читает условие сама и
+                          вернётся к работе по событию либо по сроку
   budget                  потолок пачки для taskctl batch --limit: первая
                           строка машинная (batch: N), вторая называет бакет,
                           темп и причину потолка. Потолок не выводится своим
@@ -413,6 +423,22 @@ func main() {
 			fail(fmt.Errorf("не видно дома пользователя, плану некуда лечь: %v", herr))
 		}
 		msg, err = cmdPlan(home, pos[0], pos[1:], *sid, *label, os.Getenv)
+	case "wait":
+		fs := flag.NewFlagSet("wait", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		until := fs.String("until", "", "срок ожидания: 90s, 10m, 1h")
+		note := fs.String("note", "", "чего ждём словами, эти слова видит человек в чате и в журнале")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 2, 3, "wait <ID> <условие> [<цель>] [--until <срок>] [--note <текст>]")
+		root, rerr := findRoot(*dir)
+		if rerr != nil {
+			fail(rerr)
+		}
+		target := ""
+		if len(pos) == 3 {
+			target = pos[2]
+		}
+		msg, err = cmdWait(root, pos[0], pos[1], target, *until, *note, os.Getenv, timeNow())
 	case "budget":
 		needArgs(args[1:], 0, 0, "budget")
 		msg, err = cmdBudget(gdir, timeNow())

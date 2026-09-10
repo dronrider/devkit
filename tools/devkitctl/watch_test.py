@@ -517,6 +517,7 @@ class RunTest(Stand):
 TASKCTL = "/bin/подставной-taskctl"
 SHIPCTL = "/bin/подставной-shipctl"
 AGENTCTL = "/bin/подставной-agentctl"
+DASHBOARD = "/bin/подставной-dashboard"
 
 PARK_HEAD = """# Задачи стенда
 
@@ -544,6 +545,20 @@ PARK_HEAD = """# Задачи стенда
 """
 
 PARK_ROW = "| %s | %s | task | P1 | 60 (50+5+3+0+2) | XL | [tasks/%s.md](tasks/%s.md) |"
+
+
+class RaiseFake(Fake):
+    """Запускатель, отвечающий отказом только подъёму сессии. Общий отказ тут
+    не годится: он завалил бы и возврат строки в работу, и будить стало бы
+    некого."""
+
+    def __call__(self, argv, **kw):
+        self.calls.append(list(argv))
+        self.kwargs.append(dict(kw))
+        if "wake" in argv:
+            return subprocess.CompletedProcess(
+                argv, 1, "DK-901: сессия не поднята, tmux не нашёлся", None)
+        return subprocess.CompletedProcess(argv, 0, "", None)
 
 
 class WakeTest(Stand):
@@ -588,9 +603,12 @@ class WakeTest(Stand):
         d.mkdir(parents=True, exist_ok=True)
         (d / ("task-%s.ask" % tid)).write_text(when + "\n", encoding="utf-8")
 
-    def wake(self, taskctl=TASKCTL, call=None):
+    def wake(self, taskctl=TASKCTL, call=None, dashboard=DASHBOARD):
         call = self.call if call is None else call
-        return watch.wake(str(self.proj), self.now, call, taskctl)
+        return watch.wake(str(self.proj), self.now, call, taskctl, dashboard=dashboard)
+
+    def raised(self):
+        return self.call.argv_with("wake")
 
     def moved(self):
         return self.call.argv_with("move")
@@ -756,6 +774,59 @@ class WakeTest(Stand):
         self.assertEqual(len(moved), 1, self.call.calls)
         self.assertIn("docs(tasks): DK-901 разбуждена ответом", moved[0])
         self.assertIn("--push", moved[0])
+
+    def test_wake_raises_the_session(self):
+        # DK-922: разбуженной строки мало, работу по ней надо кому-то вести.
+        # Оболочка конвейера к ответу человека уже вышла по стопу wait_human и
+        # снесла окно, планировщика у задачи, поднятой рукой, нет, и без этого
+        # вызова строка стояла в работе с непрочитанным ответом во входе.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.said(self.proj, "DK-901")
+        lines = self.wake()
+        self.assertEqual(self.raised(), [[DASHBOARD, "wake", "-C", str(self.proj), "DK-901"]],
+                         self.call.calls)
+        self.assertTrue(lines[-1].endswith("разбужено 1"), lines[-1])
+
+    def test_wake_raises_after_the_move(self):
+        # Порядок обязателен: сессия поднимается после возврата строки в
+        # In progress. Поднятая поверх парковки оболочка спрашивает доску
+        # предполётом и вышла бы тем же стопом wait_human, с которого всё и
+        # началось.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.said(self.proj, "DK-901")
+        self.wake()
+        order = [w for c in self.call.calls for w in c if w in ("move", "wake")]
+        self.assertEqual(order, ["move", "wake"], self.call.calls)
+
+    def test_wake_does_not_raise_without_the_answer(self):
+        # Нет лежащего ответа, значит и будить некого: подъём сессии не идёт
+        # вперёд пробуждения строки.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.wake()
+        self.assertEqual(self.raised(), [], self.call.calls)
+
+    def test_wake_reports_a_failed_raise(self):
+        # Отказ подъёма не роняет пробуждение и не молчит: строка уже вернулась
+        # в работу, причина уходит словами, а следующий тик повторит.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.said(self.proj, "DK-901")
+        lines = self.wake(call=RaiseFake())
+        self.assertIn("разбужена", " ".join(lines))
+        self.assertIn("dashboard wake отказал с кодом 1", " ".join(lines))
+        self.assertIn("tmux не нашёлся", " ".join(lines))
+
+    def test_wake_without_dashboard_is_reported(self):
+        # Бинаря дашборда нет: строка вернулась в работу, а поднимать её
+        # сессию нечем, и молчать об этом нельзя.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.said(self.proj, "DK-901")
+        lines = self.wake(dashboard="")
+        self.assertIn("бинаря dashboard нет", " ".join(lines))
 
     def test_taskctl_bin_prefers_path(self):
         self.assertEqual(watch.taskctl_bin(which=lambda name: "/x/%s" % name), "/x/taskctl")
@@ -1026,9 +1097,6 @@ class DrainTest(Stand):
         self.assertEqual(rc, 0, out)
         self.assertEqual(self.drained(), [
             [SHIPCTL, "-C", str(self.proj), "ship", "--drain"]], self.call.calls)
-
-
-DASHBOARD = "/bin/подставной-dashboard"
 
 
 class CheckFake(Fake):

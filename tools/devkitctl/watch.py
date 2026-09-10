@@ -1205,14 +1205,46 @@ def review_act(root, tid, verdict, call, dashboard):
     return lines
 
 
-def wake(root, now, call=None, taskctl=None, hook=LOAD_HOOK):
+def wake_raise(root, tid, call=None, dashboard=None):
+    """Подъём сессии разбуженной строки: заказ уходит в `dashboard wake`, ту же
+    команду, что зовёт панель по записи ответа (DK-922). Возврат это строка
+    отчёта и признак, что сессия поднята.
+
+    Своей копии подъёма у тика нет по той же причине, что у второго круга
+    ревью: живые сессии, подписки, ярусы и права машинного контура живут у
+    дашборда, и вторая копия этих правил в питоне разошлась бы с первой на
+    первой правке. Не поднятая сессия провалом тика не считается: строка уже
+    вернулась в работу, отчёт называет причину словами, а следующий тик
+    повторит."""
+    call = subprocess.run if call is None else call
+    bin = devkit_bin("dashboard") if dashboard is None else dashboard
+    if not bin:
+        return ("задача %s в %s: бинаря dashboard нет ни в PATH, ни в каталогах релиза: "
+                "сессию задачи поднимает человек" % (tid, root)), False
+    try:
+        p = call([bin, "wake", "-C", root, tid],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        return ("задача %s в %s: сессия не поднята, %s" % (tid, root, e)), False
+    text = " ".join((p.stdout or "").split())
+    if p.returncode != 0:
+        return ("задача %s в %s: сессия не поднята, dashboard wake отказал с кодом %d: %s"
+                % (tid, root, p.returncode, text)), False
+    return ("задача %s в %s: %s" % (tid, root, text)), True
+
+
+def wake(root, now, call=None, taskctl=None, hook=LOAD_HOOK, dashboard=None):
     """Будит припаркованные вопросом строки корня с лежащим ответом. Возврат
     это строки отчёта, по одной на будимость и итог на корень: тик молчит о
     корне только там, где парковок нет вовсе.
 
     Возврат строки идёт тем же `taskctl -C <корень> move <ID> in-progress`,
-    каким её парковали: причина блока снимается им же, а строка становится
-    кандидатом планировщика на общих основаниях. Move идёт с -m и --push:
+    каким её парковали: причина блока снимается им же. Следом идёт подъём
+    сессии (`dashboard wake`), потому что у задачи, поднятой рукой с экрана,
+    планировщика нет вовсе: оболочка конвейера вышла по стопу wait_human и
+    снесла окно, и разбуженная строка стояла бы в работе с непрочитанным
+    ответом во входе, пока человек не нажмёт «Запуск» (DK-922). Move идёт с -m
+    и --push:
     за будящим никого нет, и правка доски, оставленная грязной в основном
     чекауте, отбила бы следующий merge предполётом и подмелась бы чужим
     коммитом, поэтому она коммитится и пушится тут же, по правилу доски
@@ -1259,6 +1291,8 @@ def wake(root, now, call=None, taskctl=None, hook=LOAD_HOOK):
         drop_asks(root, tid)
         woke += 1
         lines.append("задача %s в %s разбужена: ответ в разговоре, строка вернулась в In progress" % (tid, root))
+        line, _ = wake_raise(root, tid, call, dashboard)
+        lines.append(line)
     if parked:
         lines.append("корень %s: припаркованных вопросом %d, разбужено %d"
                      % (os.path.basename(root.rstrip("/")), len(parked), woke))
@@ -1586,7 +1620,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         # бывает несколько, и разговор припаркованной задачи один на всех.
         if root and root not in swept and os.path.isdir(root):
             swept.add(root)
-            for wline in wake(root, now, timed(root), taskctl):
+            for wline in wake(root, now, timed(root), taskctl, dashboard=dashboard):
                 out.write(wline + "\n")
                 log_line(wline, home)
             for pline in park_stale(root, now, timed(root), taskctl, home=home):
@@ -1605,7 +1639,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         if root in swept:
             continue
         swept.add(root)
-        for line in (wake(root, now, timed(root), taskctl)
+        for line in (wake(root, now, timed(root), taskctl, dashboard=dashboard)
                      + park_stale(root, now, timed(root), taskctl, home=home)
                      + close_agent(root, timed(root), taskctl)
                      + review_poll(root, now, timed(root), taskctl, dashboard)):

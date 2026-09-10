@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -927,13 +926,10 @@ func runsEnvWithLog(t *testing.T, sessions string) (*testEnv, *http.Client, stri
 	srv := httptest.NewServer(s.handler())
 	t.Cleanup(srv.Close)
 
-	jar, _ := cookiejar.New(nil)
-	c := &http.Client{Jar: jar}
-	resp, _ := c.Post(srv.URL+"/api/login", "application/json",
-		strings.NewReader(`{"token": "test-token"}`))
-	resp.Body.Close()
-
-	return &testEnv{srv: srv, s: s, cfg: cfg, home: home, proj: proj, bin: bin}, c, tmuxLog, lc
+	// Вход идёт общим helper-ом, а не своей банкой: он снимает у куки срок,
+	// который сервер считает замороженными часами стенда (DK-888).
+	e := &testEnv{srv: srv, s: s, cfg: cfg, home: home, proj: proj, bin: bin}
+	return e, e.loggedClient(t), tmuxLog, lc
 }
 
 // Ошибки на запуск должны логироваться: чужой Origin

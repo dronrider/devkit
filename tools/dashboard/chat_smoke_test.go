@@ -252,6 +252,10 @@ func smokeWrap(t *testing.T, e *testEnv, driver string, extra ...func(*http.Serv
 	if cookie == nil {
 		t.Fatal("вход смоука не вернул куку сессии")
 	}
+	// Срок с куки снимается, и браузеру она уезжает сессионной. Считает срок
+	// сервер своими часами, а стенд их морозит, и chrome, который судит о сроке
+	// настоящими часами машины, выбросил бы такую куку молча (DK-888).
+	cookie.Expires, cookie.RawExpires, cookie.MaxAge = time.Time{}, "", 0
 	html, err := os.ReadFile(filepath.Join("static", "index.html"))
 	if err != nil {
 		t.Fatal(err)

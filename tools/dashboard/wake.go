@@ -22,34 +22,40 @@ import (
 // (checkrun.go) и второй круг чужого ревью (round.go): решения о том, кого
 // поднимать и кому подъём не отдавать, живут в одном месте, потому что вторая
 // копия этих правил разошлась бы с первой на первой же правке.
+//
+// Возврат строки из Blocked живёт тут же, а не у зовущих: снять парковку и
+// поднять сессию это один ход. Пока сессия не поднялась, строка стоит
+// припаркованной вопросом, и повторить подъём есть кому.
 
 // taskWake поднимает сессию по одной разбуженной строке. Возврат тот же, что у
 // подъёма прогона: слова отчёта и два признака, чтобы зовущий знал, поднялось
 // ли что-нибудь и была ли поломка.
+//
+// Порядок ходов тут важнее самих ходов. Парковка вопросом это единственное, чем
+// строку видно тому, кто повторит подъём: тик берёт будимых из Blocked с
+// причиной «вопрос: ...» (wake в tools/devkitctl/watch.py), а лежащий во входе
+// ответ никуда не девается и ждёт следующего захода. Поэтому всё, чем подъём
+// может отказать, спрашивается до снятия парковки, а снимается она последним
+// ходом перед самим подъёмом. Снятая раньше времени, она оставляла бы строку в
+// работе без сессии и без признака ожидания: такую не подхватит ни тик, ни
+// панель, и это ровно тот случай, из которого выросла задача.
 func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) checkRunReport {
 	row, ok := rows[id]
 	if !ok {
 		return checkRunReport{Line: id + ": строки нет на доске проекта " + proj.Name, Failed: true}
 	}
-	// У цели своя оболочка, и на вопросе она не умирает: цикл сторожит признак
-	// сам (goal-run.py). Поднимать ей сессию задачи нельзя вовсе.
-	if isGoalTitle(row.Title) {
-		return checkRunReport{Line: id + ": подъём не нужен, это цель: её цикл переживает вопрос сам"}
-	}
-	switch {
-	case parkedByAsk(row):
-		// Панель зовёт подъём сразу по записи ответа, и строка тут ещё стоит в
-		// Blocked. Поднимать поверх парковки нечего: оболочка конвейера
-		// спрашивает доску предполётом и вышла бы тем же стопом wait_human, с
-		// которого всё и началось. Парковка снимается тем же ходом и тем же
-		// вызовом taskctl, каким её снимает ответ клавишами (settleAsk) и тик
-		// сторожка (wake в tools/devkitctl/watch.py).
-		if err := s.unparkAsk(proj.Path, id); err != nil {
-			return checkRunReport{Failed: true, Line: id +
-				": сессия не поднята, парковка вопросом не снялась: " + err.Error()}
-		}
-	case row.Sect != "in-progress":
+	parked := parkedByAsk(row)
+	if !parked && row.Sect != "in-progress" {
 		return checkRunReport{Line: id + ": подъём не нужен, строка в " + row.Section}
+	}
+	// У цели своя оболочка, и на вопросе она не умирает: цикл сторожит признак
+	// сам (goal-run.py). Сессию задачи ей поднимать нельзя вовсе, а парковку
+	// снять надо: ответ лежит во входе, и цикл читает его своим ходом.
+	if isGoalTitle(row.Title) {
+		if err := s.unparkIf(proj.Path, id, parked); err != nil {
+			return unparkFailed(id, err)
+		}
+		return checkRunReport{Line: id + ": подъём не нужен, это цель: её цикл переживает вопрос сам"}
 	}
 	if m := tmuxMissingCheck(); m != "" {
 		return checkRunReport{Line: id + ": сессия не поднята, " + m, Failed: true}
@@ -59,6 +65,13 @@ func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) ch
 	for _, name := range tmuxSessions() {
 		if name != sess {
 			continue
+		}
+		// Живая сессия под этим именем читает вход сама, и поднимать поверх
+		// неё нечего. Парковку тут снять надо всё равно: ответ дошёл до
+		// адресата, а строка осталась бы висеть в Blocked с вопросом, на
+		// который человек уже ответил.
+		if err := s.unparkIf(proj.Path, id, parked); err != nil {
+			return unparkFailed(id, err)
 		}
 		if talk[name] {
 			// Под тем же именем идёт разговор человека. Ответ он прочитает сам
@@ -79,6 +92,13 @@ func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) ch
 		return checkRunReport{Failed: true, Line: id +
 			": сессия не поднята, права машинного контура на машине не разложены: " + why}
 	}
+	// Оболочка конвейера ищется тут же, а не внутри подъёма: без неё
+	// startTaskSession откажет уже за снятой парковкой, и строку пришлось бы
+	// возвращать в Blocked вторым коммитом доски. Из всего, чем отказывает
+	// подъём, это единственная причина, живущая на машине долго.
+	if taskRunPath(s.cfg.Roots) == "" {
+		return checkRunReport{Failed: true, Line: id + ": сессия не поднята, " + taskRunMissing}
+	}
 	// Ярус берётся исполнительским вердиктом, без роли ревью: это продолжение
 	// той же разработки, а не второй взгляд на неё.
 	tier, tierWhy := s.pickTier(proj.Path, id, "")
@@ -86,16 +106,63 @@ func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) ch
 	if own != nil && own.Default {
 		model = own.tierModel(tier)
 	}
+	// Парковка снимается последним ходом перед подъёмом: оболочка конвейера
+	// спрашивает доску предполётом и поверх строки в Blocked вышла бы тем же
+	// стопом wait_human, с которого всё и началось. Снимает её тот же вызов
+	// taskctl, каким сводит строку ответ клавишами (settleAsk) и тик сторожка.
+	if err := s.unparkIf(proj.Path, id, parked); err != nil {
+		return unparkFailed(id, err)
+	}
 	// Признак hidden тут не ставится, в отличие от прогона сценария и второго
 	// круга ревью (DK-847). Те поднимает тик сам по себе, а этот подъём начал
 	// человек своим ответом: он ждёт продолжения разговора и обязан найти его
 	// в списке панели, а не гадать, куда делся чат.
 	order := runPrompt("in-progress", id)
 	if err := s.startTaskSession(proj, id, sess, nil, model, order, order, false); err != nil {
-		return checkRunReport{Line: id + ": сессия не поднята, " + err.Error(), Failed: true}
+		return checkRunReport{Failed: true, Line: id + ": сессия не поднята, " + err.Error() +
+			s.repark(proj.Path, id, row.Block, parked)}
 	}
 	return checkRunReport{Raised: true, Line: fmt.Sprintf(
 		"%s: сессия задачи поднята в tmux-сессии %s ответом человека, %s", id, sess, tierWhy)}
+}
+
+// unparkIf снимает парковку вопросом у строки, которая ещё стоит в Blocked.
+// Разбуженную кем-то раньше строку трогать нечем: move её уже был.
+func (s *server) unparkIf(root, id string, parked bool) error {
+	if !parked {
+		return nil
+	}
+	return s.unparkAsk(root, id)
+}
+
+// unparkFailed это отказ, случившийся на снятии парковки. Строка осталась в
+// Blocked с тем же вопросом, и подъём повторит тот, кто позвал: панель следующим
+// ответом, тик следующим заходом.
+func unparkFailed(id string, err error) checkRunReport {
+	return checkRunReport{Failed: true, Line: id +
+		": сессия не поднята, парковка вопросом не снялась: " + err.Error()}
+}
+
+// repark возвращает строку в Blocked с тем же вопросом, когда парковка уже
+// снята, а сессия так и не поднялась. Без этого строка стояла бы в работе без
+// сессии и без признака ожидания: тик берёт будимых только из Blocked, и
+// поднять такую было бы некому, кроме руки человека. Возврат это хвост к строке
+// отчёта: молчаливой уборки тут быть не должно, человек читает одну строку.
+func (s *server) repark(root, id, block string, parked bool) string {
+	if !parked {
+		// Парковку снимал не подъём, а тот, кто двигал строку до него: своей
+		// причины блока у неё нет, и выдумывать вопрос вместо человека нельзя.
+		return "; строка стоит в In progress, и подъём по ней зовётся руками"
+	}
+	if _, code, err := s.taskctlWrite(root, "move", id, "blocked", "--reason", block,
+		"-m", fmt.Sprintf("docs(tasks): %s возвращена в Blocked, сессия не поднялась", id),
+		"--push"); err != nil {
+		s.logf("задача %s: возврат в Blocked после неудачного подъёма не прошёл (%d): %v", id, code, err)
+		return "; вернуть строку в Blocked не вышло: " + err.Error() +
+			"; она стоит в In progress без сессии, и поднять её надо руками"
+	}
+	s.logf("задача %s возвращена в Blocked тем же вопросом: сессия не поднялась", id)
+	return "; строка возвращена в Blocked тем же вопросом, подъём повторит следующий заход"
 }
 
 // unparkAsk снимает парковку вопросом: признак ожидания и возврат строки в

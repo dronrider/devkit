@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -171,3 +172,136 @@ func TestTaskWakeRefusesWithoutPerms(t *testing.T) {
 		t.Errorf("сессия всё-таки поднята: %s", got)
 	}
 }
+
+// parkedMoveEnv это тот же стенд с журналом ходов доски: поддельный taskctl
+// пишет всякий move строки в файл, а признак ожидания лежит там, где его
+// оставил бы вопрос. По этим двум следам и видно, где строка осталась стоять.
+func parkedMoveEnv(t *testing.T) (e *testEnv, tmuxLog, moved string) {
+	t.Helper()
+	e, tmuxLog = parkedRaiseEnv(t)
+	moved = filepath.Join(e.home, "moved.log")
+	writeScript(t, e.bin, "taskctl", `case "$*" in
+*"move XR-7"*) echo "$@" >> `+moved+`; echo '{"ok":true}';;
+*) echo '`+chatParkedBoard+`';;
+esac`)
+	if err := chat.WriteAsk(e.proj, "task-XR-7", chat.Ask{Task: "XR-7",
+		Questions: []chat.Question{{Text: "какую схему брать"}}}); err != nil {
+		t.Fatal(err)
+	}
+	return e, tmuxLog, moved
+}
+
+// Подъём отказал: строка обязана остаться припаркованной вопросом. Парковка это
+// единственное, чем строка видна следующему заходу: тик берёт будимых из
+// Blocked, а признак ожидания рисует вопрос в панели. Снятая до отказа, она
+// оставляла бы строку в работе без сессии и без признака, и поднять её было бы
+// некому, кроме руки человека.
+func TestTaskWakeKeepsRowParkedOnRefusal(t *testing.T) {
+	e, tmuxLog, moved := parkedMoveEnv(t)
+	writePermsFake(t, filepath.Dir(e.proj), true)
+
+	rep := wakeOne(t, e, "XR-7")
+	if !rep.Failed || rep.Raised {
+		t.Fatalf("подъём без прав не отказал: %+v", rep)
+	}
+	if args := readFile(t, moved); args != "" {
+		t.Errorf("строку увели из Blocked отказавшим подъёмом: %q", args)
+	}
+	if _, ok := chat.ReadAsk(chat.AskPath(e.proj, "task-XR-7")); !ok {
+		t.Error("признак ожидания снят отказавшим подъёмом: панель потеряет вопрос, а тик строку")
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("сессия всё-таки поднята: %s", got)
+	}
+}
+
+// Оболочки конвейера на машине нет: подъём отказывает до всякой правки доски.
+// Причина эта живёт долго, и снятая под неё парковка стоила бы двух коммитов
+// доски на каждом тике.
+func TestTaskWakeKeepsRowParkedWithoutTaskRun(t *testing.T) {
+	e, _, moved := parkedMoveEnv(t)
+	if err := os.Remove(filepath.Join(filepath.Dir(e.proj), "devkit", "kit", "skills",
+		"board-task", "task-run.py")); err != nil {
+		t.Fatal(err)
+	}
+
+	rep := wakeOne(t, e, "XR-7")
+	if !rep.Failed || rep.Raised {
+		t.Fatalf("подъём без оболочки конвейера не отказал: %+v", rep)
+	}
+	if !strings.Contains(rep.Line, "task-run.py") {
+		t.Errorf("в отказе нет причины: %s", rep.Line)
+	}
+	if args := readFile(t, moved); args != "" {
+		t.Errorf("строку увели из Blocked без оболочки конвейера: %q", args)
+	}
+}
+
+// Сессия не поднялась там, где парковка уже снята: строка возвращается в
+// Blocked тем же вопросом. Иначе она стояла бы в работе без сессии и без
+// признака ожидания, а тик берёт будимых только из Blocked, и повторить подъём
+// было бы некому.
+func TestTaskWakeReparksAfterFailedStart(t *testing.T) {
+	e, tmuxLog, moved := parkedMoveEnv(t)
+	// Окна tmux не поднимаются: так отказывает уже сам подъём, за снятой
+	// парковкой, и других причин отказать там не остаётся.
+	writeScript(t, e.bin, "tmux", `echo "$@" >> `+tmuxLog+`
+case "$1" in
+ls) printf 'чужая-сессия\n';;
+new-session) echo "tmux: сервер не отвечает" >&2; exit 1;;
+esac
+exit 0`)
+
+	rep := wakeOne(t, e, "XR-7")
+	if !rep.Failed || rep.Raised {
+		t.Fatalf("подъём упавшего tmux не отказал: %+v", rep)
+	}
+	args := readFile(t, moved)
+	if !strings.Contains(args, "move XR-7 in-progress") {
+		t.Fatalf("парковка не снималась вовсе, случай не тот: %q", args)
+	}
+	if !strings.Contains(args, "move XR-7 blocked") {
+		t.Fatalf("строка осталась в работе без сессии: %q", args)
+	}
+	if !strings.Contains(args, "вопрос: какую схему брать") {
+		t.Errorf("строка вернулась в Blocked не тем вопросом: %q", args)
+	}
+	if !strings.Contains(args, "--push") {
+		t.Errorf("возврат в Blocked оставил правку доски грязной: %q", args)
+	}
+	if !strings.Contains(rep.Line, "возвращена в Blocked") {
+		t.Errorf("отчёт молчит о судьбе строки: %q", rep.Line)
+	}
+}
+
+// Цель припаркована вопросом: сессию задачи ей поднимать нечего, а парковку
+// снять надо. Ответ лежит во входе, цикл цели прочитает его сам, но строка,
+// оставленная в Blocked, стояла бы там с вопросом, на который уже ответили.
+func TestTaskWakeUnparksGoal(t *testing.T) {
+	e, tmuxLog := parkedRaiseEnv(t)
+	moved := filepath.Join(e.home, "moved.log")
+	writeScript(t, e.bin, "taskctl", `case "$*" in
+*"move XR-100"*) echo "$@" >> `+moved+`; echo '{"ok":true}';;
+*) echo '`+parkedGoalBoard+`';;
+esac`)
+
+	rep := wakeOne(t, e, "XR-100")
+	if rep.Raised || rep.Failed {
+		t.Fatalf("цели подняли сессию задачи: %+v", rep)
+	}
+	if args := readFile(t, moved); !strings.Contains(args, "move XR-100 in-progress") {
+		t.Errorf("припаркованная цель осталась в Blocked с отвеченным вопросом: %q", args)
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("цели поднята сессия задачи: %s", got)
+	}
+}
+
+// parkedGoalBoard это доска с целью, припаркованной вопросом: своей строки
+// такого вида у общего стенда нет, а разбирается она отдельной дорогой.
+const parkedGoalBoard = `{"prefix":"XR","sections":[` +
+	`{"key":"in-progress","title":"In progress","rows":[` +
+	`{"id":"XR-4","title":"Начатая задача","type":"task","p":"P2","r":31,"r_parts":[25,3,1,0,2],"cost":"-","link":"-"}]},` +
+	`{"key":"blocked","title":"Blocked","rows":[` +
+	`{"id":"XR-100","title":"Цель: пробный цикл","block":"вопрос: резать ли цель",` +
+	`"type":"task","p":"P2","r":41,"r_parts":[25,9,3,0,4],"cost":"XL","link":"-"}]}]}`

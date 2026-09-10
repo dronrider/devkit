@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,6 +171,16 @@ func plainClient() *http.Client {
 }
 
 // loggedClient входит с верным токеном и держит куку.
+//
+// Куку стенд кладёт в банку сам, со снятым сроком годности. Срок ей ставит
+// сервер своими часами, а стенды морозят эти часы в прошлом (2026-08-10 у
+// половины из них); банка же судит о сроке настоящими часами машины и куку с
+// прошедшим сроком выбрасывает молча. Пока разница держалась внутри
+// тридцатидневного cookieAge, всё сходилось, а с первым же днём сверх него
+// вход стенда переставал доезжать до запроса: сервер отвечал 401, строки доски
+// приезжали пустыми, и краснели разом все тесты про признак работы. Календарь
+// в роли правки это находка DK-888. Сам срок куки проверяет auth_test, там
+// часы стенду не мешают.
 func (e *testEnv) loggedClient(t testing.TB) *http.Client {
 	t.Helper()
 	jar, err := cookiejar.New(nil)
@@ -186,6 +197,17 @@ func (e *testEnv) loggedClient(t testing.TB) *http.Client {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("вход с верным токеном: %d", resp.StatusCode)
 	}
+	u, err := url.Parse(e.srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keep []*http.Cookie
+	for _, got := range resp.Cookies() {
+		ck := *got
+		ck.Expires, ck.RawExpires, ck.MaxAge = time.Time{}, "", 0
+		keep = append(keep, &ck)
+	}
+	jar.SetCookies(u, keep)
 	return c
 }
 
@@ -198,6 +220,25 @@ func body(t *testing.T, resp *http.Response) string {
 	}
 	return string(data)
 }
+
+// regcheck:test-begin
+// Вход стенда переживает замороженные часы сервера, как бы далеко в прошлом они
+// ни стояли. Стенды морозят время фикстурой, срок куки сервер считает этими
+// часами, а банка клиента настоящими, и стоило разнице перерасти cookieAge, как
+// вход переставал доезжать до запроса: 401 на каждой ручке, пустые строки доски
+// и красный пакет целиком. Сломала его не правка, а календарь, поэтому тест
+// ставит часы заведомо дальше любого срока.
+func TestLoggedClientKeepsCookieUnderFrozenClock(t *testing.T) {
+	e := newTestEnv(t)
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return old }
+	resp := doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/projects", "")
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("вход при часах стенда %s: %d %s", old.Format("2006-01-02"), resp.StatusCode, text)
+	}
+}
+
+// regcheck:test-end
 
 // Без входа не отдаётся ни одна строка данных: API отвечает 401 без строк
 // доски, страницы уводят на /login.

@@ -70,6 +70,7 @@ type Board struct {
 	Rows   []*Row
 	Prefix string // из шапки «(префикс XX)», пустой если пометки нет
 	Legacy bool   // файл был в формате без колонки «Цена»
+	depSidesCache map[string]*struct{ after, blocks []string }
 }
 
 var (
@@ -164,15 +165,26 @@ func parseLines(path string, lines []string) (*Board, error) {
 	return b, nil
 }
 
+func (b *Board) invalidateDepSidesCache() {
+	b.depSidesCache = nil
+}
+
+func (b *Board) updateLine(idx int, line string) {
+	b.invalidateDepSidesCache()
+	b.Lines[idx] = line
+}
+
 func (b *Board) Save() error {
 	return os.WriteFile(b.Path, []byte(strings.Join(b.Lines, "\n")), 0o644)
 }
 
 func (b *Board) insert(idx int, lines ...string) {
+	b.invalidateDepSidesCache()
 	b.Lines = append(b.Lines[:idx], append(append([]string{}, lines...), b.Lines[idx:]...)...)
 }
 
 func (b *Board) remove(idx int) {
+	b.invalidateDepSidesCache()
 	b.Lines = append(b.Lines[:idx], b.Lines[idx+1:]...)
 }
 
@@ -348,7 +360,7 @@ func insertRowLine(b *Board, sec *Section, r *Row, line string) error {
 	if sec.NetIdx == -1 {
 		return fmt.Errorf("в секции %q нет ни таблицы, ни «Нет.», не понимаю, куда вставлять", sec.Key)
 	}
-	b.Lines[sec.NetIdx] = tableHeader
+	b.updateLine(sec.NetIdx, tableHeader)
 	b.insert(sec.NetIdx+1, tableSep, line)
 	return nil
 }

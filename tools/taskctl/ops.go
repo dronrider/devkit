@@ -770,7 +770,7 @@ func cmdSet(root string, p SetParams) (string, error) {
 	if len(changes) == 0 {
 		return "", fmt.Errorf("у %s уже такие значения, менять нечего", p.ID)
 	}
-	b.Lines[row.LineIdx] = formatRow(row)
+	b.updateLine(row.LineIdx, formatRow(row))
 	// В Backlog позиция строки зависит от ранга, и правка ранга или цены
 	// двигает не только эту строку: поправки считаются по всей доске, поэтому
 	// пересчёт и перестановку ведёт rehydrate, а не вставка одной строки.
@@ -947,7 +947,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 		}
 		deps = append(deps[:idx], deps[idx+1:]...)
 		r.Title = joinTitle(base, deps, acceptSuf, failSuf, blockSuf)
-		b.Lines[r.LineIdx] = formatRow(r)
+		b.updateLine(r.LineIdx, formatRow(r))
 		depTouched = append(depTouched, r.ID)
 	}
 	b.remove(row.LineIdx)

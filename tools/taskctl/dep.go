@@ -146,7 +146,7 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 	}
 	deps = append(deps, p.DepID)
 	row.Title = joinTitle(base, deps, acceptSuf, failSuf, blockSuf)
-	b.Lines[row.LineIdx] = formatRow(row)
+	b.updateLine(row.LineIdx, formatRow(row))
 	// Свежее ребро тянет ранг предпосылки вверх по инварианту зависимости, и
 	// строки затронутых задач переезжают тут же (DK-428).
 	moves, b, err := rehydrate(b)
@@ -193,7 +193,7 @@ func cmdDepRm(root string, p DepParams) (string, error) {
 	}
 	deps = append(deps[:idx], deps[idx+1:]...)
 	row.Title = joinTitle(base, deps, acceptSuf, failSuf, blockSuf)
-	b.Lines[row.LineIdx] = formatRow(row)
+	b.updateLine(row.LineIdx, formatRow(row))
 	moves, b, err := rehydrate(b)
 	if err != nil {
 		return "", err
@@ -209,8 +209,12 @@ func cmdDepRm(root string, p DepParams) (string, error) {
 }
 
 // depSides возвращает по каждой задаче с доски, после кого она делается
-// (after) и кого держит (blocks, обратное направление).
+// (after) и кого держит (blocks, обратное направление). Результат кешируется
+// в Board и пересчитывается только при явной инвалидации.
 func depSides(b *Board) map[string]*struct{ after, blocks []string } {
+	if b.depSidesCache != nil {
+		return b.depSidesCache
+	}
 	all := map[string]*struct{ after, blocks []string }{}
 	get := func(id string) *struct{ after, blocks []string } {
 		if all[id] == nil {
@@ -228,6 +232,7 @@ func depSides(b *Board) map[string]*struct{ after, blocks []string } {
 			get(d).blocks = append(get(d).blocks, r.ID)
 		}
 	}
+	b.depSidesCache = all
 	return all
 }
 

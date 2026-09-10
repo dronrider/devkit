@@ -419,7 +419,7 @@ func cmdDraftAttach(root, id, taskID string, c CommitOpts) (string, error) {
 	if created {
 		if want := fmt.Sprintf("[tasks/%s.md](tasks/%s.md)", taskID, taskID); row.Link != want {
 			row.Link = want
-			b.Lines[row.LineIdx] = formatRow(row)
+			b.updateLine(row.LineIdx, formatRow(row))
 			if err := b.Save(); err != nil {
 				return "", err
 			}

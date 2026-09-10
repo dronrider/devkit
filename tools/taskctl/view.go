@@ -158,7 +158,7 @@ func cmdFile(root, id string, c CommitOpts) (string, error) {
 	}
 	if want := fmt.Sprintf("[%s](%s)", rel, rel); row.Link != want {
 		row.Link = want
-		b.Lines[row.LineIdx] = formatRow(row)
+		b.updateLine(row.LineIdx, formatRow(row))
 		if err := b.Save(); err != nil {
 			return "", err
 		}

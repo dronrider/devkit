@@ -55,7 +55,7 @@ func cmdFail(root string, p FailParams) (string, error) {
 			return "", fmt.Errorf("у %s нет признака провала проверки, снимать нечего", p.ID)
 		}
 		row.Title = joinTitle(base, deps, acceptSuf, "", blockSuf)
-		b.Lines[row.LineIdx] = formatRow(row)
+		b.updateLine(row.LineIdx, formatRow(row))
 		if err := b.Save(); err != nil {
 			return "", err
 		}
@@ -86,7 +86,7 @@ func cmdFail(root string, p FailParams) (string, error) {
 			return "", err
 		}
 	} else {
-		b.Lines[row.LineIdx] = line
+		b.updateLine(row.LineIdx, line)
 	}
 	if err := b.Save(); err != nil {
 		return "", err

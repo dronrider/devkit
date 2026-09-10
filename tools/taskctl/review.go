@@ -230,7 +230,7 @@ func reviewEdit(root, id string, edit func(*reviewFile), c CommitOpts) (rf *revi
 		default:
 			if want := fmt.Sprintf("[%s](%s)", rel, rel); row.Link != want {
 				row.Link = want
-				b.Lines[row.LineIdx] = formatRow(row)
+				b.updateLine(row.LineIdx, formatRow(row))
 				if err := b.Save(); err != nil {
 					return nil, false, "", nil, err
 				}

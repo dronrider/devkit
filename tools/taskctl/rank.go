@@ -363,7 +363,7 @@ func rehydrate(b *Board) ([]string, *Board, error) {
 		}
 		r.RCell = want
 		r.P = bucket(r.RTotal)
-		b.Lines[r.LineIdx] = formatRow(r)
+		b.updateLine(r.LineIdx, formatRow(r))
 	}
 	sec := b.Sects[SectBacklog]
 	idxs := make([]int, len(sec.Rows))

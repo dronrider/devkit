@@ -67,11 +67,20 @@ turn-mark.py, и сессия, поднятая до того, как он лё�
 следующему заказу, и строка о конце прохода уходит в журнал утилит .devkit/log.
 
 Воронка это три коротких прохода подряд, не сдвинувших строку; на ней оболочка
-встаёт. Двух ожиданий она воронкой не считает. Задача с видом приёмки mixed или
+встаёт. Трёх ожиданий она воронкой не считает. Задача с видом приёмки mixed или
 user стоит в check и ждёт человека, а проход, кончившийся при живых субагентах
 сессии, ждёт их конца. В первом случае оболочка встаёт по-хорошему, во втором
 заказа не подаёт и ждёт следующего конца хода. Голова просыпается по концу
 субагента.
+
+Третье ожидание это машинное событие снаружи сессии: отбитое слияние ждёт
+коммита соседа, фоновое дело идёт своим чередом. Такой ход сессия отмечает
+командой `agentctl wait` (условие и срок, запись в ~/.devkit/waits на задачу), а
+оболочка читает условие с диска и ждёт за неё. Заказа на такой проход она не
+подаёт, в воронку и в потолок проходов его не считает и возвращается к работе по
+событию либо по сроку. Снимать запись за исполнителя оболочка не берётся,
+поэтому помнит отработанную отметку и второй раз по ней не встаёт, а отметку
+старше себя самой и отметку с истёкшим сроком не берёт вовсе.
 
 Коды возврата: 0 штатный стоп (задача закрыта, запаркована или ждёт приёмки),
 1 стоп оболочки (проходы исчерпаны, воронка, живая голова вышла), 2 ошибка
@@ -129,6 +138,28 @@ TURNS_LOG = os.path.join(HOME_DIR, "turns.log")
 # отметки не было. Уведомитель на том же событии сработал и строку записал,
 # поэтому оболочка читает оба журнала, а вопросом считает первое, что придёт.
 NOTIFY_LOG = os.path.join(HOME_DIR, "notify.log")
+# Отметки машинного ожидания. Их пишет agentctl wait, по файлу на задачу
+# (tools/agentctl/wait.go), и имена полей у записи с оболочкой общие. Каталог
+# подменяется тем же ключом, каким подменяет его себе сама утилита: настоящий
+# общий на машину, и стенду в нём не место.
+WAITS_DIR = os.path.join(HOME_DIR, "waits")
+WAITS_ENV = "DEVKIT_WAIT_DIR"
+# Виды условия. Голый срок ждёт только время, остальные смотрят на цель:
+# появление пути, его пропажу, чистоту рабочего дерева. Незнакомый вид оболочка
+# не выдумывает, а называет вслух и ожидание не берёт: ждать вслепую значит
+# встать до срока неизвестно на чём.
+WAIT_TIMER = "срок"
+WAIT_HERE = "есть"
+WAIT_GONE = "нет"
+WAIT_CLEAN = "чисто"
+WAIT_KINDS = (WAIT_TIMER, WAIT_HERE, WAIT_GONE, WAIT_CLEAN)
+# Исходы ожидания: чем оно кончилось. Первые два ведут к заказу, третий отдаёт
+# ход чужой реплике, четвёртый это стоп конвейера.
+WAIT_EVENT = "событие"
+WAIT_OVER = "срок вышел"
+WAIT_TAKEN = "ход начат"
+WAIT_DEAD = "голова вышла"
+
 # Реестр субагентов сессии. Его пишет сторож hooks/agent-watch.py, по файлу на
 # сессию. Каталог подменяется тем же ключом, каким подменяет его себе сам хук.
 # Иначе стенд читал бы машинный реестр живых сессий.
@@ -267,6 +298,11 @@ class Pipeline:
         self.sess_seen = {}
         self.note_seen = {}
         self.pending = []
+        # Старт оболочки и отметка ожидания, по которой она уже ждала: отметку
+        # свою пишет исполнитель, а снимать её за него оболочка не берётся,
+        # поэтому отработанное она помнит сама.
+        self.started = time.time()
+        self.wait_seen = None
         # Время события, о котором оболочка звала человека, по причине вопроса.
         # Один вопрос приходит двумя каналами, и второй зов о нём человеку не
         # нужен. Конец и начало хода память чистят.
@@ -441,9 +477,10 @@ class Pipeline:
         return bool(self.sid) and bool(sid) and self.sid.startswith(sid)
 
     def when(self, line):
-        """Время события из первого слова строки журнала, в секундах. Пусто
-        значит, что время не разобралось, и вопрос тогда считается новым:
-        промолчать тут дороже, чем позвать второй раз."""
+        """Время события в секундах: первым словом строки журнала его пишут и
+        хуки, и `agentctl wait` в полях отметки. Пусто значит, что время не
+        разобралось, и вопрос тогда считается новым: промолчать тут дороже, чем
+        позвать второй раз."""
         head = (line or "").split(" ", 1)[0]
         try:
             return time.mktime(time.strptime(head, STAMP))
@@ -575,6 +612,121 @@ class Pipeline:
                 if isinstance(v, dict) and v.get("state") == AGENT_RUNNING
                 and (v.get("job") or AGENT_SUBAGENT) == AGENT_SUBAGENT]
 
+    def wait_mark(self):
+        """Отметка машинного ожидания этого прохода или None. Пишет её
+        `agentctl wait` файлом на задачу, а условие и срок оболочка разбирает
+        сама: разбирать слова хода ей нечем.
+
+        Чужая отметка сюда не попадает: файл называется ID задачи, и своя у
+        конвейера ровно одна. Отработанная отметка отсеивается дважды. Снимать
+        за исполнителя запись оболочка не берётся, поэтому помнит ту, по которой
+        уже ждала, и второй раз по ней не встаёт. Отметка старше самой оболочки
+        осталась от прошлого запуска, а отметка с истёкшим сроком это уже не
+        ожидание. Время в полях записи идёт до секунды, и секунда допуска в
+        сравнении со стартом оболочки покрывает эту грубость.
+
+        Незнакомое условие ожиданием не считается и называется вслух. Молчание
+        тут стоило бы прохода: оболочка ждала бы до срока неизвестно чего."""
+        own = (os.environ.get(WAITS_ENV) or "").strip()
+        path = os.path.join(own or WAITS_DIR, self.id + ".json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                mark = json.load(f)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(mark, dict):
+            return None
+        since, until = self.when(mark.get("since")), self.when(mark.get("until"))
+        if since is None or until is None or since < self.started - 1 or until <= time.time():
+            return None
+        seen = (since, until, mark.get("kind"), mark.get("target"))
+        if seen == self.wait_seen:
+            return None
+        if mark.get("kind") not in WAIT_KINDS:
+            self.say("отметка ожидания с незнакомым условием (%s), проход считается "
+                     "обычным" % mark.get("kind"))
+            self.log("отметка ожидания %s с незнакомым условием %s, %s"
+                     % (path, mark.get("kind"), self.id), 0)
+            return None
+        self.wait_seen = seen
+        return mark
+
+    def wait_what(self, mark):
+        """Условие ожидания словами, для журнала и панели."""
+        out = str(mark.get("kind") or "-")
+        if mark.get("target"):
+            out += " " + str(mark["target"])
+        if mark.get("note"):
+            out += " (%s)" % mark["note"]
+        return out
+
+    def wait_done(self, mark):
+        """Пришло ли событие, которого ждёт отметка. Голый срок события не
+        имеет и кончается временем."""
+        kind, target = mark.get("kind"), str(mark.get("target") or "")
+        if kind == WAIT_HERE:
+            return os.path.exists(target)
+        if kind == WAIT_GONE:
+            return not os.path.exists(target)
+        if kind == WAIT_CLEAN:
+            return self.tree_clean(target)
+        return False
+
+    def tree_clean(self, path):
+        """Нет ли в рабочем дереве незакоммиченного. Так ждут соседа: слияние
+        отбивается грязной доской, и ждать приходится его коммита (DK-893).
+        Дерево, про которое git ничего не сказал, чистым не считается: ошибка
+        тут значит не чистоту, а неизвестность, и ожидание кончится сроком."""
+        try:
+            p = subprocess.run(["git", "-C", path, "status", "--porcelain"],
+                               capture_output=True, text=True)
+        except OSError:
+            return False
+        return p.returncode == 0 and not p.stdout.strip()
+
+    def held(self, n, after):
+        """Ожидание вместо холостого прохода. Возврат это слово исхода или
+        пустая строка, когда отметки не было и проход обычный.
+
+        Ход, кончившийся ожиданием машинного события, до DK-899 считался
+        холостым наравне с головой, вылетевшей на подъёме: воронка снимала окно
+        на третьем таком проходе вместе с работой (DK-893 и DK-510 за одну
+        ночь). Разницу говорит сама сессия отметкой, а оболочка ждёт за неё:
+        заказа на такой проход не подаёт, в воронку и в потолок его не считает
+        и возвращается к работе по событию либо по сроку."""
+        mark = self.wait_mark()
+        if not mark:
+            return ""
+        what = self.wait_what(mark)
+        self.log("проход %d кончился ожиданием (%s), срок до %s, %s в %s: заказ "
+                 "не подаётся, в потолок проходов проход не идёт"
+                 % (n, what, mark.get("until"), self.id, after), 0)
+        self.say("проход %d ждёт: %s, срок до %s" % (n, what, mark.get("until")))
+        why = self.hold(mark)
+        self.log("ожидание прохода %d кончилось (%s): %s, %s"
+                 % (n, why, what, self.id), 0)
+        self.say("ожидание прохода %d кончилось (%s)" % (n, why))
+        if why == WAIT_DEAD:
+            self.stop(1, after, "живая голова вышла в ожидании (%s)" % what)
+        return why
+
+    def hold(self, mark):
+        """Ждать события или срока. Живая голова при этом стоит в своём окне и
+        никуда не девается, а реплика человека обрывает ожидание: заказ поверх
+        начатого хода оболочка не шлёт."""
+        until = self.when(mark.get("until"))
+        while True:
+            if self.wait_done(mark):
+                return WAIT_EVENT
+            if until is None or time.time() >= until:
+                return WAIT_OVER
+            if self.head is not None:
+                if not self.head_alive():
+                    return WAIT_DEAD
+                if self.taken():
+                    return WAIT_TAKEN
+            time.sleep(self.secs(WATCH_ENV, WATCH_STEP))
+
     def wait_turn(self, n):
         """Ждать конца прохода. Возврат это слово отметки («кончен», «упал») или
         пустая строка, когда живая голова вышла раньше."""
@@ -676,7 +828,7 @@ class Pipeline:
             self.shout("run_stop", "%s: %s конвейер без реестра" % (self.project, self.id),
                        "реестр чатов не назвал сессию окна %s, проходы дальше первого "
                        "не заказываются" % self.sess)
-        idle, n, mine = 0, 1, True
+        idle, holds, n, mine = 0, 0, 1, True
         while True:
             begun = time.time()
             word = self.wait_turn(n)
@@ -711,10 +863,21 @@ class Pipeline:
                 sect = after
                 mine = False
                 continue
+            # Ход кончился ожиданием машинного события. Оболочка ждёт за
+            # сессию и проход этот не считает ни воронкой, ни расходом потолка:
+            # иначе шесть коротких ожиданий сняли бы окно тем же способом, каким
+            # его снимала воронка.
+            waited = self.held(n, after)
+            if waited == WAIT_TAKEN:
+                sect = after
+                mine = False
+                continue
+            if waited:
+                holds += 1
             # Воронка. Ход кончается быстро и строку не двигает. Считаются тут
             # только свои проходы, короткая реплика человеку законна, и цикл она
             # останавливать не должна.
-            if mine and after == sect and spent < IDLE_SECONDS:
+            elif mine and after == sect and spent < IDLE_SECONDS:
                 idle += 1
                 self.say("проход %d прошёл вхолостую (%d с, строка на месте), подряд таких %d из %d"
                          % (n, int(spent), idle, IDLE_LIMIT))
@@ -723,7 +886,7 @@ class Pipeline:
             elif mine:
                 idle = 0
             sect = after
-            if n >= self.passes:
+            if n - holds >= self.passes:
                 self.stop(1, after, "проходы исчерпаны (%d), задача не закрыта" % self.passes)
             time.sleep(self.pause())
             if self.taken():
@@ -784,8 +947,10 @@ class Pipeline:
         return self.run_passes()
 
     def run_passes(self):
-        idle = 0
-        for n in range(1, self.passes + 1):
+        # Проходы считаются вычетом: ожидание это не проход, и потолок его не
+        # съедает. Поэтому череда идёт while, а не for по числу проходов.
+        idle, holds, n = 0, 0, 1
+        while True:
             sect = self.preflight()
             code, spent = self.run_pass(self.order if n == 1 else self.again)
             after = self.status(self.show()) or sect
@@ -799,10 +964,15 @@ class Pipeline:
                 self.stop(0, after, "задача закрыта", loud=False)
             if after == PARKED:
                 self.stop(0, after, "задача запаркована и ждёт человека", reason="wait_human")
+            # Ход кончился ожиданием машинного события. Печатной череде оно
+            # нужно тем же, чем живой голове: проход этот не холостой, и потолка
+            # он не тратит.
+            if self.held(n, after):
+                holds += 1
             # Воронка: голова выходит быстро и строку не двигает. Обычно это
             # сломанное окружение (нет логина, кончилась квота, чужой флаг), и
             # шесть попыток тут ничем не лучше трёх.
-            if after == sect and spent < IDLE_SECONDS:
+            elif after == sect and spent < IDLE_SECONDS:
                 idle += 1
                 self.say("проход %d прошёл вхолостую (%d с, строка на месте), подряд таких %d из %d"
                          % (n, int(spent), idle, IDLE_LIMIT))
@@ -810,8 +980,10 @@ class Pipeline:
                     self.stop(1, after, "%d прохода подряд вхолостую, конвейер жжёт бюджет" % idle)
             else:
                 idle = 0
-            if n < self.passes:
-                time.sleep(self.pause())
+            if n - holds >= self.passes:
+                break
+            n += 1
+            time.sleep(self.pause())
         self.stop(1, self.status(self.show()), "проходы исчерпаны (%d), задача не закрыта" % self.passes)
 
 

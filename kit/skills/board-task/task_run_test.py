@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -52,13 +53,30 @@ if tail:
 # Сценарий кончился, значит повторяется последняя строка: голова, которая не
 # двигает строку, так и не двигает её до конца.
 CLAUDE_STUB = r'''#!/usr/bin/env python3
+import json
 import os
 import sys
+import time
 
 state = os.environ["DEVKIT_TEST_STATE"]
 calls = os.environ["DEVKIT_TEST_CALLS"]
 plan = os.environ["DEVKIT_TEST_PLAN"].split("|")
 order = sys.argv[sys.argv.index("-p") + 1] if "-p" in sys.argv else ""
+
+
+def wait_mark(kind, target="", secs=3, note="жду соседа"):
+    """Отметка машинного ожидания за `agentctl wait`: запись на задачу теми же
+    полями, какими её кладёт утилита (tools/agentctl/wait.go). На стенде утилиты
+    нет, а оболочка читает именно её след."""
+    stamp = "%Y-%m-%dT%H:%M:%S"
+    now = time.time()
+    body = {"task": "DK-1", "session": os.environ["DEVKIT_TEST_SID"], "kind": kind,
+            "target": target, "since": time.strftime(stamp, time.localtime(now)),
+            "until": time.strftime(stamp, time.localtime(now + secs)), "note": note}
+    dirp = os.environ["DEVKIT_WAIT_DIR"]
+    os.makedirs(dirp, exist_ok=True)
+    with open(os.path.join(dirp, "DK-1.json"), "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False)
 with open(os.path.join(os.environ["HOME"], "headless"), "w", encoding="utf-8") as f:
     f.write(os.environ.get("DEVKIT_HEADLESS", ""))
 with open(calls, "a", encoding="utf-8") as f:
@@ -73,6 +91,8 @@ elif step == "паркуй":
     open(state, "w", encoding="utf-8").write("blocked\n")
 elif step == "падение":
     sys.exit(1)
+elif step == "ожидание":
+    wait_mark("срок")
 '''
 
 
@@ -161,6 +181,20 @@ def watch(state):
         json.dump(body, f, ensure_ascii=False)
 
 
+def wait_mark(kind, target="", secs=3, note="жду соседа"):
+    """Отметка машинного ожидания за `agentctl wait`: запись на задачу теми же
+    полями, какими её кладёт утилита (tools/agentctl/wait.go). На стенде утилиты
+    нет, а оболочка читает именно её след."""
+    now = time.time()
+    body = {"task": "DK-1", "session": sid, "kind": kind, "target": target,
+            "since": time.strftime(stamp, time.localtime(now)),
+            "until": time.strftime(stamp, time.localtime(now + secs)), "note": note}
+    dirp = os.environ["DEVKIT_WAIT_DIR"]
+    os.makedirs(dirp, exist_ok=True)
+    with open(os.path.join(dirp, "DK-1.json"), "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False)
+
+
 def hits(word):
     """Сколько раз слово встретилось в журнале утилит проекта. Стенд ждёт по
     признаку, строке оболочки, а не паузой: пауза под нагрузкой кончается
@@ -237,6 +271,19 @@ while True:
         mark("ждёт", "permission_prompt")
         note("permission_prompt")
         time.sleep(0.3)
+    elif step == "ожидание":
+        # Ход кончился ожиданием машинного события: слияние отбито грязной
+        # доской соседа, и голова ждёт его коммита (DK-893).
+        wait_mark("срок")
+    elif step == "ожидание события":
+        # То же ожидание, но с условием, которое сбывается раньше срока:
+        # оболочка обязана вернуться к работе по событию, а не отстоять срок.
+        signal = os.path.join(home, "событие")
+        wait_mark("есть", signal, secs=60)
+        subprocess.Popen([sys.executable, "-c",
+                          "import sys,time;time.sleep(0.5);"
+                          "open(sys.argv[1],'w',encoding='utf-8').write('пришло')",
+                          signal])
     elif step == "молчит":
         time.sleep(3)
     elif step == "ротация":
@@ -370,6 +417,9 @@ class Stand:
             # Реестр субагентов уводится в корень стенда обоим, стабу за
             # сторожа и оболочке: машинный реестр живых сессий тут ни при чём.
             "DEVKIT_AGENT_WATCH_DIR": os.path.join(self.root, "agents"),
+            # Каталог отметок ожидания уводится в корень стенда обоим, стабу за
+            # agentctl wait и оболочке: машинный каталог тут ни при чём.
+            "DEVKIT_WAIT_DIR": os.path.join(self.root, "waits"),
             # Метку печатного режима ставит дашборд, и живая голова обязана
             # снять её с клиента: с нею рубеж синхронности отбивает фоновый ход.
             "DEVKIT_HEADLESS": "дашборд",
@@ -512,6 +562,15 @@ class TestPasses(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertEqual(len(s.orders()), 2)
         self.assertIn("проходы исчерпаны", r.stdout)
+
+    def test_wait_does_not_spend_the_passes(self):
+        # Печатной череде ожидание нужно тем же, чем живой голове: проходов у
+        # неё два, а ожиданий три, и потолок их считать не должен.
+        s = self.stand(plan="ожидание|ожидание|ожидание|закрой")
+        r = s.run("--passes", "2")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(len(s.orders()), 4, s.orders())
+        self.assertNotIn("проходы исчерпаны", r.stdout)
 
     def test_head_crash_does_not_stop_the_pipeline(self):
         # Код возврата головы тут не вердикт: вердикт это статус строки, и
@@ -697,6 +756,43 @@ class TestLiveHead(unittest.TestCase):
         self.assertEqual([l for l in s.journal() if "вхолостую" in l], [], s.journal())
         self.assertEqual(len(s.orders()), 4, s.orders())
 
+    def test_waiting_head_lives_three_passes(self):
+        # Предмет DK-899. Ход кончился отчётом об ожидании машинного события,
+        # и до этой задачи оболочка считала такой проход холостым наравне с
+        # головой, вылетевшей на подъёме: на третьем она снимала окно вместе с
+        # работой (DK-893 и DK-510 за одну ночь). Отметку ожидания ставит
+        # сессия, и три таких прохода подряд конвейер переживает.
+        s = self.stand(plan="ожидание|ожидание|ожидание|закрой")
+        got = s.run("--passes", "6")
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual([l for l in s.journal() if "вхолостую" in l], [], s.journal())
+        held = [l for l in s.journal() if "кончился ожиданием" in l]
+        self.assertEqual(len(held), 3, s.journal())
+        self.assertIn("срок", held[0])
+        self.assertIn("жду соседа", held[0])
+        self.assertEqual(len(s.orders()), 4, s.orders())
+
+    def test_head_without_a_wait_mark_meets_the_funnel(self):
+        # Обратная сторона: тот же короткий проход без отметки это по-прежнему
+        # воронка, и на третьем оболочка встаёт. Ожидание не должно оказаться
+        # дырой, через которую сломанная голова крутит цикл до конца квоты.
+        s = self.stand(plan="работа")
+        got = s.run("--passes", "6")
+        self.assertEqual(got.returncode, 1, s.why(got))
+        self.assertTrue([l for l in s.journal() if "вхолостую" in l], s.journal())
+        self.assertEqual(len(s.orders()), 3, s.orders())
+
+    def test_wait_ends_on_the_event_before_the_deadline(self):
+        # Срок у отметки минута, а событие приходит через полсекунды: оболочка
+        # обязана вернуться к работе по событию, а не отстоять весь срок.
+        s = self.stand(plan="ожидание события|закрой")
+        got = s.run("--passes", "6")
+        self.assertEqual(got.returncode, 0, s.why(got))
+        done = [l for l in s.journal() if "ожидание прохода" in l]
+        self.assertTrue(done, s.journal())
+        self.assertIn("(событие)", done[0])
+        self.assertEqual(len(s.orders()), 2, s.orders())
+
     def test_trimmed_journal_does_not_repeat_a_turn(self):
         # Журнал отметок общий на машину и режется по размеру. Оболочка, что
         # читала его по смещению, после реза перечитывала файл с начала и
@@ -729,6 +825,112 @@ class TestLiveHead(unittest.TestCase):
         got = s.run()
         self.assertEqual(got.returncode, 1, s.why(got))
         self.assertTrue([l for l in s.journal() if "живая голова вышла" in l], s.journal())
+
+
+class TestWaitMark(unittest.TestCase):
+    """Отметка машинного ожидания: что оболочка из неё берёт и чего не берёт.
+    Отметку пишет `agentctl wait`, снимать её за исполнителя оболочка не
+    берётся, и потому отработанное и просроченное она отсеивает сама."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="task-run-wait-")
+        # Обвязка проекта: без неё оболочке некуда писать журнал утилит, а
+        # незнакомое условие проверяется как раз строкой в нём.
+        os.makedirs(os.path.join(self.root, ".devkit"))
+        os.environ[task_run.WAITS_ENV] = self.root
+        self.pipe = task_run.Pipeline(task_run.parse_args(
+            ["DK-1", "-C", self.root, "--", "claude"]))
+
+    def tearDown(self):
+        os.environ.pop(task_run.WAITS_ENV, None)
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def mark(self, kind="срок", target="", since=0, until=60):
+        """Запись ожидания теми же полями, какими её кладёт agentctl wait.
+        Времена считаются от текущего момента: срок вперёд, отметка назад."""
+        stamp = "%Y-%m-%dT%H:%M:%S"
+        now = time.time()
+        body = {"task": "DK-1", "session": SID, "kind": kind, "target": target,
+                "since": time.strftime(stamp, time.localtime(now + since)),
+                "until": time.strftime(stamp, time.localtime(now + until)),
+                "note": "жду соседа"}
+        with open(os.path.join(self.root, "DK-1.json"), "w", encoding="utf-8") as f:
+            json.dump(body, f, ensure_ascii=False)
+
+    def test_fresh_mark_is_taken(self):
+        self.mark()
+        got = self.pipe.wait_mark()
+        self.assertTrue(got, "свежая отметка не взята")
+        self.assertIn("жду соседа", self.pipe.wait_what(got))
+
+    def test_mark_is_taken_once(self):
+        # Запись остаётся лежать после ожидания, и второй раз оболочка по ней
+        # вставать не должна: иначе один отбитый merge держал бы конвейер до
+        # срока на каждом следующем проходе.
+        self.mark()
+        self.assertTrue(self.pipe.wait_mark())
+        self.assertIsNone(self.pipe.wait_mark())
+
+    def test_old_mark_is_not_a_wait(self):
+        # Отметка старше самой оболочки осталась от прошлого запуска конвейера.
+        self.mark(since=-3600)
+        self.assertIsNone(self.pipe.wait_mark())
+
+    def test_expired_mark_is_not_a_wait(self):
+        self.mark(until=-1)
+        self.assertIsNone(self.pipe.wait_mark())
+
+    def test_unknown_condition_is_named_aloud(self):
+        # Условие, которого оболочка не знает, проверить нечем. Ждать по нему
+        # вслепую значит встать до срока неизвестно на чём, и молчать тут
+        # нельзя: проход считается обычным, а строка уходит в журнал.
+        self.mark(kind="погода")
+        self.assertIsNone(self.pipe.wait_mark())
+        told = [l for l in self.journal() if "незнакомым условием" in l]
+        self.assertTrue(told, self.journal())
+
+    def test_missing_mark_is_no_wait(self):
+        self.assertIsNone(self.pipe.wait_mark())
+
+    def test_broken_mark_is_no_wait(self):
+        with open(os.path.join(self.root, "DK-1.json"), "w", encoding="utf-8") as f:
+            f.write("{половина записи")
+        self.assertIsNone(self.pipe.wait_mark())
+
+    def test_here_and_gone_read_the_path(self):
+        path = os.path.join(self.root, "сигнал")
+        self.assertFalse(self.pipe.wait_done({"kind": "есть", "target": path}))
+        self.assertTrue(self.pipe.wait_done({"kind": "нет", "target": path}))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("пришло")
+        self.assertTrue(self.pipe.wait_done({"kind": "есть", "target": path}))
+        self.assertFalse(self.pipe.wait_done({"kind": "нет", "target": path}))
+
+    def test_timer_has_no_event(self):
+        self.assertFalse(self.pipe.wait_done({"kind": "срок", "target": ""}))
+
+    def test_clean_tree_is_the_event(self):
+        # Так ждут соседа: слияние отбивается грязным деревом, и ждать
+        # приходится его коммита (DK-893).
+        tree = os.path.join(self.root, "дерево")
+        os.makedirs(tree)
+        subprocess.run(["git", "init", "-q", tree], capture_output=True)
+        self.assertTrue(self.pipe.tree_clean(tree))
+        with open(os.path.join(tree, "доска"), "w", encoding="utf-8") as f:
+            f.write("правка соседа")
+        self.assertFalse(self.pipe.tree_clean(tree))
+
+    def test_tree_without_git_is_not_clean(self):
+        # Ошибка git тут значит не чистоту, а неизвестность: ожидание кончится
+        # сроком, а не мнимым событием.
+        self.assertFalse(self.pipe.tree_clean(os.path.join(self.root, "нет-такого")))
+
+    def journal(self):
+        path = os.path.join(self.root, ".devkit", "log")
+        if not os.path.isfile(path):
+            return []
+        with open(path, encoding="utf-8") as f:
+            return [l.rstrip("\n") for l in f if l.strip() != ""]
 
 
 class TestBusy(unittest.TestCase):

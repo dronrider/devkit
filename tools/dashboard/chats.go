@@ -923,7 +923,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			continue
 		}
 		last := sessions.Last(recs[f.ID])
-		tasks := sessions.Touched(recs[f.ID])
+		tasks := ownTasks(sessions.Touched(recs[f.ID]), prefix)
 		if id := taskIDInName(f.suffix); id != "" && !hasTask(tasks, id) {
 			tasks = append([]string{id}, tasks...)
 		}
@@ -1079,6 +1079,26 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 	// есть по времени правки транскриптов (замечание пользователя).
 	sortEntries(out)
 	return chatGlue(out), older
+}
+
+// ownTasks оставляет в чипах строки задачи одной доски, той, чей это разговор.
+// Чужой ID приезжает в реестр от прогона: go test зовёт утилиты доски с
+// вымышленными задачами фикстур (XR-001, XR-999), а зовёт их живая сессия, и
+// запись «работа» ложится в общий журнал под её ID. Транскриптом такую строку
+// не отличить, у записи по факту работы его нет вовсе, зато префикс задачи
+// чужой доске не принадлежит (DK-860). Доска без префикса не судит: там сита
+// нет, и лучше чип лишний, чем потерянный.
+func ownTasks(tasks []string, prefix string) []string {
+	if prefix == "" {
+		return tasks
+	}
+	out := tasks[:0:0]
+	for _, id := range tasks {
+		if strings.HasPrefix(id, prefix+"-") {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func hasTask(list []string, id string) bool {

@@ -88,6 +88,37 @@ func TestChatListAlienBindGivesNoTaskChips(t *testing.T) {
 	}
 }
 
+// Задача чужой доски чипом на строке не встаёт. Прогон go test зовёт утилиты
+// доски с ID фикстур, зовёт их живая сессия, и запись «работа» ложится в общий
+// реестр под её ID. Транскрипта у такой записи нет вовсе, и отличает её префикс.
+func TestChatListChipsKeepOwnBoard(t *testing.T) {
+	e, c := chatEnv(t)
+	writeScript(t, e.bin, "tmux", "exit 1")
+	sid := "aaaa1111-1111-4111-8111-111111111111"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
+	writeBinds(t, e.home,
+		"2026-08-20T10:00:00 сессия "+sid+" задача XR-4 проект demo дерево "+e.proj+
+			" транскрипт "+standTranscript(e.home, sid)+" источник заказ повод startup tmux -\n",
+		"2026-08-20T11:00:00 сессия "+sid+" задача ZZ-001 проект - дерево "+e.proj+
+			"/tools/shipctl транскрипт - источник работа повод «shipctl start» tmux -\n")
+
+	var got chatEntry
+	for _, ch := range chatsOf(t, e, c) {
+		if ch.ID == sid {
+			got = ch
+		}
+	}
+	if got.ID == "" {
+		t.Fatal("живой разговор пропал из списка")
+	}
+	if hasTask(got.Tasks, "ZZ-001") {
+		t.Errorf("задача чужой доски встала чипом разговора: %+v", got.Tasks)
+	}
+	if !hasTask(got.Tasks, "XR-4") {
+		t.Errorf("своя задача разговора потерялась: %+v", got.Tasks)
+	}
+}
+
 // Запись без транскрипта остаётся своей: строку по факту работы кладёт утилита
 // доски, которой про транскрипт не известно ничего, и рубеж её ронять не вправе.
 func TestBindOwnKeepsRecordWithoutTranscript(t *testing.T) {

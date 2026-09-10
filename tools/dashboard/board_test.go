@@ -1534,16 +1534,26 @@ func TestBoardRowFreeWhenTmuxIdle(t *testing.T) {
 
 // writePeerAged кладёт запись реестра со временем последнего касания: время
 // там в миллисекундах, и нулевое значит «времени нет вовсе», как у части
-// записей на живой машине.
+// записей на живой машине. Метка смены состояния идёт тем же временем, как её
+// и пишет клиент: запись он трогает ровно на смене, а по ходу самого хода
+// больше не касается.
 func writePeerAged(t *testing.T, home, sid, tmux, status string, updated int64) {
+	t.Helper()
+	writePeerPID(t, home, os.Getpid(), sid, tmux, status, updated)
+}
+
+// writePeerPID кладёт ту же запись от названного процесса: мёртвый pid это
+// клиент, не переживший хода, и по такой записи панель отличает пропажу от
+// разговора, законченного по-человечески.
+func writePeerPID(t *testing.T, home string, pid int, sid, tmux, status string, updated int64) {
 	t.Helper()
 	dir := filepath.Join(home, ".claude", "sessions")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	pid := os.Getpid()
-	rec := fmt.Sprintf(`{"pid":%d,"sessionId":%q,"name":"окно-1","kind":"interactive","tmux":%q,"status":%q,"updatedAt":%d}`,
-		pid, sid, tmux, status, updated)
+	rec := fmt.Sprintf(`{"pid":%d,"sessionId":%q,"name":"окно-1","kind":"interactive","tmux":%q,`+
+		`"status":%q,"updatedAt":%d,"statusUpdatedAt":%d}`,
+		pid, sid, tmux, status, updated, updated)
 	if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%d.json", pid)), []byte(rec), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -63,6 +63,28 @@ type peer struct {
 	Version    string `json:"version"`
 	Protocol   int    `json:"peerProtocol"`
 	Updated    int64  `json:"updatedAt"`
+	// StatusAt это время последней смены состояния сессии, то есть начало
+	// нынешнего хода у занятой. Клиент пишет его миллисекундами рядом со
+	// status и по ходу самого хода больше не трогает: пока агент думает, метка
+	// стоит на месте, и разница с ней это возраст хода. Без неё панель не
+	// могла сказать, сколько ход уже идёт, и гасила плашку своим потолком
+	// (DK-893).
+	StatusAt int64 `json:"statusUpdatedAt"`
+}
+
+// turnAge это возраст нынешнего хода сессии. Считается только у занятой
+// записи: у простаивающей метка говорит, когда сессия освободилась, и время с
+// неё ходом не является. Нулевая метка это клиент, который её не пишет, и
+// врать про возраст тогда нечем.
+func (p peer) turnAge(now time.Time) (time.Duration, bool) {
+	if p.Status != "busy" || p.StatusAt <= 0 {
+		return 0, false
+	}
+	age := now.Sub(time.UnixMilli(p.StatusAt))
+	if age < 0 {
+		age = 0
+	}
+	return age, true
 }
 
 // alive проверяет, что процесс сессии жив: реестр переживает падение клиента, и
@@ -84,7 +106,29 @@ func (p peer) alive() bool {
 // peers читает реестр живых сессий, ключ это ID сессии. Мёртвые записи
 // отсеиваются тут же: до сокета такой сессии дело всё равно не дойдёт, а в
 // списке диалогов она горела бы живой работой.
-func (s *server) peers() map[string]peer {
+func (s *server) peers() map[string]peer { return s.peersOf(true) }
+
+// peerGone это запись сессии, чей процесс не пережил хода: живой её нет, а
+// последнее, что клиент успел записать, было «busy». По ней панель отличает
+// пропажу посреди хода от разговора, законченного по-человечески (DK-893).
+// Времени смерти в реестре нет вовсе: клиент трогает запись на смене
+// состояния, а падение состояния не меняет, поэтому свежесть меряется тем же
+// рубежом простоя, что и работа. Старая запись это просто остановленный
+// разговор, и слов про пропажу он не просит.
+func (s *server) peerGone(sid string, now time.Time) (peer, bool) {
+	p, ok := s.peersOf(false)[sid]
+	if !ok || p.alive() || p.Status != "busy" {
+		return peer{}, false
+	}
+	if age, ok := p.turnAge(now); !ok || age > workIdleAfter {
+		return peer{}, false
+	}
+	return p, true
+}
+
+// peersOf читает реестр целиком, живые записи или все. Мёртвые нужны одному
+// месту, состоянию чата: остальным они врали бы живой работой.
+func (s *server) peersOf(onlyAlive bool) map[string]peer {
 	out := map[string]peer{}
 	entries, err := os.ReadDir(peerDir(s.cfg.Home))
 	if err != nil {
@@ -105,7 +149,7 @@ func (s *server) peers() map[string]peer {
 		if p.Sock == "" {
 			p.Sock = filepath.Join(sockDir, fmt.Sprintf("%d.sock", p.PID))
 		}
-		if !p.alive() {
+		if onlyAlive && !p.alive() {
 			continue
 		}
 		// Одна сессия бывает записана дважды (перезапуск клиента с тем же ID):

@@ -139,6 +139,10 @@ type chatEntry struct {
 	PID   int    `json:"pid,omitempty"`
 	Where string `json:"where,omitempty"`
 	Idle  bool   `json:"idle,omitempty"`
+	// Sec это возраст нынешнего хода в секундах, от метки смены состояния в
+	// реестре клиента. Стоит только у занятого разговора и только там, где
+	// клиент эту метку пишет: показывает его строка списка минутами (DK-893).
+	Sec int `json:"sec,omitempty"`
 	// Summary это заголовок от самого харнеса: он старше и эвристики, и haiku.
 	Summary string `json:"-"`
 	// First это первая реплика человека, обрезанная для списка. Title поверх
@@ -1041,6 +1045,12 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		e.Idle = !s.sessionBusy(f.path, s.now())
 		if p, ok := live[f.ID]; ok && p.Status == "busy" && peerFresh(p, s.now()) {
 			e.Idle = false
+			// Возраст хода едет строкой списка (DK-893): занятый разговор видно
+			// и не открывая его, а без минут «активна» одинаково выглядит и у
+			// хода, начатого секунду назад, и у получасового.
+			if age, ok := p.turnAge(s.now()); ok {
+				e.Sec = int(age / time.Second)
+			}
 		}
 		switch {
 		case e.Sock != "":
@@ -3713,17 +3723,37 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
 		return
 	}
+	now := s.now()
+	tail := time.Time{}
+	path := ""
+	if info, ok := findSession(s.transcriptRoots(), found.Path, sid); ok {
+		path = info.path
+		tail = s.busyEntryOf(path).last
+	}
 	p, ok := s.peers()[sid]
 	if !ok {
 		// Процесса нет вовсе: работать некому, и это не ошибка, а ответ.
-		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "live": false, "busy": false})
+		out := map[string]any{"session": sid, "live": false, "busy": false}
+		// Пропажа посреди хода (DK-893). Клиент, снятый на ходу, оставляет в
+		// реестре своё «busy» и больше запись не трогает: времени смерти там
+		// нет вовсе, и панели остаётся последний след жизни, запись
+		// транскрипта либо начало самого хода.
+		if gone, ok := s.peerGone(sid, now); ok {
+			at := time.UnixMilli(gone.StatusAt)
+			if tail.After(at) {
+				at = tail
+			}
+			out["gone"] = true
+			out["at"] = at.UnixMilli()
+		}
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	// Пустой status это клиент, который его не пишет: занятость тогда неизвестна,
 	// и врать про неё нечем. Индикатор в таком случае живёт лентой, а не опросом.
 	busy := false
-	if info, ok := findSession(s.transcriptRoots(), found.Path, sid); ok {
-		busy = s.sessionBusy(info.path, s.now())
+	if path != "" {
+		busy = s.sessionBusy(path, now)
 	}
 	if p.Status == "busy" {
 		busy = true
@@ -3732,8 +3762,17 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	if said == "" {
 		said = "по транскрипту"
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "live": true,
-		"busy": busy, "status": said, "where": peerWord(p)})
+	out := map[string]any{"session": sid, "live": true,
+		"busy": busy, "status": said, "where": peerWord(p)}
+	// Возраст хода (DK-893). Секунды считает сервер, а не браузер: телефон и
+	// машина расходятся часами на минуты, и счётчик, заведённый от чужой метки,
+	// врал бы на всю разницу. Само начало хода едет рядом, им плашка
+	// подписывает пропажу и им же выправляет свой счёт между опросами.
+	if age, ok := p.turnAge(now); ok {
+		out["since"] = p.StatusAt
+		out["sec"] = int(age / time.Second)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // Заголовок диалога (замечание 4 четвёртого круга POC). Первая реплика целиком

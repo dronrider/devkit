@@ -140,10 +140,13 @@ const sendTurn = async (panel) => {
 // сам гасит плашку, когда сессия становится настоящей idle ---
 {
   subBusy = true;
-  statusBusy = true;
+  // Сессия при открытии панели свободна, и слежение за состоянием чата
+  // (DK-893) плашки не поднимает: поднять её тут может только сам стоп.
+  statusBusy = false;
   const panel = await freshPanel();
   const plate = byClass(panel, "busyrow");
   if (!plate || !plate.hidden) fail("плашка горит до всякого хода: нечему было её поднять");
+  statusBusy = true;
   const stopBtn = byClass(panel, "cstop");
   posted.length = 0;
   stopBtn.handlers.click({ stopPropagation: () => {} });

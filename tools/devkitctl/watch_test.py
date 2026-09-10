@@ -548,9 +548,8 @@ PARK_ROW = "| %s | %s | task | P1 | 60 (50+5+3+0+2) | XL | [tasks/%s.md](tasks/%
 
 
 class RaiseFake(Fake):
-    """Запускатель, отвечающий отказом только подъёму сессии. Общий отказ тут
-    не годится: он завалил бы и возврат строки в работу, и будить стало бы
-    некого."""
+    """Запускатель, отвечающий отказом подъёму и штатной тишиной соседям по
+    тику. Один отказ на все вызовы путал бы источник строки в отчёте."""
 
     def __call__(self, argv, **kw):
         self.calls.append(list(argv))
@@ -603,9 +602,9 @@ class WakeTest(Stand):
         d.mkdir(parents=True, exist_ok=True)
         (d / ("task-%s.ask" % tid)).write_text(when + "\n", encoding="utf-8")
 
-    def wake(self, taskctl=TASKCTL, call=None, dashboard=DASHBOARD):
+    def wake(self, call=None, dashboard=DASHBOARD):
         call = self.call if call is None else call
-        return watch.wake(str(self.proj), self.now, call, taskctl, dashboard=dashboard)
+        return watch.wake(str(self.proj), self.now, call, dashboard=dashboard)
 
     def raised(self):
         return self.call.argv_with("wake")
@@ -623,11 +622,9 @@ class WakeTest(Stand):
         self.said(self.proj, "DK-901")
         self.said(self.proj, "DK-902")
         lines = self.wake()
-        moved = self.moved()
-        self.assertEqual(len(moved), 1, "будить обязана только припаркованная вопросом: %s" % self.call.calls)
-        self.assertEqual(moved[0][moved[0].index("move"):moved[0].index("-m")],
-                         ["move", "DK-901", "in-progress"])
-        self.assertIn("-C", moved[0])
+        raised = self.raised()
+        self.assertEqual(len(raised), 1, "будить обязана только припаркованная вопросом: %s" % self.call.calls)
+        self.assertEqual(raised[0], [DASHBOARD, "wake", "-C", str(self.proj), "DK-901"])
         self.assertTrue(lines[-1].endswith("припаркованных вопросом 1, разбужено 1"), lines[-1])
         self.assertIn("DK-901", lines[0])
         self.assertNotIn("DK-903", " ".join(lines))
@@ -722,29 +719,11 @@ class WakeTest(Stand):
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
         self.said(self.proj, "DK-901")
-        lines = watch.wake(str(self.proj), self.now, self.call, TASKCTL, hook=None)
+        lines = watch.wake(str(self.proj), self.now, self.call, hook=None)
         self.assertEqual(self.call.calls, [], "будили без разбора адресата")
         self.assertEqual(len(lines), 1, lines)
         self.assertIn("подхват реплики", lines[0])
         self.assertIn("не загрузился", lines[0])
-
-    def test_missing_taskctl_is_reported(self):
-        # Бинаря нет: строка остаётся в Blocked, тик говорит об этом, а не
-        # молчит, и следующий тик повторит.
-        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
-                                            "DK-901", "DK-901")])
-        self.said(self.proj, "DK-901")
-        lines = self.wake(taskctl="")
-        self.assertEqual(self.call.calls, [])
-        self.assertIn("taskctl", lines[0])
-
-    def test_taskctl_failure_is_reported(self):
-        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
-                                            "DK-901", "DK-901")])
-        self.said(self.proj, "DK-901")
-        lines = self.wake(call=Fake(code=1, out="зависимость не закрыта"))
-        self.assertIn("с кодом 1", lines[0])
-        self.assertIn("зависимость не закрыта", lines[0])
 
     def test_run_wakes_through_the_tick(self):
         # Будит сам тик сторожка, без отдельного процесса на задачу: цель
@@ -762,24 +741,11 @@ class WakeTest(Stand):
         beat = (self.home / ".devkit" / "goal-watch.log").read_text(encoding="utf-8")
         self.assertIn("разбужена", beat)
 
-    def test_wake_commits_and_pushes_the_board(self):
-        # Будящий move не оставляет правку доски грязной: за будящим никого
-        # нет, и коммит с пушем доски обязаны случиться тем же вызовом
-        # taskctl, иначе предполёт следующего merge отбился бы о чекаут.
-        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
-                                            "DK-901", "DK-901")])
-        self.said(self.proj, "DK-901")
-        self.wake()
-        moved = self.moved()
-        self.assertEqual(len(moved), 1, self.call.calls)
-        self.assertIn("docs(tasks): DK-901 разбуждена ответом", moved[0])
-        self.assertIn("--push", moved[0])
-
     def test_wake_raises_the_session(self):
-        # DK-922: разбуженной строки мало, работу по ней надо кому-то вести.
-        # Оболочка конвейера к ответу человека уже вышла по стопу wait_human и
-        # снесла окно, планировщика у задачи, поднятой рукой, нет, и без этого
-        # вызова строка стояла в работе с непрочитанным ответом во входе.
+        # DK-922: вернуть строку в работу мало, работу по ней надо кому-то
+        # вести. Оболочка конвейера к ответу человека уже вышла по стопу
+        # wait_human и снесла окно, планировщика у задачи, поднятой рукой, нет,
+        # и без этого вызова строка стояла в работе с непрочитанным ответом.
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
         self.said(self.proj, "DK-901")
@@ -788,17 +754,30 @@ class WakeTest(Stand):
                          self.call.calls)
         self.assertTrue(lines[-1].endswith("разбужено 1"), lines[-1])
 
-    def test_wake_raises_after_the_move(self):
-        # Порядок обязателен: сессия поднимается после возврата строки в
-        # In progress. Поднятая поверх парковки оболочка спрашивает доску
-        # предполётом и вышла бы тем же стопом wait_human, с которого всё и
-        # началось.
+    def test_wake_leaves_the_board_to_the_raise(self):
+        # Своего move у тика нет: строку возвращает из Blocked та же команда,
+        # что поднимает по ней сессию. Разведи эти два хода, и отказ подъёма
+        # оставил бы строку в работе без сессии и без признака ожидания, а
+        # будимых следующий тик берёт только из Blocked: поднять её было бы
+        # некому, кроме руки человека.
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
         self.said(self.proj, "DK-901")
         self.wake()
-        order = [w for c in self.call.calls for w in c if w in ("move", "wake")]
-        self.assertEqual(order, ["move", "wake"], self.call.calls)
+        self.assertEqual(self.moved(), [], self.call.calls)
+        self.assertEqual(self.raised(), [[DASHBOARD, "wake", "-C", str(self.proj), "DK-901"]],
+                         self.call.calls)
+
+    def test_failed_raise_keeps_the_row_parked(self):
+        # Подъём отказал: доску тик не трогает вовсе, строка остаётся
+        # припаркованной вопросом с лежащим ответом, и следующий заход
+        # повторит. Разбуженной такая строка не считается.
+        self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
+                                            "DK-901", "DK-901")])
+        self.said(self.proj, "DK-901")
+        lines = self.wake(call=RaiseFake())
+        self.assertEqual(self.moved(), [], self.call.calls)
+        self.assertTrue(lines[-1].endswith("припаркованных вопросом 1, разбужено 0"), lines[-1])
 
     def test_wake_does_not_raise_without_the_answer(self):
         # Нет лежащего ответа, значит и будить некого: подъём сессии не идёт
@@ -809,24 +788,25 @@ class WakeTest(Stand):
         self.assertEqual(self.raised(), [], self.call.calls)
 
     def test_wake_reports_a_failed_raise(self):
-        # Отказ подъёма не роняет пробуждение и не молчит: строка уже вернулась
-        # в работу, причина уходит словами, а следующий тик повторит.
+        # Отказ подъёма не роняет тик и не молчит: причина уходит словами, а
+        # строка с лежащим ответом дожидается следующего захода.
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
         self.said(self.proj, "DK-901")
         lines = self.wake(call=RaiseFake())
-        self.assertIn("разбужена", " ".join(lines))
         self.assertIn("dashboard wake отказал с кодом 1", " ".join(lines))
         self.assertIn("tmux не нашёлся", " ".join(lines))
 
     def test_wake_without_dashboard_is_reported(self):
-        # Бинаря дашборда нет: строка вернулась в работу, а поднимать её
+        # Бинаря дашборда нет: возвращать строку в работу некому, поднимать
         # сессию нечем, и молчать об этом нельзя.
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
         self.said(self.proj, "DK-901")
         lines = self.wake(dashboard="")
+        self.assertEqual(self.moved(), [], self.call.calls)
         self.assertIn("бинаря dashboard нет", " ".join(lines))
+        self.assertIn("строка стоит в Blocked", " ".join(lines))
 
     def test_taskctl_bin_prefers_path(self):
         self.assertEqual(watch.taskctl_bin(which=lambda name: "/x/%s" % name), "/x/taskctl")

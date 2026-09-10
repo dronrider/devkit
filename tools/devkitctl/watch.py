@@ -1206,57 +1206,56 @@ def review_act(root, tid, verdict, call, dashboard):
 
 
 def wake_raise(root, tid, call=None, dashboard=None):
-    """Подъём сессии разбуженной строки: заказ уходит в `dashboard wake`, ту же
-    команду, что зовёт панель по записи ответа (DK-922). Возврат это строка
-    отчёта и признак, что сессия поднята.
+    """Пробуждение припаркованной строки: заказ уходит в `dashboard wake`, ту же
+    команду, что зовёт панель по записи ответа (DK-922). Она и возвращает строку
+    из Blocked, и поднимает по ней сессию. Возврат это строка отчёта и признак,
+    что сессия поднята.
 
     Своей копии подъёма у тика нет по той же причине, что у второго круга
     ревью: живые сессии, подписки, ярусы и права машинного контура живут у
     дашборда, и вторая копия этих правил в питоне разошлась бы с первой на
-    первой правке. Не поднятая сессия провалом тика не считается: строка уже
-    вернулась в работу, отчёт называет причину словами, а следующий тик
-    повторит."""
+    первой правке. Отказ подъёма не роняет тик: строка остаётся припаркованной
+    вопросом с лежащим ответом, отчёт называет причину словами, и следующий тик
+    повторит заход."""
     call = subprocess.run if call is None else call
     bin = devkit_bin("dashboard") if dashboard is None else dashboard
     if not bin:
-        return ("задача %s в %s: бинаря dashboard нет ни в PATH, ни в каталогах релиза: "
-                "сессию задачи поднимает человек" % (tid, root)), False
+        return ("задача %s в %s: ответ лежит, а бинаря dashboard нет ни в PATH, ни в "
+                "каталогах релиза: строка стоит в Blocked" % (tid, root)), False
     try:
         p = call([bin, "wake", "-C", root, tid],
                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     except OSError as e:
-        return ("задача %s в %s: сессия не поднята, %s" % (tid, root, e)), False
+        return ("задача %s в %s: сессия не поднята, %s: строка стоит в Blocked"
+                % (tid, root, e)), False
     text = " ".join((p.stdout or "").split())
     if p.returncode != 0:
         return ("задача %s в %s: сессия не поднята, dashboard wake отказал с кодом %d: %s"
                 % (tid, root, p.returncode, text)), False
-    return ("задача %s в %s: %s" % (tid, root, text)), True
+    return ("задача %s в %s разбужена ответом: %s" % (tid, root, text)), True
 
 
-def wake(root, now, call=None, taskctl=None, hook=LOAD_HOOK, dashboard=None):
+def wake(root, now, call=None, hook=LOAD_HOOK, dashboard=None):
     """Будит припаркованные вопросом строки корня с лежащим ответом. Возврат
     это строки отчёта, по одной на будимость и итог на корень: тик молчит о
     корне только там, где парковок нет вовсе.
 
-    Возврат строки идёт тем же `taskctl -C <корень> move <ID> in-progress`,
-    каким её парковали: причина блока снимается им же. Следом идёт подъём
-    сессии (`dashboard wake`), потому что у задачи, поднятой рукой с экрана,
-    планировщика нет вовсе: оболочка конвейера вышла по стопу wait_human и
-    снесла окно, и разбуженная строка стояла бы в работе с непрочитанным
-    ответом во входе, пока человек не нажмёт «Запуск» (DK-922). Move идёт с -m
-    и --push:
-    за будящим никого нет, и правка доски, оставленная грязной в основном
-    чекауте, отбила бы следующий merge предполётом и подмелась бы чужим
-    коммитом, поэтому она коммитится и пушится тут же, по правилу доски
-    (ровно то, что делает shipctl своим commitBoard). Отказ taskctl не
-    поднимает сторожок: строка стоит в Blocked, и следующий тик повторит.
+    Своего `taskctl move` у тика тут нет: и возврат строки в In progress, и
+    подъём её сессии делает `dashboard wake` одним ходом (DK-922). У задачи,
+    поднятой рукой с экрана, планировщика нет вовсе: оболочка конвейера вышла
+    по стопу wait_human и снесла окно, и строка, разбуженная одним только move,
+    стояла бы в работе с непрочитанным ответом во входе, пока человек не
+    нажмёт «Запуск». Разделить эти два хода нельзя и по второй причине:
+    припаркованная строка это единственное, чем задача видна следующему тику,
+    и снятая до неудачного подъёма парковка оставляла бы её без подъёмщика
+    вовсе. Поэтому отказ подъёма тик только называет словами: строка стоит в
+    Blocked, ответ лежит, а следующий заход повторит.
 
     Не загрузившийся подхват останавливает пробуждение всего корня, и тик
     говорит об этом строкой отчёта: разбирать адресата своей копией формата
     нельзя, а будить не разбирая значит гнать в origin правку доски по чужой
     реплике."""
     call = subprocess.run if call is None else call
-    bin = taskctl_bin() if taskctl is None else taskctl
     lines, woke = [], 0
     parked = parked_rows(root)
     if hook is LOAD_HOOK:
@@ -1273,26 +1272,17 @@ def wake(root, now, call=None, taskctl=None, hook=LOAD_HOOK, dashboard=None):
                              "ответом задаче они не считаются: строка стоит в Blocked"
                              % (tid, root, addressed))
             continue
-        if not bin:
-            lines.append("задача %s в %s: ответ лежит, а бинаря taskctl нет ни в "
-                         "PATH, ни в каталогах релиза: строка стоит в Blocked" % (tid, root))
+        line, raised = wake_raise(root, tid, call, dashboard)
+        lines.append(line)
+        if not raised:
             continue
-        try:
-            p = call([bin, "-C", root, "move", tid, "in-progress",
-                      "-m", "docs(tasks): %s разбуждена ответом" % tid, "--push"],
-                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        except OSError as e:
-            lines.append("задача %s в %s: разбудить не вышло, %s" % (tid, root, e))
-            continue
-        if p.returncode != 0:
-            lines.append("задача %s в %s: taskctl отказал с кодом %d: %s"
-                         % (tid, root, p.returncode, (p.stdout or "").strip()))
-            continue
+        # Признак ожидания снимает сам подъём, и в обоих деревьях (unparkAsk в
+        # tools/dashboard/wake.go). Тут подметаются прежние имена DK-440:
+        # дашборд знает только .devkit/chat, а признак, написанный до выката
+        # имён, пережил бы пробуждение и рисовал бы в панели вопрос уже не
+        # ждущей строке.
         drop_asks(root, tid)
         woke += 1
-        lines.append("задача %s в %s разбужена: ответ в разговоре, строка вернулась в In progress" % (tid, root))
-        line, _ = wake_raise(root, tid, call, dashboard)
-        lines.append(line)
     if parked:
         lines.append("корень %s: припаркованных вопросом %d, разбужено %d"
                      % (os.path.basename(root.rstrip("/")), len(parked), woke))
@@ -1620,7 +1610,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         # бывает несколько, и разговор припаркованной задачи один на всех.
         if root and root not in swept and os.path.isdir(root):
             swept.add(root)
-            for wline in wake(root, now, timed(root), taskctl, dashboard=dashboard):
+            for wline in wake(root, now, timed(root), dashboard=dashboard):
                 out.write(wline + "\n")
                 log_line(wline, home)
             for pline in park_stale(root, now, timed(root), taskctl, home=home):
@@ -1639,7 +1629,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         if root in swept:
             continue
         swept.add(root)
-        for line in (wake(root, now, timed(root), taskctl, dashboard=dashboard)
+        for line in (wake(root, now, timed(root), dashboard=dashboard)
                      + park_stale(root, now, timed(root), taskctl, home=home)
                      + close_agent(root, timed(root), taskctl)
                      + review_poll(root, now, timed(root), taskctl, dashboard)):

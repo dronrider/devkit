@@ -11,12 +11,16 @@
 не трогаются: дом временный, а tmux, клиент, вердикт яруса и перечень прав
 подменены фикстурами, которые пишут свои вызовы в журнал.
 
-Стенд проверяет всю цепочку разом. Тик находит лежащий ответ, возвращает строку
-в In progress, снимает признак ожидания и зовёт `dashboard wake`. Дашборд
-поднимает окно `task-<ID>` с заказом продолжения и без признака hidden, то есть
-разговор остаётся в списке панели, и продолжение работы человек видит в ленте
-без нажатия «Запуска». Печатает одну строку итога и выходит 0, любое
-расхождение это ненулевой выход с разбором.
+Стенд проверяет всю цепочку разом, и заходов у него два. Первый идёт по машине
+без разложенных прав машинного контура: подъём отказывает, и строка обязана
+остаться в Blocked с признаком ожидания на месте, потому что снятая парковка
+оставила бы её в работе без сессии и без вопроса, а будимых следующий тик берёт
+только из Blocked. Второй заход идёт по той же машине с правами: тик находит
+лежащий ответ и зовёт `dashboard wake`, тот возвращает строку в In progress,
+снимает признак ожидания и поднимает окно `task-<ID>` с заказом продолжения и
+без признака hidden, то есть разговор остаётся в списке панели, и продолжение
+работы человек видит в ленте без нажатия «Запуска». Печатает одну строку итога
+и выходит 0, любое расхождение это ненулевой выход с разбором.
 """
 import os
 import shutil
@@ -144,6 +148,16 @@ esac
 '''
 
 
+# Перечень прав отвечает по-разному в двух заходах стенда: сперва отказом,
+# потом молчаливым согласием. Отказ прав это самая дешёвая поломка машины,
+# какую можно подложить подъёму, а разбирается она тем же ходом, что нехватка
+# tmux или клиента.
+PERMS_DENY = ("#!/usr/bin/env python3\nimport sys\n"
+              "print('в ~/.claude/settings.json не хватает прав машинного контура')\n"
+              "sys.exit(1)\n")
+PERMS_OK = "#!/usr/bin/env python3\n"
+
+
 def die(why, out=""):
     print("poc_wakeraise: %s\n%s" % (why, out), file=sys.stderr)
     sys.exit(1)
@@ -169,7 +183,7 @@ def stand(root):
     # машине разработчика.
     (devkit / "tools" / "devkitctl").mkdir(parents=True)
     (devkit / "kit" / "skills" / "board-task").mkdir(parents=True)
-    script(devkit / "tools" / "devkitctl" / "perms.py", "#!/usr/bin/env python3\n")
+    script(devkit / "tools" / "devkitctl" / "perms.py", PERMS_DENY)
     (devkit / "kit" / "skills" / "board-task" / "task-run.py").write_text(
         "import sys\n", encoding="utf-8")
 
@@ -212,11 +226,28 @@ def main():
     root = Path(tempfile.mkdtemp(prefix="poc-wakeraise-"))
     try:
         home, proj = stand(root)
+        devkit = root / "projects" / "devkit"
         bin = bins(root)
         log = root / "stand.log"
         env = dict(os.environ, HOME=str(home), STAND_LOG=str(log),
                    PATH=str(bin) + os.pathsep + os.environ["PATH"])
         env.pop("DEVKIT_HOME", None)
+        # Заход первый: прав на машине нет, подъём отказывает.
+        p = subprocess.run([sys.executable, str(DEVKITCTL), "watch"], env=env,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        out = p.stdout or ""
+        if "права машинного контура" not in out:
+            die("тик не назвал причину отказа подъёма (код %d)" % p.returncode, out)
+        board = (proj / "docs" / "TASKS.md").read_text(encoding="utf-8")
+        if TASK not in board.split("## Blocked", 1)[1]:
+            die("отказавший подъём увёл строку из Blocked: поднять её больше некому", board)
+        if not (proj / ".devkit" / "chat" / ("task-%s.ask" % TASK)).exists():
+            die("отказавший подъём снял признак ожидания: панель потеряет вопрос", out)
+        if "tmux new-session" in log.read_text(encoding="utf-8"):
+            die("сессия поднята без прав машинного контура", log.read_text(encoding="utf-8"))
+
+        # Заход второй: права разложены, и тот же ответ поднимает сессию.
+        script(devkit / "tools" / "devkitctl" / "perms.py", PERMS_OK)
         p = subprocess.run([sys.executable, str(DEVKITCTL), "watch"], env=env,
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         out = p.stdout or ""
@@ -237,9 +268,10 @@ def main():
             die("поднятое окно получило не тот заказ", said)
         if "DEVKIT_HIDDEN=1" in said:
             die("окно поднято скрытым от списка панели: продолжения в ленте не видно", said)
-        print("poc_wakeraise: ok, тик разбудил %s ответом, строка вернулась в работу, "
-              "признак ожидания снят, дашборд поднял окно task-%s с заказом продолжения "
-              "и без признака hidden" % (TASK, TASK))
+        print("poc_wakeraise: ok, без прав машинного контура строка осталась в Blocked "
+              "с вопросом на месте, а следующий тик разбудил %s тем же ответом: строка "
+              "вернулась в работу, признак ожидания снят, дашборд поднял окно task-%s "
+              "с заказом продолжения и без признака hidden" % (TASK, TASK))
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
 

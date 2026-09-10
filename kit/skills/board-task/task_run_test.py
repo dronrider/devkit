@@ -880,6 +880,15 @@ class TestWaitMark(unittest.TestCase):
         self.mark(until=-1)
         self.assertIsNone(self.pipe.wait_mark())
 
+    def test_mark_over_the_cap_is_not_a_wait(self):
+        # Потолок в два часа держит и agentctl wait, и оболочка. Запись,
+        # положенную мимо утилиты, оболочка иначе отработала бы до срока, и
+        # окно простояло бы полдня без единого заказа.
+        self.mark(until=3 * 60 * 60)
+        self.assertIsNone(self.pipe.wait_mark())
+        told = [l for l in self.journal() if "больше потолка" in l]
+        self.assertTrue(told, self.journal())
+
     def test_unknown_condition_is_named_aloud(self):
         # Условие, которого оболочка не знает, проверить нечем. Ждать по нему
         # вслепую значит встать до срока неизвестно на чём, и молчать тут

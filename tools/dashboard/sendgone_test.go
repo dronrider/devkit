@@ -19,7 +19,7 @@ func TestChatSayClientGoneMidSendRidesResume(t *testing.T) {
 	name := "chat-XR-4-1"
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now().Add(-time.Minute))
 	writeBinds(t, e.home, "2026-09-08T00:35:12 сессия "+sid+" задача XR-4 проект demo дерево "+e.proj+
-		" транскрипт /tmp/t.jsonl источник заказ повод startup tmux "+name+"\n")
+		" транскрипт "+standTranscript(e.home, sid)+" источник заказ повод startup tmux "+name+"\n")
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	gone := filepath.Join(e.home, "gone")
 	// Клиент выходит на первой же посылке: send-keys удаётся обе, как у живой
@@ -65,7 +65,7 @@ func TestChatSayLiveSessionStaysOnKeys(t *testing.T) {
 	name := "chat-XR-4-3"
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now().Add(-time.Minute))
 	writeBinds(t, e.home, "2026-09-08T00:40:12 сессия "+sid+" задача XR-4 проект demo дерево "+e.proj+
-		" транскрипт /tmp/t.jsonl источник заказ повод startup tmux "+name+"\n")
+		" транскрипт "+standTranscript(e.home, sid)+" источник заказ повод startup tmux "+name+"\n")
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
 case "$1" in ls) echo "`+name+`|1|123";; esac
@@ -100,7 +100,7 @@ func TestChatSayClientGoneAfterEnterRidesResume(t *testing.T) {
 	name := "chat-XR-4-4"
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now().Add(-time.Minute))
 	writeBinds(t, e.home, "2026-09-08T00:45:12 сессия "+sid+" задача XR-4 проект demo дерево "+e.proj+
-		" транскрипт /tmp/t.jsonl источник заказ повод startup tmux "+name+"\n")
+		" транскрипт "+standTranscript(e.home, sid)+" источник заказ повод startup tmux "+name+"\n")
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	arm := filepath.Join(e.home, "arm")
 	gone := filepath.Join(e.home, "gone")

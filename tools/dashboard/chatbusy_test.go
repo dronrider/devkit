@@ -35,7 +35,7 @@ func chatBusyEnv(t *testing.T, now time.Time) (*testEnv, string) {
 		`[{"type":"text","text":"давно"}]},"timestamp":%q}`,
 		now.Add(-time.Hour).Format(time.RFC3339)) + "\n"
 	writeSession(t, e.home, e.proj, "", sid, sessionLine("поговорим", "main")+old, now.Add(-time.Hour))
-	writeBinds(t, e.home, listedBind(sid, "XR-1", "chat-XR-1"))
+	writeBinds(t, e.home, listedBind(e.home, sid, "XR-1", "chat-XR-1"))
 	return e, sid
 }
 

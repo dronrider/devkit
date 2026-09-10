@@ -268,7 +268,7 @@ func TestChatDeathAfterTurnKeepsTailOutOfSaid(t *testing.T) {
 	// Хозяин имени нашёлся в реестре. Сессия успела назваться, то есть ход у
 	// разговора был, и причину смерти человек уже прочитал словами.
 	writeBinds(t, e.home, "2026-09-08T00:35:12 сессия "+sid+" задача XR-4 проект demo дерево "+e.proj+
-		" транскрипт /tmp/t.jsonl источник заказ повод startup tmux "+name+"\n")
+		" транскрипт "+standTranscript(e.home, sid)+" источник заказ повод startup tmux "+name+"\n")
 	tail := "по рекомендации\nCooked for 2m 36s\nauto mode on"
 	e.s.watchMu.Lock()
 	e.s.tails = map[string]chatTail{name: {text: tail, at: time.Now()}}

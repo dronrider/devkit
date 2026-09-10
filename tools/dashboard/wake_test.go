@@ -237,14 +237,45 @@ func TestTaskWakeKeepsRowParkedWithoutTaskRun(t *testing.T) {
 	}
 }
 
+// Бинарь tmux на месте, а сервер его не отвечает. Отказ этот затяжной: пока
+// сокет сорван, он повторится на каждом заходе тика. Спрошен он обязан быть до
+// снятия парковки, иначе строка каждые пять минут уходила бы в работу и
+// возвращалась назад, а доска получала бы по два коммита с пушем на заход.
+func TestTaskWakeKeepsRowParkedWhenServerIsDown(t *testing.T) {
+	e, tmuxLog, moved := parkedMoveEnv(t)
+	writeScript(t, e.bin, "tmux", `echo "$@" >> `+tmuxLog+`
+case "$1" in
+ls) printf 'чужая-сессия\n';;
+start-server) echo "tmux: сервер не отвечает" >&2; exit 1;;
+esac
+exit 0`)
+
+	rep := wakeOne(t, e, "XR-7")
+	if !rep.Failed || rep.Raised {
+		t.Fatalf("подъём при мёртвом сервере tmux не отказал: %+v", rep)
+	}
+	if !strings.Contains(rep.Line, "сервер tmux не отвечает") {
+		t.Errorf("в отказе нет причины: %s", rep.Line)
+	}
+	if args := readFile(t, moved); args != "" {
+		t.Errorf("доску подвигали при мёртвом сервере tmux: %q", args)
+	}
+	if _, ok := chat.ReadAsk(chat.AskPath(e.proj, "task-XR-7")); !ok {
+		t.Error("признак ожидания снят отказавшим подъёмом: панель потеряет вопрос, а тик строку")
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("окно подняли поверх мёртвого сервера: %s", got)
+	}
+}
+
 // Сессия не поднялась там, где парковка уже снята: строка возвращается в
 // Blocked тем же вопросом. Иначе она стояла бы в работе без сессии и без
 // признака ожидания, а тик берёт будимых только из Blocked, и повторить подъём
 // было бы некому.
 func TestTaskWakeReparksAfterFailedStart(t *testing.T) {
 	e, tmuxLog, moved := parkedMoveEnv(t)
-	// Окна tmux не поднимаются: так отказывает уже сам подъём, за снятой
-	// парковкой, и других причин отказать там не остаётся.
+	// Сервер tmux отвечает, а окна не поднимаются: так отказывает уже сам
+	// подъём, за снятой парковкой, и других причин отказать там не остаётся.
 	writeScript(t, e.bin, "tmux", `echo "$@" >> `+tmuxLog+`
 case "$1" in
 ls) printf 'чужая-сессия\n';;

@@ -42,6 +42,13 @@ const usageText = `dashboard: веб-дашборд агентской разр�
                               живой сессии поднимается новая, той же
                               tmux-сессией task-<ID>. Зовёт команду тик
                               сторожка, увидевший ответ автора в тредах MR
+  wake <ID>... [-C <дир>]     поднять сессию задачи, разбуженной ответом
+                              человека: та же tmux-сессия task-<ID>, что у
+                              кнопки экрана, с заказом «продолжай». Строку,
+                              ещё стоящую в Blocked с причиной «вопрос: ...»,
+                              команда сама возвращает в In progress. Зовут её
+                              панель по записи ответа и тик сторожка
+                              страховкой
   smoke [--keep]              сквозной прогон по API на синтетическом
                               окружении (свой дом, свой проект, фикстуры
                               вместо чужих программ): доска, запуск, стоп,
@@ -115,6 +122,16 @@ func main() {
 		dir := fs.String("C", ".", "корень проекта с доской")
 		fs.Parse(args[1:])
 		if err := cmdRound(home, *dir, fs.Args(), os.Stdout); err != nil {
+			if errors.Is(err, errCheckRunFailed) {
+				os.Exit(1)
+			}
+			fatal(err)
+		}
+	case "wake":
+		fs := flag.NewFlagSet("wake", flag.ExitOnError)
+		dir := fs.String("C", ".", "корень проекта с доской")
+		fs.Parse(args[1:])
+		if err := cmdWake(home, *dir, fs.Args(), os.Stdout); err != nil {
 			if errors.Is(err, errCheckRunFailed) {
 				os.Exit(1)
 			}

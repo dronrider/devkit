@@ -129,19 +129,36 @@ func TestChatTailCutAndMasked(t *testing.T) {
 // Время жизни подъёма называется словами, а не голым числом секунд: строка
 // ленты читается человеком.
 func TestChatDeathWordTellsLife(t *testing.T) {
-	quick := chatDeathWord("chat-1", 3*time.Second, false)
+	quick := chatDeathWord("chat-1", "", 3*time.Second, false)
 	if !strings.Contains(quick, "chat-1") || !strings.Contains(quick, "3 с") {
 		t.Errorf("слова о немом подъёме: %q", quick)
 	}
 	if !strings.Contains(quick, "не начав") {
 		t.Errorf("слова не отличают немой подъём от смерти после хода: %q", quick)
 	}
-	turn := chatDeathWord("chat-2", 90*time.Minute, true)
+	turn := chatDeathWord("chat-2", "", 90*time.Minute, true)
 	if strings.Contains(turn, "не начав") {
 		t.Errorf("смерть после хода названа немым подъёмом: %q", turn)
 	}
 	if !strings.Contains(turn, "chat-2") {
 		t.Errorf("слова о смерти после хода: %q", turn)
+	}
+}
+
+// Разговор задачи продолжается не резюмом, и обещать его нельзя (DK-922).
+// Сессию конвейера сносит своя оболочка, реплика человека уходит во вход
+// задачи, а поднимает по ней новую сессию ответ на вопрос. Прежние слова про
+// резюм человек читал у мёртвой сессии припаркованной строки и ждал
+// продолжения, которого не было.
+func TestChatDeathWordOfTaskPromisesTheRightRoad(t *testing.T) {
+	said := chatDeathWord("task-XR-7", "XR-7", 78*time.Minute, true)
+	if strings.Contains(said, "резюм") {
+		t.Errorf("смерть сессии задачи обещает резюм: %q", said)
+	}
+	for _, want := range []string{"task-XR-7", "1 ч 18 мин", "XR-7", "поднимет её сессию заново"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("в словах о смерти сессии задачи нет %q: %q", want, said)
+		}
 	}
 }
 

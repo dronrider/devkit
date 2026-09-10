@@ -285,7 +285,7 @@ func (s *server) chatDeathSay(name string, st chatStore) chatStore {
 	if sid == "" {
 		sid = st.From
 	}
-	why := chatDeathWord(name, lived, named)
+	why := chatDeathWord(name, st.Task, lived, named)
 	tail := s.chatTailOf(name)
 	st.Raised, st.Dead, st.DeadWhy, st.Tail = 0, now.Unix(), why, tail
 	if err := s.chatStoreWrite("tmux-"+name, st); err != nil {
@@ -325,7 +325,18 @@ func (s *server) chatDeathSay(name string, st chatStore) chatStore {
 // chatDeathWord это слова смерти. Немой подъём и смерть после хода лечатся
 // по-разному, и путать их нельзя: в первом случае реплика человека не доехала
 // вовсе, во втором разговор просто кончился и продолжается резюмом.
-func chatDeathWord(name string, lived time.Duration, named bool) string {
+//
+// Разговор задачи продолжается не резюмом, и обещать его нельзя (DK-922).
+// Сессию конвейера сносит своя оболочка, а реплика человека уходит не ей, а во
+// вход задачи: ответ на вопрос поднимает по ней новую сессию конвейера
+// (wake.go), и это другая дорога, с другим заказом. Прежние слова про резюм
+// человек читал у мёртвой сессии припаркованной задачи и ждал продолжения,
+// которого не было.
+func chatDeathWord(name, task string, lived time.Duration, named bool) string {
+	if named && task != "" {
+		return fmt.Sprintf("сессия %s прожила %s и кончилась: терминала у разговора больше нет, "+
+			"и ответ на вопрос задачи %s поднимет её сессию заново", name, chatLived(lived), task)
+	}
 	if named {
 		return fmt.Sprintf("сессия %s прожила %s и кончилась: терминала у разговора больше нет, "+
 			"следующая реплика поднимет продолжение резюмом", name, chatLived(lived))

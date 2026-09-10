@@ -343,8 +343,8 @@ func TestWaitAnswerGoesByTaskHandle(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("ответ на вопрос: %d %s", resp.StatusCode, text)
 	}
-	if !strings.Contains(text, "припаркована вопросом") {
-		t.Errorf("ответ не называет пробуждение припаркованной строки: %s", text)
+	if !strings.Contains(text, `"parked":true`) {
+		t.Errorf("ответ не называет припаркованную строку: %s", text)
 	}
 	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-7.in"))
 	if strings.Contains(src, ", сессии ") {

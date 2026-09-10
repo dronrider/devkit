@@ -244,13 +244,13 @@ func (s *server) settleAsk(root, name, task string) {
 		// сама, или блок стоит по другой причине): трогать нечего.
 		return
 	}
-	out, code, err := s.taskctlWrite(root, "move", task, "in-progress",
-		"-m", fmt.Sprintf("docs(tasks): %s разбуждена ответом", task), "--push")
-	if err != nil {
-		s.logf("задача %s: возврат в In progress клавишным ответом не прошёл (%d): %v", task, code, err)
-		return
+	// Снятие парковки идёт общей дорогой (unparkAsk в wake.go): тем же вызовом
+	// taskctl и той же уборкой признака, какой сводит строку подъём сессии
+	// после ответа в панели. Сессия тут жива, и поднимать поверх неё нечего:
+	// текст уже уехал клавишами.
+	if err := s.unparkAsk(root, task); err != nil {
+		s.logf("задача %s: возврат в In progress клавишным ответом не прошёл: %v", task, err)
 	}
-	s.logf("задача %s возвращена в In progress ответом клавишами: %s", task, out)
 }
 
 // handleSessionMessagePost кладёт реплику человека во вход живой сессии.
@@ -517,7 +517,7 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found, id, row, _, ok := s.taskRow(w, r)
+	found, id, row, rows, ok := s.taskRow(w, r)
 	if !ok {
 		return
 	}
@@ -556,6 +556,10 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repeat := lying != ""
+	// raised говорит, что ответ не просто лёг во вход, а поднял сессию задачи:
+	// адресат у реплики появился прямо тут, и приписка про ожидание во входе
+	// ниже была бы неправдой.
+	raised := false
 	resp := map[string]any{
 		"task": id, "chat": name, "tree": found.Path, "line": line,
 		"message": fmt.Sprintf(
@@ -574,15 +578,31 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 			"такая реплика уже лежит в чате %s: второй строки не завожу, задача прочитает одну", name)
 		s.logf("повтор сообщения задаче %s в %s: строка уже лежит в чате %s", id, found.Name, name)
 	case parkedByAsk(row):
+		// Ответ на вопрос поднимает сессию задачи сразу, а не ждёт тика: до
+		// этой задачи оболочка конвейера к моменту ответа уже вышла по стопу
+		// wait_human, окна не было, и разбуженная тиком строка стояла в работе
+		// с непрочитанной репликой во входе, пока человек сам не нажмёт
+		// «Запуск» (DK-922). Дорога подъёма общая с тиком (wake.go), и она же
+		// снимает парковку.
 		resp["parked"] = true
+		rep := s.taskWake(found, id, rows)
+		s.logf("ответ задаче %s в %s: %s", id, found.Name, rep.Line)
+		if rep.Raised {
+			raised = true
+			resp["raised"] = true
+			resp["message"] = fmt.Sprintf(
+				"реплика легла в чат %s основного чекаута: строка %s разбужена ответом, её сессия поднята, и продолжение придёт в эту ленту",
+				name, id)
+			break
+		}
 		resp["message"] = fmt.Sprintf(
-			"реплика легла в чат %s основного чекаута: строка %s припаркована вопросом, и ближайший тик сторожка вернёт её в работу",
-			name, id)
+			"реплика легла в чат %s основного чекаута: %s. Строку добирает тик сторожка",
+			name, rep.Line)
 	}
 	// Ведущей сессии у задачи нет ни одной. Строка остаётся лежать во входе, и
 	// панель показывает реплику недоставленной с причиной: молчаливое
 	// «доставлено» тут обещало бы адресата, которого нет.
-	if !s.taskLead(found.Path, id) {
+	if !raised && !s.taskLead(found.Path, id) {
 		resp["undelivered"] = true
 		resp["why"] = taskNoLeadWhy
 		if repeat {

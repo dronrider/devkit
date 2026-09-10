@@ -318,9 +318,28 @@ const chatParkedBoard = `{"prefix":"XR","sections":[` +
 
 func parkedEnv(t *testing.T) (*testEnv, *http.Client) {
 	t.Helper()
+	e, _ := parkedRaiseEnv(t)
+	return e, e.loggedClient(t)
+}
+
+// parkedRaiseEnv это тот же стенд с разложенной дорогой подъёма: ответ на
+// вопрос припаркованной строки поднимает её сессию тут же (DK-922), и без
+// фикстур tmux, клиента, прав и оболочки конвейера стенд отвечал бы по машине
+// разработчика. Возврат это стенд и журнал tmux.
+func parkedRaiseEnv(t *testing.T) (*testEnv, string) {
+	t.Helper()
 	e := newTestEnv(t)
 	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", chatParkedBoard))
-	return e, e.loggedClient(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	// Список сессий тот же, что у общего стенда: разговоры этих тестов меряются
+	// по нему. Своей сессии у припаркованной строки в нём нет, и подъёму есть
+	// куда встать.
+	writeTmuxFake(t, e.bin, tmuxLog, `goal-XR-9\ntask-XR-5\nчужая-сессия\n`)
+	writeScript(t, e.bin, "claude", "exit 0")
+	writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
+	writeTaskRunFake(t, filepath.Dir(e.proj))
+	writePermsFake(t, filepath.Dir(e.proj), false)
+	return e, tmuxLog
 }
 
 func postTaskMessage(t *testing.T, c *http.Client, e *testEnv, id, text string) *http.Response {
@@ -343,8 +362,8 @@ func TestTaskMessageLandsUnaddressedInMainCheckout(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("отправка: %d %s", resp.StatusCode, text)
 	}
-	if !strings.Contains(text, "припаркована вопросом") || !strings.Contains(text, "сторожка") {
-		t.Errorf("ответ не называет парковку и пробуждение: %s", text)
+	if !strings.Contains(text, "разбужена ответом") || !strings.Contains(text, "сессия поднята") {
+		t.Errorf("ответ не называет пробуждение и подъём сессии: %s", text)
 	}
 	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-7.in"))
 	if !strings.Contains(src, ", из дашборда: бери схему из LLD") {
@@ -355,6 +374,36 @@ func TestTaskMessageLandsUnaddressedInMainCheckout(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(side, ".devkit", "chat", "task-XR-7.in")); err == nil {
 		t.Errorf("реплика легла в боковое дерево, хотя ручка задачи пишет в чекаут")
+	}
+}
+
+// Панель поднимает сессию сразу по записи ответа, не дожидаясь тика: это тот
+// самый случай DK-922, где человек отвечал и ждал у экрана, пока сам не
+// заметит стоящую строку.
+func TestTaskMessageRaisesParkedRow(t *testing.T) {
+	e, tmuxLog := parkedRaiseEnv(t)
+	c := e.loggedClient(t)
+
+	resp := postTaskMessage(t, c, e, "XR-7", "бери схему из LLD")
+	text := body(t, resp)
+	if resp.StatusCode != 200 {
+		t.Fatalf("отправка: %d %s", resp.StatusCode, text)
+	}
+	got := readFile(t, tmuxLog)
+	if !strings.Contains(got, "new-session -d -s task-XR-7") {
+		t.Fatalf("ответ не поднял сессию задачи: %q", got)
+	}
+	if !strings.Contains(text, `"raised":true`) {
+		t.Errorf("ответ не сказал человеку про поднятую сессию: %s", text)
+	}
+	// Недоставленной реплика тут не считается: адресат у неё появился этим же
+	// запросом, и приписка про ожидание во входе была бы неправдой.
+	if strings.Contains(text, `"undelivered":true`) {
+		t.Errorf("реплика с поднятой сессией названа недоставленной: %s", text)
+	}
+	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-7.in"))
+	if !strings.Contains(src, "бери схему из LLD") {
+		t.Fatalf("реплика пропала из входа задачи:\n%s", src)
 	}
 }
 
@@ -1928,7 +1977,9 @@ exit 0`)
 // своего хода.
 func TestTaskMessageUndeliveredWithoutLead(t *testing.T) {
 	e, c := parkedEnv(t)
-	resp := postTaskMessage(t, c, e, "XR-7", "а почему задача заблокирована")
+	// Строка тут не припаркованная, а начатая: у парковки вопросом ответ сам
+	// поднимает сессию задачи (DK-922), и адресат у реплики появляется тут же.
+	resp := postTaskMessage(t, c, e, "XR-4", "а почему задача заблокирована")
 	text := body(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("отправка: %d %s", resp.StatusCode, text)
@@ -1941,7 +1992,7 @@ func TestTaskMessageUndeliveredWithoutLead(t *testing.T) {
 	}
 	// Текст человека при этом не теряется: строка лежит во входе и ждёт свою
 	// сессию.
-	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-7.in"))
+	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-4.in"))
 	if !strings.Contains(src, "а почему задача заблокирована") {
 		t.Fatalf("реплика пропала из входа задачи:\n%s", src)
 	}
@@ -1953,11 +2004,11 @@ func TestTaskMessageUndeliveredWithoutLead(t *testing.T) {
 // реплику доставленной, снимала пузырь, и лента пустела совсем.
 func TestTaskMessageRepeatStaysUndelivered(t *testing.T) {
 	e, c := parkedEnv(t)
-	first := body(t, postTaskMessage(t, c, e, "XR-7", "а почему задача заблокирована"))
+	first := body(t, postTaskMessage(t, c, e, "XR-4", "а почему задача заблокирована"))
 	if !strings.Contains(first, `"undelivered":true`) {
 		t.Fatalf("первая отправка не названа недоставленной: %s", first)
 	}
-	resp := postTaskMessage(t, c, e, "XR-7", "а почему задача заблокирована")
+	resp := postTaskMessage(t, c, e, "XR-4", "а почему задача заблокирована")
 	text := body(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("повтор: %d %s", resp.StatusCode, text)
@@ -1972,7 +2023,7 @@ func TestTaskMessageRepeatStaysUndelivered(t *testing.T) {
 		t.Errorf("ответ не говорит человеку, что реплика уже в очереди: %s", text)
 	}
 	// Второй строки повтор не завёл: очередь по-прежнему из одной реплики.
-	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-7.in"))
+	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-4.in"))
 	if got := strings.Count(src, "а почему задача заблокирована"); got != 1 {
 		t.Fatalf("строк в очереди %d, ожидалась одна:\n%s", got, src)
 	}

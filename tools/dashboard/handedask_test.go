@@ -22,10 +22,10 @@ import (
 
 // handedBind это строка реестра про сессию с задачей и родителем разом: у
 // bindRecord нет родителя, у bindParent задачи, а делегату нужны оба поля.
-func handedBind(stamp, sid, task, parent string) string {
+func handedBind(home, stamp, sid, task, parent string) string {
 	return fmt.Sprintf("%s сессия %s задача %s проект demo дерево /tmp/demo "+
-		"транскрипт /tmp/%s.jsonl источник заказ повод startup tmux - родитель %s\n",
-		stamp, sid, task, sid, parent)
+		"транскрипт %s источник заказ повод startup tmux - родитель %s\n",
+		stamp, sid, task, standTranscript(home, sid), parent)
 }
 
 // Пульс открытого разговора видит вопрос, который лежит под именем чужой
@@ -36,7 +36,7 @@ func TestPulseHandedAskReachesDispatcher(t *testing.T) {
 	e, c := pulseEnv(t, now)
 	seen := now.Add(-5 * time.Second)
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."), seen)
-	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
 	writeAskFor(t, e.proj, "XR-9", "aaa-1", now.Add(20*time.Minute))
 
 	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
@@ -65,8 +65,8 @@ func TestPulseHandedAskViaParent(t *testing.T) {
 	seen := now.Add(-5 * time.Second)
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."), seen)
 	writeBinds(t, e.home,
-		bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"),
-		handedBind("2026-08-20T11:59:30", "bbb-7", "-", "aaa-1"))
+		bindRecord(e.home, "2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"),
+		handedBind(e.home, "2026-08-20T11:59:30", "bbb-7", "-", "aaa-1"))
 	writeAskFor(t, e.proj, "XR-9", "bbb-7", now.Add(20*time.Minute))
 
 	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
@@ -85,7 +85,7 @@ func TestPulseHandedAskIgnoresForeignAndStale(t *testing.T) {
 	e, c := pulseEnv(t, now)
 	seen := now.Add(-5 * time.Second)
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."), seen)
-	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
 	writeAskFor(t, e.proj, "XR-8", "zzz-9", now.Add(20*time.Minute))
 	writeAskFor(t, e.proj, "XR-9", "aaa-1", now.Add(-time.Minute))
 
@@ -182,8 +182,8 @@ func TestChatSaySettlesDelegateAsk(t *testing.T) {
 	e, c, frames := askSayEnvNoTerm(t, sid)
 	writeBinds(t, e.home,
 		fmt.Sprintf("2026-08-28T12:00:00 сессия %s задача XR-4 проект demo дерево %s "+
-			"транскрипт /tmp/t.jsonl источник заказ повод startup tmux -\n", sid, e.proj),
-		handedBind("2026-08-28T12:01:00", deleg, "-", sid))
+			"транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux -\n", sid, e.proj),
+		handedBind(e.home, "2026-08-28T12:01:00", deleg, "-", sid))
 	writeAskSign(t, e.proj, "task-XR-9", deleg, "XR-9", time.Now().Add(5*time.Minute))
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",

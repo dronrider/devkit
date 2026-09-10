@@ -38,7 +38,7 @@ func askSayEnv(t *testing.T, sid string) (*testEnv, *http.Client, func() []strin
 	e, c := chatEnv(t)
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-28T12:00:00 сессия %s задача XR-4 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-XR-4\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux task-XR-4\n", sid, e.proj))
 	sock, frames := countingSock(t)
 	writePeerSock(t, e.home, sid, os.Getpid(), sock)
 	writeScript(t, e.bin, "tmux", `case "$1" in ls) printf 'task-XR-4\t1\t1754770421\n';; esac
@@ -54,7 +54,7 @@ func askSayEnvNoTerm(t *testing.T, sid string) (*testEnv, *http.Client, func() [
 	e, c := chatEnv(t)
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-28T12:00:00 сессия %s задача XR-4 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux -\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux -\n", sid, e.proj))
 	sock, frames := countingSock(t)
 	writePeerSock(t, e.home, sid, os.Getpid(), sock)
 	writeScript(t, e.bin, "tmux", `exit 0`)
@@ -68,7 +68,7 @@ func askSayEnvTerm(t *testing.T, sid string) (*testEnv, *http.Client, string) {
 	e, c := chatEnv(t)
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-28T12:00:00 сессия %s задача XR-4 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-XR-4\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux task-XR-4\n", sid, e.proj))
 	sent := filepath.Join(e.home, "sent.log")
 	writeScript(t, e.bin, "tmux", `case "$1" in
 ls) printf 'task-XR-4\t1\t1754770421\n';;
@@ -199,7 +199,7 @@ func TestChatSayAnsweredByKeysUnparksTheRow(t *testing.T) {
 	e, c := chatEnv(t)
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-28T12:00:00 сессия %s задача XR-4 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-XR-4\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux task-XR-4\n", sid, e.proj))
 	sent := filepath.Join(e.home, "sent.log")
 	moved := filepath.Join(e.home, "moved.log")
 	writeScript(t, e.bin, "tmux", `case "$1" in
@@ -251,7 +251,7 @@ func TestMorningCaseGoalAskReachesLiveSession(t *testing.T) {
 	e, c := chatEnv(t)
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
 	writeBinds(t, e.home, fmt.Sprintf("2026-09-04T09:59:00 сессия %s задача DK-713 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-DK-713-1\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-DK-713-1\n", sid, e.proj))
 	sent := filepath.Join(e.home, "sent.log")
 	moved := filepath.Join(e.home, "moved.log")
 	writeScript(t, e.bin, "tmux", `case "$1" in

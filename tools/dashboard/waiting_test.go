@@ -112,7 +112,7 @@ func idleLine(stamp, short, reason string) string {
 // Запасной источник: повод из журнала связывается с задачей реестром чатов по
 // префиксу сессии, потому что в журнале ID обрезан.
 func TestIdleWaitsBindsBySessionPrefix(t *testing.T) {
-	binds := parseBinds([]byte(bindRecord("2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", bindOrder)))
+	binds := parseBinds([]byte(bindRecord(noHome, "2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", bindOrder)))
 	waits, unclaimed := idleWaits([]string{idleLine("2026-08-18T11:55:00", "aaaa1111", idlePromptReason)},
 		binds, waitNow)
 	w, ok := waits["XR-4"]
@@ -136,7 +136,7 @@ func TestIdleWaitsBindsBySessionPrefix(t *testing.T) {
 // Сессия, сходившая ход после ожидания, ждущей не считается: конец хода стоит
 // в журнале последним, и ожидание с неё снято.
 func TestIdleWaitsDropSupersededEvent(t *testing.T) {
-	binds := parseBinds([]byte(bindRecord("2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", bindOrder)))
+	binds := parseBinds([]byte(bindRecord(noHome, "2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", bindOrder)))
 	lines := []string{
 		idleLine("2026-08-18T11:50:00", "aaaa1111", idlePromptReason),
 		idleLine("2026-08-18T11:55:00", "aaaa1111", "turn_done"),
@@ -149,7 +149,7 @@ func TestIdleWaitsDropSupersededEvent(t *testing.T) {
 // Вчерашний повод ожиданием не считается: отбоя у idle_prompt нет, и без срока
 // чип горел бы на строке неделю.
 func TestIdleWaitsDropStaleEvent(t *testing.T) {
-	binds := parseBinds([]byte(bindRecord("2026-08-17T09:00:00", "aaaa1111-full-id", "XR-4", bindOrder)))
+	binds := parseBinds([]byte(bindRecord(noHome, "2026-08-17T09:00:00", "aaaa1111-full-id", "XR-4", bindOrder)))
 	lines := []string{idleLine("2026-08-17T09:30:00", "aaaa1111", idlePromptReason)}
 	if waits, _ := idleWaits(lines, binds, waitNow); len(waits) != 0 {
 		t.Fatalf("повод старше полусуток выдан за ожидание: %+v", waits)
@@ -160,8 +160,8 @@ func TestIdleWaitsDropStaleEvent(t *testing.T) {
 // невязка называется словами, а не выбирается наугад.
 func TestIdleWaitsNameAmbiguousPrefix(t *testing.T) {
 	binds := parseBinds([]byte(
-		bindRecord("2026-08-18T11:40:00", "aaaa1111-one", "XR-4", bindOrder) +
-			bindRecord("2026-08-18T11:41:00", "aaaa1111-two", "XR-7", bindTree)))
+		bindRecord(noHome, "2026-08-18T11:40:00", "aaaa1111-one", "XR-4", bindOrder) +
+			bindRecord(noHome, "2026-08-18T11:41:00", "aaaa1111-two", "XR-7", bindTree)))
 	waits, unclaimed := idleWaits([]string{idleLine("2026-08-18T11:55:00", "aaaa1111", idlePromptReason)},
 		binds, waitNow)
 	if len(waits) != 0 {
@@ -178,7 +178,7 @@ func TestIdleWaitsNameAmbiguousPrefix(t *testing.T) {
 func TestWaitLookupRanksSources(t *testing.T) {
 	e := newTestEnv(t)
 	e.s.now = func() time.Time { return waitNow }
-	writeBinds(t, e.home, bindRecord("2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", bindOrder))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", bindOrder))
 	writeNotifyLog(t, e.home, []string{idleLine("2026-08-18T11:55:00", "aaaa1111", idlePromptReason)})
 
 	look := e.s.waitLookup(e.proj)
@@ -298,7 +298,7 @@ func TestFeedIdlePromptIsWaitKind(t *testing.T) {
 // никуда.
 func TestFeedNamesWaitTaskByRegistry(t *testing.T) {
 	e := newTestEnv(t)
-	writeBinds(t, e.home, bindRecord("2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", bindOrder))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", bindOrder))
 	writeNotifyLog(t, e.home, []string{idleLine("2026-08-18T11:55:00", "aaaa1111", idlePromptReason)})
 	feed := getFeed(t, e, "?kind=wait")
 	if len(feed.Items) != 1 {
@@ -317,8 +317,8 @@ func TestFeedNamesWaitTaskByRegistry(t *testing.T) {
 func TestFeedNamesAmbiguousPrefix(t *testing.T) {
 	e := newTestEnv(t)
 	writeBinds(t, e.home,
-		bindRecord("2026-08-18T11:40:00", "aaaa1111-one", "XR-4", bindOrder),
-		bindRecord("2026-08-18T11:41:00", "aaaa1111-two", "XR-7", bindTree))
+		bindRecord(e.home, "2026-08-18T11:40:00", "aaaa1111-one", "XR-4", bindOrder),
+		bindRecord(e.home, "2026-08-18T11:41:00", "aaaa1111-two", "XR-7", bindTree))
 	writeNotifyLog(t, e.home, []string{idleLine("2026-08-18T11:55:00", "aaaa1111", idlePromptReason)})
 	feed := getFeed(t, e, "?kind=wait")
 	if len(feed.Items) != 1 {
@@ -416,7 +416,7 @@ func TestWaitScanReadsLogOnce(t *testing.T) {
 	}
 	// Журнала уже нет, а разбор был снят до него: строка отвечает по снятому
 	// хвосту, а не бежит за новым чтением.
-	writeBinds(t, e.home, bindRecord("2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", bindOrder))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", bindOrder))
 	if _, ok := look("XR-4", "in-progress", ""); ok {
 		t.Error("разбор пошёл за журналом второй раз: реестр приехал после снятия хвоста")
 	}
@@ -424,9 +424,9 @@ func TestWaitScanReadsLogOnce(t *testing.T) {
 
 // bindTmuxRecord это запись реестра с tmux-сессией разговора: по ней строка
 // доски и находит клиента, чью панель надо спросить.
-func bindTmuxRecord(stamp, sid, task, tmux string) string {
-	return fmt.Sprintf("%s сессия %s задача %s проект demo дерево /tmp/demo транскрипт /tmp/t.jsonl "+
-		"источник %s повод startup tmux %s\n", stamp, sid, task, bindOrder, tmux)
+func bindTmuxRecord(home, stamp, sid, task, tmux string) string {
+	return fmt.Sprintf("%s сессия %s задача %s проект demo дерево /tmp/demo транскрипт %s "+
+		"источник %s повод startup tmux %s\n", stamp, sid, task, standTranscript(home, sid), bindOrder, tmux)
 }
 
 // fakeTmuxAsking подменяет tmux стенда: сессия одна, живая, и её панель стоит
@@ -452,7 +452,7 @@ exit 0`)
 func TestWidgetWaitSeenWithoutPanel(t *testing.T) {
 	e := newTestEnv(t)
 	e.s.now = func() time.Time { return waitNow }
-	writeBinds(t, e.home, bindTmuxRecord("2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", "chat-XR-4-1"))
+	writeBinds(t, e.home, bindTmuxRecord(e.home, "2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", "chat-XR-4-1"))
 	fakeTmuxAsking(t, e, "chat-XR-4-1", liveTrustBarePane)
 
 	look := e.s.waitLookup(e.proj)
@@ -487,7 +487,7 @@ func TestWidgetWaitSeenWithoutPanel(t *testing.T) {
 func TestWidgetWaitQuietClient(t *testing.T) {
 	e := newTestEnv(t)
 	e.s.now = func() time.Time { return waitNow }
-	writeBinds(t, e.home, bindTmuxRecord("2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", "chat-XR-4-1"))
+	writeBinds(t, e.home, bindTmuxRecord(e.home, "2026-08-18T11:40:00", "aaaa1111-full-id", "XR-4", "chat-XR-4-1"))
 	fakeTmuxAsking(t, e, "chat-XR-4-1", "  разбираю задачу, отвечу через минуту")
 
 	if w, ok := e.s.waitLookup(e.proj)("XR-4", "in-progress", ""); ok {

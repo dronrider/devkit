@@ -144,7 +144,7 @@ func TestPulseOwnAskKeepsScanAndOptions(t *testing.T) {
 	e, c := pulseEnv(t, now)
 	seen := now.Add(-5 * time.Second)
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "taskctl ask XR-1"), seen)
-	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
 	writeAskPack(t, e.proj, "XR-1", "aaa-1", now.Add(20*time.Minute), chat.Question{
 		Text:    "куда катить",
 		Options: []chat.Option{{Label: "в прод", Recommended: true}, {Label: "в стенд"}},

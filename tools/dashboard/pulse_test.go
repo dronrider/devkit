@@ -152,7 +152,7 @@ func TestPulseWorking(t *testing.T) {
 	e, c := pulseEnv(t, now)
 	seen := now.Add(-12 * time.Second)
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go test ./tools/..."), seen)
-	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
 	// Запись этапа тут обязательна: без неё о фазах не известно ничего, и
 	// шкалы у кольца нет вовсе.
 	writeStageRecord(t, e.home, e.proj, "XR-1", stage.Dev, now.Add(-10*time.Minute))
@@ -194,7 +194,7 @@ func TestPulseSilentNotEmpty(t *testing.T) {
 	// но молчит.
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."),
 		now.Add(-2*time.Minute))
-	writeBinds(t, e.home, bindRecord("2026-08-20T11:45:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T11:45:00", "aaa-1", "XR-1", "заказ"))
 
 	p := getPulse(t, e, c, "task=XR-1")
 	if p.State != pulseHush {
@@ -223,7 +223,7 @@ func TestPulsePlanFileOfSilentChat(t *testing.T) {
 	seen := now.Add(-40 * time.Minute)
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."),
 		now.Add(-2*time.Minute))
-	writeBinds(t, e.home, bindRecord("2026-08-20T11:15:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T11:15:00", "aaa-1", "XR-1", "заказ"))
 
 	if err := os.MkdirAll(planDir(e.home), 0o755); err != nil {
 		t.Fatal(err)
@@ -274,7 +274,7 @@ func TestPulseWaitingBeatsWork(t *testing.T) {
 	e, c := pulseEnv(t, now)
 	seen := now.Add(-5 * time.Second)
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."), seen)
-	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
 	writeAskFile(t, e.proj, "XR-1", now.Add(20*time.Minute))
 
 	p := getPulse(t, e, c, "task=XR-1")
@@ -312,8 +312,8 @@ func TestPulseNeighbourWaitsOwnWorks(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(work, "Bash", "go build ./..."), work)
 	writeSession(t, e.home, e.proj, "", "bbb-2", pulseTranscript(idle, "Read", "app.js"), now.Add(-time.Minute))
 	writeBinds(t, e.home,
-		bindRecord("2026-08-20T10:00:00", "aaa-1", "XR-1", "заказ"),
-		bindRecord("2026-08-20T10:00:00", "bbb-2", "XR-1", "заказ"))
+		bindRecord(e.home, "2026-08-20T10:00:00", "aaa-1", "XR-1", "заказ"),
+		bindRecord(e.home, "2026-08-20T10:00:00", "bbb-2", "XR-1", "заказ"))
 	writeAskFor(t, e.proj, "XR-1", "bbb-2", now.Add(20*time.Minute))
 
 	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
@@ -367,7 +367,7 @@ func TestPulseParkedRingStaysQuietWithLiveNeighbour(t *testing.T) {
 
 	seen := now.Add(-12 * time.Second)
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."), seen)
-	writeBinds(t, e.home, bindRecord("2026-09-05T11:59:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-09-05T11:59:00", "aaa-1", "XR-1", "заказ"))
 
 	p := getPulse(t, e, c, "task=XR-1")
 	if p.State != pulseWait {
@@ -389,7 +389,7 @@ func TestPulseIdlePromptIsNotWaiting(t *testing.T) {
 	e, c := pulseEnv(t, now)
 	idle := now.Add(-2 * time.Hour)
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(idle, "Read", "app.js"), now.Add(-time.Minute))
-	writeBinds(t, e.home, bindRecord("2026-08-20T10:00:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T10:00:00", "aaa-1", "XR-1", "заказ"))
 	writeIdlePrompt(t, e.home, "aaa-1", now.Add(-2*time.Hour))
 
 	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
@@ -416,7 +416,7 @@ func TestPulseAgentsNamed(t *testing.T) {
 	body := `{"type":"summary","summary":"Видеть ход работы агентов в чате"}` + "\n" +
 		pulseTranscript(seen, "Bash", "go test ./tools/...")
 	writeSession(t, e.home, e.proj, "", "aaa-1", body, seen)
-	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
 
 	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
 	if len(p.Agents) != 1 {
@@ -554,7 +554,7 @@ func TestPulseHeldToolCountsAsWork(t *testing.T) {
 	began := now.Add(-3 * time.Minute)
 	writeSession(t, e.home, e.proj, "", "aaa-1",
 		pulseHeldTranscript(began, "Bash", "go test ./tools/..."), began)
-	writeBinds(t, e.home, bindRecord("2026-08-20T11:50:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T11:50:00", "aaa-1", "XR-1", "заказ"))
 
 	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
 	if p.State != pulseWork {
@@ -594,8 +594,8 @@ func TestPulseCountsSplitByState(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(work, "Bash", "go build ./..."), work)
 	writeSession(t, e.home, e.proj, "", "bbb-2", pulseTranscript(idle, "Read", "app.js"), now.Add(-time.Minute))
 	writeBinds(t, e.home,
-		bindRecord("2026-08-20T10:00:00", "aaa-1", "XR-1", "заказ"),
-		bindRecord("2026-08-20T10:00:00", "bbb-2", "XR-1", "заказ"))
+		bindRecord(e.home, "2026-08-20T10:00:00", "aaa-1", "XR-1", "заказ"),
+		bindRecord(e.home, "2026-08-20T10:00:00", "bbb-2", "XR-1", "заказ"))
 
 	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
 	if p.Count != 2 || p.Working != 1 || p.Idle != 1 || p.Waiting != 0 {
@@ -615,7 +615,7 @@ func TestPulseAboutNamesTheStep(t *testing.T) {
 	e, c := pulseEnv(t, now)
 	seen := now.Add(-9 * time.Second)
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go test ./tools/..."), seen)
-	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
 
 	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
 	// Имя инструмента и довод хода едут врозь: склеенные в одну строку, они
@@ -701,7 +701,7 @@ func TestPulseNoStageRecordNoScale(t *testing.T) {
 	e, c := pulseEnv(t, now)
 	seen := now.Add(-9 * time.Second)
 	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."), seen)
-	writeBinds(t, e.home, bindRecord("2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
 
 	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
 	if p.Scale != scaleNone {

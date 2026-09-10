@@ -143,7 +143,7 @@ func TestSessionsFreeOnly(t *testing.T) {
 	// Задачу первой сессии называет запись реестра: ID из первой реплики
 	// привязкой больше не считается, и без записи оба чата уехали бы в общий
 	// список доски.
-	writeBinds(t, e.home, bindRecord("2026-08-10T09:00:00", "aaa-1", "XR-101", bindHand))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-10T09:00:00", "aaa-1", "XR-101", bindHand))
 	c := e.loggedClient(t)
 
 	_, list, _ := getSessions(t, e, c, "?free=1")
@@ -165,9 +165,9 @@ func TestSessionsFreeOnly(t *testing.T) {
 // «заказ» и имя tmux-сессии, по которому меряется, жив ли разговор. Только у
 // такой записи мера доходит до tmux, и без неё список разговоров спрашивает его
 // ноль раз (замечание ревью DK-436).
-func listedBind(sid, task, tmux string) string {
+func listedBind(home, sid, task, tmux string) string {
 	return "2026-08-18T12:03:11 сессия " + sid + " задача " + task + " проект demo " +
-		"дерево /tmp транскрипт /tmp/t.jsonl источник заказ повод startup tmux " + tmux + "\n"
+		"дерево /tmp транскрипт " + standTranscript(home, sid) + " источник заказ повод startup tmux " + tmux + "\n"
 }
 
 // Список разговоров спрашивает tmux один раз на заход, сколько бы разговоров в
@@ -185,9 +185,9 @@ func TestSessionsListAsksTmuxOnce(t *testing.T) {
 			sessionLine("поговорим про XR-005", "main"), base.Add(time.Duration(i)*time.Hour))
 	}
 	writeBinds(t, e.home,
-		listedBind("aaa-1", "XR-005", "chat-XR-005-1"),
-		listedBind("bbb-2", "XR-005", "chat-XR-005-2"),
-		listedBind("ccc-3", "XR-005", "task-XR-5"))
+		listedBind(e.home, "aaa-1", "XR-005", "chat-XR-005-1"),
+		listedBind(e.home, "bbb-2", "XR-005", "chat-XR-005-2"),
+		listedBind(e.home, "ccc-3", "XR-005", "task-XR-5"))
 	c := e.loggedClient(t)
 
 	_, list, note := getSessions(t, e, c, "?task=XR-005")
@@ -228,7 +228,7 @@ func TestSessionsListWithoutTmuxKeepsTalksAlive(t *testing.T) {
 	sideTree(t, e.proj, "xr-5")
 	writeSession(t, e.home, e.proj, "-xr-5", "aaa-1",
 		sessionLine("поговорим про XR-005", "main"), time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
-	writeBinds(t, e.home, listedBind("aaa-1", "XR-005", "chat-XR-005-1"))
+	writeBinds(t, e.home, listedBind(e.home, "aaa-1", "XR-005", "chat-XR-005-1"))
 	c := e.loggedClient(t)
 	// PATH без tmux, но с доской: спросить про имя нечем, а всё остальное
 	// работает как раньше.
@@ -252,7 +252,7 @@ func TestSessionsFreeNoneNamed(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", "aaa-1",
 		sessionLine("возьми задачу XR-101 в работу", "main"),
 		time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
-	writeBinds(t, e.home, bindRecord("2026-08-10T09:00:00", "aaa-1", "XR-101", bindHand))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-10T09:00:00", "aaa-1", "XR-101", bindHand))
 	c := e.loggedClient(t)
 
 	_, list, note := getSessions(t, e, c, "?free=1")
@@ -280,8 +280,8 @@ func TestSessionsListStateFields(t *testing.T) {
 	// Задачу обеим сессиям называет реестр: свежей заказом с доски, старой
 	// рукой человека.
 	writeBinds(t, e.home,
-		bindRecord("2026-08-10T09:00:00", "hls-1", "XR-101", bindOrder),
-		bindRecord("2026-08-10T09:00:00", "old-1", "XR-101", bindHand))
+		bindRecord(e.home, "2026-08-10T09:00:00", "hls-1", "XR-101", bindOrder),
+		bindRecord(e.home, "2026-08-10T09:00:00", "old-1", "XR-101", bindHand))
 	c := e.loggedClient(t)
 
 	_, list, note := getSessions(t, e, c, "?task=XR-101")
@@ -367,8 +367,8 @@ func TestSessionsByTaskOnlyOwn(t *testing.T) {
 		sessionLine("продолжай, я подожду", "xr-103"),
 		time.Date(2026, 8, 10, 13, 0, 0, 0, time.UTC))
 	writeBinds(t, e.home,
-		bindRecord("2026-08-10T09:00:00", "aaa-1", "XR-101", bindHand),
-		bindRecord("2026-08-10T12:00:00", "bbb-2", "XR-102", bindHand))
+		bindRecord(e.home, "2026-08-10T09:00:00", "aaa-1", "XR-101", bindHand),
+		bindRecord(e.home, "2026-08-10T12:00:00", "bbb-2", "XR-102", bindHand))
 	c := e.loggedClient(t)
 
 	text, list, _ := getSessions(t, e, c, "?task=XR-101")
@@ -404,7 +404,7 @@ func TestSessionsNameTheirTree(t *testing.T) {
 	writeSession(t, e.home, e.proj, "-xr-101", "bbb-2",
 		sessionLine("продолжай, я подожду", "main"),
 		time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC))
-	writeBinds(t, e.home, bindRecord("2026-08-10T09:00:00", "aaa-1", "XR-101", bindHand))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-10T09:00:00", "aaa-1", "XR-101", bindHand))
 	c := e.loggedClient(t)
 
 	_, list, note := getSessions(t, e, c, "?task=XR-101")
@@ -460,7 +460,7 @@ func TestSessionsEmptyKindsDiffer(t *testing.T) {
 	}
 	writeSession(t, e.home, e.proj, "", "aaa-1",
 		sessionLine("Выполни цель XR-102", "main"), time.Now())
-	writeBinds(t, e.home, bindRecord("2026-08-10T09:00:00", "aaa-1", "XR-102", bindHand))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-10T09:00:00", "aaa-1", "XR-102", bindHand))
 	_, _, other := getSessions(t, e, c, "?task=XR-101")
 	if !strings.Contains(other, "сессий задачи XR-101 нет") || !strings.Contains(other, "1 о других задачах") {
 		t.Errorf("чужие сессии названы не своими словами: %q", other)
@@ -573,7 +573,7 @@ func TestSessionsFoundBeyondHeadScan(t *testing.T) {
 	old := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
 	writeSession(t, e.home, e.proj, "", "old-1",
 		sessionLine("возьми задачу XR-101 в работу", "main"), old)
-	writeBinds(t, e.home, bindRecord("2026-08-01T09:00:00", "old-1", "XR-101", bindHand))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-01T09:00:00", "old-1", "XR-101", bindHand))
 	for i := 0; i < headScanMax+10; i++ {
 		writeSession(t, e.home, e.proj, "", fmt.Sprintf("new-%02d", i),
 			sessionLine("посмотри логи", "main"), old.Add(time.Duration(i+1)*time.Hour))
@@ -1054,7 +1054,7 @@ func TestLiveWorksSessions(t *testing.T) {
 	// имени: её кладёт подъём дашборда, и записана она только у goal-XR-9.
 	// Сессию task-XR-5 с тем же образцом имени завела рука в терминале, и
 	// своей она не считается (жалоба пользователя на признак без опоры).
-	writeBinds(t, e.home, bindTmux("2026-08-11T11:00:00",
+	writeBinds(t, e.home, bindTmux(e.home, "2026-08-11T11:00:00",
 		"aaaa9999-9999-4999-8999-999999999999", "XR-9", "goal-XR-9"))
 
 	want := []Work{
@@ -1427,7 +1427,7 @@ func TestSessionsSecondHarnessSeen(t *testing.T) {
 		time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC))
 	// Запуск с доски пишет в реестр строку с источником «заказ»: ею и названа
 	// задача, ID из текста заказа сессию не привязывает.
-	writeBinds(t, e.home, bindRecord("2026-08-10T10:00:00", sid, "XR-101", bindOrder))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-10T10:00:00", sid, "XR-101", bindOrder))
 	c := e.loggedClient(t)
 
 	_, list, note := getSessions(t, e, c, "?task=XR-101")

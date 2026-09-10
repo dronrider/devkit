@@ -364,7 +364,7 @@ func TestDashboardSmokeChatGroupOrder(t *testing.T) {
 	noon := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
 	writeSession(t, e.home, e.proj, "", "live1",
 		smokeLine(live1Title, noon.Add(-72*time.Hour)), noon.Add(-72*time.Hour))
-	writeBinds(t, e.home, listedBind("live1", "-", "chat-live-1"))
+	writeBinds(t, e.home, listedBind(e.home, "live1", "-", "chat-live-1"))
 	writeSession(t, e.home, e.proj, "", "dead1",
 		smokeLine(dead1Title, noon.Add(-2*time.Hour)), noon.Add(-2*time.Hour))
 	writeSession(t, e.home, e.proj, "", "dead2",
@@ -427,7 +427,7 @@ func TestDashboardSmokeRingWakesOnReturn(t *testing.T) {
 		pulseTranscript(now.Add(-20*time.Second), "Bash", "go test ./tools/..."),
 		now.Add(-20*time.Second))
 	writeBinds(t, e.home,
-		bindRecord(now.Add(-time.Minute).Format("2006-01-02T15:04:05"), "work1", "XR-1", "заказ"))
+		bindRecord(e.home, now.Add(-time.Minute).Format("2006-01-02T15:04:05"), "work1", "XR-1", "заказ"))
 	writeSession(t, e.home, e.proj, "", "neighbor",
 		smokeLine("соседний разговор без работы", now.Add(-3*time.Hour)), now.Add(-3*time.Hour))
 

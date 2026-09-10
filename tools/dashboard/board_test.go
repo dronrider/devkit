@@ -1408,7 +1408,7 @@ func TestBoardTalkChatDoesNotTakeRow(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-time.Minute))
 	bind := func(tmux string) {
 		writeBinds(t, e.home, fmt.Sprintf("2026-08-22T11:59:00 сессия %s задача XR-100 проект demo "+
-			"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux %s\n", sid, e.proj, tmux))
+			"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux %s\n", sid, e.proj, tmux))
 	}
 
 	bind("chat-XR-100-1")
@@ -1432,7 +1432,7 @@ func TestBoardTalkChatDoesNotTakeRow(t *testing.T) {
 	// Рабочая сессия ту же строку присваивает: запись о работе по задаче
 	// кладёт команда доски, и она же говорит, кто строку ведёт.
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-22T11:59:00 сессия %s задача XR-100 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-100-1\n"+
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-XR-100-1\n"+
 		"2026-08-22T11:59:30 сессия %s задача XR-100 проект demo дерево %s транскрипт - "+
 		"источник работа повод «taskctl move XR-100» tmux -\n", sid, e.proj, sid, e.proj))
 	if got := boardRows(t, e)["XR-100"]; got.Run == "" {
@@ -1574,7 +1574,7 @@ func TestWorkLiveState(t *testing.T) {
 	sid := "dddd4444-4444-4444-8444-444444444444"
 	silent := now.Add(-3 * time.Hour)
 	writeSession(t, e.home, e.proj, "", sid, transcriptFixture, silent)
-	writeBinds(t, e.home, listedBind(sid, "XR-002", "task-XR-002"))
+	writeBinds(t, e.home, listedBind(e.home, sid, "XR-002", "task-XR-002"))
 
 	live := func() *Work {
 		t.Helper()
@@ -2040,9 +2040,9 @@ func cssDecls(css, sel string) []string {
 
 // bindTmux собирает строку реестра с именем tmux-сессии: имя это и есть след
 // подъёма дашбордом, ради него стенды сюда и ходят.
-func bindTmux(stamp, sid, task, tmux string) string {
+func bindTmux(home, stamp, sid, task, tmux string) string {
 	return fmt.Sprintf("%s сессия %s задача %s проект demo дерево /tmp/demo "+
-		"транскрипт /tmp/t.jsonl источник заказ повод startup tmux %s\n", stamp, sid, task, tmux)
+		"транскрипт "+standTranscript(home, sid)+" источник заказ повод startup tmux %s\n", stamp, sid, task, tmux)
 }
 
 // Своей работа считается по записи реестра, а не по образцу имени сессии.
@@ -2065,7 +2065,7 @@ func TestLiveWorksOwnStandsOnBindRecord(t *testing.T) {
 	}
 
 	// Запись с именем: работу поднял дашборд, и признак опирается на имя.
-	writeBinds(t, e.home, bindTmux("2026-08-22T11:00:00", sid, "XR-004", "task-XR-004"))
+	writeBinds(t, e.home, bindTmux(e.home, "2026-08-22T11:00:00", sid, "XR-004", "task-XR-004"))
 	got = workByID(boardWorks(t, e), "XR-004")
 	if got == nil || !got.Own || got.Tmux != "task-XR-004" {
 		t.Errorf("работа с записью реестра не признана своей: %+v", got)
@@ -2089,7 +2089,7 @@ func TestLiveWorksRegistryGoalKnowsItsChat(t *testing.T) {
 	}
 
 	// Чат цели поднят дашбордом: цель узнаётся своей через него.
-	writeBinds(t, e.home, bindTmux("2026-08-22T11:00:00", sid, "XR-112", "chat-XR-112-1"))
+	writeBinds(t, e.home, bindTmux(e.home, "2026-08-22T11:00:00", sid, "XR-112", "chat-XR-112-1"))
 	got = workByID(boardWorks(t, e), "XR-112")
 	if got == nil {
 		t.Fatal("цель XR-112 пропала из списка")
@@ -2103,7 +2103,7 @@ func TestLiveWorksRegistryGoalKnowsItsChat(t *testing.T) {
 // признак own обещает человеку живую кнопку закрытия.
 func TestLiveWorksOwnIgnoresDeadTmuxName(t *testing.T) {
 	e, _, _ := runsEnv(t, `chat-XR-112-1\t1\t1000\n`)
-	writeBinds(t, e.home, bindTmux("2026-08-22T11:00:00",
+	writeBinds(t, e.home, bindTmux(e.home, "2026-08-22T11:00:00",
 		"cccc3333-3333-4333-8333-333333333333", "XR-112", "chat-XR-112-9"))
 	got := workByID(boardWorks(t, e), "XR-112")
 	if got == nil || got.Own || got.Tmux != "" {
@@ -2121,7 +2121,7 @@ func TestLiveWorksTitleFallsBackToChat(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", sid,
 		`{"type":"summary","summary":"Краснота регрессионного теста"}`+"\n"+transcriptFixture,
 		time.Now())
-	writeBinds(t, e.home, bindTmux("2026-08-22T11:00:00", sid, "XR-777", "task-XR-777"))
+	writeBinds(t, e.home, bindTmux(e.home, "2026-08-22T11:00:00", sid, "XR-777", "task-XR-777"))
 	got := workByID(boardWorks(t, e), "XR-777")
 	if got == nil {
 		t.Fatal("работа XR-777 пропала из списка")
@@ -2139,7 +2139,7 @@ func TestSessionWorkTitleFallsBackToChat(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", sid,
 		`{"type":"summary","summary":"Разбор накопителя черновиков"}`+"\n"+transcriptFixture,
 		time.Now())
-	writeBinds(t, e.home, bindTmux("2026-08-22T11:00:00", sid, "XR-777", "chat-XR-777-1"))
+	writeBinds(t, e.home, bindTmux(e.home, "2026-08-22T11:00:00", sid, "XR-777", "chat-XR-777-1"))
 	got := workByID(boardWorks(t, e), "XR-777")
 	if got == nil {
 		t.Fatal("работа XR-777 пропала из списка")

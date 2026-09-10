@@ -407,7 +407,7 @@ func chatWorkLiveEnv(t *testing.T, sid, tmux string) (*testEnv, *http.Client, st
 	writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now)
 	writeBinds(t, e.home, fmt.Sprintf(
 		"2026-08-10T09:59:00 сессия %s задача XR-004 проект demo дерево %s "+
-			"транскрипт /tmp/t.jsonl источник заказ повод startup tmux %s\n"+
+			"транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux %s\n"+
 			"2026-08-10T09:59:30 сессия %s задача XR-004 проект demo дерево %s "+
 			"транскрипт - источник работа повод «agentctl stage XR-004 разработка» tmux -\n",
 		sid, e.proj, tmux, sid, e.proj))

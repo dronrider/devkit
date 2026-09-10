@@ -211,7 +211,7 @@ exit 0`)
 	// панель уезжала в архивный разговор того же имени).
 	prior := "cccc1111-2222-4333-8444-555566667777"
 	writeBinds(t, e.home, "2026-08-18T12:03:11 сессия "+prior+" задача XR-4 проект demo "+
-		"дерево "+e.proj+" транскрипт /tmp/t0.jsonl источник заказ повод startup tmux chat-XR-4-1\n")
+		"дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t0")+" источник заказ повод startup tmux chat-XR-4-1\n")
 	if row := blankRow(blankList(t, e, c, "?all=1"), id); row == nil || row.Grown != "" {
 		t.Fatalf("запись выросла в прежнего хозяина имени: %+v", row)
 	}
@@ -219,9 +219,9 @@ exit 0`)
 	// узнаёт своего наследника.
 	born := "aaaa1111-2222-4333-8444-555566667777"
 	writeBinds(t, e.home, "2026-08-18T12:03:11 сессия "+prior+" задача XR-4 проект demo "+
-		"дерево "+e.proj+" транскрипт /tmp/t0.jsonl источник заказ повод startup tmux chat-XR-4-1\n",
+		"дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t0")+" источник заказ повод startup tmux chat-XR-4-1\n",
 		time.Now().Add(time.Second).Format("2006-01-02T15:04:05")+" сессия "+born+" задача XR-4 проект demo "+
-			"дерево "+e.proj+" транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-4-1\n")
+			"дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-XR-4-1\n")
 	row := blankRow(blankList(t, e, c, "?all=1"), id)
 	if row == nil {
 		t.Fatalf("запись пропала из списка раньше времени")
@@ -454,15 +454,15 @@ exit 0`)
 	}
 	prior := "cccc5551-2222-4333-8444-555566667777"
 	writeBinds(t, e.home, born.Add(-time.Hour).Format(sessions.Stamp)+" сессия "+prior+" задача XR-4 проект demo "+
-		"дерево "+e.proj+" транскрипт /tmp/t0.jsonl источник заказ повод startup tmux chat-5\n")
+		"дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t0")+" источник заказ повод startup tmux chat-5\n")
 	if row := blankRow(blankList(t, e, c, "?all=1"), id); row == nil || row.Grown != "" {
 		t.Fatalf("запись без момента подъёма выросла в прежнего жильца имени: %+v", row)
 	}
 	fresh := "aaaa5552-2222-4333-8444-555566667777"
 	writeBinds(t, e.home, born.Add(-time.Hour).Format(sessions.Stamp)+" сессия "+prior+" задача XR-4 проект demo "+
-		"дерево "+e.proj+" транскрипт /tmp/t0.jsonl источник заказ повод startup tmux chat-5\n",
+		"дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t0")+" источник заказ повод startup tmux chat-5\n",
 		time.Now().Add(time.Second).Format(sessions.Stamp)+" сессия "+fresh+" задача XR-4 проект demo "+
-			"дерево "+e.proj+" транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-5\n")
+			"дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-5\n")
 	if row := blankRow(blankList(t, e, c, "?all=1"), id); row == nil || row.Grown != fresh {
 		t.Fatalf("запись не выросла в сессию, названную после заведения: %+v", row)
 	}

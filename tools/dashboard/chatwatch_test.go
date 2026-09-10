@@ -40,7 +40,7 @@ func TestChatWatchDeathAfterTurnSaid(t *testing.T) {
 	// смерть сессии обязана прийти в его ленту.
 	born := "1111-2222-3333-4444"
 	writeBinds(t, e.home, "2026-09-02T12:00:00 сессия "+born+
-		" задача - проект demo дерево "+e.proj+" транскрипт /tmp/t.jsonl "+
+		" задача - проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" "+
 		"источник заказ повод startup tmux "+raise.Tmux+"\n")
 	tmuxWatchFake(t, e, raise.Tmux, `> прогони тесты\nagent: сейчас\n`)
 	e.s.chatWatchTick()
@@ -87,7 +87,7 @@ func TestChatDropNoDeathSaid(t *testing.T) {
 	}
 	born := "2222-3333-4444-5555"
 	writeBinds(t, e.home, "2026-09-02T12:00:00 сессия "+born+
-		" задача - проект demo дерево "+e.proj+" транскрипт /tmp/t.jsonl "+
+		" задача - проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" "+
 		"источник заказ повод startup tmux "+raise.Tmux+"\n")
 	tmuxWatchFake(t, e, raise.Tmux, `> подними разбор\n`)
 	drop := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+born+"/stop", `{"drop": true}`)

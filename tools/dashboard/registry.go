@@ -99,6 +99,8 @@ var realHomeFn = realHome
 
 // bindsData склеивает журналы всех домов. Свёртку делает разбор: у записи есть
 // время, и свежая выигрывает независимо от того, из какого файла приехала.
+// Тут же стоит рубеж на чтении: строка от прогона до читателей не доезжает
+// (bindsOwn).
 func (s *server) bindsData() []byte {
 	var out []byte
 	for _, home := range s.bindHomes() {
@@ -111,7 +113,87 @@ func (s *server) bindsData() []byte {
 			out = append(out, '\n')
 		}
 	}
+	return s.bindsOwn(out)
+}
+
+// bindsOwn просеивает журнал построчно. Рубеж один на всех читателей реестра:
+// хозяин имени tmux, чипы задач, дорога реплики клавишами и счёт работы за
+// строкой судят по одним и тем же записям. Непонятая строка проходит как была,
+// её отсеет разбор.
+func (s *server) bindsOwn(data []byte) []byte {
+	if len(data) == 0 {
+		return data
+	}
+	roots := s.bindRoots()
+	var out []byte
+	for _, ln := range strings.SplitAfter(string(data), "\n") {
+		if _, b, ok := parseBindLine(ln); ok && !bindOwn(b, roots) {
+			s.bindAlienLog(ln)
+			continue
+		}
+		out = append(out, ln...)
+	}
 	return out
+}
+
+// bindRoots перечисляет корни, под которыми лежат журналы разговоров машины:
+// каталоги сессий подписок (те же, что у списка чатов) плюс каталог дома
+// машины, чей реестр дашборд читает вторым (bindHomes).
+func (s *server) bindRoots() []string {
+	roots := s.transcriptRoots()
+	if home := realHomeFn(); home != "" && home != s.cfg.Home {
+		roots = append(roots, filepath.Join(home, ".claude", "projects"))
+	}
+	return roots
+}
+
+// bindOwn отвечает на один вопрос: своя ли это запись реестра. Своей считается
+// та, чей транскрипт лежит под корнем каталога сессий, и та, где транскрипт не
+// назван вовсе: строку по факту работы кладёт утилита доски, которой про
+// транскрипт ничего не известно.
+//
+// Запись с транскриптом на стороне это след прогона, а не разговора: шаг
+// сценария, прогнанный хуком руками, и go test с фикстурами кладут в реестр
+// строку с подставным путём, а имя окна она берёт из окружения живого
+// разговора и оказывается свежее его записи. После такого прогона панель
+// объявляла живой разговор снятым, реплика человека до агента не доходила, а в
+// задачах чата всплывали вымышленные ID фикстур (DK-860).
+func bindOwn(b sessionBind, roots []string) bool {
+	path := strings.TrimSpace(b.Transcript)
+	if path == "" {
+		return true
+	}
+	path = filepath.Clean(path)
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		if strings.HasPrefix(path, filepath.Clean(root)+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// bindAlienLog говорит про отсеянную строку в журнал дашборда по разу на
+// строку. Реестр читается на каждый заход за списком, и без этой памяти одна и
+// та же строка забила бы журнал; молча же ронять запись нельзя, иначе пропажа
+// разговора из панели снова осталась бы без следа.
+func (s *server) bindAlienLog(line string) {
+	line = strings.TrimSpace(line)
+	s.mu.Lock()
+	seen := s.bindAlien[line]
+	if !seen {
+		if s.bindAlien == nil {
+			s.bindAlien = map[string]bool{}
+		}
+		s.bindAlien[line] = true
+	}
+	s.mu.Unlock()
+	if seen {
+		return
+	}
+	s.logf("запись реестра мимо каталогов сессий, в счёт не идёт: %s", line)
 }
 
 // binds читает реестр целиком. Файл капается по длине самим писателем

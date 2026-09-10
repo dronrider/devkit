@@ -74,7 +74,7 @@ ls) printf 'chat-1\t1\t1754770421\n';;
 esac
 exit 0`)
 	writeBinds(t, e.home, "2026-08-20T12:00:00 сессия "+sid+
-		" задача - проект demo дерево "+e.proj+" транскрипт /tmp/t.jsonl "+
+		" задача - проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" "+
 		"источник заказ повод startup tmux chat-1\n")
 
 	killed := ""

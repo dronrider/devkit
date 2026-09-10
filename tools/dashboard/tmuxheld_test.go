@@ -31,7 +31,7 @@ func heldEnv(t *testing.T, sid, alien string) (*testEnv, *http.Client, string) {
 	writeSession(t, e.home, e.proj, "", sid, saidLine("работа идёт", time.Now().Add(-time.Hour)),
 		time.Now().Add(-time.Minute))
 	writeBinds(t, e.home, "2026-08-31T21:09:00 сессия "+sid+
-		" задача - проект demo дерево "+e.proj+" транскрипт /tmp/t.jsonl "+
+		" задача - проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" "+
 		"источник заказ повод startup tmux chat-9\n")
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"

@@ -30,7 +30,7 @@ func endedChat(t *testing.T, e *testEnv, sid, task string, tmux string) {
 		saidLine("разговор кончился вчера", time.Now().Add(-30*time.Hour)),
 		time.Now().Add(-30*time.Hour))
 	writeBinds(t, e.home, "2026-09-01T10:00:00 сессия "+sid+" задача "+task+
-		" проект demo дерево "+e.proj+" транскрипт /tmp/t.jsonl "+
+		" проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" "+
 		"источник заказ повод startup tmux "+tmux+"\n")
 }
 

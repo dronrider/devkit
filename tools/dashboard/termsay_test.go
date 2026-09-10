@@ -24,7 +24,7 @@ func termSayEnv(t *testing.T, sid, pane string) (*testEnv, *http.Client, string)
 	e, c := chatEnv(t)
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
 	writeBinds(t, e.home, "2026-08-30T12:00:00 сессия "+sid+
-		" задача - проект demo дерево "+e.proj+" транскрипт /tmp/t.jsonl "+
+		" задача - проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" "+
 		"источник заказ повод startup tmux chat-9\n")
 	sent := filepath.Join(e.home, "sent.log")
 	writeScript(t, e.bin, "tmux", `case "$1" in
@@ -285,7 +285,7 @@ func TestChatSayLockedAnswerKeysFailRefuses(t *testing.T) {
 	e, c := chatEnv(t)
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
 	writeBinds(t, e.home, "2026-08-30T12:00:00 сессия "+sid+
-		" задача - проект demo дерево "+e.proj+" транскрипт /tmp/t.jsonl "+
+		" задача - проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" "+
 		"источник заказ повод startup tmux chat-9\n")
 	writeScript(t, e.bin, "tmux", `case "$1" in
 ls) printf 'chat-9\t1\t1754770421\n';;

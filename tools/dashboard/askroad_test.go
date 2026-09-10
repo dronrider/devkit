@@ -27,7 +27,7 @@ func askRoadEnv(t *testing.T, sid, task string, now time.Time) (*testEnv, *http.
 	e.s.now = func() time.Time { return now }
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-30*time.Second))
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-25T14:59:00 сессия %s задача %s проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-13\n", sid, task, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-13\n", sid, task, e.proj))
 	writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
 	return e, c, lc
 }

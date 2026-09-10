@@ -156,10 +156,10 @@ func TestGroomSweepKeepsPipelineSession(t *testing.T) {
 	// Две привязки на одно имя: разбор назвался первым, конвейер полчаса
 	// спустя. Уборке видна только своя, и по ней она снимала чужое окно.
 	writeBinds(t, e.home, "2026-08-31T16:20:00 сессия "+groom+
-		" задача XR-4 проект demo дерево "+e.proj+" транскрипт /tmp/g.jsonl "+
+		" задача XR-4 проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "g")+" "+
 		"источник заказ повод startup tmux task-XR-4\n"+
 		"2026-08-31T16:50:20 сессия "+exec+
-		" задача XR-4 проект demo дерево "+e.proj+" транскрипт /tmp/e.jsonl "+
+		" задача XR-4 проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "e")+" "+
 		"источник заказ повод startup tmux task-XR-4\n")
 	writeScript(t, e.bin, "tmux", `case "$1" in
 ls) printf 'task-XR-4\t1\t1754770421\n';;

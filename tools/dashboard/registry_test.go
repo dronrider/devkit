@@ -50,10 +50,22 @@ func appendBinds(t *testing.T, home string, lines ...string) {
 	}
 }
 
-// bindRecord собирает строку реестра руками, как её пишет хук.
-func bindRecord(stamp, sid, task, source string) string {
-	return fmt.Sprintf("%s сессия %s задача %s проект demo дерево /tmp/demo транскрипт /tmp/t.jsonl "+
-		"источник %s повод startup tmux -\n", stamp, sid, task, source)
+// bindRecord собирает строку реестра руками, как её пишет хук. Транскрипт
+// зовётся настоящим путём под каталогом сессий дома стенда: запись с
+// транскриптом на стороне дашборд своей не считает и в счёт не берёт (DK-860).
+func bindRecord(home, stamp, sid, task, source string) string {
+	return fmt.Sprintf("%s сессия %s задача %s проект demo дерево /tmp/demo транскрипт %s "+
+		"источник %s повод startup tmux -\n", stamp, sid, task, standTranscript(home, sid), source)
+}
+
+// noHome это дом стенда там, где дома нет вовсе: разбор строки реестра о доме
+// не спрашивает, и заводить под него временный каталог незачем.
+const noHome = "/tmp/нет-дома"
+
+// standTranscript это путь транскрипта в доме стенда: тот же, по которому
+// кладёт файл writeSession, и тот же, который хук пишет в реестр.
+func standTranscript(home, sid string) string {
+	return filepath.Join(home, ".claude", "projects", claudeDirName("/tmp/demo"), sid+".jsonl")
 }
 
 func TestParseBindLine(t *testing.T) {
@@ -76,7 +88,7 @@ func TestParseBindLine(t *testing.T) {
 // Пустое поле в строке стоит дефисом, и дефис это пустота, а не значение:
 // иначе задачей сессии стал бы прочерк.
 func TestParseBindLineDashesAreEmpty(t *testing.T) {
-	sid, b, ok := parseBindLine(bindRecord("2026-08-18T12:00:00", "aaa-1", "-", "-"))
+	sid, b, ok := parseBindLine(bindRecord(noHome, "2026-08-18T12:00:00", "aaa-1", "-", "-"))
 	if !ok || sid != "aaa-1" {
 		t.Fatalf("строка без задачи: %q %v", sid, ok)
 	}
@@ -89,7 +101,7 @@ func TestParseBindLineDashesAreEmpty(t *testing.T) {
 // ключевого слова, а каталог с пробелом в имени законен.
 func TestParseBindLineKeepsSpacedPath(t *testing.T) {
 	line := "2026-08-18T12:00:00 сессия aaa-1 задача DK-1 проект demo дерево /tmp/my demo " +
-		"транскрипт /tmp/t.jsonl источник дерево повод startup tmux -\n"
+		"транскрипт " + standTranscript(noHome, "t") + " источник дерево повод startup tmux -\n"
 	_, b, ok := parseBindLine(line)
 	if !ok || b.Tree != "/tmp/my demo" || b.Task != "DK-1" {
 		t.Fatalf("путь с пробелом разобран не так: %+v %v", b, ok)
@@ -114,10 +126,10 @@ func TestParseBindLineRefusesJunk(t *testing.T) {
 // Свёртка журнала: выигрывает последняя строка сессии, соседние сессии друг
 // другу не мешают. Перепривязка тут и есть обычная запись.
 func TestParseBindsLastWins(t *testing.T) {
-	data := bindRecord("2026-08-18T12:00:00", "aaa-1", "DK-1", bindTree) +
-		bindRecord("2026-08-18T12:00:00", "bbb-2", "DK-2", bindOrder) +
+	data := bindRecord(noHome, "2026-08-18T12:00:00", "aaa-1", "DK-1", bindTree) +
+		bindRecord(noHome, "2026-08-18T12:00:00", "bbb-2", "DK-2", bindOrder) +
 		"мусор посреди журнала\n" +
-		bindRecord("2026-08-18T13:00:00", "aaa-1", "DK-9", bindHand)
+		bindRecord(noHome, "2026-08-18T13:00:00", "aaa-1", "DK-9", bindHand)
 	binds := parseBinds([]byte(data))
 	if len(binds) != 2 {
 		t.Fatalf("свёртка: %+v", binds)
@@ -136,10 +148,10 @@ func TestParseBindsLastWins(t *testing.T) {
 // уходит в «задача не распознана».
 func TestBindTaskRanks(t *testing.T) {
 	binds := parseBinds([]byte(
-		bindRecord("2026-08-18T12:00:00", "ordered", "DK-1", bindOrder) +
-			bindRecord("2026-08-18T12:00:00", "byhand", "DK-2", bindHand) +
-			bindRecord("2026-08-18T12:00:00", "bytree", "DK-3", bindTree) +
-			bindRecord("2026-08-18T12:00:00", "newword", "DK-4", "звёзды")))
+		bindRecord(noHome, "2026-08-18T12:00:00", "ordered", "DK-1", bindOrder) +
+			bindRecord(noHome, "2026-08-18T12:00:00", "byhand", "DK-2", bindHand) +
+			bindRecord(noHome, "2026-08-18T12:00:00", "bytree", "DK-3", bindTree) +
+			bindRecord(noHome, "2026-08-18T12:00:00", "newword", "DK-4", "звёзды")))
 	head := sessionHead{Branch: "dk-77", Named: "DK-88"}
 	for _, tc := range []struct {
 		name, sid, suffix string
@@ -168,7 +180,7 @@ func TestBindTaskRanks(t *testing.T) {
 // возвращается к задаче своего дерева, иначе кнопка привязки ничего не меняла
 // бы у сессии в боковом дереве.
 func TestBindTaskRecordBeatsTheTree(t *testing.T) {
-	binds := parseBinds([]byte(bindRecord("2026-08-18T12:00:00", "aaa-1", "DK-2", bindHand)))
+	binds := parseBinds([]byte(bindRecord(noHome, "2026-08-18T12:00:00", "aaa-1", "DK-2", bindHand)))
 	task, note, _ := bindTask(binds, "aaa-1", "dk-5", sessionHead{})
 	if task != "DK-2" || note != handNote {
 		t.Fatalf("рука не перебила дерево: %q %q", task, note)
@@ -178,7 +190,7 @@ func TestBindTaskRecordBeatsTheTree(t *testing.T) {
 // Снятая привязка гасит и угадывание: человек сказал «это не работа задачи», и
 // возвращать её первой репликой значило бы не слышать сказанного.
 func TestBindTaskUnbindStopsGuessing(t *testing.T) {
-	binds := parseBinds([]byte(bindRecord("2026-08-18T12:00:00", "aaa-1", "-", bindOff)))
+	binds := parseBinds([]byte(bindRecord(noHome, "2026-08-18T12:00:00", "aaa-1", "-", bindOff)))
 	task, note, bound := bindTask(binds, "aaa-1", "dk-5", sessionHead{Named: "DK-88", Branch: "dk-77"})
 	if task != "" || bound != "" || note != offNote {
 		t.Fatalf("снятая привязка вернулась: %q %q %q", task, note, bound)
@@ -189,7 +201,7 @@ func TestBindTaskUnbindStopsGuessing(t *testing.T) {
 // несёт только слово bindOff, а пустая запись оставляет право назвать задачу
 // хвосту бокового дерева.
 func TestBindTaskEmptyRecordIsNotUnbind(t *testing.T) {
-	binds := parseBinds([]byte(bindRecord("2026-08-18T12:00:00", "aaa-1", "-", "-")))
+	binds := parseBinds([]byte(bindRecord(noHome, "2026-08-18T12:00:00", "aaa-1", "-", "-")))
 	task, note, bound := bindTask(binds, "aaa-1", "dk-5", sessionHead{Named: "DK-88"})
 	if task != "DK-5" || note != treeNote || bound != boundLead {
 		t.Fatalf("пустая запись сошла за отвязку: %q %q %q", task, note, bound)
@@ -228,7 +240,7 @@ func TestSessionWorksLeadIsWork(t *testing.T) {
 	e := newTestEnv(t)
 	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", runsBoardJSON))
 	writeSession(t, e.home, e.proj, "", "worker", sessionLine("а что там с XR-4?", "main"), time.Now())
-	writeBinds(t, e.home, bindRecord("2026-08-18T12:00:00", "worker", "XR-4", sessions.BySrc))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-18T12:00:00", "worker", "XR-4", sessions.BySrc))
 	rows := map[string]boardRow{"XR-4": {ID: "XR-4", Title: "Начатая задача", Sect: "in-progress"}}
 
 	works := e.s.sessionWorks(e.proj, "XR", rows, map[string]bool{}, nil)
@@ -306,7 +318,11 @@ func TestSessionTaskPostKeepsTmuxName(t *testing.T) {
 	e := newTestEnv(t)
 	c := e.loggedClient(t)
 	writeSession(t, e.home, e.proj, "", "0f2c-e91", sessionLine("поговорим", "main"), time.Now())
-	writeBinds(t, e.home, bindFixture)
+	// Транскрипт зовётся путём в доме стенда: запись с транскриптом на стороне
+	// дашборд своей не считает (DK-860).
+	writeBinds(t, e.home, "2026-08-18T12:03:11 сессия 0f2c-e91 задача DK-430 проект devkit "+
+		"дерево /Users/r/projects/devkit-dk-430 транскрипт "+standTranscript(e.home, "0f2c-e91")+
+		" источник заказ повод startup tmux chat-DK-430-1\n")
 
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/sessions/0f2c-e91/task", `{"task": "DK-9"}`)
 	if got := e.s.binds()["0f2c-e91"]; got.Tmux != "chat-DK-430-1" || got.Task != "DK-9" {
@@ -357,14 +373,14 @@ func TestBindsWithoutTheLog(t *testing.T) {
 // до диска.
 func TestAppendBindCapsTheLog(t *testing.T) {
 	path := sessions.Path(t.TempDir())
-	long := strings.Repeat(bindRecord("2026-08-18T12:00:00", "old", "DK-1", bindTree), 900)
+	long := strings.Repeat(bindRecord(noHome, "2026-08-18T12:00:00", "old", "DK-1", bindTree), 900)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(long), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := appendBind(path, bindRecord("2026-08-18T13:00:00", "new", "DK-2", bindHand)); err != nil {
+	if err := appendBind(path, bindRecord(noHome, "2026-08-18T13:00:00", "new", "DK-2", bindHand)); err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimRight(readFile(t, path), "\n"), "\n")
@@ -408,9 +424,9 @@ func TestTaskChatsCountsWorkSessionsOnly(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", "worker",
 		sessionLine("возьми XR-9 в работу", "main"), time.Now())
 	writeBinds(t, e.home,
-		bindRecord("2026-08-18T12:00:00", "groomer", "XR-7", bindOrder),
-		bindRecord("2026-08-18T12:01:00", "hands", "XR-8", bindHand),
-		bindRecord("2026-08-18T12:02:00", "worker", "XR-9", sessions.BySrc))
+		bindRecord(e.home, "2026-08-18T12:00:00", "groomer", "XR-7", bindOrder),
+		bindRecord(e.home, "2026-08-18T12:01:00", "hands", "XR-8", bindHand),
+		bindRecord(e.home, "2026-08-18T12:02:00", "worker", "XR-9", sessions.BySrc))
 	own := e.s.taskChats(e.proj)
 	if _, hit := own["XR-7"]; hit {
 		t.Error("груминг присвоил строку задачи: кнопки запуска вернулись на чужую работу")
@@ -454,7 +470,7 @@ func TestLaunchEnvSameForEveryOrder(t *testing.T) {
 		"разговор": chatCmd(env, "opus", "", "привет", nil, "agentctl"),
 		"конвейер": sessionCommand("agentctl", "task-run.py", nil, env, "выполни XR-7",
 			"продолжай XR-7", "XR-7", "/тмп/проект", "проект", "opus"),
-		"разбор":   groomCmd(env, "разбери XR-7", nil, "opus"),
+		"разбор": groomCmd(env, "разбери XR-7", nil, "opus"),
 	}
 	for name, cmd := range orders {
 		if !strings.HasPrefix(cmd, env) {
@@ -599,7 +615,7 @@ func TestBindsReadBothHomes(t *testing.T) {
 	// Запись сессии разбора легла в дом машины: туда её кладёт хук старта по
 	// своему HOME.
 	line := "2026-08-25T23:58:04 сессия 7749edb9-1111 задача DK-483 проект devkit " +
-		"дерево /tmp/devkit транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-DK-483\n"
+		"дерево /tmp/devkit транскрипт " + standTranscript(machine, "7749edb9-1111") + " источник заказ повод startup tmux task-DK-483\n"
 	writeBindsAt(t, machine, line)
 	// А в своём доме лежит запись другой сессии: оба дома обязаны доехать.
 	writeBindsAt(t, own, "2026-08-25T20:00:00 сессия aaaa2222-2222 задача DK-400 проект devkit "+

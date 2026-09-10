@@ -13,13 +13,13 @@ import (
 
 // bindParent это строка реестра про сессию с названным родителем; пустой
 // родитель это обычный разговор, поднятый сам по себе.
-func bindParent(now time.Time, sid, parent string) string {
+func bindParent(home string, now time.Time, sid, parent string) string {
 	if parent == "" {
 		parent = "-"
 	}
 	return fmt.Sprintf("%s сессия %s задача - проект demo дерево /tmp/demo "+
-		"транскрипт /tmp/%s.jsonl источник - повод startup tmux - родитель %s\n",
-		now.Format("2006-01-02T15:04:05"), sid, sid, parent)
+		"транскрипт %s источник - повод startup tmux - родитель %s\n",
+		now.Format("2006-01-02T15:04:05"), sid, standTranscript(home, sid), parent)
 }
 
 // Работа, которую раздал разговор, из списка уходит: видно её ходом в ленте
@@ -31,7 +31,7 @@ func TestChatListHidesHandedOutWork(t *testing.T) {
 	sub := "bbbb2222-2222-4222-8222-222222222222"
 	writeSession(t, e.home, e.proj, "", own, saidLine("разбери задачу", now.Add(-time.Hour)), now.Add(-time.Hour))
 	writeSession(t, e.home, e.proj, "", sub, saidLine("Ты исполнитель задачи DK-577", now.Add(-time.Minute)), now.Add(-time.Minute))
-	writeBinds(t, e.home, bindParent(now, own, ""), bindParent(now, sub, own))
+	writeBinds(t, e.home, bindParent(e.home, now, own, ""), bindParent(e.home, now, sub, own))
 
 	list, _ := chatsWindow(t, e, c, "")
 	if !chatIn(list, own) {
@@ -50,7 +50,7 @@ func TestChatListKeepsWorkWithoutParent(t *testing.T) {
 	now := time.Now()
 	sub := "cccc3333-3333-4333-8333-333333333333"
 	writeSession(t, e.home, e.proj, "", sub, saidLine("Ты исполнитель задачи DK-577", now.Add(-time.Minute)), now.Add(-time.Minute))
-	writeBinds(t, e.home, bindParent(now, sub, ""))
+	writeBinds(t, e.home, bindParent(e.home, now, sub, ""))
 
 	list, _ := chatsWindow(t, e, c, "")
 	if !chatIn(list, sub) {

@@ -24,9 +24,9 @@ func passTalk(text, at string) string {
 }
 
 // passBind это строка реестра про заход, поднятый дашбордом под именем окна.
-func passBind(stamp, sid, task, proj, tmux string) string {
+func passBind(home, stamp, sid, task, proj, tmux string) string {
 	return stamp + " сессия " + sid + " задача " + task + " проект demo дерево " + proj +
-		" транскрипт /tmp/" + sid + ".jsonl источник заказ повод startup tmux " + tmux + "\n"
+		" транскрипт " + standTranscript(home, sid) + " источник заказ повод startup tmux " + tmux + "\n"
 }
 
 // Три захода одного окна стоят в списке одной строкой: голова это тот заход,
@@ -44,9 +44,9 @@ exit 0`)
 	writeSession(t, e.home, e.proj, "", "bbbb-0002", passTalk("второй заход", "2026-09-04T11:00:00.000Z"), base.Add(time.Hour))
 	writeSession(t, e.home, e.proj, "", "cccc-0003", passTalk("третий заход", "2026-09-04T12:00:00.000Z"), base.Add(2*time.Hour))
 	writeBinds(t, e.home,
-		passBind("2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
-		passBind("2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"),
-		passBind("2026-09-04T12:00:00", "cccc-0003", "XR-4", e.proj, "task-XR-4"))
+		passBind(e.home, "2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
+		passBind(e.home, "2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"),
+		passBind(e.home, "2026-09-04T12:00:00", "cccc-0003", "XR-4", e.proj, "task-XR-4"))
 
 	list := chatsOf(t, e, c)
 	if len(list) != 1 {
@@ -82,8 +82,8 @@ exit 0`)
 	writeSession(t, e.home, e.proj, "", "aaaa-0001", passTalk("мёртвый заход", "2026-09-04T13:00:00.000Z"), base)
 	writeSession(t, e.home, e.proj, "", "bbbb-0002", passTalk("живой заход", "2026-09-04T12:00:00.000Z"), base.Add(time.Hour))
 	writeBinds(t, e.home,
-		passBind("2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
-		passBind("2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"))
+		passBind(e.home, "2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
+		passBind(e.home, "2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"))
 
 	list := chatsOf(t, e, c)
 	if len(list) != 1 {
@@ -115,9 +115,9 @@ exit 0`)
 	writeSession(t, e.home, e.proj, "", "bbbb-0002", passTalk("живой заход конвейера", "2026-09-04T11:00:00.000Z"), base.Add(time.Hour))
 	writeSession(t, e.home, e.proj, "", "dddd-0004", passTalk("разговор о задаче", "2026-09-04T11:30:00.000Z"), base.Add(90*time.Minute))
 	writeBinds(t, e.home,
-		passBind("2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
-		passBind("2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"),
-		passBind("2026-09-04T11:30:00", "dddd-0004", "XR-4", e.proj, "chat-XR-4-1"))
+		passBind(e.home, "2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
+		passBind(e.home, "2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"),
+		passBind(e.home, "2026-09-04T11:30:00", "dddd-0004", "XR-4", e.proj, "chat-XR-4-1"))
 
 	byID := map[string]chatEntry{}
 	for _, ch := range chatsOf(t, e, c) {
@@ -148,9 +148,9 @@ exit 0`)
 	writeSession(t, e.home, e.proj, "", "bbbb-0002", passTalk("второй заход написал тесты", "2026-09-04T11:00:00.000Z"), base.Add(time.Hour))
 	writeSession(t, e.home, e.proj, "", "cccc-0003", passTalk("этот заход дописывает доку", "2026-09-04T12:00:00.000Z"), base.Add(2*time.Hour))
 	writeBinds(t, e.home,
-		passBind("2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
-		passBind("2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"),
-		passBind("2026-09-04T12:00:00", "cccc-0003", "XR-4", e.proj, "task-XR-4"))
+		passBind(e.home, "2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
+		passBind(e.home, "2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"),
+		passBind(e.home, "2026-09-04T12:00:00", "cccc-0003", "XR-4", e.proj, "task-XR-4"))
 
 	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/cccc-0003", "")
 	if resp.StatusCode != 200 {
@@ -191,7 +191,7 @@ func TestChatFeedSinglePassHasNoMark(t *testing.T) {
 	e, c := chatEnv(t)
 	base := time.Now().Add(-time.Hour)
 	writeSession(t, e.home, e.proj, "", "cccc-0003", passTalk("один заход", "2026-09-04T12:00:00.000Z"), base)
-	writeBinds(t, e.home, passBind("2026-09-04T12:00:00", "cccc-0003", "XR-4", e.proj, "task-XR-4"))
+	writeBinds(t, e.home, passBind(e.home, "2026-09-04T12:00:00", "cccc-0003", "XR-4", e.proj, "task-XR-4"))
 
 	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/cccc-0003", "")
 	text := body(t, resp)
@@ -246,9 +246,9 @@ exit 0`)
 	writeSession(t, e.home, e.proj, "", "cccc-0003",
 		two("этот заход начал", "этот заход идёт", "2026-09-04T12:00:00.000Z", "2026-09-04T12:05:00.000Z"), base.Add(2*time.Hour))
 	writeBinds(t, e.home,
-		passBind("2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
-		passBind("2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"),
-		passBind("2026-09-04T12:00:00", "cccc-0003", "XR-4", e.proj, "task-XR-4"))
+		passBind(e.home, "2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
+		passBind(e.home, "2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"),
+		passBind(e.home, "2026-09-04T12:00:00", "cccc-0003", "XR-4", e.proj, "task-XR-4"))
 
 	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/cccc-0003", "")
 	text := body(t, resp)
@@ -303,7 +303,7 @@ exit 0`)
 		at := fmt.Sprintf("2026-09-04T%02d:00:00", 10+i)
 		writeSession(t, e.home, e.proj, "", id, passTalk("заход "+id, at+".000Z"),
 			base.Add(time.Duration(i)*time.Hour))
-		binds = append(binds, passBind(at, id, "XR-4", e.proj, "task-XR-4"))
+		binds = append(binds, passBind(e.home, at, id, "XR-4", e.proj, "task-XR-4"))
 	}
 	writeBinds(t, e.home, binds...)
 
@@ -356,8 +356,8 @@ exit 0`)
 	writeSession(t, e.home, e.proj, "", "bbbb-0002", passTalk("первая реплика нового чата", "2026-09-04T12:00:00.000Z"), base.Add(time.Hour))
 	// Запись нового жильца легла после подъёма окна, запись прежнего до него.
 	writeBinds(t, e.home,
-		passBind("2026-09-04T10:00:00", "aaaa-0001", "-", e.proj, "chat-3"),
-		passBind(time.Now().Add(time.Minute).Format("2006-01-02T15:04:05"), "bbbb-0002", "-", e.proj, "chat-3"))
+		passBind(e.home, "2026-09-04T10:00:00", "aaaa-0001", "-", e.proj, "chat-3"),
+		passBind(e.home, time.Now().Add(time.Minute).Format("2006-01-02T15:04:05"), "bbbb-0002", "-", e.proj, "chat-3"))
 	e.s.chatRaised("chat-3", "", "", "demo")
 
 	byID := map[string]chatEntry{}
@@ -395,8 +395,8 @@ exit 0`)
 	writeSession(t, e.home, e.proj, "", "aaaa-0001", passTalk("убранный в архив заход", "2026-09-04T10:00:00.000Z"), base)
 	writeSession(t, e.home, e.proj, "", "bbbb-0002", passTalk("нынешний заход", "2026-09-04T11:00:00.000Z"), base.Add(time.Hour))
 	writeBinds(t, e.home,
-		passBind("2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
-		passBind("2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"))
+		passBind(e.home, "2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
+		passBind(e.home, "2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"))
 	if err := e.s.chatStoreWrite("aaaa-0001", chatStore{Archived: true}); err != nil {
 		t.Fatal(err)
 	}

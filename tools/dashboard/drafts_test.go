@@ -1122,7 +1122,7 @@ func TestDraftGroomOrderAndVisibility(t *testing.T) {
 	realHomeFn = func() string { return machine }
 	t.Cleanup(func() { realHomeFn = was })
 	writeBindsAt(t, machine, "2026-08-25T23:58:04 сессия 7749edb9-2222 задача XR-005 проект demo "+
-		"дерево "+e.proj+" транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-XR-005\n")
+		"дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux task-XR-005\n")
 
 	sid, rec := e.s.binds().Leads("XR-005")
 	if sid != "7749edb9-2222" {

@@ -100,7 +100,7 @@ exit 0`)
 	writeSession(t, e.home, e.proj, "", "bbbb-0002", plainTalk, time.Now())
 	reg := func(stamp, sid, tmux string) string {
 		return stamp + " сессия " + sid + " задача - проект demo дерево " + e.proj +
-			" транскрипт /tmp/" + sid + ".jsonl источник заказ повод startup tmux " + tmux + "\n"
+			" транскрипт " + standTranscript(e.home, sid) + " источник заказ повод startup tmux " + tmux + "\n"
 	}
 	writeBinds(t, e.home,
 		reg("2026-08-20T10:00:00", "aaaa-0001", "chat-X"),
@@ -479,14 +479,14 @@ func TestChatReplyReadsTmuxOfOrderedSession(t *testing.T) {
 	sideTree(t, e.proj, "xr-4")
 	writeSession(t, e.home, e.proj, "-xr-4", "cccc-3333", plainTalk, time.Now())
 	writeBinds(t, e.home, "2026-08-18T12:03:11 сессия cccc-3333 задача XR-4 проект demo "+
-		"дерево /tmp транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-4-1\n")
+		"дерево /tmp транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-XR-4-1\n")
 	reply, note := sessionReply(t, c, e, "cccc-3333")
 	if reply != replyToTask || !strings.Contains(note, "chat-XR-4-1") {
 		t.Fatalf("мёртвая tmux-сессия заказа не назвала ручку задачи: %q %q", reply, note)
 	}
 	// Та же запись с живым именем (фикстурный tmux стенда его печатает).
 	writeBinds(t, e.home, "2026-08-18T12:03:11 сессия cccc-3333 задача XR-4 проект demo "+
-		"дерево /tmp транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-XR-5\n")
+		"дерево /tmp транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux task-XR-5\n")
 	if reply, note := sessionReply(t, c, e, "cccc-3333"); reply != replyToSession {
 		t.Fatalf("живая tmux-сессия посчитана мёртвой: %q %q", reply, note)
 	}
@@ -618,7 +618,7 @@ esac
 exit 0`)
 	// Реестр держит имя живой tmux-сессии чата: реплика пойдёт в неё.
 	writeBinds(t, e.home, "2026-08-20T12:00:00 сессия "+sid+
-		" задача - проект demo дерево "+e.proj+" транскрипт /tmp/t.jsonl "+
+		" задача - проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" "+
 		"источник заказ повод startup tmux chat-1\n")
 	writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
 
@@ -704,7 +704,7 @@ func TestChatEntryAskWhenPermissionPrompt(t *testing.T) {
 	sid := "eeee5555-5555-4555-8555-555555555555"
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-30*time.Second))
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-23T14:59:00 сессия %s задача XR-1 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-13\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-13\n", sid, e.proj))
 	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "chat-13\t1\t1786000000\n")
 	writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
 
@@ -1044,7 +1044,7 @@ func TestChatEntryWedgeWhenTerminalLost(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-10*time.Minute))
 	writePeer(t, e.home, sid, os.Getpid())
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-22T14:40:00 сессия %s задача XR-1 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
 
 	// tmux-сессии нет: список пуст.
 	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
@@ -1105,7 +1105,7 @@ func TestChatStopDropEndsLiveSession(t *testing.T) {
 	sid := "ffff6666-6666-4666-8666-666666666666"
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-23T14:40:00 сессия %s задача XR-1 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeTmuxFake(t, e.bin, tmuxLog, "chat-XR-1-1\t1\t1786000000\n")
 
@@ -1191,7 +1191,7 @@ func TestChatStopKillsWedged(t *testing.T) {
 	sid := "eeee5555-5555-4555-8555-555555555555"
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-10*time.Minute))
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-22T14:40:00 сессия %s задача XR-1 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
 
 	// Процесс-жертва настоящий: снятие проверяется тем, что он умер, а не тем,
 	// что ручка так сказала.
@@ -1339,7 +1339,7 @@ func TestLiveModelComesFromOurLaunch(t *testing.T) {
 		`"content":[{"type":"text","text":"готово"}]},"timestamp":"2026-08-17T10:00:02.000Z"}` + "\n"
 	writeSession(t, e.home, e.proj, "", sid, talk, time.Now())
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-23T14:40:00 сессия %s задача XR-1 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
 	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "chat-XR-1-1\t1\t1786000000\n")
 
 	find := func() chatEntry {
@@ -1565,10 +1565,10 @@ func TestChatSayDoesNotRideRecycledTmuxName(t *testing.T) {
 	// Сокета у снятого разговора нет: дорога падает на имя tmux.
 	writeBinds(t, e.home,
 		"2026-08-24T12:42:48 сессия "+old+" задача DK-503 проект demo дерево "+e.proj+
-			" транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-DK-503\n",
+			" транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux task-DK-503\n",
 		// Конвейер подняли заново: то же имя реестр отдал другому разговору.
 		"2026-08-24T13:55:18 сессия "+fresh+" задача DK-503 проект demo дерево "+e.proj+
-			" транскрипт /tmp/t2.jsonl источник заказ повод startup tmux task-DK-503\n")
+			" транскрипт "+standTranscript(e.home, "t2")+" источник заказ повод startup tmux task-DK-503\n")
 	// Имя живо, и прежде этого хватало для доставки.
 	writeScript(t, e.bin, "tmux", `case "$1" in
 ls) echo "task-DK-503|1|123";;
@@ -1606,9 +1606,9 @@ func TestChatEntryNamesRestartedConversation(t *testing.T) {
 	writeSession(t, e.home, other, "", fresh, plainTalk, time.Now().Add(-time.Minute))
 	writeBinds(t, e.home,
 		"2026-08-24T12:42:48 сессия "+old+" задача DK-503 проект demo дерево "+e.proj+
-			" транскрипт /tmp/t.jsonl источник заказ повод startup tmux task-DK-503\n",
+			" транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux task-DK-503\n",
 		"2026-08-24T13:55:18 сессия "+fresh+" задача DK-503 проект other дерево "+other+
-			" транскрипт /tmp/t2.jsonl источник заказ повод startup tmux task-DK-503\n")
+			" транскрипт "+standTranscript(e.home, "t2")+" источник заказ повод startup tmux task-DK-503\n")
 	writeScript(t, e.bin, "tmux", `case "$1" in ls) echo "task-DK-503|1|123";; esac
 exit 0`)
 
@@ -1669,7 +1669,7 @@ func TestChatIdleWithoutPeerRecord(t *testing.T) {
 		`[{"type":"text","text":"давно"}]},"timestamp":%q}`,
 		now.Add(-7*time.Hour).Format(time.RFC3339)) + "\n"
 	writeSession(t, e.home, e.proj, "", sid, sessionLine("поговорим", "main")+old, now.Add(-7*time.Hour))
-	writeBinds(t, e.home, listedBind(sid, "XR-1", "chat-XR-1"))
+	writeBinds(t, e.home, listedBind(e.home, sid, "XR-1", "chat-XR-1"))
 
 	idleOf := func(what string) bool {
 		t.Helper()
@@ -1716,7 +1716,7 @@ ls) printf 'chat-7\n';;
 esac
 exit 0`)
 	sid := "aaaa1111-1111-4111-8111-111111111111"
-	writeBinds(t, e.home, listedBind(sid, "XR-1", "chat-7"))
+	writeBinds(t, e.home, listedBind(e.home, sid, "XR-1", "chat-7"))
 	c := e.loggedClient(t)
 	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/ask"
 
@@ -1858,7 +1858,7 @@ func TestAskQuietGoesToLog(t *testing.T) {
 	sid := "eeee5555-5555-4555-8555-555555555555"
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-30*time.Second))
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-25T14:59:00 сессия %s задача XR-1 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-13\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-13\n", sid, e.proj))
 	writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
 	// Панель клиента без виджета: слова есть, а разбирать в кнопки нечего.
 	quiet := " Работаю дальше, вопросов нет.\n\n\u276f \n"
@@ -1902,7 +1902,7 @@ func TestAskParsedStaysQuietInLog(t *testing.T) {
 	sid := "eeee5555-5555-4555-8555-555555555555"
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-30*time.Second))
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-25T14:59:00 сессия %s задача XR-1 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-13\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-13\n", sid, e.proj))
 	writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
 	pane := " Quick safety check: доверяешь каталогу?\n\n \u276f 1. Yes, I trust this folder\n" +
 		"   2. No, exit\n\n Enter to confirm \u00b7 Esc to cancel\n"
@@ -2197,7 +2197,7 @@ func wedgedEnv(t *testing.T) (*testEnv, *http.Client, string, time.Time) {
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-10*time.Minute))
 	writePeer(t, e.home, sid, os.Getpid())
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-22T14:40:00 сессия %s задача XR-1 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-XR-1-1\n", sid, e.proj))
 	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
 	return e, c, sid, now
 }
@@ -2376,7 +2376,7 @@ func TestChatEntryAskFromPaneWithoutJournal(t *testing.T) {
 	sid := "eeee5555-5555-4555-8555-555555555555"
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, now.Add(-30*time.Second))
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-28T17:29:00 сессия %s задача XR-1 проект demo "+
-		"дерево %s транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-13\n", sid, e.proj))
+		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-13\n", sid, e.proj))
 	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "chat-13\t1\t1786000000\n")
 	old := tmuxAskOfFn
 	tmuxAskOfFn = func(string) tmuxAsk { return parseTmuxAsk(liveTrustBarePane) }
@@ -2884,7 +2884,7 @@ func TestChatTmuxNameBetweenOwnersIsNobodys(t *testing.T) {
 	writeSession(t, e.home, e.proj, "", old, plainTalk, time.Now().Add(-time.Hour))
 	writeBinds(t, e.home,
 		"2026-08-24T12:42:48 сессия "+old+" задача DK-851 проект demo дерево "+e.proj+
-			" транскрипт /tmp/t.jsonl источник заказ повод startup tmux chat-7\n")
+			" транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-7\n")
 	writeScript(t, e.bin, "tmux", `case "$1" in ls) echo "chat-7|1|123";; esac
 exit 0`)
 	e.s.chatRaised("chat-7", "", "", "demo")

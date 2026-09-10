@@ -480,3 +480,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-571 | Фоновая команда мимо реестра сторожа: весть о её конце теряется | bug | P1 | 2026-09-09 | [tasks/archive/2026/DK-571.md](tasks/archive/2026/DK-571.md) |
 | DK-588 | doctor --fix из подставного HOME уводит launchd-агентов машины | bug | P1 | 2026-09-09 | [tasks/archive/2026/DK-588.md](tasks/archive/2026/DK-588.md), `f7d9f082`, `de754658` |
 | DK-847 | Список чатов панели держит только разговоры человека [приёмка: mixed] | task | P2 | 2026-09-09 | [tasks/archive/2026/DK-847.md](tasks/archive/2026/DK-847.md) |
+| DK-888 | go:dashboard тесты красные на main: talk_state пуст у чата без хода | bug | P1 | 2026-09-10 | [tasks/archive/2026/DK-888.md](tasks/archive/2026/DK-888.md) |

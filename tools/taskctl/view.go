@@ -281,13 +281,13 @@ func cmdShow(root, id string) (string, error) {
 		return "", err
 	}
 	note := staleBoardNote(root)
+	sides := depSides(b)
 	if row := b.find(id); row != nil {
 		out := []string{fmt.Sprintf("%s в %s", id, row.Sect), b.Lines[row.LineIdx]}
 		if note != "" {
 			out = append([]string{note}, out...)
 		}
 		out = append(out, rowNotes(root, row.Sect, row, showTimes(root), true)...)
-		sides := depSides(b)
 		s := sides[id]
 		if s == nil {
 			s = &struct{ after, blocks []string }{}
@@ -314,7 +314,7 @@ func cmdShow(root, id string) (string, error) {
 		// доске и у закрытой, а «после» закрытие снимает, и об этом сказано
 		// словами, а не прочерком.
 		blocks := []string(nil)
-		if s := depSides(b)[id]; s != nil {
+		if s := sides[id]; s != nil {
 			blocks = s.blocks
 		}
 		out = append(out, "после: "+archiveAfterNote, "держит: "+joinOrDash(blocks))

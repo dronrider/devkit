@@ -161,3 +161,60 @@ func TestShowAnnotatesCheckRow(t *testing.T) {
 		}
 	}
 }
+
+func TestShowWithDependencies(t *testing.T) {
+	root := t.TempDir()
+	tasks := filepath.Join(root, "docs", "tasks")
+	if err := os.MkdirAll(tasks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	board := `# Тест: доска (префикс XR)
+
+## In progress
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|--------|---|---|------|--------|
+| XR-100 | После A [после XR-101] | task | P3 | 5 (0+3+1+0+1) | S | [tasks/XR-100.md](tasks/XR-100.md) |
+| XR-101 | Основная | task | P3 | 5 (0+3+1+0+1) | S | [tasks/XR-101.md](tasks/XR-101.md) |
+
+## Check
+
+Нет.
+
+## Backlog
+
+Нет.
+
+## Blocked
+
+Нет.
+`
+	if err := os.WriteFile(boardPath(root), []byte(board), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeTask := func(id, body string) {
+		if err := os.WriteFile(filepath.Join(tasks, id+".md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTask("XR-100", "# XR-100\n")
+	writeTask("XR-101", "# XR-101\n")
+
+	// XR-101 держит XR-100
+	out, err := cmdShow(root, "XR-101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "держит: XR-100") {
+		t.Errorf("XR-101 должна держать XR-100:\n%s", out)
+	}
+
+	// XR-100 после XR-101
+	out, err = cmdShow(root, "XR-100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "после: XR-101") {
+		t.Errorf("XR-100 должна быть после XR-101:\n%s", out)
+	}
+}

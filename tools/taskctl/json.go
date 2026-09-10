@@ -148,12 +148,13 @@ func cmdShowJSON(root, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	sides := depSides(b)
 	if row := b.find(id); row != nil {
 		out := jsonShow{
 			jsonRow: makeJSONRow(root, row, showTimes(root), true),
 			Sect:    row.Sect,
 		}
-		if s := depSides(b)[id]; s != nil {
+		if s := sides[id]; s != nil {
 			out.Blocks = s.blocks
 		}
 		rel := filepath.Join("docs", "tasks", id+".md")
@@ -174,7 +175,7 @@ func cmdShowJSON(root, id string) (string, error) {
 		}
 		// «Держит» у архивной строки считается по доске, как у живой: с её
 		// экрана берут в работу тех, кого она держала.
-		if s := depSides(b)[id]; s != nil {
+		if s := sides[id]; s != nil {
 			out.Blocks = s.blocks
 		}
 		if rel, ok := archiveTaskFile(root, id, r.Cells[4]); ok {

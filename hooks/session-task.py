@@ -21,7 +21,8 @@
 Строка журнала именованная, как у уведомителя, и читается по ключевым словам:
 
   <время> сессия <ID> задача <DK-431> проект <devkit> дерево <путь>
-  транскрипт <путь> источник <слово> повод <startup> tmux <имя> родитель <ID>
+  транскрипт <путь> источник <слово> повод <startup> tmux <имя> панель <%N>
+  родитель <ID>
 
 Задачу хук берёт из двух мест. Переменная DEVKIT_TASK это заказ того, кто
 поднял сессию: её ставит дашборд в начало команды сессии, и только так узнаётся
@@ -49,6 +50,14 @@ DK-161). Поэтому имя окна принимается только у �
 дашборда поднимает клиента в панели tmux, и терминал у него есть, а печатный
 подъём из хода идёт без него вовсе. Ошибка в эту сторону дешевле обратной: без
 имени панель ведёт разговор резюмом, а с чужим именем она пишет постороннему.
+
+Адрес панели tmux хук пишет у любого клиента с терминалом внутри tmux, из
+$TMUX_PANE, и у окна, открытого руками, тоже (DK-931). Имя окна называет
+tmux-сессию того, кто её поднял, а по адресу панели `taskctl run` подаёт
+реплику в живое окно задачи. Клиент без терминала адреса не получает по той же
+мере, что и имя. Сервер tmux не по умолчанию адреса тоже не даёт: номера
+панелей у него свои, и читатель попал бы в чужую панель сервера по умолчанию.
+Этот отказ виден в поводе строки.
 
 Беда любого разбора это тихий ноль: хук стоит в каждой сессии на машине, и
 ронять её ради журнала нельзя. Сессия вне git-дерева всё равно пишет строку с
@@ -96,6 +105,11 @@ BY_TREE = "дерево"
 
 TASK_ENV = "DEVKIT_TASK"
 TMUX_ENV = "DEVKIT_TMUX"
+# Адрес панели tmux (DK-931): сокет сервера первым полем $TMUX и номер панели
+# в $TMUX_PANE. Их ставит сам tmux любому процессу в своей панели.
+TMUX_SOCK_ENV = "TMUX"
+PANE_ENV = "TMUX_PANE"
+PANE_RE = re.compile(r"^%[0-9]+$")
 # Свой процесс клиент называет сам, и это единственная дорога спросить систему,
 # в терминале он поднят или нет: у хука своего терминала нет ни в одной сессии,
 # харнес отвязывает от него подпроцессы (замер 2026-09-02).
@@ -196,6 +210,19 @@ def window_name(env, tty):
     return "" if tty == "" else name
 
 
+def pane_address(env, tty):
+    """Адрес панели tmux, где стоит клиент. Возврат (адрес, повод отказа).
+    Пустой адрес без повода значит, что клиент не в tmux либо без терминала:
+    печатный подъём панель наследует, а не занимает (DK-673)."""
+    pane = (env.get(PANE_ENV) or "").strip()
+    if tty == "" or not PANE_RE.match(pane):
+        return "", ""
+    sock = (env.get(TMUX_SOCK_ENV) or "").split(",")[0].strip()
+    if os.path.basename(sock) != "default":
+        return "", "адрес окна %s не принят (чужой сервер %s)" % (pane, sock or "без сокета")
+    return pane, ""
+
+
 def ordered_task(env):
     """Задача из заказа поднявшего сессию. Пустая строка значит, что заказа не
     было или он не похож на ID: врать про чужую задачу дороже, чем промолчать."""
@@ -228,18 +255,21 @@ def record(start, env=None, now=None, terminal=client_terminal):
         task, source = ordered, BY_ORDER
     tty = terminal(env)
     name = window_name(env, tty)
+    pane, pane_why = pane_address(env, tty)
     why = start.source
     if not name and (env.get(TMUX_ENV) or "").strip():
         # Отказ виден в самом журнале: молчаливая потеря имени читалась бы как
         # сессия, поднятая мимо дашборда, и человек искал бы причину в панели.
         why = "%s, имя окна %s не принято (клиент без терминала)" % (
             start.source, " ".join(env[TMUX_ENV].split()))
+    if pane_why:
+        why = "%s, %s" % (why, pane_why)
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))
     return ("%s сессия %s задача %s проект %s дерево %s транскрипт %s "
-            "источник %s повод %s tmux %s родитель %s\n") % (
+            "источник %s повод %s tmux %s панель %s родитель %s\n") % (
         stamp, dashless(start.session), dashless(task), dashless(project),
         dashless(root), dashless(start.transcript), dashless(source),
-        dashless(why), dashless(name),
+        dashless(why), dashless(name), dashless(pane),
         dashless(parent_session(env, start.session)))
 
 
@@ -262,9 +292,9 @@ def touch_record(tool, now=None):
         return ""
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))
     return ("%s сессия %s задача %s проект %s дерево %s транскрипт %s "
-            "источник %s повод %s tmux %s родитель %s\n") % (
+            "источник %s повод %s tmux %s панель %s родитель %s\n") % (
         stamp, dashless(tool.session), dashless(task), dashless(project),
-        dashless(root), "-", dashless(BY_WORK), "правка файла", "-", "-")
+        dashless(root), "-", dashless(BY_WORK), "правка файла", "-", "-", "-")
 
 
 def known_touch(path, session, task):

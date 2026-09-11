@@ -36,7 +36,7 @@ def start(cwd, session=SID, transcript="/home/t/.claude/projects/p/%s.jsonl" % S
 
 
 REG_KEYS = ("сессия", "задача", "проект", "дерево", "транскрипт", "источник",
-            "повод", "tmux", "родитель")
+            "повод", "tmux", "панель", "родитель")
 
 
 def fields(line):
@@ -217,9 +217,39 @@ class TestRecord(unittest.TestCase):
                                    env={"DEVKIT_TMUX": "task-DK-431"}, now=0)
         self.assertEqual(line.split(" ")[1::2],
                          ["сессия", "задача", "проект", "дерево", "транскрипт",
-                          "источник", "повод", "tmux", "родитель"])
+                          "источник", "повод", "tmux", "панель", "родитель"])
         self.assertTrue(line.endswith(
-            " источник дерево повод resume tmux task-DK-431 родитель -\n"), line)
+            " источник дерево повод resume tmux task-DK-431 панель - родитель -\n"), line)
+
+    def test_pane_of_any_window_is_written(self):
+        # Окно, открытое руками внутри tmux: имени от поднявшего нет, а адрес
+        # панели есть, и по нему taskctl run подаёт реплику (DK-931).
+        tree = Tree(self.tmp, "devkit-dk-431")
+        f, _ = fields(session_task.record(
+            start(tree.root), env={"TMUX": "/private/tmp/tmux-501/default,123,0",
+                                   "TMUX_PANE": "%12"},
+            terminal=lambda env: "ttys004"))
+        self.assertEqual((f["задача"], f["tmux"], f["панель"], f["повод"]),
+                         ("DK-431", "-", "%12", "startup"))
+
+    def test_headless_client_does_not_take_the_pane(self):
+        # Печатный подъём из хода наследует $TMUX_PANE окна, где идёт ход, и
+        # адрес чужого разговора ему не принадлежит.
+        tree = Tree(self.tmp, "devkit")
+        f, _ = fields(session_task.record(
+            start(tree.root), env={"TMUX": "/tmp/tmux-501/default,1,0", "TMUX_PANE": "%12"},
+            terminal=lambda env: ""))
+        self.assertEqual((f["панель"], f["повод"]), ("-", "startup"))
+
+    def test_pane_of_a_foreign_server_is_told_apart(self):
+        # Номер панели чужого сервера из своего счёта: адреса нет, а отказ
+        # виден в поводе, иначе потеря читалась бы как окно вне tmux.
+        tree = Tree(self.tmp, "devkit")
+        f, _ = fields(session_task.record(
+            start(tree.root), env={"TMUX": "/tmp/tmux-501/work,1,0", "TMUX_PANE": "%3"},
+            terminal=lambda env: "ttys004"))
+        self.assertEqual(f["панель"], "-")
+        self.assertIn("адрес окна %3 не принят (чужой сервер /tmp/tmux-501/work)", f["повод"])
 
     def test_parent_session_names_the_one_who_handed_out_the_work(self):
         # Подпроцесс делегирования это не разговор человека, а чужая работа, и
@@ -253,6 +283,8 @@ class TestHook(unittest.TestCase):
         env = dict(os.environ, HOME=self.home)
         env.pop("DEVKIT_TASK", None)
         env.pop("DEVKIT_TMUX", None)
+        env.pop("TMUX", None)
+        env.pop("TMUX_PANE", None)
         env.pop("DEVKIT_HIDDEN", None)
         env.update(extra or {})
         return subprocess.run([sys.executable, HOOK] + list(args),

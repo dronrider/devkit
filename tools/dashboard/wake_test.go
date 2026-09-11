@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 // Подъём сессии после ответа человека (DK-922). Стенд тот же, что у подъёма
@@ -274,14 +275,20 @@ exit 0`)
 // было бы некому.
 func TestTaskWakeReparksAfterFailedStart(t *testing.T) {
 	e, tmuxLog, moved := parkedMoveEnv(t)
-	// Сервер tmux отвечает, а окна не поднимаются: так отказывает уже сам
-	// подъём, за снятой парковкой, и других причин отказать там не остаётся.
+	// Сервер tmux отвечает, а окна не поднимаются, и оболочка, запущенная
+	// ступенью headless, замка не принимает: так отказывает уже сам подъём, за
+	// снятой парковкой, и лестнице поднять голову нечем (DK-935).
 	writeScript(t, e.bin, "tmux", `echo "$@" >> `+tmuxLog+`
 case "$1" in
 ls) printf 'чужая-сессия\n';;
 new-session) echo "tmux: сервер не отвечает" >&2; exit 1;;
 esac
 exit 0`)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(e.proj), "devkit", "kit", "skills",
+		"board-task", "task-run.py"), []byte("import sys\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(taskhead.AdoptEnv, "1")
 
 	rep := wakeOne(t, e, "XR-7")
 	if !rep.Failed || rep.Raised {
@@ -302,6 +309,28 @@ exit 0`)
 	}
 	if !strings.Contains(rep.Line, "возвращена в Blocked") {
 		t.Errorf("отчёт молчит о судьбе строки: %q", rep.Line)
+	}
+}
+
+// Замок держит голова, поднятая мимо дашборда: вторая рядом не встаёт, а
+// строка в Blocked не возвращается, потому что ответ дойдёт до живой головы,
+// как до живой tmux-сессии (DK-935).
+func TestTaskWakeBusyLockLeavesHeadAlone(t *testing.T) {
+	e, tmuxLog, moved := parkedMoveEnv(t)
+	holdHeadLock(t, e.home, "XR-7")
+
+	rep := wakeOne(t, e, "XR-7")
+	if rep.Failed || rep.Raised {
+		t.Fatalf("занятый замок отчитан не как живая работа: %+v", rep)
+	}
+	if !strings.Contains(rep.Line, "подъём не нужен, работа уже идёт (голова уже поднята: замок ") {
+		t.Errorf("отчёт не назвал замок: %q", rep.Line)
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("поверх занятого замка поднято окно: %s", got)
+	}
+	if args := readFile(t, moved); strings.Contains(args, "move XR-7 blocked") {
+		t.Errorf("строку вернули в Blocked при живой голове: %q", args)
 	}
 }
 

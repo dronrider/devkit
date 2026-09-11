@@ -1,12 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 // Подъём сессии задачи, разбуженной ответом человека (DK-922). Строка,
@@ -92,12 +94,18 @@ func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) ch
 		return checkRunReport{Failed: true, Line: id +
 			": сессия не поднята, права машинного контура на машине не разложены: " + why}
 	}
-	// Оболочка конвейера ищется тут же, а не внутри подъёма: без неё
-	// startTaskSession откажет уже за снятой парковкой, и строку пришлось бы
-	// возвращать в Blocked вторым коммитом доски. Из всего, чем отказывает
-	// подъём, это единственная причина, живущая на машине долго.
-	if taskRunPath(s.cfg.Roots) == "" {
-		return checkRunReport{Failed: true, Line: id + ": сессия не поднята, " + taskRunMissing}
+	// Чем поднимать голову, спрашивается тут же, а не внутри подъёма:
+	// оболочка конвейера, профиль харнеса с секцией [head] и клиент в PATH.
+	// Без них startTaskSession откажет уже за снятой парковкой, и строку
+	// пришлось бы возвращать в Blocked вторым коммитом доски. Эти причины живут
+	// на машине долго, и спрашивает их тот же предполёт, что у обхода ждущих
+	// в taskctl (DK-932).
+	pre, err := s.headRequest(proj, id, sess, nil, "", "", "", false)
+	if err == nil {
+		err = taskhead.Preflight(pre)
+	}
+	if err != nil {
+		return checkRunReport{Failed: true, Line: id + ": сессия не поднята, " + err.Error()}
 	}
 	// Сервер tmux раскачивается тут же, до снятия парковки. Наличие бинаря в
 	// PATH ничего не говорит про живость сервера: сорванный сокет, упёршийся
@@ -129,12 +137,20 @@ func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) ch
 	// человек своим ответом: он ждёт продолжения разговора и обязан найти его
 	// в списке панели, а не гадать, куда делся чат.
 	order := runPrompt("in-progress", id)
-	if err := s.startTaskSession(proj, id, sess, nil, model, order, order, false); err != nil {
+	res, err := s.startTaskSession(proj, id, sess, nil, model, order, order, false)
+	if err != nil {
+		// Замок держит живая голова, поднятая мимо дашборда: ответ дойдёт до
+		// неё так же, как до живой tmux-сессии выше, и возвращать строку в
+		// Blocked незачем.
+		var busy *headBusy
+		if errors.As(err, &busy) {
+			return checkRunReport{Line: id + ": подъём не нужен, работа уже идёт (" + busy.where + ")"}
+		}
 		return checkRunReport{Failed: true, Line: id + ": сессия не поднята, " + err.Error() +
 			s.repark(proj.Path, id, row.Block, parked)}
 	}
 	return checkRunReport{Raised: true, Line: fmt.Sprintf(
-		"%s: сессия задачи поднята в tmux-сессии %s ответом человека, %s", id, sess, tierWhy)}
+		"%s: сессия задачи поднята %s ответом человека, %s", id, headWhere(res, sess), tierWhy)}
 }
 
 // unparkIf снимает парковку вопросом у строки, которая ещё стоит в Blocked.

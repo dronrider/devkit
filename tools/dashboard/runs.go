@@ -9,13 +9,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 // Запуск и стоп работ: POST /api/projects/{p}/runs и DELETE
 // /api/projects/{p}/runs/{id}. Запуск зовёт тот же механизм, что и руками
 // (LLD DK-112): цель поднимает оболочка goal-run.py в её tmux-сессии
-// goal-<ID>, одиночная задача это tmux-сессия task-<ID> с оболочкой конвейера
-// доски. Голову конвейера оболочка ведёт живой интерактивной сессией в том же
+// goal-<ID>, а голову одиночной задачи поднимает общий код taskhead, тот же,
+// что у `taskctl run` (DK-935): замок на ID и лестница носителей, где первым
+// делом заводится tmux-сессия task-<ID> с оболочкой конвейера. Голову конвейера оболочка ведёт живой интерактивной сессией в том же
 // окне и заказывает ей проходы репликами (DK-724); печатная череда `claude -p`
 // осталась у неё запасным входом. Стоп это стоп сессии, ручки «пауза» нет:
 // возобновление это новый запуск, читающий состояние с диска.
@@ -310,118 +313,128 @@ func harnessTail(h *Harness) string {
 // Окружение приходит доводом, а не собирается тут: собирает его одно место на
 // все дороги подъёма (launchEnv), и звать его в обход сервера некому.
 
-// taskRunRel это путь оболочки конвейера задачи внутри чекаута devkit. Ищется
-// она там же и тем же порядком, что оболочка цикла цели.
-const taskRunRel = "kit/skills/board-task/task-run.py"
-
-const taskRunMissing = "task-run.py не нашёлся в корнях конфига (" + taskRunRel +
+// Оболочка конвейера задачи (taskhead.TaskRunRel) ищется там же и тем же
+// порядком, что оболочка цикла цели. Дерево, где она нашлась, и есть дерево
+// devkit для подъёма: из него же берётся профиль харнеса.
+const taskRunMissing = "task-run.py не нашёлся в корнях конфига (" + taskhead.TaskRunRel +
 	"): поднимать конвейер задачи нечем, нужен чекаут devkit в одном из корней"
 
 func taskRunPath(roots []string) string {
 	if tree := devkitOwnTree(); tree != "" {
-		if p := filepath.Join(tree, filepath.FromSlash(taskRunRel)); isFile(p) {
+		if p := filepath.Join(tree, filepath.FromSlash(taskhead.TaskRunRel)); isFile(p) {
 			return p
 		}
 	}
-	return inRoots(roots, taskRunRel)
+	return inRoots(roots, taskhead.TaskRunRel)
 }
 
-// taskRunHead это голова команды конвейера: оболочка с задачей, корнем и
-// заказами обоих сортов. Заказ первого прохода зависит от статуса строки, заказ
-// следующих всегда «продолжай»: строку к тому времени уже двигали, и начинать
-// её заново нельзя. Слова обоих заказов сочиняет дашборд и только он, оболочка
-// их не пересказывает.
-func taskRunHead(runner, id, root, order, again, project string) string {
-	return "python3 " + shQuote(runner) + " " + shQuote(id) +
-		" -C " + shQuote(root) +
-		" --project " + shQuote(project) +
-		" --order " + shQuote(order) +
-		" --again " + shQuote(again) + " --"
-}
-
-// sessionCommand собирает команду tmux-сессии конвейера: оболочка, а за нею
-// клиент без заказа. Заказ каждому проходу оболочка приставляет сама, теми
-// словами, что пришли ей отсюда, и она же решает, вести голову живой сессией
-// или печатной чередой. Прежде тут стоял голый `claude -p '<заказ>'`, и
-// конвейер жил ровно один ход головы: ход кончался, процесс выходил, окно
-// закрывалось, а задача оставалась в работе (DK-691).
-func sessionCommand(agentctl, runner string, h *Harness, env, order, again, id, root, project, model string) string {
-	return env + taskRunHead(runner, id, root, order, again, project) + " " +
-		clientCommand(agentctl, h, model)
-}
-
-// clientCommand это клиент с флагами и без заказа. Без выбранной подписки это
-// `claude`, с выбранной команда заворачивается в `agentctl exec`: пары окружения
-// подписки кладёт он, и значения при этом никуда не уезжают, ни в веб-сервер, ни
-// в панель сессии, которую дашборд показывает на экране (LLD DK-328, решение 3).
-// Собирать пары тут самому нельзя по той же причине: токен и base URL второй
-// подписки поселились бы в процессе, который эти панели и раздаёт.
-func clientCommand(agentctl string, h *Harness, model string) string {
-	if h == nil {
-		// Режим разрешений ставится и своей подписке. Живая голова стоит в
-		// окне без человека, а печатный проход идёт и вовсе без окна, и запрос
-		// разрешения одобрить некому: клиент отвечает отказом, а работа встаёт
-		// молча.
-		// Своё умолчание оболочка проходов ставит сама, но строка клиента
-		// приезжает к ней отсюда и умолчание перебивает, так что сказать это
-		// надо тут (DK-739).
-		client := defaultClient + " --permission-mode auto"
-		// Ярус называется явно: без флага клиент берёт свой дефолт, и работа
-		// уходила верхним ярусом, которого ей никто не назначал.
-		if model != "" {
-			client += " --model " + shQuote(model)
-		}
-		return client
-	}
-	// agentctl зовётся полным путём: сессия наследует PATH дашборда, а под
-	// launchd он системный, и утилиты devkit в нём может не быть вовсе. Клиент
-	// подписки остаётся именем: его ищет тот же PATH, каким дашборд находил
-	// claude до этой задачи, и проверка «не нашёлся» идёт по нему же.
-	// Имя, путь и клиент квотятся наравне с заказом: строка уходит шеллу сессии,
-	// и пробел в пути рассыпал бы команду на слова.
-	// Режим разрешений едет флагом по той же причине, что у чата (chatCmd):
-	// свежий профиль второй подписки поднимает клиента в ручном режиме, и
-	// конвейер вставал бы на вопросе разрешения, которого некому увидеть.
-	tier := ""
-	// Ярус называется и второй подписке: её клиент принимает имя из своей
-	// лестницы той же дорогой, что и чат (DK-750), а без флага сессия шла бы
-	// дефолтом профиля, которого никто не назначал.
-	if model != "" {
-		tier = " --model " + shQuote(model)
-	}
-	return shQuote(agentctl) + " exec --harness " + shQuote(h.Name) + " -- " +
-		shQuote(h.Bin) + " --permission-mode auto" + tier
-}
-
-// startTaskSession поднимает tmux-сессию конвейера задачи: оболочка, клиент и
-// заказы обоих сортов. Дорога сюда не одна: кнопка экрана и подъём
-// прогона после выката (checkrun.go) поднимают одно и то же окно, и заказ
-// (план, канал ответа) обоим собирается тут, а не пересказывается каждым
-// зовущим. Правила плана и канала в текст заказа больше не приписываются
-// (DK-612): их доставляет хук старта сессии.
+// headRequest собирает заказ подъёма головы задачи для общего кода taskhead.
+// Дерево devkit это то, где нашлась оболочка конвейера: без неё голова прожила
+// бы один ход, и отказать тут честнее, чем поднять работу, которая умрёт на
+// первом же ожидании. Профиль харнеса берётся по имени подписки: выбранной
+// человеком, иначе подписки по умолчанию из раскладки машины. Клиента с
+// режимом разрешений, ярусом и обвязкой `agentctl exec` второй подписки
+// собирает секция [head] этого профиля, своей сборки клиента у дашборда больше
+// нет.
 //
-// hidden называет зовущего (DK-847): кнопка экрана это человек, а прогон
-// проверки и второй круг ревью поднимаются тиком без него, и запись уходит из
-// списка панели.
-func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again string, hidden bool) error {
-	// Оболочка ищется до подъёма окна: без неё конвейер прожил бы один ход
-	// головы, и отказать тут честнее, чем поднять работу, которая умрёт на
-	// первом же ожидании.
+// Окружение окна приезжает приставкой из той же сборки, что у разговора
+// (launchEnv), с меткой печатного режима и признаком hidden: настоящий дом,
+// путь с утилитами кита, чистка чужого наследства tmux-сервера. Пары
+// приставки стоят после пар taskhead и перекрывают их. Дом замка и реестра
+// тоже настоящий, машинный: `taskctl run` из тика смотрит туда же, и замок у
+// всех дорог выходит один.
+func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, order, again string, hidden bool) (taskhead.Request, error) {
 	tr := taskRunPath(s.cfg.Roots)
 	if tr == "" {
-		return errors.New(taskRunMissing)
+		return taskhead.Request{}, errors.New(taskRunMissing)
 	}
-	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", proj.Path,
-		sessionCommand(binPath(agentctlBin), tr, h, s.headlessEnv(id, sess, hidden),
-			order, again,
-			id, proj.Path, proj.Name, model)); err != nil {
-		return fmt.Errorf("tmux не поднял сессию %s: %s", sess, procErr(err))
+	adopt, err := taskhead.AdoptWait()
+	if err != nil {
+		return taskhead.Request{}, err
 	}
-	// Конвейер встаёт под того же сторожа, что и разговор (chatwatch.go): без
-	// отметки его смерть не замечал никто, и оборванная работа стояла до тех
-	// пор, пока человек сам не напишет задаче (DK-660).
-	s.chatRaised(sess, "", id, proj.Name)
-	return nil
+	name := ""
+	if h != nil {
+		name = h.Name
+	} else if own := s.harnesses().byDefault(); own != nil {
+		name = own.Name
+	}
+	home := realHomeFn()
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	dk := strings.TrimSuffix(tr, string(filepath.Separator)+filepath.FromSlash(taskhead.TaskRunRel))
+	return taskhead.Request{ID: id, Root: proj.Path, Project: proj.Name, Home: home, Devkit: dk,
+		Harness: taskhead.HarnessName(name), Model: model, Order: order, Again: again,
+		Hidden: hidden, Adopt: adopt, Prefix: s.headlessEnv(id, sess, hidden)}, nil
+}
+
+// startTaskSession поднимает голову задачи общим подъёмом taskhead.Raise: та
+// же лестница носителей и тот же замок, что у `taskctl run` (DK-935). Дорог
+// сюда четыре: кнопка экрана, подъём ответом человека (wake.go), прогон
+// сценария после выката (checkrun.go) и второй круг ревью (round.go). Заказ
+// каждой собирает зовущий: первый проход зависит от статуса строки, следующие
+// всегда «продолжай», потому что строку к тому времени уже двигали. Правила
+// плана и канала в текст заказа не приписываются (DK-612): их доставляет хук
+// старта сессии.
+//
+// hidden называет зовущего (DK-847): кнопка экрана и ответ человека поднимают
+// голову для него, а прогон проверки и второй круг ревью поднимает тик без
+// него, и запись уходит из списка панели.
+//
+// Занятый замок это *headBusy: голову уже поднял кто-то другой, чаще всего тик
+// командой `taskctl run`. Лестница, которой поднять голову нечем, зовёт
+// человека сама, а сюда приходит ошибкой со своими строками.
+func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again string, hidden bool) (taskhead.Result, error) {
+	q, err := s.headRequest(proj, id, sess, h, model, order, again, hidden)
+	if err != nil {
+		return taskhead.Result{}, err
+	}
+	res, err := taskhead.Raise(q)
+	if err != nil {
+		return res, err
+	}
+	s.logf("подъём головы %s в %s: ступень %s, %s", id, proj.Name, res.Rung, strings.Join(res.Lines, "; "))
+	switch res.Code {
+	case taskhead.CodeBusy:
+		where := ""
+		if len(res.Lines) > 0 {
+			where = strings.TrimPrefix(res.Lines[0], id+": ")
+		}
+		return res, &headBusy{id: id, where: where}
+	case taskhead.CodeCalled:
+		return res, errors.New(strings.Join(res.Lines, "; "))
+	}
+	// Новое окно встаёт под того же сторожа, что и разговор (chatwatch.go):
+	// без отметки его смерть не замечал никто, и оборванная работа стояла до
+	// тех пор, пока человек сам не напишет задаче (DK-660). У живого окна
+	// отметка уже есть, у headless окна нет вовсе.
+	if res.Rung == taskhead.RungWindow {
+		s.chatRaised(sess, "", id, proj.Name)
+	}
+	return res, nil
+}
+
+// headBusy это отказ занятого замка головы задачи.
+type headBusy struct{ id, where string }
+
+func (e *headBusy) Error() string { return runBusy(e.id, e.where) }
+
+// runBusy это отказ запуска поверх живой работы. Слова одни у живой
+// tmux-сессии и у занятого замка: для человека причина одна, работа уже идёт.
+func runBusy(id, where string) string {
+	return fmt.Sprintf("работа %s уже идёт (%s): запускать поверх живой сессии нельзя, сначала стоп", id, where)
+}
+
+// headWhere называет словами ступень, на которой встала голова, для ответа
+// ручки и строки отчёта.
+func headWhere(res taskhead.Result, sess string) string {
+	switch res.Rung {
+	case taskhead.RungLive:
+		return "репликой в живое окно задачи"
+	case taskhead.RungHeadless:
+		return "без окна, headless"
+	}
+	return "в tmux-сессии " + sess
 }
 
 func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
@@ -493,8 +506,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		}
 		if !talk[name] {
 			s.logf("запуск %s в %s отклонён: tmux-сессия %s уже идёт", id, found.Name, name)
-			writeJSON(w, http.StatusConflict, map[string]string{
-				"error": fmt.Sprintf("работа %s уже идёт (tmux-сессия %s): запускать поверх живой сессии нельзя, сначала стоп", id, name)})
+			writeJSON(w, http.StatusConflict, map[string]string{"error": runBusy(id, "tmux-сессия "+name)})
 			return
 		}
 		// Сессия без хода это досчитавший разговор (чаще всего груминг, который
@@ -613,8 +625,18 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if own != nil {
 		model = own.tierModel(tier)
 	}
-	if err := s.startTaskSession(found, id, sess, harness, model,
-		runPrompt(row.Sect, id), runPrompt("in-progress", id), false); err != nil {
+	res, err := s.startTaskSession(found, id, sess, harness, model,
+		runPrompt(row.Sect, id), runPrompt("in-progress", id), false)
+	if err != nil {
+		// Замок держит голова, поднятая мимо кнопки (тик командой `taskctl
+		// run`, человек из терминала). Для экрана это та же живая работа, что
+		// и tmux-сессия выше, и отказ у неё тот же, 409 теми же словами.
+		var busy *headBusy
+		if errors.As(err, &busy) {
+			s.logf("запуск %s в %s отклонён: замок головы занят 409", id, found.Name)
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
 		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -623,11 +645,12 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	// сказано тут именно про сессию конвейера. Куда она отдаст исполнителя
 	// дальше, решает вердикт pick по лестнице этой подписки, и обещать тут
 	// большее значило бы обещать чужую настройку.
+	where := headWhere(res, sess)
 	resp := map[string]string{"id": id, "kind": kind, "session": sess, "tier": tier,
-		"message": fmt.Sprintf("конвейер задачи %s поднят в tmux-сессии %s", id, sess)}
+		"message": fmt.Sprintf("конвейер задачи %s поднят %s", id, where)}
 	if harness != nil {
 		resp["harness"] = harness.Name
-		resp["message"] = fmt.Sprintf("конвейер задачи %s поднят на подписке %s (tmux-сессия %s)", id, harness.Name, sess)
+		resp["message"] = fmt.Sprintf("конвейер задачи %s поднят на подписке %s %s", id, harness.Name, where)
 	}
 	if model != "" {
 		resp["model"] = model
@@ -635,7 +658,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	// Откуда взялся ярус, сказано словами и в ответе, и в журнале: молчащий
 	// вердикт подменяет назначение, и человеку это видно.
 	resp["message"] += ", " + tierWhy
-	s.logf("задача %s поднята в %s (tmux-сессия %s%s), %s", id, found.Name, sess, harnessTail(harness), tierWhy)
+	s.logf("задача %s поднята в %s (%s%s), %s", id, found.Name, where, harnessTail(harness), tierWhy)
 	writeJSON(w, http.StatusOK, resp)
 }
 

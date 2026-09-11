@@ -417,7 +417,9 @@ else:
 	// Оболочка конвейера: на стенде она поднимает голову один раз и заказом
 	// первого прохода. Проходы, доска и журнал у настоящей оболочки проверяются
 	// своей самопроверкой, а тут смотрят, что подписка и заказ доезжают до
-	// клиента через неё.
+	// клиента через неё. Голову поднимает общий код taskhead (DK-935), и он ждёт,
+	// пока оболочка примет замок. Поддельный tmux исполняет окно до конца, так
+	// что замок оболочка передаёт фоновому держателю, живущему пару секунд.
 	taskRun := `#!/usr/bin/env python3
 import os
 import subprocess
@@ -426,10 +428,39 @@ import sys
 args = sys.argv[1:]
 tail = args[args.index("--") + 1:] if "--" in args else []
 order = args[args.index("--order") + 1] if "--order" in args else ""
-sys.exit(subprocess.run(tail + ["-p", order]).returncode)
+code = subprocess.run(tail + ["-p", order]).returncode
+pid = os.path.join(os.environ["HOME"], ".devkit", "task-%s.lock" % args[0].upper(), "pid")
+try:
+    owner = open(pid).read().strip()
+except OSError:
+    owner = ""
+if owner and owner == os.environ.get("DEVKIT_TASK_LOCK_FROM"):
+    holder = subprocess.Popen(["sleep", "2"], start_new_session=True, stdin=subprocess.DEVNULL,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    with open(pid + ".tmp", "w") as f:
+        f.write("%d\n" % holder.pid)
+    os.replace(pid + ".tmp", pid)
+sys.exit(code)
 `
-	return smokeWrite(filepath.Join(s.root, "devkit", "kit", "skills", "board-task", "task-run.py"),
-		taskRun, 0o755)
+	if err := smokeWrite(filepath.Join(s.root, "devkit", "kit", "skills", "board-task", "task-run.py"),
+		taskRun, 0o755); err != nil {
+		return err
+	}
+	// Клиента головы собирает секция [head] профиля подписки: у первой это её
+	// клиент, у второй он же за обвязкой agentctl exec, как у второй подписки
+	// кита.
+	tail := "model = [\"--model\", \"{model}\"]\nsession = [\"--session-id\", \"{session}\"]\n"
+	profiles := map[string]string{
+		smokeHarnessOne: fmt.Sprintf("[head]\nclient = [%q, \"--permission-mode\", \"auto\"]\n", smokeClientOne) + tail,
+		smokeHarnessTwo: fmt.Sprintf("[head]\nclient = [\"agentctl\", \"exec\", \"--harness\", %q, \"--\", %q, "+
+			"\"--permission-mode\", \"auto\"]\nbin = %q\n", smokeHarnessTwo, smokeClientTwo, smokeClientTwo) + tail,
+	}
+	for name, body := range profiles {
+		if err := smokeWrite(filepath.Join(s.root, "devkit", "kit", "harness", name+".toml"), body, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // smokeHarnessJSON это машинный вид agentctl harness --json: две включённые
@@ -587,6 +618,12 @@ func newSmoke(dir string) (*smoke, error) {
 	oldKit := kitDir
 	kitDir = func() string { return s.bin }
 	s.restore = append(s.restore, func() { kitDir = oldKit })
+	// Машинный дом у прогона тоже свой: в нём подъём головы берёт замок задачи
+	// и пишет строку реестра чатов (DK-935), и настоящий ~/.devkit прогон
+	// трогать не должен.
+	oldHome := realHomeFn
+	realHomeFn = func() string { return s.home }
+	s.restore = append(s.restore, func() { realHomeFn = oldHome })
 
 	static, err := fs.Sub(embedded, "static")
 	if err != nil {
@@ -1552,7 +1589,7 @@ func (s *smoke) stepHarnessRun() (string, error) {
 		return "", fmt.Errorf("журнала поднятых сессий нет: %v", err)
 	}
 	text := string(runs)
-	if !strings.Contains(text, "agentctl' exec --harness") {
+	if !strings.Contains(text, "agentctl exec --harness") {
 		return "", fmt.Errorf("команда сессии не завёрнута в agentctl exec:\n%s", text)
 	}
 	want := fmt.Sprintf("%s: подписка %s, заказ Выполни %s", smokeClientTwo, smokeHarnessTwo, smokeTask)

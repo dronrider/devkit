@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -66,11 +67,13 @@ func (s *server) reviewRound(proj *Project, id string, rows map[string]boardRow)
 	if own != nil && own.Default {
 		model = own.tierModel(tier)
 	}
-	if err := s.startTaskSession(proj, id, sess, nil, model, order, runPrompt("in-progress", id), true); err != nil {
-		return checkRunReport{Line: id + ": второй круг не начат, " + err.Error(), Failed: true}
+	res, err := s.startTaskSession(proj, id, sess, nil, model, order, runPrompt("in-progress", id), true)
+	if err != nil {
+		var busy *headBusy
+		return checkRunReport{Line: id + ": второй круг не начат, " + err.Error(), Failed: !errors.As(err, &busy)}
 	}
 	return checkRunReport{Raised: true,
-		Line: fmt.Sprintf("%s: второй круг поднят в tmux-сессии %s, %s", id, sess, tierWhy)}
+		Line: fmt.Sprintf("%s: второй круг поднят %s, %s", id, headWhere(res, sess), tierWhy)}
 }
 
 // cmdRound это вход команды `dashboard round <ID>`: второй круг чужого ревью

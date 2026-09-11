@@ -339,6 +339,7 @@ func parkedRaiseEnv(t *testing.T) (*testEnv, string) {
 	writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
 	writeTaskRunFake(t, filepath.Dir(e.proj))
 	writePermsFake(t, filepath.Dir(e.proj), false)
+	useHeadHome(t, e)
 	return e, tmuxLog
 }
 

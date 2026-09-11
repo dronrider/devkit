@@ -468,8 +468,9 @@ func TestLaunchEnvSameForEveryOrder(t *testing.T) {
 	}
 	orders := map[string]string{
 		"разговор": chatCmd(env, "opus", "", "привет", nil, "agentctl"),
-		"конвейер": sessionCommand("agentctl", "task-run.py", nil, env, "выполни XR-7",
-			"продолжай XR-7", "XR-7", "/тмп/проект", "проект", "opus"),
+		// Конвейеру окружение едет приставкой заказа taskhead (DK-935), и
+		// приставка эта та же сборка с меткой печатного режима на хвосте.
+		"конвейер": s.headlessEnv("XR-7", "task-XR-7", false),
 		"разбор": groomCmd(env, "разбери XR-7", nil, "opus"),
 	}
 	for name, cmd := range orders {

@@ -1,13 +1,17 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 // Доска для тестов запуска: цель XR-100 (заголовок от слова «Цель:») и
@@ -36,9 +40,24 @@ func writeTmuxFake(t *testing.T, bin, logPath, sessions string) {
 	// стопа, где ход прерывают на ходу.
 	body += fmt.Sprintf("capture-pane)\n  if [ -f %q ]; then cat %q; else printf '%%s\\n' %q; fi;;\n",
 		panePath(logPath), panePath(logPath), paneTurnScreen)
+	body += tmuxHeadWindow
 	body += "esac\nexit 0"
 	writeScript(t, bin, "tmux", body)
 }
+
+// tmuxHeadWindow это окно конвейера в поддельном tmux. Голову поднимает общий
+// код taskhead (DK-935), а он ждёт, пока оболочка в окне примет замок, так что
+// окно с task-run.py стенд запускает по-настоящему, фоном, и печатает адрес
+// панели, как с -P -F. Прочие окна (разговор, разбор, вход) стенду запускать
+// незачем, их проверяют по журналу вызовов.
+const tmuxHeadWindow = `new-session)
+  for last; do :; done
+  case "$last" in
+  *task-run.py*)
+    /bin/sh -c "$last" >/dev/null 2>&1 &
+    echo "%9";;
+  esac;;
+`
 
 // panePath это файл, которым стенд задаёт снимок окна поддельному tmux.
 func panePath(logPath string) string { return logPath + ".pane" }
@@ -107,17 +126,63 @@ func writeGoalRunFake(t *testing.T, root, pyBody string) {
 }
 
 // writeTaskRunFake кладёт фикстуру оболочки конвейера задачи в тот же
-// синтетический чекаут devkit. Настоящей оболочке тут работать не даёт стенд:
-// tmux фиктивный, и до запуска команды сессии дело не доходит, а искомость
-// файла дашборд проверяет до подъёма окна.
+// синтетический чекаут devkit, а рядом профили харнесов стенда. Настоящей
+// оболочке тут работать не даёт стенд, а фикстура делает ровно то, чего ждёт
+// подъём taskhead: принимает замок по DEVKIT_TASK_LOCK_FROM и держит его, пока
+// живёт.
 func writeTaskRunFake(t *testing.T, root string) {
 	t.Helper()
 	dir := filepath.Join(root, "devkit", "kit", "skills", "board-task")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "task-run.py"), []byte("import sys\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "task-run.py"), []byte(taskRunAdoptBody), 0o755); err != nil {
 		t.Fatal(err)
+	}
+	writeHeadProfiles(t, filepath.Join(root, "devkit"))
+}
+
+// taskRunAdoptBody это оболочка, принимающая замок: вписывает свой pid, если в
+// замке стоит pid подъёма, и живёт пару секунд, чтобы подъём успел это увидеть.
+const taskRunAdoptBody = `import os, sys, time
+pid = os.path.join(os.environ["HOME"], ".devkit", "task-%s.lock" % sys.argv[1].upper(), "pid")
+try:
+    owner = open(pid).read().strip()
+except OSError:
+    owner = ""
+if owner and owner == os.environ.get("DEVKIT_TASK_LOCK_FROM"):
+    with open(pid + ".tmp", "w") as f:
+        f.write("%d\n" % os.getpid())
+    os.replace(pid + ".tmp", pid)
+    time.sleep(3)
+`
+
+// writeHeadProfiles кладёт профили харнесов в синтетический чекаут devkit.
+// Своей подписке и подписке по умолчанию достаётся настоящий профиль кита:
+// режим разрешений и флаг яруса стенд проверяет по нему, и правка профиля,
+// потерявшая `--permission-mode auto`, уронила бы запуск (DK-739). Второй
+// подписке профиль пишется по образцу второй подписки кита, с обвязкой
+// `agentctl exec`.
+func writeHeadProfiles(t *testing.T, devkit string) {
+	t.Helper()
+	own, err := os.ReadFile(filepath.Join("..", "..", "kit", "harness", taskhead.DefaultHarness+".toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := `[head]
+client = ["agentctl", "exec", "--harness", "втораяtest", "--", "клиент-2", "--permission-mode", "auto"]
+bin = "клиент-2"
+model = ["--model", "{model}"]
+session = ["--session-id", "{session}"]
+`
+	for name, body := range map[string]string{"перваяtest": string(own), taskhead.DefaultHarness: string(own), "втораяtest": second} {
+		path := taskhead.ProfilePath(devkit, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -145,7 +210,31 @@ func runsEnv(t *testing.T, sessions string) (*testEnv, *http.Client, string) {
 	// Оболочка конвейера кладётся каждому стенду: без неё запуск задачи
 	// отказывает, и это отдельный случай со своим тестом.
 	writeTaskRunFake(t, filepath.Dir(e.proj))
+	useHeadHome(t, e)
 	return e, e.loggedClient(t), tmuxLog
+}
+
+// useHeadHome ставит машинным домом дом стенда. Замок и реестр головы лежат в
+// машинном доме, а настоящий дом разработчика подъём трогать не должен.
+func useHeadHome(t *testing.T, e *testEnv) {
+	t.Helper()
+	was := realHomeFn
+	realHomeFn = func() string { return e.home }
+	t.Cleanup(func() { realHomeFn = was })
+}
+
+// holdHeadLock занимает замок головы живым процессом: так его держит голова,
+// поднятая мимо дашборда, тиком командой `taskctl run` либо человеком.
+func holdHeadLock(t *testing.T, home, id string) {
+	t.Helper()
+	sleep := exec.Command("sleep", "30")
+	if err := sleep.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sleep.Process.Kill(); sleep.Wait() })
+	if err := taskhead.Take(taskhead.LockPath(home, id), sleep.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func doReq(t *testing.T, c *http.Client, method, url, body string) *http.Response {
@@ -298,24 +387,25 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 			// и канала в текст заказа больше не приписываются (DK-612): их
 			// доставляет хук старта сессии.
 			for _, want := range []string{
-				// Пары окружения едут в начале команды те же, что у диалога: их
+				// Окно заводит общий подъём taskhead (DK-935) под тем же именем,
+				// что и прежде.
+				"new-session -d -s task-" + tc.id + " -c " + e.proj,
+				// Пары окружения едут приставкой те же, что у диалога: их
 				// собирает одна сборка на все дороги подъёма (launchEnv).
 				// Впереди пар чистка чужого наследства, а метка печатного режима
 				// стоит за ними: tmux-сервер раздаёт новым окнам окружение той
 				// сессии, из которой его завели, и рубеж синхронности считал
-				// конвейер живым окном (DK-691).
-				"new-session -d -s task-" + tc.id + " -c " + e.proj + " " + dropForeign(),
-				// Имя сессии для реестра чатов, настоящий HOME (без него
-				// agentctl exec разворачивал тильду раскладки в подложном доме
-				// демона, и клиент второй подписки отвечал «Not logged in»),
-				// адрес демона для помощника askpass (DK-772) и заглушка опроса
-				// фокуса.
-				"DEVKIT_NO_FOCUS=1 HOME='" + realHomeFn() + "' DEVKIT_ADDR='" + e.s.cfg.ListenAddr() + "'" +
+				// конвейер живым окном (DK-691). Имя сессии для реестра чатов,
+				// настоящий HOME (без него agentctl exec разворачивал тильду
+				// раскладки в подложном доме демона, и клиент второй подписки
+				// отвечал «Not logged in»), адрес демона для помощника askpass
+				// (DK-772) и заглушка опроса фокуса.
+				dropForeign() + " DEVKIT_NO_FOCUS=1 HOME='" + realHomeFn() + "' DEVKIT_ADDR='" + e.s.cfg.ListenAddr() + "'" +
 					" DEVKIT_TASK='" + tc.id + "' DEVKIT_TMUX='task-" + tc.id + "' " + headlessMark,
 				// Голову поднимает оболочка проходов, а не клиент напрямую:
 				// печатная сессия живёт один ход, и без оболочки конвейер
 				// кончался на первом же ожидании.
-				"kit/skills/board-task/task-run.py' '" + tc.id + "' -C '" + e.proj + "' --project 'demo'",
+				"kit/skills/board-task/task-run.py " + tc.id + " -C " + e.proj + " --project demo",
 				" --order '" + tc.prompt + "'",
 				// Заказ следующих проходов всегда «продолжай»: строку к тому
 				// времени уже двигали, и начинать её заново нельзя.
@@ -328,6 +418,13 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 				if !strings.Contains(got, want) {
 					t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
 				}
+			}
+			// Замок передаётся оболочке парой подъёма, а приставка дашборда
+			// стоит за парами подъёма и перекрывает их: иначе дом и путь окна
+			// были бы домом и путём демона.
+			lock, drop := strings.Index(got, "DEVKIT_TASK_LOCK_FROM="), strings.Index(got, dropForeign())
+			if lock < 0 || drop < lock {
+				t.Errorf("приставка дашборда стоит не за парами подъёма:\n%s", got)
 			}
 		})
 	}
@@ -374,14 +471,12 @@ func TestRunStartOnChosenHarness(t *testing.T) {
 			t.Errorf("в ответе запуска нет %q: %s", want, text)
 		}
 	}
-	// agentctl зовётся полным путём: tmux-сессия наследует PATH дашборда, а под
-	// launchd он системный, и утилит devkit в нём может не быть. HOME в заказе
-	// настоящий: exec разворачивает тильду раскладки харнеса, и в подложном
-	// доме демона CLAUDE_CONFIG_DIR второй подписки указывал в пустой каталог.
-	// Клиент подписки стоит хвостом за оболочкой проходов: заказ ему приставляет
-	// она, и обвязка подписки от этого не меняется.
-	want := "-- '" + filepath.Join(e.bin, "agentctl") +
-		"' exec --harness 'втораяtest' -- 'клиент-2' --permission-mode auto"
+	// Обвязку подписки собирает секция [head] её профиля (DK-935). agentctl в
+	// ней стоит именем: путь окна приставка дашборда называет сама, с
+	// каталогом утилит кита, так что системный PATH демона под launchd его не
+	// теряет. Клиент подписки стоит хвостом за оболочкой проходов: заказ ему
+	// приставляет она, и обвязка подписки от этого не меняется.
+	want := "-- agentctl exec --harness 'втораяtest' -- 'клиент-2' --permission-mode auto"
 	got := readFile(t, tmuxLog)
 	if !strings.Contains(got, want) {
 		t.Errorf("tmux позван не так:\n%s\nожидал вхождение %q", got, want)
@@ -530,6 +625,53 @@ func TestRunStartAlreadyRunning(t *testing.T) {
 		if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "уже идёт") {
 			t.Errorf("запуск %s поверх живой сессии: %d %s, ожидал 409 про «уже идёт»", id, resp.StatusCode, text)
 		}
+	}
+}
+
+// Голову поднял тик командой `taskctl run` мимо кнопки: tmux-сессии под её
+// именем нет (голова идёт headless либо в чужом окне), а замок занят. Кнопка
+// отвечает тем же 409 и теми же словами, что поверх живой tmux-сессии, а
+// вторую голову не поднимает (DK-935).
+func TestRunStartBusyHeadLock(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "")
+	holdHeadLock(t, e.home, "XR-002")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("запуск поверх занятого замка: %d %s, ожидал 409", resp.StatusCode, text)
+	}
+	live, _, _ := runsEnv(t, `task-XR-002\n`)
+	liveResp := doReq(t, live.loggedClient(t), "POST", live.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+	liveText := body(t, liveResp)
+	for _, want := range []string{"работа XR-002 уже идёт (", "): запускать поверх живой сессии нельзя, сначала стоп"} {
+		if !strings.Contains(text, want) || !strings.Contains(liveText, want) {
+			t.Errorf("отказы разошлись словами, ждал в обоих %q:\nзамок: %s\nсессия: %s", want, text, liveText)
+		}
+	}
+	if !strings.Contains(text, "голова уже поднята: замок ") {
+		t.Errorf("отказ не назвал замок: %s", text)
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("поверх занятого замка поднято окно: %s", got)
+	}
+}
+
+// Голова кнопки держит тот же замок, что проверяет `taskctl run`: второй
+// подъём тем же кодом отказывает, и вторая голова рядом не встаёт (DK-935).
+func TestRunStartHeadTakesSharedLock(t *testing.T) {
+	e, c, _ := runsEnv(t, "")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск задачи: %d %s", resp.StatusCode, text)
+	}
+	lock := taskhead.LockPath(e.home, "XR-002")
+	owner := taskhead.Owner(lock)
+	if owner == 0 || owner == os.Getpid() || !taskhead.Alive(owner) {
+		t.Fatalf("замок головы не у оболочки конвейера: владелец %d", owner)
+	}
+	var busy *taskhead.BusyError
+	if err := taskhead.Take(lock, os.Getpid()); !errors.As(err, &busy) {
+		t.Fatalf("замок поднятой головы взялся вторым подъёмом: %v", err)
 	}
 }
 
@@ -1346,24 +1488,6 @@ func TestRunStartGoalCarriesTier(t *testing.T) {
 	}
 	if got := readFile(t, calls); !strings.Contains(got, "--tier base") {
 		t.Errorf("выбранный ярус не доехал до оболочки цели: %q", got)
-	}
-}
-
-// Клиент своей подписки поднимается в том же режиме разрешений, что и клиент
-// чужой: проход идёт headless, окна у него нет, и запрос разрешения одобрить
-// некому. Без флага дашборд перебивал умолчание самой оболочки проходов
-// (task-run.py ставит режим себе сам), и прогон сценария после автономного
-// слияния вставал на первом же требующем подтверждения вызове (DK-739).
-func TestClientCommandOwnHarnessGetsPermissionMode(t *testing.T) {
-	got := clientCommand("agentctl", nil, "opus")
-	if !strings.Contains(got, "--permission-mode auto") {
-		t.Errorf("своя подписка поднята без режима разрешений: %q", got)
-	}
-	if !strings.Contains(got, "--model 'opus'") {
-		t.Errorf("ярус потерялся: %q", got)
-	}
-	if bare := clientCommand("agentctl", nil, ""); !strings.Contains(bare, "--permission-mode auto") {
-		t.Errorf("запуск без яруса поднят без режима разрешений: %q", bare)
 	}
 }
 

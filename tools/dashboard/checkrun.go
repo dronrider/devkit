@@ -211,11 +211,15 @@ func (s *server) checkRun(proj *Project, id string, rows map[string]boardRow) ch
 				" сценарий прогоняет не автор правки, поднять другой моделью руками либо развести ярусы в раскладке машины",
 			id, tier, model)}
 	}
-	if err := s.startTaskSession(proj, id, sess, nil, model,
-		checkRunOrder(id, dev, row.Accept), runPrompt("in-progress", id), true); err != nil {
-		return checkRunReport{Line: id + ": прогон не поднят, " + err.Error(), Failed: true}
+	res, err := s.startTaskSession(proj, id, sess, nil, model,
+		checkRunOrder(id, dev, row.Accept), runPrompt("in-progress", id), true)
+	if err != nil {
+		// Занятый замок это живая голова, поднятая мимо дашборда, и поломкой он
+		// не считается, как и живая tmux-сессия выше.
+		var busy *headBusy
+		return checkRunReport{Line: id + ": прогон не поднят, " + err.Error(), Failed: !errors.As(err, &busy)}
 	}
-	line := fmt.Sprintf("%s: прогон сценария поднят в tmux-сессии %s, %s", id, sess, tierWhy)
+	line := fmt.Sprintf("%s: прогон сценария поднят %s, %s", id, headWhere(res, sess), tierWhy)
 	switch {
 	case known && model != "":
 		line += fmt.Sprintf(", модель %s, разработку вёл %s", model, dev)

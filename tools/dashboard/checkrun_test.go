@@ -177,6 +177,26 @@ func TestCheckRunRaisesSession(t *testing.T) {
 	}
 }
 
+// Замок головы занят подъёмом мимо дашборда: прогон не поднимается вторым,
+// а отчёт называет живую работу теми же словами, что кнопка экрана, и
+// поломкой её не считает (DK-935).
+func TestCheckRunBusyLockIsNotFailure(t *testing.T) {
+	e, tmuxLog := checkEnv(t, "")
+	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc)
+	holdHeadLock(t, e.home, "XR-003")
+
+	rep := checkRunOne(t, e, "XR-003")
+	if rep.Raised || rep.Failed {
+		t.Fatalf("занятый замок отчитан не как живая работа: %+v", rep)
+	}
+	if !strings.Contains(rep.Line, "работа XR-003 уже идёт (голова уже поднята: замок ") {
+		t.Errorf("отчёт не назвал замок: %q", rep.Line)
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("поверх занятого замка поднято окно: %s", got)
+	}
+}
+
 // Кому прогон не отдавать, сказано в самом заказе: ворота закрытия сверяют
 // прогонявшего с исполнителем разработки, и узнать имя после отказа дороже,
 // чем получить его до прогона.

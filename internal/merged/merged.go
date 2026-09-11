@@ -1,7 +1,9 @@
-// Package merged держит признак «слита» из решения 2 LLD DK-933: работа
-// задачи лежит в main и не откачена. Признак читают agentctl (условие «слита» у
-// wait), а за ней taskctl и shipctl (снятость ребра «после»), и у трёх утилит
-// он обязан совпадать. Отдельная копия в каждой разошлась бы на первой правке.
+// Package merged держит два слоя решения 2 LLD DK-933. Нижний это признак
+// «слита»: работа задачи лежит в main и не откачена, его читает условие «слита»
+// у agentctl wait. Верхний это снятость ребра «после» (edge.go), она добавляет к
+// признаку архив, пометку провала и вид приёмки, её читают taskctl и shipctl.
+// У трёх утилит ответ обязан совпадать, и отдельная копия в каждой разошлась бы
+// на первой правке.
 //
 // Ветку слитой задачи shipctl удаляет, и `git merge-base --is-ancestor` по ней
 // после слияния отвечать нечем. Опорой служат запись «Выкат» в файле задачи и
@@ -56,29 +58,129 @@ func short(sha string) string {
 // отличается от codeCommits в shipctl. Откат задачи новее её работы делает
 // признак ложным до следующего слияния.
 func Task(root, main, id string) (Verdict, error) {
-	rec := Record(root, main, id)
-	log, err := git(root, "log", main, "--format=%H%x09%s")
+	return (&Book{root: root, main: main}).Task(id)
+}
+
+// Book это лог main, прочитанный один раз на команду. Признак у доски
+// спрашивают десятки рёбер разом (`list --json`, lint, slot), а лог, файлы
+// коммитов и список деревьев у них общие. Книга живёт одну команду и
+// перечитывать себя не умеет: доска и main за это время не двигаются.
+type Book struct {
+	root, main string
+	mainErr    error
+	read       bool
+	log        []logLine
+	logErr     error
+	trees      []string
+	work       map[string]bool
+	edges      map[Prereq]Edge
+}
+
+type logLine struct{ sha, subj string }
+
+// Open заводит книгу репозитория root, основную ветку она называет сама. Без
+// git и без main книга отвечает ошибкой на каждый вопрос признака, а снятость
+// ребра в таком случае сводится к архиву.
+func Open(root string) *Book {
+	b := &Book{root: root}
+	b.main, b.mainErr = Main(root)
+	return b
+}
+
+// Task это признак «слита» из книги, правило то же, что у Task пакета.
+func (b *Book) Task(id string) (Verdict, error) {
+	v, _, err := b.scan(id, false)
+	return v, err
+}
+
+// Ever отвечает, ложилась ли работа задачи в main хоть раз, откачена она
+// потом или нет. По нему lint отличает начатую строку, которую ворота старта
+// когда-то пустили, от строки, пущенной мимо них.
+func (b *Book) Ever(id string) (bool, error) {
+	_, ever, err := b.scan(id, true)
+	return ever, err
+}
+
+// scan идёт по логу от новых к старым. Первый коммит задачи даёт признак.
+// С past обход после отката продолжается до первой работы: так считается Ever.
+func (b *Book) scan(id string, past bool) (Verdict, bool, error) {
+	lines, err := b.lines()
 	if err != nil {
-		return Verdict{}, fmt.Errorf("лог %s не прочитан: %v", main, err)
+		return Verdict{}, false, err
 	}
-	for _, ln := range strings.Split(log, "\n") {
-		sha, subj, ok := strings.Cut(ln, "\t")
-		if !ok || (!OwnsSubject(subj, id) && !inRecord(rec, sha)) {
+	rec := b.record(id)
+	var v Verdict
+	found := false
+	for _, ln := range lines {
+		if !OwnsSubject(ln.subj, id) && !inRecord(rec, ln.sha) {
 			continue
 		}
-		if IsRevert(subj) {
-			return Verdict{Reverted: true, Sha: sha, Subject: subj}, nil
+		if IsRevert(ln.subj) {
+			if !found {
+				v, found = Verdict{Reverted: true, Sha: ln.sha, Subject: ln.subj}, true
+			}
+			if !past {
+				return v, false, nil
+			}
+			continue
 		}
-		files, err := git(root, "show", "--name-only", "--pretty=", sha)
+		work, err := b.isWork(ln.sha)
 		if err != nil {
-			return Verdict{}, err
+			return Verdict{}, false, err
 		}
-		if BoardOnly(files) {
+		if !work {
 			continue
 		}
-		return Verdict{Merged: true, Sha: sha, Subject: subj}, nil
+		if !found {
+			v = Verdict{Merged: true, Sha: ln.sha, Subject: ln.subj}
+		}
+		return v, true, nil
 	}
-	return Verdict{}, nil
+	return v, false, nil
+}
+
+func (b *Book) lines() ([]logLine, error) {
+	if b.mainErr != nil {
+		return nil, b.mainErr
+	}
+	if b.read {
+		return b.log, b.logErr
+	}
+	b.read = true
+	out, err := git(b.root, "log", b.main, "--format=%H%x09%s")
+	if err != nil {
+		b.logErr = fmt.Errorf("лог %s не прочитан: %v", b.main, err)
+		return nil, b.logErr
+	}
+	for _, ln := range strings.Split(out, "\n") {
+		if sha, subj, ok := strings.Cut(ln, "\t"); ok {
+			b.log = append(b.log, logLine{sha, subj})
+		}
+	}
+	return b.log, nil
+}
+
+// isWork отвечает, трогает ли коммит что-то кроме доски и файлов задач.
+func (b *Book) isWork(sha string) (bool, error) {
+	if w, ok := b.work[sha]; ok {
+		return w, nil
+	}
+	files, err := git(b.root, "show", "--name-only", "--pretty=", sha)
+	if err != nil {
+		return false, err
+	}
+	if b.work == nil {
+		b.work = map[string]bool{}
+	}
+	b.work[sha] = !BoardOnly(files)
+	return b.work[sha], nil
+}
+
+func (b *Book) record(id string) []string {
+	if b.trees == nil {
+		b.trees = trees(b.root)
+	}
+	return record(b.root, b.main, id, b.trees)
 }
 
 // Record собирает коммиты записи «Выкат» задачи id из всех мест, где свежая
@@ -88,11 +190,15 @@ func Task(root, main, id string) (Verdict, error) {
 // с архивом файлов задач. Лишний коммит в объединении вреда не делает: в
 // расчёт идут только коммиты, лежащие в логе main.
 func Record(root, main, id string) []string {
+	return record(root, main, id, trees(root))
+}
+
+func record(root, main, id string, dirs []string) []string {
 	var docs []string
 	if out, err := git(root, "show", main+":docs/tasks/"+id+".md"); err == nil {
 		docs = append(docs, out)
 	}
-	for _, dir := range trees(root) {
+	for _, dir := range dirs {
 		files := []string{filepath.Join(dir, "docs", "tasks", id+".md")}
 		if more, err := filepath.Glob(filepath.Join(dir, "docs", "tasks", "archive", "*", id+".md")); err == nil {
 			files = append(files, more...)

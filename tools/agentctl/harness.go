@@ -124,6 +124,11 @@ var profileSchema = []sectionSpec{
 // вклейку правил.
 var optionalSchema = []sectionSpec{
 	{"skills", []keySpec{{"dir", tomlStr}, {"format", tomlStr}, {"discovery", tomlStr}}},
+	// Голова задачи (DK-931): чем её поднимает taskctl run. Читает секцию
+	// internal/taskhead, тут она сверяется только типами. Профиль без неё
+	// законен, подъём на нём откажет сам со своими словами.
+	{"head", []keySpec{{"client", tomlArr}, {"bin", tomlStr}, {"model", tomlArr},
+		{"session", tomlArr}, {"resume", tomlArr}, {"turn_end", tomlStr}}},
 }
 
 var discoveryValues = []string{"auto", "manual"}

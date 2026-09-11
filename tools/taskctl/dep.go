@@ -97,8 +97,9 @@ type DepParams struct {
 	Commit    CommitOpts
 }
 
-// cmdDepAdd ставит «A после B»: A с этого момента не может уйти в работу,
-// пока B не закрыта.
+// cmdDepAdd ставит «A после B»: A с этого момента не уходит в работу из
+// Backlog, пока ребро не снято, то есть работа B не слита в main или B не
+// закрыта (решение 2 LLD DK-933).
 func cmdDepAdd(root string, p DepParams) (string, error) {
 	if err := p.Commit.validate(); err != nil {
 		return "", err
@@ -127,13 +128,14 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 	if b.find(p.DepID) == nil && !arch.has(p.DepID) {
 		return "", fmt.Errorf("%s нет ни на доске, ни в архиве", p.DepID)
 	}
-	// Симметрично страховке move: если задача уже в работе, на проверке или на
-	// внешнем блокере, свежая незакрытая зависимость молча делает доску красной
-	// по lint. Blocked тут наравне с остальными: ждать своей же задачи и
-	// обстоятельства снаружи разом это ровно та путаница, которую развели в
-	// RULES.board.md, «Трекинг задач» п. 4.
-	if (row.Sect == SectInProgress || row.Sect == SectCheck || row.Sect == SectBlocked) && !arch.has(p.DepID) {
-		return "", fmt.Errorf("%s уже в %s, нельзя добавить незакрытую зависимость %s", p.ID, sectTitles[row.Sect], p.DepID)
+	// Симметрично воротам старта: начатой строке ребро дописывается, только
+	// когда оно уже снято (решение 2 LLD DK-933). Blocked тут наравне с
+	// остальными: ждать своей же задачи и обстоятельства снаружи разом это
+	// ровно та путаница, которую развели в RULES.board.md, «Трекинг задач» п. 4.
+	if row.Sect == SectInProgress || row.Sect == SectCheck || row.Sect == SectBlocked {
+		if ed := newEdges(root, b, arch).of(p.DepID); !ed.Lifted() {
+			return "", fmt.Errorf("%s уже в %s, нельзя добавить неснятое ребро на %s: %s", p.ID, sectTitles[row.Sect], p.DepID, ed.Why)
+		}
 	}
 	base, deps, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 	for _, d := range deps {

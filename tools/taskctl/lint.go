@@ -99,7 +99,7 @@ func cmdLint(root string) ([]string, error) {
 		}
 		finds = append(finds, checkLinks(root, ap, r.LineIdx, arch.Lines[r.LineIdx])...)
 	}
-	finds = append(finds, lintDeps(b, arch, bp)...)
+	finds = append(finds, lintDeps(root, b, arch, bp)...)
 	finds = append(finds, lintFailed(b, bp)...)
 	finds = append(finds, lintAcceptance(root, b, bp)...)
 	finds = append(finds, lintFormOrder(root, b)...)
@@ -233,11 +233,14 @@ func lintFailed(b *Board, bp string) []string {
 
 // lintDeps проверяет инварианты маркера «[после ...]»: ID существует (на
 // доске или в архиве), не сам на себя, без дублей внутри маркера, без
-// циклов; задача в работе или на проверке с незакрытой зависимостью это
-// отдельная находка, и место у такой строки одно, Backlog: ждать своей же
-// задачи это маркер «после», а Blocked отдан обстоятельствам снаружи доски
-// (RULES.board.md, «Трекинг задач» п. 4).
-func lintDeps(b *Board, arch *Archive, bp string) []string {
+// циклов. Начатая строка с ребром, которое ворота старта не пропустили бы ни
+// разу, это отдельная находка, и место у такой строки одно, Backlog: ждать
+// своей же задачи это маркер «после», а Blocked отдан обстоятельствам снаружи
+// доски (RULES.board.md, «Трекинг задач» п. 4). Ребро, вернувшееся откатом или
+// провалом предпосылки, находкой не считается: такую строку держат ворота
+// слияния, а вернуть её в Backlog значило бы потерять начатую работу (решение
+// 2 LLD DK-933).
+func lintDeps(root string, b *Board, arch *Archive, bp string) []string {
 	var finds []string
 	for _, r := range b.Rows {
 		where := fmt.Sprintf("%s:%d: %s", bp, r.LineIdx+1, r.ID)
@@ -255,13 +258,14 @@ func lintDeps(b *Board, arch *Archive, bp string) []string {
 			seen[d] = true
 		}
 	}
+	ed := newEdges(root, b, arch)
 	for _, key := range []string{SectInProgress, SectCheck, SectBlocked} {
 		for _, r := range b.Sects[key].Rows {
 			_, deps, _, _, _ := splitTitle(r.Title)
 			for _, d := range deps {
-				if !arch.has(d) {
-					finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с незакрытой зависимостью %s, вернуть в Backlog",
-						bp, r.LineIdx+1, r.ID, sectTitles[key], d))
+				if ok, why := ed.startable(d); !ok {
+					finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с неснятым ребром на %s (%s), вернуть в Backlog",
+						bp, r.LineIdx+1, r.ID, sectTitles[key], d, why))
 				}
 			}
 		}

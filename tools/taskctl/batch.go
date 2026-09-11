@@ -38,19 +38,6 @@ func isLLD(t string) bool {
 	return false
 }
 
-// openDeps возвращает ID из «[после ...]», которых нет в архиве, то есть
-// незакрытые зависимости задачи.
-func openDeps(r *Row, arch *Archive) []string {
-	_, deps, _, _, _ := splitTitle(r.Title)
-	var open []string
-	for _, d := range deps {
-		if !arch.has(d) {
-			open = append(open, d)
-		}
-	}
-	return open
-}
-
 // cmdBatch отбирает кандидатов в поезд выката по тем критериям правила, что
 // читаются с доски. Проверки идут фиксированным порядком, и задача попадает в
 // отказ по первой непрошедшей, то есть ровно в одну группу.
@@ -66,6 +53,7 @@ func cmdBatch(root string, limit int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	ed := newEdges(root, b, arch)
 	var taken, takenIDs []string
 	byLink := map[string]string{}
 	g := &batchGroups{}
@@ -85,8 +73,8 @@ func cmdBatch(root string, limit int) (string, error) {
 			g.add("цена не S и не M", fmt.Sprintf("%s (%s)", r.ID, r.Cost))
 		case unc > 1:
 			g.add("неопределённость выше 1", fmt.Sprintf("%s (%d)", r.ID, unc))
-		case len(openDeps(r, arch)) > 0:
-			g.add("ждут незакрытых зависимостей", r.ID)
+		case len(ed.heldIDs(r)) > 0:
+			g.add("ждут неснятых рёбер «после»", r.ID)
 		case byLink[r.Link] != "":
 			g.add("ссылка та же, что у отобранной", fmt.Sprintf("%s (как у %s)", r.ID, byLink[r.Link]))
 		case len(takenIDs) == limit:

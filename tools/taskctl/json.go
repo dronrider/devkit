@@ -17,9 +17,13 @@ import (
 // суффиксы, ранг на сумму и слагаемые, дата последней правки строки лежит
 // отдельным полем, пометки list («код слит», возраст) отдельным списком.
 type jsonRow struct {
-	ID     string   `json:"id"`
-	Title  string   `json:"title"`
-	After  []string `json:"after,omitempty"`
+	ID    string   `json:"id"`
+	Title string   `json:"title"`
+	After []string `json:"after,omitempty"`
+	// HeldBy это неснятые рёбра строки (решение 2 LLD DK-933). Маркер «после»
+	// снимает только close, а ребро снимается уже слиянием предпосылки, и
+	// держит строку на экране это поле, а не after.
+	HeldBy []string `json:"held_by,omitempty"`
 	Accept string   `json:"accept,omitempty"`
 	Fail   string   `json:"fail,omitempty"`
 	Block  string   `json:"block,omitempty"`
@@ -72,12 +76,13 @@ func sufText(suf, label string) string {
 	return strings.TrimSpace(strings.TrimSuffix(s, "]"))
 }
 
-func makeJSONRow(root string, r *Row, times map[int]int64, clean bool) jsonRow {
+func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, clean bool) jsonRow {
 	base, deps, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
 	return jsonRow{
 		ID:     r.ID,
 		Title:  strings.TrimSpace(base),
 		After:  deps,
+		HeldBy: ed.heldIDs(r),
 		Accept: sufText(acceptSuf, "приёмка"),
 		Fail:   sufText(failSuf, "провал"),
 		Block:  sufText(blockSuf, "блок"),
@@ -108,6 +113,11 @@ func cmdListJSON(root, sect string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	arch, err := LoadArchive(archivePath(root))
+	if err != nil {
+		return "", err
+	}
+	ed := newEdges(root, b, arch)
 	clean := boardClean(root)
 	var times map[int]int64
 	if clean {
@@ -125,7 +135,7 @@ func cmdListJSON(root, sect string) (string, error) {
 	for _, key := range keys {
 		sec := jsonSection{Key: key, Title: sectTitles[key], Rows: []jsonRow{}}
 		for _, r := range b.Sects[key].Rows {
-			sec.Rows = append(sec.Rows, makeJSONRow(root, r, times, clean))
+			sec.Rows = append(sec.Rows, makeJSONRow(root, r, ed, times, clean))
 		}
 		out.Sections = append(out.Sections, sec)
 	}
@@ -149,9 +159,13 @@ func cmdShowJSON(root, id string) (string, error) {
 		return "", err
 	}
 	sides := depSides(b)
+	arch, err := LoadArchive(archivePath(root))
+	if err != nil {
+		return "", err
+	}
 	if row := b.find(id); row != nil {
 		out := jsonShow{
-			jsonRow: makeJSONRow(root, row, showTimes(root), true),
+			jsonRow: makeJSONRow(root, row, newEdges(root, b, arch), showTimes(root), true),
 			Sect:    row.Sect,
 		}
 		if s := sides[id]; s != nil {
@@ -162,10 +176,6 @@ func cmdShowJSON(root, id string) (string, error) {
 			out.File = rel
 		}
 		return marshal(out)
-	}
-	arch, err := LoadArchive(archivePath(root))
-	if err != nil {
-		return "", err
 	}
 	if r := arch.find(id); r != nil {
 		out := jsonShow{
@@ -247,6 +257,24 @@ type jsonDep struct {
 	Blocks    []string `json:"blocks,omitempty"`
 	Archived  bool     `json:"archived,omitempty"`
 	AfterNote string   `json:"after_note,omitempty"`
+	// Edges это состояние каждого ребра из after словами «слита», «закрыта»
+	// и «ждёт» с причиной (решение 2 LLD DK-933).
+	Edges []jsonEdge `json:"edges,omitempty"`
+}
+
+type jsonEdge struct {
+	ID    string `json:"id"`
+	State string `json:"state"`
+	Why   string `json:"why"`
+}
+
+func jsonEdges(ed *edges, deps []string) []jsonEdge {
+	var out []jsonEdge
+	for _, d := range deps {
+		e := ed.of(d)
+		out = append(out, jsonEdge{ID: d, State: e.State, Why: e.Why})
+	}
+	return out
 }
 
 func cmdDepListJSON(root, id string) (string, error) {
@@ -254,11 +282,17 @@ func cmdDepListJSON(root, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	arch, err := LoadArchive(archivePath(root))
+	if err != nil {
+		return "", err
+	}
+	ed := newEdges(root, b, arch)
 	sides := depSides(b)
 	if id != "" {
 		d := jsonDep{ID: id}
 		if s := sides[id]; s != nil {
 			d.After, d.Blocks = s.after, s.blocks
+			d.Edges = jsonEdges(ed, s.after)
 		}
 		if b.find(id) == nil {
 			archived, err := inArchive(root, id)
@@ -268,7 +302,7 @@ func cmdDepListJSON(root, id string) (string, error) {
 			if !archived {
 				return "", fmt.Errorf("%s нет ни на доске, ни в архиве", id)
 			}
-			d.After, d.Archived, d.AfterNote = nil, true, archiveAfterNote
+			d.After, d.Archived, d.AfterNote, d.Edges = nil, true, archiveAfterNote, nil
 		}
 		return marshal(d)
 	}
@@ -278,7 +312,7 @@ func cmdDepListJSON(root, id string) (string, error) {
 		if s == nil || (len(s.after) == 0 && len(s.blocks) == 0) {
 			continue
 		}
-		deps = append(deps, jsonDep{ID: r.ID, After: s.after, Blocks: s.blocks})
+		deps = append(deps, jsonDep{ID: r.ID, After: s.after, Blocks: s.blocks, Edges: jsonEdges(ed, s.after)})
 	}
 	return marshal(struct {
 		Deps []jsonDep `json:"deps"`

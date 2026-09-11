@@ -238,6 +238,7 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	ed := newEdges(root, b, arch)
 	home, _ := os.UserHomeDir()
 	busy := works.Busy(b.Prefix, home, root)
 	clean := boardClean(root)
@@ -266,8 +267,8 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 		switch {
 		case limit < 1:
 			g.add("нет квоты на пачку", r.ID)
-		case len(openDeps(r, arch)) > 0:
-			g.add("незакрытая предпосылка", fmt.Sprintf("%s (ждут %s)", r.ID, strings.Join(openDeps(r, arch), ", ")))
+		case len(ed.heldIDs(r)) > 0:
+			g.add("неснятое ребро «после»", fmt.Sprintf("%s (ждут %s)", r.ID, strings.Join(ed.heldIDs(r), ", ")))
 		case unc > 1:
 			g.add("неопределённость выше 1", fmt.Sprintf("%s (%d)", r.ID, unc))
 		case !priced:

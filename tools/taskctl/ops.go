@@ -532,16 +532,18 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	if row.Sect == target {
 		return "", fmt.Errorf("%s уже в %s", id, target)
 	}
-	if target == SectInProgress {
+	// Ворота старта стоят только на выходе из Backlog (решение 2 LLD DK-933).
+	// Ребро начатой строки может вернуться откатом или провалом предпосылки, и
+	// такую строку держат ворота слияния shipctl. Возврат из Check и выход из
+	// Blocked рёбер не проверяют, иначе зависимую, чей код уже в main, не
+	// вернуть на доработку до нового слияния предпосылки.
+	if target == SectInProgress && row.Sect == SectBacklog {
 		arch, err := LoadArchive(archivePath(root))
 		if err != nil {
 			return "", err
 		}
-		_, deps, _, _, _ := splitTitle(row.Title)
-		for _, d := range deps {
-			if !arch.has(d) {
-				return "", fmt.Errorf("%s зависит от незакрытой %s, нельзя перевести в in-progress", id, d)
-			}
+		if held := newEdges(root, b, arch).held(row); len(held) > 0 {
+			return "", fmt.Errorf("%s ждёт предпосылку: %s; ребро «после» снимает слияние её работы в main либо закрытие, нельзя перевести в in-progress", id, edgeWords(held))
 		}
 	}
 	if target == SectCheck {

@@ -336,13 +336,13 @@ func TestLintDeps(t *testing.T) {
 		"маркер «после» дублирует XR-021",
 		"маркер «после» ссылается на несуществующую задачу XR-999",
 		"цикл зависимостей",
-		"XR-020 в In progress с незакрытой зависимостью XR-021, вернуть в Backlog",
+		"XR-020 в In progress с неснятым ребром на XR-021",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("нет находки %q среди:\n%s", want, joined)
 		}
 	}
-	if strings.Contains(joined, "незакрытой зависимостью XR-007") {
+	if strings.Contains(joined, "ребром на XR-007") {
 		t.Errorf("зависимость на закрытую (архивную) задачу не должна считаться незакрытой:\n%s", joined)
 	}
 }
@@ -395,7 +395,7 @@ func TestLintDepsFindsBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(finds, "\n"), "XR-004 в Blocked с незакрытой зависимостью XR-001, вернуть в Backlog") {
+	if !strings.Contains(strings.Join(finds, "\n"), "XR-004 в Blocked с неснятым ребром на XR-001") {
 		t.Fatalf("нет находки про блокер с зависимостью: %v", finds)
 	}
 }

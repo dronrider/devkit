@@ -96,7 +96,7 @@ func TestListAnnotatesCheckRows(t *testing.T) {
 	}
 	for _, want := range []string{
 		"| XR-010 | Со сценарием агента и выкатом",
-		"  код слит, вид agent, строка не двигалась 10 дней",
+		"  код слит, вид agent, без отметки smoke, строка не двигалась 10 дней",
 		"| XR-011 | Пользовательская проверка без выката [приёмка: user]",
 		"  без выката, вид user, строка не двигалась 10 дней",
 		"| XR-012 | Без файла задачи",
@@ -154,7 +154,7 @@ func TestShowAnnotatesCheckRow(t *testing.T) {
 	}
 	for _, want := range []string{
 		"XR-010 в check",
-		"код слит, вид agent, строка не двигалась 1 день",
+		"код слит, вид agent, без отметки smoke, строка не двигалась 1 день",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("в show нет %q:\n%s", want, out)

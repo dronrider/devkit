@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // taskFilePath собирает путь к файлу задачи так же, как это делает shipctl
@@ -93,11 +95,24 @@ func checkMarkLabel(root, id, title string) string {
 	if !ok {
 		return "вид " + kind
 	}
-	q := "без выката"
-	if queue {
-		q = "код слит"
+	if !queue {
+		return "без выката, вид " + kind
 	}
-	return q + ", вид " + kind
+	// Отметка smoke называется словами с DK-947: по ней оболочка конвейера
+	// (task-run.py) отличает строку, которую ждёт человек, от строки, которую
+	// ждёт проверяющий. Строку без отметки конвейер не сдаёт человеку, а
+	// передаёт подъёму проверяющего, и другого машинного ответа про отметку у
+	// taskctl нет.
+	return "код слит, вид " + kind + ", " + smokeMark(root, id)
+}
+
+// smokeMark это состояние отметки прогона словами: стоит или нет.
+func smokeMark(root, id string) string {
+	data, err := os.ReadFile(taskFilePath(root, id))
+	if err != nil || !taskform.SmokeCovers(string(data)) {
+		return "без отметки smoke"
+	}
+	return "smoke прогнан"
 }
 
 // timeNow подменяется тестами, чтобы возраст строки считался от известного

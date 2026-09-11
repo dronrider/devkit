@@ -118,6 +118,20 @@ if entry:
     with open(goal, "w", encoding="utf-8") as f:
         f.write("\n".join(out))
 
+if "ожидание" in parts:
+    # Отметка машинного ожидания тем же форматом, каким её пишет agentctl wait:
+    # виток упёрся в чужую очередь выката и ждёт срока вместо стопа.
+    import json as marks
+    import time as clock
+    d = os.environ.get("DEVKIT_WAIT_DIR") or ""
+    os.makedirs(d, exist_ok=True)
+    now = clock.time()
+    when = lambda t: clock.strftime("%Y-%m-%dT%H:%M:%S", clock.localtime(t))
+    with open(os.path.join(d, "DK-100.json"), "w", encoding="utf-8") as f:
+        marks.dump({"task": "DK-100", "kind": "срок", "since": when(now),
+                    "until": when(now + 1),
+                    "note": "очередь выката держит чужая задача"}, f)
+
 if "замок" in parts:
     lock = os.path.join(root, "proj", ".devkit", "goal-DK-100.lock")
     if os.path.isdir(lock):
@@ -259,6 +273,11 @@ class Stand:
         # (обрыв на стороне API немедленный повтор встретит тем же обрывом),
         # стенду она только добавляет секунд, поэтому по умолчанию ноль.
         env["DEVKIT_GOAL_RETRY_PAUSE"] = pause
+        # Каталог отметок ожидания уводится в корень стенда обоим, стабу за
+        # agentctl wait и оболочке: машинный каталог тут ни при чём. Шаг
+        # ожидания стенду ни к чему длинный, ждёт он секунду.
+        env["DEVKIT_WAIT_DIR"] = os.path.join(root, "waits")
+        env["DEVKIT_GOAL_WAIT_STEP"] = "0.1"
         return env
 
     def goal_run(self, root, *args, pause="0"):
@@ -315,6 +334,20 @@ class GoalRunTests(Stand, unittest.TestCase):
         self.assertIn("уровень громкий", self.notify_log(root))
         self.assertFalse(os.path.isdir(os.path.join(root, "proj", ".devkit", "goal-DK-100.lock")),
                          "замок остался после цикла")
+
+    def test_wait_mark_holds_the_loop_instead_of_empty_turns(self):
+        # Кейс 3 DK-947: виток упёрся в чужую задачу в Check, за которой стоит
+        # его поезд. Чужой smoke он не гоняет и wait-human не выходит: кладёт
+        # отметку ожидания, выходит continue, а оболочка ждёт за него срока.
+        # Следующий виток спрашивает очередь заново.
+        root = self.stand("continue ожидание", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.turns_done(root), 2)
+        log = self.shell_log(root)
+        self.assertIn("виток 1 кончился ожиданием", log)
+        self.assertIn("очередь выката держит чужая задача", log)
+        self.assertIn("ожидание витка 1 кончилось", log)
 
     def test_each_terminal_marker_stops_on_first_turn(self):
         # Каждый маркер, кроме continue, завершает цикл первым же витком.

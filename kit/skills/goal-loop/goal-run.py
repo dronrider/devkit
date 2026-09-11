@@ -86,6 +86,16 @@ ASK_POLL = 1
 # ждёт, и ждёт коротко: замок держат на одну запись файла.
 ASK_LOCK_WAIT = 5
 STAMP = "%Y-%m-%dT%H:%M:%S"
+# Отметки машинного ожидания (DK-899): их пишет `agentctl wait`, по файлу на
+# задачу, и цикл цели ждёт по ним так же, как оболочка задачи (DK-947). Каталог
+# подменяется тем же ключом, каким подменяет его себе сама утилита: настоящий
+# общий на машину, и стенду в нём не место.
+WAITS_DIR = os.path.join(os.path.expanduser("~"), ".devkit", "waits")
+WAITS_ENV = "DEVKIT_WAIT_DIR"
+WAIT_STEP = 5
+WAIT_STEP_ENV = "DEVKIT_GOAL_WAIT_STEP"
+# Потолок ожидания цикла: дольше этого виток не ждёт даже со сроком в отметке.
+WAIT_CAP = 2 * 60 * 60
 
 USAGE = """\
 goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <строка> | --ask <вопрос>]
@@ -720,6 +730,63 @@ class Loop:
                       % (marker, self.id), 0)
         return ("", "", after > before)
 
+    def wait_stamp(self, value):
+        """Время из поля отметки в секундах или None."""
+        try:
+            return time.mktime(time.strptime(str(value), STAMP))
+        except (TypeError, ValueError):
+            return None
+
+    def wait_mark(self, began):
+        """Отметка ожидания этого витка или None. Чужая сюда не попадает: файл
+        называется ID цели. Отметка старше витка осталась от прошлого раза,
+        отметка с истёкшим сроком это уже не ожидание, а срок выше потолка
+        оболочка не берёт: ждать полдня цикл не должен. Секунда допуска в
+        сравнении со стартом витка покрывает грубость времени в записи."""
+        path = os.path.join((os.environ.get(WAITS_ENV) or "").strip() or WAITS_DIR,
+                            self.id + ".json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                mark = json.load(f)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(mark, dict):
+            return None
+        since, until = self.wait_stamp(mark.get("since")), self.wait_stamp(mark.get("until"))
+        if since is None or until is None or since < began - 1 or until <= time.time():
+            return None
+        if until - since > WAIT_CAP:
+            self.say("отметка ожидания со сроком больше потолка (%s), виток ждать не будет"
+                      % mark.get("until"))
+            return None
+        return mark
+
+    def held(self, began):
+        """Ожидание цикла по отметке `agentctl wait`, положенной самим витком.
+
+        Виток, упёршийся в чужую очередь выката, не выходит wait-human и не
+        крутит пустые витки: он кладёт отметку со сроком, выходит continue, а
+        оболочка ждёт за него (DK-947). Ждёт она срока, а очередь следующий
+        виток спрашивает заново: снимает очередь отметка smoke, и доводят её
+        выкат и тик сторожка подъёмом проверяющего, а не сам виток."""
+        mark = self.wait_mark(began)
+        if not mark:
+            return False
+        what = " ".join(str(mark.get(k) or "") for k in ("kind", "target")).strip()
+        if mark.get("note"):
+            what += " (%s)" % mark["note"]
+        self.say("виток %d кончился ожиданием (%s), срок до %s"
+                  % (self.turn, what, mark.get("until")))
+        until = self.wait_stamp(mark.get("until"))
+        try:
+            step = max(0.0, float(os.environ.get(WAIT_STEP_ENV, "") or WAIT_STEP))
+        except ValueError:
+            step = WAIT_STEP
+        while time.time() < until:
+            time.sleep(min(step, max(0.0, until - time.time())))
+        self.say("ожидание витка %d кончилось, следующий виток спрашивает доску заново" % self.turn)
+        return True
+
     def retry_pause(self):
         try:
             pause = int(os.environ.get(PAUSE_ENV, ""))
@@ -738,6 +805,7 @@ class Loop:
             self.say("цикл цели %s начат в %s, pid %d" % (self.id, self.proj, os.getpid()))
             while True:
                 self.turn += 1
+                began = time.time()
                 reason, text, progressed = self.run_turn()
                 if reason:
                     tries += 1
@@ -752,6 +820,7 @@ class Loop:
                     time.sleep(pause)
                     continue
                 tries = 0
+                self.held(began)
                 if progressed:
                     idle = 0
                 else:

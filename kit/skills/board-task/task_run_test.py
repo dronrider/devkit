@@ -43,7 +43,12 @@ if sys.argv[1:2] != ["show"]:
 tail = ""
 if sect.startswith("check-"):
     sect, kind = "check", sect.split("-", 1)[1]
-    tail = "  код слит, вид %s, строка не двигалась 0 дней" % kind
+    # Отметку прогона taskctl называет словами (DK-947): «+smoke» в хвосте
+    # секции стенда значит, что она стоит.
+    smoke = "без отметки smoke"
+    if kind.endswith("+smoke"):
+        kind, smoke = kind[:-len("+smoke")], "smoke прогнан"
+    tail = "  код слит, вид %s, %s, строка не двигалась 0 дней" % (kind, smoke)
 sys.stdout.write("%s в %s\n" % (sys.argv[2], sect))
 sys.stdout.write("| %s | строка | task | P2 | 10 | S | file |\n" % sys.argv[2])
 if tail:
@@ -533,15 +538,43 @@ class TestPasses(unittest.TestCase):
         self.assertEqual(s.orders(), [])
         self.assertIn("приёмки человеком", r.stdout)
 
-    def test_mixed_acceptance_stops_the_pipeline(self):
+    def test_mixed_acceptance_with_smoke_stops_the_pipeline(self):
         # Предмет DK-870: вид приёмки show печатает словами «вид mixed» с
         # DK-298, а оболочка искала в его выводе слово «пользовательск». Задачу,
-        # ждущую человека, она не узнавала и долбила заказами до воронки.
-        s = self.stand(sect="check-mixed")
+        # ждущую человека, она не узнавала и долбила заказами до воронки. С
+        # DK-947 человека такая строка ждёт только с отметкой smoke: агентская
+        # половина сценария прогнана, остаток за ним.
+        s = self.stand(sect="check-mixed+smoke")
         r = s.run()
         self.assertEqual(r.returncode, 0)
         self.assertEqual(s.orders(), [])
         self.assertIn("приёмки человеком", r.stdout)
+
+    def test_mixed_without_smoke_is_handed_to_the_checker(self):
+        # Кейс 5 DK-947: строка mixed выкачена, а агентскую половину сценария
+        # ещё не гоняли. Человек ей не нужен, нужен проверяющий, и стоп «ждёт
+        # приёмки человеком» останавливал тут конвейер зря. Оболочка сдаёт
+        # строку и уходит: подъём ведут выкат и тик, а замок головы задачи один
+        # на ID, и оставшаяся в окне оболочка отбила бы этот подъём.
+        s = self.stand(sect="check-mixed", plan="работа")
+        r = s.run()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("приёмки человеком", r.stdout)
+        self.assertIn("сдана проверяющему", r.stdout)
+        self.assertEqual(len(s.orders()), 1, s.orders())
+        self.assertTrue([l for l in s.journal() if "сдана проверяющему" in l], s.journal())
+
+    def test_checker_head_hands_the_row_to_nobody(self):
+        # Оборотная сторона: голову проверки поднимают заказом прогона на ту же
+        # строку mixed без отметки. Сдавать её некому, отметку ставит она сама,
+        # и проходы идут обычным порядком.
+        s = self.stand(sect="check-mixed", plan="работа")
+        r = s.run("--passes", "2", "--order",
+                  "Прогони агентскую часть сценария проверки DK-1 на выкаченном коде")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertNotIn("сдана проверяющему", r.stdout)
+        self.assertIn("проходы исчерпаны", r.stdout)
+        self.assertEqual(len(s.orders()), 2, s.orders())
 
     def test_agent_acceptance_keeps_the_pipeline(self):
         # Обратная сторона: агентский вид проверяет сама голова, и вставать

@@ -98,7 +98,11 @@ if (!goalPost || goalPost.body.text !== "ответ на вопрос витка
 }
 
 // --- кейс 3: цикл не идёт, кнопка ведёт по адресу цели ---
+// Живого разговора о цели нет, есть только вчерашний груминг: его кнопка и
+// открывала. Живой чат человека адрес цели выбрал бы законно (DK-446), его
+// ведёт следующий кусок стенда.
 live = false;
+const human = chats.splice(2, 1)[0];
 const readFrom = reads.length;
 st = await sandbox.chatState("demo", "XR-100", board, []);
 if (st.sid) fail("адрес цели выбрал чужой чат " + st.sid + ": реплика подняла бы его резюмом");
@@ -121,6 +125,13 @@ if (got.length !== 1 || got[0].path !== "/api/projects/demo/goals/XR-100/message
 }
 
 // --- чат человека о цели остаётся своим разговором ---
+// Цель ведут и живым чатом дашборда (DK-446): адрес цели выбирает его, и
+// реплика идёт в его сессию.
+chats.push(human);
+st = await sandbox.chatState("demo", "XR-100", board, []);
+if (st.sid !== human.id || st.goal) {
+  fail("адрес цели не открыл живой чат человека о ней: " + JSON.stringify([st.sid, st.goal]));
+}
 st = await sandbox.chatState("demo", "cccc3333-0000-4000-8000-000000000003", board, works);
 if (st.goal) fail("чат человека о цели принят за виток: реплика ушла бы мимо его сессии");
 panel = sandbox.chatPanel("demo", st);

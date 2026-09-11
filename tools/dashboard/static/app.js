@@ -7908,13 +7908,16 @@ async function chatState(project, addr, board, works) {
   // форме DK-459 открывала последний разговор всего проекта, чат DK-397
   // (живой случай). Нет у задачи своих диалогов, значит пустой sid, и панель
   // открывает новый чат с её привязкой.
-  // Адрес цели чата по списку не выбирает вовсе: разговор с ней идёт через
-  // «Входящие» её файла, а свежий чат задачи это чей-то груминг, и реплика
-  // подняла бы его резюмом (DK-938). Идущий виток кнопка открывает по sid.
+  // Адрес цели выбирает только живой разговор: цель ведут и живым чатом
+  // дашборда (DK-446), и реплика тогда идёт в него. Кончившийся чат задачи
+  // это чей-то груминг, реплика подняла бы его резюмом, и без живого
+  // разговора она уходит во «Входящие» цели (DK-938). Идущий виток кнопка
+  // открывает по sid.
   const goalAddr = Boolean(st.task && !st.sid && !st.fresh && isGoalRow(board, st.task));
-  if (!st.sid && !st.fresh && !goalAddr) {
+  if (!st.sid && !st.fresh) {
     const list = (st.task ? st.chats.filter((c) => (c.tasks || []).includes(st.task))
-      : chatVisible(st)).filter((c) => !c.project || c.project === project);
+      : chatVisible(st)).filter((c) => !c.project || c.project === project)
+      .filter((c) => !goalAddr || c.state === "live");
     const want = st.task ? chatTaskLast(st.task) : "";
     const kept = want && list.find((c) => c.id === want);
     if (kept) st.sid = kept.id;
@@ -7985,7 +7988,7 @@ async function chatState(project, addr, board, works) {
     // Разговор с целью это её виток либо адрес цели без выбранного чата:
     // реплика отсюда уходит во «Входящие» файла цели. Чат человека по цели
     // остаётся своим разговором, и реплика ему идёт прежней дорогой.
-    st.goal = turn || (goalAddr && st.isGoal) ? st.task : "";
+    st.goal = turn || (goalAddr && st.isGoal && !st.sid) ? st.task : "";
     st.goalRun = Boolean(st.goal && (works || []).some((w) => w.id === st.goal));
     const row = boardRow(board, st.task);
     st.title = row ? row.title : "";

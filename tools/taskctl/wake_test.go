@@ -329,3 +329,27 @@ func TestWakeQuietAndBrokenReason(t *testing.T) {
 		t.Fatalf("кривая причина не названа: %v %v %q", err, failed, out)
 	}
 }
+
+// DK-932, замечание ревью: обход поднимает голову той же лестницей, что run, и
+// модель головы берёт тем же вердиктом agentctl pick. До правки вопрос,
+// разбуженный тиком, стартовал клиента без модели.
+func TestWakeRaisesWithPickedModel(t *testing.T) {
+	root := setup(t)
+	_, _, dk := runDevkit(t)
+	parkRow(t, root, "XR-004", "вопрос: нужна схема")
+	logs, _ := pickStand(t, dk, "sonnet")
+	old := raiseHead
+	raiseHead = func(root, id string, o runOpts) (string, int, error) { return cmdRun(root, id, o) }
+	t.Cleanup(func() { raiseHead = old })
+	out, _, err := cmdWake(root, []string{"XR-004"}, wakeOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := readStub(logs, "runner.log")
+	if !strings.Contains(runner, "XR-004 -C ") || !strings.Contains(runner, "-- claude --permission-mode auto --model sonnet") {
+		t.Fatalf("голова вопроса поднята без модели вердикта:\n%s\nотчёт:\n%s", runner, out)
+	}
+	if pick := strings.TrimSpace(readStub(logs, "pick.log")); pick != "claude-code pick XR-004 --record" {
+		t.Fatalf("вердикт спрошен не так: %q", pick)
+	}
+}

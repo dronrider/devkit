@@ -32,7 +32,14 @@ type Bind struct {
 	Tree       string
 	Transcript string
 	Tmux       string
-	Time       string
+	// Pane это адрес панели tmux, где стоит клиент сессии (`%12` из
+	// $TMUX_PANE). Пишут его хук старта у любого клиента с терминалом внутри
+	// tmux и `taskctl run` у окна, которое поднял сам (DK-931). Имя Tmux
+	// называет tmux-сессию поднявшего, по нему дашборд её снимает. Реплика в
+	// живое окно идёт по панели: у окна, открытого руками, имени от поднявшего
+	// нет вовсе.
+	Pane string
+	Time string
 	// Parent это разговор, раздавший работу этой сессии. Пусто у сессии,
 	// которую подняли сами: из терминала, кнопкой дашборда, руками. Непустой
 	// родитель значит, что сессия это чужая работа, а не разговор человека, и
@@ -45,7 +52,7 @@ type Bind struct {
 var keys = map[string]bool{
 	"сессия": true, "задача": true, "проект": true, "дерево": true,
 	"транскрипт": true, "источник": true, "повод": true, "tmux": true,
-	"родитель": true,
+	"панель": true, "родитель": true,
 }
 
 // dashless читает пустое поле, записанное дефисом.
@@ -97,6 +104,7 @@ func ParseLine(line string) (string, Bind, bool) {
 		Tree:       dashless(vals["дерево"]),
 		Transcript: dashless(vals["транскрипт"]),
 		Tmux:       dashless(vals["tmux"]),
+		Pane:       dashless(vals["панель"]),
 		Parent:     dashless(vals["родитель"]),
 		Time:       f[0],
 	}
@@ -331,6 +339,9 @@ func Last(recs []Bind) Bind {
 		if r.Tmux != "" {
 			b.Tmux = r.Tmux
 		}
+		if r.Pane != "" {
+			b.Pane = r.Pane
+		}
 		// Родитель называется при рождении сессии, а последующие записи
 		// (compact, resume) пишет тот же процесс с тем же окружением. Пустое
 		// поле поздней записи родителя не снимает: розданная работа остаётся
@@ -355,7 +366,7 @@ func Line(now time.Time, sid string, b Bind, why string) string {
 	return now.Format(Stamp) + " сессия " + dash(sid) + " задача " + dash(b.Task) +
 		" проект " + dash(b.Project) + " дерево " + dash(b.Tree) +
 		" транскрипт " + dash(b.Transcript) + " источник " + dash(b.Source) +
-		" повод " + dash(why) + " tmux " + dash(b.Tmux) + "\n"
+		" повод " + dash(why) + " tmux " + dash(b.Tmux) + " панель " + dash(b.Pane) + "\n"
 }
 
 // Append дописывает строку в журнал, обрезав разросшийся файл теми же берегами,
@@ -445,6 +456,30 @@ func TmuxOwnerSince(recs map[string][]Bind, name, since string) string {
 	for sid, rs := range recs {
 		for _, r := range rs {
 			if r.Tmux != name || (since != "" && r.Time < since) {
+				continue
+			}
+			if best == "" || r.Time > at {
+				best, at = sid, r.Time
+			}
+		}
+	}
+	return best
+}
+
+// PaneOwner называет разговор, которому сейчас принадлежит панель tmux pane:
+// сессию из свежайшей записи реестра, назвавшей этот адрес. Номера панелей
+// tmux раздаёт заново после перезапуска своего сервера, и %3 вчерашней записи
+// сегодня бывает чужим окном. Живость панели ещё не значит, что в ней стоит та
+// самая сессия, и хозяина сверяют так же, как у имени (TmuxOwner).
+func PaneOwner(recs map[string][]Bind, pane string) string {
+	pane = strings.TrimSpace(pane)
+	if pane == "" {
+		return ""
+	}
+	best, at := "", ""
+	for sid, rs := range recs {
+		for _, r := range rs {
+			if r.Pane != pane {
 				continue
 			}
 			if best == "" || r.Time > at {

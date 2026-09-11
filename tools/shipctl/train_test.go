@@ -300,7 +300,7 @@ func TestRevertSkipsNeighbourMention(t *testing.T) {
 func stubTaskctl(t *testing.T, callLog, body string) {
 	t.Helper()
 	bin := filepath.Dir(callLog)
-	write(t, bin, "taskctl", "#!/bin/sh\necho \"$@\" >> \""+callLog+"\"\n"+body+
+	write(t, bin, "taskctl", "#!/bin/sh\necho \"$@\" >> \""+callLog+"\"\n[ \"$3\" = wake ] && exit 0\n"+body+
 		"printf '<!-- move -->\\n' >> \"$2/docs/TASKS.md\"\n")
 	if err := os.Chmod(filepath.Join(bin, "taskctl"), 0o755); err != nil {
 		t.Fatal(err)

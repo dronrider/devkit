@@ -57,7 +57,9 @@ func setup(t *testing.T, inProg, check string) (root, callLog string) {
 
 	bin := t.TempDir()
 	callLog = filepath.Join(bin, "calls.log")
-	stub := "#!/bin/sh\necho \"$@\" >> \"" + callLog + "\"\nprintf '<!-- move -->\\n' >> \"$2/docs/TASKS.md\"\n"
+	// Обход ждущих (DK-932) доску стенда не правит: будить на ней некого, а
+	// лишняя строка после последнего коммита оставила бы дерево грязным.
+	stub := "#!/bin/sh\necho \"$@\" >> \"" + callLog + "\"\n[ \"$3\" = wake ] && exit 0\nprintf '<!-- move -->\\n' >> \"$2/docs/TASKS.md\"\n"
 	write(t, bin, "taskctl", stub)
 	if err := os.Chmod(filepath.Join(bin, "taskctl"), 0o755); err != nil {
 		t.Fatal(err)

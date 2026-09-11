@@ -1173,6 +1173,9 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 					msg = append(msg, note)
 				}
 			}
+			if note := wakeNote(root, p.Push || deploy.autonomous); note != "" {
+				msg = append(msg, note)
+			}
 			if note := syncWindowTree(root, main); note != "" {
 				msg = append(msg, note)
 			}
@@ -1191,6 +1194,11 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			}
 		} else {
 			msg = append(msg, fmt.Sprintf("в поезде (состав не пересчитался: %v); выкат поезда: shipctl ship", err))
+		}
+		// Поездное слияние тоже кладёт работу в main: ждущие слияния
+		// поднимаются сразу, а не выкатом поезда (DK-932).
+		if note := wakeNote(root, p.Push || deploy.autonomous); note != "" {
+			msg = append(msg, note)
 		}
 		msg = append(msg, "следующий шаг: добрать поезд следующей задачей либо выкатить его (shipctl ship): выкат и перевод строк доски идут на весь состав разом")
 		return strings.Join(msg, "\n"), nil
@@ -1242,6 +1250,11 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		if note := checkRunNote(root, []string{p.ID}); note != "" {
 			msg = append(msg, note)
 		}
+	}
+	// Работа задачи легла в main: строки, ждавшие её слияния, поднимаются тут
+	// же (DK-932).
+	if note := wakeNote(root, p.Push || deploy.autonomous); note != "" {
+		msg = append(msg, note)
 	}
 	if note := syncWindowTree(root, main); note != "" {
 		msg = append(msg, note)

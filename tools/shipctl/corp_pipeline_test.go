@@ -126,7 +126,7 @@ func corpPipeline(t *testing.T, id string, tr corpTrack, mode trackMode) (clone,
 
 	bin := t.TempDir()
 	taskLog = filepath.Join(bin, "calls.log")
-	taskStub := "#!/bin/sh\necho \"$@\" >> \"" + taskLog + "\"\nprintf '<!-- move -->\\n' >> \"$2/docs/TASKS.md\"\n"
+	taskStub := "#!/bin/sh\necho \"$@\" >> \"" + taskLog + "\"\n[ \"$3\" = wake ] && exit 0\nprintf '<!-- move -->\\n' >> \"$2/docs/TASKS.md\"\n"
 	corpWrite(t, filepath.Join(bin, "taskctl"), taskStub)
 	if err := os.Chmod(filepath.Join(bin, "taskctl"), 0o755); err != nil {
 		t.Fatal(err)

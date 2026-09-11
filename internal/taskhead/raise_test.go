@@ -399,6 +399,34 @@ func TestMissingHeadSectionIsSetupError(t *testing.T) {
 	}
 }
 
+// Предполёт обхода ждущих (DK-932) называет, чем голову поднимать нечего, до
+// снятия парковки, и не трогает ни замка, ни tmux.
+func TestPreflight(t *testing.T) {
+	s := newStand(t, true, true)
+	if err := Preflight(s.req()); err != nil {
+		t.Fatalf("исправный стенд отбит предполётом: %v", err)
+	}
+	client := filepath.Join(s.bin, "claude")
+	os.Remove(client)
+	if err := Preflight(s.req()); err == nil || !strings.Contains(err.Error(), "клиент claude не нашёлся") {
+		t.Fatalf("без клиента жду отказ, а пришло %v", err)
+	}
+	put(t, client, "#!/bin/sh\nexit 0\n", 0o755)
+	runner := filepath.Join(s.devkit, filepath.FromSlash(TaskRunRel))
+	os.Remove(runner)
+	if err := Preflight(s.req()); err == nil || !strings.Contains(err.Error(), "оболочки") {
+		t.Fatalf("без оболочки жду отказ, а пришло %v", err)
+	}
+	put(t, runner, runnerStub, 0o644)
+	put(t, ProfilePath(s.devkit, "stub"), "[detect]\n", 0o644)
+	if err := Preflight(s.req()); err == nil || !strings.Contains(err.Error(), "нет секции [head]") {
+		t.Fatalf("без [head] жду отказ, а пришло %v", err)
+	}
+	if s.tmux("calls.log") != "" || !s.lockGone() {
+		t.Fatalf("предполёт тронул tmux или замок: %q", s.tmux("calls.log"))
+	}
+}
+
 func TestDevkitLookup(t *testing.T) {
 	base := t.TempDir()
 	proj := filepath.Join(base, "proj")

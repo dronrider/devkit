@@ -145,6 +145,26 @@ func Raise(q Request) (Result, error) {
 	return res, nil
 }
 
+// Preflight отвечает, есть ли чем поднять голову, не трогая ни замка, ни tmux:
+// профиль с секцией [head], оболочка task-run.py и клиент в PATH. Нужна она
+// тем, кто до подъёма снимает парковку строки (обход ждущих в taskctl, DK-932).
+// Снятая впустую парковка оставила бы строку в работе без головы, а при
+// отказе предполёта строка стоит в Blocked, и следующий обход повторит.
+func Preflight(q Request) error {
+	head, err := ReadHead(ProfilePath(q.Devkit, q.Harness))
+	if err != nil {
+		return err
+	}
+	runner := filepath.Join(q.Devkit, filepath.FromSlash(TaskRunRel))
+	if !isFile(runner) {
+		return fmt.Errorf("оболочки %s нет: поднимать голову нечем", runner)
+	}
+	if !found(head.Bin) {
+		return fmt.Errorf("клиент %s не нашёлся в PATH: поднимать голову нечем", head.Bin)
+	}
+	return nil
+}
+
 // window это окно задачи из реестра: сессия, адрес и время записи.
 type window struct{ sid, addr, at string }
 

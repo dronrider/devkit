@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -309,6 +310,61 @@ exit 0`)
 	}
 	if !strings.Contains(rep.Line, "возвращена в Blocked") {
 		t.Errorf("отчёт молчит о судьбе строки: %q", rep.Line)
+	}
+}
+
+// Окно не встало, и лестница ушла в headless: голова получает окружение той же
+// сборки, что и окно. Впереди пути штатный кит, а не каталог экземпляра со
+// старыми копиями agentctl и taskctl, дом настоящий, адрес демона для askpass
+// на месте, метка печатного режима дашборда, а имени окна нет (DK-935).
+func TestTaskWakeHeadlessGetsLaunchEnv(t *testing.T) {
+	e, tmuxLog, _ := parkedMoveEnv(t)
+	writeScript(t, e.bin, "tmux", `echo "$@" >> `+tmuxLog+`
+case "$1" in
+ls) printf 'чужая-сессия\n';;
+new-session) echo "tmux: сервер не отвечает" >&2; exit 1;;
+esac
+exit 0`)
+	envLog := filepath.Join(e.home, "head-env.log")
+	dump := fmt.Sprintf(`import os
+with open(%q, "w") as f:
+    for k in ("PATH", "HOME", "DEVKIT_ADDR", "DEVKIT_TMUX", "DEVKIT_HEADLESS"):
+        f.write("%%s=%%s\n" %% (k, os.environ.get(k, "-")))
+`, envLog)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(e.proj), "devkit", "kit", "skills",
+		"board-task", "task-run.py"), []byte(dump+taskRunAdoptBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Каталог экземпляра стоит в пути первым, как его ставит plist. Копий кита в
+	// нём стенд не держит: они перебили бы фикстуру taskctl самому дашборду.
+	inst, kit := t.TempDir(), t.TempDir()
+	writeKit(t, kit)
+	wasExe, wasKit := exeDir, kitDir
+	exeDir = func() string { return inst }
+	kitDir = func() string { return kit }
+	t.Cleanup(func() { exeDir, kitDir = wasExe, wasKit })
+	sep := string(os.PathListSeparator)
+	t.Setenv("PATH", inst+sep+os.Getenv("PATH"))
+	t.Setenv(taskhead.AdoptEnv, "5")
+
+	rep := wakeOne(t, e, "XR-7")
+	if !rep.Raised || rep.Failed {
+		t.Fatalf("headless-подъём не отчитан поднятым: %+v", rep)
+	}
+	got := readFile(t, envLog)
+	for _, want := range []string{
+		"PATH=" + kit + sep,
+		"HOME=" + e.home + "\n",
+		"DEVKIT_ADDR=" + e.s.cfg.ListenAddr() + "\n",
+		"DEVKIT_TMUX=-\n",
+		headlessMark + "\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("в окружении headless-головы нет %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, inst) {
+		t.Errorf("каталог экземпляра остался в пути headless-головы:\n%s", got)
 	}
 }
 

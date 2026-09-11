@@ -33,10 +33,16 @@ launchd-агент, его кладёт `devkitctl doctor --fix`.
 чаще, чем раз в час, а короче десятка минут порог ловил бы долгую сборку.
 
 Тем же тиком сторожок будит припаркованные вопросом задачи (LLD DK-400,
-решение 2): строка в Blocked с причиной «вопрос:» и лежащим ответом в разговоре
-задачи возвращается в In progress вызовом `taskctl -C <корень> move <ID>
-in-progress`. Будит сторожок и только он, а будить значит вернуть строку в
-кандидаты планировщика: сессии поверх разбуженной строки не встаёт.
+решение 2): строку в Blocked с причиной «вопрос:» и лежащим ответом в разговоре
+задачи тик отдаёт команде `taskctl -C <корень> wake <ID>`. Она снимает признак
+ожидания и парковку и поднимает голову задачи лестницей `taskctl run` (DK-931,
+DK-932).
+
+Тем же тиком идёт обход ждущих соседа (DK-932): строки в Blocked с причиной
+«слияние: <ID>» или «закрытие: <ID>» поднимает `taskctl -C <корень> wake`,
+когда предпосылка слита в main либо закрыта. Первыми этот обход зовут сами
+`shipctl merge` и `taskctl close`, а тик добирает событие, прошедшее мимо них.
+Правило совпадения живёт в taskctl одно на троих.
 
 Тем же тиком идёт страховка ожидания (LLD DK-430, решение 3). Инструмент
 `taskctl ask` паркует задачу сам, не дождавшись ответа, но SIGKILL от харнеса
@@ -80,9 +86,11 @@ in-progress`. Будит сторожок и только он, а будить 
 строк в трекер не ходит вовсе.
 
 Тем же тиком поднимается упавший ход (DK-510): повод `turn_failed` в журнале
-уведомителя называет сессию, реестр чатов даёт её панель, и сторож подаёт туда
-реплику «продолжай», дождавшись сети. Попыток три на сессию, а дальше зов
-человеку. Разбор в README, раздел «Подъём упавшего хода».
+уведомителя называет сессию, реестр чатов даёт её панель, и, дождавшись сети,
+сторож поднимает окно задачи командой `taskctl run` с репликой «продолжай»
+(DK-932). Окну без задачи реплика идёт в его панель. Попыток три на сессию, а
+дальше зов человеку с командой продолжения из профиля харнеса. Разбор в README,
+раздел «Подъём упавшего хода».
 """
 import importlib.util
 import json
@@ -167,6 +175,19 @@ PARKED = "[блок: вопрос:"
 # тредах MR (LLD DK-756, решение 5): такую строку тик опрашивает через API
 # трекера, а не ищет ей ответ в разговоре.
 REVIEW_PARKED = "[блок: автор:"
+# Причины блока «слияние:» и «закрытие:» паркуют строку ожиданием соседа
+# (DK-932). Событие сверяет `taskctl wake`: правило совпадения живёт там одно на
+# close, merge и тик, а тику остаётся знать, есть ли на доске такие строки.
+WAIT_PARKED = ("[блок: слияние:", "[блок: закрытие:")
+# Источники записи реестра, по которым окно считается окном задачи: сессию
+# подняли заказом, она родилась в дереве задачи либо привязана человеком. Слова
+# те же, что у ownSources в internal/taskhead: только такое окно `taskctl run`
+# признаёт живым окном задачи, а упавший ход окна с другим источником (диспетчер
+# двигал строку командами доски) поднимается репликой в его же панель.
+OWN_SOURCES = ("заказ", "дерево", "рука")
+# Коды `taskctl run` (DK-931): голова поднята, позван человек, сломана
+# раскладка, замок занят.
+RUN_RAISED, RUN_CALLED, RUN_SETUP, RUN_BUSY = 0, 1, 2, 3
 # Вход разговора задачи и признак ожидания рядом с ним. Прежняя пара DK-440
 # (.devkit/mail, task-<ID>.inbox) читается наравне с новой один выпуск: ответ,
 # написанный до выката, обязан разбудить задачу так же, как написанный после.
@@ -940,7 +961,38 @@ def say_pane(name, word, call=None, tmux=None):
     return True, "реплика «%s» подана в панель %s" % (word, name)
 
 
-def resume_failed(now, call=None, home=None, tmux=None, probe=None):
+def run_head(root, task, call=None, taskctl=None):
+    """Подъём головы задачи командой `taskctl run` (DK-931) с репликой
+    «продолжай»: живое окно задачи получает её, а без живого окна лестница идёт
+    дальше, как у любого подъёма. Возврат это код лестницы и слова вывода одной
+    строкой."""
+    call = subprocess.run if call is None else call
+    bin = taskctl_bin() if taskctl is None else taskctl
+    if not bin:
+        return RUN_SETUP, "бинаря taskctl нет ни в PATH, ни в каталогах релиза"
+    try:
+        p = call([bin, "-C", root, "run", task, "--order", RESUME_WORD],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        return RUN_SETUP, str(e)
+    return p.returncode, " ".join((p.stdout or "").split())
+
+
+def session_resume(sid, name=None):
+    """Команда продолжения сессии из профиля харнеса: ключ resume секции [head]
+    (DK-931). Профиль берётся тот же, что у `taskctl run`: DEVKIT_HARNESS, а без
+    неё claude-code. Пусто, когда профиль её не называет или не читается."""
+    import harness
+    name = name or os.environ.get("DEVKIT_HARNESS", "").strip() or "claude-code"
+    path = DEVKIT / "kit" / "harness" / (name + ".toml")
+    try:
+        doc = harness.parse(name, path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, harness.TomlError):
+        return ""
+    return " ".join(w.replace("{session}", sid) for w in doc.arr_of("head", "resume"))
+
+
+def resume_failed(now, call=None, home=None, tmux=None, probe=None, taskctl=None):
     """Подъём упавшего хода (DK-510). Возврат это строки отчёта, как у
     пробуждения и страховки.
 
@@ -1003,10 +1055,14 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None):
             keep("идёт", "сессия %s: ход упал, но разговор пишет дальше: подъём не нужен" % sid)
             continue
         if tries >= RESUME_TRIES:
+            # Команда продолжения берётся из профиля харнеса (DK-931): у второй
+            # подписки она своя, и прибитая строка клиента первой звала бы не
+            # того клиента.
+            by_hand = session_resume(field(row, "сессия") or sid) or (
+                "taskctl run %s -C %s" % (task, root) if task else "реплика в окне разговора")
             said = shout("ход упал: подъём не помог",
-                         "разговор %s в %s не поднялся с %d попыток; продолжить руками: "
-                         "claude --resume %s" % (sid, os.path.basename(root.rstrip("/")),
-                                                 RESUME_TRIES, field(row, "сессия") or sid),
+                         "разговор %s в %s не поднялся с %d попыток; продолжить руками: %s"
+                         % (sid, os.path.basename(root.rstrip("/")), RESUME_TRIES, by_hand),
                          root, call, task)
             keep("зов", "сессия %s: попытки подъёма кончились (%d), зову человека; %s"
                         % (sid, RESUME_TRIES, said))
@@ -1028,7 +1084,24 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None):
             keep("сеть", "сессия %s: ход упал, а сети нет: подъём ждёт следующего тика, "
                          "попытка не тратится" % sid)
             continue
-        ok, note = say_pane(pane, RESUME_WORD, call, tmux)
+        if task and field(row, "источник") in OWN_SOURCES:
+            # Окно задачи поднимает та же лестница, что любой подъём головы
+            # (DK-931, DK-932): живому окну задачи уходит реплика, а окно,
+            # умершее вместе с панелью, сюда не доходит, его отсеял барьер выше.
+            code, note = run_head(root, task, call, taskctl)
+            if code == RUN_BUSY:
+                keep("оболочка", "сессия %s: ход упал, а голову %s держит оболочка конвейера "
+                                 "(замок занят): упавший ход она разбирает сама" % (sid, task))
+                continue
+            if code == RUN_CALLED:
+                keep("зов", "сессия %s: ход упал, поднять голову %s нечем, taskctl run позвал "
+                            "человека; %s" % (sid, task, note))
+                continue
+            ok = code == RUN_RAISED
+            if not ok:
+                note = "taskctl run отказал с кодом %d: %s" % (code, note)
+        else:
+            ok, note = say_pane(pane, RESUME_WORD, call, tmux)
         tries += 1
         state[sid] = {"stamp": mark, "tries": tries, "said": "подъём" if ok else "отказ"}
         lines.append("сессия %s: ход упал, подъём %d из %d; %s"
@@ -1205,51 +1278,50 @@ def review_act(root, tid, verdict, call, dashboard):
     return lines
 
 
-def wake_raise(root, tid, call=None, dashboard=None):
-    """Пробуждение припаркованной строки: заказ уходит в `dashboard wake`, ту же
-    команду, что зовёт панель по записи ответа (DK-922). Она и возвращает строку
-    из Blocked, и поднимает по ней сессию. Возврат это строка отчёта и признак,
-    что сессия поднята.
+def wake_raise(root, tid, call=None, taskctl=None):
+    """Пробуждение припаркованной вопросом строки: заказ уходит в
+    `taskctl wake <ID>` (DK-932). Команда снимает признак ожидания и парковку и
+    поднимает голову задачи лестницей `taskctl run` (DK-931). Возврат это строка
+    отчёта и признак, что строка вышла из Blocked.
 
-    Своей копии подъёма у тика нет по той же причине, что у второго круга
-    ревью: живые сессии, подписки, ярусы и права машинного контура живут у
-    дашборда, и вторая копия этих правил в питоне разошлась бы с первой на
-    первой правке. Отказ подъёма не роняет тик: строка остаётся припаркованной
-    вопросом с лежащим ответом, отчёт называет причину словами, и следующий тик
-    повторит заход."""
+    Своей копии подъёма у тика нет: предполёт, порядок ходов и лестница
+    носителей живут в taskctl, и вторая копия этих правил в питоне разошлась бы
+    с первой на первой правке. Отказ не роняет тик: предполёт отказывает до
+    снятия парковки, строка остаётся припаркованной вопросом с лежащим ответом,
+    отчёт называет причину словами, и следующий тик повторит заход."""
     call = subprocess.run if call is None else call
-    bin = devkit_bin("dashboard") if dashboard is None else dashboard
+    bin = taskctl_bin() if taskctl is None else taskctl
     if not bin:
-        return ("задача %s в %s: ответ лежит, а бинаря dashboard нет ни в PATH, ни в "
+        return ("задача %s в %s: ответ лежит, а бинаря taskctl нет ни в PATH, ни в "
                 "каталогах релиза: строка стоит в Blocked" % (tid, root)), False
     try:
-        p = call([bin, "wake", "-C", root, tid],
+        p = call([bin, "-C", root, "wake", tid, "--push"],
                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     except OSError as e:
         return ("задача %s в %s: сессия не поднята, %s: строка стоит в Blocked"
                 % (tid, root, e)), False
     text = " ".join((p.stdout or "").split())
     if p.returncode != 0:
-        return ("задача %s в %s: сессия не поднята, dashboard wake отказал с кодом %d: %s"
+        return ("задача %s в %s: сессия не поднята, taskctl wake отказал с кодом %d: %s"
                 % (tid, root, p.returncode, text)), False
     return ("задача %s в %s разбужена ответом: %s" % (tid, root, text)), True
 
 
-def wake(root, now, call=None, hook=LOAD_HOOK, dashboard=None):
+def wake(root, now, call=None, hook=LOAD_HOOK, taskctl=None):
     """Будит припаркованные вопросом строки корня с лежащим ответом. Возврат
     это строки отчёта, по одной на будимость и итог на корень: тик молчит о
     корне только там, где парковок нет вовсе.
 
     Своего `taskctl move` у тика тут нет: и возврат строки в In progress, и
-    подъём её сессии делает `dashboard wake` одним ходом (DK-922). У задачи,
-    поднятой рукой с экрана, планировщика нет вовсе: оболочка конвейера вышла
+    подъём её головы делает `taskctl wake <ID>` одним ходом (DK-922, DK-932).
+    У задачи, поднятой рукой, планировщика нет вовсе: оболочка конвейера вышла
     по стопу wait_human и снесла окно, и строка, разбуженная одним только move,
-    стояла бы в работе с непрочитанным ответом во входе, пока человек не
-    нажмёт «Запуск». Разделить эти два хода нельзя и по второй причине:
-    припаркованная строка это единственное, чем задача видна следующему тику,
-    и снятая до неудачного подъёма парковка оставляла бы её без подъёмщика
-    вовсе. Поэтому отказ подъёма тик только называет словами: строка стоит в
-    Blocked, ответ лежит, а следующий заход повторит.
+    стояла бы в работе с непрочитанным ответом во входе. Разделить эти два хода
+    нельзя и по второй причине: припаркованная строка это единственное, чем
+    задача видна следующему тику, и снятая до неудачного подъёма парковка
+    оставляла бы её без подъёмщика вовсе. Поэтому отказ подъёма тик только
+    называет словами: строка стоит в Blocked, ответ лежит, а следующий заход
+    повторит.
 
     Не загрузившийся подхват останавливает пробуждение всего корня, и тик
     говорит об этом строкой отчёта: разбирать адресата своей копией формата
@@ -1272,13 +1344,13 @@ def wake(root, now, call=None, hook=LOAD_HOOK, dashboard=None):
                              "ответом задаче они не считаются: строка стоит в Blocked"
                              % (tid, root, addressed))
             continue
-        line, raised = wake_raise(root, tid, call, dashboard)
+        line, raised = wake_raise(root, tid, call, taskctl)
         lines.append(line)
         if not raised:
             continue
-        # Признак ожидания снимает сам подъём, и в обоих деревьях (unparkAsk в
-        # tools/dashboard/wake.go). Тут подметаются прежние имена DK-440:
-        # дашборд знает только .devkit/chat, а признак, написанный до выката
+        # Признак ожидания снимает сам подъём, и в обоих деревьях (wakeRow в
+        # tools/taskctl/wake.go). Тут подметаются прежние имена DK-440:
+        # taskctl знает только .devkit/chat, а признак, написанный до выката
         # имён, пережил бы пробуждение и рисовал бы в панели вопрос уже не
         # ждущей строке.
         drop_asks(root, tid)
@@ -1286,6 +1358,37 @@ def wake(root, now, call=None, hook=LOAD_HOOK, dashboard=None):
     if parked:
         lines.append("корень %s: припаркованных вопросом %d, разбужено %d"
                      % (os.path.basename(root.rstrip("/")), len(parked), woke))
+    return lines
+
+
+def waiters(root, call=None, taskctl=None):
+    """Обход ждущих соседа (DK-932): строки Blocked с причиной «слияние: <ID>»
+    или «закрытие: <ID>». Поднимают их первыми `shipctl merge` и `taskctl close`
+    в конце своей работы, а тик добирает событие, прошедшее мимо них: слияние
+    или закрытие руками, упавший хвост, событие до выката утилит.
+
+    Правило совпадения, перевод строки и подъём держит `taskctl wake`, тик его
+    только зовёт, и только по корню, где такие строки есть: доска без ждущих
+    соседа тику процесса не стоит. Возврат это строки отчёта, пусто там, где
+    ждущих нет или событие ещё не случилось."""
+    rows = [tid for needle in WAIT_PARKED for tid in section_rows(root, BLOCKED, needle)]
+    if not rows:
+        return []
+    call = subprocess.run if call is None else call
+    bin = taskctl_bin() if taskctl is None else taskctl
+    name = os.path.basename(root.rstrip("/"))
+    if not bin:
+        return ["корень %s: строки ждут соседа (%d), а бинаря taskctl нет ни в PATH, ни в "
+                "каталогах релиза: обход ждущих не прошёл" % (name, len(rows))]
+    try:
+        p = call([bin, "-C", root, "wake", "--quiet", "--push"],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        return ["корень %s: обход ждущих не вышел, %s" % (name, e)]
+    lines = ["корень %s: %s" % (name, ln.strip()) for ln in (p.stdout or "").splitlines() if ln.strip()]
+    if p.returncode != 0:
+        lines.append("корень %s: taskctl wake вышел с кодом %d: строки, оставшиеся стоять, "
+                     "повторит следующий тик" % (name, p.returncode))
     return lines
 
 
@@ -1593,7 +1696,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     # Подъём упавшего хода идёт там же, до обхода реестра: падение случается и в
     # разговоре, за которым нет ни цели, ни строки доски, а журнал уведомителя и
     # реестр чатов лежат на уровне машины (DK-510).
-    for rline in resume_failed(now, timed(here()), home, tmux, probe):
+    for rline in resume_failed(now, timed(here()), home, tmux, probe, taskctl):
         out.write(rline + "\n")
         log_line(rline, home)
     found, watched = 0, 0
@@ -1610,7 +1713,8 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         # бывает несколько, и разговор припаркованной задачи один на всех.
         if root and root not in swept and os.path.isdir(root):
             swept.add(root)
-            for wline in wake(root, now, timed(root), dashboard=dashboard):
+            for wline in (wake(root, now, timed(root), taskctl=taskctl)
+                          + waiters(root, timed(root), taskctl)):
                 out.write(wline + "\n")
                 log_line(wline, home)
             for pline in park_stale(root, now, timed(root), taskctl, home=home):
@@ -1629,7 +1733,8 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         if root in swept:
             continue
         swept.add(root)
-        for line in (wake(root, now, timed(root), dashboard=dashboard)
+        for line in (wake(root, now, timed(root), taskctl=taskctl)
+                     + waiters(root, timed(root), taskctl)
                      + park_stale(root, now, timed(root), taskctl, home=home)
                      + close_agent(root, timed(root), taskctl)
                      + review_poll(root, now, timed(root), taskctl, dashboard)):

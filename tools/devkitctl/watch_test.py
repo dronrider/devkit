@@ -602,9 +602,9 @@ class WakeTest(Stand):
         d.mkdir(parents=True, exist_ok=True)
         (d / ("task-%s.ask" % tid)).write_text(when + "\n", encoding="utf-8")
 
-    def wake(self, call=None, dashboard=DASHBOARD):
+    def wake(self, call=None, taskctl=TASKCTL):
         call = self.call if call is None else call
-        return watch.wake(str(self.proj), self.now, call, dashboard=dashboard)
+        return watch.wake(str(self.proj), self.now, call, taskctl=taskctl)
 
     def raised(self):
         return self.call.argv_with("wake")
@@ -624,7 +624,7 @@ class WakeTest(Stand):
         lines = self.wake()
         raised = self.raised()
         self.assertEqual(len(raised), 1, "будить обязана только припаркованная вопросом: %s" % self.call.calls)
-        self.assertEqual(raised[0], [DASHBOARD, "wake", "-C", str(self.proj), "DK-901"])
+        self.assertEqual(raised[0], [TASKCTL, "-C", str(self.proj), "wake", "DK-901", "--push"])
         self.assertTrue(lines[-1].endswith("припаркованных вопросом 1, разбужено 1"), lines[-1])
         self.assertIn("DK-901", lines[0])
         self.assertNotIn("DK-903", " ".join(lines))
@@ -750,7 +750,7 @@ class WakeTest(Stand):
                                             "DK-901", "DK-901")])
         self.said(self.proj, "DK-901")
         lines = self.wake()
-        self.assertEqual(self.raised(), [[DASHBOARD, "wake", "-C", str(self.proj), "DK-901"]],
+        self.assertEqual(self.raised(), [[TASKCTL, "-C", str(self.proj), "wake", "DK-901", "--push"]],
                          self.call.calls)
         self.assertTrue(lines[-1].endswith("разбужено 1"), lines[-1])
 
@@ -765,7 +765,7 @@ class WakeTest(Stand):
         self.said(self.proj, "DK-901")
         self.wake()
         self.assertEqual(self.moved(), [], self.call.calls)
-        self.assertEqual(self.raised(), [[DASHBOARD, "wake", "-C", str(self.proj), "DK-901"]],
+        self.assertEqual(self.raised(), [[TASKCTL, "-C", str(self.proj), "wake", "DK-901", "--push"]],
                          self.call.calls)
 
     def test_failed_raise_keeps_the_row_parked(self):
@@ -794,18 +794,18 @@ class WakeTest(Stand):
                                             "DK-901", "DK-901")])
         self.said(self.proj, "DK-901")
         lines = self.wake(call=RaiseFake())
-        self.assertIn("dashboard wake отказал с кодом 1", " ".join(lines))
+        self.assertIn("taskctl wake отказал с кодом 1", " ".join(lines))
         self.assertIn("tmux не нашёлся", " ".join(lines))
 
-    def test_wake_without_dashboard_is_reported(self):
-        # Бинаря дашборда нет: возвращать строку в работу некому, поднимать
-        # сессию нечем, и молчать об этом нельзя.
+    def test_wake_without_taskctl_is_reported(self):
+        # Бинаря taskctl нет: возвращать строку в работу некому, поднимать
+        # голову нечем, и молчать об этом нельзя.
         self.board_with(parked=[PARK_ROW % ("DK-901", "Спрашивает [блок: вопрос: нужна схема]",
                                             "DK-901", "DK-901")])
         self.said(self.proj, "DK-901")
-        lines = self.wake(dashboard="")
-        self.assertEqual(self.moved(), [], self.call.calls)
-        self.assertIn("бинаря dashboard нет", " ".join(lines))
+        lines = self.wake(taskctl="")
+        self.assertEqual(self.call.calls, [], self.call.calls)
+        self.assertIn("бинаря taskctl нет", " ".join(lines))
         self.assertIn("строка стоит в Blocked", " ".join(lines))
 
     def test_taskctl_bin_prefers_path(self):
@@ -830,6 +830,71 @@ class WakeTest(Stand):
         update.BIN_DIRS = (str(self.dir / "nowhere"),)
         self.assertEqual(watch.taskctl_bin(which=lambda name: None), "")
 
+
+
+class WaitersTest(Stand):
+    """Обход ждущих соседа (DK-932): тик зовёт `taskctl wake` по корню, где на
+    доске есть строки с причиной «слияние:» или «закрытие:». Правило совпадения
+    живёт в taskctl, тут проверяется, кто и когда его зовёт."""
+
+    WOKE = "DK-902: ждала «слияние: DK-901», DK-901 слита, строка в In progress\n"
+
+    def setUp(self):
+        super().setUp()
+        self.call = Fake(out=self.WOKE)
+        self.entry(seen_minutes=1)
+        self.runlog(1)
+
+    def board_with(self, parked):
+        (self.proj / "docs" / "TASKS.md").write_text(
+            PARK_HEAD % (ROW % (GOAL, GOAL, GOAL), "\n".join(parked)), encoding="utf-8")
+
+    def sweep(self):
+        return [TASKCTL, "-C", str(self.proj), "wake", "--quiet", "--push"]
+
+    def test_merge_waiter_calls_the_sweep(self):
+        self.board_with([PARK_ROW % ("DK-902", "Ждёт соседа [блок: слияние: DK-901]", "DK-902", "DK-902")])
+        lines = watch.waiters(str(self.proj), self.call, TASKCTL)
+        self.assertEqual(self.call.calls, [self.sweep()])
+        self.assertIn("DK-902: ждала «слияние: DK-901»", " ".join(lines))
+
+    def test_close_waiter_calls_the_sweep(self):
+        self.board_with([PARK_ROW % ("DK-902", "Ждёт соседа [блок: закрытие: DK-901]", "DK-902", "DK-902")])
+        watch.waiters(str(self.proj), self.call, TASKCTL)
+        self.assertEqual(self.call.calls, [self.sweep()])
+
+    def test_other_parkings_do_not_call(self):
+        # Вопрос будит ответ, окружение и прозу никто: доска без ждущих соседа
+        # не стоит тику ни одного процесса.
+        self.board_with([PARK_ROW % ("DK-903", "Ждёт среду [блок: окружение: нет железа]", "DK-903", "DK-903"),
+                         PARK_ROW % ("DK-904", "Спрашивает [блок: вопрос: схема]", "DK-904", "DK-904"),
+                         PARK_ROW % ("DK-905", "Ждёт [блок: слияния DK-901 жду]", "DK-905", "DK-905")])
+        self.assertEqual(watch.waiters(str(self.proj), self.call, TASKCTL), [])
+        self.assertEqual(self.call.calls, [])
+
+    def test_row_left_standing_is_named(self):
+        self.board_with([PARK_ROW % ("DK-902", "Ждёт соседа [блок: слияние: DK-901]", "DK-902", "DK-902")])
+        call = Fake(code=1, out="DK-902: ждала «слияние: DK-901», а голову поднять нечем\n")
+        text = " ".join(watch.waiters(str(self.proj), call, TASKCTL))
+        self.assertIn("голову поднять нечем", text)
+        self.assertIn("кодом 1", text)
+
+    def test_missing_taskctl_is_reported(self):
+        self.board_with([PARK_ROW % ("DK-902", "Ждёт соседа [блок: слияние: DK-901]", "DK-902", "DK-902")])
+        text = " ".join(watch.waiters(str(self.proj), self.call, ""))
+        self.assertEqual(self.call.calls, [])
+        self.assertIn("бинаря taskctl нет", text)
+
+    def test_tick_catches_the_missed_event(self):
+        # DoD: событие прошло мимо close и merge, тик добирает его сам и пишет
+        # подъём в журнал сторожка.
+        self.board_with([PARK_ROW % ("DK-902", "Ждёт соседа [блок: слияние: DK-901]", "DK-902", "DK-902")])
+        out = io.StringIO()
+        watch.run(now=self.now, idle=45 * 60, home=self.home, out=out, call=self.call,
+                  taskctl=TASKCTL, shipctl=SHIPCTL, agentctl=AGENTCTL, dashboard=DASHBOARD)
+        self.assertIn(self.sweep(), self.call.calls)
+        beat = (self.home / ".devkit" / "goal-watch.log").read_text(encoding="utf-8")
+        self.assertIn("DK-902: ждала «слияние: DK-901»", beat)
 
 
 class TimedTest(Stand):
@@ -1983,8 +2048,9 @@ class ResumeTest(Stand):
         with open(str(path), "a", encoding="utf-8") as f:
             f.write(line)
 
-    def chat(self, sid=None, pane="task-DK-901", transcript_ago_minutes=1):
-        """Строка реестра чатов: полный ID, дерево, панель и транскрипт."""
+    def chat(self, sid=None, pane="task-DK-901", transcript_ago_minutes=1, source="заказ", task="DK-901"):
+        """Строка реестра чатов: полный ID, задача, источник, дерево, панель и
+        транскрипт."""
         tr = self.dir / ("%s.jsonl" % (sid or self.FULL))
         tr.write_text("{}\n", encoding="utf-8")
         when = (self.now - timedelta(minutes=transcript_ago_minutes)).timestamp()
@@ -1992,14 +2058,19 @@ class ResumeTest(Stand):
         log = self.home / ".devkit" / "sessions.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         with open(str(log), "a", encoding="utf-8") as f:
-            f.write("%s сессия %s задача DK-901 проект стенд дерево %s транскрипт %s "
-                    "источник заказ повод startup tmux %s родитель -\n"
-                    % (stamp(self.now), sid or self.FULL, self.proj, tr, pane or "-"))
+            f.write("%s сессия %s задача %s проект стенд дерево %s транскрипт %s "
+                    "источник %s повод startup tmux %s родитель -\n"
+                    % (stamp(self.now), sid or self.FULL, task, self.proj, tr, source, pane or "-"))
 
-    def resume(self, online=True, call=None, tmux=None):
+    def resume(self, online=True, call=None, tmux=None, taskctl=TASKCTL):
         call = self.call if call is None else call
         tmux = self.tmux if tmux is None else tmux
-        return watch.resume_failed(self.now, call, self.home, tmux, lambda: online)
+        return watch.resume_failed(self.now, call, self.home, tmux, lambda: online, taskctl)
+
+    def ran(self, call=None):
+        """Подъёмы через `taskctl run`."""
+        call = self.call if call is None else call
+        return [a for a in call.calls if a and a[0] == TASKCTL and "run" in a]
 
     def keys(self):
         return [a for a in self.call.calls if a and a[0] == self.tmux]
@@ -2011,12 +2082,39 @@ class ResumeTest(Stand):
     def state(self):
         return watch.read_resume(self.home)
 
+    def run_fake(self, code, out=""):
+        """Запускатель, у которого `taskctl run` отвечает кодом code, а tmux
+        штатно: панель жива."""
+        class RunFake(Fake):
+            def __call__(me, argv, **kw):
+                me.calls.append(list(argv))
+                me.kwargs.append(dict(kw))
+                if argv and argv[0] == TASKCTL:
+                    return subprocess.CompletedProcess(argv, code, out, None)
+                return subprocess.CompletedProcess(argv, 0, "", None)
+        return RunFake()
+
     def test_failed_turn_wakes_the_same_pane(self):
-        # Ход упал, сеть есть, панель разговора жива: сторож подаёт в неё
-        # реплику, и лента продолжается в той же сессии.
+        # Ход упал, сеть есть, панель окна задачи жива: подъём идёт командой
+        # `taskctl run` с репликой «продолжай» (DK-932), живое окно задачи
+        # получает её, и лента продолжается в той же сессии.
         self.notify("turn_failed")
         self.chat()
         lines = self.resume()
+        self.assertEqual(self.ran(), [[TASKCTL, "-C", str(self.proj), "run", "DK-901",
+                                       "--order", watch.RESUME_WORD]], self.call.calls)
+        self.assertEqual(self.sent(), [], "реплика ушла мимо taskctl run: %s" % self.call.calls)
+        self.assertIn("подъём 1 из %d" % watch.RESUME_TRIES, " ".join(lines))
+        self.assertEqual(self.state()[self.SID]["tries"], 1)
+
+    def test_foreign_window_gets_the_word_in_its_pane(self):
+        # Окно диспетчера, двигавшего строку командами доски, окном задачи не
+        # считается: `taskctl run` подняло бы поверх него новую голову. Упавший
+        # ход такого окна поднимается репликой в его же панель.
+        self.notify("turn_failed")
+        self.chat(source="работа")
+        lines = self.resume()
+        self.assertEqual(self.ran(), [], self.call.calls)
         keys = self.keys()
         self.assertEqual([a[1] for a in keys], ["has-session", "send-keys", "send-keys"],
                          "реплика в панель не подана: %s" % self.call.calls)
@@ -2024,7 +2122,37 @@ class ResumeTest(Stand):
         self.assertIn("task-DK-901", " ".join(keys[1]))
         self.assertEqual(keys[2][-1], "Enter", "ввод не отправлен, реплика осталась в строке")
         self.assertIn("подъём 1 из %d" % watch.RESUME_TRIES, " ".join(lines))
-        self.assertEqual(self.state()[self.SID]["tries"], 1)
+
+    def test_chat_without_task_gets_the_word_in_its_pane(self):
+        # Разговор без задачи поднимать командой задачи нечем: реплика идёт в
+        # его панель, как до DK-932.
+        self.notify("turn_failed", task="-")
+        self.chat(task="-")
+        self.resume()
+        self.assertEqual(self.ran(), [], self.call.calls)
+        self.assertEqual(len(self.sent()), 2, self.call.calls)
+
+    def test_busy_lock_leaves_it_to_the_shell(self):
+        # Замок головы держит оболочка конвейера: упавший ход она разбирает
+        # сама, и попытка на такой разговор не тратится.
+        self.notify("turn_failed")
+        self.chat()
+        busy = self.run_fake(watch.RUN_BUSY, "DK-901: замок занят")
+        lines = self.resume(call=busy)
+        self.assertEqual(len(self.ran(busy)), 1)
+        self.assertIn("держит оболочка конвейера", " ".join(lines))
+        self.assertEqual(self.state()[self.SID]["tries"], 0)
+
+    def test_call_from_run_is_the_call(self):
+        # Поднять голову нечем, и `taskctl run` позвал человека сам: второй зов
+        # сторожа поверх него был бы тем же баннером дважды.
+        self.notify("turn_failed")
+        self.chat()
+        called = self.run_fake(watch.RUN_CALLED, "голову DK-901 поднять нечем")
+        lines = self.resume(call=called)
+        self.assertIn("позвал человека", " ".join(lines))
+        self.assertEqual(self.state()[self.SID]["said"], "зов")
+        self.assertEqual(called.argv_with("notify.py"), [])
 
     def test_finished_turn_is_left_alone(self):
         # Последнее событие сессии это конец хода: подниматься нечему.

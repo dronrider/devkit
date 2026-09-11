@@ -1,0 +1,24 @@
+# Голова задачи (DK-931): секция [head] необязательна и сверяется типами.
+# Незнакомый ключ в ней это предупреждение, а не отказ.
+[detect]
+
+[rules]
+mode = "import"
+file = "SOMETOOL.md"
+import_line = "@{path}"
+
+[delegate]
+mode = "none"
+
+[hooks]
+
+[quota]
+
+[head]
+client = ["sometool", "--auto"]
+bin = "sometool"
+model = ["--model", "{model}"]
+session = ["--session-id", "{session}"]
+resume = ["sometool", "--resume", "{session}"]
+turn_end = "exit"
+wait_cap = "2h"

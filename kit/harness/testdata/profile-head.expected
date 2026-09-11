@@ -1,0 +1,18 @@
+[detect]
+[rules]
+mode = "import"
+file = "SOMETOOL.md"
+import_line = "@{path}"
+[delegate]
+mode = "none"
+[hooks]
+[quota]
+[head]
+client = ["sometool", "--auto"]
+bin = "sometool"
+model = ["--model", "{model}"]
+session = ["--session-id", "{session}"]
+resume = ["sometool", "--resume", "{session}"]
+turn_end = "exit"
+wait_cap = "2h"
+warn: profile-head.toml: [head] незнакомый ключ wait_cap, пропущен

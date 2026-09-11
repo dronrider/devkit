@@ -39,6 +39,20 @@ dir = "~/.claude/skills"
 format = "claude-code"
 discovery = "auto"
 
+# Голова задачи: чем её поднимают `taskctl run` и оболочка конвейера
+# task-run.py (DK-931). client это интерактивный клиент без заказа, заказ
+# приставляет оболочка. model и session приставляются к нему, когда названы
+# ярус и имя сессии. Имя живой голове даёт команда подъёма и пишет его в
+# реестр чатов с адресом окна. resume получает человек в тексте зова.
+# turn_end это признак конца хода. turn-mark значит отметку хука Stop в
+# ~/.devkit/turns.log, exit значит выход процесса.
+[head]
+client = ["claude", "--permission-mode", "auto"]
+model = ["--model", "{model}"]
+session = ["--session-id", "{session}"]
+resume = ["claude", "--resume", "{session}"]
+turn_end = "turn-mark"
+
 [quota]
 snap = "usage-pane"
 # week_opus известен, но ни один ярус из него не тратит: панель показывала его

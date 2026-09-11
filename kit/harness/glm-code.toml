@@ -58,6 +58,17 @@ dir = "{home}/skills"
 format = "claude-code"
 discovery = "auto"
 
+# Голова задачи (DK-931), ключи те же, что у claude-code.toml. Клиент идёт
+# через agentctl exec: пары окружения подписки кладёт он, как и в окне
+# дашборда. bin называет сам клиент, его подъём и ищет в PATH.
+[head]
+client = ["agentctl", "exec", "--harness", "glm-code", "--", "claude", "--permission-mode", "auto"]
+bin = "claude"
+model = ["--model", "{model}"]
+session = ["--session-id", "{session}"]
+resume = ["agentctl", "exec", "--harness", "glm-code", "--", "claude", "--resume", "{session}"]
+turn_end = "turn-mark"
+
 # Остаток снимает kit/harness/snap/glm-code.sh: эндпоинт мониторинга подписки
 # отвечает тем же токеном, которым работает клиент, и отдаёт оба окна сразу.
 # Окна два, пятичасовое и недельное, и тратит из обоих каждый ярус: разница

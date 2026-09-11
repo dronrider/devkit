@@ -923,14 +923,14 @@ func TestStaticTaskActionBySection(t *testing.T) {
 	body := funcBody(t, app, "function taskActions(")
 	for _, want := range []string{"actionLabel(row.sect)", "runControl(project, id",
 		`kind === "held"`, "wait.disabled = true",
-		`withTip(wait, "сначала " + row.after.join(", "))`} {
+		`withTip(wait, "сначала " + row.held_by.join(", "))`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в полосе действий задачи нет %q", want)
 		}
 	}
-	// Маркер «после DK-NNN» спрашивается общим правилом, и держащая задача
-	// названа в нём: своего условия у формы тут больше нет.
-	if !strings.Contains(funcBody(t, app, "function rowActionKind("), "row.after && row.after.length") {
+	// Неснятое ребро спрашивается общим правилом, и держащая задача названа в
+	// нём: своего условия у формы тут больше нет.
+	if !strings.Contains(funcBody(t, app, "function rowActionKind("), "row.held_by && row.held_by.length") {
 		t.Error("общее правило кнопки не спрашивает про маркер зависимости")
 	}
 	if strings.Contains(app, "function taskActionHint(") {

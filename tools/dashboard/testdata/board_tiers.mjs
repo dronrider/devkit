@@ -25,10 +25,11 @@ const board = {
       title: "Backlog",
       rows: [
         row("XR-10", { sect: "backlog" }),
-        row("XR-11", { sect: "backlog", after: ["XR-1"] }),
+        row("XR-11", { sect: "backlog", after: ["XR-1"], held_by: ["XR-1"] }),
         row("XR-12", { sect: "backlog" }),
-        row("XR-13", { sect: "backlog", after: ["XR-1", "XR-10"] }),
+        row("XR-13", { sect: "backlog", after: ["XR-1", "XR-10"], held_by: ["XR-1", "XR-10"] }),
         row("XR-14", { sect: "backlog", after: ["XR-99"] }),
+        row("XR-15", { sect: "backlog", after: ["XR-1"] }),
       ],
     },
     {
@@ -80,15 +81,24 @@ if (at("Blocked") > at("Backlog")) {
 const ids = (card) => allByClass(card, "trow").map((tr) => dump(byClass(tr, "id")).trim());
 
 // --- очередь: только то, что можно запустить ---
-if (ids(backCard).join(",") !== "XR-10,XR-12,XR-14") {
+if (ids(backCard).join(",") !== "XR-10,XR-12,XR-14,XR-15") {
   fail("в очереди остались ждущие чужих задач строки: " + ids(backCard).join(","));
 }
-// Маркер на задачу, которой на доске нет, никого не держит: она закрыта и
-// уехала в архив, а строка доступна к запуску.
+// Маркер на закрытую задачу никого не держит: taskctl не кладёт её в held_by,
+// и строка доступна к запуску.
 if (!ids(backCard).includes("XR-14")) {
   fail("строка с маркером на закрытую задачу пропала из очереди: " + ids(backCard).join(","));
 }
-if (!dump(backHead).includes("3")) {
+// Маркер на живую задачу, чья работа уже слита, строку тоже не держит: ребро
+// снято слиянием, а маркер снимет только закрытие (решение 2 LLD DK-933).
+if (!ids(backCard).includes("XR-15")) {
+  fail("строка со снятым ребром осталась ждать: " + ids(backCard).join(","));
+}
+const lifted = allByClass(backCard, "trow").find((tr) => dump(byClass(tr, "id")).trim() === "XR-15");
+if (!allByClass(lifted, "btn").some((b) => b.attrs["aria-label"] === "Выполнить" && !b.disabled)) {
+  fail("строке со снятым ребром нечем стартовать: " + dump(lifted));
+}
+if (!dump(backHead).includes("4")) {
   fail("счётчик очереди врёт: " + dump(backHead));
 }
 if (!dump(backHead).includes("по рангу")) fail("очередь перестала называть свой порядок");
@@ -164,12 +174,13 @@ if (!btn) fail("у ждущей строки пропала кнопка с пр
 if (!btn.disabled) fail("ждущую чужой задачи строку предлагают запустить");
 
 // --- очередь пустеет честно ---
-// Ждущие задач строки ушли все: в очереди без них не остаётся ни одной с
-// маркером на живую задачу.
+// Ждущие задач строки ушли все: маркер в очереди остаётся только у строк,
+// которых ребро уже не держит (закрытая XR-99 у XR-14, слитая XR-1 у XR-15).
 for (const tr of allByClass(backCard, "trow")) {
+  const id = dump(byClass(tr, "id")).trim();
   const chip = allByClass(tr, "chip").find((c) => dump(c).startsWith("после "));
-  if (chip && dump(chip) !== "после XR-99") {
-    fail("в очереди осталась строка с маркером на живую задачу: " + dump(tr));
+  if (chip && id !== "XR-14" && id !== "XR-15") {
+    fail("в очереди осталась строка с неснятым ребром: " + dump(tr));
   }
 }
 

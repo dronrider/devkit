@@ -38,6 +38,10 @@ type boardRow struct {
 	ID    string   `json:"id"`
 	Title string   `json:"title"`
 	After []string `json:"after,omitempty"`
+	// HeldBy это неснятые рёбра строки, их считает taskctl (решение 2 LLD
+	// DK-933). Маркер after живёт до закрытия предпосылки, а ребро снимается
+	// уже её слиянием, и держит строку экран по этому полю.
+	HeldBy []string `json:"held_by,omitempty"`
 	// Accept это вид приёмки задачи (agent, mixed, user). Его отдаёт taskctl,
 	// разобрав суффикс заголовка строки «[приёмка: ...]» (LLD DK-292): вид
 	// назначается на доске, и своего признака дашборд не заводит. Пусто у

@@ -1376,7 +1376,7 @@ function rowActionKind(row) {
   if (rowOurRun(row)) return "stop";
   if (row && row.run_busy) return "busy";
   if (rowHasRun(row)) return "resume";
-  if (row && row.after && row.after.length) return "held";
+  if (row && row.held_by && row.held_by.length) return "held";
   return "start";
 }
 
@@ -1506,15 +1506,16 @@ function rowAction(project, row, sect) {
     });
   } else {
     const label = actionLabel(sect);
-    if (row.after && row.after.length) {
-      // Заблокированную маркером задачу конвейер брать не должен, и кнопка
-      // говорит это сама: погашенная с причиной понятнее исчезнувшей.
+    if (row.held_by && row.held_by.length) {
+      // Задачу с неснятым ребром конвейер брать не должен, и кнопка говорит
+      // это сама: погашенная с причиной понятнее исчезнувшей. Держит строку
+      // held_by, а не маркер after: ребро снимает уже слияние предпосылки.
       main = el("button", "btn btn-sm btn-ico rmain");
       main.append(icon("i-play"));
       main.disabled = true;
       main.setAttribute("aria-label", label);
-      withTip(main, label + ": сначала " + row.after.join(", "));
-      pickWhy = "сначала " + row.after.join(", ");
+      withTip(main, label + ": сначала " + row.held_by.join(", "));
+      pickWhy = "сначала " + row.held_by.join(", ");
     } else {
       // Строка списка остаётся на доске и после нажатия (DK-316): экран не
       // уезжает из-под пальца, и afterOk тут не передаётся. Заказ дословно всё
@@ -2495,11 +2496,10 @@ function renderBoard(project, board, works) {
   // нижним ярусом: запустить её нельзя, а в очереди она отвечала не на тот
   // вопрос, ради которого очередь и открывают («чем заняться сейчас»). Доска в
   // git от этого не меняется: статус строки прежний, это группировка вида.
-  // Держащей считается задача, которая ещё стоит на доске: закрытая уезжает в
-  // архив, и маркер на неё больше никого не держит.
-  const onBoard = new Set();
-  for (const sec of board.sections || []) for (const row of sec.rows || []) onBoard.add(row.id);
-  const holdersOf = (row) => (row.after || []).filter((dep) => onBoard.has(dep));
+  // Держат строку неснятые рёбра, их считает taskctl полем held_by (решение 2
+  // LLD DK-933): ребро снимает слияние работы предпосылки в main либо её
+  // закрытие, а маркер after живёт до закрытия и держать строку не должен.
+  const holdersOf = (row) => row.held_by || [];
   const backRows = (byKey.backlog && byKey.backlog.rows) || [];
   const freeRows = backRows.filter((row) => !holdersOf(row).length);
   const heldRows = backRows.filter((row) => holdersOf(row).length);
@@ -3630,7 +3630,7 @@ function taskActions(project, id, row) {
     wait.disabled = true;
     // Чего ждёт задача, сказано подсказкой кнопки и карточкой зависимостей
     // ниже. Третьей строкой то же самое стояло плашкой поперёк экрана.
-    out.push(withTip(wait, "сначала " + row.after.join(", ")));
+    out.push(withTip(wait, "сначала " + row.held_by.join(", ")));
     return out;
   }
   // Удачный запуск ведёт на экран этой работы: до DK-286 нажатие оставляло

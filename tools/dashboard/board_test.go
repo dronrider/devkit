@@ -109,7 +109,7 @@ func TestStaticRowRunFromRowData(t *testing.T) {
 	// отдала пустую полосу там, где список рисовал кнопку.
 	kind := funcBody(t, text, "function rowActionKind(")
 	for _, want := range []string{"rowOurRun(row)", "row.run_busy", "rowHasRun(row)",
-		`return "resume"`, "row.after && row.after.length"} {
+		`return "resume"`, "row.held_by && row.held_by.length"} {
 		if !strings.Contains(kind, want) {
 			t.Errorf("в rowActionKind нет %q: правило кнопки снова разъезжается по экранам", want)
 		}
@@ -200,10 +200,10 @@ func TestStaticActionLabelBySection(t *testing.T) {
 	if strings.Contains(text, `"В работу"`) {
 		t.Error("в static/app.js осталась кнопка «В работу»: одна подпись на все статусы шлёт конвейеру не тот заказ")
 	}
-	// Заблокированная маркером строка действия не получает: кнопка стоит
-	// погашенной с причиной, а запуск с неё не уходит.
+	// Строка с неснятым ребром действия не получает: кнопка стоит погашенной с
+	// причиной, а запуск с неё не уходит. Держит её held_by, а не маркер after.
 	body := funcBody(t, text, "function rowAction(")
-	for _, want := range []string{"row.after && row.after.length", "main.disabled = true", "сначала "} {
+	for _, want := range []string{"row.held_by && row.held_by.length", "main.disabled = true", "сначала "} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в rowAction нет %q: заблокированная задача снова уходит в конвейер", want)
 		}

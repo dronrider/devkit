@@ -45,6 +45,10 @@ PROFILE_SCHEMA = (
 # вклейку правил.
 OPTIONAL_SCHEMA = (
     ("skills", (("dir", STR), ("format", STR), ("discovery", STR))),
+    # Голова задачи (DK-931): чем её поднимает taskctl run. Читает секцию
+    # internal/taskhead, тут она сверяется только типами.
+    ("head", (("client", ARR), ("bin", STR), ("model", ARR), ("session", ARR),
+              ("resume", ARR), ("turn_end", STR))),
 )
 
 DISCOVERY_VALUES = ("auto", "manual")

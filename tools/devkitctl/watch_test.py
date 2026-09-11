@@ -2148,5 +2148,22 @@ class ResumeTest(Stand):
         self.assertIn("ход упал, подъём 1", out.getvalue())
 
 
+class TestRegistryPane(unittest.TestCase):
+    """Адрес панели в реестре чатов (DK-931) читается своим ключом: имя tmux и
+    родитель остаются собой, и подъём упавшего хода адресуется как прежде."""
+
+    def test_pane_does_not_stick_to_neighbours(self):
+        home = Path(tempfile.mkdtemp(prefix="watch-pane-"))
+        self.addCleanup(shutil.rmtree, home, True)
+        (home / ".devkit").mkdir()
+        (home / ".devkit" / "sessions.log").write_text(
+            "2026-09-11T12:00:00 сессия S1 задача DK-931 проект devkit дерево /x "
+            "транскрипт - источник заказ повод startup tmux task-DK-931 панель %9 "
+            "родитель -\n", encoding="utf-8")
+        row = watch.chat_address("S1", home)
+        self.assertEqual((watch.field(row, "tmux"), watch.field(row, "панель"),
+                          watch.field(row, "родитель")), ("task-DK-931", "%9", ""))
+
+
 if __name__ == "__main__":
     unittest.main()

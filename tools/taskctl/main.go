@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/frame"
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 const usageText = `taskctl: механика канбан-доски docs/TASKS.md
@@ -189,6 +190,16 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   lint                                        проверить инварианты доски и архива
   init --prefix XR [--name "..."] [--here]   скелет доски в корне репозитория,
                                              с --here в названной директории
+
+Поднимать голову задачи:
+  run <ID> [--harness имя] [--model ярус] [--order "..."] [--again "..."] [--hidden]
+                                              лестница носителей: реплика в живое
+                                              окно задачи, новое окно tmux с
+                                              task-run.py, headless, громкий зов
+                                              человеку с готовой командой; замок
+                                              ~/.devkit/task-<ID>.lock. Коды: 0
+                                              голова поднята, 1 позван человек,
+                                              2 раскладка, 3 замок занят
 
 Держать дерево доски свежим:
   catchup [--hook]                            догнать боковое дерево (detached HEAD,
@@ -681,6 +692,32 @@ func main() {
 		pos := frame.ParseArgs(fs, args[1:])
 		needArgs(pos, 1, 1, "elapsed <ID>")
 		msg, err = cmdElapsed(root(*dir), pos[0])
+	case "run":
+		fs := flag.NewFlagSet("run", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		harness := fs.String("harness", "", "профиль харнеса (по умолчанию DEVKIT_HARNESS либо claude-code)")
+		model := fs.String("model", "", "ярус моделью")
+		order := fs.String("order", "", "заказ первого прохода и реплика живому окну")
+		again := fs.String("again", "", "заказ следующих проходов")
+		hidden := fs.Bool("hidden", false, "поднято без человека")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, `run <ID> [--harness имя] [--model ярус] [--order "..."] [--again "..."] [--hidden]`)
+		out, code, rerr := cmdRun(root(*dir), pos[0], runOpts{harness: *harness, model: *model,
+			order: *order, again: *again, hidden: *hidden})
+		if rerr != nil {
+			logRun(code)
+			fmt.Fprintln(os.Stderr, "ошибка:", rerr)
+			os.Exit(code)
+		}
+		// Отказ занятого замка уходит в stderr: тик читает его кодом и
+		// молчит, а stdout остаётся тем, кто голову поднял.
+		if code == taskhead.CodeBusy {
+			fmt.Fprint(os.Stderr, out)
+		} else {
+			fmt.Print(out)
+		}
+		logRun(code)
+		os.Exit(code)
 	case "review":
 		if len(args) < 2 {
 			fail(fmt.Errorf("жду: review level|add|clean|resolve|show|stats|draft|approve|drop|publish|poll|approve-mr ..."))

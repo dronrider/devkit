@@ -15,4 +15,5 @@ session = ["--session-id", "{session}"]
 resume = ["sometool", "--resume", "{session}"]
 turn_end = "exit"
 wait_cap = "2h"
-warn: profile-head.toml: [head] незнакомый ключ wait_cap, пропущен
+tint = "blue"
+warn: profile-head.toml: [head] незнакомый ключ tint, пропущен

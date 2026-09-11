@@ -68,6 +68,7 @@ model = ["--model", "{model}"]
 session = ["--session-id", "{session}"]
 resume = ["agentctl", "exec", "--harness", "glm-code", "--", "claude", "--resume", "{session}"]
 turn_end = "turn-mark"
+wait_cap = "2h"
 
 # Остаток снимает kit/harness/snap/glm-code.sh: эндпоинт мониторинга подписки
 # отвечает тем же токеном, которым работает клиент, и отдаёт оба окна сразу.

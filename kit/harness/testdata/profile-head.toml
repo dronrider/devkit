@@ -22,3 +22,4 @@ session = ["--session-id", "{session}"]
 resume = ["sometool", "--resume", "{session}"]
 turn_end = "exit"
 wait_cap = "2h"
+tint = "blue"

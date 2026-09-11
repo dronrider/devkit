@@ -46,9 +46,10 @@ PROFILE_SCHEMA = (
 OPTIONAL_SCHEMA = (
     ("skills", (("dir", STR), ("format", STR), ("discovery", STR))),
     # Голова задачи (DK-931): чем её поднимает taskctl run. Читает секцию
-    # internal/taskhead, тут она сверяется только типами.
+    # internal/taskhead, тут она сверяется только типами. wait_cap это потолок
+    # срока agentctl wait (DK-930), его читают утилита и оболочка task-run.py.
     ("head", (("client", ARR), ("bin", STR), ("model", ARR), ("session", ARR),
-              ("resume", ARR), ("turn_end", STR))),
+              ("resume", ARR), ("turn_end", STR), ("wait_cap", STR))),
 )
 
 DISCOVERY_VALUES = ("auto", "manual")

@@ -45,13 +45,16 @@ discovery = "auto"
 # ярус и имя сессии. Имя живой голове даёт команда подъёма и пишет его в
 # реестр чатов с адресом окна. resume получает человек в тексте зова.
 # turn_end это признак конца хода. turn-mark значит отметку хука Stop в
-# ~/.devkit/turns.log, exit значит выход процесса.
+# ~/.devkit/turns.log, exit значит выход процесса. wait_cap это потолок срока
+# `agentctl wait` (DK-930): ожидание дольше него паркует строку доски, а не
+# держит окно головы. Держат потолок оба конца, утилита и оболочка.
 [head]
 client = ["claude", "--permission-mode", "auto"]
 model = ["--model", "{model}"]
 session = ["--session-id", "{session}"]
 resume = ["claude", "--resume", "{session}"]
 turn_end = "turn-mark"
+wait_cap = "2h"
 
 [quota]
 snap = "usage-pane"

@@ -126,9 +126,10 @@ var optionalSchema = []sectionSpec{
 	{"skills", []keySpec{{"dir", tomlStr}, {"format", tomlStr}, {"discovery", tomlStr}}},
 	// Голова задачи (DK-931): чем её поднимает taskctl run. Читает секцию
 	// internal/taskhead, тут она сверяется только типами. Профиль без неё
-	// законен, подъём на нём откажет сам со своими словами.
+	// законен, подъём на нём откажет сам со своими словами. wait_cap это
+	// потолок срока agentctl wait (DK-930), значение разбирает сама команда.
 	{"head", []keySpec{{"client", tomlArr}, {"bin", tomlStr}, {"model", tomlArr},
-		{"session", tomlArr}, {"resume", tomlArr}, {"turn_end", tomlStr}}},
+		{"session", tomlArr}, {"resume", tomlArr}, {"turn_end", tomlStr}, {"wait_cap", tomlStr}}},
 }
 
 var discoveryValues = []string{"auto", "manual"}

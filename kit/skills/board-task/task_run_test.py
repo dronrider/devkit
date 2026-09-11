@@ -8,6 +8,7 @@
 фикстура, изображающая чужую программу.
 """
 import importlib
+import io
 import json
 import os
 import shutil
@@ -16,6 +17,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUN = os.path.join(HERE, "task-run.py")
@@ -428,13 +430,15 @@ class Stand:
             "DEVKIT_NOTIFY_OFF": "1",
         }
 
-    def run(self, *args):
+    def run(self, *args, extra=None):
         argv = [sys.executable, RUN, "DK-1", "-C", self.root] + list(args)
         # Печатную череду гоняет печатный стаб: он выходит концом прохода, а
         # живой между заказами не выходит вовсе.
         head = "claude-live" if self.live and "--headless" not in args else "claude-stub"
         argv += ["--", os.path.join(self.bin, head)]
-        return subprocess.run(argv, capture_output=True, text=True, env=self.env())
+        env = self.env()
+        env.update(extra or {})
+        return subprocess.run(argv, capture_output=True, text=True, env=env)
 
     def why(self, got):
         """Слова к провалу прогона. Голый код возврата не говорит ничего:
@@ -1042,6 +1046,90 @@ class TestJournal(unittest.TestCase):
         got, after = self.read(seen)
         self.assertEqual(got, [])
         self.assertEqual(after, seen, "память забылась на пропавшем журнале")
+
+
+class TestLock(unittest.TestCase):
+    """Замок головы задачи (DK-931): вторая оболочка по той же задаче не
+    встаёт, замок от команды подъёма принимается, свой снимается на выходе.
+    Строка стоит в архиве, и оболочка кончается штатно на первом же взгляде
+    на доску: голова тут не нужна, проверяется только замок."""
+
+    def setUp(self):
+        self.stand = Stand(sect="архиве")
+        self.addCleanup(self.stand.drop)
+        self.lock = os.path.join(self.stand.root, ".devkit", "task-DK-1.lock")
+
+    def hold(self, pid):
+        os.makedirs(self.lock, exist_ok=True)
+        with open(os.path.join(self.lock, "pid"), "w", encoding="utf-8") as f:
+            f.write("%d\n" % pid)
+
+    def live(self):
+        p = subprocess.Popen(["sleep", "30"])
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        return p.pid
+
+    def test_busy_lock_stops_with_code_3(self):
+        self.hold(self.live())
+        got = self.stand.run()
+        self.assertEqual(got.returncode, 3, got.stderr)
+        self.assertIn("уже поднята", got.stderr)
+        self.assertEqual(self.stand.orders(), [], "голова поднята поверх занятого замка")
+        self.assertTrue(os.path.isdir(self.lock), "чужой замок снят")
+
+    def test_lock_from_the_raise_command_is_taken_over(self):
+        owner = self.live()
+        self.hold(owner)
+        got = self.stand.run(extra={"DEVKIT_TASK_LOCK_FROM": str(owner)})
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertFalse(os.path.exists(self.lock), "принятый замок не снят на выходе")
+
+    def test_dead_owner_is_retaken(self):
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        self.hold(dead.pid)
+        got = self.stand.run()
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertFalse(os.path.exists(self.lock))
+
+    def test_own_lock_is_released(self):
+        got = self.stand.run()
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertFalse(os.path.exists(self.lock), "свой замок остался после стопа")
+
+
+class TestProfileClient(unittest.TestCase):
+    """Клиент головы без хвоста после `--` берётся из профиля харнеса: прибитой
+    строки клиента в оболочке нет (DK-931)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="task-run-profile-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.env = unittest.mock.patch.dict(os.environ, {"DEVKIT_HARNESS": ""})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def test_client_comes_from_the_profile(self):
+        opts = task_run.parse_args(["DK-1", "-C", self.tmp])
+        self.assertEqual(opts["client"], ["claude", "--permission-mode", "auto"])
+        self.assertFalse(opts["headless"])
+
+    def test_exit_turn_end_means_headless(self):
+        with open(os.path.join(self.tmp, "x.toml"), "w", encoding="utf-8") as f:
+            f.write('[head]\nclient = ["x", "--y"]\nturn_end = "exit"\n')
+        with unittest.mock.patch.object(task_run, "HARNESS_DIR", self.tmp):
+            os.environ["DEVKIT_HARNESS"] = "x"
+            opts = task_run.parse_args(["DK-1", "-C", self.tmp])
+        self.assertEqual((opts["client"], opts["headless"]), (["x", "--y"], True))
+
+    def test_missing_profile_is_named(self):
+        os.environ["DEVKIT_HARNESS"] = "нет-такого"
+        err = io.StringIO()
+        with unittest.mock.patch("sys.stderr", err), self.assertRaises(SystemExit) as got:
+            task_run.parse_args(["DK-1", "-C", self.tmp])
+        self.assertEqual(got.exception.code, 2)
+        self.assertIn("нет-такого.toml", err.getvalue())
 
 
 if __name__ == "__main__":

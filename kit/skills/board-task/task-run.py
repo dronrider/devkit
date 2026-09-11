@@ -7,7 +7,7 @@
 
   task-run.py <ID> [-C <корень проекта>] [--order <заказ первого прохода>]
               [--again <заказ следующих>] [--passes N] [--project <имя>]
-              [--headless] -- <команда клиента без -p>
+              [--headless] [-- <команда клиента без -p>]
 
 Голов у конвейера две, и выбирает между ними окружение.
 
@@ -52,14 +52,24 @@ turn-mark.py, и сессия, поднятая до того, как он лё�
 самого события, а конец и начало хода его снимают: второй вопрос той же
 причины это другой вопрос, и молчать о нём нельзя.
 
-Перезагрузка машины разбирается сама собой. Своего замка оболочка не заводит,
-живой сессии после ребута нет ни в tmux, ни в реестре, и та же команда
-дашборда поднимает работу заново, прочитав состояние с доски и из дерева
-задачи.
+Замок на задачу оболочка держит всю свою жизнь. Это каталог
+~/.devkit/task-<ID>.lock с её pid, общий с командой подъёма `taskctl run`
+(internal/taskhead, DK-931). Команда берёт замок первой и передаёт его
+оболочке переменной DEVKIT_TASK_LOCK_FROM, а оболочка вписывает туда свой pid.
+Поднятая мимо команды оболочка (дашборд, терминал) берёт замок сама. Занятый
+живым владельцем замок это стоп кодом 3, и вторая голова по задаче не встаёт.
+Перезагрузка машины разбирается сама собой. Pid в замке мёртв, замок снимается
+как брошенный, и работа поднимается заново с доски и из дерева задачи.
 
 Заказ проходу оболочка не сочиняет. Слова приходят флагами от того, кто её
 позвал, и лежат в одном месте (у дашборда это runPrompt). Умолчание держится
 только на случай ручного запуска из терминала.
+
+Клиента тоже называет зовущий, хвостом после `--`. Без хвоста оболочка берёт
+его из профиля харнеса: ключ client секции [head] в kit/harness/<имя>.toml, имя
+из DEVKIT_HARNESS, по умолчанию claude-code. Прибитой строки клиента в оболочке
+нет. Профиль с turn_end = "exit" говорит, что отметки конца хода у клиента нет,
+и голова тогда идёт печатной чередой.
 
 Проход кончается концом хода, каким бы он ни был. Ни код возврата, ни слово
 отметки тут не вердикт, вердикт это статус строки на доске. Закрытая задача
@@ -84,12 +94,13 @@ user стоит в check и ждёт человека, а проход, конч
 
 Коды возврата: 0 штатный стоп (задача закрыта, запаркована или ждёт приёмки),
 1 стоп оболочки (проходы исчерпаны, воронка, живая голова вышла), 2 ошибка
-вызова или окружения.
+вызова или окружения, 3 замок занят (голова задачи уже поднята).
 """
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -181,7 +192,7 @@ TURNS_ENV = "DEVKIT_TURN_MARK_LOG"
 # Ключевые слова строк обоих журналов. Значение поля собирается до следующего
 # слова, и поэтому пробел в пути дерева строку не рассыпает.
 SESSION_KEYS = ("сессия", "задача", "проект", "дерево", "транскрипт", "источник",
-                "повод", "tmux", "родитель")
+                "повод", "tmux", "панель", "родитель")
 TURN_KEYS = ("сессия", "ход", "повод", "дерево")
 # Ключевые слова строки журнала уведомителя. Оболочке нужны два первых, но
 # перечень обязан назвать и остальные. Значение поля собирается до следующего
@@ -223,12 +234,87 @@ MUTE_SECONDS = 1800
 # пакете, обгоняет отрисовку, и в поле остаётся половина заказа (chats.go).
 SEND_PAUSE = 0.25
 
+# Замок головы задачи (DK-931). Команда подъёма кладёт в него свой pid и
+# называет его этой переменной, оболочка вписывает свой. Замок без pid моложе
+# LOCK_YOUNG секунд ещё занят: каталог и pid пишутся двумя шагами.
+LOCK_FROM_ENV = "DEVKIT_TASK_LOCK_FROM"
+LOCK_YOUNG = 5
+BUSY = 3
+# Профиль харнеса, из которого берётся клиент, когда хвоста после `--` нет.
+HARNESS_DIR = os.path.normpath(os.path.join(HERE, "..", "..", "harness"))
+HARNESS_ENV = "DEVKIT_HARNESS"
+DEFAULT_HARNESS = "claude-code"
+TURN_EXIT = "exit"
+
 USAGE = __doc__
 
 
 def die(text, code=2):
     sys.stderr.write("task-run: %s\n" % text)
     sys.exit(code)
+
+
+def head_keys(path):
+    """Секция [head] профиля харнеса. Значения там строки и массивы строк в
+    двойных кавычках, их запись совпадает с JSON, и разбор идёт им."""
+    keys, sect = {}, ""
+    with open(path, encoding="utf-8") as f:
+        for n, raw in enumerate(f, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("[") and line.endswith("]") and "=" not in line:
+                sect = line[1:-1].strip()
+                continue
+            if sect != "head" or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            try:
+                keys[key.strip()] = json.loads(val.strip())
+            except ValueError:
+                die("профиль %s:%d: в [head] ключ %s не разобран" % (path, n, key.strip()))
+    return keys
+
+
+def profile_client(name=None):
+    """Клиент головы из профиля харнеса и признак печатной череды."""
+    name = name or (os.environ.get(HARNESS_ENV) or "").strip() or DEFAULT_HARNESS
+    path = os.path.join(HARNESS_DIR, name + ".toml")
+    if not os.path.isfile(path):
+        die("клиент не назван: хвоста после -- нет, а профиля харнеса %s нет" % path)
+    keys = head_keys(path)
+    client = keys.get("client")
+    if not isinstance(client, list) or not client or not all(isinstance(c, str) for c in client):
+        die("клиент не назван: в профиле %s нет [head] client массивом строк" % path)
+    return client, keys.get("turn_end") == TURN_EXIT
+
+
+def lock_owner(pidfile):
+    try:
+        with open(pidfile, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def pid_alive(owner):
+    """Жив ли процесс с pid из замка. Чужой процесс без права на сигнал жив."""
+    if not owner.isdigit():
+        return False
+    try:
+        os.kill(int(owner), 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def young(path):
+    try:
+        return time.time() - os.stat(path).st_mtime < LOCK_YOUNG
+    except OSError:
+        return False
 
 
 def parse_args(argv):
@@ -271,7 +357,9 @@ def parse_args(argv):
     if not opts["again"]:
         opts["again"] = opts["order"]
     if not opts["client"]:
-        opts["client"] = ["claude", "--permission-mode", "auto"]
+        opts["client"], exit_only = profile_client()
+        if exit_only:
+            opts["headless"] = True
     opts["proj"] = os.path.abspath(opts["proj"])
     if not os.path.isdir(opts["proj"]):
         die("корень проекта %s не каталог" % opts["proj"])
@@ -311,6 +399,45 @@ class Pipeline:
         # Один вопрос приходит двумя каналами, и второй зов о нём человеку не
         # нужен. Конец и начало хода память чистят.
         self.said_stuck = {}
+        self.lock = ""
+
+    # -- замок --------------------------------------------------------------
+
+    def take_lock(self):
+        """Замок на задачу до разговора с доской. Вторая голова по той же
+        задаче заказывала бы проходы поверх первой, и занятый живым владельцем
+        замок это стоп кодом 3."""
+        lock = os.path.join(HOME_DIR, "task-%s.lock" % self.id.upper())
+        pidfile = os.path.join(lock, "pid")
+        handed = (os.environ.get(LOCK_FROM_ENV) or "").strip()
+        os.makedirs(HOME_DIR, exist_ok=True)
+        took = False
+        for _ in range(2):
+            try:
+                os.mkdir(lock)
+                took = True
+                break
+            except FileExistsError:
+                owner = lock_owner(pidfile)
+                if handed and owner == handed:
+                    took = True
+                    break
+                if pid_alive(owner) or (not owner and young(lock)):
+                    die("голова %s уже поднята: замок %s держит pid %s"
+                        % (self.id, lock, owner or "без записи"), BUSY)
+                shutil.rmtree(lock, ignore_errors=True)
+        if not took:
+            die("голова %s уже поднимается: замок %s перехвачен" % (self.id, lock), BUSY)
+        with open(pidfile + ".tmp", "w", encoding="utf-8") as f:
+            f.write("%d\n" % os.getpid())
+        os.replace(pidfile + ".tmp", pidfile)
+        self.lock = lock
+
+    def drop_lock(self):
+        """Снять свой замок на выходе. Чужой, перехваченный после ребута, не
+        трогается."""
+        if self.lock and lock_owner(os.path.join(self.lock, "pid")) == str(os.getpid()):
+            shutil.rmtree(self.lock, ignore_errors=True)
 
     # -- состояние доски ----------------------------------------------------
 
@@ -1003,7 +1130,12 @@ def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
         sys.stdout.write(USAGE)
         return 0
-    Pipeline(parse_args(argv)).run()
+    pipe = Pipeline(parse_args(argv))
+    pipe.take_lock()
+    try:
+        pipe.run()
+    finally:
+        pipe.drop_lock()
     return 0
 
 

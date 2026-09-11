@@ -441,3 +441,50 @@ func TestDevkitLookup(t *testing.T) {
 		t.Fatalf("devkit найден там, где его нет: %q", got)
 	}
 }
+
+// DK-932, замечание ревью: без модели в заказе лестница спрашивает вердикт
+// перед стартом нового клиента и приставляет модель к его команде. Занятому
+// замку и живому окну вердикт не нужен, явная модель сильнее вердикта, отказ
+// вердикта оставляет клиенту его умолчание и называется в выводе.
+func TestPickOnlyForNewClient(t *testing.T) {
+	asked := 0
+	pick := func() (string, error) { asked++; return "sonnet", nil }
+
+	s := newStand(t, true, true)
+	q := s.req()
+	q.Pick = pick
+	res, err := Raise(q)
+	if err != nil || res.Rung != RungWindow || asked != 1 ||
+		!strings.Contains(s.read("runner.log"), "-- claude --permission-mode auto --model sonnet --session-id ") ||
+		!strings.Contains(strings.Join(res.Lines, "\n"), "модель sonnet по вердикту agentctl pick") {
+		t.Fatalf("модель вердикта не дошла до окна, вопросов %d, ошибка %v:\n%s", asked, err, s.why(res))
+	}
+	if res, _ := Raise(q); res.Rung != RungLock || asked != 1 {
+		t.Fatalf("занятый замок спросил вердикт, вопросов %d:\n%s", asked, s.why(res))
+	}
+
+	live := newStand(t, true, true)
+	live.register(time.Minute, "S1", "DK-1", "дерево", "-", "%3")
+	live.pane("%3", "0 claude")
+	q = live.req()
+	q.Pick = pick
+	if res, _ := Raise(q); res.Rung != RungLive || asked != 1 {
+		t.Fatalf("живое окно спросило вердикт, вопросов %d:\n%s", asked, live.why(res))
+	}
+
+	named := newStand(t, true, true)
+	q = named.req()
+	q.Model, q.Pick = "haiku", pick
+	if res, _ := Raise(q); asked != 1 || !strings.Contains(named.read("runner.log"), "--model haiku --session-id ") {
+		t.Fatalf("явная модель не сильнее вердикта, вопросов %d:\n%s", asked, named.why(res))
+	}
+
+	broken := newStand(t, true, true)
+	q = broken.req()
+	q.Pick = func() (string, error) { return "", fmt.Errorf("вердикт сломан") }
+	res, _ = Raise(q)
+	if res.Rung != RungWindow || strings.Contains(broken.read("runner.log"), "--model") ||
+		!strings.Contains(strings.Join(res.Lines, "\n"), "клиент стартует на своём умолчании: вердикт сломан") {
+		t.Fatalf("отказ вердикта не оставил клиенту умолчание:\n%s", broken.why(res))
+	}
+}

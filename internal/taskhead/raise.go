@@ -66,11 +66,14 @@ type Request struct {
 	Home    string // дом, от которого считаются ~/.devkit и реестр
 	Devkit  string // дерево devkit: оболочка, профили, уведомитель
 	Harness string // имя профиля харнеса
-	Model   string // ярус моделью, пусто значит умолчание клиента
-	Order   string // заказ первого прохода, пусто значит умолчание оболочки
-	Again   string // заказ следующих проходов
-	Hidden  bool   // поднято без человека (DK-847)
-	Adopt   time.Duration
+	Model   string // ярус моделью, пусто значит спросить Pick
+	// Pick называет модель вердиктом, когда Model пуст. Зовётся только перед
+	// стартом нового клиента. Отказ оставляет клиенту его умолчание.
+	Pick   func() (string, error)
+	Order  string // заказ первого прохода, пусто значит умолчание оболочки
+	Again  string // заказ следующих проходов
+	Hidden bool   // поднято без человека (DK-847)
+	Adopt  time.Duration
 }
 
 // Result это исход лестницы.
@@ -90,6 +93,23 @@ func (q Request) Word() string {
 		return q.Order
 	}
 	return "Продолжай выполнение " + q.ID
+}
+
+// pickModel называет модель вердиктом, когда заказ её не назвал. Спрашивается
+// он только перед стартом нового клиента: живому окну и занятому замку модель
+// не нужна, а тик зовёт подъём на каждом заходе, и вердикт с записью этапа
+// копил бы записи впустую. Исход ложится строкой вывода в обе стороны.
+func (q *Request) pickModel(res *Result) {
+	if q.Model != "" || q.Pick == nil {
+		return
+	}
+	model, err := q.Pick()
+	if err != nil {
+		res.say("модель вердиктом не выбрана, клиент стартует на своём умолчании: %v", err)
+		return
+	}
+	q.Model = model
+	res.say("модель %s по вердикту agentctl pick", model)
 }
 
 // Raise ведёт лестницу носителей. Ошибка это сломанная раскладка (нет
@@ -131,6 +151,7 @@ func Raise(q Request) (Result, error) {
 	case !found(head.Bin):
 		res.say("клиент %s не нашёлся в PATH: поднимать голову нечем", head.Bin)
 	default:
+		q.pickModel(&res)
 		if tmux != "" && q.newWindow(tmux, runner, head, lock, me, &res) {
 			res.Code, res.Rung = CodeRaised, RungWindow
 			return res, nil

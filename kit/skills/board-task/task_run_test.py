@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import unittest.mock
@@ -829,6 +830,303 @@ class TestLiveHead(unittest.TestCase):
         got = s.run()
         self.assertEqual(got.returncode, 1, s.why(got))
         self.assertTrue([l for l in s.journal() if "живая голова вышла" in l], s.journal())
+
+
+# Стаб agentctl для условий «слита» и «закрыта»: код выхода берётся из файла
+# стенда, вызов дописывается рядом. Так проверяется договор оболочки с
+# утилитой без сборки go: 0 пришло, 1 ещё нет, прочее проверить нечем.
+AGENTCTL_STUB = r'''#!/usr/bin/env python3
+import os
+import sys
+
+state = os.environ["DEVKIT_TEST_AGENTCTL"]
+with open(state, encoding="utf-8") as f:
+    code = int(f.read().strip() or "2")
+with open(state + ".calls", "a", encoding="utf-8") as f:
+    f.write(" ".join(sys.argv[1:]) + "\n")
+if code == 2:
+    sys.stderr.write("ошибка: проверить нечем\n")
+else:
+    sys.stdout.write("ответ %d\n" % code)
+sys.exit(code)
+'''
+
+REPO = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+
+
+def git_t(root, *args):
+    """git стенда мимо глобального конфига машины: хуки devkit отбили бы
+    коммит кода без теста, а подпись спросила бы ключ."""
+    env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    p = subprocess.run(["git", "-C", root, "-c", "user.name=t", "-c", "user.email=t@t",
+                        "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + os.devnull]
+                       + list(args), capture_output=True, text=True, env=env)
+    if p.returncode != 0:
+        raise AssertionError("git %s: %s" % (" ".join(args), p.stderr))
+    return p.stdout.strip()
+
+
+def stamp(secs):
+    """Время отметки через secs секунд от текущего момента."""
+    return time.strftime(task_run.WAIT_STAMP, time.localtime(time.time() + secs))
+
+
+class WaitStand(unittest.TestCase):
+    """Общий корень стендов ожидания: временный проект с обвязкой .devkit,
+    каталог отметок и окружение, которое тест вправе подменять."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="task-run-kinds-")
+        os.makedirs(os.path.join(self.root, ".devkit"))
+        self.saved = dict(os.environ)
+        os.environ[task_run.WAITS_ENV] = self.root
+        os.environ[task_run.WATCH_ENV] = "0"
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self.saved)
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def pipe(self):
+        return task_run.Pipeline(task_run.parse_args(["DK-1", "-C", self.root, "--", "claude"]))
+
+    def journal(self):
+        try:
+            with open(os.path.join(self.root, ".devkit", "log"), encoding="utf-8") as f:
+                return f.read().splitlines()
+        except OSError:
+            return []
+
+
+class TestWaitKinds(WaitStand):
+    """Новые условия DK-930: конец процесса и час оболочка проверяет сама,
+    «слита» и «закрыта» спрашивает у agentctl, а потолок срока берёт из
+    профиля харнеса."""
+
+    def setUp(self):
+        super().setUp()
+        self.bin = os.path.join(self.root, "bin")
+        os.makedirs(self.bin)
+        stub = os.path.join(self.bin, "agentctl")
+        with open(stub, "w", encoding="utf-8") as f:
+            f.write(AGENTCTL_STUB)
+        os.chmod(stub, 0o755)
+        self.answer = os.path.join(self.root, "answer")
+        os.environ["DEVKIT_TEST_AGENTCTL"] = self.answer
+        os.environ["PATH"] = self.bin + os.pathsep + self.saved.get("PATH", "")
+
+    def say(self, code):
+        with open(self.answer, "w", encoding="utf-8") as f:
+            f.write(str(code))
+
+    def test_process_death_is_the_event(self):
+        p = subprocess.Popen(["sleep", "30"])
+        self.addCleanup(p.wait)
+        pipe = self.pipe()
+        mark = {"kind": "процесс", "target": str(p.pid)}
+        self.assertFalse(pipe.wait_done(mark), "живой процесс сочтён кончившимся")
+        p.kill()
+        p.wait()
+        self.assertTrue(pipe.wait_done(mark), "кончившийся процесс сочтён живым")
+
+    def test_zombie_is_the_event(self):
+        # Процесс вышел, а родитель его ещё не прибрал. Сигнал 0 такой процесс
+        # принимает, и без спроса у ps ожидание стояло бы до срока.
+        p = subprocess.Popen(["true"])
+        self.addCleanup(p.wait)
+        pipe, end = self.pipe(), time.time() + 5
+        mark = {"kind": "процесс", "target": str(p.pid)}
+        while time.time() < end and not pipe.wait_done(mark):
+            time.sleep(0.02)
+        self.assertTrue(pipe.wait_done(mark), "неприбранный процесс считается живым")
+
+    def test_hour_is_the_event(self):
+        pipe = self.pipe()
+        self.assertTrue(pipe.wait_done({"kind": "час", "target": stamp(-1)}))
+        self.assertFalse(pipe.wait_done({"kind": "час", "target": stamp(60)}))
+
+    def test_asked_kinds_follow_agentctl(self):
+        pipe = self.pipe()
+        mark = {"kind": "слита", "target": "DK-2"}
+        self.say(1)
+        self.assertFalse(pipe.wait_done(mark))
+        self.say(0)
+        self.assertTrue(pipe.wait_done(mark))
+        self.assertTrue(pipe.wait_done({"kind": "закрыта", "target": "DK-2"}))
+        with open(self.answer + ".calls", encoding="utf-8") as f:
+            calls = f.read().splitlines()
+        self.assertEqual(calls[0], "wait DK-1 слита DK-2 --check -C " + self.root)
+        self.assertIn("wait DK-1 закрыта DK-2 --check -C " + self.root, calls)
+
+    def test_blind_check_is_named_once(self):
+        # Проверить нечем: старый agentctl без --check, сломанный git. Ожидание
+        # кончится сроком, а человек узнаёт о слепоте одной строкой журнала на
+        # отметку, а не строкой на каждый шаг ожидания.
+        pipe = self.pipe()
+        self.say(2)
+        mark = {"kind": "слита", "target": "DK-2"}
+        self.assertFalse(pipe.wait_done(mark))
+        self.assertFalse(pipe.wait_done(mark))
+        told = [l for l in self.journal() if "не проверено" in l]
+        self.assertEqual(len(told), 1, self.journal())
+        self.assertIn("проверить нечем", told[0])
+
+    def test_missing_agentctl_is_named(self):
+        os.environ["PATH"] = os.path.join(self.root, "пусто")
+        pipe = self.pipe()
+        self.assertFalse(pipe.wait_done({"kind": "закрыта", "target": "DK-2"}))
+        self.assertTrue([l for l in self.journal() if "не проверено" in l], self.journal())
+
+    def test_new_kinds_are_taken(self):
+        pipe = self.pipe()
+        for kind in ("слита", "закрыта", "процесс", "час"):
+            body = {"task": "DK-1", "session": SID, "kind": kind, "target": "DK-2",
+                    "since": stamp(0), "until": stamp(60), "note": ""}
+            with open(os.path.join(self.root, "DK-1.json"), "w", encoding="utf-8") as f:
+                json.dump(body, f, ensure_ascii=False)
+            self.assertTrue(pipe.wait_mark(), "отметка с условием %s не взята" % kind)
+        self.assertEqual([l for l in self.journal() if "незнакомым" in l], [])
+
+    def profile(self, head):
+        """Каталог профилей с одним claude-code, секция [head] как задана."""
+        harness = os.path.join(self.root, "harness")
+        os.makedirs(harness, exist_ok=True)
+        path = os.path.join(harness, "claude-code.toml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('[detect]\n\n[head]\nclient = ["claude"]\n' + head)
+        patch = unittest.mock.patch.object(task_run, "HARNESS_DIR", harness)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return path
+
+    def test_cap_comes_from_the_profile(self):
+        path = self.profile('wait_cap = "30m"\n')
+        pipe = self.pipe()
+        body = {"task": "DK-1", "session": SID, "kind": "срок", "target": "",
+                "since": stamp(0), "until": stamp(45 * 60), "note": ""}
+        with open(os.path.join(self.root, "DK-1.json"), "w", encoding="utf-8") as f:
+            json.dump(body, f, ensure_ascii=False)
+        self.assertIsNone(pipe.wait_mark())
+        told = [l for l in self.journal() if "больше потолка" in l]
+        self.assertTrue(told, self.journal())
+        self.assertIn("30m", told[0])
+        self.assertIn(path, told[0])
+        body["until"] = stamp(20 * 60)
+        with open(os.path.join(self.root, "DK-1.json"), "w", encoding="utf-8") as f:
+            json.dump(body, f, ensure_ascii=False)
+        self.assertTrue(pipe.wait_mark(), "срок под потолком профиля не взят")
+
+    def test_cap_defaults_without_the_key(self):
+        self.profile("")
+        pipe = self.pipe()
+        self.assertEqual(pipe.wait_cap, 2 * 60 * 60)
+        self.assertIn("умолчание", pipe.wait_cap_from)
+
+    def test_broken_cap_stops_the_shell(self):
+        # Молча подменённый потолок неотличим от настоящего, поэтому кривое
+        # значение останавливает оболочку до первого прохода.
+        self.profile('wait_cap = "два часа"\n')
+        with unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+            with self.assertRaises(SystemExit):
+                self.pipe()
+        self.assertIn("wait_cap", err.getvalue())
+
+    def test_parse_span(self):
+        cases = {"90s": 90, "10m": 600, "1h30m": 5400, "2h": 7200,
+                 "": None, "0s": None, "2д": None, "1.5h": None}
+        for text, want in cases.items():
+            self.assertEqual(task_run.parse_span(text), want, text)
+
+
+class TestWaitEvents(WaitStand):
+    """Оболочка выходит из ожидания по событию раньше срока. Стенд это
+    синтетическая доска во временном git и настоящий agentctl, собранный из
+    дерева: признак «слита» проверяется тем кодом, каким его считают утилиты."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("go"):
+            raise unittest.SkipTest("go на машине нет, настоящий agentctl не собрать")
+        cls.bin = tempfile.mkdtemp(prefix="task-run-agentctl-")
+        p = subprocess.run(["go", "build", "-o", os.path.join(cls.bin, "agentctl"), "."],
+                           cwd=os.path.join(REPO, "tools", "agentctl"),
+                           env=dict(os.environ, GOWORK="off"), capture_output=True, text=True)
+        if p.returncode != 0:
+            raise AssertionError("agentctl не собран: %s" % p.stderr)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.bin, ignore_errors=True)
+
+    def setUp(self):
+        super().setUp()
+        os.environ["PATH"] = self.bin + os.pathsep + self.saved.get("PATH", "")
+        os.makedirs(os.path.join(self.root, "docs"))
+        with open(os.path.join(self.root, "docs", "TASKS.md"), "w", encoding="utf-8") as f:
+            f.write("# доска\n\n## In progress\n\n| ID | Задача | Тип | P | R | Цена | Ссылка |\n"
+                    "|---|---|---|---|---|---|---|\n| DK-1 | голова | task | P2 | 1 | S | - |\n"
+                    "| DK-2 | соседка | task | P2 | 1 | S | - |\n")
+        with open(os.path.join(self.root, "docs", "TASKS-archive.md"), "w", encoding="utf-8") as f:
+            f.write(self.ARCHIVE)
+        with open(os.path.join(self.root, ".gitignore"), "w", encoding="utf-8") as f:
+            f.write(".devkit/\n*.json\n")
+        git_t(self.root, "init", "-q", "-b", "main")
+        git_t(self.root, "add", "-A")
+        git_t(self.root, "commit", "-q", "-m", "docs(tasks): доска")
+
+    ARCHIVE = "# сделано\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n|---|---|---|---|---|---|\n"
+
+    def held(self, mark, event, after=0.5):
+        """Ждать отметку оболочкой, пока событие придёт через after секунд.
+        Возврат это исход ожидания и сколько оно длилось."""
+        timer = threading.Timer(after, event)
+        timer.start()
+        self.addCleanup(timer.cancel)
+        pipe, started = self.pipe(), time.time()
+        why = pipe.hold(mark)
+        return why, time.time() - started
+
+    def test_merge_ends_the_wait(self):
+        git_t(self.root, "switch", "-q", "-c", "dk-2")
+        with open(os.path.join(self.root, "code.go"), "w", encoding="utf-8") as f:
+            f.write("package x\n")
+        git_t(self.root, "add", "code.go")
+        git_t(self.root, "commit", "-q", "-m", "feat: DK-2 код")
+        git_t(self.root, "switch", "-q", "main")
+
+        def merge():
+            git_t(self.root, "merge", "-q", "--no-ff", "-m", "Merge branch dk-2", "dk-2")
+            git_t(self.root, "branch", "-q", "-D", "dk-2")
+
+        why, took = self.held({"kind": "слита", "target": "DK-2", "until": stamp(60)}, merge)
+        self.assertEqual(why, task_run.WAIT_EVENT)
+        self.assertLess(took, 30)
+
+    def test_close_ends_the_wait(self):
+        def close():
+            with open(os.path.join(self.root, "docs", "TASKS-archive.md"), "a", encoding="utf-8") as f:
+                f.write("| DK-2 | соседка | task | P2 | 2026-09-11 | - |\n")
+
+        why, took = self.held({"kind": "закрыта", "target": "DK-2", "until": stamp(60)}, close)
+        self.assertEqual(why, task_run.WAIT_EVENT)
+        self.assertLess(took, 30)
+
+    def test_process_death_ends_the_wait(self):
+        p = subprocess.Popen(["sleep", "30"])
+        self.addCleanup(p.wait)
+        why, took = self.held({"kind": "процесс", "target": str(p.pid), "until": stamp(60)}, p.kill)
+        self.assertEqual(why, task_run.WAIT_EVENT)
+        self.assertLess(took, 30)
+
+    def test_hour_ends_the_wait(self):
+        at = stamp(1)
+        why, took = self.held({"kind": "час", "target": at, "until": at}, lambda: None)
+        self.assertEqual(why, task_run.WAIT_EVENT)
+        self.assertLess(took, 30)
+
+    def test_no_event_waits_the_deadline(self):
+        why, _ = self.held({"kind": "слита", "target": "DK-2", "until": stamp(2)}, lambda: None)
+        self.assertEqual(why, task_run.WAIT_OVER)
 
 
 class TestWaitMark(unittest.TestCase):

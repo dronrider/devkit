@@ -86,7 +86,10 @@ user стоит в check и ждёт человека, а проход, конч
 Третье ожидание это машинное событие снаружи сессии: отбитое слияние ждёт
 коммита соседа, фоновое дело идёт своим чередом. Такой ход сессия отмечает
 командой `agentctl wait` (условие и срок, запись в ~/.devkit/waits на задачу), а
-оболочка читает условие с диска и ждёт за неё. Заказа на такой проход она не
+оболочка читает условие с диска и ждёт за неё. Конец процесса и час она
+проверяет сама, слияние и закрытие соседней строки спрашивает у
+`agentctl wait --check`, а потолок срока берёт из [head] wait_cap профиля
+харнеса. Заказа на такой проход она не
 подаёт, в воронку и в потолок проходов его не считает и возвращается к работе по
 событию либо по сроку. Снимать запись за исполнителя оболочка не берётся,
 поэтому помнит отработанную отметку и второй раз по ней не встаёт, а отметку
@@ -163,11 +166,25 @@ WAIT_TIMER = "срок"
 WAIT_HERE = "есть"
 WAIT_GONE = "нет"
 WAIT_CLEAN = "чисто"
-WAIT_KINDS = (WAIT_TIMER, WAIT_HERE, WAIT_GONE, WAIT_CLEAN)
-# Потолок ожидания, тот же, каким его держит agentctl wait (waitDeadline в
-# wait.go). Проверка стоит с обеих сторон: файл кладёт утилита, но читает его
-# оболочка, и запись с длинным сроком подвесила бы окно на полдня.
-WAIT_CAP = 2 * 60 * 60
+WAIT_MERGED = "слита"
+WAIT_CLOSED = "закрыта"
+WAIT_PROC = "процесс"
+WAIT_HOUR = "час"
+WAIT_KINDS = (WAIT_TIMER, WAIT_HERE, WAIT_GONE, WAIT_CLEAN,
+              WAIT_MERGED, WAIT_CLOSED, WAIT_PROC, WAIT_HOUR)
+# Условия, которые оболочка спрашивает у `agentctl wait --check`. Признак
+# «слита» лежит в общем go-модуле (internal/merged), и его копия на python
+# разошлась бы с оригиналом на первой же правке. Выход 0 значит, что событие
+# пришло, 1 что ещё нет, прочее что проверить нечем.
+WAIT_ASKED = (WAIT_MERGED, WAIT_CLOSED)
+WAIT_ASK_LIMIT = 60
+# Потолок ожидания читается из ключа wait_cap секции [head] профиля харнеса,
+# того же, откуда его берёт agentctl wait. Проверка стоит с обеих сторон: файл
+# кладёт утилита, но читает его оболочка, и запись с длинным сроком подвесила
+# бы окно на полдня. Профилю без ключа достаётся умолчание.
+WAIT_CAP_KEY = "wait_cap"
+WAIT_CAP_DEFAULT = "2h"
+WAIT_STAMP = "%Y-%m-%dT%H:%M:%S"
 # Исходы ожидания: чем оно кончилось. Первые два ведут к заказу, третий отдаёт
 # ход чужой реплике, четвёртый это стоп конвейера.
 WAIT_EVENT = "событие"
@@ -289,6 +306,64 @@ def profile_client(name=None):
     return client, keys.get("turn_end") == TURN_EXIT
 
 
+def parse_span(text):
+    """Срок в секундах из записи вида 90s, 10m, 2h, 1h30m, той же, какой его
+    пишет agentctl. None значит, что запись не разобрана или срок нулевой."""
+    got = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?", (text or "").strip())
+    if not got or not any(got.groups()):
+        return None
+    h, m, s = (int(g or 0) for g in got.groups())
+    return h * 3600 + m * 60 + s or None
+
+
+def profile_cap(name=None):
+    """Потолок срока ожидания в секундах и место, откуда он взят. Профиль
+    выбирается так же, как у клиента головы: DEVKIT_HARNESS, иначе
+    claude-code, и так же его выбирает agentctl wait. Кривое значение
+    останавливает оболочку: молча подменённый потолок неотличим от
+    настоящего."""
+    name = name or (os.environ.get(HARNESS_ENV) or "").strip() or DEFAULT_HARNESS
+    path = os.path.join(HARNESS_DIR, name + ".toml")
+    default = parse_span(WAIT_CAP_DEFAULT)
+    if not os.path.isfile(path):
+        return default, "умолчание %s, профиля %s нет" % (WAIT_CAP_DEFAULT, path)
+    raw = head_keys(path).get(WAIT_CAP_KEY)
+    if raw is None:
+        return default, "умолчание %s, в профиле %s нет [head] %s" % (WAIT_CAP_DEFAULT, path, WAIT_CAP_KEY)
+    span = parse_span(raw) if isinstance(raw, str) else None
+    if not span:
+        die("профиль %s: [head] %s = %r не разобран, жду вид 90m, 2h" % (path, WAIT_CAP_KEY, raw))
+    return span, "%s из профиля %s" % (raw, path)
+
+
+def pid_gone(target):
+    """Кончился ли процесс. Сигнал 0 проверяет только наличие, отказ в
+    правах значит чужой, но живой процесс. Зомби сигнал тоже принимает, хотя
+    процесс уже вышел и ждёт, чтобы родитель его прибрал, поэтому состояние
+    спрашивается у ps. Цель не числом событием не считается: ждать тогда
+    нечего, и ожидание кончится сроком."""
+    try:
+        pid = int(target)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        pass
+    except OSError:
+        return False
+    try:
+        p = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                           capture_output=True, text=True)
+    except OSError:
+        return False
+    return p.stdout.strip().startswith("Z")
+
+
 def lock_owner(pidfile):
     try:
         with open(pidfile, encoding="utf-8") as f:
@@ -395,6 +470,11 @@ class Pipeline:
         # поэтому отработанное она помнит сама.
         self.started = time.time()
         self.wait_seen = None
+        # Потолок срока ожидания из профиля харнеса и условие, про которое
+        # оболочка уже сказала, что проверить его нечем: слепоту она называет
+        # один раз на отметку, а не на каждом шаге ожидания.
+        self.wait_cap, self.wait_cap_from = profile_cap()
+        self.wait_blind = None
         # Время события, о котором оболочка звала человека, по причине вопроса.
         # Один вопрос приходит двумя каналами, и второй зов о нём человеку не
         # нужен. Конец и начало хода память чистят.
@@ -775,11 +855,11 @@ class Pipeline:
         seen = (since, until, mark.get("kind"), mark.get("target"))
         if seen == self.wait_seen:
             return None
-        if until - since > WAIT_CAP:
+        if until - since > self.wait_cap:
             self.say("отметка ожидания со сроком больше потолка (%s), проход "
                      "считается обычным" % mark.get("until"))
-            self.log("отметка ожидания %s со сроком %s больше потолка %d с, %s"
-                     % (path, mark.get("until"), WAIT_CAP, self.id), 0)
+            self.log("отметка ожидания %s со сроком %s больше потолка %d с (%s), %s"
+                     % (path, mark.get("until"), self.wait_cap, self.wait_cap_from, self.id), 0)
             return None
         if mark.get("kind") not in WAIT_KINDS:
             self.say("отметка ожидания с незнакомым условием (%s), проход считается "
@@ -809,6 +889,37 @@ class Pipeline:
             return not os.path.exists(target)
         if kind == WAIT_CLEAN:
             return self.tree_clean(target)
+        if kind == WAIT_PROC:
+            return pid_gone(target)
+        if kind == WAIT_HOUR:
+            at = self.when(target)
+            return at is not None and time.time() >= at
+        if kind in WAIT_ASKED:
+            return self.asked(kind, target)
+        return False
+
+    def asked(self, kind, target):
+        """Событие «слита» или «закрыта» по ответу `agentctl wait --check`.
+        Своей копии признака у оболочки нет, спрашивает она ту же функцию, по
+        которой считают утилиты. Выход 0 значит, что событие пришло, 1 что ещё
+        нет. Прочее значит, что проверить нечем: agentctl нет в PATH, он старый
+        и флага не знает, git не ответил. Такое ожидание кончится сроком, а
+        слепота называется вслух один раз на условие."""
+        cmd = ["agentctl", "wait", self.id, kind, target, "--check", "-C", self.proj]
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=WAIT_ASK_LIMIT)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            why = str(e)
+        else:
+            if p.returncode in (0, 1):
+                return p.returncode == 0
+            why = (p.stderr or p.stdout).strip() or "выход %d" % p.returncode
+        if self.wait_blind != (kind, target):
+            self.wait_blind = (kind, target)
+            self.say("условие %s %s проверить нечем (%s), ожидание кончится сроком"
+                     % (kind, target, why))
+            self.log("условие ожидания %s %s не проверено agentctl: %s, %s"
+                     % (kind, target, why, self.id), 0)
         return False
 
     def tree_clean(self, path):

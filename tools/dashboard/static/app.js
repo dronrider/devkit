@@ -11173,8 +11173,11 @@ function chatPanel(project, st) {
     fillChatNote(note, Boolean(st.goalRun));
     const inbox = el("div", "msgs mlocal");
     wrap.append(inbox);
+    // Живость витка решает ручка «Входящих» правилом подхвата, а не список
+    // работ экрана: форма, открытая по ссылке, панель поднимает раньше, чем
+    // список работ пришёл, и живой цикл назывался стоящим.
     goalOut = makeOutbox(st.project, st.goal, inbox, goalMessageURL(st.project, st.goal),
-      (live) => { fillChatNote(note, note.dataset.running === "1", live); });
+      (live) => { fillChatNote(note, note.dataset.running === "1" || live, live); });
     chatLive.push(goalOut.stop);
     goalOut.draw();
     goalOut.load().catch(console.error);

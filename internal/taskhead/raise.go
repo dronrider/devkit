@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,6 +30,20 @@ const AdoptEnv = "DEVKIT_RUN_ADOPT_WAIT"
 // она его первым делом, до разговора с доской, и срок тут с запасом на
 // холодный старт tmux-сервера под нагрузкой.
 const DefaultAdopt = 30 * time.Second
+
+// AdoptWait читает срок передачи замка из AdoptEnv. Ноль значит, что
+// переменной нет, и Raise возьмёт DefaultAdopt.
+func AdoptWait() (time.Duration, error) {
+	v := strings.TrimSpace(os.Getenv(AdoptEnv))
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s ждёт число секунд, а пришло %q", AdoptEnv, v)
+	}
+	return time.Duration(n) * time.Second, nil
+}
 
 // Коды выхода команды подъёма.
 const (
@@ -74,6 +89,12 @@ type Request struct {
 	Again  string // заказ следующих проходов
 	Hidden bool   // поднято без человека (DK-847)
 	Adopt  time.Duration
+	// Prefix это готовая шелл-приставка зовущего перед оболочкой в новом окне:
+	// чистка унаследованного окружения и свои пары. Стоит она после пар
+	// команды и перекрывает их. Нужна дашборду (DK-935): его окно получает
+	// настоящий дом, путь с утилитами кита и метку печатного режима, а собирает
+	// их одна сборка на все его дороги подъёма.
+	Prefix string
 }
 
 // Result это исход лестницы.
@@ -323,7 +344,11 @@ func (q Request) newWindow(tmux, runner string, head Head, lock string, me int, 
 	if len(head.Session) > 0 {
 		sid = newSessionID()
 	}
-	cmd := envJoin(q.env(me, name)) + " " +
+	prefix := strings.TrimSpace(q.Prefix)
+	if prefix != "" {
+		prefix += " "
+	}
+	cmd := envJoin(q.env(me, name)) + " " + prefix +
 		shellJoin(append(append(q.runnerArgs(runner, head.TurnEnd == TurnExit), "--"), head.Command(q.Model, sid)...))
 	out, err := exec.Command(tmux, "new-session", "-d", "-s", name, "-c", q.Root,
 		"-P", "-F", "#{pane_id}", cmd).CombinedOutput()

@@ -41,6 +41,26 @@ type Head struct {
 	TurnEnd string
 }
 
+// HarnessEnv называет профиль харнеса, когда зовущий имени не дал. Та же
+// переменная называет активный харнес у agentctl.
+const HarnessEnv = "DEVKIT_HARNESS"
+
+// DefaultHarness это профиль, которым поднимается голова, когда имени нет ни
+// у зовущего, ни в HarnessEnv.
+const DefaultHarness = "claude-code"
+
+// HarnessName это имя профиля головы: названное зовущим, иначе из HarnessEnv,
+// иначе DefaultHarness. Порядок один у taskctl run и у дашборда.
+func HarnessName(name string) string {
+	if name = strings.TrimSpace(name); name != "" {
+		return name
+	}
+	if name = strings.TrimSpace(os.Getenv(HarnessEnv)); name != "" {
+		return name
+	}
+	return DefaultHarness
+}
+
 // ProfilePath называет профиль харнеса name в дереве devkit.
 func ProfilePath(devkit, name string) string {
 	return filepath.Join(devkit, "kit", "harness", name+".toml")

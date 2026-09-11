@@ -300,6 +300,61 @@ func TestNewWindowRaisesShell(t *testing.T) {
 	}
 }
 
+// Приставка зовущего встаёт в команду окна за парами подъёма: её пары
+// перекрывают пары подъёма, и оболочка видит в окружении их (DK-935).
+func TestNewWindowPrefixFollowsPairs(t *testing.T) {
+	s := newStand(t, true, true)
+	q := s.req()
+	q.Prefix = "DEVKIT_TMUX=приставка "
+	res, err := Raise(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rung != RungWindow {
+		t.Fatal(s.why(res))
+	}
+	call := s.tmux("calls.log")
+	lock, prefix := strings.Index(call, LockFromEnv+"="), strings.Index(call, "DEVKIT_TMUX=приставка python3 ")
+	if lock < 0 || prefix < lock {
+		t.Fatalf("приставка стоит не за парами подъёма:\n%s", call)
+	}
+	run := s.lines("runner.log")
+	if len(run) < 2 || !strings.Contains(run[1], "tmux=приставка") {
+		t.Fatalf("пара приставки не перекрыла пару подъёма: %v", run)
+	}
+}
+
+// Имя профиля: названное зовущим, иначе из окружения, иначе умолчание.
+func TestHarnessName(t *testing.T) {
+	t.Setenv(HarnessEnv, "")
+	if got := HarnessName(""); got != DefaultHarness {
+		t.Errorf("без имени и окружения %q, ждал %q", got, DefaultHarness)
+	}
+	t.Setenv(HarnessEnv, "из-окружения")
+	if got := HarnessName(" "); got != "из-окружения" {
+		t.Errorf("без имени %q, ждал имя из окружения", got)
+	}
+	if got := HarnessName(" названный "); got != "названный" {
+		t.Errorf("названное имя %q не перебило окружение", got)
+	}
+}
+
+// Срок передачи замка: пусто это умолчание, число это секунды, прочее отказ.
+func TestAdoptWait(t *testing.T) {
+	t.Setenv(AdoptEnv, "")
+	if d, err := AdoptWait(); d != 0 || err != nil {
+		t.Errorf("без переменной %v %v, ждал ноль без ошибки", d, err)
+	}
+	t.Setenv(AdoptEnv, "2")
+	if d, err := AdoptWait(); d != 2*time.Second || err != nil {
+		t.Errorf("две секунды прочитаны как %v %v", d, err)
+	}
+	t.Setenv(AdoptEnv, "полминуты")
+	if _, err := AdoptWait(); err == nil || !strings.Contains(err.Error(), AdoptEnv) {
+		t.Errorf("негодный срок не отбит: %v", err)
+	}
+}
+
 // Второй вызов при занятом замке это отказ, вторая голова не встаёт.
 func TestBusyLockRefusesSecondHead(t *testing.T) {
 	s := newStand(t, true, true)

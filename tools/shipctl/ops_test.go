@@ -59,22 +59,56 @@ func setup(t *testing.T, inProg, check string) (root, callLog string) {
 	callLog = filepath.Join(bin, "calls.log")
 	// Обход ждущих (DK-932) доску стенда не правит: будить на ней некого, а
 	// лишняя строка после последнего коммита оставила бы дерево грязным.
-	stub := "#!/bin/sh\necho \"$@\" >> \"" + callLog + "\"\n[ \"$3\" = wake ] && exit 0\nprintf '<!-- move -->\\n' >> \"$2/docs/TASKS.md\"\n"
+	// Подъём проверяющего после выката (DK-947) зовёт `taskctl run`: стаб
+	// отвечает ступенью лестницы, а код выхода берёт из TASKCTL_RUN_CODE, чтобы
+	// стенд мог сыграть занятый замок и зов человеку.
+	stub := "#!/bin/sh\necho \"$@\" >> \"" + callLog + "\"\n" +
+		"if [ \"$1\" = run ]; then echo \"голова $2 поднята в новом окне tmux task-$2\"; " +
+		"echo 'ступень: новое окно, код '\"${TASKCTL_RUN_CODE:-0}\"; exit \"${TASKCTL_RUN_CODE:-0}\"; fi\n" +
+		"[ \"$3\" = wake ] && exit 0\nprintf '<!-- move -->\\n' >> \"$2/docs/TASKS.md\"\n"
 	write(t, bin, "taskctl", stub)
 	if err := os.Chmod(filepath.Join(bin, "taskctl"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Подъём прогона сценария после выката (DK-718) зовёт дашборд, и фикстура
-	// стоит в стенде с самого начала: без неё автономный выкат дотянулся бы до
-	// живого бинаря машины, а тот пошёл бы читать настоящий конфиг и живые
-	// tmux-сессии.
-	write(t, bin, checkRunBin, "#!/bin/sh\necho \"dashboard $@\" >> \""+callLog+
-		"\"\necho 'прогон сценария поднят в tmux-сессии task-XR-001'\n")
-	if err := os.Chmod(filepath.Join(bin, checkRunBin), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	// Ярус и лестница подписки приезжают фикстурой agentctl: живой отвечал бы
+	// по машине разработчика, и модель проверяющего ездила бы от неё.
+	writeAgentctlFake(t, bin, "base")
+	// Дерево devkit стенда: оболочка конвейера, без которой голове негде жить,
+	// и перечень прав, отвечающий «права на месте». Живой perms.py читал бы
+	// настройки машины.
+	t.Setenv("DEVKIT_HOME", fakeDevkit(t, false))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return root, callLog
+}
+
+// ladderFixture это ответ agentctl harness --json: одна подписка, три ступени.
+const ladderFixture = `{"harnesses": [{"name": "стенд", "enabled": true, "default": true, "bin": "клиент",
+ "models": [{"tier": "base", "model": "модель-base"}, {"tier": "pro", "model": "модель-pro"}, {"tier": "max", "model": "модель-max"}]}]}`
+
+// writeAgentctlFake кладёт agentctl, отвечающий вердиктом с названным ярусом
+// на pick и лестницей ladderFixture на harness --json.
+func writeAgentctlFake(t *testing.T, bin, tier string) {
+	t.Helper()
+	body := "#!/bin/sh\ncase \"$1\" in\npick) printf 'model: модель-" + tier + "\\neffort: high\\ntier: " + tier + "\\n' ;;\n" +
+		"harness) cat <<'JSON'\n" + ladderFixture + "\nJSON\n;;\n*) exit 1 ;;\nesac\n"
+	write(t, bin, "agentctl", body)
+	if err := os.Chmod(filepath.Join(bin, "agentctl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fakeDevkit собирает дерево devkit с оболочкой конвейера и перечнем прав;
+// deny просит перечень ответить нехваткой прав.
+func fakeDevkit(t *testing.T, deny bool) string {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, dir, "kit/skills/board-task/task-run.py", "import sys\n")
+	perms := "import sys\n"
+	if deny {
+		perms += "print('в ~/.claude/settings.json не хватает прав машинного контура, 2 из 37')\nsys.exit(1)\n"
+	}
+	write(t, dir, "tools/devkitctl/perms.py", perms)
+	return dir
 }
 
 // fixtureReviewLevel это раздел «Ревью» со строкой уровня: без неё ворот следа

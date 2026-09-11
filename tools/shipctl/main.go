@@ -44,6 +44,13 @@ const usageText = `shipctl: слияние и откат задач по пра�
                                   деплоя вдобавок ставит признак провала на
                                   первую задачу состава, чтобы следующий разлив
                                   промолчал сам
+  check-run [ID...] [--json]      поднять проверяющего по строкам Check без
+                                  отметки smoke (все, когда ID не названы):
+                                  отбор общий с выкатом, модель ярусом ревью,
+                                  при совпадении с автором ступенью выше,
+                                  голова командой taskctl run; зовёт тик
+                                  devkitctl watch, --json для него, выход 1
+                                  на отказе нужного подъёма
   smoke <ID> [--push]             отметить прогон агентской части сценария
                                   после выката: строка «smoke прогнан, <дата>»
                                   в разделе «Выкат» файла задачи; с отметкой
@@ -223,6 +230,24 @@ func main() {
 		fs.BoolVar(&p.Drain, "drain", false, "разлив: пустой поезд, занятая очередь, занятый конвейер и сломанный прод молчат нулём, провал деплоя ставит признак провала")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "ship [--deploy \"cmd\"] [--push] [--drain]")
 		msg, err = cmdShip(root(*dir), p)
+	case "check-run":
+		fs := flag.NewFlagSet("check-run", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		asJSON := fs.Bool("json", false, "машинный вид: исход по строкам")
+		pos := frame.ParseArgs(fs, args[1:])
+		out, failed, cerr := cmdCheckRun(root(*dir), pos, *asJSON)
+		if cerr != nil {
+			fail(cerr)
+		}
+		fmt.Println(out)
+		// Отказ нужного подъёма это ненулевой выход, но слова уже напечатаны
+		// построчно, и повторять их ошибкой незачем.
+		if failed {
+			logRun(1)
+			os.Exit(1)
+		}
+		logRun(0)
+		return
 	case "smoke":
 		fs := flag.NewFlagSet("smoke", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,12 +15,6 @@ import (
 // Подъём головы задачи (DK-931): `taskctl run <ID>` ведёт лестницу носителей
 // из internal/taskhead. Сама лестница, замок и ключи профиля живут там, а тут
 // только флаги, поиск дерева devkit и код выхода.
-
-// runHarnessEnv называет профиль харнеса, когда флага нет. Та же переменная
-// называет активный харнес у agentctl.
-const runHarnessEnv = "DEVKIT_HARNESS"
-
-const runDefaultHarness = "claude-code"
 
 type runOpts struct {
 	harness, model, order, again string
@@ -40,20 +33,10 @@ func runRequest(root, home, id string, o runOpts) (taskhead.Request, error) {
 			".devkit/devkit проекта, ни рядом с ним, ни в ~/projects/devkit; указать: DEVKIT_HOME=<путь к devkit>",
 			taskhead.TaskRunRel)
 	}
-	harness := o.harness
-	if harness == "" {
-		harness = strings.TrimSpace(os.Getenv(runHarnessEnv))
-	}
-	if harness == "" {
-		harness = runDefaultHarness
-	}
-	var adopt time.Duration
-	if v := strings.TrimSpace(os.Getenv(taskhead.AdoptEnv)); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return taskhead.Request{}, fmt.Errorf("%s ждёт число секунд, а пришло %q", taskhead.AdoptEnv, v)
-		}
-		adopt = time.Duration(n) * time.Second
+	harness := taskhead.HarnessName(o.harness)
+	adopt, err := taskhead.AdoptWait()
+	if err != nil {
+		return taskhead.Request{}, err
 	}
 	return taskhead.Request{ID: id, Root: root, Project: filepath.Base(root), Home: home, Devkit: dk,
 		Harness: harness, Model: o.model, Order: o.order, Again: o.again, Hidden: o.hidden, Adopt: adopt,
@@ -89,7 +72,7 @@ func askPick(root, id, harness string) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), runHarnessEnv+"="+harness)
+	cmd.Env = append(os.Environ(), taskhead.HarnessEnv+"="+harness)
 	out, err := cmd.Output()
 	if err != nil {
 		said := ""

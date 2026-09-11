@@ -30,16 +30,16 @@ func runDevkit(t *testing.T) (root, home, dk string) {
 
 func TestRunRequestPicksHarness(t *testing.T) {
 	root, home, dk := runDevkit(t)
-	t.Setenv(runHarnessEnv, "")
+	t.Setenv(taskhead.HarnessEnv, "")
 	q, err := runRequest(root, home, "dk-7", runOpts{model: "opus", hidden: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if q.ID != "DK-7" || q.Harness != runDefaultHarness || q.Devkit != dk || q.Project != "proj" ||
+	if q.ID != "DK-7" || q.Harness != taskhead.DefaultHarness || q.Devkit != dk || q.Project != "proj" ||
 		q.Model != "opus" || !q.Hidden {
 		t.Fatalf("заказ %+v", q)
 	}
-	t.Setenv(runHarnessEnv, "glm-code")
+	t.Setenv(taskhead.HarnessEnv, "glm-code")
 	if q, _ := runRequest(root, home, "DK-7", runOpts{}); q.Harness != "glm-code" {
 		t.Fatalf("переменная харнеса не прочитана: %s", q.Harness)
 	}
@@ -113,7 +113,7 @@ func pickStand(t *testing.T, dk, verdict string) (logs, bin string) {
 	t.Setenv("STUB_LOGS", logs)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv(taskhead.AdoptEnv, "2")
-	t.Setenv(runHarnessEnv, "")
+	t.Setenv(taskhead.HarnessEnv, "")
 	return logs, bin
 }
 

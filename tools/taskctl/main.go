@@ -200,6 +200,16 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               ~/.devkit/task-<ID>.lock. Коды: 0
                                               голова поднята, 1 позван человек,
                                               2 раскладка, 3 замок занят
+  wake [<ID>...] [--push] [--no-commit] [--quiet]
+                                              обход ждущих: строки Blocked с
+                                              причиной «слияние: <ID>» или
+                                              «закрытие: <ID>», чья предпосылка
+                                              слита либо закрыта, выходят в In
+                                              progress и поднимаются как у run;
+                                              с ID поднимаются названные строки.
+                                              Зовут close, shipctl merge и тик
+                                              devkitctl watch. Код 1: строка
+                                              осталась стоять
 
 Держать дерево доски свежим:
   catchup [--hook]                            догнать боковое дерево (detached HEAD,
@@ -718,6 +728,28 @@ func main() {
 		}
 		logRun(code)
 		os.Exit(code)
+	case "wake":
+		fs := flag.NewFlagSet("wake", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		push := fs.Bool("push", false, "запушить коммиты доски")
+		noCommit := fs.Bool("no-commit", false, "не коммитить перевод строк")
+		quiet := fs.Bool("quiet", false, "молчать, когда будить некого")
+		pos := frame.ParseArgs(fs, args[1:])
+		out, failed, werr := cmdWake(root(*dir), pos, wakeOpts{commit: !*noCommit, push: *push, quiet: *quiet})
+		if werr != nil {
+			fail(werr)
+		}
+		if out != "" {
+			fmt.Println(out)
+		}
+		// Строка, оставшаяся стоять, это код 1: тик по нему не считает её
+		// разбуженной и повторит следующим заходом.
+		if failed {
+			logRun(1)
+			os.Exit(1)
+		}
+		logRun(0)
+		return
 	case "review":
 		if len(args) < 2 {
 			fail(fmt.Errorf("жду: review level|add|clean|resolve|show|stats|draft|approve|drop|publish|poll|approve-mr ..."))

@@ -34,6 +34,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("DEVKIT_NOTIFY_OFF", "1")
 	os.Unsetenv("CLAUDE_CODE_SESSION_ID")
 	muteShipctlInTests()
+	muteRaiseInTests()
 	os.Exit(runsguard.Guard(m))
 }
 

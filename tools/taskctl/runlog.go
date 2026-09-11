@@ -22,6 +22,12 @@ func logRun(code int) {
 	if err != nil {
 		return
 	}
+	logLine(root, logCmd, code)
+}
+
+// logLine дописывает строку журнала .devkit/log корня root: запуск команды у
+// logRun, подъём строки у обхода ждущих.
+func logLine(root, cmd string, code int) {
 	dir := filepath.Join(root, ".devkit")
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return
@@ -31,5 +37,5 @@ func logRun(code int) {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s\ttaskctl\t%s\t%d\n", time.Now().Format("2006-01-02T15:04:05"), logCmd, code)
+	fmt.Fprintf(f, "%s\ttaskctl\t%s\t%d\n", time.Now().Format("2006-01-02T15:04:05"), cmd, code)
 }

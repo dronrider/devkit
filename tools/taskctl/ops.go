@@ -76,7 +76,10 @@ func checkReason(reason string) error {
 // добавило к ним ещё два (LLD DK-756, решения 5 и 6): «автор:» ждёт ответа
 // коллеги в тредах, и такую строку сторожок опрашивает через API трекера,
 // «спор:» это стоп на отказе автора чинить блокирующее, и его снимает человек.
-var parkPrefixes = []string{"вопрос", "окружение", "автор", "спор"}
+// Ожидание соседа (DK-932) добавило «слияние:» и «закрытие:» с ID предпосылки
+// первым словом: такую строку поднимает обход ждущих (wake.go), когда
+// предпосылка слита в main либо закрыта.
+var parkPrefixes = []string{"вопрос", "окружение", "автор", "спор", classMerge, classClose}
 
 // checkParkPrefix отбивает сломанный машинный префикс. «вопрос :», «вопрос -»,
 // заглавная форма и ведущий пробел после неаккуратной вставки разбирались бы
@@ -566,6 +569,9 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 		if err := checkParkPrefix(reason); err != nil {
 			return "", err
 		}
+		if err := checkWaitReason(b, root, id, reason); err != nil {
+			return "", err
+		}
 		if strings.HasPrefix(reason, "вопрос:") {
 			if err := checkQuestionCeiling(b, root, id); err != nil {
 				return "", err
@@ -983,7 +989,9 @@ func cmdClose(root string, p CloseParams) (string, error) {
 		msg += ", маркер «после» снят у: " + strings.Join(depTouched, ", ")
 	}
 	msg += movesTail(moves)
-	return msg + tail + shipDrainNote(root) + "\n" + nextAfterClose(), nil
+	// Обход ждущих идёт раньше разлива: разлив может катить поезд минутами, а
+	// строке, ждавшей закрытия, голова нужна сразу (DK-932).
+	return msg + tail + wakeNote(root, p.Commit) + shipDrainNote(root) + "\n" + nextAfterClose(), nil
 }
 
 // shipDrainNote зовёт разлив поезда сразу после закрытия задачи (LLD DK-306,

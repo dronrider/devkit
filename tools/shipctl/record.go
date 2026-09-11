@@ -8,8 +8,29 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dronrider/devkit/internal/merged"
 	"github.com/dronrider/devkit/internal/taskform"
 )
+
+// Принадлежность коммита задаче, откат и правка одной доски считаются тем же
+// кодом, что признак «слита» (internal/merged, решение 2 LLD DK-933): поезд,
+// откат и ожидание обязаны сходиться в том, чей это коммит.
+
+// ownsSubject: владелец коммита это первый ID в subject с префиксом задачи.
+// Упомянуть соседнюю задачу в сообщении законно («пробел DoD цели XR-002
+// снят»), и поиск ID словом записывал бы такой коммит в чужой код.
+func ownsSubject(subj, id string) bool { return merged.OwnsSubject(subj, id) }
+
+// firstID возвращает первый ID вида «<pref>-<число>», стоящий в s словом.
+func firstID(s, pref string) string { return merged.FirstID(s, pref) }
+
+// isRevertSubject распознаёт коммит-откат: штатное «revert: ...» либо своё
+// сообщение со словом «откат» (конвенция для проектов с белым списком
+// префиксов, см. README).
+func isRevertSubject(subj string) bool { return merged.IsRevert(subj) }
+
+// boardOnly: коммит трогает только доску и файлы задач.
+func boardOnly(files string) bool { return merged.BoardOnly(files) }
 
 // Раздел «Выкат» в файле задачи держит коммиты, которые shipctl слил под этим
 // ID. До него связь задачи с её коммитами выводилась поиском ID в subject
@@ -34,23 +55,9 @@ func mergedShas(root, id string) ([]string, error) {
 		}
 		return nil, err
 	}
-	var shas []string
-	for _, ln := range sectionLines(string(data), mergedSection) {
-		t := strings.TrimSpace(ln)
-		if !strings.HasPrefix(t, "- ") {
-			continue
-		}
-		_, list, ok := strings.Cut(t, ":")
-		if !ok {
-			continue
-		}
-		for _, part := range strings.Split(list, ",") {
-			if s := strings.TrimSpace(part); isSha(s) {
-				shas = append(shas, s)
-			}
-		}
-	}
-	return shas, nil
+	// Разбор записи общий с признаком «слита» (internal/merged): чем shipctl
+	// находит работу задачи, тем её находят ожидание и рёбра доски.
+	return taskform.MergedShas(string(data)), nil
 }
 
 // smokeNote это начало строки отметки прогона smoke в разделе «Выкат». Разбор

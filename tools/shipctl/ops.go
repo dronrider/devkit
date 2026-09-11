@@ -11,7 +11,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode"
 
 	"github.com/dronrider/devkit/internal/frame"
 	"github.com/dronrider/devkit/internal/gitrun"
@@ -603,25 +602,6 @@ func pushTag(root string) error {
 		return fmt.Errorf("тег %s не запушен (%s), повторить: git push -f origin %s", deployTag, out, deployTag)
 	}
 	return nil
-}
-
-// isRevertSubject распознаёт коммит-откат: штатное «revert: ...» либо своё
-// сообщение со словом «откат» (конвенция для проектов с белым списком
-// префиксов, см. README). Слово ищется целиком, иначе фичекоммит про
-// «откатить настройки» тихо выкидывал бы задачу из поезда.
-func isRevertSubject(subj string) bool {
-	low := strings.ToLower(subj)
-	if strings.HasPrefix(low, "revert") {
-		return true
-	}
-	for _, w := range strings.FieldsFunc(low, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
-	}) {
-		if w == "откат" {
-			return true
-		}
-	}
-	return false
 }
 
 // stray это осиротевшая задача: код в окне выката есть, а строка ушла из
@@ -1622,62 +1602,6 @@ func taskCommits(root, main, id string) ([]string, error) {
 		shas = append(shas, sha)
 	}
 	return shas, nil
-}
-
-// ownsSubject отвечает, принадлежит ли коммит задаче id: владельцем считается
-// первый ID в subject, прочие упоминания дальше по тексту чужие. Упомянуть
-// соседнюю задачу в сообщении законно («пробел DoD цели XR-002 снят»), и по
-// поиску ID словом такой коммит записывался в чужой код, а задача-соседка
-// приходила осиротевшей и отбивала merge.
-// Ищется только ID с префиксом самой задачи: ключ внешнего трекера или «UTF-8»
-// в тексте иначе занял бы место первого ID и владельца отобрал.
-func ownsSubject(subj, id string) bool {
-	pref, _, ok := strings.Cut(id, "-")
-	if !ok || pref == "" {
-		return false
-	}
-	return firstID(subj, pref) == id
-}
-
-// firstID возвращает первый ID вида «<pref>-<число>», стоящий в s отдельным
-// словом. Пустая строка значит, что задач этого префикса в тексте нет.
-func firstID(s, pref string) string {
-	for i := 0; ; {
-		j := strings.Index(s[i:], pref+"-")
-		if j < 0 {
-			return ""
-		}
-		j += i
-		i = j + len(pref) + 1
-		if j > 0 && isWordByte(s[j-1]) {
-			continue
-		}
-		k := i
-		for k < len(s) && s[k] >= '0' && s[k] <= '9' {
-			k++
-		}
-		if k == i || (k < len(s) && isWordByte(s[k])) {
-			continue
-		}
-		return s[j:k]
-	}
-}
-
-func isWordByte(b byte) bool {
-	return b == '-' || b == '_' || (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
-}
-
-func boardOnly(files string) bool {
-	for _, f := range strings.Split(files, "\n") {
-		f = strings.TrimSpace(f)
-		if f == "" {
-			continue
-		}
-		if f != "docs/TASKS.md" && f != "docs/TASKS-archive.md" && !strings.HasPrefix(f, "docs/tasks/") {
-			return false
-		}
-	}
-	return true
 }
 
 // docsOnly шире boardOnly: коммит не трогает ничего за пределами docs/.

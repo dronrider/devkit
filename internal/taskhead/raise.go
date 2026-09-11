@@ -395,8 +395,7 @@ func (q Request) headless(runner string, head Head, lock string, me int, res *Re
 		return false
 	}
 	defer f.Close()
-	args := append(append(q.runnerArgs(runner, true), "--"), head.Command(q.Model, "")...)
-	cmd := exec.Command(args[0], args[1:]...)
+	cmd := q.headlessCmd(append(append(q.runnerArgs(runner, true), "--"), head.Command(q.Model, "")...))
 	cmd.Dir = q.Root
 	cmd.Env = append(os.Environ(), q.env(me, "")...)
 	cmd.Stdout, cmd.Stderr = f, f
@@ -425,6 +424,21 @@ func (q Request) headless(runner string, head Head, lock string, me int, res *Re
 	}
 	res.say("голова %s поднята headless, оболочка pid %d, журнал %s", q.ID, owner, logPath)
 	return true
+}
+
+// headlessCmd это процесс оболочки без окна. Приставку зовущего он получает
+// той же дорогой, что и окно: шеллом, поверх пар подъёма (DK-935). В headless
+// лестница падает, когда окно не встало, и путь с утилитами кита с настоящим
+// домом нужен голове тут не меньше. Имя окна снимается последним: окна у
+// такой головы нет, а DEVKIT_TMUX от зовущего или из приставки хук старта
+// записал бы в реестр адресом, которого нет.
+func (q Request) headlessCmd(args []string) *exec.Cmd {
+	args = append([]string{"/usr/bin/env", "-u", "DEVKIT_TMUX"}, args...)
+	prefix := strings.TrimSpace(q.Prefix)
+	if prefix == "" {
+		return exec.Command(args[0], args[1:]...)
+	}
+	return exec.Command("/bin/sh", "-c", "exec /usr/bin/env "+prefix+" "+shellJoin(args))
 }
 
 // Command это готовая команда подъёма для текста зова.

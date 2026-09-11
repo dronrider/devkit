@@ -324,6 +324,45 @@ func TestNewWindowPrefixFollowsPairs(t *testing.T) {
 	}
 }
 
+// Окно не встало, и лестница ушла в headless: приставка зовущего едет и туда,
+// поверх пар подъёма, а имя окна снимается, окна у такой головы нет (DK-935).
+func TestHeadlessPrefixFollowsPairs(t *testing.T) {
+	s := newStand(t, true, true)
+	put(t, filepath.Join(s.d, "newfail"), "", 0o644)
+	t.Setenv("DEVKIT_TMUX", "окно-зовущего")
+	q := s.req()
+	q.Prefix = "/usr/bin/env -u DEVKIT_HIDDEN DEVKIT_HEADLESS=приставка DEVKIT_TMUX=окно-приставки DEVKIT_TASK='DK 1' "
+	res, err := Raise(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rung != RungHeadless {
+		t.Fatal(s.why(res))
+	}
+	run := s.lines("runner.log")
+	if len(run) < 2 || !strings.Contains(run[0], "--headless") {
+		t.Fatalf("оболочка поднята не headless: %v", run)
+	}
+	if want := "env tmux=- headless=приставка hidden=- task=DK 1"; run[1] != want {
+		t.Fatalf("окружение headless-головы %q, ждал %q", run[1], want)
+	}
+}
+
+// Без приставки headless-голова тоже не несёт чужого имени окна.
+func TestHeadlessDropsCallerWindow(t *testing.T) {
+	s := newStand(t, true, true)
+	put(t, filepath.Join(s.d, "newfail"), "", 0o644)
+	t.Setenv("DEVKIT_TMUX", "окно-зовущего")
+	res := s.raise()
+	if res.Rung != RungHeadless {
+		t.Fatal(s.why(res))
+	}
+	run := s.lines("runner.log")
+	if len(run) < 2 || !strings.Contains(run[1], "tmux=- headless=taskctl run") {
+		t.Fatalf("окружение headless-головы без приставки: %v", run)
+	}
+}
+
 // Имя профиля: названное зовущим, иначе из окружения, иначе умолчание.
 func TestHarnessName(t *testing.T) {
 	t.Setenv(HarnessEnv, "")

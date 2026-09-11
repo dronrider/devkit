@@ -496,3 +496,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-930 | agentctl wait ждёт слияния и закрытия строки, конца процесса и назначенного часа | task | P1 | 2026-09-11 | [tasks/archive/2026/DK-930.md](tasks/archive/2026/DK-930.md) |
 | DK-935 | Кнопка и подъёмы дашборда запускают голову через taskctl run | task | P1 | 2026-09-11 | [tasks/archive/2026/DK-935.md](tasks/archive/2026/DK-935.md) |
 | DK-943 | Ребро «после» снимается слиянием предпосылки | task | P1 | 2026-09-11 | [tasks/archive/2026/DK-943.md](tasks/archive/2026/DK-943.md) |
+| DK-932 | Разряды «слияние:» и «закрытие:», close и merge поднимают припаркованных | task | P1 | 2026-09-11 | [tasks/archive/2026/DK-932.md](tasks/archive/2026/DK-932.md) |

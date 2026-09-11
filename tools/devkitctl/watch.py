@@ -67,12 +67,14 @@ DK-932).
 сторожка, разбор по харнесам идёт в отчёт тика, а свежие снимки журнал не
 трогают.
 
-Тем же тиком поднимается прогон сценария (DK-718): по каждому корню обхода тик
-зовёт `dashboard check -C <корень>`, и строка Check, выкаченная без человека в
-окне, получает сессию проверяющего. Первым делом подъём зовёт сам выкат, а тик
-страхует то, что проехало мимо: провалившийся подъём, пачку с закрывшимся
-диспетчером и строки, ушедшие в Check раньше самого подъёма. Тут же и
-единственное место, где сторожок поднимает сессию поверх доски.
+Тем же тиком поднимается прогон сценария (DK-718, DK-947): по каждому корню
+обхода тик зовёт `shipctl -C <корень> check-run --json`, и строка Check,
+выкаченная без человека в окне, получает сессию проверяющего командой
+`taskctl run`. Первым делом подъём зовёт сам выкат, а тик страхует то, что
+проехало мимо: провалившийся подъём, голову задачи, сдавшую строку, пачку с
+закрывшимся диспетчером. Второй одинаковый отказ подъёма подряд в журнал не
+идёт: тик один раз зовёт человека уведомлением и молчит до смены состояния
+строки, память повторов лежит в ~/.devkit/watch.checkrun.
 
 Тем же тиком закрываются агентские задачи из Check (DK-516): строка вида agent
 с прогнанным smoke и непустым разделом «Проверка» доходит до Done без живой
@@ -1470,39 +1472,133 @@ def drain(root, call=None, shipctl=None):
 NO_CHECK_RUN = "подъём не нужен"
 
 
-def check_run(root, call=None, dashboard=None):
-    """Страховка подъёма прогона сценария (DK-718): по строкам Check корня тик
-    зовёт `dashboard check -C <корень>`, и строка, выкаченная без человека в
-    окне, получает сессию проверяющего.
+CHECK_RUN_STATE = "~/.devkit/watch.checkrun"
+# Ключ отказа всего корня в памяти повторов: бинаря нет, ответ не разобрался.
+CHECK_RUN_ROOT = "*"
+
+
+def check_run_memory(home):
+    if not home:
+        return {}
+    try:
+        got = json.loads(home_path(home, CHECK_RUN_STATE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+def check_run_remember(home, memory):
+    if not home:
+        return
+    path = home_path(home, CHECK_RUN_STATE)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(memory, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def check_run_repeat(seen, key, line):
+    """Судьба отказа подъёма с учётом прошлого тика. Первый отказ и отказ с
+    новыми словами идут в журнал. Второй одинаковый подряд журнал не трогает, а
+    один раз зовёт человека. Дальше тик молчит, пока слова не сменятся или
+    строка не выйдет из отказа: слова отказа и есть состояние строки, их
+    собирает отбор по секции, виду, отметке smoke и исполнителю разработки."""
+    prev = seen.get(key)
+    if not isinstance(prev, dict) or prev.get("line") != line:
+        seen[key] = {"line": line, "called": False}
+        return "journal"
+    if not prev.get("called"):
+        prev["called"] = True
+        return "call"
+    return "quiet"
+
+
+def check_run(root, call=None, shipctl=None, home=None):
+    """Страховка подъёма прогона сценария (DK-718, DK-947): по строкам Check
+    корня тик зовёт `shipctl -C <корень> check-run --json`, и строка,
+    выкаченная без человека в окне, получает сессию проверяющего командой
+    `taskctl run`, тем же путём, что у выката, и без дашборда.
 
     Поднимает прогон сам выкат, merge при autonomous и ship после выката, а тик
     добирает то, что мимо него проехало: выкат, у которого подъём не вышел,
-    пачку, чей диспетчер закрылся раньше перевода в Check, и строки, ушедшие в
-    Check до появления самого подъёма. Решает, кому прогон нужен и кому его не
-    отдавать, одна команда дашборда: вторая копия этих правил тут разошлась бы
-    с первой на первой правке, как разошлась бы копия ворот закрытия.
+    голову задачи, которая держала замок и сдала строку, пачку, чей диспетчер
+    закрылся раньше перевода в Check. Решает, кому прогон нужен и кому его не
+    отдавать, общий отбор internal/checkrun: вторая копия этих правил тут
+    разошлась бы с первой на первой правке.
 
-    Возврат тот же, что у разлива: строка отчёта и признак значимости. Значимо
-    поднятое и провалившееся, а «поднимать нечего» идёт только в отчёт тика,
-    иначе журнал тонул бы отметками каждые пять минут."""
+    Возврат это строка отчёта тика и строки для журнала. В журнал идёт поднятое
+    и первый отказ. «Поднимать нечего» идёт только в отчёт, иначе журнал тонул
+    бы отметками каждые пять минут. До DK-947 тик писал один и тот же отказ
+    каждые пять минут, тридцать записей за ночь, и ни разу не позвал человека.
+    Теперь второй одинаковый отказ подряд журнал не трогает, а один раз зовёт
+    человека уведомлением, и дальше тик молчит до смены состояния строки."""
     call = subprocess.run if call is None else call
     name = os.path.basename(root.rstrip("/"))
+    memory = check_run_memory(home)
+    was = json.dumps(memory.get(root), sort_keys=True)
+    seen = memory.get(root) if isinstance(memory.get(root), dict) else {}
+    lines, journal, now = [], [], {}
+
+    def refused(key, line, task=None):
+        fate = check_run_repeat(seen, key, line)
+        now[key] = seen[key]
+        if fate == "journal":
+            journal.append("корень %s: %s" % (name, line))
+            lines.append(line)
+            return
+        if fate == "call":
+            said = shout("%s: проверяющий не поднимается" % name,
+                         "%s. Отказ повторился на тике сторожка, журнал про него молчит до "
+                         "смены состояния строки; разобрать и поднять руками: "
+                         "shipctl -C %s check-run %s" % (line, root, task or ""),
+                         root, call, task=task)
+            lines.append("%s (повтор отказа, человек позван: %s)" % (line, said))
+            return
+        lines.append("%s (повтор отказа, человек уже позван)" % line)
+
     if not section_rows(root, CHECK):
-        return ("корень %s: в Check пусто, %s" % (name, NO_CHECK_RUN)), False
-    bin = devkit_bin("dashboard") if dashboard is None else dashboard
-    if not bin:
-        return ("корень %s: бинаря dashboard нет ни в PATH, ни в каталогах релиза: "
-                "прогон сценария поднимать нечем, строки Check ждут человека" % name), True
-    try:
-        p = call([bin, "check", "-C", root],
-                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    except OSError as e:
-        return ("корень %s: подъём прогона не вышел, %s" % (name, e)), True
-    text = " ".join((p.stdout or "").split())
-    if p.returncode != 0:
-        return ("корень %s: подъём прогона отказал с кодом %d: %s"
-                % (name, p.returncode, text)), True
-    return ("корень %s: %s" % (name, text)), "поднят" in (p.stdout or "")
+        lines.append("в Check пусто, %s" % NO_CHECK_RUN)
+    else:
+        bin = devkit_bin("shipctl") if shipctl is None else shipctl
+        reps = None
+        if not bin:
+            refused(CHECK_RUN_ROOT, "бинаря shipctl нет ни в PATH, ни в каталогах релиза: "
+                                    "прогон сценария поднимать нечем, строки Check ждут человека")
+        else:
+            try:
+                p = call([bin, "-C", root, "check-run", "--json"],
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            except OSError as e:
+                refused(CHECK_RUN_ROOT, "подъём прогона не вышел, %s" % e)
+            else:
+                try:
+                    reps = json.loads(p.stdout or "")
+                except ValueError:
+                    reps = None
+                if not isinstance(reps, list):
+                    reps = None
+                    text = " ".join((p.stdout or "").split())
+                    refused(CHECK_RUN_ROOT, "подъём прогона отказал с кодом %d: %s"
+                            % (p.returncode, text))
+        for rep in reps or []:
+            if not isinstance(rep, dict):
+                continue
+            line, task = str(rep.get("line") or ""), str(rep.get("id") or "")
+            if rep.get("failed"):
+                refused(task or line, line, task or None)
+            elif rep.get("raised"):
+                journal.append("корень %s: %s" % (name, line))
+                lines.append(line)
+            else:
+                lines.append(line)
+    if now:
+        memory[root] = now
+    else:
+        memory.pop(root, None)
+    if json.dumps(memory.get(root), sort_keys=True) != was:
+        check_run_remember(home, memory)
+    return ("корень %s: %s" % (name, "; ".join(lines))), journal
 
 
 def shout(title, body, root, call=None, task=None):
@@ -1755,10 +1851,10 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         # Подъём прогона идёт следом за разливом: строки, которые разлив только
         # что увёл в Check, свой прогон уже получили от самого ship, и тик
         # доберёт остальные.
-        line, notable = check_run(root, timed(root), dashboard)
+        line, journal = check_run(root, timed(root), shipctl, home=home)
         out.write(line + "\n")
-        if notable:
-            log_line(line, home)
+        for entry in journal:
+            log_line(entry, home)
     log_line("целей под надзором %d, вставших %d" % (watched, found), home)
     if not watched:
         out.write("целей под надзором нет: реестр %s пуст\n" % home_path(home, GOALS_DIR))

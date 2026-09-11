@@ -435,14 +435,23 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 			continue
 		}
 		sid := sidOf[sess.Name]
+		// Виток цели имени окна в реестре не оставляет: это `claude -p`, и хук
+		// старта имя от клиента без терминала не принимает (DK-673). Сессию
+		// витка называет замок оболочки, туда её пишет goal-run.py до подъёма
+		// клиента (DK-938).
+		turn := ""
+		if kind == "goal" && sid == "" {
+			turn = goalTurn(projectPath, id)
+			sid = turn
+		}
 		live, moved, silent := s.workState(projectPath, id, sid, sess.Name, bySid, byTmux)
 		// Своей сессия считается по записи реестра, а не по образцу имени:
 		// разбор этой развилки лежит при поле Tmux.
 		own := ""
-		if sid != "" {
+		if sid != "" && turn == "" {
 			own = sess.Name
 		}
-		list = append(list, Work{ID: id, Kind: kind,
+		list = append(list, Work{ID: id, Kind: kind, Session: turn,
 			Title: s.workTitle(projectPath, rows[id].Title, sid),
 			Sect:  rows[id].Sect, Via: workViaTmux, Started: sess.Created,
 			Own: own != "", Tmux: own, Model: s.chatModel(sid, sess.Name), Talk: talk[sess.Name],
@@ -470,6 +479,12 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 			w.Model = s.chatModel(l.sid, l.tmux)
 			w.Harness = s.harnessOfSession(projectPath, l.sid, roots)
 			w.Live, w.Moved, w.Silent = s.workState(projectPath, goal, l.sid, l.tmux, bySid, byTmux)
+		} else if turn := goalTurn(projectPath, goal); turn != "" {
+			// Цикл без своего окна (--foreground в терминале человека): сессию
+			// витка называет тот же замок оболочки.
+			w.Session = turn
+			w.Harness = s.harnessOfSession(projectPath, turn, roots)
+			w.Live, w.Moved, w.Silent = s.workState(projectPath, goal, turn, "", bySid, byTmux)
 		}
 		w.Title = s.workTitle(projectPath, w.Title, w.Session)
 		list = append(list, w)

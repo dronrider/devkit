@@ -3892,8 +3892,11 @@ function formPage(cfg) {
   // такое же действие над открытой задачей, и отдельной дороги ему не нужно
   // (решение пользователя). Кнопка та же, что в строке доски и в накопителе,
   // чтобы вход в чат везде выглядел одинаково.
+  // Строку кнопка получает целиком: адрес идущего хода (run_chat) несёт она, и
+  // с одним ID кнопка цели искала разговор среди видимых чатов задачи, где
+  // скрытого витка нет, и открывала вчерашний груминг (DK-938).
   if (has.chat && cfg.id) {
-    modes.append(rowChatBtn(cfg.project, { id: cfg.id }));
+    modes.append(rowChatBtn(cfg.project, cfg.chatRow || { id: cfg.id }));
   }
   if (has.pencil) {
     const pen = el("button", "tpen");
@@ -4295,7 +4298,7 @@ async function renderTask(project, works, id, pre) {
     if (row.p) tail.push(el("span", "chip dashed" + (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p));
     for (const chip of stateChips) tail.push(chip);
     const view = formPage({
-      key: "task", project, id, detail,
+      key: "task", project, id, detail, chatRow: row,
       chips, tailChips: tail,
       num: row.id, titleText: row.title || id,
       form: { text: detail.text || "" },
@@ -4371,7 +4374,7 @@ async function renderTask(project, works, id, pre) {
   }
 
   const view = formPage({
-    key: "task", project, id, detail,
+    key: "task", project, id, detail, chatRow: row,
     num: row.id, titleLabel: "заголовок задачи " + id, form, chips, tailChips: tail, top,
     links: detail.links || null,
     has: { title: true, type: true, cost: true, rank: true, deps: true, chat: true,
@@ -7905,7 +7908,11 @@ async function chatState(project, addr, board, works) {
   // форме DK-459 открывала последний разговор всего проекта, чат DK-397
   // (живой случай). Нет у задачи своих диалогов, значит пустой sid, и панель
   // открывает новый чат с её привязкой.
-  if (!st.sid && !st.fresh) {
+  // Адрес цели чата по списку не выбирает вовсе: разговор с ней идёт через
+  // «Входящие» её файла, а свежий чат задачи это чей-то груминг, и реплика
+  // подняла бы его резюмом (DK-938). Идущий виток кнопка открывает по sid.
+  const goalAddr = Boolean(st.task && !st.sid && !st.fresh && isGoalRow(board, st.task));
+  if (!st.sid && !st.fresh && !goalAddr) {
     const list = (st.task ? st.chats.filter((c) => (c.tasks || []).includes(st.task))
       : chatVisible(st)).filter((c) => !c.project || c.project === project);
     const want = st.task ? chatTaskLast(st.task) : "";
@@ -7919,7 +7926,7 @@ async function chatState(project, addr, board, works) {
   // сессию, что и адрес new, и плашка с запертым полем ей нужна та же.
   // Незачатой записи это не касается: она ждёт свою сессию, а не работу задачи,
   // и запирать поле ввода из-за чужого конвейера ей не за что.
-  if (!st.sid && st.task && !st.lift && !st.blank) {
+  if (!st.sid && st.task && !st.lift && !st.blank && !goalAddr) {
     st.lift = chatLiftOf(project, CHAT_NEW + ":" + st.task) ||
       workSession(st.task, works);
   }
@@ -7961,6 +7968,9 @@ async function chatState(project, addr, board, works) {
   }
   // Задача берётся у самого диалога, когда адрес её не назвал: по ней
   // подписывается шапка и заводится следующий диалог в том же дереве.
+  // Виток цели называет свою цель сам (поле goal): задач он трогает много, и
+  // первая из них увела бы шапку и реплику к чужой строке.
+  if (st.entry && st.entry.goal) st.task = st.entry.goal;
   if (!st.task && st.entry && (st.entry.tasks || []).length) st.task = st.entry.tasks[0];
   // Задача панели живёт только на своей доске: хвост адреса переживает смену
   // проекта, и задача devkit не должна ехать ни в шапку, ни в заказ нового
@@ -7970,7 +7980,13 @@ async function chatState(project, addr, board, works) {
   const prefix = board && board.prefix ? String(board.prefix).toUpperCase() + "-" : "";
   if (st.task && prefix && !st.task.toUpperCase().startsWith(prefix)) st.task = "";
   if (st.task) {
-    st.isGoal = isGoalRow(board, st.task);
+    const turn = Boolean(st.entry && st.entry.goal === st.task);
+    st.isGoal = turn || isGoalRow(board, st.task);
+    // Разговор с целью это её виток либо адрес цели без выбранного чата:
+    // реплика отсюда уходит во «Входящие» файла цели. Чат человека по цели
+    // остаётся своим разговором, и реплика ему идёт прежней дорогой.
+    st.goal = turn || (goalAddr && st.isGoal) ? st.task : "";
+    st.goalRun = Boolean(st.goal && (works || []).some((w) => w.id === st.goal));
     const row = boardRow(board, st.task);
     st.title = row ? row.title : "";
     // Ожидание человека едет в панель вместе с задачей: пока строка стоит с
@@ -9594,6 +9610,8 @@ function waitChatTip(st, w) {
       " безадресной строкой: по ней сторожок разбудит строку.";
   } else if (kind === "say") {
     where = " Ответ уйдёт живой сессии задачи.";
+  } else if (kind === "goal") {
+    where = " Ответ ляжет во «Входящие» файла цели " + st.task + ".";
   }
   return w.state + ", источник: " + (w.note || "не назван") + "." +
     (qs.length ? " Вопрос: " + qs.join("; ") : "") + where;
@@ -9602,6 +9620,11 @@ function waitChatTip(st, w) {
 // Куда уйдёт реплика и почему. Мера приходит с сервера состоянием диалога, а
 // не считается на глаз: ошибка тут стоит реплики, ушедшей мимо адресата.
 function chatWay(st) {
+  // Разговор с циклом цели: реплика ложится строкой во «Входящие» её файла
+  // (ручка /goals/<ID>/message), идущий виток берёт её подхватом chat-in.py,
+  // стоящий цикл прочитает следующим витком. Живой виток это `claude -p`, и
+  // /say поднял бы резюм второго агента рядом с ним (DK-938).
+  if (st.goal) return { kind: "goal", off: false, why: "" };
   // Задача стоит с вопросом, а живой сессии за ней нет: обычная реплика
   // уходит безадресной строкой во вход задачи (ручка /tasks/<ID>/message), и
   // по ней сторожок будит строку. Адресованную мёртвой сессии реплику не взял
@@ -11129,6 +11152,34 @@ function chatPanel(project, st) {
   // по ссылке в момент нажатия, поэтому переподнятая очередь доезжает до них
   // сама.
   let echo = null;
+  // Разговор с циклом цели держит свою очередь исходящих над ручкой цели:
+  // реплика ложится строкой во «Входящие», и под лентой видно, лежит она,
+  // доставлена ли витку и прочитана ли (DK-287). Правка DK-397 снимала вызов
+  // очереди вместе со старой панелью, и реплика из чата цели уезжала в сессию
+  // витка, мимо «Входящих» (DK-938).
+  let goalOut = null;
+  if (way.kind === "goal") {
+    const note = keyed(el("div", "cnote"), "chat-note", "");
+    const said = keyed(el("span"), "chat-said", "");
+    const start = keyed(el("button", "btn btn-acc", "Поднять виток"), "chat-start", "");
+    start.addEventListener("click", () => { startRun(st.project, st.goal).catch(console.error); });
+    const shut = keyed(el("button", "nx"), "chat-close", "");
+    shut.setAttribute("aria-label", "Закрыть");
+    shut.title = "Закрыть";
+    shut.append(icon("close"));
+    shut.addEventListener("click", () => { note.hidden = true; });
+    note.append(said, start, shut);
+    wrap.append(note);
+    fillChatNote(note, Boolean(st.goalRun));
+    const inbox = el("div", "msgs mlocal");
+    wrap.append(inbox);
+    goalOut = makeOutbox(st.project, st.goal, inbox, goalMessageURL(st.project, st.goal),
+      (live) => { fillChatNote(note, note.dataset.running === "1", live); });
+    chatLive.push(goalOut.stop);
+    goalOut.draw();
+    goalOut.load().catch(console.error);
+    goalOut.pump().catch(console.error);
+  }
 
   if (way.why) {
     const note = el("div", "cnote" + (way.off ? " idle" : ""));
@@ -11559,6 +11610,14 @@ function chatPanel(project, st) {
     const text = ta.value.trim();
     if (!text || send.disabled) return;
     ta.value = "";
+    // Реплика циклу цели уходит очередью «Входящих», пузырь ей рисует сама
+    // очередь. Эхо транскрипта ей не положено: в ленту витка она попадёт
+    // только подхватом, а не записью клиента.
+    if (goalOut) {
+      chatDraftWrite(st.addr, "");
+      goalOut.send(text).catch(console.error);
+      return;
+    }
     // Собранная галочками строка уехала вместе с репликой, и помнить её
     // больше незачем: следующая отметка дописывает своё в пустое поле.
     askPick.put = "";

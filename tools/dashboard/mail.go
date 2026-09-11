@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -121,6 +122,48 @@ func lockAlive(projectPath, id string) bool {
 		return false
 	}
 	return pidAlive(pid)
+}
+
+// goalTurnSid это форма имени витка в замке: goal-run.py пишет туда uuid,
+// которым сам поднимает клиента (`--session-id`).
+var goalTurnSid = regexp.MustCompile(`^[0-9A-Fa-f-]{8,64}$`)
+
+// goalTurn называет сессию идущего витка цели: имя, которое goal-run.py кладёт
+// в файл session каталога замка до подъёма клиента. Тем же файлом адресует
+// реплику подхват hooks/chat-in.py. Пусто там, где замок не держит живая
+// оболочка: имя в брошенном замке ведёт в кончившийся виток.
+func goalTurn(projectPath, id string) string {
+	if !lockAlive(projectPath, id) {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(projectPath, ".devkit", "goal-"+id+".lock", "session"))
+	if err != nil {
+		return ""
+	}
+	sid := strings.TrimSpace(string(data))
+	if !goalTurnSid.MatchString(sid) {
+		return ""
+	}
+	return sid
+}
+
+// goalTurnOrder это заказ витка, которым goal-run.py поднимает клиента
+// (self.prompt): «продолжай цель <ID> по скиллу goal-loop».
+var goalTurnOrder = regexp.MustCompile(`^продолжай цель ([A-Z][A-Z0-9]*-\d+) по скиллу goal-loop$`)
+
+// goalTurnGoal узнаёт виток цели по разговору: скрытая запись (признак ставит
+// шапка команды цикла, DEVKIT_HIDDEN) с заказом оболочки первой репликой.
+// Человек, сам набравший ту же фразу в своём чате, ведёт цель этим разговором,
+// и реплика ему уходит в сессию, поэтому без признака hidden ответ пустой.
+func goalTurnGoal(hidden bool, first string) string {
+	if !hidden {
+		return ""
+	}
+	m := goalTurnOrder.FindStringSubmatch(strings.TrimSpace(first))
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 // stampAt разбирает метку времени. Нулевое время значит, что метки нет:

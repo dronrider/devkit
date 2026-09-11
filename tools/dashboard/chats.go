@@ -164,6 +164,11 @@ type chatEntry struct {
 	// чтобы найденная строка была видна как розданная машиной, а не спутана с
 	// разговором человека.
 	Hidden bool `json:"hidden,omitempty"`
+	// Goal называет цель, чей виток идёт этой сессией: скрытая запись с заказом
+	// оболочки цикла (goalTurnGoal). Реплика из такого чата уходит ручкой цели
+	// во «Входящие» её файла, а не в сессию витка: ответ через /say поднял бы
+	// резюм второго агента рядом с идущим витком (DK-938).
+	Goal string `json:"goal,omitempty"`
 	// Parent называет разговор, раздавший эту работу: реестр машины пишет его
 	// подпроцессу делегирования (DK-581). Непустое поле значит, что строка это
 	// не разговор человека, а чужая работа, и списку она не нужна: ходы её
@@ -914,7 +919,11 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		// Служебная сессия суммаризации чатом не является: её завёл сам
 		// дашборд ради заголовка, и в списке ей делать нечего.
 		store := s.chatStoreRead(f.ID)
-		if titleSession(head.First) || (store.Hidden && !win.includeHidden) {
+		// Скрытую запись отдаёт и адресный вход (ключ keep): кнопка чата у
+		// строки цели ведёт в идущий виток по его sid, а без записи в ответе
+		// панель рисовала живой разговор мёртвым и слала реплику резюмом
+		// (DK-938). Список без адреса остаётся чистым, как велит DK-847.
+		if titleSession(head.First) || (store.Hidden && !win.includeHidden && !win.keep[f.ID]) {
 			continue
 		}
 		// Разговор, в котором никто ничего не сказал, в списке не строка, а
@@ -947,6 +956,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			Model:    s.chatModel(f.ID, last.Tmux),
 			Archived: store.Archived,
 			Hidden:   store.Hidden,
+			Goal:     goalTurnGoal(store.Hidden, head.First),
 			Parent:   last.Parent,
 		}
 		// Ключ склейки заходов считается до того, как устаревшее имя снимут:

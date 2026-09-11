@@ -202,3 +202,23 @@ func TestIsReviewLevel(t *testing.T) {
 		}
 	}
 }
+
+// TestMergedShas: коммитами записи считаются только похожие на sha куски
+// строк списка. Проза, отметка smoke, цитата в ограждённом блоке и соседний
+// раздел в перечень не попадают.
+func TestMergedShas(t *testing.T) {
+	doc := "# DK-1\n\n## Выкат\n\n" +
+		"- слито 2026-09-11: a1b2c3d, 0f0f0f0f0f\n" +
+		"- smoke прогнан, 2026-09-11\n" +
+		"проза: abcdef1\n" +
+		"```\n- слито: 1234567\n```\n" +
+		"- откат: не sha, deadbee\n\n" +
+		"## Проверка\n\n- слито: 7654321\n"
+	got := strings.Join(MergedShas(doc), " ")
+	if want := "a1b2c3d 0f0f0f0f0f deadbee"; got != want {
+		t.Fatalf("MergedShas = %q, ждём %q", got, want)
+	}
+	if MergedShas("# DK-1\n") != nil {
+		t.Fatal("у файла без раздела нашлись коммиты")
+	}
+}

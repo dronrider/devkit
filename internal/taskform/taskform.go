@@ -222,6 +222,30 @@ func SmokeCovers(doc string) bool {
 	return smoke > lastMerge
 }
 
+// MergedShas отдаёт коммиты из записи раздела «Выкат»: строки «- <слово>:
+// sha, sha». Проза и отметка smoke в перечень не попадают, коммитом считается
+// только то, что похоже на sha. По перечню shipctl находит работу задачи для
+// отката и поезда, а признак «слита» (internal/merged) для ожидания и рёбер.
+func MergedShas(doc string) []string {
+	var shas []string
+	for _, ln := range sectionLines(doc, Merged) {
+		t := strings.TrimSpace(ln)
+		if !strings.HasPrefix(t, "- ") {
+			continue
+		}
+		_, list, ok := strings.Cut(t, ":")
+		if !ok {
+			continue
+		}
+		for _, part := range strings.Split(list, ",") {
+			if s := strings.TrimSpace(part); IsSha(s) {
+				shas = append(shas, s)
+			}
+		}
+	}
+	return shas
+}
+
 // SectionLines отдаёт строки названного раздела вне ограждённых блоков. Тем же
 // разбором читают форму сама taskform и её вызывающие: раздел «Ход работы»
 // спрашивают ворота закрытия и подъём прогона после выката, и вторая копия

@@ -906,6 +906,12 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 			return "", fmt.Errorf("%s; поезд при сломанном проде не копится, чинить одиночным merge или откатом", brokenProd(f))
 		}
 	}
+	// Ребро «после» у сливаемой строки обязано быть снято (решение 3 LLD
+	// DK-933), в обоих режимах: код идёт в main и поездом. Провал предпосылки
+	// сюда не доходит, его раньше отбил сломанный прод.
+	if err := edgeGate(root, b, p.ID); err != nil {
+		return "", err
+	}
 	// Занятая очередь держит выкат, а не main: инвариант «непроверенный выкат
 	// один» сказан про прод. Слияние на прод ничего не везёт, оно
 	// возвращается до блока выката, и очередь его не касается. Одиночный merge
@@ -1852,6 +1858,15 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	out := []string{fmt.Sprintf("откачено коммитов: %d (%s)", len(shas), strings.Join(short, ", "))}
 	if plan.warn != "" {
 		out = append(out, "предупреждение: "+plan.warn)
+	}
+	// Откат чинит прод и ждать не может, поэтому строки с ребром на
+	// откаченную задачу, чья работа уже в main, он не трогает, а называет
+	// (решение 3 LLD DK-933).
+	if deps, err := dependentsInMain(root, bTrain, p.ID); err != nil {
+		out = append(out, fmt.Sprintf("строки с ребром на %s не проверены: %v", p.ID, err))
+	} else if len(deps) > 0 {
+		out = append(out, fmt.Sprintf("в main осталась работа строк с ребром на %s (%s): откат их не трогает, нужен ли им код %s, по коммитам не видно, и откатывать ли их следом, решает откатывающий (shipctl revert <ID>)",
+			p.ID, strings.Join(deps, "; "), p.ID))
 	}
 	push := func(note, failed string) error {
 		if !p.Push && !plan.autonomous {

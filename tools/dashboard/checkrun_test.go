@@ -237,6 +237,27 @@ func TestCheckRunRefusesDeveloperModel(t *testing.T) {
 	}
 }
 
+// Кейс 2 DK-947 на экранном носителе: вердикт ревью дал base, а base в
+// раскладке это та же модель, что вела разработку. Раньше тут был отказ и
+// строка стояла до человека, теперь ярус берётся ступенью выше.
+func TestCheckRunStepsUpOverDeveloperModel(t *testing.T) {
+	e, tmuxLog := checkEnv(t, "")
+	writeAgentctlPick(t, e.bin, harnessTiersFixture, "base")
+	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc+
+		"\n## Ход работы\n\n- Разработка: субагент модель-base/high по вердикту pick, 2026-09-02 10:00-11:00.\n")
+
+	rep := checkRunOne(t, e, "XR-003")
+	if !rep.Raised || rep.Failed {
+		t.Fatalf("столкновение ярусов должно подниматься ступенью, а не отказом: %+v", rep)
+	}
+	if !strings.Contains(rep.Line, "поднят ступенью до pro") || !strings.Contains(rep.Line, "модель модель-pro") {
+		t.Errorf("отчёт не называет ступень: %q", rep.Line)
+	}
+	if got := readFile(t, tmuxLog); !strings.Contains(got, "модель-pro") {
+		t.Errorf("голова поднята не моделью ступени выше: %s", got)
+	}
+}
+
 // Строки, которым прогон не нужен: отметка smoke уже стоит, приёмка за
 // человеком, непогашенный провал, строка не в Check. Все четыре отвечают
 // словами и без поломки, иначе тик сторожка звонил бы каждые пять минут.

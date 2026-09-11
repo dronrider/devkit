@@ -14,8 +14,8 @@ import (
 // разговоры без явного маркера в кандидаты не попадают и остаются на глаз
 // человеку.
 var sweepMarkers = []string{
-	// checkRunOrder (checkrun.go): прогон сценария проверки, зовёт shipctl и
-	// тик `devkitctl watch`.
+	// checkrun.OrderHead (internal/checkrun): прогон сценария проверки, зовут
+	// выкат shipctl, тик `devkitctl watch` и `dashboard check`.
 	"Прогони агентскую часть сценария проверки ",
 	// roundOrder (round.go): второй круг ревью, зовёт тик сторожка.
 	"Второй круг ревью ",

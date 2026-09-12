@@ -260,16 +260,32 @@ def quiet(home, limit=QUIET_WAIT):
     return locks(home)
 
 
-def woke(cmd_run, proj, heads_log, task):
-    """Поднялась ли строка: вышла в работу и получила свою голову.
+def woke(cmd_run, proj, home, heads_log, task):
+    """Подъём строки: вышла в работу, получила голову и дождалась её конца.
+    Возврат это пустая строка при удавшемся подъёме либо слова о том, чего не
+    вышло.
 
     Секция спрашивается первой и сразу. Обход ждущих синхронный, и строка,
     оставшаяся стоять, видна по доске, не дожидаясь срока. Голова приходит
     своим ходом, стенд её ждёт.
+
+    Конца головы стенд ждёт по той же причине, по какой ждёт её появления.
+    Голова живёт своими проходами и на каждом спрашивает доску командой
+    `taskctl show`, а та меряет возраст строки через `git status` (age.go).
+    Второй git в том же репозитории берёт .git/index.lock, и следующий коммит
+    стенда падает с «Another git process seems to be running». Замок головы
+    лежит в ~/.devkit/task-<ID>.lock и снимается её выходом, по нему стенд и
+    ждёт.
     """
-    if board_sect(cmd_run, proj, task) != "in-progress":
-        return False
-    return await_raise(heads_log, task)
+    sect = board_sect(cmd_run, proj, task)
+    if sect != "in-progress":
+        return "строка осталась в %s" % (sect or "прежней секции")
+    if not await_raise(heads_log, task):
+        return "строка вышла в работу, а голова так и не поднялась"
+    held = quiet(home)
+    if held:
+        return "голова поднялась и не закончила за %d с (%s)" % (QUIET_WAIT, ", ".join(held))
+    return ""
 
 
 def board_sect(cmd_run, proj, task):
@@ -388,7 +404,7 @@ def arm_row(cmd_run, proj):
                     "-m", "docs(tasks): %s взвод строки" % ARMED])
 
 
-def event_wait(cmd_run, proj, mode_file, heads_log):
+def event_wait(cmd_run, proj, home, mode_file, heads_log):
     """Ожидание второе: `shipctl merge` и `taskctl close` поднимают ждущих.
 
     Строка PARKED стоит в Blocked с машинным разрядом «закрытие: <ID>»,
@@ -429,19 +445,17 @@ def event_wait(cmd_run, proj, mode_file, heads_log):
     rc, merge_out = cmd_run(["shipctl", "-C", str(proj), "merge", DEP])
     if rc != 0:
         return step("слияние предпосылки не прошло", rc, merge_out)
-    if not woke(cmd_run, proj, heads_log, ARMED):
-        return step("%s не стартовала по слиянию %s: взведённая строка осталась "
-                    "в %s" % (ARMED, DEP, board_sect(cmd_run, proj, ARMED) or "Backlog"),
-                    1, merge_out)
+    why = woke(cmd_run, proj, home, heads_log, ARMED)
+    if why:
+        return step("%s не стартовала по слиянию %s: %s" % (ARMED, DEP, why), 1, merge_out)
     rc, close_out = cmd_run(["taskctl", "-C", str(proj), "close", DEP,
                              "-m", "docs(tasks): %s предпосылка закрыта" % DEP,
                              "--push"])
     if rc != 0:
         return step("закрытие предпосылки не прошло", rc, close_out)
-    if not woke(cmd_run, proj, heads_log, PARKED):
-        return step("%s не разбужена закрытием %s: строка осталась в %s"
-                    % (PARKED, DEP, board_sect(cmd_run, proj, PARKED) or "Blocked"),
-                    1, close_out)
+    why = woke(cmd_run, proj, home, heads_log, PARKED)
+    if why:
+        return step("%s не разбужена закрытием %s: %s" % (PARKED, DEP, why), 1, close_out)
     return step("слияние %s подняло %s, закрытие подняло %s"
                 % (DEP, ARMED, PARKED), 0, merge_out + "\n" + close_out)
 
@@ -518,10 +532,10 @@ def tick_wait(cmd_run, proj, home, mode_file, heads_log):
                     % (proj, ", ".join(roots) or "ничего"), 1, out)
     lines = watch.waiters(str(proj), call=tick_call(cmd_run), taskctl=which(cmd_run, "taskctl"))
     said = "\n".join(lines)
-    if not woke(cmd_run, proj, heads_log, MISSED):
-        return step("%s не поднята тиком (строка в %s): пропущенное событие так и "
-                    "не добрано" % (MISSED, board_sect(cmd_run, proj, MISSED) or "Blocked"),
-                    1, said)
+    why = woke(cmd_run, proj, home, heads_log, MISSED)
+    if why:
+        return step("%s не поднята тиком: пропущенное событие так и не добрано (%s)"
+                    % (MISSED, why), 1, said)
     return step("тик добрал слияние %s руками и поднял %s" % (HAND, MISSED), 0, said)
 
 
@@ -556,7 +570,7 @@ def circle(cmd_run, proj, home, devkit, mode_file, client, heads_log, log):
         ("живое ожидание против воронки",
          lambda: funnel_wait(cmd_run, proj, devkit, mode_file, client, heads_log)),
         ("close и merge поднимают ждущих",
-         lambda: event_wait(cmd_run, proj, mode_file, heads_log)),
+         lambda: event_wait(cmd_run, proj, home, mode_file, heads_log)),
         ("тик добирает пропущенное",
          lambda: tick_wait(cmd_run, proj, home, mode_file, heads_log)),
     )

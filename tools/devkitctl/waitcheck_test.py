@@ -42,6 +42,7 @@ class WaitcheckTest(SandboxCase):
         """Прогон стенда в своём каталоге. Возврат это код и отчёт строками."""
         where = self.box.root / name
         where.mkdir()
+        self.where = where
         lines = []
 
         def cmd_run(args, cwd=None, env=None):
@@ -70,6 +71,15 @@ class WaitcheckTest(SandboxCase):
                       "исход обхода не назвал взведённую строку:\n%s" % out)
         self.assertIn("тик добрал слияние %s" % waitcheck.HAND, out,
                       "исход тика не назвал пропущенное событие:\n%s" % out)
+        # Голова, пережившая свой шаг, идёт вторым git в том же репозитории:
+        # `taskctl show` меряет возраст строки через `git status`, тот берёт
+        # .git/index.lock, и следующий коммит стенда падает с «Another git
+        # process seems to be running». Так прогон и флакал. Стенд ждёт конца
+        # каждой поднятой головы, и к отчёту ни одного замка остаться не должно.
+        self.assertNotIn("головы стенда не закончили", out,
+                         "стенд отчитался при живых головах:\n%s" % out)
+        self.assertEqual(waitcheck.locks(self.where / "home"), [],
+                         "за стендом остался замок головы")
 
     def test_head_without_a_wait_mark_fails_the_stand(self):
         # Откат первого звена: голова кончает ход, не отметив ожидания. Воронка

@@ -80,17 +80,89 @@ func TestRegistryGoals(t *testing.T) {
 // TestBusyTmux: занятость собирается из tmux без реестра. tmux подменяется
 // скриптом в PATH, как его подменяют тесты дашборда.
 func TestBusyTmux(t *testing.T) {
-	bin := t.TempDir()
-	script := "#!/bin/sh\nprintf 'task-XR-5\\t1\\t100\\ngoal-XR-9\\t1\\t200\\ntask-ZZ-1\\t1\\t300\\n'\n"
-	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	busy := Busy("XR", t.TempDir(), t.TempDir())
+	fakeTmux(t, "task-XR-5|1|100\ngoal-XR-9|1|200\ntask-ZZ-1|1|300\n",
+		"task-XR-5|claude|0\ngoal-XR-9|claude|0\ntask-ZZ-1|claude|0\n")
+	busy := Busy("XR", t.TempDir(), t.TempDir(), nil)
 	if !busy["XR-5"] || !busy["XR-9"] {
 		t.Fatalf("свои сессии не заняли задачи: %v", busy)
 	}
 	if busy["ZZ-1"] {
 		t.Fatal("чужой префикс занял задачу")
+	}
+}
+
+// fakeTmux кладёт в PATH подставной tmux: `ls` отдаёт список сессий, а
+// `list-panes` пейны. Данные лежат файлами рядом со скриптом, чтобы кавычки
+// вывода не приходилось прятать внутрь шелла. Пустой panes это отказ спросить
+// пейны, как у tmux, которого на машине нет.
+func fakeTmux(t *testing.T, ls, panes string) {
+	t.Helper()
+	bin := t.TempDir()
+	script := "#!/bin/sh\ncase \"$1\" in\n" +
+		"ls) cat \"$0.ls\" ;;\n" +
+		"list-panes) [ -f \"$0.panes\" ] && cat \"$0.panes\" || exit 1 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "tmux.ls"), []byte(ls), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if panes != "" {
+		if err := os.WriteFile(filepath.Join(bin, "tmux.panes"), []byte(panes), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestParsePanes гоняет разбор вывода tmux list-panes: имя сессии, команда
+// переднего плана и признак мёртвого пейна.
+func TestParsePanes(t *testing.T) {
+	in := "task-XR-5|claude|0\ntask-XR-6|zsh|0\ntask-XR-7|node|1\n\n"
+	want := []Pane{{"task-XR-5", "claude", false}, {"task-XR-6", "zsh", false},
+		{"task-XR-7", "node", true}}
+	if got := ParsePanes([]byte(in)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParsePanes = %+v, ожидал %+v", got, want)
+	}
+}
+
+// TestBusySkipsDeadWindows: регрессия DK-967. Работой считалась всякая
+// tmux-сессия с именем task-<ID>, и брошенные окна копились на машине
+// неделями: живых заходов два, а счётчик занятых показывал девять, и ворота
+// ёмкости взвода отказывали подъёму словами «потолок пачки 3 исчерпан, живых
+// работ 9». Работу даёт только живой заход: в окне сидит клиент, а строка на
+// доске взята.
+func TestBusySkipsDeadWindows(t *testing.T) {
+	ls := "task-XR-5|1|100\ntask-XR-6|1|200\ntask-XR-7|1|300\ntask-XR-8|1|400\n"
+	panes := "task-XR-5|claude|0\ntask-XR-6|zsh|0\ntask-XR-7|claude|0\ntask-XR-8|claude|0\n"
+	fakeTmux(t, ls, panes)
+	sect := map[string]string{"XR-5": "in-progress", "XR-6": "in-progress", "XR-7": "backlog"}
+	busy := Busy("XR", t.TempDir(), t.TempDir(), func(id string) string { return sect[id] })
+	if !busy["XR-5"] {
+		t.Fatal("живой заход не занял задачу")
+	}
+	if busy["XR-6"] {
+		t.Fatal("окно с одной оболочкой посчитано работой")
+	}
+	if busy["XR-7"] {
+		t.Fatal("строка в Backlog посчитана работой")
+	}
+	if busy["XR-8"] {
+		t.Fatal("строка, которой нет на доске, посчитана работой")
+	}
+	if len(busy) != 1 {
+		t.Fatalf("занятых %d, ожидал одну: %v", len(busy), busy)
+	}
+}
+
+// TestBusyKeepsWorkWhenPanesUnknown: пейнов спросить не удалось, и режущее
+// правило не работает. Отказ в другую сторону хуже: живая работа пропала бы из
+// счёта, и машина взяла бы сверх потолка.
+func TestBusyKeepsWorkWhenPanesUnknown(t *testing.T) {
+	fakeTmux(t, "task-XR-5|1|100\n", "")
+	busy := Busy("XR", t.TempDir(), t.TempDir(), func(string) string { return "in-progress" })
+	if !busy["XR-5"] {
+		t.Fatalf("без ответа о пейнах работа пропала: %v", busy)
 	}
 }

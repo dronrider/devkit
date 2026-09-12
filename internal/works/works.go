@@ -143,16 +143,117 @@ func RegistryGoals(home, projectRoot string) []string {
 	return goals
 }
 
+// Pane это пейн tmux: имя сессии, команда переднего плана и признак мёртвого
+// пейна (окно осталось от процесса, который уже вышел).
+type Pane struct {
+	Session string
+	Cmd     string
+	Dead    bool
+}
+
+// Panes отдаёт пейны всех сессий машины. Второй ответ это «спросить удалось».
+// Без tmux и на ошибке вызова пейнов не видно вовсе, и тогда нечем считать
+// живость окна.
+func Panes() ([]Pane, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), procTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F",
+		"#{session_name}"+SessionSep+"#{pane_current_command}"+SessionSep+"#{pane_dead}")
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, false
+	}
+	return ParsePanes(out), true
+}
+
+// ParsePanes разбирает вывод tmux list-panes; вынесен из Panes, чтобы тест
+// гонял разбор без tmux.
+func ParsePanes(out []byte) []Pane {
+	panes := []Pane{}
+	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Split(ln, SessionSep)
+		if fields[0] == "" {
+			continue
+		}
+		p := Pane{Session: fields[0]}
+		if len(fields) > 1 {
+			p.Cmd = fields[1]
+		}
+		if len(fields) > 2 {
+			p.Dead = fields[2] == "1"
+		}
+		panes = append(panes, p)
+	}
+	return panes
+}
+
+// shellCmds это оболочки. Заход конвейера поднимает в окне клиента, и после
+// его выхода на переднем плане остаётся одна оболочка. Человек забыл закрыть
+// такое окно, а работы в нём нет.
+var shellCmds = map[string]bool{
+	"sh": true, "bash": true, "zsh": true, "fish": true, "dash": true,
+	"ksh": true, "csh": true, "tcsh": true, "login": true, "tmux": true,
+}
+
+// ClientSessions называет сессии, где на переднем плане живёт не оболочка, то
+// есть клиент или запущенная им программа. Второй ответ это «спросить
+// удалось». Не спросив, не применяем режущее правило. Без него живая работа
+// пропала бы из счёта, и машина взяла бы лишнее.
+func ClientSessions() (map[string]bool, bool) {
+	panes, ok := Panes()
+	if !ok {
+		return nil, false
+	}
+	live := map[string]bool{}
+	for _, p := range panes {
+		if p.Dead || shellCmds[strings.TrimPrefix(strings.ToLower(p.Cmd), "-")] {
+			continue
+		}
+		live[p.Session] = true
+	}
+	return live, true
+}
+
+// atWork отвечает, даёт ли секция строки доски работу. Пустая секция это
+// строка, которой на доске нет вовсе. Закрытая и уехавшая в архив задача не
+// занимает ёмкости, сколько бы окон с её ID ни висело. Backlog это строка,
+// которую ещё не брали. Окно от прошлого захода тут тоже не работа. Взятая
+// задача стоит в In progress, Check или Blocked, и её дерево занято.
+func atWork(sect string) bool {
+	return sect != "" && sect != "backlog"
+}
+
 // Busy собирает занятые ID работ по машинным источникам: tmux-сессии конвейера
 // и записи реестра целей. Третий источник дашборда, свежие транскрипты
 // интерактивных окон, здесь не читается: он живёт у сервера экрана вместе с
 // кэшем транскриптов, а планировщику довольно того, что видит tmux.
-func Busy(prefix, home, projectRoot string) map[string]bool {
+//
+// Сессия даёт работу, пока заход в ней жив. Окно от брошенного захода стоит на
+// машине неделями. Без этого разбора счётчик рос от каждого старта и не
+// убывал, а ворота ёмкости взвода отказывали подъёму словами про девять живых
+// работ при двух настоящих (DK-967). Живость меряется двумя признаками:
+// клиент на переднем плане окна и секция строки на доске. Третий названный
+// признак, возраст окна, тут не заведён. Первых двух хватило, а срок жизни
+// работы пришлось бы угадывать.
+//
+// sect отдаёт секцию строки доски по ID; доска у зовущего своя, и он сам её
+// разбирает. Пустой sect это «доски нет», и тогда строка не режется.
+func Busy(prefix, home, projectRoot string, sect func(id string) string) map[string]bool {
 	busy := map[string]bool{}
+	clients, asked := ClientSessions()
 	for _, sess := range Sessions() {
-		if id, _ := SessionTask(sess.Name, prefix); id != "" {
-			busy[id] = true
+		id, _ := SessionTask(sess.Name, prefix)
+		if id == "" {
+			continue
 		}
+		if asked && !clients[sess.Name] {
+			continue
+		}
+		if sect != nil && !atWork(sect(id)) {
+			continue
+		}
+		busy[id] = true
 	}
 	for _, goal := range RegistryGoals(home, projectRoot) {
 		busy[goal] = true

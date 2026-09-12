@@ -166,3 +166,27 @@ func TestBusyKeepsWorkWhenPanesUnknown(t *testing.T) {
 		t.Fatalf("без ответа о пейнах работа пропала: %v", busy)
 	}
 }
+
+// DK-968: ветка задачи узнаётся с хвостом-слагом и в любом регистре, а чужая
+// ветка задачей не считается: по этому разбору ворота ёмкости отличают дерево
+// работы от одноразового дерева прогона.
+func TestBranchTask(t *testing.T) {
+	cases := []struct{ branch, want string }{
+		{"dk-470", "DK-470"},
+		{"dk-470-lld-link", "DK-470"},
+		{"DK-470", "DK-470"},
+		{"main", ""},
+		{"dk-", ""},
+		{"dk-lld", ""},
+		{"xr-470", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := BranchTask(c.branch, "DK"); got != c.want {
+			t.Errorf("ветка %q: %q, жду %q", c.branch, got, c.want)
+		}
+	}
+	if got := BranchTask("dk-470", ""); got != "" {
+		t.Errorf("доска без префикса не должна узнавать задач: %q", got)
+	}
+}

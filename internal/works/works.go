@@ -215,12 +215,34 @@ func ClientSessions() (map[string]bool, bool) {
 	return live, true
 }
 
-// atWork отвечает, даёт ли секция строки доски работу. Пустая секция это
+// BranchTask по имени ветки находит задачу доски. Ветки dk-470 и
+// dk-470-lld-link дают строку DK-470. Регистр не важен, хвост-слаг
+// отрезается, префикс берётся у доски. Чужая ветка и ветка без номера задачи
+// задачей не считаются.
+func BranchTask(branch, prefix string) string {
+	if branch == "" || prefix == "" {
+		return ""
+	}
+	rest, ok := strings.CutPrefix(strings.ToLower(branch), strings.ToLower(prefix)+"-")
+	if !ok {
+		return ""
+	}
+	num := rest
+	if i := strings.IndexByte(rest, '-'); i >= 0 {
+		num = rest[:i]
+	}
+	if num == "" || strings.TrimLeft(num, "0123456789") != "" {
+		return ""
+	}
+	return prefix + "-" + num
+}
+
+// AtWork отвечает, даёт ли секция строки доски работу. Пустая секция это
 // строка, которой на доске нет вовсе. Закрытая и уехавшая в архив задача не
 // занимает ёмкости, сколько бы окон с её ID ни висело. Backlog это строка,
 // которую ещё не брали. Окно от прошлого захода тут тоже не работа. Взятая
 // задача стоит в In progress, Check или Blocked, и её дерево занято.
-func atWork(sect string) bool {
+func AtWork(sect string) bool {
 	return sect != "" && sect != "backlog"
 }
 
@@ -250,7 +272,7 @@ func Busy(prefix, home, projectRoot string, sect func(id string) string) map[str
 		if asked && !clients[sess.Name] {
 			continue
 		}
-		if sect != nil && !atWork(sect(id)) {
+		if sect != nil && !AtWork(sect(id)) {
 			continue
 		}
 		busy[id] = true

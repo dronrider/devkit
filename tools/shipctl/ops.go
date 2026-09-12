@@ -80,7 +80,7 @@ func runShellLimit(root, cmdStr string, limit time.Duration, env []string) (stri
 // (обкатка сценария в taskctl), поэтому разбор живёт в общем пакете, а здесь
 // осталось имя, под которым его знает слияние.
 func freshTestRun(root, sha string) (*freshtree.Run, error) {
-	return freshtree.Start(root, sha, "shipctl-merge-")
+	return freshtree.Start(root, sha, freshtree.MergePrefix)
 }
 
 // deployProblem говорит, что стряслось с выкатом: короткое для заголовка

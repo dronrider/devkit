@@ -341,7 +341,7 @@ func Run(p Params) (string, error) {
 	// Дерево старого кода выкладывает общий кирпич. Он же метит каталог
 	// владельцем и снимает дерево по ловимому сигналу. Без этого упавший
 	// прогон оставлял бы запись в списке git навсегда (DK-968).
-	wt, _, cleanup, err := freshtree.Make(root, base, "regcheck-")
+	wt, _, cleanup, err := freshtree.Make(root, base, freshtree.RegcheckPrefix)
 	if err != nil {
 		return "", err
 	}

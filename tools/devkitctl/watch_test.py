@@ -546,6 +546,30 @@ PARK_HEAD = """# Задачи стенда
 
 PARK_ROW = "| %s | %s | task | P1 | 60 (50+5+3+0+2) | XL | [tasks/%s.md](tasks/%s.md) |"
 
+ARM_HEAD = """# Задачи стенда
+
+## In progress
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+
+## Check (готово, ждёт проверки пользователем)
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+
+## Backlog
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+%s
+
+## Blocked
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+"""
+
 
 class RaiseFake(Fake):
     """Запускатель, отвечающий отказом подъёму и штатной тишиной соседям по
@@ -869,6 +893,22 @@ class WaitersTest(Stand):
         self.board_with([PARK_ROW % ("DK-903", "Ждёт среду [блок: окружение: нет железа]", "DK-903", "DK-903"),
                          PARK_ROW % ("DK-904", "Спрашивает [блок: вопрос: схема]", "DK-904", "DK-904"),
                          PARK_ROW % ("DK-905", "Ждёт [блок: слияния DK-901 жду]", "DK-905", "DK-905")])
+        self.assertEqual(watch.waiters(str(self.proj), self.call, TASKCTL), [])
+        self.assertEqual(self.call.calls, [])
+
+    def board_backlog(self, rows):
+        (self.proj / "docs" / "TASKS.md").write_text(
+            ARM_HEAD % "\n".join(rows), encoding="utf-8")
+
+    def test_armed_backlog_row_calls_the_sweep(self):
+        # DK-934: взведённая строка Backlog это тот же обход. Снятость рёбер и
+        # ворота ёмкости считает taskctl, тику довольно суффикса на доске.
+        self.board_backlog([PARK_ROW % ("DK-902", "Взведённая [после DK-901] [взвод]", "DK-902", "DK-902")])
+        watch.waiters(str(self.proj), self.call, TASKCTL)
+        self.assertEqual(self.call.calls, [self.sweep()])
+
+    def test_backlog_row_without_arm_does_not_call(self):
+        self.board_backlog([PARK_ROW % ("DK-902", "Ждёт руки [после DK-901]", "DK-902", "DK-902")])
         self.assertEqual(watch.waiters(str(self.proj), self.call, TASKCTL), [])
         self.assertEqual(self.call.calls, [])
 

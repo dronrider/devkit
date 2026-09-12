@@ -502,3 +502,35 @@ func TestArmGatesSkipDeadWindows(t *testing.T) {
 		t.Fatalf("живая работа перестала занимать дерево: %q", why)
 	}
 }
+
+// DoD DK-968: ворота ёмкости считают деревом взятую задачу, а не всякую запись
+// в списке git. Одноразовое дерево упавшего прогона стоит на отцепленной
+// голове, дерево брошенного захода держит строку Backlog, и оба отказывали
+// подъёму словами про потолок деревьев при пустой машине.
+func TestArmGatesCountOnlyTakenTaskTrees(t *testing.T) {
+	root := armStand(t, 3)
+	t.Setenv(slotTreesEnv, "1")
+	trees := t.TempDir()
+	// Заход бросили: ветка и дерево стоят, а строка XR-002 лежит в Backlog.
+	wakeGit(t, root, "worktree", "add", "-q", "-b", "xr-002", filepath.Join(trees, "xr-002"))
+	// Упавшее слияние: отцепленная голова, задачи за деревом нет.
+	wakeGit(t, root, "worktree", "add", "-q", "--detach", filepath.Join(trees, "shipctl-merge"), "main")
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := liveTrees(root, b); n != 0 {
+		t.Fatalf("брошенное дерево и дерево прогона считаются работой: %d", n)
+	}
+	if why := newArmGates(root, b).pass("XR-003"); why != "" {
+		t.Fatalf("ворота ёмкости отказали при пустой машине: %s", why)
+	}
+	// Взятая задача дерево занимает: XR-005 стоит в In progress.
+	wakeGit(t, root, "worktree", "add", "-q", "-b", "xr-005-hotfix", filepath.Join(trees, "xr-005"))
+	if n := liveTrees(root, b); n != 1 {
+		t.Fatalf("дерево взятой задачи не сосчитано: %d", n)
+	}
+	if why := newArmGates(root, b).pass("XR-003"); why != "потолок деревьев 1 из 1" {
+		t.Fatalf("потолок деревьев перестал держать: %q", why)
+	}
+}

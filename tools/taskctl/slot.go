@@ -104,18 +104,38 @@ func treeCeiling(limit int) int {
 // и ветку, стоящее дерево это незакрытая работа. Основной чекаут не считается.
 // Вне git и при недоступном git деревьев нет, и потолок жмёт только свежие
 // старты.
-func liveTrees(root string) int {
+//
+// Считается не всякое дерево, а дерево взятой задачи (DK-968). Одноразовые
+// деревья прогонов (слияние, regcheck, обкатка сценария) стоят на отцепленной
+// голове без задачи. Падение прогона оставляло их в списке наравне с рабочими
+// деревьями, и там набиралось восемнадцать деревьев против пяти рабочих.
+// Дерево задачи, чья строка лежит в Backlog или уехала в архив, тоже не
+// работа. Это заход, который бросили, и живость меряется той же секцией
+// доски, что у окон tmux (DK-967).
+func liveTrees(root string, b *Board) int {
 	out, err := exec.Command("git", "-C", root, "worktree", "list", "--porcelain").Output()
 	if err != nil {
 		return 0
 	}
 	n := 0
-	for _, ln := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(ln, "worktree ") {
-			n++
+	for i, block := range strings.Split(strings.TrimSpace(string(out)), "\n\n") {
+		// Первым блоком git печатает основной чекаут, он не линкованный.
+		if i == 0 {
+			continue
 		}
+		branch := ""
+		for _, ln := range strings.Split(block, "\n") {
+			if v, ok := strings.CutPrefix(strings.TrimSpace(ln), "branch refs/heads/"); ok {
+				branch = v
+			}
+		}
+		id := works.BranchTask(branch, b.Prefix)
+		if id == "" || !works.AtWork(b.sectOf(id)) {
+			continue
+		}
+		n++
 	}
-	return n - 1
+	return n
 }
 
 // taskHasTree говорит, есть ли у задачи своя ветка: возврат к припаркованной
@@ -244,7 +264,7 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 	clean := boardClean(root)
 	times := boardTimes(root)
 	ceiling := treeCeiling(limit)
-	live := liveTrees(root)
+	live := liveTrees(root, b)
 	// Недоступность человека это припаркованный вопрос старше часа без ответа.
 	humanAway := false
 	for _, r := range b.Rows {

@@ -497,3 +497,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-935 | Кнопка и подъёмы дашборда запускают голову через taskctl run | task | P1 | 2026-09-11 | [tasks/archive/2026/DK-935.md](tasks/archive/2026/DK-935.md) |
 | DK-943 | Ребро «после» снимается слиянием предпосылки | task | P1 | 2026-09-11 | [tasks/archive/2026/DK-943.md](tasks/archive/2026/DK-943.md) |
 | DK-932 | Разряды «слияние:» и «закрытие:», close и merge поднимают припаркованных | task | P1 | 2026-09-11 | [tasks/archive/2026/DK-932.md](tasks/archive/2026/DK-932.md) |
+| DK-947 | Выкат без человека сам доводит отметку smoke проверяющим другой модели | task | P1 | 2026-09-12 | [tasks/archive/2026/DK-947.md](tasks/archive/2026/DK-947.md) |

@@ -240,7 +240,7 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 	}
 	ed := newEdges(root, b, arch)
 	home, _ := os.UserHomeDir()
-	busy := works.Busy(b.Prefix, home, root)
+	busy := works.Busy(b.Prefix, home, root, b.sectOf)
 	clean := boardClean(root)
 	times := boardTimes(root)
 	ceiling := treeCeiling(limit)

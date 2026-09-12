@@ -128,7 +128,7 @@ var batchCeiling = func(root string) (int, string) {
 func newArmGates(root string, b *Board) *armGates {
 	home, _ := os.UserHomeDir()
 	limit, _ := batchCeiling(root)
-	return &armGates{root: root, busy: works.Busy(b.Prefix, home, root), limit: limit,
+	return &armGates{root: root, busy: works.Busy(b.Prefix, home, root, b.sectOf), limit: limit,
 		live: liveTrees(root), ceiling: treeCeiling(limit)}
 }
 

@@ -470,3 +470,35 @@ func TestLintFindsArmWhereItDoesNotBelong(t *testing.T) {
 		t.Fatalf("обход поднял строку, которой взвод не положен: %+v\n%s", *calls, out)
 	}
 }
+
+// TestArmGatesSkipDeadWindows: регрессия DK-967. Ворота ёмкости считали
+// работой всякое окно tmux с именем task-<ID>, а такие окна остаются от
+// брошенных заходов и живут на машине неделями. Взведённая строка не
+// стартовала: живых заходов было два, а счётчик показывал девять, и подъёму
+// отказывали словами «потолок пачки 3 исчерпан, живых работ 9». Работу даёт
+// живой заход: клиент на переднем плане окна и взятая строка на доске.
+func TestArmGatesSkipDeadWindows(t *testing.T) {
+	root := armStand(t, 3)
+	fakeTmux(t, strings.Join([]string{
+		"task-XR-005\\t1\\t100", // живой заход по строке из In progress
+		"task-XR-001\\t1\\t200", // окно от брошенного захода, внутри оболочка
+		"task-XR-002\\t1\\t300", // клиент жив, а строка лежит в Backlog
+		"task-XR-004\\t1\\t400", // то же самое, второе такое окно
+	}, "\\n"), strings.Join([]string{
+		"task-XR-005|claude|0",
+		"task-XR-001|zsh|0",
+		"task-XR-002|claude|0",
+		"task-XR-004|claude|0",
+	}, "\\n"))
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := newArmGates(root, b)
+	if why := g.pass("XR-003"); why != "" {
+		t.Fatalf("ворота не пустили взведённую строку: %s", why)
+	}
+	if why := g.pass("XR-005"); why != "дерево занято живой работой" {
+		t.Fatalf("живая работа перестала занимать дерево: %q", why)
+	}
+}

@@ -197,6 +197,16 @@ func (b *Board) find(id string) *Row {
 	return nil
 }
 
+// sectOf отдаёт секцию строки по ID, а строке, которой на доске нет, пустую.
+// Этим ответом счётчик занятых работ (internal/works) отличает живую работу от
+// окна tmux, оставшегося от брошенного захода.
+func (b *Board) sectOf(id string) string {
+	if r := b.find(id); r != nil {
+		return r.Sect
+	}
+	return ""
+}
+
 func splitCells(line string) ([]string, error) {
 	s := strings.TrimSpace(line)
 	if !strings.HasPrefix(s, "|") || !strings.HasSuffix(s, "|") {

@@ -40,12 +40,21 @@ func gitBoard(t *testing.T, root string) {
 	gitOut(t, root, "commit", "-q", "-m", "init")
 }
 
-// fakeTmux подменяет tmux скриптом с данным списком сессий: занятость дерева
-// читается по tmux-сессиям конвейера, и стенд держит их сам.
-func fakeTmux(t *testing.T, sessions string) {
+// fakeTmux подменяет tmux скриптом с данным списком сессий и пейнов: занятость
+// дерева читается по tmux-сессиям конвейера, а живость окна по команде на
+// переднем плане пейна, и стенд держит то и другое сам. Пустой panes это
+// машина, где пейнов спросить не удалось.
+func fakeTmux(t *testing.T, sessions, panes string) {
 	t.Helper()
 	bin := t.TempDir()
-	script := "#!/bin/sh\nprintf '" + sessions + "\\n'\n"
+	listPanes := "exit 1"
+	if panes != "" {
+		listPanes = "printf '" + panes + "\\n'"
+	}
+	script := "#!/bin/sh\ncase \"$1\" in\n" +
+		"ls) printf '" + sessions + "\\n' ;;\n" +
+		"list-panes) " + listPanes + " ;;\n" +
+		"esac\n"
 	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +212,7 @@ func TestSlotGates(t *testing.T) {
 | XR-108 | Внешний блокер [блок: роутер DE недоступен] | task | P3 | 9 (0+4+0+0+5) | S | - |
 `)
 	gitBoard(t, root)
-	fakeTmux(t, "task-XR-100\\t1\\t1000")
+	fakeTmux(t, "task-XR-100\\t1\\t1000", "task-XR-100|claude|0")
 	travelTime(t, 2*time.Hour)
 
 	out, err := cmdSlot(root, 1, "slot")

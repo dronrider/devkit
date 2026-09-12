@@ -203,7 +203,7 @@ func holdEdges(root string, b *Board) map[string][]string {
 		holds[holder] = append(holds[holder], held)
 	}
 	for _, r := range b.Rows {
-		_, deps, _, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _, _ := splitTitle(r.Title)
 		for _, d := range deps {
 			add(d, r.ID)
 		}

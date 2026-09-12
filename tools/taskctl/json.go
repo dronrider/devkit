@@ -24,14 +24,17 @@ type jsonRow struct {
 	// снимает только close, а ребро снимается уже слиянием предпосылки, и
 	// держит строку на экране это поле, а не after.
 	HeldBy []string `json:"held_by,omitempty"`
-	Accept string   `json:"accept,omitempty"`
-	Fail   string   `json:"fail,omitempty"`
-	Block  string   `json:"block,omitempty"`
-	Type   string   `json:"type"`
-	P      string   `json:"p"`
-	R      int      `json:"r"`
-	ROwn   int      `json:"r_own"`
-	RParts [5]int   `json:"r_parts"`
+	// Armed это взвод строки (решение 1 LLD DK-933): человек разрешил ей
+	// стартовать самой, как только рёбра сняты.
+	Armed  bool   `json:"armed,omitempty"`
+	Accept string `json:"accept,omitempty"`
+	Fail   string `json:"fail,omitempty"`
+	Block  string `json:"block,omitempty"`
+	Type   string `json:"type"`
+	P      string `json:"p"`
+	R      int    `json:"r"`
+	ROwn   int    `json:"r_own"`
+	RParts [5]int `json:"r_parts"`
 	// Поправки к рангу списком: у аддитивной имя и дельта, у подтягивающей
 	// задача, от которой подтянут итог (DK-428). Дашборд хвост не разбирает,
 	// правит ручкой пять слагаемых, а читает готовые r и r_own.
@@ -77,12 +80,13 @@ func sufText(suf, label string) string {
 }
 
 func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, clean bool) jsonRow {
-	base, deps, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
+	base, deps, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
 	return jsonRow{
 		ID:     r.ID,
 		Title:  strings.TrimSpace(base),
 		After:  deps,
 		HeldBy: ed.heldIDs(r),
+		Armed:  armSuf != "",
 		Accept: sufText(acceptSuf, "приёмка"),
 		Fail:   sufText(failSuf, "провал"),
 		Block:  sufText(blockSuf, "блок"),
@@ -93,7 +97,7 @@ func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, clean bool
 		// секциями доски, то есть правит её, и отдельной даты перевода в доске
 		// нет. Возраст днями остаётся в notes, дашборд показывает дату.
 		Moved: lineDate(times, r.LineIdx, clean),
-		Notes: rowNoteParts(root, r.Sect, r, times, clean),
+		Notes: rowNoteParts(root, ed, r.Sect, r, times, clean),
 	}
 }
 
@@ -260,6 +264,9 @@ type jsonDep struct {
 	// Edges это состояние каждого ребра из after словами «слита», «закрыта»
 	// и «ждёт» с причиной (решение 2 LLD DK-933).
 	Edges []jsonEdge `json:"edges,omitempty"`
+	// Armed это взвод строки: со снятыми рёбрами она стартует сама, и экрану
+	// зависимостей это говорит, кого ждать своим ходом, а кого рукой.
+	Armed bool `json:"armed,omitempty"`
 }
 
 type jsonEdge struct {
@@ -290,6 +297,9 @@ func cmdDepListJSON(root, id string) (string, error) {
 	sides := depSides(b)
 	if id != "" {
 		d := jsonDep{ID: id}
+		if row := b.find(id); row != nil {
+			d.Armed = armed(row.Title)
+		}
 		if s := sides[id]; s != nil {
 			d.After, d.Blocks = s.after, s.blocks
 			d.Edges = jsonEdges(ed, s.after)
@@ -312,7 +322,8 @@ func cmdDepListJSON(root, id string) (string, error) {
 		if s == nil || (len(s.after) == 0 && len(s.blocks) == 0) {
 			continue
 		}
-		deps = append(deps, jsonDep{ID: r.ID, After: s.after, Blocks: s.blocks, Edges: jsonEdges(ed, s.after)})
+		deps = append(deps, jsonDep{ID: r.ID, After: s.after, Blocks: s.blocks,
+			Edges: jsonEdges(ed, s.after), Armed: armed(r.Title)})
 	}
 	return marshal(struct {
 		Deps []jsonDep `json:"deps"`

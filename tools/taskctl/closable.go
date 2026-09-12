@@ -39,7 +39,7 @@ func closable(root string, b *Board) []closableRow {
 			out = append(out, closableRow{r.ID, "вид приёмки " + kind + ": приёмка за человеком"})
 			continue
 		}
-		if _, _, _, failSuf, _ := splitTitle(r.Title); failSuf != "" {
+		if _, _, _, _, failSuf, _ := splitTitle(r.Title); failSuf != "" {
 			out = append(out, closableRow{r.ID, "непогашенный провал проверки: сначала чинится прод"})
 			continue
 		}

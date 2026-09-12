@@ -144,7 +144,7 @@ func parkedQuestions(b *Board, root, goal string) []string {
 		if r.Sect != SectBlocked {
 			continue
 		}
-		_, _, _, _, blockSuf := splitTitle(r.Title)
+		_, _, _, _, _, blockSuf := splitTitle(r.Title)
 		if !strings.HasPrefix(blockReason(blockSuf), "вопрос:") {
 			continue
 		}
@@ -584,13 +584,23 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 		// На выходе из Blocked причина в заголовке больше не нужна.
 		moved.Title = blockSufRe.ReplaceAllString(row.Title, "")
 	}
+	// Выход из Backlog снимает взвод (решение 3 LLD DK-933): согласие человека
+	// на самостоятельный старт своё сделало, и строка, которая потом вернётся
+	// в Backlog, по старому согласию сама уже не стартует. Вместе со взводом
+	// уходит и файл последнего отказа ворот ёмкости.
+	disarmed := ""
+	if base, deps, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(moved.Title); row.Sect == SectBacklog && armSuf != "" {
+		moved.Title = joinTitle(base, deps, "", acceptSuf, failSuf, blockSuf)
+		dropArmRefusal(root, id)
+		disarmed = ", взвод снят"
+	}
 	// Перевод в Check гасит признак провала проверки сам: задача снова ждёт
 	// проверки на живом проде, значит прод починен. Именно этот move зовут
 	// shipctl merge и ship после удачного выката, поэтому дочищать признак
 	// руками после починки не приходится.
 	quenched := ""
-	if base, deps, acceptSuf, failSuf, blockSuf := splitTitle(moved.Title); target == SectCheck && failSuf != "" {
-		moved.Title = joinTitle(base, deps, acceptSuf, "", blockSuf)
+	if base, deps, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(moved.Title); target == SectCheck && failSuf != "" {
+		moved.Title = joinTitle(base, deps, armSuf, acceptSuf, "", blockSuf)
 		quenched = ", признак провала снят"
 	}
 	if moved.Title != row.Title {
@@ -607,7 +617,7 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	// он тут же, где меняется статус, а не в shipctl или где-то ещё, кто бы
 	// move ни позвал (RULES.board.md, «Ветки, ревью и деплой» п. 8).
 	var note string
-	base, _, _, _, _ := splitTitle(row.Title)
+	base, _, _, _, _, _ := splitTitle(row.Title)
 	switch target {
 	case SectCheck:
 		note = notify(root, reasonCheck, id, fmt.Sprintf("%s: %s в Check", filepath.Base(root), id), base)
@@ -638,7 +648,7 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 			hint = h + "\n"
 		}
 	}
-	return fmt.Sprintf("%s: %s -> %s%s%s%s%s\n%s%s", id, row.Sect, target, quenched, stages, tail, note, hint, nextAfterMove(root, id, target)), nil
+	return fmt.Sprintf("%s: %s -> %s%s%s%s%s%s\n%s%s", id, row.Sect, target, quenched, disarmed, stages, tail, note, hint, nextAfterMove(root, id, target)), nil
 }
 
 // relocate вырезает строку из её секции и вставляет line в секцию target,
@@ -688,13 +698,16 @@ func cmdSet(root string, p SetParams) (string, error) {
 			return "", err
 		}
 		title := p.Title
-		// У строки с зависимостью, приёмкой, провалом проверки и/или причиной
-		// блокировки эти хвосты живут в заголовке, при замене текста они
-		// переносятся в новый (в исходном порядке: «после», «приёмка», «провал»,
-		// «блок»).
-		_, deps, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
+		// У строки с зависимостью, взводом, приёмкой, провалом проверки и/или
+		// причиной блокировки эти хвосты живут в заголовке, при замене текста
+		// они переносятся в новый (в исходном порядке: «после», «взвод»,
+		// «приёмка», «провал», «блок»).
+		_, deps, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 		if len(deps) > 0 && !strings.Contains(title, "[после") {
-			title = joinTitle(title, deps, "", "", "")
+			title = joinTitle(title, deps, "", "", "", "")
+		}
+		if armSuf != "" && !strings.Contains(title, "[взвод]") {
+			title += armSuf
 		}
 		if acceptSuf != "" && !strings.Contains(title, "[приёмка:") {
 			title += acceptSuf
@@ -730,8 +743,8 @@ func cmdSet(root string, p SetParams) (string, error) {
 			}
 		}
 		if p.Accept != old {
-			base, deps, _, failSuf, blockSuf := splitTitle(row.Title)
-			row.Title = joinTitle(base, deps, acceptSuffix(p.Accept), failSuf, blockSuf)
+			base, deps, armSuf, _, failSuf, blockSuf := splitTitle(row.Title)
+			row.Title = joinTitle(base, deps, armSuf, acceptSuffix(p.Accept), failSuf, blockSuf)
 			changes = append(changes, fmt.Sprintf("вид %s -> %s", old, p.Accept))
 		}
 	}
@@ -827,7 +840,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	}
 	// Закрыть задачу с непогашенным провалом значит увезти в архив сломанный
 	// прод: строка с доски уйдёт, и очередь выката отпустит его молча.
-	if _, _, _, failSuf, _ := splitTitle(row.Title); failSuf != "" {
+	if _, _, _, _, failSuf, _ := splitTitle(row.Title); failSuf != "" {
 		return "", fmt.Errorf("у %s непогашенный провал проверки%s: сначала починить прод (shipctl revert %s либо форвард-фикс и shipctl merge %s), а если он уже починен мимо shipctl, снять признак: taskctl fail %s --clear",
 			p.ID, failSuf, p.ID, p.ID, p.ID)
 	}
@@ -930,8 +943,8 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	// саму себя ждать больше не заставит. Суффикс приёмки переживает закрытие
 	// наравне с «[блок: ...]» (LLD DK-292, решение 3): вид это свойство самой
 	// задачи, а не её положения в очереди, и без него сводке нечего считать.
-	archBase, _, archAcceptSuf, _, archBlockSuf := splitTitle(row.Title)
-	cells := []string{p.ID, joinTitle(archBase, nil, archAcceptSuf, "", archBlockSuf), row.Type, row.P, date, linkCell}
+	archBase, _, _, archAcceptSuf, _, archBlockSuf := splitTitle(row.Title)
+	cells := []string{p.ID, joinTitle(archBase, nil, "", archAcceptSuf, "", archBlockSuf), row.Type, row.P, date, linkCell}
 	if err := appendArchiveRow(archivePath(root), cells); err != nil {
 		return "", err
 	}
@@ -942,7 +955,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 		if r.ID == p.ID {
 			continue
 		}
-		base, deps, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
+		base, deps, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
 		idx := -1
 		for i, d := range deps {
 			if d == p.ID {
@@ -954,7 +967,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 			continue
 		}
 		deps = append(deps[:idx], deps[idx+1:]...)
-		r.Title = joinTitle(base, deps, acceptSuf, failSuf, blockSuf)
+		r.Title = joinTitle(base, deps, armSuf, acceptSuf, failSuf, blockSuf)
 		b.updateLine(r.LineIdx, formatRow(r))
 		depTouched = append(depTouched, r.ID)
 	}

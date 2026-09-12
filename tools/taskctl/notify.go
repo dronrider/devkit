@@ -38,6 +38,10 @@ const (
 	reasonCheck   = "task_check"
 	reasonBlocked = "task_blocked"
 	reasonFail    = "task_fail"
+	// reasonArm подписывает отказ ворот ёмкости взведённой строке (решение 5
+	// LLD DK-933): строка готова стартовать, а места ей нет, и зов уходит один
+	// раз на каждую новую причину.
+	reasonArm = "task_arm"
 )
 
 // notify зовёт уведомитель громко: задача доехала до Check или встала на

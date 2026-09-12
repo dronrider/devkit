@@ -147,7 +147,7 @@ func waitingTrees(root string, b *Board) []string {
 		if r.Sect != SectBlocked || !taskHasTree(root, r.ID) {
 			continue
 		}
-		_, _, _, _, blockSuf := splitTitle(r.Title)
+		_, _, _, _, _, blockSuf := splitTitle(r.Title)
 		reason := blockReason(blockSuf)
 		switch {
 		case strings.HasPrefix(reason, "вопрос:"):
@@ -248,7 +248,7 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 	// Недоступность человека это припаркованный вопрос старше часа без ответа.
 	humanAway := false
 	for _, r := range b.Rows {
-		_, _, _, _, blockSuf := splitTitle(r.Title)
+		_, _, _, _, _, blockSuf := splitTitle(r.Title)
 		if r.Sect == SectBlocked && strings.HasPrefix(blockReason(blockSuf), "вопрос:") &&
 			rowIdleHours(root, r, times, clean) > slotAwayGate.Hours() {
 			humanAway = true
@@ -260,7 +260,7 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 	var picks []slotPick
 	treeFull := false
 	for _, r := range b.Rows {
-		_, _, _, _, blockSuf := splitTitle(r.Title)
+		_, _, _, _, _, blockSuf := splitTitle(r.Title)
 		reason := blockReason(blockSuf)
 		unc := r.RParts[2]
 		rate, priced := rates[r.Cost]

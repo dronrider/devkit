@@ -186,6 +186,9 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   dep add <ID> <DEP-ID>                       ID делается после DEP-ID
   dep rm <ID> <DEP-ID>                        снять зависимость
   dep list [ID]                               кто после кого; без ID вся доска
+  arm <ID> [--off]                            взвод строки Backlog: со снятыми
+                                              рёбрами она стартует сама ближайшим
+                                              обходом ждущих, --off снимает взвод
   sort                                        пересортировать Backlog по R
   lint                                        проверить инварианты доски и архива
   init --prefix XR [--name "..."] [--here]   скелет доски в корне репозитория,
@@ -633,6 +636,15 @@ func main() {
 		needArgs(pos, 1, 1, "fail <ID> --reason \"...\" [--class ...] либо fail <ID> --clear")
 		p.ID = pos[0]
 		msg, err = cmdFail(root(*dir), p)
+	case "arm":
+		fs := flag.NewFlagSet("arm", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		off := fs.Bool("off", false, "снять взвод: строка снова ждёт руки человека")
+		var c CommitOpts
+		commitFlags(fs, &c)
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "arm <ID> [--off] [-m ... --push]")
+		msg, err = cmdArm(root(*dir), pos[0], *off, c)
 	case "set":
 		fs := flag.NewFlagSet("set", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

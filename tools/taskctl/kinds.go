@@ -66,7 +66,7 @@ func cmdKinds(root string) (string, error) {
 		// Суффикс стоит, но не разбирается: у строки вида нет, а не «agent по
 		// умолчанию». Так выглядит опечатка в значении при ручной правке
 		// доски, и ноль строк без вида обязан её видеть.
-		_, _, acceptSuf, _, _ := splitTitle(title)
+		_, _, _, acceptSuf, _, _ := splitTitle(title)
 		if acceptSuf == "" && strings.Contains(title, "[приёмка:") {
 			noKind = append(noKind, id)
 			return
@@ -89,7 +89,7 @@ func cmdKinds(root string) (string, error) {
 			continue
 		}
 		if row := b.find(tasks[i].id); row != nil {
-			_, _, _, failSuf, _ := splitTitle(row.Title)
+			_, _, _, _, failSuf, _ := splitTitle(row.Title)
 			tasks[i].failed = failSuf != ""
 		}
 	}

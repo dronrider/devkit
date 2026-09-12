@@ -35,8 +35,8 @@ func ensureTaskFile(root, id string, row *Row) (bool, error) {
 	} else if !os.IsNotExist(err) {
 		return false, err
 	}
-	base, deps, _, _, _ := splitTitle(row.Title)
-	title := joinTitle(base, deps, "", "", "")
+	base, deps, _, _, _, _ := splitTitle(row.Title)
+	title := joinTitle(base, deps, "", "", "", "")
 	body := fmt.Sprintf("# %s: %s\n", id, title)
 	if needsDoD(row.Type, row.Title) {
 		body += taskFormSkeleton()
@@ -58,7 +58,7 @@ const dodHeading = "## DoD"
 // признак цели в доске один, и DoD такой строке не положен, он живёт в разделе
 // «Цель» файла цели.
 func goalRow(title string) bool {
-	base, _, _, _, _ := splitTitle(title)
+	base, _, _, _, _, _ := splitTitle(title)
 	return strings.HasPrefix(base, "Цель:")
 }
 
@@ -181,6 +181,11 @@ func cmdList(root, sect string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Архив нужен только пометке взвода, и печать доски из-за него не падает:
+	// без архива ребро на закрытую строку читается неснятым, а сама доска
+	// печатается как прежде.
+	arch, _ := LoadArchive(archivePath(root))
+	ed := newEdges(root, b, arch)
 	clean := boardClean(root)
 	var times map[int]int64
 	if clean {
@@ -205,7 +210,7 @@ func cmdList(root, sect string) (string, error) {
 		}
 		for _, r := range rows {
 			out = append(out, b.Lines[r.LineIdx])
-			out = append(out, rowNotes(root, key, r, times, clean)...)
+			out = append(out, rowNotes(root, ed, key, r, times, clean)...)
 		}
 	}
 	if sect != "" {
@@ -238,8 +243,8 @@ func cmdList(root, sect string) (string, error) {
 // не пишутся (RULES.board.md запрещает заводить под них колонку). Метки
 // Check печатаются только в её секции, возраст, когда его удалось посчитать,
 // в любой; нет ни того, ни другого, значит nil, и вывод не меняется вовсе.
-func rowNotes(root, sect string, r *Row, times map[int]int64, clean bool) []string {
-	notes := rowNoteParts(root, sect, r, times, clean)
+func rowNotes(root string, ed *edges, sect string, r *Row, times map[int]int64, clean bool) []string {
+	notes := rowNoteParts(root, ed, sect, r, times, clean)
 	if len(notes) == 0 {
 		return nil
 	}
@@ -248,9 +253,14 @@ func rowNotes(root, sect string, r *Row, times map[int]int64, clean bool) []stri
 
 // rowNoteParts отдаёт те же пометки списком без вёрстки: печать склеивает их
 // в строку с отступом, --json кладёт как есть.
-func rowNoteParts(root, sect string, r *Row, times map[int]int64, clean bool) []string {
+func rowNoteParts(root string, ed *edges, sect string, r *Row, times map[int]int64, clean bool) []string {
 	var notes []string
 	kind := acceptOf(r.Title)
+	// Взвод и его три состояния идут первыми: это ответ на вопрос «стартует ли
+	// строка сама», а он у строки Backlog главный (решение 1 LLD DK-933).
+	if n := armNote(root, ed, r); n != "" {
+		notes = append(notes, n)
+	}
 	if sect == SectCheck {
 		// В Check вид печатается всегда: это момент приёмки, и кто её
 		// принимает (агент, пользователь или оба) здесь главный вопрос.
@@ -283,11 +293,14 @@ func cmdShow(root, id string) (string, error) {
 	note := staleBoardNote(root)
 	sides := depSides(b)
 	if row := b.find(id); row != nil {
+		// Живой строке архив нужен только пометкой взвода, и отсутствие архива
+		// её печать не роняет.
+		arch, _ := LoadArchive(archivePath(root))
 		out := []string{fmt.Sprintf("%s в %s", id, row.Sect), b.Lines[row.LineIdx]}
 		if note != "" {
 			out = append([]string{note}, out...)
 		}
-		out = append(out, rowNotes(root, row.Sect, row, showTimes(root), true)...)
+		out = append(out, rowNotes(root, newEdges(root, b, arch), row.Sect, row, showTimes(root), true)...)
 		s := sides[id]
 		if s == nil {
 			s = &struct{ after, blocks []string }{}

@@ -11,30 +11,34 @@ func TestSplitJoinTitle(t *testing.T) {
 		title     string
 		base      string
 		deps      []string
+		armSuf    string
 		acceptSuf string
 		failSuf   string
 		blockSuf  string
 	}{
-		{"Простой заголовок", "Простой заголовок", nil, "", "", ""},
-		{"С зависимостью [после XR-001]", "С зависимостью", []string{"XR-001"}, "", "", ""},
-		{"С двумя [после XR-001, XR-002]", "С двумя", []string{"XR-001", "XR-002"}, "", "", ""},
-		{"С видом [приёмка: user]", "С видом", nil, " [приёмка: user]", "", ""},
-		{"С блоком [блок: ждём]", "С блоком", nil, "", "", " [блок: ждём]"},
-		{"Оба [после XR-001] [блок: ждём]", "Оба", []string{"XR-001"}, "", "", " [блок: ждём]"},
-		{"С провалом [провал: 500 на входе]", "С провалом", nil, "", " [провал: 500 на входе]", ""},
-		{"Вид и блок [приёмка: mixed] [блок: ждём]", "Вид и блок", nil, " [приёмка: mixed]", "", " [блок: ждём]"},
-		{"Все четыре [после XR-001] [приёмка: user] [провал: 500] [блок: ждём]", "Все четыре",
-			[]string{"XR-001"}, " [приёмка: user]", " [провал: 500]", " [блок: ждём]"},
+		{"Простой заголовок", "Простой заголовок", nil, "", "", "", ""},
+		{"С зависимостью [после XR-001]", "С зависимостью", []string{"XR-001"}, "", "", "", ""},
+		{"С двумя [после XR-001, XR-002]", "С двумя", []string{"XR-001", "XR-002"}, "", "", "", ""},
+		{"С видом [приёмка: user]", "С видом", nil, "", " [приёмка: user]", "", ""},
+		{"С блоком [блок: ждём]", "С блоком", nil, "", "", "", " [блок: ждём]"},
+		{"Оба [после XR-001] [блок: ждём]", "Оба", []string{"XR-001"}, "", "", "", " [блок: ждём]"},
+		{"С провалом [провал: 500 на входе]", "С провалом", nil, "", "", " [провал: 500 на входе]", ""},
+		{"Вид и блок [приёмка: mixed] [блок: ждём]", "Вид и блок", nil, "", " [приёмка: mixed]", "", " [блок: ждём]"},
+		{"Со взводом [взвод]", "Со взводом", nil, " [взвод]", "", "", ""},
+		{"Взвод после ребра [после XR-001] [взвод]", "Взвод после ребра",
+			[]string{"XR-001"}, " [взвод]", "", "", ""},
+		{"Все пять [после XR-001] [взвод] [приёмка: user] [провал: 500] [блок: ждём]", "Все пять",
+			[]string{"XR-001"}, " [взвод]", " [приёмка: user]", " [провал: 500]", " [блок: ждём]"},
 	}
 	for _, c := range cases {
-		base, deps, acceptSuf, failSuf, blockSuf := splitTitle(c.title)
+		base, deps, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(c.title)
 		if base != c.base || strings.Join(deps, ",") != strings.Join(c.deps, ",") ||
-			acceptSuf != c.acceptSuf || failSuf != c.failSuf || blockSuf != c.blockSuf {
-			t.Fatalf("splitTitle(%q) = %q, %v, %q, %q, %q; ожидал %q, %v, %q, %q, %q",
-				c.title, base, deps, acceptSuf, failSuf, blockSuf,
-				c.base, c.deps, c.acceptSuf, c.failSuf, c.blockSuf)
+			armSuf != c.armSuf || acceptSuf != c.acceptSuf || failSuf != c.failSuf || blockSuf != c.blockSuf {
+			t.Fatalf("splitTitle(%q) = %q, %v, %q, %q, %q, %q; ожидал %q, %v, %q, %q, %q, %q",
+				c.title, base, deps, armSuf, acceptSuf, failSuf, blockSuf,
+				c.base, c.deps, c.armSuf, c.acceptSuf, c.failSuf, c.blockSuf)
 		}
-		if got := joinTitle(base, deps, acceptSuf, failSuf, blockSuf); got != c.title {
+		if got := joinTitle(base, deps, armSuf, acceptSuf, failSuf, blockSuf); got != c.title {
 			t.Fatalf("joinTitle не восстановил заголовок: %q, ожидал %q", got, c.title)
 		}
 	}
@@ -47,7 +51,7 @@ func TestSplitJoinTitle(t *testing.T) {
 // и close. Порядок остаётся неверным (это отдельная опечатка), но сама
 // зависимость обязана быть видна.
 func TestSplitTitleWrongOrderStillExposesDep(t *testing.T) {
-	_, deps, _, _, _ := splitTitle("Заголовок [блок: ждём] [после XR-001]")
+	_, deps, _, _, _, _ := splitTitle("Заголовок [блок: ждём] [после XR-001]")
 	if len(deps) != 1 || deps[0] != "XR-001" {
 		t.Fatalf("зависимость не видна при перепутанном порядке суффиксов: deps=%v", deps)
 	}

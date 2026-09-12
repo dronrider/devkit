@@ -101,6 +101,7 @@ func cmdLint(root string) ([]string, error) {
 	}
 	finds = append(finds, lintDeps(root, b, arch, bp)...)
 	finds = append(finds, lintFailed(b, bp)...)
+	finds = append(finds, lintArmed(root, b, bp)...)
 	finds = append(finds, lintAcceptance(root, b, bp)...)
 	finds = append(finds, lintFormOrder(root, b)...)
 	finds = append(finds, lintForks(root, b)...)
@@ -222,10 +223,36 @@ func lintFailed(b *Board, bp string) []string {
 	var finds []string
 	for _, key := range []string{SectBacklog, SectCheck} {
 		for _, r := range b.Sects[key].Rows {
-			if _, _, _, failSuf, _ := splitTitle(r.Title); failSuf != "" {
+			if _, _, _, _, failSuf, _ := splitTitle(r.Title); failSuf != "" {
 				finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с признаком провала проверки%s: он ставится задаче в работе, снять: taskctl fail %s --clear",
 					bp, r.LineIdx+1, r.ID, sectTitles[key], failSuf, r.ID))
 			}
+		}
+	}
+	return finds
+}
+
+// lintArmed ловит взвод там, где он ничего не значит (решение 1 LLD DK-933).
+// Взвод это согласие на самостоятельный старт, и живёт он только у строки
+// Backlog: на начатой строке он своё отработал, а хвост обхода такую строку и
+// не смотрит. Строку из состава незакрытой цели поднимает цикл цели, и взвод
+// на ней делил бы с циклом бюджет и ответственность. Обе находки снимает
+// `taskctl arm <ID> --off`.
+func lintArmed(root string, b *Board, bp string) []string {
+	var finds []string
+	for _, r := range b.Rows {
+		if !armed(r.Title) {
+			continue
+		}
+		where := fmt.Sprintf("%s:%d: %s", bp, r.LineIdx+1, r.ID)
+		if r.Sect != SectBacklog {
+			finds = append(finds, fmt.Sprintf("%s: взвод на строке в %s, а взводится только Backlog, снять: taskctl arm %s --off",
+				where, sectTitles[r.Sect], r.ID))
+			continue
+		}
+		if goal := goalOfTask(root, r.ID); goal != "" && b.find(goal) != nil {
+			finds = append(finds, fmt.Sprintf("%s: взвод на строке незакрытой цели %s, её строки поднимает цикл цели, снять: taskctl arm %s --off",
+				where, goal, r.ID))
 		}
 	}
 	return finds
@@ -244,7 +271,7 @@ func lintDeps(root string, b *Board, arch *Archive, bp string) []string {
 	var finds []string
 	for _, r := range b.Rows {
 		where := fmt.Sprintf("%s:%d: %s", bp, r.LineIdx+1, r.ID)
-		_, deps, _, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _, _ := splitTitle(r.Title)
 		seen := map[string]bool{}
 		for _, d := range deps {
 			switch {
@@ -261,7 +288,7 @@ func lintDeps(root string, b *Board, arch *Archive, bp string) []string {
 	ed := newEdges(root, b, arch)
 	for _, key := range []string{SectInProgress, SectCheck, SectBlocked} {
 		for _, r := range b.Sects[key].Rows {
-			_, deps, _, _, _ := splitTitle(r.Title)
+			_, deps, _, _, _, _ := splitTitle(r.Title)
 			for _, d := range deps {
 				if ok, why := ed.startable(d); !ok {
 					finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с неснятым ребром на %s (%s), вернуть в Backlog",
@@ -282,7 +309,7 @@ func lintDepCycles(rows []*Row, bp string) []string {
 	line := map[string]int{}
 	for _, r := range rows {
 		line[r.ID] = r.LineIdx
-		_, deps, _, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _, _ := splitTitle(r.Title)
 		// Ссылку на себя уже ловит отдельная проверка в lintDeps, вторым
 		// циклом в две строки её дублировать незачем.
 		for _, d := range deps {

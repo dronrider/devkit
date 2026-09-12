@@ -31,7 +31,7 @@ func (e *edges) of(dep string) merged.Edge {
 
 // held возвращает неснятые рёбра строки в порядке маркера.
 func (e *edges) held(r *Row) []merged.Edge {
-	_, deps, _, _, _ := splitTitle(r.Title)
+	_, deps, _, _, _, _ := splitTitle(r.Title)
 	var out []merged.Edge
 	for _, d := range deps {
 		if ed := e.of(d); !ed.Lifted() {

@@ -132,10 +132,10 @@ type waiter struct {
 // спросить не вышло.
 type waiterSource func(root string, b *Board, arch *Archive) ([]waiter, []string)
 
-// waiterSources это перечень источников обхода. Взвод ребра «после» (DK-934)
-// ложится сюда вторым источником, и close, merge и тик получают его без правки
-// своих вызовов.
-var waiterSources = []waiterSource{parkedWaiters}
+// waiterSources это перечень источников обхода. Их два: припаркованная строка,
+// ждущая соседа, и взведённая строка Backlog (DK-934). Close, merge и тик зовут
+// обход одинаково и получают оба источника без правки своих вызовов.
+var waiterSources = []waiterSource{parkedWaiters, armedWaiters}
 
 // parkedWaiters это строки Blocked с разрядом ожидания соседа.
 func parkedWaiters(root string, b *Board, arch *Archive) ([]waiter, []string) {
@@ -145,7 +145,7 @@ func parkedWaiters(root string, b *Board, arch *Archive) ([]waiter, []string) {
 		if r.Sect != SectBlocked {
 			continue
 		}
-		_, _, _, _, blockSuf := splitTitle(r.Title)
+		_, _, _, _, _, blockSuf := splitTitle(r.Title)
 		c, ok, err := parseWaitCond(blockReason(blockSuf))
 		if !ok {
 			continue
@@ -191,12 +191,35 @@ var wakePreflight = func(root, id string, o runOpts) error {
 	return taskhead.Preflight(q)
 }
 
-// cause это событие словами: разряд, предпосылка и ответ признака.
+// cause это событие словами: разряд, предпосылка и ответ признака. У взвода
+// предпосылка не одна, и слова приходят готовыми от источника.
 func (w waiter) cause() string {
+	if w.Class == classArm {
+		return "взведена, " + w.Said
+	}
 	if w.Dep != "" {
 		return fmt.Sprintf("ждала «%s: %s», %s", w.Class, w.Dep, w.Said)
 	}
 	return w.Said
+}
+
+// wakeFrom говорит, откуда обход поднимает строку. Ждущую соседа он берёт из
+// Blocked и In progress, взведённую из Backlog: согласие человека на старт
+// живёт только там, а начатой строке взвод уже не нужен.
+func wakeFrom(class, sect string) bool {
+	if class == classArm {
+		return sect == SectBacklog
+	}
+	return sect == SectBlocked || sect == SectInProgress
+}
+
+// wakeWords это хвост сообщения коммита доски: взведённая строка не будится, а
+// стартует, и в истории доски это видно словами.
+func wakeWords(class string) string {
+	if class == classArm {
+		return "стартует по взводу"
+	}
+	return "разбужена обходом ждущих"
 }
 
 // wakeRow ведёт одну строку: предполёт, снятие признака вопроса, перевод в In
@@ -211,7 +234,7 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 	if row == nil {
 		return w.ID + ": строки нет на доске", false
 	}
-	if row.Sect != SectBlocked && row.Sect != SectInProgress {
+	if !wakeFrom(w.Class, row.Sect) {
 		return fmt.Sprintf("%s: подъём не нужен, строка в %s", w.ID, row.Sect), true
 	}
 	ro := runOpts{hidden: o.hidden}
@@ -229,7 +252,7 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 	if row.Sect != SectInProgress {
 		var c CommitOpts
 		if o.commit {
-			c = CommitOpts{Msg: fmt.Sprintf("docs(tasks): %s разбужена обходом ждущих", w.ID), Push: o.push}
+			c = CommitOpts{Msg: fmt.Sprintf("docs(tasks): %s %s", w.ID, wakeWords(w.Class)), Push: o.push}
 		}
 		if _, err := cmdMove(root, w.ID, SectInProgress, "", c); err != nil {
 			return fmt.Sprintf("%s: %s, а строка из %s не вышла: %v", w.ID, w.cause(), row.Sect, err), false
@@ -278,7 +301,11 @@ func namedWaiter(b *Board, id string) waiter {
 	if row == nil {
 		return w
 	}
-	_, _, _, _, blockSuf := splitTitle(row.Title)
+	if row.Sect == SectBacklog && armed(row.Title) {
+		w.Class, w.Said = classArm, "подъём по названному ID"
+		return w
+	}
+	_, _, _, _, _, blockSuf := splitTitle(row.Title)
 	reason := blockReason(blockSuf)
 	if c, ok, err := parseWaitCond(reason); ok && err == nil {
 		w.Class, w.Dep = c.Class, c.Dep

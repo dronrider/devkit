@@ -87,8 +87,8 @@ func TestKinds(t *testing.T) {
 		t.Fatal(err)
 	}
 	row := b.find("XR-102")
-	base, deps, acceptSuf, _, blockSuf := splitTitle(row.Title)
-	row.Title = joinTitle(base, deps, acceptSuf, " [провал: прод отдаёт 500]", blockSuf)
+	base, deps, armSuf, acceptSuf, _, blockSuf := splitTitle(row.Title)
+	row.Title = joinTitle(base, deps, armSuf, acceptSuf, " [провал: прод отдаёт 500]", blockSuf)
 	b.Lines[row.LineIdx] = formatRow(row)
 	if err := b.Save(); err != nil {
 		t.Fatal(err)

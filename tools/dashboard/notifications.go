@@ -57,6 +57,9 @@ var notifyKinds = map[string]string{
 	"task_check":   "task",
 	"task_blocked": "task",
 	"task_fail":    "task",
+	// task_arm шлёт хвост обхода ждущих: взведённая строка готова стартовать
+	// сама, а ёмкости ей нет (DK-934).
+	"task_arm": "task",
 }
 
 // notifyLabels дают слова строке без текста: у старых строк журнала и у хуков

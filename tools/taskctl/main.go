@@ -189,6 +189,11 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   arm <ID> [--off]                            взвод строки Backlog: со снятыми
                                               рёбрами она стартует сама ближайшим
                                               обходом ждущих, --off снимает взвод
+  chain [--after ID,...] "уровень 1" ["уровень 2" ...] [--dry-run]
+                                              рёбра и взвод уровнями одной
+                                              командой, вместо dep add и arm на
+                                              каждую строку; --dry-run печатает
+                                              план и доску не трогает
   sort                                        пересортировать Backlog по R
   lint                                        проверить инварианты доски и архива
   init --prefix XR [--name "..."] [--here]   скелет доски в корне репозитория,
@@ -645,6 +650,23 @@ func main() {
 		pos := frame.ParseArgs(fs, args[1:])
 		needArgs(pos, 1, 1, "arm <ID> [--off] [-m ... --push]")
 		msg, err = cmdArm(root(*dir), pos[0], *off, c)
+	case "chain":
+		fs := flag.NewFlagSet("chain", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		after := fs.String("after", "", "рёбра первому уровню: ID через запятую или пробел")
+		dry := fs.Bool("dry-run", false, "напечатать план уровнями и ничего не менять")
+		var c CommitOpts
+		commitFlags(fs, &c)
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, -1, `chain [--after ID,...] "уровень 1" ["уровень 2" ...] [--dry-run]`)
+		p := ChainParams{DryRun: *dry, Commit: c}
+		if *after != "" {
+			p.After = splitChainIDs(*after)
+		}
+		for _, lvl := range pos {
+			p.Levels = append(p.Levels, splitChainIDs(lvl))
+		}
+		msg, err = cmdChain(root(*dir), p)
 	case "set":
 		fs := flag.NewFlagSet("set", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

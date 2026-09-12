@@ -353,6 +353,20 @@ func Make(root, sha, prefix string) (tree, home string, cleanup func(), err erro
 // снимать запись дерева.
 const OwnerFile = "owner"
 
+// Префиксы временных каталогов прогонов. Имя каталога видно в `git worktree
+// list`, и по нему читатель узнаёт, чей это прогон. Названы они здесь по одному
+// разу, а зовущие берут готовую строку: перечень читает и уборка каталогов без
+// метки (`tools/devkitctl/runtrees.py`), и разъехавшийся список спрятал бы от
+// неё целую ногу конвейера (DK-968).
+const (
+	MergePrefix    = "shipctl-merge-"
+	RegcheckPrefix = "regcheck-"
+	RehearsePrefix = "taskctl-rehearse-"
+)
+
+// Prefixes это весь перечень разом, каким его читают сторожа согласия.
+var Prefixes = []string{MergePrefix, RegcheckPrefix, RehearsePrefix}
+
 // markOwner кладёт метку рядом с деревом. Провал записи прогон не роняет.
 // Без метки уборка разберёт каталог по имени и возрасту, это хуже, но не
 // смертельно.

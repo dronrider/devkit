@@ -1,9 +1,11 @@
 package freshtree
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -301,6 +303,13 @@ func TestMakeDropsTreeOnSignal(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd.Wait()
+	// Прибравшись, процесс обязан уйти тем же сигналом. Позвавший читает
+	// причину смерти по коду выхода, и подмена её на свой код выхода выдала бы
+	// убитый прогон за обычный отказ.
+	st, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !st.Signaled() || st.Signal() != syscall.SIGTERM {
+		t.Fatalf("помощник ушёл не сигналом TERM: %v", cmd.ProcessState)
+	}
 	if wl := gitT(t, root, "worktree", "list"); strings.Count(wl, "\n") != 0 {
 		t.Fatalf("оборванный прогон оставил запись о дереве:\n%s", wl)
 	}
@@ -334,4 +343,44 @@ func TestSignalHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(time.Minute)
+}
+
+// Замечание ревью DK-968: префиксы названы один раз, и зовущие берут строку из
+// перечня. Литерал в вызове прошёл бы мимо уборки навсегда, потому что каталог
+// с незнакомым именем и без метки она не смотрит вовсе.
+func TestCallersTakePrefixFromList(t *testing.T) {
+	names := map[string]string{
+		"freshtree.MergePrefix":    MergePrefix,
+		"freshtree.RegcheckPrefix": RegcheckPrefix,
+		"freshtree.RehearsePrefix": RehearsePrefix,
+	}
+	if len(names) != len(Prefixes) {
+		t.Fatalf("сторож знает %d префиксов, а в перечне их %d", len(names), len(Prefixes))
+	}
+	call := regexp.MustCompile(`freshtree\.(?:Make|Start)\(([^)]*)\)`)
+	seen := 0
+	err := filepath.WalkDir(filepath.Join("..", "..", "tools"), func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range call.FindAllStringSubmatch(string(data), -1) {
+			args := strings.Split(m[1], ",")
+			arg := strings.TrimSpace(args[len(args)-1])
+			seen++
+			if _, ok := names[arg]; !ok {
+				t.Errorf("%s: префикс прогона задан как %s, а не строкой перечня freshtree", path, arg)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seen == 0 {
+		t.Fatal("вызовов freshtree в tools не нашлось: сторож ослеп")
+	}
 }

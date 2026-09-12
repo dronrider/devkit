@@ -156,31 +156,37 @@ def task_tree(proj, task):
     return Path("%s-%s" % (proj, task.lower()))
 
 
-def write_scenario(cmd_run, tree, task):
+def write_scenario(cmd_run, tree, task, about=None, verify=None):
     """Сценарий проверки и раздел «Проверка» в файл задачи, коммитом в ветку.
 
     Ворота слияния пускают ветку только со сценарием в файле задачи, а ворота
     закрытия требуют у агентского вида непустой раздел «Проверка»: круг
     дописывает оба в дереве задачи, и слияние привозит их в main. Файл
     пишется тем же заголовком, каким его заводит taskctl file.
+
+    Слова сценария и проверки берёт своими и соседний стенд ожиданий (DK-936):
+    ворота у них одни, а рассказывать о себе каждый обязан сам.
     """
     doc = Path(tree) / "docs" / "tasks" / ("%s.md" % task)
     doc.parent.mkdir(parents=True, exist_ok=True)
     text = doc.read_text(encoding="utf-8") if doc.exists() else ""
     if not text.strip():
         text = "# %s: проверка связки\n" % task
-    if not re.search(r"^%s\b" % re.escape(SCENARIO_HEADER), text, flags=re.M):
-        text += ("\n%s\n\n1. devkitctl selfcheck во временном каталоге.\n"
+    if about is None:
+        about = ("1. devkitctl selfcheck во временном каталоге.\n"
                  "2. Каждый шаг круга отвечает «ок», итог «связка жива».\n\n"
                  "Шаг, выполнимый без выката, лежит блоком: его гоняет обкатка\n"
                  "круга, и ворота перевода в Check спрашивают её отметку.\n\n"
                  "```sh\ntest -f docs/TASKS.md && grep -q %s docs/TASKS.md\n```\n\n"
                  "Ожидаемый итог: круг закрыл временную задачу и не оставил "
-                 "после себя ни проекта, ни дерева задачи.\n"
-                 % (SCENARIO_HEADER, task))
+                 "после себя ни проекта, ни дерева задачи.\n" % task)
+    if verify is None:
+        verify = ("выкат круга оставляет метку .devkit/selfcheck-deployed, "
+                  "круг проверяет её после слияния\n")
+    if not re.search(r"^%s\b" % re.escape(SCENARIO_HEADER), text, flags=re.M):
+        text += "\n%s\n\n%s" % (SCENARIO_HEADER, about)
     if not re.search(r"^%s\b" % re.escape(VERIFY_HEADER), text, flags=re.M):
-        text += ("\n%s\n\nвыкат круга оставляет метку .devkit/selfcheck-deployed, "
-                 "круг проверяет её после слияния\n" % VERIFY_HEADER)
+        text += "\n%s\n\n%s" % (VERIFY_HEADER, verify)
     doc.write_text(text, encoding="utf-8")
     cmd_run(["git", "-C", str(tree), "add", "--", "docs/tasks/%s.md" % task])
     return cmd_run(["git", "-C", str(tree), "commit", "-q", "-m",

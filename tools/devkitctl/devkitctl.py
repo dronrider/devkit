@@ -164,6 +164,15 @@
       и убирает его за собой. Находки доктора по машине это не провал круга:
       доктор тут отдельный шаг, его отчёт печатается, а судится сам шаг
 
+  devkitctl waitcheck
+      стенд трёх ожиданий конвейера (DK-936): во временном проекте голова с
+      живым ожиданием проходит воронку оболочки, слияние и закрытие
+      предпосылки поднимают припаркованного соседа и взведённую строку, а
+      событие, прошедшее мимо обеих команд, добирает обход тика. Клиент
+      харнеса и tmux подставные, дом свой временный, службы машины не
+      трогаются. Каждое ожидание отчитывается строкой исхода, выход 1 значит,
+      что ожидание не снялось
+
 Выход 0 всё в порядке, 1 есть находки, 2 ошибка запуска.
 """
 import argparse
@@ -194,6 +203,7 @@ import sys
 import time
 import update
 import user
+import waitcheck
 import watch
 import weigh
 import workflow
@@ -3331,6 +3341,8 @@ def main(argv):
                    help="род, в котором агент пишет о себе; без ключа печатается заданный")
     sub.add_parser("selfcheck",
                    help="живой круг связки во временном проекте, с уборкой за собой")
+    sub.add_parser("waitcheck",
+                   help="стенд трёх ожиданий конвейера во временном проекте")
     a = ap.parse_args(argv)
     if a.cmd == "doctor":
         # Один прогон спрашивает у git одно и то же по многу раз (сводка режима,
@@ -3362,6 +3374,8 @@ def main(argv):
         rc = user.main(["--gender", a.gender] if a.gender else [])
     elif a.cmd == "selfcheck":
         rc = selfcheck.main()
+    elif a.cmd == "waitcheck":
+        rc = waitcheck.main()
     elif a.cmd == "drain":
         rc = drain_run(a.dir, a.all)
     else:
@@ -3373,7 +3387,7 @@ def main(argv):
     # строка раз в пять минут выглядела бы движением там, где всё стоит.
     # Самопроверка тоже: её круг сам зовёт утилиты, и их строки в журнале
     # живого проекта читались бы как работа человека, а не как прогон.
-    if a.cmd not in ("watch", "selfcheck"):
+    if a.cmd not in ("watch", "selfcheck", "waitcheck"):
         root = project_root(getattr(a, "dir", str(DEVKIT)))[0]
         log_run(Path(corp.pair(root, DEVKIT)[1] or root), a.cmd, rc)
     return rc

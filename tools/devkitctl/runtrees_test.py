@@ -6,6 +6,7 @@
 `git worktree list`, и проверить это подделкой нечем.
 """
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -81,6 +82,35 @@ class RunTreesCase(unittest.TestCase):
         write(alien / "payload", "чужое\n")
         runtrees.check(True, root=self.temp)
         self.assertTrue(alien.exists())
+
+    def test_reused_pid_does_not_hold_forever(self):
+        """Номера процессов машина выдаёт по кругу, и через сутки под номером
+        из метки ходит посторонний. Сутки прошли, и дерево уходит, хотя процесс
+        с этим номером жив."""
+        self.run_dir("shipctl-merge-5", os.getpid())
+        self.assertEqual(runtrees.abandoned(self.temp), [])
+        later = time.time() + runtrees.MAX_AGE + 60
+        self.assertEqual(len(runtrees.abandoned(self.temp, now=later)), 1)
+        runtrees.check(True, root=self.temp, now=later)
+        self.assertEqual(self.trees(), [])
+
+    def test_marked_dir_is_swept_whatever_its_name(self):
+        """Каталог свой, когда в нём лежит метка. Новая нога конвейера видна
+        уборке с первого прогона, не дожидаясь правки списка префиксов."""
+        d = self.run_dir("newtool-run-6", self.dead_pid())
+        self.assertEqual(len(self.trees()), 1)
+        runtrees.check(True, root=self.temp)
+        self.assertEqual(self.trees(), [])
+        self.assertFalse(d.exists())
+
+    def test_prefixes_agree_with_go_list(self):
+        """Сторож согласия списков. Префиксы названы один раз в
+        internal/freshtree, и разъезд спрятал бы от уборки целую ногу."""
+        src = Path(__file__).resolve().parents[2] / "internal" / "freshtree" / "freshtree.go"
+        named = re.findall(r'^\s*\w+Prefix\s*=\s*"([^"]+)"', src.read_text(encoding="utf-8"),
+                           re.M)
+        self.assertTrue(named, "в internal/freshtree не нашлось ни одного префикса")
+        self.assertEqual(sorted(named), sorted(runtrees.PREFIXES))
 
     def test_stale_record_is_pruned(self):
         """Каталог без метки унёс с собой и запись. Из каталога не видно,

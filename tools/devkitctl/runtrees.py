@@ -27,7 +27,10 @@ OWNER = "owner"
 
 # Префиксы каталогов прогона, названные поимённо. Под тем же корнем лежат
 # также каталоги редактора, браузера и системы, и уборка их не должна
-# касаться.
+# касаться. Каталог с меткой владельца узнаётся и без этого списка, так что
+# новая нога конвейера видна уборке с первого же прогона. Список нужен старым
+# каталогам, метки не знавшим. Держит его в согласии с go-перечнем
+# `freshtree.Prefixes` сторож в runtrees_test.py.
 PREFIXES = ("shipctl-merge-", "regcheck-", "taskctl-rehearse-")
 
 # Возраст, с которого каталог без метки считается брошенным. Метку кладут все
@@ -35,6 +38,13 @@ PREFIXES = ("shipctl-merge-", "regcheck-", "taskctl-rehearse-")
 # каталог, чей прогон умер между mkdir и записью метки. Прогон слияния с
 # тестами идёт минуты, час это запас поверх самого долгого.
 NO_OWNER_AGE = 3600
+
+# Возраст, после которого метка живого процесса уборку уже не держит. Номера
+# процессов машина выдаёт по кругу, и через сутки под номером из метки почти
+# наверняка ходит посторонний процесс. Без верхней границы такое дерево висело
+# бы вечно, потому что живым его считает переиспользованный номер. Сутки это с
+# запасом больше самого долгого прогона.
+MAX_AGE = 24 * 3600
 
 TREES = ("дерево", "дерева", "деревьев")
 
@@ -74,6 +84,10 @@ def abandoned(root=None, now=None):
     репозитории, чей прогон её завёл. Без метки известен один каталог, и тогда
     оба поля пустые. Такой каталог убирается с диска, а запись о дереве
     снимает `git worktree prune`, потому что каталога не стало.
+
+    Каталог свой, когда в нём лежит метка. Имя тут ни при чём, и прогон с
+    префиксом, которого нет в PREFIXES, уборке виден. По имени и возрасту
+    разбираются только каталоги без метки.
     """
     now = now or time.time()
     base = Path(root or tempfile.gettempdir())
@@ -83,23 +97,34 @@ def abandoned(root=None, now=None):
     except OSError:
         return out
     for path in entries:
-        if not path.is_dir() or not path.name.startswith(PREFIXES):
+        if not path.is_dir():
             continue
         owner = read_owner(path)
         pid = owner.get("pid", "")
-        if not re.fullmatch(r"[0-9]+", pid):
-            try:
-                age = now - path.stat().st_mtime
-            except OSError:
+        if not re.fullmatch(r"[0-9]+", pid) or not owner.get("tree"):
+            if not path.name.startswith(PREFIXES):
                 continue
-            if age < NO_OWNER_AGE:
+            if age_of(path, now) < NO_OWNER_AGE:
                 continue
             out.append((str(path), "", ""))
             continue
-        if pid_alive(int(pid)):
+        if pid_alive(int(pid)) and age_of(path, now) < MAX_AGE:
             continue
         out.append((str(path), owner.get("root", ""), owner.get("tree", "")))
     return out
+
+
+def age_of(path, now):
+    """Возраст метки в секундах. Каталог, чей возраст не прочитался, уборка
+    считает свежим и не трогает."""
+    try:
+        return now - Path(path, OWNER).stat().st_mtime
+    except OSError:
+        pass
+    try:
+        return now - Path(path).stat().st_mtime
+    except OSError:
+        return 0
 
 
 def drop(path, repo, tree):

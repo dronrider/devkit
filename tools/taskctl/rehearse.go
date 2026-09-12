@@ -56,7 +56,7 @@ func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 		return "", fmt.Errorf("%s: не узнать коммит для свежего дерева: %v", id, err)
 	}
 	sha = strings.TrimSpace(sha)
-	run, err := freshtree.Start(root, sha, "taskctl-rehearse-")
+	run, err := freshtree.Start(root, sha, freshtree.RehearsePrefix)
 	if err != nil {
 		return "", fmt.Errorf("%s: свежее дерево на %s не выложилось: %v", id, shortSha(sha), err)
 	}

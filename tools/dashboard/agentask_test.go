@@ -185,6 +185,28 @@ func TestStaticAskPicksInReply(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Опрос вопроса (watchClientAsk) ходит на сервер раз в ASK_POLL, и до этой
+// правки первый же отвергнутый fetch (обрыв связи, сон ноутбука, внешний вход)
+// обрывал цепочку setTimeout насовсем: следующий шаг не планировался никогда,
+// и галочки при вариантах не вставали до перезагрузки страницы (живой случай
+// DK-964, чат груминга 2026-09-12, ответ человека панель заметила только после
+// перезагрузки). Стенд testdata/poc_askwake.mjs гонит один отвергнутый вызов
+// /ask подряд и смотрит, что опрос сам планирует следующий шаг и вешает
+// галочки, дождавшись его. Без node шаг пропускается: узел стенда, а не
+// рабочей части.
+func TestStaticAskPollSurvivesFetchFailure(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд живучести опроса пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_askwake.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("опрос вопроса не переживает отвергнутый fetch: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Прежний блок вопроса агента с кнопками и табами убран целиком: он читался
 // формой поверх разговора, запирал чат до ответа и терял рекомендацию по
 // дороге. Разбор снимка панели tmux остался, но за вопросами самого клиента

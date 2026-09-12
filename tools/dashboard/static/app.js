@@ -11832,17 +11832,27 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
   chatLive.push(() => { stop = true; });
   const tick = async () => {
     if (stop) return;
-    const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
+    // Отвергнутый fetch (обрыв связи, сон ноутбука) не должен гасить опрос
+    // навсегда: без try/catch первое же исключение обрывало бы цепочку
+    // setTimeout, и галочки при вариантах стояли бы до перезагрузки страницы
+    // (живой случай DK-964). Индикатор занятости рядом переживает то же самое.
+    try {
+      const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
+      if (stop) return;
+      const ask = (r.ok && r.body.ask) || null;
+      // Признак ожидания и есть тот повод, по которому панель добавляет галочки:
+      // заход спросил человека текстом и стоит, пока ответа нет.
+      pick.on = Boolean(ask && ask.kind === "agent");
+      askPickWire(feed, ta, pick);
+      paintClientAsk(project, st, box, ask, tick);
+      // Опрос идёт и при открытом вопросе: виджет меняется не только от наших
+      // нажатий (человек вправе ответить и руками в tmux), а перерисовка стоит
+      // на подписи снимка, поэтому лишних сборок блока это не даёт.
+    } catch (err) {
+      // Молчим: следующий шаг всё равно планируется ниже, а строка в консоли
+      // на каждый обрыв связи только шумела бы.
+    }
     if (stop) return;
-    const ask = (r.ok && r.body.ask) || null;
-    // Признак ожидания и есть тот повод, по которому панель добавляет галочки:
-    // заход спросил человека текстом и стоит, пока ответа нет.
-    pick.on = Boolean(ask && ask.kind === "agent");
-    askPickWire(feed, ta, pick);
-    paintClientAsk(project, st, box, ask, tick);
-    // Опрос идёт и при открытом вопросе: виджет меняется не только от наших
-    // нажатий (человек вправе ответить и руками в tmux), а перерисовка стоит
-    // на подписи снимка, поэтому лишних сборок блока это не даёт.
     setTimeout(() => { tick().catch(console.error); }, ASK_POLL);
   };
   tick().catch(console.error);

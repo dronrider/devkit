@@ -5,7 +5,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // TestEnv: окружение прогона собрано явно. Живой HOME подменён временным,
@@ -271,4 +273,65 @@ func writeTool(t *testing.T, tree, tool, name, body string) {
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// DoD DK-968: прогон, оборванный на середине, дерева за собой не оставляет.
+// Ловимый сигнал сносит процесс мимо defer, и без перехвата запись о дереве
+// оставалась в списке git насовсем: каталог на месте, и prunable git её не
+// считает.
+func TestMakeDropsTreeOnSignal(t *testing.T) {
+	root := gitRepo(t)
+	ready := filepath.Join(t.TempDir(), "ready")
+	cmd := exec.Command(os.Args[0], "-test.run=TestSignalHelper")
+	cmd.Env = append(os.Environ(), "FRESHTREE_HELPER_ROOT="+root, "FRESHTREE_HELPER_READY="+ready)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer cmd.Process.Kill()
+	for i := 0; i < 600; i++ {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if _, err := os.Stat(ready); err != nil {
+		t.Fatal("помощник не выложил дерево за отведённое время")
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+	if wl := gitT(t, root, "worktree", "list"); strings.Count(wl, "\n") != 0 {
+		t.Fatalf("оборванный прогон оставил запись о дереве:\n%s", wl)
+	}
+	tmp, err := os.ReadFile(ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Dir(string(tmp))); err == nil {
+		t.Fatalf("оборванный прогон оставил каталог %s", filepath.Dir(string(tmp)))
+	}
+}
+
+// TestSignalHelper это не тест, а тело помощника для теста выше: он
+// выкладывает дерево и ждёт сигнала. Прогон без переменных окружения помощника
+// проходит мимо.
+func TestSignalHelper(t *testing.T) {
+	root := os.Getenv("FRESHTREE_HELPER_ROOT")
+	ready := os.Getenv("FRESHTREE_HELPER_READY")
+	if root == "" || ready == "" {
+		t.Skip("помощник поднимается своим тестом")
+	}
+	sha := gitT(t, root, "rev-parse", "HEAD")
+	tree, _, _, err := Make(root, sha, "freshtree-signal-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(tree), OwnerFile)); err != nil {
+		t.Fatalf("метки владельца нет: %v", err)
+	}
+	if err := os.WriteFile(ready, []byte(tree), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Minute)
 }

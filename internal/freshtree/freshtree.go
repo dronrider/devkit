@@ -18,9 +18,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"syscall"
 )
 
 // homeToolchains это тулчейны, живущие под домом пользователя. Их каталоги
@@ -314,6 +317,12 @@ func exists(path string) bool {
 // выката. Уборка на вызывающем: cleanup зовётся и при провале прогона, отказ
 // временных деревьев не копит. Префикс идёт в имя временного каталога, по нему
 // в `git worktree list` видно, чей это прогон.
+//
+// Аварийный выход прогона разобран отдельно (DK-968). Сигнал сносит процесс
+// мимо defer, и снятое им дерево остаётся в списке git насовсем. Каталог
+// остаётся на месте, и prunable git такую запись не считает. Ловимые сигналы
+// перехвачены здесь, а после несловимого KILL каталог узнаётся по метке
+// владельца, и брошенное убирает `devkitctl doctor --fix`.
 func Make(root, sha, prefix string) (tree, home string, cleanup func(), err error) {
 	tmp, err := os.MkdirTemp("", prefix)
 	if err != nil {
@@ -329,11 +338,69 @@ func Make(root, sha, prefix string) (tree, home string, cleanup func(), err erro
 		os.RemoveAll(tmp)
 		return "", "", nil, wrap(err, out)
 	}
-	cleanup = func() {
+	markOwner(tmp, root, tree)
+	drop := func() {
 		git(root, "worktree", "remove", "--force", tree)
 		os.RemoveAll(tmp)
 	}
-	return tree, home, cleanup, nil
+	watch(tmp, drop)
+	return tree, home, func() { forget(tmp); drop() }, nil
+}
+
+// OwnerFile это метка владельца временного каталога прогона. Метка это номер
+// процесса, корень репозитория и путь дерева. Уборка читает её, чтобы отличить
+// каталог живого прогона от брошенного, и знает по ней, в каком репозитории
+// снимать запись дерева.
+const OwnerFile = "owner"
+
+// markOwner кладёт метку рядом с деревом. Провал записи прогон не роняет.
+// Без метки уборка разберёт каталог по имени и возрасту, это хуже, но не
+// смертельно.
+func markOwner(tmp, root, tree string) {
+	line := fmt.Sprintf("pid = %d\nroot = %s\ntree = %s\n", os.Getpid(), root, tree)
+	os.WriteFile(filepath.Join(tmp, OwnerFile), []byte(line), 0o644)
+}
+
+// Брошенные прогоном деревья снимаются по ловимому сигналу. Список открытых
+// каталогов лежит в процессе, перехват ставится один раз на процесс.
+var (
+	runsMu   sync.Mutex
+	runs     = map[string]func(){}
+	trapOnce sync.Once
+)
+
+// watch берёт каталог прогона под перехват сигналов.
+func watch(tmp string, drop func()) {
+	runsMu.Lock()
+	runs[tmp] = drop
+	runsMu.Unlock()
+	trapOnce.Do(trap)
+}
+
+// forget снимает каталог с перехвата: прогон убрал его сам.
+func forget(tmp string) {
+	runsMu.Lock()
+	delete(runs, tmp)
+	runsMu.Unlock()
+}
+
+// trap ставит перехват INT, TERM и HUP. Прибравшись, процесс уходит тем же
+// сигналом, а не своим кодом выхода. Позвавший читает код как причину смерти,
+// и обычный код отказа скрыл бы, что прогон оборвали сигналом.
+func trap() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		sig := <-ch
+		runsMu.Lock()
+		for tmp, drop := range runs {
+			drop()
+			delete(runs, tmp)
+		}
+		runsMu.Unlock()
+		signal.Reset(sig.(syscall.Signal))
+		syscall.Kill(os.Getpid(), sig.(syscall.Signal))
+	}()
 }
 
 // git зовёт гит в каталоге root и отдаёт вывод вместе с ошибкой: у

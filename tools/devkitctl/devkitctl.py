@@ -195,6 +195,7 @@ import os
 import perms
 import re
 import rules
+import runtrees
 import say
 import selfcheck
 import shutil
@@ -2014,6 +2015,12 @@ def check_machine(fix):
     af, ad = check_askpass_helper(fix)
     findings += af
     fixed += ad
+    # Временные деревья упавших прогонов лежат под каталогом временных файлов
+    # машины, а не в проекте: своё дерево прогон снимает сам, а брошенное
+    # несловимым сигналом висит в списке git до уборки (DK-968).
+    tf, td = runtrees.check(fix, repo=main)
+    findings += tf
+    fixed += td
     # Носитель сторожка цикла цели после бинарей: PATH агента собирается по
     # бинарю dashboard из PATH, тем же якорем, что у соседней проверки ниже, и
     # на прогоне с --fix тот успевает встать на место строкой выше (DK-664).

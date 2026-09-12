@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/frame"
+	"github.com/dronrider/devkit/internal/freshtree"
 )
 
 type Params struct {
@@ -337,16 +338,14 @@ func Run(p Params) (string, error) {
 	if out, err := runCmd(dirAbs, p.Cmd); err != nil {
 		return "", fmt.Errorf("тест не проходит на текущем коде, сначала чинить его:\n%s", cmdoutFrame(root, "test", out, 1))
 	}
-	tmp, err := os.MkdirTemp("", "regcheck-")
+	// Дерево старого кода выкладывает общий кирпич. Он же метит каталог
+	// владельцем и снимает дерево по ловимому сигналу. Без этого упавший
+	// прогон оставлял бы запись в списке git навсегда (DK-968).
+	wt, _, cleanup, err := freshtree.Make(root, base, "regcheck-")
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(tmp)
-	wt := filepath.Join(tmp, "old")
-	if _, err := gitOut(root, "worktree", "add", "--detach", wt, base); err != nil {
-		return "", err
-	}
-	defer gitOut(root, "worktree", "remove", "--force", wt)
+	defer cleanup()
 	for _, t := range tests {
 		if err := copyFile(filepath.Join(root, t), filepath.Join(wt, t)); err != nil {
 			return "", err

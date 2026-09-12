@@ -567,7 +567,7 @@ class TestProofread(SkillTree):
     «поезд» как кандидат, а без корпуса правка пар уходит без страховки."""
 
     TERMS = ("поезд", "виток", "лестница", "накопитель",
-             "сторожок", "заход", "ворота", "рубеж", "дорезка")
+             "сторожок", "заход", "дорезка")
     PAIRS = "\n".join("## %d. пункт\n\nПлохо:\n\n> x\n\nХорошо:\n\n> y\n" % i
                        for i in range(1, 9))
     BAD_HALVES = "## Плохая половина\n\nне меньше 14 находок из 16\n"
@@ -644,11 +644,11 @@ class TestRulesBacklink(SkillTree):
 
 
 class TestProse(SkillTree):
-    """DK-523: скилл письма с горячим списком из пяти примет и четырьмя
-    точками вызова. Три точки лежат файлами, четвёртая (правка README) названа
-    в самом скилле."""
+    """DK-523: скилл письма с горячим списком примет и четырьмя точками
+    вызова. Три точки лежат файлами, четвёртая (правка README) названа в самом
+    скилле. Примет девять: пять из замера DK-446 и четыре из разбора DK-962."""
 
-    HOT = "\n".join("%d. Примета %d." % (i, i) for i in range(1, 6))
+    HOT = "\n".join("%d. Примета %d." % (i, i) for i in range(1, 10))
     CALL = "python3 ~/projects/devkit/kit/skills/prose/prose.py sample --genre task"
 
     def add_prose(self, hot=None, readme=True):
@@ -680,11 +680,11 @@ class TestProse(SkillTree):
         fails = check_skills.check_prose(self.root)
         self.assertTrue(any("нет горячего списка" in f for f in fails), fails)
 
-    def test_примет_меньше_пяти(self):
-        self.add_prose(hot="\n".join("%d. Примета %d." % (i, i) for i in range(1, 5)))
+    def test_примет_меньше_девяти(self):
+        self.add_prose(hot="\n".join("%d. Примета %d." % (i, i) for i in range(1, 9)))
         self.add_points()
         fails = check_skills.check_prose(self.root)
-        self.assertTrue(any("примет в горячем списке 4" in f for f in fails), fails)
+        self.assertTrue(any("примет в горячем списке 8" in f for f in fails), fails)
 
     def test_readme_не_названа_точкой(self):
         self.add_prose(readme=False)

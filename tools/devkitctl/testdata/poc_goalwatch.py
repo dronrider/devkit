@@ -10,11 +10,11 @@
 дома. Настоящий дом и настоящая доска не трогаются.
 
 Стенд гоняет пять тиков подряд. Цикл встал (зов), тот же стоп следом (молчание
-до порога), стоп дожил до второго порога (повторный зов с номером), в журнал лёг
-боевой выкат вне окон своего корня (движение, тишина), поверх него встало окно
-соседнего проекта (тишина, чужое окно не режет). Последним шагом стенд смотрит,
-что тик записал окна своих вызовов. Печатает одну строку итога и выходит 0,
-любое расхождение это ненулевой выход с разбором.
+до порога), стоп дожил до второго порога (повторный зов с номером), соседняя
+сессия набила журнал запусков свежими вызовами (зов остаётся: чужая работа
+движением цикла не считается, DK-971), цикл написал строку в свой журнал
+(движение, тишина). Печатает одну строку итога и выходит 0, любое расхождение
+это ненулевой выход с разбором.
 """
 import os
 import re
@@ -58,15 +58,9 @@ def stand(root):
     (proj / ".devkit" / ("goal-%s.log" % GOAL)).write_text(
         "%s виток стенда\n" % ago(270), encoding="utf-8")
     lines = ["%s\ttaskctl\tmove\t0" % ago(270)]
-    ticks = []
     for i in range(265, 0, -5):
         lines += ["%s\tshipctl\tship\t1" % ago(i), "%s\tagentctl\tquota\t0" % ago(i)]
-        ticks.append("%s\t%s\t%s" % (ago(i), ago(i - 0.05), proj))
     (proj / ".devkit" / "log").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    # Окна тиков рядом с этими строками: по ним сторожок и узнаёт свой
-    # служебный вызов. Боевой `shipctl ship <ID>` в журнале выглядит так же, и
-    # без окна стенд не отличил бы одно от другого.
-    (home / ".devkit" / "watch.ticks").write_text("\n".join(ticks) + "\n", encoding="utf-8")
     entry = home / ".devkit" / "goals" / ("%s-стенд.watch" % GOAL)
     entry.write_text("goal = %s\nroot = %s\nfile = %s\nseen = %s\n" % (
         GOAL, proj, proj / "docs" / "tasks" / ("%s.md" % GOAL), ago(270)), encoding="utf-8")
@@ -101,35 +95,31 @@ def main():
         code, out = tick(home)
         if code != 1 or "зову 2-й раз" not in out:
             die("стоп дожил до второго порога, а повторного зова нет (код %d)" % code, out)
-        # Боевой вызов той же утилиты в окно своего корня не попадает, и цикл
-        # живой.
+        # Соседняя сессия работает в том же проекте и пишет в тот же журнал
+        # запусков. Цикл от этого не поехал, и зов обязан повториться.
         with open(proj / ".devkit" / "log", "a", encoding="utf-8") as f:
-            f.write("%s\tshipctl\tship\t0\n" % ago(2))
+            f.write("%s\ttaskctl\tclose\t0\n%s\tshipctl\tmerge\t0\n" % (ago(2), ago(1)))
+        text = entry.read_text(encoding="utf-8")
+        entry.write_text(re.sub(r"stopped = .*", "stopped = %s" % ago(60), text),
+                         encoding="utf-8")
+        code, out = tick(home)
+        if code != 1 or "зову" not in out:
+            die("вызовы соседней сессии сошли за движение цикла (код %d)" % code, out)
+        # Строка в журнале цикла это его собственный след, и она движение.
+        with open(proj / ".devkit" / ("goal-%s.log" % GOAL), "a", encoding="utf-8") as f:
+            f.write("%s DK-901 отдан исполнителю\n" % ago(1))
         code, out = tick(home)
         if code != 0 or "тихо" not in out:
-            die("боевой выкат не сошёл за движение цикла (код %d)" % code, out)
-        # Окно соседнего проекта своё время накрывает, а этот корень нет:
-        # длинный выкат чужого дерева не имеет права гасить движение тут.
-        with open(home / ".devkit" / "watch.ticks", "a", encoding="utf-8") as f:
-            f.write("%s\t%s\t%s\n" % (ago(3), ago(1), root / "proj2"))
-        code, out = tick(home)
-        if code != 0 or "тихо" not in out:
-            die("окно чужого корня съело боевой выкат (код %d)" % code, out)
-        # Тик, убитый на середине, окна сделанных вызовов уже записал: после
-        # него в файле окон лежат строки этого прогона.
-        marks = (home / ".devkit" / "watch.ticks").read_text(encoding="utf-8").splitlines()
-        fresh = [m for m in marks if m.split("\t")[0] >= ago(1)]
-        if not fresh:
-            die("тик не оставил окон своих вызовов", "\n".join(marks[-5:]))
+            die("строка журнала цикла не сошла за движение (код %d)" % code, out)
         log = home / ".devkit" / "notify.log"
         said = [ln for ln in log.read_text(encoding="utf-8").splitlines()
                 if GOAL in ln] if log.is_file() else []
-        if len(said) < 2:
-            die("уведомитель позвал %d раз вместо двух" % len(said), "\n".join(said))
+        if len(said) < 3:
+            die("уведомитель позвал %d раз вместо трёх" % len(said), "\n".join(said))
         print("poc_goalwatch: ok, тик 1 позвал, тик 2 смолчал до порога, "
-              "тик 3 позвал 2-й раз, тик 4 принял боевой выкат за движение, "
-              "тик 5 не поддался окну чужого корня; уведомитель отработал "
-              "%d раза, окна своих вызовов записаны" % len(said))
+              "тик 3 позвал 2-й раз, тик 4 не принял чужие вызовы за движение, "
+              "тик 5 принял строку журнала цикла за движение; уведомитель "
+              "отработал %d раза" % len(said))
     finally:
         shutil.rmtree(str(root), ignore_errors=True)
 

@@ -15,11 +15,13 @@ launchd-агент, его кладёт `devkitctl doctor --fix`.
 
 Что цикл должен идти, сторожок узнаёт из реестра `~/.devkit/goals`: запись туда
 кладёт гейт бюджета `agentctl spend --goal`, который стоит в начале каждого
-витка и у оболочки, и в чате. Движение меряется двумя журналами: строкой хода в
-журнале цикла `.devkit/goal-<ID>.log` и вызовом утилиты в `.devkit/log`
-проекта, за вычетом подхвата по часам сессии и того, что позвал сам сторожок
-(окно каждого своего вызова он кладёт в `~/.devkit/watch.ticks`). Цель, ушедшая с доски или из In progress,
-снимается с надзора вместе со своей записью.
+витка и у оболочки, и в чате. Движением считаются только следы самого цикла:
+строка хода в журнале цикла `.devkit/goal-<ID>.log`, запись в «Журнале» файла
+цели и строка гейта в самой записи. Журнал запусков `.devkit/log` в источники
+не входит (DK-971): туда пишет любая сессия проекта, и при живых соседях порог
+тишины у цели не наступал никогда. Цель, ушедшая с доски, в Check или в Done,
+снимается с надзора вместе со своей записью, а припаркованная машинной причиной
+остаётся под ним и ждёт молча: её поднимает обход ждущих.
 
 Позвав, сторожок ставит в запись отметку `stopped` и счёт зовов `shouts`, а
 дальше зовёт снова через тот же порог, пока цикл стоит. Движение свежее отметки
@@ -129,30 +131,15 @@ EVERY = 5 * 60       # как часто launchd будит сторожок, с
 HEARTBEAT_MISS = 3
 
 STAMP = "%Y-%m-%dT%H:%M:%S"
-STAMP_FORMATS = (STAMP, "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S")
-RUN_LOG = ".devkit/log"
+STAMP_FORMATS = (STAMP, "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M")
 GOAL_LOG = ".devkit/goal-%s.log"
-# Подхват катится хуком по часам сессии и в журнал запусков пишет ту же строку,
-# что виток. Витку он не принадлежит: у брошенной сессии подхват тикает так же,
-# как у работающей, поэтому движением цикла эта пара не считается. Флаги вызова
-# журнал не хранит (logCmd берёт args[0]), но обеих команд `catchup` у витка нет
-# ни с какими флагами, и пара тут различает всё, что нужно.
-HOOK_CALLS = frozenset((("devkitctl", "catchup"), ("taskctl", "catchup")))
-# Окна собственных вызовов сторожка: файл строк «начало\tконец\tкорень», по
-# строке на вызов. Тик зовёт разлив, снимок квоты и таскцтл в каждом корне под
-# надзором, и в журнале запусков эти строки неотличимы от боевых по паре
-# «утилита, команда»: служебный `shipctl -C root ship --drain` и выкат поезда
-# `shipctl ship <ID>` пишутся одинаково. Различает их время.
-#
-# Окно ставится на каждый вызов, а не одно на прогон. Так упавший или убитый на
-# середине тик оставляет окна по тем вызовам, что успел сделать, а чужой корень
-# под окно не попадает: окно шириной в минуту, которую разлив потратил на один
-# проект, вычеркнуло бы боевой выкат соседнего.
-TICKS = "~/.devkit/watch.ticks"
-TICKS_KEEP = 2000
-# Корень, к которому вызов не привязан: снимок квоты живёт на уровне машины и
-# строку журнала оставляет там, откуда сторожок запущен.
-ANY_ROOT = "*"
+# Раздел файла цели, куда пишут строки команды цикла, и время в такой строке.
+# Пишутся они двумя видами: снимок квоты гейта («- снимок 2026-09-13T14:26: ...»)
+# и запись сделанного («- 2026-09-13 14:26-22:12, ...; continue»), у второй
+# время идёт парой «начало-конец» и конец бывает следующим днём.
+GOAL_JOURNAL = "Журнал"
+JOURNAL_TIME = re.compile(
+    r"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?:-(?:(\d{4}-\d{2}-\d{2})[T ])?(\d{2}:\d{2}))?")
 # Потолок ожидания подпроцесса и грация мягкого снятия, секунды. Потолок стоит
 # выше собственного предела выката у shipctl (ключ `deploy_timeout`, умолчание
 # 30m): сторожок обязан дать ему упасть по-своему и отметить провал на доске, а
@@ -186,6 +173,12 @@ WAIT_PARKED = ("[блок: слияние:", "[блок: закрытие:")
 # старт (DK-934). Такую строку поднимает тот же `taskctl wake`: снятость рёбер и
 # ворота ёмкости он считает сам, а тику остаётся знать, есть ли на доске взвод.
 ARMED = "[взвод]"
+# Машинные разряды причины блока целиком (LLD DK-400, решение 2; DK-756,
+# решения 5 и 6; DK-932). Цель, припаркованная таким разрядом, ждёт события, а
+# не стоит: сторожок держит её запись и молчит, пока её не поднимет обход
+# ждущих. Разряд «окружение:» тоже машинный, но события у него нет, и цель с ним
+# судится как всякая другая.
+MACHINE_PARKED = (PARKED, REVIEW_PARKED) + WAIT_PARKED
 # Источники записи реестра, по которым окно считается окном задачи: сессию
 # подняли заказом, она родилась в дереве задачи либо привязана человеком. Слова
 # те же, что у ownSources в internal/taskhead: только такое окно `taskctl run`
@@ -354,51 +347,6 @@ def here(start=None):
         path = up
 
 
-def read_ticks(home=None):
-    """Окна собственных вызовов сторожка, тройками «начало, конец, корень».
-    Незнакомая строка пропускается, нет файла значит нет окон."""
-    home = default_home() if home is None else home
-    try:
-        text = home_path(home, TICKS).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-    out = []
-    for ln in text.splitlines():
-        cells = ln.split("\t")
-        if len(cells) < 2:
-            continue
-        beg, end = stamp_of(cells[0].strip()), stamp_of(cells[1].strip())
-        if beg is not None and end is not None:
-            out.append((beg, end, cells[2].strip() if len(cells) > 2 else ANY_ROOT))
-    return out
-
-
-def write_tick(beg, end, root=ANY_ROOT, home=None):
-    """Окно вызова в файл. Хвост подрезается, история дальше пары суток никому
-    не нужна: по ней читается только принадлежность строки журнала."""
-    home = default_home() if home is None else home
-    path = home_path(home, TICKS)
-    line = "%s\t%s\t%s\n" % (beg.strftime(STAMP), end.strftime(STAMP), root or ANY_ROOT)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        old = path.read_text(encoding="utf-8", errors="replace").splitlines(True) \
-            if path.exists() else []
-        path.write_text("".join(old[-(TICKS_KEEP - 1):]) + line, encoding="utf-8")
-    except OSError:
-        pass
-
-
-def own_tick(when, ticks, root=None):
-    """Легла ли строка журнала внутрь окна собственного вызова сторожка. Окно
-    чужого корня не в счёт, а окно без корня накрывает любой."""
-    for beg, end, at in ticks:
-        if when < beg or when > end:
-            continue
-        if at == ANY_ROOT or root is None or at == root:
-            return True
-    return False
-
-
 def run_soft(argv, timeout=None, grace=GRACE, **kw):
     """Запуск подпроцесса с мягким снятием по времени. Отвечает тем же
     `CompletedProcess`, что `subprocess.run`, и на месте его же.
@@ -432,27 +380,15 @@ def run_soft(argv, timeout=None, grace=GRACE, **kw):
 
 
 class Timed:
-    """Запускатель служебных вызовов сторожка. Засекает окно каждого вызова и
-    кладёт его в файл окон до возврата, в том числе когда вызов упал: строка,
-    которую подпроцесс уже оставил в журнале запусков, обязана быть накрыта
-    окном, иначе следующий тик примет её за движение цикла.
+    """Запускатель служебных вызовов сторожка с потолком ожидания. Повисший
+    подпроцесс без него держит сторожок до убийства launchd, и остаток обхода не
+    случается вовсе. Снимается вызов мягко, это работа `run_soft`."""
 
-    Тут же стоит потолок ожидания. Повисший подпроцесс без него держит сторожок
-    до убийства launchd, и окно не запишется вовсе. Снимается вызов мягко, это
-    работа `run_soft`.
-
-    Сдвиг `shift` двигает записанное окно вместе с подставленным временем
-    прогона: без него сквозной случай проверялся бы ожиданием настоящих часов."""
-
-    def __init__(self, call, home, root=ANY_ROOT, shift=None, timeout=None):
+    def __init__(self, call, timeout=None):
         self.call = run_soft if call is None else call
-        self.home = home
-        self.root = root
-        self.shift = shift or (datetime.now() - datetime.now())
         self.timeout = TIMEOUT if timeout is None else timeout
 
     def __call__(self, argv, **kw):
-        beg = datetime.now() + self.shift
         kw.setdefault("timeout", self.timeout)
         kw.setdefault("grace", GRACE)
         try:
@@ -460,37 +396,6 @@ class Timed:
         except subprocess.TimeoutExpired:
             return subprocess.CompletedProcess(
                 argv, 124, "вызов не уложился в %s и снят" % say.human_age(self.timeout), None)
-        finally:
-            write_tick(beg, datetime.now() + self.shift, self.root, self.home)
-
-
-def last_run_stamp(root, ticks=()):
-    """Момент последнего вызова утилиты devkit в проекте, None если журнала нет,
-    он пуст или в хвосте одно расписание. Читается хвост файла: строки идут по
-    возрастанию времени.
-
-    Пропускается два вида строк. Строки HOOK_CALLS оставил подхват по часам
-    сессии, строки внутри окон `ticks` оставил сам сторожок своим тиком.
-    Движением цикла считается то, что осталось."""
-    try:
-        with open(os.path.join(root, RUN_LOG), "rb") as f:
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            f.seek(max(0, size - TAIL))
-            tail = f.read().decode("utf-8", "replace")
-    except OSError:
-        return None
-    for ln in reversed(tail.splitlines()):
-        cells = ln.split("\t")
-        st = stamp_of(cells[0])
-        if st is None:
-            continue
-        if tuple(c.strip() for c in cells[1:3]) in HOOK_CALLS:
-            continue
-        if own_tick(st, ticks, root):
-            continue
-        return st
-    return None
 
 
 def last_round_stamp(root, goal):
@@ -511,9 +416,46 @@ def last_round_stamp(root, goal):
     return None
 
 
-def board_section(root, goal_id):
-    """Раздел доски, в котором стоит строка цели: «In progress», «Check» и так
-    далее. Пустая строка значит, что цели на доске нет либо доски нет вовсе.
+def last_journal_stamp(path):
+    """Момент последней записи в «Журнале» файла цели, None если файла нет или
+    записей в нём ещё нет. Строку журнала пишут только команды цикла
+    (`agentctl spend --record` снимок квоты, `agentctl lap` запись сделанного),
+    поэтому это тоже след самого цикла.
+
+    Времена в записи идут парой «начало-конец», и берётся из них самое позднее:
+    запись, закрывшая пятичасовой виток, сделана в его конце."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except (OSError, TypeError):
+        return None
+    best = None
+    for ln in goal_section(text, GOAL_JOURNAL):
+        for m in JOURNAL_TIME.finditer(ln):
+            day, beg, end_day, end = m.group(1), m.group(2), m.group(3), m.group(4)
+            for st in (stamp_of("%s %s" % (day, beg)),
+                       stamp_of("%s %s" % (end_day or day, end)) if end else None):
+                if st is not None and (best is None or st > best):
+                    best = st
+    return best
+
+
+def goal_section(text, name):
+    """Строки раздела файла цели по его заголовку, без самого заголовка. Разбор
+    тут свой и простой: заголовок второго уровня открывает раздел, следующий
+    такой же его закрывает."""
+    out, inside = [], False
+    for ln in text.splitlines():
+        if ln.startswith("## "):
+            inside = ln[3:].strip() == name
+            continue
+        if inside:
+            out.append(ln)
+    return out
+
+
+def board_row(root, goal_id):
+    """Раздел доски и строка цели в нём: («In progress», «| DK-100 | ... |»).
+    Пустой раздел значит, что цели на доске нет либо доски нет вовсе.
 
     Доска читается тут напрямую, а не через `taskctl show`: сторожок обязан
     работать и тогда, когда на машине сломано всё остальное, включая бинари
@@ -521,7 +463,7 @@ def board_section(root, goal_id):
     try:
         text = Path(root, BOARD).read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return ""
+        return "", ""
     section = ""
     for ln in text.splitlines():
         if ln.startswith("## "):
@@ -531,8 +473,20 @@ def board_section(root, goal_id):
             continue
         cell = ln.split("|")[1].strip() if ln.count("|") > 1 else ""
         if cell == goal_id:
-            return section
-    return ""
+            return section, ln
+    return "", ""
+
+
+def board_section(root, goal_id):
+    return board_row(root, goal_id)[0]
+
+
+def parked_by_machine(row):
+    """Припаркована ли строка машинной причиной: суффикс «[блок: <разряд>: ...]»
+    с разрядом из тех, что снимает не рука человека, а событие. Проза в причине
+    значит ожидание без источника события, и такую строку сторожок судит как
+    всякую другую."""
+    return any(mark in row for mark in MACHINE_PARKED)
 
 
 def board_present(root):
@@ -1638,16 +1592,22 @@ def resume_command(goal, root, devkit=None):
         devkit / "kit" / "skills" / "goal-loop" / "goal-run.py", goal, root)
 
 
-def moved_at(entry, root, path, ticks=()):
-    """Когда цикл двигался последний раз. Источников три: журнал цикла цели,
-    журнал запусков проекта без строк расписания и строка гейта в самой записи.
-    Берётся самый свежий, потому что живого цикла хватает и одного: виток на
-    долгом прогоне в журнал цикла часами не пишет, зато зовёт утилиты, а виток,
-    который только что отчитался строкой хода, утилит пока не звал. Не разобран
-    ни один источник, значит берётся время самой записи, иначе цель осталась бы
-    без надзора."""
+def moved_at(entry, root, path):
+    """Когда цикл двигался последний раз. Источника три, и все три это следы
+    самого цикла: строка журнала цикла, запись в «Журнале» файла цели и строка
+    гейта в самой записи. Берётся самый свежий, потому что живого цикла хватает
+    и одного: цикл на долгом прогоне в «Журнал» часами не пишет, зато метит
+    повороты строкой журнала, а цикл, только что отчитавшийся записью, журнала
+    пока не трогал. Не разобран ни один источник, значит берётся время самой
+    записи, иначе цель осталась бы без надзора.
+
+    Вызов утилиты devkit в проекте (журнал `.devkit/log`) источником не был бы
+    ошибкой, а стал: писать туда может любая соседняя сессия, и 12 сентября цель
+    простояла ночь при живых соседях, потому что порог тишины не наступал
+    никогда (DK-971)."""
     marks = [m for m in (last_round_stamp(root, entry.get("goal")),
-                         last_run_stamp(root, ticks), stamp_of(entry.get("seen"))) if m]
+                         last_journal_stamp(entry.get("file")),
+                         stamp_of(entry.get("seen"))) if m]
     if marks:
         return max(marks)
     try:
@@ -1656,11 +1616,13 @@ def moved_at(entry, root, path, ticks=()):
         return None
 
 
-def look(path, now, idle, call=None, ticks=()):
+def look(path, now, idle, call=None):
     """Что сторожок сделал с одной записью реестра: (позвали ли, строка отчёта).
 
-    Тут же чинится сам реестр: цель, ушедшая с доски или из In progress, надзора
-    больше не просит, и её запись снимается."""
+    Тут же чинится сам реестр: цель, ушедшая с доски, в Check или в Done, надзора
+    больше не просит, и её запись снимается. Цель, припаркованная машинным
+    разрядом, запись сохраняет: она ждёт события, её поднимает обход ждущих, и
+    звать по ней человека не за чем."""
     entry = read_entry(path)
     goal, root = entry.get("goal"), entry.get("root")
     if not goal or not root or not os.path.isdir(root):
@@ -1668,12 +1630,15 @@ def look(path, now, idle, call=None, ticks=()):
         return False, "запись %s снята: %s" % (
             path.name, "корня %s нет" % root if root else "в ней нет цели или корня")
     if board_present(root):
-        section = board_section(root, goal)
+        section, row = board_row(root, goal)
+        if section == BLOCKED and parked_by_machine(row):
+            return False, ("цель %s в %s: припаркована машинной причиной, надзор остаётся, "
+                           "поднимет обход ждущих" % (goal, root))
         if section != IN_PROGRESS:
             drop(path)
             where = "она стоит в разделе «%s»" % section if section else "её нет на доске"
             return False, "цель %s в %s: %s, запись снята" % (goal, root, where)
-    moved = moved_at(entry, root, path, ticks)
+    moved = moved_at(entry, root, path)
     if moved is None:
         return False, "цель %s в %s: движения не измерить, записи нет времени" % (goal, root)
     gap = (now - moved).total_seconds()
@@ -1780,20 +1745,10 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     home = default_home() if home is None else home
     idle = conf_idle(home) if idle is None else idle
     out = sys.stdout if out is None else out
-    # Окна своих вызовов читаются один раз, до первого вызова этого прогона.
-    # Каждый служебный вызов пишет своё окно сам, сразу как вернулся, поэтому
-    # строки, оставленные тиком в журналах запусков, накрыты окном и после
-    # падения на середине (DK-740). Начало окна берётся от `now`: подставленное
-    # время должно двигать окна вместе с журналами.
-    shift = now - datetime.now()
-    ticks = read_ticks(home)
     limit = conf_timeout(home)
-    timed = lambda root: Timed(call, home, root, shift, limit)
+    timed = lambda root: Timed(call, limit)
     # Съём квоты идёт до обхода реестра и не зависит от него: снимок лежит на
     # уровне машины, и свежеть он обязан и там, где целей под надзором нет.
-    # Корень у окна всё равно свой: строку журнала agentctl пишет в тот проект,
-    # из которого запущен сторожок, и звёздочка на всё время съёма съедала бы
-    # боевой `agentctl quota` соседей.
     qreport, qnote = quota_snap(timed(here()), agentctl)
     out.write(qreport + "\n")
     if qnote:
@@ -1809,7 +1764,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     for path in entries(home):
         watched += 1
         root = read_entry(path).get("root")
-        called, line = look(path, now, idle, call, ticks)
+        called, line = look(path, now, idle, call)
         found += 1 if called else 0
         out.write(line + "\n")
         if called:

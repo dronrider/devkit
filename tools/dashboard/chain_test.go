@@ -115,6 +115,36 @@ func TestChainLaysThreeRowsOnTwoLevels(t *testing.T) {
 	}
 }
 
+// regcheck:test-begin
+// Ручка цепочки публичная (README, раздел «API»), и запрос приходит не только
+// из списка доски, отдающего канонический номер. Номер не в каноническом виде
+// («xr-002», пробелы по краям) чистит chainIDs, и в подпроцесс уходит канон, а
+// в subject коммита прежде уезжало сырое тело запроса: рёбра ложились верно, а
+// коммит задачи по её ID больше не находился (RULES.board.core.md, ревью).
+func TestChainCommitSubjectTakesCanonicalID(t *testing.T) {
+	e, c, gitLog := freshChainEnv(t)
+
+	code, v := chainResp(t, c, e, `{"after": ["xr-001"], "levels": [[" xr-002 "]]}`)
+	if code != http.StatusOK {
+		t.Fatalf("запись цепочки с номером не в каноническом виде: %d %v", code, v)
+	}
+	git := readFile(t, gitLog)
+	if !strings.Contains(git, "docs(tasks): XR-002 цепочка с дашборда") {
+		t.Errorf("subject коммита без канонического ID: %s", git)
+	}
+	// Рёбра лежат по канону, и subject обязан совпасть с ними, а не со строкой
+	// запроса: разошлись они, значит коммит цепочки по ID не найти.
+	if strings.Contains(git, " xr-002 ") || strings.Contains(git, "docs(tasks): xr-002") {
+		t.Errorf("в subject уехал сырой номер запроса: %s", git)
+	}
+	out := runTaskctl(t, e.proj, "dep", "list", "XR-002", "--json")
+	if !strings.Contains(out, `"after":["XR-001"]`) {
+		t.Errorf("ребро легло не по канону: %s", out)
+	}
+}
+
+// regcheck:test-end
+
 // Предпросмотр доску не трогает: план это тот же `--dry-run`, и человек читает
 // рёбра до записи, а не после.
 func TestChainDryRunLeavesBoardAlone(t *testing.T) {

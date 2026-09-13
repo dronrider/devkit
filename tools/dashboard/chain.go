@@ -91,7 +91,7 @@ func (s *server) handleChain(w http.ResponseWriter, r *http.Request) {
 			"error": "жду JSON {\"after\": [\"DK-NNN\"], \"levels\": [[\"DK-NNN\"], ...]}"})
 		return
 	}
-	args, err := chainArgs(body.After, body.Levels, body.DryRun)
+	args, head, err := chainArgs(body.After, body.Levels, body.DryRun)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -115,8 +115,11 @@ func (s *server) handleChain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Коммит один на всю цепочку, как и запись: ID в subject это ID первой
-	// строки первого уровня, по ней цепочку и ищут в истории доски.
-	head := body.Levels[0][0]
+	// строки первого уровня, по ней цепочку и ищут в истории доски. Берётся он
+	// из того же очищенного списка, что уехал в подпроцесс, а не из тела
+	// запроса: ручка публичная, и запрос с номером не в каноническом виде
+	// («dk-12», с пробелом по краям) положил бы рёбра по канону, а subject
+	// увёл в сторону, порвав розыск коммитов задачи по ID.
 	if note := commitDocs(found.Path, boardCommitMsg(head, "цепочка с дашборда"),
 		filepath.ToSlash(filepath.Join("docs", "TASKS.md"))); note != "" {
 		resp["note"] = note
@@ -129,43 +132,52 @@ func (s *server) handleChain(w http.ResponseWriter, r *http.Request) {
 // chainArgs собирает аргументы `taskctl chain` из выбора человека. Пустой
 // уровень и чужой ID отбиваются тут: до подпроцесса такой запрос не доходит, а
 // человек получает ту же причину словами.
-func chainArgs(after []string, levels [][]string, dry bool) ([]string, error) {
+//
+// Вторым значением идёт голова цепочки, первый номер первого уровня в
+// каноническом виде. Отдаётся она отсюда, а не считается заново у коммита:
+// чистит номера одно место, и subject коммита обязан совпасть с тем, что
+// уехало в подпроцесс.
+func chainArgs(after []string, levels [][]string, dry bool) ([]string, string, error) {
 	if len(levels) == 0 {
-		return nil, fmt.Errorf("цепочке нужен хотя бы один уровень")
+		return nil, "", fmt.Errorf("цепочке нужен хотя бы один уровень")
 	}
 	if len(levels) > chainLevelsMax {
-		return nil, fmt.Errorf("уровней %d, потолок %d: цепочку такой глубины собирают командой, а не диалогом",
+		return nil, "", fmt.Errorf("уровней %d, потолок %d: цепочку такой глубины собирают командой, а не диалогом",
 			len(levels), chainLevelsMax)
 	}
 	n := len(after)
 	for i, level := range levels {
 		if len(level) == 0 {
-			return nil, fmt.Errorf("уровень %d пуст: в нём нужна хотя бы одна задача", i+1)
+			return nil, "", fmt.Errorf("уровень %d пуст: в нём нужна хотя бы одна задача", i+1)
 		}
 		n += len(level)
 	}
 	if n > chainIDsMax {
-		return nil, fmt.Errorf("задач в цепочке %d, потолок %d", n, chainIDsMax)
+		return nil, "", fmt.Errorf("задач в цепочке %d, потолок %d", n, chainIDsMax)
 	}
 	args := []string{"chain"}
 	if len(after) > 0 {
 		ids, err := chainIDs(after)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		args = append(args, "--after", strings.Join(ids, ","))
 	}
+	head := ""
 	for _, level := range levels {
 		ids, err := chainIDs(level)
 		if err != nil {
-			return nil, err
+			return nil, "", err
+		}
+		if head == "" {
+			head = ids[0]
 		}
 		args = append(args, strings.Join(ids, " "))
 	}
 	if dry {
 		args = append(args, "--dry-run")
 	}
-	return args, nil
+	return args, head, nil
 }
 
 // chainIDs чистит список номеров: пробелы по краям, верхний регистр и рубеж

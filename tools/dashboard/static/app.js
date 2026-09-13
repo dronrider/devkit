@@ -753,6 +753,29 @@ function forkChip(row) {
   return withTip(chip, tip);
 }
 
+// Чип взвода: поле arm строки доски (решение 1 LLD DK-933). Три состояния
+// взведённой строки и четвёртое, свободное, считает taskctl, и чип только
+// выбирает по разряду вид метки. Своих слов у него нет: пометку утилиты он
+// отдаёт подсказкой целиком, а на чипе оставляет разряд.
+//
+// Разряд «отказ» стоит красным, а не зелёным: готовая строка, которой обход
+// отказал по ёмкости, единственная из трёх, где человеку есть что сделать, и
+// сливаться с просто готовой она не должна.
+const ARM_CHIP = {
+  "ждёт": { word: "взвод: ждёт", cls: " c-after" },
+  "готова": { word: "взвод: готова", cls: " c-check" },
+  "отказ": { word: "взвод: отказ", cls: " c-block" },
+  "рукой": { word: "старт рукой", cls: "" },
+};
+
+function armChip(row) {
+  const arm = row.arm;
+  if (!arm || !arm.state) return null;
+  const said = ARM_CHIP[arm.state];
+  if (!said) return null;
+  return withTip(el("span", "chip" + said.cls, said.word), arm.note || said.word);
+}
+
 function rowChips(project, row) {
   const chips = [];
   // Своего чипа у признака работы нет: идущую работу говорит кружок у номера,
@@ -790,6 +813,10 @@ function rowChips(project, row) {
   if (row.block) chips.push(withFull(el("span", "chip c-block cwhy", "блок: " + row.block), row.block));
   const check = checkChip(row);
   if (check) chips.push(check);
+  // Взвод идёт последним: вопрос «стартует ли строка сама» задают уже после
+  // того, как прочли, что это за строка.
+  const arm = armChip(row);
+  if (arm) chips.push(arm);
   return chips;
 }
 
@@ -3062,8 +3089,16 @@ const TASK_PKEY = "task-page";
 async function sendTaskEdit(path, method, body) {
   const r = await api(path, { method, body });
   sayResult(apiSaid(r), !r.ok);
-  if (r.ok) await refresh();
-  return r.ok;
+  if (r.ok) {
+    // Записанная правка обесценивает память доски, из которой собран список
+    // выбора задачи: следующее открытие списка обязано показать доску после
+    // записи, а не до неё.
+    pickForget();
+    await refresh();
+  }
+  // Отдаётся весь ответ, а не один признак удачи: переключатель автозапуска
+  // ставит причину отказа себе в карточку, и слова эти берутся отсюда.
+  return r;
 }
 
 // Слова ответа ручки одной строкой: удача, отказ и приписка утилиты. Собраны
@@ -3112,6 +3147,17 @@ async function addDep(project, id, dep) {
   return sendTaskEdit(taskPath(project, id, "/deps"), "POST", { id: dep });
 }
 
+// Переключатель автозапуска: взвод это согласие человека на то, что строка
+// стартует сама, как только с неё сняты рёбра (решение 1 LLD DK-933). Ставит и
+// снимает его taskctl, и он же отказывает: открытая развилка, неразобранная
+// строка и состав незакрытой цели взвод не получают. Причину отказа карточка
+// ставит у самого переключателя, а не только строкой результата наверху
+// экрана: решение о взводе принимают здесь, тут и читают отказ.
+async function setArm(project, id, on) {
+  sayResult(id + (on ? ": взвод..." : ": снятие взвода..."));
+  return sendTaskEdit(taskPath(project, id, "/arm"), "POST", { on });
+}
+
 async function dropDep(project, id, dep) {
   sayResult("снятие зависимости " + id + " от " + dep + "...");
   return sendTaskEdit(taskPath(project, id, "/deps/" + encodeURIComponent(dep)), "DELETE");
@@ -3137,6 +3183,108 @@ function pickField(label, values, cur, onPick) {
   sel.addEventListener("change", () => { onPick(sel.value); });
   wrap.append(sel);
   return wrap;
+}
+
+// Список задач с поиском вместо поля ввода ID (DK-942). Поле принимало один
+// номер, и знать его надо было заранее: человек шёл на доску, читал номер
+// глазами, возвращался и набирал его по памяти. Список отвечает на тот же
+// вопрос заголовком строки, а поиск режет доску до нескольких строк.
+//
+// Источник один, ручка доски: она уже лежит в памяти сервера, и своей выдачи
+// для выбора задачи не нужно. Поиск идёт по номеру и заголовку прямо на
+// клиенте, потому что вся доска у него в руках, а поход на сервер за каждой
+// набранной буквой стоил бы подпроцесса taskctl.
+const PICK_SHOW = 8;
+
+// Доска для выбора, разобранная в плоский список строк. Память живёт на
+// проект: диалог цепочки перебирает уровни, и каждый его шаг ходил бы на
+// сервер заново.
+let pickBoard = { project: "", rows: null };
+
+async function pickRows(project) {
+  if (pickBoard.project === project && pickBoard.rows) return pickBoard.rows;
+  const r = await api("/api/projects/" + encodeURIComponent(project) + "/board");
+  if (!r.ok) throw new Error(r.body.error || ("доска не прочиталась (" + r.status + ")"));
+  const rows = [];
+  for (const sec of (r.body.board || {}).sections || []) {
+    for (const row of sec.rows || []) rows.push(Object.assign({ sect: sec.key }, row));
+  }
+  pickBoard = { project, rows };
+  return rows;
+}
+
+// Память доски снимается вместе с правкой: рёбра и взвод меняют сами строки, и
+// список выбора обязан показывать доску после записи, а не до неё.
+function pickForget() {
+  pickBoard = { project: "", rows: null };
+}
+
+// Отбор строк под запрос: номер или заголовок, регистр не в счёт. Пустой
+// запрос это вся доска, урезанная потолком показа: список открывается с чего-то
+// видимого, а не с приглашения набрать.
+function pickMatch(rows, q, skip) {
+  const said = String(q || "").trim().toLowerCase();
+  const out = [];
+  for (const row of rows) {
+    if (skip.includes(row.id)) continue;
+    if (said && !(row.id.toLowerCase().includes(said) ||
+      String(row.title || "").toLowerCase().includes(said))) continue;
+    out.push(row);
+  }
+  return out;
+}
+
+// Сам список: поле поиска, строки выдачи и слово о хвосте. Выбор уходит
+// вызывающему, своей ручки у списка нет: карточка зависимостей зовёт им
+// dep add, диалог цепочки складывает уровень.
+//
+// opts.skip это номера, которых в выдаче быть не должно (сама задача и уже
+// выбранные), opts.pick это что делать с выбранной строкой, opts.hint это
+// подпись над полем.
+function taskPick(project, opts) {
+  const o = opts || {};
+  const box = el("div", "tpick");
+  if (o.hint) box.append(el("div", "tphint", o.hint));
+  const find = el("input");
+  find.placeholder = o.placeholder || "номер или слово из заголовка";
+  find.setAttribute("aria-label", o.hint || "поиск задачи");
+  box.append(find);
+  const list = el("div", "tplist");
+  box.append(list);
+  const draw = (rows) => {
+    list.replaceChildren();
+    const hit = pickMatch(rows, find.value, o.skip || []);
+    if (!hit.length) {
+      list.append(el("div", "empty", "Ничего не нашлось."));
+      return;
+    }
+    for (const row of hit.slice(0, PICK_SHOW)) {
+      const line = el("button", "tprow");
+      line.type = "button";
+      line.append(el("span", "id", row.id));
+      line.append(withFull(el("span", "dt", row.title || ""), row.title || ""));
+      if (row.sect && row.sect !== "backlog") line.append(el("span", "chip", row.sect));
+      if (row.r) line.append(el("span", "tpr", String(row.r)));
+      line.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        find.value = "";
+        o.pick(row.id);
+      });
+      list.append(line);
+    }
+    if (hit.length > PICK_SHOW) {
+      list.append(el("div", "tpmore", "ещё " + (hit.length - PICK_SHOW) +
+        ": уточните запрос"));
+    }
+  };
+  list.append(el("div", "empty", "Доска читается..."));
+  pickRows(project).then((rows) => {
+    draw(rows);
+    find.addEventListener("input", () => { draw(rows); });
+  }).catch((e) => {
+    list.replaceChildren(el("div", "empty", String(e.message || e)));
+  });
+  return box;
 }
 
 // Строка соседа в карточке зависимостей. У архивной задачи (ro) кнопки «Снять»
@@ -3252,25 +3400,291 @@ function depsCard(project, id, after, blocks, opts) {
   for (const dep of after) card.append(depRow(project, id, "after", dep, o.ro));
 
   if (!o.ro) {
-    const add = el("div", "dadd");
-    const inp = el("input");
-    inp.placeholder = "DK-NNN";
-    inp.setAttribute("aria-label", "ID задачи, после которой делается эта");
-    const btn = el("button", "btn btn-sm", "Добавить");
-    const send = () => {
-      const dep = inp.value.trim().toUpperCase();
-      if (dep) addDep(project, id, dep).catch(console.error);
-    };
-    btn.addEventListener("click", send);
-    inp.addEventListener("keydown", (ev) => { if (ev.key === "Enter") send(); });
-    add.append(inp, btn);
-    card.append(add);
+    const skip = [id].concat(after.map((dep) => dep.id));
+    card.append(taskPick(project, {
+      hint: "после какой задачи делается эта",
+      skip,
+      pick: (dep) => { addDep(project, id, dep).catch(console.error); },
+    }));
+    card.append(armRow(project, id, o));
   }
 
   card.append(el("div", "dhead", "Блокирует выполнение задач"));
   if (!blocks.length) card.append(el("div", "empty", "Её никто не ждёт."));
   for (const dep of blocks) card.append(depRow(project, id, "blocks", dep, o.ro));
   return card;
+}
+
+// Полоса автозапуска в карточке зависимостей: сам переключатель и состояние
+// взвода словами утилиты. Состояние приезжает полем arm ответа ручки задачи
+// (`taskctl dep list --json`), и своего счёта у экрана нет.
+//
+// Строка вне Backlog переключателя не носит: взводится только очередь, и
+// обещать согласие на старт уже начатой строке было бы обманом. Причина стоит
+// на месте переключателя, иначе пустое место читается поломкой.
+function armRow(project, id, opts) {
+  const o = opts || {};
+  const box = el("div", "darm");
+  if (o.sect && o.sect !== "backlog") {
+    box.append(el("div", "empty", "Автозапуск ставится строке очереди: " +
+      "взвод это согласие на старт, а эта уже начата."));
+    return box;
+  }
+  const wrap = el("label", "dtgl");
+  const inp = el("input");
+  inp.type = "checkbox";
+  inp.checked = Boolean(o.armed);
+  wrap.append(inp);
+  wrap.append(el("span", "", "Автозапуск"));
+  withTip(wrap, "Взвод: строка стартует сама, как только с неё сняты все рёбра " +
+    "«после». Поднимает её обход ждущих, человек в окне не нужен.");
+  // Причина отказа ложится под переключателем и занимает всю ширину полосы.
+  const bad = el("div", "darmbad");
+  bad.hidden = true;
+  inp.addEventListener("change", () => {
+    // Кнопка гаснет до ответа: второе нажатие по пути уходило бы вторым
+    // запросом.
+    inp.disabled = true;
+    const want = inp.checked;
+    setArm(project, id, want).then((r) => {
+      if (r && !r.ok) {
+        // Отказ возвращает переключатель в прежнее положение: взвода не
+        // случилось, и галочка о нём врала бы до следующего обновления.
+        inp.checked = !want;
+        bad.textContent = r.body.error || "взвод не прошёл";
+        bad.hidden = false;
+        return;
+      }
+      bad.hidden = true;
+    }).catch(console.error).finally(() => { inp.disabled = false; });
+  });
+  box.append(wrap);
+  const arm = o.arm;
+  if (arm && arm.note) {
+    box.append(withTip(el("span", "chip" + ((ARM_CHIP[arm.state] || {}).cls || ""), arm.note),
+      arm.note));
+  }
+  // Цепочка собирается от этой строки: она встаёт первым «после», а уровни
+  // человек набирает в диалоге. Дорога сюда вторая, первая с самой доски.
+  const chain = el("button", "btn btn-sm", "Цепочка после этой");
+  chain.type = "button";
+  withTip(chain, "Собрать цепочку задач уровнями: каждый следующий уровень " +
+    "ждёт предыдущий и взводится.");
+  chain.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    chainOpen(project, [id]);
+  });
+  box.append(chain);
+  box.append(bad);
+  return box;
+}
+
+// Диалог цепочки (DK-942). Просьба «после DK-A сделай DK-B и DK-C, потом DK-D»
+// это четыре ребра и три взвода, и поштучно человек ставил их шестью заходами
+// на экран задачи. Диалог собирает ту же цепочку одним вызовом `taskctl chain`:
+// уровни набираются списком задач, план приходит предпросмотром, запись идёт
+// одним коммитом доски.
+//
+// Уровни нумеруются с единицы, как их печатает утилита. Строка уровня N
+// получает ребро на каждую строку уровня N-1 и взвод, первый уровень встаёт
+// после того, что выбрано в «после». Пустое «после» тоже законно: первый
+// уровень тогда идёт без рёбер, с одним взводом, и стартует ближайшим обходом
+// ждущих.
+let chainLens = null;
+
+// CHAIN_WAIT это задержка предпросмотра. Каждый показ плана это подпроцесс
+// taskctl, и гонять его на каждое нажатие незачем: человек добавляет задачи
+// очередями.
+const CHAIN_WAIT = 250;
+
+function chainOpen(project, after) {
+  chainShut();
+  const state = { after: (after || []).slice(), levels: [[]] };
+  const box = el("div", "chainlens");
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-label", "цепочка задач " + project);
+  const card = el("div", "chainbox");
+  const head = el("div", "chainhead");
+  head.append(el("b", "", "Цепочка задач"));
+  const shut = el("button", "chainx");
+  shut.type = "button";
+  shut.append(icon("close"));
+  shut.setAttribute("aria-label", "Закрыть");
+  shut.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    chainShut();
+  });
+  head.append(shut);
+  card.append(head);
+  const body = el("div", "chainbody");
+  card.append(body);
+  const plan = el("div", "chainplan");
+  card.append(plan);
+  const foot = el("div", "chainfoot");
+  const write = el("button", "btn btn-acc", "Записать");
+  write.type = "button";
+  // До первого плана кнопка погашена: пустая цепочка ушла бы на сервер и
+  // вернулась его отказом, а человек читал бы отказ вместо плана.
+  write.disabled = true;
+  foot.append(write);
+  card.append(foot);
+  box.append(card);
+  // Нажатие внутри карточки диалог не закрывает, мимо карточки закрывает: тот
+  // же уговор, что у разворота снимка.
+  card.addEventListener("click", (ev) => { ev.stopPropagation(); });
+  box.addEventListener("click", () => { chainShut(); });
+
+  let timer = 0;
+  const preview = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = 0;
+      chainPreview(project, state, plan, write);
+    }, CHAIN_WAIT);
+  };
+  const draw = () => {
+    body.replaceChildren();
+    body.append(chainPart(project, state, "после", state.after, null, draw, preview));
+    state.levels.forEach((level, i) => {
+      body.append(chainPart(project, state, "уровень " + (i + 1), level, i, draw, preview));
+    });
+    const more = el("button", "chainadd", "+ уровень");
+    more.type = "button";
+    withTip(more, "Строки нового уровня ждут весь предыдущий уровень.");
+    more.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      state.levels.push([]);
+      draw();
+      preview();
+    });
+    body.append(more);
+    preview();
+  };
+  write.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    write.disabled = true;
+    chainWrite(project, state).catch(console.error).finally(() => { write.disabled = false; });
+  });
+  draw();
+  chainLens = box;
+  document.body.append(box);
+  document.addEventListener("keydown", chainKey);
+}
+
+// Кусок диалога: одно место цепочки со своими задачами и списком выбора. Место
+// это «после» либо уровень, и различаются они одним, номером уровня: у «после»
+// его нет.
+function chainPart(project, state, label, ids, level, draw, preview) {
+  const part = el("div", "chainpart");
+  const top = el("div", "chaintop");
+  top.append(el("span", "chainlbl", label));
+  // Лишний уровень убирается целиком: набранное в нём человек видит и решает
+  // сам. Последний уровень не убирается, без него цепочки нет.
+  if (level !== null && state.levels.length > 1) {
+    const drop = el("button", "chaindrop", "убрать");
+    drop.type = "button";
+    drop.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      state.levels.splice(level, 1);
+      draw();
+      preview();
+    });
+    top.append(drop);
+  }
+  part.append(top);
+  const box = el("div", "chainids");
+  for (const id of ids) {
+    const chip = el("span", "chip");
+    chip.append(el("span", "", id));
+    const off = el("button", "chipx");
+    off.type = "button";
+    off.append(icon("close"));
+    off.setAttribute("aria-label", "убрать " + id);
+    off.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      ids.splice(ids.indexOf(id), 1);
+      draw();
+      preview();
+    });
+    chip.append(off);
+    box.append(chip);
+  }
+  if (!ids.length) {
+    box.append(el("span", "empty", level === null
+      ? "Ребра нет: первый уровень стартует ближайшим обходом."
+      : "Пусто: выберите задачу ниже."));
+  }
+  part.append(box);
+  part.append(taskPick(project, {
+    skip: chainTaken(state),
+    placeholder: "номер или слово из заголовка",
+    pick: (id) => {
+      ids.push(id);
+      draw();
+      preview();
+    },
+  }));
+  return part;
+}
+
+// Всё, что в цепочке уже занято: одна задача не стоит на двух уровнях и не
+// бывает разом предпосылкой и звеном.
+function chainTaken(state) {
+  const out = state.after.slice();
+  for (const level of state.levels) {
+    for (const id of level) out.push(id);
+  }
+  return out;
+}
+
+// Предпросмотр: план уровнями, как его печатает `chain --dry-run`. Слова тут
+// целиком утилитины, включая отказ: цикл зависимостей и отказ взвода человек
+// читает до записи, а не после.
+async function chainPreview(project, state, plan, write) {
+  const levels = state.levels.filter((level) => level.length);
+  if (levels.length !== state.levels.length || !levels.length) {
+    plan.replaceChildren(el("div", "empty", "Наберите уровни: план покажется сам."));
+    write.disabled = true;
+    return;
+  }
+  const r = await api("/api/projects/" + encodeURIComponent(project) + "/chain",
+    { method: "POST", body: { after: state.after, levels, dry_run: true } });
+  plan.replaceChildren();
+  if (!r.ok) {
+    plan.append(el("div", "chainbad", r.body.error || ("предпросмотр не прошёл (" + r.status + ")")));
+    write.disabled = true;
+    return;
+  }
+  for (const line of r.body.plan || []) plan.append(el("div", "chainline", line));
+  write.disabled = false;
+}
+
+async function chainWrite(project, state) {
+  const levels = state.levels.filter((level) => level.length);
+  sayResult("цепочка на " + levels.length + " " +
+    plural(levels.length, "уровень", "уровня", "уровней") + "...");
+  const r = await api("/api/projects/" + encodeURIComponent(project) + "/chain",
+    { method: "POST", body: { after: state.after, levels, dry_run: false } });
+  sayResult(apiSaid(r), !r.ok);
+  if (!r.ok) return;
+  // Записанная цепочка обесценивает и память доски, и нарисованный список:
+  // рёбра со взводом видно на самих строках.
+  pickForget();
+  chainShut();
+  await refresh();
+}
+
+function chainKey(ev) {
+  if (ev.key === "Escape") chainShut();
+}
+
+function chainShut() {
+  const box = chainLens;
+  chainLens = null;
+  document.removeEventListener("keydown", chainKey);
+  if (!box) return;
+  if (box.parentElement && box.parentElement.removeChild) box.parentElement.removeChild(box);
+  else if (document.body.removeChild) document.body.removeChild(box);
 }
 
 // Панель файла задачи: текст правится прямо в поле, своей кнопки сохранения у
@@ -4142,7 +4556,8 @@ function formPage(cfg) {
   }
   if (has.deps) {
     grid.append(depsCard(cfg.project, cfg.id, cfg.after || [], cfg.blocks || [],
-      { ro: Boolean(cfg.depsRO), afterNote: cfg.afterNote || "" }));
+      { ro: Boolean(cfg.depsRO), afterNote: cfg.afterNote || "",
+        armed: Boolean(cfg.armed), arm: cfg.arm || null, sect: cfg.sect || "" }));
   }
   if (cfg.links && ((cfg.links.lld || []).length || (cfg.links.tasks || []).length)) {
     grid.append(linksCard(cfg.project, cfg.links));
@@ -4380,6 +4795,9 @@ async function renderTask(project, works, id, pre) {
     has: { title: true, type: true, cost: true, rank: true, deps: true, chat: true,
       file: true, make: true, pencil: true, read: true },
     after: detail.after || [], blocks: detail.blocks || [],
+    // Взвод и его состояние приезжают тем же ответом, что зависимости: они и
+    // живут на доске одним заголовком строки.
+    armed: Boolean(detail.armed), arm: detail.arm || null, sect: row.sect || "",
     actions: taskActions(project, id, row),
     // Признак правки живёт в черновике: следующая честная перерисовка экрана
     // (она бывает после сохранения) откроет задачу тем же режимом.
@@ -14604,6 +15022,17 @@ function makeMenuAt(btn, project, host) {
     });
     menu.append(opt);
   }
+  // Третий пункт заводит не строку, а связь между готовыми: цепочка ставит
+  // рёбра со взводом на строки, которые на доске уже есть. Стоит он тут же,
+  // потому что спрашивают об этом там же, где о заведении, глядя на список
+  // доски (DK-942).
+  const chain = el("div", "pmrow", "Цепочка");
+  chain.addEventListener("click", (e) => {
+    e.stopPropagation();
+    homeMenuShut();
+    chainOpen(project, []);
+  });
+  menu.append(chain);
   (host || btn.parentNode).append(menu);
   homeMenu = menu;
   homeMenuHeld = popupHold(menu, homeMenuShut);

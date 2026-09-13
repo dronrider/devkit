@@ -507,6 +507,26 @@ a:hover{text-decoration:underline}
 .drow .dt{flex:1;font:400 12.5px var(--sans);color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dadd{display:flex;gap:10px;padding:8px 14px 12px 18px}
 .dadd input{flex:1;min-width:0;height:32px;padding:0 10px;border-radius:8px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:500 12.5px var(--mono)}
+/* список задач с поиском вместо поля ввода ID (DK-942): номер больше не надо
+   знать заранее, строка узнаётся по заголовку */
+.tpick{display:flex;flex-direction:column;gap:6px;padding:8px 14px 12px 18px}
+.tphint{font:400 11.5px var(--sans);color:var(--tx3)}
+.tpick input{height:32px;padding:0 10px;border-radius:8px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:500 12.5px var(--sans)}
+.tplist{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.tplist .empty{padding:8px 10px}
+.tprow{display:flex;align-items:center;gap:8px;padding:7px 10px;border:none;border-top:1px solid var(--line);background:none;color:var(--tx);text-align:left;cursor:pointer;font:500 12.5px var(--sans)}
+.tprow:first-child{border-top:none}
+.tprow:hover{background:var(--bg2)}
+.tprow .dt{flex:1;min-width:0;font:400 12.5px var(--sans);color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tprow .tpr{font:600 12px var(--mono);color:var(--tx3)}
+.tpmore{padding:7px 10px;border-top:1px solid var(--line);font:400 11.5px var(--sans);color:var(--tx3)}
+/* полоса автозапуска: переключатель взвода, состояние словами утилиты и дорога
+   в диалог цепочки от этой строки */
+.darm{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:2px 14px 12px 18px}
+.darm .empty{padding:0}
+.dtgl{display:flex;align-items:center;gap:8px;font:500 12.5px var(--sans);color:var(--tx2);cursor:pointer}
+.dtgl input{width:16px;height:16px;margin:0;accent-color:var(--acc);cursor:pointer}
+.darmbad{flex:0 0 100%;font:400 12px/1.45 var(--sans);color:var(--block)}
 .c-run{background:color-mix(in oklab,var(--run) 16%,transparent);color:var(--run)}
 /* чип идущей работы уводит на её живой статус, и палец обязан видеть, что это
    не подпись */
@@ -1711,6 +1731,35 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .shotx{position:absolute;top:14px;right:14px;width:32px;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
 .shotx svg{width:14px;height:14px;display:block}
 .shotx:hover{border-color:var(--acc);color:var(--tx)}
+
+/* диалог цепочки (DK-942): уровни набираются списком задач, план приходит
+   предпросмотром. Живёт он поверх страницы, как разворот снимка, и закрывается
+   теми же тремя путями: крестиком, нажатием мимо и клавишей Esc */
+.chainlens{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,0.72)}
+.chainbox{display:flex;flex-direction:column;max-width:560px;width:100%;max-height:100%;overflow:auto;background:var(--bg1);border:1px solid var(--line2);border-radius:var(--rad3)}
+.chainhead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);font:600 14px var(--sans);color:var(--tx)}
+.chainx{width:28px;height:28px;flex:none;border:1px solid var(--line2);border-radius:8px;background:var(--bg1);color:var(--tx2);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
+.chainx svg{width:12px;height:12px;display:block}
+.chainx:hover{border-color:var(--acc);color:var(--tx)}
+.chainbody{display:flex;flex-direction:column;gap:4px;padding:8px 4px 12px}
+.chainpart{border-top:1px solid var(--line)}
+.chainpart:first-child{border-top:none}
+.chaintop{display:flex;align-items:center;gap:10px;padding:10px 14px 2px 18px}
+.chainlbl{font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;color:var(--tx3)}
+.chaindrop{border:none;background:none;color:var(--tx3);font:500 11.5px var(--sans);cursor:pointer;padding:0}
+.chaindrop:hover{color:var(--block)}
+.chainids{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:4px 14px 0 18px}
+.chainids .empty{padding:0;font:400 11.5px var(--sans)}
+.chipx{border:none;background:none;color:var(--tx3);cursor:pointer;padding:0;display:flex;align-items:center}
+.chipx svg{width:9px;height:9px;display:block}
+.chipx:hover{color:var(--block)}
+.chainadd{align-self:flex-start;margin:6px 18px 0;border:1px dashed var(--line2);border-radius:8px;background:none;color:var(--tx2);font:500 12.5px var(--sans);cursor:pointer;padding:6px 10px}
+.chainadd:hover{border-color:var(--acc);color:var(--tx)}
+.chainplan{padding:10px 18px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:3px}
+.chainline{font:500 12.5px var(--mono);color:var(--tx2)}
+.chainbad{font:400 12.5px/1.5 var(--sans);color:var(--block)}
+.chainplan .empty{padding:0}
+.chainfoot{display:flex;justify-content:flex-end;gap:10px;padding:12px 18px;border-top:1px solid var(--line)}
 
 /* 10: продолжение работы иконкой рядом с отправкой */
 .cgo{flex:none;width:32px;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}

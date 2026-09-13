@@ -658,24 +658,41 @@ func depRefs(ids []string, rows map[string]boardRow) []depRef {
 // доске, и оба направления знает dep list --json. У закрытой задачи утилита
 // отвечает по архиву, и вместо списка «после» приходит пояснение afterNote:
 // закрытие снимает маркер, и пустой список читался бы как «ни после кого».
-func taskDeps(dir, id string) (after, blocks []string, afterNote string, err error) {
+func taskDeps(dir, id string) (d taskDepView, err error) {
 	bin := taskctlPath()
 	if bin == "" {
-		return nil, nil, "", errors.New(taskctlMissing())
+		return taskDepView{}, errors.New(taskctlMissing())
 	}
 	out, err := runProc(bin, "dep", "list", id, "--json", "-C", dir)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("taskctl dep list %s: %s", id, procErr(err))
+		return taskDepView{}, fmt.Errorf("taskctl dep list %s: %s", id, procErr(err))
 	}
-	var v struct {
-		After     []string `json:"after"`
-		Blocks    []string `json:"blocks"`
-		AfterNote string   `json:"after_note"`
+	if err := json.Unmarshal(out, &d); err != nil {
+		return taskDepView{}, fmt.Errorf("ответ taskctl dep list не разобрался: %v", err)
 	}
-	if err := json.Unmarshal(out, &v); err != nil {
-		return nil, nil, "", fmt.Errorf("ответ taskctl dep list не разобрался: %v", err)
-	}
-	return v.After, v.Blocks, v.AfterNote, nil
+	return d, nil
+}
+
+// taskDepView это ответ dep list --json тем составом, каким его читает экран
+// задачи: обе стороны зависимостей, пояснение вместо пустого «после» у
+// закрытой задачи и взвод строки со своим состоянием.
+type taskDepView struct {
+	After     []string `json:"after"`
+	Blocks    []string `json:"blocks"`
+	AfterNote string   `json:"after_note"`
+	// Armed это согласие человека на самостоятельный старт, а Arm его
+	// состояние: ждёт рёбер, готова, получила отказ ворот ёмкости либо
+	// поднимается рукой (решение 1 LLD DK-933). Считает оба taskctl, карточка
+	// зависимостей только показывает.
+	Armed bool     `json:"armed"`
+	Arm   *ArmView `json:"arm"`
+}
+
+// ArmView это состояние взвода словами утилиты: разряд, по которому карточка
+// выбирает вид метки, и пометка, которой она объясняет метку человеку.
+type ArmView struct {
+	State string `json:"state"`
+	Note  string `json:"note"`
 }
 
 // ForkView это открытая развилка задачи на экране: имя, вопрос и рекомендация,
@@ -735,7 +752,8 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	after, blocks, afterNote, err := taskDeps(found.Path, id)
+	deps, err := taskDeps(found.Path, id)
+	after, blocks, afterNote := deps.After, deps.Blocks, deps.AfterNote
 	if err != nil && row.Closed == "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -811,6 +829,14 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		"row":     row,
 		"after":   depRefs(after, rows),
 		"blocks":  depRefs(blocks, rows),
+		// Взвод строки и его состояние идут рядом с зависимостями: переключатель
+		// автозапуска стоит в той же карточке, и оба поля приезжают одним
+		// ответом dep list --json (DK-942). Состояния нет у строки, которой о
+		// взводе сказать нечего, и карточка тогда показывает один переключатель.
+		"armed": deps.Armed,
+	}
+	if deps.Arm != nil {
+		resp["arm"] = deps.Arm
 	}
 	rel := taskFileRel(id)
 	var fileText string

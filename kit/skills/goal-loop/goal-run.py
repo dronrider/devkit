@@ -94,6 +94,9 @@ WAITS_DIR = os.path.join(os.path.expanduser("~"), ".devkit", "waits")
 WAITS_ENV = "DEVKIT_WAIT_DIR"
 WAIT_STEP = 5
 WAIT_STEP_ENV = "DEVKIT_GOAL_WAIT_STEP"
+# Метка носителя цикла для дочернего клиента и его хуков: непустое значение
+# значит виток оболочки, а не сессию живого чата (DK-971).
+SHELL_ENV = "DEVKIT_GOAL_SHELL"
 # Потолок ожидания цикла: дольше этого виток не ждёт даже со сроком в отметке.
 WAIT_CAP = 2 * 60 * 60
 
@@ -335,6 +338,12 @@ class Loop:
                 "--permission-mode", "auto"] + turn
 
     def preflight(self):
+        # Витку оболочки ход держать нельзя: он кончается маркером, и решение
+        # block держателя (hooks/goal-hold.py) закрутило бы клиента в цикле.
+        # Оболочка называет себя дочернему клиенту переменной окружения, а тот
+        # уносит её и в свои хуки, и в гейт бюджета, который пишет носителя в
+        # запись реестра (DK-971).
+        os.environ[SHELL_ENV] = self.id
         if not os.path.isfile(os.path.join(self.proj, "docs", "TASKS.md")):
             die("доски %s/docs/TASKS.md нет, режим цели живёт только в проекте с доской" % self.proj)
         if not os.path.isfile(self.goal):

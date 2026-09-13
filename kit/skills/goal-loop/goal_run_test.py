@@ -75,6 +75,9 @@ goal = os.path.join(root, "proj", "docs", "tasks", "DK-100.md")
 
 with open(os.path.join(root, "calls"), "a", encoding="utf-8") as f:
     f.write(" ".join(sys.argv[1:]) + "\n")
+# Метка носителя цикла, которую оболочка выставляет дочернему клиенту (DK-971).
+with open(os.path.join(root, "shellenv"), "a", encoding="utf-8") as f:
+    f.write(os.environ.get("DEVKIT_GOAL_SHELL", "-") + "\n")
 # Имя витка снимается прямо во время витка: после цикла замка уже нет, а
 # вопрос теста именно в том, чьё имя лежало в замке, пока виток шёл.
 try:
@@ -334,6 +337,19 @@ class GoalRunTests(Stand, unittest.TestCase):
         self.assertIn("уровень громкий", self.notify_log(root))
         self.assertFalse(os.path.isdir(os.path.join(root, "proj", ".devkit", "goal-DK-100.lock")),
                          "замок остался после цикла")
+
+    def test_shell_names_itself_to_the_turn(self):
+        # Виток оболочки помечен переменной окружения. По ней гейт бюджета
+        # пишет носителя в запись реестра целей, а держатель хода
+        # hooks/goal-hold.py такой ход не держит: виток кончается маркером и
+        # ход отдаёт (DK-971).
+        root = self.stand("done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        with open(os.path.join(root, "shellenv"), encoding="utf-8") as f:
+            named = f.read().splitlines()
+        self.assertEqual(named[:1], ["DK-100"],
+                         "виток оболочки не назвал себя дочернему клиенту: %s" % named)
 
     def test_wait_mark_holds_the_loop_instead_of_empty_turns(self):
         # Кейс 3 DK-947: виток упёрся в чужую задачу в Check, за которой стоит
@@ -1064,20 +1080,20 @@ class SkillInboxTests(unittest.TestCase):
         self.assertIn("из дашборда", state, "формат строки сообщения не назван")
 
     def test_state_step_points_at_the_live_reply(self):
-        # Реплика не ждёт шага состояния, и виток обязан знать об этом там же,
+        # Реплика не ждёт шага состояния, и цикл обязан знать об этом там же,
         # где читает «Входящие»: иначе он примет доставленную посреди работы
         # строку за чужой текст в контексте.
         state = self.skill[self.skill.index("1. Состояние"):self.skill.index("2. Гейт бюджета")]
-        self.assertIn("посреди витка", state)
+        self.assertIn("посреди работы", state)
         self.assertIn("Живая реплика", state, "раздел с правилом реакции не назван")
 
     def test_inbox_line_is_removed_by_the_turn_record(self):
-        # Убирается строка записью витка, а не при чтении: оборванный виток
+        # Убирается строка записью «Журнала», а не при чтении: оборванный заход
         # теряет только себя, и сообщение дожидается следующего.
         state = self.skill[self.skill.index("1. Состояние"):self.skill.index("2. Гейт бюджета")]
-        self.assertIn("запись витка", state)
-        record = self.skill[self.skill.index("5. Запись витка"):self.skill.index("6. Итог")]
-        self.assertIn("убирает из «Входящих»", record)
+        self.assertIn("запись «Журнала»", state)
+        record = self.skill[self.skill.index("5. Запись в «Журнале»"):self.skill.index("6. Итог")]
+        self.assertIn("из «Входящих» убираются", record)
         self.assertIn("ждёт витка", record, "надпись дашборда не привязана к лежащей строке")
 
 
@@ -1098,7 +1114,8 @@ class SkillRecordTests(unittest.TestCase):
             cls.readme = f.read()
 
     def record(self):
-        return self.skill[self.skill.index("5. Запись витка"):self.skill.index("7. Выход маркером")]
+        return self.skill[self.skill.index("5. Запись в «Журнале»"):
+                          self.skill.index("7. Выход маркером")]
 
     def test_turn_line_is_written_by_the_command(self):
         record = self.record()
@@ -1167,7 +1184,7 @@ class SkillMarkerTests(unittest.TestCase):
         self.assertIn("move <ID> blocked", section, "парковка задачи не названа командой")
         self.assertIn("вопрос:", section, "машинный префикс причины парковки не назван")
         self.assertIn("«окружение:", section, "парковка окружения задачи не названа")
-        self.assertIn("ошибка витка", section, "запрет задачного повода у маркера пропал")
+        self.assertIn("ошибка цикла", section, "запрет задачного повода у маркера пропал")
 
 
 # Подписка витков (замечание пользователя: «выполнить задачу с выбором подписки

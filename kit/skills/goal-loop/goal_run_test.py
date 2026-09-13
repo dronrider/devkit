@@ -1171,7 +1171,8 @@ class SkillMarkerTests(unittest.TestCase):
         bullet = self.markers()
         bullet = bullet[bullet.index("- `wait-human`"):]
         bullet = bullet[:bullet.index("- `stuck`")]
-        self.assertIn("сама цель", bullet, "граница повода не названа")
+        self.assertIn("без человека", bullet, "граница повода не названа")
+        self.assertIn("сама", bullet, "повод уровня цели не отделён от задачного")
         self.assertIn("`goal-cut`", bullet, "сверка бюджета не названа")
         for gone in ("задача цели ждёт", "харнес отказал"):
             self.assertNotIn(gone, bullet, "задачный повод вернулся в wait-human: %s" % gone)

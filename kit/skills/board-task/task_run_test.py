@@ -262,6 +262,10 @@ while True:
         n = len([l for l in f if l.strip()])
     step = plan[min(n, len(plan)) - 1]
     seen = 0
+    if n == 1:
+        # Первый заказ приходит аргументом, а не строкой окна, и ход по нему
+        # хук отмечает так же, как всякий другой: «начат» тут есть.
+        mark("начат")
     if step == "закрой":
         open(state, "w", encoding="utf-8").write("архиве\n")
     elif step == "паркуй":
@@ -366,6 +370,11 @@ while True:
             time.sleep(0.05)
         shell("done")
         mark("начат")
+        mark("кончен")
+    if step == "лишний конец":
+        # Стоп-хук сторожа фоновых работ пожаловался на непрочитанный отчёт,
+        # голова ответила второй репликой, и ход кончился ещё раз: на один
+        # «начат» две отметки конца (DK-966).
         mark("кончен")
     if step == "чужой":
         # Реплика человека, поданная панелью в это же окно: ход начался не по
@@ -859,6 +868,32 @@ class TestLiveHead(unittest.TestCase):
         self.assertIn("срок", held[0])
         self.assertIn("жду соседа", held[0])
         self.assertEqual(len(s.orders()), 4, s.orders())
+
+    def test_extra_turn_end_does_not_close_a_pass(self):
+        # Предмет DK-966. Стоп-хук сторожа жалуется на непрочитанный отчёт,
+        # голова отвечает второй репликой, и на один «начат» приходит две
+        # отметки конца. Лишняя доставалась следующему проходу и закрывала его
+        # за ноль секунд: так конвейер DK-962 снял голову при живом
+        # исполнителе. Проходов тут ровно столько, сколько ходов, а лишняя
+        # отметка названа в журнале.
+        s = self.stand(plan="лишний конец|молчит|закрой")
+        got = s.run("--passes", "6")
+        self.assertEqual(got.returncode, 0, s.why(got))
+        ends = [l for l in s.journal() if "конец прохода живой головы" in l]
+        self.assertEqual(len(ends), 3, s.journal())
+        self.assertTrue([l for l in s.journal() if "непарная отметка" in l], s.journal())
+        self.assertEqual(s.lines("поверх"), [], s.why(got))
+
+    def test_wait_starts_the_idle_count_over(self):
+        # Предмет DK-966. Честное машинное ожидание значит, что работа шла, а
+        # воронка ловит подряд идущие пустые проходы. До правки единица от
+        # утреннего прохода доживала через три ожидания до вечера и снимала
+        # окно третьей.
+        s = self.stand(plan="работа|ожидание|работа|ожидание|работа|закрой")
+        got = s.run("--passes", "8")
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual([l for l in s.journal() if "жжёт бюджет" in l], [], s.journal())
+        self.assertEqual(len(s.orders()), 6, s.orders())
 
     def test_head_without_a_wait_mark_meets_the_funnel(self):
         # Обратная сторона: тот же короткий проход без отметки это по-прежнему

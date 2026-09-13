@@ -534,3 +534,70 @@ func TestArmGatesCountOnlyTakenTaskTrees(t *testing.T) {
 		t.Fatalf("потолок деревьев перестал держать: %q", why)
 	}
 }
+
+// Состояние взвода едет в машинный ответ разрядом и теми же словами, какие
+// печатает `list`: карточка зависимостей дашборда выбирает по разряду вид
+// метки, а человеку показывает пометку. Три состояния взвода и свободная
+// строка приезжают и в `list --json`, и в `dep list --json` (DK-942).
+func TestArmStateRidesJSON(t *testing.T) {
+	root := armStand(t, 0)
+	for _, id := range []string{"XR-003", "XR-004"} {
+		if _, err := cmdDepAdd(root, DepParams{ID: id, DepID: "XR-005"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := cmdArm(root, "XR-003", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	waits := rowJSON(t, root, "XR-003")
+	if waits.Arm == nil || waits.Arm.State != armWaits {
+		t.Fatalf("строка списка не назвала ждущий взвод: %+v", waits.Arm)
+	}
+	if !strings.Contains(waits.Arm.Note, "XR-005 не слита") {
+		t.Fatalf("пометка ждущего взвода не назвала предпосылку: %+v", waits.Arm)
+	}
+	if d := depJSON(t, root, "XR-003"); d.Arm == nil || d.Arm.State != armWaits {
+		t.Fatalf("dep list --json не назвал ждущий взвод: %+v", d.Arm)
+	}
+
+	mergeWork(t, root, "XR-005")
+	if r := rowJSON(t, root, "XR-003"); r.Arm == nil || r.Arm.State != armReady {
+		t.Fatalf("готовый взвод не назван: %+v", r.Arm)
+	}
+	// Строка без взвода со снятым ребром это четвёртое, не взводное состояние:
+	// её поднимает рука, и путать её с готовой к самостоятельному старту нельзя.
+	if r := rowJSON(t, root, "XR-004"); r.Arm == nil || r.Arm.State != armHand {
+		t.Fatalf("свободная строка не отличена от взведённой: %+v", r.Arm)
+	}
+
+	// Отказ ворот ёмкости это третье состояние: строка готова, а прошлый обход
+	// её не поднял, и причина с временем едет той же пометкой.
+	if _, _, err := cmdWake(root, nil, wakeOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	r := rowJSON(t, root, "XR-003")
+	if r.Arm == nil || r.Arm.State != armRefused {
+		t.Fatalf("отказ ворот ёмкости не назван разрядом: %+v", r.Arm)
+	}
+	if !strings.Contains(r.Arm.Note, "нет квоты на пачку") {
+		t.Fatalf("пометка отказа без причины: %+v", r.Arm)
+	}
+	if d := depJSON(t, root, "XR-003"); d.Arm == nil || d.Arm.State != armRefused {
+		t.Fatalf("dep list --json не назвал отказ: %+v", d.Arm)
+	}
+
+	// Снятый взвод оставляет строку со снятыми рёбрами свободной, и снаружи
+	// это видно тем же полем.
+	if _, err := cmdArm(root, "XR-003", true, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if d := depJSON(t, root, "XR-003"); d.Arm == nil || d.Arm.State != armHand {
+		t.Fatalf("снятый взвод не вернул строку к старту рукой: %+v", d.Arm)
+	}
+	// Строке без рёбер о взводе сказать нечего: поля у неё нет вовсе, и пустой
+	// разряд читателю не приходит.
+	if r := rowJSON(t, root, "XR-002"); r.Arm != nil {
+		t.Fatalf("строка без рёбер принесла состояние взвода: %+v", r.Arm)
+	}
+}

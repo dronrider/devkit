@@ -245,7 +245,23 @@ func armedWaiters(root string, b *Board, arch *Archive) ([]waiter, []string) {
 const (
 	armWaits = "ждёт"
 	armReady = "готова"
+	// armRefused это та же готовая строка, которой прошлый обход отказал по
+	// ёмкости: разряд отдельный, потому что отказ это единственное из трёх
+	// состояний, где человеку есть что сделать.
+	armRefused = "отказ"
+	// armHand это строка без взвода, с которой сняты все рёбра: поднимает её
+	// только рука.
+	armHand = "рукой"
 )
+
+// armView это состояние взвода строки: разряд одним словом и вся пометка,
+// какой её печатают `list` и `show`. Разряд едет в JSON рядом с пометкой,
+// потому что читателю вроде дашборда нужны оба: по разряду он выбирает вид
+// метки, а словами объясняет её человеку.
+type armView struct {
+	State string
+	Note  string
+}
 
 // armNote это пометка строки про взвод, какой её печатают `list` и `show`.
 // Взведённая строка говорит, чего ждёт или что готова, и отказ последнего
@@ -253,24 +269,34 @@ const (
 // все рёбра, называется свободной: поднять её некому, кроме руки человека, и
 // заглохшей бывает только такая.
 func armNote(root string, ed *edges, r *Row) string {
+	if v := armState(root, ed, r); v != nil {
+		return v.Note
+	}
+	return ""
+}
+
+// armState считает состояние взвода один раз на строку: печать берёт у него
+// пометку, JSON берёт и пометку, и разряд. Второго разбора заголовка тут нет
+// именно поэтому: разойтись печати с машинным ответом было бы негде видно.
+func armState(root string, ed *edges, r *Row) *armView {
 	if r.Sect != SectBacklog {
-		return ""
+		return nil
 	}
 	_, deps, armSuf, _, _, _ := splitTitle(r.Title)
 	if armSuf == "" {
 		if len(deps) == 0 || len(ed.held(r)) > 0 {
-			return ""
+			return nil
 		}
-		return "свободна, старт рукой"
+		return &armView{State: armHand, Note: "свободна, старт рукой"}
 	}
 	if held := ed.held(r); len(held) > 0 {
-		return "взвод: " + armWaits + ", " + edgeWords(held)
+		return &armView{State: armWaits, Note: "взвод: " + armWaits + ", " + edgeWords(held)}
 	}
-	note := "взвод: " + armReady
 	if ref, ok := readArmRefusal(root, r.ID); ok {
-		note += fmt.Sprintf(", отказ %s, %s", ref.When.Format("15:04"), ref.Why)
+		return &armView{State: armRefused, Note: fmt.Sprintf("взвод: %s, отказ %s, %s",
+			armReady, ref.When.Format("15:04"), ref.Why)}
 	}
-	return note
+	return &armView{State: armReady, Note: "взвод: " + armReady}
 }
 
 // cmdArm ставит и снимает взвод. Взводится только строка Backlog, и только та,

@@ -26,15 +26,19 @@ type jsonRow struct {
 	HeldBy []string `json:"held_by,omitempty"`
 	// Armed это взвод строки (решение 1 LLD DK-933): человек разрешил ей
 	// стартовать самой, как только рёбра сняты.
-	Armed  bool   `json:"armed,omitempty"`
-	Accept string `json:"accept,omitempty"`
-	Fail   string `json:"fail,omitempty"`
-	Block  string `json:"block,omitempty"`
-	Type   string `json:"type"`
-	P      string `json:"p"`
-	R      int    `json:"r"`
-	ROwn   int    `json:"r_own"`
-	RParts [5]int `json:"r_parts"`
+	Armed bool `json:"armed,omitempty"`
+	// Arm это состояние взвода: ждёт рёбер, готова стартовать, получила отказ
+	// ворот ёмкости либо поднимается рукой. Пусто там, где о взводе сказать
+	// нечего: строка вне Backlog и строка без взвода с неснятым ребром.
+	Arm    *jsonArm `json:"arm,omitempty"`
+	Accept string   `json:"accept,omitempty"`
+	Fail   string   `json:"fail,omitempty"`
+	Block  string   `json:"block,omitempty"`
+	Type   string   `json:"type"`
+	P      string   `json:"p"`
+	R      int      `json:"r"`
+	ROwn   int      `json:"r_own"`
+	RParts [5]int   `json:"r_parts"`
 	// Поправки к рангу списком: у аддитивной имя и дельта, у подтягивающей
 	// задача, от которой подтянут итог (DK-428). Дашборд хвост не разбирает,
 	// правит ручкой пять слагаемых, а читает готовые r и r_own.
@@ -43,6 +47,23 @@ type jsonRow struct {
 	Link        string    `json:"link"`
 	Moved       string    `json:"moved,omitempty"`
 	Notes       []string  `json:"notes,omitempty"`
+}
+
+// jsonArm это состояние взвода строки для машинного читателя: разряд словом и
+// та же пометка, какую печатают `list` и `show`. Своей копии правила у
+// читателя нет, счёт остаётся за утилитой.
+type jsonArm struct {
+	// State это разряд: «ждёт», «готова», «отказ», «рукой».
+	State string `json:"state"`
+	Note  string `json:"note"`
+}
+
+func jsonArmOf(root string, ed *edges, r *Row) *jsonArm {
+	v := armState(root, ed, r)
+	if v == nil {
+		return nil
+	}
+	return &jsonArm{State: v.State, Note: v.Note}
 }
 
 // jsonAdj это одна поправка машинным видом: имя с дельтой либо ссылка «от».
@@ -87,6 +108,7 @@ func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, clean bool
 		After:  deps,
 		HeldBy: ed.heldIDs(r),
 		Armed:  armSuf != "",
+		Arm:    jsonArmOf(root, ed, r),
 		Accept: sufText(acceptSuf, "приёмка"),
 		Fail:   sufText(failSuf, "провал"),
 		Block:  sufText(blockSuf, "блок"),
@@ -267,6 +289,9 @@ type jsonDep struct {
 	// Armed это взвод строки: со снятыми рёбрами она стартует сама, и экрану
 	// зависимостей это говорит, кого ждать своим ходом, а кого рукой.
 	Armed bool `json:"armed,omitempty"`
+	// Arm это состояние взвода тем же составом, что у строки списка: карточка
+	// зависимостей показывает его рядом с переключателем автозапуска.
+	Arm *jsonArm `json:"arm,omitempty"`
 }
 
 type jsonEdge struct {
@@ -299,6 +324,7 @@ func cmdDepListJSON(root, id string) (string, error) {
 		d := jsonDep{ID: id}
 		if row := b.find(id); row != nil {
 			d.Armed = armed(row.Title)
+			d.Arm = jsonArmOf(root, ed, row)
 		}
 		if s := sides[id]; s != nil {
 			d.After, d.Blocks = s.after, s.blocks
@@ -323,7 +349,7 @@ func cmdDepListJSON(root, id string) (string, error) {
 			continue
 		}
 		deps = append(deps, jsonDep{ID: r.ID, After: s.after, Blocks: s.blocks,
-			Edges: jsonEdges(ed, s.after), Armed: armed(r.Title)})
+			Edges: jsonEdges(ed, s.after), Armed: armed(r.Title), Arm: jsonArmOf(root, ed, r)})
 	}
 	return marshal(struct {
 		Deps []jsonDep `json:"deps"`

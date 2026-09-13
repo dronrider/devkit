@@ -648,6 +648,17 @@ class TestPasses(unittest.TestCase):
         self.assertEqual(len(s.orders()), 4, s.orders())
         self.assertNotIn("проходы исчерпаны", r.stdout)
 
+    def test_wait_starts_the_idle_count_over(self):
+        # Предмет DK-966, печатная череда. Ожидание значит, что работа шла, и
+        # счёт холостых после него начинается заново. Без сброса единица от
+        # первого прохода доживает через два ожидания до третьей и снимает
+        # конвейер, хотя работа между ними шла.
+        s = self.stand(plan="работа|ожидание|работа|ожидание|работа|закрой")
+        got = s.run("--passes", "8")
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual([l for l in s.journal() if "жжёт бюджет" in l], [], s.journal())
+        self.assertEqual(len(s.orders()), 6, s.orders())
+
     def test_head_crash_does_not_stop_the_pipeline(self):
         # Код возврата головы тут не вердикт: вердикт это статус строки, и
         # упавший проход поднимается следующим.
@@ -765,7 +776,10 @@ class TestLiveHead(unittest.TestCase):
 
     def test_one_question_calls_the_human_once(self):
         # Каналов у вопроса два, и один запрос разрешения приходит обоими. Зов
-        # об одном и том же вопросе человеку нужен один.
+        # об одном и том же вопросе человеку нужен один. Отметки хода и строка
+        # уведомителя тут в одной пачке, а первым в ней лежит «начат», которым
+        # проход открылся: сброс придержания на нём звал человека дважды про
+        # один вопрос (DK-966).
         s = self.stand(plan="вопрос дважды|закрой")
         got = s.run()
         self.assertEqual(got.returncode, 0, s.why(got))

@@ -161,10 +161,15 @@ def entry_of(session, env=None):
     return None, {}
 
 
+def board_present(root):
+    return os.path.isfile(os.path.join(root, BOARD))
+
+
 def board_section(root, goal):
-    """Раздел доски, в котором стоит строка цели. Пустая строка значит, что цели
-    на доске нет либо доски нет вовсе. Доска читается напрямую: хук обязан
-    работать и тогда, когда бинарей devkit нет в PATH."""
+    """Раздел доски, в котором стоит строка цели. Пустая строка значит, что
+    строки цели на доске нет: так выглядит закрытая цель, её строку `taskctl
+    close` уносит в архив. Доска читается напрямую: хук обязан работать и тогда,
+    когда бинарей devkit нет в PATH."""
     try:
         with open(os.path.join(root, BOARD), encoding="utf-8", errors="replace") as f:
             text = f.read()
@@ -265,9 +270,14 @@ def decide(entry, path, event, env=None, call=None):
     marker = entry.get("marker", "")
     if marker and marker != GO_ON:
         return False, "цикл кончился маркером %s" % marker
-    section = board_section(root, goal)
-    if section and section != IN_PROGRESS:
-        return False, "цель стоит в разделе «%s»" % section
+    # Доска сверяется тем же порядком, что у сторожка (watch.py, look): сначала
+    # её наличие, потом раздел целиком. Проверка истинности раздела тут держала
+    # бы ход у закрытой цели, чью строку `taskctl close` унёс в архив.
+    if board_present(root):
+        section = board_section(root, goal)
+        if section != IN_PROGRESS:
+            return False, ("цель стоит в разделе «%s»" % section if section
+                           else "строки цели на доске нет, цель закрыта")
     if asked(root, event.session):
         return False, "сессия ждёт ответа человека"
     mark = trace(root, goal, entry.get("file"))

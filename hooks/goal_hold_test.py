@@ -173,6 +173,25 @@ class HoldTest(Stand):
         self.assertIsNone(decision, "ход держится у цели не в работе: %s" % decision)
         self.assertIn("Check", self.journal())
 
+    def test_goal_off_the_board_releases_the_turn(self):
+        # Замечание ревью DK-971: строку закрытой цели `taskctl close` уносит в
+        # архив, и на доске её нет вовсе. Держать сессию по закрытой цели
+        # нельзя, а проверка истинности раздела держала.
+        self.entry()
+        with open(os.path.join(self.proj, "docs", "TASKS.md"), "w", encoding="utf-8") as f:
+            f.write(BOARD % ("", ""))
+        decision, _ = self.stop()
+        self.assertIsNone(decision, "ход держится по закрытой цели: %s" % decision)
+        self.assertIn("строки цели на доске нет", self.journal())
+
+    def test_project_without_a_board_keeps_holding(self):
+        # Доски нет вовсе: судить по ней нечего, и цель остаётся под держателем,
+        # как остаётся под надзором сторожка.
+        self.entry()
+        os.remove(os.path.join(self.proj, "docs", "TASKS.md"))
+        decision, _ = self.stop()
+        self.assertIsNotNone(decision, "пропавшая доска отпустила ход")
+
     def test_question_to_the_human_releases_the_turn(self):
         # Вопрос, без которого работа не едет, это законный конец хода: рядом с
         # разговором лежит признак ожидания этой сессии.

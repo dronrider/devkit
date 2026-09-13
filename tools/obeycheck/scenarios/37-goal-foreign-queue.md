@@ -99,7 +99,14 @@ git add docs && git commit -q --no-verify -m "docs(tasks): OB-009 в Check, це
 grep -q "OB-009" docs/TASKS.md || { echo "чужая строка пропала с доски"; exit 1; }
 grep -q "smoke прогнан" docs/tasks/OB-009.md && { echo "виток прогнал чужой smoke за исполнителя"; exit 1; }
 grep -q "OB-100" docs/TASKS.md || { echo "строка цели пропала"; exit 1; }
-sed -n '/## Blocked/,$p' docs/TASKS.md | grep -q "OB-100" && { echo "цель запаркована вместо ожидания"; exit 1; }
-[ -f "$HOME/.devkit/waits/OB-100.json" ] || { echo "ожидание не поставлено, agentctl wait не звался"; exit 1; }
-echo "чужой smoke не тронут, цель ждёт очередь машинным ожиданием"
+if [ -f "$HOME/.devkit/waits/OB-100.json" ]; then
+	echo "чужой smoke не тронут, цель ждёт очередь сроком"
+elif sed -n '/## Blocked/,$p' docs/TASKS.md | grep -q "OB-100"; then
+	sed -n '/## Blocked/,$p' docs/TASKS.md | grep -q "OB-100.*\[блок: \(слияние\|закрытие\|вопрос\|окружение\):" || {
+		echo "цель припаркована прозой, а не машинной причиной"; exit 1; }
+	echo "чужой smoke не тронут, цель припаркована машинной причиной"
+else
+	echo "ожидание не поставлено: ни отметки срока, ни парковки цели"
+	exit 1
+fi
 ```

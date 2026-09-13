@@ -189,6 +189,20 @@ def watch(state):
         json.dump(body, f, ensure_ascii=False)
 
 
+def shell(state):
+    """Реестр той же сессии с фоновой командой оболочки: разряд shell, командная
+    строка вместо имени. Пишет такую запись тот же сторож, и живёт она рядом с
+    записями субагентов."""
+    os.makedirs(agents, exist_ok=True)
+    now = time.time()
+    body = {"session": sid, "updated": now,
+            "agents": {"b1": {"type": "", "description": "слияние", "job": "shell",
+                              "command": "shipctl merge DK-1", "output": "",
+                              "started": now, "done": 0, "state": state, "told": False}}}
+    with open(os.path.join(agents, sid + ".json"), "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False)
+
+
 def wait_mark(kind, target="", secs=3, note="жду соседа"):
     """Отметка машинного ожидания за `agentctl wait`: запись на задачу теми же
     полями, какими её кладёт утилита (tools/agentctl/wait.go). На стенде утилиты
@@ -259,6 +273,11 @@ while True:
         # сдвинув. Реестр сторожа при этом держит живую работу.
         watch("running")
         seen = hits("живых субагентах")
+    elif step == "фоновая команда":
+        # Голова запустила фоновую команду оболочки и кончила ход, ничего не
+        # сдвинув. Реестр сторожа при этом держит живую команду.
+        shell("running")
+        seen = hits("живой фоновой команде")
     elif step == "вопрос":
         mark("ждёт", "permission_prompt")
         time.sleep(0.3)
@@ -336,6 +355,16 @@ while True:
         while time.time() < until and hits("живых субагентах") <= seen:
             time.sleep(0.05)
         watch("done")
+        mark("начат")
+        mark("кончен")
+    if step == "фоновая команда":
+        # Заказа на этот проход оболочка подать не должна: ход головы поднимает
+        # конец команды. Ждём её строку об этом, потом играем сам конец
+        # команды, ход по её вести и обычный конец хода.
+        until = time.time() + 10
+        while time.time() < until and hits("живой фоновой команде") <= seen:
+            time.sleep(0.05)
+        shell("done")
         mark("начат")
         mark("кончен")
     if step == "чужой":
@@ -789,6 +818,27 @@ class TestLiveHead(unittest.TestCase):
         # снимала на третьем окно вместе с субагентами, и работа исполнителя
         # пропадала (так погиб exec-high на седьмой минуте DK-864).
         s = self.stand(plan="субагенты|субагенты|субагенты|закрой")
+        got = s.run("--passes", "6")
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual([l for l in s.journal() if "вхолостую" in l], [], s.journal())
+        self.assertEqual(len(s.orders()), 4, s.orders())
+
+    def test_live_command_holds_the_order(self):
+        # Предмет DK-979: голова запустила фоновую команду оболочки и ушла
+        # ждать её конца. Заказ на такой проход не подаётся, ход поднимает
+        # конец команды, а не оболочка.
+        s = self.stand(plan="фоновая команда|закрой", pause="1")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, s.why(got))
+        told = [l for l in s.journal() if "живой фоновой команде" in l]
+        self.assertTrue(told, s.journal())
+        self.assertIn("shipctl merge DK-1", told[0])
+        self.assertEqual(len(s.orders()), 2, s.orders())
+
+    def test_live_command_does_not_feed_the_funnel(self):
+        # Три коротких прохода подряд при живой фоновой команде. Так встала
+        # голова DK-941: воронка сняла окно на четвёртой секунде ожидания.
+        s = self.stand(plan="фоновая команда|фоновая команда|фоновая команда|закрой")
         got = s.run("--passes", "6")
         self.assertEqual(got.returncode, 0, s.why(got))
         self.assertEqual([l for l in s.journal() if "вхолостую" in l], [], s.journal())
@@ -1278,9 +1328,8 @@ class TestWaitMark(unittest.TestCase):
 
 
 class TestBusy(unittest.TestCase):
-    """Живая работа сессии по реестру сторожа. Считаются тут субагенты: конца
-    фоновой команды голова не дождётся, и проход, отложенный ради такой записи,
-    встал бы навсегда (DK-571)."""
+    """Живая работа сессии по реестру сторожа. Разряды разбираются порознь:
+    субагент назван видом, фоновая команда командной строкой."""
 
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="task-run-busy-")
@@ -1306,10 +1355,29 @@ class TestBusy(unittest.TestCase):
         self.registry({"a1": {"type": "exec-high", "state": "running"}})
         self.assertEqual(self.pipe.busy(), ["exec-high"])
 
-    def test_live_command_does_not_hold_the_pass(self):
+    def test_live_command_is_not_a_subagent(self):
         self.registry({"b1": {"type": "", "state": "running", "job": "shell",
                               "command": "shipctl merge DK-1"}})
         self.assertEqual(self.pipe.busy(), [])
+        self.assertEqual(self.pipe.shells(), ["shipctl merge DK-1"])
+
+    def test_finished_command_is_not_counted(self):
+        self.registry({"b1": {"type": "", "state": "done", "job": "shell",
+                              "command": "shipctl merge DK-1"}})
+        self.assertEqual(self.pipe.shells(), [])
+
+    def test_long_command_is_cut(self):
+        # Команда с путями заняла бы строку журнала целиком, а узнаётся она по
+        # началу.
+        self.registry({"b1": {"type": "", "state": "running", "job": "shell",
+                              "command": "shipctl merge DK-1 " + "x" * 200}})
+        got = self.pipe.shells()
+        self.assertEqual(len(got[0]), task_run.SHELL_CUT + 3, got)
+        self.assertTrue(got[0].startswith("shipctl merge DK-1 "), got)
+
+    def test_subagent_does_not_show_up_among_commands(self):
+        self.registry({"a1": {"type": "exec-high", "state": "running", "job": "subagent"}})
+        self.assertEqual(self.pipe.shells(), [])
 
 
 class TestJournal(unittest.TestCase):

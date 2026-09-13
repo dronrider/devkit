@@ -92,6 +92,7 @@ NOTIFY = "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"
 WATCH = "python3 ~/projects/devkit/hooks/agent-watch.py --hook claude-code"
 TURN = "python3 ~/projects/devkit/hooks/turn-mark.py --hook claude-code"
 PLAN = "python3 ~/projects/devkit/hooks/plan-watch.py --hook claude-code"
+HOLD = "python3 ~/projects/devkit/hooks/goal-hold.py --hook claude-code"
 SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
  "hooks": {"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-symbols.py --hook"},
@@ -125,6 +126,7 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"}
 ]}], "Stop": [{"hooks": [
+  {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"},
@@ -531,7 +533,7 @@ class Sandbox:
         (home / ".devkit" / "quota").mkdir(parents=True)
         allow = json.dumps(list(perms.MACHINE_ALLOW), ensure_ascii=False)
         deny = json.dumps(list(perms.SECRET_DENY), ensure_ascii=False)
-        text = SETTINGS % (allow, deny, WATCH, NOTIFY, TURN, NOTIFY, WATCH, PLAN, TURN,
+        text = SETTINGS % (allow, deny, WATCH, NOTIFY, TURN, NOTIFY, WATCH, PLAN, HOLD, TURN,
                            NOTIFY, TURN, NOTIFY, WATCH, NOTIFY, TURN)
         write(home / ".claude" / "settings.json",
               text.replace(FIXTURE_DEVKIT, os.path.realpath(str(self.dk))))

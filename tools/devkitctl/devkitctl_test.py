@@ -274,6 +274,21 @@ class ProjectFindingsTest(SandboxCase):
         self.assertNotIn_("plan-watch.py не подключён", out,
                           "подключённый сторож плана попал в находку")
 
+    def test_5g_goal_hold_hook(self):
+        # Держатель хода цикла цели (DK-971) стоит на Stop, и его пропажа это
+        # находка: без него сессия отдаёт ход посреди цели.
+        full = read(self.settings)
+        drop_lines(self.settings, "goal-hold.py")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("держатель хода goal-hold.py не подключён на событии Stop", out,
+                       "нет находки про неподключённого держателя хода")
+        self.assertIn_("до реплики человека", out,
+                       "находка не говорит, что ломается без держателя")
+        write(self.settings, full)
+        _, out = self.box.doctor(self.proj)
+        self.assertNotIn_("goal-hold.py не подключён", out,
+                          "подключённый держатель попал в находку")
+
     def test_5b_retry_watchdog_key(self):
         # Без env-ключа недокументированного ретрай-вотчдога доктор называет
         # это находкой (стенд DK-172 разницы в поведении с ключом не нашёл, но

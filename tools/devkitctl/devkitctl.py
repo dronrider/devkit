@@ -312,6 +312,11 @@ PHASE_HOOK = "phase-budget.py"
 # Категория сообщения в hook_gaps своя: без сторожа кольцо дашборда врёт про
 # живой заход молча, и это не то же самое, что потерянный отчёт субагента.
 PLAN_HOOK = "plan-watch.py"
+# Держатель хода цикла цели (DK-971): Stop на пустом матчере, потому что цель
+# ведётся любым ходом сессии, а не правкой файла. Категория сообщения в
+# hook_gaps своя: без держателя сессия отдаёт ход посреди цели и та стоит до
+# реплики человека, а это не то же самое, что потерянный отчёт субагента.
+HOLD_HOOK = "goal-hold.py"
 # Хуки, переименованные в devkit: прежнее имя файла и нынешнее (DK-440). Строка
 # с прежним именем зовёт файл, которого в чекауте уже нет, и харнес спотыкается
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
@@ -361,6 +366,7 @@ HOOK_LAYOUT = (
     ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/plan-watch.py --hook claude-code"),
+    ("Stop", "", "python3 %s/hooks/goal-hold.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
     ("StopFailure", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
     ("Notification", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
@@ -1532,6 +1538,10 @@ def hook_gaps(text, settings):
                             "работ с делом не ловит никто, и кольцо дашборда врёт про живой "
                             "заход, пока человек не спросит сессию сам (hooks/README.md)"
                             % (PLAN_HOOK, settings))
+        elif script == HOLD_HOOK:
+            findings.append("держатель хода %s не подключён на событии Stop в %s: сессия, "
+                            "ведущая цель, отдаёт ход посреди неё, и цель стоит до реплики "
+                            "человека (hooks/README.md)" % (HOLD_HOOK, settings))
         elif script == PHASE_HOOK:
             findings.append("сторожок стыка фаз %s не подключён на событии PostToolUse Bash в %s: "
                             "остаток окна на переходе задачи никто не считает, и хвост задачи "

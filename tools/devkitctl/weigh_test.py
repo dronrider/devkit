@@ -200,12 +200,15 @@ class ThresholdsTest(unittest.TestCase):
         # сегодняшних тел, поэтому и проверяется через LIMIT: разъехавшиеся числа
         # иначе заметит только читатель README.
         want = -(-round(weigh.LIMIT * weigh.CHARS_PER_TOKEN) // 100) * 100
-        self.assertEqual(weigh.SKILL_BODY_LIMIT, want)
         self.assertEqual(want, 16000)
+        # Надбавка DK-941 держит порог выше формулы, пока DK-976 не вернёт
+        # тело board-task под неё. Сверяются оба числа: уехавшая формула
+        # и снятая надбавка это разные события.
+        self.assertEqual(weigh.SKILL_BODY_LIMIT, 18000)
         self.assertIsNone(weigh.evaluate_skill_body("test-skill", weigh.SKILL_BODY_LIMIT))
         f = weigh.evaluate_skill_body("test-skill", weigh.SKILL_BODY_LIMIT + 1)
         self.assertIsNotNone(f)
-        self.assertIn("порог 16 000 символов", f)
+        self.assertIn("порог 18 000 символов", f)
 
 
 class KeychainTest(SandboxCase):
@@ -567,12 +570,12 @@ class MeasureTest(SandboxCase):
         # (DK-029, сценарий проверки, шаг 4), тело в норме молчит про него.
         probe = self.box.dk / "kit" / "skills" / "oversized-probe"
         write(probe / "SKILL.md",
-              "---\nname: oversized-probe\ndescription: тестовый скилл.\n---\n" + "т" * 16500)
+              "---\nname: oversized-probe\ndescription: тестовый скилл.\n---\n" + "т" * 18500)
         try:
             with fake_home(self.whome):
                 found = weigh.skill_findings(str(self.box.dk))
-            self.assertTrue([f for f in found if "тело скилла oversized-probe: 16 500 символов, "
-                                                 "порог 16 000 символов; резать скилл надвое" in f],
+            self.assertTrue([f for f in found if "тело скилла oversized-probe: 18 500 символов, "
+                                                 "порог 18 000 символов; резать скилл надвое" in f],
                             "разбухший скилл на диске не дал находки: %s" % (found,))
             self.assertFalse([f for f in found if "тело скилла board-groom" in f],
                              "тело скилла в пределах порога дало находку")
@@ -736,10 +739,10 @@ class DoctorResidencyTest(SandboxCase):
         self.assertRegex(out, r"(?m)^  итого", "в таблице карманов нет итоговой строки")
 
     def test_2_oversized_skill_body(self):
-        self.machine_skill(self.SKILL + "т" * 16500)
+        self.machine_skill(self.SKILL + "т" * 18500)
         rc, out = self.rddoc()
         self.assertEqual(rc, 1, "разбухший скилл не поднял код возврата: %s" % out)
-        self.assertIn_("тело скилла tiny-skill: 16 500 символов, порог 16 000 символов; "
+        self.assertIn_("тело скилла tiny-skill: 18 500 символов, порог 18 000 символов; "
                        "резать скилл надвое", out, "нет находки про разбухшее тело скилла")
         self.machine_skill(self.SKILL + "т" * 200)
         rc, out = self.rddoc()
@@ -786,7 +789,7 @@ class DoctorResidencyTest(SandboxCase):
         # Доктор подключённого проекта печатает вес его резидента (карманы те же,
         # смотрит на них проект), а находок devkit не выдаёт: ни разбухшего тела
         # скилла, ни его карманов. Чинить их в проекте нечем (DK-029, DK-190).
-        self.machine_skill(self.SKILL + "т" * 16500)
+        self.machine_skill(self.SKILL + "т" * 18500)
         try:
             other = git_init(self.box.root / "resid" / "otherproj")
             _, out = self.box.dkctl_run("doctor", "-C", str(other),

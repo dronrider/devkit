@@ -246,15 +246,24 @@ def sweep(agents, now):
                 if isinstance(v, dict) and now - float(v.get("started") or 0) < LIFETIME)
 
 
-def entry_of(job, kind, description, command, output, now):
+def entry_of(job, kind, description, command, output, now, owner=""):
     return {"type": kind, "description": description, "command": command,
             "output": output, "started": now, "done": 0, "message": "",
-            "state": RUNNING, "told": False, "warned": False, "job": job}
+            "state": RUNNING, "told": False, "warned": False, "job": job,
+            "owner": owner}
 
 
 def launched(agents, event, now):
+    """Запись о запущенной работе. Ключ у неё это её собственный номер, номер
+    фоновой команды у команды и agentId у субагента. Команда, уведённая в фон
+    изнутри субагента, ложится своим ключом и запись субагента не трогает:
+    раньше обе шли под номером субагента, команда затирала исполнителя, и
+    оболочка конвейера считала живого исполнителя кончившимся (DK-966). Чей ход
+    работу запустил, остаётся полем owner: по нему разбирается, откуда команда
+    взялась."""
     agents[event.agent_id] = entry_of(event.job or SUBAGENT_JOB, event.agent_type,
-                                      event.description, event.command, event.output, now)
+                                      event.description, event.command, event.output, now,
+                                      event.owner)
     return agents
 
 
@@ -510,8 +519,11 @@ def handle(event, env=None, now=None, sleep=time.sleep, stream=None):
         if not event.agent_id:
             return 0
         if update(path, event.session, lambda a: launched(a, event, now), now, sleep) is not None:
-            log(event.session, event.agent_id, "запуск",
-                event.command or event.description, env, event.job or SUBAGENT_JOB)
+            what = event.command or event.description
+            if event.owner:
+                what = "%s, запущено субагентом %s" % (what, event.owner)
+            log(event.session, event.agent_id, "запуск", what, env,
+                event.job or SUBAGENT_JOB)
         return 0
     if event.kind == hookio.SUBAGENT_DONE:
         entry = update(path, event.session, lambda a: finished(a, event, now), now, sleep)

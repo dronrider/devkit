@@ -41,9 +41,9 @@ def sample(name):
 
 def event(kind, session=SID, transcript="", agent_id="", agent_type="general-purpose",
           description="", output="", message="", jobs=(), active=False,
-          job_kind="subagent", command=""):
+          job_kind="subagent", command="", owner=""):
     return hookio.Agent(kind=kind, session=session, cwd="/tmp/work", transcript=transcript,
-                        agent_id=agent_id, job=job_kind, agent_type=agent_type,
+                        agent_id=agent_id, owner=owner, job=job_kind, agent_type=agent_type,
                         description=description, command=command, output=output,
                         message=message, jobs=jobs, active=active)
 
@@ -273,6 +273,29 @@ class Watch(unittest.TestCase):
         self.assertIn("разряд shell", line)
         self.assertIn("событие запуск", line)
         self.assertIn(CMD, line)
+
+    def test_command_from_a_subagent_keeps_both_records(self):
+        # Предмет DK-966. Исполнитель пустил фоновую команду, и до правки её
+        # запись ложилась ключом субагента: живой исполнитель пропадал из
+        # реестра, оболочка конвейера считала фоновую работу конченной и
+        # снимала окно вместе с ним. Событие собрано из двух живых образцов:
+        # номер фоновой работы взят у команды, ID субагента у хода внутри
+        # субагента.
+        raw = sample("tool-done-bash-background")
+        inside = sample("tool-done-subagent")
+        raw["agent_id"] = inside["agent_id"]
+        raw["agent_type"] = inside["agent_type"]
+        ev = hookio.parse_agent("claude-code", raw)._replace(session=SID)
+        self.assertEqual(ev.agent_id, "bpmzinhpl")
+        self.assertEqual(ev.owner, inside["agent_id"])
+        self.launch(agent_id=inside["agent_id"])
+        self.handle(ev, now=NOW)
+        got = self.registry()
+        self.assertEqual(sorted(got), sorted([inside["agent_id"], "bpmzinhpl"]))
+        self.assertEqual(got[inside["agent_id"]]["job"], "subagent")
+        self.assertEqual(got[inside["agent_id"]]["state"], watch.RUNNING)
+        self.assertEqual(got["bpmzinhpl"]["job"], "shell")
+        self.assertIn("запущено субагентом %s" % inside["agent_id"], self.journal())
 
     def test_command_from_the_job_list_is_registered(self):
         # Раскладка хуков, положенная до разряда команд, зовёт сторожа одним

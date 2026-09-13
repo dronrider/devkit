@@ -91,13 +91,15 @@ Start = collections.namedtuple("Start", "session cwd transcript source")
 # лежит ещё и сама командная строка, у субагента этого поля нет.
 Job = collections.namedtuple("Job", "id kind status description command")
 # Фоновая работа глазами сторожа завершений: ось события, сессия, дерево,
-# транскрипт, ID работы, разряд работы, роль субагента, чем названа, командная
-# строка, куда сложен отчёт, последняя реплика и перечень фоновых работ сессии
-# на этот момент. Признак active это отметка харнеса о том, что ход уже
-# продолжен стоп-хуком. Поле, которого событие не несёт, приходит пустым: у
-# конца хода нет ни ID работы, ни роли, а у команды оболочки нет роли субагента.
+# транскрипт, ID работы, ID субагента, из которого её запустили, разряд работы,
+# роль субагента, чем названа, командная строка, куда сложен отчёт, последняя
+# реплика и перечень фоновых работ сессии на этот момент. Признак active это
+# отметка харнеса о том, что ход уже продолжен стоп-хуком. Поле, которого
+# событие не несёт, приходит пустым: у конца хода нет ни ID работы, ни роли, у
+# команды оболочки нет роли субагента, а поле owner пусто у всего, что запущено
+# самой сессией.
 Agent = collections.namedtuple(
-    "Agent", "kind session cwd transcript agent_id job agent_type description command "
+    "Agent", "kind session cwd transcript agent_id owner job agent_type description command "
              "output message jobs active")
 
 
@@ -268,12 +270,19 @@ def claude_code_agent(event):
         kind = AGENT_LAUNCHED
     elif kind is None:
         return None
+    # ID работы это её собственный номер: у команды оболочки номер фоновой
+    # работы харнеса, у субагента его agentId. Поле agent_id самого события
+    # говорит про другое, про субагента, внутри которого ход случился, и брать
+    # его номер работе нельзя: фоновая команда исполнителя ложилась в реестр
+    # тем же ключом, что и сам исполнитель, и затирала его запись (DK-966).
+    own = text_of(event.get("agent_id"))
+    work = (task or response_field(response, "agentId")) if kind == AGENT_LAUNCHED else own
     return Agent(kind=kind,
                  session=text_of(event.get("session_id")),
                  cwd=text_of(event.get("cwd")),
                  transcript=text_of(event.get("transcript_path")),
-                 agent_id=(text_of(event.get("agent_id"))
-                           or response_field(response, "agentId") or task),
+                 agent_id=work,
+                 owner=own if kind == AGENT_LAUNCHED and work != own else "",
                  job=job,
                  agent_type=text_of(event.get("agent_type")) or text_of(ti.get("subagent_type")),
                  description=text_of(ti.get("description")) or response_field(response, "description"),

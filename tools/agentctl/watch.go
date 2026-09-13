@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/sessions"
 )
 
 // Реестр целей под надзором сторожка цикла (tools/devkitctl/watch.py). Сторожок
@@ -28,7 +30,20 @@ const (
 // Порядок известных ключей записи, тот же, что у сторожка (watch.py, KEYS):
 // сначала поля гейта, следом отметки сторожка, а незнакомое дописывается в
 // хвост по алфавиту.
-var watchKeys = []string{"goal", "root", "file", "seen", "stopped"}
+var watchKeys = []string{"goal", "root", "file", "session", "carrier", "seen", "marker", "stopped"}
+
+// Носители цикла в записи. Чат это живая сессия человека, оболочка это
+// goal-run.py, и она называет себя сама переменной окружения дочернему клиенту.
+// Различать их приходится потому, что ход у них кончается по-разному: виток
+// оболочки обязан кончиться маркером и отдать ход, а сессия чата ведёт цель до
+// стоп-маркера, и её ход держит hooks/goal-hold.py (DK-971).
+const (
+	carrierChat  = "chat"
+	carrierShell = "shell"
+	// Переменную выставляет оболочка перед запуском клиента, и дочерний
+	// процесс её наследует вместе со своими хуками.
+	shellEnv = "DEVKIT_GOAL_SHELL"
+)
 
 // watchSlug делает из пути корня имя, годное в имя файла: два проекта с
 // одинаковым именем директории не должны занимать одну запись реестра.
@@ -45,10 +60,11 @@ func watchSlug(root string) string {
 }
 
 // watchRegister отмечает, что цель ведётся: сторожок берёт отсюда корень
-// проекта и ID цели, а движение меряет по журналу цикла и по .devkit/log
-// этого корня. Провал
-// записи гейт не роняет, как и провал журнала запусков: без надзора цикл
-// работает, просто молча.
+// проекта и ID цели, а движение меряет по следам самого цикла, журналу
+// `.devkit/goal-<ID>.log` и «Журналу» файла цели (DK-971). Тут же запись
+// называет сессию цикла и его носителя: по ним держатель хода узнаёт свою
+// сессию среди соседних. Провал записи гейт не роняет, как и провал журнала
+// запусков: без надзора цикл работает, просто молча.
 func watchRegister(root, goalPath string, now time.Time) {
 	path, err := goalPathOf(root, goalPath)
 	if err != nil {
@@ -73,10 +89,46 @@ func watchRegister(root, goalPath string, now time.Time) {
 	entry := filepath.Join(dir, id+"-"+watchSlug(root)+".watch")
 	data := watchRead(entry)
 	delete(data, "stopped")
+	// Маркер стопа снимает тот же гейт: цикл, дошедший до гейта снова, кончился
+	// не насовсем, и держатель хода обязан судить по нынешнему заходу, а не по
+	// прошлому стопу.
+	delete(data, "marker")
 	data["goal"] = id
 	data["root"] = root
 	data["file"] = abs
+	data["session"] = sessions.Own()
+	data["carrier"] = carrierChat
+	if strings.TrimSpace(os.Getenv(shellEnv)) != "" {
+		data["carrier"] = carrierShell
+	}
 	data["seen"] = now.Format(watchStamp)
+	os.WriteFile(entry, []byte(watchBody(data)), 0o644)
+}
+
+// watchMarker кладёт в запись реестра маркер, которым кончился цикл. Читает его
+// держатель хода (hooks/goal-hold.py): стоп-маркер это единственное, чем сессия
+// чата вправе кончить работу над целью, и по записи он виден и после конца хода.
+// Маркер `continue` работу не кончает, и прошлый стоп с записи снимается.
+func watchMarker(root, goalPath, marker string) {
+	path, err := goalPathOf(root, goalPath)
+	if err != nil {
+		return
+	}
+	id := strings.TrimSuffix(filepath.Base(path), ".md")
+	home, err := os.UserHomeDir()
+	if err != nil || id == "" {
+		return
+	}
+	entry := filepath.Join(home, filepath.FromSlash(watchDir), id+"-"+watchSlug(root)+".watch")
+	data := watchRead(entry)
+	if len(data) == 0 {
+		return
+	}
+	if marker == goalGoOn {
+		delete(data, "marker")
+	} else {
+		data["marker"] = marker
+	}
 	os.WriteFile(entry, []byte(watchBody(data)), 0o644)
 }
 

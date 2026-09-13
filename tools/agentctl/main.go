@@ -329,6 +329,11 @@ func main() {
 			fail(rerr)
 		}
 		msg, err = cmdLap(root, *goal, *note, *marker, start, timeNow())
+		if err == nil {
+			// Стоп-маркер уезжает в запись реестра: держатель хода в чате
+			// отпускает сессию только по нему (DK-971).
+			watchMarker(root, *goal, *marker)
+		}
 	case "tally":
 		fs := flag.NewFlagSet("tally", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

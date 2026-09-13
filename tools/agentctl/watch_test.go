@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/sessions"
 )
 
 // watchEntries читает реестр сторожка из подставного дома.
@@ -161,5 +163,103 @@ func TestWatchSlugKeepsProjectsApart(t *testing.T) {
 	}
 	if strings.ContainsAny(a, "/. ") {
 		t.Errorf("в имени записи остались символы пути: %s", a)
+	}
+}
+
+// TestWatchRegisterNamesSessionAndCarrier: запись называет сессию цикла и его
+// носителя. По ним держатель хода (hooks/goal-hold.py) отличает свою сессию от
+// соседних, а цикл в чате от витка оболочки, которому ход отдавать положено.
+func TestWatchRegisterNamesSessionAndCarrier(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(sessions.SessionEnv, "sess-1")
+	root := t.TempDir()
+	goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+
+	watchRegister(root, "docs/tasks/T-100.md", time.Now())
+	body, err := os.ReadFile(watchEntries(t, home)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"session = sess-1", "carrier = chat"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("в записи нет строки %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestWatchRegisterKnowsTheShell: виток под оболочкой goal-run помечен своим
+// носителем. Ход такого витка кончается маркером, и держать его нельзя.
+func TestWatchRegisterKnowsTheShell(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(shellEnv, "T-100")
+	root := t.TempDir()
+	goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+
+	watchRegister(root, "docs/tasks/T-100.md", time.Now())
+	body, err := os.ReadFile(watchEntries(t, home)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "carrier = shell") {
+		t.Errorf("виток оболочки записан чатом:\n%s", body)
+	}
+}
+
+// TestWatchMarkerWritesStop: стоп-маркер витка ложится в запись реестра. Это
+// единственное, чем сессия чата вправе кончить работу над целью, и держателю
+// хода нужен машинный след, переживающий конец хода.
+func TestWatchMarkerWritesStop(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+	watchRegister(root, "docs/tasks/T-100.md", time.Now())
+	name := watchEntries(t, home)[0]
+
+	watchMarker(root, "docs/tasks/T-100.md", "wait-human")
+	body, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "marker = wait-human") {
+		t.Errorf("стоп-маркер не лёг в запись:\n%s", body)
+	}
+	// Продолжение работы маркер снимает: цикл едет дальше, и держатель хода
+	// обязан снова держать ход.
+	watchMarker(root, "docs/tasks/T-100.md", "continue")
+	body, err = os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "marker") {
+		t.Errorf("маркер стопа пережил продолжение цикла:\n%s", body)
+	}
+}
+
+// TestLapWritesMarkerToRegistry: живая проводка от команды до записи. Маркер
+// кладёт главный разбор после cmdLap, и в юните этой проводки не видно.
+func TestLapWritesMarkerToRegistry(t *testing.T) {
+	home := t.TempDir()
+	root := writeBoard(t)
+	goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+	cmd := exec.Command("go", "run", ".", "-C", root, "spend", "--goal", "docs/tasks/T-100.md")
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("spend: %v\n%s", err, out)
+	}
+	cmd = exec.Command("go", "run", ".", "-C", root, "lap", "--goal", "docs/tasks/T-100.md",
+		"--note", "цель дошла до вопроса", "--marker", "wait-human")
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lap: %v\n%s", err, out)
+	}
+	body, err := os.ReadFile(watchEntries(t, home)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "marker = wait-human") {
+		t.Errorf("маркер витка не доехал до записи реестра:\n%s", body)
 	}
 }

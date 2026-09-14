@@ -184,3 +184,104 @@ func TestPlanKeepsUnknownOp(t *testing.T) {
 		t.Fatal("неизвестное действие принято молча")
 	}
 }
+
+// TestPlanSetCarriesStates про перекладку плана посреди захода: снятый шаг
+// уходит из набора, а отметки закрытых и идущего остаются на месте (DK-609).
+func TestPlanSetCarriesStates(t *testing.T) {
+	home := t.TempDir()
+	env := planEnv(map[string]string{planEnvSession: "s1"})
+
+	if _, err := cmdPlan(home, "set", []string{"разведка\nправка\nотменённый шаг\nкоммит"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "done", []string{"разведка"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "step", []string{"правка"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+
+	// Работа сменилась: отменённый шаг снят, к хвосту добавился новый этап.
+	out, err := cmdPlan(home, "set", []string{"разведка\nправка\nкоммит\nвычитка"}, "", "", env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := planFile(t, home, "s1.json")
+	want := []planItem{
+		{Text: "разведка", State: "completed"},
+		{Text: "правка", State: "in_progress"},
+		{Text: "коммит", State: "pending"},
+		{Text: "вычитка", State: "pending"},
+	}
+	if len(plan) != len(want) {
+		t.Fatalf("пунктов %d, ждали %d: %v", len(plan), len(want), plan)
+	}
+	for i, it := range plan {
+		if it != want[i] {
+			t.Fatalf("пункт %d это %v, ждали %v", i+1, it, want[i])
+		}
+	}
+	if !strings.Contains(out, "закрыто 1") || !strings.Contains(out, "идёт 2") {
+		t.Fatalf("печать перекладки не назвала закрытого и идущего: %s", out)
+	}
+}
+
+// TestPlanSetCarryIgnoresCase про то, что пункт, переписанный с другим
+// отступом или регистром первой буквы, остаётся тем же пунктом.
+func TestPlanSetCarryIgnoresCase(t *testing.T) {
+	home := t.TempDir()
+	env := planEnv(map[string]string{planEnvSession: "s1"})
+
+	if _, err := cmdPlan(home, "set", []string{"Разведка\nправка"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "done", []string{"Разведка"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "set", []string{"  разведка  \nправка"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	if got := planFile(t, home, "s1.json")[0].State; got != "completed" {
+		t.Fatalf("пункт после перекладки в состоянии %q, ждали completed", got)
+	}
+}
+
+// TestPlanSetCarryOnlyOnce про повторяющийся текст: два одинаковых пункта не
+// забирают одну и ту же прежнюю отметку дважды.
+func TestPlanSetCarryOnlyOnce(t *testing.T) {
+	home := t.TempDir()
+	env := planEnv(map[string]string{planEnvSession: "s1"})
+
+	if _, err := cmdPlan(home, "set", []string{"прогон\nправка"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "done", []string{"прогон"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "set", []string{"прогон\nправка\nпрогон"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	plan := planFile(t, home, "s1.json")
+	if plan[0].State != "completed" {
+		t.Fatalf("первый прогон в состоянии %q, ждали completed", plan[0].State)
+	}
+	if plan[2].State != "pending" {
+		t.Fatalf("второй прогон в состоянии %q, ждали pending", plan[2].State)
+	}
+}
+
+// TestPlanSetFreshOnEmpty про первый план сессии: переносить нечего, и все
+// пункты ложатся ждущими.
+func TestPlanSetFreshOnEmpty(t *testing.T) {
+	home := t.TempDir()
+	env := planEnv(map[string]string{planEnvSession: "s1"})
+
+	if _, err := cmdPlan(home, "set", []string{"разведка\nправка"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range planFile(t, home, "s1.json") {
+		if it.State != "pending" {
+			t.Fatalf("пункт первого плана в состоянии %q, ждали pending", it.State)
+		}
+	}
+}

@@ -186,6 +186,36 @@ func planItems(args []string) []planItem {
 	return out
 }
 
+// planSame сводит пункт прежнего плана с пунктом нового: сессия перекладывает
+// план своими словами, и разница в отступе или в регистре первой буквы не
+// делает пункт другим.
+func planSame(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+// planCarry переносит состояния прежнего плана в переложенный набор. Пункт с
+// тем же текстом остаётся закрытым или идущим, снятый шаг просто не попадает в
+// новый набор, а новых состояний в файле не заводится. Прежде set собирал
+// список целиком из pending, и сессия, снявшая один отменённый пункт, роняла
+// отметки на остальных: кольцо в шапке разговора откатывалось к нулю посреди
+// работы (DK-609).
+func planCarry(old, fresh []planItem) []planItem {
+	taken := make([]bool, len(old))
+	for i := range fresh {
+		for j := range old {
+			if taken[j] || !planSame(old[j].Text, fresh[i].Text) {
+				continue
+			}
+			taken[j] = true
+			if old[j].State != "" {
+				fresh[i].State = old[j].State
+			}
+			break
+		}
+	}
+	return fresh
+}
+
 // planMark это значок состояния в печати плана.
 func planMark(state string) string {
 	switch state {
@@ -283,6 +313,7 @@ func cmdPlan(home, op string, args []string, sid, label string, env func(string)
 		if len(items) == 0 {
 			return "", fmt.Errorf("жду пункты плана: plan set <пункт> [<пункт>...]")
 		}
+		items = planCarry(plan, items)
 		if err := planWrite(a.file, items); err != nil {
 			return "", err
 		}

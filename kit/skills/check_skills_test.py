@@ -917,6 +917,18 @@ class TestLiveReply(SkillTree):
             f.write("---\nname: goal-loop\ndescription: Звать, всегда.\n---\n\n%s"
                     % (self.LOOP if body is None else body))
 
+    def test_shell_call_in_the_cases_file_is_checked(self):
+        # Раздел про оболочку уехал в соседний файл разрезом DK-971, и правило
+        # про python3 обязано ловить голый путь и там.
+        self.write_loop()
+        d = os.path.join(self.here, "goal-loop")
+        with open(os.path.join(d, "cases.md"), "w", encoding="utf-8") as f:
+            f.write("## Оболочка goal-run\n\n"
+                    "```bash\n~/projects/devkit/kit/skills/goal-loop/goal-run.py DK-100\n```\n")
+        fails = check_skills.check_live_reply(self.here)
+        self.assertTrue(any("без python3" in f for f in fails),
+                        "голый путь в соседнем файле прошёл мимо сторожа: %s" % fails)
+
     def test_full_rule_passes(self):
         self.write_loop()
         self.assertEqual(check_skills.check_live_reply(self.here), [])

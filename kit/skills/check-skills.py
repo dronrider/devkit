@@ -598,7 +598,10 @@ def check_live_reply(here):
                 fails.append("goal-loop: %s" % why)
         if "Журнал" not in body:
             fails.append("goal-loop: живая реплика не оседает записью «Журнала», поворот работы останется без причины")
-    for line in text.split("\n"):
+    # Зов оболочки ищется и в соседнем файле разбора: раздел про неё уехал туда
+    # разрезом DK-971, а правило про python3 от переезда не поменялось.
+    cases = read(os.path.join(here, "goal-loop", "cases.md")) or ""
+    for line in (text + "\n" + cases).split("\n"):
         if "goal-run.py" in line and "/" in line and "python3" not in line:
             fails.append("goal-loop: оболочка зовётся путём без python3, а машинный контур даёт только Bash(python3:*)")
             break

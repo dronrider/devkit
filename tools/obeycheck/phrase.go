@@ -124,3 +124,32 @@ func assistantReplies(transcript string) (string, error) {
 	}
 	return strings.Join(parts, "\n\n"), nil
 }
+
+// lastSessionID достаёт ID сессии из транскрипта headless-прогона: событие
+// stream-json несёт его почти на каждой строке, а нужен он один раз, самый
+// свежий, чтобы адресовать вторую реплику ключом --resume и найти файл плана
+// той же сессии в проверке.
+func lastSessionID(transcript string) (string, error) {
+	data, err := os.ReadFile(transcript)
+	if err != nil {
+		return "", fmt.Errorf("транскрипт: %v", err)
+	}
+	var id string
+	for _, line := range strings.Split(string(data), "\n") {
+		t := strings.TrimSpace(line)
+		if !strings.HasPrefix(t, "{") {
+			continue
+		}
+		var ev struct {
+			SessionID string `json:"session_id"`
+		}
+		if json.Unmarshal([]byte(t), &ev) != nil || ev.SessionID == "" {
+			continue
+		}
+		id = ev.SessionID
+	}
+	if id == "" {
+		return "", fmt.Errorf("в транскрипте нет строки с session_id")
+	}
+	return id, nil
+}

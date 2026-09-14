@@ -214,6 +214,39 @@ func TestRunEnvironment(t *testing.T) {
 	}
 }
 
+// Вторая реплика человека (секция «Ответ») уходит той же сессии: команда
+// прогона зовётся дважды, а второй раз с ключом --resume и ID сессии,
+// который дала первая реплика. Одним длинным промптом это не заменить: живой
+// чат получает вторую реплику новым ходом, а не припиской к первому.
+func TestReplyResumesSameSession(t *testing.T) {
+	p := params(t, scenarios(t, "reply"), "full", "core")
+	p.Repeats = 1
+	p.Work = t.TempDir()
+	p.Keep = true
+	report, failed := runOK(t, p)
+	if failed {
+		t.Fatalf("сценарий с двумя репликами не прошёл:\n%s", report)
+	}
+	work, err := filepath.EvalSymlinks(p.Work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(work, "reply-full-1", "project", "invocations.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("команда прогона позвана не два раза: %v", lines)
+	}
+	if strings.Contains(lines[0], "--resume") {
+		t.Fatalf("первый ход уже адресован --resume, а сессии ещё не было: %s", lines[0])
+	}
+	if !strings.Contains(lines[1], "--resume 11111111-2222-3333-4444-555555555555") {
+		t.Fatalf("вторая реплика не адресована ключом --resume к сессии первого хода: %s", lines[1])
+	}
+}
+
 // Субагентский конец: промпт уходит обёрнутым, а сценарий, объявленный
 // сессионным, на этом конце пропускается.
 func TestSubagentEnd(t *testing.T) {

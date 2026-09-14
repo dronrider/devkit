@@ -79,6 +79,32 @@ func trimNote(s string) string {
 	return strings.TrimSpace(strings.Join(lines, "; "))
 }
 
+// turnResult это исход одного вызова команды прогона: код ошибки плюс два
+// признака, нужных вызывающему отдельно от самой ошибки, стартовал ли процесс
+// вообще и не уткнулись ли в потолок времени.
+type turnResult struct {
+	err      error
+	started  bool
+	timedOut bool
+}
+
+// runTurn гоняет команду прогона одним ходом: промпт (или вторая реплика)
+// уходит на stdin, вывод дописывается в уже открытый транскрипт. Общий для
+// первого хода и для реплики: разница между ними только в аргументах команды
+// (--resume у реплики) и в тексте stdin.
+func (p Params) runTurn(e *runEnv, env []string, args []string, stdin string, tr *os.File) turnResult {
+	ctx, cancel := context.WithTimeout(context.Background(), p.Timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Dir = e.Project
+	cmd.Env = env
+	cmd.Stdin = strings.NewReader(stdin)
+	cmd.Stdout = tr
+	cmd.Stderr = tr
+	err := cmd.Run()
+	return turnResult{err: err, started: cmd.ProcessState != nil, timedOut: err != nil && ctx.Err() != nil}
+}
+
 // runOnce гоняет один сценарий на одной раскладке один раз: собирает окружение,
 // отдаёт промпт команде прогона и спрашивает у проверки код возврата. Зелено
 // или нет, решает только проверка: агент мог выйти с ошибкой и всё равно
@@ -104,23 +130,38 @@ func (p Params) runOnce(s Scenario, layout string, repeat int, dir string) (atte
 	if err != nil {
 		return a, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), p.Timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, p.Agent[0], p.Agent[1:]...)
-	cmd.Dir = e.Project
-	cmd.Env = env
-	cmd.Stdin = strings.NewReader(prompt)
-	cmd.Stdout = tr
-	cmd.Stderr = tr
-	runErr := cmd.Run()
-	tr.Close()
-	if runErr != nil && ctx.Err() != nil {
+	defer tr.Close()
+	res := p.runTurn(e, env, p.Agent, prompt, tr)
+	if res.timedOut {
 		a.Note = fmt.Sprintf("прогон не уложился в %s", p.Timeout)
 	}
-	if runErr != nil && cmd.ProcessState == nil {
-		return a, fmt.Errorf("команда прогона %q не запустилась: %v", strings.Join(p.Agent, " "), runErr)
+	if res.err != nil && !res.started {
+		return a, fmt.Errorf("команда прогона %q не запустилась: %v", strings.Join(p.Agent, " "), res.err)
 	}
-	out, err := shOut(e.Project, e.checkEnviron(env), s.Check, p.Timeout)
+	sessionID := ""
+	if id, idErr := lastSessionID(e.Transcript); idErr == nil {
+		sessionID = id
+	}
+	if res.err == nil && s.Reply != "" {
+		if sessionID == "" {
+			return a, fmt.Errorf("сценарий %s: вторая реплика без ID сессии первого хода", s.ID)
+		}
+		args := append(append([]string{}, p.Agent...), "--resume", sessionID)
+		res = p.runTurn(e, env, args, s.Reply, tr)
+		if res.timedOut {
+			a.Note = fmt.Sprintf("вторая реплика не уложилась в %s", p.Timeout)
+		}
+		if res.err != nil && !res.started {
+			return a, fmt.Errorf("команда второй реплики %q не запустилась: %v", strings.Join(args, " "), res.err)
+		}
+	}
+	tr.Close()
+	runErr := res.err
+	checkEnv := e.checkEnviron(env)
+	if sessionID != "" {
+		checkEnv = append(checkEnv, "OBEY_SESSION_ID="+sessionID)
+	}
+	out, err := shOut(e.Project, checkEnv, s.Check, p.Timeout)
 	if err == nil {
 		a.Green = true
 		// Зелёная проверка при упавшей команде прогона это повод посмотреть

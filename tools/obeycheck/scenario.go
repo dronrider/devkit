@@ -18,6 +18,7 @@ type Scenario struct {
 	End      string // на каком конце гоняется: сессия, субагент или любой
 	Subjects []obey.Subject
 	Prompt   string
+	Reply    string // вторая реплика человека тем же ходом --resume; пусто, если реплика одна
 	Setup    string
 	Check    string
 	Judge    *Judge // судейская секция, необязательная
@@ -36,13 +37,14 @@ const (
 
 const (
 	sectPrompt = "Промпт"
+	sectReply  = "Ответ"
 	sectSetup  = "Подготовка"
 	sectCheck  = "Проверка"
 )
 
 // sectNames это секции сценария в порядке, в котором они перечисляются в
 // отказах разбора.
-var sectNames = []string{sectPrompt, sectSetup, sectCheck, sectJudge}
+var sectNames = []string{sectPrompt, sectReply, sectSetup, sectCheck, sectJudge}
 
 // runsOn отвечает, гоняется ли сценарий на этом конце. Сценарий про сам спавн
 // исполнителя субагентским концом бессмысленен, поэтому конец объявляется в
@@ -101,7 +103,7 @@ func parseScenario(path, text string) (Scenario, error) {
 		if !inCode && strings.HasPrefix(l, "## ") {
 			sect = strings.TrimSpace(l[3:])
 			switch sect {
-			case sectPrompt, sectSetup, sectCheck, sectJudge:
+			case sectPrompt, sectReply, sectSetup, sectCheck, sectJudge:
 			default:
 				return fail(ln, "неизвестная секция «%s»: жду %s", sect, strings.Join(sectNames, ", "))
 			}
@@ -145,6 +147,7 @@ func parseScenario(path, text string) (Scenario, error) {
 	}
 
 	s.Prompt = unfence(body[sectPrompt])
+	s.Reply = unfence(body[sectReply])
 	s.Setup = unfence(body[sectSetup])
 	s.Check = unfence(body[sectCheck])
 	if raw, ok := body[sectJudge]; ok {

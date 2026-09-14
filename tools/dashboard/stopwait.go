@@ -284,7 +284,10 @@ func (s *server) stopWaitOffSaid(key string) {
 	if sid == key || sid == "" {
 		return
 	}
-	if tmux := sessions.Last(s.bindsAll()[sid]).Tmux; tmux != "" {
+	// Окно ищет та же свёртка, что ставила заказ: по одной записи журнала у
+	// разговора с вырезанной записью рождения окна не находилось, заказ
+	// оставался, и Escape прилетал после слов человека (рубеж DK-716).
+	if tmux, _ := s.chatWinOf(sid, s.bindsAll(), s.peers(), s.chatWinMemory()); tmux != "" {
 		s.stopWaitOff(tmux)
 	}
 }

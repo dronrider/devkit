@@ -857,6 +857,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 	view := s.harnesses()
 	names := harnessRoots(view)
 	live := s.peers()
+	winMem := s.chatWinMemory()
 	// Слово живого клиента старше записи реестра. Запись кладёт хук старта из
 	// унаследованной переменной, и печатный подъём чужой сессии изнутри окна
 	// уводит имя мёртвому разговору: панель после этого рисует его живым, а
@@ -936,7 +937,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		// второго места сборки в дашборде нет (DK-793). Жилец имени ниже
 		// сверяется по записям журнала, а память окна в них не пишется, и её
 		// имя сверки не проходит.
-		winName, winSrc := s.chatWinOf(f.ID, recs, live)
+		winName, winSrc := s.chatWinOf(f.ID, recs, live, winMem)
 		tasks := ownTasks(sessions.Touched(recs[f.ID]), prefix)
 		if id := taskIDInName(f.suffix); id != "" && !hasTask(tasks, id) {
 			tasks = append([]string{id}, tasks...)
@@ -958,7 +959,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			Own:       winName != "",
 			Tmux:      winName, Tree: f.suffix, Branch: head.Branch,
 			Harness:  names[f.root],
-			Model:    s.chatModel(f.ID, last.Tmux),
+			Model:    s.chatModel(f.ID, winName),
 			Archived: store.Archived,
 			Hidden:   store.Hidden,
 			Goal:     goalTurnGoal(store.Hidden, head.First),
@@ -969,7 +970,10 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		// делятся моментом подъёма окна: номер чата дашборд отдаёт заново, и
 		// без этого деления новый разговор вставал бы одной строкой с прежним
 		// (DK-859).
-		e.win = chatLife(chatWin(f.projPath, last.Tmux), last.Time, winSinceOf(last.Tmux))
+		// Ключ склейки идёт по тому же имени, что и строка: у разговора с
+		// вырезанной записью рождения имя из журнала пустое, и заходы одного
+		// окна расходились бы по строкам (DK-430.15).
+		e.win = chatLife(chatWin(f.projPath, winName), last.Time, winSinceOf(winName))
 		// Устаревшее имя снимается: живую tmux-сессию под этим именем ведёт
 		// другая, более свежая запись реестра, и мерить ею живость этого
 		// разговора значило бы показывать его живым и ловить его по ?tmux=.
@@ -2481,20 +2485,23 @@ const (
 const chatWinLooked = "ни в журнале привязок, ни у живого клиента, ни в памяти окон дашборда"
 
 // chatWinOf собирает имя tmux-окна разговора одним местом на весь дашборд:
-// список чатов, стоп под перезапуск и прерывание хода зовут её же (DK-793).
-// Прежде ручки читали одну запись журнала, а список рядом добавлял к ней слово
-// живого клиента, и тот же чат список видел в окне, а действие над ним окна не
-// находило: запись рождения вырезается ротацией журнала, и разговор старше
-// пары дней делался для ручек чужим.
+// список чатов, стоп под перезапуск, прерывание хода и снятие дожима зовут её
+// же (DK-793). Прежде ручки читали одну запись журнала, а список рядом
+// добавлял к ней слово живого клиента, и тот же чат список видел в окне, а
+// действие над ним окна не находило: запись рождения вырезается ротацией
+// журнала, и разговор старше пары дней делался для ручек чужим.
 //
 // Источника три. Слово живого клиента старше всего: клиент называет своё окно
 // о себе и только пока жив, а запись журнала кладёт хук старта из
 // унаследованной переменной и промахивается (DK-673). Дальше журнал привязок.
-// Последней память окна: окно, поднятое дашбордом резюмом этого разговора,
-// помнит его как родителя, и до записи хука старта другого хозяина у имени
-// нет. Пустое имя значит, что ни один источник окна не назвал, и вторым
-// значением возвращается источник, у которого имя нашлось.
-func (s *server) chatWinOf(sid string, recs map[string][]sessionBind, live map[string]peer) (string, string) {
+// Последней память окна (mem, её собирает chatWinMemory): окно, поднятое
+// дашбордом резюмом этого разговора, помнит его как родителя, и до записи
+// хука старта другого хозяина у имени нет. Из нескольких таких окон берётся
+// поднятое позже всех, окно без отметки подъёма мертво и не считается. Пустое
+// имя значит, что ни один источник окна не назвал, а вторым значением идёт
+// источник, у которого имя нашлось.
+func (s *server) chatWinOf(sid string, recs map[string][]sessionBind, live map[string]peer,
+	mem map[string]chatStore) (string, string) {
 	if p, ok := live[sid]; ok {
 		if n := peerTmux(p); n != "" {
 			return n, chatWinByPeer
@@ -2503,16 +2510,31 @@ func (s *server) chatWinOf(sid string, recs map[string][]sessionBind, live map[s
 	if n := sessions.Last(recs[sid]).Tmux; n != "" {
 		return n, chatWinByBind
 	}
-	for _, name := range s.chatWatchNames() {
-		if s.chatStoreRead("tmux-"+name).From != sid {
+	best, at := "", int64(0)
+	for name, st := range mem {
+		if st.From != sid || st.Raised <= 0 || st.Raised < at {
 			continue
 		}
 		if sessions.TmuxOwner(recs, name) != "" || tmuxHeld(live, name) != "" {
 			continue
 		}
-		return name, chatWinByMemory
+		best, at = name, st.Raised
+	}
+	if best != "" {
+		return best, chatWinByMemory
 	}
 	return "", ""
+}
+
+// chatWinMemory читает память окон под присмотром по разу на имя: имён
+// горстка, а зовущих свёртку строк списка десятки, и читать файл на каждую
+// строку дорого (замечание ревью DK-793).
+func (s *server) chatWinMemory() map[string]chatStore {
+	mem := map[string]chatStore{}
+	for _, name := range s.chatWatchNames() {
+		mem[name] = s.chatStoreRead("tmux-" + name)
+	}
+	return mem
 }
 
 // chatForeignLive узнаёт, идёт ли разговор сейчас в чужом окне. Пустой tmux в
@@ -2561,7 +2583,7 @@ func (s *server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	}
 	recs := s.bindsAll()
 	last := sessions.Last(recs[sid])
-	last.Tmux, _ = s.chatWinOf(sid, recs, s.peers())
+	last.Tmux, _ = s.chatWinOf(sid, recs, s.peers(), s.chatWinMemory())
 	alive := tmuxAliveFn()
 	if body.Drop {
 		// Сессия, которой уже нет, это не отказ, а сделанное дело: человек жал
@@ -3231,7 +3253,7 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "task": agent.Task, "ask": agent})
 		return
 	}
-	name, _ := s.chatWinOf(sid, s.bindsAll(), s.peers())
+	name, _ := s.chatWinOf(sid, s.bindsAll(), s.peers(), s.chatWinMemory())
 	if name == "" {
 		// Разговор без нашей tmux-сессии это обычный случай, а не поломка:
 		// панель спрашивает всякий открытый разговор, и «ни на чём не стоит»
@@ -3474,7 +3496,7 @@ func (s *server) chatTmuxOf(w http.ResponseWriter, r *http.Request) (*Project, s
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return nil, "", "", false
 	}
-	name, _ := s.chatWinOf(sid, s.bindsAll(), s.peers())
+	name, _ := s.chatWinOf(sid, s.bindsAll(), s.peers(), s.chatWinMemory())
 	if name == "" {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
 			"разговор %s не живёт в нашей tmux (окна не нашёл %s): спрашивать его клиента неоткуда",

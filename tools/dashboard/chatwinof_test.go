@@ -83,24 +83,75 @@ func TestChatWinOfSources(t *testing.T) {
 	sid := "aaaa1111-1111-4111-8111-111111111111"
 	recs := map[string][]sessionBind{sid: {{Tmux: "chat-old-1", Time: "2026-08-23T14:40:00"}}}
 	live := map[string]peer{sid: {Tmux: "chat-new-1:@1.%1"}}
-	if name, src := e.s.chatWinOf(sid, recs, live); name != "chat-new-1" || src != chatWinByPeer {
+	mem := e.s.chatWinMemory()
+	if name, src := e.s.chatWinOf(sid, recs, live, mem); name != "chat-new-1" || src != chatWinByPeer {
 		t.Errorf("живой клиент не старше журнала: %s (%s)", name, src)
 	}
-	if name, src := e.s.chatWinOf(sid, recs, nil); name != "chat-old-1" || src != chatWinByBind {
+	if name, src := e.s.chatWinOf(sid, recs, nil, mem); name != "chat-old-1" || src != chatWinByBind {
 		t.Errorf("журнал без клиента не назвал окна: %s (%s)", name, src)
 	}
 	// Окно поднято резюмом этого разговора, хук старта ещё не написал записи.
 	e.s.chatRaised("chat-res-1", sid, "", "")
-	if name, src := e.s.chatWinOf(sid, nil, nil); name != "chat-res-1" || src != chatWinByMemory {
+	mem = e.s.chatWinMemory()
+	if name, src := e.s.chatWinOf(sid, nil, nil, mem); name != "chat-res-1" || src != chatWinByMemory {
 		t.Errorf("память окна не назвала окна резюма: %s (%s)", name, src)
 	}
 	// Имя занял родившийся разговор: память окна прежнему хозяину уже не отвечает.
 	born := "bbbb2222-2222-4222-8222-222222222222"
 	taken := map[string][]sessionBind{born: {{Tmux: "chat-res-1", Time: "2026-08-23T15:00:00"}}}
-	if name, src := e.s.chatWinOf(sid, taken, nil); name != "" || src != "" {
+	if name, src := e.s.chatWinOf(sid, taken, nil, mem); name != "" || src != "" {
 		t.Errorf("память окна отдала занятое имя: %s (%s)", name, src)
 	}
-	if name, src := e.s.chatWinOf(sid, nil, map[string]peer{born: {Tmux: "chat-res-1"}}); name != "" || src != "" {
+	if name, src := e.s.chatWinOf(sid, nil, map[string]peer{born: {Tmux: "chat-res-1"}}, mem); name != "" || src != "" {
 		t.Errorf("память окна отдала имя живого чужого клиента: %s (%s)", name, src)
+	}
+	// Второй резюм того же разговора в другом окне: свёртка отвечает поднятым
+	// позже, а не первым попавшимся в карте.
+	e.s.now = func() time.Time { return time.Now().Add(time.Minute) }
+	e.s.chatRaised("chat-res-2", sid, "", "")
+	mem = e.s.chatWinMemory()
+	if name, _ := e.s.chatWinOf(sid, nil, nil, mem); name != "chat-res-2" {
+		t.Errorf("память окна назвала не свежайший подъём: %s", name)
+	}
+	// Окно умерло, присмотр снял отметку подъёма: мёртвое имя не отвечает.
+	dead := e.s.chatStoreRead("tmux-chat-res-2")
+	dead.Raised = 0
+	if err := e.s.chatStoreWrite("tmux-chat-res-2", dead); err != nil {
+		t.Fatal(err)
+	}
+	if name, _ := e.s.chatWinOf(sid, nil, nil, e.s.chatWinMemory()); name != "chat-res-1" {
+		t.Errorf("память окна ответила мёртвым именем: %s", name)
+	}
+}
+
+// Имя окна дашборд переиспользует. Подъём нового разговора под старым именем
+// без резюма стирает родителя: иначе память окна отдавала бы прежнему
+// разговору чужое окно, пока новый не записался ни в журнал, ни в реестр
+// клиента, и стоп снимал бы чужое окно (замечание ревью DK-793).
+func TestChatWinOfForgetsParentOnReuse(t *testing.T) {
+	e, _ := chatEnv(t)
+	sid := "aaaa3333-3333-4333-8333-333333333333"
+	e.s.chatRaised("chat-res-1", sid, "", "")
+	e.s.chatRaised("chat-res-1", "", "", "")
+	if name, src := e.s.chatWinOf(sid, nil, nil, e.s.chatWinMemory()); name != "" {
+		t.Errorf("память окна отдала прежнему хозяину окно нового жильца: %s (%s)", name, src)
+	}
+}
+
+// Снятие дожима стопа словами человека идёт той же свёрткой: у разговора с
+// вырезанной записью рождения окно называет живой клиент, и заказ снимается,
+// иначе Escape прилетел бы в разговор после реплики (рубеж DK-716).
+func TestStopWaitOffSaidFindsWindowByLivePeer(t *testing.T) {
+	e, _ := chatEnv(t)
+	sid := "aaaa4444-4444-4444-8444-444444444444"
+	writePeerTmux(t, e.home, sid, "chat-XR-4-1:@4.%4", "busy")
+	st := e.s.chatStoreRead("tmux-chat-XR-4-1")
+	st.StopAt = time.Now().Unix()
+	if err := e.s.chatStoreWrite("tmux-chat-XR-4-1", st); err != nil {
+		t.Fatal(err)
+	}
+	e.s.stopWaitOffSaid("sess-" + sid)
+	if e.s.stopWaitOn("chat-XR-4-1") {
+		t.Error("реплика человека не сняла заказ дожима: окно у живого клиента не найдено")
 	}
 }

@@ -109,12 +109,39 @@ func TestBoardCacheCeiling(t *testing.T) {
 	c := e.loggedClient(t)
 	getStatus(t, c, e.srv.URL+"/api/projects/demo/board")
 
-	// Потолок памяти на доску 10 секунд (cache.go, boardTTL).
+	// Потолок памяти на доску 10 секунд (cache.go, boardTTL). Ответ уезжает
+	// старым сразу, а свежий подъём уходит в фоновую горутину (cache.go,
+	// projectBoard, ветка same+lagged): считать запуски можно только после
+	// того, как эта горутина закрыла свой полёт, а не по удаче планировщика.
 	e.advance(11 * time.Second)
 	getStatus(t, c, e.srv.URL+"/api/projects/demo/board")
+	awaitFly(t, e.s, e.proj)
 	if n := calls(t, log); n != 2 {
 		t.Fatalf("заход после потолка срока стоил %d запусков taskctl, жду два: память держит доску дольше срока", n)
 	}
+}
+
+// awaitFly ждёт, пока фоновый подъём доски по этому дереву не закроет свой
+// полёт. boardLoad (и awaitLoad поверх него) тут не годится: запись о полёте
+// (cache.go, takeoff) ложится в карту синхронно, до запуска горутины, а
+// счётчик занятых taskctl (taskctlGate) растёт только внутри неё, после
+// go s.fly. Между этими двумя моментами есть окно, где счётчик честно
+// показывает «никого», хотя горутина ещё не начала работу, и опрос по нему
+// был бы той же удачей планировщика, что и красный тест до этой правки.
+// Пропажа записи из карты полётов, наоборот, происходит только в defer самой
+// fly, после того как taskctl отработал и лёг в журнал.
+func awaitFly(t *testing.T, s *server, dir string) {
+	t.Helper()
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
+		s.mu.Lock()
+		_, flying := s.flights[dir]
+		s.mu.Unlock()
+		if !flying {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("фоновый подъём доски не закрылся: полёт по дереву завис")
 }
 
 // Причина отказа не запоминается: поднятый taskctl доезжает до экрана

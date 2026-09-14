@@ -1206,8 +1206,8 @@ func TestChatStopDropEndsLiveSession(t *testing.T) {
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("снятие чужого окна не отбито: %d %s", resp.StatusCode, text)
 	}
-	if !strings.Contains(text, "поднимал не дашборд") {
-		t.Errorf("отказ чужому окну не назвал причины: %s", text)
+	if !strings.Contains(text, "ни у живого клиента") {
+		t.Errorf("отказ чужому окну не назвал, где искали: %s", text)
 	}
 
 	// Мёртвый разговор, который дашборд не поднимал вовсе: окна нет ни у нас,

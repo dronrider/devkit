@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Самопроверка сторожа плана (DK-609): сдача сессии, чей план разошёлся с
-работой. Прогон идёт подпроцессом с живым образцом события конца хода, как в
-settings.json, а план, журнал отметок и конфиг порогов подставляются каталогом
+"""Самопроверка сторожа плана: сдача сессии, чей план разошёлся с работой
+(DK-609), и сдача сессии, у которой плана нет вовсе (DK-978). Прогон идёт
+подпроцессом с живым образцом события конца хода, как в settings.json, а
+план, транскрипт, журнал отметок и конфиг порогов подставляются каталогом
 теста: в живой ~/.devkit прогон не пишет.
 """
 import json
@@ -68,16 +69,44 @@ class Stand(object):
                                      time.localtime(time.time() - since + 1 + i))
                 f.write("%s сессия %s ход кончен повод - дерево /tmp\n" % (when, SHORT))
 
-    def run(self, event=None, config=None):
+    def lay_transcript(self, turns):
+        """Транскрипт сессии файлом: turns это список признаков «в ходе был
+        вызов инструмента» по одному на ход, ходы порезаны настоящими
+        репликами человека. Путь к файлу возвращается для события."""
+        path = os.path.join(self.tmp, "transcript.jsonl")
+        lines = []
+        for i, used_tools in enumerate(turns):
+            lines.append(json.dumps({"type": "user", "message": {
+                "role": "user", "content": "реплика человека %d" % i}}, ensure_ascii=False))
+            if used_tools:
+                lines.append(json.dumps({"type": "assistant", "message": {
+                    "role": "assistant", "content": [
+                        {"type": "tool_use", "name": "Bash", "input": {}}]}}, ensure_ascii=False))
+                # эхо результата инструмента: не реплика человека, границей хода не служит
+                lines.append(json.dumps({"type": "user", "message": {
+                    "role": "user", "content": [{"type": "tool_result", "content": "ок"}]}},
+                    ensure_ascii=False))
+            lines.append(json.dumps({"type": "assistant", "message": {
+                "role": "assistant", "content": [{"type": "text", "text": "ответ %d" % i}]}},
+                ensure_ascii=False))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        return path
+
+    def run(self, event=None, config=None, transcript=None, extra_env=None):
         """Прогон хука подпроцессом. Возврат (код, разобранная сдача)."""
         event = event or sample("turn-done.json")
         event["session_id"] = SESSION
+        if transcript is not None:
+            event["transcript_path"] = transcript
         env = dict(os.environ,
                    DEVKIT_PLAN_DIR=self.plans,
                    DEVKIT_TURN_MARK_LOG=self.turns,
                    DEVKIT_PLAN_CONFIG=config or self.config,
                    DEVKIT_PLAN_WATCH_LOG=self.log)
         env.pop("DEVKIT_PLAN_WATCH_OFF", None)
+        env.pop("CLAUDE_CODE_CHILD_SESSION", None)
+        env.update(extra_env or {})
         p = subprocess.run([sys.executable, HOOK, "--hook"], input=json.dumps(event),
                            capture_output=True, text=True, env=env)
         said = json.loads(p.stdout) if p.stdout.strip() else {}
@@ -295,6 +324,95 @@ class TestWatch(unittest.TestCase):
             json.dump(plan(("чужое", "in_progress")), f, ensure_ascii=False)
         s.lay_turns(20)
         code, said = s.run()
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {})
+
+    def test_no_plan_second_turn_with_tools_is_handed_over(self):
+        """Четвёртый признак (DK-978): плана нет вовсе, а второй ход подряд
+        идёт с вызовами инструментов. Это буквально порог DK-881 «длиннее
+        одного хода»."""
+        s = self.stand()
+        tr = s.lay_transcript([True, True])
+        code, said = s.run(transcript=tr)
+        self.assertEqual(code, 0)
+        self.assertEqual(said.get("decision"), "block")
+        self.assertIn("плана", said.get("reason", ""))
+        self.assertIn("agentctl plan set", said.get("reason", ""))
+        self.assertIn("своего плана нет", s.said_log())
+
+    def test_skill_result_does_not_fake_a_second_turn(self):
+        """Результат инструмента Skill харнес кладёт не блоком tool_result, как
+        у прочих инструментов, а тем же блоком text, что и у живой реплики
+        человека, и вдобавок isMeta. Разбор по одной строке контента путал его
+        со второй репликой, и один ответ с вызовом Skill внутри читался как
+        два хода (живая находка на реальном транскрипте)."""
+        s = self.stand()
+        path = os.path.join(s.tmp, "skill-transcript.jsonl")
+        lines = [
+            {"type": "user", "message": {"role": "user", "content": "вопрос"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "name": "Skill", "input": {"skill": "board-chat"}}]}},
+            {"type": "user", "isMeta": True, "message": {"role": "user", "content": [
+                {"type": "text", "text": "Base directory for this skill: ..."}]}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "name": "Bash", "input": {}}]}},
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "content": "ок"}]}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "ответ"}]}},
+        ]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(json.dumps(x, ensure_ascii=False) for x in lines) + "\n")
+        code, said = s.run(transcript=path)
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {}, "эхо инструмента Skill сочтено вторым ходом")
+
+    def test_no_plan_single_turn_with_tools_is_left_alone(self):
+        """Один ответ, пусть и с вызовами инструментов, это ещё не «длиннее
+        одного хода», второго хода тут просто не было."""
+        s = self.stand()
+        tr = s.lay_transcript([True])
+        code, said = s.run(transcript=tr)
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {})
+
+    def test_no_plan_first_turn_without_tools_is_left_alone(self):
+        """Второй ход с инструментами, а первый прошёл без них: подряд тут
+        только один ход из двух, порог не достигнут."""
+        s = self.stand()
+        tr = s.lay_transcript([False, True])
+        code, said = s.run(transcript=tr)
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {})
+
+    def test_no_plan_check_is_skipped_when_own_plan_exists(self):
+        """Свой файл плана есть, и до признака «плана нет» дело не доходит:
+        сессию сверяют старые три признака расхождения."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "pending")), age=600.0)
+        tr = s.lay_transcript([True, True])
+        code, said = s.run(transcript=tr)
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {})
+
+    def test_no_plan_labelled_subagent_file_still_counts_as_no_plan(self):
+        """Случай chat-54: план положил только субагент под своей меткой, у
+        родителя своего плана нет. own_plan() взял бы файл субагента, а этот
+        признак его не считает."""
+        s = self.stand()
+        s.lay_plan(plan(("чужая работа", "in_progress")), age=600.0, label="dk900")
+        tr = s.lay_transcript([True, True])
+        code, said = s.run(transcript=tr)
+        self.assertEqual(code, 0)
+        self.assertEqual(said.get("decision"), "block")
+
+    def test_child_session_env_is_exempt_from_no_plan_check(self):
+        """Субагент, окно конвейера в tmux и стенд obeycheck сами вынуждены
+        писать план с меткой (CLAUDE_CODE_CHILD_SESSION=1): признак «плана
+        нет» их не трогает, даже без своего файла и с работой на два хода."""
+        s = self.stand()
+        tr = s.lay_transcript([True, True])
+        code, said = s.run(transcript=tr, extra_env={"CLAUDE_CODE_CHILD_SESSION": "1"})
         self.assertEqual(code, 0)
         self.assertEqual(said, {})
 

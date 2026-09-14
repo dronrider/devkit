@@ -29,6 +29,19 @@
 журнале ~/.devkit/turns.log, и своего журнала рядом с планом тут не заводится.
 Ход, кончившийся позже последней правки плана, это ход, который план не тронул.
 
+Четвёртый признак другой природы: плана у сессии нет вовсе. У чата доски без
+привязки к задаче нет своего шага board-task, который зовёт agentctl plan, и
+решение положить план держится только на памяти самой сессии (находка
+DK-978). Свой файл плана это только `<ID сессии>.json`, файл с меткой
+субагента за него не считается, даже свежий: план положил не тот, у кого
+сторож спрашивает. Второй ход подряд той же сессии, между отметками которого в
+транскрипте видны вызовы инструментов, и есть порог DK-881 «длиннее одного
+хода». Разбор на один ответ, пусть и с десятком вызовов внутри, сторож не
+трогает. Сессия, чьё окружение само требует метку у плана
+(`CLAUDE_CODE_CHILD_SESSION=1`: субагент, окно конвейера, стенд obeycheck), в
+этот признак не попадает: её собственный план и так вынужденно ложится с
+меткой, а расхождение с делом у него смотрят три признака выше.
+
 Находка сдаётся сессии решением block на конце хода, как сдача фоновых работ:
 строка без блокировки теряется среди необязательных, а расхождение чинит та же
 сессия, которой его завели.
@@ -64,6 +77,9 @@ CONFIG_ENV = "DEVKIT_PLAN_CONFIG"
 DIR_ENV = "DEVKIT_PLAN_DIR"
 TURNS_ENV = "DEVKIT_TURN_MARK_LOG"
 LOG_ENV = "DEVKIT_PLAN_WATCH_LOG"
+# Признак сессии, чьё окружение само требует метку у плана (agentctl plan,
+# tools/agentctl/plan.go): субагент, окно конвейера в tmux, стенд obeycheck.
+CHILD_ENV = "CLAUDE_CODE_CHILD_SESSION"
 
 DEFAULT_CONFIG = os.path.join(hookio.ROOT, "kit", "plan.toml")
 
@@ -174,6 +190,102 @@ def own_plan(session, env=None):
     return labelled[0] if labelled else path
 
 
+def no_plan_applies(session, env=None):
+    """Признак «плана нет вовсе» (DK-978) смотрит только файл без метки: план
+    сессии это `<ID>.json`, а свежий файл субагента за него не считается,
+    как и у own_plan(). В отличие от own_plan(), сюда не заглядывают: сессия,
+    чьё окружение само требует метку (CLAUDE_CODE_CHILD_SESSION=1), тут вообще
+    не смотрится, её собственный план и так ложится с меткой."""
+    env = os.environ if env is None else env
+    if (env.get(CHILD_ENV) or "").strip() == "1":
+        return False
+    return not os.path.exists(plan_path(session, env))
+
+
+def is_human_turn(event):
+    """Начало хода человека в транскрипте: настоящая реплика, а не
+    механическое эхо харнеса. Тип user с результатом инструмента харнес кладёт
+    сам после каждого вызова, обычно блоком tool_result, а у инструмента Skill
+    тем же блоком текста, что и у живой реплики. Обе разновидности эха, и
+    сдача фоновой работы, харнес помечает isMeta, и по этому признаку они
+    отсекаются раньше разбора самого содержимого."""
+    if event.get("type") != "user" or event.get("isMeta"):
+        return False
+    message = event.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return True
+    if isinstance(content, list):
+        return not all(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+    return False
+
+
+def turn_used_tools(events):
+    """В ходе виден хотя бы один вызов инструмента: у события ассистента
+    среди блоков контента есть блок tool_use."""
+    for event in events:
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                return True
+    return False
+
+
+def transcript_turns(path):
+    """Транскрипт сессии, порезанный на ходы человека: список списков событий
+    ассистента между соседними настоящими репликами. Файла нет или строка не
+    разбирается, и такая строка просто пропускается: транскрипт живого
+    прогона хрупок форматом, а не обязан быть безупречным JSON построчно."""
+    turns = []
+    current = None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if is_human_turn(event):
+                    current = []
+                    turns.append(current)
+                    continue
+                if current is not None and event.get("type") == "assistant":
+                    current.append(event)
+    except OSError:
+        return []
+    return turns
+
+
+def two_turns_in_a_row_used_tools(path):
+    """Второй ход подряд той же сессии с вызовами инструментов между
+    отметками журнала turn-mark: буквально порог DK-881 «длиннее одного
+    хода». Разбор на один ответ, пусть и с десятком вызовов внутри, здесь не
+    считается, ходов для этого нужно минимум два."""
+    turns = transcript_turns(path)
+    if len(turns) < 2:
+        return False
+    return turn_used_tools(turns[-1]) and turn_used_tools(turns[-2])
+
+
+def no_plan_handover():
+    """Текст сдачи для признака «плана нет вовсе»: своей записи о плане
+    сессия ещё не оставила, и просить «переложить» его, как у расхождения,
+    здесь неверно по смыслу."""
+    return ("Сторож плана devkit: второй ход подряд идёт с вызовами инструментов, "
+            "а план работ сессия не положила.\n"
+            "Работа явно не на один ход, порядок в скилле work-plan: положи план "
+            "командой agentctl plan set, шаг начинай agentctl plan step и закрывай "
+            "agentctl plan done.")
+
+
 def read_plan(path):
     """План файлом: (пункты, время правки). Нет файла или он битый, и пунктов
     нет: сессию без плана сторожит не эта проверка (DK-880)."""
@@ -280,6 +392,10 @@ def handle(event, env=None, now=None, stream=None):
     if event.kind != hookio.TURN_DONE or event.active:
         # Ход, продолженный стоп-хуком, сторож пропускает: второй заход закрутил
         # бы сессию в цикле, а сказанное в первый раз уже сказано.
+        return 0
+    if no_plan_applies(event.session, env) and two_turns_in_a_row_used_tools(event.transcript):
+        blocked(no_plan_handover(), stream)
+        log(event.session, "сдача: своего плана нет, а второй ход подряд идёт с инструментами", env)
         return 0
     items, changed = read_plan(own_plan(event.session, env))
     if not items:

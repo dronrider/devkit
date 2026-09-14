@@ -33,6 +33,18 @@ type server struct {
 	scan   scanEntry
 	boards map[string]boardEntry
 	heads  map[string]headEntry
+	// Идущие опросы досок: дерево -> полёт (cache.go). По одному дереву летит
+	// один taskctl, остальные запросы ждут его или берут устаревший ответ.
+	flights map[string]*boardFlight
+	// Сколько запросов ждёт чужого полёта прямо сейчас: число едет в /healthz,
+	// иначе отставание опроса видно только по нагрузке машины.
+	boardWaiting int
+	// Сказано ли в журнал про пропущенный круг по этому дереву: строка одна на
+	// полосу отставания, а не на каждый запрос (noteLag).
+	lagSaid map[string]bool
+	// Память вердиктов отсева боковых деревьев (projects.go): молчащий git не
+	// меняет вердикт, а без прежнего каталог считается деревом.
+	wt *worktreeMemo
 	// Память разбора хвостов транскриптов (busyEntry): по ней считается, идёт
 	// ли ход в сессии. Разбор стоит чтения и парсинга хвоста файла, а спрашивают
 	// его и сборка работ, и живой опрос таба сессий.
@@ -167,6 +179,9 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 	}
 	return &server{cfg: cfg, static: static, logf: logf, now: time.Now, started: time.Now(),
 		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, deaf: map[string]deafEntry{},
+		flights:   map[string]*boardFlight{},
+		lagSaid:   map[string]bool{},
+		wt:        newWorktreeMemo(),
 		busy:      map[string]busyEntry{},
 		heal:      map[string]healEntry{},
 		probe:     peerProbe,
@@ -468,12 +483,17 @@ func (s *server) healthErrs() ([]Project, []string) {
 
 func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	projects, errs := s.healthErrs()
+	// Живые дети taskctl и ждущие запросы: по ним отставание опроса видно
+	// снаружи, а не только по нагрузке машины (DK-992).
+	live, waiting := s.boardLoad()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":       true,
-		"version":  fmt.Sprintf("%s %s (%s)", toolName, version, commit),
-		"uptime_s": int(s.now().Sub(s.started).Seconds()),
-		"projects": len(projects),
-		"errors":   errs,
+		"ok":              true,
+		"version":         fmt.Sprintf("%s %s (%s)", toolName, version, commit),
+		"uptime_s":        int(s.now().Sub(s.started).Seconds()),
+		"projects":        len(projects),
+		"taskctl_live":    live,
+		"taskctl_waiting": waiting,
+		"errors":          errs,
 	})
 }
 

@@ -212,7 +212,7 @@ func TestScanCandidatesInParallel(t *testing.T) {
 		"printf '/repo/.git/worktrees/side\\n/repo/.git\\n'", "printf '/repo/.git\\n/repo/.git\\n'"))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	projects, errs := scanProjects([]string{root})
+	projects, errs := scanProjects([]string{root}, newWorktreeMemo())
 	if len(errs) != 0 {
 		t.Fatalf("ошибки обхода: %v", errs)
 	}
@@ -348,7 +348,7 @@ rm -f '%[1]s'/$$
 printf '.git\n.git\n'`, live, log))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	if projects, _ := scanProjects([]string{root}); len(projects) != cands {
+	if projects, _ := scanProjects([]string{root}, newWorktreeMemo()); len(projects) != cands {
 		t.Fatalf("проектов %d, жду %d", len(projects), cands)
 	}
 	most := 0

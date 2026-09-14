@@ -30,7 +30,7 @@ func TestScanProjects(t *testing.T) {
 	// Проект глубже прямого подкаталога не ищется.
 	mkProject(t, filepath.Join(root, "plain", "deep"))
 
-	projects, errs := scanProjects([]string{root})
+	projects, errs := scanProjects([]string{root}, newWorktreeMemo())
 	var names []string
 	for _, p := range projects {
 		names = append(names, p.Name)
@@ -46,14 +46,14 @@ func TestScanProjects(t *testing.T) {
 func TestScanProjectsRootItself(t *testing.T) {
 	root := t.TempDir()
 	mkProject(t, root)
-	projects, _ := scanProjects([]string{root})
+	projects, _ := scanProjects([]string{root}, newWorktreeMemo())
 	if len(projects) != 1 || projects[0].Path != root {
 		t.Fatalf("корень с доской должен быть проектом: %v", projects)
 	}
 }
 
 func TestScanProjectsMissingRoot(t *testing.T) {
-	_, errs := scanProjects([]string{"/нет/такого/корня"})
+	_, errs := scanProjects([]string{"/нет/такого/корня"}, newWorktreeMemo())
 	if len(errs) != 1 || !strings.Contains(errs[0], "нет") {
 		t.Fatalf("пропавший корень должен быть назван, получил %v", errs)
 	}
@@ -65,7 +65,7 @@ func TestScanProjectsNameCollision(t *testing.T) {
 	rootA, rootB := t.TempDir(), t.TempDir()
 	mkProject(t, filepath.Join(rootA, "same"))
 	mkProject(t, filepath.Join(rootB, "same"))
-	projects, errs := scanProjects([]string{rootA, rootB})
+	projects, errs := scanProjects([]string{rootA, rootB}, newWorktreeMemo())
 	if len(projects) != 0 {
 		t.Errorf("проект-двойник не должен показываться: %v", projects)
 	}
@@ -74,9 +74,12 @@ func TestScanProjectsNameCollision(t *testing.T) {
 	}
 }
 
-// Зависший git не держит обход корней: gitLine идёт через runProc со сроком,
-// а обход стоит за /api/projects и открытым /healthz. Git молчит, значит
-// признака worktree нет и каталог остаётся проектом, а не висит навсегда.
+// Зависший git не держит обход корней: gitLine идёт через runProc со сроком, а
+// обход стоит за /api/projects и открытым /healthz. Молчание при этом не
+// считается ответом «дерева нет»: под нагрузкой так в список проектов въезжали
+// боковые деревья, опрос досок множился на их число и раскручивал нагрузку сам
+// от себя (DK-992). Прежнего вердикта у каталога нет, значит он считается
+// деревом, а причина едет в /healthz.
 func TestScanProjectsHungGit(t *testing.T) {
 	root := t.TempDir()
 	mkProject(t, filepath.Join(root, "proj"))
@@ -88,12 +91,57 @@ func TestScanProjectsHungGit(t *testing.T) {
 	t.Cleanup(func() { procTimeout = old })
 
 	start := time.Now()
-	projects, errs := scanProjects([]string{root})
+	projects, errs := scanProjects([]string{root}, newWorktreeMemo())
 	if took := time.Since(start); took > 5*time.Second {
 		t.Fatalf("обход занял %v: срок подпроцесса git не сработал", took)
 	}
+	if len(projects) != 0 {
+		t.Fatalf("проекты %v: молчащий git пустил каталог в список, и опрос досок умножится на боковые деревья", projects)
+	}
+	if len(errs) != 1 || !strings.Contains(errs[0], "git не сказал про боковое дерево") {
+		t.Fatalf("причины в /healthz нет: %v", errs)
+	}
+}
+
+// Каталог без репозитория остаётся проектом: ненулевой код git это ответ, а не
+// молчание, и отличать одно от другого обязан сам отсев.
+func TestScanProjectsGitRefusalIsAnswer(t *testing.T) {
+	root := t.TempDir()
+	mkProject(t, filepath.Join(root, "proj"))
+	bin := t.TempDir()
+	writeScript(t, bin, "git", "echo 'not a git repository' >&2; exit 128")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	projects, errs := scanProjects([]string{root}, newWorktreeMemo())
 	if len(projects) != 1 || len(errs) != 0 {
-		t.Fatalf("проекты %v, ошибки %v: молчащий git не должен ронять обход", projects, errs)
+		t.Fatalf("проекты %v, ошибки %v: отказ git должен читаться ответом «дерева нет»", projects, errs)
+	}
+}
+
+// Молчание git не меняет прежнего вердикта: каталог, который обход уже признал
+// проектом, остаётся проектом и на круге, где git не ответил. Иначе пик
+// нагрузки выметал бы со стартовой все проекты разом.
+func TestScanProjectsSilentGitKeepsOldVerdict(t *testing.T) {
+	root := t.TempDir()
+	mkProject(t, filepath.Join(root, "proj"))
+	bin := t.TempDir()
+	writeScript(t, bin, "git", "printf '.git\n.git\n'")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	memo := newWorktreeMemo()
+	if projects, _ := scanProjects([]string{root}, memo); len(projects) != 1 {
+		t.Fatalf("первый обход дал %v, жду один проект", projects)
+	}
+
+	writeScript(t, bin, "git", "sleep 60")
+	old := procTimeout
+	procTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { procTimeout = old })
+	projects, errs := scanProjects([]string{root}, memo)
+	if len(projects) != 1 {
+		t.Fatalf("проекты %v: молчание git сняло прежний вердикт обхода", projects)
+	}
+	if len(errs) != 1 || !strings.Contains(errs[0], "по прежнему обходу") {
+		t.Fatalf("причины в /healthz нет: %v", errs)
 	}
 }
 
@@ -116,7 +164,7 @@ func TestScanProjectsSkipsLinkedWorktree(t *testing.T) {
 	git("commit", "-q", "-m", "init")
 	git("worktree", "add", "-q", filepath.Join(root, "proj-dk-1"), "-b", "dk-1")
 
-	projects, errs := scanProjects([]string{root})
+	projects, errs := scanProjects([]string{root}, newWorktreeMemo())
 	var names []string
 	for _, p := range projects {
 		names = append(names, p.Name)

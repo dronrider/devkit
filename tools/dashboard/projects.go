@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Project это найденный проект с доской: имя каталога и путь. Имя это и есть
@@ -23,20 +24,62 @@ func hasBoard(dir string) bool {
 	return err == nil && !fi.IsDir()
 }
 
+// worktreeMemo это память вердиктов отсева по каталогам. Она нужна потому, что
+// молчание git под нагрузкой неотличимо от ответа «дерева нет», а цена ошибки
+// несимметрична: лишний проект в списке умножает опрос досок на число боковых
+// деревьев и раскручивает нагрузку сам от себя (DK-992). Прежний вердикт живёт
+// до конца процесса: боковым дерево становится один раз, а обратно уезжает
+// вместе с каталогом.
+type worktreeMemo struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}
+
+func newWorktreeMemo() *worktreeMemo { return &worktreeMemo{seen: map[string]bool{}} }
+
+// recall отдаёт прежний вердикт по каталогу, если он был.
+func (m *worktreeMemo) recall(dir string) (bool, bool) {
+	if m == nil {
+		return false, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	linked, ok := m.seen[dir]
+	return linked, ok
+}
+
+// remember кладёт вердикт, полученный от ответившего git.
+func (m *worktreeMemo) remember(dir string, linked bool) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.seen[dir] = linked
+	m.mu.Unlock()
+}
+
 // isLinkedWorktree узнаёт боковое дерево задачи расхождением git-dir и
 // git-common-dir, как рубеж taskctl: у дерева та же доска, и без отсева
-// каждый проект множился бы на свои деревья. Нет git или репозитория, значит
-// и дерева нет. Оба адреса спрашиваются одним rev-parse: подпроцесс тут самое
-// дорогое, а печатает утилита что попросили и в том порядке, в каком спросили.
-func isLinkedWorktree(dir string) bool {
+// каждый проект множился бы на свои деревья. Оба адреса спрашиваются одним
+// rev-parse: подпроцесс тут самое дорогое, а печатает утилита что попросили и
+// в том порядке, в каком спросили. Второй ответ говорит, был ли ответ вообще:
+// молчащий git это не «дерева нет», а неизвестность, и решает её обход выше.
+// Отказ git молчанием не считается: каталог без репозитория это честный ответ.
+func isLinkedWorktree(dir string) (bool, bool) {
+	out, err := gitLine(dir, "rev-parse", "--git-dir", "--git-common-dir")
+	if err != nil {
+		// Отказ git это ответ: репозитория тут нет, значит нет и дерева.
+		// Молчание ответом не считается.
+		return false, !procSilent(err)
+	}
 	// Строки, а не поля: путь репозитория бывает и с пробелом в имени.
-	lines := strings.Split(gitLine(dir, "rev-parse", "--git-dir", "--git-common-dir"), "\n")
+	lines := strings.Split(out, "\n")
 	if len(lines) != 2 {
-		return false
+		return false, true
 	}
 	one, common := strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
 	if one == "" || common == "" {
-		return false
+		return false, true
 	}
 	if !filepath.IsAbs(one) {
 		one = filepath.Join(dir, one)
@@ -44,24 +87,27 @@ func isLinkedWorktree(dir string) bool {
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(dir, common)
 	}
-	return filepath.Clean(one) != filepath.Clean(common)
+	return filepath.Clean(one) != filepath.Clean(common), true
 }
 
 // gitLine ходит через runProc, как все подпроцессы сервера: обход корней
 // стоит за /api/projects и открытым /healthz, и зависший git держал бы их
-// горутины вечно.
-func gitLine(dir string, args ...string) string {
+// горутины вечно. Отказ отдаётся отдельно от вывода: вызывающему нужно
+// различать пустой ответ и неответ.
+func gitLine(dir string, args ...string) (string, error) {
 	out, err := runProc("git", append([]string{"-C", dir}, args...)...)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out)), nil
 }
 
 // scanProjects обходит корни из конфига: проект это сам корень или его прямой
 // подкаталог с docs/TASKS.md, глубже обход не идёт, чтобы не ползать по
-// деревьям сборки. Отдаёт проекты по имени и список ошибок для /healthz.
-func scanProjects(roots []string) ([]Project, []string) {
+// деревьям сборки. Память вердиктов отсева приходит аргументом и бывает
+// пустой: у обхода без памяти неответивший git значит «дерево», как и у
+// первого обхода. Отдаёт проекты по имени и список ошибок для /healthz.
+func scanProjects(roots []string, memo *worktreeMemo) ([]Project, []string) {
 	var found, cands []Project
 	var errs []string
 	for _, root := range roots {
@@ -90,13 +136,29 @@ func scanProjects(roots []string) ([]Project, []string) {
 	// Отсев боковых деревьев стоит подпроцесса git на каждого кандидата, и это
 	// самое дорогое место обхода: кандидаты спрашиваются разом, а порядок всё
 	// равно наводится ниже сортировкой.
-	linked := make([]bool, len(cands))
-	broken := inParallel(scanWorkers, len(cands), func(i int) { linked[i] = isLinkedWorktree(cands[i].Path) })
+	linked, said := make([]bool, len(cands)), make([]bool, len(cands))
+	broken := inParallel(scanWorkers, len(cands), func(i int) {
+		linked[i], said[i] = isLinkedWorktree(cands[i].Path)
+		if said[i] {
+			memo.remember(cands[i].Path, linked[i])
+		}
+	})
 	for i, c := range cands {
-		// Сорвавшаяся проверка это причина в /healthz, а каталог остаётся
-		// проектом: молчащий git и до этого значил «бокового дерева не видно».
 		if broken[i] != nil {
 			errs = append(errs, fmt.Sprintf("каталог %s не проверился на боковое дерево: %v", c.Path, broken[i]))
+		}
+		// Молчащий git не делает каталог проектом: держится прежний вердикт
+		// обхода, а без прежнего каталог считается деревом и в список не идёт.
+		// Лишнее дерево в списке умножает опрос досок, и заплатить за молчание
+		// пропавшей строкой дешевле, чем нагрузкой на всю машину (DK-992).
+		if !said[i] {
+			was, ok := memo.recall(c.Path)
+			linked[i] = !ok || was
+			if broken[i] == nil {
+				errs = append(errs, fmt.Sprintf(
+					"каталог %s: git не сказал про боковое дерево, каталог считается %s",
+					c.Path, worktreeWord(linked[i], ok)))
+			}
 		}
 		if !linked[i] {
 			found = append(found, c)
@@ -124,4 +186,17 @@ func scanProjects(roots []string) ([]Project, []string) {
 	sort.Slice(projects, func(i, j int) bool { return projects[i].Name < projects[j].Name })
 	sort.Strings(errs)
 	return projects, errs
+}
+
+// worktreeWord называет исход молчания словами для /healthz: прежний вердикт
+// или запасной.
+func worktreeWord(linked, known bool) string {
+	switch {
+	case known && linked:
+		return "боковым деревом по прежнему обходу"
+	case known:
+		return "проектом по прежнему обходу"
+	default:
+		return "боковым деревом: прежнего вердикта нет"
+	}
 }

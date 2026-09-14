@@ -80,9 +80,31 @@ func runProcIn(stdin, name string, args ...string) ([]byte, error) {
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("%s не ответил за %s и снят по сроку", name, procTimeout)
+		return nil, &procDeadline{name: name, after: procTimeout}
 	}
 	return out, err
+}
+
+// procDeadline это отказ по сроку отдельным типом, а не только словами. Слова
+// те же, что были, а тип нужен вызывающему: снятый по сроку подпроцесс не
+// сказал ничего, и принимать его молчание за ответ дорого (DK-992, DK-904).
+type procDeadline struct {
+	name  string
+	after time.Duration
+}
+
+func (e *procDeadline) Error() string {
+	return fmt.Sprintf("%s не ответил за %s и снят по сроку", e.name, e.after)
+}
+
+// procSilent отличает молчание подпроцесса от его ответа. Молчание это одно:
+// снят по сроку, то есть не сказал ничего и ничего не скажет. Всё остальное это
+// ответ, пусть и неприятный: ненулевой код это слово самой утилиты («тут нет
+// репозитория»), а ненайденный бинарь это слово машины, и ни то, ни другое не
+// меняется от нагрузки.
+func procSilent(err error) bool {
+	var dl *procDeadline
+	return errors.As(err, &dl)
 }
 
 // commitDocs коммитит и пушит правку доски или файла задачи: доска это общий

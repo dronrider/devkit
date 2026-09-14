@@ -270,7 +270,7 @@ func TestAppendKeepsBirthOverWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	if len(lines) != 500+1 {
+	if len(lines) != Keep+1 {
 		t.Fatalf("журнал не обрезан: строк %d", len(lines))
 	}
 	if lines[0] != strings.TrimRight(birth, "\n") {

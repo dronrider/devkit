@@ -369,18 +369,19 @@ func Line(now time.Time, sid string, b Bind, why string) string {
 		" повод " + dash(why) + " tmux " + dash(b.Tmux) + " панель " + dash(b.Pane) + "\n"
 }
 
-// logLimit и logKeep это берега реестра, те же, что у писателя на python
-// (hookio.LOG_LIMIT, LOG_KEEP): файл больше предела режется до последних строк.
+// Limit и Keep это берега реестра, те же, что у писателя на python
+// (hookio.LOG_LIMIT, LOG_KEEP): файл больше Limit байт режется до последних
+// Keep строк. Тесты обоих писателей ждут потолок отсюда, а не литералом.
 const (
-	logLimit = 100 * 1024
-	logKeep  = 500
+	Limit = 100 * 1024
+	Keep  = 500
 )
 
-// Trim оставляет последние keep строк реестра. Записи работы (BySrc) уходят
-// раньше остальных, старшие вперёд: их кладут по одной на сессию и задачу и
-// после обрезки кладут заново, а запись рождения сессии одна, и вымытая она
-// оставляла живой разговор без имени tmux (DK-826). Ту же обрезку держит
-// hookio.trim_lines.
+// Trim оставляет последние keep строк реестра. Первыми уходят строки, которые
+// отбирает TrimFirst, старшие вперёд, остальное режется хвостом. Записи по
+// факту работы кладут по одной на сессию и задачу и после обрезки кладут
+// заново, а запись рождения сессии одна, и вымытая она оставляла живой
+// разговор без имени tmux (DK-826). Ту же обрезку держит hookio.trim_lines.
 func Trim(lines []string, keep int) []string {
 	if len(lines) <= keep {
 		return lines
@@ -388,7 +389,7 @@ func Trim(lines []string, keep int) []string {
 	extra := len(lines) - keep
 	kept := lines[:0:0]
 	for _, ln := range lines {
-		if extra > 0 && IsWork(ln) {
+		if extra > 0 && TrimFirst(ln) {
 			extra--
 			continue
 		}
@@ -397,8 +398,11 @@ func Trim(lines []string, keep int) []string {
 	return kept[len(kept)-keep:]
 }
 
-// IsWork говорит, что строка реестра это запись по факту работы.
-func IsWork(line string) bool { return strings.Contains(line, " источник "+BySrc+" ") }
+// TrimFirst отбирает строки, которые обрезка отдаёт первыми: записи с
+// источником BySrc, по факту работы. Граница уже, чем у workSrc: там работой
+// сессии считается и ByTree, но запись с ByTree это рождение сессии в боковом
+// дереве, и её обрезка бережёт наравне с прочими рождениями.
+func TrimFirst(line string) bool { return strings.Contains(line, " источник "+BySrc+" ") }
 
 // Append дописывает строку в журнал, обрезав разросшийся файл теми же берегами,
 // что держит писатель на python (hookio.registry_append).
@@ -406,9 +410,9 @@ func Append(path, line string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if fi, err := os.Stat(path); err == nil && fi.Size() > logLimit {
+	if fi, err := os.Stat(path); err == nil && fi.Size() > Limit {
 		if data, err := os.ReadFile(path); err == nil {
-			lines := Trim(strings.Split(strings.TrimRight(string(data), "\n"), "\n"), logKeep)
+			lines := Trim(strings.Split(strings.TrimRight(string(data), "\n"), "\n"), Keep)
 			os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 		}
 	}

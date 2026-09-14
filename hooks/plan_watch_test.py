@@ -103,6 +103,18 @@ class TestWatch(unittest.TestCase):
         self.assertEqual(said, {})
         self.assertIn("план отвечает делу", s.said_log())
 
+    def test_log_entries_land_on_separate_lines(self):
+        """Журнал сторожа читается построчно (`tail`, grep по времени), и
+        запись без перевода строки в конце склеивает соседние заходы в одну
+        нечитаемую строку (ревью DK-609)."""
+        s = self.stand()
+        s.lay_plan(plan(("разведка", "completed"), ("правка", "in_progress")), age=600.0)
+        s.lay_turns(1)
+        s.run()
+        s.run()
+        lines = [ln for ln in s.said_log().splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 2, "две сдачи журнала легли не двумя строками: %r" % lines)
+
     def test_old_running_step_is_handed_over(self):
         """Первый признак: пункт помечен идущим, а план не менялся дольше
         порога. Ровно так и висели два шага находки DK-609."""

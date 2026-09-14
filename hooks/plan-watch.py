@@ -97,7 +97,7 @@ def log(session, text, env=None):
     """Журнал сторожа: чем кончился его заход. Без такой строки молчание
     сторожа неотличимо от его отсутствия."""
     env = os.environ if env is None else env
-    line = "%s сессия %s %s" % (time.strftime("%Y-%m-%dT%H:%M:%S"), session, text)
+    line = "%s сессия %s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), session, text)
     try:
         hookio.append_capped((env.get(LOG_ENV) or "").strip() or LOG, line)
     except OSError:

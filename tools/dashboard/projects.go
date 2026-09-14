@@ -58,6 +58,27 @@ func (m *worktreeMemo) remember(dir string, linked bool) {
 	m.mu.Unlock()
 }
 
+// keep оставляет вердикты только по названным каталогам. Слитая задача уносит
+// своё боковое дерево, и без чистки путь лежал бы в памяти до перезапуска
+// демона. Чужих вердиктов чистка не задевает: каталог, которого нет среди
+// кандидатов обхода, в список проектов не попадает и так.
+func (m *worktreeMemo) keep(dirs []string) {
+	if m == nil {
+		return
+	}
+	live := make(map[string]bool, len(dirs))
+	for _, d := range dirs {
+		live[d] = true
+	}
+	m.mu.Lock()
+	for dir := range m.seen {
+		if !live[dir] {
+			delete(m.seen, dir)
+		}
+	}
+	m.mu.Unlock()
+}
+
 // isLinkedWorktree узнаёт боковое дерево задачи расхождением git-dir и
 // git-common-dir, как рубеж taskctl: у дерева та же доска, и без отсева
 // каждый проект множился бы на свои деревья. Оба адреса спрашиваются одним
@@ -164,6 +185,11 @@ func scanProjects(roots []string, memo *worktreeMemo) ([]Project, []string) {
 			found = append(found, c)
 		}
 	}
+	paths := make([]string, 0, len(cands))
+	for _, c := range cands {
+		paths = append(paths, c.Path)
+	}
+	memo.keep(paths)
 	byName := map[string][]Project{}
 	for _, p := range found {
 		byName[p.Name] = append(byName[p.Name], p)

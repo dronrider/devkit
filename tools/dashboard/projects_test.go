@@ -145,6 +145,59 @@ func TestScanProjectsSilentGitKeepsOldVerdict(t *testing.T) {
 	}
 }
 
+// Буквальный ход инцидента 2026-09-14: боковые деревья задач были опознаны
+// прежним обходом, а под нагрузкой git замолчал по сроку. Прежний вердикт
+// «дерево» держится, и в список проектов такое дерево не возвращается, иначе
+// опрос досок снова умножился бы на число деревьев.
+func TestScanProjectsSilentGitKeepsTreeVerdict(t *testing.T) {
+	root := t.TempDir()
+	mkProject(t, filepath.Join(root, "proj-dk-605"))
+	bin := t.TempDir()
+	writeScript(t, bin, "git", "printf '/repo/.git/worktrees/dk-605\n/repo/.git\n'")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	memo := newWorktreeMemo()
+	if projects, errs := scanProjects([]string{root}, memo); len(projects) != 0 || len(errs) != 0 {
+		t.Fatalf("первый обход дал проекты %v и ошибки %v, жду отсеянное дерево", projects, errs)
+	}
+
+	writeScript(t, bin, "git", "sleep 60")
+	old := procTimeout
+	procTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { procTimeout = old })
+	projects, errs := scanProjects([]string{root}, memo)
+	if len(projects) != 0 {
+		t.Fatalf("проекты %v: молчащий git вернул опознанное дерево в список, и опрос досок умножился", projects)
+	}
+	if len(errs) != 1 || !strings.Contains(errs[0], "боковым деревом по прежнему обходу") {
+		t.Fatalf("причины в /healthz нет: %v", errs)
+	}
+}
+
+// Память вердиктов не растёт заброшенными путями: слитая задача уносит своё
+// боковое дерево, и вердикта по нему на следующем обходе не остаётся.
+func TestWorktreeMemoForgetsGoneDirs(t *testing.T) {
+	root := t.TempDir()
+	side := filepath.Join(root, "proj-dk-1")
+	mkProject(t, filepath.Join(root, "proj"))
+	mkProject(t, side)
+	bin := t.TempDir()
+	writeScript(t, bin, "git", "printf '.git\n.git\n'")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	memo := newWorktreeMemo()
+	scanProjects([]string{root}, memo)
+	if _, ok := memo.recall(side); !ok {
+		t.Fatal("вердикта по каталогу нет после обхода: чистка сняла живой путь")
+	}
+
+	if err := os.RemoveAll(side); err != nil {
+		t.Fatal(err)
+	}
+	scanProjects([]string{root}, memo)
+	if _, ok := memo.recall(side); ok {
+		t.Fatalf("вердикт по снесённому дереву %s остался: память растёт заброшенными путями", side)
+	}
+}
+
 // Боковое дерево задачи (linked worktree) несёт ту же доску и отсеивается,
 // иначе каждый проект множился бы на свои деревья.
 func TestScanProjectsSkipsLinkedWorktree(t *testing.T) {

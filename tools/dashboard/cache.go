@@ -207,10 +207,31 @@ func (s *server) takeoff(dir string) *boardFlight {
 
 // fly это один опрос доски: подпроцесс под общим потолком, запись в память и
 // подъём ждущих. Зовётся и своей горутиной запроса, и фоновой.
+//
+// Уборка идёт через defer вся целиком, и паника ловится тут по двум разным
+// причинам. В фоновой горутине она уносит процесс целиком, как и любая паника
+// вне обработчика (тот же довод стоит у inParallel ниже). В горутине запроса её
+// погасил бы recover самого net/http, но запись полёта и слот семафора остались
+// бы за ней навсегда, и следующий запрос по этому дереву встал бы на <-fl.done
+// без срока. Паника уезжает ждущим ошибкой со словами, а стек в журнал.
 func (s *server) fly(dir, stamp string, stamped bool, fl *boardFlight) {
 	taskctlGate.enter()
+	defer func() {
+		if v := recover(); v != nil {
+			rec := &recovered{val: v, stack: debug.Stack()}
+			fl.raw, fl.err = nil, rec
+			s.notePanic("опрос доски "+dir, rec)
+		}
+		s.mu.Lock()
+		delete(s.flights, dir)
+		s.mu.Unlock()
+		taskctlGate.leave()
+		close(fl.done)
+	}()
+	if s.boardProbe != nil {
+		s.boardProbe(dir)
+	}
 	raw, err := boardJSON(dir)
-	taskctlGate.leave()
 	s.mu.Lock()
 	fl.raw, fl.err = raw, err
 	// Срок считается от ответа, а не от запроса: опрос под нагрузкой сам идёт
@@ -219,9 +240,7 @@ func (s *server) fly(dir, stamp string, stamped bool, fl *boardFlight) {
 	if err == nil && stamped {
 		s.boards[dir] = boardEntry{raw: raw, stamp: stamp, born: s.now()}
 	}
-	delete(s.flights, dir)
 	s.mu.Unlock()
-	close(fl.done)
 }
 
 // noteLag пишет в журнал первый пропущенный круг по дереву: запрос обошёлся

@@ -212,3 +212,79 @@ func TestHealthzShowsBoardLoad(t *testing.T) {
 	release(t, gofile)
 	wg.Wait()
 }
+
+// Паника внутри опроса стоит одного запроса, а не демона и не дерева. В своей
+// горутине она уносила бы процесс целиком, а в горутине запроса оставила бы за
+// собой запись полёта и слот семафора: следующий запрос по тому же дереву встал
+// бы на ожидании, которое никто не закроет.
+func TestBoardFlightSurvivesPanic(t *testing.T) {
+	e := newTestEnv(t)
+	var mu sync.Mutex
+	var journal strings.Builder
+	e.s.logf = func(format string, args ...any) {
+		mu.Lock()
+		fmt.Fprintf(&journal, format+"\n", args...)
+		mu.Unlock()
+	}
+	e.s.boardProbe = func(string) { panic("доска рассыпалась") }
+
+	raw, err := e.s.projectBoard(e.proj)
+	if err == nil {
+		t.Fatalf("паника приехала ответом %s: жду ошибку со словами", raw)
+	}
+	if !strings.Contains(err.Error(), "доска рассыпалась") {
+		t.Fatalf("паника без слов: %v", err)
+	}
+	if strings.Contains(err.Error(), "goroutine") {
+		t.Fatalf("в ответ уехал стек: %v", err)
+	}
+	mu.Lock()
+	said := journal.String()
+	mu.Unlock()
+	if !strings.Contains(said, "опрос доски") || !strings.Contains(said, "goroutine") {
+		t.Fatalf("в журнале %q: жду строку с деревом и стеком", said)
+	}
+	// Уборка прошла: слот семафора свободен, записи полёта нет, и следующий
+	// запрос по тому же дереву доходит до ответа.
+	awaitLoad(t, e.s, 0, 0)
+	e.s.boardProbe = nil
+	got, err := e.s.projectBoard(e.proj)
+	if err != nil || !strings.Contains(string(got), "XR-005") {
+		t.Fatalf("запрос после паники: %s (%v), жду доску: полёт запер дерево навсегда", got, err)
+	}
+}
+
+// Та же паника в фоновом опросе, который поднимает отдача устаревшего ответа.
+// Без recover в этой горутине прогон падал бы дампом вместе с процессом, а
+// живой демон умирал бы от одной рассыпавшейся доски.
+func TestBoardBackgroundFlightSurvivesPanic(t *testing.T) {
+	e := newTestEnv(t)
+	now := time.Now()
+	e.s.now = func() time.Time { return now }
+	if raw, err := e.s.projectBoard(e.proj); err != nil || !strings.Contains(string(raw), "XR-005") {
+		t.Fatalf("первый ответ доски %s (%v)", raw, err)
+	}
+
+	panicked := make(chan struct{})
+	var once sync.Once
+	e.s.boardProbe = func(string) {
+		once.Do(func() { close(panicked) })
+		panic("доска рассыпалась в фоне")
+	}
+	// Потолок памяти на доску 10 секунд (cache.go, boardTTL).
+	e.advance(11 * time.Second)
+	if raw, err := e.s.projectBoard(e.proj); err != nil || !strings.Contains(string(raw), "XR-005") {
+		t.Fatalf("устаревший ответ %s (%v)", raw, err)
+	}
+	select {
+	case <-panicked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("фоновый опрос не поднялся")
+	}
+	awaitLoad(t, e.s, 0, 0)
+
+	e.s.boardProbe = nil
+	if got, err := e.s.projectBoard(e.proj); err != nil || !strings.Contains(string(got), "XR-005") {
+		t.Fatalf("запрос после паники в фоне: %s (%v)", got, err)
+	}
+}

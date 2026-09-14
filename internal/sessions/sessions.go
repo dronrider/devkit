@@ -369,18 +369,46 @@ func Line(now time.Time, sid string, b Bind, why string) string {
 		" повод " + dash(why) + " tmux " + dash(b.Tmux) + " панель " + dash(b.Pane) + "\n"
 }
 
+// logLimit и logKeep это берега реестра, те же, что у писателя на python
+// (hookio.LOG_LIMIT, LOG_KEEP): файл больше предела режется до последних строк.
+const (
+	logLimit = 100 * 1024
+	logKeep  = 500
+)
+
+// Trim оставляет последние keep строк реестра. Записи работы (BySrc) уходят
+// раньше остальных, старшие вперёд: их кладут по одной на сессию и задачу и
+// после обрезки кладут заново, а запись рождения сессии одна, и вымытая она
+// оставляла живой разговор без имени tmux (DK-826). Ту же обрезку держит
+// hookio.trim_lines.
+func Trim(lines []string, keep int) []string {
+	if len(lines) <= keep {
+		return lines
+	}
+	extra := len(lines) - keep
+	kept := lines[:0:0]
+	for _, ln := range lines {
+		if extra > 0 && IsWork(ln) {
+			extra--
+			continue
+		}
+		kept = append(kept, ln)
+	}
+	return kept[len(kept)-keep:]
+}
+
+// IsWork говорит, что строка реестра это запись по факту работы.
+func IsWork(line string) bool { return strings.Contains(line, " источник "+BySrc+" ") }
+
 // Append дописывает строку в журнал, обрезав разросшийся файл теми же берегами,
-// что держит писатель на python (hookio.append_capped).
+// что держит писатель на python (hookio.registry_append).
 func Append(path, line string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	if fi, err := os.Stat(path); err == nil && fi.Size() > 100*1024 {
+	if fi, err := os.Stat(path); err == nil && fi.Size() > logLimit {
 		if data, err := os.ReadFile(path); err == nil {
-			lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-			if len(lines) > 500 {
-				lines = lines[len(lines)-500:]
-			}
+			lines := Trim(strings.Split(strings.TrimRight(string(data), "\n"), "\n"), logKeep)
 			os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 		}
 	}

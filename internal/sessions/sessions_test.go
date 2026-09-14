@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -237,5 +238,69 @@ func TestTmuxOwnerSinceSkipsRecordsBeforeRaise(t *testing.T) {
 	}
 	if got := TmuxOwnerSince(recs, "chat-3", ""); got != "new" {
 		t.Fatalf("пустой порог обязан выбирать по времени: %q", got)
+	}
+}
+
+const workRecord = "%s сессия %s задача %s проект devkit дерево /Users/r/projects/devkit-dk-826 " +
+	"транскрипт - источник работа повод правка файла tmux - панель - родитель -\n"
+
+// Записи работы кормят реестр до потолка, а запись рождения живой сессии
+// остаётся: хук --touch и утилиты доски кладут работу на каждую сессию и
+// задачу заново, и хвостовая обрезка вымывала ею имя tmux живого разговора
+// (DK-826).
+func TestAppendKeepsBirthOverWork(t *testing.T) {
+	path := Path(t.TempDir())
+	birth := fmt.Sprintf(record, "2026-09-04T16:13:00", "live", "DK-1", "live", "DK-1")
+	var b []byte
+	b = append(b, birth...)
+	for i := 0; i < 900; i++ {
+		b = append(b, fmt.Sprintf(workRecord, "2026-09-05T12:00:00", fmt.Sprintf("w%d", i), "DK-826")...)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Append(path, fmt.Sprintf(record, "2026-09-05T13:00:00", "new", "DK-2", "new", "DK-2")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 500+1 {
+		t.Fatalf("журнал не обрезан: строк %d", len(lines))
+	}
+	if lines[0] != strings.TrimRight(birth, "\n") {
+		t.Errorf("запись рождения живой сессии вымыта работой, первая строка: %s", lines[0])
+	}
+	if got := Last(All(data)["live"]).Tmux; got != "task-DK-1" {
+		t.Errorf("имя tmux живой сессии после обрезки: %q", got)
+	}
+}
+
+// Обрезка отдаёт записи работы старшими вперёд, а когда работы на потолок не
+// хватает, добирает хвостом.
+func TestTrimDropsOldestWorkFirst(t *testing.T) {
+	work := func(sid string) string {
+		return strings.TrimRight(fmt.Sprintf(workRecord, "2026-09-05T12:00:00", sid, "DK-826"), "\n")
+	}
+	birth := func(sid string) string {
+		return strings.TrimRight(fmt.Sprintf(record, "2026-09-05T12:00:00", sid, "DK-1", sid, "DK-1"), "\n")
+	}
+	lines := []string{birth("a"), work("w1"), birth("b"), work("w2"), work("w3")}
+	got := Trim(lines, 3)
+	want := []string{birth("a"), birth("b"), work("w3")}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("обрезка: %q, ждал %q", got, want)
+	}
+	got = Trim(lines, 1)
+	if want := []string{birth("b")}; !reflect.DeepEqual(got, want) {
+		t.Errorf("обрезка без работы: %q, ждал %q", got, want)
+	}
+	if got := Trim(lines, 5); !reflect.DeepEqual(got, lines) {
+		t.Errorf("короткий журнал тронут: %q", got)
 	}
 }

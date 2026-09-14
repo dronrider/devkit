@@ -9434,8 +9434,8 @@ function pulseRing(project, p) {
     // последних закрытых), и продвижения работы по кольцу видно не было
     // (решение пользователя). Окно осталось тем, чем и было, нарезкой
     // сегментов: сотня долек за три дня работы сливалась в сплошную полосу.
-    const num = ringNumber(next, plan);
-    if (num) box.append(ringNum(num));
+    const mid = ringMiddle(next, plan);
+    if (mid) box.append(mid);
     fillPop(pop, project, next);
     wrap.replaceChildren(box, pop);
     // Подсказка у кольца одна, всплывающим списком: браузерная подсказка поверх
@@ -9508,6 +9508,33 @@ function ringNumber(p, list) {
   if (p.parked) return "";
   if (p.state === "waiting") return String(p.waiting || 1);
   return p.working > 0 ? String(p.working) : "";
+}
+
+// Ракета вместо числа работающих: рисунок собран прямыми линиями, как и
+// остальные значки кольца, библиотеки иконок тут нет. Нос, плечи, две дужки
+// хвостовых стабилизаторов и вырез между ними, иллюминатор отдельным кругом.
+function ringRocket() {
+  const g = svgEl("g", "rrocket");
+  const body = svgEl("path", "rbody");
+  svgAttrs(body, { d: "M18,11 L21,17 L21,22 L24,25 L18,22.5 L12,25 L15,22 L15,17 Z" });
+  const win = svgEl("circle", "rwin");
+  svgAttrs(win, { cx: 18, cy: 16, r: 1.3 });
+  g.append(body, win);
+  return g;
+}
+
+// Середина кольца: дробь плана, число работающих или, если своего плана у
+// живой работы нет вовсе, ракета (DK-978). Дашборд меток сторожа plan-watch
+// не читает, тут хватает того, что план пуст у сессии, которая прямо сейчас
+// работает: человек читает ракету как быстрое действие на один ход, а не как
+// вставшую сессию.
+function ringMiddle(p, list) {
+  list = list || [];
+  if (!list.length && p && !p.parked && p.state === "working" && p.working > 0) {
+    return ringRocket();
+  }
+  const num = ringNumber(p, list);
+  return num ? ringNum(num) : null;
 }
 
 // Этапы словами для подсказки: сколько их за сессию и сколько из них видно

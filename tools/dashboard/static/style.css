@@ -1310,6 +1310,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    тем же радиусом, что деления этапов, поэтому взята полупрозрачной. Деления
    под ней читаются, а второго тонкого круга внутри больше нет */
 .r-working .comet{stroke:var(--acc);opacity:0.55;animation:ringrun 1.6s linear infinite}
+/* Ракета вместо числа работающих: у живой сессии без своего плана (DK-978).
+   Иллюминатор вырезан цветом фона, чтобы читаться дыркой, а не точкой */
+.rrocket .rbody{fill:var(--acc)}
+.rrocket .rwin{fill:var(--bg1)}
 .r-waiting .rnum{fill:var(--block)}
 .r-waiting .halo{stroke:var(--block);opacity:0.5;animation:ringpulse 1.4s ease-in-out infinite}
 /* Ждёт сама строка, а разговоров за ней нет: ореол стоит тихо. Моргание тут

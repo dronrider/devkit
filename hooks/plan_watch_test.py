@@ -52,7 +52,7 @@ class Stand(object):
 
     def lay_plan(self, items, age=0.0, label=""):
         """План сессии файлом. С меткой имя выходит таким же, как у agentctl
-        plan в окружении с CLAUDE_CODE_CHILD_SESSION."""
+        plan с флагом --label."""
         name = "%s-sub-%s.json" % (SESSION, label) if label else "%s.json" % SESSION
         path = os.path.join(self.plans, name)
         with open(path, "w", encoding="utf-8") as f:
@@ -105,7 +105,6 @@ class Stand(object):
                    DEVKIT_PLAN_CONFIG=config or self.config,
                    DEVKIT_PLAN_WATCH_LOG=self.log)
         env.pop("DEVKIT_PLAN_WATCH_OFF", None)
-        env.pop("CLAUDE_CODE_CHILD_SESSION", None)
         env.update(extra_env or {})
         p = subprocess.run([sys.executable, HOOK, "--hook"], input=json.dumps(event),
                            capture_output=True, text=True, env=env)
@@ -277,11 +276,9 @@ class TestWatch(unittest.TestCase):
         self.assertEqual(p.stdout.strip(), "")
 
     def test_plan_written_with_a_label_is_the_plan_of_the_session(self):
-        """Окно конвейера в tmux и сессия стенда наследуют
-        CLAUDE_CODE_CHILD_SESSION от чужого процесса, и agentctl plan пишет их
-        план с меткой. Файла без метки у такой сессии нет вовсе, и сторож,
-        глядящий только на него, молчал бы там, где находка DK-609 и
-        случилась."""
+        """Сессия, писавшая план с меткой, пока agentctl plan отбивала
+        безымянную запись, файла без метки не имеет вовсе. Сторож, глядящий
+        только на него, молчал бы там, где находка DK-609 и случилась."""
         s = self.stand()
         s.lay_plan(plan(("разведка", "completed"), ("правка", "in_progress")),
                    age=4 * HOUR, label="dk609")
@@ -406,15 +403,16 @@ class TestWatch(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(said.get("decision"), "block")
 
-    def test_child_session_env_is_exempt_from_no_plan_check(self):
-        """Субагент, окно конвейера в tmux и стенд obeycheck сами вынуждены
-        писать план с меткой (CLAUDE_CODE_CHILD_SESSION=1): признак «плана
-        нет» их не трогает, даже без своего файла и с работой на два хода."""
+    def test_child_session_env_does_not_exempt_from_no_plan_check(self):
+        """Предмет DK-852: клиент 2.1.261 ставит CLAUDE_CODE_CHILD_SESSION=1
+        каждому вызову Bash, у головы разговора и у субагента одинаково. Пока
+        признак «плана нет» пропускал такую сессию, на этом клиенте он не
+        срабатывал ни у кого."""
         s = self.stand()
         tr = s.lay_transcript([True, True])
         code, said = s.run(transcript=tr, extra_env={"CLAUDE_CODE_CHILD_SESSION": "1"})
         self.assertEqual(code, 0)
-        self.assertEqual(said, {})
+        self.assertEqual(said.get("decision"), "block")
 
     def test_off_switch_keeps_the_watch_quiet(self):
         s = self.stand()

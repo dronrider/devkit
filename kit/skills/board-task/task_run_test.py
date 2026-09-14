@@ -1256,6 +1256,20 @@ class TestWaitEvents(WaitStand):
         self.assertEqual(why, task_run.WAIT_EVENT)
         self.assertLess(took, 30)
 
+    def test_hour_beats_the_deadline_on_the_same_instant(self):
+        # Час и срок назначены на один момент. Часы тикают между двумя
+        # проверками цикла ожидания, и раньше событие оказывалось «до», а срок
+        # «после»: ожидание по часу изредка кончалось сроком, и на этом
+        # краснела сборка (DK-971). Момент теперь один на оба вопроса.
+        at = stamp(0)
+        pipe = self.pipe()
+        edge = pipe.when(at)
+        ticks = iter([edge - 0.001, edge + 0.001, edge + 0.002, edge + 0.003])
+        with unittest.mock.patch("time.time", lambda: next(ticks)), \
+                unittest.mock.patch("time.sleep", lambda *_: None):
+            why = pipe.hold({"kind": "час", "target": at, "until": at})
+        self.assertEqual(why, task_run.WAIT_EVENT)
+
     def test_no_event_waits_the_deadline(self):
         why, _ = self.held({"kind": "слита", "target": "DK-2", "until": stamp(2)}, lambda: None)
         self.assertEqual(why, task_run.WAIT_OVER)

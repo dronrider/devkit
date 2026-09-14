@@ -953,9 +953,14 @@ class Pipeline:
             out += " (%s)" % mark["note"]
         return out
 
-    def wait_done(self, mark):
+    def wait_done(self, mark, now=None):
         """Пришло ли событие, которого ждёт отметка. Голый срок события не
-        имеет и кончается временем."""
+        имеет и кончается временем.
+
+        Момент `now` передаёт цикл ожидания, и он же идёт на сверку со сроком:
+        час и срок бывают назначены на один момент, а два разных вызова
+        `time.time()` подряд разводят их по разные стороны границы, и ожидание
+        по часу изредка кончалось сроком (краснота DK-971)."""
         kind, target = mark.get("kind"), str(mark.get("target") or "")
         if kind == WAIT_HERE:
             return os.path.exists(target)
@@ -967,7 +972,7 @@ class Pipeline:
             return pid_gone(target)
         if kind == WAIT_HOUR:
             at = self.when(target)
-            return at is not None and time.time() >= at
+            return at is not None and (time.time() if now is None else now) >= at
         if kind in WAIT_ASKED:
             return self.asked(kind, target)
         return False
@@ -1040,9 +1045,10 @@ class Pipeline:
         начатого хода оболочка не шлёт."""
         until = self.when(mark.get("until"))
         while True:
-            if self.wait_done(mark):
+            now = time.time()
+            if self.wait_done(mark, now):
                 return WAIT_EVENT
-            if until is None or time.time() >= until:
+            if until is None or now >= until:
                 return WAIT_OVER
             if self.head is not None:
                 if not self.head_alive():

@@ -66,6 +66,13 @@ import os
 import sys
 import time
 
+# Пары, по которым тест смотрит окружение поднятой головы: чужое наследство
+# агентской сессии, а рядом с ним дом подписки и признак hidden, которые
+# чистка трогать не должна.
+WATCHED = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDECODE",
+           "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_PID", "AI_AGENT",
+           "CLAUDE_CONFIG_DIR", "DEVKIT_HIDDEN")
+
 state = os.environ["DEVKIT_TEST_STATE"]
 calls = os.environ["DEVKIT_TEST_CALLS"]
 plan = os.environ["DEVKIT_TEST_PLAN"].split("|")
@@ -87,6 +94,8 @@ def wait_mark(kind, target="", secs=3, note="жду соседа"):
         json.dump(body, f, ensure_ascii=False)
 with open(os.path.join(os.environ["HOME"], "headless"), "w", encoding="utf-8") as f:
     f.write(os.environ.get("DEVKIT_HEADLESS", ""))
+with open(os.path.join(os.environ["HOME"], "окружение"), "w", encoding="utf-8") as f:
+    f.write("\n".join("%s=%s" % (k, os.environ.get(k, "")) for k in WATCHED) + "\n")
 with open(calls, "a", encoding="utf-8") as f:
     f.write(order + "\n")
 n = 0
@@ -142,6 +151,13 @@ import os
 import subprocess
 import sys
 import time
+
+# Пары, по которым тест смотрит окружение поднятой головы: чужое наследство
+# агентской сессии, а рядом с ним дом подписки и признак hidden, которые
+# чистка трогать не должна.
+WATCHED = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDECODE",
+           "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_PID", "AI_AGENT",
+           "CLAUDE_CONFIG_DIR", "DEVKIT_HIDDEN")
 
 home = os.environ["HOME"]
 state = os.environ["DEVKIT_TEST_STATE"]
@@ -243,6 +259,8 @@ with open(os.path.join(devkit, "sessions.log"), "a", encoding="utf-8") as f:
             % (time.strftime(stamp), sid, home, os.environ.get("DEVKIT_TMUX", "-")))
 with open(os.path.join(home, "headless"), "w", encoding="utf-8") as f:
     f.write(os.environ.get("DEVKIT_HEADLESS", ""))
+with open(os.path.join(home, "окружение"), "w", encoding="utf-8") as f:
+    f.write("\n".join("%s=%s" % (k, os.environ.get(k, "")) for k in WATCHED) + "\n")
 if "ротация" in plan:
     # Журнал был полон чужими сессиями ещё до нашей: рез его подрезает до
     # последних пятисот строк, и без этого запаса своя отметка уехала бы вместе
@@ -725,6 +743,46 @@ class TestLiveHead(unittest.TestCase):
         s = self.stand(plan="закрой")
         s.run("--headless")
         self.assertEqual(s.lines("headless"), ["дашборд"], s.lines("headless"))
+
+    # Наследство чужой агентской сессии, каким его видит окно конвейера:
+    # tmux-сервер раздаёт окружение той сессии, из которой его завели, а клиент
+    # ставит свои пары каждому вызову Bash (DK-852).
+    FOREIGN = {"CLAUDE_CODE_SESSION_ID": "чужая-сессия",
+               "CLAUDE_CODE_CHILD_SESSION": "1",
+               "CLAUDECODE": "1",
+               "CLAUDE_CODE_ENTRYPOINT": "claude-vscode",
+               "CLAUDE_PID": "4242",
+               "AI_AGENT": "1"}
+
+    def test_live_head_drops_the_foreign_session(self):
+        # Предмет DK-852: голова получала метку субагента и чужой ID сессии, и
+        # первый же agentctl plan отвечал ей отказом. Дашборд эту чистку делает
+        # сам перед подъёмом окна, а подъём из тика и руками её не проходил.
+        s = self.stand(plan="закрой")
+        s.run(extra=dict(self.FOREIGN))
+        got = dict(l.split("=", 1) for l in s.lines("окружение"))
+        for name in self.FOREIGN:
+            self.assertEqual(got[name], "", "%s доехала до живой головы" % name)
+
+    def test_live_head_keeps_its_own_pairs(self):
+        # Чистка снимает чужое, а своё оставляет: дом второй подписки и признак
+        # hidden подъёмщик ставит нарочно, и читают их уже в самой голове.
+        s = self.stand(plan="закрой")
+        extra = dict(self.FOREIGN)
+        extra.update({"CLAUDE_CONFIG_DIR": "/дом/подписки", "DEVKIT_HIDDEN": "1"})
+        s.run(extra=extra)
+        got = dict(l.split("=", 1) for l in s.lines("окружение"))
+        self.assertEqual(got["CLAUDE_CONFIG_DIR"], "/дом/подписки")
+        self.assertEqual(got["DEVKIT_HIDDEN"], "1")
+
+    def test_headless_pass_drops_the_foreign_session(self):
+        # Печатной голове чужое наследство мешает тем же: план она ведёт той же
+        # командой, а ID сессии у неё свой.
+        s = self.stand(plan="закрой")
+        s.run("--headless", extra=dict(self.FOREIGN))
+        got = dict(l.split("=", 1) for l in s.lines("окружение"))
+        for name in self.FOREIGN:
+            self.assertEqual(got[name], "", "%s доехала до печатной головы" % name)
 
     def test_registry_holds_one_record_for_the_task(self):
         # Предмет DK-723: череда проходов давала по записи на проход, и список

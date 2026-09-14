@@ -258,6 +258,20 @@ SAME_QUESTION = 5
 # стоил бы конвейеру как раз того, ради чего живая голова заводилась.
 HEADLESS_ENV = "DEVKIT_HEADLESS"
 TMUX_ENV = "DEVKIT_TMUX"
+# Переменные чужой агентской сессии, которые голова не должна унаследовать.
+# Список тот же, что у чистки дашборда (dropForeign, foreignVars в
+# tools/dashboard/chats.go), и держится он в двух местах потому, что языка у
+# подъёмщиков два. Дорога наследства неочевидная: tmux-сервер переживает ту
+# сессию, из которой его завели однажды, и раздаёт её окружение всем новым
+# окнам, а клиент вдобавок ставит свои пары каждому вызову Bash. Окно, поднятое
+# дашбордом, эту чистку уже прошло, а поднятое `taskctl run` из тика или руками
+# из живой оболочки не проходило (DK-852). Признак hidden (DEVKIT_HIDDEN) тут
+# не снимается: его подъёмщик ставит нарочно, и читает его хук старта уже в
+# самой голове.
+FOREIGN_ENV = ("CLAUDE_CODE_ENTRYPOINT", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID",
+               "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_MESSAGING_SOCKET",
+               "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_ENV_FILE",
+               "CLAUDE_PROJECT_DIR", "AI_AGENT")
 # Как часто оболочка заглядывает в журнал отметок. Реже держать незачем, файл
 # крошечный, чаще незачем тоже. Между проходами и так стоит пауза.
 WATCH_STEP = 3
@@ -771,16 +785,26 @@ class Pipeline:
     def head_alive(self):
         return self.head is not None and self.head.poll() is None
 
+    def head_env(self, live=True):
+        """Окружение поднимаемой головы. Наследство чужой агентской сессии
+        снимается обеим, живой и печатной, той же чисткой, какой его снимает
+        дашборд перед подъёмом окна. Живой вдобавок снимается метка печатного
+        режима: окно у неё есть, фоновый ребёнок переживает конец хода, и рубеж
+        синхронности отбивал бы ей как раз то, ради чего она заведена (DK-678,
+        DK-724)."""
+        env = dict(os.environ)
+        for name in FOREIGN_ENV:
+            env.pop(name, None)
+        if live:
+            env.pop(HEADLESS_ENV, None)
+        return env
+
     def raise_head(self, order):
         """Подъём живой головы в своей же панели. Клиент забирает терминал
         окна и рисует в нём свой TUI, оболочка остаётся его родителем и дальше
         только смотрит за отметками. Заказ едет первым аргументом. Интерактивный
         клиент берёт его как первый вопрос и остаётся стоять."""
-        env = dict(os.environ)
-        # Живой сессии метка печатного режима не ставится. Окно у неё есть,
-        # фоновый ребёнок переживает конец хода, и рубеж синхронности отбивал бы
-        # ей как раз то, ради чего она заведена (DK-678, DK-724).
-        env.pop(HEADLESS_ENV, None)
+        env = self.head_env()
         cmd = list(self.client) + [order]
         # Память реестра набирается до подъёма. Прошлый запуск конвейера
         # поднимал окно под тем же именем task-<ID>, и его запись оболочка
@@ -1301,7 +1325,7 @@ class Pipeline:
         self.say("проход поднят: %s" % " ".join(shlex.quote(c) for c in cmd[:-1]))
         started = time.time()
         try:
-            p = subprocess.run(cmd, cwd=self.proj)
+            p = subprocess.run(cmd, cwd=self.proj, env=self.head_env(live=False))
         except OSError as e:
             die("клиент не поднялся (%s): %s" % (e, " ".join(self.client)))
         return p.returncode, time.time() - started

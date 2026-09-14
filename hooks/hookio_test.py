@@ -316,6 +316,37 @@ class TestSamplesThroughChecks(unittest.TestCase):
                 self.assertNotIn("Traceback", r.stderr, (tool, name))
 
 
+class TestTrimLines(unittest.TestCase):
+    """Обрезка журнала: без отбора это хвост, с отбором названные строки уходят
+    первыми, старшие вперёд, а нехватку добирает хвост (DK-826)."""
+
+    def test_tail_without_first(self):
+        self.assertEqual(hookio.trim_lines(["a", "b", "c"], 2), ["b", "c"])
+        self.assertEqual(hookio.trim_lines(["a", "b"], 5), ["a", "b"])
+
+    def test_first_goes_oldest_first_then_tail(self):
+        lines = ["birth a", "work 1", "birth b", "work 2", "work 3"]
+        work = lambda ln: ln.startswith("work")
+        self.assertEqual(hookio.trim_lines(lines, 3, work), ["birth a", "birth b", "work 3"])
+        self.assertEqual(hookio.trim_lines(lines, 1, work), ["birth b"])
+
+    def test_registry_append_spares_birth(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", tmp]))
+        path = os.path.join(tmp, "sessions.log")
+        birth = "2026-09-04T16:13:00 сессия live задача DK-1 источник заказ tmux chat-DK-1-1\n"
+        work = "2026-09-05T12:00:00 сессия w%d задача DK-826 источник работа повод правка файла" + " -" * 60 + "\n"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(birth)
+            for i in range(2 * hookio.LOG_KEEP):
+                f.write(work % i)
+        hookio.registry_append(path, work % 9999)
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+        self.assertEqual(len(lines), hookio.LOG_KEEP + 1)
+        self.assertEqual(lines[0], birth)
+
+
 class TestRunnerLayout(unittest.TestCase):
     """Раннер тестов хуков это сам unittest, и терять проверки он умеет молча:
     файл, чьё имя не годится в имя модуля (дефис), discover пропускает без

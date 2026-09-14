@@ -278,7 +278,7 @@ def record(start, env=None, now=None, terminal=client_terminal):
 # её дерево (POC ветки poc-chat).
 WORK_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
 
-BY_WORK = "работа"
+BY_WORK = hookio.WORK_SRC
 
 
 def touch_record(tool, now=None):
@@ -320,7 +320,7 @@ def run_touch(protocol, path=None, now=None):
     task = line.split(" задача ")[1].split(" ")[0]
     if known_touch(log, dashless(tool.session), task):
         return 0
-    hookio.append_capped(log, line)
+    hookio.registry_append(log, line)
     return 0
 
 
@@ -444,7 +444,7 @@ def run_hook(protocol, path=None, env=None, now=None):
         # Чужое событие и событие без ID сессии в реестр не попадают: запись
         # без сессии не сводится ни с транскриптом, ни с ручкой привязки.
         return 0
-    hookio.append_capped(path or LOG, record(start, env, now))
+    hookio.registry_append(path or LOG, record(start, env, now))
     real_env = os.environ if env is None else env
     is_hidden = hidden(real_env)
     if is_hidden:

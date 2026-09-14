@@ -14,6 +14,7 @@
   hookio.memory_index(protocol)    хвост пути индекса памяти из профиля
   hookio.toml_at(path)             конфиг проверки разобранным Doc и причина
   hookio.append_capped(path, line) строка в машинный журнал хука с обрезкой
+  hookio.registry_append(path, line) то же в реестр чатов, работа режется первой
   hookio.tree_root(cwd)            дерево работы: ближайший предок с .git
 
 Имя протокола приходит аргументом `--hook <протокол>`; голый `--hook` это
@@ -35,6 +36,9 @@ DEFAULT = "claude-code"
 # всех: файл больше предела режется до последних строк.
 LOG_LIMIT = 100 * 1024
 LOG_KEEP = 500
+# Слово источника у записи реестра чатов по факту работы (session-task.py,
+# internal/sessions BySrc).
+WORK_SRC = "работа"
 
 # Оси событий сессии, имена те же, что в `[hooks] events` профиля.
 NOTIFY = "notify"
@@ -405,21 +409,54 @@ def tool_event(name, stream=None):
         return None
 
 
-def append_capped(path, line, limit=LOG_LIMIT, keep=LOG_KEEP):
+def trim_lines(lines, keep, first=None):
+    """Последние `keep` строк журнала. Строки, на которых `first` даёт истину,
+    уходят раньше остальных, старшие вперёд: так записи работы в реестре чатов
+    не вытесняют запись рождения сессии (DK-826). Без `first` это хвост."""
+    if len(lines) <= keep:
+        return lines
+    if first is not None:
+        extra = len(lines) - keep
+        kept = []
+        for ln in lines:
+            if extra and first(ln):
+                extra -= 1
+                continue
+            kept.append(ln)
+        lines = kept
+    return lines[-keep:]
+
+
+def append_capped(path, line, limit=LOG_LIMIT, keep=LOG_KEEP, first=None):
     """Дописать строку в журнал хука, обрезав разросшийся файл до последних
-    строк. Провал записи тихий: журнал это след работы, и ронять из-за него
-    сессию нельзя."""
+    строк (`first` называет строки, которые обрезка отдаёт первыми, см.
+    trim_lines). Провал записи тихий: журнал это след работы, и ронять из-за
+    него сессию нельзя."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if os.path.exists(path) and os.path.getsize(path) > limit:
             with open(path, encoding="utf-8", errors="replace") as f:
-                tail = f.readlines()[-keep:]
+                tail = trim_lines(f.readlines(), keep, first)
             with open(path, "w", encoding="utf-8") as f:
                 f.writelines(tail)
         with open(path, "a", encoding="utf-8") as f:
             f.write(line)
     except OSError:
         pass
+
+
+def work_line(line):
+    """Строка реестра чатов про работу сессии в дереве задачи: их кладут хук
+    --touch и утилиты доски, по одной на сессию и задачу, а после обрезки
+    заново, и потому их не жалко."""
+    return " источник %s " % WORK_SRC in line
+
+
+def registry_append(path, line):
+    """Строка в реестр чатов ~/.devkit/sessions.log. Обрезка отдаёт записи
+    работы первыми: запись рождения живёт, пока реестр не заполнили рождения
+    новее (DK-826). Ту же обрезку держит писатель на go (sessions.Append)."""
+    append_capped(path, line, first=work_line)
 
 
 def tree_root(cwd):

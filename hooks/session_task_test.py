@@ -7,6 +7,7 @@
 пишет строку и уходит нулём.
 """
 import importlib
+import io
 import json
 import os
 import subprocess
@@ -268,6 +269,55 @@ class TestRecord(unittest.TestCase):
         f, _ = fields(session_task.record(
             start(tree.root), env={"DEVKIT_PARENT_SESSION": SID}))
         self.assertEqual(f["родитель"], "-")
+
+
+class TestTouchKeepsBirth(unittest.TestCase):
+    """Записи работы кормят реестр до потолка, а запись рождения живой сессии
+    остаётся. Хвостовая обрезка вымывала её, дедупликация вымытой строки не
+    видела и писала работу заново, и живой разговор оставался без имени tmux
+    (DK-826)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.tmp]))
+        self.log = os.path.join(self.tmp, "sessions.log")
+        self.tree = Tree(self.tmp, "devkit-dk-826")
+
+    def touch(self, sid):
+        event = {"session_id": sid, "cwd": self.tree.root, "hook_event_name": "PostToolUse",
+                 "tool_name": "Edit", "tool_input": {"file_path": os.path.join(self.tree.root, "a.py")},
+                 "tool_response": {}}
+        stdin, sys.stdin = sys.stdin, io.StringIO(json.dumps(event))
+        try:
+            return session_task.run_touch("claude-code", path=self.log, now=0)
+        finally:
+            sys.stdin = stdin
+
+    def lines(self):
+        with open(self.log, encoding="utf-8") as f:
+            return [ln for ln in f.read().split("\n") if ln]
+
+    def test_work_to_the_cap_keeps_birth_of_live_session(self):
+        birth = session_task.record(start(self.tree.root), env={"DEVKIT_TMUX": "chat-DK-826-1"},
+                                    now=0, terminal=lambda env: "/dev/ttys001")
+        hookio.append_capped(self.log, birth)
+        for i in range(2 * hookio.LOG_KEEP):
+            self.touch("w%04d" % i)
+        lines = self.lines()
+        self.assertLessEqual(len(lines), hookio.LOG_KEEP + 1)
+        self.assertEqual(lines[0], birth.rstrip("\n"),
+                         "запись рождения вымыта записями работы")
+        self.assertTrue(all(" источник работа " in ln or ln == birth.rstrip("\n")
+                            for ln in lines))
+
+    def test_touch_once_per_session_and_task(self):
+        self.assertEqual(self.touch("s1"), 0)
+        self.assertEqual(self.touch("s1"), 0)
+        lines = self.lines()
+        self.assertEqual(len(lines), 1)
+        got, _ = fields(lines[0])
+        self.assertEqual((got["источник"], got["задача"], got["повод"]),
+                         ("работа", "DK-826", "правка файла"))
 
 
 class TestHook(unittest.TestCase):

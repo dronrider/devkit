@@ -49,12 +49,16 @@ class Stand(object):
         with open(self.config, "w", encoding="utf-8") as f:
             f.write(CONFIG)
 
-    def lay_plan(self, items, age=0.0):
-        path = os.path.join(self.plans, "%s.json" % SESSION)
+    def lay_plan(self, items, age=0.0, label=""):
+        """План сессии файлом. С меткой имя выходит таким же, как у agentctl
+        plan в окружении с CLAUDE_CODE_CHILD_SESSION."""
+        name = "%s-sub-%s.json" % (SESSION, label) if label else "%s.json" % SESSION
+        path = os.path.join(self.plans, name)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(items, f, ensure_ascii=False)
         when = time.time() - age
         os.utime(path, (when, when))
+        return path
 
     def lay_turns(self, count, since=60.0):
         """Столько ходов сессии, доработанных после правки плана."""
@@ -242,6 +246,57 @@ class TestWatch(unittest.TestCase):
                            capture_output=True, text=True, env=env)
         self.assertEqual(p.returncode, 0)
         self.assertEqual(p.stdout.strip(), "")
+
+    def test_plan_written_with_a_label_is_the_plan_of_the_session(self):
+        """Окно конвейера в tmux и сессия стенда наследуют
+        CLAUDE_CODE_CHILD_SESSION от чужого процесса, и agentctl plan пишет их
+        план с меткой. Файла без метки у такой сессии нет вовсе, и сторож,
+        глядящий только на него, молчал бы там, где находка DK-609 и
+        случилась."""
+        s = self.stand()
+        s.lay_plan(plan(("разведка", "completed"), ("правка", "in_progress")),
+                   age=4 * HOUR, label="dk609")
+        s.lay_turns(1, since=4 * HOUR - 60)
+        code, said = s.run()
+        self.assertEqual(code, 0)
+        self.assertEqual(said.get("decision"), "block")
+        self.assertIn("«правка»", said.get("reason", ""))
+
+    def test_the_freshest_labelled_plan_wins(self):
+        """Меток у сессии бывает несколько, а план сессии один: берётся тот,
+        который правился последним."""
+        s = self.stand()
+        s.lay_plan(plan(("старая работа", "in_progress")), age=9 * HOUR, label="old")
+        s.lay_plan(plan(("разведка", "completed"), ("правка", "pending")),
+                   age=600.0, label="new")
+        s.lay_turns(1)
+        code, said = s.run()
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {}, "сторож взял устаревший план вместо свежего")
+
+    def test_subagent_plan_does_not_wake_the_watch(self):
+        """У сессии со своим планом файлы с меткой это планы субагентов.
+        Брошенный идущим план мёртвого субагента обычное дело, и ругаться на
+        него каждым ходом диспетчера сторож не должен."""
+        s = self.stand()
+        s.lay_plan(plan(("разведка", "completed"), ("правка", "in_progress")), age=600.0)
+        s.lay_plan(plan(("чужая правка", "in_progress")), age=9 * HOUR, label="dk900")
+        s.lay_turns(1)
+        code, said = s.run()
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {})
+
+    def test_neighbour_file_is_not_a_plan(self):
+        """Маска планов субагента отделяет метку дефисом, и сосед вроде
+        <ID>-submit.json под неё не попадает."""
+        s = self.stand()
+        with open(os.path.join(s.plans, "%s-submit.json" % SESSION), "w",
+                  encoding="utf-8") as f:
+            json.dump(plan(("чужое", "in_progress")), f, ensure_ascii=False)
+        s.lay_turns(20)
+        code, said = s.run()
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {})
 
     def test_off_switch_keeps_the_watch_quiet(self):
         s = self.stand()

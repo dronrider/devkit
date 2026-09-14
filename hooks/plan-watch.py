@@ -17,6 +17,14 @@
   план стоит без правки        план не менялся still_turns ходов подряд, а
                                незакрытые пункты в нём есть
 
+План сессии это файл ~/.devkit/plans/<ID сессии>.json. Нет его, а файлы с
+меткой <ID сессии>-sub-<метка>.json есть, значит план с меткой ведёт сама
+сессия, и берётся свежайший из них. Так лежит план окна конвейера в tmux и
+сессии стенда obeycheck: переменная CLAUDE_CODE_CHILD_SESSION достаётся им от
+чужого процесса, и agentctl plan в таком окружении требует метку. Есть файл без
+метки, значит план сессии это он, а файлы с меткой это планы её субагентов, и
+брошенный идущим план субагента сторожа не будит.
+
 Ходы сторож не считает сам: их считает отметка хода (hooks/turn-mark.py) в
 журнале ~/.devkit/turns.log, и своего журнала рядом с планом тут не заводится.
 Ход, кончившийся позже последней правки плана, это ход, который план не тронул.
@@ -122,6 +130,48 @@ def thresholds(path=None, env=None):
 
 def plan_path(session, env=None):
     return os.path.join(plan_dir(env), "%s.json" % session)
+
+
+def label_plans(session, env=None):
+    """Планы, писанные с меткой: файлы <ID сессии>-sub-<метка>.json, свежайший
+    первым. Маска та же, что у дашборда (subPlanFiles в
+    tools/dashboard/sessions.go), и соседа вроде <ID>-submit.json она не
+    захватывает."""
+    if not session:
+        return []
+    directory = plan_dir(env)
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return []
+    pre = session + "-sub"
+    out = []
+    for name in names:
+        if not name.startswith(pre) or not name.endswith(".json"):
+            continue
+        rest = name[len(pre):-len(".json")]
+        if rest and not rest.startswith("-"):
+            continue
+        path = os.path.join(directory, name)
+        try:
+            out.append((os.path.getmtime(path), path))
+        except OSError:
+            continue
+    out.sort(reverse=True)
+    return [path for _, path in out]
+
+
+def own_plan(session, env=None):
+    """Файл плана самой сессии. Первым спрашивается адрес без метки, как у
+    кольца дашборда. Его нет, а файлы с меткой есть, значит план с меткой ведёт
+    сама сессия: переменная CLAUDE_CODE_CHILD_SESSION достаётся от tmux-сервера
+    и стенду obeycheck, и agentctl plan в таком окружении требует метку
+    (DK-609). Берётся свежайший файл, остальные это планы субагентов."""
+    path = plan_path(session, env)
+    if os.path.exists(path):
+        return path
+    labelled = label_plans(session, env)
+    return labelled[0] if labelled else path
 
 
 def read_plan(path):
@@ -231,7 +281,7 @@ def handle(event, env=None, now=None, stream=None):
         # Ход, продолженный стоп-хуком, сторож пропускает: второй заход закрутил
         # бы сессию в цикле, а сказанное в первый раз уже сказано.
         return 0
-    items, changed = read_plan(plan_path(event.session, env))
+    items, changed = read_plan(own_plan(event.session, env))
     if not items:
         return 0
     limits, why = thresholds(None, env)

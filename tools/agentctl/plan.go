@@ -23,14 +23,20 @@ type planItem struct {
 	State string `json:"state"`
 }
 
-// planEnvSession, planEnvChild и planEnvTmux это окружение, из которого
-// считается адрес файла. Своё имя сессия Claude Code кладёт сама, признак
-// субагента приезжает от харнеса, а имя tmux-сессии это заказ поднявшего:
-// в контуре второй подписки CLAUDE_CODE_SESSION_ID пуст, и без запасного
-// адреса план такой сессии писать некуда (DK-269).
+// planEnvSession, planEnvTmux и planEnvLabel это окружение, из которого
+// считается адрес файла. Своё имя сессия Claude Code кладёт сама, имя
+// tmux-сессии это заказ поднявшего (в контуре второй подписки
+// CLAUDE_CODE_SESSION_ID пуст, и без запасного адреса план такой сессии писать
+// некуда, DK-269), а метку кладёт поднявший субагента.
+//
+// Отрицательного признака субагента тут больше нет. До DK-852 запись без метки
+// отбивалась при CLAUDE_CODE_CHILD_SESSION=1, и ворота эти держались на том,
+// что метку харнес ставит одному субагенту. Клиент 2.1.261 ставит её в
+// окружение каждого вызова Bash, у головы разговора и у субагента одинаково, и
+// различителя в окружении не осталось. Планы пачки держит теперь только
+// положительная метка, а требовать её умеет тот, кто субагента поднимает.
 const (
 	planEnvSession = "CLAUDE_CODE_SESSION_ID"
-	planEnvChild   = "CLAUDE_CODE_CHILD_SESSION"
 	planEnvTmux    = "DEVKIT_TMUX"
 	planEnvLabel   = "DEVKIT_PLAN_LABEL"
 )
@@ -67,8 +73,9 @@ func planLabelOK(label string) bool {
 // planResolve считает адрес плана по окружению и флагам. Субагент пишет свой
 // файл с меткой: CLAUDE_CODE_SESSION_ID у субагентов одной пачки общий, своего
 // признака окружение им не даёт, и без метки они писали план поверх соседского
-// (DK-527).
-func planResolve(home, sid, label string, env func(string) string, write bool) (planAddr, error) {
+// (DK-527). Метка приезжает флагом либо парой окружения, а безымянный план это
+// план самой сессии.
+func planResolve(home, sid, label string, env func(string) string) (planAddr, error) {
 	var a planAddr
 	a.sid = sid
 	if a.sid == "" {
@@ -84,10 +91,6 @@ func planResolve(home, sid, label string, env func(string) string, write bool) (
 	a.label = label
 	if a.label == "" {
 		a.label = strings.TrimSpace(env(planEnvLabel))
-	}
-	if write && a.label == "" && strings.TrimSpace(env(planEnvChild)) == "1" {
-		return a, fmt.Errorf("ты субагент (%s=1), ID сессии у тебя от внешней сессии: назови свою метку флагом --label, иначе план ляжет поверх чужого",
-			planEnvChild)
 	}
 	name := a.sid
 	if a.label != "" {
@@ -277,9 +280,7 @@ func planSubFiles(home, sid string) []string {
 // cmdPlan это все четыре действия над планом одной командой: положить, начать
 // пункт, закрыть пункт, показать.
 func cmdPlan(home, op string, args []string, sid, label string, env func(string) string) (string, error) {
-	// Смотреть чужой план не запрещено: без метки субагент читает план внешней
-	// сессии, а вот пишет только свой.
-	a, err := planResolve(home, sid, label, env, op != "show")
+	a, err := planResolve(home, sid, label, env)
 	if err != nil {
 		return "", err
 	}

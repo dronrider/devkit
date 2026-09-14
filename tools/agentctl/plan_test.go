@@ -105,17 +105,29 @@ func TestPlanShow(t *testing.T) {
 	}
 }
 
-func TestPlanSubagentNeedsLabel(t *testing.T) {
-	home := t.TempDir()
-	env := planEnv(map[string]string{planEnvSession: "s1", planEnvChild: "1"})
+// planChildMark это метка, которую клиент Claude Code с версии 2.1.261 ставит в
+// окружение каждого вызова Bash: и у головы разговора, и у субагента (DK-852).
+// Своего имени в коде она больше не имеет, а тут стоит замером.
+const planChildMark = "CLAUDE_CODE_CHILD_SESSION"
 
-	_, err := cmdPlan(home, "set", []string{"работа"}, "", "", env)
-	if err == nil {
-		t.Fatal("субагент без метки положил план поверх плана внешней сессии")
+func TestPlanHeadWritesUnderChildMark(t *testing.T) {
+	home := t.TempDir()
+	// Предмет DK-852: голова разговора со своим ID сессии пишет свой план, хотя
+	// метка субагента в окружении стоит. Прежде она получала отказ и обходила
+	// его руками, снимая метку через env -u перед каждым вызовом.
+	env := planEnv(map[string]string{planEnvSession: "s1", planChildMark: "1"})
+
+	if _, err := cmdPlan(home, "set", []string{"работа"}, "", "", env); err != nil {
+		t.Fatalf("голова разговора получила отказ на своём же плане: %v", err)
 	}
-	if !strings.Contains(err.Error(), "--label") {
-		t.Fatalf("отказ не зовёт флаг метки: %v", err)
+	if _, err := os.Stat(filepath.Join(home, ".devkit", "plans", "s1.json")); err != nil {
+		t.Fatalf("плана сессии по имени s1.json нет: %v", err)
 	}
+}
+
+func TestPlanSubagentKeepsNeighbourPlan(t *testing.T) {
+	home := t.TempDir()
+	env := planEnv(map[string]string{planEnvSession: "s1", planChildMark: "1"})
 
 	if _, err := cmdPlan(home, "set", []string{"работа"}, "", "dk613", env); err != nil {
 		t.Fatal(err)
@@ -126,16 +138,22 @@ func TestPlanSubagentNeedsLabel(t *testing.T) {
 	}
 	// Метка из окружения работает наравне с флагом: пачку исполнителей поднимает
 	// диспетчер, и метку он может положить парой окружения.
-	envLabel := planEnv(map[string]string{planEnvSession: "s1", planEnvChild: "1", planEnvLabel: "dk614"})
+	envLabel := planEnv(map[string]string{planEnvSession: "s1", planEnvLabel: "dk614"})
 	if _, err := cmdPlan(home, "set", []string{"работа"}, "", "", envLabel); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".devkit", "plans", "s1-sub-dk614.json")); err != nil {
 		t.Fatalf("метка из окружения в имя файла не уехала: %v", err)
 	}
-	// Читать чужой план субагенту не запрещено: метки требует запись, а не показ.
+	// План соседа по пачке метка бережёт: имена файлов разные, и первый план
+	// лежит на месте.
+	if _, err := os.Stat(filepath.Join(home, ".devkit", "plans", "s1-sub-dk613.json")); err != nil {
+		t.Fatalf("план соседа по пачке пропал: %v", err)
+	}
+	// Читать чужой план не запрещено: метка называет своего хозяина, а показ
+	// берёт план сессии вместе с планами её субагентов.
 	if _, err := cmdPlan(home, "show", nil, "", "", env); err != nil {
-		t.Fatalf("субагент без метки не смог посмотреть план внешней сессии: %v", err)
+		t.Fatalf("план внешней сессии не показан: %v", err)
 	}
 }
 
@@ -144,7 +162,7 @@ func TestPlanAddress(t *testing.T) {
 
 	// Запасной адрес: в контуре второй подписки CLAUDE_CODE_SESSION_ID пуст, и
 	// план сессии ведётся именем её tmux-сессии.
-	a, err := planResolve(home, "", "", planEnv(map[string]string{planEnvTmux: "chat-2"}), true)
+	a, err := planResolve(home, "", "", planEnv(map[string]string{planEnvTmux: "chat-2"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,12 +172,12 @@ func TestPlanAddress(t *testing.T) {
 
 	// Нечем назвать сессию, значит команда отказывает словами, а не пишет план
 	// в файл со случайным именем.
-	if _, err := planResolve(home, "", "", planEnv(nil), true); err == nil {
+	if _, err := planResolve(home, "", "", planEnv(nil)); err == nil {
 		t.Fatal("план без ID сессии записан, ждали отказ")
 	}
 
 	// Метка не уводит файл за пределы каталога планов.
-	if _, err := planResolve(home, "s1", "../../beda", planEnv(nil), true); err == nil {
+	if _, err := planResolve(home, "s1", "../../beda", planEnv(nil)); err == nil {
 		t.Fatal("метка с путём принята, ждали отказ")
 	}
 }

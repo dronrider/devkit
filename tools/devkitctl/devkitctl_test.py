@@ -259,6 +259,21 @@ class ProjectFindingsTest(SandboxCase):
         self.assertNotIn_("phase-budget.py не подключён", out,
                           "подключённый сторожок попал в находку")
 
+    def test_5f_plan_watch_hook(self):
+        # Сторож плана (DK-609) стоит на Stop, и его пропажа это находка: план,
+        # разошедшийся с работой, остаётся заботой человеческого глаза.
+        full = read(self.settings)
+        drop_lines(self.settings, "plan-watch.py")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("сторож plan-watch.py не подключён на событии Stop", out,
+                       "нет находки про неподключённый сторож плана")
+        self.assertIn_("кольцо дашборда врёт про живой заход", out,
+                       "находка не говорит, что ломается без сторожа плана")
+        write(self.settings, full)
+        _, out = self.box.doctor(self.proj)
+        self.assertNotIn_("plan-watch.py не подключён", out,
+                          "подключённый сторож плана попал в находку")
+
     def test_5b_retry_watchdog_key(self):
         # Без env-ключа недокументированного ретрай-вотчдога доктор называет
         # это находкой (стенд DK-172 разницы в поведении с ключом не нашёл, но

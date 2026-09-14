@@ -307,6 +307,11 @@ TURN_EVENTS = ("Stop", "StopFailure", "Notification", "UserPromptSubmit")
 # и хвост задачи попадает на самый занятый контекст, а это не то же самое, что
 # потерянная реплика чата.
 PHASE_HOOK = "phase-budget.py"
+# Сторож плана (DK-609): Stop на пустом матчере, потому что сверять план с
+# делом имеет смысл там же, где сдаются фоновые работы, на конце хода.
+# Категория сообщения в hook_gaps своя: без сторожа кольцо дашборда врёт про
+# живой заход молча, и это не то же самое, что потерянный отчёт субагента.
+PLAN_HOOK = "plan-watch.py"
 # Хуки, переименованные в devkit: прежнее имя файла и нынешнее (DK-440). Строка
 # с прежним именем зовёт файл, которого в чекауте уже нет, и харнес спотыкается
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
@@ -355,6 +360,7 @@ HOOK_LAYOUT = (
     ("PostToolUse", PRE_MATCHER, "python3 %s/hooks/phase-budget.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
+    ("Stop", "", "python3 %s/hooks/plan-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
     ("StopFailure", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
     ("Notification", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
@@ -1521,6 +1527,11 @@ def hook_gaps(text, settings):
             findings.append("подхват реплики %s не подключён на событии PostToolUse в %s: реплика "
                             "человека из чата цели ждёт следующего витка вместо идущего "
                             "(hooks/README.md)" % (CHAT_HOOK, settings))
+        elif script == PLAN_HOOK:
+            findings.append("сторож %s не подключён на событии Stop в %s: расхождение плана "
+                            "работ с делом не ловит никто, и кольцо дашборда врёт про живой "
+                            "заход, пока человек не спросит сессию сам (hooks/README.md)"
+                            % (PLAN_HOOK, settings))
         elif script == PHASE_HOOK:
             findings.append("сторожок стыка фаз %s не подключён на событии PostToolUse Bash в %s: "
                             "остаток окна на переходе задачи никто не считает, и хвост задачи "

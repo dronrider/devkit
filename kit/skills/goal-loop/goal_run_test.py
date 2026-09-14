@@ -1161,7 +1161,8 @@ class SkillMarkerTests(unittest.TestCase):
             cls.skill = f.read()
 
     def markers(self):
-        return self.skill[self.skill.index("## Маркеры выхода"):self.skill.index("## Живая реплика")]
+        return self.skill[self.skill.index("## Маркеры выхода"):
+                          self.skill.index("## Живая реплика")]
 
     def test_wait_human_names_goal_level_reasons_only(self):
         # У маркера три повода уровня цели: сверка бюджета, вопрос постановки,

@@ -384,7 +384,7 @@ func TestAppendBindCapsTheLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimRight(readFile(t, path), "\n"), "\n")
-	if len(lines) != bindLogKeep+1 {
+	if len(lines) != 500+1 {
 		t.Fatalf("журнал не обрезан: строк %d", len(lines))
 	}
 	if binds := parseBinds([]byte(readFile(t, path))); binds["new"].Task != "DK-2" {

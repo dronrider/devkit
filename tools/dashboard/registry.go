@@ -352,40 +352,11 @@ func dash(v string) string {
 	return v
 }
 
-// bindLogLimit и bindLogKeep держат реестр в тех же берегах, что и писатель на
-// python (hookio.LOG_LIMIT, LOG_KEEP): разросшийся файл режется до последних
-// строк, а сворачивает читатель всё равно по последней записи сессии.
-const (
-	bindLogLimit = 100 * 1024
-	bindLogKeep  = 500
-)
-
-// appendBind дописывает строку в реестр, обрезав разросшийся файл. Обрезка
-// повторяет python-писателя нарочно: два писателя с разными правилами роста
-// оставили бы файл, растущий до диска в половине случаев.
-func appendBind(path, line string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	if fi, err := os.Stat(path); err == nil && fi.Size() > bindLogLimit {
-		if data, err := os.ReadFile(path); err == nil {
-			lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-			if len(lines) > bindLogKeep {
-				lines = lines[len(lines)-bindLogKeep:]
-			}
-			if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
-				return err
-			}
-		}
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = f.WriteString(line)
-	return err
-}
+// appendBind дописывает строку в реестр одним писателем с утилитами доски
+// (sessions.Append): два писателя с разными правилами обрезки оставили бы файл,
+// растущий до диска в половине случаев, а обрезка там не простой хвост: записи
+// работы уходят первыми, а рождения сессий остаются (DK-826).
+func appendBind(path, line string) error { return sessions.Append(path, line) }
 
 // handleSessionTaskPost привязывает разговор к задаче рукой и отвязывает его
 // пустым значением. Это ответ на нераспознанную сессию: угадать её задачу

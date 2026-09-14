@@ -102,9 +102,9 @@ class Stand(unittest.TestCase):
 
     def event(self, session=SID, active=False):
         return hookio.Agent(kind=hookio.TURN_DONE, session=session, cwd=self.proj,
-                            transcript="", agent_id="", job="subagent", agent_type="",
-                            description="", command="", output="", message="отчёт витка",
-                            jobs=(), active=active)
+                            transcript="", agent_id="", owner="", job="subagent",
+                            agent_type="", description="", command="", output="",
+                            message="отчёт витка", jobs=(), active=active)
 
     def stop(self, session=SID, call=None, active=False):
         """Конец хода через держателя: (решение либо None, запускатель)."""

@@ -3650,30 +3650,49 @@ func (s *server) chatArchive(sid string, on bool) (archDone, error) {
 		s.logf("чат %s возвращён из архива", sid)
 		return archDone{message: "разговор вернулся в список"}, nil
 	}
-	last := sessions.Last(s.bindsAll()[sid])
-	if last.Tmux == "" || !tmuxAliveFn()(last.Tmux) {
-		s.logf("чат %s убран в архив", sid)
-		return archDone{message: "разговор убран в архив"}, nil
+	// Имя окна собирает та же свёртка, что у списка и стопа (chatWinOf). Одной
+	// записью журнала ручка отвечала «убран в архив» на 29 живых чатов
+	// подряд, а их процессы жили дальше невидимыми: записи были вырезаны
+	// ротацией, окно знал только живой клиент (DK-825).
+	recs, live, mem := s.bindsAll(), s.peers(), s.chatWinMemory()
+	name, src := s.chatWinOf(sid, recs, live, mem)
+	if name == "" {
+		s.logf("чат %s убран в архив, окно не найдено %s: снимать нечего", sid, chatWinLooked)
+		return archDone{message: "разговор убран в архив, окно не найдено: если процесс жив, он остался"}, nil
 	}
-	// Имя окна в записи бывает чужим, и уборка по нему снимала живую работу
+	if !tmuxAliveFn()(name) {
+		s.logf("чат %s убран в архив, окно %s уже снято", sid, name)
+		return archDone{tmux: name, message: fmt.Sprintf("разговор убран в архив, окно %s уже снято", name)}, nil
+	}
+	// Имя из журнала бывает чужим, и уборка по нему снимала живую работу
 	// соседа: убери человек мёртвый разговор, чьё имя занял диспетчер цели, и
-	// вместе с ним ушёл бы весь цикл (DK-673). Снимается поэтому не имя из
-	// записи, а окно, в котором этот разговор и идёт.
-	if held := tmuxHeld(s.peers(), last.Tmux); held != "" && held != sid {
-		s.logf("чат %s убран в архив, сессия %s осталась жить: в этом окне идёт разговор %s",
-			sid, last.Tmux, held)
-		return archDone{tmux: last.Tmux, message: fmt.Sprintf(
-			"разговор убран в архив, а сессия %s осталась жить: в этом окне идёт разговор %s",
-			last.Tmux, held)}, nil
+	// вместе с ним ушёл бы весь цикл (DK-673). Хозяин сверяется по живому
+	// клиенту, свежая запись журнала без живого клиента это кончившийся
+	// разговор, и окно за ним снимается. Окно, поднятое дашбордом заново до
+	// записи хука старта (DK-851), живое и чужое, его уборка не трогает.
+	// Слово живого клиента о своём окне старше всего этого.
+	if src == chatWinByBind {
+		if held := tmuxHeld(live, name); held != "" && held != sid {
+			s.logf("чат %s убран в архив, сессия %s осталась жить: в этом окне идёт разговор %s",
+				sid, name, held)
+			return archDone{tmux: name, message: fmt.Sprintf(
+				"разговор убран в архив, а сессия %s осталась жить: в этом окне идёт разговор %s",
+				name, held)}, nil
+		}
+		if raised := mem[name].Raised; raised > 0 && sessions.Last(recs[sid]).Time < bindTimeSince(raised) {
+			s.logf("чат %s убран в архив, окно %s поднято заново и осталось жить", sid, name)
+			return archDone{tmux: name, message: fmt.Sprintf(
+				"разговор убран в архив, а окно %s поднято заново и осталось жить", name)}, nil
+		}
 	}
-	s.chatWatchOff(last.Tmux)
-	if err := chatKill(last.Tmux); err != nil {
-		s.logf("чат %s убран в архив, но tmux-сессия %s не снялась: %v", sid, last.Tmux, err)
-		return archDone{tmux: last.Tmux, message: fmt.Sprintf(
-			"разговор убран в архив, но сессия %s не снялась: %s", last.Tmux, procErr(err))}, nil
+	s.chatWatchOff(name)
+	if err := chatKill(name); err != nil {
+		s.logf("чат %s убран в архив, но tmux-сессия %s не снялась, процесс остался: %v", sid, name, err)
+		return archDone{tmux: name, message: fmt.Sprintf(
+			"разговор убран в архив, но сессия %s не снялась, процесс остался: %s", name, procErr(err))}, nil
 	}
-	s.logf("чат %s убран в архив, сессия %s снята", sid, last.Tmux)
-	return archDone{dropped: true, tmux: last.Tmux, message: "разговор убран в архив, сессия снята"}, nil
+	s.logf("чат %s убран в архив, сессия %s снята", sid, name)
+	return archDone{dropped: true, tmux: name, message: "разговор убран в архив, сессия снята"}, nil
 }
 
 // handleChatModel меняет модель диалога. Смена действует на следующий подъём

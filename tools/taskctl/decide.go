@@ -23,6 +23,7 @@ type DecideParams struct {
 	Ask    string   // вопрос заведения
 	Who    string   // значение поля «решает» при заведении
 	Hint   string   // рекомендация
+	Tie    string   // довод равенства вариантов вместо рекомендации
 	Opts   []string // варианты ответа, кроме рекомендованного
 	By     string   // автор решения или передачи
 	Text   string   // ответ с доводом либо причина передачи
@@ -167,6 +168,11 @@ func decideWho(who string) string {
 	return "решает человек, держит старт задачи"
 }
 
+// decideAsk заводит развилку. Вопрос без рекомендации отказывает (DK-974):
+// первая голова DK-941 спросила человека тремя вариантами без рекомендации,
+// верного среди них не было, и цель простояла ночь. Рекомендация с доводом
+// это итог обхода развилки до вопроса, и заводить вопрос раньше него нечем.
+// Честное равенство двух вариантов называется ключом --tie с доводом.
 func decideAsk(doc string, p DecideParams) (string, error) {
 	who := p.Who
 	if who == "" {
@@ -175,7 +181,11 @@ func decideAsk(doc string, p DecideParams) (string, error) {
 	if strings.TrimSpace(p.Text) == "" {
 		return "", fmt.Errorf("у развилки нет вопроса: taskctl decide %s --ask «имя» \"вопрос\"", p.ID)
 	}
-	return taskform.AddFork(doc, decideName(p.Ask), p.Text, who, p.Hint, p.Opts...)
+	if strings.TrimSpace(p.Hint) == "" && strings.TrimSpace(p.Tie) == "" {
+		return "", fmt.Errorf("у развилки «%s» нет рекомендации: сначала обход развилки (interview, «Обход до первого вопроса»), потом taskctl decide %s --ask «%s» --hint \"ответ, довод\" \"вопрос\"; равный счёт двух вариантов называется --tie \"довод равенства\" с двумя --option",
+			decideName(p.Ask), p.ID, decideName(p.Ask))
+	}
+	return taskform.AddForkSpec(doc, taskform.Fork{Name: decideName(p.Ask), Question: p.Text, Who: who, Hint: p.Hint, Tie: p.Tie, Options: p.Opts})
 }
 
 // decideOption дописывает варианты ответа к заведённой развилке. Вариантами
@@ -302,6 +312,9 @@ func decideShow(doc string, p DecideParams) string {
 		line := fmt.Sprintf("- «%s» (%s): %s", f.Name, decideState(f), f.Question)
 		if f.Hint != "" {
 			line += "\n  рекомендация: " + f.Hint
+		}
+		if f.Tie != "" {
+			line += "\n  равенство: " + f.Tie
 		}
 		for _, o := range f.Options {
 			line += "\n  вариант: " + o

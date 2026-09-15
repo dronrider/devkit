@@ -122,7 +122,7 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               JSON со stdin, признак ложится
                                               без срока и паркует задачу
                                               причиной «вопрос: ...»
-  decide <ID> --ask «имя» [--who человек|исполнитель] [--hint "..."] [--option "..."] "вопрос"
+  decide <ID> --ask «имя» [--who человек|исполнитель] --hint "..."|--tie "..." [--option "..."] "вопрос"
                                               завести открытую развилку в
                                               разделе «Развилки» записи
                                               (черновик, файл задачи или файл
@@ -595,7 +595,8 @@ func main() {
 		var p DecideParams
 		fs.StringVar(&p.Ask, "ask", "", "завести развилку с этим именем")
 		fs.StringVar(&p.Who, "who", "", "кто решает: человек (по умолчанию) либо исполнитель")
-		fs.StringVar(&p.Hint, "hint", "", "рекомендация: ответ по умолчанию с доводом")
+		fs.StringVar(&p.Hint, "hint", "", "рекомендация: ответ по умолчанию с доводом, без неё --ask отказывает")
+		fs.StringVar(&p.Tie, "tie", "", "довод равенства двух вариантов вместо рекомендации, вместе с двумя --option")
 		fs.Var((*strList)(&p.Opts), "option", "вариант ответа кроме рекомендованного, ключ повторяется")
 		fs.BoolVar(&p.Chat, "chat", false, "напечатать блок вопроса для реплики в чат")
 		fs.StringVar(&p.Answer, "answer", "", "ответ человека на блок вопроса: «имя 1, имя 2» либо «по рекомендации»")
@@ -612,7 +613,7 @@ func main() {
 			needArgs(pos, 1, 1, "decide <ID> --answer \"имя 1, имя 2\"")
 			p.ID = pos[0]
 		case p.Ask != "":
-			needArgs(pos, 2, 2, "decide <ID> --ask «имя» [--who ...] [--hint \"...\"] [--option \"...\"] \"вопрос\"")
+			needArgs(pos, 2, 2, "decide <ID> --ask «имя» [--who ...] --hint \"...\"|--tie \"...\" [--option \"...\"] \"вопрос\"")
 			p.ID, p.Text = pos[0], pos[1]
 		case len(p.Opts) > 0:
 			needArgs(pos, 2, 2, "decide <ID> «имя» --option \"вариант\"")

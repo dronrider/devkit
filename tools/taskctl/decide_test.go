@@ -71,7 +71,7 @@ func TestDecideWritesList(t *testing.T) {
 
 	// Передача правит поле «решает», а не только дописывает след: состояние
 	// читается полем, и без правки развилка держала бы старт после передачи.
-	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "публичность", Text: "релизы видны без токена?"})
+	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "публичность", Hint: "проверить по факту", Text: "релизы видны без токена?"})
 	decideRun(t, root, DecideParams{ID: "XR-005", Name: "публичность", Leave: true, By: "агент", Text: "проверить по факту"})
 	f, ok := taskform.FindFork(readTask(t, root, "XR-005"), "публичность")
 	if !ok || f.HoldsStart() || f.State() != taskform.StateLeft {
@@ -86,10 +86,10 @@ func TestDecideWritesList(t *testing.T) {
 // имени, архивный ID, чужой автор и заведение без вопроса.
 func TestDecideRefusals(t *testing.T) {
 	root := setup(t)
-	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "доступ", Text: "токен положен?"})
+	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "доступ", Hint: "считать приватным", Text: "токен положен?"})
 
 	t.Run("повтор имени", func(t *testing.T) {
-		_, err := cmdDecide(root, DecideParams{ID: "XR-005", Ask: "доступ", Text: "второй раз", Now: decideDay})
+		_, err := cmdDecide(root, DecideParams{ID: "XR-005", Ask: "доступ", Hint: "считать приватным", Text: "второй раз", Now: decideDay})
 		if err == nil || !strings.Contains(err.Error(), "доступ") {
 			t.Fatalf("занятое имя завелось второй раз: %v", err)
 		}
@@ -108,7 +108,7 @@ func TestDecideRefusals(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "XR-007.md"), []byte("# XR-007\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := cmdDecide(root, DecideParams{ID: "XR-007", Ask: "поздно", Text: "вопрос?", Now: decideDay})
+		_, err := cmdDecide(root, DecideParams{ID: "XR-007", Ask: "поздно", Hint: "ответ", Text: "вопрос?", Now: decideDay})
 		if err == nil || !strings.Contains(err.Error(), "XR-007") {
 			t.Fatalf("развилка завелась в архивной записи: %v", err)
 		}
@@ -122,12 +122,12 @@ func TestDecideRefusals(t *testing.T) {
 		}
 	})
 	t.Run("нет вопроса", func(t *testing.T) {
-		if _, err := cmdDecide(root, DecideParams{ID: "XR-005", Ask: "пусто", Now: decideDay}); err == nil {
+		if _, err := cmdDecide(root, DecideParams{ID: "XR-005", Ask: "пусто", Hint: "ответ", Now: decideDay}); err == nil {
 			t.Fatal("развилка завелась без вопроса")
 		}
 	})
 	t.Run("записи нет", func(t *testing.T) {
-		if _, err := cmdDecide(root, DecideParams{ID: "XR-404", Ask: "нет", Text: "вопрос?", Now: decideDay}); err == nil {
+		if _, err := cmdDecide(root, DecideParams{ID: "XR-404", Ask: "нет", Hint: "ответ", Text: "вопрос?", Now: decideDay}); err == nil {
 			t.Fatal("развилка завелась у записи, которой нет")
 		}
 	})
@@ -135,6 +135,56 @@ func TestDecideRefusals(t *testing.T) {
 		decideRun(t, root, DecideParams{ID: "XR-005", Name: "доступ", By: "человек", Text: "положил в secretctl"})
 		if _, err := cmdDecide(root, DecideParams{ID: "XR-005", Name: "доступ", Leave: true, Now: decideDay}); err == nil {
 			t.Fatal("решённая развилка ушла исполнителю")
+		}
+	})
+}
+
+// TestDecideAskTie: два варианта с равным доводом называются ключом --tie
+// (DK-974). Развилка человеческая, держит старт, в файле стоит подстрока
+// «равенство», а блок --chat печатает оба варианта без рекомендованного и
+// довод равенства под головой.
+func TestDecideAskTie(t *testing.T) {
+	root := setup(t)
+	msg := decideRun(t, root, DecideParams{ID: "XR-005", Ask: "разрез", Tie: "оба режут тело одинаково, прецедента в репозитории нет", Text: "куда вынести раздел?", Opts: []string{"свой скилл", "файл рядом"}})
+	if !strings.Contains(msg, "держит старт") {
+		t.Fatalf("ответ заведения не сказал про старт: %s", msg)
+	}
+	doc := readTask(t, root, "XR-005")
+	want := "- «разрез»: куда вынести раздел?\n  - решает: человек\n  - равенство: оба режут тело одинаково, прецедента в репозитории нет\n  - вариант: свой скилл\n  - вариант: файл рядом"
+	if !strings.Contains(doc, want) {
+		t.Fatalf("развилка записана не по форме:\n%s", doc)
+	}
+	f, ok := taskform.FindFork(doc, "разрез")
+	if !ok || !f.HoldsStart() || f.Tie == "" {
+		t.Fatalf("развилка с равенством разобрана как %+v", f)
+	}
+	if finds := taskform.ForkFinds(doc); len(finds) != 0 {
+		t.Fatalf("сторож формы споткнулся о равенство: %+v", finds)
+	}
+	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, nil)
+	for _, w := range []string{"«разрез»: куда вынести раздел?\nварианты равны: оба режут тело одинаково", "\n1. свой скилл", "\n2. файл рядом"} {
+		if !strings.Contains(got, w) {
+			t.Fatalf("в блоке нет строки %q:\n%s", w, got)
+		}
+	}
+	if strings.Contains(got, "рекомендую") {
+		t.Fatalf("блок назвал рекомендованный вариант у равенства:\n%s", got)
+	}
+	if !strings.Contains(decideRun(t, root, DecideParams{ID: "XR-005", Open: true}), "равенство: оба режут") {
+		t.Fatal("печать открытых потеряла довод равенства")
+	}
+
+	t.Run("отказы равенства", func(t *testing.T) {
+		cases := map[string]DecideParams{
+			"с рекомендацией":      {ID: "XR-005", Ask: "оба", Hint: "первый", Tie: "равны", Text: "вопрос?", Opts: []string{"а", "б"}},
+			"один вариант":         {ID: "XR-005", Ask: "один", Tie: "равны", Text: "вопрос?", Opts: []string{"а"}},
+			"оставить исполнителю": {ID: "XR-005", Ask: "себе", Who: taskform.ForkExecutor, Tie: "равны", Text: "вопрос?", Opts: []string{"а", "б"}},
+		}
+		for name, p := range cases {
+			p.Now = decideDay
+			if _, err := cmdDecide(root, p); err == nil {
+				t.Fatalf("%s: развилка с равенством завелась", name)
+			}
 		}
 	})
 }
@@ -151,7 +201,7 @@ func TestDecideFindsRecord(t *testing.T) {
 	if err := os.WriteFile(path, []byte("# XR-050: черновик\n\n## Черновик\n\n### Ситуация\n\nтекст\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg := decideRun(t, root, DecideParams{ID: "XR-050", Ask: "хранение", Text: "где держать?"})
+	msg := decideRun(t, root, DecideParams{ID: "XR-050", Ask: "хранение", Hint: "в файле", Text: "где держать?"})
 	if !strings.Contains(msg, "черновик") {
 		t.Fatalf("ответ не назвал вид записи: %s", msg)
 	}
@@ -275,7 +325,7 @@ func TestDecideOptionRefusals(t *testing.T) {
 	if _, err := cmdDecide(root, DecideParams{ID: "XR-005", Name: "секрет", Opts: []string{"из secretctl"}, Now: decideDay}); err == nil {
 		t.Fatal("вариант лёг в незаведённую развилку")
 	}
-	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "доступ", Text: "токен положен?"})
+	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "доступ", Hint: "считать приватным", Text: "токен положен?"})
 	if _, err := cmdDecide(root, DecideParams{ID: "XR-005", Name: "доступ", Opts: []string{"   "}, Now: decideDay}); err == nil {
 		t.Fatal("пустой вариант принят")
 	}

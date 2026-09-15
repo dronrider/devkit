@@ -665,8 +665,8 @@ const bindTip = (head) => {
   if (!dump(p1).includes("не ушло, дожимаю")) {
     fail("неушедшая реплика не сказала про автодожим: " + dump(p1));
   }
-  if (!dump(p1).includes("повторить")) {
-    fail("кнопка ручного повтора пропала вместе с автодожимом: " + dump(p1));
+  if (dump(p1).includes("повторить") || dump(p1).includes("отменить")) {
+    fail("у неушедшей реплики стоят кнопки, а дожим это дело дашборда: " + dump(p1));
   }
   const saved = store.get("devkit.chat.pend.demo/" + mine.id);
   if (!saved || !saved.includes("дожми это")) {

@@ -710,7 +710,8 @@ func permissionNotify(sid string) string {
 // и реплику, легшую в очередь вставшего клиента (пузырь с причиной).
 func TestStaticPanelKnowsStartAndStuck(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
-	for _, want := range []string{`if (r.body.stuck) echo.held(m, r.body.stuck);`,
+	for _, want := range []string{`if (r.body.stuck && r.body.way === "held") echo.held(m, r.body.stuck);`,
+		`else if (r.body.stuck) echo.queued(m, r.body.stuck);`,
 		`if (r.body.way === "start")`, `chatWait(project, r.body.tmux)`,
 		`m.state === "held" ? "не доставлено: "`} {
 		if !strings.Contains(app, want) {
@@ -2202,27 +2203,77 @@ func TestStaticChatDropFocusByWidth(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
-// Повтор и отмена недоставленной реплики на экране: пузырь остаётся на месте и
-// говорит, что реплика уже в очереди, а отмена снимает её и из самой очереди.
+// Дожим реплики во вход задачи: панель довозит неушедшее сама, второй строки в
+// очереди не заводит, а пузырь стоит со словами про очередь и без кнопок.
 // Предмет проверки это поведение панели, поэтому статика поднимается в node с
-// заглушкой DOM (стенд testdata/poc_taskretry.mjs). Без node шаг пропускается:
+// заглушкой DOM (стенд testdata/poc_taskqueue.mjs). Без node шаг пропускается:
 // узел стенда, а не рабочей части.
-func TestStaticTaskRetryKeepsBubble(t *testing.T) {
+func TestStaticTaskQueueKeepsBubble(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node не найден: стенд повтора реплики пропущен")
+		t.Skip("node не найден: стенд дожима реплики пропущен")
 	}
-	out, err := exec.Command(node, filepath.Join("testdata", "poc_taskretry.mjs"),
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_taskqueue.mjs"),
 		filepath.Join("static", "app.js")).CombinedOutput()
 	if err != nil {
-		t.Fatalf("повтор недоставленной реплики: %v\n%s", err, out)
+		t.Fatalf("дожим реплики во вход задачи: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
 
-// Реплика в задачу без ведущей сессии на экране: пузырь стоит недоставленным с
-// причиной, текст человека цел и переживает таймеры панели, а рядом выход к
-// задаче. Предмет проверки это собранная разметка, поэтому статика поднимается
+// Реплика в снятый разговор (поле gone): панель отправляет её обычной дорогой,
+// ручка /say продолжает ту же сессию резюмом, пузыря «не доставлено», плашки и
+// кнопок в панели нет (DK-1011). Стенд testdata/poc_chatgone.mjs. Без node шаг
+// пропускается: узел стенда, а не рабочей части.
+func TestStaticChatGoneGoesResume(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд снятого разговора пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatgone.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("реплика в снятый разговор: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Второй заход подъёма сессии: смерть клиента на первой реплике панель
+// переживает сама, а вторая смерть подряд встаёт причиной на пузыре без кнопок
+// (DK-1011). Стенд testdata/poc_chatlift2.mjs. Без node шаг пропускается: узел
+// стенда, а не рабочей части.
+func TestStaticChatLiftTriesTwice(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд второго подъёма пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatlift2.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("второй заход подъёма сессии: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Пузырь своей реплики без кнопок: ни в одном состоянии их нет, состояние
+// названо строкой, а неушедшее уезжает дожимом само (DK-1011). Стенд
+// testdata/poc_chatnobtn.mjs. Без node шаг пропускается: узел стенда, а не
+// рабочей части.
+func TestStaticChatBubbleHasNoButtons(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд пузыря без кнопок пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatnobtn.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("пузырь без кнопок: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
+// Реплика в задачу без ведущей сессии на экране: пузырь называет очередь задачи
+// строкой, кнопок при нём нет, текст человека цел и переживает таймеры панели. Предмет проверки это собранная разметка, поэтому статика поднимается
 // в node с заглушкой DOM (стенд testdata/poc_tasknolead.mjs). Без node шаг
 // пропускается: узел стенда, а не рабочей части.
 func TestStaticTaskReplyWithoutLead(t *testing.T) {

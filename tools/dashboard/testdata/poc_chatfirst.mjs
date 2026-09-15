@@ -144,26 +144,10 @@ const asks = (panel) => {
   if (!said.includes("не ушло")) {
     fail("пузырь после отказа выглядит доставленным: " + said.slice(0, 200));
   }
-  if (!said.includes("повторить") || !said.includes("отменить")) {
-    fail("после отказа нечем ни повторить, ни отменить: " + said.slice(0, 200));
-  }
-  raiseFails = false;
-}
-
-// --- отменённая последняя реплика возвращает ленте её слова ---
-{
-  raiseFails = true;
-  const panel = await openPanel();
-  await sendFrom(panel, "передумал");
-  await settle();
-  const undo = deepBtn(bubbles(panel)[0], "отменить");
-  if (!undo) fail("у недоставленного пузыря нет отмены");
-  undo.handlers.click({ stopPropagation: () => {} });
-  await settle();
-  if (bubbles(panel).length) fail("отменённая реплика осталась в панели");
-  if (!asks(panel)) {
-    fail("после отмены лента молчит: пустой чат обязан сказать, с чего начать: " +
-      dump(feedOf(panel)).slice(0, 200));
+  // Кнопок у пузыря нет ни в одном состоянии (DK-1011): неушедшее дожимает
+  // сам дашборд, и разбирать его руками человеку не приходится.
+  for (const word of ["повторить", "отменить", "открыть живой чат"]) {
+    if (deepBtn(mine[0], word)) fail("у пузыря осталась кнопка «" + word + "»");
   }
   raiseFails = false;
 }

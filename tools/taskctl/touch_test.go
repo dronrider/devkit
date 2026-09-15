@@ -24,8 +24,8 @@ func TestRunLeavesLiveRegistryAlone(t *testing.T) {
 	live := liveRegistry(t)
 	was := lines(live)
 	// Отметка работы во время прогона: живого реестра она не касается.
-	touchWork([]string{"move", "XR-004", "in-progress"})
-	touchWork([]string{"close", "XR-005"})
+	touchWork([]string{"move", "XR-004", "in-progress"}, nil)
+	touchWork([]string{"close", "XR-005"}, nil)
 	if got := lines(live); got != was {
 		t.Errorf("прогон дописал живой реестр %s: было %d строк, стало %d", live, was, got)
 	}
@@ -102,8 +102,8 @@ func TestTouchWorkWritesRelease(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv(sessions.SessionEnv, "aaaa1111-1111-4111-8111-111111111111")
-	touchWork([]string{"move", "XR-005", "in-progress"})
-	touchWork([]string{"close", "XR-005"})
+	touchWork([]string{"move", "XR-005", "in-progress"}, nil)
+	touchWork([]string{"close", "XR-005"}, nil)
 	recs := sessions.LoadAll(home)["aaaa1111-1111-4111-8111-111111111111"]
 	if len(recs) != 2 {
 		t.Fatalf("записей в реестре %d: %+v", len(recs), recs)

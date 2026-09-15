@@ -26,9 +26,12 @@ var touchIDRe = regexp.MustCompile(`^[A-Za-z]{2,10}-\d{1,6}$`)
 // touchWork отмечает работу сессии над задачей: ID берётся первым похожим
 // словом команды, потому что стоит он у разных подкоманд в разных местах.
 // Конец работы отмечается той же дорогой в обратную сторону, разбор в
-// touchDone.
-func touchWork(args []string) {
-	if len(args) == 0 || !touchCmds[args[0]] {
+// touchDone. Зовётся после исполнения команды, когда исход уже известен:
+// отбитая воротами или ошибкой команда (несуществующий ID, протухшая
+// обкатка внутри shipctl merge, пустая «Проверка» у close) реестр не
+// трогает вовсе, ни отметкой, ни отвязкой (DK-1003).
+func touchWork(args []string, err error) {
+	if err != nil || len(args) == 0 || !touchCmds[args[0]] {
 		return
 	}
 	for i, a := range args[1:] {

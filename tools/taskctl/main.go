@@ -445,7 +445,6 @@ func main() {
 	if (args[0] == "review" || args[0] == "dep") && len(args) > 1 {
 		logCmd += " " + args[1]
 	}
-	touchWork(args)
 	var msg string
 	var err error
 	switch args[0] {
@@ -1062,6 +1061,7 @@ func main() {
 		logRun(2)
 		os.Exit(2)
 	}
+	touchWork(args, err)
 	if err != nil {
 		fail(err)
 	}

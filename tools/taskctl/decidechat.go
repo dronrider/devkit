@@ -46,12 +46,41 @@ func chatOptionLine(n int, c taskform.ForkChoice) string {
 
 // chatForkBlock собирает одну развилку: голова с именем и вопросом, ниже
 // пронумерованные варианты. Развилка без рекомендации и без вариантов остаётся
-// одной головой, и отвечают на неё словами.
+// одной головой, и отвечают на неё словами. У развилки составов кейсов в
+// строке варианта стоит только голова состава, ширина и счёт: весь список
+// кейсов в строке с номером не читается, а стоит он ниже раскладкой (DK-969).
 func chatForkBlock(f taskform.Fork) string {
 	out := []string{fmt.Sprintf("«%s»: %s", f.Name, f.Question)}
+	lineups, short := f.Lineups()
 	for i, c := range f.Choices() {
+		if short {
+			c.Text = lineups[i].Head()
+		}
 		out = append(out, chatOptionLine(i+1, c))
 	}
+	return strings.Join(out, "\n")
+}
+
+// chatLineupHint это последняя строка раскладки: вид ответа, которым человек
+// берёт состав и правит его по номерам кейсов.
+const chatLineupHint = "правка состава: «состав 2, минус 4, плюс <свой кейс>», номер кейса из раскладки выше"
+
+// chatLineupRoll собирает раскладку кейсов: по составу блоком, по кейсу на
+// строку. Стоит она ниже последней строки блока, и галочки панели туда не
+// доходят: отмечают там составы, а кейсы правят номерами в строке ответа.
+func chatLineupRoll(f taskform.Fork) string {
+	lineups, ok := f.Lineups()
+	if !ok {
+		return ""
+	}
+	out := []string{fmt.Sprintf("раскладка кейсов развилки «%s», по кейсу на строку:", f.Name)}
+	for i, l := range lineups {
+		out = append(out, "", fmt.Sprintf("состав %d, %s:", i+1, l.Width))
+		for j, c := range l.Cases {
+			out = append(out, fmt.Sprintf("%d. %s", j+1, c))
+		}
+	}
+	out = append(out, "", chatLineupHint)
 	return strings.Join(out, "\n")
 }
 
@@ -62,6 +91,11 @@ func chatBlock(forks []taskform.Fork) string {
 		out = append(out, chatForkBlock(f))
 	}
 	out = append(out, chatAnswerHint)
+	for _, f := range forks {
+		if roll := chatLineupRoll(f); roll != "" {
+			out = append(out, roll)
+		}
+	}
 	return strings.Join(out, "\n\n")
 }
 
@@ -71,7 +105,11 @@ func chatQuestions(forks []taskform.Fork) []chat.Question {
 	var out []chat.Question
 	for _, f := range forks {
 		q := chat.Question{Text: fmt.Sprintf("«%s»: %s", f.Name, f.Question)}
-		for _, c := range f.Choices() {
+		lineups, short := f.Lineups()
+		for i, c := range f.Choices() {
+			if short {
+				c.Text = lineups[i].Head()
+			}
 			q.Options = append(q.Options, chat.Option{Label: c.Text, Recommended: c.Recommended})
 		}
 		out = append(out, q)
@@ -136,6 +174,104 @@ type chatDecision struct {
 	Text string
 }
 
+// chatLineupRe узнаёт кусок ответа про состав кейсов: «состав 2», «минус 4»,
+// «плюс человек снимает кейс по номеру». Слова эти стоят вместо имени
+// развилки: развилка составов в пачке одна, и называть её человеку незачем.
+var chatLineupRe = regexp.MustCompile(`(?i)^(состав|минус|плюс)\s+(\S.*)$`)
+
+// lineupOrder это правка состава, собранная из кусков ответа: какой состав
+// взят и что человек снял и добавил по номерам кейсов.
+type lineupOrder struct {
+	Pick int      // номер состава, ноль значит «взят рекомендованный»
+	Drop []int    // номера снятых кейсов, по раскладке взятого состава
+	Add  []string // кейсы, дописанные человеком
+	Said bool     // в ответе был хоть один кусок про состав
+}
+
+// take кладёт кусок ответа в правку. Номер не числом это не команда состава, а
+// слова человека, и кусок уходит агенту неразобранным.
+func (o *lineupOrder) take(word, tail string) bool {
+	word = strings.ToLower(word)
+	if word == "плюс" {
+		o.Add = append(o.Add, tail)
+		o.Said = true
+		return true
+	}
+	m := chatNumRe.FindStringSubmatch(strings.TrimSpace(tail))
+	if m == nil {
+		return false
+	}
+	n, _ := strconv.Atoi(m[1])
+	if word == "состав" {
+		o.Pick = n
+	} else {
+		o.Drop = append(o.Drop, n)
+	}
+	o.Said = true
+	return true
+}
+
+// lineupFork ищет в пачке развилку составов кейсов. Она тут одна: первый раунд
+// интервью спрашивает про кейсы одной развилкой, а второй такой в пачке
+// означал бы два списка под одними номерами.
+func lineupFork(forks []taskform.Fork) (taskform.Fork, bool) {
+	for _, f := range forks {
+		if _, ok := f.Lineups(); ok && f.HoldsStart() {
+			return f, true
+		}
+	}
+	return taskform.Fork{}, false
+}
+
+// applyLineup собирает ответ на развилку составов: берёт названный состав (или
+// рекомендованный, когда номер не назван), снимает и дописывает кейсы по
+// номерам и кладёт пересобранный текст в решение. Развилку, уже закрытую в
+// этом же ответе по имени, правка не дублирует, а правит на месте.
+func applyLineup(f taskform.Fork, o lineupOrder, done []chatDecision) ([]chatDecision, error) {
+	choices := f.Choices()
+	at := -1
+	for i, dec := range done {
+		if dec.Fork.Name == f.Name {
+			at = i
+		}
+	}
+	text := ""
+	switch {
+	case o.Pick > 0:
+		if o.Pick > len(choices) {
+			return nil, fmt.Errorf("у развилки «%s» составов %d, а в ответе «состав %d»: составы стоят в блоке номерами",
+				f.Name, len(choices), o.Pick)
+		}
+		text = choices[o.Pick-1].Text
+		if at >= 0 && done[at].Text != text {
+			return nil, fmt.Errorf("развилка «%s» названа в ответе дважды и по-разному: «состав %d» и имя развилки с другим номером",
+				f.Name, o.Pick)
+		}
+	case at >= 0:
+		text = done[at].Text
+	case len(choices) > 0 && choices[0].Recommended:
+		text = choices[0].Text
+	default:
+		return nil, fmt.Errorf("у развилки «%s» нет рекомендованного состава: назовите состав номером, «состав 1»", f.Name)
+	}
+	l, ok := taskform.ParseLineup(text)
+	if !ok {
+		return nil, fmt.Errorf("ответ на «%s» на состав не похож, править его по номерам кейсов нечем: состав это «<ширина> состав, N кейсов: (1) ...»", f.Name)
+	}
+	l, err := l.Drop(o.Drop)
+	if err != nil {
+		return nil, err
+	}
+	if l, err = l.Add(o.Add); err != nil {
+		return nil, err
+	}
+	if at >= 0 {
+		done[at].Text = l.String()
+		return done, nil
+	}
+	return append(done, chatDecision{Fork: f, Text: l.String()}), nil
+}
+
 // parseAnswer разбирает ответ человека по перечню развилок. Умного разбора тут
 // нет и не заводится. Команда узнаёт имя развилки с номером варианта и слова
 // «по рекомендации», а кусок, который под это не подошёл, отдаёт агенту
@@ -144,6 +280,8 @@ type chatDecision struct {
 func parseAnswer(answer string, forks []taskform.Fork) (done []chatDecision, left []string, err error) {
 	taken := map[string]bool{}
 	all := false
+	lf, hasLineup := lineupFork(forks)
+	var order lineupOrder
 	for _, piece := range chatPieceRe.Split(answer, -1) {
 		piece = strings.Join(strings.Fields(piece), " ")
 		if piece == "" {
@@ -155,6 +293,12 @@ func parseAnswer(answer string, forks []taskform.Fork) (done []chatDecision, lef
 		}
 		f, tail, ok := chatNamed(piece, forks)
 		if !ok {
+			// Слова состава стоят вместо имени развилки, и смотрят на них
+			// только тогда, когда имя развилки в куске не нашлось: развилка,
+			// названную «состав», должна отвечаться своим именем.
+			if m := chatLineupRe.FindStringSubmatch(piece); hasLineup && m != nil && order.take(m[1], m[2]) {
+				continue
+			}
 			left = append(left, piece)
 			continue
 		}
@@ -168,6 +312,12 @@ func parseAnswer(answer string, forks []taskform.Fork) (done []chatDecision, lef
 		}
 		taken[f.Name] = true
 		done = append(done, chatDecision{Fork: f, Text: text})
+	}
+	if order.Said {
+		if done, err = applyLineup(lf, order, done); err != nil {
+			return nil, nil, err
+		}
+		taken[lf.Name] = true
 	}
 	if !all {
 		return done, left, nil

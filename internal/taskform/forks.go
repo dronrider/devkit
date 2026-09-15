@@ -43,6 +43,7 @@ type Fork struct {
 	Question string   // вопрос после двоеточия в голове
 	Who      string   // значение поля «решает»
 	Hint     string   // рекомендация, она же ответ по умолчанию у оставленной
+	Tie      string   // довод равенства вариантов, когда рекомендации нет честно
 	Options  []string // варианты ответа, кроме рекомендованного, в порядке записи
 	Answer   string   // текст последней строки «решено»
 	By       string   // автор последнего решения
@@ -79,6 +80,7 @@ var (
 	forkSubRe   = regexp.MustCompile(`^\s+-\s+(.*)$`)
 	forkWhoRe   = regexp.MustCompile(`^решает:\s*(человек|исполнитель)$`)
 	forkHintRe  = regexp.MustCompile(`^рекомендация:\s*(\S.*)$`)
+	forkTieRe   = regexp.MustCompile(`^равенство:\s*(\S.*)$`)
 	forkOptRe   = regexp.MustCompile(`^вариант:\s*(\S.*)$`)
 	forkDoneRe  = regexp.MustCompile(`^решено (человеком|агентом|исполнителем) (\d{4}-\d{2}-\d{2}):\s*(\S.*)$`)
 	forkLeaveRe = regexp.MustCompile(`^оставлена (человеком|агентом) (\d{4}-\d{2}-\d{2})(?::\s*(.*))?$`)
@@ -88,7 +90,7 @@ var (
 // начатая таким словом и не подошедшая под форму, это опечатка формы, и её
 // называет lint. Подстрока без этих слов это проза при развилке (довод,
 // ссылка на документ): разбор её пропускает, а писатель сохраняет.
-var forkWords = []string{"решает", "рекомендация", "решено", "оставлена", "вариант"}
+var forkWords = []string{"решает", "рекомендация", "равенство", "решено", "оставлена", "вариант"}
 
 // ParseForks читает перечень развилок файла. Читается только тело раздела
 // «## Развилки» и только вне ограждённых блоков: голова вида «- «имя»:» в
@@ -131,6 +133,8 @@ func applyForkSub(f *Fork, text string) {
 		f.Who = forkWhoRe.FindStringSubmatch(text)[1]
 	case forkHintRe.MatchString(text):
 		f.Hint = forkHintRe.FindStringSubmatch(text)[1]
+	case forkTieRe.MatchString(text):
+		f.Tie = forkTieRe.FindStringSubmatch(text)[1]
 	case forkOptRe.MatchString(text):
 		f.Options = append(f.Options, strings.TrimSpace(forkOptRe.FindStringSubmatch(text)[1]))
 	case forkDoneRe.MatchString(text):
@@ -228,8 +232,8 @@ func forkOffForm(text string) (string, bool) {
 		}
 		switch {
 		case forkWhoRe.MatchString(text), forkHintRe.MatchString(text),
-			forkOptRe.MatchString(text), forkDoneRe.MatchString(text),
-			forkLeaveRe.MatchString(text):
+			forkTieRe.MatchString(text), forkOptRe.MatchString(text),
+			forkDoneRe.MatchString(text), forkLeaveRe.MatchString(text):
 			return w, false
 		}
 		return w, true
@@ -244,6 +248,8 @@ func ForkFormHint(word string) string {
 		return "«решает: человек» либо «решает: исполнитель»"
 	case "рекомендация":
 		return "«рекомендация: <ответ>, <довод>»"
+	case "равенство":
+		return "«равенство: <довод равного счёта вариантов>»"
 	case "вариант":
 		return "«вариант: <ответ>», по строке на вариант"
 	case "решено":
@@ -267,6 +273,11 @@ func ForkWhoLine(who string) string { return forkIndent + "решает: " + who
 // ForkHintLine собирает подстроку рекомендации.
 func ForkHintLine(hint string) string {
 	return forkIndent + "рекомендация: " + strings.TrimSpace(hint)
+}
+
+// ForkTieLine собирает подстроку равенства вариантов.
+func ForkTieLine(tie string) string {
+	return forkIndent + "равенство: " + strings.TrimSpace(tie)
 }
 
 // ForkOptionLine собирает подстроку варианта.
@@ -303,6 +314,19 @@ func FindFork(doc, name string) (Fork, bool) {
 // место по форме. Занятое имя отказывает: перечень адресуется именем, и
 // второй элемент с тем же именем сделал бы отказ ворот неразрешимым.
 func AddFork(doc, name, question, who, hint string, opts ...string) (string, error) {
+	return AddForkSpec(doc, Fork{Name: name, Question: question, Who: who, Hint: hint, Options: opts})
+}
+
+// AddForkSpec заводит развилку по разобранной голове. Довод равенства (DK-974)
+// это честное «рекомендации нет»: два варианта с равным счётом. Такая
+// развилка идёт человеку с обоими вариантами, и рядом с рекомендацией она не
+// стоит: одно из двух либо есть ответ по умолчанию, либо его нет. Одного
+// варианта при равенстве мало, равнять его не с чем. Исполнителю равенство
+// не оставляют: оставленная развилка живёт рекомендацией как ответом по
+// умолчанию, а у равенства его нет.
+func AddForkSpec(doc string, spec Fork) (string, error) {
+	name, question, who, hint := spec.Name, spec.Question, spec.Who, spec.Hint
+	tie, opts := strings.TrimSpace(spec.Tie), spec.Options
 	if strings.TrimSpace(name) == "" {
 		return "", fmt.Errorf("у развилки нет имени: имя от одного до трёх слов, по нему её называют ворота и человек")
 	}
@@ -315,10 +339,28 @@ func AddFork(doc, name, question, who, hint string, opts ...string) (string, err
 	if _, ok := FindFork(doc, name); ok {
 		return "", fmt.Errorf("развилка «%s» уже заведена: закрыть её ответом или дописать след, а второй с тем же именем не будет", name)
 	}
+	var live []string
+	for _, o := range opts {
+		if strings.TrimSpace(o) != "" {
+			live = append(live, o)
+		}
+	}
+	switch {
+	case tie != "" && strings.TrimSpace(hint) != "":
+		return "", fmt.Errorf("у развилки «%s» и рекомендация, и равенство: либо ответ по умолчанию есть, либо счёт вариантов равный", name)
+	case tie != "" && len(live) < 2:
+		return "", fmt.Errorf("равенство у развилки «%s» не с чем сравнивать: вариантов --option нужно два и больше", name)
+	case tie != "" && who == ForkExecutor:
+		return "", fmt.Errorf("развилку «%s» с равенством исполнителю не оставляют: ответа по умолчанию у неё нет, решает человек", name)
+	}
 	lines := []string{ForkHead(name, question), ForkWhoLine(who)}
 	if strings.TrimSpace(hint) != "" {
 		lines = append(lines, ForkHintLine(hint))
 	}
+	if tie != "" {
+		lines = append(lines, ForkTieLine(tie))
+	}
+	opts = live
 	for _, o := range opts {
 		if strings.TrimSpace(o) != "" {
 			lines = append(lines, ForkOptionLine(o))
@@ -388,6 +430,9 @@ func ForkGateNote(id, what string, forks []Fork) string {
 		fmt.Fprintf(&b, "\n- «%s»: %s", f.Name, f.Question)
 		if f.Hint != "" {
 			b.WriteString("\n  рекомендация: " + f.Hint)
+		}
+		if f.Tie != "" {
+			b.WriteString("\n  равенство: " + f.Tie)
 		}
 	}
 	fmt.Fprintf(&b, "\nответ снимает развилку: taskctl decide %s «%s» --by человек \"ответ и довод\"", id, forks[0].Name)

@@ -219,6 +219,44 @@ func TestForksWrite(t *testing.T) {
 	}
 }
 
+// TestForkTie: подстрока «равенство» (DK-974) читается полем, лечится
+// сторожем формы как машинная и печатается воротами старта рядом с
+// рекомендацией. Заведение отбивает равенство при рекомендации, при одном
+// варианте и у оставленной исполнителю.
+func TestForkTie(t *testing.T) {
+	doc := "# T-009\n\n## Что происходит\n\nтекст\n"
+	got, err := AddForkSpec(doc, Fork{Name: "разрез", Question: "куда вынести?", Who: ForkHuman, Tie: "оба режут одинаково", Options: []string{"скилл", "файл рядом"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "- «разрез»: куда вынести?\n  - решает: человек\n  - равенство: оба режут одинаково\n  - вариант: скилл\n  - вариант: файл рядом\n") {
+		t.Fatalf("равенство легло не по форме:\n%s", got)
+	}
+	f, ok := FindFork(got, "разрез")
+	if !ok || f.Tie != "оба режут одинаково" || !f.HoldsStart() || len(f.Choices()) != 2 || f.Choices()[0].Recommended {
+		t.Fatalf("развилка с равенством разобрана как %+v", f)
+	}
+	if finds := ForkFinds(got); len(finds) != 0 {
+		t.Fatalf("сторож формы споткнулся о равенство: %+v", finds)
+	}
+	if finds := ForkFinds(strings.Replace(got, "равенство: оба", "равенство оба", 1)); len(finds) != 1 || !strings.Contains(finds[0].Text, "равенство") {
+		t.Fatalf("опечатка формы равенства не названа: %+v", finds)
+	}
+	if note := ForkGateNote("T-009", "старт", HoldingForks(got)); !strings.Contains(note, "равенство: оба режут одинаково") {
+		t.Fatalf("ворота не показали довод равенства:\n%s", note)
+	}
+	bad := []Fork{
+		{Name: "а", Question: "?", Who: ForkHuman, Hint: "первый", Tie: "равны", Options: []string{"x", "y"}},
+		{Name: "б", Question: "?", Who: ForkHuman, Tie: "равны", Options: []string{"x", "  "}},
+		{Name: "в", Question: "?", Who: ForkExecutor, Tie: "равны", Options: []string{"x", "y"}},
+	}
+	for _, b := range bad {
+		if _, err := AddForkSpec(doc, b); err == nil {
+			t.Fatalf("развилка %+v с равенством завелась", b)
+		}
+	}
+}
+
 // TestHoldingForks: отбор ворот (DK-804). Держит старт только открытая
 // человеческая развилка: решённая отпускает, оставленная исполнителю не держала
 // никогда, а перечень без единой открытой отдаётся пустым, и звать ворота на

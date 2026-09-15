@@ -12494,20 +12494,29 @@ const ASK_PICK_TAIL = "ответ строкой:";
 
 // askChatPicks разбирает блок вопроса в словах реплики: какая развилка, какой
 // номер и на какой строке он стоит. Блока в реплике нет, значит и отмечать
-// нечего.
+// нечего. На последней строке блок кончается, и номера ниже неё галочек не
+// получают: там стоит раскладка кейсов состава, по кейсу на строку (DK-969).
+// Отмечают в блоке составы, а кейсы правят номерами прямо в строке ответа.
 function askChatPicks(text) {
   const lines = String(text || "").split("\n");
   const out = [];
   let fork = "";
+  let live = false;
   let tail = false;
   lines.forEach((line, i) => {
     const head = ASK_FORK_RE.exec(line);
     if (head) {
       fork = head[1];
+      live = true;
       return;
     }
-    if (line.trim().startsWith(ASK_PICK_TAIL)) tail = true;
-    if (fork && ASK_PICK_RE.test(line)) {
+    if (line.trim().startsWith(ASK_PICK_TAIL)) {
+      tail = true;
+      live = false;
+      fork = "";
+      return;
+    }
+    if (live && fork && ASK_PICK_RE.test(line)) {
       out.push({ fork, num: Number(ASK_PICK_RE.exec(line)[1]), line: i });
     }
   });

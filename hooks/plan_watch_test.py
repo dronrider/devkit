@@ -348,7 +348,7 @@ class TestWatch(unittest.TestCase):
         lines = [
             {"type": "user", "message": {"role": "user", "content": "вопрос"}},
             {"type": "assistant", "message": {"role": "assistant", "content": [
-                {"type": "tool_use", "name": "Skill", "input": {"skill": "board-chat"}}]}},
+                {"type": "tool_use", "name": "Skill", "input": {"skill": "chat"}}]}},
             {"type": "user", "isMeta": True, "message": {"role": "user", "content": [
                 {"type": "text", "text": "Base directory for this skill: ..."}]}},
             {"type": "assistant", "message": {"role": "assistant", "content": [

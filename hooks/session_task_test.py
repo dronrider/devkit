@@ -368,13 +368,13 @@ class TestHook(unittest.TestCase):
                          (SID, "DK-431", "заказ", "startup"))
 
     def test_start_names_the_chat_skill(self):
-        # Порядок разговора с человеком лежит в скилле board-chat (DK-614), и
+        # Порядок разговора с человеком лежит в скилле chat (DK-614), и
         # старт называет скилл одной строкой: тело приезжает по вызову, а не
         # каждым стартом.
         r = self.run_hook(sample(), {"DEVKIT_TASK": "DK-431"})
         self.assertEqual(r.returncode, 0)
         said = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("board-chat", said)
+        self.assertIn("chat", said)
         self.assertIn("DK-431", said)
         self.assertNotIn("Контекст сжат", said)
 
@@ -386,7 +386,7 @@ class TestHook(unittest.TestCase):
         r = self.run_hook(sample(), {"DEVKIT_TASK": "DK-431", "DEVKIT_HIDDEN": "1"})
         self.assertEqual(r.returncode, 0)
         said = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertNotIn("board-chat", said)
+        self.assertNotIn("chat", said)
         self.assertIn("agentctl plan", said)
         self.assertIn("отдавай субагенту", said)
 
@@ -403,7 +403,7 @@ class TestHook(unittest.TestCase):
         data = json.loads(r.stdout)
         self.assertEqual(data["hookSpecificOutput"]["hookEventName"], "SessionStart")
         said = data["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("перечитай скилл board-chat", said)
+        self.assertIn("перечитай скилл chat", said)
         self.assertIn("DK-431", said)
         self.assertNotIn("Строка доски", said)
         self.assertNotIn("Файл задачи", said)
@@ -415,13 +415,13 @@ class TestHook(unittest.TestCase):
 
     def test_compact_hidden_keeps_plan_but_drops_reread(self):
         # После сжатия скрытая сессия план с отзывчивостью восстанавливает
-        # по-прежнему, а просьбу перечитать board-chat не получает: человека
+        # по-прежнему, а просьбу перечитать chat не получает: человека
         # в собеседниках у неё нет (DK-880).
         event = dict(sample(), source="compact")
         r = self.run_hook(event, {"DEVKIT_TASK": "DK-431", "DEVKIT_HIDDEN": "1"})
         self.assertEqual((r.returncode, r.stderr), (0, ""))
         said = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertNotIn("board-chat", said)
+        self.assertNotIn("chat", said)
         self.assertIn("agentctl plan", said)
         self.assertIn("отдавай субагенту", said)
 
@@ -435,7 +435,7 @@ class TestHook(unittest.TestCase):
         r = self.run_hook(event)
         self.assertEqual((r.returncode, r.stderr), (0, ""))
         said = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("Перечитай скилл board-chat", said)
+        self.assertIn("Перечитай скилл chat", said)
         self.assertIn("agentctl plan", said)
         self.assertIn("отдавай субагенту", said)
         self.assertNotIn("по задаче", said)
@@ -450,8 +450,8 @@ class TestHook(unittest.TestCase):
         r = self.run_hook(sample())
         self.assertEqual((r.returncode, r.stderr), (0, ""))
         said = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("board-chat", said)
-        self.assertIn("Позови скилл board-chat", said)
+        self.assertIn("chat", said)
+        self.assertIn("вызови скилл chat инструментом Skill", said)
         self.assertIn("agentctl plan", said)
         self.assertIn("отдавай субагенту", said)
         self.assertNotIn("по задаче", said)

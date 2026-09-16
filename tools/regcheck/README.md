@@ -115,7 +115,9 @@ path: /home/me/proj/.devkit/cmdout/20260916T121108-test-old/out
 exec не нашёл или не смог запустить, даёт отказ «не запустилась». Файл
 команды должен быть и в базе, либо лежать в PATH. Следы сборки ищутся у любой
 команды. Это `error: could not compile` и `error[E` у cargo, `[build failed]`
-и `[setup failed]` у go test. Признак упавшего теста известен у `cargo test`
+и `[setup failed]` у go test, `ImportError while importing test module` и
+`ERROR collecting` у pytest, который на новом символе падает на сборе
+тестов. Признак упавшего теста известен у `cargo test`
 (`test result: FAILED`) и у `go test` (`--- FAIL:`). Ненулевой код без него у
 этих двух раннеров тоже не засчитывается. Так падает cargo без манифеста или
 go test с неизвестным флагом, и отказ тут «краснота не доказана». У остальных

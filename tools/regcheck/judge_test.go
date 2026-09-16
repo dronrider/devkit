@@ -30,6 +30,9 @@ func TestJudgeBaseRun(t *testing.T) {
 		{"go без признака", []string{"go", "test", "./..."}, "flag provided but not defined\n", exit(2), verdictUnproven},
 		{"чужой раннер с кодом", []string{"sh", "probe_test.sh"}, "", exit(1), verdictRed},
 		{"чужой раннер с ошибкой сборки", []string{"make", "test"}, "error[E0433]: failed to resolve\n", exit(2), verdictBuild},
+		{"pytest импорт модуля теста", []string{"python3", "-m", "pytest"}, "ImportError while importing test module 'tests/test_ops.py'\n", exit(2), verdictBuild},
+		{"pytest сбор тестов", []string{"pytest", "tests"}, "ERROR collecting tests/test_ops.py\n", exit(2), verdictBuild},
+		{"pytest упавший тест", []string{"pytest", "tests"}, "FAILED tests/test_ops.py::test_x\n", exit(1), verdictRed},
 		{"не запустилась", []string{"./run.sh"}, "", &exec.Error{Name: "./run.sh", Err: os.ErrNotExist}, verdictNoStart},
 	}
 	for _, c := range cases {

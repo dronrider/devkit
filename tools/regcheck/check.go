@@ -268,9 +268,15 @@ const (
 	verdictUnproven                    // известный раннер упал без признака упавшего теста
 )
 
-// buildMarkers это следы упавшей сборки в выводе cargo и go test. Они ищутся
-// у любой команды: чужая обёртка над теми же компиляторами печатает то же.
-var buildMarkers = []string{"error: could not compile", "error[E", "[build failed]", "[setup failed]"}
+// buildMarkers это следы упавшей сборки в выводе cargo и go test и следы
+// упавшего сбора тестов у pytest: новый символ в Python роняет импорт
+// модуля теста до запуска самих тестов. Они ищутся у любой команды: чужая
+// обёртка над теми же раннерами печатает то же.
+var buildMarkers = []string{
+	"error: could not compile", "error[E",
+	"[build failed]", "[setup failed]",
+	"ImportError while importing test module", "ERROR collecting",
+}
 
 // failMarkers это признак упавшего теста у известных раннеров: по имени
 // команды выбирается набор, и без признака ненулевой код не считается

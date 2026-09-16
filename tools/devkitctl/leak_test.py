@@ -68,6 +68,34 @@ class LeakCliTest(SandboxCase):
         rc, out = self.lcli()
         self.assertEqual(rc, 0, "после --fix остались литералы: %s" % out)
 
+    def test_escaped_quote_rule_survives_fix(self):
+        # Правило с экранированной кавычкой: подстановка по тексту съедала
+        # обратную косую перед кавычкой и оставляла файл неразбираемым.
+        rule = 'Bash(curl -H "Authorization: Bearer glpat-xxx" https://git/api)'
+        body = {"permissions": {"allow": [rule]}, "model": "opus"}
+        write(self.settings, json.dumps(body, ensure_ascii=False, indent=2) + "\n")
+        rc, out = self.lcli("--fix")
+        self.assertEqual(rc, 0, "--fix не закрыл литерал в экранированном правиле: %s" % out)
+        text = read(self.settings)
+        self.assertIn_("\\\"", text, "обратная косая перед кавычкой съедена заменой")
+        data = json.loads(text)
+        self.assertEqual(data["permissions"]["allow"],
+                         ['Bash(curl -H "Authorization: Bearer __TRACKED_VAR__" https://git/api)'],
+                         "маска легла не в правило целиком")
+        self.assertEqual(data["model"], "opus", "--fix потерял соседние настройки")
+        rc, out = self.lcli()
+        self.assertEqual(rc, 0, "после --fix проверка всё ещё видит литерал: %s" % out)
+
+    def test_broken_json_is_not_rewritten(self):
+        # Файл уже неразбираем: маску в него не положить, и --fix говорит об
+        # этом находкой, а не пишет поверх.
+        body = '{"permissions": {"allow": ["Bash(curl -H \'Authorization: Bearer pat-x\' e)"],}\n'
+        write(self.settings, body)
+        rc, out = self.lcli("--fix")
+        self.assertEqual(rc, 1, "неразбираемый файл прошёл как починенный: %s" % out)
+        self.assertIn_("не разбираются", out, "находка не назвала причину")
+        self.assertEqual(read(self.settings), body, "--fix переписал неразбираемый файл")
+
     def test_fix_is_idempotent_on_mask(self):
         # На чистом файле --fix ничего не переписывает: маска маской и остаётся.
         body = ('{"permissions": {"allow": ['

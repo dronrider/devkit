@@ -14,7 +14,13 @@
 резолвится харнесом: правило перестаёт быть рабочим разрешением, но форму
 команды хранит без литерала. Резервные копии .bak/.pre несут те же литералы,
 что и основной файл, и чистота одного при грязной копии рядом ничего не стоит.
+
+Маску --fix кладёт в разобранный документ, а файл переписывает целиком через
+json.dumps отступом в два пробела, как это делает perms: подстановка по тексту
+съедала обратную косую перед экранированной кавычкой правила и оставляла после
+себя неразбираемый JSON.
 """
+import json
 import os
 import re
 import say
@@ -45,6 +51,9 @@ LITERAL_PATTERNS = [
 
 # Подстановка для --fix: заголовок и значение до ближайшей кавычки, запятой или
 # пробела сменяются на заголовок и маску. На прижитой маске идемпотентно.
+# Работает по строке разобранного документа, где экранирования уже нет: в тексте
+# файла хвостовая кавычка правила стоит за обратной косой, и класс символов
+# сжевал бы её вместе со значением.
 _FIX = [
     (re.compile(r"Authorization: Bearer [^'\" ]+"), "Authorization: Bearer " + MASK),
     (re.compile(r"PRIVATE-TOKEN: [^'\" ]+"), "PRIVATE-TOKEN: " + MASK),
@@ -70,6 +79,35 @@ def scan_literals(text):
         if n:
             found.append((name, n))
     return found
+
+
+def mask_string(value):
+    for rx, replacement in _FIX:
+        value = rx.sub(replacement, value)
+    return value
+
+
+def mask_data(data):
+    # Правила живут строками в permissions.allow, но литерал попадает и в
+    # соседние разделы настроек, а сверка читает весь текст файла. Поэтому маска
+    # обходит документ целиком и трогает каждую строку-значение.
+    if isinstance(data, str):
+        return mask_string(data)
+    if isinstance(data, list):
+        return [mask_data(v) for v in data]
+    if isinstance(data, dict):
+        return dict((k, mask_data(v)) for k, v in data.items())
+    return data
+
+
+def mask_file(settings, text):
+    # Возврат это (новый текст, беда). Неразбираемый файл маской не чинится:
+    # доктор и так называет его находкой проверки прав.
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        return None, str(e)
+    return json.dumps(mask_data(data), ensure_ascii=False, indent=2) + "\n", None
 
 
 def find_copies(settings):
@@ -119,10 +157,17 @@ def check(settings, fix=False, worktree_main=None):
         detail.append(say.counted(len(copies), COPY_FORM))
     detail_text = ", ".join(detail)
     if fix and from_main:
-        for rx, replacement in _FIX:
-            text = rx.sub(replacement, text)
-        settings.write_text(text, encoding="utf-8")
-        fixed.append("в %s литералы заменены маской %s" % (settings, MASK))
+        if literals:
+            masked, bad = mask_file(settings, text)
+            if bad is not None:
+                findings.append("настройки харнеса %s не разбираются (%s): литералы в них "
+                                "маской не закрыть, вернуть файлу валидный JSON и повторить "
+                                "%spython3 %s doctor --fix" % (settings, bad, whence, doctor))
+            else:
+                tmp = settings.with_name(settings.name + ".devkit-tmp")
+                tmp.write_text(masked, encoding="utf-8")
+                os.replace(str(tmp), str(settings))
+                fixed.append("в %s литералы заменены маской %s" % (settings, MASK))
         for copy in copies:
             copy.unlink()
             fixed.append("удалена %s" % copy)

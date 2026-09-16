@@ -131,8 +131,11 @@ if "ожидание" in parts:
     now = clock.time()
     when = lambda t: clock.strftime("%Y-%m-%dT%H:%M:%S", clock.localtime(t))
     with open(os.path.join(d, "DK-100.json"), "w", encoding="utf-8") as f:
+        # Срок с запасом (DK-1023): `when` пишет время до секунды, дробная
+        # часть пропадает, и отметка `now + 1` у самой границы секунды уже
+        # истекла к моменту проверки в `wait_mark()`.
         marks.dump({"task": "DK-100", "kind": "срок", "since": when(now),
-                    "until": when(now + 1),
+                    "until": when(now + 3),
                     "note": "очередь выката держит чужая задача"}, f)
 
 if "замок" in parts:

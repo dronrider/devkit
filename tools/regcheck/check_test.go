@@ -490,3 +490,145 @@ func pathFromError(t *testing.T, msg string) string {
 	t.Fatalf("в ошибке нет строки path:\n%s", msg)
 	return ""
 }
+
+// cargoStub кладёт в корень репозитория заглушку компилятора под именем
+// cargo: компилятор в тесте не нужен, а по имени команды regcheck узнаёт
+// раннер. Заглушка читает lib.rs из каталога, где её позвали: без «fn helper»
+// она печатает ошибку E0425 и выходит со 101, как cargo при непроходящей
+// сборке; с helper она гоняет «тест» и печатает итог cargo test. Так база
+// без новой функции роняет сборку, а база с ней краснеет по-настоящему.
+func cargoStub(t *testing.T, root string) []string {
+	t.Helper()
+	script := `#!/bin/sh
+if ! grep -q 'fn helper' lib.rs; then
+  echo 'error[E0425]: cannot find function ` + "`helper`" + ` in this scope'
+  echo 'error: could not compile ` + "`probe`" + ` (lib test) due to 1 previous error'
+  exit 101
+fi
+if grep -q fixed lib.rs; then
+  echo 'test result: ok. 1 passed; 0 failed'
+  exit 0
+fi
+echo 'test tests::probe ... FAILED'
+echo 'test result: FAILED. 0 passed; 1 failed'
+exit 101
+`
+	path := filepath.Join(root, "cargo")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return []string{path, "test"}
+}
+
+// TestInlineBaseBuildFailsIsRefused это регрессионный тест DK-603 для кейса
+// (1): новые инлайновые тесты зовут функцию helper, которой в базе нет, база
+// с ними не собирается, и старый код засчитывал это краснотой (успех). Теперь
+// это отказ с причиной «не собралась» и подсказкой выхода.
+func TestInlineBaseBuildFailsIsRefused(t *testing.T) {
+	root := setupInlineRepo(t)
+	write(t, root, "lib.rs", "const CODE: &str = \"fixed\";\nfn helper() {}\n\n#[cfg(test)]\nmod tests {\n    // зовёт helper()\n}\n")
+	cmd := cargoStub(t, root)
+	_, err := Run(Params{Dir: root, Inline: []string{"lib.rs"}, Cmd: cmd})
+	if err == nil {
+		t.Fatal("падение сборки базы засчитано краснотой")
+	}
+	msg := err.Error()
+	for _, want := range []string{"не собралась", "без новых символов", "не применим", "error[E0425]", "path: "} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("в отказе нет %q:\n%s", want, msg)
+		}
+	}
+}
+
+// TestInlineBaseRedIsProven: кейс (2), база с новыми тестами собирается и
+// краснеет по-настоящему, успех как прежде.
+func TestInlineBaseRedIsProven(t *testing.T) {
+	root := setupInlineRepo(t)
+	gitT(t, root, "rm", "-q", "lib.rs")
+	write(t, root, "lib.rs", "const CODE: &str = \"bug\";\nfn helper() {}\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "helper")
+	write(t, root, "lib.rs", "const CODE: &str = \"fixed\";\nfn helper() {}\n\n#[cfg(test)]\nmod tests {\n    // зовёт helper()\n}\n")
+	cmd := cargoStub(t, root)
+	msg, err := Run(Params{Dir: root, Inline: []string{"lib.rs"}, Cmd: cmd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "краснеет") {
+		t.Fatalf("сообщение: %q", msg)
+	}
+}
+
+// TestInlineBaseGreenIsRefused: кейс (3), база собирается и тест на ней
+// зелёный, отказ как прежде.
+func TestInlineBaseGreenIsRefused(t *testing.T) {
+	root := setupInlineRepo(t)
+	gitT(t, root, "rm", "-q", "lib.rs")
+	write(t, root, "lib.rs", "const CODE: &str = \"fixed\";\nfn helper() {}\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "helper")
+	write(t, root, "lib.rs", "const CODE: &str = \"fixed\";\nfn helper() {}\n\n#[cfg(test)]\nmod tests {\n    // зовёт helper()\n}\n")
+	cmd := cargoStub(t, root)
+	_, err := Run(Params{Dir: root, Inline: []string{"lib.rs"}, Cmd: cmd})
+	if err == nil || !strings.Contains(err.Error(), "зелёный и на старом") {
+		t.Fatalf("ожидал отказ про зелёный на старом, получил: %v", err)
+	}
+}
+
+// TestTestsFlagBaseBuildFailsIsRefused: кейс (4), тест перенесён флагом
+// --tests целиком и зовёт helper, которого в базе нет. Сборка базы падает
+// тем же исходом, что у --inline, и отказ тот же.
+func TestTestsFlagBaseBuildFailsIsRefused(t *testing.T) {
+	root := setupInlineRepo(t)
+	write(t, root, "lib.rs", "const CODE: &str = \"fixed\";\nfn helper() {}\n")
+	write(t, root, "tests/probe.rs", "// зовёт helper()\n")
+	cmd := cargoStub(t, root)
+	_, err := Run(Params{Dir: root, Tests: []string{"tests/probe.rs"}, Cmd: cmd})
+	if err == nil {
+		t.Fatal("падение сборки базы засчитано краснотой")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "не собралась") || !strings.Contains(msg, "error[E0425]") {
+		t.Fatalf("в отказе нет причины «не собралась» с выжимкой:\n%s", msg)
+	}
+}
+
+// TestBaseRunNotStartedIsRefused: команда теста есть в рабочем дереве, но не
+// в базе (скрипт не закоммичен и тестом не считается). На базе exec не
+// находит её, и это отказ «не запустилась», а не краснота.
+func TestBaseRunNotStartedIsRefused(t *testing.T) {
+	root := setupRepo(t)
+	write(t, root, "code.txt", "fixed\n")
+	write(t, root, "probe_test.sh", probe)
+	if err := os.WriteFile(filepath.Join(root, "run.sh"), []byte("#!/bin/sh\nsh probe_test.sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run(Params{Dir: root, Cmd: []string{"./run.sh"}})
+	if err == nil {
+		t.Fatal("незапуск команды на базе засчитан краснотой")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "не запустилась") || strings.Contains(msg, "краснеет") {
+		t.Fatalf("ожидал отказ «не запустилась», получил:\n%s", msg)
+	}
+}
+
+// TestKnownRunnerWithoutFailMarkerIsUnproven: известный раннер (cargo) упал
+// на базе без признака упавшего теста и без ошибки сборки. Так падает
+// cargo, у которого не нашлась зависимость или манифест; за красноту это не
+// считается, отказ «не доказана» с выжимкой.
+func TestKnownRunnerWithoutFailMarkerIsUnproven(t *testing.T) {
+	root := setupRepo(t)
+	write(t, root, "code.txt", "fixed\n")
+	write(t, root, "probe_test.sh", probe)
+	script := "#!/bin/sh\nif grep -q fixed code.txt; then exit 0; fi\necho 'error: failed to load manifest'\nexit 101\n"
+	path := filepath.Join(root, "cargo")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run(Params{Dir: root, Cmd: []string{path, "test"}})
+	if err == nil {
+		t.Fatal("прогон без признака упавшего теста засчитан краснотой")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "не доказана") || !strings.Contains(msg, "failed to load manifest") {
+		t.Fatalf("ожидал отказ «не доказана» с выжимкой, получил:\n%s", msg)
+	}
+}

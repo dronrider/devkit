@@ -256,6 +256,69 @@ func spliceInline(base, cur string) (string, error) {
 	return strings.Join(result, "\n") + "\n", nil
 }
 
+// baseVerdict это исход прогона на старом коде. Код выхода один на все три
+// исхода, и красноту из них доказывает только упавший тест (DK-603).
+type baseVerdict int
+
+const (
+	verdictGreen    baseVerdict = iota // прошёл, регрессию не ловит
+	verdictRed                         // тест упал, краснота доказана
+	verdictBuild                       // сборка базы с тестами не прошла
+	verdictNoStart                     // команда не запустилась (exec без кода выхода)
+	verdictUnproven                    // известный раннер упал без признака упавшего теста
+)
+
+// buildMarkers это следы упавшей сборки в выводе cargo и go test. Они ищутся
+// у любой команды: чужая обёртка над теми же компиляторами печатает то же.
+var buildMarkers = []string{"error: could not compile", "error[E", "[build failed]", "[setup failed]"}
+
+// failMarkers это признак упавшего теста у известных раннеров: по имени
+// команды выбирается набор, и без признака ненулевой код не считается
+// краснотой. У чужого раннера (pytest, npm, sh) признаков нет, и ненулевой
+// код без следов сборки засчитывается краснотой, как раньше.
+var failMarkers = map[string][]string{
+	"cargo": {"test result: FAILED"},
+	"go":    {"--- FAIL:"},
+}
+
+func exitCode(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return 1
+}
+
+// judgeBaseRun судит прогон на старом коде по ошибке exec и выводу. Следы
+// сборки старше признака упавшего теста: go test с пакетами печатает оба
+// рядом, и который из тестов упал, а который не собрался, из вывода не
+// видно.
+func judgeBaseRun(argv []string, out string, err error) baseVerdict {
+	if err == nil {
+		return verdictGreen
+	}
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return verdictNoStart
+	}
+	for _, m := range buildMarkers {
+		if strings.Contains(out, m) {
+			return verdictBuild
+		}
+	}
+	runner := filepath.Base(argv[0])
+	markers, known := failMarkers[runner]
+	if !known || len(argv) < 2 || argv[1] != "test" {
+		return verdictRed
+	}
+	for _, m := range markers {
+		if strings.Contains(out, m) {
+			return verdictRed
+		}
+	}
+	return verdictUnproven
+}
+
 func copyFile(from, to string) error {
 	data, err := os.ReadFile(from)
 	if err != nil {
@@ -370,14 +433,30 @@ func Run(p Params) (string, error) {
 			return "", err
 		}
 	}
-	if oldOut, err := runCmd(filepath.Join(wt, relDir), p.Cmd); err == nil {
-		// Второй прогон гоняется в том же смещении внутри worktree, который
-		// defer'ом удаляется вместе с деревом. Полный вывод должен жить в
-		// основном репозитории, иначе path будет вести в пустоту: dir здесь
-		// это root, а не wt.
+	oldOut, oldErr := runCmd(filepath.Join(wt, relDir), p.Cmd)
+	// Второй прогон гоняется в том же смещении внутри worktree, который
+	// defer'ом удаляется вместе с деревом. Полный вывод должен жить в
+	// основном репозитории, иначе path будет вести в пустоту: dir здесь
+	// это root, а не wt.
+	switch judgeBaseRun(p.Cmd, oldOut, oldErr) {
+	case verdictGreen:
 		return "", fmt.Errorf("тест зелёный и на старом коде (%s), регрессию он не ловит; "+
 			"если правка уже закоммичена, укажи базу без неё (--base main)\n%s",
 			base, cmdoutFrame(root, "test-old", oldOut, 0))
+	case verdictNoStart:
+		return "", fmt.Errorf("команда теста не запустилась на старом коде (%s): %v; краснота ничего не доказывает. "+
+			"Команда должна находиться и на базе: путь из PATH или файл, который в базе уже есть",
+			base, oldErr)
+	case verdictBuild:
+		return "", fmt.Errorf("база %s с перенесёнными тестами не собралась, краснота ничего не доказывает: "+
+			"тест зовёт то, чего в базе ещё нет (новая функция, импорт, другая арность). "+
+			"Выходы: тест без новых символов либо запись в файле задачи, что regcheck здесь не применим\n%s",
+			base, cmdoutFrame(root, "test-old", oldOut, exitCode(oldErr)))
+	case verdictUnproven:
+		return "", fmt.Errorf("прогон на старом коде (%s) упал без признака упавшего теста, краснота не доказана; "+
+			"причина в выжимке ниже. Выходы: починить запуск на базе, тест без новых символов "+
+			"либо запись в файле задачи, что regcheck здесь не применим\n%s",
+			base, cmdoutFrame(root, "test-old", oldOut, exitCode(oldErr)))
 	}
 	all := append(append([]string{}, tests...), p.Inline...)
 	return fmt.Sprintf("тест краснеет на %s и проходит на текущем коде, регрессия закрыта (тесты: %s)",

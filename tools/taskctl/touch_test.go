@@ -149,3 +149,26 @@ func TestDryRunLeavesRegistryAlone(t *testing.T) {
 		t.Fatalf("после холостого прогона сессия работает над %v, ожидал [XR-005]", works)
 	}
 }
+
+// Ключ холостого прогона узнаётся по чёрточке, а не по одному слову. Значение
+// соседнего флага, дословно равное «dry-run», это причина блокировки: строку
+// такая команда двигает всерьёз, и в реестре обязана остаться «снята»
+// (замечание ревью DK-1007).
+func TestReasonNamedDryRunStillWorks(t *testing.T) {
+	const sid = "aaaa1111-1111-4111-8111-111111111111"
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(sessions.SessionEnv, sid)
+	touchWork([]string{"move", "XR-005", "in-progress"}, nil)
+	touchWork([]string{"move", "XR-005", "blocked", "--reason", "dry-run"}, nil)
+	recs := sessions.LoadAll(home)[sid]
+	if len(recs) != 2 {
+		t.Fatalf("записей в реестре %d, причину блокировки прочли ключом: %+v", len(recs), recs)
+	}
+	if recs[1].Source != sessions.ByOff {
+		t.Errorf("источник второй записи %q, ожидала отвязку", recs[1].Source)
+	}
+	if len(sessions.Works(recs)) != 0 {
+		t.Errorf("после блокировки строка осталась рабочей: %+v", sessions.Works(recs))
+	}
+}

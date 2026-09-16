@@ -59,9 +59,14 @@ func touchWork(args []string, err error) {
 // команду `move <ID> check --dry-run` вызывают и руками, и подпроцессом из
 // shipctl по всему составу поезда. На этом сессия теряла свои строки разом.
 // Написание берётся любое, какое принимает пакет flag: одна чёрточка или две,
-// значение через знак равенства.
+// значение через знак равенства. Чёрточка обязательна, иначе ключом станет
+// значение соседнего флага. Слово «dry-run» в `move <ID> blocked --reason
+// dry-run` это причина блокировки, а строку такая команда двигает всерьёз.
 func isDry(args []string) bool {
 	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			continue
+		}
 		name, val, eq := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(a, "-"), "-"), "=")
 		if name != "dry-run" {
 			continue

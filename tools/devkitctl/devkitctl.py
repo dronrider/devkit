@@ -214,10 +214,13 @@ from pathlib import Path
 
 DEVKIT = Path(__file__).resolve().parent.parent.parent
 POST_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py",
-                "check-prose.py")
+                "check-prose.py", "check-calque.py")
 # Конфиг порогов сторожа прозы (DK-521). Полноту его смотрит сам хук режимом
 # --config: список метрик живёт в коде хука, и второй копии тут не заводится.
 PROSE_HOOK = "check-prose.py"
+# Список калек лежит в том же конфиге своими секциями (DK-1022), и полноту
+# его смотрит сам хук тем же режимом --config.
+CALQUE_HOOK = "check-calque.py"
 # Рубежи на PreToolUse Bash: чтение секретов (DK-228), подстановка в свободном
 # тексте у утилит devkit (DK-452), след ревью у пуша и создания MR и связка cd
 # со второй командой (DK-770). Записей на матчере Bash четыре, и сообщение в
@@ -363,6 +366,7 @@ HOOK_LAYOUT = (
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-memory.py --hook"),
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-sensitive.py --hook"),
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-prose.py --hook"),
+    ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-calque.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-read-secret.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-subst.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-review.py --hook"),
@@ -2570,6 +2574,25 @@ def check_prose_config():
             % ("; ".join(lines) if lines else "конфиг порогов не читается")]
 
 
+def check_calque_config():
+    """Список калек в том же конфиге (DK-1022).
+
+    Смотрит опять же сам хук режимом --config: статьи списка разбираются его
+    кодом, и второй разборщик тут разъехался бы с ним на первой же статье.
+    Без списка сторож калек молчит на каждой записи, и отличить это молчание
+    от чистого текста можно только отсюда.
+    """
+    hook = DEVKIT / "hooks" / CALQUE_HOOK
+    if not hook.is_file():
+        return []
+    rc, out = run([sys.executable, str(hook), "--config"])
+    if rc == 0:
+        return []
+    lines = [ln.strip()[2:] for ln in out.splitlines() if ln.strip().startswith("- ")]
+    return ["сторож калек молчит на каждой записи, %s (hooks/README.md)"
+            % ("; ".join(lines) if lines else "список калек не читается")]
+
+
 def check_map_freshness(root, fix=False):
     """Проверка свежести карты проекта (DK-375).
 
@@ -2705,6 +2728,7 @@ def doctor(start, fix=False):
     # Конфиг порогов прозы того же формата и той же судьбы: чинится он правкой
     # в devkit, а не автоматикой, поэтому идёт находкой рядом с профилями.
     findings += check_prose_config()
+    findings += check_calque_config()
     # Вес резидента считается и проекту (DK-190): карманы одни и те же, а судятся
     # в них разные. В чекауте devkit это его собственные карманы (ядро, ядро
     # доски, итог) и тело скилла, всё общее для всех проектов и проекту не

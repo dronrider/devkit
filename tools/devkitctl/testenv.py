@@ -98,7 +98,8 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-symbols.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-memory.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-prose.py --hook"}
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-prose.py --hook"},
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-calque.py --hook"}
 ]}, {"hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/chat-in.py --hook claude-code"}
 ]}, {"hooks": [

@@ -340,6 +340,16 @@ NOTIFY_EVENTS = ("Notification", "Stop", "StopFailure", "SubagentStop", "UserPro
 # не трогает: это его решение, а не пробел раскладки.
 WATCHDOG_KEY = "CLAUDE_CODE_RETRY_WATCHDOG"
 WATCHDOG_VALUE = "1"
+# Приём межсессионных реплик (DK-630). Реплика дашборда едет живой сессии
+# сокетом /tmp/cc-socks/<pid>.sock, и на входе у получателя стоит один барьер:
+# класс разрешений отправителя. Разойдись он с классом получателя, харнес
+# придержит сообщение до ответа человека в чужом окне, а дашборду доставка
+# выглядела удачной. Снимает барьер настройка верхнего уровня
+# crossSessionInbound: accept, и до этой задачи её ставили рукой на витке цели
+# DK-397. Значение, вписанное человеком (hold или refuse), доктор не трогает:
+# закрытый приём это его решение, а не пробел раскладки.
+INBOUND_KEY = "crossSessionInbound"
+INBOUND_VALUE = "accept"
 NOTIFY_MATCHER = "permission_prompt|agent_needs_input|elicitation_dialog|idle_prompt"
 POST_MATCHER = "Edit|Write|NotebookEdit"
 PRE_MATCHER = "Bash"
@@ -1886,6 +1896,50 @@ def install_watchdog(settings):
             % (WATCHDOG_KEY, WATCHDOG_VALUE, settings)]
 
 
+def inbound_gap(text, settings):
+    """Стоит ли в настройках харнеса приём межсессионных реплик. Возврат тот
+    же, что у вотчдога: (пробел, находка). Пробел чинит install_inbound, а
+    находка без пробела значит, что ключ есть, но приём им закрыт, и спорить с
+    записанным человеком доктор не идёт."""
+    try:
+        data = json.loads(text or "{}")
+    except ValueError:
+        # Про нечитаемый файл говорят проверки того же файла рубежом раньше.
+        return False, ""
+    if not isinstance(data, dict):
+        return False, ""
+    if INBOUND_KEY not in data:
+        return True, ("в %s нет ключа %s: реплика из дашборда приходит живой сессии "
+                      "межсессионным сообщением, и без «%s» харнес придерживает её на "
+                      "расхождении класса разрешений, пока человек не ответит в чужом окне; "
+                      "вписать: devkitctl doctor --fix"
+                      % (settings, INBOUND_KEY, INBOUND_VALUE))
+    if data.get(INBOUND_KEY) == INBOUND_VALUE:
+        return False, ""
+    return False, ("в %s ключ %s стоит значением %r: приём межсессионных реплик закрыт, "
+                   "и реплика из дашборда до сессии не дойдёт; доктор значение, вписанное "
+                   "человеком, не трогает, менять на «%s» руками"
+                   % (settings, INBOUND_KEY, data.get(INBOUND_KEY), INBOUND_VALUE))
+
+
+def install_inbound(settings):
+    """Вписать ключ приёма межсессионных реплик в настройки харнеса. Правка
+    additive, как у вотчдога: чужие ключи и порядок остаются."""
+    data, bad = perms.load(settings)
+    if bad is not None:
+        return []
+    if INBOUND_KEY in data:
+        return []
+    data[INBOUND_KEY] = INBOUND_VALUE
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    tmp = settings.with_name(settings.name + ".devkit-tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(str(tmp), str(settings))
+    return ["вписан ключ %s=%s в %s: реплика дашборда доходит до живой сессии, не "
+            "упираясь в класс разрешений отправителя"
+            % (INBOUND_KEY, INBOUND_VALUE, settings)]
+
+
 def check_notify_hook(fix=False):
     findings = []
     # Выбор бэкенда живёт в самом уведомителе, второй его копии тут нет.
@@ -1984,6 +2038,15 @@ def check_harness_contour(name, profile, homes, fix, main, from_main):
             text = settings.read_text(encoding="utf-8") if settings.exists() else ""
         elif wfinding:
             findings.append(wfinding)
+        # Приём межсессионных реплик тем же файлом и тем же рубежом from_main:
+        # ключ виден каждой сессии на машине сразу, и с непроверенной ветки ему
+        # ехать нельзя так же, как хукам, правам и вотчдогу.
+        igap, ifinding = inbound_gap(text, settings)
+        if igap and fix and from_main:
+            fixed += install_inbound(settings)
+            text = settings.read_text(encoding="utf-8") if settings.exists() else ""
+        elif ifinding:
+            findings.append(ifinding)
         pf, pd = perms.check(settings, fix, None if from_main else main)
         findings += pf
         fixed += pd

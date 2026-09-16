@@ -141,7 +141,8 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
   {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"}
 ]}]},
- "env": {"CLAUDE_CODE_RETRY_WATCHDOG": "1"}}
+ "env": {"CLAUDE_CODE_RETRY_WATCHDOG": "1"},
+ "crossSessionInbound": "accept"}
 """
 
 # Заглушка go: настоящая сборка шести модулей на четырёх парах стоила бы минуты

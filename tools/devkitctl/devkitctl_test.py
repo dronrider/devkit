@@ -309,6 +309,28 @@ class ProjectFindingsTest(SandboxCase):
         self.assertNotIn_("env-ключа", out, "доктор спорит со значением, вписанным человеком")
         write(self.settings, full)
 
+    def test_5d_cross_session_inbound_key(self):
+        # Без ключа приёма межсессионных реплик доктор даёт находку словами про
+        # доставку, а закрытый рукой приём (hold) остаётся решением человека:
+        # доктор про него говорит, но сам значения не меняет (DK-630).
+        full = read(self.settings)
+        data = json.loads(full)
+        del data[devkitctl.INBOUND_KEY]
+        write(self.settings, json.dumps(data, ensure_ascii=False, indent=1))
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("нет ключа %s" % devkitctl.INBOUND_KEY, out,
+                       "нет находки про неразложенный приём межсессионных реплик")
+        self.assertIn_("реплика из дашборда", out,
+                       "находка не говорит, что ломается без ключа")
+        data[devkitctl.INBOUND_KEY] = "hold"
+        write(self.settings, json.dumps(data, ensure_ascii=False, indent=1))
+        _, out = self.box.doctor(self.proj, "--fix")
+        self.assertIn_("приём межсессионных реплик закрыт", out,
+                       "закрытый приём не назван находкой")
+        self.assertEqual(json.loads(read(self.settings)).get(devkitctl.INBOUND_KEY), "hold",
+                         "доктор переписал значение, вписанное человеком")
+        write(self.settings, full)
+
     def test_6_no_notification_backend(self):
         # Слать нечем: бэкенда на платформе нет (PATH подставной, переменная
         # снята), и доктор называет это находкой с командой самопроверки.
@@ -2284,6 +2306,11 @@ class HarnessHooksTest(SandboxCase):
         # обрыв сети ретраится, а не останавливает ход до ручного «продолжай».
         self.assertEqual(data.get("env", {}).get(devkitctl.WATCHDOG_KEY),
                          devkitctl.WATCHDOG_VALUE, data.get("env"))
+        # Приём межсессионных реплик (DK-630) ложится тем же --fix: без ключа
+        # реплика из дашборда упирается в класс разрешений и до сессии не
+        # доходит, а отправителю доставка выглядит удачной.
+        self.assertEqual(data.get(devkitctl.INBOUND_KEY), devkitctl.INBOUND_VALUE,
+                         "doctor --fix не разложил приём межсессионных реплик")
         start = [h["command"] for g in hooks["SessionStart"] for h in g["hooks"]]
         self.assertEqual(len([c for c in start if "quota-refresh.sh" in c]), 1, start)
         self.assertEqual(len([c for c in start if "session-task.py" in c]), 1, start)
@@ -2434,6 +2461,67 @@ class RetryWatchdogTest(unittest.TestCase):
         self.assertEqual(len(said), 1, said)
         data = json.loads(read(self.settings))
         self.assertEqual(data["env"][devkitctl.WATCHDOG_KEY], devkitctl.WATCHDOG_VALUE)
+
+
+class CrossSessionInboundTest(unittest.TestCase):
+    """Ключ приёма межсессионных реплик в настройках харнеса (DK-630).
+
+    Реплика дашборда едет живой сессии сокетом, и барьер на входе у получателя
+    один: класс разрешений отправителя. Снимает его настройка
+    crossSessionInbound: accept, и до этой задачи её ставили рукой на витке
+    цели DK-397. Пробел кладёт doctor --fix, а закрытый приём остаётся решением
+    человека."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="dk630-"))
+        self.addCleanup(shutil.rmtree, str(self.dir), True)
+        self.settings = self.dir / "settings.json"
+
+    def test_gap_on_empty_settings(self):
+        gap, finding = devkitctl.inbound_gap("", self.settings)
+        self.assertTrue(gap)
+        self.assertIn(devkitctl.INBOUND_KEY, finding)
+        self.assertIn("doctor --fix", finding)
+
+    def test_no_gap_when_key_is_set(self):
+        text = json.dumps({devkitctl.INBOUND_KEY: devkitctl.INBOUND_VALUE})
+        self.assertEqual(devkitctl.inbound_gap(text, self.settings), (False, ""))
+
+    def test_closed_inbound_is_a_manual_finding(self):
+        # Закрытый приём это решение человека: доктор его называет, но чинить
+        # не идёт, иначе --fix спорил бы с записанным рукой.
+        gap, finding = devkitctl.inbound_gap(json.dumps({devkitctl.INBOUND_KEY: "hold"}),
+                                             self.settings)
+        self.assertFalse(gap)
+        self.assertIn("закрыт", finding)
+        self.assertIn("hold", finding)
+
+    def test_broken_json_is_silent(self):
+        # Про нечитаемый файл говорят проверки того же файла рубежом раньше.
+        self.assertEqual(devkitctl.inbound_gap("{оборвано", self.settings), (False, ""))
+
+    def test_install_keeps_neighbours(self):
+        write(self.settings, json.dumps({"model": "opus", "env": {"FOO": "bar"}}))
+        said = devkitctl.install_inbound(self.settings)
+        self.assertEqual(len(said), 1, said)
+        self.assertIn(devkitctl.INBOUND_KEY, said[0])
+        data = json.loads(read(self.settings))
+        self.assertEqual(data["model"], "opus")
+        self.assertEqual(data["env"]["FOO"], "bar")
+        self.assertEqual(data[devkitctl.INBOUND_KEY], devkitctl.INBOUND_VALUE)
+        # Повторная установка молчит: ключ уже стоит.
+        self.assertEqual(devkitctl.install_inbound(self.settings), [])
+
+    def test_install_keeps_human_value(self):
+        write(self.settings, json.dumps({devkitctl.INBOUND_KEY: "hold"}))
+        self.assertEqual(devkitctl.install_inbound(self.settings), [])
+        self.assertEqual(json.loads(read(self.settings))[devkitctl.INBOUND_KEY], "hold")
+
+    def test_install_into_missing_file(self):
+        said = devkitctl.install_inbound(self.settings)
+        self.assertEqual(len(said), 1, said)
+        data = json.loads(read(self.settings))
+        self.assertEqual(data[devkitctl.INBOUND_KEY], devkitctl.INBOUND_VALUE)
 
 
 class AltSubDirTest(unittest.TestCase):

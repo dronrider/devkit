@@ -127,9 +127,9 @@ func changedTests(root, base string) ([]string, error) {
 	return tests, nil
 }
 
-// errNoTestRegion значит, что в файле честно нет тестового региона (не
-// ошибка поиска, а факт: например, в базовой версии теста ещё не было).
-var errNoTestRegion = errors.New("тестовый регион не найден")
+// errNoTestRegion значит, что тестовой части в файле нет вовсе (не ошибка
+// поиска, а факт: например, в базовой версии теста ещё не было).
+var errNoTestRegion = errors.New("тестовая часть файла не найдена")
 
 func splitLines(s string) []string {
 	return strings.Split(strings.TrimRight(s, "\n"), "\n")
@@ -168,7 +168,7 @@ func findTestRegion(lines []string) (start, end int, err error) {
 // findRustCfgTest находит единственный блок #[cfg(test)] mod ... { ... } и
 // возвращает его границы по совпадению фигурных скобок. Скобки внутри строк
 // и комментариев не разбираются: на них эвристика ошибётся, но честно
-// (несбалансированный подсчёт вернёт ошибку, а не тихо неверный регион).
+// (несбалансированный подсчёт вернёт ошибку, а не тихо неверную границу).
 func findRustCfgTest(lines []string) (start, end int, err error) {
 	// атрибут ищем по префиксу, а не по точному совпадению строки: так
 	// ловятся и «#[cfg(test)] mod tests {» одной строкой, и «#[cfg(test)] //
@@ -227,14 +227,14 @@ func findRustCfgTest(lines []string) (start, end int, err error) {
 
 // spliceInline строит версию инлайнового файла для базового кода: код
 // базовый (возможно с багом), тестовая часть текущая (новая, должна ловить
-// баг). Если в базе тестового региона ещё нет, он дописывается в конец
-// файла, иначе заменяет собой прежний.
+// баг). Если в базе тестовой части ещё нет, она дописывается в конец файла,
+// иначе заменяет собой прежнюю.
 func spliceInline(base, cur string) (string, error) {
 	curLines := splitLines(cur)
 	start, end, err := findTestRegion(curLines)
 	if err != nil {
 		if err == errNoTestRegion {
-			return "", fmt.Errorf("не нашёл тестовый регион: нет #[cfg(test)] mod и нет маркеров " +
+			return "", fmt.Errorf("не нашёл тестовую часть файла: нет #[cfg(test)] mod и нет маркеров " +
 				"regcheck:test-begin/regcheck:test-end вокруг тестов")
 		}
 		return "", err

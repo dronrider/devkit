@@ -221,8 +221,8 @@ func TestInlineNoRegionFails(t *testing.T) {
 	write(t, root, "lib.rs", "const CODE: &str = \"fixed\";\n")
 	write(t, root, "probe_test.sh", "grep -q fixed lib.rs\n")
 	_, err := Run(Params{Dir: root, Inline: []string{"lib.rs"}, Cmd: []string{"sh", "probe_test.sh"}})
-	if err == nil || !strings.Contains(err.Error(), "не нашёл тестовый регион") {
-		t.Fatalf("ожидал ошибку про ненайденный регион, получил: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "не нашёл тестовую часть файла") {
+		t.Fatalf("ожидал ошибку про ненайденную тестовую часть, получил: %v", err)
 	}
 }
 
@@ -241,7 +241,7 @@ func TestInlineFalseGreen(t *testing.T) {
 
 // TestFindTestRegionRejectsSameLineMarkers: оба маркера в одной строке (что
 // бывает в комментарии-упоминании вроде «см. regcheck:test-begin/
-// regcheck:test-end») не должны схлопывать регион в begin==end и перекрывать
+// regcheck:test-end») не должны схлопывать тестовую часть в begin==end и перекрывать
 // настоящий блок cfg(test) ниже, это должна быть ошибка.
 func TestFindTestRegionRejectsSameLineMarkers(t *testing.T) {
 	lines := splitLines("code\n// см. regcheck:test-begin/regcheck:test-end\n\n" +

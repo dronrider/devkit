@@ -106,11 +106,16 @@ func readSectionFromPath(path, heading string) (text string, found, ok bool) {
 	if err != nil {
 		return "", false, false
 	}
+	lines := strings.Split(string(data), "\n")
+	// Ограждение, не закрытое до конца файла, ограждением не считается:
+	// иначе раздел с забытым ``` тянется за все заголовки до последней строки
+	// (DK-820, обкатка гоняла прозу шагами).
+	gap := unclosedFence(lines)
 	fence := ""
 	inSection := false
 	var out []string
-	for _, ln := range strings.Split(string(data), "\n") {
-		if m := fenceRe.FindStringSubmatch(ln); m != nil {
+	for i, ln := range lines {
+		if m := fenceRe.FindStringSubmatch(ln); m != nil && i+1 != gap {
 			switch {
 			case fence == "":
 				fence = m[1]
@@ -141,6 +146,25 @@ func readSectionFromPath(path, heading string) (text string, found, ok bool) {
 		out = append(out, ln)
 	}
 	return strings.Join(out, "\n"), inSection, true
+}
+
+// unclosedFence отдаёт номер строки (с единицы) ограждения блока кода, которое
+// не закрылось до конца файла, и ноль, когда все блоки закрыты.
+func unclosedFence(lines []string) int {
+	fence, at := "", 0
+	for i, ln := range lines {
+		m := fenceRe.FindStringSubmatch(ln)
+		if m == nil {
+			continue
+		}
+		switch {
+		case fence == "":
+			fence, at = m[1], i+1
+		case m[1][0] == fence[0] && len(m[1]) >= len(fence) && strings.TrimSpace(ln[len(m[0]):]) == "":
+			fence, at = "", 0
+		}
+	}
+	return at
 }
 
 // acceptanceSection читает текст раздела «Приёмка» файла задачи (без строки

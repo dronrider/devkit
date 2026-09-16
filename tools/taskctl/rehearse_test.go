@@ -312,3 +312,50 @@ func writeTool(t *testing.T, root, tool, name, body string) {
 		t.Fatal(err)
 	}
 }
+
+// unclosedScenarioDoc это файл задачи, где блок ```sh второго шага не закрыт:
+// за ним идут проза, пункт руками и соседний раздел со своим блоком. Такой
+// файл и дал на DK-696 «шагов 66, красных 60»: ограждение второго шага
+// закрылось чужой строкой из «Проверки», а прозой между ними набрались шаги.
+const unclosedScenarioDoc = "# XR-005\n\n## Сценарий проверки\n\nАгентский.\n\n" +
+	"```sh\ntrue\n```\n\n2. Второй шаг.\n\n```sh\ntrue\n\n" +
+	"Ожидание: строка встала в Check.\n\n3. Третий шаг руками.\n\n" +
+	"## Проверка\n\n```console\nчужой вывод\n```\n"
+
+// TestRehearseUnclosedFenceRefuses: незакрытое ограждение сценария валит
+// обкатку до свежего дерева. Иначе раздел тянется за «## Проверка», прозой и
+// чужим блоком набираются красные шаги, а в файл задачи уезжает ложная
+// отметка «Обкатка не зачтена».
+func TestRehearseUnclosedFenceRefuses(t *testing.T) {
+	root := setup(t)
+	writeTask(t, root, "XR-005", unclosedScenarioDoc)
+	gitSetup(t, root)
+	_, err := cmdRehearse(root, "XR-005", RehearseParams{Now: rehearseAt})
+	if err == nil {
+		t.Fatal("незакрытое ограждение должно валить обкатку")
+	}
+	for _, want := range []string{"docs/tasks/XR-005.md", "строкой 13", "закрыть"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("в отказе нет %q: %v", want, err)
+		}
+	}
+	if doc := rehearseDoc(t, root, "XR-005"); doc != unclosedScenarioDoc {
+		t.Fatalf("файл задачи после отказа изменился:\n%s", doc)
+	}
+}
+
+// TestReadSectionStopsAtHeadingAfterUnclosedFence: ограждение, не закрытое до
+// конца файла, ограждением не считается, и раздел кончается следующим
+// заголовком второго уровня, а не концом файла.
+func TestReadSectionStopsAtHeadingAfterUnclosedFence(t *testing.T) {
+	root := setup(t)
+	writeTask(t, root, "XR-005", "# XR-005\n\n## Сценарий проверки\n\n```sh\ntrue\n\n"+
+		"2. Второй шаг руками.\n\n## Проверка\n\nчужой вывод\n")
+	text, found, ok := readSectionFromPath(filepath.Join(root, "docs", "tasks", "XR-005.md"), scenarioSection)
+	if !ok || !found {
+		t.Fatal("раздел сценария не прочитан")
+	}
+	if strings.Contains(text, "чужой вывод") {
+		t.Fatalf("раздел протянулся за «## Проверка»:\n%s", text)
+	}
+}

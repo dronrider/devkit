@@ -40,6 +40,14 @@ func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 		return "", fmt.Errorf("%s: файла задачи нет (%s): завести «taskctl file %s» и описать сценарий", id, path, id)
 	}
 	doc := string(data)
+	// Незакрытое ограждение сценария валит обкатку до свежего дерева: раздел
+	// тогда тянется за соседний заголовок, шагами уходят проза и чужие блоки,
+	// а в файл задачи ложится красная отметка, причину которой видно только в
+	// коде (DK-820). Проверка идёт и при шагах из --step: писать вывод в файл
+	// с потерянным ограждением всё равно нельзя.
+	if n := unclosedScenarioFence(doc); n > 0 {
+		return "", fmt.Errorf("%s: в docs/tasks/%s.md ограждение блока кода, открытое строкой %d, не закрыто внутри раздела «Сценарий проверки»: закрыть блок строкой ``` и повторить обкатку", id, id, n)
+	}
 	steps := p.Steps
 	if len(steps) == 0 {
 		text, found, _ := readSectionFromPath(path, scenarioSection)
@@ -219,6 +227,40 @@ func scenarioSteps(text string) []string {
 		steps = append(steps, strings.TrimPrefix(t, "$ "))
 	}
 	return steps
+}
+
+// unclosedScenarioFence отдаёт номер строки (с единицы) ограждения, открытого
+// в разделе «Сценарий проверки» и не закрытого ни до следующего заголовка
+// второго уровня, ни до конца файла. Ноль значит, что раздел ограждениями
+// сходится. Строже общего читателя разделов здесь нарочно: заголовок внутри
+// блока в остальных разделах это чужой вывод, а в сценарии это забытое ```.
+func unclosedScenarioFence(doc string) int {
+	fence, at, in := "", 0, false
+	for i, ln := range strings.Split(doc, "\n") {
+		if m := fenceRe.FindStringSubmatch(ln); m != nil {
+			switch {
+			case fence == "":
+				fence, at = m[1], i+1
+			case m[1][0] == fence[0] && len(m[1]) >= len(fence) && strings.TrimSpace(ln[len(m[0]):]) == "":
+				fence, at = "", 0
+			}
+			continue
+		}
+		if !strings.HasPrefix(ln, "## ") {
+			continue
+		}
+		if fence != "" {
+			if in {
+				return at
+			}
+			continue
+		}
+		in = strings.HasPrefix(ln, scenarioSection)
+	}
+	if fence != "" && in {
+		return at
+	}
+	return 0
 }
 
 // fenceMarker отдаёт ограждение в начале строки (три и больше знака ` или ~) и

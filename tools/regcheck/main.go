@@ -52,7 +52,7 @@ func main() {
 	dir := fs.String("C", ".", "откуда искать корень репозитория")
 	base := fs.String("base", "", "реф старого кода")
 	tests := fs.String("tests", "", "тестовые файлы через запятую")
-	inline := fs.String("inline", "", "инлайновые файлы (правка и тест в одном файле) через запятую")
+	inline := fs.String("inline", "", "файлы, где правка и тест вместе, через запятую")
 	fs.Parse(args)
 	if len(fs.Args()) > 0 {
 		fmt.Fprintf(os.Stderr, "лишние аргументы %v: команда теста ставится после «--»\n\n%s", fs.Args(), usageText)

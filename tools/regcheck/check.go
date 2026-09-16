@@ -225,7 +225,7 @@ func findRustCfgTest(lines []string) (start, end int, err error) {
 	return 0, 0, fmt.Errorf("не нашёл закрывающую скобку блока mod, начатого на строке %d", j+1)
 }
 
-// spliceInline строит версию инлайнового файла для базового кода: код
+// spliceInline строит версию файла с тестом внутри для базового кода: код
 // базовый (возможно с багом), тестовая часть текущая (новая, должна ловить
 // баг). Если в базе тестовой части ещё нет, она дописывается в конец файла,
 // иначе заменяет собой прежнюю.
@@ -401,7 +401,7 @@ func Run(p Params) (string, error) {
 	}
 	for _, t := range p.Inline {
 		if _, err := os.Stat(filepath.Join(root, t)); err != nil {
-			return "", fmt.Errorf("инлайновый файл %s не найден в рабочем дереве", t)
+			return "", fmt.Errorf("файл %s из --inline не найден в рабочем дереве", t)
 		}
 	}
 	if out, err := runCmd(dirAbs, p.Cmd); err != nil {
@@ -428,12 +428,12 @@ func Run(p Params) (string, error) {
 		basePath := filepath.Join(wt, t)
 		baseData, err := os.ReadFile(basePath)
 		if err != nil {
-			return "", fmt.Errorf("инлайновый файл %s не найден в базе %s; это целиком новый файл, "+
+			return "", fmt.Errorf("файл %s из --inline не найден в базе %s; это целиком новый файл, "+
 				"--inline тут ни при чём, перенеси его как обычный тест через --tests", t, base)
 		}
 		result, err := spliceInline(string(baseData), string(curData))
 		if err != nil {
-			return "", fmt.Errorf("инлайновый файл %s: %v", t, err)
+			return "", fmt.Errorf("файл %s из --inline: %v", t, err)
 		}
 		if err := os.WriteFile(basePath, []byte(result), 0o644); err != nil {
 			return "", err

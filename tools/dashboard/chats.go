@@ -1635,7 +1635,7 @@ func chatNewName(id string, alive func(string) bool) string {
 // аргументом: интерактивный клиент берёт её как первый вопрос и остаётся
 // стоять, дальше реплики подаются в тот же процесс через send-keys. Правила
 // плана, отзывчивости, канала и ротации исполнителя заказ больше не несёт
-// (DK-612): их доставляет хук старта сессии и скиллы board-chat и work-plan, а
+// (DK-612): их доставляет хук старта сессии и скиллы chat и work-plan, а
 // дублирующая приписка расходилась с ними и засоряла ленту вырезками.
 func chatCmd(env, model, resume, text string, h *Harness, agentctl string) string {
 	client := defaultClient

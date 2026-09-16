@@ -1977,7 +1977,7 @@ func TestPeerReplyAuthorBySource(t *testing.T) {
 		return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"%s"},`+
 			`"timestamp":"2026-08-21T10:00:00.000Z"}`, body) + "\n"
 	}
-	// Подпись человека это слово human (скилл board-chat, DK-614), а
+	// Подпись человека это слово human (скилл chat, DK-614), а
 	// транскрипты до переименования подписаны словом dashboard, и лента по
 	// ним читается так же.
 	data := []byte(line("human", "слова человека") +

@@ -848,7 +848,7 @@ func TestChatCmdSecondHarnessCarriesModel(t *testing.T) {
 
 // Заказ несёт слова человека без приписок: правила плана, отзывчивости,
 // канала и ротации исполнителя дашборд к тексту больше не клеит (DK-612), их
-// доставляет хук старта сессии и скиллы board-chat, work-plan.
+// доставляет хук старта сессии и скиллы chat, work-plan.
 func TestChatCmdCarriesOnlyHumanWords(t *testing.T) {
 	fresh := chatCmd("", "opus", "", "посмотри доску", nil, "agentctl")
 	if !strings.HasSuffix(fresh, " 'посмотри доску'") {
@@ -1354,7 +1354,7 @@ func queued(at string) string {
 // доезжают этим каналом, харнес оборачивает их рамкой «сообщение от другой
 // сессии», и агент отвечал человеку в третьем лице («коллега спрашивает»,
 // «ответ ему отправлен» в живом чате 93828026). Подпись называет скилл
-// board-chat, доставленный хуком старта сессии, а не текст заказа (DK-612).
+// chat, доставленный хуком старта сессии, а не текст заказа (DK-612).
 func TestPeerFrameSignsHuman(t *testing.T) {
 	sign := `from-name="` + humanPeer + `"`
 	frame, err := peerFrame("привет", "uds:/tmp/cc-socks/1.sock")

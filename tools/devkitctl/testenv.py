@@ -364,6 +364,9 @@ def git_init(root):
     git(root, "init", "-q")
     git(root, "config", "user.name", "t")
     git(root, "config", "user.email", "t@t")
+    # Отсоединённый `git maintenance run --auto` после commit репакует объекты
+    # песочницы под обходом (DK-1026); `gc.auto 0` на git 2.54 из CLT не помогает.
+    git(root, "config", "maintenance.auto", "false")
     return Path(root)
 
 
@@ -649,16 +652,22 @@ class Sandbox:
         """Слепок копии devkit по содержимому: чем стенд был до теста.
 
         Считается по содержимому, а не по mtime: тест, вернувший файл на место
-        перезаписью, стенд не менял. `.git` пропускается, его трогает не тест, а
-        сам git (индекс, логи ссылок). `__pycache__` пропускается по той же
-        причине: байткод пишет python при первом же импорте из подпроцесса, и на
-        чекауте, где кеша ещё нет, сторож утечки краснел бы на исправном коде.
+        перезаписью, стенд не менял. `.git` пропускается обходом, а не
+        результатом: отсоединённый репак git может снести каталог
+        `objects/XX` между вызовами `scandir`, и фильтр по готовому списку
+        путей на это уже опоздал бы (DK-1026). `__pycache__` пропускается по
+        схожей причине: байткод пишет python при первом же импорте из
+        подпроцесса, и на чекауте, где кеша ещё нет, сторож утечки краснел бы
+        на исправном коде.
         """
         h = hashlib.sha1()
         skip = (".git", "__pycache__")
-        for p in sorted(self.dk.rglob("*")):
-            if set(p.relative_to(self.dk).parts) & set(skip):
-                continue
+        found = []
+        for dirpath, dirnames, filenames in os.walk(self.dk):
+            dirnames[:] = [d for d in dirnames if d not in skip]
+            for name in dirnames + filenames:
+                found.append(Path(dirpath) / name)
+        for p in sorted(found):
             h.update(str(p.relative_to(self.dk)).encode("utf-8"))
             if p.is_symlink():
                 h.update(b"->" + os.readlink(str(p)).encode("utf-8"))

@@ -2938,6 +2938,12 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			if why := s.chatStuck(sid); why != "" {
 				out["stuck"] = why
 				s.logf("реплика чата %s легла в очередь: %s", sid, why)
+			} else if why := peerInboundHeld(s.cfg.Home); why != "" {
+				// Второй молчаливый исход той же удачной с виду отправки:
+				// приём межсессионных реплик на машине не разложен, и
+				// получатель придержит кадр на расхождении класса разрешений.
+				out["stuck"] = why
+				s.logf("реплика чата %s могла лечь придержанной: %s", sid, why)
 			}
 			writeJSON(w, http.StatusOK, out)
 			return

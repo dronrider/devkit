@@ -194,6 +194,40 @@ func peerFrame(text, from string) ([]byte, error) {
 // кнопку.
 const peerSendTimeout = 3 * time.Second
 
+// Барьер класса разрешений на входе у получателя снимает настройка харнеса
+// crossSessionInbound: accept. Без неё реплика, написанная в сокет, ложится у
+// получателя в придержанные до ответа человека в его окне, а отправителю
+// доставка выглядит удачной: сокет кадр взял и соединение закрыл. Раскладывает
+// ключ devkitctl doctor --fix (DK-630), а дашборд говорит про его отсутствие
+// там, где человек жмёт отправку.
+const (
+	inboundKey    = "crossSessionInbound"
+	inboundAccept = "accept"
+)
+
+// peerInboundHeld это причина для плашки, когда приём межсессионных реплик на
+// машине не разрешён. Пустая строка значит, что барьера нет либо судить не по
+// чему: нечитаемые и битые настройки это разговор доктора, а не плашки над
+// репликой.
+func peerInboundHeld(home string) string {
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Inbound string `json:"crossSessionInbound"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+	if cfg.Inbound == inboundAccept {
+		return ""
+	}
+	return fmt.Sprintf("приём межсессионных реплик на машине не разрешён (%s не «%s» в "+
+		"настройках харнеса): сессия придержит реплику до ответа человека в своём окне; "+
+		"разложить: devkitctl doctor --fix", inboundKey, inboundAccept)
+}
+
 // errPeerNoAck это отказ подтверждения: байты ушли в ядро, а клиент так и не
 // дочитал соединение до конца. У живого клиента событийный цикл принимает
 // соединение, дочитывает кадр до полузакрытия и закрывает его сам, за

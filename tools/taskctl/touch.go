@@ -2,6 +2,7 @@ package main
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/sessions"
@@ -29,9 +30,15 @@ var touchIDRe = regexp.MustCompile(`^[A-Za-z]{2,10}-\d{1,6}$`)
 // touchDone. Зовётся после исполнения команды, когда исход уже известен:
 // отбитая воротами или ошибкой команда (несуществующий ID, протухшая
 // обкатка внутри shipctl merge, пустая «Проверка» у close) реестр не
-// трогает вовсе, ни отметкой, ни отвязкой (DK-1003).
+// трогает вовсе, ни отметкой, ни отвязкой (DK-1003). Холостой прогон
+// отбивается раньше разбора статуса по тем же соображениям. Доску он не
+// двигает, работой над строкой не становится и уж тем более не отвязывает от
+// неё сессию (DK-1007).
 func touchWork(args []string, err error) {
 	if err != nil || len(args) == 0 || !touchCmds[args[0]] {
+		return
+	}
+	if isDry(args[1:]) {
 		return
 	}
 	for i, a := range args[1:] {
@@ -46,6 +53,27 @@ func touchWork(args []string, err error) {
 		sessions.Touch(a, why)
 		return
 	}
+}
+
+// isDry отвечает, стоит ли среди слов команды ключ холостого прогона. Ту же
+// команду `move <ID> check --dry-run` вызывают и руками, и подпроцессом из
+// shipctl по всему составу поезда. На этом сессия теряла свои строки разом.
+// Написание берётся любое, какое принимает пакет flag: одна чёрточка или две,
+// значение через знак равенства.
+func isDry(args []string) bool {
+	for _, a := range args {
+		name, val, eq := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(a, "-"), "-"), "=")
+		if name != "dry-run" {
+			continue
+		}
+		if !eq {
+			return true
+		}
+		if on, err := strconv.ParseBool(val); err == nil && on {
+			return true
+		}
+	}
+	return false
 }
 
 // touchDone отвечает, кончилась ли этой командой работа сессии над задачей.
@@ -63,7 +91,7 @@ func touchDone(args []string, at int) bool {
 		return true
 	case "move":
 		// Статус стоит следующим словом за ID, а не третьим аргументом:
-		// ключи вроде --dry-run встают где угодно, и счёт по позиции читал бы
+		// ключи вроде --reason встают где угодно, и счёт по позиции читал бы
 		// статусом первый попавшийся флаг.
 		for _, a := range args[at+1:] {
 			if strings.HasPrefix(a, "-") {

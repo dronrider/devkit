@@ -78,8 +78,8 @@ func TestTouchDoneOnCloseAndMoveOut(t *testing.T) {
 		{[]string{"move", "XR-005", "In progress"}, false},
 		// Ключи встают где угодно, и статусом читается первое слово за ID, а
 		// не третий аргумент подряд.
-		{[]string{"move", "XR-005", "--dry-run", "check"}, true},
-		{[]string{"move", "--dry-run", "XR-005", "in-progress"}, false},
+		{[]string{"move", "XR-005", "--push", "check"}, true},
+		{[]string{"move", "--push", "XR-005", "in-progress"}, false},
 		{[]string{"ask", "XR-005"}, false},
 	}
 	for _, c := range cases {
@@ -116,5 +116,36 @@ func TestTouchWorkWritesRelease(t *testing.T) {
 	}
 	if len(sessions.Works(recs)) != 0 {
 		t.Errorf("после закрытия строка осталась рабочей: %+v", sessions.Works(recs))
+	}
+}
+
+// Холостой прогон реестра не касается ни в какую сторону (DK-1007). Ту же
+// команду `move <ID> check --dry-run` вызывают и руками, и подпроцессом из
+// shipctl по всему составу поезда. Доску такой прогон не двигает, и снимать
+// сессию со строки ему тем более нечем. Обратная сторона та же. Холостой
+// перевод в In progress привязки не заводит.
+func TestDryRunLeavesRegistryAlone(t *testing.T) {
+	const sid = "aaaa1111-1111-4111-8111-111111111111"
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(sessions.SessionEnv, sid)
+	touchWork([]string{"move", "XR-005", "in-progress"}, nil)
+	dry := [][]string{
+		{"move", "XR-005", "check", "--dry-run"},
+		{"move", "XR-005", "--dry-run", "check"},
+		{"move", "--dry-run", "XR-006", "in-progress"},
+		{"move", "XR-006", "in-progress", "-dry-run"},
+		{"move", "XR-006", "in-progress", "--dry-run=true"},
+	}
+	for _, args := range dry {
+		touchWork(args, nil)
+	}
+	recs := sessions.LoadAll(home)[sid]
+	if len(recs) != 1 {
+		t.Fatalf("холостой прогон дописал реестр, записей %d: %+v", len(recs), recs)
+	}
+	works := sessions.Works(recs)
+	if len(works) != 1 || works[0] != "XR-005" {
+		t.Fatalf("после холостого прогона сессия работает над %v, ожидал [XR-005]", works)
 	}
 }

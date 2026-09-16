@@ -1,11 +1,11 @@
 # чат без задачи кладёт план ко второй настоящей работе
 
 конец: сессия
-предмет: kit/skills/board-chat/SKILL.md
+предмет: kit/skills/chat/SKILL.md
 
 ## Промпт
 
-Эта сессия открыта чатом без привязки к задаче. План работ веди командой agentctl plan. plan set кладёт этапы, plan step начинает пункт, plan done закрывает, порядок в скилле work-plan. Позови скилл board-chat, порядок разговора с человеком лежит в нём.
+Эта сессия открыта чатом без привязки к задаче. План работ веди командой agentctl plan. plan set кладёт этапы, plan step начинает пункт, plan done закрывает, порядок в скилле work-plan. На каждой реплике человека первым действием, до ответа ему, вызови скилл chat инструментом Skill и веди разговор по нему: без этого ответ не по правилам.
 
 Another Claude session sent a message:
 <cross-session-message from="uds:/tmp/cc-socks/41217.sock" from-name="human" from-mode="prompting">

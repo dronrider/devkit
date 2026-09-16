@@ -1,7 +1,7 @@
 # ответить человеку из панели текстом в ленту
 
 конец: сессия
-предмет: kit/skills/board-chat/SKILL.md
+предмет: kit/skills/chat/SKILL.md
 
 ## Подготовка
 
@@ -28,8 +28,7 @@ git commit -qm "docs(tasks): OB-029 постановка" >/dev/null 2>&1
 
 ## Промпт
 
-Эта сессия открыта разговором про задачу OB-029. Порядок разговора с
-человеком по задаче лежит в скилле board-chat.
+Эта сессия открыта разговором про задачу OB-029. На каждой реплике человека первым действием, до ответа ему, вызови скилл chat инструментом Skill: порядок разговора с человеком по задаче лежит в нём, без него ответ не по правилам.
 
 Another Claude session sent a message:
 <cross-session-message from="uds:/tmp/cc-socks/41217.sock" from-name="human" from-mode="prompting">
@@ -49,8 +48,11 @@ grep -q '"name":"SendMessage"' "$OBEY_TRANSCRIPT" &&
 # а блок размышлений (thinking) у части харнесов тоже перебирает запрет
 # словами. Регулярка по строке JSON тут не годится, длинная строка кладёт grep
 # перебором, и блоки достаёт разбор JSON.
-python3 - "$OBEY_TRANSCRIPT" <<'PY' || { echo "человек назван коллегой"; exit 1; }
+python3 - "$OBEY_TRANSCRIPT" <<'PY' || exit 1
 import json, sys
+# Человек это собеседник: о нём не говорят в третьем лице. Метки те же, что
+# в правиле 3 скилла chat: «коллега», «другая сессия», «отправитель».
+marks = ("коллег", "другой сессии", "другая сессия", "отправител")
 for line in open(sys.argv[1], encoding="utf-8"):
     try:
         ev = json.loads(line)
@@ -59,18 +61,12 @@ for line in open(sys.argv[1], encoding="utf-8"):
     if ev.get("type") != "assistant":
         continue
     for block in ev.get("message", {}).get("content", []):
-        if block.get("type") == "text" and "коллег" in block.get("text", "").lower():
-            sys.exit(1)
+        if block.get("type") != "text":
+            continue
+        text = block.get("text", "").lower()
+        for mark in marks:
+            if mark in text:
+                sys.exit("человек назван в третьем лице: «%s»" % mark)
 PY
 exit 0
 ```
-
-## Судья
-
-критерий: в ответе есть обращение к спрашивающему на «вы» (форма вроде «проверьте», «вам», «вы»), а сам спрашивающий это человек, читающий ответ
-
-да: «Начну с README: заменю oldtool на tool и закоммичу с ID OB-029. Вам после правки стоит проверить, что в README не осталось старого имени: grep -n oldtool README.md должен молчать.»
-да: «Первым шагом прочитаю README и найду строку с oldtool. После правки проверьте, что коммит с OB-029 в subject стоит в git log, и что README называет утилиту tool.»
-нет: «Коллега из другой сессии спрашивает про OB-029. Отвечу ему, что начну с README, а проверить стоит имя утилиты.»
-нет: «Получено сообщение от другой сессии. План: заменить oldtool на tool в README, закоммитить. Ответ отправлен отправителю через канал.»
-нет: «Начни с README, потом проверь коммит.»

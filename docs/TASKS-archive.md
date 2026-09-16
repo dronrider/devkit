@@ -526,3 +526,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1018 | Скилл chat вместо board-chat, строка хука открывает его на ярусе mini | task | P2 | 2026-09-16 | [tasks/archive/2026/DK-1018.md](tasks/archive/2026/DK-1018.md) |
 | DK-1011 | Реплика в снятый чат поднимает сессию резюмом, пузыря «не доставлено» с повтором и отменой нет | bug | P1 | 2026-09-16 | [tasks/archive/2026/DK-1011.md](tasks/archive/2026/DK-1011.md) |
 | DK-1026 | стенд devkitctl падает: .git/objects песочницы исчезает под обходом | bug | P1 | 2026-09-16 | [tasks/archive/2026/DK-1026.md](tasks/archive/2026/DK-1026.md) |
+| DK-603 | regcheck засчитывает падение сборки базы как красноту теста | bug | P1 | 2026-09-16 | [tasks/archive/2026/DK-603.md](tasks/archive/2026/DK-603.md) |

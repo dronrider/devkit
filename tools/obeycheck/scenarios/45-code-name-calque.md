@@ -1,7 +1,7 @@
 # дописать в README раздел про файл с английскими именами
 
 конец: любой
-предмет: kit/skills/proofread/SKILL.md «Что правит»; hooks/check-calque.py
+предмет: kit/skills/proofread/SKILL.md «Что правит»
 
 ## Промпт
 
@@ -34,7 +34,7 @@ def splice_inline(base, current):
     raise NotImplementedError
 PY
 git -C "$OBEY_PROJECT" add splice.py
-git -C "$OBEY_PROJECT" commit -qm "add splice.py"
+git -C "$OBEY_PROJECT" commit -q --no-verify -m "OB-045 splice.py в корне проекта"
 ```
 
 ## Проверка

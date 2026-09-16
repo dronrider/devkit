@@ -665,6 +665,7 @@ class Sandbox:
         found = []
         for dirpath, dirnames, filenames in os.walk(self.dk):
             dirnames[:] = [d for d in dirnames if d not in skip]
+            filenames = [f for f in filenames if f not in skip]
             for name in dirnames + filenames:
                 found.append(Path(dirpath) / name)
         for p in sorted(found):

@@ -27,6 +27,20 @@ class FingerprintTest(SandboxCase):
             if not any(pyc.parent.iterdir()):
                 pyc.parent.rmdir()
 
+    def test_git_faylom_slepok_ne_dvigaet(self):
+        """Вложенный worktree кладёт `.git` файлом-поинтером, не каталогом.
+        Фильтр пропускает такое имя и среди файлов, не только среди каталогов
+        (DK-1026): старый обход резал `.git` по любой части пути, а первый
+        обход через `os.walk` пропускал только имена каталогов."""
+        git_file = self.box.dk / "tools" / "devkitctl" / ".git"
+        before = self.box.fingerprint()
+        write(git_file, "gitdir: /anywhere\n")
+        try:
+            self.assertEqual(self.box.fingerprint(), before,
+                             "`.git` файлом (указатель worktree) тоже пропускается")
+        finally:
+            git_file.unlink()
+
     def test_pravka_ishodnika_slepok_dvigaet(self):
         target = self.box.dk / "hooks" / "check-symbols.py"
         was = target.read_text(encoding="utf-8")

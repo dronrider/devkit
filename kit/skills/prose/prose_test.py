@@ -329,14 +329,19 @@ class CorpusCase(unittest.TestCase):
         self.dir = tempfile.mkdtemp(prefix="prose-corpus-")
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
 
-    def genre(self, name, title, bodies, пометка=""):
+    def genre(self, name, title, bodies, пометка="", формы=None, типы=None):
         path = os.path.join(self.dir, name + ".md")
         mark = "пометка: %s\n" % пометка if пометка else ""
         with open(path, "w", encoding="utf-8") as f:
             f.write("# %s\n\nВводная проза жанра, во фрагменты не едет.\n\n" % title)
             for i, body in enumerate(bodies, 1):
-                f.write("## %d\nисточник: трекер, issues/%d\nроль: репортёр\n%s\n%s\n\n"
-                        % (i, i, mark, body))
+                поля = ""
+                if типы and типы[i - 1]:
+                    поля += "тип: %s\n" % типы[i - 1]
+                if формы and формы[i - 1]:
+                    поля += "форма: %s\n" % формы[i - 1]
+                f.write("## %d\nисточник: трекер, issues/%d\n%sроль: репортёр\n%s\n%s\n\n"
+                        % (i, i, поля, mark, body))
         return path
 
 
@@ -361,6 +366,23 @@ class TestParse(CorpusCase):
         _, fragments = prose.parse_genre(os.path.join(self.dir, "task.md"))
         self.assertTrue(fragments[0]["body"].startswith("Вот что вышло: доска встала."))
         self.assertNotIn("Вот что вышло", fragments[0])
+
+    def test_форма_и_тип_читаются_из_шапки(self):
+        self.genre("readme", "вход README", ["- Первый пункт.\n- Второй пункт."],
+                   формы=["список"], типы=["справочник флагов"])
+        _, fragments = prose.parse_genre(os.path.join(self.dir, "readme.md"))
+        self.assertEqual(fragments[0]["форма"], "список")
+        self.assertEqual(fragments[0]["тип"], "справочник флагов")
+        self.assertEqual(prose.form_of(fragments[0]), "список")
+
+    def test_фрагмент_без_поля_формы_это_абзацы(self):
+        # Поле завелось позже корпуса, и 66 стоящих фрагментов его не получили.
+        # Читайся такой фрагмент формой пустой, выборка по форме уронила бы их
+        # всех из набора разом.
+        self.genre("task", "постановка", ["Первый абзац.\n\nВторой абзац."])
+        _, fragments = prose.parse_genre(os.path.join(self.dir, "task.md"))
+        self.assertNotIn("форма", fragments[0])
+        self.assertEqual(prose.form_of(fragments[0]), "абзацы")
 
 
 class TestSample(CorpusCase):
@@ -417,6 +439,66 @@ class TestSample(CorpusCase):
     def test_фрагмент_без_пометки_её_не_печатает(self):
         text = prose.render(prose.sample(self.dir, "task", 2, seed=3))
         self.assertNotIn("пометка:", text)
+
+    def test_тип_и_форма_едут_в_шапке(self):
+        # Пишущий видит, какой блок перед ним. Потеряй шапка форму, и образец
+        # списка ляжет под правку сплошного текста.
+        self.genre("readme", "вход README", ["- Пункт %d." % i for i in range(1, 4)],
+                   формы=["список"] * 3, типы=["справочник флагов"] * 3)
+        text = prose.render(prose.sample(self.dir, "readme", 3, seed=1))
+        self.assertEqual(text.count("форма: список"), 3)
+        self.assertEqual(text.count("тип: справочник флагов"), 3)
+
+    def test_фрагмент_без_формы_и_типа_их_не_печатает(self):
+        text = prose.render(prose.sample(self.dir, "task", 2, seed=3))
+        self.assertNotIn("форма:", text)
+        self.assertNotIn("тип:", text)
+
+
+class TestФормаВыборки(CorpusCase):
+    """Пишущему список нужен список. Структурных фрагментов на жанр три-четыре,
+    и случайный набор из четырёх обходит их чаще, чем берёт."""
+
+    def setUp(self):
+        super().setUp()
+        тела = ["Абзац %d." % i for i in range(1, 7)] + [
+            "- Пункт первый.\n- Пункт второй.\n- Пункт третий.",
+            "| Ключ | Что делает |\n|---|---|\n| раз | первое |\n| два | второе |",
+        ]
+        формы = [""] * 6 + ["список", "таблица"]
+        self.genre("readme", "вход README", тела, формы=формы)
+
+    def test_названная_форма_едет_первой(self):
+        for seed in range(10):
+            picked = prose.sample(self.dir, "readme", 4, seed, form="список")
+            self.assertEqual(prose.form_of(picked[0][2]), "список", seed)
+
+    def test_остальной_набор_идёт_без_фильтра(self):
+        # Фраза внутри пунктов учится у той же прозы, поэтому хвост набора
+        # берётся как прежде, случайным.
+        формы = set()
+        for seed in range(10):
+            picked = prose.sample(self.dir, "readme", 4, seed, form="список")
+            формы.update(prose.form_of(f) for _, _, f in picked[1:])
+        self.assertIn("абзацы", формы)
+
+    def test_без_формы_выборка_прежняя(self):
+        первый = [f["body"] for _, _, f in prose.sample(self.dir, "readme", 4, seed=5)]
+        второй = [f["body"] for _, _, f
+                  in prose.sample(self.dir, "readme", 4, seed=5, form="")]
+        self.assertEqual(первый, второй)
+
+    def test_формы_нет_в_корпусе_набор_идёт_и_причина_названа(self):
+        # Молчание тут читалось бы как выборку по форме, и пишущий правил бы
+        # таблицу по образцу сплошного текста, не зная об этом.
+        self.genre("task", "постановка", ["Абзац %d." % i for i in range(1, 5)])
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = prose.main(["sample", "--corpus", self.dir, "--genre", "task",
+                               "--form", "таблица", "--seed", "1"])
+        self.assertEqual(code, 0)
+        self.assertIn("формы «таблица» в корпусе нет", err.getvalue())
+        self.assertIn("Абзац", out.getvalue())
 
 
 class TestБюджетВыборки(CorpusCase):
@@ -690,6 +772,31 @@ class TestКорпусРепозитория(unittest.TestCase):
             self.assertGreaterEqual(len(fragments), 3, genre)
             for fragment in fragments:
                 self.assertIn("источник", fragment)
+
+    def test_форма_фрагмента_из_четырёх_и_тело_без_подзаголовков(self):
+        # Форма это ключ выборки, и слово мимо четырёх значений просто не
+        # выберется ключом: фрагмент тихо выпадет из набора той формы, ради
+        # которой его и клали. Подзаголовок в теле фрагмент разваливает,
+        # заголовок режется тем же шаблоном, что и шапка.
+        corpus = prose.read_corpus(os.path.join(prose.HERE, "corpus"))
+        for genre, (_, fragments) in corpus.items():
+            for i, fragment in enumerate(fragments, 1):
+                где = "%s #%d" % (genre, i)
+                self.assertIn(prose.form_of(fragment), prose.FORMS, где)
+                for line in fragment["body"].split("\n"):
+                    self.assertFalse(line.startswith("#"), "%s: %s" % (где, line))
+
+    def test_структурный_фрагмент_назван_типом(self):
+        # Тип это слово пользователя о том, что за документ: «справочник
+        # флагов», «список изменений», «установка». По нему фрагмент ложится в
+        # таблицу типов скилла, а без него список и таблица в корпусе стоят
+        # безымянными, и происхождение видно только по адресу источника.
+        corpus = prose.read_corpus(os.path.join(prose.HERE, "corpus"))
+        for genre, (_, fragments) in corpus.items():
+            for i, fragment in enumerate(fragments, 1):
+                if prose.form_of(fragment) == prose.DEFAULT_FORM:
+                    continue
+                self.assertTrue(fragment.get("тип"), "%s #%d" % (genre, i))
 
     def test_источник_фрагмента_одного_из_четырёх_видов(self):
         # Источников у корпуса четыре. Два названы в цели DK-446, это реплики

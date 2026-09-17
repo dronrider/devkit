@@ -675,9 +675,12 @@ class TestProse(SkillTree):
     HOT = "\n".join("%d. Примета %d." % (i, i) for i in range(1, 10))
     CALL = "python3 ~/projects/devkit/kit/skills/prose/prose.py sample --genre task"
 
-    def add_prose(self, hot=None, readme=True):
-        body = "## Горячий список\n\n%s\n\n## Кто зовёт\n\nПравка %s.\n" % (
-            self.HOT if hot is None else hot, "README" if readme else "входной страницы")
+    def add_prose(self, hot=None, readme=True, form=True):
+        body = "## Как взять выборку\n\n%s\n\n## Горячий список\n\n%s\n\n" \
+               "## Кто зовёт\n\nПравка %s.\n" % (
+                   self.CALL + (" --form список" if form else ""),
+                   self.HOT if hot is None else hot,
+                   "README" if readme else "входной страницы")
         self.add_skill("prose", body=body)
 
     def add_points(self, groom=True, task=True, xhigh=True):
@@ -715,6 +718,15 @@ class TestProse(SkillTree):
         self.add_points()
         fails = check_skills.check_prose(self.root)
         self.assertTrue(any("правка README не названа" in f for f in fails), fails)
+
+    def test_ключ_формы_не_назван(self):
+        # DK-618: ключ доезжает до пишущего текстом скилла. Без него правка
+        # списка пойдёт по образцу сплошного текста.
+        self.add_prose(form=False)
+        self.add_points()
+        fails = check_skills.check_prose(self.root)
+        self.assertTrue(any("ключ выборки по форме блока не назван" in f for f in fails),
+                        fails)
 
     def test_точка_без_выборки(self):
         self.add_prose()

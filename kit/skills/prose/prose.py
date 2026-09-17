@@ -2,7 +2,8 @@
 """Корпус эталонов прозы: сборщик реплик пользователя и выборка фрагментов.
 
   prose.py collect [--journals DIR] [--min-words N] [--out DIR]
-  prose.py sample [--genre ЖАНР] [--count N] [--words N] [--seed S] [--corpus DIR]
+  prose.py sample [--genre ЖАНР] [--form ФОРМА] [--count N] [--words N]
+                  [--seed S] [--corpus DIR]
   prose.py repocheck [--repo DIR] [--corpus DIR] [--dump FILE]
 
 `collect` режет журналы сессий на реплики роли user, отсеивает короткие,
@@ -682,6 +683,18 @@ def write_dump(out_dir, candidates, words_top):
 HEAD_RE = re.compile(r"^##\s+(.+)$")
 KEY_RE = re.compile(r"^([А-Яа-яЁёA-Za-z][А-Яа-яЁёA-Za-z -]*):\s*(.*)$")
 
+# Форма фрагмента это то, чем блок стоит на странице. Значения отвечают режимам
+# чтения один к одному: сплошной текст читают подряд, перечисление и таблицу
+# глазами по диагонали, шаги выполняют по порядку.
+FORMS = ("абзацы", "список", "таблица", "шаги")
+DEFAULT_FORM = FORMS[0]
+
+
+def form_of(fragment):
+    """Форма фрагмента. Поля нет, значит абзацы: так стоят все фрагменты,
+    собранные до того, как поле завелось, и трогать их не пришлось."""
+    return fragment.get("форма") or DEFAULT_FORM
+
 
 def parse_genre(path):
     """Возврат (имя жанра, фрагменты). Фрагмент это словарь с полями шапки и
@@ -741,14 +754,19 @@ def read_corpus(corpus_dir):
     return out
 
 
-def sample(corpus_dir, genre, count, seed, budget=WORD_BUDGET):
+def sample(corpus_dir, genre, count, seed, budget=WORD_BUDGET, form=""):
     """Возврат списка (жанр, имя жанра, фрагмент).
 
     Фрагменты в корпусе разной длины, от двадцати пяти слов до четырёхсот, и
     четыре длинных подряд кладут в контекст письма простыню. Поэтому набор
     держит бюджет слов: берётся, пока хватает бюджета, а `count` остаётся
     потолком числа фрагментов. Один длинный фрагмент вытесняет три коротких.
-    Первый фрагмент едет всегда, даже когда он один длиннее бюджета."""
+    Первый фрагмент едет всегда, даже когда он один длиннее бюджета.
+
+    `form` ставит первым фрагмент названной формы: пишущему список нужен
+    список, а при трёх структурных фрагментах на жанр случайный набор из
+    четырёх чаще обходит их стороной, чем берёт. Остальной набор идёт без
+    фильтра, и фраза внутри пунктов учится у той же прозы."""
     corpus = read_corpus(corpus_dir)
     if genre:
         if genre not in corpus:
@@ -760,6 +778,11 @@ def sample(corpus_dir, genre, count, seed, budget=WORD_BUDGET):
             pool.extend((key, title, f) for f in fragments)
     rnd = random.Random(seed)
     rnd.shuffle(pool)
+    if form:
+        for i, item in enumerate(pool):
+            if form_of(item[2]) == form:
+                pool.insert(0, pool.pop(i))
+                break
     picked = []
     spent = 0
     for item in pool:
@@ -774,16 +797,19 @@ def sample(corpus_dir, genre, count, seed, budget=WORD_BUDGET):
 
 
 def render(picked):
-    """Выборка текстом, шапкой едут источник, роль и пометка.
+    """Выборка текстом, шапкой едут источник, тип, форма, роль и пометка.
 
     Пометка это оговорка вычитки, вроде «резкость оценки, лексику не
     копировать». Без неё резкий фрагмент попадает в контекст письма как
     образец целиком, вместе с бранью, ради которой его как раз и оставили
-    резким (находка ревью DK-522)."""
+    резким (находка ревью DK-522).
+
+    Тип и форма едут тем же порядком. Пишущий видит, какой блок перед ним и
+    откуда он взят, и не правит по образцу списка сплошной текст."""
     out = []
     for genre, title, fragment in picked:
         head = "## %s (%s)" % (title, genre)
-        for field in ("источник", "роль", "пометка"):
+        for field in ("источник", "тип", "форма", "роль", "пометка"):
             value = fragment.get(field, "")
             if value:
                 head += "\n%s: %s" % (field, value)
@@ -915,10 +941,17 @@ def cmd_repocheck(args):
 
 
 def cmd_sample(args):
-    picked = sample(args.corpus, args.genre, args.count, args.seed, args.words)
+    picked = sample(args.corpus, args.genre, args.count, args.seed, args.words,
+                    args.form)
     if not picked:
         print("в корпусе нечего показать: %s" % args.corpus, file=sys.stderr)
         return 1
+    # Молчание тут читалось бы как выборку по форме, и пишущий правил бы
+    # таблицу по образцу сплошного текста, не зная об этом.
+    if args.form and form_of(picked[0][2]) != args.form:
+        print("формы «%s» в корпусе нет%s, набор идёт без неё"
+              % (args.form, " у жанра %s" % args.genre if args.genre else ""),
+              file=sys.stderr)
     print(render(picked))
     return 0
 
@@ -949,6 +982,8 @@ def main(argv=None):
     p = sub.add_parser("sample", help="случайный набор фрагментов корпуса")
     p.add_argument("--corpus", default=os.path.join(HERE, "corpus"))
     p.add_argument("--genre", default="")
+    p.add_argument("--form", default="", choices=("",) + FORMS,
+                   help="форма блока: %s" % ", ".join(FORMS))
     p.add_argument("--count", type=int, default=4)
     p.add_argument("--words", type=int, default=WORD_BUDGET)
     p.add_argument("--seed", type=int, default=None)

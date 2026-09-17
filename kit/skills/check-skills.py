@@ -501,6 +501,11 @@ def check_prose(root):
             fails.append("prose: примет в горячем списке %d, а их девять: пять из замера DK-446 и четыре из разбора 2026-09-12" % n)
     if "README" not in text:
         fails.append("prose: правка README не названа точкой вызова, а своего скилла у неё нет")
+    # DK-618: ключ выборки по форме доезжает до пишущего одним путём, текстом
+    # скилла. Пропади он оттуда, правка списка пойдёт по образцу сплошного
+    # текста, и заметно это станет по испорченной странице.
+    if "--form" not in text:
+        fails.append("prose: ключ выборки по форме блока не назван, фрагмент нужной формы придётся отбирать глазами")
     for path, who in ((os.path.join(skills, "board-groom", "SKILL.md"), "board-groom"),
                       (os.path.join(skills, "board-task", "SKILL.md"), "board-task"),
                       (os.path.join(root, "kit", "agents", "exec-xhigh.md"), "exec-xhigh")):

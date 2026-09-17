@@ -28,7 +28,6 @@ type note struct {
 	Table     string
 	Scenarios []Scenario
 	Failed    bool
-	Warnings  []string
 	Now       time.Time
 }
 
@@ -82,10 +81,10 @@ func scenarioIDs(scen []Scenario) []string {
 
 // missingInLayout ищет тексты предметов в раскладке-кандидате. Правила и
 // страницы корня едут в прогон не из дерева, а из раскладки, и раскладка,
-// собранная руками до последней правки, дала бы свежий след на прогоне старого
-// текста. Отказом это не делается: генератор вправе переверстать файл, и
-// сравнение идёт по тексту со схлопнутыми пробелами. Скиллы и определения
-// субагентов не проверяются, их стенд берёт из дерева сам.
+// собранная руками до последней правки или не той глубины, дала бы свежий след
+// на прогоне старого либо чужого текста. Генератор вправе переверстать файл,
+// поэтому сравнение идёт по тексту со схлопнутыми пробелами. Скиллы и
+// определения субагентов не проверяются, их стенд берёт из дерева сам.
 func missingInLayout(layout, devkit string, subs []obey.Subject) []string {
 	var out []string
 	for _, s := range subs {
@@ -101,6 +100,20 @@ func missingInLayout(layout, devkit string, subs []obey.Subject) []string {
 		}
 	}
 	return out
+}
+
+// staleLayout отказывает прогону с `--task`, когда текст предмета в
+// раскладке-кандидате не найден. Раньше это шло предупреждением под отметкой,
+// и отметка ложилась зачтённой: две такие у DK-996 прошли ворота стенда на
+// раскладке без ядра (DK-1025). Проверка идёт до сессий, чтобы не платить за
+// прогон, след которого всё равно не запишется.
+func staleLayout(layout, devkit string, subs []obey.Subject) error {
+	missing := missingInLayout(layout, devkit, subs)
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("--task: след не пишется, раскладка-кандидат %s без текста предмета:\n  %s",
+		layout, strings.Join(missing, "\n  "))
 }
 
 // layoutHas отвечает, лежит ли текст в каком-нибудь файле раскладки, включая
@@ -142,9 +155,6 @@ func (n note) record(mark taskform.StandMark) []string {
 		tail = "ворота закрыты"
 	}
 	out := []string{"", taskform.StandLine(mark, n.Now, tail)}
-	for _, w := range n.Warnings {
-		out = append(out, "", taskform.WarnLine+w)
-	}
 	out = append(out, "", "```console", "$ "+n.Command)
 	out = append(out, strings.Split(strings.TrimRight(n.Table, "\n"), "\n")...)
 	out = append(out, "```")

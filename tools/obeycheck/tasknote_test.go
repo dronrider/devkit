@@ -128,13 +128,23 @@ func TestTaskNoteReplacesSameKey(t *testing.T) {
 }
 
 // Повторный прогон заменяет запись и тогда, когда у прошлой было
-// предупреждение о несвежей раскладке. Пара условий разом: ключ тот же, а
+// предупреждение о несвежей раскладке: такие записи лежат в старых файлах
+// задач (DK-996), новых стенд не пишет. Пара условий разом: ключ тот же, а
 // строка предупреждения стоит между отметкой и таблицей вне ограждения.
 func TestTaskNoteReplacesRecordWithWarning(t *testing.T) {
 	p := taskDoc(t)
 	first := standNote(t, scenarios(t, "press"), baseOld)
-	first.Warnings = []string{"текст предмета RULES.core.md в раскладке-кандидате не найден, раскладка собрана до правки?"}
 	if err := first.write(p); err != nil {
+		t.Fatal(err)
+	}
+	doc := read(t, p)
+	marks := taskform.StandMarks(doc)
+	if len(marks) != 1 {
+		t.Fatalf("отметок после первого прогона %d:\n%s", len(marks), doc)
+	}
+	warn := taskform.WarnLine + "текст предмета RULES.core.md в раскладке-кандидате не найден, раскладка собрана до правки?"
+	doc = strings.Replace(doc, "\n```console", "\n"+warn+"\n\n```console", 1)
+	if err := os.WriteFile(p, []byte(doc), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	again := standNote(t, scenarios(t, "press"), baseOld)
@@ -143,7 +153,7 @@ func TestTaskNoteReplacesRecordWithWarning(t *testing.T) {
 	if err := again.write(p); err != nil {
 		t.Fatal(err)
 	}
-	doc := read(t, p)
+	doc = read(t, p)
 	if n := len(taskform.StandMarks(doc)); n != 1 {
 		t.Fatalf("отметок после повторного прогона %d:\n%s", n, doc)
 	}
@@ -199,8 +209,7 @@ func TestTaskFileMissing(t *testing.T) {
 	}
 }
 
-// Раскладка-кандидат, собранная до правки, ловится по тексту предмета:
-// отказом это не делается, но предупреждение видно и в консоли, и под отметкой.
+// Раскладка-кандидат, собранная до правки, ловится по тексту предмета.
 func TestMissingInLayoutWarns(t *testing.T) {
 	root := devkitRoot(t)
 	sub := []obey.Subject{{Path: "RULES.core.md", Section: "Символы"}}
@@ -231,16 +240,35 @@ func TestMissingInLayoutWarns(t *testing.T) {
 	}
 }
 
-// Предупреждение доезжает до ревьювера: оно ложится в файл задачи под
-// отметкой, а не остаётся в консоли автора.
-func TestTaskNoteCarriesWarning(t *testing.T) {
-	p := taskDoc(t)
-	n := standNote(t, scenarios(t, "press"), baseOld)
-	n.Warnings = []string{"текст предмета RULES.core.md в раскладке-кандидате не найден, раскладка собрана до правки?"}
-	if err := n.write(p); err != nil {
+// Предмет, которого в раскладке-кандидате нет, это отказ прогону с --task, а
+// не предупреждение под зачтённой отметкой: раскладка full без ядра давала
+// DK-996 зелёный след по правилу, которого сессия не читала (DK-1025).
+// Причина печатается той же фразой, что раньше шла предупреждением.
+func TestStaleLayoutRefuses(t *testing.T) {
+	root := devkitRoot(t)
+	sub := []obey.Subject{{Path: "RULES.core.md", Section: "Символы"}}
+	stale := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stale, "RULES.md"), []byte("разбор без ядра\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if doc := read(t, p); !strings.Contains(doc, "Предупреждение: текст предмета RULES.core.md") {
-		t.Fatalf("предупреждения под отметкой нет:\n%s", doc)
+	err := staleLayout(stale, root, sub)
+	if err == nil {
+		t.Fatal("раскладка без текста предмета прошла")
+	}
+	for _, want := range []string{"след не пишется", "текст предмета RULES.core.md «Символы»", "раскладка собрана до правки"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("в отказе нет %q: %v", want, err)
+		}
+	}
+	fresh := t.TempDir()
+	text, err := obey.Text(root, sub[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fresh, "RULES.core.md"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := staleLayout(fresh, root, sub); err != nil {
+		t.Fatalf("свежая раскладка отбита: %v", err)
 	}
 }

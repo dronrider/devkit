@@ -164,6 +164,9 @@ func main() {
 		if taskPath, err = taskFile(".", *task); err != nil {
 			fail(err)
 		}
+		if err := staleLayout(fs.Args()[0], root, runSubjects(scen)); err != nil {
+			fail(err)
+		}
 	}
 
 	argv := strings.Fields(*agentCmd)
@@ -245,11 +248,7 @@ func main() {
 			Table:     res.Report,
 			Scenarios: liveScenarios(res.Rows),
 			Failed:    res.Failed,
-			Warnings:  missingInLayout(fs.Args()[0], root, runSubjects(scen)),
 			Now:       time.Now(),
-		}
-		for _, w := range n.Warnings {
-			fmt.Fprintln(os.Stderr, "предупреждение:", w)
 		}
 		if err := n.write(taskPath); err != nil {
 			fail(err)

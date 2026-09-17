@@ -168,6 +168,23 @@ func draftHere(projectPath, id string) bool {
 	return err == nil && !st.IsDir()
 }
 
+// rowHere отвечает, стоит ли за этим ID строка доски. Спрашивает его отказ
+// экрана записи: файл черновика уносит любой исход разбора, а строку на доску
+// ставит только заведение задачи, и по ней экран узнаёт, куда ушла запись.
+// Тем же двойным вопросом закрывает разговор разбора groomDone.
+func (s *server) rowHere(projPath, id string) bool {
+	raw, err := s.projectBoard(projPath)
+	if err != nil {
+		return false
+	}
+	rows, err := parseBoardRows(raw)
+	if err != nil {
+		return false
+	}
+	_, hit := rows[id]
+	return hit
+}
+
 // draftTitleOf читает заголовок записи накопителя и отвечает заодно, лежит ли
 // она на месте. Спрашивает его блок «Связи»: лестница названий кончалась
 // архивом, и упоминание черновика доезжало на экран задачей без названия.
@@ -223,6 +240,17 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 	path, rel := draftPathOf(found.Path, id)
 	text, err := os.ReadFile(path)
 	if err != nil {
+		// Файла нет, а строка с тем же ID стоит на доске: разбор кончился
+		// заведением задачи, и открытая форма записи по этому слову уходит на
+		// форму задачи. Прежде она оставалась формой черновика с отказом, и до
+		// заведённой задачи человек добирался руками (DK-719). В обратную
+		// сторону экран задачи так же уходит на запись накопителя.
+		if s.rowHere(found.Path, id) {
+			writeJSON(w, http.StatusNotFound, map[string]string{
+				"error": fmt.Sprintf("черновика %s в %s нет: грумминг завёл по нему задачу", id, found.Name),
+				"task":  id})
+			return
+		}
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, грумминг мог уже завести по нему задачу", id, found.Name, rel)})
 		return

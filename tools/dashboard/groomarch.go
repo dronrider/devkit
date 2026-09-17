@@ -44,16 +44,7 @@ func (s *server) groomDone(projPath, id string) bool {
 	if !draftHere(projPath, id) {
 		return true
 	}
-	raw, err := s.projectBoard(projPath)
-	if err != nil {
-		return false
-	}
-	rows, err := parseBoardRows(raw)
-	if err != nil {
-		return false
-	}
-	_, hit := rows[id]
-	return hit
+	return s.rowHere(projPath, id)
 }
 
 // groomSweepable отвечает, можно ли убрать этот разговор груминга, и называет

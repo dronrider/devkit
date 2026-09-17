@@ -1384,3 +1384,68 @@ func TestStaticDraftEditorLock(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// Груминг уносит запись из накопителя и ставит по ней строку на доску, а
+// открытая форма черновика об этом не знала: ручка отдавала голый отказ
+// «файла не видно», и человек добирался до задачи руками (DK-719). Отказ
+// теперь называет заведённую задачу отдельным полем, симметрично тому, как
+// отказ ручки задачи называет запись накопителя.
+func TestDraftOfTaskIDNamesTask(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"text": "форма черновика после груминга не уходит на задачу", "prio": "mid"}`).Body.Close()
+
+	// Исход груминга дословно: строка встала на доску, файл записи уехал из
+	// накопителя.
+	if err := os.Remove(filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")); err != nil {
+		t.Fatal(err)
+	}
+	runTaskctl(t, e.proj, "add", "--id", "XR-005", "--title", "Заведённая грумингом",
+		"--rank", "25+1+1+0+1", "--accept", "agent")
+
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("ID заведённой задачи на ручке черновика: %d %s, ожидал 404", resp.StatusCode, text)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("отказ не разобрался: %v\n%s", err, text)
+	}
+	if got["task"] != "XR-005" {
+		t.Fatalf("отказ не назвал заведённую задачу: %s", text)
+	}
+	if !strings.Contains(got["error"], "грумминг завёл") {
+		t.Errorf("отказ по заведённой задаче сказан не своими словами: %s", text)
+	}
+
+	// ID, за которым нет ни записи, ни строки, задачей не притворяется: форма
+	// остаётся на отказе, а не уезжает на пустой экран задачи.
+	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-777", "")
+	text = body(t, resp)
+	var plain map[string]string
+	if err := json.Unmarshal([]byte(text), &plain); err != nil {
+		t.Fatalf("отказ не разобрался: %v\n%s", err, text)
+	}
+	if plain["task"] != "" || !strings.Contains(plain["error"], "файла") {
+		t.Fatalf("ID без записи и без строки назван задачей: %s", text)
+	}
+}
+
+// Экранная половина перехода: форма черновика, чей ID стал строкой доски,
+// уходит на форму задачи. Проверяется прогоном самой статики в node (стенд
+// testdata/poc_drafttask.mjs), а не поиском строк в исходнике: предмет тут
+// смена адреса и собранная разметка. Без node шаг пропускается: узел стенда, а
+// не рабочей части.
+func TestStaticDraftGoesToTask(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд перехода на форму задачи пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_drafttask.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("переход формы черновика на задачу: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}

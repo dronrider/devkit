@@ -414,6 +414,83 @@ PostToolUse-хук ставится четвёртым рядом с остал�
 (`kit/skills/proofread/SKILL.md`), ключ метрики выписан рядом с пунктом, и
 совпадение списков держит тест `check_prose_test.py`.
 
+## Выборка прозы до записи долгоживущего текста
+
+`check-prose.py` меряет уже написанный кусок. Абзац короче 120 слов он не
+видит, само отсутствие выборки эталонов тоже. Фраза правила в контексте
+вызова не даёт. Стенд DK-1022 насчитал 0 вызовов `prose.py sample` из 19 у
+haiku, а у sonnet счёт упал до нуля от лишнего абзаца в `RULES.md`.
+`check-prose-sample.py` закрывает это структурно. PreToolUse-хук на Write,
+Edit, MultiEdit и NotebookEdit отбивает запись долгоживущего текста, пока в
+сессии нет следа выборки, и отказ печатает команду с жанром по пути:
+
+```
+запись долгоживущего текста без выборки эталонов прозы: возьми выборку
+`python3 ~/projects/devkit/kit/skills/prose/prose.py sample --genre task` и
+повтори запись
+```
+
+Долгоживущие пути и их жанр лежат секцией в `kit/prose.toml`: `[sample-task]`,
+`[sample-lld]`, `[sample-readme]`, `[sample-skill]`, ключ `paths` в каждой,
+плюс общий `[sample] mode` (`block` или `warn`, умолчание `block`) и `exclude`
+для машинных файлов вроде доски. Список жанров зашит в код хука тем же
+порядком, что список метрик в `check-prose.py`. Полноту секций проверяет сам
+хук режимом `--config`, а пробел виден находкой `devkitctl doctor`.
+
+Подключается парой хуков:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "python3 ~/projects/devkit/hooks/check-prose-sample.py --hook" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 ~/projects/devkit/hooks/prose-mark.py --hook claude-code" }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 ~/projects/devkit/hooks/prose-mark.py --hook claude-code" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Матчер записи несёт `MultiEdit`. У тройки проверок текста `POST_MATCHER` его
+не несёт, и третья правка того же абзаца этим инструментом шла бы мимо них
+молча. Новый рубеж заведён без этой дыры сразу.
+
+След ставит `prose-mark.py`, PostToolUse-хук на Bash. Команда, в которой
+встречается `prose.py sample`, узнаётся регуляркой над `tool_input.command`
+тем же порядком, что `phase-budget.py` узнаёт `taskctl move`. Файл следа лежит
+по контексту сессии, `~/.devkit/prose/<контекст>.json`, устройство контекста
+то же, что у `check-reread.py`. У субагента к `session_id` приписан через
+точку `agent_id`, окно у него своё и пустое, и выборка диспетчера субагенту не
+засчитывается (DK-608). Тот же скрипт стоит SessionStart-хуком и сбрасывает
+след на поводе `compact`. Сжатие уносит корпус из контекста, и подсказка
+«выборка уже была» после него была бы неправдой.
+
+Запись долгоживущего файла через Bash (heredoc, `sed`, `tee`) рубежу не видна.
+Он стоит на инструментах записи харнеса, разбора текста команды оболочки у
+него нет. Это решённая граница задачи DK-1024, а не пробел.
+
+Ручной прогон: `hooks/check-prose-sample.py --hook` и `hooks/prose-mark.py
+--hook` с событием на stdin, каталог следа для тестов перебивается флагом
+`--state <путь>`.
+
 ## Калька вместо русского слова
 
 `check-calque.py` ищет в записанном тексте слова из списка калек. Калька это

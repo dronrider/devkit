@@ -42,12 +42,16 @@ $ obeycheck --list
 
 Дальше собираются две раскладки. Первая это кандидат, вторая база, и что за
 база, говорит `--base`. Раскладку девкитовских правил печатает генератор, `-k`
-задаёт число повторов на раскладку:
+задаёт число повторов на раскладку. Глубина берётся та, что у живой машины,
+`core`: ядро плюс скиллы, полного текста в контексте нет. Раскладка `full`
+везёт полный текст без ядра (генератор снимает его по DK-104 и говорит об
+этом строкой вывода), и годится она только сценарию с предметом в `RULES.md`.
+База собирается так же, а разница пары делается руками в её каталоге:
 
 ```sh
-python3 tools/devkitctl/rules.py --layout core ../rules-core tools/obeycheck/testdata/project
-python3 tools/devkitctl/rules.py --layout full ../rules-full tools/obeycheck/testdata/project
-obeycheck --tier mini -k 5 --base старый ../rules-core ../rules-full
+python3 tools/devkitctl/rules.py --layout core ../rules-new tools/obeycheck/testdata/project
+python3 tools/devkitctl/rules.py --layout core ../rules-old tools/obeycheck/testdata/project
+obeycheck --tier mini -k 5 --base старый ../rules-new ../rules-old
 ```
 
 Правку скилла или правила стенд отбирает по её файлу, а след прогона кладёт в
@@ -446,7 +450,7 @@ logged in», сессия не поднимается. Проверки на о�
 уже своя.
 
 ```sh
-obeycheck --home-seed ~/.devkit/obey-home ../rules-full ../rules-core
+obeycheck --home-seed ~/.devkit/obey-home ../rules-new ../rules-old
 ```
 
 Живой прогон гоняется на настроенной машине: `taskctl`, `regcheck` и `agentctl`

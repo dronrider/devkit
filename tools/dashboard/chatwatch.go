@@ -104,6 +104,27 @@ func (s *server) chatRaised(sess, sid, task, proj string) {
 	s.watchAdd(sess)
 }
 
+// buriedAdd кладёт имя на полку погребённых: tmux, назвавший его живым,
+// снимет запись о смерти, если окно то же (chatRevive).
+func (s *server) buriedAdd(sess string) {
+	s.watchMu.Lock()
+	defer s.watchMu.Unlock()
+	if s.buried == nil {
+		s.buried = map[string]bool{}
+	}
+	s.buried[sess] = true
+}
+
+func (s *server) buriedNames() []string {
+	s.watchMu.Lock()
+	defer s.watchMu.Unlock()
+	out := make([]string, 0, len(s.buried))
+	for name := range s.buried {
+		out = append(out, name)
+	}
+	return out
+}
+
 // chatWatchOff снимает сессию с присмотра. Снятие рукой (стоп под перезапуск,
 // уборка в архив) это не смерть: человек сам закончил разговор, и строка о
 // смерти в его ленте была бы враньём.
@@ -114,6 +135,7 @@ func (s *server) chatWatchOff(sess string) {
 	s.watchMu.Lock()
 	delete(s.watch, sess)
 	delete(s.tails, sess)
+	delete(s.buried, sess)
 	s.watchMu.Unlock()
 	key := "tmux-" + sess
 	st := s.chatStoreRead(key)
@@ -136,6 +158,7 @@ func (s *server) watchAdd(sess string) {
 		s.watch = map[string]bool{}
 	}
 	s.watch[sess] = true
+	delete(s.buried, sess)
 }
 
 // chatWatchNames перечисляет сессии под присмотром.
@@ -168,6 +191,9 @@ func (s *server) chatWatchRestore() {
 		if st.Raised > 0 && st.Dead == 0 {
 			s.watchAdd(sess)
 		}
+		if st.Dead > 0 {
+			s.buriedAdd(sess)
+		}
 		// Незаконченный дожим стопа переживает перезапуск демона так же, как
 		// присмотр за подъёмом: выкат меняет бинарь каждый день, а работа,
 		// которую человек остановил, ждать его не станет.
@@ -199,19 +225,71 @@ func (s *server) chatWatchKeeper(stop <-chan struct{}) {
 
 // chatWatchTick это один обход. Список tmux спрашивается один раз на обход:
 // сессий под присмотром бывает десяток, и подпроцесс на каждую был бы дороже
-// самого присмотра.
+// самого присмотра. Сорванный опрос пропускает обход целиком: ответ «спросить
+// не удалось» это не «никого нет», а по пустой карте сторож однажды похоронил
+// двадцать живых окон разом (DK-904). Пропуск виден строкой журнала со
+// словами tmux, иначе сорванный опрос снова был бы молчаливым.
 func (s *server) chatWatchTick() {
 	if tmuxMissingCheck() != "" {
 		return
 	}
-	alive := tmuxAliveFn()
+	roll, err := tmuxRollAsk()
+	if err != nil {
+		s.logf("обход сторожа окон пропущен, опрос tmux сорван: %v", err)
+		return
+	}
 	for _, name := range s.chatWatchNames() {
-		s.chatWatchOne(name, alive)
+		s.chatWatchOne(name, roll.alive)
 		// Заказ дожима стопа смотрится тем же обходом: сессия у него та же, шаг
 		// тот же, а второй сторож рядом с этим ходил бы по тому же списку tmux
 		// (разбор в stopwait.go).
-		s.stopWaitOne(name, alive)
+		s.stopWaitOne(name, roll.alive)
 	}
+	for _, name := range s.buriedNames() {
+		if created, ok := roll[name]; ok {
+			s.chatRevive(name, created)
+		}
+	}
+}
+
+// chatRevive снимает ложную запись о смерти: tmux назвал имя живым, и окно
+// это то же самое, что хоронили, оно заведено раньше записи о смерти. Окно
+// моложе записи это новый жилец имени, поднятый мимо дашборда, и запись
+// прежнего он не трогает. Разговор получает строку о том, что терминал
+// нашёлся, а присмотр возвращается.
+func (s *server) chatRevive(name string, created int64) {
+	s.deathMu.Lock()
+	defer s.deathMu.Unlock()
+	key := "tmux-" + name
+	st := s.chatStoreRead(key)
+	if st.Dead == 0 || created >= st.Dead {
+		s.watchMu.Lock()
+		delete(s.buried, name)
+		s.watchMu.Unlock()
+		return
+	}
+	st.Raised = st.Since
+	if st.Raised == 0 {
+		st.Raised = s.now().Unix()
+	}
+	st.Dead, st.DeadWhy, st.Tail = 0, "", ""
+	if err := s.chatStoreWrite(key, st); err != nil {
+		s.logf("снятие ложной смерти сессии %s не запомнилось: %v", name, err)
+		return
+	}
+	s.watchAdd(name)
+	sid := sessions.TmuxOwner(s.bindsAll(), name)
+	if sid == "" {
+		sid = st.From
+	}
+	line := "терминал сессии " + name + " нашёлся: tmux снова называет её живой, строка о конце была ложной, разговор идёт"
+	switch {
+	case sid != "":
+		s.saidMark(saidSessionKey(sid), line)
+	case st.Task != "":
+		s.saidMark(saidTaskKey(st.Task), line)
+	}
+	s.logf("%s", line)
 }
 
 // chatWatchOne сверяет одну поднятую сессию. Жива значит снимок панели про
@@ -319,6 +397,10 @@ func (s *server) chatDeathSay(name string, st chatStore) chatStore {
 	s.watchMu.Lock()
 	delete(s.watch, name)
 	delete(s.tails, name)
+	if s.buried == nil {
+		s.buried = map[string]bool{}
+	}
+	s.buried[name] = true
 	s.watchMu.Unlock()
 	// Строка в ленте разговора ждёт, пока человек откроет карточку, а
 	// оборванная работа ждать не должна: задачу, оставшуюся без ведущей

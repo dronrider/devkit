@@ -408,19 +408,24 @@ func treeAlive(projPath, suffix string) bool {
 // дело до tmux не доходит вовсе. Машина без tmux мерой не работает, и все
 // имена там считаются живыми: иначе список разговоров разом объявил бы их
 // кончившимися, не имея на то ни одного признака.
+//
+// Сорванный опрос тут отвечает «нет» всякому имени, как и раньше: мера эта
+// служит показу и выбору свободного имени, и «все живы» на ней зациклил бы
+// подбор имени (chatNewName). Тому, кто по мере пишет состояние окна (сторож
+// chatwatch.go и опрос панели), различать «не знаю» и «никого нет»
+// обязательно, и он спрашивает список сам через tmuxRollAsk (DK-904).
 func tmuxAliveFn() func(string) bool {
 	if tmuxMissingCheck() != "" {
 		return func(string) bool { return true }
 	}
-	var names map[string]bool
+	var roll tmuxRoll
+	asked := false
 	return func(name string) bool {
-		if names == nil {
-			names = map[string]bool{}
-			for _, t := range tmuxList() {
-				names[t.Name] = true
-			}
+		if !asked {
+			asked = true
+			roll, _ = tmuxRollAsk()
 		}
-		return names[name]
+		return roll.alive(name)
 	}
 }
 

@@ -1205,7 +1205,11 @@ func (s *server) handleChatList(w http.ResponseWriter, r *http.Request) {
 		// ожидание у неё нет. Тут же за поднятой сессией и присматривают: пока
 		// она жива, снимается панель терминала, а пропала значит смерть со
 		// словами, которые панель и покажет вместо вечного «вот-вот назовётся».
-		if st, gone := s.chatWatchOne(name, tmuxAliveFn()); gone {
+		// Сорванный опрос tmux смерти не пишет: панель подождёт следующего
+		// круга, а сторож демона пропускает такой обход тем же порядком (DK-904).
+		if roll, err := tmuxRollAsk(); err != nil {
+			s.logf("присмотр за сессией %s из панели пропущен, опрос tmux сорван: %v", name, err)
+		} else if st, gone := s.chatWatchOne(name, roll.alive); gone {
 			dead = chatDeadResp(name, st)
 		}
 	} else {

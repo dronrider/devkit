@@ -61,10 +61,10 @@ func TestTmuxListNames(t *testing.T) {
 }
 
 // tmux без единой сессии это штатно пустой список со словами «сессий нет»,
-// а не ошибка и не молчание.
+// а не ошибка и не молчание. Отказывает он словами про сервер, как настоящий.
 func TestTmuxListNoServer(t *testing.T) {
 	e := newTestEnv(t)
-	writeScript(t, e.bin, "tmux", "exit 1")
+	writeScript(t, e.bin, "tmux", "echo 'no server running on /tmp/tmux-501/default' >&2; exit 1")
 	c := e.loggedClient(t)
 	resp := doReq(t, c, "GET", e.srv.URL+"/api/tmux", "")
 	text := body(t, resp)
@@ -501,5 +501,21 @@ exit 0`)
 				t.Errorf("клавиши поданы не те: %q, жду %q", got, tc.keys)
 			}
 		})
+	}
+}
+
+// TestTmuxListSilentIs502: незнакомый отказ tmux ls это сорванный опрос, а не
+// пустой список: ручка отвечает ошибкой со словами tmux (DK-904).
+func TestTmuxListSilentIs502(t *testing.T) {
+	e := newTestEnv(t)
+	writeScript(t, e.bin, "tmux", "echo 'lost server' >&2; exit 1")
+	c := e.loggedClient(t)
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/tmux", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("сорванный опрос отдан как %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "lost server") {
+		t.Errorf("ответ не несёт слов tmux: %s", text)
 	}
 }

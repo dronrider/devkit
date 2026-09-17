@@ -263,3 +263,133 @@ func TestRunStartOverLeftoverNoDeathSaid(t *testing.T) {
 		t.Fatalf("поднятый конвейер остался без присмотра: %+v", st)
 	}
 }
+
+// tmuxWatchSilent подменяет tmux скриптом, у которого ls отказывает словами
+// msg: это сорванный опрос, а не машина без сессий, та отвечает про сервер.
+func tmuxWatchSilent(t *testing.T, e *testEnv, msg string) {
+	t.Helper()
+	writeScript(t, e.bin, "tmux", `case "$1" in
+ls) echo '`+msg+`' >&2; exit 1;;
+esac
+exit 0`)
+}
+
+// watchRaise поднимает разговор репликой и называет его в реестре, как
+// делает сам клиент первым ходом: с этой минуты смерть сессии и её отмена
+// приходят в ленту разговора born.
+func watchRaise(t *testing.T, e *testEnv, c *http.Client, sid, born string) string {
+	t.Helper()
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text": "прогони тесты"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика в чат без сессии: %d %s", resp.StatusCode, text)
+	}
+	var raise struct {
+		Tmux string `json:"tmux"`
+	}
+	if err := json.Unmarshal([]byte(text), &raise); err != nil {
+		t.Fatal(err)
+	}
+	writeBinds(t, e.home, "2026-09-02T12:00:00 сессия "+born+
+		" задача - проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" "+
+		"источник заказ повод startup tmux "+raise.Tmux+"\n")
+	return raise.Tmux
+}
+
+// TestChatWatchSkipsSilentTmux: регрессия DK-904. Сорванный опрос tmux
+// приходил сторожу пустой картой, и на первом же обходе каждое окно под
+// присмотром получало запись dead и строку о конце в ленту, при живых
+// tmux-сессиях. Сорванный опрос это «не знаю», обход пропускается целиком, а
+// журнал демона называет пропуск словами tmux.
+func TestChatWatchSkipsSilentTmux(t *testing.T) {
+	e, c := chatEnv(t)
+	writeScript(t, e.bin, "claude", "exit 0")
+	tmuxWatchFake(t, e, "", "")
+	var lines []string
+	e.s.logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	born := "1111-2222-3333-4444"
+	name := watchRaise(t, e, c, "turn-1111-2222-3333", born)
+
+	tmuxWatchSilent(t, e, "lost server")
+	e.s.chatWatchTick()
+	if marks := saidMarks(t, e.home, "sess-"+born); len(marks) != 0 {
+		t.Fatalf("сорванный опрос похоронил разговор: %v", marks)
+	}
+	if st := e.s.chatStoreRead("tmux-" + name); st.Dead != 0 || st.Raised == 0 {
+		t.Fatalf("сорванный опрос изменил запись окна: %+v", st)
+	}
+	if !e.s.watch[name] {
+		t.Fatal("окно ушло из-под присмотра после сорванного опроса")
+	}
+	skipped := false
+	for _, ln := range lines {
+		if strings.Contains(ln, "опрос tmux сорван") && strings.Contains(ln, "lost server") {
+			skipped = true
+		}
+	}
+	if !skipped {
+		t.Fatalf("пропущенный обход не виден в журнале: %q", lines)
+	}
+}
+
+// TestChatWatchRevivesFalseDeath: ложная запись dead снимается сама, как
+// только tmux снова назвал имя живым, и окно это то же, что хоронили (оно
+// старше записи о смерти). Лента получает строку про нашедшийся терминал, а
+// присмотр возвращается: следующая настоящая смерть видна как раньше.
+func TestChatWatchRevivesFalseDeath(t *testing.T) {
+	e, c := chatEnv(t)
+	writeScript(t, e.bin, "claude", "exit 0")
+	tmuxWatchFake(t, e, "", "")
+	born := "1111-2222-3333-4444"
+	name := watchRaise(t, e, c, "turn-1111-2222-3333", born)
+
+	e.s.chatWatchTick()
+	if st := e.s.chatStoreRead("tmux-" + name); st.Dead == 0 {
+		t.Fatal("окно без tmux-сессии не похоронено")
+	}
+	marks := saidMarks(t, e.home, "sess-"+born)
+	if len(marks) != 1 {
+		t.Fatalf("ждала одну строку о смерти, а в ленте %v", marks)
+	}
+
+	// Сессия заведена в 2025 году, раньше записи о смерти: то же окно.
+	tmuxWatchFake(t, e, name, `> прогони тесты\n`)
+	e.s.chatWatchTick()
+	st := e.s.chatStoreRead("tmux-" + name)
+	if st.Dead != 0 || st.DeadWhy != "" || st.Raised == 0 {
+		t.Fatalf("ложная смерть не снята: %+v", st)
+	}
+	if !e.s.watch[name] {
+		t.Fatal("присмотр за ожившим окном не вернулся")
+	}
+	marks = saidMarks(t, e.home, "sess-"+born)
+	if len(marks) != 2 || !strings.Contains(marks[1], "нашёлся") {
+		t.Fatalf("лента не сказала про нашедшийся терминал: %v", marks)
+	}
+
+	tmuxWatchFake(t, e, "", "")
+	e.s.chatWatchTick()
+	if st := e.s.chatStoreRead("tmux-" + name); st.Dead == 0 {
+		t.Fatal("настоящая смерть после оживления не замечена")
+	}
+}
+
+// TestChatPanelPollSkipsSilentTmux: опрос панели присматривает за поднятой
+// сессией тем же порядком, что сторож, и на сорванном опросе tmux смерти не
+// пишет: панель ждёт следующего круга (DK-904).
+func TestChatPanelPollSkipsSilentTmux(t *testing.T) {
+	e, c := chatEnv(t)
+	writeScript(t, e.bin, "claude", "exit 0")
+	tmuxWatchFake(t, e, "", "")
+	born := "1111-2222-3333-4444"
+	name := watchRaise(t, e, c, "turn-1111-2222-3333", born)
+
+	tmuxWatchSilent(t, e, "lost server")
+	if dead := chatDeadOf(t, e, c, name); dead.Why != "" {
+		t.Fatalf("опрос панели похоронил разговор по сорванному опросу: %+v", dead)
+	}
+	if st := e.s.chatStoreRead("tmux-" + name); st.Dead != 0 {
+		t.Fatalf("запись окна получила смерть: %+v", st)
+	}
+}

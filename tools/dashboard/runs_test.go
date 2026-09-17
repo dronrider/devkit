@@ -30,7 +30,10 @@ func writeTmuxFake(t *testing.T, bin, logPath, sessions string) {
 	t.Helper()
 	body := fmt.Sprintf("echo \"$@\" >> %q\ncase \"$1\" in\nls)\n", logPath)
 	if sessions == "" {
-		body += "  exit 1;;\n"
+		// Без сессий tmux отказывает словами про сервер, и так же отказывает
+		// стенд: молчаливый ненулевой код это сорванный опрос, и сторож окон
+		// такой обход пропускает (DK-904).
+		body += "  echo 'no server running on /tmp/tmux-501/default' >&2; exit 1;;\n"
 	} else {
 		body += fmt.Sprintf("  printf '%s';;\n", sessions)
 	}

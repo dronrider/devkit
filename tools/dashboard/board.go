@@ -444,8 +444,13 @@ func (s *server) liveWorks(projectPath, prefix string, board json.RawMessage) []
 		}
 	}
 	// Сессии спрашиваются со временем создания (tmuxList): по нему экран
-	// «Агенты» говорит, сколько работа идёт.
-	sessions := tmuxList()
+	// «Агенты» говорит, сколько работа идёт. Сорванный опрос отдаёт список
+	// без работ tmux и строку журнала: этот ответ живёт один круг обновления,
+	// а хранимого состояния по нему нет (DK-904).
+	sessions, err := tmuxList()
+	if err != nil {
+		s.logf("работы проекта без tmux-сессий, опрос tmux сорван: %v", err)
+	}
 	alive := map[string]bool{}
 	for _, sess := range sessions {
 		alive[sess.Name] = true

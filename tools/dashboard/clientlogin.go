@@ -486,7 +486,13 @@ func (s *server) loginRecover() {
 	if m := tmuxMissingCheck(); m != "" {
 		return
 	}
-	sessions := tmuxList()
+	sessions, err := tmuxList()
+	if err != nil {
+		// Сорванный опрос это не «своих сессий нет»: снимать по нему нечего,
+		// и уборка ждёт следующего вызова (DK-904).
+		s.logf("уборка сессий входа пропущена, опрос tmux сорван: %v", err)
+		return
+	}
 	sort.SliceStable(sessions, func(i, j int) bool {
 		return sessions[i].Created > sessions[j].Created
 	})

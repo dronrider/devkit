@@ -29,13 +29,41 @@ type tmuxSession struct {
 
 // tmuxList отдаёт сессии; разбор вывода живёт в общем каркасе
 // (internal/works), потому что занятость задач по именам сессий читает и
-// планировщик слота taskctl. Ненулевой код ls это штатное «сессий нет».
-func tmuxList() []tmuxSession {
+// планировщик слота taskctl. Ненулевой код ls без сервера это штатное «сессий
+// нет», а всякий другой отказ это ошибка: «спросить не удалось» (DK-904).
+func tmuxList() ([]tmuxSession, error) {
+	list, err := works.Sessions()
+	if err != nil {
+		return nil, err
+	}
 	sessions := []tmuxSession{}
-	for _, s := range works.Sessions() {
+	for _, s := range list {
 		sessions = append(sessions, tmuxSession(s))
 	}
-	return sessions
+	return sessions, nil
+}
+
+// tmuxRoll это один ответ tmux на опрос: время создания сессии по имени.
+// По нему сторож отличает живое окно от нового жильца того же имени.
+type tmuxRoll map[string]int64
+
+// tmuxRollAsk спрашивает список сессий сразу. Ошибка это сорванный опрос, и
+// зовущий по ней ничего не решает: у сторожа окон это пропущенный обход.
+func tmuxRollAsk() (tmuxRoll, error) {
+	list, err := tmuxList()
+	if err != nil {
+		return nil, err
+	}
+	roll := tmuxRoll{}
+	for _, t := range list {
+		roll[t.Name] = t.Created
+	}
+	return roll, nil
+}
+
+func (r tmuxRoll) alive(name string) bool {
+	_, ok := r[name]
+	return ok
 }
 
 func (s *server) handleTmuxList(w http.ResponseWriter, r *http.Request) {
@@ -43,9 +71,10 @@ func (s *server) handleTmuxList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	sessions := tmuxList()
-	if sessions == nil {
-		sessions = []tmuxSession{}
+	sessions, err := tmuxList()
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "опрос tmux сорван: " + err.Error()})
+		return
 	}
 	resp := map[string]any{"sessions": sessions}
 	if len(sessions) == 0 {

@@ -358,6 +358,9 @@ class TestHook(unittest.TestCase):
         self.assertEqual((r.returncode, r.stderr), (0, ""))
         self.assertIn("agentctl plan", r.stdout)
         self.assertIn("work-plan", r.stdout)
+        # Порог повода из скилла work-plan едет дословно: без него правило
+        # звучит безусловно, и разговор на один вопрос получает план (DK-881).
+        self.assertIn("один вопрос с одним ответом", r.stdout)
         # Тем же абзацем едет правило отзывчивости: разговор идёт ходами, и
         # получасовой ход в нём неотличим от зависшей сессии.
         self.assertIn("отдавай субагенту", r.stdout)

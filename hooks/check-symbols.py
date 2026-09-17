@@ -2,12 +2,16 @@
 """Проверка п. 1 раздела «Код и тексты» RULES.md: только символы клавиатурных
 раскладок en/ru, «ёлочки» и №.
 
-Файлы из testdata не проверяются ни по путям, ни хуком: там лежат снимки
-чужого вывода, которые переписывать нельзя.
+Файлы из testdata не проверяются ни по путям, ни хуком, ни на коммите: там
+лежат снимки чужого вывода, которые переписывать нельзя. Пропуску нужен путь
+файла, поэтому в потоке он действует только в режиме --diff, где путь приходит
+префиксом строки; сырой --stdin про пути ничего не знает.
 
 Режимы:
   check-symbols.py <файл>...    находки вида файл:строка:текст, выход 1 если есть
-  ... | check-symbols.py --stdin
+  ... | check-symbols.py --stdin  поток без путей, проверяется как есть
+  ... | check-symbols.py --diff   строки вида файл:строка:текст (staged-дифф
+                                из pre-commit), снимки из testdata пропускаются
   check-symbols.py --hook [протокол]
                                 хук на запись файла: JSON события на stdin,
                                 проверяется записанный фрагмент, а не файл
@@ -71,6 +75,23 @@ def scan(lines, where=None):
     return findings
 
 
+def run_diff():
+    """Добавленные строки коммита: файл, номер, текст через двоеточие.
+
+    Путь тут известен, значит снимок из testdata проходит так же, как проходил
+    бы по имени файла. Строка без префикса отбрасывается: решить про пропуск
+    по ней нельзя, а гадать на рубеже коммита нечего.
+    """
+    findings = []
+    for raw in sys.stdin:
+        parts = raw.rstrip("\n").split(":", 2)
+        if len(parts) < 3 or is_testdata(parts[0]):
+            continue
+        if BAD.search(parts[2]):
+            findings.append("%s:%s:%s" % (parts[0], parts[1], parts[2]))
+    return findings
+
+
 def run_hook(protocol):
     write = hookio.write_event(protocol)
     if write is None or is_testdata(write.path):
@@ -96,7 +117,9 @@ def main(argv):
             sys.stderr.write("check-symbols: %s\n" % e)
             return 2
     findings = []
-    if argv[:1] == ["--stdin"]:
+    if argv[:1] == ["--diff"]:
+        findings = run_diff()
+    elif argv[:1] == ["--stdin"]:
         findings = scan(sys.stdin)
     else:
         if not argv:

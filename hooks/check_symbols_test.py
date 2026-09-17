@@ -67,6 +67,39 @@ class TestFileAndStdin(unittest.TestCase):
         self.assertEqual(run(path).returncode, 1)
 
 
+class TestDiffMode(unittest.TestCase):
+    """Режим --diff: строки staged-диффа вида файл:строка:текст. Путь файла
+    тут известен, значит действует тот же пропуск testdata, что и по файлам."""
+
+    def test_dash_in_added_line_is_caught(self):
+        r = run("--diff", input="docs/x.md:12:строка с тире %s\n" % DASH)
+        self.assertEqual(r.returncode, 1)
+        self.assertTrue(r.stdout.startswith("docs/x.md:12:"), r.stdout)
+
+    def test_clean_line_passes(self):
+        r = run("--diff", input="docs/x.md:12:чисто, «ёлочки», № 5\n")
+        self.assertEqual(r.returncode, 0)
+
+    def test_testdata_snapshot_is_skipped(self):
+        r = run("--diff",
+                input="hooks/testdata/claude-code/turn.json:3:тире %s\n" % DASH)
+        self.assertEqual(r.returncode, 0)
+
+    def test_similar_name_is_not_testdata(self):
+        r = run("--diff", input="hooks/mytestdata/turn.json:3:тире %s\n" % DASH)
+        self.assertEqual(r.returncode, 1)
+
+    def test_line_without_prefix_is_dropped(self):
+        # Смотрится текст добавленной строки, а не всё, что пришло в поток:
+        # без пути решить про пропуск testdata нельзя.
+        r = run("--diff", input="без префикса %s\n" % DASH)
+        self.assertEqual(r.returncode, 0)
+
+    def test_advice_is_printed(self):
+        out = run("--diff", input="docs/x.md:1:тире %s\n" % DASH).stdout
+        self.assertIn("перестроить предложение", out)
+
+
 class TestHookMode(unittest.TestCase):
     def test_dash_in_new_string_is_refused(self):
         r = run("--hook", input=hook_event("x.md", "плохо %s" % DASH))
@@ -134,10 +167,12 @@ class TestPreCommit(unittest.TestCase):
         for key, value in (("user.name", "t"), ("user.email", "t@t")):
             subprocess.run(["git", "-C", self.repo, "config", key, value], check=True)
 
-    def stage(self, text):
-        with open(os.path.join(self.repo, "f.txt"), "w", encoding="utf-8") as f:
+    def stage(self, text, name="f.txt"):
+        path = os.path.join(self.repo, name)
+        os.makedirs(os.path.dirname(path) or self.repo, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
             f.write(text)
-        subprocess.run(["git", "-C", self.repo, "add", "f.txt"], check=True)
+        subprocess.run(["git", "-C", self.repo, "add", name], check=True)
 
     def hook(self):
         return subprocess.run([os.path.join(HERE, "pre-commit")], cwd=self.repo,
@@ -146,6 +181,13 @@ class TestPreCommit(unittest.TestCase):
     def test_dash_in_added_lines(self):
         self.stage("первая строка\nстарое тире %s тут\nтретья строка\n" % DASH)
         self.assertEqual(self.hook(), 1)
+
+    def test_testdata_snapshot_commits_clean(self):
+        # Снимок чужого вывода коммитится без --no-verify: тире стоит в тексте
+        # настоящей ошибки, переписать его нельзя.
+        self.stage('{"error": "rate limit %s try later"}\n' % DASH,
+                   name="hooks/testdata/claude-code/turn-failed.json")
+        self.assertEqual(self.hook(), 0)
 
     def test_committed_line_is_left_alone(self):
         self.stage("первая строка\nстарое тире %s тут\nтретья строка\n" % DASH)

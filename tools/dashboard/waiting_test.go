@@ -527,7 +527,7 @@ func TestTmuxAskingRemembersSnapshot(t *testing.T) {
 
 // Реплику человека после момента ожидания отличает автор и время: слова
 // другого агента каналом и старые реплики повод не гасят.
-func TestHumanSaidAfter(t *testing.T) {
+func TestLastHumanSaid(t *testing.T) {
 	since := time.Date(2026, 9, 9, 15, 0, 0, 0, time.UTC)
 	stamp := func(d time.Duration) string { return since.Add(d).Format(time.RFC3339) }
 	line := func(content, at string) string {
@@ -550,8 +550,36 @@ func TestHumanSaidAfter(t *testing.T) {
 		if err := os.WriteFile(path, []byte(tc.talk), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if got := humanSaidAfter(path, since.Unix()); got != tc.want {
+		if got := lastHumanSaid(path) > since.Unix(); got != tc.want {
 			t.Errorf("%s: %v, ждала %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// Момент реплики человека живёт в памяти процесса по отпечатку файла: при том
+// же отпечатке хвост не перечитывается, новый отпечаток ведёт к чтению заново.
+func TestHumanSaidCachedByStamp(t *testing.T) {
+	e := newTestEnv(t)
+	since := time.Date(2026, 9, 9, 15, 0, 0, 0, time.UTC)
+	line := func(at time.Time) string {
+		return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"катим"},"timestamp":%q}`+"\n",
+			at.Format(time.RFC3339))
+	}
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(path, []byte(line(since)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.s.humanSaidCached(path, "1/1"); got != since.Unix() {
+		t.Fatalf("первое чтение: %d, ждала %d", got, since.Unix())
+	}
+	later := since.Add(time.Hour)
+	if err := os.WriteFile(path, []byte(line(since)+line(later)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.s.humanSaidCached(path, "1/1"); got != since.Unix() {
+		t.Fatalf("тот же отпечаток перечитал файл: %d", got)
+	}
+	if got := e.s.humanSaidCached(path, "2/2"); got != later.Unix() {
+		t.Fatalf("новый отпечаток не дочитал реплику: %d, ждала %d", got, later.Unix())
 	}
 }

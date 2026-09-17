@@ -33,6 +33,8 @@ type server struct {
 	scan   scanEntry
 	boards map[string]boardEntry
 	heads  map[string]headEntry
+	// Момент последней реплики человека по транскрипту (waiting.go).
+	said map[string]saidEntry
 	// Идущие опросы досок: дерево -> полёт (cache.go). По одному дереву летит
 	// один taskctl, остальные запросы ждут его или берут устаревший ответ.
 	flights map[string]*boardFlight
@@ -181,7 +183,7 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 		logf = func(string, ...any) {}
 	}
 	return &server{cfg: cfg, static: static, logf: logf, now: time.Now, started: time.Now(),
-		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, deaf: map[string]deafEntry{},
+		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, said: map[string]saidEntry{}, deaf: map[string]deafEntry{},
 		flights:   map[string]*boardFlight{},
 		lagSaid:   map[string]bool{},
 		wt:        newWorktreeMemo(),

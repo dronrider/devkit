@@ -532,24 +532,54 @@ func (s *server) waitAlive(projPath string, w Waiting) bool {
 	if !ok {
 		return true
 	}
-	return !humanSaidAfter(info.path, w.Since)
+	return s.humanSaidCached(info.path, info.stamp) <= w.Since
 }
 
-// humanSaidAfter говорит, писал ли человек в разговор позже момента since.
-// Реплика человека узнаётся тем же предикатом, что у панели (askedReply):
-// слова другого агента, приехавшие каналом, подписаны автором и ответом не
-// считаются. Читается хвост транскрипта, а не файл целиком: ответ на свежий
-// повод лежит в самом конце.
-func humanSaidAfter(path string, since int64) bool {
+// saidEntry это запомненный момент последней реплики человека одного
+// транскрипта и отпечаток файла, по которому он снят.
+type saidEntry struct {
+	at    int64
+	stamp string
+}
+
+// humanSaidCached отдаёт момент последней реплики человека, по возможности из
+// памяти процесса (образец sessionHeadCached). Полку опрашивают каждые
+// пятнадцать секунд, и обход доски спрашивает то же: без памяти каждый заход
+// перечитывал бы по четверти мегабайта хвоста на ждущую сессию, а горячий
+// путь уже назван в DK-746. Ключ памяти это путь, отпечаток из mtime и
+// размера (findSession) ловит дописанный файл, и срока доверия тут нет:
+// транскрипт только дописывается, и старый ответ протухает вместе с
+// отпечатком.
+func (s *server) humanSaidCached(path, stamp string) int64 {
+	s.mu.Lock()
+	e, hit := s.said[path]
+	s.mu.Unlock()
+	if hit && e.stamp == stamp {
+		return e.at
+	}
+	at := lastHumanSaid(path)
+	s.mu.Lock()
+	s.said[path] = saidEntry{at: at, stamp: stamp}
+	s.mu.Unlock()
+	return at
+}
+
+// lastHumanSaid отдаёт момент последней реплики человека в unix-секундах,
+// ноль, когда её нет или у неё нет времени. Реплика человека узнаётся тем же
+// предикатом, что у панели (askedReply): слова другого агента, приехавшие
+// каналом, подписаны автором и ответом не считаются. Читается хвост
+// транскрипта, а не файл целиком: ответ на свежий повод лежит в самом конце.
+func lastHumanSaid(path string) int64 {
+	var last int64
 	for _, r := range tailParsed(path) {
 		if !askedReply(r) {
 			continue
 		}
-		if at, ok := saidUnix(r.Time); ok && at > since {
-			return true
+		if at, ok := saidUnix(r.Time); ok && at > last {
+			last = at
 		}
 	}
-	return false
+	return last
 }
 
 // nameWaitTasks доводит события ожидания в ленте до задачи. Задача и проект у

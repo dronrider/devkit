@@ -323,7 +323,7 @@ func cmdStart(root string, p StartParams) (string, error) {
 	// Замок берётся и здесь: start единственный из четырёх команд пишет и
 	// коммитит доску в основном дереве, и его taskctl move с пушем посреди
 	// чужого слияния бьёт в тот же зазор, что и второе слияние.
-	unlock, err := acquireLock(root)
+	unlock, err := acquireLock(root, lockWho("start", p.ID))
 	if err != nil {
 		return "", err
 	}

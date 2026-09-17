@@ -782,7 +782,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if corpActive(root) {
 		return "", corpRefused("merge")
 	}
-	unlock, err := acquireLock(root)
+	unlock, err := acquireLock(root, lockWho("merge", p.ID))
 	if err != nil {
 		return "", err
 	}
@@ -1299,7 +1299,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	if corpActive(root) {
 		return "", corpRefused("ship")
 	}
-	unlock, err := acquireLock(root)
+	unlock, err := acquireLock(root, lockWho("ship", ""))
 	if err != nil {
 		// Занятость конвейера под --drain это состыковка с чужим заходом
 		// (merge, ship, разлив от close), а не поломка: сторожок, чей тик
@@ -1761,7 +1761,7 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	if corpActive(root) {
 		return "", corpRefused("revert")
 	}
-	unlock, err := acquireLock(root)
+	unlock, err := acquireLock(root, lockWho("revert", p.ID))
 	if err != nil {
 		return "", err
 	}

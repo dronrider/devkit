@@ -217,7 +217,7 @@ func cmdSmoke(root string, p SmokeParams) (string, error) {
 	if corpActive(root) {
 		return "", corpRefused("smoke")
 	}
-	unlock, err := acquireLock(root)
+	unlock, err := acquireLock(root, lockWho("smoke", p.ID))
 	if err != nil {
 		return "", err
 	}

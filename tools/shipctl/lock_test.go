@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // devkitDir заводит обвязку .devkit в корне: без неё замок не берётся, как не
@@ -27,7 +29,7 @@ func TestLockRefusesSecondRun(t *testing.T) {
 	branchWithFix(t, root) // остаёмся на фичеветке: merge сливает её же
 	head := gitT(t, root, "rev-parse", "main")
 
-	unlock, err := acquireLock(root)
+	unlock, err := acquireLock(root, "merge XR-009")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +70,7 @@ func TestLockRefusesSecondRun(t *testing.T) {
 		t.Fatalf("файл замка должен остаться на месте: %v", err)
 	}
 	// Замок отпущен и после самой команды, иначе следующий запуск встал бы.
-	release, err := acquireLock(root)
+	release, err := acquireLock(root, "проверка")
 	if err != nil {
 		t.Fatalf("merge не отпустил замок: %v", err)
 	}
@@ -84,13 +86,13 @@ func TestLockRefusalExplainsEmptyFile(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
 
-	unlock, err := acquireLock(root)
+	unlock, err := acquireLock(root, "merge XR-009")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unlock()
 
-	_, err = acquireLock(root)
+	_, err = acquireLock(root, "ship")
 	if err == nil {
 		t.Fatal("второй захват при занятом замке должен отказать")
 	}
@@ -138,7 +140,7 @@ func TestLockRetriesWhenFileReplacedMidAcquire(t *testing.T) {
 	}
 	t.Cleanup(func() { lockRaceHook = nil })
 
-	_, err := acquireLock(root)
+	_, err := acquireLock(root, "merge XR-009")
 	if other != nil {
 		defer other.Close()
 	}
@@ -154,12 +156,12 @@ func TestLockRetriesWhenFileReplacedMidAcquire(t *testing.T) {
 // команды работают как раньше (в проекте без обвязки запирать нечего).
 func TestLockSkippedWithoutDevkit(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
-	first, err := acquireLock(root)
+	first, err := acquireLock(root, "merge XR-009")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first()
-	if _, err := acquireLock(root); err != nil {
+	if _, err := acquireLock(root, "ship"); err != nil {
 		t.Fatalf("без .devkit второй замок не должен отказывать: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, lockPath)); !os.IsNotExist(err) {
@@ -168,5 +170,70 @@ func TestLockSkippedWithoutDevkit(t *testing.T) {
 	branchWithFix(t, root)
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
 		t.Fatalf("merge без .devkit должен проходить: %v", err)
+	}
+}
+
+// TestLockRefusalNamesHolder: отказ занятого замка называет держателя, а не
+// только сам факт занятости. До DK-122 файл замка лежал пустым, отказ был
+// безымянным, и владельца искали мимо утилиты, через pgrep по shipctl.
+func TestLockRefusalNamesHolder(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	devkitDir(t, root)
+
+	unlock, err := acquireLock(root, "merge XR-009")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = acquireLock(root, "ship")
+	if err == nil {
+		t.Fatal("второй захват при занятом замке должен отказать")
+	}
+	for _, want := range []string{"merge XR-009", fmt.Sprintf("pid %d", os.Getpid()), "меньше минуты назад"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("отказ не называет держателя (нет %q): %v", want, err)
+		}
+	}
+
+	// Отпущенный замок держателя за собой не оставляет: под свободным замком
+	// файл снова пуст, и прочитать в нём мёртвого владельца нельзя.
+	unlock()
+	data, err := os.ReadFile(filepath.Join(root, lockPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("после снятия замка файл должен остаться пустым, а в нём %q", data)
+	}
+}
+
+// TestLockHolderUnnamed: пустой файл замка и строка не того вида это не
+// поломка, а замок сборки до DK-122 или запись, не успевшая лечь. Отказ в
+// таком случае говорит прямо, что держатель не назвался, и не выдумывает pid.
+func TestLockHolderUnnamed(t *testing.T) {
+	now := time.Now()
+	for _, data := range []string{"", "  \n", "мусор без ключей"} {
+		got := lockHolder([]byte(data), now)
+		if !strings.Contains(got, "неназвавшийся запуск") {
+			t.Fatalf("на %q ждали отказ без держателя, получили %q", data, got)
+		}
+	}
+}
+
+// TestLockAge: возраст замка говорит, ждать или разбираться, поэтому пишется
+// словами и с точностью до минуты.
+func TestLockAge(t *testing.T) {
+	for _, c := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{20 * time.Second, "меньше минуты назад"},
+		{7 * time.Minute, "7 мин назад"},
+		{3*time.Hour + 5*time.Minute, "3 ч 5 мин назад"},
+		{-time.Minute, "часы разъехались"},
+	} {
+		if got := lockAge(c.d); !strings.Contains(got, c.want) {
+			t.Fatalf("возраст %v: ждали %q, получили %q", c.d, c.want, got)
+		}
 	}
 }

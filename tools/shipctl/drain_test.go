@@ -55,7 +55,7 @@ func TestShipDrainBrokenProdNoop(t *testing.T) {
 func TestShipDrainBusyLockNoop(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	devkitDir(t, root)
-	unlock, err := acquireLock(root)
+	unlock, err := acquireLock(root, "merge XR-009")
 	if err != nil {
 		t.Fatal(err)
 	}

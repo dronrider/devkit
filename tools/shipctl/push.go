@@ -50,7 +50,7 @@ func cmdPush(root string, p PushParams) (string, error) {
 	if corpActive(root) {
 		return "", corpRefused("push")
 	}
-	unlock, err := acquireLock(root)
+	unlock, err := acquireLock(root, lockWho("push", ""))
 	if err != nil {
 		return "", err
 	}

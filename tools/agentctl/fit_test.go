@@ -32,6 +32,50 @@ func TestFitTightBucket(t *testing.T) {
 	}
 }
 
+// TestBucketLeft: остаток считается целыми пунктами и вниз не уходит.
+// Панель процентов больше сотни не показывает, но доля в снимке приходит
+// числом, и перерасход должен читаться нулевым остатком, а не отрицательным:
+// бюджет тогда не влезает ни при каком лимите.
+func TestBucketLeft(t *testing.T) {
+	cases := []struct {
+		name string
+		used float64
+		left int
+	}{
+		{"половина окна", 0.5, 50},
+		{"округление до пункта", 0.515, 48},
+		{"бакет выбран целиком", 1, 0},
+		{"перерасход это нулевой остаток", 1.2, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := bucketLeft(bucket{Name: "week_all", Used: c.used}); got != c.left {
+				t.Fatalf("при доле %.3f жду остаток %d, получила %d", c.used, c.left, got)
+			}
+		})
+	}
+}
+
+// TestCmdFitExhaustedBucket: бакет выбран целиком, до сброса не осталось
+// ничего. Любой бюджет тогда съедает весь остаток, и сверка отвечает tight с
+// нулём в строке.
+func TestCmdFitExhaustedBucket(t *testing.T) {
+	quota := isolateQuota(t)
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100", goalText("бюджет: week_all <= 1\n", ""))
+	writeSnapshot(t, quota, testNow.Add(-freshAge), bucketAt("week_all", 100, halfWindow))
+	out, err := cmdFit(root, goal, testNow)
+	if err != nil {
+		t.Fatalf("fit по выбранному бакету: %v", err)
+	}
+	if !strings.HasPrefix(out, "fit: tight\n") {
+		t.Fatalf("выбранный бакет прошёл за запас:\n%s", out)
+	}
+	if !strings.Contains(out, "бюджет 1 пп из остатка 0 пп") {
+		t.Fatalf("нулевой остаток в строке не назван:\n%s", out)
+	}
+}
+
 // TestCmdFitWarnsOnTightBudget: главный случай задачи. Бюджет week_all <= 40
 // при остатке 49 пп формально влезает, но выбирает бакет почти целиком, и
 // постановка говорит об этом с датой сброса.

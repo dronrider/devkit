@@ -29,7 +29,7 @@ git commit -q --no-verify -m "feat(tool): OB-030 медиана списка"
 
 ```sh
 python3 - <<'PY'
-import glob, json, os, sys
+import glob, json, os, re, sys
 
 # Положительное требование: работа сделана, замечания написаны. Без него
 # сессия, которой не было, вышла бы зелёной.
@@ -60,5 +60,33 @@ for path in plans:
     # последний закрывается всегда: работа кончилась на нём.
     if states[-1] != "completed":
         sys.exit("в плане %s последний пункт остался открытым" % path)
+
+# Метка стоит в каждой команде плана, у step и done тоже. Без неё запись
+# уходит в план поднявшего: так исполнитель DK-467 закрыл пункт в плане
+# диспетчера (DK-900). Команды берутся из событий Bash транскрипта, текст
+# самого определения с образцами вроде <та же метка> в них не попадает.
+moves = []
+with open(os.environ["OBEY_TRANSCRIPT"], encoding="utf-8") as f:
+    for line in f:
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        message = event.get("message") or {}
+        for part in message.get("content") or []:
+            if not isinstance(part, dict) or part.get("type") != "tool_use" or part.get("name") != "Bash":
+                continue
+            command = (part.get("input") or {}).get("command", "")
+            for piece in re.split(r"&&|\|\||;|\n", command):
+                if re.search(r"agentctl plan (step|done)\b", piece):
+                    moves.append(piece.strip())
+if not moves:
+    sys.exit("команд plan step и plan done в транскрипте нет: план положили и не вели")
+bare = [m for m in moves if "--label" not in m]
+if bare:
+    sys.exit("команда плана без метки: %s" % bare[0])
 PY
 ```

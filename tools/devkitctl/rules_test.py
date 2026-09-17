@@ -659,6 +659,30 @@ class LayoutTest(unittest.TestCase):
             self.assertFalse((out_dir / "RULES.core.md").exists(),
                              "ядро легло рядом с тонким файлом, а тонкий файл его не зовёт")
 
+    def test_full_layout_names_why_the_core_is_dropped(self):
+        # На «full» ядро от глобальной точки не дубль, а сжатие RULES.md, и
+        # строка вывода обязана назвать причину снятия (DK-104): фраза «текст
+        # уже в раскладке» посылала читателя искать ядро там, где его нет
+        # (DK-1025). На «core» глобальная точка и тонкий файл зовут разные
+        # файлы, и снимать нечего.
+        glhome = self.work / "glhome-why"
+        (glhome / ".claude").mkdir(parents=True)
+        (glhome / "nested-devkit").mkdir(parents=True)
+        shutil.copy(str(DEVKIT_SRC / "RULES.core.md"), str(glhome / "nested-devkit" / "RULES.core.md"))
+        write(glhome / ".claude" / "CLAUDE.md",
+              "<!-- devkit:generated body=stub -->\nэталон не нужен, только импорт\n\n"
+              "@~/nested-devkit/RULES.core.md\n")
+        rc, out = run([PY, str(self.rules_cli), "--layout", "full", str(self.work / "why" / "full"),
+                       str(self.project)], home=glhome)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("home/nested-devkit/RULES.core.md снят, ядро на глубине full не едет (DK-104), "
+                      "вместо него RULES.md", out)
+        self.assertNotIn("текст уже в раскладке", out)
+        rc, out = run([PY, str(self.rules_cli), "--layout", "core", str(self.work / "why" / "core"),
+                       str(self.project)], home=glhome)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("снят", out)
+
 
 class GlobalPointDoctorTest(SandboxCase):
     """Глобальная точка правил значит для любой сессии на машине, а не только

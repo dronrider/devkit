@@ -683,6 +683,24 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertNotIn("снят", out)
 
+    def test_core_layout_keeps_the_plain_phrase_for_a_full_text_point(self):
+        # Точка старого вида зовёт полный текст доски, а на «core» вместо него
+        # едет его ядро: это тот же дедуп, что и раньше, ядро тут как раз едет.
+        # Фраза про DK-104 привязана к глубине full, а не к смене имени файла
+        # (замечание ревью DK-1025).
+        glhome = self.work / "glhome-board"
+        (glhome / ".claude").mkdir(parents=True)
+        (glhome / "nested-devkit").mkdir(parents=True)
+        shutil.copy(str(DEVKIT_SRC / "RULES.board.md"), str(glhome / "nested-devkit" / "RULES.board.md"))
+        write(glhome / ".claude" / "CLAUDE.md",
+              "<!-- devkit:generated body=stub -->\nэталон не нужен, только импорт\n\n"
+              "@~/nested-devkit/RULES.board.md\n")
+        rc, out = run([PY, str(self.rules_cli), "--layout", "core", str(self.work / "board" / "core"),
+                       str(self.project)], home=glhome)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("home/nested-devkit/RULES.board.md снят, текст уже в раскладке", out)
+        self.assertNotIn("DK-104", out)
+
 
 class GlobalPointDoctorTest(SandboxCase):
     """Глобальная точка правил значит для любой сессии на машине, а не только

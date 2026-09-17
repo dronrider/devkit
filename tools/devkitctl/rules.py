@@ -1251,7 +1251,7 @@ def layout(root, devkit, dst, depth):
                 # (ядро и полный текст вместе не лежат), и строка вывода
                 # называет эту причину, иначе читатель ищет ядро в раскладке.
                 drop.append("@" + spec)
-                if src.name != target.resolve().name:
+                if depth == DEPTH_FULL and src.name != target.resolve().name:
                     out.append("  home/%s снят, ядро на глубине %s не едет (DK-104), "
                                "вместо него %s" % (spec[2:], depth, src.name))
                 else:

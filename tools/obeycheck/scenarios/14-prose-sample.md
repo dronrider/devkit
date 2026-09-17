@@ -1,7 +1,7 @@
 # написать постановку задачи
 
 конец: любой
-предмет: RULES.core.md «Мимикрия»; kit/skills/prose/SKILL.md «Кто зовёт»
+предмет: RULES.core.md «Мимикрия»; kit/skills/prose/SKILL.md «Кто зовёт»; kit/skills/prose/SKILL.md «Сторож на записи»
 
 ## Промпт
 

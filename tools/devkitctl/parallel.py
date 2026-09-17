@@ -21,8 +21,11 @@
 обратно в очередь.
 
 Вызов без аргументов гонит все компоненты по раскладке корня devkit,
-`--list` печатает их перечень. Запускается из корня чекаута, как ключ `test`
-из `.devkit/deploy.local`.
+`--list` печатает их перечень, `--only-go` сужает прогон до го-модулей
+`tools/` (этим же флагом их гоняет CI, `.github/workflows/ci.yml`: список
+модулей общий с `go_tools`, поэтому новый модуль подхватывается без правки
+workflow). Запускается из корня чекаута, как ключ `test` из
+`.devkit/deploy.local`.
 """
 import argparse
 import contextlib
@@ -187,8 +190,12 @@ def main(argv=None):
                     help="потолок воркеров, по компоненту на поток (по умолчанию 8)")
     ap.add_argument("--list", action="store_true",
                     help="только перечень компонентов")
+    ap.add_argument("--only-go", action="store_true",
+                    help="только го-модули tools/ (тот же перечень, что у go_tools)")
     args = ap.parse_args(argv)
     comps = components()
+    if args.only_go:
+        comps = [c for c in comps if c[0].startswith("go:")]
     if args.list:
         for name, rel, argv in comps:
             print("%-16s (%s) %s" % (name, rel, " ".join(argv)))

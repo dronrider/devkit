@@ -267,6 +267,45 @@ class MainTest(Stand):
         self.assertIn("FAILED (first=lost.sh)", out)
         self.assertIn("Ran 1 of 1 components", out)
 
+    def test_only_go_narrows_the_list_to_go_modules(self):
+        # CI гоняет именно этот срез (--only-go), и перечень обязан оставаться
+        # тем же, что у go_tools: хранёный список руками уже расходился с
+        # деревом молча, cmdout и secretctl выпали из CI незамеченными
+        # (находка DK-508).
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = parallel.main(["--only-go", "--list"])
+        self.assertEqual(rc, 0)
+        names = [line.split()[0] for line in out.getvalue().splitlines()
+                 if line.startswith("go:")]
+        self.assertEqual(names, ["go:" + t for t in parallel.go_tools()])
+        self.assertIn("go:cmdout", names)
+        self.assertIn("go:secretctl", names)
+        self.assertNotIn("hooks", out.getvalue())
+        self.assertNotIn("doctor", out.getvalue())
+
+
+class CiWorkflowTest(unittest.TestCase):
+    """CI обязан гонять го-модули тем же раннером, что не хранит их список.
+
+    Хранёный вручную перечень в `.github/workflows/ci.yml` уже расходился с
+    деревом молча: `cmdout` и `secretctl` выпали из CI, оставшись зелёными без
+    единого прогона (находка DK-508). Перечень поэтому не хранится в workflow
+    вовсе, а вызывается флагом `--only-go`, чей состав уже сверен с
+    `go_tools()` тестом выше.
+    """
+
+    def test_ci_calls_the_dynamic_go_runner(self):
+        text = (parallel.ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8")
+        self.assertIn("parallel.py --only-go", text,
+                      "CI обязан гонять го-модули через раннер, а не "
+                      "хранёный список")
+        for tool in parallel.go_tools():
+            self.assertNotIn("working-directory: tools/%s" % tool, text,
+                              "го-модуль %s не должен возвращаться в CI "
+                              "отдельным ручным шагом" % tool)
+
 
 if __name__ == "__main__":
     unittest.main()

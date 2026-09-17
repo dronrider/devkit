@@ -13,30 +13,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-      - name: тесты taskctl
-        run: go test ./...
-        working-directory: tools/taskctl
-      - name: тесты shipctl
-        run: go test ./...
-        working-directory: tools/shipctl
-      - name: тесты agentctl
-        run: go test ./...
-        working-directory: tools/agentctl
-      - name: тесты trackctl
-        run: go test ./...
-        working-directory: tools/trackctl
-      - name: тесты regcheck
-        run: go test ./...
-        working-directory: tools/regcheck
-      - name: тесты obeycheck
-        run: go test ./...
-        working-directory: tools/obeycheck
-      # Сквозной прогон дашборда идёт этим же шагом (smoke_test.go): чужие
-      # программы он изображает своими фикстурами, живого tmux и taskctl ему
-      # не нужно.
-      - name: тесты dashboard
-        run: go test ./...
-        working-directory: tools/dashboard
+      # Перечень го-модулей раннер находит сам, по факту go.mod под tools/
+      # (parallel.go_tools): хранёный список руками уже расходился с деревом
+      # и молчал об этом, пока cmdout и secretctl не выпали из CI незамеченно
+      # (находка DK-508). Сквозной прогон дашборда идёт тем же шагом
+      # (smoke_test.go): чужие программы он изображает своими фикстурами,
+      # живого tmux и taskctl ему не нужно.
+      - name: тесты го-модулей tools
+        run: python3 tools/devkitctl/parallel.py --only-go
       - name: тесты хуков
         run: python3 -m unittest discover -p '*_test.py'
         working-directory: hooks

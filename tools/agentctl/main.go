@@ -94,11 +94,14 @@ const usageText = `agentctl: выбор исполнителя под задач
   plan show               закрывает названный либо идущий, show печатает план
       [--sid <ID>]        живой сессии вместе с планами её субагентов. Пункт
       [--label <метка>]   называется номером с единицы или куском текста. Адрес
-                          файла считает сама команда: ID из
+      [--force]           файла считает сама команда: ID из
                           CLAUDE_CODE_SESSION_ID, запасной адрес из DEVKIT_TMUX,
                           метка из --label либо DEVKIT_PLAN_LABEL кладёт план
                           файлом <ID>-sub-<метка>.json. Субагент зовёт план с
-                          меткой, иначе пачка пишет план поверх соседского.
+                          меткой и хвостом роли, иначе пачка пишет план поверх
+                          соседского. set поверх плана, с которым новый набор
+                          не совпал ни одним пунктом, отказывает: это чужой
+                          заход, выходы --label со своим хвостом либо --force.
                           Порядок ведения в скилле work-plan, читает план
                           дашборд
   wait <ID> <условие>     отметка машинного ожидания для оболочки конвейера:
@@ -428,13 +431,14 @@ func main() {
 		fs := flag.NewFlagSet("plan", flag.ExitOnError)
 		sid := fs.String("sid", "", "ID сессии, перебивает окружение")
 		label := fs.String("label", "", "метка субагента в имени файла плана")
+		force := fs.Bool("force", false, "положить план поверх лежащего, даже когда наборы не пересеклись ни одним пунктом")
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, -1, "plan set|step|done|show [<пункт>...] [--sid <ID>] [--label <метка>]")
+		needArgs(pos, 1, -1, "plan set|step|done|show [<пункт>...] [--sid <ID>] [--label <метка>] [--force]")
 		home, herr := os.UserHomeDir()
 		if herr != nil {
 			fail(fmt.Errorf("не видно дома пользователя, плану некуда лечь: %v", herr))
 		}
-		msg, err = cmdPlan(home, pos[0], pos[1:], *sid, *label, os.Getenv)
+		msg, err = planCmd(home, pos[0], pos[1:], *sid, *label, *force, os.Getenv)
 	case "wait":
 		fs := flag.NewFlagSet("wait", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

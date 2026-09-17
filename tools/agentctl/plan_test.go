@@ -303,3 +303,150 @@ func TestPlanSetFreshOnEmpty(t *testing.T) {
 		}
 	}
 }
+
+// Четыре кейса DK-900 ниже краснеют, если из set убрать ворота planForeign:
+// набор без единого совпадения ложится поверх лежащего плана, и отметки
+// исполнителя пропадают.
+
+func TestPlanSetRefusesReviewerOverExecutor(t *testing.T) {
+	home := t.TempDir()
+	// Кейс DK-888: исполнитель ведёт план с меткой задачи, а поднятый им
+	// ревьювер берёт ту же метку и кладёт свой план поверх.
+	env := planEnv(map[string]string{planEnvSession: "s1"})
+	if _, err := cmdPlan(home, "set", []string{"разведка\nправка\nкоммит"}, "", "DK-888", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "done", []string{"разведка"}, "", "DK-888", env); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cmdPlan(home, "set", []string{"чтение диффа\nпрогон тестов\nзамечания"}, "", "DK-888", env)
+	if err == nil {
+		t.Fatal("план ревьювера с меткой задачи лёг поверх плана исполнителя без отказа")
+	}
+	// Отказ называет чужой план по имени файла и оба выхода: свою метку с
+	// хвостом роли и --force.
+	for _, want := range []string{"s1-sub-DK-888.json", "DK-888-review", "--force", `"разведка"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("в отказе нет %q: %v", want, err)
+		}
+	}
+	got := planFile(t, home, "s1-sub-DK-888.json")
+	if len(got) != 3 || got[0].Text != "разведка" || got[0].State != "completed" {
+		t.Fatalf("план исполнителя после отказа не цел: %+v", got)
+	}
+}
+
+func TestPlanSetRefusesUnlabelledOverHead(t *testing.T) {
+	home := t.TempDir()
+	// Кейс DK-936: субагент без метки пишет по унаследованному ID сессии и
+	// стирает план головы захода, где первый пункт уже идёт.
+	env := planEnv(map[string]string{planEnvSession: "s1"})
+	if _, err := cmdPlan(home, "set", []string{"груминг\nнарезка\nотчёт"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "step", nil, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cmdPlan(home, "set", []string{"вычитка\nправка формы"}, "", "", env)
+	if err == nil {
+		t.Fatal("безымянный план субагента лёг поверх плана головы без отказа")
+	}
+	if !strings.Contains(err.Error(), "s1.json") || !strings.Contains(err.Error(), "--label") {
+		t.Errorf("отказ не называет файл головы и выход через метку: %v", err)
+	}
+	got := planFile(t, home, "s1.json")
+	if len(got) != 3 || got[0].State != "in_progress" {
+		t.Fatalf("план головы после отказа не цел: %+v", got)
+	}
+}
+
+func TestPlanDoneWithoutLabelHitsHeadPlan(t *testing.T) {
+	home := t.TempDir()
+	// Кейс DK-467: plan done без метки закрывает пункт в плане диспетчера.
+	// Ворота set этого не видят, у done нового набора нет, и адресность даёт
+	// только своя метка захода: с ней закрытие уходит в свой файл, а план
+	// головы остаётся как был.
+	env := planEnv(map[string]string{planEnvSession: "s1"})
+	if _, err := cmdPlan(home, "set", []string{"спавн исполнителей\nслияние"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "step", nil, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "set", []string{"правка\nтесты"}, "", "DK-467-exec", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "step", nil, "", "DK-467-exec", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "done", nil, "", "DK-467-exec", env); err != nil {
+		t.Fatal(err)
+	}
+	head := planFile(t, home, "s1.json")
+	if head[0].State != "in_progress" {
+		t.Fatalf("закрытие с меткой задело план головы: %+v", head)
+	}
+	own := planFile(t, home, "s1-sub-DK-467-exec.json")
+	if own[0].State != "completed" {
+		t.Fatalf("закрытие с меткой не дошло до своего плана: %+v", own)
+	}
+	// Без метки закрытие уходит в план головы: это предел механики, и
+	// закрывает его правило метки в определениях агентов, а не команда.
+	if _, err := cmdPlan(home, "done", nil, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	if head = planFile(t, home, "s1.json"); head[0].State != "completed" {
+		t.Fatalf("done без метки не дошёл до плана головы: %+v", head)
+	}
+}
+
+func TestPlanSetNestedProofreadTakesOwnLabel(t *testing.T) {
+	home := t.TempDir()
+	// Кейс DK-1012: вычитка внутри исполнителя берёт метку задачи и получает
+	// отказ, а со своим хвостом ложится рядом, и show печатает оба плана.
+	env := planEnv(map[string]string{planEnvSession: "s1"})
+	if _, err := cmdPlan(home, "set", []string{"разведка\nправка\nкоммит"}, "", "DK-974", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "done", []string{"разведка"}, "", "DK-974", env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdPlan(home, "set", []string{"чтение текста\nвычитка"}, "", "DK-974", env); err == nil {
+		t.Fatal("план вычитки с меткой задачи лёг поверх плана исполнителя без отказа")
+	}
+	if _, err := cmdPlan(home, "set", []string{"чтение текста\nвычитка"}, "", "DK-974-proofread", env); err != nil {
+		t.Fatalf("план вычитки под своей меткой не лёг: %v", err)
+	}
+	out, err := cmdPlan(home, "show", nil, "", "", env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"план субагента DK-974: пунктов 3, закрыто 1", "план субагента DK-974-proofread: пунктов 2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("в показе нет %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestPlanSetOverFinishedPlan(t *testing.T) {
+	home := t.TempDir()
+	// Закрытый целиком план чужим не считается: в контуре второй подписки
+	// адрес плана это имя tmux-сессии (DK-269), и новая сессия под тем же
+	// именем кладёт свой план на место доделанного без --force.
+	env := planEnv(map[string]string{planEnvTmux: "dk"})
+	if _, err := cmdPlan(home, "set", []string{"разведка\nправка"}, "", "", env); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range []string{"1", "2"} {
+		if _, err := cmdPlan(home, "done", []string{it}, "", "", env); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := cmdPlan(home, "set", []string{"груминг"}, "", "", env); err != nil {
+		t.Fatalf("новый план поверх доделанного получил отказ: %v", err)
+	}
+	// Перекладка своими словами с одним совпавшим пунктом воротами не ловится.
+	if _, err := cmdPlan(home, "set", []string{"груминг\nотчёт"}, "", "", env); err != nil {
+		t.Fatalf("перекладка своего плана получила отказ: %v", err)
+	}
+}

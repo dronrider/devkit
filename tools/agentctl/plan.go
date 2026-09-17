@@ -219,6 +219,49 @@ func planCarry(old, fresh []planItem) []planItem {
 	return fresh
 }
 
+// planForeign отбивает запись поверх чужого плана. Сессия перекладывает свой
+// план своими словами, и хоть один пункт в новом наборе совпадает со старым.
+// Набор без единого совпадения кладёт другой заход: субагент с меткой задачи
+// поверх плана исполнителя (DK-888), субагент без метки по унаследованному ID
+// сессии (DK-936), вычитка внутри исполнителя (DK-1012). Различителя заходов
+// в окружении нет (DK-852), и чужой план узнаётся по тексту. Закрытый целиком
+// план чужим не считается: новая сессия под тем же именем tmux (DK-269)
+// кладёт свой план на место доделанного, и терять там нечего.
+func planForeign(a planAddr, old, fresh []planItem) error {
+	if len(old) == 0 {
+		return nil
+	}
+	done := 0
+	for _, o := range old {
+		if o.State == "completed" {
+			done++
+		}
+		for _, f := range fresh {
+			if planSame(o.Text, f.Text) {
+				return nil
+			}
+		}
+	}
+	if done == len(old) {
+		return nil
+	}
+	whose := "сессии " + a.sid
+	if a.label != "" {
+		whose = "с меткой " + a.label
+	}
+	return fmt.Errorf("в файле %s уже лежит план %s (пунктов %d, первый %q), и новый набор не совпал с ним ни одним пунктом: это чужой заход. Свой план веди под своей меткой (%s), а этот план перекладывай с --force",
+		a.file, whose, len(old), old[0].Text, planLabelHint(a.label))
+}
+
+// planLabelHint подсказывает метку с хвостом захода: у пачки одной задачи метка
+// без хвоста общая, и различает заходы только роль в её конце.
+func planLabelHint(label string) string {
+	if label == "" {
+		return "--label <ID задачи>-<роль>"
+	}
+	return "--label " + label + "-<роль>, скажем " + label + "-review"
+}
+
 // planMark это значок состояния в печати плана.
 func planMark(state string) string {
 	switch state {
@@ -278,8 +321,15 @@ func planSubFiles(home, sid string) []string {
 }
 
 // cmdPlan это все четыре действия над планом одной командой: положить, начать
-// пункт, закрыть пункт, показать.
+// пункт, закрыть пункт, показать. Ключ --force живёт у planCmd: без него
+// команда бережёт лежащий план от чужого набора.
 func cmdPlan(home, op string, args []string, sid, label string, env func(string) string) (string, error) {
+	return planCmd(home, op, args, sid, label, false, env)
+}
+
+// planCmd это cmdPlan с ключом force: set поверх плана, с которым новый набор
+// не совпал ни одним пунктом, без него отказывает.
+func planCmd(home, op string, args []string, sid, label string, force bool, env func(string) string) (string, error) {
 	a, err := planResolve(home, sid, label, env)
 	if err != nil {
 		return "", err
@@ -313,6 +363,11 @@ func cmdPlan(home, op string, args []string, sid, label string, env func(string)
 		items := planItems(args)
 		if len(items) == 0 {
 			return "", fmt.Errorf("жду пункты плана: plan set <пункт> [<пункт>...]")
+		}
+		if !force {
+			if err := planForeign(a, plan, items); err != nil {
+				return "", err
+			}
 		}
 		items = planCarry(plan, items)
 		if err := planWrite(a.file, items); err != nil {

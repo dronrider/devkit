@@ -1,6 +1,7 @@
 package works
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -137,6 +138,35 @@ func TestSessionsNoServerIsEmpty(t *testing.T) {
 	}
 	if got == nil || len(got) != 0 {
 		t.Fatalf("сессий нет, ждал пустой список, получил %v", got)
+	}
+}
+
+// TestSessionsNoTmuxIsErrNoTmux: машина без tmux отвечает своим ответом,
+// и занятость на ней считается по остальным источникам, как до DK-904.
+// Сорванным опросом ненайденный бинарь не считается (замечание ревью).
+func TestSessionsNoTmuxIsErrNoTmux(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, err := Sessions()
+	if !errors.Is(err, ErrNoTmux) {
+		t.Fatalf("без tmux ждала ErrNoTmux, получила %v", err)
+	}
+	busy, err := Busy("XR", t.TempDir(), t.TempDir(), nil)
+	if err != nil || busy == nil || len(busy) != 0 {
+		t.Fatalf("без tmux занятость %v, ошибка %v; ждала пустую карту без ошибки", busy, err)
+	}
+}
+
+// TestSessionsSocketRefusedIsError: жалоба на соединение с живым сервером за
+// недоступным сокетом это сорванный опрос, а не «сессий нет».
+func TestSessionsSocketRefusedIsError(t *testing.T) {
+	fakeTmux(t, "", "")
+	tmuxRefuse(t, "error connecting to /tmp/tmux-501/default (Permission denied)\n")
+	if _, err := Sessions(); err == nil {
+		t.Fatal("недоступный сокет живого сервера прочитан как «сессий нет»")
+	}
+	tmuxRefuse(t, "error connecting to /tmp/tmux-501/default (No such file or directory)\n")
+	if got, err := Sessions(); err != nil || len(got) != 0 {
+		t.Fatalf("сокета нет, ждала пустой список, получила %v, %v", got, err)
 	}
 }
 

@@ -35,6 +35,12 @@ type Session struct {
 	Created int64
 }
 
+// ErrNoTmux это ответ «tmux на машине нет». Он отличается от сорванного
+// опроса: у машины без tmux сессий не бывает, и планировщик слота считает
+// занятость по остальным источникам, как и до DK-904. Ловится он через
+// errors.Is, вызов оборачивает его словами команды.
+var ErrNoTmux = errors.New("tmux не нашёлся")
+
 // Sessions отдаёт сессии tmux машины. Ошибка это «спросить не удалось»:
 // tmux не нашёлся, не уложился в срок или ответил незнакомым отказом. Такой
 // ответ не пустой список, и вызывающий его не применяет: сторож дашборда
@@ -62,16 +68,23 @@ func Sessions() ([]Session, error) {
 			}
 			return nil, fmt.Errorf("tmux ls: %s", firstLine(msg, err.Error()))
 		}
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil, fmt.Errorf("tmux ls: %w", ErrNoTmux)
+		}
 		return nil, fmt.Errorf("tmux ls: %w", err)
 	}
 	return ParseSessions(out), nil
 }
 
 // noServer узнаёт отказ tmux ls без сервера. Слова у версий разные: старые
-// жалуются на соединение с сокетом, новые говорят прямо, что сервера нет.
+// жалуются на соединение с сокетом, которого нет, новые говорят прямо, что
+// сервера нет. Жалоба на соединение с другой причиной в скобках (Permission
+// denied, Connection refused) это живой сервер за недоступным сокетом, и
+// такой ответ остаётся сорванным опросом (замечание ревью DK-904).
 func noServer(msg string) bool {
 	return strings.Contains(msg, "no server running") ||
-		strings.Contains(msg, "error connecting to")
+		(strings.Contains(msg, "error connecting to") &&
+			strings.Contains(msg, "No such file or directory"))
 }
 
 func firstLine(msg, fallback string) string {
@@ -293,10 +306,12 @@ func AtWork(sect string) bool {
 // разбирает. Пустой sect это «доски нет», и тогда строка не режется.
 //
 // Ошибка это сорванный опрос tmux: занятость по нему не известна, и пустая
-// карта была бы враньём о свободных деревьях (DK-904).
+// карта была бы враньём о свободных деревьях (DK-904). Машина без tmux
+// (ErrNoTmux) ошибкой не считается: сессий на ней не бывает, занятость идёт
+// по реестру целей, и слот с взводом работают, как до правки.
 func Busy(prefix, home, projectRoot string, sect func(id string) string) (map[string]bool, error) {
 	sessions, err := Sessions()
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrNoTmux) {
 		return nil, err
 	}
 	busy := map[string]bool{}

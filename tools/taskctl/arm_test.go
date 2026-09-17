@@ -619,3 +619,17 @@ func TestArmGatesHoldOnSilentTmux(t *testing.T) {
 		t.Fatalf("ворота при сорванном опросе ответили %q", why)
 	}
 }
+
+// TestArmGatesPassWithoutTmux: без tmux на машине ворота ёмкости взвода
+// пропускают строку, как до DK-904, а не отказывают ей сорванным опросом.
+func TestArmGatesPassWithoutTmux(t *testing.T) {
+	root := armStand(t, 3)
+	noTmux(t)
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if why := newArmGates(root, b).pass("XR-003"); why != "" {
+		t.Fatalf("ворота без tmux отказали: %s", why)
+	}
+}

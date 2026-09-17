@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -447,5 +448,38 @@ func TestSlotRefusesOnSilentTmux(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "опрос tmux сорван") || !strings.Contains(err.Error(), "lost server") {
 		t.Fatalf("отказ слота без причины: %v", err)
+	}
+}
+
+// noTmux собирает PATH, где есть git и оболочка, а tmux нет: так выглядит
+// машина без tmux, на которой слот и взвод работают по реестру целей.
+func noTmux(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	for _, name := range []string{"git", "sh"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Skipf("%s не нашёлся: %v", name, err)
+		}
+		if err := os.Symlink(path, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin)
+}
+
+// TestSlotPicksWithoutTmux: машина без tmux это не сорванный опрос. Слот
+// выбирает строку по остальным источникам занятости, как до DK-904
+// (замечание ревью).
+func TestSlotPicksWithoutTmux(t *testing.T) {
+	root := setup(t)
+	gitBoard(t, root)
+	noTmux(t)
+	out, err := cmdSlot(root, batchDefaultLimit, "slot")
+	if err != nil {
+		t.Fatalf("слот без tmux отказал: %v", err)
+	}
+	if strings.Contains(out, "опрос tmux сорван") || !strings.HasPrefix(out, "slot:") {
+		t.Fatalf("слот без tmux не напечатал порядок кандидатов:\n%s", out)
 	}
 }

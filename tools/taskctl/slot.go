@@ -260,7 +260,12 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 	}
 	ed := newEdges(root, b, arch)
 	home, _ := os.UserHomeDir()
-	busy := works.Busy(b.Prefix, home, root, b.sectOf)
+	// Сорванный опрос tmux не даёт занятости, и выбирать по нему нельзя: пустая
+	// карта отдала бы занятое дерево второй сессии (DK-904).
+	busy, err := works.Busy(b.Prefix, home, root, b.sectOf)
+	if err != nil {
+		return "", fmt.Errorf("занятость деревьев не известна, опрос tmux сорван: %w", err)
+	}
 	clean := boardClean(root)
 	times := boardTimes(root)
 	ceiling := treeCeiling(limit)

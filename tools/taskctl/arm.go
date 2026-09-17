@@ -94,8 +94,11 @@ func dropArmRefusal(root, id string) {
 // Считают их те же функции, что у `slot` и старта задачи, второй копии правила
 // тут нет.
 type armGates struct {
-	root    string
-	busy    map[string]bool
+	root string
+	busy map[string]bool
+	// busyErr это сорванный опрос tmux: занятость не известна, и ворота
+	// отказывают всем строкам до следующего обхода (DK-904).
+	busyErr error
 	limit   int
 	live    int
 	ceiling int
@@ -128,7 +131,8 @@ var batchCeiling = func(root string) (int, string) {
 func newArmGates(root string, b *Board) *armGates {
 	home, _ := os.UserHomeDir()
 	limit, _ := batchCeiling(root)
-	return &armGates{root: root, busy: works.Busy(b.Prefix, home, root, b.sectOf), limit: limit,
+	busy, err := works.Busy(b.Prefix, home, root, b.sectOf)
+	return &armGates{root: root, busy: busy, busyErr: err, limit: limit,
 		live: liveTrees(root, b), ceiling: treeCeiling(limit)}
 }
 
@@ -139,6 +143,9 @@ func newArmGates(root string, b *Board) *armGates {
 func (g *armGates) pass(id string) string {
 	if held := taskform.HoldingForks(readTaskDoc(g.root, id)); len(held) > 0 {
 		return fmt.Sprintf("открытая развилка «%s», решает человек", held[0].Name)
+	}
+	if g.busyErr != nil {
+		return "занятость деревьев не известна, опрос tmux сорван: " + g.busyErr.Error()
 	}
 	if g.busy[id] {
 		return "дерево занято живой работой"

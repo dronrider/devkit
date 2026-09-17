@@ -601,3 +601,21 @@ func TestArmStateRidesJSON(t *testing.T) {
 		t.Fatalf("строка без рёбер принесла состояние взвода: %+v", r.Arm)
 	}
 }
+
+// TestArmGatesHoldOnSilentTmux: регрессия DK-904. Сорванный опрос tmux
+// отдавал пустую занятость, и ворота пускали взведённую строку в дерево,
+// где уже сидит живой заход. Занятость не известна, значит ворота отказывают
+// всем строкам до следующего обхода и называют причину словами tmux.
+func TestArmGatesHoldOnSilentTmux(t *testing.T) {
+	root := armStand(t, 3)
+	silentTmux(t, "lost server")
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := newArmGates(root, b)
+	why := g.pass("XR-003")
+	if !strings.Contains(why, "опрос tmux сорван") || !strings.Contains(why, "lost server") {
+		t.Fatalf("ворота при сорванном опросе ответили %q", why)
+	}
+}

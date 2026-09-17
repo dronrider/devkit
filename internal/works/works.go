@@ -6,6 +6,8 @@ package works
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,11 +35,13 @@ type Session struct {
 	Created int64
 }
 
-// Sessions отдаёт сессии tmux машины. Ненулевой код ls это штатное «сессий
-// нет»: без единой сессии tmux не держит сервера. Отсутствие tmux и ошибка
-// тоже дают пустой список; различие «нет tmux» и «нет сессий» держит
-// вызывающий, здесь его нечем получить.
-func Sessions() []Session {
+// Sessions отдаёт сессии tmux машины. Ошибка это «спросить не удалось»:
+// tmux не нашёлся, не уложился в срок или ответил незнакомым отказом. Такой
+// ответ не пустой список, и вызывающий его не применяет: сторож дашборда
+// пропускает обход, а планировщик слота не считает занятую задачу свободной
+// (DK-904). Ненулевой код ls со словами про отсутствие сервера это штатное
+// «сессий нет»: без единой сессии tmux сервера не держит.
+func Sessions() ([]Session, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), procTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "tmux", "ls", "-F",
@@ -47,9 +51,35 @@ func Sessions() []Session {
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil {
-		return nil
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("tmux ls не уложился в %s", procTimeout)
+		}
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			msg := strings.TrimSpace(string(ee.Stderr))
+			if noServer(msg) {
+				return []Session{}, nil
+			}
+			return nil, fmt.Errorf("tmux ls: %s", firstLine(msg, err.Error()))
+		}
+		return nil, fmt.Errorf("tmux ls: %w", err)
 	}
-	return ParseSessions(out)
+	return ParseSessions(out), nil
+}
+
+// noServer узнаёт отказ tmux ls без сервера. Слова у версий разные: старые
+// жалуются на соединение с сокетом, новые говорят прямо, что сервера нет.
+func noServer(msg string) bool {
+	return strings.Contains(msg, "no server running") ||
+		strings.Contains(msg, "error connecting to")
+}
+
+func firstLine(msg, fallback string) string {
+	if msg == "" {
+		return fallback
+	}
+	line, _, _ := strings.Cut(msg, "\n")
+	return line
 }
 
 // SessionSep это разделитель полей в формате tmux ls. Табуляция тут не годится
@@ -261,10 +291,17 @@ func AtWork(sect string) bool {
 //
 // sect отдаёт секцию строки доски по ID; доска у зовущего своя, и он сам её
 // разбирает. Пустой sect это «доски нет», и тогда строка не режется.
-func Busy(prefix, home, projectRoot string, sect func(id string) string) map[string]bool {
+//
+// Ошибка это сорванный опрос tmux: занятость по нему не известна, и пустая
+// карта была бы враньём о свободных деревьях (DK-904).
+func Busy(prefix, home, projectRoot string, sect func(id string) string) (map[string]bool, error) {
+	sessions, err := Sessions()
+	if err != nil {
+		return nil, err
+	}
 	busy := map[string]bool{}
 	clients, asked := ClientSessions()
-	for _, sess := range Sessions() {
+	for _, sess := range sessions {
 		id, _ := SessionTask(sess.Name, prefix)
 		if id == "" {
 			continue
@@ -280,5 +317,5 @@ func Busy(prefix, home, projectRoot string, sect func(id string) string) map[str
 	for _, goal := range RegistryGoals(home, projectRoot) {
 		busy[goal] = true
 	}
-	return busy
+	return busy, nil
 }

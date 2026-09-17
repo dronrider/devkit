@@ -421,3 +421,31 @@ func TestSlotEmptyBoard(t *testing.T) {
 		t.Fatalf("пустая доска: %q, ожидал %q", out, "slot: -")
 	}
 }
+
+// silentTmux подменяет tmux скриптом, у которого ls отказывает незнакомыми
+// словами: это сорванный опрос, а не машина без сессий.
+func silentTmux(t *testing.T, msg string) {
+	t.Helper()
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho '" + msg + "' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestSlotRefusesOnSilentTmux: регрессия DK-904. Сорванный опрос tmux давал
+// пустую занятость, и слот считал занятое дерево свободным. Теперь выбор
+// отказывает словами про сорванный опрос и словами самого tmux.
+func TestSlotRefusesOnSilentTmux(t *testing.T) {
+	root := setup(t)
+	gitBoard(t, root)
+	silentTmux(t, "lost server")
+	out, err := cmdSlot(root, batchDefaultLimit, "slot")
+	if err == nil {
+		t.Fatalf("слот выбрал по сорванному опросу:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "опрос tmux сорван") || !strings.Contains(err.Error(), "lost server") {
+		t.Fatalf("отказ слота без причины: %v", err)
+	}
+}

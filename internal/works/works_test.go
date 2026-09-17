@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -82,7 +83,7 @@ func TestRegistryGoals(t *testing.T) {
 func TestBusyTmux(t *testing.T) {
 	fakeTmux(t, "task-XR-5|1|100\ngoal-XR-9|1|200\ntask-ZZ-1|1|300\n",
 		"task-XR-5|claude|0\ngoal-XR-9|claude|0\ntask-ZZ-1|claude|0\n")
-	busy := Busy("XR", t.TempDir(), t.TempDir(), nil)
+	busy, _ := Busy("XR", t.TempDir(), t.TempDir(), nil)
 	if !busy["XR-5"] || !busy["XR-9"] {
 		t.Fatalf("свои сессии не заняли задачи: %v", busy)
 	}
@@ -92,20 +93,26 @@ func TestBusyTmux(t *testing.T) {
 }
 
 // fakeTmux кладёт в PATH подставной tmux: `ls` отдаёт список сессий, а
-// `list-panes` пейны. Данные лежат файлами рядом со скриптом, чтобы кавычки
+// `list-panes` пейны. Пустой ls это отказ tmux ls со словами tmuxRefusal в
+// stderr и ненулевым кодом, как у настоящего tmux без сервера. Данные лежат файлами рядом со скриптом, чтобы кавычки
 // вывода не приходилось прятать внутрь шелла. Пустой panes это отказ спросить
 // пейны, как у tmux, которого на машине нет.
 func fakeTmux(t *testing.T, ls, panes string) {
 	t.Helper()
 	bin := t.TempDir()
 	script := "#!/bin/sh\ncase \"$1\" in\n" +
-		"ls) cat \"$0.ls\" ;;\n" +
+		"ls) [ -f \"$0.ls\" ] && cat \"$0.ls\" || { cat \"$0.err\" >&2; exit 1; } ;;\n" +
 		"list-panes) [ -f \"$0.panes\" ] && cat \"$0.panes\" || exit 1 ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, "tmux.ls"), []byte(ls), 0o644); err != nil {
+	if ls != "" {
+		if err := os.WriteFile(filepath.Join(bin, "tmux.ls"), []byte(ls), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(bin, "tmux.err"), []byte(tmuxRefusal), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if panes != "" {
@@ -114,6 +121,62 @@ func fakeTmux(t *testing.T, ls, panes string) {
 		}
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// tmuxRefusal это слова, которыми подставной tmux ls отказывает без списка.
+// Тесты сорванного опроса подменяют их через файл tmux.err.
+const tmuxRefusal = "no server running on /tmp/tmux-501/default"
+
+// TestSessionsNoServerIsEmpty: tmux без сервера отвечает ненулевым кодом, и
+// это штатное «сессий нет», а не сорванный опрос.
+func TestSessionsNoServerIsEmpty(t *testing.T) {
+	fakeTmux(t, "", "")
+	got, err := Sessions()
+	if err != nil {
+		t.Fatalf("отказ tmux без сервера принят за сорванный опрос: %v", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Fatalf("сессий нет, ждал пустой список, получил %v", got)
+	}
+}
+
+// TestSessionsSilentIsError: регрессия DK-904. Незнакомый отказ tmux ls
+// отдавался пустым списком, и потребители читали его как «никого нет»:
+// сторож дашборда хоронил все окна разом, а занятость задач обнулялась.
+// Сорванный опрос это ошибка со словами tmux, а не пустота.
+func TestSessionsSilentIsError(t *testing.T) {
+	fakeTmux(t, "", "")
+	tmuxRefuse(t, "lost server\n")
+	got, err := Sessions()
+	if err == nil {
+		t.Fatalf("сорванный опрос отдан списком %v без ошибки", got)
+	}
+	if !strings.Contains(err.Error(), "lost server") {
+		t.Fatalf("ошибка не несёт слов tmux: %v", err)
+	}
+}
+
+// TestBusySilentTmuxIsError: занятость по сорванному опросу не считается.
+// Пустая карта здесь значила бы «все деревья свободны», и планировщик слота
+// поднимал бы вторую сессию по занятой задаче (DK-904).
+func TestBusySilentTmuxIsError(t *testing.T) {
+	fakeTmux(t, "", "")
+	tmuxRefuse(t, "lost server\n")
+	busy, err := Busy("XR", t.TempDir(), t.TempDir(), nil)
+	if err == nil {
+		t.Fatalf("занятость по сорванному опросу посчитана: %v", busy)
+	}
+}
+
+// tmuxRefuse подменяет слова отказа подставного tmux ls: список он больше не
+// отдаёт, а в stderr пишет msg.
+func tmuxRefuse(t *testing.T, msg string) {
+	t.Helper()
+	bin, _, _ := strings.Cut(os.Getenv("PATH"), string(os.PathListSeparator))
+	os.Remove(filepath.Join(bin, "tmux.ls"))
+	if err := os.WriteFile(filepath.Join(bin, "tmux.err"), []byte(msg), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestParsePanes гоняет разбор вывода tmux list-panes: имя сессии, команда
@@ -138,7 +201,7 @@ func TestBusySkipsDeadWindows(t *testing.T) {
 	panes := "task-XR-5|claude|0\ntask-XR-6|zsh|0\ntask-XR-7|claude|0\ntask-XR-8|claude|0\n"
 	fakeTmux(t, ls, panes)
 	sect := map[string]string{"XR-5": "in-progress", "XR-6": "in-progress", "XR-7": "backlog"}
-	busy := Busy("XR", t.TempDir(), t.TempDir(), func(id string) string { return sect[id] })
+	busy, _ := Busy("XR", t.TempDir(), t.TempDir(), func(id string) string { return sect[id] })
 	if !busy["XR-5"] {
 		t.Fatal("живой заход не занял задачу")
 	}
@@ -161,7 +224,7 @@ func TestBusySkipsDeadWindows(t *testing.T) {
 // счёта, и машина взяла бы сверх потолка.
 func TestBusyKeepsWorkWhenPanesUnknown(t *testing.T) {
 	fakeTmux(t, "task-XR-5|1|100\n", "")
-	busy := Busy("XR", t.TempDir(), t.TempDir(), func(string) string { return "in-progress" })
+	busy, _ := Busy("XR", t.TempDir(), t.TempDir(), func(string) string { return "in-progress" })
 	if !busy["XR-5"] {
 		t.Fatalf("без ответа о пейнах работа пропала: %v", busy)
 	}

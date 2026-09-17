@@ -449,4 +449,21 @@ func TestPlanSetOverFinishedPlan(t *testing.T) {
 	if _, err := cmdPlan(home, "set", []string{"груминг\nотчёт"}, "", "", env); err != nil {
 		t.Fatalf("перекладка своего плана получила отказ: %v", err)
 	}
+	// У адреса из ID сессии изъятия нет: диспетчер закрыл оба пункта, и
+	// безымянный набор субагента поверх них всё равно отбивается.
+	envSid := planEnv(map[string]string{planEnvSession: "s1"})
+	if _, err := cmdPlan(home, "set", []string{"спавн\nслияние"}, "", "", envSid); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range []string{"1", "2"} {
+		if _, err := cmdPlan(home, "done", []string{it}, "", "", envSid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := cmdPlan(home, "set", []string{"вычитка"}, "", "", envSid); err == nil {
+		t.Fatal("чужой набор лёг поверх доделанного плана сессии без отказа")
+	}
+	if got := planFile(t, home, "s1.json"); len(got) != 2 || got[1].State != "completed" {
+		t.Fatalf("доделанный план сессии после отказа не цел: %+v", got)
+	}
 }

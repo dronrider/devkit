@@ -186,34 +186,41 @@ func goalTaskIDs(root, goalID string) []string {
 	return out
 }
 
-// holdEdges строит рёбра наследования: holds[X] это задачи, которые держит X,
-// то есть те, чей ранг X наследует. Ребро дают суффикс «[после X]» зависимой
-// строки и состав незакрытой цели.
-func holdEdges(root string, b *Board) map[string][]string {
-	holds := map[string][]string{}
-	add := func(holder, held string) {
-		if holder == held || b.find(holder) == nil {
+// boardEdges строит рёбра доски двумя картами. В holds лежит наследование:
+// holds[X] это задачи, которые держит X, то есть те, чей ранг X наследует.
+// В order лежит порядок внутри полосы равного итога: order[X] это строки,
+// которые встают после X. Для суффикса «[после X]» обе карты совпадают,
+// предпосылка и тянется зависимой, и стоит раньше неё. Ребро цели в них
+// расходится: ранг цель отдаёт своим задачам, а в списке идёт перед ними,
+// иначе подтянутые задачи закрывают собой саму цель.
+func boardEdges(root string, b *Board) (holds, order map[string][]string) {
+	holds = map[string][]string{}
+	order = map[string][]string{}
+	add := func(m map[string][]string, from, to string) {
+		if from == to || b.find(from) == nil || b.find(to) == nil {
 			return
 		}
-		for _, ex := range holds[holder] {
-			if ex == held {
+		for _, ex := range m[from] {
+			if ex == to {
 				return
 			}
 		}
-		holds[holder] = append(holds[holder], held)
+		m[from] = append(m[from], to)
 	}
 	for _, r := range b.Rows {
 		_, deps, _, _, _, _ := splitTitle(r.Title)
 		for _, d := range deps {
-			add(d, r.ID)
+			add(holds, d, r.ID)
+			add(order, d, r.ID)
 		}
 		if goalRow(r.Title) {
 			for _, t := range goalTaskIDs(root, r.ID) {
-				add(t, r.ID)
+				add(holds, t, r.ID)
+				add(order, r.ID, t)
 			}
 		}
 	}
-	return holds
+	return holds, order
 }
 
 // rootOfBoard достаёт корень проекта из пути доски: доска лежит в docs/ этого
@@ -245,7 +252,7 @@ func computeRanks(b *Board) {
 		r.RBase = clampRank(own + add)
 		base[r.ID] = r.RBase
 	}
-	holds := holdEdges(rootOfBoard(b.Path), b)
+	holds, _ := boardEdges(rootOfBoard(b.Path), b)
 	type memo struct {
 		val    int
 		origin string
@@ -283,38 +290,39 @@ func computeRanks(b *Board) {
 }
 
 // backlogOrder отдаёт строки Backlog в положенном порядке: по R_eff вниз, при
-// равном R_eff предпосылка раньше зависимой, дальше по номеру. Порядок внутри
-// полосы равных считается обходом рёбер наследования, а не парным сравнением:
+// равном R_eff предпосылка раньше зависимой, цель раньше своих задач, дальше
+// по номеру. Порядок внутри полосы равных считается обходом рёбер, а не парным
+// сравнением:
 // «раньше» тут отношение по графу, и сортировка парами разъезжается на
 // цепочке из трёх.
 func backlogOrder(root string, b *Board) []*Row {
 	rows := append([]*Row{}, b.Sects[SectBacklog].Rows...)
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].RTotal > rows[j].RTotal })
-	holds := holdEdges(root, b)
+	_, order := boardEdges(root, b)
 	var out []*Row
 	for i := 0; i < len(rows); {
 		j := i
 		for j < len(rows) && rows[j].RTotal == rows[i].RTotal {
 			j++
 		}
-		out = append(out, orderTier(rows[i:j], holds)...)
+		out = append(out, orderTier(rows[i:j], order)...)
 		i = j
 	}
 	return out
 }
 
-// orderTier раскладывает полосу равного R_eff: сначала те, кого никто из
-// полосы не держит, среди готовых берётся меньший номер.
-func orderTier(tier []*Row, holds map[string][]string) []*Row {
+// orderTier раскладывает полосу равного R_eff: сначала те, перед кем никого из
+// полосы не стоит, среди готовых берётся меньший номер.
+func orderTier(tier []*Row, order map[string][]string) []*Row {
 	in := map[string]*Row{}
 	for _, r := range tier {
 		in[r.ID] = r
 	}
 	deg := map[string]int{}
 	for _, r := range tier {
-		for _, held := range holds[r.ID] {
-			if _, ok := in[held]; ok {
-				deg[held]++
+		for _, next := range order[r.ID] {
+			if _, ok := in[next]; ok {
+				deg[next]++
 			}
 		}
 	}
@@ -335,9 +343,9 @@ func orderTier(tier []*Row, holds map[string][]string) []*Row {
 		r := rest[pick]
 		rest = append(rest[:pick], rest[pick+1:]...)
 		out = append(out, r)
-		for _, held := range holds[r.ID] {
-			if _, ok := in[held]; ok {
-				deg[held]--
+		for _, next := range order[r.ID] {
+			if _, ok := in[next]; ok {
+				deg[next]--
 			}
 		}
 	}

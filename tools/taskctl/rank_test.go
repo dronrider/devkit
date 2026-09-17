@@ -280,3 +280,28 @@ func TestJSONCarriesAdjustments(t *testing.T) {
 		t.Fatalf("json без поправок:\n%s", out)
 	}
 }
+
+// TestGoalLeadsItsTasksInTier: цель и подтянутые до её ранга задачи попали в
+// одну полосу равного итога. Цель встаёт первой, её задачи идут следом в
+// порядке своих рёбер, а задача с собственным рангом выше цели остаётся над
+// всей полосой.
+func TestGoalLeadsItsTasksInTier(t *testing.T) {
+	goalFile := "# XR-100: Цель: пример\n\n## Задачи цели\n\n- XR-101 первая\n- XR-102 вторая\n"
+	root := setupRank(t, rankBoardText(
+		"| XR-100 | Цель: пример | task | P1 | 60 (50+6+1+0+3) | - | [tasks/XR-100.md](tasks/XR-100.md) |",
+		"| XR-101 | Первая задача цели | task | P3 | 20 (10+4+1+0+5) | - | (LLD позже) |",
+		"| XR-102 | Вторая задача цели [после XR-101] | task | P3 | 18 (8+4+1+0+5) | - | (LLD позже) |",
+		"| XR-103 | Своя срочная | task | P0 | 70 (60+6+1+0+3) | - | (LLD позже) |",
+	), map[string]string{"XR-100.md": goalFile})
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, r := range backlogOrder(root, b) {
+		ids = append(ids, r.ID)
+	}
+	if got := strings.Join(ids, " "); got != "XR-103 XR-100 XR-101 XR-102" {
+		t.Fatalf("порядок Backlog: %q, ожидал «XR-103 XR-100 XR-101 XR-102»", got)
+	}
+}

@@ -488,7 +488,14 @@ func cmdStart(root string, p StartParams) (string, error) {
 	// regcheck); свежему дереву корп-клона он нужен ещё и под ссылки на соседние
 	// деревья правил. Разбор -- в placeWrapping.
 	placeWrapping(wtPath, codeRoot, root, p.Tree == "")
-	msg = append(msg, fmt.Sprintf("работать в %s, по готовности: shipctl merge %s (оттуда же или из основного чекаута)", wtPath, p.ID))
+	if corpBound {
+		// В корп-контуре merge отказывает (corpActive в cmdMerge): слияние и
+		// выкат ведёт MR-флоу компании, и подсказка называет тот же ручной
+		// путь, что уже звучит в отказе merge, а не команду, которой здесь нет.
+		msg = append(msg, fmt.Sprintf("работать в %s, по готовности: %s", wtPath, corpNextSteps))
+	} else {
+		msg = append(msg, fmt.Sprintf("работать в %s, по готовности: shipctl merge %s (оттуда же или из основного чекаута)", wtPath, p.ID))
+	}
 	if corpNote != "" {
 		msg = append(msg, corpNote)
 	}

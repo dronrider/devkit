@@ -399,6 +399,27 @@ func TestCorpMergeShipRevertRefuse(t *testing.T) {
 	}
 }
 
+// TestCorpStartHintsRealNextStep ловит DK-123: shipctl start в корп-контуре
+// заканчивал отчёт подсказкой «по готовности: shipctl merge <ID>», а merge
+// там отказывает (corpActive в cmdMerge), потому что слияние и выкат ведёт
+// MR-флоу компании. Подсказка обязана называть тот же ручной путь, что
+// звучит в отказе merge (TestCorpMergeShipRevertRefuse), а не команду,
+// которой нет.
+func TestCorpStartHintsRealNextStep(t *testing.T) {
+	_, local, _, _ := corpPipeline(t, "LOC-3",
+		corpTrack{Branch: "feature/{key}-{slug}", Key: "ABC", Ticket: "ABC-42"}, trackOK)
+	msg, err := cmdStart(local, StartParams{ID: "LOC-3", Slug: "add-x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(msg, "shipctl merge") {
+		t.Fatalf("подсказка называет shipctl merge, которого в корп-контуре нет: %q", msg)
+	}
+	if !strings.Contains(msg, "trackctl submit") {
+		t.Fatalf("подсказка не называет настоящий следующий шаг: %q", msg)
+	}
+}
+
 // TestCorpStatusBranchFromClone чинит DK-081: status называл веткой ветку
 // боковой директории (где живёт только доска), а не рабочую ветку клона.
 // Ловит и мутацию «status спросил ветку у корня»: ветки боковой директории

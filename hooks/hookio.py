@@ -153,6 +153,42 @@ def text_of(value):
     return value if isinstance(value, str) else ""
 
 
+def safe_name(value):
+    """Строка, безопасная для имени файла состояния: буквы, цифры, дефис и
+    подчёркивание остаются, остальное схлопывается в подчёркивание. Настоящие
+    session_id и agent_id это UUID и hex, под фильтр они проходят как есть."""
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in (value or ""))
+
+
+def context_id(session, agent):
+    """Имя контекста хода по сессии и роли субагента: session_id, а у
+    субагента с приписанным agent_id через точку (ни в UUID, ни в hex её не
+    бывает, и пара разбирается однозначно). Контекст субагента свой и пустой,
+    даже когда session_id общий с диспетчером (DK-608, hooks/check-reread.py):
+    состояние диспетчера ему не засчитывается."""
+    if not agent:
+        return safe_name(session)
+    return safe_name(session) + "." + safe_name(agent)
+
+
+def state_dir(name, override=None):
+    """Каталог состояния хука по имени (~/.devkit/<name>), заведённый, если
+    его не было. override подменяет путь тестам, чтобы они не лазили в
+    настоящий каталог."""
+    where = override or os.path.join(os.path.expanduser("~"), ".devkit", name)
+    try:
+        os.makedirs(where, exist_ok=True)
+    except OSError:
+        pass
+    return where
+
+
+def state_path(name, context, override=None):
+    """Путь файла состояния хука по контексту, каталог тот же, что у
+    state_dir(name, override)."""
+    return os.path.join(state_dir(name, override), context + ".json")
+
+
 def claude_code_write(event):
     ti = event.get("tool_input")
     if not isinstance(ti, dict):

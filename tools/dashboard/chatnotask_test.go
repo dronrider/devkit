@@ -242,7 +242,7 @@ exit 0`, smokeSayWord, time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), path
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeScript(t, e.bin, "tmux", fmt.Sprintf(`echo "$@" >> %q
 case "$1" in
-ls) exit 1;;
+ls) `+tmuxNoServer+`;;
 new-session)
   for a in "$@"; do last="$a"; done
   sh -c "$last" >> %q 2>&1

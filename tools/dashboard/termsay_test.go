@@ -107,7 +107,7 @@ func TestChatSayBangWithoutTerminalIsNamed(t *testing.T) {
 	sock, frames := countingSock(t)
 	writePeerSock(t, e.home, sid, os.Getpid(), sock)
 	// tmux-сессии у разговора нет: окно vscode слышно только сокетом.
-	writeScript(t, e.bin, "tmux", `case "$1" in ls) exit 1;; esac
+	writeScript(t, e.bin, "tmux", `case "$1" in ls) `+tmuxNoServer+`;; esac
 exit 0`)
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",

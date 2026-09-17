@@ -167,7 +167,7 @@ func TestChatBlankGrowsIntoSession(t *testing.T) {
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
 case "$1" in
-ls) exit 1;;
+ls) `+tmuxNoServer+`;;
 esac
 exit 0`)
 	writeScript(t, e.bin, "claude", "exit 0")
@@ -438,7 +438,7 @@ func TestChatModelsNoteWhenLadderEmpty(t *testing.T) {
 // старше него так же не считаются (замечание ревью DK-851).
 func TestChatBlankWithoutLiftedUsesBorn(t *testing.T) {
 	e, c := chatEnv(t)
-	writeScript(t, e.bin, "tmux", `case "$1" in ls) exit 1;; esac
+	writeScript(t, e.bin, "tmux", `case "$1" in ls) `+tmuxNoServer+`;; esac
 exit 0`)
 	id := "blank-old-deploy"
 	born := time.Now().Add(-10 * time.Second)

@@ -618,7 +618,7 @@ func TestChatSayRaisesSessionWithoutTranscript(t *testing.T) {
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
 case "$1" in
-ls) exit 1;;
+ls) `+tmuxNoServer+`;;
 esac
 exit 0`)
 	writeScript(t, e.bin, "claude", "exit 0")
@@ -788,7 +788,7 @@ func TestChatStartWithoutTask(t *testing.T) {
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
 case "$1" in
-ls) exit 1;;
+ls) `+tmuxNoServer+`;;
 esac
 exit 0`)
 	writeScript(t, e.bin, "claude", "exit 0")
@@ -1530,7 +1530,7 @@ func TestChatSayRepeatAfterResumeRidesOnce(t *testing.T) {
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	// Сессии нет: tmux ls пуст, живого сокета у чата тоже нет.
 	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
-case "$1" in ls) exit 1;; esac
+case "$1" in ls) `+tmuxNoServer+`;; esac
 exit 0`)
 	writeScript(t, e.bin, "claude", "exit 0")
 	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/say"

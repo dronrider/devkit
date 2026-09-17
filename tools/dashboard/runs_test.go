@@ -23,6 +23,11 @@ const runsBoardJSON = `{"prefix":"XR","sections":[` +
 	`{"key":"check","title":"Check","rows":[{"id":"XR-003","title":"Задача на проверке","type":"task","p":"P2","r":32,"r_parts":[25,4,1,0,2],"cost":"-","link":"-"}]},` +
 	`{"key":"backlog","title":"Backlog","rows":[{"id":"XR-002","title":"Обычная задача","type":"task","p":"P2","r":30,"r_parts":[25,2,1,0,2],"cost":"-","link":"-"}]}]}`
 
+// tmuxNoServer это ответ подставного tmux ls на машине без сессий: слова про
+// сервер и ненулевой код, как у настоящего. Молчаливый код 1 по правилу
+// DK-904 читается сорванным опросом, и стенды его не изображают.
+const tmuxNoServer = "echo 'no server running on /tmp/tmux-501/default' >&2; exit 1"
+
 // writeTmuxFake кладёт фикстуру tmux: пишет каждый вызов в журнал, на ls
 // отвечает списком сессий; пустой список это ненулевой код, как у живого tmux
 // без своего сервера.
@@ -33,7 +38,7 @@ func writeTmuxFake(t *testing.T, bin, logPath, sessions string) {
 		// Без сессий tmux отказывает словами про сервер, и так же отказывает
 		// стенд: молчаливый ненулевой код это сорванный опрос, и сторож окон
 		// такой обход пропускает (DK-904).
-		body += "  echo 'no server running on /tmp/tmux-501/default' >&2; exit 1;;\n"
+		body += "  " + tmuxNoServer + ";;\n"
 	} else {
 		body += fmt.Sprintf("  printf '%s';;\n", sessions)
 	}

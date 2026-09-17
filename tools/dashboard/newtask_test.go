@@ -398,8 +398,11 @@ func TestStaticNewTaskForm(t *testing.T) {
 		"Новая задача",
 		// Пара кнопок записи черновика (DK-370, LLD DK-354 решение 5):
 		// одиночной «Записать черновик» и промежуточного экрана между ними
-		// нет, обе дороги закрыты возвратами самих кнопок.
-		"Сохранить и грумить",
+		// нет, обе дороги закрыты возвратами самих кнопок. Подпись второй
+		// кнопки следует выбору исхода (DK-1043): «Сохранить и » стоит
+		// строкой, а слово после него берёт draftModeVerb.
+		"Сохранить и ",
+		"грумить",
 		"Что нужно сделать и зачем",
 		"Завести задачу",
 		"function renderNew(",
@@ -664,14 +667,21 @@ func TestStaticNewFormExit(t *testing.T) {
 }
 
 // Пара кнопок на форме записи (DK-370, LLD DK-354 решение 5): «Сохранить»
-// возвращает в накопитель, «Сохранить и грумить» той же ручкой пишет запись и
-// поднимает разбор. Промежуточного экрана «Черновик записан» между формой и
-// списком нет вовсе.
+// возвращает в накопитель, «Сохранить и грумить» либо «Сохранить и
+// выполнить» той же ручкой пишет запись и поднимает разбор. Какой из двух
+// исходов заказан, решает список рядом (DK-1043), и подпись кнопки следует
+// выбору. Промежуточного экрана «Черновик записан» между формой и списком
+// нет вовсе.
 func TestStaticDraftSaveButtons(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
 		`saveLabel: draft ? "Сохранить" : "Завести задачу"`,
-		`label: "Сохранить и грумить"`,
+		`label: "Сохранить и " + draftModeVerb(newForm.mode)`,
+		// Список из двух пунктов, «грумить» и «выполнить», умолчание груминг.
+		"function draftModePick(",
+		`[DRAFT_MODE_GROOM, "грумить"]`,
+		`[DRAFT_MODE_RUN, "выполнить"]`,
+		"mode: DRAFT_MODE_GROOM",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("пара кнопок записи собрана не тем блоком: нет %q", want)
@@ -694,13 +704,38 @@ func TestStaticDraftSaveButtons(t *testing.T) {
 			t.Errorf("вторая кнопка сохранения живёт своим рубежом: нет %q", want)
 		}
 	}
-	// Разбор поднимается той же ручкой, что и с накопителя, и уводит на экран
-	// записи с ходом разбора.
+	// Разбор поднимается той же ручкой, что и с накопителя, уводит на экран
+	// записи с ходом разбора и уносит с собой выбранный исход.
 	made := funcBody(t, text, "function renderNew(")
-	if !strings.Contains(made, `groomDraft(project, done.id, project + "/draft/" + done.id)`) {
-		t.Error("«Сохранить и грумить» не поднимает разбор с переходом на экран записи")
+	if !strings.Contains(made, `groomDraft(project, done.id, project + "/draft/" + done.id, "", "", mode)`) {
+		t.Error("«Сохранить и ...» не поднимает разбор с переходом на экран записи и с выбранным исходом")
+	}
+	if !strings.Contains(made, "saveDraft(newForm.mode)") {
+		t.Error("«Сохранить и ...» не передаёт выбранный исход записи")
+	}
+	// Подпись кнопки следует выбору списка без похода на сервер.
+	if !strings.Contains(made, `view.saveMore.rename("Сохранить и " + draftModeVerb(v))`) {
+		t.Error("подпись «Сохранить и ...» не следует выбору исхода")
 	}
 	if !strings.Contains(made, `goKeepingChat(project + "/drafts")`) {
 		t.Error("«Сохранить» не возвращает в накопитель")
+	}
+}
+
+// Список исхода на экране записи (DK-1043): кнопка «Грумить» становится
+// «Выполнить», подсказка называет заказ выбранного исхода, а не тот же
+// заказ дважды.
+func TestStaticDraftScreenModePick(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	made := funcBody(t, text, "function renderDraft(")
+	for _, want := range []string{
+		"let groomMode = DRAFT_MODE_GROOM;",
+		`groomBtn.rename(v === DRAFT_MODE_RUN ? "Выполнить" : "Грумить");`,
+		"groomDraft(project, id, \"\", harness, tier, groomMode)",
+		"text.body.orderRun",
+	} {
+		if !strings.Contains(made, want) {
+			t.Errorf("список исхода на экране записи собран не тем блоком: нет %q", want)
+		}
 	}
 }

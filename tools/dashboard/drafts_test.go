@@ -170,8 +170,8 @@ func TestDraftsCarryOrder(t *testing.T) {
 	// Заказ едет дословно тем же текстом, каким его собирает groomPrompt: слова
 	// заказа сторожит TestDraftWaitingFromAsk, а тут проверяется, что до экрана
 	// доезжает именно он, без пересборки на клиенте.
-	if order, _ := first["order"].(string); order != groomPrompt("XR-005", "") {
-		t.Errorf("заказ строки накопителя %q, ждал %q", order, groomPrompt("XR-005", ""))
+	if order, _ := first["order"].(string); order != groomPrompt("XR-005", "", draftModeGroom) {
+		t.Errorf("заказ строки накопителя %q, ждал %q", order, groomPrompt("XR-005", "", draftModeGroom))
 	}
 
 	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
@@ -180,11 +180,18 @@ func TestDraftsCarryOrder(t *testing.T) {
 		t.Fatalf("текст черновика: %d %s", resp.StatusCode, text)
 	}
 	var withOrder struct {
-		Order string `json:"order"`
+		Order    string `json:"order"`
+		OrderRun string `json:"orderRun"`
 	}
 	json.Unmarshal([]byte(text), &withOrder)
-	if withOrder.Order != groomPrompt("XR-005", "") {
+	if withOrder.Order != groomPrompt("XR-005", "", draftModeGroom) {
 		t.Errorf("заказ экрана записи не приехал: %s", text)
+	}
+	// Заказ на «выполнить» едет тем же ответом, той же строкой, что и
+	// groomPrompt: список исхода на экране переключает подсказку без второго
+	// запроса (DK-1043).
+	if withOrder.OrderRun != groomPrompt("XR-005", "", draftModeRun) {
+		t.Errorf("заказ исхода «выполнить» не приехал: %s", text)
 	}
 }
 
@@ -253,7 +260,7 @@ func TestDraftGroomPrompt(t *testing.T) {
 		// Правила плана и канала в текст заказа больше не приписываются
 		// (DK-612): их доставляет хук старта сессии.
 		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' claude --model 'модель-pro' '" +
-			groomPrompt("XR-005", "") + "'",
+			groomPrompt("XR-005", "", draftModeGroom) + "'",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("сессия груминга поднята не так:\n%s\nжду %q", got, want)
@@ -542,9 +549,46 @@ func TestDraftGroomAsk(t *testing.T) {
 	if !strings.Contains(text, "уточнение уехало в заказ") {
 		t.Errorf("ответ не говорит, что уточнение уехало новой ходкой: %s", text)
 	}
-	want := "claude --model 'модель-pro' '" + groomPrompt(id, "оставить эту, вторую снять") + "'"
+	want := "claude --model 'модель-pro' '" + groomPrompt(id, "оставить эту, вторую снять", draftModeGroom) + "'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("уточнение не доехало до заказа сессии:\n%s\nжду %q", got, want)
+	}
+
+	// Пустое поле и явный groom дают тот же заказ, что и раньше: mode это
+	// добавка, а не смена умолчания (DK-1043).
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom", `{"mode": "groom"}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("груминг с явным mode groom: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, groomPrompt(id, "", draftModeGroom)) {
+		t.Errorf("явный mode groom изменил заказ: %s", text)
+	}
+
+	// Исход «выполнить» дописывает заказу хвост про продолжение и про стоп на
+	// трёх других исходах, и хвост доезжает до сессии дословно.
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom", `{"mode": "run"}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("груминг с исходом «выполнить»: %d %s", resp.StatusCode, text)
+	}
+	runOrder := groomPrompt(id, "", draftModeRun)
+	if !strings.Contains(text, runOrder) {
+		t.Errorf("заказ исхода «выполнить» не приехал в ответе ручки: %s\nжду вхождение %q", text, runOrder)
+	}
+	if !strings.Contains(text, "продолжит выполнением") {
+		t.Errorf("сообщение о подъёме не отличает исход «выполнить»: %s", text)
+	}
+	if got := readFile(t, tmuxLog); !strings.Contains(got, runOrder) {
+		t.Errorf("заказ исхода «выполнить» не доехал до сессии:\n%s\nжду вхождение %q", got, runOrder)
+	}
+
+	// Слово, которого нет среди исходов, ручка отбивает: значений у mode
+	// всего два.
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/"+id+"/groom", `{"mode": "delete"}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("чужой mode: %d %s, ждал 400", resp.StatusCode, text)
 	}
 }
 
@@ -589,7 +633,7 @@ func TestDraftGroomAskQuoting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("заказ с кавычками не разобрался шеллом: %v\n%s", err, quoted)
 	}
-	want := groomPrompt(id, ask)
+	want := groomPrompt(id, ask, draftModeGroom)
 	if string(out) != want {
 		t.Errorf("заказ доехал до шелла не тем текстом:\n%s\nжду\n%s", out, want)
 	}

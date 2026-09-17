@@ -18,7 +18,7 @@ import (
 func groomChat(t *testing.T, e *testEnv, sid, id string, said time.Time) {
 	t.Helper()
 	writeSession(t, e.home, e.proj, "", sid,
-		saidLine(groomPrompt(id, ""), said)+
+		saidLine(groomPrompt(id, "", draftModeGroom), said)+
 			fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text",`+
 				`"text":"Завёл строку %s."}]},"timestamp":%q}`, id, said.Add(time.Minute).UTC().Format(time.RFC3339))+"\n",
 		said.Add(time.Minute))
@@ -135,7 +135,7 @@ func TestGroomSweepSkipsOtherChats(t *testing.T) {
 			t.Errorf("реплика %q сочтена заказом груминга: %q", said, got)
 		}
 	}
-	if got := groomChatID(chatEntry{First: groomPrompt("XR-9", "")}); got != "XR-9" {
+	if got := groomChatID(chatEntry{First: groomPrompt("XR-9", "", draftModeGroom)}); got != "XR-9" {
 		t.Errorf("заказ груминга не узнан: %q", got)
 	}
 }

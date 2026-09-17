@@ -31,15 +31,54 @@ import (
 // вопрос был выходом из захода, а ответ уезжал новым заходом с уточнением, и
 // грумер перечитывал черновик заново; экран черновика держал под это своё поле
 // ответа, и оно ушло вместе с механикой (решение пользователя).
-func groomPrompt(id, ask string) string {
+//
+// mode называет исход записи (DK-1043): "groom" оставляет заказ прежним, а
+// "run" дописывает хвост про продолжение выполнением, groomRunTail.
+func groomPrompt(id, ask, mode string) string {
 	prompt := "Проведи груминг " + id +
 		". Вопросы задавай текстом в этом же разговоре: блок печатает " +
 		"taskctl decide " + id + " --chat, он же кладёт признак и паркует запись, " +
 		"а вопрос с прошлого разбора без ответа не повторяй, отложи запись с причиной"
+	if mode == draftModeRun {
+		prompt += groomRunTail(id)
+	}
 	if ask != "" {
 		prompt += ". Человек уточняет: " + ask
 	}
 	return prompt
+}
+
+// draftModeGroom и draftModeRun это два исхода, которыми кончается запись
+// накопителя (DK-1043): разбор без продолжения либо разбор, за которым идёт
+// выполнение. Пустое поле в теле ручки читается как draftModeGroom, прежнее
+// поведение.
+const (
+	draftModeGroom = "groom"
+	draftModeRun   = "run"
+)
+
+// draftMode проверяет значение поля mode тела запроса: пустая строка и
+// draftModeGroom это прежнее поведение, draftModeRun просит хвост про
+// выполнение, а чужое слово ok не подтверждает.
+func draftMode(v string) (string, bool) {
+	switch v {
+	case "", draftModeGroom:
+		return draftModeGroom, true
+	case draftModeRun:
+		return draftModeRun, true
+	}
+	return "", false
+}
+
+// groomRunTail это хвост заказа для исхода «выполнить». Слова про сам
+// продолжение те же, какими просят конвейер задачи в чате (runPrompt,
+// runs.go): разбор продолжает тем же разговором, когда черновик кончился
+// строкой на доске. Три других исхода (приписка, отложен, удалён) заказ
+// останавливает: строки нет, и продолжать нечем.
+func groomRunTail(id string) string {
+	return ". Когда разбор кончится строкой " + id + " на доске, продолжай тем " +
+		"же разговором: " + runPrompt("", id) + ". На трёх других исходах " +
+		"(приписка, отложен, удалён) скажи об этом в чате и останови работу"
 }
 
 // draftAskLimit ограничивает уточнение: это фраза в заказ груминга, а не
@@ -127,7 +166,7 @@ func (s *server) draftsWithOrder(projPath string, items []json.RawMessage) []jso
 		var id string
 		json.Unmarshal(m["id"], &id)
 		if id != "" {
-			if mark, err := json.Marshal(groomPrompt(id, "")); err == nil {
+			if mark, err := json.Marshal(groomPrompt(id, "", draftModeGroom)); err == nil {
 				m["order"] = mark
 			}
 			// Ожидание разговора едет тем же полем и в том же виде, что у
@@ -255,10 +294,15 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, грумминг мог уже завести по нему задачу", id, found.Name, rel)})
 		return
 	}
-	// Заказ едет и сюда, дословно: экран записи держит свою кнопку «Провести
-	// груминг», и подсказка на ней читает то же поле, что и строка накопителя.
+	// Заказ едет и сюда, дословно: экран записи держит свою кнопку «Грумить»,
+	// и подсказка на ней читает то же поле, что и строка накопителя. Оба
+	// исхода едут сразу, order на «грумить» и orderRun на «выполнить»
+	// (DK-1043): список исхода на экране переключает подсказку без похода на
+	// сервер за вторым заказом.
 	out := map[string]any{
-		"id": id, "file": rel, "text": string(text), "order": groomPrompt(id, ""),
+		"id": id, "file": rel, "text": string(text),
+		"order":    groomPrompt(id, "", draftModeGroom),
+		"orderRun": groomPrompt(id, "", draftModeRun),
 		// База правки едет вместе с текстом: экран вернёт её при сохранении, и
 		// разошедшуюся ручка отобьёт вместо молчаливого затирания.
 		"hash": draftHash(text)}
@@ -376,7 +420,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на ID задачи", id)})
 		return
 	}
-	ask, want, wantTier, ok := s.draftAsk(w, r, id)
+	ask, want, wantTier, mode, ok := s.draftAsk(w, r, id)
 	if !ok {
 		return
 	}
@@ -464,7 +508,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// разговаривает со всеми, а сессия называет себя в реестре записью
 	// накопителя, и найти её потом можно тем же списком чатов.
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		groomCmd(s.launchEnv(id, sess, ""), groomPrompt(id, ask),
+		groomCmd(s.launchEnv(id, sess, ""), groomPrompt(id, ask, mode),
 			harness, model)); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("грумминг %s в %s не удался: %s", id, found.Name, text)
@@ -478,13 +522,17 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// пока нет, поэтому смерть поедет в журнал задачи.
 	s.chatRaised(sess, "", id, found.Name)
 	s.logf("грумминг %s в %s поднят (tmux-сессия %s%s)", id, found.Name, sess, harnessTail(harness))
-	message := fmt.Sprintf("грумминг %s поднят в tmux-сессии %s: разбор доведёт черновик до строки Backlog либо снимет его с причиной", id, sess)
+	// Хвост про исход дописывается ко всякому варианту сообщения о подъёме:
+	// человек выбрал «выполнить», и это должно быть слышно, чем бы ни
+	// кончилась остальная фраза (DK-1043).
+	tail := groomLiftTail(mode)
+	message := fmt.Sprintf("грумминг %s поднят в tmux-сессии %s: разбор доведёт черновик до строки Backlog либо снимет его с причиной%s", id, sess, tail)
 	if ask != "" {
-		message = fmt.Sprintf("грумминг %s поднят заново в tmux-сессии %s, уточнение уехало в заказ: агент перечитает черновик и пойдёт с начала", id, sess)
+		message = fmt.Sprintf("грумминг %s поднят заново в tmux-сессии %s, уточнение уехало в заказ: агент перечитает черновик и пойдёт с начала%s", id, sess, tail)
 	}
 	out := map[string]string{
-		"id": id, "kind": "task", "session": sess, "prompt": groomPrompt(id, ask),
-		"message": message, "tier": tier,
+		"id": id, "kind": "task", "session": sess, "prompt": groomPrompt(id, ask, mode),
+		"message": message, "tier": tier, "mode": mode,
 	}
 	if model != "" {
 		out["model"] = model
@@ -492,9 +540,19 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	}
 	if harness != nil {
 		out["harness"] = harness.Name
-		out["message"] = fmt.Sprintf("грумминг %s поднят на подписке %s (tmux-сессия %s)", id, harness.Name, sess)
+		out["message"] = fmt.Sprintf("грумминг %s поднят на подписке %s (tmux-сессия %s)%s", id, harness.Name, sess, tail)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// groomLiftTail это хвост сообщения о подъёме для исхода «выполнить»: без
+// него ответ ручки звучал бы одинаково для обоих режимов, а слышно должно
+// быть то, что выбрал человек (DK-1043).
+func groomLiftTail(mode string) string {
+	if mode == draftModeRun {
+		return ", а после строки на доске продолжит выполнением"
+	}
+	return ""
 }
 
 // groomCmd собирает команду сессии разбора. Клиент чужой подписки поднимается
@@ -523,7 +581,7 @@ func groomCmd(env, prompt string, h *Harness, model string) string {
 // draftAsk достаёт уточнение из тела запроса. Тело бывает и пустым: кнопка
 // «Грумить» шлёт заказ без слов, а уточнение приходит только с поля
 // повторной ходки.
-func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (string, string, string, bool) {
+func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (ask, harness, tier, mode string, ok bool) {
 	var body struct {
 		Ask string `json:"ask"`
 		// Подписка выбирается при запуске, как у конвейера задачи: разбор
@@ -533,11 +591,14 @@ func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (st
 		// Ярус едет тем же телом, что и подписка: подписка выбирает контур, а
 		// ярус вес модели, и без него разбор шёл дефолтом клиента.
 		Tier string `json:"tier"`
+		// Исход записи (DK-1043): пустое поле и "groom" оставляют заказ
+		// прежним, "run" дописывает хвост про продолжение выполнением.
+		Mode string `json:"mode"`
 	}
 	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, draftAskLimit)).Decode(&body)
 	switch {
 	case errors.Is(err, io.EOF):
-		return "", "", "", true
+		return "", "", "", draftModeGroom, true
 	case err != nil:
 		var mbe *http.MaxBytesError
 		text := "жду JSON {\"ask\": \"...\"} либо пустое тело"
@@ -546,9 +607,16 @@ func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (st
 		}
 		s.logf("груминг %s отклонён: тело запроса не разобралось 400", id)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": text})
-		return "", "", "", false
+		return "", "", "", "", false
 	}
-	return strings.Join(strings.Fields(body.Ask), " "), body.Harness, strings.TrimSpace(body.Tier), true
+	got, modeOK := draftMode(body.Mode)
+	if !modeOK {
+		text := fmt.Sprintf("%q не похоже на исход записи: жду groom либо run", body.Mode)
+		s.logf("груминг %s отклонён: %s 400", id, text)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": text})
+		return "", "", "", "", false
+	}
+	return strings.Join(strings.Fields(body.Ask), " "), body.Harness, strings.TrimSpace(body.Tier), got, true
 }
 
 // handleDraftDrop удаляет черновик. Причина обязательна, как и у самой

@@ -12819,11 +12819,42 @@ const GROOM_HINT = "«Грумить» поднимает сессию разб�
   "запись до строки Backlog либо снимет её с причиной. Ход разбора и его исход " +
   "видны на экране записи.";
 
+// Исход записи (DK-1043): «грумить» оставляет заказ разбора прежним,
+// «выполнить» дописывает ему хвост про продолжение выполнением, когда разбор
+// кончится строкой на доске. Список из двух пунктов стоит рядом с кнопкой
+// подъёма на форме новой записи и на экране самой записи, а подпись кнопки
+// следует выбору. Умолчание «грумить», как и раньше.
+const DRAFT_MODE_GROOM = "groom";
+const DRAFT_MODE_RUN = "run";
+const DRAFT_MODE_LABELS = [[DRAFT_MODE_GROOM, "грумить"], [DRAFT_MODE_RUN, "выполнить"]];
+
+// draftModeVerb называет исход глаголом для подписи кнопки: «Грумить» или
+// «Выполнить» на экране записи, «Сохранить и грумить» либо «Сохранить и
+// выполнить» на форме новой записи.
+function draftModeVerb(mode) {
+  return mode === DRAFT_MODE_RUN ? "выполнить" : "грумить";
+}
+
+// draftModePick рисует список из двух пунктов. Текст пункта русское слово, а
+// не имя режима: сервер сверяет уже английское значение в поле mode.
+function draftModePick(cur, onPick) {
+  const sel = el("select", "cdsel");
+  sel.setAttribute("aria-label", "исход записи");
+  for (const [value, label] of DRAFT_MODE_LABELS) {
+    const opt = el("option", "", label);
+    opt.value = value;
+    opt.selected = value === cur;
+    sel.append(opt);
+  }
+  sel.addEventListener("change", () => { onPick(sel.value); });
+  return sel;
+}
+
 // afterOk это хэш экрана записи: заполнен со строки накопителя, до DK-286
 // нажатие там уводило на общий экран агента, у которого нет ни текста
 // записи, ни исхода разбора (LLD DK-328, «Отвергнутое»). С экрана самой
 // записи afterOk не передают, там уже стоит экран этой работы.
-async function groomDraft(project, id, afterOk, harness, tier) {
+async function groomDraft(project, id, afterOk, harness, tier, mode) {
   sayResult("подъём груминга " + id + "...");
   const order = {};
   // Подписка едет только выбранная: пустое поле это «как раньше», и сервер
@@ -12832,6 +12863,9 @@ async function groomDraft(project, id, afterOk, harness, tier) {
   // Ярус едет тем же телом: пустое поле это pro, и сверяет имя с раскладкой
   // машины сам сервер, как сверяет имя подписки.
   if (tier) order.tier = tier;
+  // Исход едет только на «выполнить»: пустое поле и «грумить» это прежнее
+  // поведение, и сервер сам читает его как groom (DK-1043).
+  if (mode === DRAFT_MODE_RUN) order.mode = mode;
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/drafts/" + encodeURIComponent(id) + "/groom",
     { method: "POST", body: order });
@@ -13939,23 +13973,40 @@ async function renderDraft(project, works, id) {
       } else {
         // Пока разбор идёт, поднять второй нечем: кнопка рядом с пометкой
         // «груминг идёт» звала запустить грумера поверх работающего.
+        // Исход записи стоит выпадашкой рядом с кнопкой (DK-1043): выбор
+        // решает, продолжит ли поднятая сессия конвейером задачи после
+        // строки на доске, либо разбор кончается ей одной, как раньше.
+        // Подпись кнопки и подсказка следуют выбору без похода на сервер:
+        // оба заказа уже приехали текстом записи.
+        let groomMode = DRAFT_MODE_GROOM;
+        let groomBtn = null;
+        const groomOrder = (mode) => (text.ok
+          ? (mode === DRAFT_MODE_RUN ? text.body.orderRun : text.body.order) || ""
+          : "");
+        const groomTip = (mode) => (groomOrder(mode) ? "Заказ агенту: «" + groomOrder(mode) + "»." : "");
         const groom = runControl(project, id,
-          (label) => barBtn("btn btn-acc", label, "i-play"),
-          "Грумить", false,
-          text.ok && text.body.order ? "Заказ агенту: «" + text.body.order + "»." : "",
+          (label) => { groomBtn = barBtn("btn btn-acc", label, "i-play"); return groomBtn; },
+          "Грумить", false, groomTip(groomMode),
           "", "",
           // Несохранённая правка уезжает на диск до подъёма разбора: иначе
           // агент прочитал бы старый текст, и потеря была бы молчаливой.
           (harness, tier) => (form.text !== said
             ? saveDraftText(project, id, form.text, hash)
             : Promise.resolve(true))
-            .then((ok) => ok && groomDraft(project, id, "", harness, tier))
+            .then((ok) => ok && groomDraft(project, id, "", harness, tier, groomMode))
             .then((ok) => {
               if (ok) refresh().catch(console.error);
               return ok;
             }),
           harnessTiers());
-        actions.push(groom);
+        const modeSel = draftModePick(groomMode, (v) => {
+          groomMode = v;
+          if (groomBtn) {
+            groomBtn.rename(v === DRAFT_MODE_RUN ? "Выполнить" : "Грумить");
+            withTip(groomBtn, groomTip(v));
+          }
+        });
+        actions.push(modeSel, groom);
       }
       // Карточек исхода разбора на форме нет ни одной. Разговор с агентом у
       // нас всегда идёт в чате, и место исхода там же, а на доске он виден по
@@ -14084,7 +14135,7 @@ const DRAFT_OFF_PARTS = "поля те же, что у задачи, но пок
 // переключатель их не теряет.
 const newForm = { project: "", draft: false, title: "", type: "task", cost: "-",
   parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "", prio: "mid",
-  seeded: false };
+  seeded: false, mode: DRAFT_MODE_GROOM };
 
 function resetNewForm(project) {
   newForm.project = project;
@@ -14098,6 +14149,7 @@ function resetNewForm(project) {
   newForm.reason = "";
   newForm.prio = "mid";
   newForm.seeded = false;
+  newForm.mode = DRAFT_MODE_GROOM;
 }
 
 // Форма набрана хоть чем-то: пустую закрываем молча, а над набранной сперва
@@ -14185,6 +14237,17 @@ function renderNew(project, kind) {
   });
   prioPick.querySelector("select").setAttribute("aria-label", "уровень разбора записи накопителя");
   prioBox.append(prioPick);
+  // Исход записи стоит рядом с уровнем разбора (DK-1043): выбор решает,
+  // чем кончится кнопка «Сохранить и ...», грумингом одним или продолжением
+  // выполнением после строки на доске. Подпись кнопки следует выбору.
+  const modePick = el("label", "pick");
+  modePick.append(el("span", "pl", "исход записи"));
+  modePick.append(draftModePick(newForm.mode, (v) => {
+    newForm.mode = v;
+    if (view && view.saveMore) view.saveMore.rename("Сохранить и " + draftModeVerb(v));
+    view.touch();
+  }));
+  prioBox.append(modePick);
   const prioHint = el("div", "hint", PRIO_HINT);
 
   // Вид приёмки, барьер и причина (DK-301): вид закрытым списком из трёх,
@@ -14249,9 +14312,11 @@ function renderNew(project, kind) {
   };
   // Обе кнопки записи ходят одной ручкой и расходятся только дорогой после
   // неё. «Сохранить» возвращает в накопитель, и следующая запись начинается
-  // оттуда же, с плюса на списке. «Сохранить и грумить» поднимает разбор без
-  // лишних вопросов и открывает экран записи, где виден его ход.
-  const saveDraft = (groom) => {
+  // оттуда же, с плюса на списке. «Сохранить и грумить» либо «Сохранить и
+  // выполнить» поднимает разбор без лишних вопросов и открывает экран
+  // записи, где виден его ход. Какой из двух исходов заказан, называет mode
+  // (DK-1043). У «Сохранить» это false, и подъёма он не просит вовсе.
+  const saveDraft = (mode) => {
     if (draftFormRefusal(newForm)) return;
     // Уезжает написанное как есть: разметку разделов утилита записи узнаёт
     // сама, а снятый или добавленный рукой раздел это дело автора.
@@ -14263,8 +14328,8 @@ function renderNew(project, kind) {
       // Записанное ищут в накопителе, и метка ведёт туда глаз: свежая запись
       // оказывается не там, куда человек смотрит.
       freshRow = done.id || "";
-      if (groom && done.id) {
-        await groomDraft(project, done.id, project + "/draft/" + done.id);
+      if (mode && done.id) {
+        await groomDraft(project, done.id, project + "/draft/" + done.id, "", "", mode);
         return;
       }
       goKeepingChat(project + "/drafts");
@@ -14290,7 +14355,9 @@ function renderNew(project, kind) {
     // после записи (LLD DK-354, решение 5). Промежуточной карточки с
     // «Записать ещё» и «На доску» между ними нет: обе её дороги закрыты
     // возвратами самих кнопок.
-    saveMore: draft ? { label: "Сохранить и грумить", onSave: () => { saveDraft(true); } } : null,
+    saveMore: draft
+      ? { label: "Сохранить и " + draftModeVerb(newForm.mode), onSave: () => { saveDraft(newForm.mode); } }
+      : null,
     quitLabel: draft ? "Не записывать" : "Не заводить",
     onQuit: (btn) => { leaveNew(btn); },
     actions: [],

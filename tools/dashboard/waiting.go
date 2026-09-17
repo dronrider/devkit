@@ -535,9 +535,9 @@ func (s *server) waitAlive(projPath string, w Waiting) bool {
 	return s.humanSaidCached(info.path, info.stamp) <= w.Since
 }
 
-// saidEntry это запомненный момент последней реплики человека одного
+// humanSaidEntry это запомненный момент последней реплики человека одного
 // транскрипта и отпечаток файла, по которому он снят.
-type saidEntry struct {
+type humanSaidEntry struct {
 	at    int64
 	stamp string
 }
@@ -552,14 +552,14 @@ type saidEntry struct {
 // отпечатком.
 func (s *server) humanSaidCached(path, stamp string) int64 {
 	s.mu.Lock()
-	e, hit := s.said[path]
+	e, hit := s.humanSaid[path]
 	s.mu.Unlock()
 	if hit && e.stamp == stamp {
 		return e.at
 	}
 	at := lastHumanSaid(path)
 	s.mu.Lock()
-	s.said[path] = saidEntry{at: at, stamp: stamp}
+	s.humanSaid[path] = humanSaidEntry{at: at, stamp: stamp}
 	s.mu.Unlock()
 	return at
 }

@@ -7044,8 +7044,9 @@ function goalMessageURL(project, id) {
 
 // Отправленное человеком под лентой чата: свои реплики со своими состояниями
 // плюс чужие строки «Входящих» (их мог положить другой браузер или рука).
-// Пустота говорит словами: пустая коробка неотличима от неотрисованной.
-function makeOutbox(project, id, box, url, onLive, opts) {
+// Пустая коробка остаётся без слов, как и пустая лента: сбой чтения рисуется
+// своим узлом div.error, и пустота от поломки остаётся отличима.
+function makeOutbox(project, id, box, url, opts) {
   // Список лежащего есть только у ручки цели: «Входящие» читаются тем же
   // адресом, каким пишутся. У ручек разговора и задачи чтения нет вовсе, и
   // очередь тогда живёт без сверки: отправленная реплика подписана лежащей во
@@ -7055,7 +7056,6 @@ function makeOutbox(project, id, box, url, onLive, opts) {
   let others = [];
   // Отметки доставки лежащих строк, ключ это строка «Входящих» целиком.
   let marks = new Map();
-  let empty = "во «Входящих» пусто: непрочитанных сообщений нет";
   let failed = "";
   // Заход очереди идёт по одному: два параллельных дожима слали бы один и тот
   // же текст дважды. told помнит, о какой реплике человеку уже сказали, чтобы
@@ -7093,10 +7093,6 @@ function makeOutbox(project, id, box, url, onLive, opts) {
         marks.has(line) ? deliveredMeta(marks.get(line)) : "ждёт витка"));
     }
     for (const m of mine) box.append(bubble(m));
-    // Пустота говорится словами там, где лежащее вообще читается: у ручек без
-    // чтения пустая коробка это просто отсутствие своих реплик, и слова про
-    // «Входящие» там были бы о чужом предмете.
-    if (readable && !others.length && !mine.length) box.append(el("div", "empty", empty));
     if (failed) box.append(el("div", "error", failed));
   };
 
@@ -7122,13 +7118,7 @@ function makeOutbox(project, id, box, url, onLive, opts) {
     }
     failed = "";
     const pending = r.body.pending || [];
-    if (r.body.note) empty = r.body.note;
     marks = new Map((r.body.delivered || []).map((mark) => [mark.line, mark]));
-    // Живость витка сервер судит правилом подхвата, а не списком работ
-    // экрана, и плашка чата берёт ответ отсюда. Ответ без поля живости
-    // (старый сервер) плашку не трогает: выдуманное «доставим за минуты»
-    // хуже прежних слов про следующий виток.
-    if (onLive && typeof r.body.live === "boolean") onLive(r.body.live);
     const known = new Set(mine.map((m) => m.line).filter(Boolean));
     others = pending.filter((line) => !known.has("- " + line));
     for (const m of mine) {
@@ -7288,51 +7278,6 @@ async function sendMessage(project, id, ta, out) {
   ta.value = "";
   sayResult("отправка сообщения для " + id + "...");
   await out.send(text);
-}
-
-// Плашка над полем ввода. При идущем цикле в ней сказано, когда агент
-// прочитает сообщение, и закрывается она крестиком: прочитав её однажды,
-// держать её над полем незачем. При стоящем цикле в ней сказано прямо, что
-// читать сообщение некому, и рядом стоит та же ручка подъёма витка, что кнопка
-// в ленте: до DK-319 строка ложилась во «Входящие» с молчаливым «ждёт витка», а
-// человек ждал ответа от закончившего работу агента. Отказ крестиком не
-// закрывается, спрятанный отказ это то же молчание. Признак running приходит
-// той же работой цели, какую сервер считает живой (goalIdle в messages.go):
-// цикл в чужом окне и цель из реестра для плашки живые, хотя кнопка стопа их и
-// не берёт.
-//
-// Минуты до доставки плашка обещает не по этому признаку, а по живости витка
-// с ручки сообщения (goalLive в mail.go, DK-136): убитая оболочка запись
-// реестра не снимает, и цель с мёртвым циклом держит на экране работу, до
-// которой доставлять некому. Живость приходит перечитыванием «Входящих» и
-// живёт на самой плашке, поэтому перерисовка по доске её не теряет. Плашка
-// называет доставку, а не действие: до идущего витка реплика доходит за
-// минуты, а развернуть работу он может и позже, на границе шага.
-function fillChatNote(note, running, live) {
-  const said = findKey(note, "chat-said");
-  const start = findKey(note, "chat-start");
-  const close = findKey(note, "chat-close");
-  if (!said || !start || !close) return;
-  if (live !== undefined) note.dataset.live = live ? "1" : "0";
-  note.dataset.running = running ? "1" : "";
-  said.replaceChildren();
-  if (running && note.dataset.live === "1") {
-    said.append(el("b", "", "Сообщение уйдёт агенту."));
-    said.append(document.createTextNode(
-      " Идущий виток получит его за минуты, на ближайшем законченном ходе, " +
-      "а развернуть работу может и позже, на границе шага."));
-  } else if (running) {
-    said.append(el("b", "", "Сообщение уйдёт агенту."));
-    said.append(document.createTextNode(" Он отреагирует на него на следующей рабочей итерации."));
-  } else {
-    said.append(el("b", "", "Цикл цели не идёт."));
-    said.append(document.createTextNode(
-      " Сообщение ляжет во «Входящие» файла цели и будет лежать там, пока виток не поднят."));
-  }
-  note.className = running ? "cnote" : "cnote idle";
-  start.hidden = running;
-  close.hidden = !running;
-  if (!running) note.hidden = false;
 }
 
 
@@ -8417,7 +8362,6 @@ async function chatState(project, addr, board, works) {
     // реплика отсюда уходит во «Входящие» файла цели. Чат человека по цели
     // остаётся своим разговором, и реплика ему идёт прежней дорогой.
     st.goal = turn || (goalAddr && st.isGoal && !st.sid) ? st.task : "";
-    st.goalRun = Boolean(st.goal && (works || []).some((w) => w.id === st.goal));
     const row = boardRow(board, st.task);
     st.title = row ? row.title : "";
     // Ожидание человека едет в панель вместе с задачей: пока строка стоит с
@@ -11600,25 +11544,14 @@ function chatPanel(project, st) {
   // витка, мимо «Входящих» (DK-938).
   let goalOut = null;
   if (way.kind === "goal") {
-    const note = keyed(el("div", "cnote"), "chat-note", "");
-    const said = keyed(el("span"), "chat-said", "");
-    const start = keyed(el("button", "btn btn-acc", "Поднять виток"), "chat-start", "");
-    start.addEventListener("click", () => { startRun(st.project, st.goal).catch(console.error); });
-    const shut = keyed(el("button", "nx"), "chat-close", "");
-    shut.setAttribute("aria-label", "Закрыть");
-    shut.title = "Закрыть";
-    shut.append(icon("close"));
-    shut.addEventListener("click", () => { note.hidden = true; });
-    note.append(said, start, shut);
-    wrap.append(note);
-    fillChatNote(note, Boolean(st.goalRun));
     const inbox = el("div", "msgs mlocal");
     wrap.append(inbox);
-    // Живость витка решает ручка «Входящих» правилом подхвата, а не список
-    // работ экрана: форма, открытая по ссылке, панель поднимает раньше, чем
-    // список работ пришёл, и живой цикл назывался стоящим.
-    goalOut = makeOutbox(st.project, st.goal, inbox, goalMessageURL(st.project, st.goal),
-      (live) => { fillChatNote(note, note.dataset.running === "1" || live, live); });
+    // Плашки над полем ввода тут больше нет ни в одном виде: про отправку
+    // человек читал её на каждой цели заново и закрывал крестиком. Стоящий
+    // цикл от этого не прячется: сама реплика подписана «ждёт витка»,
+    // уведомление о стопе несёт кнопку подъёма, а запустить виток можно из
+    // строки доски (след DK-319).
+    goalOut = makeOutbox(st.project, st.goal, inbox, goalMessageURL(st.project, st.goal));
     chatLive.push(goalOut.stop);
     goalOut.draw();
     goalOut.load().catch(console.error);

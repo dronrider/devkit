@@ -73,8 +73,10 @@ func TestBrowserGoalChatOpensLoop(t *testing.T) {
 		if v.Stop || !v.Green {
 			t.Errorf("чат витка после кнопки %s не зелёный: %+v", one.where, v)
 		}
-		if !strings.Contains(v.Note, "Сообщение уйдёт агенту") {
-			t.Errorf("над полем чата витка (кнопка %s) нет слов про доставку: %q", one.where, v.Note)
+		// Плашка над полем ввода снята (DK-957): у живого витка над полем
+		// ничего не стоит, и зонд возвращает пустые слова.
+		if v.Note != "" {
+			t.Errorf("над полем чата витка (кнопка %s) вернулась плашка: %q", one.where, v.Note)
 		}
 		t.Logf("кнопка %s: %+v", one.where, v)
 	}

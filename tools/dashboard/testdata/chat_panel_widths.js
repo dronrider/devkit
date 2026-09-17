@@ -30,7 +30,7 @@ const PANEL = `
   <div class="chatwrap">
     <div class="msgs chatfeed"><div class="mlist"><div class="msg"><div class="bb">лента разговора</div><div class="mm">агент, 10:02, из транскрипта</div></div></div></div>
     <div class="msgs"></div>
-    <div class="cnote"><span>Реплика ляжет во вход разговора.</span><button class="nx"></button></div>
+    <div class="cnote"><span>Реплика ляжет во вход разговора.</span></div>
     <div class="cbox"><textarea placeholder="Написать агенту..."></textarea><div class="crow"><button class="btn btn-acc">Отправить</button></div></div>
   </div>`;
 

@@ -849,21 +849,8 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .msg.m-stuck .bb{border-color:color-mix(in oklab,var(--check) 50%,var(--line))}
 .msg.m-stuck .mm{color:var(--check)}
 .cnote{display:flex;align-items:flex-start;gap:8px;padding:9px 14px;border-radius:9px;background:color-mix(in oklab,var(--check) 9%,var(--bg1));border:1px solid color-mix(in oklab,var(--check) 25%,transparent);font:400 12px/1.5 var(--sans);color:var(--tx2);margin:16px 0 10px}
-.cnote b{color:var(--check);font-weight:600;white-space:nowrap}
-/* Плашка разговора прячется атрибутом hidden, а раскладывается она флексом, и
-   авторское display сильнее встроенного [hidden]{display:none} браузера. Без
-   парного правила плашка разлогина (DK-466) стояла на экране всегда: код гасил
-   её первым же живым ответом агента, а с экрана она не уходила, и человек
-   видел «Сессия разлогинена» над работающим разговором. */
-.cnote[hidden]{display:none}
-.cnote .nx{margin-left:auto;flex:none;width:24px;height:24px;border-radius:6px;border:none;background:none;color:var(--tx3);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
-.cnote .nx svg{width:11px;height:11px;display:block}
-.cnote .nx:hover{color:var(--tx);background:var(--bg2)}
-/* та же плашка про стоящий цикл: цвет стопа, а рядом с отказом ручка подъёма
-   витка (DK-319) */
+/* тот же щиток про погашенный ввод: цвет стопа вместо цвета работы */
 .cnote.idle{background:color-mix(in oklab,var(--block) 9%,var(--bg1));border-color:color-mix(in oklab,var(--block) 25%,transparent)}
-.cnote.idle b{color:var(--block)}
-.cnote .btn{flex:none;margin-left:auto;height:28px;min-height:28px;padding:0 12px;font-size:12px}
 /* Плашка разлогина (DK-466): та же плашка разговора, но тревожного цвета и с
    кнопкой починки. Слова и кнопка переносятся: на узком экране кнопка встаёт
    своей строкой, а не уезжает за край, потому что с телефона путь к починке
@@ -1008,8 +995,8 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    цветом слов и тем, что у него вовсе нет таймера */
 .flash.res{cursor:default}
 .flash.res.err .ft b{color:var(--block)}
-/* крестик закрытия: тот же приём, что у плашки чата (.cnote .nx), тычок по
-   нему не должен доходить до клика по карточке. */
+/* крестик закрытия: тот же приём, что у крестика шапки панели (.chead .nx),
+   тычок по нему не должен доходить до клика по карточке. */
 .flash .nx{flex:none;width:26px;height:26px;border-radius:7px;border:none;background:none;color:var(--tx3);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
 .flash .nx svg{width:12px;height:12px;display:block}
 .flash .nx:hover{color:var(--tx);background:var(--bg2)}

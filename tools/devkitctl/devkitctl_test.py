@@ -715,7 +715,7 @@ class DeployTest(SandboxCase):
         self.assertIn_("пустой test=", out, "после дописывания нет находки про пустой test=")
 
     def test_16_machine_ignore_paths(self):
-        # Машинные записи .devkit (cmdout/, ship.lock, goal-*) раскладывает
+        # Машинные записи .devkit (cmdout/, ship.lock*, goal-*) раскладывает
         # автоматика подключения (new), а отсутствие доктор помечает находкой и
         # чинит по --fix, как журнал запусков (DK-278). Проверка идёт в блоке
         # in_git, а не блока доски: cmdout и shipctl работают и в проекте без
@@ -732,6 +732,10 @@ class DeployTest(SandboxCase):
                          "new не гитигнорнул .devkit/cmdout/")
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/ship.lock")[0], 0,
                          "new не гитигнорнул .devkit/ship.lock")
+        # Запись держателя замка лежит рядом с ним и попадает под тот же
+        # шаблон (DK-122): её имя сверяется живым, а не только шаблоном.
+        self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/ship.lock.owner")[0], 0,
+                         "new не гитигнорнул запись держателя замка")
         # Рабочее состояние цикла цели сверяется не только шаблоном, но и живым
         # именем файла (DK-443): в статусе висели именно журнал витков, файл
         # отметок и его замок, а шаблон без них подтвердил бы сам себя.
@@ -745,14 +749,14 @@ class DeployTest(SandboxCase):
         # Старый проект, подключённый до появления записей: стёрли их из .gitignore.
         gi = proj / ".gitignore"
         kept = [ln for ln in gi.read_text(encoding="utf-8").splitlines()
-                if ln.strip() not in (".devkit/cmdout/", ".devkit/ship.lock", ".devkit/goal-*",
+                if ln.strip() not in (".devkit/cmdout/", ".devkit/ship.lock*", ".devkit/goal-*",
                                       ".devkit/chat/")]
         gi.write_text("\n".join(kept) + "\n", encoding="utf-8")
         rc, out = self.box.doctor(proj)
         self.assertEqual(rc, 1, "doctor не вернул 1 при отсутствующих машинных гитигнор-записях")
         self.assertIn_(".devkit/cmdout/ не гитигнорнут", out,
                        "doctor не нашёл отсутствующий гитигнор cmdout")
-        self.assertIn_(".devkit/ship.lock не гитигнорнут", out,
+        self.assertIn_(".devkit/ship.lock* не гитигнорнут", out,
                        "doctor не нашёл отсутствующий гитигнор ship.lock")
         self.assertIn_(".devkit/goal-* не гитигнорнут", out,
                        "doctor не нашёл отсутствующий гитигнор рабочего состояния цели")
@@ -762,7 +766,7 @@ class DeployTest(SandboxCase):
         _, out = self.box.doctor(proj, "--fix")
         self.assertIn_("починено: .gitignore: добавлен .devkit/cmdout/", out,
                        "doctor --fix не дописал cmdout")
-        self.assertIn_("починено: .gitignore: добавлен .devkit/ship.lock", out,
+        self.assertIn_("починено: .gitignore: добавлен .devkit/ship.lock*", out,
                        "doctor --fix не дописал ship.lock")
         self.assertIn_("починено: .gitignore: добавлен .devkit/goal-*", out,
                        "doctor --fix не дописал рабочее состояние цели")
@@ -772,6 +776,8 @@ class DeployTest(SandboxCase):
                          "после --fix cmdout не гитигнорнут")
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/ship.lock")[0], 0,
                          "после --fix ship.lock не гитигнорнут")
+        self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/ship.lock.owner")[0], 0,
+                         "после --fix запись держателя замка не гитигнорнута")
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/goal-MP-001.log")[0], 0,
                          "после --fix журнал витков цели не гитигнорнут")
         # Повторный доктор находок по машинным путям не даёт.

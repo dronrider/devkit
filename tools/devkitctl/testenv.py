@@ -107,7 +107,8 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
 ]}, {"matcher": "Bash|Agent", "hooks": [
   {"type": "command", "command": "%s"}
 ]}, {"matcher": "Bash", "hooks": [
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/phase-budget.py --hook claude-code"}
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/phase-budget.py --hook claude-code"},
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/prose-mark.py --hook claude-code"}
 ]}], "PreToolUse": [{"matcher": "Bash", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-read-secret.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-subst.py --hook"},
@@ -118,11 +119,14 @@ SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
 ]}, {"matcher": "Read", "hooks": [
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-reread.py --hook"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-longfile.py --hook"}
+]}, {"matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-prose-sample.py --hook"}
 ]}], "SessionStart": [{"hooks": [
   {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"},
   {"type": "command", "command": "python3 ~/projects/devkit/hooks/session-task.py --hook claude-code"},
   {"type": "command", "command": "sh ~/projects/devkit/hooks/board-catchup.sh"},
-  {"type": "command", "command": "sh ~/projects/devkit/hooks/devkit-catchup.sh"}
+  {"type": "command", "command": "sh ~/projects/devkit/hooks/devkit-catchup.sh"},
+  {"type": "command", "command": "python3 ~/projects/devkit/hooks/prose-mark.py --hook claude-code"}
 ]}], "Notification": [{"hooks": [
   {"type": "command", "command": "%s"},
   {"type": "command", "command": "%s"}

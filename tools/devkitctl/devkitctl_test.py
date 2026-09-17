@@ -2216,6 +2216,22 @@ class HarnessHooksTest(SandboxCase):
                          "доктор не заметил PreToolUse-хук повторных чтений")
         self.assertRegex(out, r"на PreToolUse Read[^\n]*check-longfile\.py|check-longfile\.py[^\n]*на PreToolUse Read",
                          "доктор не заметил PreToolUse-хук длинных чтений")
+        # Рубеж выборки prose (DK-1024) говорит своей категорией, отдельной от
+        # чтения: без него его отсутствие выдавалось бы за дыру чтения секретов,
+        # а ломается там другое, запись долгоживущего текста без корпуса.
+        self.assertRegex(out, r"на PreToolUse записи[^\n]*check-prose-sample\.py|"
+                              r"check-prose-sample\.py[^\n]*на PreToolUse записи",
+                         "доктор не заметил PreToolUse-хук выборки prose")
+        self.assertIn_("держится только дисциплиной модели", out,
+                       "находка не говорит, что ломается без рубежа выборки")
+        # Отметка выборки (DK-1024) говорит своей строкой на двух событиях: без
+        # PostToolUse рубеж записи блокирует каждый заход, без SessionStart он
+        # не гаснет после сжатия контекста.
+        self.assertRegex(out, r"отметка выборки prose-mark\.py не подключена на события "
+                              r"PostToolUse, SessionStart",
+                         "доктор не заметил неподключённую отметку выборки prose")
+        self.assertIn_("врёт, что выборка ещё в силе", out,
+                       "находка не говорит, что ломается без отметки выборки")
         # Подхват реплики говорит своей категорией: без неё --fix хук положит, а
         # doctor без ключа промолчит, и неподключённый канал чата останется
         # неотличим от штатной тишины.
@@ -2245,6 +2261,11 @@ class HarnessHooksTest(SandboxCase):
                          "--fix не разложил PreToolUse-хук повторных чтений")
         self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-longfile\.py на PreToolUse",
                          "--fix не разложил PreToolUse-хук длинных чтений")
+        self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-prose-sample\.py на PreToolUse",
+                         "--fix не разложил PreToolUse-хук выборки prose DK-1024")
+        self.assertRegex(out,
+                         r"включено \d+ хук\S* харнеса в[^\n]*prose-mark\.py на PostToolUse, SessionStart",
+                         "--fix не разложил отметку выборки prose")
         self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*chat-in\.py на PostToolUse",
                          "--fix не разложил подхват реплики")
         self.assertRegex(out,
@@ -2273,16 +2294,18 @@ class HarnessHooksTest(SandboxCase):
                          hooks["PostToolUse"])
         self.assertEqual(len([c for c in post if "agent-watch.py" in c]), 1, post)
         self.assertEqual(len([c for c in post if "phase-budget.py" in c]), 1, post)
+        self.assertEqual(len([c for c in post if "prose-mark.py" in c]), 1, post)
         chat = [h["command"] for g in hooks["PostToolUse"] if not g.get("matcher")
                 for h in g["hooks"]]
         self.assertEqual(len(chat), 2, chat)
         self.assertIn("chat-in.py", chat[0])
         self.assertIn("session-task.py --touch", chat[1])
-        # PreToolUse: три группы на трёх матчерах, Bash (чтение секретов
+        # PreToolUse: четыре группы на четырёх матчерах, Bash (чтение секретов
         # и подстановка), Bash с инструментом делегирования (рубеж
-        # синхронности: фоном зовутся оба, и матчер у рубежа поэтому свой) и
-        # Read (повторные чтения и длинные чтения). Каждая своим скриптом,
-        # порядок как в HOOK_LAYOUT.
+        # синхронности: фоном зовутся оба, и матчер у рубежа поэтому свой),
+        # Read (повторные чтения и длинные чтения) и запись (рубеж выборки
+        # prose, DK-1024, включая MultiEdit). Каждая своим скриптом, порядок
+        # как в HOOK_LAYOUT.
         pre = [h["command"] for g in hooks["PreToolUse"] for h in g["hooks"]]
         self.assertEqual(len([c for c in pre if "check-read-secret.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-subst.py" in c]), 1, pre)
@@ -2291,8 +2314,10 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual(len([c for c in pre if "check-background.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-reread.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-longfile.py" in c]), 1, pre)
+        self.assertEqual(len([c for c in pre if "check-prose-sample.py" in c]), 1, pre)
         self.assertEqual([g.get("matcher") for g in hooks["PreToolUse"]],
-                         ["Bash", "Bash|Agent", "Read"], hooks["PreToolUse"])
+                         ["Bash", "Bash|Agent", "Read", "Edit|Write|MultiEdit|NotebookEdit"],
+                         hooks["PreToolUse"])
         for event in ("Notification", "Stop", "StopFailure", "SubagentStop", "UserPromptSubmit"):
             cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
             self.assertEqual(len([c for c in cmds if "notify.py" in c]), 1, (event, cmds))
@@ -2320,6 +2345,9 @@ class HarnessHooksTest(SandboxCase):
         start = [h["command"] for g in hooks["SessionStart"] for h in g["hooks"]]
         self.assertEqual(len([c for c in start if "quota-refresh.sh" in c]), 1, start)
         self.assertEqual(len([c for c in start if "session-task.py" in c]), 1, start)
+        # Отметка выборки prose (DK-1024) гасит след на SessionStart с
+        # source=compact тем же скриптом, что ставит его на PostToolUse.
+        self.assertEqual(len([c for c in start if "prose-mark.py" in c]), 1, start)
         # Догон бокового дерева доски (DK-269) ложится туда же, третьим
         # SessionStart-хуком, и повторный --fix его не дублирует.
         self.assertEqual(len([c for c in start if "board-catchup.sh" in c]), 1, start)
@@ -2332,7 +2360,7 @@ class HarnessHooksTest(SandboxCase):
         self.assertNotIn_("env-ключ", out, "повторный --fix вписал вотчдог второй раз")
         post = [h["command"] for g in json.loads(read(self.settings))["hooks"]["PostToolUse"]
                 for h in g["hooks"]]
-        self.assertEqual(len(post), 9, post)
+        self.assertEqual(len(post), 10, post)
 
     def test_hooks_from_a_stray_tree_are_repointed(self):
         # DK-582: строка с путём чужого дерева выглядит подключённым хуком, и по
@@ -3138,6 +3166,42 @@ class ProseConfigTest(unittest.TestCase):
     def test_shipped_config_keeps_the_doctor_quiet(self):
         os.environ.pop("DEVKIT_PROSE_CONFIG", None)
         self.assertEqual(devkitctl.check_prose_config(), [])
+
+
+class ProseSampleConfigTest(unittest.TestCase):
+    """Пути и жанры сторожа выборки prose (DK-1024). Без путей рубеж молчит на
+    каждой записи долгоживущего текста, а молчание не отличить от пути,
+    которого в конфиге нарочно нет."""
+
+    def setUp(self):
+        self.was = os.environ.get("DEVKIT_PROSE_CONFIG")
+
+    def tearDown(self):
+        if self.was is None:
+            os.environ.pop("DEVKIT_PROSE_CONFIG", None)
+        else:
+            os.environ["DEVKIT_PROSE_CONFIG"] = self.was
+
+    def test_missing_config_is_a_finding(self):
+        os.environ["DEVKIT_PROSE_CONFIG"] = os.path.join(tempfile.mkdtemp(), "prose.toml")
+        found = devkitctl.check_prose_sample_config()
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("сторож выборки prose молчит", found[0])
+
+    def test_config_without_a_genre_is_a_finding(self):
+        path = os.path.join(tempfile.mkdtemp(), "prose.toml")
+        write(path, '[sample]\nmode = "block"\nexclude = []\n'
+                    '[sample-lld]\npaths = ["docs/lld/*.md"]\n'
+                    '[sample-readme]\npaths = ["README.md"]\n'
+                    '[sample-skill]\npaths = ["kit/skills/*/SKILL.md"]\n')
+        os.environ["DEVKIT_PROSE_CONFIG"] = path
+        found = devkitctl.check_prose_sample_config()
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("sample-task", found[0])
+
+    def test_shipped_config_keeps_the_doctor_quiet(self):
+        os.environ.pop("DEVKIT_PROSE_CONFIG", None)
+        self.assertEqual(devkitctl.check_prose_sample_config(), [])
 
 
 class PlansCleanTest(unittest.TestCase):

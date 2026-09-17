@@ -253,6 +253,18 @@ PRE_READ_GAPS = {
     "check-longfile.py": "чтение длинного файла целиком не режется, и контекст "
                          "съедает разовый большой вывод Read",
 }
+# Рубеж выборки prose на PreToolUse-записи (DK-1024): категория отдельная от
+# проверок текстов PostToolUse (POST_SCRIPTS ловит уже написанное, этот рубеж
+# стоит раньше записи) и от чтения секретов на Bash. Записей на матчере пока
+# одна, а список заведён так же, как PRE_READ_SCRIPTS: соседний рубеж на том же
+# матчере получит свою строку без переделки цикла в hook_gaps.
+PRE_WRITE_SCRIPTS = ("check-prose-sample.py",)
+PRE_WRITE_GAPS = {
+    "check-prose-sample.py": "запись README, файла задачи, решения LLD или шага "
+                             "скилла без выборки эталонов прозы не отбивается, и "
+                             "правило мимикрии держится только дисциплиной модели "
+                             "(DK-1024)",
+}
 SESSION_HOOK = "quota-refresh.sh"
 # Реестр чатов задачи (DK-431): SessionStart на пустом матчере, потому что
 # записать «эта сессия ведёт задачу» можно только в момент её рождения, когда ID
@@ -320,6 +332,15 @@ PLAN_HOOK = "plan-watch.py"
 # hook_gaps своя: без держателя сессия отдаёт ход посреди цели и та стоит до
 # реплики человека, а это не то же самое, что потерянный отчёт субагента.
 HOLD_HOOK = "goal-hold.py"
+# Отметка выборки prose (DK-1024): PostToolUse на Bash ставит след по команде
+# `prose.py sample`, SessionStart с source=compact его гасит. Матчер Bash тот
+# же, что у PHASE_HOOK и рубежей Bash выше, событие различает сам скрипт по
+# hook_event_name, тем же порядком, что WATCH_HOOK и TURN_HOOK стоят на
+# нескольких событиях одной командой. Категория сообщения в hook_gaps своя на
+# каждое из двух событий: без отметки на Bash рубеж записи блокирует каждый
+# заход, без гашения на SessionStart он молчит и после сжатия контекста.
+MARK_HOOK = "prose-mark.py"
+MARK_EVENTS = ("PostToolUse", "SessionStart")
 # Хуки, переименованные в devkit: прежнее имя файла и нынешнее (DK-440). Строка
 # с прежним именем зовёт файл, которого в чекауте уже нет, и харнес спотыкается
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
@@ -358,6 +379,11 @@ POST_MATCHER = "Edit|Write|NotebookEdit"
 PRE_MATCHER = "Bash"
 PRE_READ_MATCHER = "Read"
 SYNC_MATCHER = "Bash|Agent"
+# MultiEdit в POST_MATCHER не попал изначально, и тройка PostToolUse-проверок
+# текстов его не видит: третья правка того же абзаца MultiEdit-ом идёт мимо
+# check-prose и check-calque молча. Рубеж выборки prose (DK-1024) заводится
+# сразу с полным списком, дыру у POST_MATCHER эта задача не трогает.
+PRE_WRITE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit"
 # Раскладка хуков харнеса: событие, матчер, команда с местом под чекаут devkit.
 # Тот же перечень нарисован в hooks/README.md, но раскладывает его отсюда
 # доктор: список ручных шагов в README это перекладывание раскладки на человека.
@@ -374,9 +400,12 @@ HOOK_LAYOUT = (
     ("PreToolUse", SYNC_MATCHER, "python3 %s/hooks/check-background.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
+    ("PreToolUse", PRE_WRITE_MATCHER, "python3 %s/hooks/check-prose-sample.py --hook"),
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
     ("PostToolUse", WATCH_MATCHER, "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("PostToolUse", PRE_MATCHER, "python3 %s/hooks/phase-budget.py --hook claude-code"),
+    ("PostToolUse", PRE_MATCHER, "python3 %s/hooks/prose-mark.py --hook claude-code"),
+    ("SessionStart", "", "python3 %s/hooks/prose-mark.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/plan-watch.py --hook claude-code"),
@@ -1492,8 +1521,16 @@ def hook_gaps(text, settings):
     turn_events = hook_events(text, TURN_HOOK)
     if turn_events is None:
         turn_events = set(TURN_EVENTS) if TURN_HOOK in text else set()
+    # MARK_HOOK стоит на двух событиях одной и той же командой (PostToolUse
+    # Bash ставит след, SessionStart его гасит), и общий разбор по ключу
+    # «скрипт третье слово» тут не различает события: у обеих строк третье
+    # слово «--hook», и присутствие одной в тексте молча закрыло бы пробел
+    # другой. Тем же порядком, что у TURN_HOOK, событие сверяется явно.
+    mark_events = hook_events(text, MARK_HOOK)
+    if mark_events is None:
+        mark_events = set(MARK_EVENTS) if MARK_HOOK in text else set()
     missing_notify, missing_post, missing_pre, missing_pre_read = [], [], [], []
-    missing_watch, missing_turn = [], []
+    missing_watch, missing_turn, missing_write, missing_mark = [], [], [], []
     for event, matcher, cmd in HOOK_LAYOUT:
         parts = cmd.split()
         script = os.path.basename(parts[1])
@@ -1527,6 +1564,10 @@ def hook_gaps(text, settings):
             if event in turn_events:
                 continue
             missing_turn.append(event)
+        elif script == MARK_HOOK:
+            if event in mark_events:
+                continue
+            missing_mark.append(event)
         elif key in text:
             continue
         gaps.append((event, matcher, cmd))
@@ -1536,6 +1577,8 @@ def hook_gaps(text, settings):
             missing_post.append(script)
         elif script in PRE_SCRIPTS:
             missing_pre.append(script)
+        elif script in PRE_WRITE_SCRIPTS:
+            missing_write.append(script)
         elif script in PRE_READ_SCRIPTS:
             missing_pre_read.append(script)
         elif script == SYNC_HOOK:
@@ -1604,6 +1647,24 @@ def hook_gaps(text, settings):
                             % (say.folded(("не подключён", "не подключено"), HOOK_WORD,
                                           [script], settings, ""),
                                PRE_READ_GAPS.get(script, "контекст расходуется впустую")))
+    if missing_write:
+        # Рубеж записи один сегодня, но сообщение уже разведено по скрипту,
+        # как у PreToolUse Read: соседний хук на том же матчере получит свою
+        # строку без переделки этого блока.
+        for script in missing_write:
+            findings.append("%s на PreToolUse записи (Write, Edit, MultiEdit, "
+                            "NotebookEdit); %s (hooks/README.md)"
+                            % (say.folded(("не подключён", "не подключено"), HOOK_WORD,
+                                          [script], settings, ""),
+                               PRE_WRITE_GAPS.get(script, "долгоживущий текст пишется "
+                                                         "мимо рубежа")))
+    if missing_mark:
+        findings.append("отметка выборки %s не подключена на события %s в %s: без "
+                        "PostToolUse Bash след взятой выборки не ставится, и рубеж %s "
+                        "блокирует каждую запись подряд, без SessionStart он не гаснет "
+                        "после сжатия контекста и врёт, что выборка ещё в силе "
+                        "(hooks/README.md)"
+                        % (MARK_HOOK, ", ".join(missing_mark), settings, PRE_WRITE_SCRIPTS[0]))
     if missing_notify:
         findings.append("хук %s не подключён на события %s в %s: сессия молча стоит, когда ждёт "
                         "разрешения, и не говорит, что закончила ход или что субагент "
@@ -2593,6 +2654,26 @@ def check_calque_config():
             % ("; ".join(lines) if lines else "список калек не читается")]
 
 
+def check_prose_sample_config():
+    """Пути и жанры сторожа выборки prose (DK-1024).
+
+    Тем же устройством, что у check_prose_config: список жанров живёт в
+    hooks/check-prose-sample.py, здесь второй копии нет, а полноту секций
+    kit/prose.toml смотрит сам хук режимом --config. Без путей рубеж молчит на
+    каждой записи, и это неотличимо от долгоживущего пути, которого в конфиге
+    нарочно нет, если не сказать об этом здесь.
+    """
+    hook = DEVKIT / "hooks" / PRE_WRITE_SCRIPTS[0]
+    if not hook.is_file():
+        return []
+    rc, out = run([sys.executable, str(hook), "--config"])
+    if rc == 0:
+        return []
+    lines = [ln.strip()[2:] for ln in out.splitlines() if ln.strip().startswith("- ")]
+    return ["сторож выборки prose молчит на каждой записи долгоживущего текста, %s "
+            "(hooks/README.md)" % ("; ".join(lines) if lines else "конфиг путей не читается")]
+
+
 def check_map_freshness(root, fix=False):
     """Проверка свежести карты проекта (DK-375).
 
@@ -2729,6 +2810,7 @@ def doctor(start, fix=False):
     # в devkit, а не автоматикой, поэтому идёт находкой рядом с профилями.
     findings += check_prose_config()
     findings += check_calque_config()
+    findings += check_prose_sample_config()
     # Вес резидента считается и проекту (DK-190): карманы одни и те же, а судятся
     # в них разные. В чекауте devkit это его собственные карманы (ядро, ядро
     # доски, итог) и тело скилла, всё общее для всех проектов и проекту не

@@ -195,15 +195,11 @@ func TestLockRefusalNamesHolder(t *testing.T) {
 		}
 	}
 
-	// Отпущенный замок держателя за собой не оставляет: под свободным замком
-	// файл снова пуст, и прочитать в нём мёртвого владельца нельзя.
+	// Отпущенный замок держателя за собой не оставляет: файл держателя убран,
+	// и прочитать в нём мёртвого владельца нельзя.
 	unlock()
-	data, err := os.ReadFile(filepath.Join(root, lockPath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(data) != 0 {
-		t.Fatalf("после снятия замка файл должен остаться пустым, а в нём %q", data)
+	if _, err := os.Stat(filepath.Join(root, lockOwnerPath)); !os.IsNotExist(err) {
+		t.Fatalf("после снятия замка файл держателя должен быть убран: %v", err)
 	}
 }
 
@@ -235,5 +231,37 @@ func TestLockAge(t *testing.T) {
 		if got := lockAge(c.d); !strings.Contains(got, c.want) {
 			t.Fatalf("возраст %v: ждали %q, получили %q", c.d, c.want, got)
 		}
+	}
+}
+
+// TestAcquireLockKeepsTreeClean: взятый замок дерева не грязнит. Держатель
+// живёт в соседнем файле, сам замок остаётся пустым, и проверка чистоты,
+// которую ship и merge гоняют уже под замком, проходит даже там, где .devkit
+// не гитигнорнут и файл замка лежит под git.
+func TestAcquireLockKeepsTreeClean(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	devkitDir(t, root)
+	write(t, root, lockPath, "")
+	gitT(t, root, "add", "-f", lockPath)
+	gitT(t, root, "commit", "-qm", "chore: замок под git")
+
+	unlock, err := acquireLock(root, "merge XR-009")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+
+	if err := requireClean(root); err != nil {
+		t.Fatalf("под взятым замком дерево должно оставаться чистым: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, lockPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("сам замок должен оставаться пустым, а в нём %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(root, lockOwnerPath)); err != nil {
+		t.Fatalf("файл держателя должен лежать рядом с замком: %v", err)
 	}
 }

@@ -12,6 +12,15 @@ import (
 
 const lockPath = ".devkit/ship.lock"
 
+// lockOwnerPath это файл рядом с замком, куда держатель пишет, кто он.
+// Отдельный файл, а не сам замок: замок в старых проектах попадал под git
+// (DK-271), и запись прямо в него делала бы отслеживаемый файл изменённым на
+// всё время работы команды. Тогда git отбивал бы checkout своего же слияния, а
+// проверка чистоты дерева считала бы замок незакоммиченной правкой. Файл
+// держателя заводится захватом и стирается снятием, поэтому вне работы
+// команды его на диске нет.
+const lockOwnerPath = lockPath + ".owner"
+
 // errLockBusy отличает отказ занятости от аномальных отказов замка (не
 // открылся, не устоялся за N попыток). Занятость под ship --drain это
 // штатная состыковка с чужим заходом (LLD DK-306, решение 2) и уходит в
@@ -33,13 +42,12 @@ var errLockBusy = errors.New("конвейер занят")
 // месте и когда замок свободен, ждать его исчезновения бессмысленно, о
 // занятости говорит только отказ повторного запуска.
 //
-// Взявший замок пишет в файл, кто он: pid, команда с ID задачи и время
-// захвата (DK-122). Отказ читает эту строку и называет держателя, чтобы
-// следующий видел, ждать ему (чужое слияние началось минуту назад) или
-// разбираться (процесс висит с прошлой ночи). Время правки самого файла тут
-// ни при чём: пустой файл трёхдневной давности лежит и под свежим замком.
-// Отпуская замок, держатель строку стирает, поэтому под свободным замком
-// файл снова пуст, а мёртвого владельца в нём не остаётся.
+// Взявший замок пишет, кто он, в соседний файл .devkit/ship.lock.owner: pid,
+// команда с ID задачи и время захвата (DK-122). Отказ читает эту строку и
+// называет держателя, чтобы следующий видел, ждать ему (чужое слияние
+// началось минуту назад) или разбираться (процесс висит с прошлой ночи).
+// Время правки самого замка тут ни при чём: пустой файл трёхдневной давности
+// лежит и под свежим замком. Отпуская замок, держатель свой файл удаляет.
 //
 // flock не знает про переименования и unlink: если файл под живым замком
 // снят чужим rm, дескриптор держит замок на старом, отвязанном от пути inode,
@@ -61,8 +69,8 @@ func lockOwner(who string, now time.Time) string {
 	return fmt.Sprintf("pid=%d\tкоманда=%s\tвзят=%s\n", os.Getpid(), who, now.Format(time.RFC3339))
 }
 
-// lockHolder превращает строку из файла замка в кусок отказа. Пустой файл или
-// строка не того вида это не поломка: замок мог взять shipctl сборки до
+// lockHolder превращает строку файла держателя в кусок отказа. Пустой файл
+// или строка не того вида это не поломка: замок мог взять shipctl сборки до
 // DK-122, а могла не успеть лечь запись держателя, взявшего замок в эту
 // секунду.
 func lockHolder(data []byte, now time.Time) string {
@@ -101,9 +109,10 @@ func lockAge(d time.Duration) string {
 	}
 }
 
-// lockBusy собирает отказ занятости, прочитав держателя из файла замка.
-func lockBusy(path string) error {
-	data, err := os.ReadFile(path)
+// lockBusy собирает отказ занятости, прочитав держателя из файла рядом с
+// замком.
+func lockBusy(root string) error {
+	data, err := os.ReadFile(filepath.Join(root, lockOwnerPath))
 	if err != nil {
 		data = nil
 	}
@@ -134,7 +143,7 @@ func acquireLock(root, who string) (func(), error) {
 		}
 		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 			f.Close()
-			return nil, lockBusy(path)
+			return nil, lockBusy(root)
 		}
 		stale, err := lockStale(f, path)
 		if err != nil {
@@ -146,13 +155,14 @@ func acquireLock(root, who string) (func(), error) {
 			continue
 		}
 		// Запись держателя ложится под уже взятым flock, а снимается перед
-		// закрытием файла: под свободным замком в файле пусто.
-		if err := writeOwner(f, lockOwner(who, time.Now())); err != nil {
+		// освобождением замка: вне работы команды файла держателя нет.
+		owner := filepath.Join(root, lockOwnerPath)
+		if err := os.WriteFile(owner, []byte(lockOwner(who, time.Now())), 0o644); err != nil {
 			f.Close()
-			return nil, fmt.Errorf("замок %s не записал держателя: %v", lockPath, err)
+			return nil, fmt.Errorf("замок %s не записал держателя в %s: %v", lockPath, lockOwnerPath, err)
 		}
 		return func() {
-			writeOwner(f, "")
+			os.Remove(owner)
 			f.Close()
 		}, nil
 	}
@@ -175,18 +185,6 @@ func lockStale(f *os.File, path string) (bool, error) {
 		return false, err
 	}
 	return !os.SameFile(fdInfo, diskInfo), nil
-}
-
-// writeOwner переписывает файл замка одной строкой: пустая стирает держателя.
-func writeOwner(f *os.File, line string) error {
-	if err := f.Truncate(0); err != nil {
-		return err
-	}
-	if line == "" {
-		return nil
-	}
-	_, err := f.WriteAt([]byte(line), 0)
-	return err
 }
 
 // lockRaceHook раздвигает окно между open и flock для детерминированного

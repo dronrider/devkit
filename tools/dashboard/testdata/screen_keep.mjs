@@ -1600,6 +1600,76 @@ if (doc.activeElement !== doc.body) {
 if (!dump(groups).includes("Ждём двух символов")) {
   fail("пустой запрос не говорит, чего ждёт: " + dump(groups).slice(0, 300));
 }
+
+// Один знак с паузой дольше срока набора раньше читался отказом от поиска, и
+// первая же буква на телефоне уводила на доску вместе с клавиатурой (DK-1041).
+const screenField = phoneQ.children[1];
+screenField.focus();
+screenField.value = "к";
+screenField.handlers.input();
+for (const t of timers.splice(0)) t.fn();
+await sandbox.refresh();
+await settle();
+if (sandbox.location.hash === "demo" || sandbox.location.hash === "#demo") {
+  fail("один знак на экране выдачи увёл на доску: " + sandbox.location.hash);
+}
+if (find(groups, "find-q") !== phoneQ) {
+  fail("набор одного знака пересобрал поле запроса на экране выдачи");
+}
+if (doc.activeElement !== screenField) {
+  fail("набор одного знака отобрал фокус у поля на экране выдачи");
+}
+if (!dump(groups).includes("Ждём двух символов")) {
+  fail("короткий запрос на экране выдачи не показывает подсказку сервера: " + dump(groups).slice(0, 300));
+}
+
+// Стирание до пустого поля это ожидание нового запроса, а не отказ от
+// поиска: экран и клавиатура держатся так же, как на самом наборе.
+screenField.value = "";
+screenField.handlers.input();
+for (const t of timers.splice(0)) t.fn();
+await sandbox.refresh();
+await settle();
+if (sandbox.location.hash === "demo" || sandbox.location.hash === "#demo") {
+  fail("стирание до пустого поля на экране выдачи увело на доску: " + sandbox.location.hash);
+}
+if (find(groups, "find-q") !== phoneQ) {
+  fail("стирание до пустого пересобрало поле запроса на экране выдачи");
+}
+if (doc.activeElement !== screenField) {
+  fail("стирание до пустого отобрало фокус у поля на экране выдачи");
+}
+
+// Крестик на экране выдачи стирает запрос и оставляет курсор в поле, а не
+// уводит на доску, в отличие от крестика в поле шапки.
+screenField.value = "кот";
+screenField.handlers.input();
+for (const t of timers.splice(0)) t.fn();
+await sandbox.refresh();
+await settle();
+phoneQ.children[2].handlers.click();
+await settle();
+if (screenField.value !== "") fail("крестик не очистил поле на экране выдачи: " + screenField.value);
+if (sandbox.location.hash === "demo" || sandbox.location.hash === "#demo") {
+  fail("крестик на экране выдачи увёл на доску: " + sandbox.location.hash);
+}
+if (find(groups, "find-q") !== phoneQ) {
+  fail("крестик пересобрал поле запроса на экране выдачи");
+}
+if (doc.activeElement !== screenField) {
+  fail("крестик не оставил курсор в поле на экране выдачи");
+}
+
+// DK-397 держится у поля шапки: там пустое поле по-прежнему возвращает
+// доску, в отличие от поля экрана выдачи выше.
+await go("#demo/find/" + encodeURIComponent("колокольчик"));
+hq.value = "";
+hq.handlers.input();
+for (const t of timers.splice(0)) t.fn();
+if (sandbox.location.hash !== "demo" && sandbox.location.hash !== "#demo") {
+  fail("пустое поле шапки не увело на доску: " + sandbox.location.hash);
+}
+
 // Поле на экране выдачи это телефонный узел: на ноутбуке его гасят стили, и
 // стенд читает это в самом style.css, а не пересказывает себя.
 const findCSS = fs.readFileSync(path.join(path.dirname(appPath), "style.css"), "utf8");

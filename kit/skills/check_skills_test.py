@@ -569,14 +569,18 @@ class TestProofread(SkillTree):
     TERMS = ("поезд", "виток", "лестница", "накопитель",
              "сторожок", "заход", "дорезка")
     PAIRS = "\n".join("## %d. пункт\n\nПлохо:\n\n> x\n\nХорошо:\n\n> y\n" % i
-                       for i in range(1, 9))
+                       for i in range(1, 9)) + (
+        "\n## Инвариант: разметка и утверждение\n\nПлохо:\n\n> x\n\nХорошо:\n\n> y\n")
+    BODY = ("\n".join(["тело скилла"] * 15)
+            + "\n\n## Проход страницы\n\nсчёт пунктов, время глаголов, число блоков\n"
+            + "\n## Что не трогает\n\nразметка и утверждение остаются исходными\n")
     BAD_HALVES = "## Плохая половина\n\nне меньше 14 находок из 16\n"
     ETALON_HALVES = "## Эталонная половина\n\nне больше двух ложных\n"
 
     def write_proofread(self, pairs=None, dictionary=None, corpus=None, skill_body=None):
         d = os.path.join(self.here, "proofread")
         os.makedirs(d, exist_ok=True)
-        body = skill_body or "\n".join(["тело скилла"] * 15)
+        body = skill_body or self.BODY
         with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
             f.write("---\nname: proofread\ndescription: Звать, при вычитке.\n---\n\n%s\n" % body)
         with open(os.path.join(d, "pairs.md"), "w", encoding="utf-8") as f:
@@ -622,6 +626,26 @@ class TestProofread(SkillTree):
         self.write_proofread(corpus=corpus)
         fails = check_skills.check_proofread(self.here)
         self.assertTrue(any("не зафиксирован порог плохой половины" in f for f in fails), fails)
+
+    def test_page_pass_missing(self):
+        self.write_proofread(skill_body="\n".join(["тело скилла"] * 15)
+                             + "\n\n## Что не трогает\n\nутверждение\n")
+        fails = check_skills.check_proofread(self.here)
+        self.assertTrue(any("нет прохода страницы" in f for f in fails), fails)
+
+    def test_invariant_missing_in_guard_section(self):
+        self.write_proofread(skill_body="\n".join(["тело скилла"] * 15)
+                             + "\n\n## Проход страницы\n\nсчёт\n"
+                             + "\n## Что не трогает\n\nшесть форм замера\n")
+        fails = check_skills.check_proofread(self.here)
+        self.assertTrue(any("нет инварианта правки готового текста" in f for f in fails), fails)
+
+    def test_pairs_without_invariant_pair(self):
+        pairs = "\n".join("## %d. пункт\n\nПлохо:\n\n> x\n\nХорошо:\n\n> y\n" % i
+                          for i in range(1, 9))
+        self.write_proofread(pairs=pairs)
+        fails = check_skills.check_proofread(self.here)
+        self.assertTrue(any("нет пары на инвариант" in f for f in fails), fails)
 
     def test_corpus_missing_etalon_half(self):
         self.write_proofread(corpus=self.BAD_HALVES)

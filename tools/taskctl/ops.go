@@ -277,12 +277,34 @@ func (c CommitOpts) apply(root string, paths []string) (string, error) {
 	}
 	suffix := ", коммит " + hash
 	if c.Push {
-		if _, err := git("push"); err != nil {
+		tail, err := pushCommit(git)
+		if err != nil {
 			return "", err
 		}
-		suffix += ", запушено"
+		suffix += tail
 	}
 	return suffix, nil
+}
+
+// pushCommit пушит коммит доски и возвращает хвост сообщения. Ветка задачи
+// заводится свежей, upstream у неё нет ни у кого, и голый push на такой ветке
+// отказывает «no upstream»: коммиты ревью оставались локальными и позже
+// вылезали конфликтом ребейза (DK-597). Установка upstream это правка
+// конфигурации ветки, поэтому команда о ней говорит, а не молчит. На
+// отделённой голове ставить нечего, там остаётся прежний пуш со своим отказом.
+func pushCommit(git func(args ...string) (string, error)) (string, error) {
+	if _, err := git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"); err != nil {
+		if head, herr := git("rev-parse", "--abbrev-ref", "HEAD"); herr == nil && head != "HEAD" {
+			if _, err := git("push", "-u", "origin", "HEAD"); err != nil {
+				return "", err
+			}
+			return ", запушено, upstream ветки поставлен", nil
+		}
+	}
+	if _, err := git("push"); err != nil {
+		return "", err
+	}
+	return ", запушено", nil
 }
 
 // normalizeStatus приводит статус к ключу секции: «In progress» = in-progress.

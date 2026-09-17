@@ -228,3 +228,59 @@ func TestCloseCommitWithoutJournalUnchanged(t *testing.T) {
 		t.Fatalf("после close -m дерево не чистое: %q", st)
 	}
 }
+
+// TestPushSetsUpstreamOnFreshBranch: ветка задачи заводится свежей, upstream у
+// неё нет ни у кого, и голый git push на такой ветке отказывает «no upstream».
+// Коммиты ревью оставались локальными и вылезали конфликтом ребейза (DK-597),
+// поэтому --push ставит upstream сам и говорит об этом строкой вывода.
+func TestPushSetsUpstreamOnFreshBranch(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	remote := t.TempDir()
+	gitOut(t, remote, "init", "-q", "--bare", "-b", "main")
+	gitOut(t, root, "remote", "add", "origin", remote)
+	gitOut(t, root, "push", "-q", "-u", "origin", "main")
+	gitOut(t, root, "checkout", "-q", "-b", "xr-005")
+	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	c := CommitOpts{Msg: "docs(tasks): XR-005 замечание ревью", Push: true}
+	msg, err := cmdReviewResolve(root, "XR-005", 1, "fixed", "", c)
+	if err != nil {
+		t.Fatalf("review resolve --push на ветке без upstream: %v", err)
+	}
+	if !strings.Contains(msg, "upstream") {
+		t.Fatalf("про поставленный upstream в выводе не сказано: %q", msg)
+	}
+	if subj := gitOut(t, remote, "log", "-1", "--pretty=%s", "xr-005"); subj != c.Msg {
+		t.Fatalf("коммит не доехал до remote: %q", subj)
+	}
+	if up := gitOut(t, root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"); up != "origin/xr-005" {
+		t.Fatalf("upstream ветки: %q", up)
+	}
+}
+
+// TestPushKeepsExistingUpstream: у ветки с готовым upstream пуш остаётся
+// прежним, лишней правки конфигурации и лишних слов в выводе нет.
+func TestPushKeepsExistingUpstream(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	remote := t.TempDir()
+	gitOut(t, remote, "init", "-q", "--bare", "-b", "main")
+	gitOut(t, root, "remote", "add", "origin", remote)
+	gitOut(t, root, "push", "-q", "-u", "origin", "main")
+	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	c := CommitOpts{Msg: "docs(tasks): XR-005 замечание ревью", Push: true}
+	msg, err := cmdReviewResolve(root, "XR-005", 1, "fixed", "", c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(msg, "upstream") {
+		t.Fatalf("upstream был на месте, а команда о нём говорит: %q", msg)
+	}
+	if subj := gitOut(t, remote, "log", "-1", "--pretty=%s", "main"); subj != c.Msg {
+		t.Fatalf("коммит не доехал до remote: %q", subj)
+	}
+}

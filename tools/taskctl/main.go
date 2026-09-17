@@ -322,7 +322,7 @@ RANKING.md), в пять слагаемых не входит; «-» значи�
 // commitFlags вешает на изменяющую команду флаги -m/--push.
 func commitFlags(fs *flag.FlagSet, c *CommitOpts) {
 	fs.StringVar(&c.Msg, "m", "", "закоммитить тронутые файлы с этим сообщением")
-	fs.BoolVar(&c.Push, "push", false, "после коммита сделать git push (только с -m)")
+	fs.BoolVar(&c.Push, "push", false, "после коммита сделать git push, ветке без upstream поставить его (только с -m)")
 }
 
 // addFlags и setFlags объявляют флаги подкоманд отдельно от разбора, чтобы

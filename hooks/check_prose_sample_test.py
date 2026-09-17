@@ -220,5 +220,47 @@ class TestShippedConfig(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout)
 
 
+class TestGenreSpecificity(unittest.TestCase):
+    """fnmatch не считает «/» границей, и широкий паттерн readme (docs/*.md)
+    формально ловит и docs/tasks, и docs/lld. Побеждает не порядок жанров в
+    конфиге, а длина самого паттерна: длиннее и уже берёт верх (замечание
+    ревью DK-1024)."""
+
+    def setUp(self):
+        self.shipped = os.path.join(os.path.dirname(HERE), "kit", "prose.toml")
+
+    def test_nested_task_path_does_not_fall_to_readme(self):
+        conf, gaps = guard.read_config(self.shipped)
+        self.assertEqual(gaps, [])
+        self.assertEqual(guard.genre_of("docs/tasks/DK-1.md", conf), "task")
+        self.assertEqual(guard.genre_of("docs/tasks/drafts/DK-1.md", conf), "task")
+
+    def test_nested_lld_path_does_not_fall_to_readme(self):
+        conf, gaps = guard.read_config(self.shipped)
+        self.assertEqual(guard.genre_of("docs/lld/DK-1-design.md", conf), "lld")
+
+    def test_readme_still_wins_on_its_own_ground(self):
+        conf, gaps = guard.read_config(self.shipped)
+        self.assertEqual(guard.genre_of("docs/other.md", conf), "readme")
+
+    def test_order_of_genres_dict_does_not_matter(self):
+        # read_config всегда строит conf.genres в порядке кода (GENRES), и
+        # порядок секций в самом toml на него не влияет: реальная развязка
+        # держится на genre_of, не на файле. Здесь genre_of вызывается напрямую
+        # с ключами в обратном порядке (readme раньше task), которого через
+        # read_config не получить, но который был бы у genre_of, переставь
+        # кто-нибудь GENRES местами: широкий паттерн readme проверяется первым
+        # и всё равно не должен победить более узкий паттерн task.
+        conf = guard.Settings(path="<test>", mode="block", exclude=(), genres={
+            "readme": ("README.md", "docs/*.md"),
+            "skill": ("kit/skills/*/SKILL.md",),
+            "lld": ("docs/lld/*.md",),
+            "task": ("docs/tasks/*.md",),
+        })
+        self.assertEqual(guard.genre_of("docs/tasks/DK-1.md", conf), "task")
+        self.assertEqual(guard.genre_of("docs/lld/DK-1-design.md", conf), "lld")
+        self.assertEqual(guard.genre_of("docs/other.md", conf), "readme")
+
+
 if __name__ == "__main__":
     unittest.main()

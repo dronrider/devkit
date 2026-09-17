@@ -106,15 +106,24 @@ def relpath(path, root):
 
 def genre_of(rel, conf):
     """Жанр по относительному пути, None значит, что путь не долгоживущий или
-    в исключениях."""
+    в исключениях.
+
+    `fnmatch` не считает «/» границей, и широкий паттерн жанра readme
+    (`docs/*.md`) формально ловит и `docs/tasks/DK-1.md`, и `docs/lld/x.md`.
+    Победитель среди нескольких совпавших паттернов не порядок жанров в
+    `GENRES` (это случайно совпадало и держалось только перебором словаря), а
+    длина самого паттерна: `docs/tasks/*.md` длиннее и уже, чем `docs/*.md`, и
+    берёт верх над ним при любом порядке перечисления жанров в конфиге."""
     if not rel:
         return None
     if any(fnmatch.fnmatch(rel, p) for p in conf.exclude):
         return None
+    best_genre, best_pattern = None, ""
     for genre, patterns in conf.genres.items():
-        if any(fnmatch.fnmatch(rel, p) for p in patterns):
-            return genre
-    return None
+        for p in patterns:
+            if fnmatch.fnmatch(rel, p) and len(p) > len(best_pattern):
+                best_genre, best_pattern = genre, p
+    return best_genre
 
 
 def marked(context, override=None):

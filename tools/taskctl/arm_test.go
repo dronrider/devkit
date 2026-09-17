@@ -634,18 +634,18 @@ func TestArmGatesPassWithoutTmux(t *testing.T) {
 	}
 }
 
-// TestArmGatesPassOnBareTmuxExit: подставной tmux стенда отвечает кодом 1 без
-// слов на любую команду, и ворота ёмкости взвода на таком ответе вставали
-// (красный стенд трёх ожиданий devkitctl при слиянии DK-904). Код без слов
-// это «сессий нет», строка проходит.
-func TestArmGatesPassOnBareTmuxExit(t *testing.T) {
+// TestArmGatesHoldOnBareTmuxExit: код 1 без слов от tmux ls это сорванный
+// опрос, и ворота ёмкости взвода на нём отказывают, как на любом незнакомом
+// отказе. Стенды без сессий говорят словами про сервер (замечание ревью
+// DK-904, круг 3).
+func TestArmGatesHoldOnBareTmuxExit(t *testing.T) {
 	root := armStand(t, 3)
 	silentTmux(t, "")
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if why := newArmGates(root, b).pass("XR-003"); why != "" {
-		t.Fatalf("ворота на коде без слов отказали: %s", why)
+	if why := newArmGates(root, b).pass("XR-003"); !strings.Contains(why, "опрос tmux сорван") {
+		t.Fatalf("ворота на коде без слов ответили %q", why)
 	}
 }

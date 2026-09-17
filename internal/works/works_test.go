@@ -170,19 +170,15 @@ func TestSessionsSocketRefusedIsError(t *testing.T) {
 	}
 }
 
-// TestSessionsBareExitIsEmpty: ненулевой код без слов это «сессий нет».
-// Так отвечают подставные tmux стендов, и на таком ответе ворота взвода
-// считали опрос сорванным и не пускали ни одной строки (красный стенд трёх
-// ожиданий devkitctl при слиянии DK-904).
-func TestSessionsBareExitIsEmpty(t *testing.T) {
+// TestSessionsBareExitIsError: ненулевой код без слов это сорванный опрос.
+// Настоящий tmux всякий отказ называет словами, и код без слов приходит
+// только от чужой обёртки или подставной программы; стенды говорят словами
+// про сервер, а правило в каркасе одно (замечание ревью DK-904, круг 3).
+func TestSessionsBareExitIsError(t *testing.T) {
 	fakeTmux(t, "", "")
 	tmuxRefuse(t, "")
-	got, err := Sessions()
-	if err != nil {
-		t.Fatalf("код без слов принят за сорванный опрос: %v", err)
-	}
-	if got == nil || len(got) != 0 {
-		t.Fatalf("ждала пустой список, получила %v", got)
+	if got, err := Sessions(); err == nil {
+		t.Fatalf("код без слов принят за «сессий нет»: %v", got)
 	}
 }
 

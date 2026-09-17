@@ -345,6 +345,49 @@ class TestHook(unittest.TestCase):
         self.assertEqual(r.stderr, "")
 
 
+class TestFindingText(unittest.TestCase):
+    """Текст находки: чем берётся порог и куда пишется пометка (DK-606.2)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.conf = os.path.join(self.tmp, "prose.toml")
+
+    def said(self, path, text):
+        r = run("--hook", env={prose.CONFIG_ENV: self.conf},
+                input=hook_event(path, text))
+        self.assertEqual(r.returncode, 0)
+        return json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+
+    def test_finding_tells_to_keep_the_claim(self):
+        config(self.conf, warn={"colon_mid": 5})
+        said = self.said("docs/tasks/DK-001.md", COLONS)
+        self.assertIn("перестройкой фразы с тем же утверждением", said)
+        self.assertIn("подгонять смысл под порог нельзя", said)
+
+    def test_finding_carries_a_filled_mark_for_the_stage_section(self):
+        config(self.conf, warn={"colon_mid": 5})
+        said = self.said("docs/tasks/DK-001.md", COLONS)
+        self.assertIn("«Ход работы»", said)
+        self.assertIn("- Сторож прозы: docs/tasks/DK-001.md, "
+                      "двоеточие в середине фразы ", said)
+        self.assertIn(" при пороге 5, оставлено: <причина>.", said)
+
+    def test_every_finding_gets_its_own_mark(self):
+        config(self.conf, warn={"colon_mid": 5, "argued": 20})
+        said = self.said("docs/tasks/DK-001.md", COLONS)
+        marks = [ln for ln in said.split("\n")
+                 if ln.startswith("- Сторож прозы: ")]
+        self.assertEqual(len(marks), 2)
+        self.assertIn("довод в той же фразе", marks[0])
+        self.assertIn("двоеточие в середине фразы", marks[1])
+
+    def test_text_outside_a_task_reports_the_same_line(self):
+        config(self.conf, warn={"colon_mid": 5})
+        said = self.said("README.md", COLONS)
+        self.assertIn("в отчёт захода", said)
+        self.assertIn("- Сторож прозы: README.md, ", said)
+
+
 class TestModes(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()

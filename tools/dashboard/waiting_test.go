@@ -524,3 +524,34 @@ func TestTmuxAskingRemembersSnapshot(t *testing.T) {
 		t.Errorf("память снимка не протухла за %s: снимков %d", askSeenTTL, calls)
 	}
 }
+
+// Реплику человека после момента ожидания отличает автор и время: слова
+// другого агента каналом и старые реплики повод не гасят.
+func TestHumanSaidAfter(t *testing.T) {
+	since := time.Date(2026, 9, 9, 15, 0, 0, 0, time.UTC)
+	stamp := func(d time.Duration) string { return since.Add(d).Format(time.RFC3339) }
+	line := func(content, at string) string {
+		return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},"timestamp":%q}`+"\n", content, at)
+	}
+	cases := []struct {
+		name string
+		talk string
+		want bool
+	}{
+		{"реплика позже", line("катим", stamp(time.Minute)), true},
+		{"реплика раньше", line("катим", stamp(-time.Minute)), false},
+		{"та же секунда", line("катим", stamp(0)), false},
+		{"слова другого агента", line(`<cross-session-message from="uds:/tmp/cc-socks/9.sock" from-name="agent-dk-1" from-mode="prompting">докладываю</cross-session-message>`, stamp(time.Minute)), false},
+		{"реплика человека каналом", line(`<cross-session-message from="uds:/tmp/cc-socks/9.sock" from-name="human" from-mode="prompting">катим</cross-session-message>`, stamp(time.Minute)), true},
+		{"пусто", "", false},
+	}
+	for _, tc := range cases {
+		path := filepath.Join(t.TempDir(), "s.jsonl")
+		if err := os.WriteFile(path, []byte(tc.talk), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := humanSaidAfter(path, since.Unix()); got != tc.want {
+			t.Errorf("%s: %v, ждала %v", tc.name, got, tc.want)
+		}
+	}
+}

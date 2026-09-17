@@ -486,23 +486,70 @@ func (s *server) waitLookup(projPath string) func(id, sect, block string) (Waiti
 	scan := s.waitScan()
 	now := s.now()
 	return func(id, sect, block string) (Waiting, bool) {
-		if w, ok := askWaiting(projPath, id, now); ok {
+		if w, ok := askWaiting(projPath, id, now); ok && s.waitAlive(projPath, w) {
 			return w, true
 		}
 		// Живой виджет идёт раньше парковки: у припаркованной задачи захода
 		// нет вовсе, а тут клиент стоит и ждёт нажатия прямо сейчас, и это
 		// знание точнее и полезнее.
-		if w, ok := scan.widget[id]; ok {
+		if w, ok := scan.widget[id]; ok && s.waitAlive(projPath, w) {
 			return w, true
 		}
 		if w, ok := parkedWaiting(sect, block); ok {
 			return w, true
 		}
-		if w, ok := scan.idle[id]; ok {
+		if w, ok := scan.idle[id]; ok && s.waitAlive(projPath, w) {
 			return w, true
 		}
 		return Waiting{}, false
 	}
+}
+
+// waitAlive отсеивает ожидание, за которым человека уже никто не ждёт (DK-889).
+// Случая два, и оба сверяются на чтении, а не снятием признака у источника:
+// источников четыре, снимать пришлось бы в каждом, а повод из журнала
+// уведомителя снять нельзя вовсе, он не файл. Первый случай это разговор,
+// убранный в архив: в хранилище чата у него стоит Archived, а полка и чип
+// строки этого признака не видели и звали отвечать в закрытый разговор.
+// Второй случай это повод «сессия ждёт ввода», на который человек уже ответил:
+// повод приходит после каждого конца хода, реплика человека его не снимает,
+// и запись висела в полке, пока не выйдет срок повода. Гасит её реплика
+// человека в транскрипте позже момента, с которого сессия ждёт. Просмотр
+// разговора (поле Seen) не гасит: просмотр это не ответ, а сессия после
+// просмотра стоит ровно так же. Ожидание без сессии (парковка) сверять не по
+// чему, и оно остаётся как есть.
+func (s *server) waitAlive(projPath string, w Waiting) bool {
+	if w.Session == "" {
+		return true
+	}
+	if s.chatStoreRead(w.Session).Archived {
+		return false
+	}
+	if w.Source != waitIdle || w.Since == 0 {
+		return true
+	}
+	info, ok := findSession(s.transcriptRoots(), projPath, w.Session)
+	if !ok {
+		return true
+	}
+	return !humanSaidAfter(info.path, w.Since)
+}
+
+// humanSaidAfter говорит, писал ли человек в разговор позже момента since.
+// Реплика человека узнаётся тем же предикатом, что у панели (askedReply):
+// слова другого агента, приехавшие каналом, подписаны автором и ответом не
+// считаются. Читается хвост транскрипта, а не файл целиком: ответ на свежий
+// повод лежит в самом конце.
+func humanSaidAfter(path string, since int64) bool {
+	for _, r := range tailParsed(path) {
+		if !askedReply(r) {
+			continue
+		}
+		if at, ok := saidUnix(r.Time); ok && at > since {
+			return true
+		}
+	}
+	return false
 }
 
 // nameWaitTasks доводит события ожидания в ленте до задачи. Задача и проект у

@@ -77,7 +77,11 @@ func (s *server) projectWaits(p Project) ([]WaitItem, error) {
 		if h.Ask.Task != "" && seen[h.Ask.Task] {
 			continue
 		}
-		if it, ok := waitShelfItem(p.Name, h.Ask.Task, "", handedWaiting(h)); ok {
+		w := handedWaiting(h)
+		if !s.waitAlive(p.Path, w) {
+			continue
+		}
+		if it, ok := waitShelfItem(p.Name, h.Ask.Task, "", w); ok {
 			out = append(out, it)
 		}
 	}

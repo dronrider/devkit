@@ -213,3 +213,82 @@ func TestStaticWaitShelf(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// idleShelf ставит на стенд повод «сессия ждёт ввода» по задаче XR-005 за час
+// до часов стенда: реестр связывает сессию с задачей, журнал уведомителя несёт
+// сам повод. Возвращает момент повода, от него считаются реплики.
+func idleShelf(t *testing.T, e *testEnv, now time.Time, sid string) time.Time {
+	t.Helper()
+	at := now.Add(-time.Hour)
+	writeBinds(t, e.home, bindRecord(e.home, at.Add(-10*time.Minute).Format(bindStamp), sid, "XR-005", bindOrder))
+	writeNotifyLog(t, e.home, []string{idleLine(at.Format(bindStamp), sid[:8], idlePromptReason)})
+	return at
+}
+
+// humanLine это реплика человека в транскрипте с меткой времени.
+func humanLine(text string, at time.Time) string {
+	return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},"timestamp":%q}`+"\n",
+		text, at.UTC().Format(time.RFC3339))
+}
+
+func shelfHas(items []WaitItem, id string) bool {
+	for _, it := range items {
+		if it.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// Разговор, убранный в архив, на полке не стоит: отвечать в нём некому, а
+// снятый архив возвращает запись тем же чтением (живой случай DK-837 и DK-839,
+// 2026-09-09).
+func TestWaitShelfDropsArchivedChat(t *testing.T) {
+	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.Local)
+	e, c := shelfEnv(t, now)
+	const sid = "aaaa1111-arch-id"
+	idleShelf(t, e, now, sid)
+	if items, _ := getShelf(t, e, c); !shelfHas(items, "XR-005") {
+		t.Fatalf("повод из журнала до полки не доехал: %+v", items)
+	}
+
+	if err := e.s.chatStoreWrite(sid, chatStore{Archived: true}); err != nil {
+		t.Fatal(err)
+	}
+	if items, _ := getShelf(t, e, c); shelfHas(items, "XR-005") {
+		t.Fatalf("архивный разговор остался на полке: %+v", items)
+	}
+
+	if err := e.s.chatStoreWrite(sid, chatStore{Archived: false}); err != nil {
+		t.Fatal(err)
+	}
+	if items, _ := getShelf(t, e, c); !shelfHas(items, "XR-005") {
+		t.Fatalf("снятый архив не вернул запись на полку: %+v", items)
+	}
+}
+
+// Повод «сессия ждёт ввода» гасит реплика человека позже момента, с которого
+// сессия ждёт. Просмотр разговора не гасит: просмотр это не ответ, а сессия
+// после просмотра стоит ровно так же.
+func TestWaitShelfDropsAnsweredIdle(t *testing.T) {
+	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.Local)
+	e, c := shelfEnv(t, now)
+	const sid = "aaaa1111-idle-id"
+	at := idleShelf(t, e, now, sid)
+
+	path := writeSession(t, e.home, e.proj, "", sid, humanLine("начинай", at.Add(-time.Hour)), at)
+	if err := e.s.chatStoreWrite(sid, chatStore{Seen: at.Add(10 * time.Minute).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if items, _ := getShelf(t, e, c); !shelfHas(items, "XR-005") {
+		t.Fatalf("просмотр без реплики снял запись с полки: %+v", items)
+	}
+
+	talk := humanLine("начинай", at.Add(-time.Hour)) + humanLine("катим", at.Add(5*time.Minute))
+	if err := os.WriteFile(path, []byte(talk), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if items, _ := getShelf(t, e, c); shelfHas(items, "XR-005") {
+		t.Fatalf("отвеченный повод остался на полке: %+v", items)
+	}
+}

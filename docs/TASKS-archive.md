@@ -528,3 +528,14 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1026 | стенд devkitctl падает: .git/objects песочницы исчезает под обходом | bug | P1 | 2026-09-16 | [tasks/archive/2026/DK-1026.md](tasks/archive/2026/DK-1026.md) |
 | DK-603 | regcheck засчитывает падение сборки базы как красноту теста | bug | P1 | 2026-09-16 | [tasks/archive/2026/DK-603.md](tasks/archive/2026/DK-603.md) |
 | DK-1023 | тест ожидания goal-loop падает, когда отметка пишется в конце секунды | bug | P1 | 2026-09-16 | [tasks/archive/2026/DK-1023.md](tasks/archive/2026/DK-1023.md) |
+| DK-1007 | Холостой прогон move --dry-run снимает привязку сессии к задаче | bug | P1 | 2026-09-17 | [tasks/archive/2026/DK-1007.md](tasks/archive/2026/DK-1007.md) |
+| DK-467 | Маскировка токенов доктором рвёт экранирование и ломает settings.json | bug | P1 | 2026-09-17 | [tasks/archive/2026/DK-467.md](tasks/archive/2026/DK-467.md) |
+| DK-630 | Настройку доставки реплики раскладывает доктор | task | P1 | 2026-09-17 | [tasks/archive/2026/DK-630.md](tasks/archive/2026/DK-630.md) |
+| DK-597 | review resolve --push отказывает на ветке без upstream | bug | P2 | 2026-09-17 | [tasks/archive/2026/DK-597.md](tasks/archive/2026/DK-597.md) |
+| DK-820 | Обкатка гоняет прозу как шаги при незакрытом блоке сценария вместо отказа | bug | P2 | 2026-09-17 | [tasks/archive/2026/DK-820.md](tasks/archive/2026/DK-820.md) |
+| DK-123 | shipctl start в корп-контуре зовёт merge, которого там нет | bug | P2 | 2026-09-17 | [tasks/archive/2026/DK-123.md](tasks/archive/2026/DK-123.md) |
+| DK-122 | Отказ «конвейер занят» не говорит, кто держит замок | task | P2 | 2026-09-17 | [tasks/archive/2026/DK-122.md](tasks/archive/2026/DK-122.md) |
+| DK-509 | Рубеж символов на коммите не щадит testdata: снимок не закоммитить | bug | P2 | 2026-09-17 | [tasks/archive/2026/DK-509.md](tasks/archive/2026/DK-509.md) |
+| DK-508 | CI не гоняет тесты модулей cmdout и secretctl | bug | P2 | 2026-09-17 | [tasks/archive/2026/DK-508.md](tasks/archive/2026/DK-508.md) |
+| DK-970 | Панель чата после архива уходит в «Новый чат» вместо соседнего разговора | bug | P2 | 2026-09-17 | [tasks/archive/2026/DK-970.md](tasks/archive/2026/DK-970.md) |
+| DK-719 | Открытая форма черновика после груминга не становится формой задачи | bug | P2 | 2026-09-17 | [tasks/archive/2026/DK-719.md](tasks/archive/2026/DK-719.md) |

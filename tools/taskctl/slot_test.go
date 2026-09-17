@@ -424,11 +424,15 @@ func TestSlotEmptyBoard(t *testing.T) {
 }
 
 // silentTmux подменяет tmux скриптом, у которого ls отказывает незнакомыми
-// словами: это сорванный опрос, а не машина без сессий.
+// словами: это сорванный опрос, а не машина без сессий. Пустой msg даёт код
+// без слов, как у подставных tmux стендов.
 func silentTmux(t *testing.T, msg string) {
 	t.Helper()
 	bin := t.TempDir()
-	script := "#!/bin/sh\necho '" + msg + "' >&2\nexit 1\n"
+	script := "#!/bin/sh\nexit 1\n"
+	if msg != "" {
+		script = "#!/bin/sh\necho '" + msg + "' >&2\nexit 1\n"
+	}
 	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

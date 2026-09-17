@@ -63,7 +63,12 @@ func Sessions() ([]Session, error) {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			msg := strings.TrimSpace(string(ee.Stderr))
-			if noServer(msg) {
+			// Код без единого слова это тоже «сессий нет». Настоящий tmux
+			// всякий отказ называет словами, а молчаливый код отдают
+			// подставные tmux стендов и обёртки, и на нём вставали ворота
+			// взвода (стенд трёх ожиданий devkitctl). Снятый сигналом процесс
+			// сюда не попадает: код у него отрицательный.
+			if noServer(msg) || (msg == "" && ee.ExitCode() > 0) {
 				return []Session{}, nil
 			}
 			return nil, fmt.Errorf("tmux ls: %s", firstLine(msg, err.Error()))

@@ -633,3 +633,19 @@ func TestArmGatesPassWithoutTmux(t *testing.T) {
 		t.Fatalf("ворота без tmux отказали: %s", why)
 	}
 }
+
+// TestArmGatesPassOnBareTmuxExit: подставной tmux стенда отвечает кодом 1 без
+// слов на любую команду, и ворота ёмкости взвода на таком ответе вставали
+// (красный стенд трёх ожиданий devkitctl при слиянии DK-904). Код без слов
+// это «сессий нет», строка проходит.
+func TestArmGatesPassOnBareTmuxExit(t *testing.T) {
+	root := armStand(t, 3)
+	silentTmux(t, "")
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if why := newArmGates(root, b).pass("XR-003"); why != "" {
+		t.Fatalf("ворота на коде без слов отказали: %s", why)
+	}
+}

@@ -249,6 +249,13 @@ function pollEvery(ms, run) {
     poll.timer = null;
     step().catch(console.error);
   };
+  // Уход в фон снимает и заведённый круг. Без этого вкладка успевала спросить
+  // сервер по разу на каждый опрос уже после того, как человек её спрятал:
+  // срок круга выходил в фоне, и замер числа запросов это видел.
+  poll.sleep = () => {
+    if (poll.timer !== null) clearTimeout(poll.timer);
+    poll.timer = null;
+  };
   polls.add(poll);
   arm();
   return () => {
@@ -275,6 +282,10 @@ function pollOnce(ms, run) {
     if (poll.timer !== null) clearTimeout(poll.timer);
     fire();
   };
+  poll.sleep = () => {
+    if (poll.timer !== null) clearTimeout(poll.timer);
+    poll.timer = null;
+  };
   polls.add(poll);
   if (!hiddenTab()) poll.timer = setTimeout(fire, ms);
   return () => {
@@ -286,8 +297,11 @@ function pollOnce(ms, run) {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (hiddenTab()) return;
-  for (const poll of [...polls]) poll.wake();
+  const away = hiddenTab();
+  for (const poll of [...polls]) {
+    if (away) poll.sleep();
+    else poll.wake();
+  }
 });
 
 // Ответ бывает и не от дашборда: до него стоит внешний вход, и свой отказ

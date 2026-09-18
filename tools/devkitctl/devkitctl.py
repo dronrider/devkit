@@ -341,6 +341,12 @@ HOLD_HOOK = "goal-hold.py"
 # заход, без гашения на SessionStart он молчит и после сжатия контекста.
 MARK_HOOK = "prose-mark.py"
 MARK_EVENTS = ("PostToolUse", "SessionStart")
+# Указатель на скилл chat по транскрипту (DK-1032): UserPromptSubmit на пустом
+# матчере, тем же порядком, что TASK_HOOK на SessionStart, потому что класть
+# указатель можно только на реплике человека, а не на правке файла. Категория
+# сообщения в hook_gaps своя: без хука второй ход подряд идёт мимо скилла chat,
+# и разговор с человеком ведётся не по правилам молча.
+CHAT_POINTER_HOOK = "chat-pointer.py"
 # Хуки, переименованные в devkit: прежнее имя файла и нынешнее (DK-440). Строка
 # с прежним именем зовёт файл, которого в чекауте уже нет, и харнес спотыкается
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
@@ -418,6 +424,7 @@ HOOK_LAYOUT = (
     ("SessionStart", "", "sh %s/hooks/quota-refresh.sh"),
     ("SessionStart", "", "python3 %s/hooks/session-task.py --hook claude-code"),
     ("PostToolUse", "", "python3 %s/hooks/session-task.py --touch claude-code"),
+    ("UserPromptSubmit", "", "python3 %s/hooks/chat-pointer.py --hook claude-code"),
     ("SessionStart", "", "sh %s/hooks/board-catchup.sh"),
     ("SessionStart", "", "sh %s/hooks/devkit-catchup.sh"),
     ("Notification", NOTIFY_MATCHER, "python3 %s/hooks/notify.py --hook claude-code"),
@@ -1613,6 +1620,11 @@ def hook_gaps(text, settings):
                             "остаток окна на переходе задачи никто не считает, и хвост задачи "
                             "попадает на самый занятый контекст (hooks/README.md)"
                             % (PHASE_HOOK, settings))
+        elif script == CHAT_POINTER_HOOK:
+            findings.append("указатель на скилл chat %s не подключён на событии UserPromptSubmit "
+                            "в %s: второй ход подряд идёт мимо скилла chat молча, и разговор с "
+                            "человеком ведётся не по правилам (hooks/README.md)"
+                            % (CHAT_POINTER_HOOK, settings))
         elif script == TASK_HOOK and event == "PostToolUse":
             findings.append("PostToolUse-хук %s --touch не подключён в %s: правка файла в боковом "
                             "дереве задачи не оставляет отметку в журнале сессий, и работа вне "

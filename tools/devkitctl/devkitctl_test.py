@@ -328,6 +328,23 @@ class ProjectFindingsTest(SandboxCase):
         self.assertNotIn_("goal-hold.py не подключён", out,
                           "подключённый держатель попал в находку")
 
+    def test_5h_chat_pointer_hook(self):
+        # Указатель на скилл chat по транскрипту (DK-1032) стоит на
+        # UserPromptSubmit, и его пропажа это находка: без хука второй ход
+        # подряд идёт мимо скилла chat молча.
+        full = read(self.settings)
+        drop_lines(self.settings, "chat-pointer.py")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("указатель на скилл chat chat-pointer.py не подключён на "
+                       "событии UserPromptSubmit", out,
+                       "нет находки про неподключённый указатель на скилл chat")
+        self.assertIn_("разговор с человеком ведётся не по правилам", out,
+                       "находка не говорит, что ломается без указателя")
+        write(self.settings, full)
+        _, out = self.box.doctor(self.proj)
+        self.assertNotIn_("chat-pointer.py не подключён", out,
+                          "подключённый указатель попал в находку")
+
     def test_5b_retry_watchdog_key(self):
         # Без env-ключа недокументированного ретрай-вотчдога доктор называет
         # это находкой (стенд DK-172 разницы в поведении с ключом не нашёл, но
@@ -2375,6 +2392,10 @@ class HarnessHooksTest(SandboxCase):
         for event in ("Stop", "StopFailure", "Notification", "UserPromptSubmit"):
             cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
             self.assertEqual(len([c for c in cmds if "turn-mark.py" in c]), 1, (event, cmds))
+        # Указатель на скилл chat (DK-1032) ложится на реплику человека, а не
+        # на старт сессии: тело правила приезжает по вызову, не на каждом ходе.
+        cmds = [h["command"] for g in hooks["UserPromptSubmit"] for h in g["hooks"]]
+        self.assertEqual(len([c for c in cmds if "chat-pointer.py" in c]), 1, cmds)
         # Ретрай-вотчдог (DK-172) ложится тем же --fix: env-ключ, с которым
         # обрыв сети ретраится, а не останавливает ход до ручного «продолжай».
         self.assertEqual(data.get("env", {}).get(devkitctl.WATCHDOG_KEY),

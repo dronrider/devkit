@@ -136,7 +136,7 @@ func componentKey(key string) (name string, isPaths bool) {
 	return rest, false
 }
 
-// splitPaths разбирает список путей компонента через запятую: xr-core/,
+// splitPaths разбирает список путей компонента через запятую: web/,
 // shared/. Пробелы вокруг каждого пути обрезаются, пустые элементы (хвостовая
 // или двойная запятая) пропускаются.
 func splitPaths(s string) []string {
@@ -190,7 +190,7 @@ func (c Config) componentFor(path string) (string, bool) {
 
 // pathUnder проверяет, лежит ли path под prefix: как файл целиком, либо
 // внутри каталога, который тот называет. Хвостовой слеш не обязателен,
-// «xr-core» и «xr-core/» в списке путей компонента это одно и то же.
+// «web» и «web/» в списке путей компонента это одно и то же.
 func pathUnder(path, prefix string) bool {
 	prefix = strings.TrimSuffix(prefix, "/")
 	if prefix == "" {

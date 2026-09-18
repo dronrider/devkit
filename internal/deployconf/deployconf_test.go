@@ -48,8 +48,8 @@ func TestLoadMissingIsUserDeploy(t *testing.T) {
 // первого из них в файле, а не в алфавитном.
 func TestLoadComponents(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "deploy.xr-hub = ./deploy-hub.sh\ndeploy.xr-hub.paths = xr-hub/\n"+
-		"deploy.xr-core.paths = xr-core/, shared/\ndeploy.xr-core = ./deploy-server.sh\n"+
+	write(t, root, "deploy.worker = ./deploy-worker.sh\ndeploy.worker.paths = worker/\n"+
+		"deploy.web.paths = web/, shared/\ndeploy.web = ./deploy-web.sh\n"+
 		"autonomous = true\n")
 	c, err := Load(root)
 	if err != nil {
@@ -58,12 +58,12 @@ func TestLoadComponents(t *testing.T) {
 	if len(c.Components) != 2 {
 		t.Fatalf("компонентов %d, ждал 2: %+v", len(c.Components), c.Components)
 	}
-	if c.Components[0].Name != "xr-hub" || c.Components[0].Command != "./deploy-hub.sh" ||
-		len(c.Components[0].Paths) != 1 || c.Components[0].Paths[0] != "xr-hub/" {
+	if c.Components[0].Name != "worker" || c.Components[0].Command != "./deploy-worker.sh" ||
+		len(c.Components[0].Paths) != 1 || c.Components[0].Paths[0] != "worker/" {
 		t.Errorf("первый компонент разобран не так: %+v", c.Components[0])
 	}
-	if c.Components[1].Name != "xr-core" || c.Components[1].Command != "./deploy-server.sh" ||
-		len(c.Components[1].Paths) != 2 || c.Components[1].Paths[0] != "xr-core/" || c.Components[1].Paths[1] != "shared/" {
+	if c.Components[1].Name != "web" || c.Components[1].Command != "./deploy-web.sh" ||
+		len(c.Components[1].Paths) != 2 || c.Components[1].Paths[0] != "web/" || c.Components[1].Paths[1] != "shared/" {
 		t.Errorf("второй компонент разобран не так: %+v", c.Components[1])
 	}
 }
@@ -73,8 +73,8 @@ func TestLoadComponents(t *testing.T) {
 // нечем катить задетый.
 func TestLoadComponentsIncomplete(t *testing.T) {
 	for _, body := range []string{
-		"deploy.xr-core = ./deploy-server.sh\n",
-		"deploy.xr-core.paths = xr-core/\n",
+		"deploy.web = ./deploy-web.sh\n",
+		"deploy.web.paths = web/\n",
 	} {
 		root := t.TempDir()
 		write(t, root, body)
@@ -88,27 +88,68 @@ func TestLoadComponentsIncomplete(t *testing.T) {
 // диффе) и находит все затронутые, каждый по разу.
 func TestMatch(t *testing.T) {
 	root := t.TempDir()
-	write(t, root, "deploy.xr-hub = ./deploy-hub.sh\ndeploy.xr-hub.paths = xr-hub/\n"+
-		"deploy.xr-core = ./deploy-server.sh\ndeploy.xr-core.paths = xr-core/, shared/\n")
+	write(t, root, "deploy.worker = ./deploy-worker.sh\ndeploy.worker.paths = worker/\n"+
+		"deploy.web = ./deploy-web.sh\ndeploy.web.paths = web/, shared/\n")
 	c, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	matched, miss := c.Match([]string{"xr-hub/main.go", "shared/util.go", "xr-hub/README.md"})
+	matched, miss := c.Match([]string{"worker/main.go", "shared/util.go", "worker/README.md"})
 	if miss != "" {
 		t.Fatalf("неожиданный miss: %q", miss)
 	}
-	if len(matched) != 2 || matched[0].Name != "xr-hub" || matched[1].Name != "xr-core" {
+	if len(matched) != 2 || matched[0].Name != "worker" || matched[1].Name != "web" {
 		t.Fatalf("состав или порядок не тот: %+v", matched)
 	}
 	// Путь мимо всех компонентов останавливает разбор и называет себя.
-	if matched, miss := c.Match([]string{"xr-hub/main.go", "infra/loader.py"}); miss != "infra/loader.py" || matched != nil {
+	if matched, miss := c.Match([]string{"worker/main.go", "infra/loader.py"}); miss != "infra/loader.py" || matched != nil {
 		t.Fatalf("ждал отказ по infra/loader.py: matched=%v miss=%q", matched, miss)
 	}
 	// Раскладки нет вовсе: Match не судья, старый одиночный deploy остаётся в силе.
 	empty := Config{}
 	if matched, miss := empty.Match([]string{"any/path.go"}); matched != nil || miss != "" {
 		t.Fatalf("пустая раскладка не должна судить пути: %v %q", matched, miss)
+	}
+}
+
+// Пути двух компонентов бывают вложены один в другой (общий подкаталог
+// раскладки на весь модуль плюс отдельный компонент под его частью). Путь,
+// который подходит обоим, достаётся тому, что стоит в конфиге первым: разбор
+// компонента для одного пути не выбирает более узкий, он берёт первый
+// подходящий по порядку (находка ревью DK-894, №2).
+func TestMatchOverlappingPathsPicksFirstByConfig(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "deploy.app = ./deploy-app.sh\ndeploy.app.paths = app/\n"+
+		"deploy.app-static = ./deploy-app-static.sh\ndeploy.app-static.paths = app/static/\n")
+	c, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matched, miss := c.Match([]string{"app/static/x.css"})
+	if miss != "" {
+		t.Fatalf("неожиданный miss: %q", miss)
+	}
+	if len(matched) != 1 || matched[0].Name != "app" {
+		t.Fatalf("путь под обоими компонентами должен достаться первому по конфигу (app): %+v", matched)
+	}
+}
+
+// pathUnder судит по границе `/`, а не по голому HasPrefix: сосед с более
+// длинным именем (tools/shipctl) не должен попадать под более короткий путь
+// компонента (tools/ship), и наоборот, свой путь остаётся своим (находка
+// ревью DK-894, №3).
+func TestMatchPathBoundaryNotPrefixCollision(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "deploy.ship = ./deploy-ship.sh\ndeploy.ship.paths = tools/ship\n")
+	c, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matched, miss := c.Match([]string{"tools/ship/main.go"}); miss != "" || len(matched) != 1 || matched[0].Name != "ship" {
+		t.Fatalf("свой путь компонента должен матчиться: matched=%v miss=%q", matched, miss)
+	}
+	if matched, miss := c.Match([]string{"tools/shipctl/main.go"}); miss != "tools/shipctl/main.go" || matched != nil {
+		t.Fatalf("соседний каталог с тем же префиксом не должен матчиться: matched=%v miss=%q", matched, miss)
 	}
 }
 

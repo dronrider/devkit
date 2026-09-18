@@ -7,18 +7,18 @@ import (
 	"testing"
 )
 
-// coreHubCfg это раскладка на два компонента: xr-core и xr-hub, каждый со
+// webWorkerCfg это раскладка на два компонента: web и worker, каждый со
 // своим путём и командой-заглушкой, которая оставляет маркер в root. Порядок
 // ключей в файле это порядок, в котором merge и ship катят задетые компоненты.
-func coreHubCfg(root string, hubFails bool) string {
-	hub := "touch " + filepath.Join(root, "hub.marker")
-	if hubFails {
-		hub = "false"
+func webWorkerCfg(root string, workerFails bool) string {
+	worker := "touch " + filepath.Join(root, "worker.marker")
+	if workerFails {
+		worker = "false"
 	}
-	return "deploy.xr-core = touch " + filepath.Join(root, "core.marker") + "\n" +
-		"deploy.xr-core.paths = xr-core/\n" +
-		"deploy.xr-hub = " + hub + "\n" +
-		"deploy.xr-hub.paths = xr-hub/\n" +
+	return "deploy.web = touch " + filepath.Join(root, "web.marker") + "\n" +
+		"deploy.web.paths = web/\n" +
+		"deploy.worker = " + worker + "\n" +
+		"deploy.worker.paths = worker/\n" +
 		"autonomous = true\n"
 }
 
@@ -42,23 +42,23 @@ func componentWorktree(t *testing.T, root, branch string, files map[string]strin
 // упоминается.
 func TestStatusPrintsComponents(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
-	writeDeployCfg(t, root, coreHubCfg(root, false))
+	writeDeployCfg(t, root, webWorkerCfg(root, false))
 	componentWorktree(t, root, "xr-001-fix", map[string]string{
-		"xr-core/a.go":      "package xrcore\n",
-		"xr-core/a_test.go": "package xrcore\n",
+		"web/a.go":      "package web\n",
+		"web/a_test.go": "package web\n",
 	})
 
 	msg, err := cmdStatus(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "компоненты: xr-core (touch "+filepath.Join(root, "core.marker")+")") {
+	if !strings.Contains(msg, "компоненты: web (touch "+filepath.Join(root, "web.marker")+")") {
 		t.Fatalf("нет печати задетого компонента:\n%s", msg)
 	}
-	// "xr-hub" сам по себе встречается и в общей строке раскладки ("выкат:
-	// ... (xr-core, xr-hub)"), список имён в конфиге; а вот с командой в
+	// "worker" сам по себе встречается и в общей строке раскладки ("выкат:
+	// ... (web, worker)"), список имён в конфиге; а вот с командой в
 	// скобках, как у задетого, незадетый компонент попасть не должен.
-	if strings.Contains(msg, "xr-hub (") {
+	if strings.Contains(msg, "worker (") {
 		t.Fatalf("незадетый компонент не должен попадать в список задетых:\n%s", msg)
 	}
 }
@@ -68,7 +68,7 @@ func TestStatusPrintsComponents(t *testing.T) {
 // остальные задачи тоже.
 func TestStatusComponentsMissingPath(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
-	writeDeployCfg(t, root, coreHubCfg(root, false))
+	writeDeployCfg(t, root, webWorkerCfg(root, false))
 	componentWorktree(t, root, "xr-001-fix", map[string]string{
 		"infra/loader.py":      "print(1)\n",
 		"infra/loader_test.py": "print(1)\n",
@@ -91,22 +91,22 @@ func TestStatusComponentsMissingPath(t *testing.T) {
 // задача уезжает в Check.
 func TestMergeComponentsHappyPath(t *testing.T) {
 	root, callLog := setup(t, rowInProg, "")
-	writeDeployCfg(t, root, coreHubCfg(root, false))
+	writeDeployCfg(t, root, webWorkerCfg(root, false))
 	addRemote(t, root)
 	componentWorktree(t, root, "xr-001-fix", map[string]string{
-		"xr-core/a.go":      "package xrcore\n",
-		"xr-core/a_test.go": "package xrcore\n",
-		"xr-hub/b.go":       "package xrhub\n",
+		"web/a.go":      "package web\n",
+		"web/a_test.go": "package web\n",
+		"worker/b.go":   "package worker\n",
 	})
 
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "выкат компонентов прошёл: xr-core, xr-hub") {
+	if !strings.Contains(msg, "выкат компонентов прошёл: web, worker") {
 		t.Fatalf("нет отчёта о прогоне компонентов: %q", msg)
 	}
-	for _, marker := range []string{"core.marker", "hub.marker"} {
+	for _, marker := range []string{"web.marker", "worker.marker"} {
 		if _, err := os.Stat(filepath.Join(root, marker)); err != nil {
 			t.Fatalf("компонент не выкачен, маркер %s не появился", marker)
 		}
@@ -120,33 +120,33 @@ func TestMergeComponentsHappyPath(t *testing.T) {
 	}
 }
 
-// TestMergeComponentsStopsOnFirstFailure: xr-hub встаёт вторым по конфигу и
-// падает, xr-core к этому моменту уже выкачен и не перезапускается. Отказ
+// TestMergeComponentsStopsOnFirstFailure: worker встаёт вторым по конфигу и
+// падает, web к этому моменту уже выкачен и не перезапускается. Отказ
 // называет упавший компонент и то, что уже уехало (решение «двое», DK-894).
 func TestMergeComponentsStopsOnFirstFailure(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
-	writeDeployCfg(t, root, coreHubCfg(root, true))
+	writeDeployCfg(t, root, webWorkerCfg(root, true))
 	addRemote(t, root)
 	componentWorktree(t, root, "xr-001-fix", map[string]string{
-		"xr-core/a.go":      "package xrcore\n",
-		"xr-core/a_test.go": "package xrcore\n",
-		"xr-hub/b.go":       "package xrhub\n",
+		"web/a.go":      "package web\n",
+		"web/a_test.go": "package web\n",
+		"worker/b.go":   "package worker\n",
 	})
 
 	_, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"})
 	if err == nil {
-		t.Fatal("провал компонента xr-hub должен провалить merge")
+		t.Fatal("провал компонента worker должен провалить merge")
 	}
-	for _, want := range []string{"xr-hub", "уже выкачены: xr-core", "In progress"} {
+	for _, want := range []string{"worker", "уже выкачены: web", "In progress"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("в отказе нет %q: %v", want, err)
 		}
 	}
-	if _, statErr := os.Stat(filepath.Join(root, "core.marker")); statErr != nil {
-		t.Fatal("xr-core должен был отработать до провала xr-hub")
+	if _, statErr := os.Stat(filepath.Join(root, "web.marker")); statErr != nil {
+		t.Fatal("web должен был отработать до провала worker")
 	}
-	if _, statErr := os.Stat(filepath.Join(root, "hub.marker")); statErr == nil {
-		t.Fatal("xr-hub провалился, маркера быть не должно")
+	if _, statErr := os.Stat(filepath.Join(root, "worker.marker")); statErr == nil {
+		t.Fatal("worker провалился, маркера быть не должно")
 	}
 	b, err := loadBoard(root)
 	if err != nil {
@@ -162,7 +162,7 @@ func TestMergeComponentsStopsOnFirstFailure(t *testing.T) {
 // тестов и ребейза.
 func TestMergeRefusesUnmappedPath(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
-	writeDeployCfg(t, root, coreHubCfg(root, false))
+	writeDeployCfg(t, root, webWorkerCfg(root, false))
 	addRemote(t, root)
 	componentWorktree(t, root, "xr-001-fix", map[string]string{
 		"infra/loader.py":      "print(1)\n",
@@ -192,7 +192,7 @@ func TestMergeRefusesUnmappedPath(t *testing.T) {
 // для которого нет компонента.
 func TestMergeExplicitDeployBypassesComponents(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
-	writeDeployCfg(t, root, coreHubCfg(root, false))
+	writeDeployCfg(t, root, webWorkerCfg(root, false))
 	addRemote(t, root)
 	componentWorktree(t, root, "xr-001-fix", map[string]string{
 		"infra/loader.py":      "print(1)\n",
@@ -214,12 +214,12 @@ func TestMergeExplicitDeployBypassesComponents(t *testing.T) {
 // задетые компоненты по очереди, разом переводя обе задачи в Check.
 func TestShipRunsComponentsForTrain(t *testing.T) {
 	root, callLog := setup(t, rowInProg+rowInProg3, "")
-	writeDeployCfg(t, root, coreHubCfg(root, false))
+	writeDeployCfg(t, root, webWorkerCfg(root, false))
 	addRemote(t, root)
 
 	componentWorktree(t, root, "xr-001-fix", map[string]string{
-		"xr-core/a.go":      "package xrcore\n",
-		"xr-core/a_test.go": "package xrcore\n",
+		"web/a.go":      "package web\n",
+		"web/a_test.go": "package web\n",
 	})
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
 		t.Fatal(err)
@@ -229,8 +229,8 @@ func TestShipRunsComponentsForTrain(t *testing.T) {
 	// XR-003, тем же приёмом, что в TestTrainMergeAndShip.
 	taskWithScenario(t, root, "XR-003")
 	componentWorktree(t, root, "xr-003-fix", map[string]string{
-		"xr-hub/b.go":      "package xrhub\n",
-		"xr-hub/b_test.go": "package xrhub\n",
+		"worker/b.go":      "package worker\n",
+		"worker/b_test.go": "package worker\n",
 	})
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true}); err != nil {
 		t.Fatal(err)
@@ -240,10 +240,10 @@ func TestShipRunsComponentsForTrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "поезд выкачен по компонентам") || !strings.Contains(msg, "xr-core") || !strings.Contains(msg, "xr-hub") {
+	if !strings.Contains(msg, "поезд выкачен по компонентам") || !strings.Contains(msg, "web") || !strings.Contains(msg, "worker") {
 		t.Fatalf("нет отчёта о прогоне компонентов поезда: %q", msg)
 	}
-	for _, marker := range []string{"core.marker", "hub.marker"} {
+	for _, marker := range []string{"web.marker", "worker.marker"} {
 		if _, err := os.Stat(filepath.Join(root, marker)); err != nil {
 			t.Fatalf("компонент поезда не выкачен, маркер %s не появился", marker)
 		}
@@ -269,7 +269,7 @@ func TestShipDrainSwallowsUnmappedPath(t *testing.T) {
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
 		t.Fatal(err)
 	}
-	writeDeployCfg(t, root, coreHubCfg(root, false))
+	writeDeployCfg(t, root, webWorkerCfg(root, false))
 
 	msg, err := cmdShip(root, ShipParams{Drain: true})
 	if err != nil {

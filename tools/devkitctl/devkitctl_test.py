@@ -1482,10 +1482,13 @@ class PackagesTest(SandboxCase):
 
     def test_3_no_package_manager(self):
         # Менеджера нет: находка остаётся, но с причиной, и чужого менеджера
-        # devkit не выдумывает.
+        # devkit не выдумывает. Найти нечем не только пакет, а и сам brew, и
+        # находка называет команду его установки, а не только «ставить руками».
         _, out = self.docp("--fix", path=self.nobrew)
         self.assertIn_("пакетного менеджера brew на машине нет", out,
                        "находка не называет причину, по которой пакет не поставлен")
+        self.assertIn_(devkitctl.PACKAGER_INSTALL_CMD, out,
+                       "находка не называет команду установки brew")
         self.assertFalse((self.pkgbin / "tmux").exists(), "пакет поставлен без менеджера")
         self.assertNotIn_("apt install", out, "доводка подставила чужой пакетный менеджер")
 

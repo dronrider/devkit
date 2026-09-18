@@ -18,8 +18,10 @@ launchd его поднял, и /healthz отвечает без ошибок к
 """
 import json
 import os
+import secrets
 import shutil
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -31,6 +33,11 @@ LOG = "~/.devkit/dashboard.log"
 CONF = "~/.devkit/dashboard.local"
 DEFAULT_PORT = 7112
 HEALTHZ_TIMEOUT = 3
+# Ждём секрет входа, который кладёт сам `serve` при первом старте: launchd
+# поднимает процесс не мгновенно, и без этого ожидания первый прогон
+# devkitctl update/doctor --fix чаще всего не застал бы токен готовым.
+LOGIN_WAIT = 5.0
+LOGIN_POLL = 0.2
 
 
 def home_path(home, path):
@@ -61,6 +68,68 @@ def conf_port(home):
                 return DEFAULT_PORT
             return port if 0 < port < 65536 else DEFAULT_PORT
     return DEFAULT_PORT
+
+
+def default_root(main):
+    """Корень поиска проектов по умолчанию: родитель чекаута devkit. Клон по
+    CONNECT.md лежит в `~/projects`, и родитель напрашивается сам; чекаут в
+    другом месте даёт другой корень, а не пустой список (решение DK-822)."""
+    return str(Path(main).resolve().parent)
+
+
+def ensure_conf(home, main):
+    """Заводит `~/.devkit/dashboard.local` со строкой `root`, когда файла ещё
+    нет вовсе: без неё сервер стартует с пустым списком корней, и строка из
+    CONNECT.md доводит только до «нет ни одной строки root» в /healthz.
+    Существующий конфиг не трогается, даже без строки root в нём: человек мог
+    убрать её нарочно. Зовётся раньше взвода агента, чтобы первый же старт
+    `serve` увидел готовый конфиг, а не пустой."""
+    path = home_path(home, CONF)
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("root = %s\n" % default_root(main), encoding="utf-8")
+    path.chmod(0o600)
+
+
+def _read_token(home):
+    path = home_path(home, CONF)
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    for ln in text.splitlines():
+        key, sep, val = ln.partition("=")
+        if sep and key.strip() == "token":
+            return val.strip()
+    return ""
+
+
+def wait_for_token(home, timeout=LOGIN_WAIT, poll=LOGIN_POLL, sleep=None):
+    """Ждёт секрет входа, который кладёт сам `serve` при первом старте (тем же
+    кодом, что и `dashboard secret`): до этого момента стучаться в /healthz
+    некуда, а токен показать нечего. Пустая строка на истёкший срок ожидания,
+    вызывающий тогда печатает адрес без токена."""
+    sleep = time.sleep if sleep is None else sleep
+    deadline = time.monotonic() + timeout
+    got = _read_token(home)
+    while not got and time.monotonic() < deadline:
+        sleep(poll)
+        got = _read_token(home)
+    return got
+
+
+def login_line(home, had_token, waiter=None):
+    """Строка входа в хвост update/doctor --fix: адрес печатается всегда, а
+    секрет только когда родился на этом же прогоне (had_token снят до наших
+    действий), потому что машина та же, и звать новичка за `dashboard secret`
+    отдельным шагом незачем (решение DK-822)."""
+    addr = "http://localhost:%d/login" % conf_port(home)
+    if had_token:
+        return "дашборд поднят, адрес входа %s" % addr
+    got = (waiter or wait_for_token)(home)
+    if not got:
+        return "дашборд поднят, адрес входа %s (токен ещё не родился, напечатать: dashboard secret)" % addr
+    return "дашборд поднят, адрес входа %s, токен %s" % (addr, got)
 
 
 # PATH launchd-агента собирается из четырёх частей: системное умолчание
@@ -175,7 +244,7 @@ def probe(home, fetch=None):
 
 
 def check(fix=False, main=None, from_main=True, home=None, platform=None,
-          call=None, which=None, fetch=None, machine=None):
+          call=None, which=None, fetch=None, machine=None, waiter=None):
     """Носитель дашборда в машинном контуре доктора.
 
     Хоть plist и показывает на бинарь из PATH, а не на чекаут, класть его с
@@ -185,7 +254,9 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None,
     Под подставным домом launchd не трогается вовсе (DK-588): метка агента
     одна на машину, и доводка из временного дома уводила живой дашборд
     пользователя. Дом машины берётся из учётной записи, ключ `machine` тут для
-    тестов."""
+    тестов. Конфиг с корнем поиска проектов (`ensure_conf`) это простой файл
+    заданного дома, а не служба машины, и заводится независимо от own_home:
+    подставному дому это не вредит, а настоящему экономит первый шаг."""
     home = default_home() if home is None else home
     platform = sys.platform if platform is None else platform
     which = shutil.which if which is None else which
@@ -199,6 +270,9 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None,
     if not binary:
         return ["бинаря dashboard нет в PATH: дашборд не поднять; поставить бинари "
                 "(devkitctl update или build) и повторить doctor --fix"], []
+    had_token = bool(_read_token(home))
+    if fix:
+        ensure_conf(home, main)
     plist = home_path(home, PLIST)
     log = home_path(home, LOG)
     want = plist_text(binary, log)
@@ -218,8 +292,8 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None,
         err = reload_agent(plist, call)
         if err:
             return ["launchd не взял агента дашборда %s: %s" % (plist, err)], []
-        return [], ["дашборд подключён launchd-агентом %s (порт %d, журнал %s)"
-                    % (LABEL, conf_port(home), log)]
+        return [], ["дашборд подключён launchd-агентом %s (порт %d, журнал %s); %s"
+                    % (LABEL, conf_port(home), log, login_line(home, had_token, waiter))]
     # Дальше речь про службы машины, и под подставным домом судить о них не о
     # чем: поднят там агент пользователя, а не тот, что описан этим plist.
     if not launchd.own_home(home, machine):
@@ -233,7 +307,8 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None,
         err = reload_agent(plist, call)
         if err:
             return ["launchd не взял агента дашборда %s: %s" % (plist, err)], []
-        return [], ["дашборд отобран у перехватчика %s и поднят из %s" % (thief, plist)]
+        return [], ["дашборд отобран у перехватчика %s и поднят из %s; %s"
+                    % (thief, plist, login_line(home, had_token, waiter))]
     if not loaded(call):
         if not fix:
             return ["launchd-агент дашборда %s положен, но не поднят: доска с телефона "
@@ -241,13 +316,20 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None,
         err = reload_agent(plist, call)
         if err:
             return ["launchd не взял агента дашборда %s: %s" % (plist, err)], []
-        return [], ["дашборд поднят launchd-агентом %s" % LABEL]
-    # Живость меряется по /healthz только после первого старта сервера: конфиг
-    # с секретом кладёт сам serve, и пока файла нет, сервер ещё не поднимался
-    # (агента только что взвели), стучаться некуда и не в какой порт.
-    if not home_path(home, CONF).exists():
+        return [], ["дашборд поднят launchd-агентом %s; %s"
+                    % (LABEL, login_line(home, had_token, waiter))]
+    # Живость меряется по /healthz только после первого старта сервера: секрет
+    # в конфиг кладёт только сам serve, и пока его там нет, сервер ещё не
+    # поднимался (root в конфиге кладёт уже ensure_conf, файл сам по себе
+    # больше не доказательство старта), стучаться некуда и не в какой порт.
+    if not _read_token(home):
         return [], []
     bad = probe(home, fetch)
     if bad:
         return [bad], []
-    return [], []
+    if not fix:
+        return [], []
+    # На обновлениях, когда чинить уже нечего, доктор всё равно печатает
+    # адрес входа одной строкой: новичок, вставивший строку из CONNECT.md
+    # заново, должен увидеть его и без свежей установки.
+    return [], [login_line(home, had_token, waiter)]

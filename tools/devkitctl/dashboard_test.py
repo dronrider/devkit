@@ -49,6 +49,12 @@ def ok_fetch(port):
                        "errors": []})
 
 
+def no_wait(home):
+    """Стенды прогона install/reload секрет не ждут: он тут не рождается
+    вовсе, потому что launchctl подставной."""
+    return ""
+
+
 class Stand(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="dashboard-test-"))
@@ -61,15 +67,19 @@ class Stand(unittest.TestCase):
         self.plist = self.home / "Library" / "LaunchAgents" / ("%s.plist" % dashboard.LABEL)
 
     def check(self, fix=False, call=None, platform="darwin", binary=True,
-              fetch=ok_fetch, from_main=True, machine=None):
+              fetch=ok_fetch, from_main=True, machine=None, waiter=no_wait):
         # Дом стенда объявляется домом машины: без этого проверка шла бы по
         # ветке подставного дома (DK-588) и launchd не трогала бы вовсе.
+        # waiter по умолчанию не ждёт: реальное ожидание секрета разбирает
+        # LoginLineTest своим стендом, а тут оно било бы по каждому прогону
+        # install/reload пятисекундной паузой.
         call = Fake() if call is None else call
         which = (lambda name: str(self.binary)) if binary else (lambda name: None)
         f, d = dashboard.check(fix=fix, main=self.dir / "devkit", from_main=from_main,
                                home=self.home, platform=platform,
                                call=call, which=which, fetch=fetch,
-                               machine=self.home if machine is None else machine)
+                               machine=self.home if machine is None else machine,
+                               waiter=waiter)
         return f, d, call
 
 
@@ -278,10 +288,14 @@ class ProbeTest(Stand):
         f, d, _ = self.loaded_check(ok_fetch)
         self.assertEqual((f, d), ([], []))
 
-    def test_no_config_skips_the_probe(self):
-        # Конфига ещё нет, значит сервер ни разу не стартовал (его кладёт сам
-        # serve): агент только что взведён, и стучаться в /healthz некуда.
+    def test_no_token_skips_the_probe(self):
+        # Root в конфиг кладёт уже ensure_conf при взводе, а секрета там ещё
+        # нет: значит сервер ни разу не стартовал (секрет кладёт только сам
+        # serve), и стучаться в /healthz некуда.
         self.check(fix=True)
+        conf = self.home / ".devkit" / "dashboard.local"
+        self.assertIn("root = ", conf.read_text(encoding="utf-8"))
+        self.assertNotIn("token", conf.read_text(encoding="utf-8"))
 
         def boom(port):
             raise AssertionError("probe не должен ходить в сеть без конфига")
@@ -329,6 +343,119 @@ class ConfTest(Stand):
 
         dashboard.probe(self.home, spy)
         self.assertEqual(seen, [7300])
+
+
+class EnsureConfTest(Stand):
+    """Строка root по умолчанию (DK-822): доктор заводит конфиг сам, вместо
+    молчаливого «нет ни одной строки root» на первом же /healthz."""
+
+    def conf(self):
+        return self.home / ".devkit" / "dashboard.local"
+
+    def test_missing_conf_gets_default_root(self):
+        main = self.dir / "projects" / "devkit"
+        main.mkdir(parents=True)
+        dashboard.ensure_conf(self.home, main)
+        text = self.conf().read_text(encoding="utf-8")
+        self.assertEqual(text, "root = %s\n" % main.resolve().parent)
+        self.assertEqual(oct(self.conf().stat().st_mode & 0o777), oct(0o600))
+
+    def test_existing_conf_is_untouched(self):
+        self.conf().parent.mkdir(parents=True, exist_ok=True)
+        self.conf().write_text("addr = 127.0.0.1\n", encoding="utf-8")
+        dashboard.ensure_conf(self.home, self.dir / "projects" / "devkit")
+        self.assertEqual(self.conf().read_text(encoding="utf-8"), "addr = 127.0.0.1\n")
+
+    def test_check_fix_writes_root_before_arming(self):
+        # До взвода агента: written раньше плиста, поэтому первый же старт
+        # serve видит готовый root, а не пустой список.
+        f, d, call = self.check(fix=True)
+        self.assertEqual(f, [])
+        text = self.conf().read_text(encoding="utf-8")
+        self.assertEqual(text, "root = %s\n" % (self.dir / "devkit").resolve().parent)
+
+    def test_check_without_fix_leaves_conf_alone(self):
+        self.check(fix=False)
+        self.assertFalse(self.conf().exists(), "без --fix конфиг заводиться не должен")
+
+
+class LoginLineTest(Stand):
+    """Адрес и токен в хвосте update/doctor --fix (DK-822): токен печатается,
+    только когда родился на этом же прогоне."""
+
+    def test_had_token_is_quiet_about_the_secret(self):
+        def boom(home):
+            raise AssertionError("не должен ждать старый токен")
+        line = dashboard.login_line(self.home, had_token=True, waiter=boom)
+        self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, line)
+        self.assertNotIn("токен", line)
+
+    def test_fresh_token_is_printed(self):
+        line = dashboard.login_line(self.home, had_token=False, waiter=lambda h: "секрет123")
+        self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, line)
+        self.assertIn("секрет123", line)
+
+    def test_timed_out_wait_still_prints_the_address(self):
+        line = dashboard.login_line(self.home, had_token=False, waiter=lambda h: "")
+        self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, line)
+        self.assertIn("dashboard secret", line)
+
+    def test_wait_for_token_polls_without_real_sleep(self):
+        # serve дописывает секрет не мгновенно (KeepAlive поднимает процесс
+        # чуть позже bootstrap): подставной sleep сам кладёт файл на втором
+        # тике, вместо того чтобы ждать секунды по-настоящему.
+        conf = self.home / ".devkit" / "dashboard.local"
+        conf.parent.mkdir(parents=True, exist_ok=True)
+        conf.write_text("root = /x\n", encoding="utf-8")
+        ticks = []
+
+        def fake_sleep(seconds):
+            ticks.append(seconds)
+            if len(ticks) == 2:
+                conf.write_text("root = /x\ntoken = abc\n", encoding="utf-8")
+
+        got = dashboard.wait_for_token(self.home, timeout=10, poll=0.01, sleep=fake_sleep)
+        self.assertEqual(got, "abc")
+        self.assertEqual(len(ticks), 2)
+
+    def test_wait_for_token_gives_up_after_timeout(self):
+        calls = []
+
+        def fake_sleep(seconds):
+            calls.append(seconds)
+
+        got = dashboard.wait_for_token(self.home, timeout=0.05, poll=0.01, sleep=fake_sleep)
+        self.assertEqual(got, "")
+        self.assertTrue(calls, "ожидание не сделало ни одного тика")
+
+
+class InstallLoginTest(Stand):
+    """Полный ход через check(): адрес в хвосте первой установки и на
+    последующих здоровых прогонах, без реального ожидания секрета."""
+
+    def test_fresh_install_names_address_and_token(self):
+        f, d, call = self.check(fix=True, waiter=lambda h: "новый-секрет")
+        self.assertEqual(f, [])
+        self.assertEqual(len(d), 1, d)
+        self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, d[0])
+        self.assertIn("новый-секрет", d[0])
+
+    def test_steady_state_prints_one_address_line(self):
+        (self.home / ".devkit" / "dashboard.local").write_text(
+            "root = /x\ntoken = abc\n", encoding="utf-8")
+        self.check(fix=True)
+        f, d, _ = self.check(fix=True, fetch=ok_fetch)
+        self.assertEqual(f, [])
+        self.assertEqual(len(d), 1, d)
+        self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, d[0])
+        self.assertNotIn("abc", d[0], "старый токен не должен печататься заново")
+
+    def test_steady_state_without_fix_is_quiet(self):
+        (self.home / ".devkit" / "dashboard.local").write_text(
+            "root = /x\ntoken = abc\n", encoding="utf-8")
+        self.check(fix=True)
+        f, d, _ = self.check(fetch=ok_fetch)
+        self.assertEqual((f, d), ([], []))
 
 
 if __name__ == "__main__":

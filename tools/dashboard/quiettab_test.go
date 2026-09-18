@@ -40,6 +40,13 @@ func TestStaticPollsGoThroughVisibilityGate(t *testing.T) {
 		!strings.Contains(app, "function pollEvery(") || !strings.Contains(app, "function pollOnce(") {
 		t.Fatal("выключателя видимости в app.js нет: опросы гасить нечем")
 	}
+	// Догон идёт лесенкой: первый ряд сразу, остальные по ступеньке (замечание
+	// ревью). Поведение замеряет TestDashboardSmokeHiddenTabQuiet настоящим
+	// браузером, а тут сторожатся сами опоры, чтобы правка не сняла их на
+	// машине без chrome.
+	if !strings.Contains(app, "const WAKE_STEP") || !strings.Contains(app, "poll.eager") {
+		t.Errorf("возврат к вкладке будит опросы разом: ни ступеньки (WAKE_STEP), ни первого ряда (eager) в app.js нет")
+	}
 	for _, name := range pollNames {
 		gate := regexp.MustCompile(`poll(Every|Once)\(\s*` + name + `\b`)
 		if !gate.MatchString(app) {

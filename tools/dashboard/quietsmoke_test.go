@@ -63,12 +63,18 @@ const showTab = (on) => {
     await sleep(res.ms);
     res.hidden = (await count()) - before;
     const back = await count();
+    // Отметка возврата: по ней сервер отделит догон от всего, что было раньше.
+    await fetch("/__quiet_back__", { method: "POST" });
     showTab(true);
     for (let i = 0; i < 24; i += 1) {
       await sleep(250);
       res.catchup = (await count()) - back;
       if (res.catchup) break;
     }
+    // Лесенка догона длиной около секунды: ждём её целиком, иначе сервер
+    // увидит одну первую ступеньку и разлив мерить будет нечем.
+    await sleep(1300);
+    res.catchup = (await count()) - back;
     res.ok = true;
   } catch (e) {
     res.error = String((e && e.message) || e);
@@ -91,17 +97,20 @@ type quietResult struct {
 	Ms      int    `json:"ms"`
 }
 
-// quietCounter считает запросы к api дашборда. Поток уведомлений в счёт не
-// идёт: его держит открытым сама страница, и переподключение потока это не
-// опрос.
+// quietCounter считает запросы к api дашборда и помнит, когда каждый пришёл.
+// Поток уведомлений в счёт не идёт: его держит открытым сама страница, и
+// переподключение потока это не опрос.
 type quietCounter struct {
-	mu sync.Mutex
-	n  int
+	mu   sync.Mutex
+	n    int
+	at   []time.Time
+	back time.Time
 }
 
 func (c *quietCounter) add() {
 	c.mu.Lock()
 	c.n++
+	c.at = append(c.at, time.Now())
 	c.mu.Unlock()
 }
 
@@ -109,6 +118,38 @@ func (c *quietCounter) get() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.n
+}
+
+// mark запоминает миг возврата к вкладке.
+func (c *quietCounter) mark() {
+	c.mu.Lock()
+	c.back = time.Now()
+	c.mu.Unlock()
+}
+
+// spread рассказывает про догон: сколько запросов пришло в окне после
+// возврата и сколько из них отстало от первого больше, чем на gap. Залповый
+// догон даёт ноль отставших, лесенка хотя бы одного.
+func (c *quietCounter) spread(window, gap time.Duration) (int, int, time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var got []time.Time
+	for _, at := range c.at {
+		if at.After(c.back) && at.Sub(c.back) <= window {
+			got = append(got, at)
+		}
+	}
+	if len(got) == 0 {
+		return 0, 0, 0
+	}
+	first := got[0]
+	late := 0
+	for _, at := range got[1:] {
+		if at.Sub(first) >= gap {
+			late++
+		}
+	}
+	return len(got), late, got[len(got)-1].Sub(first)
 }
 
 // quietChrome ищет браузер для этого замера. Сверх общего findChrome сюда
@@ -164,6 +205,10 @@ func TestDashboardSmokeHiddenTabQuiet(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]int{"n": counter.get()})
 		})
+		mux.HandleFunc("POST /__quiet_back__", func(w http.ResponseWriter, r *http.Request) {
+			counter.mark()
+			w.WriteHeader(http.StatusNoContent)
+		})
 		mux.HandleFunc("POST /__quiet_result__", func(w http.ResponseWriter, r *http.Request) {
 			defer r.Body.Close()
 			var res quietResult
@@ -192,8 +237,22 @@ func TestDashboardSmokeHiddenTabQuiet(t *testing.T) {
 	if res.Catchup < 1 {
 		t.Errorf("возврат к вкладке не догнал пропущенное: запросов после возврата %d", res.Catchup)
 	}
-	t.Logf("smoke: открытая вкладка %d запросов за %d мс, в фоне %d, догон %d (%s)",
-		res.Visible, res.Ms, res.Hidden, res.Catchup, url)
+	// Догон идёт лесенкой, а не залпом (замечание ревью). Судят тут отметки
+	// времени на сервере: первый ряд опросов приходит сразу, и хотя бы один
+	// запрос обязан отстать от него на ступеньку. Порог взят с запасом, вчетверо
+	// меньше самой ступеньки в 150 мс, чтобы прогон под нагрузкой не плавал.
+	const (
+		quietWindow = 1200 * time.Millisecond
+		quietGap    = 40 * time.Millisecond
+	)
+	got, late, span := counter.spread(quietWindow, quietGap)
+	if got >= 2 && late == 0 {
+		t.Errorf("догон пришёл залпом: %d запросов за %v после возврата, ни один не отстал от первого "+
+			"на %v. Опросы будятся разом, и возвращённая вкладка получает всплеск запросов",
+			got, span.Round(time.Millisecond), quietGap)
+	}
+	t.Logf("smoke: открытая вкладка %d запросов за %d мс, в фоне %d, догон %d, лесенкой %d из %d за %v (%s)",
+		res.Visible, res.Ms, res.Hidden, res.Catchup, late, got, span.Round(time.Millisecond), url)
 }
 
 // runChromeQuiet держит браузер дольше смоука списка чатов: замер сидит два

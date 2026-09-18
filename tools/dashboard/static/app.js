@@ -218,18 +218,29 @@ async function api(path, opts) {
 // на всех, потому что каждый опрос со своим условием разъезжался бы уже на
 // втором, а забытый заводился бы снова с любого экрана.
 //
-// Данные после возврата догоняются: вкладка, поднятая из фона, зовёт все
-// опросы сразу, не дожидаясь остатка срока. Иначе человек видел бы состояние
-// той минуты, когда уходил, и читал его как настоящее.
+// Данные после возврата догоняются, и первым рядом идёт то, на что человек
+// смотрит сразу: доска, полка ждущих и занятость открытого разговора. Иначе он
+// видел бы состояние той минуты, когда уходил, и читал его как настоящее.
+// Остальные опросы встают следом лесенкой, по ступеньке в WAKE_STEP, и весь
+// догон укладывается в секунду с небольшим. Разом их будить незачем: десять
+// запросов в один кадр это всплеск и на сервере, и на возвращённой вкладке
+// (замечание ревью).
 const polls = new Set();
+
+// Ступенька лесенки и её потолок. Потолок держит догон в пределах секунды с
+// небольшим, когда опросов на экране больше семи: дальние ступеньки садятся на
+// него и идут кучнее, но одним кадром догон всё равно не приходит.
+const WAKE_STEP = 150;
+const WAKE_SPAN = 1200;
 
 const hiddenTab = () => document.visibilityState === "hidden";
 
 // Опрос по кругу: run зовётся раз в ms, пока вкладка на виду. Возврат к
 // вкладке идёт за очередной круг. Снимается возвращённой функцией, её экраны
 // кладут в свои перечни живого (agentLive, chatLive) наравне с потоками.
-function pollEvery(ms, run) {
-  const poll = { timer: null, dead: false };
+// Признак eager ставят опросы первого ряда: их догон идёт без ступеньки.
+function pollEvery(ms, run, eager) {
+  const poll = { timer: null, dead: false, eager: Boolean(eager) };
   const arm = () => {
     if (poll.dead || poll.timer !== null || hiddenTab()) return;
     poll.timer = setTimeout(() => { step().catch(console.error); }, ms);
@@ -269,8 +280,8 @@ function pollEvery(ms, run) {
 // Одна отложенная ходка тем же правилом. Ею живут опросы, которые заводят
 // следующий круг сами из своего обработчика: у них круг идёт от конца ответа,
 // а не от начала запроса, и медленный сервер не получает очередь заходов.
-function pollOnce(ms, run) {
-  const poll = { timer: null, dead: false };
+function pollOnce(ms, run, eager) {
+  const poll = { timer: null, dead: false, eager: Boolean(eager) };
   const fire = () => {
     poll.timer = null;
     if (poll.dead) return;
@@ -297,10 +308,20 @@ function pollOnce(ms, run) {
 }
 
 document.addEventListener("visibilitychange", () => {
-  const away = hiddenTab();
+  if (hiddenTab()) {
+    for (const poll of [...polls]) poll.sleep();
+    return;
+  }
+  let step = 0;
   for (const poll of [...polls]) {
-    if (away) poll.sleep();
-    else poll.wake();
+    if (poll.eager) {
+      poll.wake();
+      continue;
+    }
+    step += 1;
+    // Опрос, снятый уходом с экрана за время лесенки, своей ступеньки не
+    // дождётся: снятый круг о пробуждении не знает и запроса не шлёт.
+    setTimeout(() => { poll.wake(); }, Math.min(step * WAKE_STEP, WAKE_SPAN));
   }
 });
 
@@ -10946,7 +10967,9 @@ function makeBusy(project, box) {
   const LIMIT = 10 * 60 * 1000;
   const later = (ms) => {
     if (poll) poll();
-    poll = pollOnce(ms || 1500, () => { poll = null; tick().catch(console.error); });
+    // Плашка занятости идёт первым рядом догона: человек возвращается на
+    // вкладку ради ответа агента, и ждать ступеньки тут нечего.
+    poll = pollOnce(ms || 1500, () => { poll = null; tick().catch(console.error); }, true);
   };
   const tick = async () => {
     if (!watched) return;
@@ -13987,10 +14010,12 @@ function watchRunning() {
     });
   }
   if (draftPoll !== null) return;
+  // Круг строки идёт первым рядом: на доску человек смотрит сразу, и «Стоп»
+  // ступенькой опоздал бы к первому же взгляду.
   draftPoll = pollOnce(DRAFT_GROOM_POLL, () => {
     draftPoll = null;
     refresh().catch(console.error);
-  });
+  }, true);
 }
 
 async function renderDraft(project, works, id) {
@@ -16666,7 +16691,7 @@ document.getElementById("waits").addEventListener("click", (ev) => {
 // Число на кнопке живёт своим кругом: заходы на экран бывают редкими, а вопрос
 // приходит когда угодно, и узнавать о нём только при переходе значило бы
 // молчать ровно тогда, когда человек и так сидит на одном экране.
-pollEvery(WAIT_POLL, refreshWaits);
+pollEvery(WAIT_POLL, refreshWaits, true);
 
 // Кнопка заведения в шапке спрашивает вид тем же меню, что плюс карточки
 // проекта и плавающий плюс телефона. Прежде она вела прямо на форму задачи, и

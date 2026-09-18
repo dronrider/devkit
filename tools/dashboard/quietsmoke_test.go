@@ -260,10 +260,17 @@ func TestDashboardSmokeHiddenTabQuiet(t *testing.T) {
 func runChromeQuiet(t *testing.T, chrome, url string, resultCh <-chan quietResult) quietResult {
 	t.Helper()
 	dir := t.TempDir()
-	ctx, stop := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, stop := context.WithTimeout(context.Background(), 240*time.Second)
 	defer stop()
+	// Обычный Chrome на чистом доме первым делом будит свой апдейтер и лезет в
+	// сеть: обкатка сценария гоняет шаги с временным HOME, и там замер вставал
+	// на этом до конца срока. Флаги ниже оставляют браузеру одну работу,
+	// открыть страницу стенда.
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--disable-gpu", "--no-sandbox",
 		"--hide-scrollbars", "--user-data-dir="+filepath.Join(dir, "profile"),
+		"--no-first-run", "--no-default-browser-check", "--disable-background-networking",
+		"--disable-component-update", "--disable-sync", "--disable-extensions",
+		"--disable-default-apps", "--metrics-recording-only", "--mute-audio",
 		"--window-size=1280,900", url)
 	var out strings.Builder
 	cmd.Stdout = &out
@@ -276,12 +283,15 @@ func runChromeQuiet(t *testing.T, chrome, url string, resultCh <-chan quietResul
 	select {
 	case res = <-resultCh:
 		ok = true
-	case <-time.After(100 * time.Second):
+	// Срок с большим запасом: сам замер укладывается в пятнадцать секунд, а
+	// первый запуск обычного Chrome на чистом доме сначала поднимает свой
+	// апдейтер и до страницы доходит через полторы минуты.
+	case <-time.After(200 * time.Second):
 	}
 	stop()
 	_ = cmd.Wait()
 	if !ok {
-		t.Fatalf("замер не дождался результата от браузера за 100с\n%s", out.String())
+		t.Fatalf("замер не дождался результата от браузера за 200с\n%s", out.String())
 	}
 	return res
 }

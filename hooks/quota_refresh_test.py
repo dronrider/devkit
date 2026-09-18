@@ -90,7 +90,9 @@ class TestQuotaRefresh(unittest.TestCase):
         self.assertTrue(awaited(self.mark), "панель не снималась вовсе")
         # Свежий снимок хук не переснимает: порог свежести живёт в agentctl.
         self.assertIn("--if-stale", read(self.mark))
-        self.assertTrue(awaited(self.log), "журнала последнего запуска нет")
+        # Дожидаемся конца фоновой работы (замок снят), а не первого байта в
+        # журнале: непустой файл ещё не значит дописанную запись (DK-457).
+        self.assertTrue(self.wait_unlocked(), "журнала последнего запуска нет")
         self.assertIn("код возврата", read(self.log))
 
     def test_taken_lock_stops_the_second_run(self):
@@ -110,7 +112,7 @@ class TestQuotaRefresh(unittest.TestCase):
                               'снимать остаток нечем" >&2\nexit 1\n' % self.mark)
         self.assertEqual(self.run_hook(), 0)
         self.assertTrue(awaited(self.mark), "хук даже не позвал refresh")
-        time.sleep(0.5)
+        self.assertTrue(self.wait_unlocked(), "замок не снялся")
         self.assertEqual(read(self.log), "", "отказ харнеса без квоты попал в журнал")
 
     def test_a_real_refusal_still_reaches_the_journal(self):
@@ -119,9 +121,35 @@ class TestQuotaRefresh(unittest.TestCase):
         self.stub("agentctl", '#!/bin/sh\necho "$*" >> "%s"\n'
                               'echo "панель /usage не узналась" >&2\nexit 1\n' % self.mark)
         self.assertEqual(self.run_hook(), 0)
-        self.assertTrue(awaited(self.log), "журнала последнего запуска нет")
+        self.assertTrue(self.wait_unlocked(), "журнала последнего запуска нет")
         self.assertIn("панель /usage не узналась", read(self.log))
         self.assertIn("код возврата: 1", read(self.log))
+
+    def test_journal_entry_never_seen_half_written(self):
+        # Ревью на прогоне под нагрузкой (parallel.py -j 2) поймало ровно
+        # это: несколько write() одного прогона в открытый на дозапись файл
+        # читатель застал между ними, отбивку без тела следом. Запись теперь
+        # уходит в файл одним вызовом printf, и тест ловит регресс сам:
+        # искусственная задержка внутри сборки записи (не в самой записи)
+        # раздвигает окно, пока опрос идёт частым тиком.
+        real_date = shutil.which("date")
+        self.stub("date", '#!/bin/sh\nsleep 0.3\nexec "%s" "$@"\n' % real_date)
+        self.stub("agentctl", '#!/bin/sh\necho "$*" >> "%s"\n'
+                              'echo "проверка гонки" >&2\nexit 1\n' % self.mark)
+        self.assertEqual(self.run_hook(), 0)
+
+        deadline = time.time() + 10.0
+        saw_content = False
+        while time.time() < deadline:
+            text = read(self.log)
+            if text:
+                saw_content = True
+                self.assertIn("код возврата", text,
+                             "журнал застигнут наполовину написанным: %r" % text)
+            if not os.path.isdir(self.lock):
+                break
+            time.sleep(0.005)
+        self.assertTrue(saw_content, "журнал так и не появился")
 
     def test_journal_keeps_previous_runs_instead_of_overwriting(self):
         # DK-457: разбор инцидента 19.08 занял три захода реконструкции как

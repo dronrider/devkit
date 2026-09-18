@@ -74,8 +74,12 @@ const (
 // smokeBoardJSON изображает ответ taskctl list --json: доска с целью в работе,
 // принятой задачей в Check и соседкой в Backlog. Закрытие уносит строку Check с
 // доски, и таким прогон видит её после нажатия.
+//
+// У принятой задачи хвост поправок, бонус за дешевизну: итог 33 расходится со
+// своей суммой пяти слагаемых, 31. Прежде доска стенда была вся из строк без
+// хвоста, и расхождение формы со списком прогонами не ловилось вовсе (DK-650).
 const smokeBoardJSON = smokeBoardHead +
-	`{"key":"check","title":"Check","rows":[{"id":"XR-003","title":"Принятая глазами","accept":"user","type":"task","p":"P2","r":31,"r_parts":[25,3,1,0,2],"cost":"S","link":"-"}]},` +
+	`{"key":"check","title":"Check","rows":[{"id":"XR-003","title":"Принятая глазами","accept":"user","type":"task","p":"P2","r":33,"r_own":31,"r_parts":[25,3,1,0,2],"adjustments":[{"name":"S","delta":2}],"cost":"S","link":"-"}]},` +
 	smokeBoardTail
 
 const smokeBoardClosedJSON = smokeBoardHead + `{"key":"check","title":"Check","rows":[]},` + smokeBoardTail
@@ -110,7 +114,7 @@ const smokeBoardDoc = `# Синтетическая доска smoke (префи
 
 | ID | Задача | Тип | P | R | Цена | Ссылка |
 |--------|--------|-----|---|---|------|--------|
-| XR-003 | Принятая глазами [приёмка: user] | task | P2 | 31 (25+3+1+0+2) | S | - |
+| XR-003 | Принятая глазами [приёмка: user] | task | P2 | 33 (25+3+1+0+2, S+2) | S | - |
 
 ## Backlog
 

@@ -32,6 +32,15 @@ const taskTextLimit = 256 << 10
 // называет их в отказах, а проверку значений держит taskctl.
 var rankNames = [5]string{"серьёзность", "ценность", "неопределённость", "поправка на баг", "рычаг"}
 
+// boardAdj это одна поправка к рангу, как её отдаёт taskctl: у аддитивной имя
+// и дельта (бонус за дешевизну), у подтягивающей задача, от которой подтянут
+// итог. Поля те же, что в json.go утилиты, счёта своего у дашборда нет.
+type boardAdj struct {
+	Name  string `json:"name,omitempty"`
+	Delta int    `json:"delta,omitempty"`
+	From  string `json:"from,omitempty"`
+}
+
 // boardRow это строка доски, как её отдаёт taskctl list --json, плюс секция,
 // в которой она нашлась.
 type boardRow struct {
@@ -52,18 +61,25 @@ type boardRow struct {
 	// готовое поле, а не собирает заказ второй раз. Пусто у строки цели (её
 	// виток сочиняет goal-run) и у проверенной строки с пользовательской
 	// приёмкой (закрытие идёт без сессии, closeFromCheck).
-	Order   string   `json:"order,omitempty"`
-	Fail    string   `json:"fail,omitempty"`
-	Block   string   `json:"block,omitempty"`
-	Type    string   `json:"type"`
-	P       string   `json:"p"`
-	R       int      `json:"r"`
-	RParts  []int    `json:"r_parts"`
-	Cost    string   `json:"cost"`
-	Link    string   `json:"link"`
-	Notes   []string `json:"notes,omitempty"`
-	Sect    string   `json:"sect"`
-	Section string   `json:"section"`
+	Order  string `json:"order,omitempty"`
+	Fail   string `json:"fail,omitempty"`
+	Block  string `json:"block,omitempty"`
+	Type   string `json:"type"`
+	P      string `json:"p"`
+	R      int    `json:"r"`
+	RParts []int  `json:"r_parts"`
+	// ROwn это сумма пяти слагаемых до поправок, Adjustments сам хвост
+	// поправок: бонус за дешевизну и подтяжка итога от задачи, которую эта
+	// держит. Считает их taskctl, дашборд читает готовое. Прежде оба поля
+	// выбрасывались тут на разборе, и форма задачи складывала пять ручек сама:
+	// список показывал 64, а форма 38 (DK-650).
+	ROwn        int        `json:"r_own"`
+	Adjustments []boardAdj `json:"adjustments,omitempty"`
+	Cost        string     `json:"cost"`
+	Link        string     `json:"link"`
+	Notes       []string   `json:"notes,omitempty"`
+	Sect        string     `json:"sect"`
+	Section     string     `json:"section"`
 	// Run это признак идущей работы: чем работа видна (tmux, registry,
 	// session, теми же словами, что Via у живой работы) либо gone у строки в
 	// работе, за которой живой сессии нет. Пусто у стоящей задачи. Признак

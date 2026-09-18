@@ -2035,6 +2035,12 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 .rcard:not(.redit) .rfold{display:none}
 .rcard.redit .rview{display:none}
 .rcard .rview{font:400 12.5px var(--sans);color:var(--tx2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* хвост разбора: своя сумма пяти ручек и поправки к итогу (бонус за дешевизну,
+   подтяжка от держимой задачи). В правке он остаётся на месте, а слагаемые
+   уходят: разницу между своей суммой и крупным итогом объясняет ровно он */
+.rcard .radj{display:flex;flex-wrap:wrap;gap:var(--sp2);min-width:0;font:500 12px var(--mono);color:var(--tx3)}
+.rcard .rfrom{background:none;border:none;padding:0;cursor:pointer;font:inherit;color:var(--acc)}
+.rcard .rfrom:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .rcard.redit .rtop{flex:none}
 .rcard .rbig{gap:var(--sp2)}
 .rcard .rbig .v{font-size:22px}

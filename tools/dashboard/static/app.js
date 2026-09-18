@@ -1002,6 +1002,19 @@ function rankCell(row, tag) {
     return one;
   };
   RANK_PARTS.forEach((one, at) => tip.append(line(one.name, parts[at])));
+  // Поправки к рангу считает taskctl, и итог строки расходится со своей суммой
+  // пяти слагаемых: подсказка, где под слагаемыми на 38 стоит «Ранг 64», не
+  // объясняет ничего (DK-650). Расходятся они не у всех строк, и лишних строк
+  // подсказка не носит.
+  const own = typeof row.r_own === "number" ? row.r_own : row.r;
+  if (own !== row.r) {
+    tip.append(line("Своя сумма", own));
+    for (const adj of row.adjustments || []) {
+      tip.append(adj.from
+        ? line("Подтянут от", adj.from)
+        : line("Цена " + (adj.name || ""), (Number(adj.delta) > 0 ? "+" : "") + Number(adj.delta)));
+    }
+  }
   tip.append(line("Ранг", row.r, "rtsum"));
   cell.append(tip);
   sum.addEventListener("click", (ev) => {
@@ -4077,7 +4090,7 @@ function filePanel(project, id, detail, form, touch, edit, canMake) {
 function taskSeen(detail) {
   const row = detail.row || {};
   return JSON.stringify([row.title, row.type, row.cost, row.p, row.r, row.r_parts,
-    row.section, row.fail, row.block, row.notes, row.moved, detail.text || "", detail.file || "",
+    row.adjustments || null, row.section, row.fail, row.block, row.notes, row.moved, detail.text || "", detail.file || "",
     detail.doc || ""]);
 }
 
@@ -4694,7 +4707,11 @@ function formPage(cfg) {
     // пять селектов (замечание пользователя). Поля приходят карандашом, вместе
     // с остальной правкой формы.
     const view = el("span", "rview");
-    big.append(sum, note, view);
+    // Хвост разбора: своя сумма пяти ручек и поправки к ней. Узел свой, а не
+    // кусок строки слагаемых, потому что ID источника подтяжки тут
+    // кликабельный, и текстом его не сделать.
+    const tail = el("span", "radj");
+    big.append(sum, note, view, tail);
     // Разворот это настоящая кнопка, и клавиатура достаётся ей даром: Enter и
     // пробел жмут её сами. Ширину при этом никто не спрашивает, кнопку прячут
     // стили, а спрятанная кнопка ни в обход табом, ни под палец не попадает.
@@ -4716,13 +4733,45 @@ function formPage(cfg) {
     rank.append(rtop);
     const rbody = el("div", "rbody");
     rank.append(rbody);
-    // Итог считается из слагаемых формы, а не берётся готовым числом строки:
-    // правка слагаемого видна суммой сразу, до сохранения.
+    // Крупным числом идёт итог строки, тот же, что в списке доски. Поправки к
+    // рангу (бонус за дешевизну, подтяжка итога от задачи, которую эта держит)
+    // считает taskctl, и сумма пяти ручек это только своя часть ранга: пока
+    // форма складывала её сама, одна и та же задача показывала 64 в списке и
+    // 38 в форме (DK-650). Своя сумма осталась рядом мельче и пересчитывается
+    // на месте, поэтому правка ручкой по-прежнему видна до сохранения; итог
+    // пересчитает утилита, когда правка до неё доедет.
+    const rankRow = cfg.rankRow || {};
+    const adjs = rankRow.adjustments || [];
     const drawRank = () => {
-      sum.textContent = String(form.parts.reduce((a, b) => a + Number(b), 0));
+      const own = form.parts.reduce((a, b) => a + Number(b), 0);
+      const total = typeof rankRow.r === "number" ? rankRow.r : own;
+      sum.textContent = String(total);
       view.textContent = RANK_PARTS
         .map((part, i) => part.name.toLowerCase() + " " + Number(form.parts[i]))
         .join(", ");
+      tail.replaceChildren();
+      if (own === total && !adjs.length) return;
+      tail.append(el("span", "radj1", "своя сумма " + own));
+      for (const adj of adjs) {
+        const one = el("span", "radj1");
+        if (adj.from) {
+          one.append(el("span", "", "подтянут от "));
+          // Источник подтяжки открывается отсюда: сегодня его ищут грепом по
+          // доске, а из формы не видно даже, что итог чужой.
+          const go = el("button", "rfrom", adj.from);
+          go.type = "button";
+          go.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            goKeepingChat(cfg.project + "/" + adj.from);
+          });
+          one.append(go);
+        } else {
+          const delta = Number(adj.delta || 0);
+          one.textContent = "цена " + (adj.name || "") + " " +
+            (delta > 0 ? "+" : "") + delta;
+        }
+        tail.append(one);
+      }
     };
     rankMode = (on) => { rank.classList.toggle("redit", on); };
     RANK_PARTS.forEach((part, i) => {
@@ -5003,7 +5052,7 @@ async function renderTask(project, works, id, pre) {
   }
 
   const view = formPage({
-    key: "task", project, id, detail, chatRow: row,
+    key: "task", project, id, detail, chatRow: row, rankRow: row,
     num: row.id, titleLabel: "заголовок задачи " + id, form, chips, tailChips: tail, top,
     links: detail.links || null,
     has: { title: true, type: true, cost: true, rank: true, deps: true, chat: true,

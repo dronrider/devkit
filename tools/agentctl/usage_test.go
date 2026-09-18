@@ -1048,13 +1048,36 @@ func TestPanelFailure(t *testing.T) {
 		}
 	})
 
-	t.Run("панель не открылась вовсе", func(t *testing.T) {
+	t.Run("панель не открылась вовсе: версии причины, а не одна установленная", func(t *testing.T) {
+		// DK-457: тот же симптом даёт и смена разметки, и медленная отрисовка,
+		// и перехвативший экран, и недолетевший Enter. Отказ не вправе называть
+		// один из них фактом, разбор по кадру выбирает между версиями сам.
 		msg := panelFailure(specAt(t, snapPath), readFixture(t, "pane-ready.txt"), nil).Error()
-		if !strings.Contains(msg, "не нарисовал панель") {
-			t.Fatalf("отказ не про пустой экран: %s", msg)
+		for _, want := range []string{"версий несколько", "разметка", "отрисовка", "перехватило", "Enter"} {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("в отказе нет версии %q: %s", want, msg)
+			}
 		}
 		if strings.Contains(msg, "не поместился в окно") {
 			t.Fatalf("отказ выдумал срезанный верх: %s", msg)
+		}
+	})
+
+	t.Run("кадру некуда лечь: отказ виден, а не проглочен", func(t *testing.T) {
+		// DK-457: месту следа тоже нужен видимый исход. Путь строится под
+		// файлом, а не каталогом, MkdirAll отказывает по-настоящему, и это не
+		// платформенная удача с правами доступа.
+		blocker := filepath.Join(t.TempDir(), "blocker")
+		if err := os.WriteFile(blocker, []byte("не каталог"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		q := specAt(t, filepath.Join(blocker, "sub", "claude-code.local"))
+		msg := panelFailure(q, readFixture(t, "pane-ready.txt"), nil).Error()
+		if !strings.Contains(msg, "Кадр панели сохранить не удалось") {
+			t.Fatalf("отказ сохранить кадр прошёл молча: %s", msg)
+		}
+		if !strings.Contains(msg, "Снимок не тронут") {
+			t.Fatalf("отказ потерял хвост про снимок: %s", msg)
 		}
 	})
 

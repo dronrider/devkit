@@ -30,6 +30,60 @@ func TestParseSessions(t *testing.T) {
 	}
 }
 
+// TestParseSessionsUnderscoredLine: строка бедного окружения (DK-456)
+// приезжает слипшейся в одно поле, потому что непечатный разделитель tmux
+// подменяет подчёркиванием. Разбор не падает и хотя бы имя сохраняет, пускай
+// счётчик окон и момент создания в таком поле уже потеряны.
+func TestParseSessionsUnderscoredLine(t *testing.T) {
+	got := ParseSessions([]byte("chat-1_1_1787148735\n"))
+	want := []Session{{"chat-1_1_1787148735", 0, 0}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParseSessions(мятая строка) = %+v, ожидал %+v", got, want)
+	}
+}
+
+// TestSessionsPoorLocaleMangling: регрессия DK-456. tmux без UTF-8 локали в
+// окружении (штатно под launchd и cron) считает разделитель формата -F
+// непечатным знаком и подменяет его подчёркиванием, отчего вся строка
+// приезжает одним полем. Подставной tmux воспроизводит это по формату,
+// который ему передали: печатный | проходит без порчи, табуляция мнётся.
+// Разделитель в Sessions() печатный (SessionSep), и тест краснеет, если
+// кто-то вернёт его к табу: тогда сама команда tmux ls понесёт непечатный
+// знак, и разбор потеряет поля так же, как на живой машине.
+func TestSessionsPoorLocaleMangling(t *testing.T) {
+	fakeTmuxLocale(t)
+	got, err := Sessions()
+	if err != nil {
+		t.Fatalf("Sessions() = %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "task-XR-5" || got[0].Windows != 1 || got[0].Created != 1700000000 {
+		t.Fatalf("бедное окружение испортило разбор: %+v", got)
+	}
+}
+
+// fakeTmuxLocale кладёт в PATH подставной tmux ls, который читает формат из
+// своего третьего аргумента и решает по нему: формат с табуляцией мнётся в
+// подчёркивания, как у настоящего tmux без локали, формат с любым другим
+// печатным разделителем проходит нетронутым.
+func fakeTmuxLocale(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"ls)\n" +
+		"  fmt=\"$3\"\n" +
+		"  case \"$fmt\" in\n" +
+		"  *\"$(printf '\\t')\"*) printf 'task-XR-5_1_1700000000\\n' ;;\n" +
+		"  *) printf 'task-XR-5|1|1700000000\\n' ;;\n" +
+		"  esac\n" +
+		"  ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // TestSessionTask опознаёт работы конвейера по имени сессии: свой префикс
 // проходит, чужой, производный хвост с моментом запуска и пустой префикс
 // опознаны не бывают.

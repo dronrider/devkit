@@ -57,6 +57,15 @@ func TestStaticPollsGoThroughVisibilityGate(t *testing.T) {
 	if !strings.Contains(app, "if (poll.dead || hiddenTab()) return;") {
 		t.Errorf("круг pollEvery не смотрит на видимость перед запросом: ступенька уйдёт на сервер со скрытой вкладки")
 	}
+	// У pollOnce та же опора своя. Прежде тест держал только строку pollEvery,
+	// и снятая проверка в fire() оставляла его зелёным (замечание ревью).
+	// Смотрит проверка внутрь самого fire: строка «if (hiddenTab()) return;»
+	// где-то ещё в файле про эту ходку ничего не говорит.
+	if fire := jsBody(app, "const fire = () => {"); fire == "" {
+		t.Error("тела fire() у pollOnce в app.js нет: опора смотрит не туда")
+	} else if !strings.Contains(fire, "hiddenTab()") {
+		t.Errorf("ходка pollOnce не смотрит на видимость перед запросом: ступенька уйдёт на сервер со скрытой вкладки")
+	}
 	for _, name := range pollNames {
 		gate := regexp.MustCompile(`poll(Every|Once)\(\s*` + name + `\b`)
 		if !gate.MatchString(app) {
@@ -137,6 +146,32 @@ func frameProps(body string) []string {
 		out = append(out, name)
 	}
 	return out
+}
+
+// jsBody отдаёт тело функции, объявленной строкой head: от открывающей
+// фигурной скобки до парной ей. Разбор скобками, а не поиском строки целиком:
+// опора должна держать саму функцию, а не её соседей по файлу.
+func jsBody(src, head string) string {
+	at := strings.Index(src, head)
+	if at < 0 {
+		return ""
+	}
+	i := at + len(head)
+	depth := 1
+	start := i
+	for i < len(src) && depth > 0 {
+		switch src[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+		}
+		i++
+	}
+	if depth != 0 {
+		return ""
+	}
+	return src[start : i-1]
 }
 
 func readStatic(t *testing.T, name string) string {

@@ -93,8 +93,9 @@ obeycheck --only 21-first-person-gender -k 1 --judge-model sonnet ../rules-new .
 Одна клетка таблицы это сценарий, раскладка и один повтор. Под каждый повтор
 собирается своё окружение, и живая машина в нём не участвует:
 
-1. временный `HOME` с настройками харнеса (PostToolUse-хуки devkit),
-   определениями субагентов из `kit/agents/` и скиллами из `kit/skills/`;
+1. временный `HOME` с настройками харнеса (PostToolUse- и UserPromptSubmit-
+   хуки devkit), определениями субагентов из `kit/agents/` и скиллами из
+   `kit/skills/`;
 2. синтетический проект из `tools/obeycheck/testdata/project`: git-репозиторий с доской
    `docs/TASKS.md`, парой файлов кода, историей из трёх коммитов с разными
    conventional-префиксами, подключёнными git-хуками devkit и фиктивным

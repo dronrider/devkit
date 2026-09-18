@@ -669,19 +669,23 @@ func TestStaticNewFormExit(t *testing.T) {
 // Пара кнопок на форме записи (DK-370, LLD DK-354 решение 5): «Сохранить»
 // возвращает в накопитель, «Сохранить и грумить» либо «Сохранить и
 // выполнить» той же ручкой пишет запись и поднимает разбор. Какой из двух
-// исходов заказан, решает список рядом (DK-1043), и подпись кнопки следует
-// выбору. Промежуточного экрана «Черновик записан» между формой и списком
-// нет вовсе.
+// исходов заказан, решает группа в меню составной кнопки, а не отдельный
+// список рядом (второй круг DK-1043), и подпись кнопки следует выбору.
+// Промежуточного экрана «Черновик записан» между формой и меню нет вовсе.
 func TestStaticDraftSaveButtons(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{
 		`saveLabel: draft ? "Сохранить" : "Завести задачу"`,
 		`label: "Сохранить и " + draftModeVerb(newForm.mode)`,
 		// Список из двух пунктов, «грумить» и «выполнить», умолчание груминг.
-		"function draftModePick(",
 		`[DRAFT_MODE_GROOM, "грумить"]`,
 		`[DRAFT_MODE_RUN, "выполнить"]`,
 		"mode: DRAFT_MODE_GROOM",
+		// Вторая кнопка составная: меню несёт исход записи, а с подпиской и
+		// ярусом выбирают там же, той же формой, что у экрана записи.
+		"tiers: harnessTiers(),",
+		`verb: (v) => "Сохранить и " + draftModeVerb(v)`,
+		"onSave: (harness, tier, mode) => { saveDraft(mode, harness, tier); }",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("пара кнопок записи собрана не тем блоком: нет %q", want)
@@ -691,13 +695,17 @@ func TestStaticDraftSaveButtons(t *testing.T) {
 		"function draftDone(",
 		`"Записать черновик"`,
 		`"Записать ещё"`,
+		// Отдельного селекта исхода рядом с кнопкой больше нет: приёмка первого
+		// круга отклонила два органа управления на одно действие.
+		"function draftModePick(",
 	} {
 		if strings.Contains(text, gone) {
-			t.Errorf("промежуточный экран записи остался в коде: нашлось %q", gone)
+			t.Errorf("промежуточный экран записи или отдельный список исхода остался в коде: нашлось %q", gone)
 		}
 	}
 	// Обе кнопки живут и гаснут вместе: рубеж у них один, ручка одна, и
-	// разошедшийся вид сказал бы неправду о том, что можно нажать.
+	// разошедшийся вид сказал бы неправду о том, что можно нажать. Составная
+	// кнопка держит своё свойство disabled тем же именем, что и плоская.
 	form := funcBody(t, text, "function formPage(")
 	for _, want := range []string{"more.disabled = save.disabled", "more.hidden = save.hidden"} {
 		if !strings.Contains(form, want) {
@@ -705,16 +713,17 @@ func TestStaticDraftSaveButtons(t *testing.T) {
 		}
 	}
 	// Разбор поднимается той же ручкой, что и с накопителя, уводит на экран
-	// записи с ходом разбора и уносит с собой выбранный исход.
+	// записи с ходом разбора и уносит с собой выбранный исход, подписку и ярус.
 	made := funcBody(t, text, "function renderNew(")
-	if !strings.Contains(made, `groomDraft(project, done.id, project + "/draft/" + done.id, "", "", mode)`) {
+	if !strings.Contains(made, `groomDraft(project, done.id, project + "/draft/" + done.id, harness || "", tier || "", mode)`) {
 		t.Error("«Сохранить и ...» не поднимает разбор с переходом на экран записи и с выбранным исходом")
 	}
-	if !strings.Contains(made, "saveDraft(newForm.mode)") {
-		t.Error("«Сохранить и ...» не передаёт выбранный исход записи")
+	if !strings.Contains(made, "saveDraft(mode, harness, tier)") {
+		t.Error("«Сохранить и ...» не передаёт выбранный исход, подписку и ярус")
 	}
-	// Подпись кнопки следует выбору списка без похода на сервер.
-	if !strings.Contains(made, `view.saveMore.rename("Сохранить и " + draftModeVerb(v))`) {
+	// Подпись кнопки следует выбору меню без похода на сервер: рубеж живёт
+	// внутри runControl, а форма только запоминает выбор.
+	if !strings.Contains(made, "tell: (v) => { newForm.mode = v; }") {
 		t.Error("подпись «Сохранить и ...» не следует выбору исхода")
 	}
 	if !strings.Contains(made, `goKeepingChat(project + "/drafts")`) {
@@ -722,20 +731,49 @@ func TestStaticDraftSaveButtons(t *testing.T) {
 	}
 }
 
-// Список исхода на экране записи (DK-1043): кнопка «Грумить» становится
-// «Выполнить», подсказка называет заказ выбранного исхода, а не тот же
-// заказ дважды.
+// Исход на экране записи (DK-1043, второй круг): кнопка «Грумить» становится
+// «Выполнить» через группу в меню составной кнопки, подсказка называет заказ
+// выбранного исхода, а не тот же заказ дважды. Отдельного списка рядом нет.
 func TestStaticDraftScreenModePick(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	made := funcBody(t, text, "function renderDraft(")
 	for _, want := range []string{
 		"let groomMode = DRAFT_MODE_GROOM;",
-		`groomBtn.rename(v === DRAFT_MODE_RUN ? "Выполнить" : "Грумить");`,
-		"groomDraft(project, id, \"\", harness, tier, groomMode)",
+		`verb: (v) => (v === DRAFT_MODE_RUN ? "Выполнить" : "Грумить")`,
+		"groomDraft(project, id, \"\", harness, tier, mode)",
 		"text.body.orderRun",
 	} {
 		if !strings.Contains(made, want) {
-			t.Errorf("список исхода на экране записи собран не тем блоком: нет %q", want)
+			t.Errorf("исход записи на экране записи собран не тем блоком: нет %q", want)
+		}
+	}
+}
+
+// Группа исхода записи это третья полоса меню составной кнопки, той же
+// формой, что и полоса ярусов: подпись меню не закрывает и работу не
+// запускает, а руководит только переименованием широкой половины (DK-1043,
+// второй круг). Меню остаётся раскрываемым и тогда, когда выбирать подписку и
+// ярус не из чего, иначе выбор исхода было бы неоткуда сделать.
+func TestStaticRunModeGroup(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	pick := funcBody(t, text, "function runPickBody(")
+	for _, want := range []string{
+		`el("span", "hph", "Что сделать с записью")`,
+		"opts.modes || []",
+		"opts.modeTell(value)",
+	} {
+		if !strings.Contains(pick, want) {
+			t.Errorf("группа исхода записи собрана не тем блоком: нет %q", want)
+		}
+	}
+	ctl := funcBody(t, text, "function runControl(")
+	for _, want := range []string{
+		"const modeList = (modes && modes.list) || [];",
+		"!pickHarness && tierList.length < 2 && !modeList.length",
+		"wide.rename(modes.verb(value))",
+	} {
+		if !strings.Contains(ctl, want) {
+			t.Errorf("составная кнопка не проводит исход записи в меню: нет %q", want)
 		}
 	}
 }

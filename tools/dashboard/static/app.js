@@ -1129,11 +1129,36 @@ function runPickBody(into, opts) {
     }
     into.append(bar);
   }
+  // Полоса исхода записи (DK-1043): та же форма, что у полосы ярусов, и та же
+  // причина. Выбор тут не запускает работу и не закрывает меню, он лишь
+  // называет исход, а подпись широкой половины и сам запуск правит вызывающий
+  // код через modeTell. Отдельного селекта рядом с кнопкой больше нет: два
+  // органа управления на одно действие были отклонены приёмкой.
+  const modeList = opts.modes || [];
+  let mode = opts.mode || "";
+  if (modeList.length) {
+    into.append(el("span", "hph", "Что сделать с записью"));
+    const bar = el("div", "tbar");
+    const marks = [];
+    for (const [value, name] of modeList) {
+      const btn = el("button", "tpick" + (value === mode ? " on" : ""), name);
+      btn.type = "button";
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        mode = value;
+        opts.modeTell(value);
+        for (const m of marks) m.classList.toggle("on", m === btn);
+      });
+      marks.push(btn);
+      bar.append(btn);
+    }
+    into.append(bar);
+  }
 }
 // run это способ поднять работу выбранной подпиской. По умолчанию это конвейер
 // задачи, а груминг черновика поднимает себя сам: выбор подписки у него тот же,
 // потому что разбор это такая же работа агента (замечание пользователя).
-function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run, tiers) {
+function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run, tiers, modes) {
   // isGoal тут остаётся ради подписи, а не ради запрета: выбор подписки у цели
   // такой же, как у задачи, и разводить их поведением больше незачем.
   const wide = make(label);
@@ -1152,9 +1177,16 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
   // Наружу вердикт едет пустым полем: имени такого яруса в раскладке нет, его
   // называет сервер.
   const tierOut = () => (tier === TIER_VERDICT ? "" : tier);
+  // modes это исход записи (DK-1043): список пар «значение, подпись меню»,
+  // умолчание грумить. Кнопка сама переименовывает широкую половину по
+  // ответу modes.verb, а run узнаёт исход третьим доводом.
+  const modeList = (modes && modes.list) || [];
+  let mode = (modes && modes.now) || (modeList[0] && modeList[0][0]) || "";
+  const modeOut = () => mode;
   const fire = (node, harness) => {
     node.disabled = true;
-    const going = run ? run(harness, tierOut()) : startRun(project, id, harness, afterOk, tierOut());
+    const going = run ? run(harness, tierOut(), modeOut())
+      : startRun(project, id, harness, afterOk, tierOut());
     Promise.resolve(going).catch(console.error).finally(() => { node.disabled = false; });
   };
   wide.addEventListener("click", (ev) => {
@@ -1172,8 +1204,12 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
   // яруса и подписки различается по секциям», замечание пользователя). Теперь
   // список один везде, а прикреплённая подписка стоит в нём подсвеченной: на
   // неё и уйдёт запуск, если не выбирать.
+  // Выбирать нечего только когда пусты все три группы разом: подписка, ярус
+  // и исход записи. Заданная группа исхода держит меню развёрнутым даже с
+  // одной подпиской и одним ярусом на машине, иначе выбор «грумить/выполнить»
+  // было бы неоткуда сделать (DK-1043).
   const pickHarness = list.length >= 2;
-  if (!pickHarness && tierList.length < 2) {
+  if (!pickHarness && tierList.length < 2 && !modeList.length) {
     const why = pinned ? "" : harnessWhy();
     if (why) withTip(wide, tip ? tip + " " + why : why);
     // Кнопка без стрелки выбора тоже стоит в пустом span, а не голой: составная
@@ -1183,7 +1219,7 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
     // (app.js:82-113, DK-316).
     const solo = el("span");
     solo.append(wide);
-    return solo;
+    return wireDisabled(solo, wide, null);
   }
   const grp = el("span", "split");
   grp.append(wide);
@@ -1203,18 +1239,32 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
     pin: pinned || harnessDefault(),
     tiers: tierList,
     tier,
+    modes: modeList,
+    mode,
     fire: (name) => {
       popupDrop(held);
       shut();
       fire(wide, name);
     },
     tell: (name) => { tier = name; },
+    modeTell: (value) => {
+      mode = value;
+      if (modes && modes.verb) wide.rename(modes.verb(value));
+      if (modes && modes.tell) modes.tell(value);
+    },
   });
   const more = el("button", wide.className + " more2");
   more.append(el("span", "car"));
-  more.setAttribute("aria-label", "Выбрать подписку");
+  // Подсказка называет то, что в меню и правда есть выбирать: с одной
+  // подпиской на машине список открывают только ради яруса или исхода
+  // записи, и говорить про подписку там было бы неправдой.
+  const chooseWhat = pickHarness ? "подписку"
+    : (modeList.length ? "исход записи" : "уровень модели");
+  more.setAttribute("aria-label", "Выбрать " + chooseWhat);
   more.setAttribute("aria-expanded", "false");
-  withTip(more, "Выбрать подписку: " + list.map((h) => h.name).join(", "));
+  withTip(more, pickHarness
+    ? "Выбрать подписку: " + list.map((h) => h.name).join(", ")
+    : "Выбрать " + chooseWhat);
   more.addEventListener("click", (ev) => {
     ev.stopPropagation();
     if (!pop.hidden) {
@@ -1238,7 +1288,23 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
     }
   });
   grp.append(more, pop);
-  return grp;
+  return wireDisabled(grp, wide, more);
+}
+
+// Составная кнопка возвращается наружу узлом span, а не голым button, и у
+// span своего disabled нет: без этого свойства форма черновика (formPage,
+// DK-1043) не могла бы гасить сборную кнопку тем же полем, каким гасит
+// плоскую. Свойство правит обе половины разом: широкую и стрелку меню.
+function wireDisabled(container, wide, opener) {
+  Object.defineProperty(container, "disabled", {
+    get() { return wide.disabled; },
+    set(v) {
+      wide.disabled = v;
+      if (opener) opener.disabled = v;
+    },
+    configurable: true,
+  });
+  return container;
 }
 
 // Хватает ли под узлом места на раскрытый список. Мерить нечем (стенд, старый
@@ -4368,9 +4434,16 @@ function formPage(cfg) {
   const save = barBtn("btn btn-acc", cfg.saveLabel || "Сохранить", "i-done");
   // Вторая кнопка сохранения: тот же рубеж и та же ручка, но своя дорога после
   // записи. Форма записи черновика стоит на паре «Сохранить» и «Сохранить и
-  // грумить», и обе кнопки живут и гаснут вместе.
+  // грумить» либо «Сохранить и выполнить», и обе кнопки живут и гаснут
+  // вместе. Вторая собрана составной кнопкой runControl (DK-1043): меню несёт
+  // исход записи, а при выборе подписки и яруса и их, той же формой, что у
+  // экрана записи. Клик по широкой половине и выбор строки меню зовут
+  // cfg.saveMore.onSave сами, второго обработчика тут больше нет.
   const more = cfg.saveMore
-    ? barBtn("btn btn-acc", cfg.saveMore.label, cfg.saveMore.icon || "i-play")
+    ? runControl("", "", (label) => barBtn("btn btn-acc", label, cfg.saveMore.icon || "i-play"),
+      cfg.saveMore.label, false, cfg.saveMore.tip || "", "", "",
+      (harness, tier, mode) => (cfg.saveMore.onSave ? cfg.saveMore.onSave(harness, tier, mode) : null),
+      cfg.saveMore.tiers, cfg.saveMore.modes)
     : null;
   const drop = barBtn("btn", "Отменить правку", "close");
   const sep = el("span", "div");
@@ -4382,9 +4455,6 @@ function formPage(cfg) {
   if (more) {
     more.hidden = true;
     bar.append(more);
-    more.addEventListener("click", () => {
-      if (!more.disabled && cfg.saveMore.onSave) cfg.saveMore.onSave();
-    });
   }
   // Выход с формы стоит рядом с сохранением: решение «записать или уйти»
   // человек принимает в одном месте, и держать выход в другом углу экрана
@@ -12768,21 +12838,6 @@ function draftModeVerb(mode) {
   return mode === DRAFT_MODE_RUN ? "выполнить" : "грумить";
 }
 
-// draftModePick рисует список из двух пунктов. Текст пункта русское слово, а
-// не имя режима: сервер сверяет уже английское значение в поле mode.
-function draftModePick(cur, onPick) {
-  const sel = el("select", "cdsel");
-  sel.setAttribute("aria-label", "исход записи");
-  for (const [value, label] of DRAFT_MODE_LABELS) {
-    const opt = el("option", "", label);
-    opt.value = value;
-    opt.selected = value === cur;
-    sel.append(opt);
-  }
-  sel.addEventListener("change", () => { onPick(sel.value); });
-  return sel;
-}
-
 // afterOk это хэш экрана записи: заполнен со строки накопителя, до DK-286
 // нажатие там уводило на общий экран агента, у которого нет ни текста
 // записи, ни исхода разбора (LLD DK-328, «Отвергнутое»). С экрана самой
@@ -13906,11 +13961,13 @@ async function renderDraft(project, works, id) {
       } else {
         // Пока разбор идёт, поднять второй нечем: кнопка рядом с пометкой
         // «груминг идёт» звала запустить грумера поверх работающего.
-        // Исход записи стоит выпадашкой рядом с кнопкой (DK-1043): выбор
-        // решает, продолжит ли поднятая сессия конвейером задачи после
+        // Исход записи стоит группой в меню составной кнопки (DK-1043):
+        // выбор решает, продолжит ли поднятая сессия конвейером задачи после
         // строки на доске, либо разбор кончается ей одной, как раньше.
-        // Подпись кнопки и подсказка следуют выбору без похода на сервер:
-        // оба заказа уже приехали текстом записи.
+        // Отдельного селекта рядом с кнопкой нет: два органа управления на
+        // одно действие приёмка отклонила первым кругом. Подпись кнопки и
+        // подсказка следуют выбору без похода на сервер: оба заказа уже
+        // приехали текстом записи.
         let groomMode = DRAFT_MODE_GROOM;
         let groomBtn = null;
         const groomOrder = (mode) => (text.ok
@@ -13923,23 +13980,25 @@ async function renderDraft(project, works, id) {
           "", "",
           // Несохранённая правка уезжает на диск до подъёма разбора: иначе
           // агент прочитал бы старый текст, и потеря была бы молчаливой.
-          (harness, tier) => (form.text !== said
+          (harness, tier, mode) => (form.text !== said
             ? saveDraftText(project, id, form.text, hash)
             : Promise.resolve(true))
-            .then((ok) => ok && groomDraft(project, id, "", harness, tier, groomMode))
+            .then((ok) => ok && groomDraft(project, id, "", harness, tier, mode))
             .then((ok) => {
               if (ok) refresh().catch(console.error);
               return ok;
             }),
-          harnessTiers());
-        const modeSel = draftModePick(groomMode, (v) => {
-          groomMode = v;
-          if (groomBtn) {
-            groomBtn.rename(v === DRAFT_MODE_RUN ? "Выполнить" : "Грумить");
-            withTip(groomBtn, groomTip(v));
-          }
-        });
-        actions.push(modeSel, groom);
+          harnessTiers(),
+          {
+            list: DRAFT_MODE_LABELS,
+            now: groomMode,
+            verb: (v) => (v === DRAFT_MODE_RUN ? "Выполнить" : "Грумить"),
+            tell: (v) => {
+              groomMode = v;
+              if (groomBtn) withTip(groomBtn, groomTip(v));
+            },
+          });
+        actions.push(groom);
       }
       // Карточек исхода разбора на форме нет ни одной. Разговор с агентом у
       // нас всегда идёт в чате, и место исхода там же, а на доске он виден по
@@ -14170,17 +14229,6 @@ function renderNew(project, kind) {
   });
   prioPick.querySelector("select").setAttribute("aria-label", "уровень разбора записи накопителя");
   prioBox.append(prioPick);
-  // Исход записи стоит рядом с уровнем разбора (DK-1043): выбор решает,
-  // чем кончится кнопка «Сохранить и ...», грумингом одним или продолжением
-  // выполнением после строки на доске. Подпись кнопки следует выбору.
-  const modePick = el("label", "pick");
-  modePick.append(el("span", "pl", "исход записи"));
-  modePick.append(draftModePick(newForm.mode, (v) => {
-    newForm.mode = v;
-    if (view && view.saveMore) view.saveMore.rename("Сохранить и " + draftModeVerb(v));
-    view.touch();
-  }));
-  prioBox.append(modePick);
   const prioHint = el("div", "hint", PRIO_HINT);
 
   // Вид приёмки, барьер и причина (DK-301): вид закрытым списком из трёх,
@@ -14247,9 +14295,10 @@ function renderNew(project, kind) {
   // неё. «Сохранить» возвращает в накопитель, и следующая запись начинается
   // оттуда же, с плюса на списке. «Сохранить и грумить» либо «Сохранить и
   // выполнить» поднимает разбор без лишних вопросов и открывает экран
-  // записи, где виден его ход. Какой из двух исходов заказан, называет mode
-  // (DK-1043). У «Сохранить» это false, и подъёма он не просит вовсе.
-  const saveDraft = (mode) => {
+  // записи, где виден его ход. Исход, подписку и ярус называет меню составной
+  // кнопки (DK-1043). У «Сохранить» mode это false, и подъёма он не просит
+  // вовсе.
+  const saveDraft = (mode, harness, tier) => {
     if (draftFormRefusal(newForm)) return;
     // Уезжает написанное как есть: разметку разделов утилита записи узнаёт
     // сама, а снятый или добавленный рукой раздел это дело автора.
@@ -14262,7 +14311,7 @@ function renderNew(project, kind) {
       // оказывается не там, куда человек смотрит.
       freshRow = done.id || "";
       if (mode && done.id) {
-        await groomDraft(project, done.id, project + "/draft/" + done.id, "", "", mode);
+        await groomDraft(project, done.id, project + "/draft/" + done.id, harness || "", tier || "", mode);
         return;
       }
       goKeepingChat(project + "/drafts");
@@ -14288,8 +14337,21 @@ function renderNew(project, kind) {
     // после записи (LLD DK-354, решение 5). Промежуточной карточки с
     // «Записать ещё» и «На доску» между ними нет: обе её дороги закрыты
     // возвратами самих кнопок.
+    // Вторая кнопка собрана составной, той же формой, что у экрана записи:
+    // меню несёт исход записи, а с подпиской и ярусом выбирают там же, а не
+    // селектом рядом (DK-1043).
     saveMore: draft
-      ? { label: "Сохранить и " + draftModeVerb(newForm.mode), onSave: () => { saveDraft(newForm.mode); } }
+      ? {
+        label: "Сохранить и " + draftModeVerb(newForm.mode),
+        tiers: harnessTiers(),
+        modes: {
+          list: DRAFT_MODE_LABELS,
+          now: newForm.mode,
+          verb: (v) => "Сохранить и " + draftModeVerb(v),
+          tell: (v) => { newForm.mode = v; },
+        },
+        onSave: (harness, tier, mode) => { saveDraft(mode, harness, tier); },
+      }
       : null,
     quitLabel: draft ? "Не записывать" : "Не заводить",
     onQuit: (btn) => { leaveNew(btn); },

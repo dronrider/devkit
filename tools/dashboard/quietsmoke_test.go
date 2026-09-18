@@ -262,12 +262,16 @@ func runChromeQuiet(t *testing.T, chrome, url string, resultCh <-chan quietResul
 	dir := t.TempDir()
 	ctx, stop := context.WithTimeout(context.Background(), 240*time.Second)
 	defer stop()
-	// Обычный Chrome на чистом доме первым делом будит свой апдейтер и лезет в
-	// сеть: обкатка сценария гоняет шаги с временным HOME, и там замер вставал
-	// на этом до конца срока. Флаги ниже оставляют браузеру одну работу,
-	// открыть страницу стенда.
+	// Обычный Chrome на свежем профиле лезет в систему, и человек у экрана
+	// получает чужие диалоги. Связка ключей macOS спрашивает доступ к «Chrome
+	// Safe Storage», а под временным HOME обкатки связки входа нет вовсе, и
+	// вопрос висит поверх работы. Апдейтер браузера тем временем уходит в сеть,
+	// и первый запуск с чистым домом доходил до страницы через полторы минуты.
+	// Флаги ниже оставляют браузеру одну работу, открыть страницу стенда:
+	// хранилище паролей поддельное, в связку ключей замер не ходит.
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--disable-gpu", "--no-sandbox",
 		"--hide-scrollbars", "--user-data-dir="+filepath.Join(dir, "profile"),
+		"--use-mock-keychain", "--password-store=basic",
 		"--no-first-run", "--no-default-browser-check", "--disable-background-networking",
 		"--disable-component-update", "--disable-sync", "--disable-extensions",
 		"--disable-default-apps", "--metrics-recording-only", "--mute-audio",

@@ -47,6 +47,16 @@ func TestStaticPollsGoThroughVisibilityGate(t *testing.T) {
 	if !strings.Contains(app, "const WAKE_STEP") || !strings.Contains(app, "poll.eager") {
 		t.Errorf("возврат к вкладке будит опросы разом: ни ступеньки (WAKE_STEP), ни первого ряда (eager) в app.js нет")
 	}
+	// Повторный уход в фон посреди лесенки снимает недобуженные ступеньки, и
+	// держат это две опоры разом (замечание ревью). Заведённые ступеньки
+	// снимаются по своим id, а разбуженный круг сам смотрит на видимость перед
+	// запросом: отложенный вызов успевает прийти между двумя строками.
+	if !strings.Contains(app, "stairsDrop") {
+		t.Errorf("ступеньки лесенки нигде не хранятся: повторный уход в фон их не снимет")
+	}
+	if !strings.Contains(app, "if (poll.dead || hiddenTab()) return;") {
+		t.Errorf("круг pollEvery не смотрит на видимость перед запросом: ступенька уйдёт на сервер со скрытой вкладки")
+	}
 	for _, name := range pollNames {
 		gate := regexp.MustCompile(`poll(Every|Once)\(\s*` + name + `\b`)
 		if !gate.MatchString(app) {

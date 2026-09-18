@@ -43,7 +43,7 @@ const showTab = (on) => {
   document.dispatchEvent(new Event("visibilitychange"));
 };
 (async () => {
-  const res = { ok: false, error: "", visible: 0, hidden: 0, catchup: 0, ms: 0 };
+  const res = { ok: false, error: "", visible: 0, hidden: 0, catchup: 0, after: 0, ms: 0 };
   try {
     // Страница поднялась, панель разговора открылась, первые запросы прошли.
     await sleep(2000);
@@ -75,6 +75,19 @@ const showTab = (on) => {
     // увидит одну первую ступеньку и разлив мерить будет нечем.
     await sleep(1300);
     res.catchup = (await count()) - back;
+
+    // Второй уход в фон посреди лесенки. Человек вернулся на вкладку и тут же
+    // ушёл снова: заведённые ступеньки обязаны погаснуть вместе с кругами.
+    showTab(false);
+    await sleep(600);
+    const second = await count();
+    showTab(true);
+    // Лесенка пошла, но до первой ступеньки вкладка снова уходит в фон.
+    await sleep(100);
+    showTab(false);
+    await fetch("/__quiet_gone__", { method: "POST" });
+    await sleep(2000);
+    res.after = (await count()) - second;
     res.ok = true;
   } catch (e) {
     res.error = String((e && e.message) || e);
@@ -94,6 +107,7 @@ type quietResult struct {
 	Visible int    `json:"visible"`
 	Hidden  int    `json:"hidden"`
 	Catchup int    `json:"catchup"`
+	After   int    `json:"after"`
 	Ms      int    `json:"ms"`
 }
 
@@ -104,14 +118,31 @@ type quietCounter struct {
 	mu   sync.Mutex
 	n    int
 	at   []time.Time
+	path []string
 	back time.Time
+	gone time.Time
 }
 
-func (c *quietCounter) add() {
+func (c *quietCounter) add(path string) {
 	c.mu.Lock()
 	c.n++
 	c.at = append(c.at, time.Now())
+	c.path = append(c.path, path)
 	c.mu.Unlock()
+}
+
+// caught называет ручки, которые ответили в окне догона: по ним видно, какие
+// опросы в лесенке вообще есть.
+func (c *quietCounter) caught(window time.Duration) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for i, at := range c.at {
+		if at.After(c.back) && at.Sub(c.back) <= window {
+			out = append(out, c.path[i])
+		}
+	}
+	return out
 }
 
 func (c *quietCounter) get() int {
@@ -127,10 +158,12 @@ func (c *quietCounter) mark() {
 	c.mu.Unlock()
 }
 
-// spread рассказывает про догон: сколько запросов пришло в окне после
-// возврата и сколько из них отстало от первого больше, чем на gap. Залповый
-// догон даёт ноль отставших, лесенка хотя бы одного.
-func (c *quietCounter) spread(window, gap time.Duration) (int, int, time.Duration) {
+// spread раскладывает догон по окнам длиной size: сколько запросов пришло в
+// каждом окне, считая от первого запроса догона. Залп занимает одно окно,
+// лесенка несколько, и судит тест по числу занятых окон, а не по одной паре
+// меток (замечание ревью): под нагрузкой пара схлопывается, а картина занятых
+// окон держится.
+func (c *quietCounter) spread(window, size time.Duration) []int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var got []time.Time
@@ -140,16 +173,53 @@ func (c *quietCounter) spread(window, gap time.Duration) (int, int, time.Duratio
 		}
 	}
 	if len(got) == 0 {
-		return 0, 0, 0
+		return nil
 	}
-	first := got[0]
-	late := 0
-	for _, at := range got[1:] {
-		if at.Sub(first) >= gap {
-			late++
+	out := make([]int, int(window/size)+1)
+	for _, at := range got {
+		box := int(at.Sub(got[0]) / size)
+		if box >= len(out) {
+			box = len(out) - 1
+		}
+		out[box]++
+	}
+	return out
+}
+
+// busyBoxes это число занятых окон, а span длина догона от первого запроса до
+// последнего.
+func busyBoxes(boxes []int, size time.Duration) (int, time.Duration) {
+	busy := 0
+	last := 0
+	for i, n := range boxes {
+		if n == 0 {
+			continue
+		}
+		busy++
+		last = i
+	}
+	return busy, time.Duration(last) * size
+}
+
+// mind запоминает миг второго ухода в фон.
+func (c *quietCounter) mind() {
+	c.mu.Lock()
+	c.gone = time.Now()
+	c.mu.Unlock()
+}
+
+// afterGone считает запросы, пришедшие после второго ухода в фон. Ступенька
+// лесенки, пережившая этот уход, видна тут и только тут.
+func (c *quietCounter) afterGone() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, at := range c.at {
+		if at.After(c.gone) {
+			n++
 		}
 	}
-	return len(got), late, got[len(got)-1].Sub(first)
+	return n
 }
 
 // quietChrome ищет браузер для этого замера. Сверх общего findChrome сюда
@@ -197,7 +267,7 @@ func TestDashboardSmokeHiddenTabQuiet(t *testing.T) {
 		inner := e.s.handler()
 		mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
 			if !strings.Contains(r.URL.Path, "/notifications") {
-				counter.add()
+				counter.add(r.URL.Path)
 			}
 			inner.ServeHTTP(w, r)
 		})
@@ -207,6 +277,10 @@ func TestDashboardSmokeHiddenTabQuiet(t *testing.T) {
 		})
 		mux.HandleFunc("POST /__quiet_back__", func(w http.ResponseWriter, r *http.Request) {
 			counter.mark()
+			w.WriteHeader(http.StatusNoContent)
+		})
+		mux.HandleFunc("POST /__quiet_gone__", func(w http.ResponseWriter, r *http.Request) {
+			counter.mind()
 			w.WriteHeader(http.StatusNoContent)
 		})
 		mux.HandleFunc("POST /__quiet_result__", func(w http.ResponseWriter, r *http.Request) {
@@ -237,22 +311,40 @@ func TestDashboardSmokeHiddenTabQuiet(t *testing.T) {
 	if res.Catchup < 1 {
 		t.Errorf("возврат к вкладке не догнал пропущенное: запросов после возврата %d", res.Catchup)
 	}
-	// Догон идёт лесенкой, а не залпом (замечание ревью). Судят тут отметки
-	// времени на сервере: первый ряд опросов приходит сразу, и хотя бы один
-	// запрос обязан отстать от него на ступеньку. Порог взят с запасом, вчетверо
-	// меньше самой ступеньки в 150 мс, чтобы прогон под нагрузкой не плавал.
+	// Догон идёт лесенкой, а не залпом (замечание ревью). Судит тут разброс по
+	// окнам в полступеньки, а не одна пара меток: залп занимает одно окно,
+	// лесенка несколько.
+	//
+	// Сколько ступенек на этом стенде, сказано числом. Опросов вне первого ряда
+	// тут три: пульс кольца, вопрос клиента и сторожок молчащего потока
+	// событий. Запрос шлют два первых, сторожок при живом потоке молчит, и
+	// разброс держится на двух ступеньках. Порог занятых окон поэтому взят
+	// двойкой: одна ступенька вправе схлопнуться с первым рядом (заминка
+	// event loop под нагрузкой), и тест это переживёт, а залп даёт одно окно
+	// на все десять запросов и краснеет.
 	const (
-		quietWindow = 1200 * time.Millisecond
-		quietGap    = 40 * time.Millisecond
+		quietWindow = 1500 * time.Millisecond
+		quietBox    = 75 * time.Millisecond
+		quietBusy   = 2
 	)
-	got, late, span := counter.spread(quietWindow, quietGap)
-	if got >= 2 && late == 0 {
-		t.Errorf("догон пришёл залпом: %d запросов за %v после возврата, ни один не отстал от первого "+
-			"на %v. Опросы будятся разом, и возвращённая вкладка получает всплеск запросов",
-			got, span.Round(time.Millisecond), quietGap)
+	boxes := counter.spread(quietWindow, quietBox)
+	busy, span := busyBoxes(boxes, quietBox)
+	if busy < quietBusy {
+		t.Errorf("догон пришёл залпом: %v запросов по окнам в %v, занято окон %d при пороге %d, "+
+			"длина догона %v. Опросы будятся разом, и возвращённая вкладка получает всплеск запросов",
+			boxes, quietBox, busy, quietBusy, span)
 	}
-	t.Logf("smoke: открытая вкладка %d запросов за %d мс, в фоне %d, догон %d, лесенкой %d из %d за %v (%s)",
-		res.Visible, res.Ms, res.Hidden, res.Catchup, late, got, span.Round(time.Millisecond), url)
+	// Второй уход в фон посреди лесенки. Недобуженная ступенька обязана
+	// погаснуть вместе с кругами, и запросов после ухода быть не должно. Один
+	// допущен на ответ, ушедший из браузера до самой отметки.
+	if gone := counter.afterGone(); gone > 1 {
+		t.Errorf("повторный уход в фон не снял ступеньки лесенки: после него сервер получил %d запросов",
+			gone)
+	}
+	t.Logf("smoke: открытая вкладка %d запросов за %d мс, в фоне %d, догон %d по окнам %v "+
+		"(занято %d, длина %v), после второго ухода %d (%s)",
+		res.Visible, res.Ms, res.Hidden, res.Catchup, boxes, busy, span, counter.afterGone(), url)
+	t.Logf("smoke: ручки догона %v", counter.caught(quietWindow))
 }
 
 // runChromeQuiet держит браузер дольше смоука списка чатов: замер сидит два

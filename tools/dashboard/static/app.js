@@ -233,6 +233,18 @@ const polls = new Set();
 const WAKE_STEP = 150;
 const WAKE_SPAN = 1200;
 
+// Заведённые ступеньки лесенки. Человек возвращается на вкладку и тут же
+// уходит снова, а недобуженная ступенька всё равно долетала до запроса уже на
+// скрытой вкладке: отложенный вызов о втором уходе не знал (замечание ревью).
+// Сами ступеньки снимаются здесь, а видимость проверяет ещё и разбуженный
+// круг перед запросом: отложенный вызов успевает прийти между двумя строками.
+let wakeStairs = [];
+
+const stairsDrop = () => {
+  for (const id of wakeStairs) clearTimeout(id);
+  wakeStairs = [];
+};
+
 const hiddenTab = () => document.visibilityState === "hidden";
 
 // Опрос по кругу: run зовётся раз в ms, пока вкладка на виду. Возврат к
@@ -247,7 +259,10 @@ function pollEvery(ms, run, eager) {
   };
   const step = async () => {
     poll.timer = null;
-    if (poll.dead) return;
+    // Скрытая вкладка запроса не шлёт, чей бы вызов сюда ни пришёл: свой
+    // круг, ступенька лесенки или пробуждение. Круг не заводится заново,
+    // поднимет его возврат к вкладке.
+    if (poll.dead || hiddenTab()) return;
     try {
       await run();
     } catch (err) {
@@ -285,6 +300,9 @@ function pollOnce(ms, run, eager) {
   const fire = () => {
     poll.timer = null;
     if (poll.dead) return;
+    // Вкладка снова в фоне: ходка остаётся неотработанной и ждёт возврата.
+    // Из набора опрос при этом не уходит, иначе будить было бы некого.
+    if (hiddenTab()) return;
     poll.dead = true;
     polls.delete(poll);
     run();
@@ -308,6 +326,10 @@ function pollOnce(ms, run, eager) {
 }
 
 document.addEventListener("visibilitychange", () => {
+  // Недобуженные ступеньки снимаются в обе стороны. Уход в фон гасит их
+  // вместе с кругами, а возврат заводит лесенку заново, и ступеньки прошлого
+  // возврата пришлись бы поверх новых.
+  stairsDrop();
   if (hiddenTab()) {
     for (const poll of [...polls]) poll.sleep();
     return;
@@ -319,9 +341,8 @@ document.addEventListener("visibilitychange", () => {
       continue;
     }
     step += 1;
-    // Опрос, снятый уходом с экрана за время лесенки, своей ступеньки не
-    // дождётся: снятый круг о пробуждении не знает и запроса не шлёт.
-    setTimeout(() => { poll.wake(); }, Math.min(step * WAKE_STEP, WAKE_SPAN));
+    wakeStairs.push(setTimeout(() => { poll.wake(); },
+      Math.min(step * WAKE_STEP, WAKE_SPAN)));
   }
 });
 

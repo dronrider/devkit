@@ -87,10 +87,10 @@ $EDITOR ~/projects/myproj/.devkit/deploy.local
 на компонент, команду и её пути:
 
 ```
-deploy.xr-core = ./deploy-server.sh
-deploy.xr-core.paths = xr-core/, shared/
-deploy.xr-hub = ./deploy-hub.sh
-deploy.xr-hub.paths = xr-hub/
+deploy.web = ./deploy-web.sh
+deploy.web.paths = web/, shared/
+deploy.worker = ./deploy-worker.sh
+deploy.worker.paths = worker/
 ```
 
 Разбор раскладки, отказ на пути мимо неё и порядок выката компонентов в

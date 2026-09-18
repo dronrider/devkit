@@ -1077,12 +1077,12 @@ Docker, демон не поднят, и шаг ждал его вечно, мо
 которые его задевают.
 
 ```
-deploy.xr-core = ./deploy-server.sh
-deploy.xr-core.paths = xr-core/, shared/
-deploy.xr-hub = ./deploy-hub.sh
-deploy.xr-hub.paths = xr-hub/
-deploy.apk = ./release-apk.sh
-deploy.apk.paths = mobile/
+deploy.web = ./deploy-web.sh
+deploy.web.paths = web/, shared/
+deploy.worker = ./deploy-worker.sh
+deploy.worker.paths = worker/
+deploy.mobile = ./release-mobile.sh
+deploy.mobile.paths = mobile/
 autonomous = true
 ```
 
@@ -1091,13 +1091,16 @@ autonomous = true
 есть порядок их выката. `merge` и `ship` катят задетые компоненты по очереди
 сверху вниз, не в порядке путей в диффе. Первый провал останавливает
 остальные. В отказе видно, какой компонент встал и какие уже уехали (решение
-«двое» разбора DK-894, катить оба, первый провал держит второй).
+«двое» разбора DK-894, катить оба, первый провал держит второй). Пути двух
+компонентов иногда вложены один в другой (общий каталог плюс его часть под
+своим компонентом): путь, подходящий обоим, достаётся тому, что стоит в
+конфиге первым, молча, без отдельного предупреждения.
 
 `status` печатает задетые компоненты рядом с веткой задачи, тем же диффом,
 каким их посчитает `merge`:
 
 ```
-worktree: xr-001-fix в ~/projects/xr-proxy-xr-001-fix; компоненты: xr-core (./deploy-server.sh)
+worktree: mp-001-fix в ~/projects/myproj-mp-001-fix; компоненты: web (./deploy-web.sh)
 ```
 
 Путь диффа, для которого нет своего компонента, это отказ. Он называет путь

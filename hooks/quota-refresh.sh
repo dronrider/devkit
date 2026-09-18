@@ -8,6 +8,11 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 dir="$HOME/.devkit"
 lock="$dir/quota-refresh.lock"
 log="$dir/quota-refresh.log"
+# Порог обрезки журнала: тот же размер и тот же запас строк, что у
+# append_capped (hookio.py), которым режутся остальные машинные журналы хуков.
+# Переопределимы переменной окружения ради теста, на живой машине не трогаются.
+log_limit=${QUOTA_REFRESH_LOG_LIMIT:-102400}
+log_keep=${QUOTA_REFRESH_LOG_KEEP:-500}
 
 # Снимать нечем, значит молча уходим: хук стоит у всех сессий на машине, и
 # ругаться в каждой на отсутствующий tmux он не должен. Про нехватку скажет
@@ -46,12 +51,25 @@ mkdir "$lock" 2>/dev/null || exit 0
     *"[quota] пуста"*) quiet=1 ;;
     esac
     if [ -z "$quiet" ]; then
+        # Запись копится хвостом: прежний запуск не затирается, отбивка
+        # разделяет записи, и по журналу видно всю цепочку отказов, а не
+        # только последний (DK-457, инцидент 19.08 разбирался три захода
+        # именно потому, что журнал перезаписывался и след того дня стёрся).
         {
+            printf -- '---\n'
             date '+%Y-%m-%dT%H:%M:%S'
             echo "хук $here/quota-refresh.sh"
             printf '%s\n' "$out"
             echo "код возврата: $code"
-        } > "$log" 2>&1
+        } >> "$log" 2>&1
+        if [ -f "$log" ]; then
+            size=$(wc -c <"$log" 2>/dev/null)
+            set -- $size
+            size=${1:-0}
+            if [ "${size:-0}" -gt "$log_limit" ] 2>/dev/null; then
+                tail -n "$log_keep" "$log" >"$log.tmp" 2>/dev/null && mv "$log.tmp" "$log" 2>/dev/null
+            fi
+        fi
     fi
     rmdir "$lock" 2>/dev/null
 } </dev/null >/dev/null 2>&1 &

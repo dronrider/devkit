@@ -380,6 +380,9 @@ class TestHook(unittest.TestCase):
         self.assertIn("chat", said)
         self.assertIn("DK-431", said)
         self.assertNotIn("Контекст сжат", said)
+        # Второй ход держит хук chat-pointer.py по транскрипту, а не эта
+        # оговорка (DK-1032): в тексте её быть не должно.
+        self.assertNotIn("на каждой реплике", said)
 
     def test_hidden_task_keeps_plan_but_drops_chat_rule(self):
         # Скрытая сессия с заказом (виток цикла цели, тиковый прогон
@@ -458,6 +461,9 @@ class TestHook(unittest.TestCase):
         self.assertIn("agentctl plan", said)
         self.assertIn("отдавай субагенту", said)
         self.assertNotIn("по задаче", said)
+        # Второй ход держит хук chat-pointer.py по транскрипту, а не эта
+        # оговорка (DK-1032): в тексте её быть не должно.
+        self.assertNotIn("на каждой реплике", said)
 
     def test_no_task_with_hidden_is_silent(self):
         # Скрытая сессия без заказа задачи (например, делегат без привязки)

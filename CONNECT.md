@@ -82,7 +82,20 @@ $EDITOR ~/projects/myproj/.devkit/deploy.local
 ```
 
 Вписать `test =` (команда общего тест-набора) и `deploy =` (команда выката).
-Файл гитигнорнут и живёт только на машине.
+Файл гитигнорнут и живёт только на машине. Монорепозиторий с несколькими
+частями, каждая со своим выкатом, вместо одного `deploy` заводит пару ключей
+на компонент, команду и её пути:
+
+```
+deploy.xr-core = ./deploy-server.sh
+deploy.xr-core.paths = xr-core/, shared/
+deploy.xr-hub = ./deploy-hub.sh
+deploy.xr-hub.paths = xr-hub/
+```
+
+Разбор раскладки, отказ на пути мимо неё и порядок выката компонентов в
+[tools/shipctl/README.md](tools/shipctl/README.md), раздел «Раскладка
+компонентов».
 
 ```bash
 python3 ~/projects/devkit/tools/devkitctl/devkitctl.py doctor -C ~/projects/myproj

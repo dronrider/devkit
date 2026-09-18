@@ -5,7 +5,7 @@
 
 ## Промпт
 
-На каждой реплике человека первым действием, до ответа ему, вызови скилл chat инструментом Skill и веди разговор по нему: без этого ответ не по правилам.
+Первым действием, до ответа человеку, вызови скилл chat инструментом Skill и веди разговор по нему: без этого ответ не по правилам.
 
 Another Claude session sent a message:
 <cross-session-message from="uds:/tmp/cc-socks/41217.sock" from-name="human" from-mode="prompting">

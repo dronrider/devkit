@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -232,5 +233,41 @@ func TestTempHomeGoesWithTheRun(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, keychainRel, "login.keychain-db")); err != nil {
 		t.Fatalf("связка пользователя не пережила прогон: %v", err)
+	}
+}
+
+// Указатель на скилл chat (DK-1032) стоит на UserPromptSubmit, а не на записи
+// файла: без этой строки в семени дома второй ход сценария 41 (он идёт
+// resume-ом настоящего харнеса) хук не зовёт вовсе, и стенд проверяет не то,
+// чем сессия отвечает по правде.
+func TestHookSettingsWireChatPointer(t *testing.T) {
+	e, err := makeEnv(filepath.Join(t.TempDir(), "run"), devkitRoot(t), layout("full"), "", fakeHome(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(e.Home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("settings.json не парсится: %v\n%s", err, data)
+	}
+	found := false
+	for _, group := range parsed.Hooks["UserPromptSubmit"] {
+		for _, h := range group.Hooks {
+			if strings.Contains(h.Command, "chat-pointer.py --hook") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("chat-pointer.py не стоит на UserPromptSubmit в семени дома:\n%s", data)
 	}
 }

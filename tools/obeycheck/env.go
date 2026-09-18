@@ -165,6 +165,10 @@ func checkAuth(userHome, homeSeed string) error {
 	return nil
 }
 
+// Указатель на скилл chat (DK-1032) стоит на UserPromptSubmit, событии
+// каждой реплики, а не на записи файла: без этой группы второй ход сценария
+// 41 (он идёт resume-ом настоящего харнеса, не сочинённым текстом) хук не
+// зовёт вовсе, и стенд проверяет не то, чем сессия отвечает по правде.
 const hookSettings = `{
   "hooks": {
     "PostToolUse": [
@@ -173,6 +177,13 @@ const hookSettings = `{
         "hooks": [
           { "type": "command", "command": "python3 %s/hooks/check-symbols.py --hook" },
           { "type": "command", "command": "python3 %s/hooks/check-sensitive.py --hook" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 %s/hooks/chat-pointer.py --hook" }
         ]
       }
     ]
@@ -269,7 +280,7 @@ func makeEnv(root, devkit, layout, homeSeed, userHome string) (*runEnv, error) {
 	}
 	settings := filepath.Join(claude, "settings.json")
 	if _, err := os.Stat(settings); err != nil { // раскладка могла принести свои
-		if err := os.WriteFile(settings, []byte(fmt.Sprintf(hookSettings, devkit, devkit)), 0o644); err != nil {
+		if err := os.WriteFile(settings, []byte(fmt.Sprintf(hookSettings, devkit, devkit, devkit)), 0o644); err != nil {
 			return nil, err
 		}
 	}

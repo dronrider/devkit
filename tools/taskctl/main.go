@@ -65,6 +65,14 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               задач, записи runs и историю
                                               коммитов доски, --runs подменяет
                                               каталог записей для стендов
+  stops [--since 2026-09-01] [--runs DIR]     счёт остановок конвейера по
+                                              четырём разрядам парковки
+                                              (вопрос, окружение, автор, спор):
+                                              число, доля и медиана простоя в
+                                              часах у каждого; читает раздел
+                                              «Ход работы» файлов задач и живые
+                                              записи runs для ещё не закрытых
+                                              остановок, --runs для стендов
   closable                                    кого из Check вправе закрыть
                                               автоматика: вид приёмки agent,
                                               отметка smoke на последний выкат,
@@ -1043,6 +1051,13 @@ func main() {
 		runs := fs.String("runs", "", "каталог записей runs вместо ~/.devkit/runs, для стендов")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "pilot --since 2026-09-01 [--runs DIR]")
 		msg, err = cmdPilot(root(*dir), *since, *runs)
+	case "stops":
+		fs := flag.NewFlagSet("stops", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		since := fs.String("since", "", "срез окна с этой даты, вид 2026-09-01, без ключа вся история")
+		runs := fs.String("runs", "", "каталог записей runs вместо ~/.devkit/runs, для стендов")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "stops [--since 2026-09-01] [--runs DIR]")
+		msg, err = cmdStops(root(*dir), *since, *runs)
 	case "id":
 		fs := flag.NewFlagSet("id", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

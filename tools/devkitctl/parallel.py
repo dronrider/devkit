@@ -68,10 +68,13 @@ def components(root=ROOT):
 
     Go-компоненты идут с GOWORK=off: чужой go.work выше по дереву (находка
     DK-115) уводил бы go test из модуля утилиты. -count=1 держит DoD цели
-    DK-166: кэш тестового прогона go обязан молчать.
+    DK-166: кэш тестового прогона go обязан молчать. -timeout=20m поднят с
+    дефолтных 10 минут go test: пакет dashboard изолированно укладывается в
+    516с, а рядом с остальными компонентами конкуренция за машину регулярно
+    выносит его за исходный потолок.
     """
     comps = [("go:" + tool, "tools/" + tool,
-              ["go", "test", "-count=1", "./..."]) for tool in go_tools(root)]
+              ["go", "test", "-count=1", "-timeout=20m", "./..."]) for tool in go_tools(root)]
     comps += [
         ("hooks", "hooks",
          [sys.executable, "-m", "unittest", "discover", "-p", "*_test.py"]),

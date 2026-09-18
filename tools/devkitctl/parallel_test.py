@@ -103,6 +103,15 @@ class ComponentsTest(unittest.TestCase):
                 self.assertIn("-count=1", argv,
                               "%s потерял -count=1" % name)
 
+    def test_go_raises_timeout_past_the_default(self):
+        # Дефолтный потолок go test 10 минут пакет dashboard рядом с
+        # остальными компонентами держит не всегда: тихая пропажа ключа
+        # вернула бы этот срыв.
+        for name, _, argv in parallel.components():
+            if name.startswith("go:"):
+                self.assertIn("-timeout=20m", argv,
+                              "%s потерял -timeout=20m" % name)
+
     def test_go_components_leave_the_foreign_workspace(self):
         # Чужой go.work выше по дереву (находка DK-115) уводит go test из
         # модуля утилиты, поэтому глушить workspace обязан сам раннер: env

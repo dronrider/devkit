@@ -104,12 +104,45 @@ func TestStaticRankCardShowsRowTotal(t *testing.T) {
 	}
 	// Та же разница видна и в подсказке ячейки списка: под слагаемыми на 38
 	// стояло «Ранг 64», и подсказка объясняла ровно ничего.
-	cell := funcBody(t, app, "function rankCell(")
-	if !strings.Contains(cell, "row.r_own") || !strings.Contains(cell, "Своя сумма") {
-		t.Error("подсказка ранга в списке не разбирает итог: своя сумма и поправки в неё не попали")
+	rows := funcBody(t, app, "function rankRows(")
+	if !strings.Contains(rows, "row.r_own") || !strings.Contains(rows, "Своя сумма") {
+		t.Error("разбор ранга для списка не знает своей суммы и поправок: подсказке нечего показать")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
 	if !strings.Contains(css, ".rcard .radj{") || !strings.Contains(css, ".rcard .rfrom{") {
 		t.Error("у хвоста разбора нет своих стилей: он встанет строкой крупного итога")
+	}
+}
+
+// Читалка экрана слышит тот же разбор ранга, что виден в подсказке. Оба текста
+// собираются из одного помощника, и вторым списком слов aria-label не
+// набирается: с ним читалка перечисляла пять слагаемых на 38 под итогом 64, а
+// поправки называла одна подсказка (замечание ревью DK-650).
+func TestStaticRankLabelSaysAdjustments(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	rows := funcBody(t, app, "function rankRows(")
+	for _, want := range []string{"RANK_PARTS.map", "row.r_own", "Своя сумма",
+		"Подтянут от", `"Цена "`} {
+		if !strings.Contains(rows, want) {
+			t.Errorf("в общем разборе ранга нет %q: читалке и подсказке достанется разное", want)
+		}
+	}
+	cell := funcBody(t, app, "function rankCell(")
+	if !strings.Contains(cell, "const rows = rankRows(row, parts)") {
+		t.Error("ячейка ранга не зовёт общий разбор: подсказка и aria-label разъедутся снова")
+	}
+	if !strings.Contains(cell, `const said = rows.map(`) ||
+		!strings.Contains(cell, `sum.setAttribute("aria-label", "ранг " + row.r + ", слагаемые: " + said)`) {
+		t.Error("aria-label кнопки ранга собран мимо общего разбора: у строки с хвостом " +
+			"поправок читалка снова услышит слагаемые на 38 под итогом 64")
+	}
+	if !strings.Contains(cell, "for (const one of rows) tip.append(") {
+		t.Error("подсказка ранга рисуется мимо общего разбора: у неё и у aria-label два источника")
+	}
+	for _, gone := range []string{"Своя сумма", "Подтянут от", "row.r_own"} {
+		if strings.Contains(cell, gone) {
+			t.Errorf("строка разбора %q снова живёт в самой ячейке: следующая поправка "+
+				"приедет в подсказку и не приедет в aria-label", gone)
+		}
 	}
 }

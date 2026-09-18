@@ -970,6 +970,28 @@ function checkChip(row) {
   return withTip(chip, bits.join(", ") + ".");
 }
 
+// Разбор ранга строки парами «имя, значение»: пять показателей по RANKING.md,
+// а у строки с хвостом поправок ещё своя сумма, бонус за цену и подтяжка итога
+// с ID источника. Поправки считает taskctl, счёта тут нет.
+//
+// Разбор один на оба читателя строки, на всплывающий блок для глаз и на
+// aria-label кнопки для читалки экрана. Своим списком слов aria-label уже
+// разошёлся с блоком: блок называл поправки, а читалка слышала «ранг 64,
+// слагаемые», перечисленные на 38, и разницу ей не объяснял никто (замечание
+// ревью DK-650).
+function rankRows(row, parts) {
+  const rows = RANK_PARTS.map((one, at) => [one.name, String(parts[at])]);
+  const own = typeof row.r_own === "number" ? row.r_own : row.r;
+  if (own === row.r) return rows;
+  rows.push(["Своя сумма", String(own)]);
+  for (const adj of row.adjustments || []) {
+    rows.push(adj.from
+      ? ["Подтянут от", adj.from]
+      : ["Цена " + (adj.name || ""), (Number(adj.delta) > 0 ? "+" : "") + Number(adj.delta)]);
+  }
+  return rows;
+}
+
 // Ранг в строке это одна сумма, а слагаемые приходят всплывающим блоком: пять
 // показателей по RANKING.md именем и числом, под ними итог.
 //
@@ -990,8 +1012,10 @@ function rankCell(row, tag) {
   cell.append(sum);
   if (parts.length !== RANK_PARTS.length) return cell;
   // Имена показателей берутся из того же списка, каким ранг правят на экране
-  // задачи: вторая копия имён разошлась бы с RANKING.md молча.
-  const said = RANK_PARTS.map((one, at) => one.name + " " + parts[at]).join(", ");
+  // задачи: вторая копия имён разошлась бы с RANKING.md молча. Строка без
+  // хвоста поправок этих строк не носит, и текст остаётся прежним.
+  const rows = rankRows(row, parts);
+  const said = rows.map((one) => one[0] + " " + one[1]).join(", ");
   sum.setAttribute("aria-expanded", "false");
   sum.setAttribute("aria-label", "ранг " + row.r + ", слагаемые: " + said);
   const tip = el("div", "rtip");
@@ -1001,20 +1025,7 @@ function rankCell(row, tag) {
     one.append(el("span", "rtn", name), el("span", "rtv", String(num)));
     return one;
   };
-  RANK_PARTS.forEach((one, at) => tip.append(line(one.name, parts[at])));
-  // Поправки к рангу считает taskctl, и итог строки расходится со своей суммой
-  // пяти слагаемых: подсказка, где под слагаемыми на 38 стоит «Ранг 64», не
-  // объясняет ничего (DK-650). Расходятся они не у всех строк, и лишних строк
-  // подсказка не носит.
-  const own = typeof row.r_own === "number" ? row.r_own : row.r;
-  if (own !== row.r) {
-    tip.append(line("Своя сумма", own));
-    for (const adj of row.adjustments || []) {
-      tip.append(adj.from
-        ? line("Подтянут от", adj.from)
-        : line("Цена " + (adj.name || ""), (Number(adj.delta) > 0 ? "+" : "") + Number(adj.delta)));
-    }
-  }
+  for (const one of rows) tip.append(line(one[0], one[1]));
   tip.append(line("Ранг", row.r, "rtsum"));
   cell.append(tip);
   sum.addEventListener("click", (ev) => {

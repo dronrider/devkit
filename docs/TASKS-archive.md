@@ -561,3 +561,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-822 | Дашборд поднимается одной строкой установки devkit | task | P2 | 2026-09-18 | [tasks/archive/2026/DK-822.md](tasks/archive/2026/DK-822.md) |
 | DK-650 | Ранг в форме задачи расходится со списком у задач с хвостом поправок | bug | P2 | 2026-09-18 | [tasks/archive/2026/DK-650.md](tasks/archive/2026/DK-650.md) |
 | DK-894 | shipctl выбирает команду выката по путям диффа задачи | task | P2 | 2026-09-18 | [tasks/archive/2026/DK-894.md](tasks/archive/2026/DK-894.md) |
+| DK-449 | prompt-test для формы DK-444: сценарии черновика и файла задачи на стенде | task | P2 | 2026-09-19 | [tasks/archive/2026/DK-449.md](tasks/archive/2026/DK-449.md) |

@@ -38,6 +38,12 @@ HEALTHZ_TIMEOUT = 3
 # devkitctl update/doctor --fix чаще всего не застал бы токен готовым.
 LOGIN_WAIT = 5.0
 LOGIN_POLL = 0.2
+# Признак агентской сессии: та же переменная, которой профиль
+# kit/harness/claude-code.toml узнаёт харнес ([detect] env/value), её видит и
+# вторая подписка glm-code, тот же клиент под другим endpoint. Вывод такой
+# сессии едет в контекст и транскрипт агента, и значению секрета там не место.
+AGENT_ENV = "CLAUDECODE"
+AGENT_ENV_VALUE = "1"
 
 
 def home_path(home, path):
@@ -118,18 +124,39 @@ def wait_for_token(home, timeout=LOGIN_WAIT, poll=LOGIN_POLL, sleep=None):
     return got
 
 
-def login_line(home, had_token, waiter=None):
+def agentic_session(env=None):
+    """Сессия харнеса Claude Code (окном или headless) или его второй
+    подписки glm-code, узнаётся тем же признаком, что и профиль харнеса.
+    `doctor --fix` рутинно зовут и такие сессии, и их вывод уходит в
+    контекст модели и в транскрипт, а не только на глаза человеку рядом с
+    окном."""
+    env = os.environ if env is None else env
+    return env.get(AGENT_ENV) == AGENT_ENV_VALUE
+
+
+def login_line(home, had_token, waiter=None, tty=None, agent=None):
     """Строка входа в хвост update/doctor --fix: адрес печатается всегда, а
     секрет только когда родился на этом же прогоне (had_token снят до наших
     действий), потому что машина та же, и звать новичка за `dashboard secret`
-    отдельным шагом незачем (решение DK-822)."""
+    отдельным шагом незачем (решение DK-822).
+
+    Значение токена при этом уходит в вывод только человеку за терминалом вне
+    агентской сессии: `doctor --fix` зовут и агенты, и их вывод едет в
+    контекст и транскрипт, куда секрету дороги нет (замечание ревью DK-822).
+    В остальных случаях, включая вывод не в терминал, вместо значения
+    называется место и способ посмотреть его самому, а не тишина."""
     addr = "http://localhost:%d/login" % conf_port(home)
     if had_token:
         return "дашборд поднят, адрес входа %s" % addr
     got = (waiter or wait_for_token)(home)
     if not got:
         return "дашборд поднят, адрес входа %s (токен ещё не родился, напечатать: dashboard secret)" % addr
-    return "дашборд поднят, адрес входа %s, токен %s" % (addr, got)
+    is_tty = sys.stdout.isatty() if tty is None else tty
+    is_agent = agentic_session() if agent is None else agent
+    if is_tty and not is_agent:
+        return "дашборд поднят, адрес входа %s, токен %s" % (addr, got)
+    return ("дашборд поднят, адрес входа %s, токен в %s (ключ token), "
+            "напечатать: dashboard secret" % (addr, home_path(home, CONF)))
 
 
 # PATH launchd-агента собирается из четырёх частей: системное умолчание
@@ -244,7 +271,8 @@ def probe(home, fetch=None):
 
 
 def check(fix=False, main=None, from_main=True, home=None, platform=None,
-          call=None, which=None, fetch=None, machine=None, waiter=None):
+          call=None, which=None, fetch=None, machine=None, waiter=None,
+          tty=None, agent=None):
     """Носитель дашборда в машинном контуре доктора.
 
     Хоть plist и показывает на бинарь из PATH, а не на чекаут, класть его с
@@ -293,7 +321,7 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None,
         if err:
             return ["launchd не взял агента дашборда %s: %s" % (plist, err)], []
         return [], ["дашборд подключён launchd-агентом %s (порт %d, журнал %s); %s"
-                    % (LABEL, conf_port(home), log, login_line(home, had_token, waiter))]
+                    % (LABEL, conf_port(home), log, login_line(home, had_token, waiter, tty, agent))]
     # Дальше речь про службы машины, и под подставным домом судить о них не о
     # чем: поднят там агент пользователя, а не тот, что описан этим plist.
     if not launchd.own_home(home, machine):
@@ -308,7 +336,7 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None,
         if err:
             return ["launchd не взял агента дашборда %s: %s" % (plist, err)], []
         return [], ["дашборд отобран у перехватчика %s и поднят из %s; %s"
-                    % (thief, plist, login_line(home, had_token, waiter))]
+                    % (thief, plist, login_line(home, had_token, waiter, tty, agent))]
     if not loaded(call):
         if not fix:
             return ["launchd-агент дашборда %s положен, но не поднят: доска с телефона "
@@ -317,7 +345,7 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None,
         if err:
             return ["launchd не взял агента дашборда %s: %s" % (plist, err)], []
         return [], ["дашборд поднят launchd-агентом %s; %s"
-                    % (LABEL, login_line(home, had_token, waiter))]
+                    % (LABEL, login_line(home, had_token, waiter, tty, agent))]
     # Живость меряется по /healthz только после первого старта сервера: секрет
     # в конфиг кладёт только сам serve, и пока его там нет, сервер ещё не
     # поднимался (root в конфиге кладёт уже ensure_conf, файл сам по себе
@@ -332,4 +360,4 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None,
     # На обновлениях, когда чинить уже нечего, доктор всё равно печатает
     # адрес входа одной строкой: новичок, вставивший строку из CONNECT.md
     # заново, должен увидеть его и без свежей установки.
-    return [], [login_line(home, had_token, waiter)]
+    return [], [login_line(home, had_token, waiter, tty, agent)]

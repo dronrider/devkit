@@ -67,19 +67,22 @@ class Stand(unittest.TestCase):
         self.plist = self.home / "Library" / "LaunchAgents" / ("%s.plist" % dashboard.LABEL)
 
     def check(self, fix=False, call=None, platform="darwin", binary=True,
-              fetch=ok_fetch, from_main=True, machine=None, waiter=no_wait):
+              fetch=ok_fetch, from_main=True, machine=None, waiter=no_wait,
+              tty=None, agent=None):
         # Дом стенда объявляется домом машины: без этого проверка шла бы по
         # ветке подставного дома (DK-588) и launchd не трогала бы вовсе.
         # waiter по умолчанию не ждёт: реальное ожидание секрета разбирает
         # LoginLineTest своим стендом, а тут оно било бы по каждому прогону
-        # install/reload пятисекундной паузой.
+        # install/reload пятисекундной паузой. tty/agent по умолчанию не
+        # подменяются: под тестовым раннером stdout и так не терминал, и
+        # тесты, которым нужно значение секрета в строке, подменяют явно.
         call = Fake() if call is None else call
         which = (lambda name: str(self.binary)) if binary else (lambda name: None)
         f, d = dashboard.check(fix=fix, main=self.dir / "devkit", from_main=from_main,
                                home=self.home, platform=platform,
                                call=call, which=which, fetch=fetch,
                                machine=self.home if machine is None else machine,
-                               waiter=waiter)
+                               waiter=waiter, tty=tty, agent=agent)
         return f, d, call
 
 
@@ -381,7 +384,9 @@ class EnsureConfTest(Stand):
 
 class LoginLineTest(Stand):
     """Адрес и токен в хвосте update/doctor --fix (DK-822): токен печатается,
-    только когда родился на этом же прогоне."""
+    только когда родился на этом же прогоне, и только человеку за терминалом
+    вне агентской сессии (замечание ревью: секрет не должен ехать в контекст
+    и транскрипт агента, doctor --fix зовут и агенты)."""
 
     def test_had_token_is_quiet_about_the_secret(self):
         def boom(home):
@@ -390,15 +395,46 @@ class LoginLineTest(Stand):
         self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, line)
         self.assertNotIn("токен", line)
 
-    def test_fresh_token_is_printed(self):
-        line = dashboard.login_line(self.home, had_token=False, waiter=lambda h: "секрет123")
+    def test_human_terminal_sees_the_value(self):
+        # Терминал человека (isatty), не агентская сессия: значение печатается.
+        line = dashboard.login_line(self.home, had_token=False,
+                                    waiter=lambda h: "секрет123", tty=True, agent=False)
         self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, line)
         self.assertIn("секрет123", line)
 
+    def test_agent_terminal_hides_the_value(self):
+        # Та же tty, но сессия агентская (CLAUDECODE=1 в окне): вывод всё
+        # равно едет в контекст модели, значение прятать.
+        line = dashboard.login_line(self.home, had_token=False,
+                                    waiter=lambda h: "секрет123", tty=True, agent=True)
+        self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, line)
+        self.assertNotIn("секрет123", line, "агентская сессия увидела значение секрета")
+        self.assertIn("dashboard.local", line)
+        self.assertIn("dashboard secret", line)
+
+    def test_non_terminal_hides_the_value_and_is_not_silent(self):
+        # Вывод не в терминал (перенаправлен, захвачен подпроцессом): значение
+        # прячется, но строка не пустая, место и способ посмотреть названы.
+        line = dashboard.login_line(self.home, had_token=False,
+                                    waiter=lambda h: "секрет123", tty=False, agent=False)
+        self.assertTrue(line, "вывод не в терминал не должен молчать")
+        self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, line)
+        self.assertNotIn("секрет123", line, "не-терминал увидел значение секрета")
+        self.assertIn("dashboard.local", line)
+        self.assertIn("dashboard secret", line)
+
     def test_timed_out_wait_still_prints_the_address(self):
-        line = dashboard.login_line(self.home, had_token=False, waiter=lambda h: "")
+        line = dashboard.login_line(self.home, had_token=False, waiter=lambda h: "",
+                                    tty=True, agent=False)
         self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, line)
         self.assertIn("dashboard secret", line)
+
+    def test_default_tty_and_agent_read_real_environment(self):
+        # Без подмены login_line спрашивает настоящие sys.stdout.isatty() и
+        # CLAUDECODE: под тестовым раннером stdout не терминал, значит
+        # значение прячется само, без явного tty=False.
+        line = dashboard.login_line(self.home, had_token=False, waiter=lambda h: "секрет123")
+        self.assertNotIn("секрет123", line)
 
     def test_wait_for_token_polls_without_real_sleep(self):
         # serve дописывает секрет не мгновенно (KeepAlive поднимает процесс
@@ -429,16 +465,48 @@ class LoginLineTest(Stand):
         self.assertTrue(calls, "ожидание не сделало ни одного тика")
 
 
+class AgenticSessionTest(unittest.TestCase):
+    def test_claudecode_env_is_agentic(self):
+        self.assertTrue(dashboard.agentic_session({"CLAUDECODE": "1"}))
+
+    def test_other_or_missing_env_is_not_agentic(self):
+        self.assertFalse(dashboard.agentic_session({}))
+        self.assertFalse(dashboard.agentic_session({"CLAUDECODE": "0"}))
+        self.assertFalse(dashboard.agentic_session({"CLAUDECODE": "true"}))
+
+
 class InstallLoginTest(Stand):
     """Полный ход через check(): адрес в хвосте первой установки и на
     последующих здоровых прогонах, без реального ожидания секрета."""
 
     def test_fresh_install_names_address_and_token(self):
-        f, d, call = self.check(fix=True, waiter=lambda h: "новый-секрет")
+        # Терминал человека вне агентской сессии: значение секрета видно.
+        f, d, call = self.check(fix=True, waiter=lambda h: "новый-секрет",
+                                tty=True, agent=False)
         self.assertEqual(f, [])
         self.assertEqual(len(d), 1, d)
         self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, d[0])
         self.assertIn("новый-секрет", d[0])
+
+    def test_fresh_install_in_agent_session_hides_the_value(self):
+        # Тот же взвод агента launchd, но сессия агентская: значение секрета
+        # не должно уехать в вывод инструмента, который читает модель.
+        f, d, call = self.check(fix=True, waiter=lambda h: "новый-секрет",
+                                tty=True, agent=True)
+        self.assertEqual(f, [])
+        self.assertEqual(len(d), 1, d)
+        self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, d[0])
+        self.assertNotIn("новый-секрет", d[0], "агентская сессия увидела значение секрета")
+        self.assertIn("dashboard secret", d[0])
+
+    def test_fresh_install_without_terminal_hides_the_value(self):
+        f, d, call = self.check(fix=True, waiter=lambda h: "новый-секрет",
+                                tty=False, agent=False)
+        self.assertEqual(f, [])
+        self.assertEqual(len(d), 1, d)
+        self.assertIn("http://localhost:%d/login" % dashboard.DEFAULT_PORT, d[0])
+        self.assertNotIn("новый-секрет", d[0], "не-терминал увидел значение секрета")
+        self.assertIn("dashboard secret", d[0])
 
     def test_steady_state_prints_one_address_line(self):
         (self.home / ".devkit" / "dashboard.local").write_text(

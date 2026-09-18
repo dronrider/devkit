@@ -2391,20 +2391,23 @@ func TestChatLiveBlinkUsesAccent(t *testing.T) {
 	if !strings.Contains(rule[1], "var(--acc)") {
 		t.Errorf("рамка живого разговора красится не основным цветом: %s", rule[1])
 	}
-	frames := regexp.MustCompile(`@keyframes dklive\{([^@]*?)\}\s*\n`).FindStringSubmatch(css)
-	if frames == nil {
-		t.Fatal("дорожки моргания dklive в стилях нет")
+	// Моргает вкладыш поверх кнопки, а не сама кнопка (DK-986): цвет и такт
+	// живут теперь у него, а дорожка dklive осталась с одной прозрачностью и
+	// превращением, чтобы браузер не перерисовывал кадр.
+	over := regexp.MustCompile(`\.chatlive::after\{([^}]*)\}`).FindStringSubmatch(css)
+	if over == nil {
+		t.Fatal("вкладыша моргания .chatlive::after в стилях нет: моргать нечему")
 	}
-	if !strings.Contains(frames[1], "var(--acc)") {
-		t.Errorf("моргание идёт не основным цветом: %s", frames[1])
+	if !strings.Contains(over[1], "var(--acc)") {
+		t.Errorf("моргание идёт не основным цветом: %s", over[1])
 	}
-	if strings.Contains(rule[1], "var(--run)") || strings.Contains(frames[1], "var(--run)") {
+	if strings.Contains(rule[1], "var(--run)") || strings.Contains(over[1], "var(--run)") {
 		t.Errorf("моргание осталось зелёным --run, на фоне строки его не видно: %s %s",
-			rule[1], frames[1])
+			rule[1], over[1])
 	}
 	// Такт: заметно, но не мельтешит. Быстрее полутора секунд метка дёргается,
 	// медленнее четырёх её принимают за неподвижную рамку.
-	said := regexp.MustCompile(`\.chatlive\{animation:dklive ([0-9.]+)s`).FindStringSubmatch(css)
+	said := regexp.MustCompile(`animation:dklive ([0-9.]+)s`).FindStringSubmatch(css)
 	if said == nil {
 		t.Fatal("у моргания нет такта: правила animation в .chatlive не нашлось")
 	}

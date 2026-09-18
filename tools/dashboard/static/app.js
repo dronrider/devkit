@@ -212,6 +212,84 @@ async function api(path, opts) {
   return { ok: resp.ok, status: resp.status, body: await apiBody(resp) };
 }
 
+// Скрытая вкладка ничего не спрашивает (DK-986). Периодических опросов у
+// дашборда десяток, и вкладка, забытая открытой на переносной машине, гоняла
+// их все: сервер отвечал в пустоту, а батарея садилась. Выключатель тут один
+// на всех, потому что каждый опрос со своим условием разъезжался бы уже на
+// втором, а забытый заводился бы снова с любого экрана.
+//
+// Данные после возврата догоняются: вкладка, поднятая из фона, зовёт все
+// опросы сразу, не дожидаясь остатка срока. Иначе человек видел бы состояние
+// той минуты, когда уходил, и читал его как настоящее.
+const polls = new Set();
+
+const hiddenTab = () => document.visibilityState === "hidden";
+
+// Опрос по кругу: run зовётся раз в ms, пока вкладка на виду. Возврат к
+// вкладке идёт за очередной круг. Снимается возвращённой функцией, её экраны
+// кладут в свои перечни живого (agentLive, chatLive) наравне с потоками.
+function pollEvery(ms, run) {
+  const poll = { timer: null, dead: false };
+  const arm = () => {
+    if (poll.dead || poll.timer !== null || hiddenTab()) return;
+    poll.timer = setTimeout(() => { step().catch(console.error); }, ms);
+  };
+  const step = async () => {
+    poll.timer = null;
+    if (poll.dead) return;
+    try {
+      await run();
+    } catch (err) {
+      console.error(err);
+    }
+    arm();
+  };
+  poll.wake = () => {
+    if (poll.timer !== null) clearTimeout(poll.timer);
+    poll.timer = null;
+    step().catch(console.error);
+  };
+  polls.add(poll);
+  arm();
+  return () => {
+    poll.dead = true;
+    if (poll.timer !== null) clearTimeout(poll.timer);
+    poll.timer = null;
+    polls.delete(poll);
+  };
+}
+
+// Одна отложенная ходка тем же правилом. Ею живут опросы, которые заводят
+// следующий круг сами из своего обработчика: у них круг идёт от конца ответа,
+// а не от начала запроса, и медленный сервер не получает очередь заходов.
+function pollOnce(ms, run) {
+  const poll = { timer: null, dead: false };
+  const fire = () => {
+    poll.timer = null;
+    if (poll.dead) return;
+    poll.dead = true;
+    polls.delete(poll);
+    run();
+  };
+  poll.wake = () => {
+    if (poll.timer !== null) clearTimeout(poll.timer);
+    fire();
+  };
+  polls.add(poll);
+  if (!hiddenTab()) poll.timer = setTimeout(fire, ms);
+  return () => {
+    poll.dead = true;
+    if (poll.timer !== null) clearTimeout(poll.timer);
+    poll.timer = null;
+    polls.delete(poll);
+  };
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (hiddenTab()) return;
+  for (const poll of [...polls]) poll.wake();
+});
+
 // Ответ бывает и не от дашборда: до него стоит внешний вход, и свой отказ
 // (413 на длинное тело, 502 на упавший бэкенд) он пишет страницей html.
 // Разбор такой страницы падал SyntaxError, и человек читал жалобу движка js
@@ -6216,14 +6294,14 @@ async function wireFeed(project, sid, opts) {
   // значит поток умер тихо, и хвост дочитывается опросом. Без неё оставался бы
   // случай, когда вкладка всё время на виду, а связь оборвалась так, что
   // onerror не пришёл вовсе.
-  const guard = setInterval(() => {
+  const guard = pollEvery(streamQuiet, () => {
     if (gone()) return;
     if (Date.now() - seen < streamQuiet) return;
     seen = Date.now();
     if (!live.es || live.es.readyState === 2) openStream();
     catchUp();
-  }, streamQuiet);
-  opts.live.push(() => clearInterval(guard));
+  });
+  opts.live.push(guard);
 }
 
 // tmux: сессия работы и снимок пейна через capture-pane; событийного
@@ -6261,8 +6339,7 @@ function wireTmux(id, card, sub) {
     if (sub) sub.textContent = hit.name;
   };
   load().catch(console.error);
-  const t = setInterval(() => { load().catch(console.error); }, 5000);
-  agentLive.push(() => clearInterval(t));
+  agentLive.push(pollEvery(5000, load));
 }
 
 // Строка задачи по id: ищет во всех секциях доски разом, а не только в той,
@@ -7215,7 +7292,7 @@ function makeOutbox(project, id, box, url, opts) {
       await read();
     } finally {
       if (readable && !stopped && poll === null) {
-        poll = setTimeout(() => { poll = null; load().catch(console.error); }, OUTBOX_POLL);
+        poll = pollOnce(OUTBOX_POLL, () => { poll = null; load().catch(console.error); });
       }
     }
   };
@@ -7316,7 +7393,7 @@ function makeOutbox(project, id, box, url, opts) {
     stopped = true;
     if (timer) clearTimeout(timer);
     timer = null;
-    if (poll) clearTimeout(poll);
+    if (poll) poll();
     poll = null;
     window.removeEventListener("online", wake);
   };
@@ -9691,8 +9768,7 @@ function wireRing(project, st, slot) {
     if (r.ok) put(r.body);
   };
   load().catch(console.error);
-  const t = setInterval(() => { load().catch(console.error); }, PULSE_POLL);
-  chatLive.push(() => clearInterval(t));
+  chatLive.push(pollEvery(PULSE_POLL, load));
 }
 
 // Привязка разговора к задаче рукой. Дашборд узнаёт задачу сессии по реестру
@@ -9930,8 +10006,7 @@ function wireTaskPlan(project, id, page) {
     if (r.ok) put(r.body);
   };
   load().catch(console.error);
-  const t = setInterval(() => { load().catch(console.error); }, PULSE_POLL);
-  agentLive.push(() => clearInterval(t));
+  agentLive.push(pollEvery(PULSE_POLL, load));
 }
 
 // Прерывать ход можно у своей работающей tmux-сессии: занятость приходит
@@ -10765,12 +10840,12 @@ function makeBusy(project, box) {
   // Счётчик тикает своим таймером, а не опросом: опрос ходит раз в полторы
   // секунды, и время в плашке шло бы рывками через секунду на третью.
   const beatOff = () => {
-    if (beat) clearTimeout(beat);
+    if (beat) beat();
     beat = null;
   };
   const beatOn = () => {
     beatOff();
-    beat = setTimeout(() => { draw(); beatOn(); }, 1000);
+    beat = pollEvery(1000, draw);
   };
   const off = () => {
     row.hidden = true;
@@ -10788,7 +10863,7 @@ function makeBusy(project, box) {
     off();
     mute = false;
     watched = "";
-    if (poll) clearTimeout(poll);
+    if (poll) poll();
     poll = null;
   };
   // Плашка встаёт по состоянию чата: at это начало хода местными
@@ -10856,8 +10931,8 @@ function makeBusy(project, box) {
   // не слышно вовсе.
   const LIMIT = 10 * 60 * 1000;
   const later = (ms) => {
-    if (poll) clearTimeout(poll);
-    poll = setTimeout(tick, ms || 1500);
+    if (poll) poll();
+    poll = pollOnce(ms || 1500, () => { poll = null; tick().catch(console.error); });
   };
   const tick = async () => {
     if (!watched) return;
@@ -12278,7 +12353,12 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
   // где tmux-сессия и правда есть (DK-652).
   if (!sid) return;
   let stop = false;
-  chatLive.push(() => { stop = true; });
+  let next = null;
+  chatLive.push(() => {
+    stop = true;
+    if (next) next();
+    next = null;
+  });
   const tick = async () => {
     if (stop) return;
     // Отвергнутый fetch (обрыв связи, сон ноутбука) не должен гасить опрос
@@ -12302,7 +12382,7 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
       // на каждый обрыв связи только шумела бы.
     }
     if (stop) return;
-    setTimeout(() => { tick().catch(console.error); }, ASK_POLL);
+    next = pollOnce(ASK_POLL, () => { next = null; tick().catch(console.error); });
   };
   tick().catch(console.error);
 }
@@ -13887,16 +13967,16 @@ function watchRunning() {
   if (!draftPollWired) {
     draftPollWired = true;
     agentLive.push(() => {
-      if (draftPoll !== null) clearTimeout(draftPoll);
+      if (draftPoll !== null) draftPoll();
       draftPoll = null;
       draftPollWired = false;
     });
   }
   if (draftPoll !== null) return;
-  draftPoll = setTimeout(() => {
+  draftPoll = pollOnce(DRAFT_GROOM_POLL, () => {
     draftPoll = null;
     refresh().catch(console.error);
-  }, DRAFT_GROOM_POLL);
+  });
 }
 
 async function renderDraft(project, works, id) {
@@ -15848,16 +15928,16 @@ function watchSessions(project, q) {
   if (!sessWired) {
     sessWired = true;
     agentLive.push(() => {
-      if (sessPoll !== null) clearTimeout(sessPoll);
+      if (sessPoll !== null) sessPoll();
       sessPoll = null;
       sessWired = false;
     });
   }
   if (sessPoll !== null) return;
-  sessPoll = setTimeout(() => {
+  sessPoll = pollOnce(SESS_POLL, () => {
     sessPoll = null;
     pollSessions(project, q).catch(console.error);
-  }, SESS_POLL);
+  });
 }
 
 // Заход опроса: работы спрашиваются своей ручкой, а не общим списком проектов,
@@ -16572,7 +16652,7 @@ document.getElementById("waits").addEventListener("click", (ev) => {
 // Число на кнопке живёт своим кругом: заходы на экран бывают редкими, а вопрос
 // приходит когда угодно, и узнавать о нём только при переходе значило бы
 // молчать ровно тогда, когда человек и так сидит на одном экране.
-setInterval(() => { refreshWaits().catch(console.error); }, WAIT_POLL);
+pollEvery(WAIT_POLL, refreshWaits);
 
 // Кнопка заведения в шапке спрашивает вид тем же меню, что плюс карточки
 // проекта и плавающий плюс телефона. Прежде она вела прямо на форму задачи, и

@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/frame"
-	"github.com/dronrider/devkit/internal/gitrun"
 	"github.com/dronrider/devkit/internal/freshtree"
+	"github.com/dronrider/devkit/internal/gitrun"
 )
 
 // git это единственная дорога к git из shipctl: закрытый запрос учётки и
@@ -97,6 +97,59 @@ func deployProblem(cmdStr string, timedOut bool, limit time.Duration) (short, fu
 		short, cmdStr, limit, deployConfigPath)
 }
 
+// runComponents катит задетые компоненты по очереди в порядке конфига
+// (решение «двое», DK-894: первый провал останавливает остальные). done это
+// уже прогнанные до провала, они уезжают в отчёт наравне с причиной провала,
+// иначе повторный запуск задвоил бы уже прошедший компонент.
+func runComponents(root string, comps []deployComponent, timeout time.Duration) (done []string, failed deployComponent, out string, timedOut bool, err error) {
+	for _, comp := range comps {
+		o, to, e := runShellLimit(root, comp.Command, timeout, nil)
+		if e != nil {
+			return done, comp, o, to, e
+		}
+		done = append(done, comp.Name)
+	}
+	return done, deployComponent{}, "", false, nil
+}
+
+// componentNames это имена компонентов в исходном порядке, для отчёта.
+func componentNames(comps []deployComponent) []string {
+	names := make([]string, len(comps))
+	for i, c := range comps {
+		names[i] = c.Name
+	}
+	return names
+}
+
+// componentsLine печатает раскладку, которую задел дифф paths: задетые
+// компоненты с их командами, либо путь мимо раскладки с подсказкой, какой
+// ключ завести. Пустая раскладка (Components нет вовсе) отдаёт пустую
+// строку: печатать тут нечего, проект катится одиночной командой Deploy.
+func componentsLine(root string, paths []string) (string, error) {
+	cfg, err := loadDeployConfig(root)
+	if err != nil {
+		return "", err
+	}
+	if len(cfg.Components) == 0 {
+		return "", nil
+	}
+	// matchComponents несёт и фильтр docs/, и текст подсказки про пропущенный
+	// ключ: здесь status его не отказом делает, а печатает информационной
+	// строкой, merge тем же текстом откажет по-настоящему.
+	matched, merr := matchComponents(root, paths)
+	if merr != nil {
+		return merr.Error(), nil
+	}
+	if len(matched) == 0 {
+		return "компонентов раскладки дифф не задел", nil
+	}
+	parts := make([]string, len(matched))
+	for i, comp := range matched {
+		parts[i] = comp.Name + " (" + comp.Command + ")"
+	}
+	return "компоненты: " + strings.Join(parts, ", "), nil
+}
+
 // cmdoutFrame строит выжимку вывода провалившейся команды для ошибок shipctl.
 // Это замена бывшей tail(out): на месте последних 30 строк без контекста
 // агенту видна сводка по формату LLD (exit, lines_total, lines_hidden,
@@ -171,6 +224,21 @@ func pathLines(out string) []string {
 		}
 	}
 	return paths
+}
+
+// nonDocsPaths убирает из диффа файлы под docs/: доска, файлы задач и LLD
+// едут тем же коммитом, но прод не меняют, и раскладка компонентов про них не
+// знает и не должна знать (тот же критерий, что у codeCommits и docsOnly).
+// Без фильтра любой дифф с правкой файла задачи отказывал бы раскладке путём,
+// для которого нет и не будет компонента.
+func nonDocsPaths(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		if !strings.HasPrefix(p, "docs/") {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // mergeRangePaths это пути, которые тронет предстоящее слияние: диапазон
@@ -381,6 +449,13 @@ func cmdStatus(root string) (string, error) {
 	if err != nil {
 		linked = nil
 	}
+	// Раскладку компонентов печатает дифф ветки задачи против main, поэтому
+	// main нужен уже здесь, до корп-проверки ниже: тот же приём, что у
+	// mainBranch дальше по функции, только раньше по месту вызова. Корп-контур
+	// свою ветку не двигает через shipctl, и печать там просто промолчит по
+	// пустому list, а не будет спрошена отдельно.
+	corp := corpActive(root)
+	main, mainErr := mainBranch(root)
 	for _, l := range linked {
 		// Копия окна называется своим именем: она стоит в списке всегда, в том
 		// числе отцепленной между задачами, и строка «worktree:  в ...» с
@@ -392,7 +467,20 @@ func cmdStatus(root string) (string, error) {
 		if state == "" {
 			state = "detached, задачи в работе нет"
 		}
-		out = append(out, what+": "+state+" в "+l.Path)
+		line := what + ": " + state + " в " + l.Path
+		// Компоненты, которые задел дифф этой ветки, печатаются тут же, рядом
+		// с самой веткой: то же требование, что у merge (DK-894), только для
+		// предпросмотра до слияния.
+		if !corp && mainErr == nil && l.Branch != "" && l.Branch != main {
+			if paths, perr := mergeRangePaths(root, main, l.Branch); perr == nil {
+				if cline, cerr := componentsLine(root, paths); cerr != nil {
+					return "", cerr
+				} else if cline != "" {
+					line += "; " + cline
+				}
+			}
+		}
+		out = append(out, line)
 	}
 	for _, s := range []struct{ key, name string }{
 		{"in-progress", "In progress"}, {"check", "Check"}, {"blocked", "Blocked"},
@@ -433,7 +521,7 @@ func cmdStatus(root string) (string, error) {
 	// поезд и решение по деплою здесь не считаются вовсе, а не молчат.
 	// Check в этом контуре значит «мяч на чужой стороне», и строку двигает
 	// pull-синхронизация трекера (trackctl sync, DK-084), а не shipctl ship.
-	if corpActive(root) {
+	if corp {
 		out = append(out, "корп-контур: слияние и выкат ведёт MR-флоу компании, shipctl очередь и поезд не считает; Check означает «мяч на чужой стороне» (MR открыт, тикет в ревью или тестировании), строку двигает trackctl sync")
 		return strings.Join(out, "\n"), nil
 	}
@@ -446,7 +534,7 @@ func cmdStatus(root string) (string, error) {
 	for _, r := range b.sects["check"] {
 		busy = append(busy, r.ID)
 	}
-	if main, err := mainBranch(root); err == nil {
+	if mainErr == nil {
 		if train, strays, err = trainTasks(root, main, b); err != nil {
 			return "", err
 		}
@@ -549,7 +637,20 @@ func cmdStatus(root string) (string, error) {
 	if plan.warn != "" {
 		out = append(out, "предупреждение: "+plan.warn)
 	}
+	cfg, err := loadDeployConfig(root)
+	if err != nil {
+		return "", err
+	}
 	switch {
+	// Раскладка компонентов вытесняет одиночную команду: без неё plan.run
+	// пуст (single deploy обычно не заведён рядом с компонентами), а «команды
+	// нет» здесь было бы неправдой, компоненты и есть команды выката.
+	case len(cfg.Components) > 0 && plan.autonomous:
+		out = append(out, fmt.Sprintf("выкат: автономный (autonomous=true), раскладка компонентов в %s (%s), merge и ship катят задетые по очереди",
+			deployConfigPath, strings.Join(componentNames(cfg.Components), ", ")))
+	case len(cfg.Components) > 0:
+		out = append(out, fmt.Sprintf("выкат: за пользователем (autonomous=false), раскладка компонентов в %s (%s)",
+			deployConfigPath, strings.Join(componentNames(cfg.Components), ", ")))
 	case plan.run != "":
 		out = append(out, "выкат: автономный (autonomous=true), команда из "+deployConfigPath+", merge катит и пушит сам")
 	case plan.manual != "":
@@ -973,6 +1074,17 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Раскладка компонентов бьёт уже посчитанный mergePaths, тем же списком,
+	// каким проверялась чистота дерева выше. Явный --deploy это одна команда
+	// пользователя прямо сейчас, ей раскладка не указ (решение «раскладка»,
+	// DK-894); без autonomous компонент никто не катит, и путь мимо раскладки
+	// подождёт, пока выкат правда станет автономным.
+	var comps []deployComponent
+	if p.Deploy == "" && deploy.autonomous {
+		if comps, err = matchComponents(root, mergePaths); err != nil {
+			return "", err
+		}
+	}
 	if err := freshMain(root, main); err != nil {
 		return "", err
 	}
@@ -1213,6 +1325,21 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		msg = append(msg, "предупреждение: "+deploy.warn)
 	}
 	switch {
+	case len(comps) > 0:
+		// Компоненты катятся по очереди в порядке конфига, первый провал
+		// останавливает остальные (решение «двое», DK-894).
+		done, failedComp, out, timedOut, rerr := runComponents(root, comps, deploy.timeout)
+		if rerr != nil {
+			short, full := deployProblem(failedComp.Command, timedOut, deploy.timeout)
+			outSummary := cmdoutFrame(root, "deploy-"+failedComp.Name, out)
+			doneNote := ""
+			if len(done) > 0 {
+				doneNote = "; уже выкачены: " + strings.Join(done, ", ")
+			}
+			note := notify(root, p.ID, fmt.Sprintf("%s: выкат %s, компонент %s %s", filepath.Base(root), p.ID, failedComp.Name, short), full+"\n"+outSummary)
+			return "", fmt.Errorf("слито, но компонент %s выкатом %s, задача остаётся в In progress%s:\n%s%s", failedComp.Name, full, doneNote, outSummary, note)
+		}
+		msg = append(msg, "выкат компонентов прошёл: "+strings.Join(done, ", "))
 	case deploy.run != "":
 		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout, nil); err != nil {
 			short, full := deployProblem(deploy.run, timedOut, deploy.timeout)
@@ -1393,6 +1520,21 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Раскладка компонентов считает дифф от тега deployed до main (решение
+	// «безветки», DK-894): то же окно, каким trainTasks уже собрал состав
+	// выше, поэтому тег точно есть. Путь мимо раскладки это тот же отказ, что
+	// у merge, но под --drain он не громче обычного предусловия: код ещё не
+	// запушен и не выкачен, чинить конфиг можно тем же тиком следующего захода.
+	var comps []deployComponent
+	if p.Deploy == "" && deploy.autonomous {
+		paths, perr := mergeRangePaths(root, deployTag, main)
+		if perr != nil {
+			return "", perr
+		}
+		if comps, err = matchComponents(root, paths); err != nil {
+			return withTail(drainOr(p.Drain, err))
+		}
+	}
 	if err := freshMain(root, main); err != nil {
 		return "", err
 	}
@@ -1418,6 +1560,25 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		return "", err
 	}
 	switch {
+	case len(comps) > 0:
+		// Компоненты катятся по очереди в порядке конфига, первый провал
+		// останавливает остальные (решение «двое», DK-894).
+		done, failedComp, out, timedOut, rerr := runComponents(root, comps, deploy.timeout)
+		if rerr != nil {
+			short, full := deployProblem(failedComp.Command, timedOut, deploy.timeout)
+			outSummary := cmdoutFrame(root, "deploy-"+failedComp.Name, out)
+			doneNote := ""
+			if len(done) > 0 {
+				doneNote = "; уже выкачены: " + strings.Join(done, ", ")
+			}
+			if p.Drain {
+				note := failNote(root, train[0], fmt.Sprintf("компонент %s %s", failedComp.Name, short), doPush)
+				return "", fmt.Errorf("выкат поезда, компонент %s %s, задачи остаются в In progress%s:\n%s%s", failedComp.Name, full, doneNote, outSummary, note)
+			}
+			note := notify(root, train[0], fmt.Sprintf("%s: выкат поезда, компонент %s %s (%s)", filepath.Base(root), failedComp.Name, short, list), full+"\n"+outSummary)
+			return "", fmt.Errorf("выкат поезда, компонент %s %s, задачи остаются в In progress%s:\n%s%s", failedComp.Name, full, doneNote, outSummary, note)
+		}
+		msg = append(msg, fmt.Sprintf("поезд выкачен по компонентам (%s): %s", list, strings.Join(done, ", ")))
 	case deploy.run != "":
 		if out, timedOut, err := runShellLimit(root, deploy.run, deploy.timeout, nil); err != nil {
 			short, full := deployProblem(deploy.run, timedOut, deploy.timeout)

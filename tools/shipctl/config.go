@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/dronrider/devkit/internal/deployconf"
@@ -12,6 +13,11 @@ import (
 const deployConfigPath = deployconf.Rel
 
 type deployConfig = deployconf.Config
+
+// deployComponent это одна боевая единица раскладки монорепозитория: разбор
+// пары ключей deploy.<имя> и deploy.<имя>.paths живёт в internal/deployconf,
+// здесь остаётся псевдоним, чтобы ops.go не тянул сам пакет.
+type deployComponent = deployconf.Component
 
 const defaultDeployTimeout = deployconf.DefaultTimeout
 
@@ -87,3 +93,25 @@ func resolveTest(root, flag string) (string, bool, error) {
 // unquote снимает окружающую пару кавычек значения. Разбор корп-конфига
 // (corp.go) читает свои ключи тем же приёмом, что обвязка выката.
 func unquote(s string) string { return deployconf.Unquote(s) }
+
+// matchComponents сопоставляет пути диффа раскладке компонентов проекта.
+// Файлы под docs/ (доска, файлы задач, LLD) не в счёт, они едут тем же
+// коммитом, но прод не меняют (nonDocsPaths, тот же критерий, что у
+// codeCommits). Пустой matched при пустой ошибке значит «раскладки нет», err
+// называет путь, для которого не нашлось компонента, подсказкой, какой ключ
+// завести: вызывающий решает сам, отказом это считать или информационной
+// строкой (merge отказывает, status только печатает).
+func matchComponents(root string, paths []string) (matched []deployComponent, err error) {
+	cfg, cerr := loadDeployConfig(root)
+	if cerr != nil {
+		return nil, cerr
+	}
+	if len(cfg.Components) == 0 {
+		return nil, nil
+	}
+	m, miss := cfg.Match(nonDocsPaths(paths))
+	if miss != "" {
+		return nil, fmt.Errorf("путь %s не задет ни одним компонентом из %s, завести deploy.<имя> и deploy.<имя>.paths", miss, deployConfigPath)
+	}
+	return m, nil
+}

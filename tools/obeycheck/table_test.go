@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -175,5 +177,55 @@ func TestRenderCleanRun(t *testing.T) {
 	got := render(rows, []string{"кандидат", "старый"}, 5, baseOld)
 	if !strings.Contains(got, "итог: сценариев 1, все зачтены, база старый") {
 		t.Fatalf("итог чистого прогона:\n%s", got)
+	}
+}
+
+// runSymbolsHook гоняет боевой hooks/check-symbols.py на тексте и отдаёт код
+// возврата: 0 текст чист, 1 хук нашёл запрещённый символ. Код рун в образцах
+// ниже собран числом через rune(0x...), а не буквенным символом: живой символ
+// в исходнике сам не прошёл бы тот же рубеж.
+func runSymbolsHook(t *testing.T, text string) int {
+	t.Helper()
+	path := filepath.Join(devkitRoot(t), "hooks", "check-symbols.py")
+	cmd := exec.Command("python3", path, "--stdin")
+	cmd.Stdin = strings.NewReader(text)
+	err := cmd.Run()
+	if err == nil {
+		return 0
+	}
+	if ee, ok := err.(*exec.ExitError); ok {
+		return ee.ExitCode()
+	}
+	t.Fatalf("хук символов: %v", err)
+	return -1
+}
+
+// TestToKeyboardMatchesHook гоняет по случаю каждый класс BAD из
+// hooks/check-symbols.py через сам хук: сырой символ хук обязан ловить,
+// приведённый к клавиатуре текст обязан пропускать. Так таблица toKeyboard
+// не расходится с хуком на следующей правке одного без другого (DK-1056).
+func TestToKeyboardMatchesHook(t *testing.T) {
+	r := func(code int) string { return string(rune(code)) }
+	cases := []struct{ name, dirty, want string }{
+		{"длинное тире", "слово" + r(0x2014) + "слово", "слово - слово"},
+		{"стрелка вправо", "было" + r(0x2192) + "стало", "было->стало"},
+		{"многоточие", "ждать" + r(0x2026), "ждать..."},
+		{"двойная кавычка-лапка", r(0x201c) + "цитата" + r(0x201d), "«цитата»"},
+		{"одинарная кавычка-лапка", r(0x2018) + "цитата" + r(0x2019), "«цитата»"},
+		{"неразрывный пробел", "два" + r(0x00a0) + "слова", "два слова"},
+		{"эмодзи", "готово" + r(0x2705), "готово"},
+		{"символ вне раскладок", "caf" + r(0x00e9), "caf?"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if code := runSymbolsHook(t, c.dirty); code == 0 {
+				t.Fatalf("образец %q не ловится текущим хуком, случай устарел", c.dirty)
+			}
+			if got := toKeyboard(c.dirty); got != c.want {
+				t.Fatalf("toKeyboard(%q) = %q, ждал %q", c.dirty, got, c.want)
+			} else if code := runSymbolsHook(t, got); code != 0 {
+				t.Fatalf("после toKeyboard хук всё ещё против %q (код %d)", got, code)
+			}
+		})
 	}
 }

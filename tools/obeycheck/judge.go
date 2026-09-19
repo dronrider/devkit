@@ -104,6 +104,7 @@ type judge struct {
 	Model   string // как называть судью в сообщениях
 	Home    string
 	Dir     string
+	Answers string // каталог для дословных ответов, см. saveAnswer
 	Timeout time.Duration
 }
 
@@ -117,9 +118,10 @@ func newJudge(work string, cmd []string, model, homeSeed, userHome string, timeo
 		Model:   model,
 		Home:    filepath.Join(work, "judge", "home"),
 		Dir:     filepath.Join(work, "judge", "cwd"),
+		Answers: filepath.Join(work, "judge", "answers"),
 		Timeout: timeout,
 	}
-	for _, d := range []string{j.Home, j.Dir} {
+	for _, d := range []string{j.Home, j.Dir, j.Answers} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return nil, err
 		}
@@ -321,6 +323,25 @@ func (s Scenario) judgeInput(e *runEnv) (string, error) {
 	return string(data), nil
 }
 
+// judgeAnswerNote это строка блока «Проверка» у записи с разбором судьи:
+// буквальность цитаты это условие доверия к судье (LLD DK-805, решение 4), а
+// в файл задачи цитата и заметки прогона едут уже приведённые к клавиатурным
+// символам (toKeyboard, table.go). Дословный ответ при этом не теряется, а
+// остаётся в каталоге прогона, см. saveAnswer.
+const judgeAnswerNote = "символы разбора судьи и заметок приведены к клавиатурным, дословный ответ судьи лежит в каталоге прогона под --keep (judge/answers)"
+
+// saveAnswer кладёт дословный ответ судьи в каталог прогона до всякой
+// нормализации и сжатия oneLine: буквальность ответа это условие доверия
+// (LLD DK-805, решение 4). Имя файла берётся от каталога попытки (сценарий,
+// раскладка, повтор уже сведены в него makeEnv), так файлы разных раскладок
+// одного сценария не затирают друг друга. Запись лучших усилий: неудача не
+// должна ронять прогон ради следа, который и так виден в таблице строкой
+// oneLine.
+func (j *judge) saveAnswer(e *runEnv, answer string) {
+	name := filepath.Base(e.Root) + ".txt"
+	_ = os.WriteFile(filepath.Join(j.Answers, name), []byte(answer), 0o644)
+}
+
 // judgeOnce красит клетку по вердикту судьи. Зовётся после зелёной
 // sh-проверки: она держит положительное требование и бесплатна, а судья стоит
 // вызова модели.
@@ -335,6 +356,7 @@ func (p Params) judgeOnce(s Scenario, e *runEnv, a *attempt) error {
 	if err != nil {
 		return p.jury.unavailable(s.ID, fmt.Sprintf("повтор %d", a.Repeat), err)
 	}
+	p.jury.saveAnswer(e, answer)
 	a.Judge = oneLine(answer)
 	verdict, ok := judgeVerdict(answer)
 	switch {

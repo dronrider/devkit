@@ -169,6 +169,46 @@ func TestTaskNoteReplacesRecordWithWarning(t *testing.T) {
 	}
 }
 
+// Таблица со спецсимволами разбора судьи коммитится нормализованной: рубеж
+// hooks/check-symbols.py молчит на записанном файле без правки руками
+// (DK-1056). У записи с судейской секцией под таблицей стоит строка про
+// нормализацию и каталог прогона.
+func TestTaskNoteNormalizesTableForFile(t *testing.T) {
+	p := taskDoc(t)
+	dirty := "цитата: " + string(rune(0x201c)) + "было" + string(rune(0x2014)) + "стало" + string(rune(0x201d))
+	n := standNote(t, scenarios(t, "judge"), baseOld)
+	n.Table = "сценарий  cand  base  вердикт\nсказать о себе  3/3  0/3  польза\n\nразбор судьи:\n  judge / cand / повтор 1: " + dirty
+	if err := n.write(p); err != nil {
+		t.Fatal(err)
+	}
+	doc := read(t, p)
+	if strings.Contains(doc, dirty) {
+		t.Fatalf("цитата судьи попала в файл без нормализации:\n%s", doc)
+	}
+	if !strings.Contains(doc, "было - стало") {
+		t.Fatalf("длинное тире цитаты не приведено к клавиатуре:\n%s", doc)
+	}
+	if !strings.Contains(doc, judgeAnswerNote) {
+		t.Fatalf("строки про нормализацию и каталог прогона нет:\n%s", doc)
+	}
+	if code := runSymbolsHook(t, doc); code != 0 {
+		t.Fatalf("рубеж символов против записанного файла (код %d):\n%s", code, doc)
+	}
+}
+
+// Без судейской секции строка про нормализацию не нужна: нормализовать
+// нечего в цитатах, которых не было, а дисклеймер был бы лишним.
+func TestTaskNoteSkipsNoteWithoutJudge(t *testing.T) {
+	p := taskDoc(t)
+	n := standNote(t, scenarios(t, "press"), baseOld)
+	if err := n.write(p); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(read(t, p), judgeAnswerNote) {
+		t.Fatal("строка про нормализацию появилась без судейской секции")
+	}
+}
+
 // Разведка следом не считается: одна и две сессии на раскладку не отличают
 // правку от случайности ни при каком тесте.
 func TestTaskNoteRefusesScouting(t *testing.T) {

@@ -176,6 +176,24 @@ func TestAssistantReplies(t *testing.T) {
 	}
 }
 
+// Дословный ответ судьи остаётся в каталоге прогона до oneLine и до
+// toKeyboard: буквальность цитаты это условие доверия к судье (LLD DK-805,
+// решение 4), а в файл задачи она едет уже приведённой к клавиатуре
+// (table.go, toKeyboard, DK-1056). Разных раскладок одного сценария файлы не
+// затирают друг друга: имя берётся от каталога попытки, а не только от ID.
+func TestJudgeSavesRawAnswer(t *testing.T) {
+	p := judgeParams(t, scenarios(t, "judge"), "judge-no", "judge-yes", "word", "разобрала")
+	runOK(t, p)
+	want := "цитата: «Я разобрала постановку и сверила её с кодом.»\nда"
+	got := read(t, filepath.Join(p.Work, "judge", "answers", "judge-judge-yes-1.txt"))
+	if got != want {
+		t.Fatalf("дословный ответ %q, ждал %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(p.Work, "judge", "answers", "judge-judge-no-1.txt")); err != nil {
+		t.Fatalf("дословного ответа красной клетки нет: %v", err)
+	}
+}
+
 // Ответ по стилю против ответа мимо стиля: судья красит клетку, и строка
 // выходит просадкой. Разбор судьи печатается в таблице по каждой клетке.
 func TestJudgeColoursCell(t *testing.T) {

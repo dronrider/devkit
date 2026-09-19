@@ -157,7 +157,12 @@ func collapse(s string) string { return strings.Join(strings.Fields(s), " ") }
 // record складывает запись прогона для раздела «Проверка»: строку отметки, по
 // которой ворота узнают прогон, и под ней ограждённый блок с командой и
 // таблицей. Таблица идёт ограждённой, иначе разметка файла задачи ломается о
-// первую же её строку.
+// первую же её строку. В файл задачи таблица едет приведённой к клавиатурным
+// символам (toKeyboard, table.go): терминал печатает n.Table как записал
+// судья, дословно, а коммитимая копия обязана пройти рубеж hooks/check-
+// symbols.py без правки руками (DK-1056). У записи с судейской секцией под
+// таблицей стоит строкой, что цитаты нормализованы и где искать дословный
+// ответ.
 func (n note) record(mark taskform.StandMark) []string {
 	tail := "зачтён"
 	if n.Failed {
@@ -165,7 +170,10 @@ func (n note) record(mark taskform.StandMark) []string {
 	}
 	out := []string{"", taskform.StandLine(mark, n.Now, tail)}
 	out = append(out, "", "```console", "$ "+n.Command)
-	out = append(out, strings.Split(strings.TrimRight(n.Table, "\n"), "\n")...)
+	out = append(out, strings.Split(toKeyboard(strings.TrimRight(n.Table, "\n")), "\n")...)
+	if needsJudge(n.Scenarios) {
+		out = append(out, "", "# "+judgeAnswerNote)
+	}
 	out = append(out, "```")
 	return out
 }

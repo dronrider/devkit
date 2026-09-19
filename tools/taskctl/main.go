@@ -254,13 +254,17 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               stdin: текст с обратными кавычками
                                               передаётся heredoc с одинарными
                                               кавычками (<<'EOF'), а не аргументом
-  review clean <ID> ["пояснение"]             записать вердикт ревью без
+  review clean <ID> ["пояснение"] [--new-round]
+                                              записать вердикт ревью без
                                               замечаний: строка «Вердикт: без
-                                              замечаний.» с пояснением за ней,
-                                              по ней «ревью прошло чисто»
-                                              отличимо от «ревью не гонялось»;
-                                              открытое замечание в разделе
-                                              отбивает запись
+                                              замечаний до <sha>.» с пояснением
+                                              за ней, по ней «ревью прошло
+                                              чисто» отличимо от «ревью не
+                                              гонялось»; открытое замечание в
+                                              разделе отбивает запись; повтор
+                                              на том же коде остаётся дублем,
+                                              а когда сравнить с прежним
+                                              вердиктом нечем, нужен --new-round
   review resolve <ID> <N> fixed|rejected [--reason "..."]
                                               зафиксировать исход замечания N
   review show <ID>                            замечания с номерами и исходами
@@ -822,10 +826,11 @@ func main() {
 		case "clean":
 			fs := flag.NewFlagSet("review clean", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
+			newRound := fs.Bool("new-round", false, "заявить новый круг, когда сравнить с прежним вердиктом нечем")
 			var c CommitOpts
 			commitFlags(fs, &c)
 			pos := frame.ParseArgs(fs, args[2:])
-			needArgs(pos, 1, 2, "review clean <ID> [\"пояснение\"]")
+			needArgs(pos, 1, 2, "review clean <ID> [\"пояснение\"] [--new-round]")
 			note := ""
 			if len(pos) == 2 {
 				note = pos[1]
@@ -833,7 +838,7 @@ func main() {
 			if nroot := noteRoot(*dir); nroot != "" {
 				msg, err = cmdNoteClean(nroot, pos[0], note, c)
 			} else {
-				msg, err = cmdReviewClean(root(*dir), pos[0], note, c)
+				msg, err = cmdReviewClean(root(*dir), pos[0], note, *newRound, c)
 			}
 		case "level":
 			fs := flag.NewFlagSet("review level", flag.ExitOnError)

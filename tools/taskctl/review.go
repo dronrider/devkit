@@ -432,11 +432,20 @@ const cleanVerdictHeadFmt = "Вердикт: без замечаний до %s."
 // Check это законный следующий круг: правка после провала это новый код, и
 // ревьювер судит его заново. Разницу решает cleanVerdictSameCode, sha
 // прежнего вердикта против HEAD, и только законный круг дописывает новую
-// строку своим sha, прежняя остаётся на месте (DK-812). Сбой самого
-// сравнения (нет git, битый sha, файл вне репозитория) это отказ команды со
-// словами причины, а не молчаливый дубль в ту или другую сторону
-// (замечание 2 ревью).
-func cmdReviewClean(root, id, note string, c CommitOpts) (string, error) {
+// строку своим sha, прежняя остаётся на месте (DK-812).
+//
+// Сравнить бывает нечем: у прежнего вердикта нет своей sha (записан до этой
+// правки либо когда HEAD тогда не читался), сам HEAD не читается, или sha
+// прежнего вердикта не находится в базе объектов git. Догадка по тексту
+// строки (verdictIntroducedAt) вносила свои дыры: правка формулировки той
+// же строки вычиткой сдвигала основание за код, а два вердикта с одинаковым
+// текстом путались местами (замечания 4 и 5 второго круга ревью), и приём
+// убран совсем. Такой случай не решается ни дублем, ни новым кругом молча:
+// команда отказывает и называет причину, а обходит его ревьювер явно, флагом
+// newRound (CLI: --new-round). Флаг не спасает вердикт, для которого
+// сравнение всё же прошло и показало тот же код: заявить новый круг на
+// доказанном дубле нельзя.
+func cmdReviewClean(root, id, note string, newRound bool, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
 	}
@@ -453,9 +462,12 @@ func cmdReviewClean(root, id, note string, c CommitOpts) (string, error) {
 			case "":
 				return "", fmt.Errorf("замечание %d в ревью %s открыто, чистый вердикт ему противоречит: закрой его через review resolve", i+1, id)
 			case "чисто":
-				same, err := cleanVerdictSameCode(root, id, n)
-				if err != nil {
-					return "", fmt.Errorf("не сравнить код второго круга ревью %s с прежним вердиктом: %w", id, err)
+				same, comparable, cause := cleanVerdictSameCode(root, id, n)
+				if !comparable {
+					if !newRound {
+						return "", fmt.Errorf("чистый вердикт в ревью %s сравнить нечем (%s): заяви новый круг явно ключом --new-round, иначе он остаётся дублем", id, cause)
+					}
+					continue
 				}
 				if same {
 					return "", fmt.Errorf("чистый вердикт в ревью %s уже записан на этом коде: %s", id, n.Text)
@@ -495,58 +507,42 @@ func cmdReviewClean(root, id, note string, c CommitOpts) (string, error) {
 // cleanVerdictSameCode решает, стоит ли HEAD там же, где стоял код у прежнего
 // чистого вердикта n: коммиты между ними трогают только файл задачи
 // (sameCodeSince), кода среди них нет. Основание берётся из головы вердикта
-// (cleanVerdictSha), а для вердиктов без своего sha (записанных до DK-812
-// либо там, где на момент записи HEAD не читался) из истории самого файла
-// задачи: verdictIntroducedAt находит коммит, которым легла точная строка
-// вердикта. Строка уровня в сравнении не участвует ни в каком виде: её
-// переписывает следующий review level (замечание 1 ревью).
+// (cleanVerdictSha) и только из неё: строка уровня в сравнении не участвует
+// ни в каком виде, следующий review level её переписывает (замечание 1
+// ревью). Догадка по тексту строки (прежний приём verdictIntroducedAt,
+// git log -S) убрана совсем: правка формулировки той же строки вычиткой
+// сдвигала найденное основание за код, а два вердикта с одинаковым текстом
+// путались местами (замечания 4 и 5 второго круга ревью).
 //
-// Сбой на любом из шагов (HEAD не читается, коммит-основание не находится
-// или недостижим для git log) это отказ, а не молчаливое решение в ту или
-// иную сторону: старая осторожность (DK-471) держала обратную крайность,
-// дубль всегда, а прочтение ошибки git как «код менялся» открывало дубль
-// молча (замечание 2 ревью). Ребейз не входит в число сбоев: старый коммит
+// comparable=false значит «сравнить нечем»: у вердикта нет своей sha (запи-
+// сан до этой правки либо когда HEAD тогда не читался), сам HEAD не
+// читается, либо sha прежнего вердикта не находится в базе объектов git.
+// cause называет причину человеку. Такое состояние не решается ни дублем,
+// ни новым кругом само по себе: старая осторожность (DK-471) держала
+// крайность «дубль всегда», а прочтение ошибки git как «код менялся»
+// открывало дубль молча (замечание 2 ревью), обе крайности неверны, когда
+// сравнить и правда нечем. Разбирает его cmdReviewClean явным ключом
+// --new-round. Ребейз не входит в число таких случаев: старый коммит
 // остаётся в базе объектов, пока его не собрал git gc, и git log <старый
 // sha>..HEAD исправно показывает код, честно считая переигранные коммиты
-// новыми (TestCleanVerdictSameCodeSurvivesRebase).
-func cleanVerdictSameCode(root, id string, n reviewNote) (bool, error) {
+// новыми (TestReviewCleanSecondRoundSurvivesRebase).
+func cleanVerdictSameCode(root, id string, n reviewNote) (same, comparable bool, cause string) {
 	base := cleanVerdictSha(n.Text)
 	if base == "" {
-		var err error
-		base, err = verdictIntroducedAt(root, id, n)
-		if err != nil {
-			return false, err
-		}
+		return false, false, "прежний вердикт без sha: записан до этой правки либо когда HEAD тогда не читался"
 	}
 	head, err := headSha(root)
 	if err != nil {
-		return false, err
+		return false, false, fmt.Sprintf("не читается HEAD (%v)", err)
 	}
 	if head == base {
-		return true, nil
+		return true, true, ""
 	}
-	return sameCodeSince(root, id, base)
-}
-
-// verdictIntroducedAt находит коммит, которым в файл задачи id легла точная
-// строка чистого вердикта n: для вердиктов без своего sha в голове это и есть
-// основание сравнения (cleanVerdictSameCode), а не строка уровня, которую
-// следующий review level переписывает. Строка ревью-вердикта уникальна (её
-// текст несёт круг и пояснение ревьювера), поэтому первый коммит в
-// хронологическом порядке, где число её вхождений меняется (git log -S), это
-// коммит добавления.
-func verdictIntroducedAt(root, id string, n reviewNote) (string, error) {
-	rel := path.Join("docs", "tasks", id+".md")
-	needle := "- " + n.Text
-	out, err := exec.Command("git", "-C", root, "log", "--reverse", "--format=%H", "-S"+needle, "--", rel).Output()
+	same, err = sameCodeSince(root, id, base)
 	if err != nil {
-		return "", fmt.Errorf("в %s не читается история строки прежнего вердикта (%v)", root, err)
+		return false, false, fmt.Sprintf("sha %s из прежнего вердикта не в базе объектов (%v)", base, err)
 	}
-	shas := strings.Fields(string(out))
-	if len(shas) == 0 {
-		return "", fmt.Errorf("в истории %s не нашёлся коммит, добавивший строку прежнего вердикта: %q", rel, needle)
-	}
-	return shas[0], nil
+	return same, true, ""
 }
 
 // sameCodeSince решает, будто onlyTaskDocSince (tools/taskctl/gate.go) для

@@ -25,11 +25,17 @@ func readTaskFile(t *testing.T, root, id string) string {
 func writeManualVerdict(t *testing.T, root, id, line string) {
 	t.Helper()
 	got := readTaskFile(t, root, id)
-	marker := "\n\n## Сценарий проверки"
-	if !strings.Contains(got, marker) {
+	marker := "## Сценарий проверки"
+	idx := strings.Index(got, marker)
+	if idx < 0 {
 		t.Fatalf("маркер %q не нашёлся в файле задачи %s:\n%s", marker, id, got)
 	}
-	newContent := strings.Replace(got, marker, "\n"+line+"\n## Сценарий проверки", 1)
+	// Заголовок ищется заново на каждый вызов, поэтому повторный вызов кладёт
+	// вторую строку вердикта следом за первой, а не теряет её же маркер: сам
+	// маркер, "\n\n## Сценарий проверки", после первой вставки схлопывается в
+	// одну пустую строку и второй раз не находится.
+	head := strings.TrimRight(got[:idx], "\n")
+	newContent := head + "\n" + line + "\n\n" + got[idx:]
 	if err := os.WriteFile(taskFileAbs(root, id), []byte(newContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -483,7 +489,7 @@ func TestReviewCommitFlag(t *testing.T) {
 // «замечаний нет» (DK-471).
 func TestReviewCleanWritesVerdict(t *testing.T) {
 	root := setup(t)
-	msg, err := cmdReviewClean(root, "XR-005", "Путь от симптома пройден по ops.go.", CommitOpts{})
+	msg, err := cmdReviewClean(root, "XR-005", "Путь от симптома пройден по ops.go.", false, CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +514,7 @@ func TestReviewCleanWritesVerdict(t *testing.T) {
 // кончается точкой, за которую цепляется критерий исхода.
 func TestReviewCleanWithoutNote(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdReviewClean(root, "XR-005", "", CommitOpts{}); err != nil {
+	if _, err := cmdReviewClean(root, "XR-005", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := readTaskFile(t, root, "XR-005"); !strings.Contains(got, "- Вердикт: без замечаний.\n") {
@@ -531,7 +537,7 @@ func TestReviewCleanRefusesOpenNote(t *testing.T) {
 	if _, err := cmdReviewAdd(root, "XR-005", "гонка в close", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := cmdReviewClean(root, "XR-005", "", CommitOpts{})
+	_, err := cmdReviewClean(root, "XR-005", "", false, CommitOpts{})
 	if err == nil {
 		t.Fatal("вердикт поверх открытого замечания должен отбиваться")
 	}
@@ -553,7 +559,7 @@ func TestReviewCleanAfterResolved(t *testing.T) {
 	if _, err := cmdReviewResolve(root, "XR-005", 1, "fixed", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdReviewClean(root, "XR-005", "Правки по замечанию приняты.", CommitOpts{}); err != nil {
+	if _, err := cmdReviewClean(root, "XR-005", "Правки по замечанию приняты.", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	got := readTaskFile(t, root, "XR-005")
@@ -561,7 +567,7 @@ func TestReviewCleanAfterResolved(t *testing.T) {
 		t.Fatalf("файл задачи:\n%s", got)
 	}
 	// Второй вердикт поверх первого это уже дубль, и он отбивается.
-	if _, err := cmdReviewClean(root, "XR-005", "", CommitOpts{}); err == nil {
+	if _, err := cmdReviewClean(root, "XR-005", "", false, CommitOpts{}); err == nil {
 		t.Fatal("повторный вердикт должен отбиваться")
 	}
 }
@@ -580,7 +586,7 @@ func TestReviewCleanSecondRoundAfterCodeChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	headFirst := gitOut(t, root, "rev-parse", "--short=7", "HEAD")
-	if _, err := cmdReviewClean(root, "XR-005", "первый круг чист", CommitOpts{}); err != nil {
+	if _, err := cmdReviewClean(root, "XR-005", "первый круг чист", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	wantFirst := "- Вердикт: без замечаний до " + headFirst + ". первый круг чист\n"
@@ -596,7 +602,7 @@ func TestReviewCleanSecondRoundAfterCodeChange(t *testing.T) {
 	gitOut(t, root, "commit", "-q", "-m", "fix: XR-005 правка после красного слияния")
 	headAfterFix := gitOut(t, root, "rev-parse", "--short=7", "HEAD")
 
-	msg, err := cmdReviewClean(root, "XR-005", "второй круг чист", CommitOpts{})
+	msg, err := cmdReviewClean(root, "XR-005", "второй круг чист", false, CommitOpts{})
 	if err != nil {
 		t.Fatalf("законный второй круг должен пройти: %v", err)
 	}
@@ -619,7 +625,7 @@ func TestReviewCleanSecondRoundAfterCodeChange(t *testing.T) {
 		t.Fatalf("review show должен назвать оба вердикта чистыми, нашлось %d:\n%s", n, show)
 	}
 	// Третий вызов без новой правки кода это дубль второго круга.
-	if _, err := cmdReviewClean(root, "XR-005", "", CommitOpts{}); err == nil {
+	if _, err := cmdReviewClean(root, "XR-005", "", false, CommitOpts{}); err == nil {
 		t.Fatal("повтор без правки кода должен отбиваться")
 	}
 }
@@ -638,7 +644,7 @@ func TestReviewCleanSecondRoundSurvivesLevelRewrite(t *testing.T) {
 	if _, err := cmdReviewLevel(root, root, "XR-005", 1, "неопределённость 0, не критично", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdReviewClean(root, "XR-005", "первый круг чист", CommitOpts{}); err != nil {
+	if _, err := cmdReviewClean(root, "XR-005", "первый круг чист", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	codePath := filepath.Join(root, "code.txt")
@@ -653,7 +659,7 @@ func TestReviewCleanSecondRoundSurvivesLevelRewrite(t *testing.T) {
 	if _, err := cmdReviewLevel(root, root, "XR-005", 1, "второй круг, неопределённость 0", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := cmdReviewClean(root, "XR-005", "второй круг чист", CommitOpts{})
+	msg, err := cmdReviewClean(root, "XR-005", "второй круг чист", false, CommitOpts{})
 	if err != nil {
 		t.Fatalf("второй круг после повторного review level должен пройти: %v", err)
 	}
@@ -667,12 +673,17 @@ func TestReviewCleanSecondRoundSurvivesLevelRewrite(t *testing.T) {
 	}
 }
 
-// TestReviewCleanSecondRoundAfterVerdictWithoutSha: тот же живой порядок, но
-// первый вердикт записан в старом формате, без своего sha (файл задачи до
-// DK-812 либо круг, где на момент записи HEAD не читался). Основание для
-// сравнения тогда ищется по истории файла задачи (verdictIntroducedAt), а не
-// по строке уровня, которая всё равно переписана вторым review level.
-func TestReviewCleanSecondRoundAfterVerdictWithoutSha(t *testing.T) {
+// TestReviewCleanNewRoundAfterTextEditedVerdict: репро замечания 4 второго
+// круга ревью DK-812. Первый вердикт headless (без sha в голове: файл задачи
+// до этой правки либо круг, где на момент записи HEAD не читался). Код
+// меняется коммитом. Правка формулировки той же строки вычиткой ложится
+// отдельным коммитом следом, кода не трогая. Прежний приём (verdictIntro-
+// ducedAt, поиск основания по тексту строки через git log -S) на этом месте
+// сдвигал бы найденное основание за код и вердикт второго круга ловился бы
+// дублем, хотя код менялся раньше вычитки. Приём убран: без своего sha
+// сравнить нечем в принципе, и второй `review clean` без --new-round
+// отказывает причиной, а с ключом проходит и пишет новую строку своим sha.
+func TestReviewCleanNewRoundAfterTextEditedVerdict(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
 	if _, err := cmdReviewLevel(root, root, "XR-005", 1, "неопределённость 0, не критично", CommitOpts{}); err != nil {
@@ -690,21 +701,98 @@ func TestReviewCleanSecondRoundAfterVerdictWithoutSha(t *testing.T) {
 	}
 	gitOut(t, root, "add", "code.txt")
 	gitOut(t, root, "commit", "-q", "-m", "fix: XR-005 правка после красного слияния")
-	headAfterFix := gitOut(t, root, "rev-parse", "--short=7", "HEAD")
+
+	// Вычитка чуть меняет ту же строку вердикта отдельным коммитом, кода не
+	// трогая: старый приём искал бы основание именно по этому, более позднему
+	// тексту.
+	edited := strings.Replace(readTaskFile(t, root, "XR-005"),
+		"- Вердикт: без замечаний. первый круг чист",
+		"- Вердикт: без замечаний. Первый круг чист.", 1)
+	if err := os.WriteFile(taskFileAbs(root, "XR-005"), []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", "docs/tasks/XR-005.md")
+	gitOut(t, root, "commit", "-q", "-m", "docs(tasks): XR-005 вычитка строки вердикта")
 
 	if _, err := cmdReviewLevel(root, root, "XR-005", 1, "второй круг, неопределённость 0", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := cmdReviewClean(root, "XR-005", "второй круг чист", CommitOpts{})
-	if err != nil {
-		t.Fatalf("второй круг после вердикта без sha должен пройти: %v", err)
+
+	// Без ключа команда отказывает и называет его буквально, а не решает
+	// молча ни дублем, ни новым кругом.
+	_, err := cmdReviewClean(root, "XR-005", "второй круг чист", false, CommitOpts{})
+	if err == nil {
+		t.Fatal("без --new-round вердикт без sha должен отказывать, а не решать молча")
 	}
-	if !strings.Contains(msg, headAfterFix) {
+	if !strings.Contains(err.Error(), "--new-round") {
+		t.Fatalf("отказ не называет ключ: %v", err)
+	}
+
+	// С ключом ревьювер сам заявляет новый круг, и он проходит, пишет
+	// текущий HEAD своей sha.
+	headAtClean := gitOut(t, root, "rev-parse", "--short=7", "HEAD")
+	msg, err := cmdReviewClean(root, "XR-005", "второй круг чист", true, CommitOpts{})
+	if err != nil {
+		t.Fatalf("--new-round должен провести законный второй круг: %v", err)
+	}
+	if !strings.Contains(msg, headAtClean) {
 		t.Fatalf("сообщение не назвало sha второго круга: %q", msg)
 	}
-	// Без новой правки кода третий вызов остаётся дублем второго круга.
-	if _, err := cmdReviewClean(root, "XR-005", "", CommitOpts{}); err == nil {
-		t.Fatal("повтор без правки кода должен отбиваться")
+}
+
+// TestReviewCleanNewRoundDoesNotHideDuplicate: репро замечания 5 второго
+// круга ревью DK-812. Два headless-вердикта с одинаковым текстом
+// неразличимы для поиска по тексту (прежний приём verdictIntroducedAt брал
+// бы первое вхождение, круг 1, и код между кругом 1 и кругом 2 выглядел бы
+// новым для третьего вызова, хотя дубль настоящий: после круга 2 код не
+// менялся). Приём убран: без sha в обоих вердиктах третий вызов без ключа
+// отказывает, а не угадывает по тексту.
+func TestReviewCleanNewRoundDoesNotHideDuplicate(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdReviewLevel(root, root, "XR-005", 1, "неопределённость 0, не критично", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	writeManualVerdict(t, root, "XR-005", "- Вердикт: без замечаний.")
+	gitOut(t, root, "add", "docs/tasks/XR-005.md")
+	gitOut(t, root, "commit", "-q", "-m", "docs(tasks): XR-005 ревью круг 1")
+
+	if err := os.WriteFile(filepath.Join(root, "code.txt"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", "code.txt")
+	gitOut(t, root, "commit", "-q", "-m", "fix: XR-005 правка после красного слияния")
+
+	// Круг 2 пишет ту же строку тем же пустым пояснением: текст обоих
+	// вердиктов совпадает побайтово.
+	writeManualVerdict(t, root, "XR-005", "- Вердикт: без замечаний.")
+	gitOut(t, root, "add", "docs/tasks/XR-005.md")
+	gitOut(t, root, "commit", "-q", "-m", "docs(tasks): XR-005 ревью круг 2")
+
+	// Без новой правки кода третий вызов это настоящий дубль круга 2, а не
+	// круга 1: без ключа команда отказывает, доказать совпадение нечем.
+	if _, err := cmdReviewClean(root, "XR-005", "", false, CommitOpts{}); err == nil {
+		t.Fatal("без --new-round третий вызов должен отказывать, а не проходить новым кругом")
+	}
+}
+
+// TestReviewCleanNewRoundIgnoredOnSameCode: ключ --new-round не спасает
+// вердикт, для которого сравнение всё же прошло и показало тот же код.
+// Заявить новый круг на доказанном дубле нельзя (замечания 4-6 второго
+// круга ревью DK-812).
+func TestReviewCleanNewRoundIgnoredOnSameCode(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdReviewLevel(root, root, "XR-005", 1, "неопределённость 0, не критично", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdReviewClean(root, "XR-005", "первый круг чист", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	// Код не менялся: сравнение возможно (первый вердикт несёт свою sha) и
+	// показывает тот же код, ключ тут не спасает.
+	if _, err := cmdReviewClean(root, "XR-005", "", true, CommitOpts{}); err == nil {
+		t.Fatal("--new-round на доказанном дубле должен отбиваться, а не проходить")
 	}
 }
 
@@ -718,7 +806,7 @@ func TestReviewCleanTaskDocOnlyCommitStaysDuplicate(t *testing.T) {
 	if _, err := cmdReviewLevel(root, root, "XR-005", 1, "неопределённость 0, не критично", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdReviewClean(root, "XR-005", "первый круг чист", CommitOpts{}); err != nil {
+	if _, err := cmdReviewClean(root, "XR-005", "первый круг чист", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	// Коммит трогает только файл задачи, кода в нём нет.
@@ -729,7 +817,7 @@ func TestReviewCleanTaskDocOnlyCommitStaysDuplicate(t *testing.T) {
 	gitOut(t, root, "add", "docs/tasks/XR-005.md")
 	gitOut(t, root, "commit", "-q", "-m", "docs(tasks): XR-005 запись хода")
 
-	if _, err := cmdReviewClean(root, "XR-005", "", CommitOpts{}); err == nil {
+	if _, err := cmdReviewClean(root, "XR-005", "", false, CommitOpts{}); err == nil {
 		t.Fatal("вердикт без правки кода между вызовами должен отбиваться дублем")
 	}
 }
@@ -744,7 +832,7 @@ func TestReviewCleanSecondRoundAfterNoteBetweenVerdicts(t *testing.T) {
 	if _, err := cmdReviewLevel(root, root, "XR-005", 1, "неопределённость 0, не критично", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdReviewClean(root, "XR-005", "первый круг чист", CommitOpts{}); err != nil {
+	if _, err := cmdReviewClean(root, "XR-005", "первый круг чист", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "code.txt"), []byte("v2\n"), 0o644); err != nil {
@@ -761,7 +849,7 @@ func TestReviewCleanSecondRoundAfterNoteBetweenVerdicts(t *testing.T) {
 	if _, err := cmdReviewResolve(root, "XR-005", 2, "fixed", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdReviewClean(root, "XR-005", "второй круг чист", CommitOpts{}); err != nil {
+	if _, err := cmdReviewClean(root, "XR-005", "второй круг чист", false, CommitOpts{}); err != nil {
 		t.Fatalf("вердикт после закрытого замечания второго круга должен пройти: %v", err)
 	}
 	got := readTaskFile(t, root, "XR-005")
@@ -778,7 +866,7 @@ func TestReviewCleanSecondRoundAfterNoteBetweenVerdicts(t *testing.T) {
 func TestReviewCleanCreatesFile(t *testing.T) {
 	root := setup(t)
 	dropTaskFile(t, root, "XR-001")
-	msg, err := cmdReviewClean(root, "XR-001", "", CommitOpts{})
+	msg, err := cmdReviewClean(root, "XR-001", "", false, CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1014,7 +1102,7 @@ func TestReviewCleanSecondRoundSurvivesRebase(t *testing.T) {
 	if _, err := cmdReviewLevel(root, root, "XR-005", 1, "неопределённость 0, не критично", CommitOpts{Msg: "docs(tasks): XR-005 уровень ревью"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdReviewClean(root, "XR-005", "первый круг чист", CommitOpts{Msg: "docs(tasks): XR-005 первый круг чист"}); err != nil {
+	if _, err := cmdReviewClean(root, "XR-005", "первый круг чист", false, CommitOpts{Msg: "docs(tasks): XR-005 первый круг чист"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1033,7 +1121,7 @@ func TestReviewCleanSecondRoundSurvivesRebase(t *testing.T) {
 	// объектами в .git.
 	gitOut(t, root, "rebase", "-q", "trunk")
 
-	msg, err := cmdReviewClean(root, "XR-005", "второй круг чист", CommitOpts{})
+	msg, err := cmdReviewClean(root, "XR-005", "второй круг чист", false, CommitOpts{})
 	if err != nil {
 		t.Fatalf("второй круг после ребейза должен пройти, а не упасть: %v", err)
 	}
@@ -1059,7 +1147,7 @@ func TestReviewCleanRefusesMissingShaBase(t *testing.T) {
 	gitOut(t, root, "add", "docs/tasks/XR-005.md")
 	gitOut(t, root, "commit", "-q", "-m", "docs(tasks): XR-005 ревью: первый круг чист")
 
-	if _, err := cmdReviewClean(root, "XR-005", "второй круг", CommitOpts{}); err == nil {
+	if _, err := cmdReviewClean(root, "XR-005", "второй круг", false, CommitOpts{}); err == nil {
 		t.Fatal("сравнение с несуществующим sha должно отказывать, а не решать молча")
 	}
 }

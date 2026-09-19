@@ -105,6 +105,41 @@ class TestScope(TaskFileCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, "")
 
+    def test_trailing_space_added_passes_silently(self):
+        # Замечание ревью 3: ключ множества у форматов без сырого вида был
+        # сырой строкой, и добавленный хвостовой пробел на неизменном
+        # содержимом читался как «строка пропала», хотя формат тот же.
+        line = ("- Обкатка: 2026-09-19, свежее дерево abc1234, сценарий "
+               "def5678, шагов 14")
+        before = "## Проверка\n\n%s\n" % line
+        after = "## Проверка\n\n%s \n" % line
+        r = self.hook(before, after)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "")
+
+    def test_trailing_space_added_on_crlf_file_passes_silently(self):
+        # Тот же случай на файле с переносами CRLF: `\r` читается с диска
+        # универсальным переводом строк (`open(..., encoding="utf-8")` без
+        # `newline=`) и в сравниваемую строку не попадает вовсе, хвостовой
+        # пробел остаётся тем же случаем, что и на файле с `\n`.
+        line = ("- Обкатка: 2026-09-19, свежее дерево abc1234, сценарий "
+               "def5678, шагов 14")
+        before = "## Проверка\r\n\r\n%s\r\n" % line
+        after = "## Проверка\r\n\r\n%s \r\n" % line
+        r = self.hook(before, after)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "")
+
+    def test_fork_sub_indent_change_is_still_a_finding(self):
+        # Отступ слева у подстроки развилки значим (DK-550: отличает вложенный
+        # пункт от примера тем же синтаксисом верхним уровнем), рубеж
+        # снятие пробелов справа не распространяет на левый отступ.
+        before = "## Развилки\n\n- «формат»: вопрос\n  - решает: человек\n"
+        after = "## Развилки\n\n- «формат»: вопрос\n    - решает: человек\n"
+        r = self.hook(before, after)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("развилка: подстрока", r.stderr)
+
     def test_path_outside_docs_tasks_is_ignored(self):
         other = os.path.join(self.tmp, "note.md")
         r = self.hook("- Стенд: 1", "- Стенд без колонки испорчено", path=other)
@@ -308,6 +343,24 @@ class TestMissingHelper(unittest.TestCase):
         before = "- Стенд: раз.\n"
         after = before + "- Стенд: два.\n"
         self.assertEqual(cml.missing(before, after), [])
+
+    def test_trailing_whitespace_key_ignores_space_and_cr(self):
+        # Ключ множества для форматов без сырого вида это ln.rstrip(): пробел
+        # и `\r` на конце не делают строку другой (замечание ревью 3).
+        before = "- Стенд: раз.\n"
+        for after in ("- Стенд: раз. \n", "- Стенд: раз.\r\n", "- Стенд: раз. \r\n"):
+            self.assertEqual(cml.missing(before, after), [], repr(after))
+
+    def test_raw_category_key_keeps_left_indent_significant(self):
+        # У «сырых» категорий ключ это исходная строка целиком: отступ слева
+        # остаётся значимым, снятие пробелов справа его не заслоняет.
+        before = "  - решает: человек\n"
+        after = "    - решает: человек\n"
+        found = cml.missing(before, after)
+        self.assertEqual(len(found), 1)
+        name, line, was, still = found[0]
+        self.assertEqual((name, line, was, still),
+                        ("развилка: подстрока", "  - решает: человек", 1, 0))
 
 
 if __name__ == "__main__":

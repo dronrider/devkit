@@ -133,12 +133,26 @@ REVIEW_FINDING_RE = re.compile(
     r"^-\s+(?:\[возврат:[^\]]*\]\s*)?(?:не\s+)?блокирует:\s")
 
 
+# Категория несёт классификатор (какая строка сюда попадает) и ключ
+# множества (чем строка отличается от другой строки того же формата).
+# Классификатор для «сырых» категорий (ACCEPT_OUTCOME_RE, FORK_SUB_RE) матчит
+# исходную строку без strip(), потому что отступ слева отличает вложенный
+# пункт развилки или приёмки от такого же синтаксиса примером верхним уровнем
+# (DK-550), и ключ там тоже исходная строка целиком: подрезать пробел справа
+# незачем, отступ и есть предмет проверки. У остальных категорий классификатор
+# матчит `ln.strip()`, а ключ это `ln.rstrip()`: хвостовой пробел или перенос
+# `\r`, который редактор или модель добавляют или снимают отдельно от правки
+# содержимого, не должен выглядеть как убранная и невесть откуда взявшаяся
+# строка (замечание ревью второго круга).
+Category = collections.namedtuple("Category", "test key")
+
+
 def _stripped(rx):
-    return lambda ln: bool(rx.match(ln.strip()))
+    return Category(lambda ln: bool(rx.match(ln.strip())), str.rstrip)
 
 
 def _raw(rx):
-    return lambda ln: bool(rx.match(ln))
+    return Category(lambda ln: bool(rx.match(ln)), lambda ln: ln)
 
 
 def _own_categories():
@@ -173,9 +187,6 @@ def _shared_categories(cp):
         "ревью: уровень": cp.REVIEW_LEVEL_HEAD_RE,
         "ревью: вердикт": cp.REVIEW_VERDICT_HEAD_RE,
     }
-    # check-prose.py матчит эти две на исходную строку без strip(), чтобы
-    # отличить вложенный пункт развилки или приёмки от такого же синтаксиса
-    # примером верхним уровнем (DK-550).
     raw = {
         "приёмка: обход": cp.ACCEPT_OUTCOME_RE,
         "развилка: подстрока": cp.FORK_SUB_RE,
@@ -186,8 +197,8 @@ def _shared_categories(cp):
 
 
 def category_tests():
-    """Имя формата -> предикат(строка)->bool. check-prose.py недоступен,
-    тогда возвращает только собственные форматы, а вызывающий сам решает, что
+    """Имя формата -> Category(test, key). check-prose.py недоступен, тогда
+    возвращает только собственные форматы, а вызывающий сам решает, что
     сверка неполна (см. CHECK_PROSE_ERROR)."""
     tests = dict(_own_categories())
     if check_prose is not None:
@@ -195,18 +206,19 @@ def category_tests():
     return tests
 
 
-def line_counts(text, test):
-    return collections.Counter(ln for ln in (text or "").splitlines() if test(ln))
+def line_counts(text, category):
+    return collections.Counter(category.key(ln) for ln in (text or "").splitlines()
+                               if category.test(ln))
 
 
 def missing(before, after):
-    """Строки прежней версии, которых дословно (с учётом кратности) нет в
-    новой, по каждому формату. Возврат: список (формат, строка, было,
-    осталось), осталось всегда меньше было."""
+    """Строки прежней версии, которых дословно (с учётом кратности и ключа
+    формата) нет в новой, по каждому формату. Возврат: список (формат,
+    строка, было, осталось), осталось всегда меньше было."""
     out = []
-    for name, test in category_tests().items():
-        b = line_counts(before, test)
-        a = line_counts(after, test)
+    for name, category in category_tests().items():
+        b = line_counts(before, category)
+        a = line_counts(after, category)
         for line, was in b.items():
             still = a.get(line, 0)
             if still < was:

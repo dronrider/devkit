@@ -218,12 +218,13 @@ function ringOf(head) {
   if (!(lit > 0 && lit < whole / 3)) {
     fail("бегущий отрезок занял треть кольца и больше: " + lit + " из " + whole.toFixed(2));
   }
-  // Крутит её анимация той же длины: оборот обязан замыкаться, иначе подсветка
-  // прыгает на стыке.
+  // Крутит её анимация поворотом (композитное свойство, DK-986): оборот
+  // обязан замыкаться ровно на 360 градусов, иначе подсветка прыгает на
+  // стыке.
   const css = readFileSync(join(dirname(app), "style.css"), "utf8");
-  const spin = (css.match(/@keyframes ringrun\{from\{stroke-dashoffset:0\}to\{stroke-dashoffset:(-?\d+(?:\.\d+)?)\}\}/) || [])[1];
-  if (!spin || Math.abs(Math.abs(Number(spin)) - whole) > 0.5) {
-    fail("оборот подсветки не по длине кольца: " + spin + " при длине " + whole.toFixed(2));
+  const spin = css.match(/@keyframes ringrun\{from\{transform:rotate\((-?\d+(?:\.\d+)?)deg\)\}to\{transform:rotate\((-?\d+(?:\.\d+)?)deg\)\}\}/);
+  if (!spin || Math.abs(Math.abs(Number(spin[2]) - Number(spin[1])) - 360) > 0.5) {
+    fail("оборот подсветки не полный круг: " + (spin ? spin[1] + "deg -> " + spin[2] + "deg" : "keyframe не найден"));
   }
   // На простое анимации нет вовсе: крутится она только у работающего кольца.
   if (!/\.r-working \.comet\{[^}]*animation:ringrun/.test(css)) {

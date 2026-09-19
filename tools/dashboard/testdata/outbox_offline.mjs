@@ -227,6 +227,12 @@ sandbox.globalThis = sandbox;
 
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(appPath, "utf8"), sandbox, { filename: "app.js" });
+// Загрузка статики сама заводит верхнеуровневый опрос ожиданий (WAIT_POLL):
+// он ложится в ту же игрушечную очередь таймеров, значением совпадает с
+// OUTBOX_POLL и здесь ни при чём, стенд про очередь исходящих. Один раз
+// снятый в самом начале, сам он больше не появится: пересобирает себя только
+// сработавший таймер, а тут его не трогают.
+timers.length = 0;
 
 const fail = (msg) => { console.error(msg); process.exit(1); };
 

@@ -100,11 +100,13 @@ func main() {
 		fs := flag.NewFlagSet("secret", flag.ExitOnError)
 		rotate := fs.Bool("rotate", false, "заменить секрет: все выданные куки гаснут")
 		fs.Parse(args[1:])
-		token, err := cmdSecret(home, *rotate)
-		if err != nil {
-			fatal(err)
+		out, code := runSecret(home, *rotate, os.Getenv)
+		if code == 0 {
+			fmt.Print(out)
+		} else {
+			fmt.Fprint(os.Stderr, out)
 		}
-		fmt.Println(token)
+		os.Exit(code)
 	case "check":
 		fs := flag.NewFlagSet("check", flag.ExitOnError)
 		dir := fs.String("C", ".", "корень проекта с доской")
@@ -166,6 +168,33 @@ func main() {
 		fmt.Fprintf(os.Stderr, "неизвестная команда %q\n\n%s", args[0], usageText)
 		os.Exit(2)
 	}
+}
+
+// agenticSession узнаёт агентскую сессию харнеса (и вторую подписку того же
+// клиента под другим endpoint) тем же признаком, которым её узнаёт
+// devkitctl doctor --fix (tools/devkitctl/dashboard.py, AGENT_ENV).
+// Проверка isatty сюда не годится: три шага человека (DK-481, DK-726, DK-826)
+// зовут команду подстановкой `$(dashboard secret)`, и стандартный вывод там
+// не терминал даже у человека за клавиатурой.
+func agenticSession(getenv func(string) string) bool {
+	return getenv("CLAUDECODE") == "1"
+}
+
+// runSecret это тело команды `secret`: решает, печатать ли токен, или назвать
+// агентской сессии файл и ключ вместо значения. Отдельно от main() и от
+// cmdSecret, чтобы тест проверил обе ветки без os.Exit в процессе теста и без
+// оглядки cmdSecret (его зовут cmdServe и тесты конфига) на признак сессии.
+func runSecret(home string, rotate bool, getenv func(string) string) (out string, code int) {
+	if agenticSession(getenv) {
+		return fmt.Sprintf(
+			"секрет входа агентской сессии не печатается, он в %s (ключ token), эту команду зовёт человек\n",
+			confPath(home)), 1
+	}
+	token, err := cmdSecret(home, rotate)
+	if err != nil {
+		return fmt.Sprintf("ошибка: %v\n", err), 1
+	}
+	return token + "\n", 0
 }
 
 // cmdSecret печатает токен входа; не будь его в конфиге, он рождается тут же.

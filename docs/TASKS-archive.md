@@ -571,3 +571,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-812 | review clean записывает чистый вердикт второго круга | bug | P2 | 2026-09-19 | [tasks/archive/2026/DK-812.md](tasks/archive/2026/DK-812.md) |
 | DK-1054 | Экран задачи получает дату движения строки, поля строки сверяет тест | bug | P2 | 2026-09-19 | [tasks/archive/2026/DK-1054.md](tasks/archive/2026/DK-1054.md) |
 | DK-1063 | poc_deadraise.mjs и poc_bench_chat.mjs не завершаются, тот же живой polling | bug | P1 | 2026-09-19 | [tasks/archive/2026/DK-1063.md](tasks/archive/2026/DK-1063.md) |
+| DK-1064 | TestStaticPulseRing и TestChatOutboxQueueSendsItself скрыты зависанием, настоящие баги | bug | P1 | 2026-09-19 | [tasks/archive/2026/DK-1064.md](tasks/archive/2026/DK-1064.md) |

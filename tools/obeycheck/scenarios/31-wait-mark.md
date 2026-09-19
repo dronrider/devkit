@@ -13,7 +13,7 @@ anchor = ("## In progress\n\n"
           "| ID | Задача | Тип | P | R | Цена | Ссылка |\n"
           "|--------|--------|-----|---|---|------|--------|\n")
 row = ("| OB-031 | Сторожок не будит припаркованную строку | task | P2 | "
-       "33 (25+4+1+0+3) | S | - |\n")
+       "35 (25+4+1+0+3, S+2) | S | - |\n")
 if anchor not in s:
     raise SystemExit("шапка In progress в фикстуре не нашлась")
 open(p, "w", encoding="utf-8").write(s.replace(anchor, anchor + row, 1))

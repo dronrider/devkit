@@ -29,8 +29,7 @@ sit=$(sed -n '/^### Ситуация/,/^### /p' "$f" | sed '1d;$d' | tr -d '[:sp
 [ -n "$sit" ] || { echo "«Ситуация» пуста"; exit 1; }
 comp=$(sed -n '/^### Осложнение/,/^### /p' "$f" | sed '1d;$d' | tr -d '[:space:]')
 [ -n "$comp" ] || { echo "«Осложнение» пусто"; exit 1; }
-extra=$(taskctl lint 2>&1 | grep -v "OB-002: ячейка R\|OB-001: ячейка R\|OB-002 в работе без файла задачи\|^находок: ")
-[ -z "$extra" ] || { echo "lint нашёл новое: $extra"; exit 1; }
+taskctl lint || { echo "lint фикстуры не молчит"; exit 1; }
 exit 0
 ```
 

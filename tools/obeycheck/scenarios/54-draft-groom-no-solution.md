@@ -54,8 +54,7 @@ awk -F'\t' '$2 == "taskctl" && $3 == "add" && $4 == "0"' .devkit/log 2>/dev/null
 f=docs/tasks/OB-003.md
 [ -s "$f" ] || { echo "файла задачи OB-003 нет"; exit 1; }
 [ ! -e docs/tasks/drafts/OB-003.md ] || { echo "черновик не переехал"; exit 1; }
-extra=$(taskctl lint 2>&1 | grep -v "OB-002: ячейка R\|OB-001: ячейка R\|OB-002 в работе без файла задачи\|^находок: ")
-[ -z "$extra" ] || { echo "lint нашёл новое: $extra"; exit 1; }
+taskctl lint || { echo "lint фикстуры не молчит"; exit 1; }
 title=$(sed -n '1s/^# OB-003: //p' "$f")
 [ -n "$title" ] || { echo "у файла нет заголовка"; exit 1; }
 grep -q "^## Что происходит" "$f" || { echo "нет раздела «Что происходит»"; exit 1; }

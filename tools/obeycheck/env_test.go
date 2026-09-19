@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -49,6 +50,18 @@ func TestSkillLayoutSkipsNoise(t *testing.T) {
 		if _, err := os.Stat(bad); err == nil {
 			t.Fatalf("мусор доехал в дом прогона: %s", bad)
 		}
+	}
+}
+
+// Фикстура синтетического проекта (её копирует makeEnv в каждый прогон) держит
+// `taskctl lint` немым. Сценарии 53 и 54 с DK-1057 проверяют ответ агента
+// голой командой без фильтра трёх старых строк (DK-449), и четвёртая находка
+// фикстуры покрасила бы их без вины агента.
+func TestFixtureProjectPassesLint(t *testing.T) {
+	fixture := filepath.Join(devkitRoot(t), "tools", "obeycheck", "testdata", "project")
+	out, err := exec.Command("taskctl", "-C", fixture, "lint").CombinedOutput()
+	if err != nil {
+		t.Fatalf("taskctl lint на фикстуре нашёл находки:\n%s", out)
 	}
 }
 

@@ -11,7 +11,7 @@ python3 - <<'PY'
 import re
 p = "docs/TASKS.md"
 t = open(p, encoding="utf-8").read()
-row = "| OB-001 | clamp не режет верхнюю границу | bug | P2 | 40 (25+5+1+5+4) | S | [tasks/OB-001.md](tasks/OB-001.md) |\n"
+row = "| OB-001 | clamp не режет верхнюю границу | bug | P2 | 42 (25+5+1+5+4, S+2) | S | [tasks/OB-001.md](tasks/OB-001.md) |\n"
 t = t.replace(row, "")
 t = re.sub(r"(## In progress[^\n]*\n\n\| ID[^\n]*\n\|[-|]+\|\n)", r"\1" + row, t)
 open(p, "w", encoding="utf-8").write(t)

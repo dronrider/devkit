@@ -36,10 +36,26 @@ var resolvedTailRe = regexp.MustCompile(`: (исправлено|отклоне�
 // пояснения), а не по факту оборота где-то в тексте: суть замечания,
 // кончающаяся словами «про вердикт без замечаний нет ничего», голове не
 // соответствует и замечание не закрывает (DK-469). За фразой идёт точка,
-// двоеточие или конец текста, поэтому «замечаний неточностей» и продолжение
-// фразы перечислением вердиктом не считаются. Маркер списка терпится ради
-// копии в shipctl, где элементы разбираются вместе с маркером.
-var cleanVerdictRe = regexp.MustCompile(`^(?:[-*] )?(?:(?:вердикт|ревью):\s*)?(?:без замечаний|замечаний нет)(?:[.:]|$)`)
+// двоеточие, необязательный хвост «до <sha>» второго и следующих кругов
+// (cmdReviewClean, DK-812) или конец текста, поэтому «замечаний неточностей»
+// и продолжение фразы перечислением вердиктом не считаются. Маркер списка
+// терпится ради копии в shipctl, где элементы разбираются вместе с маркером.
+var cleanVerdictRe = regexp.MustCompile(`^(?:[-*] )?(?:(?:вердикт|ревью):\s*)?(?:без замечаний|замечаний нет)(?:\s+до\s+[0-9a-f]{4,40})?(?:[.:]|$)`)
+
+// cleanVerdictShaRe вынимает sha из головы чистого вердикта второго и
+// следующих кругов, той же формы, что печатает cleanVerdictHeadFmt. Вердикты
+// первого круга и вердикты, записанные до DK-812, головы с sha не несут, и
+// cleanVerdictSha тогда отдаёт пустую строку: сравнивать дублирование не с
+// чем, и вопрос решает reviewLevelSha либо старая осторожность (защита
+// DK-471 остаётся).
+var cleanVerdictShaRe = regexp.MustCompile(`(?i)^(?:[-*] )?(?:(?:вердикт|ревью):\s*)?(?:без замечаний|замечаний нет)\s+до\s+([0-9a-f]{4,40})\b`)
+
+func cleanVerdictSha(text string) string {
+	if m := cleanVerdictShaRe.FindStringSubmatch(text); m != nil {
+		return m[1]
+	}
+	return ""
+}
 
 // outcome возвращает исход замечания: «исправлено», «отклонено», «чисто»
 // (ревью без замечаний, не требующее исхода) или пустую строку у открытого.
@@ -386,15 +402,32 @@ func cmdReviewLevel(root, start, id string, level int, reason string, c CommitOp
 	return msg + linkHint + tail, nil
 }
 
-// cleanVerdictLine это канон формы записи: голова «Вердикт: без замечаний.»
-// узнаётся критерием исхода (cleanVerdictRe и его копия в shipctl), а
-// пояснение живёт за ней и на разбор не влияет.
+// cleanVerdictHead это канон формы записи первого круга: голова «Вердикт:
+// без замечаний.» узнаётся критерием исхода (cleanVerdictRe и его копия в
+// shipctl), а пояснение живёт за ней и на разбор не влияет. Формат остаётся
+// как был до DK-812: правка второго круга его не трогает, там, где второй
+// вердикт этой задаче не понадобился, ни разбор, ни прежде записанные вер-
+// дикты байт не меняют.
 const cleanVerdictHead = "Вердикт: без замечаний."
+
+// cleanVerdictHeadFmt форматирует голову второго и следующих кругов:
+// «Вердикт: без замечаний до <sha>.» Sha несёт коммит, до которого стоял
+// проверенный код, той же ролью, что у sha строки уровня (headSha,
+// cmdReviewLevel), и по нему следующий вызов cmdReviewClean отличает новый
+// круг ревью от повтора на том же коде (cleanVerdictSameCode, DK-812).
+const cleanVerdictHeadFmt = "Вердикт: без замечаний до %s."
 
 // cmdReviewClean записывает вердикт ревью, прошедшего без замечаний. Раздел
 // «Ревью» с таким элементом машинно отличим от отсутствия ревью, ради чего
 // команда и заводится (LLD DK-460, «Что меняется в строках», п. 1): раньше
 // чистый исход изображали замечанием с текстом «замечаний нет».
+//
+// Повторный вызов на том же коде остаётся дублем (DK-471, TestReviewClean-
+// AfterResolved), а вот повтор после возврата с красного слияния или из
+// Check это законный следующий круг: правка после провала это новый код, и
+// ревьювер судит его заново. Разницу решает cleanVerdictSameCode, sha прежнего
+// вердикта против HEAD, и только законный круг дописывает новую строку своим
+// sha, прежняя остаётся на месте (DK-812).
 func cmdReviewClean(root, id, note string, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
@@ -406,19 +439,32 @@ func cmdReviewClean(root, id, note string, c CommitOpts) (string, error) {
 	// Открытое замечание и чистый вердикт в одном разделе противоречат друг
 	// другу: ворот замечаний увидел бы открытый пункт, а ворот следа ревью
 	// чистый итог. Замечание закрывают резолвом, а не вердиктом поверх.
+	hadClean := false
 	if rf, err := loadReview(taskFileAbs(root, id)); err == nil {
 		for i, n := range rf.notes {
 			switch n.outcome() {
 			case "":
 				return "", fmt.Errorf("замечание %d в ревью %s открыто, чистый вердикт ему противоречит: закрой его через review resolve", i+1, id)
 			case "чисто":
-				return "", fmt.Errorf("чистый вердикт в ревью %s уже записан: %s", id, n.Text)
+				hadClean = true
+				if cleanVerdictSameCode(root, id, rf, n) {
+					return "", fmt.Errorf("чистый вердикт в ревью %s уже записан на этом коде: %s", id, n.Text)
+				}
 			}
 		}
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
 	line := "- " + cleanVerdictHead
+	sha := ""
+	if hadClean {
+		var shaErr error
+		sha, shaErr = headSha(root)
+		if shaErr != nil {
+			return "", shaErr
+		}
+		line = "- " + fmt.Sprintf(cleanVerdictHeadFmt, sha)
+	}
 	if note != "" {
 		line += " " + note
 	}
@@ -431,10 +477,48 @@ func cmdReviewClean(root, id, note string, c CommitOpts) (string, error) {
 		return "", err
 	}
 	msg := fmt.Sprintf("%s: вердикт без замечаний записан, элементов в ревью %d", id, len(rf.notes)+1)
+	if sha != "" {
+		msg = fmt.Sprintf("%s: вердикт без замечаний до %s записан, элементов в ревью %d", id, sha, len(rf.notes)+1)
+	}
 	if created {
 		msg += ", файл задачи создан"
 	}
 	return msg + linkHint + tail, nil
+}
+
+// cleanVerdictSameCode решает, стоит ли HEAD там же, где стоял код у
+// прежнего чистого вердикта n: коммиты между ними трогают только файл
+// задачи (onlyTaskDocSince, tools/taskctl/gate.go), тем же разбором, каким
+// rehearsalGate прощает запись самого прогона. Основание берётся из головы
+// вердикта (cleanVerdictSha), а для первого круга, чья голова sha не несёт,
+// из строки уровня (reviewLevelSha): без неё сравнивать было бы не с чем, и
+// защита DK-471 держала бы дублем и законный второй круг.
+//
+// Основания сравнивать не с чем (ни у вердикта, ни у строки уровня нет sha,
+// либо HEAD не читается) значит совпадение недоказуемо, и осторожность та
+// же, что была до DK-812: дубль остаётся дублем. Ребейз делает старый sha
+// недостижимым, git log тогда падает, onlyTaskDocSince отвечает false, и это
+// читается как «код менялся»: доказать совпадение нечем, а второй законный
+// круг (живой случай DK-457 из черновика DK-1049) должен пройти, а не
+// упираться в недостижимый sha.
+func cleanVerdictSameCode(root, id string, rf *reviewFile, n reviewNote) bool {
+	base := cleanVerdictSha(n.Text)
+	if base == "" {
+		if lvl, ok := reviewLevelSha(rf); ok {
+			base = lvl
+		}
+	}
+	if base == "" {
+		return true
+	}
+	head, err := headSha(root)
+	if err != nil {
+		return true
+	}
+	if head == base {
+		return true
+	}
+	return onlyTaskDocSince(root, id, base)
 }
 
 var outcomeNames = map[string]string{"fixed": "исправлено", "rejected": "отклонено"}
@@ -534,6 +618,21 @@ func reviewLevelOf(rf *reviewFile) (int, bool) {
 		return 0, false
 	}
 	return lvl, true
+}
+
+// reviewLevelSha читает sha строки уровня: коммит, до которого стоял код на
+// старте ревью. cmdReviewClean берёт его основанием для первого круга: его
+// собственный вердикт головы с sha не несёт, и без строки уровня сравнивать
+// код первого круга было бы не с чем.
+func reviewLevelSha(rf *reviewFile) (string, bool) {
+	if rf.levelIdx < 0 || rf.levelIdx >= len(rf.lines) {
+		return "", false
+	}
+	m := reviewLevelLineRe.FindStringSubmatch(strings.TrimSpace(rf.lines[rf.levelIdx]))
+	if m == nil {
+		return "", false
+	}
+	return m[2], true
 }
 
 // reviewLevelReason читает уровень и причину его выбора из строки уровня

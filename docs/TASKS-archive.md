@@ -574,3 +574,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1064 | TestStaticPulseRing и TestChatOutboxQueueSendsItself скрыты зависанием, настоящие баги | bug | P1 | 2026-09-19 | [tasks/archive/2026/DK-1064.md](tasks/archive/2026/DK-1064.md) |
 | DK-881 | Правило плана называет порог повода и не просит плана на один ответ | task | P2 | 2026-09-20 | [tasks/archive/2026/DK-881.md](tasks/archive/2026/DK-881.md) |
 | DK-689 | README taskctl не говорит, что обкатка режет блок сценария построчно | bug | P2 | 2026-09-20 | [tasks/archive/2026/DK-689.md](tasks/archive/2026/DK-689.md) |
+| DK-1056 | След стенда с разбором судьи проходит рубеж символов без правки руками | task | P2 | 2026-09-20 | [tasks/archive/2026/DK-1056.md](tasks/archive/2026/DK-1056.md) |

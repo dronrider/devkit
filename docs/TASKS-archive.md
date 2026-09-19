@@ -569,3 +569,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-887 | Сторож прозы не меряет машинные строки файла задачи как прозу | bug | P2 | 2026-09-19 | [tasks/archive/2026/DK-887.md](tasks/archive/2026/DK-887.md) |
 | DK-1062 | poc_chatwarm.mjs не завершается, живой polling списка чатов держит node | bug | P1 | 2026-09-19 | [tasks/archive/2026/DK-1062.md](tasks/archive/2026/DK-1062.md) |
 | DK-812 | review clean записывает чистый вердикт второго круга | bug | P2 | 2026-09-19 | [tasks/archive/2026/DK-812.md](tasks/archive/2026/DK-812.md) |
+| DK-1054 | Экран задачи получает дату движения строки, поля строки сверяет тест | bug | P2 | 2026-09-19 | [tasks/archive/2026/DK-1054.md](tasks/archive/2026/DK-1054.md) |

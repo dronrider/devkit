@@ -57,9 +57,21 @@ func TestSkillLayoutSkipsNoise(t *testing.T) {
 // `taskctl lint` немым. Сценарии 53 и 54 с DK-1057 проверяют ответ агента
 // голой командой без фильтра трёх старых строк (DK-449), и четвёртая находка
 // фикстуры покрасила бы их без вины агента.
+//
+// Бинарь берётся сборкой из этого же дерева, а не из PATH: PATH-бинарь
+// собран когда-то раньше и может разойтись с правкой tools/taskctl/lint.go в
+// этом дереве, и тогда тест зеленеет на устаревшей проверке, хотя дерево и
+// фикстура уже разошлись (ревью DK-1057, по образцу tasknote_bin_test.go).
 func TestFixtureProjectPassesLint(t *testing.T) {
-	fixture := filepath.Join(devkitRoot(t), "tools", "obeycheck", "testdata", "project")
-	out, err := exec.Command("taskctl", "-C", fixture, "lint").CombinedOutput()
+	root := devkitRoot(t)
+	fixture := filepath.Join(root, "tools", "obeycheck", "testdata", "project")
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	build := exec.Command("go", "build", "-C", filepath.Join(root, "tools", "taskctl"), "-o", bin, ".")
+	build.Env = append(os.Environ(), "GOWORK=off")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("сборка taskctl не прошла: %v\n%s", err, out)
+	}
+	out, err := exec.Command(bin, "-C", fixture, "lint").CombinedOutput()
 	if err != nil {
 		t.Fatalf("taskctl lint на фикстуре нашёл находки:\n%s", out)
 	}

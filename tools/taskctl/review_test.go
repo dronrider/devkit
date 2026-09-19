@@ -17,6 +17,24 @@ func readTaskFile(t *testing.T, root, id string) string {
 	return string(data)
 }
 
+// writeManualVerdict кладёт готовую строку вердикта прямо в раздел «Ревью»,
+// минуя cmdReviewClean: так проверяются файлы, записанные до DK-812 или
+// руками. Вставка идёт после строки уровня, перед следующим заголовком, тем
+// же местом, куда кладёт замечание reviewItem, а не в хвост файла: хвост
+// приходится на «## Проверка» и loadReview там ничего не разбирает.
+func writeManualVerdict(t *testing.T, root, id, line string) {
+	t.Helper()
+	got := readTaskFile(t, root, id)
+	marker := "\n\n## Сценарий проверки"
+	if !strings.Contains(got, marker) {
+		t.Fatalf("маркер %q не нашёлся в файле задачи %s:\n%s", marker, id, got)
+	}
+	newContent := strings.Replace(got, marker, "\n"+line+"\n## Сценарий проверки", 1)
+	if err := os.WriteFile(taskFileAbs(root, id), []byte(newContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestReviewAddStdin: без позиционного текста review add читает замечание со
 // stdin (DK-452). Так текст с обратными кавычками доезжает дословно, а не
 // исполняется подстановкой bash по дороге.
@@ -662,10 +680,7 @@ func TestReviewCleanSecondRoundAfterVerdictWithoutSha(t *testing.T) {
 	}
 	// Первый вердикт кладём в старом формате напрямую, минуя cmdReviewClean:
 	// так выглядит файл задачи, записанный до DK-812.
-	got := readTaskFile(t, root, "XR-005")
-	if err := os.WriteFile(taskFileAbs(root, "XR-005"), []byte(got+"- Вердикт: без замечаний. первый круг чист\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeManualVerdict(t, root, "XR-005", "- Вердикт: без замечаний. первый круг чист")
 	gitOut(t, root, "add", "docs/tasks/XR-005.md")
 	gitOut(t, root, "commit", "-q", "-m", "docs(tasks): XR-005 ревью: первый круг чист")
 
@@ -977,24 +992,35 @@ func TestReviewLevelCLI(t *testing.T) {
 	}
 }
 
-// TestCleanVerdictSameCodeSurvivesRebase: ребейз меняет sha коммитов, но
+// TestReviewCleanSecondRoundSurvivesRebase: ребейз меняет sha коммитов, но
 // старый объект остаётся в базе, пока его не собрал git gc, и git log с этим
 // sha исправно строится, честно показывая переигранный код. Особого пути на
-// этот случай не нужно: сравнение просто видит код в диффе между старым sha
-// и HEAD и не путает ребейз с дублем (DK-812, замечание 2).
-func TestCleanVerdictSameCodeSurvivesRebase(t *testing.T) {
+// этот случай не нужно: второй `review clean` после настоящего ребейза
+// просто видит код в диффе между старым sha и HEAD и не путает ребейз с
+// дублем (DK-812, замечание 2). Идёт через тот же публичный `cmdReviewClean`,
+// которым пользуется живой ревьювер, а не через внутренний разбор напрямую.
+func TestReviewCleanSecondRoundSurvivesRebase(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
+	beforeCode := gitOut(t, root, "rev-parse", "HEAD")
 	if err := os.WriteFile(filepath.Join(root, "code.txt"), []byte("v1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	gitOut(t, root, "add", "code.txt")
 	gitOut(t, root, "commit", "-q", "-m", "code v1")
-	baseBeforeRebase := gitOut(t, root, "rev-parse", "--short=7", "HEAD")
+
+	// Msg коммитит каждый шаг по-настоящему: без коммита рёбейзу дальше
+	// нечего переигрывать.
+	if _, err := cmdReviewLevel(root, root, "XR-005", 1, "неопределённость 0, не критично", CommitOpts{Msg: "docs(tasks): XR-005 уровень ревью"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdReviewClean(root, "XR-005", "первый круг чист", CommitOpts{Msg: "docs(tasks): XR-005 первый круг чист"}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Ветка trunk ушла вперёд от точки перед кодовым коммитом: типичный повод
 	// перекладывать свою ветку на неё.
-	gitOut(t, root, "checkout", "-q", "-b", "trunk", "HEAD~1")
+	gitOut(t, root, "checkout", "-q", "-b", "trunk", beforeCode)
 	if err := os.WriteFile(filepath.Join(root, "unrelated.txt"), []byte("x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1002,49 +1028,38 @@ func TestCleanVerdictSameCodeSurvivesRebase(t *testing.T) {
 	gitOut(t, root, "commit", "-q", "-m", "unrelated: чужая правка")
 	gitOut(t, root, "checkout", "-q", "main")
 
-	// Настоящий ребейз: кодовый коммит переигрывается на новую вершину trunk
-	// и получает новый sha, а старый sha остаётся объектом в .git.
+	// Настоящий ребейз: коммиты кода, уровня и первого вердикта переигрываются
+	// на новую вершину trunk и получают новые sha, а старые sha остаются
+	// объектами в .git.
 	gitOut(t, root, "rebase", "-q", "trunk")
-	head := gitOut(t, root, "rev-parse", "--short=7", "HEAD")
-	if head == baseBeforeRebase {
-		t.Fatalf("ребейз должен был сменить sha кодового коммита")
-	}
 
-	n := reviewNote{Text: "Вердикт: без замечаний до " + baseBeforeRebase + ". первый круг чист"}
-	same, err := cleanVerdictSameCode(root, "XR-005", n)
+	msg, err := cmdReviewClean(root, "XR-005", "второй круг чист", CommitOpts{})
 	if err != nil {
-		t.Fatalf("сравнение после ребейза не должно падать: %v", err)
+		t.Fatalf("второй круг после ребейза должен пройти, а не упасть: %v", err)
 	}
-	if same {
-		t.Fatalf("ребейз честно принёс код в diff, дублем это быть не должно (head %s)", head)
+	if !strings.Contains(msg, "вердикт без замечаний до") {
+		t.Fatalf("сообщение не назвало sha второго круга: %q", msg)
 	}
 }
 
-// TestCleanVerdictSameCodeRefusesMissingSha: sha, которого в базе объектов
-// нет вовсе (битая строка, ручная правка, чужой репозиторий), это сбой
-// сравнения, и он отказывает явной причиной, а не решает дублем или новым
-// кругом молча (DK-812, замечание 2).
-func TestCleanVerdictSameCodeRefusesMissingSha(t *testing.T) {
+// TestReviewCleanRefusesMissingShaBase: sha, которого в базе объектов нет
+// вовсе (битая строка, ручная правка, чужой репозиторий), это сбой
+// сравнения, и второй `review clean` отказывает явной причиной, а не решает
+// дублем или новым кругом молча (DK-812, замечание 2). До этой правки
+// нечитаемый git log читался как «код менялся», и вердикт проходил бы молча.
+func TestReviewCleanRefusesMissingShaBase(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
-	n := reviewNote{Text: "Вердикт: без замечаний до 0123456. первый круг чист"}
-	if _, err := cleanVerdictSameCode(root, "XR-005", n); err == nil {
-		t.Fatal("сравнение с несуществующим sha должно отказывать, а не решать молча")
+	if _, err := cmdReviewLevel(root, root, "XR-005", 1, "неопределённость 0, не критично", CommitOpts{}); err != nil {
+		t.Fatal(err)
 	}
-}
+	// Первый вердикт несёт битый sha: ручная правка, чужой репозиторий или
+	// перенос строки из другого места.
+	writeManualVerdict(t, root, "XR-005", "- Вердикт: без замечаний до 0123456. первый круг чист")
+	gitOut(t, root, "add", "docs/tasks/XR-005.md")
+	gitOut(t, root, "commit", "-q", "-m", "docs(tasks): XR-005 ревью: первый круг чист")
 
-// TestCleanVerdictSameCodeRefusesWithoutGit: без git сравнивать нечем ни для
-// вердикта со своим sha (нечем прочитать HEAD), ни для вердикта без sha
-// (нечем найти коммит, добавивший строку, по истории файла задачи). Оба
-// случая отказывают причиной, а не тихо считают дублем или новым кругом.
-func TestCleanVerdictSameCodeRefusesWithoutGit(t *testing.T) {
-	root := setup(t)
-	withSha := reviewNote{Text: "Вердикт: без замечаний до 1234567. первый круг чист"}
-	if _, err := cleanVerdictSameCode(root, "XR-005", withSha); err == nil {
-		t.Fatal("без git сравнение должно отказывать, даже когда sha уже в вердикте")
-	}
-	withoutSha := reviewNote{Text: "Вердикт: без замечаний. первый круг чист"}
-	if _, err := cleanVerdictSameCode(root, "XR-005", withoutSha); err == nil {
-		t.Fatal("без git сравнение должно отказывать и для вердикта без sha")
+	if _, err := cmdReviewClean(root, "XR-005", "второй круг", CommitOpts{}); err == nil {
+		t.Fatal("сравнение с несуществующим sha должно отказывать, а не решать молча")
 	}
 }

@@ -388,6 +388,19 @@ class TestReviewHeads(unittest.TestCase):
         self.assertEqual(prose.strip_machine_head(line),
                           "- DoD сверен построчно: всё учтено.")
 
+    def test_review_verdict_head_with_sha_is_stripped_note_stays(self):
+        """DK-812: второй и следующие круги несут в голове sha, до которого
+        стоял проверенный код, а суть проверки остаётся той же строкой."""
+        line = "- Вердикт: без замечаний до e4f5a6b. Второй круг сверен."
+        self.assertFalse(prose.is_machine_line(line))
+        self.assertEqual(prose.strip_machine_head(line),
+                          "- Второй круг сверен.")
+
+    def test_review_verdict_with_sha_without_note_leaves_nothing_to_count(self):
+        t, v = prose.measure("- Вердикт: без замечаний до e4f5a6b.\n")
+        self.assertEqual(len(t.sentences), 0)
+        self.assertEqual(t.words, 0)
+
     def test_review_verdict_without_note_leaves_nothing_to_count(self):
         t, v = prose.measure("- Вердикт: без замечаний.\n")
         self.assertEqual(len(t.sentences), 0)

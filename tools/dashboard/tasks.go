@@ -77,9 +77,14 @@ type boardRow struct {
 	Adjustments []boardAdj `json:"adjustments,omitempty"`
 	Cost        string     `json:"cost"`
 	Link        string     `json:"link"`
-	Notes       []string   `json:"notes,omitempty"`
-	Sect        string     `json:"sect"`
-	Section     string     `json:"section"`
+	// Moved это дата последней правки строки доски (2006-01-02), её считает
+	// taskctl по git-истории. app.js рисует из неё чип «строка не двигалась
+	// N дней» на экране задачи (formPage, рядом с полосой чипов состояния).
+	// Прежде поля не было в типе, и чип висел мёртвым с появления (DK-1054).
+	Moved   string   `json:"moved,omitempty"`
+	Notes   []string `json:"notes,omitempty"`
+	Sect    string   `json:"sect"`
+	Section string   `json:"section"`
 	// Run это признак идущей работы: чем работа видна (tmux, registry,
 	// session, теми же словами, что Via у живой работы) либо gone у строки в
 	// работе, за которой живой сессии нет. Пусто у стоящей задачи. Признак

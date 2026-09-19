@@ -31,8 +31,31 @@ LOG = ("2026-07-29T01:02:41\tshipctl\tmerge\t0\n"
 
 
 def drop_lines(path, needle):
-    write(path, "".join(ln + "\n" for ln in read(path).split("\n")
-                        if ln and needle not in ln))
+    """Убрать хук харнеса, чья команда содержит needle. Правит распарсенный
+    JSON, а не текст построчно: строка HOOK_LAYOUT, которую нашли негде
+    удалить последней в своей группе, текстовым резом оставляла бы висячую
+    запятую перед закрывающей скобкой, и порядок хуков раскладки решал бы,
+    остаётся ли файл разбираемым после реза (DK-1058). Файл не settings.json
+    (не JSON или без ключа hooks) правится, как раньше, построчно."""
+    text = read(path)
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    if not isinstance(hooks, dict):
+        write(path, "".join(ln + "\n" for ln in text.split("\n")
+                            if ln and needle not in ln))
+        return
+    for groups in hooks.values():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            group["hooks"] = [h for h in group.get("hooks") or []
+                              if needle not in (h.get("command") or "")]
+    write(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 class EnvironmentTest(SandboxCase):
@@ -133,6 +156,22 @@ class ProjectFindingsTest(SandboxCase):
         drop_lines(self.settings, "check-memory")
         _, out = self.box.doctor(self.proj)
         self.assertIn_("check-memory", out, "нет находки про пропавший хук памяти")
+
+    def test_3b_machine_lines_hook_arrives_on_update(self):
+        # Хук сверки машинных строк (DK-1058) стоит в том же семействе
+        # проверок текстов, что и check-memory: на уже разложенной машине,
+        # где строка HOOK_LAYOUT ещё не легла (машина не обновлена), доктор
+        # называет находку, а --fix подключает хук диагностикой одной командой.
+        drop_lines(self.settings, "check-machine-lines")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("check-machine-lines.py", out,
+                       "нет находки про пропавший хук сверки машинных строк")
+        _, out = self.box.doctor(self.proj, "--fix")
+        self.assertRegex(out, r"включ\S*[^\n]*check-machine-lines\.py на PostToolUse",
+                         "--fix не подключил хук сверки машинных строк")
+        _, out = self.box.doctor(self.proj)
+        self.assertNotIn_("check-machine-lines.py", out,
+                          "хук сверки машинных строк остался неподключённым после --fix")
 
     def test_4_quota_refresh_hook(self):
         # Хук освежения квоты живёт в другом событии, и проверяться должен своей

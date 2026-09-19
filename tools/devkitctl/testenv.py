@@ -83,72 +83,10 @@ def dispatcher_script(bodies):
     return "".join(lines)
 
 # Хуки харнеса в фикстуре машинного контура: чистый проект должен быть чист.
-# Каждый хук стоит своей строкой, потому что проверки режут этот файл построчно,
-# и после реза он обязан оставаться разбираемым. Дерево в путях подставное
-# (FIXTURE_DEVKIT меняется на копию стенда при записи): доктор судит, из того ли
-# дерева зовётся хук, и настоящий ~/projects/devkit тут был бы чужим.
-FIXTURE_DEVKIT = "~/projects/devkit"
-NOTIFY = "python3 ~/projects/devkit/hooks/notify.py --hook claude-code"
-WATCH = "python3 ~/projects/devkit/hooks/agent-watch.py --hook claude-code"
-TURN = "python3 ~/projects/devkit/hooks/turn-mark.py --hook claude-code"
-PLAN = "python3 ~/projects/devkit/hooks/plan-watch.py --hook claude-code"
-HOLD = "python3 ~/projects/devkit/hooks/goal-hold.py --hook claude-code"
-SETTINGS = """{"permissions": {"allow": %s, "deny": %s},
- "hooks": {"PostToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-symbols.py --hook"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-memory.py --hook"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-sensitive.py --hook"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-prose.py --hook"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-calque.py --hook"}
-]}, {"hooks": [
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/chat-in.py --hook claude-code"}
-]}, {"hooks": [
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/session-task.py --touch claude-code"}
-]}, {"matcher": "Bash|Agent", "hooks": [
-  {"type": "command", "command": "%s"}
-]}, {"matcher": "Bash", "hooks": [
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/phase-budget.py --hook claude-code"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/prose-mark.py --hook claude-code"}
-]}], "PreToolUse": [{"matcher": "Bash", "hooks": [
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-read-secret.py --hook"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-subst.py --hook"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-review.py --hook"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-cd-compound.py --hook"}
-]}, {"matcher": "Bash|Agent", "hooks": [
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-background.py --hook"}
-]}, {"matcher": "Read", "hooks": [
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-reread.py --hook"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-longfile.py --hook"}
-]}, {"matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/check-prose-sample.py --hook"}
-]}], "SessionStart": [{"hooks": [
-  {"type": "command", "command": "sh ~/projects/devkit/hooks/quota-refresh.sh"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/session-task.py --hook claude-code"},
-  {"type": "command", "command": "sh ~/projects/devkit/hooks/board-catchup.sh"},
-  {"type": "command", "command": "sh ~/projects/devkit/hooks/devkit-catchup.sh"},
-  {"type": "command", "command": "python3 ~/projects/devkit/hooks/prose-mark.py --hook claude-code"}
-]}], "Notification": [{"hooks": [
-  {"type": "command", "command": "%s"},
-  {"type": "command", "command": "%s"}
-]}], "Stop": [{"hooks": [
-  {"type": "command", "command": "%s"},
-  {"type": "command", "command": "%s"},
-  {"type": "command", "command": "%s"},
-  {"type": "command", "command": "%s"},
-  {"type": "command", "command": "%s"}
-]}], "StopFailure": [{"hooks": [
-  {"type": "command", "command": "%s"},
-  {"type": "command", "command": "%s"}
-]}], "SubagentStop": [{"hooks": [
-  {"type": "command", "command": "%s"},
-  {"type": "command", "command": "%s"}
-]}], "UserPromptSubmit": [{"hooks": [
-  {"type": "command", "command": "%s"},
-  {"type": "command", "command": "%s"}
-]}]},
- "env": {"CLAUDE_CODE_RETRY_WATCHDOG": "1"},
- "crossSessionInbound": "accept"}
-"""
+# Раскладку кладёт devkitctl.install_hooks по devkitctl.HOOK_LAYOUT, той же
+# функцией, которой на живой машине звонит --fix (DK-1058): второй, ручной
+# копии списка хуков тут не заводится, и новый хук в HOOK_LAYOUT встаёт в
+# чистую фикстуру сам, без правки этого файла.
 
 # Заглушка go: настоящая сборка шести модулей на четырёх парах стоила бы минуты
 # на каждый прогон самопроверки. Разбирает она то же, что передаёт сборка (-o и
@@ -442,6 +380,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import build  # noqa: E402
 import context  # noqa: E402
+import devkitctl  # noqa: E402
 import drain  # noqa: E402
 import harness  # noqa: E402
 import leak  # noqa: E402
@@ -540,12 +479,14 @@ class Sandbox:
         (home / ".claude" / "agents").mkdir(parents=True)
         (home / ".claude" / "skills").mkdir(parents=True)
         (home / ".devkit" / "quota").mkdir(parents=True)
-        allow = json.dumps(list(perms.MACHINE_ALLOW), ensure_ascii=False)
-        deny = json.dumps(list(perms.SECRET_DENY), ensure_ascii=False)
-        text = SETTINGS % (allow, deny, WATCH, NOTIFY, TURN, NOTIFY, WATCH, PLAN, HOLD, TURN,
-                           NOTIFY, TURN, NOTIFY, WATCH, NOTIFY, TURN)
-        write(home / ".claude" / "settings.json",
-              text.replace(FIXTURE_DEVKIT, os.path.realpath(str(self.dk))))
+        settings = home / ".claude" / "settings.json"
+        write(settings, json.dumps({
+            "permissions": {"allow": list(perms.MACHINE_ALLOW), "deny": list(perms.SECRET_DENY)},
+            "env": {devkitctl.WATCHDOG_KEY: devkitctl.WATCHDOG_VALUE},
+            devkitctl.INBOUND_KEY: devkitctl.INBOUND_VALUE,
+        }, ensure_ascii=False, indent=2) + "\n")
+        devkitctl.install_hooks(settings, devkitctl.HOOK_LAYOUT,
+                                Path(os.path.realpath(str(self.dk))))
         for f in (self.dk / "kit" / "agents").glob("*.md"):
             shutil.copy(str(f), str(home / ".claude" / "agents" / f.name))
         for d in (self.dk / "kit" / "skills").iterdir():

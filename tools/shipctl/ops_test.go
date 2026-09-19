@@ -1336,7 +1336,12 @@ func TestDeployTagUnderGPGSign(t *testing.T) {
 	}
 
 	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureReviewLevel)
-	gitT(t, root, "add", ".")
+	// Добавляется только свой файл, а не «.»: .devkit/deploy.local уже лежит
+	// untracked (написан выше для ship), и без глобального excludesFile машины
+	// (свежий HOME обкатки его не несёт) «git add .» увёз бы его в этот же
+	// коммит, испортив его docs-only статус и подмешав XR-003 в поезд раньше
+	// времени.
+	gitT(t, root, "add", "docs/tasks/XR-003.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 файл")
 	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true"}); err != nil {

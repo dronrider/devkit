@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -197,15 +198,41 @@ func TestTaskNoteAcceptsMinimumRepeats(t *testing.T) {
 	}
 }
 
-// Файл задачи ищется в корне репозитория текущей директории: стенд, позванный
-// не из дерева задачи, следу писать некуда.
+// Файл задачи ищется сперва в дереве --devkit, а не найден там, от startDir
+// тем же путём, каким стенд находит журнал прогонов: стенд, позванный не из
+// дерева задачи ни тем, ни другим путём, следу писать некуда.
 func TestTaskFileMissing(t *testing.T) {
-	if _, err := taskFile(devkitRoot(t), "DK-000000"); err == nil ||
+	if _, err := taskFile(devkitRoot(t), devkitRoot(t), "DK-000000"); err == nil ||
 		!strings.Contains(err.Error(), "дерева задачи") {
 		t.Fatalf("ждал отказ на отсутствующем файле задачи, получил: %v", err)
 	}
-	if _, err := taskFile(t.TempDir(), "DK-836"); err == nil {
+	if _, err := taskFile(t.TempDir(), t.TempDir(), "DK-836"); err == nil {
 		t.Fatal("вне репозитория файл задачи находиться не должен")
+	}
+}
+
+// Дерево --devkit и дерево cwd разные: файл задачи ищется сперва в дереве
+// --devkit, cwd роли не играет. До правки DK-1055 taskFile звали с "." вместо
+// root, и след искался только от cwd.
+func TestTaskFilePrefersDevkitTreeOverCwd(t *testing.T) {
+	devkit := t.TempDir()
+	want := filepath.Join(devkit, "docs", "tasks", "DK-836.md")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("# DK-836\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cwd := t.TempDir()
+	if out, err := exec.Command("git", "-C", cwd, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	got, err := taskFile(devkit, cwd, "DK-836")
+	if err != nil {
+		t.Fatalf("ждал файл из дерева --devkit, получил отказ: %v", err)
+	}
+	if got != want {
+		t.Fatalf("путь %s, ждал %s из дерева --devkit", got, want)
 	}
 }
 

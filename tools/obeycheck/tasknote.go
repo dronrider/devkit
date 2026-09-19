@@ -31,19 +31,28 @@ type note struct {
 	Now       time.Time
 }
 
-// taskFile ищет файл задачи в корне репозитория текущей директории, тем же
-// путём, каким стенд находит журнал прогонов. Файла нет, значит стенд зовут не
-// из дерева задачи, и записывать след некуда.
-func taskFile(startDir, id string) (string, error) {
-	root, err := gitOut(startDir, "rev-parse", "--show-toplevel")
+// taskFile ищет файл задачи. Сперва дерево --devkit: там след и должен
+// лежать, cwd на это не влияет. Если файла там нет, стенд ищет от startDir тем
+// же путём, каким находит журнал прогонов, git rev-parse --show-toplevel: это
+// дерево, из которого позвали команду, запасной путь на случай, когда задача
+// не про devkit. Если файла нет ни там, ни там, писать след некуда, и отказ
+// называет оба пути.
+func taskFile(root, startDir, id string) (string, error) {
+	rel := filepath.Join("docs", "tasks", id+".md")
+	devkitPath := filepath.Join(root, rel)
+	if _, err := os.Stat(devkitPath); err == nil {
+		return devkitPath, nil
+	}
+	cwdRoot, err := gitOut(startDir, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return "", fmt.Errorf("--task %s: текущая директория не в репозитории, запускайся из дерева задачи", id)
+		return "", fmt.Errorf("--task %s: файла %s нет, а текущая директория не в репозитории", id, devkitPath)
 	}
-	p := filepath.Join(root, "docs", "tasks", id+".md")
-	if _, err := os.Stat(p); err != nil {
-		return "", fmt.Errorf("--task %s: файла %s нет, запускайся из дерева задачи", id, p)
+	cwdPath := filepath.Join(cwdRoot, rel)
+	if _, err := os.Stat(cwdPath); err != nil {
+		return "", fmt.Errorf("--task %s: файла %s нет ни в дереве --devkit, ни в %s, запускайся из дерева задачи",
+			id, devkitPath, cwdPath)
 	}
-	return p, nil
+	return cwdPath, nil
 }
 
 // runSubjects собирает предметы всех сценариев прогона: без повторов и в

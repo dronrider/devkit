@@ -161,9 +161,10 @@ func main() {
 			fail(fmt.Errorf("--task %s при -k %d это разведка, а не замер: следу в файле задачи нужно "+
 				"хотя бы %d повтора на раскладку", *task, *repeats, minTaskRepeats))
 		}
-		if taskPath, err = taskFile(".", *task); err != nil {
+		if taskPath, err = taskFile(root, ".", *task); err != nil {
 			fail(err)
 		}
+		fmt.Printf("след прогона ляжет в %s\n", taskPath)
 		if err := staleLayout(fs.Args()[0], root, runSubjects(scen)); err != nil {
 			fail(err)
 		}

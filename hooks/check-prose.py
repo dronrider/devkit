@@ -105,10 +105,17 @@ RANK_LINE_RE = re.compile(r"^-\s+(?:%s)\s+\d+:\s" % "|".join(RANK_WORDS))
 # (tools/shipctl/record.go). recordMerge дописывает строку слитых коммитов
 # «- <дата> слито: <sha>[, <sha>...]» (record.go:150), cmdSmoke дописывает
 # отметку прогона «- smoke прогнан, <дата>» (record.go:243, smokeNote). Обе
-# строки без точки на конце, как их строит сам код.
+# строки без точки на конце, как их строит сам код. Пара movePendingNote и
+# moveDoneNote (record.go: recordMovePending, recordMoveDone) следит за
+# переводом в Check после выката: «- <дата> выкачено, перевод в Check отбит:
+# <причина>» и «- <дата> перевод в Check доведён».
 DEPLOY_MERGE_RE = re.compile(
     r"^-\s+\d{4}-\d{2}-\d{2}\s+слито:\s+[0-9a-f]{7,}(?:,\s*[0-9a-f]{7,})*\s*$")
 DEPLOY_SMOKE_RE = re.compile(r"^-\s+smoke прогнан,\s*\d{4}-\d{2}-\d{2}\s*$")
+DEPLOY_PENDING_RE = re.compile(
+    r"^-\s+\d{4}-\d{2}-\d{2}\s+выкачено,\s+перевод в Check отбит:\s")
+DEPLOY_MOVE_DONE_RE = re.compile(
+    r"^-\s+\d{4}-\d{2}-\d{2}\s+перевод в Check доведён\s*$")
 
 # «Приёмка»: формат ACCEPTANCE.md, те же регулярки, что у самого taskctl
 # (tools/taskctl/accept.go: acceptBarrierLineRe, acceptBypassRe;
@@ -123,20 +130,89 @@ ACCEPT_KIND_RE = re.compile(r"^-\s+вид:\s")
 ACCEPT_BARRIER_RE = re.compile(r"^-\s+барьер\s+«[^»]*»:")
 ACCEPT_OUTCOME_RE = re.compile(r"^  - .*:\s*(?:не\s+)?годится\b")
 
+# «Развилки»: перечень пишет taskctl decide (internal/taskform/forks.go).
+# Голова стоит верхним уровнем («- «имя»: вопрос», ForkHead), подстроки идут
+# с отступом в два пробела (forkIndent) ровно тем же синтаксисом, что и у
+# ACCEPT_OUTCOME_RE: решает, рекомендация, равенство, вариант, решено
+# <дата>, оставлена <дата>. Вопрос и рекомендацию пишет человек или агент, но
+# саму строку кладёт код, и DK-396 показал, чем это кончается: перечень
+# считался прозой и красил метрику «абзац кончается обобщением» ложно.
+FORK_HEAD_RE = re.compile(r"^-\s+«[^»]+»:\s")
+FORK_SUB_RE = re.compile(
+    r"^  - (?:"
+    r"решает:\s*(?:человек|исполнитель)\s*$"
+    r"|рекомендация:\s"
+    r"|равенство:\s"
+    r"|вариант:\s"
+    r"|решено (?:человеком|агентом|исполнителем) \d{4}-\d{2}-\d{2}:\s"
+    r"|оставлена (?:человеком|агентом) \d{4}-\d{2}-\d{2}(?::\s|\s*$)"
+    r")")
+
+# «Ревью»: уровень тщательности и чистый вердикт (tools/taskctl/review.go).
+# У обеих запись это фиксированная голова: «Уровень N до sha:» (без маркера
+# списка, reviewLevelRe в internal/taskform/taskform.go) и «- Вердикт: без
+# замечаний.» (cleanVerdictHead). Хвост после головы пишет ревьювер, и это
+# суть проверки не хуже отдельного замечания: голову счёт метрик режет,
+# хвост остаётся под ним, как и раньше. Цену обратного показал DK-1050:
+# ревьювер руками убрал двоеточие из головы вердикта, спасаясь от сторожа,
+# и ворота слияния перестали узнавать чистый исход.
+REVIEW_LEVEL_HEAD_RE = re.compile(r"^Уровень [0-3] до \S+:\s*")
+REVIEW_VERDICT_HEAD_RE = re.compile(r"^(-\s+)Вердикт:\s+без замечаний\.\s*")
+
+# «Проверка»: отметки стенда и обкатки (internal/taskform/stand.go:
+# StandNote, StandFailNote; internal/taskform/taskform.go: RehearsalNote,
+# RehearsalFailNote). Хвост машинный, свободного текста ревьювера в нём нет.
+STAND_RE = re.compile(r"^-\s+Стенд(?: не зачтён)?:\s")
+REHEARSAL_RE = re.compile(r"^-\s+Обкатка(?: не зачтена)?:\s")
+
+# «Ход работы», отдельные пометки поверх строк этапов: вычитка
+# (kit/skills/proofread/SKILL.md), сам сторож прозы (см. report() ниже),
+# исключение ворот (internal/taskform/taskform.go: Exception) и провал
+# задачи (tools/taskctl/retclass.go: returnStageLine). Причину каждой пишет
+# человек или агент, но кладёт строку код, и весь пункт списка машинный.
+PROOFREAD_RE = re.compile(r"^-\s+Вычитка:\s")
+PROSE_MARK_RE = re.compile(r"^-\s+Сторож прозы:\s")
+EXCEPTION_RE = re.compile(r"^-\s+Исключение:\s")
+RETURN_RE = re.compile(r"^-\s+Возврат:\s")
+
 # Регулярки верхнего уровня разбирают строку после strip(): у настоящей
-# записи отступа нет, а strip() не портит хвост. ACCEPT_OUTCOME_RE особняком:
-# ему нужен исходный, не обрезанный отступ, чтобы отличить вложенный обход от
-# такого же текста без вложенности.
+# записи отступа нет, а strip() не портит хвост. ACCEPT_OUTCOME_RE и
+# FORK_SUB_RE особняком: им нужен исходный, не обрезанный отступ, чтобы
+# отличить вложенный пункт от такого же текста без вложенности.
 TOP_LEVEL_MACHINE_RES = (STAGE_LINE_RE, RANK_LINE_RE, DEPLOY_MERGE_RE,
-                          DEPLOY_SMOKE_RE, ACCEPT_KIND_RE, ACCEPT_BARRIER_RE)
+                          DEPLOY_SMOKE_RE, DEPLOY_PENDING_RE,
+                          DEPLOY_MOVE_DONE_RE, ACCEPT_KIND_RE,
+                          ACCEPT_BARRIER_RE, FORK_HEAD_RE, STAND_RE,
+                          REHEARSAL_RE, PROOFREAD_RE, PROSE_MARK_RE,
+                          EXCEPTION_RE, RETURN_RE)
 
 
 def is_machine_line(line):
-    """Строка файла задачи, которую дописывает утилита, а не человек."""
+    """Строка файла задачи, которую дописывает утилита, а не человек.
+
+    Уровень ревью и вердикт сюда не входят: у них машинная только голова, а
+    хвост пишет ревьювер и он остаётся под счётом (strip_machine_head).
+    """
     s = line.strip()
     if any(r.match(s) for r in TOP_LEVEL_MACHINE_RES):
         return True
-    return bool(ACCEPT_OUTCOME_RE.match(line))
+    return bool(ACCEPT_OUTCOME_RE.match(line) or FORK_SUB_RE.match(line))
+
+
+def strip_machine_head(line):
+    """Срезает у строки фиксированную машинную голову.
+
+    «Уровень N до sha:» и «Вердикт: без замечаний.» несут за собой суть
+    проверки ревьювера, и её сторож меряет как прежде (DK-887): режется
+    только голова, а не строка целиком.
+    """
+    m = REVIEW_LEVEL_HEAD_RE.match(line)
+    if m:
+        return line[m.end():]
+    m = REVIEW_VERDICT_HEAD_RE.match(line)
+    if m:
+        return m.group(1) + line[m.end():]
+    return line
 
 
 Text = collections.namedtuple("Text", "words sentences paragraphs")
@@ -156,9 +232,12 @@ def prose(text):
     text = FRONT_RE.sub("", text)
     text = FENCE_RE.sub("", text)
     text = INLINE_RE.sub("CODE", text)
-    lines = [ln for ln in text.split("\n")
-             if not ln.strip().startswith("|") and not ln.strip().startswith("#")
-             and not is_machine_line(ln)]
+    lines = []
+    for ln in text.split("\n"):
+        s = ln.strip()
+        if s.startswith("|") or s.startswith("#") or is_machine_line(ln):
+            continue
+        lines.append(strip_machine_head(ln))
     return TAG_RE.sub("", "\n".join(lines))
 
 

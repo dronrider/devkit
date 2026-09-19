@@ -230,11 +230,56 @@ class TestMachineLines(unittest.TestCase):
     DEPLOY_SMOKE = "- smoke прогнан, 2026-08-27"
     DEPLOY_SMOKE_LOOKALIKE = "- Smoke прогнали, а число в лог не попало."
 
+    DEPLOY_PENDING = "- 2026-08-27 выкачено, перевод в Check отбит: ворота ждут регрессии"
+    DEPLOY_PENDING_LOOKALIKE = "- Перевод в Check отбит без выката: ворота придирчивы."
+
+    DEPLOY_MOVE_DONE = "- 2026-08-27 перевод в Check доведён"
+    DEPLOY_MOVE_DONE_LOOKALIKE = "- Перевод в Check доведён без выката, запись ошибочна."
+
+    FORK_HEAD = "- «кусок-3»: заводить его строкой сейчас или ждать повода?"
+
+    STAND = ("- Стенд: 2026-09-18 00:33, дерево a02dde6c, предмет a4677514, "
+             "база старый, ярус mini, k 3, сценарии 25-stand-trace, зачтён.")
+    STAND_LOOKALIKE = "- Стенд теста дал брак: числа не сошлись."
+
+    STAND_FAIL = ("- Стенд не зачтён: 2026-09-17 01:08, дерево 0dbbeb8f, "
+                  "предмет 3df66c98, база старый, ярус mini, k 3, "
+                  "сценарии 45-code-name-calque, ворота закрыты.")
+
+    REHEARSAL = ("- Обкатка: 2026-09-18 20:14, свежее дерево 366418d8729d, "
+                 "сценарий 8a0b80d4, временный HOME, утилит дерева 11, "
+                 "шагов 5, все зелёные.")
+    REHEARSAL_LOOKALIKE = "- Обкатка прошла гладко: все сценарии сошлись."
+
+    REHEARSAL_FAIL = ("- Обкатка не зачтена: 2026-09-18 20:14, "
+                       "свежее дерево 366418d8729d, сценарий 8a0b80d4, "
+                       "временный HOME, утилит дерева 11, шагов 5, "
+                       "1 красный.")
+
+    PROOFREAD = "- Вычитка: 2 файла, 5 правок, 1 пометка, 2026-08-12."
+    PROOFREAD_LOOKALIKE = "- Вычитка заняла час: правок вышло немного."
+
+    PROSE_MARK = ("- Сторож прозы: docs/tasks/DK-001.md, двоеточие в "
+                  "середине фразы 105,3 при пороге 5, оставлено: причина.")
+    PROSE_MARK_LOOKALIKE = "- Сторож прозы работал долго: результат оказался спорным."
+
+    EXCEPTION = ("- Исключение: обкатка (сценарий обкатан зелёным на main "
+                 "2c5a691d после слияния, вывод в «Проверке»)")
+    EXCEPTION_LOOKALIKE = "- Исключение из правила: сроки поджимают, а бюджет мал."
+
+    RETURN = "- Возврат: постановка, проверка, 2026-09-05, прод падает на старте."
+    RETURN_LOOKALIKE = "- Возврат к вопросу: тема не закрыта, а решения нет."
+
     MACHINE = (STAGE, RANK, ACCEPT_KIND, ACCEPT_BARRIER, ACCEPT_OUTCOME,
-               DEPLOY_MERGE, DEPLOY_SMOKE)
+               DEPLOY_MERGE, DEPLOY_SMOKE, DEPLOY_PENDING, DEPLOY_MOVE_DONE,
+               FORK_HEAD, STAND, STAND_FAIL, REHEARSAL, REHEARSAL_FAIL,
+               PROOFREAD, PROSE_MARK, EXCEPTION, RETURN)
     LOOKALIKE = (STAGE_LOOKALIKE, RANK_LOOKALIKE, ACCEPT_KIND_LOOKALIKE,
                  ACCEPT_BARRIER_LOOKALIKE, ACCEPT_OUTCOME_LOOKALIKE,
-                 DEPLOY_MERGE_LOOKALIKE, DEPLOY_SMOKE_LOOKALIKE)
+                 DEPLOY_MERGE_LOOKALIKE, DEPLOY_SMOKE_LOOKALIKE,
+                 DEPLOY_PENDING_LOOKALIKE, DEPLOY_MOVE_DONE_LOOKALIKE,
+                 STAND_LOOKALIKE, REHEARSAL_LOOKALIKE, PROOFREAD_LOOKALIKE,
+                 PROSE_MARK_LOOKALIKE, EXCEPTION_LOOKALIKE, RETURN_LOOKALIKE)
 
     def test_machine_lines_are_recognized(self):
         for line in self.MACHINE:
@@ -254,7 +299,7 @@ class TestMachineLines(unittest.TestCase):
     def test_lookalike_lines_count_toward_metrics(self):
         body = "\n".join(self.LOOKALIKE) + "\n"
         t, v = prose.measure(body)
-        self.assertEqual(len(t.sentences), 7)
+        self.assertEqual(len(t.sentences), len(self.LOOKALIKE))
         self.assertGreater(v["colon_mid"], 0.0)
 
     def test_outcome_indent_distinguishes_machine_from_example(self):
@@ -269,6 +314,130 @@ class TestMachineLines(unittest.TestCase):
         top_level = "- headless-браузер с замером: годится, ширины уходят агенту"
         self.assertTrue(prose.is_machine_line(nested))
         self.assertFalse(prose.is_machine_line(top_level))
+
+
+class TestForkLines(unittest.TestCase):
+    """DK-887: перечень развилок, который пишет `taskctl decide`, не проза.
+
+    Подстроки развилки держат отступ в два пробела (forkIndent в
+    internal/taskform/forks.go), ровно как обход приёмки у ACCEPT_OUTCOME_RE:
+    тот же отступ без него это не запись, а пример в чужой прозе.
+    """
+
+    SUB_LINES = (
+        "  - решает: человек",
+        "  - решает: исполнитель",
+        "  - рекомендация: построчные регулярки по прецеденту DK-550",
+        "  - равенство: обе оценки держат один и тот же довод",
+        "  - вариант: строкой сейчас",
+        "  - решено человеком 2026-09-09: завести строкой сейчас",
+        "  - решено агентом 2026-09-19: построчные регулярки",
+        "  - оставлена человеком 2026-09-09",
+        "  - оставлена человеком 2026-09-09: причина передачи",
+    )
+
+    def test_fork_head_is_machine(self):
+        self.assertTrue(prose.is_machine_line(
+            "- «кусок-3»: заводить его строкой сейчас или ждать повода?"))
+
+    def test_fork_sub_lines_are_machine(self):
+        for line in self.SUB_LINES:
+            self.assertTrue(prose.is_machine_line(line), line)
+
+    def test_fork_sub_indent_distinguishes_record_from_example(self):
+        nested = "  - решает: человек"
+        top_level = "- решает: человек"
+        self.assertTrue(prose.is_machine_line(nested))
+        self.assertFalse(prose.is_machine_line(top_level))
+
+    def test_fork_question_and_recommendation_do_not_count(self):
+        """Сюжет DK-396: развилка с длинной рекомендацией красила метрику
+        «абзац кончается обобщением» ложно, потому что перечень считался
+        прозой целиком, от головы до подстрок."""
+        body = "\n".join((
+            "- «кусок-3»: нарезка цели оставила кусок в накопителе, заводить "
+            "его строкой сейчас или ждать повода, значит это и есть развилка?",
+            "  - решает: человек",
+            "  - рекомендация: завести строкой сейчас, это и есть дешёвый шаг",
+            "  - вариант: строкой сейчас",
+            "  - решено человеком 2026-09-09: завести строкой сейчас",
+        )) + "\n"
+        t, v = prose.measure(body)
+        self.assertEqual(len(t.sentences), 0)
+        self.assertEqual(t.words, 0)
+        self.assertEqual(v["aphorism"], 0.0)
+
+
+class TestReviewHeads(unittest.TestCase):
+    """DK-887: у строки уровня и вердикта машинная только голова.
+
+    Суть проверки, которую пишет ревьювер, остаётся под сторожем не хуже
+    отдельного замечания (tools/taskctl/review.go): DK-1050 показал цену
+    того, что ревьювер сам правит голову руками, спасаясь от находки.
+    """
+
+    def test_review_level_head_is_stripped_reason_stays(self):
+        line = "Уровень 2 до aac93b6: неопределённость 1, риск: невелик"
+        self.assertFalse(prose.is_machine_line(line))
+        self.assertEqual(prose.strip_machine_head(line),
+                          "неопределённость 1, риск: невелик")
+
+    def test_review_verdict_head_is_stripped_note_stays(self):
+        line = "- Вердикт: без замечаний. DoD сверен построчно: всё учтено."
+        self.assertFalse(prose.is_machine_line(line))
+        self.assertEqual(prose.strip_machine_head(line),
+                          "- DoD сверен построчно: всё учтено.")
+
+    def test_review_verdict_without_note_leaves_nothing_to_count(self):
+        t, v = prose.measure("- Вердикт: без замечаний.\n")
+        self.assertEqual(len(t.sentences), 0)
+        self.assertEqual(t.words, 0)
+
+    def test_review_verdict_note_keeps_own_colon_under_count(self):
+        """Голова не даёт двоеточие в счёт, а двоеточие самой сути ревьювера
+        считается как прежде: ровно та развилка, которую сломал DK-1050."""
+        body = "- Вердикт: без замечаний. DoD сверен построчно: всё учтено.\n"
+        t, v = prose.measure(body)
+        self.assertEqual(len(t.sentences), 1)
+        self.assertGreater(v["colon_mid"], 0.0)
+
+
+class TestArchiveFixtures(unittest.TestCase):
+    """DK-887, DoD: фикстуры это копии архивных файлов задач.
+
+    На DK-396 доля «абзац кончается обобщением» с разделом «Развилки» и без
+    него обязана совпасть: до правки перечень развилок считался прозой и
+    красил метрику ложно (задача, «Что происходит»).
+    """
+
+    DIR = os.path.join(HERE, "testdata", "dk-887")
+
+    def read(self, name):
+        with open(os.path.join(self.DIR, name), encoding="utf-8") as f:
+            return f.read()
+
+    def test_dk396_aphorism_share_same_with_and_without_forks(self):
+        raw = self.read("DK-396.md")
+        without_forks = re.sub(r"(?ms)^## Развилки\n.*?(?=^## )", "", raw)
+        self.assertNotEqual(raw, without_forks)
+        t_with, v_with = prose.measure(raw)
+        t_without, v_without = prose.measure(without_forks)
+        self.assertEqual(v_with["aphorism"], v_without["aphorism"])
+        self.assertEqual(t_with.words, t_without.words)
+
+    def test_dk631_review_verdict_note_still_counted(self):
+        """DK-631, черновик DK-1050: тот же файл несёт «Исключение»,
+        «Стенд»/«Обкатка» и большой вердикт разом, разбор не должен падать и
+        не должен молчать про сам вердикт."""
+        raw = self.read("DK-631.md")
+        t, v = prose.measure(raw)
+        self.assertGreater(t.words, 0)
+        self.assertGreater(v["colon_mid"], 0.0)
+
+    def test_dk894_parses_without_error(self):
+        raw = self.read("DK-894.md")
+        t, v = prose.measure(raw)
+        self.assertGreater(t.words, 0)
 
 
 class TestHook(unittest.TestCase):

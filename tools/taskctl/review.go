@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -42,12 +43,13 @@ var resolvedTailRe = regexp.MustCompile(`: (исправлено|отклоне�
 // терпится ради копии в shipctl, где элементы разбираются вместе с маркером.
 var cleanVerdictRe = regexp.MustCompile(`^(?:[-*] )?(?:(?:вердикт|ревью):\s*)?(?:без замечаний|замечаний нет)(?:\s+до\s+[0-9a-f]{4,40})?(?:[.:]|$)`)
 
-// cleanVerdictShaRe вынимает sha из головы чистого вердикта второго и
-// следующих кругов, той же формы, что печатает cleanVerdictHeadFmt. Вердикты
-// первого круга и вердикты, записанные до DK-812, головы с sha не несут, и
-// cleanVerdictSha тогда отдаёт пустую строку: сравнивать дублирование не с
-// чем, и вопрос решает reviewLevelSha либо старая осторожность (защита
-// DK-471 остаётся).
+// cleanVerdictShaRe вынимает sha из головы чистого вердикта: с DK-812 её
+// несёт каждый круг, у кого есть где взять HEAD (cmdReviewClean), а вердикты,
+// записанные раньше правки, головы с sha не несут, и cleanVerdictSha тогда
+// отдаёт пустую строку. Основание для такого вердикта ищет verdictIntroducedAt
+// по истории файла задачи, а не строка уровня: её переписывает следующий
+// review level, и держаться за неё в сравнении кругов нельзя (DK-812,
+// замечание 1).
 var cleanVerdictShaRe = regexp.MustCompile(`(?i)^(?:[-*] )?(?:(?:вердикт|ревью):\s*)?(?:без замечаний|замечаний нет)\s+до\s+([0-9a-f]{4,40})\b`)
 
 func cleanVerdictSha(text string) string {
@@ -402,19 +404,22 @@ func cmdReviewLevel(root, start, id string, level int, reason string, c CommitOp
 	return msg + linkHint + tail, nil
 }
 
-// cleanVerdictHead это канон формы записи первого круга: голова «Вердикт:
-// без замечаний.» узнаётся критерием исхода (cleanVerdictRe и его копия в
-// shipctl), а пояснение живёт за ней и на разбор не влияет. Формат остаётся
-// как был до DK-812: правка второго круга его не трогает, там, где второй
-// вердикт этой задаче не понадобился, ни разбор, ни прежде записанные вер-
-// дикты байт не меняют.
+// cleanVerdictHead это канон формы записи вердикта, не несущей своего sha:
+// вердикты, записанные до DK-812, и вердикты, положенные там, где HEAD не
+// читается (headSha), головы с sha не несут, а по критерию исхода
+// (cleanVerdictRe и его копия в shipctl) остаются чистым вердиктом всё
+// равно. Круг, в котором HEAD читается, пишет cleanVerdictHeadFmt: старые
+// файлы задач этот формат не переписывает, читатели принимают обе головы.
 const cleanVerdictHead = "Вердикт: без замечаний."
 
-// cleanVerdictHeadFmt форматирует голову второго и следующих кругов:
-// «Вердикт: без замечаний до <sha>.» Sha несёт коммит, до которого стоял
-// проверенный код, той же ролью, что у sha строки уровня (headSha,
-// cmdReviewLevel), и по нему следующий вызов cmdReviewClean отличает новый
-// круг ревью от повтора на том же коде (cleanVerdictSameCode, DK-812).
+// cleanVerdictHeadFmt форматирует голову вердикта с её собственным sha:
+// «Вердикт: без замечаний до <sha>.» С DK-812 так пишет каждый круг, у кого
+// читается HEAD, начиная с первого, а не только второй и следующие. Sha несёт
+// коммит, до которого стоял проверенный код, и по нему следующий вызов
+// cmdReviewClean отличает новый круг ревью от повтора на том же коде
+// (cleanVerdictSameCode, DK-812). Строка уровня (review level) в этом
+// сравнении не участвует: следующий её вызов переписывает её на новый HEAD,
+// и держаться за неё как за основание кругу нельзя (замечание 1 ревью).
 const cleanVerdictHeadFmt = "Вердикт: без замечаний до %s."
 
 // cmdReviewClean записывает вердикт ревью, прошедшего без замечаний. Раздел
@@ -425,9 +430,12 @@ const cleanVerdictHeadFmt = "Вердикт: без замечаний до %s."
 // Повторный вызов на том же коде остаётся дублем (DK-471, TestReviewClean-
 // AfterResolved), а вот повтор после возврата с красного слияния или из
 // Check это законный следующий круг: правка после провала это новый код, и
-// ревьювер судит его заново. Разницу решает cleanVerdictSameCode, sha прежнего
-// вердикта против HEAD, и только законный круг дописывает новую строку своим
-// sha, прежняя остаётся на месте (DK-812).
+// ревьювер судит его заново. Разницу решает cleanVerdictSameCode, sha
+// прежнего вердикта против HEAD, и только законный круг дописывает новую
+// строку своим sha, прежняя остаётся на месте (DK-812). Сбой самого
+// сравнения (нет git, битый sha, файл вне репозитория) это отказ команды со
+// словами причины, а не молчаливый дубль в ту или другую сторону
+// (замечание 2 ревью).
 func cmdReviewClean(root, id, note string, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
@@ -439,15 +447,17 @@ func cmdReviewClean(root, id, note string, c CommitOpts) (string, error) {
 	// Открытое замечание и чистый вердикт в одном разделе противоречат друг
 	// другу: ворот замечаний увидел бы открытый пункт, а ворот следа ревью
 	// чистый итог. Замечание закрывают резолвом, а не вердиктом поверх.
-	hadClean := false
 	if rf, err := loadReview(taskFileAbs(root, id)); err == nil {
 		for i, n := range rf.notes {
 			switch n.outcome() {
 			case "":
 				return "", fmt.Errorf("замечание %d в ревью %s открыто, чистый вердикт ему противоречит: закрой его через review resolve", i+1, id)
 			case "чисто":
-				hadClean = true
-				if cleanVerdictSameCode(root, id, rf, n) {
+				same, err := cleanVerdictSameCode(root, id, n)
+				if err != nil {
+					return "", fmt.Errorf("не сравнить код второго круга ревью %s с прежним вердиктом: %w", id, err)
+				}
+				if same {
 					return "", fmt.Errorf("чистый вердикт в ревью %s уже записан на этом коде: %s", id, n.Text)
 				}
 			}
@@ -457,12 +467,8 @@ func cmdReviewClean(root, id, note string, c CommitOpts) (string, error) {
 	}
 	line := "- " + cleanVerdictHead
 	sha := ""
-	if hadClean {
-		var shaErr error
-		sha, shaErr = headSha(root)
-		if shaErr != nil {
-			return "", shaErr
-		}
+	if s, err := headSha(root); err == nil {
+		sha = s
 		line = "- " + fmt.Sprintf(cleanVerdictHeadFmt, sha)
 	}
 	if note != "" {
@@ -486,39 +492,91 @@ func cmdReviewClean(root, id, note string, c CommitOpts) (string, error) {
 	return msg + linkHint + tail, nil
 }
 
-// cleanVerdictSameCode решает, стоит ли HEAD там же, где стоял код у
-// прежнего чистого вердикта n: коммиты между ними трогают только файл
-// задачи (onlyTaskDocSince, tools/taskctl/gate.go), тем же разбором, каким
-// rehearsalGate прощает запись самого прогона. Основание берётся из головы
-// вердикта (cleanVerdictSha), а для первого круга, чья голова sha не несёт,
-// из строки уровня (reviewLevelSha): без неё сравнивать было бы не с чем, и
-// защита DK-471 держала бы дублем и законный второй круг.
+// cleanVerdictSameCode решает, стоит ли HEAD там же, где стоял код у прежнего
+// чистого вердикта n: коммиты между ними трогают только файл задачи
+// (sameCodeSince), кода среди них нет. Основание берётся из головы вердикта
+// (cleanVerdictSha), а для вердиктов без своего sha (записанных до DK-812
+// либо там, где на момент записи HEAD не читался) из истории самого файла
+// задачи: verdictIntroducedAt находит коммит, которым легла точная строка
+// вердикта. Строка уровня в сравнении не участвует ни в каком виде: её
+// переписывает следующий review level (замечание 1 ревью).
 //
-// Основания сравнивать не с чем (ни у вердикта, ни у строки уровня нет sha,
-// либо HEAD не читается) значит совпадение недоказуемо, и осторожность та
-// же, что была до DK-812: дубль остаётся дублем. Ребейз делает старый sha
-// недостижимым, git log тогда падает, onlyTaskDocSince отвечает false, и это
-// читается как «код менялся»: доказать совпадение нечем, а второй законный
-// круг (живой случай DK-457 из черновика DK-1049) должен пройти, а не
-// упираться в недостижимый sha.
-func cleanVerdictSameCode(root, id string, rf *reviewFile, n reviewNote) bool {
+// Сбой на любом из шагов (HEAD не читается, коммит-основание не находится
+// или недостижим для git log) это отказ, а не молчаливое решение в ту или
+// иную сторону: старая осторожность (DK-471) держала обратную крайность,
+// дубль всегда, а прочтение ошибки git как «код менялся» открывало дубль
+// молча (замечание 2 ревью). Ребейз не входит в число сбоев: старый коммит
+// остаётся в базе объектов, пока его не собрал git gc, и git log <старый
+// sha>..HEAD исправно показывает код, честно считая переигранные коммиты
+// новыми (TestCleanVerdictSameCodeSurvivesRebase).
+func cleanVerdictSameCode(root, id string, n reviewNote) (bool, error) {
 	base := cleanVerdictSha(n.Text)
 	if base == "" {
-		if lvl, ok := reviewLevelSha(rf); ok {
-			base = lvl
+		var err error
+		base, err = verdictIntroducedAt(root, id, n)
+		if err != nil {
+			return false, err
 		}
-	}
-	if base == "" {
-		return true
 	}
 	head, err := headSha(root)
 	if err != nil {
-		return true
+		return false, err
 	}
 	if head == base {
-		return true
+		return true, nil
 	}
-	return onlyTaskDocSince(root, id, base)
+	return sameCodeSince(root, id, base)
+}
+
+// verdictIntroducedAt находит коммит, которым в файл задачи id легла точная
+// строка чистого вердикта n: для вердиктов без своего sha в голове это и есть
+// основание сравнения (cleanVerdictSameCode), а не строка уровня, которую
+// следующий review level переписывает. Строка ревью-вердикта уникальна (её
+// текст несёт круг и пояснение ревьювера), поэтому первый коммит в
+// хронологическом порядке, где число её вхождений меняется (git log -S), это
+// коммит добавления.
+func verdictIntroducedAt(root, id string, n reviewNote) (string, error) {
+	rel := path.Join("docs", "tasks", id+".md")
+	needle := "- " + n.Text
+	out, err := exec.Command("git", "-C", root, "log", "--reverse", "--format=%H", "-S"+needle, "--", rel).Output()
+	if err != nil {
+		return "", fmt.Errorf("в %s не читается история строки прежнего вердикта (%v)", root, err)
+	}
+	shas := strings.Fields(string(out))
+	if len(shas) == 0 {
+		return "", fmt.Errorf("в истории %s не нашёлся коммит, добавивший строку прежнего вердикта: %q", rel, needle)
+	}
+	return shas[0], nil
+}
+
+// sameCodeSince решает, будто onlyTaskDocSince (tools/taskctl/gate.go) для
+// отметки обкатки, трогают ли коммиты после base только файл задачи. Разбор
+// тот же, но сбой git здесь не глушится в false: rehearsalGate сравнивает с
+// собственной отметкой прогона и вправе быть снисходительным при отсутствии
+// git вовсе, а cmdReviewClean решает, дубль перед ним или новый круг, и
+// ошибка сравнения не должна тихо превращаться ни в то, ни в другое
+// (замечание 2 ревью).
+func sameCodeSince(root, id, base string) (bool, error) {
+	rel := path.Join("docs", "tasks", id+".md")
+	out, err := exec.Command("git", "-C", root, "log", "--format=%H", base+"..HEAD").Output()
+	if err != nil {
+		return false, fmt.Errorf("в %s не сравнить код с коммита %s (%v)", root, base, err)
+	}
+	shas := strings.Fields(string(out))
+	if len(shas) == 0 {
+		return true, nil
+	}
+	files, err := exec.Command("git", append([]string{"-C", root, "show", "--name-only",
+		"--format=", "--no-renames"}, shas...)...).Output()
+	if err != nil {
+		return false, fmt.Errorf("в %s не прочитать содержимое коммитов после %s (%v)", root, base, err)
+	}
+	for _, p := range strings.Fields(string(files)) {
+		if p != rel {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 var outcomeNames = map[string]string{"fixed": "исправлено", "rejected": "отклонено"}
@@ -618,21 +676,6 @@ func reviewLevelOf(rf *reviewFile) (int, bool) {
 		return 0, false
 	}
 	return lvl, true
-}
-
-// reviewLevelSha читает sha строки уровня: коммит, до которого стоял код на
-// старте ревью. cmdReviewClean берёт его основанием для первого круга: его
-// собственный вердикт головы с sha не несёт, и без строки уровня сравнивать
-// код первого круга было бы не с чем.
-func reviewLevelSha(rf *reviewFile) (string, bool) {
-	if rf.levelIdx < 0 || rf.levelIdx >= len(rf.lines) {
-		return "", false
-	}
-	m := reviewLevelLineRe.FindStringSubmatch(strings.TrimSpace(rf.lines[rf.levelIdx]))
-	if m == nil {
-		return "", false
-	}
-	return m[2], true
 }
 
 // reviewLevelReason читает уровень и причину его выбора из строки уровня

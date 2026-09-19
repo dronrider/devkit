@@ -564,3 +564,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-449 | prompt-test для формы DK-444: сценарии черновика и файла задачи на стенде | task | P2 | 2026-09-19 | [tasks/archive/2026/DK-449.md](tasks/archive/2026/DK-449.md) |
 | DK-1059 | Потолок go test в parallel.py не поспевает за выросшим dashboard | bug | P2 | 2026-09-19 | [tasks/archive/2026/DK-1059.md](tasks/archive/2026/DK-1059.md) |
 | DK-464 | proofread правит машинные строки раздела «Ход работы» | bug | P2 | 2026-09-19 | [tasks/archive/2026/DK-464.md](tasks/archive/2026/DK-464.md) |
+| DK-1055 | obeycheck --task пишет след в дерево, названное --devkit | bug | P2 | 2026-09-19 | [tasks/archive/2026/DK-1055.md](tasks/archive/2026/DK-1055.md) |

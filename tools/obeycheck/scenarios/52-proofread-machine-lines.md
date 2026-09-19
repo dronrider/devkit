@@ -1,7 +1,7 @@
 # вычитать файл задачи, не тронув машинные строки
 
 конец: любой
-предмет: kit/skills/proofread/SKILL.md «Что не трогает»; kit/skills/proofread/SKILL.md «Что правит»; kit/skills/proofread/SKILL.md «След отработки»; kit/skills/proofread/pairs.md «Инвариант: машинные строки»
+предмет: kit/skills/proofread/SKILL.md; kit/skills/proofread/pairs.md; kit/skills/proofread/corpus.md; kit/skills/proofread/machine-lines.md
 
 ## Подготовка
 

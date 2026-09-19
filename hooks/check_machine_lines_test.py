@@ -4,7 +4,7 @@
 Каждая проверка ниже кладёт «до» в originalFile события и «после» на диск
 (как это делает харнес до вызова хука), запускает хук отдельным процессом и
 смотрит на выход: 2 и подсказка на stderr это находка, 0 без вывода это
-молчание, 0 с additionalContext на stdout это «сравнивать не с чем».
+молчание, 0 с additionalContext на stdout это добавка без блокировки.
 """
 import importlib.util
 import json
@@ -85,8 +85,8 @@ class TestScope(TaskFileCase):
         self.assertEqual(r.stderr, "")
 
     def test_added_stage_line_passes_silently(self):
-        # Новый этап дописан утилитой (agentctl stage) поверх старого: счёт
-        # формата растёт, а не падает, и находки быть не должно.
+        # Новый этап дописан утилитой (agentctl stage) поверх старого: старая
+        # строка осталась дословно, а появление новой находкой не считается.
         before = ("## Ход работы\n\n"
                   "- Разработка: субагент, 2026-09-19 10:00-10:05.\n")
         after = before + "- Ревью: субагент, 2026-09-19 11:00-11:05.\n"
@@ -94,9 +94,20 @@ class TestScope(TaskFileCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, "")
 
+    def test_reordered_lines_pass_silently(self):
+        # Перестановка строк без смены текста: то же множество строк в другом
+        # порядке, находки быть не должно (DK-1058, замечание ревью 1).
+        stage = "- Разработка: субагент, 2026-09-19 10:00-10:05.\n"
+        mr = "- MR слит, 2026-09-19.\n"
+        before = "## Ход работы\n\n" + stage + mr
+        after = "## Ход работы\n\n" + mr + stage
+        r = self.hook(before, after)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "")
+
     def test_path_outside_docs_tasks_is_ignored(self):
         other = os.path.join(self.tmp, "note.md")
-        r = self.hook("- Стенд без колонки", "- Стенд без колонки испорчено", path=other)
+        r = self.hook("- Стенд: 1", "- Стенд без колонки испорчено", path=other)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, "")
 
@@ -115,34 +126,71 @@ class TestScope(TaskFileCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
-class TestSectionRegressions(TaskFileCase):
-    """Один случай на раздел перечня machine-lines.md: строка, которую правка
-    ломает так, что регулярка её больше не узнаёт, отбивается находкой."""
+class TestCheckProseUnavailable(unittest.TestCase):
+    """Замечание ревью 2 (неблокирующее): загрузка check-prose.py обёрнута,
+    и её отсутствие не роняет хук трассировкой."""
 
-    def assertBroken(self, before, after, category):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.tasks = os.path.join(self.tmp, "docs", "tasks")
+        os.makedirs(self.tasks)
+        self.file = os.path.join(self.tasks, "DK-TEST.md")
+        with open(self.file, "w", encoding="utf-8") as f:
+            f.write("проза\n")
+        # Своя копия дерева hooks/ без check-prose.py: hookio.py и сам хук
+        # нужны, а файл-источник форматов отсутствует нарочно.
+        self.tree = tempfile.mkdtemp()
+        for name in ("hookio.py", "check-machine-lines.py"):
+            with open(os.path.join(HERE, name), encoding="utf-8") as src:
+                content = src.read()
+            with open(os.path.join(self.tree, name), "w", encoding="utf-8") as dst:
+                dst.write(content)
+        self.tool = os.path.join(self.tree, "check-machine-lines.py")
+
+    def tearDown(self):
+        for d in (self.tmp, self.tree):
+            for root, _, files in os.walk(d, topdown=False):
+                for n in files:
+                    try:
+                        os.remove(os.path.join(root, n))
+                    except OSError:
+                        pass
+                try:
+                    os.rmdir(root)
+                except OSError:
+                    pass
+
+    def test_missing_check_prose_is_a_context_note_not_a_crash(self):
+        event = write_event(self.file, "старое")
+        r = subprocess.run([sys.executable, self.tool, "--hook"], input=event,
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("additionalContext", r.stdout)
+        self.assertIn("не выполнена", r.stdout)
+
+
+class TestReviewerCases(TaskFileCase):
+    """Пять случаев, которые ревью на дереве задачи прогнало вручную и нашло
+    молчащими у сверки по счёту: смена значения внутри строки при целом
+    формате проходила без находки. Каждый ловится точным сравнением строк по
+    множеству с учётом кратности."""
+
+    def assertBroken(self, before, after, category, quoted):
         r = self.hook(before, after)
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn(category, r.stderr)
-        self.assertIn(self.file, r.stderr)
+        self.assertIn(quoted, r.stderr)
 
-    def test_dk_460_stage_quota_truncated(self):
-        # «Ход работы»: срезанная квота увела хвост строки этапа (дату, время
-        # и точку) за пределы STAGE_LINE_RE, тот же регресс, что нашла DK-460.
-        before = ("## Ход работы\n\n"
-                  "- Разработка: субагент sonnet/high по вердикту pick "
-                  "(квота: week_all 27%, снимок 25м назад, сдвига нет), "
-                  "2026-09-19 19:54-19:54.\n")
-        after = ("## Ход работы\n\n"
-                "- Разработка: субагент sonnet/high по вердикту pick "
-                "(квота: week_all\n")
-        self.assertBroken(before, after, "ход работы: этап")
+    def test_case1_stage_quota_value_changed_tail_intact(self):
+        line = ("- Разработка: субагент по вердикту pick (квота: week_all "
+               "27%, снимок 25м назад, сдвига нет), 2026-09-19 19:54-19:54.")
+        broken = line.replace("27%", "3%")
+        self.assertBroken("## Ход работы\n\n%s\n" % line,
+                          "## Ход работы\n\n%s\n" % broken,
+                          "ход работы: этап", line)
 
-    def test_dk_1050_verdict_colon_removed(self):
-        # «Ревью»: снятое двоеточие у головы вердикта, тот же регресс, что
-        # нашла DK-1050. Голова может нести sha (DK-812 меняет
-        # REVIEW_VERDICT_HEAD_RE рядом),
-        # образец берём тем, что реально совпадает с regex на диске, а не
-        # своим текстом.
+    def test_case2_verdict_sha_and_tail_swapped(self):
         verdict_re = cml.check_prose.REVIEW_VERDICT_HEAD_RE
         good = None
         for candidate in ("- Вердикт: без замечаний до a1b2c3d. коротко.",
@@ -151,57 +199,115 @@ class TestSectionRegressions(TaskFileCase):
                 good = candidate
                 break
         self.assertIsNotNone(good, "ни один образец не совпал с REVIEW_VERDICT_HEAD_RE")
-        broken = good.replace("Вердикт:", "Вердикт", 1)
-        before = "## Ревью\n\nУровень 1 до abc123:\n\n%s\n" % good
-        after = "## Ревью\n\nУровень 1 до abc123:\n\n%s\n" % broken
-        self.assertBroken(before, after, "ревью: вердикт")
+        broken = good.replace("коротко.", "подменено, sha другой.")
+        self.assertBroken("## Ревью\n\n%s\n" % good, "## Ревью\n\n%s\n" % broken,
+                          "ревью: вердикт", good)
 
-    def test_accept_barrier_colon_removed(self):
+    def test_case3_rehearsal_commit_and_steps_swapped(self):
+        line = ("- Обкатка: 2026-09-19, свежее дерево abc1234, сценарий "
+               "def5678, шагов 14")
+        broken = line.replace("abc1234", "zzzzzzz").replace("шагов 14", "шагов 99")
+        self.assertBroken("## Проверка\n\n%s\n" % line,
+                          "## Проверка\n\n%s\n" % broken,
+                          "проверка: обкатка", line)
+
+    def test_case4_review_finding_essence_rewritten(self):
+        line = ("- [возврат: реализация, 2026-09-19] блокирует: сверка "
+               "считает число строк, а не текст : исправлено")
+        broken = ("- [возврат: реализация, 2026-09-19] блокирует: всё "
+                 "отлично, замечаний нет : исправлено")
+        self.assertBroken("## Ревью\n\n%s\n" % line, "## Ревью\n\n%s\n" % broken,
+                          "ревью: замечание", line)
+
+    def test_case5_mr_fate_date_swapped_one_to_one_count(self):
+        line = "- MR слит, 2026-09-10."
+        broken = "- MR слит, 2026-09-19."
+        self.assertBroken("## Ход работы\n\n%s\n" % line,
+                          "## Ход работы\n\n%s\n" % broken,
+                          "ход работы: судьба MR", line)
+
+
+class TestSectionRegressions(TaskFileCase):
+    """По одному случаю на оставшиеся разделы перечня machine-lines.md,
+    строка убрана целиком (не просто изменена внутри формата)."""
+
+    def assertBroken(self, before, after, category):
+        r = self.hook(before, after)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn(category, r.stderr)
+        self.assertIn(self.file, r.stderr)
+
+    def test_dk_460_stage_line_dropped(self):
+        # Регресс DK-460 в исходной формулировке: строка этапа пропадает
+        # целиком (а не просто теряет число, см. TestReviewerCases выше).
+        before = ("## Ход работы\n\n"
+                  "- Разработка: субагент sonnet/high по вердикту pick "
+                  "(квота: week_all 27%, снимок 25м назад, сдвига нет), "
+                  "2026-09-19 19:54-19:54.\n")
+        after = "## Ход работы\n\n"
+        self.assertBroken(before, after, "ход работы: этап")
+
+    def test_accept_barrier_dropped(self):
         before = "## DoD\n\n- барьер «prompt-test»: требуется сценарий.\n"
-        after = "## DoD\n\n- барьер «prompt-test» требуется сценарий.\n"
+        after = "## DoD\n\n"
         self.assertBroken(before, after, "приёмка: барьер")
 
-    def test_fork_head_colon_removed(self):
+    def test_fork_head_dropped(self):
         before = "## Развилки\n\n- «формат»: откуда берутся регулярки?\n"
-        after = "## Развилки\n\n- «формат» откуда берутся регулярки?\n"
+        after = "## Развилки\n\n"
         self.assertBroken(before, after, "развилка: голова")
 
-    def test_deploy_merge_hash_dropped(self):
+    def test_deploy_merge_dropped(self):
         before = "## Ход работы\n\n- 2026-09-19 слито: a1b2c3d\n"
-        after = "## Ход работы\n\n- 2026-09-19 слито:\n"
+        after = "## Ход работы\n\n"
         self.assertBroken(before, after, "выкат: слияние")
 
-    def test_stand_colon_removed(self):
+    def test_stand_dropped(self):
         before = "## Проверка\n\n- Стенд: сценарий 12, k=5, 4/5.\n"
-        after = "## Проверка\n\n- Стенд сценарий 12, k=5, 4/5.\n"
+        after = "## Проверка\n\n"
         self.assertBroken(before, after, "проверка: стенд")
 
-    def test_goal_lap_marker_dropped(self):
+    def test_goal_lap_dropped(self):
         before = "## Журнал\n\n- 2026-09-19 19:54-19:55, виток цели; continue\n"
-        after = "## Журнал\n\n- 2026-09-19 19:54-19:55, виток цели\n"
+        after = "## Журнал\n\n"
         self.assertBroken(before, after, "журнал: виток")
 
+    def test_goal_snapshot_dropped(self):
+        before = "## Журнал\n\n- снимок 2026-08-03T12:00: week_all 12%, week_max 4%\n"
+        after = "## Журнал\n\n"
+        self.assertBroken(before, after, "журнал: снимок")
 
-class TestFindingsHelper(unittest.TestCase):
-    """decreases() напрямую: полнее ловит расхождение счётчиков без накладных
-    расходов подпроцесса, полезно при добавлении новых форматов."""
-
-    def test_no_before_and_after_difference_means_no_decrease(self):
-        text = "проза без машинных строк, дважды одна и та же.\n"
-        self.assertEqual(cml.decreases(text, text), [])
-
-    def test_removed_review_link_line_is_a_decrease(self):
+    def test_review_link_dropped(self):
         before = "MR: https://example.invalid/mr/1\n\nдальше текст.\n"
         after = "дальше текст.\n"
-        found = dict((name, (was, now)) for name, was, now in cml.decreases(before, after))
-        self.assertIn("что происходит: ссылка ревью", found)
-        self.assertEqual(found["что происходит: ссылка ревью"], (1, 0))
+        self.assertBroken(before, after, "что происходит: ссылка ревью")
 
-    def test_removed_mr_fate_line_is_a_decrease(self):
-        before = "## Ход работы\n\n- MR слит, 2026-09-19.\n"
-        after = "## Ход работы\n\n"
-        found = dict((name, (was, now)) for name, was, now in cml.decreases(before, after))
-        self.assertIn("ход работы: судьба MR", found)
+
+class TestMissingHelper(unittest.TestCase):
+    """missing() напрямую: полнее ловит расхождение без накладных расходов
+    подпроцесса, полезно при добавлении новых форматов."""
+
+    def test_no_difference_means_nothing_missing(self):
+        text = "проза без машинных строк, дважды одна и та же.\n"
+        self.assertEqual(cml.missing(text, text), [])
+
+    def test_reorder_of_identical_multiset_is_not_missing(self):
+        a = "- Стенд: раз.\n- Стенд: два.\n"
+        b = "- Стенд: два.\n- Стенд: раз.\n"
+        self.assertEqual(cml.missing(a, b), [])
+
+    def test_duplicate_line_removed_once_counts_as_one_missing(self):
+        before = "- Стенд: раз.\n- Стенд: раз.\n"
+        after = "- Стенд: раз.\n"
+        found = cml.missing(before, after)
+        self.assertEqual(len(found), 1)
+        name, line, was, still = found[0]
+        self.assertEqual((name, line, was, still), ("проверка: стенд", "- Стенд: раз.", 2, 1))
+
+    def test_added_distinct_line_is_not_missing(self):
+        before = "- Стенд: раз.\n"
+        after = before + "- Стенд: два.\n"
+        self.assertEqual(cml.missing(before, after), [])
 
 
 if __name__ == "__main__":

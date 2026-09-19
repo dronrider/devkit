@@ -572,3 +572,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1054 | Экран задачи получает дату движения строки, поля строки сверяет тест | bug | P2 | 2026-09-19 | [tasks/archive/2026/DK-1054.md](tasks/archive/2026/DK-1054.md) |
 | DK-1063 | poc_deadraise.mjs и poc_bench_chat.mjs не завершаются, тот же живой polling | bug | P1 | 2026-09-19 | [tasks/archive/2026/DK-1063.md](tasks/archive/2026/DK-1063.md) |
 | DK-1064 | TestStaticPulseRing и TestChatOutboxQueueSendsItself скрыты зависанием, настоящие баги | bug | P1 | 2026-09-19 | [tasks/archive/2026/DK-1064.md](tasks/archive/2026/DK-1064.md) |
+| DK-881 | Правило плана называет порог повода и не просит плана на один ответ | task | P2 | 2026-09-20 | [tasks/archive/2026/DK-881.md](tasks/archive/2026/DK-881.md) |

@@ -214,7 +214,7 @@ from pathlib import Path
 
 DEVKIT = Path(__file__).resolve().parent.parent.parent
 POST_SCRIPTS = ("check-symbols.py", "check-memory.py", "check-sensitive.py",
-                "check-prose.py", "check-calque.py")
+                "check-prose.py", "check-calque.py", "check-machine-lines.py")
 # Конфиг порогов сторожа прозы (DK-521). Полноту его смотрит сам хук режимом
 # --config: список метрик живёт в коде хука, и второй копии тут не заводится.
 PROSE_HOOK = "check-prose.py"
@@ -393,6 +393,7 @@ HOOK_LAYOUT = (
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-sensitive.py --hook"),
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-prose.py --hook"),
     ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-calque.py --hook"),
+    ("PostToolUse", POST_MATCHER, "python3 %s/hooks/check-machine-lines.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-read-secret.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-subst.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-review.py --hook"),

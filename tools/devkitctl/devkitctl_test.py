@@ -2363,7 +2363,7 @@ class HarnessHooksTest(SandboxCase):
         self.assertNotIn_("env-ключ", out, "повторный --fix вписал вотчдог второй раз")
         post = [h["command"] for g in json.loads(read(self.settings))["hooks"]["PostToolUse"]
                 for h in g["hooks"]]
-        self.assertEqual(len(post), 10, post)
+        self.assertEqual(len(post), 11, post)
 
     def test_hooks_from_a_stray_tree_are_repointed(self):
         # DK-582: строка с путём чужого дерева выглядит подключённым хуком, и по

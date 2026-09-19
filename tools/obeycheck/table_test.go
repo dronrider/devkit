@@ -241,6 +241,11 @@ func TestToKeyboardApostropheBetweenLetters(t *testing.T) {
 		{"апостроф во втором слове фразы", "it" + r(0x2019) + "s ok", "it's ok"},
 		{"закрывающая лапка после буквы, а не апостроф", r(0x2018) + "цитата" + r(0x2019), "«цитата»"},
 		{"закрывающая лапка перед знаком препинания", "фраза" + r(0x2019) + ", дальше", "фраза», дальше"},
+		// Ревью DK-1056, замечание 4: граница «буква и не буква» была видна
+		// только на пунктуации. Цифра и подчёркивание тоже не буквы, и
+		// решение о ёлочке, а не апострофе, распространяется и на них.
+		{"буква и цифра, а не апостроф", "5" + r(0x2019) + "s", "5»s"},
+		{"буква и подчёркивание, а не апостроф", "a" + r(0x2019) + "_b", "a»_b"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -272,6 +277,38 @@ func TestToKeyboardRemovesZWJFromEmoji(t *testing.T) {
 			"эмодзи с модификатором тона кожи",
 			"жест " + r(0x1f44d) + r(0x1f3fc),
 			"жест ",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if code := runSymbolsHook(t, c.dirty); code == 0 {
+				t.Fatalf("образец %q не ловится текущим хуком, случай устарел", c.dirty)
+			}
+			if got := toKeyboard(c.dirty); got != c.want {
+				t.Fatalf("toKeyboard(%q) = %q, ждал %q", c.dirty, got, c.want)
+			} else if code := runSymbolsHook(t, got); code != 0 {
+				t.Fatalf("после toKeyboard хук всё ещё против %q (код %d)", got, code)
+			}
+		})
+	}
+}
+
+// TestToKeyboardZWJOnlyDropsNearEmoji: ZWJ (U+200D) убирается только рядом с
+// эмодзи, а вне такого соседства идёт в общий разбор «символ вне раскладок»
+// (ревью DK-1056, замечание 3). Безусловное удаление молча склеивало слова
+// («wordnext» вместо «word» и «next»), а склейка без следа хуже видимого
+// мусора, ради которого замечание и заводили.
+func TestToKeyboardZWJOnlyDropsNearEmoji(t *testing.T) {
+	r := func(code int) string { return string(rune(code)) }
+	cases := []struct{ name, dirty, want string }{
+		{"ZWJ между английскими словами не склеивает их", "word" + r(0x200d) + "next", "word?next"},
+		{"ZWJ между русскими словами не склеивает их", "слово" + r(0x200d) + "дальше", "слово?дальше"},
+		{"ZWJ в начале строки не роняет разбор", r(0x200d) + "текст", "?текст"},
+		{"ZWJ в конце строки не роняет разбор", "текст" + r(0x200d), "текст?"},
+		{
+			"семейная эмодзи с двумя соединителями по-прежнему исчезает целиком",
+			"семья " + r(0x1f468) + r(0x200d) + r(0x1f469) + r(0x200d) + r(0x1f466),
+			"семья ",
 		},
 	}
 	for _, c := range cases {

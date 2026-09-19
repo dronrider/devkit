@@ -99,8 +99,16 @@ func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 	}
 	rel := "docs/tasks/" + id + ".md"
 	if failed > 0 {
-		return "", fmt.Errorf("%s: обкатка красная, шагов упало %d из %d, вывод лежит в %s разделом «Проверка»: разбирать провал и повторить rehearse, отметки для move check нет",
-			id, failed, len(runs), rel)
+		hint := ""
+		// Проверяем, есть ли в упавших шагах признаки попытки многострочности
+		for _, r := range runs {
+			if !r.ok && (strings.HasSuffix(r.cmd, "\\") || strings.HasPrefix(strings.TrimSpace(r.cmd), "|") || strings.HasPrefix(strings.TrimSpace(r.cmd), "&&")) {
+				hint = "; по подсказке: строка блока это отдельный шаг, многострочную команду соедините в одну через &&"
+				break
+			}
+		}
+		return "", fmt.Errorf("%s: обкатка красная, шагов упало %d из %d, вывод лежит в %s разделом «Проверка»: разбирать провал и повторить rehearse, отметки для move check нет%s",
+			id, failed, len(runs), rel, hint)
 	}
 	return fmt.Sprintf("%s: обкатка зелёная, шагов %d, свежее дерево %s, вывод и отметка в %s; дальше taskctl move %s check",
 		id, len(runs), shortSha(sha), rel, id), nil

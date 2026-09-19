@@ -359,3 +359,20 @@ func TestReadSectionStopsAtHeadingAfterUnclosedFence(t *testing.T) {
 		t.Fatalf("раздел протянулся за «## Проверка»:\n%s", text)
 	}
 }
+
+// TestRehearseHintsOnLineContinuation: когда шаг красный и содержит признаки
+// попытки многострочности (обратный слеш на конце), отказ обкатки подсказывает,
+// что строка блока это отдельный шаг.
+func TestRehearseHintsOnLineContinuation(t *testing.T) {
+	root := setupRehearse(t, "echo раз && \\")
+	_, err := cmdRehearse(root, "XR-005", RehearseParams{Now: rehearseAt})
+	if err == nil {
+		t.Fatal("обкатка с обратным слешем должна быть красной")
+	}
+	if !strings.Contains(err.Error(), "отдельный шаг") {
+		t.Fatalf("отказ не содержит подсказку про отдельный шаг: %v", err)
+	}
+	if !strings.Contains(err.Error(), "&&") {
+		t.Fatalf("отказ не содержит совет про &&: %v", err)
+	}
+}

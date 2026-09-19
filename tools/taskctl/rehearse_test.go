@@ -360,19 +360,41 @@ func TestReadSectionStopsAtHeadingAfterUnclosedFence(t *testing.T) {
 	}
 }
 
-// TestRehearseHintsOnLineContinuation: когда шаг красный и содержит признаки
-// попытки многострочности (обратный слеш на конце), отказ обкатки подсказывает,
-// что строка блока это отдельный шаг.
-func TestRehearseHintsOnLineContinuation(t *testing.T) {
-	root := setupRehearse(t, "echo раз && \\")
-	_, err := cmdRehearse(root, "XR-005", RehearseParams{Now: rehearseAt})
-	if err == nil {
-		t.Fatal("обкатка с обратным слешем должна быть красной")
+// TestRehearseHintsOnMultilineScripts: когда обкатка красная и есть признаки
+// попытки многострочности (слеш на конце, служебные символы, присваивание),
+// отказ подсказывает про построчную нарезку.
+func TestRehearseHintsOnMultilineScripts(t *testing.T) {
+	cases := []struct {
+		name    string
+		steps   string
+		wantHint bool
+	}{
+		{"backslash at end", "echo раз && \\", true},
+		{"pipe at end", "echo раз |\ncat /dev/null", true},
+		{"&& at end", "echo раз &&\necho два", true},
+		{"|| at end", "false ||\necho два", true},
+		{"pipe at start", "echo раз\n| cat", true},
+		{"&& at start", "echo раз\n&& false", true},
+		{"variable assignment before command", "VAR=value\ntest -n \"$VAR\" && false", true},
+		{"var assignment with subshell", "X=$(false)\ntest $?", true},
+		{"normal red without hint", "false", false},
+		{"normal syntax error without hint", ")\n", false},
 	}
-	if !strings.Contains(err.Error(), "отдельный шаг") {
-		t.Fatalf("отказ не содержит подсказку про отдельный шаг: %v", err)
-	}
-	if !strings.Contains(err.Error(), "&&") {
-		t.Fatalf("отказ не содержит совет про &&: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := setupRehearse(t, tc.steps)
+			_, err := cmdRehearse(root, "XR-005", RehearseParams{Now: rehearseAt})
+			if err == nil {
+				t.Fatal("обкатка должна быть красной")
+			}
+			errMsg := err.Error()
+			hasHint := strings.Contains(errMsg, "подсказка:")
+			if tc.wantHint && !hasHint {
+				t.Fatalf("ожидалась подсказка в отказе, но её нет: %v", err)
+			}
+			if !tc.wantHint && hasHint {
+				t.Fatalf("подсказка не должна быть в отказе: %v", err)
+			}
+		})
 	}
 }

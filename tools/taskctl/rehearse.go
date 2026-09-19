@@ -12,6 +12,83 @@ import (
 	"github.com/dronrider/devkit/internal/taskform"
 )
 
+// hasMultilineHints проверяет, нужна ли подсказка про построчную нарезку. Подсказка
+// срабатывает, когда в списке шагов есть признаки попытки многострочности: конец
+// строки на слеш или служебные символы, или начало со служебных символов, или
+// присваивание переменной без команды. Каждый шаг гонится своим вызовом sh -c,
+// поэтому продолжение строки и переменные между шагами не работают, и автор видит
+// только синтаксическую ошибку без понимания, почему.
+func hasMultilineHints(runs []stepRun, failed bool) bool {
+	if !failed {
+		return false
+	}
+	// Проверяем упавший шаг на конец слешем
+	for _, r := range runs {
+		if !r.ok && strings.HasSuffix(r.cmd, "\\") {
+			return true
+		}
+	}
+	// Проверяем все шаги на служебные символы в конце и начале, и на присваивание
+	for _, r := range runs {
+		trimmed := strings.TrimSpace(r.cmd)
+		// Конец на |, &&, ||
+		for _, suffix := range []string{"|", "&&", "||"} {
+			if strings.HasSuffix(trimmed, suffix) {
+				return true
+			}
+		}
+		// Начало с |, &&, ||
+		for _, prefix := range []string{"|", "&&", "||"} {
+			if strings.HasPrefix(trimmed, prefix) {
+				return true
+			}
+		}
+		// Присваивание переменной: VAR=value или VAR=$(...)
+		if isVariableAssignment(trimmed) {
+			return true
+		}
+	}
+	return false
+}
+
+// isVariableAssignment проверяет, является ли строка присваиванием переменной без команды.
+func isVariableAssignment(s string) bool {
+	// Форма VAR=value
+	if len(s) == 0 {
+		return false
+	}
+	eqIdx := strings.Index(s, "=")
+	if eqIdx > 0 && isValidVarName(s[:eqIdx]) {
+		// Проверяем, что это не сравнение
+		beforeEq := s[:eqIdx]
+		afterEq := s[eqIdx+1:]
+		// Если после = не стоит ещё один =, то это присваивание
+		if !strings.HasPrefix(afterEq, "=") && !strings.Contains(beforeEq, " ") {
+			return true
+		}
+	}
+	return false
+}
+
+// isValidVarName проверяет, является ли строка допустимым именем переменной в shell.
+func isValidVarName(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	// Первый символ буква или underscore
+	if !((s[0] >= 'a' && s[0] <= 'z') || (s[0] >= 'A' && s[0] <= 'Z') || s[0] == '_') {
+		return false
+	}
+	// Остальные символы буквы, цифры или underscore
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
 // RehearseParams это ключи обкатки сценария: шаги, названные руками, и предел
 // на шаг. Пустые Steps значат «взять шаги из файла задачи».
 type RehearseParams struct {
@@ -100,12 +177,8 @@ func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 	rel := "docs/tasks/" + id + ".md"
 	if failed > 0 {
 		hint := ""
-		// Проверяем, есть ли в упавших шагах признаки попытки многострочности
-		for _, r := range runs {
-			if !r.ok && (strings.HasSuffix(r.cmd, "\\") || strings.HasPrefix(strings.TrimSpace(r.cmd), "|") || strings.HasPrefix(strings.TrimSpace(r.cmd), "&&")) {
-				hint = "; по подсказке: строка блока это отдельный шаг, многострочную команду соедините в одну через &&"
-				break
-			}
+		if hasMultilineHints(runs, failed > 0) {
+			hint = "; подсказка: каждая строка блока sh идёт отдельным шагом со своим sh -c, продолжение строки и переменная со строки выше до следующей строки не доживают, команду собери в одну строку через &&"
 		}
 		return "", fmt.Errorf("%s: обкатка красная, шагов упало %d из %d, вывод лежит в %s разделом «Проверка»: разбирать провал и повторить rehearse, отметки для move check нет%s",
 			id, failed, len(runs), rel, hint)

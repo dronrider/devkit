@@ -53,17 +53,23 @@ func hasMultilineHints(runs []stepRun, failed bool) bool {
 
 // isVariableAssignment проверяет, является ли строка присваиванием переменной без команды.
 func isVariableAssignment(s string) bool {
-	// Форма VAR=value
-	if len(s) == 0 {
+	eq := strings.Index(s, "=")
+	if eq <= 0 || !isValidVarName(s[:eq]) {
 		return false
 	}
-	eqIdx := strings.Index(s, "=")
-	if eqIdx > 0 && isValidVarName(s[:eqIdx]) {
-		// Проверяем, что это не сравнение
-		beforeEq := s[:eqIdx]
-		afterEq := s[eqIdx+1:]
-		// Если после = не стоит ещё один =, то это присваивание
-		if !strings.HasPrefix(afterEq, "=") && !strings.Contains(beforeEq, " ") {
+	val := s[eq+1:]
+	if strings.HasPrefix(val, "=") {
+		return false
+	}
+	if !strings.Contains(val, " ") {
+		return true
+	}
+	// Значение с пробелом идёт за присваивание, только когда оно целиком взято
+	// в кавычки или в подстановку команды. Иначе за ним стоит своя команда, и
+	// шаг рабочий: «VAR=1 команда аргумент» отрабатывает в один заход.
+	pairs := [][2]string{{"$(", ")"}, {"\"", "\""}, {"'", "'"}}
+	for _, p := range pairs {
+		if len(val) > len(p[0]) && strings.HasPrefix(val, p[0]) && strings.HasSuffix(val, p[1]) {
 			return true
 		}
 	}

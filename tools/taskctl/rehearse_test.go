@@ -365,8 +365,8 @@ func TestReadSectionStopsAtHeadingAfterUnclosedFence(t *testing.T) {
 // отказ подсказывает про построчную нарезку.
 func TestRehearseHintsOnMultilineScripts(t *testing.T) {
 	cases := []struct {
-		name    string
-		steps   string
+		name     string
+		steps    string
 		wantHint bool
 	}{
 		{"backslash at end", "echo раз && \\", true},
@@ -377,6 +377,8 @@ func TestRehearseHintsOnMultilineScripts(t *testing.T) {
 		{"&& at start", "echo раз\n&& false", true},
 		{"variable assignment before command", "VAR=value\ntest -n \"$VAR\" && false", true},
 		{"var assignment with subshell", "X=$(false)\ntest $?", true},
+		{"assignment before command on one line", "VAR=1 echo ok\nfalse", false},
+		{"assignment of quoted value", "VAR=\"раз два\"\ntest -n \"$VAR\" && false", true},
 		{"normal red without hint", "false", false},
 		{"normal syntax error without hint", ")\n", false},
 	}

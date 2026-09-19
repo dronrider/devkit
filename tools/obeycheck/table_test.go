@@ -229,3 +229,61 @@ func TestToKeyboardMatchesHook(t *testing.T) {
 		})
 	}
 }
+
+// TestToKeyboardApostropheBetweenLetters: U+2019 между двумя буквами это
+// апостроф внутри слова, а не закрывающая кавычка (ревью DK-1056, замечание
+// 1). Обычная замена на «»» ломает английское слово, «don»t» вместо «don't»;
+// прямой апостроф с клавиатуры хук пропускает и слово остаётся собой.
+func TestToKeyboardApostropheBetweenLetters(t *testing.T) {
+	r := func(code int) string { return string(rune(code)) }
+	cases := []struct{ name, dirty, want string }{
+		{"апостроф внутри английского слова", "don" + r(0x2019) + "t", "don't"},
+		{"апостроф во втором слове фразы", "it" + r(0x2019) + "s ok", "it's ok"},
+		{"закрывающая лапка после буквы, а не апостроф", r(0x2018) + "цитата" + r(0x2019), "«цитата»"},
+		{"закрывающая лапка перед знаком препинания", "фраза" + r(0x2019) + ", дальше", "фраза», дальше"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if code := runSymbolsHook(t, c.dirty); code == 0 {
+				t.Fatalf("образец %q не ловится текущим хуком, случай устарел", c.dirty)
+			}
+			if got := toKeyboard(c.dirty); got != c.want {
+				t.Fatalf("toKeyboard(%q) = %q, ждал %q", c.dirty, got, c.want)
+			} else if code := runSymbolsHook(t, got); code != 0 {
+				t.Fatalf("после toKeyboard хук всё ещё против %q (код %d)", got, code)
+			}
+		})
+	}
+}
+
+// TestToKeyboardRemovesZWJFromEmoji: соединитель ZWJ (U+200D) между эмодзи
+// уходит вместе с ними, а не в default-ветку «?» (ревью DK-1056, замечание
+// 2). Без этого составная эмодзи (семья, тон кожи) оставляет в тексте мусор
+// из вопросительных знаков на месте соединителя.
+func TestToKeyboardRemovesZWJFromEmoji(t *testing.T) {
+	r := func(code int) string { return string(rune(code)) }
+	cases := []struct{ name, dirty, want string }{
+		{
+			"семейная эмодзи с двумя соединителями",
+			"семья " + r(0x1f468) + r(0x200d) + r(0x1f469) + r(0x200d) + r(0x1f466),
+			"семья ",
+		},
+		{
+			"эмодзи с модификатором тона кожи",
+			"жест " + r(0x1f44d) + r(0x1f3fc),
+			"жест ",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if code := runSymbolsHook(t, c.dirty); code == 0 {
+				t.Fatalf("образец %q не ловится текущим хуком, случай устарел", c.dirty)
+			}
+			if got := toKeyboard(c.dirty); got != c.want {
+				t.Fatalf("toKeyboard(%q) = %q, ждал %q", c.dirty, got, c.want)
+			} else if code := runSymbolsHook(t, got); code != 0 {
+				t.Fatalf("после toKeyboard хук всё ещё против %q (код %d)", got, code)
+			}
+		})
+	}
+}

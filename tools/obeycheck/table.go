@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 func pad(s string, w int) string {
@@ -168,20 +169,36 @@ var arrowGlyph = map[rune]string{
 // (DK-1056). Разбор идёт по тем же классам, что в ADVICE хука
 // check-symbols.py, и тест TestToKeyboardMatchesHook гоняет по случаю каждый
 // класс через сам хук, чтобы таблицы не разошлись на следующей правке одного
-// без другого.
+// без другого. U+2019 разбирается не по одному символу, а по соседям:
+// между двумя буквами это апостроф внутри слова («don't»), а не закрывающая
+// кавычка, и обычной замене на «»» он не подчиняется (ревью DK-1056).
 func toKeyboard(s string) string {
 	if !badSymbol.MatchString(s) {
 		return s
 	}
+	rs := []rune(s)
 	var b strings.Builder
-	for _, r := range s {
+	for i, r := range rs {
+		if r == rune(0x2019) && isLetterAt(rs, i-1) && isLetterAt(rs, i+1) {
+			b.WriteString("'")
+			continue
+		}
 		b.WriteString(keyboardRune(r))
 	}
 	return b.String()
 }
 
-// keyboardRune отдаёт клавиатурную замену одного символа. Границы классов
-// собраны числом через rune(0x...) по той же причине, что у arrowGlyph.
+// isLetterAt отвечает, стоит ли на месте i буква: индекс вне текста letter не
+// считается, конец и начало строки апостроф внутри слова не заводят.
+func isLetterAt(rs []rune, i int) bool {
+	return i >= 0 && i < len(rs) && unicode.IsLetter(rs[i])
+}
+
+// keyboardRune отдаёт клавиатурную замену одного символа без оглядки на
+// соседей; апостроф U+2019 между буквами разбирает toKeyboard раньше, сюда он
+// со своим обычным разбором (закрывающая ёлочка) доходит только вне слова.
+// Границы классов собраны числом через rune(0x...) по той же причине, что у
+// arrowGlyph.
 func keyboardRune(r rune) string {
 	switch {
 	case !badSymbol.MatchString(string(r)):
@@ -203,8 +220,10 @@ func keyboardRune(r rune) string {
 			return g
 		}
 		return "->"
-	case (r >= rune(0x2600) && r <= rune(0x27bf)) || r == rune(0xfe0f) || (r >= rune(0x1f000) && r <= rune(0x1faff)):
+	case (r >= rune(0x2600) && r <= rune(0x27bf)) || r == rune(0xfe0f) || r == rune(0x200d) || (r >= rune(0x1f000) && r <= rune(0x1faff)):
 		// эмодзи: убрать, замены им нет (та же подсказка, что у хука).
+		// Соединитель ZWJ (0x200d) уходит вместе с ними, иначе составная
+		// эмодзи (семья, тон кожи) оставляет по знаку вопроса на стыке.
 		return ""
 	default:
 		// символ вне раскладок и вне известных классов: клавиатурного

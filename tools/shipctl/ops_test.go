@@ -493,6 +493,31 @@ func TestReviewNotesVerdictPhrase(t *testing.T) {
 	}
 }
 
+// TestReviewNotesSecondRoundVerdict: второй круг ревью пишет новую строку
+// вердикта своим sha (taskctl cmdReviewClean, DK-812), и раздел с двумя
+// такими строками ворота слияния читают закрытым ревью наравне с одной.
+func TestReviewNotesSecondRoundVerdict(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	write(t, root, "docs/tasks/XR-001.md",
+		"# XR-001: починка бага\n\n## Сценарий проверки\n\nАгентский: `git log -1`, ждём коммит правки.\n"+
+			fixtureReviewLevel+"\n- гонка в close: исправлено\n- нейминг: отклонено, стиль проекта\n"+
+			"- Вердикт: без замечаний. Путь от симптома пройден по ops.go.\n"+
+			"- Вердикт: без замечаний до a1b2c3d. Второй круг после красного слияния.\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 второй круг ревью")
+	open, err := openReviewNotes(root, "XR-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("открытых замечаний быть не должно, получили: %v", open)
+	}
+	branchWithFix(t, root)
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {
+		t.Fatalf("merge с двумя чистыми вердиктами должен пройти: %v", err)
+	}
+}
+
 func TestMergeRedTests(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	branchWithFix(t, root)

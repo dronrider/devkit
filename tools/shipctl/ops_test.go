@@ -9,9 +9,14 @@ import (
 	"testing"
 )
 
+// gitT форсирует commit.gpgsign и tag.gpgsign в false флагом -c: подпись
+// фикстур зависит от глобального конфига машины (DK-1060), а -c читается
+// поверх него и не трогает то, что тест сам пишет в локальный .git/config
+// (так регрессионный тест на DK-1060 включает tag.gpgsign себе явно).
 func gitT(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	base := []string{"-C", dir, "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"}
+	out, err := exec.Command("git", append(base, args...)...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
@@ -1300,5 +1305,53 @@ func TestMergeSewnBranchKeepsHistory(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Fatalf("ребейз расплющил историю, нет %q:\n%s", want, log)
 		}
+	}
+}
+
+// TestDeployTagUnderGPGSign: DK-1060. При tag.gpgsign=true в конфиге репозитория
+// голый `git tag` становится аннотированным и без сообщения падает «no tag
+// message?»: до правки ни одно из четырёх мест простановки и сдвига тега
+// deployed в ops.go этого не переживало. Тест проходит все четыре подряд:
+// первый поездной merge заводит тег, ship его двигает, второй одиночный merge
+// двигает уже существующий тег, а revert не поездной и не docs-only задачи
+// двигает его в третий раз. gitT форсирует подпись в false своим -c, поэтому
+// tag.gpgsign включается здесь явной записью в локальный .git/config.
+func TestDeployTagUnderGPGSign(t *testing.T) {
+	root, _ := setup(t, rowInProg+rowInProg3, "")
+	gitT(t, root, "config", "tag.gpgsign", "true")
+
+	branchFor(t, root, "XR-001", "xr-001-fix", "a.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true", Train: true}); err != nil {
+		t.Fatalf("поездной merge с включённой подписью тегов: %v", err)
+	}
+	gitT(t, root, "rev-parse", "--verify", "deployed") // первый merge --train завёл тег
+
+	write(t, root, ".devkit/deploy.local", "deploy = touch shipped.marker\nautonomous = false\n")
+	if _, err := cmdShip(root, ShipParams{Deploy: "true"}); err != nil {
+		t.Fatalf("ship с включённой подписью тегов: %v", err)
+	}
+	afterShip := gitT(t, root, "rev-parse", "deployed")
+	if afterShip != gitT(t, root, "rev-parse", "main^") {
+		t.Fatal("тег deployed не сдвинут выкатом при включённой подписи")
+	}
+
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureReviewLevel)
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 файл")
+	branchFor(t, root, "XR-003", "xr-003-fix", "b.txt")
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true"}); err != nil {
+		t.Fatalf("одиночный merge на существующий тег с включённой подписью: %v", err)
+	}
+	afterMerge := gitT(t, root, "rev-parse", "deployed")
+	if afterMerge == afterShip {
+		t.Fatal("тег deployed не сдвинут одиночным merge при включённой подписи")
+	}
+
+	if _, err := cmdRevert(root, RevertParams{ID: "XR-003"}); err != nil {
+		t.Fatalf("revert с включённой подписью тегов: %v", err)
+	}
+	afterRevert := gitT(t, root, "rev-parse", "deployed")
+	if afterRevert == afterMerge {
+		t.Fatal("тег deployed не сдвинут откатом при включённой подписи")
 	}
 }

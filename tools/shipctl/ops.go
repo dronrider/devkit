@@ -1220,7 +1220,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	// окно поезда она бы открыла на пустом месте.
 	if p.Train && !docsRange {
 		if _, err := git(root, "rev-parse", "--verify", deployTag); err != nil {
-			if _, err := git(root, "tag", deployTag, preSha); err != nil {
+			if _, err := git(root, "tag", "--no-sign", deployTag, preSha); err != nil {
 				return "", err
 			}
 		}
@@ -1357,7 +1357,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	// с поездами (тег есть), тег двигается и здесь, иначе окно поезда тащило
 	// бы за собой давно выкаченные и закрытые задачи.
 	if hasTag(root) {
-		if _, err := git(root, "tag", "-f", deployTag, main); err != nil {
+		if _, err := git(root, "tag", "--no-sign", "-f", deployTag, main); err != nil {
 			return "", err
 		}
 	}
@@ -1600,7 +1600,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	// (поезд с этого места пуст, следующий копится заново), и пушится сразу
 	// за сдвигом, до правок доски: упади дальше что угодно, вторая машина уже
 	// не посчитает выкаченный поезд стоящим и не выкатит его повторно.
-	if _, err := git(root, "tag", "-f", deployTag, main); err != nil {
+	if _, err := git(root, "tag", "--no-sign", "-f", deployTag, main); err != nil {
 		return "", err
 	}
 	if doPush {
@@ -2067,7 +2067,7 @@ func cmdRevert(root string, p RevertParams) (string, error) {
 	// У задачи из поезда и у документной правки прод не менялся, тег стоит
 	// где стоял.
 	if !inTrain && !docsRevert && hasTag(root) {
-		if _, err := git(root, "tag", "-f", deployTag, main); err != nil {
+		if _, err := git(root, "tag", "--no-sign", "-f", deployTag, main); err != nil {
 			return "", err
 		}
 	}

@@ -10,10 +10,13 @@ import (
 
 // corpGitT гоняет git и валит тест на ошибке. Свой помощник, а не соседский:
 // файл целиком одинаков в трёх утилитах, и таскать его между ними проще без
-// связей с остальными тестами модуля.
+// связей с остальными тестами модуля. commit.gpgsign и tag.gpgsign форсированы
+// в false флагом -c: подпись фикстур не должна зависеть от глобального
+// конфига машины (DK-1060).
 func corpGitT(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	base := []string{"-C", dir, "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"}
+	out, err := exec.Command("git", append(base, args...)...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}

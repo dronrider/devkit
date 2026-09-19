@@ -124,6 +124,41 @@ func runSecretCLI(t *testing.T, bin, home, claudecode string) (out string, code 
 // именно отказ печати. Признак тот же, что у devkitctl doctor --fix
 // (CLAUDECODE=1), isatty тут не годится: шаги человека зовут команду
 // подстановкой `$(dashboard secret)`, и стандартный вывод там не терминал.
+// Ротация в агентской сессии отказывает целиком, а не крутит токен молча:
+// новый секрет гасит человеку все открытые входы, и побочный эффект без его
+// участия хуже отказа. Тест держит и второе: прежнее значение не попадает в
+// вывод отказа.
+func TestSecretCLIAgenticRotateKeepsToken(t *testing.T) {
+	bin := buildSecretCLI(t)
+	home := t.TempDir()
+	writeConf(t, home, "root = /x\ntoken = синтетический-токен-ротации\n")
+	var env []string
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "CLAUDECODE=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "HOME="+home, "CLAUDECODE=1")
+	cmd := exec.Command(bin, "secret", "--rotate")
+	cmd.Env = env
+	data, err := cmd.CombinedOutput()
+	out := string(data)
+	if err == nil {
+		t.Fatalf("ротация в агентской сессии прошла с кодом 0: %q", out)
+	}
+	if strings.Contains(out, "синтетический-токен-ротации") {
+		t.Fatalf("вывод отказа несёт значение токена: %q", out)
+	}
+	conf, readErr := os.ReadFile(confPath(home))
+	if readErr != nil {
+		t.Fatalf("конфиг не прочитался: %v", readErr)
+	}
+	if !strings.Contains(string(conf), "синтетический-токен-ротации") {
+		t.Fatalf("токен в конфиге сменился, хотя команда отказала: %q", string(conf))
+	}
+}
+
 func TestSecretCLIAgenticSessionRefuses(t *testing.T) {
 	bin := buildSecretCLI(t)
 	home := t.TempDir()

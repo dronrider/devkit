@@ -584,3 +584,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1081 | Проверяющий субагент ложится этапом «разработка», и ворота close сверяют его с ним самим | bug | P1 | 2026-09-20 | [tasks/archive/2026/DK-1081.md](tasks/archive/2026/DK-1081.md) |
 | DK-910 | taskctl list и show печатают живой этап задачи и признак «брошена» | task | P1 | 2026-09-20 | [tasks/archive/2026/DK-910.md](tasks/archive/2026/DK-910.md) |
 | DK-912 | taskctl spend сводит токены задачи по этапам из транскриптов | task | P1 | 2026-09-20 | [tasks/archive/2026/DK-912.md](tasks/archive/2026/DK-912.md) |
+| DK-913 | taskctl spend считает оркестрацию, постановку, фон и стенд сквозными статьями | task | P1 | 2026-09-20 | [tasks/archive/2026/DK-913.md](tasks/archive/2026/DK-913.md) |

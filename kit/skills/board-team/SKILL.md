@@ -44,7 +44,7 @@ disable-model-invocation: true
    должно, иначе pull отобьётся раньше доски.
 2. `taskctl show <ID>`. Строка в Backlog и без чужой пометки значит свободна;
    `In progress` значит занята, и захват на этом кончается.
-3. Обычное взятие в работу по `board-task`: `agentctl pick <ID> --record`,
+3. Обычное взятие в работу по `board-task`: `agentctl pick <ID>`,
    `taskctl move <ID> in-progress`.
 4. Коммит доски с пушем тем же шагом, флагами самой команды:
    `taskctl move <ID> in-progress -m "docs(tasks): <ID> взята в работу" --push`.

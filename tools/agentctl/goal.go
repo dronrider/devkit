@@ -233,7 +233,7 @@ func goalPathOf(root, path string) (string, error) {
 }
 
 // recordGoalSnap дописывает строку снимка в конец раздела «Журнал» файла цели.
-// Симметрия с pick --record: считает гейт, а пишет виток, и следующий вызов
+// Симметрия с записью этапа: считает гейт, а пишет виток, и следующий вызов
 // читает записанное как предыдущую точку цепочки.
 func recordGoalSnap(path string, s goalSnap) error {
 	data, err := os.ReadFile(path)

@@ -14,8 +14,8 @@ type stageMark struct {
 }
 
 // liveStages собирает живые этапы задач проекта: запись на задачу пишет
-// конвейер (agentctl pick --record, taskctl move), лежат они на уровне машины в
-// ~/.devkit/runs и разделены полем root. Дашборд их только читает: писать этап
+// конвейер (хук спавна субагента, shipctl, taskctl move), лежат они на
+// уровне машины в ~/.devkit/runs и разделены полем root. Дашборд их только читает: писать этап
 // он не вправе, иначе работа, поднятая из терминала, осталась бы неотмеченной.
 func (s *server) liveStages(projectPath string) map[string]stageMark {
 	out := map[string]stageMark{}

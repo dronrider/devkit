@@ -520,7 +520,10 @@ def tick_wait(cmd_run, proj, home, mode_file, heads_log):
         return step("строка %s не запарковалась" % MISSED, rc, out)
     # Запись этапа заводит корень в реестре ~/.devkit/runs, по которому тик и
     # находит доски задач вне цикла цели.
-    rc, out = cmd_run(["agentctl", "-C", str(proj), "stage", MISSED, "разработка"])
+    # Руками ставится ожидание, этапы работы кладут хук спавна и shipctl
+    # (DK-911); тику довольно корня из шапки записи, вид ему безразличен.
+    rc, out = cmd_run(["agentctl", "-C", str(proj), "stage", MISSED, "ждёт события",
+                       "--note", "стенд ожиданий: тик добирает пропущенное"])
     if rc != 0:
         return step("запись этапа не легла: тику не по чему найти корень", rc, out)
     rc, out = hand_merge(cmd_run, proj, HAND)

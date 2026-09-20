@@ -148,3 +148,27 @@ func TestElapsedRefusesExtraPositional(t *testing.T) {
 		t.Fatalf("вместо отказа: %s", out)
 	}
 }
+
+// TestCmdElapsedClosedStage (DK-911, замечание ревью): этап исполнителя,
+// закрытый его концом, лимитом не меряется, команда отвечает как без этапа.
+func TestCmdElapsedClosedStage(t *testing.T) {
+	root := setup(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	old := timeNow
+	defer func() { timeNow = old }()
+	now := time.Date(2026, 9, 20, 14, 0, 0, 0, time.Local)
+	timeNow = func() time.Time { return now }
+	s := stage.Stage{Kind: stage.Dev, Start: now.Add(-5 * time.Hour), End: now.Add(-3 * time.Hour), Note: "субагент opus/high по определению exec-high"}
+	if err := stage.Put(home, root, "XR-005", s); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdElapsed(root, "XR-005")
+	if err != nil {
+		t.Fatalf("cmdElapsed: %v", err)
+	}
+	want := "этап не открыт, лимит не проверить: разработка закрыта писателем 2026-09-20T11:00:00"
+	if msg != want {
+		t.Fatalf("cmdElapsed по закрытому этапу = %q, ждал %q", msg, want)
+	}
+}

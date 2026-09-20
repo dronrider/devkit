@@ -212,6 +212,10 @@ func closeVerifyGate(root, id string) error {
 	if !ok {
 		return nil
 	}
+	if note, missing := stage.ExecutorMissing(lines, pending); missing {
+		return fmt.Errorf("%s: у последнего этапа работы над кодом исполнитель не назван («%s»): субагент поднят без параметра model, и модель сессии в запись не легла, сверить прогонявшего сценарий не с кем; впиши модель в текст этой строки «Хода работы», например «субагент opus/high по определению exec-high», и повтори закрытие",
+			id, note)
+	}
 	dev, ok := stage.LastExecutor(lines, pending)
 	if !ok {
 		return nil

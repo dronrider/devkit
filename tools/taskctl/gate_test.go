@@ -679,3 +679,23 @@ func TestMoveDryRunKeepsRow(t *testing.T) {
 		t.Fatalf("сухой прогон правил доску:\n%s", after)
 	}
 }
+
+// TestCloseRefusesNamelessExecutor (DK-911, замечание ревью): запись хука без
+// модели (спавн без параметра model и без транскрипта сессии) не даёт сверить
+// прогонявшего с автором, и ворота отказывают с причиной, а не молчат.
+func TestCloseRefusesNamelessExecutor(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := setup(t)
+	stagedDoc(t, root, "XR-005",
+		"- Разработка: субагент по определению exec-high, работа d1, 2026-08-30 10:00-11:00.",
+		verifyStageLine("sonnet"))
+	err := closeVerifyGate(root, "XR-005")
+	if err == nil {
+		t.Fatal("ворота промолчали по этапу без исполнителя")
+	}
+	for _, want := range []string{"исполнитель не назван", "без параметра model", "впиши модель"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("в отказе нет %q: %v", want, err)
+		}
+	}
+}

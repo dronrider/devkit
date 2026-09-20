@@ -252,3 +252,31 @@ func TestStageRoundCountsSameKind(t *testing.T) {
 		t.Fatalf("круг пустой записи %d", got)
 	}
 }
+
+// TestAskStageNeedsSession: уточнение по словарю ведёт живая сессия
+// (stage.NeedsSession), и запись от мёртвой сессии печатается брошенной, как
+// разработка. Ожидание снаружи хвоста о сессии не получает.
+func TestAskStageNeedsSession(t *testing.T) {
+	root := checkBoardSetup(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	old := timeNow
+	defer func() { timeNow = old }()
+	timeNow = func() time.Time { return stageNow }
+	main := stage.MainRoot(root)
+	writePeer(t, home, "s-dead", deadPID(t), stageNow.Add(-time.Minute))
+	openAs(t, home, main, "XR-020", stage.Ask, "s-dead", stageNow.Add(-5*time.Hour))
+	openAs(t, home, main, "XR-010", stage.Outside, "s-dead", stageNow.Add(-5*time.Hour))
+	out, err := cmdList(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"  этап: уточнение, 5 часов, сессии нет, брошена",
+		"  этап: снаружи, 5 часов\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("в list нет %q:\n%s", want, out)
+		}
+	}
+}

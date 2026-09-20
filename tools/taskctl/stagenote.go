@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -32,7 +30,7 @@ func loadStageView(root string) *stageView {
 		return nil
 	}
 	v := &stageView{recs: map[string]stage.Record{}, now: timeNow()}
-	for _, rec := range stageRecords(home, stage.MainRoot(root)) {
+	for _, rec := range stage.List(home, stage.MainRoot(root)) {
 		if _, ok := rec.Live(); ok {
 			v.recs[rec.ID] = rec
 		}
@@ -44,47 +42,6 @@ func loadStageView(root string) *stageView {
 	v.binds = sessions.LoadAll(home)
 	return v
 }
-
-// stageRecords читает записи проекта root. Корень сверяется по настоящему
-// пути, а не по написанию: писатели этапов берут корень у git, который
-// разворачивает символические ссылки, а читатель мог получить корень с
-// экрана или из аргумента -C как есть, и на машинах с домом за ссылкой (macOS,
-// /var против /private/var) те же записи выпадали бы из списка.
-func stageRecords(home, root string) []stage.Record {
-	paths, err := filepath.Glob(filepath.Join(stage.Dir(home), "*.run"))
-	if err != nil {
-		return nil
-	}
-	sort.Strings(paths)
-	want := realPath(root)
-	var out []stage.Record
-	for _, p := range paths {
-		rec, err := stage.Load(p)
-		if err != nil || rec.ID == "" || realPath(rec.Root) != want {
-			continue
-		}
-		out = append(out, rec)
-	}
-	return out
-}
-
-// realPath приводит путь к виду без символических ссылок; недоступный путь
-// остаётся как есть, чтобы записи несуществующих корней сверялись хотя бы по
-// написанию.
-func realPath(p string) string {
-	p = filepath.Clean(p)
-	if real, err := filepath.EvalSymlinks(p); err == nil {
-		return real
-	}
-	return p
-}
-
-// waitStage отвечает, ждёт ли этап чего-то снаружи: за таким этапом живой
-// сессии нет по смыслу, и признак «брошена» ему не ставится (решение человека
-// по DK-910, развилка «секции»). Это единственная точка, где список судит о
-// виде этапа: словарь DK-911 приносит предикат ожидания, и тогда тело этой
-// функции меняется на него одной строкой.
-func waitStage(kind string) bool { return kind == stage.Outside || kind == stage.Ask }
 
 // stageRound это круг живого этапа: сколько этапов того же вида накопил пакет
 // записи, живой включая. Отдельного поля круга в записи нет, и заводить его
@@ -144,7 +101,11 @@ func (v *stageView) mark(id string) *jsonStage {
 	}
 	live, _ := rec.Live()
 	m := &jsonStage{Kind: live.Kind, Since: live.Start.Unix(), Round: stageRound(rec), Age: ageSince(live.Start, v.now)}
-	if !waitStage(live.Kind) {
+	// Хвост о сессии стоит там, где этап требует живой сессии (решение
+	// человека по DK-910, развилка «секции»). Отвечает на это словарь этапов,
+	// stage.NeedsSession, своего списка у списка нет: словарь DK-911 меняет
+	// ответ у ожиданий, и строка переедет вместе с ним.
+	if stage.NeedsSession(live.Kind) {
 		m.Session = lifeWords(peers.Judge(v.peers, v.taskSessions(id, live), v.now))
 	}
 	return m
@@ -177,6 +138,9 @@ func lifeWords(l peers.Life) string {
 	case peers.Alive:
 		return "сессия жива"
 	case peers.Silent:
+		if l.Silence == 0 {
+			return "сессия молчит, касания не записано"
+		}
 		m := int(l.Silence.Minutes())
 		return fmt.Sprintf("сессия молчит %d %s", m, pluralMinutes(m))
 	}

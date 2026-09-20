@@ -349,7 +349,7 @@ func TestWakeRaisesWithPickedModel(t *testing.T) {
 	if !strings.Contains(runner, "XR-004 -C ") || !strings.Contains(runner, "-- claude --permission-mode auto --model sonnet") {
 		t.Fatalf("голова вопроса поднята без модели вердикта:\n%s\nотчёт:\n%s", runner, out)
 	}
-	if pick := strings.TrimSpace(readStub(logs, "pick.log")); pick != "claude-code pick XR-004 --record" {
+	if pick := strings.TrimSpace(readStub(logs, "pick.log")); pick != "claude-code pick XR-004" {
 		t.Fatalf("вердикт спрошен не так: %q", pick)
 	}
 }

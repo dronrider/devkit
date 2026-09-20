@@ -19,7 +19,7 @@ func TestParseLineReadsPane(t *testing.T) {
 func TestLineWritesPaneAndLastKeepsIt(t *testing.T) {
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.Local)
 	line := Line(now, "aaa-1", Bind{Task: "DK-931", Tmux: "task-DK-931", Pane: "%9"}, "taskctl run")
-	if !strings.Contains(line, " tmux task-DK-931 панель %9\n") {
+	if !strings.Contains(line, " tmux task-DK-931 панель %9 носитель -\n") {
 		t.Fatalf("строка %q", line)
 	}
 	_, first, _ := ParseLine(line)

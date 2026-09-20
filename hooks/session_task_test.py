@@ -38,7 +38,7 @@ def start(cwd, session=SID, transcript="/home/t/.claude/projects/p/%s.jsonl" % S
 
 
 REG_KEYS = ("сессия", "задача", "проект", "дерево", "транскрипт", "источник",
-            "повод", "tmux", "панель", "родитель")
+            "повод", "tmux", "панель", "родитель", "носитель")
 
 
 def fields(line):
@@ -219,9 +219,27 @@ class TestRecord(unittest.TestCase):
                                    env={"DEVKIT_TMUX": "task-DK-431"}, now=0)
         self.assertEqual(line.split(" ")[1::2],
                          ["сессия", "задача", "проект", "дерево", "транскрипт",
-                          "источник", "повод", "tmux", "панель", "родитель"])
+                          "источник", "повод", "tmux", "панель", "родитель",
+                          "носитель"])
         self.assertTrue(line.endswith(
-            " источник дерево повод resume tmux task-DK-431 панель - родитель -\n"), line)
+            " источник дерево повод resume tmux task-DK-431 панель - родитель - "
+            "носитель -\n"), line)
+
+    def test_carrier_tells_headless_from_a_talk(self):
+        # Разговор человека и безголовый заход по реестру были неотличимы, и
+        # свод расхода относил их к одной статье. Носитель пишется из
+        # окружения поднявшего, а виток цели старше безголовости: цикл ходит и
+        # печатным клиентом дашборда, а статья у него своя (DK-913).
+        tree = Tree(self.tmp, "devkit-dk-431")
+        f, _ = fields(session_task.record(start(tree.root), env={}))
+        self.assertEqual(f["носитель"], "-")
+        f, _ = fields(session_task.record(
+            start(tree.root), env={"DEVKIT_HEADLESS": "дашборд"}))
+        self.assertEqual(f["носитель"], "дашборд")
+        f, _ = fields(session_task.record(
+            start(tree.root),
+            env={"DEVKIT_HEADLESS": "дашборд", "DEVKIT_GOAL_SHELL": "1"}))
+        self.assertEqual(f["носитель"], "виток")
 
     def test_pane_of_any_window_is_written(self):
         # Окно, открытое руками внутри tmux: имени от поднявшего нет, а адрес

@@ -40,6 +40,12 @@ type Bind struct {
 	// нет вовсе.
 	Pane string
 	Time string
+	// Carrier это носитель сессии: чем она поднята, если не человеком.
+	// Пусто у разговора, «виток» у оболочки цикла цели (DEVKIT_GOAL_SHELL),
+	// у безголового захода слово из DEVKIT_HEADLESS («дашборд», «taskctl
+	// run»). Без поля безголовый заход и разговор человека по реестру
+	// неотличимы, а свод расхода относит их к разным статьям (DK-913).
+	Carrier string
 	// Parent это разговор, раздавший работу этой сессии. Пусто у сессии,
 	// которую подняли сами: из терминала, кнопкой дашборда, руками. Непустой
 	// родитель значит, что сессия это чужая работа, а не разговор человека, и
@@ -52,7 +58,7 @@ type Bind struct {
 var keys = map[string]bool{
 	"сессия": true, "задача": true, "проект": true, "дерево": true,
 	"транскрипт": true, "источник": true, "повод": true, "tmux": true,
-	"панель": true, "родитель": true,
+	"панель": true, "родитель": true, "носитель": true,
 }
 
 // dashless читает пустое поле, записанное дефисом.
@@ -106,6 +112,7 @@ func ParseLine(line string) (string, Bind, bool) {
 		Tmux:       dashless(vals["tmux"]),
 		Pane:       dashless(vals["панель"]),
 		Parent:     dashless(vals["родитель"]),
+		Carrier:    dashless(vals["носитель"]),
 		Time:       f[0],
 	}
 	return sid, b, true
@@ -349,6 +356,12 @@ func Last(recs []Bind) Bind {
 		if r.Parent != "" {
 			b.Parent = r.Parent
 		}
+		// Носитель называется при рождении сессии тем же порядком, что и
+		// родитель: записи по факту работы кладут утилиты доски, и про
+		// окружение поднявшего им не известно ничего.
+		if r.Carrier != "" {
+			b.Carrier = r.Carrier
+		}
 		b.Task, b.Source, b.Time = r.Task, r.Source, r.Time
 	}
 	return b
@@ -366,7 +379,8 @@ func Line(now time.Time, sid string, b Bind, why string) string {
 	return now.Format(Stamp) + " сессия " + dash(sid) + " задача " + dash(b.Task) +
 		" проект " + dash(b.Project) + " дерево " + dash(b.Tree) +
 		" транскрипт " + dash(b.Transcript) + " источник " + dash(b.Source) +
-		" повод " + dash(why) + " tmux " + dash(b.Tmux) + " панель " + dash(b.Pane) + "\n"
+		" повод " + dash(why) + " tmux " + dash(b.Tmux) + " панель " + dash(b.Pane) +
+		" носитель " + dash(b.Carrier) + "\n"
 }
 
 // Limit и Keep это берега реестра, те же, что у писателя на python

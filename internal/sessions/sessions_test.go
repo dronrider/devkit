@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 const record = "%s сессия %s задача %s проект devkit дерево /Users/r/projects/devkit-dk-432 " +
@@ -302,5 +303,36 @@ func TestTrimDropsOldestWorkFirst(t *testing.T) {
 	}
 	if got := Trim(lines, 5); !reflect.DeepEqual(got, lines) {
 		t.Errorf("короткий журнал тронут: %q", got)
+	}
+}
+
+// TestCarrierReadAndCarried: носитель сессии читается из строки реестра и
+// добирается из прежней записи, когда свежую кладёт утилита доски: про
+// окружение поднявшего ей не известно ничего (DK-913).
+func TestCarrierReadAndCarried(t *testing.T) {
+	log := "2026-09-18T10:00:00 сессия s1 задача - проект devkit дерево /tmp/devkit " +
+		"транскрипт /tmp/s1.jsonl источник - повод startup tmux - панель - родитель - носитель виток\n" +
+		"2026-09-18T11:00:00 сессия s1 задача DK-913 проект devkit дерево /tmp/devkit " +
+		"транскрипт - источник работа повод taskctl move tmux - панель - родитель -\n"
+	recs := All([]byte(log))["s1"]
+	if len(recs) != 2 {
+		t.Fatalf("записей %d, ждал 2", len(recs))
+	}
+	if recs[0].Carrier != "виток" {
+		t.Fatalf("носитель первой записи %q", recs[0].Carrier)
+	}
+	last := Last(recs)
+	if last.Carrier != "виток" {
+		t.Fatalf("носитель потерян свежей записью: %q", last.Carrier)
+	}
+	if last.Task != "DK-913" {
+		t.Fatalf("задача свежей записи %q", last.Task)
+	}
+	line := Line(time.Date(2026, 9, 18, 12, 0, 0, 0, time.Local), "s2", Bind{Carrier: "дашборд"}, "startup")
+	if !strings.Contains(line, " носитель дашборд") {
+		t.Fatalf("писатель не кладёт носителя: %s", line)
+	}
+	if _, b, ok := ParseLine(line); !ok || b.Carrier != "дашборд" {
+		t.Fatalf("своя же строка не прочиталась: %s", line)
 	}
 }

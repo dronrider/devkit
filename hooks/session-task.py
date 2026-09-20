@@ -22,7 +22,7 @@
 
   <время> сессия <ID> задача <DK-431> проект <devkit> дерево <путь>
   транскрипт <путь> источник <слово> повод <startup> tmux <имя> панель <%N>
-  родитель <ID>
+  родитель <ID> носитель <слово>
 
 Задачу хук берёт из двух мест. Переменная DEVKIT_TASK это заказ того, кто
 поднял сессию: её ставит дашборд в начало команды сессии, и только так узнаётся
@@ -260,6 +260,25 @@ def tree_task(root):
     return m.group(1).upper(), name[:len(name) - len(m.group(1))].rstrip("-")
 
 
+# Носители сессии, поднятой не человеком. Оболочка цикла цели зовётся витком,
+# а безголовый заход называет себя сам словом из DEVKIT_HEADLESS («дашборд»,
+# «taskctl run»). Строка без носителя это разговор человека, и свод расхода
+# относит её к другой статье (DK-913).
+GOAL_SHELL_ENV = "DEVKIT_GOAL_SHELL"
+HEADLESS_ENV = "DEVKIT_HEADLESS"
+GOAL_CARRIER = "виток"
+
+
+def carrier(env=None):
+    """Чем поднята сессия. Виток старше безголовости: цикл цели ходит и через
+    печатного клиента дашборда, и тогда стоят обе переменные, а статья у витка
+    своя, на ID цели."""
+    env = os.environ if env is None else env
+    if (env.get(GOAL_SHELL_ENV) or "").strip():
+        return GOAL_CARRIER
+    return (env.get(HEADLESS_ENV) or "").strip()
+
+
 def record(start, env=None, now=None, terminal=client_terminal):
     """Строка журнала про родившуюся сессию."""
     env = os.environ if env is None else env
@@ -284,11 +303,11 @@ def record(start, env=None, now=None, terminal=client_terminal):
         why = "%s, %s" % (why, pane_why)
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))
     return ("%s сессия %s задача %s проект %s дерево %s транскрипт %s "
-            "источник %s повод %s tmux %s панель %s родитель %s\n") % (
+            "источник %s повод %s tmux %s панель %s родитель %s носитель %s\n") % (
         stamp, dashless(start.session), dashless(task), dashless(project),
         dashless(root), dashless(start.transcript), dashless(source),
         dashless(why), dashless(name), dashless(pane),
-        dashless(parent_session(env, start.session)))
+        dashless(parent_session(env, start.session)), dashless(carrier(env)))
 
 
 # Ходы, которые считаются работой в дереве задачи: правка файла это работа, а

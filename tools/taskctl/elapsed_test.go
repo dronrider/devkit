@@ -153,15 +153,15 @@ func TestCmdElapsedCountsFromLiveStage(t *testing.T) {
 	if msg != want {
 		t.Fatalf("cmdElapsed = %q, ждал %q", msg, want)
 	}
-	// Ожидание снаружи лимитом не меряется: сдавать хвост там некому.
-	if err := stage.Open(home, root, "XR-005", stage.Outside, "", now.Add(-300*time.Minute)); err != nil {
+	// Ожидание лимитом не меряется: сдавать хвост там некому.
+	if err := stage.Open(home, root, "XR-005", stage.WaitHuman, "", now.Add(-300*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	msg, err = cmdElapsed(root, "XR-005")
 	if err != nil {
 		t.Fatalf("cmdElapsed: %v", err)
 	}
-	want = "этап снаружи открыт 300 минут назад (с 2026-09-10T10:30:00), ожидание, лимит не считается"
+	want = "этап ждёт человека открыт 300 минут назад (с 2026-09-10T10:30:00), ожидание, лимит не считается"
 	if msg != want {
 		t.Fatalf("cmdElapsed у ожидания = %q, ждал %q", msg, want)
 	}

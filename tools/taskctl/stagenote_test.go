@@ -55,7 +55,7 @@ func openAs(t *testing.T, home, root, id, kind, sid string, at time.Time) {
 }
 
 // stageBoard собирает доску с четырьмя записями этапов на четыре случая:
-// живая сессия со вторым кругом ревью, ожидание снаружи, мёртвый процесс и
+// живая сессия со вторым кругом ревью, ожидание человека, мёртвый процесс и
 // живая сессия, молчащая дольше рубежа.
 func stageBoard(t *testing.T) (root, home string) {
 	t.Helper()
@@ -74,7 +74,7 @@ func stageBoard(t *testing.T) (root, home string) {
 	openAs(t, home, main, "XR-020", stage.Dev, "s-live", stageNow.Add(-5*time.Hour))
 	openAs(t, home, main, "XR-020", stage.Review, "s-live", stageNow.Add(-40*time.Minute))
 	openAs(t, home, main, "XR-020", stage.Review, "s-live", stageNow.Add(-12*time.Minute))
-	openAs(t, home, main, "XR-010", stage.Outside, "s-dead", stageNow.Add(-3*time.Hour))
+	openAs(t, home, main, "XR-010", stage.WaitHuman, "s-dead", stageNow.Add(-3*time.Hour))
 	openAs(t, home, main, "XR-011", stage.Dev, "s-dead", stageNow.Add(-49*time.Hour))
 	openAs(t, home, main, "XR-012", stage.Dev, "s-quiet", stageNow.Add(-50*time.Minute))
 	return root, home
@@ -90,7 +90,7 @@ func TestListPrintsStageLineInEverySection(t *testing.T) {
 		"| XR-020 | В работе",
 		"  этап: ревью, круг 2, 12 минут, сессия жива",
 		"| XR-010 | Со сценарием агента и выкатом",
-		"  этап: снаружи, 3 часа",
+		"  этап: ждёт человека, 3 часа",
 		"| XR-011 | Пользовательская проверка без выката [приёмка: user]",
 		"  этап: разработка, 2 дня, сессии нет, брошена",
 		"| XR-012 | Без файла задачи",
@@ -100,12 +100,12 @@ func TestListPrintsStageLineInEverySection(t *testing.T) {
 			t.Errorf("в list нет %q:\n%s", want, out)
 		}
 	}
-	// Ожидание снаружи живой сессии не требует, и слов о ней под ним нет.
-	if strings.Contains(out, "снаружи, 3 часа, сесси") {
-		t.Fatalf("у ожидания снаружи появился признак сессии:\n%s", out)
+	// Ожидание живой сессии не требует, и слов о ней под ним нет.
+	if strings.Contains(out, "ждёт человека, 3 часа, сесси") {
+		t.Fatalf("у ожидания появился признак сессии:\n%s", out)
 	}
 	// Строка этапа идёт второй под строкой доски, после пометок.
-	if got := lineAfter(t, out, "  код слит, вид agent, без отметки smoke"); got != "  этап: снаружи, 3 часа" {
+	if got := lineAfter(t, out, "  код слит, вид agent, без отметки smoke"); got != "  этап: ждёт человека, 3 часа" {
 		t.Fatalf("после пометок Check стоит %q, жду строку этапа", got)
 	}
 }
@@ -151,8 +151,8 @@ func TestListJSONCarriesStageFields(t *testing.T) {
 	if since, _ := live["stage_since"].(float64); int64(since) != stageNow.Add(-12*time.Minute).Unix() {
 		t.Fatalf("начало этапа %v, жду %d", live["stage_since"], stageNow.Add(-12*time.Minute).Unix())
 	}
-	if _, has := rows["XR-010"]["stage_session"]; has || rows["XR-010"]["stage"] != "снаружи" {
-		t.Fatalf("ожидание снаружи: %v", rows["XR-010"])
+	if _, has := rows["XR-010"]["stage_session"]; has || rows["XR-010"]["stage"] != "ждёт человека" {
+		t.Fatalf("ожидание человека: %v", rows["XR-010"])
 	}
 	if rows["XR-011"]["stage_session"] != "сессии нет, брошена" || rows["XR-012"]["stage_session"] != "сессия молчит 25 минут" {
 		t.Fatalf("признаки сессии: %v / %v", rows["XR-011"]["stage_session"], rows["XR-012"]["stage_session"])
@@ -253,10 +253,12 @@ func TestStageRoundCountsSameKind(t *testing.T) {
 	}
 }
 
-// TestAskStageNeedsSession: уточнение по словарю ведёт живая сессия
-// (stage.NeedsSession), и запись от мёртвой сессии печатается брошенной, как
-// разработка. Ожидание снаружи хвоста о сессии не получает.
-func TestAskStageNeedsSession(t *testing.T) {
+// TestWaitStagesHaveNoSessionTail: ожидания по словарю живой сессии не
+// требуют (stage.NeedsSession), и запись от мёртвой сессии печатается без
+// хвоста, а не брошенной. Слова прежнего словаря «уточнение» и «снаружи» из
+// старой записи читаются ожиданиями (stage.Canon) и печатаются нынешними
+// словами.
+func TestWaitStagesHaveNoSessionTail(t *testing.T) {
 	root := checkBoardSetup(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -265,18 +267,27 @@ func TestAskStageNeedsSession(t *testing.T) {
 	timeNow = func() time.Time { return stageNow }
 	main := stage.MainRoot(root)
 	writePeer(t, home, "s-dead", deadPID(t), stageNow.Add(-time.Minute))
-	openAs(t, home, main, "XR-020", stage.Ask, "s-dead", stageNow.Add(-5*time.Hour))
-	openAs(t, home, main, "XR-010", stage.Outside, "s-dead", stageNow.Add(-5*time.Hour))
+	openAs(t, home, main, "XR-020", stage.WaitEvent, "s-dead", stageNow.Add(-5*time.Hour))
+	openAs(t, home, main, "XR-011", stage.WaitQueue, "s-dead", stageNow.Add(-5*time.Hour))
+	legacy := "id = XR-010\nroot = " + main + "\n" +
+		"этап = уточнение | " + stageNow.Add(-5*time.Hour).Format(stage.Stamp) + " | вопрос человеку | s-dead\n"
+	if err := os.WriteFile(stage.Path(home, main, "XR-010"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	out, err := cmdList(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"  этап: уточнение, 5 часов, сессии нет, брошена",
-		"  этап: снаружи, 5 часов\n",
+		"  этап: ждёт события, 5 часов\n",
+		"  этап: ждёт очереди, 5 часов\n",
+		"  этап: ждёт человека, 5 часов\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("в list нет %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "брошена") || strings.Contains(out, "уточнение") {
+		t.Fatalf("ожидание названо брошенным или старым словом:\n%s", out)
 	}
 }

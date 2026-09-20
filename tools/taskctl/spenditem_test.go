@@ -303,3 +303,23 @@ func TestSpendStandWithoutTokens(t *testing.T) {
 		t.Fatalf("отметка без чисел вошла в свод: %d прогонов, %+v", runs, u)
 	}
 }
+
+// TestSpendSetupText: постановку в тексте работы узнают слова разбора записи,
+// а «Виток цели XR-100» и «Исполнитель XR-005» это работа по коду и фон, и
+// статья у них другая.
+func TestSpendSetupText(t *testing.T) {
+	setups := []string{"Груминг черновика XR-009", "Нарезка цели XR-100",
+		"Интервью постановки XR-009", "Постановка задачи XR-005"}
+	for _, text := range setups {
+		if !spendSetupText(text) {
+			t.Errorf("работа %q не узнана постановкой", text)
+		}
+	}
+	others := []string{"Виток цели XR-100", "Исполнитель XR-005",
+		"Ревью XR-001", "shipctl merge XR-005 целиком"}
+	for _, text := range others {
+		if spendSetupText(text) {
+			t.Errorf("работа %q прочитана постановкой", text)
+		}
+	}
+}

@@ -43,7 +43,6 @@ const (
 // отсюда так же, как стёртый журнал: журналов вне ~/.claude на машине нет.
 const (
 	whyNoTranscript = "транскрипта головной сессии нет в журналах харнеса claude: второй харнес либо журнал стёрт"
-	whyNoCarrier    = "носителя в реестре сессий нет, безголовый заход от разговора человека не отличить"
 )
 
 // spendIDRe ловит ID записи в тексте работы журнала агентов («Исполнитель
@@ -478,35 +477,4 @@ func (c *spendCrew) taskSessions(id string, stages []spendStage) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// periodItems раскладывает статьями головные потоки машины за срез. Потоки
-// субагентов сюда не приезжают: они целиком принадлежат этапам задач.
-func (c *spendCrew) periodItems(streams []spend.Stream, p spendPeriod) (*spendItems, spend.Usage, spend.Usage, int) {
-	items := newSpendItems()
-	var outside, total spend.Usage
-	blind := 0
-	for _, st := range streams {
-		if st.Session == "" {
-			continue
-		}
-		turns, err := spend.ReadTurns(st.Path)
-		if err != nil {
-			blind++
-			continue
-		}
-		for _, t := range turns {
-			if p.set && !p.holds(t.At) {
-				continue
-			}
-			total = total.Add(t.Usage)
-			kind, key, ok := c.place(st.Session, t.At)
-			if !ok {
-				outside = outside.Add(t.Usage)
-				continue
-			}
-			items.add(kind, key, t.Usage)
-		}
-	}
-	return items, outside, total, blind
 }

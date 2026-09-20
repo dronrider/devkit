@@ -647,7 +647,7 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 		note = notify(root, reasonBlocked, id, fmt.Sprintf("%s: %s на блокере", filepath.Base(root), id), reason)
 	}
 	// Пакет этапов уезжает в файл задачи до открытия нового: смена статуса
-	// закрывает всё, что накопил конвейер, и ожидание снаружи начинается уже
+	// закрывает всё, что накопил конвейер, и ожидание начинается уже
 	// новым пакетом.
 	now := time.Now()
 	doc, stages := flushStages(root, id, now)
@@ -906,7 +906,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 		}
 	}
 	// Пакет этапов уезжает в файл задачи до архивации: после git mv писать в
-	// него уже некуда, а ожидание снаружи, открытое переводом в Check, иначе
+	// него уже некуда, а ожидание человека, открытое переводом в Check, иначе
 	// пропало бы вместе с записью.
 	_, stagesTail := flushStages(root, p.ID, time.Now())
 	year := date[:4]

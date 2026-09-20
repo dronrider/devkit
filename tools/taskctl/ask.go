@@ -231,7 +231,7 @@ func runAsk(root string, p AskParams, d askDeps, env func(string) string) (strin
 		return "", err
 	}
 	// Уведомитель зовётся сразу: человек узнаёт про вопрос немедленно, а не
-	// когда-нибудь потом, и запись «уточнение» стоит ровно на том времени,
+	// когда-нибудь потом, и запись «ждёт человека» стоит ровно на том времени,
 	// когда заход встал (tools/agentctl/stage.go).
 	if d.Notify != nil {
 		if n := d.Notify(reasonAsk, p.ID, fmt.Sprintf("%s: вопрос по задаче", p.ID), text); n != "" {

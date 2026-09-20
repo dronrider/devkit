@@ -699,3 +699,40 @@ func TestCloseRefusesNamelessExecutor(t *testing.T) {
 		}
 	}
 }
+
+// DK-1081: проверяющего на строке в Check хук спавна кладёт этапом «проверка»,
+// и запись его несёт модель с определением, как у исполнителя. Ворота закрытия
+// ищут автора правки среди этапов разработки и доработки, поэтому запись
+// проверяющего за автора не сходит и честный прогон закрытию не мешает.
+func TestCloseVerifyGateIgnoresVerifierStage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := setup(t)
+	stagedDoc(t, root, "XR-005", devStageLine("fable"))
+	now := time.Now()
+	hookNote := "субагент opus/medium по определению exec-medium, работа ae65e3b8a"
+	if err := stage.Open(stage.Home(), root, "XR-005", stage.Verify, hookNote, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := stage.Open(stage.Home(), root, "XR-005", stage.Verify, stage.VerifyNote("opus"), now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeVerifyGate(root, "XR-005"); err != nil {
+		t.Fatalf("прогон чужими руками отбит записью самого проверяющего: %v", err)
+	}
+}
+
+// Та же запись проверяющего, но разработку вёл он сам: ворота обязаны отказать
+// по этапу разработки, а не промолчать.
+func TestCloseVerifyGateRefusesWhenVerifierWroteTheCode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := setup(t)
+	stagedDoc(t, root, "XR-005", devStageLine("opus"))
+	now := time.Now()
+	if err := stage.Open(stage.Home(), root, "XR-005", stage.Verify, stage.VerifyNote("opus"), now); err != nil {
+		t.Fatal(err)
+	}
+	err := closeVerifyGate(root, "XR-005")
+	if err == nil || !strings.Contains(err.Error(), "не автор") {
+		t.Fatalf("прогон автором правки прошёл ворота: %v", err)
+	}
+}

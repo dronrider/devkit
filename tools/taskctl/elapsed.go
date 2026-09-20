@@ -46,36 +46,46 @@ func pluralMinutes(n int) string {
 	}
 }
 
-// cmdElapsed печатает минуты с открытия этапа исполнителя записи задачи
-// против планового лимита жизненного цикла агента (LLD DK-503, решение 1):
-// этап открывает хук спавна субагента на каждом подъёме исполнителя (DK-911),
-// команда только читает запись и сравнивает. Меряется работа исполнителя над
-// кодом, разработка либо доработка после ревью: сравнение идёт предикатом
-// словаря, а не словом. Без открытого этапа (задача ещё не бралась в работу
-// либо этап исполнителя уже закрыт его концом) команда честно говорит об этом и
-// не падает: отсутствие данных не повод рвать заход, а минуты мёртвого этапа
-// лимитом не считаются.
+// cmdElapsed печатает минуты с открытия живого этапа записи задачи против
+// планового лимита жизненного цикла агента (LLD DK-503, решение 1): этап
+// открывает хук спавна субагента на каждом подъёме исполнителя (DK-911),
+// команда только читает запись и сравнивает. Живой этап это последний, которого
+// не закрыл писатель. Считать последнюю разработку в пакете нельзя: у записи
+// без конца её закрывает следующий этап, и открытые следом ревью и слияние шли
+// в счёт разработки часами, а команда без повода звала сдавать хвост (DK-874).
+// Этап, которому по словарю не положена живая сессия (stage.NeedsSession),
+// лимитом не меряется: там ждут человека или события, и сдавать хвост некому.
+// Без открытого этапа (задача ещё не бралась в работу либо последний этап
+// закрыт его писателем) команда честно говорит об этом и не падает: отсутствие
+// данных не повод рвать заход, а минуты закрытого этапа лимитом не считаются.
 func cmdElapsed(root, id string) (string, error) {
 	rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), id))
 	if err != nil {
 		return "", err
 	}
 	now := timeNow()
-	s, ok := stage.LastOf(rec, stage.IsExec)
+	live, ok := rec.Live()
 	if !ok {
+		if n := len(rec.Stages); n > 0 {
+			last := rec.Stages[n-1]
+			return fmt.Sprintf("этап не открыт, лимит не проверить: этап %s закрыт писателем %s", last.Kind, last.End.Format(stage.Stamp)), nil
+		}
 		return "этап не открыт, лимит не проверить", nil
 	}
-	if s.Ended() {
-		return fmt.Sprintf("этап не открыт, лимит не проверить: %s закрыта писателем %s", s.Kind, s.End.Format(stage.Stamp)), nil
+	minutes := int(now.Sub(live.Start).Minutes())
+	if minutes < 0 {
+		minutes = 0
 	}
-	d := now.Sub(s.Start)
-	start := s.Start
-	minutes := int(d.Minutes())
 	ceiling := execCeiling()
 	verdict := fmt.Sprintf("лимит %d %s: в пределах", ceiling, pluralMinutes(ceiling))
-	if minutes > ceiling {
+	switch {
+	case !stage.NeedsSession(live.Kind):
+		// Этап без живой сессии по словарю это ожидание, и лимит захода к
+		// нему не относится.
+		verdict = "ожидание, лимит не считается"
+	case minutes > ceiling:
 		verdict = fmt.Sprintf("лимит %d %s пройден: сдавай хвост", ceiling, pluralMinutes(ceiling))
 	}
-	return fmt.Sprintf("%s открыта %d %s назад (с %s), %s",
-		s.Kind, minutes, pluralMinutes(minutes), start.Format(stage.Stamp), verdict), nil
+	return fmt.Sprintf("этап %s открыт %d %s назад (с %s), %s",
+		live.Kind, minutes, pluralMinutes(minutes), live.Start.Format(stage.Stamp), verdict), nil
 }

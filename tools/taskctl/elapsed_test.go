@@ -69,7 +69,7 @@ func TestCmdElapsedWithinCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cmdElapsed: %v", err)
 	}
-	want := "разработка открыта 46 минут назад (с 2026-08-24T13:55:00), лимит 120 минут: в пределах"
+	want := "этап разработка открыт 46 минут назад (с 2026-08-24T13:55:00), лимит 120 минут: в пределах"
 	if msg != want {
 		t.Fatalf("cmdElapsed = %q, ждал %q", msg, want)
 	}
@@ -93,7 +93,7 @@ func TestCmdElapsedPastCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cmdElapsed: %v", err)
 	}
-	want := "разработка открыта 145 минут назад (с 2026-08-24T09:10:00), лимит 120 минут пройден: сдавай хвост"
+	want := "этап разработка открыт 145 минут назад (с 2026-08-24T09:10:00), лимит 120 минут пройден: сдавай хвост"
 	if msg != want {
 		t.Fatalf("cmdElapsed = %q, ждал %q", msg, want)
 	}
@@ -122,6 +122,52 @@ func TestCmdElapsedCustomCeiling(t *testing.T) {
 		t.Fatalf("cmdElapsed с лимитом из окружения = %q", msg)
 	}
 }
+
+// regcheck:test-begin
+//
+// TestCmdElapsedCountsFromLiveStage: регрессия DK-874. Команда брала начало
+// последней «разработки» в пакете и не смотрела, жив ли этап: открытое следом
+// ревью отсчёт не останавливало, и через два часа ревью диспетчер слышал
+// «сдавай хвост» про заход, которого нет. Считается живой этап, каким бы он
+// ни был.
+func TestCmdElapsedCountsFromLiveStage(t *testing.T) {
+	root := setup(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	old := timeNow
+	defer func() { timeNow = old }()
+	now := time.Date(2026, 9, 10, 15, 30, 0, 0, time.Local)
+	timeNow = func() time.Time { return now }
+
+	if err := stage.Open(home, root, "XR-005", stage.Dev, "", now.Add(-145*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := stage.Open(home, root, "XR-005", stage.Review, "", now.Add(-10*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdElapsed(root, "XR-005")
+	if err != nil {
+		t.Fatalf("cmdElapsed: %v", err)
+	}
+	want := "этап ревью открыт 10 минут назад (с 2026-09-10T15:20:00), лимит 120 минут: в пределах"
+	if msg != want {
+		t.Fatalf("cmdElapsed = %q, ждал %q", msg, want)
+	}
+	// Ожидание снаружи лимитом не меряется: сдавать хвост там некому.
+	if err := stage.Open(home, root, "XR-005", stage.Outside, "", now.Add(-300*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	msg, err = cmdElapsed(root, "XR-005")
+	if err != nil {
+		t.Fatalf("cmdElapsed: %v", err)
+	}
+	want = "этап снаружи открыт 300 минут назад (с 2026-09-10T10:30:00), ожидание, лимит не считается"
+	if msg != want {
+		t.Fatalf("cmdElapsed у ожидания = %q, ждал %q", msg, want)
+	}
+}
+
+// regcheck:test-end
 
 // TestElapsedNeedsID: подкоманда без ID отказывает, а не молчит про «этап не
 // открыт» пустой строке.
@@ -167,7 +213,7 @@ func TestCmdElapsedClosedStage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cmdElapsed: %v", err)
 	}
-	want := "этап не открыт, лимит не проверить: разработка закрыта писателем 2026-09-20T11:00:00"
+	want := "этап не открыт, лимит не проверить: этап разработка закрыт писателем 2026-09-20T11:00:00"
 	if msg != want {
 		t.Fatalf("cmdElapsed по закрытому этапу = %q, ждал %q", msg, want)
 	}

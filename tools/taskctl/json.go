@@ -48,6 +48,9 @@ type jsonRow struct {
 	Link        string    `json:"link"`
 	Moved       string    `json:"moved,omitempty"`
 	Notes       []string  `json:"notes,omitempty"`
+	// Строка этапа полями (DK-910): вид, начало, круг, возраст словами и
+	// живость сессии словами. Пусто у строки без открытого этапа.
+	*jsonStage
 }
 
 // jsonArm это состояние взвода строки для машинного читателя: разряд словом и
@@ -101,7 +104,7 @@ func sufText(suf, label string) string {
 	return strings.TrimSpace(strings.TrimSuffix(s, "]"))
 }
 
-func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, clean bool) jsonRow {
+func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, clean bool, sv *stageView) jsonRow {
 	base, deps, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
 	return jsonRow{
 		ID:     r.ID,
@@ -119,8 +122,9 @@ func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, clean bool
 		// Дата последней правки строки: перевод в статус двигает строку между
 		// секциями доски, то есть правит её, и отдельной даты перевода в доске
 		// нет. Возраст днями остаётся в notes, дашборд показывает дату.
-		Moved: lineDate(times, r.LineIdx, clean),
-		Notes: rowNoteParts(root, ed, r.Sect, r, times, clean),
+		Moved:     lineDate(times, r.LineIdx, clean),
+		Notes:     rowNoteParts(root, ed, r.Sect, r, times, clean),
+		jsonStage: sv.mark(r.ID),
 	}
 }
 
@@ -150,6 +154,7 @@ func cmdListJSON(root, sect string) (string, error) {
 	if clean {
 		times = boardTimes(root)
 	}
+	sv := loadStageView(root)
 	keys := []string{SectInProgress, SectCheck, SectBacklog, SectBlocked}
 	if sect != "" {
 		key := normalizeStatus(sect)
@@ -162,7 +167,7 @@ func cmdListJSON(root, sect string) (string, error) {
 	for _, key := range keys {
 		sec := jsonSection{Key: key, Title: sectTitles[key], Rows: []jsonRow{}}
 		for _, r := range b.Sects[key].Rows {
-			sec.Rows = append(sec.Rows, makeJSONRow(root, r, ed, times, clean))
+			sec.Rows = append(sec.Rows, makeJSONRow(root, r, ed, times, clean, sv))
 		}
 		out.Sections = append(out.Sections, sec)
 	}
@@ -192,7 +197,7 @@ func cmdShowJSON(root, id string) (string, error) {
 	}
 	if row := b.find(id); row != nil {
 		out := jsonShow{
-			jsonRow: makeJSONRow(root, row, newEdges(root, b, arch), showTimes(root), true),
+			jsonRow: makeJSONRow(root, row, newEdges(root, b, arch), showTimes(root), true, loadStageView(root)),
 			Sect:    row.Sect,
 		}
 		if s := sides[id]; s != nil {

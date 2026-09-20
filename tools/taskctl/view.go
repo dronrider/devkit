@@ -191,6 +191,7 @@ func cmdList(root, sect string) (string, error) {
 	if clean {
 		times = boardTimes(root)
 	}
+	sv := loadStageView(root)
 	var out []string
 	if note := staleBoardNote(root); note != "" {
 		out = append(out, note)
@@ -210,7 +211,7 @@ func cmdList(root, sect string) (string, error) {
 		}
 		for _, r := range rows {
 			out = append(out, b.Lines[r.LineIdx])
-			out = append(out, rowNotes(root, ed, key, r, times, clean)...)
+			out = append(out, rowNotes(root, ed, key, r, times, clean, sv)...)
 		}
 	}
 	if sect != "" {
@@ -243,12 +244,18 @@ func cmdList(root, sect string) (string, error) {
 // не пишутся (RULES.board.md запрещает заводить под них колонку). Метки
 // Check печатаются только в её секции, возраст, когда его удалось посчитать,
 // в любой; нет ни того, ни другого, значит nil, и вывод не меняется вовсе.
-func rowNotes(root string, ed *edges, sect string, r *Row, times map[int]int64, clean bool) []string {
-	notes := rowNoteParts(root, ed, sect, r, times, clean)
-	if len(notes) == 0 {
-		return nil
+// Строка этапа идёт второй строкой под пометками у всякой строки с открытым
+// этапом, в какой бы секции та ни стояла (DK-910): на Check и Blocked строки
+// тоже стоят на этапах, и их простой как раз надо видеть.
+func rowNotes(root string, ed *edges, sect string, r *Row, times map[int]int64, clean bool, sv *stageView) []string {
+	var out []string
+	if notes := rowNoteParts(root, ed, sect, r, times, clean); len(notes) > 0 {
+		out = append(out, "  "+strings.Join(notes, ", "))
 	}
-	return []string{"  " + strings.Join(notes, ", ")}
+	if n := sv.note(r.ID); n != "" {
+		out = append(out, "  "+n)
+	}
+	return out
 }
 
 // rowNoteParts отдаёт те же пометки списком без вёрстки: печать склеивает их
@@ -300,7 +307,7 @@ func cmdShow(root, id string) (string, error) {
 		if note != "" {
 			out = append([]string{note}, out...)
 		}
-		out = append(out, rowNotes(root, newEdges(root, b, arch), row.Sect, row, showTimes(root), true)...)
+		out = append(out, rowNotes(root, newEdges(root, b, arch), row.Sect, row, showTimes(root), true, loadStageView(root))...)
 		s := sides[id]
 		if s == nil {
 			s = &struct{ after, blocks []string }{}

@@ -39,6 +39,14 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               стендов), «в пределах» или «пройден:
                                               сдавай хвост»; без открытого этапа не
                                               падает, говорит об этом честно
+  spend <ID>                                  токены по этапам задачи из транскриптов
+  spend --from ... --to ...                   харнеса claude: ходы, вывод, свежий вход
+                                              и чтение кэша на этап, вложенная работа
+                                              под тем этапом, который её поднял;
+                                              этап без номера работы и работа без
+                                              транскрипта печатаются строкой «нет
+                                              данных» с причиной; со сроками это свод
+                                              по всем задачам с медианой и хвостом
   id                                          следующий свободный ID
   draft list [--json]                         накопитель черновиков: ID,
                                               заголовок, возраст, метка уровня
@@ -748,6 +756,25 @@ func main() {
 		pos := frame.ParseArgs(fs, args[1:])
 		needArgs(pos, 1, 1, "elapsed <ID>")
 		msg, err = cmdElapsed(root(*dir), pos[0])
+	case "spend":
+		fs := flag.NewFlagSet("spend", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		from := fs.String("from", "", "начало среза, ГГГГ-ММ-ДД")
+		to := fs.String("to", "", "конец среза, ГГГГ-ММ-ДД")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 0, 1, "spend <ID> | spend --from 2026-09-01 --to 2026-09-20")
+		if len(pos) == 1 {
+			if *from != "" || *to != "" {
+				fail(fmt.Errorf("spend берёт либо ID задачи, либо срок --from/--to, но не оба сразу"))
+			}
+			msg, err = cmdSpend(root(*dir), pos[0])
+			break
+		}
+		p, perr := parseSpendPeriod(*from, *to)
+		if perr != nil {
+			fail(perr)
+		}
+		msg, err = cmdSpendPeriod(root(*dir), p)
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

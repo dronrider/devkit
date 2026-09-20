@@ -909,6 +909,10 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	// него уже некуда, а ожидание человека, открытое переводом в Check, иначе
 	// пропало бы вместе с записью.
 	_, stagesTail := flushStages(root, p.ID, time.Now())
+	// Итог токенов ложится строкой следом за пакетом этапов и тоже до
+	// архивации: свод считается на лету из транскриптов, а харнес их чистит,
+	// и у закрытой задачи от расхода остаётся только эта строка (DK-912).
+	spendTail := writeSpendTotal(root, p.ID, time.Now())
 	year := date[:4]
 	moved := ""
 	var changedFiles []string
@@ -1018,7 +1022,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	msg := fmt.Sprintf("%s закрыта %s, строка в архиве%s", p.ID, date, stagesTail)
+	msg := fmt.Sprintf("%s закрыта %s, строка в архиве%s%s", p.ID, date, stagesTail, spendTail)
 	if moved != "" {
 		msg += ", файл задачи в " + moved
 	}

@@ -259,6 +259,8 @@ class TestMachineLines(unittest.TestCase):
                        "временный HOME, утилит дерева 11, шагов 5, "
                        "1 красный.")
 
+    TOKENS = "- Токены: ходов 387, вывод 104k, свежий вход 12k, чтение кэша 3.4M, этапов со счётом 4, 2026-09-18."
+    TOKENS_LOOKALIKE = "- Токены кончились на середине захода, и разбор пришлось делить."
     PROOFREAD = "- Вычитка: 2 файла, 5 правок, 1 пометка, 2026-08-12."
     PROOFREAD_LOOKALIKE = "- Вычитка заняла час: правок вышло немного."
 
@@ -276,12 +278,13 @@ class TestMachineLines(unittest.TestCase):
     MACHINE = (STAGE, STAGE_MERGE, STAGE_WAIT, RANK, ACCEPT_KIND, ACCEPT_BARRIER, ACCEPT_OUTCOME,
                DEPLOY_MERGE, DEPLOY_SMOKE, DEPLOY_PENDING, DEPLOY_MOVE_DONE,
                FORK_HEAD, STAND, STAND_FAIL, REHEARSAL, REHEARSAL_FAIL,
-               PROOFREAD, PROSE_MARK, EXCEPTION, RETURN)
+               TOKENS, PROOFREAD, PROSE_MARK, EXCEPTION, RETURN)
     LOOKALIKE = (STAGE_LOOKALIKE, RANK_LOOKALIKE, ACCEPT_KIND_LOOKALIKE,
                  ACCEPT_BARRIER_LOOKALIKE, ACCEPT_OUTCOME_LOOKALIKE,
                  DEPLOY_MERGE_LOOKALIKE, DEPLOY_SMOKE_LOOKALIKE,
                  DEPLOY_PENDING_LOOKALIKE, DEPLOY_MOVE_DONE_LOOKALIKE,
-                 STAND_LOOKALIKE, REHEARSAL_LOOKALIKE, PROOFREAD_LOOKALIKE,
+                 STAND_LOOKALIKE, REHEARSAL_LOOKALIKE, TOKENS_LOOKALIKE,
+                 PROOFREAD_LOOKALIKE,
                  PROSE_MARK_LOOKALIKE, EXCEPTION_LOOKALIKE, RETURN_LOOKALIKE)
 
     def test_machine_lines_are_recognized(self):

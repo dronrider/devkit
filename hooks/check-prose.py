@@ -176,6 +176,11 @@ REHEARSAL_RE = re.compile(r"^-\s+Обкатка(?: не зачтена)?:\s")
 # исключение ворот (internal/taskform/taskform.go: Exception) и провал
 # задачи (tools/taskctl/retclass.go: returnStageLine). Причину каждой пишет
 # человек или агент, но кладёт строку код, и весь пункт списка машинный.
+# «Ход работы», строка итога токенов: её кладёт taskctl close перед
+# архивацией (tools/taskctl/spend.go: spendMark, spendTotalLine). Свод
+# считается на лету из транскриптов, харнес их чистит, и у закрытой задачи от
+# расхода остаётся только эта строка.
+TOKENS_RE = re.compile(r"^-\s+Токены:\s")
 PROOFREAD_RE = re.compile(r"^-\s+Вычитка:\s")
 PROSE_MARK_RE = re.compile(r"^-\s+Сторож прозы:\s")
 EXCEPTION_RE = re.compile(r"^-\s+Исключение:\s")
@@ -189,7 +194,7 @@ TOP_LEVEL_MACHINE_RES = (STAGE_LINE_RE, RANK_LINE_RE, DEPLOY_MERGE_RE,
                           DEPLOY_SMOKE_RE, DEPLOY_PENDING_RE,
                           DEPLOY_MOVE_DONE_RE, ACCEPT_KIND_RE,
                           ACCEPT_BARRIER_RE, FORK_HEAD_RE, STAND_RE,
-                          REHEARSAL_RE, PROOFREAD_RE, PROSE_MARK_RE,
+                          REHEARSAL_RE, TOKENS_RE, PROOFREAD_RE, PROSE_MARK_RE,
                           EXCEPTION_RE, RETURN_RE)
 
 

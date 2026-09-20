@@ -696,3 +696,30 @@ class Stages(unittest.TestCase):
         stages = self.stages("DK-519")
         self.assertEqual([s["kind"] for s in stages], [stagerun.DEV])
         self.assertIn("субагент haiku/low по определению exec-low", stages[0]["note"])
+
+    # DK-1081: исполнителя на строке в Check подняли прогнать сценарий после
+    # выката, и это проверка, а не разработка.
+    def board(self, section):
+        docs = os.path.join(self.root, "docs")
+        os.makedirs(docs, exist_ok=True)
+        with open(os.path.join(docs, "TASKS.md"), "w", encoding="utf-8") as f:
+            f.write("# Доска\n\n## %s\n\n| DK-911 | строка | bug | P1 | 66 | S | ссылка |\n" % section)
+
+    def test_exec_on_a_check_row_opens_verify(self):
+        self.board("Check (готово, ждёт проверки пользователем)")
+        self.spawn("exec-medium", "Проверка DK-911")
+        stages = self.stages()
+        self.assertEqual([s["kind"] for s in stages], [stagerun.VERIFY])
+        self.assertEqual(stages[0]["note"],
+                         "субагент opus/medium по определению exec-medium, работа " + AID)
+        self.assertEqual(stages[0]["work"], AID)
+
+    def test_exec_on_an_in_progress_row_stays_development(self):
+        self.board("In progress")
+        self.spawn("exec-medium", "Исполнитель DK-911")
+        self.assertEqual([s["kind"] for s in self.stages()], [stagerun.DEV])
+
+    def test_reviewer_on_a_check_row_stays_review(self):
+        self.board("Check (готово, ждёт проверки пользователем)")
+        self.spawn("review-high", "Ревью DK-911")
+        self.assertEqual([s["kind"] for s in self.stages()], [stagerun.REVIEW])

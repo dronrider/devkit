@@ -64,11 +64,12 @@
 Тот же хук ставит этап задачи по спавну субагента (DK-911). По определению
 агента ревьювер (review-*) кладёт «ревью», вычитка (proofread) «вычитку»,
 исполнитель (exec-*) «разработку», а на записи, где последним этапом работы
-стоит ревью, «доработку». ID задачи берётся из описания работы, из заказа
-DEVKIT_TASK либо из имени дерева задачи. Этап несёт модель, определение и
-номер работы субагента, а закрывается его концом. У фонового это
-SubagentStop, у синхронного конец ставится сразу, задним числом по
-длительности хода. Диспетчеру о команде
+стоит ревью, «доработку». Исполнитель на строке доски в Check ложится
+«проверкой»: на такой строке прогоняют сценарий после выката (DK-1081). ID
+задачи берётся из описания работы, из заказа DEVKIT_TASK либо из имени дерева
+задачи. Этап несёт модель, определение и номер работы субагента, а
+закрывается его концом. У фонового это SubagentStop, у синхронного конец
+ставится сразу, задним числом по длительности хода. Диспетчеру о команде
 записи помнить не надо. Запись лежит в ~/.devkit/runs, пишет её stagerun.py
 тем же форматом, что internal/stage на go.
 
@@ -265,17 +266,52 @@ def entry_of(job, kind, description, command, output, now, owner=""):
             "owner": owner}
 
 
+BOARD = os.path.join("docs", "TASKS.md")
+
+# Раздел доски, откуда задачу берут на проверку после выката. Заголовок несёт
+# приписку про пользователя («Check (готово, ждёт проверки пользователем)»),
+# поэтому сверяется начало, а не весь заголовок.
+CHECK_SECTION = "Check"
+
+
+def board_section(root, task):
+    """Раздел доски, где стоит строка задачи. Доска читается напрямую, без
+    taskctl: бинарей devkit в PATH может не быть, а молчаливая пропажа этапа
+    из-за этого неотличима от штатной работы. Пустая строка значит, что доски
+    нет либо строки задачи на ней не видно."""
+    try:
+        with open(os.path.join(root, BOARD), encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return ""
+    section = ""
+    for ln in text.splitlines():
+        if ln.startswith("## "):
+            section = ln[3:].strip()
+            continue
+        if not ln.startswith("|") or ln.count("|") < 2:
+            continue
+        if ln.split("|")[1].strip() == task:
+            return section
+    return ""
+
+
 # Определения субагентов и виды этапов по ним (DK-911). Остальные определения
 # (Explore, general-purpose, свои) этапа не открывают: это подручные работы, а
 # не деятельность над задачей.
-def stage_kind(agent_type, last_work):
-    """Вид этапа по определению субагента. Исполнитель на записи, где последним
-    этапом работы стоит ревью либо доработка, чинит замечания: это доработка."""
+def stage_kind(agent_type, last_work, section=""):
+    """Вид этапа по определению субагента и разделу доски. Исполнителя на
+    строке в Check подняли прогнать сценарий после выката, и это проверка, а не
+    разработка (DK-1081): иначе ворота закрытия сверяли бы прогонявшего с ним
+    же. Исполнитель на записи, где последним этапом работы стоит ревью либо
+    доработка, чинит замечания: это доработка."""
     if agent_type.startswith("review-"):
         return stagerun.REVIEW
     if agent_type == "proofread":
         return stagerun.PROOF
     if agent_type.startswith("exec-"):
+        if section.startswith(CHECK_SECTION):
+            return stagerun.VERIFY
         if last_work and last_work["kind"] in (stagerun.REVIEW, stagerun.REWORK):
             return stagerun.REWORK
         return stagerun.DEV
@@ -382,7 +418,8 @@ def stage_mark(event, env, now):
 def stage_write(event, env, now, task):
     home = stagerun.home_dir(env)
     root = stagerun.main_root(hookio.tree_root(event.cwd) or event.cwd)
-    kind = stage_kind(event.agent_type, stagerun.last_work(home, root, task))
+    kind = stage_kind(event.agent_type, stagerun.last_work(home, root, task),
+                      board_section(root, task))
     if not kind:
         return None
     model = stage_model(event)

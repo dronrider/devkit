@@ -323,3 +323,27 @@ func TestSpendSetupText(t *testing.T) {
 		}
 	}
 }
+
+// TestSpendPeriodOpenHead: у среза без нижней границы своя голова строки:
+// «токены за по 2026-09-18» читалось бы не по-русски.
+func TestSpendPeriodOpenHead(t *testing.T) {
+	root := setup(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	old := timeNow
+	defer func() { timeNow = old }()
+	timeNow = func() time.Time { return spendDay(15, 0) }
+	spendMachine(t, root, home)
+
+	p, err := parseSpendPeriod("", "2026-09-20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdSpendPeriod(root, p)
+	if err != nil {
+		t.Fatalf("cmdSpendPeriod: %v", err)
+	}
+	if !strings.HasPrefix(msg, "токены по 2026-09-20: ") {
+		t.Fatalf("голова среза без нижней границы:\n%s", strings.SplitN(msg, "\n", 2)[0])
+	}
+}

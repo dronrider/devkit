@@ -511,15 +511,17 @@ func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
 	}
 
 	span := p.to.Add(-time.Nanosecond).Format("2006-01-02")
-	head := "по " + span
+	// Срез без нижней границы это весь срок машины, и предлог у него свой:
+	// «токены за по 18 сентября» не по-русски.
+	head := "токены по " + span
 	if !p.from.IsZero() {
-		head = p.from.Format("2006-01-02") + ".." + span
+		head = "токены за " + p.from.Format("2006-01-02") + ".." + span
 	}
 	if total.Empty() {
-		return fmt.Sprintf("токены за %s: транскриптов харнеса claude за срез нет, этапов без данных %d", head, blind), nil
+		return fmt.Sprintf("%s: транскриптов харнеса claude за срез нет, этапов без данных %d", head, blind), nil
 	}
 	tasks := spendTasks(byTask)
-	out := []string{fmt.Sprintf("токены за %s: %s; сессий %d, задач %d, этапов %d, без данных %d",
+	out := []string{fmt.Sprintf("%s: %s; сессий %d, задач %d, этапов %d, без данных %d",
 		head, spendNumbers(total), heads, len(tasks), stageCount, blind)}
 	out = append(out, "- этапы: "+spendNumbers(stagesUsage)+spendShare(stagesUsage, total))
 	for _, k := range stage.Kinds {

@@ -437,6 +437,11 @@ func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
 	items := newSpendItems()
 	heads, lost := 0, 0
 	mute := map[string]bool{}
+	// Потоков в срезе два разряда, и считаются они по-разному. Поток головной
+	// сессии режется по ходам: за один заход она ведёт несколько задач, и
+	// статью каждому ходу называет журнал агентов. Поток работы субагента
+	// принадлежит одному этапу целиком, и от него нужны только ходы, попавшие
+	// в срез.
 	for _, st := range spend.Streams(home, p.from) {
 		turns, err := spend.ReadTurns(st.Path)
 		if err != nil {

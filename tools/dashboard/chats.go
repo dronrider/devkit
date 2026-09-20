@@ -1064,7 +1064,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			// Возраст хода едет строкой списка (DK-893): занятый разговор видно
 			// и не открывая его, а без минут «активна» одинаково выглядит и у
 			// хода, начатого секунду назад, и у получасового.
-			if age, ok := p.turnAge(s.now()); ok {
+			if age, ok := p.TurnAge(s.now()); ok {
 				e.Sec = int(age / time.Second)
 			}
 		}
@@ -3969,7 +3969,7 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	// машина расходятся часами на минуты, и счётчик, заведённый от чужой метки,
 	// врал бы на всю разницу. Само начало хода едет рядом, им плашка
 	// подписывает пропажу и им же выправляет свой счёт между опросами.
-	if age, ok := p.turnAge(now); ok {
+	if age, ok := p.TurnAge(now); ok {
 		out["since"] = p.StatusAt
 		out["sec"] = int(age / time.Second)
 	}

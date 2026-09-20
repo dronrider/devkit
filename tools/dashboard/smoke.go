@@ -709,6 +709,10 @@ type smokeBoard struct {
 				// кладёт в запись конвейер, а ручка доски отдаёт строкой (DK-338).
 				Stage      string `json:"stage"`
 				StageSince int64  `json:"stage_since"`
+				// StageSession это живость сессии за этапом словами, её
+				// считает taskctl (DK-910): «сессии нет, брошена» у записи
+				// без живого процесса.
+				StageSession string `json:"stage_session"`
 				// Waiting это состояние «ждёт человека» (DK-433): признак
 				// ожидания, парковка вопросом либо повод из журнала.
 				Waiting *Waiting `json:"waiting"`
@@ -780,59 +784,87 @@ func (s *smoke) stepBoard() (string, error) {
 		list.Projects[0].Sections, len(rows)), nil
 }
 
-// boardStage достаёт вид деятельности и начало этапа из строки доски.
-func boardStage(v smokeBoard, id string) (string, int64) {
+// boardStage достаёт вид деятельности, начало этапа и слова о сессии из
+// строки доски.
+func boardStage(v smokeBoard, id string) (string, int64, string) {
 	for _, sec := range v.Board.Sections {
 		for _, row := range sec.Rows {
 			if row.ID == id {
-				return row.Stage, row.StageSince
+				return row.Stage, row.StageSince, row.StageSession
 			}
 		}
 	}
-	return "", 0
+	return "", 0, ""
 }
 
-// stepStage: вид деятельности едет полем строки доски. Запись этапа кладёт
-// конвейер, а не дашборд, поэтому шаг пишет её тем же вызовом, каким её пишут
-// хук спавна и shipctl, и смотрит, что ручка доски отдала вид и время начала
-// рядом с готовым признаком Run. Тут же проверяется оборванный этап: за строкой
-// в Backlog живой сессии нет, и запись за неё выдавать работу не должна.
+// smokeStageJSON это доска стенда со строкой этапа у двух строк, как её
+// печатает taskctl list --json (DK-910): у цели живая разработка, у соседки в
+// Backlog ревью без живой сессии. Слова о сессии считает taskctl, дашборд их
+// только везёт; у ожидания по словарю (stage.NeedsSession) слов о сессии нет.
+func smokeStageJSON(since int64, taskStage string) string {
+	goal := fmt.Sprintf(`"stage":"разработка","stage_since":%d,"stage_round":1,"stage_age":"30 минут","stage_session":"сессия жива",`, since)
+	task := fmt.Sprintf(`"stage":"%s","stage_since":%d,"stage_round":2,"stage_age":"30 минут",`, taskStage, since)
+	if stage.NeedsSession(taskStage) {
+		task += `"stage_session":"сессии нет, брошена",`
+	}
+	out := strings.Replace(smokeBoardJSON, `{"id":"XR-100",`, `{"id":"XR-100",`+goal, 1)
+	return strings.Replace(out, `{"id":"XR-002",`, `{"id":"XR-002",`+task, 1)
+}
+
+// stepStage: вид деятельности едет полем строки доски. Считает его taskctl по
+// записи конвейера (~/.devkit/runs) вместе с кругом, возрастом и живостью
+// сессии за этапом, а дашборд везёт поля как есть (DK-910): своего расчёта у
+// него нет, и гасить этап у строки без работы он не вправе. Шаг подкладывает
+// фикстуре taskctl доску с полями этапа и смотрит, что ручка доски отдала их
+// нетронутыми у обеих строк: у цели с живой работой и у брошенной соседки в
+// Backlog, чей признак «сессии нет, брошена» экран показывает словами taskctl.
 func (s *smoke) stepStage() (string, error) {
-	since := time.Now().Add(-30 * time.Minute).Truncate(time.Second)
-	if err := stage.Open(s.home, s.proj, smokeGoal, stage.Dev, "субагент opus/high по вердикту pick", since); err != nil {
-		return "", err
+	since := time.Now().Add(-30 * time.Minute).Truncate(time.Second).Unix()
+	show := func(doc string) (smokeBoard, error) {
+		if err := smokeWrite(s.boardFile(), doc+"\n", 0o644); err != nil {
+			return smokeBoard{}, err
+		}
+		// Память ответа доски отдаёт прежний ответ, пока файл доски тот же и
+		// не вышел срок: на экране этап догоняет следующим кругом, а шагу
+		// ждать нечем, и он двигает отпечаток файла сам.
+		if err := s.touchBoard(); err != nil {
+			return smokeBoard{}, err
+		}
+		return s.board()
 	}
-	if err := stage.Open(s.home, s.proj, smokeTask, stage.Review, "субагент sonnet/high по вердикту pick", since); err != nil {
-		return "", err
-	}
-	v, err := s.board()
+	v, err := show(smokeStageJSON(since, "ревью"))
 	if err != nil {
 		return "", err
 	}
-	kind, at := boardStage(v, smokeGoal)
-	if kind != stage.Dev {
-		return "", fmt.Errorf("вид деятельности строки %s %q, ждал %q", smokeGoal, kind, stage.Dev)
+	kind, at, life := boardStage(v, smokeGoal)
+	if kind != "разработка" || at != since || life != "сессия жива" {
+		return "", fmt.Errorf("этап строки %s пришёл как %q с %d, %q; ждал «разработка» с %d и «сессия жива»", smokeGoal, kind, at, life, since)
 	}
-	if at != since.Unix() {
-		return "", fmt.Errorf("начало этапа строки %s %d, ждал %d", smokeGoal, at, since.Unix())
+	if kind, _, life := boardStage(v, smokeTask); kind != "ревью" || life != "сессии нет, брошена" {
+		return "", fmt.Errorf("оборванный этап строки %s пришёл как %q, %q; ждал «ревью» с признаком «сессии нет, брошена»", smokeTask, kind, life)
 	}
-	if kind, _ := boardStage(v, smokeTask); kind != "" {
-		return "", fmt.Errorf("оборванный этап строки %s выдан за работу словом %q", smokeTask, kind)
-	}
-	// Ожидание человека живой сессии не требует по смыслу, и та же строка
-	// обязана его показать.
-	if err := stage.Open(s.home, s.proj, smokeTask, stage.WaitHuman, "проверка после выката", since); err != nil {
+	// Ожидание человека живой сессии не требует по словарю: слов о сессии у
+	// него нет, и та же строка обязана показать его без них.
+	if v, err = show(smokeStageJSON(since, stage.WaitHuman)); err != nil {
 		return "", err
 	}
-	v, err = s.board()
-	if err != nil {
+	if kind, _, life := boardStage(v, smokeTask); kind != stage.WaitHuman || life != "" {
+		return "", fmt.Errorf("ожидание человека строки %s пришло как %q, %q; признака сессии у него быть не должно", smokeTask, kind, life)
+	}
+	// Доска возвращается к исходной: дальше прогон меряет её строки без этапов.
+	if _, err := show(smokeBoardJSON); err != nil {
 		return "", err
 	}
-	if kind, _ := boardStage(v, smokeTask); kind != stage.WaitHuman {
-		return "", fmt.Errorf("ожидание человека строки %s пришло как %q", smokeTask, kind)
-	}
-	return fmt.Sprintf("строка %s несёт «%s» с %s, оборванный этап %s не выдан за работу",
-		smokeGoal, stage.Dev, since.Format("15:04"), smokeTask), nil
+	return fmt.Sprintf("строка %s несёт «разработка» с %s и «сессия жива», оборванный этап %s назван «сессии нет, брошена»",
+		smokeGoal, time.Unix(since, 0).Format("15:04"), smokeTask), nil
+}
+
+// touchBoard двигает отпечаток файла доски: память ответа taskctl узнаёт
+// чужую правку по времени и размеру файла, и шаг, изменивший то, что taskctl
+// считает мимо файла, просит свежий ответ этим касанием.
+func (s *smoke) touchBoard() error {
+	now := time.Now()
+	return os.Chtimes(s.boardDoc(), now, now)
 }
 
 // boardRun достаёт признак идущей работы из строки доски.

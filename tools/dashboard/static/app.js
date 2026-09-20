@@ -828,13 +828,20 @@ function liveChip(work) {
   return withTip(chip, who);
 }
 
-// Этап работы строки: вид деятельности словом и сколько он идёт. Запись кладут
-// конвейер и taskctl (~/.devkit/runs), дашборд её только читает и приносит
-// полями row.stage и row.stage_since.
+// Этап работы строки: вид деятельности словом, круг, сколько он идёт и жива ли
+// сессия за ним. Запись кладут конвейер и taskctl (~/.devkit/runs), а читает её
+// taskctl list --json и приносит полями row.stage, row.stage_since,
+// row.stage_round и row.stage_session (DK-910): слова о сессии те же, что под
+// строкой списка, своего расчёта у экрана нет. Возраст считается тут по
+// stage_since, чтобы чип шёл между опросами доски.
 function stageChip(row) {
   if (!row.stage) return null;
+  const parts = [row.stage];
+  if (row.stage_round > 1) parts.push("круг " + row.stage_round);
   const age = workAge(row.stage_since, Date.now());
-  return el("span", "chip", age ? row.stage + ", " + age : row.stage);
+  if (age) parts.push(age);
+  if (row.stage_session) parts.push(row.stage_session);
+  return el("span", "chip", parts.join(", "));
 }
 
 // Обратный отсчёт до срока: те же слова, что у возраста работы, только вперёд.

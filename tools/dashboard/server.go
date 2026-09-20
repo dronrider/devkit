@@ -735,10 +735,9 @@ func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"project": found.Name,
 		"path":    found.Path,
-		"board": boardRuns(raw, works, mine, s.liveStages(found.Path),
-			s.waitLookup(found.Path)),
-		"works":  works,
-		"errors": []string{},
+		"board":   boardRuns(raw, works, mine, s.waitLookup(found.Path)),
+		"works":   works,
+		"errors":  []string{},
 	}
 	// Пустой список работ при ненайденном tmux это не «агенты не работают»,
 	// причина называется и здесь, а не только в /healthz.

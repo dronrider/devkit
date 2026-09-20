@@ -13,8 +13,9 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/dronrider/devkit/internal/peers"
 )
 
 // msgID это идентификатор кадра в форме uuid4. Пакета ради одной строки тут не
@@ -43,65 +44,17 @@ func msgID() string {
 // from-mode, и на нём стоит единственный барьер: разойдись он с классом
 // получателя, тот придержит сообщение до ответа человека.
 
-// peerDir и sockDir это реестр живых сессий и каталог их сокетов. Пути машинные
-// и своей настройки не имеют: их знает сам клиент.
-func peerDir(home string) string { return filepath.Join(home, ".claude", "sessions") }
+// peer это живая сессия машины из реестра клиента. Разбор реестра, живость
+// процесса и рубеж молчания живут в общем пакете internal/peers (DK-910): те же
+// слова о живости печатает taskctl под строкой доски, и считать их дважды
+// значило бы разводить экран со списком.
+type peer = peers.Peer
 
-const sockDir = "/tmp/cc-socks"
+// peerDir это каталог реестра клиента.
+func peerDir(home string) string { return peers.Dir(home) }
 
-// peer это живая сессия машины из реестра клиента.
-type peer struct {
-	PID        int    `json:"pid"`
-	SessionID  string `json:"sessionId"`
-	Cwd        string `json:"cwd"`
-	Kind       string `json:"kind"`
-	Entrypoint string `json:"entrypoint"`
-	Sock       string `json:"messagingSocketPath"`
-	Name       string `json:"name"`
-	Tmux       string `json:"tmux"`
-	Status     string `json:"status"`
-	Version    string `json:"version"`
-	Protocol   int    `json:"peerProtocol"`
-	Updated    int64  `json:"updatedAt"`
-	// StatusAt это время последней смены состояния сессии, то есть начало
-	// нынешнего хода у занятой. Клиент пишет его миллисекундами рядом со
-	// status и по ходу самого хода больше не трогает: пока агент думает, метка
-	// стоит на месте, и разница с ней это возраст хода. Без неё панель не
-	// могла сказать, сколько ход уже идёт, и гасила плашку своим потолком
-	// (DK-893).
-	StatusAt int64 `json:"statusUpdatedAt"`
-}
-
-// turnAge это возраст нынешнего хода сессии. Считается только у занятой
-// записи: у простаивающей метка говорит, когда сессия освободилась, и время с
-// неё ходом не является. Нулевая метка это клиент, который её не пишет, и
-// врать про возраст тогда нечем.
-func (p peer) turnAge(now time.Time) (time.Duration, bool) {
-	if p.Status != "busy" || p.StatusAt <= 0 {
-		return 0, false
-	}
-	age := now.Sub(time.UnixMilli(p.StatusAt))
-	if age < 0 {
-		age = 0
-	}
-	return age, true
-}
-
-// alive проверяет, что процесс сессии жив: реестр переживает падение клиента, и
-// запись без процесса это мёртвый сокет, а не собеседник. Сигнал 0 не трогает
-// процесс, а только спрашивает, есть ли он.
-func (p peer) alive() bool {
-	if p.PID <= 0 {
-		return false
-	}
-	proc, err := os.FindProcess(p.PID)
-	if err != nil {
-		return false
-	}
-	// Сигнал 0 не трогает процесс, а только спрашивает, есть ли он; nil тут не
-	// годится, пакет os принимает лишь syscall.Signal.
-	return proc.Signal(syscall.Signal(0)) == nil
-}
+// sockDir это каталог сокетов сессий, его знает клиент.
+const sockDir = peers.SockDir
 
 // peers читает реестр живых сессий, ключ это ID сессии. Мёртвые записи
 // отсеиваются тут же: до сокета такой сессии дело всё равно не дойдёт, а в
@@ -117,10 +70,10 @@ func (s *server) peers() map[string]peer { return s.peersOf(true) }
 // разговор, и слов про пропажу он не просит.
 func (s *server) peerGone(sid string, now time.Time) (peer, bool) {
 	p, ok := s.peersOf(false)[sid]
-	if !ok || p.alive() || p.Status != "busy" {
+	if !ok || p.Alive() || p.Status != "busy" {
 		return peer{}, false
 	}
-	if age, ok := p.turnAge(now); !ok || age > workIdleAfter {
+	if age, ok := p.TurnAge(now); !ok || age > workIdleAfter {
 		return peer{}, false
 	}
 	return p, true
@@ -128,39 +81,7 @@ func (s *server) peerGone(sid string, now time.Time) (peer, bool) {
 
 // peersOf читает реестр целиком, живые записи или все. Мёртвые нужны одному
 // месту, состоянию чата: остальным они врали бы живой работой.
-func (s *server) peersOf(onlyAlive bool) map[string]peer {
-	out := map[string]peer{}
-	entries, err := os.ReadDir(peerDir(s.cfg.Home))
-	if err != nil {
-		return out
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(peerDir(s.cfg.Home), e.Name()))
-		if err != nil {
-			continue
-		}
-		var p peer
-		if json.Unmarshal(data, &p) != nil || p.SessionID == "" {
-			continue
-		}
-		if p.Sock == "" {
-			p.Sock = filepath.Join(sockDir, fmt.Sprintf("%d.sock", p.PID))
-		}
-		if onlyAlive && !p.alive() {
-			continue
-		}
-		// Одна сессия бывает записана дважды (перезапуск клиента с тем же ID):
-		// выигрывает свежая запись, у неё живой сокет.
-		if old, ok := out[p.SessionID]; ok && old.Updated > p.Updated {
-			continue
-		}
-		out[p.SessionID] = p
-	}
-	return out
-}
+func (s *server) peersOf(onlyAlive bool) map[string]peer { return peers.Load(s.cfg.Home, onlyAlive) }
 
 // peerFrame собирает кадр канала. Подпись from-name это слово humanPeer, по
 // нему сессия отличает реплику человека от соседней сессии (скилл chat,

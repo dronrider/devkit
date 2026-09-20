@@ -805,7 +805,7 @@ func TestTaskctlFoundNextToExecutable(t *testing.T) {
 	if m := taskctlMissing(); m != "" {
 		t.Fatalf("taskctl лежит рядом с бинарём, а диагностика: %s", m)
 	}
-	raw, err := boardJSON(t.TempDir())
+	raw, err := boardJSON("", t.TempDir())
 	if err != nil {
 		t.Fatalf("доска не прочиталась соседом по каталогу: %v", err)
 	}

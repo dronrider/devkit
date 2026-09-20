@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dronrider/devkit/internal/peers"
 	"github.com/dronrider/devkit/internal/works"
 )
 
@@ -68,9 +69,15 @@ func runProc(name string, args ...string) ([]byte, error) {
 // не аргументом: аргументом он проходит через разбор флагов и через стража
 // подкоманд taskctl, и мысль вида «-p» или «fix» там теряется целиком.
 func runProcIn(stdin, name string, args ...string) ([]byte, error) {
+	return runProcEnv(nil, stdin, name, args...)
+}
+
+// runProcEnv это тот же запуск с окружением: пустое наследуется как есть.
+func runProcEnv(env []string, stdin, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), procTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
@@ -147,12 +154,20 @@ func taskctlMissing() string {
 
 // boardJSON отдаёт доску проекта как есть, байтами ответа taskctl. Память на
 // этот ответ живёт уровнем выше, в методе сервера (cache.go).
-func boardJSON(dir string) (json.RawMessage, error) {
+// Дом дашборда едет подпроцессу окружением: строку этапа и живость сессии за
+// ней taskctl читает из ~/.devkit/runs и реестра клиента того же дома, что и
+// сам дашборд (DK-910), и в прогоне smoke с подменённым домом это один дом на
+// обоих. Пустой дом оставляет окружение как есть.
+func boardJSON(home, dir string) (json.RawMessage, error) {
 	bin := taskctlPath()
 	if bin == "" {
 		return nil, errors.New(taskctlMissing())
 	}
-	out, err := runProc(bin, "list", "--json", "-C", dir)
+	var env []string
+	if home != "" {
+		env = homeEnvAt(home, false)
+	}
+	out, err := runProcEnv(env, "", bin, "list", "--json", "-C", dir)
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
@@ -290,22 +305,16 @@ const (
 )
 
 // workIdleAfter это рубеж простоя: работа, чей последний ход старше него,
-// работой не считается, как бы жива ни была её сессия. Порог назван тут один
-// раз на весь дашборд: разъехавшись, кружок строки и слова подсказки мерили бы
-// простой по-разному.
-const workIdleAfter = 20 * time.Minute
+// работой не считается, как бы жива ни была её сессия. Порог один на дашборд и
+// на taskctl (internal/peers): разъехавшись, кружок строки и слова под строкой
+// в списке мерили бы простой по-разному.
+const workIdleAfter = peers.IdleAfter
 
 // peerFresh отвечает, свежа ли запись реестра клиента. Слову «busy» верят
 // только у свежей записи: клиент, упавший посреди хода, оставляет своё «busy» в
 // реестре навсегда, и по нему семичасовой разговор выходил активным (замечание
-// пользователя). Время в записи лежит в миллисекундах, нулевое значит «времени
-// нет», и такой записи не верят вовсе.
-func peerFresh(p peer, now time.Time) bool {
-	if p.Updated <= 0 {
-		return false
-	}
-	return now.Sub(time.Unix(p.Updated/1000, 0)) <= workIdleAfter
-}
+// пользователя).
+func peerFresh(p peer, now time.Time) bool { return p.Fresh(now) }
 
 // livePeers раскладывает реестр живых сессий клиента по двум ключам: по id
 // сессии и по имени tmux. Имя в записи стоит полным адресом пары

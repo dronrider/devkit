@@ -128,11 +128,16 @@ type boardRow struct {
 	Harness string `json:"harness,omitempty"`
 	// Stage это вид деятельности строки словом (разработка, ревью, снаружи,
 	// уточнение), а StageSince момент начала этапа в unix-секундах. Отмечает
-	// этап конвейер записью за пределами репозитория (DK-338), дашборд её
-	// только читает. Пусто у строки без отмеченного этапа и у оборванного
-	// этапа, за которым живой сессии нет.
-	Stage      string `json:"stage,omitempty"`
-	StageSince int64  `json:"stage_since,omitempty"`
+	// этап конвейер записью за пределами репозитория (DK-338), а читает её и
+	// судит о сессии за ней taskctl: поля приезжают готовыми из
+	// `taskctl list --json` вместе с кругом, возрастом словами и живостью
+	// сессии (DK-910). Своего расчёта по строке у дашборда нет, иначе бейдж
+	// экрана и текст списка разошлись бы. Пусто у строки без открытого этапа.
+	Stage        string `json:"stage,omitempty"`
+	StageSince   int64  `json:"stage_since,omitempty"`
+	StageRound   int    `json:"stage_round,omitempty"`
+	StageAge     string `json:"stage_age,omitempty"`
+	StageSession string `json:"stage_session,omitempty"`
 	// Waiting это состояние «ждёт человека»: кто кого ждёт, с какой точностью
 	// это известно и до какого срока (waiting.go, LLD DK-430, решение 4).
 	// Пусто, когда никто никого не ждёт; у непустого источник назван всегда.
@@ -345,7 +350,7 @@ func rowRun(live, mine map[string]string, id, key string) string {
 // потерял. Неразобранный ответ уезжает нетронутым: без признака строка
 // рисуется по-старому, а вот без доски экран пуст.
 func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
-	stages map[string]stageMark, wait func(id, sect, block string) (Waiting, bool)) json.RawMessage {
+	wait func(id, sect, block string) (Waiting, bool)) json.RawMessage {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return raw
@@ -404,17 +409,6 @@ func boardRuns(raw json.RawMessage, works []Work, mine map[string]string,
 					}
 					row["run_busy"] = mark
 				}
-			}
-			if kind, since := rowStage(stages, run, id); kind != "" {
-				mark, err := json.Marshal(kind)
-				if err != nil {
-					return raw
-				}
-				row["stage"] = mark
-				if mark, err = json.Marshal(since); err != nil {
-					return raw
-				}
-				row["stage_since"] = mark
 			}
 			if sid := chats[id]; sid != "" {
 				mark, err := json.Marshal(sid)
@@ -835,7 +829,6 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		if row.Sect == sectCheck {
 			row.Harness = mine[id]
 		}
-		row.Stage, row.StageSince = rowStage(s.liveStages(found.Path), row.Run, id)
 	}
 	// Ожидание человека едет и сюда: врезка панели чата берёт вопрос и срок с
 	// той же строки, что и чип на карточке, а не вторым разбором признака.

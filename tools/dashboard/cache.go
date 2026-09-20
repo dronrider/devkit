@@ -231,7 +231,7 @@ func (s *server) fly(dir, stamp string, stamped bool, fl *boardFlight) {
 	if s.boardProbe != nil {
 		s.boardProbe(dir)
 	}
-	raw, err := boardJSON(dir)
+	raw, err := boardJSON(s.cfg.Home, dir)
 	s.mu.Lock()
 	fl.raw, fl.err = raw, err
 	// Срок считается от ответа, а не от запроса: опрос под нагрузкой сам идёт

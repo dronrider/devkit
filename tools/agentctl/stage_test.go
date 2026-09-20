@@ -228,3 +228,27 @@ func TestStageCommandArgs(t *testing.T) {
 		t.Fatalf("лишний позиционный проглочен молча:\n%s", out)
 	}
 }
+
+// TestCmdStageShowsLiveUnderClosed (DK-911, замечание ревью): закрытая
+// вычитка поверх живой разработки живого не гасит, показ печатает разработку
+// живой, а вычитку в пакете со своим концом.
+func TestCmdStageShowsLiveUnderClosed(t *testing.T) {
+	root := stageRoot(t)
+	home := stage.Home()
+	main := stage.MainRoot(root)
+	if err := stage.Open(home, main, "T-001", stage.Dev, "субагент opus/high", stageAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := stage.Put(home, main, "T-001", stage.Stage{Kind: stage.Proof, Start: stageAt.Add(10 * time.Minute), End: stageAt.Add(20 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdStage(root, "T-001", "", "", "", stageAt.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "stage: " + stage.Dev + "\nsince: 2026-08-15T14:30:00\nnote: субагент opus/high\n" +
+		"до него в пакете:\n  " + stage.Proof + " с 2026-08-15T14:40:00 до 2026-08-15T14:50:00"
+	if out != want {
+		t.Fatalf("вывод живого под закрытым\nжду:\n%s\nвижу:\n%s", want, out)
+	}
+}

@@ -107,7 +107,14 @@ func stageShow(home, root, id string) (string, error) {
 		if live.Note != "" {
 			out = append(out, "note: "+live.Note)
 		}
-		pack = rec.Stages[:len(rec.Stages)-1]
+		// Живой этап не обязательно последний: закрытая вычитка ложится и
+		// поверх него, и в пакет она идёт, а живой из пакета вынимается.
+		pack = nil
+		for _, s := range rec.Stages {
+			if s.Ended() || !s.Start.Equal(live.Start) || s.Kind != live.Kind {
+				pack = append(pack, s)
+			}
+		}
 	} else {
 		out = append(out, "stage: нет, последний этап закрыт писателем")
 	}

@@ -249,7 +249,7 @@ func TestSpendTotalLineOnClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "- Токены: ходов 2, вывод 60k, свежий вход 200, чтение кэша 2.0k, этапов со счётом 1, 2026-09-18."
+	want := "- Токены: ходов 2, вывод 60k, свежий вход 200, чтение кэша 2.0k, этапов со счётом 1, статей 0, 2026-09-18."
 	if !strings.Contains(string(data), want) {
 		t.Fatalf("строки итога нет в файле задачи:\n%s", data)
 	}

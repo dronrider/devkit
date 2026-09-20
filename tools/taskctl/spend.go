@@ -297,17 +297,30 @@ func spendKidLines(n spend.Node, pad string) []string {
 // говорит, есть ли что записывать: у задачи без сведённых этапов строка была
 // бы нулями и врала бы про расход.
 func spendTotalLine(root, id string, now time.Time) (string, bool) {
-	stages, _ := spendStages(root, stage.MainRoot(root), id)
-	if len(stages) == 0 {
+	main := stage.MainRoot(root)
+	home := stage.Home()
+	stages, _ := spendStages(root, main, id)
+	crew := newSpendCrew(home, main)
+	items, _, _ := crew.taskItems(id, stages, spendPeriod{})
+	if stand, runs := spendStands(root, id, spendPeriod{}); runs > 0 {
+		items.add(itemStand, id, stand)
+	}
+	list := items.list()
+	if len(stages) == 0 && len(list) == 0 {
 		return "", false
 	}
-	rows := spendRows(spend.NewLookup(stage.Home()), stages)
+	rows := spendRows(spend.NewLookup(home), stages)
 	total, seen := spendTotal(rows)
-	if seen == 0 {
+	if seen == 0 && len(list) == 0 {
 		return "", false
 	}
-	return fmt.Sprintf("%s%s, этапов со счётом %d, %s.",
-		spendMark, spendNumbers(total), seen, now.Format("2006-01-02")), true
+	// Статьи входят в итог наравне с этапами: диспетчер задачи стоит дороже
+	// её исполнителя, и строка без него занижала бы расход втрое (DK-913).
+	for _, it := range list {
+		total = total.Add(it.usage)
+	}
+	return fmt.Sprintf("%s%s, этапов со счётом %d, статей %d, %s.",
+		spendMark, spendNumbers(total), seen, len(list), now.Format("2006-01-02")), true
 }
 
 // writeSpendTotal кладёт строку итога в «Ход работы» файла задачи. Провал

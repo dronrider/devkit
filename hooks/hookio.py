@@ -108,10 +108,15 @@ Job = collections.namedtuple("Job", "id kind status description command")
 # самой сессией.
 # Модель и длительность приехали с DK-911: модель субагента идёт в запись этапа,
 # а длительность синхронного субагента даёт начало этапа, о котором хук узнаёт
-# только по концу. Оба поля с умолчанием, событие без них читается по-старому.
+# только по концу. Транскрипт субагента (agent_transcript_path у SubagentStop)
+# это отдельное поле: transcript остаётся транскриптом сессии, по нему сторож
+# ищет весть о конце работы, а по транскрипту субагента конец этапа дописывает
+# модель, когда спавн её не назвал. Все поля с умолчанием, событие без них
+# читается по-старому.
 Agent = collections.namedtuple(
     "Agent", "kind session cwd transcript agent_id owner job agent_type description command "
-             "output message jobs active model duration report", defaults=("", 0.0, ""))
+             "output message jobs active model duration report agent_transcript",
+    defaults=("", 0.0, "", ""))
 
 
 class Unknown(Exception):
@@ -369,7 +374,8 @@ def claude_code_agent(event):
                  jobs=claude_code_jobs(event),
                  active=bool(event.get("stop_hook_active")),
                  model=text_of(ti.get("model")) or response_field(response, "resolvedModel"),
-                 duration=number_of(event.get("duration_ms")) / 1000.0)
+                 duration=number_of(event.get("duration_ms")) / 1000.0,
+                 agent_transcript=text_of(event.get("agent_transcript_path")))
 
 
 # Таблица разборщиков: протокол, разбор записи, разбор события сессии, разбор

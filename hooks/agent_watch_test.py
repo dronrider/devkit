@@ -44,12 +44,12 @@ def sample(name):
 def event(kind, session=SID, transcript="", agent_id="", agent_type="general-purpose",
           description="", output="", message="", jobs=(), active=False,
           job_kind="subagent", command="", owner="", model="", duration=0.0, report="",
-          cwd="/tmp/work"):
+          cwd="/tmp/work", agent_transcript=""):
     return hookio.Agent(kind=kind, session=session, cwd=cwd, transcript=transcript,
                         agent_id=agent_id, owner=owner, job=job_kind, agent_type=agent_type,
                         description=description, command=command, output=output,
                         message=message, jobs=jobs, active=active, model=model,
-                        duration=duration, report=report)
+                        duration=duration, report=report, agent_transcript=agent_transcript)
 
 
 def job(agent_id=AID, kind="subagent", status="running", description="разбор", command=""):
@@ -624,24 +624,52 @@ class Stages(unittest.TestCase):
         with open(watch.log_path(self.env), encoding="utf-8") as f:
             self.assertIn("DK-911 не записан", f.read())
 
-    def test_model_comes_from_the_session_transcript(self):
-        # DK-911, замечание ревью: спавн без параметра model наследует модель
-        # сессии, и запись берёт её из транскрипта.
-        transcript = os.path.join(self.tmp, "session.jsonl")
-        with open(transcript, "w", encoding="utf-8") as f:
+    def transcript(self, name, model):
+        path = os.path.join(self.tmp, name)
+        with open(path, "w", encoding="utf-8") as f:
             f.write(json.dumps({"type": "user", "message": {"role": "user", "content": "model: haiku"}}) + "\n")
-            f.write(json.dumps({"type": "assistant", "message": {"model": "claude-opus-4-1-20250805",
-                                                                  "role": "assistant", "content": []}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "message": {"model": model, "role": "assistant",
+                                                                  "content": []}}) + "\n")
             f.write(json.dumps({"type": "progress", "data": {"model": "sonnet"}}) + "\n")
-        self.handle(event(hookio.AGENT_LAUNCHED, agent_id=AID, agent_type="exec-high",
-                          description="Правка DK-911", model="", transcript=transcript, cwd=self.root))
-        self.assertIn("субагент opus/high по определению exec-high", self.stages()[0]["note"])
+        return path
 
-    def test_missing_model_is_logged(self):
-        self.spawn("exec-high", "Правка DK-911", model="")
+    def test_model_is_not_inherited_from_the_parent(self):
+        # DK-911, второй круг ревью: субагент без параметра model идёт на
+        # модели субагента харнеса, а не родителя, и модель сессии в запись не
+        # берётся. Запись остаётся без исполнителя до конца субагента.
+        parent = self.transcript("session.jsonl", "claude-opus-4-1-20250805")
+        self.handle(event(hookio.AGENT_LAUNCHED, agent_id=AID, agent_type="exec-high",
+                          description="Правка DK-911", model="", transcript=parent, cwd=self.root))
         self.assertIn("субагент по определению exec-high", self.stages()[0]["note"])
+        self.assertNotIn("opus", self.stages()[0]["note"])
         with open(watch.log_path(self.env), encoding="utf-8") as f:
             self.assertIn("модель не названа", f.read())
+
+    def test_subagent_stop_names_the_model_from_its_own_transcript(self):
+        # DK-911, второй круг ревью: спавн без model, модель субагента другая,
+        # чем у родителя, и конец этапа берёт её из транскрипта субагента.
+        parent = self.transcript("session.jsonl", "claude-opus-4-1-20250805")
+        own = self.transcript("agent.jsonl", "claude-haiku-4-5-20251001")
+        self.handle(event(hookio.AGENT_LAUNCHED, agent_id=AID, agent_type="exec-high",
+                          description="Правка DK-911", model="", transcript=parent, cwd=self.root))
+        self.handle(event(hookio.SUBAGENT_DONE, agent_id=AID, message="готово, ходов 4", transcript=parent,
+                          agent_transcript=own), now=NOW + 120)
+        note = self.stages()[0]["note"]
+        self.assertTrue(note.startswith("субагент haiku/high по определению exec-high, работа " + AID), note)
+        self.assertTrue(note.endswith("ходов 4, минут 2"), note)
+        self.assertNotIn("opus", note)
+
+    def test_subagent_stop_keeps_a_named_model(self):
+        own = self.transcript("agent.jsonl", "claude-haiku-4-5-20251001")
+        self.spawn("review-high", "Ревью DK-911", model="sonnet")
+        self.handle(event(hookio.SUBAGENT_DONE, agent_id=AID, message="ходов 2", agent_transcript=own),
+                    now=NOW + 60)
+        self.assertTrue(self.stages()[0]["note"].startswith("субагент sonnet/high по определению review-high"))
+
+    def test_subagent_stop_sample_carries_its_own_transcript(self):
+        got = hookio.claude_code_agent(sample("subagent-done"))
+        self.assertTrue(got.agent_transcript.endswith("/subagents/agent-a7131ebeaabc745f2.jsonl"), got.agent_transcript)
+        self.assertNotEqual(got.agent_transcript, got.transcript)
 
     def test_sync_sample_is_parsed_as_returned(self):
         ev = dict(sample("tool-done-agent-launch"))

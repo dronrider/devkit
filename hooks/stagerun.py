@@ -168,13 +168,31 @@ def last_work(home, root, task):
     return None
 
 
-def close(home, root, task, kind, end, extra="", work=""):
+NAMELESS_RE = re.compile(r"^субагент по определению (\S+?)(?=,|$)")
+
+
+def name_executor(note, model):
+    """Вписать модель в текст записи, где спавн её не назвал: «субагент по
+    определению exec-high» становится «субагент haiku/high по определению
+    exec-high». Запись с моделью и запись не о субагенте остаются как есть."""
+    m = NAMELESS_RE.match(note or "")
+    if not m or not model:
+        return note
+    agent_type = m.group(1)
+    effort = agent_type.rsplit("-", 1)[1] if "-" in agent_type else ""
+    who = "субагент " + model + ("/" + effort if effort else "")
+    return who + note[len("субагент"):]
+
+
+def close(home, root, task, kind, end, extra="", work="", model=""):
     """Закрыть незакрытый этап названного вида: конец и хвост текста записи.
     Ищется последний незакрытый этап этого вида, а не последний этап записи:
     поверх идущей разработки успевают лечь и закрыться вычитка или ревью, и
     конец разработки находит свой этап под ними. Этап другого вида не
     трогается. Номер работы сверяется, когда назван: у одной задачи бывают два
-    субагента подряд, и конец первого не должен закрывать второй. Возвращает
+    субагента подряд, и конец первого не должен закрывать второй. Модель, когда
+    названа, вписывается в текст записи без исполнителя: спавн без параметра
+    model её не знал, а транскрипт субагента по его концу знает. Возвращает
     True, когда этап закрыт."""
     rec = load(path(home, root, task))
     own = None
@@ -187,6 +205,7 @@ def close(home, root, task, kind, end, extra="", work=""):
     if work and own["work"] and own["work"] != work:
         return False
     own["end"] = stamp(end)
+    own["note"] = name_executor(own["note"], model)
     if extra:
         own["note"] = (own["note"] + ", " + extra) if own["note"] else extra
     save(home, root, task, rec)

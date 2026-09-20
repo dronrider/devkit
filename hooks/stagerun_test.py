@@ -67,6 +67,22 @@ class Writer(unittest.TestCase):
         self.assertEqual([s["end"] for s in rec["stages"]],
                          ["2026-08-15T11:00:00", "2026-08-15T10:15:00"])
 
+    def test_close_names_the_executor_from_the_model(self):
+        # DK-911, второй круг ревью: конец этапа вписывает модель субагента в
+        # запись без исполнителя, запись с моделью не трогает.
+        stagerun.put(self.home, "/p", "T-1", stagerun.DEV, "субагент по определению exec-high, работа d1",
+                     "sess", AT, work="d1")
+        self.assertTrue(stagerun.close(self.home, "/p", "T-1", stagerun.DEV, AT + 60, "минут 1", "d1",
+                                       model="haiku"))
+        rec = stagerun.load(stagerun.path(self.home, "/p", "T-1"))
+        self.assertEqual(rec["stages"][0]["note"], "субагент haiku/high по определению exec-high, работа d1, минут 1")
+        self.assertEqual(stagerun.name_executor("субагент opus/high по определению exec-high", "haiku"),
+                         "субагент opus/high по определению exec-high")
+        self.assertEqual(stagerun.name_executor("субагент по определению proofread", "sonnet"),
+                         "субагент sonnet по определению proofread")
+        self.assertEqual(stagerun.name_executor("субагент по определению exec-low", ""),
+                         "субагент по определению exec-low")
+
     def test_last_work_skips_waits(self):
         stagerun.put(self.home, "/p", "T-1", stagerun.REVIEW, "", "", AT)
         stagerun.put(self.home, "/p", "T-1", stagerun.WAIT_HUMAN, "вопрос", "", AT + 60)

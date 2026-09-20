@@ -53,6 +53,20 @@ class Writer(unittest.TestCase):
         self.assertEqual(rec["stages"][0]["note"], "субагент, ходов 12, минут 10")
         self.assertFalse(stagerun.close(self.home, "/p", "T-1", stagerun.REVIEW, AT + 700))
 
+    def test_closed_stage_on_top_keeps_the_live_one(self):
+        # DK-911, замечание ревью: синхронная вычитка внутри идущей разработки
+        # ложится закрытой поверх, живой остаётся разработка, и её конец
+        # находит свой этап под вычиткой.
+        stagerun.put(self.home, "/p", "T-1", stagerun.DEV, "субагент", "sess", AT, work="d1")
+        stagerun.put(self.home, "/p", "T-1", stagerun.PROOF, "вычитка", "sess", AT + 600,
+                     end=AT + 900, work="p1")
+        self.assertEqual(stagerun.live(self.home, "/p", "T-1")["kind"], stagerun.DEV)
+        self.assertTrue(stagerun.close(self.home, "/p", "T-1", stagerun.DEV, AT + 3600, "минут 60", "d1"))
+        self.assertIsNone(stagerun.live(self.home, "/p", "T-1"))
+        rec = stagerun.load(stagerun.path(self.home, "/p", "T-1"))
+        self.assertEqual([s["end"] for s in rec["stages"]],
+                         ["2026-08-15T11:00:00", "2026-08-15T10:15:00"])
+
     def test_last_work_skips_waits(self):
         stagerun.put(self.home, "/p", "T-1", stagerun.REVIEW, "", "", AT)
         stagerun.put(self.home, "/p", "T-1", stagerun.WAIT_HUMAN, "вопрос", "", AT + 60)

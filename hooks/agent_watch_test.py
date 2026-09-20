@@ -598,6 +598,51 @@ class Stages(unittest.TestCase):
         # Синхронный субагент в реестр сторожа по-прежнему не попадает.
         self.assertEqual(watch.load_registry(watch.registry_path(SID, self.env)), {})
 
+    def test_sync_proofread_inside_live_exec_keeps_exec_live(self):
+        # DK-911, замечание ревью: закрытая вычитка поверх живой разработки
+        # её не гасит, а конец исполнителя закрывает свой этап под ней.
+        self.spawn("exec-high", "Правка DK-911", agent_id="d1")
+        self.handle(event(hookio.AGENT_RETURNED, agent_id="p1", agent_type="proofread",
+                          description="Вычитка DK-911", model="sonnet", duration=300.0,
+                          report="1 файл", cwd=self.root), now=NOW + 900)
+        root = os.path.realpath(self.root)
+        self.assertEqual(stagerun.live(self.home, root, "DK-911")["kind"], stagerun.DEV)
+        self.handle(event(hookio.SUBAGENT_DONE, agent_id="d1", message="готово, ходов 30"), now=NOW + 3600)
+        self.assertIsNone(stagerun.live(self.home, root, "DK-911"))
+        stages = self.stages()
+        self.assertEqual([s["kind"] for s in stages], [stagerun.DEV, stagerun.PROOF])
+        self.assertTrue(stages[0]["note"].endswith("ходов 30, минут 60"), stages[0]["note"])
+
+    def test_unwritable_home_does_not_break_the_hook(self):
+        # DK-911, замечание ревью: провал записи этапа уходит строкой в
+        # журнал, а спавн ложится в реестр как обычно.
+        os.makedirs(self.home)
+        with open(os.path.join(self.home, ".devkit"), "w") as f:
+            f.write("не каталог\n")
+        self.spawn("review-high", "Ревью DK-911")
+        self.assertIn(AID, watch.load_registry(watch.registry_path(SID, self.env)))
+        with open(watch.log_path(self.env), encoding="utf-8") as f:
+            self.assertIn("DK-911 не записан", f.read())
+
+    def test_model_comes_from_the_session_transcript(self):
+        # DK-911, замечание ревью: спавн без параметра model наследует модель
+        # сессии, и запись берёт её из транскрипта.
+        transcript = os.path.join(self.tmp, "session.jsonl")
+        with open(transcript, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": "model: haiku"}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "message": {"model": "claude-opus-4-1-20250805",
+                                                                  "role": "assistant", "content": []}}) + "\n")
+            f.write(json.dumps({"type": "progress", "data": {"model": "sonnet"}}) + "\n")
+        self.handle(event(hookio.AGENT_LAUNCHED, agent_id=AID, agent_type="exec-high",
+                          description="Правка DK-911", model="", transcript=transcript, cwd=self.root))
+        self.assertIn("субагент opus/high по определению exec-high", self.stages()[0]["note"])
+
+    def test_missing_model_is_logged(self):
+        self.spawn("exec-high", "Правка DK-911", model="")
+        self.assertIn("субагент по определению exec-high", self.stages()[0]["note"])
+        with open(watch.log_path(self.env), encoding="utf-8") as f:
+            self.assertIn("модель не названа", f.read())
+
     def test_sync_sample_is_parsed_as_returned(self):
         ev = dict(sample("tool-done-agent-launch"))
         ev["tool_response"] = {"status": "completed", "agentId": "s9",

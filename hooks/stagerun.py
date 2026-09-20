@@ -152,11 +152,12 @@ def put(home, root, task, kind, note, session, start, end=None, work=""):
 
 
 def live(home, root, task):
-    """Живой этап записи либо None: последний, пока его не закрыл писатель."""
-    stages = load(path(home, root, task))["stages"]
-    if not stages or stages[-1]["end"]:
-        return None
-    return stages[-1]
+    """Живой этап записи либо None: последний незакрытый. Синхронный субагент
+    ложится сразу закрытым и поверх живого, живой остаётся под ним."""
+    for s in reversed(load(path(home, root, task))["stages"]):
+        if not s["end"]:
+            return s
+    return None
 
 
 def last_work(home, root, task):
@@ -168,19 +169,26 @@ def last_work(home, root, task):
 
 
 def close(home, root, task, kind, end, extra="", work=""):
-    """Закрыть живой этап названного вида: конец и хвост текста записи. Живой
-    этап другого вида не трогается. Номер работы сверяется, когда назван:
-    у одной задачи бывают два субагента подряд, и конец первого не должен
-    закрывать второй. Возвращает True, когда этап закрыт."""
+    """Закрыть незакрытый этап названного вида: конец и хвост текста записи.
+    Ищется последний незакрытый этап этого вида, а не последний этап записи:
+    поверх идущей разработки успевают лечь и закрыться вычитка или ревью, и
+    конец разработки находит свой этап под ними. Этап другого вида не
+    трогается. Номер работы сверяется, когда назван: у одной задачи бывают два
+    субагента подряд, и конец первого не должен закрывать второй. Возвращает
+    True, когда этап закрыт."""
     rec = load(path(home, root, task))
-    stages = rec["stages"]
-    if not stages or stages[-1]["end"] or stages[-1]["kind"] != kind:
+    own = None
+    for s in reversed(rec["stages"]):
+        if not s["end"] and s["kind"] == kind:
+            own = s
+            break
+    if own is None:
         return False
-    if work and stages[-1]["work"] and stages[-1]["work"] != work:
+    if work and own["work"] and own["work"] != work:
         return False
-    stages[-1]["end"] = stamp(end)
+    own["end"] = stamp(end)
     if extra:
-        stages[-1]["note"] = (stages[-1]["note"] + ", " + extra) if stages[-1]["note"] else extra
+        own["note"] = (own["note"] + ", " + extra) if own["note"] else extra
     save(home, root, task, rec)
     return True
 

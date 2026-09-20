@@ -309,12 +309,48 @@ def short_model(model):
     return m.group(1) if m else (model or "")
 
 
-def stage_note(event):
+def session_model(transcript, tail=TAIL):
+    """Модель сессии из хвоста транскрипта: субагент, поднятый без параметра
+    model, наследует её, и запись этапа получает исполнителя оттуда. Берётся
+    последняя реплика ассистента с именем модели. Пусто, когда транскрипта нет
+    или модели в нём не видно."""
+    if not transcript:
+        return ""
+    try:
+        with open(transcript, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - tail))
+            lines = f.read().decode("utf-8", "replace").split("\n")
+    except OSError:
+        return ""
+    for ln in reversed(lines):
+        if '"assistant"' not in ln:
+            continue
+        try:
+            rec = json.loads(ln)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict) or rec.get("type") != "assistant":
+            continue
+        message = rec.get("message")
+        model = message.get("model") if isinstance(message, dict) else ""
+        if isinstance(model, str) and model and not model.startswith("<"):
+            return model
+    return ""
+
+
+def stage_model(event):
+    """Модель исполнителя для записи: из параметра спавна, без него модель
+    сессии из транскрипта. Пусто значит, что исполнителя записать нечем."""
+    return short_model(event.model) or short_model(session_model(event.transcript))
+
+
+def stage_note(event, model):
     """Текст записи этапа: модель через дробь с effort, как у вердикта pick, по
     нему ворота закрытия находят исполнителя (stage.Executor), дальше
-    определение и номер работы. Без модели запись несёт одно определение."""
+    определение и номер работы. Без модели запись несёт одно определение, и
+    ворота закрытия по такой записи отказывают."""
     effort = event.agent_type.rsplit("-", 1)[1] if "-" in event.agent_type else ""
-    model = short_model(event.model)
     who = "субагент"
     if model:
         who += " " + model + ("/" + effort if effort else "")
@@ -325,36 +361,58 @@ def stage_mark(event, env, now):
     """Этап по спавну субагента. Фоновый ложится живым и закрывается концом
     субагента, синхронный сразу закрытым: о нём хук узнаёт по концу хода
     инструмента, и начало считается назад по длительности. Возвращает запись
-    для реестра (задача, корень, вид), по ней конец закроет этап."""
+    для реестра (задача, корень, вид), по ней конец закроет этап. Провал
+    записи (дом только на чтение, битый файл) хук не роняет: этап теряется
+    строкой в журнале, а реестр и передача отчёта идут своим чередом."""
     task = task_of(event, env)
     if not task:
         log(event.session, event.agent_id, "этап", "задача не названа, этап не ставится", env)
         return None
+    try:
+        return stage_write(event, env, now, task)
+    except (OSError, ValueError) as e:
+        log(event.session, event.agent_id, "этап", "%s не записан: %s" % (task, e), env)
+        return None
+
+
+def stage_write(event, env, now, task):
     home = stagerun.home_dir(env)
     root = stagerun.main_root(hookio.tree_root(event.cwd) or event.cwd)
     kind = stage_kind(event.agent_type, stagerun.last_work(home, root, task))
     if not kind:
         return None
+    model = stage_model(event)
+    if not model:
+        log(event.session, event.agent_id, "этап",
+            "%s %s: модель не названа ни параметром спавна, ни транскриптом сессии, исполнитель в запись не лёг" % (kind, task), env)
+    note = stage_note(event, model)
     if event.kind == hookio.AGENT_RETURNED:
         start = now - max(0.0, event.duration)
-        stagerun.put(home, root, task, kind, stage_note(event) + ", " + stagerun.work_note(event.report, event.duration),
+        stagerun.put(home, root, task, kind, note + ", " + stagerun.work_note(event.report, event.duration),
                      event.session, start, end=now, work=event.agent_id)
         log(event.session, event.agent_id, "этап", "%s %s, закрыт концом синхронного субагента" % (kind, task), env)
         return None
-    stagerun.put(home, root, task, kind, stage_note(event), event.session, now, work=event.agent_id)
+    stagerun.put(home, root, task, kind, note, event.session, now, work=event.agent_id)
     log(event.session, event.agent_id, "этап", "%s %s" % (kind, task), env)
     return {"task": task, "root": root, "kind": kind, "started": now}
 
 
 def stage_close(entry, event, env, now):
     """Конец фонового субагента закрывает его этап: конец и хвост «ходов N,
-    минут M» по отчёту и длительности, его читает taskctl review stats."""
+    минут M» по отчёту и длительности, его читает taskctl review stats. Провал
+    записи, как и у открытия, уходит строкой в журнал."""
     mark = entry.get("stage") if isinstance(entry, dict) else None
     if not isinstance(mark, dict):
         return
     seconds = max(0.0, now - float(mark.get("started") or now))
     extra = stagerun.work_note(event.message, seconds)
-    if stagerun.close(stagerun.home_dir(env), mark["root"], mark["task"], mark["kind"], now, extra, event.agent_id):
+    try:
+        closed = stagerun.close(stagerun.home_dir(env), mark["root"], mark["task"], mark["kind"], now, extra,
+                                event.agent_id)
+    except (OSError, ValueError) as e:
+        log(event.session, event.agent_id, "этап", "%s %s не закрыт: %s" % (mark["kind"], mark["task"], e), env)
+        return
+    if closed:
         log(event.session, event.agent_id, "этап", "%s %s закрыт, %s" % (mark["kind"], mark["task"], extra), env)
 
 

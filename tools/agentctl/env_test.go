@@ -146,7 +146,7 @@ env = ["SECRET_TOKEN=`+marker+`"]
 `)
 	root := writeBoard(t)
 	var out, errw bytes.Buffer
-	if _, err := cmdRun(root, "T-001", false, roleExec, "", root, &out, &errw); err != nil {
+	if _, err := cmdRun(root, "T-001", roleExec, "", root, &out, &errw); err != nil {
 		t.Fatal(err)
 	}
 	texts := map[string]string{"run": out.String() + errw.String()}
@@ -162,7 +162,7 @@ env = ["SECRET_TOKEN=`+marker+`"]
 		t.Fatal(err)
 	}
 	texts["harness --json"] = asJSON
-	pick, err := cmdPick(root, "T-001", false, roleExec, "")
+	pick, err := cmdPick(root, "T-001", roleExec, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,18 +13,16 @@ import (
 
 const usageText = `agentctl: выбор исполнителя под задачу по метаданным доски (RULES.board.md)
 
-  pick <ID> [--record]    вердикт, каким исполнителем закрывать задачу: три
+  pick <ID>               вердикт, каким исполнителем закрывать задачу: три
        [--role exec|      машинные строки model (модель активного харнеса),
         review]           effort: low|medium|high|xhigh|max и tier:
        [--goal <файл>]    mini|base|pro|max, четвёртая строка задачи и причина;
-                          --record отмечает этап работы в записи ~/.devkit/runs
-                          (разработка либо ревью), откуда её читает дашборд, а
-                          taskctl на смене статуса уносит пакетом в раздел «Ход
-                          работы» файла задачи, --role review отдаёт вердикт
-                          для агента-ревьювера (ярус ниже исполнителя, пол base),
-                          --goal режет вердикт потолком яруса из раздела
-                          «Бюджет» файла цели
-  run <ID> [--record]     делегирование задачи: печатается тот же вердикт, что
+                          этап работы вердикт не отмечает, его кладёт хук
+                          спавна субагента по определению агента (DK-911),
+                          --role review отдаёт вердикт для агента-ревьювера
+                          (ярус ниже исполнителя, пол base), --goal режет
+                          вердикт потолком яруса из раздела «Бюджет» файла цели
+  run <ID>                делегирование задачи: печатается тот же вердикт, что
       [--role exec|       у pick, а дальше режим [delegate] харнеса назначения
        review]            ступени решает, кто исполняет. native это инструкция
       [--goal <файл>]     диспетчеру спавнить субагента (выход 0), cli это
@@ -36,16 +34,14 @@ const usageText = `agentctl: выбор исполнителя под задач
                           задачи (по умолчанию корень проекта)
   stage <ID> [<вид>]      этап работы над задачей: без вида печатает живой этап
         [--note <текст>]  и накопленный пакет, с видом отмечает начало нового.
-        [--by <модель>]   Виды: разработка, ревью, проверка, снаружи, уточнение.
-        [--turns N        Первые два ставит pick --record сам, ожидание снаружи
-         --minutes M]     ставит taskctl на смене статуса, руками отмечают
-                          уточнение и проверку. Проверка это прогон сценария не
-                          автором правки, --by называет прогнавшую модель, и
-                          taskctl close сверяет её с исполнителем разработки.
-                          Ревью сверх кругов pick несёт активную работу:
-                          --turns и --minutes (только вместе, с --by) кладут
-                          ходы и минуты без ожидания, taskctl review stats
-                          сводит их по уровням против бюджета review.conf
+        [--by <модель>]   Руками ставится проверка и три ожидания («ждёт
+                          человека», «ждёт события», «ждёт очереди»). Этапы
+                          работы ставят инструменты: постановку, разработку,
+                          вычитку, ревью и доработку хук спавна субагента,
+                          слияние и выкат shipctl, и команда их отбивает.
+                          Проверка это прогон сценария не автором правки, --by
+                          называет прогнавшую модель, и taskctl close сверяет
+                          её с исполнителем разработки
   spend --goal <файл>     гейт бюджета цели: первая строка машинная (gate: ok
        [--record]         либо gate: over), вторая называет потраченное по
                           каждому бакету против потолка из раздела «Бюджет»
@@ -246,25 +242,23 @@ func main() {
 	case "pick":
 		fs := flag.NewFlagSet("pick", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		record := fs.Bool("record", false, "дописать строку исполнения в файл задачи")
 		role := fs.String("role", roleExec, "роль субагента: exec или review")
 		goal := fs.String("goal", "", "файл цели, из него берётся потолок яруса")
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, "pick <ID> [--record] [--role exec|review] [--goal <файл>]")
+		needArgs(pos, 1, 1, "pick <ID> [--role exec|review] [--goal <файл>]")
 		root, rerr := findRoot(*dir)
 		if rerr != nil {
 			fail(rerr)
 		}
-		msg, err = cmdPick(root, pos[0], *record, *role, *goal)
+		msg, err = cmdPick(root, pos[0], *role, *goal)
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
-		record := fs.Bool("record", false, "дописать строку исполнения в файл задачи")
 		role := fs.String("role", roleExec, "роль исполнителя: exec или review")
 		goal := fs.String("goal", "", "файл цели, из него берётся потолок яруса")
 		workdir := fs.String("workdir", "", "рабочая директория задачи, по умолчанию корень проекта")
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, "run <ID> [--record] [--role exec|review] [--goal <файл>] [--workdir <dir>]")
+		needArgs(pos, 1, 1, "run <ID> [--role exec|review] [--goal <файл>] [--workdir <dir>]")
 		root, rerr := findRoot(*dir)
 		if rerr != nil {
 			fail(rerr)
@@ -272,7 +266,7 @@ func main() {
 		// Вывод подпроцесса идёт наружу по ходу дела, а не собирается в строку:
 		// делегированная сессия живёт минутами, и молчащий терминал до её конца
 		// неотличим от повисшего.
-		code, rerr := cmdRun(root, pos[0], *record, *role, *goal, *workdir, os.Stdout, os.Stderr)
+		code, rerr := cmdRun(root, pos[0], *role, *goal, *workdir, os.Stdout, os.Stderr)
 		if rerr != nil {
 			fail(rerr)
 		}
@@ -282,11 +276,9 @@ func main() {
 		fs := flag.NewFlagSet("stage", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		note := fs.String("note", "", "текст записи, он уедет в «Ход работы» файла задачи")
-		by := fs.String("by", "", "кто прогнал сценарий либо провёл ревью: имя модели")
-		turns := fs.Int("turns", 0, "ходы ревью без ожидания, только с --minutes и видом ревью")
-		minutes := fs.Int("minutes", 0, "минуты ревью без ожидания, только с --turns и видом ревью")
+		by := fs.String("by", "", "кто прогнал сценарий: имя модели")
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 2, "stage <ID> [<вид>] [--note <текст>] [--by <модель>] [--turns N --minutes M]")
+		needArgs(pos, 1, 2, "stage <ID> [<вид>] [--note <текст>] [--by <модель>]")
 		root, rerr := findRoot(*dir)
 		if rerr != nil {
 			fail(rerr)
@@ -295,7 +287,7 @@ func main() {
 		if len(pos) == 2 {
 			kind = pos[1]
 		}
-		msg, err = cmdStage(root, pos[0], kind, *note, *by, *turns, *minutes, timeNow())
+		msg, err = cmdStage(root, pos[0], kind, *note, *by, timeNow())
 	case "spend":
 		fs := flag.NewFlagSet("spend", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

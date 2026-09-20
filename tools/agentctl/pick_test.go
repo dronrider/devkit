@@ -274,7 +274,7 @@ func TestCmdPick(t *testing.T) {
 		{"T-007", "model: sonnet", "effort: high", "полоса задач ценой M"},
 	}
 	for _, c := range cases {
-		out, err := cmdPick(root, c.id, false, roleExec, "")
+		out, err := cmdPick(root, c.id, roleExec, "")
 		if err != nil {
 			t.Fatalf("pick %s: %v", c.id, err)
 		}
@@ -319,7 +319,7 @@ home = "`+home+`"
 	} {
 		t.Run(c.harness, func(t *testing.T) {
 			t.Setenv("DEVKIT_HARNESS", c.harness)
-			out, err := cmdPick(root, "T-007", false, roleExec, "")
+			out, err := cmdPick(root, "T-007", roleExec, "")
 			if err != nil {
 				t.Fatalf("pick: %v", err)
 			}
@@ -347,7 +347,7 @@ func TestCmdPickOverride(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-003", false, roleExec, "")
+		out, err := cmdPick(root, "T-003", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick T-003: %v", err)
 		}
@@ -373,7 +373,7 @@ func TestCmdPickOverride(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-003", false, roleExec, "")
+		out, err := cmdPick(root, "T-003", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick T-003: %v", err)
 		}
@@ -391,7 +391,7 @@ func TestCmdPickOverride(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-001", false, roleExec, "")
+		out, err := cmdPick(root, "T-001", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick T-001: %v", err)
 		}
@@ -409,7 +409,7 @@ func TestCmdPickOverride(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-001", false, roleExec, "")
+		out, err := cmdPick(root, "T-001", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick T-001: %v", err)
 		}
@@ -424,7 +424,7 @@ func TestCmdPickOverride(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := cmdPick(root, "T-001", false, roleExec, "")
+		_, err := cmdPick(root, "T-001", roleExec, "")
 		if err == nil || !strings.Contains(err.Error(), "неизвестный effort") {
 			t.Fatalf("жду ошибку про неизвестный effort, получил %v", err)
 		}
@@ -436,7 +436,7 @@ func TestCmdPickOverride(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-002", false, roleExec, "")
+		out, err := cmdPick(root, "T-002", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick T-002: %v", err)
 		}
@@ -453,7 +453,7 @@ func TestCmdPickOverride(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := cmdPick(root, "T-001", false, roleExec, "")
+		_, err := cmdPick(root, "T-001", roleExec, "")
 		if err == nil || !strings.Contains(err.Error(), "неизвестный ярус") {
 			t.Fatalf("жду ошибку про неизвестный ярус, получил %v", err)
 		}
@@ -467,7 +467,7 @@ func TestCmdPickOverride(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-001", false, roleExec, "")
+		out, err := cmdPick(root, "T-001", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick T-001: %v", err)
 		}
@@ -487,7 +487,7 @@ func TestCmdPickOverride(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-005", false, roleExec, "")
+		out, err := cmdPick(root, "T-005", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick T-005: %v", err)
 		}
@@ -508,7 +508,7 @@ func TestCmdPickOverride(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-005", false, roleExec, "")
+		out, err := cmdPick(root, "T-005", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick T-005: %v", err)
 		}
@@ -521,7 +521,7 @@ func TestCmdPickOverride(t *testing.T) {
 		if err := os.RemoveAll(filepath.Join(root, "docs", "tasks")); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-001", false, roleExec, "")
+		out, err := cmdPick(root, "T-001", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick T-001: %v", err)
 		}
@@ -561,7 +561,8 @@ func TestCmdPickQuota(t *testing.T) {
 			t.Fatal(err)
 		}
 		clearStages(t, root, "T-002")
-		out, err := cmdPick(root, "T-002", true, roleExec, "")
+		p, err := recordVerdict(root, "T-002", roleExec, "")
+		out := p.Text
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -583,7 +584,7 @@ func TestCmdPickQuota(t *testing.T) {
 
 	t.Run("профицит поднимает вердикт", func(t *testing.T) {
 		writeQuota(t, quota, 5, 5, 24*time.Hour)
-		out, err := cmdPick(root, "T-005", false, roleExec, "")
+		out, err := cmdPick(root, "T-005", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -599,7 +600,7 @@ func TestCmdPickQuota(t *testing.T) {
 
 	t.Run("сдвинутому вниз LLD советуют отложить дизайн", func(t *testing.T) {
 		writeQuota(t, quota, 95, 50, halfWindow)
-		out, err := cmdPick(root, "T-003", false, roleExec, "")
+		out, err := cmdPick(root, "T-003", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -613,7 +614,7 @@ func TestCmdPickQuota(t *testing.T) {
 
 	t.Run("сдвинутому вниз вердикту ценой M советуют отложить исполнение", func(t *testing.T) {
 		writeQuota(t, quota, 95, 50, halfWindow)
-		out, err := cmdPick(root, "T-002", false, roleExec, "")
+		out, err := cmdPick(root, "T-002", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -627,7 +628,7 @@ func TestCmdPickQuota(t *testing.T) {
 
 	t.Run("сдвинутому вниз вердикту ценой L тоже советуют отложить исполнение", func(t *testing.T) {
 		writeQuota(t, quota, 95, 50, halfWindow)
-		out, err := cmdPick(root, "T-006", false, roleExec, "")
+		out, err := cmdPick(root, "T-006", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -641,7 +642,7 @@ func TestCmdPickQuota(t *testing.T) {
 
 	t.Run("сдвинутому вниз вердикту ценой S совета не дают", func(t *testing.T) {
 		writeQuota(t, quota, 90, 50, halfWindow)
-		out, err := cmdPick(root, "T-005", false, roleExec, "")
+		out, err := cmdPick(root, "T-005", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -655,7 +656,7 @@ func TestCmdPickQuota(t *testing.T) {
 
 	t.Run("грумминговый вердикт корректор не трогает", func(t *testing.T) {
 		writeQuota(t, quota, 95, 50, halfWindow)
-		out, err := cmdPick(root, "T-004", false, roleExec, "")
+		out, err := cmdPick(root, "T-004", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -676,7 +677,7 @@ func TestCmdPickQuota(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte("# T-002\n\nМодель: opus\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-002", false, roleExec, "")
+		out, err := cmdPick(root, "T-002", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -690,7 +691,7 @@ func TestCmdPickQuota(t *testing.T) {
 		if err := os.WriteFile(quota, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-001", false, roleExec, "")
+		out, err := cmdPick(root, "T-001", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -711,7 +712,7 @@ func TestCmdPickQuota(t *testing.T) {
 		if err := os.MkdirAll(quota, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-001", false, roleExec, "")
+		out, err := cmdPick(root, "T-001", roleExec, "")
 		if err != nil {
 			t.Fatalf("нечитаемый снимок не должен ронять pick: %v", err)
 		}
@@ -729,7 +730,7 @@ func TestCmdPickQuota(t *testing.T) {
 		}
 		// T-006 берётся ради чистоты: у T-002 выше по тесту уже лежит
 		// override-строка, а при override корректор до снимка не доходит.
-		out, err := cmdPick(root, "T-006", false, roleExec, "")
+		out, err := cmdPick(root, "T-006", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -755,7 +756,7 @@ func TestCmdPickQuota(t *testing.T) {
 		if err := os.WriteFile(quota, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-005", false, roleExec, "")
+		out, err := cmdPick(root, "T-005", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -774,7 +775,7 @@ func TestCmdPickQuota(t *testing.T) {
 		if err := os.WriteFile(quota, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-006", false, roleExec, "")
+		out, err := cmdPick(root, "T-006", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -797,7 +798,7 @@ func TestCmdPickQuota(t *testing.T) {
 		if err := os.WriteFile(quota, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-001", false, roleExec, "")
+		out, err := cmdPick(root, "T-001", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -814,7 +815,7 @@ func TestCmdPickQuota(t *testing.T) {
 		if err := os.WriteFile(quota, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-005", false, roleExec, "")
+		out, err := cmdPick(root, "T-005", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -867,7 +868,7 @@ func TestCmdPickReview(t *testing.T) {
 	t.Run("исполнитель opus, ревьювер sonnet с подтянутым effort", func(t *testing.T) {
 		// T-002 маппингом opus/medium; ревьювер идёт ярусом ниже, а пол sonnet
 		// поднимает ему глубину до high.
-		out, err := cmdPick(root, "T-002", false, roleReview, "")
+		out, err := cmdPick(root, "T-002", roleReview, "")
 		if err != nil {
 			t.Fatalf("pick --role review: %v", err)
 		}
@@ -880,7 +881,7 @@ func TestCmdPickReview(t *testing.T) {
 	})
 
 	t.Run("исполнителю haiku ревьювер не достаётся дешевле пола", func(t *testing.T) {
-		out, err := cmdPick(root, "T-001", false, roleReview, "")
+		out, err := cmdPick(root, "T-001", roleReview, "")
 		if err != nil {
 			t.Fatalf("pick --role review: %v", err)
 		}
@@ -890,7 +891,7 @@ func TestCmdPickReview(t *testing.T) {
 	})
 
 	t.Run("роль exec вердикт не трогает", func(t *testing.T) {
-		out, err := cmdPick(root, "T-002", false, roleExec, "")
+		out, err := cmdPick(root, "T-002", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -903,7 +904,7 @@ func TestCmdPickReview(t *testing.T) {
 	})
 
 	t.Run("дизайн ревьюится тем же калибром", func(t *testing.T) {
-		out, err := cmdPick(root, "T-003", false, roleReview, "")
+		out, err := cmdPick(root, "T-003", roleReview, "")
 		if err != nil {
 			t.Fatalf("pick --role review: %v", err)
 		}
@@ -917,7 +918,7 @@ func TestCmdPickReview(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte("# T-005\n\nМодель: fable (3D-графика)\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-005", false, roleReview, "")
+		out, err := cmdPick(root, "T-005", roleReview, "")
 		if err != nil {
 			t.Fatalf("pick --role review: %v", err)
 		}
@@ -927,7 +928,7 @@ func TestCmdPickReview(t *testing.T) {
 	})
 
 	t.Run("неизвестная роль это ошибка", func(t *testing.T) {
-		if _, err := cmdPick(root, "T-001", false, "тестировщик", ""); err == nil ||
+		if _, err := cmdPick(root, "T-001", "тестировщик", ""); err == nil ||
 			!strings.Contains(err.Error(), "неизвестная роль") {
 			t.Fatalf("жду ошибку про роль, получил %v", err)
 		}
@@ -940,7 +941,7 @@ func TestCmdPickReview(t *testing.T) {
 			t.Fatal(err)
 		}
 		clearStages(t, root, "T-002")
-		if _, err := cmdPick(root, "T-002", true, roleReview, ""); err != nil {
+		if _, err := recordVerdict(root, "T-002", roleReview, ""); err != nil {
 			t.Fatalf("pick --role review --record: %v", err)
 		}
 		text := stageText(t, root, "T-002")
@@ -958,7 +959,7 @@ func TestCmdPickReview(t *testing.T) {
 	// ниже по тесту.
 	t.Run("корректор не уводит ревьювера ниже пола", func(t *testing.T) {
 		writeQuota(t, quotaPath("claude-code"), 95, 50, halfWindow)
-		out, err := cmdPick(root, "T-002", false, roleReview, "")
+		out, err := cmdPick(root, "T-002", roleReview, "")
 		if err != nil {
 			t.Fatalf("pick --role review: %v", err)
 		}
@@ -974,7 +975,7 @@ func TestCmdPickReview(t *testing.T) {
 	t.Run("ревьюверу не советуют отложить сделанную работу", func(t *testing.T) {
 		writeQuota(t, quotaPath("claude-code"), 95, 50, halfWindow)
 		for _, id := range []string{"T-002", "T-006", "T-003"} {
-			out, err := cmdPick(root, id, false, roleReview, "")
+			out, err := cmdPick(root, id, roleReview, "")
 			if err != nil {
 				t.Fatalf("pick %s --role review: %v", id, err)
 			}
@@ -985,7 +986,7 @@ func TestCmdPickReview(t *testing.T) {
 			if !strings.Contains(out, "корректор: дефицит week_all") {
 				t.Fatalf("вместе с советом ушёл и хвост корректора для %s: %q", id, out)
 			}
-			exec, err := cmdPick(root, id, false, roleExec, "")
+			exec, err := cmdPick(root, id, roleExec, "")
 			if err != nil {
 				t.Fatalf("pick %s: %v", id, err)
 			}
@@ -998,7 +999,7 @@ func TestCmdPickReview(t *testing.T) {
 
 func TestCmdPickMissing(t *testing.T) {
 	root := writeBoard(t)
-	if _, err := cmdPick(root, "T-999", false, roleExec, ""); err == nil || !strings.Contains(err.Error(), "нет на доске") {
+	if _, err := cmdPick(root, "T-999", roleExec, ""); err == nil || !strings.Contains(err.Error(), "нет на доске") {
 		t.Fatalf("жду ошибку про отсутствие на доске, получил %v", err)
 	}
 }
@@ -1014,7 +1015,7 @@ func TestPickOnRealBoardFormat(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "docs", "TASKS.md"), []byte(empty), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdPick(root, "T-001", false, roleExec, ""); err == nil {
+	if _, err := cmdPick(root, "T-001", roleExec, ""); err == nil {
 		t.Fatal("жду ошибку на пустой доске")
 	}
 }
@@ -1101,7 +1102,7 @@ func TestRecordQuotaState(t *testing.T) {
 				t.Fatal(err)
 			}
 			clearStages(t, root, c.id)
-			if _, err := cmdPick(root, c.id, true, roleExec, ""); err != nil {
+			if _, err := recordVerdict(root, c.id, roleExec, ""); err != nil {
 				t.Fatalf("pick --record: %v", err)
 			}
 			text := stageText(t, root, c.id)
@@ -1124,7 +1125,7 @@ func TestRecordQuotaState(t *testing.T) {
 		}
 		clearStages(t, root, "T-002")
 		for i := 0; i < 2; i++ {
-			if _, err := cmdPick(root, "T-002", true, roleExec, ""); err != nil {
+			if _, err := recordVerdict(root, "T-002", roleExec, ""); err != nil {
 				t.Fatalf("pick --record, вызов %d: %v", i+1, err)
 			}
 		}
@@ -1136,135 +1137,6 @@ func TestRecordQuotaState(t *testing.T) {
 		}
 		if n := strings.Count(text, "квота: week_all 50%, week_max 50%, снимок 1м назад, сдвига нет"); n != 2 {
 			t.Fatalf("жду по одному состоянию на каждую из двух записей, вижу %d:\n%s", n, text)
-		}
-	})
-}
-
-func TestRecordStage(t *testing.T) {
-	isolateQuota(t)
-	fixNow(t, testNow)
-	root := writeBoard(t)
-	if err := os.MkdirAll(filepath.Join(root, "docs", "tasks"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Run("этап разработки отмечен видом и временем", func(t *testing.T) {
-		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
-		content := "# T-001\n\nОписание задачи.\n"
-		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		clearStages(t, root, "T-001")
-		if _, err := cmdPick(root, "T-001", true, roleExec, ""); err != nil {
-			t.Fatalf("pick --record: %v", err)
-		}
-		rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), "T-001"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		live, ok := rec.Live()
-		if !ok {
-			t.Fatal("этап не отмечен вовсе")
-		}
-		if live.Kind != stage.Dev {
-			t.Fatalf("вид деятельности %q, жду %q", live.Kind, stage.Dev)
-		}
-		if !live.Start.Equal(testNow) {
-			t.Fatalf("время начала %s, жду %s", live.Start, testNow)
-		}
-		if !strings.Contains(live.Note, "субагент haiku/low по вердикту pick") {
-			t.Fatalf("в тексте записи нет исполнителя: %q", live.Note)
-		}
-	})
-
-	t.Run("файл задачи вердикт не трогает", func(t *testing.T) {
-		// Исходный баг DK-120: строка вердикта ложилась правкой рабочего дерева,
-		// ревьювер её не коммитил, и merge отказывал на незакоммиченном. Правки
-		// больше нет вовсе, поэтому и коммитить нечего.
-		taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
-		content := "# T-002\n\n## Ход работы\n\n- Разработка: было.\n"
-		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		clearStages(t, root, "T-002")
-		if _, err := cmdPick(root, "T-002", true, roleExec, ""); err != nil {
-			t.Fatalf("pick --record: %v", err)
-		}
-		data, err := os.ReadFile(taskFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(data) != content {
-			t.Fatalf("вердикт правил файл задачи:\n%s", data)
-		}
-	})
-
-	t.Run("ошибка без файла задачи", func(t *testing.T) {
-		_, err := cmdPick(root, "T-003", true, roleExec, "")
-		if err == nil {
-			t.Fatal("жду ошибку при отсутствии файла задачи")
-		}
-		if !strings.Contains(err.Error(), "taskctl file") {
-			t.Fatalf("ошибка без подсказки про taskctl file: %v", err)
-		}
-	})
-
-	t.Run("повторный вызов копит этапы в пакете", func(t *testing.T) {
-		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
-		if err := os.WriteFile(taskFile, []byte("# T-001\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		clearStages(t, root, "T-001")
-		if _, err := cmdPick(root, "T-001", true, roleExec, ""); err != nil {
-			t.Fatalf("вердикт исполнителя: %v", err)
-		}
-		if _, err := cmdPick(root, "T-001", true, roleReview, ""); err != nil {
-			t.Fatalf("вердикт ревьювера: %v", err)
-		}
-		rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), "T-001"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(rec.Stages) != 2 {
-			t.Fatalf("жду два этапа в пакете, вижу %d: %+v", len(rec.Stages), rec.Stages)
-		}
-		if rec.Stages[0].Kind != stage.Dev || rec.Stages[1].Kind != stage.Review {
-			t.Fatalf("порядок этапов разошёлся с порядком вердиктов: %+v", rec.Stages)
-		}
-	})
-
-	t.Run("грумминговый вердикт это разработка со словом в тексте", func(t *testing.T) {
-		taskFile := filepath.Join(root, "docs", "tasks", "T-004.md")
-		if err := os.WriteFile(taskFile, []byte("# T-004\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		clearStages(t, root, "T-004")
-		if _, err := cmdPick(root, "T-004", true, roleExec, ""); err != nil {
-			t.Fatalf("pick --record: %v", err)
-		}
-		text := stageText(t, root, "T-004")
-		if !strings.Contains(text, "- Разработка: грумминговый вердикт, субагент opus/xhigh") {
-			t.Fatalf("жду разработку со словом про грумминг:\n%s", text)
-		}
-	})
-
-	t.Run("override снимает грумминг, и слова про него в записи нет", func(t *testing.T) {
-		// T-004 без override уходит в грумминг (неопределённость 5, см. тест
-		// выше); override-строка перебивает маппинг целиком, включая Groom.
-		taskFile := filepath.Join(root, "docs", "tasks", "T-004.md")
-		if err := os.WriteFile(taskFile, []byte("# T-004\n\nМодель: sonnet\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		clearStages(t, root, "T-004")
-		if _, err := cmdPick(root, "T-004", true, roleExec, ""); err != nil {
-			t.Fatalf("pick --record: %v", err)
-		}
-		text := stageText(t, root, "T-004")
-		if !strings.Contains(text, "- Разработка: субагент sonnet/xhigh") {
-			t.Fatalf("жду запись по override:\n%s", text)
-		}
-		if strings.Contains(text, "грумминговый вердикт") {
-			t.Fatalf("override записан груммингом:\n%s", text)
 		}
 	})
 }
@@ -1293,7 +1165,7 @@ func TestCmdPickSnapshotMigration(t *testing.T) {
 
 	legacy := legacyQuotaPath()
 	writeQuota(t, legacy, 95, 50, halfWindow)
-	before, err := cmdPick(root, "T-002", false, roleExec, "")
+	before, err := cmdPick(root, "T-002", roleExec, "")
 	if err != nil {
 		t.Fatalf("pick по старому снимку: %v", err)
 	}
@@ -1313,7 +1185,7 @@ func TestCmdPickSnapshotMigration(t *testing.T) {
 	if err := os.Rename(legacy, moved); err != nil {
 		t.Fatal(err)
 	}
-	after, err := cmdPick(root, "T-002", false, roleExec, "")
+	after, err := cmdPick(root, "T-002", roleExec, "")
 	if err != nil {
 		t.Fatalf("pick после переезда: %v", err)
 	}
@@ -1334,7 +1206,7 @@ func TestCmdPickNewSnapshotWins(t *testing.T) {
 	root := writeBoard(t)
 	writeQuota(t, legacyQuotaPath(), 95, 50, halfWindow)
 	writeQuota(t, quota, 5, 5, 24*time.Hour)
-	out, err := cmdPick(root, "T-005", false, roleExec, "")
+	out, err := cmdPick(root, "T-005", roleExec, "")
 	if err != nil {
 		t.Fatalf("pick: %v", err)
 	}

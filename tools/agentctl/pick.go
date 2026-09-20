@@ -266,17 +266,22 @@ type pickResult struct {
 	V    verdict
 	HC   harnessContext
 	Text string
+	// Note это текст записи этапа под этот вердикт: модель, маппинг, причина
+	// сдвига и состояние квоты. Кладёт его в запись тот, кто по вердикту
+	// поднимает работу подпроцессом (agentctl run); спавн субагента внутри
+	// сессии отмечает хук по определению агента, и вердикт тут ни при чём.
+	Note string
 }
 
-func cmdPick(root, id string, record bool, role, goal string) (string, error) {
-	p, err := pickVerdict(root, id, record, role, goal)
+func cmdPick(root, id, role, goal string) (string, error) {
+	p, err := pickVerdict(root, id, role, goal)
 	if err != nil {
 		return "", err
 	}
 	return p.Text, nil
 }
 
-func pickVerdict(root, id string, record bool, role, goal string) (pickResult, error) {
+func pickVerdict(root, id, role, goal string) (pickResult, error) {
 	var res pickResult
 	if !validRoles[role] {
 		return res, fmt.Errorf("неизвестная роль %q, допустимы exec и review", role)
@@ -434,42 +439,21 @@ func pickVerdict(root, id string, record bool, role, goal string) (pickResult, e
 	if n := uncertainty(r.Rank); n >= 0 {
 		unc = fmt.Sprint(n)
 	}
-	if record {
-		if err := recordStage(root, id, v, c, cp, qf, tm, now, role); err != nil {
-			return res, err
-		}
-	}
 	res.V, res.HC = v, hc
+	res.Note = verdictNote(v, c, cp, qf, tm)
 	res.Text = fmt.Sprintf("model: %s\neffort: %s\ntier: %s\nvia: %s\n%s (%s, цена %s, неопределённость %s): %s",
 		v.Model, v.Effort, v.Tier, v.Via, r.ID, r.Type, r.Cost, unc, v.Reason)
 	return res, nil
 }
 
-// recordStage открывает этап работы над задачей: вид деятельности и время
-// начала уезжают в запись за пределами репозитория (internal/stage), а в файл
-// задачи весь пакет этапов кладёт taskctl на смене статуса. Рабочего дерева
-// вердикт при этом не касается вовсе, и правки, которую ревьювер обязан был
-// коммитить за собой, больше нет (DK-120). Вид деятельности у ревью «ревью», у
-// исполнения и грумминга «разработка»: словарь экранов знает четыре слова, а
-// грумминговый вердикт это тот же заход в задачу, только разбирающий. Что
-// вердикт был грумминговым, говорит текст записи: исполнение по нему не
-// начинается, и запись не должна обещать то, чего не было. Сдвинутый вердикт
-// несёт и маппинг, и причину сдвига: иначе по файлу задачи не понять, почему
-// модель разошлась с таблицей. Состояние квоты идёт в текст всегда: без него
-// запись про несдвинутый вердикт не отличает выключенный корректор от снимка в
-// норме, а по закрытой задаче потом не восстановить, на каких данных модель
-// выбиралась.
-func recordStage(root, id string, v verdict, c correction, cp goalCap, qf quotaFacts, tm tierModels, now time.Time, role string) error {
-	if _, err := os.Stat(filepath.Join(root, "docs", "tasks", id+".md")); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("файла задачи нет, завести: taskctl file %s", id)
-		}
-		return err
-	}
-	kind := stage.Dev
-	if role == roleReview {
-		kind = stage.Review
-	}
+// verdictNote собирает текст записи этапа под вердикт. Сдвинутый вердикт несёт
+// и маппинг, и причину сдвига: иначе по файлу задачи не понять, почему модель
+// разошлась с таблицей. Состояние квоты идёт в текст всегда: без него запись
+// про несдвинутый вердикт не отличает выключенный корректор от снимка в норме,
+// а по закрытой задаче потом не восстановить, на каких данных модель
+// выбиралась. Что вердикт был грумминговым, говорит сам текст: исполнение по
+// нему не начинается, и запись не должна обещать то, чего не было.
+func verdictNote(v verdict, c correction, cp goalCap, qf quotaFacts, tm tierModels) string {
 	var parts []string
 	if c.shifted() {
 		parts = append(parts, fmt.Sprintf("маппинг %s, корректор: %s", tm.named(c.From), c.Note))
@@ -503,9 +487,50 @@ func recordStage(root, id string, v verdict, c correction, cp goalCap, qf quotaF
 	if v.Groom {
 		groom = "грумминговый вердикт, "
 	}
-	note := fmt.Sprintf("%s%s %s/%s по вердикту pick%s", groom, tm.word(v.Tier), name, v.Effort, tail)
-	// Этап открывается по основному чекауту, а не по дереву задачи: pick зовут
-	// с -C <worktree>, а закрывает пакет taskctl из основного чекаута, и без
-	// приведения это были бы две разные записи.
-	return stage.Open(stage.Home(), stage.MainRoot(root), id, kind, note, now)
+	return fmt.Sprintf("%s%s %s/%s по вердикту pick%s", groom, tm.word(v.Tier), name, v.Effort, tail)
+}
+
+// openVerdictStage открывает этап под работу, поднятую подпроцессом по
+// вердикту: подпроцесс не проходит через хук спавна субагента, и кроме run
+// отметить его некому (DK-911). Вид у ревью «ревью», у исполнителя
+// «разработка», а после ревью с замечаниями «доработка»: исполнитель, поднятый
+// на записи с ревью последним этапом работы, чинит замечания. Этап
+// открывается по основному чекауту, а не по дереву задачи: закрывает пакет
+// taskctl из основного чекаута, и без приведения это были бы две разные
+// записи. Возвращает открытый вид, по нему run закрывает этап на выходе
+// подпроцесса.
+func openVerdictStage(root, id, role, note string, now time.Time) (string, error) {
+	if _, err := os.Stat(filepath.Join(root, "docs", "tasks", id+".md")); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("файла задачи нет, завести: taskctl file %s", id)
+		}
+		return "", err
+	}
+	home, main := stage.Home(), stage.MainRoot(root)
+	kind := stage.Dev
+	if role == roleReview {
+		kind = stage.Review
+	} else if rec, err := stage.Load(stage.Path(home, main, id)); err == nil && afterReview(rec) {
+		kind = stage.Rework
+	}
+	return kind, stage.Open(home, main, id, kind, note, now)
+}
+
+// afterReview отвечает, стоит ли последним этапом работы записи ревью либо
+// доработка: следующий исполнитель на такой записи дорабатывает. Ожидания
+// между ними не в счёт, вопрос человеку после ревью доработку не отменяет.
+func afterReview(rec stage.Record) bool {
+	last, ok := stage.LastOf(rec, stage.IsWork)
+	return ok && (last.Kind == stage.Review || last.Kind == stage.Rework)
+}
+
+// recordVerdict считает вердикт и открывает под него этап: дорога подпроцесса
+// в run и стенд, который проверяет текст записи.
+func recordVerdict(root, id, role, goal string) (pickResult, error) {
+	p, err := pickVerdict(root, id, role, goal)
+	if err != nil {
+		return p, err
+	}
+	_, err = openVerdictStage(root, id, role, p.Note, timeNow())
+	return p, err
 }

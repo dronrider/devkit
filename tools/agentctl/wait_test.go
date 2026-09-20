@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/dronrider/devkit/internal/stage"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,5 +176,29 @@ func TestWaitOverwritesTheOldMark(t *testing.T) {
 	}
 	if got["since"] != "2026-09-10T09:43:00" {
 		t.Fatalf("время отметки %q, ждали 09:43:00", got["since"])
+	}
+}
+
+// TestWaitOpensEventStage: ожидание машинного события ложится этапом «ждёт
+// события» в запись задачи без команды диспетчера (DK-911).
+func TestWaitOpensEventStage(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := writeBoard(t)
+	dir := t.TempDir()
+	env := waitEnv(map[string]string{waitDirEnv: dir})
+	if _, err := cmdWait(root, "T-001", waitTimer, "", "10m", "", env, waitNow()); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := stage.Load(stage.Path(home, stage.MainRoot(root), "T-001"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, ok := rec.Live()
+	if !ok || live.Kind != stage.WaitEvent || !strings.Contains(live.Note, "agentctl wait "+waitTimer) {
+		t.Fatalf("ожидание не легло этапом события: %+v", live)
+	}
+	if !live.Start.Equal(waitNow()) {
+		t.Fatalf("начало ожидания %v, ждали %v", live.Start, waitNow())
 	}
 }

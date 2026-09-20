@@ -15,6 +15,7 @@ import (
 
 	"github.com/dronrider/devkit/internal/attime"
 	"github.com/dronrider/devkit/internal/merged"
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // Отметка машинного ожидания. Сессия конвейера кончает ход не только сделанной
@@ -415,6 +416,15 @@ func cmdWait(root, id, kind, target, until, note string, env func(string) string
 	if err != nil {
 		return "", err
 	}
+	// Ожидание ложится этапом в запись задачи: строка в это время не
+	// работает, и дашборд с taskctl list обязаны показывать ожидание
+	// события, а не последнюю разработку (DK-911). Провал записи заказ не
+	// роняет, как и у остальных писателей этапа.
+	what := kind
+	if target != "" {
+		what += " " + target
+	}
+	stage.Open(stage.Home(), stage.MainRoot(root), id, stage.WaitEvent, "agentctl wait "+what, now)
 	return waitSaid(m, file), nil
 }
 

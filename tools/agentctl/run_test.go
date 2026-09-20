@@ -145,7 +145,7 @@ mode = "none"
 func runOut(t *testing.T, root, id, role, workdir string) (int, string) {
 	t.Helper()
 	var out, errw bytes.Buffer
-	code, err := cmdRun(root, id, false, role, "", workdir, &out, &errw)
+	code, err := cmdRun(root, id, role, "", workdir, &out, &errw)
 	if err != nil {
 		t.Fatalf("run %s: %v", id, err)
 	}
@@ -380,7 +380,7 @@ func TestRunDepthGuard(t *testing.T) {
 	root := writeBoard(t)
 	t.Setenv(runDepthEnv, "1")
 	var out, errw bytes.Buffer
-	if _, err := cmdRun(root, "T-001", false, roleExec, "", "", &out, &errw); err == nil {
+	if _, err := cmdRun(root, "T-001", roleExec, "", "", &out, &errw); err == nil {
 		t.Fatalf("жду отказ на взведённом ограничителе, вывод: %s%s", out.String(), errw.String())
 	} else if !strings.Contains(err.Error(), "вложенное делегирование запрещено") {
 		t.Fatalf("причина отказа: %v", err)
@@ -514,7 +514,7 @@ func TestRunBadWorkdir(t *testing.T) {
 	writeMachine(t, kit, "enabled = [\"echocli\"]\ndefault = \"echocli\"\n\n[echocli]\nmini = \"cheap\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
 	root := writeBoard(t)
 	var out, errw bytes.Buffer
-	_, err := cmdRun(root, "T-001", false, roleExec, "", filepath.Join(root, "нет-такого"), &out, &errw)
+	_, err := cmdRun(root, "T-001", roleExec, "", filepath.Join(root, "нет-такого"), &out, &errw)
 	if err == nil || !strings.Contains(err.Error(), "рабочей директории") {
 		t.Fatalf("жду отказ про рабочую директорию, вышло: %v", err)
 	}

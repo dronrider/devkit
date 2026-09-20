@@ -23,7 +23,7 @@ func stageRoot(t *testing.T) string {
 
 func TestCmdStageVerifyRecordsRunner(t *testing.T) {
 	root := stageRoot(t)
-	if _, err := cmdStage(root, "T-001", stage.Verify, "", "sonnet", 0, 0, stageAt); err != nil {
+	if _, err := cmdStage(root, "T-001", stage.Verify, "", "sonnet", stageAt); err != nil {
 		t.Fatalf("отметка прогона: %v", err)
 	}
 	rec, err := stage.Load(stage.Path(stage.Home(), root, "T-001"))
@@ -42,7 +42,7 @@ func TestCmdStageVerifyRecordsRunner(t *testing.T) {
 
 func TestCmdStageVerifyNeedsBy(t *testing.T) {
 	root := stageRoot(t)
-	_, err := cmdStage(root, "T-001", stage.Verify, "", "", 0, 0, stageAt)
+	_, err := cmdStage(root, "T-001", stage.Verify, "", "", stageAt)
 	if err == nil || !strings.Contains(err.Error(), "--by") {
 		t.Fatalf("проверка без --by прошла: %v", err)
 	}
@@ -50,75 +50,56 @@ func TestCmdStageVerifyNeedsBy(t *testing.T) {
 
 func TestCmdStageByOnlyForVerify(t *testing.T) {
 	root := stageRoot(t)
-	_, err := cmdStage(root, "T-001", stage.Dev, "", "sonnet", 0, 0, stageAt)
+	_, err := cmdStage(root, "T-001", stage.WaitHuman, "", "sonnet", stageAt)
 	if err == nil || !strings.Contains(err.Error(), "--by") {
-		t.Fatalf("--by у разработки прошёл: %v", err)
+		t.Fatalf("--by у ожидания прошёл: %v", err)
 	}
 }
 
-// TestCmdStageReviewRecordsWork: --by, --turns и --minutes у ревью кладут
-// ходы и минуты в запись, а VerifyRunner (тот же критерий, что у ворот
-// проверки) не путает ревьювера с прогонявшим сценарий.
-func TestCmdStageReviewRecordsWork(t *testing.T) {
+// TestCmdStageRefusesToolWrittenKinds: этапы работы ставят инструменты (хук
+// спавна, shipctl), и ручная отметка отбивается с именем писателя. Иначе
+// диспетчер по памяти клал бы вторую строку об одном ревью (DK-911).
+func TestCmdStageRefusesToolWrittenKinds(t *testing.T) {
 	root := stageRoot(t)
-	if _, err := cmdStage(root, "T-001", stage.Review, "", "sonnet", 44, 9, stageAt); err != nil {
-		t.Fatalf("отметка ревью с ходами и минутами: %v", err)
+	cases := map[string]string{
+		stage.Dev:    "exec-*",
+		stage.Review: "review-*",
+		stage.Proof:  "proofread",
+		stage.Rework: "после ревью",
+		stage.Merge:  "shipctl merge",
+		stage.Deploy: "shipctl ship",
+		stage.Setup:  "хук старта",
 	}
-	rec, err := stage.Load(stage.Path(stage.Home(), root, "T-001"))
-	if err != nil {
-		t.Fatal(err)
+	for kind, who := range cases {
+		_, err := cmdStage(root, "T-001", kind, "", "", stageAt)
+		if err == nil || !strings.Contains(err.Error(), who) {
+			t.Fatalf("этап %s руками прошёл либо отказ не назвал писателя: %v", kind, err)
+		}
 	}
-	live, ok := rec.Live()
-	if !ok || live.Kind != stage.Review {
-		t.Fatalf("живой этап не ревью: %+v", live)
-	}
-	turns, minutes, ok := stage.ParseWork(live.Note)
-	if !ok || turns != 44 || minutes != 9 {
-		t.Fatalf("ходы и минуты не достались из записи %q: %d, %d, %v", live.Note, turns, minutes, ok)
-	}
-	if _, ok := stage.VerifyRunner(live.Note); ok {
-		t.Fatalf("ревью спутано с прогоном сценария: %q", live.Note)
+	if _, err := os.Stat(stage.Path(stage.Home(), stage.MainRoot(root), "T-001")); err == nil {
+		t.Fatal("отбитый вид всё равно завёл запись")
 	}
 }
 
-// TestCmdStageReviewWorkNeedsBoth: ходы и минуты только парой, поодиночке
-// считать нечего.
-func TestCmdStageReviewWorkNeedsBoth(t *testing.T) {
+// TestCmdStageRefusesOldWords: слово прежнего словаря отбивается с подсказкой,
+// каким ожиданием его писать.
+func TestCmdStageRefusesOldWords(t *testing.T) {
 	root := stageRoot(t)
-	if _, err := cmdStage(root, "T-001", stage.Review, "", "sonnet", 44, 0, stageAt); err == nil {
-		t.Fatal("ходы без минут прошли")
-	}
-	if _, err := cmdStage(root, "T-001", stage.Review, "", "sonnet", 0, 9, stageAt); err == nil {
-		t.Fatal("минуты без ходов прошли")
-	}
-}
-
-// TestCmdStageReviewWorkNeedsBy: без модели работа обезличена, запись отбита.
-func TestCmdStageReviewWorkNeedsBy(t *testing.T) {
-	root := stageRoot(t)
-	_, err := cmdStage(root, "T-001", stage.Review, "", "", 44, 9, stageAt)
-	if err == nil || !strings.Contains(err.Error(), "--by") {
-		t.Fatalf("ходы и минуты без --by прошли: %v", err)
+	for _, kind := range []string{stage.Outside, stage.Ask} {
+		_, err := cmdStage(root, "T-001", kind, "", "", stageAt)
+		if err == nil || !strings.Contains(err.Error(), stage.WaitHuman) {
+			t.Fatalf("старое слово %s принято либо отказ без подсказки: %v", kind, err)
+		}
 	}
 }
 
-// TestCmdStageWorkOnlyForReview: другим видам ходы и минуты не идут, у них
-// нет бюджета ревью, против которого их сверяют.
-func TestCmdStageWorkOnlyForReview(t *testing.T) {
+func TestCmdStageOpensWait(t *testing.T) {
 	root := stageRoot(t)
-	_, err := cmdStage(root, "T-001", stage.Verify, "", "sonnet", 44, 9, stageAt)
-	if err == nil || !strings.Contains(err.Error(), stage.Review) {
-		t.Fatalf("ходы и минуты у проверки прошли: %v", err)
-	}
-}
-
-func TestCmdStageOpensStage(t *testing.T) {
-	root := stageRoot(t)
-	out, err := cmdStage(root, "T-001", stage.Ask, "ждём выбора между двумя раскладками", "", 0, 0, stageAt)
+	out, err := cmdStage(root, "T-001", stage.WaitHuman, "ждём выбора между двумя раскладками", "", stageAt)
 	if err != nil {
 		t.Fatalf("отметка этапа: %v", err)
 	}
-	for _, want := range []string{"T-001", stage.Ask, "14:30"} {
+	for _, want := range []string{"T-001", stage.WaitHuman, "14:30"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("в ответе нет %q:\n%s", want, out)
 		}
@@ -132,7 +113,7 @@ func TestCmdStageOpensStage(t *testing.T) {
 		t.Fatal(err)
 	}
 	live, ok := rec.Live()
-	if !ok || live.Kind != stage.Ask || !live.Start.Equal(stageAt) {
+	if !ok || live.Kind != stage.WaitHuman || !live.Start.Equal(stageAt) {
 		t.Fatalf("этап записан не тем: %+v", live)
 	}
 	if live.Note != "ждём выбора между двумя раскладками" {
@@ -142,13 +123,13 @@ func TestCmdStageOpensStage(t *testing.T) {
 
 func TestCmdStageRejectsUnknownKind(t *testing.T) {
 	root := stageRoot(t)
-	_, err := cmdStage(root, "T-001", "деплой", "", "", 0, 0, stageAt)
+	_, err := cmdStage(root, "T-001", "деплой", "", "", stageAt)
 	if err == nil {
 		t.Fatal("неизвестный вид деятельности принят командой")
 	}
 	// Отказ обязан назвать словарь: гадать, чем «деплой» отличается от
-	// «разработки», читателю нечем.
-	for _, want := range []string{"деплой", stage.Dev, stage.Outside} {
+	// «выката», читателю нечем.
+	for _, want := range []string{"деплой", stage.Deploy, stage.WaitQueue} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("в отказе нет %q: %v", want, err)
 		}
@@ -158,46 +139,28 @@ func TestCmdStageRejectsUnknownKind(t *testing.T) {
 	}
 }
 
-func TestCmdStageAccumulatesPack(t *testing.T) {
-	root := stageRoot(t)
-	if _, err := cmdStage(root, "T-001", stage.Dev, "субагент opus/high", "", 0, 0, stageAt); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cmdStage(root, "T-001", stage.Review, "субагент sonnet/high", "", 0, 0, stageAt.Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), "T-001"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rec.Stages) != 2 {
-		t.Fatalf("жду два этапа в пакете, вижу %d: %+v", len(rec.Stages), rec.Stages)
-	}
-	if rec.Stages[0].Kind != stage.Dev || rec.Stages[1].Kind != stage.Review {
-		t.Fatalf("порядок этапов разошёлся с порядком вызовов: %+v", rec.Stages)
-	}
-}
-
 func TestCmdStageShowsLiveAndPack(t *testing.T) {
 	root := stageRoot(t)
-	if _, err := cmdStage(root, "T-001", stage.Dev, "субагент opus/high", "", 0, 0, stageAt); err != nil {
+	home := stage.Home()
+	main := stage.MainRoot(root)
+	if err := stage.Open(home, main, "T-001", stage.Dev, "субагент opus/high", stageAt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdStage(root, "T-001", stage.Ask, "ждём ответа", "", 0, 0, stageAt.Add(time.Hour)); err != nil {
+	if _, err := cmdStage(root, "T-001", stage.WaitHuman, "ждём ответа", "", stageAt.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdStage(root, "T-001", "", "", "", 0, 0, stageAt.Add(2*time.Hour))
+	out, err := cmdStage(root, "T-001", "", "", "", stageAt.Add(2*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "stage: " + stage.Ask + "\nsince: 2026-08-15T15:30:00\nnote: ждём ответа\n" +
+	want := "stage: " + stage.WaitHuman + "\nsince: 2026-08-15T15:30:00\nnote: ждём ответа\n" +
 		"до него в пакете:\n  " + stage.Dev + " с 2026-08-15T14:30:00"
 	if out != want {
 		t.Fatalf("вывод живого состояния разошёлся с ожидаемым\nжду:\n%s\nвижу:\n%s", want, out)
 	}
 	// Показ ничего не отмечает: иначе каждый взгляд на состояние добавлял бы
 	// этап, и пакет распухал бы от одного чтения.
-	rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), "T-001"))
+	rec, err := stage.Load(stage.Path(home, main, "T-001"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,9 +169,28 @@ func TestCmdStageShowsLiveAndPack(t *testing.T) {
 	}
 }
 
+// TestCmdStageShowsClosedPack: закрытый писателем этап живым не печатается, а
+// стоит в пакете со своим концом.
+func TestCmdStageShowsClosedPack(t *testing.T) {
+	root := stageRoot(t)
+	home := stage.Home()
+	main := stage.MainRoot(root)
+	if err := stage.Put(home, main, "T-001", stage.Stage{Kind: stage.Review, Start: stageAt, End: stageAt.Add(20 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdStage(root, "T-001", "", "", "", stageAt.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "stage: нет, последний этап закрыт писателем\nдо него в пакете:\n  " + stage.Review + " с 2026-08-15T14:30:00 до 2026-08-15T14:50:00"
+	if out != want {
+		t.Fatalf("вывод закрытого пакета\nжду:\n%s\nвижу:\n%s", want, out)
+	}
+}
+
 func TestCmdStageShowsEmptyRecordInWords(t *testing.T) {
 	root := stageRoot(t)
-	out, err := cmdStage(root, "T-404", "", "", "", 0, 0, stageAt)
+	out, err := cmdStage(root, "T-404", "", "", "", stageAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,11 +209,11 @@ func TestStageCommandArgs(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	root := writeBoard(t)
-	out, err := goRunAgent(t, root, "stage", "--note", "ждём ответа", "T-001", stage.Ask)
+	out, err := goRunAgent(t, root, "stage", "--note", "ждём ответа", "T-001", stage.WaitHuman)
 	if err != nil {
 		t.Fatalf("stage с флагом перед позиционными: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, stage.Ask) {
+	if !strings.Contains(out, stage.WaitHuman) {
 		t.Fatalf("вид деятельности не доехал до записи:\n%s", out)
 	}
 	rec, err := stage.Load(stage.Path(home, stage.MainRoot(root), "T-001"))
@@ -239,10 +221,10 @@ func TestStageCommandArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	live, ok := rec.Live()
-	if !ok || live.Kind != stage.Ask || live.Note != "ждём ответа" {
+	if !ok || live.Kind != stage.WaitHuman || live.Note != "ждём ответа" {
 		t.Fatalf("команда записала не то: %+v", live)
 	}
-	if out, err := goRunAgent(t, root, "stage", "T-001", stage.Ask, "лишнее"); err == nil {
+	if out, err := goRunAgent(t, root, "stage", "T-001", stage.WaitHuman, "лишнее"); err == nil {
 		t.Fatalf("лишний позиционный проглочен молча:\n%s", out)
 	}
 }

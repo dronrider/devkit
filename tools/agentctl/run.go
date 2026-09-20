@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/dronrider/devkit/internal/stage"
 	"io"
 	"os"
 	"os/exec"
@@ -281,7 +282,7 @@ func runChild(cmd *exec.Cmd, errw io.Writer, what string) (int, error) {
 // на харнесе со своим спавном), три это «делегировать нечем», код подпроцесса
 // проезжает наружу как есть. Ошибка это отказ самого run, её печатает main
 // единицей.
-func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw io.Writer) (int, error) {
+func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, error) {
 	if err := runDepthRefusal(os.Getenv(runDepthEnv), id); err != nil {
 		return 0, err
 	}
@@ -296,7 +297,7 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 	if fi, err := os.Stat(workdir); err != nil || !fi.IsDir() {
 		return 0, fmt.Errorf("рабочей директории %s нет: дерево задачи заводит shipctl start, а путь к нему run принимает флагом --workdir", workdir)
 	}
-	p, err := pickVerdict(root, id, record, role, goal)
+	p, err := pickVerdict(root, id, role, goal)
 	if err != nil {
 		return 0, err
 	}
@@ -397,6 +398,13 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 	if side != nil {
 		fmt.Fprintf(out, "ход работы едет в ленту разговора %s, боковой журнал %s\n", os.Getenv(parentSessionEnv), side.path)
 	}
+	// Подпроцесс это работа, которую поднимает сам run, и этап под неё
+	// открывает он же: хука спавна на этой дороге нет. Без файла задачи этап
+	// не открыть, и об этом говорится вслух, а делегирование идёт.
+	kind, serr := openVerdictStage(root, id, role, p.Note, timeNow())
+	if serr != nil {
+		fmt.Fprintf(errw, "этап не отмечен: %v\n", serr)
+	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = workdir
 	// Ограничитель вложенности идёт после общей сборки окружения: делегированная
@@ -421,6 +429,9 @@ func cmdRun(root, id string, record bool, role, goal, workdir string, out, errw 
 		}()
 	}
 	code, err := runChild(cmd, errw, "команду объявляет [delegate] command профиля "+prof.Path)
+	if kind != "" {
+		stage.Close(stage.Home(), stage.MainRoot(root), id, kind, timeNow(), "")
+	}
 	if err != nil {
 		return 0, err
 	}

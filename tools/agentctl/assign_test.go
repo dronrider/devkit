@@ -195,7 +195,7 @@ func TestPickVia(t *testing.T) {
 
 	t.Run("однородная лестница", func(t *testing.T) {
 		setupLadder(t, homeMachine)
-		out, err := cmdPick(root, "T-005", false, roleExec, "")
+		out, err := cmdPick(root, "T-005", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -206,7 +206,7 @@ func TestPickVia(t *testing.T) {
 
 	t.Run("гетерогенная лестница", func(t *testing.T) {
 		setupLadder(t, ladderMachine)
-		out, err := cmdPick(root, "T-005", false, roleExec, "")
+		out, err := cmdPick(root, "T-005", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -220,7 +220,7 @@ func TestPickVia(t *testing.T) {
 
 	t.Run("битое назначение не роняет pick", func(t *testing.T) {
 		setupLadder(t, strings.Replace(ladderMachine, `base = "glm-code:glm-5.2"`, `base = "nowhere:m"`, 1))
-		out, err := cmdPick(root, "T-005", false, roleExec, "")
+		out, err := cmdPick(root, "T-005", roleExec, "")
 		if err != nil {
 			t.Fatalf("битое назначение уронило pick: %v", err)
 		}
@@ -244,7 +244,7 @@ func TestPickGuardAcrossSubscriptions(t *testing.T) {
 	t.Run("домашняя ступень ниже: сдвиг идёт", func(t *testing.T) {
 		quota := setupLadder(t, homeMachine)
 		writeQuota(t, quota, 95, 50, halfWindow)
-		out, err := cmdPick(root, "T-006", false, roleExec, "")
+		out, err := cmdPick(root, "T-006", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -256,7 +256,7 @@ func TestPickGuardAcrossSubscriptions(t *testing.T) {
 	t.Run("ступенью ниже чужая подписка: сдвига нет", func(t *testing.T) {
 		quota := setupLadder(t, ladderMachine)
 		writeQuota(t, quota, 95, 50, halfWindow)
-		out, err := cmdPick(root, "T-006", false, roleExec, "")
+		out, err := cmdPick(root, "T-006", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -273,7 +273,7 @@ func TestPickGuardAcrossSubscriptions(t *testing.T) {
 		// итоговую ступень нечем, а исходная работала.
 		quota := setupLadder(t, strings.Replace(ladderMachine, `base = "glm-code:glm-5.2"`, `base = "nowhere:m"`, 1))
 		writeQuota(t, quota, 95, 50, halfWindow)
-		out, err := cmdPick(root, "T-006", false, roleExec, "")
+		out, err := cmdPick(root, "T-006", roleExec, "")
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -306,7 +306,7 @@ max = "fable"
 home = "`+home+`"
 `)
 	t.Setenv("DEVKIT_HARNESS", "glm-code")
-	out, err := cmdPick(root, "T-005", false, roleExec, "")
+	out, err := cmdPick(root, "T-005", roleExec, "")
 	if err != nil {
 		t.Fatalf("pick: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestRecordAssignment(t *testing.T) {
 				t.Fatal(err)
 			}
 			clearStages(t, root, "T-005")
-			if _, err := cmdPick(root, "T-005", true, roleExec, ""); err != nil {
+			if _, err := recordVerdict(root, "T-005", roleExec, ""); err != nil {
 				t.Fatalf("pick --record: %v", err)
 			}
 			text := stageText(t, root, "T-005")

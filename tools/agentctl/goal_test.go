@@ -491,7 +491,7 @@ func TestCmdPickGoalCap(t *testing.T) {
 	t.Run("вердикт выше потолка режется с причиной", func(t *testing.T) {
 		setGoal(t, tierBase)
 		writeSnapshot(t, quota, testNow.Add(-freshAge), bucketAt("week_all", 50, halfWindow))
-		out, err := cmdPick(root, "T-002", false, roleExec, goal)
+		out, err := cmdPick(root, "T-002", roleExec, goal)
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -506,7 +506,7 @@ func TestCmdPickGoalCap(t *testing.T) {
 	t.Run("вердикт ниже потолка остаётся как был", func(t *testing.T) {
 		setGoal(t, tierPro)
 		writeSnapshot(t, quota, testNow.Add(-freshAge), bucketAt("week_all", 50, halfWindow))
-		out, err := cmdPick(root, "T-001", false, roleExec, goal)
+		out, err := cmdPick(root, "T-001", roleExec, goal)
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -525,7 +525,7 @@ func TestCmdPickGoalCap(t *testing.T) {
 		setGoal(t, tierPro)
 		writeSnapshot(t, quota, testNow.Add(-freshAge),
 			bucketAt("week_all", 5, 24*time.Hour), bucketAt("week_max", 5, 24*time.Hour))
-		out, err := cmdPick(root, "T-002", false, roleExec, goal)
+		out, err := cmdPick(root, "T-002", roleExec, goal)
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -544,7 +544,7 @@ func TestCmdPickGoalCap(t *testing.T) {
 		if err := os.WriteFile(taskFile, []byte("# T-006\n\nМодель: max (3D-графика)\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		out, err := cmdPick(root, "T-006", false, roleExec, goal)
+		out, err := cmdPick(root, "T-006", roleExec, goal)
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -559,7 +559,7 @@ func TestCmdPickGoalCap(t *testing.T) {
 	t.Run("грумминговый вердикт ниже pro не режется", func(t *testing.T) {
 		setGoal(t, tierMini)
 		writeSnapshot(t, quota, testNow.Add(-freshAge), bucketAt("week_all", 50, halfWindow))
-		out, err := cmdPick(root, "T-004", false, roleExec, goal)
+		out, err := cmdPick(root, "T-004", roleExec, goal)
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -574,7 +574,7 @@ func TestCmdPickGoalCap(t *testing.T) {
 	t.Run("без строки яруса вердикт работает как обычно", func(t *testing.T) {
 		setGoal(t, "")
 		writeSnapshot(t, quota, testNow.Add(-freshAge), bucketAt("week_all", 50, halfWindow))
-		out, err := cmdPick(root, "T-002", false, roleExec, goal)
+		out, err := cmdPick(root, "T-002", roleExec, goal)
 		if err != nil {
 			t.Fatalf("pick: %v", err)
 		}
@@ -584,7 +584,7 @@ func TestCmdPickGoalCap(t *testing.T) {
 	})
 
 	t.Run("файла цели нет, значит отказ", func(t *testing.T) {
-		if _, err := cmdPick(root, "T-002", false, roleExec, "docs/tasks/T-999.md"); err == nil ||
+		if _, err := cmdPick(root, "T-002", roleExec, "docs/tasks/T-999.md"); err == nil ||
 			!strings.Contains(err.Error(), "файла цели нет") {
 			t.Fatalf("жду отказ, получил %v", err)
 		}
@@ -604,7 +604,7 @@ func TestCmdPickGoalCapRecord(t *testing.T) {
 	if err := os.WriteFile(taskFile, []byte("# T-002\n\n## Ход работы\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdPick(root, "T-002", true, roleExec, "docs/tasks/T-100.md"); err != nil {
+	if _, err := recordVerdict(root, "T-002", roleExec, "docs/tasks/T-100.md"); err != nil {
 		t.Fatalf("pick --record: %v", err)
 	}
 	text := stageText(t, root, "T-002")
@@ -798,8 +798,10 @@ func TestCmdTallyAddsUpStagesOfGoalTasks(t *testing.T) {
 		"время задач цели: всего 3ч 30м, этапов 4, задач 4",
 		"- разработка: 2ч 45м, этапов 2",
 		"- ревью: 30м, этапов 1",
-		"- снаружи: 15м, этапов 1",
-		"- уточнение: 0м, этапов 0",
+		// Старый ярлык «Снаружи» в файле задачи читается ожиданием человека
+		// (DK-911), строка сводки идёт нынешним словом.
+		"- ждёт человека: 15м, этапов 1",
+		"- ждёт события: 0м, этапов 0",
 		"- дольше прочих: T-101 2ч 30м, T-102 1ч 00м",
 		"- без записей «Хода работы»: T-104",
 		"- файла задачи нет: T-103",

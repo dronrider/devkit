@@ -96,7 +96,7 @@ func TestOldSixColumnBoard(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "docs", "TASKS.md"), []byte(old), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdPick(root, "T-001", false, roleExec, "")
+	out, err := cmdPick(root, "T-001", roleExec, "")
 	if err != nil {
 		t.Fatalf("pick на 6-колоночной доске: %v", err)
 	}

@@ -426,3 +426,62 @@ func TestSpendSetupWithoutSession(t *testing.T) {
 		t.Fatalf("причина у разработки без работы: %q", rows[1].why)
 	}
 }
+
+// TestSpendPeriodCountsBlindSession: сессия, от которой осталась одна строка
+// реестра чатов (заход второго харнеса: транскрипта нет, записи ~/.devkit/runs
+// нет), видна в срезе за период и на пустом срезе, и рядом с чужой
+// активностью. Потоковый разбор её не видит вовсе, потоков у неё нет
+// (замечание ревью, круг 2).
+func TestSpendPeriodCountsBlindSession(t *testing.T) {
+	want := "- нет данных, сессий без транскрипта 1: " + whyNoTranscript
+
+	t.Run("пустой срез", func(t *testing.T) {
+		root := setup(t)
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		old := timeNow
+		defer func() { timeNow = old }()
+		timeNow = func() time.Time { return spendDay(15, 0) }
+		spendBind(t, home, sessGone, sessions.Bind{Task: "XR-600", Source: sessions.ByOrder,
+			Project: "synthetic"})
+
+		p, err := parseSpendPeriod("2026-09-01", "2026-09-20")
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, err := cmdSpendPeriod(root, p)
+		if err != nil {
+			t.Fatalf("cmdSpendPeriod: %v", err)
+		}
+		if strings.Contains(msg, "считать нечего") {
+			t.Fatalf("слепая сессия съедена ранним выходом среза:\n%s", msg)
+		}
+		if !strings.Contains(msg, want) {
+			t.Fatalf("в срезе нет строки %q:\n%s", want, msg)
+		}
+	})
+
+	t.Run("рядом с чужой активностью", func(t *testing.T) {
+		root := setup(t)
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		old := timeNow
+		defer func() { timeNow = old }()
+		timeNow = func() time.Time { return spendDay(15, 0) }
+		spendMachine(t, root, home)
+		spendBind(t, home, sessGone, sessions.Bind{Task: "XR-600", Source: sessions.ByOrder,
+			Project: "synthetic"})
+
+		p, err := parseSpendPeriod("2026-09-01", "2026-09-20")
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, err := cmdSpendPeriod(root, p)
+		if err != nil {
+			t.Fatalf("cmdSpendPeriod: %v", err)
+		}
+		if !strings.Contains(msg, want) {
+			t.Fatalf("слепая сессия потерялась среди чужой активности:\n%s", msg)
+		}
+	})
+}

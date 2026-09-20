@@ -538,7 +538,12 @@ func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
 	if !p.from.IsZero() {
 		head = "токены за " + p.from.Format("2006-01-02") + ".." + span
 	}
-	if total.Empty() && blind == 0 && stageCount == 0 {
+	// Сессия, от которой осталась одна строка реестра чатов, потоков не даёт
+	// вовсе, и потоковый разбор выше её не видит. Спрашивается она у того же
+	// реестра, что и в своде задачи: иначе заход второго харнеса пропадал бы
+	// из среза при любой соседней активности (замечание ревью, круг 2).
+	blindSess := crew.blindSessions(p)
+	if total.Empty() && blind == 0 && stageCount == 0 && blindSess == 0 {
 		return fmt.Sprintf("%s: ни транскриптов харнеса claude, ни этапов за срез нет, считать нечего", head), nil
 	}
 	tasks := spendTasks(byTask)
@@ -553,6 +558,9 @@ func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
 	}
 	out = append(out, spendPeriodItems(items, total)...)
 	out = append(out, "- вне статей: "+spendNumbers(outside)+spendShare(outside, total)+"; "+whyOutside)
+	if blindSess > 0 {
+		out = append(out, fmt.Sprintf("- нет данных, сессий без транскрипта %d: %s", blindSess, whyNoTranscript))
+	}
 	if len(mute) > 0 || lost > 0 || setupBlind > 0 {
 		out = append(out, fmt.Sprintf("- нет данных: сессий без носителя в реестре %d, работ без этапа %d, этапов постановки без сессии %d",
 			len(mute), lost, setupBlind))

@@ -305,13 +305,8 @@ func (c *spendCrew) sessionTurns(sid string) ([]spend.Turn, bool) {
 	if c.blind[sid] {
 		return nil, false
 	}
-	path := c.binds[sid].Transcript
-	if path == "" {
-		if p, ok := spend.SessionFile(c.home, sid); ok {
-			path = p
-		}
-	}
-	if path == "" {
+	path, ok := c.transcript(sid)
+	if !ok {
 		c.blind[sid] = true
 		return nil, false
 	}
@@ -322,6 +317,40 @@ func (c *spendCrew) sessionTurns(sid string) ([]spend.Turn, bool) {
 	}
 	c.turns[sid] = turns
 	return turns, true
+}
+
+// transcript называет поток головной сессии: путь берётся из реестра чатов, а
+// когда его там нет, ищется по имени каталога журналов. Журнал при этом не
+// читается: счёт слепых сессий спрашивает только, есть ли что читать.
+func (c *spendCrew) transcript(sid string) (string, bool) {
+	if path := c.binds[sid].Transcript; path != "" {
+		if _, err := os.Stat(path); err == nil {
+			return path, true
+		}
+	}
+	return spend.SessionFile(c.home, sid)
+}
+
+// blindSessions считает сессии реестра чатов, у которых транскрипта нет вовсе:
+// заход второго харнеса либо стёртый журнал. Срок такой сессии берётся у самой
+// записи реестра: ходов у неё нет, и опознать её по времени больше нечем. Счёт
+// идёт по всей машине, как и чтение потоков за срез: свод меряет расход машины,
+// а задачи берёт с доски (замечание ревью, круг 2).
+func (c *spendCrew) blindSessions(p spendPeriod) int {
+	n := 0
+	for sid, b := range c.binds {
+		if _, ok := c.transcript(sid); ok {
+			continue
+		}
+		if p.set {
+			at, err := time.ParseInLocation(sessions.Stamp, b.Time, time.Local)
+			if err != nil || !p.holds(at) {
+				continue
+			}
+		}
+		n++
+	}
+	return n
 }
 
 // spendItem это статья свода: вид, ключ, расход и сколько источников за ним

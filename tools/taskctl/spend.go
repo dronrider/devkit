@@ -195,14 +195,27 @@ func spendSpan(st spendStage) string {
 // же заходе (развилка «хранение свода» цели DK-909). В файл задачи ложится
 // одна строка итога, и кладёт её закрытие.
 func cmdSpend(root, id string) (string, error) {
-	stages, src := spendStages(root, stage.MainRoot(root), id)
-	if len(stages) == 0 {
-		return fmt.Sprintf("токены %s: этапов не нашлось ни в записи ~/.devkit/runs, ни в разделе «Ход работы» файла задачи, считать нечего", id), nil
+	main := stage.MainRoot(root)
+	stages, src := spendStages(root, main, id)
+	home := stage.Home()
+	crew := newSpendCrew(home, main)
+	items, loose, blind := crew.taskItems(id, stages, spendPeriod{})
+	if stand, runs := spendStands(root, id, spendPeriod{}); runs > 0 {
+		items.add(itemStand, id, stand)
+		items.get(itemStand, id).parts = runs
 	}
-	rows := spendRows(spend.NewLookup(stage.Home()), stages)
+	list := items.list()
+	if len(stages) == 0 && len(list) == 0 {
+		return fmt.Sprintf("токены %s: ни этапов в записи ~/.devkit/runs и «Ходе работы», ни статей в журналах машины, считать нечего", id), nil
+	}
+	rows := spendRows(spend.NewLookup(home), stages)
+	rows = spendDropSetup(rows, items)
 	total, seen := spendTotal(rows)
-	out := []string{fmt.Sprintf("токены %s: %s; этапов %d, со счётом %d, источник %s",
-		id, spendNumbers(total), len(rows), seen, src)}
+	for _, it := range list {
+		total = total.Add(it.usage)
+	}
+	out := []string{fmt.Sprintf("токены %s: %s; этапов %d, со счётом %d, статей %d, источник %s",
+		id, spendNumbers(total), len(rows), seen, len(list), src)}
 	for _, r := range rows {
 		head := fmt.Sprintf("- %s %s", r.st.kind, spendSpan(r.st))
 		if !r.ok {
@@ -218,7 +231,53 @@ func cmdSpend(root, id string) (string, error) {
 			out = append(out, spendKidLines(kid, "  ")...)
 		}
 	}
+	out = append(out, spendItemLines(list, loose, blind)...)
 	return strings.Join(out, "\n"), nil
+}
+
+// spendItemLines печатает статьи задачи теми же колонками, что и этапы. Хвост
+// строки говорит, по скольким сессиям или прогонам она собрана.
+func spendItemLines(list []*spendItem, loose spend.Usage, blind int) []string {
+	var out []string
+	for _, it := range list {
+		tail := fmt.Sprintf(", сессий %d", it.parts)
+		if it.kind == itemStand {
+			tail = fmt.Sprintf(", прогонов %d", it.parts)
+		}
+		out = append(out, fmt.Sprintf("- статья %s: %s%s", it.kind, spendNumbers(it.usage), tail))
+	}
+	if !loose.Empty() {
+		out = append(out, "- оркестрация без привязки: "+spendNumbers(loose)+
+			", ходы сессии пачки, за которыми не стояло работы ни с одним ID")
+	}
+	if blind > 0 {
+		out = append(out, fmt.Sprintf("- нет данных, сессий без транскрипта %d: %s", blind, whyNoTranscript))
+	}
+	return out
+}
+
+// spendDropSetup убирает строку этапа «постановка», когда та же запись стоит
+// статьёй: разбор черновика ведёт головная сессия, номера работы у этапа нет, и
+// строка этапа была бы «нет данных» рядом с честными числами статьи (кейс 3
+// развилки «кейсы» задачи DK-913).
+func spendDropSetup(rows []spendRow, items *spendItems) []spendRow {
+	has := false
+	for _, it := range items.list() {
+		if it.kind == itemSetup {
+			has = true
+		}
+	}
+	if !has {
+		return rows
+	}
+	out := rows[:0]
+	for _, r := range rows {
+		if r.st.kind == stage.Setup && !r.ok {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // spendKidLines печатает вложенную работу под тем этапом, который её поднял.
@@ -340,72 +399,254 @@ func spendIDs(root string) []string {
 type spendTask struct {
 	id    string
 	usage spend.Usage
-	blind int
 }
 
-// cmdSpendPeriod печатает те же числа по всем задачам среза: сумму, разбивку
-// по видам этапов, медиану задачи и хвост самых дорогих.
+// cmdSpendPeriod печатает те же числа по всем задачам среза и статьи рядом с
+// этапами. Числа тут берутся по ходам, а не по потокам целиком: срез режет
+// работу по датам, которые называет человек, а поток субагента переживает
+// полночь как ни в чём не бывало. Остаток, которому не нашлось ни этапа, ни
+// статьи, стоит строкой «вне статей», и сумма сходится с расходом всех
+// транскриптов среза.
 func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
-	look := spend.NewLookup(stage.Home())
+	home := stage.Home()
+	look := spend.NewLookup(home)
 	// Корень основного чекаута спрашивается у git, и на каждую задачу это был
 	// бы свой подпроцесс: у боевой доски их под тысячу (замечание ревью
 	// DK-912). Считается он один раз на весь срез.
 	main := stage.MainRoot(root)
-	var total spend.Usage
+	crew := newSpendCrew(home, main)
+	works, stageCount, blind := spendWorkMap(root, main, look, p)
+
 	byKind := map[string]spend.Usage{}
 	counts := map[string]int{}
-	var tasks []spendTask
-	blind := 0
-	for _, id := range spendIDs(root) {
-		stages, _ := spendStages(root, main, id)
-		var cut []spendStage
-		for _, st := range stages {
-			if p.holds(st.start) {
-				cut = append(cut, st)
-			}
-		}
-		if len(cut) == 0 {
+	byTask := map[string]spend.Usage{}
+	var stagesUsage, outside, total spend.Usage
+	items := newSpendItems()
+	heads, lost := 0, 0
+	mute := map[string]bool{}
+	for _, st := range spend.Streams(home, p.from) {
+		turns, err := spend.ReadTurns(st.Path)
+		if err != nil {
 			continue
 		}
-		rows := spendRows(look, cut)
-		u, seen := spendTotal(rows)
-		for _, r := range rows {
-			if !r.ok {
-				blind++
+		var cut spend.Usage
+		for _, t := range turns {
+			if p.set && !p.holds(t.At) {
 				continue
 			}
-			byKind[r.st.kind] = byKind[r.st.kind].Add(r.node.Total())
-			counts[r.st.kind]++
+			if st.Session == "" {
+				cut = cut.Add(t.Usage)
+				continue
+			}
+			total = total.Add(t.Usage)
+			kind, key, ok := crew.place(st.Session, t.At)
+			if !ok {
+				outside = outside.Add(t.Usage)
+				if b := crew.binds[st.Session]; b.Carrier == "" {
+					mute[st.Session] = true
+				}
+				continue
+			}
+			items.add(kind, key, t.Usage)
 		}
-		if seen == 0 {
+		if st.Session != "" {
+			heads++
 			continue
 		}
-		total = total.Add(u)
-		tasks = append(tasks, spendTask{id: id, usage: u, blind: len(rows) - seen})
+		if cut.Empty() {
+			continue
+		}
+		total = total.Add(cut)
+		m, ok := works[st.Work]
+		if !ok {
+			outside = outside.Add(cut)
+			lost++
+			continue
+		}
+		stagesUsage = stagesUsage.Add(cut)
+		byKind[m.kind] = byKind[m.kind].Add(cut)
+		counts[m.kind]++
+		byTask[m.task] = byTask[m.task].Add(cut)
 	}
+	for _, id := range spendIDs(root) {
+		stand, runs := spendStands(root, id, p)
+		if runs == 0 {
+			continue
+		}
+		items.add(itemStand, id, stand)
+		items.get(itemStand, id).parts = runs
+		total = total.Add(stand)
+	}
+	// Статья на ID задачи это её же расход, и в медиану с хвостом дорогих она
+	// входит наравне с этапами: диспетчер стоит дороже исполнителя, и свод,
+	// который его не считает, врёт втрое. Фон цели в задачи не едет: цель это
+	// запись, а не строка доски, и её виток меряется своим бюджетом.
+	goals := map[string]bool{}
+	for _, id := range crew.goals {
+		goals[id] = true
+	}
+	for _, it := range items.list() {
+		if it.kind == itemBack || it.key == keyLoose || goals[it.key] {
+			continue
+		}
+		byTask[it.key] = byTask[it.key].Add(it.usage)
+	}
+
 	span := p.to.Add(-time.Nanosecond).Format("2006-01-02")
 	head := "по " + span
 	if !p.from.IsZero() {
 		head = p.from.Format("2006-01-02") + ".." + span
 	}
-	if len(tasks) == 0 {
-		return fmt.Sprintf("токены за %s: задач со сведёнными этапами нет, этапов без данных %d", head, blind), nil
+	if total.Empty() {
+		return fmt.Sprintf("токены за %s: транскриптов харнеса claude за срез нет, этапов без данных %d", head, blind), nil
 	}
-	out := []string{fmt.Sprintf("токены за %s: %s; задач %d, этапов без данных %d",
-		head, spendNumbers(total), len(tasks), blind)}
+	tasks := spendTasks(byTask)
+	out := []string{fmt.Sprintf("токены за %s: %s; сессий %d, задач %d, этапов %d, без данных %d",
+		head, spendNumbers(total), heads, len(tasks), stageCount, blind)}
+	out = append(out, "- этапы: "+spendNumbers(stagesUsage)+spendShare(stagesUsage, total))
 	for _, k := range stage.Kinds {
 		if counts[k] == 0 {
 			continue
 		}
-		out = append(out, fmt.Sprintf("- %s: %s, этапов %d", k, spendNumbers(byKind[k]), counts[k]))
+		out = append(out, fmt.Sprintf("  - %s: %s, работ %d", k, spendNumbers(byKind[k]), counts[k]))
 	}
-	sort.Slice(tasks, func(i, j int) bool {
-		if tasks[i].usage.Output != tasks[j].usage.Output {
-			return tasks[i].usage.Output > tasks[j].usage.Output
+	out = append(out, spendPeriodItems(items, total)...)
+	out = append(out, "- вне статей: "+spendNumbers(outside)+spendShare(outside, total)+"; "+whyOutside)
+	if len(mute) > 0 || lost > 0 {
+		out = append(out, fmt.Sprintf("- нет данных: сессий без носителя в реестре %d, работ без этапа %d",
+			len(mute), lost))
+	}
+	out = append(out, spendTaskLines(root, tasks)...)
+	return strings.Join(out, "\n"), nil
+}
+
+// whyOutside говорит, из чего состоит остаток. Разговор человека и безголовый
+// заход, чья строка реестра носителя не несёт, отсюда неотличимы, и сюда же
+// идёт работа субагента, чей этап потерян.
+const whyOutside = "разговоры человека, сессии без носителя в реестре и работы без этапа"
+
+// spendMark это этап, которому принадлежит поток работы.
+type spendWorkMark struct {
+	task string
+	kind string
+}
+
+// spendWorkMap раскладывает работы субагентов по этапам задач: какой работе
+// какой этап и какая задача. Вложенные работы ложатся тому же этапу, который
+// их поднял. Второе и третье значения это сколько этапов попало в срез и у
+// скольких из них чисел не взять.
+func spendWorkMap(root, main string, look *spend.Lookup, p spendPeriod) (map[string]spendWorkMark, int, int) {
+	out := map[string]spendWorkMark{}
+	count, blind := 0, 0
+	for _, id := range spendIDs(root) {
+		stages, _ := spendStages(root, main, id)
+		for _, st := range stages {
+			inCut := !p.set || p.holds(st.start)
+			if inCut {
+				count++
+			}
+			if st.work == "" {
+				if inCut && !stage.IsWait(st.kind) {
+					blind++
+				}
+				continue
+			}
+			n, ok := look.Tree(st.session, st.work)
+			if !ok {
+				if inCut {
+					blind++
+				}
+				continue
+			}
+			spendMarkTree(out, n, spendWorkMark{task: id, kind: st.kind})
 		}
-		return tasks[i].id < tasks[j].id
+	}
+	return out, count, blind
+}
+
+// spendMarkTree помечает работу вместе с поднятыми из неё.
+func spendMarkTree(out map[string]spendWorkMark, n spend.Node, m spendWorkMark) {
+	if _, seen := out[n.Work]; !seen {
+		out[n.Work] = m
+	}
+	for _, kid := range n.Kids {
+		spendMarkTree(out, kid, m)
+	}
+}
+
+// spendShare печатает долю строки от расхода среза. Доля считается по выводу:
+// чтение кэша растёт от длины разговора, а вывод это то, что модель сделала.
+func spendShare(u, total spend.Usage) string {
+	if total.Output == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", доля вывода %d%%", u.Output*100/total.Output)
+}
+
+// spendPeriodItems печатает статьи среза: строка на вид и под ней ключи, дорогие
+// первыми.
+func spendPeriodItems(items *spendItems, total spend.Usage) []string {
+	byKind := map[string]spend.Usage{}
+	var order []string
+	for _, it := range items.list() {
+		if _, seen := byKind[it.kind]; !seen {
+			order = append(order, it.kind)
+		}
+		byKind[it.kind] = byKind[it.kind].Add(it.usage)
+	}
+	var out []string
+	for _, kind := range order {
+		out = append(out, "- статья "+kind+": "+spendNumbers(byKind[kind])+spendShare(byKind[kind], total))
+		for _, it := range items.list() {
+			if it.kind != kind {
+				continue
+			}
+			out = append(out, "  - "+it.key+": "+spendNumbers(it.usage))
+		}
+	}
+	return out
+}
+
+// spendTasks сворачивает расход по задачам в список, дорогие первыми.
+func spendTasks(byTask map[string]spend.Usage) []spendTask {
+	var out []spendTask
+	for id, u := range byTask {
+		if u.Empty() {
+			continue
+		}
+		out = append(out, spendTask{id: id, usage: u})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].usage.Output != out[j].usage.Output {
+			return out[i].usage.Output > out[j].usage.Output
+		}
+		return out[i].id < out[j].id
 	})
-	out = append(out, "- медиана задачи: вывод "+humanTokens(spendMedian(tasks)))
+	return out
+}
+
+// spendTaskLines печатает медиану задачи, подгруппу проектирования и хвост
+// самых дорогих. Задача типа LLD в медиану разработки не входит: проектирование
+// идёт другим заходом и другой ценой, и общая медиана от него перекашивается.
+func spendTaskLines(root string, tasks []spendTask) []string {
+	lld := spendLLD(root)
+	var plain, design []spendTask
+	for _, t := range tasks {
+		if lld[t.id] {
+			design = append(design, t)
+			continue
+		}
+		plain = append(plain, t)
+	}
+	out := []string{"- медиана задачи: вывод " + humanTokens(spendMedian(plain))}
+	if len(design) > 0 {
+		var u spend.Usage
+		for _, t := range design {
+			u = u.Add(t.usage)
+		}
+		out = append(out, fmt.Sprintf("- подгруппа LLD: %s, задач %d, в медиану не входит",
+			spendNumbers(u), len(design)))
+	}
 	var tail []string
 	for _, t := range tasks {
 		if len(tail) == 3 {
@@ -413,8 +654,32 @@ func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
 		}
 		tail = append(tail, t.id+" "+humanTokens(t.usage.Output))
 	}
-	out = append(out, "- дороже прочих по выводу: "+strings.Join(tail, ", "))
-	return strings.Join(out, "\n"), nil
+	if len(tail) > 0 {
+		out = append(out, "- дороже прочих по выводу: "+strings.Join(tail, ", "))
+	}
+	return out
+}
+
+// spendLLD называет задачи типа LLD по строке доски и по строке архива.
+// Нечитаемая доска это пустая карта: свод печатается и без неё, просто одной
+// подгруппой.
+func spendLLD(root string) map[string]bool {
+	out := map[string]bool{}
+	if b, err := LoadBoard(boardPath(root)); err == nil {
+		for _, r := range b.Rows {
+			if isLLD(r.Type) {
+				out[r.ID] = true
+			}
+		}
+	}
+	if a, err := LoadArchive(archivePath(root)); err == nil {
+		for _, r := range a.Rows {
+			if len(r.Cells) > 2 && isLLD(r.Cells[2]) {
+				out[r.ID] = true
+			}
+		}
+	}
+	return out
 }
 
 // spendMedian это медиана вывода по задачам среза: средняя задача честнее

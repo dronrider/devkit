@@ -11,11 +11,17 @@ import (
 	"github.com/dronrider/devkit/internal/stage"
 )
 
+// spendStamp это момент, которым тесты подписывают ходы синтетических
+// транскриптов. Срез за период режет работу по нему, а свод статей относит по
+// нему же ход головной сессии к задаче.
+var spendStamp = time.Date(2026, 9, 18, 12, 0, 0, 0, time.Local)
+
 // spendTurn это ход ассистента с расходом, как его пишет харнес claude.
 func spendTurn(req string, out, in, read int) string {
 	rec := map[string]any{
 		"type":      "assistant",
 		"requestId": req,
+		"timestamp": spendStamp.UTC().Format(time.RFC3339),
 		"message": map[string]any{
 			"usage": map[string]any{
 				"output_tokens":               out,
@@ -82,7 +88,7 @@ func TestCmdSpendByStages(t *testing.T) {
 		t.Fatalf("cmdSpend: %v", err)
 	}
 	want := []string{
-		"токены XR-005: ходов 6, вывод 78k, свежий вход 600, чтение кэша 6.0k; этапов 2, со счётом 2, источник живая запись этапов",
+		"токены XR-005: ходов 6, вывод 78k, свежий вход 600, чтение кэша 6.0k; этапов 2, со счётом 2, статей 0, источник живая запись этапов",
 		"- разработка 2026-09-18 12:00-14:00, работа a1b2c3d4e5f60718a: ходов 4, вывод 64k, свежий вход 400, чтение кэша 4.0k, квота week_all 25%",
 		"  - вложенная работа b2c3d4e5f60718a1c (proofread): ходов 2, вывод 4.0k, свежий вход 200, чтение кэша 2.0k",
 		"- ревью 2026-09-18 14:10-14:20, работа c3d4e5f60718a1b2d: ходов 2, вывод 14k, свежий вход 200, чтение кэша 2.0k",
@@ -176,9 +182,13 @@ func TestCmdSpendPeriod(t *testing.T) {
 	defer func() { timeNow = old }()
 	timeNow = func() time.Time { return now }
 
+	spendStamp = time.Date(2026, 9, 10, 11, 0, 0, 0, time.Local)
 	spendWork(t, home, "sess-1", "a1b2c3d4e5f60718a", "exec-high", "", 60000)
+	spendStamp = time.Date(2026, 9, 11, 10, 10, 0, 0, time.Local)
 	spendWork(t, home, "sess-1", "b2c3d4e5f60718a1c", "exec-high", "", 20000)
+	spendStamp = time.Date(2026, 8, 1, 11, 0, 0, 0, time.Local)
 	spendWork(t, home, "sess-1", "c3d4e5f60718a1b2d", "exec-high", "", 90000)
+	spendStamp = time.Date(2026, 9, 18, 12, 0, 0, 0, time.Local)
 
 	tasks := filepath.Join(root, "docs", "tasks")
 	docs := map[string]string{
@@ -204,8 +214,8 @@ func TestCmdSpendPeriod(t *testing.T) {
 	}
 	want := []string{
 		"токены за 2026-09-01..2026-09-20: ходов 4, вывод 80k",
-		"- разработка: ходов 2, вывод 60k, свежий вход 200, чтение кэша 2.0k, этапов 1",
-		"- ревью: ходов 2, вывод 20k, свежий вход 200, чтение кэша 2.0k, этапов 1",
+		"- разработка: ходов 2, вывод 60k, свежий вход 200, чтение кэша 2.0k, работ 1",
+		"- ревью: ходов 2, вывод 20k, свежий вход 200, чтение кэша 2.0k, работ 1",
 		"- медиана задачи: вывод 40k",
 		"- дороже прочих по выводу: XR-005 60k, XR-002 20k",
 	}

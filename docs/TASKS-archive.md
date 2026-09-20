@@ -579,3 +579,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1052 | dashboard secret не печатает токен агентской сессии | task | P2 | 2026-09-20 | [tasks/archive/2026/DK-1052.md](tasks/archive/2026/DK-1052.md) |
 | DK-1057 | Фикстурный проект стенда проходит taskctl lint | task | P2 | 2026-09-20 | [tasks/archive/2026/DK-1057.md](tasks/archive/2026/DK-1057.md) |
 | DK-1032 | Указатель на скилл chat приходит хуком по транскрипту, а не в каждой реплике | task | P3 | 2026-09-20 | [tasks/archive/2026/DK-1032.md](tasks/archive/2026/DK-1032.md) |
+| DK-902 | Цель: снятие блокировки поднимает ждущих, конвейер не встаёт на ожидании | task | P1 | 2026-09-20 | [tasks/archive/2026/DK-902.md](tasks/archive/2026/DK-902.md) |

@@ -58,7 +58,7 @@ func setupStops(t *testing.T) string {
 // формат, что пишет прод-код.
 func writeStopsTask(t *testing.T, root, id, note string, start time.Time, dur time.Duration) {
 	t.Helper()
-	stages := []stage.Stage{{Kind: stage.Outside, Start: start, Note: note}}
+	stages := []stage.Stage{{Kind: stage.WaitHuman, Start: start, Note: note}}
 	var b strings.Builder
 	b.WriteString("# " + id + "\n\n## Ход работы\n\n")
 	for _, ln := range stage.Lines(stages, start.Add(dur)) {
@@ -69,12 +69,12 @@ func writeStopsTask(t *testing.T, root, id, note string, start time.Time, dur ti
 	}
 }
 
-// stopsRuns кладёт живую запись runs с одним открытым этапом «снаружи»: пакет
+// stopsRuns кладёт живую запись runs с одним открытым ожиданием: пакет
 // ещё не уехал в файл задачи, задача стоит в Blocked прямо сейчас.
 func stopsRuns(t *testing.T, root, id, note string, start time.Time) string {
 	t.Helper()
 	home := t.TempDir()
-	if err := stage.Open(home, stage.MainRoot(root), id, stage.Outside, note, start); err != nil {
+	if err := stage.Open(home, stage.MainRoot(root), id, stage.WaitHuman, note, start); err != nil {
 		t.Fatal(err)
 	}
 	return stage.Dir(home)

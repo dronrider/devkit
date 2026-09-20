@@ -23,7 +23,7 @@ import (
 // Источник тот же, что у `taskctl pilot`. Команда не диффует историю доски
 // коммит за коммитом, а читает то, что о ней уже осело на диске. Вход в
 // Blocked открывает этап «снаружи» с запиской «блок: <причина>»
-// (tools/taskctl/stage.go, openOutside). Выход из статуса уносит пакет
+// (tools/taskctl/stage.go, openWait). Выход из статуса уносит пакет
 // этапов в раздел «Ход работы» файла задачи (flushStages), и так закрытая
 // остановка становится строкой истории. Ещё не закрытая (задача стоит в
 // Blocked прямо сейчас) остаётся живой записью в ~/.devkit/runs, и её
@@ -37,8 +37,8 @@ const stopsWindowLayout = "2006-01-02"
 // человека, в порядке печати.
 var stopsClasses = []string{"вопрос", "окружение", "автор", "спор"}
 
-// stopsOutsideNotePrefix это начало записки этапа «снаружи», которую ставит
-// openOutside при входе в Blocked: «блок: <причина>». У Check записка другая
+// stopsOutsideNotePrefix это начало записки ожидания, которую ставит
+// openWait при входе в Blocked: «блок: <причина>». У Check записка другая
 // («проверка после выката»), и такой этап тут не в счёт остановок.
 const stopsOutsideNotePrefix = "блок: "
 
@@ -98,7 +98,7 @@ func collectFlushedStops(root string) ([]stopEvent, error) {
 		}
 		for _, ln := range taskform.SectionLines(string(data), stageSection) {
 			s, dur, ok := stage.ParseLine(ln)
-			if !ok || s.Kind != stage.Outside {
+			if !ok || !stage.IsWait(s.Kind) {
 				continue
 			}
 			class := stopsClassOf(s.Note)
@@ -134,7 +134,7 @@ func collectLiveStops(root, runsDir string, b *Board, now time.Time) []stopEvent
 		}
 		for _, ln := range stage.Lines(rec.Stages, now) {
 			s, dur, ok := stage.ParseLine(ln)
-			if !ok || s.Kind != stage.Outside {
+			if !ok || !stage.IsWait(s.Kind) {
 				continue
 			}
 			class := stopsClassOf(s.Note)

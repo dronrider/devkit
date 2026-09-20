@@ -48,22 +48,24 @@ func pluralMinutes(n int) string {
 
 // cmdElapsed печатает минуты с открытия этапа «разработка» записи задачи
 // против планового лимита жизненного цикла агента (LLD DK-503, решение 1):
-// диспетчер открывает этап вызовом agentctl pick --record перед каждым
-// спавном исполнителя (DK-511), команда только читает запись и сравнивает.
-// Без открытого этапа (диспетчер пропустил --record, либо задача ещё не
-// бралась в работу) команда честно говорит об этом и не падает: отсутствие
-// данных не повод рвать заход.
+// этап открывает хук спавна субагента на каждом подъёме исполнителя (DK-911),
+// команда только читает запись и сравнивает. Меряется работа исполнителя над
+// кодом, разработка либо доработка после ревью: сравнение идёт предикатом
+// словаря, а не словом. Без открытого этапа (задача ещё не бралась в работу)
+// команда честно говорит об этом и не падает: отсутствие данных не повод рвать
+// заход.
 func cmdElapsed(root, id string) (string, error) {
 	rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), id))
 	if err != nil {
 		return "", err
 	}
 	now := timeNow()
-	d, ok := stage.Elapsed(rec, stage.Dev, now)
+	s, ok := stage.LastOf(rec, stage.IsExec)
 	if !ok {
 		return "этап не открыт, лимит не проверить", nil
 	}
-	start := now.Add(-d)
+	d := now.Sub(s.Start)
+	start := s.Start
 	minutes := int(d.Minutes())
 	ceiling := execCeiling()
 	verdict := fmt.Sprintf("лимит %d %s: в пределах", ceiling, pluralMinutes(ceiling))
@@ -71,5 +73,5 @@ func cmdElapsed(root, id string) (string, error) {
 		verdict = fmt.Sprintf("лимит %d %s пройден: сдавай хвост", ceiling, pluralMinutes(ceiling))
 	}
 	return fmt.Sprintf("%s открыта %d %s назад (с %s), %s",
-		stage.Dev, minutes, pluralMinutes(minutes), start.Format(stage.Stamp), verdict), nil
+		s.Kind, minutes, pluralMinutes(minutes), start.Format(stage.Stamp), verdict), nil
 }

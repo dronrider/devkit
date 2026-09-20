@@ -83,7 +83,7 @@ func TestMoveWithoutStagesLeavesTaskFileAlone(t *testing.T) {
 	}
 }
 
-func TestMoveToCheckOpensOutside(t *testing.T) {
+func TestMoveToCheckOpensWaitHuman(t *testing.T) {
 	stageHome(t)
 	root := setup(t)
 	openStages(t, root, "XR-005", stage.Dev)
@@ -96,17 +96,20 @@ func TestMoveToCheckOpensOutside(t *testing.T) {
 	}
 	live, ok := rec.Live()
 	if !ok {
-		t.Fatal("перевод в Check не отметил ожидания снаружи")
+		t.Fatal("перевод в Check не отметил ожидания человека")
 	}
-	if live.Kind != stage.Outside {
-		t.Fatalf("вид деятельности после Check %q, жду %q", live.Kind, stage.Outside)
+	if live.Kind != stage.WaitHuman {
+		t.Fatalf("вид деятельности после Check %q, жду %q", live.Kind, stage.WaitHuman)
 	}
 	if len(rec.Stages) != 1 {
-		t.Fatalf("ожидание снаружи должно открывать новый пакет, а в нём %d этапов", len(rec.Stages))
+		t.Fatalf("ожидание должно открывать новый пакет, а в нём %d этапов", len(rec.Stages))
 	}
 }
 
-func TestMoveToBlockedOpensOutsideWithReason(t *testing.T) {
+// TestMoveToBlockedOpensWaitByReason: человеческий разряд причины парковки
+// пишется ожиданием человека, машинный разряд (слияние соседа) ожиданием
+// события. Слова «снаружи» на записи больше нет (DK-911).
+func TestMoveToBlockedOpensWaitByReason(t *testing.T) {
 	stageHome(t)
 	root := setup(t)
 	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
@@ -120,8 +123,22 @@ func TestMoveToBlockedOpensOutsideWithReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	live, _ := rec.Live()
-	if live.Kind != stage.Outside || !strings.Contains(live.Note, "ждём железо") {
-		t.Fatalf("блокер не назван ожиданием снаружи с причиной: %+v", live)
+	if live.Kind != stage.WaitHuman || !strings.Contains(live.Note, "ждём железо") {
+		t.Fatalf("блокер не назван ожиданием человека с причиной: %+v", live)
+	}
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "слияние: XR-005 ждёт поезда", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	rec, err = stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), "XR-004"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, _ = rec.Live()
+	if live.Kind != stage.WaitEvent || !strings.Contains(live.Note, "блок: слияние: XR-005") {
+		t.Fatalf("ожидание соседа не названо ожиданием события: %+v", live)
 	}
 }
 
@@ -153,7 +170,7 @@ func TestCloseFlushesStagesBeforeArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "- Снаружи: проверка после выката,") {
+	if !strings.Contains(string(data), "- Ждёт человека: проверка после выката,") {
 		t.Fatalf("этап ожидания не доехал до архивного файла задачи:\n%s", data)
 	}
 }

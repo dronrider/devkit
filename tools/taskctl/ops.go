@@ -651,7 +651,7 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	// новым пакетом.
 	now := time.Now()
 	doc, stages := flushStages(root, id, now)
-	openOutside(root, id, target, reason, now)
+	openWait(root, id, target, reason, now)
 	paths := []string{filepath.Join("docs", "TASKS.md")}
 	if doc != "" {
 		paths = append(paths, doc)

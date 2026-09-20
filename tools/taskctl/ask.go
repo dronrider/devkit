@@ -93,7 +93,7 @@ func liveDeps(root string) askDeps {
 			return notify(main, reason, id, title, body)
 		},
 		Stage: func(id, note string) {
-			stage.Open(stage.Home(), main, id, stage.Ask, note, time.Now())
+			stage.Open(stage.Home(), main, id, stage.WaitHuman, note, time.Now())
 		},
 		Park: func(id, reason string) (string, error) {
 			// Доска коммитится и пушится тут же, как её пушит будящий тик

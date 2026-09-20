@@ -316,7 +316,7 @@ func attachLiveStages(tasks []pilotTask, root, runsDir string) {
 			continue
 		}
 		for _, s := range rec.Stages {
-			if s.Kind != stage.Dev {
+			if !stage.IsExec(s.Kind) {
 				continue
 			}
 			tasks[i].devs = append(tasks[i].devs, time.Date(s.Start.Year(), s.Start.Month(), s.Start.Day(), 0, 0, 0, 0, time.UTC))

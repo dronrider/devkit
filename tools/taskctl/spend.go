@@ -55,8 +55,8 @@ type spendRow struct {
 // работе держит этапы в ~/.devkit/runs, а в «Ход работы» пакет уезжает сменой
 // статуса. У закрытой и заархивированной задачи остаётся только файл, и
 // номер работы там лежит внутри текста этапа.
-func spendStages(root, id string) ([]spendStage, string) {
-	rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), id))
+func spendStages(root, main, id string) ([]spendStage, string) {
+	rec, err := stage.Load(stage.Path(stage.Home(), main, id))
 	if err == nil && len(rec.Stages) > 0 {
 		now := timeNow()
 		out := make([]spendStage, 0, len(rec.Stages))
@@ -122,7 +122,7 @@ func spendTaskFile(root, id string) (string, bool) {
 // чисел нет. Заход второго харнеса выглядит отсюда так же, как стёртый
 // транскрипт: журналов вне ~/.claude на машине нет, и обе причины называются
 // одной строкой (развилка «второй харнес» цели DK-909).
-func spendRows(home string, stages []spendStage) []spendRow {
+func spendRows(look *spend.Lookup, stages []spendStage) []spendRow {
 	out := make([]spendRow, 0, len(stages))
 	for _, st := range stages {
 		row := spendRow{st: st}
@@ -133,7 +133,7 @@ func spendRows(home string, stages []spendStage) []spendRow {
 				row.why = "ожидание, субагента за ним нет"
 			}
 		default:
-			n, ok := spend.Tree(home, st.session, st.work)
+			n, ok := look.Tree(st.session, st.work)
 			if !ok {
 				row.why = "транскрипта работы " + st.work + " нет в журналах харнеса claude: второй харнес либо журнал стёрт"
 				break
@@ -195,12 +195,11 @@ func spendSpan(st spendStage) string {
 // же заходе (развилка «хранение свода» цели DK-909). В файл задачи ложится
 // одна строка итога, и кладёт её закрытие.
 func cmdSpend(root, id string) (string, error) {
-	stages, src := spendStages(root, id)
+	stages, src := spendStages(root, stage.MainRoot(root), id)
 	if len(stages) == 0 {
 		return fmt.Sprintf("токены %s: этапов не нашлось ни в записи ~/.devkit/runs, ни в разделе «Ход работы» файла задачи, считать нечего", id), nil
 	}
-	home := stage.Home()
-	rows := spendRows(home, stages)
+	rows := spendRows(spend.NewLookup(stage.Home()), stages)
 	total, seen := spendTotal(rows)
 	out := []string{fmt.Sprintf("токены %s: %s; этапов %d, со счётом %d, источник %s",
 		id, spendNumbers(total), len(rows), seen, src)}
@@ -239,11 +238,11 @@ func spendKidLines(n spend.Node, pad string) []string {
 // говорит, есть ли что записывать: у задачи без сведённых этапов строка была
 // бы нулями и врала бы про расход.
 func spendTotalLine(root, id string, now time.Time) (string, bool) {
-	stages, _ := spendStages(root, id)
+	stages, _ := spendStages(root, stage.MainRoot(root), id)
 	if len(stages) == 0 {
 		return "", false
 	}
-	rows := spendRows(stage.Home(), stages)
+	rows := spendRows(spend.NewLookup(stage.Home()), stages)
 	total, seen := spendTotal(rows)
 	if seen == 0 {
 		return "", false
@@ -347,14 +346,18 @@ type spendTask struct {
 // cmdSpendPeriod печатает те же числа по всем задачам среза: сумму, разбивку
 // по видам этапов, медиану задачи и хвост самых дорогих.
 func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
-	home := stage.Home()
+	look := spend.NewLookup(stage.Home())
+	// Корень основного чекаута спрашивается у git, и на каждую задачу это был
+	// бы свой подпроцесс: у боевой доски их под тысячу (замечание ревью
+	// DK-912). Считается он один раз на весь срез.
+	main := stage.MainRoot(root)
 	var total spend.Usage
 	byKind := map[string]spend.Usage{}
 	counts := map[string]int{}
 	var tasks []spendTask
 	blind := 0
 	for _, id := range spendIDs(root) {
-		stages, _ := spendStages(root, id)
+		stages, _ := spendStages(root, main, id)
 		var cut []spendStage
 		for _, st := range stages {
 			if p.holds(st.start) {
@@ -364,7 +367,7 @@ func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
 		if len(cut) == 0 {
 			continue
 		}
-		rows := spendRows(home, cut)
+		rows := spendRows(look, cut)
 		u, seen := spendTotal(rows)
 		for _, r := range rows {
 			if !r.ok {

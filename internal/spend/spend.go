@@ -49,28 +49,75 @@ func (u Usage) Empty() bool { return u == Usage{} }
 // Dir это корень журналов харнеса claude в доме.
 func Dir(home string) string { return filepath.Join(home, ".claude", "projects") }
 
-// WorkFile ищет поток работы субагента. Сначала по сессии, которая этап
-// писала: её каталог назван UUID сессии, и это одна проверка пути вместо
-// обхода. Без сессии и при промахе идёт глоб по каталогам проектов: работа
-// исполнителя ведётся из дерева задачи, а пакет этапов закрывает основной
-// чекаут, и слепок пути у них разный. Каталоги при этом только перебираются,
-// журналы не читаются: обход всех транскриптов машины это полтора гигабайта.
-func WorkFile(home, session, work string) (string, bool) {
-	if home == "" || work == "" {
+// Lookup это поиск потоков на один заход команды: карта «номер работы ->
+// путь» и разобранные спутники каталогов. Свод за период спрашивает сотни
+// этапов подряд, и глоб по всем каталогам проектов на каждый из них обходился
+// дороже самого чтения журналов (замечание ревью DK-912, 11 секунд на боевой
+// доске). Карта строится лениво и только когда промахнулся быстрый путь по
+// сессии этапа.
+type Lookup struct {
+	home  string
+	works map[string]string
+	metas map[string]map[string]meta
+}
+
+// NewLookup заводит поиск по дому. Дерево журналов при этом не трогается.
+func NewLookup(home string) *Lookup {
+	return &Lookup{home: home, metas: map[string]map[string]meta{}}
+}
+
+// File ищет поток работы субагента. Сначала по сессии, которая этап писала:
+// её каталог назван UUID сессии, и это одна проверка пути вместо обхода.
+// Промах ведёт к карте всех работ машины: работа исполнителя ведётся из
+// дерева задачи, а пакет этапов закрывает основной чекаут, и слепок пути у
+// них разный. Строки «Хода работы» сессии не несут вовсе. Журналы при обходе
+// не читаются, перебираются только имена файлов.
+func (l *Lookup) File(session, work string) (string, bool) {
+	if l == nil || l.home == "" || work == "" {
 		return "", false
 	}
 	name := "agent-" + work + ".jsonl"
 	if session != "" {
-		got, _ := filepath.Glob(filepath.Join(Dir(home), "*", session, "subagents", name))
+		got, _ := filepath.Glob(filepath.Join(Dir(l.home), "*", session, "subagents", name))
 		if len(got) > 0 {
 			return got[0], true
 		}
 	}
-	got, _ := filepath.Glob(filepath.Join(Dir(home), "*", "*", "subagents", name))
-	if len(got) > 0 {
-		return got[0], true
+	l.build()
+	path, ok := l.works[work]
+	return path, ok
+}
+
+// build собирает карту работ один раз за заход.
+func (l *Lookup) build() {
+	if l.works != nil {
+		return
 	}
-	return "", false
+	l.works = map[string]string{}
+	paths, _ := filepath.Glob(filepath.Join(Dir(l.home), "*", "*", "subagents", "agent-*.jsonl"))
+	for _, p := range paths {
+		work := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(p), "agent-"), ".jsonl")
+		if _, seen := l.works[work]; !seen {
+			l.works[work] = p
+		}
+	}
+}
+
+// dirMetas отдаёт спутники каталога, разобрав их однажды: у одной задачи все
+// этапы обычно лежат в каталоге одной сессии.
+func (l *Lookup) dirMetas(dir string) map[string]meta {
+	if m, ok := l.metas[dir]; ok {
+		return m
+	}
+	m := readMetas(dir)
+	l.metas[dir] = m
+	return m
+}
+
+// WorkFile ищет поток одной работы без карты: разовому вопросу карта дороже
+// самого поиска.
+func WorkFile(home, session, work string) (string, bool) {
+	return NewLookup(home).File(session, work)
 }
 
 // SessionFile ищет поток головной сессии: он лежит рядом с её каталогом
@@ -200,17 +247,20 @@ func (n Node) Total() Usage {
 	return out
 }
 
-// Tree собирает работу с вложенными. Каталог субагентов читается один раз на
-// работу: метаданные там мелкие, а журналы читаются только те, что вошли в
-// дерево.
+// Tree собирает работу с вложенными разовым поиском.
 func Tree(home, session, work string) (Node, bool) {
-	path, ok := WorkFile(home, session, work)
+	return NewLookup(home).Tree(session, work)
+}
+
+// Tree собирает работу с вложенными. Спутники каталога разбираются один раз
+// за заход, а журналы читаются только те, что вошли в дерево.
+func (l *Lookup) Tree(session, work string) (Node, bool) {
+	path, ok := l.File(session, work)
 	if !ok {
 		return Node{}, false
 	}
 	dir := filepath.Dir(path)
-	metas := readMetas(dir)
-	return node(dir, work, metas, map[string]bool{}), true
+	return node(dir, work, l.dirMetas(dir), map[string]bool{}), true
 }
 
 func node(dir, work string, metas map[string]meta, seen map[string]bool) Node {

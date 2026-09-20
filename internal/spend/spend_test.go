@@ -197,3 +197,66 @@ func TestTreeMissingWork(t *testing.T) {
 		t.Fatal("дерево собралось на пустом доме")
 	}
 }
+
+// turnNoRequest это ход без requestId: так харнес пишет синтетические записи
+// об отказе API, и у них свой uuid на каждую строку.
+func turnNoRequest(uuid string, out int) string {
+	rec := map[string]any{
+		"type": "assistant",
+		"uuid": uuid,
+		"message": map[string]any{
+			"usage": map[string]any{"output_tokens": out, "input_tokens": 0,
+				"cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+		},
+	}
+	data, _ := json.Marshal(rec)
+	return string(data) + "\n"
+}
+
+// TestReadFallsBackToUUID: без requestId ход считается по uuid записи. Копия
+// строки с тем же uuid склеивается, две разные записи остаются двумя ходами, а
+// синтетический отказ API с нулевым расходом в счёт не идёт: в живых журналах
+// devkit записи без requestId это ровно он.
+func TestReadFallsBackToUUID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent-a1.jsonl")
+	body := turnNoRequest("u-1", 30) +
+		turnNoRequest("u-1", 30) +
+		turnNoRequest("u-2", 12) +
+		turnNoRequest("u-3", 0)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	u, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if u.Turns != 2 || u.Output != 42 {
+		t.Fatalf("расход %+v, ждал два хода с выводом 42", u)
+	}
+}
+
+// TestLookupFindsAcrossProjects: работа исполнителя ведётся из дерева задачи, а
+// строки «Хода работы» сессии не несут вовсе. Карта захода находит поток в
+// каталоге чужого слепка, и повторный вопрос отвечается ею же.
+func TestLookupFindsAcrossProjects(t *testing.T) {
+	home := t.TempDir()
+	dir := subagents(home, "-Users-rider-projects-devkit-dk-912", "sess-1")
+	work(t, dir, "a1", "exec-high", "", turnLine("req-1", 5, 0, 0, 0))
+	look := NewLookup(home)
+	if _, ok := look.File("", "a1"); !ok {
+		t.Fatal("карта не нашла поток работы без сессии")
+	}
+	if look.works == nil {
+		t.Fatal("карта работ не построена")
+	}
+	// Файл, легший после сборки карты, ей уже не виден: карта живёт один
+	// заход команды, и это её цена за отказ от обхода на каждый этап.
+	work(t, dir, "a2", "exec-high", "", turnLine("req-2", 5, 0, 0, 0))
+	if _, ok := look.File("", "a2"); ok {
+		t.Fatal("карта захода пересобралась на ходу")
+	}
+	if _, ok := NewLookup(home).File("", "a2"); !ok {
+		t.Fatal("новый заход не нашёл поток")
+	}
+}

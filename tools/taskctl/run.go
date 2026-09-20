@@ -47,10 +47,12 @@ func runRequest(root, home, id string, o runOpts) (taskhead.Request, error) {
 const runPickWait = 30 * time.Second
 
 // runPick спрашивает модель головы у `agentctl pick` так же, как исполнителя
-// назначает диспетчер: с --record, чтобы этап разработки лёг в запись, и с
-// --goal, когда файл задачи ссылается на цель. Харнес вердикту называется тем
-// же, каким поднимается голова: модель у каждого харнеса своя. Отказ ложится
-// строкой в журнал .devkit/log, а подъём идёт дальше без модели.
+// назначает диспетчер: вердиктом без записи этапа (этап кладёт хук спавна
+// субагента, DK-911) и с --goal, когда файл задачи ссылается на цель. Харнес
+// вердикту называется тем же, каким поднимается голова: модель у каждого
+// харнеса своя. Отказ ложится строкой в журнал .devkit/log, а подъём идёт
+// дальше без модели. Набор ключей сверяется с живым agentctl тестом
+// TestAskPickArgsAcceptedByLiveAgentctl: стаб принял бы и снятый ключ.
 func runPick(root, id, harness string) (string, error) {
 	model, err := askPick(root, id, harness)
 	if err != nil {
@@ -64,7 +66,7 @@ func askPick(root, id, harness string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("agentctl pick не позвать: agentctl не нашёлся в PATH")
 	}
-	args := []string{"pick", id, "--record"}
+	args := []string{"pick", id}
 	if goal := taskGoal(root, id); goal != "" {
 		args = append(args, "--goal", goal)
 	}

@@ -123,8 +123,8 @@ func readStub(dir, name string) string {
 }
 
 // DK-932, замечание ревью: подъём без --model спрашивает модель вердиктом
-// agentctl pick с записью этапа и потолком цели из шапки файла задачи, и
-// модель доходит до команды клиента.
+// agentctl pick с потолком цели из шапки файла задачи, и модель доходит до
+// команды клиента. Записи этапа вердикт не просит (DK-911).
 func TestRunTakesModelFromPick(t *testing.T) {
 	root, _, dk := runDevkit(t)
 	logs, _ := pickStand(t, dk, "sonnet")
@@ -142,7 +142,7 @@ func TestRunTakesModelFromPick(t *testing.T) {
 	if runner := readStub(logs, "runner.log"); !strings.Contains(runner, "-- claude --permission-mode auto --model sonnet") {
 		t.Fatalf("модель вердикта не дошла до клиента:\n%s\nвывод:\n%s", runner, out)
 	}
-	if pick := strings.TrimSpace(readStub(logs, "pick.log")); pick != "claude-code pick DK-7 --record --goal docs/tasks/DK-900.md" {
+	if pick := strings.TrimSpace(readStub(logs, "pick.log")); pick != "claude-code pick DK-7 --goal docs/tasks/DK-900.md" {
 		t.Fatalf("вердикт спрошен не так: %q", pick)
 	}
 	if !strings.Contains(out, "модель sonnet по вердикту agentctl pick") {

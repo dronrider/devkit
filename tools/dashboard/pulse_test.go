@@ -45,12 +45,19 @@ func TestPulsePhaseCut(t *testing.T) {
 		{"строка в работе без записи этапа шкалы не даёт", sectRun, "", nil, false, 0, "", false},
 		{"взята в работу, идёт код", sectRun, stage.Dev, nil, false, 0, phaseCode, true},
 		{"агент гоняет тесты, код пройден", sectRun, stage.Dev, nil, true, 1, phaseTests, true},
-		{"уточнение это та же разработка", sectRun, stage.Ask, nil, false, 0, phaseCode, true},
+		{"вопрос человеку это та же разработка", sectRun, stage.WaitHuman, nil, false, 0, phaseCode, true},
+		{"вычитка идёт до ревью", sectRun, stage.Proof, nil, false, 0, phaseCode, true},
 		{"на ревью код с тестами позади", sectRun, stage.Review, nil, false, 2, phaseReview, true},
-		{"проверка после выката закрывает всё", "check", stage.Outside, nil, false, 5, "", true},
+		{"доработка после ревью ревью не теряет", sectRun, stage.Rework,
+			[]string{stage.Dev, stage.Review}, false, 2, phaseCode, true},
+		{"слияние это четвёртая фаза", sectRun, stage.Merge, nil, false, 3, phaseMerge, true},
+		{"выкат это пятая фаза", sectRun, stage.Deploy, nil, false, 4, phaseShip, true},
+		{"проверка после выката закрывает всё", "check", stage.WaitHuman, nil, false, 5, "", true},
 		{"Check знает про пять фаз и без записи", "check", "", nil, false, 5, "", true},
-		{"блок после ревью кода не теряет", "blocked", stage.Outside,
+		{"блок после ревью кода не теряет", "blocked", stage.WaitHuman,
 			[]string{stage.Dev, stage.Review}, false, 2, "", true},
+		{"ожидание очереди после слияния держит четыре фазы", sectRun, stage.WaitQueue,
+			[]string{stage.Dev, stage.Review, stage.Merge}, false, 3, "", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

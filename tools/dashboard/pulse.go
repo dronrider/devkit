@@ -218,10 +218,17 @@ func pulsePhaseCut(sect string, live string, seen map[string]bool, testing bool)
 		return 0, "", false
 	}
 	cut, now := 0, ""
-	switch live {
-	case stage.Review:
+	switch {
+	case live == stage.Deploy:
+		cut, now = 4, phaseShip
+	case live == stage.Merge:
+		cut, now = 3, phaseMerge
+	case live == stage.Review:
 		cut, now = 2, phaseReview
-	case stage.Dev, stage.Ask:
+	case stage.IsExec(live) || live == stage.Proof || (live == stage.WaitHuman && sect == sectRun):
+		// Вычитка и вопрос человеку у строки в работе это та же работа над
+		// кодом: строка ещё до ревью, а фазы шкалы про код, тесты и ревью, не
+		// про разговоры. У строки в блоке живой фазы нет.
 		if testing {
 			cut, now = 1, phaseTests
 		} else {
@@ -229,9 +236,12 @@ func pulsePhaseCut(sect string, live string, seen map[string]bool, testing bool)
 		}
 	}
 	// История этапов старше живого: задача, побывавшая на ревью и уехавшая в
-	// блок, кода с тестами обратно не теряет.
+	// блок, кода с тестами обратно не теряет, а слитая не теряет ревью.
 	if seen[stage.Review] && cut < 2 {
 		cut = 2
+	}
+	if seen[stage.Merge] && cut < 3 {
+		cut = 3
 	}
 	return cut, now, true
 }

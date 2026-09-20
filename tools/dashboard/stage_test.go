@@ -15,7 +15,7 @@ var stageAt = time.Date(2026, 8, 15, 12, 0, 0, 0, time.Local)
 func TestRowStageNeedsLiveSession(t *testing.T) {
 	stages := map[string]stageMark{
 		"XR-001": {Kind: stage.Dev, Since: stageAt.Unix()},
-		"XR-002": {Kind: stage.Outside, Since: stageAt.Unix()},
+		"XR-002": {Kind: stage.WaitHuman, Since: stageAt.Unix()},
 	}
 	cases := []struct {
 		name, id, run, want string
@@ -23,7 +23,7 @@ func TestRowStageNeedsLiveSession(t *testing.T) {
 		{"живая работа несёт вид деятельности", "XR-001", "tmux", stage.Dev},
 		{"оборванный этап за работу не выдаётся", "XR-001", runGone, ""},
 		{"строка без работы вида не получает", "XR-001", "", ""},
-		{"ожидание снаружи живой сессии не требует", "XR-002", runGone, stage.Outside},
+		{"ожидание человека живой сессии не требует", "XR-002", runGone, stage.WaitHuman},
 		{"записи нет, значит и вида нет", "XR-404", "tmux", ""},
 	}
 	for _, c := range cases {

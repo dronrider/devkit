@@ -793,8 +793,8 @@ func boardStage(v smokeBoard, id string) (string, int64) {
 }
 
 // stepStage: вид деятельности едет полем строки доски. Запись этапа кладёт
-// конвейер, а не дашборд, поэтому шаг пишет её тем же вызовом, каким её пишет
-// agentctl pick --record, и смотрит, что ручка доски отдала вид и время начала
+// конвейер, а не дашборд, поэтому шаг пишет её тем же вызовом, каким её пишут
+// хук спавна и shipctl, и смотрит, что ручка доски отдала вид и время начала
 // рядом с готовым признаком Run. Тут же проверяется оборванный этап: за строкой
 // в Backlog живой сессии нет, и запись за неё выдавать работу не должна.
 func (s *smoke) stepStage() (string, error) {
@@ -819,17 +819,17 @@ func (s *smoke) stepStage() (string, error) {
 	if kind, _ := boardStage(v, smokeTask); kind != "" {
 		return "", fmt.Errorf("оборванный этап строки %s выдан за работу словом %q", smokeTask, kind)
 	}
-	// Ожидание снаружи живой сессии не требует по смыслу, и та же строка обязана
-	// его показать.
-	if err := stage.Open(s.home, s.proj, smokeTask, stage.Outside, "проверка после выката", since); err != nil {
+	// Ожидание человека живой сессии не требует по смыслу, и та же строка
+	// обязана его показать.
+	if err := stage.Open(s.home, s.proj, smokeTask, stage.WaitHuman, "проверка после выката", since); err != nil {
 		return "", err
 	}
 	v, err = s.board()
 	if err != nil {
 		return "", err
 	}
-	if kind, _ := boardStage(v, smokeTask); kind != stage.Outside {
-		return "", fmt.Errorf("ожидание снаружи строки %s пришло как %q", smokeTask, kind)
+	if kind, _ := boardStage(v, smokeTask); kind != stage.WaitHuman {
+		return "", fmt.Errorf("ожидание человека строки %s пришло как %q", smokeTask, kind)
 	}
 	return fmt.Sprintf("строка %s несёт «%s» с %s, оборванный этап %s не выдан за работу",
 		smokeGoal, stage.Dev, since.Format("15:04"), smokeTask), nil

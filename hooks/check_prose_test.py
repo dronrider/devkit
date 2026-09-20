@@ -210,6 +210,9 @@ class TestMachineLines(unittest.TestCase):
              "(квота: week_all 42%, снимок 3м назад), "
              "2026-08-27 13:53-14:08.")
     STAGE_LOOKALIKE = "- Разработка: сроки жмут, а бюджет невелик."
+    STAGE_MERGE = "- Слияние: shipctl merge, 2026-09-20 09:54-16:43."
+    STAGE_WAIT = ("- Ждёт человека: вопрос «словарь этапов», "
+                  "2026-09-20 12:00-12:40.")
 
     RANK = "- Неопределённость 1: место известно, открыт был только выбор."
     RANK_LOOKALIKE = "- Неопределённость есть, но она невелика."
@@ -270,7 +273,7 @@ class TestMachineLines(unittest.TestCase):
     RETURN = "- Возврат: постановка, проверка, 2026-09-05, прод падает на старте."
     RETURN_LOOKALIKE = "- Возврат к вопросу: тема не закрыта, а решения нет."
 
-    MACHINE = (STAGE, RANK, ACCEPT_KIND, ACCEPT_BARRIER, ACCEPT_OUTCOME,
+    MACHINE = (STAGE, STAGE_MERGE, STAGE_WAIT, RANK, ACCEPT_KIND, ACCEPT_BARRIER, ACCEPT_OUTCOME,
                DEPLOY_MERGE, DEPLOY_SMOKE, DEPLOY_PENDING, DEPLOY_MOVE_DONE,
                FORK_HEAD, STAND, STAND_FAIL, REHEARSAL, REHEARSAL_FAIL,
                PROOFREAD, PROSE_MARK, EXCEPTION, RETURN)

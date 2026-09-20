@@ -643,10 +643,7 @@ func Lines(stages []Stage, end time.Time) []string {
 		if s.Ended() {
 			fin = s.End
 		}
-		label := s.Kind
-		if r := []rune(s.Kind); len(r) > 0 {
-			label = strings.ToUpper(string(r[0])) + string(r[1:])
-		}
+		label := Label(s.Kind)
 		span := s.Start.Format("15:04")
 		if fin.After(s.Start) {
 			span += "-" + fin.Format("15:04")
@@ -658,6 +655,18 @@ func Lines(stages []Stage, end time.Time) []string {
 		out = append(out, fmt.Sprintf("- %s: %s%s %s.", label, note, s.Start.Format("2006-01-02"), span))
 	}
 	return out
+}
+
+// Label это ярлык строки «Хода работы» у вида: слово словаря с заглавной
+// буквы. Тот же перечень держат сторож прозы (hooks/check-prose.py,
+// STAGE_LABELS) и перечень машинных строк вычитки, по нему обе стороны узнают
+// строку этапа и не считают её прозой.
+func Label(kind string) string {
+	r := []rune(kind)
+	if len(r) == 0 {
+		return kind
+	}
+	return strings.ToUpper(string(r[0])) + string(r[1:])
 }
 
 // spanRe ловит хвост строки «Хода работы»: дату и часы этапа, которые собрал

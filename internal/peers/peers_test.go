@@ -106,7 +106,7 @@ func TestJudge(t *testing.T) {
 		{"сессий не названо", nil, Gone, 0, ""},
 		{"судит самая свежая из живых", []string{"quiet", "fresh", "dead"}, Alive, 0, "fresh"},
 		{"мёртвая свежее живой молчащей", []string{"dead", "quiet"}, Silent, 25 * time.Minute, "quiet"},
-		{"без времени касания живая", []string{"blank"}, Alive, 0, "blank"},
+		{"без времени касания молчит, как у Fresh", []string{"blank"}, Silent, 0, "blank"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

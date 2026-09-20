@@ -668,12 +668,26 @@ func List(home, root string) []Record {
 		if err != nil || rec.ID == "" {
 			continue
 		}
-		if filepath.Clean(rec.Root) != filepath.Clean(root) {
+		if realPath(rec.Root) != realPath(root) {
 			continue
 		}
 		out = append(out, rec)
 	}
 	return out
+}
+
+// realPath приводит путь к виду без символических ссылок. Писатели этапов
+// берут корень у git, который ссылки разворачивает, а читатель получает корень
+// из аргумента -C или с экрана как есть, и на машинах с домом за ссылкой
+// (macOS, /var против /private/var) те же записи сверкой по написанию выпадали
+// из списка (DK-910). Недоступный путь остаётся как есть, чтобы записи
+// несуществующих корней сверялись хотя бы по написанию.
+func realPath(p string) string {
+	p = filepath.Clean(p)
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		return real
+	}
+	return p
 }
 
 // Lines разворачивает пакет этапов в строки раздела «Ход работы». Вид

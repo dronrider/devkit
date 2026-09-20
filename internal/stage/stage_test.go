@@ -777,3 +777,28 @@ func TestClosedStageOnTopKeepsLive(t *testing.T) {
 		t.Fatalf("незакрытую разработку кончило закрытое ревью: %s", ln)
 	}
 }
+
+// TestListMatchesRootThroughSymlink: писатель взял корень у git, развернувший
+// ссылку, а читатель спрашивает по написанию со ссылкой (DK-910, macOS с
+// домом под /var -> /private/var). Записи одни и те же.
+func TestListMatchesRootThroughSymlink(t *testing.T) {
+	home := t.TempDir()
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := Open(home, real, "XR-001", Dev, "", at(10, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if got := List(home, link); len(got) != 1 || got[0].ID != "XR-001" {
+		t.Fatalf("по ссылке на корень записи не нашлись: %+v", got)
+	}
+	if got := List(home, filepath.Join(base, "other")); len(got) != 0 {
+		t.Fatalf("чужой корень получил записи: %+v", got)
+	}
+}

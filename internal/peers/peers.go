@@ -143,7 +143,10 @@ type State string
 // Три состояния. Gone это «сессии нет вовсе»: процесс мёртв или записи о нём
 // не осталось, и задача брошена. Silent это живой процесс, молчащий дольше
 // IdleAfter. Различать их велено человеком (DK-910, развилка «порог»): под одним
-// словом упавший процесс не отличить от думающего.
+// словом упавший процесс не отличить от думающего. Запись без времени касания
+// читается тем же правилом, что у Fresh: свежей её не считают, и живой процесс
+// за ней это Silent с нулевой длительностью, а не Alive. Правило одно на
+// список и на экран, ради этого пакет и заведён.
 const (
 	Alive  State = "жива"
 	Silent State = "молчит"
@@ -176,7 +179,11 @@ func Judge(all map[string]Peer, sids []string, now time.Time) Life {
 	if !found {
 		return Life{State: Gone}
 	}
-	if at, ok := best.Touched(); ok && now.Sub(at) > IdleAfter {
+	at, ok := best.Touched()
+	if !ok {
+		return Life{State: Silent, Session: best.SessionID}
+	}
+	if now.Sub(at) > IdleAfter {
 		return Life{State: Silent, Silence: now.Sub(at), Session: best.SessionID}
 	}
 	return Life{State: Alive, Session: best.SessionID}

@@ -22,38 +22,116 @@ import (
 	"github.com/dronrider/devkit/internal/taskform"
 )
 
-// Словарь видов деятельности. Слова из него рисуют экраны доски и задачи
-// (DK-355, DK-356), и новое слово к ним не добавляется без нужды: колонка
-// экрана узкая, а длинное слово её ломает.
+// Словарь видов деятельности (DK-911, принят развилкой «словарь этапов» цели
+// DK-909). Восемь этапов работы и три ожидания. Слова из него рисуют экраны
+// доски и задачи (DK-355, DK-356), и новое слово к ним не добавляется без
+// нужды: колонка экрана узкая, а длинное слово её ломает. Этап ставит
+// инструмент, который начинает деятельность: хук спавна субагента, shipctl,
+// taskctl на парковке. Из рук диспетчера ставится одна проверка.
 const (
+	// Setup это разбор записи до кода: груминг черновика, нарезка цели.
+	Setup = "постановка"
 	// Dev это работа исполнителя над кодом задачи, включая грумминговый вердикт:
 	// разбирают задачу тем же заходом, что и делают.
 	Dev = "разработка"
+	// Proof это вычитка прозы субагентом со свежим контекстом.
+	Proof = "вычитка"
 	// Review это чтение диффа ревьювером.
 	Review = "ревью"
+	// Rework это исполнитель, поднятый заново после ревью с замечаниями.
+	Rework = "доработка"
+	// Merge это слияние ветки задачи в main командой shipctl merge.
+	Merge = "слияние"
+	// Deploy это выкат поезда командой shipctl ship.
+	Deploy = "выкат"
 	// Verify это прогон сценария проверки чужими руками (DK-642): гоняет его не
 	// автор правки, и запись несёт имя прогонявшего.
 	Verify = "проверка"
-	// Outside это ожидание не нас: проверка на проде, блокер, чужая работа.
+	// WaitHuman это вопрос человеку либо приёмка глазами: ответа ждут от него.
+	WaitHuman = "ждёт человека"
+	// WaitEvent это машинное событие: слияние соседа, закрытие предпосылки,
+	// таймер agentctl wait.
+	WaitEvent = "ждёт события"
+	// WaitQueue это занятый замок конвейера: merge или ship упёрлись в чужой
+	// заход и повторятся.
+	WaitQueue = "ждёт очереди"
+
+	// Outside и Ask это слова прежнего словаря. Они остаются только для
+	// чтения старых записей и строк «Хода работы»: Canon переводит их в
+	// ожидания, а Open их не принимает.
 	Outside = "снаружи"
-	// Ask это вопрос пользователю, на который ждут ответа.
-	Ask = "уточнение"
+	Ask     = "уточнение"
 )
 
 // Kinds это словарь целиком, в порядке типичного хода задачи.
-var Kinds = []string{Dev, Review, Verify, Outside, Ask}
+var Kinds = []string{Setup, Dev, Proof, Review, Rework, Merge, Deploy, Verify, WaitHuman, WaitEvent, WaitQueue}
 
-// Known отвечает, знаком ли вид деятельности. Незнакомое слово отбивается на
-// входе: запись с ним доехала бы до экрана пустой колонкой, и разбираться
-// пришлось бы уже там.
-func Known(kind string) bool {
-	for _, k := range Kinds {
+// works это этапы работы, waits это ожидания. Деление читают elapsed, pilot,
+// ворота закрытия и дашборд, и держится оно тут одним местом, а не сравнением
+// со словом в каждом читателе.
+var (
+	works = []string{Setup, Dev, Proof, Review, Rework, Merge, Deploy, Verify}
+	waits = []string{WaitHuman, WaitEvent, WaitQueue}
+	// execs это работа исполнителя над кодом: по ней меряется срок жизни
+	// субагента (elapsed), считаются заходы (pilot) и ищется автор правки у
+	// ворот закрытия.
+	execs = []string{Dev, Rework}
+)
+
+func among(kind string, set []string) bool {
+	for _, k := range set {
 		if k == kind {
 			return true
 		}
 	}
 	return false
 }
+
+// IsWork отвечает, этап ли это работы: за ним стоит сессия, которая что-то
+// делает.
+func IsWork(kind string) bool { return among(kind, works) }
+
+// IsWait отвечает, ожидание ли это. Слова прежнего словаря «снаружи» и
+// «уточнение» тоже ожидания: старые пакеты «Хода работы» читаются наравне с
+// новыми.
+func IsWait(kind string) bool { return among(kind, waits) || Legacy(kind) }
+
+// IsExec отвечает, работа ли это исполнителя над кодом: разработка либо
+// доработка после ревью.
+func IsExec(kind string) bool { return among(kind, execs) }
+
+// Legacy отвечает, слово ли это прежнего словаря.
+func Legacy(kind string) bool { return kind == Outside || kind == Ask }
+
+// blockedEventClasses это разряды парковки, за которыми ждут машинного
+// события, а не человека: слияние соседа и закрытие предпосылки (taskctl
+// wake). По ним старое «снаружи» из Blocked читается ожиданием события.
+var blockedEventClasses = []string{"слияние", "закрытие"}
+
+// Canon приводит вид к нынешнему словарю. Слова прежнего словаря переводятся
+// в ожидания по тексту записи: «уточнение» это вопрос человеку, «снаружи» из
+// Blocked с машинным разрядом слияния или закрытия это событие, остальное
+// «снаружи» это человек (проверка после выката, блокер, чужая работа).
+// Нынешнее слово возвращается как есть.
+func Canon(kind, note string) string {
+	switch kind {
+	case Ask:
+		return WaitHuman
+	case Outside:
+		reason := strings.TrimPrefix(note, "блок: ")
+		first, _, _ := strings.Cut(reason, ":")
+		if among(strings.TrimSpace(first), blockedEventClasses) {
+			return WaitEvent
+		}
+		return WaitHuman
+	}
+	return kind
+}
+
+// Known отвечает, знаком ли вид деятельности, включая слова прежнего словаря.
+// Незнакомое слово отбивается на входе: запись с ним доехала бы до экрана
+// пустой колонкой, и разбираться пришлось бы уже там.
+func Known(kind string) bool { return among(kind, Kinds) || Legacy(kind) }
 
 // VerifyNote собирает текст записи прогона сценария. Форма одна на всех
 // писателей: по ней ворота закрытия находят прогонявшего, и свободная проза
@@ -107,10 +185,12 @@ func ParseWork(text string) (turns, minutes int, ok bool) {
 	return t, mm, true
 }
 
-// executorRe находит модель исполнителя в тексте записи этапа разработки:
-// pick пишет её как «субагент opus/high по вердикту pick», и имя стоит перед
-// косой чертой. Ручная строка без вердикта pick исполнителя не несёт.
-var executorRe = regexp.MustCompile(`(\S+)/\S+ по вердикту pick`)
+// executorRe находит модель исполнителя в тексте записи этапа разработки. Хук
+// спавна пишет её как «субагент opus/high по определению exec-high», прежний
+// pick --record писал «субагент opus/high по вердикту pick», и в обоих имя
+// стоит перед косой чертой. Ручная строка без того и другого исполнителя не
+// несёт.
+var executorRe = regexp.MustCompile(`(\S+)/\S+ по (?:вердикту pick|определению)`)
 
 // Executor достаёт модель исполнителя из текста записи этапа. Второе значение
 // false, когда вердикта pick в тексте нет.
@@ -122,22 +202,33 @@ func Executor(text string) (string, bool) {
 	return m[len(m)-1][1], true
 }
 
-// devLine это ярлык строки «Хода работы» об этапе разработки. По ярлыку этап и
-// узнаётся: текст ревью тоже несёт вердикт pick, и без ярлыка ревьювер сошёл бы
-// за исполнителя.
-const devLine = "- Разработка:"
+// execLines это ярлыки строк «Хода работы» об этапах исполнителя. По ярлыку
+// этап и узнаётся: текст ревью тоже несёт определение и модель, и без ярлыка
+// ревьювер сошёл бы за исполнителя.
+var execLines = []string{"- Разработка:", "- Доработка:"}
 
-// LastExecutor находит модель исполнителя последнего этапа «разработка». На
-// входе строки раздела «Ход работы» файла задачи и этапы незакрытого пакета из
-// ~/.devkit/runs; пакет свежее файла, поэтому спрашивается первым. Второе
-// значение false, когда исполнителя не назвал ни один источник.
+func execLine(ln string) bool {
+	ln = strings.TrimSpace(ln)
+	for _, l := range execLines {
+		if strings.HasPrefix(ln, l) {
+			return true
+		}
+	}
+	return false
+}
+
+// LastExecutor находит модель исполнителя последнего этапа работы над кодом
+// (разработка либо доработка). На входе строки раздела «Ход работы» файла
+// задачи и этапы незакрытого пакета из ~/.devkit/runs; пакет свежее файла,
+// поэтому спрашивается первым. Второе значение false, когда исполнителя не
+// назвал ни один источник.
 //
 // Спрашивают об этом двое и об одном и том же: ворота закрытия сверяют
 // прогонявшего сценарий с автором правки, а подъём прогона после выката решает,
 // кому прогон не отдавать.
 func LastExecutor(lines []string, pending []Stage) (string, bool) {
 	for i := len(pending) - 1; i >= 0; i-- {
-		if pending[i].Kind != Dev {
+		if !IsExec(pending[i].Kind) {
 			continue
 		}
 		if name, ok := Executor(pending[i].Note); ok {
@@ -145,7 +236,7 @@ func LastExecutor(lines []string, pending []Stage) (string, bool) {
 		}
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
-		if !strings.HasPrefix(strings.TrimSpace(lines[i]), devLine) {
+		if !execLine(lines[i]) {
 			continue
 		}
 		if name, ok := Executor(lines[i]); ok {
@@ -175,11 +266,11 @@ func LastVerifyRunner(lines []string, pending []Stage) (string, bool) {
 }
 
 // NeedsSession отвечает, обязана ли за этапом стоять живая сессия агента.
-// Разработка, ревью и уточнение ведутся сессией, и запись без неё это
-// оборванный этап, тот же случай, что gone у признака Run. Ожидание снаружи
-// сессии не требует по смыслу: там ждут человека, и требовать живого агента
-// значило бы гасить единственный честный этап.
-func NeedsSession(kind string) bool { return kind != Outside }
+// Этап работы ведётся сессией, и запись без неё это оборванный этап, тот же
+// случай, что gone у признака Run. Ожидание сессии не требует по смыслу: там
+// ждут человека, событие или очередь, и требовать живого агента значило бы
+// гасить единственный честный этап.
+func NeedsSession(kind string) bool { return IsWork(kind) }
 
 // Stamp это формат времени в записи: секунды без зоны, как у реестра целей.
 const Stamp = "2006-01-02T15:04:05"
@@ -197,12 +288,25 @@ const LineStamp = "2006-01-02 15:04"
 // разработка, а спросить исполнителя было негде (предмет DK-716). ID приезжает
 // из окружения самой сессии, и пусто оно там, где этап открыли вне харнеса:
 // рукой из терминала, скриптом, стендом.
+//
+// End это конец этапа, когда его закрыл сам писатель: shipctl по концу
+// слияния и выката, хук по концу субагента. Нулевое время значит, что этап
+// закроет следующий за ним либо смена статуса. Без своего конца выкат висел бы
+// живым этапом у строки в Check до самого закрытия (DK-911).
+//
+// Work это номер работы субагента у этапов, которые открыл хук спавна: по нему
+// свод расхода находит транскрипт субагента (DK-912).
 type Stage struct {
 	Kind    string
 	Start   time.Time
 	Note    string
 	Session string
+	End     time.Time
+	Work    string
 }
+
+// Ended отвечает, закрыт ли этап своим писателем.
+func (s Stage) Ended() bool { return !s.End.IsZero() }
 
 // Record это запись задачи целиком: шапка и накопленные этапы в порядке
 // открытия. Живой этап последний.
@@ -212,12 +316,26 @@ type Record struct {
 	Stages []Stage
 }
 
-// Live отдаёт живой этап записи.
+// Live отдаёт живой этап записи: последний, пока его не закрыл писатель.
+// Закрытый последний этап это промежуток между деятельностями, живого этапа у
+// задачи в нём нет.
 func (r Record) Live() (Stage, bool) {
-	if len(r.Stages) == 0 {
+	if len(r.Stages) == 0 || r.Stages[len(r.Stages)-1].Ended() {
 		return Stage{}, false
 	}
 	return r.Stages[len(r.Stages)-1], true
+}
+
+// LastOf отдаёт последний этап записи, чей вид подошёл под предикат. Ищет от
+// конца, а не берёт только живой этап: спрашивающий (taskctl elapsed) хочет
+// свой вид деятельности, а живым к моменту вопроса может стоять другой.
+func LastOf(rec Record, match func(string) bool) (Stage, bool) {
+	for i := len(rec.Stages) - 1; i >= 0; i-- {
+		if match(rec.Stages[i].Kind) {
+			return rec.Stages[i], true
+		}
+	}
+	return Stage{}, false
 }
 
 // Elapsed отдаёт время с момента Start последнего этапа с совпавшим Kind
@@ -302,11 +420,23 @@ func MainRoot(root string) string {
 // смена статуса. Провал записи не роняет вызывающую команду, как и провал
 // журнала запусков: без отметки конвейер работает, просто молча.
 func Open(home, root, id, kind, note string, now time.Time) error {
+	return Put(home, root, id, Stage{Kind: kind, Start: now, Note: note})
+}
+
+// Put дописывает этап в запись целиком, с концом и номером работы, когда они у
+// писателя есть: хук спавна синхронного субагента узнаёт об этапе по его концу
+// и кладёт сразу закрытый. Разговор берётся из окружения, когда писатель его
+// не назвал. Слова прежнего словаря не принимаются: старые записи читаются, а
+// новые пишутся нынешними словами.
+func Put(home, root, id string, s Stage) error {
 	if home == "" {
 		return fmt.Errorf("домашней директории не видно, этап записывать некуда")
 	}
-	if !Known(kind) {
-		return fmt.Errorf("неизвестный вид деятельности %q, жду один из: %s", kind, strings.Join(Kinds, ", "))
+	if Legacy(s.Kind) {
+		return fmt.Errorf("вид %q остался в прежнем словаре, ожидание пишется одним из: %s", s.Kind, strings.Join(waits, ", "))
+	}
+	if !Known(s.Kind) {
+		return fmt.Errorf("неизвестный вид деятельности %q, жду один из: %s", s.Kind, strings.Join(Kinds, ", "))
 	}
 	if err := os.MkdirAll(Dir(home), 0o755); err != nil {
 		return err
@@ -316,9 +446,41 @@ func Open(home, root, id, kind, note string, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	if s.Session == "" {
+		s.Session = sessions.Own()
+	}
 	rec.ID, rec.Root = id, root
-	rec.Stages = append(rec.Stages, Stage{Kind: kind, Start: now, Note: note, Session: sessions.Own()})
+	rec.Stages = append(rec.Stages, s)
 	return os.WriteFile(path, []byte(body(rec)), 0o644)
+}
+
+// Close закрывает живой этап названного вида: ставит ему конец и дописывает
+// хвост к тексту записи (ходы и минуты ревью, итог слияния). Живой этап
+// другого вида не трогается: пока слияние шло, смена статуса могла увезти
+// пакет и открыть ожидание, и закрывать его за слияние нельзя. Второе значение
+// говорит, был ли этап закрыт.
+func Close(home, root, id, kind string, now time.Time, extra string) (bool, error) {
+	if home == "" {
+		return false, nil
+	}
+	path := Path(home, root, id)
+	rec, err := Load(path)
+	if err != nil {
+		return false, err
+	}
+	live, ok := rec.Live()
+	if !ok || live.Kind != kind {
+		return false, nil
+	}
+	last := &rec.Stages[len(rec.Stages)-1]
+	last.End = now
+	if extra != "" {
+		if last.Note != "" {
+			last.Note += ", "
+		}
+		last.Note += extra
+	}
+	return true, os.WriteFile(path, []byte(body(rec)), 0o644)
 }
 
 // body собирает запись в текст. Формат тот же, что у остальных локальных файлов
@@ -330,8 +492,12 @@ func body(rec Record) string {
 	fmt.Fprintf(&b, "id = %s\n", rec.ID)
 	fmt.Fprintf(&b, "root = %s\n", rec.Root)
 	for _, s := range rec.Stages {
-		fmt.Fprintf(&b, "этап = %s | %s | %s | %s\n",
-			s.Kind, s.Start.Format(Stamp), clean(s.Note), clean(s.Session))
+		end := ""
+		if s.Ended() {
+			end = s.End.Format(Stamp)
+		}
+		fmt.Fprintf(&b, "этап = %s | %s | %s | %s | %s | %s\n",
+			s.Kind, s.Start.Format(Stamp), clean(s.Note), clean(s.Session), end, clean(s.Work))
 	}
 	return b.String()
 }
@@ -384,10 +550,12 @@ func Load(path string) (Record, error) {
 // parseStage разбирает строку этапа. Строка с неизвестным видом или битым
 // временем пропускается: запись правил не только текущий инструмент, и ронять
 // из-за одной строки чтение всей задачи незачем. Четвёртое поле, разговор,
-// приехало с DK-716, и записи без него читаются по-прежнему: на диске лежат
-// пакеты, открытые прежней сборкой, и терять их из-за нового поля нельзя.
+// приехало с DK-716, пятое и шестое, конец и работа, с DK-911, и записи без
+// них читаются по-прежнему: на диске лежат пакеты, открытые прежней сборкой,
+// и терять их из-за нового поля нельзя. Слово прежнего словаря приводится к
+// ожиданию тут же, читатели видят один словарь.
 func parseStage(val string) (Stage, bool) {
-	parts := strings.SplitN(val, "|", 4)
+	parts := strings.Split(val, "|")
 	if len(parts) < 2 {
 		return Stage{}, false
 	}
@@ -399,14 +567,20 @@ func parseStage(val string) (Stage, bool) {
 	if err != nil {
 		return Stage{}, false
 	}
-	note, sess := "", ""
-	if len(parts) >= 3 {
-		note = strings.TrimSpace(parts[2])
+	field := func(i int) string {
+		if i < len(parts) {
+			return strings.TrimSpace(parts[i])
+		}
+		return ""
 	}
-	if len(parts) == 4 {
-		sess = strings.TrimSpace(parts[3])
+	s := Stage{Kind: kind, Start: start, Note: field(2), Session: field(3), Work: field(5)}
+	s.Kind = Canon(kind, s.Note)
+	if e := field(4); e != "" {
+		if end, err := time.ParseInLocation(Stamp, e, time.Local); err == nil {
+			s.End = end
+		}
 	}
-	return Stage{Kind: kind, Start: start, Note: note, Session: sess}, true
+	return s, true
 }
 
 // Flush забирает накопленные этапы и убирает запись: пакет уезжает в файл
@@ -457,14 +631,17 @@ func List(home, root string) []Record {
 // Lines разворачивает пакет этапов в строки раздела «Ход работы». Вид
 // деятельности идёт с заглавной ярлыком строки, следом текст записи, дальше
 // дата и часы этапа: по ним видно не только чем задача занималась, но и сколько
-// это заняло. Конец этапа это начало следующего, у последнего это момент
-// записи пакета.
+// это заняло. Конец этапа это его собственный конец, когда писатель его
+// закрыл, иначе начало следующего, а у последнего момент записи пакета.
 func Lines(stages []Stage, end time.Time) []string {
 	out := make([]string, 0, len(stages))
 	for i, s := range stages {
 		fin := end
 		if i+1 < len(stages) {
 			fin = stages[i+1].Start
+		}
+		if s.Ended() {
+			fin = s.End
 		}
 		label := s.Kind
 		if r := []rune(s.Kind); len(r) > 0 {
@@ -490,9 +667,10 @@ var spanRe = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?:-(\d{2}:\d{
 // ParseLine читает строку раздела «Ход работы» обратно в этап и его
 // длительность: сводке цели нужно знать, куда ушло время закрытых задач, а
 // живая запись к тому моменту уже уехала в файл задачи и стёрта Flush. Вид
-// берётся по словарю Kinds, так что пятое слово словаря читается наравне с
-// четырьмя нынешними, а строка с чужим ярлыком или без часов это не находка,
-// а обычная проза раздела, и второе значение у неё false.
+// берётся по словарю Kinds вместе со словами прежнего словаря, и те
+// приводятся к ожиданиям тут же: старые пакеты со «снаружи» и «уточнением»
+// читаются наравне с новыми. Строка с чужим ярлыком или без часов это не
+// находка, а обычная проза раздела, и второе значение у неё false.
 func ParseLine(ln string) (Stage, time.Duration, bool) {
 	t := strings.TrimSpace(ln)
 	t = strings.TrimPrefix(t, "- ")
@@ -527,7 +705,8 @@ func ParseLine(ln string) (Stage, time.Duration, bool) {
 		}
 		span = fin.Sub(start)
 	}
-	return Stage{Kind: kind, Start: start, Note: strings.TrimSpace(note)}, span, true
+	note = strings.TrimSpace(note)
+	return Stage{Kind: Canon(kind, note), Start: start, Note: note}, span, true
 }
 
 // FenceMask и InsertIntoSection живут в пакете taskform вместе с порядком

@@ -25,11 +25,172 @@ func TestKnownAndSession(t *testing.T) {
 	if Known("деплой") {
 		t.Fatal("чужое слово принято за вид деятельности")
 	}
-	if !NeedsSession(Dev) || !NeedsSession(Review) || !NeedsSession(Ask) {
+	if !NeedsSession(Dev) || !NeedsSession(Review) || !NeedsSession(Proof) || !NeedsSession(Merge) {
 		t.Fatal("этап агента объявлен не требующим сессии")
 	}
-	if NeedsSession(Outside) {
-		t.Fatal("ожидание снаружи потребовало живой сессии")
+	for _, k := range []string{WaitHuman, WaitEvent, WaitQueue, Outside, Ask} {
+		if NeedsSession(k) {
+			t.Fatalf("ожидание %q потребовало живой сессии", k)
+		}
+	}
+}
+
+// TestDictionarySplit: словарь DK-911 делится на восемь этапов работы и три
+// ожидания, и деление отвечает предикатами, а не сравнением со словом. Слова
+// прежнего словаря читаются ожиданиями.
+func TestDictionarySplit(t *testing.T) {
+	if len(Kinds) != 11 {
+		t.Fatalf("в словаре %d слов, жду 11: %v", len(Kinds), Kinds)
+	}
+	work, wait := 0, 0
+	for _, k := range Kinds {
+		switch {
+		case IsWork(k) && !IsWait(k):
+			work++
+		case IsWait(k) && !IsWork(k):
+			wait++
+		default:
+			t.Fatalf("вид %q и работа, и ожидание разом либо ни то, ни другое", k)
+		}
+	}
+	if work != 8 || wait != 3 {
+		t.Fatalf("этапов работы %d, ожиданий %d, жду 8 и 3", work, wait)
+	}
+	if !IsExec(Dev) || !IsExec(Rework) || IsExec(Review) || IsExec(Proof) {
+		t.Fatal("работа исполнителя это разработка и доработка, и только они")
+	}
+	for _, k := range []string{Outside, Ask} {
+		if !Known(k) || !IsWait(k) || IsWork(k) || !Legacy(k) {
+			t.Fatalf("слово прежнего словаря %q читается не ожиданием", k)
+		}
+	}
+}
+
+// TestCanonTurnsOldWordsIntoWaits: «уточнение» это вопрос человеку, «снаружи»
+// из Blocked с машинным разрядом слияния или закрытия это событие, остальное
+// «снаружи» это человек.
+func TestCanonTurnsOldWordsIntoWaits(t *testing.T) {
+	cases := []struct{ kind, note, want string }{
+		{Ask, "вопрос: какая раскладка", WaitHuman},
+		{Outside, "проверка после выката", WaitHuman},
+		{Outside, "блок: окружение: нет доступа", WaitHuman},
+		{Outside, "блок: слияние: DK-100 ждёт", WaitEvent},
+		{Outside, "блок: закрытие: DK-100", WaitEvent},
+		{Dev, "субагент opus/high", Dev},
+		{WaitQueue, "", WaitQueue},
+	}
+	for _, c := range cases {
+		if got := Canon(c.kind, c.note); got != c.want {
+			t.Errorf("Canon(%q, %q) = %q, жду %q", c.kind, c.note, got, c.want)
+		}
+	}
+}
+
+// TestPutRejectsOldWords: новые записи пишутся нынешним словарём, а старое
+// слово отбивается с подсказкой, каким ожиданием его писать.
+func TestPutRejectsOldWords(t *testing.T) {
+	home := t.TempDir()
+	err := Open(home, "/p", "T-1", Outside, "проверка после выката", at(10, 0))
+	if err == nil || !strings.Contains(err.Error(), WaitHuman) {
+		t.Fatalf("старое слово принято либо отказ без подсказки: %v", err)
+	}
+}
+
+// TestOldRecordReadsAsWait: пакет прежней сборки со «снаружи» и «уточнением»
+// читается ожиданиями, а не теряется и не приходит старым словом.
+func TestOldRecordReadsAsWait(t *testing.T) {
+	home := t.TempDir()
+	path := Path(home, "/p", "T-1")
+	os.MkdirAll(Dir(home), 0o755)
+	os.WriteFile(path, []byte("id = T-1\nroot = /p\nэтап = разработка | 2026-08-15T10:00:00 | субагент opus/high по вердикту pick\nэтап = уточнение | 2026-08-15T11:00:00 | вопрос: какая раскладка | sess\nэтап = снаружи | 2026-08-15T12:00:00 | блок: слияние: T-2\n"), 0o644)
+	rec, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Stages) != 3 || rec.Stages[1].Kind != WaitHuman || rec.Stages[2].Kind != WaitEvent {
+		t.Fatalf("старые слова прочитаны не ожиданиями: %+v", rec.Stages)
+	}
+	if rec.Stages[1].Session != "sess" {
+		t.Fatalf("разговор старой записи потерян: %+v", rec.Stages[1])
+	}
+}
+
+// TestCloseEndsLiveStageOfKind: писатель закрывает свой этап, и у записи нет
+// живого этапа до следующего; чужой живой этап закрытие не трогает.
+func TestCloseEndsLiveStageOfKind(t *testing.T) {
+	home := t.TempDir()
+	if err := Put(home, "/p", "T-1", Stage{Kind: Review, Start: at(10, 0), Note: "субагент sonnet/high по определению review-high", Work: "a1b2"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := Close(home, "/p", "T-1", Merge, at(10, 30), ""); err != nil || ok {
+		t.Fatalf("закрытие чужого вида тронуло запись: ok=%v, %v", ok, err)
+	}
+	ok, err := Close(home, "/p", "T-1", Review, at(10, 30), WorkNote(12, 30))
+	if err != nil || !ok {
+		t.Fatalf("закрытие своего вида: ok=%v, %v", ok, err)
+	}
+	rec, _ := Load(Path(home, "/p", "T-1"))
+	if _, live := rec.Live(); live {
+		t.Fatal("закрытый этап остался живым")
+	}
+	s := rec.Stages[0]
+	if !s.End.Equal(at(10, 30)) || s.Work != "a1b2" || !strings.HasSuffix(s.Note, "ходов 12, минут 30") {
+		t.Fatalf("конец, работа или хвост записи потерялись: %+v", s)
+	}
+	ln := Lines(rec.Stages, at(23, 0))[0]
+	if !strings.Contains(ln, "10:00-10:30") {
+		t.Fatalf("строка «Хода работы» не взяла свой конец: %s", ln)
+	}
+	if ok, _ := Close(home, "/p", "T-1", Review, at(11, 0), ""); ok {
+		t.Fatal("закрытый этап закрылся второй раз")
+	}
+}
+
+// TestParseLineCanonsOldLabels: строки «Хода работы» прежних пакетов читаются
+// ожиданиями, свод цели складывает их в нынешние слова.
+func TestParseLineCanonsOldLabels(t *testing.T) {
+	s, span, ok := ParseLine("- Снаружи: проверка после выката, 2026-08-15 10:00-12:00.")
+	if !ok || s.Kind != WaitHuman || span != 2*time.Hour {
+		t.Fatalf("старый ярлык прочитан как %+v (%v, ok=%v)", s, span, ok)
+	}
+	s, _, ok = ParseLine("- Уточнение: вопрос: раскладка, 2026-08-15 10:00-10:05.")
+	if !ok || s.Kind != WaitHuman {
+		t.Fatalf("уточнение прочитано как %+v", s)
+	}
+}
+
+// TestExecutorFromHookNote: запись хука спавна называет исполнителя тем же
+// местом, что и прежний вердикт pick, и доработка считается работой
+// исполнителя у ворот закрытия.
+func TestExecutorFromHookNote(t *testing.T) {
+	name, ok := Executor("субагент opus/high по определению exec-high, работа a1b2c3")
+	if !ok || name != "opus" {
+		t.Fatalf("исполнитель из записи хука %q, ok=%v", name, ok)
+	}
+	lines := []string{
+		"- Разработка: субагент opus/high по определению exec-high, 2026-08-15 10:00-12:00.",
+		"- Ревью: субагент sonnet/high по определению review-high, 2026-08-15 12:00-12:30.",
+		"- Доработка: субагент haiku/low по определению exec-low, 2026-08-15 12:30-13:00.",
+	}
+	if name, ok := LastExecutor(lines, nil); !ok || name != "haiku" {
+		t.Fatalf("исполнитель доработки не найден: %q, ok=%v", name, ok)
+	}
+	pending := []Stage{{Kind: Rework, Note: "субагент glm-5.2/high по определению exec-high"}}
+	if name, ok := LastExecutor(lines, pending); !ok || name != "glm-5.2" {
+		t.Fatalf("исполнитель из живой доработки не найден: %q, ok=%v", name, ok)
+	}
+}
+
+// TestLastOfFindsByPredicate: elapsed спрашивает работу исполнителя, а не
+// слово «разработка», и доработка после ревью находится тем же вопросом.
+func TestLastOfFindsByPredicate(t *testing.T) {
+	rec := Record{Stages: []Stage{{Kind: Dev, Start: at(9, 0)}, {Kind: Review, Start: at(10, 0)}, {Kind: Rework, Start: at(11, 0)}, {Kind: WaitHuman, Start: at(12, 0)}}}
+	s, ok := LastOf(rec, IsExec)
+	if !ok || s.Kind != Rework {
+		t.Fatalf("последняя работа исполнителя %+v, ok=%v", s, ok)
+	}
+	if _, ok := LastOf(Record{}, IsExec); ok {
+		t.Fatal("в пустой записи что-то нашлось")
 	}
 }
 

@@ -21,6 +21,7 @@ SAMPLE = os.path.join(HERE, "testdata", "claude-code", "session-start.json")
 
 sys.path.insert(0, HERE)
 import hookio  # noqa: E402
+import stagerun  # noqa: E402
 session_task = importlib.import_module("session-task")
 
 SID = "5a750327-a8b5-4d2f-9aab-46cf862d2c47"
@@ -550,3 +551,63 @@ class TestHook(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=0)
+
+
+class SetupStage(unittest.TestCase):
+    """Сессия на черновике или на цели ставит записи этап «постановка»
+    (DK-911): временный репозиторий с накопителем, временный дом."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.tmp]))
+        self.home = os.path.join(self.tmp, "home")
+        self.root = os.path.join(self.tmp, "proj")
+        subprocess.run(["git", "init", "-q", "-b", "main", self.root], check=True)
+        os.makedirs(os.path.join(self.root, "docs", "tasks", "drafts"))
+        with open(os.path.join(self.root, "docs", "tasks", "drafts", "DK-7.md"), "w", encoding="utf-8") as f:
+            f.write("# DK-7: черновик\n")
+        with open(os.path.join(self.root, "docs", "tasks", "DK-8.md"), "w", encoding="utf-8") as f:
+            f.write("# DK-8: цель\n\n## Задачи цели\n\n- DK-9\n")
+        with open(os.path.join(self.root, "docs", "tasks", "DK-9.md"), "w", encoding="utf-8") as f:
+            f.write("# DK-9: задача\n\n## Что происходит\n")
+
+    def stages(self, task):
+        return stagerun.load(stagerun.path(self.home, os.path.realpath(self.root), task))["stages"]
+
+    def run_stage(self, task, hidden=False, source="startup"):
+        env = {"HOME": self.home, "DEVKIT_TASK": task}
+        if hidden:
+            env["DEVKIT_HIDDEN"] = "1"
+        return session_task.setup_stage(start(self.root, source=source), task, env, now=0)
+
+    def test_draft_session_writes_setup(self):
+        self.assertEqual(self.run_stage("DK-7"), "черновик")
+        stages = self.stages("DK-7")
+        self.assertEqual([s["kind"] for s in stages], [stagerun.SETUP])
+        self.assertEqual(stages[0]["note"], "разбор черновика, сессия startup")
+        self.assertEqual(stages[0]["session"], SID)
+
+    def test_goal_session_with_a_human_writes_setup(self):
+        self.assertEqual(self.run_stage("DK-8"), "цель")
+        self.assertEqual(self.stages("DK-8")[0]["note"], "нарезка цели, сессия startup")
+
+    def test_hidden_goal_tick_is_not_setup(self):
+        self.assertEqual(self.run_stage("DK-8", hidden=True), "")
+        self.assertEqual(self.stages("DK-8"), [])
+
+    def test_plain_task_and_compact_write_nothing(self):
+        self.assertEqual(self.run_stage("DK-9"), "")
+        self.assertEqual(self.run_stage("DK-7", source=session_task.COMPACT), "")
+        self.assertEqual(self.stages("DK-9"), [])
+        self.assertEqual(self.stages("DK-7"), [])
+
+    def test_hook_from_stdin_writes_setup_for_a_draft(self):
+        ev = dict(sample())
+        ev["cwd"] = self.root
+        env = dict(os.environ, HOME=self.home, DEVKIT_TASK="DK-7")
+        for key in ("DEVKIT_TMUX", "TMUX", "TMUX_PANE", "DEVKIT_HIDDEN"):
+            env.pop(key, None)
+        r = subprocess.run([sys.executable, HOOK, "--hook"], input=json.dumps(ev),
+                           capture_output=True, text=True, env=env)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        self.assertEqual([s["kind"] for s in self.stages("DK-7")], [stagerun.SETUP])

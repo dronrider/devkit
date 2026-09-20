@@ -63,6 +63,14 @@ tmux-сессию того, кто её поднял, а по адресу па�
 ронять её ради журнала нельзя. Сессия вне git-дерева всё равно пишет строку с
 пустым деревом: разговор доски идёт как раз из такой.
 
+Сессия, поднятая на черновике или на записи цели, ставит записи этап
+«постановка» (DK-911): груминг и нарезка это работа над записью до кода, и
+ставит её инструмент, поднявший разговор, а не память диспетчера. Черновик
+узнаётся по файлу в docs/tasks/drafts, цель по разделу «Задачи цели» в файле
+записи; у цели этап ставит только сессия с человеком, скрытый виток цикла
+цели постановкой не считается. Запись лежит в ~/.devkit/runs, пишет её
+stagerun.py.
+
 Сессии с заказом (DEVKIT_TASK) хук вдобавок кладёт контекст задачи полем
 additionalContext: строку доски, файл задачи и строки про план и отзывчивость.
 На поводе compact (SessionStart после сжатия контекста) вместо контекста
@@ -96,6 +104,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hookio
+import stagerun
 
 # Журнал реестра лежит рядом с журналом уведомителя в одном машинном каталоге,
 # и формат с механизмом для третьего файла в нём уже готовы.
@@ -462,6 +471,44 @@ def task_context(task, cwd, is_hidden=False):
     return "\n\n".join(parts)
 
 
+GOAL_SECTION = "## Задачи цели"
+
+
+def record_kind(root, task):
+    """Чем задача лежит на диске: «черновик» у файла в накопителе, «цель» у
+    файла задачи с разделом «Задачи цели», пусто у остального."""
+    if not root or not task:
+        return ""
+    if os.path.exists(os.path.join(root, "docs", "tasks", "drafts", task + ".md")):
+        return "черновик"
+    try:
+        with open(os.path.join(root, "docs", "tasks", task + ".md"), encoding="utf-8",
+                  errors="replace") as fh:
+            text = fh.read(TASK_CTX_LIMIT * 4)
+    except OSError:
+        return ""
+    return "цель" if GOAL_SECTION in text else ""
+
+
+def setup_stage(start, task, env, now=None):
+    """Этап «постановка» сессии, поднятой на черновике или на цели. Возвращает
+    слово записи, на которой этап лёг, либо пустую строку."""
+    if not task or start.source == COMPACT:
+        return ""
+    root = hookio.tree_root(start.cwd)
+    kind = record_kind(root, task)
+    if not kind or (kind == "цель" and hidden(env)):
+        return ""
+    note = "разбор черновика" if kind == "черновик" else "нарезка цели"
+    try:
+        stagerun.put(stagerun.home_dir(env), stagerun.main_root(root), task, stagerun.SETUP,
+                     "%s, сессия %s" % (note, start.source), start.session,
+                     time.time() if now is None else now)
+    except (OSError, ValueError):
+        return ""
+    return kind
+
+
 def run_hook(protocol, path=None, env=None, now=None):
     start = hookio.start_event(protocol)
     if start is None or not start.session:
@@ -471,6 +518,8 @@ def run_hook(protocol, path=None, env=None, now=None):
     hookio.registry_append(path or LOG, record(start, env, now))
     real_env = os.environ if env is None else env
     is_hidden = hidden(real_env)
+    bound = ordered_task(real_env) or tree_task(hookio.tree_root(start.cwd))[0]
+    setup_stage(start, bound, real_env, now)
     if is_hidden:
         mark_hidden(start.session)
     task = ordered_task(real_env)

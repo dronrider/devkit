@@ -59,6 +59,10 @@ SESSION_START = "session-start"
 # запущенную работу вместо отчёта. Своей строки в профиле харнеса у неё нет, она
 # снимается с той же оси tool-done, что и остальные ходы инструментов.
 AGENT_LAUNCHED = "agent-launched"
+# Синхронный субагент отчитался ходом инструмента: сторожу тут делать нечего, а
+# писатель этапов по этому событию кладёт этап субагента сразу закрытым
+# (DK-911). Длительность работы событие несёт полем duration_ms.
+AGENT_RETURNED = "agent-returned"
 # Имя инструмента делегирования и признак фонового запуска в его ответе.
 AGENT_TOOL = "Agent"
 AGENT_ASYNC = "async_launched"
@@ -102,9 +106,12 @@ Job = collections.namedtuple("Job", "id kind status description command")
 # событие не несёт, приходит пустым: у конца хода нет ни ID работы, ни роли, у
 # команды оболочки нет роли субагента, а поле owner пусто у всего, что запущено
 # самой сессией.
+# Модель и длительность приехали с DK-911: модель субагента идёт в запись этапа,
+# а длительность синхронного субагента даёт начало этапа, о котором хук узнаёт
+# только по концу. Оба поля с умолчанием, событие без них читается по-старому.
 Agent = collections.namedtuple(
     "Agent", "kind session cwd transcript agent_id owner job agent_type description command "
-             "output message jobs active")
+             "output message jobs active model duration report", defaults=("", 0.0, ""))
 
 
 class Unknown(Exception):
@@ -259,6 +266,30 @@ def claude_code_start(event):
 # там одинарные кавычки и True. Форма эта на стороне харнеса, поэтому нужное
 # снимается регуляркой, а объект, если он однажды придёт объектом, читается
 # ключом.
+def number_of(value):
+    """Число из поля события либо ноль: длительность и счётчики приходят
+    числами, а чужой протокол может прислать что угодно."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def response_text(response):
+    """Текст отчёта субагента из ответа инструмента: у синхронного субагента
+    он лежит блоками content, у строкового ответа это сама строка."""
+    if isinstance(response, str):
+        return response
+    if not isinstance(response, dict):
+        return ""
+    content = response.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(text_of(c.get("text")) for c in content if isinstance(c, dict))
+    return text_of(content)
+
+
 def response_field(response, key):
     if isinstance(response, dict):
         return text_of(response.get(key))
@@ -291,13 +322,15 @@ def claude_code_agent(event):
     ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
     response = event.get("tool_response")
     job, command, task = SUBAGENT_JOB, "", ""
+    returned = False
     if name == "PostToolUse":
         tool = text_of(event.get("tool_name"))
         if tool == AGENT_TOOL:
             if response_field(response, "status") != AGENT_ASYNC:
                 # Синхронный субагент отчитывается ходом инструмента, и терять
-                # его сессии негде: сторожить тут нечего.
-                return None
+                # его сессии негде: сторожить тут нечего, а этап его ложится
+                # по этому же событию задним числом.
+                returned = True
         elif tool == BASH_TOOL:
             task = response_field(response, BASH_ASYNC)
             if not task:
@@ -317,6 +350,9 @@ def claude_code_agent(event):
     # тем же ключом, что и сам исполнитель, и затирала его запись (DK-966).
     own = text_of(event.get("agent_id"))
     work = (task or response_field(response, "agentId")) if kind == AGENT_LAUNCHED else own
+    if returned:
+        kind = AGENT_RETURNED
+        work = response_field(response, "agentId") or text_of(event.get("tool_use_id"))
     return Agent(kind=kind,
                  session=text_of(event.get("session_id")),
                  cwd=text_of(event.get("cwd")),
@@ -326,11 +362,14 @@ def claude_code_agent(event):
                  job=job,
                  agent_type=text_of(event.get("agent_type")) or text_of(ti.get("subagent_type")),
                  description=text_of(ti.get("description")) or response_field(response, "description"),
+                 report=response_text(response) if returned else "",
                  command=command,
                  output=response_field(response, "outputFile"),
                  message=text_of(event.get("last_assistant_message")),
                  jobs=claude_code_jobs(event),
-                 active=bool(event.get("stop_hook_active")))
+                 active=bool(event.get("stop_hook_active")),
+                 model=text_of(ti.get("model")) or response_field(response, "resolvedModel"),
+                 duration=number_of(event.get("duration_ms")) / 1000.0)
 
 
 # Таблица разборщиков: протокол, разбор записи, разбор события сессии, разбор

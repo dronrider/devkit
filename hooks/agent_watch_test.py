@@ -9,6 +9,7 @@
 нулём.
 """
 import importlib
+import io
 import json
 import os
 import subprocess
@@ -23,6 +24,7 @@ DATA = os.path.join(HERE, "testdata", "claude-code")
 
 sys.path.insert(0, HERE)
 import hookio  # noqa: E402
+import stagerun  # noqa: E402
 watch = importlib.import_module("agent-watch")
 
 SID = "0ebb6e3b-7d4e-4b8b-8a82-a340dd843209"
@@ -41,11 +43,13 @@ def sample(name):
 
 def event(kind, session=SID, transcript="", agent_id="", agent_type="general-purpose",
           description="", output="", message="", jobs=(), active=False,
-          job_kind="subagent", command="", owner=""):
-    return hookio.Agent(kind=kind, session=session, cwd="/tmp/work", transcript=transcript,
+          job_kind="subagent", command="", owner="", model="", duration=0.0, report="",
+          cwd="/tmp/work"):
+    return hookio.Agent(kind=kind, session=session, cwd=cwd, transcript=transcript,
                         agent_id=agent_id, owner=owner, job=job_kind, agent_type=agent_type,
                         description=description, command=command, output=output,
-                        message=message, jobs=jobs, active=active)
+                        message=message, jobs=jobs, active=active, model=model,
+                        duration=duration, report=report)
 
 
 def job(agent_id=AID, kind="subagent", status="running", description="разбор", command=""):
@@ -497,3 +501,125 @@ class _Sink(object):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Stages(unittest.TestCase):
+    """Этап задачи по спавну субагента (DK-911): временный репозиторий с
+    деревом задачи, временный дом под ~/.devkit/runs, ни одной команды
+    диспетчера."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.tmp]))
+        self.home = os.path.join(self.tmp, "home")
+        self.root = os.path.join(self.tmp, "proj")
+        subprocess.run(["git", "init", "-q", "-b", "main", self.root], check=True)
+        subprocess.run(["git", "-C", self.root, "-c", "user.email=t@t", "-c", "user.name=t",
+                        "commit", "-q", "--allow-empty", "-m", "seed"], check=True)
+        self.tree = os.path.join(self.tmp, "proj-dk-911")
+        subprocess.run(["git", "-C", self.root, "worktree", "add", "-q", self.tree, "-b", "dk-911"],
+                       check=True)
+        self.env = {watch.DIR_ENV: os.path.join(self.tmp, "agents"), "HOME": self.home}
+        self.sleeper = Sleeper()
+
+    def handle(self, ev, now=NOW):
+        watch.handle(ev, self.env, now, self.sleeper, io.StringIO())
+
+    def stages(self, task="DK-911"):
+        return stagerun.load(stagerun.path(self.home, os.path.realpath(self.root), task))["stages"]
+
+    def spawn(self, agent_type, description, agent_id=AID, cwd=None, model="opus", now=NOW):
+        self.handle(event(hookio.AGENT_LAUNCHED, agent_id=agent_id, agent_type=agent_type,
+                          description=description, model=model, cwd=cwd or self.root), now=now)
+
+    def test_review_spawn_opens_review_with_model_and_work(self):
+        self.spawn("review-high", "Ревью DK-911")
+        stages = self.stages()
+        self.assertEqual([s["kind"] for s in stages], [stagerun.REVIEW])
+        self.assertEqual(stages[0]["note"],
+                         "субагент opus/high по определению review-high, работа " + AID)
+        self.assertEqual(stages[0]["work"], AID)
+        self.assertEqual(stages[0]["session"], SID)
+        self.assertEqual(stages[0]["end"], "")
+
+    def test_proofread_spawn_opens_proof(self):
+        self.spawn("proofread", "Вычитка файла задачи DK-911")
+        self.assertEqual([s["kind"] for s in self.stages()], [stagerun.PROOF])
+
+    def test_exec_after_review_is_rework(self):
+        self.spawn("exec-high", "Исполнитель DK-911", agent_id="e1")
+        self.spawn("review-high", "Ревью DK-911", agent_id="r1")
+        self.spawn("exec-high", "Замечания ревью DK-911", agent_id="e2")
+        self.assertEqual([s["kind"] for s in self.stages()],
+                         [stagerun.DEV, stagerun.REVIEW, stagerun.REWORK])
+
+    def test_helper_agents_open_nothing(self):
+        self.spawn("Explore", "Найти вызовы DK-911")
+        self.spawn("general-purpose", "Разбор DK-911")
+        self.assertFalse(os.path.exists(stagerun.path(self.home, os.path.realpath(self.root), "DK-911")))
+
+    def test_task_from_the_tree_name_when_description_is_mute(self):
+        self.spawn("review-high", "Ревью ветки", cwd=self.tree)
+        stages = self.stages()
+        self.assertEqual(len(stages), 1, "запись не легла по имени дерева либо легла в чужой корень")
+
+    def test_task_from_the_order_env(self):
+        self.env["DEVKIT_TASK"] = "DK-911"
+        self.spawn("exec-medium", "Правка по замечаниям")
+        self.assertEqual([s["kind"] for s in self.stages()], [stagerun.DEV])
+
+    def test_without_a_task_nothing_is_written_and_the_log_says_why(self):
+        self.spawn("review-high", "Ревью ветки")
+        self.assertFalse(os.listdir(stagerun.runs_dir(self.home)) if os.path.isdir(stagerun.runs_dir(self.home)) else [])
+        with open(watch.log_path(self.env), encoding="utf-8") as f:
+            self.assertIn("задача не названа", f.read())
+
+    def test_subagent_stop_closes_the_stage_with_work_note(self):
+        self.spawn("review-high", "Ревью DK-911")
+        self.handle(event(hookio.SUBAGENT_DONE, agent_id=AID, message="Итог: ходов 21, замечаний два"),
+                    now=NOW + 540)
+        stages = self.stages()
+        self.assertNotEqual(stages[0]["end"], "")
+        self.assertTrue(stages[0]["note"].endswith(", ходов 21, минут 9"), stages[0]["note"])
+        self.assertIsNone(stagerun.live(self.home, os.path.realpath(self.root), "DK-911"))
+
+    def test_synchronous_subagent_lands_closed_with_its_span(self):
+        self.handle(event(hookio.AGENT_RETURNED, agent_id="s1", agent_type="review-medium",
+                          description="Ревью DK-911", model="claude-sonnet-4-5-20250929",
+                          duration=1200.0, report="ходов 8, замечаний нет", cwd=self.root),
+                    now=NOW)
+        stages = self.stages()
+        self.assertEqual(len(stages), 1)
+        s = stages[0]
+        self.assertEqual(s["kind"], stagerun.REVIEW)
+        self.assertEqual(s["start"], stagerun.stamp(NOW - 1200))
+        self.assertEqual(s["end"], stagerun.stamp(NOW))
+        self.assertIn("субагент sonnet/medium по определению review-medium, работа s1, ходов 8, минут 20", s["note"])
+        # Синхронный субагент в реестр сторожа по-прежнему не попадает.
+        self.assertEqual(watch.load_registry(watch.registry_path(SID, self.env)), {})
+
+    def test_sync_sample_is_parsed_as_returned(self):
+        ev = dict(sample("tool-done-agent-launch"))
+        ev["tool_response"] = {"status": "completed", "agentId": "s9",
+                               "content": [{"type": "text", "text": "ходов 3"}]}
+        ev["duration_ms"] = 90000
+        got = hookio.claude_code_agent(ev)
+        self.assertEqual((got.kind, got.agent_id, got.duration, got.report),
+                         (hookio.AGENT_RETURNED, "s9", 90.0, "ходов 3"))
+        self.assertEqual(got.model, "")
+        launched = hookio.claude_code_agent(sample("tool-done-agent-launch"))
+        self.assertEqual(launched.model, "claude-haiku-4-5-20251001")
+
+    def test_hook_writes_the_stage_from_stdin(self):
+        # Живой образец запуска: описание работы без ID, задача из заказа.
+        env = dict(os.environ, HOME=self.home, DEVKIT_TASK="DK-519")
+        env[watch.DIR_ENV] = self.env[watch.DIR_ENV]
+        ev = dict(sample("tool-done-agent-launch"))
+        ev["cwd"] = self.root
+        ev["tool_input"] = dict(ev["tool_input"], subagent_type="exec-low", model="haiku")
+        r = subprocess.run([sys.executable, HOOK, "--hook"], input=json.dumps(ev),
+                           capture_output=True, text=True, env=env)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        stages = self.stages("DK-519")
+        self.assertEqual([s["kind"] for s in stages], [stagerun.DEV])
+        self.assertIn("субагент haiku/low по определению exec-low", stages[0]["note"])

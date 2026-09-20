@@ -61,6 +61,16 @@
 сессии негде его терять. В реестр попадает только то, что запущено фоном, а
 конец незнакомой работы сторож пропускает молча.
 
+Тот же хук ставит этап задачи по спавну субагента (DK-911): по определению
+агента ревьювер (review-*) кладёт «ревью», вычитка (proofread) «вычитку»,
+исполнитель (exec-*) «разработку», а на записи, где последним этапом работы
+стоит ревью, «доработку». ID задачи берётся из описания работы, из заказа
+DEVKIT_TASK либо из имени дерева задачи. Этап несёт модель, определение и
+номер работы субагента, а закрывается его концом: у фонового по SubagentStop,
+у синхронного сразу, задним числом по длительности хода. Диспетчеру о команде
+записи помнить не надо. Запись лежит в ~/.devkit/runs, пишет её stagerun.py
+тем же форматом, что internal/stage на go.
+
 Режим один:
   agent-watch.py --hook [протокол]  событие читается со stdin и разбирается по
                                     имени протокола таблицей hookio.py (голый
@@ -84,6 +94,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hookio
+import stagerun
 
 HOME_DIR = os.path.join(os.path.expanduser("~"), ".devkit")
 REGISTRY_DIR = os.path.join(HOME_DIR, "agents")
@@ -251,6 +262,99 @@ def entry_of(job, kind, description, command, output, now, owner=""):
             "output": output, "started": now, "done": 0, "message": "",
             "state": RUNNING, "told": False, "warned": False, "job": job,
             "owner": owner}
+
+
+# Определения субагентов и виды этапов по ним (DK-911). Остальные определения
+# (Explore, general-purpose, свои) этапа не открывают: это подручные работы, а
+# не деятельность над задачей.
+def stage_kind(agent_type, last_work):
+    """Вид этапа по определению субагента. Исполнитель на записи, где последним
+    этапом работы стоит ревью либо доработка, чинит замечания: это доработка."""
+    if agent_type.startswith("review-"):
+        return stagerun.REVIEW
+    if agent_type == "proofread":
+        return stagerun.PROOF
+    if agent_type.startswith("exec-"):
+        if last_work and last_work["kind"] in (stagerun.REVIEW, stagerun.REWORK):
+            return stagerun.REWORK
+        return stagerun.DEV
+    return ""
+
+
+TASK_RE = re.compile(r"\b([A-Z]{2,10}-[0-9]{1,6})\b")
+TREE_RE = re.compile(r"(?:^|-)([A-Za-z]{2,10}-[0-9]{1,6})$")
+
+
+def task_of(event, env):
+    """ID задачи для этапа: описание работы («Ревью DK-911»), заказ поднявшего
+    сессию, имя дерева задачи. Не нашёлся, значит этапа нет: писать его на
+    выдуманную задачу хуже, чем промолчать, а в журнале причина видна."""
+    m = TASK_RE.search(event.description or "")
+    if m:
+        return m.group(1)
+    ordered = (env.get("DEVKIT_TASK") or "").strip().upper()
+    if TASK_RE.fullmatch(ordered):
+        return ordered
+    root = hookio.tree_root(event.cwd) or ""
+    m = TREE_RE.search(os.path.basename(root.rstrip(os.sep)))
+    return m.group(1).upper() if m else ""
+
+
+def short_model(model):
+    """Имя модели для записи: короткое из заказа диспетчера (opus, sonnet) как
+    есть, а полный ID харнеса (claude-opus-4-1-20250805) сводится к семейству,
+    иначе ворота закрытия не сверят его с именем из --by."""
+    m = re.match(r"claude-([a-z]+)-\d", model or "")
+    return m.group(1) if m else (model or "")
+
+
+def stage_note(event):
+    """Текст записи этапа: модель через дробь с effort, как у вердикта pick, по
+    нему ворота закрытия находят исполнителя (stage.Executor), дальше
+    определение и номер работы. Без модели запись несёт одно определение."""
+    effort = event.agent_type.rsplit("-", 1)[1] if "-" in event.agent_type else ""
+    model = short_model(event.model)
+    who = "субагент"
+    if model:
+        who += " " + model + ("/" + effort if effort else "")
+    return "%s по определению %s, работа %s" % (who, event.agent_type, event.agent_id)
+
+
+def stage_mark(event, env, now):
+    """Этап по спавну субагента. Фоновый ложится живым и закрывается концом
+    субагента, синхронный сразу закрытым: о нём хук узнаёт по концу хода
+    инструмента, и начало считается назад по длительности. Возвращает запись
+    для реестра (задача, корень, вид), по ней конец закроет этап."""
+    task = task_of(event, env)
+    if not task:
+        log(event.session, event.agent_id, "этап", "задача не названа, этап не ставится", env)
+        return None
+    home = stagerun.home_dir(env)
+    root = stagerun.main_root(hookio.tree_root(event.cwd) or event.cwd)
+    kind = stage_kind(event.agent_type, stagerun.last_work(home, root, task))
+    if not kind:
+        return None
+    if event.kind == hookio.AGENT_RETURNED:
+        start = now - max(0.0, event.duration)
+        stagerun.put(home, root, task, kind, stage_note(event) + ", " + stagerun.work_note(event.report, event.duration),
+                     event.session, start, end=now, work=event.agent_id)
+        log(event.session, event.agent_id, "этап", "%s %s, закрыт концом синхронного субагента" % (kind, task), env)
+        return None
+    stagerun.put(home, root, task, kind, stage_note(event), event.session, now, work=event.agent_id)
+    log(event.session, event.agent_id, "этап", "%s %s" % (kind, task), env)
+    return {"task": task, "root": root, "kind": kind, "started": now}
+
+
+def stage_close(entry, event, env, now):
+    """Конец фонового субагента закрывает его этап: конец и хвост «ходов N,
+    минут M» по отчёту и длительности, его читает taskctl review stats."""
+    mark = entry.get("stage") if isinstance(entry, dict) else None
+    if not isinstance(mark, dict):
+        return
+    seconds = max(0.0, now - float(mark.get("started") or now))
+    extra = stagerun.work_note(event.message, seconds)
+    if stagerun.close(stagerun.home_dir(env), mark["root"], mark["task"], mark["kind"], now, extra, event.agent_id):
+        log(event.session, event.agent_id, "этап", "%s %s закрыт, %s" % (mark["kind"], mark["task"], extra), env)
 
 
 def launched(agents, event, now):
@@ -513,12 +617,24 @@ def handover_lines(agents, event, delivered, env, now):
 
 def handle(event, env=None, now=None, sleep=time.sleep, stream=None):
     """Одно событие: реестр обновлён, сдача напечатана, если было что сдавать."""
+    env = os.environ if env is None else env
     now = time.time() if now is None else now
     path = registry_path(event.session, env)
+    if event.kind == hookio.AGENT_RETURNED:
+        if event.agent_id:
+            stage_mark(event, env, now)
+        return 0
     if event.kind == hookio.AGENT_LAUNCHED:
         if not event.agent_id:
             return 0
-        if update(path, event.session, lambda a: launched(a, event, now), now, sleep) is not None:
+        mark = stage_mark(event, env, now) if event.job == SUBAGENT_JOB else None
+
+        def add(agents):
+            launched(agents, event, now)
+            if mark:
+                agents[event.agent_id]["stage"] = mark
+            return agents
+        if update(path, event.session, add, now, sleep) is not None:
             what = event.command or event.description
             if event.owner:
                 what = "%s, запущено субагентом %s" % (what, event.owner)
@@ -529,6 +645,7 @@ def handle(event, env=None, now=None, sleep=time.sleep, stream=None):
         entry = update(path, event.session, lambda a: finished(a, event, now), now, sleep)
         if entry is not None:
             log(event.session, event.agent_id, "конец", entry["message"], env)
+            stage_close(entry, event, env, now)
         return 0
     if event.kind != hookio.TURN_DONE or event.active:
         # Сторож пропускает ход, продолженный стоп-хуком: второй заход закрутил

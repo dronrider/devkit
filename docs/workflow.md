@@ -37,7 +37,7 @@ pick» из текстов автоматически не выводятся (L
 ## Работа
 
 - Backlog -> In progress: диспетчер берёт задачу по вердикту
-  `agentctl pick <ID> --record` и переводит `taskctl move <ID> in-progress`;
+  `agentctl pick <ID>` и переводит `taskctl move <ID> in-progress`;
   процедура одного раза в скилле `board-task`, пачку задач ведёт `board-batch`.
 - In progress -> ветка: `shipctl start <ID>` заводит ветку и worktree на задачу
   (скилл `board-ship`); мелочь идёт коммитом прямо в main, без ветки.

@@ -249,6 +249,7 @@ func main() {
 			Table:     res.Report,
 			Scenarios: liveScenarios(res.Rows),
 			Failed:    res.Failed,
+			Usage:     res.Usage,
 			Now:       time.Now(),
 		}
 		if err := n.write(taskPath); err != nil {

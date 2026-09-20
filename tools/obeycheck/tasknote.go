@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/obey"
+	"github.com/dronrider/devkit/internal/spend"
 	"github.com/dronrider/devkit/internal/taskform"
 )
 
@@ -29,6 +30,9 @@ type note struct {
 	Scenarios []Scenario
 	Failed    bool
 	Now       time.Time
+	// Usage это расход прогона, снятый с временных домов до их сноса. Нули
+	// значат, что считать было нечего, и числа в отметку не едут (DK-913).
+	Usage spend.Usage
 }
 
 // taskFile ищет файл задачи. Сперва дерево --devkit: там след и должен
@@ -197,6 +201,10 @@ func (n note) write(path string) error {
 	}
 	ids := scenarioIDs(n.Scenarios)
 	mark := taskform.StandMark{
+		Turns:     n.Usage.Turns,
+		Output:    n.Usage.Output,
+		Input:     n.Usage.Input,
+		CacheRead: n.Usage.CacheRead,
 		Failed:    n.Failed,
 		Tree:      tree,
 		Print:     fp,

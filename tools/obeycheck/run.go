@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/spend"
 )
 
 type Params struct {
@@ -44,6 +46,7 @@ const subagentWrap = `Работу ниже сам не делай. Спавни
 
 type attempt struct {
 	Green   bool
+	Usage   spend.Usage // расход сессий прогона, снятый до сноса временного дома
 	Suspect bool   // проверка зелёная, а команда прогона вышла с ошибкой
 	Note    string // чем кончился прогон, если не просто зелено
 	Judge   string // разбор судьи в одну строку, у сценариев с секцией «Судья»
@@ -161,6 +164,9 @@ func (p Params) runOnce(s Scenario, layout string, repeat int, dir string) (atte
 	if sessionID != "" {
 		checkEnv = append(checkEnv, "OBEY_SESSION_ID="+sessionID)
 	}
+	// Расход снимается до проверки сценария: дом прогона сносит вызывающий,
+	// как только runOnce вернулась.
+	a.Usage = homeUsage(e.Home)
 	out, err := shOut(e.Project, checkEnv, s.Check, p.Timeout)
 	if err == nil {
 		a.Green = true
@@ -194,18 +200,18 @@ func (p Params) runOnce(s Scenario, layout string, repeat int, dir string) (atte
 // отвечает, но сессии не поднимает (чаще всего временный HOME не авторизован).
 // Без пробы это выглядит как ровная таблица нулей или, хуже, как зелёные
 // проверки на отрицание, и двести сессий уходят впустую.
-func (p Params) preflight(work string) error {
+func (p Params) preflight(work string) (spend.Usage, error) {
 	dir := filepath.Join(work, "preflight")
 	e, err := makeEnv(dir, p.Devkit, p.Layouts[0], p.HomeSeed, p.UserHome)
 	if err != nil {
-		return err
+		return spend.Usage{}, err
 	}
 	if !p.Keep {
 		defer os.RemoveAll(dir)
 	}
 	tr, err := os.Create(e.Transcript)
 	if err != nil {
-		return err
+		return spend.Usage{}, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), p.Timeout)
 	defer cancel()
@@ -221,15 +227,16 @@ func (p Params) preflight(work string) error {
 	if fi, err := os.Stat(e.Transcript); err == nil {
 		size = fi.Size()
 	}
+	used := homeUsage(e.Home)
 	if runErr == nil && size > 0 {
 		p.say("проба: команда прогона отвечает, идём полным проходом")
-		return nil
+		return used, nil
 	}
 	why := "транскрипт пуст"
 	if runErr != nil {
 		why = runErr.Error()
 	}
-	return fmt.Errorf("пробная сессия командой %q не отработала (%s); вслепую стенд полный проход не гонит. "+
+	return used, fmt.Errorf("пробная сессия командой %q не отработала (%s); вслепую стенд полный проход не гонит. "+
 		"Частая причина это неавторизованный временный HOME, разбор в tools/obeycheck/README.md; "+
 		"пропустить пробу: --no-preflight", strings.Join(p.Agent, " "), why)
 }
@@ -283,6 +290,10 @@ type Result struct {
 	Report string
 	Rows   []row
 	Failed bool
+	// Usage это расход всего прогона: пробная сессия, клетки таблицы и судья.
+	// Снят он с временных домов, пока они целы, и уезжает в отметку прогона
+	// файла задачи (DK-913).
+	Usage spend.Usage
 }
 
 // Run гоняет все сценарии на обеих раскладках. Первая раскладка это кандидат,
@@ -332,8 +343,11 @@ func Run(p Params) (Result, error) {
 	total := len(live) * len(p.Layouts) * p.Repeats
 	p.say("прогон: сценариев %d, раскладки %d, повторов %d, всего %d сессий (конец: %s)",
 		len(live), len(p.Layouts), p.Repeats, total, p.End)
+	var used spend.Usage
 	if p.Preflight {
-		if err := p.preflight(work); err != nil {
+		u, err := p.preflight(work)
+		used = used.Add(u)
+		if err != nil {
 			return Result{}, err
 		}
 	}
@@ -372,6 +386,7 @@ func Run(p Params) (Result, error) {
 					word += "; судья: " + a.Judge
 				}
 				p.say("[%d/%d] %s / %s / повтор %d: %s", done, total, s.ID, filepath.Base(layout), i, word)
+				used = used.Add(a.Usage)
 				r.Cells[li].Attempts = append(r.Cells[li].Attempts, a)
 				if !p.Keep {
 					os.RemoveAll(dir)
@@ -387,7 +402,12 @@ func Run(p Params) (Result, error) {
 			failed = true
 		}
 	}
-	return Result{Report: render(rows, p.Layouts, p.Repeats, p.Base), Rows: rows, Failed: failed}, nil
+	if p.jury != nil {
+		// Дом судьи живёт от калибровки до последней клетки и сносится вместе
+		// с каталогом прогона, поэтому складывается он здесь, а не по клеткам.
+		used = used.Add(homeUsage(p.jury.Home))
+	}
+	return Result{Report: render(rows, p.Layouts, p.Repeats, p.Base), Rows: rows, Failed: failed, Usage: used}, nil
 }
 
 func needsJudge(scen []Scenario) bool {

@@ -76,6 +76,7 @@ func deadPid(t *testing.T) int {
 // TestWaitNewKindsLayMarks: каждое новое условие кладёт отметку с целью в той
 // записи, которую оболочка проверит без догадок.
 func TestWaitNewKindsLayMarks(t *testing.T) {
+	waitHome(t)
 	root := waitRepo(t)
 	dir := t.TempDir()
 	env := waitEnv(map[string]string{waitDirEnv: dir})
@@ -110,6 +111,7 @@ func TestWaitNewKindsLayMarks(t *testing.T) {
 // TestWaitUnknownKindListsKinds: незнакомое условие даёт отказ с перечнем всех
 // видов, иначе голове не из чего выбрать правильное.
 func TestWaitUnknownKindListsKinds(t *testing.T) {
+	waitHome(t)
 	root := waitRepo(t)
 	env := waitEnv(map[string]string{waitDirEnv: t.TempDir()})
 	_, err := cmdWait(root, "T-001", "слияние", "T-002", "10m", "", env, waitNow())
@@ -127,6 +129,7 @@ func TestWaitUnknownKindListsKinds(t *testing.T) {
 // слитой задачи shipctl удаляет. Признак обязан увидеть слияние уже без ветки,
 // и отметка на слитую задачу отбивается: ждать нечего.
 func TestWaitMergedAfterBranchDeleted(t *testing.T) {
+	waitHome(t)
 	root := waitRepo(t)
 	dir := t.TempDir()
 	env := waitEnv(map[string]string{waitDirEnv: dir})
@@ -159,6 +162,7 @@ func TestWaitMergedAfterBranchDeleted(t *testing.T) {
 
 // TestWaitClosedSeesTheArchive: закрытие это строка в архиве доски.
 func TestWaitClosedSeesTheArchive(t *testing.T) {
+	waitHome(t)
 	root := waitRepo(t)
 	env := waitEnv(map[string]string{waitDirEnv: t.TempDir()})
 	if _, came, err := cmdWaitCheck(root, "T-001", waitClosed, "T-002", waitNow()); err != nil || came {
@@ -178,6 +182,7 @@ func TestWaitClosedSeesTheArchive(t *testing.T) {
 // ставится. Ожидание встало бы до срока на выдуманном ID либо на закрытой
 // строке без работы в main.
 func TestWaitRowMustBeWaitable(t *testing.T) {
+	waitHome(t)
 	root := waitRepo(t)
 	env := waitEnv(map[string]string{waitDirEnv: t.TempDir()})
 	cases := map[string]struct{ kind, target string }{
@@ -201,6 +206,7 @@ func TestWaitRowMustBeWaitable(t *testing.T) {
 
 // TestWaitProcess: конец процесса это событие, зомби тоже кончившийся процесс.
 func TestWaitProcess(t *testing.T) {
+	waitHome(t)
 	root := waitRepo(t)
 	env := waitEnv(map[string]string{waitDirEnv: t.TempDir()})
 	dead := strconv.Itoa(deadPid(t))
@@ -234,6 +240,7 @@ func TestWaitProcess(t *testing.T) {
 // TestWaitHour: час в прошлом ждать нечего, срок у часа это сам час, и
 // потолок меряется до него.
 func TestWaitHour(t *testing.T) {
+	waitHome(t)
 	root := waitRepo(t)
 	env := waitEnv(map[string]string{waitDirEnv: t.TempDir()})
 	cases := map[string]struct{ target, until string }{
@@ -280,6 +287,7 @@ func waitProfiles(t *testing.T, edit map[string]string) {
 // TestWaitCapFromProfile: потолок срока читается из [head] профиля харнеса, а
 // отказ называет и потолок, и профиль.
 func TestWaitCapFromProfile(t *testing.T) {
+	waitHome(t)
 	root := waitRepo(t)
 	waitProfiles(t, map[string]string{"claude-code": "30m", "glm-code": "3h"})
 	dir := t.TempDir()
@@ -306,6 +314,7 @@ func TestWaitCapFromProfile(t *testing.T) {
 // TestWaitCapDefaultAndBroken: профиль без ключа получает два часа и говорит
 // об умолчании, кривое значение даёт отказ, а не молча подменённый потолок.
 func TestWaitCapDefaultAndBroken(t *testing.T) {
+	waitHome(t)
 	root := waitRepo(t)
 	waitProfiles(t, map[string]string{"claude-code": "", "glm-code": "два часа"})
 	env := waitEnv(map[string]string{waitDirEnv: t.TempDir()})
@@ -323,6 +332,7 @@ func TestWaitCapDefaultAndBroken(t *testing.T) {
 // TestWaitCheckRefusesTimer: у голого срока события нет, и --check по нему
 // отвечает ошибкой, а не «не пришло»: оболочка отличает одно от другого.
 func TestWaitCheckRefusesTimer(t *testing.T) {
+	waitHome(t)
 	root := waitRepo(t)
 	if _, _, err := cmdWaitCheck(root, "T-001", waitTimer, "", waitNow()); err == nil {
 		t.Fatal("проверка голого срока прошла")

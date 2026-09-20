@@ -17,6 +17,17 @@ func waitEnv(pairs map[string]string) func(string) string {
 	return func(name string) string { return pairs[name] }
 }
 
+// waitHome уводит дом прогона во временный каталог. cmdWait кладёт ожидание
+// этапом в ~/.devkit/runs (DK-911), и без подмены тест оставлял бы след в
+// настоящем доме: при параллельном прогоне пакетов его видел сторож runsguard
+// соседнего taskctl, а слияние падало на чужом следе.
+func waitHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	return home
+}
+
 // waitRead читает отметку из подставного каталога тем же разбором, каким её
 // читает оболочка конвейера: полями JSON, а не структурой пакета.
 func waitRead(t *testing.T, dir, id string) map[string]string {
@@ -40,6 +51,7 @@ func waitNow() time.Time {
 // (task-run.py, WAIT_KEYS). Переименование поля тут ломает чтение там, и
 // молчаливым такое переименование быть не должно.
 func TestWaitMarkFields(t *testing.T) {
+	waitHome(t)
 	root := writeBoard(t)
 	dir := t.TempDir()
 	env := waitEnv(map[string]string{waitDirEnv: dir, waitSessEnv: "88a28c88-1"})
@@ -71,6 +83,7 @@ func TestWaitMarkFields(t *testing.T) {
 // сессии своим файлом не отмечается (DK-510: слияние ушло в фон, и ждать
 // оболочке было нечего, кроме времени).
 func TestWaitTimerNeedsNoTarget(t *testing.T) {
+	waitHome(t)
 	root := writeBoard(t)
 	dir := t.TempDir()
 	env := waitEnv(map[string]string{waitDirEnv: dir})
@@ -90,6 +103,7 @@ func TestWaitTimerNeedsNoTarget(t *testing.T) {
 // TestWaitTargetIsAbsolute: оболочка живёт в своей директории, а не в
 // директории сессии, и относительный путь она проверяла бы не там.
 func TestWaitTargetIsAbsolute(t *testing.T) {
+	waitHome(t)
 	root := writeBoard(t)
 	dir := t.TempDir()
 	env := waitEnv(map[string]string{waitDirEnv: dir})
@@ -107,6 +121,7 @@ func TestWaitTargetIsAbsolute(t *testing.T) {
 // Ход тогда кончится ожиданием, которого никто не ждёт, и воронка снимет окно
 // ровно так же, как снимала до DK-899.
 func TestWaitRefusals(t *testing.T) {
+	waitHome(t)
 	root := writeBoard(t)
 	dir := t.TempDir()
 	env := waitEnv(map[string]string{waitDirEnv: dir})
@@ -147,6 +162,7 @@ func TestWaitRefusals(t *testing.T) {
 // TestWaitCleanNeedsATree: условие «чисто» проверяется в рабочем дереве, и
 // путь, которого нет, оболочка проверяла бы до самого срока впустую.
 func TestWaitCleanNeedsATree(t *testing.T) {
+	waitHome(t)
 	root := writeBoard(t)
 	dir := t.TempDir()
 	env := waitEnv(map[string]string{waitDirEnv: dir})
@@ -161,6 +177,7 @@ func TestWaitCleanNeedsATree(t *testing.T) {
 // Свежая отметка обязана перебивать прошлую целиком, иначе оболочка читала бы
 // вчерашнее условие.
 func TestWaitOverwritesTheOldMark(t *testing.T) {
+	waitHome(t)
 	root := writeBoard(t)
 	dir := t.TempDir()
 	env := waitEnv(map[string]string{waitDirEnv: dir})
@@ -183,8 +200,7 @@ func TestWaitOverwritesTheOldMark(t *testing.T) {
 // TestWaitOpensEventStage: ожидание машинного события ложится этапом «ждёт
 // события» в запись задачи без команды диспетчера (DK-911).
 func TestWaitOpensEventStage(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := waitHome(t)
 	root := writeBoard(t)
 	dir := t.TempDir()
 	env := waitEnv(map[string]string{waitDirEnv: dir})

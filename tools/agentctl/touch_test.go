@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/dronrider/devkit/internal/runsguard"
 	"github.com/dronrider/devkit/internal/sessions"
 )
 
@@ -14,9 +15,14 @@ import (
 // отметка, называют ID сами через t.Setenv. Без ID отметка не пишется
 // никуда: mark() в internal/sessions выходит по пустому sid раньше, чем
 // тронет диск.
+//
+// runsguard.Guard оборачивает m.Run() сторожем настоящего ~/.devkit/runs, как
+// у taskctl: писатели этапов (wait, run, stage) берут дом из HOME процесса, и
+// тест без подмены дома оставлял бы след в боевом каталоге, который при
+// параллельном прогоне пакетов ловил сторож соседа (DK-911).
 func TestMain(m *testing.M) {
 	os.Unsetenv(sessions.SessionEnv)
-	os.Exit(m.Run())
+	os.Exit(runsguard.Guard(m))
 }
 
 // Взятие задачи в любом чате это действие, и правило board-task обязывает

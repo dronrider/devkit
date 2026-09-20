@@ -585,3 +585,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-910 | taskctl list и show печатают живой этап задачи и признак «брошена» | task | P1 | 2026-09-20 | [tasks/archive/2026/DK-910.md](tasks/archive/2026/DK-910.md) |
 | DK-912 | taskctl spend сводит токены задачи по этапам из транскриптов | task | P1 | 2026-09-20 | [tasks/archive/2026/DK-912.md](tasks/archive/2026/DK-912.md) |
 | DK-913 | taskctl spend считает оркестрацию, постановку, фон и стенд сквозными статьями | task | P1 | 2026-09-20 | [tasks/archive/2026/DK-913.md](tasks/archive/2026/DK-913.md) |
+| DK-909 | Цель: этап задачи виден со строки доски, а токены сводятся по этапам | task | P1 | 2026-09-20 | [tasks/archive/2026/DK-909.md](tasks/archive/2026/DK-909.md) |

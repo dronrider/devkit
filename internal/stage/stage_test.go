@@ -729,3 +729,51 @@ func TestParseStageWithoutSession(t *testing.T) {
 		t.Errorf("текст записи: %q", s.Note)
 	}
 }
+
+// TestClosedStageOnTopKeepsLive (DK-911, замечание ревью): синхронная вычитка
+// внутри идущей разработки ложится закрытой поверх живого этапа и не гасит
+// его, а конец разработки находит свой этап под ней. Строки «Хода работы»
+// держат вычитку отрезком внутри отрезка разработки.
+func TestClosedStageOnTopKeepsLive(t *testing.T) {
+	home := t.TempDir()
+	dev := Stage{Kind: Dev, Start: at(10, 0), Note: "субагент opus/high по определению exec-high, работа d1", Work: "d1"}
+	proof := Stage{Kind: Proof, Start: at(10, 20), End: at(10, 25), Note: "субагент sonnet по определению proofread, работа p1", Work: "p1"}
+	for _, s := range []Stage{dev, proof} {
+		if err := Put(home, "/p", "T-1", s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec, _ := Load(Path(home, "/p", "T-1"))
+	live, ok := rec.Live()
+	if !ok || live.Kind != Dev {
+		t.Fatalf("закрытая вычитка погасила живую разработку: %+v, %v", live, ok)
+	}
+	if ok, err := Close(home, "/p", "T-1", Dev, at(11, 0), WorkNote(30, 60)); err != nil || !ok {
+		t.Fatalf("конец разработки не нашёл своего этапа под вычиткой: ok=%v, %v", ok, err)
+	}
+	rec, _ = Load(Path(home, "/p", "T-1"))
+	if _, ok := rec.Live(); ok {
+		t.Fatal("после конца разработки живой этап остался")
+	}
+	lines := Lines(rec.Stages, at(23, 0))
+	if !strings.Contains(lines[0], "10:00-11:00") || !strings.Contains(lines[1], "10:20-10:25") {
+		t.Fatalf("отрезки разошлись:\n%s", strings.Join(lines, "\n"))
+	}
+	// Фоновое ревью поверх живой разработки: закрылось само, разработка живёт.
+	if err := Put(home, "/p", "T-2", dev); err != nil {
+		t.Fatal(err)
+	}
+	if err := Put(home, "/p", "T-2", Stage{Kind: Review, Start: at(10, 30), Note: "субагент sonnet/high по определению review-high", Work: "r1"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := Close(home, "/p", "T-2", Review, at(10, 50), ""); !ok {
+		t.Fatal("ревью не закрылось")
+	}
+	rec, _ = Load(Path(home, "/p", "T-2"))
+	if live, ok := rec.Live(); !ok || live.Kind != Dev {
+		t.Fatalf("после конца ревью живой должна остаться разработка: %+v, %v", live, ok)
+	}
+	if ln := Lines(rec.Stages, at(12, 0))[0]; !strings.Contains(ln, "10:00-12:00") {
+		t.Fatalf("незакрытую разработку кончило закрытое ревью: %s", ln)
+	}
+}

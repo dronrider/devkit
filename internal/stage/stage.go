@@ -246,6 +246,34 @@ func LastExecutor(lines []string, pending []Stage) (string, bool) {
 	return "", false
 }
 
+// namelessRe узнаёт запись хука о субагенте, поднятом без параметра model:
+// слово «субагент» стоит впритык к определению, имени модели между ними нет.
+var namelessRe = regexp.MustCompile(`субагент по определению`)
+
+// ExecutorMissing находит последний этап работы над кодом, у которого хук
+// спавна не назвал модели: ни параметра model у спавна, ни модели сессии из
+// транскрипта. Возврат это текст такого этапа и true. Рукописная строка без
+// определения сюда не попадает, за ней нет писателя, которому было что
+// записать. Ворота закрытия по такому этапу не молчат, а отказывают: сверить
+// прогонявшего сценарий не с кем.
+func ExecutorMissing(lines []string, pending []Stage) (string, bool) {
+	for i := len(pending) - 1; i >= 0; i-- {
+		if !IsExec(pending[i].Kind) {
+			continue
+		}
+		_, named := Executor(pending[i].Note)
+		return pending[i].Note, !named && namelessRe.MatchString(pending[i].Note)
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !execLine(lines[i]) {
+			continue
+		}
+		_, named := Executor(lines[i])
+		return strings.TrimSpace(lines[i]), !named && namelessRe.MatchString(lines[i])
+	}
+	return "", false
+}
+
 // LastVerifyRunner находит последнюю запись прогона сценария теми же двумя
 // источниками и в том же порядке.
 func LastVerifyRunner(lines []string, pending []Stage) (string, bool) {
@@ -309,21 +337,33 @@ type Stage struct {
 func (s Stage) Ended() bool { return !s.End.IsZero() }
 
 // Record это запись задачи целиком: шапка и накопленные этапы в порядке
-// открытия. Живой этап последний.
+// открытия. Живой этап это последний незакрытый: закрытый этап поверх него
+// (синхронная вычитка или ревью внутри идущей разработки) его не гасит.
 type Record struct {
 	ID     string
 	Root   string
 	Stages []Stage
 }
 
-// Live отдаёт живой этап записи: последний, пока его не закрыл писатель.
-// Закрытый последний этап это промежуток между деятельностями, живого этапа у
-// задачи в нём нет.
+// Live отдаёт живой этап записи: последний, которого не закрыл писатель.
+// Синхронный субагент ложится сразу закрытым поверх живого этапа, и живым
+// остаётся тот, что под ним. Когда закрыты все, живого этапа у задачи нет: это
+// промежуток между деятельностями.
 func (r Record) Live() (Stage, bool) {
-	if len(r.Stages) == 0 || r.Stages[len(r.Stages)-1].Ended() {
-		return Stage{}, false
+	if i := r.lastOpen(); i >= 0 {
+		return r.Stages[i], true
 	}
-	return r.Stages[len(r.Stages)-1], true
+	return Stage{}, false
+}
+
+// lastOpen это индекс последнего незакрытого этапа, -1 без такого.
+func (r Record) lastOpen() int {
+	for i := len(r.Stages) - 1; i >= 0; i-- {
+		if !r.Stages[i].Ended() {
+			return i
+		}
+	}
+	return -1
 }
 
 // LastOf отдаёт последний этап записи, чей вид подошёл под предикат. Ищет от
@@ -454,11 +494,14 @@ func Put(home, root, id string, s Stage) error {
 	return os.WriteFile(path, []byte(body(rec)), 0o644)
 }
 
-// Close закрывает живой этап названного вида: ставит ему конец и дописывает
-// хвост к тексту записи (ходы и минуты ревью, итог слияния). Живой этап
-// другого вида не трогается: пока слияние шло, смена статуса могла увезти
-// пакет и открыть ожидание, и закрывать его за слияние нельзя. Второе значение
-// говорит, был ли этап закрыт.
+// Close закрывает незакрытый этап названного вида: ставит ему конец и
+// дописывает хвост к тексту записи (ходы и минуты ревью, итог слияния). Ищется
+// последний незакрытый этап этого вида, а не последний этап записи: поверх
+// идущей разработки успевают лечь и закрыться вычитка или ревью, и конец
+// разработки обязан найти свой этап под ними. Этап другого вида не трогается:
+// пока слияние шло, смена статуса могла увезти пакет и открыть ожидание, и
+// закрывать его за слияние нельзя. Второе значение говорит, был ли этап
+// закрыт.
 func Close(home, root, id, kind string, now time.Time, extra string) (bool, error) {
 	if home == "" {
 		return false, nil
@@ -468,11 +511,16 @@ func Close(home, root, id, kind string, now time.Time, extra string) (bool, erro
 	if err != nil {
 		return false, err
 	}
-	live, ok := rec.Live()
-	if !ok || live.Kind != kind {
+	at := -1
+	for i := len(rec.Stages) - 1; i >= 0 && at < 0; i-- {
+		if !rec.Stages[i].Ended() && rec.Stages[i].Kind == kind {
+			at = i
+		}
+	}
+	if at < 0 {
 		return false, nil
 	}
-	last := &rec.Stages[len(rec.Stages)-1]
+	last := &rec.Stages[at]
 	last.End = now
 	if extra != "" {
 		if last.Note != "" {
@@ -632,13 +680,18 @@ func List(home, root string) []Record {
 // деятельности идёт с заглавной ярлыком строки, следом текст записи, дальше
 // дата и часы этапа: по ним видно не только чем задача занималась, но и сколько
 // это заняло. Конец этапа это его собственный конец, когда писатель его
-// закрыл, иначе начало следующего, а у последнего момент записи пакета.
+// закрыл, иначе начало следующего незакрытого этапа, а у последнего такого
+// момент записи пакета. Закрытый этап между ними своего соседа не кончает:
+// вычитка внутри разработки это отрезок внутри отрезка.
 func Lines(stages []Stage, end time.Time) []string {
 	out := make([]string, 0, len(stages))
 	for i, s := range stages {
 		fin := end
-		if i+1 < len(stages) {
-			fin = stages[i+1].Start
+		for j := i + 1; j < len(stages); j++ {
+			if !stages[j].Ended() {
+				fin = stages[j].Start
+				break
+			}
 		}
 		if s.Ended() {
 			fin = s.End

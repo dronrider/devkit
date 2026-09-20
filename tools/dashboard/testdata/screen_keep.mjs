@@ -1067,8 +1067,8 @@ if (byClass(find(groups, "XR-4"), "sdot")) {
   if (!kinds({ id: "XR-9", run: "registry" }).includes("sd-out")) {
     fail("чужая сессия нарисована не серым: " + kinds({ id: "XR-9", run: "registry" }));
   }
-  if (!kinds({ id: "XR-9", stage: "снаружи" }).includes("sd-out")) {
-    fail("ожидание снаружи нарисовано не серым: " + kinds({ id: "XR-9", stage: "снаружи" }));
+  if (!kinds({ id: "XR-9", stage: "ждёт человека" }).includes("sd-out")) {
+    fail("ожидание человека нарисовано не серым: " + kinds({ id: "XR-9", stage: "ждёт человека" }));
   }
   if (kinds({ id: "XR-9", run: "gone" })) fail("оборванный конвейер получил кружок");
   if (kinds({ id: "XR-9" })) fail("строка без работы получила кружок");

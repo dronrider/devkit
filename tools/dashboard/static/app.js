@@ -790,9 +790,9 @@ function rowDot(project, row) {
     // своего цвета, и пульс у неё стоит только под идущий ход.
     kind = "sd-talk" + (row.talk_state === WORK_BUSY ? " pulse" : "");
     tip = talkTip(row);
-  } else if (row.stage === STAGE_OUTSIDE) {
+  } else if (STAGE_WAITS.includes(row.stage)) {
     kind = "sd-out";
-    tip = "ждём снаружи: проверка, блокер или чужая работа";
+    tip = "ждём: " + row.stage + ", живой сессии за этапом нет по смыслу";
   } else {
     return null;
   }
@@ -811,8 +811,9 @@ function rowDot(project, row) {
   return dot;
 }
 
-// Этап ожидания не нас: словарь этапов держит его этим словом (internal/stage).
-const STAGE_OUTSIDE = "снаружи";
+// Этапы ожидания: словарь этапов держит их этими словами (internal/stage,
+// DK-911), старые «снаружи» и «уточнение» taskctl переводит в них сам.
+const STAGE_WAITS = ["ждёт человека", "ждёт события", "ждёт очереди"];
 
 // Состояние работы на форме задачи: те же слова и тот же вид чипа, что в табе
 // сессий, потому что состояние одно на весь дашборд. Кто её ведёт (наша

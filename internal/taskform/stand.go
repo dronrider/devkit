@@ -28,6 +28,10 @@ const (
 	standTierWord  = "ярус "
 	standKWord     = "k "
 	standScenWord  = "сценарии "
+	standTurnsWord = "ходов "
+	standOutWord   = "вывод "
+	standInWord    = "вход "
+	standCacheWord = "кэш "
 )
 
 // standTailWords это слова, которыми кончается отметка после списка
@@ -46,6 +50,23 @@ type StandMark struct {
 	Tier      string   // ярус модели
 	Repeats   int      // повторов на раскладку
 	Scenarios []string // сценарии прогона, в порядке таблицы
+	// Расход прогона: сессии стенда живут во временном доме, который сносится
+	// по концу прогона вместе с их журналами, и своду расхода читать после
+	// них нечего. Числа складывает сам стенд до сноса и кладёт сюда, а свод
+	// печатает их статьёй «стенд» на ID задачи (DK-913). У отметки, писанной
+	// до DK-913, нули: прогон был, а чисел с него не осталось.
+	Turns     int
+	Output    int
+	Input     int
+	CacheRead int
+	// When это момент прогона из головы отметки. По нему прогон попадает в
+	// срез свода за период.
+	When time.Time
+}
+
+// Tokens отвечает, несёт ли отметка числа расхода.
+func (m StandMark) Tokens() bool {
+	return m.Turns+m.Output+m.Input+m.CacheRead > 0
 }
 
 // SameKey отвечает, тот ли у отметки ключ записи: список сценариев вместе с
@@ -70,11 +91,19 @@ func StandLine(m StandMark, when time.Time, tail string) string {
 	if m.Failed {
 		head = StandFailNote
 	}
-	return fmt.Sprintf("%s %s, %s%s, %s%s, %s%s, %s%s, %s%d, %s%s, %s.",
+	// Числа расхода стоят перед списком сценариев, а не после: список кончается
+	// словом хвоста, и поле, приписанное следом, читалось бы именем сценария.
+	tokens := ""
+	if m.Tokens() {
+		tokens = fmt.Sprintf("%s%d, %s%d, %s%d, %s%d, ",
+			standTurnsWord, m.Turns, standOutWord, m.Output,
+			standInWord, m.Input, standCacheWord, m.CacheRead)
+	}
+	return fmt.Sprintf("%s %s, %s%s, %s%s, %s%s, %s%s, %s%d, %s%s%s, %s.",
 		head, when.Format("2006-01-02 15:04"),
 		standTreeWord, m.Tree, standPrintWord, m.Print, standBaseWord, m.Base,
 		standTierWord, m.Tier, standKWord, m.Repeats,
-		standScenWord, strings.Join(m.Scenarios, ", "), tail)
+		tokens, standScenWord, strings.Join(m.Scenarios, ", "), tail)
 }
 
 // StandMarks достаёт из файла задачи все отметки стенда по порядку. Читается
@@ -112,9 +141,46 @@ func StandMarks(doc string) []StandMark {
 			continue
 		}
 		m.Tree, m.Print, m.Base, m.Tier, m.Repeats, m.Scenarios = tree, print, base, tier, n, scen
+		m.Turns = standNumber(t, standTurnsWord)
+		m.Output = standNumber(t, standOutWord)
+		m.Input = standNumber(t, standInWord)
+		m.CacheRead = standNumber(t, standCacheWord)
+		m.When = standWhen(t)
 		out = append(out, m)
 	}
 	return out
+}
+
+// standNumber достаёт число поля. Ноль значит, что поля нет: отметки до
+// DK-913 чисел расхода не несут вовсе, и это не повод их не читать.
+func standNumber(line, word string) int {
+	v, ok := standWord(line, word)
+	if !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// standWhen достаёт момент прогона из головы отметки. Нулевое время значит,
+// что момент не прочитался, и срез за период такую отметку не берёт.
+func standWhen(line string) time.Time {
+	rest, ok := cutAfter(line, ": ")
+	if !ok {
+		return time.Time{}
+	}
+	f := strings.Fields(rest)
+	if len(f) < 2 {
+		return time.Time{}
+	}
+	t, err := time.ParseInLocation("2006-01-02 15:04", f[0]+" "+strings.TrimRight(f[1], ","), time.Local)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // standWord достаёт значение поля одним словом, очищенным от запятой и точки.

@@ -2,12 +2,13 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/dronrider/devkit/internal/stage"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // waitEnv собирает подставное окружение: команда спрашивает переменные через

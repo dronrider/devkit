@@ -347,3 +347,82 @@ func TestSpendPeriodOpenHead(t *testing.T) {
 		t.Fatalf("голова среза без нижней границы:\n%s", strings.SplitN(msg, "\n", 2)[0])
 	}
 }
+
+// TestSpendBlindSessionOnly: у задачи, от которой остались только слепая
+// сессия без транскрипта и ход без привязки, свод не молчит. Молчание тут
+// неотличимо от нулевого расхода, а это единственный сигнал про заход второго
+// харнеса (DoD DK-913, возврат ревью).
+func TestSpendBlindSessionOnly(t *testing.T) {
+	root := setup(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	old := timeNow
+	defer func() { timeNow = old }()
+	timeNow = func() time.Time { return spendDay(15, 0) }
+	spendBind(t, home, sessGone, sessions.Bind{Task: "XR-002", Source: sessions.ByOrder, Project: "synthetic"})
+
+	msg, err := cmdSpend(root, "XR-002")
+	if err != nil {
+		t.Fatalf("cmdSpend: %v", err)
+	}
+	if strings.Contains(msg, "считать нечего") {
+		t.Fatalf("слепая сессия съедена ранним выходом:\n%s", msg)
+	}
+	if !strings.Contains(msg, "- нет данных, сессий без транскрипта 1: "+whyNoTranscript) {
+		t.Fatalf("причины у слепой сессии нет:\n%s", msg)
+	}
+	line, ok := spendTotalLine(root, "XR-002", spendDay(15, 0))
+	if !ok {
+		t.Fatal("итог закрытия не записан, строка «Токены» пропала вместе с сигналом")
+	}
+	if !strings.Contains(line, "нет данных, сессий без транскрипта 1") {
+		t.Fatalf("итог закрытия молчит про слепую сессию: %s", line)
+	}
+}
+
+// TestSpendPeriodKeepsBlindStages: срез без единого транскрипта, но с этапами
+// без данных, печатает их числом, а не отговаривается пустотой.
+func TestSpendPeriodKeepsBlindStages(t *testing.T) {
+	root := setup(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	old := timeNow
+	defer func() { timeNow = old }()
+	timeNow = func() time.Time { return spendDay(15, 0) }
+	st := stage.Stage{Kind: stage.Dev, Start: spendDay(10, 0), End: spendDay(11, 0),
+		Note: "субагент второго харнеса, работа d4e5f60718a1b2c3e", Session: "",
+		Work: "d4e5f60718a1b2c3e"}
+	if err := stage.Put(home, root, "XR-005", st); err != nil {
+		t.Fatal(err)
+	}
+	p, err := parseSpendPeriod("2026-09-01", "2026-09-20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := cmdSpendPeriod(root, p)
+	if err != nil {
+		t.Fatalf("cmdSpendPeriod: %v", err)
+	}
+	if strings.Contains(msg, "считать нечего") {
+		t.Fatalf("этапы без данных съедены ранним выходом:\n%s", msg)
+	}
+	if !strings.Contains(msg, "этапов 1, без данных 1") {
+		t.Fatalf("шапка молчит про этап без данных:\n%s", msg)
+	}
+}
+
+// TestSpendSetupWithoutSession: у этапа «постановка» без сессии причина
+// названа по существу. Про номер работы субагента тут говорить не о чем, его
+// у постановки не бывает вовсе.
+func TestSpendSetupWithoutSession(t *testing.T) {
+	rows := spendRows(nil, []spendStage{
+		{kind: stage.Setup, start: spendDay(10, 0)},
+		{kind: stage.Dev, start: spendDay(11, 0)},
+	})
+	if rows[0].why != "сессии постановки в записи этапа нет, ход головной сессии к ней не привязать" {
+		t.Fatalf("причина у постановки без сессии: %q", rows[0].why)
+	}
+	if rows[1].why != "номера работы в записи этапа нет" {
+		t.Fatalf("причина у разработки без работы: %q", rows[1].why)
+	}
+}

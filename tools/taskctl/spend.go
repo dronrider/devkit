@@ -129,8 +129,15 @@ func spendRows(look *spend.Lookup, stages []spendStage) []spendRow {
 		switch {
 		case st.work == "":
 			row.why = "номера работы в записи этапа нет"
-			if stage.IsWait(st.kind) {
+			switch {
+			case stage.IsWait(st.kind):
 				row.why = "ожидание, субагента за ним нет"
+			case st.kind == stage.Setup:
+				// Постановку ведёт головная сессия, и субагента за этапом нет
+				// вовсе. Чисел этому этапу даёт статья «постановка», а
+				// находит она сессию по самой записи: в строках «Хода работы»
+				// сессии нет, и там остаётся только журнал агентов.
+				row.why = "сессии постановки в записи этапа нет, ход головной сессии к ней не привязать"
 			}
 		default:
 			n, ok := look.Tree(st.session, st.work)
@@ -205,8 +212,14 @@ func cmdSpend(root, id string) (string, error) {
 		items.get(itemStand, id).parts = runs
 	}
 	list := items.list()
-	if len(stages) == 0 && len(list) == 0 {
+	// Слепая сессия и ход без привязки это тоже сигнал, и ранний выход их
+	// съедал: заход второго харнеса по такой задаче виден только строкой «нет
+	// данных», а молчание неотличимо от нулевого расхода (замечание ревью).
+	if len(stages) == 0 && len(list) == 0 && blind == 0 && loose.Empty() {
 		return fmt.Sprintf("токены %s: ни этапов в записи ~/.devkit/runs и «Ходе работы», ни статей в журналах машины, считать нечего", id), nil
+	}
+	if src == "" {
+		src = "записи этапов нет"
 	}
 	rows := spendRows(spend.NewLookup(home), stages)
 	rows = spendDropSetup(rows, items)
@@ -301,17 +314,18 @@ func spendTotalLine(root, id string, now time.Time) (string, bool) {
 	home := stage.Home()
 	stages, _ := spendStages(root, main, id)
 	crew := newSpendCrew(home, main)
-	items, _, _ := crew.taskItems(id, stages, spendPeriod{})
+	items, loose, blind := crew.taskItems(id, stages, spendPeriod{})
 	if stand, runs := spendStands(root, id, spendPeriod{}); runs > 0 {
 		items.add(itemStand, id, stand)
 	}
 	list := items.list()
-	if len(stages) == 0 && len(list) == 0 {
-		return "", false
-	}
 	rows := spendRows(spend.NewLookup(home), stages)
 	total, seen := spendTotal(rows)
-	if seen == 0 && len(list) == 0 {
+	// Пустой итог это молчание там, где сигнал есть: у задачи, чей заход шёл
+	// вторым харнесом, слепая сессия единственное, что от расхода осталось, а
+	// транскрипты харнес чистит, и после архивации спросить будет не у кого
+	// (замечание ревью).
+	if seen == 0 && len(list) == 0 && blind == 0 && loose.Empty() {
 		return "", false
 	}
 	// Статьи входят в итог наравне с этапами: диспетчер задачи стоит дороже
@@ -319,8 +333,15 @@ func spendTotalLine(root, id string, now time.Time) (string, bool) {
 	for _, it := range list {
 		total = total.Add(it.usage)
 	}
-	return fmt.Sprintf("%s%s, этапов со счётом %d, статей %d, %s.",
-		spendMark, spendNumbers(total), seen, len(list), now.Format("2006-01-02")), true
+	tail := ""
+	if blind > 0 {
+		tail += fmt.Sprintf(", нет данных, сессий без транскрипта %d", blind)
+	}
+	if !loose.Empty() {
+		tail += ", без привязки вывод " + humanTokens(loose.Output)
+	}
+	return fmt.Sprintf("%s%s, этапов со счётом %d, статей %d%s, %s.",
+		spendMark, spendNumbers(total), seen, len(list), tail, now.Format("2006-01-02")), true
 }
 
 // writeSpendTotal кладёт строку итога в «Ход работы» файла задачи. Провал
@@ -428,7 +449,7 @@ func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
 	// DK-912). Считается он один раз на весь срез.
 	main := stage.MainRoot(root)
 	crew := newSpendCrew(home, main)
-	works, stageCount, blind := spendWorkMap(root, main, look, p)
+	works, stageCount, blind, setupBlind := spendWorkMap(root, main, look, p)
 
 	byKind := map[string]spend.Usage{}
 	counts := map[string]int{}
@@ -517,8 +538,8 @@ func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
 	if !p.from.IsZero() {
 		head = "токены за " + p.from.Format("2006-01-02") + ".." + span
 	}
-	if total.Empty() {
-		return fmt.Sprintf("%s: транскриптов харнеса claude за срез нет, этапов без данных %d", head, blind), nil
+	if total.Empty() && blind == 0 && stageCount == 0 {
+		return fmt.Sprintf("%s: ни транскриптов харнеса claude, ни этапов за срез нет, считать нечего", head), nil
 	}
 	tasks := spendTasks(byTask)
 	out := []string{fmt.Sprintf("%s: %s; сессий %d, задач %d, этапов %d, без данных %d",
@@ -532,11 +553,13 @@ func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
 	}
 	out = append(out, spendPeriodItems(items, total)...)
 	out = append(out, "- вне статей: "+spendNumbers(outside)+spendShare(outside, total)+"; "+whyOutside)
-	if len(mute) > 0 || lost > 0 {
-		out = append(out, fmt.Sprintf("- нет данных: сессий без носителя в реестре %d, работ без этапа %d",
-			len(mute), lost))
+	if len(mute) > 0 || lost > 0 || setupBlind > 0 {
+		out = append(out, fmt.Sprintf("- нет данных: сессий без носителя в реестре %d, работ без этапа %d, этапов постановки без сессии %d",
+			len(mute), lost, setupBlind))
 	}
-	out = append(out, spendTaskLines(root, tasks)...)
+	if len(tasks) > 0 {
+		out = append(out, spendTaskLines(root, tasks)...)
+	}
 	return strings.Join(out, "\n"), nil
 }
 
@@ -555,9 +578,9 @@ type spendWorkMark struct {
 // какой этап и какая задача. Вложенные работы ложатся тому же этапу, который
 // их поднял. Второе и третье значения это сколько этапов попало в срез и у
 // скольких из них чисел не взять.
-func spendWorkMap(root, main string, look *spend.Lookup, p spendPeriod) (map[string]spendWorkMark, int, int) {
+func spendWorkMap(root, main string, look *spend.Lookup, p spendPeriod) (map[string]spendWorkMark, int, int, int) {
 	out := map[string]spendWorkMark{}
-	count, blind := 0, 0
+	count, blind, setups := 0, 0, 0
 	for _, id := range spendIDs(root) {
 		stages, _ := spendStages(root, main, id)
 		for _, st := range stages {
@@ -568,6 +591,9 @@ func spendWorkMap(root, main string, look *spend.Lookup, p spendPeriod) (map[str
 			if st.work == "" {
 				if inCut && !stage.IsWait(st.kind) {
 					blind++
+				}
+				if inCut && st.kind == stage.Setup && st.session == "" {
+					setups++
 				}
 				continue
 			}
@@ -581,7 +607,7 @@ func spendWorkMap(root, main string, look *spend.Lookup, p spendPeriod) (map[str
 			spendMarkTree(out, n, spendWorkMark{task: id, kind: st.kind})
 		}
 	}
-	return out, count, blind
+	return out, count, blind, setups
 }
 
 // spendMarkTree помечает работу вместе с поднятыми из неё.

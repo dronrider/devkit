@@ -15,6 +15,7 @@ import (
 	"github.com/dronrider/devkit/internal/frame"
 	"github.com/dronrider/devkit/internal/freshtree"
 	"github.com/dronrider/devkit/internal/gitrun"
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // git это единственная дорога к git из shipctl: закрытый запрос учётки и
@@ -885,9 +886,14 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	unlock, err := acquireLock(root, lockWho("merge", p.ID))
 	if err != nil {
+		if errors.Is(err, errLockBusy) {
+			stageQueue(root, []string{p.ID}, "shipctl merge ждёт замок конвейера")
+		}
 		return "", err
 	}
 	defer unlock()
+	stageOpen(root, p.ID, stage.Merge, "shipctl merge")
+	defer stageClose(root, p.ID, stage.Merge)
 	// Перевод в поездной режим при занятой очереди помнит, откуда он: отчёт
 	// обязан объяснить отказ от выката, иначе тихое отсутствие выката
 	// неотличимо от забытья.
@@ -1432,6 +1438,7 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		// (merge, ship, разлив от close), а не поломка: сторожок, чей тик
 		// попал в чужое окно, отступает тихо. Аномалии замка глушить нельзя.
 		if errors.Is(err, errLockBusy) {
+			stageQueue(root, queueTrain(root), "shipctl ship ждёт замок конвейера")
 			return drainOr(p.Drain, err)
 		}
 		return "", err
@@ -1539,6 +1546,10 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		return "", err
 	}
 	list := strings.Join(train, ", ")
+	for _, id := range train {
+		stageOpen(root, id, stage.Deploy, "shipctl ship, поезд: "+list)
+		defer stageClose(root, id, stage.Deploy)
+	}
 	if deploy.warn != "" {
 		msg = append(msg, "предупреждение: "+deploy.warn)
 	}

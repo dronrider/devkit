@@ -38,6 +38,9 @@ const rowInProg = "| XR-001 | Починка бага | bug | P1 | 55 (50+0+0+5+
 // taskctl в PATH пишет вызовы в лог и имитирует правку доски.
 func setup(t *testing.T, inProg, check string) (root, callLog string) {
 	t.Helper()
+	// Записи этапов shipctl пишет в ~/.devkit/runs, и без подмены дома стенд
+	// нёс бы их в боевой каталог машины (тот же случай, что DK-818 у taskctl).
+	t.Setenv("HOME", t.TempDir())
 	root = t.TempDir()
 	gitT(t, root, "init", "-q", "-b", "main")
 	gitT(t, root, "config", "user.email", "test@test")

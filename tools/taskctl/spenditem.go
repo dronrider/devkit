@@ -244,7 +244,7 @@ func (c *spendCrew) place(sid string, at time.Time) (string, string, bool) {
 //
 // Цель спрашивается сперва у реестра чатов и только потом у живой записи
 // ~/.devkit/goals. Запись уходит с концом цикла, и срез за прошлый день ронял
-// ход головной сессии в строку «вне статей», а носитель реестра переживает
+// ход головной сессии в строку «вне статей». Носитель реестра переживает
 // цикл вместе со строкой рождения сессии (DK-1088).
 func (c *spendCrew) carrier(sid string) (string, string, bool) {
 	b := c.binds[sid]
@@ -274,7 +274,7 @@ func (c *spendCrew) carrier(sid string) (string, string, bool) {
 const carrierGoal = "цикл цели"
 
 // spendCarrierGoal достаёт ID цели из носителя сессии. Второе значение false
-// значит, что носитель про цикл цели не говорит вовсе.
+// значит, что в носителе нет признака цикла цели.
 func spendCarrierGoal(carrier string) (string, bool) {
 	rest, ok := strings.CutPrefix(strings.TrimSpace(carrier), carrierGoal+" ")
 	if !ok {

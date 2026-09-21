@@ -71,6 +71,13 @@ tmux-сессию того, кто её поднял, а по адресу па�
 цели постановкой не считается. Запись лежит в ~/.devkit/runs, пишет её
 stagerun.py.
 
+Сессия, ведущая цикл цели, получает в поле носителя «цикл цели <ID>». Цель
+называют две дороги: оболочка витка ставит её ID в DEVKIT_GOAL_SHELL, а заход
+по строке доски узнаётся по тому, что файл задачи это запись цели. Носитель
+живёт в реестре столько же, сколько строка рождения сессии, поэтому свод
+расхода относит ход к статье «фон» и назавтра, когда живой записи цикла
+в ~/.devkit/goals уже нет (DK-1088).
+
 Сессии с заказом (DEVKIT_TASK) хук вдобавок кладёт контекст задачи полем
 additionalContext: строку доски, файл задачи и строки про план и отзывчивость.
 На поводе compact (SessionStart после сжатия контекста) вместо контекста
@@ -267,15 +274,31 @@ def tree_task(root):
 GOAL_SHELL_ENV = "DEVKIT_GOAL_SHELL"
 HEADLESS_ENV = "DEVKIT_HEADLESS"
 GOAL_CARRIER = "виток"
+# Носитель сессии, ведущей цикл цели: слова и ID цели через пробел. Держится он
+# в реестре чатов столько же, сколько сама строка рождения, и потому свод
+# узнаёт цикл и назавтра, когда живой записи ~/.devkit/goals уже нет (DK-1088).
+GOAL_LOOP_CARRIER = "цикл цели"
 
 
-def carrier(env=None):
-    """Чем поднята сессия. Виток старше безголовости: цикл цели ходит и через
-    печатного клиента дашборда, и тогда стоят обе переменные, а статья у витка
-    своя, на ID цели."""
+def goal_carrier(goal):
+    """Носитель цикла цели по её ID. Пустой ID значит, что цикла тут нет."""
+    goal = (goal or "").strip().upper()
+    return "%s %s" % (GOAL_LOOP_CARRIER, goal) if TASK_RE.match(goal) else ""
+
+
+def carrier(env=None, goal=""):
+    """Чем поднята сессия. Цикл цели старше безголовости: он ходит и через
+    печатного клиента дашборда, и тогда стоят обе переменные, а статья у цикла
+    своя, на ID цели. Цель приезжает двумя дорогами: оболочка витка называет её
+    в DEVKIT_GOAL_SHELL, а заход по строке доски узнаётся тем, что файл задачи
+    это запись цели. Оболочка без ID цели в переменной остаётся витком без
+    номера, как было до DK-1088."""
     env = os.environ if env is None else env
-    if (env.get(GOAL_SHELL_ENV) or "").strip():
-        return GOAL_CARRIER
+    shell = (env.get(GOAL_SHELL_ENV) or "").strip()
+    if shell:
+        return goal_carrier(shell) or GOAL_CARRIER
+    if goal:
+        return goal_carrier(goal) or (env.get(HEADLESS_ENV) or "").strip()
     return (env.get(HEADLESS_ENV) or "").strip()
 
 
@@ -290,6 +313,9 @@ def record(start, env=None, now=None, terminal=client_terminal):
         # Заказ старше дерева: конвейер дашборда стартует в главном чекауте, и
         # по имени дерева там выходит не та задача либо никакая.
         task, source = ordered, BY_ORDER
+    # Цель узнаётся по файлу записи: сессия, поднятая на строке цели, ведёт её
+    # цикл из чата, и носителя ей никто, кроме этого хука, не назовёт.
+    goal = task if record_kind(root, task) == "цель" else ""
     tty = terminal(env)
     name = window_name(env, tty)
     pane, pane_why = pane_address(env, tty)
@@ -307,7 +333,7 @@ def record(start, env=None, now=None, terminal=client_terminal):
         stamp, dashless(start.session), dashless(task), dashless(project),
         dashless(root), dashless(start.transcript), dashless(source),
         dashless(why), dashless(name), dashless(pane),
-        dashless(parent_session(env, start.session)), dashless(carrier(env)))
+        dashless(parent_session(env, start.session)), dashless(carrier(env, goal)))
 
 
 # Ходы, которые считаются работой в дереве задачи: правка файла это работа, а

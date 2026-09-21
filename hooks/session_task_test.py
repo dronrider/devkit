@@ -629,3 +629,66 @@ class SetupStage(unittest.TestCase):
                            capture_output=True, text=True, env=env)
         self.assertEqual((r.returncode, r.stderr), (0, ""))
         self.assertEqual([s["kind"] for s in self.stages("DK-7")], [stagerun.SETUP])
+
+
+class GoalLoopCarrier(unittest.TestCase):
+    """Носитель сессии, ведущей цикл цели (DK-1088): «цикл цели <ID>» в строке
+    реестра. Временный репозиторий с файлом цели, временный дом."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", self.tmp]))
+        self.root = os.path.join(self.tmp, "proj")
+        subprocess.run(["git", "init", "-q", "-b", "main", self.root], check=True)
+        os.makedirs(os.path.join(self.root, "docs", "tasks"))
+        with open(os.path.join(self.root, "docs", "tasks", "DK-8.md"), "w", encoding="utf-8") as f:
+            f.write("# DK-8: цель\n\n## Задачи цели\n\n- DK-9\n")
+        with open(os.path.join(self.root, "docs", "tasks", "DK-9.md"), "w", encoding="utf-8") as f:
+            f.write("# DK-9: задача\n\n## Что происходит\n")
+
+    def carrier_of(self, env):
+        f, _ = fields(session_task.record(start(self.root), env=env))
+        return f["носитель"]
+
+    def test_chat_on_a_goal_row_carries_the_loop(self):
+        # Заход из чата по строке цели ведёт её цикл, и до DK-1088 признака
+        # цикла в реестре у него не было вовсе: он жил в записи ~/.devkit/goals
+        # и уходил с концом цикла.
+        self.assertEqual(self.carrier_of({"DEVKIT_TASK": "DK-8"}), "цикл цели DK-8")
+
+    def test_plain_task_row_carries_nothing(self):
+        # Обычная задача циклом не становится: носитель разговора пуст.
+        self.assertEqual(self.carrier_of({"DEVKIT_TASK": "DK-9"}), "-")
+
+    def test_goal_shell_names_the_goal_by_env(self):
+        # Оболочка витка ставит ID цели в DEVKIT_GOAL_SHELL, и файла записи ей
+        # не нужно: виток ходит из любого дерева.
+        self.assertEqual(
+            self.carrier_of({"DEVKIT_GOAL_SHELL": "dk-8", "DEVKIT_HEADLESS": "дашборд"}),
+            "цикл цели DK-8")
+
+    def test_shell_without_an_id_stays_a_tick(self):
+        # Оболочка, назвавшая себя без ID цели, остаётся витком без номера, как
+        # было до DK-1088.
+        self.assertEqual(self.carrier_of({"DEVKIT_GOAL_SHELL": "1"}), "виток")
+
+    def test_headless_on_a_goal_row_keeps_the_loop(self):
+        # Безголовый заход по строке цели это тот же цикл, и статья у него на
+        # ID цели, а не фоном машины.
+        self.assertEqual(
+            self.carrier_of({"DEVKIT_TASK": "DK-8", "DEVKIT_HEADLESS": "дашборд"}),
+            "цикл цели DK-8")
+
+    def test_hook_from_stdin_writes_the_loop_carrier(self):
+        ev = dict(sample())
+        ev["cwd"] = self.root
+        home = os.path.join(self.tmp, "home")
+        env = dict(os.environ, HOME=home, DEVKIT_TASK="DK-8", DEVKIT_HIDDEN="1")
+        for key in ("DEVKIT_TMUX", "TMUX", "TMUX_PANE", "DEVKIT_GOAL_SHELL"):
+            env.pop(key, None)
+        r = subprocess.run([sys.executable, HOOK, "--hook"], input=json.dumps(ev),
+                           capture_output=True, text=True, env=env)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        with open(os.path.join(home, ".devkit", "sessions.log"), encoding="utf-8") as f:
+            line = f.read().strip()
+        self.assertTrue(line.endswith("носитель цикл цели DK-8"), line)

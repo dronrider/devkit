@@ -241,11 +241,19 @@ func (c *spendCrew) place(sid string, at time.Time) (string, string, bool) {
 // сессии: цикл цели идёт фоном на ID цели, безголовый заход фоном машины,
 // конвейер задачи её оркестрацией, а диспетчер пачки без задачи в реестре
 // строкой «оркестрация без привязки».
+//
+// Цель спрашивается сперва у реестра чатов и только потом у живой записи
+// ~/.devkit/goals. Запись уходит с концом цикла, и срез за прошлый день ронял
+// ход головной сессии в строку «вне статей», а носитель реестра переживает
+// цикл вместе со строкой рождения сессии (DK-1088).
 func (c *spendCrew) carrier(sid string) (string, string, bool) {
+	b := c.binds[sid]
+	if goal, ok := spendCarrierGoal(b.Carrier); ok {
+		return itemBack, goal, true
+	}
 	if goal, ok := c.goals[sid]; ok {
 		return itemBack, goal, true
 	}
-	b := c.binds[sid]
 	if b.Carrier == "виток" {
 		return itemBack, spendMachineKey(b), true
 	}
@@ -259,6 +267,24 @@ func (c *spendCrew) carrier(sid string) (string, string, bool) {
 		return itemOrch, keyLoose, true
 	}
 	return "", "", false
+}
+
+// carrierGoal это начало носителя сессии, ведущей цикл цели: за словами стоит
+// ID цели. Пишет носителя хук старта сессии (hooks/session-task.py, carrier).
+const carrierGoal = "цикл цели"
+
+// spendCarrierGoal достаёт ID цели из носителя сессии. Второе значение false
+// значит, что носитель про цикл цели не говорит вовсе.
+func spendCarrierGoal(carrier string) (string, bool) {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(carrier), carrierGoal+" ")
+	if !ok {
+		return "", false
+	}
+	goal := strings.ToUpper(strings.TrimSpace(rest))
+	if goal == "" || spendIDRe.FindString(goal) != goal {
+		return "", false
+	}
+	return goal, true
 }
 
 // spendMachineKey называет фон машины проектом, из корня которого заход шёл.

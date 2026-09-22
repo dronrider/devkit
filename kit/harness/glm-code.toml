@@ -66,6 +66,7 @@ client = ["agentctl", "exec", "--harness", "glm-code", "--", "claude", "--permis
 bin = "claude"
 model = ["--model", "{model}"]
 session = ["--session-id", "{session}"]
+name = ["--name", "{name}"]
 resume = ["agentctl", "exec", "--harness", "glm-code", "--", "claude", "--resume", "{session}"]
 turn_end = "turn-mark"
 wait_cap = "2h"

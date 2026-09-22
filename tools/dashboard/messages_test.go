@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -892,6 +893,20 @@ func TestStaticChatTimeIsLocal(t *testing.T) {
 	}
 }
 
+// mdSourceConsts и mdSourceFuncs называют ровно то, что рендер зовёт на
+// самом деле (DK-1132): инлайн-код тянет за собой ссылку в коде и кнопку
+// копирования, кнопка собирает значок. Список один на сборку модуля
+// (mdSource) и на сторож полноты (TestMdSourceCutsEveryCalledName), иначе они
+// разойдутся так же, как разошлись вырезка и статика в DK-1120.
+var mdSourceConsts = []string{"const MD_INLINE", "const MD_MENTION =", "const boardPrefixes", "const CODE_URL"}
+
+var mdSourceFuncs = []string{
+	"function el(", "function mdGo(", "function mentionAddr(", "function projectOfPrefix(",
+	"function mdText(", "function mdLink(", "function mdInline(", "function mdRender(",
+	"function codeLinkify(", "function inlineCodeSpan(", "function copyBtn(", "function icon(",
+	"function mdCodeBlock(", "function wrapScroll(",
+}
+
 // mdSource собирает рендер markdown из статики: тесты гоняют его как есть,
 // поэтому вырезаются те же строки, что уедут в браузер, а не их пересказ.
 func mdSource(t *testing.T, text string) string {
@@ -900,7 +915,7 @@ func mdSource(t *testing.T, text string) string {
 	// разметку, MD_MENTION узнаёт в остатке упоминание задачи или документа.
 	// Память префиксов досок едет сюда же: без неё автоссылка не собирается.
 	var parts []string
-	for _, want := range []string{"const MD_INLINE", "const MD_MENTION =", "const boardPrefixes"} {
+	for _, want := range mdSourceConsts {
 		line := ""
 		for _, l := range strings.Split(text, "\n") {
 			if strings.HasPrefix(l, want) {
@@ -913,10 +928,7 @@ func mdSource(t *testing.T, text string) string {
 		}
 		parts = append(parts, line)
 	}
-	for _, head := range []string{
-		"function el(", "function mdGo(", "function mentionAddr(", "function projectOfPrefix(",
-		"function mdText(", "function mdLink(", "function mdInline(", "function mdRender(",
-	} {
+	for _, head := range mdSourceFuncs {
 		parts = append(parts, funcBody(t, text, head)+"\n}")
 	}
 	return strings.Join(parts, "\n\n")
@@ -950,11 +962,19 @@ class N {
   set href(v) { this.attrs.href = v; }
   set target(v) { this.attrs.target = v; }
   set rel(v) { this.attrs.rel = v; }
+  set title(v) { this.attrs.title = v; }
+  setAttribute(name, v) { this.attrs[name] = v; }
+  // Клик по кнопке копирования тесты не бьют, тело обработчика не звучит:
+  // достаточно, что addEventListener есть и не роняет сборку.
+  addEventListener() {}
   append(...nodes) { for (const n of nodes) this.kids.push(n); }
 }
 const document = {
   createElement: (tag) => new N(tag),
   createTextNode: (text) => ({ text: String(text) }),
+  // icon() ищет шаблон значков в разметке страницы, которой у игрушечного
+  // DOM нет: без узла функция сама уходит на запасной вариант el("i").
+  getElementById: () => undefined,
 };
 function html(n) {
   if (n.text !== undefined) return esc(n.text);
@@ -977,6 +997,14 @@ function html(n) {
 		t.Fatalf("разбор ответа рендера: %v\n%s", err, out)
 	}
 	return got
+}
+
+// mdCodeWrap собирает разметку инлайн-кода вместе с кнопкой копирования: с
+// DK-1120 код в обратных кавычках приезжает не голым <code>, а обёрткой
+// span.mdicode, и ожидания юнитов держат ту же разметку, что видит браузер.
+func mdCodeWrap(code string) string {
+	return `<span class="mdicode"><code>` + code +
+		`</code><button class="foldcp" title="Копировать" aria-label="Копировать"><i></i></button></span>`
 }
 
 // Разметка из реплики остаётся буквами: тег script, картинка с onerror и
@@ -1002,7 +1030,7 @@ func TestMarkdownEscapesInjection(t *testing.T) {
 	if !strings.Contains(got[1], "&lt;img src=x onerror=alert(1)&gt;") {
 		t.Errorf("картинка с onerror не показана словами: %s", got[1])
 	}
-	if !strings.Contains(got[2], "<code>&lt;/code&gt;&lt;script&gt;alert(2)&lt;/script&gt;</code>") {
+	if !strings.Contains(got[2], mdCodeWrap("&lt;/code&gt;&lt;script&gt;alert(2)&lt;/script&gt;")) {
 		t.Errorf("строчный код не закрылся экранированием: %s", got[2])
 	}
 }
@@ -1038,7 +1066,7 @@ func TestMarkdownBlocks(t *testing.T) {
 	})
 	for _, want := range []string{
 		`<div class="mdh mdh1">Виток 12</div>`,
-		"<code>кодом</code>",
+		mdCodeWrap("кодом"),
 		"<ul><li>раз</li><li>два</li></ul>",
 		"<pre>ls -la &lt;тут&gt;</pre>",
 		"<ol><li>первый</li><li>второй</li></ol>",
@@ -1046,6 +1074,162 @@ func TestMarkdownBlocks(t *testing.T) {
 		if !strings.Contains(got[0], want) {
 			t.Errorf("в рендере нет %q: %s", want, got[0])
 		}
+	}
+}
+
+// mdCallRe находит голые вызовы функций (не через точку): m[1] это имя.
+// Обращение через точку (into.append(...), MD_MENTION.exec(...)) сторож не
+// трогает, оно идёт на игрушечный DOM или на встроенный метод строки.
+var mdCallRe = regexp.MustCompile(`(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\(`)
+
+// mdLocalDeclRe находит имена, объявленные внутри самих функций (скажем,
+// cells в mdRender): такое имя не часть вырезки, оно живёт и вызывается в
+// своём же теле, и разрывом не считается.
+var mdLocalDeclRe = regexp.MustCompile(`\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=`)
+
+// mdNestedFuncDeclRe находит имя вложенной именованной function-декларации:
+// mdCallRe без разбора синтаксиса принимает «function helper(» за вызов
+// helper, а это объявление (замечание ревью DK-1132). Имя уходит в тот же
+// разряд, что и local const/let/var, а не в перечень пропущенных вызовов.
+var mdNestedFuncDeclRe = regexp.MustCompile(`\bfunction\s+([A-Za-z_$][\w$]*)\s*\(`)
+
+// mdCallKeywords это языковые слова, которые перед скобкой выглядят как имя
+// вызова (if (, for (, return (...)), но вызовом не являются.
+var mdCallKeywords = map[string]bool{
+	"if": true, "for": true, "while": true, "switch": true, "catch": true,
+	"function": true, "return": true, "typeof": true, "new": true, "do": true,
+}
+
+// mdCallBuiltins это языковые и рантайм-встроенные, которые вырезка не
+// собирает и не обязана: они есть и в браузере, и под node.
+var mdCallBuiltins = map[string]bool{
+	"String": true, "Number": true, "Boolean": true, "RegExp": true,
+	"Array": true, "Object": true, "setTimeout": true,
+}
+
+// stripEventHandlerBodies вырезает тело обработчика из
+// addEventListener(тип, (ev) => { ... }): клик по кнопке копирования или по
+// ссылке упоминания тесты не бьют, обработчик не звучит, а имена внутри него
+// (window.navigator, goFromChat) даны настоящему браузеру, не игрушечному
+// DOM. Разрыв в этих именах юнит не увидит, пока кто-то не позовёт их же за
+// пределами обработчика.
+func stripEventHandlerBodies(body string) string {
+	const marker = "addEventListener("
+	var out strings.Builder
+	i := 0
+	for {
+		idx := strings.Index(body[i:], marker)
+		if idx < 0 {
+			out.WriteString(body[i:])
+			break
+		}
+		idx += i
+		end := idx + len(marker)
+		out.WriteString(body[i:end])
+		brace := strings.IndexByte(body[end:], '{')
+		if brace < 0 {
+			i = end
+			continue
+		}
+		brace += end
+		depth := 0
+		j := brace
+		for ; j < len(body); j++ {
+			switch body[j] {
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					j++
+				}
+			}
+			if depth == 0 && body[j-1] == '}' {
+				break
+			}
+		}
+		i = j
+	}
+	return out.String()
+}
+
+// mdCollectKnown дописывает в known имена, объявленные внутри самого body:
+// локальные const/let/var и вложенные именованные function-декларации. Оба
+// вида это объявление, а не вызов чего-то внешнего, и в перечень пропущенных
+// имён попадать не должны.
+func mdCollectKnown(body string, known map[string]bool) {
+	for _, m := range mdLocalDeclRe.FindAllStringSubmatch(body, -1) {
+		known[m[1]] = true
+	}
+	for _, m := range mdNestedFuncDeclRe.FindAllStringSubmatch(body, -1) {
+		known[m[1]] = true
+	}
+}
+
+// mdMissingCalls находит в body голые вызовы имён, которых нет ни в known,
+// ни среди языковых слов, ни среди встроенных.
+func mdMissingCalls(body string, known map[string]bool) []string {
+	var missing []string
+	for _, m := range mdCallRe.FindAllStringSubmatch(body, -1) {
+		name := m[1]
+		if known[name] || mdCallKeywords[name] || mdCallBuiltins[name] {
+			continue
+		}
+		missing = append(missing, name)
+	}
+	return missing
+}
+
+// TestMdSourceCutsEveryCalledName сторожит сам разрыв вырезки, а не один его
+// случай: если функция из mdSourceFuncs зовёт голым именем что-то, чего нет
+// ни среди вырезанных функций, ни во встроенных, сборка модуля неполна и
+// однажды упадёт под node на ReferenceError, как упала в DK-1132 (статика
+// добавила inlineCodeSpan и mdCodeBlock, вырезка о них не узнала). Тест
+// статический, node не нужен, и говорит явно, какого имени не хватает.
+func TestMdSourceCutsEveryCalledName(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	known := map[string]bool{}
+	for _, head := range mdSourceFuncs {
+		known[strings.TrimSuffix(strings.TrimPrefix(head, "function "), "(")] = true
+	}
+	var bodies []string
+	for _, head := range mdSourceFuncs {
+		body := stripEventHandlerBodies(funcBody(t, text, head))
+		bodies = append(bodies, body)
+		mdCollectKnown(body, known)
+	}
+	seen := map[string]bool{}
+	var missing []string
+	for _, body := range bodies {
+		for _, name := range mdMissingCalls(body, known) {
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		t.Errorf("рендер зовёт %s, а mdSource этого не вырезает из static/app.js: сборка неполна, под node будет ReferenceError", strings.Join(missing, ", "))
+	}
+}
+
+// Вложенная именованная function-декларация это объявление, не вызов, и
+// сторож не должен путать одно с другим (замечание ревью DK-1132): regexp
+// mdCallRe без разбора синтаксиса иначе принял бы «function helper(» за
+// вызов helper. Настоящий пропущенный вызов внутри той же вложенной функции
+// сторож обязан находить по-прежнему.
+func TestMdCallRegexSeesDeclarationsNotCalls(t *testing.T) {
+	body := `function outer(x) {
+  function helper(y) { return y + reallyMissing(1); }
+  return helper(x);
+}`
+	known := map[string]bool{"outer": true}
+	mdCollectKnown(body, known)
+	missing := mdMissingCalls(body, known)
+	if len(missing) != 1 || missing[0] != "reallyMissing" {
+		t.Errorf("сторож должен был найти только reallyMissing, а нашёл %v", missing)
 	}
 }
 

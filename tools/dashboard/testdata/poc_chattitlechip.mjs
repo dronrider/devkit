@@ -19,19 +19,26 @@ const board = { prefix: "DK", sections: [] };
 const NAMED = "aaaa1111-1111";
 const SECOND = "bbbb2222-2222";
 const PLAIN = "cccc3333-3333";
+const COINCIDENT = "dddd4444-4444";
 
 const chats = [
-  // Заголовок несёт единственную задачу чата: чип обязан пропасть целиком.
+  // Заголовок несёт единственную задачу чата, поставлен дашбордом
+  // (titleNamed): чип обязан пропасть целиком.
   { id: NAMED, project: "demo", title: "DK-1120 работа", state: "dead",
-    mtime: "2026-09-22T10:00:00Z", tasks: ["DK-1120"] },
+    mtime: "2026-09-22T10:00:00Z", tasks: ["DK-1120"], titleNamed: true },
   // Заголовок несёт первую задачу, вторая чипом остаётся: дубль снимается
   // точечно, а не гасит всю полосу чипов задач.
   { id: SECOND, project: "demo", title: "DK-1120 груминг", state: "dead",
-    mtime: "2026-09-22T09:00:00Z", tasks: ["DK-1120", "DK-1200"] },
+    mtime: "2026-09-22T09:00:00Z", tasks: ["DK-1120", "DK-1200"], titleNamed: true },
   // Заголовок без номера: чип остаётся, дедуп его не касается (свободный чат,
   // подписанный из транскрипта, а не известной головой).
   { id: PLAIN, project: "demo", title: "разберись с подпиской", state: "dead",
     mtime: "2026-09-22T08:00:00Z", tasks: ["DK-1120"] },
+  // Заголовок случайно начинается с ID своей же задачи, но назван не
+  // дашбордом (эвристика по ai-title, titleNamed не стоит): чип остаётся,
+  // текстовое совпадение дедуп не запускает (замечание ревью DK-879).
+  { id: COINCIDENT, project: "demo", title: "DK-1120 в тексте реплики, а не имя",
+    state: "dead", mtime: "2026-09-22T07:00:00Z", tasks: ["DK-1120"] },
 ];
 
 const { sandbox, store } = makeSandbox(app, (path) => {
@@ -87,4 +94,15 @@ const taskChipsOf = (node) => allByClass(node, "chip")
   }
 }
 
-console.log("poc_chattitlechip: ok, чип задачи не дублирует номер, уже стоящий в заголовке чата");
+// --- заголовок случайно начинается с ID, но назван не дашбордом: чип остаётся ---
+{
+  const row = rowOf(COINCIDENT);
+  if (!row) fail("строка со случайным совпадением не нашлась: " + dump(rows).slice(0, 300));
+  const chips = taskChipsOf(row);
+  if (chips.length !== 1 || chips[0] !== "DK-1120") {
+    fail("чип задачи пропал по текстовому совпадению без titleNamed: " + JSON.stringify(chips));
+  }
+}
+
+console.log("poc_chattitlechip: ok, чип задачи не дублирует номер, уже стоящий в заголовке чата, " +
+  "и не гасится текстовым совпадением без признака titleNamed");

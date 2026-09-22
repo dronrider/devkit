@@ -1087,6 +1087,12 @@ var mdCallRe = regexp.MustCompile(`(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\(`)
 // своём же теле, и разрывом не считается.
 var mdLocalDeclRe = regexp.MustCompile(`\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=`)
 
+// mdNestedFuncDeclRe находит имя вложенной именованной function-декларации:
+// mdCallRe без разбора синтаксиса принимает «function helper(» за вызов
+// helper, а это объявление (замечание ревью DK-1132). Имя уходит в тот же
+// разряд, что и local const/let/var, а не в перечень пропущенных вызовов.
+var mdNestedFuncDeclRe = regexp.MustCompile(`\bfunction\s+([A-Za-z_$][\w$]*)\s*\(`)
+
 // mdCallKeywords это языковые слова, которые перед скобкой выглядят как имя
 // вызова (if (, for (, return (...)), но вызовом не являются.
 var mdCallKeywords = map[string]bool{
@@ -1147,6 +1153,33 @@ func stripEventHandlerBodies(body string) string {
 	return out.String()
 }
 
+// mdCollectKnown дописывает в known имена, объявленные внутри самого body:
+// локальные const/let/var и вложенные именованные function-декларации. Оба
+// вида это объявление, а не вызов чего-то внешнего, и в перечень пропущенных
+// имён попадать не должны.
+func mdCollectKnown(body string, known map[string]bool) {
+	for _, m := range mdLocalDeclRe.FindAllStringSubmatch(body, -1) {
+		known[m[1]] = true
+	}
+	for _, m := range mdNestedFuncDeclRe.FindAllStringSubmatch(body, -1) {
+		known[m[1]] = true
+	}
+}
+
+// mdMissingCalls находит в body голые вызовы имён, которых нет ни в known,
+// ни среди языковых слов, ни среди встроенных.
+func mdMissingCalls(body string, known map[string]bool) []string {
+	var missing []string
+	for _, m := range mdCallRe.FindAllStringSubmatch(body, -1) {
+		name := m[1]
+		if known[name] || mdCallKeywords[name] || mdCallBuiltins[name] {
+			continue
+		}
+		missing = append(missing, name)
+	}
+	return missing
+}
+
 // TestMdSourceCutsEveryCalledName сторожит сам разрыв вырезки, а не один его
 // случай: если функция из mdSourceFuncs зовёт голым именем что-то, чего нет
 // ни среди вырезанных функций, ни во встроенных, сборка модуля неполна и
@@ -1163,16 +1196,13 @@ func TestMdSourceCutsEveryCalledName(t *testing.T) {
 	for _, head := range mdSourceFuncs {
 		body := stripEventHandlerBodies(funcBody(t, text, head))
 		bodies = append(bodies, body)
-		for _, m := range mdLocalDeclRe.FindAllStringSubmatch(body, -1) {
-			known[m[1]] = true
-		}
+		mdCollectKnown(body, known)
 	}
 	seen := map[string]bool{}
 	var missing []string
 	for _, body := range bodies {
-		for _, m := range mdCallRe.FindAllStringSubmatch(body, -1) {
-			name := m[1]
-			if known[name] || mdCallKeywords[name] || mdCallBuiltins[name] || seen[name] {
+		for _, name := range mdMissingCalls(body, known) {
+			if seen[name] {
 				continue
 			}
 			seen[name] = true
@@ -1182,6 +1212,24 @@ func TestMdSourceCutsEveryCalledName(t *testing.T) {
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		t.Errorf("рендер зовёт %s, а mdSource этого не вырезает из static/app.js: сборка неполна, под node будет ReferenceError", strings.Join(missing, ", "))
+	}
+}
+
+// Вложенная именованная function-декларация это объявление, не вызов, и
+// сторож не должен путать одно с другим (замечание ревью DK-1132): regexp
+// mdCallRe без разбора синтаксиса иначе принял бы «function helper(» за
+// вызов helper. Настоящий пропущенный вызов внутри той же вложенной функции
+// сторож обязан находить по-прежнему.
+func TestMdCallRegexSeesDeclarationsNotCalls(t *testing.T) {
+	body := `function outer(x) {
+  function helper(y) { return y + reallyMissing(1); }
+  return helper(x);
+}`
+	known := map[string]bool{"outer": true}
+	mdCollectKnown(body, known)
+	missing := mdMissingCalls(body, known)
+	if len(missing) != 1 || missing[0] != "reallyMissing" {
+		t.Errorf("сторож должен был найти только reallyMissing, а нашёл %v", missing)
 	}
 }
 

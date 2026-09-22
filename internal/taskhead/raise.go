@@ -95,6 +95,12 @@ type Request struct {
 	// настоящий дом, путь с утилитами кита и метку печатного режима, а собирает
 	// их одна сборка на все его дороги подъёма.
 	Prefix string
+	// Name это отображаемое имя головы, ID задачи и роль словом («DK-1120
+	// работа», «DK-1120 проверка»): им голова подписана в списке чатов, и той
+	// же строкой её называет сам клиент флагом --name из секции [head]
+	// (DK-879). Пусто значит, что профиль ключа name не назвал, и голова идёт
+	// без него, как раньше.
+	Name string
 }
 
 // Result это исход лестницы.
@@ -349,7 +355,7 @@ func (q Request) newWindow(tmux, runner string, head Head, lock string, me int, 
 		prefix += " "
 	}
 	cmd := envJoin(q.env(me, name)) + " " + prefix +
-		shellJoin(append(append(q.runnerArgs(runner, head.TurnEnd == TurnExit), "--"), head.Command(q.Model, sid)...))
+		shellJoin(append(append(q.runnerArgs(runner, head.TurnEnd == TurnExit), "--"), head.Command(q.Model, sid, q.Name)...))
 	out, err := exec.Command(tmux, "new-session", "-d", "-s", name, "-c", q.Root,
 		"-P", "-F", "#{pane_id}", cmd).CombinedOutput()
 	if err != nil {
@@ -395,7 +401,7 @@ func (q Request) headless(runner string, head Head, lock string, me int, res *Re
 		return false
 	}
 	defer f.Close()
-	cmd := q.headlessCmd(append(append(q.runnerArgs(runner, true), "--"), head.Command(q.Model, "")...))
+	cmd := q.headlessCmd(append(append(q.runnerArgs(runner, true), "--"), head.Command(q.Model, "", q.Name)...))
 	cmd.Dir = q.Root
 	cmd.Env = append(os.Environ(), q.env(me, "")...)
 	cmd.Stdout, cmd.Stderr = f, f

@@ -32,9 +32,9 @@ func TestRealProfilesNameTheHead(t *testing.T) {
 		if got := strings.Join(h.ResumeCommand("S1"), " "); !strings.Contains(got, "--resume S1") {
 			t.Fatalf("%s: резюм %q", name, got)
 		}
-		cmd := strings.Join(h.Command("opus", "S2"), " ")
+		cmd := strings.Join(h.Command("opus", "S2", "DK-1 работа"), " ")
 		if !strings.Contains(cmd, "--permission-mode auto") || !strings.Contains(cmd, "--model opus") ||
-			!strings.Contains(cmd, "--session-id S2") {
+			!strings.Contains(cmd, "--session-id S2") || !strings.Contains(cmd, "--name DK-1 работа") {
 			t.Fatalf("%s: клиент %q", name, cmd)
 		}
 	}
@@ -66,8 +66,8 @@ client = ["чужое"]
 	if !reflect.DeepEqual(h.Client, []string{"cl", "--flag", `a "b" \c`}) || h.Bin != "cl-bin" || h.TurnEnd != TurnExit {
 		t.Fatalf("разобрано %+v", h)
 	}
-	if got := h.Command("m", "s"); !reflect.DeepEqual(got, h.Client) {
-		t.Fatalf("без ключей model и session клиент оброс флагами: %v", got)
+	if got := h.Command("m", "s", "n"); !reflect.DeepEqual(got, h.Client) {
+		t.Fatalf("без ключей model, session и name клиент оброс флагами: %v", got)
 	}
 }
 

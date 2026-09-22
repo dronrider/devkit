@@ -34,6 +34,12 @@ type Head struct {
 	// сама называет сессию живой головы и пишет её в реестр чатов с адресом
 	// окна.
 	Session []string
+	// Name это флаги отображаемого имени с плейсхолдером {name}: тем же
+	// значением, которым голова подписана в списке чатов и в чипе задачи,
+	// называется и сама сессия клиента, и оно же видно в claude --resume и в
+	// заголовке окна (DK-879). Заказчик имени зовущий, само поле только
+	// подставляет плейсхолдер.
+	Name []string
 	// Resume это команда продолжения прошлой сессии с плейсхолдером
 	// {session}. Её получает человек в тексте громкого зова.
 	Resume []string
@@ -108,6 +114,8 @@ func ReadHead(path string) (Head, error) {
 			h.Model, err = parseList(val)
 		case "session":
 			h.Session, err = parseList(val)
+		case "name":
+			h.Name, err = parseList(val)
 		case "resume":
 			h.Resume, err = parseList(val)
 		case "bin":
@@ -141,15 +149,22 @@ func ReadHead(path string) (Head, error) {
 	return h, nil
 }
 
-// Command собирает клиента головы: Client, флаги яруса, если назван model, и
-// флаги имени сессии, если назван session.
-func (h Head) Command(model, session string) []string {
+// Command собирает клиента головы: Client, флаги яруса, если назван model,
+// флаги имени сессии, если назван session, и флаги отображаемого имени, если
+// назван name. Имя ставится только на свежий подъём: у продолжения (--resume)
+// оно уже есть в транскрипте, и повторный флаг переписал бы его молча (проба
+// DK-879 на клиенте), поэтому зовущий передаёт name пустым там, где голова не
+// новая.
+func (h Head) Command(model, session, name string) []string {
 	cmd := append([]string{}, h.Client...)
 	if model != "" {
 		cmd = append(cmd, fill(h.Model, "{model}", model)...)
 	}
 	if session != "" {
 		cmd = append(cmd, fill(h.Session, "{session}", session)...)
+	}
+	if name != "" {
+		cmd = append(cmd, fill(h.Name, "{name}", name)...)
 	}
 	return cmd
 }

@@ -31,6 +31,27 @@ func TestRunLeavesLiveRegistryAlone(t *testing.T) {
 	}
 }
 
+// TestTouchCmdsComposition: регрессия DK-1121. Груминг из чата дашборда зовёт
+// add --id и set, и раньше они входили в touchCmds наравне с настоящей
+// работой: чат оформления задачи держал «Стоп» вместо кнопки «Выполнить».
+// Строку теперь делают своей только взятие в работу и его прямые следствия.
+func TestTouchCmdsComposition(t *testing.T) {
+	want := []string{"move", "close", "ask", "fail", "review"}
+	if len(touchCmds) != len(want) {
+		t.Fatalf("состав touchCmds %v, ожидал ровно %v", touchCmds, want)
+	}
+	for _, cmd := range want {
+		if !touchCmds[cmd] {
+			t.Errorf("touchCmds потерял %q", cmd)
+		}
+	}
+	for _, dropped := range []string{"add", "set", "file", "dep", "progress"} {
+		if touchCmds[dropped] {
+			t.Errorf("touchCmds всё ещё держит %q: груминг снова станет работой над строкой", dropped)
+		}
+	}
+}
+
 // liveRegistry это реестр живого дома человека, а не дома прогона: сторожим мы
 // именно его.
 func liveRegistry(t *testing.T) string {

@@ -17,9 +17,11 @@ import (
 // touchCmds это команды, которые считаются работой над задачей. Чтение
 // (list, show, batch) сюда не идёт: спросить про строку это не работать над
 // ней, и разговор бы привязывался к каждой задаче, о которой сессия справилась.
+// Груминг тоже не входит: add, set, file, dep и progress правят метаданные из
+// разговора о задаче, а не ведут её (DK-1121). Строку делает своей только
+// взятие в работу и её прямые следствия.
 var touchCmds = map[string]bool{
-	"add": true, "move": true, "close": true, "ask": true, "fail": true,
-	"set": true, "file": true, "review": true, "dep": true, "progress": true,
+	"move": true, "close": true, "ask": true, "fail": true, "review": true,
 }
 
 var touchIDRe = regexp.MustCompile(`^[A-Za-z]{2,10}-\d{1,6}$`)

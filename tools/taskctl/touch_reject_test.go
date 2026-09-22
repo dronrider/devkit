@@ -85,6 +85,41 @@ func TestRejectedCloseLeavesRegistryAlone(t *testing.T) {
 	}
 }
 
+// TestGroomingCommandsLeaveRegistryAlone: регрессия DK-1121 на синтетической
+// доске. Груминг из чата дашборда зовёт `add --id` и `set` (оформление и
+// правка строки из разговора), и до сужения touchCmds эти команды заводили
+// в реестре запись «работа»: строка на дашборде держала «Стоп» вместо кнопки
+// «Выполнить», хотя работу над ней никто не вёл. Взятие строки командой move
+// остаётся работой, как и раньше.
+func TestGroomingCommandsLeaveRegistryAlone(t *testing.T) {
+	root := setup(t)
+	bin := buildTaskctl(t)
+	home := t.TempDir()
+	sess := "dddd4444-4444-4444-8444-444444444444"
+
+	out, err := runTaskctlSession(t, bin, root, home, sess, "add", "--id", "XR-777",
+		"--title", "Из чата груминга", "--type", "task", "--rank", "0+1+1+0+1", "--accept", "agent")
+	if err != nil {
+		t.Fatalf("add --id должен пройти: %v\n%s", err, out)
+	}
+	out, err = runTaskctlSession(t, bin, root, home, sess, "set", "XR-777", "--cost", "M")
+	if err != nil {
+		t.Fatalf("set должен пройти: %v\n%s", err, out)
+	}
+	if recs := sessions.LoadAll(home)[sess]; len(recs) != 0 {
+		t.Fatalf("груминг завёл привязку сессии к строке: %+v", recs)
+	}
+
+	out, err = runTaskctlSession(t, bin, root, home, sess, "move", "XR-004", "in-progress")
+	if err != nil {
+		t.Fatalf("move in-progress должен пройти: %v\n%s", err, out)
+	}
+	recs := sessions.LoadAll(home)[sess]
+	if len(recs) != 1 || recs[0].Source != sessions.BySrc {
+		t.Fatalf("взятие строки в работу не отметилось в реестре: %+v", recs)
+	}
+}
+
 // TestMissingRowMoveSkipsRegistry: взятие несуществующей строки не заводит
 // привязку вовсе, ни отметкой работы, ни отвязкой.
 func TestMissingRowMoveSkipsRegistry(t *testing.T) {

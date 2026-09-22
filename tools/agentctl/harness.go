@@ -129,7 +129,7 @@ var optionalSchema = []sectionSpec{
 	// законен, подъём на нём откажет сам со своими словами. wait_cap это
 	// потолок срока agentctl wait (DK-930), значение разбирает сама команда.
 	{"head", []keySpec{{"client", tomlArr}, {"bin", tomlStr}, {"model", tomlArr},
-		{"session", tomlArr}, {"resume", tomlArr}, {"turn_end", tomlStr}, {"wait_cap", tomlStr}}},
+		{"session", tomlArr}, {"name", tomlArr}, {"resume", tomlArr}, {"turn_end", tomlStr}, {"wait_cap", tomlStr}}},
 }
 
 var discoveryValues = []string{"auto", "manual"}

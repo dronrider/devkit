@@ -79,6 +79,12 @@ func TestProfileClaudeCode(t *testing.T) {
 	if got := strings.Join(p.section("hooks").arr("events"), ","); got != "write,session-start,notify,subagent-done,turn-done,turn-failed,prompt-submit,tool-done" {
 		t.Fatalf("events = %q", got)
 	}
+	// Ключ [head].name (DK-879): им голова конвейера подписывает себя в
+	// списке чатов и в claude --resume, схема agentctl обязана знать ключ,
+	// а не считать его незнакомым.
+	if got := strings.Join(p.section("head").arr("name"), ","); got != "--name,{name}" {
+		t.Fatalf("[head] name = %q", got)
+	}
 }
 
 // writeProfiles кладёт во временную директорию профили с заданными режимами

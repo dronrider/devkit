@@ -1,0 +1,39 @@
+-j 3 run 1: exit=0 wall=1276s load_before=1.88 2.39 4.34 load_after=1.43 3.30 4.87
+check-skills        0.1s ok
+Ran 18 of 18 components in 21m16s
+OK
+-j 4 run 1: exit=0 wall=1184s load_before=1.43 3.30 4.87 load_after=1.20 3.33 5.36
+check-skills        0.0s ok
+Ran 18 of 18 components in 19m44s
+OK
+-j 5 run 1: exit=1 wall=557s load_before=1.20 3.33 5.36 load_after=8.06 10.41 8.99
+go:dashboard      556.0s FAIL
+go:shipctl        385.7s ok
+go:taskctl        239.1s ok
+board-task        154.1s ok
+hooks             137.8s ok
+go:agentctl        95.6s ok
+go:obeycheck       78.6s ok
+goal-loop          59.9s ok
+go:regcheck         9.6s ok
+go:cmdout           8.5s ok
+go:secretctl        7.6s ok
+go:trackctl         7.3s ok
+skills              1.3s ok
+prose               0.6s ok
+doctor              0.3s ok
+check-skills        0.1s ok
+check-exec-bit      0.1s ok
+FAIL go:dashboard
+--- FAIL: TestChatListGluesWindowPasses (0.11s)
+    testing.go:1464: TempDir RemoveAll cleanup: unlinkat /var/folders/x1/vsj11crd03dcghk7d4p8ppjm0000gn/T/TestChatListGluesWindowPasses1213637064/001/.devkit: directory not empty
+FAIL
+FAIL	github.com/dronrider/devkit/tools/dashboard	555.375s
+FAIL
+
+Ran 17 of 18 components in 9m16s
+FAILED (first=go:dashboard), стоп по первому провалу
+-j 8 run 1: exit=0 wall=1044s load_before=8.06 10.41 8.99 load_after=1.64 4.91 8.54
+check-skills        0.1s ok
+Ran 18 of 18 components in 17m24s
+OK

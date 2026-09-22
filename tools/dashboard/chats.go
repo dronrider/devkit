@@ -143,8 +143,15 @@ type chatEntry struct {
 	// реестре клиента. Стоит только у занятого разговора и только там, где
 	// клиент эту метку пишет: показывает его строка списка минутами (DK-893).
 	Sec int `json:"sec,omitempty"`
-	// Summary это заголовок от самого харнеса: он старше и эвристики, и haiku.
+	// Summary это заголовок от самого харнеса: старый формат записи
+	// {"type":"summary"}, младше custom-title и ai-title в лестнице.
 	Summary string `json:"-"`
+	// CustomTitle это имя, названное человеком (/rename, claude --name) либо
+	// дашбордом при подъёме головы с известным предметом: старше всего
+	// остального в лестнице заголовка (DK-879).
+	CustomTitle string `json:"-"`
+	// AITitle это заголовок, который харнес сам считает по первой реплике.
+	AITitle string `json:"-"`
 	// First это первая реплика человека, обрезанная для списка. Title поверх
 	// неё замещается заголовком (titleFill), а панель, вернувшаяся на адрес
 	// new, узнаёт родившийся диалог именно по первой реплике: она уехала
@@ -528,10 +535,6 @@ func chatStoreDir(home string) string {
 
 type chatStore struct {
 	Model string `json:"model,omitempty"`
-	// Title это заголовок разговора, названный haiku: харнес пишет summary не
-	// всякому транскрипту, а первая реплика заголовком не годится. Считается он
-	// один раз и живёт тут навсегда.
-	Title string `json:"title,omitempty"`
 	// Hidden убирает чат из списков насовсем: им помечены пробные чаты, поднятые
 	// ради проверки дашборда, у которых метки в промпте не было.
 	Hidden bool `json:"hidden,omitempty"`
@@ -917,14 +920,14 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		read++
 		prefix := prefixOf(f.projPath)
 		head := s.sessionHeadCached(f.path, f.stamp)
-		// Служебная сессия суммаризации чатом не является: её завёл сам
-		// дашборд ради заголовка, и в списке ей делать нечего.
+		// Пробный чат, поднятый ради проверки самого дашборда, разговором не
+		// является, и в списке ему делать нечего.
 		store := s.chatStoreRead(f.ID)
 		// Скрытую запись отдаёт и адресный вход (ключ keep): кнопка чата у
 		// строки цели ведёт в идущий виток по его sid, а без записи в ответе
 		// панель рисовала живой разговор мёртвым и слала реплику резюмом
 		// (DK-938). Список без адреса остаётся чистым, как велит DK-847.
-		if titleSession(head.First) || (store.Hidden && !win.includeHidden && !win.keep[f.ID]) {
+		if probeSession(head.First) || (store.Hidden && !win.includeHidden && !win.keep[f.ID]) {
 			continue
 		}
 		// Разговор, в котором никто ничего не сказал, в списке не строка, а
@@ -938,11 +941,19 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		// сверяется по записям журнала, а память окна в них не пишется, и её
 		// имя сверки не проходит.
 		winName, winSrc := s.chatWinOf(f.ID, recs, live, winMem)
-		tasks := ownTasks(sessions.Touched(recs[f.ID]), prefix)
-		if id := taskIDInName(f.suffix); id != "" && !hasTask(tasks, id) {
-			tasks = append([]string{id}, tasks...)
-		}
 		task, note, bound := bindTask(s.binds(), f.ID, f.suffix, head)
+		tasks := ownTasks(sessions.Touched(recs[f.ID]), prefix)
+		// Привязка запуска идёт первым чипом: это задача, под которой дашборд
+		// сам поднял сессию (bindTask), и у неё чип стоит с первой секунды, до
+		// всякой команды доски. Касания реестра (ownTasks) дописываются следом
+		// (замечание пользователя про DK-909 и DK-972, DK-879). Чужая доска в
+		// чип не идёт по той же причине, по которой её не пускает ownTasks:
+		// прогон зовёт утилиты доски с вымышленной задачей фикстуры под своим
+		// же ID, и чужой префикс тут не привязка, а шум работы (DK-860).
+		if bound == boundLead && task != "" && !hasTask(tasks, task) &&
+			(prefix == "" || strings.HasPrefix(task, prefix+"-")) {
+			tasks = append([]string{task}, tasks...)
+		}
 		if task != "" && prefix != "" && !strings.HasPrefix(task, prefix+"-") {
 			note = foreignTaskNote
 		} else if bound == boundLead {
@@ -953,6 +964,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		e := chatEntry{
 			ID: f.ID, Project: f.projName,
 			Title: head.First, First: head.First, Summary: head.Summary,
+			CustomTitle: head.CustomTitle, AITitle: head.AITitle,
 			Mtime: saidAt(head, f.sessionInfo), Born: head.Born, Tasks: tasks,
 			Note: note, Bound: bound,
 			LiveModel: modelShort(readSessionModel(f.path)),
@@ -1641,7 +1653,14 @@ func chatNewName(id string, alive func(string) bool) string {
 // плана, отзывчивости, канала и ротации исполнителя заказ больше не несёт
 // (DK-612): их доставляет хук старта сессии и скиллы chat и work-plan, а
 // дублирующая приписка расходилась с ними и засоряла ленту вырезками.
-func chatCmd(env, model, resume, text string, h *Harness, agentctl string) string {
+//
+// name это отображаемое имя чата с известным предметом («DK-1120 работа»,
+// «DK-1120 цель»): им клиент подпишет сессию себе, и то же имя видно в
+// claude --resume (DK-879). Зовущий обязан оставлять его пустым при
+// продолжении (resume != ""): у резюма имя уже есть в транскрипте, и флаг
+// переписал бы его молча поверх custom-title, который держал разговор
+// прежде (проба DK-879 на клиенте, раздел «Границы» файла задачи).
+func chatCmd(env, model, resume, text, name string, h *Harness, agentctl string) string {
 	client := defaultClient
 	head := env
 	if h != nil && !h.Default {
@@ -1670,6 +1689,8 @@ func chatCmd(env, model, resume, text string, h *Harness, agentctl string) strin
 	}
 	if resume != "" {
 		cmd += " --resume " + shQuote(resume)
+	} else if name != "" {
+		cmd += " --name " + shQuote(name)
 	}
 	if text != "" {
 		cmd += " " + shQuote(text)
@@ -1989,7 +2010,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		s.logf("модель чата %s не записалась: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, ""), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, ""), model, "", text, "", s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("подъём чата в %s не удался: %s", found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
@@ -3019,7 +3040,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(task, sess, sid), model, sid, text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(task, sess, sid), model, sid, text, "", s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял продолжение чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -3551,7 +3572,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", chatTree(found.Path, task),
-		chatCmd(s.launchEnv(task, sess, sid), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(task, sess, sid), model, "", text, "", s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял сессию чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -3838,12 +3859,19 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 		}
 		return continuePrompt(id, sess)
 	}
+	// Имя свежей головы это ID и роль словом (DK-879): предмет известен здесь
+	// до первого токена, заказывать заголовок у модели незачем.
+	role := "работа"
+	if goal {
+		role = "цель"
+	}
+	name := id + " " + role
 	e, has := s.taskChat(found.Path, id)
 	if !has {
 		// Чата нет ни одного: поднимается новый, с той же репликой. Раньше тут
 		// экран откатывался на подъём конвейера, и у цели это был не тот
 		// механизм вовсе.
-		s.startFresh(w, found, id, prompt(""))
+		s.startFresh(w, found, id, prompt(""), name)
 		return
 	}
 	if e.Sock != "" {
@@ -3879,7 +3907,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sid := e.ID
 	info, okS := findSession(s.transcriptRoots(), found.Path, sid)
 	if !okS {
-		s.startFresh(w, found, id, prompt(""))
+		s.startFresh(w, found, id, prompt(""), name)
 		return
 	}
 	if m := tmuxMissingCheck(); m != "" {
@@ -3894,7 +3922,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, sid), model, sid, prompt(sess), s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, sid), model, sid, prompt(sess), "", s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял продолжение работы %s: %s", id, procErr(err))})
 		return
@@ -3976,14 +4004,17 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// Заголовок диалога (замечание 4 четвёртого круга POC). Первая реплика целиком
-// заголовком не годится: «Привет. Ответь одной строкой: как называется этот
-// проект? Ничего не делай, только скажи.» растягивалось на весь экран. Порядок
-// такой, от дешёвого к дорогому: запись summary самого харнеса (её пишет
-// Claude Code и ею же подписывает разговоры список `claude --resume`),
-// сохранённый ранее заголовок из ~/.devkit/chats/<sid>.json, дальше эвристика
-// первого предложения. Haiku зовётся фоном и только там, где эвристика
-// работает плохо, а результат оседает в том же файле навсегда.
+// Заголовок диалога (замечание 4 четвёртого круга POC, лестница переписана
+// DK-879). Первая реплика целиком заголовком не годится: «Привет. Ответь
+// одной строкой: как называется этот проект? Ничего не делай, только скажи.»
+// растягивалось на весь экран. Порядок такой, от старшего к младшему:
+// custom-title (человек назвал разговор командой /rename либо тем же именем
+// его назвал дашборд флагом --name при подъёме известной головы), ai-title
+// (харнес сам считает заголовок по первой реплике записью сразу после неё),
+// запись summary самого харнеса (устаревший формат, но читается на всякий
+// случай), эвристика первого предложения на месте. Отдельного заказа у модели
+// тут больше нет: то, что раньше просили у haiku фоном, харнес и так пишет в
+// транскрипт сам, дёшево и без отдельного процесса.
 
 // titleWords это потолок заголовка словами: пять-семь слов читаются глазом
 // целиком, длиннее уже не заголовок, а сама реплика.
@@ -4025,19 +4056,6 @@ func titleTrim(text string) string {
 	return strings.Join(words, " ")
 }
 
-// titleMark это метка служебного вызова в самом начале промпта. По ней
-// транскрипт суммаризации узнаётся в списках и выбрасывается из них: клиент
-// пишет журнал всякому вызову, в том числе одноразовому, и без метки эти
-// сессии всплывали чатами наравне с разговорами человека (баг девятого круга
-// POC). Метка стоит первой строкой, потому что список читает только начало
-// первой реплики.
-const titleMark = "[devkit-title]"
-
-// titleLegacy это начало промпта, каким он был до метки: уже написанные
-// транскрипты узнаются по нему, и старый мусор уходит с экранов сам, без
-// удаления файлов.
-const titleLegacy = "Назови диалог заголовком"
-
 // probeMark помечает пробный чат, поднятый ради проверки самого дашборда.
 // Такие чаты не разговор человека, и в списках им делать нечего ровно по той же
 // причине, по которой там нет сессий суммаризации (замечание 20).
@@ -4068,10 +4086,10 @@ func (s *server) taskChats(projPath string) map[string]string {
 	view := s.harnesses()
 	for _, f := range sessionFiles(s.transcriptRoots(), projPath) {
 		head := s.sessionHeadCached(f.path, f.stamp)
-		// Груминг черновика и служебная сессия заголовка приезжают тем же
+		// Груминг черновика и пробный чат самого дашборда приезжают тем же
 		// заказом дашборда, и по полям реестра от запуска задачи они
 		// неотличимы: разводит их первая реплика.
-		if strings.HasPrefix(head.First, groomOrderPrefix) || titleSession(head.First) {
+		if strings.HasPrefix(head.First, groomOrderPrefix) || probeSession(head.First) {
 			continue
 		}
 		task, note, bound := bindTask(binds, f.ID, f.suffix, head)
@@ -4094,11 +4112,14 @@ func (s *server) taskChats(projPath string) map[string]string {
 	return out
 }
 
-// titleSession узнаёт служебную сессию по первой реплике.
-func titleSession(first string) bool {
+// probeSession узнаёт пробный чат, поднятый вручную для проверки самого
+// дашборда, по первой реплике: такие чаты не разговор человека, и в списках
+// им делать нечего ровно по той же причине, по которой там нет служебных
+// сессий заголовка (замечание 20). Заказ заголовка у haiku снят целиком
+// (DK-879), и своей метки у него больше нет: метить осталось только пробы.
+func probeSession(first string) bool {
 	first = strings.TrimSpace(first)
-	if strings.HasPrefix(first, titleMark) || strings.HasPrefix(first, titleLegacy) ||
-		strings.HasPrefix(first, probeMark) {
+	if strings.HasPrefix(first, probeMark) {
 		return true
 	}
 	low := strings.ToLower(first)
@@ -4110,141 +4131,48 @@ func titleSession(first string) bool {
 	return false
 }
 
-// titleDir это рабочая директория служебного вызова: каталог вне всех проектов,
-// чтобы транскрипт лёг в свой угол и не попал ни в один список. Не создался,
-// значит вызов пойдёт из директории процесса, и его подберёт фильтр по метке.
-func (s *server) titleDir() string {
-	dir := filepath.Join(s.cfg.Home, ".devkit", "titles")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return ""
-	}
-	return dir
-}
-
-// titleAsk просит haiku назвать чат. Модель тут самая дешёвая нарочно:
-// заголовок это украшение списка, и платить за него ярусом выше некому.
-func (s *server) titleAsk(text string) string {
-	if m := clientMissing(defaultClient); m != "" {
-		return ""
-	}
-	prompt := titleMark + " Назови диалог заголовком в 5-7 слов по первой реплике человека. " +
-		"Ответь только заголовком, без кавычек и пояснений. Реплика: " + truncate(text, 600)
-	// Вызов служебный: заголовок это украшение списка, а не работа человека.
-	// Хуки devkit на нём молчат по метке окружения, а транскрипт уезжает в свой
-	// каталог вне проектов, чтобы не всплыть чатом (баг девятого круга POC).
-	out, err := runProcQuiet(s.titleDir(), true, defaultClient, "-p", "--model", "haiku", prompt)
-	if err != nil {
-		return ""
-	}
-	said := strings.TrimSpace(string(out))
-	if titleJunk(said) {
-		return ""
-	}
-	return titleTrim(said)
-}
-
-// titleJunk узнаёт служебный ответ вместо заголовка. Клиент отвечает своим
-// текстом и на отказ хука, и на несостоявшийся логин, а заголовок из такого
-// ответа оседал в кеше навсегда и вставал в шапку чата («UserPromptSubmit
-// operation blocked by hook»). Признаки грубые нарочно: заголовок это пять-семь
-// слов одной строкой, и всё, что на него не похоже, лучше выбросить, оставшись
-// с эвристикой.
-func titleJunk(said string) bool {
-	if said == "" {
-		return true
-	}
-	if strings.Contains(said, "\n") {
-		return true
-	}
-	low := strings.ToLower(said)
-	for _, mark := range []string{
-		"blocked by hook", "operation blocked", "not logged in", "please run /login",
-		"userpromptsubmit", "pretooluse", "posttooluse", "invalid api key",
-		"execution error", "traceback", "no such file",
-	} {
-		if strings.Contains(low, mark) {
-			return true
-		}
-	}
-	// Заголовок длиннее двух строк текста это уже не заголовок, а рассказ.
-	return len([]rune(said)) > 200
-}
-
-// titleJobs держит счёт идущих суммаризаций: заголовок нужен списку, а не
-// человеку прямо сейчас, и очередь на восемьдесят транскриптов сожгла бы
-// квоту на украшение.
-var titleJobs = make(chan struct{}, 1)
-
-// titleAskLimit это сколько заголовков заказывается за один заход списка.
-// Список открывают часто, и за несколько заходов свежие разговоры обрастают
-// заголовками сами, без единого ожидания на экране.
-const titleAskLimit = 2
-
 // titleFor это одна лестница заголовка разговора на всех потребителей: список
-// диалогов, раздел «Агенты», всякий следующий. Порядок от дешёвого к дорогому:
-// summary самого харнеса, сохранённый заголовок, эвристика первого предложения
-// на месте. Haiku зовётся фоном и правит эвристику к следующему заходу; ask
-// говорит, можно ли его заказывать, потому что счёт заказов держит вызывающий.
-// Второй такой лестницы заводить нельзя: разойдясь, они дали бы одному
-// разговору два разных имени на соседних экранах (замечание 1 восьмого круга).
-// Второй ответ говорит, ушёл ли заказ haiku: счёт заказов держит вызывающий, а
-// знает про заказ только эта лестница.
-func (s *server) titleFor(sid, summary, first string, ask bool) (string, bool) {
+// диалогов, раздел «Агенты», всякий следующий. Второй такой лестницы заводить
+// нельзя: разойдясь, они дали бы одному разговору два разных имени на
+// соседних экранах (замечание 1 восьмого круга). Порядок описан в комментарии
+// выше: custom-title, ai-title, summary харнеса, эвристика первого
+// предложения. known это имя, которое дашборд посчитал сам для головы с
+// известным предметом там, где транскрипт его не несёт (виток цели, DK-879):
+// оно старше ai-title и summary, но младше custom-title, потому что человек,
+// переименовавший разговор рукой, обязан оставаться последним словом.
+func titleFor(summary, custom, known, ai, first string) string {
+	if custom != "" {
+		return custom
+	}
+	if known != "" {
+		return known
+	}
+	if ai != "" {
+		return ai
+	}
 	if summary != "" {
-		return summary, false
+		return summary
 	}
-	if sid != "" && chatKeyRe.MatchString(sid) {
-		if st := s.chatStoreRead(sid); st.Title != "" {
-			return st.Title, false
-		}
-	}
-	said := titleTrim(first)
-	if ask && first != "" && sid != "" && chatKeyRe.MatchString(sid) {
-		s.titleOrder(sid, first)
-		return said, true
-	}
-	return said, false
+	return titleTrim(first)
 }
 
-// titleOrder заказывает заголовок фоном. Заказ идёт по одному на машину:
-// параллельные вызовы клиента стоят дороже, чем ожидание заголовка до
-// следующего открытия экрана.
-func (s *server) titleOrder(sid, text string) {
-	go func() {
-		select {
-		case titleJobs <- struct{}{}:
-		default:
-			return
-		}
-		defer func() { <-titleJobs }()
-		said := s.titleAsk(text)
-		if said == "" {
-			return
-		}
-		cur := s.chatStoreRead(sid)
-		cur.Title = said
-		s.chatStoreWrite(sid, cur)
-		s.logf("заголовок чата %s назван haiku: %s", sid, said)
-	}()
-}
-
-// titleFill дописывает заголовки списку диалогов той же лестницей. Счёт заказов
-// держится тут: список приходит на восемьдесят транскриптов, и заказывать
-// заголовок каждому значило бы сжечь квоту на украшение.
+// titleFill дописывает заголовки списку диалогов той же лестницей.
 func (s *server) titleFill(list []chatEntry) {
-	asked := 0
 	for i := range list {
 		e := &list[i]
-		// В незачатом разговоре ни слова не сказано, и называть его нечем:
-		// заказ заголовка поднял бы сессию суммаризации на пустоту.
+		// В незачатом разговоре ни слова не сказано, и называть его нечем.
 		if e.Blank {
 			continue
 		}
-		said, ordered := s.titleFor(e.ID, e.Summary, e.Title, asked < titleAskLimit)
-		e.Title = said
-		if ordered {
-			asked++
+		known := ""
+		if e.Goal != "" {
+			// Виток цели не проходит через голову задачи (DK-879, границы): у
+			// него своя оболочка, goal-run.py, и --name ей не назван. Имя
+			// считается тут же, той же лестницей, что у остальных известных
+			// голов: ID и роль словом.
+			known = e.Goal + " цель"
 		}
+		e.Title = titleFor(e.Summary, e.CustomTitle, known, e.AITitle, e.Title)
 	}
 }
 
@@ -4351,8 +4279,10 @@ func (s *server) handleChatShotGet(w http.ResponseWriter, r *http.Request) {
 
 // startFresh поднимает новый чат работы и отвечает тем же телом, что и
 // продолжение: экрану всё равно, продолжили ему сессию или завели первую, ему
-// нужен адрес, куда идти смотреть.
-func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text string) {
+// нужен адрес, куда идти смотреть. name это детерминированное имя головы
+// («DK-1120 работа», «DK-1120 цель»), которым клиент подпишет свежую сессию
+// (DK-879): резюма тут не бывает, и передавать его пустым незачем.
+func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text, name string) {
 	if m := tmuxMissingCheck(); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
@@ -4369,7 +4299,7 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text stri
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, ""), model, "", text, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, ""), model, "", text, name, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял новый чат %s: %s", id, procErr(err))})
 		return

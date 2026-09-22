@@ -343,7 +343,7 @@ func taskRunPath(roots []string) string {
 // приставки стоят после пар taskhead и перекрывают их. Дом замка и реестра
 // тоже настоящий, машинный: `taskctl run` из тика смотрит туда же, и замок у
 // всех дорог выходит один.
-func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, order, again string, hidden bool) (taskhead.Request, error) {
+func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, order, again, role string, hidden bool) (taskhead.Request, error) {
 	tr := taskRunPath(s.cfg.Roots)
 	if tr == "" {
 		return taskhead.Request{}, errors.New(taskRunMissing)
@@ -363,9 +363,17 @@ func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, 
 		home, _ = os.UserHomeDir()
 	}
 	dk := strings.TrimSuffix(tr, string(filepath.Separator)+filepath.FromSlash(taskhead.TaskRunRel))
+	// Отображаемое имя головы это ID и роль словом («DK-1120 работа», «DK-1120
+	// проверка»): предмет сессии известен зовущему до первого токена, и
+	// заказывать заголовок у модели тут незачем (DK-879). Пустая роль значит,
+	// что имя не называется вовсе (предполёт wake.go не поднимает голову).
+	chatName := ""
+	if role != "" {
+		chatName = strings.TrimSpace(id) + " " + role
+	}
 	return taskhead.Request{ID: id, Root: proj.Path, Project: proj.Name, Home: home, Devkit: dk,
 		Harness: taskhead.HarnessName(name), Model: model, Order: order, Again: again,
-		Hidden: hidden, Adopt: adopt, Prefix: s.headlessEnv(id, sess, hidden)}, nil
+		Hidden: hidden, Adopt: adopt, Prefix: s.headlessEnv(id, sess, hidden), Name: chatName}, nil
 }
 
 // startTaskSession поднимает голову задачи общим подъёмом taskhead.Raise: та
@@ -377,6 +385,10 @@ func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, 
 // плана и канала в текст заказа не приписываются (DK-612): их доставляет хук
 // старта сессии.
 //
+// role это слово, которым названа голова в списке чатов: «работа» у кнопки
+// экрана, ответа человека и второго круга ревью, «проверка» у прогона
+// сценария (DK-879). Пустое значит, что голова идёт без имени.
+//
 // hidden называет зовущего (DK-847): кнопка экрана и ответ человека поднимают
 // голову для него, а прогон проверки и второй круг ревью поднимает тик без
 // него, и запись уходит из списка панели.
@@ -384,8 +396,8 @@ func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, 
 // Занятый замок это *headBusy: голову уже поднял кто-то другой, чаще всего тик
 // командой `taskctl run`. Лестница, которой поднять голову нечем, зовёт
 // человека сама, а сюда приходит ошибкой со своими строками.
-func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again string, hidden bool) (taskhead.Result, error) {
-	q, err := s.headRequest(proj, id, sess, h, model, order, again, hidden)
+func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again, role string, hidden bool) (taskhead.Result, error) {
+	q, err := s.headRequest(proj, id, sess, h, model, order, again, role, hidden)
 	if err != nil {
 		return taskhead.Result{}, err
 	}
@@ -626,7 +638,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		model = own.tierModel(tier)
 	}
 	res, err := s.startTaskSession(found, id, sess, harness, model,
-		runPrompt(row.Sect, id), runPrompt("in-progress", id), false)
+		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false)
 	if err != nil {
 		// Замок держит голова, поднятая мимо кнопки (тик командой `taskctl
 		// run`, человек из терминала). Для экрана это та же живая работа, что

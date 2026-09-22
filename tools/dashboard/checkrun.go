@@ -127,7 +127,7 @@ func (c *dashCarrier) Ladder() []checkrun.Step {
 func (c *dashCarrier) Raise(p checkrun.Plan) checkrun.Report {
 	id := p.Row.ID
 	sess := "task-" + id
-	res, err := c.s.startTaskSession(c.proj, id, sess, nil, p.Choice.Model, p.Order, p.Again, true)
+	res, err := c.s.startTaskSession(c.proj, id, sess, nil, p.Choice.Model, p.Order, p.Again, "проверка", true)
 	if err != nil {
 		// Занятый замок это живая голова, поднятая мимо дашборда, и поломкой он
 		// не считается, как и живая tmux-сессия в предполёте.

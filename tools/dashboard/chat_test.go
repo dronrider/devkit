@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -727,18 +728,18 @@ func TestStaticPanelKnowsStartAndStuck(t *testing.T) {
 // от содержимого чужого конфига; сам конфиг подписки дашборд не правит.
 func TestChatCmdSecondHarnessCarriesAutoPermissionMode(t *testing.T) {
 	h := &Harness{Name: "втораяtest", Bin: "клиент-2"}
-	got := chatCmd("", "glm-5.3", "", "посмотри доску", h, "agentctl")
+	got := chatCmd("", "glm-5.3", "", "посмотри доску", "", h, "agentctl")
 	if !strings.Contains(got, " --permission-mode auto") {
 		t.Errorf("заказ второй подписки без режима разрешений: %s", got)
 	}
 	// Резюм идёт тем же клиентом и с тем же режимом.
-	again := chatCmd("", "glm-5.3", "aaaa-1111", "и что вышло", h, "agentctl")
+	again := chatCmd("", "glm-5.3", "aaaa-1111", "и что вышло", "", h, "agentctl")
 	if !strings.Contains(again, " --permission-mode auto") {
 		t.Errorf("резюм второй подписки без режима разрешений: %s", again)
 	}
 	// Подписке по умолчанию флаг не ставится: её режим настраивает сам человек,
 	// и дашборд в него не лезет.
-	def := chatCmd("", "opus", "", "посмотри доску", nil, "agentctl")
+	def := chatCmd("", "opus", "", "посмотри доску", "", nil, "agentctl")
 	if strings.Contains(def, "--permission-mode") {
 		t.Errorf("режим разрешений уехал в заказ подписки по умолчанию: %s", def)
 	}
@@ -822,7 +823,7 @@ exit 0`)
 // незнание окна контекста и оставлено осознанно.
 func TestChatCmdSecondHarnessCarriesModel(t *testing.T) {
 	h := &Harness{Name: "втораяtest", Bin: "клиент-2"}
-	got := chatCmd("", "glm-5.3-flash", "", "посмотри доску", h, "agentctl")
+	got := chatCmd("", "glm-5.3-flash", "", "посмотри доску", "", h, "agentctl")
 	if !strings.Contains(got, " --model 'glm-5.3-flash'") {
 		t.Errorf("заказ второй подписки потерял модель яруса: %s", got)
 	}
@@ -830,17 +831,17 @@ func TestChatCmdSecondHarnessCarriesModel(t *testing.T) {
 		t.Errorf("заказ второй подписки потерял обёртку exec: %s", got)
 	}
 	// Резюм на второй подписке идёт той же дорогой: с моделью в команде.
-	again := chatCmd("", "glm-5.3-flash", "aaaa-1111", "и что вышло", h, "agentctl")
+	again := chatCmd("", "glm-5.3-flash", "aaaa-1111", "и что вышло", "", h, "agentctl")
 	if !strings.Contains(again, " --model 'glm-5.3-flash'") {
 		t.Errorf("резюм второй подписки потерял модель яруса: %s", again)
 	}
 	// Подписка по умолчанию остаётся с моделью: выбор селектора панели работает
 	// как работал.
-	def := chatCmd("", "opus", "", "посмотри доску", nil, "agentctl")
+	def := chatCmd("", "opus", "", "посмотри доску", "", nil, "agentctl")
 	if !strings.Contains(def, " --model 'opus'") {
 		t.Errorf("заказ подписки по умолчанию потерял модель: %s", def)
 	}
-	byDef := chatCmd("", "opus", "", "посмотри доску",
+	byDef := chatCmd("", "opus", "", "посмотри доску", "",
 		&Harness{Name: "перваяtest", Bin: "клиент-1", Default: true}, "agentctl")
 	if !strings.Contains(byDef, " --model 'opus'") {
 		t.Errorf("заказ default-харнеса потерял модель: %s", byDef)
@@ -851,11 +852,11 @@ func TestChatCmdSecondHarnessCarriesModel(t *testing.T) {
 // канала и ротации исполнителя дашборд к тексту больше не клеит (DK-612), их
 // доставляет хук старта сессии и скиллы chat, work-plan.
 func TestChatCmdCarriesOnlyHumanWords(t *testing.T) {
-	fresh := chatCmd("", "opus", "", "посмотри доску", nil, "agentctl")
+	fresh := chatCmd("", "opus", "", "посмотри доску", "", nil, "agentctl")
 	if !strings.HasSuffix(fresh, " 'посмотри доску'") {
 		t.Errorf("в заказе подъёма не только слова человека: %s", fresh)
 	}
-	again := chatCmd("", "opus", "aaaa-1111", "и что вышло", nil, "agentctl")
+	again := chatCmd("", "opus", "aaaa-1111", "и что вышло", "", nil, "agentctl")
 	if !strings.HasSuffix(again, " 'и что вышло'") {
 		t.Errorf("в резюмном заказе не только слова человека: %s", again)
 	}
@@ -872,7 +873,7 @@ func TestChatCmdCarriesOnlyHumanWords(t *testing.T) {
 // (скилл work-plan, раздел «Адрес файла»).
 func TestChatLaunchEnvCarriesTmuxForPlanFallback(t *testing.T) {
 	srv := newServer(&Config{Home: t.TempDir()}, nil, nil)
-	got := chatCmd(srv.launchEnv("XR-4", "chat-XR-4-1", ""), "opus", "", "привет", nil, "agentctl")
+	got := chatCmd(srv.launchEnv("XR-4", "chat-XR-4-1", ""), "opus", "", "привет", "", nil, "agentctl")
 	if !strings.Contains(got, "DEVKIT_TMUX='chat-XR-4-1'") {
 		t.Errorf("в заказе нет имени tmux, и запасной адрес плана команде не собрать: %s", got)
 	}
@@ -2732,6 +2733,46 @@ func TestStaticChatSew(t *testing.T) {
 // написать в нём, перейти в другой, открыть список, и нового чата там нет до
 // перезагрузки страницы (стенд testdata/poc_chatlist.mjs). Без node шаг
 // пропускается: узел стенда, а не рабочей части.
+// TestNoDirectClientSpawn это сторож DK-879. Единственным прямым подъёмом
+// клиента в коде дашборда был заказ заголовка у haiku (titleAsk,
+// runProcQuiet(..., defaultClient, "-p", "--model", "haiku", ...)), и он снят
+// целиком. Всякий другой подъём клиента дашборд ведёт через `tmux
+// new-session`, чью команду тесты стендов подменяют фейковым бинарём: живого
+// агента прогон не поднимает. Сторож грепает исходники пакета и не даёт
+// прямому запуску (runProc/runProcQuiet/exec.Command с клиентом на входе,
+// мимо tmux) вернуться незамеченным следующей правкой.
+func TestNoDirectClientSpawn(t *testing.T) {
+	all, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`(?m)(?:runProc\w*|exec\.Command)\([^\n]*defaultClient`)
+	for _, path := range all {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		if m := re.FindString(readFile(t, path)); m != "" {
+			t.Errorf("%s поднимает клиента напрямую, мимо tmux: %s", path, m)
+		}
+	}
+}
+
+// Чип задачи не повторяет номер, которым уже начинается заголовок чата
+// (DK-879, замечание пользователя про 14 строк с дублем из 79). Без node шаг
+// пропускается: узел стенда, а не рабочей части.
+func TestStaticChatTitleChip(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд чипа заголовка пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chattitlechip.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("чип заголовка: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 func TestStaticChatListFresh(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {

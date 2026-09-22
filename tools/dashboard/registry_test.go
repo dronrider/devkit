@@ -467,11 +467,11 @@ func TestLaunchEnvSameForEveryOrder(t *testing.T) {
 		}
 	}
 	orders := map[string]string{
-		"разговор": chatCmd(env, "opus", "", "привет", nil, "agentctl"),
+		"разговор": chatCmd(env, "opus", "", "привет", "", nil, "agentctl"),
 		// Конвейеру окружение едет приставкой заказа taskhead (DK-935), и
 		// приставка эта та же сборка с меткой печатного режима на хвосте.
 		"конвейер": s.headlessEnv("XR-7", "task-XR-7", false),
-		"разбор": groomCmd(env, "разбери XR-7", nil, "opus"),
+		"разбор": groomCmd(env, "разбери XR-7", nil, "opus", ""),
 	}
 	for name, cmd := range orders {
 		if !strings.HasPrefix(cmd, env) {
@@ -491,8 +491,8 @@ func TestHeadlessMarkOnlyForPipeline(t *testing.T) {
 		t.Fatalf("общая сборка окружения несёт метку печатного режима: %s", env)
 	}
 	for name, cmd := range map[string]string{
-		"разговор": chatCmd(env, "opus", "", "привет", nil, "agentctl"),
-		"разбор":   groomCmd(env, "разбери XR-7", nil, "opus"),
+		"разговор": chatCmd(env, "opus", "", "привет", "", nil, "agentctl"),
+		"разбор":   groomCmd(env, "разбери XR-7", nil, "opus", ""),
 		"вход":     env + " " + defaultClient,
 	} {
 		if strings.Contains(cmd, "DEVKIT_HEADLESS=") {

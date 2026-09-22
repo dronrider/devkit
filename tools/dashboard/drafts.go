@@ -509,7 +509,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// накопителя, и найти её потом можно тем же списком чатов.
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
 		groomCmd(s.launchEnv(id, sess, ""), groomPrompt(id, ask, mode),
-			harness, model)); err != nil {
+			harness, model, id+" груминг")); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("грумминг %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
@@ -562,7 +562,12 @@ func groomLiftTail(mode string) string {
 // Окружение приходит доводом: собирает его одно место на все дороги подъёма
 // (launchEnv). Прежде разбор звал сборку сам, и стоило ей разойтись с прочими
 // дорогами, как сессии разбора пропадали из панели.
-func groomCmd(env, prompt string, h *Harness, model string) string {
+//
+// name это отображаемое имя головы («DK-1120 груминг»): предмет разбора
+// известен до первого токена, заказывать заголовок у отдельной модели
+// незачем (DK-879). Разбор всегда свежая сессия, резюма у него не бывает, и
+// имя ставится безусловно.
+func groomCmd(env, prompt string, h *Harness, model, name string) string {
 	client := defaultClient
 	if h != nil && !h.Default {
 		client = shQuote(binPath(agentctlBin)) + " exec --harness " + shQuote(h.Name) +
@@ -574,6 +579,9 @@ func groomCmd(env, prompt string, h *Harness, model string) string {
 		// не собирался. Имя из лестницы второй подписки её клиент принимает
 		// той же дорогой, что и чат (DK-750).
 		client += " --model " + shQuote(model)
+	}
+	if name != "" {
+		client += " --name " + shQuote(name)
 	}
 	return env + client + " " + shQuote(prompt)
 }

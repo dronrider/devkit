@@ -2067,6 +2067,14 @@ function narrowScreen() {
   return Boolean(window.matchMedia && window.matchMedia("(max-width:900px)").matches);
 }
 
+// phoneScreen это более узкая граница, чем narrowScreen: тот же порог, что у
+// сжатой полосы чипов чата в style.css (DK-879). На такой ширине заголовок и
+// полоса обязаны уместиться в две строки экрана, и чипов задач в строке видно
+// меньше, чем на планшете и на столе.
+function phoneScreen() {
+  return Boolean(window.matchMedia && window.matchMedia("(max-width:520px)").matches);
+}
+
 // Табы экрана доски: задачи, сессии проекта и накопитель черновиков. Три их на
 // любой ширине. Раздела «Агенты» с обзором всех досок сразу больше нет:
 // сессии это работа проекта, и место им на его доске, а сквозной обзор машины
@@ -8834,6 +8842,16 @@ function chatTitle(c) {
   return "чат " + c.id.slice(0, 8);
 }
 
+// chatTitleTask достаёт ID задачи, которым начинается заголовок разговора
+// («DK-1120 работа», «DK-1120 груминг»): дашборд называет так головы с
+// известным предметом (DK-879), номер первым, и чип с тем же ID дублировал
+// бы его в той же строке. Пусто, значит заголовок номера не несёт, и все
+// чипы задач рисуются как обычно.
+function chatTitleTask(c) {
+  const m = /^([A-ZА-Я][A-ZА-Я0-9]*-\d+)\b/.exec((c && c.title) || "");
+  return m ? m[1] : "";
+}
+
 function chatWhen(c) {
   return c.mtime ? localDay(c.mtime) + ", " + localTime(c.mtime) : "";
 }
@@ -8963,7 +8981,14 @@ function chatOption(project, c, current, done) {
   if ((c.past || []).length) {
     chips.append(el("span", "chip", "заходов: " + (c.past.length + 1)));
   }
-  for (const t of (c.tasks || []).slice(0, 4)) chips.append(el("span", "chip", t));
+  // Номер, которым уже начинается заголовок, чипом не повторяется (DK-879):
+  // он один раз стоит там, где читается и ищется, а чип остаётся у задач,
+  // которых заголовок не назвал. На телефоне полоса и так сжата (style.css),
+  // и чипов задач видно не больше трёх: четвёртый занял бы третью строку.
+  const titleTask = chatTitleTask(c);
+  const taskChips = (c.tasks || []).filter((t) => t !== titleTask);
+  const taskLimit = phoneScreen() ? 3 : 4;
+  for (const t of taskChips.slice(0, taskLimit)) chips.append(el("span", "chip", t));
   if (c.harness) chips.append(el("span", "chip", c.harness));
   row.append(chips);
   row.append(el("span", "cfirst", chatWhen(c) + (c.tree ? ", " + c.tree : "")));

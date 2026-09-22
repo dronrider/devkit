@@ -592,7 +592,11 @@ func (s *server) workTitle(projPath, said, sid string) string {
 		return ""
 	}
 	head := s.sessionHeadCached(info.path, info.stamp)
-	name, _ := s.titleFor(sid, head.Summary, head.First, false)
+	known := ""
+	if goal := goalTurnGoal(s.chatStoreRead(sid).Hidden, head.First); goal != "" {
+		known = goal + " цель"
+	}
+	name := titleFor(head.Summary, head.CustomTitle, known, head.AITitle, head.First)
 	return name
 }
 

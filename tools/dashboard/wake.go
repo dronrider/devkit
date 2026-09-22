@@ -100,7 +100,7 @@ func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) ch
 	// пришлось бы возвращать в Blocked вторым коммитом доски. Эти причины живут
 	// на машине долго, и спрашивает их тот же предполёт, что у обхода ждущих
 	// в taskctl (DK-932).
-	pre, err := s.headRequest(proj, id, sess, nil, "", "", "", false)
+	pre, err := s.headRequest(proj, id, sess, nil, "", "", "", "", false)
 	if err == nil {
 		err = taskhead.Preflight(pre)
 	}
@@ -137,7 +137,7 @@ func (s *server) taskWake(proj *Project, id string, rows map[string]boardRow) ch
 	// человек своим ответом: он ждёт продолжения разговора и обязан найти его
 	// в списке панели, а не гадать, куда делся чат.
 	order := runPrompt("in-progress", id)
-	res, err := s.startTaskSession(proj, id, sess, nil, model, order, order, false)
+	res, err := s.startTaskSession(proj, id, sess, nil, model, order, order, "работа", false)
 	if err != nil {
 		// Замок держит живая голова, поднятая мимо дашборда: ответ дойдёт до
 		// неё так же, как до живой tmux-сессии выше, и возвращать строку в

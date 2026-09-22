@@ -45,9 +45,12 @@ func TestBrowserGoalChatOpensLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const loopTitle = "Цикл цели XR-100: третий виток"
+	// Заголовок витка цели считается детерминированно, ID и роль словом
+	// (DK-879): запись summary харнеса из транскрипта ниже её в лестнице, и
+	// заголовок остаётся «XR-100 цель» вместо неё.
+	const loopTitle = "XR-100 цель"
 	writeSession(t, e.home, e.proj, "", goalTurnSID,
-		`{"type":"summary","summary":"`+loopTitle+`"}`+"\n"+goalTurnTalk("XR-100"), time.Now())
+		`{"type":"summary","summary":"Цикл цели XR-100: третий виток"}`+"\n"+goalTurnTalk("XR-100"), time.Now())
 	if err := e.s.chatStoreWrite(goalTurnSID, chatStore{Hidden: true}); err != nil {
 		t.Fatal(err)
 	}

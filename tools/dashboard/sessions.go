@@ -303,6 +303,17 @@ type sessionHead struct {
 	// Записи этой нет у большинства транскриптов, и тогда заголовком остаётся
 	// обрезанная первая реплика.
 	Summary string
+	// AITitle это заголовок, который харнес сам считает по первой реплике и
+	// пишет записью {"type":"ai-title"} сразу после неё, до первого ответа
+	// модели. Он есть почти у каждого интерактивного разговора (DK-879) и
+	// старше эвристики: заказывать то же самое у отдельной модели незачем.
+	AITitle string
+	// CustomTitle это имя, которое сессии дал человек: командой /rename или
+	// флагом `claude --name`. Той же дорогой идёт заказ дашборда: голове с
+	// известным предметом (груминг, конвейер задачи, прогон Check) он
+	// называет имя при подъёме, и клиент пишет его сюда же (DK-879). Запись
+	// старше всего остального в лестнице заголовка.
+	CustomTitle string
 }
 
 // readSessionHead вычитывает шапку транскрипта; служебные вставки в угловых
@@ -425,11 +436,13 @@ func readSessionHead(path string) (sessionHead, bool) {
 	full := err == nil
 	for _, ln := range strings.Split(string(buf[:n]), "\n") {
 		var rec struct {
-			Type      string `json:"type"`
-			GitBranch string `json:"gitBranch"`
-			Summary   string `json:"summary"`
-			Timestamp string `json:"timestamp"`
-			Message   struct {
+			Type        string `json:"type"`
+			GitBranch   string `json:"gitBranch"`
+			Summary     string `json:"summary"`
+			AiTitle     string `json:"aiTitle"`
+			CustomTitle string `json:"customTitle"`
+			Timestamp   string `json:"timestamp"`
+			Message     struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 		}
@@ -441,6 +454,18 @@ func readSessionHead(path string) (sessionHead, bool) {
 		}
 		if head.Summary == "" && rec.Type == "summary" {
 			head.Summary = firstLine(rec.Summary)
+		}
+		// ai-title лежит записью сразу после первой реплики человека, до
+		// первого ответа модели, а custom-title приезжает и позже, при
+		// /rename. Обе читаются до конца шапки, а не до первого попадания: у
+		// custom-title в файле может стоять несколько записей (повторный
+		// заказ дашборда на новый подъём той же головы), и верить надо
+		// последней в прочитанном хвосте.
+		if rec.Type == "ai-title" && rec.AiTitle != "" {
+			head.AITitle = firstLine(rec.AiTitle)
+		}
+		if rec.Type == "custom-title" && rec.CustomTitle != "" {
+			head.CustomTitle = firstLine(rec.CustomTitle)
 		}
 		if head.Branch == "" {
 			head.Branch = rec.GitBranch
@@ -462,9 +487,11 @@ func readSessionHead(path string) (sessionHead, bool) {
 				}
 			}
 		}
-		if head.Branch != "" && head.First != "" {
-			break
-		}
+		// Раньше шапка обрывалась сразу на Branch и First: запись ai-title
+		// лежит дальше, и до неё чтение не доезжало (DK-879). Читается вся
+		// голова до предела метки: буфер и так вычитан целиком выше, и
+		// досрочный выход из цикла экономил бы разбор нескольких строк ценой
+		// потерянного заголовка.
 	}
 	head.Said, head.Bye = tailFacts(path)
 	return head, full
@@ -616,9 +643,9 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 		if strings.HasPrefix(head.First, groomOrderPrefix) {
 			continue
 		}
-		// Служебная сессия суммаризации работой не является по той же причине,
-		// по которой её нет в списке чатов: её завёл дашборд ради заголовка.
-		if titleSession(head.First) {
+		// Пробный чат работой не является по той же причине, по которой его
+		// нет в списке чатов: его завёл дашборд ради собственной проверки.
+		if probeSession(head.First) {
 			continue
 		}
 		task, note, bound := bindTask(binds, f.ID, f.suffix, head)
@@ -681,7 +708,7 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 				// Строки на доске нет (задача закрыта и уехала в архив):
 				// работа подписывается заголовком своего разговора, а не
 				// голым номером (workTitle в board.go).
-				title, _ = s.titleFor(f.ID, head.Summary, head.First, false)
+				title = titleFor(head.Summary, head.CustomTitle, "", head.AITitle, head.First)
 			}
 		}
 		if task == "" {
@@ -692,7 +719,7 @@ func (s *server) sessionWorks(projPath, prefix string, rows map[string]boardRow,
 			// разбора раздел «Агенты» не заводит, иначе один и тот же чат
 			// назывался бы на соседних экранах по-разному (замечание 1
 			// восьмого круга POC).
-			if said, _ := s.titleFor(f.ID, head.Summary, head.First, false); said != "" {
+			if said := titleFor(head.Summary, head.CustomTitle, "", head.AITitle, head.First); said != "" {
 				note = said
 			}
 		}

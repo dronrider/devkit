@@ -258,8 +258,9 @@ func TestDraftGroomPrompt(t *testing.T) {
 	for _, want := range []string{
 		"new-session -d -s task-XR-005 -c " + e.proj + " ",
 		// Правила плана и канала в текст заказа больше не приписываются
-		// (DK-612): их доставляет хук старта сессии.
-		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' claude --model 'модель-pro' '" +
+		// (DK-612): их доставляет хук старта сессии. Имя головы («<ID>
+		// груминг», DK-879) стоит перед заказом.
+		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' claude --model 'модель-pro' --name 'XR-005 груминг' '" +
 			groomPrompt("XR-005", "", draftModeGroom) + "'",
 	} {
 		if !strings.Contains(got, want) {
@@ -549,7 +550,8 @@ func TestDraftGroomAsk(t *testing.T) {
 	if !strings.Contains(text, "уточнение уехало в заказ") {
 		t.Errorf("ответ не говорит, что уточнение уехало новой ходкой: %s", text)
 	}
-	want := "claude --model 'модель-pro' '" + groomPrompt(id, "оставить эту, вторую снять", draftModeGroom) + "'"
+	want := "claude --model 'модель-pro' --name '" + id + " груминг' '" +
+		groomPrompt(id, "оставить эту, вторую снять", draftModeGroom) + "'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("уточнение не доехало до заказа сессии:\n%s\nжду %q", got, want)
 	}
@@ -733,7 +735,9 @@ func TestDraftGroomOnChosenHarness(t *testing.T) {
 		}
 	}
 	// Клиент чужой подписки поднимается её же обвязкой, как у задачи и у чата.
-	want := "' exec --harness 'втораяtest' -- 'клиент-2' --permission-mode auto 'Проведи груминг " + id
+	// Имя головы («<ID> груминг», DK-879) ставится и второй подписке.
+	want := "' exec --harness 'втораяtest' -- 'клиент-2' --permission-mode auto --name '" +
+		id + " груминг' 'Проведи груминг " + id
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("разбор поднят мимо выбранной подписки:\n%s\nжду %q", got, want)
 	}
@@ -777,7 +781,8 @@ func TestDraftGroomWithoutHarnessStaysPlain(t *testing.T) {
 	if strings.Contains(got, "exec --harness") {
 		t.Errorf("разбор без выбора завернули в обвязку подписки: %s", got)
 	}
-	if !strings.Contains(got, "claude --model 'модель-pro' 'Проведи груминг "+id) {
+	// Имя головы («<ID> груминг», DK-879) ставится и подписке по умолчанию.
+	if !strings.Contains(got, "claude --model 'модель-pro' --name '"+id+" груминг' 'Проведи груминг "+id) {
 		t.Errorf("заказ разбора поехал не тем клиентом: %s", got)
 	}
 }

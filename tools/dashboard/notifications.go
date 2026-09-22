@@ -398,11 +398,12 @@ func marshalNotification(n Notification) string {
 
 // Мусор от суммаризации заголовков (баг девятого круга POC). Пока служебный
 // вызов клиента не был помечен молчащим, каждая суммаризация писала в журнал
-// «ход закончен» с заголовком того чата, который она называла. Новых таких
-// строк больше нет, а насыпанные лежат в журнале и лезут в список. Узнаются они
-// дёшево и точно: событие без задачи и без проекта, чей текст дословно совпал с
-// заголовком, лежащим в кеше чатов. Совпасть случайно тут нечему, кеш заполнен
-// ровно ответами haiku на эти же вызовы.
+// «ход закончен» с заголовком того чата, который она называла. Заказ у haiku
+// снят целиком (DK-879), новых таких строк не будет вовсе, а насыпанные
+// прежде лежат в журнале и лезут в список. Узнаются они дёшево и точно:
+// событие без задачи и без проекта, чей текст дословно совпал с заголовком,
+// лежащим в кеше чатов. Совпасть случайно тут нечему, кеш заполнен ровно
+// прежними ответами haiku на эти же вызовы.
 func (s *server) titleNoise() []string {
 	var out []string
 	entries, err := os.ReadDir(chatStoreDir(s.cfg.Home))
@@ -417,7 +418,12 @@ func (s *server) titleNoise() []string {
 		if err != nil {
 			continue
 		}
-		var st chatStore
+		// Своё поле в chatStore под заголовок haiku больше не заводится
+		// (DK-879), а старые файлы кеша на дисках, где заказ ещё работал, его
+		// несут: ключ читается напрямую, мимо общей структуры.
+		var st struct {
+			Title string `json:"title"`
+		}
 		if json.Unmarshal(data, &st) != nil || st.Title == "" {
 			continue
 		}
@@ -479,7 +485,11 @@ func (s *server) waitTitles(list []Notification) {
 			continue
 		}
 		head := s.sessionHeadCached(info.path, info.stamp)
-		said, _ := s.titleFor(n.Chat, head.Summary, head.First, false)
+		known := ""
+		if goal := goalTurnGoal(s.chatStoreRead(n.Chat).Hidden, head.First); goal != "" {
+			known = goal + " цель"
+		}
+		said := titleFor(head.Summary, head.CustomTitle, known, head.AITitle, head.First)
 		if said == "" {
 			said = "без заголовка"
 		}

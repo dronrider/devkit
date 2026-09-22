@@ -49,7 +49,7 @@ OPTIONAL_SCHEMA = (
     # internal/taskhead, тут она сверяется только типами. wait_cap это потолок
     # срока agentctl wait (DK-930), его читают утилита и оболочка task-run.py.
     ("head", (("client", ARR), ("bin", STR), ("model", ARR), ("session", ARR),
-              ("resume", ARR), ("turn_end", STR), ("wait_cap", STR))),
+              ("name", ARR), ("resume", ARR), ("turn_end", STR), ("wait_cap", STR))),
 )
 
 DISCOVERY_VALUES = ("auto", "manual")

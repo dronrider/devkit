@@ -1263,6 +1263,18 @@ class HarnessTests(Stand, unittest.TestCase):
         self.assertNotIn("--model", loop.turn_cmd("сид"),
                           "второй подписке приклеили явную модель")
 
+    def test_turn_cmd_names_the_turn(self):
+        """Имя витка это ID и роль словом, «DK-100 цель» (DK-879): им клиент
+        подпишет себя в claude --resume, и то же имя видно в списке
+        дашборда. Резюма у витка не бывает, каждый раз новый sid, и флаг
+        ставится безусловно."""
+        mod = load_goal_run()
+        loop = mod.Loop("DK-100", "/tmp")
+        cmd = loop.turn_cmd("сид")
+        self.assertIn("--name", cmd, "виток не назвал себя: %r" % (cmd,))
+        self.assertEqual(cmd[cmd.index("--name") + 1], "DK-100 цель",
+                          "имя витка не то: %r" % (cmd,))
+
     def test_unknown_tier_refused_before_turns(self):
         """Имён моделей у оболочки своих нет: лестницу держит раскладка машины,
         и незнакомый ярус это отказ словами до первого витка, а не молчаливый

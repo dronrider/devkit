@@ -587,3 +587,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-913 | taskctl spend считает оркестрацию, постановку, фон и стенд сквозными статьями | task | P1 | 2026-09-20 | [tasks/archive/2026/DK-913.md](tasks/archive/2026/DK-913.md) |
 | DK-1088 | Привязка сессии к цели пишется в реестр чатов при старте цикла, срез считает «фон» после конца цикла | bug | P1 | 2026-09-21 | [tasks/archive/2026/DK-1088.md](tasks/archive/2026/DK-1088.md) |
 | DK-909 | Цель: этап задачи виден со строки доски, а токены сводятся по этапам | task | P1 | 2026-09-21 | [tasks/archive/2026/DK-909.md](tasks/archive/2026/DK-909.md) |
+| DK-999 | TestFeedTailSkipsWholeJournals красит по нагрузке машины | bug | P1 | 2026-09-22 | [tasks/archive/2026/DK-999.md](tasks/archive/2026/DK-999.md) |

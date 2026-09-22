@@ -1382,3 +1382,48 @@ console.log("кромки ленты: отступ задаёт строка, у
 }
 
 console.log("пузырь: копирование сообщения целиком");
+
+// --- DK-1120: у блока кода в ленте своя кнопка копирования ---
+// Отклик у неё тот же, что у команды tool-вызова (та же copyBtn), и в буфер
+// уходит исходный текст блока, без разметки ссылок, которые правка добавляет
+// внутрь. Кейс из файла задачи (1): агент дал ссылку в блоке кода.
+{
+  const copied = [];
+  sandbox.window.navigator = { clipboard: { writeText: (t) => { copied.push(t); return Promise.resolve(); } } };
+  const src = "открой\nhttps://example.com/auth?token=abc";
+  const bubble = sandbox.chatBubble("агент", "```\n" + src + "\n```", "");
+  const block = byClass(bubble, "mdcode");
+  if (!block) fail("у блока кода нет своей обёртки: " + dump(bubble));
+  const btn = deepBtn(block, "foldcp");
+  if (!btn) fail("у блока кода нет кнопки копирования: " + dump(block));
+  if (String(btn.title) !== "Копировать") fail("кнопка блока кода не назвалась: " + btn.title);
+  btn.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (copied.length !== 1) fail("клик по кнопке блока кода не скопировал ровно один раз: " + copied.length);
+  if (copied[0] !== src) fail("в буфер уехал не исходный текст блока: " + JSON.stringify(copied[0]));
+  const a = block.querySelectorAll("a");
+  const href = a.find((k) => k.href === "https://example.com/auth?token=abc");
+  if (!href || href.target !== "_blank") fail("адрес в блоке кода не открывается тапом: " + JSON.stringify(a));
+}
+
+console.log("блок кода: кнопка копирования, буфер без разметки ссылок");
+
+// --- DK-1120: у инлайн-кода в обратных кавычках своя кнопка копирования ---
+// Кейс из файла задачи (3): агент назвал путь обратными кавычками, человек
+// берёт его кнопкой.
+{
+  const copied = [];
+  sandbox.window.navigator = { clipboard: { writeText: (t) => { copied.push(t); return Promise.resolve(); } } };
+  const bubble = sandbox.chatBubble("агент", "Правь `tools/dashboard/static/app.js` и запусти `!go build`.", "");
+  const spans = allByClass(bubble, "mdicode");
+  if (spans.length !== 2) fail("у инлайн-кода не по кнопке на каждое упоминание: " + spans.length);
+  const btn = deepBtn(spans[0], "foldcp");
+  if (!btn) fail("у инлайн-кода нет кнопки копирования: " + dump(spans[0]));
+  btn.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (copied[0] !== "tools/dashboard/static/app.js") {
+    fail("в буфер уехал не текст инлайн-кода: " + JSON.stringify(copied[0]));
+  }
+}
+
+console.log("инлайн-код: своя кнопка копирования у каждого упоминания");

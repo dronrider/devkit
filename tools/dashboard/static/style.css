@@ -1174,6 +1174,19 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .md code{font:400 0.92em var(--mono);background:var(--bg2);border:1px solid var(--line);border-radius:5px;padding:0 4px}
 .md pre code{background:none;border:none;padding:0}
 .md a{overflow-wrap:anywhere}
+/* DK-1120: кнопка копирования у блока кода стоит рядом с ним сверху, а не
+   подписью пузыря, которая прячется до наведения: на тач-экране наведения
+   нет. Вид самого блока (.md pre) остаётся прежним. */
+.md .mdcode{margin:8px 0}
+.md .mdcode pre{margin:0}
+.md .mdcbar{display:flex;justify-content:flex-end;margin-bottom:2px}
+.md .mdcode .foldcp:hover{opacity:1}
+/* своя кнопка копирования у каждого инлайн-кода: группа держится вместе при
+   переносе строки абзаца, а не рвётся между кодом и кнопкой */
+.md .mdicode{display:inline-flex;align-items:center;gap:1px;vertical-align:-4px}
+.md .mdicode .foldcp{width:15px;height:15px}
+.md .mdicode .foldcp svg{width:11px;height:11px}
+.md .mdicode .foldcp:hover{opacity:1}
 /* Упоминание задачи или документа в реплике: та же ссылка, но с пунктиром
    снизу, чтобы ID читался ссылкой и в потоке текста, где цвета мало. */
 .md a.mdgo{border-bottom:1px dotted var(--acc)}

@@ -5427,6 +5427,52 @@ function mdText(text, into, where) {
 // уходит текстовым узлом.
 const MD_INLINE = /`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|(\*\*|__)([\s\S]+?)\4|(\*|_)([\s\S]+?)\6|(https?:\/\/[^\s<>"']+)/;
 
+// Голый адрес внутри кода: код в обратных кавычках и блоком не разбирается
+// строчной разметкой (там команды и флаги, mdInline на них не идёт), но
+// адрес http и https в нём открывается тапом, как и в обычном тексте. Проход
+// узкий, ровно по самому адресу, остальное содержимое остаётся текстом.
+const CODE_URL = /https?:\/\/[^\s<>"']+/;
+
+function codeLinkify(into, text) {
+  let rest = String(text);
+  for (;;) {
+    const m = CODE_URL.exec(rest);
+    if (!m) break;
+    if (m.index) into.append(document.createTextNode(rest.slice(0, m.index)));
+    const a = el("a", "", m[0]);
+    a.href = m[0];
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    into.append(a);
+    rest = rest.slice(m.index + m[0].length);
+  }
+  if (rest) into.append(document.createTextNode(rest));
+}
+
+// Инлайн-код обратными кавычками своей кнопкой копирования: тап по кнопке
+// пузыря целиком одного упоминания не берёт, а частокол упоминаний в абзаце
+// решён осознанно (развилка «взятие инлайна» задачи DK-1120). Группа с
+// кодом и кнопкой держится вместе при переносе строки.
+function inlineCodeSpan(raw, where) {
+  const said = String(raw).trim();
+  // Путь документа репозитория это исключение: в кавычках его пишут и агенты,
+  // и человек, и это имя документа, а не команда, так что ссылка там ожидаема
+  // (замечание пользователя по снимку). Вид кода при этом остаётся, ссылкой
+  // становится обёртка. Это поведение раньше DK-1120 и правкой не трогается.
+  const addr = where && /\.md$/i.test(said) ? mentionAddr(where, said) : "";
+  const wrap = el("span", "mdicode");
+  if (addr) {
+    const code = el("code", "", raw);
+    wrap.append(mdGo(code, addr));
+  } else {
+    const code = el("code");
+    codeLinkify(code, raw);
+    wrap.append(code);
+  }
+  wrap.append(copyBtn(raw));
+  return wrap;
+}
+
 function mdInline(text, into, where) {
   let rest = String(text);
   for (;;) {
@@ -5434,16 +5480,9 @@ function mdInline(text, into, where) {
     if (!m) break;
     if (m.index) mdText(rest.slice(0, m.index), into, where);
     if (m[1] !== undefined) {
-      // Код в обратных кавычках разбор не трогает: там команды и флаги. Одно
-      // исключение это путь документа репозитория: в кавычках его пишут и
-      // агенты, и человек, и это имя документа, а не команда, так что ссылка
-      // там ожидаема (замечание пользователя по снимку). Вид кода при этом
-      // остаётся, ссылкой становится обёртка. Блок кода тройными кавычками не
-      // трогается вовсе: он до строчного разбора не доходит.
-      const code = el("code", "", m[1]);
-      const said = String(m[1]).trim();
-      const addr = where && /\.md$/i.test(said) ? mentionAddr(where, said) : "";
-      into.append(addr ? mdGo(code, addr) : code);
+      // Блок кода тройными кавычками сюда не попадает вовсе: он до строчного
+      // разбора не доходит (своя сборка в mdRender).
+      into.append(inlineCodeSpan(m[1], where));
     } else if (m[2] !== undefined) {
       into.append(mdLink(m[2], m[3], where));
     } else if (m[5] !== undefined) {
@@ -5474,6 +5513,22 @@ function wrapScroll(node) {
   return box;
 }
 
+// Блок кода тройными кавычками: копия всего блока одной кнопкой (граница
+// задачи DK-1120, построчного взятия нет), в буфер уходит исходный текст, а
+// не собранная разметка. Адрес http и https внутри становится ссылкой тем же
+// узким проходом, что и у инлайн-кода; остальное содержимое (команды, флаги)
+// разбор не трогает, и вид самого блока не меняется.
+function mdCodeBlock(text) {
+  const box = el("div", "mdcode");
+  const bar = el("div", "mdcbar");
+  bar.append(copyBtn(text));
+  box.append(bar);
+  const pre = el("pre");
+  codeLinkify(pre, text);
+  box.append(pre);
+  return box;
+}
+
 function mdRender(text, where) {
   const box = el("div", "md");
   const lines = String(text || "").split("\n");
@@ -5491,7 +5546,7 @@ function mdRender(text, where) {
       stack.length = 0;
       list = null;
       para = null;
-      box.append(el("pre", "", buf.join("\n")));
+      box.append(mdCodeBlock(buf.join("\n")));
       continue;
     }
     const head = line.match(/^(#{1,6})\s+(.*)$/);

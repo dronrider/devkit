@@ -113,6 +113,47 @@ const bubble = (project, text) => {
   }
 }
 
+// --- DK-1120: голый адрес внутри блока кода становится ссылкой ---
+// Прочее содержимое блока (команда, ID) разбор по-прежнему не трогает: только
+// сам адрес узким проходом, mdInline на код не идёт.
+{
+  const box = bubble("devkit", "```\ntaskctl show DK-397\nсм. https://example.com/DK-397\n```");
+  const a = box.querySelectorAll("a");
+  const hrefs = a.map((k) => k.href);
+  if (!hrefs.includes("https://example.com/DK-397")) {
+    fail("голый адрес в блоке кода не стал ссылкой: " + JSON.stringify(hrefs));
+  }
+  const href = a.find((k) => k.href === "https://example.com/DK-397");
+  if (href.target !== "_blank" || href.rel !== "noopener noreferrer") {
+    fail("ссылка в блоке кода открывается не в соседней вкладке: " + JSON.stringify([href.target, href.rel]));
+  }
+  if (!dump(box).includes("taskctl show DK-397")) fail("остальной текст блока потерялся: " + dump(box));
+  if (links(box).length) fail("ID из блока кода стал внутренней ссылкой: " + JSON.stringify(links(box)));
+}
+
+// --- DK-1120: голый адрес в обратных кавычках становится ссылкой ---
+{
+  const box = bubble("devkit", "Забери `https://example.com/token`.");
+  const a = box.querySelectorAll("a");
+  const href = a.find((k) => k.href === "https://example.com/token");
+  if (!href) fail("адрес в обратных кавычках не стал ссылкой: " + JSON.stringify(a.map((k) => k.href)));
+  if (href.target !== "_blank" || href.rel !== "noopener noreferrer") {
+    fail("ссылка в обратных кавычках открывается не в соседней вкладке: " + JSON.stringify([href.target, href.rel]));
+  }
+  const code = box.querySelectorAll("code");
+  if (!code.some((k) => dump(k).trim() === "https://example.com/token")) {
+    fail("адрес в кавычках потерял вид кода: " + dump(box));
+  }
+}
+
+// --- DK-1120: не-адрес в кавычках ссылкой не становится ---
+{
+  const box = bubble("devkit", "Ключ `--flag` и путь `tools/dashboard/app.js` тут ни при чём.");
+  if (box.querySelectorAll("a").length) {
+    fail("флаг или путь без протокола стали ссылкой: " + JSON.stringify(box.querySelectorAll("a").map((k) => k.href)));
+  }
+}
+
 // --- ссылка markdown на файл репозитория ведёт на экран, а не в пустоту ---
 {
   const got = links(bubble("devkit", "Постановка: [tasks/DK-397.md](../tasks/DK-397.md)."));

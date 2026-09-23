@@ -99,6 +99,40 @@ func TestResolveOwnershipLayoutOverridesRoot(t *testing.T) {
 	}
 }
 
+// TestResolveOwnershipWholeRepoRootAlwaysOwn: замечание ревью круга 3,
+// запись 3. Компонент doctor (tools/devkitctl/parallel.py, cwd=".") держит
+// корень «.», весь репозиторий. Любой путь диффа лежит внутри такой
+// области, и own обязан быть true, а не застревать в false навсегда из-за
+// того, что реальный путь никогда не совпадает с голой точкой буквально.
+func TestResolveOwnershipWholeRepoRootAlwaysOwn(t *testing.T) {
+	cfg := deployConfig{}
+	diff := []string{"tools/devkitctl/devkitctl.py"}
+	resolved, own := resolveOwnership(cfg, "doctor", ".", diff)
+	if !resolved || !own {
+		t.Fatalf("корень-точка обязан резолвиться своим для любого пути диффа: resolved=%v own=%v", resolved, own)
+	}
+}
+
+// TestResolveOwnershipLayoutWithoutPathsFallsBackToRoot: замечание ревью
+// круга 3, запись 4. deploy.<имя> заведён без единой deploy.<имя>.paths
+// строки (deployconf.Load отдаёт Component с пустым Paths вместе с
+// ошибкой, которую вызывающий молча роняет). Раньше это застревало в
+// own=false навсегда: цикл по пустым Paths ничего не находит, а return
+// срабатывает раньше Root. Теперь недоделанная раскладка приравнена к
+// отсутствующей, и резолв падает дальше к Root.
+func TestResolveOwnershipLayoutWithoutPathsFallsBackToRoot(t *testing.T) {
+	cfg := deployConfig{Components: []deployComponent{
+		{Name: "partial", Command: "true"},
+	}}
+	diff := []string{"partial/thing.go"}
+	if resolved, own := resolveOwnership(cfg, "partial", "partial", diff); !resolved || !own {
+		t.Fatalf("раскладка без .paths должна уступать Root, а не застревать в own=false: resolved=%v own=%v", resolved, own)
+	}
+	if resolved, own := resolveOwnership(cfg, "partial", "", diff); resolved || own {
+		t.Fatalf("без Root та же недоделанная раскладка остаётся неопознанной, как и отсутствующая: resolved=%v own=%v", resolved, own)
+	}
+}
+
 // TestResolveOwnershipExactPathMatch: заведённая раскладка распознаёт
 // точное совпадение независимо от расширения. Второй кейс это замечание
 // ревью про компонент-скрипт (kit/skills/check-skills.py против имени
@@ -326,6 +360,62 @@ func TestMergeForeignFailsOwnRedFromRootWithoutLayoutNotCounted(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("своя краснота по корню из строки итога не должна идти в счёт даже без раскладки: %d", n)
+	}
+}
+
+// TestMergeForeignFailsOwnRedFromWholeRepoRootNotCounted: регрессия ревью
+// круга 3, запись 3. Живой пример - компонент doctor (tools/devkitctl/
+// parallel.py, cwd="."), корень которого это весь репозиторий. Красный
+// такой компонент честно свой при любом диффе задачи, и в foreign-fails
+// попадать не должен.
+func TestMergeForeignFailsOwnRedFromWholeRepoRootNotCounted(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, root, "checkout", "-qb", "xr-001-fix")
+	write(t, root, "compA/thing.txt", "own\n")
+	write(t, root, "fix_test.go", "package main\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	test := `printf 'doctor (.) 0.1s FAIL\n'; exit 1`
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: test}); err == nil {
+		t.Fatal("красный компонент должен держать слияние")
+	}
+	n, err := foreignFails(root, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("компонент с корнем-точкой честно свой на любом диффе, в счёт не идёт: %d", n)
+	}
+}
+
+// TestMergeForeignFailsOwnRedFromPartialLayoutFallsBackToRootNotCounted:
+// регрессия ревью круга 3, запись 4. deploy.compA заведён без единой
+// deploy.compA.paths строки (недоделанная раскладка), и own обязан
+// решаться через Root, а не застревать в false навсегда.
+func TestMergeForeignFailsOwnRedFromPartialLayoutFallsBackToRootNotCounted(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeDeployCfg(t, root, "deploy.compA = true\n")
+	gitT(t, root, "checkout", "-qb", "xr-001-fix")
+	write(t, root, "compA/thing.txt", "own\n")
+	write(t, root, "fix_test.go", "package main\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	test := `printf 'compA (compA) 0.1s FAIL\n'; exit 1`
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: test}); err == nil {
+		t.Fatal("красный компонент должен держать слияние")
+	}
+	n, err := foreignFails(root, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("недоделанная раскладка должна уступать Root, а не топить own в false: %d", n)
 	}
 }
 

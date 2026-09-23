@@ -174,10 +174,20 @@ func readTestLog(root string, since time.Duration) ([]testRunRecord, error) {
 // Ни раскладки, ни Root нет - resolved остаётся false, и own тоже: без
 // единого источника границы шипctl её не угадывает по голому имени, оно
 // раньше врало в обе стороны (замечание ревью круга 1, DK-1125).
+//
+// Раскладка, заведённая для имени без единой deploy.<имя>.paths строки
+// (deployconf.Load тогда отдаёт Component с пустым Paths вместе с ошибкой,
+// а её здесь молча роняют), честного ответа дать не может: цикл по Paths
+// пуст, own навсегда застрял бы в false, а до Root, который мог бы решить
+// честно, дело бы не дошло. Такая раскладка приравнена к отсутствующей, и
+// резолв идёт дальше к Root (замечание ревью круга 3, запись 4, DK-1125).
 func resolveOwnership(cfg deployConfig, name, root string, diff []string) (resolved, own bool) {
 	for _, comp := range cfg.Components {
 		if comp.Name != name {
 			continue
+		}
+		if len(comp.Paths) == 0 {
+			break
 		}
 		resolved = true
 		for _, p := range diff {
@@ -204,11 +214,19 @@ func resolveOwnership(cfg deployConfig, name, root string, diff []string) (resol
 // pathUnder проверяет, лежит ли path под prefix: как файл целиком либо
 // внутри каталога, который тот называет. Копия приёма deployconf.pathUnder:
 // та версия не экспортирована, а тянуть отдельный пакет ради одной проверки
-// на шесть строк незачем.
+// на шесть строк незачем. Корень-точка это отдельный случай: он называет не
+// подкаталог, а весь репозиторий целиком (живой пример - компонент doctor,
+// tools/devkitctl/parallel.py, cwd="."), а git diff --name-only не отдаёт
+// путей вида "./..." или голого ".", так что общее правило (path==prefix
+// либо HasPrefix(path, prefix+"/")) для этого корня не сработало бы ни на
+// одном реальном пути (замечание ревью круга 3, запись 3, DK-1125).
 func pathUnder(path, prefix string) bool {
 	prefix = strings.TrimSuffix(prefix, "/")
 	if prefix == "" {
 		return false
+	}
+	if prefix == "." {
+		return true
 	}
 	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }

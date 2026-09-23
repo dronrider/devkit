@@ -59,7 +59,11 @@ func setup(t *testing.T, inProg, check string) (root, callLog string) {
 	// команд из сводки frame.Summarize: в репозитории проекта каталог гитигнорнут
 	// правилами devkit, а тестовый репозиторий заводится без gitignore, и без этой
 	// записи untracked файлы вывода смазывали бы статусные проверки в worktree.
-	write(t, root, ".gitignore", ".devkit/cmdout/\n")
+	// .devkit/test-runs.log это журнал итогов прогона test по компонентам
+	// (DK-1125): в боевом проекте его прячет devkitctl тем же списком записей,
+	// что cmdout, а фикстуры заводят .gitignore руками и без строки словили бы
+	// его в "git add .", ломая последующий checkout внутри merge.
+	write(t, root, ".gitignore", ".devkit/cmdout/\n.devkit/test-runs.log\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "seed")
 

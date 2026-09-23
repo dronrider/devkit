@@ -63,6 +63,10 @@ const usageText = `shipctl: слияние и откат задач по пра�
                                   возврат задачи в In progress и снятие
                                   признака провала проверки; задачу из
                                   невыкаченного поезда снимает без деплоя
+  foreign-fails --since срок    число слияний за срок, отбитых компонентом вне
+                                  диффа задачи (24h, 30m, 7d, 2w): своя
+                                  краснота в счёт не идёт, читает журнал
+                                  .devkit/test-runs.log
   push [--check-only <remote_sha> пуш main калиткой DK-602: пропускает
         <local_sha>]              диапазон, где каждый код-коммит (дифф вне
                                   docs/TASKS.md, docs/TASKS-archive.md и
@@ -268,6 +272,12 @@ func main() {
 		needArgs(pos, 1, 1, "revert <ID> [--test \"cmd\"] [-m \"...\"] [--push]")
 		p.ID = pos[0]
 		msg, err = cmdRevert(root(*dir), p)
+	case "foreign-fails":
+		fs := flag.NewFlagSet("foreign-fails", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		since := fs.String("since", "", "срок, за который считать (24h, 30m, 7d, 2w)")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "foreign-fails --since срок")
+		msg, err = cmdForeignFails(root(*dir), *since)
 	case "push":
 		fs := flag.NewFlagSet("push", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

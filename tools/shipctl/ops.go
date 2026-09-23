@@ -1167,8 +1167,14 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	testStarted := time.Now()
 	out, _, err := runShellLimit(run.Tree, test, 0, run.Env)
+	testElapsed := time.Since(testStarted)
 	run.Cleanup()
+	// Журнал итогов по компонентам (DK-1125): пишется по факту прогона, красного
+	// в том числе, до отказа ниже, иначе отбитое слияние не оставляло бы следа и
+	// счёт чужой красноты бил бы мимо.
+	writeTestLog(root, p.ID, nonDocsPaths(mergePaths), out, err == nil, testElapsed)
 	if err != nil {
 		why := ""
 		if d := run.Diagnose(out); d != "" {

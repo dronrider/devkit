@@ -438,11 +438,18 @@ def main(argv=None):
           "доля компонента=%d..%d (живая, растёт по мере опустения очереди)"
           % (budget, jobs, reserved, component_share(jobs, budget, reserved),
              budget))
+    # Корень компонента идёт в ту же строку итога, каким его уже печатает
+    # --list (строка 434): граница компонента известна раннеру всегда, в
+    # отличие от deploy.<имя>.paths, которая в самом devkit не заведена
+    # (замечание ревью круга 2, DK-1125). shipctl читает эту строку и берёт
+    # корень оттуда, когда раскладки выката нет.
+    rel_by_name = {name: rel for name, rel, _ in comps}
     started = time.monotonic()
     outcomes, first_fail = run_all(comps, jobs, budget=budget)
     secs = time.monotonic() - started
     for name, rc, took, out in sorted(outcomes, key=lambda o: -o[2]):
-        print("%-16s %6.1fs %s" % (name, took, "ok" if rc == 0 else "FAIL"))
+        print("%-16s (%s) %6.1fs %s" % (name, rel_by_name.get(name, ""), took,
+                                         "ok" if rc == 0 else "FAIL"))
     for name, rc, _, out in outcomes:
         if rc != 0:
             print("FAIL %s\n%s" % (name, out))

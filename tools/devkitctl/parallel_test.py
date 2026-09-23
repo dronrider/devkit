@@ -534,6 +534,16 @@ class MainTest(Stand):
         self.assertIn("FAILED (first=bad.sh)", out)
         self.assertIn("boom", out, "вывод провалившегося компонента печатается целиком")
 
+    def test_result_line_carries_the_component_root(self):
+        # shipctl (DK-1125, круг 2) читает корень компонента из этой же
+        # строки итога, когда раскладки deploy.<имя>.paths у проекта нет:
+        # без корня в строке компонент остаётся неопознанным, и своя
+        # краснота считается чужой. Строка итога несёт корень тем же
+        # приёмом, каким его уже показывает --list.
+        rc, out = self.run_main([self.grow("ok.sh", "exit 0")])
+        self.assertEqual(rc, 0)
+        self.assertRegex(out, r"ok\.sh\s+\(\.\)\s+\d+\.\ds\s+ok")
+
     def test_list_names_the_components(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

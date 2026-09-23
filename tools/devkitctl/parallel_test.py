@@ -99,6 +99,15 @@ class ComponentsTest(unittest.TestCase):
         self.assertEqual(rel, "hooks")
         self.assertEqual(argv[-1], "check-exec-bit.py")
 
+    def test_doctor_root_is_the_whole_checkout(self):
+        # shipctl (DK-1125, круг 3) читает корень компонента из строки итога
+        # и матчит его как границу диффа: doctor проверяет весь чекаут, и
+        # его корень обязан остаться "." - тихая замена на подкаталог
+        # вернула бы честное падение doctor в foreign-fails как чужое.
+        comp = {name: rel for name, rel, _ in parallel.components()}
+        self.assertIn("doctor", comp)
+        self.assertEqual(comp["doctor"], ".")
+
     def test_go_stays_with_count_one(self):
         # -count=1 это требование DoD цели: кэш тестового прогона go обязан
         # молчать, и тихая пропажа ключа из перечня вернула бы кэш.

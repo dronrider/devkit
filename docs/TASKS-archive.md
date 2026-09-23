@@ -589,3 +589,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-909 | Цель: этап задачи виден со строки доски, а токены сводятся по этапам | task | P1 | 2026-09-21 | [tasks/archive/2026/DK-909.md](tasks/archive/2026/DK-909.md) |
 | DK-999 | TestFeedTailSkipsWholeJournals красит по нагрузке машины | bug | P1 | 2026-09-22 | [tasks/archive/2026/DK-999.md](tasks/archive/2026/DK-999.md) |
 | DK-1130 | Тест markdown дашборда не знает про inlineCodeSpan, TestMarkdownBlocks красный на main | bug | P1 | 2026-09-23 | [tasks/archive/2026/DK-1130.md](tasks/archive/2026/DK-1130.md) |
+| DK-1122 | Стена прогона померена на -j 3, 4, 5 и 8, потолок длительности стоит по замеру | task | P1 | 2026-09-23 | [tasks/archive/2026/DK-1122.md](tasks/archive/2026/DK-1122.md) |

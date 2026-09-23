@@ -799,6 +799,11 @@ class DeployTest(SandboxCase):
                          "new не гитигнорнул .devkit/goal-*")
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/chat/")[0], 0,
                          "new не гитигнорнул .devkit/chat/")
+        # Журнал итогов прогона test по компонентам (DK-1125): без записи в
+        # .gitignore случайный "git add ." в дереве задачи ловит его и роняет
+        # следующий checkout внутри shipctl merge.
+        self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/test-runs.log")[0], 0,
+                         "new не гитигнорнул .devkit/test-runs.log")
         for name in ("goal-MP-001.log", "goal-MP-001.mail", "goal-MP-001.mail.lock"):
             self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/" + name)[0], 0,
                              "new не гитигнорнул .devkit/%s" % name)
@@ -806,7 +811,7 @@ class DeployTest(SandboxCase):
         gi = proj / ".gitignore"
         kept = [ln for ln in gi.read_text(encoding="utf-8").splitlines()
                 if ln.strip() not in (".devkit/cmdout/", ".devkit/ship.lock*", ".devkit/goal-*",
-                                      ".devkit/chat/")]
+                                      ".devkit/chat/", ".devkit/test-runs.log")]
         gi.write_text("\n".join(kept) + "\n", encoding="utf-8")
         rc, out = self.box.doctor(proj)
         self.assertEqual(rc, 1, "doctor не вернул 1 при отсутствующих машинных гитигнор-записях")
@@ -818,7 +823,9 @@ class DeployTest(SandboxCase):
                        "doctor не нашёл отсутствующий гитигнор рабочего состояния цели")
         self.assertIn_(".devkit/chat/ не гитигнорнут", out,
                        "doctor не нашёл отсутствующий гитигнор входов разговора")
-        # doctor --fix дописывает обе записи со своим комментарием.
+        self.assertIn_(".devkit/test-runs.log не гитигнорнут", out,
+                       "doctor не нашёл отсутствующий гитигнор журнала итогов теста")
+        # doctor --fix дописывает все записи со своим комментарием.
         _, out = self.box.doctor(proj, "--fix")
         self.assertIn_("починено: .gitignore: добавлен .devkit/cmdout/", out,
                        "doctor --fix не дописал cmdout")
@@ -828,6 +835,8 @@ class DeployTest(SandboxCase):
                        "doctor --fix не дописал рабочее состояние цели")
         self.assertIn_("починено: .gitignore: добавлен .devkit/chat/", out,
                        "doctor --fix не дописал входы разговора")
+        self.assertIn_("починено: .gitignore: добавлен .devkit/test-runs.log", out,
+                       "doctor --fix не дописал журнал итогов теста")
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/cmdout/")[0], 0,
                          "после --fix cmdout не гитигнорнут")
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/ship.lock")[0], 0,
@@ -836,12 +845,16 @@ class DeployTest(SandboxCase):
                          "после --fix запись держателя замка не гитигнорнута")
         self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/goal-MP-001.log")[0], 0,
                          "после --fix журнал витков цели не гитигнорнут")
+        self.assertEqual(git(proj, "check-ignore", "-q", ".devkit/test-runs.log")[0], 0,
+                         "после --fix журнал итогов теста не гитигнорнут")
         # Повторный доктор находок по машинным путям не даёт.
         _, out = self.box.doctor(proj)
         self.assertNotIn_(".devkit/cmdout/", out, "повторный doctor всё ещё видит cmdout")
         self.assertNotIn_(".devkit/ship.lock", out, "повторный doctor всё ещё видит ship.lock")
         self.assertNotIn_(".devkit/goal-*", out,
                           "повторный doctor всё ещё видит рабочее состояние цели")
+        self.assertNotIn_(".devkit/test-runs.log", out,
+                          "повторный doctor всё ещё видит журнал итогов теста")
 
 
 class DeployWorktreeTest(SandboxCase):

@@ -11,6 +11,7 @@
 import contextlib
 import io
 import os
+import queue
 import shutil
 import sys
 import tempfile
@@ -255,21 +256,33 @@ class LiveBudgetTest(unittest.TestCase):
     с уменьшившимся счётом было уже некому. Счёт идёт по компонентам,
     работающим прямо сейчас. Гонка настоящих потоков это не ловит
     детерминированно (какой воркер первым освободится - решает планировщик
-    ОС), поэтому механика проверяется прямыми вызовами `take` и `drop`, без
+    ОС), поэтому механика проверяется прямыми вызовами `pull` и `drop`, без
     единого потока.
     """
 
+    def pending(self, *names):
+        """Очередь компонентов на этих именах, argv стенду не нужен."""
+        waiting = queue.Queue()
+        for name in names:
+            waiting.put((name, ".", ["true"]))
+        return waiting
+
+    def take(self, live, name, waiting=0):
+        """Доля компоненту, за которым в очереди ждут ещё `waiting` штук."""
+        tail = ["tail:%d" % i for i in range(waiting)]
+        return live.pull(self.pending(name, *tail))[1]
+
     def test_runner_gets_its_reserved_share(self):
         live = parallel._Budget(10, 3, parallel.runner_share(10))
-        self.assertEqual(live.take(parallel.RUNNER, 17), 5)
+        self.assertEqual(self.take(live, parallel.RUNNER, 17), 5)
 
     def test_lanes_and_runner_add_up_to_the_budget(self):
         # Полный старт на десяти ядрах: раннер и два обычных лайна.
         reserved = parallel.runner_share(10)
         jobs = parallel.lane_count(10, reserved)
         live = parallel._Budget(10, jobs, reserved)
-        given = [live.take(parallel.RUNNER, 17)]
-        given += [live.take("go:%d" % i, 12 - i) for i in range(jobs - 1)]
+        given = [self.take(live, parallel.RUNNER, 17)]
+        given += [self.take(live, "go:%d" % i, 12 - i) for i in range(jobs - 1)]
         self.assertEqual(given, [5, 1, 1, 1, 1, 1])
         self.assertLessEqual(sum(given), 10)
 
@@ -278,27 +291,79 @@ class LiveBudgetTest(unittest.TestCase):
         # будущими соседями: без этого первый же компонент забрал бы бюджет
         # целиком, а стартовавшие следом сложились бы с ним в перебор.
         live = parallel._Budget(10, parallel.lane_count(10), 0)
-        self.assertEqual(live.take("go:a", 5), 1)
+        self.assertEqual(self.take(live, "go:a", 5), 1)
 
     def test_share_grows_when_the_run_thins_out(self):
         reserved = parallel.runner_share(10)
         jobs = parallel.lane_count(10, reserved)
         live = parallel._Budget(10, jobs, reserved)
-        live.take(parallel.RUNNER, 17)
+        self.take(live, parallel.RUNNER, 17)
         for i in range(jobs - 1):
-            live.take("go:%d" % i, 12 - i)
+            self.take(live, "go:%d" % i, 12 - i)
         for i in range(jobs - 1):
             live.drop("go:%d" % i)
-        self.assertEqual(live.take("hooks", 0), 5,
+        self.assertEqual(self.take(live, "hooks"), 5,
                          "раннер держит половину бюджета, вторая уходит соседу")
         live.drop("hooks")
         live.drop(parallel.RUNNER)
-        self.assertEqual(live.take("doctor", 0), 10,
+        self.assertEqual(self.take(live, "doctor"), 10,
                          "последний компонент на пустой очереди берёт весь бюджет")
 
     def test_share_never_drops_below_one(self):
         live = parallel._Budget(1, 6, 0)
-        self.assertGreaterEqual(live.take("go:a", 10), 1)
+        self.assertGreaterEqual(self.take(live, "go:a", 10), 1)
+
+    def test_pull_on_the_empty_queue_gives_nothing(self):
+        live = parallel._Budget(10, 3, 0)
+        self.assertIsNone(live.pull(self.pending()))
+
+    def test_neighbour_in_flight_holds_the_first_share_down(self):
+        # Замечание ревью DK-1123. Снятие с очереди и счёт доли порознь
+        # оставляли компонент в пути: из очереди вынут, в счёт работающих не
+        # попал, хвоста очереди не занимает. Сосед, стартующий в эту щель,
+        # брал долю как единственный на машине (`take("O2", 0)` -> 10), а
+        # подоспевший следом добавлял к ней свою (`take("O1", 0)` -> 5), и
+        # сумма выходила 15 при бюджете 10. Одним шагом такой щели нет.
+        live = parallel._Budget(10, 3, 0)
+        waiting = self.pending("O1", "O2")
+        given = [live.pull(waiting)[1], live.pull(waiting)[1]]
+        self.assertLessEqual(sum(given), 10,
+                             "доли работающих компонентов не перебирают бюджет")
+        self.assertEqual(given, [5, 5])
+
+    def test_queue_is_drained_under_the_share_lock(self):
+        # Щель закрыта ровно тем, что оба шага идут внутри одного замка:
+        # разнесённые, они снова пустят соседа считать долю по очереди, из
+        # которой компонент уже вынут.
+        live = parallel._Budget(10, 3, 0)
+        held = []
+
+        class Watched(queue.Queue):
+
+            def get_nowait(self):
+                held.append(live._lock.locked())
+                return queue.Queue.get_nowait(self)
+
+        waiting = Watched()
+        waiting.put(("go:a", ".", ["true"]))
+        live.pull(waiting)
+        self.assertEqual(held, [True],
+                         "компонент снимается с очереди под замком счёта")
+
+    def test_tail_order_keeps_the_invariant_under_the_runner(self):
+        # Тот же перебор на боевой конфигурации: раннер уже держит половину
+        # бюджета, первый сосед кончился, и хвост очереди разбирают двое.
+        # Порознь это давало 5 плюс 5 плюс 2 при бюджете 10.
+        reserved = parallel.runner_share(10)
+        live = parallel._Budget(10, parallel.lane_count(10, reserved), reserved)
+        waiting = self.pending(parallel.RUNNER, "go:a", "go:b", "go:c")
+        runner = live.pull(waiting)[1]
+        live.pull(waiting)
+        live.drop("go:a")
+        tail = [live.pull(waiting)[1], live.pull(waiting)[1]]
+        self.assertLessEqual(runner + sum(tail), 10,
+                             "доли работающих компонентов не перебирают бюджет")
+        self.assertEqual([runner] + tail, [5, 2, 2])
 
 
 class RunAllTest(Stand):

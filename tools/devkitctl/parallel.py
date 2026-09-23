@@ -253,6 +253,13 @@ class _Budget:
     работающих компонентов прибавляется хвост очереди, потому что свободные
     лайны займутся тут же. Без этой поправки первый же компонент забрал бы
     весь бюджет, а стартовавшие следом сложились бы с ним в перебор.
+
+    Снятие с очереди идёт тем же шагом и под тем же замком, что и счёт
+    (замечание ревью DK-1123). Порознь компонент между ними висит в пути: из
+    очереди уже вынут, в счёт работающих ещё не попал, и хвоста очереди
+    собой тоже не занимает. Сосед, стартующий в эту щель, не видит его ни с
+    одной стороны, берёт долю как единственный, и при невезучем порядке
+    потоков доли складываются в перебор бюджета.
     """
 
     def __init__(self, budget, jobs, reserved=0):
@@ -262,22 +269,27 @@ class _Budget:
         self._running = {}
         self._lock = threading.Lock()
 
-    def take(self, name, waiting=0):
-        """Доля компоненту, который сейчас встаёт в работу.
+    def pull(self, pending):
+        """Снимает компонент с очереди и тут же считает ему долю.
 
-        `waiting` это длина хвоста очереди на этот момент.
+        Отдаёт пару (компонент, доля), на пустой очереди None.
         """
         with self._lock:
+            try:
+                comp = pending.get_nowait()
+            except queue.Empty:
+                return None
+            name = comp[0]
             if name == RUNNER and self._reserved:
                 self._running[name] = self._reserved
-                return self._reserved
+                return comp, self._reserved
             lanes = max(1, self._jobs - (1 if self._reserved else 0))
             busy = 1 + sum(1 for n in self._running if n != RUNNER)
-            ordinary = min(lanes, busy + waiting)
+            ordinary = min(lanes, busy + pending.qsize())
             jobs = ordinary + (1 if self._reserved else 0)
             share = component_share(jobs, self._budget, self._reserved)
             self._running[name] = share
-            return share
+            return comp, share
 
     def drop(self, name):
         """Компонент кончился: его доля возвращается в бюджет."""
@@ -316,11 +328,10 @@ def run_all(comps, workers, root=ROOT, budget=None):
 
     def worker():
         while not stop.is_set():
-            try:
-                name, rel, argv = pending.get_nowait()
-            except queue.Empty:
+            job = live.pull(pending)
+            if job is None:
                 return
-            share = live.take(name, pending.qsize())
+            (name, rel, argv), share = job
             argv = with_share(name, argv, share)
             started = time.monotonic()
             # Старт и провал одного правила: компонент, который не смог

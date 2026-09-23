@@ -11,6 +11,7 @@
 цель с корнем под временным каталогом получает реплики наравне с любой другой.
 Правило песочницы, заведённое заново, красит тут каждый тест доставки.
 """
+import collections
 import fcntl
 import json
 import os
@@ -30,6 +31,50 @@ STAMP = "%Y-%m-%dT%H:%M:%S"
 # кода и падал на ровном месте.
 with open(HOOK, encoding="utf-8") as _f:
     SAY_WORD = re.search(r'^SAY_WORD = "([^"]+)"', _f.read(), re.M).group(1)
+
+Trail = collections.namedtuple("Trail", "modules data spawns")
+# Бюджет модулей холостого хода сверх голого интерпретатора. Сейчас хук
+# поднимает сорок девять, и запас оставлен на транзитивную мелочь stdlib:
+# заметная библиотека тянет модули десятками и в бюджет не влезает.
+IDLE_MODULES = 60
+# Проба состава прогона. Интерпретатор берёт sitecustomize сам при старте, и
+# запуск хука от этого боевым быть не перестаёт. Аудит пишет строками в файл,
+# названный DEVKIT_AUDIT, а обращения к данным считает только под путями
+# DEVKIT_AUDIT_WATCH: так кеш байткода в HOME за работу не сходит.
+AUDIT = '''"""Проба состава прогона: модули, обращения к данным, подпроцессы."""
+import os
+import sys
+
+_out = open(os.environ["DEVKIT_AUDIT"], "a", buffering=1)
+_watch = [p for p in os.environ.get("DEVKIT_AUDIT_WATCH", "").split(os.pathsep) if p]
+_data = ("open", "os.listdir", "os.scandir", "os.stat", "os.mkdir", "os.rename")
+_born = ("subprocess.Popen", "os.exec", "os.posix_spawn")
+
+
+def _seen(event, args):
+    if event == "import":
+        _out.write("module %s\\n" % args[0])
+    elif event in _born:
+        _out.write("spawn %s\\n" % (args[0],))
+    elif event in _data and isinstance(args[0], str):
+        path = os.path.abspath(args[0])
+        for root in _watch:
+            if path == root or path.startswith(root + os.sep):
+                _out.write("data %s %s\\n" % (event, path))
+                break
+
+
+def _probe(event, args):
+    # Проба стоит на каждом событии интерпретатора и падать не вправе: своя
+    # ошибка тут испортила бы прогон, а не показала бы состав.
+    try:
+        _seen(event, args)
+    except Exception:
+        pass
+
+
+sys.addaudithook(_probe)
+'''
 
 GOAL_MD = """# DK-100: Цель: синтетическая цель обкатки
 
@@ -109,8 +154,9 @@ class Stand:
             for session, line in rows:
                 f.write("%s %s\n%s\n" % (stamp(), session, line))
 
-    def run(self, cwd=None, session="c0ffee-1111-2222-3333-444455556666",
-            tool="Bash", agent=None, raw=None, trace=False, protocol=None):
+    def payload(self, cwd=None, session="c0ffee-1111-2222-3333-444455556666",
+                tool="Bash", agent=None):
+        """Событие хода инструмента, каким его даёт харнес."""
         event = {"session_id": session, "cwd": self.root if cwd is None else cwd,
                  "transcript_path": os.path.join(self.root, "transcript.jsonl"),
                  "hook_event_name": "PostToolUse", "tool_name": tool,
@@ -119,10 +165,19 @@ class Stand:
         if agent:
             event["agent_type"] = agent
             event["agent_id"] = "a1b2c3"
+        return event
+
+    def env(self, trace=False):
         env = dict(os.environ, HOME=self.home)
         env.pop("DEVKIT_CHAT_TRACE", None)
         if trace:
             env["DEVKIT_CHAT_TRACE"] = "1"
+        return env
+
+    def run(self, cwd=None, session="c0ffee-1111-2222-3333-444455556666",
+            tool="Bash", agent=None, raw=None, trace=False, protocol=None):
+        event = self.payload(cwd=cwd, session=session, tool=tool, agent=agent)
+        env = self.env(trace=trace)
         argv = [sys.executable, HOOK, "--hook"] + ([protocol] if protocol else [])
         return subprocess.run(argv, input=json.dumps(event) if raw is None else raw,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -514,32 +569,78 @@ class JournalTest(GoalCase):
 class CostTest(GoalCase):
     """Цена холостого хода. Хук стоит на каждом ходе инструмента в каждой
     сессии машины, и его цена это цена самого запуска интерпретатора: всё, что
-    сверх, платится на чужой работе. Мерка тут относительная, к запуску голого
-    python3, потому что абсолютные миллисекунды на загруженной машине скачут."""
+    сверх, платится на чужой работе.
 
-    def clock(self, argv, env, feed):
-        best = None
-        for _ in range(5):
-            at = time.time()
-            subprocess.run(argv, input=feed, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, text=True, env=env)
-            best = time.time() - at if best is None else min(best, time.time() - at)
-        return best
+    Меряется цена составом хода, а не секундомером. Стенные миллисекунды под
+    нагрузкой собственного прогона скачут шире любого запаса, и прежний
+    относительный порог, лучший из пяти запусков хука против трёх запусков
+    голого python3, отбил три чужих слияния за одну пачку на разнице в сотые
+    доли секунды (DK-1038). Состав же холостого хода от нагрузки машины не
+    зависит вовсе: поднятые модули, обращения к данным и поднятые подпроцессы
+    одни и те же на пустой машине и под двадцатью соседями."""
+
+    def trail(self, argv, feed, env, watch):
+        """Состав прогона: модули, которые он поднял, его обращения к данным под
+        путями `watch` и поднятые им подпроцессы. Считает это аудит самого
+        интерпретатора (`sys.addaudithook`): проба лежит в `sitecustomize.py`
+        каталога, подставленного в PYTHONPATH, и интерпретатор берёт её при
+        старте сам, так что запуск хука остаётся боевым."""
+        probe = os.path.join(self.tmp, "audit")
+        if not os.path.isdir(probe):
+            os.makedirs(probe)
+            with open(os.path.join(probe, "sitecustomize.py"), "w", encoding="utf-8") as f:
+                f.write(AUDIT)
+        path = os.path.join(probe, "trail-%d.txt" % len(os.listdir(probe)))
+        env = dict(env, PYTHONPATH=probe, DEVKIT_AUDIT=path,
+                   DEVKIT_AUDIT_WATCH=os.pathsep.join(watch))
+        subprocess.run(argv, input=feed, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, text=True, env=env)
+        modules, data, spawns = set(), [], []
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                kind, _, rest = line.strip().partition(" ")
+                if kind == "module":
+                    modules.add(rest)
+                elif kind == "data":
+                    data.append(rest)
+                elif kind == "spawn":
+                    spawns.append(rest)
+        return Trail(modules, data, spawns)
 
     def test_idle_turn_costs_about_the_interpreter_start(self):
         empty = os.path.join(self.tmp, "no-goals")
         os.makedirs(os.path.join(empty, ".devkit"))
         env = dict(os.environ, HOME=empty)
         env.pop("DEVKIT_CHAT_TRACE", None)
-        bare = self.clock([sys.executable, "-c", "pass"], env, "")
-        idle = self.clock([sys.executable, HOOK, "--hook"], env, "{}")
-        self.assertLess(idle, bare * 3 + 0.05,
-                        "холостой ход хука дороже трёх запусков интерпретатора: %.3f против %.3f"
-                        % (idle, bare))
-        # Целей под надзором нет, значит и следов от хука не остаётся: ранний
-        # выход стоит на реестре и до разбора события не доходит.
+        watch = [os.path.join(empty, ".devkit")]
+        bare = self.trail([sys.executable, "-c", "pass"], "", env, watch)
+        idle = self.trail([sys.executable, HOOK, "--hook"], "{}", env, watch)
+        # Ранний выход стоит раньше всякой работы: ни реестра целей, ни доски
+        # холостой ход не читает и никого не поднимает.
+        self.assertEqual(idle.spawns, [],
+                         "холостой ход поднял подпроцесс: %s" % idle.spawns)
+        self.assertEqual(idle.data, [],
+                         "холостой ход полез в данные: %s" % idle.data)
+        # Остаток цены это импорты, и держит их бюджет модулей сверх голого
+        # интерпретатора. Дорогая зависимость приносит модули десятками, так что
+        # в бюджет она не влезет, а стенные секунды тут больше ни при чём.
+        extra = idle.modules - bare.modules
+        self.assertLessEqual(len(extra), IDLE_MODULES,
+                             "холостой ход поднимает %d модулей сверх голого интерпретатора"
+                             " при бюджете %d: %s"
+                             % (len(extra), IDLE_MODULES, ", ".join(sorted(extra))))
+        # Целей под надзором нет, значит и следов от хука не остаётся.
         self.assertFalse(os.path.exists(os.path.join(empty, ".devkit", "chat-in.log")),
                          "холостой ход написал строку в журнал")
+
+    def test_probe_sees_the_work_of_a_real_turn(self):
+        """Пустой состав холостого хода это не слепота пробы. Тем же замером
+        рабочий ход на носителе цели и в данные лезет, и модулей поднимает
+        больше: сравнивать холостой ход есть с чем."""
+        s = self.stand()
+        live = self.trail([sys.executable, HOOK, "--hook"], json.dumps(s.payload()),
+                          s.env(), [os.path.join(s.home, ".devkit"), s.root])
+        self.assertTrue(live.data, "замер не увидел обращений рабочего хода к данным")
 
 
 if __name__ == "__main__":

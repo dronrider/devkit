@@ -65,6 +65,16 @@ class SyntaxTest(unittest.TestCase):
                               text=True)
         self.assertEqual(proc.returncode, 0, proc.stdout)
 
+    def test_no_external_bc_dependency(self):
+        # Замечание ревью DK-1124: bc нигде больше в tools/ и hooks/ не
+        # встречается и не гарантирован на всякой машине, а сравнение и
+        # разность времени можно свести к awk, который сценарий и так
+        # зовёт для разбора конфига. Регрессия на возврат bc текстовая:
+        # запуск с PATH без bc уронил бы сам прогон, а не только этот тест.
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertNotRegex(text, r'\bbc\b',
+                            "bc обязан быть убран, сравнение и разность времени на awk")
+
 
 class ThresholdTest(Stand):
 

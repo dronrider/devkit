@@ -41,15 +41,16 @@ while [ "$i" -le 10 ]; do
 	t0=$(date +%s.%N)
 	taskctl list --json >/dev/null
 	t1=$(date +%s.%N)
-	tk=$(echo "$t1 - $t0" | bc)
+	tk=$(awk -v a="$t1" -v b="$t0" 'BEGIN{printf "%.3f", a-b}')
 
 	t0=$(date +%s.%N)
 	curl -sS -b "$cookies" "$base/api/projects" >/dev/null
 	t1=$(date +%s.%N)
-	ap=$(echo "$t1 - $t0" | bc)
+	ap=$(awk -v a="$t1" -v b="$t0" 'BEGIN{printf "%.3f", a-b}')
 
 	printf 'замер %s: taskctl=%ss api/projects=%ss\n' "$i" "$tk" "$ap"
-	if [ "$(echo "$tk > $LIMIT" | bc)" = 1 ] || [ "$(echo "$ap > $LIMIT" | bc)" = 1 ]; then
+	if awk -v a="$tk" -v b="$LIMIT" 'BEGIN{exit !(a>b)}' \
+		|| awk -v a="$ap" -v b="$LIMIT" 'BEGIN{exit !(a>b)}'; then
 		over=$((over + 1))
 	fi
 	i=$((i + 1))

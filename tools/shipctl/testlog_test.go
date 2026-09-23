@@ -62,9 +62,9 @@ func TestParseComponentOutcomesEmpty(t *testing.T) {
 func TestResolveOwnershipUnresolvedWithoutLayout(t *testing.T) {
 	cfg := deployConfig{}
 	diff := []string{"compA/thing.txt"}
-	resolved, own := resolveOwnership(cfg, "compA", "", diff)
-	if resolved || own {
-		t.Fatalf("без раскладки и без Root компонент не должен считаться ни опознанным, ни своим: resolved=%v own=%v", resolved, own)
+	resolved, own, undetermined := resolveOwnership(cfg, "compA", "", diff)
+	if resolved || own || undetermined {
+		t.Fatalf("без раскладки и без Root компонент не должен считаться ни опознанным, ни своим, ни неопределённым: resolved=%v own=%v undetermined=%v", resolved, own, undetermined)
 	}
 }
 
@@ -75,12 +75,12 @@ func TestResolveOwnershipUnresolvedWithoutLayout(t *testing.T) {
 func TestResolveOwnershipRootWithoutLayout(t *testing.T) {
 	cfg := deployConfig{}
 	own := []string{"compA/thing.txt"}
-	if resolved, isOwn := resolveOwnership(cfg, "compA", "compA", own); !resolved || !isOwn {
-		t.Fatalf("свой диффу корень без раскладки должен резолвиться своим: resolved=%v own=%v", resolved, isOwn)
+	if resolved, isOwn, undetermined := resolveOwnership(cfg, "compA", "compA", own); !resolved || !isOwn || undetermined {
+		t.Fatalf("свой диффу корень без раскладки должен резолвиться своим: resolved=%v own=%v undetermined=%v", resolved, isOwn, undetermined)
 	}
 	other := []string{"compB/thing.txt"}
-	if resolved, isOwn := resolveOwnership(cfg, "compA", "compA", other); !resolved || isOwn {
-		t.Fatalf("чужой диффу корень без раскладки должен резолвиться чужим, а не оставаться неопознанным: resolved=%v own=%v", resolved, isOwn)
+	if resolved, isOwn, undetermined := resolveOwnership(cfg, "compA", "compA", other); !resolved || isOwn || undetermined {
+		t.Fatalf("чужой диффу корень без раскладки должен резолвиться чужим, а не оставаться неопознанным: resolved=%v own=%v undetermined=%v", resolved, isOwn, undetermined)
 	}
 }
 
@@ -93,23 +93,26 @@ func TestResolveOwnershipLayoutOverridesRoot(t *testing.T) {
 		{Name: "check-skills", Paths: []string{"kit/skills/check-skills.py"}},
 	}}
 	diff := []string{"kit/skills/some-other-skill/foo.py"}
-	resolved, own := resolveOwnership(cfg, "check-skills", "kit/skills", diff)
-	if !resolved || own {
-		t.Fatalf("раскладка должна главенствовать над более широким Root: resolved=%v own=%v", resolved, own)
+	resolved, own, undetermined := resolveOwnership(cfg, "check-skills", "kit/skills", diff)
+	if !resolved || own || undetermined {
+		t.Fatalf("раскладка должна главенствовать над более широким Root: resolved=%v own=%v undetermined=%v", resolved, own, undetermined)
 	}
 }
 
-// TestResolveOwnershipWholeRepoRootAlwaysOwn: замечание ревью круга 3,
-// запись 3. Компонент doctor (tools/devkitctl/parallel.py, cwd=".") держит
-// корень «.», весь репозиторий. Любой путь диффа лежит внутри такой
-// области, и own обязан быть true, а не застревать в false навсегда из-за
-// того, что реальный путь никогда не совпадает с голой точкой буквально.
-func TestResolveOwnershipWholeRepoRootAlwaysOwn(t *testing.T) {
+// TestResolveOwnershipWholeRepoRootUndetermined: замечание ревью круга 4.
+// Компонент doctor (tools/devkitctl/parallel.py, cwd=".") держит корень «.»,
+// весь репозиторий, и задевает любой путь диффа структурно, без единого
+// различающего бита. Own=true тут был бы верхней оценкой (это и было
+// поведением круга 3, замечание ревью его сняло): своя и чужая краснота
+// doctor неотличимы, own обязан остаться false, а Undetermined - стать
+// true, отдельно и от own=false (диффа не касается), и от resolved=false
+// (границы нет вовсе).
+func TestResolveOwnershipWholeRepoRootUndetermined(t *testing.T) {
 	cfg := deployConfig{}
 	diff := []string{"tools/devkitctl/devkitctl.py"}
-	resolved, own := resolveOwnership(cfg, "doctor", ".", diff)
-	if !resolved || !own {
-		t.Fatalf("корень-точка обязан резолвиться своим для любого пути диффа: resolved=%v own=%v", resolved, own)
+	resolved, own, undetermined := resolveOwnership(cfg, "doctor", ".", diff)
+	if !resolved || own || !undetermined {
+		t.Fatalf("корень-точка обязан резолвиться неопределённым, а не своим: resolved=%v own=%v undetermined=%v", resolved, own, undetermined)
 	}
 }
 
@@ -125,11 +128,11 @@ func TestResolveOwnershipLayoutWithoutPathsFallsBackToRoot(t *testing.T) {
 		{Name: "partial", Command: "true"},
 	}}
 	diff := []string{"partial/thing.go"}
-	if resolved, own := resolveOwnership(cfg, "partial", "partial", diff); !resolved || !own {
-		t.Fatalf("раскладка без .paths должна уступать Root, а не застревать в own=false: resolved=%v own=%v", resolved, own)
+	if resolved, own, undetermined := resolveOwnership(cfg, "partial", "partial", diff); !resolved || !own || undetermined {
+		t.Fatalf("раскладка без .paths должна уступать Root, а не застревать в own=false: resolved=%v own=%v undetermined=%v", resolved, own, undetermined)
 	}
-	if resolved, own := resolveOwnership(cfg, "partial", "", diff); resolved || own {
-		t.Fatalf("без Root та же недоделанная раскладка остаётся неопознанной, как и отсутствующая: resolved=%v own=%v", resolved, own)
+	if resolved, own, undetermined := resolveOwnership(cfg, "partial", "", diff); resolved || own || undetermined {
+		t.Fatalf("без Root та же недоделанная раскладка остаётся неопознанной, как и отсутствующая: resolved=%v own=%v undetermined=%v", resolved, own, undetermined)
 	}
 }
 
@@ -143,12 +146,12 @@ func TestResolveOwnershipExactPathMatch(t *testing.T) {
 		{Name: "check-skills", Paths: []string{"kit/skills/check-skills.py"}},
 	}}
 	own := []string{"kit/skills/check-skills.py"}
-	if resolved, isOwn := resolveOwnership(cfg, "check-skills", "", own); !resolved || !isOwn {
-		t.Fatalf("точный путь компонента-скрипта должен резолвиться своим: resolved=%v own=%v", resolved, isOwn)
+	if resolved, isOwn, undetermined := resolveOwnership(cfg, "check-skills", "", own); !resolved || !isOwn || undetermined {
+		t.Fatalf("точный путь компонента-скрипта должен резолвиться своим: resolved=%v own=%v undetermined=%v", resolved, isOwn, undetermined)
 	}
 	other := []string{"kit/skills/some-other-skill/foo.py"}
-	if resolved, isOwn := resolveOwnership(cfg, "check-skills", "", other); !resolved || isOwn {
-		t.Fatalf("файл другого скилла не должен резолвиться своим для check-skills: resolved=%v own=%v", resolved, isOwn)
+	if resolved, isOwn, undetermined := resolveOwnership(cfg, "check-skills", "", other); !resolved || isOwn || undetermined {
+		t.Fatalf("файл другого скилла не должен резолвиться своим для check-skills: resolved=%v own=%v undetermined=%v", resolved, isOwn, undetermined)
 	}
 }
 
@@ -163,9 +166,9 @@ func TestResolveOwnershipBucketLayoutTrustsDeclaredBoundary(t *testing.T) {
 		{Name: "skills", Paths: []string{"kit/skills/"}},
 	}}
 	diff := []string{"kit/skills/some-other-skill/foo.py"}
-	resolved, own := resolveOwnership(cfg, "skills", "", diff)
-	if !resolved || !own {
-		t.Fatalf("объявленная граница бакета должна доверяться как есть: resolved=%v own=%v", resolved, own)
+	resolved, own, undetermined := resolveOwnership(cfg, "skills", "", diff)
+	if !resolved || !own || undetermined {
+		t.Fatalf("объявленная граница бакета должна доверяться как есть: resolved=%v own=%v undetermined=%v", resolved, own, undetermined)
 	}
 }
 
@@ -176,9 +179,9 @@ func TestResolveOwnershipDeclaredButNotTouched(t *testing.T) {
 		{Name: "compB", Paths: []string{"compB/"}},
 	}}
 	diff := []string{"compA/thing.txt"}
-	resolved, own := resolveOwnership(cfg, "compB", "", diff)
-	if !resolved || own {
-		t.Fatalf("заведённый, но не задетый компонент должен быть чужим: resolved=%v own=%v", resolved, own)
+	resolved, own, undetermined := resolveOwnership(cfg, "compB", "", diff)
+	if !resolved || own || undetermined {
+		t.Fatalf("заведённый, но не задетый компонент должен быть чужим: resolved=%v own=%v undetermined=%v", resolved, own, undetermined)
 	}
 }
 
@@ -363,12 +366,14 @@ func TestMergeForeignFailsOwnRedFromRootWithoutLayoutNotCounted(t *testing.T) {
 	}
 }
 
-// TestMergeForeignFailsOwnRedFromWholeRepoRootNotCounted: регрессия ревью
-// круга 3, запись 3. Живой пример - компонент doctor (tools/devkitctl/
-// parallel.py, cwd="."), корень которого это весь репозиторий. Красный
-// такой компонент честно свой при любом диффе задачи, и в foreign-fails
-// попадать не должен.
-func TestMergeForeignFailsOwnRedFromWholeRepoRootNotCounted(t *testing.T) {
+// TestMergeForeignFailsWholeRepoRootAloneNotCounted: регрессия ревью круга
+// 4. Живой пример - компонент doctor (tools/devkitctl/parallel.py, cwd="."),
+// корень которого это весь репозиторий. Own=true для такого корня было бы
+// верхней оценкой (поведение круга 3, снятое замечанием круга 4): своя и
+// чужая краснота doctor неотличимы, и одного его провала для счёта мало -
+// запись остаётся вне foreign-fails не потому, что доктор «свой», а потому,
+// что граница не установлена ни в одну сторону.
+func TestMergeForeignFailsWholeRepoRootAloneNotCounted(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
@@ -387,7 +392,38 @@ func TestMergeForeignFailsOwnRedFromWholeRepoRootNotCounted(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n != 0 {
-		t.Fatalf("компонент с корнем-точкой честно свой на любом диффе, в счёт не идёт: %d", n)
+		t.Fatalf("неопределённый в одиночку компонент в счёт не идёт ни в свою, ни в чужую сторону: %d", n)
+	}
+}
+
+// TestMergeForeignFailsWholeRepoRootBesideForeignCounted: регрессия ревью
+// круга 4, обратная сторона той же записи. doctor (корень-точка,
+// неопределён) падает рядом с точно чужим компонентом (раскладка заведена,
+// диффа не касается): неопределённость doctor не должна прятать точно
+// опознанную чужую красноту соседа - третья строка DoD цели DK-1084 держит
+// счёт по слияниям, а не по отдельным компонентам, и хотя бы один точно
+// чужой компонент обязан довести запись до счёта.
+func TestMergeForeignFailsWholeRepoRootBesideForeignCounted(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeDeployCfg(t, root, "deploy.compB = true\ndeploy.compB.paths = compB/\n")
+	gitT(t, root, "checkout", "-qb", "xr-001-fix")
+	write(t, root, "compA/thing.txt", "own\n")
+	write(t, root, "fix_test.go", "package main\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	test := `printf 'doctor (.) 0.1s FAIL\ncompB (compB) 0.1s FAIL\n'; exit 1`
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: test}); err == nil {
+		t.Fatal("красный компонент должен держать слияние")
+	}
+	n, err := foreignFails(root, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("точно чужой сосед обязан довести запись до счёта даже рядом с неопределённым doctor: %d", n)
 	}
 }
 

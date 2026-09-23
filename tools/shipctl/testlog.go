@@ -33,13 +33,27 @@ const testLogPath = ".devkit/test-runs.log"
 // компонент без заведённой раскладки и без Root не признаётся своим
 // никогда, его краснота идёт в счёт foreign-fails как неопознанная, а не
 // как молчаливо прощённая.
+//
+// Undetermined это третье значение поверх Own, не его отрицание: компонент
+// с корнем «.» (весь репозиторий, живой пример - doctor,
+// tools/devkitctl/parallel.py) задевает любой непустой дифф структурно, без
+// единого различающего бита, и своя краснота такого компонента неотличима
+// от чужой. Own=true тут был бы верхней оценкой: doctor не мог бы попасть в
+// foreign-fails никогда, ни при одном диффе, что прямо против третьей
+// строки DoD цели DK-1084 (у любого компонента должна быть возможность
+// оказаться отбившим слияние чужой краснотой). Undetermined не путает эту
+// неопределённость с Own=false (компонент resolved, но диффа не касается) и
+// не путает её с Resolved=false (границы нет вовсе): счёт по такому
+// компоненту не идёт ни в свою, ни в чужую сторону (замечание ревью круга
+// 4, DK-1125).
 type componentOutcome struct {
-	Name     string  `json:"name"`
-	OK       bool    `json:"ok"`
-	Secs     float64 `json:"secs"`
-	Root     string  `json:"root,omitempty"`
-	Resolved bool    `json:"resolved"`
-	Own      bool    `json:"own"`
+	Name         string  `json:"name"`
+	OK           bool    `json:"ok"`
+	Secs         float64 `json:"secs"`
+	Root         string  `json:"root,omitempty"`
+	Resolved     bool    `json:"resolved"`
+	Own          bool    `json:"own"`
+	Undetermined bool    `json:"undetermined,omitempty"`
 }
 
 // testRunRecord это одна запись журнала: итог прогона test при слиянии
@@ -106,7 +120,7 @@ func writeTestLog(root, id string, diff []string, out string, ok bool, dur time.
 	// должна переигрывать смысл уже слитых слияний.
 	cfg, _ := loadDeployConfig(root)
 	for i := range comps {
-		comps[i].Resolved, comps[i].Own = resolveOwnership(cfg, comps[i].Name, comps[i].Root, diff)
+		comps[i].Resolved, comps[i].Own, comps[i].Undetermined = resolveOwnership(cfg, comps[i].Name, comps[i].Root, diff)
 	}
 	rec := testRunRecord{Time: time.Now(), ID: id, OK: ok, Diff: diff, Components: comps}
 	line, err := json.Marshal(rec)
@@ -181,7 +195,19 @@ func readTestLog(root string, since time.Duration) ([]testRunRecord, error) {
 // пуст, own навсегда застрял бы в false, а до Root, который мог бы решить
 // честно, дело бы не дошло. Такая раскладка приравнена к отсутствующей, и
 // резолв идёт дальше к Root (замечание ревью круга 3, запись 4, DK-1125).
-func resolveOwnership(cfg deployConfig, name, root string, diff []string) (resolved, own bool) {
+//
+// Root "." это отдельный, третий исход. Он называет не подкаталог, а весь
+// репозиторий (живой пример - doctor, tools/devkitctl/parallel.py, cwd="."),
+// и задевает любой непустой diff структурно, без единого различающего
+// бита. Own=true тут был бы верхней оценкой без разбора: своя и чужая
+// краснота doctor неотличимы, own=true в обе стороны без исключения
+// означал бы, что doctor не может попасть в foreign-fails никогда, ни при
+// одном диффе (замечание ревью круга 4, DK-1125, тот же приём, что
+// предлагался для бакетов ещё в круге 1). Undetermined=true метит этот
+// случай отдельно от own=false (resolved, но диффа не касается) и от
+// resolved=false (границы нет вовсе): счёт по такому компоненту не должен
+// идти ни в свою, ни в чужую сторону, это отдаётся на решение foreignFails.
+func resolveOwnership(cfg deployConfig, name, root string, diff []string) (resolved, own, undetermined bool) {
 	for _, comp := range cfg.Components {
 		if comp.Name != name {
 			continue
@@ -193,33 +219,41 @@ func resolveOwnership(cfg deployConfig, name, root string, diff []string) (resol
 		for _, p := range diff {
 			for _, prefix := range comp.Paths {
 				if pathUnder(p, prefix) {
-					return true, true
+					return true, true, false
 				}
 			}
 		}
-		return true, false
+		return true, false, false
 	}
 	if root == "" {
-		return false, false
+		return false, false, false
+	}
+	if root == "." {
+		return true, false, true
 	}
 	resolved = true
 	for _, p := range diff {
 		if pathUnder(p, root) {
-			return true, true
+			return true, true, false
 		}
 	}
-	return true, false
+	return true, false, false
 }
 
 // pathUnder проверяет, лежит ли path под prefix: как файл целиком либо
 // внутри каталога, который тот называет. Копия приёма deployconf.pathUnder:
 // та версия не экспортирована, а тянуть отдельный пакет ради одной проверки
 // на шесть строк незачем. Корень-точка это отдельный случай: он называет не
-// подкаталог, а весь репозиторий целиком (живой пример - компонент doctor,
-// tools/devkitctl/parallel.py, cwd="."), а git diff --name-only не отдаёт
+// подкаталог, а весь репозиторий целиком, а git diff --name-only не отдаёт
 // путей вида "./..." или голого ".", так что общее правило (path==prefix
 // либо HasPrefix(path, prefix+"/")) для этого корня не сработало бы ни на
-// одном реальном пути (замечание ревью круга 3, запись 3, DK-1125).
+// одном реальном пути (замечание ревью круга 3, запись 3, DK-1125). Own для
+// такой точки здесь по-прежнему true: pathUnder отвечает только "лежит ли
+// путь внутри", а разбор своя-чужая-неотличима для Root "." живёт выше по
+// стеку, в resolveOwnership (замечание ревью круга 4, DK-1125) - раскладка
+// deploy.<имя>.paths, объявившая "." явно, это осознанное решение проекта
+// про собственную границу, а не структурная случайность рабочего каталога
+// раннера, и pathUnder её не переигрывает.
 func pathUnder(path, prefix string) bool {
 	prefix = strings.TrimSuffix(prefix, "/")
 	if prefix == "" {
@@ -232,12 +266,19 @@ func pathUnder(path, prefix string) bool {
 }
 
 // foreignFails считает слияния, отбитые компонентом вне диффа задачи, за
-// срок since: запись в счёт идёт, когда прогон целиком красный и ни один из
-// провалившихся компонентов не признан своим (Own при Resolved). Своя
-// краснота отбивает слияние законно и в счёт не идёт. Неопознанный компонент
-// (раскладка для его имени не заведена) своим не считается никогда и уходит
-// в счёт вместе с точно чужим: ложный ноль опаснее ложной единицы, потому
-// что прячет реальную чужую красноту (замечание ревью круга 1, DK-1125).
+// срок since. Три исхода на компонент, не два:
+//
+//   - own (Resolved && Own): своя краснота, отбивает слияние законно, и один
+//     такой компонент выводит всю запись из счёта - других провалившихся
+//     разбирать не нужно.
+//   - неопознанный (!Resolved) или точно чужой (Resolved && !Own &&
+//     !Undetermined): в счёт идут вместе, ложный ноль опаснее ложной
+//     единицы, неопознанная граница прячет реальную чужую красноту
+//     (замечание ревью круга 1, DK-1125).
+//   - Undetermined: ни своя, ни чужая, граница компонента (Root ".", весь
+//     репозиторий) не различает их структурно. Одного такого провала для
+//     счёта мало: запись идёт в счёт, только если рядом провалился ещё и
+//     точно опознанный чужой компонент (замечание ревью круга 4, DK-1125).
 func foreignFails(root string, since time.Duration) (int, error) {
 	recs, err := readTestLog(root, since)
 	if err != nil {
@@ -248,17 +289,24 @@ func foreignFails(root string, since time.Duration) (int, error) {
 		if rec.OK {
 			continue
 		}
-		failedAny, own := false, false
+		own, foreign := false, false
 		for _, c := range rec.Components {
 			if c.OK {
 				continue
 			}
-			failedAny = true
-			if c.Resolved && c.Own {
+			switch {
+			case c.Undetermined:
+				// граница не установлена, ни своя, ни чужая - счёт молчит
+			case c.Resolved && c.Own:
 				own = true
+			default:
+				foreign = true
 			}
 		}
-		if failedAny && !own {
+		if own {
+			continue
+		}
+		if foreign {
 			n++
 		}
 	}

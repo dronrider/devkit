@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
-"""Стенд для DK-1124-check.sh: сценарий проверки живёт рядом с постановкой, а
-не в tools/, и живого дашборда с живым дереватором нагрузки здесь нет.
+"""Стенд для docs/tasks/DK-1124-check.sh.
+
+Сам сценарий это одноразовая проверка задачи и по правилу раскладки
+(README.md, «Раскладка», DK-139) остаётся в `docs/tasks/`, а python это код,
+не материал: доктор (`tools/devkitctl/layout.py`) метит `.py` под `docs/`
+находкой MATERIAL без исключений, поэтому стенд лежит здесь, в
+`tools/devkitctl/`, рядом с `parallel.py`, чей прогон он и проверяет
+косвенно, а на сам `.sh` ссылается путём вверх по дереву. Живого дашборда с
+живым деревом нагрузки здесь нет.
 
 Настоящий прогон занимает 20-25 минут и просит уже запущенный дашборд
 (разбор в docs/tasks/DK-1124.md, раздел «Ход работы»), поэтому тест глушит
@@ -28,7 +35,7 @@ import time
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent / "DK-1124-check.sh"
+SCRIPT = Path(__file__).resolve().parent.parent.parent / "docs" / "tasks" / "DK-1124-check.sh"
 
 STAND_TOKEN = "stand-token"
 STAND_COOKIE = "session=stand-session"

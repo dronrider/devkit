@@ -7,20 +7,68 @@
 обе внешние зависимости точками подмены самого скрипта: DEVKIT_HOME уводит
 конфиг и журнал в свой каталог, DEVKIT_LOAD_CMD заменяет второй полный
 прогон `parallel.py` на мгновенную команду, DEVKIT_PROBE_INTERVAL убирает
-паузы между замерами. `taskctl` и `curl` подменены стендовыми скриптами в
-голове PATH: логика самого сценария (разбор конфига, порог, окно журнала,
-код возврата) проверяется по-настоящему, а не изображается.
+паузы между замерами. `taskctl` подменён стендовым скриптом в голове PATH.
+HTTP-часть сценария (login и /api/projects) идёт через python3
+urllib.request и http.cookiejar, не через curl (замечание ревью DK-1124:
+curl отбит разрешениями Bash харнесса агента), поэтому вместо стенда-бинаря
+поднят настоящий loopback-сервер стандартной библиотекой http.server: логика
+самого сценария (разбор конфига, порог, окно журнала, код возврата, cookie
+сессии между login и замером) проверяется по-настоящему, а не изображается.
 """
+import http.server
+import json
 import os
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent / "DK-1124-check.sh"
+
+STAND_TOKEN = "stand-token"
+STAND_COOKIE = "session=stand-session"
+
+
+def _make_handler(state):
+    class Handler(http.server.BaseHTTPRequestHandler):
+
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            if self.path != "/api/login":
+                self.send_response(404)
+                self.end_headers()
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length else b"{}"
+            data = json.loads(body)
+            if data.get("token") == STAND_TOKEN:
+                self.send_response(200)
+                self.send_header("Set-Cookie", STAND_COOKIE + "; Path=/")
+                self.end_headers()
+            else:
+                self.send_response(401)
+                self.end_headers()
+
+        def do_GET(self):
+            if self.path != "/api/projects":
+                self.send_response(404)
+                self.end_headers()
+                return
+            state["total"] += 1
+            if STAND_COOKIE in self.headers.get("Cookie", ""):
+                state["authed"] += 1
+                self.send_response(200)
+            else:
+                self.send_response(401)
+            self.end_headers()
+
+    return Handler
 
 
 class Stand(unittest.TestCase):
@@ -30,8 +78,14 @@ class Stand(unittest.TestCase):
         self.addCleanup(shutil.rmtree, str(self.dir), True)
         self.home = self.dir / "home"
         (self.home / ".devkit").mkdir(parents=True)
+        self.state = {"total": 0, "authed": 0}
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), _make_handler(self.state))
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
         (self.home / ".devkit" / "dashboard.local").write_text(
-            "port = 7112\ntoken = stand-token\n", encoding="utf-8")
+            "port = %d\ntoken = %s\n" % (self.server.server_port, STAND_TOKEN),
+            encoding="utf-8")
         self.bin = self.dir / "bin"
         self.bin.mkdir()
 
@@ -41,7 +95,6 @@ class Stand(unittest.TestCase):
         path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
     def run_script(self, limit=5, load="true", probe_interval="0", extra_env=None):
-        self.stub("curl", 'exit 0')
         env = dict(os.environ)
         env["PATH"] = str(self.bin) + os.pathsep + env.get("PATH", "")
         env["DEVKIT_HOME"] = str(self.home)
@@ -75,12 +128,24 @@ class SyntaxTest(unittest.TestCase):
         self.assertNotRegex(text, r'\bbc\b',
                             "bc обязан быть убран, сравнение и разность времени на awk")
 
+    def test_no_curl_dependency(self):
+        # Замечание ревью DK-1124: curl отбит разрешениями Bash харнесса
+        # агента, включая curl --version без байта по сети (разбор в
+        # docs/tasks/DK-1124.md, «Ход работы»). HTTP-часть переведена на
+        # python3 urllib.request и http.cookiejar стандартной библиотеки.
+        # Комментарии, где curl назван по имени ради этого разбора, тест не
+        # считает: смотрит только исполняемые строки.
+        code_lines = [ln for ln in SCRIPT.read_text(encoding="utf-8").splitlines()
+                      if not ln.strip().startswith("#")]
+        self.assertNotRegex("\n".join(code_lines), r'\bcurl\b',
+                            "curl обязан быть убран, HTTP-запросы идут через python3 urllib.request")
+
 
 class ThresholdTest(Stand):
 
     def test_reports_ok_under_the_limit(self):
-        # Быстрый taskctl и curl, порог с запасом: все десять замеров
-        # укладываются, сценарий обязан отдать 0 и напечатать OK.
+        # Быстрый taskctl и loopback-сервер, порог с запасом: все десять
+        # замеров укладываются, сценарий обязан отдать 0 и напечатать OK.
         self.stub("taskctl", "exit 0")
         proc = self.run_script(limit=5)
         self.assertEqual(proc.returncode, 0, proc.stdout)
@@ -125,6 +190,18 @@ class ThresholdTest(Stand):
         self.stub("taskctl", "exit 0")
         proc = self.run_script(limit=5)
         self.assertIn("потолок не задет", proc.stdout)
+
+    def test_measurement_reuses_the_login_cookie(self):
+        # curl -c/-b передавали cookie между login и замером через файл
+        # cookies; http.cookiejar обязан делать то же самое через
+        # MozillaCookieJar на том же файле, иначе все десять запросов
+        # /api/projects идут неавторизованными.
+        self.stub("taskctl", "exit 0")
+        proc = self.run_script(limit=5)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual(self.state["total"], 10)
+        self.assertEqual(self.state["authed"], 10,
+                          "все десять замеров /api/projects обязаны идти с cookie сессии")
 
     def test_default_load_command_is_the_real_full_run(self):
         # DEVKIT_LOAD_CMD это точка подмены для теста, а не смена

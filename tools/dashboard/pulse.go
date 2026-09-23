@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dronrider/devkit/internal/stage"
@@ -360,6 +361,19 @@ func pulseSeen(path string) pulseStep {
 	return step
 }
 
+// pulseReads считает журналы, хвосты которых кольцо взяло с диска. Растёт счёт
+// в pulseRead, а через pulseRead идёт всё чтение кольца, и по счёту видно то
+// самое, ради чего заведена память: ответил ли повторный опрос из памяти
+// процесса или пошёл за хвостами заново. Живой дашборд платит за счёт одним
+// сложением на открытый файл, а стенду он заменяет секундомер: стенное время
+// на загруженной машине плывёт вместе с соседями по процессору, а число
+// открытых журналов держится под любой нагрузкой.
+var pulseReads atomic.Int64
+
+// pulseReadStat отдаёт накопленный счёт чтений кольца. Число растёт от старта
+// процесса, и мерить им надо разницу вокруг захода за ходом.
+func pulseReadStat() int64 { return pulseReads.Load() }
+
 func pulseRead(path string) pulseStep {
 	var step pulseStep
 	f, err := os.Open(path)
@@ -367,6 +381,7 @@ func pulseRead(path string) pulseStep {
 		return step
 	}
 	defer f.Close()
+	pulseReads.Add(1)
 	fi, err := f.Stat()
 	if err != nil {
 		return step

@@ -745,24 +745,33 @@ func TestPulseCheckScaleWithoutRecord(t *testing.T) {
 // хвоста файла, и неизменившийся файл отвечает из памяти процесса. Прежде
 // сотня журналов долгого разговора перечитывалась на каждый опрос кольца, и
 // кольцо выходило дороже самой ленты.
+//
+// Сторожит это счёт чтений кольца, а не секундомер: тёплый заход обязан не
+// открыть ни одного журнала, и такой ответ одинаков на свободной машине и под
+// соседями по прогону. Вес журналов тут роли не играет, хвост берётся
+// последними килобайтами файла, поэтому фикстура держит сорок журналов ради
+// числа открытий, а не ради мегабайтов.
 func TestPulseRemembersJournalSteps(t *testing.T) {
 	e := newTestEnv(t)
 	forgetPulseSteps()
 	path := writeSession(t, e.home, e.proj, "", "aaa-1", transcriptFixture, time.Now())
 	for i := 0; i < 40; i++ {
-		fatSubLog(t, path, fmt.Sprintf("p%02d", i), 1<<20)
+		fatSubLog(t, path, fmt.Sprintf("p%02d", i), 1<<16)
 	}
-	at := time.Now()
+	was := pulseReadStat()
 	first := pulseTrace(path)
-	cold := time.Since(at)
-	at = time.Now()
+	cold := pulseReadStat() - was
+	if cold < 41 {
+		t.Fatalf("холодный заход прочитал %d журналов, ждал транскрипт и сорок боковых", cold)
+	}
+	was = pulseReadStat()
 	again := pulseTrace(path)
-	warm := time.Since(at)
+	warm := pulseReadStat() - was
 	if first.At.IsZero() || first != again {
 		t.Fatalf("ход кольца разошёлся: %+v против %+v", first, again)
 	}
-	if warm > cold/5 || warm > 30*time.Millisecond {
-		t.Fatalf("повторный опрос кольца стоит %v против первого %v", warm, cold)
+	if warm != 0 {
+		t.Fatalf("повторный опрос пошёл за хвостами заново: прочитано %d журналов, холодный заход брал %d", warm, cold)
 	}
 }
 

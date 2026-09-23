@@ -46,6 +46,13 @@ devkitctl сама раздаёт работу воркерам по класс�
 компоненту его стартом, и уже бегущему её не домешать, `go test` читает `-p`
 только при своём запуске.
 
+Бюджет держит сумму процессов в рамке, а приоритет решает, кто из них
+выигрывает у планировщика при столкновении. Каждый компонент идёт под
+`nice` (`with_priority`, `NICE_LEVEL`, задача DK-1124), и дашборд с
+терминалом не голодают на прогоне даже тогда, когда бюджет занят целиком:
+2026-09-20 `taskctl list --json` не отвечал за 30 с потолка `board.go`
+именно из-за приоритета, не только из-за перемножения потолков.
+
 Вызов без аргументов гонит все компоненты по раскладке корня devkit,
 `--list` печатает их перечень, `--only-go` сужает прогон до го-модулей
 `tools/` (этим же флагом их гоняет CI, `.github/workflows/ci.yml`: список
@@ -194,6 +201,26 @@ def with_share(name, argv, share):
     return argv
 
 
+# Niceness всего дерева процессов прогона: верхняя граница для процесса без
+# привилегий (диапазон POSIX 0..19). Разбор рычага и отвергнутых вариантов
+# в docs/tasks/DK-1124.md, разделы «Что происходит» и «Ход работы».
+NICE_LEVEL = 19
+
+
+def with_priority(argv):
+    """Argv компонента, обёрнутый `nice` на пониженный приоритет.
+
+    `nice` не форкает и не ждёт: он выставляет свою niceness и тут же
+    заменяет себя целевой командой через exec, так что обёртка не добавляет
+    процесс к дереву, которое стопает `killpg` по группе (`run_all`).
+    Niceness это атрибут процесса, а не потока, и наследуется через
+    fork/exec любым порождённым подпроцессом. У `go test` это тестовые
+    бинари пакетов, у `suite.py` воркеры классов, и своей правки на их
+    стороне не требуется.
+    """
+    return ["nice", "-n", str(NICE_LEVEL)] + argv
+
+
 def command_env(argv):
     """Окружение подпроцесса компонента, None оставляет окружение раннера.
 
@@ -314,6 +341,10 @@ def run_all(comps, workers, root=ROOT, budget=None):
     и уходит в очередь первым (`queue_order`). Предел способа честный: уже
     бегущему компоненту долю не домешать, `go test` читает `-p` только при
     своём запуске.
+
+    Каждый компонент идёт под `nice` (`with_priority`, `NICE_LEVEL`), и
+    приоритет наследует всё его дерево подпроцессов: дашборд и терминал не
+    голодают на прогоне, разбор в docs/tasks/DK-1124.md.
     """
     budget = budget if budget is not None else cpu_budget()
     comps = queue_order(comps)
@@ -333,6 +364,8 @@ def run_all(comps, workers, root=ROOT, budget=None):
                 return
             (name, rel, argv), share = job
             argv = with_share(name, argv, share)
+            env = command_env(argv)
+            argv = with_priority(argv)
             started = time.monotonic()
             # Старт и провал одного правила: компонент, который не смог
             # запуститься (несуществующий cwd или бинарник), обязан красить
@@ -345,7 +378,7 @@ def run_all(comps, workers, root=ROOT, budget=None):
                 # terminate самого питона оставил бы их сиротами докручивать
                 # уже решённый прогон.
                 proc = subprocess.Popen(
-                    argv, cwd=str(root / rel), env=command_env(argv),
+                    argv, cwd=str(root / rel), env=env,
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     start_new_session=True)
@@ -427,17 +460,19 @@ def main(argv=None):
         # единственное, что получит каждый компонент.
         share = component_share(jobs, budget, reserved)
         preview = [(name, rel,
-                    with_share(name, comp_argv,
-                               reserved if name == RUNNER and reserved else share))
+                    with_priority(with_share(
+                        name, comp_argv,
+                        reserved if name == RUNNER and reserved else share)))
                    for name, rel, comp_argv in queue_order(comps)]
         for name, rel, comp_argv in preview:
             print("%-16s (%s) %s" % (name, rel, " ".join(comp_argv)))
         print("компонентов: %d" % len(preview))
         return 0
     print("бюджет параллельности: ядра=%d лайнов=%d доля раннера=%d "
-          "доля компонента=%d..%d (живая, растёт по мере опустения очереди)"
+          "доля компонента=%d..%d (живая, растёт по мере опустения очереди) "
+          "приоритет=nice %d"
           % (budget, jobs, reserved, component_share(jobs, budget, reserved),
-             budget))
+             budget, NICE_LEVEL))
     # Корень компонента идёт в ту же строку итога, каким его уже печатает
     # --list (строка 434): граница компонента известна раннеру всегда, в
     # отличие от deploy.<имя>.paths, которая в самом devkit не заведена

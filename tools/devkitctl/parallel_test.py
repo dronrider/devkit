@@ -134,6 +134,17 @@ class ComponentsTest(unittest.TestCase):
         self.assertEqual(env["GOWORK"], "off")
         self.assertIsNone(parallel.command_env(["/usr/bin/python3", "-m", "unittest"]))
 
+    def test_with_priority_wraps_the_command_in_nice(self):
+        # DK-1124: дерево процессов прогона обязано идти пониженным
+        # приоритетом, а сама обёртка не должна путать поиск GOWORK по
+        # argv[0]: command_env обязан читаться до обёртки в nice, не после.
+        wrapped = parallel.with_priority(["go", "test", "./..."])
+        self.assertEqual(wrapped,
+                         ["nice", "-n", str(parallel.NICE_LEVEL),
+                          "go", "test", "./..."])
+        self.assertEqual(wrapped[0], "nice",
+                         "приоритет обязан быть виден в самой команде")
+
 
 class BudgetTest(unittest.TestCase):
     """Один бюджет параллельности вместо трёх независимых потолков (DK-1123).
@@ -440,6 +451,23 @@ class RunAllTest(Stand):
                       "полез в рантайм своей переменной")
         self.assertIn("suite -j 4", said, "доля не дошла до раннера")
 
+    def test_component_tree_runs_niced(self):
+        # DK-1124: дерево процессов прогона обязано идти пониженным
+        # приоритетом, иначе дашборд и терминал голодают под прогоном
+        # (разбор в docs/tasks/DK-1124.md). Компонент это sh, который
+        # форкает python3-внука: факт ловится по niceness внука, а не по
+        # секундам, так что нагрузка соседних прогонов тест не красит.
+        comp = self.grow(
+            "prio.sh",
+            'python3 -c '
+            '"import os; print(os.getpriority(os.PRIO_PROCESS, 0))" '
+            '> nice.out\n')
+        outcomes, first = parallel.run_all([comp], 1, root=self.dir)
+        self.assertIsNone(first, outcomes)
+        got = (self.dir / "nice.out").read_text(encoding="utf-8").strip()
+        self.assertEqual(got, str(parallel.NICE_LEVEL),
+                         "внук процесса не унаследовал пониженный приоритет")
+
     def test_parallel_components_meet_each_other(self):
         # Факт параллели ловится встречей компонентов, а не временем: каждый
         # скрипт ставит свою метку и ждёт меток остальных. На восьми воркерах
@@ -490,12 +518,16 @@ class RunAllTest(Stand):
                       "трейсбек старта обязан доходить до итога")
 
     def test_missing_binary_fails_the_run(self):
-        # Несуществующий бинарник это тот же провал старта: переименованный
-        # каталог утилиты или убранный скрипт обязаны валить прогон.
+        # Несуществующий бинарник обязан валить прогон: переименованный
+        # каталог утилиты или убранный скрипт не должны проходить молча.
+        # Провал теперь идёт не питоновским исключением на старте (argv[0]
+        # это "nice" из with_priority, DK-1124, и он существует), а кодом
+        # возврата самого nice, не сумевшего заэкзекать цель.
         comps = [("ghost.sh", ".", [str(self.dir / "ghost.sh")])]
         outcomes, first = parallel.run_all(comps, 1, root=self.dir)
         self.assertEqual(first, "ghost.sh")
-        self.assertIn("FileNotFoundError", outcomes[0][3])
+        self.assertNotEqual(outcomes[0][1], 0, "провал обязан красить прогон")
+        self.assertIn("No such file or directory", outcomes[0][3])
 
     def test_term_proof_component_is_killed_harder(self):
         # Компонент с игнорирующим TERM лидером группы обязан умереть по
@@ -552,6 +584,24 @@ class MainTest(Stand):
         rc, out = self.run_main([self.grow("ok.sh", "exit 0")])
         self.assertEqual(rc, 0)
         self.assertRegex(out, r"ok\.sh\s+\(\.\)\s+\d+\.\ds\s+ok")
+
+    def test_priority_is_visible_in_the_run(self):
+        # DoD DK-1124: приоритет обязан быть виден в самой команде, и на
+        # живом прогоне, и в превью --list, не только в коде раннера.
+        rc, out = self.run_main([self.grow("ok.sh", "exit 0")])
+        self.assertEqual(rc, 0)
+        self.assertIn("приоритет=nice %d" % parallel.NICE_LEVEL, out)
+
+    def test_list_shows_the_nice_wrapper(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = parallel.main(["--only-go", "--list"])
+        self.assertEqual(rc, 0)
+        go_lines = [line for line in out.getvalue().splitlines()
+                    if line.startswith("go:")]
+        self.assertTrue(go_lines)
+        for line in go_lines:
+            self.assertIn("nice -n %d" % parallel.NICE_LEVEL, line, line)
 
     def test_list_names_the_components(self):
         out = io.StringIO()

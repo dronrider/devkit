@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -254,12 +255,32 @@ func newChunk(file, src string, off int64, side bool) ([]reply, []byte, int64) {
 	return items, data, off + int64(len(data))
 }
 
+// feedIO это след работы ленты с диском: сколько раз она открывала файл и
+// сколько байтов оттуда взяла. Растёт он в readFrom, а через readFrom идёт всё
+// чтение ленты, и по следу видно главное: взят ли у файла кусок с конца или
+// файл прочитан целиком. Живой дашборд платит за след двумя сложениями на
+// открытый файл, а стенду след заменяет секундомер: стенное время на
+// загруженной машине плывёт вместе с соседями по процессору, а число
+// прочитанных байтов держится одним и тем же под любой нагрузкой.
+var feedIO struct {
+	opens atomic.Int64
+	bytes atomic.Int64
+}
+
+// feedIOStat отдаёт накопленный след ленты: открытые файлы и прочитанные
+// байты. Числа растут от старта процесса, и мерить ими надо разницу вокруг
+// захода за лентой.
+func feedIOStat() (opens, bytes int64) {
+	return feedIO.opens.Load(), feedIO.bytes.Load()
+}
+
 func readFrom(file string, from int64) []byte {
 	f, err := os.Open(file)
 	if err != nil {
 		return nil
 	}
 	defer f.Close()
+	feedIO.opens.Add(1)
 	if _, err := f.Seek(from, io.SeekStart); err != nil {
 		return nil
 	}
@@ -267,6 +288,7 @@ func readFrom(file string, from int64) []byte {
 	if err != nil {
 		return nil
 	}
+	feedIO.bytes.Add(int64(len(data)))
 	return data
 }
 

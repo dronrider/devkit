@@ -185,6 +185,40 @@ class BudgetTest(unittest.TestCase):
         self.assertEqual(env["GOMAXPROCS"], "3")
 
 
+class LiveShareTest(unittest.TestCase):
+    """Доля по числу воркеров, ещё не исчерпавших очередь, без стенных секунд.
+
+    Замечание ревью DK-1123: `component_share(jobs, budget)` считался один
+    раз перед всей пачкой и держался статичным весь прогон, поэтому компонент
+    в хвосте, где очередь опустела и он остался единственным живым, получал
+    ту же долю, что и на самом занятом старте. Гонка настоящих потоков это
+    не ловит детерминированно (какой из двух воркеров первым обнаружит пустую
+    очередь - решает планировщик ОС), поэтому механика проверяется напрямую,
+    последовательными вызовами `share`/`exhausted`, без единого потока.
+    """
+
+    def test_share_matches_the_static_value_while_workers_are_all_busy(self):
+        # Пока ни один воркер не нашёл очередь пустой, доля не отличается от
+        # прежнего статичного расчёта на всю пачку.
+        live = parallel._LiveShare(4, 8)
+        self.assertEqual(live.share(), parallel.component_share(4, 8))
+        self.assertEqual(live.share(), parallel.component_share(4, 8))
+
+    def test_share_grows_as_workers_exhaust_the_queue(self):
+        live = parallel._LiveShare(4, 8)
+        live.exhausted()
+        self.assertEqual(live.share(), parallel.component_share(3, 8),
+                          "доля обязана расти после первого же выбывшего воркера")
+        live.exhausted()
+        live.exhausted()
+        self.assertEqual(live.share(), parallel.component_share(1, 8),
+                          "единственный живой воркер обязан получить всю долю бюджета")
+
+    def test_share_never_drops_below_one(self):
+        live = parallel._LiveShare(1, 0)
+        self.assertGreaterEqual(live.share(), 1)
+
+
 class RunAllTest(Stand):
 
     def test_green_components_all_finish(self):
@@ -383,6 +417,25 @@ class MainTest(Stand):
                  if line.startswith("devkitctl ")]
         self.assertEqual(len(lines), 1)
         self.assertIn("-j %d" % share, lines[0])
+
+    def test_explicit_j_flag_reaches_the_share(self):
+        # Замечание ревью DK-1123: склейка args.jobs -> component_share была
+        # проверена только на умолчании (jobs = число ядер по mock cpu_count),
+        # явный -j никакой тест не трогал. Восемь ядер и -j 3 дают долю 2,
+        # отличную и от доли на умолчании (1), и от доли budget=jobs (8) -
+        # подмена jobs константой budget тут же ловится числом.
+        with mock.patch.object(parallel.os, "cpu_count", return_value=8):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = parallel.main(["-j", "3", "--only-go", "--list"])
+        self.assertEqual(rc, 0)
+        share = parallel.component_share(3, 8)
+        self.assertEqual(share, 2, "доля обязана прийти именно от -j, не от бюджета")
+        go_lines = [line for line in out.getvalue().splitlines()
+                    if line.startswith("go:")]
+        self.assertTrue(go_lines)
+        for line in go_lines:
+            self.assertIn("-p %d" % share, line, line)
 
 
 class CiWorkflowTest(unittest.TestCase):

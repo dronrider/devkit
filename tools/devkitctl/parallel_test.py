@@ -11,10 +11,12 @@
 import contextlib
 import io
 import shutil
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import parallel
 
@@ -120,6 +122,67 @@ class ComponentsTest(unittest.TestCase):
         env = parallel.command_env(["go", "test", "./..."])
         self.assertEqual(env["GOWORK"], "off")
         self.assertIsNone(parallel.command_env(["/usr/bin/python3", "-m", "unittest"]))
+
+
+class BudgetTest(unittest.TestCase):
+    """Один бюджет параллельности вместо трёх независимых потолков (DK-1123).
+
+    Раздача долей проверяется арифметикой и собранными командами, а не
+    стенным временем: под нагрузкой машины секунды растягиваются, а числа в
+    argv и окружении нет.
+    """
+
+    def test_cpu_budget_uses_the_real_core_count(self):
+        with mock.patch.object(parallel.os, "cpu_count", return_value=1):
+            self.assertEqual(parallel.cpu_budget(), 1)
+
+    def test_cpu_budget_falls_back_when_core_count_is_unknown(self):
+        # os.cpu_count() отдаёт None на песочницах, где число ядер не узнать
+        # (документированное поведение stdlib), и бюджет обязан не падать.
+        with mock.patch.object(parallel.os, "cpu_count", return_value=None):
+            self.assertEqual(parallel.cpu_budget(), 4)
+
+    def test_share_holds_the_invariant_for_jobs_within_the_budget(self):
+        # При jobs в пределах бюджета произведение занятых слотов не обязано
+        # превышать бюджет: это и есть развязка трёх умножавшихся потолков.
+        for budget in (1, 2, 4, 10, 17):
+            for jobs in range(1, budget + 1):
+                share = parallel.component_share(jobs, budget)
+                self.assertGreaterEqual(share, 1)
+                self.assertLessEqual(jobs * share, budget,
+                                      "jobs=%d budget=%d share=%d" % (jobs, budget, share))
+
+    def test_share_uses_the_whole_budget_when_jobs_is_one(self):
+        # Один компонент за раз получает весь бюджет: доля не размазывается
+        # там, где делить не на кого.
+        self.assertEqual(parallel.component_share(1, 10), 10)
+
+    def test_share_floors_at_one_when_jobs_outnumber_the_budget(self):
+        # Ручной -j больше числа ядер это осознанный выбор исполнителя, а не
+        # брешь раздачи: доля не растёт обратно, просто перестаёт делиться.
+        self.assertEqual(parallel.component_share(50, 10), 1)
+
+    def test_with_share_inserts_p_before_the_package_list(self):
+        # После списка пакетов флаг -p ушёл бы аргументом go test, а не
+        # потолком параллельности.
+        argv = ["go", "test", "-count=1", "-timeout=20m", "./..."]
+        got = parallel.with_share("go:taskctl", argv, 3)
+        self.assertEqual(got, ["go", "test", "-count=1", "-timeout=20m",
+                               "-p", "3", "./..."])
+
+    def test_with_share_appends_j_for_devkitctl(self):
+        argv = [sys.executable, "suite.py"]
+        got = parallel.with_share("devkitctl", argv, 5)
+        self.assertEqual(got, argv + ["-j", "5"])
+
+    def test_with_share_leaves_other_components_alone(self):
+        argv = [sys.executable, "check-skills.py"]
+        self.assertEqual(parallel.with_share("check-skills", argv, 5), argv)
+
+    def test_command_env_carries_gomaxprocs_matching_the_share(self):
+        env = parallel.command_env(["go", "test", "./..."], 3)
+        self.assertEqual(env["GOWORK"], "off")
+        self.assertEqual(env["GOMAXPROCS"], "3")
 
 
 class RunAllTest(Stand):
@@ -292,6 +355,34 @@ class MainTest(Stand):
         self.assertIn("go:secretctl", names)
         self.assertNotIn("hooks", out.getvalue())
         self.assertNotIn("doctor", out.getvalue())
+
+    def test_list_shows_go_shares_matching_the_budget(self):
+        # --list не гоняет ни одного подпроцесса, поэтому числа в собранных
+        # командах реального перечня компонентов проверяются без стенного
+        # времени.
+        with mock.patch.object(parallel.os, "cpu_count", return_value=4):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = parallel.main(["--only-go", "--list"])
+        self.assertEqual(rc, 0)
+        share = parallel.component_share(4, 4)
+        go_lines = [line for line in out.getvalue().splitlines()
+                    if line.startswith("go:")]
+        self.assertTrue(go_lines)
+        for line in go_lines:
+            self.assertIn("-p %d" % share, line, line)
+
+    def test_list_shows_devkitctl_share_matching_the_budget(self):
+        with mock.patch.object(parallel.os, "cpu_count", return_value=4):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = parallel.main(["--list"])
+        self.assertEqual(rc, 0)
+        share = parallel.component_share(4, 4)
+        lines = [line for line in out.getvalue().splitlines()
+                 if line.startswith("devkitctl ")]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("-j %d" % share, lines[0])
 
 
 class CiWorkflowTest(unittest.TestCase):

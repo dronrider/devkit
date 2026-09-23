@@ -14,11 +14,19 @@
 а не дорожка на компонент: два go-инструмента рядом прогоняют общую сборку
 пакетов, а освободившийся воркер забирает следующий компонент, не простаивая.
 
-Потолок по умолчанию ограничен восемью воркерами при пятнадцати компонентах:
-за сюитой devkitctl стоят её собственные воркеры с подпроцессами, и общее
-число процессов обязано оставаться в плато, за которым сюита упирается в
-файловую систему, а не в CPU. Слишком малый потолок складывает go-инструменты
-обратно в очередь.
+Потолков параллельности исторически было три независимых: воркеры этого
+раннера, воркеры сюиты devkitctl (`suite.py`) и параллельность самого
+`go test` (по умолчанию равна числу ядер и внутри пакета, и между пакетами).
+Три потолка перемножались: на десяти ядрах прогон `shipctl merge` разгонял
+load average до 78 (находка DK-1123), потому что каждый из восьми
+одновременных компонентов верхнего уровня внутри себя ещё брал все ядра под
+себя. У прогона один бюджет параллельности, равный числу ядер машины
+(`cpu_budget`), и он не суммируется, а делится: воркеры верхнего уровня
+получают число одновременно работающих компонентов, а `component_share`
+делит бюджет на них же, отдавая долю каждому компоненту внутрь (`suite.py`
+аргументом `-j`, `go test` флагом `-p` и переменной `GOMAXPROCS`). Целочисленное
+деление с полом в единицу держит инвариант `jobs * share <= budget` при любом
+числе одновременно активных компонентов, тяжёлых или лёгких.
 
 Вызов без аргументов гонит все компоненты по раскладке корня devkit,
 `--list` печатает их перечень, `--only-go` сужает прогон до го-модулей
@@ -93,25 +101,70 @@ def components(root=ROOT):
     return comps
 
 
-def command_env(argv):
+def cpu_budget():
+    """Общий бюджет параллельности прогона: число ядер машины, минимум один.
+
+    Одна точка, от которой считаются все три потолка (DK-1123): раньше
+    верхний раннер, сюита devkitctl и `go test` каждый брали параллельность
+    по-своему, и потолки перемножались вместо деления одного бюджета.
+    """
+    return max(1, os.cpu_count() or 4)
+
+
+def component_share(jobs, budget=None):
+    """Доля бюджета на один одновременно работающий компонент.
+
+    При `jobs` одновременных компонентах и общем бюджете `budget` в худшем
+    случае (все места заняты внутренне-параллельными компонентами) обязано
+    держаться `jobs * share <= budget`: целочисленное деление с полом в
+    единицу даёт это без исключений, включая ручной `-j` больше числа ядер
+    (тогда доля падает к одному, а не растёт обратно).
+    """
+    budget = budget if budget is not None else cpu_budget()
+    return max(1, budget // max(1, jobs))
+
+
+def with_share(name, argv, share):
+    """Argv компонента с долей бюджета, вставленной на его место.
+
+    Го-компонент получает `-p <share>` перед списком пакетов (после списка
+    флаг ушёл бы как путь), сюита devkitctl берёт готовый `-j <share>`
+    (`suite.py` уже принимает этот аргумент). Остальные компоненты не умеют
+    делиться внутри и argv не трогают.
+    """
+    if name.startswith("go:"):
+        return argv[:-1] + ["-p", str(share)] + argv[-1:]
+    if name == "devkitctl":
+        return argv + ["-j", str(share)]
+    return argv
+
+
+def command_env(argv, share=None):
     """Окружение подпроцесса компонента, None оставляет окружение раннера.
 
     Go-компоненты идут с GOWORK=off: чужой go.work выше по дереву (находка
     DK-115) уводит go test из модуля утилиты, поэтому глушить workspace
-    обязан сам раннер, а не только обёртка снаружи.
+    обязан сам раннер, а не только обёртка снаружи. GOMAXPROCS держит ту же
+    долю бюджета, что и флаг `-p` в argv: без переменной рантайм go внутри
+    одного тестового бинаря по-прежнему брал бы все ядра под горутины.
     """
     if argv[0] != "go":
         return None
-    return dict(os.environ, GOWORK="off")
+    share = share if share is not None else cpu_budget()
+    return dict(os.environ, GOWORK="off", GOMAXPROCS=str(share))
 
 
-def run_all(comps, workers, root=ROOT):
+def run_all(comps, workers, root=ROOT, share=None):
     """Гонит компоненты параллельно с потолком воркеров.
 
     Отдаёт итоги (имя, код, секунды, вывод) в порядке завершения и имя первого
     провалившегося компонента либо None. Первый же неуспешный код валит прогон:
     занятые компоненты получают SIGTERM по группе процессов и в итог не
     попадают, а короткий хвост за тяжёлой сюитой успевает догнаться.
+
+    `share` это доля бюджета параллельности, отданная каждому компоненту
+    внутрь (DK-1123): она идёт в GOMAXPROCS го-компонентов тем же числом, что
+    уже вставлено в их argv флагом `-p`.
     """
     pending = queue.Queue()
     for comp in comps:
@@ -137,7 +190,7 @@ def run_all(comps, workers, root=ROOT):
                 # terminate самого питона оставил бы их сиротами докручивать
                 # уже решённый прогон.
                 proc = subprocess.Popen(
-                    argv, cwd=str(root / rel), env=command_env(argv),
+                    argv, cwd=str(root / rel), env=command_env(argv, share),
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     start_new_session=True)
@@ -189,23 +242,30 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="parallel", description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("-j", dest="jobs", type=int, default=8,
-                    help="потолок воркеров, по компоненту на поток (по умолчанию 8)")
+    ap.add_argument("-j", dest="jobs", type=int, default=None,
+                    help="потолок воркеров верхнего уровня, по компоненту на "
+                         "поток (по умолчанию число ядер машины)")
     ap.add_argument("--list", action="store_true",
                     help="только перечень компонентов")
     ap.add_argument("--only-go", action="store_true",
                     help="только го-модули tools/ (тот же перечень, что у go_tools)")
     args = ap.parse_args(argv)
+    budget = cpu_budget()
+    jobs = args.jobs if args.jobs is not None else budget
+    share = component_share(jobs, budget)
     comps = components()
     if args.only_go:
         comps = [c for c in comps if c[0].startswith("go:")]
+    comps = [(name, rel, with_share(name, comp_argv, share))
+             for name, rel, comp_argv in comps]
     if args.list:
-        for name, rel, argv in comps:
-            print("%-16s (%s) %s" % (name, rel, " ".join(argv)))
+        for name, rel, comp_argv in comps:
+            print("%-16s (%s) %s" % (name, rel, " ".join(comp_argv)))
         print("компонентов: %d" % len(comps))
         return 0
+    print("бюджет параллельности: ядра=%d jobs=%d доля=%d" % (budget, jobs, share))
     started = time.monotonic()
-    outcomes, first_fail = run_all(comps, args.jobs)
+    outcomes, first_fail = run_all(comps, jobs, share=share)
     secs = time.monotonic() - started
     for name, rc, took, out in sorted(outcomes, key=lambda o: -o[2]):
         print("%-16s %6.1fs %s" % (name, took, "ok" if rc == 0 else "FAIL"))

@@ -33,7 +33,9 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 SCRIPT = Path(__file__).resolve().parent.parent.parent / "docs" / "tasks" / "DK-1124-check.sh"
 
@@ -207,13 +209,34 @@ class ThresholdTest(Stand):
 
         # Строка журнала пишется до старта сценария нарочно: дата
         # 9999-01-01 гарантированно позже метки старта из самого сценария
-        # (date -u сегодняшним годом), так что окно `awk -v s="$start"` её
-        # не отбросит ни на одной машине.
+        # (сегодняшним годом), так что окно `awk -v s="$start"` её не
+        # отбросит ни на одной машине.
         load_and_write_log()
         proc = self.run_script(limit=5)
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertIn("потолок задет", proc.stdout)
         self.assertIn("не ответил за 30s", proc.stdout)
+
+    def test_log_line_before_the_run_start_is_not_flagged(self):
+        # Живой замер диспетчера нашёл ложный «потолок задет»: `start`
+        # считался через `date -u` (UTC), а журнал дашборда пишет локальное
+        # время, так что лексикографический фильтр `awk -v s="$start"`
+        # подхватывал строки за часы до настоящего старта сценария (разбор в
+        # docs/tasks/DK-1124.md, «Ход работы»). Тут строка журнала нарочно
+        # датирована раньше запуска сценария по местному времени зоны с
+        # положительным смещением от UTC (Europe/Moscow, +3), в которой
+        # старый `date -u` давал метку меньше настоящего локального времени
+        # строки и ошибочно включал её в окно. Сценарий обязан её отбросить.
+        self.stub("taskctl", "exit 0")
+        log = self.home / ".devkit" / "dashboard.log"
+        now_msk = datetime.now(ZoneInfo("Europe/Moscow"))
+        stale_ts = (now_msk - timedelta(hours=1, minutes=30)).strftime("%Y-%m-%dT%H:%M:%S")
+        log.write_text(
+            stale_ts + " taskctl list --json не ответил за 30s и снят по сроку\n",
+            encoding="utf-8")
+        proc = self.run_script(limit=5, extra_env={"TZ": "Europe/Moscow"})
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("потолок не задет", proc.stdout, proc.stdout)
 
     def test_clean_log_reports_the_ceiling_is_not_touched(self):
         self.stub("taskctl", "exit 0")

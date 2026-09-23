@@ -32,7 +32,7 @@ port=${port:-7112}
 token=$(awk -F'= *' '/^[[:space:]]*token[[:space:]]*=/{print $2}' "$CFG" 2>/dev/null | tail -n 1)
 base="http://127.0.0.1:$port"
 
-start=$(date -u +%Y-%m-%dT%H:%M:%S)
+start=$(date +%Y-%m-%dT%H:%M:%S)
 cookies=$(mktemp)
 trap 'rm -f "$cookies"' EXIT
 

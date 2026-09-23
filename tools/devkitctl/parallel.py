@@ -28,6 +28,18 @@ load average до 78 (находка DK-1123), потому что каждый 
 деление с полом в единицу держит инвариант `jobs * share <= budget` при любом
 числе одновременно активных компонентов, тяжёлых или лёгких.
 
+Доля не статичная на весь прогон, а живая: `run_all` считает её по числу
+воркеров, ещё не исчерпавших очередь (`alive`), а не по потолку воркеров
+целиком (замечание ревью DK-1123). Пока компонентов хватает на всех
+воркеров, доля не отличается от старой статичной, а к хвосту прогона, когда
+воркеры один за другим находят очередь пустой, доля новых, позже
+стартующих компонентов растёт. У способа есть предел: компонент первого
+залпа (когда очередь ещё не короче числа воркеров) получает статичную долю
+навсегда, `-p` и `GOMAXPROCS` домешать после старта процесса нельзя - для
+`go:dashboard`, известного длинного полюса (по замеру DK-1122 494-556 с в
+одиночку), это и есть его случай. Живой замер полного прогона проверяет,
+что при этом стена не раздувается выше потолка DK-1122.
+
 Вызов без аргументов гонит все компоненты по раскладке корня devkit,
 `--list` печатает их перечень, `--only-go` сужает прогон до го-модулей
 `tools/` (этим же флагом их гоняет CI, `.github/workflows/ci.yml`: список
@@ -154,7 +166,39 @@ def command_env(argv, share=None):
     return dict(os.environ, GOWORK="off", GOMAXPROCS=str(share))
 
 
-def run_all(comps, workers, root=ROOT, share=None):
+class _LiveShare:
+    """Доля компонента по числу воркеров, ещё не исчерпавших очередь.
+
+    Статичный `component_share(jobs, budget)` считался бы один раз перед всей
+    пачкой и держался бы одним и тем же весь прогон (замечание ревью
+    DK-1123): к хвосту, где очередь опустела и воркеры один за другим уходят
+    ни с чем, доля новых компонентов обязана расти, а не оставаться такой,
+    как будто по-прежнему работают все воркеры разом. Воркер выходит из игры
+    только по факту пустой очереди (`exhausted`), а не по числу уже забранных
+    компонентов: так `alive` не падает раньше времени, пока компонентов
+    хватает на всех, и инвариант `alive_сейчас * доля(alive_при_старте) <=
+    budget` держится - `alive` только убывает, поэтому доля уже бегущего
+    компонента не может превысить долю, посчитанную по меньшему текущему
+    `alive`.
+    """
+
+    def __init__(self, workers, budget):
+        self._alive = max(1, workers)
+        self._budget = budget
+        self._lock = threading.Lock()
+
+    def share(self):
+        """Доля для компонента, который только что встал в работу."""
+        with self._lock:
+            return component_share(self._alive, self._budget)
+
+    def exhausted(self):
+        """Воркер нашёл очередь пустой и навсегда выходит из игры."""
+        with self._lock:
+            self._alive -= 1
+
+
+def run_all(comps, workers, root=ROOT, budget=None):
     """Гонит компоненты параллельно с потолком воркеров.
 
     Отдаёт итоги (имя, код, секунды, вывод) в порядке завершения и имя первого
@@ -162,22 +206,34 @@ def run_all(comps, workers, root=ROOT, share=None):
     занятые компоненты получают SIGTERM по группе процессов и в итог не
     попадают, а короткий хвост за тяжёлой сюитой успевает догнаться.
 
-    `share` это доля бюджета параллельности, отданная каждому компоненту
-    внутрь (DK-1123): она идёт в GOMAXPROCS го-компонентов тем же числом, что
-    уже вставлено в их argv флагом `-p`.
+    `budget` это общий бюджет параллельности (по умолчанию `cpu_budget()`).
+    Доля компонента внутрь (`-p` у go test, `-j` у сюиты devkitctl,
+    `GOMAXPROCS`) считает `_LiveShare` по числу воркеров, ещё остающихся в
+    игре, а не статичным расчётом на всю пачку разом (замечание ревью
+    DK-1123, разбор в докстроке `_LiveShare`). У способа есть предел:
+    компонент первого залпа, вставший в очередь до того, как хоть один
+    воркер её исчерпал, получает ту же долю, что и при статичном расчёте, и
+    она с ним навсегда - `go test` и рантайм go читают `-p` и `GOMAXPROCS`
+    только при своём старте, домешать больше нельзя. Живой замер полного
+    прогона проверяет, что это не раздувает стену выше потолка DK-1122.
     """
+    budget = budget if budget is not None else cpu_budget()
     pending = queue.Queue()
     for comp in comps:
         pending.put(comp)
     outcomes, stop = [], threading.Event()
     first_fail, lock = [None], threading.Lock()
+    live = _LiveShare(workers, budget)
 
     def worker():
         while not stop.is_set():
             try:
                 name, rel, argv = pending.get_nowait()
             except queue.Empty:
+                live.exhausted()
                 return
+            share = live.share()
+            argv = with_share(name, argv, share)
             started = time.monotonic()
             # Старт и провал одного правила: компонент, который не смог
             # запуститься (несуществующий cwd или бинарник), обязан красить
@@ -252,20 +308,27 @@ def main(argv=None):
     args = ap.parse_args(argv)
     budget = cpu_budget()
     jobs = args.jobs if args.jobs is not None else budget
-    share = component_share(jobs, budget)
     comps = components()
     if args.only_go:
         comps = [c for c in comps if c[0].startswith("go:")]
-    comps = [(name, rel, with_share(name, comp_argv, share))
-             for name, rel, comp_argv in comps]
     if args.list:
-        for name, rel, comp_argv in comps:
+        # Превью на полную пачку: --list не гоняет ни одного подпроцесса,
+        # поэтому показывает худший случай (все компоненты стартуют разом),
+        # тот же, что при живом прогоне держится на первом же круге.
+        # Дальше по ходу прогона доля растёт по мере опустения очереди
+        # (run_all, DK-1123) - число в --list это нижняя граница, а не
+        # то единственное, что получит каждый компонент.
+        share = component_share(jobs, budget)
+        preview = [(name, rel, with_share(name, comp_argv, share))
+                   for name, rel, comp_argv in comps]
+        for name, rel, comp_argv in preview:
             print("%-16s (%s) %s" % (name, rel, " ".join(comp_argv)))
-        print("компонентов: %d" % len(comps))
+        print("компонентов: %d" % len(preview))
         return 0
-    print("бюджет параллельности: ядра=%d jobs=%d доля=%d" % (budget, jobs, share))
+    print("бюджет параллельности: ядра=%d jobs=%d доля=%d..%d (живая, растёт по "
+          "мере опустения очереди)" % (budget, jobs, component_share(jobs, budget), budget))
     started = time.monotonic()
-    outcomes, first_fail = run_all(comps, jobs, share=share)
+    outcomes, first_fail = run_all(comps, jobs, budget=budget)
     secs = time.monotonic() - started
     for name, rc, took, out in sorted(outcomes, key=lambda o: -o[2]):
         print("%-16s %6.1fs %s" % (name, took, "ok" if rc == 0 else "FAIL"))

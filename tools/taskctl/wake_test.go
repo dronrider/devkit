@@ -345,6 +345,7 @@ func TestWakeRaisesWithPickedModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantHeadless(t, out)
 	runner := readStub(logs, "runner.log")
 	if !strings.Contains(runner, "XR-004 -C ") || !strings.Contains(runner, "-- claude --permission-mode auto --model sonnet") {
 		t.Fatalf("голова вопроса поднята без модели вердикта:\n%s\nотчёт:\n%s", runner, out)

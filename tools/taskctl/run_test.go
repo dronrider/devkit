@@ -4,7 +4,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/dronrider/devkit/internal/taskhead"
@@ -82,12 +84,79 @@ func TestCmdRunBusyLock(t *testing.T) {
 	}
 }
 
+// headStub играет оболочку task-run.py: пишет свой вызов в runner.log, свой pid
+// в heads.log, принимает замок задачи у команды и держит его, пока стенд не
+// снимет голову.
+//
+// Приём замка тут это тот самый факт, которого ждёт лестница подъёма, и стенд
+// стоит на нём, а не на секундах (DK-764). Прежняя заглушка выходила молча:
+// передачи замка лестница не дожидалась никогда, ждала её стенные две секунды и
+// по сроку убивала заглушку. Под нагрузкой полного прогона заглушка не успевала
+// получить процессор за этот срок, умирала до первой своей строки, и вызов
+// оболочки в runner.log не появлялся вовсе.
+//
+// Задержка STUB_HEAD_DELAY играет ту нехватку процессора, которую под полным
+// прогоном получает оболочка на старте. Сценарий проверки задаёт её числом и
+// смотрит, с какой задержки подъём краснеет. Запас тут боевой, DefaultAdopt, и
+// своего потолка стенд не ставит. Умолчание нулевое.
+//
+// Утилиты названы путями: тест с урезанным PATH оставляет в нём одни заглушки.
+const headStub = `#!/bin/sh
+/bin/sleep "${STUB_HEAD_DELAY:-0}"
+echo "$*" >> "$STUB_LOGS/runner.log"
+echo "$$" >> "$STUB_LOGS/heads.log"
+lock="$HOME/.devkit/task-$DEVKIT_TASK.lock"
+owner=""
+if [ -f "$lock/pid" ]; then
+  read owner < "$lock/pid"
+fi
+if [ "$owner" = "$DEVKIT_TASK_LOCK_FROM" ]; then
+  echo "$$" > "$lock/pid.tmp"
+  /bin/mv "$lock/pid.tmp" "$lock/pid"
+fi
+exec /bin/sleep 300
+`
+
+// killHeads снимает оболочки, поднятые стендом: их pid лежат в heads.log. Замок
+// они держат до конца теста, и без этого дерево стенда осталось бы со спящим
+// процессом.
+func killHeads(logs string) {
+	for _, line := range strings.Fields(readStub(logs, "heads.log")) {
+		if pid, err := strconv.Atoi(line); err == nil {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
+	os.Remove(filepath.Join(logs, "heads.log"))
+}
+
+// dropHead снимает голову задачи и освобождает её замок. Нужна тесту, который
+// поднимает голову той же задаче второй раз: замок первой головы занят её
+// оболочкой, и второй подъём упёрся бы в него.
+func dropHead(t *testing.T, logs, home, id string) {
+	t.Helper()
+	killHeads(logs)
+	if err := os.RemoveAll(taskhead.LockPath(home, id)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// wantHeadless требует ступени headless с принятым замком. Пока замок не
+// передан, вызова оболочки в runner.log может и не быть: лестница снимает
+// оболочку, не принявшую замок. Так что проверять вызов, не проверив ступени,
+// значит читать журнал, которого ещё нет (DK-764).
+func wantHeadless(t *testing.T, out string) {
+	t.Helper()
+	if !strings.Contains(out, "поднята headless, оболочка pid") {
+		t.Fatalf("оболочка стенда не приняла замок, лестница до headless не дошла:\n%s", out)
+	}
+}
+
 // pickStand кладёт в PATH заглушки подъёма вместо tmux, клиента и agentctl
 // машины. agentctl пишет свой вызов в pick.log и отвечает вердиктом с моделью
 // verdict, а пустой verdict играет отказ вердикта. python3 играет оболочку
-// task-run.py: пишет свою команду в runner.log и выходит. tmux отказывает на
-// всём, и лестница идёт headless. Профиль несёт флаги яруса, как у
-// claude-code. Возврат это каталог журналов заглушек и каталог самих заглушек.
+// task-run.py заглушкой headStub. tmux отказывает на всём, и лестница идёт
+// headless. Профиль несёт флаги яруса, как у claude-code. Возврат это каталог
+// журналов заглушек и каталог самих заглушек.
 func pickStand(t *testing.T, dk, verdict string) (logs, bin string) {
 	t.Helper()
 	logs, bin = t.TempDir(), t.TempDir()
@@ -101,7 +170,7 @@ func pickStand(t *testing.T, dk, verdict string) (logs, bin string) {
 	}
 	stubs := map[string]string{
 		"agentctl": "#!/bin/sh\necho \"$DEVKIT_HARNESS $*\" >> \"$STUB_LOGS/pick.log\"\n" + answer + "\n",
-		"python3":  "#!/bin/sh\necho \"$*\" >> \"$STUB_LOGS/runner.log\"\n",
+		"python3":  headStub,
 		"tmux":     "#!/bin/sh\nexit 1\n",
 		"claude":   "#!/bin/sh\nexit 0\n",
 	}
@@ -112,8 +181,11 @@ func pickStand(t *testing.T, dk, verdict string) (logs, bin string) {
 	}
 	t.Setenv("STUB_LOGS", logs)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv(taskhead.AdoptEnv, "2")
+	// Срок передачи замка остаётся производственным: стенд ждёт факта передачи,
+	// а не срока, и своего потолка секунд ему не нужно.
+	t.Setenv(taskhead.AdoptEnv, "")
 	t.Setenv(taskhead.HarnessEnv, "")
+	t.Cleanup(func() { killHeads(logs) })
 	return logs, bin
 }
 
@@ -139,6 +211,7 @@ func TestRunTakesModelFromPick(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantHeadless(t, out)
 	if runner := readStub(logs, "runner.log"); !strings.Contains(runner, "-- claude --permission-mode auto --model sonnet") {
 		t.Fatalf("модель вердикта не дошла до клиента:\n%s\nвывод:\n%s", runner, out)
 	}
@@ -158,6 +231,7 @@ func TestRunModelFlagBeatsPick(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantHeadless(t, out)
 	runner := readStub(logs, "runner.log")
 	if !strings.Contains(runner, "-- claude --permission-mode auto --model haiku") || strings.Contains(runner, "sonnet") {
 		t.Fatalf("явная модель не дошла до клиента:\n%s\nвывод:\n%s", runner, out)
@@ -170,7 +244,7 @@ func TestRunModelFlagBeatsPick(t *testing.T) {
 // Отказ вердикта и agentctl, которого нет в PATH, подъём не валят: клиент
 // стартует без модели, а журнал проекта называет причину.
 func TestRunPickRefusalStartsWithoutModel(t *testing.T) {
-	root, _, dk := runDevkit(t)
+	root, home, dk := runDevkit(t)
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +253,7 @@ func TestRunPickRefusalStartsWithoutModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantHeadless(t, out)
 	runner := readStub(logs, "runner.log")
 	if !strings.Contains(runner, "-- claude --permission-mode auto") || strings.Contains(runner, "--model") {
 		t.Fatalf("клиент без модели не поднят:\n%s\nвывод:\n%s", runner, out)
@@ -191,11 +266,14 @@ func TestRunPickRefusalStartsWithoutModel(t *testing.T) {
 		t.Fatalf("журнал не называет отказ вердикта:\n%s", journal)
 	}
 
+	dropHead(t, logs, home, "DK-7")
 	os.Remove(filepath.Join(bin, "agentctl"))
 	t.Setenv("PATH", bin)
-	if _, _, err := cmdRun(root, "DK-7", runOpts{}); err != nil {
+	again, _, err := cmdRun(root, "DK-7", runOpts{})
+	if err != nil {
 		t.Fatal(err)
 	}
+	wantHeadless(t, again)
 	if n := strings.Count(readStub(logs, "runner.log"), "-- claude"); n != 2 {
 		t.Fatalf("без agentctl клиент не поднят, подъёмов %d", n)
 	}

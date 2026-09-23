@@ -591,3 +591,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1130 | Тест markdown дашборда не знает про inlineCodeSpan, TestMarkdownBlocks красный на main | bug | P1 | 2026-09-23 | [tasks/archive/2026/DK-1130.md](tasks/archive/2026/DK-1130.md) |
 | DK-1122 | Стена прогона померена на -j 3, 4, 5 и 8, потолок длительности стоит по замеру | task | P1 | 2026-09-23 | [tasks/archive/2026/DK-1122.md](tasks/archive/2026/DK-1122.md) |
 | DK-908 | Тест свежести снимка квоты краснеет под нагрузкой параллельного прогона | bug | P1 | 2026-09-23 | [tasks/archive/2026/DK-908.md](tasks/archive/2026/DK-908.md) |
+| DK-764 | Тесты со стенным потолком времени валят чужие слияния под нагрузкой | bug | P1 | 2026-09-23 | [tasks/archive/2026/DK-764.md](tasks/archive/2026/DK-764.md) |

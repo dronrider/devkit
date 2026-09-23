@@ -21,19 +21,23 @@ import (
 const testLogPath = ".devkit/test-runs.log"
 
 // componentOutcome это итог одного именованного компонента прогона: имя,
-// исход, длительность и разбор принадлежности. Resolved говорит, нашлась ли
-// для имени компонента раскладка deploy.<имя>.paths в .devkit/deploy.local
-// (решение DK-1125 по замечанию ревью круга 1). Голый сегмент пути врёт в
+// исход, длительность и разбор принадлежности. Root это корень компонента
+// (путь от корня проекта), когда команда test печатает его прямо в строке
+// итога, тем же приёмом, каким parallel.py уже показывает его в --list.
+// Resolved говорит, нашлась ли граница компонента вообще, раскладкой
+// deploy.<имя>.paths в .devkit/deploy.local либо этим полем Root (решение
+// DK-1125 по замечаниям ревью круга 1 и круга 2). Голый сегмент пути врёт в
 // обе стороны. Бакет parallel.py вроде «skills» матчит любой чужой файл
 // внутри kit/skills, а компонент-скрипт вроде «check-skills» не матчит
 // собственный файл из-за расширения. Own действует только при Resolved:
-// компонент без заведённой раскладки не признаётся своим никогда, его
-// краснота идёт в счёт foreign-fails как неопознанная, а не как молчаливо
-// прощённая.
+// компонент без заведённой раскладки и без Root не признаётся своим
+// никогда, его краснота идёт в счёт foreign-fails как неопознанная, а не
+// как молчаливо прощённая.
 type componentOutcome struct {
 	Name     string  `json:"name"`
 	OK       bool    `json:"ok"`
 	Secs     float64 `json:"secs"`
+	Root     string  `json:"root,omitempty"`
 	Resolved bool    `json:"resolved"`
 	Own      bool    `json:"own"`
 }
@@ -51,11 +55,16 @@ type testRunRecord struct {
 }
 
 // componentLineRe разбирает строку итога компонента общего вида
-// «<имя> <секунды>s ok|FAIL»: тот же формат, каким parallel.py печатает
-// каждый компонент своей строкой (tools/devkitctl/parallel.py). Контракт
-// общий, а не завязанный на конкретный проект: команда test любого проекта,
-// печатающая построчный итог в этом виде, дробится в журнале на компоненты.
-var componentLineRe = regexp.MustCompile(`^(\S+)\s+([0-9]+(?:\.[0-9]+)?)s\s+(ok|FAIL)\s*$`)
+// «<имя> [(<корень>)] <секунды>s ok|FAIL»: тот же формат, каким parallel.py
+// печатает каждый компонент своей строкой (tools/devkitctl/parallel.py).
+// Корень в скобках необязателен: команда без разбора по компонентам его не
+// печатает, а команда, которая его знает, называет им область, которую
+// компонент реально задевает (решение DK-1125 по замечанию ревью круга 2,
+// раскладка deploy.<имя>.paths не обязана быть заведена, а корень у раннера
+// есть всегда). Контракт общий, а не завязанный на конкретный проект:
+// команда test любого проекта, печатающая построчный итог в этом виде,
+// дробится в журнале на компоненты.
+var componentLineRe = regexp.MustCompile(`^(\S+)\s+(?:\(([^()]*)\)\s+)?([0-9]+(?:\.[0-9]+)?)s\s+(ok|FAIL)\s*$`)
 
 // parseComponentOutcomes вытягивает из вывода команды test построчные итоги
 // компонентов. Пустой результат значит, что команда не дробится на
@@ -68,11 +77,11 @@ func parseComponentOutcomes(out string) []componentOutcome {
 		if m == nil {
 			continue
 		}
-		secs, err := strconv.ParseFloat(m[2], 64)
+		secs, err := strconv.ParseFloat(m[3], 64)
 		if err != nil {
 			continue
 		}
-		res = append(res, componentOutcome{Name: m[1], OK: m[3] == "ok", Secs: secs})
+		res = append(res, componentOutcome{Name: m[1], Root: m[2], OK: m[4] == "ok", Secs: secs})
 	}
 	return res
 }
@@ -97,7 +106,7 @@ func writeTestLog(root, id string, diff []string, out string, ok bool, dur time.
 	// должна переигрывать смысл уже слитых слияний.
 	cfg, _ := loadDeployConfig(root)
 	for i := range comps {
-		comps[i].Resolved, comps[i].Own = resolveOwnership(cfg, comps[i].Name, diff)
+		comps[i].Resolved, comps[i].Own = resolveOwnership(cfg, comps[i].Name, comps[i].Root, diff)
 	}
 	rec := testRunRecord{Time: time.Now(), ID: id, OK: ok, Diff: diff, Components: comps}
 	line, err := json.Marshal(rec)
@@ -144,16 +153,28 @@ func readTestLog(root string, since time.Duration) ([]testRunRecord, error) {
 	return recs, nil
 }
 
-// resolveOwnership ищет в раскладке cfg компонент с именем name и, если он
-// найден, проверяет, лежит ли хоть один путь diff внутри его paths.
-// Компонент без заведённой раскладки (deploy.<имя> и deploy.<имя>.paths в
-// .devkit/deploy.local) resolved не получает: без явной границы шипctl не
-// угадывает её по имени, потому что имя раньше врало в обе стороны
-// (замечание ревью круга 1, DK-1125). Бакет parallel.py вроде «skills»
-// (unittest discover по всему kit/skills) остаётся неточным ровно настолько,
-// насколько неточна собственная раскладка проекта: заведи её проект точнее
-// (deploy.<имя-скилла>.paths на каждый скилл), точнее станет и счёт.
-func resolveOwnership(cfg deployConfig, name string, diff []string) (resolved, own bool) {
+// resolveOwnership ищет границу компонента name и проверяет, лежит ли хоть
+// один путь diff внутри неё. Два источника границы, в порядке приоритета:
+//
+//  1. Раскладка deploy.<имя>.paths проекта (cfg), когда она заведена. Это
+//     осознанный выбор проекта и уточнение: он же вправе объявить границу
+//     точнее, чем знает о себе сам компонент (деление бакета parallel.py на
+//     кусок помельче, скажем).
+//  2. Root, когда раскладки для имени нет. Это корень компонента, который
+//     пришёл строкой итога самой команды test (componentLineRe, скобки).
+//     Раскладка выката не обязана быть заведена вовсе - деплой девкита сам
+//     катится одной командой без деления на deploy.<имя> (живой пример:
+//     .devkit/deploy.local самого devkit), и опора только на неё оставляла
+//     бы любой компонент неопознанным всегда, а значит own=false всегда, и
+//     каждое красное слияние проекта без раскладки садилось бы в
+//     foreign-fails как чужое, включая честно своё (замечание ревью круга
+//     2, DK-1125). Root у раннера есть всегда, независимо от раскладки
+//     выката: он и берёт эту роль.
+//
+// Ни раскладки, ни Root нет - resolved остаётся false, и own тоже: без
+// единого источника границы шипctl её не угадывает по голому имени, оно
+// раньше врало в обе стороны (замечание ревью круга 1, DK-1125).
+func resolveOwnership(cfg deployConfig, name, root string, diff []string) (resolved, own bool) {
 	for _, comp := range cfg.Components {
 		if comp.Name != name {
 			continue
@@ -168,7 +189,16 @@ func resolveOwnership(cfg deployConfig, name string, diff []string) (resolved, o
 		}
 		return true, false
 	}
-	return false, false
+	if root == "" {
+		return false, false
+	}
+	resolved = true
+	for _, p := range diff {
+		if pathUnder(p, root) {
+			return true, true
+		}
+	}
+	return true, false
 }
 
 // pathUnder проверяет, лежит ли path под prefix: как файл целиком либо

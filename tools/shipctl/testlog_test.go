@@ -26,6 +26,25 @@ func TestParseComponentOutcomes(t *testing.T) {
 	}
 }
 
+// TestParseComponentOutcomesWithRoot: замечание ревью круга 2. Команда test
+// вправе назвать корень компонента прямо в строке итога, в скобках между
+// именем и длительностью, тем же приёмом, каким его уже печатает --list
+// parallel.py. Строка без скобок разбирается как раньше, Root пустой.
+func TestParseComponentOutcomesWithRoot(t *testing.T) {
+	out := "skills          (kit/skills)  4.2s FAIL\n" +
+		"go:shipctl        3.5s ok\n"
+	got := parseComponentOutcomes(out)
+	if len(got) != 2 {
+		t.Fatalf("разобрано %d строк, ждали 2: %+v", len(got), got)
+	}
+	if got[0].Name != "skills" || got[0].Root != "kit/skills" || got[0].OK || got[0].Secs != 4.2 {
+		t.Fatalf("строка с корнем в скобках разобрана неверно: %+v", got[0])
+	}
+	if got[1].Name != "go:shipctl" || got[1].Root != "" || !got[1].OK {
+		t.Fatalf("строка без скобок не должна получать Root: %+v", got[1])
+	}
+}
+
 func TestParseComponentOutcomesEmpty(t *testing.T) {
 	// Одиночная команда без построчного разбора (обычный go test ./... или
 	// make check) не даёт ни одной строки компонента, и вызывающий заводит
@@ -36,15 +55,47 @@ func TestParseComponentOutcomesEmpty(t *testing.T) {
 }
 
 // TestResolveOwnershipUnresolvedWithoutLayout: замечание ревью круга 1. Без
-// заведённой раскладки deploy.<имя>.paths шипctl не угадывает границу
-// компонента по имени: компонент неопознан, даже когда диффа касается путь,
-// который совпал бы с именем по старой (снятой) эвристике сегмента.
+// заведённой раскладки deploy.<имя>.paths и без Root в строке итога шипctl не
+// угадывает границу компонента по имени: компонент неопознан, даже когда
+// диффа касается путь, который совпал бы с именем по старой (снятой)
+// эвристике сегмента.
 func TestResolveOwnershipUnresolvedWithoutLayout(t *testing.T) {
 	cfg := deployConfig{}
 	diff := []string{"compA/thing.txt"}
-	resolved, own := resolveOwnership(cfg, "compA", diff)
+	resolved, own := resolveOwnership(cfg, "compA", "", diff)
 	if resolved || own {
-		t.Fatalf("без раскладки компонент не должен считаться ни опознанным, ни своим: resolved=%v own=%v", resolved, own)
+		t.Fatalf("без раскладки и без Root компонент не должен считаться ни опознанным, ни своим: resolved=%v own=%v", resolved, own)
+	}
+}
+
+// TestResolveOwnershipRootWithoutLayout: замечание ревью круга 2. Раскладки
+// deploy.<имя>.paths у проекта нет вовсе (как сегодня у самого devkit), но
+// команда test назвала корень компонента прямо в строке итога. Own
+// определяется этим корнем, а не молчаливым отказом.
+func TestResolveOwnershipRootWithoutLayout(t *testing.T) {
+	cfg := deployConfig{}
+	own := []string{"compA/thing.txt"}
+	if resolved, isOwn := resolveOwnership(cfg, "compA", "compA", own); !resolved || !isOwn {
+		t.Fatalf("свой диффу корень без раскладки должен резолвиться своим: resolved=%v own=%v", resolved, isOwn)
+	}
+	other := []string{"compB/thing.txt"}
+	if resolved, isOwn := resolveOwnership(cfg, "compA", "compA", other); !resolved || isOwn {
+		t.Fatalf("чужой диффу корень без раскладки должен резолвиться чужим, а не оставаться неопознанным: resolved=%v own=%v", resolved, isOwn)
+	}
+}
+
+// TestResolveOwnershipLayoutOverridesRoot: раскладка deploy.<имя>.paths, когда
+// заведена, главнее Root. Root тут шире (весь бакет kit/skills), раскладка
+// уже (один файл скрипта), и диффа касается только бакет, а не файл из
+// раскладки: своим признаётся ответ раскладки, а не более широкого Root.
+func TestResolveOwnershipLayoutOverridesRoot(t *testing.T) {
+	cfg := deployConfig{Components: []deployComponent{
+		{Name: "check-skills", Paths: []string{"kit/skills/check-skills.py"}},
+	}}
+	diff := []string{"kit/skills/some-other-skill/foo.py"}
+	resolved, own := resolveOwnership(cfg, "check-skills", "kit/skills", diff)
+	if !resolved || own {
+		t.Fatalf("раскладка должна главенствовать над более широким Root: resolved=%v own=%v", resolved, own)
 	}
 }
 
@@ -58,11 +109,11 @@ func TestResolveOwnershipExactPathMatch(t *testing.T) {
 		{Name: "check-skills", Paths: []string{"kit/skills/check-skills.py"}},
 	}}
 	own := []string{"kit/skills/check-skills.py"}
-	if resolved, isOwn := resolveOwnership(cfg, "check-skills", own); !resolved || !isOwn {
+	if resolved, isOwn := resolveOwnership(cfg, "check-skills", "", own); !resolved || !isOwn {
 		t.Fatalf("точный путь компонента-скрипта должен резолвиться своим: resolved=%v own=%v", resolved, isOwn)
 	}
 	other := []string{"kit/skills/some-other-skill/foo.py"}
-	if resolved, isOwn := resolveOwnership(cfg, "check-skills", other); !resolved || isOwn {
+	if resolved, isOwn := resolveOwnership(cfg, "check-skills", "", other); !resolved || isOwn {
 		t.Fatalf("файл другого скилла не должен резолвиться своим для check-skills: resolved=%v own=%v", resolved, isOwn)
 	}
 }
@@ -78,7 +129,7 @@ func TestResolveOwnershipBucketLayoutTrustsDeclaredBoundary(t *testing.T) {
 		{Name: "skills", Paths: []string{"kit/skills/"}},
 	}}
 	diff := []string{"kit/skills/some-other-skill/foo.py"}
-	resolved, own := resolveOwnership(cfg, "skills", diff)
+	resolved, own := resolveOwnership(cfg, "skills", "", diff)
 	if !resolved || !own {
 		t.Fatalf("объявленная граница бакета должна доверяться как есть: resolved=%v own=%v", resolved, own)
 	}
@@ -91,7 +142,7 @@ func TestResolveOwnershipDeclaredButNotTouched(t *testing.T) {
 		{Name: "compB", Paths: []string{"compB/"}},
 	}}
 	diff := []string{"compA/thing.txt"}
-	resolved, own := resolveOwnership(cfg, "compB", diff)
+	resolved, own := resolveOwnership(cfg, "compB", "", diff)
 	if !resolved || own {
 		t.Fatalf("заведённый, но не задетый компонент должен быть чужим: resolved=%v own=%v", resolved, own)
 	}
@@ -244,6 +295,37 @@ func TestMergeForeignFailsUnresolvedComponentCounted(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("неопознанный компонент без раскладки не должен молча прощаться: %d", n)
+	}
+}
+
+// TestMergeForeignFailsOwnRedFromRootWithoutLayoutNotCounted: регрессия
+// ревью круга 2. Раскладки deploy.<имя>.paths нет вовсе (живой пример - сам
+// devkit), но команда test называет корень красного компонента прямо в
+// строке итога (тем же приёмом, каким его теперь печатает parallel.py).
+// Красный компонент честно свой (корень внутри диффа задачи), и такое
+// слияние в foreign-fails попадать не должно: без разбора по Root каждое
+// красное слияние проекта без раскладки садилось бы в счёт как чужое,
+// включая своё.
+func TestMergeForeignFailsOwnRedFromRootWithoutLayoutNotCounted(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, root, "checkout", "-qb", "xr-001-fix")
+	write(t, root, "compA/thing.txt", "own\n")
+	write(t, root, "fix_test.go", "package main\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	test := `printf 'compA (compA) 0.1s FAIL\n'; exit 1`
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: test}); err == nil {
+		t.Fatal("красный компонент должен держать слияние")
+	}
+	n, err := foreignFails(root, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("своя краснота по корню из строки итога не должна идти в счёт даже без раскладки: %d", n)
 	}
 }
 

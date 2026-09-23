@@ -10,6 +10,7 @@
 """
 import contextlib
 import io
+import os
 import shutil
 import sys
 import tempfile
@@ -143,14 +144,62 @@ class BudgetTest(unittest.TestCase):
             self.assertEqual(parallel.cpu_budget(), 4)
 
     def test_share_holds_the_invariant_for_jobs_within_the_budget(self):
-        # При jobs в пределах бюджета произведение занятых слотов не обязано
+        # При jobs в пределах бюджета сумма долей занятых лайнов не обязана
         # превышать бюджет: это и есть развязка трёх умножавшихся потолков.
+        # Доля раннера считается вместе со своим лайном.
         for budget in (1, 2, 4, 10, 17):
-            for jobs in range(1, budget + 1):
-                share = parallel.component_share(jobs, budget)
-                self.assertGreaterEqual(share, 1)
-                self.assertLessEqual(jobs * share, budget,
-                                      "jobs=%d budget=%d share=%d" % (jobs, budget, share))
+            for reserved in (0, parallel.runner_share(budget)):
+                top = parallel.lane_count(budget, reserved)
+                for jobs in range(1, top + 1):
+                    share = parallel.component_share(jobs, budget, reserved)
+                    lanes = jobs - 1 if reserved else jobs
+                    self.assertGreaterEqual(share, 1)
+                    self.assertLessEqual(reserved + max(0, lanes) * share, budget,
+                                         "jobs=%d budget=%d reserved=%d share=%d"
+                                         % (jobs, budget, reserved, share))
+
+    def test_manual_jobs_past_the_lane_count_floors_at_one(self):
+        # Ручной -j больше, чем оставил раннер, это осознанный выбор
+        # исполнителя: доля падает к единице и ниже не идёт.
+        self.assertEqual(parallel.component_share(50, 10, parallel.runner_share(10)), 1)
+
+    def test_runner_takes_half_the_budget(self):
+        # Сюита devkitctl это полюс прогона (1161-1205 с против 526-586 с у
+        # следующего компонента, замер 2026-09-23), и один воркер свёл бы её к
+        # последовательному прогону классов.
+        self.assertEqual(parallel.runner_share(10), 5)
+        self.assertEqual(parallel.runner_share(4), 2)
+        self.assertEqual(parallel.runner_share(1), 1,
+                         "на одном ядре раннеру достаётся хотя бы один воркер")
+
+    def test_lanes_leave_room_for_the_runner_share(self):
+        # Лайнов ровно столько, чтобы доля раннера и доли остальных лайнов
+        # сложились в бюджет.
+        for budget in (1, 2, 4, 10, 17):
+            reserved = parallel.runner_share(budget)
+            jobs = parallel.lane_count(budget, reserved)
+            share = parallel.component_share(jobs, budget, reserved)
+            self.assertGreaterEqual(jobs, 1)
+            self.assertLessEqual(reserved + (jobs - 1) * share, budget,
+                                 "budget=%d jobs=%d share=%d"
+                                 % (budget, jobs, share))
+
+    def test_lanes_without_a_runner_take_the_whole_budget(self):
+        # Срез --only-go (тот же прогон в CI) делить с раннером нечего, и
+        # лайнов там столько же, сколько ядер.
+        for budget in (1, 2, 4, 10, 17):
+            self.assertEqual(parallel.lane_count(budget), budget)
+
+    def test_queue_puts_the_runner_first(self):
+        # Лайнов меньше, чем компонентов, и раннер, взятый из очереди
+        # последним, удлинил бы стену на всю свою длину.
+        comps = [("go:a", ".", ["go"]), (parallel.RUNNER, ".", ["s"]),
+                 ("hooks", ".", ["h"])]
+        self.assertEqual([c[0] for c in parallel.queue_order(comps)],
+                         [parallel.RUNNER, "go:a", "hooks"])
+        self.assertEqual([c[0] for c in parallel.queue_order(comps[:1] + comps[2:])],
+                         ["go:a", "hooks"],
+                         "без раннера порядок остальных не трогается")
 
     def test_share_uses_the_whole_budget_when_jobs_is_one(self):
         # Один компонент за раз получает весь бюджет: доля не размазывается
@@ -179,44 +228,77 @@ class BudgetTest(unittest.TestCase):
         argv = [sys.executable, "check-skills.py"]
         self.assertEqual(parallel.with_share("check-skills", argv, 5), argv)
 
-    def test_command_env_carries_gomaxprocs_matching_the_share(self):
-        env = parallel.command_env(["go", "test", "./..."], 3)
+    def test_command_env_leaves_the_go_runtime_alone(self):
+        # Постановка DK-1123 звала долю и переменной GOMAXPROCS, а замер
+        # 2026-09-23 её отменил. Переменная это не потолок работы, а смена
+        # режима рантайма: горутина, дождавшаяся своего подпроцесса, ждёт
+        # освободившегося полюса вместо того, чтобы бежать рядом. Под полным
+        # прогоном такая задержка красит гонку уборки TempDir в пакете
+        # dashboard (пять красных прогонов из пяти при доле единица, шестой
+        # при доле два, зелёный без переменной), а машине не сберегает
+        # ничего: тесты го-модулей t.Parallel не зовут. Гонка живёт
+        # черновиком DK-1136.
+        with mock.patch.dict(parallel.os.environ, {"GOMAXPROCS": "7"}):
+            env = parallel.command_env(["go", "test", "./..."])
         self.assertEqual(env["GOWORK"], "off")
-        self.assertEqual(env["GOMAXPROCS"], "3")
+        self.assertEqual(env.get("GOMAXPROCS"), "7",
+                         "раннер своей доли в рантайм не ставит, а чужую "
+                         "переменную оставляет как была")
 
 
-class LiveShareTest(unittest.TestCase):
-    """Доля по числу воркеров, ещё не исчерпавших очередь, без стенных секунд.
+class LiveBudgetTest(unittest.TestCase):
+    """Живая раздача бюджета по факту идущих компонентов, без стенных секунд.
 
-    Замечание ревью DK-1123: `component_share(jobs, budget)` считался один
-    раз перед всей пачкой и держался статичным весь прогон, поэтому компонент
-    в хвосте, где очередь опустела и он остался единственным живым, получал
-    ту же долю, что и на самом занятом старте. Гонка настоящих потоков это
-    не ловит детерминированно (какой из двух воркеров первым обнаружит пустую
-    очередь - решает планировщик ОС), поэтому механика проверяется напрямую,
-    последовательными вызовами `share`/`exhausted`, без единого потока.
+    Первая доработка по замечанию ревью DK-1123 считала живость по воркерам,
+    ещё не нашедшим очередь пустой, и не меняла ничего: воркер объявляет
+    очередь пустой ровно тогда, когда брать больше нечего, так что стартовать
+    с уменьшившимся счётом было уже некому. Счёт идёт по компонентам,
+    работающим прямо сейчас. Гонка настоящих потоков это не ловит
+    детерминированно (какой воркер первым освободится - решает планировщик
+    ОС), поэтому механика проверяется прямыми вызовами `take` и `drop`, без
+    единого потока.
     """
 
-    def test_share_matches_the_static_value_while_workers_are_all_busy(self):
-        # Пока ни один воркер не нашёл очередь пустой, доля не отличается от
-        # прежнего статичного расчёта на всю пачку.
-        live = parallel._LiveShare(4, 8)
-        self.assertEqual(live.share(), parallel.component_share(4, 8))
-        self.assertEqual(live.share(), parallel.component_share(4, 8))
+    def test_runner_gets_its_reserved_share(self):
+        live = parallel._Budget(10, 3, parallel.runner_share(10))
+        self.assertEqual(live.take(parallel.RUNNER, 17), 5)
 
-    def test_share_grows_as_workers_exhaust_the_queue(self):
-        live = parallel._LiveShare(4, 8)
-        live.exhausted()
-        self.assertEqual(live.share(), parallel.component_share(3, 8),
-                          "доля обязана расти после первого же выбывшего воркера")
-        live.exhausted()
-        live.exhausted()
-        self.assertEqual(live.share(), parallel.component_share(1, 8),
-                          "единственный живой воркер обязан получить всю долю бюджета")
+    def test_lanes_and_runner_add_up_to_the_budget(self):
+        # Полный старт на десяти ядрах: раннер и два обычных лайна.
+        reserved = parallel.runner_share(10)
+        jobs = parallel.lane_count(10, reserved)
+        live = parallel._Budget(10, jobs, reserved)
+        given = [live.take(parallel.RUNNER, 17)]
+        given += [live.take("go:%d" % i, 12 - i) for i in range(jobs - 1)]
+        self.assertEqual(given, [5, 1, 1, 1, 1, 1])
+        self.assertLessEqual(sum(given), 10)
+
+    def test_queue_tail_holds_the_early_share_down(self):
+        # Свободные лайны займутся тут же, поэтому хвост очереди считается
+        # будущими соседями: без этого первый же компонент забрал бы бюджет
+        # целиком, а стартовавшие следом сложились бы с ним в перебор.
+        live = parallel._Budget(10, parallel.lane_count(10), 0)
+        self.assertEqual(live.take("go:a", 5), 1)
+
+    def test_share_grows_when_the_run_thins_out(self):
+        reserved = parallel.runner_share(10)
+        jobs = parallel.lane_count(10, reserved)
+        live = parallel._Budget(10, jobs, reserved)
+        live.take(parallel.RUNNER, 17)
+        for i in range(jobs - 1):
+            live.take("go:%d" % i, 12 - i)
+        for i in range(jobs - 1):
+            live.drop("go:%d" % i)
+        self.assertEqual(live.take("hooks", 0), 5,
+                         "раннер держит половину бюджета, вторая уходит соседу")
+        live.drop("hooks")
+        live.drop(parallel.RUNNER)
+        self.assertEqual(live.take("doctor", 0), 10,
+                         "последний компонент на пустой очереди берёт весь бюджет")
 
     def test_share_never_drops_below_one(self):
-        live = parallel._LiveShare(1, 0)
-        self.assertGreaterEqual(live.share(), 1)
+        live = parallel._Budget(1, 6, 0)
+        self.assertGreaterEqual(live.take("go:a", 10), 1)
 
 
 class RunAllTest(Stand):
@@ -253,6 +335,36 @@ class RunAllTest(Stand):
         self.assertFalse(marker.exists(), "долгий компонент не был остановлен")
         self.assertEqual([o[0] for o in outcomes], ["fail.sh"],
                          "остановленный компонент не обязан попадать в итог")
+
+    def test_share_reaches_go_and_runner_components(self):
+        # Замечание ревью DK-1123: юниты закрывали with_share, command_env и
+        # сам расчёт доли по отдельности, а связку «run_all раздаёт долю
+        # настоящему го-компоненту и раннеру» не трогал никто. Прочие стенды
+        # раннера гонят shell-компоненты, которых with_share не касается по
+        # имени, и подмена доли на бюджет прошла бы мимо них.
+        #
+        # Стенд подставляет свой `go` первым в PATH: имя исполняемого файла
+        # разбирается по PATH того самого окружения, что собирает
+        # command_env, поэтому в файл уезжает и argv с флагом -p, и
+        # окружение подпроцесса.
+        self.grow("go", 'printf "%s GOWORK=%s GOMAXPROCS=[%s]\\n"'
+                        ' "$*" "$GOWORK" "$GOMAXPROCS" >> calls')
+        runner = self.grow(parallel.RUNNER, 'printf "suite %s\\n" "$*" >> calls')
+        comps = [runner, ("go:x", ".", ["go", "test", "./..."])]
+        path = str(self.dir) + os.pathsep + parallel.os.environ.get("PATH", "")
+        with mock.patch.dict(parallel.os.environ, {"PATH": path},
+                             clear=False) as _:
+            parallel.os.environ.pop("GOMAXPROCS", None)
+            outcomes, first = parallel.run_all(comps, 2, root=self.dir, budget=8)
+        self.assertIsNone(first, [o[3] for o in outcomes])
+        said = (self.dir / "calls").read_text(encoding="utf-8")
+        # Бюджет 8 при двух лайнах: раннеру половина (4), го-компоненту
+        # остаток на единственный обычный лайн (4). Ни доля по умолчанию (1),
+        # ни бюджет целиком (8) на эти числа не похожи.
+        self.assertIn("test -p 4 ./... GOWORK=off GOMAXPROCS=[]", said,
+                      "доля не дошла до argv го-компонента либо раннер "
+                      "полез в рантайм своей переменной")
+        self.assertIn("suite -j 4", said, "доля не дошла до раннера")
 
     def test_parallel_components_meet_each_other(self):
         # Факт параллели ловится встречей компонентов, а не временем: каждый
@@ -399,7 +511,7 @@ class MainTest(Stand):
             with contextlib.redirect_stdout(out):
                 rc = parallel.main(["--only-go", "--list"])
         self.assertEqual(rc, 0)
-        share = parallel.component_share(4, 4)
+        share = parallel.component_share(parallel.lane_count(4), 4)
         go_lines = [line for line in out.getvalue().splitlines()
                     if line.startswith("go:")]
         self.assertTrue(go_lines)
@@ -412,11 +524,20 @@ class MainTest(Stand):
             with contextlib.redirect_stdout(out):
                 rc = parallel.main(["--list"])
         self.assertEqual(rc, 0)
-        share = parallel.component_share(4, 4)
-        lines = [line for line in out.getvalue().splitlines()
-                 if line.startswith("devkitctl ")]
-        self.assertEqual(len(lines), 1)
-        self.assertIn("-j %d" % share, lines[0])
+        lines = out.getvalue().splitlines()
+        runner = [line for line in lines if line.startswith("devkitctl ")]
+        self.assertEqual(len(runner), 1)
+        # Раннеру половина бюджета, обычному компоненту единица: равная доля
+        # свела бы сюиту к одному воркеру и сделала полюсом её саму.
+        self.assertIn("-j %d" % parallel.runner_share(4), runner[0])
+        self.assertEqual(lines[0], runner[0],
+                         "раннер обязан стоять первым в очереди")
+        go_lines = [line for line in lines if line.startswith("go:")]
+        self.assertTrue(go_lines)
+        share = parallel.component_share(parallel.lane_count(4), 4,
+                                         parallel.runner_share(4))
+        for line in go_lines:
+            self.assertIn("-p %d" % share, line, line)
 
     def test_explicit_j_flag_reaches_the_share(self):
         # Замечание ревью DK-1123: склейка args.jobs -> component_share была

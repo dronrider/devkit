@@ -21,12 +21,21 @@ import (
 const askpassSecretHeaderTest = "X-Devkit-Askpass-Secret"
 
 // waitForAskpass опрашивает GET .../ask, пока не встанет вопрос помощника
-// пароля (или не выйдет срок): опрос демона в проде идёт из панели раз в
-// три секунды, а тест не должен ждать так долго.
-func waitForAskpass(t *testing.T, c *http.Client, base, sid string) map[string]any {
+// пароля. Круг опроса кончается событием, а не стенным сроком: либо вопрос
+// встал, либо сам помощник вернулся раньше ответа панели, и об этом говорит
+// проба broke. Стенного порога у круга нет нарочно: под полным прогоном
+// помощник добирается до демона и за три секунды, и это не поломка, а
+// нехватка процессора (DK-845). Зависший наглухо круг ловит боевой срок
+// демона askpassTimeout: по нему помощник получает отказ и возвращается, а
+// проба broke делает из этого красноту с причиной.
+func waitForAskpass(t *testing.T, c *http.Client, base, sid string, broke func() string) map[string]any {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+	for {
+		if broke != nil {
+			if why := broke(); why != "" {
+				t.Fatalf("помощник вернулся раньше вопроса в GET .../ask: %s", why)
+			}
+		}
 		resp := doReq(t, c, "GET", base+"/api/projects/demo/chats/"+sid+"/ask", "")
 		var parsed struct {
 			Ask map[string]any `json:"ask"`
@@ -37,8 +46,14 @@ func waitForAskpass(t *testing.T, c *http.Client, base, sid string) map[string]a
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("вопрос помощника не встал в GET .../ask вовремя")
-	return nil
+}
+
+// askpassHangGuard это не мера нормального пути, а страховка от зависания
+// теста: ответ панели доезжает до помощника сразу, и ждать его дольше боевого
+// срока демона нечего, за тем сроком помощник отказывает сам. Своих стенных
+// сроков тесты askpass не назначают.
+func askpassHangGuard() <-chan time.Time {
+	return time.After(askpassTimeout)
 }
 
 // askpassPost зовёт /api/askpass как звал бы помощник: секрет заголовком,
@@ -81,7 +96,14 @@ func TestAskpassRequestAnswerRoundTrip(t *testing.T) {
 		done <- askResult{resp.StatusCode, text}
 	}()
 
-	ask := waitForAskpass(t, c, e.srv.URL, sid)
+	ask := waitForAskpass(t, c, e.srv.URL, sid, func() string {
+		select {
+		case r := <-done:
+			return fmt.Sprintf("%d %s", r.code, r.body)
+		default:
+			return ""
+		}
+	})
 	if ask["text"] != "[sudo] Password:" {
 		t.Errorf("текст запроса не тот: %v", ask)
 	}
@@ -104,7 +126,7 @@ func TestAskpassRequestAnswerRoundTrip(t *testing.T) {
 		if !strings.Contains(r.body, `"password":"пароль-панели-7"`) {
 			t.Errorf("пароль не доехал до помощника: %s", r.body)
 		}
-	case <-time.After(3 * time.Second):
+	case <-askpassHangGuard():
 		t.Fatal("помощник не дождался ответа")
 	}
 
@@ -133,7 +155,14 @@ func TestAskpassCancelReturnsGone(t *testing.T) {
 		done <- askResult{resp.StatusCode, text}
 	}()
 
-	ask := waitForAskpass(t, c, e.srv.URL, sid)
+	ask := waitForAskpass(t, c, e.srv.URL, sid, func() string {
+		select {
+		case r := <-done:
+			return fmt.Sprintf("%d %s", r.code, r.body)
+		default:
+			return ""
+		}
+	})
 	id, _ := ask["id"].(string)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/askpass",
 		`{"id":"`+id+`","cancel":true}`)
@@ -149,7 +178,7 @@ func TestAskpassCancelReturnsGone(t *testing.T) {
 		if strings.Contains(r.body, "password") {
 			t.Errorf("отменённый ответ несёт поле password: %s", r.body)
 		}
-	case <-time.After(3 * time.Second):
+	case <-askpassHangGuard():
 		t.Fatal("помощник не дождался отмены")
 	}
 }
@@ -223,13 +252,20 @@ func TestAskpassPasswordNeverLogged(t *testing.T) {
 		askpassPost(t, e.srv.URL, e.s.askpassSecret, sid, "chat-9", "[sudo] Password:")
 		close(done)
 	}()
-	ask := waitForAskpass(t, c, e.srv.URL, sid)
+	ask := waitForAskpass(t, c, e.srv.URL, sid, func() string {
+		select {
+		case <-done:
+			return "запрос помощника кончился без ответа панели"
+		default:
+			return ""
+		}
+	})
 	id, _ := ask["id"].(string)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/askpass",
 		`{"id":"`+id+`","text":"`+secretWord+`"}`)
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-askpassHangGuard():
 		t.Fatal("помощник не дождался ответа")
 	}
 
@@ -330,13 +366,11 @@ func TestAskpassChainWithFakeSudo(t *testing.T) {
 	e := newTestEnv(t)
 	e.s.askpassSecret = "cafef00dgggg7777"
 
-	// Срок ожидания укорочен: сорвись цепочка, тест обязан упасть быстро, а
-	// не повиснуть на боевые 120 секунд (python-клиент помощника ждёт больше
-	// серверного срока и всегда получит от демона отказ первым).
-	wasTimeout := askpassTimeout
-	askpassTimeout = 5 * time.Second
-	t.Cleanup(func() { askpassTimeout = wasTimeout })
-
+	// Свой срок ожидания тест не назначает: цепочка рвётся смертью подменного
+	// sudo, и круг опроса видит это событием, без стенных секунд. Боевой срок
+	// демона остаётся на месте и держит единственный случай, где события нет,
+	// вопрос встал, а панель его не видит. Тогда помощник получит отказ сам
+	// (python-клиент ждёт дольше серверного срока) и вернётся к sudo.
 	home := t.TempDir()
 	was := realHomeFn
 	realHomeFn = func() string { return home }
@@ -400,31 +434,18 @@ printf 'SUDO-OK:%s\n' "$pw"`)
 		sudoErr <- err
 	}()
 
+	// Ожидание вопроса держится на событии: круг кончается либо самим
+	// вопросом, либо смертью подменного sudo. Сколько стенных секунд уйдёт у
+	// python-помощника на старт под чужой нагрузкой, тесту безразлично.
 	c := e.loggedClient(t)
-	var ask map[string]any
-	deadline := time.Now().Add(3 * time.Second)
-pollLoop:
-	for time.Now().Before(deadline) {
+	ask := waitForAskpass(t, c, e.srv.URL, sid, func() string {
 		select {
 		case out := <-sudoDone:
-			err := <-sudoErr
-			t.Fatalf("подменный sudo кончился раньше вопроса (err=%v):\n%s", err, out)
+			return fmt.Sprintf("подменный sudo кончился (err=%v):\n%s", <-sudoErr, out)
 		default:
+			return ""
 		}
-		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats/"+sid+"/ask", "")
-		text := body(t, resp)
-		var parsed struct {
-			Ask map[string]any `json:"ask"`
-		}
-		if json.Unmarshal([]byte(text), &parsed) == nil && parsed.Ask != nil && parsed.Ask["kind"] == askKindPass {
-			ask = parsed.Ask
-			break pollLoop
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if ask == nil {
-		t.Fatal("вопрос помощника не встал в GET .../ask вовремя")
-	}
+	})
 	id, _ := ask["id"].(string)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/askpass",
 		`{"id":"`+id+`","text":"свежий-пароль-77"}`)
@@ -440,7 +461,7 @@ pollLoop:
 		if !strings.Contains(string(out), "SUDO-OK:свежий-пароль-77") {
 			t.Fatalf("пароль не доехал через настоящего помощника до подменного sudo: %s", out)
 		}
-	case <-time.After(10 * time.Second):
+	case <-askpassHangGuard():
 		t.Fatal("подменный sudo не завершился вовремя")
 	}
 }
@@ -468,7 +489,14 @@ func TestAskpassSidByTmuxFallback(t *testing.T) {
 		done <- askResult{resp.StatusCode, text}
 	}()
 
-	ask := waitForAskpass(t, c, e.srv.URL, sid)
+	ask := waitForAskpass(t, c, e.srv.URL, sid, func() string {
+		select {
+		case r := <-done:
+			return fmt.Sprintf("%d %s", r.code, r.body)
+		default:
+			return ""
+		}
+	})
 	id, _ := ask["id"].(string)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/askpass",
 		`{"id":"`+id+`","text":"пароль-по-tmux"}`)
@@ -480,7 +508,7 @@ func TestAskpassSidByTmuxFallback(t *testing.T) {
 		if r.code != http.StatusOK || !strings.Contains(r.body, `"password":"пароль-по-tmux"`) {
 			t.Fatalf("пароль не доехал через запасную дорогу tmux: %d %s", r.code, r.body)
 		}
-	case <-time.After(3 * time.Second):
+	case <-askpassHangGuard():
 		t.Fatal("помощник не дождался ответа по запасной дороге tmux")
 	}
 }

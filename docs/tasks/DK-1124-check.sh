@@ -7,9 +7,10 @@
 # дашборда, ~/.devkit/dashboard.local: сценарий рассчитан на уже запущенный
 # сервис, как он живёт на машине агента.
 #
-# DEVKIT_HOME, DEVKIT_LOAD_CMD и DEVKIT_PROBE_INTERVAL это точки подмены для
-# check_test.py рядом: тест глушит настоящий прогон и настоящий HOME
-# стендом, а логику порога и разбора конфига гоняет по-настоящему.
+# DEVKIT_HOME, DEVKIT_LOAD_CMD, DEVKIT_PROBE_INTERVAL и DEVKIT_HTTP_CEILING
+# это точки подмены для check_test.py рядом: тест глушит настоящий прогон,
+# настоящий HOME и держит потолок HTTP-клиента коротким, а логику порога и
+# разбора конфига гоняет по-настоящему.
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 LIMIT=${1:-5}
@@ -18,6 +19,12 @@ CFG="$HOME_DIR/.devkit/dashboard.local"
 LOG="$HOME_DIR/.devkit/dashboard.log"
 LOAD_CMD=${DEVKIT_LOAD_CMD:-"cd '$ROOT' && python3 tools/devkitctl/parallel.py"}
 PROBE_INTERVAL=${DEVKIT_PROBE_INTERVAL:-120}
+# Потолок HTTP-клиента: выше потолка подпроцессов дашборда (30 с,
+# tools/dashboard/board.go), с запасом, чтобы замер увидел настоящее время
+# ответа, вплоть до потолка сервера, вместо более короткого клиентского
+# среза. curl без --max-time ждал ответ сколько угодно; здесь верхняя
+# граница нужна, чтобы сценарий не завис вовсе при мёртвой сети.
+HTTP_CEILING=${DEVKIT_HTTP_CEILING:-35}
 
 port=$(awk -F'= *' '/^[[:space:]]*port[[:space:]]*=/{print $2}' "$CFG" 2>/dev/null | tail -n 1)
 port=${port:-7112}
@@ -36,14 +43,16 @@ trap 'rm -f "$cookies"' EXIT
 # внешних зависимостей.
 py_http() {
 	mode=$1
-	python3 - "$mode" "$base" "$cookies" "$token" <<'PY'
+	python3 - "$mode" "$base" "$cookies" "$token" "$HTTP_CEILING" <<'PY'
 import http.cookiejar
 import json
+import socket
 import sys
 import urllib.error
 import urllib.request
 
-mode, base, cookie_path, auth_token = sys.argv[1:5]
+mode, base, cookie_path, auth_token, ceiling = sys.argv[1:6]
+ceiling = float(ceiling)
 jar = http.cookiejar.MozillaCookieJar(cookie_path)
 if mode == "get":
 	jar.load(ignore_discard=True, ignore_expires=True)
@@ -55,11 +64,16 @@ try:
 		req = urllib.request.Request(
 			base + "/api/login", data=data,
 			headers={"Content-Type": "application/json"})
-		opener.open(req, timeout=10).read()
+		opener.open(req, timeout=ceiling).read()
 		jar.save(ignore_discard=True, ignore_expires=True)
 	else:
-		opener.open(base + "/api/projects", timeout=10).read()
-except urllib.error.HTTPError:
+		opener.open(base + "/api/projects", timeout=ceiling).read()
+except (urllib.error.HTTPError, socket.timeout, TimeoutError):
+	# Замер не должен падать на медленном ответе или статусе ошибки: время
+	# уже измерено снаружи, в shell, сравнением с $LIMIT, а сама медленность
+	# это предмет DoD DK-1124, а не повод прервать сценарий. Отказ на
+	# уровне соединения (сервер не поднят, порт закрыт) сюда не входит и
+	# продолжает падать сценарий целиком, как раньше падал на нём curl.
 	pass
 PY
 }

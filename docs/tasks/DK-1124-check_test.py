@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -61,6 +62,8 @@ def _make_handler(state):
                 self.end_headers()
                 return
             state["total"] += 1
+            if state.get("delay"):
+                time.sleep(state["delay"])
             if STAND_COOKIE in self.headers.get("Cookie", ""):
                 state["authed"] += 1
                 self.send_response(200)
@@ -94,12 +97,14 @@ class Stand(unittest.TestCase):
         path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
         path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
-    def run_script(self, limit=5, load="true", probe_interval="0", extra_env=None):
+    def run_script(self, limit=5, load="true", probe_interval="0",
+                   http_ceiling="2", extra_env=None):
         env = dict(os.environ)
         env["PATH"] = str(self.bin) + os.pathsep + env.get("PATH", "")
         env["DEVKIT_HOME"] = str(self.home)
         env["DEVKIT_LOAD_CMD"] = load
         env["DEVKIT_PROBE_INTERVAL"] = probe_interval
+        env["DEVKIT_HTTP_CEILING"] = http_ceiling
         if extra_env:
             env.update(extra_env)
         return subprocess.run(
@@ -161,6 +166,23 @@ class ThresholdTest(Stand):
         self.assertEqual(proc.returncode, 1, proc.stdout)
         self.assertIn("FAILED", proc.stdout)
         self.assertIn("10 замер", proc.stdout, proc.stdout)
+
+    def test_slow_projects_handle_does_not_crash_the_run(self):
+        # Живой замер нашёл настоящую причину DK-1124: /api/projects под
+        # нагрузкой отвечает за секунды, а старый потолок питоновского
+        # клиента (10 с) и узкий except (только HTTPError) роняли весь
+        # сценарий на socket.timeout вместо того, чтобы просто измерить
+        # медленный ответ. Тут /api/projects нарочно медленнее потолка
+        # клиента (0,4 с против http_ceiling=0,2 с). Сценарий обязан
+        # пережить исключение, дойти до всех десяти замеров и честно
+        # отчитаться про превышение порога, а не упасть трейсбеком.
+        self.stub("taskctl", "exit 0")
+        self.state["delay"] = 0.4
+        proc = self.run_script(limit=0, http_ceiling="0.2")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertNotIn("Traceback", proc.stdout, proc.stdout)
+        self.assertIn("замер 10:", proc.stdout, "сценарий обязан взять все десять замеров")
+        self.assertIn("FAILED", proc.stdout)
 
     def test_flags_the_30s_ceiling_from_the_log(self):
         # Строка потолка в журнале дашборда после старта сценария обязана

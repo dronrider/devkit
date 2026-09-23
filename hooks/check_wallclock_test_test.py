@@ -411,6 +411,10 @@ class TestPreCommit(unittest.TestCase):
         r = self.hook()
         self.assertEqual(r.returncode, 1)
         self.assertIn("стенным порогом", r.stderr)
+        # ссылка на раздел бьёт по названию: ревью DK-1126 поймало опечатку,
+        # где вместо нового раздела в подсказке стоял соседний «Откуда
+        # берётся ожидание».
+        self.assertIn("Факт вместо стенного времени", r.stderr)
 
     def test_new_test_with_fact_passes(self):
         self.stage("feed_test.go", "package dashboard\n\n" + GO_FACT)

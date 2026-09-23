@@ -48,7 +48,7 @@ fi
 wall=$(printf '%s\n' "$added" | python3 "$here/check-wallclock-test.py" --diff)
 status=$?
 if [ $status -eq 1 ]; then
-    echo "новый тест со стенным порогом вместо факта (test-standard, «Откуда берётся ожидание»):" >&2
+    echo "новый тест со стенным порогом вместо факта (test-standard, «Факт вместо стенного времени»):" >&2
     printf '%s\n' "$wall" >&2
     echo "мерить факт или счёт вместо времени; ложная находка: пометка «стенной порог: причина» на той же строке; осознанно: git commit --no-verify" >&2
     exit 1

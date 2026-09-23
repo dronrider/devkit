@@ -35,22 +35,65 @@ func TestParseComponentOutcomesEmpty(t *testing.T) {
 	}
 }
 
-func TestBareNameAndTouchesDiff(t *testing.T) {
-	if bareName("go:shipctl") != "shipctl" {
-		t.Fatalf("bareName не срезал префикс: %q", bareName("go:shipctl"))
+// TestResolveOwnershipUnresolvedWithoutLayout: замечание ревью круга 1. Без
+// заведённой раскладки deploy.<имя>.paths шипctl не угадывает границу
+// компонента по имени: компонент неопознан, даже когда диффа касается путь,
+// который совпал бы с именем по старой (снятой) эвристике сегмента.
+func TestResolveOwnershipUnresolvedWithoutLayout(t *testing.T) {
+	cfg := deployConfig{}
+	diff := []string{"compA/thing.txt"}
+	resolved, own := resolveOwnership(cfg, "compA", diff)
+	if resolved || own {
+		t.Fatalf("без раскладки компонент не должен считаться ни опознанным, ни своим: resolved=%v own=%v", resolved, own)
 	}
-	if bareName("hooks") != "hooks" {
-		t.Fatalf("bareName без двоеточия не должен меняться: %q", bareName("hooks"))
+}
+
+// TestResolveOwnershipExactPathMatch: заведённая раскладка распознаёт
+// точное совпадение независимо от расширения. Второй кейс это замечание
+// ревью про компонент-скрипт (kit/skills/check-skills.py против имени
+// компонента «check-skills» без расширения): путь matching, а не имя,
+// поэтому расширение больше не мешает.
+func TestResolveOwnershipExactPathMatch(t *testing.T) {
+	cfg := deployConfig{Components: []deployComponent{
+		{Name: "check-skills", Paths: []string{"kit/skills/check-skills.py"}},
+	}}
+	own := []string{"kit/skills/check-skills.py"}
+	if resolved, isOwn := resolveOwnership(cfg, "check-skills", own); !resolved || !isOwn {
+		t.Fatalf("точный путь компонента-скрипта должен резолвиться своим: resolved=%v own=%v", resolved, isOwn)
 	}
-	diff := []string{"tools/shipctl/ops.go", "docs/tasks/DK-1125.md"}
-	if !touchesDiff("go:shipctl", diff) {
-		t.Fatal("компонент tools/shipctl обязан считаться задетым своим диффом")
+	other := []string{"kit/skills/some-other-skill/foo.py"}
+	if resolved, isOwn := resolveOwnership(cfg, "check-skills", other); !resolved || isOwn {
+		t.Fatalf("файл другого скилла не должен резолвиться своим для check-skills: resolved=%v own=%v", resolved, isOwn)
 	}
-	if touchesDiff("go:taskctl", diff) {
-		t.Fatal("компонент tools/taskctl дифф не задевал, а посчитан задетым")
+}
+
+// TestResolveOwnershipBucketLayoutTrustsDeclaredBoundary: замечание ревью
+// про бакет parallel.py (skills, hooks, unittest discover по всему
+// каталогу). Заведённая раскладка на весь каталог считается доверенной как
+// есть: вложенный файл внутри объявленной границы признаётся своим. Точность
+// тут решает раскладка проекта, а не шипctl: заведи её проект уже (paths на
+// каждый скилл отдельно), точнее станет и разбор.
+func TestResolveOwnershipBucketLayoutTrustsDeclaredBoundary(t *testing.T) {
+	cfg := deployConfig{Components: []deployComponent{
+		{Name: "skills", Paths: []string{"kit/skills/"}},
+	}}
+	diff := []string{"kit/skills/some-other-skill/foo.py"}
+	resolved, own := resolveOwnership(cfg, "skills", diff)
+	if !resolved || !own {
+		t.Fatalf("объявленная граница бакета должна доверяться как есть: resolved=%v own=%v", resolved, own)
 	}
-	if touchesDiff("hooks", diff) {
-		t.Fatal("компонент hooks дифф не задевал, а посчитан задетым")
+}
+
+// TestResolveOwnershipDeclaredButNotTouched: раскладка заведена, но дифф
+// её область не касается. Компонент опознан и не свой, чужая краснота.
+func TestResolveOwnershipDeclaredButNotTouched(t *testing.T) {
+	cfg := deployConfig{Components: []deployComponent{
+		{Name: "compB", Paths: []string{"compB/"}},
+	}}
+	diff := []string{"compA/thing.txt"}
+	resolved, own := resolveOwnership(cfg, "compB", diff)
+	if !resolved || own {
+		t.Fatalf("заведённый, но не задетый компонент должен быть чужим: resolved=%v own=%v", resolved, own)
 	}
 }
 
@@ -117,6 +160,11 @@ func TestMergeForeignFailsOwnRedNotCounted(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Раскладка нужна не выкату (autonomous не поднят, деплой не зовётся), а
+	// разбору принадлежности компонента: без неё оба компонента остались бы
+	// неопознанными, и своя краснота ничем не отличалась бы от чужой.
+	writeDeployCfg(t, root, "deploy.compA = true\ndeploy.compA.paths = compA/\n"+
+		"deploy.compB = true\ndeploy.compB.paths = compB/\n")
 	gitT(t, root, "checkout", "-qb", "xr-001-fix")
 	write(t, root, "compA/thing.txt", "own\n")
 	write(t, root, "fix_test.go", "package main\n")
@@ -143,6 +191,8 @@ func TestMergeForeignFailsForeignRedCounted(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	writeDeployCfg(t, root, "deploy.compA = true\ndeploy.compA.paths = compA/\n"+
+		"deploy.compB = true\ndeploy.compB.paths = compB/\n")
 	gitT(t, root, "checkout", "-qb", "xr-001-fix")
 	write(t, root, "compA/thing.txt", "own\n")
 	write(t, root, "fix_test.go", "package main\n")
@@ -165,6 +215,35 @@ func TestMergeForeignFailsForeignRedCounted(t *testing.T) {
 	}
 	if !strings.Contains(msg, ": 1") {
 		t.Fatalf("отчёт команды должен называть число 1: %q", msg)
+	}
+}
+
+// TestMergeForeignFailsUnresolvedComponentCounted: регрессия ревью круга 1.
+// Раскладки нет вовсе (как сегодня у самого devkit), а красный компонент
+// назван так же, как каталог, который дифф задачи трогает. По старой (снятой)
+// эвристике сегмента пути это читалось бы своей краснотой и держало бы
+// foreign-fails в ложном нуле. Без заведённой границы компонент неопознан, и
+// его краснота идёт в счёт: ложный ноль опаснее ложной единицы.
+func TestMergeForeignFailsUnresolvedComponentCounted(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, root, "checkout", "-qb", "xr-001-fix")
+	write(t, root, "compA/thing.txt", "own\n")
+	write(t, root, "fix_test.go", "package main\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "fix: XR-001 правка")
+	test := `printf 'compA   0.1s FAIL\n'; exit 1`
+	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: test}); err == nil {
+		t.Fatal("красный компонент должен держать слияние")
+	}
+	n, err := foreignFails(root, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("неопознанный компонент без раскладки не должен молча прощаться: %d", n)
 	}
 }
 

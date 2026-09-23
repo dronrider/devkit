@@ -21,11 +21,21 @@ import (
 const testLogPath = ".devkit/test-runs.log"
 
 // componentOutcome это итог одного именованного компонента прогона: имя,
-// исход и длительность.
+// исход, длительность и разбор принадлежности. Resolved говорит, нашлась ли
+// для имени компонента раскладка deploy.<имя>.paths в .devkit/deploy.local
+// (решение DK-1125 по замечанию ревью круга 1). Голый сегмент пути врёт в
+// обе стороны. Бакет parallel.py вроде «skills» матчит любой чужой файл
+// внутри kit/skills, а компонент-скрипт вроде «check-skills» не матчит
+// собственный файл из-за расширения. Own действует только при Resolved:
+// компонент без заведённой раскладки не признаётся своим никогда, его
+// краснота идёт в счёт foreign-fails как неопознанная, а не как молчаливо
+// прощённая.
 type componentOutcome struct {
-	Name string  `json:"name"`
-	OK   bool    `json:"ok"`
-	Secs float64 `json:"secs"`
+	Name     string  `json:"name"`
+	OK       bool    `json:"ok"`
+	Secs     float64 `json:"secs"`
+	Resolved bool    `json:"resolved"`
+	Own      bool    `json:"own"`
 }
 
 // testRunRecord это одна запись журнала: итог прогона test при слиянии
@@ -81,6 +91,14 @@ func writeTestLog(root, id string, diff []string, out string, ok bool, dur time.
 	if len(comps) == 0 {
 		comps = []componentOutcome{{Name: "test", OK: ok, Secs: dur.Seconds()}}
 	}
+	// Принадлежность компонента диффу задачи разбирается прямо тут, в
+	// момент записи, раскладкой deploy.<имя>.paths проекта: журнал это
+	// стабильная историческая запись, и следующая правка раскладки не
+	// должна переигрывать смысл уже слитых слияний.
+	cfg, _ := loadDeployConfig(root)
+	for i := range comps {
+		comps[i].Resolved, comps[i].Own = resolveOwnership(cfg, comps[i].Name, diff)
+	}
 	rec := testRunRecord{Time: time.Now(), ID: id, OK: ok, Diff: diff, Components: comps}
 	line, err := json.Marshal(rec)
 	if err != nil {
@@ -126,42 +144,52 @@ func readTestLog(root string, since time.Duration) ([]testRunRecord, error) {
 	return recs, nil
 }
 
-// bareName убирает префикс до последнего ":" включительно: составное имя
-// компонента вида "kind:name" (как go-модули parallel.py, "go:shipctl")
-// называет себя через двоеточие, а сравнению с диффом задачи нужен голый
-// хвост.
-func bareName(name string) string {
-	if i := strings.LastIndex(name, ":"); i >= 0 {
-		return name[i+1:]
-	}
-	return name
-}
-
-// touchesDiff отвечает, лежит ли хоть один путь diff внутри компонента name:
-// голое имя компонента встречается отдельным сегментом пути. Раскладка
-// deploy.<имя>.paths тут не судья: она не обязана быть заведена (autonomous
-// не поднят или раскладки нет вовсе), а имя компонента журнал уже знает из
-// собственного вывода команды test.
-func touchesDiff(name string, diff []string) bool {
-	bare := bareName(name)
-	if bare == "" {
-		return false
-	}
-	for _, p := range diff {
-		for _, seg := range strings.Split(p, "/") {
-			if seg == bare {
-				return true
+// resolveOwnership ищет в раскладке cfg компонент с именем name и, если он
+// найден, проверяет, лежит ли хоть один путь diff внутри его paths.
+// Компонент без заведённой раскладки (deploy.<имя> и deploy.<имя>.paths в
+// .devkit/deploy.local) resolved не получает: без явной границы шипctl не
+// угадывает её по имени, потому что имя раньше врало в обе стороны
+// (замечание ревью круга 1, DK-1125). Бакет parallel.py вроде «skills»
+// (unittest discover по всему kit/skills) остаётся неточным ровно настолько,
+// насколько неточна собственная раскладка проекта: заведи её проект точнее
+// (deploy.<имя-скилла>.paths на каждый скилл), точнее станет и счёт.
+func resolveOwnership(cfg deployConfig, name string, diff []string) (resolved, own bool) {
+	for _, comp := range cfg.Components {
+		if comp.Name != name {
+			continue
+		}
+		resolved = true
+		for _, p := range diff {
+			for _, prefix := range comp.Paths {
+				if pathUnder(p, prefix) {
+					return true, true
+				}
 			}
 		}
+		return true, false
 	}
-	return false
+	return false, false
+}
+
+// pathUnder проверяет, лежит ли path под prefix: как файл целиком либо
+// внутри каталога, который тот называет. Копия приёма deployconf.pathUnder:
+// та версия не экспортирована, а тянуть отдельный пакет ради одной проверки
+// на шесть строк незачем.
+func pathUnder(path, prefix string) bool {
+	prefix = strings.TrimSuffix(prefix, "/")
+	if prefix == "" {
+		return false
+	}
+	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }
 
 // foreignFails считает слияния, отбитые компонентом вне диффа задачи, за
 // срок since: запись в счёт идёт, когда прогон целиком красный и ни один из
-// провалившихся компонентов диффа задачи не касается. Своя краснота (диффа
-// касается хотя бы один из провалившихся) отбивает слияние законно и в счёт
-// не идёт.
+// провалившихся компонентов не признан своим (Own при Resolved). Своя
+// краснота отбивает слияние законно и в счёт не идёт. Неопознанный компонент
+// (раскладка для его имени не заведена) своим не считается никогда и уходит
+// в счёт вместе с точно чужим: ложный ноль опаснее ложной единицы, потому
+// что прячет реальную чужую красноту (замечание ревью круга 1, DK-1125).
 func foreignFails(root string, since time.Duration) (int, error) {
 	recs, err := readTestLog(root, since)
 	if err != nil {
@@ -178,7 +206,7 @@ func foreignFails(root string, since time.Duration) (int, error) {
 				continue
 			}
 			failedAny = true
-			if touchesDiff(c.Name, rec.Diff) {
+			if c.Resolved && c.Own {
 				own = true
 			}
 		}

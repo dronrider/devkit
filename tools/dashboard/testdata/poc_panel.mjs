@@ -1420,6 +1420,12 @@ console.log("пузырь: копирование сообщения целик�
   const a = block.querySelectorAll("a");
   const href = a.find((k) => k.href === "https://example.com/auth?token=abc");
   if (!href || href.target !== "_blank") fail("адрес в блоке кода не открывается тапом: " + JSON.stringify(a));
+  // Замечание приёмки с телефона: кнопка стоит внутри .mdcode рядом с pre, а
+  // не отдельной панелью над блоком, съедающей строку ленты.
+  if (btn.parentNode !== block) fail("кнопка блока кода стоит не внутри .mdcode: " + dump(block));
+  if (byClass(block, "mdcbar")) fail("у блока кода осталась отдельная панель кнопки: " + dump(block));
+  const pre = block.children.find((k) => k.tagName === "PRE");
+  if (!pre) fail("у блока кода потерялся pre: " + dump(block));
 }
 
 console.log("блок кода: кнопка копирования, буфер без разметки ссылок");
@@ -1439,6 +1445,32 @@ console.log("блок кода: кнопка копирования, буфер 
   await settle();
   if (copied[0] !== "tools/dashboard/static/app.js") {
     fail("в буфер уехал не текст инлайн-кода: " + JSON.stringify(copied[0]));
+  }
+  // Замечание приёмки с телефона: кнопка лежит в одной рамке с кодом, а не
+  // рядом с ней снаружи, и вертикально не уезжает от строки текста.
+  if (btn.parentNode !== spans[0]) fail("кнопка инлайн-кода стоит вне рамки фрагмента: " + dump(spans[0]));
+  const code = spans[0].children.find((k) => k.tagName === "CODE" || k.tagName === "A");
+  if (!code) fail("у инлайн-кода потерялся сам код: " + dump(spans[0]));
+  if (code.parentNode !== spans[0]) fail("код инлайн-фрагмента стоит не в общей рамке: " + dump(spans[0]));
+  // Центровка и общая рамка это раскладка, JSDOM её не считает: сама правка
+  // (vertical-align группы, перенос фона и рамки с code на группу, кнопка
+  // блока снятая с потока) читается прямо в style.css, иначе откат этих
+  // свойств не покраснит ни один узел стенда (замечание ревью).
+  const css = readFileSync(join(dirname(app), "style.css"), "utf8");
+  const mdicodeRule = (css.match(/\.md \.mdicode\{[^}]*\}/) || [])[0] || "";
+  if (!/vertical-align:middle/.test(mdicodeRule)) {
+    fail("инлайн-код не центрирован по строке текста: " + mdicodeRule);
+  }
+  if (!/background:/.test(mdicodeRule) || !/border:/.test(mdicodeRule)) {
+    fail("рамка инлайн-кода стоит не на самой группе: " + mdicodeRule);
+  }
+  const mdicodeCodeRule = (css.match(/\.md \.mdicode code\{[^}]*\}/) || [])[0] || "";
+  if (!/background:none/.test(mdicodeCodeRule)) {
+    fail("у code внутри инлайн-кода остался свой фон, рамка дробится надвое: " + mdicodeCodeRule);
+  }
+  const mdcodeBtnRule = (css.match(/\.md \.mdcode \.foldcp\{[^}]*\}/) || [])[0] || "";
+  if (!/position:absolute/.test(mdcodeBtnRule)) {
+    fail("кнопка блока кода не снята с потока, съест отдельную строку ленты: " + mdcodeBtnRule);
   }
 }
 

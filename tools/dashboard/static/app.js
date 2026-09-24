@@ -5528,12 +5528,10 @@ function wrapScroll(node) {
 // разбор не трогает, и вид самого блока не меняется.
 function mdCodeBlock(text) {
   const box = el("div", "mdcode");
-  const bar = el("div", "mdcbar");
-  bar.append(copyBtn(text));
-  box.append(bar);
   const pre = el("pre");
   codeLinkify(pre, text);
   box.append(pre);
+  box.append(copyBtn(text));
   return box;
 }
 

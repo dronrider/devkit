@@ -1174,16 +1174,22 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .md code{font:400 0.92em var(--mono);background:var(--bg2);border:1px solid var(--line);border-radius:5px;padding:0 4px}
 .md pre code{background:none;border:none;padding:0}
 .md a{overflow-wrap:anywhere}
-/* DK-1120: кнопка копирования у блока кода стоит рядом с ним сверху, а не
-   подписью пузыря, которая прячется до наведения: на тач-экране наведения
-   нет. Вид самого блока (.md pre) остаётся прежним. */
-.md .mdcode{margin:8px 0}
-.md .mdcode pre{margin:0}
-.md .mdcbar{display:flex;justify-content:flex-end;margin-bottom:2px}
+/* DK-1120: кнопка копирования у блока кода лежит поверх самого блока, у
+   правого верхнего угла .md pre, а не подписью пузыря, которая прячется до
+   наведения: на тач-экране наведения нет. Отдельной строки ленты кнопка не
+   занимает (замечание пользователя по приёмке с телефона). */
+.md .mdcode{position:relative;margin:8px 0}
+.md .mdcode pre{margin:0;padding-right:38px}
+.md .mdcode .foldcp{position:absolute;top:6px;right:6px;background:var(--bg2)}
 .md .mdcode .foldcp:hover{opacity:1}
 /* своя кнопка копирования у каждого инлайн-кода: группа держится вместе при
-   переносе строки абзаца, а не рвётся между кодом и кнопкой */
-.md .mdicode{display:inline-flex;align-items:center;gap:1px;vertical-align:-4px}
+   переносе строки абзаца, а не рвётся между кодом и кнопкой. Фон и рамка
+   стоят на самой группе, а не на code внутри неё, поэтому кнопка попадает в
+   ту же рамку, что и код, и фрагмент выглядит цельно (замечание пользователя
+   по приёмке с телефона). Центр группы выровнен по центру строки текста, а
+   не смещён под базовую линию. */
+.md .mdicode{display:inline-flex;align-items:center;gap:2px;vertical-align:middle;background:var(--bg2);border:1px solid var(--line);border-radius:5px;padding:1px 3px 1px 5px}
+.md .mdicode code{background:none;border:none;padding:0}
 .md .mdicode .foldcp{width:15px;height:15px}
 .md .mdicode .foldcp svg{width:11px;height:11px}
 .md .mdicode .foldcp:hover{opacity:1}

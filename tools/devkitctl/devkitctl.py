@@ -190,6 +190,7 @@ import harness
 import importlib.util
 import json
 import leak
+import lift
 import layout
 import os
 import perms
@@ -3560,6 +3561,12 @@ def main(argv):
     u = sub.add_parser("user", help="настройки пользователя машины: род первого лица")
     u.add_argument("--gender", choices=user.GENDERS,
                    help="род, в котором агент пишет о себе; без ключа печатается заданный")
+    lf = sub.add_parser("lift",
+                        help="подъём строк в работе без живой сессии и уборка следов умерших сессий")
+    lf.add_argument("-C", dest="dir", default="",
+                    help="один корень; без ключа обходятся все корни под надзором")
+    lf.add_argument("--dry-run", action="store_true",
+                    help="показать находки, ничего не поднимая и не снимая")
     sub.add_parser("selfcheck",
                    help="живой круг связки во временном проекте, с уборкой за собой")
     sub.add_parser("waitcheck",
@@ -3591,6 +3598,8 @@ def main(argv):
         rc = update_devkit(a.pin, a.check, a.restarted)
     elif a.cmd == "watch":
         rc = watch.run(idle=a.idle * 60 if a.idle else None)
+    elif a.cmd == "lift":
+        rc = lift.run(root=a.dir if a.dir else None, act=not a.dry_run)
     elif a.cmd == "user":
         rc = user.main(["--gender", a.gender] if a.gender else [])
     elif a.cmd == "selfcheck":

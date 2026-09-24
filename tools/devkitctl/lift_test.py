@@ -198,6 +198,17 @@ class OrphanProcCase(unittest.TestCase):
         line = "go test ./... /private/var/folders/x1/T/shipctl-merge-546185521/tree"
         self.assertTrue(any(rx.search(line) for rx in lift.ORPHAN_PATTERNS))
 
+    def test_pattern_spares_work_tree_build(self):
+        """Прогон человека в дереве задачи под образец не идёт.
+
+        Рабочее дерево зовётся devkit-dk-<ID>, и его имя лежит в аргументах
+        обычного `go test`. Образец по голому имени унёс бы живой прогон под
+        сигнал, стоит его родителю уйти в pid 1.
+        """
+        for line in ("go test ./... /Users/x/projects/devkit-dk-1157/tools/devkitctl",
+                     "go build github.com/x/devkit-dk-1157/tools/taskctl"):
+            self.assertFalse(any(rx.search(line) for rx in lift.ORPHAN_PATTERNS), line)
+
     def test_pattern_spares_ordinary_python(self):
         self.assertFalse(any(rx.search("python3 manage.py runserver")
                              for rx in lift.ORPHAN_PATTERNS))

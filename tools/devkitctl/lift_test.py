@@ -265,5 +265,50 @@ class TickCase(unittest.TestCase):
             self.assertIsInstance(ln, str)
 
 
+class TreesCase(unittest.TestCase):
+    """Уборка деревьев прогона: находки считает разбор доктора, снимает он же.
+
+    Уборка необратима, каталог уходит с диска вместе с записью о дереве, и
+    поведение сухого прогона тут важнее прочего.
+    """
+
+    def setUp(self):
+        import runtrees
+        self.mod = runtrees
+        self.found = [("/T/shipctl-merge-1/tree", "/repo", "/T/shipctl-merge-1/tree")]
+        self.dropped = []
+        self.old_ab = runtrees.abandoned
+        self.old_drop = runtrees.drop
+        runtrees.abandoned = lambda *a, **kw: self.found
+        runtrees.drop = lambda path, repo, tree: self.dropped.append(path)
+
+        def back():
+            runtrees.abandoned = self.old_ab
+            runtrees.drop = self.old_drop
+        self.addCleanup(back)
+
+    def test_act_drops_trees(self):
+        lines = lift.stale_trees()
+        self.assertEqual(self.dropped, ["/T/shipctl-merge-1/tree"])
+        self.assertIn("снято брошенных деревьев прогона 1", " ".join(lines))
+
+    def test_dry_run_keeps_trees(self):
+        lines = lift.stale_trees(act=False)
+        self.assertEqual(self.dropped, [])
+        self.assertIn("снялись бы", " ".join(lines))
+
+    def test_nothing_found(self):
+        self.found = []
+        self.assertIn("брошенных деревьев прогона нет", " ".join(lift.stale_trees()))
+
+    def test_broken_discovery_does_not_break_sweep(self):
+        """Отказ разбора уборку не роняет: замки и процессы убираются дальше."""
+        def boom(*a, **kw):
+            raise RuntimeError("разбор отказал")
+        self.mod.abandoned = boom
+        lines = lift.stale_trees()
+        self.assertIn("посчитать не вышло", " ".join(lines))
+
+
 if __name__ == "__main__":
     unittest.main()

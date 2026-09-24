@@ -953,7 +953,7 @@ def session_resume(sid, name=None):
     return " ".join(w.replace("{session}", sid) for w in doc.arr_of("head", "resume"))
 
 
-def lift_rows(root, call=None, taskctl=None):
+def lift_rows(root, call=None, taskctl=None, home=None):
     """Подъём строк, оставшихся в работе без живой сессии (DK-1157). Возврат это
     строки отчёта, как у пробуждения и страховки.
 
@@ -962,7 +962,7 @@ def lift_rows(root, call=None, taskctl=None):
     модуль lift, тик только зовёт её по корню."""
     import lift
     try:
-        lines, _ = lift.lift_root(root, call=call, taskctl=taskctl)
+        lines, _ = lift.lift_root(root, call=call, taskctl=taskctl, home=home)
         return lines
     except Exception as e:
         return ["корень %s: подъём осиротевших строк не отработал, %s" % (root, e)]
@@ -1795,7 +1795,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
             for pline in park_stale(root, now, timed(root), taskctl, home=home):
                 out.write(pline + "\n")
                 log_line(pline, home)
-            for lline in lift_rows(root, timed(root), taskctl):
+            for lline in lift_rows(root, timed(root), taskctl, home=home):
                 out.write(lline + "\n")
                 log_line(lline, home)
             for cline in close_agent(root, timed(root), taskctl):
@@ -1814,7 +1814,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         for line in (wake(root, now, timed(root), taskctl=taskctl)
                      + waiters(root, timed(root), taskctl)
                      + park_stale(root, now, timed(root), taskctl, home=home)
-                     + lift_rows(root, timed(root), taskctl)
+                     + lift_rows(root, timed(root), taskctl, home=home)
                      + close_agent(root, timed(root), taskctl)
                      + review_poll(root, now, timed(root), taskctl, dashboard)):
             out.write(line + "\n")

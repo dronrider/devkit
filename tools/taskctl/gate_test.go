@@ -311,7 +311,7 @@ func TestCloseNonAgentSkipsVerificationGate(t *testing.T) {
 	if _, err := cmdAdd(root, AddParams{ID: "XR-100", Title: "Пользовательская", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "событие"}); err != nil {
 		t.Fatal(err)
 	}
-	acceptanceBody := "# XR-100: Пользовательская\n" +
+	acceptanceBody := "# XR-100: Пользовательская\n" + fixtureScenario +
 		"\n## Приёмка\n\n- вид: user\n- барьер «событие»: причина\n" +
 		"  - событие в логе: годится\n" +
 		"  - пустой лог: годится\n" +

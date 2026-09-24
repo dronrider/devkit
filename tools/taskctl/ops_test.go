@@ -1211,11 +1211,7 @@ func TestCloseWithLinks(t *testing.T) {
 
 Описание:
 - [LLD](../lld/XR-099.md)
-
-## Проверка
-
-- вывод прогона вложен.
-`
+` + fixtureScenario + fixtureVerification
 	taskPath := filepath.Join(root, "docs", "tasks", "XR-099.md")
 	os.WriteFile(taskPath, []byte(taskContent), 0o644)
 
@@ -1259,7 +1255,7 @@ func TestCloseRewritesIncomingLinks(t *testing.T) {
 	}
 	os.WriteFile(
 		filepath.Join(root, "docs", "tasks", "XR-077.md"),
-		[]byte("# XR-077\nTask\n\n## Проверка\n\n- вывод прогона вложен.\n"),
+		[]byte("# XR-077\nTask\n"+fixtureScenario+fixtureVerification),
 		0o644,
 	)
 	os.WriteFile(

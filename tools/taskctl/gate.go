@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/obey"
+	"github.com/dronrider/devkit/internal/rehearsal"
 	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskform"
 )
@@ -78,21 +79,14 @@ func scenarioElsewhere(link, id string) bool {
 	return path.Base(m[1]) != id+".md"
 }
 
-// checkGate держит два рубежа перевода в Check: готовый сценарий проверки и
-// слитый код. Оба нарушения приходят от слабой модели, которая прозу правил не
-// держит, а через move ходит обязательно, поэтому отказ называет причину и
-// следующий шаг.
+// checkGate держит рубежи перевода в Check: готовый сценарий проверки,
+// обкатка, слитый код и перебор обходов приёмки. Нарушения приходят от слабой
+// модели, которая прозу правил не держит, а через move ходит обязательно,
+// поэтому отказ называет причину и следующий шаг.
 func checkGate(root string, row *Row) error {
 	id := row.ID
-	if !scenarioElsewhere(row.Link, id) {
-		has, hasFile := hasScenario(root, id)
-		rel := "docs/tasks/" + id + ".md"
-		switch {
-		case !hasFile:
-			return fmt.Errorf("%s: в Check пускают только с готовым сценарием проверки, а файла %s нет: завести «taskctl file %s», описать шаги и ожидаемый итог разделом «Сценарий проверки» и повторить move", id, rel, id)
-		case !has:
-			return fmt.Errorf("%s: в %s нет раздела «Сценарий проверки», без него в Check нельзя: описать шаги и ожидаемый итог (RULES.board.md, «Трекинг задач» п. 6) и повторить move", id, rel)
-		}
+	if err := scenarioGate(root, row, "move", true); err != nil {
+		return err
 	}
 	// Обкатка спрашивается у агентского вида: там каждый шаг выполним с машины
 	// агента, и прогнать сценарий до Check ничего не стоит. У mixed и user
@@ -108,9 +102,57 @@ func checkGate(root string, row *Row) error {
 	// Не агентский вид требует раздел «Приёмка» с перебором обходов
 	// (LLD DK-292, решение 4): машина считает строки, ревьювер судит причины.
 	if kind := acceptOf(row.Title); kind != acceptAgent {
-		if err := acceptGate(root, id, kind); err != nil {
+		if err := acceptGate(root, id, kind, "move"); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// closeGate держит на закрытии строки те же рубежи, что checkGate держит на
+// переводе в Check, кроме слитого кода: закрывают и минуя Check, прямо из In
+// progress, и так в архив уезжали задачи без сценария, без обкатки и без
+// перебора обходов приёмки (DK-685). Проверки те же самые, а не их копия:
+// разойдись они, закрытие снова стало бы дверью без замка. Слитость ветки
+// здесь не спрашивается, её держит сам выход в Check.
+func closeGate(root string, row *Row) error {
+	if err := scenarioGate(root, row, "закрытие", false); err != nil {
+		return err
+	}
+	kind := acceptOf(row.Title)
+	if kind == acceptAgent {
+		// Агентский вид требует непустого раздела «Проверка» в файле задачи
+		// (LLD DK-292, решение 4): пустое закрытие агентской задачи запрещено,
+		// и это машинный рубеж против фиктивного сценария из повтора тестов
+		// ветки.
+		if err := closeAgentGate(root, row.ID); err != nil {
+			return err
+		}
+		return closeRehearsalGate(root, row.ID)
+	}
+	return acceptGate(root, row.ID, kind, "закрытие")
+}
+
+// scenarioGate требует готовый сценарий проверки: без него задача уходит с
+// доски без способа себя проверить. Сценарий, живущий в другом документе
+// (LLD), ворот проходит по ссылке строки. Ключ needFile говорит, спрашивать ли
+// сам файл задачи: перевод в Check его требует, а закрытие нет, потому что
+// строки старого запаса заводились без файла и закрыть их иначе было бы
+// нечем.
+func scenarioGate(root string, row *Row, again string, needFile bool) error {
+	id := row.ID
+	if scenarioElsewhere(row.Link, id) {
+		return nil
+	}
+	has, hasFile := hasScenario(root, id)
+	rel := "docs/tasks/" + id + ".md"
+	switch {
+	case !hasFile && !needFile:
+		return nil
+	case !hasFile:
+		return fmt.Errorf("%s: без готового сценария проверки задачу не выпускают, а файла %s нет: завести «taskctl file %s», описать шаги и ожидаемый итог разделом «Сценарий проверки» и повторить %s", id, rel, id, again)
+	case !has:
+		return fmt.Errorf("%s: в %s нет раздела «Сценарий проверки», без него задачу не выпускают: описать шаги и ожидаемый итог (RULES.board.md, «Трекинг задач» п. 6) и повторить %s", id, rel, again)
 	}
 	return nil
 }
@@ -150,14 +192,14 @@ func cmdMoveDry(root, id, target string) (string, error) {
 // «Приёмка» с ключом барьера из шести и строкой перебора на каждый обход этого
 // барьера. Судить убедительность причины обхода машина не берётся, это работа
 // ревьювера; здесь только счёт по закрытому списку.
-func acceptGate(root, id, kind string) error {
+func acceptGate(root, id, kind, again string) error {
 	rel := "docs/tasks/" + id + ".md"
 	text, found, ok := acceptanceSection(root, id)
 	if !ok {
 		return fmt.Errorf("%s: вид приёмки %s, а файла %s нет: вид с барьером требует раздел «Приёмка» в файле задачи (LLD DK-292, решение 3)", id, kind, rel)
 	}
 	if !found {
-		return fmt.Errorf("%s: вид приёмки %s, а раздела «Приёмка» в %s нет: назвать барьер и перебрать обходы (LLD DK-292, решение 1) и повторить move", id, kind, rel)
+		return fmt.Errorf("%s: вид приёмки %s, а раздела «Приёмка» в %s нет: назвать барьер и перебрать обходы (LLD DK-292, решение 1) и повторить %s", id, kind, rel, again)
 	}
 	barrier, bypasses := parseAcceptance(text)
 	if barrier == "" {
@@ -338,74 +380,30 @@ func promptHint(root, id string) string {
 // того, как задача уехала на проверку. Прогон на месте, в прогретом чекауте с
 // живым HOME и PATH, зеленеет там, где на чужой машине красно, и находится это
 // уже после слияния (RULES.board.md, «Трекинг задач» п. 6; повод из цикла
-// DK-138). Отметку ставит `taskctl rehearse`, гасится ворот пометкой-
-// исключением по образцу ворот слияния: где шаги без выката не гоняются
-// (проверка идёт на проде, шаги держит соседняя задача), молчание неотличимо
-// от прогона, а пометка называет причину. Файла задачи нет значит и отметке
-// негде стоять: рубеж выше уже отказал за сценарий, второй раз ронять не о чем.
+// DK-138). Сам разбор отметки лежит в internal/rehearsal: тот же ворот стоит
+// на закрытии строки и на слиянии ветки, и своей копии у каждого выхода нет
+// намеренно. Файла задачи нет значит и отметке негде стоять: рубеж выше уже
+// отказал за сценарий, второй раз ронять не о чем.
 func rehearsalGate(root, id string) error {
 	data, err := os.ReadFile(taskFilePath(root, id))
 	if err != nil {
 		return nil
 	}
-	doc := string(data)
-	if taskform.Exception(doc, taskform.GateRehearsal) {
-		return nil
-	}
-	mark, print, ok := taskform.RehearsalStamp(doc)
-	if !ok {
-		return fmt.Errorf("%s: сценарий не обкатан в чистом окружении, а Check значит, что проверять по нему будут всерьёз: прогнать «taskctl rehearse %s» (свежее дерево, временный HOME, вывод ляжет в «Проверку») и повторить move; где шаги без выката не гоняются, загасить ворот пометкой «- Исключение: обкатка (причина)» в docs/tasks/%s.md",
-			id, id, id)
-	}
-	// Отпечаток обкатанного сценария сверяется первым. Правка шагов лежит в том
-	// же файле задачи, что и запись прогона, и по именам файлов эти коммиты
-	// неразличимы: подменённый шаг проезжал в Check под отметкой прогона,
-	// который его не видел.
-	if now := taskform.ScenarioPrint(doc); now != print {
-		return fmt.Errorf("%s: сценарий менялся после обкатки (отпечаток отметки %s, у нынешнего текста %s): прогнать «taskctl rehearse %s» заново и повторить move",
-			id, print, now, id)
-	}
-	// Отметка привязана к коммиту, на котором шёл прогон. После обкатки ветка
-	// уезжает вперёд, и вчерашняя отметка открывала бы Check сегодняшнему коду.
-	// Вне git сверять не с чем, и ворот довольствуется самой отметкой: доска
-	// живёт и в корп-контуре, где код лежит отдельно.
-	head, err := gitRevParse(root, "HEAD")
-	if err != nil || head == "" {
-		return nil
-	}
-	if strings.HasPrefix(head, mark) || onlyTaskDocSince(root, id, mark) {
-		return nil
-	}
-	return fmt.Errorf("%s: отметка обкатки стоит на коммите %s, а HEAD уже %s: после прогона в ветку приехал код, которого обкатка не видела, прогнать «taskctl rehearse %s» заново и повторить move",
-		id, mark, head[:min(len(head), 12)], id)
+	return rehearsal.Fresh(root, id, string(data), "move")
 }
 
-// onlyTaskDocSince отвечает, что после обкатки в ветку приехали одни правки
-// файла самой задачи. Сама запись прогона это такой коммит: обкатка пишет
-// вывод и отметку в файл задачи, коммит с ними уезжает следом, и отметка
-// устаревала бы ровно в ту минуту, когда её положили. Правку кода такой
-// разбор не прощает: там в диффе коммита стоят чужие пути.
-func onlyTaskDocSince(root, id, mark string) bool {
-	rel := path.Join("docs", "tasks", id+".md")
-	out, err := exec.Command("git", "-C", root, "log", "--format=%H", mark+"..HEAD").Output()
+// closeRehearsalGate спрашивает обкатку на втором выходе задачи, закрытии
+// строки. Ворот move check закрытие обходит стороной: строку закрывают и прямо
+// из In progress, и архив принимал задачу, чей сценарий никто не гонял
+// (DK-685). Свежесть отметки тут не сверяется: закрытие идёт после Check, HEAD
+// к тому часу уехал чужими слияниями, и сверка коммита требовала бы обкатки
+// кода, которого задача не писала.
+func closeRehearsalGate(root, id string) error {
+	data, err := os.ReadFile(taskFilePath(root, id))
 	if err != nil {
-		return false
+		return nil
 	}
-	shas := strings.Fields(string(out))
-	if len(shas) == 0 {
-		return false
-	}
-	files, err := exec.Command("git", append([]string{"-C", root, "show", "--name-only",
-		"--format=", "--no-renames"}, shas...)...).Output()
-	if err != nil {
-		return false
-	}
-	for _, p := range strings.Fields(string(files)) {
-		if p != rel {
-			return false
-		}
-	}
-	return true
+	return rehearsal.Mark(id, string(data), "закрытие")
 }
 
 // closeForkGate не даёт закрыть задачу, пока в перечне развилок её файла стоит

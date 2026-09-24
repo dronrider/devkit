@@ -13,6 +13,7 @@ import io
 import os
 import queue
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -138,9 +139,14 @@ class ComponentsTest(unittest.TestCase):
         # DK-1124: дерево процессов прогона обязано идти пониженным
         # приоритетом, а сама обёртка не должна путать поиск GOWORK по
         # argv[0]: command_env обязан читаться до обёртки в nice, не после.
+        # `-n` это приращение к niceness этого процесса, а не абсолютное
+        # значение, поэтому ожидание считается той же разницей, что и код:
+        # на обычном (невложенном) прогоне niceness нулевой, и разница
+        # совпадает с NICE_LEVEL.
+        current = parallel.os.getpriority(parallel.os.PRIO_PROCESS, 0)
         wrapped = parallel.with_priority(["go", "test", "./..."])
         self.assertEqual(wrapped,
-                         ["nice", "-n", str(parallel.NICE_LEVEL),
+                         ["nice", "-n", str(parallel.NICE_LEVEL - current),
                           "go", "test", "./..."])
         self.assertEqual(wrapped[0], "nice",
                          "приоритет обязан быть виден в самой команде")
@@ -468,6 +474,44 @@ class RunAllTest(Stand):
         self.assertEqual(got, str(parallel.NICE_LEVEL),
                          "внук процесса не унаследовал пониженный приоритет")
 
+    def test_component_tree_stays_niced_when_the_runner_itself_is_niced(self):
+        # DK-1124: на слиянии regcheck гонит компонент "devkitctl" уже под
+        # `with_priority`, а его сюита внутри себя снова зовёт `run_all` на
+        # своих тестах, - раннер вложен в самого себя тем же способом.
+        # Одиночный прогон предыдущего теста этого не ловит: его собственный
+        # процесс стартует с чистой niceness 0, и красноту показывает только
+        # вложенность. `-n` у `nice` это приращение к niceness вызывающего, а
+        # не абсолютное значение, поэтому два прохода `with_priority` подряд
+        # без разбора удваивали её и упирались в потолок системы (на Darwin
+        # 20) вместо целевого уровня. Тест воспроизводит те же два уровня:
+        # внешний процесс, который зовёт `run_all`, сам поднят той же
+        # обёрткой снаружи.
+        comp = self.grow(
+            "prio.sh",
+            'python3 -c '
+            '"import os; print(os.getpriority(os.PRIO_PROCESS, 0))" '
+            '> nice.out\n')
+        runner = self.dir / "run_nested.py"
+        runner.write_text(
+            "import sys\n"
+            "from pathlib import Path\n"
+            "sys.path.insert(0, {!r})\n".format(
+                str(Path(parallel.__file__).resolve().parent))
+            + "import parallel\n"
+            "comp = {!r}\n".format(comp)
+            + "outcomes, first = parallel.run_all([comp], 1, root=Path({!r}))\n"
+              .format(str(self.dir))
+            + "assert first is None, outcomes\n",
+            encoding="utf-8")
+        outer = parallel.with_priority([sys.executable, str(runner)])
+        result = subprocess.run(outer, cwd=str(self.dir),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        got = (self.dir / "nice.out").read_text(encoding="utf-8").strip()
+        self.assertEqual(got, str(parallel.NICE_LEVEL),
+                         "вложенный прогон удвоил приращение nice: внук "
+                         "не на целевом уровне")
+
     def test_parallel_components_meet_each_other(self):
         # Факт параллели ловится встречей компонентов, а не временем: каждый
         # скрипт ставит свою метку и ждёт меток остальных. На восьми воркерах
@@ -593,6 +637,10 @@ class MainTest(Stand):
         self.assertIn("приоритет=nice %d" % parallel.NICE_LEVEL, out)
 
     def test_list_shows_the_nice_wrapper(self):
+        # `-n` в превью это то же приращение, что реально уйдёт в `nice`
+        # (with_priority), а не голый NICE_LEVEL: на обычном прогоне
+        # niceness этого процесса нулевой, и приращение с ним совпадает.
+        current = parallel.os.getpriority(parallel.os.PRIO_PROCESS, 0)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             rc = parallel.main(["--only-go", "--list"])
@@ -601,7 +649,8 @@ class MainTest(Stand):
                     if line.startswith("go:")]
         self.assertTrue(go_lines)
         for line in go_lines:
-            self.assertIn("nice -n %d" % parallel.NICE_LEVEL, line, line)
+            self.assertIn("nice -n %d" % (parallel.NICE_LEVEL - current),
+                          line, line)
 
     def test_list_names_the_components(self):
         out = io.StringIO()

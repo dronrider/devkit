@@ -238,5 +238,21 @@ class TriesCase(unittest.TestCase):
         self.assertEqual(lift.marks(home=str(self.home)), {})
 
 
+class TickCase(unittest.TestCase):
+    """Врезка в тик сторожка отдаёт строки отчёта, а не пару.
+
+    Тик складывает ответы работ в один список и пишет их построчно. Пара,
+    возвращённая туда как есть, роняла весь тик на конкатенации списка со
+    строкой, и сторожок молчал до починки.
+    """
+
+    def test_watch_work_returns_lines(self):
+        import watch
+        lines = watch.lift_rows("/root", call=Fake(board([])), taskctl="taskctl")
+        self.assertIsInstance(lines, list)
+        for ln in lines:
+            self.assertIsInstance(ln, str)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -962,7 +962,8 @@ def lift_rows(root, call=None, taskctl=None):
     модуль lift, тик только зовёт её по корню."""
     import lift
     try:
-        return lift.lift_root(root, call=call, taskctl=taskctl)
+        lines, _ = lift.lift_root(root, call=call, taskctl=taskctl)
+        return lines
     except Exception as e:
         return ["корень %s: подъём осиротевших строк не отработал, %s" % (root, e)]
 

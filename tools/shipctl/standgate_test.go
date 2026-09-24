@@ -44,7 +44,7 @@ func standBranch(t *testing.T, root, skillText string) {
 func standMark(t *testing.T, root string, m taskform.StandMark, tail string) {
 	t.Helper()
 	doc := "# XR-001: починка бага\n\n## Сценарий проверки\n\nАгентский: `git log -1`.\n" +
-		fixtureRehearsal+fixtureReviewLevel + "\n## Проверка\n\n" + taskform.StandLine(m, time.Now(), tail) + "\n"
+		fixtureRehearsal + fixtureReviewLevel + "\n## Проверка\n\n" + taskform.StandLine(m, time.Now(), tail) + "\n"
 	write(t, root, "docs/tasks/XR-001.md", doc)
 	gitT(t, root, "add", "docs/tasks/XR-001.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 отметка стенда")

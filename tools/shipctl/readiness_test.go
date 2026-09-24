@@ -64,7 +64,7 @@ func TestMergeTestsGateRustLayout(t *testing.T) {
 // перенос константы), не снимая ворот для остальных задач.
 func TestMergeTestsGateOverride(t *testing.T) {
 	root, _ := setup(t, rowInProg3, "")
-	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureReviewLevel+"\n## Ход работы\n\n- Исключение: тесты (правка конфигурации, тест неприменим)\n")
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureRehearsal+fixtureReviewLevel+"\n## Ход работы\n\n- Исключение: тесты (правка конфигурации, тест неприменим)\n")
 	gitT(t, root, "add", "docs/tasks/XR-003.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 пометка тестов")
 	branchCodeOnly(t, root, "xr-003-fix", "config.txt")
@@ -77,7 +77,7 @@ func TestMergeTestsGateOverride(t *testing.T) {
 // требует: кода нет, тест не нужен. Ворот снимается, а не падает.
 func TestMergeTestsGateDocsOnly(t *testing.T) {
 	root, _ := setup(t, rowInProg3, "")
-	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureReviewLevel)
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureRehearsal+fixtureReviewLevel)
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 файл задачи")
 	gitT(t, root, "checkout", "-qb", "xr-003-docs", "main")
@@ -93,7 +93,7 @@ func TestMergeTestsGateDocsOnly(t *testing.T) {
 // проверка неприменима (задача проверяется вместе с другой, разбор без выката).
 func TestMergeScenarioGateOverride(t *testing.T) {
 	root, _ := setup(t, rowInProg3, "")
-	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Ход работы\n\n- Исключение: сценарий (проверяется вместе с XR-001)\n"+fixtureReviewLevel)
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Ход работы\n\n- Исключение: сценарий (проверяется вместе с XR-001)\n"+fixtureRehearsal+fixtureReviewLevel)
 	gitT(t, root, "add", "docs/tasks/XR-003.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 пометка сценария")
 	branchFor(t, root, "XR-003", "xr-003-fix", "feature.txt")
@@ -186,7 +186,7 @@ func TestHasException(t *testing.T) {
 // уже в её дереве.
 func reviewDocFor(t *testing.T, root, id, review string) {
 	t.Helper()
-	write(t, root, "docs/tasks/"+id+".md", "# "+id+"\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+review)
+	write(t, root, "docs/tasks/"+id+".md", "# "+id+"\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureRehearsal+review)
 	gitT(t, root, "add", "docs/tasks/"+id+".md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): "+id+" файл задачи")
 }

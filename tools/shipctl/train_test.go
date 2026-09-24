@@ -163,7 +163,7 @@ func TestTrainScenarioProseIsNotScenario(t *testing.T) {
 func TestTrainScenarioWarningReadsBranch(t *testing.T) {
 	root, _ := setup(t, rowInProg+rowInProg3, "")
 	wt := startTask(t, root, "XR-003", "b.txt")
-	write(t, wt, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: shipctl status.\n"+fixtureReviewLevel)
+	write(t, wt, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: shipctl status.\n"+fixtureRehearsal+fixtureReviewLevel)
 	gitT(t, wt, "add", ".")
 	gitT(t, wt, "commit", "-qm", "docs(tasks): XR-003 сценарий проверки")
 	msg, err := cmdMerge(root, MergeParams{ID: "XR-003", Test: "true", Train: true})
@@ -330,7 +330,7 @@ func realMoves(t *testing.T, callLog, id string) int {
 // строку, деплой не запускается, точка стоит на месте.
 func TestTrainGateBeforeDeploy(t *testing.T) {
 	root, callLog := setup(t, rowInProg+rowInProg3, "")
-	write(t, root, "docs/tasks/XR-003.md", "# XR-003: заголовок\n"+fixtureReviewLevel)
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003: заголовок\n"+fixtureRehearsal+fixtureReviewLevel)
 	gitT(t, root, "add", "docs/tasks/XR-003.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 файл задачи")
 	stubTaskctl(t, callLog, `case "$*" in

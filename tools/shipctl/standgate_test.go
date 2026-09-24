@@ -44,7 +44,7 @@ func standBranch(t *testing.T, root, skillText string) {
 func standMark(t *testing.T, root string, m taskform.StandMark, tail string) {
 	t.Helper()
 	doc := "# XR-001: починка бага\n\n## Сценарий проверки\n\nАгентский: `git log -1`.\n" +
-		fixtureReviewLevel + "\n## Проверка\n\n" + taskform.StandLine(m, time.Now(), tail) + "\n"
+		fixtureRehearsal+fixtureReviewLevel + "\n## Проверка\n\n" + taskform.StandLine(m, time.Now(), tail) + "\n"
 	write(t, root, "docs/tasks/XR-001.md", doc)
 	gitT(t, root, "add", "docs/tasks/XR-001.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 отметка стенда")
@@ -93,7 +93,7 @@ func TestStandGateException(t *testing.T) {
 	gitT(t, root, "commit", "-qm", "seed: чужой скилл")
 	standBranch(t, root, strings.Replace(standSkillText, "Команда одна.", "Команда одна, зовут её сразу.", 1))
 	write(t, root, "docs/tasks/XR-001.md", "# XR-001: починка бага\n\n## Сценарий проверки\n\nАгентский: `git log -1`.\n"+
-		fixtureReviewLevel+"\n## Ход работы\n\n- Исключение: стенд (правка формулировки, шаги не менялись)\n")
+		fixtureRehearsal+fixtureReviewLevel+"\n## Ход работы\n\n- Исключение: стенд (правка формулировки, шаги не менялись)\n")
 	gitT(t, root, "add", "docs/tasks/XR-001.md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 пометка стенда")
 	if _, err := cmdMerge(root, MergeParams{ID: "XR-001", Test: "true"}); err != nil {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/dronrider/devkit/internal/accept"
 	"github.com/dronrider/devkit/internal/obey"
+	"github.com/dronrider/devkit/internal/rehearsal"
 	"github.com/dronrider/devkit/internal/taskform"
 )
 
@@ -301,6 +302,21 @@ func scenarioGate(id string, docsBranch bool, doc string) error {
 	}
 	return fmt.Errorf("в docs/tasks/%s.md нет раздела «Сценарий проверки», а %s: дописать раздел и повторить (RULES.board.md, «Трекинг задач» п. 6); если сценарий неприменим (бескодовая правка, проверяется вместе с другой задачей), загасить ворот пометкой «- Исключение: сценарий (причина)»",
 		id, who)
+}
+
+// rehearsalGate отказывает слиянию агентской задачи, чей сценарий не обкатан.
+// Стоит он до слияния намеренно: перевод в Check идёт следом за merge и
+// спрашивает ту же отметку, и без ворот здесь ветка уезжала в main, а строка
+// оставалась в In progress, потому что move отбивал ворот обкатки уже после
+// слияния (DK-685). Мерка та же, что у taskctl, из internal/rehearsal, включая
+// пометку-исключение «- Исключение: обкатка (причина)»: своей копии ворот у
+// shipctl нет. У mixed и user часть шагов держит человек, машинной отметки с
+// них не спрашивают, а без файла задачи отметке негде стоять.
+func rehearsalGate(root, id, title, doc string) error {
+	if accept.KindOf(title) != accept.Agent || doc == "" {
+		return nil
+	}
+	return rehearsal.Fresh(root, id, doc, "слияние")
 }
 
 // reviewLevelGate отказывает слиянию, если в разделе «Ревью» нет строки уровня

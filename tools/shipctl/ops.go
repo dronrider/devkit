@@ -1120,6 +1120,11 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err := standGate(root, main, branch, p.ID, taskDoc); err != nil {
 		return "", err
 	}
+	// Обкатка спрашивается в дереве ветки: HEAD там это её вершина, и отметка
+	// ручается ровно за тот код, который сейчас поедет в main.
+	if err := rehearsalGate(reviewRoot, p.ID, b.rowOf(p.ID).Title, taskDoc); err != nil {
+		return "", err
+	}
 	// Предупреждения собираются до ребейза (diff ветки против main ещё
 	// осмысленный) и не валят слияние: это подсказки по правилам, а не
 	// предусловия.

@@ -53,7 +53,7 @@ func setup(t *testing.T, inProg, check string) (root, callLog string) {
 	write(t, root, "docs/TASKS.md", board)
 	write(t, root, "docs/tasks/XR-001.md",
 		"# XR-001: починка бага\n\n## Сценарий проверки\n\nАгентский: `git log -1`, ждём коммит правки.\n"+
-			fixtureReviewLevel+"\n- гонка в close: исправлено\n- нейминг: отклонено, стиль проекта\n")
+			fixtureRehearsal+fixtureReviewLevel+"\n- гонка в close: исправлено\n- нейминг: отклонено, стиль проекта\n")
 	write(t, root, "code.txt", "old\n")
 	// .devkit/cmdout это место, куда DK-266 складывает полные выводы провалившихся
 	// команд из сводки frame.Summarize: в репозитории проекта каталог гитигнорнут
@@ -127,6 +127,12 @@ func fakeDevkit(t *testing.T, deny bool) string {
 // ревью отбивает merge, а предмет почти всех тестов тут не ревью. Замечания в
 // фикстурах дописываются следом за строкой уровня, как их пишет taskctl.
 const fixtureReviewLevel = "\n## Ревью\n\nУровень 1 до 1a2b3c4: рутина, тронут один файл.\n"
+
+// fixtureRehearsal гасит ворот обкатки в стендовых файлах задач: сценарий
+// стенда гонять нечем, а ворот спрашивает отметку у каждой агентской задачи
+// перед слиянием (DK-685). Тесты про сам ворот кладут настоящую отметку или
+// снимают эту пометку.
+const fixtureRehearsal = "\n## Ход работы\n\n- Исключение: обкатка (стенд сценария не гоняет)\n"
 
 func write(t *testing.T, root, name, content string) {
 	t.Helper()
@@ -507,7 +513,7 @@ func TestReviewNotesSecondRoundVerdict(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
 	write(t, root, "docs/tasks/XR-001.md",
 		"# XR-001: починка бага\n\n## Сценарий проверки\n\nАгентский: `git log -1`, ждём коммит правки.\n"+
-			fixtureReviewLevel+"\n- гонка в close: исправлено\n- нейминг: отклонено, стиль проекта\n"+
+			fixtureRehearsal+fixtureReviewLevel+"\n- гонка в close: исправлено\n- нейминг: отклонено, стиль проекта\n"+
 			"- Вердикт: без замечаний. Путь от симптома пройден по ops.go.\n"+
 			"- Вердикт: без замечаний до a1b2c3d. Второй круг после красного слияния.\n")
 	gitT(t, root, "add", ".")
@@ -742,7 +748,7 @@ func branchFor(t *testing.T, root, id, branch, file string) {
 // его содержание. Звать до branchFor, чтобы файл ушёл на main и поднялся веткой.
 func taskWithScenario(t *testing.T, root, id string) {
 	t.Helper()
-	write(t, root, "docs/tasks/"+id+".md", "# "+id+": заголовок\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureReviewLevel)
+	write(t, root, "docs/tasks/"+id+".md", "# "+id+": заголовок\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureRehearsal+fixtureReviewLevel)
 	gitT(t, root, "add", "docs/tasks/"+id+".md")
 	gitT(t, root, "commit", "-qm", "docs(tasks): "+id+" файл задачи")
 }
@@ -769,7 +775,7 @@ func TestTrainMergeAndShip(t *testing.T) {
 	// Коммит только по файлам задач попадает в окно тега, но членства в
 	// поезде не даёт: запись «в работу» это не код. Сценарий в файле нужен,
 	// чтобы дальше XR-003 прошла ворот сценария при своём слиянии.
-	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureReviewLevel)
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureRehearsal+fixtureReviewLevel)
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-003 файл")
 	st, err := cmdStatus(root)
@@ -1367,7 +1373,7 @@ func TestDeployTagUnderGPGSign(t *testing.T) {
 		t.Fatal("тег deployed не сдвинут выкатом при включённой подписи")
 	}
 
-	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureReviewLevel)
+	write(t, root, "docs/tasks/XR-003.md", "# XR-003\n\n## Сценарий проверки\n\nАгентский: `shipctl status`.\n"+fixtureRehearsal+fixtureReviewLevel)
 	// Добавляется только свой файл, а не «.»: .devkit/deploy.local уже лежит
 	// untracked (написан выше для ship), и без глобального excludesFile машины
 	// (свежий HOME обкатки его не несёт) «git add .» увёз бы его в этот же

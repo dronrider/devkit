@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -1611,25 +1612,65 @@ func chromeStand(t *testing.T, probeName string, inject ...string) (string, stri
 	return dir, page
 }
 
-// chromeMeasure открывает страницу стенда в заданном окне и поднимает замеры
-// из заголовка получившейся страницы: --dump-dom отдаёт разметку после
-// исполнения скриптов, и заголовок это самый короткий способ вынести из
-// браузера числа.
-func chromeMeasure(t *testing.T, chrome, dir, page, window, bar string) map[string]int {
+// Запас, который замер оставляет прогону на отчёт. Браузер снимается раньше
+// потолка самого прогона, чтобы причину назвал тест, а не паника go test с
+// дампом горутин всего пакета.
+const chromeReport = 30 * time.Second
+
+// chromeBudget отдаёт замеру боевой потолок: срок, с которым прогон поднял сам
+// тест (`-timeout` у `go test`, двадцать минут в `tools/devkitctl/parallel.py`),
+// за вычетом запаса на отчёт. Своего потолка секунд стенд не ставит.
+//
+// Прежде тут стояли девяносто секунд на браузер (DK-669). В одиночку подъём
+// идёт полсекунды, а под полным прогоном, где рядом семнадцать компонентов и
+// load average около двадцати, браузер не получает процессор и в девяносто
+// секунд не укладывается. Страница при этом собирается правильно, и меряемая
+// вёрстка цела: снимался сигналом живой замер, а слияние краснело задаче,
+// которая дашборда не касалась (DK-944, слияния DK-644 и DK-933). Ждать
+// теперь надо факта: браузер отдал разметку. Сколько он её собирал, стенд не
+// судит, а потолок ожидания остаётся боевым, и он один на весь прогон.
+//
+// Прогон без срока (`go test -timeout 0`) отдаёт контекст без предела: потолка
+// нет и у самого прогона, выдумывать его стенду тем более не из чего.
+func chromeBudget(t *testing.T) (context.Context, context.CancelFunc) {
 	t.Helper()
-	ctx, stop := context.WithTimeout(context.Background(), 90*time.Second)
-	defer stop()
+	until, ok := t.Deadline()
+	if !ok {
+		return context.WithCancel(context.Background())
+	}
+	return context.WithDeadline(context.Background(), until.Add(-chromeReport))
+}
+
+// chromeDump открывает страницу стенда в заданном окне и отдаёт разметку после
+// исполнения скриптов: --dump-dom печатает её в stdout. Срок приходит снаружи
+// целиком, своего у замера нет.
+func chromeDump(ctx context.Context, chrome, dir, page, window, bar string) (string, error) {
 	cmd := exec.CommandContext(ctx, chrome, "--headless", "--disable-gpu", "--no-sandbox",
 		"--hide-scrollbars", "--allow-file-access-from-files",
 		"--user-data-dir="+filepath.Join(dir, "profile-"+strings.ReplaceAll(window, ",", "x")),
 		"--window-size="+window, "--virtual-time-budget=4000", "--dump-dom", "file://"+page+"?bar="+bar)
+	// Браузер поднимает под собой свои процессы (zygote, отрисовщик), и сигнал
+	// одному родителю их не трогает: брошенное дерево осталось бы занимать ту
+	// же машину, на которой идёт прогон, а лечится цель DK-1084 ровно от этого.
+	// Отсюда своя группа процессов у браузера и снятие всей группы разом.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("chrome на окне %s: %v\n%s", window, err, out)
+	if ctx.Err() != nil {
+		return string(out), fmt.Errorf("браузер снят боевым потолком прогона на окне %s: %w "+
+			"(страница так и не собралась; потолок тут один на весь прогон, `-timeout` у go test, "+
+			"и своего срока у замера нет)", window, ctx.Err())
 	}
+	return string(out), err
+}
+
+// chromeVals поднимает замеры из заголовка собранной страницы: заголовок это
+// самый короткий способ вынести из браузера числа.
+func chromeVals(dom string) (map[string]int, string) {
 	title := ""
-	if at := strings.Index(string(out), "<title>"); at >= 0 {
-		rest := string(out)[at+len("<title>"):]
+	if at := strings.Index(dom, "<title>"); at >= 0 {
+		rest := dom[at+len("<title>"):]
 		if end := strings.Index(rest, "</title>"); end >= 0 {
 			title = rest[:end]
 		}
@@ -1646,6 +1687,20 @@ func chromeMeasure(t *testing.T, chrome, dir, page, window, bar string) map[stri
 		}
 		vals[name] = n
 	}
+	return vals, title
+}
+
+// chromeMeasure открывает страницу стенда в заданном окне и поднимает из неё
+// числа замера.
+func chromeMeasure(t *testing.T, chrome, dir, page, window, bar string) map[string]int {
+	t.Helper()
+	ctx, stop := chromeBudget(t)
+	defer stop()
+	out, err := chromeDump(ctx, chrome, dir, page, window, bar)
+	if err != nil {
+		t.Fatalf("chrome на окне %s: %v\n%s", window, err, out)
+	}
+	vals, title := chromeVals(out)
 	if len(vals) == 0 {
 		t.Fatalf("замер не вернулся из браузера, заголовок %q\n%s", title, out)
 	}
@@ -1653,6 +1708,119 @@ func chromeMeasure(t *testing.T, chrome, dir, page, window, bar string) map[stri
 		t.Fatalf("%v\n%s", err, out)
 	}
 	return vals
+}
+
+// Потолок замера это потолок прогона, своего у стенда нет. Тест нарочно похож
+// на пересказ хелпера, и цена ему в том, что возвращённый в стенд собственный
+// потолок краснеет здесь, а не через неделю в чужом слиянии (DK-669). Браузера
+// он не просит и на машине без браузера идёт наравне со всеми.
+func TestChromeStandTakesRunBudget(t *testing.T) {
+	until, ok := t.Deadline()
+	if !ok {
+		t.Skip("прогон без срока: боевого потолка нет и у него")
+	}
+	ctx, stop := chromeBudget(t)
+	defer stop()
+	got, has := ctx.Deadline()
+	if !has {
+		t.Fatal("замер поднят без срока, хотя срок прогона известен: брошенный браузер " +
+			"снимет только go test, паникой на весь пакет")
+	}
+	if want := until.Add(-chromeReport); !got.Equal(want) {
+		t.Errorf("замер стоит на своём потолке (снимает браузер в %s), а не на потолке прогона (%s): "+
+			"под нагрузкой браузер не успевает собрать страницу к своему сроку, и прогон краснеет "+
+			"чужой задаче", got.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+}
+
+// standBrowser играет браузер стенда: поднимает под собой свой процесс, как
+// настоящий поднимает отрисовщика, ждёт задержку STAND_DELAY и печатает
+// разметку с заголовком замера. Задержка играет ту нехватку процессора,
+// которую браузер получает под полным прогоном. Вывод своего процесса уведён
+// в /dev/null: иначе он держал бы открытой трубу вывода и после ухода
+// родителя.
+const standBrowser = `#!/bin/sh
+/bin/sleep 300 >/dev/null 2>&1 &
+echo $! > "$STAND_CHILD"
+/bin/sleep "${STAND_DELAY:-0}"
+echo "<html><head><title>screen=390 over=0</title></head><body></body></html>"
+`
+
+// standChild читает pid процесса, поднятого заглушкой браузера.
+func standChild(t *testing.T, path string) int {
+	t.Helper()
+	pid, err := strconv.Atoi(strings.TrimSpace(readFile(t, path)))
+	if err != nil {
+		t.Fatalf("заглушка браузера не назвала свой процесс: %v", err)
+	}
+	return pid
+}
+
+// standGone ждёт ухода процесса: сигнал приходит группе разом, а из таблицы
+// процессов ядро убирает её своим чередом.
+func standGone(pid int) bool {
+	for range 100 {
+		if err := syscall.Kill(pid, 0); err != nil {
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
+// Медленный браузер доезжает до чисел, а снимается он боевым потолком прогона
+// и уходит вместе со своими процессами.
+//
+// Первая половина держит сам приём DK-669: браузер, отставший от прежних
+// стендовых секунд, замер не валит, пока у прогона есть запас. Вторая держит
+// уборку: сигнал одному родителю оставлял бы дерево браузера на машине, а
+// занятая машина это и есть беда цели DK-1084.
+func TestChromeStandStopsAtRunBudget(t *testing.T) {
+	dir := t.TempDir()
+	browser := filepath.Join(dir, "browser")
+	if err := os.WriteFile(browser, []byte(standBrowser), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(dir, "child.pid")
+	t.Setenv("STAND_CHILD", child)
+	t.Setenv("STAND_DELAY", "2")
+	t.Cleanup(func() {
+		if pid, err := strconv.Atoi(strings.TrimSpace(readFile(t, child))); err == nil {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+
+	roomy, stop := context.WithDeadline(context.Background(), time.Now().Add(time.Minute))
+	defer stop()
+	out, err := chromeDump(roomy, browser, dir, filepath.Join(dir, "stand.html"), "390,844", "tasks")
+	if err != nil {
+		t.Fatalf("замер снят, хотя у прогона оставался запас:\n%v\n%s", err, out)
+	}
+	if vals, title := chromeVals(out); vals["screen"] != 390 {
+		t.Fatalf("числа не поднялись из заголовка %q:\n%s", title, out)
+	}
+	// Тот же процесс на зелёном замере жив: без него вторая половина теста
+	// доказывала бы уборку процессом, который и так уходит сам.
+	if pid := standChild(t, child); syscall.Kill(pid, 0) != nil {
+		t.Error("процесс браузера снят на зелёном замере: снимать тут нечего, браузер ушёл сам")
+	} else {
+		syscall.Kill(pid, syscall.SIGKILL)
+	}
+
+	t.Setenv("STAND_DELAY", "60")
+	tight, cut := context.WithDeadline(context.Background(), time.Now().Add(300*time.Millisecond))
+	defer cut()
+	out, err = chromeDump(tight, browser, dir, filepath.Join(dir, "stand.html"), "390,844", "tasks")
+	if err == nil {
+		t.Fatalf("браузер пережил потолок прогона: срок пришёл снаружи, а замер живёт по своему\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "боевым потолком прогона") {
+		t.Errorf("причина снятия названа не потолком прогона: %v", err)
+	}
+	if pid := standChild(t, child); !standGone(pid) {
+		t.Errorf("процесс браузера pid %d остался жить после снятия: дерево браузера занимает "+
+			"машину, на которой идёт прогон", pid)
+	}
 }
 
 // sameWindow сверяет ширину, которую отдал браузер, с той, которую просили.

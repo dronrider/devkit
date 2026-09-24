@@ -457,26 +457,40 @@ async function feedOf(items, sid) {
 // шедший с работой субагента вперемешку, уезжал за тысячу записей вверх: на
 // экране это читалось как один пузырь на весь чат. Записи приходят слитыми по
 // времени, и лента ставит их подряд, помечая чужие.
+//
+// Записи идут той же формой, что в живом разговоре: работу открывает вызов
+// Agent, закрывает весть о том, что фоновый агент закончил, и помечен весь
+// отрезок между кружками, а не одни только записи бокового журнала (DK-397).
 {
   const mixed = [];
   let seq = 0;
-  const say = (role, text) => mixed.push({ seq: seq, key: "m:" + seq++, role, text,
-    time: "2026-08-13T09:00:00+03:00" });
+  const at = "2026-08-13T09:00:00+03:00";
+  const say = (role, text) => mixed.push({ seq: seq, key: "m:" + seq++, role, text, time: at });
+  const call = (text) => mixed.push({ seq: seq, key: "a:" + seq++, role: "tool", tool: "Agent",
+    text, time: at });
+  const done = () => mixed.push({ seq: seq, key: "a:" + seq++, role: "note", mark: "agent",
+    text: "Фоновый агент завершил работу", time: at });
   const work = (n, text) => {
     for (let i = 0; i < n; i++) {
       mixed.push({ seq: seq, key: "a:" + seq++, role: "assistant", text: text + " " + i,
-        sub: "работа", time: "2026-08-13T09:00:00+03:00" });
+        sub: "работа", time: at });
     }
   };
   say("user", "разбери находку");
+  call("разбор находки");
   work(4, "смотрю дерево");
+  done();
   say("assistant", "нашёл причину в разборе");
   say("user", "тогда правь и проверь стендом");
+  call("правка разбора");
   work(3, "правлю разбор");
+  done();
   const box = await feedOf(mixed, "mix1");
   if (byClass(box, "subblk")) fail("лента снова свернула работу субагента в блок");
-  if (allByClass(box, "sub").length !== 7) {
-    fail("помечено чужих записей " + allByClass(box, "sub").length + ", ожидал семь");
+  // Два отрезка: шесть записей в первом (вызов, четыре хода журнала, весть о
+  // конце) и пять во втором.
+  if (allByClass(box, "sub").length !== 11) {
+    fail("помечено чужих записей " + allByClass(box, "sub").length + ", ожидал одиннадцать");
   }
   const seen = dump(box);
   for (const line of ["разбери находку", "нашёл причину", "тогда правь", "смотрю дерево 0",
@@ -494,8 +508,10 @@ async function feedOf(items, sid) {
   // Реплики самой сессии ничем не помечены: пометка говорит именно о чужом
   // ходе, а не украшает ленту.
   const own = allByClass(box, "sub").map((n) => dump(n));
-  if (own.some((t) => t.includes("разбери находку"))) {
-    fail("реплика человека помечена как чужой ход: " + JSON.stringify(own));
+  for (const line of ["разбери находку", "тогда правь", "нашёл причину"]) {
+    if (own.some((t) => t.includes(line))) {
+      fail("реплика вне работы субагента помечена как чужой ход: " + JSON.stringify(own));
+    }
   }
 }
 

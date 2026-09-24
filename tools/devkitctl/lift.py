@@ -31,26 +31,50 @@ WORK_STAGES = ("постановка", "разработка", "вычитка",
 GONE = "сессии нет"
 ALIVE = "сессия жива"
 
-# Реплика подъёма та же, что у сторожка при упавшем ходе.
-ORDER = "продолжай"
+# Реплика подъёма адресная. Слова «продолжай» хватало сессии, поднятой по
+# упавшему ходу: у той в окне уже лежал разговор о своей строке. Поднятая с
+# нуля сессия контекста не имеет и на общей доске берёт что угодно, включая
+# строку, которую прямо сейчас ведёт человек. Поэтому реплика называет строку
+# и запрещает брать другую работу.
+ORDER = "продолжай %s, эту строку ты уже вёл. Другую работу с доски не бери"
 
 # Потолок подъёма за один заход, когда ёмкость спросить не у кого.
 FALLBACK_LIMIT = 2
+
+# Потолок подъёма на машину за один заход. Ёмкость считается по корню, а корней
+# под надзором несколько, и каждый сам по себе укладывается в свой потолок.
+# Разом это дало бы столько сессий, сколько корней, поэтому счёт идёт сквозной.
+MACHINE_LIMIT = 3
 
 # Сколько секунд строка считается только что поднятой. Сессия харнеса заводит
 # транскрипт не мгновенно, и до первой записи доска честно говорит «сессии
 # нет». Без этой выдержки следующий тик поднял бы ту же строку второй раз.
 SETTLE = 900
 
-# След подъёма: строка «ID корень отметка» на каждую поднятую задачу.
+# След подъёма: строка «корень ID отметка попытки» на каждую поднятую задачу.
 LIFT_LOG = "lift.log"
+
+# Сколько раз подряд поднимать строку, чья сессия не удержалась. Заказ уходит
+# успешно, окно заводится, а сессия гибнет на старте, и строка возвращается в
+# находки следующего захода. Без потолка заход дёргал бы её вечно.
+LIFT_TRIES = 3
+
+# Через сколько секунд счётчик попыток забывается. Строку, поднятую сутки
+# назад, считать той же попыткой незачем.
+FORGET = 86400
 
 # Образцы команд, которые остаются сиротами от прогонов сценариев. Нагрузка
 # сценария живёт дочерними процессами, и снятая обёртка уносит с собой trap,
 # а не детей. Список узкий нарочно: заход убивает процессы, и широкий образец
 # тут дороже пропущенного мусора.
 ORPHAN_PATTERNS = (
-    re.compile(r"(?i)python[^\s]*\s+-c\s+while True:\s*pass"),
+    # Нагрузка сценариев: холостой цикл на любом питоне, как его пишут шаги
+    # проверки.
+    re.compile(r"(?i)python[^\s]*\s+-c\s+.{0,40}while\s+True:\s*pass"),
+    # Прогон тестов и сборка, оставшиеся без своей сессии. Дерево прогона
+    # временное, и живого хозяина у такого процесса нет по определению.
+    re.compile(r"(?i)\bgo\s+(test|build)\b.*(/T/(shipctl|taskctl)-\w+|devkit-dk-)"),
+    re.compile(r"(?i)/T/(shipctl-merge|taskctl-rehearse)-\d+/"),
 )
 
 
@@ -59,35 +83,51 @@ def log_path(home=None):
     return os.path.join(home, LIFT_LOG)
 
 
-def recent(home=None, now=None):
-    """Строки, поднятые недавно: ключ «корень\tID» и отметка подъёма."""
+def marks(home=None, now=None):
+    """Журнал подъёма: ключ «корень\tID» против пары (отметка, число попыток).
+    Записи старше FORGET не читаются: счётчик попыток живёт сутки."""
     now = time.time() if now is None else now
     out = {}
     try:
-        text = open(log_path(home), encoding="utf-8").read()
+        with open(log_path(home), encoding="utf-8") as fh:
+            text = fh.read()
     except OSError:
         return out
     for ln in text.splitlines():
         f = ln.split("\t")
-        if len(f) != 3:
+        if len(f) < 3:
             continue
         try:
             when = float(f[2])
+            tries = int(f[3]) if len(f) > 3 else 1
         except ValueError:
             continue
-        if now - when < SETTLE:
-            out[f[0] + "\t" + f[1]] = when
+        if now - when < FORGET:
+            out[f[0] + "\t" + f[1]] = (when, tries)
     return out
 
 
-def mark_lifted(root, tid, home=None, now=None):
-    """След подъёма строки, по нему считается выдержка."""
+def recent(home=None, now=None):
+    """Строки, поднятые только что: выдержка считается по ним."""
     now = time.time() if now is None else now
+    return {k: v[0] for k, v in marks(home, now).items() if now - v[0] < SETTLE}
+
+
+def mark_lifted(root, tid, home=None, now=None):
+    """След подъёма строки: отметка времени и номер попытки подряд. Записи
+    старше суток заход уносит, иначе журнал растёт без края."""
+    now = time.time() if now is None else now
+    known = marks(home, now)
+    was = known.pop(root + "\t" + tid, None)
+    tries = (was[1] + 1) if was else 1
+    keep = ["%s\t%.0f\t%d" % (key, val[0], val[1]) for key, val in known.items()]
+    keep.append("%s\t%s\t%.0f\t%d" % (root, tid, now, tries))
     try:
-        with open(log_path(home), "a", encoding="utf-8") as fh:
-            fh.write("%s\t%s\t%.0f\n" % (root, tid, now))
+        with open(log_path(home), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(keep) + "\n")
     except OSError:
         pass
+    return tries
 
 
 def board_rows(root, call=None, taskctl=None):
@@ -172,27 +212,40 @@ def capacity(root, rows, call=None, agentctl=None):
     return max(0, limit - busy), "%s %d, живых сессий %d" % (src, limit, busy)
 
 
-def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None):
-    """Подъём осиротевших строк одного корня. Возврат это строки отчёта."""
+def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
+              left=None):
+    """Подъём осиротевших строк одного корня. Возврат это строки отчёта и число
+    поднятых строк: потолок на машину считается сквозным по всем корням."""
     rows, err = board_rows(root, call=call, taskctl=taskctl)
     if err:
-        return ["корень %s: доска не прочиталась, %s" % (root, err)]
+        return ["корень %s: доска не прочиталась, %s" % (root, err)], 0
     orphans = orphan_rows(rows)
     fresh = recent(home)
+    tried = marks(home)
     held = [r for r in orphans if root + "\t" + (r.get("id") or "") in fresh]
     orphans = [r for r in orphans if root + "\t" + (r.get("id") or "") not in fresh]
+    spent = [r for r in orphans
+             if tried.get(root + "\t" + (r.get("id") or ""), (0, 0))[1] >= LIFT_TRIES]
+    orphans = [r for r in orphans if r not in spent]
+    spent_words = ["задача %s в %s: поднималась %d раза подряд, сессия не удержалась: "
+                   "строка ждёт человека, подъём её больше не трогает"
+                   % (r.get("id"), root, LIFT_TRIES) for r in spent]
     if not orphans:
+        if spent_words:
+            return spent_words, 0
         if held:
             return ["корень %s: строки %s подняты недавно, сессия ещё заводится"
-                    % (root, ", ".join(r.get("id", "?") for r in held))]
-        return ["корень %s: строк в работе без сессии нет" % root]
+                    % (root, ", ".join(r.get("id", "?") for r in held))], 0
+        return ["корень %s: строк в работе без сессии нет" % root], 0
     free, why = capacity(root, rows, call=call, agentctl=agentctl)
-    lines = ["корень %s: строк в работе без сессии %d (%s), свободных мест %d"
+    if left is not None:
+        free = min(free, left)
+        why += ", остаток потолка машины %d" % left
+    lines = spent_words + ["корень %s: строк в работе без сессии %d (%s), свободных мест %d"
              % (root, len(orphans), ", ".join(r.get("id", "?") for r in orphans), free)]
     if free < 1:
         lines.append("корень %s: %s, подъём отложен до следующего тика" % (root, why))
-        return lines
-    import watch
+        return lines, 0
     raised = 0
     for row in orphans:
         if raised >= free:
@@ -205,15 +258,29 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None)
                          % (tid, root, row.get("stage")))
             raised += 1
             continue
-        code, words = watch.run_head(root, tid, call=call, taskctl=taskctl)
+        code, words = run_order(root, tid, ORDER % tid, call=call, taskctl=taskctl)
         if code == 0:
             raised += 1
             mark_lifted(root, tid, home)
-            lines.append("задача %s в %s: поднята заказом с репликой «%s»: %s"
-                         % (tid, root, ORDER, words))
+            lines.append("задача %s в %s: поднята адресным заказом: %s" % (tid, root, words))
         else:
             lines.append("задача %s в %s: подъём отбит кодом %d: %s" % (tid, root, code, words))
-    return lines
+    return lines, raised
+
+
+def run_order(root, tid, order, call=None, taskctl=None):
+    """Заказ головы задачи с названной репликой. Лестница носителей, предполёт и
+    замок живут в `taskctl run`, второй копии тут не заводится."""
+    call = subprocess.run if call is None else call
+    bin = taskctl or which("taskctl")
+    if not bin:
+        return 1, "бинаря taskctl нет ни в PATH, ни в каталогах релиза"
+    try:
+        p = call([bin, "-C", root, "run", tid, "--order", order],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        return 1, str(e)
+    return p.returncode, " ".join((p.stdout or "").split())
 
 
 def dead_pid(pid):
@@ -243,7 +310,8 @@ def stale_locks(home, act=True):
         path = os.path.join(home, name)
         pidfile = os.path.join(path, "pid")
         try:
-            pid = int(open(pidfile, encoding="utf-8").read().strip() or 0)
+            with open(pidfile, encoding="utf-8") as fh:
+                pid = int(fh.read().strip() or 0)
         except (OSError, ValueError):
             continue
         if not dead_pid(pid):
@@ -304,10 +372,37 @@ def kill_orphans(call=None, act=True):
     return [words]
 
 
+def stale_trees(act=True):
+    """Брошенные деревья прогона. Разбор тот же, что у доктора: своего счёта
+    возраста и своего списка каталогов тут не заводится."""
+    try:
+        import runtrees
+    except ImportError:
+        return []
+    try:
+        found = runtrees.abandoned()
+    except Exception as e:
+        return ["деревья прогона посчитать не вышло, %s" % e]
+    if not found:
+        return ["брошенных деревьев прогона нет"]
+    if not act:
+        return ["брошенных деревьев прогона %d, снялись бы" % len(found)]
+    gone = 0
+    for path, repo, tree in found:
+        try:
+            runtrees.drop(path, repo, tree)
+            gone += 1
+        except Exception:
+            pass
+    return ["снято брошенных деревьев прогона %d" % gone]
+
+
 def sweep(home=None, call=None, act=True):
-    """Уборка следов умерших сессий: замки задач и процессы нагрузки."""
+    """Уборка следов умерших сессий: замки задач, процессы нагрузки и деревья
+    прогонов."""
     home = home or os.path.expanduser("~/.devkit")
-    return stale_locks(home, act=act) + kill_orphans(call=call, act=act)
+    return (stale_locks(home, act=act) + kill_orphans(call=call, act=act)
+            + stale_trees(act=act))
 
 
 def roots(home=None):
@@ -334,8 +429,15 @@ def run(root=None, home=None, act=True, out=print, call=None):
     # Уборка идёт первой: замок мёртвого владельца стоит на пути у подъёма той
     # же строки, и снятый после подъёма он помог бы только следующему заходу.
     lines += sweep(home=home, call=call, act=act)
+    left = MACHINE_LIMIT
     for r in targets:
-        lines += lift_root(r, call=call, act=act)
+        said, raised = lift_root(r, call=call, act=act, home=home, left=left)
+        lines += said
+        left -= raised
+        if left < 1:
+            lines.append("потолок подъёма на машину %d исчерпан, остальные корни ждут "
+                         "следующего захода" % MACHINE_LIMIT)
+            break
     for ln in lines:
         out(ln)
     return 0

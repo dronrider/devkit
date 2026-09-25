@@ -903,7 +903,8 @@ var mdSourceConsts = []string{"const MD_INLINE", "const MD_MENTION =", "const bo
 var mdSourceFuncs = []string{
 	"function el(", "function mdGo(", "function mentionAddr(", "function projectOfPrefix(",
 	"function mdText(", "function mdLink(", "function mdInline(", "function mdRender(",
-	"function codeLinkify(", "function inlineCodeSpan(", "function copyBtn(", "function icon(",
+	"function codeLinkify(", "function inlineCodeTaken(", "function inlineCodeSpan(",
+	"function copyInto(", "function copyBtn(", "function icon(",
 	"function mdCodeBlock(", "function wrapScroll(",
 }
 
@@ -955,7 +956,23 @@ class N {
   // dataset у игрушечного узла свой и в разметку не едет: номер исходной
   // строки рендер вешает на каждый пункт списка (DK-864), а читает его
   // панель, не браузер.
-  constructor(tag) { this.tag = tag; this.kids = []; this.attrs = {}; this.dataset = {}; }
+  constructor(tag) {
+    this.tag = tag; this.kids = []; this.attrs = {}; this.dataset = {};
+    const attrs = this.attrs;
+    // classList.add сюда доходит из inlineCodeSpan (DK-1120, класс "tap") и
+    // из copyInto (отклик "ok"/"bad"): сборка не должна падать на них, вид
+    // класса тесты не проверяют.
+    this.classList = {
+      add(name) {
+        const cur = attrs.class ? attrs.class.split(" ") : [];
+        if (!cur.includes(name)) { cur.push(name); attrs.class = cur.join(" "); }
+      },
+      remove(name) {
+        if (!attrs.class) return;
+        attrs.class = attrs.class.split(" ").filter((c) => c !== name).join(" ");
+      },
+    };
+  }
   get tagName() { return this.tag.toUpperCase(); }
   set className(v) { if (v) this.attrs.class = v; }
   set textContent(v) { this.kids = [{ text: String(v) }]; }
@@ -999,12 +1016,19 @@ function html(n) {
 	return got
 }
 
-// mdCodeWrap собирает разметку инлайн-кода вместе с кнопкой копирования: с
-// DK-1120 код в обратных кавычках приезжает не голым <code>, а обёрткой
-// span.mdicode, и ожидания юнитов держат ту же разметку, что видит браузер.
+// mdCodeWrap собирает разметку команды или промта в обратных кавычках вместе
+// с кнопкой копирования: фрагмент из нескольких слов (пробел внутри) или со
+// знаком «!» впереди человек уносит в буфер целиком, разводит их
+// inlineCodeTaken (DK-1120, круг «взятие инлайна»).
 func mdCodeWrap(code string) string {
 	return `<span class="mdicode"><code>` + code +
 		`</code><button class="foldcp" title="Копировать" aria-label="Копировать"><i></i></button></span>`
+}
+
+// mdCodeTap собирает разметку короткого упоминания (путь, флаг, одно слово):
+// кнопки у него нет, копирование идёт кликом по самому фрагменту.
+func mdCodeTap(code string) string {
+	return `<span class="mdicode tap" title="Копировать"><code>` + code + `</code></span>`
 }
 
 // Разметка из реплики остаётся буквами: тег script, картинка с onerror и
@@ -1030,7 +1054,7 @@ func TestMarkdownEscapesInjection(t *testing.T) {
 	if !strings.Contains(got[1], "&lt;img src=x onerror=alert(1)&gt;") {
 		t.Errorf("картинка с onerror не показана словами: %s", got[1])
 	}
-	if !strings.Contains(got[2], mdCodeWrap("&lt;/code&gt;&lt;script&gt;alert(2)&lt;/script&gt;")) {
+	if !strings.Contains(got[2], mdCodeTap("&lt;/code&gt;&lt;script&gt;alert(2)&lt;/script&gt;")) {
 		t.Errorf("строчный код не закрылся экранированием: %s", got[2])
 	}
 }
@@ -1062,11 +1086,12 @@ func TestMarkdownLinksSafe(t *testing.T) {
 // внешней библиотеки в статике нет, а разметка реплик всё же читается.
 func TestMarkdownBlocks(t *testing.T) {
 	got := mdHTML(t, []string{
-		"# Виток 12\n\nтекст с `кодом`\n\n- раз\n- два\n\n```\nls -la <тут>\n```\n\n1. первый\n2. второй",
+		"# Виток 12\n\nтекст с `кодом` и `git log -1`\n\n- раз\n- два\n\n```\nls -la <тут>\n```\n\n1. первый\n2. второй",
 	})
 	for _, want := range []string{
 		`<div class="mdh mdh1">Виток 12</div>`,
-		mdCodeWrap("кодом"),
+		mdCodeTap("кодом"),
+		mdCodeWrap("git log -1"),
 		"<ul><li>раз</li><li>два</li></ul>",
 		"<pre>ls -la &lt;тут&gt;</pre>",
 		"<ol><li>первый</li><li>второй</li></ol>",

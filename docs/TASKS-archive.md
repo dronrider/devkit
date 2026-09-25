@@ -603,3 +603,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-845 | Тест цепочки askpass мигает под нагрузкой полного прогона | bug | P1 | 2026-09-24 | [tasks/archive/2026/DK-845.md](tasks/archive/2026/DK-845.md) |
 | DK-1135 | Замер тёплого опроса кольца валит слияние на загруженной машине | bug | P1 | 2026-09-24 | [tasks/archive/2026/DK-1135.md](tasks/archive/2026/DK-1135.md) |
 | DK-1161 | Отметка обкатки не гаснет от коммита файла соседней задачи | bug | P1 | 2026-09-25 | [tasks/archive/2026/DK-1161.md](tasks/archive/2026/DK-1161.md) |
+| DK-685 | Ворот обкатки стоит на move check, а close и merge его минуют | bug | P1 | 2026-09-25 | [tasks/archive/2026/DK-685.md](tasks/archive/2026/DK-685.md) |

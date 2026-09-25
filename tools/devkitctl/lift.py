@@ -161,13 +161,22 @@ def board_rows(root, call=None, taskctl=None):
 
 def orphan_rows(rows):
     """Строки в работе без живой сессии: этап означает работу, а taskctl про
-    сессию говорит, что её нет."""
+    сессию говорит, что её нет.
+
+    Строка в Check с приёмкой человека сюда не идёт. Её проверка это дело
+    человека, и голова задачи на такой строке останавливается сама, едва
+    поднявшись: «задача ждёт приёмки человеком». Подъём тратил на неё три
+    попытки подряд и сдавался, а строке от этого не было ни пользы, ни вреда.
+    Живой прогон 25 сентября это показал на DK-937."""
     out = []
     for row in rows:
         stage = (row.get("stage") or "").strip()
         note = (row.get("stage_session") or "").strip()
-        if stage in WORK_STAGES and note.startswith(GONE):
-            out.append(row)
+        if stage not in WORK_STAGES or not note.startswith(GONE):
+            continue
+        if row.get("_section") == "check" and (row.get("accept") or "agent") != "agent":
+            continue
+        out.append(row)
     return out
 
 

@@ -60,6 +60,18 @@ class OrphanRowsCase(unittest.TestCase):
         rows = [row("DK-5", "разработка", "сессия жива")]
         self.assertEqual(lift.orphan_rows(rows), [])
 
+    def test_check_under_human_left_alone(self):
+        """Строка Check с приёмкой человека подъёму не подлежит: голова на ней
+        останавливается сама. Агентская приёмка в Check поднимается по-прежнему."""
+        human = row("DK-30", "проверка", "сессии нет, брошена")
+        human.update({"_section": "check", "accept": "mixed"})
+        agent = row("DK-31", "проверка", "сессии нет, брошена")
+        agent.update({"_section": "check", "accept": "agent"})
+        work = row("DK-32", "разработка", "сессии нет, брошена")
+        work.update({"_section": "in-progress", "accept": "user"})
+        self.assertEqual([r["id"] for r in lift.orphan_rows([human, agent, work])],
+                         ["DK-31", "DK-32"])
+
     def test_busy_counted(self):
         rows = [row("DK-6", "разработка", "сессия жива"),
                 row("DK-7", "слияние", "сессии нет, брошена")]

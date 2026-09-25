@@ -826,8 +826,9 @@ func TestCmdPickQuota(t *testing.T) {
 }
 
 func TestReviewShift(t *testing.T) {
-	// Ярусная ось для роли ревью: ступень вниз, пол base, и два случая без
-	// спуска (дизайн и грумминг). Effort роль не считает, он приходит готовым.
+	// Ярусная ось для роли ревью: ярус исполнителя без спуска, пол base, и два
+	// случая, которые пол не касается (дизайн и грумминг). Effort роль не
+	// считает, он приходит готовым.
 	cases := []struct {
 		name string
 		v    verdict
@@ -835,8 +836,8 @@ func TestReviewShift(t *testing.T) {
 		tier string
 		part string
 	}{
-		{"дефолтный pro опускается до base", verdict{Tier: tierPro}, row{Type: "task", Cost: "M"}, tierBase, "внимательность на диффе"},
-		{"max опускается до pro", verdict{Tier: tierMax}, row{Type: "task", Cost: "L"}, tierPro, "внимательность на диффе"},
+		{"pro остаётся pro", verdict{Tier: tierPro}, row{Type: "task", Cost: "M"}, tierPro, "ярусом исполнителя"},
+		{"max остаётся max", verdict{Tier: tierMax}, row{Type: "task", Cost: "L"}, tierMax, "ярусом исполнителя"},
 		{"base это пол, ниже не идём", verdict{Tier: tierBase}, row{Type: "task", Cost: "S"}, tierBase, "пол ревьювера"},
 		{"mini подтягивается до пола", verdict{Tier: tierMini}, row{Type: "task", Cost: "S"}, tierBase, "ниже base ревью не опускаем"},
 		{"дизайн читается тем же калибром", verdict{Tier: tierPro}, row{Type: "LLD", Cost: "S"}, tierPro, "спуска нет"},
@@ -865,18 +866,18 @@ func TestCmdPickReview(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Run("исполнитель opus, ревьювер sonnet с подтянутым effort", func(t *testing.T) {
-		// T-002 маппингом opus/medium; ревьювер идёт ярусом ниже, а пол sonnet
-		// поднимает ему глубину до high.
+	t.Run("исполнитель opus, ревьювер тем же opus/medium", func(t *testing.T) {
+		// T-002 маппингом opus/medium; ревьювер идёт тем же ярусом, спуска и
+		// подъёма пола нет.
 		out, err := cmdPick(root, "T-002", roleReview, "")
 		if err != nil {
 			t.Fatalf("pick --role review: %v", err)
 		}
-		if !strings.HasPrefix(out, "model: sonnet\neffort: high\n") {
-			t.Fatalf("жду вердикт ревьювера sonnet/high, получил %q", out)
+		if !strings.HasPrefix(out, "model: opus\neffort: medium\n") {
+			t.Fatalf("жду вердикт ревьювера opus/medium, получил %q", out)
 		}
-		if !strings.Contains(out, "роль ревью: pro -> base") {
-			t.Fatalf("в причине не видно спуска на роль: %q", out)
+		if !strings.Contains(out, "роль ревью: pro остаётся") {
+			t.Fatalf("в причине не видно правила «ярусом исполнителя»: %q", out)
 		}
 	})
 
@@ -922,8 +923,8 @@ func TestCmdPickReview(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pick --role review: %v", err)
 		}
-		if !strings.HasPrefix(out, "model: opus") {
-			t.Fatalf("жду ярус ниже заданной override модели, получил %q", out)
+		if !strings.HasPrefix(out, "model: fable") {
+			t.Fatalf("жду ярус заданной override модели без спуска, получил %q", out)
 		}
 	})
 
@@ -945,7 +946,7 @@ func TestCmdPickReview(t *testing.T) {
 			t.Fatalf("pick --role review --record: %v", err)
 		}
 		text := stageText(t, root, "T-002")
-		want := "- Ревью: субагент sonnet/high по вердикту pick" + noQuotaNote + ", " + stageStamp() + "."
+		want := "- Ревью: субагент opus/medium по вердикту pick" + noQuotaNote + ", " + stageStamp() + "."
 		if !strings.Contains(text, want) {
 			t.Fatalf("строка ревью разошлась с ожидаемой:\n%s", text)
 		}

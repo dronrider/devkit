@@ -20,15 +20,16 @@ func goRunAgent(t *testing.T, root string, args ...string) (string, error) {
 }
 
 // TestPickFlagAnywhere: у agentctl pick флаг --role стоит где угодно относительно
-// ID, и обе формы дают одинаковый вердикт. T-002 на доске из writeBoard это
-// opus/medium для исполнителя и sonnet/high для ревьювера, поэтому разница
-// хорошо видна: потеря --role review меняет вердикт целиком.
+// ID, и обе формы дают одинаковый вердикт. T-001 на доске из writeBoard это
+// haiku/low для исполнителя и sonnet/high для ревьювера (mini подтягивается до
+// пола base), поэтому разница хорошо видна: потеря --role review меняет
+// вердикт целиком.
 func TestPickFlagAnywhere(t *testing.T) {
 	isolateQuota(t)
 	root := writeBoard(t)
 
-	reviewSuffix := []string{"pick", "T-002", "--role", "review"}
-	reviewPrefix := []string{"pick", "--role", "review", "T-002"}
+	reviewSuffix := []string{"pick", "T-001", "--role", "review"}
+	reviewPrefix := []string{"pick", "--role", "review", "T-001"}
 
 	out, err := goRunAgent(t, root, reviewSuffix...)
 	if err != nil {

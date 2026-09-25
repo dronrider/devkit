@@ -71,6 +71,12 @@ func asModelVerdicts(s string) string {
 
 func TestPickVerdictsUnchanged(t *testing.T) {
 	golden := filepath.Join("testdata", "pick-verdicts.txt")
+	if os.Getenv("DEVKIT_WRITE_GOLDEN") != "" {
+		if err := os.WriteFile(golden, []byte(asModelVerdicts(pickVerdicts(t))), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
 	want, err := os.ReadFile(golden)
 	if err != nil {
 		t.Fatal(err)

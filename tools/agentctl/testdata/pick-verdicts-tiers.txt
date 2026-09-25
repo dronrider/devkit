@@ -17,11 +17,11 @@ tier: pro
 via: claude-code
 T-002 (task, цена L, неопределённость 1): задача для дешёвых моделей не подходит, по умолчанию идёт сильной; снимка квоты нет (~/.devkit/quota/claude-code.local), вердикт идёт без корректора; снять: agentctl quota refresh
 ### T-002 review
-model: sonnet
-effort: high
-tier: base
+model: opus
+effort: medium
+tier: pro
 via: claude-code
-T-002 (task, цена L, неопределённость 1): задача для дешёвых моделей не подходит, по умолчанию идёт сильной; роль ревью: pro -> base, ревьюверу нужен не калибр автора, а внимательность на диффе, effort поднят до high: base дёшев, экономить глубину смысла нет; снимка квоты нет (~/.devkit/quota/claude-code.local), вердикт идёт без корректора; снять: agentctl quota refresh
+T-002 (task, цена L, неопределённость 1): задача для дешёвых моделей не подходит, по умолчанию идёт сильной; роль ревью: pro остаётся, ревьювер идёт ярусом исполнителя, спуска на ступень нет; снимка квоты нет (~/.devkit/quota/claude-code.local), вердикт идёт без корректора; снять: agentctl quota refresh
 ### T-003 exec
 model: opus
 effort: xhigh
@@ -65,8 +65,8 @@ tier: pro
 via: claude-code
 T-006 (task, цена L, неопределённость 1): задача для дешёвых моделей не подходит, по умолчанию идёт сильной; снимка квоты нет (~/.devkit/quota/claude-code.local), вердикт идёт без корректора; снять: agentctl quota refresh
 ### T-006 review
-model: sonnet
-effort: high
-tier: base
+model: opus
+effort: medium
+tier: pro
 via: claude-code
-T-006 (task, цена L, неопределённость 1): задача для дешёвых моделей не подходит, по умолчанию идёт сильной; роль ревью: pro -> base, ревьюверу нужен не калибр автора, а внимательность на диффе, effort поднят до high: base дёшев, экономить глубину смысла нет; снимка квоты нет (~/.devkit/quota/claude-code.local), вердикт идёт без корректора; снять: agentctl quota refresh
+T-006 (task, цена L, неопределённость 1): задача для дешёвых моделей не подходит, по умолчанию идёт сильной; роль ревью: pro остаётся, ревьювер идёт ярусом исполнителя, спуска на ступень нет; снимка квоты нет (~/.devkit/quota/claude-code.local), вердикт идёт без корректора; снять: agentctl quota refresh

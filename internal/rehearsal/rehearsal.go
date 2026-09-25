@@ -9,7 +9,6 @@ package rehearsal
 import (
 	"fmt"
 	"os/exec"
-	"path"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/taskform"
@@ -77,7 +76,7 @@ func missing(id, again string) error {
 // устаревала бы ровно в ту минуту, когда её положили. Правку кода такой разбор
 // не прощает: там в диффе коммита стоят чужие пути.
 func onlyTaskDocSince(root, id, mark string) bool {
-	rel := path.Join("docs", "tasks", id+".md")
+	_ = id // состав коммита теперь смотрят без привязки к названной строке
 	out, err := gitLine(root, "log", "--format=%H", mark+"..HEAD")
 	if err != nil {
 		return false
@@ -91,9 +90,23 @@ func onlyTaskDocSince(root, id, mark string) bool {
 		return false
 	}
 	for _, p := range strings.Fields(files) {
-		if p != rel {
+		if !boardDoc(p) {
 			return false
 		}
+	}
+	return true
+}
+
+// boardDoc: путь ведёт в запись задачи доски. Такой файл кода не несёт, и
+// обкатка, прошедшая до него, ручается за тот же код.
+//
+// Раньше тут стоял файл одной названной задачи, и поезд из нескольких строк
+// через ворота не проходил вовсе. Запись обкатки ложится в файл своей задачи и
+// коммитится, а соседу по составу этот коммит уже чужой: обкатали первую,
+// закоммитили, обкатали вторую, и отметка первой числилась протухшей (DK-1161).
+func boardDoc(p string) bool {
+	if !strings.HasPrefix(p, "docs/tasks/") || !strings.HasSuffix(p, ".md") {
+		return false
 	}
 	return true
 }

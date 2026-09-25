@@ -1,6 +1,9 @@
 package rehearsal
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -62,5 +65,73 @@ func TestFreshOutsideGit(t *testing.T) {
 	d := doc("")
 	if err := Fresh(t.TempDir(), "XR-001", d+stamp(d, "1a2b3c4d5e6f"), "слияние"); err != nil {
 		t.Fatalf("вне git отметки должно хватать: %v", err)
+	}
+}
+
+// repo заводит репозиторий с одним коммитом и отдаёт его путь.
+func repo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"config", "user.name", "t"},
+		{"config", "user.email", "t@t"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	return dir
+}
+
+// commit кладёт файл и коммитит его, отдавая новый HEAD.
+func commit(t *testing.T, dir, rel, body string) string {
+	t.Helper()
+	full := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "."}, {"commit", "-qm", "правка " + rel}} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// TestFreshSurvivesNeighbourTaskDoc: запись обкатки соседней задачи отметку не
+// гасит. Поезд собирается из нескольких строк, запись каждой ложится в файл
+// своей задачи, и раньше первая же такая запись числила соседа протухшим
+// (DK-1161).
+func TestFreshSurvivesNeighbourTaskDoc(t *testing.T) {
+	dir := repo(t)
+	head := commit(t, dir, "tools/x/main.go", "package main\n")
+	d := doc("")
+	commit(t, dir, "docs/tasks/XR-002.md", "запись обкатки соседа\n")
+	if err := Fresh(dir, "XR-001", d+stamp(d, head), "слияние"); err != nil {
+		t.Fatalf("коммит файла соседней задачи погасил отметку: %v", err)
+	}
+}
+
+// TestFreshCatchesCodeAfterMark: код, приехавший после обкатки, ворот отбивает
+// по-прежнему. Послабление про записи доски кода не касается.
+func TestFreshCatchesCodeAfterMark(t *testing.T) {
+	dir := repo(t)
+	head := commit(t, dir, "tools/x/main.go", "package main\n")
+	d := doc("")
+	commit(t, dir, "tools/x/other.go", "package main\n\nfunc f() {}\n")
+	err := Fresh(dir, "XR-001", d+stamp(d, head), "слияние")
+	if err == nil {
+		t.Fatal("код после обкатки ворот не отбил")
+	}
+	if !strings.Contains(err.Error(), "отметка обкатки стоит на коммите") {
+		t.Fatalf("отказ не называет причину: %v", err)
 	}
 }

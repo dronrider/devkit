@@ -53,6 +53,15 @@ devkitctl сама раздаёт работу воркерам по класс�
 2026-09-20 `taskctl list --json` не отвечал за 30 с потолка `board.go`
 именно из-за приоритета, не только из-за перемножения потолков.
 
+Бюджет и приоритет держат в рамке один прогон. Уровнем выше стоит потолок
+числа прогонов на машине разом (`full_run_slot`, `FULL_RUN_SLOTS`, задача
+DK-1162): на поезде из нескольких задач Check поднимает сессию на строку, и
+каждая гонит свой полный прогон. Без потолка эти прогоны складывались
+друг с другом так же, как раньше складывались потолки внутри одного
+прогона, только уже поверх границы процесса, которую бюджет не видит.
+Лишний прогон ждёт свободный слот и печатает об этом строку, вместо того
+чтобы давить машину рядом с чужим.
+
 Вызов без аргументов гонит все компоненты по раскладке корня devkit,
 `--list` печатает их перечень, `--only-go` сужает прогон до го-модулей
 `tools/` (этим же флагом их гоняет CI, `.github/workflows/ci.yml`: список
@@ -62,6 +71,7 @@ workflow). Запускается из корня чекаута, как клю�
 """
 import argparse
 import contextlib
+import fcntl
 import os
 import queue
 import signal
@@ -444,6 +454,94 @@ def run_all(comps, workers, root=ROOT, budget=None):
     return outcomes, first_fail[0]
 
 
+# Каталог с замками потолка одновременных полных прогонов, общий на машину и
+# не под git (DK-1162). Не тот каталог, что стережёт `internal/runsguard` от
+# следов тестового прогона (`~/.devkit/runs`, `stage.Home()`): слоты лежат
+# рядом, а не внутри, иначе свой же файл замка читался бы чужим Guard как
+# утечка.
+SLOT_DIR = os.path.expanduser(os.path.join("~", ".devkit", "parallel-slots"))
+
+# Потолок числа одновременных полных прогонов на машине. Прогон уже берёт
+# cpu_budget() ядер целиком под один слот (DK-1123): доля тут не у рядового
+# компонента, а у прогона целиком. Второй параллельный прогон удваивает
+# заявку на бюджет при той же машине, поэтому потолок держится единицей, а не
+# числом ядер и не числом проверяющих сессий на поезде. Разбор развилки
+# «рычаг» и отвергнутый вариант (резерв доли в cpu_budget с очередью на фазу
+# сборки go) лежат в docs/tasks/DK-1162.md, раздел «Развилки».
+FULL_RUN_SLOTS = 1
+
+# Пауза между попытками занять слот и шаг между повторами строки ожидания:
+# секунды календарного времени, не завязаны на стенное время самого прогона.
+SLOT_POLL_SECS = 2.0
+SLOT_HEARTBEAT_SECS = 20.0
+
+
+def _slot_path(index, dir_path):
+    return os.path.join(dir_path, "slot-%d.lock" % index)
+
+
+@contextlib.contextmanager
+def full_run_slot(n=None, dir_path=None, poll=None, heartbeat=None,
+                   out=None):
+    """Держит один из `n` слотов потолка одновременных полных прогонов.
+
+    Слот это файл под `flock`, держится дескриптором ровно как замок
+    конвейера shipctl (`tools/shipctl/lock.go`, `acquireLock`): убитый
+    посреди прогона процесс слот не держит навечно, `flock` снимает ядро
+    само при закрытии дескриптора, в том числе аварийном. Кандидаты
+    перебираются по кругу `slot-0.lock`..`slot-(n-1).lock`, занятый слот
+    пропускается неблокирующей попыткой, свободный берётся сразу.
+
+    Заняты все слоты, тогда вызов не падает. Он ждёт. Первая неудачная
+    попытка печатает строку ожидания в `out`, дальше строка повторяется раз в
+    `heartbeat` секунд, пока слот не освободится. Молчания тут не должно
+    быть: по этой строке видно, что прогон стоит в очереди, а не завис
+    (DoD DK-1162).
+
+    Аргументы без значения читают модульные константы в момент вызова, а не
+    на старте процесса: стенд подменяет `SLOT_POLL_SECS` через
+    `mock.patch.object` на короткую паузу, и подмена обязана доходить до
+    вызова `main()` без своего аргумента, для чего сравнение с умолчанием
+    внутри тела важнее значения по умолчанию в сигнатуре (оно бы застыло
+    числом на момент импорта модуля).
+    """
+    n = n if n is not None else FULL_RUN_SLOTS
+    dir_path = dir_path if dir_path is not None else SLOT_DIR
+    poll = poll if poll is not None else SLOT_POLL_SECS
+    heartbeat = heartbeat if heartbeat is not None else SLOT_HEARTBEAT_SECS
+    out = out if out is not None else sys.stdout
+    os.makedirs(dir_path, exist_ok=True)
+    waited = False
+    heartbeat_at = time.monotonic()
+    while True:
+        for index in range(n):
+            path = _slot_path(index, dir_path)
+            fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                os.close(fd)
+                continue
+            if waited:
+                print("потолок полных прогонов освободился, продолжаю",
+                      file=out, flush=True)
+            try:
+                yield
+            finally:
+                os.close(fd)
+            return
+        if not waited:
+            print("потолок %d полных прогонов занят, жду свободный слот в %s"
+                  % (n, dir_path), file=out, flush=True)
+            waited = True
+            heartbeat_at = time.monotonic()
+        elif time.monotonic() - heartbeat_at >= heartbeat:
+            print("всё ещё жду свободный слот потолка полных прогонов",
+                  file=out, flush=True)
+            heartbeat_at = time.monotonic()
+        time.sleep(poll)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="parallel", description=__doc__,
@@ -481,20 +579,24 @@ def main(argv=None):
             print("%-16s (%s) %s" % (name, rel, " ".join(comp_argv)))
         print("компонентов: %d" % len(preview))
         return 0
-    print("бюджет параллельности: ядра=%d лайнов=%d доля раннера=%d "
-          "доля компонента=%d..%d (живая, растёт по мере опустения очереди) "
-          "приоритет=nice %d"
-          % (budget, jobs, reserved, component_share(jobs, budget, reserved),
-             budget, NICE_LEVEL))
     # Корень компонента идёт в ту же строку итога, каким его уже печатает
     # --list (строка 434): граница компонента известна раннеру всегда, в
     # отличие от deploy.<имя>.paths, которая в самом devkit не заведена
     # (замечание ревью круга 2, DK-1125). shipctl читает эту строку и берёт
     # корень оттуда, когда раскладки выката нет.
     rel_by_name = {name: rel for name, rel, _ in comps}
-    started = time.monotonic()
-    outcomes, first_fail = run_all(comps, jobs, budget=budget)
-    secs = time.monotonic() - started
+    # Потолок одновременных полных прогонов на машине держится снаружи
+    # бюджета одного прогона (DK-1162): ждущая строка печатается раньше
+    # бюджета, а сам бюджет и прогон стартуют только с занятым слотом.
+    with full_run_slot():
+        print("бюджет параллельности: ядра=%d лайнов=%d доля раннера=%d "
+              "доля компонента=%d..%d (живая, растёт по мере опустения "
+              "очереди) приоритет=nice %d"
+              % (budget, jobs, reserved,
+                 component_share(jobs, budget, reserved), budget, NICE_LEVEL))
+        started = time.monotonic()
+        outcomes, first_fail = run_all(comps, jobs, budget=budget)
+        secs = time.monotonic() - started
     for name, rc, took, out in sorted(outcomes, key=lambda o: -o[2]):
         print("%-16s (%s) %6.1fs %s" % (name, rel_by_name.get(name, ""), took,
                                          "ok" if rc == 0 else "FAIL"))

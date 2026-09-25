@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -29,6 +30,15 @@ class Stand(unittest.TestCase):
 
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="devkitctl-parallel-test-"))
+        # main() держит потолок одновременных полных прогонов (DK-1162) через
+        # реальный SLOT_DIR машины по умолчанию. Стенд подменяет его своим
+        # каталогом: иначе прогон юнит-тестов этого файла соревновался бы за
+        # общий слот машины с настоящим прогоном где-то рядом (regcheck,
+        # shipctl merge, проверяющая сессия), либо держал бы его лишний раз.
+        patcher = mock.patch.object(parallel, "SLOT_DIR",
+                                    str(self.dir / "slots"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         shutil.rmtree(str(self.dir), ignore_errors=True)
@@ -392,6 +402,146 @@ class LiveBudgetTest(unittest.TestCase):
         self.assertEqual([runner] + tail, [5, 2, 2])
 
 
+class FullRunSlotTest(unittest.TestCase):
+    """Потолок одновременных полных прогонов на машине (DK-1162).
+
+    `flock` держится по открытому файловому дескриптору, а не по процессу
+    (POSIX, man 2 flock), поэтому два дескриптора одного процесса, открытые
+    отдельными вызовами `os.open`, соревнуются за слот совершенно так же, как
+    два разных процесса. Стенд потому гоняет `full_run_slot` в потоках одного
+    процесса, без реальных подпроцессов: конкуренция за файл та же самая, а
+    проверка быстрее и не тянет за собой стенное время подпроцесса.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="devkitctl-slot-test-")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_single_run_takes_the_slot_without_waiting(self):
+        out = io.StringIO()
+        with parallel.full_run_slot(n=1, dir_path=self.dir, poll=0.01,
+                                    out=out):
+            self.assertTrue(os.path.exists(os.path.join(self.dir,
+                                                         "slot-0.lock")))
+        self.assertEqual(out.getvalue(), "", "единственный держатель не ждёт")
+
+    def test_second_run_waits_for_the_slot_to_free(self):
+        # Первый держатель занимает единственный слот и не отпускает его,
+        # пока стенд не разрешит; второй вызов из соседнего потока обязан
+        # дождаться освобождения, а не пройти рядом.
+        order = []
+        holder_may_release = threading.Event()
+        holder_entered = threading.Event()
+
+        def holder():
+            with parallel.full_run_slot(n=1, dir_path=self.dir, poll=0.01,
+                                        out=io.StringIO()):
+                order.append("holder-enter")
+                holder_entered.set()
+                holder_may_release.wait(timeout=5)
+            order.append("holder-exit")
+
+        t = threading.Thread(target=holder)
+        t.start()
+        self.assertTrue(holder_entered.wait(timeout=5))
+
+        waiter_out = io.StringIO()
+        waiter_done = threading.Event()
+
+        def waiter():
+            with parallel.full_run_slot(n=1, dir_path=self.dir, poll=0.01,
+                                        out=waiter_out):
+                order.append("waiter-enter")
+            waiter_done.set()
+
+        w = threading.Thread(target=waiter)
+        w.start()
+        # Секунда ожидания на потоке-ожидателе: слот ещё занят, второй вызов
+        # обязан стоять в цикле, а не проскочить мимо занятого flock.
+        time.sleep(0.3)
+        self.assertFalse(waiter_done.is_set(),
+                         "занятый слот обязан держать второй вызов")
+        self.assertIn("потолок 1 полных прогонов занят", waiter_out.getvalue())
+
+        holder_may_release.set()
+        t.join(timeout=5)
+        w.join(timeout=5)
+        self.assertEqual(order, ["holder-enter", "holder-exit",
+                                 "waiter-enter"],
+                         "ожидающий обязан войти только после освобождения")
+
+    def test_two_slots_let_two_runs_hold_at_once(self):
+        first_in = threading.Event()
+        second_in = threading.Event()
+        release = threading.Event()
+
+        def run(flag):
+            with parallel.full_run_slot(n=2, dir_path=self.dir, poll=0.01,
+                                        out=io.StringIO()):
+                flag.set()
+                release.wait(timeout=5)
+
+        t1 = threading.Thread(target=run, args=(first_in,))
+        t2 = threading.Thread(target=run, args=(second_in,))
+        t1.start()
+        t2.start()
+        # Оба потока обязаны войти без ожидания: слотов два, держателей два.
+        self.assertTrue(first_in.wait(timeout=5))
+        self.assertTrue(second_in.wait(timeout=5))
+        release.set()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
+
+    def test_slot_is_released_on_exception(self):
+        with self.assertRaises(ValueError):
+            with parallel.full_run_slot(n=1, dir_path=self.dir, poll=0.01,
+                                        out=io.StringIO()):
+                raise ValueError("boom")
+        # Слот освободился, следующий держатель проходит без ожидания.
+        out = io.StringIO()
+        with parallel.full_run_slot(n=1, dir_path=self.dir, poll=0.01,
+                                    out=out):
+            pass
+        self.assertEqual(out.getvalue(), "")
+
+    def test_heartbeat_repeats_the_waiting_line(self):
+        holder_may_release = threading.Event()
+        holder_entered = threading.Event()
+
+        def holder():
+            with parallel.full_run_slot(n=1, dir_path=self.dir, poll=0.01,
+                                        out=io.StringIO()):
+                holder_entered.set()
+                holder_may_release.wait(timeout=5)
+
+        t = threading.Thread(target=holder)
+        t.start()
+        self.assertTrue(holder_entered.wait(timeout=5))
+
+        waiter_out = io.StringIO()
+        waiter_done = threading.Event()
+
+        def waiter():
+            with parallel.full_run_slot(n=1, dir_path=self.dir, poll=0.01,
+                                        heartbeat=0.05, out=waiter_out):
+                pass
+            waiter_done.set()
+
+        w = threading.Thread(target=waiter)
+        w.start()
+        time.sleep(0.3)
+        holder_may_release.set()
+        t.join(timeout=5)
+        w.join(timeout=5)
+        self.assertTrue(waiter_done.is_set())
+        lines = [line for line in waiter_out.getvalue().splitlines()
+                if "жду" in line]
+        self.assertGreater(len(lines), 1,
+                           "строка ожидания обязана повторяться, не молчать")
+
+
 class RunAllTest(Stand):
 
     def test_green_components_all_finish(self):
@@ -612,6 +762,41 @@ class MainTest(Stand):
         self.assertEqual(rc, 0)
         self.assertIn("Ran 1 of 1 components", out)
         self.assertIn("OK", out)
+
+    def test_main_waits_out_a_sibling_holding_the_only_slot(self):
+        # DoD DK-1162: две проверяющие сессии поезда, каждая со своим
+        # `main()`, делят один слот потолка. Вторая обязана дождаться первой
+        # и напечатать об этом строку, а не пройти рядом и не упасть.
+        holder_entered = threading.Event()
+        holder_may_release = threading.Event()
+
+        def holder():
+            with mock.patch.object(parallel, "SLOT_POLL_SECS", 0.01):
+                with parallel.full_run_slot(dir_path=parallel.SLOT_DIR,
+                                            poll=0.01, out=io.StringIO()):
+                    holder_entered.set()
+                    holder_may_release.wait(timeout=5)
+
+        t = threading.Thread(target=holder)
+        t.start()
+        self.assertTrue(holder_entered.wait(timeout=5))
+
+        result = {}
+
+        def run_second():
+            with mock.patch.object(parallel, "SLOT_POLL_SECS", 0.01):
+                rc, out = self.run_main([self.grow("ok.sh", "exit 0")])
+            result["rc"], result["out"] = rc, out
+
+        w = threading.Thread(target=run_second)
+        w.start()
+        time.sleep(0.3)
+        holder_may_release.set()
+        t.join(timeout=5)
+        w.join(timeout=5)
+        self.assertEqual(result["rc"], 0)
+        self.assertIn("потолок 1 полных прогонов занят", result["out"])
+        self.assertIn("OK", result["out"])
 
     def test_failure_prints_output_and_exits_nonzero(self):
         rc, out = self.run_main([self.grow("bad.sh", "echo boom; exit 4")])

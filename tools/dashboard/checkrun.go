@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/checkrun"
+	"github.com/dronrider/devkit/internal/clientdir"
 )
 
 // Подъём прогона сценария после выката (DK-718). Выкат без человека в окне
@@ -61,7 +62,12 @@ func (s *server) permsRefusal() string {
 			"): проверить их нечем, а без них сессия без человека встаёт на первом же" +
 			" запросе разрешения; нужен чекаут devkit в одном из корней"
 	}
-	out, err := runProcQuietAt(realHome(), "", true, "python3", p)
+	home := realHome()
+	dir, err := clientdir.Service(home)
+	if err != nil {
+		return err.Error()
+	}
+	out, err := runProcQuietAt(home, dir, true, "python3", p)
 	if err == nil {
 		return ""
 	}

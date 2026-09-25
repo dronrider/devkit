@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/clientdir"
 )
 
 // Вход в клиента с телефона (DK-577). Разлогиненный разговор дашборд узнаёт и
@@ -670,11 +672,22 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 		s.loginDrop(run, "")
 	}
 	sess := loginSessName(tmuxAliveFn())
-	// Каталог входа это дом машины, а не проект: вход не принадлежит разговору,
+	// Каталог входа служебный, а не проект: вход не принадлежит разговору,
 	// токен лежит в связке ключей машины, и REPL клиента в проекте ему не нужен.
+	// Прежде тут стоял дом машины, и клиент входа обходил его дерево, заходя в
+	// Рабочий стол, Документы и медиатеку: macOS спрашивала разрешение на
+	// каждую папку у дашборда, и очередь этих окон однажды легла человеку
+	// поперёк работы (DK-1163). В служебном каталоге обходить нечего.
+	// Вопрос о доверии каталогу клиент задаёт и тут, а отвечает на него
+	// loginAwaitLink, как и прежде.
 	// Пары тут общие, и метки печатного режима среди них нет: окно входа это
 	// живой REPL, и врать про него рубежу синхронности незачем.
-	dir := realHomeOr(s.cfg.Home)
+	dir, err := clientdir.Service(realHomeOr(s.cfg.Home))
+	if err != nil {
+		s.logf("подъём входа клиента в %s не удался: %v", found.Name, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
 		s.launchEnv("", sess, "")+" "+defaultClient); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию входа %s: %s", sess, procErr(err))

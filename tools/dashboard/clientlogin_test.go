@@ -113,6 +113,7 @@ ls)
   [ -f "$D/sess" ] && cat "$D/sess";;
 list-panes) echo 4242;;
 new-session)
+  printf '%s\n' "$*" >"$D/raise"
   if [ -f "$D/first" ]; then cat "$D/first" >"$D/stage"; else echo repl >"$D/stage"; fi
   printf '%s|1|%s\n' "$4" "$(date +%s)" >"$D/sess";;
 set-environment) printf '%s=%s\n' "$4" "$5" >"$D/env-${3#=}";;

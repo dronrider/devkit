@@ -317,7 +317,10 @@ func TestQuotaRefreshDirNotCwd(t *testing.T) {
 }
 
 // Недоверенное дерево не берётся: вызов из него упёрся бы в вопрос про доверие,
-// и снимок остался бы вчерашним. Откат тут дом человека, а не каталог демона.
+// и снимок остался бы вчерашним. Откат тут служебный пустой каталог под домом,
+// а не сам дом и не каталог демона: поднятый в доме клиент обходит Рабочий
+// стол, Документы и медиатеку, и macOS спрашивает разрешение на каждую папку у
+// дашборда (DK-1163).
 func TestQuotaRefreshDirSkipsUntrusted(t *testing.T) {
 	e := newTestEnv(t)
 	quotaTrustSays(t)
@@ -327,8 +330,15 @@ func TestQuotaRefreshDirSkipsUntrusted(t *testing.T) {
 	if *dir == e.proj {
 		t.Fatalf("вызов ушёл в дерево, доверия которому у клиента нет: %q", *dir)
 	}
-	if *dir != realHome() {
-		t.Fatalf("откатом взят не дом человека: %q, дом %q", *dir, realHome())
+	home := realHome()
+	if err := raiseDirCheck(*dir, home); err != nil {
+		t.Fatalf("каталог отката не годится под подъём клиента: %v", err)
+	}
+	if want := serviceDirOf(home); *dir != want {
+		t.Fatalf("откатом взят %q, ждали служебный каталог %q", *dir, want)
+	}
+	if fi, err := os.Stat(*dir); err != nil || !fi.IsDir() {
+		t.Fatalf("служебный каталог не заведён: %v", err)
 	}
 }
 

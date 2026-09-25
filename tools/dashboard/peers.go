@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dronrider/devkit/internal/clientdir"
 	"github.com/dronrider/devkit/internal/peers"
 )
 
@@ -382,28 +383,41 @@ func homeEnvAt(home string, silent bool) []string {
 
 // runProcHome это runProc с настоящим домом пользователя. Им зовётся всё, что
 // поднимает клиента харнеса: под чужим домом он не найдёт ни своих хуков, ни
-// своего логина.
+// своего логина. Каталог служебный: подпроцесс сам поднимает клиента, и
+// каталог этот достаётся клиенту рабочим.
 func runProcHome(name string, args ...string) ([]byte, error) {
-	return runProcQuiet("", false, name, args...)
+	home := realHome()
+	dir, err := clientdir.Service(home)
+	if err != nil {
+		return nil, err
+	}
+	return runProcQuietAt(home, dir, false, name, args...)
 }
 
 // runProcQuiet это тот же запуск, помеченный служебным: хуки devkit на нём
 // молчат, и лента уведомлений не наполняется ходами, которых человек не делал.
 // dir задаёт рабочую директорию: клиент кладёт транскрипт в каталог по ней, и
 // служебный вызов из каталога проекта всплыл бы в его списке чатов отдельной
-// сессией. Пустой dir оставляет директорию процесса.
+// сессией.
 func runProcQuiet(dir string, silent bool, name string, args ...string) ([]byte, error) {
 	return runProcQuietAt(realHome(), dir, silent, name, args...)
 }
 
 // runProcQuietAt это тот же служебный запуск под названным домом.
+//
+// Каталог обязателен. Прежде пустой dir оставлял рабочий каталог демона, а под
+// launchd это корень файловой системы: поднятый оттуда клиент обходил весь
+// диск и упирался в защищённые папки macOS, а системные диалоги доступа
+// вставали на имя дашборда (DK-1163). Наследовать тут нечего, и пустой каталог
+// это отказ с причиной.
 func runProcQuietAt(home, dir string, silent bool, name string, args ...string) ([]byte, error) {
+	if err := clientdir.Check(dir, ""); err != nil {
+		return nil, fmt.Errorf("%s не поднят: %v", name, err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), procTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
-	if dir != "" {
-		cmd.Dir = dir
-	}
+	cmd.Dir = dir
 	if env := homeEnvAt(home, silent); env != nil {
 		cmd.Env = env
 	}

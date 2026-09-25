@@ -144,6 +144,17 @@ const bubble = (project, text) => {
   if (!code.some((k) => dump(k).trim() === "https://example.com/token")) {
     fail("адрес в кавычках потерял вид кода: " + dump(box));
   }
+  // Адрес это одно слово, то есть короткое упоминание: кнопки у него нет, а
+  // фрагмент копируется кликом. Клик по самой ссылке при этом остаётся
+  // открытием вкладки и в буфер ничего не кладёт.
+  const span = allByClass(box, "mdicode")[0];
+  if (!span) fail("адрес в кавычках собрался без группы инлайн-кода: " + dump(box));
+  if (deepBtn(span, "foldcp")) fail("у адреса в кавычках выросла кнопка копирования: " + dump(span));
+  const copied = [];
+  sandbox.window.navigator = { clipboard: { writeText: (t) => { copied.push(t); return Promise.resolve(); } } };
+  span.handlers.click({ stopPropagation: () => {}, target: href });
+  await settle();
+  if (copied.length) fail("клик по ссылке внутри кавычек утащил адрес в буфер: " + JSON.stringify(copied));
 }
 
 // --- DK-1120: не-адрес в кавычках ссылкой не становится ---

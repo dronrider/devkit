@@ -1182,17 +1182,25 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .md .mdcode pre{margin:0;padding-right:38px}
 .md .mdcode .foldcp{position:absolute;top:6px;right:6px;background:var(--bg2)}
 .md .mdcode .foldcp:hover{opacity:1}
-/* своя кнопка копирования у каждого инлайн-кода: группа держится вместе при
-   переносе строки абзаца, а не рвётся между кодом и кнопкой. Фон и рамка
-   стоят на самой группе, а не на code внутри неё, поэтому кнопка попадает в
-   ту же рамку, что и код, и фрагмент выглядит цельно (замечание пользователя
-   по приёмке с телефона). Центр группы выровнен по центру строки текста, а
-   не смещён под базовую линию. */
+/* инлайн-код: группа держится вместе при переносе строки абзаца, а не рвётся
+   между кодом и кнопкой. Фон и рамка стоят на самой группе, а не на code
+   внутри неё, поэтому кнопка попадает в ту же рамку, что и код, и фрагмент
+   выглядит цельно (замечание пользователя по приёмке с телефона). Центр
+   группы выровнен по центру строки текста, а не смещён под базовую линию. */
 .md .mdicode{display:inline-flex;align-items:center;gap:2px;vertical-align:middle;background:var(--bg2);border:1px solid var(--line);border-radius:5px;padding:1px 3px 1px 5px}
 .md .mdicode code{background:none;border:none;padding:0}
 .md .mdicode .foldcp{width:15px;height:15px}
 .md .mdicode .foldcp svg{width:11px;height:11px}
 .md .mdicode .foldcp:hover{opacity:1}
+/* короткое упоминание (путь, флаг, имя функции) кнопки не носит: кнопка у
+   каждого такого фрагмента загромождает абзац (замечание пользователя по
+   приёмке с телефона). Берётся оно кликом по самому фрагменту, и что фрагмент
+   нажимается, видно по курсору и подсветке рамки. Отклик успеха тот же
+   цветом, что у кнопки. */
+.md .mdicode.tap{cursor:pointer;padding:1px 5px}
+.md .mdicode.tap:hover{border-color:var(--acc)}
+.md .mdicode.tap.ok{border-color:var(--run);color:var(--run)}
+.md .mdicode.tap.bad{border-color:var(--block);color:var(--block)}
 /* Упоминание задачи или документа в реплике: та же ссылка, но с пунктиром
    снизу, чтобы ID читался ссылкой и в потоке текста, где цвета мало. */
 .md a.mdgo{border-bottom:1px dotted var(--acc)}

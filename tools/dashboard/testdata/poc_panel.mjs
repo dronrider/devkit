@@ -1430,32 +1430,50 @@ console.log("пузырь: копирование сообщения целик�
 
 console.log("блок кода: кнопка копирования, буфер без разметки ссылок");
 
-// --- DK-1120: у инлайн-кода в обратных кавычках своя кнопка копирования ---
-// Кейс из файла задачи (3): агент назвал путь обратными кавычками, человек
-// берёт его кнопкой.
+// --- DK-1120: кнопка у инлайн-кода стоит там, где фрагмент берут целиком ---
+// Кейс из файла задачи (2): команда для знака «!» уносится в буфер, и у неё
+// кнопка. Кейс (3): путь в обратных кавычках это короткое упоминание, кнопка
+// рядом с каждым таким загромождает абзац (замечание приёмки с телефона), и
+// берётся оно кликом по самому фрагменту.
 {
   const copied = [];
   sandbox.window.navigator = { clipboard: { writeText: (t) => { copied.push(t); return Promise.resolve(); } } };
   const bubble = sandbox.chatBubble("агент", "Правь `tools/dashboard/static/app.js` и запусти `!go build`.", "");
   const spans = allByClass(bubble, "mdicode");
-  if (spans.length !== 2) fail("у инлайн-кода не по кнопке на каждое упоминание: " + spans.length);
-  const btn = deepBtn(spans[0], "foldcp");
-  if (!btn) fail("у инлайн-кода нет кнопки копирования: " + dump(spans[0]));
+  if (spans.length !== 2) fail("инлайн-код собрался не двумя фрагментами: " + spans.length);
+  const [short, cmd] = spans;
+
+  if (deepBtn(short, "foldcp")) fail("у короткого упоминания осталась кнопка копирования: " + dump(short));
+  if (!short.classList.contains("tap")) fail("короткое упоминание не помечено нажимаемым: " + dump(short));
+  if (String(short.title) !== "Копировать") fail("короткое упоминание не назвалось: " + short.title);
+  const code = short.children.find((k) => k.tagName === "CODE" || k.tagName === "A");
+  if (!code) fail("у инлайн-кода потерялся сам код: " + dump(short));
+  if (code.parentNode !== short) fail("код инлайн-фрагмента стоит не в общей рамке: " + dump(short));
+  short.handlers.click({ stopPropagation: () => {}, target: code });
+  await settle();
+  if (copied.length !== 1 || copied[0] !== "tools/dashboard/static/app.js") {
+    fail("клик по короткому упоминанию не положил его в буфер: " + JSON.stringify(copied));
+  }
+
+  const btn = deepBtn(cmd, "foldcp");
+  if (!btn) fail("у команды в обратных кавычках нет кнопки копирования: " + dump(cmd));
+  if (cmd.classList.contains("tap")) fail("команда взялась кликом вместо кнопки: " + dump(cmd));
   btn.handlers.click({ stopPropagation: () => {} });
   await settle();
-  if (copied[0] !== "tools/dashboard/static/app.js") {
-    fail("в буфер уехал не текст инлайн-кода: " + JSON.stringify(copied[0]));
-  }
+  if (copied[1] !== "!go build") fail("в буфер уехал не текст команды: " + JSON.stringify(copied[1]));
   // Замечание приёмки с телефона: кнопка лежит в одной рамке с кодом, а не
-  // рядом с ней снаружи, и вертикально не уезжает от строки текста.
-  if (btn.parentNode !== spans[0]) fail("кнопка инлайн-кода стоит вне рамки фрагмента: " + dump(spans[0]));
-  const code = spans[0].children.find((k) => k.tagName === "CODE" || k.tagName === "A");
-  if (!code) fail("у инлайн-кода потерялся сам код: " + dump(spans[0]));
-  if (code.parentNode !== spans[0]) fail("код инлайн-фрагмента стоит не в общей рамке: " + dump(spans[0]));
-  // Центровка и общая рамка это раскладка, JSDOM её не считает: сама правка
-  // (vertical-align группы, перенос фона и рамки с code на группу, кнопка
-  // блока снятая с потока) читается прямо в style.css, иначе откат этих
-  // свойств не покраснит ни один узел стенда (замечание ревью).
+  // рядом с ней снаружи.
+  if (btn.parentNode !== cmd) fail("кнопка инлайн-кода стоит вне рамки фрагмента: " + dump(cmd));
+
+  // Текст промта это те же несколько слов через пробел, и кнопка у него стоит.
+  const promt = allByClass(sandbox.chatBubble("агент", "Пошли `разбери черновик DK-1 и оформи`.", ""), "mdicode")[0];
+  if (!deepBtn(promt, "foldcp")) fail("у текста промта нет кнопки копирования: " + dump(promt));
+
+  // Центровка, общая рамка и отклик это раскладка, JSDOM её не считает: сама
+  // правка (vertical-align группы, перенос фона и рамки с code на группу,
+  // кнопка блока снятая с потока, нажимаемый вид короткого упоминания)
+  // читается прямо в style.css, иначе откат этих свойств не покраснит ни один
+  // узел стенда (замечание ревью).
   const css = readFileSync(join(dirname(app), "style.css"), "utf8");
   const mdicodeRule = (css.match(/\.md \.mdicode\{[^}]*\}/) || [])[0] || "";
   if (!/vertical-align:middle/.test(mdicodeRule)) {
@@ -1468,10 +1486,17 @@ console.log("блок кода: кнопка копирования, буфер 
   if (!/background:none/.test(mdicodeCodeRule)) {
     fail("у code внутри инлайн-кода остался свой фон, рамка дробится надвое: " + mdicodeCodeRule);
   }
+  const tapRule = (css.match(/\.md \.mdicode\.tap\{[^}]*\}/) || [])[0] || "";
+  if (!/cursor:pointer/.test(tapRule)) {
+    fail("по короткому упоминанию не видно, что оно нажимается: " + tapRule);
+  }
+  if (!/\.md \.mdicode\.tap\.ok\{/.test(css)) {
+    fail("у копирования кликом нет отклика успеха в style.css");
+  }
   const mdcodeBtnRule = (css.match(/\.md \.mdcode \.foldcp\{[^}]*\}/) || [])[0] || "";
   if (!/position:absolute/.test(mdcodeBtnRule)) {
     fail("кнопка блока кода не снята с потока, съест отдельную строку ленты: " + mdcodeBtnRule);
   }
 }
 
-console.log("инлайн-код: своя кнопка копирования у каждого упоминания");
+console.log("инлайн-код: кнопка у команды и промта, короткое упоминание берётся кликом");

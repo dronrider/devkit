@@ -5457,10 +5457,20 @@ function codeLinkify(into, text) {
   if (rest) into.append(document.createTextNode(rest));
 }
 
-// Инлайн-код обратными кавычками своей кнопкой копирования: тап по кнопке
-// пузыря целиком одного упоминания не берёт, а частокол упоминаний в абзаце
-// решён осознанно (развилка «взятие инлайна» задачи DK-1120). Группа с
-// кодом и кнопкой держится вместе при переносе строки.
+// Фрагмент, который человек уносит в буфер целиком: команда для знака «!» и
+// текст промта. У такого стоит кнопка, остальное копируется кликом по самому
+// фрагменту (развилка «взятие инлайна» задачи DK-1120, пересмотр по замечанию
+// приёмки). Разводит их не длина, а форма: команда и промт это несколько слов
+// через пробел, а путь, флаг и имя функции это одно слово посреди фразы, и
+// кнопка у каждого такого упоминания загромождает абзац. Порога длины,
+// который пришлось бы угадывать, тут нет.
+function inlineCodeTaken(said) {
+  return /\s/.test(said) || said.startsWith("!");
+}
+
+// Инлайн-код обратными кавычками со своим копированием: тап по кнопке пузыря
+// целиком одного упоминания не берёт. Группа с кодом и кнопкой держится
+// вместе при переносе строки.
 function inlineCodeSpan(raw, where) {
   const said = String(raw).trim();
   // Путь документа репозитория это исключение: в кавычках его пишут и агенты,
@@ -5477,7 +5487,21 @@ function inlineCodeSpan(raw, where) {
     codeLinkify(code, raw);
     wrap.append(code);
   }
-  wrap.append(copyBtn(raw));
+  if (inlineCodeTaken(said)) {
+    wrap.append(copyBtn(raw));
+    return wrap;
+  }
+  wrap.classList.add("tap");
+  wrap.title = "Копировать";
+  wrap.addEventListener("click", (ev) => {
+    // Адрес и путь документа внутри фрагмента остаются ссылкой: клик по ней
+    // открывает вкладку и в буфер ничего не кладёт.
+    for (let node = ev && ev.target; node && node !== wrap; node = node.parentNode) {
+      if (node.tagName === "A") return;
+    }
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    copyInto(wrap, raw);
+  });
   return wrap;
 }
 
@@ -5731,6 +5755,21 @@ function foldEl(cls, head, text, sub, copy) {
 // Кнопка копирования при свёрнутом блоке: команду с выводом уносят в терминал
 // целиком, и выделять их мышью из ленты неудобно. Ответ виден на самой кнопке:
 // молчаливое копирование неотличимо от несработавшего.
+// Копирование в буфер с откликом на самом узле: у кнопки и у фрагмента,
+// который берётся кликом по себе, отклик один и тот же.
+function copyInto(node, text) {
+  const done = () => {
+    node.classList.add("ok");
+    setTimeout(() => { node.classList.remove("ok"); }, 1500);
+  };
+  const nav = window.navigator;
+  if (nav && nav.clipboard && nav.clipboard.writeText) {
+    nav.clipboard.writeText(text).then(done).catch(() => { node.classList.add("bad"); });
+    return;
+  }
+  node.classList.add("bad");
+}
+
 function copyBtn(text) {
   const btn = el("button", "foldcp");
   btn.title = "Копировать";
@@ -5738,16 +5777,7 @@ function copyBtn(text) {
   btn.append(icon("i-copy"));
   btn.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    const done = () => {
-      btn.classList.add("ok");
-      setTimeout(() => { btn.classList.remove("ok"); }, 1500);
-    };
-    const nav = window.navigator;
-    if (nav && nav.clipboard && nav.clipboard.writeText) {
-      nav.clipboard.writeText(text).then(done).catch(() => { btn.classList.add("bad"); });
-      return;
-    }
-    btn.classList.add("bad");
+    copyInto(btn, text);
   });
   return btn;
 }

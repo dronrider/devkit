@@ -75,6 +75,12 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	realHomeFn = func() string { return spare }
+	// Дом служебного каталога подъёма клиента на время прогона тот же запасной.
+	// Настоящий берётся от uid через getpwuid, подмена HOME его не трогает, и
+	// всякая дорога подъёма заводила бы настоящий `~/.devkit/client` на машине,
+	// где тесты гоняют (замечание ревью DK-1163). Тест со своим домом ставит
+	// его поверх (swapClientHome).
+	clientHomeFn = func(string) string { return spare }
 	code := m.Run()
 	os.RemoveAll(spare)
 	if realTaskctlPath != "" {

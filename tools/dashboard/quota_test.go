@@ -324,13 +324,13 @@ func TestQuotaRefreshDirNotCwd(t *testing.T) {
 func TestQuotaRefreshDirSkipsUntrusted(t *testing.T) {
 	e := newTestEnv(t)
 	quotaTrustSays(t)
+	home := e.home
 	dir := quotaCatch(t, nil)
 
 	e.s.quotaRefresh("agentctl")
 	if *dir == e.proj {
 		t.Fatalf("вызов ушёл в дерево, доверия которому у клиента нет: %q", *dir)
 	}
-	home := realHome()
 	if err := raiseDirCheck(*dir, home); err != nil {
 		t.Fatalf("каталог отката не годится под подъём клиента: %v", err)
 	}

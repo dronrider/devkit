@@ -341,6 +341,20 @@ func realHome() string {
 	return ""
 }
 
+// clientHomeFn это шов дома, под которым заводится служебный каталог подъёма
+// клиента (`internal/clientdir`). Настоящий дом берётся от uid через getpwuid,
+// и подменить его на время прогона нечем: HOME на него не влияет. Без шва
+// каждый прогон стенда заводил бы настоящий `~/.devkit/client` на машине
+// разработчика (замечание ревью DK-1163). Довод это дом из конфига, он идёт в
+// дело там, где настоящего не нашлось. Шов держит одно только место каталога:
+// дом окружения подпроцесса зовущий берёт сам, и подменять его тут нечего.
+var clientHomeFn = func(fallback string) string { return realHomeOr(fallback) }
+
+// serviceDir это служебный каталог подъёма клиента под настоящим домом.
+func serviceDir(fallback string) (string, error) {
+	return clientdir.Service(clientHomeFn(fallback))
+}
+
 // silentEnv это маркер служебного вызова клиента: хуки devkit по нему молчат.
 // Без него каждая суммаризация заголовка писала в ленту уведомлений «ход
 // закончен» и строку в реестр чатов, потому что claude -p это полноценная
@@ -386,12 +400,11 @@ func homeEnvAt(home string, silent bool) []string {
 // своего логина. Каталог служебный: подпроцесс сам поднимает клиента, и
 // каталог этот достаётся клиенту рабочим.
 func runProcHome(name string, args ...string) ([]byte, error) {
-	home := realHome()
-	dir, err := clientdir.Service(home)
+	dir, err := serviceDir("")
 	if err != nil {
 		return nil, err
 	}
-	return runProcQuietAt(home, dir, false, name, args...)
+	return runProcQuietAt(realHome(), dir, false, name, args...)
 }
 
 // runProcQuiet это тот же запуск, помеченный служебным: хуки devkit на нём

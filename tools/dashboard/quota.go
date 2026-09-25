@@ -380,13 +380,13 @@ func (s *server) quotaRefreshDir() string {
 			return p.Path
 		}
 	}
-	dir, err := clientdir.Service(home)
+	dir, err := serviceDir("")
 	if err != nil {
 		// Каталог не завёлся, и сказать об этом некому: зовущий ждёт строку.
 		// Путь возвращается как есть, подпроцесс упрётся в него и назовёт
 		// причину, а она доедет до плашки квоты.
 		s.logf("служебный каталог подъёма клиента не заведён: %v", err)
-		return clientdir.Path(home)
+		return clientdir.Path(clientHomeFn(""))
 	}
 	return dir
 }

@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/dronrider/devkit/internal/clientdir"
 )
 
 // Вход в клиента с телефона (DK-577). Разлогиненный разговор дашборд узнаёт и
@@ -682,7 +680,7 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 	// loginAwaitLink, как и прежде.
 	// Пары тут общие, и метки печатного режима среди них нет: окно входа это
 	// живой REPL, и врать про него рубежу синхронности незачем.
-	dir, err := clientdir.Service(realHomeOr(s.cfg.Home))
+	dir, err := serviceDir(s.cfg.Home)
 	if err != nil {
 		s.logf("подъём входа клиента в %s не удался: %v", found.Name, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})

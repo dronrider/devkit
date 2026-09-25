@@ -124,6 +124,11 @@ func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	loginPause = 0
 	home := t.TempDir()
+	// Дом служебного каталога подъёма клиента идёт на тот же временный дом.
+	// Настоящий берётся от uid через getpwuid, подмена HOME его не трогает, и
+	// без шва всякий прогон заводил бы настоящий `~/.devkit/client` на машине,
+	// где тесты гоняют (замечание ревью DK-1163).
+	swapClientHome(t, home)
 	root := filepath.Join(home, "projects")
 	proj := filepath.Join(root, "demo")
 	mkProject(t, proj)

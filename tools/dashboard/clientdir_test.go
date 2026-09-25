@@ -23,6 +23,24 @@ func serviceDirOf(home string) string {
 	return filepath.Join(home, ".devkit", "client")
 }
 
+// swapClientHome подставляет названный дом под служебный каталог подъёма
+// клиента и возвращает прежний шов по концу теста. Зовёт его и общий стенд
+// (newTestEnv), поэтому настоящий `~/.devkit/client` не заводит ни один прогон.
+func swapClientHome(t *testing.T, home string) {
+	t.Helper()
+	old := clientHomeFn
+	clientHomeFn = func(string) string { return home }
+	t.Cleanup(func() { clientHomeFn = old })
+}
+
+// tempClientHome это то же на временном доме, для тестов без общего стенда.
+func tempClientHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	swapClientHome(t, home)
+	return home
+}
+
 // raiseDirCheck это мерка каталога подъёма: назван и не дом.
 func raiseDirCheck(dir, home string) error {
 	if strings.TrimSpace(dir) == "" {
@@ -41,6 +59,7 @@ func raiseDirCheck(dir, home string) error {
 // подозревается в падении WindowServer.
 func TestClientLoginRaisesOutsideHome(t *testing.T) {
 	e := newTestEnv(t)
+	home := e.home
 	d := fakeTmuxLogin(t, e)
 	fastLoginWait(t, 2*time.Second)
 	c := e.loggedClient(t)
@@ -59,7 +78,6 @@ func TestClientLoginRaisesOutsideHome(t *testing.T) {
 			dir = args[i+1]
 		}
 	}
-	home := realHomeOr(e.s.cfg.Home)
 	if err := raiseDirCheck(dir, home); err != nil {
 		t.Fatalf("каталог подъёма входа не годится: %v (доводы %v)", err, args)
 	}
@@ -109,11 +127,11 @@ func TestRunProcQuietKeepsNamedDir(t *testing.T) {
 // Дороги, у которых каталог не заказывают, берут служебный: он заводится сам и
 // пуст, обходить клиенту там нечего.
 func TestRunProcHomeUsesServiceDir(t *testing.T) {
+	home := tempClientHome(t)
 	out, err := runProcHome("pwd")
 	if err != nil {
 		t.Fatalf("запуск под домом отказал: %v", err)
 	}
-	home := realHome()
 	got, err := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
 	if err != nil {
 		t.Fatal(err)

@@ -2241,3 +2241,83 @@ class TestRegistryPane(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GoalCarrierTest(Stand):
+    """Сторожок различает осознанный стоп цикла и смерть его носителя (DK-1160).
+
+    Раньше он мерил одно, время простоя, и зов выходил одинаковым в обоих
+    случаях. Цикл, вставший вердиктом витка, ждёт человека. Цикл, чья оболочка
+    умерла вместе с машиной, не ждёт ничего, и продолжать его некому.
+    """
+
+    def raised(self, call):
+        """Вызовы самой оболочки цикла. Имя её файла лежит и в тексте зова
+        человеку, поэтому смотреть надо аргумент запуска, а не всю строку."""
+        return [a for a in call.calls if len(a) > 1 and "goal-run.py" in str(a[1])]
+
+    def dead_session(self, sid="sess-мёртвая"):
+        """Запись реестра чатов про сессию, транскрипта у которой нет."""
+        line = ("2026-09-24T11:33:35 сессия %s задача - проект стенд дерево %s "
+                "транскрипт %s источник - повод startup tmux - панель - "
+                "родитель - носитель -\n" % (sid, self.proj, self.home / "нет.jsonl"))
+        with open(str(self.home / ".devkit" / "sessions.log"), "a", encoding="utf-8") as f:
+            f.write(line)
+        return sid
+
+    def test_dead_carrier_raises_the_loop(self):
+        sid = self.dead_session()
+        path = self.entry(seen_minutes=200, session=sid, carrier="shell")
+        self.runlog(200)
+        call = Fake()
+        called, line = watch.look(path, self.now, 45 * 60, call, home=self.home)
+        self.assertTrue(called, line)
+        self.assertIn("носитель мёртв", line)
+        self.assertIn("цикл поднят оболочкой", line)
+        raised = self.raised(call)
+        self.assertEqual(len(raised), 1, "оболочку не позвали: %s" % call.calls)
+        self.assertIn(GOAL, raised[0])
+        self.assertEqual(call.argv_with("notify.py"), [],
+                         "осиротевший цикл подняли и всё равно позвали человека")
+
+    def test_stop_marker_is_left_to_the_human(self):
+        sid = self.dead_session()
+        path = self.entry(seen_minutes=200, session=sid, carrier="shell",
+                          marker="wait-human")
+        self.runlog(200)
+        call = Fake()
+        called, line = watch.look(path, self.now, 45 * 60, call, home=self.home)
+        self.assertTrue(called, line)
+        self.assertIn("ждёт человека", line)
+        self.assertEqual(self.raised(call), [],
+                         "цикл, ждущий человека, подняли оболочкой")
+        notify = call.argv_with("notify.py")
+        self.assertEqual(len(notify), 1, "человека не позвали: %s" % call.calls)
+        self.assertIn("ждёт человека", notify[0][5],
+                      "зов не называет, что с циклом: %s" % notify[0][5])
+
+    def test_live_carrier_is_left_alone(self):
+        """Живой носитель подъёмом не трогают: сессия идёт сама."""
+        path = self.entry(seen_minutes=200, session="sess-1", carrier="chat")
+        self.runlog(200)
+        call = Fake()
+        watch.session_alive = lambda *a, **kw: True
+        try:
+            called, line = watch.look(path, self.now, 45 * 60, call, home=self.home)
+        finally:
+            import importlib
+            importlib.reload(watch)
+        self.assertTrue(called, line)
+        self.assertIn("носитель жив", line)
+
+    def test_tries_have_a_ceiling(self):
+        sid = self.dead_session()
+        path = self.entry(seen_minutes=200, session=sid, carrier="shell",
+                          raised=str(watch.GOAL_TRIES))
+        self.runlog(200)
+        call = Fake()
+        called, line = watch.look(path, self.now, 45 * 60, call, home=self.home)
+        self.assertTrue(called, line)
+        self.assertIn("дальше ждёт человека", line)
+        self.assertEqual(self.raised(call), [],
+                         "потолок попыток не удержал подъём")

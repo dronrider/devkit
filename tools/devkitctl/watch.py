@@ -1597,6 +1597,31 @@ def shout(title, body, root, call=None, task=None):
     return out or "отправлено"
 
 
+# Маркеры вердикта витка, при которых цикл стоит осознанно: он позвал человека
+# или упёрся и ждёт разбора. Такой стоп подъёмом не трогают, о нём зовут.
+GOAL_STOPS = ("wait-human", "stuck", "over", "done")
+
+
+def carrier_state(entry, now, home=None):
+    """Что с носителем цикла: пара (жив ли, слова для отчёта).
+
+    Сторожок мерил одно, время последнего движения, и зов выходил одинаковым в
+    двух разных случаях. Цикл, вставший по вердикту витка, ждёт человека.
+    Цикл, чья оболочка умерла вместе с машиной, не ждёт ничего и продолжать его
+    некому (DK-1160). Мера живости та же, что у задач: свежесть транскрипта
+    сессии из записи надзора.
+    """
+    marker = (entry.get("marker") or "").strip()
+    if marker in GOAL_STOPS:
+        return True, "цикл встал вердиктом витка «%s», ждёт человека" % marker
+    sid = (entry.get("session") or "").strip()
+    if not sid or sid == "-":
+        return True, "носитель не записан, подъём вслепую не идёт"
+    if session_alive(sid, now, home):
+        return True, "носитель жив, сессия %s идёт" % sid
+    return False, "носитель мёртв: сессии %s на машине нет" % sid
+
+
 def resume_command(goal, root, devkit=None):
     """Команда продолжения цикла, готовая к запуску: путь до оболочки абсолютный,
     цель и корень названы. Сам сторожок цикл не поднимает (разбор в
@@ -1631,7 +1656,42 @@ def moved_at(entry, root, path):
         return None
 
 
-def look(path, now, idle, call=None):
+# Сколько раз подряд поднимать осиротевший цикл. Потолок тот же по смыслу, что
+# у подъёма строк: цикл, который не заводится три раза, ждёт человека.
+GOAL_TRIES = 3
+
+
+def raise_goal(goal, root, entry, path, now, call=None):
+    """Подъём цикла, потерявшего носителя. Возврат это (поднялся ли, слова).
+
+    Продолжение цикла сторожок на себя не брал, и доводы тому стоят в
+    tools/devkitctl/README.md. Все они про осознанный стоп: оболочка потратила
+    свои три попытки, живой чат оболочкой не продолжается, чужую сессию за
+    деньги квоты без спроса не запускают. Осиротевший цикл под эти доводы не
+    подходит. Попыток он не тратил, чата у него больше нет, а команда на
+    подъём та же самая, которую сторожок и так кладёт человеку в зов.
+    """
+    try:
+        tries = int(entry.get("raised", "0")) + 1
+    except ValueError:
+        tries = 1
+    if tries > GOAL_TRIES:
+        return False, ("цикл поднимали %d раза подряд, носитель не удержался: "
+                       "дальше ждёт человека" % GOAL_TRIES)
+    call = subprocess.run if call is None else call
+    argv = resume_command(goal, root).split()
+    entry["raised"] = str(tries)
+    entry["stopped"] = now.strftime(STAMP)
+    write_entry(path, entry)
+    try:
+        call(argv, cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+             start_new_session=True)
+    except OSError as e:
+        return False, "оболочка не запустилась, %s" % e
+    return True, "цикл поднят оболочкой, попытка %d из %d" % (tries, GOAL_TRIES)
+
+
+def look(path, now, idle, call=None, home=None):
     """Что сторожок сделал с одной записью реестра: (позвали ли, строка отчёта).
 
     Тут же чинится сам реестр: цель, ушедшая с доски, в Check или в Done, надзора
@@ -1671,21 +1731,29 @@ def look(path, now, idle, call=None):
         if quiet < idle:
             return False, "цель %s в %s: простой %s, звали в %s, повтор через %s" % (
                 goal, root, say.human_age(gap), entry["stopped"], say.human_age(idle - quiet))
+    alive, why = carrier_state(entry, now, home)
+    if not alive:
+        ok, words = raise_goal(goal, root, entry, path, now, call)
+        if ok:
+            return True, "цель %s в %s: простой %s, %s; %s" % (
+                goal, root, say.human_age(gap), why, words)
+        return True, "цель %s в %s: простой %s, %s; подъём не вышел: %s" % (
+            goal, root, say.human_age(gap), why, words)
     try:
         times = int(entry.get("shouts", "0")) + 1
     except ValueError:
         times = 1
     title = "цель %s: цикл стоит %s" % (goal, say.human_age(gap))
     again = ", зову %d-й раз" % times if times > 1 else ""
-    body = "движения в %s нет с %s при пороге %s%s; продолжить цикл: %s" % (
+    body = "движения в %s нет с %s при пороге %s%s; %s; продолжить цикл: %s" % (
         os.path.basename(root.rstrip("/")), moved.strftime(STAMP), say.human_age(idle),
-        again, resume_command(goal, root))
+        again, why, resume_command(goal, root))
     said = shout(title, body, root, call, goal)
     entry["stopped"] = now.strftime(STAMP)
     entry["shouts"] = str(times)
     write_entry(path, entry)
-    return True, "цель %s в %s: простой %s при пороге %s, зову%s; %s" % (
-        goal, root, say.human_age(gap), say.human_age(idle), again, said)
+    return True, "цель %s в %s: простой %s при пороге %s, %s, зову%s; %s" % (
+        goal, root, say.human_age(gap), say.human_age(idle), why, again, said)
 
 
 def drop(path):
@@ -1779,7 +1847,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     for path in entries(home):
         watched += 1
         root = read_entry(path).get("root")
-        called, line = look(path, now, idle, call)
+        called, line = look(path, now, idle, call, home=home)
         found += 1 if called else 0
         out.write(line + "\n")
         if called:

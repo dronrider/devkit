@@ -1661,7 +1661,19 @@ def moved_at(entry, root, path):
 GOAL_TRIES = 3
 
 
-def raise_goal(goal, root, entry, path, now, call=None):
+def autonomous(root):
+    """Стоит ли в проекте флаг автономного выката. Оболочка цикла его и так
+    спрашивает предполётом, но сторожок обязан спросить раньше: иначе он
+    тратит попытку подъёма и рапортует успех там, где цикл не стартует."""
+    try:
+        with open(os.path.join(root, ".devkit", "deploy.local"), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return False
+    return any(re.match(r"^\s*autonomous\s*=\s*true", ln) for ln in lines)
+
+
+def raise_goal(goal, root, entry, path, now, call=None, shout_call=None):
     """Подъём цикла, потерявшего носителя. Возврат это (поднялся ли, слова).
 
     Продолжение цикла сторожок на себя не брал, и доводы тому стоят в
@@ -1678,11 +1690,17 @@ def raise_goal(goal, root, entry, path, now, call=None):
     if tries > GOAL_TRIES:
         return False, ("цикл поднимали %d раза подряд, носитель не удержался: "
                        "дальше ждёт человека" % GOAL_TRIES)
-    call = subprocess.run if call is None else call
+    if not autonomous(root):
+        return False, ("в .devkit/deploy.local нет autonomous = true: "
+                       "цикл тут не поднимают, зову человека")
+    call = subprocess.Popen if call is None else call
     argv = resume_command(goal, root).split()
     entry["raised"] = str(tries)
     entry["stopped"] = now.strftime(STAMP)
     write_entry(path, entry)
+    # Ход запускателя тут не ждут. Цикл цели живёт часами, и ожидание его конца
+    # встало бы поперёк всего тика: сторожок не дошёл бы ни до разлива, ни до
+    # соседних корней.
     try:
         call(argv, cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
              start_new_session=True)
@@ -1718,8 +1736,9 @@ def look(path, now, idle, call=None, home=None):
         return False, "цель %s в %s: движения не измерить, записи нет времени" % (goal, root)
     gap = (now - moved).total_seconds()
     if gap < idle:
-        if entry.pop("stopped", None) or entry.pop("shouts", None):
+        if entry.pop("stopped", None) or entry.pop("shouts", None) or entry.pop("raised", None):
             entry.pop("shouts", None)
+            entry.pop("raised", None)
             write_entry(path, entry)
         return False, "цель %s в %s: движение %s назад, тихо" % (goal, root, say.human_age(gap))
     # Зов повторяется, пока цикл стоит: молчание после первого баннера и дало
@@ -1737,8 +1756,9 @@ def look(path, now, idle, call=None, home=None):
         if ok:
             return True, "цель %s в %s: простой %s, %s; %s" % (
                 goal, root, say.human_age(gap), why, words)
-        return True, "цель %s в %s: простой %s, %s; подъём не вышел: %s" % (
-            goal, root, say.human_age(gap), why, words)
+        # Подъём не пошёл, и дальше цикл сам не двинется. Молчать тут нельзя:
+        # осиротевшая цель осталась бы без присмотра вовсе.
+        why = "%s, %s" % (why, words)
     try:
         times = int(entry.get("shouts", "0")) + 1
     except ValueError:

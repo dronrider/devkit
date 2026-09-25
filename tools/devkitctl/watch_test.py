@@ -2256,6 +2256,12 @@ class GoalCarrierTest(Stand):
         человеку, поэтому смотреть надо аргумент запуска, а не всю строку."""
         return [a for a in call.calls if len(a) > 1 and "goal-run.py" in str(a[1])]
 
+    def autonomous(self):
+        """Флаг автономного выката в проекте стенда: без него подъём не идёт."""
+        d = self.proj / ".devkit"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "deploy.local").write_text("autonomous = true\n", encoding="utf-8")
+
     def dead_session(self, sid="sess-мёртвая"):
         """Запись реестра чатов про сессию, транскрипта у которой нет."""
         line = ("2026-09-24T11:33:35 сессия %s задача - проект стенд дерево %s "
@@ -2266,6 +2272,7 @@ class GoalCarrierTest(Stand):
         return sid
 
     def test_dead_carrier_raises_the_loop(self):
+        self.autonomous()
         sid = self.dead_session()
         path = self.entry(seen_minutes=200, session=sid, carrier="shell")
         self.runlog(200)
@@ -2311,6 +2318,7 @@ class GoalCarrierTest(Stand):
         self.assertIn("носитель жив", line)
 
     def test_tries_have_a_ceiling(self):
+        self.autonomous()
         sid = self.dead_session()
         path = self.entry(seen_minutes=200, session=sid, carrier="shell",
                           raised=str(watch.GOAL_TRIES))
@@ -2321,3 +2329,59 @@ class GoalCarrierTest(Stand):
         self.assertIn("дальше ждёт человека", line)
         self.assertEqual(self.raised(call), [],
                          "потолок попыток не удержал подъём")
+
+    def test_ceiling_still_shouts(self):
+        """Исчерпав попытки, сторожок зовёт человека. Молчание оставило бы
+        осиротевшую цель без присмотра вовсе (замечание ревью DK-1160)."""
+        self.autonomous()
+        sid = self.dead_session()
+        path = self.entry(seen_minutes=200, session=sid, carrier="shell",
+                          raised=str(watch.GOAL_TRIES))
+        self.runlog(200)
+        call = Fake()
+        called, line = watch.look(path, self.now, 45 * 60, call, home=self.home)
+        self.assertTrue(called, line)
+        notify = call.argv_with("notify.py")
+        self.assertEqual(len(notify), 1, "на потолке попыток человека не позвали: %s" % call.calls)
+        self.assertIn("дальше ждёт человека", notify[0][5])
+
+    def test_movement_clears_the_raise_count(self):
+        """Двинувшийся цикл снимает счёт попыток. Иначе три осиротения за всю
+        жизнь цели закрывали бы ей подъём навсегда."""
+        path = self.entry(seen_minutes=1, session="sess-1", carrier="shell",
+                          raised="2", stopped=stamp(self.now - timedelta(minutes=100)))
+        self.runlog(1)
+        watch.look(path, self.now, 45 * 60, Fake(), home=self.home)
+        self.assertNotIn("raised", watch.read_entry(path),
+                         "движение не сняло счёт попыток подъёма")
+
+    def test_no_autonomy_means_no_raise(self):
+        """Без флага автономного выката цикл не поднимают, а зовут человека:
+        оболочка всё равно откажет предполётом, и попытка ушла бы впустую."""
+        sid = self.dead_session()
+        path = self.entry(seen_minutes=200, session=sid, carrier="shell")
+        self.runlog(200)
+        call = Fake()
+        called, line = watch.look(path, self.now, 45 * 60, call, home=self.home)
+        self.assertTrue(called, line)
+        self.assertEqual(self.raised(call), [], "цикл подняли без флага автономии")
+        self.assertIn("autonomous = true", line)
+        self.assertEqual(len(call.argv_with("notify.py")), 1,
+                         "человека не позвали: %s" % call.calls)
+
+    def test_unknown_session_is_left_alone(self):
+        """Незнакомая и пустая сессия это не повод поднимать: носитель мог и не
+        записаться, а подъём вслепую стоит денег квоты."""
+        self.autonomous()
+        for extra in ({"session": ""}, {"session": "sess-незнакомая"}):
+            path = self.entry(seen_minutes=200, carrier="shell", **extra)
+            self.runlog(200)
+            call = Fake()
+            called, line = watch.look(path, self.now, 45 * 60, call, home=self.home)
+            self.assertTrue(called, line)
+            if extra["session"]:
+                self.assertIn("носитель мёртв", line)
+            else:
+                self.assertIn("носитель не записан", line)
+                self.assertEqual(self.raised(call), [],
+                                 "цикл без записанного носителя подняли")

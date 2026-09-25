@@ -56,7 +56,14 @@ mode, base, cookie_path, auth_token, ceiling = sys.argv[1:6]
 ceiling = float(ceiling)
 jar = http.cookiejar.MozillaCookieJar(cookie_path)
 if mode == "get":
-	jar.load(ignore_discard=True, ignore_expires=True)
+	# Вход мог не состояться: конфига дашборда нет, сервис не поднят, токен
+	# не тот. Тогда файл пуст, и разбор его формата валит замер трассой
+	# вместо внятного отказа. Пустая банка едет дальше, ответ сервера скажет
+	# о беде сам.
+	try:
+		jar.load(ignore_discard=True, ignore_expires=True)
+	except (OSError, http.cookiejar.LoadError):
+		pass
 opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 
 try:

@@ -56,7 +56,7 @@ func Fresh(root, id, doc, again string) error {
 	if err != nil || head == "" {
 		return nil
 	}
-	if strings.HasPrefix(head, mark) || onlyTaskDocSince(root, id, mark) {
+	if strings.HasPrefix(head, mark) || onlyTaskDocSince(root, mark) {
 		return nil
 	}
 	return fmt.Errorf("%s: отметка обкатки стоит на коммите %s, а HEAD уже %s: после прогона в ветку приехал код, которого обкатка не видела, прогнать «taskctl rehearse %s» заново и повторить %s",
@@ -75,8 +75,7 @@ func missing(id, again string) error {
 // вывод и отметку в файл задачи, коммит с ними уезжает следом, и отметка
 // устаревала бы ровно в ту минуту, когда её положили. Правку кода такой разбор
 // не прощает: там в диффе коммита стоят чужие пути.
-func onlyTaskDocSince(root, id, mark string) bool {
-	_ = id // состав коммита теперь смотрят без привязки к названной строке
+func onlyTaskDocSince(root, mark string) bool {
 	out, err := gitLine(root, "log", "--format=%H", mark+"..HEAD")
 	if err != nil {
 		return false
@@ -97,18 +96,22 @@ func onlyTaskDocSince(root, id, mark string) bool {
 	return true
 }
 
-// boardDoc: путь ведёт в запись задачи доски. Такой файл кода не несёт, и
+// boardDoc: путь ведёт в доску или в запись задачи. Такой файл кода не несёт, и
 // обкатка, прошедшая до него, ручается за тот же код.
+//
+// Сама доска сюда входит наравне с записями. Перевод строки соседа по поезду
+// правит docs/TASKS.md и docs/tasks/<ID>.md одним коммитом, и без доски
+// послабление накрывало бы половину случая.
 //
 // Раньше тут стоял файл одной названной задачи, и поезд из нескольких строк
 // через ворота не проходил вовсе. Запись обкатки ложится в файл своей задачи и
 // коммитится, а соседу по составу этот коммит уже чужой: обкатали первую,
 // закоммитили, обкатали вторую, и отметка первой числилась протухшей (DK-1161).
 func boardDoc(p string) bool {
-	if !strings.HasPrefix(p, "docs/tasks/") || !strings.HasSuffix(p, ".md") {
-		return false
+	if p == "docs/TASKS.md" || p == "docs/TASKS-archive.md" {
+		return true
 	}
-	return true
+	return strings.HasPrefix(p, "docs/tasks/") && strings.HasSuffix(p, ".md")
 }
 
 func gitLine(root string, args ...string) (string, error) {

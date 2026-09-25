@@ -135,3 +135,29 @@ func TestFreshCatchesCodeAfterMark(t *testing.T) {
 		t.Fatalf("отказ не называет причину: %v", err)
 	}
 }
+
+// TestFreshSurvivesBoardMove: перевод строки соседа по поезду отметку не гасит.
+// Такой коммит правит доску и запись задачи вместе, и без доски послабление
+// накрывало бы половину случая (замечание ревью DK-1161).
+func TestFreshSurvivesBoardMove(t *testing.T) {
+	dir := repo(t)
+	head := commit(t, dir, "tools/x/main.go", "package main\n")
+	d := doc("")
+	commit(t, dir, "docs/TASKS.md", "| XR-002 |\n")
+	commit(t, dir, "docs/tasks/XR-002.md", "запись соседа\n")
+	if err := Fresh(dir, "XR-001", d+stamp(d, head), "слияние"); err != nil {
+		t.Fatalf("перевод строки соседа погасил отметку: %v", err)
+	}
+}
+
+// TestFreshCatchesScriptNextToTaskDoc: сценарный скрипт рядом с записью задачи
+// это код, и отметку он гасит: по нему гоняются шаги проверки.
+func TestFreshCatchesScriptNextToTaskDoc(t *testing.T) {
+	dir := repo(t)
+	head := commit(t, dir, "tools/x/main.go", "package main\n")
+	d := doc("")
+	commit(t, dir, "docs/tasks/XR-001-check.sh", "echo шаг\n")
+	if err := Fresh(dir, "XR-001", d+stamp(d, head), "слияние"); err == nil {
+		t.Fatal("правка сценарного скрипта ворот не отбила")
+	}
+}

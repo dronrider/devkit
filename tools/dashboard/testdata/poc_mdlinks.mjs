@@ -91,14 +91,33 @@ const bubble = (project, text) => {
   if (links(box).length) fail("обычный код стал ссылкой: " + JSON.stringify(links(box)));
 }
 
-// --- ID внутри блока кода и обратных кавычек не трогается ---
+// --- ID внутри блока кода не трогается ---
 {
   const box = bubble("devkit",
-    "Смотри тут:\n\n```\ntaskctl show DK-397\nсм. docs/lld/DK-503-exec-ceiling.md\n```\n\nи `DK-430` в строке.");
+    "Смотри тут:\n\n```\ntaskctl show DK-397\nсм. docs/lld/DK-503-exec-ceiling.md\n```\n\nи всё.");
   if (links(box).length) {
-    fail("ID из блока кода или обратных кавычек стал ссылкой: " + JSON.stringify(links(box)));
+    fail("ID из блока кода стал ссылкой: " + JSON.stringify(links(box)));
   }
   if (!dump(box).includes("taskctl show DK-397")) fail("блок кода потерялся: " + dump(box));
+}
+
+// --- ID задачи в обратных кавычках ведёт на задачу, оставаясь кодом ---
+//
+// После DK-1120 короткий фрагмент в кавычках берётся кликом в буфер, и ID в
+// кавычках, как его пишут агенты, стал блоком копирования без дороги к задаче
+// (жалоба пользователя). Ссылкой становится обёртка, как у пути документа, а
+// команда с ID внутри остаётся командой: она не одно слово.
+{
+  const box = bubble("devkit", "Взял `DK-430` в работу, смотри `taskctl show DK-397` и `XR-1`.");
+  const got = links(box);
+  const want = [["DK-430", "#devkit/DK-430"], ["XR-1", "#other/XR-1"]];
+  if (JSON.stringify(got) !== JSON.stringify(want)) {
+    fail("ID в обратных кавычках повёл не на задачу: " + JSON.stringify(got));
+  }
+  const a = allByClass(box, "mdgo")[0];
+  const mono = (a.children || []).some((k) => k && k.tagName === "CODE");
+  if (!mono) fail("ссылка на задачу потеряла вид кода: " + JSON.stringify(dump(a)));
+  if (!dump(box).includes("taskctl show DK-397")) fail("команда с ID потерялась: " + dump(box));
 }
 
 // --- документы: LLD, файл задачи, черновик ---

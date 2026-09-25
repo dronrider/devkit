@@ -478,12 +478,15 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 	}
 	session := fmt.Sprintf("agentctl-usage-%d", os.Getpid())
 	args := []string{"new-session", "-d", "-s", session, "-x", strconv.Itoa(usagePaneCols), "-y", strconv.Itoa(usagePaneRows)}
-	// Клиент поднимается в каталоге, которому он уже доверяет (panelDir):
-	// из недоверенного он вместо панели спрашивает про доверие, и таким
-	// каталогом оказывается рабочий каталог всякого launchd-агента.
-	if dir := panelDir(q); dir != "" {
-		args = append(args, "-c", dir)
+	// Каталог подъёма называется всегда (panelDir): доверенное дерево, иначе
+	// служебный пустой каталог под домом харнеса. Без «-c» клиент брал рабочий
+	// каталог agentctl, а под launchd это корень файловой системы, и обход
+	// дерева поднимал диалоги доступа macOS (DK-1163).
+	dir, err := panelDir(q)
+	if err != nil {
+		return snapshot{}, fmt.Errorf("каталог подъёма клиента не выбран (%v), снимок не тронут", err)
 	}
+	args = append(args, "-c", dir)
 	if out, err := tmuxRun(append(args, "claude")...); err != nil {
 		return snapshot{}, fmt.Errorf("tmux не поднял сессию: %v %s", err, out)
 	}
@@ -517,7 +520,6 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 
 	var w panelWaiter
 	var why error
-	var err error
 	// Отказ по частоте обращений панель предлагает пережать сама («r to
 	// retry»), и уходить с него с первого раза нельзя: эндпоинт расхода общий на
 	// все живые сессии машины, попасть в занятую минуту легко, а платит за это

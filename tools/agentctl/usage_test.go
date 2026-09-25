@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/clientdir"
 )
 
 func readFixture(t *testing.T, name string) string {
@@ -1317,12 +1319,17 @@ func TestPanelDir(t *testing.T) {
 	home := t.TempDir()
 	trusted := t.TempDir()
 	gone := filepath.Join(home, "снесённый")
+	service := filepath.Join(home, clientdir.Base, clientdir.Name)
 	q := specAt(t, filepath.Join(home, ".devkit", "quota", "claude-code.local"))
 	q.Home = home
 
-	t.Run("без файла клиента каталог не меняется", func(t *testing.T) {
-		if dir := panelDir(q); dir != "" {
-			t.Fatalf("без .claude.json каталог сменился на %q", dir)
+	t.Run("без файла клиента берётся служебный каталог", func(t *testing.T) {
+		dir, err := panelDir(q)
+		if err != nil {
+			t.Fatalf("каталог не выбран: %v", err)
+		}
+		if dir != service {
+			t.Fatalf("без .claude.json выбран %q, ждали служебный %q", dir, service)
 		}
 	})
 
@@ -1334,22 +1341,48 @@ func TestPanelDir(t *testing.T) {
 	}
 
 	t.Run("берётся живой доверенный каталог", func(t *testing.T) {
-		if dir := panelDir(q); dir != trusted {
+		dir, err := panelDir(q)
+		if err != nil {
+			t.Fatalf("каталог не выбран: %v", err)
+		}
+		if dir != trusted {
 			t.Fatalf("жду %q, получил %q", trusted, dir)
 		}
 	})
 
-	t.Run("доверенный текущий каталог остаётся как есть", func(t *testing.T) {
+	t.Run("доверенный текущий каталог берётся первым", func(t *testing.T) {
 		cwd, err := os.Getwd()
 		if err != nil {
 			t.Fatal(err)
 		}
-		conf := `{"projects": {"` + cwd + `": {"hasTrustDialogAccepted": true}}}`
+		conf := `{"projects": {"` + cwd + `": {"hasTrustDialogAccepted": true},
+			"` + trusted + `": {"hasTrustDialogAccepted": true}}}`
 		if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(conf), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if dir := panelDir(q); dir != "" {
-			t.Fatalf("доверенный текущий каталог сменился на %q", dir)
+		dir, err := panelDir(q)
+		if err != nil {
+			t.Fatalf("каталог не выбран: %v", err)
+		}
+		if dir != cwd {
+			t.Fatalf("жду текущий каталог %q, получил %q", cwd, dir)
+		}
+	})
+
+	// Доверенный дом под подъём не годится: обход дома и поднимает диалоги
+	// доступа macOS, из-за которых каталог вообще стали называть (DK-1163).
+	t.Run("доверенный дом меняется на служебный каталог", func(t *testing.T) {
+		conf := `{"projects": {"` + home + `": {"hasTrustDialogAccepted": true}}}`
+		if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(conf), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		dir, err := panelDir(q)
+		if err != nil {
+			t.Fatalf("каталог не выбран: %v", err)
+		}
+		if dir != service {
+			t.Fatalf("выбран %q, ждали служебный %q", dir, service)
 		}
 	})
 }
+

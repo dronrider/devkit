@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/clientdir"
 )
 
 // Кеш расхода клиента Claude Code. Панель /usage рисует не свои цифры: ответ
@@ -68,16 +70,21 @@ func usageModelBucket(name string) (string, bool) {
 	return "", false
 }
 
-// usageCachePath это файл клиента под домом харнеса. У первой подписки дом
-// обычный, у второй свой каталог конфигурации, и кеш лежит там же.
+// usageHome это дом харнеса. У первой подписки он обычный, у второй свой
+// каталог конфигурации, и кеш клиента со служебным каталогом подъёма лежат под
+// ним же.
+func usageHome(q *quotaSpec) (string, error) {
+	if q.Home != "" {
+		return q.Home, nil
+	}
+	return os.UserHomeDir()
+}
+
+// usageCachePath это файл клиента под домом харнеса.
 func usageCachePath(q *quotaSpec) (string, error) {
-	home := q.Home
-	if home == "" {
-		h, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		home = h
+	home, err := usageHome(q)
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(home, usageCacheFile), nil
 }
@@ -87,11 +94,30 @@ func usageCachePath(q *quotaSpec) (string, error) {
 // вопрос про доверие, и съём кончается блокером. Живой случай DK-633: тик
 // сторожка живёт под launchd с рабочим каталогом «/», и панель из него не
 // давалась никогда, а снимок бесконечно падал на протухший кеш. Подтверждения
-// лежат в том же .claude.json, что и кеш расхода. Текущий каталог с доверием
-// остаётся как есть, это дорога ручного запуска. Пустой возврат значит
-// «каталог не менять»: доверенных не нашлось, и блокер панели назовёт вопрос
-// доверия словами.
-func panelDir(q *quotaSpec) string {
+// лежат в том же .claude.json, что и кеш расхода.
+//
+// Каталог называется всегда. Прежде пустой возврат значил «каталог не менять»,
+// и клиент поднимался в рабочем каталоге agentctl: под launchd это корень
+// файловой системы, а из терминала дом пользователя, и обход дерева упирался в
+// защищённые папки macOS диалогами доступа (DK-1163). Доверенного дерева не
+// нашлось, значит подъём идёт в служебном пустом каталоге: блокер панели
+// назовёт вопрос доверия словами, но обходить клиенту там уже нечего.
+func panelDir(q *quotaSpec) (string, error) {
+	home, err := usageHome(q)
+	if err != nil {
+		return "", fmt.Errorf("дом харнеса %s не найден (%v)", q.Harness, err)
+	}
+	if dir := panelTrusted(q, home); dir != "" {
+		return dir, nil
+	}
+	return clientdir.Service(home)
+}
+
+// panelTrusted ищет живое доверенное дерево под подъём панели. Текущий каталог
+// с доверием предпочитается остальным, это дорога ручного запуска. Дом сюда не
+// годится, даже доверенный: обход дома и есть тот дефект, ради которого
+// каталог называется явно.
+func panelTrusted(q *quotaSpec, home string) string {
 	path, err := usageCachePath(q)
 	if err != nil {
 		return ""
@@ -108,12 +134,12 @@ func panelDir(q *quotaSpec) string {
 	if json.Unmarshal(raw, &conf) != nil {
 		return ""
 	}
-	if cwd, err := os.Getwd(); err == nil && conf.Projects[cwd].Trusted {
-		return ""
+	if cwd, err := os.Getwd(); err == nil && conf.Projects[cwd].Trusted && clientdir.Check(cwd, home) == nil {
+		return cwd
 	}
 	var dirs []string
 	for dir, p := range conf.Projects {
-		if p.Trusted {
+		if p.Trusted && clientdir.Check(dir, home) == nil {
 			dirs = append(dirs, dir)
 		}
 	}

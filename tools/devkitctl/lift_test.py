@@ -472,3 +472,53 @@ class ReplyCallCase(unittest.TestCase):
         # Второй заход о том же молчит: зов состоялся, а строка так и лежит.
         _, _, again = self.lift()
         self.assertEqual(again.call_count, 0, "баннер повторился на следующем тике")
+
+
+class ReplyRefusalCase(unittest.TestCase):
+    """Отказ подъёма по реплике: зовут не на всякий код возврата.
+
+    Занятый замок значит, что голову задачи держит живая работа, и реплику она
+    прочитает подхватом. Баннер «реплика лежит недоставленной» там был бы
+    неправдой, а сломанная раскладка машины это настоящее молчание в ответ.
+    """
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.home), str(self.root)]))
+        d = self.root / ".devkit" / "chat"
+        d.mkdir(parents=True)
+        (d / "task-DK-60.in").write_text(
+            "2026-09-26 21:41, из дашборда: продолжай\n", encoding="utf-8")
+
+    def lift(self, code):
+        """Заход, где заказ подъёма отвечает названным кодом."""
+        rows = board([row("DK-60", "проверка", "сессии нет, брошена")], key="check")
+        call = Fake(rows)
+
+        def run(argv, **kw):
+            call.calls.append(argv)
+            if "run" in argv:
+                return subprocess.CompletedProcess(argv, code, "слова заказа", "")
+            return subprocess.CompletedProcess(argv, 0, rows, "")
+
+        with unittest.mock.patch("watch.shout", return_value="отправлено") as shout:
+            lines, raised = lift.lift_root(str(self.root), call=run, taskctl="taskctl",
+                                          home=str(self.home))
+        return lines, raised, shout
+
+    def test_busy_lock_calls_nobody(self):
+        lines, raised, shout = self.lift(3)
+        self.assertEqual(raised, 0)
+        self.assertIn("подъём отбит кодом 3", " ".join(lines))
+        self.assertEqual(shout.call_count, 0, "баннер ушёл при живой голове задачи")
+
+    def test_ladder_call_is_not_doubled(self):
+        """Кодом 1 лестница говорит, что человека позвала сама."""
+        _, _, shout = self.lift(1)
+        self.assertEqual(shout.call_count, 0, "баннер о том же молчании ушёл вторым")
+
+    def test_broken_setup_calls_human(self):
+        lines, _, shout = self.lift(2)
+        self.assertEqual(shout.call_count, 1, "сломанная раскладка осталась без зова")
+        self.assertIn("человек позван к лежащей реплике", " ".join(lines))

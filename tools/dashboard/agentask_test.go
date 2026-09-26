@@ -212,15 +212,22 @@ func TestStaticAskPollSurvivesFetchFailure(t *testing.T) {
 // дороге. Разбор снимка панели tmux остался, но за вопросами самого клиента
 // (доверие каталогу, вход по /login), и стенд следит, чтобы вместе с блоком не
 // уехала эта половина.
+//
+// Поле `steps` признака приметой прежнего блока больше не считается (DK-892).
+// Вопросов в пачке до четырёх, и подсказка при неузнанном блоке называет их
+// все, иначе человек отвечал бы на один из четырёх (замечание 2 ревью). Табы,
+// своя отправка и поле свободного ответа остались запрещены поимённо: блоком с
+// кнопками подсказка от этого не становится.
 func TestStaticAgentAskWidgetGone(t *testing.T) {
 	js := readFile(t, filepath.Join("static", "app.js"))
 	for _, gone := range []string{"paintAgentAsk", "askSay", "box.askSaid", "box.askStep",
-		"askStepShell", "askFreeField", "ask.steps", "ask.said"} {
+		"askStepShell", "askFreeField", "ask.said"} {
 		if strings.Contains(js, gone) {
 			t.Errorf("в static/app.js остался прежний блок вопроса агента: %q", gone)
 		}
 	}
-	for _, want := range []string{"function paintClientAsk(", "function askPickWire("} {
+	for _, want := range []string{"function paintClientAsk(", "function askPickWire(",
+		"function askBlindSteps("} {
 		if !strings.Contains(js, want) {
 			t.Errorf("в static/app.js нет %q: вопрос клиента или галочки не соберутся", want)
 		}

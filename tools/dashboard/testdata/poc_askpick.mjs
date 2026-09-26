@@ -133,9 +133,33 @@ const ask = {
   options: [{ text: "утилита печатает блок" }, { text: "агент собирает текст" }],
 };
 
+// Признак с пачкой вопросов: их до четырёх, и едут они полем steps, а первый
+// ручка дублирует в text и options (agentAskOf в waiting.go). Промах DK-891
+// случился как раз на пачке, и подсказка обязана назвать её целиком.
+const askPack = {
+  kind: "agent",
+  task: "DK-864",
+  until,
+  text: "«печать»: кто собирает текст вопроса в чат?",
+  options: [{ text: "утилита печатает блок" }, { text: "агент собирает текст" }],
+  steps: [
+    {
+      name: "1. кто собирает текст вопроса",
+      now: true,
+      text: "«печать»: кто собирает текст вопроса в чат?",
+      options: [{ text: "утилита печатает блок" }, { text: "агент собирает текст" }],
+    },
+    {
+      name: "2. какой формы ответ человека",
+      text: "«ответ»: какой формы ответ человека?",
+      options: [{ text: "имя развилки и номер варианта" }, { text: "только словами" }],
+    },
+  ],
+};
+
 const now = { ask, items: [], said: [] };
 
-const { sandbox, timers } = makeSandbox(app, (path, init) => {
+const { sandbox, timers, streams } = makeSandbox(app, (path, init) => {
   const post = init && init.method === "POST";
   if (post && path.includes("/say")) {
     now.said.push(JSON.parse(init.body).text);
@@ -174,6 +198,16 @@ const click = (node) => node.handlers.click({ stopPropagation: () => {} });
 const settleMove = async () => {
   await settle();
   for (const t of timers.splice(0)) t.fn();
+  await settle();
+};
+// Реплика, доехавшая в живую ленту потоком: так она и приходит на экране, и
+// только так проверяется случай «признак встал раньше реплики с блоком».
+const saidLater = async (item) => {
+  const live = streams.filter((s) => String(s.url).includes("/sessions/") && !s.closed);
+  const es = live[live.length - 1];
+  if (!es || !es.onmessage) fail("поток ленты не поднялся: потоков " + live.length);
+  now.items = now.items.concat([item]);
+  es.onmessage({ data: JSON.stringify(item) });
   await settle();
 };
 
@@ -385,7 +419,7 @@ const settleMove = async () => {
   // с первого круга мигала бы на каждом штатном вопросе.
   if (!box) fail("узла блока вопроса в панели нет вовсе");
   if (!box.hidden) fail("подсказка встала с первого круга опроса: " + dump(box).slice(0, 400));
-  await settleMove();
+  for (let i = 0; i < 4; i++) await settleMove();
   if (box.hidden) fail("панель промолчала о живом признаке без разобранного блока");
   const said = dump(box);
   // Вопрос человек читает словами признака, а рядом стоит, чем отвечать.
@@ -405,6 +439,48 @@ const settleMove = async () => {
   now.ask = null;
   await settleMove();
   if (!box.hidden) fail("подсказка осталась после снятого признака");
+  now.ask = ask;
+}
+
+// --- признак завёлся посреди хода: подсказки нет, пока блок едет в ленту ---
+{
+  // Признак пишет сама команда decide --chat, а реплику с блоком агент печатает
+  // концом хода. Между ними проходит минута с лишним, и порог кругов сам по себе
+  // тут врёт: подсказка мигала бы на каждом штатном вопросе (замечание 1 ревью).
+  now.ask = null;
+  const panel = await panelWith([answer(1, plan)]);
+  const box = boxOf(panel);
+  now.ask = ask;
+  for (let i = 0; i < 8; i++) await settleMove();
+  if (box && !box.hidden) {
+    fail("подсказка встала, пока агент ещё говорит: " + dump(box).slice(0, 400));
+  }
+  // Ход кончился, и блок приехал в ленту следующей репликой.
+  await saidLater(answer(2, block));
+  for (let i = 0; i < 3; i++) await settleMove();
+  if (picksOf(panel).length !== 5) {
+    fail("галочки не встали при доехавшем блоке: " + picksOf(panel).length);
+  }
+  if (box && !box.hidden) fail("подсказка осталась при доехавшем блоке");
+}
+
+// --- в признаке пачка вопросов: подсказка называет все ---
+{
+  now.ask = askPack;
+  const panel = await panelWith([answer(1, retell)]);
+  const box = boxOf(panel);
+  for (let i = 0; i < 4; i++) await settleMove();
+  if (!box || box.hidden) fail("подсказка не встала на пачке вопросов");
+  const said = dump(box);
+  for (const want of ["кто собирает текст вопроса в чат?", "какой формы ответ человека?",
+    "утилита печатает блок", "имя развилки и номер"]) {
+    if (!said.includes(want)) {
+      fail("подсказка потеряла из пачки «" + want + "»: " + said.slice(0, 600));
+    }
+  }
+  if (!said.includes("Вопросов 2")) {
+    fail("подсказка не назвала счёт вопросов пачки: " + said.slice(0, 400));
+  }
   now.ask = ask;
 }
 

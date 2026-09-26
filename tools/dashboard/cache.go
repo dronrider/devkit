@@ -231,7 +231,12 @@ func (s *server) fly(dir, stamp string, stamped bool, fl *boardFlight) {
 	if s.boardProbe != nil {
 		s.boardProbe(dir)
 	}
+	begun := s.now()
 	raw, err := boardJSON(s.cfg.Home, dir)
+	if took := s.now().Sub(begun); took >= boardSlow {
+		s.logf("обход доски %s ответил за %.1fс, порог отзывчивости %.0fс",
+			dir, took.Seconds(), boardSlow.Seconds())
+	}
 	s.mu.Lock()
 	fl.raw, fl.err = raw, err
 	// Срок считается от ответа, а не от запроса: опрос под нагрузкой сам идёт

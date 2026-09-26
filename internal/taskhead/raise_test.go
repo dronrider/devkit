@@ -582,3 +582,21 @@ func TestPickOnlyForNewClient(t *testing.T) {
 		t.Fatalf("отказ вердикта не оставил клиенту умолчание:\n%s", broken.why(res))
 	}
 }
+
+// Готовая команда подъёма одна на всех, кто зовёт человека руками: сама
+// лестница последней ступенью и дашборд с недоставленной репликой (DK-1194).
+// Разойдись эти две строки, человек копировал бы из баннера команду, не
+// совпадающую с той, что зовёт лестница.
+func TestRunCommandIsOneForAllCallers(t *testing.T) {
+	q := Request{ID: "DK-1", Root: "/tmp/чужой проект"}
+	want := RunCommand(q.ID, q.Root)
+	if got := q.Command(); got != want {
+		t.Fatalf("лестница зовёт %q, а зовущий без заказа %q", got, want)
+	}
+	if !strings.Contains(want, "taskctl run DK-1 -C ") {
+		t.Fatalf("в команде нет подъёма задачи: %q", want)
+	}
+	if strings.Contains(want, "-C /tmp/чужой проект") {
+		t.Fatalf("путь с пробелом уехал без кавычек: %q", want)
+	}
+}

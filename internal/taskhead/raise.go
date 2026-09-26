@@ -449,7 +449,15 @@ func (q Request) headlessCmd(args []string) *exec.Cmd {
 
 // Command это готовая команда подъёма для текста зова.
 func (q Request) Command() string {
-	return "taskctl run " + q.ID + " -C " + shQuote(q.Root)
+	return RunCommand(q.ID, q.Root)
+}
+
+// RunCommand это та же готовая команда подъёма для тех, у кого заказа на руках
+// нет: дашборд зовёт человека к реплике, которую некому забрать (DK-1194), и
+// команда в баннере обязана совпадать слово в слово с той, которой зовёт сама
+// лестница.
+func RunCommand(id, root string) string {
+	return "taskctl run " + id + " -C " + shQuote(root)
 }
 
 // callHuman зовёт человека уведомителем: головы нет, и молчать об этом нельзя.

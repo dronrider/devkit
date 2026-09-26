@@ -46,6 +46,9 @@ type server struct {
 	// Сказано ли в журнал про пропущенный круг по этому дереву: строка одна на
 	// полосу отставания, а не на каждый запрос (noteLag).
 	lagSaid map[string]bool
+	// Сказано ли в журнал про просадку обхода доски по этому дереву. Строка
+	// одна на полосу просадки, снимает её первый уложившийся круг (noteSlow).
+	slowSaid map[string]bool
 	// Память вердиктов отсева боковых деревьев (projects.go): молчащий git не
 	// меняет вердикт, а без прежнего каталог считается деревом.
 	wt *worktreeMemo
@@ -192,6 +195,7 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, humanSaid: map[string]humanSaidEntry{}, deaf: map[string]deafEntry{},
 		flights:   map[string]*boardFlight{},
 		lagSaid:   map[string]bool{},
+		slowSaid:  map[string]bool{},
 		wt:        newWorktreeMemo(),
 		busy:      map[string]busyEntry{},
 		heal:      map[string]healEntry{},

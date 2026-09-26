@@ -215,7 +215,14 @@ func (s *server) takeoff(dir string) *boardFlight {
 // бы за ней навсегда, и следующий запрос по этому дереву встал бы на <-fl.done
 // без срока. Паника уезжает ждущим ошибкой со словами, а стек в журнал.
 func (s *server) fly(dir, stamp string, stamped bool, fl *boardFlight) {
+	// Счёт секунд идёт от этой строки, а не от входа в семафор. Экран ждёт и
+	// очередь тоже. Живых taskctl разом шесть, деревьев задач на машине больше
+	// десятка, и под полным прогоном рядом именно очередь делает ответ
+	// медленным. Замер от входа дал бы «уложился в порог» там, где человек
+	// смотрел на пустой экран втрое дольше (замечание ревью DK-1168).
+	queued := s.now()
 	taskctlGate.enter()
+	begun := s.now()
 	defer func() {
 		if v := recover(); v != nil {
 			rec := &recovered{val: v, stack: debug.Stack()}
@@ -231,13 +238,16 @@ func (s *server) fly(dir, stamp string, stamped bool, fl *boardFlight) {
 	if s.boardProbe != nil {
 		s.boardProbe(dir)
 	}
-	begun := s.now()
 	raw, err := boardJSON(s.cfg.Home, dir)
-	if took := s.now().Sub(begun); took >= boardSlow {
-		s.logf("обход доски %s ответил за %.1fс, порог отзывчивости %.0fс",
-			dir, took.Seconds(), boardSlow.Seconds())
-	}
+	took := s.now().Sub(queued)
 	s.mu.Lock()
+	if took >= boardSlow {
+		s.noteSlow(dir, took, begun.Sub(queued))
+	} else {
+		// Круг уложился в порог: следующая просадка по этому дереву снова стоит
+		// строки в журнале.
+		delete(s.slowSaid, dir)
+	}
 	fl.raw, fl.err = raw, err
 	// Срок считается от ответа, а не от запроса: опрос под нагрузкой сам идёт
 	// дольше потолка, и ответ, устаревший в момент своего прихода, гнал бы фоновый
@@ -246,6 +256,20 @@ func (s *server) fly(dir, stamp string, stamped bool, fl *boardFlight) {
 		s.boards[dir] = boardEntry{raw: raw, stamp: stamp, born: s.now()}
 	}
 	s.mu.Unlock()
+}
+
+// noteSlow пишет в журнал просадку обхода доски: сколько заняла очередь
+// семафора и сколько весь круг от строки до ответа. Строка одна на полосу
+// просадки, как и у noteLag. Ручек экрана десяток, а на живом журнале одна
+// жалоба без полосы заняла 26735 строк из 37799 (замечание ревью DK-1168).
+// Полосу снимает первый уложившийся круг. Зовётся под s.mu.
+func (s *server) noteSlow(dir string, took, queue time.Duration) {
+	if s.slowSaid[dir] {
+		return
+	}
+	s.slowSaid[dir] = true
+	s.logf("обход доски %s ответил за %.1fс, из них в очереди %.1fс, порог отзывчивости %.0fс",
+		dir, took.Seconds(), queue.Seconds(), boardSlow.Seconds())
 }
 
 // noteLag пишет в журнал первый пропущенный круг по дереву: запрос обошёлся

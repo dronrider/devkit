@@ -9,7 +9,8 @@
 // (решение пользователя 2026-09-26). Отказ сервера макетов даёт кнопку «Войти в
 // Claude Design», разлогин клиента прежнюю «Войти», вид уезжает в теле всех трёх
 // ручек входа, и ответ агента блок макетов не гасит: сервер молчит до конца жизни
-// процесса.
+// процесса. Здесь же два места из ревью: отказ, пришедший при открытой панели,
+// поднимает блок сам, а реплика перезапуска называет тот вход, который делали.
 //
 // Зовётся: node testdata/poc_designlogin.mjs static/app.js
 
@@ -22,6 +23,9 @@ const URL_AUTH = "https://claude.ai/oauth/authorize?client_id=design&state=abc12
 let items = [];
 const asked = [];
 const bodies = [];
+// Ответ ручки состояния разговора. Признаки входа едут им же: панель собрана
+// однажды, а отказ приходит и позже, при открытой панели.
+let status = { live: true, busy: false };
 // Дорога входа: с телефона код руками, с самой машины клиент ловит его петлёй, и
 // исход тогда ждётся своей ручкой.
 let road = "code";
@@ -47,6 +51,7 @@ const { sandbox, streams } = makeSandbox(app, (path, init) => {
     const sid = path.slice(path.indexOf("/sessions/") + 10).split("?")[0];
     return { session: sid, head: { id: sid }, items, total: items.length };
   }
+  if (path.endsWith("/status")) return status;
   if (path.includes("/chats")) return { chats: [], models: [] };
   return {};
 });
@@ -220,5 +225,66 @@ const btnText = (node) => String(node.textContent || "").trim();
   }
 }
 
+// --- отказ при открытой панели поднимает блок сам ---
+//
+// Разговор открыт здоровым, умер и поднялся заново уже без сервера макетов.
+// Состояние панели собрано однажды, и блок вставал только переоткрытием
+// разговора (замечание ревью). Признаки входа едут ответом о состоянии, который
+// панель и так опрашивает.
+{
+  clear();
+  status = { live: true, busy: false, design: true };
+  const panel = sandbox.chatPanel("demo", out("dddd9200-9999", {}));
+  await settle();
+  const plate = byClass(panel, "cbyetalk");
+  if (!plate || plate.hidden) {
+    fail("отказ, пришедший при открытой панели, блока не поднял: " + dump(panel));
+  }
+  const enter = deepBtn(panel, "Войти");
+  if (btnText(enter) !== "Войти в Claude Design") {
+    fail("поднятый блок называет не тот вход: " + btnText(enter));
+  }
+  if (!dump(plate).includes("Claude Design")) {
+    fail("в поднятом блоке не сказано, чего не хватает: " + dump(plate));
+  }
+  status = { live: true, busy: false };
+}
+
+// --- реплика перезапуска называет тот вход, который делали ---
+{
+  clear();
+  const panel = sandbox.chatPanel("demo", out("dddd9200-aaaa",
+    { design: "нужен вход в Claude Design" }));
+  await settle();
+  deepBtn(panel, "Перезапустить").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  const said = stepOf("/say");
+  if (said < 0) fail("перезапуск разговор не поднял: " + JSON.stringify(asked));
+  const text = String((bodies[said] || {}).text || "");
+  // Вход в клиента тут был жив, и слова про истёкший вход агенту врали бы.
+  if (text.includes("истёк вход")) {
+    fail("агенту сказано про истёкший вход клиента, которого не было: " + text);
+  }
+  if (!text.includes("Claude Design")) {
+    fail("реплика перезапуска не называет, чем разговор встал: " + text);
+  }
+}
+
+// --- а разлогин остался при своих словах ---
+{
+  clear();
+  const panel = sandbox.chatPanel("demo", out("dddd9200-bbbb", { login: "нужен вход" }));
+  await settle();
+  deepBtn(panel, "Перезапустить").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  const said = stepOf("/say");
+  if (said < 0) fail("перезапуск разговор не поднял: " + JSON.stringify(asked));
+  const text = String((bodies[said] || {}).text || "");
+  if (!text.includes("истёк вход")) {
+    fail("реплика перезапуска после разлогина сменила слова: " + text);
+  }
+}
+
 console.log("ок: блок в ленте один, вид входа выбирает признак подъёма, вид едет " +
-  "в теле ручек, ответ агента блок макетов не гасит");
+  "в теле ручек, ответ агента блок макетов не гасит, отказ при открытой панели " +
+  "поднимает блок сам, реплика перезапуска называет свой вход");

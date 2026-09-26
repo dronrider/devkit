@@ -71,6 +71,17 @@ func loginPaneOf(stage string) string {
 			"  OAuth error: Request failed with status code 400", "", "",
 			"  Press Enter to retry.", "", "  Esc to cancel", "",
 		}, "\n")
+	case "oexp":
+		// Тот же экран отказа обычного входа, но словами про истёкшую ссылку.
+		// Слово expired стоит в общем списке отказа кода, а поля кода на панели
+		// нет и нажатия она ждёт: спрошенный раньше поля отказ читал такую
+		// панель как повторяемую и оставлял человека с «введите другой код» в
+		// мёртвом диалоге (находка ревью DK-920).
+		return strings.Join([]string{
+			"", strings.Repeat(paneFrame, 60), "  Login", "",
+			"  OAuth error: link expired. Press Enter to retry", "", "",
+			"  Esc to cancel", "",
+		}, "\n")
 	case "stuck":
 		// Экран входа стоит, а что случилось, по нему не прочесть.
 		return strings.Join([]string{
@@ -120,8 +131,8 @@ func loginPaneOf(stage string) string {
 func fakeTmuxLogin(t *testing.T, e *testEnv) string {
 	t.Helper()
 	d := t.TempDir()
-	for _, stage := range []string{"boot", "repl", "init", "trust", "ask", "url", "ok", "again", "oauth", "stuck",
-		"durl", "dok", "dagain"} {
+	for _, stage := range []string{"boot", "repl", "init", "trust", "ask", "url", "ok", "again", "oauth", "oexp",
+		"stuck", "durl", "dok", "dagain"} {
 		if err := os.WriteFile(filepath.Join(d, "pane-"+stage),
 			[]byte(loginPaneOf(stage)), 0o644); err != nil {
 			t.Fatal(err)
@@ -1009,6 +1020,42 @@ func TestClientLoginCodeErrorNotSuccess(t *testing.T) {
 	}
 	if !strings.Contains(text, "status code 400") {
 		t.Fatalf("слова клиента про отказ до человека не доехали: %s", text)
+	}
+}
+
+// Окончательный отказ словами, которые есть и в списке повторяемого. Панель
+// «OAuth error: link expired. Press Enter to retry» поля кода не держит, и
+// повторять в ней нечего: вход начинается заново. Отказ кода у обычного входа
+// поэтому спрашивается после ветки поля, а не раньше неё: спрошенный первым, он
+// звал такую панель повторяемой, человеку говорили «введите другой код», а
+// диалог в это время ждал нажатия (находка ревью DK-920).
+func TestClientLoginCodeExpiredLinkNotRetry(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	fastLoginWait(t, 2*time.Second)
+	c := e.loggedClient(t)
+	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
+		t.Fatalf("вход не поднялся: %s", text)
+	}
+	if err := os.WriteFile(filepath.Join(d, "after"), []byte("oexp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login/code",
+		`{"code":"nosuchcode"}`)
+	if resp.StatusCode == http.StatusOK || strings.Contains(text, `"ok":true`) {
+		t.Fatalf("истёкшая ссылка выдана за сделанный вход: %d, %s", resp.StatusCode, text)
+	}
+	if strings.Contains(text, loginAgainWords) {
+		t.Fatalf("окончательный отказ назван повторяемым: %s", text)
+	}
+	if !strings.Contains(text, "link expired") {
+		t.Fatalf("слова клиента про отказ до человека не доехали: %s", text)
+	}
+	// Ссылка после такого отказа мертва, и сессия входа снимается: следующий
+	// заход берёт свежую.
+	killed, _ := os.ReadFile(filepath.Join(d, "killed"))
+	if !strings.Contains(string(killed), "login-1") {
+		t.Fatalf("сессия входа осталась стоять с мёртвой ссылкой: %q", killed)
 	}
 }
 

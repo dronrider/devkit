@@ -18,6 +18,10 @@ type chatStatusView struct {
 	Gone  bool   `json:"gone"`
 	At    int64  `json:"at"`
 	Where string `json:"where"`
+	// Признаки входа: по ним блок входа в ленте встаёт и при открытой панели
+	// (DK-920).
+	Login  bool `json:"login"`
+	Design bool `json:"design"`
 }
 
 // chatBusyEnv поднимает разговор с молчащим транскриптом: занятость тут

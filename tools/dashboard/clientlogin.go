@@ -1118,10 +1118,14 @@ func (s *server) loginAwaitCode(way *loginWay, sess string, sent bool) (string, 
 		if err != nil {
 			return "gone", fmt.Sprintf("сессия входа умерла на середине входа: %s", procErr(err))
 		}
-		// Отказ кода спрашивается раньше поля: диалог входа в Claude Design
-		// поля на такой панели не держит вовсе, и мера по ушедшему полю назвала
-		// бы повторяемый отказ окончательным провалом.
-		if sent && way.again(pane) {
+		// Отказ кода спрашивается раньше поля только у вида, который после
+		// отказа ждёт нажатия: диалог входа в Claude Design поля на такой панели
+		// не держит вовсе, и мера по ушедшему полю назвала бы повторяемый отказ
+		// окончательным провалом. Обычному входу ранний вопрос вреден: панель
+		// «OAuth error: link expired. Press Enter to retry» тоже отвечает на
+		// слова отказа, и человек получал бы «введите другой код» в мёртвый
+		// диалог вместо слов клиента и снятой сессии входа (находка ревью).
+		if sent && way.Press && way.again(pane) {
 			return s.loginAgain(way, sess)
 		}
 		if way.done(pane) {
@@ -1133,7 +1137,7 @@ func (s *server) loginAwaitCode(way *loginWay, sess string, sent bool) (string, 
 			if err != nil {
 				return "gone", fmt.Sprintf("сессия входа умерла на середине входа: %s", procErr(err))
 			}
-			if sent && way.again(pane) {
+			if sent && way.Press && way.again(pane) {
 				return s.loginAgain(way, sess)
 			}
 			if way.done(pane) {
@@ -1158,6 +1162,13 @@ func (s *server) loginAwaitCode(way *loginWay, sess string, sent bool) (string, 
 				return "stuck", loginLastWords(pane)
 			}
 			return "ok", ""
+		}
+		// Поле кода на панели стоит: отказ тут и правда повторяемый, клиент
+		// вернулся к полю и ждёт другого кода. Вопрос этот идёт после ветки
+		// поля, а не раньше неё: панель без поля разбирается словами отказа
+		// выше, и окончательный провал там остаётся провалом.
+		if sent && way.again(pane) {
+			return s.loginAgain(way, sess)
 		}
 		if !s.now().Before(deadline) {
 			if !sent {

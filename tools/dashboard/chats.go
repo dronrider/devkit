@@ -4000,14 +4000,32 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	now := s.now()
 	tail := time.Time{}
 	path := ""
+	// Признаки входа едут тем же ответом (DK-920). Панель собирает блок входа
+	// один раз, а признак приходит и позже: разговор умер, поднялся заново и не
+	// подключился к серверу макетов. Опрос этот идёт и так, шапка разговора
+	// лежит в памяти процесса, и второй ручки ради двух полей не заводится.
+	bye, design := false, false
 	if info, ok := findSession(s.transcriptRoots(), found.Path, sid); ok {
 		path = info.path
 		tail = s.busyEntryOf(path).last
+		head := s.sessionHeadCached(path, info.stamp)
+		bye, design = head.Bye, head.Design
+	}
+	// loginFlags дописывает признаки входа в любой ответ: процесса у разговора
+	// может и не быть вовсе, а блок входа человеку нужен тем более.
+	loginFlags := func(out map[string]any) map[string]any {
+		if bye {
+			out["login"] = true
+		}
+		if design {
+			out["design"] = true
+		}
+		return out
 	}
 	p, ok := s.peers()[sid]
 	if !ok {
 		// Процесса нет вовсе: работать некому, и это не ошибка, а ответ.
-		out := map[string]any{"session": sid, "live": false, "busy": false}
+		out := loginFlags(map[string]any{"session": sid, "live": false, "busy": false})
 		// Пропажа посреди хода (DK-893). Клиент, снятый на ходу, оставляет в
 		// реестре своё «busy» и больше запись не трогает: времени смерти там
 		// нет вовсе, и панели остаётся последний след жизни, запись
@@ -4036,8 +4054,8 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	if said == "" {
 		said = "по транскрипту"
 	}
-	out := map[string]any{"session": sid, "live": true,
-		"busy": busy, "status": said, "where": peerWord(p)}
+	out := loginFlags(map[string]any{"session": sid, "live": true,
+		"busy": busy, "status": said, "where": peerWord(p)})
 	// Возраст хода (DK-893). Секунды считает сервер, а не браузер: телефон и
 	// машина расходятся часами на минуты, и счётчик, заведённый от чужой метки,
 	// врал бы на всю разницу. Само начало хода едет рядом, им плашка

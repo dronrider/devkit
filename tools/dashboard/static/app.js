@@ -10914,6 +10914,12 @@ const CHAT_UNWEDGE = "Разговор завис, процесс был сня�
 const CHAT_RELOGIN = "Разговор встал: у клиента истёк вход, процесс снят и " +
   "поднят заново после /login. Продолжай с того места, где остановился.";
 
+// Та же реплика после входа в Claude Design. Вход клиента тут был жив, и слова
+// про истёкший вход агенту врали бы: стоял у него один сервер макетов.
+const CHAT_REDESIGN = "Разговор встал: клиент не подключился к серверу макетов " +
+  "Claude Design, процесс снят и поднят заново после /design-login. Продолжай " +
+  "с того места, где остановился.";
+
 // Может ли дашборд перезапустить этот разговор. Чужое окно (vscode) он не
 // поднимал, tmux-сессии у такого разговора нет, и снимать ему нечего: кнопка
 // там обещала бы работу, которой не будет.
@@ -10970,7 +10976,13 @@ function loginBubble(text) {
 // всё равно идут подряд (решение пользователя).
 function loginWayOf(st) {
   const e = st && st.entry;
-  return e && e.design && !e.login ? "design" : "client";
+  return loginWayByFlags(e && e.design, e && e.login);
+}
+
+// Тот же выбор по двум признакам: их несёт и строка разговора при сборке панели,
+// и опрос состояния при открытой панели.
+function loginWayByFlags(design, login) {
+  return design && !login ? "design" : "client";
 }
 
 // Слова записи по виду входа. Разлогин и отказ сервера макетов это разные беды,
@@ -10984,6 +10996,7 @@ const LOGIN_SAY = {
     alien: "Требуется повторная аутентификация. Разговор поднят не дашбордом, " +
       "снять его отсюда нечем: сделайте /login на машине и перезапустите " +
       "разговор в том окне, где он идёт.",
+    wake: CHAT_RELOGIN,
   },
   design: {
     enter: "Войти в Claude Design",
@@ -10994,6 +11007,7 @@ const LOGIN_SAY = {
     alien: "Клиент не подключился к Claude Design. Разговор поднят не " +
       "дашбордом, снять его отсюда нечем: сделайте /design-login на машине и " +
       "перезапустите разговор в том окне, где он идёт.",
+    wake: CHAT_REDESIGN,
   },
 };
 
@@ -11005,12 +11019,36 @@ function loginTalk(project, st, busy) {
   box.hidden = true;
   // Вид едет в теле всех трёх ручек входа: на машине сессия входа одна, и
   // сервер по виду решает, тому ли диалогу достанется код авторизации.
-  const way = loginWayOf(st);
-  const words = LOGIN_SAY[way];
+  let way = loginWayOf(st);
+  let words = LOGIN_SAY[way];
   const talk = { box, ask: "", lastUser: "", way };
   const first = loginBubble(words.first);
   box.append(first.row);
+  // Кнопка входа рождается ниже, а слова её меняются вместе с видом: ссылка на
+  // неё живёт тут, потому что дорога чужого окна до кнопки не доходит вовсе.
+  let enterBtn = null;
+  let alien = false;
+  const setWay = (next) => {
+    if (next === way || !LOGIN_SAY[next]) return;
+    way = next;
+    words = LOGIN_SAY[next];
+    talk.way = next;
+    first.say(alien ? words.alien : words.first);
+    if (enterBtn) enterBtn.textContent = words.enter;
+  };
+  // Признак отказа приходит и при открытой панели: разговор умер, поднялся
+  // заново и не подключился к серверу макетов, а состояние панели собрано
+  // однажды. Блок тогда вставал только переоткрытием разговора (находка ревью).
+  // Пересчёт трогает спрятанный блок: раскрытый это идущий вход, и переписывать
+  // его слова под рукой человека нельзя.
+  talk.seen = (flags) => {
+    if (!flags || !box.hidden) return;
+    if (!flags.design && !flags.login) return;
+    setWay(loginWayByFlags(flags.design, flags.login));
+    box.hidden = false;
+  };
   if (!loginFixable(st)) {
+    alien = true;
     first.say(words.alien);
     return talk;
   }
@@ -11121,12 +11159,13 @@ function loginTalk(project, st, busy) {
     lock(true);
     step.row.hidden = true;
     say("Вход сделан. Поднимаю разговор и повторяю запрос, на котором он встал.", false);
-    await loginRestart(project, st, busy, talk.ask);
+    await loginRestart(project, st, busy, talk.ask, words.wake);
   }
 
   const row = el("div", "loginbtns");
   first.own(row);
   const enter = el("button", "btn btn-sm btn-acc", words.enter);
+  enterBtn = enter;
   const go = el("button", "btn btn-sm", "Перезапустить");
   // Запертые кнопки и уходят с экрана: запертая кнопка на виду обещает работу,
   // которой по ней не будет.
@@ -11149,7 +11188,7 @@ function loginTalk(project, st, busy) {
     ev.stopPropagation();
     if (go.disabled || talk.done) return;
     lock(true);
-    loginRestart(project, st, busy, talk.ask).catch(console.error).finally(free);
+    loginRestart(project, st, busy, talk.ask, words.wake).catch(console.error).finally(free);
   });
   row.append(enter, go);
   send.addEventListener("click", (ev) => {
@@ -11196,8 +11235,10 @@ function loginSawAll(talk, list) {
 // когда он известен: разговор доделывает начатое, а не начинает с чистого
 // листа. Своих слов человек в этом случае не говорил заново, и говорить за
 // него нельзя, поэтому запасная реплика зовёт продолжить, а не выдумывает
-// заказ.
-async function loginRestart(project, st, busy, ask) {
+// заказ. Слова запасной реплики приходят от блока входа: виду входа она своя, и
+// после входа в макеты агенту незачем читать про истёкший вход клиента, которого
+// не было.
+async function loginRestart(project, st, busy, ask, wake) {
   const sid = st && st.sid;
   if (!sid) return;
   const url = chatsURL(st.project || project) + "/" + encodeURIComponent(sid);
@@ -11214,7 +11255,7 @@ async function loginRestart(project, st, busy, ask) {
       ". Пошлите реплику ещё раз: живой разговор подхватит новый вход сам.", true);
     return;
   }
-  const text = String(ask || "").trim() || CHAT_RELOGIN;
+  const text = String(ask || "").trim() || wake || CHAT_RELOGIN;
   const r = await api(url + "/say", { method: "POST", body: { text } });
   busy.off();
   if (!r.ok) {
@@ -11613,14 +11654,23 @@ function makeBusy(project, box) {
     if (!watched) return;
     try {
       const r = await api(chatsURL(project) + "/" + encodeURIComponent(watched) + "/status");
-      if (r.ok) apply(r.body);
+      if (r.ok) {
+        apply(r.body);
+        // Тем же ответом едут признаки входа: состояние разговора меняется под
+        // открытой панелью, и читает его пока только этот опрос.
+        if (out.onState) out.onState(r.body);
+      }
     } catch (err) {
       // Обрыв связи не гасит индикатор: работа идёт, видно её просто нечем.
     }
     if (!row.hidden && !hold && Date.now() > stop) off();
     later();
   };
-  return {
+  // Слушатель состояния разговора. Плашка занятости читает из ответа своё, а
+  // признаки входа нужны блоку в ленте, и второго опроса того же ответа ради
+  // них не заводится.
+  const out = {
+    onState: null,
     // Слежение за чатом с открытия панели. Первый опрос идёт сразу: ход,
     // который шёл до открытия, человек должен увидеть в тот же миг, а не через
     // полторы секунды пустой ленты.
@@ -11718,6 +11768,7 @@ function makeBusy(project, box) {
     off,
     shut,
   };
+  return out;
 }
 
 // Свои реплики, ещё не вернувшиеся из транскрипта. Пузырь встаёт в ленту сразу
@@ -12393,6 +12444,10 @@ function chatPanel(project, st) {
   // плашкой над полем ввода, а второй шаг починки лежит на её кнопке.
   const bye = loginTalk(project, st, busy);
   bye.box.hidden = !(st.entry && (st.entry.login || st.entry.design));
+  // Признак приходит и при открытой панели: состояние разговора собрано один
+  // раз, а отказ случается позже (разговор умер и поднялся заново). Опрос
+  // состояния несёт оба признака входа, и блок по ним встаёт сам.
+  busy.onState = (b) => bye.seen(b);
   // Блок стоит там же, где стоят свои реплики. Под лентой, над полем ввода,
   // тем же узлом сообщений и тем же пузырём: это продолжение разговора, а не
   // щиток при нём.

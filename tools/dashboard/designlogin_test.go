@@ -255,6 +255,69 @@ func TestChatEntryDesignGone(t *testing.T) {
 	if got := chatsOf(t, e, c); got[0].Design != "" {
 		t.Errorf("признак не погас после входа в макеты: design=%q", got[0].Design)
 	}
+
+}
+
+// Продолженный разговор: процесс поднялся посреди файла, и запись о серверах
+// лежит под работой захода. Ни шапкой, ни хвостом такую запись не достать, и
+// строка списка про отказ молчала, а снятый отказ возвращался, едва после входа
+// набегала четверть мегабайта (находка ревью).
+//
+// Каждый случай берёт своё окружение и свой транскрипт: шапку дочитанного файла
+// процесс помнит по headTTL, и вторая правка того же файла доехала бы до списка
+// только сроком памяти, а предмет тут не память, а сам разбор.
+func TestChatEntryDesignGoneMidFile(t *testing.T) {
+	pad := designPad(metaScanLimit + 32*1024)
+	fail := designAttach(designFailed, "2026-09-15T21:10:00.000Z")
+	ok := designAttach("[]", "2026-09-15T21:20:00.000Z")
+	cases := []struct {
+		name string
+		talk string
+		want string
+	}{
+		{"отказ под работой захода", plainTalk + pad + fail + pad, designGoneWord},
+		{"вход сделан под работой захода", plainTalk + fail + pad + ok + pad, ""},
+	}
+	for _, c := range cases {
+		e, cl := chatEnv(t)
+		sid := "dddd9201-9201-4201-8201-920192019201"
+		writeSession(t, e.home, e.proj, "", sid, c.talk, time.Now())
+		got := chatsOf(t, e, cl)
+		if len(got) != 1 {
+			t.Fatalf("%s: чатов в списке %d, ждал один", c.name, len(got))
+		}
+		if got[0].Design != c.want {
+			t.Errorf("%s: design=%q, ждал %q", c.name, got[0].Design, c.want)
+		}
+	}
+}
+
+// Признак отказа едет и в ответе о состоянии разговора. Панель собирает блок
+// входа один раз, а отказ приходит и позже: разговор умер и поднялся заново уже
+// без сервера макетов. Этим ответом блок встаёт при открытой панели, не дожидаясь
+// переоткрытия разговора (замечание ревью).
+func TestChatStatusTellsDesignGone(t *testing.T) {
+	e := newTestEnv(t)
+	sid := "dddd9202-9202-4202-8202-920292029202"
+	talk := designAttach(designFailed, "2026-09-15T20:32:46.138Z") + plainTalk
+	writeSession(t, e.home, e.proj, "", sid, talk, time.Now())
+
+	// Процесса у разговора нет: он и умер, а признак человеку нужен тем более.
+	got := chatStatus(t, e, sid)
+	if !got.Design {
+		t.Fatalf("отказ сервера макетов в состоянии разговора не назван: %+v", got)
+	}
+	if got.Login {
+		t.Errorf("отказ макетов выдан за разлогин: %+v", got)
+	}
+
+	// Вход сделан, свежий заход отказа не несёт: признак гаснет и тут.
+	fresh := "dddd9203-9203-4203-8203-920392039203"
+	writeSession(t, e.home, e.proj, "", fresh,
+		talk+designAttach("[]", "2026-09-15T20:45:00.000Z"), time.Now())
+	if got := chatStatus(t, e, fresh); got.Design {
+		t.Errorf("признак не погас после входа в макеты: %+v", got)
+	}
 }
 
 // Разбор записи о серверах: отказ узнаётся по имени сервера, запись без поля
@@ -290,25 +353,76 @@ func TestDesignOfReadsLastRecord(t *testing.T) {
 	}
 }
 
-// Шапка и хвост транскрипта сводятся в один ответ: свежая запись хвоста старше,
-// а шапка отвечает за долгий разговор, чей хвост до записи подъёма уже не
-// доезжает.
-func TestDesignGoneTakesTailFirst(t *testing.T) {
+// designPad это работа разговора между записями о серверах: столько байт
+// записей, сколько сказано, и ни байтом больше. Длина тут точная нарочно: по
+// ней стенд ставит границу обратного чтения ровно посреди записи.
+func designPad(n int) string {
+	line := func(size int) string {
+		head := `{"type":"user","message":{"role":"user","content":"`
+		tail := `"},"timestamp":"2026-09-15T20:35:00.000Z"}` + "\n"
+		fill := size - len(head) - len(tail)
+		if fill < 0 {
+			return strings.Repeat("x", size-1) + "\n"
+		}
+		return head + strings.Repeat("x", fill) + tail
+	}
+	var b strings.Builder
+	for n-b.Len() >= 512 {
+		b.WriteString(line(512))
+	}
+	if rest := n - b.Len(); rest > 0 {
+		b.WriteString(line(rest))
+	}
+	return b.String()
+}
+
+// Запись о серверах ищется обратным чтением по всему файлу, а не в двух
+// форточках по концам. Прежде смотрели шапку и хвост по четверти мегабайта, и
+// запись середины не видел никто: у живого транскрипта в 43 МБ записи стояли на
+// 35-37 МБ, отказ продолженного разговора блока не поднимал, а снятый отказ
+// возвращался, едва после входа набегала четверть мегабайта (находка ревью).
+func TestDesignLastFindsRecordMidFile(t *testing.T) {
+	fail := designAttach(designFailed, "2026-09-15T20:32:46.138Z")
+	ok := designAttach("[]", "2026-09-15T20:45:00.000Z")
+	// Форточка была в metaScanLimit с каждой стороны, и работы тут больше неё:
+	// запись лежит там, где её не видит ни шапка, ни хвост.
+	pad := designPad(metaScanLimit + 32*1024)
 	cases := []struct {
 		name string
-		head designSeen
-		tail designSeen
-		want bool
+		data string
+		want designSeen
 	}{
-		{"отказ в шапке, хвост молчит", designOff, designUnseen, true},
-		{"отказ в шапке, хвост говорит о живом сервере", designOff, designUp, false},
-		{"шапка молчит, отказ в хвосте", designUnseen, designOff, true},
-		{"обе молчат", designUnseen, designUnseen, false},
+		{"отказ посреди файла", pad + fail + pad, designOff},
+		{"вход сделан посреди файла, отказ в шапке", fail + pad + ok + pad, designUp},
+		{"отказ посреди файла, успех в шапке", ok + pad + fail + pad, designOff},
+		{"записи нет вовсе", pad + pad, designUnseen},
 	}
 	for _, c := range cases {
-		if got := designGone(c.head, c.tail); got != c.want {
-			t.Errorf("%s: признак %v, ждал %v", c.name, got, c.want)
+		path := filepath.Join(t.TempDir(), "talk.jsonl")
+		if err := os.WriteFile(path, []byte(c.data), 0o644); err != nil {
+			t.Fatalf("%s: транскрипт стенда не записался: %v", c.name, err)
 		}
+		if got := designLast(path); got != c.want {
+			t.Errorf("%s: разбор дал %d, ждал %d", c.name, got, c.want)
+		}
+	}
+}
+
+// Запись на стыке кусков обратного чтения: читается файл с конца шагами по
+// designScanChunk, и строка, разорванная границей, склеивается хвостом. Без
+// склейки такая запись терялась бы целиком, а стоит она в живом файле где
+// придётся.
+func TestDesignLastGluesRecordOnChunkEdge(t *testing.T) {
+	rec := designAttach(designFailed, "2026-09-15T20:32:46.138Z")
+	// Хвост после записи короче куска ровно на половину её длины: граница
+	// первого куска тогда ложится посреди самой записи.
+	data := designPad(64*1024) + rec + designPad(designScanChunk-len(rec)/2)
+	path := filepath.Join(t.TempDir(), "talk.jsonl")
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("транскрипт стенда не записался: %v", err)
+	}
+	if got := designLast(path); got != designOff {
+		t.Fatalf("запись на стыке кусков потеряна: разбор дал %d, ждал %d", got, designOff)
 	}
 }
 

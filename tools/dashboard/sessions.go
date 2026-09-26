@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -381,21 +382,20 @@ func tailReplies(path string, n int) []reply {
 // Читается хвост, а не файл целиком: транскрипт долгого разговора это мегабайты,
 // а последняя реплика лежит в самом конце.
 func lastSaid(path string) string {
-	said, _, _ := tailFacts(path)
+	said, _ := tailFacts(path)
 	return said
 }
 
-// tailFacts читает хвост один раз и отвечает тремя фактами: когда в разговоре
-// последний раз сказали что-то по делу, не отказался ли клиент работать без
-// логина и что в хвосте сказано о подключении сервера макетов. Разбор хвоста
-// стоит чтения файла, и второго ради одного признака тут не заводится.
+// tailFacts читает хвост один раз и отвечает двумя фактами: когда в разговоре
+// последний раз сказали что-то по делу и не отказался ли клиент работать без
+// логина. Разбор хвоста стоит чтения файла, и второго ради одного признака тут
+// не заводится.
 //
 // Разлогин меряется последним ответом агента, а не последней репликой вообще:
 // человек вправе написать после отказа сколько угодно, и разговор от этого не
 // становится рабочим. Настоящий ответ агента признак снимает.
-func tailFacts(path string) (string, bool, designSeen) {
-	data := tailBytes(path)
-	list := parseReplies(data, 0)
+func tailFacts(path string) (string, bool) {
+	list := parseReplies(tailBytes(path), 0)
 	said, bye, seen := "", false, false
 	for i := len(list) - 1; i >= 0; i-- {
 		r := list[i]
@@ -412,7 +412,7 @@ func tailFacts(path string) (string, bool, designSeen) {
 			break
 		}
 	}
-	return said, bye, designOf(data)
+	return said, bye
 }
 
 // designServer это имя сервера макетов среди серверов MCP, которые клиенту не
@@ -476,15 +476,71 @@ func designOf(data []byte) designSeen {
 	return out
 }
 
-// designGone сводит шапку и хвост транскрипта в один ответ. Хвост старше:
-// запись о серверах пишет каждый заход процесса, и свежая отменяет прежнюю.
-// Шапка отвечает за долгий разговор, чей хвост до записи подъёма уже не
-// доезжает.
-func designGone(head, tail designSeen) bool {
-	if tail != designUnseen {
-		return tail == designOff
+// designScanChunk это шаг обратного чтения транскрипта: столько байт за раз
+// берётся с конца файла в поисках записи о серверах.
+const designScanChunk = 256 * 1024
+
+// designScanCarry ограничивает строку, склеиваемую через границу чанков. Запись
+// о серверах это несколько сотен байт, и строка длиннее этого предела точно не
+// она: у клиента такой длины бывают вставки файлов, и тащить их целиком в
+// память ради склейки незачем.
+const designScanCarry = 4 * designScanChunk
+
+// designLast отвечает, что сказала о сервере макетов последняя запись о
+// серверах. Файл читается с конца чанками до первой найденной записи: свою
+// пишет каждый заход процесса, и свежая отменяет прежнюю, а лежит она где
+// угодно по файлу. Прежде смотрели два конца, шапку и хвост по четверти
+// мегабайта, и записи середины не видел никто: у живого транскрипта в 43 МБ
+// записи стояли на 35-37 МБ, отказ продолженного разговора блока не поднимал, а
+// снятый отказ возвращался, едва после входа набегала четверть мегабайта
+// (находка ревью DK-920).
+//
+// Цена обратного чтения это путь от конца файла до записи, а полный файл
+// читается только у разговора, где записи нет вовсе. Платится она раз в срок
+// памяти шапки (headTTL), потому что зовут её оттуда.
+func designLast(path string) designSeen {
+	f, err := os.Open(path)
+	if err != nil {
+		return designUnseen
 	}
-	return head == designOff
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return designUnseen
+	}
+	to := fi.Size()
+	var carry []byte
+	for to > 0 {
+		from := to - designScanChunk
+		if from < 0 {
+			from = 0
+		}
+		buf := make([]byte, to-from+int64(len(carry)))
+		if _, err := f.ReadAt(buf[:to-from], from); err != nil {
+			return designUnseen
+		}
+		copy(buf[to-from:], carry)
+		carry = nil
+		scan := buf
+		if from > 0 {
+			// Первая строка чанка обрезана слева: её начало лежит в куске,
+			// который читается следующим шагом, и до тех пор она ждёт хвостом.
+			cut := bytes.IndexByte(buf, '\n')
+			if cut < 0 {
+				if len(buf) <= designScanCarry {
+					carry = buf
+				}
+				to = from
+				continue
+			}
+			scan, carry = buf[cut+1:], buf[:cut+1]
+		}
+		if seen := designOf(scan); seen != designUnseen {
+			return seen
+		}
+		to = from
+	}
+	return designUnseen
 }
 
 // saidReply отделяет сказанное от машинного: пузырём в ленте стоят реплика
@@ -581,12 +637,11 @@ func readSessionHead(path string) (sessionHead, bool) {
 		// досрочный выход из цикла экономил бы разбор нескольких строк ценой
 		// потерянного заголовка.
 	}
-	said, bye, tail := tailFacts(path)
-	head.Said, head.Bye = said, bye
-	// Запись о серверах клиент пишет при подъёме процесса, то есть в начале
-	// захода: у свежего разговора она в шапке, у продолженного в хвосте, и
-	// смотреть приходится оба конца.
-	head.Design = designGone(designOf(buf[:n]), tail)
+	head.Said, head.Bye = tailFacts(path)
+	// Запись о серверах клиент пишет при подъёме процесса: у свежего разговора
+	// она в начале файла, у продолженного посреди него, и ищется она обратным
+	// чтением до первой найденной, а не в двух форточках по концам.
+	head.Design = designLast(path) == designOff
 	return head, full
 }
 

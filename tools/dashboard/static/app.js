@@ -13193,8 +13193,13 @@ function askPickBare(msg) {
 // того же перечня развилок записи, что и блок в реплике (chatQuestions в
 // taskctl, agentAskOf в waiting.go), поэтому имена у них одни. Вопросов в
 // пачке до четырёх и едут они полем steps, а единственный вопрос steps не
-// заводит вовсе и лежит в text. Имя шага идёт запасным путём: полный текст
-// вопроса стоит в step.text, а в step.name он обрезан под ширину таба.
+// заводит вовсе и лежит в text. Имя шага (step.name) тут не смотрится: оно
+// собрано из того же текста, обрезанного под ширину таба, и своего имени
+// развилки не несёт.
+//
+// Пустой набор это тоже ответ, и значит он «признак не про блок». Свободный
+// вопрос от `taskctl ask --question` едет текстом как есть, без ёлочек, а блок
+// печатает одна команда `decide --chat`, и имя развилки в нём стоит всегда.
 function askForkNames(ask) {
   const out = new Set();
   const add = (text) => {
@@ -13202,9 +13207,7 @@ function askForkNames(ask) {
     if (head) out.add(head[1]);
   };
   for (const step of (ask && ask.steps) || []) {
-    if (!step) continue;
-    add(step.text);
-    add(String(step.name || "").replace(/^\s*\d{1,2}[.)]\s*/, ""));
+    if (step) add(step.text);
   }
   if (ask) add(ask.text);
   return out;
@@ -13218,19 +13221,24 @@ function askForkNames(ask) {
 // Имена развилок тут не украшение. Разговор идёт развилка за развилкой, и
 // отвеченный блок остаётся в ленте выше: без сверки имён панель брала первый
 // блок с конца, принимала закрытый вопрос за живой, вешала на него галочки и
-// молчала о том, про который её и спросили (провал приёмки DK-892). Имён
-// признака панель не знает только в одном случае, когда вопрос пришёл без
-// ёлочек вовсе; тогда сверять нечем и блок берётся прежним порядком.
+// молчала о том, про который её и спросили (провал приёмки DK-892). Признак без
+// имён развилок галочек не даёт вовсе: блок печатает одна команда `decide
+// --chat`, а свободный вопрос `ask --question` стоит про другое, и прежний
+// порядок «первый блок с конца» вернул бы на нём ту же поломку.
+//
+// Дно поиска это последняя реплика человека. Выше неё лежит прочитанное и
+// закрытое, и повторный вопрос по той же развилке нашёл бы там имя своей
+// развилки в отвеченном блоке, где варианты уже другие.
 function askPickWire(feed, ta, state) {
   if (!feed || !ta) return;
   const msgs = feed.querySelectorAll(".msg") || [];
   let at = null;
   let picks = [];
-  if (state.on) {
-    const forks = state.forks;
+  const forks = state.forks;
+  if (state.on && forks && forks.size) {
     for (let i = msgs.length - 1; i >= 0; i--) {
-      let got = askChatPicks(msgs[i].mdText);
-      if (forks && forks.size) got = got.filter((pick) => forks.has(pick.fork));
+      if (msgs[i].classList && msgs[i].classList.contains("me")) break;
+      const got = askChatPicks(msgs[i].mdText).filter((pick) => forks.has(pick.fork));
       if (got.length) {
         at = msgs[i];
         picks = got;

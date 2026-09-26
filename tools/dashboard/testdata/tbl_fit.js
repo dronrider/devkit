@@ -51,6 +51,14 @@ const CELLS = {
     id: `<td class="id"><span class="sdot sd-wait"></span><span data-fit="id">DK-517</span></td>`,
     title: `<td class="tt"><span class="cin"><span class="ttl">Команды доски зовутся голой командой без обвязки</span>` +
       `<span class="rchips"><span class="chip">M</span></span></span></td>`,
+    // Слово этапа режется многоточием как заголовок (DK-1119): длиннее
+    // этапов работы слово ожидания «ждёт человека», и мерить его нечем, как
+    // и растяжимую колонку названия. Круг с возрастом короче и держит место
+    // сам, тут и меряется худший случай: второй круг и двузначные часы.
+    stage: `<td class="stage"><span class="act2 k-rev"><b><span class="w">ждёт человека</span>` +
+      `<em data-fit="stage" data-alt="12 ч 34 мин|круг 2, 45 мин">25 мин</em></b>` +
+      `<span class="seg"><i class="done"></i><i class="done"></i><i class="done"></i>` +
+      `<i class="now"></i><i></i><i></i><i></i><i></i></span></span></td>`,
     rank: `<td class="rank"><button class="rsum" type="button" data-fit="rank">100</button></td>`,
     date: `<td class="twhen"><span class="stale dashed" data-fit="date">2026-08-20</span></td>`,
     // Хвост строки это две кнопки значками: работа и разговор. Слов на них нет

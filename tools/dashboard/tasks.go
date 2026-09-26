@@ -133,11 +133,15 @@ type boardRow struct {
 	// `taskctl list --json` вместе с кругом, возрастом словами и живостью
 	// сессии (DK-910). Своего расчёта по строке у дашборда нет, иначе бейдж
 	// экрана и текст списка разошлись бы. Пусто у строки без открытого этапа.
-	Stage        string `json:"stage,omitempty"`
-	StageSince   int64  `json:"stage_since,omitempty"`
-	StageRound   int    `json:"stage_round,omitempty"`
-	StageAge     string `json:"stage_age,omitempty"`
+	Stage      string `json:"stage,omitempty"`
+	StageSince int64  `json:"stage_since,omitempty"`
+	StageRound int    `json:"stage_round,omitempty"`
+	StageAge   string `json:"stage_age,omitempty"`
+	// StageSession пусто у ожидания: своей сессии у него не бывает, и StageAt
+	// называет вместо этого этап работы, на котором задача встала (DK-1119),
+	// его подсвечивает лента строки списка и степпер формы.
 	StageSession string `json:"stage_session,omitempty"`
+	StageAt      string `json:"stage_at,omitempty"`
 	// Waiting это состояние «ждёт человека»: кто кого ждёт, с какой точностью
 	// это известно и до какого срока (waiting.go, LLD DK-430, решение 4).
 	// Пусто, когда никто никого не ждёт; у непустого источник назван всегда.

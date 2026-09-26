@@ -829,20 +829,164 @@ function liveChip(work) {
   return withTip(chip, who);
 }
 
-// Этап работы строки: вид деятельности словом, круг, сколько он идёт и жива ли
-// сессия за ним. Запись кладут конвейер и taskctl (~/.devkit/runs), а читает её
-// taskctl list --json и приносит полями row.stage, row.stage_since,
-// row.stage_round и row.stage_session (DK-910): слова о сессии те же, что под
-// строкой списка, своего расчёта у экрана нет. Возраст считается тут по
-// stage_since, чтобы чип шёл между опросами доски.
-function stageChip(row) {
+// Восемь этапов работы словаря (internal/stage.Kinds без ожиданий, DK-911) в
+// том же порядке: лента строки списка и степпер формы идут по нему. Ожидания
+// сюда не входят, у них в ленте своего деления нет, они подсвечивают деление
+// этапа работы, на котором задача встала (row.stage_at, DK-1119).
+const STAGE_ORDER = ["постановка", "разработка", "вычитка", "ревью", "доработка",
+  "слияние", "выкат", "проверка"];
+
+// Цвет словаря по этапу (макет DK-1119, лист «14 Этап задачи, ход 2»): группы
+// делят цвет, а не назначают его на строку («разработка и доработка зелёные,
+// ревью и вычитка жёлтые, слияние и выкат синие, проверка сиреневая», слова
+// человека). «Постановка» в перечне цветов не названа: она идёт тем же
+// зелёным, что и разработка, как черновой этап работы того же рода.
+const STAGE_COLOR = {
+  "постановка": "k-dev",
+  "разработка": "k-dev",
+  "доработка": "k-dev",
+  "вычитка": "k-rev",
+  "ревью": "k-rev",
+  "слияние": "k-ship",
+  "выкат": "k-ship",
+  "проверка": "k-ver",
+};
+
+// Класс цвета строки этапа: брошенная сессия красит в красный поверх группы
+// этапа, ожидание идёт отдельным оранжевым, а у этапа работы с сессией цвет
+// берёт словарь STAGE_COLOR.
+function stageKindClass(row) {
+  if (row.stage_session === "сессии нет, брошена") return "k-gone";
+  if (STAGE_WAITS.includes(row.stage)) return "k-wait";
+  return STAGE_COLOR[row.stage] || "k-dev";
+}
+
+// Подсказка о сессии: слова остаются только в подсказке, приписки в тексте
+// строки и формы нет нигде (решение человека по DK-1119). У ожидания своей
+// сессии не бывает, и подсказка называет этап работы, на котором задача
+// встала, если он известен.
+function stageHint(row) {
+  if (row.stage_session) return row.stage_session;
+  if (STAGE_WAITS.includes(row.stage) && row.stage_at) {
+    return "ожидание на этапе «" + row.stage_at + "»";
+  }
+  return "";
+}
+
+// Возраст этапа словами, с кругом впереди при повторном заходе. Тот же счёт,
+// что раньше собирал stageChip, теперь общий для колонки строки и шапки формы.
+function stageAgeText(since, round, now) {
+  const age = workAge(since, now);
+  if (!age) return "";
+  return round > 1 ? "круг " + round + ", " + age : age;
+}
+
+// Лента из восьми делений по этапам работы: пройденные серые, текущее цветом
+// группы, у брошенной сплошным красным. Свечение стоит на делении row.stage,
+// а у ожидания на делении row.stage_at (макет 2a).
+function stageRail(row, cls) {
+  const seg = el("span", "seg");
+  const at = STAGE_WAITS.includes(row.stage) ? row.stage_at : row.stage;
+  const idx = STAGE_ORDER.indexOf(at);
+  STAGE_ORDER.forEach((_, i) => {
+    let mark = "";
+    if (idx >= 0) {
+      if (i < idx) mark = "done";
+      else if (i === idx) mark = cls === "k-gone" ? "now gone" : "now";
+    }
+    seg.append(el("i", mark));
+  });
+  return seg;
+}
+
+// Тик возраста этапа: раз в минуту, а не полной перерисовкой строки на каждый
+// опрос доски. Опрос сам меняет этап раз в пять секунд, но ageSince округляет
+// до минут, и более частый пересчёт ничего бы не поменял на экране, а
+// перерисовка строки увела бы фокус и прервала перетаскивание очереди.
+// Узел находит себя по data-stage-since, и живёт он, пока стоит в дереве:
+// пропавшую строку следующий обход просто не найдёт.
+function tickStageAges() {
+  const now = Date.now();
+  document.querySelectorAll("[data-stage-since]").forEach((node) => {
+    const since = Number(node.dataset.stageSince);
+    const round = Number(node.dataset.stageRound || "0");
+    node.textContent = stageAgeText(since, round, now);
+  });
+}
+pollEvery(60000, tickStageAges, true);
+
+// Возраст этапа с тикающим узлом: общий для колонки строки и шапки формы.
+function stageAgeNode(tag, row) {
+  const node = el(tag, "", stageAgeText(row.stage_since, row.stage_round, Date.now()));
+  if (row.stage_since) {
+    node.dataset.stageSince = String(row.stage_since);
+    node.dataset.stageRound = String(row.stage_round || 0);
+  }
+  return node;
+}
+
+// Колонка хода строки списка (макет DK-1119, вариант 2a листа «14 Этап
+// задачи, ход 2»): слово этапа цветом словаря, рядом круг и возраст
+// моноширинным, под ними лента из восьми делений. Пусто у строки без записи
+// этапа: сетку колонки это не ломает, ячейка таблицы просто остаётся пустой.
+// Второй точки тут нет: состояние сессии, как и раньше, несёт точка у номера
+// строки, а эта колонка только слово, возраст и лента (решение человека).
+function stageColumn(row) {
   if (!row.stage) return null;
-  const parts = [row.stage];
-  if (row.stage_round > 1) parts.push("круг " + row.stage_round);
-  const age = workAge(row.stage_since, Date.now());
-  if (age) parts.push(age);
-  if (row.stage_session) parts.push(row.stage_session);
-  return el("span", "chip", parts.join(", "));
+  const cls = stageKindClass(row);
+  const live = row.stage_session === "сессия жива";
+  const box = el("span", "act2 " + cls + (live ? " live" : ""));
+  const hint = stageHint(row);
+  if (hint) box.title = hint;
+  const b = el("b");
+  // Слово этапа режется многоточием, а возраст нет: у ожидания слово длиннее
+  // этапов работы («ждёт человека» против «разработка»), и в узкой колонке
+  // обрубается оно, а не круг с возрастом, который короче и нужнее числом.
+  b.append(el("span", "w", row.stage), stageAgeNode("em", row));
+  box.append(b, stageRail(row, cls));
+  return box;
+}
+
+// Шапка «сейчас» и степпер формы задачи (макет DK-1119, вариант 2b): чип
+// stageChip снят целиком, крупное слово этапа с точкой сессии перед ним и
+// круг с возрастом стоят шапкой, а восемь этапов подписаны в степпере под
+// ней. «Кто ведёт» из макета сюда не попал: модель и определение исполнителя
+// за этапом не входят в поля row.stage* (stage, stage_since, stage_round,
+// stage_session, stage_at), заводить его значило бы выдумывать знание.
+function stageFormBlocks(row) {
+  if (!row.stage) return [];
+  const cls = stageKindClass(row);
+  const live = row.stage_session === "сессия жива";
+  const header = el("div", "now2 " + cls + (live ? " live" : ""));
+  const big = el("span", "big");
+  const dot = el("i");
+  if (row.stage_session && row.stage_session.indexOf("молчит") >= 0) dot.className = "quiet";
+  const hint = stageHint(row);
+  if (hint) dot.title = hint;
+  big.append(dot, document.createTextNode(row.stage));
+  header.append(big, stageAgeNode("span", row));
+  const steps = el("div", "step2 " + cls);
+  const at = STAGE_WAITS.includes(row.stage) ? row.stage_at : row.stage;
+  const idx = STAGE_ORDER.indexOf(at);
+  STAGE_ORDER.forEach((name, i) => {
+    let mark = "s";
+    if (idx >= 0) {
+      if (i < idx) mark = "s dn";
+      else if (i === idx) mark = cls === "k-gone" ? "s on gone" : "s on";
+    }
+    const s = el("span", mark);
+    s.append(el("i"), el("span", "", name));
+    steps.append(s);
+  });
+  const blocks = [header, steps];
+  if (cls === "k-gone") {
+    const hintLine = el("div", "hint");
+    hintLine.append(document.createTextNode("Сессии нет " + workAge(row.stage_since, Date.now()) + ". "),
+      el("b", "", "Взять в работу"),
+      document.createTextNode(" заведёт новую с этого этапа."));
+    blocks.push(hintLine);
+  }
+  return blocks;
 }
 
 // Обратный отсчёт до срока: те же слова, что у возраста работы, только вперёд.
@@ -1934,6 +2078,12 @@ function renderRow(project, row, sect, opts) {
     tt.append(box);
   }
   tr.append(ttc);
+  // Колонка хода между заголовком и рангом (DK-1119, макет 2a): пустая
+  // ячейка у строки без записи этапа, сетку колонки это не ломает.
+  const stagec = el("td", "stage");
+  const stageBox = stageColumn(row);
+  if (stageBox) stagec.append(stageBox);
+  tr.append(stagec);
   // Ранг и дата стоят своими колонками, а не приписками в хвосте: по ним
   // сортирует шапка, и колонка, которой нет в таблице, подписи в шапке не
   // соответствует ничем.
@@ -2135,6 +2285,11 @@ const TBL_COLS = {
     // второе TestBoardTableCellsNoDeadSpace.
     { key: "id", label: "Номер", by: "номеру", first: "asc", w: 82 },
     { key: "title", label: "Задача", by: "названию", first: "asc", flex: true },
+    // Колонка хода задачи (DK-1119, макет 2a): слово этапа, круг и возраст,
+    // под ними лента из восьми делений. Своей сортировки у неё нет, как и у
+    // хвоста с кнопками: порядок по этапу ничего бы не сказал стабильнее
+    // ранга или даты правки.
+    { key: "stage", label: "", w: 150 },
     // Заголовок у ранга значком по той же причине, что у хода: замер показал,
     // что ширину колонки держит слово «Ранг» со значком направления (пятьдесят
     // четыре точки), а само содержимое двузначное число (тридцать). Колонка
@@ -4519,6 +4674,11 @@ function formPage(cfg) {
   }
   out.chips = chips;
 
+  // Блоки сразу под полосой чипов и до описания: сюда встают шапка и степпер
+  // этапа задачи (DK-1119), а не в конец страницы, где сидит cfg.extra после
+  // ранга, файла и зависимостей.
+  for (const node of cfg.afterChips || []) page.append(node);
+
   let file = null;
   let edit = Boolean(cfg.edit);
   let dressPen = () => {};
@@ -5039,13 +5199,15 @@ async function renderTask(project, works, id, pre) {
 
   // Тот же признак работы, что и в строке списка, и теми же словами: решение
   // «продолжить или не трогать» принимают чаще всего на этом экране. Признаки
-  // живости и этап работы переехали сюда с экрана агента (DK-435): разговор
-  // ушёл в панель, а чем занята задача и кто её ведёт это предмет самой задачи.
-  // Состояние строки идёт первым чипом полосы: раньше оно стояло отдельной
-  // строкой над заголовком, рядом со ссылкой на доску, и полоса с типом, ценой
-  // и бакетом начиналась мимо него (решение пользователя).
+  // живости переехали сюда с экрана агента (DK-435): разговор ушёл в панель, а
+  // чем занята задача это предмет самой задачи. Этап работы отсюда съехал
+  // шапкой и степпером под чипы (DK-1119, макет 2b): чип-строка журнала не
+  // читалась индикатором и дублировала точку у номера. Состояние строки идёт
+  // первым чипом полосы: раньше оно стояло отдельной строкой над заголовком,
+  // рядом со ссылкой на доску, и полоса с типом, ценой и бакетом начиналась
+  // мимо него (решение пользователя).
   const chips = [row.section ? el("span", "chip", row.section) : null,
-    liveChip(work), stageChip(row), waitChip(row), talkChip(row), forkChip(row)].filter(Boolean);
+    liveChip(work), waitChip(row), talkChip(row), forkChip(row)].filter(Boolean);
   if (isGoal) chips.push(el("span", "chip c-goal", "цель"));
   const tail = [withTip(el("span", "chip dashed" +
     (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p), P_HINT)];
@@ -5081,6 +5243,9 @@ async function renderTask(project, works, id, pre) {
   const view = formPage({
     key: "task", project, id, detail, chatRow: row, rankRow: row,
     num: row.id, titleLabel: "заголовок задачи " + id, form, chips, tailChips: tail, top,
+    // Шапка и степпер этапа (DK-1119, макет 2b) встают между полосой чипов и
+    // описанием: то же место, где раньше читался чип stageChip.
+    afterChips: stageFormBlocks(row),
     links: detail.links || null,
     has: { title: true, type: true, cost: true, rank: true, deps: true, chat: true,
       file: true, make: true, pencil: true, read: true },

@@ -39,6 +39,7 @@ const row = (id, live) => `
     <tr class="trow">
       <td class="id"><span>${id}</span></td>
       <td class="tt"><span class="cin"><span class="ttl">строка доски ${id}</span></span></td>
+      <td class="stage"></td>
       <td class="rank"><button class="rsum" type="button">40</button></td>
       <td class="twhen"><span class="stale dashed">2026-08-26</span></td>
       <td class="meta"><span class="cin"><span class="racts">${

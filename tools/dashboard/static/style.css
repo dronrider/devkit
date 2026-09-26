@@ -577,6 +577,72 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .trow .id .sdot{position:absolute;top:50%;transform:translateY(-50%);left:var(--rowpx)}
 .trow .tt{font:var(--rowfw) var(--rowfs) var(--sans);color:var(--tx)}
 .trow .tt .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Этап задачи в строке списка и на форме (DK-1119, макет «14 Этап задачи, ход
+   2», варианты 2a и 2b): --k держит цвет словаря этапов на всём поддереве
+   класса вместо повтора в каждом правиле («разработка и доработка зелёные,
+   ревью и вычитка жёлтые, слияние и выкат синие, проверка сиреневая,
+   ожидания оранжевые, брошенная красная», слова человека). У «постановки»
+   своего цвета в словаре нет, она красится тем же, что разработка. */
+.k-dev{--k:var(--run)}
+.k-rev{--k:var(--check)}
+.k-ship{--k:var(--deleg)}
+.k-ver{--k:var(--goal)}
+.k-wait{--k:var(--wait)}
+.k-gone{--k:var(--block)}
+
+/* Колонка хода строки списка (2a): слово этапа и возраст одной строкой, лента
+   из восьми делений под ними. Второй точки тут нет: состояние сессии несёт
+   точка у номера, как и раньше, а колонка держит только слово, возраст и
+   цвет (решение человека). */
+.trow .stage{vertical-align:top}
+.act2{display:flex;flex-direction:column;gap:4px;min-width:0}
+.act2 b{font:600 12.5px var(--sans);color:var(--k);
+  display:flex;align-items:center;gap:7px;min-width:0;font-style:normal}
+/* Слово этапа режется многоточием первым: слово ожидания длиннее слов этапов
+   работы, а круг с возрастом короче и нужнее числом, поэтому он держит место,
+   а не подстраивается под слово. */
+.act2 b .w{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.act2 b em{font:400 11px var(--mono);font-style:normal;color:var(--tx3);
+  white-space:nowrap;flex:none}
+/* Деление меньше пяти точек не читается делением: min-width колонки держит
+   ленту на восьми различимых полосках, а не сжимает её до полоски пикселей
+   вместе с колонкой (замер TestBoardTableCellsNoDeadSpace). */
+.act2 .seg{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;min-width:140px}
+.act2 .seg i{display:block;height:2px;border-radius:1px;background:var(--bg3);
+  font-style:normal}
+.act2 .seg i.done{background:color-mix(in oklab,var(--tx3) 55%,var(--bg3))}
+.act2 .seg i.now{background:var(--k)}
+.act2 .seg i.now.gone{background:var(--block)}
+
+/* Шапка «сейчас» и степпер формы (2b): чип stageChip снят целиком, слово
+   этапа встало крупно с точкой сессии перед ним, круг с возрастом рядом, а
+   восемь этапов подписаны в степпере ниже. */
+.now2{display:flex;align-items:center;gap:12px;padding:4px 0 2px;flex-wrap:wrap}
+.now2 .big{display:flex;align-items:center;gap:10px;font:600 18px var(--sans);
+  color:var(--k)}
+.now2 .big i{width:8px;height:8px;border-radius:50%;background:var(--k);
+  flex:none;font-style:normal}
+.now2 .big i.quiet{background:color-mix(in oklab,var(--k) 45%,var(--bg3))}
+.now2.k-gone .big i{background:transparent;border:2px solid var(--block);
+  width:6px;height:6px}
+@media (prefers-reduced-motion:no-preference){
+  .now2.live .big i{animation:dkpulse 2.2s ease-out infinite}
+}
+.now2 .age{font:500 13px var(--mono);color:var(--tx2)}
+.step2{display:flex;gap:0;padding:2px 0 4px;flex-wrap:wrap}
+.step2 .s{flex:1;display:flex;flex-direction:column;gap:6px;min-width:52px}
+.step2 .s i{display:block;height:3px;border-radius:2px;background:var(--bg3);
+  font-style:normal;margin-right:3px}
+.step2 .s.dn i{background:color-mix(in oklab,var(--tx3) 55%,var(--bg3))}
+.step2 .s.on i{background:var(--k)}
+.step2 .s.on.gone i{background:var(--block)}
+.step2 .s span{font:400 10.5px var(--sans);color:var(--tx3);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;padding-right:8px}
+.step2 .s.dn span{color:var(--tx2)}
+.step2 .s.on span{font-weight:600;color:var(--k)}
+.hint{font:400 11px var(--sans);color:var(--tx3);padding:2px 0 6px}
+.hint b{font-weight:500;color:var(--tx2)}
 /* Коробка чипов одна на все разделы: у задач, у записи накопителя и у строки
    сессии чипы стоят одинаково и одним зазором. */
 .rchips{display:flex;align-items:center;gap:var(--chipgap);flex:none}
@@ -2284,6 +2350,14 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .trow .twhen{grid-column:3;grid-row:1;min-width:0;overflow:hidden}
   .trow .tt{grid-column:1 / -1;grid-row:2}
   .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:var(--rowmgy)}
+  /* Колонка хода уходит второй строкой под заголовок (DK-1119, «уже 600 точек
+     колонка уходит второй строкой под заголовок, ранг остаётся в первой
+     строке»): ранг не двигается со своего места в первой строке, а этой
+     колонке довольно узкой полосы во всю ширину сразу под названием. Пустая
+     ячейка у строки без записи этапа схлопывается: третьей строки ради
+     пустоты нет. */
+  .trow .stage{grid-column:1 / -1;grid-row:3;padding-top:0}
+  .trow .stage:empty{display:none}
   .trow .meta{grid-column:4;grid-row:1}
   /* Хвост прижат к правому краю строки и не переносится: правило одно на три
      раздела, и стоит оно рядом с раскладкой той строки, которой правит. */

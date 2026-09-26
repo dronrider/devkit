@@ -17,7 +17,40 @@ type edges struct {
 }
 
 func newEdges(root string, b *Board, arch *Archive) *edges {
-	return &edges{b: b, arch: arch, book: merged.Open(root)}
+	e := &edges{b: b, arch: arch, book: merged.Open(root)}
+	e.book.Expect(boardIDs(b))
+	return e
+}
+
+// boardIDs это ID, про которые обход доски спросит признак «слита»: сами строки
+// и предпосылки их рёбер. Книга читает их пакетом, и обход доски обходится
+// десятком подпроцессов git вместо восьмидесяти с лишним. Это считается не
+// работой git, а ценой запуска процесса. Под соседним полным прогоном запуск
+// дороже обычного в три-пять раз, и понижение приоритета не берёт его (замер
+// DK-1168).
+func boardIDs(b *Board) []string {
+	if b == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	for _, sect := range b.Sects {
+		for _, r := range sect.Rows {
+			add(r.ID)
+			_, deps, _, _, _, _ := splitTitle(r.Title)
+			for _, d := range deps {
+				add(d)
+			}
+		}
+	}
+	return out
 }
 
 // of это снятость ребра на предпосылку dep.

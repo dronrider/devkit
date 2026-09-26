@@ -621,3 +621,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1181 | Доктор ставит находки на docs/ARCHITECTURE.md и docs/STYLEGUIDE.md, кладёт скелеты по --fix, карта несёт ссылки шапкой | task | P1 | 2026-09-26 | [tasks/archive/2026/DK-1181.md](tasks/archive/2026/DK-1181.md) |
 | DK-1182 | Доктор называет язык проекта без конфига форматтера или линтера находкой без автопочинки | task | P1 | 2026-09-26 | [tasks/archive/2026/DK-1182.md](tasks/archive/2026/DK-1182.md) |
 | DK-1180 | Ревью, интервью и определения агентов сверяют правку с docs/ARCHITECTURE.md и docs/STYLEGUIDE.md | task | P1 | 2026-09-26 | [tasks/archive/2026/DK-1180.md](tasks/archive/2026/DK-1180.md) |
+| DK-1178 | Цель: архитектура и стиль проекта записаны якорями и держат правки агентов | task | P1 | 2026-09-26 | [tasks/archive/2026/DK-1178.md](tasks/archive/2026/DK-1178.md) |

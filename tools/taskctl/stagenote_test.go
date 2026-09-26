@@ -154,6 +154,11 @@ func TestListJSONCarriesStageFields(t *testing.T) {
 	if _, has := rows["XR-010"]["stage_session"]; has || rows["XR-010"]["stage"] != "ждёт человека" {
 		t.Fatalf("ожидание человека: %v", rows["XR-010"])
 	}
+	// Ожидание без этапа работы перед собой (запись открыта сразу им) не
+	// придумывает, где задача встала: stage_at пуст, а не название ожидания.
+	if _, has := rows["XR-010"]["stage_at"]; has {
+		t.Fatalf("у ожидания без этапа работы перед собой появился stage_at: %v", rows["XR-010"])
+	}
 	if rows["XR-011"]["stage_session"] != "сессии нет, брошена" || rows["XR-012"]["stage_session"] != "сессия молчит 25 минут" {
 		t.Fatalf("признаки сессии: %v / %v", rows["XR-011"]["stage_session"], rows["XR-012"]["stage_session"])
 	}
@@ -163,6 +168,55 @@ func TestListJSONCarriesStageFields(t *testing.T) {
 		if strings.HasPrefix(n, "этап:") {
 			t.Fatalf("строка этапа попала в notes: %v", live["notes"])
 		}
+	}
+}
+
+// TestListJSONStageAtMarksParkedWork: лента строки списка и шапка формы
+// (DK-1119) подсвечивают деление того этапа, на котором задача встала, а не
+// собственное деление ожидания, которого у ожиданий в словаре нет вовсе
+// (решение исполнителя по развилке «поле на этапе ожидания», docs/tasks/DK-1119.md).
+func TestListJSONStageAtMarksParkedWork(t *testing.T) {
+	root := checkBoardSetup(t)
+	if err := os.WriteFile(archivePath(root), []byte(fixtureArchive), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	old := timeNow
+	t.Cleanup(func() { timeNow = old })
+	timeNow = func() time.Time { return stageNow }
+	main := stage.MainRoot(root)
+	openAs(t, home, main, "XR-020", stage.Verify, "", stageNow.Add(-time.Hour))
+	openAs(t, home, main, "XR-020", stage.WaitHuman, "", stageNow.Add(-30*time.Minute))
+
+	out, err := cmdListJSON(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Sections []struct {
+			Rows []map[string]any `json:"rows"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	var row map[string]any
+	for _, sec := range doc.Sections {
+		for _, r := range sec.Rows {
+			if r["id"] == "XR-020" {
+				row = r
+			}
+		}
+	}
+	if row == nil {
+		t.Fatal("строка XR-020 не нашлась")
+	}
+	if row["stage"] != "ждёт человека" || row["stage_at"] != "проверка" {
+		t.Fatalf("этап ожидания после проверки: %v", row)
+	}
+	if _, has := row["stage_session"]; has {
+		t.Fatalf("у ожидания появилась сессия: %v", row)
 	}
 }
 

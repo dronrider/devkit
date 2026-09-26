@@ -88,6 +88,7 @@ type jsonStage struct {
 	Round   int    `json:"stage_round"`
 	Age     string `json:"stage_age"`
 	Session string `json:"stage_session,omitempty"`
+	At      string `json:"stage_at,omitempty"`
 }
 
 // mark собирает поля этапа строки. Пусто у строки без открытого этапа.
@@ -107,6 +108,13 @@ func (v *stageView) mark(id string) *jsonStage {
 	// ответ у ожиданий, и строка переедет вместе с ним.
 	if stage.NeedsSession(live.Kind) {
 		m.Session = lifeWords(peers.Judge(v.peers, v.taskSessions(id, live), v.now))
+	} else if last, ok := stage.LastOf(rec, stage.IsWork); ok {
+		// Ожидание не несёт своей сессии (словарь DK-911), а лента строки
+		// списка и шапка формы (DK-1119) подсвечивают не своё деление, а то,
+		// на котором задача встала: последний этап работы перед записью
+		// ожидания. Тот же приём уже стоит в tools/agentctl/pick.go
+		// (afterReview), считает его stage.LastOf.
+		m.At = last.Kind
 	}
 	return m
 }

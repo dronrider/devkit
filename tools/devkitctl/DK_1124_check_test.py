@@ -13,8 +13,11 @@
 (разбор в docs/tasks/DK-1124.md, раздел «Ход работы»), поэтому тест глушит
 обе внешние зависимости точками подмены самого скрипта: DEVKIT_HOME уводит
 конфиг и журнал в свой каталог, DEVKIT_LOAD_CMD заменяет второй полный
-прогон `parallel.py` на мгновенную команду, DEVKIT_PROBE_INTERVAL убирает
-паузы между замерами. `taskctl` подменён стендовым скриптом в голове PATH.
+прогон `parallel.py` ожиданием отмашки стенда, DEVKIT_PROBE_INTERVAL убирает
+паузы между замерами. Отмашку стенд кладёт на последнем замере. Сценарий
+требует живого прогона рядом всё окно замеров, и нагрузка у стенда идёт всё
+это время, а не по счётчику секунд. `taskctl` подменён стендовым скриптом в
+голове PATH.
 HTTP-часть сценария (login и /api/projects) идёт через python3
 urllib.request и http.cookiejar, не через curl (замечание ревью DK-1124:
 curl отбит разрешениями Bash харнесса агента), поэтому вместо стенда-бинаря
@@ -106,20 +109,45 @@ class Stand(unittest.TestCase):
         path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
         path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
-    def run_script(self, limit=5, load="true", probe_interval="0",
+    def run_script(self, limit=5, load=None, probe_interval="0",
                    http_ceiling="2", extra_env=None):
         env = dict(os.environ)
         env["PATH"] = str(self.bin) + os.pathsep + env.get("PATH", "")
         env["DEVKIT_HOME"] = str(self.home)
-        env["DEVKIT_LOAD_CMD"] = load
         env["DEVKIT_PROBE_INTERVAL"] = probe_interval
         env["DEVKIT_HTTP_CEILING"] = http_ceiling
+        stop = self.dir / "load-stop"
+        if load is None:
+            # Нагрузка по умолчанию живёт, пока идут замеры. Сценарий требует
+            # живого прогона рядом, и стенд снимает нагрузку отмашкой, увидев
+            # последний замер в выводе. Живость проверяется состоянием, а не
+            # стенным временем, и стенд не тратит лишнего времени на ожидание.
+            load = "while [ ! -f '%s' ]; do sleep 0.05; done" % stop
+        env["DEVKIT_LOAD_CMD"] = load
         if extra_env:
             env.update(extra_env)
-        return subprocess.run(
+        proc = subprocess.Popen(
             ["sh", str(SCRIPT), str(limit)],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, timeout=60)
+            text=True)
+        lines = []
+        code = None
+        try:
+            for line in proc.stdout:
+                lines.append(line)
+                if "замер 10:" in line:
+                    stop.touch()
+            code = proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            raise
+        finally:
+            # Отмашка кладётся и на падении стенда. Без неё нагрузка осталась бы
+            # крутиться после прогона.
+            stop.touch()
+            proc.stdout.close()
+        return subprocess.CompletedProcess(
+            [str(SCRIPT)], code, stdout="".join(lines))
 
 
 class SyntaxTest(unittest.TestCase):
@@ -254,6 +282,28 @@ class ThresholdTest(Stand):
         self.assertEqual(self.state["total"], 10)
         self.assertEqual(self.state["authed"], 10,
                           "все десять замеров /api/projects обязаны идти с cookie сессии")
+
+    def test_live_load_is_named_next_to_every_measurement(self):
+        # Замечание ревью DK-1168: шаг не доказывал, что прогон нагрузки был
+        # жив на десятом замере. Сценарий ждёт `load_pid` только после цикла и
+        # про его жизнь ничего не печатал. Шаг проходил и по свободной машине.
+        # Теперь живость стоит рядом с каждым замером.
+        self.stub("taskctl", "exit 0")
+        proc = self.run_script(limit=5)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual(proc.stdout.count("прогон жив"), 10, proc.stdout)
+        self.assertIn("прогон нагрузки: жив всё окно замеров", proc.stdout)
+
+    def test_dead_load_fails_the_run(self):
+        # Нагрузка кончилась до первого замера. Порог тогда мерился по
+        # свободной машине, и шаг про отзывчивость под нагрузкой не
+        # доказывает ничего. Сценарий обязан назвать замер, с которого
+        # нагрузки не было, и провалиться.
+        self.stub("taskctl", "exit 0")
+        proc = self.run_script(limit=5, load="true")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("прогон кончился", proc.stdout)
+        self.assertIn("кончился на замере 1", proc.stdout, proc.stdout)
 
     def test_default_load_command_is_the_real_full_run(self):
         # DEVKIT_LOAD_CMD это точка подмены для теста, а не смена

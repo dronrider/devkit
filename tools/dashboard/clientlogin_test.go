@@ -81,6 +81,26 @@ func loginPaneOf(stage string) string {
 		return strings.Join([]string{
 			"Invalid authorization code. Try again.", "", code,
 		}, "\n")
+	case "durl":
+		// Диалог /design-login устроен как у /login: сперва ссылка, под ней
+		// строка про код (дополнение черновика DK-920, живой вид с панели).
+		// Виджета выбора способа тут нет, вход в макеты один.
+		return strings.Join([]string{
+			"Visit the following URL to authorize Claude Design:", "",
+			"https://claude.ai/oauth/authorize?client_id=design&state=abc123", "",
+			code,
+		}, "\n")
+	case "dok":
+		return strings.Join([]string{"Design-system access authorized", "",
+			paneCursor + " \n"}, "\n")
+	case "dagain":
+		// Отказ кода в диалоге макетов: поля кода на панели нет вовсе, а слово
+		// invalid общий узнаватель отказа принял бы за окончательный провал и
+		// снял бы живую сессию входа.
+		return strings.Join([]string{
+			"", strings.Repeat(paneFrame, 60), "  Claude Design login", "",
+			"  Invalid code. Press Enter to retry, or any other key to cancel", "",
+		}, "\n")
 	}
 	return ""
 }
@@ -90,8 +110,9 @@ func loginPaneOf(stage string) string {
 // рисует REPL), trust (виджет доверия каталогу), init (REPL вида готового, но
 // пересборка вычищает ввод, и со второго снимка он готов по-настоящему), repl
 // (REPL без входа), ask (виджет выбора способа), url (ссылка и поле кода), ok
-// (вход сделан), again (код не принят); пропажа файла стадии это смерть
-// сессии. Хвостовая черта в строке фикстуры значит перенос строки пейна:
+// (вход сделан), again (код не принят), durl (ссылка и поле кода у входа в
+// Claude Design), dok (макеты открыты), dagain (код макетов не принят, диалог
+// ждёт нажатия); пропажа файла стадии это смерть сессии. Хвостовая черта в строке фикстуры значит перенос строки пейна:
 // capture-pane с -J склеивает такие строки, как живой tmux. Нажатие на пустой
 // панели оставляет метку early: в ненарисовавшегося клиента нажатия не уходят.
 // ls называет и живую сессию входа с моментом рождения: по списку служба
@@ -99,7 +120,8 @@ func loginPaneOf(stage string) string {
 func fakeTmuxLogin(t *testing.T, e *testEnv) string {
 	t.Helper()
 	d := t.TempDir()
-	for _, stage := range []string{"boot", "repl", "init", "trust", "ask", "url", "ok", "again", "oauth", "stuck"} {
+	for _, stage := range []string{"boot", "repl", "init", "trust", "ask", "url", "ok", "again", "oauth", "stuck",
+		"durl", "dok", "dagain"} {
 		if err := os.WriteFile(filepath.Join(d, "pane-"+stage),
 			[]byte(loginPaneOf(stage)), 0o644); err != nil {
 			t.Fatal(err)
@@ -116,7 +138,7 @@ new-session)
   printf '%s\n' "$*" >"$D/raise"
   if [ -f "$D/first" ]; then cat "$D/first" >"$D/stage"; else echo repl >"$D/stage"; fi
   printf '%s|1|%s\n' "$4" "$(date +%s)" >"$D/sess";;
-set-environment) printf '%s=%s\n' "$4" "$5" >"$D/env-${3#=}";;
+set-environment) printf '%s=%s\n' "$4" "$5" >>"$D/env-${3#=}";;
 show-environment)
   [ -f "$D/env-${3#=}" ] || exit 1
   grep "^$4=" "$D/env-${3#=}" || exit 1;;
@@ -148,10 +170,19 @@ capture-pane)
   ;;
 send-keys)
   st=$(cat "$D/stage" 2>/dev/null || echo gone)
-  if [ "$4" = "-l" ] && [ "$st" != "init" ]; then printf '%s' "$5" >"$D/last"
+  if [ "$4" = "-l" ] && [ "$st" != "init" ]; then
+    printf '%s' "$5" >"$D/last"
+    if [ "$5" = "/design-login" ]; then touch "$D/design"; fi
   elif [ "$4" = "Enter" ]; then
     last=$(cat "$D/last" 2>/dev/null || true)
-    if [ "$st" = "repl" ]; then echo ask >"$D/stage"
+    if [ "$st" = "repl" ] && [ -f "$D/design" ]; then echo durl >"$D/stage"
+    elif [ "$st" = "dagain" ]; then echo durl >"$D/stage"
+    elif [ "$st" = "durl" ]; then
+      case "$last" in
+      GOOD) echo dok >"$D/stage";;
+      *) echo dagain >"$D/stage";;
+      esac
+    elif [ "$st" = "repl" ]; then echo ask >"$D/stage"
     elif [ "$st" = "boot" ]; then touch "$D/early"
     elif [ "$st" = "init" ]; then :
     elif [ "$st" = "trust" ]; then echo init >"$D/stage"

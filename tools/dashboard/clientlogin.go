@@ -27,6 +27,11 @@ import (
 type loginRun struct {
 	Tmux string
 	URL  string
+	// Kind это вид входа, которым поднята сессия (loginWay.Kind). Вход на
+	// машине один, а видов у него два, и без вида код авторизации уехал бы
+	// нажатиями в чужой диалог: ключ одноразовый, и дорога ему туда в один
+	// конец.
+	Kind string
 	// Alive это последний признак жизни входа: момент подъёма, а дальше каждый
 	// заход человека по ручкам входа. Срок уборки считается от него, а не от
 	// подъёма: человек, взявший ссылку заново или промахнувшийся кодом, никуда
@@ -195,19 +200,86 @@ func loginWantsCode(pane string) bool {
 	return false
 }
 
-// loginRejectWords узнают отказ кода: клиент перерисовывает панель и печатает
-// свою строку про неверный код рядом с новым полем.
+// loginRejectWords узнают отказ кода у обычного входа: клиент перерисовывает
+// панель и печатает свою строку про неверный код рядом с новым полем.
 var loginRejectWords = []string{"invalid", "incorrect", "try again", "expired"}
 
-// loginSaysRejected отвечает, сказал ли клиент, что код не принят.
-func loginSaysRejected(pane string) bool {
+// designAgainWords узнают повторяемый отказ кода в диалоге входа в Claude
+// Design. Слова тут свои, и общий список к ним не годится: диалог печатает
+// «Invalid code. Press Enter to retry, or any other key to cancel», то есть
+// поля кода на панели нет, а loginSaysFailed по слову invalid объявил бы
+// окончательный провал и снял бы живую сессию входа. Мера узкая нарочно: общий
+// отказ этого же диалога («OAuth error», истёкшая ссылка) тоже зовёт нажать
+// Enter, и повторять там нечего, начинать надо заново.
+var designAgainWords = []string{"invalid code"}
+
+// designDoneWords узнают успех входа в Claude Design словами самого клиента.
+// Успех обычного входа узнаётся уходом поля кода, а тут есть прямое слово, и
+// мера по нему честнее: «Design-system access authorized» это ответ диалога, а
+// не догадка по пустой панели.
+var designDoneWords = []string{"design-system access authorized"}
+
+// loginWay это вид входа: своя команда клиенту, свои слова диалога и своё имя
+// для человека. Видов два, механика у них одна (одноразовая сессия tmux,
+// ссылка, код нажатиями, исход по панели), и расходятся они ровно тут.
+type loginWay struct {
+	// Kind это машинное имя вида: его присылает панель в теле ручек входа, и
+	// оно же лежит в состоянии поднятой сессии.
+	Kind string
+	// Cmd это команда клиента, которой вид поднимается.
+	Cmd string
+	// Word называет вид словами: он едет в журнал и в отказы человеку.
+	Word string
+	// Again узнают повторяемый отказ кода: диалог жив и ждёт новой попытки.
+	Again []string
+	// Done узнают успех словами клиента. Пусто значит, что своих слов у вида
+	// нет и успех считается по уходу поля кода.
+	Done []string
+	// Press говорит, что после отказа кода диалог ждёт нажатия, а не кода:
+	// нажатие возвращает поле, а любая другая клавиша диалог отменяет, и
+	// поданный вслепую код убил бы сессию входа вместо второй попытки.
+	Press bool
+}
+
+// loginWayClient это обычный вход в клиента: тот, что делают командой /login.
+var loginWayClient = &loginWay{Kind: "client", Cmd: "/login", Word: "вход клиента",
+	Again: loginRejectWords}
+
+// loginWayDesign это вход в Claude Design. Токен обычного входа доступа к
+// макетам не несёт: api.anthropic.com отвечает на него 403 и просит
+// /design-login, и до этого входа работа с макетами из дашборда стоит.
+var loginWayDesign = &loginWay{Kind: "design", Cmd: "/design-login",
+	Word: "вход в Claude Design", Again: designAgainWords, Done: designDoneWords,
+	Press: true}
+
+// loginWays это виды входа по их машинному имени. Пустое имя это обычный вход:
+// панель старой версии вида не присылает вовсе.
+var loginWays = map[string]*loginWay{
+	"":                  loginWayClient,
+	loginWayClient.Kind: loginWayClient,
+	loginWayDesign.Kind: loginWayDesign,
+}
+
+// paneSays отвечает, есть ли в панели хоть одно слово из списка.
+func paneSays(pane string, words []string) bool {
 	low := strings.ToLower(pane)
-	for _, word := range loginRejectWords {
+	for _, word := range words {
 		if strings.Contains(low, word) {
 			return true
 		}
 	}
 	return false
+}
+
+// again отвечает, сказал ли диалог этого вида, что код не принят, а попытка
+// повторяется.
+func (way *loginWay) again(pane string) bool {
+	return paneSays(pane, way.Again)
+}
+
+// done отвечает, сказал ли диалог этого вида, что вход сделан.
+func (way *loginWay) done(pane string) bool {
+	return len(way.Done) > 0 && paneSays(pane, way.Done)
 }
 
 // loginFailWords узнают отказ входа словами самого клиента. Список нарочно
@@ -456,11 +528,37 @@ func (s *server) loginMark() string {
 	return s.cfg.Path
 }
 
-// loginStamp метит сессию входа сразу после подъёма.
-func (s *server) loginStamp(sess string) error {
+// loginWayVar это переменная окружения tmux-сессии, которой дашборд метит вид
+// поднятого входа. Состояние подъёма живёт в памяти процесса и умирает
+// перезапуском службы, а сессия входа остаётся на машине: без метки узнанной
+// после перезапуска сессии вид приходилось бы угадывать, а по нему решается,
+// куда уедет код авторизации.
+const loginWayVar = "DEVKIT_LOGIN_WAY"
+
+// loginStamp метит сессию входа сразу после подъёма: владельцем и видом входа.
+func (s *server) loginStamp(sess string, way *loginWay) error {
+	if _, err := runProc("tmux", "set-environment", "-t", "="+sess,
+		loginWayVar, way.Kind); err != nil {
+		return err
+	}
 	_, err := runProc("tmux", "set-environment", "-t", "="+sess,
 		loginOwnerVar, s.loginMark())
 	return err
+}
+
+// loginWayOfSess читает вид входа с метки сессии. Метки нет у сессии, поднятой
+// прежней версией службы, и такая считается обычным входом: он и был
+// единственным.
+func loginWayOfSess(sess string) *loginWay {
+	out, err := runProc("tmux", "show-environment", "-t", "="+sess, loginWayVar)
+	if err != nil {
+		return loginWayClient
+	}
+	kind := strings.TrimPrefix(strings.TrimSpace(string(out)), loginWayVar+"=")
+	if way, ok := loginWays[kind]; ok {
+		return way
+	}
+	return loginWayClient
 }
 
 // loginOwns отвечает, наша ли это сессия входа. Чужая и безымянная равно не
@@ -507,11 +605,14 @@ func (s *server) loginRecover() {
 		s.mu.Unlock()
 		if !taken && err == nil && s.now().Sub(born) < loginRunTTL {
 			if url, _ := loginLinkOf(pane); url != "" {
+				way := loginWayOfSess(sess.Name)
 				s.mu.Lock()
 				if s.loginRun == nil {
-					s.loginRun = &loginRun{Tmux: sess.Name, URL: url, Alive: born}
+					s.loginRun = &loginRun{Tmux: sess.Name, URL: url, Alive: born,
+						Kind: way.Kind}
 					s.mu.Unlock()
-					s.logf("сессия входа %s узнана после перезапуска службы", sess.Name)
+					s.logf("сессия входа %s (%s) узнана после перезапуска службы",
+						sess.Name, way.Word)
 					continue
 				}
 				s.mu.Unlock()
@@ -542,16 +643,65 @@ func (s *server) loginKeeper(stop <-chan struct{}) {
 // открыть ссылку. С другого устройства петля ведёт в никуда (адрес возврата
 // указывает на сам телефон), и код остаётся единственной дорогой.
 func (s *server) loginAnswer(w http.ResponseWriter, r *http.Request, run *loginRun) {
-	url, way := run.URL, "code"
+	url, road := run.URL, "code"
 	message := "откройте ссылку, войдите и введите код в поле на плашке"
 	if loginFromMachine(r) {
 		if loop := loginLoopURL(run.URL, loginLocalPort(run.Tmux)); loop != "" {
-			url, way = loop, "local"
+			url, road = loop, "local"
 			message = "откройте ссылку и войдите: код клиент возьмёт сам"
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"tmux": run.Tmux, "url": url, "way": way, "message": message})
+	// Вид входа едет назад тем же именем, каким пришёл: экран сверяет, что
+	// ссылка досталась ему от того входа, который он и просил.
+	writeJSON(w, http.StatusOK, map[string]string{"tmux": run.Tmux, "url": url,
+		"way": road, "kind": run.Kind, "message": message})
+}
+
+// loginWayOf берёт вид входа из тела запроса. Тело у ручек входа своё, а вид в
+// нём общий: второго набора маршрутов на второй вид не заводится, механика у
+// них одна. Пустое имя это обычный вход, незнакомое отбивается словами: молча
+// свести его к обычному значило бы подать код в чужой диалог.
+func loginWayOf(w http.ResponseWriter, kind string) (*loginWay, bool) {
+	way, ok := loginWays[strings.TrimSpace(kind)]
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("вид входа %q дашборду не знаком", kind)})
+		return nil, false
+	}
+	return way, true
+}
+
+// loginBodyWay читает вид входа из тела запроса и отдаёт его же поле кода.
+func loginBodyWay(w http.ResponseWriter, r *http.Request) (*loginWay, string, bool) {
+	var body struct {
+		Kind string `json:"kind"`
+		Code string `json:"code"`
+	}
+	if r.Body != nil {
+		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
+	}
+	way, ok := loginWayOf(w, body.Kind)
+	if !ok {
+		return nil, "", false
+	}
+	return way, strings.TrimSpace(body.Code), true
+}
+
+// loginWayHeld сверяет вид поднятого входа с тем, который просит экран. Разошлись
+// значит, что вход на машине стоит другой: код авторизации туда подавать нельзя,
+// и человеку сказано поднять свой вход заново.
+func (s *server) loginWayHeld(w http.ResponseWriter, run *loginRun, way *loginWay) bool {
+	if run.Kind == way.Kind {
+		return true
+	}
+	held := loginWays[run.Kind]
+	if held == nil {
+		held = loginWayClient
+	}
+	writeJSON(w, http.StatusConflict, map[string]string{
+		"error": fmt.Sprintf("на машине поднят другой вход (%s): нажмите кнопку входа заново",
+			held.Word)})
+	return false
 }
 
 // handleClientLoginWait ждёт исхода входа, который идёт петлёй. Кода тут нет,
@@ -566,12 +716,19 @@ func (s *server) handleClientLoginWait(w http.ResponseWriter, r *http.Request) {
 	if found == nil {
 		return
 	}
+	way, _, ok := loginBodyWay(w, r)
+	if !ok {
+		return
+	}
 	s.mu.Lock()
 	run := s.loginRun
 	s.mu.Unlock()
 	if run == nil || run.URL == "" {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "вход ещё не поднят: сперва нажмите кнопку входа"})
+		return
+	}
+	if !s.loginWayHeld(w, run, way) {
 		return
 	}
 	if !s.loginOwns(run.Tmux) {
@@ -587,23 +744,23 @@ func (s *server) handleClientLoginWait(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	run.Alive = s.now()
 	s.mu.Unlock()
-	kind, words := s.loginAwaitCode(run.Tmux, false)
-	switch kind {
+	got, words := s.loginAwaitCode(way, run.Tmux, false)
+	switch got {
 	case "waiting":
 		writeJSON(w, http.StatusAccepted, map[string]any{"waiting": true,
 			"message": "вход ещё идёт: пройдите его в открывшейся вкладке"})
 	case "ok":
 		s.loginDrop(run, "вход сделан")
-		s.logf("вход клиента сделан петлёй в %s: токен у клиента в связке ключей", found.Name)
+		s.logf("%s сделан петлёй в %s: токен у клиента в связке ключей", way.Word, found.Name)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true,
 			"message": "вход сделан: свежий токен лёг в связку ключей"})
 	case "fail":
 		s.loginDrop(run, "клиент отверг вход")
-		s.logf("вход клиента отвергнут в %s: %s", found.Name, words)
+		s.logf("%s отвергнут в %s: %s", way.Word, found.Name, words)
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": fmt.Sprintf("вход не прошёл: %s. Начните вход заново.", words)})
 	case "stuck":
-		s.logf("исход входа не узнан в %s: %s", found.Name, words)
+		s.logf("исход входа не узнан в %s (%s): %s", found.Name, way.Word, words)
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("клиент кончил вход не тем, чего ждёт дашборд. "+
 				"Последнее, что он сказал: «%s». Вход не сделан.", words)})
@@ -626,6 +783,10 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 	if found == nil {
 		return
 	}
+	way, _, ok := loginBodyWay(w, r)
+	if !ok {
+		return
+	}
 	if m := tmuxMissingCheck(); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
@@ -646,7 +807,7 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 	}
 	if run != nil {
-		if s.now().Sub(run.Alive) < loginRunTTL {
+		if run.Kind == way.Kind && s.now().Sub(run.Alive) < loginRunTTL {
 			if _, err := loginPane(run.Tmux); err == nil {
 				if run.URL != "" {
 					// Повторный заход это признак жизни: срок входа считается
@@ -654,7 +815,7 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 					s.mu.Lock()
 					run.Alive = s.now()
 					s.mu.Unlock()
-					s.logf("вход клиента в %s: ссылка отдана повторно", found.Name)
+					s.logf("%s в %s: ссылка отдана повторно", way.Word, found.Name)
 					s.loginAnswer(w, r, run)
 					return
 				}
@@ -665,9 +826,15 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		// Прежняя сессия мертва или просрочена: снятия она уже не стоит,
-		// состояние забывается молча.
-		s.loginDrop(run, "")
+		// Прежняя сессия мертва, просрочена или поднята другим видом входа.
+		// Вид тут решает так же, как срок: одна сессия входа на машину, а
+		// человек нажал кнопку другого вида, значит идти дальше ей некуда.
+		// Мёртвая и просроченная снятия не стоят, и состояние забывается молча.
+		why := ""
+		if run.Kind != way.Kind {
+			why = "вместо неё поднимается " + way.Word
+		}
+		s.loginDrop(run, why)
 	}
 	sess := loginSessName(tmuxAliveFn())
 	// Каталог входа служебный, а не проект: вход не принадлежит разговору,
@@ -682,30 +849,31 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 	// живой REPL, и врать про него рубежу синхронности незачем.
 	dir, err := serviceDir(s.cfg.Home)
 	if err != nil {
-		s.logf("подъём входа клиента в %s не удался: %v", found.Name, err)
+		s.logf("подъём входа (%s) в %s не удался: %v", way.Word, found.Name, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
 		s.launchEnv("", sess, "")+" "+defaultClient); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию входа %s: %s", sess, procErr(err))
-		s.logf("подъём входа клиента в %s не удался: %s", found.Name, text)
+		s.logf("подъём входа (%s) в %s не удался: %s", way.Word, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
 		return
 	}
-	if err := s.loginStamp(sess); err != nil {
-		// Без метки сессия ничья: после перезапуска её не узнать и не снять,
-		// а код авторизации ушёл бы в сессию, о которой известно одно имя.
+	if err := s.loginStamp(sess, way); err != nil {
+		// Без метки сессия ничья: после перезапуска её не узнать, не снять и
+		// не назвать по виду, а код авторизации ушёл бы в сессию, о которой
+		// известно одно имя.
 		runProc("tmux", "kill-session", "-t", "="+sess)
 		text := fmt.Sprintf("сессия входа %s не пометилась владельцем: %s", sess, procErr(err))
-		s.logf("подъём входа клиента в %s не удался: %s", found.Name, text)
+		s.logf("подъём входа (%s) в %s не удался: %s", way.Word, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
 		return
 	}
 	s.mu.Lock()
-	s.loginRun = &loginRun{Tmux: sess, Alive: s.now(), Raising: true}
+	s.loginRun = &loginRun{Tmux: sess, Alive: s.now(), Raising: true, Kind: way.Kind}
 	s.mu.Unlock()
-	url, fail := s.loginAwaitLink(sess)
+	url, fail := s.loginAwaitLink(way, sess)
 	if fail != "" {
 		s.mu.Lock()
 		run = s.loginRun
@@ -713,7 +881,7 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 		if run != nil {
 			s.loginDrop(run, fail)
 		}
-		s.logf("вход клиента в %s не дал ссылки: %s", found.Name, fail)
+		s.logf("%s в %s не дал ссылки: %s", way.Word, found.Name, fail)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fail})
 		return
 	}
@@ -723,13 +891,13 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 		s.loginRun.Raising = false
 	}
 	s.mu.Unlock()
-	s.logf("вход клиента поднят в %s (tmux-сессия %s), ссылка авторизации отдана",
-		found.Name, sess)
+	s.logf("%s поднят в %s (tmux-сессия %s), ссылка авторизации отдана",
+		way.Word, found.Name, sess)
 	s.mu.Lock()
 	run = s.loginRun
 	s.mu.Unlock()
 	if run == nil {
-		run = &loginRun{Tmux: sess, URL: url}
+		run = &loginRun{Tmux: sess, URL: url, Kind: way.Kind}
 	}
 	s.loginAnswer(w, r, run)
 }
@@ -737,15 +905,16 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 // loginAwaitLink ждёт от панели ссылку авторизации. До ссылки клиент стоит на
 // вопросах, и они проходятся за человека: вопрос доверия каталогу отвечается
 // пунктом доверия (его поднимает машина, где дом ещё не доверен клиенту, а
-// команда /login уже съедена этим вопросом и подаётся заново), выбор способа
-// входа берёт подписку по умолчанию, первый пункт. Команда /login подаётся лишь
+// команда вида уже съедена этим вопросом и подаётся заново), выбор способа
+// входа берёт подписку по умолчанию, первый пункт. Команда вида (/login у
+// обычного входа, /design-login у входа в Claude Design) подаётся лишь
 // на нарисованную панель: пока клиент разгоняется, панель пуста, и нажатия,
 // поданные вслепую, съедает первый вставший виджет, а Enter в нём подтверждает
 // пункт на курсоре и губит клиента. Съеденной бывает и поданная вовремя: после
 // ответа о доверии клиент поднимает REPL заново и вычищает ввод, поэтому команда
 // повторяется с отступом, пока панель не отзовётся виджетом выбора способа.
 // Пустая вторая строка значит успех.
-func (s *server) loginAwaitLink(sess string) (string, string) {
+func (s *server) loginAwaitLink(way *loginWay, sess string) (string, string) {
 	deadline := s.now().Add(loginLinkWait)
 	chosen, trusted := false, false
 	var sent time.Time
@@ -779,8 +948,8 @@ func (s *server) loginAwaitLink(sess string) (string, string) {
 		case strings.TrimSpace(pane) == "":
 			// Клиент ещё не нарисовал панель: нажатия вслепую не подаются.
 		case len(ask.Options) == 0 && (sent.IsZero() || s.now().Sub(sent) >= 2*loginPollEvery):
-			if err := tmuxAnswerText("="+sess+":", "/login"); err != nil {
-				return "", fmt.Sprintf("команда /login не подалась в сессию входа: %s", procErr(err))
+			if err := tmuxAnswerText("="+sess+":", way.Cmd); err != nil {
+				return "", fmt.Sprintf("команда %s не подалась в сессию входа: %s", way.Cmd, procErr(err))
 			}
 			sent = s.now()
 		}
@@ -835,13 +1004,10 @@ func (s *server) handleClientLoginCode(w http.ResponseWriter, r *http.Request) {
 	if found == nil {
 		return
 	}
-	var body struct {
-		Code string `json:"code"`
+	way, code, ok := loginBodyWay(w, r)
+	if !ok {
+		return
 	}
-	if r.Body != nil {
-		json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
-	}
-	code := strings.TrimSpace(body.Code)
 	if code == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "пустой код отправлять нечего: код печатает страница авторизации"})
@@ -853,6 +1019,11 @@ func (s *server) handleClientLoginCode(w http.ResponseWriter, r *http.Request) {
 	if run == nil || run.URL == "" {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "вход ещё не поднят: сперва нажмите кнопку входа на плашке разлогина"})
+		return
+	}
+	// Вид проверяется раньше метки владельца: своя сессия чужого вида ждёт
+	// своего кода, и нажатия чужого губят и её, и сам код.
+	if !s.loginWayHeld(w, run, way) {
 		return
 	}
 	// Метка сессии проверяется перед самой подачей, а не только при узнавании.
@@ -880,24 +1051,25 @@ func (s *server) handleClientLoginCode(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("код не подался в сессию входа %s: %s", run.Tmux, procErr(err))})
 		return
 	}
-	kind, words := s.loginAwaitCode(run.Tmux, true)
-	switch kind {
+	got, words := s.loginAwaitCode(way, run.Tmux, true)
+	switch got {
 	case "ok":
 		s.loginDrop(run, "вход сделан")
-		s.logf("код входа принят в %s: токен у клиента в связке ключей", found.Name)
+		s.logf("код входа принят в %s (%s): токен у клиента в связке ключей",
+			found.Name, way.Word)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true,
 			"message": "вход сделан: свежий токен лёг в связку ключей, " +
 				"перезапустите разговор кнопкой на плашке"})
 	case "again":
 		// Сессия входа жива и снова ждёт код: человек может ввести другой.
-		s.logf("код входа отклонён клиентом в %s", found.Name)
+		s.logf("код входа отклонён клиентом в %s (%s)", found.Name, way.Word)
 		writeJSON(w, http.StatusConflict, map[string]string{"error": words})
 	case "fail":
 		// Клиент назвал отказ своими словами, и они едут человеку целиком.
 		// Ссылка после отказа мертва: сессия снимается, следующий заход берёт
 		// свежую.
 		s.loginDrop(run, "клиент отверг код")
-		s.logf("код входа отвергнут клиентом в %s: %s", found.Name, words)
+		s.logf("код входа отвергнут клиентом в %s (%s): %s", found.Name, way.Word, words)
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": fmt.Sprintf("клиент отверг код: %s. Ссылка больше не годится, "+
 				"начните вход заново.", words)})
@@ -915,17 +1087,45 @@ func (s *server) handleClientLoginCode(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// loginAgainWords говорят человеку, что код не принят, а попытка повторяется в
+// той же сессии входа: ссылка жива, и новый код уедет в тот же диалог.
+const loginAgainWords = "код не принят: клиент снова ждёт код авторизации, введите другой"
+
+// loginAgain готовит сессию входа ко второй попытке кода. Вид, который после
+// отказа ждёт нажатия, получает его тут же: без нажатия поле кода не вернётся, а
+// любая другая клавиша диалог отменяет, и следующий код человека уехал бы в
+// снятый диалог. Неудача нажатия это не «попробуйте снова»: диалог остался на
+// отказе, и честнее сказать про обрыв.
+func (s *server) loginAgain(way *loginWay, sess string) (string, string) {
+	if !way.Press {
+		return "again", loginAgainWords
+	}
+	if _, err := runProc("tmux", "send-keys", "-t", "="+sess+":", "Enter"); err != nil {
+		return "gone", fmt.Sprintf("повторная попытка кода не подалась в сессию входа: %s", procErr(err))
+	}
+	return "again", loginAgainWords
+}
+
 // loginAwaitCode узнаёт исход отправленного кода по панели. Поле кода,
 // пропавшее и не вернувшееся за loginSettleWait, это успех: клиент
 // перерисовывает панель, и мера не должна читать мигание как исход. Поле,
 // вернувшееся со словами отклонения, это отказ кода, а молчащее поле до
 // таймаута это тишина клиента. Ошибка снимка значит, что сессия умерла.
-func (s *server) loginAwaitCode(sess string, sent bool) (string, string) {
+func (s *server) loginAwaitCode(way *loginWay, sess string, sent bool) (string, string) {
 	deadline := s.now().Add(loginCodeWait)
 	for {
 		pane, err := loginPane(sess)
 		if err != nil {
 			return "gone", fmt.Sprintf("сессия входа умерла на середине входа: %s", procErr(err))
+		}
+		// Отказ кода спрашивается раньше поля: диалог входа в Claude Design
+		// поля на такой панели не держит вовсе, и мера по ушедшему полю назвала
+		// бы повторяемый отказ окончательным провалом.
+		if sent && way.again(pane) {
+			return s.loginAgain(way, sess)
+		}
+		if way.done(pane) {
+			return "ok", ""
 		}
 		if !loginWantsCode(pane) {
 			time.Sleep(loginSettleWait)
@@ -933,10 +1133,16 @@ func (s *server) loginAwaitCode(sess string, sent bool) (string, string) {
 			if err != nil {
 				return "gone", fmt.Sprintf("сессия входа умерла на середине входа: %s", procErr(err))
 			}
-			if loginWantsCode(pane) && loginSaysRejected(pane) {
-				return "again", "код не принят: клиент снова ждёт код авторизации, введите другой"
+			if sent && way.again(pane) {
+				return s.loginAgain(way, sess)
+			}
+			if way.done(pane) {
+				return "ok", ""
 			}
 			if loginWantsCode(pane) {
+				if way.again(pane) {
+					return "again", loginAgainWords
+				}
 				return "again", "клиент вернулся к полю кода без слов: введите код заново"
 			}
 			// Успех узнаётся своими признаками, а не тем, что поле кода ушло.
@@ -952,9 +1158,6 @@ func (s *server) loginAwaitCode(sess string, sent bool) (string, string) {
 				return "stuck", loginLastWords(pane)
 			}
 			return "ok", ""
-		}
-		if sent && loginSaysRejected(pane) {
-			return "again", "код не принят: клиент снова ждёт код авторизации, введите другой"
 		}
 		if !s.now().Before(deadline) {
 			if !sent {

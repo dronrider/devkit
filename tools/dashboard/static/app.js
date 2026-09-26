@@ -10956,21 +10956,62 @@ function loginBubble(text) {
   };
 }
 
+// ---- Вход в Claude Design (DK-920) ----
+//
+// Токен обычного входа доступа к макетам не несёт: api.anthropic.com отвечает
+// на него 403 и просит /design-login. Из дашборда такой команды не подать, и
+// работа с макетами вставала до терминала на машине, а с телефона не шла вовсе.
+// Механика входа тут та же, что у /login, и блок в ленте один: расходятся
+// команда в tmux и признак, по которому блок поднялся.
+
+// Вид входа выбирает признак подъёма, а не человек: отказ сервера макетов даёт
+// вход в Claude Design, разлогин клиента даёт обычный. Двух кнопок рядом нет,
+// признаки приходят в разные моменты жизни разговора, и при обоих сразу заходы
+// всё равно идут подряд (решение пользователя).
+function loginWayOf(st) {
+  const e = st && st.entry;
+  return e && e.design && !e.login ? "design" : "client";
+}
+
+// Слова записи по виду входа. Разлогин и отказ сервера макетов это разные беды,
+// и сказать про них одним текстом нельзя: у первой не работает ничего, у второй
+// молчит одна работа с макетами.
+const LOGIN_SAY = {
+  client: {
+    enter: "Войти",
+    first: "Требуется повторная аутентификация. Войдите заново или нажмите " +
+      "«Перезапустить», если уже прошли аутентификацию в консоли или другом чате.",
+    alien: "Требуется повторная аутентификация. Разговор поднят не дашбордом, " +
+      "снять его отсюда нечем: сделайте /login на машине и перезапустите " +
+      "разговор в том окне, где он идёт.",
+  },
+  design: {
+    enter: "Войти в Claude Design",
+    first: "Клиент не подключился к Claude Design: вход в клиента жив, а " +
+      "доступа к макетам его токен не несёт, и макеты в этом разговоре не " +
+      "работают. Войдите в Claude Design или нажмите «Перезапустить», если " +
+      "уже вошли в консоли или другом чате.",
+    alien: "Клиент не подключился к Claude Design. Разговор поднят не " +
+      "дашбордом, снять его отсюда нечем: сделайте /design-login на машине и " +
+      "перезапустите разговор в том окне, где он идёт.",
+  },
+};
+
 // Дорога входа зависит от того, где браузер. С самой машины клиент ловит код
 // сам, и поле кода не показывается вовсе: шаг один, открыть ссылку. С другого
 // устройства возврат вести некуда, и код набирается руками.
 function loginTalk(project, st, busy) {
   const box = el("div", "msgs mlocal cbyetalk");
   box.hidden = true;
-  const talk = { box, ask: "", lastUser: "" };
-  const first = loginBubble("Требуется повторная аутентификация. Войдите " +
-    "заново или нажмите «Перезапустить», если уже прошли аутентификацию в " +
-    "консоли или другом чате.");
+  // Вид едет в теле всех трёх ручек входа: на машине сессия входа одна, и
+  // сервер по виду решает, тому ли диалогу достанется код авторизации.
+  const way = loginWayOf(st);
+  const words = LOGIN_SAY[way];
+  const talk = { box, ask: "", lastUser: "", way };
+  const first = loginBubble(words.first);
   box.append(first.row);
   if (!loginFixable(st)) {
-    first.say("Требуется повторная аутентификация. Разговор поднят не " +
-      "дашбордом, снять его отсюда нечем: сделайте /login на машине и " +
-      "перезапустите разговор в том окне, где он идёт.");
+    first.say(words.alien);
     return talk;
   }
 
@@ -11015,7 +11056,7 @@ function loginTalk(project, st, busy) {
   async function start() {
     say("", false);
     busy.heal();
-    const r = await api(chatsURL(project) + "/login", { method: "POST", body: {} });
+    const r = await api(chatsURL(project) + "/login", { method: "POST", body: { kind: way } });
     busy.off();
     if (!r.ok) {
       say(r.body.error || "вход не поднялся", true);
@@ -11037,7 +11078,8 @@ function loginTalk(project, st, busy) {
   // «ещё идёт», пока человек в браузере.
   async function waitLoop() {
     for (;;) {
-      const r = await api(chatsURL(project) + "/login/wait", { method: "POST", body: {} });
+      const r = await api(chatsURL(project) + "/login/wait",
+        { method: "POST", body: { kind: way } });
       if (r.ok && r.body && r.body.waiting) continue;
       if (!r.ok) {
         say(r.body.error || "вход не прошёл", true);
@@ -11056,7 +11098,7 @@ function loginTalk(project, st, busy) {
     }
     busy.heal();
     const r = await api(chatsURL(project) + "/login/code",
-      { method: "POST", body: { code: text } });
+      { method: "POST", body: { code: text, kind: way } });
     busy.off();
     if (!r.ok) {
       // Отказ называется словами клиента целиком: человеку разбираться с
@@ -11084,7 +11126,7 @@ function loginTalk(project, st, busy) {
 
   const row = el("div", "loginbtns");
   first.own(row);
-  const enter = el("button", "btn btn-sm btn-acc", "Войти");
+  const enter = el("button", "btn btn-sm btn-acc", words.enter);
   const go = el("button", "btn btn-sm", "Перезапустить");
   // Запертые кнопки и уходят с экрана: запертая кнопка на виду обещает работу,
   // которой по ней не будет.
@@ -11132,6 +11174,10 @@ function loginSaw(talk, item) {
     return;
   }
   if (item.role !== "assistant" || !item.text) return;
+  // Блок входа в Claude Design ответом агента не гаснет: сервер макетов молчит
+  // до конца жизни процесса, а обычный ответ о нём не говорит ничего. Гаснет
+  // он свежей панелью, у которой признака отказа уже нет.
+  if (talk.way === "design") return;
   talk.box.hidden = !item.logout;
   if (item.logout && talk.lastUser) talk.ask = talk.lastUser;
 }
@@ -12346,7 +12392,7 @@ function chatPanel(project, st) {
   // перезапуск поднял бы такого же разлогиненного клиента. Состояние стоит
   // плашкой над полем ввода, а второй шаг починки лежит на её кнопке.
   const bye = loginTalk(project, st, busy);
-  bye.box.hidden = !(st.entry && st.entry.login);
+  bye.box.hidden = !(st.entry && (st.entry.login || st.entry.design));
   // Блок стоит там же, где стоят свои реплики. Под лентой, над полем ввода,
   // тем же узлом сообщений и тем же пузырём: это продолжение разговора, а не
   // щиток при нём.

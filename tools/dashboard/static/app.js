@@ -907,7 +907,7 @@ function stageRail(row, cls) {
 // пропавшую строку следующий обход просто не найдёт.
 function tickStageAges() {
   const now = Date.now();
-  document.querySelectorAll("[data-stage-since]").forEach((node) => {
+  document.querySelectorAll(".stage-age").forEach((node) => {
     const since = Number(node.dataset.stageSince);
     const round = Number(node.dataset.stageRound || "0");
     node.textContent = stageAgeText(since, round, now);
@@ -917,7 +917,7 @@ pollEvery(60000, tickStageAges, true);
 
 // Возраст этапа с тикающим узлом: общий для колонки строки и шапки формы.
 function stageAgeNode(tag, row) {
-  const node = el(tag, "", stageAgeText(row.stage_since, row.stage_round, Date.now()));
+  const node = el(tag, "stage-age", stageAgeText(row.stage_since, row.stage_round, Date.now()));
   if (row.stage_since) {
     node.dataset.stageSince = String(row.stage_since);
     node.dataset.stageRound = String(row.stage_round || 0);
@@ -2077,9 +2077,23 @@ function renderRow(project, row, sect, opts) {
     for (const chip of chips) box.append(chip);
     tt.append(box);
   }
+  // Копия колонки хода для узкого экрана: тот же виджет второй раз, внутри
+  // заголовка (DK-1119, ход по замечанию ревью). Заголовок и так стоит
+  // второй строкой на телефоне, и колонка хода ложится в неё же следующей
+  // строчкой текста, а не заводит для себя третью строку раскладки (ранее
+  // стоявшую grid-row:3, ту же регрессию, которую раньше правило решение
+  // «Две строки, а не три»). На ноутбуке копия скрыта стилем, там ход стоит
+  // отдельной ячейкой между заголовком и рангом.
+  const stageNarrow = stageColumn(row);
+  if (stageNarrow) {
+    const wrap = el("span", "stage-narrow");
+    wrap.append(stageNarrow);
+    tt.append(wrap);
+  }
   tr.append(ttc);
   // Колонка хода между заголовком и рангом (DK-1119, макет 2a): пустая
-  // ячейка у строки без записи этапа, сетку колонки это не ломает.
+  // ячейка у строки без записи этапа, сетку колонки это не ломает. На
+  // телефоне сама ячейка скрыта, копия хода стоит внутри заголовка выше.
   const stagec = el("td", "stage");
   const stageBox = stageColumn(row);
   if (stageBox) stagec.append(stageBox);

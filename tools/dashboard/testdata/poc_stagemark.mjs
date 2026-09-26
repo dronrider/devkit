@@ -43,7 +43,7 @@ const board = {
   }],
 };
 
-const { sandbox, byId } = makeSandbox(app, (path) => {
+const { sandbox, byId, timers } = makeSandbox(app, (path) => {
   if (path === "/api/harnesses") return { harnesses: [{ name: "подписка-раз", default: true }] };
   if (path === "/api/quota") return { harnesses: [] };
   if (String(path).includes("/tasks/XR-3")) {
@@ -147,6 +147,38 @@ const stageCell = (id) => {
 {
   const cell = stageCell("XR-5");
   if (cell.children.length) fail("пустая колонка хода получила содержимое: " + dump(cell));
+}
+
+// --- телефон: копия хода живёт внутри заголовка, а не третьей строкой ---
+{
+  const tr = rows.find((r) => dump(byClass(r, "id")).trim() === "XR-1");
+  const tt = byClass(tr, "tt");
+  const narrow = byClass(tt, "stage-narrow");
+  if (!narrow) fail("в заголовке строки XR-1 нет копии колонки хода для телефона");
+  const box = byClass(narrow, "act2");
+  if (!box || !String(box.className).split(" ").includes("k-dev")) {
+    fail("копия колонки хода в заголовке не та: " + dump(narrow));
+  }
+  if (!dump(narrow).includes("разработка")) {
+    fail("копия колонки хода в заголовке не называет этап: " + dump(narrow));
+  }
+}
+
+// --- возраст тикает на клиенте: минутный опрос страницы пересчитывает текст ---
+{
+  const one = timers.find((t) => t.ms === 60000 && t.fn);
+  if (!one) fail("минутный опрос возраста этапа не завёлся: " + JSON.stringify(timers.map((t) => t.ms)));
+  const ageNode = byClass(stageCell("XR-1"), "stage-age");
+  if (!ageNode) fail("у живой строки нет узла возраста с data-stage-since");
+  const before = dump(ageNode);
+  // Время начала этапа отодвигается на час назад: тик обязан пересчитать
+  // текст без нового опроса доски, а не оставить прежнее значение.
+  ageNode.dataset.stageSince = String(Math.floor(Date.now() / 1000) - 3600);
+  one.fn();
+  await settle();
+  const after = dump(ageNode);
+  if (after === before) fail("минутный тик не тронул текст возраста: " + after);
+  if (!after.includes("1 ч")) fail("минутный тик пересчитал возраст не туда: " + after);
 }
 
 // --- форма задачи брошенной строки: шапка, степпер и строка-подсказка ---

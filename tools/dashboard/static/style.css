@@ -596,6 +596,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    точка у номера, как и раньше, а колонка держит только слово, возраст и
    цвет (решение человека). */
 .trow .stage{vertical-align:top}
+/* Копия колонки хода для узкого экрана живёт внутри заголовка строки
+   (`.stage-narrow` в `.tt`), а не отдельной колонкой: на ноутбуке она
+   скрыта, там ход и так стоит отдельной ячейкой. */
+.stage-narrow{display:none}
 .act2{display:flex;flex-direction:column;gap:4px;min-width:0}
 .act2 b{font:600 12.5px var(--sans);color:var(--k);
   display:flex;align-items:center;gap:7px;min-width:0;font-style:normal}
@@ -603,7 +607,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
    работы, а круг с возрастом короче и нужнее числом, поэтому он держит место,
    а не подстраивается под слово. */
 .act2 b .w{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.act2 b em{font:400 11px var(--mono);font-style:normal;color:var(--tx3);
+.act2 b .stage-age{font:400 11px var(--mono);font-style:normal;color:var(--tx3);
   white-space:nowrap;flex:none}
 /* Деление меньше пяти точек не читается делением: min-width колонки держит
    ленту на восьми различимых полосках, а не сжимает её до полоски пикселей
@@ -629,7 +633,7 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 @media (prefers-reduced-motion:no-preference){
   .now2.live .big i{animation:dkpulse 2.2s ease-out infinite}
 }
-.now2 .age{font:500 13px var(--mono);color:var(--tx2)}
+.now2 .stage-age{font:500 13px var(--mono);color:var(--tx2)}
 .step2{display:flex;gap:0;padding:2px 0 4px;flex-wrap:wrap}
 .step2 .s{flex:1;display:flex;flex-direction:column;gap:6px;min-width:52px}
 .step2 .s i{display:block;height:3px;border-radius:2px;background:var(--bg3);
@@ -2350,14 +2354,19 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .trow .twhen{grid-column:3;grid-row:1;min-width:0;overflow:hidden}
   .trow .tt{grid-column:1 / -1;grid-row:2}
   .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:var(--rowmgy)}
-  /* Колонка хода уходит второй строкой под заголовок (DK-1119, «уже 600 точек
-     колонка уходит второй строкой под заголовок, ранг остаётся в первой
-     строке»): ранг не двигается со своего места в первой строке, а этой
-     колонке довольно узкой полосы во всю ширину сразу под названием. Пустая
-     ячейка у строки без записи этапа схлопывается: третьей строки ради
-     пустоты нет. */
-  .trow .stage{grid-column:1 / -1;grid-row:3;padding-top:0}
-  .trow .stage:empty{display:none}
+  /* Колонка хода на телефоне не отдельная третья строка, а копия внутри
+     заголовка (DK-1119, «уже 600 точек колонка уходит второй строкой под
+     заголовок, ранг остаётся в первой строке; третьей строки нет»): ранг не
+     двигается со своего места в первой строке, а .tt и так стоит второй
+     строкой целиком, и колонка хода просто дописана в неё следующей строчкой
+     текста внутри той же ячейки. Отдельная широкая колонка (`.trow .stage`)
+     на этой ширине скрыта: с шириной экрана ей и не встать, полосе из восьми
+     делений нужны те же 150 точек, что на ноутбуке.
+     Ход по замечанию ревью: было grid-row:3, ровно та регрессия строки в три
+     раза выше, которую раньше уже правили («Две строки, а не три»). */
+  .trow .stage{display:none}
+  .trow .stage-narrow{display:block}
+  .trow .stage-narrow:empty{display:none}
   .trow .meta{grid-column:4;grid-row:1}
   /* Хвост прижат к правому краю строки и не переносится: правило одно на три
      раздела, и стоит оно рядом с раскладкой той строки, которой правит. */

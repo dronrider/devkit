@@ -377,6 +377,23 @@ export function makeSandbox(appPath, reply, opts) {
         }
         return byId.get(id);
       },
+      // Своего дерева у мока нет: узлы, найденные по id, друг другу не родня,
+      // а лежат отдельными корнями в byId. Поиск по всему документу поэтому
+      // обходит каждый такой корень (и body) своим querySelectorAll узла, а не
+      // спускается от одного общего предка, которого тут не существует.
+      querySelectorAll: (sel) => {
+        const out = [];
+        const seen = new Set();
+        const collect = (root) => {
+          if (!root || !root.querySelectorAll) return;
+          for (const hit of root.querySelectorAll(sel)) {
+            if (!seen.has(hit)) { seen.add(hit); out.push(hit); }
+          }
+        };
+        collect(sandbox.document.body);
+        for (const node of byId.values()) collect(node);
+        return out;
+      },
       // Обработчиков одного события у документа бывает несколько (всплывашки
       // закрываются общим кликом, а поиск ловит свою клавишу), и хранить
       // последний значило бы терять половину поведения. Наружу остаётся тот же

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/sessions"
 	"github.com/dronrider/devkit/internal/taskhead"
 )
 
@@ -171,6 +172,9 @@ func (s *server) repark(root, id, block string, parked bool) string {
 // ждущей строке.
 func (s *server) unparkAsk(root, id string) error {
 	name := chat.TaskName(id)
+	// Адрес ждущей сессии спрашивается до снятия признака: снятый признак его
+	// больше не несёт, а именно он говорит, чья работа продолжается ответом.
+	who := askSession(root, id)
 	for _, tree := range askTrees(root, id) {
 		if err := chat.DropAsk(tree, name); err != nil {
 			s.logf("признак ожидания задачи %s в %s не снялся: %v", id, tree, err)
@@ -182,7 +186,49 @@ func (s *server) unparkAsk(root, id string) error {
 		return fmt.Errorf("taskctl move отказал (%d): %v", code, err)
 	}
 	s.logf("задача %s возвращена в In progress ответом человека: %s", id, strings.TrimSpace(out))
+	s.workBack(root, id, who)
 	return nil
+}
+
+// askSession называет сессию, которая ждёт ответа по строке id: поле «сессия»
+// признака ожидания. Деревья те же, что у снятия признака, и первый названный
+// адрес выигрывает: признак кладёт один ход, а в двух местах он лежит одной и
+// той же записью.
+func askSession(root, id string) string {
+	name := chat.TaskName(id)
+	for _, tree := range askTrees(root, id) {
+		if a, ok := chat.ReadAsk(chat.AskPath(tree, name)); ok && a.Session != "" {
+			return a.Session
+		}
+	}
+	return ""
+}
+
+// workBack возвращает записью реестра работу по строке за сессией, которая
+// ждала ответа. Возврат строки в In progress делает дашборд от своего имени, и
+// записи о работе за этим ходом не остаётся ни одной: отказавшая команда реестр
+// не трогает (DK-1003), а повторный move уже стоящей строки отказывает, и сессия
+// своего следа не ставит. Без записи привязку, снятую парковкой (DK-716), не
+// возвращает ничто: строка доски стоит без «Стопа» и с кнопкой запуска поверх
+// идущей работы, а поднятый резюмом разговор не знает своей задачи и живёт
+// свободным чатом (цепочка DK-920).
+//
+// Запись ложится на ждущую сессию, а не на ту, которую поднимет подъём ниже.
+// Работу продолжает именно ждущая: реплика человека поднимает её резюмом, и
+// задачу подъём берёт из этой записи. Сессия, поднятая заново вместо неё,
+// пишет свой след сама, а умерший разговор со записью работы ни строку, ни
+// список работ не занимает: те смотрят на живое окно и свежий транскрипт.
+func (s *server) workBack(root, id, sid string) {
+	if sid == "" {
+		return
+	}
+	line := sessions.Line(s.now(), sid, sessions.Bind{Task: id, Source: sessions.BySrc,
+		Project: filepath.Base(filepath.Clean(root))}, "возврат в работу ответом человека")
+	if err := sessions.Append(sessions.Path(s.cfg.Home), line); err != nil {
+		s.logf("задача %s: запись о работе сессии %s не легла: %v", id, sid, err)
+		return
+	}
+	s.logf("задача %s: работа возвращена сессии %s ответом человека", id, sid)
 }
 
 // askTrees называет деревья, где может лежать признак ожидания задачи: чекаут

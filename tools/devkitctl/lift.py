@@ -11,7 +11,17 @@ Blocked. Строка, которая просто шла в работе, не 
 репликой «продолжай», по одной и в пределах свободной ёмкости. Тем же заходом
 снимаются следы умерших сессий: замки задач с мёртвым владельцем и процессы
 нагрузки, пережившие своего родителя.
+
+Второй признак это лежащая во входе чата реплика человека (DK-1194). Такую
+строку доска не выдаёт ничем: она бывает в любом статусе, в том числе
+проверенной с приёмкой человека, и ни обход ждущих, ни подъём сирот её не
+берут. Живой файл `.devkit/chat/task-<ID>.in` значит, что реплика лежит
+непрочитанной, и это повод для хода головы, а не событие строки: доска тут не
+правится, и статус остаётся тем же. Панель зовёт подъём сразу, как только
+реплика легла, а этот заход добирает пропущенное: реплику из терминала и
+реплику, написанную при мёртвом дашборде.
 """
+import collections
 import json
 import os
 import re
@@ -31,12 +41,37 @@ WORK_STAGES = ("постановка", "разработка", "вычитка",
 GONE = "сессии нет"
 ALIVE = "сессия жива"
 
+# Секции доски, где строка означает работу: из них берутся осиротевшие строки.
+# Строка с лежащей репликой берётся из любой секции, статус ей безразличен.
+WORK_SECTIONS = ("in-progress", "check")
+
 # Реплика подъёма адресная. Слова «продолжай» хватало сессии, поднятой по
 # упавшему ходу: у той в окне уже лежал разговор о своей строке. Поднятая с
 # нуля сессия контекста не имеет и на общей доске берёт что угодно, включая
 # строку, которую прямо сейчас ведёт человек. Поэтому реплика называет строку
 # и запрещает брать другую работу.
 ORDER = "продолжай %s, эту строку ты уже вёл. Другую работу с доски не бери"
+
+# Заказ голове, поднятой лежащей репликой. Слова «продолжай» тут не годятся:
+# строка бывает и проверенной с приёмкой человека, и двигать её этот ход не
+# должен. Дело хода это прочитать реплику, которую подаст подхват, и ответить.
+# Слово в слово та же строка стоит у панели (replyOrder в tools/dashboard).
+REPLY_ORDER = ("В чате задачи %s лежит реплика человека, её подаст подхват этим же ходом. "
+               "Ответь ему в ленту разговора. Статус строки на доске не двигай, "
+               "пока он сам не попросит")
+
+# Заголовок строки цели: её переписку читает сам цикл цели, и голову задачи ей
+# поднимать нельзя (та же проверка у подъёма в taskctl и у панели).
+GOAL_TITLE = "Цель:"
+
+# Код выхода `taskctl run`, которым лестница говорит, что голову поднять нечем и
+# человека она позвала сама (taskhead.CodeCalled).
+TASKCTL_CALLED = 1
+
+# Машинный разряд причины парковки вопросом. Строку с таким блоком поднимает
+# пробуждение ответом (wake в tools/devkitctl/watch.py): оно снимает парковку
+# тем же ходом, и вторым подъёмщиком тут делать нечего.
+ASK_BLOCK = "вопрос:"
 
 # Потолок подъёма за один заход, когда ёмкость спросить не у кого.
 FALLBACK_LIMIT = 2
@@ -77,6 +112,12 @@ ORPHAN_PATTERNS = (
     re.compile(r"(?i)\bgo\s+(test|build)\b.*/T/(shipctl|taskctl)-\w+"),
     re.compile(r"(?i)/T/(shipctl-merge|taskctl-rehearse)-\d+/"),
 )
+
+
+# Находка захода: ID строки, заказ голове, слова причины для отчёта и признак
+# реплики. Признак нужен отчёту и зову: молчание в ответ человеку и осиротевшая
+# работа это разные события, а очередь подъёма у них одна.
+Find = collections.namedtuple("Find", "id order why reply")
 
 
 def log_path(home=None):
@@ -131,9 +172,10 @@ def mark_lifted(root, tid, home=None, now=None):
     return tries
 
 
-def board_rows(root, call=None, taskctl=None):
-    """Строки доски корня с полями этапа. Разбор один на всех: доска отдаёт
-    готовый json, второго парсера markdown тут не заводится."""
+def board_rows(root, call=None, taskctl=None, sections=WORK_SECTIONS):
+    """Строки доски корня с полями этапа и ключом секции. Разбор один на всех:
+    доска отдаёт готовый json, второго парсера markdown тут не заводится. Пустые
+    sections значат всю доску: строку с лежащей репликой ищут по любой секции."""
     call = subprocess.run if call is None else call
     bin = taskctl or which("taskctl")
     if not bin:
@@ -151,7 +193,7 @@ def board_rows(root, call=None, taskctl=None):
         return [], "разбор доски не вышел, %s" % e
     rows = []
     for sec in doc.get("sections") or []:
-        if sec.get("key") not in ("in-progress", "check"):
+        if sections and sec.get("key") not in sections:
             continue
         for row in sec.get("rows") or []:
             row["_section"] = sec.get("key")
@@ -178,6 +220,81 @@ def orphan_rows(rows):
             continue
         out.append(row)
     return out
+
+
+def head_up(tid, home=None):
+    """Держит ли голову задачи живой процесс. Замок это каталог
+    ~/.devkit/task-<ID>.lock с pid внутри, общий у команды подъёма и у оболочки
+    конвейера (internal/taskhead). Замок точнее выдержки: панель поднимает голову
+    по реплике сразу и следа подъёма тут не оставляет, а живой замок виден и ей,
+    и этому заходу."""
+    home = home or os.path.expanduser("~/.devkit")
+    path = os.path.join(home, "task-%s.lock" % tid.upper(), "pid")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            pid = int(fh.read().strip() or 0)
+    except (OSError, ValueError):
+        return False
+    return pid > 0 and not dead_pid(pid)
+
+
+def chat_hook():
+    """Модуль подхвата реплики hooks/chat-in.py либо None. Берётся он у сторожка
+    тем же импортом по пути: адресата реплики разбирает сам подхват, и вторая
+    копия формата разъехалась бы с первой на первой же правке."""
+    try:
+        import watch
+        return watch.chat_hook()
+    except ImportError:
+        return None
+
+
+def reply_rows(root, rows, home=None, hook=None):
+    """Строки корня с лежащей во входе чата безадресной репликой человека.
+
+    Реплику берёт только голова задачи, и адрес у реплики это адресат разговора:
+    строка «..., сессии <ID>: ...» написана живому окну, а не задаче, и подъёма
+    она не просит. Разбор адресата идёт у подхвата.
+
+    Вход читается в корне проекта, а не в дереве задачи: панель кладёт реплику
+    туда, и оболочка головы поднимается там же, значит там её и прочитает
+    подхват. Из находок уходят три случая. Живая голова прочитает реплику сама.
+    Строку, припаркованную вопросом, поднимает пробуждение ответом, снимая
+    парковку тем же ходом. У цели своя оболочка, и переписку она читает сама."""
+    hook = chat_hook() if hook is None else hook
+    if hook is None:
+        return []
+    names = {}
+    for d, name, suffix in hook.chat_names(root):
+        if not name.lower().startswith(hook.TASK_CHAT):
+            continue
+        names.setdefault(name[len(hook.TASK_CHAT):].upper(), []).append(
+            os.path.join(d, name + suffix))
+    out = []
+    for row in rows:
+        tid = (row.get("id") or "").upper()
+        if tid not in names or head_up(tid, home):
+            continue
+        if (row.get("title") or "").startswith(GOAL_TITLE):
+            continue
+        if (row.get("block") or "").strip().startswith(ASK_BLOCK):
+            continue
+        if any(lying_line(path, hook) for path in names[tid]):
+            out.append(row)
+    return out
+
+
+def lying_line(path, hook):
+    """Первая безадресная строка входа либо пустая строка."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            lines = [ln.strip() for ln in fh.read().split("\n") if ln.strip()]
+    except OSError:
+        return ""
+    for line in lines:
+        if not hook.addressee(line):
+            return line
+    return ""
 
 
 def busy_count(rows):
@@ -224,58 +341,102 @@ def capacity(root, rows, call=None, agentctl=None):
 
 def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
               left=None):
-    """Подъём осиротевших строк одного корня. Возврат это строки отчёта и число
-    поднятых строк: потолок на машину считается сквозным по всем корням."""
-    rows, err = board_rows(root, call=call, taskctl=taskctl)
+    """Подъём строк одного корня, осиротевших и с лежащей репликой человека.
+    Возврат это строки отчёта и число поднятых строк: потолок на машину
+    считается сквозным по всем корням.
+
+    Находки двух родов идут одной очередью, и очередь эта общая нарочно: ёмкость
+    корня, выдержка и потолок попыток у них одни. Реплика стоит впереди работы:
+    человек ждёт ответа, а «продолжай» увело бы голову в работу мимо его слов."""
+    all_rows, err = board_rows(root, call=call, taskctl=taskctl, sections=None)
     if err:
         return ["корень %s: доска не прочиталась, %s" % (root, err)], 0
-    orphans = orphan_rows(rows)
+    rows = [r for r in all_rows if r.get("_section") in WORK_SECTIONS]
+    found = [Find(r.get("id") or "", REPLY_ORDER % (r.get("id") or ""),
+                  "во входе чата лежит реплика человека", True)
+             for r in reply_rows(root, all_rows, home=home)]
+    said = {f.id for f in found}
+    found += [Find(r.get("id") or "", ORDER % (r.get("id") or ""),
+                   "этап «%s» без сессии" % (r.get("stage") or ""), False)
+              for r in orphan_rows(rows) if (r.get("id") or "") not in said]
     fresh = recent(home)
     tried = marks(home)
-    held = [r for r in orphans if root + "\t" + (r.get("id") or "") in fresh]
-    orphans = [r for r in orphans if root + "\t" + (r.get("id") or "") not in fresh]
-    spent = [r for r in orphans
-             if tried.get(root + "\t" + (r.get("id") or ""), (0, 0))[1] >= LIFT_TRIES]
-    orphans = [r for r in orphans if r not in spent]
+    held = [f for f in found if root + "\t" + f.id in fresh]
+    found = [f for f in found if root + "\t" + f.id not in fresh]
+    spent = [f for f in found if tried.get(root + "\t" + f.id, (0, 0))[1] >= LIFT_TRIES]
+    found = [f for f in found if f not in spent]
     spent_words = ["задача %s в %s: поднималась %d раза подряд, сессия не удержалась: "
                    "строка ждёт человека, подъём её больше не трогает"
-                   % (r.get("id"), root, LIFT_TRIES) for r in spent]
-    if not orphans:
+                   % (f.id, root, LIFT_TRIES) for f in spent]
+    # Реплика, отлежавшая все попытки, это не шум в отчёте, а молчание в ответ
+    # человеку: он написал задаче, а голову поднять так и не вышло. О таком
+    # зовут громко и с готовой командой, и зовут один раз. Троттлинг уведомителя
+    # тут короче тика, и без своей памяти баннер повторялся бы каждые пять минут
+    # до конца света. Памятью служит тот же счётчик попыток: попытка сверх
+    # потолка значит, что зов состоялся. Метка времени остаётся прежней, иначе
+    # выдержка сочла бы строку только что поднятой.
+    for f in spent:
+        if not (f.reply and act):
+            continue
+        when, tries = tried[root + "\t" + f.id]
+        if tries > LIFT_TRIES:
+            continue
+        spent_words.append(call_human(root, f.id, call=call))
+        mark_lifted(root, f.id, home, now=when)
+    if not found:
         if spent_words:
             return spent_words, 0
         if held:
             return ["корень %s: строки %s подняты недавно, сессия ещё заводится"
-                    % (root, ", ".join(r.get("id", "?") for r in held))], 0
-        return ["корень %s: строк в работе без сессии нет" % root], 0
+                    % (root, ", ".join(f.id or "?" for f in held))], 0
+        return ["корень %s: строк в работе без сессии и реплик без адресата нет" % root], 0
     free, why = capacity(root, rows, call=call, agentctl=agentctl)
     if left is not None:
         free = min(free, left)
         why += ", остаток потолка машины %d" % left
-    lines = spent_words + ["корень %s: строк в работе без сессии %d (%s), свободных мест %d"
-             % (root, len(orphans), ", ".join(r.get("id", "?") for r in orphans), free)]
+    lines = spent_words + ["корень %s: строк к подъёму %d (%s), свободных мест %d"
+             % (root, len(found), ", ".join(f.id or "?" for f in found), free)]
     if free < 1:
         lines.append("корень %s: %s, подъём отложен до следующего тика" % (root, why))
         return lines, 0
     raised = 0
-    for row in orphans:
+    for f in found:
         if raised >= free:
             lines.append("задача %s в %s: место кончилось, строка ждёт следующего захода"
-                         % (row.get("id"), root))
+                         % (f.id, root))
             continue
-        tid = row.get("id")
         if not act:
-            lines.append("задача %s в %s: этап «%s» без сессии, поднялась бы заказом"
-                         % (tid, root, row.get("stage")))
+            lines.append("задача %s в %s: %s, поднялась бы заказом" % (f.id, root, f.why))
             raised += 1
             continue
-        code, words = run_order(root, tid, ORDER % tid, call=call, taskctl=taskctl)
+        code, words = run_order(root, f.id, f.order, call=call, taskctl=taskctl)
         if code == 0:
             raised += 1
-            mark_lifted(root, tid, home)
-            lines.append("задача %s в %s: поднята адресным заказом: %s" % (tid, root, words))
-        else:
-            lines.append("задача %s в %s: подъём отбит кодом %d: %s" % (tid, root, code, words))
+            mark_lifted(root, f.id, home)
+            lines.append("задача %s в %s: %s, поднята адресным заказом: %s"
+                         % (f.id, root, f.why, words))
+            continue
+        lines.append("задача %s в %s: подъём отбит кодом %d: %s" % (f.id, root, code, words))
+        # Лестница зовёт человека сама, когда голову поднять нечем (код 1), и
+        # второй баннер о том же ему не нужен. Прочий отказ на реплике остаётся
+        # без зова, и позвать надо тут: реплика лежит без адресата и без срока.
+        if f.reply and code != TASKCTL_CALLED:
+            lines.append(call_human(root, f.id, call=call))
     return lines, raised
+
+
+def call_human(root, tid, call=None):
+    """Громкий зов человеку к реплике, которую забрать некому: заголовок, тело с
+    готовой командой подъёма и строка отчёта об отправке. Канала своего тут нет,
+    зовёт уведомитель сторожка, и повод у события тот же, каким зовут к
+    осиротевшей задаче."""
+    import watch
+    body = ("Реплика лежит во входе чата задачи непрочитанной, а голову поднять не вышло. "
+            "Поднять руками: taskctl run %s -C %s" % (tid, root))
+    said = watch.shout("%s: реплика задаче %s лежит недоставленной"
+                       % (os.path.basename(root.rstrip("/")), tid),
+                       body, root, call=call, task=tid)
+    return "задача %s в %s: человек позван к лежащей реплике, %s" % (tid, root, said)
 
 
 def run_order(root, tid, order, call=None, taskctl=None):

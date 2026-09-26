@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import lift
@@ -324,3 +325,150 @@ class TreesCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplyCase(unittest.TestCase):
+    """Лежащая во входе чата реплика человека это повод для подъёма в любом
+    статусе строки (DK-1194).
+
+    Прежде такую строку не брал никто. Реплика в задачу, стоящую в Check с
+    приёмкой человека, пролежала во входе двадцать минут: панель зовёт подъём
+    только у припаркованной вопросом строки, обход ждущих смотрит на Blocked, а
+    подъём сирот проверенную строку с приёмкой человека пропускает нарочно.
+    """
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.home), str(self.root)]))
+        self.hook = lift.chat_hook()
+        self.assertIsNotNone(self.hook, "подхват реплики hooks/chat-in.py не загрузился")
+
+    def lying(self, tid, text="продолжай, пожалуйста"):
+        """Реплика во входе чата задачи, той же строкой, какую пишет панель."""
+        d = self.root / ".devkit" / "chat"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ("task-%s.in" % tid)).write_text(
+            "2026-09-26 21:41, из дашборда: %s\n" % text, encoding="utf-8")
+
+    def addressed(self, tid, sid="aaaa-1111"):
+        """Реплика с адресатом: написана живому окну, а не задаче."""
+        d = self.root / ".devkit" / "chat"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ("task-%s.in" % tid)).write_text(
+            "2026-09-26 21:41, сессии %s, из дашборда: продолжай\n" % sid, encoding="utf-8")
+
+    def checked(self, tid="DK-40", **extra):
+        """Строка в Check с приёмкой человека: ровно та, что лежала молча."""
+        r = row(tid, "проверка", "сессии нет, брошена")
+        r.update({"_section": "check", "accept": "mixed"})
+        r.update(extra)
+        return r
+
+    def find(self, rows):
+        return [r["id"] for r in lift.reply_rows(str(self.root), rows,
+                                                home=str(self.home), hook=self.hook)]
+
+    def test_reply_in_check_under_human(self):
+        rows = [self.checked()]
+        self.assertEqual(lift.orphan_rows(rows), [],
+                         "строка Check с приёмкой человека сиротой не считается")
+        self.lying("DK-40")
+        self.assertEqual(self.find(rows), ["DK-40"])
+
+    def test_empty_input_is_not_a_reason(self):
+        self.assertEqual(self.find([self.checked()]), [])
+
+    def test_addressed_line_is_not_a_reason(self):
+        """Адрес у реплики это адресат разговора: строка живому окну подъёма не
+        просит, его ждёт та сессия, которой она написана."""
+        self.addressed("DK-40")
+        self.assertEqual(self.find([self.checked()]), [])
+
+    def test_live_head_left_alone(self):
+        """Живая голова прочитает реплику сама, и второй ей не надо. Замок тут
+        точнее выдержки: панель поднимает голову сразу и следа не оставляет."""
+        self.lying("DK-40")
+        lock = self.home / "task-DK-40.lock"
+        lock.mkdir(parents=True)
+        (lock / "pid").write_text("%d\n" % os.getpid(), encoding="utf-8")
+        self.assertEqual(self.find([self.checked()]), [])
+
+    def test_dead_head_lets_lift(self):
+        """Замок мёртвого владельца подъёму не мешает: работы за ним нет."""
+        self.lying("DK-40")
+        lock = self.home / "task-DK-40.lock"
+        lock.mkdir(parents=True)
+        (lock / "pid").write_text("999999\n", encoding="utf-8")
+        self.assertEqual(self.find([self.checked()]), ["DK-40"])
+
+    def test_ask_parked_left_alone(self):
+        """Строку, припаркованную вопросом, поднимает пробуждение ответом: оно
+        снимает парковку тем же ходом, и второй подъёмщик ей не нужен."""
+        self.lying("DK-40")
+        r = self.checked(_section="blocked", block="вопрос: какую схему брать")
+        self.assertEqual(self.find([r]), [])
+
+    def test_goal_row_left_alone(self):
+        """У цели своя оболочка, переписку она читает сама."""
+        self.lying("DK-40")
+        self.assertEqual(self.find([self.checked(title="Цель: пробный цикл")]), [])
+
+    def test_lift_root_raises_with_reply_order(self):
+        """Заход поднимает строку с репликой своим заказом: «продолжай» увело бы
+        голову в работу мимо слов человека."""
+        self.lying("DK-40")
+        call = Fake(board([row("DK-40", "проверка", "сессии нет, брошена")], key="check"))
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 1)
+        orders = [a for a in call.calls if "run" in a]
+        self.assertTrue(orders, "заказа не было")
+        argv = orders[0]
+        said = argv[argv.index("--order") + 1]
+        self.assertIn("лежит реплика человека", said)
+        self.assertIn("Статус строки на доске не двигай", said)
+        self.assertIn("во входе чата лежит реплика человека", " ".join(lines))
+
+
+class ReplyCallCase(unittest.TestCase):
+    """Зов человеку к реплике, которой не досталось головы за три попытки.
+
+    Молчание в ответ человеку неотличимо от штатного ожидания, и об исчерпанном
+    потолке зовут громко, с готовой командой подъёма. Зовут один раз: троттлинг
+    уведомителя короче тика, и без своей памяти баннер повторялся бы каждые пять
+    минут.
+    """
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.home), str(self.root)]))
+        d = self.root / ".devkit" / "chat"
+        d.mkdir(parents=True)
+        (d / "task-DK-50.in").write_text(
+            "2026-09-26 21:41, из дашборда: продолжай\n", encoding="utf-8")
+        # Потолок попыток уже исчерпан, и отметка старше выдержки: иначе строка
+        # считалась бы только что поднятой.
+        old = time.time() - lift.SETTLE - 60
+        for _ in range(lift.LIFT_TRIES):
+            lift.mark_lifted(str(self.root), "DK-50", home=str(self.home), now=old)
+
+    def lift(self):
+        call = Fake(board([row("DK-50", "проверка", "сессии нет, брошена")], key="check"))
+        with unittest.mock.patch("watch.shout", return_value="отправлено") as shout:
+            lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                          home=str(self.home))
+        return lines, raised, shout
+
+    def test_spent_reply_calls_human_once(self):
+        lines, raised, shout = self.lift()
+        self.assertEqual(raised, 0)
+        self.assertIn("поднималась %d раза подряд" % lift.LIFT_TRIES, " ".join(lines))
+        self.assertEqual(shout.call_count, 1, "зова не было либо он не один")
+        title, body = shout.call_args[0][0], shout.call_args[0][1]
+        self.assertIn("DK-50", title)
+        self.assertIn("taskctl run DK-50", body)
+        # Второй заход о том же молчит: зов состоялся, а строка так и лежит.
+        _, _, again = self.lift()
+        self.assertEqual(again.call_count, 0, "баннер повторился на следующем тике")

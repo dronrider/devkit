@@ -255,7 +255,6 @@ func TestChatEntryDesignGone(t *testing.T) {
 	if got := chatsOf(t, e, c); got[0].Design != "" {
 		t.Errorf("признак не погас после входа в макеты: design=%q", got[0].Design)
 	}
-
 }
 
 // Продолженный разговор: процесс поднялся посреди файла, и запись о серверах

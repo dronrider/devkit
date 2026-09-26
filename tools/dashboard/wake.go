@@ -125,7 +125,8 @@ func (s *server) unparkIf(root, id string, parked bool) error {
 	if !parked {
 		return nil
 	}
-	return s.unparkAsk(root, id)
+	// Признак тут ещё лежит, и ждущую сессию подъём читает из него сам.
+	return s.unparkAsk(root, id, "")
 }
 
 // unparkFailed это отказ, случившийся на снятии парковки. Строка осталась в
@@ -170,11 +171,15 @@ func (s *server) repark(root, id, block string, parked bool) string {
 // спрашивают чаще всего из дерева задачи, а отвечают в панели основного
 // чекаута, и признак, переживший ответ, рисовал бы в панели вопрос уже не
 // ждущей строке.
-func (s *server) unparkAsk(root, id string) error {
+func (s *server) unparkAsk(root, id, who string) error {
 	name := chat.TaskName(id)
 	// Адрес ждущей сессии спрашивается до снятия признака: снятый признак его
 	// больше не несёт, а именно он говорит, чья работа продолжается ответом.
-	who := askSession(root, id)
+	// Зовущий, который признак уже снял, называет адрес сам: клавишный ответ
+	// убирает признак первым ходом и приходит сюда с пустым файлом.
+	if who == "" {
+		who = askSession(root, id)
+	}
 	for _, tree := range askTrees(root, id) {
 		if err := chat.DropAsk(tree, name); err != nil {
 			s.logf("признак ожидания задачи %s в %s не снялся: %v", id, tree, err)
@@ -220,6 +225,11 @@ func askSession(root, id string) string {
 // список работ не занимает: те смотрят на живое окно и свежий транскрипт.
 func (s *server) workBack(root, id, sid string) {
 	if sid == "" {
+		// Признак без сессии законен: инструмент ожидания оставляет поле пустым,
+		// когда сессия не назвалась, и ждёт безадресные реплики. Возвращать
+		// работу тогда некому, и молчать об этом нельзя: строка после ответа
+		// стоит без «Стопа», а причина этому одна строка журнала.
+		s.logf("задача %s: работа за сессией не возвращена, признак ожидания сессию не назвал", id)
 		return
 	}
 	line := sessions.Line(s.now(), sid, sessions.Bind{Task: id, Source: sessions.BySrc,

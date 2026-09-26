@@ -121,6 +121,38 @@ func TestChatResumeAfterAnswerCarriesTask(t *testing.T) {
 	}
 }
 
+// Вторая дорога ответа это клавиши в живое окно (DK-715): текст доставляет
+// терминал, а признак и парковку сводит settleAsk. Признак там снимается первым
+// же ходом, и ждущую сессию он называет сам, иначе возврат работы читал бы уже
+// удалённый файл, а строка после ответа стояла бы без «Стопа».
+func TestKeysAnswerReturnsWorkToLiveSession(t *testing.T) {
+	e, tmuxLog := parkedRaiseEnv(t)
+	c := e.loggedClient(t)
+	sid := "ffff6666-7777-4777-8777-888888888888"
+	parkedAskedChat(t, e, sid)
+	// Окно сессии живо, и реестр называет хозяином её же: реплика поедет
+	// клавишами, а не резюмом.
+	writeTmuxFake(t, e.bin, tmuxLog, `task-XR-7\nчужая-сессия\n`)
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text": "бери схему из LLD"}`)
+	got := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("клавишный ответ не прошёл: %d %s", resp.StatusCode, got)
+	}
+	if said := readFile(t, tmuxLog); !strings.Contains(said, "send-keys") {
+		t.Fatalf("реплика уехала не клавишами: %s", said)
+	}
+	binds := readFile(t, filepath.Join(e.home, ".devkit", "sessions.log"))
+	if !strings.Contains(binds, "сессия "+sid+" задача XR-7") ||
+		!strings.Contains(binds, "источник работа") {
+		t.Fatalf("работа за живой сессией после клавишного ответа не вернулась: %s", binds)
+	}
+	if !sessionsWorkOn(t, e, sid, "XR-7") {
+		t.Errorf("строка не видит живую сессию ведущей: %s", binds)
+	}
+}
+
 // sessionsWorkOn отвечает, ведёт ли сессия работу по строке по тому же
 // критерию, каким её считает свёртка строки доски.
 func sessionsWorkOn(t *testing.T, e *testEnv, sid, task string) bool {

@@ -130,7 +130,7 @@ func (s *server) ownAskReply(p *Project, info sessionInfo, sid, name, text strin
 		// Текст едет клавишами дорогой ниже: тут только снимается признак и
 		// возвращается строка, чтобы доска не осталась висеть «ждёт ответа» у
 		// сессии, которая уже его получила.
-		s.settleAsk(p.Path, name, ask.Task)
+		s.settleAsk(p.Path, name, ask.Task, ask.Session)
 		return nil, false
 	}
 	tree, ok := sessionTree(p.Path, info.suffix)
@@ -179,7 +179,7 @@ func (s *server) handedAskReply(p *Project, sid, text string, hasTerm bool) (map
 	if hasTerm {
 		// Раздавший разговор жив и отвечает на клавиши сам: текст едет ему
 		// дорогой ниже, а тут только снимается признак и возвращается строка.
-		s.settleAsk(p.Path, h.Name, h.Ask.Task)
+		s.settleAsk(p.Path, h.Name, h.Ask.Task, h.Ask.Session)
 		return nil, false
 	}
 	lying, _, err := putChat(p.Path, h.Name, text, chat.TaskLine(s.now(), text))
@@ -222,7 +222,13 @@ func (s *server) handedAskReply(p *Project, sid, text string, hasTerm bool) (map
 // («окружение: ...», спор ревью) остаётся как есть, move её не тронет.
 // Отказ тут не роняет ответ: терминальная дорога ниже всё равно доставит
 // текст, а доска, если не свелась сама, дождётся тика сторожка.
-func (s *server) settleAsk(root, name, task string) {
+//
+// Ждущую сессию зовущий называет сам (who): признак тут снимается первым же
+// ходом, и возврат работы по строке (workBack в wake.go) читал бы уже удалённый
+// файл. Клавишный ответ без этого адреса возвращал строку в In progress и
+// оставлял её без «Стопа», то есть тем же симптомом, из которого выросла
+// DK-1191, только на второй дороге.
+func (s *server) settleAsk(root, name, task, who string) {
 	if err := chat.DropAsk(root, name); err != nil {
 		s.logf("признак ожидания разговора %s не снялся после ответа клавишами: %v", name, err)
 	}
@@ -249,7 +255,7 @@ func (s *server) settleAsk(root, name, task string) {
 	// taskctl и той же уборкой признака, какой сводит строку подъём сессии
 	// после ответа в панели. Сессия тут жива, и поднимать поверх неё нечего:
 	// текст уже уехал клавишами.
-	if err := s.unparkAsk(root, task); err != nil {
+	if err := s.unparkAsk(root, task, who); err != nil {
 		s.logf("задача %s: возврат в In progress клавишным ответом не прошёл: %v", task, err)
 	}
 }

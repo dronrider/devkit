@@ -209,3 +209,59 @@ func TestStandKeepsLiveAgentctlOut(t *testing.T) {
 		t.Fatalf("раскладка подписок пришла мимо фикстуры стенда: %+v", v)
 	}
 }
+
+// harnessViaFixture это лестница с уехавшей ступенью: «втораяtest» листится
+// первой, а её ярус pro ссылкой стоит на «перваяtest» ту же модель, что там
+// домашняя. «третьяtest» держит ту же модель домашней у себя, и это честный
+// повтор, который схлопывать нельзя. Порядок харнесов взят нарочно не
+// совпадающим с домашним: старый chatHarnessOf брал первую подписку по
+// порядку, и без via она попадала бы не туда (DK-1177).
+const harnessViaFixture = `{
+  "default": "перваяtest",
+  "source": "фикстура",
+  "harnesses": [
+    {"name": "втораяtest", "enabled": true, "default": false, "bin": "клиент-2",
+     "models": [{"tier": "base", "model": "вторая-base"}, {"tier": "pro", "model": "модель-pro", "via": "перваяtest"}]},
+    {"name": "перваяtest", "enabled": true, "default": true, "bin": "клиент-1",
+     "models": [{"tier": "base", "model": "модель-base"}, {"tier": "pro", "model": "модель-pro"}]},
+    {"name": "третьяtest", "enabled": true, "default": false, "bin": "клиент-3",
+     "models": [{"tier": "pro", "model": "модель-pro"}]}
+  ]
+}`
+
+// TestChatModelOptsCollapsesViaPair: в выборе моделей чата уехавшая ссылкой
+// ступень своей строки не даёт, когда домашняя строка той же модели есть в
+// списке, а честный повтор модели у двух подписок с домашней ступенью
+// остаётся (DK-1177).
+func TestChatModelOptsCollapsesViaPair(t *testing.T) {
+	e := newTestEnv(t)
+	writeAgentctlFake(t, e.bin, harnessViaFixture)
+
+	opts := e.s.chatModelOpts()
+	byHarness := map[string]string{}
+	count := map[string]int{}
+	for _, o := range opts {
+		if o.Model == "модель-pro" {
+			byHarness[o.Harness] = o.Model
+			count["модель-pro"]++
+		}
+	}
+	if count["модель-pro"] != 2 {
+		t.Fatalf("«модель-pro» в списке %d раз, жду две строки (перваяtest и третьяtest): %+v", count["модель-pro"], opts)
+	}
+	if _, ok := byHarness["втораяtest"]; ok {
+		t.Fatalf("уехавшая ступень втораяtest дала свою строку модели-владельца: %+v", opts)
+	}
+	if _, ok := byHarness["перваяtest"]; !ok {
+		t.Fatalf("домашняя строка перваяtest потерялась: %+v", opts)
+	}
+	if _, ok := byHarness["третьяtest"]; !ok {
+		t.Fatalf("честный повтор третьяtest потерялся: %+v", opts)
+	}
+
+	// chatHarnessOf ведёт на подписку-владельца, а не на первую по порядку
+	// (втораяtest стоит в фикстуре раньше перваяtest).
+	if h := e.s.chatHarnessOf("модель-pro"); h == nil || h.Name != "перваяtest" {
+		t.Fatalf("chatHarnessOf(модель-pro) = %+v, жду перваяtest", h)
+	}
+}

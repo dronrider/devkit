@@ -45,9 +45,13 @@ type Harness struct {
 }
 
 // HarnessModel это ступень лестницы: ярус и модель, в которую он развёрнут.
+// Via это харнес-владелец, когда ступень уехала ссылкой на чужую подписку;
+// пусто у домашней ступени. Формат Model не меняется (голое имя модели), поле
+// повторяет via из ответа agentctl (DK-1177).
 type HarnessModel struct {
 	Tier  string `json:"tier"`
 	Model string `json:"model"`
+	Via   string `json:"via,omitempty"`
 }
 
 // HarnessView это ответ ручки. Пустой список это не поломка запуска: работа
@@ -79,6 +83,7 @@ type agentctlHarnesses struct {
 		Models  []struct {
 			Tier  string `json:"tier"`
 			Model string `json:"model"`
+			Via   string `json:"via"`
 		} `json:"models"`
 	} `json:"harnesses"`
 	ExecRotateTokens int      `json:"exec_rotate_tokens"`
@@ -134,7 +139,7 @@ func readHarnesses() HarnessView {
 		hh := Harness{Name: h.Name, Default: h.Default, Bin: h.Bin, Home: h.Home, Env: h.Env}
 		for _, m := range h.Models {
 			if m.Model != "" {
-				hh.Models = append(hh.Models, HarnessModel{Tier: m.Tier, Model: m.Model})
+				hh.Models = append(hh.Models, HarnessModel{Tier: m.Tier, Model: m.Model, Via: m.Via})
 			}
 		}
 		view.Harnesses = append(view.Harnesses, hh)

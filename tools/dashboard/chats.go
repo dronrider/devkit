@@ -49,12 +49,33 @@ type chatModelOpt struct {
 // список выбора. Повторы модели в одной подписке отсеиваются: у второй
 // подписки верхние ярусы сложены одной моделью, и три одинаковых строки в
 // выпадающем списке читались бы как ошибка.
+//
+// Повтор между подписками отсеивается тоже, но только пара «домашняя ступень
+// и уехавшая на неё же ссылкой»: поле Via называет харнес-владельца, и уехавшая
+// ступень своей строки не даёт, когда его домашняя строка в списке уже есть.
+// Честный повтор модели у двух подписок, которым она домашняя, остаётся: это
+// разные предложения на разных квотах, а не одна ступень дважды (DK-1177).
 func (s *server) chatModelOpts() []chatModelOpt {
+	view := s.harnesses()
+	home := map[string]map[string]bool{}
+	for _, h := range view.Harnesses {
+		for _, m := range h.Models {
+			if m.Via == "" {
+				if home[m.Model] == nil {
+					home[m.Model] = map[string]bool{}
+				}
+				home[m.Model][h.Name] = true
+			}
+		}
+	}
 	out := []chatModelOpt{}
-	for _, h := range s.harnesses().Harnesses {
+	for _, h := range view.Harnesses {
 		seen := map[string]bool{}
 		for _, m := range h.Models {
 			if seen[m.Model] {
+				continue
+			}
+			if m.Via != "" && home[m.Model][m.Via] {
 				continue
 			}
 			seen[m.Model] = true
@@ -80,16 +101,29 @@ func (s *server) chatModelNote() string {
 // chatHarnessOf называет подписку, чьей моделью просят поднять разговор: у
 // второй подписки клиент поднимается своим каталогом конфигурации, и без этого
 // сессия ушла бы на чужую квоту.
+//
+// Ведёт на подписку-владельца, у которой модель домашняя: уехавшая ссылкой
+// ступень чужой подписки в списке моделей вообще не появляется отдельной
+// строкой (chatModelOpts), но защита остаётся и здесь на случай прямого
+// вызова с именем такой модели, чтобы не поднять клиента не той подписки
+// только по порядку харнесов (DK-1177).
 func (s *server) chatHarnessOf(model string) *Harness {
 	view := s.harnesses()
+	var away *Harness
 	for i := range view.Harnesses {
 		for _, m := range view.Harnesses[i].Models {
-			if m.Model == model {
+			if m.Model != model {
+				continue
+			}
+			if m.Via == "" {
 				return &view.Harnesses[i]
+			}
+			if away == nil {
+				away = &view.Harnesses[i]
 			}
 		}
 	}
-	return nil
+	return away
 }
 
 // Состояния диалога. live это живой процесс в tmux, которым правит дашборд;

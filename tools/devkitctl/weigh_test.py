@@ -708,6 +708,12 @@ class DoctorResidencyTest(SandboxCase):
               "# Карта переходов\n\nПереходы делает скилл `tiny-skill`: "
               "In progress, Check, Backlog, Blocked.\n\n"
               "Рубежи: 0.00 0.35 0.56 0.89 1.00.\n")
+        # Фикстура тащит настоящий tools/ (go, python, js статики дашборда),
+        # а вес резидента не про язык без конфига линтера (DK-1182): три
+        # конфига силят его находки, чтобы они не тонули в проверяемой строке.
+        write(cls.rdk / ".golangci.yml", "run: {}\n")
+        write(cls.rdk / "ruff.toml", "line-length = 100\n")
+        write(cls.rdk / ".eslintrc.json", "{}\n")
         git_init(cls.rdk)
         write(cls.rdk / "docs" / "TASKS.md", "# Задачи\n\nПрефикс: RD\n")
         cls.rdkctl = cls.rdk / "tools" / "devkitctl" / "devkitctl.py"

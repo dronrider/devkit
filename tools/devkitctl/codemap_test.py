@@ -700,5 +700,117 @@ class TestProjectAnchors(unittest.TestCase):
         self.assertFalse((self.root / "docs" / "ARCHITECTURE.md").is_file())
 
 
+class TestLangTooling(unittest.TestCase):
+    """Находка на язык без конфига линтера или форматтера (DK-1182)."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.root = Path(self.temp_dir)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir)
+
+    def test_no_files_silent(self):
+        """Проект без файлов языка не получает про него находки."""
+        findings = devkitctl.check_lang_tooling(self.root)
+        self.assertEqual(findings, [])
+
+    def test_go_without_config_gives_finding(self):
+        """go-файлы без .golangci.yml/.golangci.yaml: находка про линтер."""
+        (self.root / "main.go").write_text("package main", encoding="utf-8")
+        findings = devkitctl.check_lang_tooling(self.root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("go", findings[0])
+        self.assertIn(".golangci.yml", findings[0])
+        self.assertIn("gofmt", findings[0])
+
+    def test_go_with_config_silent(self):
+        """.golangci.yaml на месте: находка про go молчит."""
+        (self.root / "main.go").write_text("package main", encoding="utf-8")
+        (self.root / ".golangci.yaml").write_text("run: {}", encoding="utf-8")
+        findings = devkitctl.check_lang_tooling(self.root)
+        self.assertEqual(findings, [])
+
+    def test_python_without_config_gives_finding(self):
+        """python-файлы без ruff/flake8/pylint: находка про линтер и форматтер."""
+        (self.root / "main.py").write_text("pass", encoding="utf-8")
+        findings = devkitctl.check_lang_tooling(self.root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("python", findings[0])
+        self.assertIn("ruff.toml", findings[0])
+
+    def test_python_ruff_toml_silences(self):
+        """ruff.toml на месте: находка про python молчит."""
+        (self.root / "main.py").write_text("pass", encoding="utf-8")
+        (self.root / "ruff.toml").write_text("line-length = 100", encoding="utf-8")
+        findings = devkitctl.check_lang_tooling(self.root)
+        self.assertEqual(findings, [])
+
+    def test_python_pyproject_section_silences(self):
+        """Секция [tool.ruff] в pyproject.toml тоже гасит находку."""
+        (self.root / "main.py").write_text("pass", encoding="utf-8")
+        (self.root / "pyproject.toml").write_text(
+            "[project]\nname = \"x\"\n\n[tool.ruff]\nline-length = 100\n",
+            encoding="utf-8")
+        findings = devkitctl.check_lang_tooling(self.root)
+        self.assertEqual(findings, [])
+
+    def test_python_pyproject_without_section_still_finding(self):
+        """pyproject.toml без секций ruff/black дыру не закрывает."""
+        (self.root / "main.py").write_text("pass", encoding="utf-8")
+        (self.root / "pyproject.toml").write_text(
+            "[project]\nname = \"x\"\n", encoding="utf-8")
+        findings = devkitctl.check_lang_tooling(self.root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("python", findings[0])
+
+    def test_python_setup_cfg_flake8_section_silences(self):
+        """Секция [flake8] в setup.cfg тоже гасит находку."""
+        (self.root / "main.py").write_text("pass", encoding="utf-8")
+        (self.root / "setup.cfg").write_text("[flake8]\nmax-line-length = 100\n",
+                                             encoding="utf-8")
+        findings = devkitctl.check_lang_tooling(self.root)
+        self.assertEqual(findings, [])
+
+    def test_js_without_config_gives_finding(self):
+        """js-файлы без eslint/prettier: находка про линтер и форматтер."""
+        (self.root / "app.js").write_text("console.log(1)", encoding="utf-8")
+        findings = devkitctl.check_lang_tooling(self.root)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("js/ts", findings[0])
+
+    def test_js_eslintrc_glob_silences(self):
+        """.eslintrc.json ловится glob-паттерном .eslintrc*."""
+        (self.root / "app.js").write_text("console.log(1)", encoding="utf-8")
+        (self.root / ".eslintrc.json").write_text("{}", encoding="utf-8")
+        findings = devkitctl.check_lang_tooling(self.root)
+        self.assertEqual(findings, [])
+
+    def test_go_and_python_together_two_findings(self):
+        """Оба языка без конфигов дают по находке на каждый."""
+        (self.root / "main.go").write_text("package main", encoding="utf-8")
+        (self.root / "main.py").write_text("pass", encoding="utf-8")
+        findings = devkitctl.check_lang_tooling(self.root)
+        self.assertEqual(len(findings), 2)
+
+    def test_skipped_dirs_not_scanned(self):
+        """Файл в vendor/ не считается кодом проекта, а конфиг там не спасает."""
+        vendor = self.root / "vendor"
+        vendor.mkdir()
+        (vendor / "dep.go").write_text("package dep", encoding="utf-8")
+        findings = devkitctl.check_lang_tooling(self.root)
+        self.assertEqual(findings, [])
+
+    def test_fix_does_not_touch_finding(self):
+        """У находки нет --fix: check_lang_tooling не принимает fix и не пишет файлов."""
+        (self.root / "main.go").write_text("package main", encoding="utf-8")
+        before = sorted(p.name for p in self.root.iterdir())
+        findings = devkitctl.check_lang_tooling(self.root)
+        after = sorted(p.name for p in self.root.iterdir())
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(before, after)
+
+
 if __name__ == "__main__":
     unittest.main()

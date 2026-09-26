@@ -2740,6 +2740,101 @@ def check_project_anchors(root, fix=False):
     return findings, fixed
 
 
+# Язык -> известные конфиги линтера или форматтера (DK-1182). Спецификация
+# конфига это либо имя файла в корне, либо glob-паттерн («.eslintrc*»), либо
+# пара (файл, метка) для секции внутри общего манифеста (pyproject.toml,
+# setup.cfg). Язык без записи в таблице молчит: находка не про исчерпание
+# списка языков, а про решённые случаи, новому языку место в таблице.
+#
+# go отдельно: gofmt форматирует без всякого конфига (у него команд настройки
+# нет вовсе), так что находка на этот язык только про конфиг линтера
+# (golangci-lint), а не про пару линтер-форматтер, как у остальных. Дыра
+# всё равно называется: конфиг остаётся единственным видимым снаружи следом
+# того, что линтер заведён осознанно, а не пропущен.
+LANG_TOOLING = (
+    {
+        "name": "go",
+        "suffixes": (".go",),
+        "configs": (".golangci.yml", ".golangci.yaml"),
+        "examples": (".golangci.yml", ".golangci.yaml"),
+        "formatter_builtin": True,
+        "note": "форматтер gofmt встроен и своего конфига не просит",
+    },
+    {
+        "name": "python",
+        "suffixes": (".py",),
+        "configs": (
+            "ruff.toml", ".ruff.toml",
+            ("pyproject.toml", "[tool.ruff]"),
+            ("pyproject.toml", "[tool.black]"),
+            ("setup.cfg", "[flake8]"),
+            ".flake8", ".pylintrc",
+        ),
+        "examples": ("ruff.toml", ".ruff.toml",
+                     "pyproject.toml с [tool.ruff] или [tool.black]",
+                     "setup.cfg с [flake8]", ".flake8", ".pylintrc"),
+    },
+    {
+        "name": "js/ts",
+        "suffixes": (".js", ".ts", ".jsx", ".tsx"),
+        "configs": (".eslintrc*", "eslint.config.*", ".prettierrc*",
+                    "prettier.config.*"),
+        "examples": (".eslintrc*", "eslint.config.*", ".prettierrc*",
+                     "prettier.config.*"),
+    },
+)
+
+
+def _lang_has_files(root, suffixes):
+    for dp, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for fn in filenames:
+            if fn.endswith(suffixes):
+                return True
+    return False
+
+
+def _lang_config_present(root, spec):
+    if isinstance(spec, tuple):
+        fname, marker = spec
+        path = root / fname
+        if not path.is_file():
+            return False
+        try:
+            return marker in path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+    if spec.endswith("*"):
+        return any(root.glob(spec))
+    return (root / spec).is_file()
+
+
+def check_lang_tooling(root):
+    """Находка на язык проекта без конфига линтера или форматтера (DK-1182).
+
+    Язык берётся тем же статическим разбором дерева, что у карты (обход по
+    суффиксам файлов, теми же исключёнными каталогами, что у остальных
+    проверок devkitctl), а не запуском тулчейна. Таблица «язык -> известные
+    конфиги» это `LANG_TOOLING` выше; язык без записи в ней молчит. Конфиг
+    линтера или форматтера задача не выбирает и не заводит (граница цели
+    DK-1178), находка только называет дыру и примеры конфигов, `--fix` её не
+    трогает.
+    """
+    root = Path(root)
+    findings = []
+    for lang in LANG_TOOLING:
+        if not _lang_has_files(root, lang["suffixes"]):
+            continue
+        if any(_lang_config_present(root, spec) for spec in lang["configs"]):
+            continue
+        what = "линтера" if lang.get("formatter_builtin") else "линтера или форматтера"
+        note = " (%s)" % lang["note"] if lang.get("note") else ""
+        findings.append(
+            "язык %s без конфига %s, известные конфиги: %s%s"
+            % (lang["name"], what, "; ".join(lang["examples"]), note))
+    return findings
+
+
 def check_map_freshness(root, fix=False):
     """Проверка свежести карты проекта (DK-375).
 
@@ -2856,6 +2951,10 @@ def doctor(start, fix=False):
         cf, cd = check_project_anchors(root, fix)
         findings += cf
         fixed += cd
+        # Язык без конфига линтера или форматтера не зависит от порядка с
+        # остальными проверками: он не пишет файлов и не читает то, что
+        # заводят они (DK-1182).
+        findings += check_lang_tooling(root)
         # Свежесть карты идёт раньше тонких файлов: её импорт входит в тонкий
         # файл, и сгенерированная в этом же прогоне карта должна попасть в него
         # сразу, а не со второго прогона doctor.

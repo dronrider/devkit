@@ -585,13 +585,26 @@ max = "cheap"
 	if err != nil {
 		t.Fatal(err)
 	}
-	var v harnessesJSON
+	// Разбор через собственный тип теста, а не через harnessModelJSON пакета:
+	// на старом коде поля via там ещё нет, и привязка к нему обратила бы
+	// красноту regcheck в ошибку сборки, а не в честный красный прогон.
+	type viaModel struct {
+		Tier  string `json:"tier"`
+		Model string `json:"model"`
+		Via   string `json:"via"`
+	}
+	var v struct {
+		Harnesses []struct {
+			Name   string     `json:"name"`
+			Models []viaModel `json:"models"`
+		} `json:"harnesses"`
+	}
 	if err := json.Unmarshal([]byte(text), &v); err != nil {
 		t.Fatalf("ответ не разобрался (%v):\n%s", err, text)
 	}
-	models := map[string]map[string]harnessModelJSON{}
+	models := map[string]map[string]viaModel{}
 	for _, h := range v.Harnesses {
-		byTier := map[string]harnessModelJSON{}
+		byTier := map[string]viaModel{}
 		for _, m := range h.Models {
 			byTier[m.Tier] = m
 		}

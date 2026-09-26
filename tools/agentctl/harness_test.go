@@ -557,6 +557,57 @@ env = ["CLAUDE_CONFIG_DIR={home}"]
 	}
 }
 
+// TestCmdHarnessJSONVia: ступень, уехавшая ссылкой на чужую подписку, несёт
+// поле via с именем харнеса-владельца, а домашняя ступень поля не несёт вовсе
+// (DK-1177). Формат самого model остаётся голым именем модели: checkrun
+// сверяет по нему через EqualFold, и харнес внутри значения сломал бы это
+// сравнение.
+func TestCmdHarnessJSONVia(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "homecli", echoProfile)
+	writeProfile(t, kit, "secondcli", echoProfile)
+	writeMachine(t, kit, `enabled = ["homecli", "secondcli"]
+default = "homecli"
+
+[homecli]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+
+[secondcli]
+mini = "cheap"
+base = "cheap"
+pro = "homecli:opus"
+max = "cheap"
+`)
+	text, err := cmdHarnessJSON(kit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v harnessesJSON
+	if err := json.Unmarshal([]byte(text), &v); err != nil {
+		t.Fatalf("ответ не разобрался (%v):\n%s", err, text)
+	}
+	models := map[string]map[string]harnessModelJSON{}
+	for _, h := range v.Harnesses {
+		byTier := map[string]harnessModelJSON{}
+		for _, m := range h.Models {
+			byTier[m.Tier] = m
+		}
+		models[h.Name] = byTier
+	}
+	if m := models["homecli"]["pro"]; m.Model != "opus" || m.Via != "" {
+		t.Fatalf("домашняя ступень пришла как %+v, жду голую модель без via", m)
+	}
+	if m := models["secondcli"]["pro"]; m.Model != "opus" || m.Via != "homecli" {
+		t.Fatalf("уехавшая ступень пришла как %+v, жду модель opus и via homecli", m)
+	}
+	if strings.Contains(text, `"via"`) == false {
+		t.Fatalf("поле via не встретилось в ответе вовсе:\n%s", text)
+	}
+}
+
 // TestCmdHarnessJSONEmpty: пустой включённый список говорит о себе словами, а
 // не пустым массивом. Молчание тут неотличимо от отработавшей команды, и экран
 // показал бы «выбора нет» без причины.

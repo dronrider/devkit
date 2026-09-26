@@ -1288,11 +1288,16 @@ type harnessJSON struct {
 	Models []harnessModelJSON `json:"models,omitempty"`
 }
 
-// harnessModelJSON это одна ступень лестницы: ярус, модель и признак яруса по
-// умолчанию для роли исполнителя.
+// harnessModelJSON это одна ступень лестницы: ярус и модель. Формат поля model
+// не меняется никогда: internal/checkrun/checkrun.go сверяет по нему модель
+// разработки с моделью проверки через EqualFold, и харнес внутри значения
+// сломал бы это сравнение. Владелец уехавшей ступени идёт отдельным полем via,
+// тем же приёмом, каким строку pick уже сегодня печатает via (DK-090); у
+// домашней ступени поле пусто и в ответе не появляется.
 type harnessModelJSON struct {
 	Tier  string `json:"tier"`
 	Model string `json:"model"`
+	Via   string `json:"via,omitempty"`
 }
 
 // harnessesJSON это ответ команды: машинная раскладка подписок целиком.
@@ -1366,7 +1371,7 @@ func cmdHarnessJSON(start string) (string, error) {
 		h.Env = envNames(l.Setup[name].envOf())
 		for _, tier := range tierNames {
 			if m := l.Setup[name].mapOf(tier); m != "" {
-				h.Models = append(h.Models, harnessModelJSON{Tier: tier, Model: m})
+				h.Models = append(h.Models, harnessModelJSON{Tier: tier, Model: m, Via: l.Setup[name].viaOf(tier, name)})
 			}
 		}
 		v.Harnesses = append(v.Harnesses, h)
@@ -1394,6 +1399,20 @@ func (s *setup) mapOf(tier string) string {
 		return ""
 	}
 	return a.Model
+}
+
+// viaOf отдаёт харнес-владельца ступени, когда она уехавшая ссылкой на другую
+// подписку, и пусто на домашней ступени: name это имя секции, в которой ступень
+// назначена (сама подписка, а не активный харнес вызова).
+func (s *setup) viaOf(tier, name string) string {
+	if s == nil {
+		return ""
+	}
+	a, ok := s.Map[tier]
+	if !ok || !a.away(name) {
+		return ""
+	}
+	return a.Harness
 }
 
 func (s *setup) envOf() []envPair {

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 // Задача, оставшаяся без ведущей сессии (DK-660). Исполнитель погибал на
@@ -100,4 +102,36 @@ func (s *server) noLeadSay(task, project, why string) {
 		return
 	}
 	s.logf("задача %s осталась без ведущей сессии, человек позван", task)
+}
+
+// replyStuckSay зовёт человека к реплике, которую забрать некому (DK-1194).
+// Повод строки журнала тот же, что у осиротевшей задачи: для ленты это одно и
+// то же событие про строку доски, работа по ней не идёт. Канал тот же, свой
+// уведомитель дашборд не заводит.
+//
+// Зов идёт только там, где лестница не позвала человека сама последней ступенью:
+// два баннера об одном молчании хуже одного. Готовая команда в теле та же,
+// которой зовёт лестница (taskhead.RunCommand): человек копирует её из баннера
+// и поднимает голову сам.
+func (s *server) replyStuckSay(proj *Project, task, why string) {
+	if proj == nil || task == "" {
+		return
+	}
+	np := notifierPath(s.cfg.Roots)
+	if np == "" {
+		s.logf("реплика задаче %s лежит недоставленной: %s", task, notifierMissing)
+		return
+	}
+	title := fmt.Sprintf("%s: реплика задаче %s лежит недоставленной", proj.Name, task)
+	body := fmt.Sprintf("%s. Голову задачи поднять нечем, и реплика ждёт во входе чата. "+
+		"Поднять руками: %s", strings.TrimRight(why, ". "), taskhead.RunCommand(task, proj.Path))
+	cmd := exec.Command("python3", np, "--reason", noLeadReason,
+		"--task", task, "--project", proj.Name, title, body)
+	cmd.Dir = proj.Path
+	if out, err := cmd.CombinedOutput(); err != nil {
+		s.logf("реплика задаче %s лежит недоставленной, а уведомление не ушло: %v (%s)",
+			task, err, strings.TrimSpace(string(out)))
+		return
+	}
+	s.logf("реплика задаче %s лежит недоставленной, человек позван", task)
 }

@@ -150,6 +150,19 @@ func writeTaskRunFake(t *testing.T, root string) {
 	writeHeadProfiles(t, filepath.Join(root, "devkit"))
 }
 
+// dropTaskRunFake убирает оболочку конвейера из корней стенда: так выглядит
+// машина без чекаута devkit, и предполёт подъёма отказывает на ней до всякой
+// правки доски. Нужно это тем тестам, где реплике человека и правда некого
+// дождаться: с разложенной дорогой подъём удаётся, и адресат у реплики
+// появляется (DK-1194).
+func dropTaskRunFake(t *testing.T, root string) {
+	t.Helper()
+	path := filepath.Join(root, "devkit", "kit", "skills", "board-task", "task-run.py")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // taskRunAdoptBody это оболочка, принимающая замок: вписывает свой pid, если в
 // замке стоит pid подъёма, и живёт пару секунд, чтобы подъём успел это увидеть.
 const taskRunAdoptBody = `import os, sys, time

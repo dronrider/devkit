@@ -2699,6 +2699,47 @@ def check_prose_sample_config():
             "(hooks/README.md)" % ("; ".join(lines) if lines else "конфиг путей не читается")]
 
 
+# Якорь доки: (имя файла, шаблон в kit/templates) (DK-1179, решение 1).
+# Оба места считаются наравне, docs/ и корень (codemap.ARCH_MAPS): рукописный
+# файл, который в проекте уже живёт, находки не даёт и --fix его не трогает.
+ANCHOR_TEMPLATES = (
+    ("ARCHITECTURE.md", "ARCHITECTURE.project.md"),
+    ("STYLEGUIDE.md", "STYLEGUIDE.project.md"),
+)
+
+
+def check_project_anchors(root, fix=False):
+    """Находки на отсутствующие docs/ARCHITECTURE.md и docs/STYLEGUIDE.md
+    (DK-1179, решение 1).
+
+    Возвращает (findings, fixed). Проверяется проект с кодом: манифест или,
+    без него, каталоги верхнего уровня с кодом (тот же каскад, что у
+    describe.check), иначе пустому репозиторию находка на якоря не встаёт.
+    `--fix` кладёт скелет из kit/templates, наполнение разделов доктор не
+    читает: пустой скелет с подстановками находку снимает, содержание несёт
+    ревью.
+    """
+    findings, fixed = [], []
+    root = Path(root)
+    members = describe.members_from_manifest(root)
+    if members is None:
+        members = describe.members_from_dirs(root)
+    if not members:
+        return findings, fixed
+    for name, template in ANCHOR_TEMPLATES:
+        if (root / "docs" / name).is_file() or (root / name).is_file():
+            continue
+        if fix:
+            dest = root / "docs" / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text((DEVKIT / "kit" / "templates" / template)
+                            .read_text(encoding="utf-8"), encoding="utf-8")
+            fixed.append("docs/%s создан из шаблона" % name)
+        else:
+            findings.append("нет docs/%s: скелет кладёт devkitctl doctor --fix" % name)
+    return findings, fixed
+
+
 def check_map_freshness(root, fix=False):
     """Проверка свежести карты проекта (DK-375).
 
@@ -2808,6 +2849,13 @@ def doctor(start, fix=False):
         # делает. Режим чекаута доктор уже различает и печатает строкой ниже
         # (DK-149, решение 3), а на ветке (машина разработчика) признак ложный
         # и состав проверок не меняется.
+        # Якоря кладутся раньше свежести карты: шапка карты ссылается на них
+        # (codemap.render_map), и появившийся в этом же прогоне файл должен
+        # попасть в шапку сразу, а не со второго прогона doctor (DK-1179,
+        # решение 3).
+        cf, cd = check_project_anchors(root, fix)
+        findings += cf
+        fixed += cd
         # Свежесть карты идёт раньше тонких файлов: её импорт входит в тонкий
         # файл, и сгенерированная в этом же прогоне карта должна попасть в него
         # сразу, а не со второго прогона doctor.

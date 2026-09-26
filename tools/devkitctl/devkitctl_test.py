@@ -1727,10 +1727,12 @@ class SelfReleaseDoctorTest(SandboxCase):
             shutil.copytree(str(box.dk / d), str(cls.sdk / d))
         # Дока остальных утилит доктору тут не нужна, а её битые ссылки на
         # docs/lld были бы шумом поверх находок, которые проверяются (тот же
-        # приём, что у DoctorResidencyTest в weigh_test.py).
+        # приём, что у DoctorResidencyTest в weigh_test.py). kit/templates
+        # исключён туда же: --fix якорей (DK-1179) читает шаблоны оттуда, и
+        # их пропажа обрывает doctor --fix посреди прогона, а не находкой.
         for md in cls.sdk.rglob("*.md"):
             rel = md.relative_to(cls.sdk).parts
-            if rel[:2] not in (("kit", "skills"), ("kit", "agents")):
+            if rel[:2] not in (("kit", "skills"), ("kit", "agents"), ("kit", "templates")):
                 md.unlink()
         write(cls.sdk / "RULES.core.md", "# ядро\n\nтекст ядра.\n")
         write(cls.sdk / "RULES.board.core.md", "# ядро доски\n\nтекст ядра доски.\n")

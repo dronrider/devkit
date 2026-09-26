@@ -40,6 +40,7 @@ PACKAGE_MANIFESTS = ("go.mod", "Cargo.toml", "pyproject.toml", "setup.py",
                      "package.json", "build.gradle", "build.gradle.kts")
 
 ARCH_MAPS = ("docs/ARCHITECTURE.md", "ARCHITECTURE.md")
+STYLE_MAPS = ("docs/STYLEGUIDE.md", "STYLEGUIDE.md")
 CODE_SUFFIXES = (".go", ".py", ".rs", ".js", ".ts", ".jsx", ".tsx",
                  ".java", ".kt", ".rb", ".c", ".cc", ".cpp", ".h", ".hpp",
                  ".swift", ".m", ".mm", ".cs", ".php", ".ex", ".exs",
@@ -385,6 +386,36 @@ def generate_map(root):
     return marker, body, hash_val
 
 
+def anchor_header(root):
+    """Шапка карты про якоря docs/ARCHITECTURE.md и docs/STYLEGUIDE.md
+    (DK-1179, решение 3): ссылкой, когда файл есть, словами, когда его нет.
+
+    Молчаливой шапки нет ни в одном состоянии: пропажу якоря видит каждая
+    сессия, не только та, что позвала доктора. Оба места считаются наравне,
+    docs/ и корень (ARCH_MAPS, STYLE_MAPS).
+    """
+    root = Path(root)
+    arch = any((root / p).is_file() for p in ARCH_MAPS)
+    style = any((root / p).is_file() for p in STYLE_MAPS)
+    if arch and style:
+        return ("Границы и инварианты в [docs/ARCHITECTURE.md](ARCHITECTURE.md), соглашения\n"
+                "стиля в [docs/STYLEGUIDE.md](STYLEGUIDE.md). Читаются разделом по надобности,\n"
+                "целиком в контекст не едут.")
+    if not arch and not style:
+        return ("Якорей нет: `docs/ARCHITECTURE.md` и `docs/STYLEGUIDE.md` кладёт\n"
+                "`devkitctl doctor --fix`.")
+    lines = []
+    if arch:
+        lines.append("Границы и инварианты в [docs/ARCHITECTURE.md](ARCHITECTURE.md).")
+    else:
+        lines.append("Якоря `docs/ARCHITECTURE.md` нет, кладёт `devkitctl doctor --fix`.")
+    if style:
+        lines.append("Соглашения стиля в [docs/STYLEGUIDE.md](STYLEGUIDE.md).")
+    else:
+        lines.append("Якоря `docs/STYLEGUIDE.md` нет, кладёт `devkitctl doctor --fix`.")
+    return "\n".join(lines)
+
+
 def render_map(root):
     """Сгенерировать полный текст карты с маркером и шапкой.
 
@@ -399,6 +430,8 @@ def render_map(root):
     lines.append("")
     lines.append("Сгенерировано devkitctl из кода и доки, правится перегенерацией")
     lines.append("`devkitctl doctor --fix`, руками не править.")
+    lines.append("")
+    lines.extend(anchor_header(root).split("\n"))
     lines.append("")
     lines.append(body)
 

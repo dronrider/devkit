@@ -680,9 +680,11 @@ class DoctorResidencyTest(SandboxCase):
             shutil.copytree(str(box.dk / d), str(cls.rdk / d))
         # Дока других утилит доктору тут не нужна, а её битые ссылки на docs/lld
         # были бы шумом поверх карманов резидента, которые и проверяются.
+        # kit/templates исключён туда же: --fix якорей (DK-1179) читает
+        # шаблоны оттуда, и их пропажа обрывает doctor --fix посреди прогона.
         for md in cls.rdk.rglob("*.md"):
             rel = md.relative_to(cls.rdk).parts
-            if rel[:2] not in (("kit", "skills"), ("kit", "agents")):
+            if rel[:2] not in (("kit", "skills"), ("kit", "agents"), ("kit", "templates")):
                 md.unlink()
         shutil.rmtree(str(cls.rdk / "kit" / "skills"))
         write(cls.rdk / "kit" / "skills" / "tiny-skill" / "SKILL.md", cls.SKILL + "т" * 200)

@@ -589,5 +589,116 @@ class TestMapFreshness(unittest.TestCase):
         self.assertEqual(len(map_findings), 0, "Doctor должен молчать после исправления")
 
 
+class TestAnchorHeader(unittest.TestCase):
+    """Шапка карты про якоря docs/ARCHITECTURE.md и docs/STYLEGUIDE.md (DK-1179)."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.root = Path(self.temp_dir)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir)
+
+    def test_both_missing(self):
+        """Оба якоря отсутствуют: шапка называет оба словами."""
+        header = codemap.anchor_header(self.root)
+        self.assertIn("Якорей нет", header)
+        self.assertIn("docs/ARCHITECTURE.md", header)
+        self.assertIn("docs/STYLEGUIDE.md", header)
+
+    def test_both_present(self):
+        """Оба якоря на месте: шапка несёт обе ссылки."""
+        (self.root / "docs").mkdir()
+        (self.root / "docs" / "ARCHITECTURE.md").write_text("# Архитектура", encoding="utf-8")
+        (self.root / "docs" / "STYLEGUIDE.md").write_text("# Стиль", encoding="utf-8")
+        header = codemap.anchor_header(self.root)
+        self.assertIn("[docs/ARCHITECTURE.md](ARCHITECTURE.md)", header)
+        self.assertIn("[docs/STYLEGUIDE.md](STYLEGUIDE.md)", header)
+        self.assertNotIn("Якорей нет", header)
+
+    def test_root_place_counts(self):
+        """Якорь в корне репозитория считается наравне с docs/."""
+        (self.root / "ARCHITECTURE.md").write_text("# Архитектура", encoding="utf-8")
+        (self.root / "docs").mkdir()
+        (self.root / "docs" / "STYLEGUIDE.md").write_text("# Стиль", encoding="utf-8")
+        header = codemap.anchor_header(self.root)
+        self.assertIn("[docs/ARCHITECTURE.md](ARCHITECTURE.md)", header)
+        self.assertIn("[docs/STYLEGUIDE.md](STYLEGUIDE.md)", header)
+
+    def test_mixed(self):
+        """Один якорь есть, другого нет: у каждого файла своя строка."""
+        (self.root / "docs").mkdir()
+        (self.root / "docs" / "ARCHITECTURE.md").write_text("# Архитектура", encoding="utf-8")
+        header = codemap.anchor_header(self.root)
+        self.assertIn("[docs/ARCHITECTURE.md](ARCHITECTURE.md)", header)
+        self.assertIn("docs/STYLEGUIDE.md` нет", header)
+
+    def test_render_map_carries_header(self):
+        """render_map несёт шапку якорей в полном тексте карты."""
+        full_text, _ = codemap.render_map(self.root)
+        self.assertIn("Якорей нет", full_text)
+
+
+class TestProjectAnchors(unittest.TestCase):
+    """Находки на отсутствующие docs/ARCHITECTURE.md и docs/STYLEGUIDE.md (DK-1179)."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.root = Path(self.temp_dir)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir)
+
+    def test_no_code_silent(self):
+        """Проект без кода не получает находку про якоря."""
+        findings, fixed = devkitctl.check_project_anchors(self.root, fix=False)
+        self.assertEqual(findings, [])
+        self.assertEqual(fixed, [])
+
+    def test_missing_gives_finding(self):
+        """Проект с кодом и без якорей: находка на каждый отсутствующий файл."""
+        (self.root / "tools").mkdir()
+        (self.root / "tools" / "main.py").write_text("pass", encoding="utf-8")
+        findings, fixed = devkitctl.check_project_anchors(self.root, fix=False)
+        self.assertEqual(len(findings), 2)
+        self.assertTrue(any("ARCHITECTURE.md" in f for f in findings))
+        self.assertTrue(any("STYLEGUIDE.md" in f for f in findings))
+        self.assertEqual(fixed, [])
+
+    def test_fix_lays_skeleton_and_silences(self):
+        """--fix кладёт скелет из шаблона, повторный прогон молчит."""
+        (self.root / "tools").mkdir()
+        (self.root / "tools" / "main.py").write_text("pass", encoding="utf-8")
+        findings, fixed = devkitctl.check_project_anchors(self.root, fix=True)
+        self.assertEqual(len(fixed), 2)
+        self.assertTrue((self.root / "docs" / "ARCHITECTURE.md").is_file())
+        self.assertTrue((self.root / "docs" / "STYLEGUIDE.md").is_file())
+        arch_text = (self.root / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
+        self.assertIn("Границы", arch_text)
+        style_text = (self.root / "docs" / "STYLEGUIDE.md").read_text(encoding="utf-8")
+        self.assertIn("Ошибки и отказы", style_text)
+
+        findings, fixed = devkitctl.check_project_anchors(self.root, fix=False)
+        self.assertEqual(findings, [])
+        self.assertEqual(fixed, [])
+
+    def test_handwritten_root_file_not_touched(self):
+        """Рукописный файл в корне находки не даёт и --fix его не трогает."""
+        (self.root / "tools").mkdir()
+        (self.root / "tools" / "main.py").write_text("pass", encoding="utf-8")
+        (self.root / "ARCHITECTURE.md").write_text("рукописный текст", encoding="utf-8")
+        (self.root / "docs").mkdir()
+        (self.root / "docs" / "STYLEGUIDE.md").write_text("рукописный стиль", encoding="utf-8")
+
+        findings, fixed = devkitctl.check_project_anchors(self.root, fix=True)
+        self.assertEqual(findings, [])
+        self.assertEqual(fixed, [])
+        self.assertEqual((self.root / "ARCHITECTURE.md").read_text(encoding="utf-8"),
+                         "рукописный текст")
+        self.assertFalse((self.root / "docs" / "ARCHITECTURE.md").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

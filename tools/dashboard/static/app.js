@@ -12803,6 +12803,10 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
       // Признак ожидания и есть тот повод, по которому панель добавляет галочки:
       // заход спросил человека текстом и стоит, пока ответа нет.
       pick.on = Boolean(ask && ask.kind === "agent");
+      // Имена развилок признака память галочек держит при себе: ленту
+      // перерисовывает и поток реплик, а признак приезжает только сюда, и без
+      // этой записи перерисовка сверять блок было бы не с чем (DK-892).
+      pick.forks = pick.on ? askForkNames(ask) : null;
       askPickWire(feed, ta, pick);
       askBlindCount(feed, pick, ask);
       paintClientAsk(project, st, box, ask, tick, pick);
@@ -13184,18 +13188,49 @@ function askPickBare(msg) {
   msg.askMarks = null;
 }
 
-// askPickWire вешает галочки на последнюю реплику с блоком вопроса и снимает
-// их, когда ответа больше не ждут. Зовут её опрос признака и всякая
-// перерисовка ленты: реплика с блоком приходит после признака, а узлы пузырей
-// лента пересобирает своим порядком.
+// askForkNames собирает имена развилок, о которых стоит признак ожидания
+// (DK-892). Текст вопроса начинается именем в ёлочках: признак собирается из
+// того же перечня развилок записи, что и блок в реплике (chatQuestions в
+// taskctl, agentAskOf в waiting.go), поэтому имена у них одни. Вопросов в
+// пачке до четырёх и едут они полем steps, а единственный вопрос steps не
+// заводит вовсе и лежит в text. Имя шага идёт запасным путём: полный текст
+// вопроса стоит в step.text, а в step.name он обрезан под ширину таба.
+function askForkNames(ask) {
+  const out = new Set();
+  const add = (text) => {
+    const head = ASK_FORK_RE.exec(String(text || "").trim());
+    if (head) out.add(head[1]);
+  };
+  for (const step of (ask && ask.steps) || []) {
+    if (!step) continue;
+    add(step.text);
+    add(String(step.name || "").replace(/^\s*\d{1,2}[.)]\s*/, ""));
+  }
+  if (ask) add(ask.text);
+  return out;
+}
+
+// askPickWire вешает галочки на реплику с блоком той развилки, о которой стоит
+// признак, и снимает их, когда ответа больше не ждут. Зовут её опрос признака и
+// всякая перерисовка ленты: реплика с блоком приходит после признака, а узлы
+// пузырей лента пересобирает своим порядком.
+//
+// Имена развилок тут не украшение. Разговор идёт развилка за развилкой, и
+// отвеченный блок остаётся в ленте выше: без сверки имён панель брала первый
+// блок с конца, принимала закрытый вопрос за живой, вешала на него галочки и
+// молчала о том, про который её и спросили (провал приёмки DK-892). Имён
+// признака панель не знает только в одном случае, когда вопрос пришёл без
+// ёлочек вовсе; тогда сверять нечем и блок берётся прежним порядком.
 function askPickWire(feed, ta, state) {
   if (!feed || !ta) return;
   const msgs = feed.querySelectorAll(".msg") || [];
   let at = null;
   let picks = [];
   if (state.on) {
+    const forks = state.forks;
     for (let i = msgs.length - 1; i >= 0; i--) {
-      const got = askChatPicks(msgs[i].mdText);
+      let got = askChatPicks(msgs[i].mdText);
+      if (forks && forks.size) got = got.filter((pick) => forks.has(pick.fork));
       if (got.length) {
         at = msgs[i];
         picks = got;

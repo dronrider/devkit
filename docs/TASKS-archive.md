@@ -620,3 +620,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1179 | LLD: якоря архитектуры и стиля: разделы скелетов, развилка «кандидат в стандарт», шапка карты и абзац ядра | LLD | P1 | 2026-09-26 | [tasks/archive/2026/DK-1179.md](tasks/archive/2026/DK-1179.md) |
 | DK-1181 | Доктор ставит находки на docs/ARCHITECTURE.md и docs/STYLEGUIDE.md, кладёт скелеты по --fix, карта несёт ссылки шапкой | task | P1 | 2026-09-26 | [tasks/archive/2026/DK-1181.md](tasks/archive/2026/DK-1181.md) |
 | DK-1182 | Доктор называет язык проекта без конфига форматтера или линтера находкой без автопочинки | task | P1 | 2026-09-26 | [tasks/archive/2026/DK-1182.md](tasks/archive/2026/DK-1182.md) |
+| DK-1180 | Ревью, интервью и определения агентов сверяют правку с docs/ARCHITECTURE.md и docs/STYLEGUIDE.md | task | P1 | 2026-09-26 | [tasks/archive/2026/DK-1180.md](tasks/archive/2026/DK-1180.md) |

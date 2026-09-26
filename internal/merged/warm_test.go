@@ -1,6 +1,7 @@
 package merged
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -146,5 +147,43 @@ func TestExpectSkipsMissingDoc(t *testing.T) {
 		if v, err := b.Task(id); err != nil || v.Merged {
 			t.Fatalf("%s файла задачи в main не имеет, а признак ответил %+v (%v)", id, v, err)
 		}
+	}
+}
+
+// TestBatchDocsHoldsBatchSize: у входа `cat-file --batch` тот же потолок
+// пачки, что и у чтения состава коммитов. Ответ буферится целиком, и без потолка
+// память росла бы от числа строк доски и размера файлов задач. Считается тут
+// число пачек, а не байты. Байты меряются машиной, а пачки это факт состава
+// хода (замечание ревью DK-1168).
+func TestBatchDocsHoldsBatchSize(t *testing.T) {
+	root := repo(t)
+	var ids []string
+	for i := 0; i < 2*warmBatch+1; i++ {
+		ids = append(ids, fmt.Sprintf("DK-%d", 1000+i))
+	}
+	// Файл задачи стоит у самого хвоста списка. Содержимое обязано доехать и из
+	// последней пачки, а не только из первой.
+	last := ids[len(ids)-1]
+	commit(t, root, "docs(tasks): "+last+" файл", map[string]string{
+		"docs/tasks/" + last + ".md": "# " + last + "\n\n## Выкат\n",
+	})
+
+	calls := gitCounter(t)
+	docs := batchDocs(root, "main", ids)
+	var batches int
+	for _, c := range calls() {
+		if strings.Contains(c, "cat-file --batch") {
+			batches++
+		}
+	}
+	if batches != 3 {
+		t.Fatalf("%d путей прочитаны %d пачками, жду три при потолке %d. Без потолка весь ответ буферится разом",
+			len(ids), batches, warmBatch)
+	}
+	if got, ok := docs[last]; !ok || !strings.Contains(got, "## Выкат") {
+		t.Fatalf("файл задачи из последней пачки прочитан как %q (есть: %v). Разбиение не должно терять содержимое", got, ok)
+	}
+	if len(docs) != len(ids) {
+		t.Fatalf("прочитано %d ответов на %d путей. Пачки обязаны покрыть весь список", len(docs), len(ids))
 	}
 }

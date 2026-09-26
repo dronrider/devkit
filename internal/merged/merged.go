@@ -224,8 +224,11 @@ func (b *Book) Expect(ids []string) {
 	b.want = append(b.want, ids...)
 }
 
-// warmBatch это потолок ревизий в одном `git show`. Список едет аргументами, и
-// на доске из тысячи строк он упёрся бы в предел длины командной строки.
+// warmBatch это потолок одной пачки: и ревизий в `git show`, и путей в
+// `cat-file --batch`. У `show` список едет аргументами, и на доске из тысячи
+// строк он упёрся бы в предел длины командной строки. У `cat-file` вход идёт
+// потоком, зато ответ буферится целиком, и без потолка память росла бы
+// неограниченно.
 const warmBatch = 500
 
 // warm читает пакетом всё, названное книге наперёд: файлы задач названных
@@ -332,15 +335,38 @@ func (b *Book) fillWork(shas []string) {
 	}
 }
 
-// batchDocs читает файлы задач из main одним `cat-file --batch`. Ответ на
+// batchDocs читает файлы задач из main пачками `cat-file --batch`. Ответ на
 // каждый путь это строка заголовка и ровно столько байтов содержимого, сколько
 // в ней названо; ненайденный путь отвечает строкой без размера, и такой задачи
 // в main просто нет. Порядок ответов тот же, что порядок запросов, по нему
 // содержимое и раздаётся задачам.
+//
+// Пачка ограничена тем же потолком, что и чтение состава коммитов. Ответ
+// буферится целиком, и без потолка память росла бы от числа строк доски и
+// размера файлов задач (замечание ревью DK-1168). Пачка, на которой git
+// отказал, просто не попадает в ответ. Про её задачи спросят вызовом на файл,
+// как спрашивали до пакетного чтения.
 func batchDocs(root, main string, ids []string) map[string]string {
 	if main == "" || len(ids) == 0 {
 		return nil
 	}
+	docs := map[string]string{}
+	for len(ids) > 0 {
+		n := len(ids)
+		if n > warmBatch {
+			n = warmBatch
+		}
+		batchPart(root, main, ids[:n], docs)
+		ids = ids[n:]
+	}
+	if len(docs) == 0 {
+		return nil
+	}
+	return docs
+}
+
+// batchPart читает одну пачку путей и кладёт прочитанное в docs.
+func batchPart(root, main string, ids []string, docs map[string]string) {
 	var in strings.Builder
 	for _, id := range ids {
 		in.WriteString(main + ":docs/tasks/" + id + ".md\n")
@@ -350,9 +376,8 @@ func batchDocs(root, main string, ids []string) map[string]string {
 	cmd.Stdin = strings.NewReader(in.String())
 	out, err := cmd.Output()
 	if err != nil {
-		return nil
+		return
 	}
-	docs := map[string]string{}
 	rest := out
 	for _, id := range ids {
 		nl := bytes.IndexByte(rest, '\n')
@@ -376,7 +401,6 @@ func batchDocs(root, main string, ids []string) map[string]string {
 			rest = rest[1:]
 		}
 	}
-	return docs
 }
 
 // Record собирает коммиты записи «Выкат» задачи id из всех мест, где свежая

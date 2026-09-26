@@ -11,10 +11,12 @@
 package merged
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -74,6 +76,10 @@ type Book struct {
 	trees      []string
 	work       map[string]bool
 	edges      map[Prereq]Edge
+	want       []string
+	warmed     bool
+	docs       map[string]string
+	recs       map[string][]string
 }
 
 type logLine struct{ sha, subj string }
@@ -162,6 +168,7 @@ func (b *Book) lines() ([]logLine, error) {
 
 // isWork отвечает, трогает ли коммит что-то кроме доски и файлов задач.
 func (b *Book) isWork(sha string) (bool, error) {
+	b.warm()
 	if w, ok := b.work[sha]; ok {
 		return w, nil
 	}
@@ -180,7 +187,196 @@ func (b *Book) record(id string) []string {
 	if b.trees == nil {
 		b.trees = trees(b.root)
 	}
-	return record(b.root, b.main, id, b.trees)
+	b.warm()
+	if rec, ok := b.recs[id]; ok {
+		return rec
+	}
+	var docs []string
+	// Файл задачи из main уже прочитан пакетом, когда книгу о задаче
+	// предупредили. Пустая строка там значит, что в main такого файла нет: это
+	// тот же ответ, что давал отказ `git show` по одному пути.
+	if doc, ok := b.docs[id]; ok {
+		if doc != "" {
+			docs = append(docs, doc)
+		}
+	} else if out, err := git(b.root, "show", b.main+":docs/tasks/"+id+".md"); err == nil {
+		docs = append(docs, out)
+	}
+	rec := recordShas(append(docs, treeDocs(b.trees, id)...))
+	if b.recs == nil {
+		b.recs = map[string][]string{}
+	}
+	b.recs[id] = rec
+	return rec
+}
+
+// Expect называет ID, про которые книгу спросят в этой команде. По ним книга
+// читает файлы задач из main и состав коммитов пакетными вызовами git: один
+// `cat-file --batch` на все файлы и один `show --name-only` на все коммиты.
+//
+// Экономия тут не в работе git, а в числе запусков процесса. Обход доски
+// поднимал под сотню подпроцессов git на команду, а под соседним полным
+// прогоном один запуск стоит в три-пять раз дороже обычного. `nice` не
+// снимает этой цены. Понижение приоритета берёт счёт, а не создание процесса
+// (замер DK-1168). Книга без Expect работает как раньше, по вызову на файл и
+// на коммит.
+func (b *Book) Expect(ids []string) {
+	b.want = append(b.want, ids...)
+}
+
+// warmBatch это потолок ревизий в одном `git show`. Список едет аргументами, и
+// на доске из тысячи строк он упёрся бы в предел длины командной строки.
+const warmBatch = 500
+
+// warm читает пакетом всё, что книга знает наперёд: файлы задач названных
+// Expect строк и состав коммитов, про которые спросят признак. Зовётся из
+// первого же запроса, а не из Expect. Команда вроде `show --json` про одну
+// строку не должна платить за пакет, которого не спросит.
+func (b *Book) warm() {
+	if b.warmed {
+		return
+	}
+	b.warmed = true
+	if len(b.want) == 0 || b.mainErr != nil {
+		return
+	}
+	if b.trees == nil {
+		b.trees = trees(b.root)
+	}
+	b.docs = batchDocs(b.root, b.main, b.want)
+	lines, err := b.lines()
+	if err != nil {
+		return
+	}
+	want := map[string]bool{}
+	prefs := map[string]bool{}
+	for _, id := range b.want {
+		if p, _, ok := strings.Cut(id, "-"); ok && p != "" {
+			want[id] = true
+			prefs[p] = true
+		}
+	}
+	var rec []string
+	for id := range want {
+		rec = append(rec, b.record(id)...)
+	}
+	// Кандидаты это коммиты, про которые scan спросит состав: владелец по
+	// subject либо коммит из записи «Выкат». Первый ID в subject считается один
+	// раз на строку лога, а не на каждую пару строки и задачи: лог у доски
+	// живёт десятками тысяч строк.
+	var shas []string
+	seen := map[string]bool{}
+	for _, ln := range lines {
+		own := false
+		for p := range prefs {
+			if want[FirstID(ln.subj, p)] {
+				own = true
+				break
+			}
+		}
+		if !own && !inRecord(rec, ln.sha) {
+			continue
+		}
+		if !seen[ln.sha] {
+			seen[ln.sha] = true
+			shas = append(shas, ln.sha)
+		}
+	}
+	b.fillWork(shas)
+}
+
+// fillWork читает состав названных коммитов пакетами `git show`. Команда
+// берёт список ревизий, а вызов на коммит стоит запуска процесса.
+func (b *Book) fillWork(shas []string) {
+	if b.work == nil {
+		b.work = map[string]bool{}
+	}
+	for len(shas) > 0 {
+		n := len(shas)
+		if n > warmBatch {
+			n = warmBatch
+		}
+		part := shas[:n]
+		shas = shas[n:]
+		out, err := git(b.root, append([]string{"show", "--name-only", "--pretty=%H"}, part...)...)
+		if err != nil {
+			return
+		}
+		known := map[string]bool{}
+		for _, sha := range part {
+			known[sha] = true
+		}
+		// Ответ идёт кусками: строка sha, пустая строка, имена файлов. Начало
+		// куска узнаётся по тому, что строка это один из спрошенных sha. Без
+		// этой проверки имя файла из сорока шестнадцатеричных знаков сбило бы
+		// разбор. Коммит слияния имён не печатает вовсе, и состав у него
+		// пустой, как и был при вызове на один коммит.
+		cur := ""
+		files := map[string][]string{}
+		said := map[string]bool{}
+		for _, ln := range strings.Split(out, "\n") {
+			if known[ln] {
+				cur, said[ln] = ln, true
+				continue
+			}
+			if cur != "" && strings.TrimSpace(ln) != "" {
+				files[cur] = append(files[cur], ln)
+			}
+		}
+		// Коммит, которого в ответе не оказалось, в память не кладётся.
+		// Про него спросят отдельным вызовом, и отказ git останется
+		// отказом, а не превратится в «коммит без файлов».
+		for sha := range said {
+			b.work[sha] = !BoardOnly(strings.Join(files[sha], "\n"))
+		}
+	}
+}
+
+// batchDocs читает файлы задач из main одним `cat-file --batch`. Ответ на
+// каждый путь это строка заголовка и ровно столько байтов содержимого, сколько
+// в ней названо; ненайденный путь отвечает строкой без размера, и такой задачи
+// в main просто нет. Порядок ответов тот же, что порядок запросов, по нему
+// содержимое и раздаётся задачам.
+func batchDocs(root, main string, ids []string) map[string]string {
+	if main == "" || len(ids) == 0 {
+		return nil
+	}
+	var in strings.Builder
+	for _, id := range ids {
+		in.WriteString(main + ":docs/tasks/" + id + ".md\n")
+	}
+	cmd := exec.Command("git", "-C", root, "cat-file", "--batch")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Stdin = strings.NewReader(in.String())
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	docs := map[string]string{}
+	rest := out
+	for _, id := range ids {
+		nl := bytes.IndexByte(rest, '\n')
+		if nl < 0 {
+			break
+		}
+		head := string(rest[:nl])
+		rest = rest[nl+1:]
+		f := strings.Fields(head)
+		if len(f) < 3 {
+			docs[id] = ""
+			continue
+		}
+		size, err := strconv.Atoi(f[2])
+		if err != nil || size > len(rest) {
+			break
+		}
+		docs[id] = strings.TrimRight(string(rest[:size]), "\n")
+		rest = rest[size:]
+		if len(rest) > 0 && rest[0] == '\n' {
+			rest = rest[1:]
+		}
+	}
+	return docs
 }
 
 // Record собирает коммиты записи «Выкат» задачи id из всех мест, где свежая
@@ -198,6 +394,12 @@ func record(root, main, id string, dirs []string) []string {
 	if out, err := git(root, "show", main+":docs/tasks/"+id+".md"); err == nil {
 		docs = append(docs, out)
 	}
+	return recordShas(append(docs, treeDocs(dirs, id)...))
+}
+
+// treeDocs читает файл задачи из рабочих деревьев и из архива файлов задач.
+func treeDocs(dirs []string, id string) []string {
+	var docs []string
 	for _, dir := range dirs {
 		files := []string{filepath.Join(dir, "docs", "tasks", id+".md")}
 		if more, err := filepath.Glob(filepath.Join(dir, "docs", "tasks", "archive", "*", id+".md")); err == nil {
@@ -209,6 +411,11 @@ func record(root, main, id string, dirs []string) []string {
 			}
 		}
 	}
+	return docs
+}
+
+// recordShas собирает коммиты записи «Выкат» из прочитанных файлов задачи.
+func recordShas(docs []string) []string {
 	var out []string
 	for _, doc := range docs {
 		for _, sha := range taskform.MergedShas(doc) {

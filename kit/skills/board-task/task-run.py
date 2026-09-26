@@ -101,10 +101,19 @@ turn-mark.py, и сессия, поднятая до того, как он лё�
 поэтому помнит отработанную отметку и второй раз по ней не встаёт, а отметку
 старше себя самой и отметку с истёкшим сроком не берёт вовсе.
 
+Лежащая в чате задачи реплика человека старше любого ожидания. Строка,
+запаркованная вопросом или проверенная с приёмкой человека, останавливала
+оболочку до первого хода, и ответить в чат такой задачи было нельзя никак. Пока
+во входе `.devkit/chat/task-<ID>.in` лежит безадресная строка, предполёт эти
+стопы проходит: голова отвечает в ленту разговора, статуса строки не двигает и
+засыпает тем же стопом, едва вход опустеет. Адресата реплики разбирает сам
+подхват `hooks/chat-in.py`, и строка, написанная живому окну, ходом не считается.
+
 Коды возврата: 0 штатный стоп (задача закрыта, запаркована или ждёт приёмки),
 1 стоп оболочки (проходы исчерпаны, воронка, живая голова вышла), 2 ошибка
 вызова или окружения, 3 замок занят (голова задачи уже поднята).
 """
+import importlib.util
 import json
 import os
 import re
@@ -115,7 +124,11 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-NOTIFIER = os.path.normpath(os.path.join(HERE, "..", "..", "..", "hooks", "notify.py"))
+HOOKS = os.path.normpath(os.path.join(HERE, "..", "..", "..", "hooks"))
+NOTIFIER = os.path.join(HOOKS, "notify.py")
+# Подхват реплики: у него же спрашивается адресат строки входа. Дефис в имени
+# файла не годится для import, поэтому модуль грузится по пути.
+CHAT_IN = os.path.join(HOOKS, "chat-in.py")
 # Проходов подряд, после которых оболочка встаёт сама. Потолок нужен не от
 # осторожности: голова, которая выходит и не двигает строку, крутила бы цикл до
 # конца квоты, а разбирать такое человеку надо со свежей задачей, а не с сотней
@@ -300,6 +313,34 @@ DEFAULT_HARNESS = "claude-code"
 TURN_EXIT = "exit"
 
 USAGE = __doc__
+
+
+# Загруженный подхват реплики: модуль читается один раз на жизнь оболочки.
+# Пустая строка в памяти значит «пробовали и не вышло», чтобы не открывать файл
+# на каждом проходе.
+_chat_hook = ""
+
+
+def chat_hook():
+    """Модуль подхвата реплики hooks/chat-in.py либо None. Тот же импорт по пути
+    держит сторожок (chat_hook в tools/devkitctl/watch.py): формат входа и разбор
+    адресата живут у подхвата, и второй копии их тут не заводится."""
+    global _chat_hook
+    if _chat_hook != "":
+        return _chat_hook
+    _chat_hook = None
+    sys.path.insert(0, HOOKS)
+    try:
+        spec = importlib.util.spec_from_file_location("devkit_chat_in", CHAT_IN)
+        if spec is not None and spec.loader is not None:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _chat_hook = mod
+    except (OSError, ImportError, SyntaxError):
+        _chat_hook = None
+    finally:
+        sys.path.pop(0)
+    return _chat_hook
 
 
 def die(text, code=2):
@@ -516,6 +557,10 @@ class Pipeline:
         # нужен. Конец и начало хода память чистят.
         self.said_stuck = {}
         self.lock = ""
+        # Прошла ли оболочка стоп ожидания по лежащей реплике. Голова, поднятая
+        # репликой, отвечает в ленту и засыпает тем же стопом, и звать человека
+        # к этому стопу незачем: он только что писал в этот чат сам.
+        self.replied = False
 
     # -- замок --------------------------------------------------------------
 
@@ -605,6 +650,35 @@ class Pipeline:
         if kind not in USER_KINDS:
             return False
         return not (kind == MIXED_KIND and SMOKE_NONE in (said or ""))
+
+    def lying_reply(self):
+        """Безадресная реплика человека, лежащая во входе чата задачи, либо
+        пустая строка. Такая реплика это повод для хода в любом статусе строки
+        (DK-1194): голова отвечает в ленту и снова засыпает тем же стопом.
+
+        Читается вход того дерева, в котором идёт оболочка: подхват реплики
+        смотрит ровно туда же, и строка из чужого дерева этому ходу не доедет.
+        Адрес у реплики это адресат разговора, и строка «..., сессии <ID>: ...»
+        написана живому окну, а не задаче. Разбирает адресата сам подхват: вторая
+        копия формата разъехалась бы с первой на первой же правке. Не
+        загрузившийся подхват значит «реплики нет»: стопы тогда работают
+        по-прежнему, а молчаливо глушить их по нечитанной строке нельзя."""
+        hook = chat_hook()
+        if hook is None:
+            return ""
+        for d, name, suffix in hook.chat_names(self.proj):
+            if name.lower() != (hook.TASK_CHAT + self.id).lower():
+                continue
+            try:
+                with open(os.path.join(d, name + suffix), encoding="utf-8",
+                          errors="replace") as f:
+                    lines = [ln.strip() for ln in f.read().split("\n") if ln.strip()]
+            except OSError:
+                continue
+            for line in lines:
+                if not hook.addressee(line):
+                    return line
+        return ""
 
     def checker(self):
         """Поднята ли эта голова проверяющим: заказ называет прогон дословно."""
@@ -1353,10 +1427,20 @@ class Pipeline:
         sect = self.status(said)
         if sect == DONE:
             self.stop(0, sect, "задача закрыта", loud=False)
+        why, reason = "", ""
         if sect == PARKED:
-            self.stop(0, sect, "задача запаркована и ждёт человека", reason="wait_human")
-        if self.waits_user(said, sect):
-            self.stop(0, sect, "задача ждёт приёмки человеком", reason="task_check")
+            why, reason = "задача запаркована и ждёт человека", "wait_human"
+        elif self.waits_user(said, sect):
+            why, reason = "задача ждёт приёмки человеком", "task_check"
+        if why:
+            # Лежащая во входе реплика старше любого ожидания человека: ждёт он
+            # как раз ответа. Статус строки от этого хода не двигается, и стоп
+            # вернётся сам, едва вход опустеет.
+            if not self.lying_reply():
+                self.stop(0, sect, why, reason=reason, loud=not self.replied)
+            self.replied = True
+            self.say("%s, но во входе её чата лежит реплика: прохожу ход ответом в ленту, "
+                     "статуса строки он не двигает" % why)
         return sect
 
     def run(self):

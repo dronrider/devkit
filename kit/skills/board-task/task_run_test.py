@@ -516,6 +516,16 @@ class Stand:
         with open(path, encoding="utf-8") as f:
             return [l.rstrip("\n") for l in f if l.strip() != ""]
 
+    def reply(self, text, sid=""):
+        """Реплика во входе чата задачи, той же строкой, какую пишет панель.
+        Названный sid делает её адресной: такая написана живому окну, а не
+        задаче."""
+        d = os.path.join(self.root, ".devkit", "chat")
+        os.makedirs(d, exist_ok=True)
+        addr = (", сессии %s" % sid) if sid else ""
+        with open(os.path.join(d, "task-DK-1.in"), "a", encoding="utf-8") as f:
+            f.write("2026-09-26 21:41%s, из дашборда: %s\n" % (addr, text))
+
     def orders(self):
         with open(self.calls, encoding="utf-8") as f:
             return [l.rstrip("\n") for l in f if l.strip() != ""]
@@ -603,6 +613,40 @@ class TestPasses(unittest.TestCase):
         s = self.stand(sect="check-mixed+smoke")
         r = s.run()
         self.assertEqual(r.returncode, 0)
+        self.assertEqual(s.orders(), [])
+        self.assertIn("приёмки человеком", r.stdout)
+
+    def test_lying_reply_beats_the_acceptance_stop(self):
+        # Предмет DK-1194: строка в check с приёмкой человека и отметкой smoke
+        # ждёт человека, и голова на ней вставала стопом до первого хода. Реплика
+        # в чат такой задачи лежала во входе непрочитанной, и ответить в этот чат
+        # было нельзя никак, пока задачу не закроют. Лежащая реплика старше
+        # ожидания: ждёт человек как раз ответа.
+        s = self.stand(sect="check-mixed+smoke", plan="закрой")
+        s.reply("поясни, чем кончилась проверка")
+        r = s.run()
+        self.assertEqual(r.returncode, 0, s.why(r))
+        self.assertEqual(len(s.orders()), 1, s.orders())
+        self.assertIn("лежит реплика", r.stdout)
+
+    def test_lying_reply_beats_the_parked_stop(self):
+        # Тот же повод у припаркованной строки: человек ждёт ответа, а не
+        # молчания. Статус строки ход не двигает, стоп вернётся сам, едва вход
+        # опустеет.
+        s = self.stand(sect="blocked", plan="закрой")
+        s.reply("что со строкой")
+        r = s.run()
+        self.assertEqual(r.returncode, 0, s.why(r))
+        self.assertEqual(len(s.orders()), 1, s.orders())
+        self.assertIn("лежит реплика", r.stdout)
+
+    def test_addressed_reply_keeps_the_acceptance_stop(self):
+        # Адрес у реплики это адресат разговора: строка живому окну хода головы
+        # не просит, её ждёт та сессия, которой она написана.
+        s = self.stand(sect="check-mixed+smoke")
+        s.reply("продолжай", sid="aaaa-1111")
+        r = s.run()
+        self.assertEqual(r.returncode, 0, s.why(r))
         self.assertEqual(s.orders(), [])
         self.assertIn("приёмки человеком", r.stdout)
 

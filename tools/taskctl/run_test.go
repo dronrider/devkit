@@ -50,6 +50,24 @@ func TestRunRequestPicksHarness(t *testing.T) {
 	}
 }
 
+// Флаг --reply собирает заказ по лежащей реплике сам (DK-1194): у тика сторожка
+// текста заказа на руках нет, и второй копии его на python не заводится. Со
+// своим --order флаг не совмещается, иначе один из двух заказов молча пропал бы.
+func TestRunRequestReplyOrder(t *testing.T) {
+	root, home, _ := runDevkit(t)
+	q, err := runRequest(root, home, "DK-7", runOpts{reply: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Order != taskhead.ReplyOrder("DK-7") {
+		t.Fatalf("заказ по реплике не собрался: %q", q.Order)
+	}
+	if _, err := runRequest(root, home, "DK-7", runOpts{reply: true, order: "своё"}); err == nil ||
+		!strings.Contains(err.Error(), "--reply") {
+		t.Fatalf("два заказа разом не отбиты: %v", err)
+	}
+}
+
 func TestRunRequestRefusals(t *testing.T) {
 	root, home, _ := runDevkit(t)
 	if _, err := runRequest(root, home, "не-ид", runOpts{}); err == nil {

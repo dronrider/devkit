@@ -19,6 +19,9 @@ import (
 type runOpts struct {
 	harness, model, order, again string
 	hidden                       bool
+	// reply это заказ головы по лежащей в чате задачи реплике (DK-1194): текст
+	// заказа собирает taskhead.ReplyOrder, и зовущему его переписывать нечем.
+	reply bool
 }
 
 // runRequest собирает заказ подъёма из флагов и окружения.
@@ -38,8 +41,15 @@ func runRequest(root, home, id string, o runOpts) (taskhead.Request, error) {
 	if err != nil {
 		return taskhead.Request{}, err
 	}
+	order := o.order
+	if o.reply {
+		if order != "" {
+			return taskhead.Request{}, fmt.Errorf("--reply и --order вместе не идут: заказ по реплике собирается сам")
+		}
+		order = taskhead.ReplyOrder(id)
+	}
 	return taskhead.Request{ID: id, Root: root, Project: filepath.Base(root), Home: home, Devkit: dk,
-		Harness: harness, Model: o.model, Order: o.order, Again: o.again, Hidden: o.hidden, Adopt: adopt,
+		Harness: harness, Model: o.model, Order: order, Again: o.again, Hidden: o.hidden, Adopt: adopt,
 		Pick: func() (string, error) { return runPick(root, id, harness) }}, nil
 }
 

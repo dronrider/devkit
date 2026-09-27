@@ -216,7 +216,7 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                              с --here в названной директории
 
 Поднимать голову задачи:
-  run <ID> [--harness имя] [--model ярус] [--order "..."] [--again "..."] [--hidden]
+  run <ID> [--harness имя] [--model ярус] [--order "..."|--reply] [--again "..."] [--hidden]
                                               лестница носителей: реплика в живое
                                               окно задачи, новое окно tmux с
                                               task-run.py, headless, громкий зов
@@ -783,10 +783,11 @@ func main() {
 		order := fs.String("order", "", "заказ первого прохода и реплика живому окну")
 		again := fs.String("again", "", "заказ следующих проходов")
 		hidden := fs.Bool("hidden", false, "поднято без человека")
+		reply := fs.Bool("reply", false, "заказ по лежащей в чате задачи реплике человека")
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, `run <ID> [--harness имя] [--model ярус] [--order "..."] [--again "..."] [--hidden]`)
+		needArgs(pos, 1, 1, `run <ID> [--harness имя] [--model ярус] [--order "..."|--reply] [--again "..."] [--hidden]`)
 		out, code, rerr := cmdRun(root(*dir), pos[0], runOpts{harness: *harness, model: *model,
-			order: *order, again: *again, hidden: *hidden})
+			order: *order, again: *again, hidden: *hidden, reply: *reply})
 		if rerr != nil {
 			logRun(code)
 			fmt.Fprintln(os.Stderr, "ошибка:", rerr)

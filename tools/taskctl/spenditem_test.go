@@ -167,6 +167,22 @@ func spendMachine(t *testing.T, root, home string) {
 // «стенд» теми же колонками, а ход сессии пачки, за которым не стояло работы
 // ни с одним ID, печатается строкой «оркестрация без привязки» (первая строка
 // DoD DK-913, кейсы 1, 2 и 9).
+// Ходы сессии, чья работа по строке снята записью «снята» (taskctl close,
+// move), остаются в статье оркестрации этой строки: учёт расхода это история,
+// а свёртка ведения (Last) такую задачу гасит (замечание 14 ревью DK-1194).
+func TestSpendCarrierKeepsTheReleasedTask(t *testing.T) {
+	root := setup(t)
+	home := t.TempDir()
+	sid := "aaaa0014-1111-4111-8111-111111111111"
+	spendBind(t, home, sid, sessions.Bind{Task: "XR-005", Source: sessions.BySrc, Project: "synthetic", Tree: root})
+	spendBind(t, home, sid, sessions.Bind{Task: "XR-005", Source: sessions.ByOff, Project: "synthetic", Tree: root})
+	crew := newSpendCrew(home, root)
+	item, key, ok := crew.carrier(sid)
+	if !ok || item != itemOrch || key != "XR-005" {
+		t.Fatalf("ходы снятой работы ушли из статьи строки: %q %q %v", item, key, ok)
+	}
+}
+
 func TestSpendItemsByTask(t *testing.T) {
 	root := setup(t)
 	home := t.TempDir()

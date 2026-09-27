@@ -97,7 +97,14 @@ func newSpendCrew(home, root string) *spendCrew {
 		blind:  map[string]bool{},
 	}
 	for sid, recs := range sessions.LoadAll(home) {
-		c.binds[sid] = sessions.Last(recs)
+		// Свод относит ходы по истории, а не по текущему ведению: у сессии,
+		// которая строку двинула или слила, свёртка Last задачу гасит
+		// записью «снята», а её ходы остаются в статье оркестрации строки.
+		// Иначе они уезжали бы в носителя либо в «оркестрацию без привязки»
+		// (замечание 14 ревью DK-1194).
+		b := sessions.Last(recs)
+		b.Task = sessions.LastTask(recs)
+		c.binds[sid] = b
 	}
 	c.events = spendEvents(home)
 	c.goals = spendGoals(home)

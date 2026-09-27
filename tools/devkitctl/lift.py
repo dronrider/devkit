@@ -41,8 +41,11 @@ WORK_STAGES = ("постановка", "разработка", "вычитка",
 GONE = "сессии нет"
 ALIVE = "сессия жива"
 
-# Секции доски, где строка означает работу: из них берутся осиротевшие строки.
-# Строка с лежащей репликой берётся из любой секции, статус ей безразличен.
+# Секции доски, где строка означает работу: из них берутся и осиротевшие
+# строки, и строки с лежащей репликой. Строку Backlog никто не брал, и голова на
+# ней шла бы мимо вердикта и перевода в работу; строку Blocked будит ответ на
+# вопрос либо обход ждущих. Те же две секции у панели (replySection в
+# tools/dashboard/chat.go).
 WORK_SECTIONS = ("in-progress", "check")
 
 # Реплика подъёма адресная. Слова «продолжай» хватало сессии, поднятой по
@@ -52,13 +55,9 @@ WORK_SECTIONS = ("in-progress", "check")
 # и запрещает брать другую работу.
 ORDER = "продолжай %s, эту строку ты уже вёл. Другую работу с доски не бери"
 
-# Заказ голове, поднятой лежащей репликой. Слова «продолжай» тут не годятся:
-# строка бывает и проверенной с приёмкой человека, и двигать её этот ход не
-# должен. Дело хода это прочитать реплику, которую подаст подхват, и ответить.
-# Слово в слово та же строка стоит у панели (replyOrder в tools/dashboard).
-REPLY_ORDER = ("В чате задачи %s лежит реплика человека, её подаст подхват этим же ходом. "
-               "Ответь ему в ленту разговора. Статус строки на доске не двигай, "
-               "пока он сам не попросит")
+# Заказ голове, поднятой лежащей репликой, собирает сама лестница по флагу
+# `taskctl run --reply` (taskhead.ReplyOrder): текст один на всех зовущих, и
+# второй копии его на python не заводится.
 
 # Заголовок строки цели: её переписку читает сам цикл цели, и голову задачи ей
 # поднимать нельзя (та же проверка у подъёма в taskctl и у панели).
@@ -71,11 +70,6 @@ GOAL_TITLE = "Цель:"
 # реплику прочитает та голова, что держит замок.
 TASKCTL_CALLED = 1
 TASKCTL_SETUP = 2
-
-# Машинный разряд причины парковки вопросом. Строку с таким блоком поднимает
-# пробуждение ответом (wake в tools/devkitctl/watch.py): оно снимает парковку
-# тем же ходом, и вторым подъёмщиком тут делать нечего.
-ASK_BLOCK = "вопрос:"
 
 # Потолок подъёма за один заход, когда ёмкость спросить не у кого.
 FALLBACK_LIMIT = 2
@@ -102,6 +96,19 @@ LIFT_TRIES = 3
 # назад, считать той же попыткой незачем.
 FORGET = 86400
 
+# Сколько секунд лежащая реплика остаётся поводом для подъёма, те же сутки.
+# Первый тик после выката нашёл бы во входах реплики недельной давности к
+# строкам, которые давно никто не ведёт, и потратил бы сессии на ответы
+# вопросам, которых человек уже не ждёт. Реплика старше срока лежит во входе
+# дальше, и её прочитает ближайшая голова, поднятая другим поводом; заход
+# называет такие строки в отчёте, а не молчит о них.
+REPLY_TTL = 86400
+
+# Метка времени в начале строки входа, той же формой, какой её пишет панель
+# (lineStamp в internal/chat) и рукописная строка сценария проверки.
+LINE_STAMP = "%Y-%m-%d %H:%M"
+LINE_STAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
+
 # Образцы команд, которые остаются сиротами от прогонов сценариев. Нагрузка
 # сценария живёт дочерними процессами, и снятая обёртка уносит с собой trap,
 # а не детей. Список узкий нарочно: заход убивает процессы, и широкий образец
@@ -119,7 +126,8 @@ ORPHAN_PATTERNS = (
 
 
 # Находка захода: ID строки, заказ голове, слова причины для отчёта и признак
-# реплики. Признак нужен отчёту и зову: молчание в ответ человеку и осиротевшая
+# реплики. У находки по реплике заказ пуст: его собирает лестница по флагу.
+# Признак нужен отчёту, зову и флагу: молчание в ответ человеку и осиротевшая
 # работа это разные события, а очередь подъёма у них одна.
 Find = collections.namedtuple("Find", "id order why reply")
 
@@ -176,10 +184,10 @@ def mark_lifted(root, tid, home=None, now=None):
     return tries
 
 
-def board_rows(root, call=None, taskctl=None, sections=WORK_SECTIONS):
-    """Строки доски корня с полями этапа и ключом секции. Разбор один на всех:
-    доска отдаёт готовый json, второго парсера markdown тут не заводится. Пустые
-    sections значат всю доску: строку с лежащей репликой ищут по любой секции."""
+def board_rows(root, call=None, taskctl=None):
+    """Строки доски корня из секций работы с полями этапа и ключом секции.
+    Разбор один на всех: доска отдаёт готовый json, второго парсера markdown тут
+    не заводится."""
     call = subprocess.run if call is None else call
     bin = taskctl or which("taskctl")
     if not bin:
@@ -197,7 +205,7 @@ def board_rows(root, call=None, taskctl=None, sections=WORK_SECTIONS):
         return [], "разбор доски не вышел, %s" % e
     rows = []
     for sec in doc.get("sections") or []:
-        if sections and sec.get("key") not in sections:
+        if sec.get("key") not in WORK_SECTIONS:
             continue
         for row in sec.get("rows") or []:
             row["_section"] = sec.get("key")
@@ -253,8 +261,15 @@ def chat_hook():
         return None
 
 
-def reply_rows(root, rows, home=None, hook=None):
-    """Строки корня с лежащей во входе чата безадресной репликой человека.
+def reply_rows(root, rows, home=None, hook=None, now=None):
+    """Строки корня с лежащей во входе чата свежей безадресной репликой
+    человека, те, что заход поднимает. Устаревшие остаются за split_reply_rows."""
+    return split_reply_rows(root, rows, home=home, hook=hook, now=now)[0]
+
+
+def split_reply_rows(root, rows, home=None, hook=None, now=None):
+    """Строки корня с лежащей во входе чата безадресной репликой человека, двумя
+    списками: со свежей репликой и с устаревшей (старше REPLY_TTL).
 
     Реплику берёт только голова задачи, и адрес у реплики это адресат разговора:
     строка «..., сессии <ID>: ...» написана живому окну, а не задаче, и подъёма
@@ -262,30 +277,36 @@ def reply_rows(root, rows, home=None, hook=None):
 
     Вход читается в корне проекта, а не в дереве задачи: панель кладёт реплику
     туда, и оболочка головы поднимается там же, значит там её и прочитает
-    подхват. Из находок уходят три случая. Живая голова прочитает реплику сама.
-    Строку, припаркованную вопросом, поднимает пробуждение ответом, снимая
-    парковку тем же ходом. У цели своя оболочка, и переписку она читает сама."""
+    подхват. Из находок уходят два случая. Живая голова прочитает реплику сама.
+    У цели своя оболочка, и переписку она читает сама. Секции строк тут не
+    смотрятся: они отобраны у доски (WORK_SECTIONS), и припаркованная вопросом
+    строка сюда не доезжает, её поднимает пробуждение ответом."""
     hook = chat_hook() if hook is None else hook
     if hook is None:
-        return []
+        return [], []
+    now = time.time() if now is None else now
     names = {}
     for d, name, suffix in hook.chat_names(root):
         if not name.lower().startswith(hook.TASK_CHAT):
             continue
         names.setdefault(name[len(hook.TASK_CHAT):].upper(), []).append(
             os.path.join(d, name + suffix))
-    out = []
+    fresh, stale = [], []
     for row in rows:
         tid = (row.get("id") or "").upper()
         if tid not in names or head_up(tid, home):
             continue
         if (row.get("title") or "").startswith(GOAL_TITLE):
             continue
-        if (row.get("block") or "").strip().startswith(ASK_BLOCK):
+        lines = [ln for ln in (lying_line(path, hook) for path in names[tid]) if ln]
+        if not lines:
             continue
-        if any(lying_line(path, hook) for path in names[tid]):
-            out.append(row)
-    return out
+        ages = [reply_age(ln, now) for ln in lines]
+        if any(age is None or age < REPLY_TTL for age in ages):
+            fresh.append(row)
+        else:
+            stale.append(row)
+    return fresh, stale
 
 
 def lying_line(path, hook):
@@ -299,6 +320,21 @@ def lying_line(path, hook):
         if not hook.addressee(line):
             return line
     return ""
+
+
+def reply_age(line, now=None):
+    """Возраст реплики в секундах по метке в начале строки. None значит, что
+    метки нет: рукописная строка без времени считается свежей, срок ей мерить
+    нечем, а прочитает её первая же поднятая голова."""
+    m = LINE_STAMP_RE.match(line)
+    if not m:
+        return None
+    try:
+        when = time.mktime(time.strptime(m.group(0), LINE_STAMP))
+    except (ValueError, OverflowError):
+        return None
+    now = time.time() if now is None else now
+    return max(0.0, now - when)
 
 
 def busy_count(rows):
@@ -352,13 +388,12 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
     Находки двух родов идут одной очередью, и очередь эта общая нарочно: ёмкость
     корня, выдержка и потолок попыток у них одни. Реплика стоит впереди работы:
     человек ждёт ответа, а «продолжай» увело бы голову в работу мимо его слов."""
-    all_rows, err = board_rows(root, call=call, taskctl=taskctl, sections=None)
+    rows, err = board_rows(root, call=call, taskctl=taskctl)
     if err:
         return ["корень %s: доска не прочиталась, %s" % (root, err)], 0
-    rows = [r for r in all_rows if r.get("_section") in WORK_SECTIONS]
-    found = [Find(r.get("id") or "", REPLY_ORDER % (r.get("id") or ""),
-                  "во входе чата лежит реплика человека", True)
-             for r in reply_rows(root, all_rows, home=home)]
+    replied, stale = split_reply_rows(root, rows, home=home)
+    found = [Find(r.get("id") or "", "", "во входе чата лежит реплика человека", True)
+             for r in replied]
     said = {f.id for f in found}
     found += [Find(r.get("id") or "", ORDER % (r.get("id") or ""),
                    "этап «%s» без сессии" % (r.get("stage") or ""), False)
@@ -372,6 +407,10 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
     spent_words = ["задача %s в %s: поднималась %d раза подряд, сессия не удержалась: "
                    "строка ждёт человека, подъём её больше не трогает"
                    % (f.id, root, LIFT_TRIES) for f in spent]
+    if stale:
+        spent_words.append("корень %s: реплики старше суток лежат во входах %s, подъём по ним не "
+                           "идёт, их прочитает ближайшая голова"
+                           % (root, ", ".join(r.get("id") or "?" for r in stale)))
     # Реплика, отлежавшая все попытки, это не шум в отчёте, а молчание в ответ
     # человеку: он написал задаче, а голову поднять так и не вышло. О таком
     # зовут громко и с готовой командой, и зовут один раз. Троттлинг уведомителя
@@ -413,7 +452,7 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
             lines.append("задача %s в %s: %s, поднялась бы заказом" % (f.id, root, f.why))
             raised += 1
             continue
-        code, words = run_order(root, f.id, f.order, call=call, taskctl=taskctl)
+        code, words = run_order(root, f.id, f.order, call=call, taskctl=taskctl, reply=f.reply)
         if code == 0:
             raised += 1
             mark_lifted(root, f.id, home)
@@ -444,15 +483,17 @@ def call_human(root, tid, call=None):
     return "задача %s в %s: человек позван к лежащей реплике, %s" % (tid, root, said)
 
 
-def run_order(root, tid, order, call=None, taskctl=None):
-    """Заказ головы задачи с названной репликой. Лестница носителей, предполёт и
-    замок живут в `taskctl run`, второй копии тут не заводится."""
+def run_order(root, tid, order, call=None, taskctl=None, reply=False):
+    """Заказ головы задачи с названной репликой либо, с признаком reply, заказом
+    по лежащей реплике, который лестница собирает сама. Лестница носителей,
+    предполёт и замок живут в `taskctl run`, второй копии тут не заводится."""
     call = subprocess.run if call is None else call
     bin = taskctl or which("taskctl")
     if not bin:
         return 1, "бинаря taskctl нет ни в PATH, ни в каталогах релиза"
+    argv = [bin, "-C", root, "run", tid] + (["--reply"] if reply else ["--order", order])
     try:
-        p = call([bin, "-C", root, "run", tid, "--order", order],
+        p = call(argv,
                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     except OSError as e:
         return 1, str(e)

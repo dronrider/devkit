@@ -18,12 +18,18 @@ from pathlib import Path
 import lift
 
 
-def board(rows, key="in-progress"):
+def board(rows, key="in-progress", backlog=None):
     """Ответ `taskctl list --json` с названными строками."""
     return json.dumps({"prefix": "DK", "sections": [
-        {"key": "backlog", "title": "Backlog", "rows": []},
+        {"key": "backlog", "title": "Backlog", "rows": backlog or []},
         {"key": key, "title": "In progress", "rows": rows},
     ]}, ensure_ascii=False)
+
+
+def stamp(age=0):
+    """Метка времени строки входа, той же формой, какой её пишет панель: сейчас
+    либо на age секунд раньше."""
+    return time.strftime(lift.LINE_STAMP, time.localtime(time.time() - age))
 
 
 def row(tid, stage, session):
@@ -323,10 +329,6 @@ class TreesCase(unittest.TestCase):
         self.assertIn("посчитать не вышло", " ".join(lines))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ReplyCase(unittest.TestCase):
     """Лежащая во входе чата реплика человека это повод для подъёма в любом
     статусе строки (DK-1194).
@@ -344,19 +346,21 @@ class ReplyCase(unittest.TestCase):
         self.hook = lift.chat_hook()
         self.assertIsNotNone(self.hook, "подхват реплики hooks/chat-in.py не загрузился")
 
-    def lying(self, tid, text="продолжай, пожалуйста"):
-        """Реплика во входе чата задачи, той же строкой, какую пишет панель."""
+    def lying(self, tid, text="продолжай, пожалуйста", age=0, head=True):
+        """Реплика во входе чата задачи, той же строкой, какую пишет панель.
+        Возраст двигает метку времени в начале строки, а без head строка идёт
+        рукописной, без метки вовсе."""
         d = self.root / ".devkit" / "chat"
         d.mkdir(parents=True, exist_ok=True)
-        (d / ("task-%s.in" % tid)).write_text(
-            "2026-09-26 21:41, из дашборда: %s\n" % text, encoding="utf-8")
+        line = ("%s, из дашборда: %s" % (stamp(age), text)) if head else text
+        (d / ("task-%s.in" % tid)).write_text(line + "\n", encoding="utf-8")
 
     def addressed(self, tid, sid="aaaa-1111"):
         """Реплика с адресатом: написана живому окну, а не задаче."""
         d = self.root / ".devkit" / "chat"
         d.mkdir(parents=True, exist_ok=True)
         (d / ("task-%s.in" % tid)).write_text(
-            "2026-09-26 21:41, сессии %s, из дашборда: продолжай\n" % sid, encoding="utf-8")
+            "%s, сессии %s, из дашборда: продолжай\n" % (stamp(), sid), encoding="utf-8")
 
     def checked(self, tid="DK-40", **extra):
         """Строка в Check с приёмкой человека: ровно та, что лежала молча."""
@@ -402,12 +406,55 @@ class ReplyCase(unittest.TestCase):
         (lock / "pid").write_text("999999\n", encoding="utf-8")
         self.assertEqual(self.find([self.checked()]), ["DK-40"])
 
-    def test_ask_parked_left_alone(self):
-        """Строку, припаркованную вопросом, поднимает пробуждение ответом: оно
-        снимает парковку тем же ходом, и второй подъёмщик ей не нужен."""
-        self.lying("DK-40")
-        r = self.checked(_section="blocked", block="вопрос: какую схему брать")
-        self.assertEqual(self.find([r]), [])
+    def test_backlog_row_not_read(self):
+        """Строку Backlog реплика не поднимает: работу по ней никто не брал, и
+        голова на ней шла бы мимо вердикта и перевода в работу. Секции те же,
+        что у сирот: доска отдаёт заходу только In progress и Check, и до
+        разбора входов строка Backlog не доезжает."""
+        self.lying("DK-41")
+        call = Fake(board([], backlog=[row("DK-41", "постановка", "сессии нет")]))
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 0)
+        self.assertFalse([a for a in call.calls if "run" in a], "строку Backlog подняли")
+        self.assertIn("реплик без адресата нет", " ".join(lines))
+
+    def test_stale_reply_left_alone(self):
+        """Реплика старше суток головы не поднимает. Первый тик после выката
+        нашёл бы во входах реплики недельной давности к строкам, которые давно
+        никто не ведёт, и потратил бы сессии на ответы, которых человек уже не
+        ждёт."""
+        self.lying("DK-40", age=lift.REPLY_TTL + 60)
+        fresh, stale = lift.split_reply_rows(str(self.root), [self.checked()],
+                                             home=str(self.home), hook=self.hook)
+        self.assertEqual([r["id"] for r in fresh], [])
+        self.assertEqual([r["id"] for r in stale], ["DK-40"])
+
+    def test_reply_within_a_day_is_fresh(self):
+        self.lying("DK-40", age=lift.REPLY_TTL - 60)
+        self.assertEqual(self.find([self.checked()]), ["DK-40"])
+
+    def test_line_without_a_stamp_is_fresh(self):
+        """Рукописной строке без метки срок мерить нечем, и она считается
+        свежей: прочитает её первая же поднятая голова."""
+        self.lying("DK-40", text="продолжай", head=False)
+        self.assertEqual(self.find([self.checked()]), ["DK-40"])
+
+    def test_stale_reply_named_in_report(self):
+        """О реплике, пролежавшей срок, заход не молчит: строка отчёта называет
+        её, а подъёма не заказывает."""
+        self.lying("DK-40", age=lift.REPLY_TTL + 60)
+        # Строка под приёмкой человека: сиротой её подъём не считает, и поднять
+        # её мог бы только повод реплики.
+        r = dict(row("DK-40", "проверка", "сессии нет, брошена"), accept="mixed")
+        call = Fake(board([r], key="check"))
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 0)
+        self.assertFalse([a for a in call.calls if "run" in a], "устаревшую реплику подняли")
+        said = " ".join(lines)
+        self.assertIn("реплики старше суток", said)
+        self.assertIn("DK-40", said)
 
     def test_goal_row_left_alone(self):
         """У цели своя оболочка, переписку она читает сама."""
@@ -425,9 +472,9 @@ class ReplyCase(unittest.TestCase):
         orders = [a for a in call.calls if "run" in a]
         self.assertTrue(orders, "заказа не было")
         argv = orders[0]
-        said = argv[argv.index("--order") + 1]
-        self.assertIn("лежит реплика человека", said)
-        self.assertIn("Статус строки на доске не двигай", said)
+        # Текст заказа собирает сама лестница по флагу: у захода копии нет.
+        self.assertIn("--reply", argv)
+        self.assertNotIn("--order", argv)
         self.assertIn("во входе чата лежит реплика человека", " ".join(lines))
 
 
@@ -447,7 +494,7 @@ class ReplyCallCase(unittest.TestCase):
         d = self.root / ".devkit" / "chat"
         d.mkdir(parents=True)
         (d / "task-DK-50.in").write_text(
-            "2026-09-26 21:41, из дашборда: продолжай\n", encoding="utf-8")
+            "%s, из дашборда: продолжай\n" % stamp(), encoding="utf-8")
         # Потолок попыток уже исчерпан, и отметка старше выдержки: иначе строка
         # считалась бы только что поднятой.
         old = time.time() - lift.SETTLE - 60
@@ -489,7 +536,7 @@ class ReplyRefusalCase(unittest.TestCase):
         d = self.root / ".devkit" / "chat"
         d.mkdir(parents=True)
         (d / "task-DK-60.in").write_text(
-            "2026-09-26 21:41, из дашборда: продолжай\n", encoding="utf-8")
+            "%s, из дашборда: продолжай\n" % stamp(), encoding="utf-8")
 
     def lift(self, code):
         """Заход, где заказ подъёма отвечает названным кодом."""
@@ -522,3 +569,7 @@ class ReplyRefusalCase(unittest.TestCase):
         lines, _, shout = self.lift(2)
         self.assertEqual(shout.call_count, 1, "сломанная раскладка осталась без зова")
         self.assertIn("человек позван к лежащей реплике", " ".join(lines))
+
+
+if __name__ == "__main__":
+    unittest.main()

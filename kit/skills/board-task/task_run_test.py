@@ -25,6 +25,9 @@ RUN = os.path.join(HERE, "task-run.py")
 
 sys.path.insert(0, HERE)
 task_run = importlib.import_module("task-run")
+# Заказ головы, поднятой лежащей репликой, тем же началом, каким его собирает
+# лестница (taskhead.ReplyOrder).
+REPLY = task_run.REPLY_ORDER + "DK-1: её подаст подхват этим же ходом"
 
 # Стаб доски: печатает строку задачи тем же форматом, каким её печатает taskctl
 # («DK-1 в in-progress»), а секцию читает из файла стенда. Строке в check он
@@ -621,12 +624,13 @@ class TestPasses(unittest.TestCase):
         # ждёт человека, и голова на ней вставала стопом до первого хода. Реплика
         # в чат такой задачи лежала во входе непрочитанной, и ответить в этот чат
         # было нельзя никак, пока задачу не закроют. Лежащая реплика старше
-        # ожидания: ждёт человек как раз ответа.
+        # ожидания: ждёт человек как раз ответа. Стоп уступает голове с заказом
+        # по реплике, его собирает лестница (taskctl run --reply).
         s = self.stand(sect="check-mixed+smoke", plan="закрой")
         s.reply("поясни, чем кончилась проверка")
-        r = s.run()
+        r = s.run("--order", REPLY)
         self.assertEqual(r.returncode, 0, s.why(r))
-        self.assertEqual(len(s.orders()), 1, s.orders())
+        self.assertEqual(s.orders(), [REPLY], s.orders())
         self.assertIn("лежит реплика", r.stdout)
 
     def test_lying_reply_beats_the_parked_stop(self):
@@ -635,10 +639,22 @@ class TestPasses(unittest.TestCase):
         # опустеет.
         s = self.stand(sect="blocked", plan="закрой")
         s.reply("что со строкой")
+        r = s.run("--order", REPLY)
+        self.assertEqual(r.returncode, 0, s.why(r))
+        self.assertEqual(s.orders(), [REPLY], s.orders())
+        self.assertIn("лежит реплика", r.stdout)
+
+    def test_lying_reply_keeps_the_stop_for_an_ordinary_order(self):
+        # Обход стопа привязан к заказу, а не к одному лежащему входу. Голова с
+        # обычным «продолжай выполнение», поднятая кнопкой «Запуск» или taskctl
+        # run без флага, при лежащей реплике встаёт стопом, как и прежде: её ход
+        # двинул бы строку, которую ждёт человек.
+        s = self.stand(sect="check-mixed+smoke", plan="закрой")
+        s.reply("поясни, чем кончилась проверка")
         r = s.run()
         self.assertEqual(r.returncode, 0, s.why(r))
-        self.assertEqual(len(s.orders()), 1, s.orders())
-        self.assertIn("лежит реплика", r.stdout)
+        self.assertEqual(s.orders(), [])
+        self.assertIn("приёмки человеком", r.stdout)
 
     def test_addressed_reply_keeps_the_acceptance_stop(self):
         # Адрес у реплики это адресат разговора: строка живому окну хода головы
@@ -738,6 +754,54 @@ class TestPasses(unittest.TestCase):
         r = subprocess.run(argv, capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 2)
         self.assertEqual(s.orders(), [])
+
+
+class TestReplyHeadSleepsQuietly(unittest.TestCase):
+    """Голова, поднятая репликой, засыпает тем же ожиданием, каким её пропустил
+    предполёт, и человека к этому стопу не зовёт: он только что писал в этот
+    чат сам. Признак replied читают все три стопа ожидания, и живая голова после
+    прохода в том числе: прежде она стопила громко, и баннер приходил человеку
+    сразу после его же реплики."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="task-run-reply-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        d = os.path.join(self.root, ".devkit", "chat")
+        os.makedirs(d)
+        with open(os.path.join(d, "task-DK-1.in"), "w", encoding="utf-8") as f:
+            f.write("2026-09-26 21:41, из дашборда: поясни, чем кончилась проверка\n")
+
+    def pipeline(self, order):
+        pipe = task_run.Pipeline(task_run.parse_args(
+            ["DK-1", "-C", self.root, "--order", order, "--", "claude"]))
+        # Доска стенда: строка в Check с приёмкой человека и стоящей отметкой
+        # smoke, ровно та, что ждёт человека. Клиента, реестра и окна тут нет,
+        # проход разыгрывается ответами вместо них.
+        pipe.show = lambda: "check\n"
+        pipe.status = lambda said: "check"
+        pipe.waits_user = lambda said, sect: True
+        pipe.raise_head = lambda order: None
+        pipe.wait_session = lambda: "sid"
+        pipe.wait_turn = lambda n: "конец"
+        pipe.drop_head = lambda: None
+        pipe.shout = unittest.mock.Mock()
+        return pipe
+
+    def test_live_reply_head_stops_quietly(self):
+        pipe = self.pipeline(REPLY)
+        with self.assertRaises(SystemExit) as got:
+            pipe.run_live()
+        self.assertEqual(got.exception.code, 0)
+        self.assertTrue(pipe.replied, "предполёт не пропустил голову по реплике")
+        self.assertEqual(pipe.shout.call_count, 0, pipe.shout.call_args_list)
+
+    def test_ordinary_head_stops_loudly_before_the_pass(self):
+        pipe = self.pipeline("Продолжай выполнение DK-1")
+        with self.assertRaises(SystemExit):
+            pipe.run_live()
+        self.assertFalse(pipe.replied)
+        self.assertEqual(pipe.shout.call_count, 1, pipe.shout.call_args_list)
+        self.assertEqual(pipe.shout.call_args[0][0], "task_check")
 
 
 class TestLiveHead(unittest.TestCase):

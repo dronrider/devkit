@@ -447,17 +447,32 @@ func (q Request) headlessCmd(args []string) *exec.Cmd {
 	return exec.Command("/bin/sh", "-c", "exec /usr/bin/env "+prefix+" "+shellJoin(args))
 }
 
-// Command это готовая команда подъёма для текста зова.
+// Command это готовая команда подъёма для текста зова. Голове по лежащей
+// реплике она несёт флаг --reply: без него человек поднял бы голову с обычным
+// «продолжай», и на строке в Check с приёмкой та встала бы стопом до первого
+// хода, а реплика так и лежала бы во входе.
 func (q Request) Command() string {
+	if strings.HasPrefix(q.Order, ReplyOrderPrefix) {
+		return ReplyRunCommand(q.ID, q.Root)
+	}
 	return RunCommand(q.ID, q.Root)
 }
 
 // RunCommand это та же готовая команда подъёма для тех, у кого заказа на руках
-// нет: дашборд зовёт человека к реплике, которую некому забрать (DK-1194), и
-// команда в баннере обязана совпадать слово в слово с той, которой зовёт сама
-// лестница.
+// нет: команда в баннере обязана совпадать слово в слово с той, которой зовёт
+// сама лестница.
 func RunCommand(id, root string) string {
 	return "taskctl run " + id + " -C " + shQuote(root)
+}
+
+// ReplyRunCommand это готовая команда подъёма головы по лежащей реплике для
+// зовущих без заказа на руках: дашборд и тик сторожка зовут человека к реплике,
+// которую некому забрать (DK-1194). Флаг --reply собирает заказ ReplyOrder
+// сам, и только такую голову стоп ожидания человека пропускает к реплике.
+// Копия шаблона в tools/devkitctl/lift.py (REPLY_RUN) держится сторожем пары
+// в raise_test.go.
+func ReplyRunCommand(id, root string) string {
+	return RunCommand(id, root) + " --reply"
 }
 
 // ReplyOrderPrefix это начало заказа голове, поднятой лежащей репликой. По нему

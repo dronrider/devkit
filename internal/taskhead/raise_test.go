@@ -457,11 +457,34 @@ func TestNoClientCallsHuman(t *testing.T) {
 			t.Fatalf("в зове нет %q:\n%s", want, note)
 		}
 	}
+	if strings.Contains(note, "--reply") {
+		t.Fatalf("обычному заказу зов приписал подъём по реплике:\n%s", note)
+	}
 	if s.read("runner.log") != "" || strings.Contains(s.tmux("calls.log"), "new-session") {
 		t.Fatalf("без клиента голова всё равно поднималась:\n%s", s.why(res))
 	}
 	if !s.lockGone() {
 		t.Fatal("после зова замок остался висеть")
+	}
+}
+
+// Голову по лежащей реплике зов человеку предлагает поднять с --reply (DK-1194):
+// команда без флага подняла бы голову с обычным «продолжай», и на строке в Check
+// с приёмкой та встала бы стопом до первого хода, а реплика лежала бы дальше.
+func TestReplyOrderCallsHumanWithReplyCommand(t *testing.T) {
+	s := newStand(t, true, false)
+	q := s.req()
+	q.Order = ReplyOrder(q.ID)
+	res, err := Raise(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Code != CodeCalled || res.Rung != RungCall {
+		t.Fatal(s.why(res))
+	}
+	note := s.read("notify.log")
+	if !strings.Contains(note, "taskctl run DK-1 -C "+s.root+" --reply") {
+		t.Fatalf("в зове по реплике нет команды с --reply:\n%s", note)
 	}
 }
 
@@ -599,6 +622,38 @@ func TestRunCommandIsOneForAllCallers(t *testing.T) {
 	}
 	if strings.Contains(want, "-C /tmp/чужой проект") {
 		t.Fatalf("путь с пробелом уехал без кавычек: %q", want)
+	}
+}
+
+// Готовая команда подъёма по лежащей реплике одна на всех, кто зовёт к ней
+// человека: лестница с заказом ReplyOrder, дашборд (nolead.go, chat.go) и тик
+// сторожка (lift.py), у которого своя копия шаблона на другом языке (DK-1194).
+// Разойдись копии, человек скопировал бы из баннера команду без --reply, и на
+// строке в Check с приёмкой голова встала бы стопом до первого хода.
+func TestReplyRunCommandIsOneForAllCallers(t *testing.T) {
+	q := Request{ID: "DK-1", Root: "/tmp/proj", Order: ReplyOrder("DK-1")}
+	want := ReplyRunCommand(q.ID, q.Root)
+	if got := q.Command(); got != want {
+		t.Fatalf("лестница по реплике зовёт %q, а зовущий без заказа %q", got, want)
+	}
+	if !strings.HasPrefix(want, RunCommand(q.ID, q.Root)) || !strings.HasSuffix(want, " --reply") {
+		t.Fatalf("команда по реплике это не команда подъёма с флагом --reply: %q", want)
+	}
+	src, err := os.ReadFile(filepath.Join("..", "..", "tools", "devkitctl", "lift.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^REPLY_RUN = "([^"]+)"`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal("в tools/devkitctl/lift.py нет шаблона REPLY_RUN, тик зовёт человека своей командой")
+	}
+	tmpl := string(m[1])
+	if strings.Count(tmpl, "%s") != 2 {
+		t.Fatalf("шаблон тика ждёт не две подстановки, ID и корень: %q", tmpl)
+	}
+	got := strings.Replace(strings.Replace(tmpl, "%s", q.ID, 1), "%s", q.Root, 1)
+	if got != want {
+		t.Fatalf("тик зовёт человека командой %q, а лестница %q", got, want)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -598,5 +599,31 @@ func TestRunCommandIsOneForAllCallers(t *testing.T) {
 	}
 	if strings.Contains(want, "-C /tmp/чужой проект") {
 		t.Fatalf("путь с пробелом уехал без кавычек: %q", want)
+	}
+}
+
+// Заказ головы по лежащей реплике один на всех: дашборд и тик берут его у
+// ReplyOrder, а оболочка конвейера узнаёт его по началу строки и только ему
+// пропускает стоп ожидания человека (DK-1194). Разойдись начало заказа с
+// константой оболочки, стоп прошла бы любая голова либо не прошла бы ни одна,
+// и ни один тест по отдельности этого не увидел бы.
+func TestReplyOrderIsOneForShellAndCallers(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(TaskRunRel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^REPLY_ORDER = "([^"]+)"`).FindSubmatch(src)
+	if m == nil {
+		t.Fatalf("в %s нет константы REPLY_ORDER, оболочка заказ по реплике не узнает", TaskRunRel)
+	}
+	if got := string(m[1]); got != ReplyOrderPrefix {
+		t.Fatalf("оболочка ждёт заказ с %q, а лестница шлёт %q", got, ReplyOrderPrefix)
+	}
+	order := ReplyOrder("DK-1")
+	if !strings.HasPrefix(order, ReplyOrderPrefix) || !strings.Contains(order, "DK-1") {
+		t.Fatalf("заказ не начинается своим началом либо не называет задачу: %q", order)
+	}
+	if !strings.Contains(order, "Статус строки на доске не двигай") {
+		t.Fatalf("заказ не держит инвариант границ, статус строки: %q", order)
 	}
 }

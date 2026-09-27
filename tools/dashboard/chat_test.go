@@ -3063,6 +3063,38 @@ exit 0`)
 	}
 }
 
+// Список разговоров называет ведомую задачу полем lead: по нему отбор строки
+// под прогон сценария спрашивает, ведёт ли кто-то именно эту строку. Касание
+// соседней задачи лежит в tasks, а в lead не попадает (замечание 15 ревью
+// DK-1194).
+func TestChatListNamesTheLeadTask(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "aaaa1500-1111-4111-8111-111111111111"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
+	writeBinds(t, e.home,
+		bindRecord(e.home, "2026-09-27T10:00:00", sid, "DK-851", bindOrder),
+		bindRecord(e.home, "2026-09-27T11:00:00", sid, "DK-892", "работа"),
+		bindRecord(e.home, "2026-09-27T12:00:00", sid, "DK-892", bindOff))
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats?all=1&days=0", "")
+	raw := body(t, resp)
+	var got struct {
+		Chats []chatEntry `json:"chats"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	row := blankRow(got.Chats, sid)
+	if row == nil {
+		t.Fatalf("разговора нет в списке: %s", raw)
+	}
+	if row.Bound != boundLead {
+		t.Fatalf("разряд привязки назван иначе: %q", row.Bound)
+	}
+	if !strings.Contains(raw, `"lead":"DK-851"`) {
+		t.Fatalf("поле lead не уехало наружу: %s", raw)
+	}
+}
+
 // Подъём головы по лежащей реплике (DK-1194). Реплика человека в чат задачи
 // ложилась во вход и лежала там без адресата и без срока: подъём звался только у
 // строки, припаркованной вопросом, а ведущей сессией считалось всякое касание

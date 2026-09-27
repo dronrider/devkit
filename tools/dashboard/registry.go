@@ -231,6 +231,14 @@ func bindTask(b sessionBinds, sid, dirSuffix string, head sessionHead) (task, no
 		}
 	}
 	if id := taskIDInName(dirSuffix); id != "" {
+		// Снята именно задача дерева: хвост каталога её не возвращает, как у
+		// workTasks. Снятая соседняя задача («снята DK-892» у сессии в дереве
+		// devkit-dk-1177) дерево не гасит, иначе разговор в боковом дереве
+		// строки переставал быть её ведущим, и реплика поднимала бы вторую
+		// голову поверх живой (замечание 13 ревью DK-1194).
+		if b[sid].ReleasedTask(id) {
+			return "", offNote, ""
+		}
 		return id, treeNote, boundLead
 	}
 	// Задачи у разговора нет, и это не поломка: свободный чат стоит рядом с

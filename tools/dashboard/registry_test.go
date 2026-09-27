@@ -80,7 +80,7 @@ func TestParseBindLine(t *testing.T) {
 		Tree:       "/Users/r/projects/devkit-dk-430",
 		Transcript: "/Users/r/.claude/projects/-p/0f2c-e91.jsonl",
 		Tmux:       "chat-DK-430-1", Time: "2026-08-18T12:03:11"}
-	if b != want {
+	if !reflect.DeepEqual(b, want) {
 		t.Errorf("запись:\n%+v\nожидал:\n%+v", b, want)
 	}
 }
@@ -210,6 +210,26 @@ func TestBindTaskReleasedTaskIsNotLead(t *testing.T) {
 	task, note, bound := bindTask(binds, "aaa-1", "dk-892", sessionHead{Named: "DK-892"})
 	if task != "" || bound != "" || note != offNote {
 		t.Fatalf("снятая задача осталась ведущей: %q %q %q", task, note, bound)
+	}
+}
+
+// Снята соседняя задача, а не задача дерева: хвост бокового дерева остаётся
+// признаком ведущего, как у workTasks (замечание 13 ревью DK-1194). Иначе
+// разговор в дереве devkit-dk-1177 после чужого «снята DK-892» переставал быть
+// ведущим DK-1177, и реплика поднимала бы вторую голову поверх живой.
+func TestBindTaskReleaseOfAnotherTaskKeepsTheTree(t *testing.T) {
+	binds := parseBinds([]byte(
+		bindRecord(noHome, "2026-09-26T11:00:00", "aaa-1", "DK-892", "работа") +
+			bindRecord(noHome, "2026-09-26T12:00:00", "aaa-1", "DK-892", bindOff)))
+	task, note, bound := bindTask(binds, "aaa-1", "dk-1177", sessionHead{})
+	if task != "DK-1177" || note != treeNote || bound != boundLead {
+		t.Fatalf("дерево соседней задачи погашено чужим снятием: %q %q %q", task, note, bound)
+	}
+	recs := sessions.All([]byte(
+		bindRecord(noHome, "2026-09-26T11:00:00", "aaa-1", "DK-892", "работа") +
+			bindRecord(noHome, "2026-09-26T12:00:00", "aaa-1", "DK-892", bindOff)))["aaa-1"]
+	if !leadsTask(recs, "dk-1177", "DK-1177") {
+		t.Fatalf("workTasks и bindTask разошлись о дереве: %v", workTasks(recs, "dk-1177"))
 	}
 }
 

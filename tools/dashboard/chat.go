@@ -496,7 +496,7 @@ func (s *server) taskHead(projPath, id string) string {
 		if e.State != chatLive && e.State != chatVscode {
 			continue
 		}
-		if e.lead == id {
+		if e.Lead == id {
 			return "задачу ведёт разговор " + e.ID
 		}
 	}

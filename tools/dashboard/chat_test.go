@@ -3063,9 +3063,9 @@ exit 0`)
 	}
 }
 
-// Список разговоров называет ведомую задачу полем lead: по нему отбор строки
+// Список разговоров называет ведомые задачи полем leads: по нему отбор строки
 // под прогон сценария спрашивает, ведёт ли кто-то именно эту строку. Касание
-// соседней задачи лежит в tasks, а в lead не попадает (замечание 15 ревью
+// соседней задачи лежит в tasks, а в leads не попадает (замечание 15 ревью
 // DK-1194).
 func TestChatListNamesTheLeadTask(t *testing.T) {
 	e, c := chatEnv(t)
@@ -3090,8 +3090,8 @@ func TestChatListNamesTheLeadTask(t *testing.T) {
 	if row.Bound != boundLead {
 		t.Fatalf("разряд привязки назван иначе: %q", row.Bound)
 	}
-	if !strings.Contains(raw, `"lead":"DK-851"`) {
-		t.Fatalf("поле lead не уехало наружу: %s", raw)
+	if !strings.Contains(raw, `"leads":["DK-851"]`) {
+		t.Fatalf("поле leads не уехало наружу: %s", raw)
 	}
 }
 
@@ -3202,6 +3202,37 @@ func TestTaskMessageRaisesDespiteReleasedBind(t *testing.T) {
 	}
 	if got := readFile(t, tmuxLog); !strings.Contains(got, "new-session -d -s task-XR-9") {
 		t.Fatalf("снятая привязка сошла за ведущую, голова не поднята: %q", got)
+	}
+}
+
+// Сессия в боковом дереве строки ведёт её и тогда, когда реестр назвал
+// соседнюю задачу: безадресную строку своего чата она заберёт подхватом
+// (owns_chat спрашивает хвост дерева на каждый чат). Прежде дашборд сравнивал с
+// одной ведомой задачей и до хвоста дерева не доходил вовсе, пока реестр
+// называл хоть какую-то: реплика в чат XR-9 поднимала вторую голову поверх
+// живого исполнителя (замечание 16 ревью DK-1194).
+func TestTaskMessageKeepsQuietUnderTreeSessionOfAnotherTask(t *testing.T) {
+	e, c, tmuxLog := replyEnv(t)
+	now := time.Now()
+	sideTree(t, e.proj, "xr-9")
+	writeSession(t, e.home, e.proj, "-xr-9", "dddd-4444", plainTalk, now)
+	writeBinds(t, e.home,
+		bindRecord(e.home, now.Add(-time.Hour).Format(bindStamp), "dddd-4444", "XR-9", bindTree),
+		bindRecord(e.home, now.Add(-time.Minute).Format(bindStamp), "dddd-4444", "XR-4", "работа"))
+	if head := e.s.taskHead(e.proj, "XR-9"); head == "" {
+		t.Fatalf("сессия в дереве XR-9 не названа ведущей, хотя чат её: %q", head)
+	}
+
+	resp := postTaskMessage(t, c, e, "XR-9", "что со строкой")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("отправка: %d %s", resp.StatusCode, text)
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session -d -s task-XR-9") {
+		t.Fatalf("голова поднята поверх живой сессии дерева: %q", got)
+	}
+	if strings.Contains(text, `"undelivered":true`) {
+		t.Errorf("реплика хозяину разговора названа недоставленной: %s", text)
 	}
 }
 

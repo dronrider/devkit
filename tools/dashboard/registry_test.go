@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -698,4 +699,105 @@ func writeBindsAt(t *testing.T, home, text string) {
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Критерий хозяина разговора один у дашборда и у подхвата: headTasks тут и
+// owns_chat в hooks/chat-in.py. Сторож спрашивает обоих про один стенд, потому
+// что разойтись они умеют молча: дашборд поднимет вторую голову поверх живой
+// сессии дерева либо назовёт доставленной реплику, которую никто не прочитает
+// (замечание 16 ревью DK-1194). Ожидание выписано рядом с ответами обоих:
+// сошедшиеся на неверном ответе критерии сторож всё равно ловит.
+func TestHeadTasksAnswersLikeTheHook(t *testing.T) {
+	const sid = "aaa-1"
+	for _, tc := range []struct {
+		name, log, suffix string
+		want              map[string]bool
+	}{
+		{
+			name: "дерево строки и работа по соседней",
+			log: bindRecord(noHome, "2026-09-27T10:00:00", sid, "DK-1", bindTree) +
+				bindRecord(noHome, "2026-09-27T11:00:00", sid, "DK-9", "работа"),
+			suffix: "dk-1",
+			want:   map[string]bool{"DK-1": true, "DK-9": true, "DK-5": false},
+		},
+		{
+			name: "задача дерева снята",
+			log: bindRecord(noHome, "2026-09-27T10:00:00", sid, "DK-1", bindTree) +
+				bindRecord(noHome, "2026-09-27T11:00:00", sid, "DK-1", bindOff),
+			suffix: "dk-1",
+			want:   map[string]bool{"DK-1": false},
+		},
+		{
+			name: "снята соседняя строка",
+			log: bindRecord(noHome, "2026-09-27T10:00:00", sid, "DK-892", "работа") +
+				bindRecord(noHome, "2026-09-27T11:00:00", sid, "DK-892", bindOff),
+			suffix: "dk-1177",
+			want:   map[string]bool{"DK-1177": true, "DK-892": false},
+		},
+		{
+			name: "привязку сняли целиком, дальше работа по соседней",
+			log: bindRecord(noHome, "2026-09-27T10:00:00", sid, "DK-1", bindTree) +
+				bindRecord(noHome, "2026-09-27T11:00:00", sid, "-", bindOff) +
+				bindRecord(noHome, "2026-09-27T12:00:00", sid, "DK-9", "работа"),
+			suffix: "dk-1",
+			want:   map[string]bool{"DK-1": false, "DK-9": true},
+		},
+		{
+			name: "разговор строки переживает стоп со строки",
+			log: bindRecord(noHome, "2026-09-27T10:00:00", sid, "DK-5", bindOrder) +
+				bindRecord(noHome, "2026-09-27T11:00:00", sid, "DK-5", bindOff),
+			suffix: "",
+			want:   map[string]bool{"DK-5": true},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeBindsAt(t, home, tc.log)
+			lead := headTasks(parseBinds([]byte(tc.log))[sid], tc.suffix)
+			for task, want := range tc.want {
+				if got := hasRow(lead, task); got != want {
+					t.Errorf("дашборд о разговоре task-%s: %v, ожидал %v (ведёт %v)", task, got, want, lead)
+				}
+				if got := hookOwnsChat(t, home, sid, tc.suffix, task); got != want {
+					t.Errorf("подхват о разговоре task-%s: %v, ожидал %v", task, got, want)
+				}
+			}
+		})
+	}
+}
+
+// hookOwnsChat спрашивает сам подхват, его ли это разговор: копия критерия на
+// стороне теста сошлась бы с любым поведением хука, а сторожить надо пару.
+// Дерево сессии тут ровно то, какое считает дашборд: каталог <проект>-<хвост>
+// рядом с проектом.
+func hookOwnsChat(t *testing.T, home, sid, suffix, task string) bool {
+	t.Helper()
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 нет в PATH: подхват спросить нечем")
+	}
+	hooks, err := filepath.Abs(filepath.Join("..", "..", "hooks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(home, "projects", "devkit")
+	if suffix != "" {
+		root += "-" + suffix
+	}
+	const driver = `import importlib.util, os, sys
+sys.path.insert(0, sys.argv[1])
+spec = importlib.util.spec_from_file_location("chat_in", os.path.join(sys.argv[1], "chat-in.py"))
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print("да" if mod.owns_chat(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]) else "нет")
+`
+	out, err := exec.Command(py, "-c", driver, hooks, "task-"+task, sid, root, home).CombinedOutput()
+	if err != nil {
+		t.Fatalf("подхват не ответил: %v\n%s", err, out)
+	}
+	answer := strings.TrimSpace(string(out))
+	if answer != "да" && answer != "нет" {
+		t.Fatalf("подхват ответил не по форме: %q", out)
+	}
+	return answer == "да"
 }

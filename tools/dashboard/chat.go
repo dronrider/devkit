@@ -349,6 +349,17 @@ func parkedByAsk(row boardRow) bool {
 	return parkedBlock(row.Sect, row.Block)
 }
 
+// replySection отвечает, поднимает ли лежащая реплика голову строке этой
+// секции. Секции две, те же, из которых подъём сирот берёт работу
+// (WORK_SECTIONS в tools/devkitctl/lift.py): In progress и Check, включая
+// проверенную строку с приёмкой человека. Строку в Backlog никто не брал, и
+// голова на ней шла бы мимо вердикта agentctl pick и перевода в работу.
+// Припаркованную вопросом строку поднимает ответ (parkedByAsk выше), прочие
+// строки Blocked будит обход ждущих. В Done работы нет.
+func replySection(sect string) bool {
+	return sect == "in-progress" || sect == "check"
+}
+
 // parkedBlock это тот же разбор по секции и причине врозь: строку доски
 // разметка ответа видит общими картами, а не типом boardRow, и состояние
 // ожидания считается там по тем же двум полям.
@@ -647,7 +658,7 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 	// Повтор идёт сюда наравне с первой строкой. Второй реплики он не заводит, а
 	// вот вторую попытку подъёма человек этим и просит: в живом случае он написал
 	// трижды, и все три раза дашборд ответил, что строка уже лежит.
-	if !raised && lead == "" && !parkedByAsk(row) {
+	if !raised && lead == "" && replySection(row.Sect) {
 		rep, called := s.taskReplyRaise(found, id)
 		s.logf("реплика задаче %s в %s: %s", id, found.Name, rep.Line)
 		switch {

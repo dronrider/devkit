@@ -294,15 +294,6 @@ func (s *server) headModel(tier string) string {
 	return own.tierModel(tier)
 }
 
-// replyOrder это заказ первого прохода головы, поднятой лежащей репликой. Слова
-// «продолжай выполнение» тут не годятся: строка бывает в любом статусе, включая
-// проверенную с приёмкой человека, и двигать её этот ход не должен. Дело хода
-// это прочитать реплику, которую подаст подхват, и ответить в ленту разговора.
-func replyOrder(id string) string {
-	return "В чате задачи " + id + " лежит реплика человека, её подаст подхват этим же ходом. " +
-		"Ответь ему в ленту разговора. Статус строки на доске не двигай, пока он сам не попросит"
-}
-
 // taskReplyRaise поднимает голову задачи по реплике, легшей в её чат (DK-1194).
 // Дорога та же, что у подъёма ответом: одна лестница носителей, один замок, один
 // предполёт. Отличий два, и оба идут от повода.
@@ -326,7 +317,7 @@ func (s *server) taskReplyRaise(proj *Project, id string) (checkRunReport, bool)
 		return *rep, false
 	}
 	tier, tierWhy := s.pickTier(proj.Path, id, "")
-	order := replyOrder(id)
+	order := taskhead.ReplyOrder(id)
 	res, err := s.startTaskSession(proj, id, sess, nil, s.headModel(tier), order, order, "работа", false)
 	if err != nil {
 		// Замок держит голова, поднятая мимо дашборда: реплика дойдёт до неё

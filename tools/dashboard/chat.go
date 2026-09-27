@@ -676,9 +676,11 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 		default:
 			// Лестница отказала. Молчать тут нельзя: реплика лежит без адресата
 			// и без срока, и человек обязан увидеть отказ с готовой командой.
-			// Пузырь в панели остаётся недоставленным припиской ниже, а баннер
-			// зовёт человека туда, где он есть.
-			resp["command"] = taskhead.RunCommand(id, found.Path)
+			// Команда несёт --reply: обычный «продолжай» на строке в Check с
+			// приёмкой встал бы стопом до первого хода. Пузырь в панели остаётся
+			// недоставленным припиской ниже, а баннер зовёт человека туда, где
+			// он есть.
+			resp["command"] = taskhead.ReplyRunCommand(id, found.Path)
 			resp["refused"] = rep.Line
 			if !called {
 				s.replyStuckSay(found, id, rep.Line)

@@ -3193,12 +3193,15 @@ func TestTaskMessageCallsHumanWhenLadderRefuses(t *testing.T) {
 	if !strings.Contains(text, `"undelivered":true`) {
 		t.Errorf("отказ подъёма не назвал реплику недоставленной: %s", text)
 	}
-	if !strings.Contains(text, "taskctl run XR-9") {
-		t.Errorf("в ответе нет готовой команды подъёма: %s", text)
+	// Команда несёт --reply: без флага голова встала бы стопом приёмки до
+	// первого хода, и реплика лежала бы дальше.
+	command := "taskctl run XR-9 -C " + e.proj + " --reply"
+	if !strings.Contains(text, command) {
+		t.Errorf("в ответе нет готовой команды подъёма по реплике %q: %s", command, text)
 	}
 	said := readFile(t, calls)
-	if !strings.Contains(said, "недоставленной") || !strings.Contains(said, "taskctl run XR-9") {
-		t.Fatalf("человека не позвали с готовой командой:\n%s", said)
+	if !strings.Contains(said, "недоставленной") || !strings.Contains(said, command) {
+		t.Fatalf("человека не позвали с готовой командой %q:\n%s", command, said)
 	}
 	// Реплика остаётся во входе: забрать её некому, и терять её нельзя.
 	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-9.in"))

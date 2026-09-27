@@ -111,8 +111,9 @@ func (s *server) noLeadSay(task, project, why string) {
 //
 // Зов идёт только там, где лестница не позвала человека сама последней ступенью:
 // два баннера об одном молчании хуже одного. Готовая команда в теле та же,
-// которой зовёт лестница (taskhead.RunCommand): человек копирует её из баннера
-// и поднимает голову сам.
+// которой зовёт лестница по реплике (taskhead.ReplyRunCommand, с флагом
+// --reply): человек копирует её из баннера и поднимает голову сам, и только
+// голову с заказом по реплике стоп приёмки пропускает к ответу.
 func (s *server) replyStuckSay(proj *Project, task, why string) {
 	if proj == nil || task == "" {
 		return
@@ -124,7 +125,7 @@ func (s *server) replyStuckSay(proj *Project, task, why string) {
 	}
 	title := fmt.Sprintf("%s: реплика задаче %s лежит недоставленной", proj.Name, task)
 	body := fmt.Sprintf("%s. Голову задачи поднять нечем, и реплика ждёт во входе чата. "+
-		"Поднять руками: %s", strings.TrimRight(why, ". "), taskhead.RunCommand(task, proj.Path))
+		"Поднять руками: %s", strings.TrimRight(why, ". "), taskhead.ReplyRunCommand(task, proj.Path))
 	cmd := exec.Command("python3", np, "--reason", noLeadReason,
 		"--task", task, "--project", proj.Name, title, body)
 	cmd.Dir = proj.Path

@@ -81,7 +81,14 @@
      между кнопками, отступы в колонке и между кнопками должны быть
      одинаковые», решение пользователя). */
   --actgap:6px;
-  --chipgap:8px;  /* зазор между чипами */
+  /* Чип строки: рост, кегль и боковое поле. Числа тут мельче прежних 21, 11.5
+     и 8: заголовку строки было тесно, и человек назвал это первым по строке
+     («уменьшить чипы и зазоры между ними», замечание 5 приёмки DK-1119).
+     Величина одна на три раздела доски, иначе их вид разъезжается. */
+  --chiph:18px;   /* рост чипа */
+  --chipfs:10.5px;/* кегль чипа */
+  --chippx:6px;   /* боковое поле чипа */
+  --chipgap:4px;  /* зазор между чипами */
   --rowfs:13.5px; /* кегль заголовка строки */
   --rowfw:400;    /* насыщенность заголовка строки */
   --subfs:11px;   /* кегль подписи: дата, приписка под заголовком */
@@ -223,13 +230,13 @@ a:hover{text-decoration:underline}
 
 /* общие элементы */
 .card{background:var(--bg1);border:1px solid var(--line);border-radius:var(--rad3)}
-.chip{display:inline-flex;align-items:center;gap:6px;height:21px;padding:0 8px;border-radius:6px;font:500 11.5px var(--sans);background:var(--bg3);color:var(--tx2);white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:var(--rowgap);height:var(--chiph);padding:0 var(--chippx);border-radius:6px;font:500 var(--chipfs) var(--sans);background:var(--bg3);color:var(--tx2);white-space:nowrap}
 .c-check{background:color-mix(in oklab,var(--check) 16%,transparent);color:var(--check)}
 .c-block{background:color-mix(in oklab,var(--block) 16%,transparent);color:var(--block)}
 /* причина провала и блока это фраза человека, а не слово-метка: в строке она
    режется кромкой своего места, а целиком приходит подсказкой. Нерезаный чип
    с целым предложением уносил строку за край экрана, и раздел ездил вбок */
-.cwhy{max-width:100%;overflow:hidden;text-overflow:ellipsis;display:inline-block;line-height:21px}
+.cwhy{max-width:100%;overflow:hidden;text-overflow:ellipsis;display:inline-block;line-height:var(--chiph)}
 .c-goal{background:color-mix(in oklab,var(--goal) 16%,transparent);color:var(--goal)}
 /* ожидание человека: свой цвет, а не цвет блока, потому что припаркованная
    строка носит оба чипа сразу и они не должны сливаться */
@@ -545,7 +552,7 @@ a:hover{text-decoration:underline}
 .chip.clicky:hover{background:color-mix(in oklab,var(--run) 26%,transparent)}
 /* чип держащей задачи это кнопка: с неё есть ход на саму задачу, и палец с
    клавиатурой обязаны видеть в ней кнопку, а не подпись */
-button.chip{border:none;font:500 11.5px var(--sans)}
+button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .c-after{background:var(--bg3);color:var(--tx2)}
 .c-after:hover{background:color-mix(in oklab,var(--run) 26%,transparent);color:var(--tx)}
 
@@ -609,10 +616,28 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 .act2 b .w{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .act2 b .stage-age{font:400 11px var(--mono);font-style:normal;color:var(--tx3);
   white-space:nowrap;flex:none}
+/* На ноутбуке круг с возрастом уходит в подсказку колонки, а слово стоит
+   целиком: в колонке они съедали его до обрубка «ж...» (замечание 4 приёмки).
+   На телефоне подсказки нет, и там копия хода внутри заголовка держит их
+   словами после слова этапа (правило ниже, в узком разделе). */
+.trow .stage .act2 b .stage-age{display:none}
+/* Песочные часы у машинного ожидания: работа за задачей встала, а слово рядом
+   называет тот этап, на котором она встала. Метка «вы» говорит то же про
+   ожидание человека, и она же стоит у проверки, которую закрывает он. */
+.act2 b .hg{flex:none;width:7px;height:9px;border:1.5px solid var(--wait);
+  border-radius:1px;position:relative;opacity:.9}
+.act2 b .hg:after{content:"";position:absolute;left:1px;right:1px;top:3px;
+  height:1.5px;background:var(--wait)}
+.act2 b .you{flex:none;font:600 9.5px var(--sans);letter-spacing:.04em;
+  padding:1px 5px;border-radius:4px;
+  background:color-mix(in oklab,var(--wait) 22%,transparent);color:var(--wait)}
+/* Ожидание человека выделяется кольцом у точки: оранжевых точек на доске
+   бывает несколько, и та, что ждёт именно человека, обязана быть заметнее. */
+.sd-wait.you{box-shadow:0 0 0 2px color-mix(in oklab,var(--wait) 35%,transparent)}
 /* Деление меньше пяти точек не читается делением: min-width колонки держит
    ленту на восьми различимых полосках, а не сжимает её до полоски пикселей
    вместе с колонкой (замер TestBoardTableCellsNoDeadSpace). */
-.act2 .seg{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;min-width:140px}
+.act2 .seg{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;min-width:96px}
 .act2 .seg i{display:block;height:2px;border-radius:1px;background:var(--bg3);
   font-style:normal}
 .act2 .seg i.done{background:color-mix(in oklab,var(--tx3) 55%,var(--bg3))}
@@ -622,9 +647,19 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* Шапка «сейчас» и степпер формы (2b): чип stageChip снят целиком, слово
    этапа встало крупно с точкой сессии перед ним, круг с возрастом рядом, а
    восемь этапов подписаны в степпере ниже. */
-.now2{display:flex;align-items:center;gap:12px;padding:4px 0 2px;flex-wrap:wrap}
-.now2 .big{display:flex;align-items:center;gap:10px;font:600 18px var(--sans);
+.now2{display:flex;align-items:center;gap:10px;padding:4px 0 2px;flex-wrap:wrap}
+/* Слово этапа 15 точек, а не 18: крупнее нужного оно спорило с заголовком
+   задачи над ним (замечание 2 приёмки). */
+.now2 .big{display:flex;align-items:center;gap:8px;font:600 15px var(--sans);
   color:var(--k)}
+/* Те же пометки, что в строке, крупнее на полторы точки: форму читают глазами,
+   а не наводят на неё мышь. */
+.now2 .hgf{flex:none;width:8px;height:10px;border:1.5px solid var(--wait);
+  border-radius:1px;position:relative}
+.now2 .hgf:after{content:"";position:absolute;left:1px;right:1px;top:3.5px;
+  height:1.5px;background:var(--wait)}
+.now2 .youf{flex:none;font:600 10px var(--sans);padding:1px 6px;border-radius:4px;
+  background:color-mix(in oklab,var(--wait) 22%,transparent);color:var(--wait)}
 .now2 .big i{width:8px;height:8px;border-radius:50%;background:var(--k);
   flex:none;font-style:normal}
 .now2 .big i.quiet{background:color-mix(in oklab,var(--k) 45%,var(--bg3))}
@@ -634,8 +669,11 @@ button.chip{border:none;font:500 11.5px var(--sans)}
   .now2.live .big i{animation:dkpulse 2.2s ease-out infinite}
 }
 .now2 .stage-age{font:500 13px var(--mono);color:var(--tx2)}
-.step2{display:flex;gap:0;padding:2px 0 4px;flex-wrap:wrap}
-.step2 .s{flex:1;display:flex;flex-direction:column;gap:6px;min-width:52px}
+/* Степпер это сетка, а не переносимый ряд: в ряду восемь подписей делились по
+   месту, и на две строки они ложились пятью и тремя (замечание 3 приёмки).
+   Сетка даёт восемь равных колонок, а на узком экране четыре на два. */
+.step2{display:grid;grid-template-columns:repeat(8,1fr);gap:0 3px;padding:2px 0 4px}
+.step2 .s{display:flex;flex-direction:column;gap:6px;min-width:0}
 .step2 .s i{display:block;height:3px;border-radius:2px;background:var(--bg3);
   font-style:normal;margin-right:3px}
 .step2 .s.dn i{background:color-mix(in oklab,var(--tx3) 55%,var(--bg3))}
@@ -650,6 +688,10 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 /* Коробка чипов одна на все разделы: у задач, у записи накопителя и у строки
    сессии чипы стоят одинаково и одним зазором. */
 .rchips{display:flex;align-items:center;gap:var(--chipgap);flex:none}
+/* Дата в колонке идёт моноширинным и без века: цифры встают колонкой друг под
+   другом, и колонке хватает 62 точек вместо 76. Кегль остаётся кеглем подписи
+   из лестницы, меняется только начертание. */
+.trow .twhen .stale{font-family:var(--mono)}
 /* Кнопки жмутся к началу колонки, а не к её концу: место у каждой своё, и
    кнопка работы обязана стоять на одном и том же месте во всякой строке. С
    прижимом вправо она уезжала на ширину кнопки там, где у строки не было трёх
@@ -1190,6 +1232,14 @@ button.chip{border:none;font:500 11.5px var(--sans)}
      слева в шапке экрана */
   .logo-top{display:flex}
   .tchips .chip,.tchips .pick{height:36px}
+  /* телефон: кнопки полосы держат свои 34 точки, до них достаёт палец, и
+     ужимать их до роста чипов (правило ноутбука выше) тут нельзя */
+  .tchips .tmodes .btn,.tchips .tacts .btn{height:var(--ctl);min-height:var(--ctl)}
+  .tchips .tmodes .btn-ico,.tchips .tacts .split .more2{width:var(--ctl)}
+  .tchips .tpen{width:var(--ctl);height:var(--ctl)}
+  /* телефон: степпер этапа ложится сеткой четыре на два, а не пятью и тремя
+     подписями (замечание 3 приёмки). Порог тот же, что у всей узкой раскладки */
+  .step2{grid-template-columns:repeat(4,1fr);row-gap:8px}
   /* телефон: фильтры ленты переносятся на вторую строку, а не режутся полосой */
   .filters{flex-wrap:wrap}
   .fchip{height:36px;min-height:36px}
@@ -1742,6 +1792,20 @@ button.chip{border:none;font:500 11.5px var(--sans)}
 
 .tchips .gap{flex:1}
 .tchips{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* Полоса формы одной высоты: чипы, селекты и кнопки в ней ростом 26 точек, как
+   чипы («кнопки на форме выше чипов в той же строке», замечание 6 приёмки).
+   Рост тут свой, а не общий --ctl: тот держит органы шапок, а полоса стоит
+   среди чипов. На телефоне кнопки остаются как сегодня, в 34 точки: там до них
+   достаёт палец, и правило ниже возвращает им рост. */
+.tchips .tmodes .btn,.tchips .tacts .btn{height:26px;min-height:26px}
+.tchips .tmodes .btn-ico,.tchips .tacts .split .more2{width:26px}
+.tchips .tpen{width:26px;height:26px}
+
+/* Телефон: номер задачи стоит слева в панели кнопок, где было пусто, а
+   заголовок идёт под ней своей строкой во всю ширину (замечание 8 приёмки). */
+.thline.tnarrow{flex-direction:column;align-items:stretch;gap:8px}
+.tnumbar{display:flex;align-items:center;gap:6px;min-width:0}
+.tnumbar .tmodes{margin-left:auto}
 
 /* 8: у блока ранга не было отступа сверху, он слипался с полосой над ним */
 .rcard{margin-top:var(--fgap)}
@@ -2132,7 +2196,15 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
    итоге; поля приходят карандашом вместе с остальной правкой (замечание
    пользователя: жирные селекты в просмотре не нужны никому) */
 .rcard:not(.redit) .rbody{display:none}
-.rcard:not(.redit) .rfold{display:none}
+/* Свёрнутый ранг это одна строка в 32 точки: итог, разбивка, слагаемые
+   словами, поправка цены и «развернуть» справа. Прежде блок занимал на
+   ноутбуке целую карточку при том же содержимом («блок ранга на ноутбуке
+   громадный при малом содержимом», замечание 6 приёмки). «Развернуть» тут
+   открывает тот же редактор ранга, что и карандаш формы. */
+.rcard:not(.redit) .rtop{min-height:32px;padding:0 var(--sp3);gap:var(--sp2)}
+.rcard:not(.redit) .rbig .v{font-size:15px;line-height:1}
+.rcard:not(.redit) .rfold{display:inline-flex;align-items:center;margin-left:auto;
+  padding:0 2px;white-space:nowrap;font:500 12px var(--sans);color:var(--acc)}
 .rcard.redit .rview{display:none}
 .rcard .rview{font:400 12.5px var(--sans);color:var(--tx2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* хвост разбора: своя сумма пяти ручек и поправки к итогу (бонус за дешевизну,
@@ -2367,6 +2439,11 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .trow .stage{display:none}
   .trow .stage-narrow{display:block}
   .trow .stage-narrow:empty{display:none}
+  /* Подсказки на телефоне нет, поэтому круг и возраст стоят тут словами после
+     слова этапа, а лента ложится рядом в свои 120 точек (вариант 3b макета,
+     замечание 4 приёмки). */
+  .trow .stage-narrow .act2{flex-direction:row;align-items:center;gap:var(--rowmgx)}
+  .trow .stage-narrow .act2 .seg{width:120px;min-width:0;flex:none}
   .trow .meta{grid-column:4;grid-row:1}
   /* Хвост прижат к правому краю строки и не переносится: правило одно на три
      раздела, и стоит оно рядом с раскладкой той строки, которой правит. */

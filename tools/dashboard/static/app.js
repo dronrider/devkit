@@ -791,7 +791,11 @@ function rowDot(project, row) {
     kind = "sd-talk" + (row.talk_state === WORK_BUSY ? " pulse" : "");
     tip = talkTip(row);
   } else if (STAGE_WAITS.includes(row.stage)) {
-    kind = "sd-out";
+    // Ожидание красит точку оранжевым цветом ожиданий словаря: слово этапа
+    // рядом называет работу, на которой задача встала, и сказать «стоит»
+    // остаётся точке (DK-1119, ход 3 макета). Серая точка тут не отличалась
+    // от строки, за которой не идёт ничего.
+    kind = "sd-wait" + (row.stage === "ждёт человека" ? " you" : "");
     tip = "ждём: " + row.stage + ", живой сессии за этапом нет по смыслу";
   } else {
     return null;
@@ -852,25 +856,88 @@ const STAGE_COLOR = {
   "проверка": "k-ver",
 };
 
-// Класс цвета строки этапа: брошенная сессия красит в красный поверх группы
-// этапа, ожидание идёт отдельным оранжевым, а у этапа работы с сессией цвет
-// берёт словарь STAGE_COLOR.
-function stageKindClass(row) {
-  if (row.stage_session === "сессии нет, брошена") return "k-gone";
-  if (STAGE_WAITS.includes(row.stage)) return "k-wait";
-  return STAGE_COLOR[row.stage] || "k-dev";
+// Ожидание это не этап, а остановка на этапе: слово обязано называть работу
+// («ожидание диспетчера это норма, а не этап; слово этапа должно называть
+// работу», слово человека после приёмки первого хода). У записи ожидания
+// taskctl отдаёт stage_at, этап работы, на котором задача встала, и слово
+// берётся оттуда. Записи старого формата stage_at не несут (цель на витке), и
+// им слово остаётся словом ожидания, пока это чинит DK-1193.
+function stageWaiting(row) {
+  return STAGE_WAITS.includes(row.stage);
+}
+function stageWord(row) {
+  if (stageWaiting(row) && row.stage_at) return row.stage_at;
+  return row.stage;
 }
 
-// Подсказка о сессии: слова остаются только в подсказке, приписки в тексте
-// строки и формы нет нигде (решение человека по DK-1119). У ожидания своей
-// сессии не бывает, и подсказка называет этап работы, на котором задача
-// встала, если он известен.
-function stageHint(row) {
-  if (row.stage_session) return row.stage_session;
-  if (STAGE_WAITS.includes(row.stage) && row.stage_at) {
-    return "ожидание на этапе «" + row.stage_at + "»";
+// Ждут ли человека: у строки в Check с приёмкой не за агентом решение за ним,
+// и это то же ожидание, что этап «ждёт человека». Прежде о нём говорил чип
+// «ждёт вашей приёмки», снятый вместе с чипом «агент проверит сам»: он
+// дублировал слово «проверка», а метка «вы» при слове говорит то же короче
+// (замечание 9 приёмки).
+function stageYours(row) {
+  if (row.stage === "ждёт человека") return true;
+  return row.sect === "check" && row.accept && row.accept !== "agent";
+}
+
+// Класс цвета строки этапа: брошенная сессия красит в красный поверх группы
+// этапа, ожидание человека оранжевым (цвет ожиданий словаря), машинное
+// ожидание оставляет цвет того этапа работы, на котором задача встала, а у
+// этапа работы с сессией цвет берёт словарь STAGE_COLOR.
+function stageKindClass(row) {
+  if (row.stage_session === "сессии нет, брошена") return "k-gone";
+  if (stageYours(row)) return "k-you";
+  if (stageWaiting(row) && !row.stage_at) return "k-wait";
+  return STAGE_COLOR[stageWord(row)] || "k-dev";
+}
+
+// Подсказка колонки хода: слово этапа, круг с возрастом, состояние сессии и
+// причина остановки. Видимым текстом слова о сессии не стоят нигде (решение
+// человека), а на ноутбуке в подсказку ушли ещё круг и возраст: в колонке они
+// съедали слово до обрубка «ж...» (замечание 4 приёмки). Собирается подсказка
+// из двух хвостов: через запятую идёт состояние сессии, через точку с запятой
+// причина остановки.
+function stageTail(row) {
+  const bits = [];
+  if (row.stage_session) bits.push(row.stage_session);
+  return bits.join(", ");
+}
+function stageNote(row) {
+  const notes = [];
+  if (stageWaiting(row)) {
+    if (!row.stage_at) notes.push("запись без этапа работы (DK-1193)");
+    else notes.push(row.stage + (row.block ? ": " + row.block : ""));
   }
-  return "";
+  if (stageYours(row) && row.stage !== "ждёт человека") {
+    notes.push("приёмка за вами" + (row.barrier ? ", барьер «" + row.barrier + "»" : ""));
+  }
+  for (const said of row.notes || []) {
+    if (/^код слит/.test(said) || /^без выката/.test(said)) notes.push(said);
+  }
+  return notes.join("; ");
+}
+function stageTip(row, now) {
+  const bits = [stageWord(row)];
+  const age = stageAgeText(row.stage_since, row.stage_round, now);
+  if (age) bits.push(age);
+  const tail = stageTail(row);
+  if (tail) bits.push(tail);
+  const note = stageNote(row);
+  return bits.join(", ") + (note ? "; " + note : "");
+}
+
+// Пометки при слове этапа: песочные часы у машинного ожидания (диспетчер ждёт
+// события или очереди, работа за задачей не идёт) и метка «вы» там, где ход
+// стоит за человеком. Слово при этом остаётся словом работы, и по строке видно
+// и то, какой этап, и то, что он встал.
+// На форме те же пометки крупнее (классы youf и hgf), в строке мельче (you и
+// hg): размер тут единственная разница, и знание о том, когда пометка нужна,
+// лежит в одном месте.
+function stageMarks(row, form) {
+  const out = [];
+  if (stageYours(row)) out.push(el("span", form ? "youf" : "you", "вы"));
+  else if (stageWaiting(row) && row.stage_at) out.push(el("span", form ? "hgf" : "hg"));
+  return out;
 }
 
 // Возраст этапа словами, с кругом впереди при повторном заходе. Тот же счёт,
@@ -886,8 +953,7 @@ function stageAgeText(since, round, now) {
 // а у ожидания на делении row.stage_at (макет 2a).
 function stageRail(row, cls) {
   const seg = el("span", "seg");
-  const at = STAGE_WAITS.includes(row.stage) ? row.stage_at : row.stage;
-  const idx = STAGE_ORDER.indexOf(at);
+  const idx = STAGE_ORDER.indexOf(stageWord(row));
   STAGE_ORDER.forEach((_, i) => {
     let mark = "";
     if (idx >= 0) {
@@ -912,8 +978,36 @@ function tickStageAges() {
     const round = Number(node.dataset.stageRound || "0");
     node.textContent = stageAgeText(since, round, now);
   });
+  // Возраст на ноутбуке стоит в подсказке колонки, и тикать он обязан там же:
+  // подсказка, собранная один раз при отрисовке, к вечеру называла бы утренние
+  // минуты. Слова подсказки лежат на самом узле, поэтому строку тут не надо
+  // собирать заново из задачи, которой у тика нет.
+  document.querySelectorAll(".stage-tip").forEach((box) => {
+    const bits = [box.dataset.stageHead || ""];
+    const age = stageAgeText(Number(box.dataset.stageSince),
+      Number(box.dataset.stageRound || "0"), now);
+    if (age) bits.push(age);
+    if (box.dataset.stageTail) bits.push(box.dataset.stageTail);
+    const note = box.dataset.stageNote;
+    box.title = bits.filter(Boolean).join(", ") + (note ? "; " + note : "");
+  });
 }
 pollEvery(60000, tickStageAges, true);
+
+// Подсказка колонки с памятью о своих словах: тик выше пересчитывает в ней
+// возраст, не спрашивая задачу заново.
+function stageTipNode(box, row) {
+  box.classList.add("stage-tip");
+  box.title = stageTip(row, Date.now());
+  box.dataset.stageHead = stageWord(row) || "";
+  box.dataset.stageTail = stageTail(row);
+  box.dataset.stageNote = stageNote(row);
+  if (row.stage_since) {
+    box.dataset.stageSince = String(row.stage_since);
+    box.dataset.stageRound = String(row.stage_round || 0);
+  }
+  return box;
+}
 
 // Возраст этапа с тикающим узлом: общий для колонки строки и шапки формы.
 function stageAgeNode(tag, row) {
@@ -935,14 +1029,16 @@ function stageColumn(row) {
   if (!row.stage) return null;
   const cls = stageKindClass(row);
   const live = row.stage_session === "сессия жива";
-  const box = el("span", "act2 " + cls + (live ? " live" : ""));
-  const hint = stageHint(row);
-  if (hint) box.title = hint;
+  const box = stageTipNode(el("span", "act2 " + cls + (live ? " live" : "")), row);
   const b = el("b");
-  // Слово этапа режется многоточием, а возраст нет: у ожидания слово длиннее
-  // этапов работы («ждёт человека» против «разработка»), и в узкой колонке
-  // обрубается оно, а не круг с возрастом, который короче и нужнее числом.
-  b.append(el("span", "w", row.stage), stageAgeNode("em", row));
+  // Слово этапа стоит целиком, а круг с возрастом на ноутбуке уходит в
+  // подсказку: в колонке они съедали слово, и от «ждёт события» оставалось
+  // «ж...» (замечание 4 приёмки). Узел возраста при этом стоит в разметке
+  // всегда, его показывает узкий экран: подсказки на телефоне нет, и там круг
+  // с возрастом читаются словами после слова этапа.
+  b.append(el("span", "w", stageWord(row)));
+  for (const mark of stageMarks(row)) b.append(mark);
+  b.append(stageAgeNode("em", row));
   box.append(b, stageRail(row, cls));
   return box;
 }
@@ -961,13 +1057,16 @@ function stageFormBlocks(row) {
   const big = el("span", "big");
   const dot = el("i");
   if (row.stage_session && row.stage_session.indexOf("молчит") >= 0) dot.className = "quiet";
-  const hint = stageHint(row);
+  const hint = stageTail(row) || stageNote(row);
   if (hint) dot.title = hint;
-  big.append(dot, document.createTextNode(row.stage));
-  header.append(big, stageAgeNode("span", row));
+  big.append(dot, document.createTextNode(stageWord(row)));
+  header.append(big);
+  // Метка «вы» и песочные часы те же, что в строке списка, только крупнее: на
+  // форме они стоят при слове, а причина остановки приходит подсказкой точки.
+  for (const mark of stageMarks(row, true)) header.append(mark);
+  header.append(stageAgeNode("span", row));
   const steps = el("div", "step2 " + cls);
-  const at = STAGE_WAITS.includes(row.stage) ? row.stage_at : row.stage;
-  const idx = STAGE_ORDER.indexOf(at);
+  const idx = STAGE_ORDER.indexOf(stageWord(row));
   STAGE_ORDER.forEach((name, i) => {
     let mark = "s";
     if (idx >= 0) {
@@ -1068,7 +1167,8 @@ function rowChips(project, row) {
   // а кончившуюся не говорит никто. Чип «сессии нет» отсюда снят, он занимал
   // место в каждой строке In progress и не звал ни к какому действию
   // (замечание пользователя).
-  if (/^Цель:/.test(row.title)) chips.push(el("span", "chip c-goal", "цель"));
+  // Чипа «цель» в строке нет: слово «Цель:» стоит первым в самом заголовке, и
+  // чип повторял его же, отнимая у заголовка место (замечание 9 приёмки).
   if (row.type && row.type !== "task") chips.push(el("span", "chip", row.type));
   if (row.p === "P0" || row.p === "P1") chips.push(el("span", "chip c-p1", row.p));
   if (row.cost && row.cost !== "-") chips.push(el("span", "chip", row.cost));
@@ -1097,8 +1197,9 @@ function rowChips(project, row) {
   // прокруткой (замечание пользователя про мобильный вид).
   if (row.fail) chips.push(withFull(el("span", "chip c-block cwhy", "провал: " + row.fail), row.fail));
   if (row.block) chips.push(withFull(el("span", "chip c-block cwhy", "блок: " + row.block), row.block));
-  const check = checkChip(row);
-  if (check) chips.push(check);
+  // Чипов «ждёт вашей приёмки» и «агент проверит сам» в строке нет: то же
+  // несёт колонка хода, где у проверки за человеком слово «проверка» стоит
+  // оранжевым с меткой «вы» (замечание 9 приёмки).
   // Взвод идёт последним: вопрос «стартует ли строка сама» задают уже после
   // того, как прочли, что это за строка.
   const arm = armChip(row);
@@ -1106,20 +1207,21 @@ function rowChips(project, row) {
   return chips;
 }
 
-// Чип проверенной строки говорит человеку, ждут ли его: у видов mixed и user
-// строка без него не закроется, у agent проверку закрывает прогон. Служебные
-// детали (код слит, без выката, сам вид словом) уходят в подсказку: на строке
-// они занимали место, отвечая не на тот вопрос (замечание пользователя).
-function checkChip(row) {
-  const notes = (row.notes || []).filter((n) => /^код слит/.test(n) || /^без выката/.test(n));
-  if (row.sect !== "check" && !notes.length) return null;
-  if (row.sect !== "check") return null;
-  const mine = row.accept !== "agent";
-  const chip = el("span", "chip " + (mine ? "c-wait" : "c-check"),
-    mine ? "ждёт вашей приёмки" : "агент проверит сам");
-  const bits = ["вид приёмки: " + (row.accept || "agent")].concat(notes);
+// Вид приёмки чипом на форме задачи: «mixed, глаза» это вид и барьер вместе,
+// они читаются одной парой слов. Чипы «ждёт вашей приёмки» и «агент проверит
+// сам» сняты и тут: они говорили о том же, о чём шапка этапа со словом
+// «проверка» и меткой «вы», и повторяли её длиннее (замечание 9 приёмки). В
+// строке списка вида приёмки нет вовсе: он свойство задачи, а не её хода, и
+// заголовку там нужнее место.
+function acceptChip(row) {
+  if (!row.accept) return null;
+  const said = row.accept + (row.barrier ? ", " + row.barrier : "");
+  const bits = ["вид приёмки: " + row.accept];
   if (row.barrier) bits.push("барьер: " + row.barrier);
-  return withTip(chip, bits.join(", ") + ".");
+  for (const note of row.notes || []) {
+    if (/^код слит/.test(note) || /^без выката/.test(note)) bits.push(note);
+  }
+  return withTip(el("span", "chip", said), bits.join(", ") + ".");
 }
 
 // Разбор ранга строки парами «имя, значение»: пять показателей по RANKING.md,
@@ -2107,7 +2209,7 @@ function renderRow(project, row, sect, opts) {
   // объяснение пришло подсказкой по наведению.
   const when = el("td", "twhen");
   if (row.moved) {
-    when.append(withTip(el("span", "stale dashed", row.moved),
+    when.append(withTip(el("span", "stale dashed", whenShort(row.moved)),
       whenTip(row.moved)));
   }
   tr.append(when);
@@ -2297,21 +2399,25 @@ const TBL_COLS = {
     // Место под собственную подпись колонка обязана иметь при любом отступе, а
     // лишнего держать не должна: первое меряет TestBoardTableLabelsNotCut,
     // второе TestBoardTableCellsNoDeadSpace.
-    { key: "id", label: "Номер", by: "номеру", first: "asc", w: 82 },
+    // Подпись колонки номера это «№», а не слово «Номер»: слово со значком
+    // сортировки требовало восьмидесяти точек, а сама колонка после сжатия
+    // держит шестьдесят восемь (замечание 5 приёмки про промежутки между
+    // колонками). Словами колонку называет подсказка кнопки сортировки.
+    { key: "id", label: "№", by: "номеру", first: "asc", w: 68 },
     { key: "title", label: "Задача", by: "названию", first: "asc", flex: true },
     // Колонка хода задачи (DK-1119, макет 2a): слово этапа, круг и возраст,
     // под ними лента из восьми делений. Своей сортировки у неё нет, как и у
     // хвоста с кнопками: порядок по этапу ничего бы не сказал стабильнее
     // ранга или даты правки.
-    { key: "stage", label: "", w: 150 },
+    { key: "stage", label: "", w: 112 },
     // Заголовок у ранга значком по той же причине, что у хода: замер показал,
     // что ширину колонки держит слово «Ранг» со значком направления (пятьдесят
     // четыре точки), а само содержимое двузначное число (тридцать). Колонка
     // читалась огромной при крошечном числе внутри, и человек это назвал.
     // Столбики говорят о величине оценки, сортировка и подсказка словами
     // остались на кнопке.
-    { key: "rank", label: "Ранг", ico: "i-rank", by: "рангу", first: "desc", w: 40 },
-    { key: "date", label: "Дата", by: "дате", first: "desc", w: 76 },
+    { key: "rank", label: "Ранг", ico: "i-rank", by: "рангу", first: "desc", w: 36 },
+    { key: "date", label: "Дата", by: "дате", first: "desc", w: 62 },
     // Колонка действий держит три кнопки значками, свои боковые отступы и
     // зазоры между ними: кнопку работы, кнопку разговора и три точки с
     // выбором подписки и уровня модели. Считается ширина по ним: тридцать
@@ -4113,6 +4219,20 @@ function foldSection(name) {
   return FOLD_SECTIONS.includes(said) || said.startsWith(FOLD_SECTION_PREFIX);
 }
 
+// Первая строка файла задачи это «# DK-1119: заголовок», и на экране она
+// стояла второй копией заголовка сразу под шапкой формы (замечание 7 приёмки).
+// В просмотре она не печатается, в правке текст остаётся целым: файл на диске
+// свой заголовок держит, и правят его там же.
+function mdDropTitle(text) {
+  const lines = String(text || "").split("\n");
+  let at = 0;
+  while (at < lines.length && !lines[at].trim()) at++;
+  if (at >= lines.length || !/^#\s+\S/.test(lines[at])) return String(text || "");
+  lines.splice(0, at + 1);
+  while (lines.length && !lines[0].trim()) lines.shift();
+  return lines.join("\n");
+}
+
 // Разрез файла на разделы по заголовкам второго уровня: шапка до первого
 // «## » остаётся куском без имени и не сворачивается никогда.
 function mdSections(text) {
@@ -4262,7 +4382,7 @@ function filePanel(project, id, detail, form, touch, edit, canMake) {
   const view = el("div", "fview");
   view.dataset.file = detail.file || "docs/tasks/" + id + ".md";
   const paint = () => {
-    if (String(form.text || "").trim()) view.replaceChildren(mdRenderSections(form.text));
+    if (String(form.text || "").trim()) view.replaceChildren(mdRenderSections(mdDropTitle(form.text)));
     else view.replaceChildren(el("div", "empty", "файл задачи пуст"));
   };
   paint();
@@ -4632,7 +4752,9 @@ function formPage(cfg) {
   // доски; у черновика заголовок это первая строка записи, и правят её в самом
   // тексте.
   const head = el("div", "thline");
-  if (cfg.num) head.append(el("span", "idbig", cfg.num));
+  // Номер встаёт в разметку ниже, вместе с полосой чипов: на телефоне место ему
+  // в панели кнопок, а на ноутбуке перед заголовком.
+  const numNode = cfg.num ? el("span", "idbig", cfg.num) : null;
   let title = null;
   if (has.title) {
     title = el("textarea", "tedit" + (cfg.titleTall ? " tbig" : ""));
@@ -4679,12 +4801,26 @@ function formPage(cfg) {
   // пользователя). Тогда они уезжают в строку названия, как на форме задачи, а
   // сама строка статуса в разметку не встаёт вовсе.
   const bareChips = !chips.children.length;
-  if (bareChips) {
-    modes.classList.add("thmodes");
-    head.append(modes);
-  } else {
-    chips.append(el("span", "gap"), modes);
+  if (!bareChips && numNode && narrowScreen()) {
+    // Телефон: номер уезжает влево в панель кнопок, где было пусто, а заголовок
+    // встаёт под ней своей строкой во всю ширину без отступа под номер
+    // (замечание 8 приёмки, вариант 3e макета). Раскладка выбирается один раз,
+    // при сборке экрана: смена ширины окна на телефоне это поворот, после
+    // которого экран рисуется заново.
+    const numbar = el("div", "tnumbar");
+    numbar.append(numNode, modes);
+    head.classList.add("tnarrow");
+    head.prepend(numbar);
     page.append(keyed(chips, cfg.key + "-chips"));
+  } else {
+    if (numNode) head.prepend(numNode);
+    if (bareChips) {
+      modes.classList.add("thmodes");
+      head.append(modes);
+    } else {
+      chips.append(el("span", "gap"), modes);
+      page.append(keyed(chips, cfg.key + "-chips"));
+    }
   }
   out.chips = chips;
 
@@ -4920,6 +5056,14 @@ function formPage(cfg) {
     fold.setAttribute("aria-expanded", "false");
     rtop.append(big, fold);
     const foldRank = () => {
+      // На ноутбуке блок стоит одной строкой в 32 точки, и разворачивать в нём
+      // нечего: полей правки в просмотре нет вовсе. «Развернуть» там открывает
+      // тот же редактор ранга, что и карандаш формы (замечание 6 приёмки). На
+      // телефоне кнопка по-прежнему разворачивает сам блок.
+      if (!narrowScreen() && !rank.classList.contains("redit")) {
+        setEdit(true);
+        return;
+      }
       const shut = rank.classList.toggle("rfolded");
       fold.textContent = shut ? "развернуть" : "свернуть";
       fold.setAttribute("aria-expanded", shut ? "false" : "true");
@@ -5156,7 +5300,7 @@ async function renderTask(project, works, id, pre) {
   // чипов, к типу с ценой.
   const stateChips = [];
   if (row.moved) {
-    stateChips.push(withTip(el("span", "stale dashed", row.moved), whenTip(row.moved)));
+    stateChips.push(withTip(el("span", "stale dashed", whenShort(row.moved)), whenTip(row.moved)));
   }
 
   // Закрытая задача открывается чтением тем же составом, что живая (DK-850):
@@ -5222,13 +5366,14 @@ async function renderTask(project, works, id, pre) {
   // мимо него (решение пользователя).
   const chips = [row.section ? el("span", "chip", row.section) : null,
     liveChip(work), waitChip(row), talkChip(row), forkChip(row)].filter(Boolean);
-  if (isGoal) chips.push(el("span", "chip c-goal", "цель"));
+  // Чипа «цель» нет и тут: слово «Цель:» стоит первым в заголовке над полосой
+  // (замечание 9 приёмки).
   const tail = [withTip(el("span", "chip dashed" +
     (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p), P_HINT)];
   if (row.fail) tail.push(withFull(el("span", "chip c-block cwhy", "провал: " + row.fail), row.fail));
   if (row.block) tail.push(withFull(el("span", "chip c-block cwhy", "блок: " + row.block), row.block));
-  const check = checkChip(row);
-  if (check) tail.push(check);
+  const accept = acceptChip(row);
+  if (accept) tail.push(accept);
   for (const chip of stateChips) tail.push(chip);
 
   const patchBody = () => {
@@ -5467,6 +5612,15 @@ function whenAgo(stamp, now) {
 // подсказка говорит по-русски при любой раскладке браузера, а
 // toLocaleDateString на английской машине отдавал бы «August 20, 2026» рядом с
 // русским «8 дней назад».
+// Дата в ячейке списка без века: «26-09-26» вместо «2026-09-26». Первые две
+// цифры года одинаковы у всех строк доски и ничего не различают, а колонке они
+// стоили восемнадцати точек ширины, которых не хватало заголовку (замечание 5
+// приёмки). Полная дата со временем и давностью остаётся в подсказке whenTip.
+function whenShort(mark) {
+  const said = String(mark || "");
+  return /^\d{4}-\d{2}-\d{2}/.test(said) ? said.slice(2, 10) : said;
+}
+
 function whenTip(mark, now) {
   const stamp = whenStamp(mark);
   if (!stamp) return "";

@@ -989,7 +989,7 @@ func TestStaticTaskTips(t *testing.T) {
 	}
 	for _, want := range []string{
 		`P_HINT)`,
-		`withTip(el("span", "stale dashed", row.moved)`,
+		`withTip(el("span", "stale dashed", whenShort(row.moved))`,
 		// Подсказка даты показывает саму дату точнее, а не рассказывает, что
 		// это за дата: объяснение стоит в заголовке колонки (замечание
 		// пользователя про «идиотскую подпись»).

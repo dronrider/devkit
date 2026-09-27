@@ -1067,8 +1067,16 @@ if (byClass(find(groups, "XR-4"), "sdot")) {
   if (!kinds({ id: "XR-9", run: "registry" }).includes("sd-out")) {
     fail("чужая сессия нарисована не серым: " + kinds({ id: "XR-9", run: "registry" }));
   }
-  if (!kinds({ id: "XR-9", stage: "ждёт человека" }).includes("sd-out")) {
-    fail("ожидание человека нарисовано не серым: " + kinds({ id: "XR-9", stage: "ждёт человека" }));
+  // Ожидание этапа красит точку оранжевым цветом ожиданий словаря, а ожидание
+  // человека вдобавок получает кольцо (DK-1119, ход 3 макета): серая точка тут
+  // не отличалась от строки, за которой не идёт ничего.
+  const human = kinds({ id: "XR-9", stage: "ждёт человека" });
+  if (!human.includes("sd-wait") || !human.includes("you")) {
+    fail("ожидание человека нарисовано не оранжевым с кольцом: " + human);
+  }
+  const event = kinds({ id: "XR-9", stage: "ждёт события" });
+  if (!event.includes("sd-wait") || event.includes("you")) {
+    fail("ожидание события нарисовано не оранжевым: " + event);
   }
   if (kinds({ id: "XR-9", run: "gone" })) fail("оборванный конвейер получил кружок");
   if (kinds({ id: "XR-9" })) fail("строка без работы получила кружок");

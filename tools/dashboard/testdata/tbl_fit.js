@@ -51,16 +51,19 @@ const CELLS = {
     id: `<td class="id"><span class="sdot sd-wait"></span><span data-fit="id">DK-517</span></td>`,
     title: `<td class="tt"><span class="cin"><span class="ttl">Команды доски зовутся голой командой без обвязки</span>` +
       `<span class="rchips"><span class="chip">M</span></span></span></td>`,
-    // Слово этапа режется многоточием как заголовок (DK-1119): длиннее
-    // этапов работы слово ожидания «ждёт человека», и мерить его нечем, как
-    // и растяжимую колонку названия. Круг с возрастом короче и держит место
-    // сам, тут и меряется худший случай: второй круг и двузначные часы.
-    stage: `<td class="stage"><span class="act2 k-rev"><b><span class="w">ждёт человека</span>` +
-      `<em data-fit="stage" data-alt="12 ч 34 мин|круг 2, 45 мин">25 мин</em></b>` +
+    // Слово этапа стоит целиком, и мерится тут самое длинное из них (DK-1119,
+    // ход 3): круг с возрастом на ноутбуке ушёл в подсказку колонки, а при
+    // слове остаётся пометка остановки (песочные часы или метка «вы»). Слово
+    // ожидания в колонку больше не приходит, его место занял этап работы, на
+    // котором задача встала.
+    stage: `<td class="stage"><span class="act2 k-rev"><b>` +
+      `<span class="w" data-fit="stage" data-alt="постановка|разработка">доработка</span>` +
+      `<span class="hg"></span></b>` +
       `<span class="seg"><i class="done"></i><i class="done"></i><i class="done"></i>` +
       `<i class="now"></i><i></i><i></i><i></i><i></i></span></span></td>`,
     rank: `<td class="rank"><button class="rsum" type="button" data-fit="rank">100</button></td>`,
-    date: `<td class="twhen"><span class="stale dashed" data-fit="date">2026-08-20</span></td>`,
+    // Дата в колонке идёт без века и моноширинным (DK-1119, замечание 5).
+    date: `<td class="twhen"><span class="stale dashed" data-fit="date">26-08-20</span></td>`,
     // Хвост строки это две кнопки значками: работа и разговор. Слов на них нет
     // вовсе, и мерить тут надо не обрубок подписи, а то, влезает ли сам ряд:
     // колонка стоит ровно по нему.

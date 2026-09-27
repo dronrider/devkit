@@ -7,6 +7,7 @@
 директории теста: файлами репозитория они не становятся, как и любая другая
 фикстура, изображающая чужую программу.
 """
+import glob
 import importlib
 import io
 import json
@@ -1439,6 +1440,47 @@ class TestWaitEvents(WaitStand):
     def test_no_event_waits_the_deadline(self):
         why, _ = self.held({"kind": "слита", "target": "DK-2", "until": stamp(2)}, lambda: None)
         self.assertEqual(why, task_run.WAIT_OVER)
+
+    def runs(self):
+        """Запись этапов задачи с диска. Кладёт её go-сторона в ~/.devkit/runs,
+        и стенд читает тот же файл, каким её читают дашборд и taskctl."""
+        found = glob.glob(os.path.join(self.root, ".devkit", "runs", "*.run"))
+        self.assertEqual(len(found), 1, found)
+        with open(found[0], encoding="utf-8") as f:
+            return [l for l in f.read().splitlines() if l.startswith("этап =")]
+
+    def order(self, kind, target):
+        """Отметка ожидания и этап записи руками утилиты, а не стенда: поля
+        отметки и вид этапа обязаны сойтись у писателя с закрывателем."""
+        p = subprocess.run(["agentctl", "wait", "DK-1", kind, target,
+                            "--until", "1m", "-C", self.root],
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+    def test_wait_end_closes_the_stage(self):
+        # Предмет DK-1193. Отметку ожидания кладёт agentctl wait, а этап «ждёт
+        # события» в записи задачи до этой правки не закрывал никто: у DK-920
+        # строка доски шесть часов говорила «ждёт события», пока шло ревью.
+        # Конец условия видит одна оболочка, и она же называет конец записи.
+        os.environ["HOME"] = self.root
+        p = subprocess.Popen(["sleep", "30"])
+        self.addCleanup(p.wait)
+        self.order("процесс", str(p.pid))
+        opened = self.runs()
+        self.assertEqual(len(opened), 1, opened)
+        self.assertIn("ждёт события", opened[0])
+        self.assertEqual(opened[0].split("|")[4].strip(), "", opened[0])
+
+        timer = threading.Timer(0.5, p.kill)
+        timer.start()
+        self.addCleanup(timer.cancel)
+        pipe = self.pipe()
+        self.assertEqual(pipe.held(1, "In progress"), task_run.WAIT_EVENT)
+
+        closed = self.runs()
+        self.assertEqual(len(closed), 1, closed)
+        self.assertNotEqual(closed[0].split("|")[4].strip(), "", closed[0])
+        self.assertIn("ожидание кончилось: " + task_run.WAIT_EVENT, closed[0])
 
 
 class TestWaitMark(unittest.TestCase):

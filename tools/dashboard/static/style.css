@@ -1164,7 +1164,12 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
   /* телефон: заголовок строки идёт своей строкой во всю ширину, чипы под ним.
      В одном ряду с ним чипы ширины не отдают, и от длинного названия остаётся
      столбик обрубков по букве */
-  .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:var(--rowmgy)}
+  /* Заголовок занимает всю ширину своей строчкой, а ход и чипы идут под ним
+     одной строчкой, ход впереди (вариант 3b макета, замечание 7 ревью): ряд с
+     переносом держит их вместе, пока хватает ширины. Колонкой они вставали
+     тремя строчками текста, и строка росла. */
+  .trow .tt>.cin{flex-direction:row;flex-wrap:wrap;align-items:center;
+    gap:var(--rowmgy) var(--rowmgx)}
   .trow .tt .ttl{white-space:normal;line-height:1.35;width:100%}
   .trow .tt .rchips{flex-wrap:wrap;max-width:100%}
   /* телефон: сумма ранга с пальцем в 44 пикселя */
@@ -2425,7 +2430,12 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .trow .rank{grid-column:2;grid-row:1;min-width:0}
   .trow .twhen{grid-column:3;grid-row:1;min-width:0;overflow:hidden}
   .trow .tt{grid-column:1 / -1;grid-row:2}
-  .trow .tt>.cin{flex-direction:column;align-items:flex-start;gap:var(--rowmgy)}
+  /* Заголовок занимает всю ширину своей строчкой, а ход и чипы идут под ним
+     одной строчкой, ход впереди (вариант 3b макета, замечание 7 ревью): ряд с
+     переносом держит их вместе, пока хватает ширины. Колонкой они вставали
+     тремя строчками текста, и строка росла. */
+  .trow .tt>.cin{flex-direction:row;flex-wrap:wrap;align-items:center;
+    gap:var(--rowmgy) var(--rowmgx)}
   /* Колонка хода на телефоне не отдельная третья строка, а копия внутри
      заголовка (DK-1119, «уже 600 точек колонка уходит второй строкой под
      заголовок, ранг остаётся в первой строке; третьей строки нет»): ранг не

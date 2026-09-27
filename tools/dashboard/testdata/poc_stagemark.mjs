@@ -53,6 +53,10 @@ const board = {
         stage_session: "сессия жива" }),
       // цель: чипа «цель» в строке нет, слово стоит первым в заголовке
       row("XR-9", { title: "Цель: конвейер не встаёт на ожидании" }),
+      // строка Check без записи этапа: сказать про приёмку и слитый код
+      // колонке хода нечем, и это уходит в подсказку номера
+      row("XR-10", { sect: "check", accept: "mixed", barrier: "глаза",
+        notes: ["код слит, выката не было"] }),
     ],
   }],
 };
@@ -200,6 +204,9 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   if (!said.includes("ждёт события")) {
     fail("записи без этапа работы нечего сказать, кроме слова ожидания: " + said);
   }
+  // Часы стоят у всякого машинного ожидания, и запись без этапа работы не
+  // исключение (вариант 3a макета, замечание 8 ревью).
+  if (!byClass(box, "hg")) fail("у записи без этапа работы нет песочных часов: " + said);
   if (box.title.indexOf("DK-1193") < 0) {
     fail("подсказка не называет причину, по которой этапа работы нет: " +
       JSON.stringify(box.title));
@@ -220,6 +227,20 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   const said = dump(tr);
   if (said.includes("ждёт вашей приёмки") || said.includes("агент проверит сам")) {
     fail("чип приёмки остался в строке: " + said);
+  }
+}
+
+// --- строка Check без записи этапа: приёмка и пометки в подсказке номера ---
+{
+  const tr = rowOf("XR-10");
+  if (byClass(byClass(tr, "stage"), "act2")) {
+    fail("у строки без записи этапа появилась колонка хода");
+  }
+  const num = byClass(tr, "id").children.find((n) => dump(n).trim() === "XR-10");
+  if (!num) fail("в ячейке номера нет самого номера: " + dump(byClass(tr, "id")));
+  const tip = String(num.title || "");
+  if (tip.indexOf("приёмка за вами") < 0 || tip.indexOf("код слит") < 0) {
+    fail("след слитого кода пропал из строки без записи этапа: " + JSON.stringify(tip));
   }
 }
 
@@ -266,6 +287,13 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   if (!dump(narrow).includes("разработка")) {
     fail("копия колонки хода в заголовке не называет этап: " + dump(narrow));
   }
+  // Ход стоит раньше чипов: на телефоне они идут одной строчкой, чипы за
+  // лентой (вариант 3b макета, замечание 7 ревью).
+  const at = tt.children.indexOf(narrow);
+  const chipsAt = tt.children.indexOf(byClass(tt, "rchips"));
+  if (chipsAt >= 0 && at > chipsAt) {
+    fail("копия колонки хода встала после чипов: " + JSON.stringify(tt.children.map(dump)));
+  }
 }
 
 // --- возраст тикает на клиенте: минутный опрос страницы пересчитывает текст ---
@@ -283,6 +311,21 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   const after = dump(ageNode);
   if (after === before) fail("минутный тик не тронул текст возраста: " + after);
   if (!after.includes("1 ч")) fail("минутный тик пересчитал возраст не туда: " + after);
+}
+
+// --- подсказка колонки тикает тем же обходом: на ноутбуке возраст виден там ---
+{
+  const one = timers.find((t) => t.ms === 60000 && t.fn);
+  const box = byClass(stageCell("XR-1"), "act2");
+  const was = String(box.title);
+  box.dataset.stageSince = String(Math.floor(Date.now() / 1000) - 7200);
+  one.fn();
+  await settle();
+  const now2 = String(box.title);
+  if (now2 === was) fail("минутный тик не тронул подсказку колонки: " + now2);
+  if (!now2.includes("2 ч") || !now2.includes("разработка") || !now2.includes("сессия жива")) {
+    fail("подсказка после тика собралась не та: " + JSON.stringify(now2));
+  }
 }
 
 // --- форма задачи брошенной строки: шапка, степпер и строка-подсказка ---

@@ -898,9 +898,7 @@ function stageKindClass(row) {
 // из двух хвостов: через запятую идёт состояние сессии, через точку с запятой
 // причина остановки.
 function stageTail(row) {
-  const bits = [];
-  if (row.stage_session) bits.push(row.stage_session);
-  return bits.join(", ");
+  return row.stage_session || "";
 }
 function stageNote(row) {
   const notes = [];
@@ -936,7 +934,7 @@ function stageTip(row, now) {
 function stageMarks(row, form) {
   const out = [];
   if (stageYours(row)) out.push(el("span", form ? "youf" : "you", "вы"));
-  else if (stageWaiting(row) && row.stage_at) out.push(el("span", form ? "hgf" : "hg"));
+  else if (stageWaiting(row)) out.push(el("span", form ? "hgf" : "hg"));
   return out;
 }
 
@@ -2165,10 +2163,31 @@ function renderRow(project, row, sect, opts) {
   const idc = el("td", "id");
   const dot = rowDot(project, row);
   if (dot) idc.append(dot);
-  idc.append(el("span", "", row.id));
+  const num = el("span", "", row.id);
+  // Приёмка и пометки строки Check («код слит», «без выката») приходят
+  // подсказкой номера, когда записи этапа у строки нет вовсе: колонка хода
+  // сказала бы их сама, но у пустой колонки узла нет, и след слитого кода
+  // пропадал из списка совсем (замечание 6 ревью).
+  const note = row.stage ? "" : stageNote(row);
+  idc.append(note ? withTip(num, note) : num);
   tr.append(idc);
   const { cell: ttc, box: tt } = tblCell("tt");
   tt.append(withFull(el("span", "ttl", row.title), row.title));
+  // Копия колонки хода для узкого экрана: тот же виджет второй раз, внутри
+  // заголовка (DK-1119, ход по замечанию ревью). Заголовок и так стоит
+  // второй строкой на телефоне, и колонка хода ложится в неё же следующей
+  // строчкой текста, а не заводит для себя третью строку раскладки (ранее
+  // стоявшую grid-row:3, ту же регрессию, которую раньше правило решение
+  // «Две строки, а не три»). На ноутбуке копия скрыта стилем, там ход стоит
+  // отдельной ячейкой между заголовком и рангом.
+  // Копия стоит раньше чипов: на телефоне ход и чипы идут одной строчкой, ход
+  // впереди, чипы за лентой (вариант 3b макета, замечание 7 ревью).
+  const stageNarrow = stageColumn(row);
+  if (stageNarrow) {
+    const wrap = el("span", "stage-narrow");
+    wrap.append(stageNarrow);
+    tt.append(wrap);
+  }
   // Чипы лежат своей коробкой, а не россыпью рядом с заголовком: на телефоне
   // они уходят под него отдельной строкой, и заголовку достаётся вся ширина.
   // Рядом с заголовком они ширины не отдавали, и от длинного названия
@@ -2178,19 +2197,6 @@ function renderRow(project, row, sect, opts) {
     const box = el("span", "rchips");
     for (const chip of chips) box.append(chip);
     tt.append(box);
-  }
-  // Копия колонки хода для узкого экрана: тот же виджет второй раз, внутри
-  // заголовка (DK-1119, ход по замечанию ревью). Заголовок и так стоит
-  // второй строкой на телефоне, и колонка хода ложится в неё же следующей
-  // строчкой текста, а не заводит для себя третью строку раскладки (ранее
-  // стоявшую grid-row:3, ту же регрессию, которую раньше правило решение
-  // «Две строки, а не три»). На ноутбуке копия скрыта стилем, там ход стоит
-  // отдельной ячейкой между заголовком и рангом.
-  const stageNarrow = stageColumn(row);
-  if (stageNarrow) {
-    const wrap = el("span", "stage-narrow");
-    wrap.append(stageNarrow);
-    tt.append(wrap);
   }
   tr.append(ttc);
   // Колонка хода между заголовком и рангом (DK-1119, макет 2a): пустая

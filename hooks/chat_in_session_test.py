@@ -53,14 +53,15 @@ class ChatStand:
         # задачи хозяина не имеет, и подхват не отдаёт его никому.
         self.bind(SID, "DK-1")
 
-    def bind(self, session, task, when="2026-08-17T11:00:00", tmux="-"):
+    def bind(self, session, task, when="2026-08-17T11:00:00", tmux="-", source="заказ"):
         """Строка реестра чатов ~/.devkit/sessions.log: её пишет хук старта
-        hooks/session-task.py, а свёртка берёт последнюю запись сессии."""
+        hooks/session-task.py, а свёртка берёт последнюю запись сессии.
+        Источник «снята» это запись taskctl move о конце работы по строке."""
         with open(os.path.join(self.home, ".devkit", "sessions.log"), "a",
                   encoding="utf-8") as f:
             f.write("%s сессия %s задача %s проект devkit дерево %s "
-                    "транскрипт - источник заказ повод startup tmux %s\n"
-                    % (when, session, task or "-", self.root, tmux))
+                    "транскрипт - источник %s повод startup tmux %s\n"
+                    % (when, session, task or "-", self.root, source, tmux))
 
     def said(self, name, *lines):
         with open(os.path.join(self.chat, name + self.SUFFIX), "w", encoding="utf-8") as f:
@@ -195,6 +196,39 @@ class ChatDeliveryTest(ChatCase):
         s.said("task-DK-1", "2026-08-17 12:00, из дашборда: стой, не туда")
         self.silent(s.run())
         self.assertIn("стой, не туда", s.read("task-DK-1"))
+
+    def test_released_work_loses_the_task_chat(self):
+        # Запись «снята» с названной задачей ведущей не делает (DK-1194):
+        # taskctl move кладёт её всякой сессии, что работала по строке, а
+        # прежде она читалась задачей, и сессия, только слившая DK-892,
+        # забирала реплику вместо подъёма головы.
+        s = self.stand()
+        s.bind(OTHER, "DK-1", when="2026-08-17T12:00:00", source="работа")
+        s.bind(OTHER, "DK-1", when="2026-08-17T12:30:00", source="снята")
+        s.said("task-DK-1", "2026-08-17 12:00, из дашборда: стой, не туда")
+        self.silent(s.run(session=OTHER))
+        self.assertIn("стой, не туда", s.read("task-DK-1"),
+                      "сессия со снятой привязкой забрала реплику задачи")
+
+    def test_release_of_one_task_keeps_the_other_chat(self):
+        # Снятие одной задачи соседних не трогает: ведущей остаётся ближайшая
+        # непогашенная запись, как в свёртке internal/sessions.
+        s = self.stand()
+        s.bind(OTHER, "DK-1", when="2026-08-17T11:00:00", source="работа")
+        s.bind(OTHER, "DK-9", when="2026-08-17T12:00:00", source="работа")
+        s.bind(OTHER, "DK-9", when="2026-08-17T12:30:00", source="снята")
+        s.said("task-DK-1", "2026-08-17 12:00, из дашборда: стой, не туда")
+        self.assertIn("стой, не туда", self.added(s.run(session=OTHER)))
+        self.assertEqual(s.read("task-DK-1"), "")
+
+    def test_released_row_conversation_keeps_the_task_chat(self):
+        # Разговор, открытый для строки (заказ), после стопа остаётся её
+        # разговором: человек продолжает в том же чате, и реплика панели идёт
+        # туда (третья приёмка DK-716).
+        s = self.stand()
+        s.bind(SID, "DK-1", when="2026-08-17T12:30:00", source="снята")
+        s.said("task-DK-1", "2026-08-17 12:00, из дашборда: стой, не туда")
+        self.assertIn("стой, не туда", self.added(s.run()))
 
     def test_task_worktree_session_takes_the_task_chat(self):
         # Боковое дерево задачи принадлежит ей целиком: разговор task-DK-1 в

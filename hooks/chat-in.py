@@ -462,13 +462,13 @@ def addressee(line):
 
 
 def bind_line(line):
-    """Сессия и её задача из строки реестра чатов либо (None, None). Разбор тот
-    же, что в internal/sessions: значение поля собирается до следующего
-    ключевого слова, поэтому пробел в пути дерева строку не рассыпает, а
-    непонятая строка пропускается, не роняя разбора."""
+    """Сессия, её задача и источник привязки из строки реестра чатов либо
+    (None, None, None). Разбор тот же, что в internal/sessions: значение поля
+    собирается до следующего ключевого слова, поэтому пробел в пути дерева
+    строку не рассыпает, а непонятая строка пропускается, не роняя разбора."""
     f = line.strip().split()
     if len(f) < 3 or f[1] != "сессия":
-        return None, None
+        return None, None, None
     vals, key = {}, ""
     for tok in f[1:]:
         if tok in BIND_KEYS and vals.get(key):
@@ -480,28 +480,53 @@ def bind_line(line):
         vals[key] = (vals.get(key, "") + " " + tok).strip()
     sid = vals.get("сессия", "").strip()
     if sid in ("", "-"):
-        return None, None
+        return None, None, None
     task = vals.get("задача", "").strip()
-    return sid, "" if task == "-" else task.upper()
+    source = vals.get("источник", "").strip()
+    return sid, "" if task == "-" else task.upper(), "" if source == "-" else source
+
+
+# Слово источника у записи о снятой привязке, то же, что sessions.ByOff.
+BIND_OFF = "снята"
+# Источники, которыми сессия становится разговором строки: «заказ» кладёт хук
+# подъёму по кнопке строки, «рука» ручка привязки. Запись «снята» с названной
+# задачей их не гасит, те же слова, что sessions.talkSrc.
+BIND_TALK = ("заказ", "рука")
 
 
 def session_task(session, home=None):
     """Задача, которую ведёт сессия по реестру чатов. Выигрывает последняя её
     запись: перепривязка и отвязка это обычные строки журнала, а не правка
-    файла, и снятая привязка приезжает пустой задачей (LLD DK-430, решение 1).
-    Реестра нет, значит сессия не ведёт ничего: молчание тут строже догадки."""
+    файла (LLD DK-430, решение 1). Отвязка читается так же, как в свёртке
+    internal/sessions (lead): «снята» с пустой задачей гасит всё, «снята» с
+    названной задачей гасит записи о работе по ней, а разговор, открытый для
+    строки («заказ», «рука»), остаётся её разговором, и ведущей становится
+    ближайшая непогашенная запись. Прежде запись «снята DK-N» читалась
+    задачей DK-N, и сессия, которая DK-N только двинула или слила, забирала
+    безадресную реплику этой задачи (DK-1194). Реестра нет, значит сессия не
+    ведёт ничего: молчание тут строже догадки."""
     home = os.path.expanduser("~") if home is None else home
     try:
         with open(os.path.join(home, SESS_LOG), encoding="utf-8", errors="replace") as f:
             rows = f.read().split("\n")
     except OSError:
         return ""
-    task = ""
+    recs = []
     for row in rows:
-        sid, got = bind_line(row)
+        sid, task, source = bind_line(row)
         if sid == session:
-            task = got
-    return task
+            recs.append((task, source))
+    off = set()
+    for task, source in reversed(recs):
+        if source == BIND_OFF:
+            if not task:
+                return ""
+            off.add(task)
+            continue
+        if task in off and source not in BIND_TALK:
+            continue
+        return task
+    return ""
 
 
 def tree_task(root):

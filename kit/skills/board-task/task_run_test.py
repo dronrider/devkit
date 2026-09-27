@@ -1527,14 +1527,41 @@ class TestWaitMark(unittest.TestCase):
         self.assertTrue(self.pipe.wait_mark())
         self.assertIsNone(self.pipe.wait_mark())
 
+    def shut(self):
+        """Подменённый закрыватель записи: настоящий зовёт agentctl, а тут
+        проверяется, что оболочка его позвала и с каким исходом."""
+        return unittest.mock.patch.object(self.pipe, "wait_shut")
+
     def test_old_mark_is_not_a_wait(self):
         # Отметка старше самой оболочки осталась от прошлого запуска конвейера.
         self.mark(since=-3600)
-        self.assertIsNone(self.pipe.wait_mark())
+        with self.shut():
+            self.assertIsNone(self.pipe.wait_mark())
 
     def test_expired_mark_is_not_a_wait(self):
         self.mark(until=-1)
-        self.assertIsNone(self.pipe.wait_mark())
+        with self.shut():
+            self.assertIsNone(self.pipe.wait_mark())
+
+    def test_expired_mark_closes_the_stage(self):
+        # Замечание ревью DK-1193. По отметке с истёкшим сроком оболочка не
+        # встаёт вовсе, а запись этапа под ней оставалась открытой и держала тот
+        # самый симптом: строка доски говорила «ждёт события» поверх работы.
+        self.mark(until=-1)
+        with self.shut() as shut:
+            self.assertIsNone(self.pipe.wait_mark())
+        shut.assert_called_once_with(task_run.WAIT_OVER)
+
+    def test_stale_mark_closes_the_stage_once(self):
+        # Отметка прошлого запуска лежит на диске и после закрытия записи, и
+        # второй проход по ней закрытия не повторяет.
+        self.mark(since=-3600)
+        with self.shut() as shut:
+            self.assertIsNone(self.pipe.wait_mark())
+        shut.assert_called_once_with(task_run.WAIT_STALE)
+        with self.shut() as again:
+            self.assertIsNone(self.pipe.wait_mark())
+        again.assert_not_called()
 
     def test_mark_over_the_cap_is_not_a_wait(self):
         # Потолок в два часа держит и agentctl wait, и оболочка. Запись,

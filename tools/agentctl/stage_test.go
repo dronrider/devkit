@@ -252,3 +252,79 @@ func TestCmdStageShowsLiveUnderClosed(t *testing.T) {
 		t.Fatalf("вывод живого под закрытым\nжду:\n%s\nвижу:\n%s", want, out)
 	}
 }
+
+// TestCmdStageDoneClosesWaitAndUncoversWork: предмет DK-1193. Отметку ожидания
+// кладёт `agentctl wait`, а закрывателя у неё не было вовсе: запись висела
+// открытой поверх идущей работы, и строка доски шесть часов говорила «ждёт
+// события», пока шло ревью (DK-920). Конец ожидания называет оболочка
+// конвейера флагом --done, и живым этапом снова становится работа под
+// ожиданием.
+func TestCmdStageDoneClosesWaitAndUncoversWork(t *testing.T) {
+	root := stageRoot(t)
+	home, main := stage.Home(), stage.MainRoot(root)
+	if err := stage.Open(home, main, "T-001", stage.Review, "субагент sonnet/high по определению review-high", stageAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdStage(root, "T-001", stage.WaitEvent, "agentctl wait процесс 4242", "", stageAt.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdStageDone(root, "T-001", stage.WaitEvent, "ожидание кончилось: событие", stageAt.Add(10*time.Minute))
+	if err != nil {
+		t.Fatalf("закрытие ожидания: %v", err)
+	}
+	if !strings.Contains(out, "закрыт в 14:40") {
+		t.Fatalf("конец ожидания не назван моментом:\n%s", out)
+	}
+	rec, err := stage.Load(stage.Path(home, main, "T-001"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Stages) != 2 {
+		t.Fatalf("закрытие завело лишний этап: %+v", rec.Stages)
+	}
+	wait := rec.Stages[1]
+	if !wait.Ended() || !wait.End.Equal(stageAt.Add(10*time.Minute)) {
+		t.Fatalf("ожидание осталось без конца: %+v", wait)
+	}
+	if !strings.Contains(wait.Note, "ожидание кончилось: событие") {
+		t.Fatalf("хвост записи не дописан: %q", wait.Note)
+	}
+	live, ok := rec.Live()
+	if !ok || live.Kind != stage.Review {
+		t.Fatalf("живым этапом после ожидания стоит не ревью: %+v, %v", live, ok)
+	}
+}
+
+// TestCmdStageDoneRefusesWorkKinds: у этапов работы закрыватель свой (хук
+// спавна, shipctl, run), и вторая рука дописала бы конец поверх записанного.
+func TestCmdStageDoneRefusesWorkKinds(t *testing.T) {
+	root := stageRoot(t)
+	_, err := cmdStageDone(root, "T-001", stage.Merge, "", stageAt)
+	if err == nil || !strings.Contains(err.Error(), "shipctl merge") {
+		t.Fatalf("закрытие слияния руками прошло: %v", err)
+	}
+}
+
+// TestCmdStageDoneNeedsKind: без вида закрывать нечего, и команда говорит это
+// отказом, а не закрывает последний этап какой попало.
+func TestCmdStageDoneNeedsKind(t *testing.T) {
+	root := stageRoot(t)
+	_, err := cmdStageDone(root, "T-001", "", "", stageAt)
+	if err == nil || !strings.Contains(err.Error(), "--done") {
+		t.Fatalf("закрытие без вида прошло: %v", err)
+	}
+}
+
+// TestCmdStageDoneOnEmptyRecordSaysSo: оболочка зовёт закрытие на каждом исходе
+// ожидания, а пакет между тем мог уехать в файл задачи сменой статуса.
+// Закрывать тогда нечего, и это не отказ.
+func TestCmdStageDoneOnEmptyRecordSaysSo(t *testing.T) {
+	root := stageRoot(t)
+	out, err := cmdStageDone(root, "T-404", stage.WaitEvent, "", stageAt)
+	if err != nil {
+		t.Fatalf("закрытие пустой записи отказало: %v", err)
+	}
+	if !strings.Contains(out, "закрывать нечего") {
+		t.Fatalf("пустая запись отвечает не словами:\n%s", out)
+	}
+}

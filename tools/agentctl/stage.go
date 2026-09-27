@@ -55,6 +55,38 @@ func cmdStage(root, id, kind, note, by string, now time.Time) (string, error) {
 	return fmt.Sprintf("%s: этап %s с %s, запись %s", id, kind, now.Format("15:04"), stage.Path(home, main, id)), nil
 }
 
+// cmdStageDone закрывает живой этап названного вида: ставит ему конец и
+// дописывает хвост к тексту записи. Ожиданию конца до DK-1193 не ставил никто.
+// Отметку ожидания кладёт `agentctl wait` для оболочки конвейера, а момент
+// прихода события или срока видит одна оболочка, и без её вызова запись висела
+// открытой поверх идущей работы: у DK-920 строка доски шесть часов говорила
+// «ждёт события», пока шло ревью. Оболочка зовёт закрытие тем же способом, что
+// и проверку условия (`agentctl wait --check`), а вид называет словом словаря.
+//
+// Виды закрываются те же, что ставятся руками: у этапов работы закрыватель
+// свой (хук спавна, shipctl, run), и вторая рука дописала бы конец поверх
+// записанного. Незакрытого этапа этого вида в записи нет, значит закрывать
+// нечего, и это не ошибка: оболочка зовёт закрытие на каждом исходе ожидания, а
+// пакет между тем мог уехать в файл задачи сменой статуса.
+func cmdStageDone(root, id, kind, tail string, now time.Time) (string, error) {
+	if kind == "" {
+		return "", fmt.Errorf("--done закрывает этап названного вида: agentctl stage %s «%s» --done", id, stage.WaitEvent)
+	}
+	if err := stageByHand(kind); err != nil {
+		return "", err
+	}
+	main := stage.MainRoot(root)
+	home := stage.Home()
+	closed, err := stage.Close(home, main, id, kind, now, tail)
+	if err != nil {
+		return "", err
+	}
+	if !closed {
+		return fmt.Sprintf("%s: незакрытого этапа %s в записи нет, закрывать нечего", id, kind), nil
+	}
+	return fmt.Sprintf("%s: этап %s закрыт в %s, запись %s", id, kind, now.Format("15:04"), stage.Path(home, main, id)), nil
+}
+
 // handKinds это виды, которые ставятся руками: проверка и три ожидания.
 var handKinds = []string{stage.Verify, stage.WaitHuman, stage.WaitEvent, stage.WaitQueue}
 

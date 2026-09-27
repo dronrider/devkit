@@ -219,3 +219,58 @@ func TestWaitOpensEventStage(t *testing.T) {
 		t.Fatalf("начало ожидания %v, ждали %v", live.Start, waitNow())
 	}
 }
+
+// TestWaitClosesPreviousEventStage: второй заказ по той же строке кладёт вторую
+// запись того же вида, а закрытие по концу условия находит только последнюю.
+// Первая оставалась без конца, и строка снова говорила «ждёт события» кругом
+// вторым (замечание ревью DK-1193). Прежнее ожидание закрывается там же, где
+// кладётся новая отметка, и незакрытым в записи остаётся одно.
+func TestWaitClosesPreviousEventStage(t *testing.T) {
+	home := waitHome(t)
+	root := writeBoard(t)
+	dir := t.TempDir()
+	env := waitEnv(map[string]string{waitDirEnv: dir})
+	first := waitNow()
+	second := first.Add(5 * time.Minute)
+	if _, err := cmdWait(root, "T-001", waitTimer, "", "10m", "", env, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdWait(root, "T-001", waitClean, root, "10m", "", env, second); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := stage.Load(stage.Path(home, stage.MainRoot(root), "T-001"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Stages) != 2 {
+		t.Fatalf("этапов в записи %d, ждал два: %+v", len(rec.Stages), rec.Stages)
+	}
+	open := 0
+	for _, s := range rec.Stages {
+		if !s.Ended() {
+			open++
+		}
+	}
+	if open != 1 {
+		t.Fatalf("незакрытых ожиданий %d, ждал одно: %+v", open, rec.Stages)
+	}
+	prev := rec.Stages[0]
+	if !prev.Ended() || !prev.End.Equal(second) {
+		t.Fatalf("прежнее ожидание не закрыто моментом нового: %+v", prev)
+	}
+	if !strings.Contains(prev.Note, "заказ сменился на "+waitClean) {
+		t.Fatalf("хвост прежнего ожидания не назвал новый заказ: %q", prev.Note)
+	}
+	// Закрытие по концу условия снимает последнее, и живого ожидания у записи
+	// не остаётся вовсе.
+	if _, err := cmdStageDone(root, "T-001", stage.WaitEvent, "ожидание кончилось: событие", second.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	rec, err = stage.Load(stage.Path(home, stage.MainRoot(root), "T-001"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live, ok := rec.Live(); ok {
+		t.Fatalf("после закрытия живым остался этап %+v", live)
+	}
+}

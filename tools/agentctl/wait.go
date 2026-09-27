@@ -424,7 +424,14 @@ func cmdWait(root, id, kind, target, until, note string, env func(string) string
 	if target != "" {
 		what += " " + target
 	}
-	stage.Open(stage.Home(), stage.MainRoot(root), id, stage.WaitEvent, "agentctl wait "+what, now)
+	home, main := stage.Home(), stage.MainRoot(root)
+	// Прежнее ожидание закрывается тут же, раньше нового. Второй заказ по той
+	// же строке иначе кладёт вторую запись того же вида, а закрытие по концу
+	// условия находит только последнюю: первая остаётся без конца и держит
+	// строку на слове «ждёт события» кругом вторым (DK-1193). Своего условия у
+	// прежнего заказа больше нет, и его конец это момент нового.
+	stage.Close(home, main, id, stage.WaitEvent, now, "заказ сменился на "+what)
+	stage.Open(home, main, id, stage.WaitEvent, "agentctl wait "+what, now)
 	return waitSaid(m, file), nil
 }
 

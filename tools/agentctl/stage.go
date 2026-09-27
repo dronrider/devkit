@@ -33,7 +33,7 @@ func cmdStage(root, id, kind, note, by string, now time.Time) (string, error) {
 	if kind == "" {
 		return stageShow(home, main, id)
 	}
-	if err := stageByHand(kind); err != nil {
+	if err := stageByHand(kind, openDeed); err != nil {
 		return "", err
 	}
 	if kind == stage.Verify && by == "" {
@@ -72,7 +72,7 @@ func cmdStageDone(root, id, kind, tail string, now time.Time) (string, error) {
 	if kind == "" {
 		return "", fmt.Errorf("--done закрывает этап названного вида: agentctl stage %s «%s» --done", id, stage.WaitEvent)
 	}
-	if err := stageByHand(kind); err != nil {
+	if err := stageByHand(kind, closeDeed); err != nil {
 		return "", err
 	}
 	main := stage.MainRoot(root)
@@ -102,17 +102,28 @@ var stageWriters = map[string]string{
 	stage.Deploy: "shipctl ship",
 }
 
+// handDeed это слова действия в отказе: чем писатель занят с этапом, чего с
+// ним нельзя руками и что руками можно. Виды и писатели у открытия с закрытием
+// одни, а слова разные, и склеивать их в одно «отмечается» значило бы говорить
+// про отметку там, где закрывали.
+type handDeed struct{ writer, single, plural string }
+
+var (
+	openDeed  = handDeed{"ставит", "отмечается", "ставятся"}
+	closeDeed = handDeed{"закрывает", "закрывается", "закрываются"}
+)
+
 // stageByHand отбивает вид, который руками не ставится. Незнакомое слово и
 // слово прежнего словаря отбивает сам stage.Open, тут только этапы, у которых
 // есть свой писатель.
-func stageByHand(kind string) error {
+func stageByHand(kind string, d handDeed) error {
 	for _, k := range handKinds {
 		if k == kind {
 			return nil
 		}
 	}
 	if who, ok := stageWriters[kind]; ok {
-		return fmt.Errorf("этап %s ставит %s, руками он не отмечается; руками ставятся: %s", kind, who, strings.Join(handKinds, ", "))
+		return fmt.Errorf("этап %s %s %s, руками он не %s; руками %s: %s", kind, d.writer, who, d.single, d.plural, strings.Join(handKinds, ", "))
 	}
 	if stage.Legacy(kind) {
 		return fmt.Errorf("вид %q остался в прежнем словаре, ожидание пишется одним из: %s", kind, strings.Join(handKinds[1:], ", "))

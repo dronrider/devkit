@@ -303,6 +303,10 @@ func TestCmdStageDoneRefusesWorkKinds(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "shipctl merge") {
 		t.Fatalf("закрытие слияния руками прошло: %v", err)
 	}
+	// Отказ говорит про закрытие, а не про отметку: закрывали, а не отмечали.
+	if !strings.Contains(err.Error(), "руками он не закрывается") {
+		t.Fatalf("отказ закрытия говорит не про закрытие: %v", err)
+	}
 }
 
 // TestCmdStageDoneNeedsKind: без вида закрывать нечего, и команда говорит это

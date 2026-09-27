@@ -345,3 +345,42 @@ func TestWaitStagesHaveNoSessionTail(t *testing.T) {
 		t.Fatalf("ожидание названо брошенным или старым словом:\n%s", out)
 	}
 }
+
+// TestClosedWaitUncoversWorkInList: предмет DK-1193. Ожидание ложится поверх
+// незакрытой работы, и пока у записи ожидания не было конца, строка доски
+// говорила «ждёт события» шесть часов идущего ревью (DK-920). Конец ожидания
+// называет оболочка конвейера (`agentctl stage <ID> --done`), и живым этапом
+// строки снова становится ревью под ним. У настоящего ожидания, которое ещё
+// идёт, слово ожидания остаётся.
+func TestClosedWaitUncoversWorkInList(t *testing.T) {
+	root, home := stageBoard(t)
+	main := stage.MainRoot(root)
+	openAs(t, home, main, "XR-020", stage.WaitEvent, "s-live", stageNow.Add(-6*time.Minute))
+
+	out, err := cmdList(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "  этап: ждёт события, 6 минут") {
+		t.Fatalf("идущее ожидание не названо:\n%s", out)
+	}
+
+	closed, err := stage.Close(home, main, "XR-020", stage.WaitEvent, stageNow.Add(-time.Minute), "ожидание кончилось: событие")
+	if err != nil || !closed {
+		t.Fatalf("ожидание не закрылось: %v, %v", closed, err)
+	}
+	out, err = cmdList(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "ждёт события") {
+		t.Fatalf("закрытое ожидание осталось словом строки:\n%s", out)
+	}
+	if !strings.Contains(out, "  этап: ревью, круг 2, 12 минут, сессия жива") {
+		t.Fatalf("под закрытым ожиданием не открылось ревью:\n%s", out)
+	}
+	// У соседки ожидание идёт, и её слово не трогается.
+	if !strings.Contains(out, "  этап: ждёт человека, 3 часа") {
+		t.Fatalf("настоящее ожидание соседки пропало:\n%s", out)
+	}
+}

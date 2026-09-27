@@ -157,3 +157,30 @@ func TestStopsBadSince(t *testing.T) {
 		t.Fatal("ожидал отказ на неразборчивой дате")
 	}
 }
+
+// TestStopsCountsClosedWaitToItsEnd: предмет DK-1193. Живая запись остановки
+// считалась до текущей минуты, потому что конца у записи ожидания не было ни у
+// одного писателя. Ожидание с концом считается до конца, и сводка простоя
+// перестаёт расти сама собой.
+func TestStopsCountsClosedWaitToItsEnd(t *testing.T) {
+	root := setupStops(t)
+	fixedNow := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	was := timeNow
+	timeNow = func() time.Time { return fixedNow }
+	defer func() { timeNow = was }()
+
+	home := t.TempDir()
+	start := fixedNow.Add(-6 * time.Hour)
+	s := stage.Stage{Kind: stage.WaitHuman, Start: start, End: start.Add(2 * time.Hour),
+		Note: "блок: автор: ждём ответа ревьюера"}
+	if err := stage.Put(home, stage.MainRoot(root), "DK-906", s); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdStops(root, "2026-09-01", stage.Dir(home))
+	if err != nil {
+		t.Fatalf("stops: %v", err)
+	}
+	if !strings.Contains(out, "автор: 1 (100.0%), медиана простоя 2.0 ч") {
+		t.Fatalf("простой считается не до конца ожидания:\n%s", out)
+	}
+}

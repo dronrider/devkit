@@ -174,3 +174,56 @@ func TestCloseFlushesStagesBeforeArchive(t *testing.T) {
 		t.Fatalf("этап ожидания не доехал до архивного файла задачи:\n%s", data)
 	}
 }
+
+// TestUnparkEndsWaitStage: второй писатель вида «ждёт события» это парковка в
+// Blocked с разрядом слияния либо закрытия соседа. Конец её записи ставит тот
+// же переход статуса, которым парковку и снимают: пакет уезжает в «Ход работы»
+// до открытия нового этапа, и ожидание получает концом момент снятия (развилка
+// «парковка» DK-1193). Строка доски после подъёма про ожидание уже не говорит.
+func TestUnparkEndsWaitStage(t *testing.T) {
+	stageHome(t)
+	root := setup(t)
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "слияние: XR-005", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	path := stage.Path(stage.Home(), stage.MainRoot(root), "XR-004")
+	rec, err := stage.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, ok := rec.Live()
+	if !ok || live.Kind != stage.WaitEvent {
+		t.Fatalf("парковка не открыла ожидание события: %+v, %v", live, ok)
+	}
+
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("запись после снятия парковки осталась: %v", err)
+	}
+	data, err := os.ReadFile(taskFilePath(root, "XR-004"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, ln := range strings.Split(string(data), "\n") {
+		s, _, ok := stage.ParseLine(ln)
+		if ok && s.Kind == stage.WaitEvent {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("ожидание не легло строкой «Хода работы»:\n%s", data)
+	}
+	out, err := cmdList(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "ждёт события") {
+		t.Fatalf("снятая парковка осталась словом строки:\n%s", out)
+	}
+}

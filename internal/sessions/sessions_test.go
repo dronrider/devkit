@@ -96,6 +96,84 @@ func TestLeadsForgetsTheUnbound(t *testing.T) {
 	}
 }
 
+// srcLine это строка реестра с названным источником: записи «работа» и
+// «снята» кладут утилиты доски, и у них нет ни транскрипта, ни имени tmux.
+func srcLine(when, sid, task, source string) string {
+	return fmt.Sprintf("%s сессия %s задача %s проект - дерево /Users/r/projects/devkit транскрипт - "+
+		"источник %s повод taskctl move %s tmux - панель - носитель -\n", when, sid, task, source, task)
+}
+
+// Запись «снята» с названной задачей ведущей не делает. Живой случай DK-1194:
+// сессия слила DK-892, `taskctl close` положил ей «снята DK-892», а свёртка
+// взяла запись целиком, с задачей в поле, и реплика человека в чат DK-892 ушла
+// этой сессии вместо подъёма головы.
+func TestLastSkipsTheReleasedTask(t *testing.T) {
+	binds := Parse([]byte(
+		srcLine("2026-09-26T10:00:00", "aaa-1", "DK-892", ByTree) +
+			srcLine("2026-09-26T11:00:00", "aaa-1", "DK-892", BySrc) +
+			srcLine("2026-09-26T12:00:00", "aaa-1", "DK-892", ByOff)))
+	rec := binds["aaa-1"]
+	if rec.Task != "" || rec.Source != ByOff {
+		t.Fatalf("снятая задача осталась ведущей: %+v", rec)
+	}
+	if rec.Time != "2026-09-26T12:00:00" || rec.Tree != "/Users/r/projects/devkit" {
+		t.Fatalf("поля не задачные разъехались: %+v", rec)
+	}
+	if sid, _ := binds.Leads("DK-892"); sid != "" {
+		t.Fatalf("реестр назвал задаче сессию со снятой привязкой: %q", sid)
+	}
+}
+
+// Разговор, открытый для строки (источник «заказ»), после «снята» с её номером
+// остаётся её разговором: стоп со строки кончает работу, а человек продолжает
+// в том же чате, и строка обязана о нём говорить (третья приёмка DK-716).
+// Работой такая сессия не считается, это решает Works.
+func TestLastKeepsTheRowsConversationAfterRelease(t *testing.T) {
+	data := []byte(
+		line("2026-09-26T10:00:00", "aaa-1", "DK-892") +
+			srcLine("2026-09-26T11:00:00", "aaa-1", "DK-892", BySrc) +
+			srcLine("2026-09-26T12:00:00", "aaa-1", "DK-892", ByOff))
+	rec := Parse(data)["aaa-1"]
+	if rec.Task != "DK-892" || rec.Source != ByOrder {
+		t.Fatalf("разговор строки потерял её после стопа: %+v", rec)
+	}
+	if got := Works(All(data)["aaa-1"]); len(got) != 0 {
+		t.Fatalf("снятая работа осталась работой: %v", got)
+	}
+}
+
+// Снятие одной задачи соседних не трогает, как у Works и Touched: ведущей
+// становится ближайшая прежняя запись про другую задачу, источник любой.
+// Иначе чужой `taskctl move` по одной строке отнимал бы у разговора его
+// собственную привязку.
+func TestLastFallsBackToTheNextLiveTask(t *testing.T) {
+	binds := Parse([]byte(
+		line("2026-09-26T10:00:00", "aaa-1", "DK-1177") +
+			srcLine("2026-09-26T11:00:00", "aaa-1", "DK-892", BySrc) +
+			srcLine("2026-09-26T12:00:00", "aaa-1", "DK-892", ByOff)))
+	rec := binds["aaa-1"]
+	if rec.Task != "DK-1177" || rec.Source != ByOrder {
+		t.Fatalf("прежняя привязка не вернулась: %+v", rec)
+	}
+	if sid, _ := binds.Leads("DK-1177"); sid != "aaa-1" {
+		t.Fatalf("ведущая сессия DK-1177: %q", sid)
+	}
+}
+
+// Сессия без задачи при рождении (чат доски в главном дереве) после снятия
+// единственной работы остаётся свободной, а не снятой: пустая запись старта
+// это не отвязка, и хвост бокового дерева вправе назвать задачу.
+func TestLastReleasedWorkLeavesTheSessionFree(t *testing.T) {
+	binds := Parse([]byte(
+		"2026-09-26T10:00:00 сессия aaa-1 задача - проект devkit дерево /Users/r/projects/devkit транскрипт - источник - повод startup tmux chat-3\n" +
+			srcLine("2026-09-26T11:00:00", "aaa-1", "DK-892", BySrc) +
+			srcLine("2026-09-26T12:00:00", "aaa-1", "DK-892", ByOff)))
+	rec := binds["aaa-1"]
+	if rec.Task != "" || rec.Source != "" {
+		t.Fatalf("свободная сессия прочитана иначе: %+v", rec)
+	}
+}
+
 // Реестра нет вовсе: на машине без хука старта это пустая привязка, а не отказ.
 func TestLoadWithoutRegistry(t *testing.T) {
 	if binds := Load(t.TempDir()); len(binds) != 0 {

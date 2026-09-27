@@ -3147,6 +3147,32 @@ func TestTaskMessageRaisesDespiteNeighbourTouch(t *testing.T) {
 	}
 }
 
+// Снятая привязка за ведущую не сходит (DK-1194). Живой случай: сессия
+// груминга двинула DK-892 в Check, `taskctl move` положил ей «снята DK-892»,
+// и taskHead нашёл в ней ведущий разговор, потому что свёртка реестра брала
+// запись целиком, с задачей в поле. Ручка реплику приняла, а головы не
+// подняла и недоставленной её не назвала.
+func TestTaskMessageRaisesDespiteReleasedBind(t *testing.T) {
+	e, c, tmuxLog := replyEnv(t)
+	now := time.Now()
+	writeSession(t, e.home, e.proj, "", "cccc-3333", plainTalk, now)
+	writeBinds(t, e.home,
+		bindRecord(e.home, now.Add(-time.Hour).Format(bindStamp), "cccc-3333", "XR-9", "работа"),
+		bindRecord(e.home, now.Add(-time.Minute).Format(bindStamp), "cccc-3333", "XR-9", bindOff))
+	if head := e.s.taskHead(e.proj, "XR-9"); head != "" {
+		t.Fatalf("сессия со снятой привязкой названа ведущей: %q", head)
+	}
+
+	resp := postTaskMessage(t, c, e, "XR-9", "что со строкой")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("отправка: %d %s", resp.StatusCode, text)
+	}
+	if got := readFile(t, tmuxLog); !strings.Contains(got, "new-session -d -s task-XR-9") {
+		t.Fatalf("снятая привязка сошла за ведущую, голова не поднята: %q", got)
+	}
+}
+
 // Ведущую сессию подъём не трогает: реплику она прочитает подхватом сама, и
 // вторая голова по задаче встала бы вторым собеседником в том же чате.
 func TestTaskMessageKeepsQuietUnderLeadSession(t *testing.T) {

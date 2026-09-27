@@ -197,6 +197,35 @@ func TestBindTaskUnbindStopsGuessing(t *testing.T) {
 	}
 }
 
+// Запись «снята» с названной задачей ведущей не делает (DK-1194): её кладёт
+// `taskctl move` всякой сессии, что работала по строке, и свёртка прежде брала
+// её целиком, с задачей в поле. Живая сессия груминга числилась ведущей DK-892,
+// реплика человека уходила ей, а голова строке не поднималась. Снятая задача не
+// возвращается и хвостом бокового дерева, как у workTasks.
+func TestBindTaskReleasedTaskIsNotLead(t *testing.T) {
+	binds := parseBinds([]byte(
+		bindRecord(noHome, "2026-09-26T10:00:00", "aaa-1", "DK-892", bindTree) +
+			bindRecord(noHome, "2026-09-26T11:00:00", "aaa-1", "DK-892", "работа") +
+			bindRecord(noHome, "2026-09-26T12:00:00", "aaa-1", "DK-892", bindOff)))
+	task, note, bound := bindTask(binds, "aaa-1", "dk-892", sessionHead{Named: "DK-892"})
+	if task != "" || bound != "" || note != offNote {
+		t.Fatalf("снятая задача осталась ведущей: %q %q %q", task, note, bound)
+	}
+}
+
+// Снятие одной задачи соседних не трогает: ведущей остаётся ближайшая прежняя
+// запись, и чужой `taskctl move` по одной строке разговору привязку не портит.
+func TestBindTaskReleaseKeepsTheNeighbourTask(t *testing.T) {
+	binds := parseBinds([]byte(
+		bindRecord(noHome, "2026-09-26T10:00:00", "aaa-1", "DK-1177", bindOrder) +
+			bindRecord(noHome, "2026-09-26T11:00:00", "aaa-1", "DK-892", "работа") +
+			bindRecord(noHome, "2026-09-26T12:00:00", "aaa-1", "DK-892", bindOff)))
+	task, note, bound := bindTask(binds, "aaa-1", "", sessionHead{})
+	if task != "DK-1177" || note != orderNote || bound != boundLead {
+		t.Fatalf("соседняя привязка потерялась: %q %q %q", task, note, bound)
+	}
+}
+
 // Сессия без задачи, записанная хуком (чат доски), это не отвязка: отвязку
 // несёт только слово bindOff, а пустая запись оставляет право назвать задачу
 // хвосту бокового дерева.
@@ -471,7 +500,7 @@ func TestLaunchEnvSameForEveryOrder(t *testing.T) {
 		// Конвейеру окружение едет приставкой заказа taskhead (DK-935), и
 		// приставка эта та же сборка с меткой печатного режима на хвосте.
 		"конвейер": s.headlessEnv("XR-7", "task-XR-7", false),
-		"разбор": groomCmd(env, "разбери XR-7", nil, "opus", ""),
+		"разбор":   groomCmd(env, "разбери XR-7", nil, "opus", ""),
 	}
 	for name, cmd := range orders {
 		if !strings.HasPrefix(cmd, env) {

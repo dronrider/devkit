@@ -60,6 +60,11 @@ type Bind struct {
 	// devkit-dk-1177 у сессии с записью «снята DK-892» остаётся признаком
 	// ведущего, а дерево devkit-dk-892 нет, как у workTasks дашборда (DK-1194).
 	Released []string
+	// ReleasedAll говорит, что привязку сессии снимали целиком: запись «снята»
+	// с пустой задачей. Свёртка теряет её, как только следом ляжет запись о
+	// работе по соседней строке, а спросить об этом надо и тогда: человек
+	// сказал «это не работа задачи», и дерево такой сессии её не возвращает.
+	ReleasedAll bool
 }
 
 // keys это ключевые слова полей строки реестра в порядке записи
@@ -377,6 +382,12 @@ func Last(recs []Bind) Bind {
 	}
 	b.Task, b.Source = lead(recs)
 	b.Released = released(recs)
+	for _, r := range recs {
+		if r.Source == ByOff && r.Task == "" {
+			b.ReleasedAll = true
+			break
+		}
+	}
 	return b
 }
 
@@ -393,6 +404,15 @@ func released(recs []Bind) []string {
 		out = append(out, r.Task)
 	}
 	return out
+}
+
+// Off отвечает свёрткой на тот же вопрос, что Off по записям: снята ли
+// привязка сессии к задаче. Спрашивают там, где записей под рукой нет, а
+// свёртка есть: дашборд носит одну запись на сессию и критерий хозяина
+// разговора считает по ней (headTasks в tools/dashboard). Ответы двух Off
+// обязаны совпадать, и сторожит это пару TestFoldOffAnswersLikeTheRecords.
+func (b Bind) Off(task string) bool {
+	return b.ReleasedAll || b.ReleasedTask(task)
 }
 
 // ReleasedTask отвечает, кончена ли работа сессии по задаче task: она стоит в

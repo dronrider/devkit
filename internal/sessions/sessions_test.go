@@ -139,6 +139,49 @@ func TestLastNamesTheReleasedTasks(t *testing.T) {
 	}
 }
 
+// Свёртка отвечает о снятой привязке то же, что записи: спрашивает её
+// дашборд, который носит одну запись на сессию, а Off по записям зовёт
+// сторожок. Разошедшись, они развели бы критерий хозяина разговора на два, и
+// реплика человека уехала бы туда, где её никто не прочитает (DK-1194).
+func TestFoldOffAnswersLikeTheRecords(t *testing.T) {
+	for _, tc := range []struct {
+		name, log string
+		ask       map[string]bool
+	}{
+		{
+			name: "снята названная задача",
+			log: srcLine("2026-09-26T11:00:00", "aaa-1", "DK-892", BySrc) +
+				srcLine("2026-09-26T12:00:00", "aaa-1", "DK-892", ByOff),
+			ask: map[string]bool{"DK-892": true, "DK-1177": false},
+		},
+		{
+			name: "привязку сняли целиком, дальше работа по соседней",
+			log: srcLine("2026-09-26T10:00:00", "aaa-1", "DK-1", ByTree) +
+				srcLine("2026-09-26T11:00:00", "aaa-1", "-", ByOff) +
+				srcLine("2026-09-26T12:00:00", "aaa-1", "DK-9", BySrc),
+			ask: map[string]bool{"DK-1": true, "DK-9": true},
+		},
+		{
+			name: "снятия не было вовсе",
+			log:  srcLine("2026-09-26T10:00:00", "aaa-1", "DK-1", ByTree),
+			ask:  map[string]bool{"DK-1": false},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recs := All([]byte(tc.log))["aaa-1"]
+			fold := Parse([]byte(tc.log))["aaa-1"]
+			for task, want := range tc.ask {
+				if got := Off(recs, task); got != want {
+					t.Errorf("записи о снятии %s: %v, ожидал %v", task, got, want)
+				}
+				if got := fold.Off(task); got != want {
+					t.Errorf("свёртка о снятии %s: %v, ожидал %v", task, got, want)
+				}
+			}
+		})
+	}
+}
+
 // Разговор, открытый для строки (источник «заказ»), после «снята» с её номером
 // остаётся её разговором: стоп со строки кончает работу, а человек продолжает
 // в том же чате, и строка обязана о нём говорить (третья приёмка DK-716).

@@ -238,6 +238,20 @@ class ChatDeliveryTest(ChatCase):
         text = self.added(s.run(session=OTHER))
         self.assertIn("стой, не туда", text)
 
+    def test_released_tree_task_loses_the_task_chat(self):
+        # Снятая привязка убирает и задачу дерева: работа по строке кончена, и
+        # хозяином разговора сессия быть перестаёт. Критерий хозяина тут обязан
+        # совпасть с критерием ведущей сессии у дашборда (bindTask спрашивает о
+        # хвосте каталога sessions.Off), иначе реплику забирает досидевшая
+        # сессия, а голову строке поднимают заново (DK-1194).
+        s = self.stand(tree="devkit-DK-1")
+        s.bind(OTHER, "DK-1", when="2026-08-17T12:00:00", source="работа")
+        s.bind(OTHER, "DK-1", when="2026-08-17T12:30:00", source="снята")
+        s.said("task-DK-1", "2026-08-17 12:00, из дашборда: стой, не туда")
+        self.silent(s.run(session=OTHER))
+        self.assertIn("стой, не туда", s.read("task-DK-1"),
+                      "сессия со снятой работой забрала реплику по одному имени дерева")
+
     def test_personal_chat_reaches_only_its_own_session(self):
         # Личный разговор сессии несёт её ID прямо в имени, и чужой ход в том же
         # дереве забирать оттуда нечего.

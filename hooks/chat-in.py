@@ -494,8 +494,27 @@ BIND_OFF = "снята"
 BIND_TALK = ("заказ", "рука")
 
 
-def session_task(session, home=None):
-    """Задача, которую ведёт сессия по реестру чатов. Выигрывает последняя её
+def bind_recs(session, home=None):
+    """Записи реестра чатов по сессии, порядком журнала, парами «задача,
+    источник». Читатель тут один на оба вопроса о привязке, кто ведёт и что
+    снято: журнал открывается разом, и третьего разбора формата не заводится.
+    Реестра нет, значит записей нет: молчание тут строже догадки."""
+    home = os.path.expanduser("~") if home is None else home
+    try:
+        with open(os.path.join(home, SESS_LOG), encoding="utf-8", errors="replace") as f:
+            rows = f.read().split("\n")
+    except OSError:
+        return []
+    recs = []
+    for row in rows:
+        sid, task, source = bind_line(row)
+        if sid == session:
+            recs.append((task, source))
+    return recs
+
+
+def lead_task(recs):
+    """Задача, которую сессия ведёт по своим записям. Выигрывает последняя
     запись: перепривязка и отвязка это обычные строки журнала, а не правка
     файла (LLD DK-430, решение 1). Отвязка читается так же, как в свёртке
     internal/sessions (lead): «снята» с пустой задачей гасит всё, «снята» с
@@ -503,19 +522,7 @@ def session_task(session, home=None):
     строки («заказ», «рука»), остаётся её разговором, и ведущей становится
     ближайшая непогашенная запись. Прежде запись «снята DK-N» читалась
     задачей DK-N, и сессия, которая DK-N только двинула или слила, забирала
-    безадресную реплику этой задачи (DK-1194). Реестра нет, значит сессия не
-    ведёт ничего: молчание тут строже догадки."""
-    home = os.path.expanduser("~") if home is None else home
-    try:
-        with open(os.path.join(home, SESS_LOG), encoding="utf-8", errors="replace") as f:
-            rows = f.read().split("\n")
-    except OSError:
-        return ""
-    recs = []
-    for row in rows:
-        sid, task, source = bind_line(row)
-        if sid == session:
-            recs.append((task, source))
+    безадресную реплику этой задачи (DK-1194)."""
     off = set()
     for task, source in reversed(recs):
         if source == BIND_OFF:
@@ -527,6 +534,24 @@ def session_task(session, home=None):
             continue
         return task
     return ""
+
+
+def bind_off(recs, task):
+    """Снята ли привязка сессии к задаче task: отвязка всей сессии либо «снята»
+    с этой задачей в поле. Спрашивают об этом там, где задачу называет не
+    реестр, а имя бокового дерева: записи о работе такой привязке не нужно, а
+    снятие обязано её убирать. Те же слова, что у sessions.Off."""
+    for rec_task, source in reversed(recs):
+        if source != BIND_OFF:
+            continue
+        if not rec_task or rec_task == task:
+            return True
+    return False
+
+
+def session_task(session, home=None):
+    """Задача, которую ведёт сессия по реестру чатов: свёртка её записей."""
+    return lead_task(bind_recs(session, home))
 
 
 def tree_task(root):
@@ -542,16 +567,23 @@ def owns_chat(name, session, root, home=None):
     ходу в дереве значит увозить реплику в чужую сессию.
 
     Разговор задачи принадлежит той сессии, что ведёт задачу по реестру чатов
-    либо работает в её боковом дереве. Личный разговор сессии принадлежит ей
-    одной, и её ID стоит прямо в имени. Имя без приставки хозяина не называет
-    (рукописный разговор), и там всё остаётся по-прежнему."""
+    либо работает в её боковом дереве. Снятая привязка убирает и задачу дерева,
+    тем же порядком, что у workTasks дашборда: работа по строке кончена, и
+    голову ей поднимают заново, иначе критерий хозяина разошёлся бы с
+    критерием ведущей сессии у taskHead (DK-1194). Личный разговор сессии
+    принадлежит ей одной, и её ID стоит прямо в имени. Имя без приставки
+    хозяина не называет (рукописный разговор), и там всё остаётся
+    по-прежнему."""
     if name.startswith(SESS_CHAT):
         return name[len(SESS_CHAT):] == session
     if name.startswith(TASK_CHAT):
         task = name[len(TASK_CHAT):].upper()
         if not TASK_ID_RE.match(task):
             return True
-        return task in (session_task(session, home), tree_task(root))
+        recs = bind_recs(session, home)
+        if task == lead_task(recs):
+            return True
+        return task == tree_task(root) and not bind_off(recs, task)
     return True
 
 

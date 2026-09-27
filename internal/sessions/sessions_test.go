@@ -113,7 +113,7 @@ func TestLastSkipsTheReleasedTask(t *testing.T) {
 			srcLine("2026-09-26T11:00:00", "aaa-1", "DK-892", BySrc) +
 			srcLine("2026-09-26T12:00:00", "aaa-1", "DK-892", ByOff)))
 	rec := binds["aaa-1"]
-	if rec.Task != "" || rec.Source != ByOff {
+	if rec.Task != "" || rec.Source != "" {
 		t.Fatalf("снятая задача осталась ведущей: %+v", rec)
 	}
 	if rec.Time != "2026-09-26T12:00:00" || rec.Tree != "/Users/r/projects/devkit" {
@@ -121,6 +121,21 @@ func TestLastSkipsTheReleasedTask(t *testing.T) {
 	}
 	if sid, _ := binds.Leads("DK-892"); sid != "" {
 		t.Fatalf("реестр назвал задаче сессию со снятой привязкой: %q", sid)
+	}
+}
+
+// Снятые задачи свёртка называет отдельным полем: по нему читатель, знающий
+// задачу по имени бокового дерева, спрашивает, снята ли именно она. Снятие
+// соседней задачи такой привязки не касается (замечание 13 ревью DK-1194).
+func TestLastNamesTheReleasedTasks(t *testing.T) {
+	rec := Parse([]byte(
+		srcLine("2026-09-26T11:00:00", "aaa-1", "DK-892", BySrc) +
+			srcLine("2026-09-26T12:00:00", "aaa-1", "DK-892", ByOff)))["aaa-1"]
+	if !rec.ReleasedTask("dk-892") {
+		t.Fatalf("снятая задача не названа: %+v", rec.Released)
+	}
+	if rec.ReleasedTask("DK-1177") {
+		t.Fatalf("снятой числится соседняя задача: %+v", rec.Released)
 	}
 }
 
@@ -171,6 +186,25 @@ func TestLastReleasedWorkLeavesTheSessionFree(t *testing.T) {
 	rec := binds["aaa-1"]
 	if rec.Task != "" || rec.Source != "" {
 		t.Fatalf("свободная сессия прочитана иначе: %+v", rec)
+	}
+}
+
+// Учёт расхода это история, а не текущее ведение: задача последней записи с
+// задачей в поле остаётся у сессии и после «снята», и ходы сессии, которая
+// строку слила, идут в статью этой строки (замечание 14 ревью DK-1194).
+func TestLastTaskKeepsTheReleasedTask(t *testing.T) {
+	recs := All([]byte(
+		"2026-09-26T10:00:00 сессия aaa-1 задача - проект devkit дерево /Users/r/projects/devkit транскрипт - источник - повод startup tmux chat-3\n" +
+			srcLine("2026-09-26T11:00:00", "aaa-1", "DK-892", BySrc) +
+			srcLine("2026-09-26T12:00:00", "aaa-1", "DK-892", ByOff)))["aaa-1"]
+	if got := LastTask(recs); got != "DK-892" {
+		t.Fatalf("задача учёта: %q", got)
+	}
+	if rec := Last(recs); rec.Task != "" {
+		t.Fatalf("ведение и учёт совпали: %+v", rec)
+	}
+	if got := LastTask(recs[:1]); got != "" {
+		t.Fatalf("сессия без задачи получила задачу учёта: %q", got)
 	}
 }
 

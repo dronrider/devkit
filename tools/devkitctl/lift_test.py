@@ -454,7 +454,9 @@ class ReplyCase(unittest.TestCase):
         self.assertFalse([a for a in call.calls if "run" in a], "устаревшую реплику подняли")
         said = " ".join(lines)
         self.assertIn("реплики старше суток", said)
-        self.assertIn("DK-40", said)
+        # Обещание «прочитает ближайшая голова» тут не годится: на строке в Check
+        # обычная голова до реплики не доходит, и отчёт даёт готовую команду.
+        self.assertIn("taskctl run DK-40 -C %s --reply" % self.root, said)
 
     def test_goal_row_left_alone(self):
         """У цели своя оболочка, переписку она читает сама."""
@@ -515,7 +517,9 @@ class ReplyCallCase(unittest.TestCase):
         self.assertEqual(shout.call_count, 1, "зова не было либо он не один")
         title, body = shout.call_args[0][0], shout.call_args[0][1]
         self.assertIn("DK-50", title)
-        self.assertIn("taskctl run DK-50", body)
+        # Команда с --reply: без флага голова на строке в Check с приёмкой встала
+        # бы стопом до первого хода, и реплика лежала бы дальше.
+        self.assertIn("taskctl run DK-50 -C %s --reply" % self.root, body)
         # Второй заход о том же молчит: зов состоялся, а строка так и лежит.
         _, _, again = self.lift()
         self.assertEqual(again.call_count, 0, "баннер повторился на следующем тике")

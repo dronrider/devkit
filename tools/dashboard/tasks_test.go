@@ -1785,6 +1785,10 @@ func standGone(pid int) bool {
 // уборку: сигнал одному родителю оставлял бы дерево браузера на машине, а
 // занятая машина это и есть беда цели DK-1084.
 func TestChromeStandStopsAtRunBudget(t *testing.T) {
+	// Стенд судит ровно по стенному времени: замер с задержкой против потолка
+	// прогона. Признание идёт от самого теста, потому что chromeDump он зовёт
+	// напрямую, минуя chromeMeasure (замечание ревью круга 1, DK-1218).
+	wallClock(t)
 	dir := t.TempDir()
 	browser := filepath.Join(dir, "browser")
 	if err := os.WriteFile(browser, []byte(standBrowser), 0o755); err != nil {

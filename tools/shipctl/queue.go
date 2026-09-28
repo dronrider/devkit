@@ -169,7 +169,10 @@ func queueLines(items []queueItem) []string {
 
 // queueRetry ставит ветку в хвост: повтор считается, причина запоминается, и
 // на потолке строка уходит из очереди. Второе значение говорит, осталась ли
-// она в составе.
+// она в составе. Уход по потолку оставляет тот же след, что уход по своей
+// красноте: запись в файле задачи и уведомление. Без них автор узнавал бы про
+// отставленную ветку только грепом по журналу сторожка (замечание ревью круга
+// 1, DK-1218).
 func queueRetry(root, id, why string) (string, bool) {
 	st := loadQueue(root)
 	m := st.mark(id)
@@ -181,7 +184,7 @@ func queueRetry(root, id, why string) (string, bool) {
 	}
 	saveQueue(root, st)
 	if left {
-		return fmt.Sprintf("%s ушла из очереди слияний: %s", id, m.Reason), false
+		return fmt.Sprintf("%s ушла из очереди слияний: %s", id, m.Reason) + queueTrace(root, id, m.Reason), false
 	}
 	return fmt.Sprintf("%s встала в хвост очереди слияний, повтор %d из %d: %s", id, m.Tries, queueRetryLimit, why), true
 }
@@ -342,9 +345,14 @@ func queueTry(root, id string, p QueueParams) (merged bool, note string, stop bo
 		say = func(string) {}
 	}
 	say("очередь слияний: беру " + id)
+	// Ожидания замка тут нет нарочно. Тик сам и есть цикл повтора: он приходит
+	// раз в пять минут, а собственное предыдущее слияние держит замок десять
+	// или двадцать. Ожидание внутри захода копило бы ждущие shipctl, отодвигало
+	// разлив поезда и подъём проверяющего того же захода, а на 35-й минуте
+	// потолок подпроцесса снял бы заход посреди слияния, оставив ребейз без
+	// fast-forward (замечание ревью круга 1, DK-1218).
 	out, mergeErr := cmdMerge(root, MergeParams{
-		ID: id, Test: p.Test, Train: true, Push: p.Push,
-		LockWait: lockWaitDefault, Say: say,
+		ID: id, Test: p.Test, Train: true, Push: p.Push, Say: say,
 	})
 	if mergeErr == nil {
 		return true, id + " слита очередью: " + firstLine(out), false, ""
@@ -354,9 +362,14 @@ func queueTry(root, id string, p QueueParams) (merged bool, note string, stop bo
 	case errors.As(mergeErr, &red) && red.Own:
 		return false, queueOutOfLine(root, id, red.Why), true, ""
 	case errors.As(mergeErr, &red) && red.Load:
+		// Нагрузочная краснота и есть признак загруженной машины, и добивать её
+		// полным прогоном по остальному составу значит давить ту же машину,
+		// от чего лечит цель DK-1084. Ветка уже в хвосте, повтор посчитан, и
+		// следующую возьмёт следующий тик через пять минут (замечание ревью
+		// круга 1, DK-1218).
 		note, _ = queueRetry(root, id, red.Why)
 		stageQueue(root, []string{id}, "очередь слияний: "+note)
-		return false, note, false, ""
+		return false, note + "; разлив остановлен: машина занята, следующую ветку возьмёт следующий заход", true, ""
 	case errors.As(mergeErr, &red):
 		note, _ = queueRetry(root, id, red.Why)
 		stageQueue(root, []string{id}, "очередь слияний: "+note)
@@ -372,13 +385,19 @@ func queueTry(root, id string, p QueueParams) (merged bool, note string, stop bo
 	return false, "", false, firstLine(mergeErr.Error())
 }
 
-// queueOutOfLine выводит строку из очереди и оставляет след там, где его
-// найдёт автор: наклейка машинная, а запись идёт в файл задачи и уезжает
-// коммитом ветки. Дерева у ветки может не быть (копию окна переключили), и
-// тогда остаётся наклейка с уведомлением: писать в файл на main нельзя, он
-// стал бы незакоммиченной правкой и отбил следующее слияние.
+// queueOutOfLine выводит строку из очереди наклейкой и оставляет след.
 func queueOutOfLine(root, id, why string) string {
-	note := queueHold(root, id, why)
+	return queueHold(root, id, why) + queueTrace(root, id, why)
+}
+
+// queueTrace оставляет след снятия там, где его найдёт автор: запись в файле
+// задачи уезжает коммитом ветки, уведомление уходит сразу. Наклейка машинная
+// и живёт отдельно, её ставит queueHold либо потолок повторов в queueRetry.
+// Дерева у ветки может не быть (копию окна переключили), и тогда остаётся
+// наклейка с уведомлением: писать в файл на main нельзя, он стал бы
+// незакоммиченной правкой и отбил следующее слияние.
+func queueTrace(root, id, why string) string {
+	note := ""
 	if wt, err := taskWorktree(root, id); err == nil && wt != nil {
 		if err := appendRecord(wt.Path, id, "снята с очереди слияний: "+why); err == nil {
 			rel := "docs/tasks/" + id + ".md"
@@ -388,8 +407,7 @@ func queueOutOfLine(root, id, why string) string {
 			}
 		}
 	}
-	note += notify(root, id, "очередь слияний: "+id+" снята", why)
-	return note
+	return note + notify(root, id, "очередь слияний: "+id+" снята", why)
 }
 
 // firstLine берёт первую строку многострочного отчёта: в строку разлива идёт

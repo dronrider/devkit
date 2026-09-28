@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dronrider/devkit/internal/loadfail"
 )
@@ -150,10 +151,62 @@ func TestQueueRetriesOnLoadRed(t *testing.T) {
 	if m := st.Tasks["XR-001"]; m == nil || m.Tries != 1 || m.Held {
 		t.Fatalf("наклейка после первого отказа: %+v", st.Tasks["XR-001"])
 	}
-	// Разлив не встал: следующая по рангу ветка получила свой заход тем же
-	// проходом, и её отбило то же нагрузочное падение.
-	if !strings.Contains(msg, "XR-007 встала в хвост") {
-		t.Errorf("проход обязан идти дальше по составу: %q", msg)
+	// Проход встал на первой же отбитой: нагрузочная краснота это признак
+	// занятой машины, и гнать по ней полный прогон остального состава значит
+	// держать её занятой дальше. Следующую ветку возьмёт следующий заход.
+	if !strings.Contains(msg, "разлив остановлен") {
+		t.Errorf("проход обязан встать на нагрузочной красноте: %q", msg)
+	}
+	if strings.Contains(msg, "XR-007") {
+		t.Errorf("вторая ветка получила прогон тем же проходом: %q", msg)
+	}
+	if m := st.Tasks["XR-007"]; m != nil && m.Tries != 0 {
+		t.Errorf("повтор посчитан не отбитой ветке: %+v", m)
+	}
+}
+
+// alienRedTest это краснота вне диффа задачи без признака нагрузки: красным
+// стал сам main, и гнать через него остальные ветки незачем.
+const alienRedTest = `sh -c 'printf "%s\n" "other (other.txt) 0.1s FAIL" "FAIL other" "--- FAIL: TestOtherComponent (0.01s)" "    other_test.go:3: не то число" "Ran 1 of 1 components in 0m01s"; exit 1'`
+
+// TestQueueStopsOnAlienRed: третий исход отказа. Повтор считается, а проход
+// встаёт: один прогон на заход вместо всего состава.
+func TestQueueStopsOnAlienRed(t *testing.T) {
+	root := queueSetup(t)
+	msg, err := cmdQueue(root, QueueParams{Drain: true, Test: alienRedTest})
+	if err != nil {
+		t.Fatalf("краснота вне диффа это повтор с остановкой, а не отказ разлива: %v", err)
+	}
+	if !strings.Contains(msg, "XR-001 встала в хвост очереди слияний, повтор 1 из 3") {
+		t.Fatalf("отчёт повтора: %q", msg)
+	}
+	if !strings.Contains(msg, "разлив остановлен") || !strings.Contains(msg, "красный main") {
+		t.Errorf("остановка прохода не объяснена: %q", msg)
+	}
+	if strings.Contains(msg, "XR-007") {
+		t.Errorf("вторая ветка получила прогон при красном main: %q", msg)
+	}
+}
+
+// TestQueueDrainDoesNotWaitLock: разлив не ждёт замок. Тик сам и есть цикл
+// повтора, а ожидание внутри захода упиралось бы в потолок подпроцесса.
+func TestQueueDrainDoesNotWaitLock(t *testing.T) {
+	root := queueSetup(t)
+	unlock, err := acquireLock(root, "merge XR-009")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	started := time.Now()
+	msg, err := cmdQueue(root, QueueParams{Drain: true, Test: "true"})
+	if err != nil {
+		t.Fatalf("занятый конвейер это тихий ноль: %v", err)
+	}
+	if !strings.Contains(msg, noQueue) || !strings.Contains(msg, "конвейер занят") {
+		t.Fatalf("отчёт занятого конвейера: %q", msg)
+	}
+	if time.Since(started) > lockPoll {
+		t.Errorf("разлив ушёл в ожидание замка, прошло %s", time.Since(started))
 	}
 }
 
@@ -176,6 +229,24 @@ func TestQueueLeavesOnRetryLimit(t *testing.T) {
 	st := loadQueue(root)
 	if m := st.Tasks["XR-001"]; m == nil || !m.Held || m.Tries != queueRetryLimit {
 		t.Fatalf("наклейка на потолке: %+v", st.Tasks["XR-001"])
+	}
+	// След ухода по потолку тот же, что у своей красноты: запись в файле задачи
+	// на ветке. Без неё автор узнавал бы про отставленную ветку только грепом
+	// по журналу сторожка.
+	wt, err := taskWorktree(root, "XR-001")
+	if err != nil || wt == nil {
+		t.Fatalf("дерево задачи не нашлось: %v", err)
+	}
+	doc, err := os.ReadFile(taskFilePath(wt.Path, "XR-001"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doc), "снята с очереди слияний") ||
+		!strings.Contains(string(doc), "повторов 3 из 3") {
+		t.Errorf("записи об уходе по потолку в файле задачи нет:\n%s", doc)
+	}
+	if st := gitT(t, wt.Path, "status", "--porcelain"); st != "" {
+		t.Errorf("дерево задачи осталось грязным:\n%s", st)
 	}
 	// Снятая строка в составе не участвует и позиции не занимает: голова
 	// очереди достаётся следующей по рангу.

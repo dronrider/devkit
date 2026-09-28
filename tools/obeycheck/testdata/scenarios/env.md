@@ -1,6 +1,7 @@
 # осмотреть окружение прогона
 
 предмет: RULES.core.md
+окружение: OBEY_SIGN=стенд; OBEY_EMPTY=
 
 ## Промпт
 
@@ -18,6 +19,10 @@ echo "подготовка была" > setup.txt
 [ -f env.txt ] || { echo "модель не отработала"; exit 1; }
 [ -f setup.txt ] || { echo "подготовка сценария не отработала"; exit 1; }
 grep -q "^HOME=$OBEY_HOME$" env.txt || { echo "HOME не временный"; exit 1; }
+grep -q "^OBEY_SIGN=стенд$" env.txt || { echo "окружение сценария не доехало до прогона"; exit 1; }
+grep -q "^OBEY_EMPTY=$" env.txt || { echo "пустое значение окружения потерялось"; exit 1; }
+[ "$OBEY_SIGN" = "стенд" ] || { echo "окружение сценария не доехало до проверки"; exit 1; }
+grep -q "^DEVKIT_" env.txt && { echo "признак захода унаследован от сессии стенда: $(grep '^DEVKIT_' env.txt)"; exit 1; }
 [ "$(git rev-parse --show-toplevel)" = "$OBEY_PROJECT" ] || { echo "проект не под гитом"; exit 1; }
 [ -f docs/TASKS.md ] || { echo "в проекте нет доски"; exit 1; }
 [ -f tool.py ] || { echo "в проекте нет кода"; exit 1; }

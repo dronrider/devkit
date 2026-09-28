@@ -47,9 +47,9 @@ const subagentWrap = `Работу ниже сам не делай. Спавни
 type attempt struct {
 	Green   bool
 	Usage   spend.Usage // расход сессий прогона, снятый до сноса временного дома
-	Suspect bool   // проверка зелёная, а команда прогона вышла с ошибкой
-	Note    string // чем кончился прогон, если не просто зелено
-	Judge   string // разбор судьи в одну строку, у сценариев с секцией «Судья»
+	Suspect bool        // проверка зелёная, а команда прогона вышла с ошибкой
+	Note    string      // чем кончился прогон, если не просто зелено
+	Judge   string      // разбор судьи в одну строку, у сценариев с секцией «Судья»
 	Repeat  int
 }
 
@@ -118,7 +118,7 @@ func (p Params) runOnce(s Scenario, layout string, repeat int, dir string) (atte
 	if err != nil {
 		return a, err
 	}
-	env := e.environ(p.Devkit, filepath.Base(layout), s.ID, repeat)
+	env := append(e.environ(p.Devkit, filepath.Base(layout), s.ID, repeat), s.Env...)
 	if s.Setup != "" {
 		out, err := shOut(e.Project, env, s.Setup, p.Timeout)
 		if err != nil {

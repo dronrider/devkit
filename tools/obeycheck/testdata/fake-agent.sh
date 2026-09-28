@@ -16,6 +16,9 @@ echo "раскладка=$OBEY_LAYOUT сценарий=$OBEY_SCENARIO повто
 	echo "origin=$OBEY_ORIGIN"
 	echo "seed=$OBEY_SEED"
 	echo "hooks=$(git config core.hooksPath)"
+	echo "OBEY_SIGN=$OBEY_SIGN"
+	echo "OBEY_EMPTY=$OBEY_EMPTY"
+	env | grep '^DEVKIT_\(HEADLESS\|RUN_DEPTH\|TMUX\)='
 	echo "промпт: $prompt"
 } > env.txt
 

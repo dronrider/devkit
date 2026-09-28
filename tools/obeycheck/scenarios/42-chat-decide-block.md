@@ -1,7 +1,8 @@
-# вопрос человеку в разговоре без задачи
+# вопрос человеку в разговоре блоком, заход автоматики
 
 конец: любой
-предмет: kit/skills/chat/SKILL.md
+предмет: kit/skills/chat/SKILL.md; kit/skills/review/SKILL.md «Вход»; kit/skills/review/SKILL.md «Второй круг»
+окружение: DEVKIT_HEADLESS=стенд
 
 ## Подготовка
 
@@ -19,7 +20,7 @@ taskctl decide OB-003 --ask «умолчание» --hint "таблица, её 
 
 ```sh
 grep -q "AskUserQuestion" "$OBEY_TRANSCRIPT" &&
-	{ echo "вопрос задан виджетом: AskUserQuestion звался"; exit 1; }
+	{ echo "в заходе автоматики вопрос задан диалогом: AskUserQuestion звался"; exit 1; }
 grep -q "decide OB-003 --chat" "$OBEY_TRANSCRIPT" ||
 	{ echo "блок вопроса не печатался: taskctl decide --chat не звался"; exit 1; }
 exit 0

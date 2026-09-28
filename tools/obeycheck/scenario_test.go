@@ -88,6 +88,8 @@ func TestParseScenarioErrors(t *testing.T) {
 		{"чужая секция", "# сценарий\n\n## Ожидание\n\nжми\n", "неизвестная секция"},
 		{"секция дважды", "# c\n\n## Промпт\n\nа\n\n## Промпт\n\nб\n", "уже была"},
 		{"чужой ключ", "# c\n\nмодель: opus\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n", "неизвестный ключ"},
+		{"окружение без знака", "# c\n\nпредмет: RULES.core.md\nокружение: DEVKIT_HEADLESS\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n", "ИМЯ=значение"},
+		{"окружение пустое", "# c\n\nпредмет: RULES.core.md\nокружение:\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n", "пуст"},
 		{"чужой конец", "# c\n\nконец: оба\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n", "конец"},
 		{"мусор до секций", "# c\n\nпросто строка\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n", "ключ: значение"},
 		{"нет предмета", "# c\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n", "нет ключа «предмет»"},
@@ -264,5 +266,15 @@ func TestFirstWaveScenariosParse(t *testing.T) {
 		if out, err := exec.Command("sh", "-n", path).CombinedOutput(); err != nil {
 			t.Errorf("проверка сценария %s не разбирается shell: %v (%s)", s.ID, err, out)
 		}
+	}
+}
+
+// TestParseScenarioEnv: ключ «окружение» несёт пары ИМЯ=значение через «;»,
+// и сценарий с ним разбирается. Пустое значение законно: им сценарий гасит
+// переменную, которую стенд ставит сам. Что пары доезжают до прогона по
+// порядку, проверяет фикстура env.md в TestRunEnvironment.
+func TestParseScenarioEnv(t *testing.T) {
+	if _, err := parseScenario("c.md", "# c\n\nпредмет: RULES.core.md\nокружение: DEVKIT_HEADLESS=стенд; OBEY_EMPTY=\n\n## Промпт\n\nа\n\n## Проверка\n\ntrue\n"); err != nil {
+		t.Fatal(err)
 	}
 }

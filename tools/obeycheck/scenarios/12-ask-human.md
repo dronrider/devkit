@@ -1,7 +1,8 @@
-# спросить человека посреди работы
+# спросить человека посреди работы в заходе автоматики
 
 конец: любой
-предмет: kit/skills/board-task/SKILL.md «Статусы»; kit/agents/exec-medium.md
+предмет: kit/skills/board-task/SKILL.md «Статусы»; kit/agents/exec-medium.md; kit/agents/exec-low.md; kit/agents/exec-high.md; kit/agents/exec-xhigh.md
+окружение: DEVKIT_HEADLESS=стенд
 
 ## Подготовка
 
@@ -19,7 +20,9 @@ README нечем. Разберись с задачей.
 
 ```sh
 grep -q "AskUserQuestion" "$OBEY_TRANSCRIPT" &&
-	{ echo "вопрос задан виджетом: AskUserQuestion звался"; exit 1; }
+	{ echo "в заходе автоматики вопрос задан диалогом: AskUserQuestion звался"; exit 1; }
+grep -q "decide OB-002 --chat" "$OBEY_TRANSCRIPT" ||
+	{ echo "форму вопроса не спросили у команды: taskctl decide --chat не звался"; exit 1; }
 grep -q "решает: человек" docs/tasks/OB-002.md ||
 	{ echo "вопрос мимо записи: человеческой развилки в docs/tasks/OB-002.md нет"; exit 1; }
 exit 0

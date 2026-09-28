@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -17,6 +18,7 @@ type Scenario struct {
 	Title    string
 	End      string // на каком конце гоняется: сессия, субагент или любой
 	Subjects []obey.Subject
+	Env      []string // пары ИМЯ=значение из ключа «окружение», едут в окружение прогона поверх стенда
 	Prompt   string
 	Reply    string // вторая реплика человека тем же ходом --resume; пусто, если реплика одна
 	Setup    string
@@ -34,6 +36,36 @@ const (
 	endSession = "сессия"
 	endSub     = "субагент"
 )
+
+// envKey это ключ шапки с переменными окружения прогона. Сценарий им называет
+// заход, который стенд сам не отличает: печатный вызов стенда для команд
+// devkit выглядит живым окном, а признак автоматики (DEVKIT_HEADLESS) ставит
+// подъёмщик, которого у стенда нет (DK-1169). Пары разделяются «;», как у
+// предмета, и заданный так признак стенд не вычищает.
+const envKey = "окружение"
+
+// envPairRe это одна пара ключа «окружение»: имя переменной оболочки и
+// значение после знака равенства, пустое значение законно.
+var envPairRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=.*$`)
+
+// parseEnvPairs разбирает значение ключа «окружение».
+func parseEnvPairs(val string) ([]string, error) {
+	var out []string
+	for _, kv := range strings.Split(val, ";") {
+		kv = strings.TrimSpace(kv)
+		if kv == "" {
+			continue
+		}
+		if !envPairRe.MatchString(kv) {
+			return nil, fmt.Errorf("окружение %q: жду пары ИМЯ=значение через «;»", kv)
+		}
+		out = append(out, kv)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("ключ «%s» пуст: жду пары ИМЯ=значение через «;»", envKey)
+	}
+	return out, nil
+}
 
 const (
 	sectPrompt = "Промпт"
@@ -138,8 +170,14 @@ func parseScenario(path, text string) (Scenario, error) {
 					return fail(ln, "%v", err)
 				}
 				s.Subjects = append(s.Subjects, subs...)
+			case envKey:
+				pairs, err := parseEnvPairs(val)
+				if err != nil {
+					return fail(ln, "%v", err)
+				}
+				s.Env = append(s.Env, pairs...)
 			default:
-				return fail(ln, "неизвестный ключ %q: у сценария есть «конец» и «%s»", key, obey.Key)
+				return fail(ln, "неизвестный ключ %q: у сценария есть «конец», «%s» и «%s»", key, obey.Key, envKey)
 			}
 			continue
 		}

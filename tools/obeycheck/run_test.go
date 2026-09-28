@@ -214,6 +214,23 @@ func TestRunEnvironment(t *testing.T) {
 	}
 }
 
+// TestRunEnvironmentDropsInheritedSigns: признак захода автоматики стенд от
+// своей сессии не наследует, а ставит его сам сценарий ключом «окружение»
+// (DK-1169). Проверка фикстуры смотрит и то, и другое: пары ключа лежат в
+// окружении прогона и проверки, а DEVKIT_HEADLESS из сессии стенда до прогона
+// не доезжает.
+func TestRunEnvironmentDropsInheritedSigns(t *testing.T) {
+	t.Setenv("DEVKIT_HEADLESS", "чужая сессия")
+	t.Setenv("DEVKIT_RUN_DEPTH", "3")
+	t.Setenv("DEVKIT_TMUX", "chat-7")
+	p := params(t, scenarios(t, "env"), "full", "core")
+	p.Repeats = 1
+	report, failed := runOK(t, p)
+	if failed {
+		t.Fatalf("проверка окружения не прошла:\n%s", report)
+	}
+}
+
 // Вторая реплика человека (секция «Ответ») уходит той же сессии: команда
 // прогона зовётся дважды, а второй раз с ключом --resume и ID сессии,
 // который дала первая реплика. Одним длинным промптом это не заменить: живой

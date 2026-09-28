@@ -380,14 +380,23 @@ func seedRepo(project string) error {
 	return nil
 }
 
+// inheritedSigns это признаки захода, которые стенд не наследует от сессии,
+// откуда его запустили: признаки автоматики (hooks/check-background.py,
+// headless) и имя tmux-сессии от подъёмщика панели. Команды devkit по ним
+// выбирают форму вопроса человеку (DK-1169), и стенд, поднятый из панели,
+// субагента или печатного захода, иначе гонял бы живую ветку сценария в чужом
+// признаке. Признак ставит сам сценарий ключом «окружение».
+var inheritedSigns = map[string]bool{"DEVKIT_HEADLESS": true, "DEVKIT_RUN_DEPTH": true, "DEVKIT_TMUX": true}
+
 // environ собирает окружение прогона: временный HOME, указатели стенда и
-// вычищенные переменные харнеса. Переменные вида CLAUDE* уносятся, чтобы
-// вложенный прогон не наследовал сессию, из которой стенд запущен.
+// вычищенные переменные харнеса. Переменные вида CLAUDE* и признаки захода
+// уносятся, чтобы вложенный прогон не наследовал сессию, из которой стенд
+// запущен.
 func (e *runEnv) environ(devkit, layout, scenario string, repeat int) []string {
 	var out []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
-		if name == "HOME" || strings.HasPrefix(name, "CLAUDE") {
+		if name == "HOME" || strings.HasPrefix(name, "CLAUDE") || inheritedSigns[name] {
 			continue
 		}
 		out = append(out, kv)

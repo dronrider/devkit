@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,27 +11,19 @@ import (
 // Ответ человека снимает признак ожидания того же захода. До DK-1204 признак
 // снимали только панель и wake, а decide --answer из окна tmux и решение
 // «--by человек» головой сессии оставляли файл на месте: плашка «Заход ждёт
-// ответа» стояла на решённой развилке до перезапуска захода. Спрашивают из
-// дерева задачи, отвечают в основном чекауте, поэтому признак кладётся в оба
-// места, и снятие обязано дойти до обоих.
+// ответа» стояла на решённой развилке до перезапуска захода. Признак всегда
+// лежит в основном чекауте (runAsk пишет его через stage.MainRoot), а
+// отвечают и оттуда, и из дерева задачи, поэтому снятие обязано дойти до
+// основного чекаута с любого корня.
 
-// askInBothTrees кладёт признак ожидания задачи в чекаут и в дерево задачи
-// рядом с ним и отдаёт оба пути.
-func askInBothTrees(t *testing.T, root, id string) []string {
+// askInMain кладёт признак ожидания задачи в основной чекаут и отдаёт путь.
+func askInMain(t *testing.T, root, id string) string {
 	t.Helper()
-	tree := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-"+strings.ToLower(id))
-	if err := os.MkdirAll(tree, 0o755); err != nil {
+	ask := chat.Ask{Session: "sess-1", Task: id, Questions: []chat.Question{{Text: "куда катить"}}}
+	if err := chat.WriteAsk(root, chat.TaskName(id), ask); err != nil {
 		t.Fatal(err)
 	}
-	ask := chat.Ask{Session: "sess-1", Task: id, Questions: []chat.Question{{Text: "куда катить"}}}
-	var paths []string
-	for _, dir := range []string{root, tree} {
-		if err := chat.WriteAsk(dir, chat.TaskName(id), ask); err != nil {
-			t.Fatal(err)
-		}
-		paths = append(paths, chat.AskPath(dir, chat.TaskName(id)))
-	}
-	return paths
+	return chat.AskPath(root, chat.TaskName(id))
 }
 
 // askDroppedWord это слово ответа команды о снятом признаке. Строка стоит
@@ -40,25 +31,22 @@ func askInBothTrees(t *testing.T, root, id string) []string {
 // константы ещё нет.
 const askDroppedWord = "признак ожидания снят"
 
-func askFilesLeft(paths []string) []string {
-	var left []string
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			left = append(left, p)
-		}
-	}
-	return left
+func askStands(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+var dropForks = [][]string{
+	{"выкат", "в прод", "куда катить?", "в стенд", "в прод"},
 }
 
 func TestDecideAnswerDropsAsk(t *testing.T) {
 	root := setup(t)
-	askForks(t, root, "XR-005", [][]string{
-		{"выкат", "в прод", "куда катить?", "в стенд", "в прод"},
-	})
-	paths := askInBothTrees(t, root, "XR-005")
+	askForks(t, root, "XR-005", dropForks)
+	path := askInMain(t, root, "XR-005")
 	got := chatRun(t, root, DecideParams{ID: "XR-005", Answer: "выкат 2"}, nil, nil)
-	if left := askFilesLeft(paths); len(left) != 0 {
-		t.Fatalf("ответ человека оставил признак ожидания: %q", left)
+	if askStands(path) {
+		t.Fatalf("ответ человека оставил признак ожидания: %s", path)
 	}
 	if !strings.Contains(got, askDroppedWord) {
 		t.Fatalf("ответ команды не назвал снятие признака:\n%s", got)
@@ -67,13 +55,11 @@ func TestDecideAnswerDropsAsk(t *testing.T) {
 
 func TestDecideCloseByHumanDropsAsk(t *testing.T) {
 	root := setup(t)
-	askForks(t, root, "XR-005", [][]string{
-		{"выкат", "в прод", "куда катить?", "в стенд", "в прод"},
-	})
-	paths := askInBothTrees(t, root, "XR-005")
+	askForks(t, root, "XR-005", dropForks)
+	path := askInMain(t, root, "XR-005")
 	got := chatRun(t, root, DecideParams{ID: "XR-005", Name: "выкат", By: "человек", Text: "в стенд, там дешевле"}, nil, nil)
-	if left := askFilesLeft(paths); len(left) != 0 {
-		t.Fatalf("решение человека оставило признак ожидания: %q", left)
+	if askStands(path) {
+		t.Fatalf("решение человека оставило признак ожидания: %s", path)
 	}
 	if !strings.Contains(got, askDroppedWord) {
 		t.Fatalf("ответ команды не назвал снятие признака:\n%s", got)
@@ -84,13 +70,11 @@ func TestDecideCloseByHumanDropsAsk(t *testing.T) {
 // остаётся ждать, и признак снимать нечем.
 func TestDecideCloseByExecutorKeepsAsk(t *testing.T) {
 	root := setup(t)
-	askForks(t, root, "XR-005", [][]string{
-		{"выкат", "в прод", "куда катить?", "в стенд", "в прод"},
-	})
-	paths := askInBothTrees(t, root, "XR-005")
+	askForks(t, root, "XR-005", dropForks)
+	path := askInMain(t, root, "XR-005")
 	got := chatRun(t, root, DecideParams{ID: "XR-005", Name: "выкат", By: "исполнитель", Text: "в прод, как рекомендовано"}, nil, nil)
-	if left := askFilesLeft(paths); len(left) != 2 {
-		t.Fatalf("решение исполнителя сняло признак ожидания человека: осталось %q", left)
+	if !askStands(path) {
+		t.Fatalf("решение исполнителя сняло признак ожидания человека: %s", path)
 	}
 	if strings.Contains(got, askDroppedWord) {
 		t.Fatalf("ответ команды назвал снятие, которого не было:\n%s", got)
@@ -100,11 +84,43 @@ func TestDecideCloseByExecutorKeepsAsk(t *testing.T) {
 // Без признака ответ молчит о снятии: слово «снят» без файла было бы выдумкой.
 func TestDecideAnswerWithoutAskSaysNothing(t *testing.T) {
 	root := setup(t)
-	askForks(t, root, "XR-005", [][]string{
-		{"выкат", "в прод", "куда катить?", "в стенд", "в прод"},
-	})
+	askForks(t, root, "XR-005", dropForks)
 	got := chatRun(t, root, DecideParams{ID: "XR-005", Answer: "выкат 2"}, nil, nil)
 	if strings.Contains(got, askDroppedWord) {
 		t.Fatalf("ответ команды назвал снятие признака, которого не было:\n%s", got)
+	}
+}
+
+// Передача развилки исполнителю с --by человек это не ответ на вопрос:
+// развилка остаётся открытой у исполнителя, и признак стоит дальше.
+func TestDecideLeaveByHumanKeepsAsk(t *testing.T) {
+	root := setup(t)
+	askForks(t, root, "XR-005", dropForks)
+	path := askInMain(t, root, "XR-005")
+	got := chatRun(t, root, DecideParams{ID: "XR-005", Name: "выкат", Leave: true, By: "человек", Text: "пусть решает исполнитель"}, nil, nil)
+	if !askStands(path) {
+		t.Fatalf("передача развилки сняла признак ожидания: %s", path)
+	}
+	if strings.Contains(got, askDroppedWord) {
+		t.Fatalf("ответ команды назвал снятие, которого не было:\n%s", got)
+	}
+}
+
+// Боевая раскладка: признак лежит в основном чекауте, а отвечает исполнитель
+// из дерева задачи (taskctl -C <worktree> decide --answer). Корень ответа
+// приводится к основному чекауту, иначе признак искался бы в каталоге,
+// которого в дереве задачи не бывает.
+func TestDecideAnswerFromWorktreeDropsMainAsk(t *testing.T) {
+	root := setup(t)
+	askForks(t, root, "XR-005", dropForks)
+	gitSetup(t, root)
+	wt := addWorktree(t, root, "xr-005")
+	path := askInMain(t, root, "XR-005")
+	got := chatRun(t, wt, DecideParams{ID: "XR-005", Answer: "выкат 2"}, nil, nil)
+	if askStands(path) {
+		t.Fatalf("ответ из дерева задачи оставил признак в основном чекауте: %s", path)
+	}
+	if !strings.Contains(got, askDroppedWord) {
+		t.Fatalf("ответ команды не назвал снятие признака:\n%s", got)
 	}
 }

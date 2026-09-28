@@ -8,6 +8,7 @@ import (
 
 	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/merged"
+	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskhead"
 )
 
@@ -281,14 +282,18 @@ func logWake(root string, w waiter, code int) {
 	logLine(root, what, code)
 }
 
-// dropTaskAsks снимает признак ожидания вопроса в чекауте и в дереве задачи
-// рядом с ним: спрашивают чаще из дерева задачи, а отвечают в основном чекауте,
-// и признак, переживший ответ, рисовал бы в панели вопрос уже не ждущей строке.
-// Возврат это число снятых файлов: по нему в ответ команды встаёт строка о
-// снятом вопросе, а не одинаковое молчание при живом признаке и без него
-// (DK-1204).
+// dropTaskAsks снимает признак ожидания вопроса. Писатель признака кладёт его
+// в основной чекаут, каким бы деревом ни звали (runAsk, stage.MainRoot), а
+// отвечают и будят строку хоть из основного чекаута, хоть из дерева задачи:
+// корень тут приводится к основному тем же MainRoot, иначе ответ из дерева
+// задачи искал бы признак в каталоге, которого там не бывает (ревью DK-1204).
+// Дерево задачи рядом с чекаутом обходится следом: признак старого образца
+// мог лечь и туда, а переживший ответ признак рисовал бы в панели вопрос уже
+// не ждущей строке. Возврат это число снятых файлов: по нему в ответ команды
+// встаёт строка о снятом вопросе, а не одинаковое молчание при живом
+// признаке и без него.
 func dropTaskAsks(root, id string) int {
-	top := filepath.Clean(root)
+	top := filepath.Clean(stage.MainRoot(root))
 	tree := filepath.Join(filepath.Dir(top), filepath.Base(top)+"-"+strings.ToLower(id))
 	n := 0
 	for _, dir := range []string{top, tree} {

@@ -102,6 +102,11 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	orig := doc
 	name := decideName(p.Name)
 	note := ""
+	// answered ставят только ветки ответа человека: --answer и решение
+	// «--by человек». Снятие признака после разбора без этого признака
+	// срабатывало и на --leave с --by человек, где развилка оставлена
+	// исполнителю и вопрос человеку не отвечен (ревью DK-1204).
+	answered := false
 	switch {
 	case p.Chat:
 		if d == nil {
@@ -111,6 +116,7 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 		return decideChat(root, doc, p, *d, env)
 	case p.Answer != "":
 		doc, note, err = decideAnswer(doc, p)
+		answered = true
 	case p.Ask != "":
 		doc, err = decideAsk(doc, p)
 	case len(p.Opts) > 0:
@@ -119,6 +125,7 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 		doc, err = decideLeave(doc, name, p)
 	case p.By != "":
 		doc, err = decideClose(doc, name, p)
+		answered = decideAuthors[p.By] == taskform.ByHuman
 	default:
 		return decideShow(doc, p), nil
 	}
@@ -134,14 +141,13 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
 		return "", err
 	}
-	// Ответ человека снимает признак ожидания того же захода в обоих
-	// деревьях. Прежде его снимали только панель и wake, а ответ из окна или
-	// головой сессии оставлял признак на месте, и плашка «Заход ждёт ответа»
-	// стояла на решённой развилке до перезапуска захода (DK-1204).
-	if p.Answer != "" || (p.By != "" && decideAuthors[p.By] == taskform.ByHuman) {
-		if dropTaskAsks(root, p.ID) > 0 {
-			note += "\n" + askDroppedNote
-		}
+	// Ответ человека снимает признак ожидания того же захода, и снимает уже
+	// после записи ответа в файл: снятый раньше записи признак будил бы
+	// строку без ответа. Прежде признак снимали только панель и wake, а ответ
+	// из окна или головой сессии оставлял его на месте, и плашка «Заход ждёт
+	// ответа» стояла на решённой развилке до перезапуска захода (DK-1204).
+	if answered && dropTaskAsks(root, p.ID) > 0 {
+		note += "\n" + askDroppedNote
 	}
 	rel, rerr := filepath.Rel(root, path)
 	if rerr != nil {

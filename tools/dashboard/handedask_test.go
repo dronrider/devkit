@@ -206,7 +206,9 @@ func TestChatSaySettlesDelegateAsk(t *testing.T) {
 // показывала вопрос своей задачи вовсе (DK-652).
 func TestStaticHandedAskWiring(t *testing.T) {
 	js := readFile(t, filepath.Join("static", "app.js"))
-	for _, want := range []string{"own_wait", "askPickWire"} {
+	// askWhenWord и слово «спросил в» это шапка плашки «Заход ждёт ответа»:
+	// без задачи и времени вопрос в чужом чате читался как свой (DK-1204).
+	for _, want := range []string{"own_wait", "askPickWire", "askWhenWord(ask.since)", "\"спросил в \""} {
 		if !strings.Contains(js, want) {
 			t.Errorf("в static/app.js нет %q: вопрос агента не соберётся", want)
 		}

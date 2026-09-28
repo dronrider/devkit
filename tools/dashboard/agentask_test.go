@@ -249,3 +249,52 @@ func TestStaticAskHeaderGap(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// Виджет несёт задачу и время вопроса (DK-1204): признак адресован сессии, а
+// не задаче, и панель выносит его в чат той задачи, к которой сессия привязана
+// сейчас. Плашка «Заход ждёт ответа» без задачи и времени в чате соседней
+// строки читалась как свой свежий вопрос. Время это mtime файла признака, тот
+// же момент, с которого заход стоит.
+func TestAgentAskOfCarriesTaskAndSince(t *testing.T) {
+	h := handedAsk{Name: "task-XR-9", Since: 1_758_000_000, Ask: chat.Ask{Task: "XR-9",
+		Questions: []chat.Question{{Text: "куда катить"}}}}
+	// Виджет сверяется по JSON, как его читает панель: поле since появилось
+	// этой правкой, и regcheck собирает тест на базе, где его в типе ещё нет.
+	data, err := json.Marshal(agentAskOf(h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"task":"XR-9"`, `"since":1758000000`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("в виджете нет %s: %s", want, data)
+		}
+	}
+}
+
+func TestChatAskAgentCarriesTaskAndSince(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "aaaa1111-1111-4111-8111-111111111111"
+	writeAskPack(t, e.proj, "XR-9", sid, time.Time{}, chat.Question{Text: "куда катить"})
+	asked := time.Now().Add(-7 * time.Minute).Truncate(time.Second)
+	if err := os.Chtimes(chat.AskPath(e.proj, chat.TaskName("XR-9")), asked, asked); err != nil {
+		t.Fatal(err)
+	}
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats/"+sid+"/ask", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("вопрос агента: %d %s", resp.StatusCode, text)
+	}
+	var got struct {
+		Ask map[string]any `json:"ask"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ ручки не разобрался: %v\n%s", err, text)
+	}
+	since, _ := got.Ask["since"].(float64)
+	if got.Ask["task"] != "XR-9" || int64(since) != asked.Unix() {
+		t.Fatalf("ручка не отдала задачу и время вопроса: %s", text)
+	}
+	if _, has := got.Ask["until"]; has {
+		t.Fatalf("у признака без срока в JSON стоит срок: %s", text)
+	}
+}

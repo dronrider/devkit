@@ -1133,6 +1133,18 @@ func (s *smoke) stepWaiting() (string, error) {
 	if len(item.Waiting.Questions) != 1 || item.Waiting.Questions[0] != asked {
 		return "", fmt.Errorf("вопрос до полки ждущих не доехал: %q", item.Waiting.Questions)
 	}
+	// Тот же вопрос обязан приехать в разговор ждущей сессии с задачей и
+	// временем: по ним плашка «Заход ждёт ответа» называет, чей это вопрос и
+	// когда встал, а без них он читался бы своим в чате любой задачи (DK-1204).
+	var av struct {
+		Ask agentAsk `json:"ask"`
+	}
+	if err := s.call("GET", "/api/projects/demo/chats/"+shelfAddr+"/ask", "", http.StatusOK, &av); err != nil {
+		return "", err
+	}
+	if av.Ask.Task != smokeTask || av.Ask.Since == 0 {
+		return "", fmt.Errorf("вопрос разговора %s без задачи или времени: %+v", shelfAddr, av.Ask)
+	}
 	if err := chat.DropAsk(s.proj, chat.TaskName(smokeTask)); err != nil {
 		return "", err
 	}

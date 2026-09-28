@@ -13446,9 +13446,31 @@ function askBlindSteps(ask) {
   return [{ text: ask.text, options: ask.options }];
 }
 
+// Слово о том, когда встал вопрос: часы местные, а день добавляется, когда
+// вопрос не сегодняшний. Возраст словами тут не годится: он растёт с каждым
+// кругом опроса, а человеку надо сверить время с записью развилки и с
+// журналом, где стоит абсолютное время.
+function askWhenWord(sec) {
+  if (!sec) return "";
+  const at = sec * 1000;
+  const d = new Date(at);
+  const today = new Date();
+  const sameDay = d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth()
+    && d.getDate() === today.getDate();
+  const clock = clockWord(at);
+  if (sameDay || !clock) return clock;
+  return String(d.getDate()).padStart(2, "0") + "." + String(d.getMonth() + 1).padStart(2, "0") + " " + clock;
+}
+
 function paintAgentBlind(box, ask) {
   const head = el("div", "caskh");
   head.append(el("b", "", "Заход ждёт ответа"));
+  // Задача и время вопроса стоят в шапке: признак адресован сессии, и панель
+  // выносит его в тот чат, к какой задаче сессия привязана сейчас. Без имени
+  // задачи чужой вопрос в чате соседней строки читался как свой (DK-1204).
+  const who = [ask.task || "", askWhenWord(ask.since) ? "спросил в " + askWhenWord(ask.since) : ""]
+    .filter(Boolean).join(", ");
+  if (who) head.append(el("span", "n", who));
   const left = waitLeft(ask.until, Date.now());
   if (left) head.append(el("span", "n", left === "срок вышел" ? left : "осталось " + left));
   box.replaceChildren(head);

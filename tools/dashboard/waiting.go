@@ -233,11 +233,15 @@ const askStepCut = 28
 
 // agentAsk это вопрос агента, адресованный разговору. Поля повторяют снимок
 // панели клиента (kind, text, options, steps); своего тут
-// три поля, и все три про то, чего у клиентского вопроса нет: чья задача ждёт,
-// до какого срока и какие вопросы стоят за этим следующими.
+// четыре поля, и все четыре про то, чего у клиентского вопроса нет: чья
+// задача ждёт, с какого момента, до какого срока и какие вопросы стоят за
+// этим следующими. Время вопроса нужно плашке «Заход ждёт ответа»: признак
+// адресован сессии, а не задаче, и в чате соседней задачи вопрос без задачи и
+// времени читался как свой и свежий (DK-1204).
 type agentAsk struct {
 	Kind    string      `json:"kind"`
 	Task    string      `json:"task,omitempty"`
+	Since   int64       `json:"since,omitempty"`
 	Until   int64       `json:"until,omitempty"`
 	Rest    []string    `json:"rest,omitempty"`
 	Text    string      `json:"text,omitempty"`
@@ -258,7 +262,7 @@ type agentStep struct {
 // agentAskOf собирает виджет из признака ожидания. Пустой вид значит, что
 // показывать нечего: вопрос без текста и без вариантов рисовать не на чем.
 func agentAskOf(h handedAsk) agentAsk {
-	out := agentAsk{Kind: askKindAgent, Task: h.Ask.Task, Until: h.Ask.UnixUntil()}
+	out := agentAsk{Kind: askKindAgent, Task: h.Ask.Task, Since: h.Since, Until: h.Ask.UnixUntil()}
 	for i, q := range h.Ask.Questions {
 		text := strings.TrimSpace(q.Text)
 		if text == "" {

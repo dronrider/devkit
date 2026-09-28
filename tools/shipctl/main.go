@@ -29,11 +29,28 @@ const usageText = `shipctl: слияние и откат задач по пра�
                                   подписки и называет модель из ответа
   merge <ID> [--test "cmd"]       предусловия (чистое дерево, задача в
         [--deploy "cmd"] [--push] In progress, прод не сломан, Check пуст,
-        [--train]                 ревью без открытых замечаний), ребейз ветки
-                                  на main, тесты,
+        [--train] [--lock-wait 30m] ревью без открытых замечаний), ребейз ветки
+        [--no-wait]               на main, тесты,
                                   fast-forward-слияние, выкат, перевод в Check;
                                   --train копит задачу в поезд: сливает без
-                                  выката, задача остаётся в In progress
+                                  выката, задача остаётся в In progress.
+                                  Занятый замок конвейера ждётся: держатель
+                                  печатается сразу, срок задаёт --lock-wait
+                                  (умолчание 30m), --no-wait возвращает
+                                  мгновенный отказ для скриптов
+  queue [--drain] [--test "cmd"]  очередь слияний: строки In progress с
+        [--hold ID --reason "..."] веткой по убыванию ранга, с повторами и
+        [--free ID] [--push]      причиной прошлого отказа. Без ключей печатает
+                                  состав, --drain сливает одну готовую ветку
+                                  поездом (зовёт тик devkitctl watch; пустая
+                                  очередь, сломанный прод и занятый конвейер
+                                  выходят нулём со строкой «очередь слияний
+                                  пуста»), --hold снимает строку с очереди,
+                                  --free возвращает и обнуляет повторы.
+                                  Отбитая нагрузочной краснотой вне диффа
+                                  ветка встаёт в хвост сама, потолок повторов
+                                  три; своя краснота и конфликт ребейза выводят
+                                  строку из очереди с записью в файл задачи
   ship [--deploy "cmd"] [--push]  выкат поезда: один деплой на все слитые
         [--drain]                 после прошлого выката задачи, все разом в
                                   Check, тег deployed сдвигается на main;
@@ -221,10 +238,28 @@ func main() {
 		fs.StringVar(&p.Deploy, "deploy", "", "команда выката, без неё выкат за пользователем")
 		fs.BoolVar(&p.Train, "train", false, "слить в поезд: без выката, задача остаётся в In progress")
 		fs.BoolVar(&p.Push, "push", false, "запушить main и доску после слияния")
+		wait := fs.Duration("lock-wait", lockWaitDefault, "сколько ждать занятый замок конвейера")
+		noWait := fs.Bool("no-wait", false, "не ждать замок: мгновенный отказ, как до DK-1218")
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, "merge <ID> --test \"cmd\" [--deploy \"cmd\"] [--push]")
+		needArgs(pos, 1, 1, "merge <ID> --test \"cmd\" [--deploy \"cmd\"] [--push] [--lock-wait 30m] [--no-wait]")
 		p.ID = pos[0]
+		p.LockWait, p.Say = *wait, sayNow
+		if *noWait {
+			p.LockWait = 0
+		}
 		msg, err = cmdMerge(root(*dir), p)
+	case "queue":
+		fs := flag.NewFlagSet("queue", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		p := QueueParams{Say: sayNow}
+		fs.BoolVar(&p.Drain, "drain", false, "слить одну готовую ветку из головы очереди")
+		fs.StringVar(&p.Hold, "hold", "", "снять строку с очереди: ID задачи")
+		fs.StringVar(&p.Free, "free", "", "вернуть строку в очередь и обнулить повторы: ID задачи")
+		fs.StringVar(&p.Reason, "reason", "", "причина снятия с очереди")
+		fs.StringVar(&p.Test, "test", "", "команда тестов проекта (sh -c)")
+		fs.BoolVar(&p.Push, "push", false, "запушить main и доску после слияния")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "queue [--drain] [--hold ID --reason \"...\"] [--free ID]")
+		msg, err = cmdQueue(root(*dir), p)
 	case "ship":
 		fs := flag.NewFlagSet("ship", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

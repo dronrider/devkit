@@ -549,6 +549,12 @@ func cmdStatus(root string) (string, error) {
 	if len(train) > 0 {
 		out = append(out, "поезд: "+strings.Join(train, ", ")+" слиты и ждут выката (shipctl ship)")
 	}
+	// Очередь слияний печатается рядом с поездом: это два конца одного
+	// конвейера, ветки ждут слияния в первой и выката во втором (DK-1218).
+	if q, err := queueRows(root, b); err == nil && len(q) > 0 {
+		out = append(out, "очередь слияний (разливает тик devkitctl watch, руками shipctl queue --drain):")
+		out = append(out, queueLines(q)...)
+	}
 	if len(strays) > 0 {
 		out = append(out, "аномалия: код в окне выката, а задача не в In progress ("+strayList(strays)+"); merge и ship будут отказывать, пока не разобрано")
 	}
@@ -865,12 +871,31 @@ func deployedIn(root, main string, b *board, sects ...string) ([]string, error) 
 }
 
 type MergeParams struct {
-	ID     string
-	Test   string // команда тестов, обязательна
-	Deploy string // явная команда выката; пустую подхватывает .devkit/deploy.local
-	Train  bool   // слить в поезд: без выката и без перевода в Check
-	Push   bool
+	ID       string
+	Test     string // команда тестов, обязательна
+	Deploy   string // явная команда выката; пустую подхватывает .devkit/deploy.local
+	Train    bool   // слить в поезд: без выката и без перевода в Check
+	Push     bool
+	LockWait time.Duration // сколько ждать занятый замок, ноль это мгновенный отказ
+	Say      func(string)  // печать хода прямо сейчас: ожидание замка обязано быть слышно
 }
+
+// errRebaseConflict помечает отказ ребейза: ветку разводят руками, и очередь
+// слияний по этому признаку выводит её из состава, а не повторяет (DK-1218).
+var errRebaseConflict = errors.New("конфликт ребейза")
+
+// redError это красный прогон вместе с разбором, чья краснота отбила
+// слияние. Разбор считается один раз, в момент записи журнала, и очередь
+// читает его отсюда, а не по тексту отказа.
+type redError struct {
+	Own  bool // краснота в диффе задачи
+	Load bool // нагрузочное падение вне диффа
+	Why  string
+	err  error
+}
+
+func (e *redError) Error() string { return e.err.Error() }
+func (e *redError) Unwrap() error { return e.err }
 
 func cmdMerge(root string, p MergeParams) (string, error) {
 	if p.Train && p.Deploy != "" {
@@ -884,7 +909,15 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if corpActive(root) {
 		return "", corpRefused("merge")
 	}
-	unlock, err := acquireLock(root, lockWho("merge", p.ID))
+	// Ожидание замка отмечается этапом до самого ожидания: минуты под
+	// занятым замком это тоже ожидание очереди, и снаружи оно обязано быть
+	// видно, а не только в отказе, которого при успешном ожидании не будет.
+	if p.LockWait > 0 {
+		if lockBusyNow(root) {
+			stageQueue(root, []string{p.ID}, "shipctl merge ждёт замок конвейера")
+		}
+	}
+	unlock, err := acquireLockWait(root, lockWho("merge", p.ID), p.LockWait, p.Say)
 	if err != nil {
 		if errors.Is(err, errLockBusy) {
 			stageQueue(root, []string{p.ID}, "shipctl merge ждёт замок конвейера")
@@ -1158,7 +1191,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if _, err := git(workDir, "merge-base", "--is-ancestor", main, "HEAD"); err != nil {
 		if out, err := git(workDir, "rebase", main); err != nil {
 			git(workDir, "rebase", "--abort")
-			return "", fmt.Errorf("ребейз на %s не прошёл, разбирать конфликт руками:\n%s", main, cmdoutFrame(workDir, "git-rebase", out))
+			return "", fmt.Errorf("%w: ребейз на %s не прошёл, разбирать руками:\n%s", errRebaseConflict, main, cmdoutFrame(workDir, "git-rebase", out))
 		}
 	}
 	// Тесты идут не в workDir, а в свежем дереве на ребейзнутом коммите и в
@@ -1179,13 +1212,16 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	// Журнал итогов по компонентам (DK-1125): пишется по факту прогона, красного
 	// в том числе, до отказа ниже, иначе отбитое слияние не оставляло бы следа и
 	// счёт чужой красноты бил бы мимо.
-	writeTestLog(root, p.ID, nonDocsPaths(mergePaths), out, err == nil, testElapsed)
+	rec := writeTestLog(root, p.ID, nonDocsPaths(mergePaths), out, err == nil, testElapsed)
 	if err != nil {
 		why := ""
 		if d := run.Diagnose(out); d != "" {
 			why = "\n" + d
 		}
-		return "", fmt.Errorf("тесты после ребейза красные в свежем дереве (чистый чекаут %s, без следов работы в worktree), ветка остаётся несшитой:%s\n%s", sha[:min(len(sha), 12)], why, cmdoutFrame(workDir, "test", out))
+		own, load, verdict := redVerdict(rec)
+		full := fmt.Errorf("тесты после ребейза красные в свежем дереве (чистый чекаут %s, без следов работы в worktree), ветка остаётся несшитой, %s:%s\n%s",
+			sha[:min(len(sha), 12)], verdict, why, cmdoutFrame(workDir, "test", out))
+		return "", &redError{Own: own, Load: load, Why: verdict, err: full}
 	}
 	if wt == "" {
 		if _, err := git(root, "checkout", main); err != nil {

@@ -194,6 +194,7 @@ import lift
 import layout
 import os
 import perms
+import plans
 import re
 import rules
 import runtrees
@@ -2978,6 +2979,11 @@ def doctor(start, fix=False):
     # находится до того, как кто-то на него переключится, а починить его
     # автоматике нечем, это правка в devkit.
     findings += harness.check_profiles(str(DEVKIT / "kit" / "harness"))
+    # Набор шаблонов плана сверяется двумя слоями (DK-972, решение 9): битый файл
+    # и копия проекта, отставшая от встроенного шаблона. Раскладывать проектный
+    # слой доктор не должен, набор без него это набор встроенный.
+    findings += plans.check_plans(str(DEVKIT / "kit" / "plans"),
+                                  str(Path(root) / ".devkit" / "plans"))
     # Конфиг порогов прозы того же формата и той же судьбы: чинится он правкой
     # в devkit, а не автоматикой, поэтому идёт находкой рядом с профилями.
     findings += check_prose_config()

@@ -960,10 +960,31 @@ class RunRootsTest(Stand):
         self.assertNotIn(str(self.dir / "снесённый"), watch.run_roots(self.home))
 
 
+QUIET_QUEUE = "очередь слияний пуста: ни одной строки In progress с веткой"
+QUIET_TRAIN = "разлив не нужен: поезд пуст: после точки последнего выката нет слитых задач"
+
+
+class DrainFake(Fake):
+    """Запускатель, отвечающий по концу конвейера: очереди слияний своё,
+    разливу поезда своё. Один ответ на оба путал бы источник строки в журнале:
+    оба разлива идут одним тиком, и штатная тишина у них разная."""
+
+    def __init__(self, queue=QUIET_QUEUE, ship=QUIET_TRAIN, code=0):
+        super().__init__(code=code)
+        self.queue, self.ship = queue, ship
+
+    def __call__(self, argv, **kw):
+        self.calls.append(list(argv))
+        self.kwargs.append(dict(kw))
+        out = self.queue if "queue" in argv else self.ship
+        return subprocess.CompletedProcess(argv, self.code, out, None)
+
+
 class DrainTest(Stand):
-    """Тик льёт поезд по каждому корню обхода: у события «очередь
-    освободилась» нет получателя, и без сторожка поезд стоит до ручного
-    ship (LLD DK-306, решение 4)."""
+    """Тик ведёт оба конца конвейера по каждому корню обхода: очередь слияний
+    (DK-1218) и разлив поезда (LLD DK-306, решение 4). У событий «замок
+    освободился» и «очередь освободилась» получателя нет, и без сторожка
+    ветки стоят до ручного merge, а поезд до ручного ship."""
 
     def setUp(self):
         super().setUp()
@@ -990,7 +1011,10 @@ class DrainTest(Stand):
         return rc, out.getvalue()
 
     def drained(self):
-        return [c for c in self.call.calls if "--drain" in c]
+        return [c for c in self.call.calls if "--drain" in c and "ship" in c]
+
+    def queued(self):
+        return [c for c in self.call.calls if "--drain" in c and "queue" in c]
 
     def journal(self):
         return (self.home / ".devkit" / "goal-watch.log").read_text(encoding="utf-8")
@@ -1005,19 +1029,59 @@ class DrainTest(Stand):
             [SHIPCTL, "-C", str(self.proj), "ship", "--drain"],
             [SHIPCTL, "-C", str(solo), "ship", "--drain"]], self.call.calls)
 
+    def test_each_root_pours_merge_queue_before_the_train(self):
+        # Очередь слияний идёт раньше разлива поезда: слияние копит поезд, а
+        # разлив его везёт, и в обратном порядке только что слитая ветка
+        # ждала бы выката целый тик.
+        solo = self.second_root()
+        rc, out = self.sweep()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.queued(), [
+            [SHIPCTL, "-C", str(self.proj), "queue", "--drain"],
+            [SHIPCTL, "-C", str(solo), "queue", "--drain"]], self.call.calls)
+        first = self.call.calls.index([SHIPCTL, "-C", str(self.proj), "queue", "--drain"])
+        after = self.call.calls.index([SHIPCTL, "-C", str(self.proj), "ship", "--drain"])
+        self.assertLess(first, after, self.call.calls)
+
+    def test_empty_merge_queue_stays_out_of_the_journal(self):
+        # Пустая очередь это норма тика каждые пять минут, и в журнал она не
+        # идёт, как и пустой поезд.
+        rc, out = self.sweep(call=DrainFake())
+        self.assertEqual(rc, 0, out)
+        self.assertIn("очередь слияний пуста", out)
+        self.assertNotIn("очередь слияний пуста", self.journal())
+        self.assertIn("целей под надзором", self.journal())
+
+    def test_merged_branch_reaches_the_journal(self):
+        rc, out = self.sweep(call=DrainFake(queue="DK-901 слита очередью: DK-901 слита в main fast-forward"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("слита очередью", out)
+        self.assertIn("слита очередью", self.journal())
+
+    def test_merge_queue_failure_reported(self):
+        rc, out = self.sweep(call=DrainFake(queue="доска не прочиталась", code=1))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("разлив очереди упал с кодом 1", out)
+        self.assertIn("разлив очереди упал", self.journal())
+
+    def test_missing_shipctl_names_the_merge_queue(self):
+        rc, out = self.sweep(shipctl="")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.queued(), [])
+        self.assertIn("очередь слияний стоит до ручного merge", out)
+
     def test_silent_zero_exit_stays_out_of_the_journal(self):
         # Пустой поезд и занятая очередь это норма тика, а не событие: строка
         # идёт в отчёт, но не в журнал, иначе журнал тонул бы в «поезд пуст»
         # каждые пять минут.
-        rc, out = self.sweep(call=Fake(code=0, out="разлив не нужен: поезд пуст: "
-                                                  "после точки последнего выката нет слитых задач"))
+        rc, out = self.sweep(call=DrainFake())
         self.assertEqual(rc, 0, out)
         self.assertIn("поезд пуст", out)
         self.assertNotIn("поезд пуст", self.journal())
         self.assertIn("целей под надзором", self.journal())
 
     def test_deploy_reaches_the_journal(self):
-        rc, out = self.sweep(call=Fake(code=0, out="поезд выкачен (DK-901)\nдоска: DK-901 в Check, коммит abc"))
+        rc, out = self.sweep(call=DrainFake(ship="поезд выкачен (DK-901)\nдоска: DK-901 в Check, коммит abc"))
         self.assertEqual(rc, 0, out)
         self.assertIn("поезд выкачен", out)
         self.assertIn("поезд выкачен", self.journal())
@@ -1029,6 +1093,7 @@ class DrainTest(Stand):
         rc, out = self.sweep(call=Fake(code=1, out="выкат поезда упал: деплой не прошёл"))
         self.assertEqual(rc, 0, out)
         self.assertEqual(len(self.drained()), 2, self.call.calls)
+        self.assertEqual(len(self.queued()), 2, self.call.calls)
         self.assertIn("с кодом 1", out)
         self.assertIn("деплой не прошёл", out)
         self.assertIn("разлив упал", self.journal())

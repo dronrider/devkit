@@ -865,6 +865,21 @@ const STAGE_COLOR = {
 function stageWaiting(row) {
   return STAGE_WAITS.includes(row.stage);
 }
+
+// Закрыт ли этап: taskctl отдаёт под строкой и последний закрытый этап
+// работы, когда открытого нет (DK-1205), и говорит об этом полем
+// stage_state. Сессии за закрытым этапом не бывает, а вместо неё taskctl
+// судит о голове задачи (stage_head): есть ли сессия, которая поднимет
+// следующий этап.
+function stageClosed(row) {
+  return row.stage_state === "закрыт";
+}
+
+// Момент, от которого тикает возраст: у открытого этапа его начало, у
+// закрытого конец. Оба приходят в unix-секундах.
+function stageTickFrom(row) {
+  return stageClosed(row) ? row.stage_end : row.stage_since;
+}
 function stageWord(row) {
   if (stageWaiting(row) && row.stage_at) return row.stage_at;
   return row.stage;
@@ -880,11 +895,14 @@ function stageYours(row) {
   return row.sect === "check" && row.accept && row.accept !== "agent";
 }
 
-// Класс цвета строки этапа: брошенная сессия красит в красный поверх группы
-// этапа, ожидание человека оранжевым (цвет ожиданий словаря), машинное
-// ожидание оставляет цвет того этапа работы, на котором задача встала, а у
-// этапа работы с сессией цвет берёт словарь STAGE_COLOR.
+// Класс цвета строки этапа: закрытый этап серый поверх любой группы, за ним
+// никто не работает, и цвет группы обещал бы ход, которого нет; брошенная
+// сессия красит в красный поверх группы этапа, ожидание человека оранжевым
+// (цвет ожиданий словаря), машинное ожидание оставляет цвет того этапа
+// работы, на котором задача встала, а у этапа работы с сессией цвет берёт
+// словарь STAGE_COLOR.
 function stageKindClass(row) {
+  if (stageClosed(row)) return "k-done";
   if (row.stage_session === "сессии нет, брошена") return "k-gone";
   if (stageYours(row)) return "k-you";
   if (stageWaiting(row) && !row.stage_at) return "k-wait";
@@ -898,6 +916,7 @@ function stageKindClass(row) {
 // из двух хвостов: через запятую идёт состояние сессии, через точку с запятой
 // причина остановки.
 function stageTail(row) {
+  if (stageClosed(row)) return row.stage_head || "";
   return row.stage_session || "";
 }
 function stageNote(row) {
@@ -916,7 +935,7 @@ function stageNote(row) {
 }
 function stageTip(row, now) {
   const bits = [stageWord(row)];
-  const age = stageAgeText(row.stage_since, row.stage_round, now);
+  const age = stageAgeText(stageTickFrom(row), row.stage_round, now, stageClosed(row));
   if (age) bits.push(age);
   const tail = stageTail(row);
   if (tail) bits.push(tail);
@@ -988,9 +1007,12 @@ function stageMark(row, cls, word) {
 
 // Возраст этапа словами, с кругом впереди при повторном заходе. Тот же счёт,
 // что раньше собирал stageChip, теперь общий для колонки строки и шапки формы.
-function stageAgeText(since, round, now) {
-  const age = workAge(since, now);
+// У закрытого этапа возраст считается от конца и так и называется: «закрыт
+// 2 ч 10 мин назад».
+function stageAgeText(since, round, now, closed) {
+  let age = workAge(since, now);
   if (!age) return "";
+  if (closed) age = "закрыт " + age + " назад";
   return round > 1 ? "круг " + round + ", " + age : age;
 }
 
@@ -1043,11 +1065,14 @@ function stageAgeFits(word, ageText, markPx) {
 // копия хода видна всегда тем же компактным словом: подсказки там нет, и
 // прятать возраст решением JS незачем, а тесноту решает многоточие в стилях
 // (замечание 2 приёмки третьего круга).
+// У закрытого этапа (DK-1205) возраст тикает от конца: момент и признак
+// кладёт stageTickData, а слово «закрыт» в колонку не идёт, о закрытии говорят
+// серый цвет и полный текст подсказки.
 function stageAgeCompactNode(row, narrow) {
   const now = Date.now();
-  const text = stageAgeCompact(row.stage_since, now);
+  const text = stageAgeCompact(stageTickFrom(row), now);
   const node = el("em", "stage-age", text);
-  if (row.stage_since) node.dataset.stageSince = String(row.stage_since);
+  stageTickData(node, row);
   node.dataset.stageCompact = "1";
   if (!narrow) {
     const word = stageWord(row) || "";
@@ -1101,7 +1126,7 @@ function tickStageAges() {
       return;
     }
     const round = Number(node.dataset.stageRound || "0");
-    node.textContent = stageAgeText(since, round, now);
+    node.textContent = stageAgeText(since, round, now, node.dataset.stageClosed === "1");
   });
   // Возраст на ноутбуке стоит в подсказке колонки, и тикать он обязан там же:
   // подсказка, собранная один раз при отрисовке, к вечеру называла бы утренние
@@ -1110,7 +1135,7 @@ function tickStageAges() {
   document.querySelectorAll(".stage-tip").forEach((box) => {
     const bits = [box.dataset.stageHead || ""];
     const age = stageAgeText(Number(box.dataset.stageSince),
-      Number(box.dataset.stageRound || "0"), now);
+      Number(box.dataset.stageRound || "0"), now, box.dataset.stageClosed === "1");
     if (age) bits.push(age);
     if (box.dataset.stageTail) bits.push(box.dataset.stageTail);
     const note = box.dataset.stageNote;
@@ -1127,20 +1152,24 @@ function stageTipNode(box, row) {
   box.dataset.stageHead = stageWord(row) || "";
   box.dataset.stageTail = stageTail(row);
   box.dataset.stageNote = stageNote(row);
-  if (row.stage_since) {
-    box.dataset.stageSince = String(row.stage_since);
-    box.dataset.stageRound = String(row.stage_round || 0);
-  }
+  stageTickData(box, row);
   return box;
+}
+
+// Данные тика на узле: момент отсчёта, круг и признак закрытого этапа. Тик
+// читает их с узла и задачу заново не спрашивает.
+function stageTickData(node, row) {
+  const from = stageTickFrom(row);
+  if (!from) return;
+  node.dataset.stageSince = String(from);
+  node.dataset.stageRound = String(row.stage_round || 0);
+  if (stageClosed(row)) node.dataset.stageClosed = "1";
 }
 
 // Возраст этапа с тикающим узлом: общий для колонки строки и шапки формы.
 function stageAgeNode(tag, row) {
-  const node = el(tag, "stage-age", stageAgeText(row.stage_since, row.stage_round, Date.now()));
-  if (row.stage_since) {
-    node.dataset.stageSince = String(row.stage_since);
-    node.dataset.stageRound = String(row.stage_round || 0);
-  }
+  const node = el(tag, "stage-age", stageAgeText(stageTickFrom(row), row.stage_round, Date.now(), stageClosed(row)));
+  stageTickData(node, row);
   return node;
 }
 
@@ -1158,6 +1187,10 @@ function stageAgeNode(tag, row) {
 // со словом (замечание 2 приёмки третьего круга); слово этапа при этом не
 // режется никогда. На телефоне подсказки нет, и возраст тем же компактным
 // словом виден всегда.
+//
+// Закрытый этап (DK-1205) идёт серым словом с возрастом от конца, пульса у
+// него нет: сессии за ним не бывает, а слова о голове задачи стоят в
+// подсказке.
 function stageColumn(row, narrow) {
   if (!row.stage) return null;
   const cls = stageKindClass(row);
@@ -1206,9 +1239,18 @@ function stageFormBlocks(row) {
     steps.append(s);
   });
   const blocks = [header, steps];
+  // Брошенная сессия и закрытый этап без головы это один и тот же обрыв
+  // конвейера с двух сторон: там сессия умерла посреди этапа, тут этап сдан,
+  // а следующий открывать некому. Подсказка под степпером у обоих одна.
   if (cls === "k-gone") {
     const hintLine = el("div", "hint");
     hintLine.append(document.createTextNode("Сессии нет " + workAge(row.stage_since, Date.now()) + ". "),
+      el("b", "", "Взять в работу"),
+      document.createTextNode(" заведёт новую с этого этапа."));
+    blocks.push(hintLine);
+  } else if (stageClosed(row) && row.stage_head === "головы нет") {
+    const hintLine = el("div", "hint");
+    hintLine.append(document.createTextNode("Этап закрыт " + workAge(row.stage_end, Date.now()) + " назад, головы нет. "),
       el("b", "", "Взять в работу"),
       document.createTextNode(" заведёт новую с этого этапа."));
     blocks.push(hintLine);

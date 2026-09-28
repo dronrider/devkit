@@ -142,6 +142,14 @@ type boardRow struct {
 	// его подсвечивает лента строки списка и степпер формы.
 	StageSession string `json:"stage_session,omitempty"`
 	StageAt      string `json:"stage_at,omitempty"`
+	// StageState называет, открыт этап или закрыт («открыт», «закрыт»,
+	// DK-1205): у задачи, которой агент касался, под строкой стоит и
+	// последний закрытый этап. У закрытого StageEnd это его конец в
+	// unix-секундах, а StageHead слова о голове задачи («головы нет»,
+	// «голова жива», «голова молчит N минут») вместо хвоста о сессии.
+	StageState string `json:"stage_state,omitempty"`
+	StageEnd   int64  `json:"stage_end,omitempty"`
+	StageHead  string `json:"stage_head,omitempty"`
 	// Waiting это состояние «ждёт человека»: кто кого ждёт, с какой точностью
 	// это известно и до какого срока (waiting.go, LLD DK-430, решение 4).
 	// Пусто, когда никто никого не ждёт; у непустого источник назван всегда.

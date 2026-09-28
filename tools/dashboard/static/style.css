@@ -609,6 +609,7 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
    красился вовсе (замечание 1 приёмки второго круга). */
 .k-you{--k:var(--wait)}
 .k-gone{--k:var(--block)}
+.k-done{--k:var(--tx3)}
 
 /* Колонка хода строки списка (2a): слово этапа и возраст одной строкой, лента
    из восьми делений под ними. Второй точки тут нет: состояние сессии несёт
@@ -708,6 +709,7 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .now2 .big i.quiet{background:color-mix(in oklab,var(--k) 45%,var(--bg3))}
 .now2.k-gone .big i{background:transparent;border:2px solid var(--block);
   width:6px;height:6px}
+.now2.k-done .big i{display:none}
 @media (prefers-reduced-motion:no-preference){
   .now2.live .big i{animation:dkpulse 2.2s ease-out infinite}
 }

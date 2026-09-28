@@ -3,10 +3,11 @@
 //
 // Предмет: колонка хода строки списка и шапка со степпером формы получают от
 // taskctl список одних и тех же полей (stage, stage_since, stage_round,
-// stage_session, stage_at) и обязаны различать по ним ровно четыре состояния
-// (живая сессия, молчащая, брошенная, ожидание) цветом словаря и подсказкой,
-// не приписывая слова о сессии видимым текстом. Строка без записи этапа
-// колонку не ломает: ячейка остаётся пустой.
+// stage_session, stage_at, stage_state, stage_end, stage_head) и обязаны
+// различать по ним ровно пять состояний (живая сессия, молчащая, брошенная,
+// ожидание, закрытый этап) цветом словаря и подсказкой, не приписывая слова о
+// сессии видимым текстом. Строка без записи этапа колонку не ломает: ячейка
+// остаётся пустой.
 //
 // Зовётся: node testdata/poc_stagemark.mjs static/app.js
 
@@ -65,6 +66,11 @@ const board = {
       // остаётся, и он прячется целиком, а слово стоит целым
       row("XR-12", { stage: "разработка", stage_since: now - 59 * 60, stage_round: 1,
         stage_session: "сессия жива" }),
+      // закрытый этап без головы (DK-1205): конвейер сдал слияние и никто
+      // не поднял следующий этап; слово серое, возраст от конца, пульса нет
+      row("XR-13", { stage: "слияние", stage_state: "закрыт",
+        stage_since: now - 3 * 3600, stage_end: now - 2 * 3600 - 600, stage_round: 2,
+        stage_age: "2 часа", stage_head: "головы нет" }),
     ],
   }],
 };
@@ -75,6 +81,10 @@ const { sandbox, byId, timers } = makeSandbox(app, (path) => {
   if (String(path).includes("/tasks/XR-6")) {
     return { row: board.sections[0].rows[5], file: "docs/tasks/XR-6.md",
       text: "# XR-6: заголовок из файла\n\n## Что происходит\n\nтело постановки\n" };
+  }
+  if (String(path).includes("/tasks/XR-13")) {
+    return { row: board.sections[0].rows.find((r) => r.id === "XR-13"), file: "docs/tasks/XR-13.md",
+      text: "# XR-13: закрытый этап\n\n## Что происходит\n\nтело постановки\n" };
   }
   if (String(path).includes("/tasks/XR-3")) {
     // Первая строка файла это «# XR-3: ...», и на экране она не печатается:
@@ -469,6 +479,57 @@ const saidOf = (node) => {
   if (!String(btn.attrs["aria-label"] || "").includes("ждёт человека")) {
     fail("подсказка метки «вы» не называет ожидание: " + JSON.stringify(btn.attrs));
   }
+}
+
+// --- закрытый этап: серое слово, возраст от конца, голова в подсказке ---
+{
+  const cell = stageCell("XR-13");
+  const box = byClass(cell, "act2");
+  if (!box) fail("строка с закрытым этапом без колонки хода: " + dump(cell));
+  const cls = String(box.className).split(" ");
+  if (!cls.includes("k-done") || cls.includes("live") || cls.includes("k-gone") || cls.includes("k-ship")) {
+    fail("закрытый этап красится не серым или несёт пульс: " + box.className);
+  }
+  if (box.title !== "слияние, круг 2, закрыт 2 ч 10 мин назад, головы нет") {
+    fail("подсказка закрытого этапа не та: " + JSON.stringify(box.title));
+  }
+  const said = dump(box);
+  if (!said.includes("слияние")) fail("слово закрытого этапа не читается: " + said);
+  if (said.includes("головы")) fail("слова о голове стоят видимым текстом: " + said);
+  // В колонке возраст стоит компактно и от конца этапа (замечание 2 приёмки
+  // третьего круга DK-1119): «2 ч» рядом с коротким словом, а «закрыт ... назад»
+  // целиком живёт в подсказке и в шапке формы.
+  const age = byClass(box, "stage-age");
+  if (!age || age.dataset.stageSince !== String(now - 2 * 3600 - 600) || age.dataset.stageClosed !== "1") {
+    fail("узел возраста закрытого этапа тикает не от конца: " + JSON.stringify(age && age.dataset));
+  }
+  if (age.hidden || dump(age).trim() !== "2 ч") {
+    fail("компактный возраст закрытого этапа не от конца или спрятан: " + JSON.stringify(dump(age)));
+  }
+  const marks = byClass(box, "seg").children.map((i) => String(i.className || ""));
+  if (marks[5] !== "now" || marks[4] !== "done" || marks[6] !== "") {
+    fail("лента закрытого этапа подсвечивает не слияние: " + JSON.stringify(marks));
+  }
+
+  await sandbox.renderTask("demo", [], "XR-13", null);
+  await settle();
+  const now2 = byClass(groups, "now2");
+  if (!now2) fail("на форме задачи с закрытым этапом нет шапки этапа");
+  if (!String(now2.className).split(" ").includes("k-done") || String(now2.className).includes("live")) {
+    fail("шапка формы закрытого этапа не серая или пульсирует: " + now2.className);
+  }
+  const head = dump(now2);
+  if (!head.includes("слияние") || !head.includes("закрыт 2 ч 10 мин назад")) {
+    fail("шапка формы не называет закрытый этап с возрастом от конца: " + head);
+  }
+  const hint = byClass(groups, "hint");
+  if (!hint) fail("под степпером задачи без головы нет строки-подсказки");
+  const hintSaid = dump(hint);
+  if (!hintSaid.includes("головы нет") || !hintSaid.includes("Взять в работу")) {
+    fail("строка-подсказка закрытого этапа не та: " + hintSaid);
+  }
+  sandbox.renderBoard("demo", board);
+  await settle();
 }
 
 // --- форма задачи брошенной строки: шапка, степпер и строка-подсказка ---

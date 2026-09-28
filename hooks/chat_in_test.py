@@ -196,6 +196,15 @@ class Stand:
     def marks_text(self):
         return self.read(self.markfile)
 
+    def marked_lines(self):
+        """Отмеченные строки «Входящих» целиком, без служебной пары «время
+        сессия». Сверять отметку подстрокой нельзя: время записи стоит в том же
+        файле, и подстрока времени из фикстуры находится в нём сама собой,
+        когда часы машины показывают ту же минуту (DK-1187)."""
+        rows = self.marks_text().split("\n")
+        return [rows[i + 1] for i in range(0, len(rows) - 1, 2)
+                if rows[i].strip() and rows[i + 1]]
+
     def cycle_text(self):
         return self.read(os.path.join(self.dev, "goal-DK-100.log"))
 
@@ -275,7 +284,7 @@ class DeliveryTest(GoalCase):
         s.incoming("2026-08-15 15:10, из дашборда: да")
         text = self.added(s.run())
         self.assertIn("15:10", text)
-        self.assertNotIn("14:03", s.marks_text())
+        self.assertEqual(s.marked_lines(), ["2026-08-15 15:10, из дашборда: да"])
 
     def test_mark_without_its_line_is_not_carried_over(self):
         s = self.stand()

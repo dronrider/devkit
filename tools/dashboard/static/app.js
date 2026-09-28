@@ -13466,10 +13466,11 @@ function paintAgentBlind(box, ask) {
   const head = el("div", "caskh");
   head.append(el("b", "", "Заход ждёт ответа"));
   // Задача и время вопроса стоят в шапке: признак адресован сессии, и панель
-  // выносит его в тот чат, к какой задаче сессия привязана сейчас. Без имени
-  // задачи чужой вопрос в чате соседней строки читался как свой (DK-1204).
-  const who = [ask.task || "", askWhenWord(ask.since) ? "спросил в " + askWhenWord(ask.since) : ""]
-    .filter(Boolean).join(", ");
+  // показывает его в чате той задачи, к которой сессия привязана сейчас. Без
+  // имени задачи чужой вопрос в чате соседней строки читался как свой
+  // (DK-1204).
+  const when = askWhenWord(ask.since);
+  const who = [ask.task || "", when ? "спросил в " + when : ""].filter(Boolean).join(", ");
   if (who) head.append(el("span", "n", who));
   const left = waitLeft(ask.until, Date.now());
   if (left) head.append(el("span", "n", left === "срок вышел" ? left : "осталось " + left));

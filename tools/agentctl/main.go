@@ -113,6 +113,13 @@ const usageText = `agentctl: выбор исполнителя под задач
                           заход, выходы --label со своим хвостом либо --force.
                           Порядок ведения в скилле work-plan, читает план
                           дашборд
+  plan templates          набор шаблонов плана двумя слоями: встроенный
+      [--dump <имя>]      kit/plans и проектный .devkit/plans, где одноимённый
+  plan show               файл проекта замещает встроенный целиком. templates
+      [--template <имя>]  печатает набор списком, --dump отдаёт файл как есть
+                          для копии в проект, show --template печатает этапы
+                          шаблона по порядку: кто ведёт, какой след остаётся,
+                          какие ворота его спрашивают
   wait <ID> <условие>     отметка машинного ожидания для оболочки конвейера:
        [--until <срок>]   ход кончается штатно, а проход с такой отметкой
        [--note <текст>]   заказа не получает и в воронку с потолком проходов не
@@ -458,11 +465,22 @@ func main() {
 		// снимок квоты. Дом берётся у процесса, и без него команде некуда
 		// писать вовсе.
 		fs := flag.NewFlagSet("plan", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория, от неё ищется набор шаблонов")
 		sid := fs.String("sid", "", "ID сессии, перебивает окружение")
 		label := fs.String("label", "", "метка субагента в имени файла плана")
 		force := fs.Bool("force", false, "положить план поверх лежащего, даже когда наборы не пересеклись ни одним пунктом")
+		tpl := fs.String("template", "", "печатать не план сессии, а этапы шаблона по имени")
+		dump := fs.String("dump", "", "печатать файл шаблона как есть, для копии в .devkit/plans")
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, -1, "plan set|step|done|show [<пункт>...] [--sid <ID>] [--label <метка>] [--force]")
+		needArgs(pos, 1, -1, "plan set|step|done|show|templates [<пункт>...] [--sid <ID>] [--label <метка>] [--force] [--template <имя>] [--dump <имя>]")
+		if pos[0] == "templates" {
+			msg, err = cmdPlanTemplates(*dir, *dump)
+			break
+		}
+		if pos[0] == "show" && *tpl != "" {
+			msg, err = planTemplateShow(*dir, *tpl)
+			break
+		}
 		home, herr := os.UserHomeDir()
 		if herr != nil {
 			fail(fmt.Errorf("не видно дома пользователя, плану некуда лечь: %v", herr))

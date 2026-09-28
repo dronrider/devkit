@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -68,4 +69,82 @@ func TestStaticStageMark(t *testing.T) {
 		t.Fatalf("этап задачи в строке и на форме: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+// TestStaticStageColorHasInk: у всякого класса цвета этапа, который ставит
+// разметка, в стилях есть своё правило --k. Класс без правила оставляет
+// переменную пустой, и покрашенное ею просто пропадает: сегмент «проверка» в
+// степпере формы стоял неокрашенным у строки, которую ждёт человек (класс
+// k-you, замечание 1 приёмки второго круга). Разбором стенда такое не берётся:
+// стенд смотрит на имя класса, а цвет приходит из стилей.
+func TestStaticStageColorHasInk(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	css := readFile(t, filepath.Join("static", "style.css"))
+	seen := map[string]bool{}
+	for _, hit := range regexp.MustCompile(`"(k-[a-z]+)"`).FindAllStringSubmatch(app, -1) {
+		seen[hit[1]] = true
+	}
+	if len(seen) == 0 {
+		t.Fatal("в static/app.js нет ни одного класса цвета этапа: разметка переехала, сторож ослеп")
+	}
+	for name := range seen {
+		if !strings.Contains(css, "."+name+"{--k:") {
+			t.Errorf("класс цвета %s стоит в разметке, а правила .%s{--k:...} в стилях нет: "+
+				"слово, точка и деление ленты останутся неокрашенными", name, name)
+		}
+	}
+}
+
+// TestStaticStageGlassIcon: пометка машинного ожидания рисуется значком
+// разметки, а не рамками в стилях. Рамкой часы выходили коробкой с чертой
+// посередине и на песочные часы не походили вовсе («значок ожидания не похож
+// на часы», замечание 5 приёмки второго круга). Значок лежит там же, где
+// прочие значки экрана, и зовётся из разметки строки и шапки формы.
+func TestStaticStageGlassIcon(t *testing.T) {
+	html := readFile(t, filepath.Join("static", "index.html"))
+	if !strings.Contains(html, `<svg data-ico="i-glass"`) {
+		t.Error("в наборе значков нет i-glass: песочные часы рисовать нечем")
+	}
+	app := readFile(t, filepath.Join("static", "app.js"))
+	if !strings.Contains(app, `icon("i-glass")`) {
+		t.Error("пометка ожидания не берёт значок часов из набора разметки")
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, gone := range []string{".act2 b .hg:after", ".now2 .hgf:after"} {
+		if strings.Contains(css, gone) {
+			t.Errorf("часы снова рисуются рамкой в стилях (%s): фигура выходит коробкой", gone)
+		}
+	}
+	// Значок берёт размер строки, а не сам себе: без правила он встал бы во
+	// всю ширину коробки значка.
+	for _, want := range []string{".act2 b .hg .gico{", ".now2 .hgf .gico{"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("значку часов не задан размер (%s)", want)
+		}
+	}
+}
+
+// TestStaticStageMarkTap: пометка ожидания открывает подсказку нажатием.
+// Родная подсказка браузера живёт наведением, а на телефоне наведения нет, и
+// пометка стояла там немой (замечание 3 приёмки второго круга). Цель касания
+// растит пустой слой поверх значка, и меньше 24 точек она быть не должна.
+func TestStaticStageMarkTap(t *testing.T) {
+	css := readFile(t, filepath.Join("static", "style.css"))
+	rule := ""
+	if at := strings.Index(css, ".mtip>button:after{"); at >= 0 {
+		if end := strings.Index(css[at:], "}"); end > 0 {
+			rule = css[at : at+end]
+		}
+	}
+	if rule == "" {
+		t.Fatal("у пометки ожидания нет слоя касания: пальцем в значок не попасть")
+	}
+	for _, want := range []string{"width:max(100%,24px)", "height:24px"} {
+		if !strings.Contains(rule, want) {
+			t.Errorf("цель касания пометки меньше 24 точек: в слое нет %s (%s)", want, rule)
+		}
+	}
+	if !strings.Contains(css, ".mtip.on .mtipbox") {
+		t.Error("нажатие на пометку ничего не открывает: правила .mtip.on в стилях нет")
+	}
 }

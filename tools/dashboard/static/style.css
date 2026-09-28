@@ -89,6 +89,12 @@
   --chipfs:10.5px;/* кегль чипа */
   --chippx:6px;   /* боковое поле чипа */
   --chipgap:4px;  /* зазор между чипами */
+  /* Кромка чипа с причиной блока или провала. Причина это фраза человека, и
+     без кромки чип занимал столько, сколько в ней знаков: шапка разговора
+     отдавала ему место меню выбора чатов, а строка списка уносила раздел
+     вбок. Число одно на все места, где чип стоит (строка, форма, шапка и
+     панель разговора), а целая фраза приходит подсказкой. */
+  --cwhymax:160px;
   --rowfs:13.5px; /* кегль заголовка строки */
   --rowfw:400;    /* насыщенность заголовка строки */
   --subfs:11px;   /* кегль подписи: дата, приписка под заголовком */
@@ -236,7 +242,7 @@ a:hover{text-decoration:underline}
 /* причина провала и блока это фраза человека, а не слово-метка: в строке она
    режется кромкой своего места, а целиком приходит подсказкой. Нерезаный чип
    с целым предложением уносил строку за край экрана, и раздел ездил вбок */
-.cwhy{max-width:100%;overflow:hidden;text-overflow:ellipsis;display:inline-block;line-height:var(--chiph)}
+.cwhy{max-width:min(var(--cwhymax),100%);overflow:hidden;text-overflow:ellipsis;display:inline-block;line-height:var(--chiph);flex:0 1 auto}
 .c-goal{background:color-mix(in oklab,var(--goal) 16%,transparent);color:var(--goal)}
 /* ожидание человека: свой цвет, а не цвет блока, потому что припаркованная
    строка носит оба чипа сразу и они не должны сливаться */
@@ -596,6 +602,12 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .k-ship{--k:var(--deleg)}
 .k-ver{--k:var(--goal)}
 .k-wait{--k:var(--wait)}
+/* Ожидание человека красится цветом ожиданий целиком: слово, точка и деление
+   того этапа, на котором задача встала (вариант 3d макета, там деление
+   «проверка» оранжевое у ожидания человека и сиреневое у обычной проверки).
+   Без своего правила класс оставлял --k пустым, и сегмент степпера у формы не
+   красился вовсе (замечание 1 приёмки второго круга). */
+.k-you{--k:var(--wait)}
 .k-gone{--k:var(--block)}
 
 /* Колонка хода строки списка (2a): слово этапа и возраст одной строкой, лента
@@ -623,14 +635,32 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .trow .stage .act2 b .stage-age{display:none}
 /* Песочные часы у машинного ожидания: работа за задачей встала, а слово рядом
    называет тот этап, на котором она встала. Метка «вы» говорит то же про
-   ожидание человека, и она же стоит у проверки, которую закрывает он. */
-.act2 b .hg{flex:none;width:7px;height:9px;border:1.5px solid var(--wait);
-  border-radius:1px;position:relative;opacity:.9}
-.act2 b .hg:after{content:"";position:absolute;left:1px;right:1px;top:3px;
-  height:1.5px;background:var(--wait)}
-.act2 b .you{flex:none;font:600 9.5px var(--sans);letter-spacing:.04em;
+   ожидание человека, и она же стоит у проверки, которую закрывает он.
+   Часы рисует значок разметки (i-glass), а не рамка с чертой посередине:
+   рамкой они выходили коробкой и на часы не походили (замечание 5 приёмки
+   второго круга). */
+.act2 b .hg{color:var(--wait);opacity:.9}
+.act2 b .hg .gico{width:11px;height:11px;display:block}
+.act2 b .you{font:600 9.5px var(--sans);letter-spacing:.04em;
   padding:1px 5px;border-radius:4px;
   background:color-mix(in oklab,var(--wait) 22%,transparent);color:var(--wait)}
+
+/* Пометка ожидания открывает свою подсказку нажатием: родная подсказка
+   браузера живёт наведением, а на телефоне наведения нет, и пометка стояла там
+   немой (замечание 3 приёмки второго круга). Приём тот же, что у слагаемых
+   ранга: класс `on` на коробке, подсказка своей коробкой поверх строки.
+   Пустой слой поверх значка растит цель касания до 24 точек, не трогая при
+   этом ни размера самого значка, ни раскладки строки. */
+.mtip{position:relative;display:inline-flex;align-items:center;flex:none}
+.mtip>button{position:relative;display:inline-flex;align-items:center;flex:none;
+  padding:0;border:none;background:none;cursor:pointer;color:inherit}
+.mtip>button:after{content:"";position:absolute;left:50%;top:50%;
+  transform:translate(-50%,-50%);width:max(100%,24px);height:24px}
+.mtipbox{display:none;position:absolute;left:0;top:calc(100% + 3px);z-index:20;
+  width:max-content;max-width:220px;padding:6px 9px;border:1px solid var(--line2);
+  border-radius:var(--rad2);background:var(--bg2);box-shadow:0 14px 32px rgba(0,0,0,0.45);
+  font:400 11.5px/1.45 var(--sans);color:var(--tx2);white-space:normal;cursor:default}
+.mtip:hover .mtipbox,.mtip.on .mtipbox{display:block}
 /* Ожидание человека выделяется кольцом у точки: оранжевых точек на доске
    бывает несколько, и та, что ждёт именно человека, обязана быть заметнее. */
 .sd-wait.you{box-shadow:0 0 0 2px color-mix(in oklab,var(--wait) 35%,transparent)}
@@ -654,11 +684,9 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
   color:var(--k)}
 /* Те же пометки, что в строке, крупнее на полторы точки: форму читают глазами,
    а не наводят на неё мышь. */
-.now2 .hgf{flex:none;width:8px;height:10px;border:1.5px solid var(--wait);
-  border-radius:1px;position:relative}
-.now2 .hgf:after{content:"";position:absolute;left:1px;right:1px;top:3.5px;
-  height:1.5px;background:var(--wait)}
-.now2 .youf{flex:none;font:600 10px var(--sans);padding:1px 6px;border-radius:4px;
+.now2 .hgf{color:var(--wait)}
+.now2 .hgf .gico{width:13px;height:13px;display:block}
+.now2 .youf{font:600 10px var(--sans);padding:1px 6px;border-radius:4px;
   background:color-mix(in oklab,var(--wait) 22%,transparent);color:var(--wait)}
 .now2 .big i{width:8px;height:8px;border-radius:50%;background:var(--k);
   flex:none;font-style:normal}
@@ -1060,7 +1088,10 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .csep{color:var(--tx4,var(--tx3));opacity:.5;margin:0 5px}
 .ctool{color:var(--tx2);font-weight:600}
 .csub{color:var(--tx3);font-style:italic}
-.cwhy{color:var(--tx3);opacity:.85;max-width:22em;overflow:hidden;
+/* Довод хода зовётся своим классом, а не тем же `cwhy`, что причина блока:
+   имя было одно на два разных поля, и правило довода (22em шириной) молча
+   перебивало кромку чипа блока во всём дашборде. */
+.cabout{color:var(--tx3);opacity:.85;max-width:22em;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
 /* Крестик закрытия говорит на языке соседних кнопок шапки: та же коробка, та
    же рамка, тот же отклик на наведение. Прежде он стоял бледным значком без
@@ -1419,7 +1450,10 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
    под названием бывает в две строки, и центрированное кольцо уезжало бы от
    заголовка вниз. */
 .cpanel .chead{align-items:flex-start}
-.rslot{flex:none;display:flex;align-items:center}
+/* Кольцо с чипом блока рядом: чип режется своей кромкой (--cwhymax), и место
+   меню выбора чатов слот у шапки не отнимает. Нерезаный чип с фразой человека
+   сжимал меню до неработоспособного (замечание 4 приёмки второго круга). */
+.rslot{flex:none;min-width:0;max-width:100%;display:flex;align-items:center}
 .ringwrap{position:relative;flex:none;width:36px;height:36px;cursor:pointer}
 .ring{display:block;width:36px;height:36px;overflow:visible}
 /* Кольцо без шкалы: ровная дорожка без делений. Рисуется она там, где о ходе
@@ -2388,6 +2422,10 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
    шапка ложится рядом чипов сортировки: подписывать там нечего, колонок нет.
    Тянуть границу тоже нечего, и ручка погашена. */
 @media (max-width:900px){
+  /* На телефоне чипу причины остаётся доля ширины экрана, а не те же 160
+     точек: строка тут раскладывается по областям, и рядом с чипом стоят и
+     заголовок, и соседние чипы. */
+  :root{--cwhymax:min(160px,45vw)}
   /* Селекторы тут повторяют путь от таблицы не для красоты: правило вида
      «.tbl>tbody>tr» сильнее одиночного «.trow», и раскладку строки оно
      перебивало, отчего ячейки вставали столбиком. */
@@ -2447,13 +2485,21 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
      Ход по замечанию ревью: было grid-row:3, ровно та регрессия строки в три
      раза выше, которую раньше уже правили («Две строки, а не три»). */
   .trow .stage{display:none}
-  .trow .stage-narrow{display:block}
+  .trow .stage-narrow{display:block;min-width:0;max-width:100%}
   .trow .stage-narrow:empty{display:none}
   /* Подсказки на телефоне нет, поэтому круг и возраст стоят тут словами после
      слова этапа, а лента ложится рядом в свои 120 точек (вариант 3b макета,
      замечание 4 приёмки). */
-  .trow .stage-narrow .act2{flex-direction:row;align-items:center;gap:var(--rowmgx)}
+  .trow .stage-narrow .act2{flex-direction:row;align-items:center;gap:var(--rowmgx);
+    max-width:100%;flex-wrap:wrap}
   .trow .stage-narrow .act2 .seg{width:120px;min-width:0;flex:none}
+  /* Слово с кругом и возрастом ужимаются в остаток ширины, а лента держит свои
+     120 точек: без этого ряд считался по неразрывным словам, лента вылезала за
+     край карточки и раздел ездил вбок (замечание 2 приёмки второго круга,
+     длинный заголовок цели DK-1084). */
+  .trow .stage-narrow .act2 b{flex:1 1 auto;min-width:0;max-width:100%}
+  .trow .stage-narrow .act2 b .stage-age{flex:0 1 auto;min-width:0;
+    overflow:hidden;text-overflow:ellipsis}
   .trow .meta{grid-column:4;grid-row:1}
   /* Хвост прижат к правому краю строки и не переносится: правило одно на три
      раздела, и стоит оно рядом с раскладкой той строки, которой правит. */

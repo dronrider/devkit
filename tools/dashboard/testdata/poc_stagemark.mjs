@@ -64,6 +64,10 @@ const board = {
 const { sandbox, byId, timers } = makeSandbox(app, (path) => {
   if (path === "/api/harnesses") return { harnesses: [{ name: "подписка-раз", default: true }] };
   if (path === "/api/quota") return { harnesses: [] };
+  if (String(path).includes("/tasks/XR-6")) {
+    return { row: board.sections[0].rows[5], file: "docs/tasks/XR-6.md",
+      text: "# XR-6: заголовок из файла\n\n## Что происходит\n\nтело постановки\n" };
+  }
   if (String(path).includes("/tasks/XR-3")) {
     // Первая строка файла это «# XR-3: ...», и на экране она не печатается:
     // заголовок один, в шапке формы (замечание 7 приёмки).
@@ -85,6 +89,16 @@ const rowOf = (id) => {
 };
 const stageCell = (id) => byClass(rowOf(id), "stage");
 
+// Видимый текст узла: слова подсказки, открываемой нажатием, в него не входят.
+// Коробка подсказки лежит в разметке всегда, а показывает её наведение или
+// класс `on` (DK-1119, замечание 3 приёмки второго круга), и обход дерева
+// читал бы её словами колонки.
+const saidOf = (node) => {
+  const tip = byClass(node, "mtipbox");
+  const all = dump(node);
+  return tip ? all.split(dump(tip)).join(" ") : all;
+};
+
 // --- живая сессия: слово этапа, круг и возраст, лента без приписок ---
 {
   const cell = stageCell("XR-1");
@@ -99,7 +113,7 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   if (box.title !== "разработка, 12 мин, сессия жива") {
     fail("подсказка живой строки не та: " + JSON.stringify(box.title));
   }
-  const said = dump(box);
+  const said = saidOf(box);
   if (!said.includes("разработка") || !said.includes("12 мин")) {
     fail("слово этапа или возраст не читаются: " + said);
   }
@@ -119,7 +133,7 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   if (box.title !== "ревью, круг 2, 45 мин, сессия молчит 25 минут") {
     fail("подсказка молчащей строки не та: " + JSON.stringify(box.title));
   }
-  const said = dump(box);
+  const said = saidOf(box);
   if (!said.includes("ревью") || !said.includes("круг 2") || !said.includes("45 мин")) {
     fail("слово, круг или возраст молчащей строки не читаются: " + said);
   }
@@ -135,7 +149,7 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   if (box.title !== "разработка, 5 ч 0 мин, сессии нет, брошена") {
     fail("подсказка брошенной строки не та: " + JSON.stringify(box.title));
   }
-  const said = dump(box);
+  const said = saidOf(box);
   if (said.includes("брошена") || said.includes("сессии нет")) {
     fail("слова о брошенной сессии видимым текстом: " + said);
   }
@@ -155,7 +169,7 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   if (box.title !== "проверка, 3 ч 0 мин; ждёт человека") {
     fail("подсказка ожидания не та: " + JSON.stringify(box.title));
   }
-  const said = dump(box);
+  const said = saidOf(box);
   // Слово называет работу, а не ожидание: «ждёт человека» это остановка на
   // этапе «проверка», и в строке стоит этап (замечание 1 приёмки).
   if (!said.includes("проверка")) fail("слово ожидания не назвало этап работы: " + said);
@@ -182,7 +196,7 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   if (box.title !== "ревью, 20 мин; ждёт события") {
     fail("подсказка машинного ожидания не та: " + JSON.stringify(box.title));
   }
-  const said = dump(box);
+  const said = saidOf(box);
   if (!said.includes("ревью")) fail("машинное ожидание не назвало этап работы: " + said);
   if (said.includes("ждёт события")) fail("в строке стоит слово ожидания: " + said);
   if (!byClass(box, "hg")) fail("у машинного ожидания нет песочных часов: " + said);
@@ -200,7 +214,7 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   if (!String(box.className).split(" ").includes("k-wait")) {
     fail("запись без этапа работы не оранжевая: " + box.className);
   }
-  const said = dump(box);
+  const said = saidOf(box);
   if (!said.includes("ждёт события")) {
     fail("записи без этапа работы нечего сказать, кроме слова ожидания: " + said);
   }
@@ -220,11 +234,11 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   if (!String(box.className).split(" ").includes("k-you")) {
     fail("проверка за человеком не оранжевая: " + box.className);
   }
-  if (!byClass(box, "you")) fail("у проверки за человеком нет метки «вы»: " + dump(box));
+  if (!byClass(box, "you")) fail("у проверки за человеком нет метки «вы»: " + saidOf(box));
   if (box.title.indexOf("приёмка за вами") < 0 || box.title.indexOf("глаза") < 0) {
     fail("подсказка не называет приёмку и барьер: " + JSON.stringify(box.title));
   }
-  const said = dump(tr);
+  const said = saidOf(tr);
   if (said.includes("ждёт вашей приёмки") || said.includes("агент проверит сам")) {
     fail("чип приёмки остался в строке: " + said);
   }
@@ -328,6 +342,68 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   }
 }
 
+// --- пометка ожидания: значок часов и подсказка, открываемая нажатием ---
+{
+  const box = byClass(stageCell("XR-6"), "act2");
+  const wrap = byClass(box, "mtip");
+  if (!wrap) fail("пометка ожидания стоит без коробки подсказки: " + dump(box));
+  const btn = byClass(wrap, "hg");
+  if (!btn || btn.tagName !== "BUTTON") {
+    fail("песочные часы это не кнопка, и нажать их нечем: " + JSON.stringify(btn && btn.tagName));
+  }
+  // Часы рисует значок разметки, а не рамка в стилях (замечание 5 приёмки
+  // второго круга): узел значка стоит внутри кнопки своим классом.
+  if (!byClass(btn, "gico")) fail("внутри пометки нет значка часов: " + dump(btn));
+  const said = String(btn.title || "");
+  if (!said.includes("ждёт события")) {
+    fail("подсказка пометки не называет причину остановки: " + JSON.stringify(said));
+  }
+  if (String(btn.attrs["aria-label"] || "") !== said) {
+    fail("подсказка пометки не доехала до чтения с экрана: " + JSON.stringify(btn.attrs));
+  }
+  const tipBox = byClass(wrap, "mtipbox");
+  if (!tipBox || !dump(tipBox).includes("ждёт события")) {
+    fail("коробка подсказки пуста: " + dump(wrap));
+  }
+  // Нажатие открывает подсказку и не уводит внутрь задачи: строка списка
+  // кликабельна целиком.
+  let stopped = false;
+  btn.handlers.click({ stopPropagation: () => { stopped = true; } });
+  if (!stopped) fail("нажатие на пометку уходит в строку и открывает задачу");
+  if (!String(wrap.className).split(" ").includes("on")) {
+    fail("нажатие не открыло подсказку: " + wrap.className);
+  }
+  if (String(btn.attrs["aria-expanded"]) !== "true") {
+    fail("состояние подсказки не доехало до чтения с экрана: " + JSON.stringify(btn.attrs));
+  }
+  btn.handlers.click({ stopPropagation: () => {} });
+  if (String(wrap.className).split(" ").includes("on")) {
+    fail("второе нажатие не закрыло подсказку: " + wrap.className);
+  }
+}
+
+// --- та же пометка в копии хода для телефона: она там и нужнее всего ---
+{
+  const narrow = byClass(byClass(rowOf("XR-6"), "tt"), "stage-narrow");
+  const btn = byClass(narrow, "hg");
+  if (!btn || btn.tagName !== "BUTTON" || !byClass(btn, "gico")) {
+    fail("в копии хода для телефона пометка ожидания без значка или не нажимается: " +
+      dump(narrow));
+  }
+}
+
+// --- метка «вы» открывает подсказку тем же нажатием ---
+{
+  const box = byClass(stageCell("XR-4"), "act2");
+  const btn = byClass(box, "you");
+  if (!btn || btn.tagName !== "BUTTON") {
+    fail("метка «вы» не нажимается: " + JSON.stringify(btn && btn.tagName));
+  }
+  if (!String(btn.title || "").includes("ждёт человека")) {
+    fail("подсказка метки «вы» не называет ожидание: " + JSON.stringify(btn.title));
+  }
+}
+
 // --- форма задачи брошенной строки: шапка, степпер и строка-подсказка ---
 {
   await sandbox.renderTask("demo", [], "XR-3", null);
@@ -338,7 +414,7 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   if (!String(now2.className).split(" ").includes("k-gone")) {
     fail("шапка формы не красная у брошенной: " + now2.className);
   }
-  const said = dump(now2);
+  const said = saidOf(now2);
   if (!said.includes("разработка") || !said.includes("5 ч")) {
     fail("шапка формы не называет этап или возраст: " + said);
   }
@@ -383,6 +459,30 @@ const stageCell = (id) => byClass(rowOf(id), "stage");
   }
   if (!text.includes("Что происходит") || !text.includes("тело постановки")) {
     fail("вместе с заголовком пропало тело постановки: " + text);
+  }
+}
+
+// --- форма машинного ожидания: значок часов в шапке, степпер на этапе работы ---
+{
+  await sandbox.renderTask("demo", [], "XR-6", null);
+  await settle();
+  const now2 = byClass(groups, "now2");
+  if (!now2) fail("на форме ожидания нет шапки этапа");
+  if (!String(now2.className).split(" ").includes("k-rev")) {
+    fail("шапка формы у машинного ожидания красится не этапом работы: " + now2.className);
+  }
+  const btn = byClass(now2, "hgf");
+  if (!btn || btn.tagName !== "BUTTON" || !byClass(btn, "gico")) {
+    fail("в шапке формы пометка ожидания без значка часов или не нажимается: " + dump(now2));
+  }
+  if (!String(btn.title || "").includes("ждёт события")) {
+    fail("подсказка пометки на форме не называет причину: " + JSON.stringify(btn.title));
+  }
+  const step2 = byClass(groups, "step2");
+  const on = step2.children.filter((x) => String(x.className).split(" ").includes("on"));
+  if (on.length !== 1 || !dump(on[0]).includes("ревью")) {
+    fail("степпер ожидания подсвечивает не этап работы: " +
+      JSON.stringify(step2.children.map(dump)));
   }
 }
 

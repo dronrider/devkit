@@ -933,9 +933,50 @@ function stageTip(row, now) {
 // лежит в одном месте.
 function stageMarks(row, form) {
   const out = [];
-  if (stageYours(row)) out.push(el("span", form ? "youf" : "you", "вы"));
-  else if (stageWaiting(row)) out.push(el("span", form ? "hgf" : "hg"));
+  if (stageYours(row)) out.push(stageMark(row, form ? "youf" : "you", "вы"));
+  else if (stageWaiting(row)) out.push(stageMark(row, form ? "hgf" : "hg", ""));
   return out;
+}
+
+// Пометка с подсказкой по нажатию. Родная подсказка браузера живёт наведением,
+// а на телефоне наведения нет вовсе: пометка стояла там немой, и причина
+// остановки не читалась ничем (замечание 3 приёмки второго круга). Приём тот
+// же, что у слагаемых ранга: нажатие вешает классу коробки `on`, и своя
+// подсказка показывается ею, а не браузером. Цель касания держат стили,
+// вырастая до 24 точек пустым слоем поверх значка.
+//
+// Словами тут стоит причина остановки, а не вся строка подсказки колонки:
+// круг и возраст на телефоне и так стоят при слове этапа, а причина нигде
+// больше не видна. Заодно эти слова не стареют между опросами доски, и
+// минутный тик возраста их не касается.
+function stageMark(row, cls, word) {
+  const wrap = el("span", "mtip");
+  const btn = el("button", cls, word);
+  btn.type = "button";
+  const said = stageNote(row) || stageWord(row);
+  btn.title = said;
+  btn.setAttribute("aria-label", said);
+  btn.setAttribute("aria-expanded", "false");
+  if (cls === "hg" || cls === "hgf") {
+    // Часы рисует значок разметки, а не рамки в стилях: коробка с чертой
+    // посередине на песочные часы не походила («значок ожидания не похож на
+    // часы», замечание 5 приёмки второго круга). Класс на значке свой: по нему
+    // его находит стенд разметки и берут размеры стили.
+    const glass = icon("i-glass");
+    glass.setAttribute("class", "gico");
+    btn.append(glass);
+  }
+  const box = el("span", "mtipbox", said);
+  box.setAttribute("role", "tooltip");
+  btn.addEventListener("click", (ev) => {
+    // Нажатие держит подсказку открытой и не уводит внутрь задачи: строка
+    // списка целиком кликабельна, и без этого пометка открывала бы задачу.
+    ev.stopPropagation();
+    const on = wrap.classList.toggle("on");
+    btn.setAttribute("aria-expanded", on ? "true" : "false");
+  });
+  wrap.append(btn, box);
+  return wrap;
 }
 
 // Возраст этапа словами, с кругом впереди при повторном заходе. Тот же счёт,
@@ -9922,7 +9963,9 @@ function pulseAgentParts(a, now) {
   return [
     { text: a.sub || "", cls: "csub" },
     { text: a.tool || "", cls: "ctool" },
-    { text: truncate(a.about || "", WHY_MAX), cls: "cwhy" },
+    // Довод хода зовётся cabout, а не cwhy: имя cwhy носит чип с причиной
+    // блока, и одно имя на два поля сталкивало их правила ширины.
+    { text: truncate(a.about || "", WHY_MAX), cls: "cabout" },
     { text: age ? (a.held ? "идёт " + age : age) : "" },
   ];
 }

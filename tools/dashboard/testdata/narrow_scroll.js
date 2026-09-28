@@ -12,6 +12,25 @@
 // Заголовок взят с живой доски: самая длинная строка проекта devkit (129
 // знаков). Короткая строка влезает в любую ширину, и замер на ней ничего не
 // говорил бы о телефоне.
+// Заголовок цели с записью этапа: на нём строка и разъезжалась. Слово «Цель:»
+// стоит первым, дальше длинная фраза, а рядом с заголовком на телефоне стоит
+// копия колонки хода с лентой в 120 точек (замечание 2 приёмки второго круга,
+// живая строка DK-1084).
+const GOAL = "Цель: прогон слияния не валит чужие слияния и не давит машину, а ожидание видно строкой";
+
+// Колонка хода строки списка: разметка та же, что собирает app.js (слово
+// этапа, пометка ожидания значком, круг с возрастом, лента из восьми делений).
+const SEG = '<span class="seg">' + '<i class="done"></i>'.repeat(5) +
+  '<i class="now"></i><i></i><i></i></span>';
+const GLASS = '<span class="mtip"><button class="hg" type="button" title="ждёт события">' +
+  '<svg class="gico" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 3.5h10"></path>' +
+  '</svg></button><span class="mtipbox">ждёт события: прогон слияния держит замок конвейера</span></span>';
+// Слова взяты с живой доски: у цели DK-1084 записи этапа работы нет, и словом
+// колонки остаётся само ожидание, самое длинное из слов словаря.
+const ACT = '<span class="act2 k-wait" title="ждёт события, круг 2, 44 часа">' +
+  '<b><span class="w">ждёт события</span>' + GLASS +
+  '<em class="stage-age">круг 2, 44 часа</em></b>' + SEG + '</span>';
+
 const LONG = "Ревьювер не дешевеет ярусом, когда в правке участвует слой без автотестов: признак и его источник живут в одном месте";
 
 // Неразрывный кусок: путь и команда без пробелов приезжают и в заголовок
@@ -51,7 +70,7 @@ if (!TASK_COLS.length || !SESS_COLS.length || !DRAFT_COLS.length) {
   throw new Error("нет window.TBLFIT: стенд мерил бы раскладку из головы");
 }
 
-const band = (inside) => `<tr class="band secband"><td class="bcell" colspan="5">${inside}</td></tr>`;
+const band = (inside) => `<tr class="band secband"><td class="bcell" colspan="6">${inside}</td></tr>`;
 
 const TASK_ROWS = `<table class="tbl t-tasks">${cols(TASK_COLS)}${head("tasks", TASK_COLS)}
   <tbody class="tsec">
@@ -59,9 +78,18 @@ const TASK_ROWS = `<table class="tbl t-tasks">${cols(TASK_COLS)}${head("tasks", 
     <tr class="trow">
       <td class="id"><span class="sdot sd-wait"></span><span>DK-466</span></td>
       <td class="tt"><span class="cin"><span class="ttl">Дашборд: истёкший логин чата виден состоянием и чинится перезапуском</span><span class="rchips"><span class="chip c-p1">P1</span><span class="chip">M</span><span class="chip c-block cwhy">блок: ${WHY}</span></span></span></td>
+      <td class="stage"></td>
       <td class="rank"><button class="rsum" type="button" aria-expanded="false">62</button><span class="rfold">50+5+3+0+4</span></td>
       <td class="twhen"><span class="stale dashed">2026-08-22</span></td>
       <td class="meta"><span class="cin"><span class="racts"><button class="btn btn-sm btn-ico rmain"><svg data-ico="i-play" viewBox="0 0 24 24"></svg></button><button class="btn btn-sm btn-ico"><svg data-ico="i-chat" viewBox="0 0 24 24"></svg></button></span></span></td>
+    </tr>
+    <tr class="trow">
+      <td class="id"><span class="sdot sd-wait"></span><span>DK-1084</span></td>
+      <td class="tt"><span class="cin"><span class="ttl">${GOAL}</span><span class="stage-narrow">${ACT}</span><span class="rchips"><span class="chip c-p1">P1</span><span class="chip">XL</span></span></span></td>
+      <td class="stage">${ACT}</td>
+      <td class="rank"><button class="rsum" type="button">65</button></td>
+      <td class="twhen"><span class="stale dashed">26-09-26</span></td>
+      <td class="meta"><span class="cin"><span class="racts"><button class="btn btn-sm btn-ico rmain"><svg data-ico="i-play" viewBox="0 0 24 24"></svg></button></span></span></td>
     </tr>
     ${band('<div class="btier quiet">ждут задач<span class="n">17</span></div>')}
     ${band('<div class="shead">Backlog<span class="n">1, по рангу</span></div>')}
@@ -70,6 +98,7 @@ const TASK_ROWS = `<table class="tbl t-tasks">${cols(TASK_COLS)}${head("tasks", 
       <td class="tt"><span class="cin"><span class="ttl">${LONG} ${SOLID}</span>
         <span class="rchips"><span class="chip">M</span>
         <span class="chip c-check">без выката, сценарий пользовательский</span></span></span></td>
+      <td class="stage"></td>
       <td class="rank on"><button class="rsum">62</button><span class="rfold">25+6+1+0+2</span></td>
       <td class="twhen"><span class="stale dashed">2026-08-20</span></td>
       <td class="meta"><span class="cin"><span class="racts"><button class="btn btn-sm btn-ico rmain"><svg data-ico="i-play" viewBox="0 0 24 24"></svg></button><button class="btn btn-sm btn-ico"><svg data-ico="i-chat" viewBox="0 0 24 24"></svg></button></span></span></td>
@@ -129,6 +158,20 @@ const ASK = `
     <div class="casks">Где именно MAX ломается под прокси? ${SOLID}</div>
   </div>`;
 
+// Шапка разговора: кольцо с чипом блока слева, меню выбора чатов справа.
+// Нерезаный чип сжимал меню до неработоспособного (замечание 4 приёмки
+// второго круга), и мерять тут надо обе ширины разом.
+const CHAT_HEAD = `
+  <div class="chead">
+    <div class="rslot"><span class="chip c-block cwhy">блок: ${WHY}</span></div>
+    <div class="ct">
+      <div class="chline">
+        <button class="cdpick"><span class="cdtask">DK-1119</span><b>Этап задачи в строке списка</b><span class="cdcar"></span></button>
+        <button class="cdbtn">+</button>
+      </div>
+    </div>
+  </div>`;
+
 const TABS = `
   <div class="ktabs">
     <button class="ktab onktab">Задачи<span class="n">128</span></button>
@@ -138,7 +181,8 @@ const TABS = `
 
 const parts = new URLSearchParams(location.search).get("bar") || "tasks";
 const body = { tasks: TABS + TASK_ROWS, sess: TABS + SESS_ROWS,
-  drafts: TABS + GROOM_BAR + DRAFT_ROWS, ask: TABS + ASK }[parts] || TABS + TASK_ROWS;
+  drafts: TABS + GROOM_BAR + DRAFT_ROWS, ask: TABS + ASK,
+  chat: TABS + CHAT_HEAD }[parts] || TABS + TASK_ROWS;
 document.getElementById("groups").innerHTML = body;
 // Шапка страницы заполняется вместе с разделом: тело вбок не ездит никогда, а
 // уносить его умеет и она. Имя проекта берётся длинное нарочно: в выпадашке
@@ -205,6 +249,31 @@ function dotGap() {
   if (!mate) return NOROW;
   return Math.round(mate.getBoundingClientRect().left - box.right);
 }
+// Кромка чипа причины и место меню выбора чатов: чип обязан резаться своим
+// числом везде, где стоит, а не занимать столько, сколько в причине знаков.
+function chipWide() {
+  const chip = document.querySelector(".cwhy");
+  return chip ? Math.round(chip.getBoundingClientRect().width) : -1;
+}
+function pickWide() {
+  const pick = document.querySelector(".cdpick");
+  return pick ? Math.round(pick.getBoundingClientRect().width) : -1;
+}
+// Цель касания пометки ожидания: слой поверх значка, его размер виден только
+// через вычисленный стиль псевдоэлемента.
+function tapWide() {
+  let best = -1;
+  // Пометок на экране две: ход стоит и отдельной колонкой, и копией внутри
+  // заголовка, а видима на каждой ширине своя. Спрятанная отдаёт размеры
+  // «auto», и мерить надо ту, что стоит на экране.
+  for (const btn of document.querySelectorAll(".mtip > button")) {
+    if (!btn.getBoundingClientRect().width) continue;
+    const box = getComputedStyle(btn, "::after");
+    const side = Math.round(Math.min(parseFloat(box.width) || 0, parseFloat(box.height) || 0));
+    if (side > best) best = side;
+  }
+  return best;
+}
 const out = [
   "screen=" + screen,
   "doc=" + Math.round(document.documentElement.scrollWidth),
@@ -218,5 +287,8 @@ const out = [
   "widest=" + bad.over,
   "who=" + (bad.name || "none"),
   "dotgap=" + dotGap(),
+  "chip=" + chipWide(),
+  "pick=" + pickWide(),
+  "tap=" + tapWide(),
 ].join(" ");
 document.title = out;

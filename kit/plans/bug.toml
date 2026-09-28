@@ -1,0 +1,108 @@
+# Шаблон плана задачи-бага: порядок задачи типа task плюс краснота.
+#
+# От task отличается одним этапом: regcheck доказывает, что тест бага падает на
+# старом коде и проходит на исправленном, и след его спрашивает слияние.
+name = "bug"
+title = "Баг доски: правка с тестом красноты, ревью и чужой проверкой"
+types = ["bug"]
+
+[plan]
+title = "план работ"
+skill = "work-plan"
+by = "сам"
+trace = "слово"
+
+[start]
+title = "взятие в работу"
+skill = "board-task"
+by = "сам"
+trace = "слово"
+
+[work]
+title = "разработка"
+skill = "test-standard"
+by = "сам"
+trace = "stage:разработка"
+slot = true
+
+[tests]
+title = "тесты"
+skill = "test-standard"
+by = "сам"
+trace = "tests"
+gate = ["merge"]
+
+[regcheck]
+title = "regcheck"
+skill = "test-standard"
+by = "сам"
+trace = "regcheck"
+gate = ["merge"]
+
+[docs]
+title = "дока"
+skill = "board-task"
+by = "сам"
+trace = "слово"
+paths = ["**/*.go", "**/*.py", "**/*.sh", "**/*.js"]
+
+[proofread]
+title = "вычитка"
+skill = "proofread"
+by = "субагент"
+agent = "proofread"
+trace = "stage:вычитка"
+paths = ["**/*.md"]
+
+[stand]
+title = "стенд"
+skill = "prompt-test"
+by = "сам"
+trace = "stand"
+gate = ["merge"]
+paths = ["kit/skills/**", "kit/agents/**", "TASKFORM.md", "RANKING.md", "ACCEPTANCE.md", "RULES*.md"]
+
+[scenario]
+title = "сценарий"
+skill = "board-task"
+by = "сам"
+trace = "scenario"
+gate = ["check", "merge"]
+
+[rehearsal]
+title = "обкатка"
+skill = "board-task"
+by = "сам"
+trace = "rehearsal"
+gate = ["check"]
+accept = ["agent"]
+
+[review]
+title = "ревью"
+skill = "review"
+by = "субагент"
+agent = "review-*"
+trace = "review"
+gate = ["merge"]
+
+[ship]
+title = "слияние"
+skill = "board-ship"
+by = "сам"
+trace = "merged"
+gate = ["check"]
+
+[verify]
+title = "проверка"
+skill = "board-task"
+by = "субагент"
+agent = "exec-*"
+trace = "verify"
+gate = ["close"]
+
+[accept]
+title = "приёмка"
+skill = "board-task"
+by = "человек"
+trace = "слово"
+accept = ["user", "mixed"]

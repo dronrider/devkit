@@ -1,0 +1,103 @@
+# Шаблон плана задачи доски: порядок работы над обычной правкой.
+#
+# Порядок секций это порядок этапов, русское имя этапа живёт в title, и оно же
+# идёт в план, в отказ ворот и в пометку «- Исключение». Состав выписан из
+# живого материала LLD DK-972: те же тринадцать шагов, те же ворота. У вычитки
+# ключ gate пуст, потому что сегодня её ворота не спрашивают.
+name = "task"
+title = "Задача доски: правка с тестами, ревью и чужой проверкой"
+types = ["task"]
+
+[plan]
+title = "план работ"
+skill = "work-plan"
+by = "сам"
+trace = "слово"
+
+[start]
+title = "взятие в работу"
+skill = "board-task"
+by = "сам"
+trace = "слово"
+
+[work]
+title = "разработка"
+skill = "test-standard"
+by = "сам"
+trace = "stage:разработка"
+slot = true
+
+[tests]
+title = "тесты"
+skill = "test-standard"
+by = "сам"
+trace = "tests"
+gate = ["merge"]
+
+[docs]
+title = "дока"
+skill = "board-task"
+by = "сам"
+trace = "слово"
+paths = ["**/*.go", "**/*.py", "**/*.sh", "**/*.js"]
+
+[proofread]
+title = "вычитка"
+skill = "proofread"
+by = "субагент"
+agent = "proofread"
+trace = "stage:вычитка"
+paths = ["**/*.md"]
+
+[stand]
+title = "стенд"
+skill = "prompt-test"
+by = "сам"
+trace = "stand"
+gate = ["merge"]
+paths = ["kit/skills/**", "kit/agents/**", "TASKFORM.md", "RANKING.md", "ACCEPTANCE.md", "RULES*.md"]
+
+[scenario]
+title = "сценарий"
+skill = "board-task"
+by = "сам"
+trace = "scenario"
+gate = ["check", "merge"]
+
+[rehearsal]
+title = "обкатка"
+skill = "board-task"
+by = "сам"
+trace = "rehearsal"
+gate = ["check"]
+accept = ["agent"]
+
+[review]
+title = "ревью"
+skill = "review"
+by = "субагент"
+agent = "review-*"
+trace = "review"
+gate = ["merge"]
+
+[ship]
+title = "слияние"
+skill = "board-ship"
+by = "сам"
+trace = "merged"
+gate = ["check"]
+
+[verify]
+title = "проверка"
+skill = "board-task"
+by = "субагент"
+agent = "exec-*"
+trace = "verify"
+gate = ["close"]
+
+[accept]
+title = "приёмка"
+skill = "board-task"
+by = "человек"
+trace = "слово"
+accept = ["user", "mixed"]

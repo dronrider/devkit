@@ -1,0 +1,94 @@
+# Шаблон плана задачи проектирования: работа кончается документом, а не кодом.
+#
+# От task отличается тремя вещами. Тестов и обкатки нет, и причины сняты
+# записями dropped. Прибавился этап карты решений: заголовки решений едут в
+# docs/map.md, и следа у него нет, он стоит на слове агента. Приёмку тут
+# спрашивают у человека при любом виде строки: решение принимает он, а не
+# прогон.
+name = "lld"
+title = "Проектирование: документ решений, ревью дизайна и слово человека"
+types = ["lld"]
+dropped = ["tests: работа кончается документом, тестировать нечего", "rehearsal: обкатывать нечего, сценарий проверки у LLD живёт в самом дизайне"]
+
+[plan]
+title = "план работ"
+skill = "work-plan"
+by = "сам"
+trace = "слово"
+
+[start]
+title = "взятие в работу"
+skill = "board-task"
+by = "сам"
+trace = "слово"
+
+[work]
+title = "разработка"
+skill = "board-task"
+by = "сам"
+trace = "stage:разработка"
+slot = true
+
+[decisions]
+title = "карта решений"
+skill = "board-task"
+by = "сам"
+trace = "слово"
+
+[docs]
+title = "дока"
+skill = "board-task"
+by = "сам"
+trace = "слово"
+
+[proofread]
+title = "вычитка"
+skill = "proofread"
+by = "субагент"
+agent = "proofread"
+trace = "stage:вычитка"
+paths = ["**/*.md"]
+
+[stand]
+title = "стенд"
+skill = "prompt-test"
+by = "сам"
+trace = "stand"
+gate = ["merge"]
+paths = ["kit/skills/**", "kit/agents/**", "TASKFORM.md", "RANKING.md", "ACCEPTANCE.md", "RULES*.md"]
+
+[scenario]
+title = "сценарий"
+skill = "board-task"
+by = "сам"
+trace = "scenario"
+gate = ["check", "merge"]
+
+[review]
+title = "ревью"
+skill = "review"
+by = "субагент"
+agent = "review-*"
+trace = "review"
+gate = ["merge"]
+
+[ship]
+title = "слияние"
+skill = "board-ship"
+by = "сам"
+trace = "merged"
+gate = ["check"]
+
+[verify]
+title = "проверка"
+skill = "board-task"
+by = "субагент"
+agent = "exec-*"
+trace = "verify"
+gate = ["close"]
+
+[accept]
+title = "приёмка"
+skill = "board-task"
+by = "человек"
+trace = "слово"

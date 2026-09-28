@@ -161,7 +161,7 @@ func TestDecideAskTie(t *testing.T) {
 	if finds := taskform.ForkFinds(doc); len(finds) != 0 {
 		t.Fatalf("сторож формы споткнулся о равенство: %+v", finds)
 	}
-	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, nil)
+	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, botEnv)
 	for _, w := range []string{"«разрез»: куда вынести раздел?\nварианты равны: оба режут тело одинаково", "\n1. свой скилл", "\n2. файл рядом"} {
 		if !strings.Contains(got, w) {
 			t.Fatalf("в блоке нет строки %q:\n%s", w, got)
@@ -282,7 +282,7 @@ func TestAddLinkPrintsGoalForks(t *testing.T) {
 func TestDecideAddsOptionToOpenFork(t *testing.T) {
 	root := setup(t)
 	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "область", Hint: "послабление только боковой директории контура", Text: "любой вложенный docs/TASKS.md или доска контура?"})
-	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, nil)
+	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, botEnv)
 	if strings.Contains(got, "\n2. ") {
 		t.Fatalf("у развилки без вариантов взялся второй пункт:\n%s", got)
 	}
@@ -295,7 +295,7 @@ func TestDecideAddsOptionToOpenFork(t *testing.T) {
 	if !strings.Contains(doc, "  - рекомендация: послабление только боковой директории контура\n  - вариант: правило по суффиксу пути, одинаковое всем репозиториям") {
 		t.Fatalf("вариант встал не после рекомендации:\n%s", doc)
 	}
-	got = chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, nil)
+	got = chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, botEnv)
 	if !strings.Contains(got, "\n2. правило по суффиксу пути, одинаковое всем репозиториям") {
 		t.Fatalf("дописанный вариант не попал в блок вопроса:\n%s", got)
 	}

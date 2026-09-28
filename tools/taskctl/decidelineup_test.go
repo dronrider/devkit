@@ -32,7 +32,7 @@ func caseFork(t *testing.T, root, id string) {
 func TestChatBlockShortensLineups(t *testing.T) {
 	root := setup(t)
 	caseFork(t, root, "XR-005")
-	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, nil)
+	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, botEnv)
 	want := []string{
 		"1. рекомендую: сбалансированный состав, 3 кейса",
 		"2. узкий состав, 2 кейса",
@@ -58,7 +58,7 @@ func TestChatBlockShortensLineups(t *testing.T) {
 func TestChatBlockRollsCases(t *testing.T) {
 	root := setup(t)
 	caseFork(t, root, "XR-005")
-	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, nil)
+	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, botEnv)
 	_, roll, ok := strings.Cut(got, chatAnswerHint)
 	if !ok {
 		t.Fatalf("в блоке нет последней строки:\n%s", got)
@@ -87,7 +87,7 @@ func TestChatBlockKeepsPlainForks(t *testing.T) {
 	askForks(t, root, "XR-005", [][]string{
 		{"выкат", "катит смежник, чужая команда дорога", "релиз катится сам или его катит смежник?", "катится сам"},
 	})
-	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, nil)
+	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, botEnv)
 	if !strings.Contains(got, "\n1. рекомендую: катит смежник, чужая команда дорога\n") {
 		t.Fatalf("обычный вариант укоротился:\n%s", got)
 	}

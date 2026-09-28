@@ -12,9 +12,64 @@ import (
 
 // Вопрос человеку текстом в ленте чата (DK-864). Блок собирает утилита из
 // перечня развилок записи, а агент вставляет его в реплику как есть. Формат
-// один на терминал, окно панели и субагента. Разойдись он, человек читал бы
+// блока один на окно панели и заход автоматики. Разойдись он, человек читал бы
 // один и тот же вопрос двумя разными способами, а панель узнавала бы строку
 // варианта только в своей половине случаев.
+//
+// Форму вопроса называет команда, а не правило (DK-1169). Живой терминал, где
+// у экрана сидит человек, получает не блок, а указание задать те же варианты
+// диалогом выбора оболочки: блок там читается простынёй, и человек отвечает на
+// неё через раз. Окно панели разбирает блок само, а заход, поднятый
+// автоматикой, спрашивать некого, и обоим печатается блок. Признаки захода те
+// же, что у рубежа фона (hooks/check-background.py, функция headless), и
+// правило в промпте про вход не говорит ни слова: агент спрашивает командой и
+// делает то, что она напечатала.
+
+// Признаки захода, поднятого автоматикой. Набор повторяет функцию headless()
+// из hooks/check-background.py, и правятся оба места вместе.
+const (
+	headlessEnv  = "DEVKIT_HEADLESS"        // метку ставит подъёмщик печатного режима: дашборд, taskctl run
+	entryEnv     = "CLAUDE_CODE_ENTRYPOINT" // точка входа харнеса, у SDK своя
+	runDepthEnv  = "DEVKIT_RUN_DEPTH"       // глубина вложенности agentctl run
+	chatDialogAt = "у экрана человек"       // слово шапки о живом терминале
+)
+
+// sdkEntrypoints это значения точки входа, за которыми стоит не человек, а код.
+var sdkEntrypoints = map[string]bool{"sdk-cli": true, "sdk-ts": true, "sdk-py": true}
+
+// headlessSign говорит, чем заход опознан как поднятый автоматикой, либо
+// пустая строка у живого окна. Признак возвращается словами, а не флагом:
+// шапка вывода называет его агенту, и ложное срабатывание видно с первого
+// взгляда, а не после разбора окружения.
+func headlessSign(env func(string) string) string {
+	if v := strings.TrimSpace(env(headlessEnv)); v != "" {
+		return headlessEnv + "=" + v
+	}
+	if v := env(entryEnv); sdkEntrypoints[v] {
+		return entryEnv + "=" + v
+	}
+	if v := strings.TrimSpace(env(runDepthEnv)); v != "" {
+		return runDepthEnv + "=" + v
+	}
+	return ""
+}
+
+// chatDialogHint это указание агенту в живом терминале: та же пачка идёт
+// диалогом выбора оболочки, а не текстом. Слов про конкретную обвязку тут нет,
+// диалог у оболочки один, и агент узнаёт его сам.
+var chatDialogHint = []string{
+	"один вопрос на развилку, текст вопроса целиком с именем развилки и доводом; " +
+		"варианты в порядке списка ниже, рекомендованный первым с пометкой «рекомендую», " +
+		"свободный ответ у человека остаётся",
+	"раскладку кейсов, когда она есть ниже блока, показать в тексте вопроса о составах",
+}
+
+// chatDialogTail это последняя строка указания: куда кладётся ответ из диалога.
+// Разбор тот же, что у строки из чата, и след в записи выходит одинаковым.
+func chatDialogTail(id string) string {
+	return fmt.Sprintf("ответ человека положить в запись: taskctl decide %s --answer \"<имя 1, имя 2>\", "+
+		"свободные слова дословно: taskctl decide %s «<имя>» --by человек \"<слова человека>\"", id, id)
+}
 
 // strList это повторяемый ключ командной строки. Варианты ответа заводятся по
 // одному ключу на вариант. Перечисление в одной строке пришлось бы делить
@@ -98,13 +153,21 @@ func chatLineupRoll(f taskform.Fork) string {
 	return strings.Join(out, "\n")
 }
 
-// chatBlock собирает блок вопроса из пачки развилок.
-func chatBlock(forks []taskform.Fork) string {
+// chatBlock собирает блок вопроса из пачки развилок: развилки, хвост про вид
+// ответа и раскладки составов.
+func chatBlock(forks []taskform.Fork) string { return chatBody(forks, chatAnswerHint) }
+
+// chatBody собирает тело вопроса с произвольным хвостом. Пустой хвост это
+// форма диалога: вид ответа там называет сама оболочка, а строка «ответ
+// строкой:» в живом терминале лишь сбивала бы человека.
+func chatBody(forks []taskform.Fork, tail string) string {
 	var out []string
 	for _, f := range forks {
 		out = append(out, chatForkBlock(f))
 	}
-	out = append(out, chatAnswerHint)
+	if tail != "" {
+		out = append(out, tail)
+	}
 	for _, f := range forks {
 		if roll := chatLineupRoll(f); roll != "" {
 			out = append(out, roll)
@@ -142,9 +205,12 @@ func decideOpen(doc string) []taskform.Fork {
 	return out
 }
 
-// decideChat печатает блок вопроса и, в сессии панели, кладёт признак ожидания
-// с парковкой строки. Обычный терминал признака не заводит. Человек видит
-// вопрос прямо в ленте, и парковать строку под уже прочитанный вопрос значит
+// decideChat печатает вопрос в форме, которую называют признаки захода. Окно
+// панели получает блок и признак ожидания с парковкой строки. Заход, поднятый
+// автоматикой, получает тот же блок без признака: спрашивать там некого, и
+// вопрос остаётся текстом в ленте. Живой терминал получает указание задать те
+// же варианты диалогом выбора оболочки. Признака он не заводит: человек видит
+// вопрос прямо на экране, и парковать строку под уже прочитанный вопрос значит
 // гонять доску впустую.
 func decideChat(root, doc string, p DecideParams, d askDeps, env func(string) string) (string, error) {
 	open := decideOpen(doc)
@@ -156,12 +222,25 @@ func decideChat(root, doc string, p DecideParams, d askDeps, env func(string) st
 		rest = len(pack) - chat.PackLimit
 		pack = pack[:chat.PackLimit]
 	}
-	head := fmt.Sprintf("%s: в пачке развилок %d, блок ниже идёт в реплику как есть", p.ID, len(pack))
+	more := ""
 	if rest > 0 {
-		head += fmt.Sprintf("; ещё %d уйдут следующей пачкой", rest)
+		more = fmt.Sprintf("; ещё %d уйдут следующей пачкой", rest)
 	}
+	panel, sign := AskPanel(env), headlessSign(env)
+	if !panel && sign == "" {
+		head := fmt.Sprintf("%s: в пачке развилок %d, %s: те же варианты идут диалогом выбора оболочки, а не блоком в реплику%s",
+			p.ID, len(pack), chatDialogAt, more)
+		out := append([]string{head}, chatDialogHint...)
+		out = append(out, chatDialogTail(p.ID))
+		return strings.Join(out, "\n") + "\n\n" + chatBody(pack, ""), nil
+	}
+	where := "окно панели"
+	if !panel {
+		where = "заход поднят автоматикой, " + sign
+	}
+	head := fmt.Sprintf("%s: в пачке развилок %d, %s, блок ниже идёт в реплику как есть%s", p.ID, len(pack), where, more)
 	out := []string{head, chatFormatWarn}
-	if AskPanel(env) {
+	if panel {
 		msg, err := runAsk(root, AskParams{ID: p.ID, Pack: chatQuestions(pack), Quiet: true}, d, env)
 		if err != nil {
 			return "", err

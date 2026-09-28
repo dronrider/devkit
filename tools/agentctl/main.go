@@ -22,6 +22,14 @@ const usageText = `agentctl: выбор исполнителя под задач
                           --role review отдаёт вердикт для агента-ревьювера
                           (ярус ниже исполнителя, пол base), --goal режет
                           вердикт потолком яруса из раздела «Бюджет» файла цели
+  check <ID>              кем прогонять сценарий проверки: те же машинные
+                          строки model, effort, tier и via, что у pick, и
+                          причина хвостом. Ярус идёт вердиктом роли ревью, а
+                          совпавшую с разработкой модель заменяет первая
+                          ступень выше с другой моделью: сценарий прогоняет не
+                          автор правки, и ворота taskctl close сверяют имена.
+                          Другой модели выше по лестнице нет, значит команда
+                          отказывает и называет причину
   run <ID>                делегирование задачи: печатается тот же вердикт, что
       [--role exec|       у pick, а дальше режим [delegate] харнеса назначения
        review]            ступени решает, кто исполняет. native это инструкция
@@ -265,6 +273,16 @@ func main() {
 			fail(rerr)
 		}
 		msg, err = cmdPick(root, pos[0], *role, *goal)
+	case "check":
+		fs := flag.NewFlagSet("check", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "check <ID>")
+		root, rerr := findRoot(*dir)
+		if rerr != nil {
+			fail(rerr)
+		}
+		msg, err = cmdCheck(root, pos[0])
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

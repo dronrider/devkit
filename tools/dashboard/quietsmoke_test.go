@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -36,7 +37,23 @@ const count = async () => {
   const b = await r.json();
   return b.n;
 };
+// Круг видимости: номер поднимается на каждой смене видимости, и запрос
+// экрана уезжает на сервер с номером того круга, в котором его завели
+// (DK-1184). Времени прихода на сервер тут верить нельзя: под нагрузкой
+// запрос уходит из браузера до отметки ухода в фон, а доезжает после неё.
+let turn = 0;
+const rawFetch = window.fetch.bind(window);
+window.fetch = (input, init) => {
+  const url = String((input && input.url) || input || "");
+  if (!url.startsWith("/api/")) return rawFetch(input, init);
+  const next = Object.assign({}, init || {});
+  const head = new Headers((init && init.headers) || {});
+  head.set("X-Quiet-Turn", String(turn));
+  next.headers = head;
+  return rawFetch(input, next);
+};
 const showTab = (on) => {
+  turn += 1;
   Object.defineProperty(document, "visibilityState",
     { configurable: true, get: () => (on ? "visible" : "hidden") });
   Object.defineProperty(document, "hidden", { configurable: true, get: () => !on });
@@ -85,7 +102,7 @@ const showTab = (on) => {
     // Лесенка пошла, но до первой ступеньки вкладка снова уходит в фон.
     await sleep(100);
     showTab(false);
-    await fetch("/__quiet_gone__", { method: "POST" });
+    await fetch("/__quiet_gone__?turn=" + turn, { method: "POST" });
     await sleep(2000);
     res.after = (await count()) - second;
     res.ok = true;
@@ -111,7 +128,8 @@ type quietResult struct {
 	Ms      int    `json:"ms"`
 }
 
-// quietCounter считает запросы к api дашборда и помнит, когда каждый пришёл.
+// quietCounter считает запросы к api дашборда, помнит, когда каждый пришёл, и
+// помнит круг видимости, который назвала сама страница в момент отправки.
 // Поток уведомлений в счёт не идёт: его держит открытым сама страница, и
 // переподключение потока это не опрос.
 type quietCounter struct {
@@ -119,16 +137,29 @@ type quietCounter struct {
 	n    int
 	at   []time.Time
 	path []string
+	turn []int
 	back time.Time
-	gone time.Time
+	gone int
 }
 
-func (c *quietCounter) add(path string) {
+func (c *quietCounter) add(path string, turn int) {
 	c.mu.Lock()
 	c.n++
 	c.at = append(c.at, time.Now())
 	c.path = append(c.path, path)
+	c.turn = append(c.turn, turn)
 	c.mu.Unlock()
+}
+
+// quietTurn разбирает номер круга видимости. Запрос без номера это запрос,
+// ушедший раньше, чем драйвер подменил fetch, то есть заведомо в первом,
+// открытом круге.
+func quietTurn(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // caught называет ручки, которые ответили в окне догона: по ним видно, какие
@@ -201,25 +232,93 @@ func busyBoxes(boxes []int, size time.Duration) (int, time.Duration) {
 	return busy, time.Duration(last) * size
 }
 
-// mind запоминает миг второго ухода в фон.
-func (c *quietCounter) mind() {
+// mind запоминает круг видимости второго ухода в фон: его называет сама
+// страница, и круга без номера тут не бывает, первая же смена видимости даёт
+// единицу.
+func (c *quietCounter) mind(turn int) {
 	c.mu.Lock()
-	c.gone = time.Now()
+	c.gone = turn
 	c.mu.Unlock()
 }
 
-// afterGone считает запросы, пришедшие после второго ухода в фон. Ступенька
-// лесенки, пережившая этот уход, видна тут и только тут.
+// goneTurn отдаёт круг второго ухода в фон. Нуль значит, что отметки от
+// страницы не пришло вовсе и мерить нечем.
+func (c *quietCounter) goneTurn() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gone
+}
+
+// stamped называет наибольший круг видимости среди запросов экрана. Нуль тут
+// значит, что драйвер запросы не разметил вовсе, и счёт после ухода в фон
+// ничего не проверяет: неразмеченный запрос числится в первом круге и в счёт не
+// идёт никогда.
+func (c *quietCounter) stamped() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	top := 0
+	for _, turn := range c.turn {
+		if turn > top {
+			top = turn
+		}
+	}
+	return top
+}
+
+// afterGone считает запросы, которые страница завела после второго ухода в
+// фон. Мерка это круг видимости из самого запроса, а не время его прихода:
+// круг ставит страница в момент отправки, и задержка доставки под нагрузкой
+// вердикт не двигает (DK-1184). Ступенька лесенки, пережившая уход, видна тут
+// и только тут.
 func (c *quietCounter) afterGone() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.gone == 0 {
+		return 0
+	}
 	n := 0
-	for _, at := range c.at {
-		if at.After(c.gone) {
+	for _, turn := range c.turn {
+		if turn >= c.gone {
 			n++
 		}
 	}
 	return n
+}
+
+// TestQuietCounterCountsPageTurnNotArrival держит мерку счётчика: запрос,
+// заведённый страницей до ухода в фон, в счёт после ухода не идёт, сколько бы
+// он ни летел до сервера. Счёт по времени прихода тут краснел под нагрузкой на
+// готовых ветках (DK-1184).
+func TestQuietCounterCountsPageTurnNotArrival(t *testing.T) {
+	c := &quietCounter{}
+	// Круг 2 это возврат к вкладке, круг 3 второй уход в фон.
+	c.add("/api/board", 2)
+	c.mind(quietTurn("3"))
+	// Запоздавший запрос догона: пришёл после отметки, а заведён до неё.
+	c.add("/api/chat/live1", 2)
+	// Ступенька, пережившая уход: её страница завела уже в фоне.
+	c.add("/api/board", 3)
+	if got := c.afterGone(); got != 1 {
+		t.Errorf("после ухода в фон сосчитано %d запросов, а завёлся в фоне один", got)
+	}
+	// Без отметки от страницы мерить нечем, и счёт молчит вместо того, чтобы
+	// зачесть фону весь прогон.
+	empty := &quietCounter{}
+	empty.add("/api/board", 1)
+	if got := empty.goneTurn(); got != 0 {
+		t.Errorf("круг ухода без отметки страницы %d, а ждали нуль", got)
+	}
+	if got := empty.afterGone(); got != 0 {
+		t.Errorf("без отметки ухода сосчитано %d запросов, а ждали нуль", got)
+	}
+	// Верхний круг отделяет размеченные запросы от неразмеченных: драйвер без
+	// подмены fetch оставил бы нули, и счёт после ухода прошёл бы пустым.
+	if got := c.stamped(); got != 3 {
+		t.Errorf("верхний круг видимости %d, а размечали до третьего", got)
+	}
+	if got := (&quietCounter{}).stamped(); got != 0 {
+		t.Errorf("верхний круг пустого счётчика %d, а ждали нуль", got)
+	}
 }
 
 // quietChrome ищет браузер для этого замера. Сверх общего findChrome сюда
@@ -267,7 +366,7 @@ func TestDashboardSmokeHiddenTabQuiet(t *testing.T) {
 		inner := e.s.handler()
 		mux.HandleFunc("GET /api/", func(w http.ResponseWriter, r *http.Request) {
 			if !strings.Contains(r.URL.Path, "/notifications") {
-				counter.add(r.URL.Path)
+				counter.add(r.URL.Path, quietTurn(r.Header.Get("X-Quiet-Turn")))
 			}
 			inner.ServeHTTP(w, r)
 		})
@@ -280,7 +379,7 @@ func TestDashboardSmokeHiddenTabQuiet(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		})
 		mux.HandleFunc("POST /__quiet_gone__", func(w http.ResponseWriter, r *http.Request) {
-			counter.mind()
+			counter.mind(quietTurn(r.URL.Query().Get("turn")))
 			w.WriteHeader(http.StatusNoContent)
 		})
 		mux.HandleFunc("POST /__quiet_result__", func(w http.ResponseWriter, r *http.Request) {
@@ -335,15 +434,24 @@ func TestDashboardSmokeHiddenTabQuiet(t *testing.T) {
 			boxes, quietBox, busy, quietBusy, span)
 	}
 	// Второй уход в фон посреди лесенки. Недобуженная ступенька обязана
-	// погаснуть вместе с кругами, и запросов после ухода быть не должно. Один
-	// допущен на ответ, ушедший из браузера до самой отметки.
-	if gone := counter.afterGone(); gone > 1 {
-		t.Errorf("повторный уход в фон не снял ступеньки лесенки: после него сервер получил %d запросов",
+	// погаснуть вместе с кругами, и запросов, заведённых после ухода, быть не
+	// должно ни одного. Скидки на запоздавший ответ тут больше нет: круг
+	// видимости у запроса ставит сама страница, и ушедший до отметки запрос
+	// несёт прежний круг, когда бы он ни доехал.
+	if counter.goneTurn() == 0 {
+		t.Fatalf("страница не назвала круг второго ухода в фон: счёт после ухода мерить нечем")
+	}
+	if counter.stamped() == 0 {
+		t.Fatalf("драйвер не разметил запросы экрана кругом видимости: счёт после ухода в фон прошёл бы пустым")
+	}
+	if gone := counter.afterGone(); gone > 0 {
+		t.Errorf("повторный уход в фон не снял ступеньки лесенки: после него страница завела %d запросов",
 			gone)
 	}
 	t.Logf("smoke: открытая вкладка %d запросов за %d мс, в фоне %d, догон %d по окнам %v "+
-		"(занято %d, длина %v), после второго ухода %d (%s)",
-		res.Visible, res.Ms, res.Hidden, res.Catchup, boxes, busy, span, counter.afterGone(), url)
+		"(занято %d, длина %v), после второго ухода %d при круге ухода %d и верхнем круге %d (%s)",
+		res.Visible, res.Ms, res.Hidden, res.Catchup, boxes, busy, span, counter.afterGone(),
+		counter.goneTurn(), counter.stamped(), url)
 	t.Logf("smoke: ручки догона %v", counter.caught(quietWindow))
 }
 

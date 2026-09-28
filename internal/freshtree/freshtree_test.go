@@ -171,6 +171,52 @@ func TestEnvLeavesSetToolchainVar(t *testing.T) {
 	}
 }
 
+// TestEnvAddsGoCache: кеш сборки Go возвращается в прогон, когда каталог кеша
+// на диске есть. Под временным домом он каждый раз пустой, и без указателя
+// каждое слияние собирает всё с нуля.
+func TestEnvAddsGoCache(t *testing.T) {
+	home := t.TempDir()
+	cacheDir := goCacheDir(home)
+	if cacheDir == "" {
+		t.Skip("платформа без известного каталога кеша Go")
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	joined := "\n" + strings.Join(Env(home, "/tmp/newhome", ""), "\n") + "\n"
+	if !strings.Contains(joined, "\nGOCACHE="+cacheDir+"\n") {
+		t.Fatalf("указателя кеша сборки Go в прогоне нет:\n%s", joined)
+	}
+}
+
+// TestEnvSkipsGoCacheWhenAbsent: пустой дом без каталога кеша не даёт
+// указателя в пустоту.
+func TestEnvSkipsGoCacheWhenAbsent(t *testing.T) {
+	home := t.TempDir()
+	joined := "\n" + strings.Join(Env(home, "/tmp/newhome", ""), "\n") + "\n"
+	if strings.Contains(joined, "GOCACHE=") {
+		t.Fatalf("указатель кеша сборки Go в пустоту протёк:\n%s", joined)
+	}
+}
+
+// TestEnvLeavesSetGoCache: заданное пользователем значение GOCACHE сильнее
+// умолчания и второй копией не задваивается.
+func TestEnvLeavesSetGoCache(t *testing.T) {
+	home := t.TempDir()
+	cacheDir := goCacheDir(home)
+	if cacheDir == "" {
+		t.Skip("платформа без известного каталога кеша Go")
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOCACHE", "/opt/gocache")
+	joined := "\n" + strings.Join(Env(home, "/tmp/newhome", ""), "\n") + "\n"
+	if !strings.Contains(joined, "\nGOCACHE=/opt/gocache\n") || strings.Count(joined, "\nGOCACHE=") != 1 {
+		t.Fatalf("своё значение GOCACHE не пережило сборку окружения:\n%s", joined)
+	}
+}
+
 // TestEnvPutsTreeBinFirst: утилиты проверяемого дерева стоят в PATH первыми и
 // перекрывают одноимённые с машины.
 func TestEnvPutsTreeBinFirst(t *testing.T) {

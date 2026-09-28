@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -87,7 +88,10 @@ func (r *Run) Cleanup() {
 // прогон обязан зеленеть на чужой машине, а не на прогретой раскладке дома
 // исполнителя. Уносятся и указатели внутрь дома (GOPATH, GOMODCACHE,
 // PYTHONPATH, VIRTUAL_ENV): формально это не HOME и не PATH, но живую
-// раскладку они возвращают в прогон тем же путём. Тулчейны вне дома
+// раскладку они возвращают в прогон тем же путём. У devkit нет внешних
+// зависимостей, и GOMODCACHE снятым остаётся. Кеш сборки Go (GOCACHE) снят не
+// так: под временным домом он каждый раз пустой, и указатель на настоящий
+// каталог возвращается рядом с тулчейнами, тем же правилом. Тулчейны вне дома
 // (/usr/bin, /opt/homebrew) остаются, иначе команде нечем работать, а
 // тулчейны под домом возвращаются названным списком. Каталог bin с утилитами
 // проверяемого дерева встаёт в начало PATH и перекрывает одноимённые
@@ -162,10 +166,10 @@ func toolchainDir(p, home string) bool {
 	return false
 }
 
-// toolchainVars отдаёт указатели тулчейнов на настоящий дом. Ставятся только
-// те, которых в окружении сессии нет и чей каталог на машине есть: заданное
-// пользователем значение сильнее умолчания, а указатель в пустоту хуже
-// отсутствующего.
+// toolchainVars отдаёт указатели тулчейнов на настоящий дом, и туда же
+// ложится указатель на кеш сборки Go. Ставятся только те, которых в
+// окружении сессии нет и чей каталог на машине есть: заданное пользователем
+// значение сильнее умолчания, а указатель в пустоту хуже отсутствующего.
 func toolchainVars(home string, seen map[string]bool) []string {
 	if home == "" {
 		return nil
@@ -182,7 +186,29 @@ func toolchainVars(home string, seen map[string]bool) []string {
 			}
 		}
 	}
+	if !seen["GOCACHE"] {
+		if dir := goCacheDir(home); dir != "" {
+			if st, err := os.Stat(dir); err == nil && st.IsDir() {
+				out = append(out, "GOCACHE="+dir)
+			}
+		}
+	}
 	return out
+}
+
+// goCacheDir отдаёт путь дефолтного кеша сборки Go под домом. Имя каталога
+// расходится по платформам (Library/Caches/go-build на darwin,
+// .cache/go-build на linux), и в общий список homeToolchains одним кортежём
+// оно не ложится: там на все системы один и тот же относительный путь.
+func goCacheDir(home string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Caches", "go-build")
+	case "linux":
+		return filepath.Join(home, ".cache", "go-build")
+	default:
+		return ""
+	}
 }
 
 // Tools собирает утилиты проверяемого дерева в каталог bin. Что собирать,

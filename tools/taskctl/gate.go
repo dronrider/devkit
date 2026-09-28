@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dronrider/devkit/internal/checkrun"
 	"github.com/dronrider/devkit/internal/obey"
 	"github.com/dronrider/devkit/internal/rehearsal"
 	"github.com/dronrider/devkit/internal/stage"
@@ -265,11 +266,38 @@ func closeVerifyGate(root, id string) error {
 	// Сверка без регистра: --by принимает любой текст, и «Opus» против «opus»
 	// в точной сверке проходил бы за чужой прогон.
 	if strings.EqualFold(runner, dev) {
-		return fmt.Errorf("%s: сценарий прогнал %s, он же исполнитель последнего этапа работы над кодом: сценарий прогоняет не автор правки, прогон другой моделью отмечается «agentctl stage %s %s --by <модель>»",
-			id, runner, id, stage.Verify)
+		return fmt.Errorf("%s: сценарий прогнал %s, он же исполнитель последнего этапа работы над кодом: сценарий прогоняет не автор правки, повторить прогон и отметить «agentctl stage %s %s --by %s»",
+			id, runner, id, stage.Verify, repeatModel(root, id))
 	}
 	return nil
 }
+
+// repeatModel это модель для повторного прогона в тексте отказа (DK-1116).
+// Считает её `agentctl check`, та же дорога, какой ярус проверяющего берёт
+// автономный выкат: ярус вердиктом роли ревью, а совпавшую с разработкой
+// модель заменяет ступень выше. Позвать некем или отказ, значит отказ close
+// остаётся с прочерком вместо модели: подсказка тут не главное, а
+// разваливаться из-за неё воротам незачем.
+func repeatModel(root, id string) string {
+	bin, err := exec.LookPath("agentctl")
+	if err != nil {
+		return checkModelUnknown
+	}
+	cmd := exec.Command(bin, "check", id)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return checkModelUnknown
+	}
+	if m := checkrun.ParseModel(string(out)); m != "" {
+		return m
+	}
+	return checkModelUnknown
+}
+
+// checkModelUnknown стоит в отказе там, где модель назвать нечем: вместо
+// готового имени остаётся прежняя рамка под руку человека.
+const checkModelUnknown = "<модель>"
 
 // stageSources собирает оба источника записей об этапах: строки раздела «Ход
 // работы» и незакрытый пакет из ~/.devkit/runs. Отсутствие файла или раздела

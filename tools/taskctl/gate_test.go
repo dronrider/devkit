@@ -480,6 +480,51 @@ func TestCloseVerifyGateReadsPendingStage(t *testing.T) {
 	}
 }
 
+// TestCloseRefusalNamesRepeatModel: отказ закрытия несёт готовую команду с
+// моделью для повторного прогона, и называет её `agentctl check` (DK-1116).
+// Без модели проверяющий уходил гадать, чем поднимать второй прогон, и ловил
+// тот же отказ.
+func TestCloseRefusalNamesRepeatModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := setup(t)
+	stubCheck(t, "#!/bin/sh\nprintf 'model: opus\\neffort: high\\ntier: pro\\n'\n")
+	stagedDoc(t, root, "XR-005", devStageLine("sonnet"), verifyStageLine("sonnet"))
+	err := closeVerifyGate(root, "XR-005")
+	if err == nil {
+		t.Fatal("прогон под исполнителем разработки ворота не остановил")
+	}
+	if !strings.Contains(err.Error(), "--by opus") {
+		t.Fatalf("в отказе нет модели для повтора: %v", err)
+	}
+}
+
+// Позвать расчёт нечем: в команде остаётся рамка под руку человека, а ворота
+// работают по-прежнему.
+func TestCloseRefusalWithoutAgentctl(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := setup(t)
+	t.Setenv("PATH", t.TempDir())
+	stagedDoc(t, root, "XR-005", devStageLine("sonnet"), verifyStageLine("sonnet"))
+	err := closeVerifyGate(root, "XR-005")
+	if err == nil {
+		t.Fatal("прогон под исполнителем разработки ворота не остановил")
+	}
+	if !strings.Contains(err.Error(), "--by <модель>") {
+		t.Fatalf("рамка модели не удержана: %v", err)
+	}
+}
+
+// stubCheck кладёт в PATH заглушку agentctl: расчёт проверяющего зовётся
+// подпроцессом, и живой утилиты у теста быть не должно.
+func stubCheck(t *testing.T, body string) {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "agentctl"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+}
+
 func TestCloseVerifyGateCaseInsensitive(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := setup(t)

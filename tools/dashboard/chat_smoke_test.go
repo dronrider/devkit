@@ -234,6 +234,10 @@ func smokeLine(text string, at time.Time) string {
 // обработчика.
 func smokeWrap(t *testing.T, e *testEnv, driver string, extra ...func(*http.ServeMux)) (string, <-chan smokeResult) {
 	t.Helper()
+	// Стенд поднимает настоящий браузер и судит по стенному времени: под
+	// нагрузкой он краснеет чужой задаче, и признание об этом обязано быть в
+	// выводе (wallClock, DK-1218).
+	wallClock(t)
 	login, err := http.Post(e.srv.URL+"/api/login", "application/json",
 		strings.NewReader(`{"token":"`+e.cfg.Token+`"}`))
 	if err != nil {

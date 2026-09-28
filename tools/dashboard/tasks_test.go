@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/loadfail"
 )
 
 // Правка строки и файла задачи. Стенд гоняет настоящий taskctl на фикстурной
@@ -1700,6 +1702,7 @@ func chromeVals(dom string) (map[string]int, string) {
 // числа замера.
 func chromeMeasure(t *testing.T, chrome, dir, page, window, bar string) map[string]int {
 	t.Helper()
+	wallClock(t)
 	ctx, stop := chromeBudget(t)
 	defer stop()
 	out, err := chromeDump(ctx, chrome, dir, page, window, bar)
@@ -2046,4 +2049,17 @@ func TestStaticTaskClosedScreen(t *testing.T) {
 	if row := funcBody(t, app, "function depRow("); !strings.Contains(row, "if (!ro)") {
 		t.Error("строка зависимости ставит «Снять» и у архивной задачи")
 	}
+}
+
+// wallClock называет тест замером стенного времени: он поднимает настоящий
+// браузер, ждёт отрисовки и судит по тому, что успело случиться за секунды.
+// На загруженной машине такой замер краснеет, не тронув ни строки кода
+// ветки, и слияние отбивается чужой краснотой (цель DK-1084). Признание
+// уходит строкой в вывод теста, и по ней shipctl считает эту красноту чужой
+// независимо от пересечения диффа с компонентом. Печатается t.Log, потому
+// что go test показывает его у провалившегося теста и молчит у зелёного:
+// признание нужно ровно там, где краснота есть.
+func wallClock(t *testing.T) {
+	t.Helper()
+	t.Log(loadfail.Mark)
 }

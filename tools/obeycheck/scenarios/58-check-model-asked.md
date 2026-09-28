@@ -1,7 +1,7 @@
 # поднять проверяющего руками после выката
 
 конец: сессия
-предмет: RULES.board.core.md; kit/skills/board-task/SKILL.md «Сценарий проверки»
+предмет: RULES.board.core.md; RULES.board.md; kit/skills/board-task/SKILL.md «Сценарий проверки»
 
 ## Подготовка
 

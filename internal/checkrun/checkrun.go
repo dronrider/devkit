@@ -191,11 +191,23 @@ func Choose(tier string, ladder []Step, dev string, known bool) Choice {
 }
 
 // ParseTier достаёт ярус из машинных строк вердикта `agentctl pick`.
-func ParseTier(out string) string {
+func ParseTier(out string) string { return machineLine(out, "tier:") }
+
+// ParseModel достаёт модель из тех же машинных строк: их печатают и вердикт
+// `agentctl pick`, и расчёт проверяющего `agentctl check`. Прочерк это ответ
+// «разворачивать нечем», и модели в нём нет.
+func ParseModel(out string) string {
+	if m := machineLine(out, "model:"); m != "-" {
+		return m
+	}
+	return ""
+}
+
+func machineLine(out, key string) string {
 	for _, ln := range strings.Split(out, "\n") {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(ln), "tier:"); ok {
-			if tier := strings.TrimSpace(rest); tier != "" {
-				return tier
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(ln), key); ok {
+			if v := strings.TrimSpace(rest); v != "" {
+				return v
 			}
 		}
 	}

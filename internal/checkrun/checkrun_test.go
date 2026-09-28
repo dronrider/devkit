@@ -85,6 +85,21 @@ func TestParseTier(t *testing.T) {
 	}
 }
 
+// Модель читается из тех же машинных строк, что и ярус: их печатают вердикт
+// `agentctl pick` и расчёт проверяющего `agentctl check` (DK-1116). Прочерк
+// это «разворачивать нечем», и модели в нём нет.
+func TestParseModel(t *testing.T) {
+	if got := ParseModel("model: sonnet\neffort: high\ntier: base\n"); got != "sonnet" {
+		t.Fatalf("модель: %q", got)
+	}
+	if got := ParseModel("model: -\ntier: base\n"); got != "" {
+		t.Fatalf("прочерк за модель не сходит: %q", got)
+	}
+	if got := ParseModel("tier: base\n"); got != "" {
+		t.Fatalf("без строки model модель пуста: %q", got)
+	}
+}
+
 func TestParseLadder(t *testing.T) {
 	raw := `{"harnesses": [
 	  {"name": "выключенная", "enabled": false, "default": false, "models": []},

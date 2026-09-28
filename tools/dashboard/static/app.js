@@ -954,7 +954,10 @@ function stageMark(row, cls, word) {
   const btn = el("button", cls, word);
   btn.type = "button";
   const said = stageNote(row) || stageWord(row);
-  btn.title = said;
+  // Родной подсказки браузера у кнопки нет: свою коробку она бы задваивала, а
+  // подсказку колонки с кругом, возрастом и состоянием сессии перебивала бы
+  // собой. Чтение с экрана держит aria-label, тот же приём стоит у слагаемых
+  // ранга (замечание 10 ревью).
   btn.setAttribute("aria-label", said);
   btn.setAttribute("aria-expanded", "false");
   if (cls === "hg" || cls === "hgf") {

@@ -354,12 +354,15 @@ const saidOf = (node) => {
   // Часы рисует значок разметки, а не рамка в стилях (замечание 5 приёмки
   // второго круга): узел значка стоит внутри кнопки своим классом.
   if (!byClass(btn, "gico")) fail("внутри пометки нет значка часов: " + dump(btn));
-  const said = String(btn.title || "");
+  const said = String(btn.attrs["aria-label"] || "");
   if (!said.includes("ждёт события")) {
     fail("подсказка пометки не называет причину остановки: " + JSON.stringify(said));
   }
-  if (String(btn.attrs["aria-label"] || "") !== said) {
-    fail("подсказка пометки не доехала до чтения с экрана: " + JSON.stringify(btn.attrs));
+  // Родной подсказки у кнопки нет: она задваивала бы свою коробку и перебивала
+  // бы подсказку колонки с кругом, возрастом и состоянием сессии (замечание 10
+  // ревью).
+  if (btn.title) {
+    fail("у пометки осталась родная подсказка браузера: " + JSON.stringify(btn.title));
   }
   const tipBox = byClass(wrap, "mtipbox");
   if (!tipBox || !dump(tipBox).includes("ждёт события")) {
@@ -399,8 +402,8 @@ const saidOf = (node) => {
   if (!btn || btn.tagName !== "BUTTON") {
     fail("метка «вы» не нажимается: " + JSON.stringify(btn && btn.tagName));
   }
-  if (!String(btn.title || "").includes("ждёт человека")) {
-    fail("подсказка метки «вы» не называет ожидание: " + JSON.stringify(btn.title));
+  if (!String(btn.attrs["aria-label"] || "").includes("ждёт человека")) {
+    fail("подсказка метки «вы» не называет ожидание: " + JSON.stringify(btn.attrs));
   }
 }
 
@@ -475,8 +478,8 @@ const saidOf = (node) => {
   if (!btn || btn.tagName !== "BUTTON" || !byClass(btn, "gico")) {
     fail("в шапке формы пометка ожидания без значка часов или не нажимается: " + dump(now2));
   }
-  if (!String(btn.title || "").includes("ждёт события")) {
-    fail("подсказка пометки на форме не называет причину: " + JSON.stringify(btn.title));
+  if (!String(btn.attrs["aria-label"] || "").includes("ждёт события")) {
+    fail("подсказка пометки на форме не называет причину: " + JSON.stringify(btn.attrs));
   }
   const step2 = byClass(groups, "step2");
   const on = step2.children.filter((x) => String(x.className).split(" ").includes("on"));

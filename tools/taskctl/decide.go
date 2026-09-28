@@ -134,6 +134,15 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
 		return "", err
 	}
+	// Ответ человека снимает признак ожидания того же захода в обоих
+	// деревьях. Прежде его снимали только панель и wake, а ответ из окна или
+	// головой сессии оставлял признак на месте, и плашка «Заход ждёт ответа»
+	// стояла на решённой развилке до перезапуска захода (DK-1204).
+	if p.Answer != "" || (p.By != "" && decideAuthors[p.By] == taskform.ByHuman) {
+		if dropTaskAsks(root, p.ID) > 0 {
+			note += "\n" + askDroppedNote
+		}
+	}
 	rel, rerr := filepath.Rel(root, path)
 	if rerr != nil {
 		rel = path
@@ -154,10 +163,15 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	case p.Leave:
 		head += fmt.Sprintf("развилка «%s» оставлена исполнителю", name)
 	default:
-		head += fmt.Sprintf("развилка «%s» решена", name)
+		head += fmt.Sprintf("развилка «%s» решена", name) + note
 	}
 	return head + "\n" + decideShow(doc, DecideParams{ID: p.ID}) + tail, nil
 }
+
+// askDroppedNote это хвост ответа decide, когда ответ человека снял признак
+// ожидания: без него снятие невидимо, и человек не отличил бы его от прежней
+// дыры, где признак переживал ответ.
+const askDroppedNote = "признак ожидания снят, плашка вопроса уйдёт на ближайшем круге опроса"
 
 // decideWho поясняет в ответе, держит ли заведённая развилка старт: забытый
 // ключ иначе виден только отказом ворот, а до него ещё надо дойти.

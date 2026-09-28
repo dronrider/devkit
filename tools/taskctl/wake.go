@@ -284,12 +284,23 @@ func logWake(root string, w waiter, code int) {
 // dropTaskAsks снимает признак ожидания вопроса в чекауте и в дереве задачи
 // рядом с ним: спрашивают чаще из дерева задачи, а отвечают в основном чекауте,
 // и признак, переживший ответ, рисовал бы в панели вопрос уже не ждущей строке.
-func dropTaskAsks(root, id string) {
+// Возврат это число снятых файлов: по нему в ответ команды встаёт строка о
+// снятом вопросе, а не одинаковое молчание при живом признаке и без него
+// (DK-1204).
+func dropTaskAsks(root, id string) int {
 	top := filepath.Clean(root)
 	tree := filepath.Join(filepath.Dir(top), filepath.Base(top)+"-"+strings.ToLower(id))
+	n := 0
 	for _, dir := range []string{top, tree} {
-		chat.DropAsk(dir, chat.TaskName(id))
+		name := chat.TaskName(id)
+		if _, err := os.Stat(chat.AskPath(dir, name)); err != nil {
+			continue
+		}
+		if chat.DropAsk(dir, name) == nil {
+			n++
+		}
 	}
+	return n
 }
 
 // namedWaiter собирает подъём по названному ID: строка в Blocked с любой

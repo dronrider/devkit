@@ -32,7 +32,9 @@ class BuiltinTemplatesTest(unittest.TestCase):
                          "у task тринадцать этапов живого материала, вижу %d" % len(task["stages"]))
         self.assertEqual(task["stages"][0][0], "plan")
         poc = plans.read_template(str(KIT / "poc.toml"))
-        self.assertIn("tests", poc["dropped"], "у poc тесты сняты записью с причиной")
+        for name in ("tests", "docs", "review"):
+            self.assertIn(name, poc["dropped"],
+                          "у poc этап %s снят записью с причиной" % name)
 
     def test_builtin_set_without_project_layer_is_clean(self):
         self.assertEqual(plans.check_plans(str(KIT), "/несуществующий/слой"), [],
@@ -81,6 +83,24 @@ class ProjectLayerTest(unittest.TestCase):
         write(self.proj / "task.toml", 'title = "Копия"\n[work]\ntitle = "разработка"\nby = "робот"\ntrace = "слово"\n')
         got = plans.check_plans(str(self.kit), str(self.proj))
         self.assertTrue(got and "битый" in got[0], "битый шаблон это находка, вижу %s" % got)
+
+    def test_unknown_key_is_a_warning(self):
+        write(self.proj / "security.toml",
+              'title = "Разбор безопасности"\ngates = ["merge"]\n[audit]\n'
+              'title = "аудит"\nby = "субагент"\ntrace = "слово"\nskil = "review"\n')
+        got = plans.check_plans(str(self.kit), str(self.proj))
+        self.assertEqual(len(got), 2, "жду два предупреждения про ключи, вижу %s" % got)
+        self.assertIn("gates", got[0])
+        self.assertIn("[audit]", got[1])
+
+    def test_second_slot_is_a_finding(self):
+        write(self.proj / "security.toml",
+              'title = "Разбор безопасности"\n[audit]\ntitle = "аудит"\nby = "сам"\n'
+              'trace = "слово"\nslot = true\n[report]\ntitle = "отчёт"\nby = "сам"\n'
+              'trace = "слово"\nslot = true\n')
+        got = plans.check_plans(str(self.kit), str(self.proj))
+        self.assertTrue(got and "ложатся в один" in got[0],
+                        "копию с двумя слотами доктор пропустил: %s" % got)
 
     def test_own_template_of_project_is_not_compared(self):
         write(self.proj / "security.toml",

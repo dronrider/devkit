@@ -16,14 +16,31 @@ import harness
 BY = ("сам", "субагент", "человек")
 GATES = ("check", "close", "merge", "ready", "push")
 ACCEPTS = ("agent", "mixed", "user")
+# Известные ключи шапки и этапа. Опечатку в ключе никто не читает, и настройка
+# выглядит поставленной, поэтому незнакомый ключ идёт предупреждением.
+HEAD_KEYS = ("name", "title", "types", "dropped")
+STAGE_KEYS = ("title", "skill", "by", "agent", "trace", "gate", "types", "paths",
+              "accept", "slot", "scenario")
 
 
 class PlanError(Exception):
     pass
 
 
+def unknown_keys(name, keys, known, section):
+    """Предупреждения на ключи вне словаря. Свод тот же, что в internal/plans."""
+    where = "в секции [%s]" % section if section else "на верхнем уровне"
+    return ["%s: незнакомый ключ %s %s, пропущен" % (name, harness.quote(k), where)
+            for k in keys if k not in known]
+
+
 def read_template(path):
-    """Разбор одного файла шаблона: шапка, порядок секций и проверка ключей."""
+    """Разбор одного файла шаблона: шапка, порядок секций и проверка ключей.
+
+    Строгость та же, что у go-стороны (internal/plans). Значение, по которому
+    движок выбирает поведение, с опечаткой отбивается отказом. Незнакомый ключ
+    уезжает предупреждением в поле warns.
+    """
     name = os.path.basename(path)
     base = name[:-len(".toml")] if name.endswith(".toml") else name
     with open(path, encoding="utf-8") as f:
@@ -43,7 +60,9 @@ def read_template(path):
             raise PlanError("%s: dropped = %s без причины: жду \"<этап>: <причина>\""
                             % (name, harness.quote(raw)))
         dropped[who.strip()] = why.strip()
+    warns = unknown_keys(name, list(d.table("").keys()), HEAD_KEYS, "")
     stages = []
+    slots = 0
     for sec in d.order:
         if sec == "":
             continue
@@ -65,10 +84,18 @@ def read_template(path):
             if a not in ACCEPTS:
                 raise PlanError("%s: [%s] accept = %s, виды приёмки эти: %s"
                                 % (name, sec, harness.quote(a), ", ".join(ACCEPTS)))
+        slot = d.get(sec, "slot")
+        if slot is not None and slot.kind == harness.BOOL and slot.val:
+            slots += 1
+        warns += unknown_keys(name, list(d.table(sec).keys()), STAGE_KEYS, sec)
         stages.append((sec, d.str_of(sec, "title")))
     if not stages:
         raise PlanError("%s: этапов нет: шаблон без секций плана не собирает" % name)
-    return {"name": base, "title": title, "dropped": dropped, "stages": stages}
+    if slots > 1:
+        raise PlanError("%s: slot = true стоит у %d этапов, а свои пункты агента "
+                        "ложатся в один" % (name, slots))
+    return {"name": base, "title": title, "dropped": dropped, "stages": stages,
+            "warns": warns}
 
 
 def read_dir(path):
@@ -85,6 +112,7 @@ def read_dir(path):
             findings.append("шаблон плана битый: %s" % e)
             continue
         out[t["name"]] = t
+        findings += ["шаблон плана: %s" % w for w in t["warns"]]
     return out, findings
 
 

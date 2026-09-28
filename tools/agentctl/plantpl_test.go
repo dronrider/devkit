@@ -50,6 +50,21 @@ func TestPlanTemplatesList(t *testing.T) {
 	}
 }
 
+// TestPlanTemplatesShowsStaleCopy: отставшую копию видит не только доктор.
+// Команда, которой набор и смотрят, называет пропавший этап тут же.
+func TestPlanTemplatesShowsStaleCopy(t *testing.T) {
+	root, _ := planKit(t)
+	planWriteFile(t, filepath.Join(root, ".devkit", "plans", "task.toml"),
+		"title = \"Копия\"\n[work]\ntitle = \"разработка\"\nby = \"сам\"\ntrace = \"слово\"\n")
+	got, err := cmdPlanTemplates(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "находка:") || !strings.Contains(got, "[tests]") {
+		t.Fatalf("копия без этапа tests прошла молча:\n%s", got)
+	}
+}
+
 // TestPlanTemplatesDump: дамп отдаёт файл как есть, комментариями и порядком. Им
 // организация заводит свою копию, и перепечатанный разбор потерял бы причины,
 // записанные в комментариях.

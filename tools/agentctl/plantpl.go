@@ -37,14 +37,17 @@ func planLoadSet(start string) (*plans.Set, error) {
 	return plans.Load(kit, proj)
 }
 
-// cmdPlanTemplates печатает набор списком либо отдаёт один файл как есть:
-// проектная копия заводится дампом встроенного файла, и правится она уже в
-// репозитории проекта.
+// cmdPlanTemplates печатает набор списком либо отдаёт один файл как есть.
+// Проектная копия заводится дампом встроенного файла, а правится она уже в
+// репозитории проекта. Вместе со списком идут находки сверки слоёв: копия,
+// отставшая от встроенного шаблона, видна тому, кто набор и смотрит, а не
+// одному доктору.
 func cmdPlanTemplates(start, dump string) (string, error) {
 	set, err := planLoadSet(start)
 	if err != nil {
 		return "", err
 	}
+	kitDir, projDir := planKitDirs(start)
 	if dump != "" {
 		t, ok := set.Get(dump)
 		if !ok {
@@ -78,6 +81,9 @@ func cmdPlanTemplates(start, dump string) (string, error) {
 	}
 	for _, w := range set.Warns {
 		fmt.Fprintf(&b, "\nwarn: %s", w)
+	}
+	for _, f := range plans.Findings(kitDir, projDir) {
+		fmt.Fprintf(&b, "\nнаходка: %s", f)
 	}
 	b.WriteString("\nвзять файл целиком: agentctl plan templates --dump <имя> > .devkit/plans/<имя>.toml")
 	return b.String(), nil

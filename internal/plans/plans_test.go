@@ -105,7 +105,7 @@ func TestBuiltinLLD(t *testing.T) {
 // вычитка, стенд и обкатка сняты записями с причиной, а не молчанием.
 func TestBuiltinPOC(t *testing.T) {
 	tpl := loadBuiltin(t, "poc")
-	for _, name := range []string{"tests", "review", "proofread", "stand", "rehearsal"} {
+	for _, name := range []string{"tests", "docs", "review", "proofread", "stand", "rehearsal"} {
 		if _, ok := tpl.Stage(name); ok {
 			t.Fatalf("этап [%s] у poc остался", name)
 		}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/subtoml"
 )
 
 // Харнес это инструмент, в котором живёт сессия агента. Что он умеет,
@@ -63,7 +65,7 @@ func parseAssignment(file, section, tier, value string) (assignment, error) {
 	}
 	name, model := value[:i], value[i+1:]
 	bad := func(why string) (assignment, error) {
-		return assignment{}, fmt.Errorf("%s: [%s] %s = %s: %s", file, section, tier, quoteTOML(value), why)
+		return assignment{}, fmt.Errorf("%s: [%s] %s = %s: %s", file, section, tier, subtoml.Quote(value), why)
 	}
 	switch {
 	case name == "":
@@ -105,17 +107,17 @@ type sectionSpec struct {
 // фиксирован, по нему идут и проверки типов, и сообщения, а они входят в
 // контракт фикстур.
 var profileSchema = []sectionSpec{
-	{"detect", []keySpec{{"env", tomlStr}, {"value", tomlStr}, {"bin", tomlStr}}},
-	{"rules", []keySpec{{"mode", tomlStr}, {"file", tomlStr}, {"import_line", tomlStr},
-		{"config", tomlStr}, {"dir", tomlStr}, {"global_file", tomlStr}}},
-	{"delegate", []keySpec{{"mode", tomlStr}, {"command", tomlArr}, {"agents_dir", tomlStr},
-		{"agents_format", tomlStr}, {"map_mini", tomlStr}, {"map_base", tomlStr},
-		{"map_pro", tomlStr}, {"map_max", tomlStr}}},
-	{"hooks", []keySpec{{"protocol", tomlStr}, {"config", tomlStr}, {"events", tomlArr},
-		{"memory_index", tomlStr}}},
-	{"quota", []keySpec{{"snap", tomlStr}, {"script", tomlStr}, {"buckets", tomlArr},
-		{"required", tomlStr}, {"spend_mini", tomlArr}, {"spend_base", tomlArr},
-		{"spend_pro", tomlArr}, {"spend_max", tomlArr}, {"budget_based", tomlBool}}},
+	{"detect", []keySpec{{"env", subtoml.KindStr}, {"value", subtoml.KindStr}, {"bin", subtoml.KindStr}}},
+	{"rules", []keySpec{{"mode", subtoml.KindStr}, {"file", subtoml.KindStr}, {"import_line", subtoml.KindStr},
+		{"config", subtoml.KindStr}, {"dir", subtoml.KindStr}, {"global_file", subtoml.KindStr}}},
+	{"delegate", []keySpec{{"mode", subtoml.KindStr}, {"command", subtoml.KindArr}, {"agents_dir", subtoml.KindStr},
+		{"agents_format", subtoml.KindStr}, {"map_mini", subtoml.KindStr}, {"map_base", subtoml.KindStr},
+		{"map_pro", subtoml.KindStr}, {"map_max", subtoml.KindStr}}},
+	{"hooks", []keySpec{{"protocol", subtoml.KindStr}, {"config", subtoml.KindStr}, {"events", subtoml.KindArr},
+		{"memory_index", subtoml.KindStr}}},
+	{"quota", []keySpec{{"snap", subtoml.KindStr}, {"script", subtoml.KindStr}, {"buckets", subtoml.KindArr},
+		{"required", subtoml.KindStr}, {"spend_mini", subtoml.KindArr}, {"spend_base", subtoml.KindArr},
+		{"spend_pro", subtoml.KindArr}, {"spend_max", subtoml.KindArr}, {"budget_based", subtoml.KindBool}}},
 }
 
 // Шестая секция, ось скиллов (docs/lld/DK-100-context-tree.md, раздел «Харнесы
@@ -123,13 +125,13 @@ var profileSchema = []sectionSpec{
 // оси, обязан читаться и дальше, а отсутствие секции значит сегодняшнюю полную
 // вклейку правил.
 var optionalSchema = []sectionSpec{
-	{"skills", []keySpec{{"dir", tomlStr}, {"format", tomlStr}, {"discovery", tomlStr}}},
+	{"skills", []keySpec{{"dir", subtoml.KindStr}, {"format", subtoml.KindStr}, {"discovery", subtoml.KindStr}}},
 	// Голова задачи (DK-931): чем её поднимает taskctl run. Читает секцию
 	// internal/taskhead, тут она сверяется только типами. Профиль без неё
 	// законен, подъём на нём откажет сам со своими словами. wait_cap это
 	// потолок срока agentctl wait (DK-930), значение разбирает сама команда.
-	{"head", []keySpec{{"client", tomlArr}, {"bin", tomlStr}, {"model", tomlArr},
-		{"session", tomlArr}, {"name", tomlArr}, {"resume", tomlArr}, {"turn_end", tomlStr}, {"wait_cap", tomlStr}}},
+	{"head", []keySpec{{"client", subtoml.KindArr}, {"bin", subtoml.KindStr}, {"model", subtoml.KindArr},
+		{"session", subtoml.KindArr}, {"name", subtoml.KindArr}, {"resume", subtoml.KindArr}, {"turn_end", subtoml.KindStr}, {"wait_cap", subtoml.KindStr}}},
 }
 
 var discoveryValues = []string{"auto", "manual"}
@@ -139,10 +141,10 @@ var knownEvents = []string{"write", "session-start", "notify", "subagent-done", 
 // Свод машинного слоя. Ярусы в секции харнеса обязательны все четыре: сложенные
 // в одну модель соседние ярусы пишутся повторением значения, а пропуск ключа
 // неотличим от забытого.
-var machineRootKeys = []keySpec{{"default", tomlStr}, {"enabled", tomlArr}}
+var machineRootKeys = []keySpec{{"default", subtoml.KindStr}, {"enabled", subtoml.KindArr}}
 
-var machineHarnessKeys = []keySpec{{"mini", tomlStr}, {"base", tomlStr}, {"pro", tomlStr},
-	{"max", tomlStr}, {"budget", tomlInt}, {"bin", tomlStr}, {"home", tomlStr}, {"env", tomlArr}}
+var machineHarnessKeys = []keySpec{{"mini", subtoml.KindStr}, {"base", subtoml.KindStr}, {"pro", subtoml.KindStr},
+	{"max", subtoml.KindStr}, {"budget", subtoml.KindInt}, {"bin", subtoml.KindStr}, {"home", subtoml.KindStr}, {"env", subtoml.KindArr}}
 
 // Плейсхолдер каталога харнеса в значениях env. Тот же, что понимает генератор
 // раскладки в путях профиля (tools/devkitctl/rules.py): каталог на машине один,
@@ -239,14 +241,14 @@ func inList(list []string, s string) bool {
 }
 
 // checkTypes проверяет типы известных ключей таблицы в порядке свода.
-func checkTypes(name string, t *tomlTable, keys []keySpec) error {
+func checkTypes(name string, t *subtoml.Table, keys []keySpec) error {
 	for _, spec := range keys {
-		v, ok := t.get(spec.Key)
+		v, ok := t.Get(spec.Key)
 		if !ok || v.Kind == spec.Kind {
 			continue
 		}
 		return fmt.Errorf("%s: [%s] %s: жду %s, вижу %s", name, t.Name, spec.Key,
-			tomlKindNames[spec.Kind], tomlKindNames[v.Kind])
+			subtoml.KindNames[spec.Kind], subtoml.KindNames[v.Kind])
 	}
 	return nil
 }
@@ -254,7 +256,7 @@ func checkTypes(name string, t *tomlTable, keys []keySpec) error {
 // unknownWarns собирает незнакомые секции и ключи в порядке появления в файле.
 // Это предупреждение, а не ошибка: старый бинарь обязан переживать профиль из
 // более свежего devkit, иначе обновление devkit ломало бы работу до пересборки.
-func unknownWarns(d *tomlDoc, known map[string][]keySpec) []string {
+func unknownWarns(d *subtoml.Doc, known map[string][]keySpec) []string {
 	var warns []string
 	for _, sect := range d.Order {
 		t := d.Tables[sect]
@@ -279,19 +281,19 @@ func unknownWarns(d *tomlDoc, known map[string][]keySpec) []string {
 	return warns
 }
 
-func requireKey(name string, t *tomlTable, key, why string) error {
-	if _, ok := t.get(key); ok {
+func requireKey(name string, t *subtoml.Table, key, why string) error {
+	if _, ok := t.Get(key); ok {
 		return nil
 	}
 	return fmt.Errorf("%s: [%s] нет ключа %s (%s)", name, t.Name, key, why)
 }
 
-func requireOneOf(name string, t *tomlTable, key string, allowed []string) error {
-	v := t.str(key)
+func requireOneOf(name string, t *subtoml.Table, key string, allowed []string) error {
+	v := t.Str(key)
 	if inList(allowed, v) {
 		return nil
 	}
-	return fmt.Errorf("%s: [%s] %s = %s, допустимы %s", name, t.Name, key, quoteTOML(v),
+	return fmt.Errorf("%s: [%s] %s = %s, допустимы %s", name, t.Name, key, subtoml.Quote(v),
 		strings.Join(allowed, ", "))
 }
 
@@ -300,21 +302,21 @@ func requireOneOf(name string, t *tomlTable, key string, allowed []string) error
 // spend_* и required ссылаются только на бакеты из buckets. Нарушение это
 // жёсткая ошибка с именем файла и ключа: битый профиль хуже отсутствующего,
 // потому что молча выключил бы ось.
-func validateProfile(d *tomlDoc) ([]string, error) {
+func validateProfile(d *subtoml.Doc) ([]string, error) {
 	known := map[string][]keySpec{}
 	for _, s := range append(append([]sectionSpec{}, profileSchema...), optionalSchema...) {
 		known[s.Name] = s.Keys
 	}
 	for _, s := range profileSchema {
-		if !d.has(s.Name) {
+		if !d.Has(s.Name) {
 			return nil, fmt.Errorf("%s: нет секции [%s], в профиле обязаны быть все пять (detect, rules, delegate, hooks, quota)", d.Name, s.Name)
 		}
 	}
 	for _, s := range append(append([]sectionSpec{}, profileSchema...), optionalSchema...) {
-		if !d.has(s.Name) {
+		if !d.Has(s.Name) {
 			continue
 		}
-		if err := checkTypes(d.Name, d.table(s.Name), s.Keys); err != nil {
+		if err := checkTypes(d.Name, d.Table(s.Name), s.Keys); err != nil {
 			return nil, err
 		}
 	}
@@ -339,17 +341,17 @@ func validateProfile(d *tomlDoc) ([]string, error) {
 	warns := unknownWarns(d, known)
 	// Незнакомое событие тоже предупреждение: оси, которой этот бинарь не
 	// знает, у него всё равно нет, а отказывать из-за неё нечестно.
-	for _, e := range d.table("hooks").arr("events") {
+	for _, e := range d.Table("hooks").Arr("events") {
 		if !inList(knownEvents, e) {
-			warns = append(warns, fmt.Sprintf("%s: [hooks] events: незнакомое событие %s, пропущено", d.Name, quoteTOML(e)))
+			warns = append(warns, fmt.Sprintf("%s: [hooks] events: незнакомое событие %s, пропущено", d.Name, subtoml.Quote(e)))
 		}
 	}
 	return warns, nil
 }
 
-func validateDetect(d *tomlDoc) error {
-	t := d.table("detect")
-	if t.empty() {
+func validateDetect(d *subtoml.Doc) error {
+	t := d.Table("detect")
+	if t.Empty() {
 		return nil
 	}
 	for _, key := range []string{"env", "bin"} {
@@ -360,9 +362,9 @@ func validateDetect(d *tomlDoc) error {
 	return nil
 }
 
-func validateRules(d *tomlDoc) error {
-	t := d.table("rules")
-	if t.empty() {
+func validateRules(d *subtoml.Doc) error {
+	t := d.Table("rules")
+	if t.Empty() {
 		return fmt.Errorf("%s: секция [rules] пуста, а правила обязаны доезжать до каждого харнеса", d.Name)
 	}
 	if err := requireKey(d.Name, t, "mode", "обязателен всегда"); err != nil {
@@ -371,7 +373,7 @@ func validateRules(d *tomlDoc) error {
 	if err := requireOneOf(d.Name, t, "mode", []string{"import", "embed", "render"}); err != nil {
 		return err
 	}
-	switch t.str("mode") {
+	switch t.Str("mode") {
 	case "import":
 		for _, key := range []string{"file", "import_line"} {
 			if err := requireKey(d.Name, t, key, `при mode = "import"`); err != nil {
@@ -386,15 +388,15 @@ func validateRules(d *tomlDoc) error {
 	return nil
 }
 
-func validateDelegate(d *tomlDoc) error {
-	t := d.table("delegate")
+func validateDelegate(d *subtoml.Doc) error {
+	t := d.Table("delegate")
 	if err := requireKey(d.Name, t, "mode", "обязателен всегда, у инструмента без делегирования это none"); err != nil {
 		return err
 	}
 	if err := requireOneOf(d.Name, t, "mode", []string{"native", "cli", "none"}); err != nil {
 		return err
 	}
-	if t.str("mode") == "cli" {
+	if t.Str("mode") == "cli" {
 		if err := requireKey(d.Name, t, "command", `при mode = "cli"`); err != nil {
 			return err
 		}
@@ -402,17 +404,17 @@ func validateDelegate(d *tomlDoc) error {
 	return nil
 }
 
-func validateHooks(d *tomlDoc) error {
-	t := d.table("hooks")
-	if t.empty() {
+func validateHooks(d *subtoml.Doc) error {
+	t := d.Table("hooks")
+	if t.Empty() {
 		return nil
 	}
 	return requireKey(d.Name, t, "protocol", "секция непуста")
 }
 
-func validateQuota(d *tomlDoc) error {
-	t := d.table("quota")
-	if t.empty() {
+func validateQuota(d *subtoml.Doc) error {
+	t := d.Table("quota")
+	if t.Empty() {
 		return nil
 	}
 	if err := requireKey(d.Name, t, "snap", "секция непуста"); err != nil {
@@ -421,7 +423,7 @@ func validateQuota(d *tomlDoc) error {
 	if err := requireOneOf(d.Name, t, "snap", []string{"usage-pane", "script"}); err != nil {
 		return err
 	}
-	if t.str("snap") == "script" {
+	if t.Str("snap") == "script" {
 		if err := requireKey(d.Name, t, "script", `при snap = "script"`); err != nil {
 			return err
 		}
@@ -440,7 +442,7 @@ func validateQuota(d *tomlDoc) error {
 			return err
 		}
 	}
-	buckets := t.arr("buckets")
+	buckets := t.Arr("buckets")
 	// Окно бакета берётся из префикса имени, и имя без известного префикса
 	// молча считалось бы недельным: у месячного бюджета pace тогда врёт всемеро.
 	for _, b := range buckets {
@@ -450,16 +452,16 @@ func validateQuota(d *tomlDoc) error {
 				prefixes = append(prefixes, w.Prefix)
 			}
 			return fmt.Errorf("%s: [quota] buckets: имя бакета %s без известного префикса, из него берётся окно расчёта; годятся %s",
-				d.Name, quoteTOML(b), strings.Join(prefixes, ", "))
+				d.Name, subtoml.Quote(b), strings.Join(prefixes, ", "))
 		}
 	}
-	if req := t.str("required"); !inList(buckets, req) {
-		return fmt.Errorf("%s: [quota] required = %s, такого бакета нет в buckets", d.Name, quoteTOML(req))
+	if req := t.Str("required"); !inList(buckets, req) {
+		return fmt.Errorf("%s: [quota] required = %s, такого бакета нет в buckets", d.Name, subtoml.Quote(req))
 	}
 	for _, key := range spend {
-		for _, b := range t.arr(key) {
+		for _, b := range t.Arr(key) {
 			if !inList(buckets, b) {
-				return fmt.Errorf("%s: [quota] %s ссылается на бакет %s, которого нет в buckets", d.Name, key, quoteTOML(b))
+				return fmt.Errorf("%s: [quota] %s ссылается на бакет %s, которого нет в buckets", d.Name, key, subtoml.Quote(b))
 			}
 		}
 	}
@@ -470,9 +472,9 @@ func validateQuota(d *tomlDoc) error {
 // разбирались, и правила поедут полным текстом; пустая секция это разобранное
 // «скиллов у инструмента нет». Исход у обоих случаев один, а смысл разный, и
 // различает их генератор правил.
-func validateSkills(d *tomlDoc) error {
-	t := d.table("skills")
-	if t.empty() {
+func validateSkills(d *subtoml.Doc) error {
+	t := d.Table("skills")
+	if t.Empty() {
 		return nil
 	}
 	if err := requireKey(d.Name, t, "discovery", "секция непуста, иначе непонятно, доезжают скиллы сами или по указателю"); err != nil {
@@ -481,7 +483,7 @@ func validateSkills(d *tomlDoc) error {
 	if err := requireOneOf(d.Name, t, "discovery", discoveryValues); err != nil {
 		return err
 	}
-	if t.str("discovery") == "auto" {
+	if t.Str("discovery") == "auto" {
 		return requireKey(d.Name, t, "dir", `при discovery = "auto" скиллы надо куда-то раскладывать`)
 	}
 	return nil
@@ -490,7 +492,7 @@ func validateSkills(d *tomlDoc) error {
 // profileReport это общий с devkitctl отчёт по одному файлу: либо отказ, либо
 // канонический дамп с предупреждениями. Им сверяются фикстуры kit/harness/testdata.
 func profileReport(name, text string, validate bool) string {
-	d, err := parseTOML(name, text)
+	d, err := subtoml.Parse(name, text)
 	if err != nil {
 		return "error: " + err.Error() + "\n"
 	}
@@ -501,7 +503,7 @@ func profileReport(name, text string, validate bool) string {
 			return "error: " + err.Error() + "\n"
 		}
 	}
-	out := d.dump()
+	out := d.Dump()
 	for _, w := range warns {
 		out += "warn: " + w + "\n"
 	}
@@ -511,11 +513,11 @@ func profileReport(name, text string, validate bool) string {
 type profile struct {
 	Name  string
 	Path  string
-	Doc   *tomlDoc
+	Doc   *subtoml.Doc
 	Warns []string
 }
 
-func (p *profile) section(name string) *tomlTable { return p.Doc.table(name) }
+func (p *profile) section(name string) *subtoml.Table { return p.Doc.Table(name) }
 
 // loadProfile читает и тут же валидирует: отдельной команды проверки нет,
 // профиль проверяется на каждой загрузке.
@@ -528,7 +530,7 @@ func loadProfile(dir, name string) (*profile, error) {
 		}
 		return nil, err
 	}
-	d, err := parseTOML(filepath.Base(path), string(data))
+	d, err := subtoml.Parse(filepath.Base(path), string(data))
 	if err != nil {
 		return nil, err
 	}
@@ -637,7 +639,7 @@ type layers struct {
 	Warns            []string
 }
 
-func readConfig(path string) (*tomlDoc, error) {
+func readConfig(path string) (*subtoml.Doc, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -645,7 +647,7 @@ func readConfig(path string) (*tomlDoc, error) {
 		}
 		return nil, err
 	}
-	return parseTOML(path, string(data))
+	return subtoml.Parse(path, string(data))
 }
 
 // mergeLayers складывает слои сверху вниз: профиль объявляет возможности,
@@ -664,16 +666,16 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 		l.Default, l.DefaultHow = "claude-code", "умолчание, машинного конфига нет"
 	} else {
 		l.Source = machinePath
-		if err := checkTypes(machinePath, mdoc.table(""), machineRootKeys); err != nil {
+		if err := checkTypes(machinePath, mdoc.Table(""), machineRootKeys); err != nil {
 			return nil, err
 		}
-		l.Default, l.DefaultHow = mdoc.table("").str("default"), "default машинного конфига"
-		l.Enabled = append(l.Enabled, mdoc.table("").arr("enabled")...)
+		l.Default, l.DefaultHow = mdoc.Table("").Str("default"), "default машинного конфига"
+		l.Enabled = append(l.Enabled, mdoc.Table("").Arr("enabled")...)
 		// Ключ читается мягко, а не через machineRootKeys: битое значение не
 		// должно ронять раскладку целиком, диспетчер обойдётся умолчанием, а
 		// причина уезжает предупреждением.
-		if v, ok := mdoc.table("").get("exec_rotate_tokens"); ok {
-			if v.Kind == tomlInt && v.Int > 0 {
+		if v, ok := mdoc.Table("").Get("exec_rotate_tokens"); ok {
+			if v.Kind == subtoml.KindInt && v.Int > 0 {
 				l.ExecRotateTokens = v.Int
 			} else {
 				l.Warns = append(l.Warns, fmt.Sprintf("%s: ключ exec_rotate_tokens ждёт целое больше нуля, значение пропущено", machinePath))
@@ -683,18 +685,18 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 			if name == "" {
 				continue
 			}
-			t := mdoc.table(name)
+			t := mdoc.Table(name)
 			if err := checkTypes(machinePath, t, machineHarnessKeys); err != nil {
 				return nil, err
 			}
 			s := &setup{Map: map[string]assignment{}, Section: true}
 			var missing []string
 			for _, tier := range tierNames {
-				if _, ok := t.get(tier); !ok {
+				if _, ok := t.Get(tier); !ok {
 					missing = append(missing, tier)
 					continue
 				}
-				a, err := parseAssignment(machinePath, name, tier, t.str(tier))
+				a, err := parseAssignment(machinePath, name, tier, t.Str(tier))
 				if err != nil {
 					return nil, err
 				}
@@ -709,12 +711,12 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 				return nil, fmt.Errorf("%s: [%s] нет ключа %s (ярусы задаются все четыре либо ни одного, сложенные соседние пишутся повторением модели)",
 					machinePath, name, missing[0])
 			}
-			if v, ok := t.get("budget"); ok {
+			if v, ok := t.Get("budget"); ok {
 				s.Budget = v.Int
 			}
-			s.Bin = t.str("bin")
-			s.Home = expandTilde(t.str("home"))
-			env, err := parseHarnessEnv(machinePath, name, t.arr("env"), s.Home)
+			s.Bin = t.Str("bin")
+			s.Home = expandTilde(t.Str("home"))
+			env, err := parseHarnessEnv(machinePath, name, t.Arr("env"), s.Home)
 			if err != nil {
 				return nil, err
 			}
@@ -776,7 +778,7 @@ func suggestMap(l *layers, name string) {
 	}
 	m := map[string]assignment{}
 	for _, tier := range tierNames {
-		if v := p.section("delegate").str("map_" + tier); v != "" {
+		if v := p.section("delegate").Str("map_" + tier); v != "" {
 			m[tier] = assignment{Harness: name, Model: v}
 		}
 	}
@@ -800,10 +802,10 @@ func awayReach(p *profile) string {
 		return ""
 	}
 	d := p.section("delegate")
-	if len(d.arr("command")) > 0 {
+	if len(d.Arr("command")) > 0 {
 		return "поднимается командой [delegate] его профиля"
 	}
-	return fmt.Sprintf("а поднять его снаружи нечем: [delegate] mode = %s, команды профиль не назвал, и делегирование в него отказное", quoteTOML(d.str("mode")))
+	return fmt.Sprintf("а поднять его снаружи нечем: [delegate] mode = %s, команды профиль не назвал, и делегирование в него отказное", subtoml.Quote(d.Str("mode")))
 }
 
 // unmapHint это хвост хинта про ненастроенную лестницу: чинится она по-разному,
@@ -890,8 +892,8 @@ func narrowByProject(l *layers, path string) error {
 	if err != nil || pdoc == nil {
 		return err
 	}
-	root := pdoc.table("")
-	if err := checkTypes(path, root, []keySpec{{"enabled", tomlArr}}); err != nil {
+	root := pdoc.Table("")
+	if err := checkTypes(path, root, []keySpec{{"enabled", subtoml.KindArr}}); err != nil {
 		return err
 	}
 	for _, k := range root.Keys {
@@ -904,11 +906,11 @@ func narrowByProject(l *layers, path string) error {
 			l.Warns = append(l.Warns, fmt.Sprintf("%s: секция [%s] проектному слою не положена, маппинг ярусов машинный", path, name))
 		}
 	}
-	if _, ok := root.get("enabled"); !ok {
+	if _, ok := root.Get("enabled"); !ok {
 		return nil
 	}
 	var kept []string
-	for _, name := range root.arr("enabled") {
+	for _, name := range root.Arr("enabled") {
 		if inList(l.Enabled, name) {
 			kept = append(kept, name)
 			continue
@@ -972,7 +974,7 @@ func resolveHarness(l *layers, want string, env func(string) string) (*resolutio
 			}
 		}
 		t := p.section("detect")
-		key := t.str("env")
+		key := t.Str("env")
 		if key == "" {
 			continue
 		}
@@ -980,7 +982,7 @@ func resolveHarness(l *layers, want string, env func(string) string) (*resolutio
 		if got == "" {
 			continue
 		}
-		if need := t.str("value"); need != "" && need != got {
+		if need := t.Str("value"); need != "" && need != got {
 			continue
 		}
 		if inList(l.Enabled, name) {
@@ -996,7 +998,7 @@ func resolveHarness(l *layers, want string, env func(string) string) (*resolutio
 	case len(hits) == 1:
 		p := l.Profiles[hits[0]]
 		r.Name = hits[0]
-		r.How = fmt.Sprintf("детект по переменной %s", p.section("detect").str("env"))
+		r.How = fmt.Sprintf("детект по переменной %s", p.section("detect").Str("env"))
 		return r, nil
 	case len(hits) > 1:
 		// Гадать тут нельзя: переменные родителя видны подпроцессу, и
@@ -1132,22 +1134,22 @@ func quotaSpecOf(l *layers, name string) *quotaSpec {
 		return nil
 	}
 	t := p.section("quota")
-	if t.empty() {
+	if t.Empty() {
 		return nil
 	}
 	q := &quotaSpec{
 		Harness:  name,
 		Dir:      l.Dir,
-		Snap:     t.str("snap"),
-		Script:   t.str("script"),
-		Buckets:  t.arr("buckets"),
-		Required: t.str("required"),
+		Snap:     t.Str("snap"),
+		Script:   t.Str("script"),
+		Buckets:  t.Arr("buckets"),
+		Required: t.Str("required"),
 		Spend:    map[string][]string{},
 	}
 	for _, tier := range tierNames {
-		q.Spend[tier] = t.arr("spend_" + tier)
+		q.Spend[tier] = t.Arr("spend_" + tier)
 	}
-	if v, ok := t.get("budget_based"); ok {
+	if v, ok := t.Get("budget_based"); ok {
 		q.BudgetBased = v.Bool
 	}
 	if s := l.Setup[name]; s != nil {
@@ -1206,8 +1208,8 @@ func resolveHarnessContext(start, want string) harnessContext {
 		cmds := map[string]bool{}
 		for name, p := range l.Profiles {
 			d := p.section("delegate")
-			modes[name] = d.str("mode")
-			cmds[name] = len(d.arr("command")) > 0
+			modes[name] = d.Str("mode")
+			cmds[name] = len(d.Arr("command")) > 0
 		}
 		hc.Models = tierModels{Map: s.Map, Active: r.Name, Delegate: modes, Command: cmds}
 	} else {
@@ -1316,10 +1318,10 @@ func clientBin(p *profile, s *setup) string {
 	if p == nil {
 		return ""
 	}
-	if bin := p.section("detect").str("bin"); bin != "" {
+	if bin := p.section("detect").Str("bin"); bin != "" {
 		return bin
 	}
-	if cmd := p.section("delegate").arr("command"); len(cmd) > 0 {
+	if cmd := p.section("delegate").Arr("command"); len(cmd) > 0 {
 		return cmd[0]
 	}
 	return ""
@@ -1469,7 +1471,7 @@ func cmdHarness(start, want string) (string, error) {
 			fmt.Fprintf(&b, "маппинг ярусов: не задан, харнес ненастроен; %s\n", unmapHint(l, r.Name))
 		}
 		if p := l.Profiles[r.Name]; p != nil {
-			mode := p.section("delegate").str("mode")
+			mode := p.section("delegate").Str("mode")
 			fmt.Fprintf(&b, "делегирование: %s (профиль %s)\n", mode, p.Path)
 		}
 	}

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/subtoml"
 )
 
 // TestHarnessFixtures: общие с devkitctl фикстуры. Отчёт по каждому входу
@@ -72,17 +74,17 @@ func TestProfileClaudeCode(t *testing.T) {
 		{"skills", "discovery", "auto"},
 	}
 	for _, c := range cases {
-		if got := p.section(c.section).str(c.key); got != c.want {
+		if got := p.section(c.section).Str(c.key); got != c.want {
 			t.Fatalf("[%s] %s = %q, жду %q", c.section, c.key, got, c.want)
 		}
 	}
-	if got := strings.Join(p.section("hooks").arr("events"), ","); got != "write,session-start,notify,subagent-done,turn-done,turn-failed,prompt-submit,tool-done" {
+	if got := strings.Join(p.section("hooks").Arr("events"), ","); got != "write,session-start,notify,subagent-done,turn-done,turn-failed,prompt-submit,tool-done" {
 		t.Fatalf("events = %q", got)
 	}
 	// Ключ [head].name (DK-879): им голова конвейера подписывает себя в
 	// списке чатов и в claude --resume, схема agentctl обязана знать ключ,
 	// а не считать его незнакомым.
-	if got := strings.Join(p.section("head").arr("name"), ","); got != "--name,{name}" {
+	if got := strings.Join(p.section("head").Arr("name"), ","); got != "--name,{name}" {
 		t.Fatalf("[head] name = %q", got)
 	}
 }
@@ -95,14 +97,14 @@ func writeProfiles(t *testing.T, specs map[string][2]string) string {
 	for name, spec := range specs {
 		detect := ""
 		if spec[0] != "" {
-			detect = "env = " + quoteTOML(spec[0]) + "\nvalue = \"1\"\nbin = " + quoteTOML(name) + "\n"
+			detect = "env = " + subtoml.Quote(spec[0]) + "\nvalue = \"1\"\nbin = " + subtoml.Quote(name) + "\n"
 		}
 		command := ""
 		if spec[1] == "cli" {
-			command = "command = [" + quoteTOML(name) + ", \"run\", \"{prompt}\"]\n"
+			command = "command = [" + subtoml.Quote(name) + ", \"run\", \"{prompt}\"]\n"
 		}
 		text := "[detect]\n" + detect + "\n[rules]\nmode = \"embed\"\n\n[delegate]\nmode = " +
-			quoteTOML(spec[1]) + "\n" + command +
+			subtoml.Quote(spec[1]) + "\n" + command +
 			"map_mini = \"m1\"\nmap_base = \"m2\"\nmap_pro = \"m3\"\nmap_max = \"m4\"\n\n[hooks]\n\n[quota]\n"
 		if err := os.WriteFile(filepath.Join(dir, name+".toml"), []byte(text), 0o644); err != nil {
 			t.Fatal(err)

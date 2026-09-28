@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/stage"
+
+	"github.com/dronrider/devkit/internal/subtoml"
 )
 
 // agentctl run это точка входа делегирования: печатается тот же вердикт, что у
@@ -318,8 +320,8 @@ func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, err
 		return codeNothingToDelegate, nil
 	}
 	del := prof.section("delegate")
-	mode := del.str("mode")
-	tmpl := del.arr("command")
+	mode := del.Str("mode")
+	tmpl := del.Arr("command")
 	road := "cli"
 	switch mode {
 	case "native":
@@ -347,7 +349,7 @@ func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, err
 			return 0, fmt.Errorf("профиль %s: [delegate] mode = \"cli\", а command пуст, поднимать нечего", prof.Path)
 		}
 	default:
-		return 0, fmt.Errorf("профиль %s: [delegate] mode = %s, run такого режима не знает", prof.Path, quoteTOML(mode))
+		return 0, fmt.Errorf("профиль %s: [delegate] mode = %s, run такого режима не знает", prof.Path, subtoml.Quote(mode))
 	}
 	prompt, err := agentPrompt(filepath.Dir(hc.L.Dir), role, v.Effort, id, workdir)
 	if err != nil {

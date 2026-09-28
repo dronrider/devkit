@@ -391,10 +391,10 @@ func TestAltSubProfile(t *testing.T) {
 		t.Fatal("профиль второй подписки не загрузился")
 	}
 	del := prof.section("delegate")
-	if got := del.str("mode"); got != "cli" {
+	if got := del.Str("mode"); got != "cli" {
 		t.Fatalf("режим делегирования второй подписки %q, жду cli: спавна субагента снаружи у клиента нет", got)
 	}
-	argv := substituteCommand(del.arr("command"), map[string]string{
+	argv := substituteCommand(del.Arr("command"), map[string]string{
 		"model": "glm-5.2", "effort": "high", "prompt": "тело определения", "workdir": "/дерево",
 	})
 	if len(argv) == 0 || argv[0] != "claude" {
@@ -419,7 +419,7 @@ func TestAltSubProfile(t *testing.T) {
 	// хозяйство в контур первой.
 	for _, p := range [][2]string{{"rules", "global_file"}, {"hooks", "config"},
 		{"skills", "dir"}, {"delegate", "agents_dir"}} {
-		got := prof.section(p[0]).str(p[1])
+		got := prof.section(p[0]).Str(p[1])
 		if !strings.HasPrefix(got, "{home}") {
 			t.Fatalf("[%s] %s = %q, а считаться он обязан от {home}", p[0], p[1], got)
 		}
@@ -442,10 +442,10 @@ func TestHomeSubProfileCommand(t *testing.T) {
 		t.Fatal("профиль первой подписки не загрузился")
 	}
 	del := prof.section("delegate")
-	if got := del.str("mode"); got != "native" {
+	if got := del.Str("mode"); got != "native" {
 		t.Fatalf("режим делегирования первой подписки %q, жду native: внутри своей сессии субагент рождается спавном", got)
 	}
-	tmpl := del.arr("command")
+	tmpl := del.Arr("command")
 	if len(tmpl) == 0 {
 		t.Fatal("первая подписка не назвала команды: снаружи её поднять нечем, и уехавшая сюда ступень отказная")
 	}

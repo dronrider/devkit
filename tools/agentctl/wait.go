@@ -124,7 +124,7 @@ func waitCapOf(start string, env func(string) string) (waitLimit, error) {
 	}
 	raw := ""
 	if t := p.section("head"); t != nil {
-		raw = t.str(waitCapKey)
+		raw = t.Str(waitCapKey)
 	}
 	if raw == "" {
 		return waitLimit{def, waitCapDefault, fmt.Sprintf("умолчание, в профиле %s нет [head] %s", p.Path, waitCapKey)}, nil

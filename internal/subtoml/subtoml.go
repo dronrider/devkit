@@ -1,4 +1,8 @@
-package main
+// Package subtoml читает подмножество TOML, которым написаны профили харнесов
+// (kit/harness) и шаблоны планов (kit/plans). Пакет заведён DK-1142: парсер жил
+// в agentctl, а шаблоны планов читают ещё и другие утилиты, и вторая копия
+// разошлась бы с первой на первой же правке.
+package subtoml
 
 import (
 	"fmt"
@@ -18,21 +22,21 @@ import (
 // канонический дамп у них общие, сверяются фикстурами kit/harness/testdata.
 
 const (
-	tomlStr  = "str"
-	tomlInt  = "int"
-	tomlBool = "bool"
-	tomlArr  = "arr"
+	KindStr  = "str"
+	KindInt  = "int"
+	KindBool = "bool"
+	KindArr  = "arr"
 )
 
 // Имена типов для сообщений об ошибках, одни и те же в обеих реализациях.
-var tomlKindNames = map[string]string{
-	tomlStr:  "строку",
-	tomlInt:  "целое",
-	tomlBool: "true/false",
-	tomlArr:  "массив строк",
+var KindNames = map[string]string{
+	KindStr:  "строку",
+	KindInt:  "целое",
+	KindBool: "true/false",
+	KindArr:  "массив строк",
 }
 
-type tomlValue struct {
+type Value struct {
 	Kind string
 	Str  string
 	Int  int
@@ -41,68 +45,68 @@ type tomlValue struct {
 	Line int
 }
 
-// tomlTable это секция. Порядок ключей сохраняется: по нему идёт дамп и порядок
+// Table это секция. Порядок ключей сохраняется: по нему идёт дамп и порядок
 // предупреждений, а он входит в контракт фикстур.
-type tomlTable struct {
+type Table struct {
 	Name string
 	Keys []string
-	Vals map[string]tomlValue
+	Vals map[string]Value
 }
 
-func (t *tomlTable) get(key string) (tomlValue, bool) {
+func (t *Table) Get(key string) (Value, bool) {
 	if t == nil {
-		return tomlValue{}, false
+		return Value{}, false
 	}
 	v, ok := t.Vals[key]
 	return v, ok
 }
 
-func (t *tomlTable) str(key string) string {
-	v, ok := t.get(key)
-	if !ok || v.Kind != tomlStr {
+func (t *Table) Str(key string) string {
+	v, ok := t.Get(key)
+	if !ok || v.Kind != KindStr {
 		return ""
 	}
 	return v.Str
 }
 
-func (t *tomlTable) arr(key string) []string {
-	v, ok := t.get(key)
-	if !ok || v.Kind != tomlArr {
+func (t *Table) Arr(key string) []string {
+	v, ok := t.Get(key)
+	if !ok || v.Kind != KindArr {
 		return nil
 	}
 	return v.Arr
 }
 
-func (t *tomlTable) empty() bool { return t == nil || len(t.Keys) == 0 }
+func (t *Table) Empty() bool { return t == nil || len(t.Keys) == 0 }
 
-// tomlDoc это разобранный файл. Верхний уровень лежит таблицей с пустым именем:
+// Doc это разобранный файл. Верхний уровень лежит таблицей с пустым именем:
 // у машинного конфига там default и enabled.
-type tomlDoc struct {
+type Doc struct {
 	Name   string
 	Order  []string
-	Tables map[string]*tomlTable
+	Tables map[string]*Table
 }
 
-func (d *tomlDoc) table(name string) *tomlTable {
+func (d *Doc) Table(name string) *Table {
 	if d == nil {
 		return nil
 	}
 	return d.Tables[name]
 }
 
-func (d *tomlDoc) has(name string) bool {
+func (d *Doc) Has(name string) bool {
 	_, ok := d.Tables[name]
 	return ok
 }
 
-// quoteTOML это единственный способ показать строку в сообщении: %q в Go и repr
+// Quote это единственный способ показать строку в сообщении: %q в Go и repr
 // в Python экранируют по-разному, а тексты ошибок у двух реализаций общие.
-func quoteTOML(s string) string {
+func Quote(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`)
 	return `"` + r.Replace(s) + `"`
 }
 
-func bareTOMLKey(s string) bool {
+func BareKey(s string) bool {
 	if s == "" {
 		return false
 	}
@@ -117,7 +121,7 @@ func bareTOMLKey(s string) bool {
 	return true
 }
 
-func tomlIsInt(s string) bool {
+func isInt(s string) bool {
 	if s == "" {
 		return false
 	}
@@ -135,7 +139,7 @@ func tomlIsInt(s string) bool {
 	return true
 }
 
-func scanTOMLString(s string) (string, string, error) {
+func scanString(s string) (string, string, error) {
 	var b strings.Builder
 	for i := 1; i < len(s); {
 		c := s[i]
@@ -167,68 +171,68 @@ func scanTOMLString(s string) (string, string, error) {
 	return "", "", fmt.Errorf("строка не закрыта")
 }
 
-// tomlTrailer проверяет хвост после значения: пусто либо комментарий.
-func tomlTrailer(rest string) error {
+// trailer проверяет хвост после значения: пусто либо комментарий.
+func trailer(rest string) error {
 	rest = strings.TrimSpace(rest)
 	if rest == "" || strings.HasPrefix(rest, "#") {
 		return nil
 	}
-	return fmt.Errorf("после значения лишнее: %s", quoteTOML(rest))
+	return fmt.Errorf("после значения лишнее: %s", Quote(rest))
 }
 
-func parseTOMLArray(s string) (tomlValue, error) {
+func parseArray(s string) (Value, error) {
 	var items []string
 	rest := s[1:]
 	for {
 		rest = strings.TrimLeft(rest, " \t")
 		if rest == "" {
-			return tomlValue{}, fmt.Errorf("массив не закрыт: многострочные массивы вне подмножества")
+			return Value{}, fmt.Errorf("массив не закрыт: многострочные массивы вне подмножества")
 		}
 		if rest[0] == ']' {
 			rest = rest[1:]
 			break
 		}
 		if rest[0] != '"' {
-			return tomlValue{}, fmt.Errorf("в массиве допустимы только строки в кавычках, вижу %s", quoteTOML(rest))
+			return Value{}, fmt.Errorf("в массиве допустимы только строки в кавычках, вижу %s", Quote(rest))
 		}
-		v, r, err := scanTOMLString(rest)
+		v, r, err := scanString(rest)
 		if err != nil {
-			return tomlValue{}, err
+			return Value{}, err
 		}
 		items = append(items, v)
 		rest = strings.TrimLeft(r, " \t")
 		if rest == "" {
-			return tomlValue{}, fmt.Errorf("массив не закрыт: многострочные массивы вне подмножества")
+			return Value{}, fmt.Errorf("массив не закрыт: многострочные массивы вне подмножества")
 		}
 		switch rest[0] {
 		case ',':
 			rest = rest[1:]
 		case ']':
 			rest = rest[1:]
-			return tomlValue{Kind: tomlArr, Arr: items}, tomlTrailer(rest)
+			return Value{Kind: KindArr, Arr: items}, trailer(rest)
 		default:
-			return tomlValue{}, fmt.Errorf("жду запятую или ] после элемента массива, вижу %s", quoteTOML(rest))
+			return Value{}, fmt.Errorf("жду запятую или ] после элемента массива, вижу %s", Quote(rest))
 		}
 	}
-	return tomlValue{Kind: tomlArr, Arr: items}, tomlTrailer(rest)
+	return Value{Kind: KindArr, Arr: items}, trailer(rest)
 }
 
-func parseTOMLValue(s string) (tomlValue, error) {
+func parseValue(s string) (Value, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return tomlValue{}, fmt.Errorf("нет значения")
+		return Value{}, fmt.Errorf("нет значения")
 	}
 	switch s[0] {
 	case '"':
-		v, rest, err := scanTOMLString(s)
+		v, rest, err := scanString(s)
 		if err != nil {
-			return tomlValue{}, err
+			return Value{}, err
 		}
-		return tomlValue{Kind: tomlStr, Str: v}, tomlTrailer(rest)
+		return Value{Kind: KindStr, Str: v}, trailer(rest)
 	case '\'':
-		return tomlValue{}, fmt.Errorf("literal-строки вне подмножества, значение пишется в двойных кавычках")
+		return Value{}, fmt.Errorf("literal-строки вне подмножества, значение пишется в двойных кавычках")
 	case '[':
-		return parseTOMLArray(s)
+		return parseArray(s)
 	}
 	tok := s
 	if i := strings.Index(tok, "#"); i >= 0 {
@@ -237,26 +241,26 @@ func parseTOMLValue(s string) (tomlValue, error) {
 	tok = strings.TrimSpace(tok)
 	switch tok {
 	case "true":
-		return tomlValue{Kind: tomlBool, Bool: true}, nil
+		return Value{Kind: KindBool, Bool: true}, nil
 	case "false":
-		return tomlValue{Kind: tomlBool, Bool: false}, nil
+		return Value{Kind: KindBool, Bool: false}, nil
 	}
-	if tomlIsInt(tok) {
+	if isInt(tok) {
 		n, err := strconv.Atoi(tok)
 		if err != nil {
-			return tomlValue{}, fmt.Errorf("целое %s не разобрано", quoteTOML(tok))
+			return Value{}, fmt.Errorf("целое %s не разобрано", Quote(tok))
 		}
-		return tomlValue{Kind: tomlInt, Int: n}, nil
+		return Value{Kind: KindInt, Int: n}, nil
 	}
-	return tomlValue{}, fmt.Errorf("значение %s вне подмножества: строка в кавычках, целое, true/false, массив строк", quoteTOML(tok))
+	return Value{}, fmt.Errorf("значение %s вне подмножества: строка в кавычках, целое, true/false, массив строк", Quote(tok))
 }
 
-// parseTOML разбирает текст. Имя идёт в сообщения об ошибках и берётся как
+// Parse разбирает текст. Имя идёт в сообщения об ошибках и берётся как
 // есть: тесты подставляют базовое имя файла, чтобы сообщения не зависели от
 // того, из какой директории запущен прогон.
-func parseTOML(name, text string) (*tomlDoc, error) {
-	d := &tomlDoc{Name: name, Tables: map[string]*tomlTable{}}
-	cur := &tomlTable{Vals: map[string]tomlValue{}}
+func Parse(name, text string) (*Doc, error) {
+	d := &Doc{Name: name, Tables: map[string]*Table{}}
+	cur := &Table{Vals: map[string]Value{}}
 	d.Tables[""] = cur
 	d.Order = append(d.Order, "")
 	fail := func(line int, err error) error {
@@ -270,27 +274,27 @@ func parseTOML(name, text string) (*tomlDoc, error) {
 		}
 		if strings.HasPrefix(s, "[") {
 			if !strings.HasSuffix(s, "]") {
-				return nil, fail(ln, fmt.Errorf("секция не закрыта: %s", quoteTOML(s)))
+				return nil, fail(ln, fmt.Errorf("секция не закрыта: %s", Quote(s)))
 			}
 			name := strings.TrimSpace(s[1 : len(s)-1])
-			if !bareTOMLKey(name) {
-				return nil, fail(ln, fmt.Errorf("имя секции %s вне подмножества: вложенные таблицы и массивы таблиц не поддержаны", quoteTOML(name)))
+			if !BareKey(name) {
+				return nil, fail(ln, fmt.Errorf("имя секции %s вне подмножества: вложенные таблицы и массивы таблиц не поддержаны", Quote(name)))
 			}
 			if _, ok := d.Tables[name]; ok {
 				return nil, fail(ln, fmt.Errorf("секция [%s] уже была", name))
 			}
-			cur = &tomlTable{Name: name, Vals: map[string]tomlValue{}}
+			cur = &Table{Name: name, Vals: map[string]Value{}}
 			d.Tables[name] = cur
 			d.Order = append(d.Order, name)
 			continue
 		}
 		key, rest, ok := strings.Cut(s, "=")
 		if !ok {
-			return nil, fail(ln, fmt.Errorf("строка %s не разобрана: жду key = value", quoteTOML(s)))
+			return nil, fail(ln, fmt.Errorf("строка %s не разобрана: жду key = value", Quote(s)))
 		}
 		key = strings.TrimSpace(key)
-		if !bareTOMLKey(key) {
-			return nil, fail(ln, fmt.Errorf("ключ %s вне подмножества: допустимы буквы, цифры, дефис и подчёркивание", quoteTOML(key)))
+		if !BareKey(key) {
+			return nil, fail(ln, fmt.Errorf("ключ %s вне подмножества: допустимы буквы, цифры, дефис и подчёркивание", Quote(key)))
 		}
 		if _, ok := cur.Vals[key]; ok {
 			where := "на верхнем уровне"
@@ -299,7 +303,7 @@ func parseTOML(name, text string) (*tomlDoc, error) {
 			}
 			return nil, fail(ln, fmt.Errorf("ключ %s %s уже был", key, where))
 		}
-		v, err := parseTOMLValue(rest)
+		v, err := parseValue(rest)
 		if err != nil {
 			return nil, fail(ln, fmt.Errorf("ключ %s: %v", key, err))
 		}
@@ -311,13 +315,13 @@ func parseTOML(name, text string) (*tomlDoc, error) {
 	return d, nil
 }
 
-func (v tomlValue) render() string {
+func (v Value) Render() string {
 	switch v.Kind {
-	case tomlStr:
-		return quoteTOML(v.Str)
-	case tomlInt:
+	case KindStr:
+		return Quote(v.Str)
+	case KindInt:
 		return strconv.Itoa(v.Int)
-	case tomlBool:
+	case KindBool:
 		if v.Bool {
 			return "true"
 		}
@@ -325,7 +329,7 @@ func (v tomlValue) render() string {
 	default:
 		parts := make([]string, 0, len(v.Arr))
 		for _, s := range v.Arr {
-			parts = append(parts, quoteTOML(s))
+			parts = append(parts, Quote(s))
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	}
@@ -334,7 +338,7 @@ func (v tomlValue) render() string {
 // dump это канонический вид разобранного файла: тот же порядок, комментарии
 // убраны, значения перепечатаны из разобранных. Им обе реализации доказывают,
 // что прочитали вход одинаково.
-func (d *tomlDoc) dump() string {
+func (d *Doc) Dump() string {
 	var b strings.Builder
 	for _, name := range d.Order {
 		t := d.Tables[name]
@@ -344,7 +348,7 @@ func (d *tomlDoc) dump() string {
 			continue
 		}
 		for _, k := range t.Keys {
-			fmt.Fprintf(&b, "%s = %s\n", k, t.Vals[k].render())
+			fmt.Fprintf(&b, "%s = %s\n", k, t.Vals[k].Render())
 		}
 	}
 	return b.String()

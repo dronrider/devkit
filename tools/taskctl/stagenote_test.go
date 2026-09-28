@@ -299,10 +299,10 @@ func TestAgeSinceWords(t *testing.T) {
 
 func TestStageRoundCountsSameKind(t *testing.T) {
 	rec := stage.Record{Stages: []stage.Stage{{Kind: stage.Dev}, {Kind: stage.Review}, {Kind: stage.Dev}, {Kind: stage.Review}}}
-	if got := stageRound(rec); got != 2 {
+	if got := stageRound(rec, stage.Dev); got != 2 {
 		t.Fatalf("круг %d, жду 2", got)
 	}
-	if got := stageRound(stage.Record{}); got != 0 {
+	if got := stageRound(stage.Record{}, stage.Dev); got != 0 {
 		t.Fatalf("круг пустой записи %d", got)
 	}
 }
@@ -382,5 +382,219 @@ func TestClosedWaitUncoversWorkInList(t *testing.T) {
 	// У соседки ожидание идёт, и её слово не трогается.
 	if !strings.Contains(out, "  этап: ждёт человека, 3 часа") {
 		t.Fatalf("настоящее ожидание соседки пропало:\n%s", out)
+	}
+}
+
+// closeAs закрывает этап kind задачи id на момент at, как это делает хук по
+// концу субагента или shipctl по концу слияния.
+func closeAs(t *testing.T, home, root, id, kind string, at time.Time) {
+	t.Helper()
+	closed, err := stage.Close(home, root, id, kind, at, "")
+	if err != nil || !closed {
+		t.Fatalf("этап %s у %s не закрылся: %v, %v", kind, id, closed, err)
+	}
+}
+
+// TestListPrintsLastClosedStage: запись, в которой закрыты все этапы, это
+// задача, которой агент касался и которую бросил конвейер (DK-1205). Под
+// строкой стоит последний закрытый этап со словом «закрыт», возрастом от
+// конца и головой задачи: у XR-011 сессия мертва, головы нет, у XR-020 сессия
+// s-live жива, и голова жива.
+func TestListPrintsLastClosedStage(t *testing.T) {
+	root, home := stageBoard(t)
+	main := stage.MainRoot(root)
+	closeAs(t, home, main, "XR-011", stage.Dev, stageNow.Add(-3*time.Hour))
+	closeAs(t, home, main, "XR-020", stage.Review, stageNow.Add(-5*time.Minute))
+	closeAs(t, home, main, "XR-020", stage.Review, stageNow.Add(-4*time.Minute))
+	closeAs(t, home, main, "XR-020", stage.Dev, stageNow.Add(-2*time.Minute))
+
+	out, err := cmdList(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"  этап: разработка, закрыт 3 часа назад, головы нет",
+		// Последний это кончившийся позже прочих, а не записанный последним:
+		// разработка XR-020 закрылась после обоих ревью.
+		"  этап: разработка, закрыт 2 минуты назад, голова жива",
+		// Соседки с открытым этапом печатаются как прежде.
+		"  этап: ждёт человека, 3 часа",
+		"  этап: разработка, 50 минут, сессия молчит 25 минут",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("в list нет %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "сессии нет, брошена") {
+		t.Fatalf("закрытый этап назван брошенным:\n%s", out)
+	}
+
+	show, err := cmdShow(root, "XR-011")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(show, "\n  этап: разработка, закрыт 3 часа назад, головы нет\n") {
+		t.Fatalf("show без закрытого этапа:\n%s", show)
+	}
+}
+
+// TestListJSONCarriesClosedStageState: состояние этапа едет отдельным полем,
+// а дашборд рисует закрытый этап по нему, без своего расчёта. У закрытого есть
+// конец и голова, а хвоста о сессии нет; у открытого состояние «открыт».
+func TestListJSONCarriesClosedStageState(t *testing.T) {
+	root, home := stageBoard(t)
+	main := stage.MainRoot(root)
+	end := stageNow.Add(-3 * time.Hour)
+	closeAs(t, home, main, "XR-011", stage.Dev, end)
+	rows := listJSONRows(t, root)
+	closed := rows["XR-011"]
+	if closed["stage"] != "разработка" || closed["stage_state"] != "закрыт" || closed["stage_age"] != "3 часа" || closed["stage_head"] != "головы нет" {
+		t.Fatalf("поля закрытого этапа: %v", closed)
+	}
+	if got, _ := closed["stage_end"].(float64); int64(got) != end.Unix() {
+		t.Fatalf("конец этапа %v, жду %d", closed["stage_end"], end.Unix())
+	}
+	if got, _ := closed["stage_since"].(float64); int64(got) != stageNow.Add(-49*time.Hour).Unix() {
+		t.Fatalf("начало закрытого этапа %v", closed["stage_since"])
+	}
+	if _, has := closed["stage_session"]; has {
+		t.Fatalf("у закрытого этапа хвост о сессии: %v", closed)
+	}
+	if live := rows["XR-020"]; live["stage_state"] != "открыт" || live["stage_end"] != nil || live["stage_head"] != nil {
+		t.Fatalf("поля открытого этапа: %v", live)
+	}
+}
+
+// listJSONRows отдаёт строки list --json картой по ID.
+func listJSONRows(t *testing.T, root string) map[string]map[string]any {
+	t.Helper()
+	if err := os.WriteFile(archivePath(root), []byte(fixtureArchive), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdListJSON(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Sections []struct {
+			Rows []map[string]any `json:"rows"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	rows := map[string]map[string]any{}
+	for _, sec := range doc.Sections {
+		for _, row := range sec.Rows {
+			rows[row["id"].(string)] = row
+		}
+	}
+	return rows
+}
+
+// TestListReadsLastStageFromProgressSection: без записи в runs последний этап
+// берётся из строк «Хода работы» файла задачи в main (решение исполнителя по
+// развилке «источник», docs/tasks/DK-1205.md). Последним считается
+// кончившийся позже прочих, а этап нулевой длины кончается там же, где
+// начался. Задача с файлом без строк этапов и задача без файла остаются без
+// строки этапа: их агент не касался. Постановка черновика это тоже касание
+// (развилка «постановка»).
+func TestListReadsLastStageFromProgressSection(t *testing.T) {
+	root, _ := stageBoard(t)
+	day := stageNow.Format("2006-01-02")
+	progress := "# XR-010\n\n## Выкат\n\n- 2026-01-01 слито: 1234567\n\n## Сценарий проверки (агентский)\n\nшаги\n\n## Ход работы\n\n" +
+		"- Постановка: разбор черновика, " + day + " 09:00-09:10.\n" +
+		"- Разработка: субагент opus/high по определению exec-high, работа a1, " + day + " 10:00-13:00.\n" +
+		"- Ревью: субагент opus/high по определению review-high, работа a2, " + day + " 12:00-12:30.\n" +
+		"- Слияние: shipctl merge, " + day + " 12:40.\n"
+	if err := os.WriteFile(taskFilePath(root, "XR-010"), []byte(progress), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(stage.Path(stage.Home(), stage.MainRoot(root), "XR-010")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdList(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "  этап: разработка, закрыт 2 часа назад, головы нет") {
+		t.Fatalf("последний этап из «Хода работы» не найден:\n%s", out)
+	}
+	if strings.Contains(out, "этап: слияние") || strings.Contains(out, "ждёт человека") {
+		t.Fatalf("под строкой не последний этап «Хода работы»:\n%s", out)
+	}
+	rows := listJSONRows(t, root)
+	if got := rows["XR-010"]; got["stage_state"] != "закрыт" || got["stage_head"] != "головы нет" {
+		t.Fatalf("поля этапа из «Хода работы»: %v", got)
+	}
+	// Файл задачи без строк этапов: сценарий проверки есть, касания агента нет.
+	if _, has := rows["XR-011"]["stage"]; has && rows["XR-011"]["stage_state"] == "закрыт" {
+		t.Fatalf("у строки без этапов в файле появился закрытый этап: %v", rows["XR-011"])
+	}
+	// Постановка черновика в «Ходе работы» тоже касание.
+	setup := "# XR-011\n\n## Сценарий проверки\n\nшаги\n\n## Ход работы\n\n- Постановка: разбор черновика, " + day + " 09:00-09:10.\n"
+	if err := os.WriteFile(taskFilePath(root, "XR-011"), []byte(setup), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(stage.Path(stage.Home(), stage.MainRoot(root), "XR-011")); err != nil {
+		t.Fatal(err)
+	}
+	out, err = cmdList(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "  этап: постановка, закрыт 6 часов назад, головы нет") {
+		t.Fatalf("постановка из «Хода работы» не считается касанием:\n%s", out)
+	}
+}
+
+// TestLastEndedPrefersLatestEnd: синхронная вычитка записана поверх идущей
+// разработки последней, а кончилась раньше неё, и последним закрытым стоит
+// разработка. При равных концах побеждает записанный позже. Закрытое
+// ожидание в счёт не идёт, и запись из одних закрытых ожиданий строки не
+// даёт (DK-1193: снятая парковка словом строки не остаётся).
+func TestLastEndedPrefersLatestEnd(t *testing.T) {
+	rec := stage.Record{Stages: []stage.Stage{
+		{Kind: stage.Dev, Start: stageNow.Add(-time.Hour), End: stageNow},
+		{Kind: stage.Proof, Start: stageNow.Add(-30 * time.Minute), End: stageNow.Add(-20 * time.Minute)},
+	}}
+	if last, ok := lastEnded(rec); !ok || last.Kind != stage.Dev {
+		t.Fatalf("последний закрытый %v, жду разработку", last)
+	}
+	rec = stage.Record{Stages: []stage.Stage{
+		{Kind: stage.Merge, Start: stageNow, End: stageNow},
+		{Kind: stage.Merge, Start: stageNow, End: stageNow},
+		{Kind: stage.Review, Start: stageNow.Add(-time.Hour)},
+	}}
+	if last, ok := lastEnded(rec); !ok || last.Kind != stage.Merge {
+		t.Fatalf("при равных концах взят %v", last)
+	}
+	if _, ok := lastEnded(stage.Record{Stages: []stage.Stage{{Kind: stage.Dev, Start: stageNow}}}); ok {
+		t.Fatal("у записи без закрытых этапов нашёлся последний закрытый")
+	}
+	rec = stage.Record{Stages: []stage.Stage{
+		{Kind: stage.Review, Start: stageNow.Add(-2 * time.Hour), End: stageNow.Add(-time.Hour)},
+		{Kind: stage.WaitHuman, Start: stageNow.Add(-time.Hour), End: stageNow},
+	}}
+	if last, ok := lastEnded(rec); !ok || last.Kind != stage.Review {
+		t.Fatalf("закрытое ожидание перекрыло этап работы: %v", last)
+	}
+	if _, ok := lastEnded(stage.Record{Stages: []stage.Stage{{Kind: stage.WaitEvent, Start: stageNow.Add(-time.Hour), End: stageNow}}}); ok {
+		t.Fatal("запись из одного закрытого ожидания дала строку")
+	}
+}
+
+func TestHeadWords(t *testing.T) {
+	cases := map[peers.Life]string{
+		{State: peers.Alive}:                             "голова жива",
+		{State: peers.Silent, Silence: 25 * time.Minute}: "голова молчит 25 минут",
+		{State: peers.Silent, Silence: 46 * time.Hour}:   "голова молчит 46 часов",
+		{State: peers.Silent}:                            "голова молчит, касания не записано",
+		{State: peers.Gone}:                              "головы нет",
+	}
+	for life, want := range cases {
+		if got := headWords(life, stageNow); got != want {
+			t.Errorf("%+v: %q, жду %q", life, got, want)
+		}
 	}
 }

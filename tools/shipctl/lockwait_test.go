@@ -105,7 +105,7 @@ func TestLockBusyNowLeavesNoTrace(t *testing.T) {
 	}
 }
 
-// TestMergeWaitsLockByDefault: слияние, ткнувшееся в занятый замок, отмечает
+// TestMergeWaitsLockMarksStage: слияние, ткнувшееся в занятый замок, отмечает
 // ожидание очереди этапом до самого ожидания. Без этого минуты под занятым
 // замком снаружи неотличимы от зависшей команды.
 func TestMergeWaitsLockMarksStage(t *testing.T) {

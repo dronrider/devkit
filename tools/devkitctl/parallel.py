@@ -591,9 +591,10 @@ def main(argv=None):
     with full_run_slot():
         print("бюджет параллельности: ядра=%d лайнов=%d доля раннера=%d "
               "доля компонента=%d..%d (живая, растёт по мере опустения "
-              "очереди) приоритет=nice %d"
+              "очереди) приоритет=nice %d кеш сборки Go=%s"
               % (budget, jobs, reserved,
-                 component_share(jobs, budget, reserved), budget, NICE_LEVEL))
+                 component_share(jobs, budget, reserved), budget, NICE_LEVEL,
+                 os.environ.get("GOCACHE", "-")))
         started = time.monotonic()
         outcomes, first_fail = run_all(comps, jobs, budget=budget)
         secs = time.monotonic() - started

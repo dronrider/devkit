@@ -821,6 +821,25 @@ class MainTest(Stand):
         self.assertEqual(rc, 0)
         self.assertIn("приоритет=nice %d" % parallel.NICE_LEVEL, out)
 
+    def test_budget_line_names_the_go_cache_dir(self):
+        # DK-1217: строка бюджета указывает каталог кеша сборки Go, который
+        # freshtree.Env положил в окружение прогона (GOCACHE сильнее
+        # умолчания под временным HOME).
+        with mock.patch.dict(os.environ, {"GOCACHE": "/fake/cache/go-build"}):
+            rc, out = self.run_main([self.grow("ok.sh", "exit 0")])
+        self.assertEqual(rc, 0)
+        self.assertIn("кеш сборки Go=/fake/cache/go-build", out)
+
+    def test_budget_line_marks_missing_go_cache(self):
+        # Без GOCACHE в окружении (прогон вне freshtree, живой дом) строка не
+        # придумывает путь, а называет отсутствие явно.
+        env = dict(os.environ)
+        env.pop("GOCACHE", None)
+        with mock.patch.dict(os.environ, env, clear=True):
+            rc, out = self.run_main([self.grow("ok.sh", "exit 0")])
+        self.assertEqual(rc, 0)
+        self.assertIn("кеш сборки Go=-", out)
+
     def test_list_shows_the_nice_wrapper(self):
         # `-n` в превью это то же приращение, что реально уйдёт в `nice`
         # (with_priority), а не голый NICE_LEVEL: на обычном прогоне

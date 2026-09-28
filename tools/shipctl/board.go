@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -21,7 +22,18 @@ var sectByPrefix = []struct{ prefix, key string }{
 // Link это ячейка ссылки строки. В корп-контуре она несёт ключ тикета
 // зеркальной строки, и по ней start именует ветку (DK-124); дома ссылка ведёт
 // на файл задачи, и никто её не читает.
-type row struct{ ID, Title, Type, Cost, Link string }
+type row struct {
+	ID, Title, Type, Cost, Link string
+	// Rank это число ранга из одноимённой колонки, ноль у доски без него.
+	// Очередь слияний льёт ветки по нему (DK-1218): доска и так стоит
+	// отсортированной, но порядок очереди обязан держаться на записанном
+	// числе, а не на том, в каком виде строки легли в файл.
+	Rank int
+}
+
+// rankNumRe вытаскивает из ячейки ранга ведущее число: за ним в ячейке стоит
+// разбор слагаемыми («67 (50+8+3+0+5, M+1)»), и он очереди не нужен.
+var rankNumRe = regexp.MustCompile(`^\s*(\d+)`)
 
 // boardPrefixRe вытаскивает префикс ID из шапки доски («# devkit: задачи
 // (префикс DK)»), тем же способом, что и taskctl. Нужен калитке DK-602: она
@@ -117,6 +129,13 @@ func loadBoard(root string) (*board, error) {
 		}
 		// Колонка «Цена» есть только в семиколоночных досках, в старом
 		// формате шестая ячейка это ссылка.
+		// Колонка ранга пятая в обоих форматах, и очередь слияний читает её
+		// там и там: шестиколоночные доски живут в проектах без цены.
+		if len(cells) >= 5 {
+			if m := rankNumRe.FindStringSubmatch(cells[4]); m != nil {
+				r.Rank, _ = strconv.Atoi(m[1])
+			}
+		}
 		if len(cells) >= 7 {
 			r.Cost = strings.TrimSpace(cells[5])
 			r.Link = strings.TrimSpace(cells[6])

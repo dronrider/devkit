@@ -168,6 +168,98 @@ func acquireLock(root, who string) (func(), error) {
 	}
 }
 
+// Ожидание замка. Мгновенный отказ был верен, пока слияния жал человек:
+// занятость видна на экране, и повтор стоит одной команды. Автономный
+// конвейер устроен иначе. Семь готовых веток 28 сентября шли слиянием весь
+// день, каждое держало замок минутами, и заход, ткнувшийся в занятый замок,
+// просто уходил ни с чем: получателя у события «замок освободился» нет, и
+// повторы диспетчеры писали одноразовыми циклами в scratchpad (DK-1218).
+// Поэтому ожидание стало умолчанием, а мгновенный отказ остался ключом для
+// скриптов, которым важнее не встать в ожидание, чем дождаться.
+//
+// lockWaitDefault это срок, дольше которого ждать бессмысленно: слияние
+// девкита с полным прогоном в свежем дереве идёт от десяти до двадцати
+// минут, и полчаса накрывают его с запасом. Дольше это уже не чужое
+// слияние, а висящий процесс, и разбирать его надо, а не ждать.
+const lockWaitDefault = 30 * time.Minute
+
+// lockPoll это шаг проверки. Занятость узнаётся только повторным захватом
+// (файл замка лежит на месте и под свободным замком), а событию об
+// освобождении взяться неоткуда, поэтому проверка идёт по шагу. Пять секунд
+// против минут работы держателя это меньше процента лишнего ожидания и
+// ничего не стоит на фоне git с тестами.
+const lockPoll = 5 * time.Second
+
+// acquireLockWait берёт замок с ожиданием: пока держатель не закончил,
+// попытка повторяется шагом lockPoll до срока wait. Нулевой wait это
+// мгновенный отказ, каким замок работал раньше. say печатает ход ожидания
+// (держателя первым делом и минуты по ходу): отчёт команды собирается в
+// строку и уходит в конце, а ожидание обязано быть слышно сразу, иначе оно
+// неотличимо от зависшего слияния. Аномальные отказы замка (не открылся, не
+// устоялся) ожидания не ждут: повтор их не лечит.
+func acquireLockWait(root, who string, wait time.Duration, say func(string)) (func(), error) {
+	if say == nil {
+		say = func(string) {}
+	}
+	unlock, err := acquireLock(root, who)
+	if err == nil || !errors.Is(err, errLockBusy) || wait <= 0 {
+		return unlock, err
+	}
+	started := time.Now()
+	say(fmt.Sprintf("замок %s занят, жду до %s: %s", lockPath, lockWaitWords(wait), lockHolderNow(root)))
+	for {
+		if left := wait - time.Since(started); left <= 0 {
+			return nil, fmt.Errorf("%w; ждал %s и не дождался: держатель работает дольше срока ожидания, разбирать его, а не ждать дальше", err, lockWaitWords(wait))
+		}
+		time.Sleep(lockPoll)
+		unlock, err = acquireLock(root, who)
+		if err == nil {
+			say(fmt.Sprintf("замок %s взят, ожидание %s", lockPath, lockWaitWords(time.Since(started))))
+			return unlock, nil
+		}
+		if !errors.Is(err, errLockBusy) {
+			return nil, err
+		}
+	}
+}
+
+// lockBusyNow отвечает, занят ли замок прямо сейчас, ничего на диске не
+// меняя: файл держателя не пишется, а свой flock снимается тем же вызовом.
+// Ответ живёт мгновение (держатель мог закончить в ту же секунду), и годится
+// он только на отметку этапа, а не на предусловие: единственная настоящая
+// проверка занятости это попытка захвата.
+func lockBusyNow(root string) bool {
+	f, err := os.OpenFile(filepath.Join(root, lockPath), os.O_RDWR, 0o644)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return true
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false
+}
+
+// lockHolderNow называет держателя замка прямо сейчас, тем же куском, что и
+// отказ занятости.
+func lockHolderNow(root string) string {
+	data, err := os.ReadFile(filepath.Join(root, lockOwnerPath))
+	if err != nil {
+		data = nil
+	}
+	return lockHolder(data, time.Now())
+}
+
+// lockWaitWords пишет срок ожидания словами. Секунды нужны на коротком
+// ожидании (чужой заход кончается через минуту), минуты на длинном.
+func lockWaitWords(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%d с", int(d.Seconds()+0.5))
+	}
+	return fmt.Sprintf("%d мин", int(d.Minutes()+0.5))
+}
+
 // lockStale сравнивает inode взятого дескриптора с тем, что сейчас лежит по
 // пути замка: разошлись, значит файл, на который держится flock, уже не тот,
 // что виден снаружи (снят и пересоздан между open и flock), и захват не

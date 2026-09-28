@@ -506,3 +506,136 @@ func TestJournalSurvivesRevertAndRemerge(t *testing.T) {
 		}
 	}
 }
+
+// Нагрузочное падение в журнале (DK-1218). До этой правки дифф решал всё:
+// падение браузерного стенда на загруженной машине журнал писал как own у
+// любой ветки, тронувшей tools/dashboard, и очередь считала такую красноту
+// краснотой автора.
+
+// loadRunOut это вывод прогона, где провалился один компонент, задетый диффом
+// задачи, и провалился он замером стенного времени.
+const loadRunOut = "dashboard       (tools/dashboard)  74.1s FAIL\n" +
+	"go:shipctl        3.5s ok\n" +
+	"FAIL dashboard\n" +
+	"--- FAIL: TestDashboardSmokeHiddenTabQuiet (74.12s)\n" +
+	"    quietsmoke_test.go:390: замер стенного времени\n" +
+	"    quietsmoke_test.go:452: занятых окон 1 при пороге 2\n" +
+	"Ran 2 of 2 components in 1m20s\n"
+
+func TestWriteTestLogMarksLoadFailureForeign(t *testing.T) {
+	root := t.TempDir()
+	devkitDir(t, root)
+	rec := writeTestLog(root, "XR-001", []string{"tools/dashboard/app.js"}, loadRunOut, false, time.Minute)
+	var dash componentOutcome
+	for _, c := range rec.Components {
+		if c.Name == "dashboard" {
+			dash = c
+		}
+	}
+	if !dash.Load {
+		t.Fatalf("нагрузочное падение не опознано: %+v", dash)
+	}
+	if dash.Own || !dash.Resolved || dash.Undetermined {
+		t.Errorf("дифф задел компонент, но краснота нагрузочная и обязана быть чужой: %+v", dash)
+	}
+	if len(dash.Loaded) != 1 || dash.Loaded[0] != "TestDashboardSmokeHiddenTabQuiet" {
+		t.Errorf("журнал обязан назвать тест: %+v", dash.Loaded)
+	}
+	own, load, why := redVerdict(rec)
+	if own || !load {
+		t.Errorf("вердикт: своя=%v нагрузочная=%v (%s)", own, load, why)
+	}
+	if !strings.Contains(why, "HiddenTabQuiet") {
+		t.Errorf("причина обязана назвать тест: %q", why)
+	}
+	// Счёт чужой красноты подхватывает то же падение: наблюдение недели
+	// (раздел «Итог» цели DK-1084) считает его чужим.
+	if n, err := foreignFails(root, time.Hour); err != nil || n != 1 {
+		t.Errorf("foreign-fails: %d, %v; жду 1", n, err)
+	}
+}
+
+// WaitDelay expired это тот же класс: подпроцесс не успел ответить, и стенное
+// время кончилось у него, а не у кода ветки.
+func TestWriteTestLogMarksWaitDelayForeign(t *testing.T) {
+	root := t.TempDir()
+	devkitDir(t, root)
+	out := "dashboard       (tools/dashboard)  31.0s FAIL\n" +
+		"FAIL dashboard\n" +
+		"--- FAIL: TestBoardRowsComeFromTaskctl (31.02s)\n" +
+		"    board_test.go:88: tmux ls: exec: WaitDelay expired\n" +
+		"Ran 1 of 1 components in 0m31s\n"
+	rec := writeTestLog(root, "XR-001", []string{"tools/dashboard/board.go"}, out, false, time.Minute)
+	if !rec.Components[0].Load || rec.Components[0].Own {
+		t.Fatalf("WaitDelay expired обязан быть чужой краснотой: %+v", rec.Components[0])
+	}
+}
+
+// Настоящая поломка в диффе остаётся своей, и вердикт зовёт её своей: иначе
+// очередь гоняла бы повторы по сломанному коду.
+func TestWriteTestLogKeepsOwnFailureOwn(t *testing.T) {
+	root := t.TempDir()
+	devkitDir(t, root)
+	out := "dashboard       (tools/dashboard)  1.0s FAIL\n" +
+		"FAIL dashboard\n" +
+		"--- FAIL: TestTasksListKeepsRank (0.02s)\n" +
+		"    tasks_test.go:12: ранг потерялся\n" +
+		"Ran 1 of 1 components in 0m01s\n"
+	rec := writeTestLog(root, "XR-001", []string{"tools/dashboard/tasks.go"}, out, false, time.Minute)
+	if rec.Components[0].Load || !rec.Components[0].Own {
+		t.Fatalf("провал без признака срока обязан остаться своим: %+v", rec.Components[0])
+	}
+	own, load, why := redVerdict(rec)
+	if !own || load {
+		t.Errorf("вердикт: своя=%v нагрузочная=%v (%s)", own, load, why)
+	}
+}
+
+// Признание одного компонента не прощает соседа: пока в том же прогоне
+// краснеет задетый диффом компонент без признака, краснота своя.
+func TestRedVerdictOwnBeatsLoad(t *testing.T) {
+	root := t.TempDir()
+	devkitDir(t, root)
+	out := loadRunOut[:strings.Index(loadRunOut, "Ran 2")] +
+		"FAIL go:shipctl\n" +
+		"--- FAIL: TestQueueOrder (0.01s)\n" +
+		"    queue_test.go:5: не тот порядок\n" +
+		"Ran 2 of 2 components in 1m20s\n"
+	out = strings.Replace(out, "go:shipctl        3.5s ok", "go:shipctl      (tools/shipctl)  3.5s FAIL", 1)
+	rec := writeTestLog(root, "XR-001", []string{"tools/dashboard/app.js", "tools/shipctl/queue.go"}, out, false, time.Minute)
+	own, load, why := redVerdict(rec)
+	if !own || load {
+		t.Fatalf("рядом с нагрузочным краснеет свой компонент: своя=%v нагрузочная=%v (%s)", own, load, why)
+	}
+	if !strings.Contains(why, "go:shipctl") {
+		t.Errorf("причина обязана назвать свой компонент: %q", why)
+	}
+}
+
+// Команда без разбора на компоненты судится по всему выводу: синтетический
+// компонент и есть весь прогон.
+func TestWriteTestLogJudgesWholeOutputWithoutComponents(t *testing.T) {
+	root := t.TempDir()
+	devkitDir(t, root)
+	out := "panic: test timed out after 10m0s\n\ngoroutine 1 [running]:\n"
+	rec := writeTestLog(root, "XR-001", []string{"tools/shipctl/queue.go"}, out, false, 10*time.Minute)
+	if len(rec.Components) != 1 || !rec.Components[0].Load {
+		t.Fatalf("снятый по сроку прогон обязан быть нагрузочным: %+v", rec.Components)
+	}
+}
+
+// Блок компонента берётся свой: признание одного компонента не должно
+// перетекать в блок другого.
+func TestComponentBlocksSplitByName(t *testing.T) {
+	out := "a (x) 1.0s FAIL\nb (y) 2.0s FAIL\n" +
+		"FAIL a\nвывод a, FAIL	github.com/x	1.0s\n" +
+		"FAIL b\nвывод b\n" +
+		"Ran 2 of 2 components in 0m03s\nFAILED (first=a)\n"
+	blocks := componentBlocks(out, []componentOutcome{{Name: "a"}, {Name: "b"}})
+	if !strings.Contains(blocks["a"], "вывод a") || strings.Contains(blocks["a"], "вывод b") {
+		t.Errorf("кусок a: %q", blocks["a"])
+	}
+	if !strings.Contains(blocks["b"], "вывод b") || strings.Contains(blocks["b"], "Ran 2") {
+		t.Errorf("кусок b: %q", blocks["b"])
+	}
+}

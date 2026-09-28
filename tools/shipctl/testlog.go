@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/loadfail"
 )
 
 // Журнал итогов прогона test по компонентам (DK-1125, держит третью строку
@@ -47,13 +49,15 @@ const testLogPath = ".devkit/test-runs.log"
 // компоненту не идёт ни в свою, ни в чужую сторону (замечание ревью круга
 // 4, DK-1125).
 type componentOutcome struct {
-	Name         string  `json:"name"`
-	OK           bool    `json:"ok"`
-	Secs         float64 `json:"secs"`
-	Root         string  `json:"root,omitempty"`
-	Resolved     bool    `json:"resolved"`
-	Own          bool    `json:"own"`
-	Undetermined bool    `json:"undetermined,omitempty"`
+	Name         string   `json:"name"`
+	OK           bool     `json:"ok"`
+	Secs         float64  `json:"secs"`
+	Root         string   `json:"root,omitempty"`
+	Resolved     bool     `json:"resolved"`
+	Own          bool     `json:"own"`
+	Undetermined bool     `json:"undetermined,omitempty"`
+	Load         bool     `json:"load,omitempty"`
+	Loaded       []string `json:"loaded,omitempty"`
 }
 
 // testRunRecord это одна запись журнала: итог прогона test при слиянии
@@ -100,16 +104,44 @@ func parseComponentOutcomes(out string) []componentOutcome {
 	return res
 }
 
+// componentBlocks делит вывод команды test на куски провалившихся
+// компонентов. Раннер печатает их после сводки, головой «FAIL <имя>»
+// (tools/devkitctl/parallel.py), и кусок идёт до следующей такой головы либо
+// до строки итога «Ran N of M». Голова узнаётся только по имени из сводки:
+// сам вывод компонента полон строк, начинающихся на FAIL, и разбирать их как
+// головы значило бы рвать кусок посередине.
+func componentBlocks(out string, comps []componentOutcome) map[string]string {
+	known := map[string]bool{}
+	for _, c := range comps {
+		known[c.Name] = true
+	}
+	blocks := map[string]string{}
+	cur := ""
+	for _, line := range strings.Split(out, "\n") {
+		if name, ok := strings.CutPrefix(line, "FAIL "); ok && known[strings.TrimSpace(name)] {
+			cur = strings.TrimSpace(name)
+			continue
+		}
+		if strings.HasPrefix(line, "Ran ") {
+			cur = ""
+			continue
+		}
+		if cur != "" {
+			blocks[cur] += line + "\n"
+		}
+	}
+	return blocks
+}
+
 // writeTestLog дописывает в журнал итог прогона test: компоненты, разобранные
 // из вывода команды (либо один синтетический "test" без разбора), и состав
 // диффа задачи. Журнал ведётся только там, где есть .devkit (как .devkit/log
 // у logRun): каталог заводит devkitctl, без него журналу писать некуда.
 // Провал записи прогон не роняет, журнал это наблюдение, а не предусловие.
-func writeTestLog(root, id string, diff []string, out string, ok bool, dur time.Duration) {
-	dir := filepath.Join(root, ".devkit")
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		return
-	}
+// Разбор возвращается вызывающему: по нему очередь слияний решает, вставать
+// ветке в хвост или уходить из очереди (DK-1218), и считать его второй раз
+// значило бы разойтись с журналом.
+func writeTestLog(root, id string, diff []string, out string, ok bool, dur time.Duration) testRunRecord {
 	comps := parseComponentOutcomes(out)
 	if len(comps) == 0 {
 		comps = []componentOutcome{{Name: "test", OK: ok, Secs: dur.Seconds()}}
@@ -119,20 +151,84 @@ func writeTestLog(root, id string, diff []string, out string, ok bool, dur time.
 	// стабильная историческая запись, и следующая правка раскладки не
 	// должна переигрывать смысл уже слитых слияний.
 	cfg, _ := loadDeployConfig(root)
+	blocks := componentBlocks(out, comps)
 	for i := range comps {
 		comps[i].Resolved, comps[i].Own, comps[i].Undetermined = resolveOwnership(cfg, comps[i].Name, comps[i].Root, diff)
+		if comps[i].OK {
+			continue
+		}
+		// Нагрузочное падение бьёт разбор по диффу: тест, чей исход держится
+		// на стенном времени, краснеет на загруженной машине, не тронув ни
+		// строки ветки, а дифф пересекается с компонентом ровно так же, как
+		// при настоящей поломке (DK-1218). Кусок вывода берётся свой: судить
+		// компонент по чужому признанию нельзя. Куска нет (команда без
+		// разбора на компоненты) - судится весь вывод, он и есть весь
+		// компонент.
+		block, has := blocks[comps[i].Name]
+		if !has && len(comps) == 1 {
+			block = out
+		}
+		if load, names := loadfail.Load(block); load {
+			comps[i].Load, comps[i].Loaded = true, names
+			comps[i].Resolved, comps[i].Own, comps[i].Undetermined = true, false, false
+		}
 	}
 	rec := testRunRecord{Time: time.Now(), ID: id, OK: ok, Diff: diff, Components: comps}
+	dir := filepath.Join(root, ".devkit")
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return rec
+	}
 	line, err := json.Marshal(rec)
 	if err != nil {
-		return
+		return rec
 	}
 	f, err := os.OpenFile(filepath.Join(dir, "test-runs.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return rec
 	}
 	defer f.Close()
 	fmt.Fprintln(f, string(line))
+	return rec
+}
+
+// redVerdict судит красный прогон: чья краснота отбила слияние. Своя значит
+// провалился компонент, чью границу задел дифф задачи, и повторять прогон
+// незачем. Чужая значит провалились только компоненты вне диффа, и тогда
+// вторым значением идёт признак нагрузочного падения: с ним повтор имеет
+// смысл прямо сейчас (машина освободится), без него краснеет сам main, и
+// разлив очереди дальше не идёт. Третье значение это причина словами, она
+// уезжает в запись задачи и в уведомление.
+func redVerdict(rec testRunRecord) (own, load bool, why string) {
+	var mine, loaded, alien []string
+	for _, c := range rec.Components {
+		if c.OK {
+			continue
+		}
+		switch {
+		case c.Load:
+			at := c.Name
+			if len(c.Loaded) > 0 {
+				at += " (" + strings.Join(c.Loaded, ", ") + ")"
+			}
+			loaded = append(loaded, at)
+		case c.Resolved && c.Own:
+			mine = append(mine, c.Name)
+		default:
+			alien = append(alien, c.Name)
+		}
+	}
+	switch {
+	case len(mine) > 0:
+		return true, false, "краснота в диффе задачи: " + strings.Join(mine, ", ")
+	case len(loaded) > 0 && len(alien) == 0:
+		return false, true, "нагрузочное падение вне диффа задачи: " + strings.Join(loaded, ", ")
+	case len(alien) > 0 || len(loaded) > 0:
+		return false, false, "краснота вне диффа задачи: " + strings.Join(append(alien, loaded...), ", ")
+	}
+	// Прогон красный, а ни один компонент не назвался провалившимся: вывод
+	// не разобрался построчно. Считать такое чужим значило бы гонять повтор
+	// по кругу на нечитаемом выводе.
+	return true, false, "прогон красный, провалившийся компонент в выводе не назван"
 }
 
 // readTestLog читает записи журнала не старше since (от текущего момента).
@@ -279,6 +375,10 @@ func pathUnder(path, prefix string) bool {
 //     репозиторий) не различает их структурно. Одного такого провала для
 //     счёта мало: запись идёт в счёт, только если рядом провалился ещё и
 //     точно опознанный чужой компонент (замечание ревью круга 4, DK-1125).
+//
+// Нагрузочное падение (Load) приходит сюда уже чужим: writeTestLog ставит
+// ему Resolved без Own, и в счёт оно идёт наравне с остальной чужой
+// краснотой (DK-1218).
 func foreignFails(root string, since time.Duration) (int, error) {
 	recs, err := readTestLog(root, since)
 	if err != nil {

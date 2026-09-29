@@ -71,6 +71,17 @@ class TestWallClockDecorator(unittest.TestCase):
             return 42
         self.assertEqual(ok(), 42)
 
+    def test_skip_test_is_not_recognized_as_load(self):
+        # unittest.SkipTest это подкласс Exception, и до этой правки
+        # декоратор ловил его наравне с настоящим падением: пропущенный тест
+        # становился красным нагрузочным падением (замечание ревью круга 1).
+        @loadmark.wall_clock
+        def skipping():
+            raise unittest.SkipTest("не на этой машине")
+        with self.assertRaises(unittest.SkipTest) as ctx:
+            skipping()
+        self.assertNotIn(loadmark.MARK, str(ctx.exception))
+
     def test_mark_matches_go_constant(self):
         # Строка держится вровень с go-стороной руками: разъехавшиеся строки
         # ловит именно эта сверка литерала.

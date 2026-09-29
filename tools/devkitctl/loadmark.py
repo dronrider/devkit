@@ -18,6 +18,7 @@ stdout, для него не существует. Признание обяза
 двух, и `AssertionError` выбран как более частая по коду.
 """
 import functools
+import unittest
 
 # Строка признания, которой тест сам называет себя замером стенного времени.
 # Держится вровень с `internal/loadfail.Mark` (`internal/loadfail/loadfail.go`)
@@ -42,6 +43,11 @@ def wall_clock(fn):
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
+        except unittest.SkipTest:
+            # Пропуск теста это управляющий сигнал unittest, а не падение:
+            # признание тут исказило бы исход, зелёный пропуск стал бы
+            # красным нагрузочным падением (замечание ревью круга 1).
+            raise
         except Exception as exc:
             raise WallClockFailure("%s\n%s" % (exc, MARK)) from exc
     return wrapper

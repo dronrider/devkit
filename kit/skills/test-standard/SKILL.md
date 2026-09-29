@@ -49,7 +49,8 @@ devkitctl test hooks check_bare_test_test.TestHookMode   # модуль, кла�
 
 Полный прогон всех компонентов идёт своей командой проекта (в devkit это
 `python3 tools/devkitctl/parallel.py`), и слот у него тот же. Прямую команду
-отбивает `hooks/check-bare-test.py` (DK-1219) с готовой заменой.
+отбивает `hooks/check-bare-test.py` (DK-1219) с готовой заменой. Сам `regcheck`
+слота не берёт, поэтому обёртка зовётся из-под него, а не рядом с ним.
 
 ## Тест на новую функциональность
 

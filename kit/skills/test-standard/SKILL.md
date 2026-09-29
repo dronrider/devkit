@@ -20,8 +20,8 @@ description: Стандарт тестов devkit и доводка правки
    исправленном**. Проверяется это прогоном, а не на глаз:
 
    ```
-   regcheck -- go test ./... -run TestBoardMove       # правка и тест не закоммичены
-   regcheck --base main -- python3 -m unittest discover -p '*_test.py'  # ветка задачи
+   regcheck -- devkitctl test tools/taskctl -run TestBoardMove  # правка и тест не закоммичены
+   regcheck --base main -- devkitctl test hooks       # ветка задачи
    regcheck --inline src/lib.rs -- cargo test         # тест лежит в файле правки
    ```
 
@@ -29,6 +29,27 @@ description: Стандарт тестов devkit и доводка правки
    значит они перечисляются флагом `--tests`.
 3. Где regcheck не применим, проверять руками: временно вернуть баг и убедиться,
    что тест краснеет. Прогон без красноты покрытием не считается.
+
+## Прогон под потолком машины
+
+Тесты одного компонента гонит обёртка `devkitctl test <путь>`, а не прямой
+`go test` или `python3 -m unittest`. Прогон рядом с чужим слиянием берёт ту же
+машину второй раз: потолок одновременных прогонов держит замок
+`~/.devkit/parallel-slots` (DK-1162), и берут его обёртки, а прямая команда
+идёт мимо. Обёртка выбирает раннер по каталогу, при занятом слоте печатает
+строку ожидания, гонит тесты с долей бюджета и пониженным приоритетом и
+дописывает итог в `.devkit/test-runs.log`.
+
+```
+devkitctl test tools/taskctl              # пакет go-модуля
+devkitctl test hooks -v                   # питоновая сюита, хвост ключей свой
+devkitctl test tools/taskctl -run TestBoardMove
+devkitctl test hooks check_bare_test_test.TestHookMode   # модуль, класс, метод
+```
+
+Полный прогон всех компонентов идёт своей командой проекта (в devkit это
+`python3 tools/devkitctl/parallel.py`), и слот у него тот же. Прямую команду
+отбивает `hooks/check-bare-test.py` (DK-1219) с готовой заменой.
 
 ## Тест на новую функциональность
 

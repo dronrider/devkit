@@ -41,15 +41,18 @@ disable-model-invocation: true
    ядро бьёт по всем проектам сразу.
 
    ```bash
-   cd ~/projects/devkit
-   # GOWORK=off: чужой ~/go.work на машине перехватывает сборку, и утилиты
-   # devkit падают отказом «directory prefix . does not contain modules»
-   for d in tools/*/; do [ -f "$d/go.mod" ] && (cd $d && GOWORK=off go test ./...); done
-   for d in hooks tools/devkitctl kit/skills kit/skills/goal-loop; do
-       (cd $d && python3 -m unittest discover -p '*_test.py')
-   done
-   python3 kit/skills/check-skills.py && python3 hooks/check-exec-bit.py
-   python3 tools/devkitctl/devkitctl.py doctor --layout
+   # Тот же перечень компонентов, что гонит слияние: go-модули с GOWORK=off,
+   # питоновые сюиты, скиллы и доктор. Раннер держит бюджет параллельности,
+   # приоритет и потолок одновременных прогонов на машине, поэтому прогон
+   # рядом с чужим слиянием ждёт свободный слот, а не давит машину.
+   python3 ~/projects/devkit/tools/devkitctl/parallel.py
+   ```
+
+   Пакет одного тронутого компонента гонится обёрткой под тем же потолком:
+
+   ```bash
+   devkitctl test ~/projects/devkit/tools/taskctl
+   devkitctl test ~/projects/devkit/hooks
    ```
 
 5. Довести правку до места, где она действует. Хуки и файлы правил работают из

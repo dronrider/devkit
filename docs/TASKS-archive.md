@@ -632,3 +632,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1219 | Потолок параллельных прогонов накрывает прямой go test и unittest | task | P1 | 2026-09-29 | [tasks/archive/2026/DK-1219.md](tasks/archive/2026/DK-1219.md) |
 | DK-1142 | Набор шаблонов плана kit/plans: task, bug, lld, poc и парсер | task | P1 | 2026-09-29 | [tasks/archive/2026/DK-1142.md](tasks/archive/2026/DK-1142.md) |
 | DK-1205 | Список показывает последний этап у всякой задачи, тронутой агентом | task | P2 | 2026-09-29 | [tasks/archive/2026/DK-1205.md](tasks/archive/2026/DK-1205.md) |
+| DK-1229 | Наклейки очереди слияний пишутся без замка конвейера | bug | P1 | 2026-09-29 | [tasks/archive/2026/DK-1229.md](tasks/archive/2026/DK-1229.md) |

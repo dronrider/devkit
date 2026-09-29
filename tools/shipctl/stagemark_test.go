@@ -67,6 +67,16 @@ func TestBusyLockWritesQueueWaitOnce(t *testing.T) {
 	if len(stages) != 2 || stages[1].Kind != stage.Merge || !stages[1].Ended() {
 		t.Fatalf("слияние после ожидания не легло закрытым этапом: %+v", stages)
 	}
+	if !stages[0].Ended() {
+		t.Fatalf("ожидание очереди осталось живым под закрытым слиянием: %+v", stages[0])
+	}
+	rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), "XR-001"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live, ok := rec.Live(); ok {
+		t.Fatalf("после слияния под строкой должно стоять слияние, а не ожидание: %+v", live)
+	}
 }
 
 func TestShipWritesDeployStageForTrain(t *testing.T) {

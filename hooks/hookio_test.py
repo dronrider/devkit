@@ -371,5 +371,33 @@ class TestRunnerLayout(unittest.TestCase):
                 os.path.join(HERE, base.replace("-", "_") + "_test.py")), name)
 
 
+class TestTailLines(unittest.TestCase):
+    """Хвост транскрипта: его читают хуки, которым нужны последние ходы сессии,
+    а не вся её история (указатель скилла chat, сторож плана)."""
+
+    def test_missing_file_is_an_empty_tail(self):
+        self.assertEqual(hookio.tail_lines("/no/such/file"), [])
+
+    def test_small_file_comes_back_whole(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            f.write("одна строка\nдругая строка\n")
+            path = f.name
+        self.addCleanup(os.remove, path)
+        self.assertEqual(hookio.tail_lines(path), ["одна строка", "другая строка"])
+
+    def test_big_file_reads_only_the_tail(self):
+        # Файл больше хвостового окна: в начале мусор, который в хвост попасть
+        # не должен, к концу метка, которую и ищет проверка.
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            f.write("мусор " * 100000 + "\n")
+            f.write("метка-в-хвосте\n")
+            path = f.name
+        self.addCleanup(os.remove, path)
+        lines = hookio.tail_lines(path, size=4096)
+        self.assertIn("метка-в-хвосте", lines)
+        self.assertNotIn("мусор " * 100000, lines)
+        self.assertLess(sum(len(l) for l in lines), 4096 + 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=0)

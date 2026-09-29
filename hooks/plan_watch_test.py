@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Самопроверка сторожа плана: сдача сессии, чей план разошёлся с работой
-(DK-609), и сдача сессии, у которой плана нет вовсе (DK-978). Прогон идёт
-подпроцессом с живым образцом события конца хода, как в settings.json, а
-план, транскрипт, журнал отметок и конфиг порогов подставляются каталогом
-теста: в живой ~/.devkit прогон не пишет.
+"""Самопроверка сторожа плана: напоминание в начале хода (DK-1236), сдача
+сессии, чей план разошёлся с работой (DK-609), и сдача сессии, у которой плана
+нет вовсе (DK-978). Прогон идёт подпроцессом с живыми образцами события начала и
+конца хода, как в settings.json, а план, транскрипт, журнал отметок и конфиг
+порогов подставляются каталогом теста: в живой ~/.devkit прогон не пишет.
 """
 import json
 import os
@@ -20,6 +20,13 @@ DATA = os.path.join(HERE, "testdata", "claude-code")
 SESSION = "71fda467-4c7c-448e-8b92-3a9b7ded782a"
 SHORT = SESSION[:8]
 HOUR = 3600.0
+# Разряды хода в подставном транскрипте: ход человека с вызовами инструментов и
+# без них задаются True и False, а ход, начатый пробуждением, этими словами.
+# Пробуждение узнаётся двумя признаками, и слова разводят их по отдельности:
+# источник реплики есть не у всякого клиента, тег сдачи в содержимом есть всегда.
+WAKE = "пробуждение"
+WAKE_UNTAGGED = "пробуждение без тега"
+WAKE_UNSOURCED = "пробуждение без источника"
 
 CONFIG = """[plan]
 step_hours = 3
@@ -70,14 +77,27 @@ class Stand(object):
                 f.write("%s сессия %s ход кончен повод - дерево /tmp\n" % (when, SHORT))
 
     def lay_transcript(self, turns):
-        """Транскрипт сессии файлом: turns это список признаков «в ходе был
-        вызов инструмента» по одному на ход, ходы порезаны настоящими
-        репликами человека. Путь к файлу возвращается для события."""
+        """Транскрипт сессии файлом: turns это список ходов по одному элементу
+        на ход. True это ход человека с вызовом инструмента, False его же ход без
+        вызовов, а слова WAKE, WAKE_UNTAGGED и WAKE_UNSOURCED это ход, начатый
+        пробуждением, с вызовом инструмента. Путь к файлу возвращается для
+        события."""
         path = os.path.join(self.tmp, "transcript.jsonl")
         lines = []
-        for i, used_tools in enumerate(turns):
-            lines.append(json.dumps({"type": "user", "message": {
-                "role": "user", "content": "реплика человека %d" % i}}, ensure_ascii=False))
+        for i, kind in enumerate(turns):
+            used_tools = kind is not False
+            start = {"type": "user", "message": {
+                "role": "user", "content": "реплика человека %d" % i}}
+            if kind in (WAKE, WAKE_UNTAGGED, WAKE_UNSOURCED):
+                # Форма сдачи фоновой работы снята с живого транскрипта: реплика
+                # с источником system и тегом сдачи в содержимом.
+                body = ("<task-notification>\n<task-id>b4usjihs1</task-id>\n"
+                        "</task-notification>" if kind != WAKE_UNTAGGED
+                        else "Работа кончилась, отчёт лежит в файле.")
+                start = {"type": "user", "message": {"role": "user", "content": body}}
+                if kind != WAKE_UNSOURCED:
+                    start["promptSource"] = "system"
+            lines.append(json.dumps(start, ensure_ascii=False))
             if used_tools:
                 lines.append(json.dumps({"type": "assistant", "message": {
                     "role": "assistant", "content": [
@@ -426,6 +446,138 @@ class TestWatch(unittest.TestCase):
                            capture_output=True, text=True, env=env)
         self.assertEqual(p.returncode, 0)
         self.assertEqual(p.stdout.strip(), "")
+
+    # Напоминание в начале хода (DK-1236): перекладка плана едет тем же ходом,
+    # что и работа, а не отдельным вызовом модели после сна.
+
+    def test_closed_plan_is_reminded_at_the_start_of_a_turn(self):
+        """План закрыт целиком, а сессия работает дальше: напоминание приходит
+        добавкой контекста на UserPromptSubmit, без решения block."""
+        s = self.stand()
+        s.lay_plan(plan(("разведка", "completed"), ("правка", "completed")), age=600.0)
+        s.lay_turns(3)
+        code, said = s.run(sample("prompt-submit.json"))
+        self.assertEqual(code, 0)
+        out = said.get("hookSpecificOutput") or {}
+        self.assertEqual(out.get("hookEventName"), "UserPromptSubmit")
+        self.assertIn("все пункты плана закрыты", out.get("additionalContext", ""))
+        self.assertIn("agentctl plan set", out.get("additionalContext", ""))
+        self.assertNotIn("decision", said, "напоминание пришло блокировкой хода")
+
+    def test_standing_plan_is_reminded_at_the_start_of_a_turn(self):
+        s = self.stand()
+        s.lay_plan(plan(("разведка", "completed"), ("правка", "pending")), age=600.0)
+        s.lay_turns(12)
+        code, said = s.run(sample("prompt-submit.json"))
+        out = said.get("hookSpecificOutput") or {}
+        self.assertIn("не менялся 12 ходов", out.get("additionalContext", ""))
+
+    def test_the_log_tells_a_reminder_from_a_handover(self):
+        """Журнал различает напоминание на входе хода и сдачу на его конце:
+        иначе по нему не посчитать, сколько сессии стоил сторож."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.lay_turns(3)
+        s.run(sample("prompt-submit.json"))
+        s.run()
+        said = s.said_log()
+        self.assertIn("напоминание: все пункты плана закрыты", said)
+        self.assertIn("сдача: все пункты плана закрыты", said)
+
+    def test_a_plan_that_answers_the_work_is_not_reminded(self):
+        s = self.stand()
+        s.lay_plan(plan(("правка", "in_progress")), age=600.0)
+        s.lay_turns(1)
+        code, said = s.run(sample("prompt-submit.json"))
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {})
+        self.assertIn("напоминать нечего", s.said_log())
+
+    def test_the_aging_step_is_not_reminded_at_the_start_of_a_turn(self):
+        """Признак, который считается часами, остаётся концу хода: только там
+        видно, ждёт ли сессия живую фоновую работу, и только там он честен."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "in_progress")), age=4 * HOUR)
+        s.lay_turns(1, since=4 * HOUR - 60)
+        code, said = s.run(sample("prompt-submit.json"))
+        self.assertEqual(said, {}, "часовой признак приехал напоминанием")
+
+    def test_a_session_without_a_plan_is_not_reminded(self):
+        """Признак «плана нет вовсе» смотрит на ходы, которые сессия уже
+        сделала, и место ему на конце хода."""
+        s = self.stand()
+        tr = s.lay_transcript([True, True])
+        code, said = s.run(sample("prompt-submit.json"), transcript=tr)
+        self.assertEqual(said, {})
+
+    # Что за разъезд с планом не считается (DK-1236).
+
+    def test_turn_without_tools_is_not_a_drift(self):
+        """Ответ на один вопрос работой не был, и плана он не требует: сторож
+        на таком ходе молчит, сколько бы ходов ни стоял план."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.lay_turns(5)
+        tr = s.lay_transcript([True, False])
+        code, said = s.run(transcript=tr)
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {})
+        self.assertIn("без вызовов инструментов", s.said_log())
+
+    def test_wake_turn_is_not_a_drift(self):
+        """Ход, начатый сдачей фоновой работы, это ожидание, а не смена
+        занятия: диспетчер получал сдачу на каждом таком пробуждении."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.lay_turns(5)
+        for kind in (WAKE, WAKE_UNTAGGED, WAKE_UNSOURCED):
+            tr = s.lay_transcript([True, kind])
+            code, said = s.run(transcript=tr)
+            self.assertEqual(said, {}, "ход %s сочтён разъездом" % kind)
+            self.assertIn("начат пробуждением", s.said_log())
+
+    def test_work_turn_still_gets_the_handover(self):
+        """Ход с вызовами инструментов, который плана не тронул, сдачу
+        получает: напоминание он уже прочёл в своём начале."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.lay_turns(5)
+        tr = s.lay_transcript([True, True])
+        code, said = s.run(transcript=tr)
+        self.assertEqual(said.get("decision"), "block")
+        self.assertIn("все пункты плана закрыты", said.get("reason", ""))
+
+    def test_unreadable_transcript_keeps_the_handover(self):
+        """Транскрипта нет или он не читается, и ход считается рабочим: судить
+        нечем, а молчать на всяком нечитаемом транскрипте значит снять сторожа."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.lay_turns(5)
+        code, said = s.run(transcript=os.path.join(s.tmp, "нет.jsonl"))
+        self.assertEqual(said.get("decision"), "block")
+
+    def test_running_step_does_not_age_while_background_work_lives(self):
+        """Пункт «слияние и выкат» идёт честно, пока сессия ждёт субагента, и по
+        часам он не стареет: перечень работ харнеса держит только незакрытые."""
+        s = self.stand()
+        s.lay_plan(plan(("слияние и выкат", "in_progress"),), age=18 * HOUR)
+        s.lay_turns(1, since=18 * HOUR - 60)
+        tr = s.lay_transcript([True, True])
+        code, said = s.run(sample("turn-done-background.json"), transcript=tr)
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {})
+        self.assertIn("план отвечает делу", s.said_log())
+
+    def test_background_work_does_not_hide_a_closed_plan(self):
+        """Живая фоновая работа гасит только часовой признак. План, закрытый
+        целиком, при ней сдаётся тем же порядком: работа идёт, а плана у неё нет."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.lay_turns(5)
+        tr = s.lay_transcript([True, True])
+        code, said = s.run(sample("turn-done-background.json"), transcript=tr)
+        self.assertEqual(said.get("decision"), "block")
+        self.assertIn("все пункты плана закрыты", said.get("reason", ""))
 
 
 if __name__ == "__main__":

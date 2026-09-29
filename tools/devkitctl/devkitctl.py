@@ -330,11 +330,24 @@ TURN_EVENTS = ("Stop", "StopFailure", "Notification", "UserPromptSubmit")
 # и хвост задачи попадает на самый занятый контекст, а это не то же самое, что
 # потерянная реплика чата.
 PHASE_HOOK = "phase-budget.py"
-# Сторож плана (DK-609): Stop на пустом матчере, потому что сверять план с
-# делом имеет смысл там же, где сдаются фоновые работы, на конце хода.
-# Категория сообщения в hook_gaps своя: без сторожа кольцо дашборда врёт про
-# живой заход молча, и это не то же самое, что потерянный отчёт субагента.
+# Сторож плана (DK-609): два события на пустом матчере. Stop потому, что сдавать
+# находку имеет смысл там же, где сдаются фоновые работы, на конце хода, и
+# UserPromptSubmit потому, что напоминание о плане должно доехать раньше первого
+# действия хода, а не после него (DK-1236). Команда у обоих одна, и событие
+# различает сам скрипт, тем же порядком, что у MARK_HOOK и TURN_HOOK, поэтому
+# события сверяются явно. Категория сообщения в hook_gaps своя: без сторожа
+# кольцо дашборда врёт про живой заход молча, и это не то же самое, что
+# потерянный отчёт субагента.
 PLAN_HOOK = "plan-watch.py"
+PLAN_EVENTS = ("Stop", "UserPromptSubmit")
+# Чем каждое из двух событий сторожа плана дорого: сообщение доктора называет
+# именно пропавшую половину, а не общее «план не сверяется».
+PLAN_GAPS = {
+    "Stop": "ход, сделавший работу мимо плана, не получает находку, и кольцо "
+            "дашборда врёт про живой заход, пока человек не спросит сессию сам",
+    "UserPromptSubmit": "напоминание о плане приходит только на конце хода, и "
+                        "перекладка плана стоит сессии отдельного хода модели",
+}
 # Держатель хода цикла цели (DK-971): Stop на пустом матчере, потому что цель
 # ведётся любым ходом сессии, а не правкой файла. Категория сообщения в
 # hook_gaps своя: без держателя сессия отдаёт ход посреди цели и та стоит до
@@ -425,6 +438,7 @@ HOOK_LAYOUT = (
     ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/plan-watch.py --hook claude-code"),
+    ("UserPromptSubmit", "", "python3 %s/hooks/plan-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/goal-hold.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
     ("StopFailure", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
@@ -1557,6 +1571,13 @@ def hook_gaps(text, settings):
     mark_events = hook_events(text, MARK_HOOK)
     if mark_events is None:
         mark_events = set(MARK_EVENTS) if MARK_HOOK in text else set()
+    # Сторож плана стоит на двух событиях той же командой, что и MARK_HOOK, и
+    # различает их сам. Раскладка машины с одним только Stop, как её клал devkit
+    # до DK-1236, по подстроке от нынешней не отличается, поэтому события
+    # сверяются явно.
+    plan_events = hook_events(text, PLAN_HOOK)
+    if plan_events is None:
+        plan_events = set(PLAN_EVENTS) if PLAN_HOOK in text else set()
     missing_notify, missing_post, missing_pre, missing_pre_read = [], [], [], []
     missing_watch, missing_turn, missing_write, missing_mark = [], [], [], []
     for event, matcher, cmd in HOOK_LAYOUT:
@@ -1596,6 +1617,14 @@ def hook_gaps(text, settings):
             if event in mark_events:
                 continue
             missing_mark.append(event)
+        elif script == PLAN_HOOK:
+            if event in plan_events:
+                continue
+            gaps.append((event, matcher, cmd))
+            findings.append("сторож %s не подключён на событии %s в %s: %s "
+                            "(hooks/README.md)"
+                            % (PLAN_HOOK, event, settings, PLAN_GAPS[event]))
+            continue
         elif key in text:
             continue
         gaps.append((event, matcher, cmd))
@@ -1618,11 +1647,6 @@ def hook_gaps(text, settings):
             findings.append("подхват реплики %s не подключён на событии PostToolUse в %s: реплика "
                             "человека из чата цели ждёт следующего витка вместо идущего "
                             "(hooks/README.md)" % (CHAT_HOOK, settings))
-        elif script == PLAN_HOOK:
-            findings.append("сторож %s не подключён на событии Stop в %s: расхождение плана "
-                            "работ с делом не ловит никто, и кольцо дашборда врёт про живой "
-                            "заход, пока человек не спросит сессию сам (hooks/README.md)"
-                            % (PLAN_HOOK, settings))
         elif script == HOLD_HOOK:
             findings.append("держатель хода %s не подключён на событии Stop в %s: сессия, "
                             "ведущая цель, отдаёт ход посреди неё, и цель стоит до реплики "

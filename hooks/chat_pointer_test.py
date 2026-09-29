@@ -2,8 +2,9 @@
 """Самопроверка указателя на скилл chat (DK-1032): хук на UserPromptSubmit,
 который кладёт CHAT_RULE/NO_TASK_CHAT_RULE только тогда, когда скилл chat в
 транскрипте после последней границы сжатия ещё не звался. Разбор функций идёт
-прямыми вызовами (быстро и точно про хвост файла), а прогон хука целиком
-подпроцессом с подсунутым stdin, как у остальных хуков в этом каталоге.
+прямыми вызовами, а прогон хука целиком подпроцессом с подсунутым stdin, как у
+остальных хуков в этом каталоге. Хвост транскрипта читает общая
+hookio.tail_lines, и проверки про него лежат в hookio_test.py.
 """
 import importlib
 import json
@@ -41,31 +42,6 @@ def assistant_text(text="Ответ."):
 
 def compact_boundary():
     return json.dumps({"type": "system", "subtype": "compact_boundary"})
-
-
-class TestTailLines(unittest.TestCase):
-    def test_missing_file_is_an_empty_tail(self):
-        self.assertEqual(chat_pointer.tail_lines("/no/such/file"), [])
-
-    def test_small_file_comes_back_whole(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
-            f.write("одна строка\nдругая строка\n")
-            path = f.name
-        self.addCleanup(os.remove, path)
-        self.assertEqual(chat_pointer.tail_lines(path), ["одна строка", "другая строка"])
-
-    def test_big_file_reads_only_the_tail(self):
-        # Файл больше хвостового окна: в начале мусор, который в хвост попасть
-        # не должен, к концу метка, которую и ищет проверка.
-        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
-            f.write("мусор " * 100000 + "\n")
-            f.write("метка-в-хвосте\n")
-            path = f.name
-        self.addCleanup(os.remove, path)
-        lines = chat_pointer.tail_lines(path, size=4096)
-        self.assertIn("метка-в-хвосте", lines)
-        self.assertNotIn("мусор " * 100000, lines)
-        self.assertLess(sum(len(l) for l in lines), 4096 + 1)
 
 
 class TestSkillChatCall(unittest.TestCase):

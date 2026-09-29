@@ -30,11 +30,13 @@ LOG = ("2026-07-29T01:02:41\tshipctl\tmerge\t0\n"
        "2026-07-29T01:02:41\tbroken\tcode\tbad\n")
 
 
-def drop_lines(path, needle):
-    """Убрать хук харнеса, чья команда содержит needle. Правит распарсенный
-    JSON, а не текст построчно: строка HOOK_LAYOUT, которую нашли негде
-    удалить последней в своей группе, текстовым резом оставляла бы висячую
-    запятую перед закрывающей скобкой, и порядок хуков раскладки решал бы,
+def drop_lines(path, needle, event=None):
+    """Убрать хук харнеса, чья команда содержит needle. Имя события сужает рез
+    до одной оси: хук, стоящий на двух событиях одной командой, так режется
+    наполовину. Правит распарсенный JSON, а не текст построчно: строка
+    HOOK_LAYOUT, которую нашли негде удалить последней в своей группе, текстовым
+    резом оставляла бы висячую запятую перед закрывающей скобкой, и порядок
+    хуков раскладки решал бы,
     остаётся ли файл разбираемым после реза (DK-1058). Файл не settings.json
     (не JSON или без ключа hooks) правится, как раньше, построчно."""
     text = read(path)
@@ -47,8 +49,8 @@ def drop_lines(path, needle):
         write(path, "".join(ln + "\n" for ln in text.split("\n")
                             if ln and needle not in ln))
         return
-    for groups in hooks.values():
-        if not isinstance(groups, list):
+    for name, groups in hooks.items():
+        if not isinstance(groups, list) or (event and name != event):
             continue
         for group in groups:
             if not isinstance(group, dict):
@@ -299,15 +301,29 @@ class ProjectFindingsTest(SandboxCase):
                           "подключённый сторожок попал в находку")
 
     def test_5f_plan_watch_hook(self):
-        # Сторож плана (DK-609) стоит на Stop, и его пропажа это находка: план,
-        # разошедшийся с работой, остаётся заботой человеческого глаза.
+        # Сторож плана (DK-609) стоит на двух событиях: Stop сдаёт находку ходу,
+        # сделавшему работу мимо плана, UserPromptSubmit напоминает о плане
+        # раньше первого действия хода (DK-1236). Пропажа любого из двух это
+        # находка, и сообщение называет именно её: команда у событий одна, и по
+        # подстроке раскладка с одним только Stop от полной не отличается.
         full = read(self.settings)
         drop_lines(self.settings, "plan-watch.py")
         _, out = self.box.doctor(self.proj)
         self.assertIn_("сторож plan-watch.py не подключён на событии Stop", out,
                        "нет находки про неподключённый сторож плана")
+        self.assertIn_("сторож plan-watch.py не подключён на событии UserPromptSubmit", out,
+                       "нет находки про сторож плана на входе хода")
         self.assertIn_("кольцо дашборда врёт про живой заход", out,
                        "находка не говорит, что ломается без сторожа плана")
+        self.assertIn_("стоит сессии отдельного хода модели", out,
+                       "находка не говорит, что ломается без напоминания на входе")
+        write(self.settings, full)
+        drop_lines(self.settings, "plan-watch.py", event="UserPromptSubmit")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("сторож plan-watch.py не подключён на событии UserPromptSubmit", out,
+                       "раскладка с одним Stop сошла за полную")
+        self.assertNotIn_("не подключён на событии Stop", out,
+                          "находка про Stop появилась при подключённом Stop")
         write(self.settings, full)
         _, out = self.box.doctor(self.proj)
         self.assertNotIn_("plan-watch.py не подключён", out,

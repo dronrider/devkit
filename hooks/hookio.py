@@ -16,6 +16,7 @@
   hookio.append_capped(path, line) строка в машинный журнал хука с обрезкой
   hookio.registry_append(path, line) то же в реестр чатов, работа режется первой
   hookio.tree_root(cwd)            дерево работы: ближайший предок с .git
+  hookio.tail_lines(path)          хвост транскрипта строками вместо файла целиком
 
 Имя протокола приходит аргументом `--hook <протокол>`; голый `--hook` это
 claude-code, иначе команды, прописанные в settings.json на машинах, сломались
@@ -36,6 +37,12 @@ DEFAULT = "claude-code"
 # всех: файл больше предела режется до последних строк.
 LOG_LIMIT = 100 * 1024
 LOG_KEEP = 500
+# Сколько байт с конца транскрипта читает хук вместо файла целиком. Транскрипт
+# живой сессии весит десятки мегабайт (43 МБ был самый большой дома на день
+# разбора DK-1032), и читать его целиком на каждом ходе дорого. Значение с
+# большим запасом покрывает несколько ходов подряд, а цена промаха у читателя
+# дешевле цены такого чтения.
+TAIL_BYTES = 256 * 1024
 # Слово источника у записи реестра чатов по факту работы (session-task.py,
 # internal/sessions BySrc).
 WORK_SRC = "работа"
@@ -321,9 +328,16 @@ def claude_code_agent(event):
     сессии с перечнем незакрытых работ. Разрядов у запуска два, и разводит их
     имя инструмента: делегирование поднимает субагента, Bash уводит в фон
     команду оболочки. None значит, что сторожу тут смотреть нечего, и хук на
-    таком входе уходит нулём."""
+    таком входе уходит нулём.
+
+    Начало хода (UserPromptSubmit) разбирается тем же разбором, а не разбором
+    события сессии: сторожу плана нужен полный ID сессии, которым назван файл
+    её плана, а событие сессии режет ID до восьми знаков (DK-1236). Перечня
+    работ и признака продолженного хода у начала хода нет, и поля эти приходят
+    пустыми."""
     name = text_of(event.get("hook_event_name"))
-    kind = {"SubagentStop": SUBAGENT_DONE, "Stop": TURN_DONE}.get(name)
+    kind = {"SubagentStop": SUBAGENT_DONE, "Stop": TURN_DONE,
+            "UserPromptSubmit": PROMPT_SUBMIT}.get(name)
     ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
     response = event.get("tool_response")
     job, command, task = SUBAGENT_JOB, "", ""
@@ -538,6 +552,27 @@ def registry_append(path, line):
     работы первыми: запись рождения живёт, пока реестр не заполнили рождения
     новее (DK-826). Ту же обрезку держит писатель на go (sessions.Append)."""
     append_capped(path, line, first=work_line)
+
+
+def tail_lines(path, size=TAIL_BYTES):
+    """Строки хвоста файла: последние `size` байт, разрезанные по переводу
+    строки. Так читают транскрипт хуки, которым нужны последние ходы сессии, а
+    не вся её история. Нет файла или он не читается, и хвост пуст: что значит
+    пустой хвост, решает читатель, и разные хуки решают это по-разному."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            end = f.tell()
+            start = max(0, end - size)
+            f.seek(start)
+            if start:
+                # Первая строка после смещения могла быть разорвана серединой:
+                # отбросить её дешевле, чем гадать про её начало.
+                f.readline()
+            data = f.read()
+    except OSError:
+        return []
+    return data.decode("utf-8", errors="replace").splitlines()
 
 
 def tree_root(cwd):

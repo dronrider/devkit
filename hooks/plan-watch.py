@@ -28,6 +28,26 @@
 журнале ~/.devkit/turns.log, и своего журнала рядом с планом тут не заводится.
 Ход, кончившийся позже последней правки плана, это ход, который план не тронул.
 
+Каналов у сторожа два, и стоит он на двух событиях (DK-1236).
+
+  UserPromptSubmit   напоминание контекстом в начале хода: план закрыт целиком
+                     либо стоит без правки, и если реплика начинает работу,
+                     плану место первым действием того же хода
+  Stop               сдача решением block на конце хода, и достаётся она ходу,
+                     который делал работу инструментами и плана не тронул
+
+Разошёлся план или нет, сторож судил только на Stop, и починка неизбежно стоила
+сессии отдельного хода модели: один вызов agentctl plan set и снова сон. За три
+дня журнал насчитал 54 таких хода. Напоминание в начале хода едет тем же ходом,
+что и работа, а блокировка осталась тому, кто напоминание уже получил и работу
+сделал мимо плана.
+
+Ход без вызовов инструментов и ход, начатый пробуждением (сдача фоновой работы,
+событие Monitor), за разъезд с планом не считаются: ответ на один вопрос плана
+не требует, а ожидание субагента это не смена работы. Идущий пункт не стареет
+по часам, пока у сессии есть живая фоновая работа: диспетчер с честным пунктом
+«слияние и выкат» ждёт её часами, и брошенным этот пункт не стал.
+
 Четвёртый признак другой природы: плана у сессии нет вовсе. У чата доски без
 привязки к задаче нет своего шага board-task, который зовёт agentctl plan, и
 решение положить план держится только на памяти самой сессии (находка
@@ -38,9 +58,10 @@ DK-978). Свой файл плана это только `<ID сессии>.jso
 хода». Разбор на один ответ, пусть и с десятком вызовов внутри, сторож не
 трогает.
 
-Находка сдаётся сессии решением block на конце хода, как сдача фоновых работ:
-строка без блокировки теряется среди необязательных, а расхождение чинит та же
-сессия, которой его завели.
+Находка на конце хода сдаётся решением block, как сдача фоновых работ: строка
+без блокировки теряется среди необязательных, а расхождение чинит та же сессия,
+которой его завели. Напоминание в начале хода едет добавкой контекста: рамки
+провала у него нет, и ход от него не переигрывается.
 
 Режим один:
   plan-watch.py --hook [протокол]   событие читается со stdin и разбирается по
@@ -80,6 +101,13 @@ DEFAULT_CONFIG = os.path.join(hookio.ROOT, "kit", "plan.toml")
 PENDING, RUNNING, DONE = "pending", "in_progress", "completed"
 # Слово хода в журнале отметок, значащее доработанный ход.
 TURN_DONE_WORD = "кончен"
+# Чем в транскрипте видно пробуждение сессии вместо реплики человека: харнес
+# ставит такой реплике источник system, а содержимым кладёт сдачу фоновой работы
+# или событие Monitor. Форма снята с живых транскриптов (разбор
+# docs/tasks/DK-1236.md), и признака два, потому что источник есть не у всякого
+# клиента, а тег есть в содержимом всегда.
+WAKE_SOURCE = "system"
+WAKE_TAG = "<task-notification>"
 # Время в журнале отметок: местное, секундной точности.
 TURN_TIME = "%Y-%m-%dT%H:%M:%S"
 # Пороги, которых ждём от конфига: ключ и что он значит.
@@ -198,13 +226,15 @@ def no_plan_applies(session, env=None):
     return not os.path.exists(plan_path(session, env))
 
 
-def is_human_turn(event):
-    """Начало хода человека в транскрипте: настоящая реплика, а не
-    механическое эхо харнеса. Тип user с результатом инструмента харнес кладёт
-    сам после каждого вызова, обычно блоком tool_result, а у инструмента Skill
-    тем же блоком текста, что и у живой реплики. Обе разновидности эха, и
-    сдача фоновой работы, харнес помечает isMeta, и по этому признаку они
-    отсекаются раньше разбора самого содержимого."""
+def is_turn_start(event):
+    """Начало хода в транскрипте: настоящая реплика, а не механическое эхо
+    харнеса. Тип user с результатом инструмента харнес кладёт сам после каждого
+    вызова, обычно блоком tool_result, а у инструмента Skill тем же блоком
+    текста, что и у живой реплики. Обе разновидности эха харнес помечает isMeta,
+    и по этому признаку они отсекаются раньше разбора самого содержимого.
+
+    Ход начинает и пробуждение сессии, и оно тут тоже начало хода: isMeta у него
+    нет, а человек его не писал. Отделяет пробуждение от человека is_wake()."""
     if event.get("type") != "user" or event.get("isMeta"):
         return False
     message = event.get("message")
@@ -213,6 +243,24 @@ def is_human_turn(event):
         return True
     if isinstance(content, list):
         return not all(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+    return False
+
+
+def is_wake(event):
+    """Ход начат пробуждением, а не человеком: харнес будит сессию сдачей
+    фоновой работы и событием Monitor, кладёт это репликой с источником system, а
+    содержимым ставит тег сдачи. Работой такой ход не был, и разъездом с планом
+    сторож его не считает: ожидание субагента это не смена занятия."""
+    if hookio.text_of(event.get("promptSource")) == WAKE_SOURCE:
+        return True
+    message = event.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return content.lstrip().startswith(WAKE_TAG)
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                return hookio.text_of(block.get("text")).lstrip().startswith(WAKE_TAG)
     return False
 
 
@@ -230,8 +278,36 @@ def turn_used_tools(events):
     return False
 
 
+def last_turn(path):
+    """Последний ход сессии по хвосту транскрипта: пара (ход начат
+    пробуждением, в ходе были вызовы инструментов). Читается хвост, а не файл
+    целиком: транскрипт живой сессии весит десятки мегабайт, а начало последнего
+    хода лежит у самого конца.
+
+    Хвоста нет вовсе или начала хода в нём не нашлось, и ход считается рабочим:
+    судить нечем, а молчать на всяком нечитаемом транскрипте значит снять
+    сторожа. Начала хода не нашлось ещё и у хода длиннее хвоста, а такой ход
+    рабочий и без разбора."""
+    tools = False
+    for line in reversed(hookio.tail_lines(path)):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if turn_used_tools([event]):
+            tools = True
+        if is_turn_start(event):
+            return is_wake(event), tools
+    return False, True
+
+
 def transcript_turns(path):
-    """Транскрипт сессии, порезанный на ходы человека: список списков событий
+    """Транскрипт сессии, порезанный на ходы: список списков событий
     ассистента между соседними настоящими репликами. Файла нет или строка не
     разбирается, и такая строка просто пропускается: транскрипт живого
     прогона хрупок форматом, а не обязан быть безупречным JSON построчно."""
@@ -249,7 +325,7 @@ def transcript_turns(path):
                     continue
                 if not isinstance(event, dict):
                     continue
-                if is_human_turn(event):
+                if is_turn_start(event):
                     current = []
                     turns.append(current)
                     continue
@@ -342,24 +418,42 @@ def hours(seconds):
     return "%d %s" % (n, "час" if tail == 1 else "часа")
 
 
-def findings(items, changed, turns, limits, now):
-    """Чем план разошёлся с работой. Пустой список значит, что план делу
-    отвечает."""
+def stale_step(items, changed, limits, now):
+    """Признак, который считается часами: пункт помечен идущим, а план не менялся
+    дольше порога."""
     if not items or not limits:
         return []
-    out = []
     running = [text for text, state in items if state == RUNNING]
     age = max(0.0, now - changed)
     if running and age >= limits["step_hours"] * 3600:
-        out.append("пункт «%s» помечен идущим, а план не менялся %s"
-                   % (running[0], hours(age)))
+        return ["пункт «%s» помечен идущим, а план не менялся %s"
+                % (running[0], hours(age))]
+    return []
+
+
+def turn_drift(items, turns, limits):
+    """Признаки, которые считаются ходами: план закрыт целиком либо стоит без
+    правки при незакрытых пунктах. Они же едут напоминанием в начале хода:
+    ходы считаются журналом отметок, а не событием, и знать про конец хода тут
+    нечего."""
+    if not items or not limits:
+        return []
     closed = all(state == DONE for _, state in items)
     if closed and turns >= limits["done_turns"]:
-        out.append("все пункты плана закрыты, а сессия работает дальше: ходов "
-                   "после правки плана %d" % turns)
-    elif not closed and turns >= limits["still_turns"]:
-        out.append("план не менялся %d ходов подряд, а незакрытые пункты в нём есть" % turns)
-    return out
+        return ["все пункты плана закрыты, а сессия работает дальше: ходов "
+                "после правки плана %d" % turns]
+    if not closed and turns >= limits["still_turns"]:
+        return ["план не менялся %d ходов подряд, а незакрытые пункты в нём есть" % turns]
+    return []
+
+
+def findings(items, changed, turns, limits, now, waiting=False):
+    """Чем план разошёлся с работой. Пустой список значит, что план делу
+    отвечает. Признак «идущий пункт состарился» у сессии с живой фоновой работой
+    не считается: она честно ждёт её концом хода, и идущий пункт ожидания у неё
+    верен, сколько бы ни шло ожидание."""
+    step = [] if waiting else stale_step(items, changed, limits, now)
+    return step + turn_drift(items, turns, limits)
 
 
 def handover(lines):
@@ -374,6 +468,21 @@ def handover(lines):
             "(agentctl plan done)." % body)
 
 
+def reminder(lines):
+    """Текст напоминания в начале хода. Сессия читает его раньше первого своего
+    действия, поэтому сказано в нём и что не так с планом, и когда его правка
+    нужна: ход-ответ на один вопрос плана не требует."""
+    body = "\n".join("- %s" % line for line in lines)
+    return ("Сторож плана devkit: план работ разошёлся с делом.\n"
+            "%s\n"
+            "Если эта реплика начинает работу, положи план первым же действием "
+            "этого хода, отдельного хода на него не тратя: набор заново командой "
+            "agentctl plan set, состояния совпавших пунктов она переносит сама. "
+            "Если план верен, отметь идущий шаг (agentctl plan step) или закрой "
+            "сделанное (agentctl plan done). Ответ на один вопрос плана не "
+            "требует." % body)
+
+
 def blocked(text, stream=None):
     """Канал сдачи: решение block на конце хода. Харнес отдаёт текст модели и
     продолжает ход вместо того, чтобы уснуть."""
@@ -382,26 +491,67 @@ def blocked(text, stream=None):
     out.write("\n")
 
 
-def handle(event, env=None, now=None, stream=None):
-    """Одно событие: план сверен с делом, находки сданы сессии."""
+def said(text, stream=None):
+    """Канал напоминания: добавка контекста к началу хода. Рамки провала у неё
+    нет, и ход от неё не переигрывается."""
+    return hookio.Context("UserPromptSubmit", stream).say(text)
+
+
+def state(session, env=None):
+    """Что сторож знает о плане сессии: (пункты, время правки, пороги, ходы
+    после правки, причина молчания). Причина непуста, когда порогов нет: считать
+    нечем, своих чисел код не держит."""
+    items, changed = read_plan(own_plan(session, env))
+    if not items:
+        return [], 0.0, {}, 0, ""
+    limits, why = thresholds(None, env)
+    if not limits:
+        return items, changed, {}, 0, why
+    return items, changed, limits, turns_after(session, changed, env), ""
+
+
+def handle_prompt(event, env=None, stream=None):
+    """Начало хода: напоминание о плане, закрытом целиком или стоящем без
+    правки. Признак «плана нет вовсе» тут не считается: он смотрит на ходы,
+    которые сессия уже сделала, и место ему на конце хода."""
+    items, _, limits, turns, why = state(event.session, env)
+    if not items:
+        return 0
+    if not limits:
+        log(event.session, "пропуск: %s" % why, env)
+        return 0
+    lines = turn_drift(items, turns, limits)
+    if not lines:
+        log(event.session, "вход хода, напоминать нечего: пунктов %d, ходов после "
+            "правки %d" % (len(items), turns), env)
+        return 0
+    said(reminder(lines), stream)
+    log(event.session, "напоминание: %s" % "; ".join(lines), env)
+    return 0
+
+
+def handle_turn_done(event, env=None, now=None, stream=None):
+    """Конец хода: сдача ходу, который делал работу инструментами и плана не
+    тронул."""
     now = time.time() if now is None else now
-    if event.kind != hookio.TURN_DONE or event.active:
-        # Ход, продолженный стоп-хуком, сторож пропускает: второй заход закрутил
-        # бы сессию в цикле, а сказанное в первый раз уже сказано.
+    wake, tools = last_turn(event.transcript)
+    if wake or not tools:
+        log(event.session, "пропуск: ход %s, разъездом с планом он не считается"
+            % ("начат пробуждением" if wake else "прошёл без вызовов инструментов"), env)
         return 0
     if no_plan_applies(event.session, env) and two_turns_in_a_row_used_tools(event.transcript):
         blocked(no_plan_handover(), stream)
         log(event.session, "сдача: своего плана нет, а второй ход подряд идёт с инструментами", env)
         return 0
-    items, changed = read_plan(own_plan(event.session, env))
+    items, changed, limits, turns, why = state(event.session, env)
     if not items:
         return 0
-    limits, why = thresholds(None, env)
     if not limits:
         log(event.session, "пропуск: %s" % why, env)
         return 0
-    turns = turns_after(event.session, changed, env)
-    lines = findings(items, changed, turns, limits, now)
+    # Перечень работ харнес держит незакрытыми: пока работа в нём, сессия её
+    # ждёт, и идущий пункт ожидания по часам не стареет.
+    lines = findings(items, changed, turns, limits, now, waiting=bool(event.jobs))
     if not lines:
         log(event.session, "план отвечает делу: пунктов %d, ходов после правки %d"
             % (len(items), turns), env)
@@ -409,6 +559,17 @@ def handle(event, env=None, now=None, stream=None):
     blocked(handover(lines), stream)
     log(event.session, "сдача: %s" % "; ".join(lines), env)
     return 0
+
+
+def handle(event, env=None, now=None, stream=None):
+    """Одно событие: план сверен с делом, находки сданы сессии."""
+    if event.kind == hookio.PROMPT_SUBMIT:
+        return handle_prompt(event, env, stream)
+    if event.kind != hookio.TURN_DONE or event.active:
+        # Ход, продолженный стоп-хуком, сторож пропускает: второй заход закрутил
+        # бы сессию в цикле, а сказанное в первый раз уже сказано.
+        return 0
+    return handle_turn_done(event, env, now, stream)
 
 
 def run_hook(protocol, env=None, now=None, stream=None):

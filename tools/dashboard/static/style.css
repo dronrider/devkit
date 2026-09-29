@@ -2502,16 +2502,17 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
   .trow .stage{display:none}
   .trow .stage-narrow{display:block;min-width:0;max-width:100%}
   .trow .stage-narrow:empty{display:none}
-  /* Подсказки на телефоне нет, поэтому круг и возраст стоят тут словами после
-     слова этапа, а лента ложится рядом в свои 120 точек (вариант 3b макета,
+  /* Подсказки на телефоне нет, поэтому возраст компактным словом стоит тут
+     рядом со словом этапа всегда, без круга (замечание 2 приёмки третьего
+     круга), а лента ложится рядом в свои 120 точек (вариант 3b макета,
      замечание 4 приёмки). */
   .trow .stage-narrow .act2{flex-direction:row;align-items:center;gap:var(--rowmgx);
     max-width:100%;flex-wrap:wrap}
   .trow .stage-narrow .act2 .seg{width:120px;min-width:0;flex:none}
-  /* Слово с кругом и возрастом ужимаются в остаток ширины, а лента держит свои
-     120 точек: без этого ряд считался по неразрывным словам, лента вылезала за
-     край карточки и раздел ездил вбок (замечание 2 приёмки второго круга,
-     длинный заголовок цели DK-1084). */
+  /* Слово с компактным возрастом ужимаются в остаток ширины, а лента держит
+     свои 120 точек: без этого ряд считался по неразрывным словам, лента
+     вылезала за край карточки и раздел ездил вбок (замечание 2 приёмки
+     второго круга, длинный заголовок цели DK-1084). */
   .trow .stage-narrow .act2 b{flex:1 1 auto;min-width:0;max-width:100%}
   .trow .stage-narrow .act2 b .stage-age{flex:0 1 auto;min-width:0;
     overflow:hidden;text-overflow:ellipsis}

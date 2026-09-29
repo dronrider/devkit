@@ -292,3 +292,67 @@ func TestWaitShelfDropsAnsweredIdle(t *testing.T) {
 		t.Fatalf("отвеченный повод остался на полке: %+v", items)
 	}
 }
+
+// closedArchiveDoc это архив с одной закрытой строкой: формат тот же, что
+// TASKS-archive.md, набор колонок берёт archiveRows.
+func closedArchiveDoc(id string) string {
+	return "# Архив (префикс XR)\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
+		"|--------|--------|-----|---|---------|--------|\n" +
+		"| " + id + " | Закрытая | bug | P1 | 2026-09-09 | [tasks/archive/2026/" + id + ".md](tasks/archive/2026/" + id + ".md) |\n"
+}
+
+// Закрытая задача снимает признак ожидания, за которым строки на доске уже
+// нет вовсе (DK-1233, живой случай DK-892): сессия мертва, чат в архив не
+// уходил (записи о нём нет вовсе), а признак .ask лежал бы на полке до
+// ручной уборки rm. Гасит его уход задачи в архив доски, а не снятие признака
+// у источника.
+func TestWaitShelfDropsClosedTaskAsk(t *testing.T) {
+	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.Local)
+	e, c := shelfEnv(t, now)
+	writeAskFor(t, e.proj, "XR-050", "aaaa1111-dead-id", now.Add(20*time.Minute))
+
+	if items, _ := getShelf(t, e, c); !shelfHas(items, "XR-050") {
+		t.Fatalf("вопрос закрытой задачи до правки на полке не стоял: %+v", items)
+	}
+
+	writeAt(t, filepath.Join(e.proj, "docs", "TASKS-archive.md"), closedArchiveDoc("XR-050"))
+
+	if items, _ := getShelf(t, e, c); shelfHas(items, "XR-050") {
+		t.Fatalf("признак закрытой задачи остался на полке: %+v", items)
+	}
+}
+
+// Тот же уход в архив снимает и признак задачи, чья строка на доске стоит
+// ещё сама: доска и архив обновляются не одним чтением, и полка не должна
+// зависеть от того, кто из двух источников поспел раньше.
+func TestWaitShelfDropsClosedBoardRowAsk(t *testing.T) {
+	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.Local)
+	e, c := shelfEnv(t, now)
+	writeAskFor(t, e.proj, "XR-005", "aaaa1111-row-id", now.Add(20*time.Minute))
+
+	if items, _ := getShelf(t, e, c); !shelfHas(items, "XR-005") {
+		t.Fatalf("вопрос строки доски до правки на полке не стоял: %+v", items)
+	}
+
+	writeAt(t, filepath.Join(e.proj, "docs", "TASKS-archive.md"), closedArchiveDoc("XR-005"))
+
+	if items, _ := getShelf(t, e, c); shelfHas(items, "XR-005") {
+		t.Fatalf("признак строки, попавшей в архив, остался на полке: %+v", items)
+	}
+}
+
+// Развилку у открытой задачи закрывает исполнитель, а признак ожидания
+// человека это не снимает (TestDecideCloseByExecutorKeepsAsk у taskctl):
+// закрытие развилки и закрытие задачи это разные поводы, и полка держит
+// вопрос, пока задача сама не ушла в архив.
+func TestWaitShelfKeepsOpenTaskAsk(t *testing.T) {
+	now := time.Date(2026, 9, 9, 18, 0, 0, 0, time.Local)
+	e, c := shelfEnv(t, now)
+	writeAskFor(t, e.proj, "XR-005", "aaaa1111-open-id", now.Add(20*time.Minute))
+	// Архив не пуст, но чужой: закрытая XR-777 не должна гасить открытую.
+	writeAt(t, filepath.Join(e.proj, "docs", "TASKS-archive.md"), closedArchiveDoc("XR-777"))
+
+	if items, _ := getShelf(t, e, c); !shelfHas(items, "XR-005") {
+		t.Fatalf("вопрос открытой задачи с чужим архивом снялся с полки: %+v", items)
+	}
+}

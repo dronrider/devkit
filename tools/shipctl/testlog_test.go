@@ -571,6 +571,51 @@ func TestWriteTestLogMarksWaitDelayForeign(t *testing.T) {
 	}
 }
 
+// Python-стенд признаётся замером стенного времени не печатью в stdout (её
+// unittest не пришивает к блоку провала), а текстом самого падения: хелпер
+// loadmark.wall_clock дописывает loadfail.Mark к сообщению AssertionError
+// (DK-1230). Здесь ровно такой блок, головой unittest и признанием в тексте
+// AssertionError.
+func TestWriteTestLogMarksPythonAssertionForeign(t *testing.T) {
+	root := t.TempDir()
+	devkitDir(t, root)
+	out := "board-task      (kit/skills/board-task)  12.0s FAIL\n" +
+		"FAIL board-task\n" +
+		"FAIL: test_zombie_is_the_event (task_run_test.TestWaitDone)\n" +
+		"----------------------------------------------------------------------\n" +
+		"Traceback (most recent call last):\n" +
+		"  File \"task_run_test.py\", line 1240, in test_zombie_is_the_event\n" +
+		"    failing()\n" +
+		"AssertionError: False is not true : неприбранный процесс считается живым\n" +
+		"замер стенного времени\n" +
+		"Ran 1 of 1 components in 0m12s\n"
+	rec := writeTestLog(root, "XR-001", []string{"kit/skills/board-task/task-run.py"}, out, false, time.Minute)
+	if !rec.Components[0].Load || rec.Components[0].Own {
+		t.Fatalf("признанная python-краснота обязана быть чужой: %+v", rec.Components[0])
+	}
+	if len(rec.Components[0].Loaded) != 1 || rec.Components[0].Loaded[0] != "test_zombie_is_the_event" {
+		t.Errorf("журнал обязан назвать python-тест: %+v", rec.Components[0].Loaded)
+	}
+}
+
+// Тот же блок без строки признания остаётся своей краснотой: молчаливый
+// AssertionError с упоминанием факта (а не срока) не даёт shipctl права
+// списать провал на нагрузку.
+func TestWriteTestLogPythonAssertionWithoutMarkStaysOwn(t *testing.T) {
+	root := t.TempDir()
+	devkitDir(t, root)
+	out := "board-task      (kit/skills/board-task)  12.0s FAIL\n" +
+		"FAIL board-task\n" +
+		"FAIL: test_zombie_is_the_event (task_run_test.TestWaitDone)\n" +
+		"----------------------------------------------------------------------\n" +
+		"AssertionError: False is not true : неприбранный процесс считается живым\n" +
+		"Ran 1 of 1 components in 0m12s\n"
+	rec := writeTestLog(root, "XR-001", []string{"kit/skills/board-task/task-run.py"}, out, false, time.Minute)
+	if rec.Components[0].Load || !rec.Components[0].Own {
+		t.Fatalf("непризнанная python-краснота обязана остаться своей: %+v", rec.Components[0])
+	}
+}
+
 // Настоящая поломка в диффе остаётся своей, и вердикт зовёт её своей: иначе
 // очередь гоняла бы повторы по сломанному коду.
 func TestWriteTestLogKeepsOwnFailureOwn(t *testing.T) {

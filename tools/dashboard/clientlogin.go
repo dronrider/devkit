@@ -235,9 +235,17 @@ type loginWay struct {
 	// Done узнают успех словами клиента. Пусто значит, что своих слов у вида
 	// нет и успех считается по уходу поля кода.
 	Done []string
+	// AgainFirst говорит, что отказ кода у этого вида спрашивается раньше
+	// ветки поля кода: диалог на отказе поля не держит вовсе, и мера по
+	// ушедшему полю назвала бы повторяемый отказ окончательным провалом.
+	// Обычному входу такой порядок вреден: его экран отказа («OAuth error:
+	// link expired. Press Enter to retry») поля тоже не держит, а повторять
+	// там нечего, вход начинается заново (находка ревью).
+	AgainFirst bool
 	// Press говорит, что после отказа кода диалог ждёт нажатия, а не кода:
 	// нажатие возвращает поле, а любая другая клавиша диалог отменяет, и
-	// поданный вслепую код убил бы сессию входа вместо второй попытки.
+	// поданный вслепую код убил бы сессию входа вместо второй попытки. Про
+	// порядок мер Press не говорит ничего: место вопроса держит AgainFirst.
 	Press bool
 }
 
@@ -250,7 +258,7 @@ var loginWayClient = &loginWay{Kind: "client", Cmd: "/login", Word: "вход к
 // /design-login, и до этого входа работа с макетами из дашборда стоит.
 var loginWayDesign = &loginWay{Kind: "design", Cmd: "/design-login",
 	Word: "вход в Claude Design", Again: designAgainWords, Done: designDoneWords,
-	Press: true}
+	AgainFirst: true, Press: true}
 
 // loginWays это виды входа по их машинному имени. Пустое имя это обычный вход:
 // панель старой версии вида не присылает вовсе.
@@ -1106,11 +1114,62 @@ func (s *server) loginAgain(way *loginWay, sess string) (string, string) {
 	return "again", loginAgainWords
 }
 
+// loginCodeSeen проходит меры вида по снимку панели и отдаёт первый узнанный
+// исход; пустой вердикт значит, что меры о снимке не сказали ничего и ждать надо
+// дальше. Ряд мер один на оба снимка круга, а settled говорит, что снимок взят
+// после оседания панели: только у осевшего ушедшее поле кода это исход, а не
+// мигание перерисовки.
+func (s *server) loginCodeSeen(way *loginWay, sess, pane string, sent, settled bool) (string, string) {
+	field := loginWantsCode(pane)
+	// Про отказ кода в ряду спрашивают один раз, а место вопроса держит порядок
+	// вида: AgainFirst спрашивается раньше ветки поля, остальные при стоящем
+	// поле. Обычному входу ранний вопрос вреден: панель «OAuth error: link
+	// expired. Press Enter to retry» отвечает на слова отказа кода, поля не
+	// держит, и человек получал бы «введите другой код» в мёртвый диалог вместо
+	// слов клиента и снятой сессии входа (находка ревью).
+	if (way.AgainFirst || field) && way.again(pane) {
+		if sent {
+			return s.loginAgain(way, sess)
+		}
+		// Кода не подавали, идёт дорога петли: нажимать за человека нечего, и
+		// вернувшееся поле просто называется словами.
+		if settled && field {
+			return "again", loginAgainWords
+		}
+	}
+	if way.done(pane) {
+		return "ok", ""
+	}
+	if field {
+		if settled {
+			return "again", "клиент вернулся к полю кода без слов: введите код заново"
+		}
+		return "", ""
+	}
+	if !settled {
+		return "", ""
+	}
+	// Успех узнаётся своими признаками, а не тем, что поле кода ушло. По уходу
+	// поля успехом считался любой экран отказа: клиент писал «OAuth error:
+	// Request failed with status code 400», дашборд докладывал «вход сделан»,
+	// снимал сессию, и человек получал свежую ссылку вместо слов о том, что
+	// случилось (жалоба пользователя на приёмке).
+	if said := loginSaysFailed(pane); said != "" {
+		return "fail", said
+	}
+	if loginScreenUp(pane) {
+		return "stuck", loginLastWords(pane)
+	}
+	return "ok", ""
+}
+
 // loginAwaitCode узнаёт исход отправленного кода по панели. Поле кода,
 // пропавшее и не вернувшееся за loginSettleWait, это успех: клиент
 // перерисовывает панель, и мера не должна читать мигание как исход. Поле,
 // вернувшееся со словами отклонения, это отказ кода, а молчащее поле до
-// таймаута это тишина клиента. Ошибка снимка значит, что сессия умерла.
+// таймаута это тишина клиента. Ошибка снимка значит, что сессия умерла. Сам
+// разбор снимка лежит в loginCodeSeen, а тут круг опроса: снимок, ряд мер,
+// оседание ушедшего поля и срок ожидания.
 func (s *server) loginAwaitCode(way *loginWay, sess string, sent bool) (string, string) {
 	deadline := s.now().Add(loginCodeWait)
 	for {
@@ -1118,57 +1177,19 @@ func (s *server) loginAwaitCode(way *loginWay, sess string, sent bool) (string, 
 		if err != nil {
 			return "gone", fmt.Sprintf("сессия входа умерла на середине входа: %s", procErr(err))
 		}
-		// Отказ кода спрашивается раньше поля только у вида, который после
-		// отказа ждёт нажатия: диалог входа в Claude Design поля на такой панели
-		// не держит вовсе, и мера по ушедшему полю назвала бы повторяемый отказ
-		// окончательным провалом. Обычному входу ранний вопрос вреден: панель
-		// «OAuth error: link expired. Press Enter to retry» тоже отвечает на
-		// слова отказа, и человек получал бы «введите другой код» в мёртвый
-		// диалог вместо слов клиента и снятой сессии входа (находка ревью).
-		if sent && way.Press && way.again(pane) {
-			return s.loginAgain(way, sess)
-		}
-		if way.done(pane) {
-			return "ok", ""
+		if got, words := s.loginCodeSeen(way, sess, pane, sent, false); got != "" {
+			return got, words
 		}
 		if !loginWantsCode(pane) {
+			// Поле кода ушло: даём панели осесть и меряем тем же рядом заново.
 			time.Sleep(loginSettleWait)
 			pane, err = loginPane(sess)
 			if err != nil {
 				return "gone", fmt.Sprintf("сессия входа умерла на середине входа: %s", procErr(err))
 			}
-			if sent && way.Press && way.again(pane) {
-				return s.loginAgain(way, sess)
-			}
-			if way.done(pane) {
-				return "ok", ""
-			}
-			if loginWantsCode(pane) {
-				if way.again(pane) {
-					return "again", loginAgainWords
-				}
-				return "again", "клиент вернулся к полю кода без слов: введите код заново"
-			}
-			// Успех узнаётся своими признаками, а не тем, что поле кода ушло.
-			// По уходу поля успехом считался любой экран отказа: клиент писал
-			// «OAuth error: Request failed with status code 400», дашборд
-			// докладывал «вход сделан», снимал сессию, и человек получал
-			// свежую ссылку вместо слов о том, что случилось (жалоба
-			// пользователя на приёмке).
-			if said := loginSaysFailed(pane); said != "" {
-				return "fail", said
-			}
-			if loginScreenUp(pane) {
-				return "stuck", loginLastWords(pane)
-			}
-			return "ok", ""
-		}
-		// Поле кода на панели стоит: отказ тут и правда повторяемый, клиент
-		// вернулся к полю и ждёт другого кода. Вопрос этот идёт после ветки
-		// поля, а не раньше неё: панель без поля разбирается словами отказа
-		// выше, и окончательный провал там остаётся провалом.
-		if sent && way.again(pane) {
-			return s.loginAgain(way, sess)
+			// Осевший снимок исход называет всегда: ушедшее поле тут уже не
+			// мигание, и хвост ряда разбирает панель словами клиента.
+			return s.loginCodeSeen(way, sess, pane, sent, true)
 		}
 		if !s.now().Before(deadline) {
 			if !sent {

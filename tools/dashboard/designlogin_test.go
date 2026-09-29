@@ -443,3 +443,57 @@ func TestStaticDesignLoginTalk(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+// designKeysSent считает нажатия, поданные в сессию входа стендом tmux. Журнала
+// вызовов может ещё не быть вовсе, и тогда нажатий ноль.
+func designKeysSent(t *testing.T, d string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(d, "calls"))
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(data), "send-keys")
+}
+
+// Два смысла у вида входа стоят в своих полях и задаются независимо: нажатие
+// Enter после отказа кода это Press, а место вопроса про отказ в ряду мер это
+// AgainFirst. Пока смысл был один, флаг Press значил и то и другое: вид, чей
+// диалог поле кода оставляет, но нажатия ждёт, звал повторяемым экран
+// окончательного отказа, а вид со своим порядком без нажатия задать было нечем
+// (находка разбора на приёмке DK-920).
+func TestLoginWayPressAndOrderApart(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	// Панель отказа без поля кода: словами отказа она отвечает, а повторять в
+	// ней нечего, пока вид не сказал обратного своим порядком.
+	pane := loginPaneOf("oexp")
+	cases := []struct {
+		name    string
+		way     *loginWay
+		verdict string
+		says    string
+		keys    int
+	}{
+		{"нажатие без своего порядка", &loginWay{Kind: "press", Word: "вид с нажатием",
+			Again: loginRejectWords, Press: true}, "fail", "link expired", 0},
+		{"свой порядок без нажатия", &loginWay{Kind: "order", Word: "вид со своим порядком",
+			Again: loginRejectWords, AgainFirst: true}, "again", loginAgainWords, 0},
+		{"порядок и нажатие вместе", &loginWay{Kind: "both", Word: "вид с обоими",
+			Again: loginRejectWords, AgainFirst: true, Press: true}, "again", loginAgainWords, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			was := designKeysSent(t, d)
+			got, words := e.s.loginCodeSeen(c.way, "login-1", pane, true, true)
+			if got != c.verdict {
+				t.Fatalf("исход у вида %s вышел %q, ждал %q (слова: %s)", c.way.Kind, got, c.verdict, words)
+			}
+			if !strings.Contains(words, c.says) {
+				t.Fatalf("слова исхода у вида %s вышли %q, ждал внутри %q", c.way.Kind, words, c.says)
+			}
+			if keys := designKeysSent(t, d) - was; keys != c.keys {
+				t.Fatalf("нажатий в сессию входа у вида %s вышло %d, ждал %d", c.way.Kind, keys, c.keys)
+			}
+		})
+	}
+}

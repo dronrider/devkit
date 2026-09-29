@@ -190,6 +190,29 @@ func TestLoadReplacesWholeFile(t *testing.T) {
 	}
 }
 
+// TestLoadFallsBackToKitOnBrokenProjectFile: файл проектного слоя, не читаемый
+// как шаблон (пустой на полпути записи, например shell truncate-ит цель
+// `--dump ... > .devkit/plans/x.toml` раньше запуска agentctl), не должен
+// ронять весь набор. Встроенный шаблон того же имени остаётся в наборе, а про
+// битый файл идёт предупреждение.
+func TestLoadFallsBackToKitOnBrokenProjectFile(t *testing.T) {
+	kit := t.TempDir()
+	proj := t.TempDir()
+	write(t, filepath.Join(kit, "task.toml"), "title = \"встроенный\"\n[work]\ntitle = \"разработка\"\nby = \"сам\"\ntrace = \"слово\"\n")
+	write(t, filepath.Join(proj, "task.toml"), "")
+	set, err := Load(kit, proj)
+	if err != nil {
+		t.Fatalf("Load упал на битом файле проектного слоя: %v", err)
+	}
+	tpl, ok := set.Get("task")
+	if !ok || tpl.Title != "встроенный" || tpl.Project {
+		t.Fatalf("встроенный task не отдан запасным вариантом: %v, title %q, слой проекта %v", ok, tpl.Title, tpl.Project)
+	}
+	if len(set.Warns) != 1 || !strings.Contains(set.Warns[0], "task.toml") {
+		t.Fatalf("предупреждения %v, жду одно про task.toml", set.Warns)
+	}
+}
+
 // TestByTypeFromLayers: тип строки доски достаётся шаблону, который его назвал,
 // и проектная копия перебивает встроенный тем же типом.
 func TestByTypeFromLayers(t *testing.T) {

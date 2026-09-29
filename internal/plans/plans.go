@@ -276,6 +276,15 @@ func ReadDir(dir string, project bool) ([]*Template, []string, error) {
 		}
 		t, err := Parse(n, string(data))
 		if err != nil {
+			if project {
+				// Файл проектного слоя, битый в момент чтения (пустой на
+				// полпути записи, например `--dump ... > .devkit/plans/x.toml`
+				// сам truncate-ит цель до запуска agentctl), не должен ронять
+				// набор целиком: встроенный шаблон того же имени остаётся
+				// рабочим запасным вариантом, а находка это дело doctor.
+				warns = append(warns, fmt.Sprintf("%s: не прочитан, использован встроенный: %v", n, err))
+				continue
+			}
 			return nil, nil, err
 		}
 		t.File = file

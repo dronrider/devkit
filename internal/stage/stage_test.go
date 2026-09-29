@@ -778,6 +778,57 @@ func TestClosedStageOnTopKeepsLive(t *testing.T) {
 	}
 }
 
+// TestOpenClosesLiveWait (DK-1237): замок конвейера занят, merge открыл
+// ожидание очереди, следующий заход открыл и тут же закрыл слияние. Это тот
+// самый ход, на котором ожидание держалось живым поверх закрытого слияния и
+// подменяло собой строку доски. Live() после конца слияния не отдаёт ничего:
+// ожидание закрыто открытием слияния, а само слияние закрыто своим концом.
+func TestOpenClosesLiveWait(t *testing.T) {
+	home := t.TempDir()
+	if err := Open(home, "/p", "XR-1", WaitQueue, "shipctl merge ждёт замок конвейера", at(12, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Open(home, "/p", "XR-1", Merge, "shipctl merge", at(13, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := Close(home, "/p", "XR-1", Merge, at(13, 5), ""); err != nil || !ok {
+		t.Fatalf("слияние не закрылось: ok=%v, %v", ok, err)
+	}
+	rec, _ := Load(Path(home, "/p", "XR-1"))
+	if live, ok := rec.Live(); ok {
+		t.Fatalf("после конца слияния живого этапа быть не должно, вижу %+v", live)
+	}
+	if len(rec.Stages) != 2 || rec.Stages[0].Kind != WaitQueue || !rec.Stages[0].Ended() {
+		t.Fatalf("ожидание очереди осталось живым под слиянием: %+v", rec.Stages)
+	}
+	if !rec.Stages[0].End.Equal(at(13, 0)) {
+		t.Fatalf("ожидание закрылось не тем моментом, когда открылось слияние: %v", rec.Stages[0].End)
+	}
+	if rec.Stages[1].Kind != Merge || !rec.Stages[1].Ended() {
+		t.Fatalf("слияние легло не так: %+v", rec.Stages[1])
+	}
+}
+
+// TestOpenLeavesLiveWorkAlone: граница задачи DK-1237 «работу не трогать».
+// Открытие следующего этапа гасит только живое ожидание, а живую работу под
+// собой не закрывает.
+func TestOpenLeavesLiveWorkAlone(t *testing.T) {
+	home := t.TempDir()
+	if err := Open(home, "/p", "XR-2", Dev, "разработка", at(9, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Open(home, "/p", "XR-2", Review, "ревью", at(10, 0)); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := Load(Path(home, "/p", "XR-2"))
+	if rec.Stages[0].Kind != Dev || rec.Stages[0].Ended() {
+		t.Fatalf("живая разработка закрылась открытием ревью: %+v", rec.Stages[0])
+	}
+	if live, ok := rec.Live(); !ok || live.Kind != Review {
+		t.Fatalf("живым должно стоять ревью: %+v, %v", live, ok)
+	}
+}
+
 // TestListMatchesRootThroughSymlink: писатель взял корень у git, развернувший
 // ссылку, а читатель спрашивает по написанию со ссылкой (DK-910, macOS с
 // домом под /var -> /private/var). Записи одни и те же.

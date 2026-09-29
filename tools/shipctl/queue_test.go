@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -359,5 +360,136 @@ func TestStatusPrintsMergeQueue(t *testing.T) {
 	}
 	if !strings.Contains(msg, "повторов 1 из 3") {
 		t.Errorf("число повторов не напечатано:\n%s", msg)
+	}
+}
+
+// TestQueueRetryCountVisibleAfterTwoRuns: два отбоя подряд видны снаружи
+// командой shipctl queue, а не только в наблюдении самой наклейки (DK-1229).
+func TestQueueRetryCountVisibleAfterTwoRuns(t *testing.T) {
+	root := queueSetup(t)
+	for i := 0; i < 2; i++ {
+		if _, err := cmdQueue(root, QueueParams{Drain: true, Test: loadRedTest}); err != nil {
+			t.Fatalf("заход %d: %v", i+1, err)
+		}
+	}
+	msg, err := cmdQueue(root, QueueParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "повторов 2 из 3") {
+		t.Fatalf("снаружи не видно двух повторов подряд: %q", msg)
+	}
+}
+
+// TestQueueRetryRaceKeepsBothTries: цикл прочитать-поменять-записать у
+// queueRetry идёт под своим замком наклеек, и второй заход не может
+// вклиниться в чужой цикл. Гонка разводится не тестовым хуком внутри
+// продакшна (новый символ там не даёт regcheck доказать красноту на старом
+// коде: сборка базы без него не собирается), а держанием того же файла
+// замка снаружи напрямую, тем же flock, каким его берёт сама наклейка. Путь
+// замка не тянет символ фикса, а пишется буквально рядом с mergeQueuePath, тем
+// же способом, каким DoD его и описывает. На коде до DK-1229 queueRetry
+// никакого замка не берёт и пишет поверх, не заметив снаружи занятого файла:
+// заход, конкурирующий с держащим тестом, проходит мимо него почти мгновенно.
+// После фикса тот же заход встаёт и ждёт освобождения.
+func TestQueueRetryRaceKeepsBothTries(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	devkitDir(t, root)
+
+	lockPath := filepath.Join(root, mergeQueuePath+".lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		queueRetry(root, "XR-001", "отказ конкурента")
+		close(done)
+	}()
+
+	// Проверка ловит отрицательный факт (заход не прошёл мимо занятого
+	// замка), а не подгадывает исход по времени: не дождавшись за 80 мс,
+	// тест только ужесточается, а не рискует ложной зеленью.
+	select {
+	case <-done:
+		t.Fatal("заход прошёл мимо замка наклеек, пока он занят снаружи")
+	case <-time.After(80 * time.Millisecond):
+	}
+
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	<-done
+
+	// Первая наклейка легла с tries=1, пока замок снаружи держал тест.
+	// Второй, настоящий заход обязан увидеть её и досчитать до двух, а не
+	// потерять первую отметку.
+	msg, left := queueRetry(root, "XR-001", "отказ ещё раз")
+	if !left || !strings.Contains(msg, "повтор 2 из 3") {
+		t.Fatalf("второй заход не досчитал повтор: %q", msg)
+	}
+	if m := loadQueue(root).Tasks["XR-001"]; m == nil || m.Tries != 2 {
+		t.Fatalf("итоговый счёт повторов потерян: %+v", m)
+	}
+}
+
+// TestQueueLockIndependentOfShipLock: свой короткий замок наклеек не путается
+// с замком конвейера. Занятый .devkit/ship.lock чужим слиянием не мешает
+// наклейке писаться и не держит её дольше своего короткого замка: взятие
+// замка конвейера ради наклейки встало бы в очередь на двадцать минут
+// (DK-1229).
+func TestQueueLockIndependentOfShipLock(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	devkitDir(t, root)
+
+	unlock, err := acquireLock(root, "merge XR-009")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+
+	// Ожидание тут не мера, а срок внешнего события (test-standard, «Факт
+	// вместо стенного времени»): занятый ship.lock не должен отправить
+	// наклейку в его собственное ожидание, и заход обязан вернуться раньше
+	// срока, а не за какое-то предельное число миллисекунд.
+	done := make(chan struct{})
+	var msg string
+	var left bool
+	go func() {
+		msg, left = queueRetry(root, "XR-001", "нагрузочное падение")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("наклейка встала в ожидание занятого ship.lock вместо своего короткого замка")
+	}
+
+	if !left || !strings.Contains(msg, "повтор 1 из 3") {
+		t.Fatalf("наклейка должна была записаться несмотря на занятый ship.lock: %q", msg)
+	}
+	if m := loadQueue(root).Tasks["XR-001"]; m == nil || m.Tries != 1 {
+		t.Fatalf("наклейка не записалась под занятым ship.lock: %+v", m)
+	}
+}
+
+// TestQueueRetryWithoutDevkit: без каталога .devkit наклейки не пишутся
+// вовсе, как и раньше, а замок наклеек не заводится (DK-1229).
+func TestQueueRetryWithoutDevkit(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	msg, left := queueRetry(root, "XR-001", "провал")
+	if !left || !strings.Contains(msg, "повтор 1 из 3") {
+		t.Fatalf("отчёт без .devkit: %q", msg)
+	}
+	if _, err := os.Stat(filepath.Join(root, mergeQueuePath+".lock")); !os.IsNotExist(err) {
+		t.Fatalf("замок наклеек не должен заводиться без .devkit: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, mergeQueuePath)); !os.IsNotExist(err) {
+		t.Fatalf("наклейки не должны писаться без .devkit: %v", err)
 	}
 }

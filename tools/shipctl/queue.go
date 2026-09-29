@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -94,6 +95,42 @@ func saveQueue(root string, st *queueState) error {
 	return os.WriteFile(filepath.Join(root, mergeQueuePath), append(data, '\n'), 0o644)
 }
 
+// queueLockPath это короткий замок наклеек, свой и отдельный от замка
+// конвейера (.devkit/ship.lock): взятие замка конвейера ради наклейки
+// вставало бы в очередь за чужим слиянием на двадцать минут, а самой
+// наклейке нужно продержать замок миллисекунды (DK-1229).
+const queueLockPath = mergeQueuePath + ".lock"
+
+// queueMutate это цикл прочитать-поменять-записать наклеек под своим
+// коротким замком: держится он на весь цикл и отпускается сразу же. Занятость
+// тут ждётся, а не отбивается (LOCK_EX без LOCK_NB), потому что держатель
+// уходит за миллисекунды, и повтору незачем отваливаться отказом только
+// оттого, что тик и ручной разлив сошлись на одном файле. Без .devkit писать
+// некуда, как и в saveQueue, поэтому замок не заводится вовсе, и fn работает
+// на пустом состоянии.
+func queueMutate(root string, fn func(st *queueState)) {
+	dir := filepath.Join(root, ".devkit")
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		fn(loadQueue(root))
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(root, queueLockPath), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		// Замок не открылся значит писать особо некуда: наклейка это
+		// наблюдение поверх производного состава, а не критичное состояние, и
+		// цикл идёт без него, тем же соображением, что и порченый файл в
+		// loadQueue.
+		fn(loadQueue(root))
+		return
+	}
+	defer f.Close()
+	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	st := loadQueue(root)
+	fn(st)
+	saveQueue(root, st)
+}
+
 // mark достаёт наклейку задачи, заводя пустую.
 func (st *queueState) mark(id string) *queueMark {
 	if m := st.Tasks[id]; m != nil {
@@ -174,16 +211,17 @@ func queueLines(items []queueItem) []string {
 // отставленную ветку только грепом по журналу сторожка (замечание ревью круга
 // 1, DK-1218).
 func queueRetry(root, id, why string) (string, bool) {
-	st := loadQueue(root)
-	m := st.mark(id)
-	m.Tries++
-	m.Last, m.At = why, time.Now()
-	left := m.Tries >= queueRetryLimit
-	if left {
-		m.Held, m.Reason = true, fmt.Sprintf("повторов %d из %d, последний отказ: %s", m.Tries, queueRetryLimit, why)
-	}
-	saveQueue(root, st)
-	if left {
+	var m queueMark
+	queueMutate(root, func(st *queueState) {
+		mk := st.mark(id)
+		mk.Tries++
+		mk.Last, mk.At = why, time.Now()
+		if mk.Tries >= queueRetryLimit {
+			mk.Held, mk.Reason = true, fmt.Sprintf("повторов %d из %d, последний отказ: %s", mk.Tries, queueRetryLimit, why)
+		}
+		m = *mk
+	})
+	if m.Held {
 		return fmt.Sprintf("%s ушла из очереди слияний: %s", id, m.Reason) + queueTrace(root, id, m.Reason), false
 	}
 	return fmt.Sprintf("%s встала в хвост очереди слияний, повтор %d из %d: %s", id, m.Tries, queueRetryLimit, why), true
@@ -191,34 +229,34 @@ func queueRetry(root, id, why string) (string, bool) {
 
 // queueHold снимает ветку с очереди: повторять нечего, нужны руки.
 func queueHold(root, id, why string) string {
-	st := loadQueue(root)
-	m := st.mark(id)
-	m.Held, m.Reason, m.At = true, why, time.Now()
-	m.Last = why
-	saveQueue(root, st)
+	queueMutate(root, func(st *queueState) {
+		mk := st.mark(id)
+		mk.Held, mk.Reason, mk.At = true, why, time.Now()
+		mk.Last = why
+	})
 	return fmt.Sprintf("%s снята с очереди слияний: %s", id, why)
 }
 
 // queueFree возвращает ветку в очередь и обнуляет повторы: препятствие
 // разобрано руками, и прошлые отказы к следующему заходу отношения не имеют.
 func queueFree(root, id string) string {
-	st := loadQueue(root)
-	m := st.mark(id)
-	m.Held, m.Reason, m.Tries, m.Last = false, "", 0, ""
-	m.At = time.Now()
-	saveQueue(root, st)
+	queueMutate(root, func(st *queueState) {
+		mk := st.mark(id)
+		mk.Held, mk.Reason, mk.Tries, mk.Last = false, "", 0, ""
+		mk.At = time.Now()
+	})
 	return fmt.Sprintf("%s вернулась в очередь слияний, повторы обнулены", id)
 }
 
 // queueClear убирает наклейку целиком: задача слита, и её счёт повторов
 // следующему кругу доработки не нужен.
 func queueClear(root, id string) {
-	st := loadQueue(root)
-	if _, ok := st.Tasks[id]; !ok {
-		return
-	}
-	delete(st.Tasks, id)
-	saveQueue(root, st)
+	queueMutate(root, func(st *queueState) {
+		if _, ok := st.Tasks[id]; !ok {
+			return
+		}
+		delete(st.Tasks, id)
+	})
 }
 
 // QueueParams это параметры команды queue.

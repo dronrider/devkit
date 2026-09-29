@@ -95,19 +95,28 @@ func TestStaticStageColorHasInk(t *testing.T) {
 	}
 }
 
-// TestStaticStageGlassIcon: пометка машинного ожидания рисуется значком
-// разметки, а не рамками в стилях. Рамкой часы выходили коробкой с чертой
-// посередине и на песочные часы не походили вовсе («значок ожидания не похож
-// на часы», замечание 5 приёмки второго круга). Значок лежит там же, где
-// прочие значки экрана, и зовётся из разметки строки и шапки формы.
-func TestStaticStageGlassIcon(t *testing.T) {
+// TestStaticStageClockIcon: пометка машинного ожидания рисуется значком
+// разметки, а не рамками в стилях и не песочными часами. Рамкой часы выходили
+// коробкой с чертой посередине («значок ожидания не похож на часы», замечание
+// 5 приёмки второго круга), а песочные часы i-glass на обычные часы не
+// походили («значок ожидания заменить на обычные часы с циферблатом и
+// стрелками, а не песочные», замечание 1 приёмки третьего круга). Значок
+// i-wait лежит там же, где прочие значки экрана, и это тот же значок, что
+// рисует ленту уведомлений.
+func TestStaticStageClockIcon(t *testing.T) {
 	html := readFile(t, filepath.Join("static", "index.html"))
-	if !strings.Contains(html, `<svg data-ico="i-glass"`) {
-		t.Error("в наборе значков нет i-glass: песочные часы рисовать нечем")
+	if !strings.Contains(html, `<svg data-ico="i-wait"`) {
+		t.Error("в наборе значков нет i-wait: часам ожидания нечем рисовать циферблат")
+	}
+	if strings.Contains(html, `data-ico="i-glass"`) {
+		t.Error("значок песочных часов i-glass остался в наборе: замена на обычные часы не полная")
 	}
 	app := readFile(t, filepath.Join("static", "app.js"))
-	if !strings.Contains(app, `icon("i-glass")`) {
+	if !strings.Contains(app, `icon("i-wait")`) {
 		t.Error("пометка ожидания не берёт значок часов из набора разметки")
+	}
+	if strings.Contains(app, `icon("i-glass")`) {
+		t.Error("пометка ожидания всё ещё зовёт песочные часы i-glass")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
 	for _, gone := range []string{".act2 b .hg:after", ".now2 .hgf:after"} {
@@ -120,6 +129,25 @@ func TestStaticStageGlassIcon(t *testing.T) {
 	for _, want := range []string{".act2 b .hg .gico{", ".now2 .hgf .gico{"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("значку часов не задан размер (%s)", want)
+		}
+	}
+}
+
+// TestStaticStageAgeCompactFormat: возраст в колонке хода компактно рядом со
+// словом этапа (замечание 2 приёмки третьего круга) до часа минуты, после
+// часа только часы без минут, после суток дни. Круг сюда не входит вовсе: он
+// остаётся только в подсказке колонки, её собирает stageAgeText.
+func TestStaticStageAgeCompactFormat(t *testing.T) {
+	heads := []string{"function stageAgeCompact("}
+	cases := []struct{ expr, want string }{
+		{"stageAgeCompact(1, 1000 + 59 * 60 * 1000)", "59 мин"},
+		{"stageAgeCompact(1, 1000 + 60 * 60 * 1000)", "1 ч"},
+		{"stageAgeCompact(1, 1000 + 13 * 3600 * 1000)", "13 ч"},
+		{"stageAgeCompact(1, 1000 + 48 * 3600 * 1000)", "2 дн"},
+	}
+	for _, c := range cases {
+		if got := jsEval(t, heads, c.expr); got != c.want {
+			t.Errorf("%s дал %q, ожидал %q", c.expr, got, c.want)
 		}
 	}
 }

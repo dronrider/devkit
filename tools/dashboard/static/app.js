@@ -962,10 +962,14 @@ function stageMark(row, cls, word) {
   btn.setAttribute("aria-expanded", "false");
   if (cls === "hg" || cls === "hgf") {
     // Часы рисует значок разметки, а не рамки в стилях: коробка с чертой
-    // посередине на песочные часы не походила («значок ожидания не похож на
-    // часы», замечание 5 приёмки второго круга). Класс на значке свой: по нему
-    // его находит стенд разметки и берут размеры стили.
-    const glass = icon("i-glass");
+    // посередине на часы не походила («значок ожидания не похож на часы»,
+    // замечание 5 приёмки второго круга). Значок i-wait это циферблат с двумя
+    // стрелками, тот же самый, что уже стоит в ленте уведомлений: песочные
+    // часы (i-glass) на обычные часы не походили («значок ожидания заменить
+    // на обычные часы с циферблатом и стрелками, а не песочные», замечание 1
+    // приёмки третьего круга). Класс на значке свой: по нему его находит
+    // стенд разметки и берут размеры стили.
+    const glass = icon("i-wait");
     glass.setAttribute("class", "gico");
     btn.append(glass);
   }
@@ -988,6 +992,72 @@ function stageAgeText(since, round, now) {
   const age = workAge(since, now);
   if (!age) return "";
   return round > 1 ? "круг " + round + ", " + age : age;
+}
+
+// Компактный возраст рядом со словом этапа: до часа минуты, после часа
+// только часы без минут, круг сюда не идёт вовсе, он остаётся только в
+// подсказке колонки (замечание 2 приёмки третьего круга). Формат короче
+// workAge нарочно: тот держит место под «2 ч 10 мин», а тут задача поместиться
+// рядом со словом, которое не режется никогда.
+function stageAgeCompact(since, now) {
+  if (!since) return "";
+  const mins = Math.floor((now / 1000 - since) / 60);
+  if (mins < 1) return "меньше минуты";
+  if (mins < 60) return mins + " мин";
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return hours + " ч";
+  return Math.floor(hours / 24) + " дн";
+}
+
+// Место, которое пометка ожидания (часы или «вы») отъедает у слова и возраста
+// в колонке хода: у значка часов свой зазор и ширина, у метки «вы» свой зазор
+// и подпись. Без учёта пометки возраст казался бы влезающим там, где для него
+// места не остаётся.
+function stageAgeMarkPx(row) {
+  if (stageYours(row)) return 29;
+  if (stageWaiting(row)) return 18;
+  return 0;
+}
+
+// Влезает ли компактный возраст рядом со словом в колонку хода: настоящую
+// ширину шрифта тут негде измерить (стенд без браузера, а в браузере колонка
+// держит фиксированную лестницу), поэтому решение берёт число знаков и
+// ширину знака у каждого шрифта колонки: 7.2 точки у слова (полужирный кегль
+// 12.5) и 6.2 точки у возраста (моноширинный кегль 11). Слово занимает место
+// первым, под возраст остаётся то, что осталось от 112 точек колонки.
+const STAGE_AGE_COL_PX = 112;
+const STAGE_AGE_WORD_PX = 7.2;
+const STAGE_AGE_MONO_PX = 6.2;
+const STAGE_AGE_GAP_PX = 6;
+function stageAgeFits(word, ageText, markPx) {
+  if (!ageText) return false;
+  const used = (word || "").length * STAGE_AGE_WORD_PX + markPx + STAGE_AGE_GAP_PX;
+  return used + ageText.length * STAGE_AGE_MONO_PX <= STAGE_AGE_COL_PX;
+}
+
+// Узел компактного возраста колонки хода: тот же класс stage-age, что и на
+// форме, но свой формат и своё решение о видимости. На ноутбуке (narrow не
+// передан) возраст прячется целиком, если не влезает рядом со словом; слово
+// от этого не режется никогда, кромку на случай промаха берёт на себя сам
+// возраст (правило .act2 b .stage-age в стилях). На телефоне (narrow=true)
+// копия хода видна всегда тем же компактным словом: подсказки там нет, и
+// прятать возраст решением JS незачем, а тесноту решает многоточие в стилях
+// (замечание 2 приёмки третьего круга).
+function stageAgeCompactNode(row, narrow) {
+  const now = Date.now();
+  const text = stageAgeCompact(row.stage_since, now);
+  const node = el("em", "stage-age", text);
+  if (row.stage_since) node.dataset.stageSince = String(row.stage_since);
+  node.dataset.stageCompact = "1";
+  if (!narrow) {
+    const word = stageWord(row) || "";
+    const markPx = stageAgeMarkPx(row);
+    node.dataset.stageFit = "1";
+    node.dataset.stageWord = word;
+    node.dataset.stageMarkPx = String(markPx);
+    node.hidden = !stageAgeFits(word, text, markPx);
+  }
+  return node;
 }
 
 // Лента из восьми делений по этапам работы: пройденные серые, текущее цветом
@@ -1017,6 +1087,19 @@ function tickStageAges() {
   const now = Date.now();
   document.querySelectorAll(".stage-age").forEach((node) => {
     const since = Number(node.dataset.stageSince);
+    // Компактный узел колонки хода (табличная ячейка и копия для телефона,
+    // stageAgeCompactNode) несёт свой формат без круга и, на ноутбуке, своё
+    // решение о видимости: пересчитать его тиком надо тем же порядком, каким
+    // он собран при отрисовке (замечание 2 приёмки третьего круга).
+    if (node.dataset.stageCompact) {
+      const text = stageAgeCompact(since, now);
+      node.textContent = text;
+      if (node.dataset.stageFit) {
+        node.hidden = !stageAgeFits(node.dataset.stageWord || "",
+          text, Number(node.dataset.stageMarkPx || "0"));
+      }
+      return;
+    }
     const round = Number(node.dataset.stageRound || "0");
     node.textContent = stageAgeText(since, round, now);
   });
@@ -1062,25 +1145,28 @@ function stageAgeNode(tag, row) {
 }
 
 // Колонка хода строки списка (макет DK-1119, вариант 2a листа «14 Этап
-// задачи, ход 2»): слово этапа цветом словаря, рядом круг и возраст
-// моноширинным, под ними лента из восьми делений. Пусто у строки без записи
-// этапа: сетку колонки это не ломает, ячейка таблицы просто остаётся пустой.
-// Второй точки тут нет: состояние сессии, как и раньше, несёт точка у номера
-// строки, а эта колонка только слово, возраст и лента (решение человека).
-function stageColumn(row) {
+// задачи, ход 2»): слово этапа цветом словаря, рядом возраст моноширинным,
+// под ними лента из восьми делений. Пусто у строки без записи этапа: сетку
+// колонки это не ломает, ячейка таблицы просто остаётся пустой. Второй точки
+// тут нет: состояние сессии, как и раньше, несёт точка у номера строки, а эта
+// колонка только слово, возраст и лента (решение человека).
+//
+// Вызывается дважды на строку: без narrow для отдельной ячейки на ноутбуке, с
+// narrow=true для копии внутри заголовка на телефоне (DK-1119, ход по
+// замечанию ревью первого круга). Разница только в возрасте: на ноутбуке круг
+// стоит в подсказке, а компактный возраст виден, только если есть место рядом
+// со словом (замечание 2 приёмки третьего круга); слово этапа при этом не
+// режется никогда. На телефоне подсказки нет, и возраст тем же компактным
+// словом виден всегда.
+function stageColumn(row, narrow) {
   if (!row.stage) return null;
   const cls = stageKindClass(row);
   const live = row.stage_session === "сессия жива";
   const box = stageTipNode(el("span", "act2 " + cls + (live ? " live" : "")), row);
   const b = el("b");
-  // Слово этапа стоит целиком, а круг с возрастом на ноутбуке уходит в
-  // подсказку: в колонке они съедали слово, и от «ждёт события» оставалось
-  // «ж...» (замечание 4 приёмки). Узел возраста при этом стоит в разметке
-  // всегда, его показывает узкий экран: подсказки на телефоне нет, и там круг
-  // с возрастом читаются словами после слова этапа.
   b.append(el("span", "w", stageWord(row)));
   for (const mark of stageMarks(row)) b.append(mark);
-  b.append(stageAgeNode("em", row));
+  b.append(stageAgeCompactNode(row, narrow));
   box.append(b, stageRail(row, cls));
   return box;
 }
@@ -2226,7 +2312,7 @@ function renderRow(project, row, sect, opts) {
   // отдельной ячейкой между заголовком и рангом.
   // Копия стоит раньше чипов: на телефоне ход и чипы идут одной строчкой, ход
   // впереди, чипы за лентой (вариант 3b макета, замечание 7 ревью).
-  const stageNarrow = stageColumn(row);
+  const stageNarrow = stageColumn(row, true);
   if (stageNarrow) {
     const wrap = el("span", "stage-narrow");
     wrap.append(stageNarrow);

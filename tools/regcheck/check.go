@@ -285,6 +285,12 @@ var buildMarkers = []string{
 var failMarkers = map[string][]string{
 	"cargo": {"test result: FAILED"},
 	"go":    {"--- FAIL:"},
+	// Обёртка частичного прогона devkit (`devkitctl test <путь>`, DK-1219)
+	// гонит под собой go test либо unittest, и признак упавшего теста в её
+	// выводе тот же, что у них. Без своей строки тут её ненулевой код шёл бы
+	// краснотой без разбора, включая отказ самой обёртки на каталоге без
+	// тестов.
+	"devkitctl": {"--- FAIL:", "FAILED ("},
 }
 
 func exitCode(err error) int {

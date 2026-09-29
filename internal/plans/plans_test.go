@@ -213,6 +213,23 @@ func TestLoadFallsBackToKitOnBrokenProjectFile(t *testing.T) {
 	}
 }
 
+// TestLoadKeepsRejectingTypoInNonEmptyProjectFile: непустой файл проектного
+// слоя с опечаткой в известном ключе (by, gate, accept) остаётся отказом, а не
+// падает на тот же запасной путь, что пустой файл (ревью DK-1142). Иначе
+// развилка задачи «строгость валидатора шаблона» перестаёт работать именно
+// там, где живёт настоящая опечатка организации.
+func TestLoadKeepsRejectingTypoInNonEmptyProjectFile(t *testing.T) {
+	kit := t.TempDir()
+	proj := t.TempDir()
+	write(t, filepath.Join(kit, "task.toml"), "title = \"встроенный\"\n[work]\ntitle = \"разработка\"\nby = \"сам\"\ntrace = \"слово\"\n")
+	write(t, filepath.Join(proj, "task.toml"), "title = \"проектный\"\n[work]\ntitle = \"разработка\"\nby = \"исполнитель\"\ntrace = \"слово\"\n")
+	if _, err := Load(kit, proj); err == nil {
+		t.Fatal("Load молча подменил встроенным шаблон с опечаткой в by, а должен был отказать")
+	} else if !strings.Contains(err.Error(), "by = ") {
+		t.Fatalf("ошибка не называет причину (опечатка by): %v", err)
+	}
+}
+
 // TestByTypeFromLayers: тип строки доски достаётся шаблону, который его назвал,
 // и проектная копия перебивает встроенный тем же типом.
 func TestByTypeFromLayers(t *testing.T) {

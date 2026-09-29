@@ -384,7 +384,11 @@ def claude_code_agent(event):
                  report=response_text(response) if returned else "",
                  command=command,
                  output=response_field(response, "outputFile"),
-                 message=text_of(event.get("last_assistant_message")),
+                 # У начала хода последняя реплика это сам промпт, у остальных
+                 # осей ответ модели: сторожу плана нужно отличить реплику
+                 # человека от пробуждения сессии, а лежит оно в этом поле.
+                 message=text_of(event.get("prompt")) if kind == PROMPT_SUBMIT
+                 else text_of(event.get("last_assistant_message")),
                  jobs=claude_code_jobs(event),
                  active=bool(event.get("stop_hook_active")),
                  model=text_of(ti.get("model")) or response_field(response, "resolvedModel"),

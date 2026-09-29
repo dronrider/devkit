@@ -1623,7 +1623,9 @@ def hook_gaps(text, settings):
             gaps.append((event, matcher, cmd))
             findings.append("сторож %s не подключён на событии %s в %s: %s "
                             "(hooks/README.md)"
-                            % (PLAN_HOOK, event, settings, PLAN_GAPS[event]))
+                            % (PLAN_HOOK, event, settings,
+                               PLAN_GAPS.get(event, "расхождение плана работ с делом "
+                                                    "не ловит никто")))
             continue
         elif key in text:
             continue

@@ -108,6 +108,10 @@ TURN_DONE_WORD = "кончен"
 # клиента, а тег есть в содержимом всегда.
 WAKE_SOURCE = "system"
 WAKE_TAG = "<task-notification>"
+# Статус живой работы в перечне работ сессии. Слово то же, что у сторожа
+# завершений (hooks/agent-watch.py, JOB_RUNNING): кончившаяся работа остаётся в
+# перечне с другим статусом, и живой её считать нельзя.
+JOB_RUNNING = "running"
 # Время в журнале отметок: местное, секундной точности.
 TURN_TIME = "%Y-%m-%dT%H:%M:%S"
 # Пороги, которых ждём от конфига: ключ и что он значит.
@@ -447,6 +451,13 @@ def turn_drift(items, turns, limits):
     return []
 
 
+def waits(jobs):
+    """Сессия ждёт живую фоновую работу. Перечень работ события держит и
+    кончившуюся работу, названную другим статусом, поэтому живой считается только
+    работа в статусе running, тем же порядком, что у сторожа завершений."""
+    return any(job.status == JOB_RUNNING for job in jobs or ())
+
+
 def findings(items, changed, turns, limits, now, waiting=False):
     """Чем план разошёлся с работой. Пустой список значит, что план делу
     отвечает. Признак «идущий пункт состарился» у сессии с живой фоновой работой
@@ -515,6 +526,12 @@ def handle_prompt(event, env=None, stream=None):
     """Начало хода: напоминание о плане, закрытом целиком или стоящем без
     правки. Признак «плана нет вовсе» тут не считается: он смотрит на ходы,
     которые сессия уже сделала, и место ему на конце хода."""
+    if event.message.lstrip().startswith(WAKE_TAG):
+        # Ход начат сдачей фоновой работы, а не человеком. Ходы в журнале отметок
+        # растут и на пробуждениях, и диспетчер, честно ждущий субагента,
+        # получал бы напоминание на каждом из них.
+        log(event.session, "пропуск: ход начат пробуждением, напоминать нечего", env)
+        return 0
     items, _, limits, turns, why = state(event.session, env)
     if not items:
         return 0
@@ -550,9 +567,7 @@ def handle_turn_done(event, env=None, now=None, stream=None):
     if not limits:
         log(event.session, "пропуск: %s" % why, env)
         return 0
-    # Перечень работ харнес держит незакрытыми: пока работа в нём, сессия её
-    # ждёт, и идущий пункт ожидания по часам не стареет.
-    lines = findings(items, changed, turns, limits, now, waiting=bool(event.jobs))
+    lines = findings(items, changed, turns, limits, now, waiting=waits(event.jobs))
     if not lines:
         log(event.session, "план отвечает делу: пунктов %d, ходов после правки %d"
             % (len(items), turns), env)

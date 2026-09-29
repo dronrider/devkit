@@ -563,7 +563,7 @@ class TestWatch(unittest.TestCase):
 
     def test_running_step_does_not_age_while_background_work_lives(self):
         """Пункт «слияние и выкат» идёт честно, пока сессия ждёт субагента, и по
-        часам он не стареет: перечень работ харнеса держит только незакрытые."""
+        часам он не стареет."""
         s = self.stand()
         s.lay_plan(plan(("слияние и выкат", "in_progress"),), age=18 * HOUR)
         s.lay_turns(1, since=18 * HOUR - 60)
@@ -583,6 +583,39 @@ class TestWatch(unittest.TestCase):
         code, said = s.run(sample("turn-done-background.json"), transcript=tr)
         self.assertEqual(said.get("decision"), "block")
         self.assertIn("все пункты плана закрыты", said.get("reason", ""))
+
+    def test_finished_background_work_does_not_stop_the_clock(self):
+        """Перечень работ события держит и кончившуюся работу, названную другим
+        статусом (ключ stopped у hooks/agent-watch.py). Живой считается только
+        работа в статусе running, иначе часовой признак гаснет у сессии, которой
+        ждать уже нечего."""
+        s = self.stand()
+        s.lay_plan(plan(("слияние и выкат", "in_progress"),), age=18 * HOUR)
+        s.lay_turns(1, since=18 * HOUR - 60)
+        tr = s.lay_transcript([True, True])
+        event = sample("turn-done-background.json")
+        for job in event["background_tasks"]:
+            job["status"] = "completed"
+        code, said = s.run(event, transcript=tr)
+        self.assertEqual(code, 0)
+        self.assertEqual(said.get("decision"), "block",
+                         "кончившаяся работа сошла за живое ожидание")
+        self.assertIn("помечен идущим", said.get("reason", ""))
+
+    def test_wake_prompt_is_not_reminded(self):
+        """Ходы в журнале отметок растут и на пробуждениях, и диспетчер, честно
+        ждущий фоновую работу, получал бы напоминание на каждой сдаче. Реплика с
+        тегом сдачи напоминания не получает."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.lay_turns(5)
+        event = sample("prompt-submit.json")
+        event["prompt"] = ("<task-notification>\n<task-id>b4usjihs1</task-id>\n"
+                           "</task-notification>\n")
+        code, said = s.run(event)
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {}, "напоминание приехало на пробуждении")
+        self.assertIn("ход начат пробуждением, напоминать нечего", s.said_log())
 
 
 if __name__ == "__main__":

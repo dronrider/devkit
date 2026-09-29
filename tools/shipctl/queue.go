@@ -124,7 +124,13 @@ func queueMutate(root string, fn func(st *queueState)) {
 		return
 	}
 	defer f.Close()
-	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		// Замок не взялся (диск переполнен, файловая система не держит
+		// flock): та же наблюдательная природа наклейки, что и у не
+		// открывшегося файла замка чуть выше, цикл идёт без него.
+		fn(loadQueue(root))
+		return
+	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	st := loadQueue(root)
 	fn(st)

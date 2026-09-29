@@ -12,6 +12,10 @@
 // процесса. Здесь же два места из ревью: отказ, пришедший при открытой панели,
 // поднимает блок сам, а реплика перезапуска называет тот вход, который делали.
 //
+// Тут же находка приёмки 2026-09-29: запись с кнопкой висела в ленте и после
+// удачного входа, плашкой поверх разговора. Гаснет она удачей самого входа и
+// снятым признаком отказа, а держат её неподнятый разговор и идущий вход.
+//
 // Зовётся: node testdata/poc_designlogin.mjs static/app.js
 
 import { makeSandbox, settle, dump, byClass, deepBtn, fail, appPathArg }
@@ -29,8 +33,10 @@ let status = { live: true, busy: false };
 // Дорога входа: с телефона код руками, с самой машины клиент ловит его петлёй, и
 // исход тогда ждётся своей ручкой.
 let road = "code";
+// Отказ снятия сессии: вход к этому месту принят, а перезапуститься не вышло.
+let dropFail = "";
 
-const { sandbox, streams } = makeSandbox(app, (path, init) => {
+const { sandbox, streams, timers } = makeSandbox(app, (path, init) => {
   if (init && init.method === "POST") {
     asked.push(path);
     const body = init.body ? JSON.parse(init.body) : null;
@@ -42,7 +48,13 @@ const { sandbox, streams } = makeSandbox(app, (path, init) => {
     if (path.endsWith("/login/code") || path.endsWith("/login/wait")) {
       return { ok: true, message: "вход сделан: свежий токен лёг в связку ключей" };
     }
-    if (path.endsWith("/stop")) return { way: "drop", tmux: "chat-DK-909-1" };
+    if (path.endsWith("/stop")) {
+      if (dropFail) {
+        return { raw: { status: 500, statusText: "",
+          text: JSON.stringify({ error: dropFail }) } };
+      }
+      return { way: "drop", tmux: "chat-DK-909-1" };
+    }
     if (path.endsWith("/say")) return { way: "resume", tmux: "chat-DK-909-2" };
     return {};
   }
@@ -58,12 +70,26 @@ const { sandbox, streams } = makeSandbox(app, (path, init) => {
 
 // Разговор с признаком в строке: поле design у разговора считает сервер по записи
 // транскрипта, панель английских слов не разбирает.
-const out = (sid, entry) => ({
-  addr: sid, sid, task: "DK-909", chats: [], models: [], project: "demo",
-  fresh: false, error: "", note: "",
-  entry: Object.assign({ id: sid, state: "live", tasks: ["DK-909"], model: "opus",
-    tmux: "chat-DK-909-1", own: true }, entry),
-});
+const out = (sid, entry) => {
+  const e = Object.assign({ id: sid, state: "live", tasks: ["DK-909"], model: "opus",
+    tmux: "chat-DK-909-1", own: true }, entry);
+  // Признаки входа сервер считает одной шапкой транскрипта и отдаёт обоими
+  // ходами: строкой разговора при сборке панели и ручкой состояния при опросе.
+  // Пока стенд держал их врозь, опрос гасил запись, поднятую строкой.
+  status = { live: true, busy: false };
+  if (e.login) status.login = true;
+  if (e.design) status.design = true;
+  return {
+    addr: sid, sid, task: "DK-909", chats: [], models: [], project: "demo",
+    fresh: false, error: "", note: "", entry: e,
+  };
+};
+
+// Круг опроса состояния: панель ставит его таймером, а в стенде время не идёт.
+const beat = async () => {
+  for (const t of timers.splice(0)) t.fn();
+  await settle();
+};
 
 const clear = () => { asked.length = 0; bodies.length = 0; };
 const stepOf = (what) => asked.findIndex((p) => p.endsWith(what));
@@ -258,8 +284,9 @@ const btnText = (node) => String(node.textContent || "").trim();
 // панель и так опрашивает.
 {
   clear();
+  const st = out("dddd9200-9999", {});
   status = { live: true, busy: false, design: true };
-  const panel = sandbox.chatPanel("demo", out("dddd9200-9999", {}));
+  const panel = sandbox.chatPanel("demo", st);
   await settle();
   const plate = byClass(panel, "cbyetalk");
   if (!plate || plate.hidden) {
@@ -272,7 +299,140 @@ const btnText = (node) => String(node.textContent || "").trim();
   if (!dump(plate).includes("Claude Design")) {
     fail("в поднятом блоке не сказано, чего не хватает: " + dump(plate));
   }
+}
+
+// --- снятый признак гасит запись сам ---
+//
+// Вход сделали в другом окне, разговор поднялся заново и подключился к серверу
+// макетов. Признака отказа больше нет, и записи в ленте висеть не с чего.
+{
+  clear();
+  const panel = sandbox.chatPanel("demo", out("dddd9200-eeee",
+    { design: "нужен вход в Claude Design" }));
+  await settle();
+  if (byClass(panel, "cbyetalk").hidden) fail("блок макетов не поднялся: " + dump(panel));
   status = { live: true, busy: false };
+  await beat();
+  if (!byClass(panel, "cbyetalk").hidden) {
+    fail("снятый признак запись не погасил: " + dump(byClass(panel, "cbyetalk")));
+  }
+}
+
+// --- запись уходит удачей входа и обратно не возвращается ---
+//
+// Находка приёмки: человек проходил вход, разговор перезапускался и доделывал
+// прерванный запрос, а запись с кнопкой продолжала висеть сверху до
+// переоткрытия разговора. Прежний признак её не возвращает: запись транскрипта
+// про подключённый сервер макетов приходит секундой позже, и до неё опрос несёт
+// всё тот же отказ.
+{
+  clear();
+  const panel = sandbox.chatPanel("demo", out("dddd9200-ffff",
+    { design: "нужен вход в Claude Design" }));
+  await settle();
+  deepBtn(panel, "Войти").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  byClass(panel, "logincode").value = "SECRET2";
+  deepBtn(panel, "Подтвердить").handlers.click({ stopPropagation: () => {} });
+  await settle(300);
+  if (stepOf("/say") < 0) fail("разговор после входа не перезапущен: " + JSON.stringify(asked));
+  if (!byClass(panel, "cbyetalk").hidden) {
+    fail("после удачного входа запись с кнопкой осталась в ленте: " +
+      dump(byClass(panel, "cbyetalk")));
+  }
+  // Опрос состояния идёт кругами, и прежний признак приходит ещё не раз.
+  await beat();
+  await beat();
+  if (!byClass(panel, "cbyetalk").hidden) {
+    fail("прежний признак вернул запись с кнопкой после входа: " +
+      dump(byClass(panel, "cbyetalk")));
+  }
+}
+
+// --- вход принят, а перезапуститься не вышло: запись остаётся ---
+//
+// Беда тут не кончилась: разговор живёт в окне, которого у дашборда в реестре
+// нет, и человеку сказано послать реплику ещё раз. Гасить запись нечем.
+{
+  clear();
+  dropFail = "сессию разговора не удалось снять";
+  const panel = sandbox.chatPanel("demo", out("dddd9200-1010",
+    { design: "нужен вход в Claude Design" }));
+  await settle();
+  deepBtn(panel, "Войти").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  byClass(panel, "logincode").value = "SECRET3";
+  deepBtn(panel, "Подтвердить").handlers.click({ stopPropagation: () => {} });
+  await settle(300);
+  if (stepOf("/say") >= 0) fail("разговор поднят резюмом поверх живого клиента");
+  if (byClass(panel, "cbyetalk").hidden) {
+    fail("запись ушла с неподнятого разговора, и беда осталась без слов");
+  }
+  dropFail = "";
+}
+
+// --- гашения посреди идущего входа нет ---
+//
+// Человек держит перед собой ссылку авторизации и поле кода. Признак снимается
+// мимо него (вход в другом окне), и убрать эту запись из-под руки нельзя: код
+// вводить станет некуда.
+{
+  clear();
+  const panel = sandbox.chatPanel("demo", out("dddd9200-1111ab",
+    { design: "нужен вход в Claude Design" }));
+  await settle();
+  deepBtn(panel, "Войти").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  status = { live: true, busy: false };
+  await beat();
+  if (byClass(panel, "cbyetalk").hidden) {
+    fail("запись погасла посреди входа, и код вводить стало некуда");
+  }
+}
+
+// --- после входа в клиента остаётся вход в макеты ---
+//
+// При обоих признаках заходы идут подряд. Вход в клиента сделан, запись его
+// погасил свежий ответ агента в ленте, а сервер макетов по-прежнему не дан:
+// запись поднимается заново, своими словами и с отпертой кнопкой.
+{
+  clear();
+  const sid = "dddd9200-1212";
+  items = [{ key: "m-1", role: "user", text: "собери макет",
+    time: "2026-09-15T20:32:00+03:00" }];
+  const panel = sandbox.chatPanel("demo", out(sid,
+    { login: "нужен вход", design: "нужен вход в Claude Design" }));
+  await settle();
+  deepBtn(panel, "Войти").handlers.click({ stopPropagation: () => {} });
+  await settle();
+  byClass(panel, "logincode").value = "SECRET4";
+  deepBtn(panel, "Подтвердить").handlers.click({ stopPropagation: () => {} });
+  await settle(300);
+  const es = streams.filter((st_) => String(st_.url).includes(sid) &&
+    String(st_.url).includes("stream")).pop();
+  if (!es) fail("поток ленты не открыт");
+  es.onmessage({ data: JSON.stringify({ key: "m-2", role: "assistant",
+    text: "поднялся заново, продолжаю", time: "2026-09-15T20:34:00+03:00" }) });
+  await settle();
+  if (!byClass(panel, "cbyetalk").hidden) {
+    fail("запись входа в клиента не погасил свежий ответ агента: " +
+      dump(byClass(panel, "cbyetalk")));
+  }
+  status = { live: true, busy: false, design: true };
+  await beat();
+  const plate = byClass(panel, "cbyetalk");
+  if (!plate || plate.hidden) fail("вход в макеты после входа в клиента не сказан");
+  if (!dump(plate).includes("Claude Design")) {
+    fail("поднятая запись говорит не про макеты: " + dump(plate));
+  }
+  const enter = deepBtn(panel, "Войти");
+  if (!enter || btnText(enter) !== "Войти в Claude Design") {
+    fail("кнопка второго захода не та: " + (enter ? btnText(enter) : "нет вовсе"));
+  }
+  if (enter.disabled || enter.parentNode.hidden) {
+    fail("кнопка второго захода заперта, и нажать на записи нечего");
+  }
+  items = [];
 }
 
 // --- реплика перезапуска называет тот вход, который делали ---
@@ -313,4 +473,5 @@ const btnText = (node) => String(node.textContent || "").trim();
 console.log("ок: блок в ленте один, вид входа выбирает признак подъёма, вид едет " +
   "в теле ручек, слова записи расходятся одной первой фразой, ответ агента блок " +
   "макетов не гасит, отказ при открытой панели поднимает блок сам, реплика " +
-  "перезапуска называет свой вход");
+  "перезапуска называет свой вход, удачный вход запись гасит и обратно её не " +
+  "пускает, а неподнятый разговор и идущий вход её держат");

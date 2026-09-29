@@ -11036,15 +11036,46 @@ function loginTalk(project, st, busy) {
     first.say(alien ? words.alien : words.first);
     if (enterBtn) enterBtn.textContent = words.enter;
   };
+  // Идущий вход это раскрытая запись, в которой человек уже нажал «Войти»: перед
+  // ним стоит ссылка авторизации и поле кода, и гасить её пересчётом нельзя.
+  let going = false;
+  // Затишье после сделанного входа в макеты: прежний признак записи не вернёт,
+  // потому что снимается он записью транскрипта, а её перезапущенный процесс
+  // пишет через секунду-другую, и до неё опрос несёт всё тот же отказ. Вход в
+  // клиента затишьем не закрыт: при обоих признаках заходы идут подряд, и после
+  // входа в клиента остаётся вход в макеты.
+  let hush = false;
+  // Сброс записи под следующий заход. Ставится ниже, вместе с замком кнопок.
+  let again = null;
   // Признак отказа приходит и при открытой панели: разговор умер, поднялся
   // заново и не подключился к серверу макетов, а состояние панели собрано
   // однажды. Блок тогда вставал только переоткрытием разговора (находка ревью).
-  // Пересчёт трогает спрятанный блок: раскрытый это идущий вход, и переписывать
-  // его слова под рукой человека нельзя.
+  // Снятый признак его и гасит: пока пересчёт умел одно поднятие, запись с
+  // кнопкой висела в ленте и после удачного входа, плашкой поверх разговора
+  // (находка приёмки). Слова раскрытой записи пересчёт не переписывает: там
+  // идёт вход, и менять их под рукой человека нельзя.
   talk.seen = (flags) => {
-    if (!flags || !box.hidden) return;
-    if (!flags.design && !flags.login) return;
-    setWay(loginWayByFlags(flags.design, flags.login));
+    if (!flags) return;
+    const next = flags.design || flags.login
+      ? loginWayByFlags(flags.design, flags.login)
+      : "";
+    if (!next) {
+      // Повод записи кончился: разговор подключился и вход ему не нужен. Тем же
+      // снятием кончается затишье, потому что следующий отказ это новая беда.
+      hush = false;
+      // Признаком гаснет запись входа в макеты: поднял её он, и другого хода
+      // снять её нет. Записью разлогина клиента правит лента, служебной строкой
+      // в ответе агента, и признак там опаздывает на срок памяти шапки
+      // разговора: сняв её по молчанию признака, дашборд убрал бы запись,
+      // которую лента подняла секунду назад.
+      if (way === "design" && !going) box.hidden = true;
+      return;
+    }
+    if (!box.hidden || (hush && next === "design")) return;
+    // Беда сменилась после входа: запись поднимается заново и отпирает кнопки,
+    // иначе она просила бы нажать то, чего на ней нет.
+    if (talk.done && again) again();
+    setWay(next);
     box.hidden = false;
   };
   if (!loginFixable(st)) {
@@ -11109,6 +11140,7 @@ function loginTalk(project, st, busy) {
     linkRow.replaceChildren(link, copyBtn(r.body.url));
     codeRow.hidden = r.body.way !== "code";
     step.row.hidden = false;
+    going = true;
     if (r.body.way === "local") waitLoop().catch(console.error);
   }
 
@@ -11156,10 +11188,19 @@ function loginTalk(project, st, busy) {
   // отправило бы тот же запрос вторым разом (замечание ревью).
   async function done() {
     talk.done = true;
+    going = false;
     lock(true);
     step.row.hidden = true;
     say("Вход сделан. Поднимаю разговор и повторяю запрос, на котором он встал.", false);
-    await loginRestart(project, st, busy, talk.ask, words.wake);
+    const up = await loginRestart(project, st, busy, talk.ask, words.wake);
+    // Вход сделан, разговор поднят: поводу записи конец, и висеть ей в ленте
+    // незачем. Перезапуск, который не вышел, запись оставляет: беда не кончилась,
+    // и человеку сказано послать реплику ещё раз. Запись разлогина клиента гасит
+    // свежий ответ в ленте, и отнимать у неё эту дорогу нечем: гашение удачей
+    // разошлось бы с лентой, которая держит запись до ответа агента.
+    if (!up || way !== "design") return;
+    hush = true;
+    box.hidden = true;
   }
 
   const row = el("div", "loginbtns");
@@ -11175,6 +11216,15 @@ function loginTalk(project, st, busy) {
     row.hidden = on;
   };
   const free = () => { if (!talk.done) lock(false); };
+  // Следующий заход начинается с чистой записи: слова прежнего исхода говорят
+  // про вход, который уже сделан, а раскрытый шаг был шагом того же входа.
+  again = () => {
+    talk.done = false;
+    going = false;
+    say("", false);
+    step.row.hidden = true;
+    lock(false);
+  };
   // Запертость проверяет сам обработчик, а не только атрибут кнопки: атрибут
   // держит палец, а второе нажатие приходит и мимо него (повтор запроса из
   // очереди событий, чужой скрипт, стенд).
@@ -11214,8 +11264,9 @@ function loginSaw(talk, item) {
   }
   if (item.role !== "assistant" || !item.text) return;
   // Блок входа в Claude Design ответом агента не гаснет: сервер макетов молчит
-  // до конца жизни процесса, а обычный ответ о нём не говорит ничего. Гаснет
-  // он свежей панелью, у которой признака отказа уже нет.
+  // до конца жизни процесса, а обычный ответ о нём не говорит ничего. Гаснет он
+  // удачей самого входа и снятым признаком отказа, и обе дороги лежат в
+  // loginTalk, при самой записи.
   if (talk.way === "design") return;
   talk.box.hidden = !item.logout;
   if (item.logout && talk.lastUser) talk.ask = talk.lastUser;
@@ -11238,9 +11289,12 @@ function loginSawAll(talk, list) {
 // заказ. Слова запасной реплики приходят от блока входа: виду входа она своя, и
 // после входа в макеты агенту незачем читать про истёкший вход клиента, которого
 // не было.
+//
+// Исход возвращается словом «да» или «нет»: запись входа гаснет удачей, а не
+// самим нажатием, и без исхода она уходила бы и с неподнятого разговора.
 async function loginRestart(project, st, busy, ask, wake) {
   const sid = st && st.sid;
-  if (!sid) return;
+  if (!sid) return false;
   const url = chatsURL(st.project || project) + "/" + encodeURIComponent(sid);
   busy.heal();
   const drop = await api(url + "/stop", { method: "POST", body: { drop: true } });
@@ -11253,20 +11307,21 @@ async function loginRestart(project, st, busy, ask, wake) {
     sayResult("Вход принят, а перезапуститься не вышло: " +
       (drop.body.error || "сессию разговора не удалось снять") +
       ". Пошлите реплику ещё раз: живой разговор подхватит новый вход сам.", true);
-    return;
+    return false;
   }
   const text = String(ask || "").trim() || wake || CHAT_RELOGIN;
   const r = await api(url + "/say", { method: "POST", body: { text } });
   busy.off();
   if (!r.ok) {
     sayResult(r.body.error || "разговор не поднялся резюмом", true);
-    return;
+    return false;
   }
   if (r.body.way === "resume") chatWait(project, r.body.tmux).catch(console.error);
   sayResult(ask
     ? "разговор перезапущен: прерванный запрос повторён"
     : "разговор перезапущен: продолжение поднято резюмом");
   await repaintChat();
+  return true;
 }
 
 // Подъём нового диалога и ожидание его ID. Сессия рождается позже команды, и

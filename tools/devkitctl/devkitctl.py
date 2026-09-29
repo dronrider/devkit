@@ -261,17 +261,21 @@ PRE_READ_GAPS = {
     "check-longfile.py": "чтение длинного файла целиком не режется, и контекст "
                          "съедает разовый большой вывод Read",
 }
-# Рубеж выборки prose на PreToolUse-записи (DK-1024): категория отдельная от
-# проверок текстов PostToolUse (POST_SCRIPTS ловит уже написанное, этот рубеж
-# стоит раньше записи) и от чтения секретов на Bash. Записей на матчере пока
-# одна, а список заведён так же, как PRE_READ_SCRIPTS: соседний рубеж на том же
-# матчере получит свою строку без переделки цикла в hook_gaps.
-PRE_WRITE_SCRIPTS = ("check-prose-sample.py",)
+# Рубежи на PreToolUse-записи: выборка prose (DK-1024) и дерево задачи
+# (DK-1072). Категория отдельная от проверок текстов PostToolUse (POST_SCRIPTS
+# ловит уже написанное, эти рубежи стоят раньше записи) и от чтения секретов на
+# Bash. Сообщение в hook_gaps у каждого своё: неподключённый
+# check-prose-sample это правило мимикрии без сторожа, а неподключённый
+# check-tree-write это правка субагента в чужом дереве.
+PRE_WRITE_SCRIPTS = ("check-prose-sample.py", "check-tree-write.py")
 PRE_WRITE_GAPS = {
     "check-prose-sample.py": "запись README, файла задачи, решения LLD или шага "
                              "скилла без выборки эталонов прозы не отбивается, и "
                              "правило мимикрии держится только дисциплиной модели "
                              "(DK-1024)",
+    "check-tree-write.py": "правка субагента уезжает из дерева его задачи в чужое "
+                           "дерево того же репозитория молча, и находит её только "
+                           "следующий shipctl (DK-1072)",
 }
 SESSION_HOOK = "quota-refresh.sh"
 # Реестр чатов задачи (DK-431): SessionStart на пустом матчере, потому что
@@ -368,6 +372,13 @@ MARK_EVENTS = ("PostToolUse", "SessionStart")
 # сообщения в hook_gaps своя: без хука второй ход подряд идёт мимо скилла chat,
 # и разговор с человеком ведётся не по правилам молча.
 CHAT_POINTER_HOOK = "chat-pointer.py"
+# Привязка «субагент -> дерево задачи» (DK-1072): PostToolUse на Bash своим
+# матчером, потому что задачу называет команда доски, а не запись файла. Тем же
+# порядком стоит MARK_HOOK, и событие оба различают сами. Категория сообщения в
+# hook_gaps своя: без привязки сторож записи check-tree-write молчит и правка
+# субагента уезжает в чужое дерево, а это не то же самое, что выборка прозы без
+# следа.
+TREE_HOOK = "tree-mark.py"
 # Хуки, переименованные в devkit: прежнее имя файла и нынешнее (DK-440). Строка
 # с прежним именем зовёт файл, которого в чекауте уже нет, и харнес спотыкается
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
@@ -430,10 +441,12 @@ HOOK_LAYOUT = (
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
     ("PreToolUse", PRE_WRITE_MATCHER, "python3 %s/hooks/check-prose-sample.py --hook"),
+    ("PreToolUse", PRE_WRITE_MATCHER, "python3 %s/hooks/check-tree-write.py --hook"),
     ("PostToolUse", "", "python3 %s/hooks/chat-in.py --hook claude-code"),
     ("PostToolUse", WATCH_MATCHER, "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("PostToolUse", PRE_MATCHER, "python3 %s/hooks/phase-budget.py --hook claude-code"),
     ("PostToolUse", PRE_MATCHER, "python3 %s/hooks/prose-mark.py --hook claude-code"),
+    ("PostToolUse", PRE_MATCHER, "python3 %s/hooks/tree-mark.py --hook claude-code"),
     ("SessionStart", "", "python3 %s/hooks/prose-mark.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
@@ -1660,6 +1673,12 @@ def hook_gaps(text, settings):
                             "остаток окна на переходе задачи никто не считает, и хвост задачи "
                             "попадает на самый занятый контекст (hooks/README.md)"
                             % (PHASE_HOOK, settings))
+        elif script == TREE_HOOK:
+            findings.append("привязка дерева задачи %s не подключена на событии PostToolUse "
+                            "Bash в %s: сторож %s не знает, над какой задачей идёт ход "
+                            "субагента, и правка уезжает в чужое дерево того же репозитория "
+                            "молча (hooks/README.md)"
+                            % (TREE_HOOK, settings, "check-tree-write.py"))
         elif script == CHAT_POINTER_HOOK:
             findings.append("указатель на скилл chat %s не подключён на событии UserPromptSubmit "
                             "в %s: второй ход подряд идёт мимо скилла chat молча, и разговор с "

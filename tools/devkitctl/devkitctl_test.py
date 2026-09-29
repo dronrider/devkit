@@ -2314,6 +2314,17 @@ class HarnessHooksTest(SandboxCase):
                          "доктор не заметил PreToolUse-хук выборки prose")
         self.assertIn_("держится только дисциплиной модели", out,
                        "находка не говорит, что ломается без рубежа выборки")
+        # Сторож дерева задачи (DK-1072) стоит на том же матчере записи, а
+        # категорию имеет свою: без него правка субагента уезжает в чужое
+        # дерево, а это не выборка прозы.
+        self.assertRegex(out, r"на PreToolUse записи[^\n]*check-tree-write\.py|"
+                              r"check-tree-write\.py[^\n]*на PreToolUse записи",
+                         "доктор не заметил PreToolUse-хук дерева задачи")
+        self.assertIn_("следующий shipctl", out,
+                       "находка не говорит, что ломается без сторожа дерева задачи")
+        self.assertRegex(out, r"привязка дерева задачи tree-mark\.py не подключена "
+                              r"на событии PostToolUse Bash",
+                         "доктор не заметил привязку дерева задачи DK-1072")
         # Отметка выборки (DK-1024) говорит своей строкой на двух событиях: без
         # PostToolUse рубеж записи блокирует каждый заход, без SessionStart он
         # не гаснет после сжатия контекста.
@@ -2353,6 +2364,10 @@ class HarnessHooksTest(SandboxCase):
                          "--fix не разложил PreToolUse-хук длинных чтений")
         self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-prose-sample\.py на PreToolUse",
                          "--fix не разложил PreToolUse-хук выборки prose DK-1024")
+        self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*check-tree-write\.py на PreToolUse",
+                         "--fix не разложил сторожа дерева задачи DK-1072")
+        self.assertRegex(out, r"включено \d+ хук\S* харнеса в[^\n]*tree-mark\.py на PostToolUse",
+                         "--fix не разложил привязку дерева задачи DK-1072")
         self.assertRegex(out,
                          r"включено \d+ хук\S* харнеса в[^\n]*prose-mark\.py на PostToolUse, SessionStart",
                          "--fix не разложил отметку выборки prose")
@@ -2385,6 +2400,7 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual(len([c for c in post if "agent-watch.py" in c]), 1, post)
         self.assertEqual(len([c for c in post if "phase-budget.py" in c]), 1, post)
         self.assertEqual(len([c for c in post if "prose-mark.py" in c]), 1, post)
+        self.assertEqual(len([c for c in post if "tree-mark.py" in c]), 1, post)
         chat = [h["command"] for g in hooks["PostToolUse"] if not g.get("matcher")
                 for h in g["hooks"]]
         self.assertEqual(len(chat), 2, chat)
@@ -2405,6 +2421,7 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual(len([c for c in pre if "check-reread.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-longfile.py" in c]), 1, pre)
         self.assertEqual(len([c for c in pre if "check-prose-sample.py" in c]), 1, pre)
+        self.assertEqual(len([c for c in pre if "check-tree-write.py" in c]), 1, pre)
         self.assertEqual([g.get("matcher") for g in hooks["PreToolUse"]],
                          ["Bash", "Bash|Agent", "Read", "Edit|Write|MultiEdit|NotebookEdit"],
                          hooks["PreToolUse"])
@@ -2461,7 +2478,7 @@ class HarnessHooksTest(SandboxCase):
         self.assertNotIn_("env-ключ", out, "повторный --fix вписал вотчдог второй раз")
         post = [h["command"] for g in json.loads(read(self.settings))["hooks"]["PostToolUse"]
                 for h in g["hooks"]]
-        self.assertEqual(len(post), 11, post)
+        self.assertEqual(len(post), 12, post)
 
     def test_hooks_from_a_stray_tree_are_repointed(self):
         # DK-582: строка с путём чужого дерева выглядит подключённым хуком, и по

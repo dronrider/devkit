@@ -630,3 +630,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1184 | Смоук молчания скрытой вкладки мигает под нагрузкой полного прогона | bug | P1 | 2026-09-29 | [tasks/archive/2026/DK-1184.md](tasks/archive/2026/DK-1184.md) |
 | DK-1168 | taskctl list не проседает внутри одной фазы одного прогона | task | P1 | 2026-09-29 | [tasks/archive/2026/DK-1168.md](tasks/archive/2026/DK-1168.md) |
 | DK-1219 | Потолок параллельных прогонов накрывает прямой go test и unittest | task | P1 | 2026-09-29 | [tasks/archive/2026/DK-1219.md](tasks/archive/2026/DK-1219.md) |
+| DK-1142 | Набор шаблонов плана kit/plans: task, bug, lld, poc и парсер | task | P1 | 2026-09-29 | [tasks/archive/2026/DK-1142.md](tasks/archive/2026/DK-1142.md) |

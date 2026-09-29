@@ -64,10 +64,16 @@ type componentOutcome struct {
 // задачи ID, разбор по компонентам и состав диффа задачи (пути ветки против
 // main, без docs/, тот же список, каким merge проверял чистоту дерева и
 // раскладку компонентов выката).
+// Scope это область частичного прогона: путь каталога, по которому гонялись
+// тесты (devkitctl test, DK-1219). У полного прогона слияния поле пусто, и
+// только такие записи идут в счёт чужой красноты: частичный прогон автор
+// гоняет по своей правке посреди работы, краснота там штатное состояние, и
+// принадлежности диффу у него не считается вовсе.
 type testRunRecord struct {
 	Time       time.Time          `json:"time"`
 	ID         string             `json:"id"`
 	OK         bool               `json:"ok"`
+	Scope      string             `json:"scope,omitempty"`
 	Diff       []string           `json:"diff"`
 	Components []componentOutcome `json:"components"`
 }
@@ -379,6 +385,11 @@ func pathUnder(path, prefix string) bool {
 // Нагрузочное падение (Load) приходит сюда уже чужим: writeTestLog ставит
 // ему Resolved без Own, и в счёт оно идёт наравне с остальной чужой
 // краснотой (DK-1218).
+//
+// Запись частичного прогона (непустой Scope, DK-1219) в счёт не идёт вовсе.
+// Слияния она не отбивала: её пишет обёртка `devkitctl test`, которой автор
+// проверяет свою правку посреди работы, и красный прогон там штатный шаг, а
+// не находка про чужую красноту.
 func foreignFails(root string, since time.Duration) (int, error) {
 	recs, err := readTestLog(root, since)
 	if err != nil {
@@ -386,7 +397,7 @@ func foreignFails(root string, since time.Duration) (int, error) {
 	}
 	n := 0
 	for _, rec := range recs {
-		if rec.OK {
+		if rec.OK || rec.Scope != "" {
 			continue
 		}
 		own, foreign := false, false

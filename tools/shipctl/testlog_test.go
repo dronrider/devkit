@@ -639,3 +639,52 @@ func TestComponentBlocksSplitByName(t *testing.T) {
 		t.Errorf("кусок b: %q", blocks["b"])
 	}
 }
+
+// TestForeignFailsSkipsPartialRuns: запись частичного прогона (непустой scope,
+// DK-1219) в счёт чужой красноты не идёт. Обёртку `devkitctl test` автор
+// зовёт по своей правке посреди работы, красный прогон там штатный шаг, и
+// слияния такая запись не отбивала. Полная запись рядом в счёт идёт, иначе
+// тест проходил бы и на пустом счётчике.
+func TestForeignFailsSkipsPartialRuns(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Format(time.RFC3339Nano)
+	partial := `{"time":"` + now + `","id":"XR-001","ok":false,"scope":"tools/x",` +
+		`"diff":[],"components":[{"name":"go:x","ok":false,"secs":1,"root":"tools/x",` +
+		`"resolved":false,"own":false}]}`
+	full := `{"time":"` + now + `","id":"XR-002","ok":false,"diff":["compA/a.txt"],` +
+		`"components":[{"name":"compB","ok":false,"secs":1,"root":"compB",` +
+		`"resolved":true,"own":false}]}`
+	write(t, root, ".devkit/test-runs.log", partial+"\n"+full+"\n")
+	n, err := foreignFails(root, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("в счёт идёт только полный прогон: %d", n)
+	}
+}
+
+// TestPartialRunRecordKeepsScope: поле scope доезжает до читателя журнала как
+// есть. Пишет запись обёртка на питоне (tools/devkitctl/testrun.py), и читает
+// её этот разбор, поэтому имя поля проверяется разбором живой строки.
+func TestPartialRunRecordKeepsScope(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"time":"` + time.Now().Format(time.RFC3339Nano) +
+		`","id":"XR-001","ok":true,"scope":"hooks","diff":[],` +
+		`"components":[{"name":"hooks","ok":true,"secs":2.5,"root":"hooks",` +
+		`"resolved":false,"own":false}]}`
+	write(t, root, ".devkit/test-runs.log", line+"\n")
+	recs, err := readTestLog(root, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Scope != "hooks" {
+		t.Fatalf("scope записи частичного прогона не прочитан: %+v", recs)
+	}
+}

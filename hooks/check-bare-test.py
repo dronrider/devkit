@@ -16,12 +16,15 @@
 `-C`, а без него у рабочего каталога хода, и хвост ключей прогона
 (`-run TestX`, `-v`) переезжает в замену как есть.
 
-Ловится голая команда, а не любая. Команда под обёрткой (`regcheck -- go test
-./...`, `devkitctl test tools/taskctl`, `python3 parallel.py`) проходит: имя
-первого слова там не `go` и не питон, и слот такая команда берёт сама либо
-берёт её обёртка. Дерево вне devkit проходит тоже: потолок это файл
-`~/.devkit/parallel-slots`, а смысл он имеет там, где прогоны сессий сходятся
-на одной машине, то есть в проекте с каталогом `.devkit`.
+Ловится голая команда, а не любая. Команда под чужим первым словом
+(`regcheck -- go test ./...`, `devkitctl test tools/taskctl`,
+`python3 parallel.py`) проходит: рубеж судит по имени первого слова сегмента, а
+разбирать чужие обёртки вглубь он не берётся. Слот из этих трёх берут две,
+полный прогон `parallel.py` и `devkitctl test`; `regcheck` слота не берёт, и
+стандарт тестов поэтому зовёт из-под него обёртку, а не прямую команду. Дерево
+вне devkit проходит тоже. Потолок это файл `~/.devkit/parallel-slots`, а смысл
+он имеет там, где прогоны сессий сходятся на одной машине, то есть в проекте с
+каталогом `.devkit`.
 
 Режимы:
   check-bare-test.py <команда>     проверить команду из аргументов, выход 1 если
@@ -34,6 +37,7 @@
                                    голый --hook это claude-code, ответ exit 2
 """
 import os
+import re
 import shlex
 import sys
 
@@ -44,16 +48,57 @@ PUNCTUATION = "();<>|&\n"
 OPENERS = ("(", "{")
 CLOSERS = (")", "}")
 # Обёртки, которые ставятся перед командой прогона и сами прогоном не являются:
-# их первое слово рубеж пропускает дальше по сегменту, а прогон под ними уже
-# взял слот либо возьмёт его обёрткой.
-PREFIXES = {"nice", "env", "time", "sudo"}
+# их первое слово рубеж пропускает дальше по сегменту и смотрит на команду за
+# ними.
+PREFIXES = {"nice", "env", "time", "sudo", "timeout", "stdbuf"}
+# Ключи обёрток, которые берут значение отдельным словом: без этого перечня
+# значение читалось бы как имя команды, и `nice -n 19 go test` проходил бы мимо
+# рубежа (замечание ревью круга 1).
+PREFIX_VALUE_FLAGS = {
+    "nice": {"-n", "--adjustment"},
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "timeout": {"-k", "--kill-after", "-s", "--signal"},
+    "sudo": {"-u", "--user", "-g", "--group", "-C", "--close-from"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+}
+# Срок первым операндом у `timeout`: он стоит между ключами и самой командой.
+DURATION = re.compile(r"^[0-9]+(?:\.[0-9]+)?[smhd]?$")
+# Тело heredoc снимается до разбора тем же приёмом, что у рубежа связки cd
+# (check-cd-compound.py): записанный в файл пример прямой команды иначе ловил бы
+# сам себя, и ни сценарий стенда, ни раздел доки с таким примером в дереве
+# devkit было бы не написать (замечание ревью круга 1).
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 # Питоновые интерпретаторы, у которых `-m unittest` это прогон сюиты.
 PYTHONS = {"python", "python2", "python3"}
-# Ключи go test, которые обёртка ставит сама: в замену они не переезжают,
-# иначе агент задал бы долю бюджета и потолок времени поверх её расчёта.
-GO_OWN_FLAGS = {"-count", "-timeout", "-p", "-C"}
+# Ключи go test, которые обёртка ставит сама: в замену они не переезжают.
+# `-count=1` держит DoD цели DK-166 (кэш прогона молчит), `-p` это доля
+# бюджета, `-C` уехал в путь. Потолок времени тут не стоит: свой `-timeout`
+# обёртка пропускает вперёд, и поднять его агенту есть чем (замечание ревью
+# круга 1).
+GO_OWN_FLAGS = {"-count", "-p", "-C"}
 # Аргументы `unittest discover`, которые обёртка ставит сама.
 DISCOVER_OWN = {"discover", "-p", "--pattern"}
+
+
+def strip_heredocs(command):
+    """Команда без тел heredoc: остаются только сами строки команд."""
+    out = []
+    rest = command
+    while True:
+        m = HEREDOC.search(rest)
+        if not m:
+            out.append(rest)
+            return "".join(out)
+        delim = m.group(2)
+        head_line, sep, tail = rest.partition("\n")
+        if not sep:
+            out.append(rest)
+            return "".join(out)
+        out.append(head_line + "\n")
+        end = re.search(r"^\s*%s\s*$" % re.escape(delim), tail, re.MULTILINE)
+        if not end:
+            return "".join(out)
+        rest = tail[end.end():]
 
 
 def tokens(command):
@@ -89,6 +134,24 @@ def split_segments(parts):
     return segments
 
 
+def skip_prefix_args(seg, i, name):
+    """Индекс за ключами обёртки `name`: её собственные ключи и их значения."""
+    flags = PREFIX_VALUE_FLAGS.get(name, set())
+    while i < len(seg):
+        tok = seg[i]
+        if tok == "--":
+            return i + 1
+        if not tok.startswith("-") or tok == "-":
+            break
+        base = tok.split("=", 1)[0]
+        i += 1
+        if base in flags and "=" not in tok and i < len(seg):
+            i += 1
+    if name == "timeout" and i < len(seg) and DURATION.match(seg[i]):
+        i += 1
+    return i
+
+
 def head(seg):
     """Сегмент без присваиваний окружения и обёрток вида nice: имя команды
     первым элементом. Пустой список значит, что имени в сегменте нет."""
@@ -98,8 +161,9 @@ def head(seg):
         if "=" in tok and not tok.startswith("-") and tok.split("=", 1)[0].isidentifier():
             i += 1
             continue
-        if os.path.basename(tok) in PREFIXES:
-            i += 1
+        name = os.path.basename(tok)
+        if name in PREFIXES:
+            i = skip_prefix_args(seg, i + 1, name)
             continue
         break
     return seg[i:]
@@ -178,7 +242,7 @@ def find_bare(command, cwd):
     ушёл `cd`. Каталог с подстановкой (`cd $ROOT && ...`) не считается, и
     прогон в нём судится по рабочему каталогу.
     """
-    parts = tokens(command)
+    parts = tokens(strip_heredocs(command))
     if parts is None:
         return None
     for seg in split_segments(parts):

@@ -60,15 +60,41 @@ class TestBareRunIsCaught(Stand):
         self.assertIn("devkitctl test %s -run TestBoardMove" % self.pkg, r.stdout)
 
     def test_own_flags_of_the_wrapper_are_dropped(self):
-        r = run("go test -count=1 -timeout=20m -p 4 ./... -v", cwd=self.pkg)
+        # Доля бюджета и потолок кэша это расчёт самой обёртки, и в замену они
+        # не переезжают. Потолок времени переезжает, он остаётся за агентом.
+        r = run("go test -count=1 -p 4 ./... -v", cwd=self.pkg)
         self.assertEqual(r.returncode, 1)
         self.assertIn("devkitctl test %s -v" % self.pkg, r.stdout)
-        self.assertNotIn("-count", r.stdout.splitlines()[0])
-        self.assertNotIn("-timeout", r.stdout.splitlines()[0])
+        first = r.stdout.splitlines()[0]
+        self.assertNotIn("-count", first)
+        self.assertNotIn("-p 4", first)
 
     def test_gowork_assignment_before_the_command_is_caught(self):
         r = run("GOWORK=off go test ./...", cwd=self.pkg)
         self.assertEqual(r.returncode, 1, r.stdout)
+
+    def test_wrapper_prefix_with_its_own_flags_is_caught(self):
+        # Ключ обёртки со значением отдельным словом читался бы как имя
+        # команды, и прогон уходил бы мимо рубежа (замечание ревью круга 1).
+        for cmd in ("nice go test ./...",
+                    "nice -n 19 go test ./...",
+                    "nice -19 go test ./...",
+                    "env -u GOWORK go test ./...",
+                    "env -i GOWORK=off go test ./...",
+                    "timeout 600 go test ./...",
+                    "timeout -k 5 20m go test ./...",
+                    "sudo -u t go test ./...",
+                    "stdbuf -oL go test ./...",
+                    "nice -n 19 python3 -m unittest discover -p '*_test.py'"):
+            r = run(cmd, cwd=self.pkg)
+            self.assertEqual(r.returncode, 1, "%s: %s" % (cmd, r.stdout))
+
+    def test_own_timeout_moves_into_the_replacement(self):
+        # Потолок времени обёртка отдаёт агенту: пакет, которому двадцати минут
+        # мало, иначе не прогнать вовсе (замечание ревью круга 1).
+        r = run("go test -timeout=40m ./...", cwd=self.pkg)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("devkitctl test %s -timeout=40m" % self.pkg, r.stdout)
 
     def test_unittest_is_caught(self):
         r = run("python3 -m unittest discover -p '*_test.py'", cwd=self.pkg)
@@ -127,6 +153,20 @@ class TestWrappedAndForeignPass(Stand):
     def test_broken_quoting_passes(self):
         r = run("--stdin", input="go test 'unclosed", cwd=self.pkg)
         self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_command_inside_heredoc_passes(self):
+        # Пример прямой команды, записываемый в файл, ловил бы сам себя, и ни
+        # сценарий стенда, ни раздел доки с таким примером в дереве devkit было
+        # бы не написать (замечание ревью круга 1).
+        body = "cat > doc.md <<'EOF'\ngo test ./... -run TestX\nEOF\n"
+        r = run("--stdin", input=body, cwd=self.pkg)
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_command_after_heredoc_is_caught(self):
+        body = ("cat > doc.md <<'EOF'\nпример\nEOF\n"
+                "go test ./...\n")
+        r = run("--stdin", input=body, cwd=self.pkg)
+        self.assertEqual(r.returncode, 1, r.stdout)
 
 
 class TestHookMode(Stand):

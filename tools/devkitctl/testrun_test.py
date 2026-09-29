@@ -126,6 +126,13 @@ class CommandTest(Stand):
                                 ["-run", "TestX"])
         self.assertEqual(argv[-3:], ["./...", "-run", "TestX"])
 
+    def test_own_timeout_replaces_the_default(self):
+        argv, _ = testrun.build(self.root / "tools" / "x", "go", 2,
+                                ["-timeout=40m"])
+        self.assertIn("-timeout=40m", argv)
+        self.assertNotIn("-timeout=" + testrun.GO_TIMEOUT, argv)
+        self.assertEqual(len([t for t in argv if t.startswith("-timeout")]), 1)
+
     def test_suite_command_takes_the_share_as_jobs(self):
         d = self.pkg("own")
         testenv.write(d / "suite.py", "raise SystemExit(0)\n")

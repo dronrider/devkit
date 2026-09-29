@@ -117,7 +117,13 @@ def build(path, how, share, extra):
     """
     extra = list(extra)
     if how == "go":
-        argv = ["go", "test", "-count=1", "-timeout=" + GO_TIMEOUT, "./..."]
+        # Свой `-timeout` агента старше умолчания: пакет, которому двадцати
+        # минут мало, иначе нечем было бы прогнать вовсе (замечание ревью
+        # круга 1). Остальные ключи расчёта обёртка держит сама.
+        argv = ["go", "test", "-count=1"]
+        if not any(str(t).split("=", 1)[0] == "-timeout" for t in extra):
+            argv.append("-timeout=" + GO_TIMEOUT)
+        argv.append("./...")
         argv = parallel.with_share("go:x", argv, share) + extra
     elif named(extra):
         argv = [sys.executable, "-m", "unittest"] + extra

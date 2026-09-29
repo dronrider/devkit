@@ -462,6 +462,11 @@ class TestWatch(unittest.TestCase):
         self.assertEqual(out.get("hookEventName"), "UserPromptSubmit")
         self.assertIn("все пункты плана закрыты", out.get("additionalContext", ""))
         self.assertIn("agentctl plan set", out.get("additionalContext", ""))
+        # Напоминание уезжает сессии на каждой реплике, где план разошёлся, и
+        # порога повода в нём нет: когда плана реплика не требует и когда его
+        # место в том же ходе, сказано в скилле.
+        self.assertIn("work-plan", out.get("additionalContext", ""))
+        self.assertIn("Порог повода", out.get("additionalContext", ""))
         self.assertNotIn("decision", said, "напоминание пришло блокировкой хода")
 
     def test_standing_plan_is_reminded_at_the_start_of_a_turn(self):

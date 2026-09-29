@@ -23,9 +23,12 @@ import unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUN = os.path.join(HERE, "task-run.py")
+DEVKITCTL = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "devkitctl"))
 
 sys.path.insert(0, HERE)
 task_run = importlib.import_module("task-run")
+sys.path.insert(0, DEVKITCTL)
+import loadmark  # noqa: E402
 # Заказ головы, поднятой лежащей репликой, тем же началом, каким его собирает
 # лестница (taskhead.ReplyOrder).
 REPLY = task_run.REPLY_ORDER + "DK-1: её подаст подхват этим же ходом"
@@ -1228,9 +1231,11 @@ class TestWaitKinds(WaitStand):
         p.wait()
         self.assertTrue(pipe.wait_done(mark), "кончившийся процесс сочтён живым")
 
+    @loadmark.wall_clock
     def test_zombie_is_the_event(self):
         # Процесс вышел, а родитель его ещё не прибрал. Сигнал 0 такой процесс
-        # принимает, и без спроса у ps ожидание стояло бы до срока.
+        # принимает, и без спроса у ps ожидание стояло бы до срока. Исход
+        # держится на пятисекундном опросе стенного времени (DK-1230).
         p = subprocess.Popen(["true"])
         self.addCleanup(p.wait)
         pipe, end = self.pipe(), time.time() + 5
@@ -1385,7 +1390,10 @@ class TestWaitEvents(WaitStand):
         why = pipe.hold(mark)
         return why, time.time() - started
 
+    @loadmark.wall_clock
     def test_merge_ends_the_wait(self):
+        # Исход держится на верхней границе стенного времени ожидания, а не
+        # на логике (DK-1230).
         git_t(self.root, "switch", "-q", "-c", "dk-2")
         with open(os.path.join(self.root, "code.go"), "w", encoding="utf-8") as f:
             f.write("package x\n")
@@ -1401,7 +1409,9 @@ class TestWaitEvents(WaitStand):
         self.assertEqual(why, task_run.WAIT_EVENT)
         self.assertLess(took, 30)
 
+    @loadmark.wall_clock
     def test_close_ends_the_wait(self):
+        # Тот же срок стенного времени, что у test_merge_ends_the_wait.
         def close():
             with open(os.path.join(self.root, "docs", "TASKS-archive.md"), "a", encoding="utf-8") as f:
                 f.write("| DK-2 | соседка | task | P2 | 2026-09-11 | - |\n")
@@ -1410,14 +1420,18 @@ class TestWaitEvents(WaitStand):
         self.assertEqual(why, task_run.WAIT_EVENT)
         self.assertLess(took, 30)
 
+    @loadmark.wall_clock
     def test_process_death_ends_the_wait(self):
+        # Тот же срок стенного времени, что у test_merge_ends_the_wait.
         p = subprocess.Popen(["sleep", "30"])
         self.addCleanup(p.wait)
         why, took = self.held({"kind": "процесс", "target": str(p.pid), "until": stamp(60)}, p.kill)
         self.assertEqual(why, task_run.WAIT_EVENT)
         self.assertLess(took, 30)
 
+    @loadmark.wall_clock
     def test_hour_ends_the_wait(self):
+        # Тот же срок стенного времени, что у test_merge_ends_the_wait.
         at = stamp(1)
         why, took = self.held({"kind": "час", "target": at, "until": at}, lambda: None)
         self.assertEqual(why, task_run.WAIT_EVENT)

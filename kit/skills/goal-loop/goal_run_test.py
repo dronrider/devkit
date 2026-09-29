@@ -19,7 +19,10 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUN = os.path.join(HERE, "goal-run.py")
 HOOKS = os.path.normpath(os.path.join(HERE, "..", "..", "..", "hooks"))
+DEVKITCTL = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "devkitctl"))
 sys.path.insert(0, HOOKS)
+sys.path.insert(0, DEVKITCTL)
+import loadmark  # noqa: E402
 # Носитель цели у ключа --ask общий с подхватом реплики, и форматы сверяются с
 # ним самим. Дефис в имени файла хука не годится для import, поэтому модуль
 # грузится по пути, как его грузит и сама оболочка.
@@ -936,7 +939,11 @@ class GoalAskTests(Stand, unittest.TestCase):
         self.assertIn("текст «цель DK-100: вопрос человеку»", log)
         self.assertIn("чинить DK-102 или отложить?", log)
 
+    @loadmark.wall_clock
     def test_ask_gives_up_by_the_deadline(self):
+        # Исход держится на реальном сроке ожидания (wait="1") и общем
+        # потолке communicate(timeout=60): срок подпроцесса, не логика
+        # (DK-1230).
         # Никто не ответил: это не авария, а обычный возврат нолём. Отметок
         # ключ при этом не заводит вовсе, отмечать нечего.
         root = self.stand("done запись")
@@ -949,7 +956,11 @@ class GoalAskTests(Stand, unittest.TestCase):
         self.assertFalse(os.path.isfile(self.devfile(root, self.MAIL)),
                          "ключ завёл отметку, никого не дождавшись")
 
+    @loadmark.wall_clock
     def test_hold_is_read_by_the_chat_hook_as_a_live_wait(self):
+        # Исход держится на сроке ожидания, зафиксированном раньше проверки:
+        # под задержкой между записью и проверкой окно стенного времени может
+        # истечь (DK-1230).
         # Признак ожидания читает подхват, и читает он его своим кодом: пока
         # срок не вышел, вход принадлежит ключу и доставлять он не должен
         # ничего. Формат тут сверяется литералами, а не на глаз.

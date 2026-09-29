@@ -1,7 +1,7 @@
 # прогон тестов обёрткой, а не прямой командой
 
 конец: субагент
-предмет: RULES.core.md «Тесты обязательны»; kit/skills/test-standard/SKILL.md «Прогон под потолком машины»; kit/skills/test-standard/SKILL.md «Тест на баг»; kit/agents/exec-low.md; kit/agents/exec-medium.md; kit/agents/exec-high.md; kit/agents/exec-xhigh.md; kit/skills/live-core/SKILL.md
+предмет: kit/skills/test-standard/SKILL.md «Прогон под потолком машины»; kit/skills/test-standard/SKILL.md «Тест на баг»; kit/agents/exec-low.md; kit/agents/exec-medium.md; kit/agents/exec-high.md; kit/agents/exec-xhigh.md; kit/skills/live-core/SKILL.md
 
 ## Подготовка
 

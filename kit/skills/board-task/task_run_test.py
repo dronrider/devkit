@@ -1471,7 +1471,11 @@ class TestWaitEvents(WaitStand):
                            capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stderr)
 
+    @loadmark.wall_clock
     def test_wait_end_closes_the_stage(self):
+        # Тот же срок стенного времени, что у test_merge_ends_the_wait
+        # (обкатка DK-1230 поймала его сама: pipe.held вернул пустую строку
+        # вместо события на загруженной машине).
         # Предмет DK-1193. Отметку ожидания кладёт agentctl wait, а этап «ждёт
         # события» в записи задачи до этой правки не закрывал никто: у DK-920
         # строка доски шесть часов говорила «ждёт события», пока шло ревью.

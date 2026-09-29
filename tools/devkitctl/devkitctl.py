@@ -203,6 +203,7 @@ import selfcheck
 import shutil
 import subprocess
 import sys
+import testrun
 import time
 import update
 import user
@@ -224,13 +225,15 @@ PROSE_HOOK = "check-prose.py"
 # его смотрит сам хук тем же режимом --config.
 CALQUE_HOOK = "check-calque.py"
 # Рубежи на PreToolUse Bash: чтение секретов (DK-228), подстановка в свободном
-# тексте у утилит devkit (DK-452), след ревью у пуша и создания MR и связка cd
-# со второй командой (DK-770). Записей на матчере Bash четыре, и сообщение в
-# hook_gaps у каждой своё: неподключённый check-subst это дыра инъекции, а не
-# чтение секретов, неподключённый check-review это код наружу без ревью, а
-# неподключённый check-cd-compound это стоп автономной сессии на человеке.
+# тексте у утилит devkit (DK-452), след ревью у пуша и создания MR, связка cd
+# со второй командой (DK-770) и прямой прогон тестов мимо потолка (DK-1219).
+# Записей на матчере Bash пять, и сообщение в hook_gaps у каждой своё:
+# неподключённый check-subst это дыра инъекции, а не чтение секретов,
+# неподключённый check-review это код наружу без ревью, неподключённый
+# check-cd-compound это стоп автономной сессии на человеке, а неподключённый
+# check-bare-test это полка нагрузки на машине.
 PRE_SCRIPTS = ("check-read-secret.py", "check-subst.py", "check-review.py",
-               "check-cd-compound.py")
+               "check-cd-compound.py", "check-bare-test.py")
 PRE_GAPS = {
     "check-read-secret.py": "чтение секретов через Bash идёт мимо хука",
     "check-subst.py": "подстановка в текстовом аргументе утилит devkit "
@@ -240,6 +243,9 @@ PRE_GAPS = {
     "check-cd-compound.py": "связка cd со второй командой доходит до "
                             "классификатора прав, и автономная сессия встаёт "
                             "вопросом к человеку (DK-770)",
+    "check-bare-test.py": "прямой go test и unittest идут мимо потолка "
+                          "одновременных прогонов, и машина получает вторую "
+                          "заявку на все ядра (DK-1219)",
 }
 # Рубежи на PreToolUse Read. Категория отдельная от проверок текстов и от чтения
 # секретов через Bash, и сообщение про каждый своё. Записей на одном матчере
@@ -406,6 +412,7 @@ HOOK_LAYOUT = (
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-subst.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-review.py --hook"),
     ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-cd-compound.py --hook"),
+    ("PreToolUse", PRE_MATCHER, "python3 %s/hooks/check-bare-test.py --hook"),
     ("PreToolUse", SYNC_MATCHER, "python3 %s/hooks/check-background.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-reread.py --hook"),
     ("PreToolUse", PRE_READ_MATCHER, "python3 %s/hooks/check-longfile.py --hook"),
@@ -3720,6 +3727,11 @@ def main(argv):
                     help="один корень; без ключа обходятся все корни под надзором")
     lf.add_argument("--dry-run", action="store_true",
                     help="показать находки, ничего не поднимая и не снимая")
+    t = sub.add_parser("test",
+                       help="прогон тестов каталога под потолком одновременных прогонов")
+    t.add_argument("path", help="каталог go-модуля либо каталог с тестами *_test.py")
+    t.add_argument("rest", nargs=argparse.REMAINDER,
+                   help="хвост ключей самому прогону (-run TestX, -v)")
     sub.add_parser("selfcheck",
                    help="живой круг связки во временном проекте, с уборкой за собой")
     sub.add_parser("waitcheck",
@@ -3755,6 +3767,8 @@ def main(argv):
         rc = lift.run(root=a.dir if a.dir else None, act=not a.dry_run)
     elif a.cmd == "user":
         rc = user.main(["--gender", a.gender] if a.gender else [])
+    elif a.cmd == "test":
+        rc = testrun.run(a.path, a.rest)
     elif a.cmd == "selfcheck":
         rc = selfcheck.main()
     elif a.cmd == "waitcheck":

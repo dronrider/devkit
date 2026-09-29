@@ -482,8 +482,8 @@ def _slot_path(index, dir_path):
 
 @contextlib.contextmanager
 def full_run_slot(n=None, dir_path=None, poll=None, heartbeat=None,
-                   out=None):
-    """Держит один из `n` слотов потолка одновременных полных прогонов.
+                   out=None, label=None):
+    """Держит один из `n` слотов потолка одновременных прогонов.
 
     Слот это файл под `flock`, держится дескриптором ровно как замок
     конвейера shipctl (`tools/shipctl/lock.go`, `acquireLock`): убитый
@@ -498,6 +498,12 @@ def full_run_slot(n=None, dir_path=None, poll=None, heartbeat=None,
     быть: по этой строке видно, что прогон стоит в очереди, а не завис
     (DoD DK-1162).
 
+    Слот один на машину и делится с частичным прогоном пакета
+    (`testrun.py`, DK-1219): потолок тут не у полного прогона как такового, а
+    у заявки на всю машину, и такая заявка у частичного прогона та же.
+    `label` называет в строке ожидания, чей прогон встал в очередь, и
+    умолчание оставляет прежнюю строку полного прогона.
+
     Аргументы без значения читают модульные константы в момент вызова, а не
     на старте процесса: стенд подменяет `SLOT_POLL_SECS` через
     `mock.patch.object` на короткую паузу, и подмена обязана доходить до
@@ -510,6 +516,7 @@ def full_run_slot(n=None, dir_path=None, poll=None, heartbeat=None,
     poll = poll if poll is not None else SLOT_POLL_SECS
     heartbeat = heartbeat if heartbeat is not None else SLOT_HEARTBEAT_SECS
     out = out if out is not None else sys.stdout
+    label = label if label is not None else "полных прогонов"
     os.makedirs(dir_path, exist_ok=True)
     waited = False
     heartbeat_at = time.monotonic()
@@ -523,7 +530,7 @@ def full_run_slot(n=None, dir_path=None, poll=None, heartbeat=None,
                 os.close(fd)
                 continue
             if waited:
-                print("потолок полных прогонов освободился, продолжаю",
+                print("потолок %s освободился, продолжаю" % label,
                       file=out, flush=True)
             try:
                 yield
@@ -531,12 +538,12 @@ def full_run_slot(n=None, dir_path=None, poll=None, heartbeat=None,
                 os.close(fd)
             return
         if not waited:
-            print("потолок %d полных прогонов занят, жду свободный слот в %s"
-                  % (n, dir_path), file=out, flush=True)
+            print("потолок %d %s занят, жду свободный слот в %s"
+                  % (n, label, dir_path), file=out, flush=True)
             waited = True
             heartbeat_at = time.monotonic()
         elif time.monotonic() - heartbeat_at >= heartbeat:
-            print("всё ещё жду свободный слот потолка полных прогонов",
+            print("всё ещё жду свободный слот потолка %s" % label,
                   file=out, flush=True)
             heartbeat_at = time.monotonic()
         time.sleep(poll)

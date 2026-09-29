@@ -304,17 +304,38 @@ const btnText = (node) => String(node.textContent || "").trim();
 // --- снятый признак гасит запись сам ---
 //
 // Вход сделали в другом окне, разговор поднялся заново и подключился к серверу
-// макетов. Признака отказа больше нет, и записи в ленте висеть не с чего.
+// макетов. Живой сервер ответ называет своим полем, и записи в ленте висеть не с
+// чего.
 {
   clear();
   const panel = sandbox.chatPanel("demo", out("dddd9200-eeee",
     { design: "нужен вход в Claude Design" }));
   await settle();
   if (byClass(panel, "cbyetalk").hidden) fail("блок макетов не поднялся: " + dump(panel));
-  status = { live: true, busy: false };
+  status = { live: true, busy: false, designUp: true };
   await beat();
   if (!byClass(panel, "cbyetalk").hidden) {
-    fail("снятый признак запись не погасил: " + dump(byClass(panel, "cbyetalk")));
+    fail("живой сервер запись не погасил: " + dump(byClass(panel, "cbyetalk")));
+  }
+}
+
+// --- а неузнанное состояние сервера записи не трогает ---
+//
+// Замечание третьего круга ревью. Ответ о состоянии разговора молчит про макеты
+// и когда сервер подключён, и когда транскрипта не нашлось вовсе. Пока поле было
+// одно, запись с кнопкой гасило любое молчание, и человек оставался без кнопки до
+// переоткрытия разговора.
+{
+  clear();
+  const panel = sandbox.chatPanel("demo", out("dddd9200-dddd",
+    { design: "нужен вход в Claude Design" }));
+  await settle();
+  if (byClass(panel, "cbyetalk").hidden) fail("блок макетов не поднялся: " + dump(panel));
+  status = { live: true, busy: false };
+  await beat();
+  await beat();
+  if (byClass(panel, "cbyetalk").hidden) {
+    fail("запись погасла на ответе, который про сервер макетов ничего не знает");
   }
 }
 
@@ -383,7 +404,7 @@ const btnText = (node) => String(node.textContent || "").trim();
   await settle();
   deepBtn(panel, "Войти").handlers.click({ stopPropagation: () => {} });
   await settle();
-  status = { live: true, busy: false };
+  status = { live: true, busy: false, designUp: true };
   await beat();
   if (byClass(panel, "cbyetalk").hidden) {
     fail("запись погасла посреди входа, и код вводить стало некуда");
@@ -474,4 +495,5 @@ console.log("ок: блок в ленте один, вид входа выбир
   "в теле ручек, слова записи расходятся одной первой фразой, ответ агента блок " +
   "макетов не гасит, отказ при открытой панели поднимает блок сам, реплика " +
   "перезапуска называет свой вход, удачный вход запись гасит и обратно её не " +
-  "пускает, а неподнятый разговор и идущий вход её держат");
+  "пускает, гасит её и узнанный живой сервер, а неподнятый разговор, идущий вход " +
+  "и неузнанное состояние сервера её держат");

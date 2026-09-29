@@ -22,6 +22,10 @@ type chatStatusView struct {
 	// (DK-920).
 	Login  bool `json:"login"`
 	Design bool `json:"design"`
+	// Живой сервер макетов назван своим полем: молчание одного design значит и
+	// «сервер подключён», и «записи о серверах не видно», а запись входа гаснет
+	// только по первому.
+	DesignUp bool `json:"designUp"`
 }
 
 // chatBusyEnv поднимает разговор с молчащим транскриптом: занятость тут

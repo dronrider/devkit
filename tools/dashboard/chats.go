@@ -1068,7 +1068,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 		// при подъёме процесса. Он не зависит ни от живости разговора, ни от
 		// разлогина: токен обычного входа бывает свежим, а доступа к макетам не
 		// несёт.
-		if head.Design {
+		if head.Design == designOff {
 			e.Design = designGoneWord
 		}
 		// Клин ищется там же, где меряется состояние: у клина все признаки
@@ -4004,7 +4004,8 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	// один раз, а признак приходит и позже: разговор умер, поднялся заново и не
 	// подключился к серверу макетов. Опрос этот идёт и так, шапка разговора
 	// лежит в памяти процесса, и второй ручки ради двух полей не заводится.
-	bye, design := false, false
+	bye := false
+	design := designUnseen
 	if info, ok := findSession(s.transcriptRoots(), found.Path, sid); ok {
 		path = info.path
 		tail = s.busyEntryOf(path).last
@@ -4013,12 +4014,21 @@ func (s *server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	// loginFlags дописывает признаки входа в любой ответ: процесса у разговора
 	// может и не быть вовсе, а блок входа человеку нужен тем более.
+	//
+	// Про макеты ответ говорит двумя полями, а не одним (замечание ревью).
+	// Гашение записи с кнопкой стоит на узнанном живом сервере, и молчание
+	// одного поля этого не даёт: транскрипта могло не найтись вовсе, и тогда
+	// ответ не знает ни про отказ, ни про подключение. Старому читателю поле
+	// design осталось прежним, отказом, а живой сервер назван своим полем.
 	loginFlags := func(out map[string]any) map[string]any {
 		if bye {
 			out["login"] = true
 		}
-		if design {
+		switch design {
+		case designOff:
 			out["design"] = true
+		case designUp:
+			out["designUp"] = true
 		}
 		return out
 	}

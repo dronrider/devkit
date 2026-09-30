@@ -28,6 +28,14 @@ const draftTextLimit = 16 << 10
 // выданного ID, и брать его больше неоткуда, номер выдаётся при записи.
 var newIDRe = regexp.MustCompile(`^[A-Za-z]+-[0-9]+`)
 
+// titleNewlineRe ловит перенос строки внутри заголовка черновика: поле формы
+// это textarea без запрета на Enter (DK-447, ревью), и заголовок с переносом
+// посередине проходит и подсветку формы, и порог ниже, а до накопителя
+// доезжает первой строкой только обрывок, остальное утекает в тело перед
+// «### Ситуация» без предупреждения, потому что taskctl (form.go,
+// draftTitleGuard) берёт заголовком текст только до первого \n.
+var titleNewlineRe = regexp.MustCompile(`\r\n|\r|\n`)
+
 func draftFileRel(id string) string {
 	return filepath.ToSlash(filepath.Join("docs", "tasks", "drafts", id+".md"))
 }
@@ -67,7 +75,10 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"title\": \"...\", \"body\": \"...\"}"})
 		return
 	}
-	title := strings.TrimSpace(body.Title)
+	// Перенос строки внутри заголовка схлопывается в пробел тут же, до всех
+	// проверок ниже: заголовок остаётся одной строкой и не роняет хвост в
+	// тело записи.
+	title := strings.TrimSpace(titleNewlineRe.ReplaceAllString(body.Title, " "))
 	if title == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "пустой черновик записывать нечего: жду JSON {\"title\": \"...\", \"body\": \"...\", \"prio\": \"mid\"}"})

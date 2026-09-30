@@ -53,19 +53,17 @@ func sessionTree(projPath, suffix string) (string, bool) {
 // тем же порядком, что на экране сессий (sessionBinds.task), и разговор задачи
 // предпочитается личному: вопрос и ответ задачи живут в одном месте. Разговор о
 // задаче сюда не попадает: сессия, угаданная по первой реплике, писала бы во
-// вход чужой работы, и ей остаётся свой личный вход. Цель тоже не попадает: у
-// неё своя ручка и свой носитель, «Входящие» файла цели.
-func (s *server) sessionChatName(projPath string, info sessionInfo, head sessionHead) (string, string) {
+// вход чужой работы, и ей остаётся свой личный вход.
+//
+// Цель тут наравне с задачей (DK-1009). Прежде сессии цели отказывали именем:
+// у цели была своя ручка и свой носитель, «Входящие» файла. Носитель этот
+// остался за одной дорогой, за headless-оболочкой goal-run, а сессию цели
+// поднимает та же панель и тем же подъёмом, что и сессию задачи, и вход у неё
+// тот же, task-<ID>.
+func (s *server) sessionChatName(info sessionInfo, head sessionHead) (string, string) {
 	task, note, bound := bindTask(s.binds(), info.ID, info.suffix, head)
 	if task == "" || bound != boundLead {
 		return "sess-" + info.ID, note
-	}
-	if raw, err := s.projectBoard(projPath); err == nil {
-		if rows, err := parseBoardRows(raw); err == nil {
-			if row, ok := rows[task]; ok && isGoalTitle(row.Title) {
-				return "", task
-			}
-		}
 	}
 	return "task-" + task, note
 }
@@ -105,14 +103,9 @@ func putChat(tree, name, text, line string) (lying string, code int, err error) 
 func (s *server) sayToAsk(p *Project, info sessionInfo, sid, text string, recs map[string][]sessionBind) (map[string]any, bool) {
 	hasTerm := s.sayTermOf(sid, recs) != ""
 	head := s.sessionHeadCached(info.path, info.stamp)
-	name, _ := s.sessionChatName(p.Path, info, head)
-	// У сессии цели имени разговора нет, её реплики живут «Входящими» файла
-	// цели, но вопрос розданной работы задаётся и ей: скан ниже общий для
-	// всех разговоров.
-	if name != "" {
-		if done, ok := s.ownAskReply(p, info, sid, name, text, hasTerm); ok {
-			return done, true
-		}
+	name, _ := s.sessionChatName(info, head)
+	if done, ok := s.ownAskReply(p, info, sid, name, text, hasTerm); ok {
+		return done, true
 	}
 	return s.handedAskReply(p, sid, text, hasTerm)
 }
@@ -288,13 +281,7 @@ func (s *server) handleSessionMessagePost(w http.ResponseWriter, r *http.Request
 		return
 	}
 	head := s.sessionHeadCached(info.path, info.stamp)
-	name, note := s.sessionChatName(found.Path, info, head)
-	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
-			"сессия %s ведёт цель: переписка с целью идёт её ручкой, POST /api/projects/%s/goals/%s/message",
-			sid, found.Name, note)})
-		return
-	}
+	name, _ := s.sessionChatName(info, head)
 	var body struct {
 		Text string `json:"text"`
 	}
@@ -575,6 +562,11 @@ func (s *server) handleTaskMessageDelete(w http.ResponseWriter, r *http.Request)
 // безадресной строке, а адресованную мёртвой сессии реплику не взял бы никто.
 // Дерево тут не выбирается: чекаут переживает дерево задачи, которое сносится
 // слиянием, и сторожок читает оба места (LLD DK-430, решение 2).
+//
+// Строка цели идёт тут наравне со строкой задачи (DK-1009). Прежде ручка ей
+// отказывала и звала ручку цели, а дверь чата цели от этого вела не к
+// собеседнику, а к служебному щитку. Ручка цели осталась за одной дорогой, за
+// идущей headless-оболочкой goal-run.
 func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -582,12 +574,6 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 	}
 	found, id, row, rows, ok := s.taskRow(w, r)
 	if !ok {
-		return
-	}
-	if isGoalTitle(row.Title) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf(
-			"%s это цель: переписка с целью идёт её ручкой, POST /api/projects/%s/goals/%s/message",
-			id, found.Name, id)})
 		return
 	}
 	var body struct {

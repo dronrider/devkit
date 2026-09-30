@@ -174,14 +174,15 @@ func runPrompt(sect, id string) string {
 // rowOrder называет заказ дословно, той же строкой, что унесёт runPrompt в
 // сессию конвейера (DK-286). Подсказка кнопки на экране читает готовую строку,
 // а не пересказывает её ветвление вторым разбором: второй разбор рано или
-// поздно разошёлся бы с настоящим заказом. У строки цели нет заказа вовсе:
-// его для каждого витка сочиняет goal-run.py, а не дашборд. Нет заказа и у
-// проверенной строки с пользовательской приёмкой: она закрывается прямо с
-// экрана командой taskctl (closeFromCheck), без сессии агента, и заказывать
-// там нечего.
+// поздно разошёлся бы с настоящим заказом. У строки цели заказ один на все
+// статусы, «Продолжай цель <ID>»: и «выполнить», и «продолжить» это та же
+// работа, а что делать дальше, решает сама сессия по скиллу goal-loop
+// (DK-971). Нет заказа у проверенной строки с пользовательской приёмкой: она
+// закрывается прямо с экрана командой taskctl (closeFromCheck), без сессии
+// агента, и заказывать там нечего.
 func rowOrder(sect, id, accept, title string) string {
 	if isGoalTitle(title) {
-		return ""
+		return goalContinuePrompt(id, "")
 	}
 	if sect == "check" && accept == acceptUser {
 		return ""
@@ -426,6 +427,35 @@ func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, mo
 	return res, nil
 }
 
+// startGoalChat это ступень чата лестницы носителей цели: tmux-сессия
+// goal-<ID> с живым клиентом и заказом «Продолжай цель <ID>». Оболочки над ней
+// нет нарочно. Виток остаётся понятием одной goal-run, а живая сессия ведёт
+// цель до стоп-маркера сама, и ход ей держит hooks/goal-hold.py (DK-971).
+// Поэтому клиент тут поднимается тем же кодом, что и разговор с кнопки
+// «Продолжить», а не оболочкой проходов task-run.py: та разводит конвейер
+// задачи по статусу строки, а у цели статус один на весь цикл.
+//
+// Возврат это причина словами, пустая значит, что сессия встала. Причину
+// зовущий кладёт в журнал и уходит ступенью ниже, к headless-оболочке.
+func (s *server) startGoalChat(proj *Project, id, sess, model string, h *Harness) string {
+	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model}); err != nil {
+		s.logf("модель сессии цели %s не записалась: %v", sess, err)
+	}
+	// Имя головы это ID и роль словом, как у кнопки «Продолжить» (DK-879):
+	// предмет известен до первого токена, и заказывать заголовок у модели
+	// незачем.
+	cmd := chatCmd(s.launchEnv(id, sess, ""), model, "", goalContinuePrompt(id, ""), id+" цель",
+		h, binPath(agentctlBin))
+	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", chatTree(proj.Path, id), cmd); err != nil {
+		return fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
+	}
+	// Сессия встаёт под того же сторожа, что и разговор (chatwatch.go): без
+	// отметки её смерть не заметил бы никто, и цель стояла бы в работе с
+	// мёртвым окном.
+	s.chatRaised(sess, "", id, proj.Name)
+	return ""
+}
+
 // headBusy это отказ занятого замка головы задачи.
 type headBusy struct{ id, where string }
 
@@ -556,15 +586,62 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tierBad})
 		return
 	}
-	// У цели заказ один на все статусы: и «выполнить», и «продолжить» это
-	// следующий виток, а промпт витка сочиняет не дашборд, а сама оболочка
-	// цикла, и лезть в её слова отсюда нечем. Подписка едет ей флагом: витки
-	// она заводит сама, и без флага платила бы подпиской по умолчанию.
+	// Лестница носителей цели, как у задачи (DK-1009). Ступень чата поднимает
+	// живую сессию с заказом «Продолжай цель <ID>»: цикл она ведёт сама по
+	// скиллу goal-loop до стоп-маркера, и оболочки над ней нет (DK-971).
+	// Headless-ступень ниже это goal-run: она берётся, когда клиента в PATH нет
+	// либо окно не встало. Заказ у цели один на все статусы, и «выполнить», и
+	// «продолжить» это та же работа.
 	if kind == "goal" {
+		// Замок оболочки спрашивается до всякого подъёма. Прежде занятый замок
+		// называла сама goal-run кодом 3, а теперь первой стоит ступень чата, и
+		// без этой проверки кнопка завела бы живую сессию рядом с идущим
+		// циклом. Правило тут то же, что у двери чата цели: пока жив замок,
+		// второй сессии не бывает.
+		if lockAlive(found.Path, id) {
+			where := "цикл цели уже идёт, замок .devkit/goal-" + id + ".lock"
+			s.logf("запуск цели %s в %s отклонён: %s", id, found.Name, where)
+			writeJSON(w, http.StatusConflict, map[string]string{"error": runBusy(id, where)})
+			return
+		}
+		client := defaultClient
+		if harness != nil {
+			client = harness.Bin
+		}
+		model := chatModelDefault
+		if own != nil {
+			if m := own.tierModel(tier); m != "" {
+				model = m
+			}
+		}
+		rung := clientMissing(client)
+		if rung == "" {
+			rung = s.startGoalChat(found, id, sess, model, harness)
+		}
+		if rung == "" {
+			s.logf("цель %s поднята в %s ступенью чата (tmux-сессия %s%s), %s",
+				id, found.Name, sess, harnessTail(harness), tierWhy)
+			chatOut := map[string]string{
+				"id": id, "kind": kind, "session": sess, "tier": tier, "model": model,
+				"message": fmt.Sprintf("цель %s поднята сессией в tmux-сессии %s", id, sess),
+			}
+			if harness != nil {
+				chatOut["harness"] = harness.Name
+				chatOut["message"] = fmt.Sprintf("цель %s поднята сессией на подписке %s (tmux-сессия %s)",
+					id, harness.Name, sess)
+			}
+			chatOut["message"] += ", " + tierWhy
+			writeJSON(w, http.StatusOK, chatOut)
+			return
+		}
+		s.logf("ступень чата цели %s в %s не сработала, иду headless-оболочкой: %s", id, found.Name, rung)
 		gr := goalRunPath(s.cfg.Roots)
 		if gr == "" {
-			s.logf("запуск цели %s в %s не удался: %s", id, found.Name, goalRunMissing)
-			writeJSON(w, http.StatusBadGateway, map[string]string{"error": goalRunMissing})
+			// Обе ступени провалились, и человеку надо видеть обе причины:
+			// одна пропавшая оболочка тут только половина ответа.
+			why := rung + "; " + goalRunMissing
+			s.logf("запуск цели %s в %s не удался: %s", id, found.Name, why)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": why})
 			return
 		}
 		args := []string{gr, id, "-C", found.Path}

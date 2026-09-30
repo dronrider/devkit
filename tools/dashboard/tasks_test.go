@@ -973,11 +973,16 @@ func TestStaticOrderHintReadsServerField(t *testing.T) {
 	}
 	// Кнопка на экране задачи и кнопка в строке списка читают одно и то же
 	// поле, а не сочиняют заказ каждая по-своему.
-	if !strings.Contains(funcBody(t, app, "function taskActions("), "orderHint(row.order, row.accept, row.sect, id)") {
+	if !strings.Contains(funcBody(t, app, "function taskActions("), "orderHint(row.order, row.accept, row.sect, id, isGoal)") {
 		t.Error("полоса действий задачи не читает подсказку из orderHint")
 	}
-	if !strings.Contains(funcBody(t, app, "function rowAction("), "orderHint(row.order, row.accept, sect, row.id)") {
+	if !strings.Contains(funcBody(t, app, "function rowAction("), "orderHint(row.order, row.accept, sect, row.id,") {
 		t.Error("действие в строке списка не читает подсказку из orderHint")
+	}
+	// Имя tmux-сессии в подсказке своё у цели и у задачи (DK-1009): по нему
+	// человек находит окно, и одно на двоих увело бы его не туда.
+	if !strings.Contains(hint, `"Сессия цели получит заказ «" + order + "»`) {
+		t.Error("в orderHint нет имени сессии цели")
 	}
 }
 

@@ -162,11 +162,13 @@ func TestChatKeepOpensHiddenGoalTurn(t *testing.T) {
 	}
 }
 
-// TestStaticGoalChatReplyToInbox: реплика из чата цели уходит ручкой цели во
-// «Входящие», и ни /say, ни резюм второго агента она не поднимает. Живой виток
-// и стоящий цикл проверяются в поддельном DOM стендом testdata/poc_goalchat.mjs
+// TestStaticGoalChatWay: куда уходит реплика из чата цели. У идущей оболочки
+// goal-run это ручка цели, «Входящие» её файла: виток идёт `claude -p`, и /say
+// поднял бы рядом второго агента. У стоящего цикла это дорога задачи, и первая
+// реплика поднимает сессию с привязкой к цели через POST /chats (DK-1009).
+// Оба случая проверяются в поддельном DOM стендом testdata/poc_goalchat.mjs
 // над настоящим app.js. Без node шаг пропускается.
-func TestStaticGoalChatReplyToInbox(t *testing.T) {
+func TestStaticGoalChatWay(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node не найден: стенд реплики цели пропущен")

@@ -283,12 +283,65 @@ func readFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-// Запуск цели зовёт оболочку goal-run.py с ID и корнем проекта: тот же
-// механизм, что и руками, своего подъёма цикла у дашборда нет.
-func TestRunStartGoal(t *testing.T) {
+// dropGoalClient убирает клиента из PATH: так ступень чата лестницы цели
+// проваливается, и подъём уходит ступенью ниже, к headless-оболочке.
+func dropGoalClient(t *testing.T, e *testEnv) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(e.bin, defaultClient)); err != nil {
+		t.Fatal(err)
+	}
+	// PATH сужается до каталога фикстур: настоящий клиент машины иначе нашёлся
+	// бы поверх снятого, и ступень чата сработала бы. Каталог python3 остаётся
+	// рядом, без него headless-ступень не позвала бы оболочку цикла.
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", e.bin+string(os.PathListSeparator)+filepath.Dir(py))
+}
+
+// Запуск цели идёт лестницей носителей, как у задачи (DK-1009). Первой стоит
+// ступень чата: tmux-сессия goal-<ID> с живым клиентом и заказом «Продолжай
+// цель <ID>». Цикл ведёт сама сессия по скиллу goal-loop до стоп-маркера
+// (DK-971), оболочки над ней нет, и goal-run на этой ступени не зовётся вовсе.
+func TestRunStartGoalChatRung(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "")
+	callsLog := filepath.Join(e.home, "goal-run.calls")
+	writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(callsLog))
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск цели: %d %s", resp.StatusCode, text)
+	}
+	for _, want := range []string{`"kind":"goal"`, `"session":"goal-XR-100"`, "поднята"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в ответе запуска нет %q: %s", want, text)
+		}
+	}
+	got := readFile(t, tmuxLog)
+	for _, want := range []string{
+		"new-session -d -s goal-XR-100 -c " + e.proj,
+		"Продолжай цель XR-100.",
+		// Имя головы это ID и роль словом, как у кнопки «Продолжить» (DK-879).
+		"XR-100 цель",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ступень чата цели подняла сессию не так, нет %q: %s", want, got)
+		}
+	}
+	if calls := readFile(t, callsLog); calls != "" {
+		t.Errorf("ступень чата сработала, а goal-run всё равно позван: %q", calls)
+	}
+}
+
+// Ступень ниже: клиента в PATH нет, и цикл поднимает headless-оболочка
+// goal-run.py с ID и корнем проекта, тем же механизмом, что и руками.
+func TestRunStartGoalHeadlessRung(t *testing.T) {
 	e, c, _ := runsEnv(t, "")
 	callsLog := filepath.Join(e.home, "goal-run.calls")
 	writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(callsLog))
+	dropGoalClient(t, e)
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
 	text := body(t, resp)
@@ -312,6 +365,8 @@ func TestRunStartGoal(t *testing.T) {
 // целиком вместо поднятого цикла (живой случай на цели DK-446).
 func TestRunGoalShellFromOwnTree(t *testing.T) {
 	e, c, _ := runsEnv(t, "")
+	// Предмет тут headless-ступень, и до неё лестница доходит без клиента.
+	dropGoalClient(t, e)
 	// В корне конфига лежит чужой чекаут: он отвечает отказом на незнакомый
 	// флаг, ровно как оболочка из main.
 	writeGoalRunFake(t, filepath.Dir(e.proj), `import sys
@@ -353,6 +408,7 @@ sys.exit(2)
 // чинится случай выбором чекаута (замечание пользователя).
 func TestRunGoalShellHelpNotShown(t *testing.T) {
 	e, c, _ := runsEnv(t, "")
+	dropGoalClient(t, e)
 	writeGoalRunFake(t, filepath.Dir(e.proj), `import sys
 sys.stderr.write("usage: goal-run.py [-h] [--harness HARNESS] [-C DIR] id\n"
     "\nЦикл цели: виток за витком, пока цель не закрыта\n\n"
@@ -453,8 +509,9 @@ func TestRunStartTaskPromptBySection(t *testing.T) {
 
 // rowOrder называет заказ той же строкой, что соберёт headless-сессии
 // runPrompt: подсказке кнопки разойтись с реальным заказом нечем. У строки
-// цели и у проверенной строки с пользовательской приёмкой нет заказа вовсе:
-// первую ведёт своя оболочка, вторая закрывается без сессии агента.
+// цели заказ один на все статусы, «Продолжай цель <ID>» (DK-1009). Нет заказа
+// у проверенной строки с пользовательской приёмкой, она закрывается без сессии
+// агента.
 func TestRowOrder(t *testing.T) {
 	for _, tc := range []struct{ name, sect, id, accept, title, want string }{
 		{"backlog", "backlog", "XR-002", "", "Обычная задача", "Выполни XR-002"},
@@ -462,7 +519,8 @@ func TestRowOrder(t *testing.T) {
 		{"check agent", "check", "XR-003", "", "Задача на проверке", "Закрой XR-003"},
 		{"check mixed", "check", "XR-005", "mixed", "Смешанная приёмка", "Закрой XR-005"},
 		{"check user closes without session", "check", "XR-006", "user", "Пользовательская приёмка", ""},
-		{"goal in progress", "in-progress", "XR-100", "", "Цель: пробный цикл", ""},
+		{"goal in progress", "in-progress", "XR-100", "", "Цель: пробный цикл", "Продолжай цель XR-100."},
+		{"goal in backlog", "backlog", "XR-101", "", "Цель: вторая", "Продолжай цель XR-101."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := rowOrder(tc.sect, tc.id, tc.accept, tc.title); got != tc.want {
@@ -587,6 +645,10 @@ func TestRunStartChosenClientMissing(t *testing.T) {
 // Витки цели платятся выбранной подпиской наравне с задачей: имя едет оболочке
 // цикла флагом, и она поднимает витки её клиентом. Прежде выбора у цели не было
 // вовсе, а на попытку сервер отвечал отказом (замечание пользователя).
+//
+// Лестница тут доходит до headless-ступени: клиента второй подписки в фикстуре
+// PATH нет, и ступень чата уступает ему дорогу (DK-1009). Слова ответа их и
+// различают, у ступени чата это «поднята сессией на подписке».
 func TestRunStartGoalOnChosenHarness(t *testing.T) {
 	e, c, _ := runsEnv(t, "")
 	writeAgentctlFake(t, e.bin, harnessJSONFixture)
@@ -696,14 +758,37 @@ func TestRunStartHeadTakesSharedLock(t *testing.T) {
 	}
 }
 
-// Код 3 у оболочки это занятый замок: конфликт со словами самой оболочки, а
-// не безликая ошибка.
+// Занятый замок цикла это конфликт, а не поломка. Спрашивается он до всякого
+// подъёма (DK-1009): первой на лестнице стоит ступень чата, и без этой
+// проверки кнопка завела бы живую сессию рядом с идущим циклом.
 func TestRunStartGoalBusyLock(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "")
+	callsLog := filepath.Join(e.home, "goal-run.calls")
+	writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(callsLog))
+	goalLock(t, e.proj, "XR-100", os.Getpid(), goalTurnSID)
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "замок") {
+		t.Fatalf("занятый замок: %d %s, ожидал 409 со словами про замок", resp.StatusCode, text)
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session -d -s goal-XR-100") {
+		t.Errorf("поверх идущего цикла поднялась вторая сессия: %s", got)
+	}
+	if calls := readFile(t, callsLog); calls != "" {
+		t.Errorf("поверх идущего цикла позвана оболочка: %q", calls)
+	}
+}
+
+// Код 3 у оболочки это тот же конфликт, сказанный её словами: замок цикла мог
+// взяться между проверкой и подъёмом headless-ступени.
+func TestRunStartGoalShellBusyLock(t *testing.T) {
 	e, c, _ := runsEnv(t, "")
 	writeGoalRunFake(t, filepath.Dir(e.proj), `import sys
 sys.stderr.write("цикл цели XR-100 уже идёт, замок .devkit/goal-XR-100.lock\n")
 sys.exit(3)
 `)
+	dropGoalClient(t, e)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
 	text := body(t, resp)
 	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "замок") {
@@ -711,14 +796,18 @@ sys.exit(3)
 	}
 }
 
-// Оболочки нет ни в одном корне, и это названная ошибка, а не молчание: без
-// чекаута devkit цикл цели поднимать нечем.
+// Провалились обе ступени, и в ответе стоят обе причины: пропавшая оболочка
+// тут только половина ответа, а первой отказала ступень чата.
 func TestRunStartGoalRunMissing(t *testing.T) {
 	e, c, _ := runsEnv(t, "")
+	dropGoalClient(t, e)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
 	text := body(t, resp)
 	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(text, "goal-run.py не нашёлся") {
 		t.Fatalf("без goal-run: %d %s, ожидал 502 с именем пропажи", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "claude не нашёлся") {
+		t.Errorf("ответ не назвал причину ступени чата: %s", text)
 	}
 }
 
@@ -1485,31 +1574,50 @@ func TestRunStartTierFromVerdict(t *testing.T) {
 	})
 }
 
-// Ярус витков доезжает до оболочки цели её же флагом: разворачивать его моделью
-// будет она сама, раскладкой машины. Прежде ярус туда не ехал вовсе, и витки
-// шли дефолтом клиента.
+// Ярус доезжает до носителя обеими ступенями. На ступени чата он разворачивается
+// моделью прямо тут, флагом клиента, а на headless-ступени едет оболочке флагом
+// --tier: разворачивать его будет она сама, раскладкой машины. Прежде ярус не
+// ехал никуда вовсе, и витки шли дефолтом клиента.
 func TestRunStartGoalCarriesTier(t *testing.T) {
-	e, c, _ := runsEnv(t, "")
-	calls := filepath.Join(e.home, "goal-run.calls")
-	writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(calls))
+	t.Run("ступень чата", func(t *testing.T) {
+		e, c, tmuxLog := runsEnv(t, "")
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("запуск цели: %d %s", resp.StatusCode, text)
+		}
+		if !strings.Contains(text, `"tier":"pro"`) || !strings.Contains(text, `"model":"модель-pro"`) {
+			t.Errorf("ответ не назвал ярус и его модель: %s", text)
+		}
+		if got := readFile(t, tmuxLog); !strings.Contains(got, "--model 'модель-pro'") {
+			t.Errorf("модель яруса не доехала до сессии цели: %q", got)
+		}
+	})
 
-	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
-	if text := body(t, resp); resp.StatusCode != http.StatusOK {
-		t.Fatalf("запуск цели: %d %s", resp.StatusCode, text)
-	}
-	if got := readFile(t, calls); !strings.Contains(got, "--tier pro") {
-		t.Errorf("ярус по умолчанию не доехал до оболочки цели: %q", got)
-	}
+	t.Run("headless-ступень", func(t *testing.T) {
+		e, c, _ := runsEnv(t, "")
+		calls := filepath.Join(e.home, "goal-run.calls")
+		writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(calls))
+		dropGoalClient(t, e)
 
-	// Выбор человека едет тем же флагом.
-	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
-		`{"id": "XR-100", "tier": "base"}`)
-	if text := body(t, resp); resp.StatusCode != http.StatusOK {
-		t.Fatalf("запуск цели выбранным ярусом: %d %s", resp.StatusCode, text)
-	}
-	if got := readFile(t, calls); !strings.Contains(got, "--tier base") {
-		t.Errorf("выбранный ярус не доехал до оболочки цели: %q", got)
-	}
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
+		if text := body(t, resp); resp.StatusCode != http.StatusOK {
+			t.Fatalf("запуск цели: %d %s", resp.StatusCode, text)
+		}
+		if got := readFile(t, calls); !strings.Contains(got, "--tier pro") {
+			t.Errorf("ярус по умолчанию не доехал до оболочки цели: %q", got)
+		}
+
+		// Выбор человека едет тем же флагом.
+		resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+			`{"id": "XR-100", "tier": "base"}`)
+		if text := body(t, resp); resp.StatusCode != http.StatusOK {
+			t.Fatalf("запуск цели выбранным ярусом: %d %s", resp.StatusCode, text)
+		}
+		if got := readFile(t, calls); !strings.Contains(got, "--tier base") {
+			t.Errorf("выбранный ярус не доехал до оболочки цели: %q", got)
+		}
+	})
 }
 
 // Отказ dep list не роняет экран закрытой задачи (ревью DK-850): taskctl

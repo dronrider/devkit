@@ -218,20 +218,26 @@ func TestSessionMessageRepeatKeepsOneLine(t *testing.T) {
 	}
 }
 
-// Сессия задачи-цели отправляется к ручке цели: у цели свой носитель,
-// «Входящие» её файла, и второй вход рядом расколол бы разговор надвое.
-func TestSessionMessageRefusesGoalSession(t *testing.T) {
+// Сессия цели принимает реплику наравне с сессией задачи (DK-1009). Прежде
+// ручка отвечала отказом и звала ручку цели, а человек писал в чат цели и не
+// получал ответа: собеседника за дверью не было. Ручка цели осталась за одной
+// дорогой, за идущей headless-оболочкой goal-run.
+func TestSessionMessageTakesGoalSession(t *testing.T) {
 	e, c := chatEnv(t)
-	sideTree(t, e.proj, "xr-100")
+	tree := sideTree(t, e.proj, "xr-100")
 	writeSession(t, e.home, e.proj, "-xr-100", "cccc-3333", plainTalk, time.Now())
 
 	resp := postSessionMessage(t, c, e, "cccc-3333", "привет")
 	text := body(t, resp)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("ожидался отказ цели: %d %s", resp.StatusCode, text)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика сессии цели: %d %s", resp.StatusCode, text)
 	}
-	if !strings.Contains(text, "ручкой") || !strings.Contains(text, "XR-100") {
-		t.Errorf("отказ не называет ручку цели: %s", text)
+	if strings.Contains(text, "переписка с целью идёт её ручкой") {
+		t.Errorf("отказ цели вернулся в ручку сессии: %s", text)
+	}
+	src := readFile(t, filepath.Join(tree, ".devkit", "chat", "task-XR-100.in"))
+	if !strings.Contains(src, "привет") {
+		t.Errorf("реплика не легла во вход разговора цели:\n%s", src)
 	}
 }
 
@@ -448,23 +454,38 @@ func TestTaskMessageRepeatKeepsOneLine(t *testing.T) {
 	}
 }
 
-// Строка цели и строка, которой на доске нет, отказываются словами: у цели свой
-// носитель, а ответ несуществующей задаче лёг бы во вход, который никто не
-// читает.
+// Строка, которой на доске нет, отказывается словами: ответ несуществующей
+// задаче лёг бы во вход, который никто не читает. Строка цели тут больше не
+// отказ (DK-1009), её ведёт отдельная проверка ниже.
 func TestTaskMessageRefusals(t *testing.T) {
 	e, c := parkedEnv(t)
-	resp := postTaskMessage(t, c, e, "XR-100", "привет")
-	text := body(t, resp)
-	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "ручкой") {
-		t.Errorf("цель: %d %s", resp.StatusCode, text)
-	}
-	resp = postTaskMessage(t, c, e, "XR-999", "привет")
+	resp := postTaskMessage(t, c, e, "XR-999", "привет")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("строки нет на доске: %d %s", resp.StatusCode, body(t, resp))
 	}
 	resp = postTaskMessage(t, c, e, "XR-7", "   ")
 	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body(t, resp), "пустое сообщение") {
 		t.Errorf("пустой текст: %d", resp.StatusCode)
+	}
+}
+
+// Реплика строке цели ложится во вход task-<ID> основного чекаута, как реплика
+// задаче (DK-1009). Прежде ручка отказывала со словами про ручку цели, и дверь
+// чата цели вела к служебному щитку вместо собеседника.
+func TestTaskMessageTakesGoalRow(t *testing.T) {
+	e, c := parkedEnv(t)
+
+	resp := postTaskMessage(t, c, e, "XR-100", "продолжай цель")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика цели: %d %s", resp.StatusCode, text)
+	}
+	if strings.Contains(text, "переписка с целью идёт её ручкой") {
+		t.Errorf("отказ цели вернулся в ручку задачи: %s", text)
+	}
+	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-100.in"))
+	if !strings.Contains(src, "продолжай цель") {
+		t.Errorf("реплика цели не легла во вход task-XR-100:\n%s", src)
 	}
 }
 

@@ -31,14 +31,14 @@ func TestSplitJoinTitle(t *testing.T) {
 			[]string{"XR-001"}, " [взвод]", " [приёмка: user]", " [провал: 500]", " [блок: ждём]"},
 	}
 	for _, c := range cases {
-		base, deps, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(c.title)
+		base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(c.title)
 		if base != c.base || strings.Join(deps, ",") != strings.Join(c.deps, ",") ||
 			armSuf != c.armSuf || acceptSuf != c.acceptSuf || failSuf != c.failSuf || blockSuf != c.blockSuf {
 			t.Fatalf("splitTitle(%q) = %q, %v, %q, %q, %q, %q; ожидал %q, %v, %q, %q, %q, %q",
 				c.title, base, deps, armSuf, acceptSuf, failSuf, blockSuf,
 				c.base, c.deps, c.armSuf, c.acceptSuf, c.failSuf, c.blockSuf)
 		}
-		if got := joinTitle(base, deps, armSuf, acceptSuf, failSuf, blockSuf); got != c.title {
+		if got := joinTitle(base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf); got != c.title {
 			t.Fatalf("joinTitle не восстановил заголовок: %q, ожидал %q", got, c.title)
 		}
 	}
@@ -51,7 +51,7 @@ func TestSplitJoinTitle(t *testing.T) {
 // и close. Порядок остаётся неверным (это отдельная опечатка), но сама
 // зависимость обязана быть видна.
 func TestSplitTitleWrongOrderStillExposesDep(t *testing.T) {
-	_, deps, _, _, _, _ := splitTitle("Заголовок [блок: ждём] [после XR-001]")
+	_, deps, _, _, _, _, _ := splitTitle("Заголовок [блок: ждём] [после XR-001]")
 	if len(deps) != 1 || deps[0] != "XR-001" {
 		t.Fatalf("зависимость не видна при перепутанном порядке суффиксов: deps=%v", deps)
 	}

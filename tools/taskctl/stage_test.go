@@ -219,7 +219,7 @@ func TestUnparkEndsWaitStage(t *testing.T) {
 	if !found {
 		t.Fatalf("ожидание не легло строкой «Хода работы»:\n%s", data)
 	}
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

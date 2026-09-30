@@ -249,14 +249,14 @@ func TestDraftListAndShow(t *testing.T) {
 		!strings.Contains(out, "XR-009 (сегодня, средний): вторая идея") {
 		t.Fatalf("draft list:\n%s", out)
 	}
-	list, err := cmdList(root, "")
+	list, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(list, "Черновики (2, целиком: taskctl draft list): XR-008 (3 дня, средний), XR-009 (сегодня, средний)") {
 		t.Fatalf("list не называет черновики:\n%s", list)
 	}
-	if section, err := cmdList(root, "backlog"); err != nil {
+	if section, err := cmdList(root, "backlog", false); err != nil {
 		t.Fatal(err)
 	} else if strings.Contains(section, "Черновики") {
 		t.Fatalf("срез по секции черновики не печатает:\n%s", section)

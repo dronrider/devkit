@@ -33,7 +33,7 @@ func laggedWorktree(t *testing.T, lag int) (string, string, string) {
 func TestListWarnsWhenBoardBehind(t *testing.T) {
 	_, wt, _ := laggedWorktree(t, 2)
 
-	out, err := cmdList(wt, "")
+	out, err := cmdList(wt, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestListOnMainBehindOriginSuggestsPull(t *testing.T) {
 	gitOut(t, other, "push", "-q", "origin", "main")
 	gitOut(t, root, "fetch", "-q", "origin")
 
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestListSilentOnTaskBranch(t *testing.T) {
 	wt := filepath.Join(t.TempDir(), "task")
 	gitOut(t, root, "worktree", "add", "-q", "-b", "dk-100", wt, "HEAD~2")
 
-	out, err := cmdList(wt, "")
+	out, err := cmdList(wt, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestListSilentOnTaskBranch(t *testing.T) {
 func TestListCleanTreeHasNoNote(t *testing.T) {
 	_, wt, _ := laggedWorktree(t, 0)
 
-	out, err := cmdList(wt, "")
+	out, err := cmdList(wt, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestListCleanTreeHasNoNote(t *testing.T) {
 		t.Fatalf("свежее дерево получило предупреждение:\n%s", out)
 	}
 	plain := setup(t)
-	out, err = cmdList(plain, "")
+	out, err = cmdList(plain, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestStaleNoteFallsBackToMain(t *testing.T) {
 	gitOut(t, root, "commit", "-q", "--allow-empty", "-m", "движение без remote")
 	gitOut(t, root, "commit", "-q", "--allow-empty", "-m", "ещё одно")
 
-	out, err := cmdList(wt, "")
+	out, err := cmdList(wt, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

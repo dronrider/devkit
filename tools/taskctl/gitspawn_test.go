@@ -125,7 +125,7 @@ func TestListJSONHoldsGitSpawns(t *testing.T) {
 	root := spawnRepo(t, 8)
 	calls := countGit(t)
 
-	if _, err := cmdListJSON(root, ""); err != nil {
+	if _, err := cmdListJSON(root, "", false); err != nil {
 		t.Fatalf("обход доски: %v", err)
 	}
 	got := calls()
@@ -146,11 +146,11 @@ func TestListJSONSpawnsDoNotGrowWithRows(t *testing.T) {
 	big := spawnRepo(t, 12)
 	calls := countGit(t)
 
-	if _, err := cmdListJSON(small, ""); err != nil {
+	if _, err := cmdListJSON(small, "", false); err != nil {
 		t.Fatalf("обход малой доски: %v", err)
 	}
 	after := len(calls())
-	if _, err := cmdListJSON(big, ""); err != nil {
+	if _, err := cmdListJSON(big, "", false); err != nil {
 		t.Fatalf("обход большой доски: %v", err)
 	}
 	grew := len(calls()) - after

@@ -35,8 +35,8 @@ func ensureTaskFile(root, id string, row *Row) (bool, error) {
 	} else if !os.IsNotExist(err) {
 		return false, err
 	}
-	base, deps, _, _, _, _ := splitTitle(row.Title)
-	title := joinTitle(base, deps, "", "", "", "")
+	base, deps, _, _, _, _, _ := splitTitle(row.Title)
+	title := joinTitle(base, deps, "", "", "", "", "")
 	body := fmt.Sprintf("# %s: %s\n", id, title)
 	if needsDoD(row.Type, row.Title) {
 		body += taskFormSkeleton()
@@ -58,7 +58,7 @@ const dodHeading = "## DoD"
 // признак цели в доске один, и DoD такой строке не положен, он живёт в разделе
 // «Цель» файла цели.
 func goalRow(title string) bool {
-	base, _, _, _, _, _ := splitTitle(title)
+	base, _, _, _, _, _, _ := splitTitle(title)
 	return strings.HasPrefix(base, "Цель:")
 }
 
@@ -175,8 +175,11 @@ func cmdFile(root, id string, c CommitOpts) (string, error) {
 }
 
 // cmdList печатает доску по секциям без прозы; без аргумента Backlog обрезан
-// до listBacklogTop строк, с аргументом секция выводится целиком.
-func cmdList(root, sect string) (string, error) {
+// до listBacklogTop строк, с аргументом секция выводится целиком. debtOnly
+// оставляет только строки с меткой технического долга и снимает обрезку
+// Backlog: запас долга спрашивают целиком, и в него укладываются десятки
+// строк, а не сотни.
+func cmdList(root, sect string, debtOnly bool) (string, error) {
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return "", err
@@ -198,8 +201,18 @@ func cmdList(root, sect string) (string, error) {
 	}
 	section := func(key string, limit int) {
 		sec := b.Sects[key]
-		head := fmt.Sprintf("%s (%d)", sectTitles[key], len(sec.Rows))
 		rows := sec.Rows
+		if debtOnly {
+			var kept []*Row
+			for _, r := range rows {
+				if isDebt(r.Title) {
+					kept = append(kept, r)
+				}
+			}
+			rows = kept
+			limit = 0
+		}
+		head := fmt.Sprintf("%s (%d)", sectTitles[key], len(rows))
 		if limit > 0 && len(rows) > limit {
 			head = fmt.Sprintf("%s (%d, первые %d; целиком: taskctl list %s)",
 				sectTitles[key], len(rows), limit, key)

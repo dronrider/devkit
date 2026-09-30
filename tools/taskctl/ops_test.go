@@ -757,7 +757,7 @@ func TestFileCreatesAndRelinks(t *testing.T) {
 
 func TestList(t *testing.T) {
 	root := setup(t)
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -773,7 +773,7 @@ func TestList(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out, err = cmdList(root, "")
+	out, err = cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -784,7 +784,7 @@ func TestList(t *testing.T) {
 	if got := strings.Count(out, "\n| XR-"); got != 11 {
 		t.Fatalf("строк задач в кратком виде: %d, ожидал 11:\n%s", got, out)
 	}
-	out, err = cmdList(root, "Backlog")
+	out, err = cmdList(root, "Backlog", false)
 	if err != nil {
 		t.Fatal(err)
 	}

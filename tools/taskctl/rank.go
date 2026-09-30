@@ -208,7 +208,7 @@ func boardEdges(root string, b *Board) (holds, order map[string][]string) {
 		m[from] = append(m[from], to)
 	}
 	for _, r := range b.Rows {
-		_, deps, _, _, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _, _, _ := splitTitle(r.Title)
 		for _, d := range deps {
 			add(holds, d, r.ID)
 			add(order, d, r.ID)

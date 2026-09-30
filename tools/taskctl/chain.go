@@ -85,7 +85,7 @@ func cmdChain(root string, p ChainParams) (string, error) {
 			if err := needTaskFile(root, id); err != nil {
 				return "", err
 			}
-			base, deps, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
+			base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 			for _, dep := range prev {
 				if dep == id {
 					return "", fmt.Errorf("%s не может зависеть сам от себя", id)
@@ -104,9 +104,9 @@ func cmdChain(root string, p ChainParams) (string, error) {
 				}
 				armSuf = armSuffix
 			}
-			row.Title = joinTitle(base, deps, armSuf, acceptSuf, failSuf, blockSuf)
+			row.Title = joinTitle(base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf)
 			b.updateLine(row.LineIdx, formatRow(row))
-			plan = append(plan, fmt.Sprintf("уровень %d: %s%s", levelNo, id, joinTitle("", deps, armSuf, "", "", "")))
+			plan = append(plan, fmt.Sprintf("уровень %d: %s%s", levelNo, id, joinTitle("", deps, "", armSuf, "", "", "")))
 		}
 		prev = level
 	}

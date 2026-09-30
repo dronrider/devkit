@@ -406,7 +406,7 @@ func TestListShowsReviewMark(t *testing.T) {
 	root, home := pollEnv(t)
 	stubPoll(t, mrOpen, threadAnswered)
 	poll(t, root, home, time.Now())
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

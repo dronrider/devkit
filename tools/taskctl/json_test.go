@@ -22,7 +22,7 @@ func decodeBoard(t *testing.T, s string) jsonBoard {
 
 func TestListJSONWholeBoard(t *testing.T) {
 	root := setup(t)
-	out, err := cmdListJSON(root, "")
+	out, err := cmdListJSON(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestListJSONBacklogNotTruncated(t *testing.T) {
 	if err := b.Save(); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdListJSON(root, "")
+	out, err := cmdListJSON(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestListJSONBacklogNotTruncated(t *testing.T) {
 	if n := len(got.Sections[2].Rows); n != 16 {
 		t.Fatalf("в Backlog %d строк, ожидал все 16", n)
 	}
-	plain, err := cmdList(root, "")
+	plain, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestListJSONBacklogNotTruncated(t *testing.T) {
 
 func TestListJSONSection(t *testing.T) {
 	root := setup(t)
-	out, err := cmdListJSON(root, "In progress")
+	out, err := cmdListJSON(root, "In progress", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestListJSONSection(t *testing.T) {
 	if len(b.Sections) != 1 || b.Sections[0].Key != SectInProgress {
 		t.Fatalf("ожидал одну секцию in-progress, получил %+v", b.Sections)
 	}
-	if _, err := cmdListJSON(root, "космос"); err == nil {
+	if _, err := cmdListJSON(root, "космос", false); err == nil {
 		t.Fatal("неизвестная секция должна давать ошибку")
 	}
 }
@@ -116,7 +116,7 @@ func TestListJSONTitleSuffixes(t *testing.T) {
 	if err := b.Save(); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdListJSON(root, "backlog")
+	out, err := cmdListJSON(root, "backlog", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestListJSONMovedDate(t *testing.T) {
 	gitOut(t, root, "add", ".")
 	gitCommitDated(t, root, at, "init")
 
-	out, err := cmdListJSON(root, "")
+	out, err := cmdListJSON(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestListJSONMovedDate(t *testing.T) {
 // места, там же молчит и возраст в notes.
 func TestListJSONMovedSilentWithoutGit(t *testing.T) {
 	root := setup(t)
-	out, err := cmdListJSON(root, "")
+	out, err := cmdListJSON(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

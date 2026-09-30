@@ -40,7 +40,7 @@ const armDefaultLimit = 3
 
 // armed говорит, взведена ли строка.
 func armed(title string) bool {
-	_, _, armSuf, _, _, _ := splitTitle(title)
+	_, _, _, armSuf, _, _, _ := splitTitle(title)
 	return armSuf != ""
 }
 
@@ -289,7 +289,7 @@ func armState(root string, ed *edges, r *Row) *armView {
 	if r.Sect != SectBacklog {
 		return nil
 	}
-	_, deps, armSuf, _, _, _ := splitTitle(r.Title)
+	_, deps, _, armSuf, _, _, _ := splitTitle(r.Title)
 	if armSuf == "" {
 		if len(deps) == 0 || len(ed.held(r)) > 0 {
 			return nil
@@ -328,7 +328,7 @@ func cmdArm(root, id string, off bool, c CommitOpts) (string, error) {
 	if err := needTaskFile(root, id); err != nil {
 		return "", err
 	}
-	base, deps, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
+	base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 	if off {
 		if armSuf == "" {
 			return "", fmt.Errorf("%s и так без взвода", id)
@@ -343,7 +343,7 @@ func cmdArm(root, id string, off bool, c CommitOpts) (string, error) {
 		}
 		armSuf = armSuffix
 	}
-	row.Title = joinTitle(base, deps, armSuf, acceptSuf, failSuf, blockSuf)
+	row.Title = joinTitle(base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf)
 	b.updateLine(row.LineIdx, formatRow(row))
 	if err := b.Save(); err != nil {
 		return "", err

@@ -146,7 +146,7 @@ func parkedWaiters(root string, b *Board, arch *Archive) ([]waiter, []string) {
 		if r.Sect != SectBlocked {
 			continue
 		}
-		_, _, _, _, _, blockSuf := splitTitle(r.Title)
+		_, _, _, _, _, _, blockSuf := splitTitle(r.Title)
 		c, ok, err := parseWaitCond(blockReason(blockSuf))
 		if !ok {
 			continue
@@ -321,7 +321,7 @@ func namedWaiter(b *Board, id string) waiter {
 		w.Class, w.Said = classArm, "подъём по названному ID"
 		return w
 	}
-	_, _, _, _, _, blockSuf := splitTitle(row.Title)
+	_, _, _, _, _, _, blockSuf := splitTitle(row.Title)
 	reason := blockReason(blockSuf)
 	if c, ok, err := parseWaitCond(reason); ok && err == nil {
 		w.Class, w.Dep = c.Class, c.Dep

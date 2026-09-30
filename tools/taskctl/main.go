@@ -15,7 +15,8 @@ import (
 const usageText = `taskctl: механика канбан-доски docs/TASKS.md
 
 Смотреть доску:
-  list [backlog|in-progress|check|blocked]    доска по секциям без прозы; без
+  list [backlog|in-progress|check|blocked] [--debt]
+                                              доска по секциям без прозы; без
                                               аргумента Backlog обрезан до 10 строк.
                                               Под строкой Check пометка «держит
                                               очередь или нет, сценарий агентский
@@ -121,7 +122,7 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               паркует запись накопителя
   add --title "..." --type bug|task|LLD --rank "а+б+в+г+д" --accept agent|mixed|user
       [--cost S|M|L|XL] [--link "..."] [--status ...] [--id XR-NNN] [--reason "..."]
-      [--barrier глаза|доступ|необратимость|секрет|согласие|событие]
+      [--barrier глаза|доступ|необратимость|секрет|согласие|событие] [--debt]
                                               завести задачу (по умолчанию в Backlog;
                                               без --link и файла в ячейке будет «-»)
   move <ID> <статус> [--reason "..."]         перевести между статусами
@@ -207,6 +208,11 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   dep add <ID> <DEP-ID>                       ID делается после DEP-ID
   dep rm <ID> <DEP-ID>                        снять зависимость
   dep list [ID]                               кто после кого; без ID вся доска
+  debt <ID> [--off]                           метка технического долга: строку
+                                              берёт не очередь по рангу, а скилл
+                                              board-debt при сдаче соседней
+                                              задачи с тем же диффом, --off
+                                              снимает метку
   arm <ID> [--off]                            взвод строки Backlog: со снятыми
                                               рёбрами она стартует сама ближайшим
                                               обходом ждущих, --off снимает взвод
@@ -362,6 +368,7 @@ func addFlags(fs *flag.FlagSet, p *AddParams) {
 	fs.StringVar(&p.Status, "status", "backlog", "секция доски")
 	fs.StringVar(&p.Accept, "accept", "", "вид приёмки: agent / mixed / user (обязателен)")
 	fs.StringVar(&p.Barrier, "barrier", "", "ключ барьера из шести, обязателен для mixed и user")
+	fs.BoolVar(&p.Debt, "debt", false, "метка технического долга: строку берёт скилл board-debt при сдаче соседней задачи")
 	commitFlags(fs, &p.Commit)
 }
 
@@ -666,6 +673,15 @@ func main() {
 		needArgs(pos, 1, 1, "fail <ID> --reason \"...\" [--class ...] либо fail <ID> --clear")
 		p.ID = pos[0]
 		msg, err = cmdFail(root(*dir), p)
+	case "debt":
+		fs := flag.NewFlagSet("debt", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		var p DebtParams
+		fs.BoolVar(&p.Off, "off", false, "снять метку долга")
+		commitFlags(fs, &p.Commit)
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "debt <ID> [--off] [-m ... --push]")
+		msg, err = cmdDebt(root(*dir), pos[0], p)
 	case "arm":
 		fs := flag.NewFlagSet("arm", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
@@ -722,16 +738,17 @@ func main() {
 		fs := flag.NewFlagSet("list", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		jsonOut := fs.Bool("json", false, "машинный вывод JSON, Backlog целиком")
+		debtOnly := fs.Bool("debt", false, "только строки с меткой технического долга, Backlog целиком")
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 0, 1, "list [backlog|in-progress|check|blocked] [--json]")
+		needArgs(pos, 0, 1, "list [backlog|in-progress|check|blocked] [--debt] [--json]")
 		sect := ""
 		if len(pos) == 1 {
 			sect = pos[0]
 		}
 		if *jsonOut {
-			msg, err = cmdListJSON(root(*dir), sect)
+			msg, err = cmdListJSON(root(*dir), sect, *debtOnly)
 		} else {
-			msg, err = cmdList(root(*dir), sect)
+			msg, err = cmdList(root(*dir), sect, *debtOnly)
 		}
 	case "show":
 		fs := flag.NewFlagSet("show", flag.ExitOnError)

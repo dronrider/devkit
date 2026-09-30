@@ -24,6 +24,9 @@ type jsonRow struct {
 	// снимает только close, а ребро снимается уже слиянием предпосылки, и
 	// держит строку на экране это поле, а не after.
 	HeldBy []string `json:"held_by,omitempty"`
+	// Debt это метка технического долга (DK-624): строку берёт не очередь, а
+	// скилл board-debt при сдаче соседней задачи с тем же диффом.
+	Debt bool `json:"debt,omitempty"`
 	// Armed это взвод строки (решение 1 LLD DK-933): человек разрешил ей
 	// стартовать самой, как только рёбра сняты.
 	Armed bool `json:"armed,omitempty"`
@@ -105,12 +108,13 @@ func sufText(suf, label string) string {
 }
 
 func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, clean bool, sv *stageView) jsonRow {
-	base, deps, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
+	base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
 	return jsonRow{
 		ID:     r.ID,
 		Title:  strings.TrimSpace(base),
 		After:  deps,
 		HeldBy: ed.heldIDs(r),
+		Debt:   debtSuf != "",
 		Armed:  armSuf != "",
 		Arm:    jsonArmOf(root, ed, r),
 		Accept: sufText(acceptSuf, "приёмка"),
@@ -139,7 +143,9 @@ func marshal(v any) (string, error) {
 // cmdListJSON печатает доску одним объектом JSON. Backlog идёт целиком, без
 // обрезки печатного list: та экономит контекст агента, а машинному читателю
 // нужна вся доска.
-func cmdListJSON(root, sect string) (string, error) {
+// debtOnly оставляет в выводе только строки с меткой технического долга: так
+// скилл board-debt читает запас, не разбирая заголовки глазами.
+func cmdListJSON(root, sect string, debtOnly bool) (string, error) {
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return "", err
@@ -167,6 +173,9 @@ func cmdListJSON(root, sect string) (string, error) {
 	for _, key := range keys {
 		sec := jsonSection{Key: key, Title: sectTitles[key], Rows: []jsonRow{}}
 		for _, r := range b.Sects[key].Rows {
+			if debtOnly && !isDebt(r.Title) {
+				continue
+			}
 			sec.Rows = append(sec.Rows, makeJSONRow(root, r, ed, times, clean, sv))
 		}
 		out.Sections = append(out.Sections, sec)

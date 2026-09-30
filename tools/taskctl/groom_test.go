@@ -167,7 +167,7 @@ func TestDraftListShowsDeferMark(t *testing.T) {
 		t.Fatalf("неотложенный черновик печатается иначе, чем раньше:\n%s", out)
 	}
 
-	list, err := cmdList(root, "")
+	list, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestDraftPrioSortsList(t *testing.T) {
 		t.Fatalf("печать без русского слова уровня:\n%s", out)
 	}
 
-	list, err := cmdList(root, "")
+	list, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

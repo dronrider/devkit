@@ -304,7 +304,7 @@ func TestListTellsArmedFromIdle(t *testing.T) {
 	if _, err := cmdArm(root, "XR-003", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdList(root, SectBacklog)
+	out, err := cmdList(root, SectBacklog, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestListTellsArmedFromIdle(t *testing.T) {
 		t.Fatalf("list не назвал, чего ждёт взведённая:\n%s", out)
 	}
 	mergeWork(t, root, "XR-005")
-	out, err = cmdList(root, SectBacklog)
+	out, err = cmdList(root, SectBacklog, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ func TestArmCapacityRefusalCallsOnce(t *testing.T) {
 	if !ok || ref.Why != "нет квоты на пачку" {
 		t.Fatalf("файла отказа нет или он не о том: %+v %v", ref, ok)
 	}
-	list, err := cmdList(root, SectBacklog)
+	list, err := cmdList(root, SectBacklog, false)
 	if err != nil {
 		t.Fatal(err)
 	}

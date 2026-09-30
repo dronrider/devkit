@@ -90,7 +90,7 @@ func TestListAnnotatesCheckRows(t *testing.T) {
 	defer func() { timeNow = old }()
 	timeNow = func() time.Time { return time.Date(2026, 1, 11, 13, 0, 0, 0, time.UTC) } // +10 дней
 
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestListNoAnnotationsWhenDirty(t *testing.T) {
 	if err := os.WriteFile(boardPath(root), append(board, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

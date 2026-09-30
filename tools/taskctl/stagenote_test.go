@@ -82,7 +82,7 @@ func stageBoard(t *testing.T) (root, home string) {
 
 func TestListPrintsStageLineInEverySection(t *testing.T) {
 	root, _ := stageBoard(t)
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestListJSONCarriesStageFields(t *testing.T) {
 	if err := os.WriteFile(archivePath(root), []byte(fixtureArchive), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdListJSON(root, "")
+	out, err := cmdListJSON(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestListJSONStageAtMarksParkedWork(t *testing.T) {
 	openAs(t, home, main, "XR-020", stage.Verify, "", stageNow.Add(-time.Hour))
 	openAs(t, home, main, "XR-020", stage.WaitHuman, "", stageNow.Add(-30*time.Minute))
 
-	out, err := cmdListJSON(root, "")
+	out, err := cmdListJSON(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestStageSessionsFromRegistry(t *testing.T) {
 	if err := os.WriteFile(sessions.Path(home), []byte(lines), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestStageSessionsFromRegistry(t *testing.T) {
 func TestStageLineSilentWithoutRecords(t *testing.T) {
 	root := checkBoardSetup(t)
 	t.Setenv("HOME", t.TempDir())
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestWaitStagesHaveNoSessionTail(t *testing.T) {
 	if err := os.WriteFile(stage.Path(home, main, "XR-010"), []byte(legacy), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestClosedWaitUncoversWorkInList(t *testing.T) {
 	main := stage.MainRoot(root)
 	openAs(t, home, main, "XR-020", stage.WaitEvent, "s-live", stageNow.Add(-6*time.Minute))
 
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +369,7 @@ func TestClosedWaitUncoversWorkInList(t *testing.T) {
 	if err != nil || !closed {
 		t.Fatalf("ожидание не закрылось: %v, %v", closed, err)
 	}
-	out, err = cmdList(root, "")
+	out, err = cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +408,7 @@ func TestListPrintsLastClosedStage(t *testing.T) {
 	closeAs(t, home, main, "XR-020", stage.Review, stageNow.Add(-4*time.Minute))
 	closeAs(t, home, main, "XR-020", stage.Dev, stageNow.Add(-2*time.Minute))
 
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +471,7 @@ func listJSONRows(t *testing.T, root string) map[string]map[string]any {
 	if err := os.WriteFile(archivePath(root), []byte(fixtureArchive), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdListJSON(root, "")
+	out, err := cmdListJSON(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +513,7 @@ func TestListReadsLastStageFromProgressSection(t *testing.T) {
 	if err := os.Remove(stage.Path(stage.Home(), stage.MainRoot(root), "XR-010")); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdList(root, "")
+	out, err := cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +539,7 @@ func TestListReadsLastStageFromProgressSection(t *testing.T) {
 	if err := os.Remove(stage.Path(stage.Home(), stage.MainRoot(root), "XR-011")); err != nil {
 		t.Fatal(err)
 	}
-	out, err = cmdList(root, "")
+	out, err = cmdList(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

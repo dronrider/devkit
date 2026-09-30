@@ -442,7 +442,7 @@ func TestJSONAcceptField(t *testing.T) {
 	if err := b.Save(); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdListJSON(root, "backlog")
+	out, err := cmdListJSON(root, "backlog", false)
 	if err != nil {
 		t.Fatal(err)
 	}

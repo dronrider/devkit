@@ -158,7 +158,7 @@ func TestEdgeStartedRow(t *testing.T) {
 
 func rowJSON(t *testing.T, root, id string) jsonRow {
 	t.Helper()
-	out, err := cmdListJSON(root, "")
+	out, err := cmdListJSON(root, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

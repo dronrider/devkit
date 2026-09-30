@@ -269,7 +269,7 @@ func TestJSONCarriesAdjustments(t *testing.T) {
 	if _, err := cmdSet(root, SetParams{ID: "XR-004", Cost: "S"}); err != nil {
 		t.Fatal(err)
 	}
-	out, err := cmdListJSON(root, "backlog")
+	out, err := cmdListJSON(root, "backlog", false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dronrider/devkit/internal/taskhead"
 )
@@ -332,6 +333,40 @@ func TestRunStartGoalChatRung(t *testing.T) {
 	}
 	if calls := readFile(t, callsLog); calls != "" {
 		t.Errorf("ступень чата сработала, а goal-run всё равно позван: %q", calls)
+	}
+}
+
+// Ступень живого окна: сессия goal-<ID> стоит на стоп-маркере или на вопросе
+// человеку, и кнопка продолжает её репликой. Снятие остатка тут потеряло бы
+// весь контекст цикла и подняло бы на его месте пустую сессию (замечание
+// ревью DK-1009).
+func TestRunStartGoalLiveRung(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "goal-XR-100\t1\t1786000000\n")
+	callsLog := filepath.Join(e.home, "goal-run.calls")
+	writeGoalRunFake(t, filepath.Dir(e.proj), goalRunOKBody(callsLog))
+	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "aaaa1111-1111-4111-8111-111111111111"
+	writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-time.Hour))
+	writePeerTmux(t, e.home, sid, "goal-XR-100:@1.%1", "idle")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("продолжение цели живым окном: %d %s", resp.StatusCode, text)
+	}
+	got := readFile(t, tmuxLog)
+	if strings.Contains(got, "kill-session") {
+		t.Errorf("живое окно цели снято вместо продолжения: %s", got)
+	}
+	if !strings.Contains(got, "send-keys -t =goal-XR-100: -l Продолжай цель XR-100.") {
+		t.Errorf("заказ в живое окно цели не подан: %s", got)
+	}
+	if strings.Contains(got, "new-session") {
+		t.Errorf("рядом с живым окном цели поднята вторая сессия: %s", got)
+	}
+	if calls := readFile(t, callsLog); calls != "" {
+		t.Errorf("при живом окне цели позвана оболочка goal-run: %q", calls)
 	}
 }
 

@@ -551,6 +551,26 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": runBusy(id, "tmux-сессия "+name)})
 			return
 		}
+		// Ступень живого окна у цели, как у задачи в taskhead (замечание ревью
+		// DK-1009). Сессия goal-<ID> это сам цикл, вставший на стоп-маркере или
+		// на вопросе человеку: снятие потеряло бы весь его контекст и подняло
+		// бы на том же месте пустую сессию. Заказ уходит клавишами в то же
+		// окно, и цикл идёт дальше с того, на чём стоял.
+		if kind == "goal" && name == sess {
+			if err := chatSend(name, goalContinuePrompt(id, "")); err != nil {
+				s.logf("ступень живого окна цели %s в %s не сработала, остаток снят: %v",
+					id, found.Name, err)
+				s.chatWatchOff(name)
+				runProc("tmux", "kill-session", "-t", name)
+				continue
+			}
+			s.logf("цель %s в %s продолжена репликой в живую tmux-сессию %s", id, found.Name, name)
+			writeJSON(w, http.StatusOK, map[string]string{
+				"id": id, "kind": kind, "session": name,
+				"message": fmt.Sprintf("цель %s продолжена репликой в tmux-сессию %s", id, name),
+			})
+			return
+		}
 		// Сессия без хода это досчитавший разговор (чаще всего груминг, который
 		// кончился строкой и остался стоять на приглашении). Работой строка его
 		// не считает, кнопку запуска показывает, и отказывать тут значило бы

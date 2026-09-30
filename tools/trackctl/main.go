@@ -16,10 +16,16 @@ const usageText = `trackctl: разговор с трекером задач к�
                                   свежесть последнего sync
   issue <KEY>                     тикет глазами адаптера: статус и секция
                                   доски, тип, заголовок, оценка
+  draft <KEY> --prio high|mid|low положить тикет на доску черновиком: заголовок
+                                  из summary, постановка тикета и ссылка на
+                                  него в тело, уровень разбора из ключа; тикет
+                                  не трогается вовсе, строку из черновика даёт
+                                  груминг
   take <KEY>                      взять тикет в работу: переход в целевой
                                   статус секции In progress, assign на
                                   пользователя контура и оценка из цены
-                                  зеркальной строки доски
+                                  зеркальной строки доски; без зеркальной
+                                  строки команда отказывает и зовёт draft
   submit <KEY> [--log-only]       сдать тикет: ворклоги по фактам работы и
                                   переход в целевой статус секции Check;
                                   --log-only пишет время и статус не трогает
@@ -149,6 +155,14 @@ func main() {
 		needArgs(pos, 1, 1, "issue <KEY>")
 		logStart = *dir
 		msg, err = cmdIssue(root(*dir), pos[0])
+	case "draft":
+		fs := flag.NewFlagSet("draft", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		prio := fs.String("prio", "", "уровень разбора high|mid|low, обязателен")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "draft <KEY> --prio high|mid|low")
+		logStart = *dir
+		msg, err = cmdDraft(root(*dir), pos[0], *prio)
 	case "take":
 		fs := flag.NewFlagSet("take", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

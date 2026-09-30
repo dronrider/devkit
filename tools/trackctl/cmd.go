@@ -110,6 +110,15 @@ func cmdTake(root, arg string) (string, error) {
 	if sect == sectDone {
 		return doneHint(t), nil
 	}
+	// Зеркальной строки нет, значит тикет идёт в код мимо груминга, pick и
+	// ворот доски, и раньше это была строка вывода, которую никто не читал
+	// (DK-1262). Отказ стоит до перехода: тикет, уехавший в In Progress без
+	// строки, чинится руками в трекере.
+	row := mirrorRow(root, tr.bind, t.Key)
+	if row == nil {
+		return "", fmt.Errorf("зеркальной строки тикета %s на доске нет: без неё нет ни ранга, ни цены, ни ворот доски, и работа пойдёт мимо груминга.\n"+
+			"  вход один на оба контура, тикет -> черновик -> груминг -> take: «trackctl draft %s --prio high|mid|low», дальше груминг (скилл board-groom)", t.Key, t.Key)
+	}
 	var lines []string
 	if sect == sectInProgress {
 		lines = append(lines, fmt.Sprintf("тикет %s уже в «%s», перехода не делаю", t.Key, t.Status))
@@ -127,7 +136,6 @@ func cmdTake(root, arg string) (string, error) {
 		return "", err
 	}
 	lines = append(lines, fmt.Sprintf("исполнитель: %s", tr.contour.User))
-	row := mirrorRow(root, tr.bind, t.Key)
 	est, err := pushEstimate(tr, t, row)
 	if err != nil {
 		return "", err
@@ -142,9 +150,10 @@ func cmdTake(root, arg string) (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
-// mirrorRow ищет зеркальную строку тикета на доске. Доски может не быть вовсе
-// (нечитаемая доска это не повод валить переход тикета), поэтому отказ чтения
-// здесь тихий: команда скажет про него строкой вывода.
+// mirrorRow ищет зеркальную строку тикета на доске. Нечитаемая доска отвечает
+// тем же, чем доска без строки: строки нет. Отказ чтения тут тихий, а сказать
+// про отсутствие строки словами дело вызывающего, у take это отказ команды, у
+// draft повод завести черновик.
 func mirrorRow(root string, b *binding, key string) *boardRow {
 	rows, err := loadBoardRows(root, b.Key)
 	if err != nil {
@@ -159,9 +168,6 @@ func mirrorRow(root string, b *binding, key string) *boardRow {
 // тикете, команда не трогает: её мог поправить человек, и затирать чужую цифру
 // автоматика права не имеет.
 func pushEstimate(tr *tracker, t ticket, row *boardRow) (string, error) {
-	if row == nil {
-		return fmt.Sprintf("оценка: зеркальной строки с ключом %s на доске нет, считать эстимейт не из чего", t.Key), nil
-	}
 	value := tr.contour.estimateFor(row.Cost)
 	if value == "" {
 		return fmt.Sprintf("оценка: цена строки %s это «%s», контур %s её в оценку не переводит", row.ID, orDash(row.Cost), tr.contour.Name), nil
@@ -187,7 +193,7 @@ func pushRank(tr *tracker, t ticket, row *boardRow) (string, error) {
 	if !ok {
 		return fmt.Sprintf("приоритет: контур назвал поле %s, а адаптер %s операции rank не умеет", tr.contour.RankField, tr.contour.Adapter), nil
 	}
-	if row == nil || row.Rank == 0 {
+	if row.Rank == 0 {
 		return fmt.Sprintf("приоритет: разбивки ранга на доске нет, поле %s не трогаю", tr.contour.RankField), nil
 	}
 	if err := r.rank(t.Key, tr.contour.RankField, row.Rank); err != nil {

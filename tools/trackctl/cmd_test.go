@@ -12,6 +12,7 @@ import (
 // процессе заметен сразу, поэтому одно без другого не считается.
 func TestTakeTransitionsAndAssigns(t *testing.T) {
 	root := setupEnv(t, contourFile, bindingFile)
+	writeBoard(t, root, boardRowText{sectBacklog, "XR-1", "20 (10+5+1+0+4)", "S", ticketLink("ABC-12")})
 	msg, err := cmdTake(root, "ABC-12")
 	if err != nil {
 		t.Fatal(err)
@@ -33,6 +34,7 @@ func TestTakeTransitionsAndAssigns(t *testing.T) {
 // привязки.
 func TestTakeExpandsBareNumber(t *testing.T) {
 	root := setupEnv(t, contourFile, bindingFile)
+	writeBoard(t, root, boardRowText{sectBacklog, "XR-1", "20 (10+5+1+0+4)", "S", ticketLink("ABC-12")})
 	if _, err := cmdTake(root, "12"); err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +48,7 @@ func TestTakeExpandsBareNumber(t *testing.T) {
 func TestTakeSendsNoFieldsWithoutSection(t *testing.T) {
 	text := strings.Replace(contourFile, "[fields_in_progress]\nassignee = \"{user}\"\nreason = \"плановая работа\"\n", "", 1)
 	root := setupEnv(t, text, bindingFile)
+	writeBoard(t, root, boardRowText{sectBacklog, "XR-1", "20 (10+5+1+0+4)", "S", ticketLink("ABC-12")})
 	if _, err := cmdTake(root, "ABC-12"); err != nil {
 		t.Fatal(err)
 	}
@@ -95,6 +98,7 @@ func TestTakeDoneHints(t *testing.T) {
 // через промежуточные статусы никто не ищет.
 func TestTakeRefusalListsAvailable(t *testing.T) {
 	root := setupEnv(t, contourFile, bindingFile)
+	writeBoard(t, root, boardRowText{sectBacklog, "XR-1", "20 (10+5+1+0+4)", "S", ticketLink("ABC-12")})
 	fakeState.available = []string{"Analysis", "Rejected"}
 	_, err := cmdTake(root, "ABC-12")
 	if err == nil || !strings.Contains(err.Error(), "Analysis, Rejected") {
@@ -111,6 +115,7 @@ func TestTakeRefusalListsAvailable(t *testing.T) {
 // Тикет уже в работе: перехода нет, а исполнитель проставляется всё равно.
 func TestTakeAlreadyInProgress(t *testing.T) {
 	root := setupEnv(t, contourFile, bindingFile)
+	writeBoard(t, root, boardRowText{sectBacklog, "XR-1", "20 (10+5+1+0+4)", "S", ticketLink("ABC-12")})
 	fakeState.ticket.Status = "Development"
 	msg, err := cmdTake(root, "ABC-12")
 	if err != nil {
@@ -192,11 +197,12 @@ func TestStatusFullAdapterAndSyncAge(t *testing.T) {
 	}
 }
 
-// Шаг делается по факту, а не по наличию операции: доски с зеркальной строкой
-// тут нет, и ни оценка, ни ворклоги, ни приоритет никуда не уезжают, каким бы
-// полным ни был адаптер.
+// Шаг делается по факту, а не по наличию операции: у зеркальной строки тут ни
+// цены, ни разбивки ранга, и ни оценка, ни ворклоги, ни приоритет никуда не
+// уезжают, каким бы полным ни был адаптер.
 func TestCommandsDoNotTouchOptional(t *testing.T) {
 	root := setupEnv(t, strings.Replace(contourFile, `adapter = "fake"`, `adapter = "fake-full"`, 1), bindingFile)
+	writeBoard(t, root, boardRowText{sectBacklog, "XR-1", "-", "-", ticketLink("ABC-12")})
 	if _, err := cmdTake(root, "ABC-12"); err != nil {
 		t.Fatal(err)
 	}

@@ -67,20 +67,22 @@ func TestTakeSaysWhyNoEstimate(t *testing.T) {
 	}
 }
 
-// Зеркальной строки на доске нет: считать эстимейт не из чего, и команда
-// говорит об этом вслух.
-func TestTakeWithoutMirrorRow(t *testing.T) {
+// Зеркальной строки на доске нет: тикет в работу не берётся вовсе. Отказ стоит
+// до перехода, иначе тикет уехал бы в In Progress без ранга, цены и ворот
+// доски, а работа пошла бы мимо груминга (DK-1262). Отказ называет команду
+// заведения черновика.
+func TestTakeWithoutMirrorRowRefuses(t *testing.T) {
 	root := setupEnv(t, contourFile, bindingFile)
 	fakeState.ticket.Estimate = ""
-	msg, err := cmdTake(root, "ABC-12")
-	if err != nil {
-		t.Fatal(err)
+	_, err := cmdTake(root, "ABC-12")
+	if err == nil {
+		t.Fatal("тикет без зеркальной строки ушёл в работу")
 	}
-	if hasCall(fakeState, "estimate") {
-		t.Fatalf("оценка уехала без строки доски: %v", fakeState.calls)
+	if !strings.Contains(err.Error(), "trackctl draft ABC-12") {
+		t.Fatalf("отказ не назвал команду заведения черновика: %v", err)
 	}
-	if !strings.Contains(msg, "зеркальной строки") {
-		t.Fatalf("вывод не объяснил отсутствие оценки:\n%s", msg)
+	if hasCall(fakeState, "transition") || hasCall(fakeState, "assign") {
+		t.Fatalf("тикет тронут до отказа: %v", fakeState.calls)
 	}
 }
 

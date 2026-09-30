@@ -30,7 +30,9 @@ git -C "$tree" diff --quiet "$seed" ob-010 -- docs/notes.md &&
 	{ echo "в дереве задачи docs/notes.md не менялся"; exit 1; }
 [ "$(git -C "$OBEY_PROJECT" rev-parse HEAD)" = "$seed" ] ||
 	{ echo "коммит уехал в основной чекаут"; exit 1; }
-[ -z "$(git -C "$OBEY_PROJECT" status --porcelain)" ] ||
-	{ echo "след в основном чекауте: $(git -C "$OBEY_PROJECT" status --porcelain)"; exit 1; }
+# Каталог .devkit в проекте заводит сам стенд, следом работы агента он не
+# становится.
+stray=$(git -C "$OBEY_PROJECT" status --porcelain | grep -v "^?? \.devkit/")
+[ -z "$stray" ] || { echo "след в основном чекауте: $stray"; exit 1; }
 exit 0
 ```

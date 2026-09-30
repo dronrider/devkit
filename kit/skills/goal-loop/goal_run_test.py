@@ -270,6 +270,10 @@ class Stand:
             for spec in specs:
                 f.write(spec + "\n")
         write_exec(os.path.join(root, "bin", "claude"), CLAUDE_STUB)
+        # Стаб tmux кладётся всякому стенду, а не только запуску в окне: ветка
+        # --foreground спрашивает теперь имя окна цели, и настоящий tmux машины
+        # отвечал бы ей про чужие сессии.
+        write_exec(os.path.join(root, "bin", "tmux"), TMUX_STUB)
         return root
 
     def env(self, root, pause="0"):
@@ -289,13 +293,15 @@ class Stand:
         env["DEVKIT_GOAL_WAIT_STEP"] = "0.1"
         return env
 
-    def goal_run(self, root, *args, pause="0"):
+    def goal_run(self, root, *args, pause="0", extra=None):
         # -C всегда назван явно, как в реальном вызове из SKILL.md: без него
         # оболочка берёт корень из pwd процесса, а голый os.getcwd() в python
         # разворачивает симлинк /var -> /private/var на macOS там, где
         # логический pwd шелла этого не делает, и путь в сообщении разошёлся
         # бы с тем, что ушло в -C у стенда.
         env = self.env(root, pause)
+        if extra:
+            env.update(extra)
         proj = os.path.join(root, "proj")
         return subprocess.run([RUN, "-C", proj] + list(args), cwd=proj, env=env,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -830,6 +836,25 @@ class GoalRunTests(Stand, unittest.TestCase):
             pass
         p = self.goal_run(root, "DK-100")
         self.assertEqual(p.returncode, 3, "оболочка полезла в цель с уже поднятой tmux-сессией")
+
+    def test_foreground_refuses_beside_a_live_window_of_the_same_goal(self):
+        # Имя goal-<ID> носит и сессия, которую поднимает дашборд ступенью чата
+        # (DK-1009): замка она не держит, цикл ведёт живым клиентом по скиллу
+        # goal-loop, и по одному замку ветка --foreground встала бы рядом с ней.
+        root = self.stand("done запись")
+        with open(os.path.join(root, "tmux-has"), "w", encoding="utf-8"):
+            pass
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 3, "оболочка полезла в цель с поднятым окном goal-DK-100: %s" % p.stdout)
+        self.assertIn("goal-DK-100", p.stdout)
+        self.assertEqual(self.turns_done(root), 0, "виток поднялся рядом с живым окном цели")
+        self.assertFalse(os.path.isdir(os.path.join(root, "proj", ".devkit", "goal-DK-100.lock")),
+                         "отказавшая оболочка забрала замок")
+        # Своё же окно не в счёт: launch_tmux поднимает цикл внутри goal-<ID> и
+        # метит дочерний прогон именем сессии, иначе ветка отбивала бы сама себя.
+        p = self.goal_run(root, "DK-100", "--foreground", extra={"DEVKIT_GOAL_TMUX": "goal-DK-100"})
+        self.assertEqual(p.returncode, 0, "цикл отбил сам себя в своём же окне: %s" % p.stdout)
+        self.assertEqual(self.turns_done(root), 1, "цикл в своём окне не пошёл")
 
     def test_tmux_launch_carries_hidden_mark(self):
         # DK-847: список чатов панели не показывает витки цикла цели вовсе,

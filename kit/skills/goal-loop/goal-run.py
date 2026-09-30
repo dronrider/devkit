@@ -97,6 +97,10 @@ WAIT_STEP_ENV = "DEVKIT_GOAL_WAIT_STEP"
 # Метка носителя цикла для дочернего клиента и его хуков: непустое значение
 # значит виток оболочки, а не сессию живого чата (DK-971).
 SHELL_ENV = "DEVKIT_GOAL_SHELL"
+# Имя окна, внутри которого оболочку и подняли: его ставит launch_tmux своему
+# же дочернему прогону. По нему ветка --foreground отличает своё окно от
+# чужого и не отбивает саму себя (DK-1009).
+OWN_TMUX_ENV = "DEVKIT_GOAL_TMUX"
 # Потолок ожидания цикла: дольше этого виток не ждёт даже со сроком в отметке.
 WAIT_CAP = 2 * 60 * 60
 
@@ -681,7 +685,10 @@ class Loop:
         # или подхват после стопа, разницы для списка нет. Виток наследует
         # признак обычным путём процесса, тем же, каким наследует его и claude
         # -p внутри самого цикла: хук старта сессии читает его из окружения.
-        cmd = "DEVKIT_HIDDEN=1 " + " ".join(shlex.quote(a) for a in args)
+        # Метка своего окна идёт той же шапкой: дочерний прогон стоит внутри
+        # goal-<ID>, и без неё ветка --foreground отбила бы сама себя.
+        cmd = "DEVKIT_HIDDEN=1 " + "%s=%s " % (OWN_TMUX_ENV, self.sess) + \
+            " ".join(shlex.quote(a) for a in args)
         new = subprocess.run(["tmux", "new-session", "-d", "-s", self.sess, cmd])
         if new.returncode != 0:
             die("tmux не поднял сессию %s" % self.sess)
@@ -807,7 +814,28 @@ class Loop:
             pause = RETRY_PAUSE
         return max(0, pause)
 
+    def sess_busy(self):
+        """Занято ли окно цикла чужим жильцом. Имя goal-<ID> носит и сессия,
+        которую поднимает дашборд ступенью чата: цикл она ведёт живым клиентом
+        по скиллу goal-loop, замка при этом не держит, и по одному замку
+        оболочка встала бы рядом с ней (замечание ревью DK-1009). Без tmux
+        спрашивать нечего: такой машине и соседа взяться неоткуда.
+
+        Своё же окно не в счёт. launch_tmux поднимает цикл внутри goal-<ID> и
+        метит дочернему прогону окружение именем сессии, иначе ветка
+        --foreground отбивала бы сама себя."""
+        if os.environ.get(OWN_TMUX_ENV) == self.sess:
+            return False
+        if shutil.which("tmux") is None:
+            return False
+        has = subprocess.run(["tmux", "has-session", "-t", "=%s" % self.sess],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return has.returncode == 0
+
     def run_foreground(self):
+        if self.sess_busy():
+            die("tmux-сессия %s уже поднята, цикл цели %s ведут в ней; "
+                "смотреть её: tmux attach -t %s" % (self.sess, self.id, self.sess), 3)
         if not self.take_lock():
             die("цикл цели %s уже идёт, замок %s, владелец %s" % (self.id, self.lock, self.lock_owner()), 3)
         try:

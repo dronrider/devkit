@@ -81,6 +81,12 @@ class TestRefusesStrayWrite(GuardCase):
         self.assertIn(SIDE, r.stderr)
         self.assertIn(SIDE + "/docs/tasks/DK-1072.md", r.stderr)
 
+    def test_refusal_names_the_way_back(self):
+        # Без способа вернуться отказ оставляет исполнителя догадываться, и
+        # промах повторяется тем же относительным путём (DK-1072).
+        r = self.hook(write_event(MAIN + "/docs/tasks/DK-1072.md"))
+        self.assertIn("-C " + SIDE, r.stderr)
+
     def test_relative_path_resolved_from_cwd_is_refused(self):
         r = self.hook(write_event("docs/tasks/DK-1072.md"))
         self.assertEqual(r.returncode, 2, r.stdout)

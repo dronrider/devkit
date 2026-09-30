@@ -159,9 +159,14 @@ func saidLines(home, key string) int {
 // затем, зачем заведён: ответ припаркованной задаче уходит безадресной строкой
 // и в транскрипт не попадает, а прочитать его человек должен на любом экране,
 // откуда эта задача видна.
-func saidKeys(sid, task string, bound string) []string {
+//
+// Критерий здесь живая строка доски (onBoard), а не разряд привязки bindTask:
+// сессия, сдавшая работу по строке записью «снята», но оставшаяся её
+// разговором, продолжает видеть журнал задачи, пока строка жива, а задача,
+// уехавшая с доски, журнала в чужую ленту больше не несёт (DK-1199).
+func saidKeys(sid, task string, onBoard bool) []string {
 	keys := []string{saidSessionKey(sid)}
-	if task != "" && bound == boundLead {
+	if task != "" && onBoard {
 		keys = append(keys, saidTaskKey(task))
 	}
 	return keys

@@ -91,6 +91,26 @@ func TestTaskMessageSeenInFeed(t *testing.T) {
 	}
 }
 
+// Журнал задачи, уехавшей с доски, в чужую ленту больше не подмешивается:
+// критерий теперь живая строка доски, а не разряд привязки (DK-1199). Заказ
+// дашборда остаётся ведущим XR-9 и после того, как строка ушла с доски
+// (talkSrc переживает отвязку), но раз строки больше нет, читать там нечего.
+func TestFeedHidesTaskJournalWhenRowLeftBoard(t *testing.T) {
+	e, c := chatEnv(t)
+	writeSession(t, e.home, e.proj, "", "aaaa-1111", plainTalk, time.Now())
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-18T12:00:00", "aaaa-1111", "XR-9", bindOrder))
+	if err := e.s.saidPut(saidTaskKey("XR-9"),
+		saidRec{Time: "2026-08-17T10:00:05Z", Text: "ответ на вопрос"}); err != nil {
+		t.Fatal(err)
+	}
+	got := userTexts(saidFeed(t, c, e, "aaaa-1111"))
+	for _, text := range got {
+		if text == "ответ на вопрос" {
+			t.Fatalf("журнал задачи вне доски попал в чужую ленту: %q", got)
+		}
+	}
+}
+
 // Реплика ручкой сессии тоже оседает в журнале: подхват доставит её вставкой
 // хода, а в транскрипте она не появится, и второе устройство её иначе не
 // увидит.

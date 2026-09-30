@@ -2082,7 +2082,15 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	// транскрипту (outbox.go).
 	head := s.sessionHeadCached(path, info.stamp)
 	info.Task, info.TaskNote, info.Bound = bindTask(s.binds(), info.ID, info.suffix, head)
-	keys := saidKeys(sid, info.Task, info.Bound)
+	// Доска читается тут же, одним заходом на весь обработчик: журналу
+	// (saidKeys) и ручке реплики (chatReply) ниже нужен один и тот же признак
+	// живой строки, а не разряд привязки (DK-1199).
+	var rows map[string]boardRow
+	if raw, err := s.projectBoard(found.Path); err == nil {
+		rows, _ = parseBoardRows(raw)
+	}
+	_, onBoard := rows[info.Task]
+	keys := saidKeys(sid, info.Task, rows == nil || onBoard)
 	// Чтение ленты это и есть показ разговора человеку: панель читает её,
 	// пока разговор открыт на экране. Отметка нужна автоматике уборки, она по
 	// ней отличает непрочитанный ответ от прочитанного.
@@ -2152,13 +2160,8 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	info.Tree = info.suffix
 	// Ручка для реплики едет в шапке разговора: панель не считает её сама,
 	// иначе мера кончившегося разговора разошлась бы с той, по которой
-	// сторожок будит строку. Доска тут читается из памяти процесса, а не
-	// вызовом taskctl на каждый заход; не прочиталась, значит признака
-	// парковки нет, а два остальных работают.
-	var rows map[string]boardRow
-	if raw, err := s.projectBoard(found.Path); err == nil {
-		rows, _ = parseBoardRows(raw)
-	}
+	// сторожок будит строку. Доска уже прочитана выше, для журнала (rows);
+	// не прочиталась, значит признака парковки нет, а два остальных работают.
 	info.Harness = harnessRoots(s.harnesses())[info.root]
 	info.Live = info.mod.After(s.now().Add(-sessionLiveTTL))
 	info.Reply, info.ReplyNote = s.chatReply(found.Path, info, rows, tmuxAliveFn())

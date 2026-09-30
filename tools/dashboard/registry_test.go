@@ -247,6 +247,21 @@ func TestBindTaskReleaseKeepsTheNeighbourTask(t *testing.T) {
 	}
 }
 
+// Снята та же задача, которую разговор вёл заказом дашборда: живой случай
+// DK-892 (разбор DK-1199). Сессия чата взяла задачу заказом, сама перевела
+// строку в Check, и `taskctl move` дописал «снята DK-892» с той же задачей в
+// поле. Ведущей она остаётся: разговор, начатый заказом, отвязку одной своей
+// задачи переживает так же, как переживает отвязку соседней (talkSrc).
+func TestBindTaskReleaseOfOwnTaskStaysLeadForOrder(t *testing.T) {
+	binds := parseBinds([]byte(
+		bindRecord(noHome, "2026-09-27T22:33:00", "aaa-1", "DK-892", bindOrder) +
+			bindRecord(noHome, "2026-09-27T22:36:00", "aaa-1", "DK-892", bindOff)))
+	task, note, bound := bindTask(binds, "aaa-1", "", sessionHead{})
+	if task != "DK-892" || note != orderNote || bound != boundLead {
+		t.Fatalf("заказ перестал вести сданную задачу: %q %q %q", task, note, bound)
+	}
+}
+
 // Сессия без задачи, записанная хуком (чат доски), это не отвязка: отвязку
 // несёт только слово bindOff, а пустая запись оставляет право назвать задачу
 // хвосту бокового дерева.

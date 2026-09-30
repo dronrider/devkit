@@ -406,8 +406,13 @@ func (s *server) chatReply(projPath string, info sessionInfo, rows map[string]bo
 	if over == "" {
 		return replyToSession, ""
 	}
+	// Критерий тут живая строка доски, а не разряд привязки: сессия, сдавшая
+	// работу по строке записью «снята», но оставшаяся её разговором (talkSrc
+	// в internal/sessions), ведёт задачу так же, как до сдачи, пока строка
+	// жива (DK-1199). Разряд привязки из bindTask при живой задаче и так
+	// всегда «ведёт», и спрашивать его отдельно незачем.
 	_, onBoard := rows[info.Task]
-	if info.Task == "" || info.Bound != boundLead || (rows != nil && !onBoard) {
+	if info.Task == "" || (rows != nil && !onBoard) {
 		return "", over + ": чат кончился, и продолжить его некому"
 	}
 	return replyToTask, over + ": реплика уйдёт задаче " + info.Task + ", её возьмёт тот, кто её продолжит"

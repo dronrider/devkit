@@ -2423,6 +2423,13 @@ class HarnessHooksTest(SandboxCase):
         for event in ("Stop", "StopFailure", "Notification", "UserPromptSubmit"):
             cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
             self.assertEqual(len([c for c in cmds if "turn-mark.py" in c]), 1, (event, cmds))
+        # На конце хода отметка стоит раньше сторожа плана (DK-1243): сторож
+        # считает ходы её журналом, и отметку текущего хода ждёт на том же
+        # событии. Обратный порядок сторожу не ломает сдачу, но лишает её
+        # свежего счёта.
+        stop = [h["command"] for g in hooks["Stop"] for h in g["hooks"]]
+        self.assertLess([i for i, c in enumerate(stop) if "turn-mark.py" in c][0],
+                        [i for i, c in enumerate(stop) if "plan-watch.py" in c][0], stop)
         # Указатель на скилл chat (DK-1032) ложится на реплику человека, а не
         # на старт сессии: тело правила приезжает по вызову, не на каждом ходе.
         cmds = [h["command"] for g in hooks["UserPromptSubmit"] for h in g["hooks"]]

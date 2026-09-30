@@ -437,10 +437,12 @@ HOOK_LAYOUT = (
     ("SessionStart", "", "python3 %s/hooks/prose-mark.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
+    # Отметка хода стоит раньше сторожа плана: сторож считает ходы её журналом, и
+    # отметка текущего хода нужна ему на том же событии (DK-1243).
+    ("Stop", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/plan-watch.py --hook claude-code"),
     ("UserPromptSubmit", "", "python3 %s/hooks/plan-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/goal-hold.py --hook claude-code"),
-    ("Stop", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
     ("StopFailure", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
     ("Notification", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),
     ("UserPromptSubmit", "", "python3 %s/hooks/turn-mark.py --hook claude-code"),

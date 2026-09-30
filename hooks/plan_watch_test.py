@@ -645,7 +645,7 @@ class TestWatch(unittest.TestCase):
         code, said = s.run()
         self.assertEqual(code, 0)
         self.assertEqual(said, {}, "сдача пришла ходу, которому не напоминали")
-        self.assertIn("на входе хода не напомнили", s.said_log())
+        self.assertIn("следа напоминания нет", s.said_log())
 
     def test_the_reminder_counts_the_current_turn(self):
         """Отметку хода turn-mark пишет на Stop раньше сторожа, и на конце хода
@@ -693,6 +693,59 @@ class TestWatch(unittest.TestCase):
         s.lay_turns(4)
         code, said = s.run()
         self.assertEqual(said, {}, "след напоминания сработал второй раз")
+
+    def test_handover_comes_before_the_turn_mark_lands(self):
+        """Отметку текущего хода turn-mark пишет на том же событии Stop, и порядок
+        хуков одного события харнес не обещает. Сдача приходит и тогда, когда
+        отметка к сторожу не успела: счёт ходов у него на единицу меньше, чем в
+        следе напоминания."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.lay_turns(2)
+        s.run(sample("prompt-submit.json"))
+        code, said = s.run()
+        self.assertEqual(said.get("decision"), "block",
+                         "сдача пропала из-за порядка хуков на Stop")
+
+    def test_the_log_tells_a_missing_trail_from_a_stale_one(self):
+        """Журнал разводит «следа нет вовсе» и «след другого хода»: по этому
+        журналу разбирают лишние и пропавшие сдачи, и одно слово на два случая
+        уводит разбор по ложному следу (ревью DK-1243)."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.lay_turns(5)
+        s.run()
+        self.assertIn("следа напоминания нет", s.said_log())
+
+        s.remind(3)
+        s.lay_turns(9)
+        s.run()
+        self.assertIn("след напоминания от другого хода", s.said_log())
+
+    def test_the_log_tells_a_plan_laid_anew_after_the_reminder(self):
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.remind(3)
+        s.lay_plan(plan(("правка", "completed"), ("сдача", "completed")), age=600.0)
+        s.run()
+        self.assertIn("план переложен после напоминания", s.said_log())
+
+    def test_old_trails_are_swept(self):
+        """Сессия живёт день-два, а файл следа остаётся. Без уборки каталог растёт
+        числом сессий машины за всё время."""
+        s = self.stand()
+        os.makedirs(s.said)
+        stale = os.path.join(s.said, "старая-сессия.json")
+        with open(stale, "w", encoding="utf-8") as f:
+            json.dump({"turns": 1, "changed": 1.0}, f)
+        when = time.time() - 8 * 24 * HOUR
+        os.utime(stale, (when, when))
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.lay_turns(3)
+        s.run(sample("prompt-submit.json"))
+        self.assertFalse(os.path.exists(stale), "след мёртвой сессии остался в каталоге")
+        self.assertTrue(os.path.exists(os.path.join(s.said, "%s.json" % SESSION)),
+                        "уборка снесла свежий след")
 
 
 if __name__ == "__main__":

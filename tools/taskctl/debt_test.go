@@ -167,3 +167,55 @@ func TestLintTails(t *testing.T) {
 		t.Fatalf("находки порядка хвостов нет: %v", finds)
 	}
 }
+
+// TestDebtKeepsDepAndArmTails: метка стоит между «[после ...]» и «[взвод]», и
+// разбор хвостов её переживает. Зависимости, взвод, провал и блокировка читаются
+// при метке так же, как без неё, а сборка заголовка обратно даёт тот же текст.
+func TestDebtKeepsDepAndArmTails(t *testing.T) {
+	title := "Долг [после XR-001, XR-002] [долг] [взвод] [приёмка: mixed] [провал: 500] [блок: ждём железо]"
+	base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(title)
+	if base != "Долг" {
+		t.Fatalf("основа заголовка = %q, ожидал «Долг»", base)
+	}
+	if len(deps) != 2 || deps[0] != "XR-001" || deps[1] != "XR-002" {
+		t.Fatalf("зависимости = %v, ожидал XR-001 и XR-002", deps)
+	}
+	if debtSuf != " [долг]" {
+		t.Fatalf("хвост долга = %q", debtSuf)
+	}
+	if armSuf != " [взвод]" || acceptSuf != " [приёмка: mixed]" {
+		t.Fatalf("взвод = %q, приёмка = %q", armSuf, acceptSuf)
+	}
+	if failSuf != " [провал: 500]" || blockSuf != " [блок: ждём железо]" {
+		t.Fatalf("провал = %q, блок = %q", failSuf, blockSuf)
+	}
+	if got := joinTitle(base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf); got != title {
+		t.Fatalf("сборка обратно дала %q, ожидал %q", got, title)
+	}
+	if !armed(title) {
+		t.Fatalf("armed(%q) не увидел взвод при метке долга", title)
+	}
+}
+
+// TestDebtAfterDepCommand: команда зависимостей вставляет «[после ...]» перед
+// меткой, а не в конец, и метка остаётся на месте.
+func TestDebtAfterDepCommand(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDebt(root, "XR-004", DebtParams{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDepAdd(root, DepParams{ID: "XR-004", DepID: "XR-001"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := b.find("XR-004").Title
+	if !strings.Contains(got, "[после XR-001] [долг]") {
+		t.Fatalf("порядок хвостов сломан: %q", got)
+	}
+	if !isDebt(got) {
+		t.Fatalf("метка потерялась после dep add: %q", got)
+	}
+}

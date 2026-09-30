@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Проверка сторожа записи мимо дерева задачи (DK-1072): PreToolUse-хук на
 записи отбивает правку в чужом дереве того же репозитория, пропускает правку в
-своём, молчит без привязки и у хода самой сессии, а в отказе называет оба пути
-и путь той же правки в своём дереве."""
+своём, сходится с привязкой через симлинк, молчит без привязки и у хода самой
+сессии, а в отказе называет оба пути и путь той же правки в своём дереве."""
 import importlib.util
 import json
 import os
@@ -81,6 +81,12 @@ class TestRefusesStrayWrite(GuardCase):
         self.assertIn(SIDE, r.stderr)
         self.assertIn(SIDE + "/docs/tasks/DK-1072.md", r.stderr)
 
+    def test_refusal_ends_with_a_newline(self):
+        # Без перевода строки в выводе харнеса за точкой сразу идёт следующая
+        # строка (DK-1072).
+        r = self.hook(write_event(MAIN + "/docs/tasks/DK-1072.md"))
+        self.assertTrue(r.stderr.endswith("\n"), repr(r.stderr[-20:]))
+
     def test_refusal_names_the_way_back(self):
         # Без способа вернуться отказ оставляет исполнителя догадываться, и
         # промах повторяется тем же относительным путём (DK-1072).
@@ -158,6 +164,39 @@ class TestQuietWithoutBinding(GuardCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
+class TestSymlinkedRoots(GuardCase):
+    """Стык двух хуков: привязку кладёт tree-mark путями от `git worktree
+    list`, где симлинк уже раскрыт, а путь правки приходит таким, каким его
+    написал агент. На macOS так расходятся `/private/tmp` и `/tmp`."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = tempfile.mkdtemp()
+        self.real = os.path.join(os.path.realpath(self.home), "real")
+        for name in ("proj", "proj-dk-1072"):
+            os.makedirs(os.path.join(self.real, name, "docs"))
+        self.link = os.path.join(self.home, "link")
+        os.symlink(self.real, self.link)
+        self.bind(tree=os.path.join(self.real, "proj-dk-1072"),
+                  others=(os.path.join(self.real, "proj"),))
+
+    def tearDown(self):
+        shutil.rmtree(self.home, ignore_errors=True)
+        super().tearDown()
+
+    def test_stray_write_through_a_symlink_is_refused(self):
+        stray = os.path.join(self.link, "proj", "docs", "notes.md")
+        r = self.hook(write_event(stray, cwd=os.path.join(self.link, "proj")))
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn(os.path.join(self.real, "proj-dk-1072", "docs", "notes.md"),
+                      r.stderr)
+
+    def test_own_write_through_a_symlink_passes(self):
+        own = os.path.join(self.link, "proj-dk-1072", "docs", "notes.md")
+        r = self.hook(write_event(own, cwd=os.path.join(self.link, "proj-dk-1072")))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
 class TestPathMath(unittest.TestCase):
     def test_inside_counts_the_root_itself(self):
         self.assertTrue(check_tree_write.inside(SIDE, SIDE))
@@ -167,6 +206,16 @@ class TestPathMath(unittest.TestCase):
 
     def test_inside_with_empty_root_is_false(self):
         self.assertFalse(check_tree_write.inside(SIDE, ""))
+
+    def test_real_file_keeps_a_name_that_does_not_exist_yet(self):
+        # Файла правки на диске может ещё не быть, и раскрывается только его
+        # каталог (DK-1072).
+        d = tempfile.mkdtemp()
+        try:
+            self.assertEqual(check_tree_write.real_file(os.path.join(d, "нового.md")),
+                             os.path.join(os.path.realpath(d), "нового.md"))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
 
 
 class TestBadInput(unittest.TestCase):

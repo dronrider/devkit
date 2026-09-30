@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Проверка привязки «субагент -> дерево задачи» (DK-1072): PostToolUse-хук на
-Bash кладёт привязку по команде субагента, назвавшей ID задачи, не метит ход
-самой сессии, не метит команду без утилиты доски и молчит, когда дерева задачи
+Bash кладёт привязку по метке плана работ, не метит ход самой сессии, не метит
+ни команду доски с чужим ID, ни план без метки, и молчит, когда дерева задачи
 среди рабочих деревьев репозитория нет."""
 import importlib.util
 import json
@@ -86,7 +86,7 @@ class TreeCase(unittest.TestCase):
 
 class TestMarksTaskTree(TreeCase):
     def test_plan_command_binds_side_tree(self):
-        r = self.hook(bash_event("agentctl plan set --label DK-1072-exec «этап»",
+        r = self.hook(bash_event("agentctl plan set --label DK-1072 «этап»",
                                  cwd=self.main))
         self.assertEqual(r.returncode, 0, r.stderr)
         row = self.binding()
@@ -95,7 +95,7 @@ class TestMarksTaskTree(TreeCase):
         self.assertEqual(os.path.realpath(row["tree"]), os.path.realpath(self.side))
 
     def test_binding_lists_other_trees(self):
-        self.hook(bash_event("taskctl show DK-1072", cwd=self.main))
+        self.hook(bash_event("agentctl plan step --label DK-1072 «этап»", cwd=self.main))
         row = self.binding()
         others = [os.path.realpath(p) for p in row["others"]]
         self.assertIn(os.path.realpath(self.main), others)
@@ -104,64 +104,80 @@ class TestMarksTaskTree(TreeCase):
     def test_branch_with_tail_counts_as_task_tree(self):
         side = os.path.join(self.home, "proj-dk-470-lld-link")
         git("worktree", "add", "-b", "dk-470-lld-link", side, cwd=self.main)
-        self.hook(bash_event("taskctl show DK-470", cwd=self.main))
+        self.hook(bash_event("agentctl plan set --label DK-470 «этап»", cwd=self.main))
         row = self.binding()
         self.assertEqual(row["task"], "DK-470")
         self.assertEqual(os.path.realpath(row["tree"]), os.path.realpath(side))
 
     def test_call_from_side_tree_finds_same_repo(self):
-        r = self.hook(bash_event("taskctl elapsed DK-1072", cwd=self.side))
+        r = self.hook(bash_event("agentctl plan done --label DK-1072", cwd=self.side))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIsNotNone(self.binding())
 
 
 class TestKeepsQuiet(TreeCase):
     def test_session_turn_without_agent_is_not_marked(self):
-        r = self.hook(bash_event("taskctl show DK-1072", agent=None, cwd=self.main))
+        r = self.hook(bash_event("agentctl plan set --label DK-1072 «этап»", agent=None,
+                                 cwd=self.main))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIsNone(self.binding("s1"))
 
-    def test_command_without_board_tool_is_not_marked(self):
+    def test_command_without_plan_is_not_marked(self):
         r = self.hook(bash_event("grep -rn DK-1072 docs", cwd=self.main))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIsNone(self.binding())
 
     def test_command_without_task_id_is_not_marked(self):
-        r = self.hook(bash_event("taskctl list", cwd=self.main))
+        r = self.hook(bash_event("agentctl plan show", cwd=self.main))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIsNone(self.binding())
 
     def test_task_without_tree_is_not_marked(self):
-        r = self.hook(bash_event("taskctl show DK-999", cwd=self.main))
+        r = self.hook(bash_event("agentctl plan set --label DK-999 «этап»", cwd=self.main))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIsNone(self.binding())
 
     def test_other_tool_is_not_marked(self):
-        event = json.loads(bash_event("taskctl show DK-1072", cwd=self.main))
+        event = json.loads(bash_event("agentctl plan step --label DK-1072 «этап»",
+                                      cwd=self.main))
         event["tool_name"] = "Read"
         r = self.hook(json.dumps(event))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIsNone(self.binding())
 
     def test_outside_git_tree_does_not_fall(self):
-        r = self.hook(bash_event("taskctl show DK-1072", cwd=self.state))
+        r = self.hook(bash_event("agentctl plan set --label DK-1072 «этап»", cwd=self.state))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIsNone(self.binding())
 
 
 class TestCommandParsing(unittest.TestCase):
-    def test_task_taken_from_plan_label_tail(self):
-        self.assertEqual(tree_mark.task_of("agentctl plan step --label DK-1072-exec «этап»"),
-                         "DK-1072")
+    def test_task_taken_from_label_with_role_tail(self):
+        self.assertEqual(
+            tree_mark.task_of("agentctl plan step --label DK-1072-review «этап»"),
+            "DK-1072")
 
-    def test_task_of_requires_board_tool(self):
+    def test_task_of_requires_plan_command(self):
         self.assertEqual(tree_mark.task_of("echo DK-1072"), "")
 
-    def test_task_of_takes_first_id(self):
-        self.assertEqual(tree_mark.task_of("taskctl dep add DK-100 DK-200"), "DK-100")
+    def test_task_of_takes_the_label_not_the_step_text(self):
+        self.assertEqual(
+            tree_mark.task_of("agentctl plan set --label DK-100 «правка по DK-200»"),
+            "DK-100")
 
     def test_foreign_prefix_counts(self):
-        self.assertEqual(tree_mark.task_of("taskctl show XR-42"), "XR-42")
+        self.assertEqual(tree_mark.task_of("agentctl plan set --label XR-42 «этап»"),
+                         "XR-42")
+
+    def test_board_command_with_foreign_id_is_not_taken(self):
+        # Привязка по любой команде доски уехала бы на чужой ID: у DK-624 из
+        # основного чекаута рубеж потом толкал бы правку доски в дерево
+        # DK-624, и снять отказ агенту нечем (DK-1072).
+        self.assertEqual(tree_mark.task_of("taskctl show DK-624"), "")
+        self.assertEqual(tree_mark.task_of("shipctl merge DK-624"), "")
+
+    def test_plan_without_label_is_not_taken(self):
+        self.assertEqual(tree_mark.task_of("agentctl plan show"), "")
 
 
 class TestBadInput(unittest.TestCase):

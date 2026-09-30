@@ -10,9 +10,9 @@ MultiEdit и NotebookEdit отбивает правку, которая уезж
 `shipctl`, а прогон тестов идёт против чужой ветки и даёт ложный зелёный. Ни
 отказа, ни предупреждения при этом раньше не было.
 
-Привязку «субагент -> дерево задачи» кладёт hooks/tree-mark.py по команде
-самого исполнителя, назвавшей ID задачи. Нет привязки, нет и рубежа: сторож
-молчит у любого хода, про который неизвестно, над какой задачей он идёт.
+Привязку «субагент -> дерево задачи» кладёт hooks/tree-mark.py по метке плана
+работ. Нет привязки, нет и рубежа: сторож молчит у любого хода, про который
+неизвестно, над какой задачей он идёт.
 Отбивается только запись внутрь чужого рабочего дерева того же репозитория.
 Файл вне деревьев (черновик в /tmp, чужой проект) рубеж не трогает: следом
 задачи он не становится.
@@ -43,7 +43,7 @@ def text_of(value):
 
 
 def bound(context, override=None):
-    """Привязка хода: пара (дерево задачи, ID задачи, чужие деревья). None
+    """Привязка хода: тройка (дерево задачи, ID задачи, чужие деревья). None
     значит, что привязки нет и сверять не с чем."""
     try:
         with open(hookio.state_path(STATE_NAME, context, override), "r",
@@ -60,10 +60,29 @@ def bound(context, override=None):
     return tree, task, others
 
 
+def real_root(root):
+    """Корень дерева с раскрытыми симлинками. Пути деревьев приходят в привязку
+    от `git worktree list`, и там симлинк уже раскрыт, а путь правки харнес
+    несёт таким, каким его написал агент. На macOS `/tmp` это симлинк на
+    `/private/tmp`, и без раскрытия стороны сравнения расходятся: сторож молчит
+    у записи в чужое дерево."""
+    return os.path.realpath(root) if root else root
+
+
+def real_file(path):
+    """Путь правки с раскрытыми симлинками у каталога. Самого файла может ещё
+    не быть, поэтому раскрывается только каталог, а имя приписывается как
+    есть."""
+    head, tail = os.path.split(os.path.normpath(path))
+    if not head or not tail:
+        return os.path.realpath(path)
+    return os.path.join(os.path.realpath(head), tail)
+
+
 def inside(path, root):
     """Путь лежит в дереве: сам корень или что-то под ним. Сравнение идёт по
-    нормализованным путям без обращения к диску: файла правки может ещё не
-    быть, и realpath тут вернул бы не то, что просили."""
+    нормализованным путям без обращения к диску: симлинки у обеих сторон
+    раскрыты раньше, в real_root и real_file."""
     if not root:
         return False
     root = os.path.normpath(root)
@@ -71,16 +90,17 @@ def inside(path, root):
     return path == root or path.startswith(root + os.sep)
 
 
-def hint(path, tree, task, others):
-    """Отказ: оба пути и та же правка в своём дереве."""
-    stray = next((o for o in others if inside(path, o)), "")
-    rel = os.path.relpath(os.path.normpath(path), os.path.normpath(stray))
+def hint(path, tree, task, stray):
+    """Отказ: оба пути и та же правка в своём дереве. Пути называются такими,
+    какими их принесли привязка и событие: раскрытый симлинк агент у себя в
+    ходе не узнает."""
+    rel = os.path.relpath(real_file(path), real_root(stray))
     return ("Запись мимо дерева задачи %s отбита рубежом DK-1072.\n"
             "Правка ушла бы в %s, а дерево задачи это %s.\n"
             "Повтори ход путём в своём дереве: %s\n"
             "Рабочий каталог между вызовами Bash сбрасывается в каталог "
             "диспетчера, поэтому путь пишется целиком, а git зовётся с "
-            "-C %s." % (task, stray, tree, os.path.join(tree, rel), tree))
+            "-C %s.\n" % (task, stray, tree, os.path.join(tree, rel), tree))
 
 
 def run_hook(protocol, override=None):
@@ -108,11 +128,15 @@ def run_hook(protocol, override=None):
         # событие он приходит уже целым. Пришёл неразрешённым, значит считаем
         # его от того же каталога.
         path = os.path.join(text_of(event.get("cwd")), path)
-    if inside(path, tree):
+    # Сверка идёт по путям с раскрытыми симлинками, а отказ печатает те, что
+    # пришли: у корней дерева симлинк уже раскрыт, а у пути правки нет.
+    real = real_file(path)
+    if inside(real, real_root(tree)):
         return 0
-    if not any(inside(path, o) for o in others):
+    stray = next((o for o in others if inside(real, real_root(o))), "")
+    if not stray:
         return 0
-    return hookio.reply(protocol).found(hint(path, tree, task, others))
+    return hookio.reply(protocol).found(hint(path, tree, task, stray))
 
 
 def main(argv):

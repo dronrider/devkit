@@ -1207,5 +1207,54 @@ class ProjectImportsTest(SandboxCase):
             self.thin.unlink()
 
 
+class LocalExampleTest(SandboxCase):
+    """Локальные правила контура против коммитимого образца (DK-1262).
+
+    Живой RULES.local.md гитигнорнут, и правка порядка входа тикета доезжает до
+    второй машины образцом. Раздел про вход доктор спрашивает у живого файла.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.local = self.box.dk / rules.LOCAL_RULES
+        self.example = self.box.dk / rules.LOCAL_RULES_EXAMPLE
+        write(self.example, read(DEVKIT_SRC / rules.LOCAL_RULES_EXAMPLE))
+
+    def tearDown(self):
+        for p in (self.local, self.example):
+            if p.exists():
+                p.unlink()
+        super().tearDown()
+
+    def test_1_local_without_the_section_is_a_finding(self):
+        write(self.local, "# локальные правила\n\n## Доступы\n\nтокены лежат на машине\n")
+        found = rules.check_local_example(str(self.box.dk))
+        self.assertTrue([f for f in found if rules.LOCAL_RULES in f
+                         and "мимо черновика" in f and rules.LOCAL_RULES_EXAMPLE in f],
+                        "находка не назвала ни файл, ни цену пропуска, ни образец: %s" % (found,))
+
+    def test_2_section_in_place_is_silent(self):
+        write(self.local, "# локальные правила\n\n%s\n\nтикет -> черновик -> груминг -> take\n"
+              % rules.LOCAL_ENTRY_MARK)
+        self.assertEqual(rules.check_local_example(str(self.box.dk)), [])
+
+    def test_3_machine_without_the_contour_is_silent(self):
+        self.assertEqual(rules.check_local_example(str(self.box.dk)), [],
+                         "машина без локальных правил получила находку про корп-контур")
+
+    def test_4_example_lost_the_section(self):
+        write(self.example, "# образец\n\n## Доступы\n")
+        write(self.local, "# локальные правила\n")
+        found = rules.check_local_example(str(self.box.dk))
+        self.assertTrue([f for f in found if rules.LOCAL_RULES_EXAMPLE in f and "потерял раздел" in f],
+                        "образец без раздела молчит, и проверка глохнет на всех машинах: %s" % (found,))
+
+    def test_5_doctor_says_it(self):
+        write(self.local, "# локальные правила\n\n## Доступы\n")
+        _, out = self.box.doctor(self.box.dk)
+        self.assertIn_("нет раздела «Вход тикета на доску»", out,
+                       "доктор промолчал про локальные правила без раздела образца")
+
+
 if __name__ == "__main__":
     unittest.main()

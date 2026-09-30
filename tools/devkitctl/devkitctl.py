@@ -3040,6 +3040,10 @@ def doctor(start, fix=False):
                                   str(Path(root) / ".devkit" / "plans"))
     # Конфиг порогов прозы того же формата и той же судьбы: чинится он правкой
     # в devkit, а не автоматикой, поэтому идёт находкой рядом с профилями.
+    # Локальные правила контура против коммитимого образца. Спрашивается не у
+    # проекта, а у чекаута devkit: файл лежит там и подключается из клона
+    # импортом, и находка одна на машину.
+    findings += rules.check_local_example(DEVKIT)
     findings += check_prose_config()
     findings += check_calque_config()
     findings += check_prose_sample_config()

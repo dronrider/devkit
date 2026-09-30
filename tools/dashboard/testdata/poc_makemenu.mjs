@@ -65,8 +65,10 @@ const moved = async () => {
   const menu = menuIn(btn) || menuIn(byId.get("bhead") || groups);
   if (!menu) fail("кнопка шапки не открыла меню заведения: " + dump(btn).slice(0, 300));
   const said = rows(menu);
-  if (said.length !== 2 || !said.includes("Черновик") || !said.includes("Задача")) {
-    fail("в меню кнопки шапки не два вида: " + JSON.stringify(said));
+  // Пунктов может быть и больше двух (DK-942 добавил «Цепочку»): предмет
+  // этого стенда два обязательных, черновик и задача, а не точный счёт.
+  if (!said.includes("Черновик") || !said.includes("Задача")) {
+    fail("в меню кнопки шапки нет черновика или задачи: " + JSON.stringify(said));
   }
   // Пункт ведёт сразу в свою форму, промежуточного экрана выбора нет.
   click(pick(menu, "Черновик"));
@@ -74,7 +76,7 @@ const moved = async () => {
   if (!String(sandbox.location.hash).includes("demo/new/draft")) {
     fail("пункт «Черновик» увёл не на форму черновика: " + sandbox.location.hash);
   }
-  if (!dump(groups).includes("Черновику доступен только груминг")) {
+  if (!dump(groups).includes("уровень разбора")) {
     fail("открылась не форма черновика: " + dump(groups).replace(/\s+/g, " ").slice(0, 300));
   }
 }
@@ -90,10 +92,10 @@ const moved = async () => {
   if (!String(sandbox.location.hash).includes("demo/new/task")) {
     fail("пункт «Задача» увёл не на форму задачи: " + sandbox.location.hash);
   }
-  // Форма задачи узнаётся подписью своей кнопки и отсутствием пометки про
-  // груминг: подсказка поля живёт в placeholder, а он в текст не попадает.
+  // Форма задачи узнаётся подписью своей кнопки и отсутствием поля уровня
+  // разбора: оно стоит только у черновика.
   const said = dump(groups).replace(/\s+/g, " ");
-  if (!said.includes("Завести задачу") || said.includes("Черновику доступен только груминг")) {
+  if (!said.includes("Завести задачу") || said.includes("уровень разбора")) {
     fail("открылась не форма задачи: " + said.slice(0, 300));
   }
 }
@@ -120,7 +122,9 @@ const moved = async () => {
   const menu = menuIn(groups);
   if (!menu) fail("плюс карточки не открыл меню заведения");
   const said = rows(menu);
-  if (said.length !== 2) fail("в меню плюса не два вида: " + JSON.stringify(said));
+  if (!said.includes("Черновик") || !said.includes("Задача")) {
+    fail("в меню плюса нет черновика или задачи: " + JSON.stringify(said));
+  }
   click(pick(menu, "Черновик"));
   await moved();
   if (!String(sandbox.location.hash).includes("demo/new/draft")) {
@@ -137,7 +141,10 @@ const moved = async () => {
   await settle();
   const menu = menuIn(fab) || menuIn(groups);
   if (!menu) fail("плавающий плюс не открыл меню заведения");
-  if (rows(menu).length !== 2) fail("в меню плавающего плюса не два вида: " + JSON.stringify(rows(menu)));
+  const said = rows(menu);
+  if (!said.includes("Черновик") || !said.includes("Задача")) {
+    fail("в меню плавающего плюса нет черновика или задачи: " + JSON.stringify(said));
+  }
 }
 
 console.log("poc_makemenu: ok");

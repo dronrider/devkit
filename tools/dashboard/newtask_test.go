@@ -30,7 +30,9 @@ func newResp(t *testing.T, resp *http.Response, what string) map[string]any {
 
 // Черновик ложится в docs/tasks/drafts/ с текстом и коммитом, а каталога
 // накопителя на проекте до этого нет: заводит его сама утилита, и отказа тут
-// быть не должно.
+// быть не должно. Заголовок и тело едут с формы раздельными полями (DK-447) и
+// собираются тем же форматом, что ждёт taskctl draft на stdin: первая строка
+// заголовок, дальше пустая строка и тело подразделами формы TASKFORM.md.
 func TestDraftCreate(t *testing.T) {
 	e, c, gitLog := tasksEnv(t)
 	drafts := filepath.Join(e.proj, "docs", "tasks", "drafts")
@@ -39,7 +41,7 @@ func TestDraftCreate(t *testing.T) {
 	}
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "мысль с телефона: доска не заводится с дашборда", "prio": "mid"}`)
+		`{"title": "мысль с телефона: доска не заводится с дашборда", "body": "замечено на прогоне.", "prio": "mid"}`)
 	got := newResp(t, resp, "запись черновика")
 	id, _ := got["id"].(string)
 	if id != "XR-005" {
@@ -49,8 +51,11 @@ func TestDraftCreate(t *testing.T) {
 		t.Errorf("путь черновика не назван: %v", got["file"])
 	}
 	doc := readFile(t, filepath.Join(drafts, "XR-005.md"))
-	if !strings.Contains(doc, "мысль с телефона: доска не заводится с дашборда") {
-		t.Errorf("текст не доехал до файла черновика:\n%s", doc)
+	if !strings.HasPrefix(doc, "# XR-005: мысль с телефона: доска не заводится с дашборда\n") {
+		t.Errorf("заголовок не лёг первой строкой файла черновика:\n%s", doc)
+	}
+	if !strings.Contains(doc, "### Ситуация\n\nзамечено на прогоне.\n") {
+		t.Errorf("тело не легло подразделом «Ситуация»:\n%s", doc)
 	}
 	// Строки на доске у черновика нет: он ждёт груминга.
 	if board := readFile(t, filepath.Join(e.proj, "docs", "TASKS.md")); strings.Contains(board, "XR-005") {
@@ -76,7 +81,7 @@ func TestDraftAwkwardText(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	for i, text := range []string{"fix", "-p не работает после обновления"} {
 		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-			`{"text": `+strconv.Quote(text)+`, "prio": "mid"}`)
+			`{"title": `+strconv.Quote(text)+`, "prio": "mid"}`)
 		got := newResp(t, resp, "запись черновика "+text)
 		id, _ := got["id"].(string)
 		if id == "" {
@@ -98,7 +103,7 @@ func TestDraftTextLimit(t *testing.T) {
 
 	long := strings.Repeat("мысль без конца, ", draftTextLimit/8)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": `+strconv.Quote(long)+`, "prio": "mid"}`)
+		`{"title": "мысль с телефона", "body": `+strconv.Quote(long)+`, "prio": "mid"}`)
 	text := body(t, resp)
 	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "длиннее предела") {
 		t.Fatalf("текст за пределом: %d %s, ожидал 400 со словами про предел", resp.StatusCode, text)
@@ -110,26 +115,28 @@ func TestDraftTextLimit(t *testing.T) {
 		t.Errorf("отбитый текст дошёл до коммита доски: %s", git)
 	}
 
-	// Мысль в предел укладывается и записывается тем же полем: рубеж стоит на
-	// вложении, а не на длинной записи. Первая строка идёт заголовком, и
-	// длинное тело едет под ней: простыню одной строкой утилита отбивает сама
-	// (TASKFORM.md, форма черновика).
+	// Заголовок короткий, а тело длинное: рубеж стоит на вложении целиком, а
+	// не на длинной записи. Заголовок и тело собираются сервером в тот же
+	// формат, что ждёт taskctl draft на stdin (TASKFORM.md, форма черновика).
 	tail := strings.TrimSpace(strings.Repeat("мысль с телефона, ", 64))
-	fits := "мысль с телефона\n\n" + tail
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": `+strconv.Quote(fits)+`, "prio": "mid"}`)
+		`{"title": "мысль с телефона", "body": `+strconv.Quote(tail)+`, "prio": "mid"}`)
 	got := newResp(t, resp, "запись длинного черновика в пределе")
 	id, _ := got["id"].(string)
 	if id == "" {
 		t.Fatalf("черновик в пределе не завёлся: %v", got)
 	}
-	// Простыня одной строкой отбивается порогом первой строки утилиты, и отказ
-	// приходит без совета про stdin: с дашборда текст и так идёт на stdin.
+	// Заголовок длиннее 72 символов отбивается сервером своими словами до
+	// всякого похода на taskctl: гонка мимо подсветки формы (второй клиент,
+	// отключённый JS) не должна доехать до подпроцесса и его совета про stdin.
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": `+strconv.Quote(strings.TrimSpace(strings.Repeat("мысль с телефона, ", 8)))+`, "prio": "mid"}`)
+		`{"title": `+strconv.Quote(strings.TrimSpace(strings.Repeat("мысль с телефона, ", 8)))+`, "prio": "mid"}`)
 	text = body(t, resp)
 	if resp.StatusCode == http.StatusOK || !strings.Contains(text, "72") || strings.Contains(text, "stdin") {
-		t.Fatalf("отказ по первой строке: %d %s, ожидал отказ с порогом и без совета про stdin", resp.StatusCode, text)
+		t.Fatalf("отказ по заголовку: %d %s, ожидал отказ с порогом и без совета про stdin", resp.StatusCode, text)
+	}
+	if git := readFile(t, gitLog); strings.Count(git, "черновик записан с дашборда") != 1 {
+		t.Errorf("отказ по длине заголовка дошёл до утилиты и коммита: %s", git)
 	}
 	// Тело без разметки утилита кладёт в подраздел «Ситуация» под заголовком.
 	if doc := readFile(t, filepath.Join(e.proj, "docs", "tasks", "drafts", id+".md")); !strings.HasPrefix(doc, "# "+id+": мысль с телефона\n") || !strings.Contains(doc, "### Ситуация\n\n"+tail+"\n") {
@@ -244,7 +251,7 @@ func TestTaskCreateRefusals(t *testing.T) {
 	// Черновик без уровня разбора отбивается на сервере, не доходя до утилиты:
 	// уровень спрашивается на записи (DK-520), и отказ говорит про шкалу, а не
 	// про форму команды taskctl.
-	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"text": "мысль без уровня"}`)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"title": "мысль без уровня"}`)
 	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
 		!strings.Contains(text, "уровень разбора") {
 		t.Errorf("черновик без уровня: %d %s, ожидал 400 со словами про уровень", resp.StatusCode, text)
@@ -252,14 +259,14 @@ func TestTaskCreateRefusals(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.proj, "docs", "tasks", "drafts")); !os.IsNotExist(err) {
 		t.Errorf("черновик без уровня завёл накопитель: %v", err)
 	}
-	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"text": "мысль", "prio": "срочно"}`)
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"title": "мысль", "prio": "срочно"}`)
 	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
 		!strings.Contains(text, "уровень разбора") {
 		t.Errorf("уровень мимо шкалы: %d %s, ожидал 400", resp.StatusCode, text)
 	}
 
 	// Пустой черновик отбивается там же и не заводит файла.
-	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"text": "   ", "prio": "mid"}`)
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"title": "   ", "prio": "mid"}`)
 	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
 		!strings.Contains(text, "пустой черновик") {
 		t.Errorf("пустой черновик: %d %s", resp.StatusCode, text)
@@ -361,7 +368,7 @@ func TestNewTaskAuthAndOrigin(t *testing.T) {
 	before := readFile(t, boardPath)
 	calls := []struct{ url, body string }{
 		{e.srv.URL + "/api/projects/demo/tasks", `{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0]}`},
-		{e.srv.URL + "/api/projects/demo/drafts", `{"text": "мысль", "prio": "mid"}`},
+		{e.srv.URL + "/api/projects/demo/drafts", `{"title": "мысль", "prio": "mid"}`},
 	}
 	for _, call := range calls {
 		resp := doReq(t, plainClient(), "POST", call.url, call.body)
@@ -501,25 +508,20 @@ func TestStaticNewTaskForm(t *testing.T) {
 // нечему. Несохранённое в работу не берётся, и сказано это словами.
 func TestStaticNewFormSwitch(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
-	for _, want := range []string{
-		"Черновику доступен только груминг",
-		"в работу его не взять",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("в static/app.js нет надписи %q", want)
-		}
-	}
 	// Подписей под формой не осталось ни у черновика, ни у задачи: они
 	// пересказывали устройство (куда ляжет файл, кто выдаст ID, что откроется
 	// после записи) и объясняли кнопки, чьи подписи их и называют (замечание
-	// пользователя). Пометка про груминг выше это не подпись формы, а
-	// единственная особенность черновика, которой не видно глазами.
+	// пользователя). Пометка про то, что черновику доступен только груминг,
+	// тоже снята: у формы есть «Сохранить и выполнить», и пометка говорила
+	// неправду (DK-447).
 	for _, gone := range []string{
 		"Ляжет в docs/tasks/drafts/, ID выдаст taskctl",
 		"Встанет в Backlog сразу, место выведется из ранга",
 		"Взять в работу можно с карточки задачи",
 		"«Сохранить» вернёт в накопитель",
 		"Файл задачи docs/tasks/<ID>.md заведётся вместе со строкой",
+		"Черновику доступен только груминг",
+		"в работу его не взять",
 	} {
 		if strings.Contains(text, gone) {
 			t.Errorf("на форме заведения снова стоит подпись %q", gone)
@@ -567,22 +569,23 @@ func TestStaticNewFormSwitch(t *testing.T) {
 		t.Error("дублирующая крошка «Доска <проект>» вернулась на форму заведения")
 	}
 	css := readFile(t, filepath.Join("static", "style.css"))
-	for _, want := range []string{".pmenu", ".pmrow", ".dnote"} {
+	for _, want := range []string{".pmenu", ".pmrow"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("в static/style.css нет правила %q", want)
 		}
 	}
 }
 
-// Форма черновика встречает человека шаблоном разделов в единственном поле:
-// заголовок первой строкой, дальше «### Ситуация» и соседи с пустыми местами
-// под текст. Полей на каждый раздел форма не заводит: «нужно было просто в
+// Форма черновика встречает человека раздельными полями заголовка и тела
+// (DK-447, черновик DK-1252): заголовок короткая строка без разметки, тело
+// приходит шаблоном разделов, «### Ситуация» и соседи с пустыми местами под
+// текст. Полей на каждый раздел тела форма не заводит: «нужно было просто в
 // поле редактирования вставить шаблон с разделами, а пользователь сам заполнит
 // их, так гораздо гибче» (решение пользователя). Правит шаблон человек руками,
-// и рубеж формы тот же, что у утилиты записи: непустая первая строка.
+// а рубеж формы у заголовка: непустая строка не длиннее потолка.
 func TestStaticDraftTemplateForm(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
-	for _, want := range []string{`const DRAFT_TEMPLATE = ["", "", "### Ситуация"`,
+	for _, want := range []string{`const DRAFT_TEMPLATE = ["### Ситуация"`,
 		`"### Осложнение"`, `"### Вопрос"`, `"### Гипотеза"`} {
 		if !strings.Contains(app, want) {
 			t.Errorf("в шаблоне черновика нет %q", want)
@@ -590,35 +593,32 @@ func TestStaticDraftTemplateForm(t *testing.T) {
 	}
 	// Полей на разделы нет вовсе, как и сборки текста из них.
 	for _, gone := range []string{"DRAFT_SECTIONS", "function draftText(", `"nfsec"`,
-		"черновика\")", "form.sit", "form.comp"} {
+		"form.sit", "form.comp"} {
 		if strings.Contains(app, gone) {
 			t.Errorf("отдельные поля разделов остались в статике: нашлось %q", gone)
 		}
 	}
 	made := funcBody(t, app, "function renderNew(")
-	// Шаблон кладётся один раз за заход: перерисовка по фокусу окна не должна
-	// возвращать его в очищенное рукой поле.
-	for _, want := range []string{"const seeded = draft && !newForm.seeded && !newForm.title.trim();",
-		"if (seeded) newForm.title = DRAFT_TEMPLATE;",
-		"const text = newForm.title.trim();"} {
+	// Шаблон кладётся в тело один раз за заход: перерисовка по фокусу окна не
+	// должна возвращать его в очищенное рукой поле, а заголовок шаблоном не
+	// затрагивается вовсе.
+	for _, want := range []string{"const seeded = draft && !newForm.seeded && !newForm.body.trim();",
+		"if (seeded) newForm.body = DRAFT_TEMPLATE;",
+		"const title = newForm.title.trim();",
+		`bodyArea.setAttribute("aria-label", "тело черновика");`} {
 		if !strings.Contains(made, want) {
 			t.Errorf("шаблон кладётся не тем блоком: нет %q", want)
 		}
 	}
-	// Поле у обеих форм одно, и нетронутый шаблон на форму задачи не уезжает:
-	// там он встал бы заголовком строки.
-	if !strings.Contains(made, "if (!draft && newForm.seeded && newForm.title === DRAFT_TEMPLATE) {") {
-		t.Error("шаблон черновика уезжает на форму задачи заголовком строки")
-	}
-	// Курсор встаёт на первую строку, где человек и начинает.
+	// Курсор встаёт в заголовок, где человек и начинает.
 	if !strings.Contains(made, "view.title.setSelectionRange(0, 0)") {
-		t.Error("курсор не ставится в поле шаблона: человек ищет начало сам")
+		t.Error("курсор не ставится в поле заголовка: человек ищет начало сам")
 	}
-	// Рубеж ровно утилитин: непустая первая строка и её длина, разделов он не
+	// Рубеж ровно утилитин: непустой заголовок и его длина, тело он не
 	// спрашивает.
 	stop := funcBody(t, app, "function draftFormRefusal(")
-	if !strings.Contains(stop, `form.title || "").split("\n", 1)[0]`) {
-		t.Error("рубеж формы черновика меряет не первую строку")
+	if !strings.Contains(stop, `String(form.title || "").trim()`) {
+		t.Error("рубеж формы черновика меряет не заголовок")
 	}
 	for _, gone := range []string{"ситуация не написана", "осложнение не написано"} {
 		if strings.Contains(app, gone) {

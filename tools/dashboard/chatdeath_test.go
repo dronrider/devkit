@@ -198,7 +198,7 @@ func TestDraftGroomDeathSaid(t *testing.T) {
 	writeScript(t, e.bin, "claude", "exit 0")
 	writeAgentctlFake(t, e.bin, harnessTiersFixture)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "дашборд не показывает исход подъёма", "prio": "mid"}`).Body.Close()
+		`{"title": "дашборд не показывает исход подъёма", "prio": "mid"}`).Body.Close()
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
 	text := body(t, resp)

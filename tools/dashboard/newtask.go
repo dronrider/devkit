@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Заведение задачи и черновика с дашборда (DK-245). Путь по умолчанию это
@@ -36,7 +38,11 @@ var draftPrios = map[string]bool{"high": true, "mid": true, "low": true}
 
 // handleDraftPost записывает сырую мысль черновиком. Каталога накопителя на
 // проекте может не быть вовсе, и это не отказ: заводит его первая же команда
-// draft сама.
+// draft сама. Заголовок и тело приходят с формы отдельными полями (DK-447,
+// черновик DK-1252) и собираются тут в тот же вид, что ждёт taskctl draft на
+// stdin: первая строка заголовок, дальше пустая строка и тело. Порог
+// заголовка читается из internal/taskform, общего с утилитой записи, а не
+// дублируется числом здесь.
 func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -47,8 +53,9 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Text string `json:"text"`
-		Prio string `json:"prio"`
+		Title string `json:"title"`
+		Body  string `json:"body"`
+		Prio  string `json:"prio"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, draftTextLimit)).Decode(&body); err != nil {
 		var mbe *http.MaxBytesError
@@ -57,13 +64,22 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 				"error": fmt.Sprintf("текст длиннее предела %d КБ: в черновик кладётся мысль, а не вложение", draftTextLimit/1024)})
 			return
 		}
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"title\": \"...\", \"body\": \"...\"}"})
 		return
 	}
-	text := strings.TrimSpace(body.Text)
-	if text == "" {
+	title := strings.TrimSpace(body.Title)
+	if title == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "пустой черновик записывать нечего: жду JSON {\"text\": \"...\", \"prio\": \"mid\"}"})
+			"error": "пустой черновик записывать нечего: жду JSON {\"title\": \"...\", \"body\": \"...\", \"prio\": \"mid\"}"})
+		return
+	}
+	// Порог тот же, что подсвечивает форма до отправки: гонка мимо подсветки
+	// (второй клиент, отключённый JS) отбивается тут же человеческой фразой,
+	// а не сырым текстом отказа утилиты из подпроцесса.
+	if n := len([]rune(title)); n > taskform.DraftTitleLimit {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("заголовок черновика длиннее %d символов (%d): по нему черновик узнают в накопителе, тело идёт отдельным полем",
+				taskform.DraftTitleLimit, n)})
 		return
 	}
 	// Уровень разбора спрашивается на записи, а не в грумминге (DK-520): без
@@ -74,6 +90,10 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "жду уровень разбора: prio high|mid|low, оценка грубая и на глаз"})
 		return
+	}
+	text := title
+	if b := strings.TrimSpace(body.Body); b != "" {
+		text += "\n\n" + b
 	}
 	// Текст едет на вход подпроцесса, а не аргументом: аргумент проходит разбор
 	// флагов и стража подкоманд taskctl, и мысль из одного слова латиницей либо

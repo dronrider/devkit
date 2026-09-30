@@ -171,7 +171,7 @@ func TestDraftGroomStopNoDeathSaid(t *testing.T) {
 	writeScript(t, e.bin, "claude", "exit 0")
 	writeAgentctlFake(t, e.bin, harnessTiersFixture)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "исход подъёма виден человеку", "prio": "mid"}`).Body.Close()
+		`{"title": "исход подъёма виден человеку", "prio": "mid"}`).Body.Close()
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("груминг черновика: %d %s", resp.StatusCode, body(t, resp))
@@ -199,7 +199,7 @@ func TestDraftGroomOverLeftoverNoDeathSaid(t *testing.T) {
 	writeScript(t, e.bin, "claude", "exit 0")
 	writeAgentctlFake(t, e.bin, harnessTiersFixture)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "исход подъёма виден человеку", "prio": "mid"}`).Body.Close()
+		`{"title": "исход подъёма виден человеку", "prio": "mid"}`).Body.Close()
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("первый разбор: %d %s", resp.StatusCode, body(t, resp))

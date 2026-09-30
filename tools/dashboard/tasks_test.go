@@ -1401,7 +1401,7 @@ func TestStaticHiddenBeatsDisplay(t *testing.T) {
 	// Список тут не украшение: пока в нём не было поля правки и кнопки
 	// разворота диффа, сторож смотрел мимо, и постановка стояла на экране
 	// дважды, разметкой и полем ввода разом (жалоба пользователя).
-	for _, cls := range []string{"btn", "div", "bdot", "chip", "pick", "dnote",
+	for _, cls := range []string{"btn", "div", "bdot", "chip", "pick",
 		"submore", "textarea", "fview", "tbox", "plist"} {
 		setter, guard := "", false
 		for _, rule := range rules {

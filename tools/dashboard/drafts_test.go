@@ -53,7 +53,7 @@ func TestDraftsListAndText(t *testing.T) {
 		"дашборд не показывает накопитель черновиков",
 	} {
 		doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-			`{"text": `+strconv.Quote(text)+`, "prio": "mid"}`).Body.Close()
+			`{"title": `+strconv.Quote(text)+`, "prio": "mid"}`).Body.Close()
 	}
 	got := draftsResp(t, c, e)
 	list, _ := got["drafts"].([]any)
@@ -97,7 +97,7 @@ func TestDraftsListAndText(t *testing.T) {
 func TestDraftPutText(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "уведомитель шумит из песочницы", "prio": "mid"}`).Body.Close()
+		`{"title": "уведомитель шумит из песочницы", "prio": "mid"}`).Body.Close()
 
 	// База правки едет с текстом от той же ручки, что его отдаёт: без неё
 	// сверять правку не с чем, и ручка её не принимает.
@@ -159,7 +159,7 @@ func TestDraftPutText(t *testing.T) {
 func TestDraftsCarryOrder(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "уведомитель шумит из песочницы", "prio": "mid"}`).Body.Close()
+		`{"title": "уведомитель шумит из песочницы", "prio": "mid"}`).Body.Close()
 
 	list := draftsResp(t, c, e)
 	drafts, _ := list["drafts"].([]any)
@@ -202,7 +202,7 @@ func TestDraftsSortedByPrio(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	for _, text := range []string{"первая идея", "вторая идея", "третья идея"} {
 		doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-			`{"text": `+strconv.Quote(text)+`, "prio": "mid"}`).Body.Close()
+			`{"title": `+strconv.Quote(text)+`, "prio": "mid"}`).Body.Close()
 	}
 	runTaskctl(t, e.proj, "draft", "prio", "XR-005", "high")
 	runTaskctl(t, e.proj, "draft", "prio", "XR-007", "low")
@@ -242,7 +242,7 @@ func TestDraftGroomPrompt(t *testing.T) {
 	writeScript(t, e.bin, "claude", "exit 0")
 	writeAgentctlFake(t, e.bin, harnessTiersFixture)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "дашборд не показывает накопитель черновиков", "prio": "mid"}`).Body.Close()
+		`{"title": "дашборд не показывает накопитель черновиков", "prio": "mid"}`).Body.Close()
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
 	text := body(t, resp)
@@ -362,7 +362,7 @@ func TestDraftGroomAuthAndOrigin(t *testing.T) {
 	writeTmuxFake(t, e.bin, tmuxLog, "")
 	writeScript(t, e.bin, "claude", "exit 0")
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "мысль про накопитель", "prio": "mid"}`).Body.Close()
+		`{"title": "мысль про накопитель", "prio": "mid"}`).Body.Close()
 
 	url := e.srv.URL + "/api/projects/demo/drafts/XR-005/groom"
 	resp := doReq(t, plainClient(), "POST", url, "")
@@ -410,7 +410,7 @@ func TestDraftGroomForeignOriginLogged(t *testing.T) {
 	e, c, _, lc := runsEnvWithLog(t, "")
 	// Пишем черновик
 	req, _ := http.NewRequest("POST", e.srv.URL+"/api/projects/demo/drafts",
-		strings.NewReader(`{"text": "новая мысль", "prio": "mid"}`))
+		strings.NewReader(`{"title": "новая мысль", "prio": "mid"}`))
 	req.Header.Set("Content-Type", "application/json")
 	c.Do(req)
 
@@ -517,7 +517,7 @@ exit 0`, gitLog))
 func makeDraft(t *testing.T, c *http.Client, e *testEnv, text string) string {
 	t.Helper()
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": `+strconv.Quote(text)+`, "prio": "mid"}`)
+		`{"title": `+strconv.Quote(text)+`, "prio": "mid"}`)
 	got := body(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("черновик %q не записался: %d %s", text, resp.StatusCode, got)
@@ -877,7 +877,7 @@ func TestDraftGroomOverIdleLeftover(t *testing.T) {
 	writeTmuxFake(t, e.bin, tmuxLog, `task-XR-005\n`)
 	writeScript(t, e.bin, "claude", "exit 0")
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "дашборд не показывает накопитель черновиков", "prio": "mid"}`).Body.Close()
+		`{"title": "дашборд не показывает накопитель черновиков", "prio": "mid"}`).Body.Close()
 
 	// Клиент прошлого разбора жив, а хода в нём нет.
 	writePeerTmux(t, e.home, "eeee5555-5555-4555-8555-555555555555", "task-XR-005:@2.%2", "idle")
@@ -904,7 +904,7 @@ func TestDraftGroomOverIdleLeftover(t *testing.T) {
 func TestTaskOfDraftIDNamesDraft(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "ссылка на черновик из чата не открывается", "prio": "mid"}`).Body.Close()
+		`{"title": "ссылка на черновик из чата не открывается", "prio": "mid"}`).Body.Close()
 
 	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/tasks/XR-005", "")
 	text := body(t, resp)
@@ -947,7 +947,7 @@ func TestTaskOfDraftIDNamesDraft(t *testing.T) {
 func TestDraftWaitingFromAsk(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "ссылка на черновик из чата не открывается", "prio": "mid"}`).Body.Close()
+		`{"title": "ссылка на черновик из чата не открывается", "prio": "mid"}`).Body.Close()
 
 	order := draftsResp(t, c, e)["drafts"].([]any)[0].(map[string]any)["order"]
 	if said, _ := order.(string); !strings.Contains(said, "decide") ||
@@ -1024,7 +1024,7 @@ func TestProjectsCountDrafts(t *testing.T) {
 	}
 	for _, text := range []string{"первая мысль", "вторая мысль"} {
 		doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-			`{"text": `+strconv.Quote(text)+`, "prio": "mid"}`).Body.Close()
+			`{"title": `+strconv.Quote(text)+`, "prio": "mid"}`).Body.Close()
 	}
 	if n := drafts(); n != 2 {
 		t.Errorf("накопитель из двух записей насчитал %d", n)
@@ -1045,7 +1045,7 @@ func TestProjectsCountDrafts(t *testing.T) {
 func TestDraftsCarryMoved(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "уведомитель шумит из песочницы", "prio": "mid"}`).Body.Close()
+		`{"title": "уведомитель шумит из песочницы", "prio": "mid"}`).Body.Close()
 	file := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")
 	when := time.Date(2026, 3, 17, 12, 0, 0, 0, time.Local)
 	if err := os.Chtimes(file, when, when); err != nil {
@@ -1151,7 +1151,7 @@ func TestDraftGroomOrderAndVisibility(t *testing.T) {
 	writeScript(t, e.bin, "claude", "exit 0")
 	writeAgentctlFake(t, e.bin, harnessTiersFixture)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "накопитель черновиков не виден в панели", "prio": "mid"}`).Body.Close()
+		`{"title": "накопитель черновиков не виден в панели", "prio": "mid"}`).Body.Close()
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
 	if resp.StatusCode != http.StatusOK {
@@ -1317,7 +1317,7 @@ func draftBase(t *testing.T, c *http.Client, e *testEnv, id string) string {
 func TestDraftPutBase(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "уведомитель шумит из песочницы", "prio": "mid"}`).Body.Close()
+		`{"title": "уведомитель шумит из песочницы", "prio": "mid"}`).Body.Close()
 	file := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")
 
 	base := draftBase(t, c, e, "XR-005")
@@ -1379,7 +1379,7 @@ func TestDraftPutBase(t *testing.T) {
 	}
 }
 
-// Замок разбора: пока по записи идёт грумминг, файл принадлежит агенту, и
+// Замок разбора: пока по записи идёт груминг, файл принадлежит агенту, и
 // правка с экрана отбивается. Отпирает замок живое ожидание ответа: агент спит
 // в инструменте ожидания, файла не трогает, и ответ правкой текста это законная
 // дорога.
@@ -1442,7 +1442,7 @@ func TestStaticDraftEditorLock(t *testing.T) {
 func TestDraftOfTaskIDNamesTask(t *testing.T) {
 	e, c, _ := tasksEnv(t)
 	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
-		`{"text": "форма черновика после груминга не уходит на задачу", "prio": "mid"}`).Body.Close()
+		`{"title": "форма черновика после груминга не уходит на задачу", "prio": "mid"}`).Body.Close()
 
 	// Исход груминга дословно: строка встала на доску, файл записи уехал из
 	// накопителя.
@@ -1464,7 +1464,7 @@ func TestDraftOfTaskIDNamesTask(t *testing.T) {
 	if got["task"] != "XR-005" {
 		t.Fatalf("отказ не назвал заведённую задачу: %s", text)
 	}
-	if !strings.Contains(got["error"], "грумминг завёл") {
+	if !strings.Contains(got["error"], "груминг завёл") {
 		t.Errorf("отказ по заведённой задаче сказан не своими словами: %s", text)
 	}
 

@@ -16,11 +16,11 @@ import (
 // удаление записи. Список берётся у taskctl (draft list --json), как и доска:
 // правду про накопитель держит утилита, а разбирать её печать грепом хрупко.
 // Текст читается файлом напрямую, как текст задачи. «Грумить»
-// поднимает сессию грумминга той же механикой, что и конвейер задачи (DK-250):
+// поднимает сессию груминга той же механикой, что и конвейер задачи (DK-250):
 // tmux-сессия с сессией клиента, свой разбор накопителя у дашборда
 // не заводится.
 
-// groomPrompt это заказ сессии грумминга. Слова те же, какими эту работу
+// groomPrompt это заказ сессии груминга. Слова те же, какими эту работу
 // заказывают в чате: по ним скилл board-groom и разводит разбор черновика.
 // Уточнение человека едет в тот же заказ (LLD DK-328, решение 4): писать в
 // закончившуюся сессию нечем, и ответ на вопрос груминга уходит новой ходкой,
@@ -90,8 +90,8 @@ const draftAskLimit = 4 << 10
 // одинаково.
 const draftDateLayout = "2006-01-02"
 
-// draftSession это имя tmux-сессии грумминга. Префикс task- взят не для
-// красоты: грумминг кончается строкой доски с тем же ID (taskctl add --id), и
+// draftSession это имя tmux-сессии груминга. Префикс task- взят не для
+// красоты: груминг кончается строкой доски с тем же ID (taskctl add --id), и
 // работа видна там же, где остальные работы проекта (liveWorks привязывает их
 // префиксом доски), а стоп ей достаётся тот же самый.
 func draftSession(id string) string { return "task-" + id }
@@ -198,7 +198,7 @@ func draftPathOf(projectPath, id string) (abs, rel string) {
 }
 
 // draftHere отвечает на вопрос, лежит ли за этим ID запись накопителя. Спрашивает
-// его отказ экрана задачи: доска и архив дают строку, а до грумминга ID живёт
+// его отказ экрана задачи: доска и архив дают строку, а до груминга ID живёт
 // только файлом в docs/tasks/drafts/, и без этой проверки ссылка на черновик
 // упиралась в «нет строки».
 func draftHere(projectPath, id string) bool {
@@ -286,12 +286,12 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 		// сторону экран задачи так же уходит на запись накопителя.
 		if s.rowHere(found.Path, id) {
 			writeJSON(w, http.StatusNotFound, map[string]string{
-				"error": fmt.Sprintf("черновика %s в %s нет: грумминг завёл по нему задачу", id, found.Name),
+				"error": fmt.Sprintf("черновика %s в %s нет: груминг завёл по нему задачу", id, found.Name),
 				"task":  id})
 			return
 		}
 		writeJSON(w, http.StatusNotFound, map[string]string{
-			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, грумминг мог уже завести по нему задачу", id, found.Name, rel)})
+			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, груминг мог уже завести по нему задачу", id, found.Name, rel)})
 		return
 	}
 	// Заказ едет и сюда, дословно: экран записи держит свою кнопку «Грумить»,
@@ -314,7 +314,7 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleDraftGroom поднимает сессию грумминга черновика. Проверки те же и в том
+// handleDraftGroom поднимает сессию груминга черновика. Проверки те же и в том
 // же порядке, что у запуска задачи: без tmux и без claude сессия умерла бы
 // молча, а поверх живой работы с тем же ID вторую поднимать нельзя.
 // handleDraftPut переписывает текст записи целиком: экран черновика правит её
@@ -354,7 +354,7 @@ func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 	was, err := os.ReadFile(path)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{
-			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, грумминг мог уже завести по нему задачу", id, found.Name, rel)})
+			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, груминг мог уже завести по нему задачу", id, found.Name, rel)})
 		return
 	}
 	if strings.TrimSpace(body.Text) == "" {
@@ -362,7 +362,7 @@ func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 			"error": "пустой текст затёр бы запись черновика: жду JSON {\"text\": \"...\"}"})
 		return
 	}
-	// Замок разбора: пока по записи идёт грумминг, файл принадлежит агенту, он
+	// Замок разбора: пока по записи идёт груминг, файл принадлежит агенту, он
 	// его читает, дописывает и уносит исходом. Правка человека под живым
 	// разбором либо пропала бы под ним, либо сделала бы исход ответом не на тот
 	// текст. Исключение одно: агент, ждущий ответа, спит в инструменте ожидания
@@ -482,9 +482,9 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// этим двум местам нельзя, иначе экран запирал бы редактор там, где второй
 	// грумер поднимается, и наоборот.
 	if busy := s.draftBusy(found.Path, id); busy != "" {
-		s.logf("грумминг %s в %s отклонён: tmux-сессия %s уже идёт", id, found.Name, busy)
+		s.logf("груминг %s в %s отклонён: tmux-сессия %s уже идёт", id, found.Name, busy)
 		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": fmt.Sprintf("работа %s уже идёт (tmux-сессия %s): поднимать грумминг поверх живой сессии нельзя, сначала стоп", id, busy)})
+			"error": fmt.Sprintf("работа %s уже идёт (tmux-сессия %s): поднимать груминг поверх живой сессии нельзя, сначала стоп", id, busy)})
 		return
 	}
 	// Остаток прошлого разбора: сессия жива, а хода в ней нет. Повторный
@@ -494,12 +494,12 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		if name != sess && name != "goal-"+id {
 			continue
 		}
-		s.logf("грумминг %s в %s: остаток прошлого разбора в tmux-сессии %s снят", id, found.Name, name)
+		s.logf("груминг %s в %s: остаток прошлого разбора в tmux-сессии %s снят", id, found.Name, name)
 		s.chatWatchOff(name)
 		runProc("tmux", "kill-session", "-t", name)
 	}
 	if m := claudeMissing(); m != "" {
-		s.logf("грумминг %s в %s не удался: %s", id, found.Name, m)
+		s.logf("груминг %s в %s не удался: %s", id, found.Name, m)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
@@ -511,7 +511,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		groomCmd(s.launchEnv(id, sess, ""), groomPrompt(id, ask, mode),
 			harness, model, id+" груминг")); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
-		s.logf("грумминг %s в %s не удался: %s", id, found.Name, text)
+		s.logf("груминг %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
 		return
 	}
@@ -521,14 +521,14 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// немую петлю ожидания, ради которой затевалась DK-728. Разговора у разбора
 	// пока нет, поэтому смерть поедет в журнал задачи.
 	s.chatRaised(sess, "", id, found.Name)
-	s.logf("грумминг %s в %s поднят (tmux-сессия %s%s)", id, found.Name, sess, harnessTail(harness))
+	s.logf("груминг %s в %s поднят (tmux-сессия %s%s)", id, found.Name, sess, harnessTail(harness))
 	// Хвост про исход дописывается ко всякому варианту сообщения о подъёме:
 	// человек выбрал «выполнить», и это должно быть слышно, чем бы ни
 	// кончилась остальная фраза (DK-1043).
 	tail := groomLiftTail(mode)
-	message := fmt.Sprintf("грумминг %s поднят в tmux-сессии %s: разбор доведёт черновик до строки Backlog либо снимет его с причиной%s", id, sess, tail)
+	message := fmt.Sprintf("груминг %s поднят в tmux-сессии %s: разбор доведёт черновик до строки Backlog либо снимет его с причиной%s", id, sess, tail)
 	if ask != "" {
-		message = fmt.Sprintf("грумминг %s поднят заново в tmux-сессии %s, уточнение уехало в заказ: агент перечитает черновик и пойдёт с начала%s", id, sess, tail)
+		message = fmt.Sprintf("груминг %s поднят заново в tmux-сессии %s, уточнение уехало в заказ: агент перечитает черновик и пойдёт с начала%s", id, sess, tail)
 	}
 	out := map[string]string{
 		"id": id, "kind": "task", "session": sess, "prompt": groomPrompt(id, ask, mode),
@@ -540,7 +540,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	}
 	if harness != nil {
 		out["harness"] = harness.Name
-		out["message"] = fmt.Sprintf("грумминг %s поднят на подписке %s (tmux-сессия %s)%s", id, harness.Name, sess, tail)
+		out["message"] = fmt.Sprintf("груминг %s поднят на подписке %s (tmux-сессия %s)%s", id, harness.Name, sess, tail)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

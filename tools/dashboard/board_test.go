@@ -2063,7 +2063,7 @@ func TestStaticFormsUseSharedSteps(t *testing.T) {
 	// коробки правки.
 	blocks := []string{".card", ".tgrid", ".rcard", ".rtop", ".rbig", ".rcard .rtop",
 		".rcard .rbody", ".rcard .rbig", ".nbar", ".ktabs", ".rankbox", ".swch",
-		".dnote", ".chd", ".phd", ".pbd"}
+		".chd", ".phd", ".pbd"}
 	// Свойства, которыми меряется рыхлость формы. Ширины и высоты сюда не идут:
 	// предмет тут ритм отступов и скругление рамки.
 	props := regexp.MustCompile(`(?:^|;)\s*(border-radius|margin-top|padding|gap)\s*:\s*([^;}]+)`)

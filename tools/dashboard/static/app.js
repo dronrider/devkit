@@ -15302,38 +15302,42 @@ async function renderDraft(project, works, id) {
 // ранга. Переключатель наверху меняет только то, куда ляжет написанное. В
 // режиме черновика поля не прячутся, а гасятся с подписью, кто их заполнит:
 // перестроенная форма скрывала бы от человека, чего черновик лишён.
-const DRAFT_NOTE_HEAD = "Черновику доступен только груминг.";
-const DRAFT_NOTE = "Задачи на доске у него нет, в работу его не взять: " +
-  "ранг и тип выдаст разбор накопителя, он же заведёт задачу.";
 // Подписей под формой заведения больше нет ни у черновика, ни у задачи. Они
 // пересказывали устройство (куда ляжет файл, кто выдаст ID, что откроется
 // после записи) и объясняли кнопки, чьи подписи и без того их называют
-// (замечание пользователя). Что остаётся черновику, сказано пометкой сверху,
-// и это единственная его особенность, которой не видно глазами.
+// (замечание пользователя). Пометка про то, что черновику доступен только
+// груминг, тоже снята: кнопка «Сохранить и выполнить» берёт его в работу
+// сразу, и пометка говорила неправду (DK-447, приписанный черновик DK-1252).
 const NEW_PLACEHOLDER = "Что нужно сделать и зачем";
 
-// Черновик пишется по SCQA, и форма кладёт в поле готовый шаблон разделов:
-// заголовок первой строкой, дальше подразделы третьего уровня с пустыми
-// местами под текст. Полей на каждый раздел форма не заводит: «нужно было
-// просто в поле редактирования вставить шаблон с разделами, а пользователь сам
-// заполнит их, так гораздо гибче» (решение пользователя). Написанное в
-// шаблоне человек волен править как угодно: снять раздел, добавить свой,
-// писать сплошным текстом. Размеченный текст утилита записи кладёт как есть.
-const DRAFT_PLACEHOLDER = "Заголовок-исход первой строкой, дальше разделы";
-const DRAFT_TEMPLATE = ["", "", "### Ситуация", "", "", "### Осложнение", "",
-  "", "### Вопрос", "", "", "### Гипотеза", ""].join("\n");
-// Порог заголовка держит и утилита записи, но узнавать о нём после похода на
-// сервер поздно: тот же рубеж стоит на самой форме.
+// Черновик пишется по SCQA, и заголовок с телом стоят на форме раздельными
+// полями. Прежде поле было одно, заголовком считалась его первая строка, и
+// без двух пустых строк над шаблоном кнопка «Сохранить» гасла молча, не говоря
+// почему (черновик DK-1252). Заголовок это короткая строка без разметки, тело
+// приходит в поле готовым шаблоном подразделов третьего уровня с пустыми
+// местами под текст. Полей на каждый раздел тела форма не заводит: «нужно
+// было просто в поле редактирования вставить шаблон с разделами, а
+// пользователь сам заполнит их, так гораздо гибче» (решение пользователя).
+// Написанное в шаблоне человек волен править как угодно: снять раздел,
+// добавить свой, писать сплошным текстом. Размеченный текст утилита записи
+// кладёт как есть.
+const DRAFT_TITLE_PLACEHOLDER = "Заголовок-исход";
+const DRAFT_PLACEHOLDER = "Разделы: ситуация, осложнение, вопрос, гипотеза";
+const DRAFT_TEMPLATE = ["### Ситуация", "", "", "### Осложнение", "", "",
+  "### Вопрос", "", "", "### Гипотеза", ""].join("\n");
+// Порог заголовка держит и утилита записи (TASKFORM.md, раздел «Первая
+// строка»), но узнавать о нём после похода на сервер поздно: тот же рубеж
+// стоит на самой форме.
 const DRAFT_TITLE_LIMIT = 72;
 
-// Рубеж формы черновика ровно тот же, что у утилиты записи: непустая первая
-// строка и её длина. Разделов форма не спрашивает вовсе: человек правит текст
+// Рубеж формы черновика ровно тот же, что у утилиты записи: непустой заголовок
+// не длиннее потолка. Тело формой не проверяется: человек правит шаблон
 // руками, и отбивать запись за снятый раздел значило бы спорить с его же
 // правкой (решение пользователя).
 function draftFormRefusal(form) {
-  const head = (String(form.title || "").split("\n", 1)[0] || "").trim();
-  if (!head) return "черновик пустым не бывает: первой строкой идёт заголовок-исход";
-  if (head.length > DRAFT_TITLE_LIMIT) {
+  const title = String(form.title || "").trim();
+  if (!title) return "у черновика нет заголовка: он идёт первой строкой записи";
+  if (title.length > DRAFT_TITLE_LIMIT) {
     return "заголовок длиннее " + DRAFT_TITLE_LIMIT + " символов: по нему черновик узнают в накопителе";
   }
   return "";
@@ -15368,7 +15372,7 @@ const DRAFT_OFF_PARTS = "поля те же, что у задачи, но пок
 // окно. Форма одна на экран, как и черновик экрана задачи. Поле написанного
 // тоже одно: у задачи это заголовок строки, у черновика текст записи, и
 // переключатель их не теряет.
-const newForm = { project: "", draft: false, title: "", type: "task", cost: "-",
+const newForm = { project: "", draft: false, title: "", body: "", type: "task", cost: "-",
   parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "", prio: "mid",
   seeded: false, mode: DRAFT_MODE_GROOM };
 
@@ -15376,6 +15380,7 @@ function resetNewForm(project) {
   newForm.project = project;
   newForm.draft = false;
   newForm.title = "";
+  newForm.body = "";
   newForm.type = "task";
   newForm.cost = "-";
   newForm.parts = [0, 0, 0, 0, 0];
@@ -15390,10 +15395,14 @@ function resetNewForm(project) {
 // Форма набрана хоть чем-то: пустую закрываем молча, а над набранной сперва
 // спрашиваем. Мера тут одна на оба вида, поля чужого вида стоят нетронутыми.
 function newFormFilled() {
+  if (newForm.draft) {
+    const title = String(newForm.title || "").trim();
+    const body = String(newForm.body || "");
+    // Шаблон разделов сам по себе не написанное: форма с одним шаблоном в
+    // теле и пустым заголовком закрывается молча, как закрывалась пустая.
+    return title !== "" || (body.trim() !== "" && body !== DRAFT_TEMPLATE);
+  }
   const text = String(newForm.title || "");
-  // Шаблон разделов сам по себе не написанное: форма с одним шаблоном
-  // закрывается молча, как закрывалась пустая.
-  if (newForm.draft) return text.trim() !== "" && text !== DRAFT_TEMPLATE;
   if (text.trim()) return true;
   return newForm.type !== "task" || newForm.cost !== "-" ||
     newForm.parts.some((n) => Number(n) !== 0) ||
@@ -15425,8 +15434,8 @@ async function makeNew(project, tail, body, btns, saying) {
   });
 }
 
-function makeDraft(project, text, prio, btns) {
-  return makeNew(project, "/drafts", { text, prio }, btns, "запись черновика...");
+function makeDraft(project, title, draftBody, prio, btns) {
+  return makeNew(project, "/drafts", { title, body: draftBody, prio }, btns, "запись черновика...");
 }
 
 function makeTask(project, body, btns) {
@@ -15443,28 +15452,18 @@ function renderNew(project, kind) {
   newForm.draft = kind === "draft";
 
   const draft = newForm.draft;
-  // Шаблон разделов встаёт в поле один раз, при заходе на форму. Экран
+  // Шаблон разделов встаёт в тело один раз, при заходе на форму. Экран
   // перечитывается по фокусу окна, и класть шаблон каждой перерисовкой значило
-  // бы возвращать его в очищенное рукой поле, споря с человеком.
-  const seeded = draft && !newForm.seeded && !newForm.title.trim();
+  // бы возвращать его в очищенное рукой поле, споря с человеком. Заголовок
+  // шаблоном не затрагивается: он остаётся отдельным коротким полем.
+  const seeded = draft && !newForm.seeded && !newForm.body.trim();
   if (draft && !newForm.seeded) {
-    if (seeded) newForm.title = DRAFT_TEMPLATE;
+    if (seeded) newForm.body = DRAFT_TEMPLATE;
     newForm.seeded = true;
   }
-  // Шаблон принадлежит черновику: поле у обеих форм одно, и нетронутый шаблон,
-  // уехав на форму задачи, встал бы заголовком строки. Написанное рукой при
-  // этом переезжает, как переезжало и раньше.
-  if (!draft && newForm.seeded && newForm.title === DRAFT_TEMPLATE) {
-    newForm.title = "";
-    newForm.seeded = false;
-  }
-  // Пометка про груминг стоит только у черновика и говорит сразу обе правды: и
-  // чего у него нет, и кто это выдаст.
-  const note = el("div", "dnote");
-  note.append(el("b", "", DRAFT_NOTE_HEAD), document.createTextNode(" " + DRAFT_NOTE));
 
-  // Уровень стоит у самого верха формы, рядом с пометкой про груминг: это
-  // единственное, что черновик спрашивает сверх текста (DK-520).
+  // Уровень стоит у самого верха формы: это единственное, что черновик
+  // спрашивает сверх заголовка с телом (DK-520).
   const prioBox = el("div", "accbox");
   const prioPick = pickField("уровень разбора", PRIO_VALUES, newForm.prio, (v) => {
     newForm.prio = v;
@@ -15473,6 +15472,24 @@ function renderNew(project, kind) {
   prioPick.querySelector("select").setAttribute("aria-label", "уровень разбора записи накопителя");
   prioBox.append(prioPick);
   const prioHint = el("div", "hint", PRIO_HINT);
+
+  // Тело черновика это второе поле формы записи, растущее по высоте так же,
+  // как заголовок: текст свободный, разметку подразделов утилита записи
+  // узнаёт сама (DK-1252).
+  const bodyField = el("div", "");
+  bodyField.append(el("span", "flab", "Тело"));
+  const bodyArea = el("textarea", "tedit tbig");
+  bodyArea.rows = 1;
+  bodyArea.value = newForm.body || "";
+  bodyArea.placeholder = DRAFT_PLACEHOLDER;
+  bodyArea.setAttribute("aria-label", "тело черновика");
+  const fitBody = () => {
+    bodyArea.style.height = "auto";
+    if (bodyArea.scrollHeight) bodyArea.style.height = bodyArea.scrollHeight + "px";
+  };
+  bodyArea.addEventListener("input", () => { newForm.body = bodyArea.value; fitBody(); view.touch(); });
+  setTimeout(fitBody, 0);
+  bodyField.append(bodyArea);
 
   // Вид приёмки, барьер и причина (DK-301): вид закрытым списком из трёх,
   // барьер из шести показывается только у не агентского вида, и причина без
@@ -15543,11 +15560,13 @@ function renderNew(project, kind) {
   // вовсе.
   const saveDraft = (mode, harness, tier) => {
     if (draftFormRefusal(newForm)) return;
-    // Уезжает написанное как есть: разметку разделов утилита записи узнаёт
-    // сама, а снятый или добавленный рукой раздел это дело автора.
-    const text = newForm.title.trim();
+    // Заголовок и тело уезжают раздельно, разметку разделов внутри тела
+    // утилита записи узнаёт сама, а снятый или добавленный рукой раздел это
+    // дело автора.
+    const title = newForm.title.trim();
+    const draftBody = String(newForm.body || "");
     const btns = [view.save, view.saveMore].filter(Boolean);
-    makeDraft(project, text, newForm.prio, btns).then(async (done) => {
+    makeDraft(project, title, draftBody, newForm.prio, btns).then(async (done) => {
       if (!done) return;
       resetNewForm(project);
       // Записанное ищут в накопителе, и метка ведёт туда глаз: свежая запись
@@ -15568,12 +15587,15 @@ function renderNew(project, kind) {
     // пользователя).
     // У черновика на экране только он сам: ни карточки приёмки, ни полей
     // строки доски. У задачи наоборот, ни слова про груминг.
-    lead: draft ? [note, prioBox, prioHint] : [], extra: draft ? [] : [card],
+    lead: draft ? [prioBox, prioHint] : [], extra: draft ? [] : [card],
+    // Тело черновика встаёт сразу под заголовком, отдельным полем формы, а не
+    // общим текстом с ним (DK-1252).
+    afterChips: draft ? [bodyField] : [],
     // Форма заведения это та же правка задачи с пустыми полями: правка тут
     // включена всегда, и выключать её нечем, экран для неё и открыт.
     has: draft ? { title: true } : { title: true, type: true, cost: true, rank: true },
-    titleHint: draft ? DRAFT_PLACEHOLDER : NEW_PLACEHOLDER, titleTall: true,
-    titleLabel: draft ? "текст черновика" : "заголовок задачи",
+    titleHint: draft ? DRAFT_TITLE_PLACEHOLDER : NEW_PLACEHOLDER, titleTall: !draft,
+    titleLabel: draft ? "заголовок черновика" : "заголовок задачи",
     form: newForm, edit: true, always: true,
     saveLabel: draft ? "Сохранить" : "Завести задачу",
     // У черновика кнопок сохранения две, и расходятся они только дорогой
@@ -15667,10 +15689,10 @@ function renderNew(project, kind) {
     view.rankNote.textContent = "= " + newForm.parts.join("+");
   }
 
-  // Курсор встаёт на первую строку шаблона: с заголовка человек и начинает, а
-  // ниже его ждут готовые разделы. Ставится он только вместе со свежим
-  // шаблоном: перерисовка по фокусу окна не должна выдёргивать курсор из того
-  // раздела, где человек пишет.
+  // Курсор встаёт в поле заголовка: с него человек и начинает, а тело ждёт
+  // готовым шаблоном разделов ниже. Ставится он только со свежим шаблоном:
+  // перерисовка по фокусу окна не должна выдёргивать курсор из того поля,
+  // где человек пишет.
   if (seeded && view.title && view.title.focus) {
     view.title.focus();
     if (view.title.setSelectionRange) view.title.setSelectionRange(0, 0);

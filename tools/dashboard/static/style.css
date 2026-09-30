@@ -927,9 +927,7 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .rankbox{border:1px solid var(--line);border-radius:var(--rad2);padding:var(--sp1) var(--sp3) var(--sp2)}
 /* спрятанное атрибутом остаётся спрятанным: своё display у чипа, списка и
    пометки сильнее встроенного [hidden]{display:none} браузера. */
-.chip[hidden],.pick[hidden],.dnote[hidden],.accbox[hidden]{display:none}
-.dnote{display:flex;flex-wrap:wrap;gap:var(--sp1);padding:var(--sp3) var(--sp3);border-radius:var(--rad2);background:color-mix(in oklab,var(--goal) 10%,var(--bg1));border:1px solid color-mix(in oklab,var(--goal) 28%,transparent);font:400 12.5px/1.55 var(--sans);color:var(--tx2)}
-.dnote b{color:var(--goal);font-weight:600}
+.chip[hidden],.pick[hidden],.accbox[hidden]{display:none}
 /* погашенные поля черновика: видно, что они есть, и видно, что не заполняются */
 .nfbody .off,.tpage .off{opacity:0.45}
 /* вид приёмки и барьер в одном ряду, на телефоне переносятся: оба списка

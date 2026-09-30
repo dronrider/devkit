@@ -10,8 +10,8 @@
 Признаков три, пороги к ним лежат в конфиге (kit/plan.toml), своих чисел код не
 держит.
 
-  идущий пункт старше порога   план не менялся дольше step_hours часов, а пункт
-                               в нём всё ещё помечен идущим
+  идущий пункт старше порога   план не менялся дольше step_hours часов работы
+                               сессии, а пункт в нём всё ещё помечен идущим
   план закрыт целиком          все пункты completed, а сессия работает дальше
                                уже done_turns ходов
   план стоит без правки        план не менялся still_turns ходов подряд, а
@@ -27,14 +27,25 @@
 Ходы сторож не считает сам: их считает отметка хода (hooks/turn-mark.py) в
 журнале ~/.devkit/turns.log, и своего журнала рядом с планом тут не заводится.
 Ход, кончившийся позже последней правки плана, это ход, который план не тронул.
+Тот же журнал говорит, когда сессия работала: часы идущему пункту идут до конца
+её последнего хода, а не до текущего момента, и сессия, стоящая в ожидании
+человека, идущим пунктом не стареет (DK-1243).
 
 Каналов у сторожа два, и стоит он на двух событиях (DK-1236).
 
-  UserPromptSubmit   напоминание контекстом в начале хода: план закрыт целиком
-                     либо стоит без правки, и если реплика начинает работу,
-                     плану место первым действием того же хода
+  UserPromptSubmit   напоминание контекстом в начале хода: все три признака, и
+                     текущий ход считается уже сделанным, потому что отметку его
+                     turn-mark пишет на Stop раньше сторожа
   Stop               сдача решением block на конце хода, и достаётся она ходу,
                      который делал работу инструментами и плана не тронул
+
+Инвариант каналов один: блок на конце хода получает только ход, которому то же
+расхождение сказали напоминанием на его входе, а план с тех пор не менялся
+(DK-1243). След напоминания лежит файлом ~/.devkit/plan-said/<ID сессии>.json.
+Без инварианта блок доставался и ходу, на входе которого сторож сказал
+«напоминать нечего», и починка снова стоила сессии отдельного хода модели, ради
+которого и делалась DK-1236. Признак «плана нет вовсе» инварианту не подчинён:
+он считается по ходам, уже сделанным сессией, и живёт только на конце хода.
 
 Разошёлся план или нет, сторож судил только на Stop, и починка неизбежно стоила
 сессии отдельного хода модели: один вызов agentctl plan set и снова сон. За три
@@ -75,6 +86,7 @@ DK-978). Свой файл плана это только `<ID сессии>.jso
   DEVKIT_TURN_MARK_LOG=..   свой журнал отметок хода, тот же ключ, что у
                             hooks/turn-mark.py
   DEVKIT_PLAN_WATCH_LOG=..  свой журнал сторожа (стенд, прогон проверки)
+  DEVKIT_PLAN_SAID_DIR=..   свой каталог следов напоминания
 """
 import json
 import os
@@ -88,12 +100,14 @@ HOME_DIR = os.path.join(os.path.expanduser("~"), ".devkit")
 PLAN_DIR = os.path.join(HOME_DIR, "plans")
 TURNS_LOG = os.path.join(HOME_DIR, "turns.log")
 LOG = os.path.join(HOME_DIR, "plan-watch.log")
+SAID_DIR = os.path.join(HOME_DIR, "plan-said")
 
 OFF_ENV = "DEVKIT_PLAN_WATCH_OFF"
 CONFIG_ENV = "DEVKIT_PLAN_CONFIG"
 DIR_ENV = "DEVKIT_PLAN_DIR"
 TURNS_ENV = "DEVKIT_TURN_MARK_LOG"
 LOG_ENV = "DEVKIT_PLAN_WATCH_LOG"
+SAID_ENV = "DEVKIT_PLAN_SAID_DIR"
 
 DEFAULT_CONFIG = os.path.join(hookio.ROOT, "kit", "plan.toml")
 
@@ -387,19 +401,17 @@ def turn_time(word):
         return 0.0
 
 
-def turns_after(session, since, env=None):
-    """Сколько ходов сессия доработала после правки плана. Журнал отметок зовёт
-    сессию первыми восемью знаками, а план целым ID, поэтому сводятся они
-    началом строки, а не равенством."""
-    if since <= 0:
-        return 0
+def turn_marks(session, env=None):
+    """Времена доработанных ходов сессии по журналу отметок. Журнал зовёт сессию
+    первыми восемью знаками, а план целым ID, поэтому сводятся они началом
+    строки, а не равенством."""
     path = turns_log(env)
     try:
         with open(path, encoding="utf-8") as f:
             lines = f.read().split("\n")
     except OSError:
-        return 0
-    count = 0
+        return []
+    out = []
     for line in lines:
         words = line.split()
         if len(words) < 4 or words[1] != "сессия" or words[3] != "ход":
@@ -408,9 +420,22 @@ def turns_after(session, since, env=None):
             continue
         if words[4:5] != [TURN_DONE_WORD]:
             continue
-        if turn_time(words[0]) > since:
-            count += 1
-    return count
+        out.append(turn_time(words[0]))
+    return out
+
+
+def turns_after(session, since, env=None):
+    """Сколько ходов сессия доработала после правки плана."""
+    if since <= 0:
+        return 0
+    return len([when for when in turn_marks(session, env) if when > since])
+
+
+def last_turn_end(session, env=None):
+    """Когда сессия доработала последний ход. Нуль значит, что отметок нет:
+    журнал молод или сессия ещё не кончила ни одного хода."""
+    marks = turn_marks(session, env)
+    return max(marks) if marks else 0.0
 
 
 def hours(seconds):
@@ -422,9 +447,21 @@ def hours(seconds):
     return "%d %s" % (n, "час" if tail == 1 else "часа")
 
 
+def step_clock(session, now, env=None):
+    """Время, по которому считается возраст идущего пункта: конец последнего хода
+    сессии, а не часы на стене. Сессия, кончившая ход вопросом человеку, стоит до
+    его ответа без единого хода, и по стенным часам идущий пункт у неё старел на
+    всё это ожидание. В разборе DK-1243 пункт «отдать итог человеку» давал сдачу
+    «план не менялся 9 часов» на первой же реплике человека. Отметок нет вовсе,
+    и считать остаётся по стенным часам."""
+    end = last_turn_end(session, env)
+    return min(now, end) if end > 0 else now
+
+
 def stale_step(items, changed, limits, now):
     """Признак, который считается часами: пункт помечен идущим, а план не менялся
-    дольше порога."""
+    дольше порога. Время сюда приходит от step_clock(), и часы это часы работы
+    сессии, а не часы на стене."""
     if not items or not limits:
         return []
     running = [text for text, state in items if state == RUNNING]
@@ -495,6 +532,66 @@ def reminder(lines):
             "«Порог повода»." % body)
 
 
+def said_dir(env=None):
+    env = os.environ if env is None else env
+    return (env.get(SAID_ENV) or "").strip() or SAID_DIR
+
+
+def said_path(session, env=None):
+    return os.path.join(said_dir(env), "%s.json" % session)
+
+
+def remember(session, turns, changed, env=None):
+    """След напоминания: чем и когда сторож окликнул сессию на входе хода. По
+    нему конец того же хода узнаёт, что напоминание сессия читала. Ход зовётся
+    парой (счёт ходов, время правки плана). Счёт на входе и на конце хода один и
+    тот же: отметку текущего хода на входе добавляет сам сторож, а на конце её
+    уже дописал turn-mark. Правка плана по ходу дела меняет обе половины
+    пары."""
+    path = said_path(session, env)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"turns": turns, "changed": changed}, f, ensure_ascii=False)
+    except OSError:
+        return
+    forget_old(env)
+
+
+def forget_old(env=None, now=None, days=7):
+    """Следы сессий, которых давно нет. Сессия живёт день-два, а файл следа
+    остаётся, и без уборки каталог растёт числом сессий машины за всё время."""
+    now = time.time() if now is None else now
+    directory = said_dir(env)
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(directory, name)
+        try:
+            if now - os.path.getmtime(path) > days * 86400:
+                os.remove(path)
+        except OSError:
+            continue
+
+
+def reminded(session, turns, changed, env=None):
+    """Тому же ходу сторож напоминание уже сказал, и план с тех пор не менялся.
+    Следа нет, значит на входе хода напоминать было нечего, и сдача на его конце
+    стоила бы сессии отдельного хода модели ни за что."""
+    try:
+        with open(said_path(session, env), encoding="utf-8") as f:
+            mark = json.load(f)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(mark, dict):
+        return False
+    return mark.get("turns") == turns and abs(hookio.number_of(mark.get("changed")) - changed) < 0.001
+
+
 def blocked(text, stream=None):
     """Канал сдачи: решение block на конце хода. Харнес отдаёт текст модели и
     продолжает ход вместо того, чтобы уснуть."""
@@ -522,28 +619,38 @@ def state(session, env=None):
     return items, changed, limits, turns_after(session, changed, env), ""
 
 
-def handle_prompt(event, env=None, stream=None):
-    """Начало хода: напоминание о плане, закрытом целиком или стоящем без
-    правки. Признак «плана нет вовсе» тут не считается: он смотрит на ходы,
-    которые сессия уже сделала, и место ему на конце хода."""
+def handle_prompt(event, env=None, now=None, stream=None):
+    """Начало хода: напоминание о плане, разошедшемся с делом. Признаки тут те
+    же три, что на конце хода, и текущий ход считается уже сделанным: отметку
+    хода turn-mark дописывает на Stop раньше сторожа, и без этой поправки
+    напоминание опаздывало ровно на ход (DK-1243).
+
+    Признак «плана нет вовсе» тут не считается: он смотрит на ходы, которые
+    сессия уже сделала, и место ему на конце хода. Живую фоновую работу, которая
+    гасит часовой признак, у начала хода не спросить: в событии нет перечня
+    работ. Часы работы сессии тут считает step_clock(). У ждущего субагента
+    диспетчера ход ожидания уже кончился, и напоминания он не получает."""
+    now = time.time() if now is None else now
     if event.message.lstrip().startswith(WAKE_TAG):
         # Ход начат сдачей фоновой работы, а не человеком. Ходы в журнале отметок
         # растут и на пробуждениях, и диспетчер, честно ждущий субагента,
         # получал бы напоминание на каждом из них.
         log(event.session, "пропуск: ход начат пробуждением, напоминать нечего", env)
         return 0
-    items, _, limits, turns, why = state(event.session, env)
+    items, changed, limits, turns, why = state(event.session, env)
     if not items:
         return 0
     if not limits:
         log(event.session, "пропуск: %s" % why, env)
         return 0
-    lines = turn_drift(items, turns, limits)
+    turns += 1
+    lines = findings(items, changed, turns, limits, step_clock(event.session, now, env))
     if not lines:
         log(event.session, "вход хода, напоминать нечего: пунктов %d, ходов после "
             "правки %d" % (len(items), turns), env)
         return 0
     said(reminder(lines), stream)
+    remember(event.session, turns, changed, env)
     log(event.session, "напоминание: %s" % "; ".join(lines), env)
     return 0
 
@@ -567,10 +674,17 @@ def handle_turn_done(event, env=None, now=None, stream=None):
     if not limits:
         log(event.session, "пропуск: %s" % why, env)
         return 0
-    lines = findings(items, changed, turns, limits, now, waiting=waits(event.jobs))
+    lines = findings(items, changed, turns, limits, step_clock(event.session, now, env),
+                     waiting=waits(event.jobs))
     if not lines:
         log(event.session, "план отвечает делу: пунктов %d, ходов после правки %d"
             % (len(items), turns), env)
+        return 0
+    if not reminded(event.session, turns, changed, env):
+        # Напоминания на входе этого хода не было, и сдача обошлась бы сессии в
+        # отдельный ход модели: ровно тот расход, ради которого делалась DK-1236.
+        log(event.session, "пропуск: на входе хода не напомнили, сдавать нечем: %s"
+            % "; ".join(lines), env)
         return 0
     blocked(handover(lines), stream)
     log(event.session, "сдача: %s" % "; ".join(lines), env)
@@ -580,7 +694,7 @@ def handle_turn_done(event, env=None, now=None, stream=None):
 def handle(event, env=None, now=None, stream=None):
     """Одно событие: план сверен с делом, находки сданы сессии."""
     if event.kind == hookio.PROMPT_SUBMIT:
-        return handle_prompt(event, env, stream)
+        return handle_prompt(event, env, now, stream)
     if event.kind != hookio.TURN_DONE or event.active:
         # Ход, продолженный стоп-хуком, сторож пропускает: второй заход закрутил
         # бы сессию в цикле, а сказанное в первый раз уже сказано.

@@ -54,6 +54,7 @@ class Stand(object):
         self.turns = os.path.join(tmp, "turns.log")
         self.config = os.path.join(tmp, "plan.toml")
         self.log = os.path.join(tmp, "plan-watch.log")
+        self.said = os.path.join(tmp, "plan-said")
         with open(self.config, "w", encoding="utf-8") as f:
             f.write(CONFIG)
 
@@ -123,13 +124,24 @@ class Stand(object):
                    DEVKIT_PLAN_DIR=self.plans,
                    DEVKIT_TURN_MARK_LOG=self.turns,
                    DEVKIT_PLAN_CONFIG=config or self.config,
-                   DEVKIT_PLAN_WATCH_LOG=self.log)
+                   DEVKIT_PLAN_WATCH_LOG=self.log,
+                   DEVKIT_PLAN_SAID_DIR=self.said)
         env.pop("DEVKIT_PLAN_WATCH_OFF", None)
         env.update(extra_env or {})
         p = subprocess.run([sys.executable, HOOK, "--hook"], input=json.dumps(event),
                            capture_output=True, text=True, env=env)
         said = json.loads(p.stdout) if p.stdout.strip() else {}
         return p.returncode, said
+
+    def remind(self, turns, since=60.0, config=None, extra_env=None):
+        """Вход того же хода: сторож говорит напоминание и оставляет след, без
+        которого он на конце хода молчит. Отметку текущего хода turn-mark
+        дописывает на Stop, поэтому на входе стенд кладёт на один ход меньше, а
+        потом возвращает журнал к тому счёту, с которым пойдёт конец хода."""
+        self.lay_turns(max(0, turns - 1), since)
+        out = self.run(sample("prompt-submit.json"), config=config, extra_env=extra_env)
+        self.lay_turns(turns, since)
+        return out
 
     def said_log(self):
         if not os.path.exists(self.log):
@@ -172,7 +184,7 @@ class TestWatch(unittest.TestCase):
         порога. Ровно так и висели два шага находки DK-609."""
         s = self.stand()
         s.lay_plan(plan(("разведка", "completed"), ("правка", "in_progress")), age=4 * HOUR)
-        s.lay_turns(1, since=4 * HOUR - 60)
+        s.remind(1)
         code, said = s.run()
         self.assertEqual(code, 0)
         self.assertEqual(said.get("decision"), "block")
@@ -188,7 +200,7 @@ class TestWatch(unittest.TestCase):
         code, said = s.run()
         self.assertEqual(said, {}, "один ход поверх закрытого плана это ещё не расхождение")
 
-        s.lay_turns(3)
+        s.remind(3)
         code, said = s.run()
         self.assertEqual(code, 0)
         self.assertEqual(said.get("decision"), "block")
@@ -203,7 +215,7 @@ class TestWatch(unittest.TestCase):
         code, said = s.run()
         self.assertEqual(said, {}, "девять ходов это ещё не порог")
 
-        s.lay_turns(12)
+        s.remind(12)
         code, said = s.run()
         self.assertEqual(code, 0)
         self.assertEqual(said.get("decision"), "block")
@@ -281,6 +293,7 @@ class TestWatch(unittest.TestCase):
         loose = os.path.join(s.tmp, "loose.toml")
         with open(loose, "w", encoding="utf-8") as f:
             f.write("[plan]\nstep_hours = 3\ndone_turns = 2\nstill_turns = 3\n")
+        s.remind(4, config=loose)
         code, said = s.run(config=loose)
         self.assertEqual(said.get("decision"), "block")
 
@@ -302,7 +315,7 @@ class TestWatch(unittest.TestCase):
         s = self.stand()
         s.lay_plan(plan(("разведка", "completed"), ("правка", "in_progress")),
                    age=4 * HOUR, label="dk609")
-        s.lay_turns(1, since=4 * HOUR - 60)
+        s.remind(1)
         code, said = s.run()
         self.assertEqual(code, 0)
         self.assertEqual(said.get("decision"), "block")
@@ -472,7 +485,7 @@ class TestWatch(unittest.TestCase):
     def test_standing_plan_is_reminded_at_the_start_of_a_turn(self):
         s = self.stand()
         s.lay_plan(plan(("разведка", "completed"), ("правка", "pending")), age=600.0)
-        s.lay_turns(12)
+        s.lay_turns(11)
         code, said = s.run(sample("prompt-submit.json"))
         out = said.get("hookSpecificOutput") or {}
         self.assertIn("не менялся 12 ходов", out.get("additionalContext", ""))
@@ -482,8 +495,7 @@ class TestWatch(unittest.TestCase):
         иначе по нему не посчитать, сколько сессии стоил сторож."""
         s = self.stand()
         s.lay_plan(plan(("правка", "completed"),), age=600.0)
-        s.lay_turns(3)
-        s.run(sample("prompt-submit.json"))
+        s.remind(3)
         s.run()
         said = s.said_log()
         self.assertIn("напоминание: все пункты плана закрыты", said)
@@ -498,14 +510,17 @@ class TestWatch(unittest.TestCase):
         self.assertEqual(said, {})
         self.assertIn("напоминать нечего", s.said_log())
 
-    def test_the_aging_step_is_not_reminded_at_the_start_of_a_turn(self):
-        """Признак, который считается часами, остаётся концу хода: только там
-        видно, ждёт ли сессия живую фоновую работу, и только там он честен."""
+    def test_the_aging_step_is_reminded_at_the_start_of_a_turn(self):
+        """Часовой признак едет напоминанием наравне с остальными: раньше он
+        оставался концу хода, и сдача на Stop доставалась ходу, которому на входе
+        сказали «напоминать нечего» (DK-1243)."""
         s = self.stand()
         s.lay_plan(plan(("правка", "in_progress")), age=4 * HOUR)
-        s.lay_turns(1, since=4 * HOUR - 60)
+        s.lay_turns(1)
         code, said = s.run(sample("prompt-submit.json"))
-        self.assertEqual(said, {}, "часовой признак приехал напоминанием")
+        out = said.get("hookSpecificOutput") or {}
+        self.assertIn("помечен идущим", out.get("additionalContext", ""))
+        self.assertNotIn("decision", said, "напоминание пришло блокировкой хода")
 
     def test_a_session_without_a_plan_is_not_reminded(self):
         """Признак «плана нет вовсе» смотрит на ходы, которые сессия уже
@@ -546,7 +561,7 @@ class TestWatch(unittest.TestCase):
         получает: напоминание он уже прочёл в своём начале."""
         s = self.stand()
         s.lay_plan(plan(("правка", "completed"),), age=600.0)
-        s.lay_turns(5)
+        s.remind(5)
         tr = s.lay_transcript([True, True])
         code, said = s.run(transcript=tr)
         self.assertEqual(said.get("decision"), "block")
@@ -557,7 +572,7 @@ class TestWatch(unittest.TestCase):
         нечем, а молчать на всяком нечитаемом транскрипте значит снять сторожа."""
         s = self.stand()
         s.lay_plan(plan(("правка", "completed"),), age=600.0)
-        s.lay_turns(5)
+        s.remind(5)
         code, said = s.run(transcript=os.path.join(s.tmp, "нет.jsonl"))
         self.assertEqual(said.get("decision"), "block")
 
@@ -566,7 +581,7 @@ class TestWatch(unittest.TestCase):
         часам он не стареет."""
         s = self.stand()
         s.lay_plan(plan(("слияние и выкат", "in_progress"),), age=18 * HOUR)
-        s.lay_turns(1, since=18 * HOUR - 60)
+        s.remind(1)
         tr = s.lay_transcript([True, True])
         code, said = s.run(sample("turn-done-background.json"), transcript=tr)
         self.assertEqual(code, 0)
@@ -578,7 +593,7 @@ class TestWatch(unittest.TestCase):
         целиком, при ней сдаётся тем же порядком: работа идёт, а плана у неё нет."""
         s = self.stand()
         s.lay_plan(plan(("правка", "completed"),), age=600.0)
-        s.lay_turns(5)
+        s.remind(5)
         tr = s.lay_transcript([True, True])
         code, said = s.run(sample("turn-done-background.json"), transcript=tr)
         self.assertEqual(said.get("decision"), "block")
@@ -591,7 +606,7 @@ class TestWatch(unittest.TestCase):
         ждать уже нечего."""
         s = self.stand()
         s.lay_plan(plan(("слияние и выкат", "in_progress"),), age=18 * HOUR)
-        s.lay_turns(1, since=18 * HOUR - 60)
+        s.remind(1)
         tr = s.lay_transcript([True, True])
         event = sample("turn-done-background.json")
         for job in event["background_tasks"]:
@@ -616,6 +631,68 @@ class TestWatch(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(said, {}, "напоминание приехало на пробуждении")
         self.assertIn("ход начат пробуждением, напоминать нечего", s.said_log())
+
+    # Блок на конце хода только по напоминанию, сказанному на его входе
+    # (DK-1243): три разобранных случая, в каждом сдача досталась ходу, которому
+    # вход сказал «напоминать нечего».
+
+    def test_handover_needs_a_reminder_at_the_same_turn(self):
+        """Сдача без напоминания не приходит вовсе: починка снова стоила бы
+        сессии отдельного хода модели, ради которого делалась DK-1236."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.lay_turns(5)
+        code, said = s.run()
+        self.assertEqual(code, 0)
+        self.assertEqual(said, {}, "сдача пришла ходу, которому не напоминали")
+        self.assertIn("на входе хода не напомнили", s.said_log())
+
+    def test_the_reminder_counts_the_current_turn(self):
+        """Отметку хода turn-mark пишет на Stop раньше сторожа, и на конце хода
+        счёт ходов на единицу больше, чем на его входе. Без поправки напоминание
+        опаздывало ровно на ход: вход говорил «ходов 1», конец сдавал «ходов 2»."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.lay_turns(1)
+        code, said = s.run(sample("prompt-submit.json"))
+        out = said.get("hookSpecificOutput") or {}
+        self.assertIn("после правки плана 2", out.get("additionalContext", ""),
+                      "вход хода не посчитал текущий ход")
+
+    def test_running_step_does_not_age_while_the_session_stands(self):
+        """Пункт «отдать итог человеку» помечен идущим, сессия кончила ход
+        вопросом и девять часов стоит без единого хода. По стенным часам пункт
+        старел на всё ожидание, и первая же реплика человека получала сдачу «план
+        не менялся 9 часов». Часы идут до конца последнего хода сессии."""
+        s = self.stand()
+        s.lay_plan(plan(("отдать итог человеку", "in_progress"),), age=9 * HOUR)
+        s.lay_turns(1, since=9 * HOUR - 60)
+        code, said = s.run(sample("prompt-submit.json"))
+        self.assertEqual(said, {}, "пункт состарился на ожидании человека")
+        code, said = s.run()
+        self.assertEqual(said, {}, "пункт состарился на ожидании человека")
+
+    def test_handover_needs_an_untouched_plan(self):
+        """Напоминание сессия прочла и план переложила: сдача на конце того же
+        хода ей уже не за что. Ход зовётся парой (счёт ходов, время правки
+        плана), и правка плана эту пару меняет."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.remind(3)
+        s.lay_plan(plan(("правка", "completed"), ("сдача", "in_progress")), age=1.0)
+        code, said = s.run()
+        self.assertEqual(said, {}, "сдача пришла ходу, который план переложил")
+
+    def test_the_reminder_trail_does_not_serve_the_next_turn(self):
+        """След напоминания принадлежит своему ходу: на следующем ходе счёт ходов
+        другой, и молчаливый ход сдачи не получает."""
+        s = self.stand()
+        s.lay_plan(plan(("правка", "completed"),), age=600.0)
+        s.remind(3)
+        s.run()
+        s.lay_turns(4)
+        code, said = s.run()
+        self.assertEqual(said, {}, "след напоминания сработал второй раз")
 
 
 if __name__ == "__main__":

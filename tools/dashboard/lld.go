@@ -145,7 +145,7 @@ func taskNum(id string) int {
 // снятая запись сама собой из чужой постановки не уходит. Род связи (после,
 // держит) приезжает из зависимостей строки; прочие упоминания идут без рода,
 // источник его не различает, и выдумывать нечего.
-func taskLinks(projectPath, id, link, text string, rows map[string]boardRow, after, blocks []string) map[string]any {
+func (s *server) taskLinks(projectPath, id, link, text string, rows map[string]boardRow, after, blocks []string) map[string]any {
 	seen := map[string]bool{}
 	lld := []map[string]any{}
 	addDoc := func(rel string, own bool) {
@@ -202,7 +202,7 @@ func taskLinks(projectPath, id, link, text string, rows map[string]boardRow, aft
 		title := br.Title
 		if !here {
 			if arch == nil {
-				arch = archiveRows(projectPath)
+				arch = s.archiveRows(projectPath)
 			}
 			if a, hit := arch[m]; hit {
 				here, title = true, a.Title

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Состав цели. Стенд тот же, что у правки строки: настоящий taskctl на
@@ -338,4 +339,66 @@ func TestStaticGoalDraftRow(t *testing.T) {
 		t.Fatalf("черновик в составе цели: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+// archiveRows держит разбор архива в памяти процесса по отпечатку файла
+// (образец sessionHeadCached, humanSaidCached): waitAlive зовёт его на каждой
+// строке доски при каждом опросе полки, а файл дописывают и переписывают
+// команды доски (DK-1233, замечание ревью). Тот же отпечаток отдаёт прежний
+// разбор, новый ведёт к перечитыванию.
+func TestArchiveRowsCachedByStamp(t *testing.T) {
+	e := newTestEnv(t)
+	path := filepath.Join(e.proj, "docs", "TASKS-archive.md")
+	doc := func(id string) string {
+		return "# сделано\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
+			"|----|--------|-----|---|---------|--------|\n" +
+			"| " + id + " | старая | bug | P1 | 2026-09-09 | - |\n"
+	}
+	first := doc("XR-100")
+	if err := os.WriteFile(path, []byte(first), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stampAt := fi.ModTime()
+	rows := e.s.archiveRows(e.proj)
+	if _, hit := rows["XR-100"]; !hit {
+		t.Fatalf("первое чтение не разобрало архив: %+v", rows)
+	}
+
+	second := doc("XR-200")
+	if len(second) != len(first) {
+		t.Fatalf("тест сломан: длины строк архива разные (%d, %d)", len(first), len(second))
+	}
+	if err := os.WriteFile(path, []byte(second), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Тот же отпечаток (mtime и размер): память процесса не видит подмены и
+	// отдаёт прежний разбор, как sessionHeadCached при неизменном stamp.
+	if err := os.Chtimes(path, stampAt, stampAt); err != nil {
+		t.Fatal(err)
+	}
+	rows = e.s.archiveRows(e.proj)
+	if _, hit := rows["XR-100"]; !hit {
+		t.Fatalf("тот же отпечаток перечитал файл: %+v", rows)
+	}
+	if _, hit := rows["XR-200"]; hit {
+		t.Fatalf("тот же отпечаток отдал уже подменённую строку: %+v", rows)
+	}
+
+	// Файл доски дописывают и переписывают команды доски: новый отпечаток
+	// обязан снять память и отдать текущее содержимое.
+	later := stampAt.Add(time.Minute)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+	rows = e.s.archiveRows(e.proj)
+	if _, hit := rows["XR-200"]; !hit {
+		t.Fatalf("новый отпечаток не дочитал переписанный архив: %+v", rows)
+	}
+	if _, hit := rows["XR-100"]; hit {
+		t.Fatalf("новый отпечаток оставил снятую строку: %+v", rows)
+	}
 }

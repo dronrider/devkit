@@ -606,7 +606,7 @@ func (s *server) taskRowOf(w http.ResponseWriter, r *http.Request, archive bool)
 	row, hit := rows[id]
 	if !hit {
 		if archive {
-			if arch, closed := archiveRows(found.Path)[id]; closed {
+			if arch, closed := s.archiveRows(found.Path)[id]; closed {
 				// Строка собирается из архива целиком: тип, приоритет и ссылка
 				// там есть, цены и ранга нет, и подставлять на их место
 				// значения живой строки значило бы выдумывать.
@@ -614,7 +614,7 @@ func (s *server) taskRowOf(w http.ResponseWriter, r *http.Request, archive bool)
 					Type: arch.Type, P: arch.P, Link: arch.Link, Cost: "-"}, rows, true
 			}
 		}
-		gone := map[string]string{"error": rowGone(found, id)}
+		gone := map[string]string{"error": s.rowGone(found, id)}
 		// Строки нет, а запись накопителя с тем же ID лежит на месте: экран
 		// задачи по этому слову уходит на экран записи, и упоминание ID в
 		// разговоре ведёт туда, куда человек метил.
@@ -632,8 +632,8 @@ func (s *server) taskRowOf(w http.ResponseWriter, r *http.Request, archive bool)
 // как поломка, хотя всё сработало: человек закрыл задачу с одного устройства, а
 // нажал с другого (DK-289). Архив читается файлом, тем же порядком, что у
 // состава цели.
-func rowGone(found *Project, id string) string {
-	row, closed := archiveRows(found.Path)[id]
+func (s *server) rowGone(found *Project, id string) string {
+	row, closed := s.archiveRows(found.Path)[id]
 	if !closed {
 		// Черновик до грумминга строки на доске не имеет вовсе, и «нет строки»
 		// про него сказано верно, но не про то: файл записи лежит на месте, и
@@ -811,7 +811,7 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 		} else {
 			resp["note"] = fmt.Sprintf("файла задачи %s нет: закрытая задача осталась одной строкой архива", taskFileRel(id))
 		}
-		if links := taskLinks(found.Path, id, row.Link, fileText, rows, after, blocks); links != nil {
+		if links := s.taskLinks(found.Path, id, row.Link, fileText, rows, after, blocks); links != nil {
 			resp["links"] = links
 		}
 		writeJSON(w, http.StatusOK, resp)
@@ -883,7 +883,7 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 	}
 	// Блок «Связи»: дизайны задачи и упомянутые в постановке задачи (круг 2
 	// POC DK-470).
-	if links := taskLinks(found.Path, id, row.Link, fileText, rows, after, blocks); links != nil {
+	if links := s.taskLinks(found.Path, id, row.Link, fileText, rows, after, blocks); links != nil {
 		resp["links"] = links
 	}
 	writeJSON(w, http.StatusOK, resp)

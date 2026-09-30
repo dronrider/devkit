@@ -37,6 +37,9 @@ type server struct {
 	// приставкой human: семья said* в outbox.go про журнал отправленного, и
 	// одно слово на два разных знания читалось бы как одно.
 	humanSaid map[string]humanSaidEntry
+	// Разбор архива закрытых задач: проект -> строки (goal.go, archiveRows).
+	// waitAlive зовёт его на каждой строке доски при каждом опросе полки.
+	archive map[string]archiveEntry
 	// Идущие опросы досок: дерево -> полёт (cache.go). По одному дереву летит
 	// один taskctl, остальные запросы ждут его или берут устаревший ответ.
 	flights map[string]*boardFlight
@@ -192,7 +195,8 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 		logf = func(string, ...any) {}
 	}
 	return &server{cfg: cfg, static: static, logf: logf, now: time.Now, started: time.Now(),
-		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, humanSaid: map[string]humanSaidEntry{}, deaf: map[string]deafEntry{},
+		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, humanSaid: map[string]humanSaidEntry{},
+		archive: map[string]archiveEntry{}, deaf: map[string]deafEntry{},
 		flights:   map[string]*boardFlight{},
 		lagSaid:   map[string]bool{},
 		slowSaid:  map[string]bool{},

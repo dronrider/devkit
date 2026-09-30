@@ -167,9 +167,44 @@ type archiveRow struct {
 	Link   string
 }
 
-func archiveRows(projectPath string) map[string]archiveRow {
+// archiveEntry это запомненный разбор архива одного проекта и отпечаток
+// файла, по которому он снят.
+type archiveEntry struct {
+	rows  map[string]archiveRow
+	stamp string
+}
+
+// archiveRows отдаёт разбор docs/TASKS-archive.md, по возможности из памяти
+// процесса (образец sessionHeadCached, humanSaidCached). waitAlive зовёт его
+// на каждой строке доски при каждом опросе полки, до трёх раз на строку через
+// waitLookup плюс по разу на бесхозный признак, а опрос идёт каждые пятнадцать
+// секунд: без памяти каждый заход перечитывал бы архив целиком, а файл растёт
+// без предела (DK-1233, разбор ревью, DK-746). Ключ памяти это путь проекта,
+// отпечаток из mtime и размера ловит и дописанный, и переписанный файл.
+func (s *server) archiveRows(projectPath string) map[string]archiveRow {
+	path := filepath.Join(projectPath, "docs", "TASKS-archive.md")
+	fi, err := os.Stat(path)
+	if err != nil {
+		return map[string]archiveRow{}
+	}
+	stamp := fileStamp(fi)
+	s.mu.Lock()
+	e, hit := s.archive[projectPath]
+	s.mu.Unlock()
+	if hit && e.stamp == stamp {
+		return e.rows
+	}
+	rows := parseArchiveRows(path)
+	s.mu.Lock()
+	s.archive[projectPath] = archiveEntry{rows: rows, stamp: stamp}
+	s.mu.Unlock()
+	return rows
+}
+
+// parseArchiveRows читает и разбирает файл архива без памяти процесса.
+func parseArchiveRows(path string) map[string]archiveRow {
 	rows := map[string]archiveRow{}
-	data, err := os.ReadFile(filepath.Join(projectPath, "docs", "TASKS-archive.md"))
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return rows
 	}
@@ -261,7 +296,7 @@ func (s *server) goalProgress(projectPath, id, prefix string, rows map[string]bo
 	if !section || len(tasks) == 0 {
 		return goalCounts{}, false
 	}
-	return fillGoalTasks(projectPath, tasks, rows, archiveRows(projectPath)), true
+	return fillGoalTasks(projectPath, tasks, rows, s.archiveRows(projectPath)), true
 }
 
 func (s *server) handleGoalTasks(w http.ResponseWriter, r *http.Request) {
@@ -308,7 +343,7 @@ func (s *server) handleGoalTasks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
-	counts := fillGoalTasks(found.Path, tasks, rows, archiveRows(found.Path))
+	counts := fillGoalTasks(found.Path, tasks, rows, s.archiveRows(found.Path))
 	resp["tasks"], resp["counts"] = tasks, counts
 	writeJSON(w, http.StatusOK, resp)
 }

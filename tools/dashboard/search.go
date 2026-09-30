@@ -292,9 +292,9 @@ func (s *server) searchDrafts(dir, q string) ([]searchRow, string) {
 
 // searchArchive это группа «Архив»: закрытые задачи с датой закрытия. Ранга и
 // цены у архивной строки нет, и выдумывать их не из чего.
-func searchArchive(dir, q string) []searchRow {
+func (s *server) searchArchive(dir, q string) []searchRow {
 	var rows []searchRow
-	for id, row := range archiveRows(dir) {
+	for id, row := range s.archiveRows(dir) {
 		if !searchMatch(q, id, row.Title) {
 			continue
 		}
@@ -388,7 +388,7 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	drafts, note := s.searchDrafts(found.Path, needle)
-	archive := searchArchive(found.Path, needle)
+	archive := s.searchArchive(found.Path, needle)
 	// Заголовки найденного по номеру и имени: ими подписывается и текстовая
 	// группа, чтобы строка файла не осталась одной цитатой без имени задачи.
 	seen := map[string]bool{}

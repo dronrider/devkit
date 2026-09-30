@@ -52,7 +52,8 @@ func TestTaskLinksTitlesForClosed(t *testing.T) {
 	putDoc(t, root, "docs/lld/XR-77-alien.md", "# XR-77: чужой дизайн\n")
 	rows := map[string]boardRow{}
 	text := "дизайн в lld/XR-77-alien.md, постановка поминает XR-136, XR-9 и XR-404"
-	links := taskLinks(root, "XR-1", "", text, rows, nil, nil)
+	s := newServer(&Config{Home: root}, nil, nil)
+	links := s.taskLinks(root, "XR-1", "", text, rows, nil, nil)
 	// Артефакты самой задачи стоят выше упомянутых чужих: свой LLD первым.
 	lld := links["lld"].([]map[string]any)
 	if len(lld) != 2 || lld[0]["own"] != true || lld[1]["file"] != "lld/XR-77-alien.md" {
@@ -96,7 +97,8 @@ func TestTaskLinksKindsRelOrder(t *testing.T) {
 		"XR-5":   {ID: "XR-5", Title: "открытая поменьше", R: 10},
 	}
 	text := "сначала XR-5, потом XR-136, XR-7, XR-30, XR-100, XR-404 и XR-2"
-	links := taskLinks(root, "XR-1", "", text, rows, []string{"XR-2"}, []string{"XR-30"})
+	s := newServer(&Config{Home: root}, nil, nil)
+	links := s.taskLinks(root, "XR-1", "", text, rows, []string{"XR-2"}, []string{"XR-30"})
 	tasks := linkTasks(t, links)
 	var order []string
 	for _, row := range tasks {
@@ -153,7 +155,8 @@ func TestTaskLinksDraftAndGone(t *testing.T) {
 	putDoc(t, root, "docs/tasks/drafts/XR-51.md", "тело записи без заголовка\n")
 	rows := map[string]boardRow{"XR-8": {ID: "XR-8", Title: "живая соседка", R: 20}}
 	text := "поминаем XR-8, XR-50, XR-51 и снятый XR-483"
-	tasks := linkTasks(t, taskLinks(root, "XR-1", "", text, rows, nil, nil))
+	s := newServer(&Config{Home: root}, nil, nil)
+	tasks := linkTasks(t, s.taskLinks(root, "XR-1", "", text, rows, nil, nil))
 	byID := map[string]map[string]any{}
 	for _, row := range tasks {
 		byID[row["id"].(string)] = row
@@ -203,7 +206,8 @@ func TestTaskLinksBoardRowBeatsDraft(t *testing.T) {
 	root := t.TempDir()
 	putDoc(t, root, "docs/tasks/drafts/XR-50.md", "# XR-50: старая запись накопителя\n")
 	rows := map[string]boardRow{"XR-50": {ID: "XR-50", Title: "разобранная задача", R: 12}}
-	tasks := linkTasks(t, taskLinks(root, "XR-1", "", "поминаем XR-50", rows, nil, nil))
+	s := newServer(&Config{Home: root}, nil, nil)
+	tasks := linkTasks(t, s.taskLinks(root, "XR-1", "", "поминаем XR-50", rows, nil, nil))
 	if got := tasks[0]; got["kind"] != "задача" || got["title"] != "разобранная задача" || got["draft"] != nil {
 		t.Errorf("строка доски проиграла файлу накопителя: %+v", got)
 	}

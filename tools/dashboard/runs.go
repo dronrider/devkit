@@ -483,7 +483,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	row, ok := findRow(raw, id)
 	if !ok {
 		s.logf("запуск %s в %s отклонён: нет строки на доске 404", id, found.Name)
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": rowGone(found, id)})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": s.rowGone(found, id)})
 		return
 	}
 	// Проверенная задача с пользовательской приёмкой закрывается тут же, своей

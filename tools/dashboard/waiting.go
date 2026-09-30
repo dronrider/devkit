@@ -531,7 +531,7 @@ func (s *server) waitLookup(projPath string) func(id, sect, block string) (Waiti
 // есть; первый случай сверяется раньше и по id задачи, а не по сессии.
 func (s *server) waitAlive(projPath, id string, w Waiting) bool {
 	if id != "" {
-		if _, closed := archiveRows(projPath)[id]; closed {
+		if _, closed := s.archiveRows(projPath)[id]; closed {
 			return false
 		}
 	}

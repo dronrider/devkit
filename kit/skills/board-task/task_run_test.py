@@ -1183,6 +1183,10 @@ class WaitStand(unittest.TestCase):
         self.saved = dict(os.environ)
         os.environ[task_run.WAITS_ENV] = self.root
         os.environ[task_run.WATCH_ENV] = "0"
+        # Харнес стенд берёт умолчанием: DEVKIT_HARNESS машины прогонщика
+        # подводит потолок срока к профилю, которого в подменённом каталоге
+        # профилей стенда нет.
+        os.environ[task_run.HARNESS_ENV] = ""
 
     def tearDown(self):
         os.environ.clear()
@@ -1334,6 +1338,18 @@ class TestWaitKinds(WaitStand):
             with self.assertRaises(SystemExit):
                 self.pipe()
         self.assertIn("wait_cap", err.getvalue())
+
+    # regcheck:test-begin
+    def test_stand_pins_harness_env(self):
+        # Прогонщик тестов несёт DEVKIT_HARNESS машины: без замка в раскладке
+        # стенд ожидания подводит потолок срока к чужому профилю, которого в
+        # его каталоге профилей нет.
+        os.environ[task_run.HARNESS_ENV] = "glm-code"
+        case = WaitStand("setUp")
+        case.setUp()
+        self.addCleanup(shutil.rmtree, case.root, True)
+        self.assertEqual(os.environ[task_run.HARNESS_ENV], "")
+    # regcheck:test-end
 
     def test_parse_span(self):
         cases = {"90s": 90, "10m": 600, "1h30m": 5400, "2h": 7200,

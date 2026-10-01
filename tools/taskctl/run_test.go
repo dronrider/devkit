@@ -25,10 +25,27 @@ func runDevkit(t *testing.T) (root, home, dk string) {
 	}
 	os.WriteFile(filepath.Join(dk, filepath.FromSlash(taskhead.TaskRunRel)), []byte(""), 0o644)
 	os.WriteFile(taskhead.ProfilePath(dk, "claude-code"), []byte("[head]\nclient = [\"claude\"]\n"), 0o644)
+	// Дерево стенда несёт один профиль, и харнес берётся умолчанием: выбор из
+	// DEVKIT_HARNESS окружения прогонщика приводит к чужому профилю, которого
+	// в стенде нет. Желающие задать харнес делают это сами после раскладки.
+	t.Setenv(taskhead.HarnessEnv, "")
 	t.Setenv("DEVKIT_HOME", dk)
 	t.Setenv("HOME", home)
 	return root, home, dk
 }
+
+// regcheck:test-begin
+// Раскладка стенда запирает DEVKIT_HARNESS: прогонщик тестов несёт харнес
+// машины, и без замка занятая строка спрашивает чужой профиль, которого в
+// дереве стенда нет.
+func TestRunDevkitPinsHarnessEnv(t *testing.T) {
+	t.Setenv(taskhead.HarnessEnv, "glm-code")
+	runDevkit(t)
+	if got := os.Getenv(taskhead.HarnessEnv); got != "" {
+		t.Fatalf("раскладка не заперла %s: %q", taskhead.HarnessEnv, got)
+	}
+}
+// regcheck:test-end
 
 func TestRunRequestPicksHarness(t *testing.T) {
 	root, home, dk := runDevkit(t)

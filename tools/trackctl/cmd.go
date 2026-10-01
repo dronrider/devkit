@@ -99,6 +99,16 @@ func cmdTake(root, arg string) (string, error) {
 		return "", err
 	}
 	key := ticketKey(tr.bind, arg)
+	// Зеркальной строки нет, значит тикет идёт в код мимо груминга, pick и
+	// ворот доски, и раньше это была строка вывода, которую никто не читал
+	// (DK-1262). Отказ стоит до разговора с трекером: строка это факт доски, и
+	// проверять её дешевле, чем ходить в сеть, а тикет, уехавший в In Progress
+	// без строки, чинится руками в трекере.
+	row := mirrorRow(root, tr.bind, key)
+	if row == nil {
+		return "", fmt.Errorf("зеркальной строки тикета %s на доске нет, а без неё у работы нет ни ранга, ни цены, ни ворот доски.\n"+
+			"  вход один на оба контура, тикет -> черновик -> груминг -> take. Черновик кладёт «trackctl draft %s --prio high|mid|low», дальше груминг (скилл board-groom)", key, key)
+	}
 	t, err := tr.adapter.fetch(key)
 	if err != nil {
 		return "", err
@@ -109,15 +119,6 @@ func cmdTake(root, arg string) (string, error) {
 	}
 	if sect == sectDone {
 		return doneHint(t), nil
-	}
-	// Зеркальной строки нет, значит тикет идёт в код мимо груминга, pick и
-	// ворот доски, и раньше это была строка вывода, которую никто не читал
-	// (DK-1262). Отказ стоит до перехода: тикет, уехавший в In Progress без
-	// строки, чинится руками в трекере.
-	row := mirrorRow(root, tr.bind, t.Key)
-	if row == nil {
-		return "", fmt.Errorf("зеркальной строки тикета %s на доске нет: без неё нет ни ранга, ни цены, ни ворот доски, и работа пойдёт мимо груминга.\n"+
-			"  вход один на оба контура, тикет -> черновик -> груминг -> take: «trackctl draft %s --prio high|mid|low», дальше груминг (скилл board-groom)", t.Key, t.Key)
 	}
 	var lines []string
 	if sect == sectInProgress {

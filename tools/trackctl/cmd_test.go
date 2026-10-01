@@ -61,6 +61,7 @@ func TestTakeSendsNoFieldsWithoutSection(t *testing.T) {
 // ни тикет, ни строка доски не двигаются.
 func TestTakeUnknownStatusIsFinding(t *testing.T) {
 	root := setupEnv(t, contourFile, bindingFile)
+	writeBoard(t, root, boardRowText{sectBacklog, "XR-1", "20 (10+5+1+0+4)", "S", ticketLink("ABC-12")})
 	fakeState.ticket.Status = "Waiting for QA"
 	msg, err := cmdTake(root, "ABC-12")
 	if err != nil {
@@ -78,6 +79,7 @@ func TestTakeUnknownStatusIsFinding(t *testing.T) {
 // без своей секции done каждый закрытый тикет шумел бы «статус не расписан».
 func TestTakeDoneHints(t *testing.T) {
 	root := setupEnv(t, contourFile, bindingFile)
+	writeBoard(t, root, boardRowText{sectBacklog, "XR-1", "20 (10+5+1+0+4)", "S", ticketLink("ABC-12")})
 	fakeState.ticket.Status = "Rejected"
 	msg, err := cmdTake(root, "ABC-12")
 	if err != nil {

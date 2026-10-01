@@ -68,9 +68,10 @@ func TestTakeSaysWhyNoEstimate(t *testing.T) {
 }
 
 // Зеркальной строки на доске нет: тикет в работу не берётся вовсе. Отказ стоит
-// до перехода, иначе тикет уехал бы в In Progress без ранга, цены и ворот
-// доски, а работа пошла бы мимо груминга (DK-1262). Отказ называет команду
-// заведения черновика.
+// до разговора с трекером: строка это факт доски, и в трекер команда не сходила
+// бы ни одним вызовом, иначе тикет уехал бы в In Progress без ранга, цены и
+// ворот доски, а работа пошла бы мимо груминга (DK-1262). Отказ называет
+// команду заведения черновика.
 func TestTakeWithoutMirrorRowRefuses(t *testing.T) {
 	root := setupEnv(t, contourFile, bindingFile)
 	fakeState.ticket.Estimate = ""
@@ -81,8 +82,8 @@ func TestTakeWithoutMirrorRowRefuses(t *testing.T) {
 	if !strings.Contains(err.Error(), "trackctl draft ABC-12") {
 		t.Fatalf("отказ не назвал команду заведения черновика: %v", err)
 	}
-	if hasCall(fakeState, "transition") || hasCall(fakeState, "assign") {
-		t.Fatalf("тикет тронут до отказа: %v", fakeState.calls)
+	if len(fakeState.calls) != 0 {
+		t.Fatalf("отказ по доске сходил в трекер: %v", fakeState.calls)
 	}
 }
 

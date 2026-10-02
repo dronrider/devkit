@@ -1006,11 +1006,11 @@ class MachineContourTest(SandboxCase):
             self.assertEqual(len(lines), 1, "находка про %s не свёрнута: %s" % (word, out))
         self.assertIn_("tmux не в PATH", out, "нет находки про tmux")
         self.assertIn_("нет снимка квоты в", out, "нет находки про снимок квоты")
-        # Незаведённая вторая подписка молчанием не отличается от заведённой:
-        # окно shipctl code без каталога конфига не откроется вовсе, и сказать
-        # об этом обязан доктор, а не отказ команды в неудачный момент.
-        self.assertIn_("нет конфига второй подписки", out, "нет находки про вторую подписку")
-        self.assertIn_("devkitctl doctor --fix", out, "находка про вторую подписку без команды починки")
+        # Незаведённая подписка молчанием не отличается от заведённой: сессия
+        # харнеса без каталога конфига не поднимется вовсе, и сказать об этом
+        # обязан доктор, а не отказ команды в неудачный момент.
+        self.assertIn_("нет конфига подписки", out, "нет находки про подписку")
+        self.assertIn_("devkitctl doctor --fix", out, "находка про подписку без команды починки")
         self.assertIn_("SessionStart-хук", out, "нет находки про хук освежения квоты")
         self.assertRegex(out, r"помощника пароля askpass нет в[^\n]*devkitctl doctor --fix",
                          "нет находки про помощника askpass с командой починки")
@@ -1078,17 +1078,17 @@ class MachineContourTest(SandboxCase):
                        "находка про tmux не называет причину, по которой пакет не поставлен")
         self.assertIn_("agentctl quota refresh", out,
                        "--fix не снимает квоту, находка должна остаться")
-        # Каталог конфига второй подписки раскладывает --fix, а значения в него
+        # Каталог конфига подписки раскладывает --fix, а значения в него
         # вписывает пользователь: endpoint и токен берутся в кабинете подписки.
         conf = self.mhome / ".devkit" / "claude-glm" / "settings.json"
-        self.assertIn_("разложена болванка конфига второй подписки", out,
-                       "--fix не разложил каталог конфига второй подписки")
+        self.assertIn_("разложена болванка конфига подписки", out,
+                       "--fix не разложил каталог конфига подписки")
         self.assertEqual(json.loads(read(conf))["env"],
                          {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "", "ANTHROPIC_MODEL": ""},
-                         "болванка второй подписки разложена не теми ключами")
+                         "болванка подписки разложена не теми ключами")
         self.assertEqual(conf.stat().st_mode & 0o777, 0o600,
                          "болванка с токеном разложена с широкими правами")
-        self.assertIn_("пустые ключи", out, "--fix не назвал незаполненные ключи второй подписки")
+        self.assertIn_("пустые ключи", out, "--fix не назвал незаполненные ключи подписки")
         # Помощник askpass (DK-772): один файл под настоящим домом машины,
         # исполняемый, тем же текстом, что и в источнике.
         helper = self.mhome / ".devkit" / "askpass.py"
@@ -2677,13 +2677,14 @@ class CrossSessionInboundTest(unittest.TestCase):
 
 
 class AltSubDirTest(unittest.TestCase):
-    """Каталог конфига второй подписки берётся из машинного ключа (DK-180).
+    """Каталоги конфига подписок берутся из машинных ключей (DK-180, DK-1272).
 
     Ключ этот один на трёх читателей: раскладку машинного хозяйства
     (плейсхолдер {home} в путях профиля), окружение подпроцесса делегирования и
     окно редактора shipctl code. Была бы у каждого своя константа, они бы
     разъехались, а разъехавшись, дали бы сессию на дорогой подписке, считающую
-    себя дешёвой.
+    себя дешёвой. Подписок с каталогом на машине несколько, и болванка с
+    подстановками алиасов раскладывается каждой, а не второй по счёту.
     """
 
     def home(self, machine=""):
@@ -2786,6 +2787,72 @@ class AltSubDirTest(unittest.TestCase):
         self.assertTrue([f for f in findings if "основного чекаута" in f],
                         "находка не назвала, откуда чинить: %s" % (findings,))
         self.assertNotIn("ANTHROPIC_DEFAULT_FABLE_MODEL", json.loads(read(conf))["env"])
+
+    def ladder(self, tiers):
+        # Стенд с полной лестницей ярусов в машинном слое: якоря подстановок
+        # читаются из неё, а не из пары ключей env.
+        home = self.home('enabled = ["claude-code", "glm-code"]\n\n[glm-code]\n'
+                         'home = "~/.devkit/claude-glm"\n' + tiers)
+        conf = home / ".devkit" / "claude-glm" / "settings.json"
+        write(conf, json.dumps({"env": dict(self.LIVE,
+                                            ANTHROPIC_MODEL="флагман-env",
+                                            ANTHROPIC_SMALL_FAST_MODEL="лёгкая-env")}))
+        conf.chmod(0o600)
+        (home / ".devkit" / "claude-glm").chmod(0o700)
+        return home, conf
+
+    def test_machine_ladder_anchors_the_folding(self):
+        # Полная лестница подписки держит четыре разных модели, и алиас первой
+        # лестницы сворачивается в ступень своего яруса: якорь читается из
+        # машинного слоя, а пара ключей env остаётся запасной. Сверни всё во
+        # флагман с лёгкой, и вердикт, обещавший ярус pro, уехал бы на base.
+        home, conf = self.ladder('mini = "модель-mini"\nbase = "модель-base"\n'
+                                 'pro = "модель-pro"\nmax = "модель-max"\n')
+        with fake_home(home):
+            findings, fixed = devkitctl.check_alt_sub(True)
+        doc = json.loads(read(conf))["env"]
+        for alias, model in (("HAIKU", "модель-mini"), ("SONNET", "модель-base"),
+                             ("OPUS", "модель-pro"), ("FABLE", "модель-max")):
+            self.assertEqual(doc["ANTHROPIC_DEFAULT_%s_MODEL" % alias], model,
+                             "алиас %s свёрнут не в ступень своего яруса" % alias)
+        self.assertTrue([f for f in fixed if "подстановки алиасов" in f],
+                        "раскладка подстановок прошла молча: %s" % (fixed,))
+        with fake_home(home):
+            self.assertEqual(devkitctl.check_alt_sub(False), ([], []),
+                             "после раскладки доктор всё ещё видит разрыв в подстановках")
+
+    def test_away_tier_falls_back_to_the_spare_pair(self):
+        # Ступень «харнес:модель» уехала в чужую подписку, в env этой её нет:
+        # такой ярус выручает запасная пара, лёгкая для mini и флагман для
+        # остальных. Домашние ступени остаются на своих моделях.
+        home, conf = self.ladder('mini = "модель-mini"\nbase = "модель-base"\n'
+                                 'pro = "routerai:ант/про"\nmax = "routerai:ант/макс"\n')
+        with fake_home(home):
+            devkitctl.check_alt_sub(True)
+        doc = json.loads(read(conf))["env"]
+        for alias, model in (("HAIKU", "модель-mini"), ("SONNET", "модель-base"),
+                             ("OPUS", "флагман-env"), ("FABLE", "флагман-env")):
+            self.assertEqual(doc["ANTHROPIC_DEFAULT_%s_MODEL" % alias], model,
+                             "алиас %s свёрнут не тем якорем" % alias)
+
+    def test_every_catalog_gets_its_stub(self):
+        # Две подписки с каталогами в машинном слое: болванка раскладывается
+        # каждой, и находки пустых ключей звучат по обеим. Каталоги объявлены
+        # без включения в enabled: сессию поднимает явный DEVKIT_HARNESS, и
+        # настройки заведённой подписки обязаны стоять и без раскладки правил.
+        home = self.home('enabled = ["claude-code"]\n\n[glm-code]\n'
+                         'home = "~/.devkit/claude-glm"\n\n[routerai]\n'
+                         'home = "~/.devkit/claude-routerai"\n')
+        with fake_home(home):
+            findings, fixed = devkitctl.check_alt_sub(True)
+        for sub in ("claude-glm", "claude-routerai"):
+            conf = home / ".devkit" / sub / "settings.json"
+            self.assertTrue(conf.is_file(), "болванка не разложена подписке %s: %s" % (sub, fixed))
+            self.assertEqual(json.loads(read(conf))["env"],
+                             {k: "" for k in devkitctl.ALT_SUB_KEYS},
+                             "болванка %s разложена не теми ключами" % sub)
+            self.assertTrue([f for f in findings if str(conf) in f and "пустые ключи" in f],
+                            "пустые ключи %s не названы находкой: %s" % (sub, findings))
 
 
 class WindowCopyTest(unittest.TestCase):

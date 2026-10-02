@@ -201,6 +201,28 @@ def machine_homes(machine_path=None):
     return homes
 
 
+def machine_tiers(machine_path=None):
+    # Назначения ярусов из машинного слоя: {харнес: {ярус: назначение}}. Своя
+    # лестница ярусов держит именно машинная секция харнеса, и якорям
+    # подстановок алиасов (devkitctl) второй копии моделей заводить незачем.
+    # Битый конфиг молчит по той же причине, что и в machine_homes.
+    path = Path(os.path.expanduser(machine_path or MACHINE_CONFIG))
+    if not path.exists():
+        return {}
+    try:
+        d = harness.parse(str(path), read_text(path))
+    except harness.TomlError:
+        return {}
+    tiers = {}
+    for sect in d.order:
+        if not sect:
+            continue
+        vals = {t: d.str_of(sect, t) for t in ("mini", "base", "pro", "max") if d.str_of(sect, t)}
+        if vals:
+            tiers[sect] = vals
+    return tiers
+
+
 def harness_path(name, spec, homes, machine_path=None):
     """Путь машинного хозяйства харнеса из его профиля: (путь, находка).
 

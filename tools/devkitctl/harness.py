@@ -56,9 +56,10 @@ DISCOVERY_VALUES = ("auto", "manual")
 
 TIERS = ("mini", "base", "pro", "max")
 # Префиксы имён бакетов, из которых берётся окно расчёта: week_ это 7 суток,
-# month_ это 30, window5h_ пятичасовое окно второй подписки. Длины окон живут
-# в agentctl (quota.go), тут только перечень.
-BUCKET_PREFIXES = ("week_", "month_", "window5h_")
+# month_ это 30, window5h_ пятичасовое окно второй подписки, balance_ баланс
+# предоплаченной подписки без окна вовсе. Длины окон живут в agentctl
+# (quota.go), тут только перечень.
+BUCKET_PREFIXES = ("week_", "month_", "window5h_", "balance_")
 KNOWN_EVENTS = ("write", "session-start", "notify", "subagent-done", "turn-done",
                 "turn-failed", "prompt-submit", "tool-done")
 

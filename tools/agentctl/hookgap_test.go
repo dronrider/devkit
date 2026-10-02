@@ -50,10 +50,11 @@ func writeSettings(t *testing.T, dir, body string) {
 // и exec отказывает находкой с командой лечения, не запустив команду.
 func TestExecRefusesWithoutHooks(t *testing.T) {
 	cases := map[string]string{
-		"файла нет":    "",
-		"хуков нет":    `{"env": {"X": "1"}}`,
-		"чужие хуки":   `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo"}]}]}}`,
-		"пустой хуков": `{"hooks": {}}`,
+		"файла нет":      "",
+		"хуков нет":      `{"env": {"X": "1"}}`,
+		"чужие хуки":     `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo"}]}]}}`,
+		"пустой хуков":   `{"hooks": {}}`,
+		"только касание": `{"hooks": {"PostToolUse": [{"hooks": [{"type": "command", "command": "python3 /x/hooks/session-task.py --touch"}]}]}}`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {

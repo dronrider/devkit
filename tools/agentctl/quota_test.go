@@ -193,6 +193,69 @@ func TestReadSnapshotBroken(t *testing.T) {
 	}
 }
 
+// TestSnapshotRubLines: строки «N руб» это снимок провайдера с оплатой с
+// пополняемого баланса: траты за окно и остаток деньгами вместо процентов
+// подписки. Строка узнаётся по значению, а не по имени харнеса: формат один на
+// всех провайдеров такого типа, и страницы с чужими суммами не появляются.
+// Доля бюджета балансу рядом пишется бакетом, её держит профиль провайдера
+// (TestRouteraiSnapScript). Проверка идёт печатью cmdQuota, а не полями
+// структур: так тест собирается и на коде до правки и ловит именно её
+// (regcheck).
+func TestSnapshotRubLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "quota.local")
+	content := "taken = 2026-07-30T09:00\n" +
+		"window5h_rub = 119 руб\n" +
+		"balance_rub = 4312 руб\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	q := specAt(t, path)
+	printed := func() string {
+		t.Helper()
+		out, err := cmdQuota(q, testNow)
+		if err != nil {
+			t.Fatalf("снимок не прочитан: %v", err)
+		}
+		return out
+	}
+	out := printed()
+	if strings.Contains(out, "предупреждение") {
+		t.Fatalf("рублёвые строки встали предупреждением:\n%s", out)
+	}
+	for _, want := range []string{"window5h_rub: 119 руб", "balance_rub: 4312 руб"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("в печати снимка нет строки %q:\n%s", want, out)
+		}
+	}
+
+	// Запись refresh переживает собственный разбор: пишется тот же формат,
+	// каким снимок заполняют руками, и рубли со строки не пропадают.
+	s, err := q.read()
+	if err != nil {
+		t.Fatalf("снимок не прочитан: %v", err)
+	}
+	if err := q.write(s); err != nil {
+		t.Fatalf("запись снимка: %v", err)
+	}
+	out = printed()
+	for _, want := range []string{"window5h_rub: 119 руб", "balance_rub: 4312 руб"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("после записи и чтения в снимке нет строки %q:\n%s", want, out)
+		}
+	}
+
+	// Отрицательная сумма это не рубли: съёмщик клэмпит остаток сам, а минус
+	// в снимке значит битую строку, и она обязана назваться предупреждением.
+	broken := "taken = 2026-07-30T09:00\nwindow5h_rub = -5 руб\n"
+	if err := os.WriteFile(path, []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out = printed()
+	if !strings.Contains(out, "неизвестный ключ снимка \"window5h_rub\"") {
+		t.Fatalf("минус прошёл в снимок или назвался иначе:\n%s", out)
+	}
+}
+
 func TestReadSnapshotMissing(t *testing.T) {
 	s, err := specAt(t, filepath.Join(t.TempDir(), "нет-такого")).read()
 	if err != nil {
@@ -332,6 +395,24 @@ func TestBucketWindow(t *testing.T) {
 	five := bucket{Name: "window5h_all", Used: 0.8, Reset: testNow.Add(2 * time.Hour)}
 	if five.status(testNow) != statusDeficit {
 		t.Fatalf("пятичасовое окно посчитано чужим окном: pace %.2f", five.pace(testNow))
+	}
+	// Бакет баланса подписки без квотных окон (DK-1272): префикс известен,
+	// окно нулевое, корректор инертен. Приписанная багом дата сброса не должна
+	// двигать вердикт ни вниз сгоревшим окном, ни вверх темпом по нулевому
+	// окну.
+	if bucketWindow("balance_all") != 0 {
+		t.Fatal("у балансового бакета появилось окно темпа")
+	}
+	if bucketPrefix("balance_all") == "" {
+		t.Fatal("префикс balance_ не признан, валидатор профиля не пропустит бакет баланса")
+	}
+	burned := bucket{Name: "balance_all", Used: 0.9, Reset: testNow.Add(-time.Hour)}
+	if burned.status(testNow) != statusNormal {
+		t.Fatalf("балансовый бакет с датой в прошлом не в норме: %s", burned.status(testNow))
+	}
+	ahead := bucket{Name: "balance_all", Used: 0.9, Reset: testNow.Add(time.Hour)}
+	if ahead.status(testNow) != statusNormal {
+		t.Fatalf("балансовый бакет с датой в будущем не в норме: %s", ahead.status(testNow))
 	}
 }
 

@@ -76,6 +76,11 @@ var bucketWindows = []struct {
 	{"week_", weekWindow},
 	{"month_", monthWindow},
 	{"window5h_", window5hLen},
+	// Бакет баланса подписки без квотных окон (DK-1272): окно у него нулевое,
+	// темп по балансу не считается, и статус всегда нормальный. В таблице он
+	// затем, чтобы валидатор профиля пропускал его имена, а не делил чужое
+	// окно.
+	{"balance_", 0},
 }
 
 // bucketPrefix отвечает, известен ли префикс имени; пустая строка значит, что
@@ -221,6 +226,18 @@ type bucket struct {
 	Reset time.Time
 }
 
+// rubLine это строка снимка с суммой в рублях, значением вида «119 руб».
+// Пишет её съёмщик провайдера с оплатой с баланса за токены (budget_based):
+// проценты подписки у такого провайдера не встречаются, и траты уходят в
+// окно и остаток баланса деньгами. Имена строк принадлежат типу провайдера,
+// window5h_rub и balance_rub, а не конкретной службе, и разбор смотрит на
+// значение: имя в снимке пишет съёмщик, и требует от него синтаксиса только
+// сам съёмщик.
+type rubLine struct {
+	Name string
+	Rub  int
+}
+
 // snapshot это разобранный файл снимка. Warns копятся вместо ошибок: битая
 // строка или незнакомый ключ отбрасывают своё, а остальной снимок работает.
 // Partial это бакеты, которых в снимке нет не потому, что их нет у подписки, а
@@ -233,6 +250,7 @@ type bucket struct {
 type snapshot struct {
 	Taken    time.Time
 	Buckets  []bucket
+	Rubles   []rubLine
 	Partial  map[string]string
 	Borrowed map[string]string
 	Warns    []string
@@ -348,6 +366,12 @@ func (b bucket) status(now time.Time) string {
 	// начат, остаток полный, и звать это протуханием значило бы резать вердикт
 	// там, где квота цела.
 	if b.Reset.IsZero() {
+		return statusNormal
+	}
+	// Бакет без окна темпа не двигает вердикт вовсе. Сюда попадает только
+	// балансовый бакет с приписанной ему датой сброса: такой датой в прошлом он
+	// считался бы сгоревшим, а темп делил бы на нулевое окно и дарил профицит.
+	if bucketWindow(b.Name) <= 0 {
 		return statusNormal
 	}
 	if !b.Reset.After(now) {
@@ -473,6 +497,10 @@ func (q *quotaSpec) parse(text string) snapshot {
 			}
 			continue
 		}
+		if r, ok := parseRubLine(key, val); ok {
+			s.Rubles = append(s.Rubles, r)
+			continue
+		}
 		if !q.known(key) {
 			s.Warns = append(s.Warns, fmt.Sprintf("неизвестный ключ снимка %q, пропущен", key))
 			continue
@@ -507,6 +535,23 @@ func (q *quotaSpec) parseNote(val string) (name, why string, ok bool) {
 		return "", "", false
 	}
 	return name, why, true
+}
+
+// parseRubLine разбирает значение вида «119 руб»: сумма деньгами, какую пишет
+// съёмщик провайдера с оплатой с баланса. Логика распознавания на значении,
+// а не на имени: перечень имён это договорённость типа провайдера, и снимок
+// читатели разбирают одинаково у всех таких служб. Отрицательной сумма не
+// бывает, потолка у неё нет: баланс выше бюджета законен.
+func parseRubLine(name, val string) (rubLine, bool) {
+	n, rest, ok := strings.Cut(strings.TrimSpace(val), " ")
+	if !ok || strings.TrimSpace(rest) != "руб" || name == "" {
+		return rubLine{}, false
+	}
+	r, err := strconv.Atoi(n)
+	if err != nil || r < 0 {
+		return rubLine{}, false
+	}
+	return rubLine{Name: name, Rub: r}, true
 }
 
 // parseBucket разбирает значение вида «34% сброс 2026-08-04T10:00».
@@ -558,6 +603,9 @@ func (q *quotaSpec) write(s snapshot) error {
 			continue
 		}
 		fmt.Fprintf(&b, "%s = %d%% сброс %s\n", bk.Name, int(math.Round(bk.Used*100)), bk.Reset.Format(quotaTimeLayout))
+	}
+	for _, r := range s.Rubles {
+		fmt.Fprintf(&b, "%s = %d руб\n", r.Name, r.Rub)
 	}
 	for _, name := range s.partialNames() {
 		fmt.Fprintf(&b, "%s%s: %s\n", partialNote, name, s.Partial[name])
@@ -868,6 +916,9 @@ func cmdQuota(q *quotaSpec, now time.Time) (string, error) {
 		}
 		fmt.Fprintf(&b, "%s: потрачено %d%%, %s, pace %.1f, %s%s\n",
 			bk.Name, int(math.Round(bk.Used*100)), bucketWhen(bk), bk.pace(now), status, note)
+	}
+	for _, r := range s.Rubles {
+		fmt.Fprintf(&b, "%s: %d руб\n", r.Name, r.Rub)
 	}
 	for _, name := range s.partialNames() {
 		fmt.Fprintf(&b, "%s: в панели его не было, %s\n", name, s.Partial[name])

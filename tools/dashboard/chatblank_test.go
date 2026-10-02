@@ -167,7 +167,7 @@ func TestChatBlankGrowsIntoSession(t *testing.T) {
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
 case "$1" in
-ls) `+tmuxNoServer+`;;
+ls) if [ -f "`+tmuxLog+`.alive" ]; then printf 'chat-XR-4-1\t1\t1754770421\n'; else `+tmuxNoServer+`; fi;;
 esac
 exit 0`)
 	writeScript(t, e.bin, "claude", "exit 0")
@@ -179,6 +179,10 @@ exit 0`)
 		`{"text": "почему поезд встал", "model": "opus", "chat": `+strconv.Quote(id)+`}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("реплика не подняла сессию: %d %s", resp.StatusCode, body(t, resp))
+	}
+	// Сессия поднялась и жива: заготовка ждёт, пока клиент назовётся в реестре.
+	if err := os.WriteFile(tmuxLog+".alive", nil, 0o644); err != nil {
+		t.Fatal(err)
 	}
 	log := readFile(t, tmuxLog)
 	if !strings.Contains(log, "почему поезд встал") {
@@ -438,7 +442,7 @@ func TestChatModelsNoteWhenLadderEmpty(t *testing.T) {
 // старше него так же не считаются (замечание ревью DK-851).
 func TestChatBlankWithoutLiftedUsesBorn(t *testing.T) {
 	e, c := chatEnv(t)
-	writeScript(t, e.bin, "tmux", `case "$1" in ls) `+tmuxNoServer+`;; esac
+	writeScript(t, e.bin, "tmux", `case "$1" in ls) printf 'chat-5\t1\t1754770421\n';; esac
 exit 0`)
 	id := "blank-old-deploy"
 	born := time.Now().Add(-10 * time.Second)

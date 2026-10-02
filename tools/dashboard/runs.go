@@ -600,6 +600,11 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if own == nil {
 		own = s.harnesses().byDefault()
 	}
+	if gap := hooksGapNote(own); gap != "" {
+		s.logf("запуск %s в %s отклонён: %s", id, found.Name, gap)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": gap})
+		return
+	}
 	tier, tierWhy, tierBad := s.runTier(found.Path, id, body.Tier, own, kind == "goal")
 	if tierBad != "" {
 		s.logf("запуск %s в %s отклонён: %s", id, found.Name, tierBad)

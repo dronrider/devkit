@@ -447,6 +447,11 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	if own == nil {
 		own = view.byDefault()
 	}
+	if gap := hooksGapNote(own); gap != "" {
+		s.logf("груминг %s в %s отклонён: %s", id, found.Name, gap)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": gap})
+		return
+	}
 	tier := wantTier
 	if tier == "" {
 		tier = groomTier

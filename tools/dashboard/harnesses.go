@@ -42,6 +42,10 @@ type Harness struct {
 	// собирает выбор модели. Имён тут дашборд не сочиняет, всё приезжает
 	// ответом agentctl.
 	Models []HarnessModel `json:"models,omitempty"`
+	// HooksGap это находка agentctl, когда в настройках подписки нет хуков
+	// devkit (DK-1286). Сессия, поднятая на такой подписке, не пишет журнал и идёт
+	// мимо сторожей, поэтому подъём отказывает ей до запуска клиента.
+	HooksGap string `json:"hooks_gap,omitempty"`
 }
 
 // HarnessModel это ступень лестницы: ярус и модель, в которую он развёрнут.
@@ -80,7 +84,9 @@ type agentctlHarnesses struct {
 		Bin     string   `json:"bin"`
 		Home    string   `json:"home"`
 		Env     []string `json:"env"`
-		Models  []struct {
+		// HooksGap приезжает готовой фразой с командой лечения.
+		HooksGap string `json:"hooks_gap"`
+		Models   []struct {
 			Tier  string `json:"tier"`
 			Model string `json:"model"`
 			Via   string `json:"via"`
@@ -136,7 +142,7 @@ func readHarnesses() HarnessView {
 		if !h.Enabled || h.Bin == "" {
 			continue
 		}
-		hh := Harness{Name: h.Name, Default: h.Default, Bin: h.Bin, Home: h.Home, Env: h.Env}
+		hh := Harness{Name: h.Name, Default: h.Default, Bin: h.Bin, Home: h.Home, Env: h.Env, HooksGap: h.HooksGap}
 		for _, m := range h.Models {
 			if m.Model != "" {
 				hh.Models = append(hh.Models, HarnessModel{Tier: m.Tier, Model: m.Model, Via: m.Via})
@@ -151,6 +157,26 @@ func readHarnesses() HarnessView {
 		}
 	}
 	return view
+}
+
+// hooksGapNote это отказ подъёма на подписке без хуков devkit; пусто, когда
+// подписка не названа или обвязка на месте.
+func hooksGapNote(h *Harness) string {
+	if h == nil {
+		return ""
+	}
+	return h.HooksGap
+}
+
+// chatHooksGap судит подписку, которой поднимется разговор выбранной моделью, и
+// кладёт отказ в журнал дашборда: панель его показывает, а журнал хранит, чем
+// был закрыт подъём.
+func (s *server) chatHooksGap(model string) string {
+	gap := hooksGapNote(s.chatHarnessOf(model))
+	if gap != "" {
+		s.logf("подъём чата на модели %s отклонён: %s", model, gap)
+	}
+	return gap
 }
 
 // tierModel называет модель яруса подписки: ею подписка поднимает клиента,

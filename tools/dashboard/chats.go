@@ -1493,8 +1493,8 @@ func (s *server) chatBlankList(proj string) []chatEntry {
 // два, и различает их то, есть ли у записи что хранить. Выросшая доживает
 // дорожным знаком (chatGrownLife). Пустая, без единой буквы и без сессии, уходит
 // через час (chatBlankLife): хранить в ней нечего. Начатая руками живёт вечно,
-// её убирают рукой, и то же вечное хранение достаётся записи с поднятой, но ещё
-// не назвавшейся сессией.
+// её убирают рукой. Запись с поднятой, но ещё не назвавшейся сессией живёт, пока
+// жив её tmux, и уходит, когда tmux умер, а привязки в журнале так и не легло.
 func (s *server) chatBlankSweep(id string, st chatStore) bool {
 	if st.Born == 0 {
 		return false
@@ -1505,10 +1505,20 @@ func (s *server) chatBlankSweep(id string, st chatStore) bool {
 			return false
 		}
 	} else {
-		if st.Draft != "" || st.Tmux != "" {
+		if st.Draft != "" {
 			return false
 		}
-		if age <= chatBlankLife {
+		if st.Tmux != "" {
+			// Поднятая сессия ещё может назваться, пока жив её tmux. Умерла она, а
+			// привязки в журнале нет (хуков у подписки нет, либо клиент вышел до
+			// первого хода): ждать больше нечего, и запись жила бы вечно мёртвой
+			// строкой (DK-1286). Сорванный опрос tmux ничего не решает: он не
+			// значит «никого нет».
+			roll, err := tmuxRollAsk()
+			if err != nil || roll.alive(st.Tmux) {
+				return false
+			}
+		} else if age <= chatBlankLife {
 			return false
 		}
 	}
@@ -1519,6 +1529,8 @@ func (s *server) chatBlankSweep(id string, st chatStore) bool {
 	why := "в ней так и не сказали ни слова"
 	if st.Grown != "" {
 		why = "разговор давно идёт сессией " + st.Grown
+	} else if st.Tmux != "" {
+		why = "tmux-сессия " + st.Tmux + " умерла, а привязки в журнале так и не легло"
 	}
 	s.logf("запись чата %s стёрта: %s", id, why)
 	return true
@@ -2080,6 +2092,10 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if m := clientMissing(defaultClient); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
+	if m := s.chatHooksGap(model); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
@@ -3105,7 +3121,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		dir = found.Path
 	}
 	model := s.chatModel(sid, last.Tmux)
-	// Реплики, которые агент так и не прочитал, едут вводной резюма. Клин берёт
+	if m := s.chatHooksGap(model); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}	// Реплики, которые агент так и не прочитал, едут вводной резюма. Клин берёт
 	// их сокетом и складывает в свою очередь, а та умирает вместе с процессом:
 	// без этого человек пишет три реплики, снимает клин и получает ответ только
 	// на последнюю (инцидент с чатом DK-460).
@@ -3646,6 +3665,10 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		task = store.Task
 	}
 	model := s.chatModel(sid, "")
+	if m := s.chatHooksGap(model); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
 	sess := chatNewName(task, tmuxAliveFn())
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid}); err != nil {
 		s.logf("настройки чата %s не записались: %v", sess, err)
@@ -3998,6 +4021,10 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 		dir = found.Path
 	}
 	model := s.chatModel(sid, e.Tmux)
+	if m := s.chatHooksGap(model); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
@@ -4407,6 +4434,10 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text, nam
 		dir = tree
 	}
 	model := chatModelDefault
+	if m := s.chatHooksGap(model); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,

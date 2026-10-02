@@ -49,7 +49,11 @@ const (
 // бы врать разными словами в двух местах.
 
 // QuotaBucket это строка снимка: сколько процентов бакета потрачено на момент
-// снятия и когда он сбрасывается.
+// снятия и когда он сбрасывается. Строкой со значением «119 руб» приходит
+// сумма деньгами у провайдера с оплатой с баланса за токены: у того нет ни
+// процентов подписки, ни квотных окон, и его съёмщик пишет траты окном и
+// остаток баланса рублями. Такая строка стоит без процента и без даты сброса,
+// IsRub говорит экрану рисовать сумму, а не градусник.
 type QuotaBucket struct {
 	Name  string `json:"name"`
 	Used  int    `json:"used_pct"`
@@ -60,6 +64,12 @@ type QuotaBucket struct {
 	// (замечание 2 приёмки DK-633: занятая у кеша разбивка пережила сброс
 	// недели и читалась как живые 37%).
 	Expired bool `json:"expired,omitempty"`
+	// Rub это сумма рублями, IsRub признак рублёвой строки. Разбор смотрит на
+	// значение, а не на имя: имена window5h_rub и balance_rub это
+	// договорённость типа провайдера, и следующий агрегатор с балансом
+	// встанет в тот же показ без правки экрана.
+	Rub   int  `json:"rub,omitempty"`
+	IsRub bool `json:"is_rub,omitempty"`
 }
 
 // QuotaHarness это одна подписка. Age идёт словами, а не секундами: возраст
@@ -236,11 +246,18 @@ func quotaAge(taken, now time.Time, maxAge time.Duration) (age string, stale boo
 	}
 }
 
-// parseQuotaBucket разбирает значение вида «34% сброс 2026-08-04T10:00».
+// parseQuotaBucket разбирает значение вида «34% сброс 2026-08-04T10:00» и
+// рублёвое «119 руб» провайдера с оплатой с баланса.
 func parseQuotaBucket(name, val string) (QuotaBucket, error) {
 	pct, rest, ok := strings.Cut(val, "%")
 	if !ok {
-		return QuotaBucket{}, fmt.Errorf("жду процент потраченного, вижу %q", val)
+		n, tail, cut := strings.Cut(strings.TrimSpace(val), " ")
+		if cut && strings.TrimSpace(tail) == "руб" {
+			if r, err := strconv.Atoi(n); err == nil && r >= 0 {
+				return QuotaBucket{Name: name, Rub: r, IsRub: true}, nil
+			}
+		}
+		return QuotaBucket{}, fmt.Errorf("жду процент потраченного либо сумму в рублях, вижу %q", val)
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(pct))
 	if err != nil || n < 0 || n > 100 {

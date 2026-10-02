@@ -199,6 +199,44 @@ func TestQuotaBucketWithoutReset(t *testing.T) {
 	}
 }
 
+// Снимок провайдера с оплатой с пополняемого баланса несёт траты за окно и
+// остаток в рублях вместо процентов подписки, а долей бюджета рядом едет
+// процент корректору. Строки «N руб» узнаются значением, без имени харнеса:
+// формат общий для всех провайдеров такого типа. Проверка идёт по сырому
+// ответу ручки, а не по структурам: так тест собирается и на коде до правки
+// и ловит именно её (regcheck).
+func TestQuotaRubSnapshot(t *testing.T) {
+	e := newTestEnv(t)
+	e.s.now = func() time.Time { return quotaNow }
+	writeQuota(t, e.home, "harness-one",
+		"taken = 2026-08-11T13:23\n"+
+			"balance_all = 10%\n"+
+			"window5h_rub = 119 руб\n"+
+			"balance_rub = 4312 руб\n")
+
+	c := e.loggedClient(t)
+	resp, err := c.Get(e.srv.URL + "/api/quota")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := body(t, resp)
+	if strings.Contains(raw, "\"warns\"") {
+		t.Fatalf("рублёвые строки поданы предупреждением:\n%s", raw)
+	}
+	for _, want := range []string{
+		`"name":"balance_all","used_pct":10`,
+		`"name":"window5h_rub"`,
+		`"rub":119`,
+		`"is_rub":true`,
+		`"name":"balance_rub"`,
+		`"rub":4312`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("в ответе ручки нет %q:\n%s", want, raw)
+		}
+	}
+}
+
 func TestQuotaNeedsLogin(t *testing.T) {
 	e := newTestEnv(t)
 	resp, err := plainClient().Get(e.srv.URL + "/api/quota")

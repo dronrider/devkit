@@ -1646,10 +1646,17 @@ function harnessRow(h, pin) {
   row.type = "button";
   row.append(el("b", "hname", h.name));
   const snap = quotaEvery(quotaView).find((q) => q.name === h.name) || null;
-  const buckets = snap ? (snap.buckets || []) : [];
+  const buckets = snap ? quotaShowBuckets(snap).slice(0, 2) : [];
   const said = [h.name + (h.default ? ", подписка по умолчанию" : "")];
-  for (const b of buckets.slice(0, 2)) {
+  for (const b of buckets) {
     const one = el("span", "hq");
+    if (b.is_rub) {
+      one.append(el("em", "", rubWord(b.name)));
+      one.append(el("b", "", (b.rub || 0) + " руб"));
+      row.append(one);
+      said.push(rubWord(b.name) + " " + (b.rub || 0) + " руб");
+      continue;
+    }
     // Короткое имя бакета стоит у числа: без него два процента подряд не
     // говорят, какой из них про общий лимит, а какой про окно.
     one.append(el("em", "", bucketWord(b.name)));
@@ -17199,8 +17206,36 @@ function bucketWord(name) {
   return String(name || "").replace(/^window/, "");
 }
 
+// Имя рублёвой строки для показа: window5h_rub это траты за пятичасовое окно,
+// balance_rub остаток баланса. Хвост _rub режется вместе с ним, а час окна
+// пишется по-русски. Провайдер с оплатой с баланса платит токенами с
+// пополняемого счёта, и строки этого типа у всех таких провайдеров одни.
+function rubWord(name) {
+  const word = String(name || "").replace(/^window/, "").replace(/_rub$/, "");
+  const win = /^(\d+)h$/.exec(word);
+  return win ? "за " + win[1] + " ч" : word;
+}
+
+// Строки подписки для показа. У провайдера с оплатой с баланса нет процентов
+// подписки: траты уходят в окно и остаток рублями, и процент бюджета рядом с
+// ними читался бы как чужая шкала. Остальным подпискам нужны все строки.
+function quotaShowBuckets(h) {
+  const all = (h && h.buckets) || [];
+  const rub = all.filter((b) => b.is_rub);
+  return rub.length ? rub : all;
+}
+
 function quotaRow(b) {
   const row = el("div", "qrow" + (b.expired ? " expired" : ""));
+  if (b.is_rub) {
+    // Рублёвая строка провайдера с оплатой с баланса: сумма деньгами, без
+    // градусника и даты сброса, окно у суммы своё и не сбрасывается само.
+    const name = el("em", "", rubWord(b.name));
+    name.title = b.name;
+    row.append(name);
+    row.append(el("b", "", (b.rub || 0) + " руб"));
+    return row;
+  }
   const name = el("em", "", bucketWord(b.name));
   name.title = b.name;
   row.append(name);
@@ -17304,7 +17339,7 @@ function quotaNodes(view) {
       out.push(el("div", "qnote stale", h.note || "снимка нет: остаток неизвестен"));
       continue;
     }
-    for (const b of h.buckets || []) out.push(quotaRow(b));
+    for (const b of quotaShowBuckets(h)) out.push(quotaRow(b));
     // Возраст снимка виден цветом, а не словом «протух»: слово ничего не
     // говорило о том, насколько всё плохо, и стояло почти всегда (замечание 21).
     const note = el("div", "qnote");

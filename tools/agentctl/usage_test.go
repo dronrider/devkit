@@ -934,6 +934,218 @@ func TestGlmCodeSnapScript(t *testing.T) {
 	})
 }
 
+// TestRouteraiSnapScript гоняет съёмщик баланса routerai (DK-1272) на локальном
+// сервере с ответом, снятым с сервиса живьём. Подписка платит с предоплаченного
+// баланса, квотных окон у неё нет: съёмщик сам делит потраченное на бюджет из
+// машинного слоя, и у бакета нет сброса.
+func TestRouteraiSnapScript(t *testing.T) {
+	const token = "подписной-токен"
+	body := readFixture(t, "routerai-credits.json")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path != "/api/v1/credits":
+			http.NotFound(w, r)
+		case r.Header.Get("Authorization") != "Bearer "+token:
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			_, _ = w.Write([]byte(body))
+		}
+	}))
+	defer srv.Close()
+
+	// Base URL профиля кончается на /api, эндпоинт баланса живёт под ним же:
+	// съёмщик склеивает путь с base целиком, а не с голым хостом.
+	settings := func(tok string) string {
+		return `{"env": {"ANTHROPIC_BASE_URL": "` + srv.URL + `/api", "ANTHROPIC_AUTH_TOKEN": "` + tok + `"}}`
+	}
+	// Спец берётся из настоящего профиля репозитория, бюджет из машинного
+	// слоя: копия здесь разъехалась бы с тем, по чему работает машина. Путь
+	// снимка уезжает во временный каталог, как у glm-теста, иначе запись
+	// прежнего снимка трогала бы настоящую машину.
+	routeraiHome := func(t *testing.T, tok, budget string) *quotaSpec {
+		t.Helper()
+		home := t.TempDir()
+		writeFile(t, home, "settings.json", settings(tok))
+		machine := `default = "glm-code"
+enabled = ["glm-code", "routerai"]
+
+[routerai]
+home = "` + home + `"
+` + budget
+		l, err := mergeLayers(filepath.Join(repoRoot(t), profileDirGroup, profileDirName),
+			writeFile(t, t.TempDir(), "harness.local", machine), "")
+		if err != nil {
+			t.Fatalf("слои харнесов: %v", err)
+		}
+		q := quotaSpecOf(l, "routerai")
+		if q == nil {
+			t.Fatal("у routerai нет объявления квоты: профиль вернулся к пустой секции [quota]")
+		}
+		snapPath := filepath.Join(t.TempDir(), "quota", "routerai.local")
+		q.Path, q.From = snapPath, snapPath
+		return q
+	}
+
+	// История сэмплов баланса живёт в HOME съёмщика, а не рядом с временным
+	// снимком: без изоляции прогон теста трогал бы машину разработчика.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	t.Run("живой ответ ложится в снимок долей бюджета", func(t *testing.T) {
+		q := routeraiHome(t, token, "budget = 400\n")
+		snap, err := snapByScript(q, testNow)
+		if err != nil {
+			t.Fatalf("съёмщик отказал: %v", err)
+		}
+		if len(snap.Warns) != 0 {
+			t.Fatalf("вывод съёмщика не разобран начисто: %v", snap.Warns)
+		}
+		bal, ok := snap.bucket("balance_all")
+		if !ok {
+			t.Fatalf("бакета баланса в снимке нет: %+v", snap.Buckets)
+		}
+		// 269.5 потраченного из 400 это 67.375%, снимок округляет до ближайшего.
+		if bal.Used != 0.67 {
+			t.Fatalf("доля бюджета %.2f, жду 0.67", bal.Used)
+		}
+		if !bal.Reset.IsZero() {
+			t.Fatalf("у бакета баланса появился сброс %v, а окна у подписки нет", bal.Reset)
+		}
+	})
+
+	// Траты окном и остаток деньгами: у провайдера с оплатой с баланса нет
+	// процентов подписки, и съёмщик пишет пары строк «N руб» сверх доли бюджета
+	// для корректора. Окно считается по истории сэмплов рядом со снимком,
+	// эндпоинт помнит только текущий баланс.
+	t.Run("рублёвые строки окна и остатка", func(t *testing.T) {
+		q := routeraiHome(t, token, "budget = 400\n")
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+			t.Fatalf("съёмщик отказал: %v", err)
+		}
+		// Истории нет, окно честно нулевое; остаток это сам баланс 130.5.
+		file, err := os.ReadFile(q.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"balance_all = 67%", "window5h_rub = 0 руб", "balance_rub = 131 руб"} {
+			if !strings.Contains(string(file), want) {
+				t.Fatalf("в снимке нет строки %q:\n%s", want, file)
+			}
+		}
+		out, err := cmdQuota(q, testNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "window5h_rub: 0 руб") || !strings.Contains(out, "balance_rub: 131 руб") {
+			t.Fatalf("печать снимка не назвала рублёвые строки:\n%s", out)
+		}
+	})
+
+	t.Run("окно трат считается по истории сэмплов", func(t *testing.T) {
+		// База окна шестичасовой давностью и свежий сэмпл внутри окна: съёмщик
+		// держит одну базу и всё, что моложе пяти часов.
+		old := time.Now().Add(-6 * time.Hour).Format("2006-01-02T15:04")
+		mid := time.Now().Add(-2 * time.Hour).Format("2006-01-02T15:04")
+		hist := filepath.Join(home, ".devkit", "quota", "routerai.history.local")
+		if err := os.MkdirAll(filepath.Dir(hist), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(hist, []byte(old+" 350\n"+mid+" 200\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		q := routeraiHome(t, token, "budget = 400\n")
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+			t.Fatalf("съёмщик отказал: %v", err)
+		}
+		// Окно это база минус текущий баланс: 350 - 130.5 = 219.5, с округлением.
+		file, err := os.ReadFile(q.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(file), "window5h_rub = 220 руб") {
+			t.Fatalf("окно трат не сошлось с историей:\n%s", file)
+		}
+		kept, err := os.ReadFile(hist)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := len(strings.Fields(strings.TrimSpace(string(kept)))) / 2; n != 3 {
+			t.Fatalf("в истории %d сэмплов, жду 3 (база и два свежих):\n%s", n, kept)
+		}
+
+		// Пополнение баланса выше базы не делает окно отрицательным.
+		keptBody := body
+		body = strings.Replace(keptBody, `"credits":130.5`, `"credits":420`, 1)
+		defer func() { body = keptBody }()
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+			t.Fatalf("съёмщик отказал: %v", err)
+		}
+		file, err = os.ReadFile(q.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(file), "window5h_rub = 0 руб") {
+			t.Fatalf("пополнение ушло в минус по окну:\n%s", file)
+		}
+	})
+
+	t.Run("чужой токен это отказ, файл не тронут", func(t *testing.T) {
+		q := routeraiHome(t, "не-тот-токен", "budget = 400\n")
+		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+			!strings.Contains(err.Error(), "не прошёл") {
+			t.Fatalf("отказ эндпоинта прошёл как снимок: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
+
+	t.Run("мусорный ответ это отказ, а не догадка", func(t *testing.T) {
+		// Разметка сервиса не контракт: сменилось поле баланса, съёмщик обязан
+		// отказаться, потому что снимок с придуманным остатком молча прятал бы
+		// исчерпание подписки.
+		kept := body
+		body = strings.Replace(kept, `"credits":130.5`, `"balance":130.5`, 1)
+		defer func() { body = kept }()
+		q := routeraiHome(t, token, "budget = 400\n")
+		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+			!strings.Contains(err.Error(), "не похож на баланс") {
+			t.Fatalf("чужая разметка принята за снимок: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
+
+	t.Run("край баланса клэмпится, а не уезжает за сотню", func(t *testing.T) {
+		// Сервис держит минус за гранью нуля, а доплата сверх бюджета даёт
+		// ноль потраченного: бакет обязан остаться в диапазоне 0-100, парсер
+		// снимка большего не принимает.
+		kept := body
+		defer func() { body = kept }()
+		for credits, want := range map[string]float64{`-12.5`: 1, `550`: 0} {
+			body = strings.Replace(kept, `"credits":130.5`, `"credits":`+credits, 1)
+			q := routeraiHome(t, token, "budget = 400\n")
+			snap, err := snapByScript(q, testNow)
+			if err != nil {
+				t.Fatalf("баланс %s уронил съёмщик: %v", credits, err)
+			}
+			bal, _ := snap.bucket("balance_all")
+			if bal.Used != want {
+				t.Fatalf("баланс %s дал долю %.2f, жду %.2f", credits, bal.Used, want)
+			}
+		}
+	})
+
+	t.Run("без бюджета в машинном слое съёмщик не зовётся", func(t *testing.T) {
+		q := routeraiHome(t, token, "")
+		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+			!strings.Contains(err.Error(), "бюджета в машинном конфиге нет") {
+			t.Fatalf("отсутствие бюджета прошло как снимок: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
+}
+
 // seedSnapshot кладёт прежний снимок и возвращает его содержимое: отказ съёмщика
 // обязан оставить файл ровно таким, каким он был.
 func seedSnapshot(t *testing.T, q *quotaSpec, text string) []byte {

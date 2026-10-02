@@ -1,0 +1,81 @@
+# Профиль третьей подписки: тот же клиент Claude Code на собственном каталоге
+# конфигурации, близнец glm-code.toml. Служба это агрегатор routerai, клиент
+# говорит с ней Anthropic-совместимым /v1/messages, а модели зовутся каталожными
+# именами с префиксом провайдера, и лестница собирается из четырёх разных.
+# Каталог лежит в машинном слое (~/.devkit/harness.local, ключ home секции
+# [routerai]), в коммитируемом файле ему места нет.
+# Разбор в docs/lld/DK-090-heterogeneous-ladder.md.
+
+# Детекта нет сознательно: изнутри сессии подписка от первой переменными
+# неотличима (тот же CLAUDECODE=1), и объявленный детект дал бы неоднозначное
+# совпадение сразу у двух харнесов. Активным этот становится только явным
+# именем, а его ставит run подпроцессу либо exec голове задачи.
+[detect]
+
+[rules]
+mode = "import"
+file = "CLAUDE.md"
+import_line = "@{path}"
+global_file = "{home}/CLAUDE.md"
+
+[delegate]
+# Спавна субагента снаружи у клиента нет, поэтому уехавшая ступень поднимается
+# командой. Шаблон тот же, что у glm-code.toml: промпт идёт позиционным
+# аргументом, effort у клиента свой флаг с теми же четырьмя уровнями, что у
+# маппинга devkit. Имя сессии подпроцессу даёт run: по нему он находит
+# транскрипт делегата под {home} и кладёт его боковым журналом в разговор,
+# раздавший работу (DK-581).
+mode = "cli"
+command = ["claude", "-p", "{prompt}", "--model", "{model}", "--effort", "{effort}", "--session-id", "{session}"]
+agents_dir = "{home}/agents"
+agents_format = "claude-code"
+# Все четыре ступени отвечали смоком 2026-10-01 в формате Anthropic Messages.
+# Алиасы первой лестницы, которыми клиент принимает параметр model у субагента,
+# сворачиваются на эти же модели подстановками в env каталога подписки
+# (ANTHROPIC_DEFAULT_<АЛИАС>_MODEL); их раскладывает и сверяет доктор, разбор
+# в docs/lld/DK-090-heterogeneous-ladder.md, «Дорога модели из вердикта до
+# клиента» (DK-751).
+map_mini = "deepseek/deepseek-v4-flash"
+map_base = "z-ai/glm-5.3"
+map_pro = "anthropic/claude-sonnet-5.5"
+map_max = "anthropic/claude-opus-5.5"
+
+[hooks]
+protocol = "claude-code"
+config = "{home}/settings.json"
+events = ["write", "session-start", "notify", "subagent-done", "turn-done", "turn-failed", "prompt-submit", "tool-done"]
+memory_index = "/memory/MEMORY.md"
+
+[skills]
+dir = "{home}/skills"
+format = "claude-code"
+discovery = "auto"
+
+# Голова задачи (DK-931), ключи те же, что у glm-code.toml. Клиент идёт
+# через agentctl exec: пары окружения подписки кладёт он. bin называет сам
+# клиент, его подъём и ищет в PATH.
+[head]
+client = ["agentctl", "exec", "--harness", "routerai", "--", "claude", "--permission-mode", "auto"]
+bin = "claude"
+model = ["--model", "{model}"]
+session = ["--session-id", "{session}"]
+name = ["--name", "{name}"]
+resume = ["agentctl", "exec", "--harness", "routerai", "--", "claude", "--resume", "{session}"]
+turn_end = "turn-mark"
+wait_cap = "2h"
+
+# Оплата с предоплаченного баланса, квотных окон нет: съёмщик budget_based
+# делит потраченное на бюджет из машинного слоя (ключ budget секции
+# [routerai]). Бакет один и сброса не имеет, пополнение баланса руками, и
+# корректор ярусов по нему инертен (DK-365). Эндпоинт баланса проверен живьём
+# 2026-10-01, прецедент DK-181.
+[quota]
+snap = "script"
+script = "snap/routerai.sh"
+buckets = ["balance_all"]
+required = "balance_all"
+spend_mini = ["balance_all"]
+spend_base = ["balance_all"]
+spend_pro = ["balance_all"]
+spend_max = ["balance_all"]
+budget_based = true

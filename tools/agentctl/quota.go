@@ -903,6 +903,13 @@ func cmdQuota(q *quotaSpec, now time.Time) (string, error) {
 		fmt.Fprintf(&b, "снят %s, возраст %s\n", s.Taken.Format(quotaTimeLayout), humanAge(age))
 	}
 	for _, bk := range s.Buckets {
+		// Нулевое окно это бакет балансового провайдера, доля бюджета для
+		// корректора. Процентов подписки у такого провайдера нет, и строка
+		// «потрачено N%» читалась бы чужой шкалой поверх рублёвых строк:
+		// показ балансового провайдера это рубли ниже (DK-090).
+		if bucketWindow(bk.Name) == 0 {
+			continue
+		}
 		status := bk.status(now)
 		note := ""
 		switch {

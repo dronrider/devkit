@@ -256,6 +256,59 @@ func TestSnapshotRubLines(t *testing.T) {
 	}
 }
 
+// TestQuotaBalancePrint: печать снимка балансового провайдера это только
+// рублёвые строки, процентов подписки у такого провайдера нет вовсе (DK-090).
+// Доля бюджета едет в снимке бакетом balance_all для корректора и журнала
+// цели, но не в печать: процент поверх рублей читался бы чужой шкалой. Спец
+// берётся из настоящего профиля routerai, иначе balance_all стал бы в снимке
+// неизвестным ключом, и тест мерил бы чужой профиль. Проверка идёт печатью
+// cmdQuota, чтобы ловить именно расхождение печати с критерием (regcheck).
+func TestQuotaBalancePrint(t *testing.T) {
+	home := t.TempDir()
+	machine := writeFile(t, t.TempDir(), "harness.local", `default = "glm-code"
+enabled = ["glm-code", "routerai"]
+
+[routerai]
+home = "`+home+`"
+budget = 5000
+`)
+	l, err := mergeLayers(filepath.Join(repoRoot(t), profileDirGroup, profileDirName), machine, "")
+	if err != nil {
+		t.Fatalf("слои харнесов: %v", err)
+	}
+	q := quotaSpecOf(l, "routerai")
+	if q == nil {
+		t.Fatal("у routerai нет объявления квоты: профиль вернулся к пустой секции [quota]")
+	}
+	path := filepath.Join(t.TempDir(), "routerai.local")
+	q.Path, q.From = path, path
+	content := "taken = " + at(testNow) + "\n" +
+		"balance_all = 12%\n" +
+		"window5h_rub = 119 руб\n" +
+		"balance_rub = 4312 руб\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdQuota(q, testNow)
+	if err != nil {
+		t.Fatalf("снимок не прочитан: %v", err)
+	}
+	for _, want := range []string{"window5h_rub: 119 руб", "balance_rub: 4312 руб"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("в печати снимка нет строки %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "потрачено") {
+		t.Fatalf("печать балансового провайдера несёт строку процентов:\n%s", out)
+	}
+	if strings.Contains(out, "balance_all") {
+		t.Fatalf("доля бюджета проехала в печать снимка:\n%s", out)
+	}
+	if strings.Contains(out, "предупреждение") {
+		t.Fatalf("балансовый снимок встал предупреждением:\n%s", out)
+	}
+}
+
 func TestReadSnapshotMissing(t *testing.T) {
 	s, err := specAt(t, filepath.Join(t.TempDir(), "нет-такого")).read()
 	if err != nil {

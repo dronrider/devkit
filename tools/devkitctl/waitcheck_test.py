@@ -126,6 +126,31 @@ class WaitcheckTest(SandboxCase):
                       "провал не назван ожиданием:\n%s" % out)
         self.assertIn(waitcheck.MISSED, out, "провал не назвал строку, оставшуюся стоять")
 
+    def test_hand_merge_returns_to_start_branch(self):
+        # Ручное слияние возвращается на ветку ствола, каким бы именем его ни
+        # дал git: init.defaultBranch на машинах разнится, и хардкод main
+        # ломал стенд там, где git кладёт master.
+        proj = self.box.root / "handmerge"
+        proj.mkdir()
+
+        def cmd_run(args, cwd=None, env=None):
+            return testenv.run(args, cwd=cwd, env=env, path=self.path,
+                               home=self.box.home)
+
+        rc, out = cmd_run(["git", "init", "-q", "-b", "zz-trunk", str(proj)])
+        self.assertEqual(rc, 0, "репозиторий не завёлся: %s" % out)
+        write(proj / "README.md", "стенд ручного слияния\n")
+        cmd_run(["git", "-C", str(proj), "add", "--", "."])
+        rc, out = cmd_run(["git", "-C", str(proj), "commit", "-q", "-m",
+                           "chore: старт"])
+        self.assertEqual(rc, 0, "первый коммит не прошёл: %s" % out)
+        rc, out = waitcheck.hand_merge(cmd_run, proj, "WT-007")
+        self.assertEqual(rc, 0, "ручное слияние не прошло:\n%s" % out)
+        rc, out = cmd_run(["git", "-C", str(proj), "rev-parse",
+                           "--abbrev-ref", "HEAD"])
+        self.assertEqual(out.strip(), "zz-trunk",
+                         "слияние не вернулось на ветку ствола: %s" % out)
+
 
 if __name__ == "__main__":
     unittest.main()

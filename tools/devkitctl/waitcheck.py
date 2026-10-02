@@ -471,6 +471,12 @@ def hand_merge(cmd_run, proj, task):
     первым в subject, поэтому работа едет отдельным коммитом в своей ветке.
     """
     branch = task.lower()
+    rc, out = cmd_run(["git", "-C", str(proj), "rev-parse", "--abbrev-ref", "HEAD"])
+    if rc != 0:
+        return rc, out
+    # Ствол зовётся как дал git: init.defaultBranch на машинах разнится, и
+    # хардкод main ломал стенд там, где git кладёт master.
+    trunk = out.strip()
     rc, out = cmd_run(["git", "-C", str(proj), "checkout", "-q", "-b", branch])
     if rc != 0:
         return rc, out
@@ -482,7 +488,7 @@ def hand_merge(cmd_run, proj, task):
                        "feat: %s работа слита руками" % task])
     if rc != 0:
         return rc, out
-    rc, out = cmd_run(["git", "-C", str(proj), "checkout", "-q", "main"])
+    rc, out = cmd_run(["git", "-C", str(proj), "checkout", "-q", trunk])
     if rc != 0:
         return rc, out
     # В origin слияние не уезжает. Рубеж пуша спрашивает у кода след ревью, а

@@ -55,6 +55,42 @@ func gitDirAbs(root, arg string) (string, error) {
 	return out, nil
 }
 
+// branchWorktree называет путь дерева, где ветка branch выставлена, пустая
+// строка значит, что ни одно дерево её не держит.
+func branchWorktree(root, branch string) string {
+	out, err := exec.Command("git", "-C", root, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return ""
+	}
+	path := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			path = strings.TrimPrefix(line, "worktree ")
+		case line == "branch refs/heads/"+branch:
+			return path
+		}
+	}
+	return ""
+}
+
+// reviewTreeGuard не даёт review add и review resolve писать замечание мимо
+// ветки задачи (DK-536). Пока у задачи живая ветка с неслитыми коммитами, файл
+// задачи, который читает исполнитель и ворота слияния, лежит в её дереве, а
+// копия в другом дереве отстаёт и до исполнителя не доедет. У задачи без ветки
+// и у слитой законное дерево то, где стоит вызов, и отказа нет, как вне git.
+func reviewTreeGuard(root, id string) error {
+	br, _ := unmergedTaskBranch(root, id)
+	if br == "" || branchOfTask(headBranch(root), id) {
+		return nil
+	}
+	where := "ни одно дерево ветку не держит, встань на неё (git switch " + br + ") или слей либо удали брошенную"
+	if wt := branchWorktree(root, br); wt != "" {
+		where = "дерево задачи " + wt + ", писать надо оттуда: taskctl -C " + wt + " ..."
+	}
+	return fmt.Errorf("%s: ветка %s не слита, а %s стоит не на ней, и замечание легло бы в копию файла задачи, которую исполнитель не увидит; %s", id, br, root, where)
+}
+
 // boardGuard отказывает изменяющей доску команде, запущенной из линкованного
 // worktree: доску правит только диспетчер и только в основном чекауте
 // (RULES.board.md, «Доска в руках диспетчера»). Считается по root, который

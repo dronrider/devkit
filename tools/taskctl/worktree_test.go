@@ -207,3 +207,97 @@ func TestReviewAddFromWorktreeWritesOnlyTaskFile(t *testing.T) {
 		t.Fatal("review add из worktree тронул доску")
 	}
 }
+
+// taskBranchWorktree заводит дерево задачи id с одним коммитом впереди main:
+// такая ветка для рубежа review add живая и неслитая.
+func taskBranchWorktree(t *testing.T, root, branch string) string {
+	t.Helper()
+	wt := addWorktree(t, root, branch)
+	if err := os.WriteFile(filepath.Join(wt, "code.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, wt, "add", "code.txt")
+	gitOut(t, wt, "commit", "-q", "-m", "XR-005: код")
+	return wt
+}
+
+// TestReviewWriteFromTaskTree: из дерева живой ветки задачи review add и
+// review resolve пишут как обычно (DK-536).
+func TestReviewWriteFromTaskTree(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	wt := taskBranchWorktree(t, root, "xr-005-fix")
+
+	if _, err := cmdReviewAdd(wt, "XR-005", "замечание в дереве задачи", "", CommitOpts{}); err != nil {
+		t.Fatalf("review add из дерева задачи: %v", err)
+	}
+	if _, err := cmdReviewResolve(wt, "XR-005", 1, "fixed", "", CommitOpts{}); err != nil {
+		t.Fatalf("review resolve из дерева задачи: %v", err)
+	}
+}
+
+// TestReviewWriteFromMainCheckoutRefused: при живой неслитой ветке запись из
+// основного чекаута отказывает, называет дерево задачи и файла не трогает
+// (DK-536).
+func TestReviewWriteFromMainCheckoutRefused(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	wt := taskBranchWorktree(t, root, "xr-005-fix")
+	if _, err := cmdReviewAdd(wt, "XR-005", "замечание", "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	before := readTaskFile(t, root, "XR-005")
+
+	_, err := cmdReviewAdd(root, "XR-005", "замечание мимо ветки", "", CommitOpts{})
+	if err == nil {
+		t.Fatal("review add из основного чекаута при живой ветке должен отказывать")
+	}
+	real, rerr := filepath.EvalSymlinks(wt)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if want := "taskctl -C " + real; !strings.Contains(err.Error(), want) {
+		t.Fatalf("отказ не называет команду для дерева задачи (%s): %v", want, err)
+	}
+	if _, err := cmdReviewResolve(root, "XR-005", 1, "fixed", "", CommitOpts{}); err == nil {
+		t.Fatal("review resolve из основного чекаута при живой ветке должен отказывать")
+	}
+	if got := readTaskFile(t, root, "XR-005"); got != before {
+		t.Fatalf("отказавшая команда тронула файл задачи:\n%s", got)
+	}
+}
+
+// TestReviewWriteWithoutBranch: у задачи без своей ветки и у задачи, чья ветка
+// уже слита в main, отказа нет (DK-536).
+func TestReviewWriteWithoutBranch(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+
+	if _, err := cmdReviewAdd(root, "XR-005", "задача без ветки", "", CommitOpts{}); err != nil {
+		t.Fatalf("задача без ветки: %v", err)
+	}
+	gitOut(t, root, "branch", "xr-002-done")
+	if _, err := cmdReviewAdd(root, "XR-002", "ветка слита", "", CommitOpts{}); err != nil {
+		t.Fatalf("задача со слитой веткой: %v", err)
+	}
+	if _, err := cmdReviewResolve(root, "XR-002", 1, "fixed", "", CommitOpts{}); err != nil {
+		t.Fatalf("resolve у задачи со слитой веткой: %v", err)
+	}
+}
+
+// TestReviewWriteBranchWithoutTree: у живой ветки нет дерева (брошена либо
+// дерево стоит на отсоединённом HEAD), отказ не тупиковый и называет выход.
+func TestReviewWriteBranchWithoutTree(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	wt := taskBranchWorktree(t, root, "xr-005-fix")
+	gitOut(t, wt, "checkout", "-q", "--detach")
+
+	_, err := cmdReviewAdd(root, "XR-005", "замечание", "", CommitOpts{})
+	if err == nil {
+		t.Fatal("review add при живой ветке без дерева должен отказывать")
+	}
+	if !strings.Contains(err.Error(), "git switch xr-005-fix") {
+		t.Fatalf("отказ не называет выход: %v", err)
+	}
+}

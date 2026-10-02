@@ -282,6 +282,9 @@ func cmdReviewAdd(root, id, note, class string, c CommitOpts) (string, error) {
 	if strings.Contains(note, "\n") {
 		return "", fmt.Errorf("замечание пишется одной строкой")
 	}
+	if err := reviewTreeGuard(root, id); err != nil {
+		return "", err
+	}
 	// Маркер класса встаёт в голову замечания, перед сутью: исход дописывает
 	// resolve в хвост той же строки, и голова остаётся единственным местом,
 	// куда машинная пометка ложится, не мешая разбору исхода.
@@ -588,6 +591,9 @@ func cmdReviewResolve(root, id string, num int, outcome, reason string, c Commit
 	reason = strings.TrimSpace(reason)
 	if outcome == "rejected" && reason == "" {
 		return "", fmt.Errorf("для rejected обязателен --reason: отклонение фиксируется с причиной")
+	}
+	if err := reviewTreeGuard(root, id); err != nil {
+		return "", err
 	}
 	rf, err := loadReview(taskFileAbs(root, id))
 	if err != nil {

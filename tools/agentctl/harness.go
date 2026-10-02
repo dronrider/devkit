@@ -1286,6 +1286,10 @@ type harnessJSON struct {
 	// перечень имён там разошёлся бы с лестницей на первой же смене поставщика,
 	// а имён харнесов в чужом коде не должно быть вовсе.
 	Models []harnessModelJSON `json:"models,omitempty"`
+	// HooksGap это находка, когда в настройках включённого харнеса нет хуков
+	// devkit; пусто, когда обвязка на месте. Поднимать на таком харнесе нечего,
+	// и потребитель (дашборд) отказывает подъёму до запуска клиента.
+	HooksGap string `json:"hooks_gap,omitempty"`
 }
 
 // harnessModelJSON это одна ступень лестницы: ярус и модель. Формат поля model
@@ -1369,6 +1373,7 @@ func cmdHarnessJSON(start string) (string, error) {
 		h.Bin = clientBin(l.Profiles[name], l.Setup[name])
 		h.Home = l.Setup[name].homeOf()
 		h.Env = envNames(l.Setup[name].envOf())
+		h.HooksGap = hooksGap(l, name)
 		for _, tier := range tierNames {
 			if m := l.Setup[name].mapOf(tier); m != "" {
 				h.Models = append(h.Models, harnessModelJSON{Tier: tier, Model: m, Via: l.Setup[name].viaOf(tier, name)})

@@ -882,6 +882,21 @@ func TestScreenKeepsPlaceOnRefresh(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// DK-350: форма заведения помнит черновики, экран накопителя открывает
+// форму черновиком. Статика проверяется статическим тестом (без браузера).
+func TestDraftNewForm(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд DK-350 пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "draft_new.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("DK-350 форма заведения: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Доска на телефоне: заголовок строки идёт словами во всю ширину, чипы стоят
 // под ним, разделы переключаются полосой в одну строку, а заведение задачи
 // сидит плавающим плюсом над нижними вкладками. Предмет проверки это ширины и

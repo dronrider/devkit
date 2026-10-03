@@ -14550,6 +14550,12 @@ async function renderDrafts(project, works) {
       make: () => {
         const foot = el("div", "nbar");
         foot.append(el("span", "hint", GROOM_HINT));
+        const newDraft = el("button", "btn btn-sm", "Новый черновик");
+        newDraft.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          goKeepingChat(project + "/new/draft");
+        });
+        foot.append(newDraft);
         return foot;
       },
     });
@@ -16435,7 +16441,6 @@ function makeMenuAt(btn, project, host) {
     opt.addEventListener("click", (e) => {
       e.stopPropagation();
       homeMenuShut();
-      resetNewForm(project);
       newForm.draft = draft;
       goKeepingChat(project + "/new/" + (draft ? "draft" : "task"));
     });

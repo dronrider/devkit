@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1596,5 +1598,41 @@ func TestPanelDir(t *testing.T) {
 			t.Fatalf("выбран %q, ждали служебный %q", dir, service)
 		}
 	})
+}
+
+// Осиротевшие окна съёмки убираются по владельцу, живое окно второго agentctl,
+// своё окно и чужие сессии остаются (DK-1263).
+func TestReapUsageOrphans(t *testing.T) {
+	self := os.Getpid()
+	var killed []string
+	run := func(args ...string) (string, error) {
+		if args[0] == "list-sessions" {
+			return fmt.Sprintf("work\nagentctl-usage-111\nagentctl-usage-222\nagentctl-usage-%d\nagentctl-usage-x\nagentctl-usage-333", self), nil
+		}
+		killed = append(killed, args[2])
+		return "", nil
+	}
+	alive := func(pid int) bool { return pid == 222 }
+	n := reapUsageOrphans(run, alive)
+	if n != 2 || len(killed) != 2 || killed[0] != "agentctl-usage-111" || killed[1] != "agentctl-usage-333" {
+		t.Fatalf("убрано %d %v, ждали сирот 111 и 333", n, killed)
+	}
+}
+
+func TestReapUsageOrphansNoTmux(t *testing.T) {
+	run := func(args ...string) (string, error) { return "", errors.New("no server") }
+	if n := reapUsageOrphans(run, func(int) bool { return false }); n != 0 {
+		t.Fatalf("без сервера tmux убрано %d", n)
+	}
+}
+
+func TestOwnerAlive(t *testing.T) {
+	if ownerAlive(0) || ownerAlive(-1) {
+		t.Fatal("нулевой pid жив")
+	}
+	// тестовый бинарь зовётся не agentctl: переиспользованный pid не владелец
+	if ownerAlive(os.Getpid()) && !strings.Contains(os.Args[0], "agentctl") {
+		t.Fatal("чужой процесс принят за владельца")
+	}
 }
 

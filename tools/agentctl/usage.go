@@ -466,6 +466,50 @@ func snapByScript(q *quotaSpec, now time.Time) (snapshot, error) {
 	return s, nil
 }
 
+var usageSessionRe = regexp.MustCompile(`^agentctl-usage-(\d+)$`)
+
+// ownerAlive говорит, жив ли agentctl с таким pid. Одного сигнала 0 мало:
+// pid переиспользуется, и чужой процесс на нём сделал бы сироту «живой», поэтому
+// имя процесса сверяется отдельно.
+func ownerAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(filepath.Base(strings.TrimSpace(string(out))), "agentctl")
+}
+
+// reapUsageOrphans убирает одноразовые окна съёмки, чей agentctl погиб: жёсткий
+// сигнал по потолку времени обходит отложенный kill-session, и клиент claude
+// (~250 МБ) остаётся жить (DK-1263). Сирота опознаётся по владельцу из pid в
+// имени сессии, а не по маске или возрасту: замок quota-refresh считается
+// брошенным раньше потолка съёмки, и рядом может идти живая съёмка второго
+// agentctl, которую трогать нельзя. Своё окно и окна живых владельцев остаются.
+func reapUsageOrphans(run func(args ...string) (string, error), alive func(pid int) bool) int {
+	out, err := run("list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		return 0
+	}
+	killed := 0
+	for _, name := range strings.Fields(out) {
+		m := usageSessionRe.FindStringSubmatch(name)
+		if m == nil {
+			continue
+		}
+		pid, _ := strconv.Atoi(m[1])
+		if pid == os.Getpid() || alive(pid) {
+			continue
+		}
+		if _, err := run("kill-session", "-t", name); err == nil {
+			killed++
+		}
+	}
+	return killed
+}
+
 // snapUsagePanel это встроенный съёмщик Claude Code: одноразовая tmux-сессия с
 // клиентом, панель /usage, capture-pane.
 func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
@@ -476,6 +520,7 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 	if _, err := exec.LookPath("claude"); err != nil {
 		return snapshot{}, fmt.Errorf("claude в PATH нет, снимать панель /usage нечем; снимок пишется и руками: %s", path)
 	}
+	reapUsageOrphans(tmuxRun, ownerAlive)
 	session := fmt.Sprintf("agentctl-usage-%d", os.Getpid())
 	args := []string{"new-session", "-d", "-s", session, "-x", strconv.Itoa(usagePaneCols), "-y", strconv.Itoa(usagePaneRows)}
 	// Каталог подъёма называется всегда (panelDir): доверенное дерево, иначе

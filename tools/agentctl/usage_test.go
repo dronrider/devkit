@@ -1630,9 +1630,21 @@ func TestOwnerAlive(t *testing.T) {
 	if ownerAlive(0) || ownerAlive(-1) {
 		t.Fatal("нулевой pid жив")
 	}
-	// тестовый бинарь зовётся не agentctl: переиспользованный pid не владелец
-	if ownerAlive(os.Getpid()) && !strings.Contains(os.Args[0], "agentctl") {
-		t.Fatal("чужой процесс принят за владельца")
+	if !ownerAlive(os.Getpid()) {
+		t.Fatal("процесс agentctl.test не признан владельцем")
+	}
+	if ownerAlive(1) {
+		t.Fatal("живой pid с чужим именем принят за владельца")
 	}
 }
 
+func TestIsAgentctlComm(t *testing.T) {
+	for comm, want := range map[string]bool{
+		"/usr/local/bin/agentctl\n": true, "agentctl": true, "agentctl.test": true,
+		"launchd": false, "sleep": false, "": false,
+	} {
+		if got := isAgentctlComm(comm); got != want {
+			t.Errorf("isAgentctlComm(%q) = %v", comm, got)
+		}
+	}
+}

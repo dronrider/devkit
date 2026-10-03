@@ -479,7 +479,12 @@ func ownerAlive(pid int) bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(filepath.Base(strings.TrimSpace(string(out))), "agentctl")
+	return isAgentctlComm(string(out))
+}
+
+// isAgentctlComm сверяет имя процесса: pid мог уйти чужому процессу.
+func isAgentctlComm(comm string) bool {
+	return strings.Contains(filepath.Base(strings.TrimSpace(comm)), "agentctl")
 }
 
 // reapUsageOrphans убирает одноразовые окна съёмки, чей agentctl погиб: жёсткий

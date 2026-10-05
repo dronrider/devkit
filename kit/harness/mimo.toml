@@ -1,0 +1,72 @@
+# Профиль четвёртой подписки: тот же клиент Claude Code на собственном каталоге
+# конфигурации, близнец routerai.toml. Служба это платформа Xiaomi MiMo, клиент
+# работает с ней через Anthropic-совместимый /v1/messages. Съём остатка у
+# платформы не заводится, секция [quota] стоит пустой. Каталог лежит в машинном
+# слое (~/.devkit/harness.local, ключ home секции [mimo]), в коммитируемом файле
+# ему места нет.
+# Разбор в docs/lld/DK-090-heterogeneous-ladder.md.
+
+# Детекта нет сознательно: изнутри сессии подписка от первой переменными
+# неотличима (тот же CLAUDECODE=1), и объявленный детект дал бы неоднозначное
+# совпадение сразу у нескольких харнесов. Активным этот становится только явным
+# именем, а его ставит run подпроцессу либо exec голове задачи.
+[detect]
+
+[rules]
+mode = "import"
+file = "CLAUDE.md"
+import_line = "@{path}"
+global_file = "{home}/CLAUDE.md"
+
+[delegate]
+# Спавна субагента снаружи у клиента нет, поэтому уехавшая ступень поднимается
+# командой. Шаблон тот же, что у routerai.toml: промпт идёт позиционным
+# аргументом, effort у клиента свой флаг с теми же четырьмя уровнями, что у
+# маппинга devkit. Имя сессии подпроцессу даёт run: по нему он находит
+# транскрипт делегата под {home} и кладёт его боковым журналом в разговор,
+# раздавший работу (DK-581).
+mode = "cli"
+command = ["claude", "-p", "{prompt}", "--model", "{model}", "--effort", "{effort}", "--session-id", "{session}"]
+agents_dir = "{home}/agents"
+agents_format = "claude-code"
+# Имена временные до смока с живым ключом. Серия V2.6 анонсирована из трёх
+# моделей, точный список даёт GET /v1/models, и все четыре яруса стоят на одном
+# имени из анонса.
+# Алиасы первой лестницы, которыми клиент принимает параметр model у субагента,
+# сворачиваются на эти же модели подстановками в env каталога подписки
+# (ANTHROPIC_DEFAULT_<АЛИАС>_MODEL); их раскладывает и сверяет доктор, разбор
+# в docs/lld/DK-090-heterogeneous-ladder.md, «Дорога модели из вердикта до
+# клиента» (DK-751).
+map_mini = "mimo-v2.6-pro"
+map_base = "mimo-v2.6-pro"
+map_pro = "mimo-v2.6-pro"
+map_max = "mimo-v2.6-pro"
+
+[hooks]
+protocol = "claude-code"
+config = "{home}/settings.json"
+events = ["write", "session-start", "notify", "subagent-done", "turn-done", "turn-failed", "prompt-submit", "tool-done"]
+memory_index = "/memory/MEMORY.md"
+
+[skills]
+dir = "{home}/skills"
+format = "claude-code"
+discovery = "auto"
+
+# Голова задачи (DK-931), ключи те же, что у routerai.toml. Клиент идёт
+# через agentctl exec: пары окружения подписки кладёт он. bin называет сам
+# клиент, его подъём и ищет в PATH.
+[head]
+client = ["agentctl", "exec", "--harness", "mimo", "--", "claude", "--permission-mode", "auto"]
+bin = "claude"
+model = ["--model", "{model}"]
+session = ["--session-id", "{session}"]
+name = ["--name", "{name}"]
+resume = ["agentctl", "exec", "--harness", "mimo", "--", "claude", "--resume", "{session}"]
+turn_end = "turn-mark"
+wait_cap = "2h"
+
+# У платформы нет публичного эндпоинта остатка, снимать нечего, и пустая секция
+# держит корректор выключенным. Найдётся эндпоинт, снимок заведём отдельной
+# задачей со сменным съёмщиком в kit/harness/snap.
+[quota]

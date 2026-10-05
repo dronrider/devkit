@@ -108,6 +108,47 @@ func TestGlmCodeQuotaProfile(t *testing.T) {
 	}
 }
 
+// mimoLayers собирает слои с настоящим профилем mimo. Машинная секция названа
+// одним каталогом без ярусов, и лестницу разворачивает предложение из map_*
+// профиля (DK-189), как у первой настройки подписки мастером.
+func mimoLayers(t *testing.T) *layers {
+	t.Helper()
+	home := t.TempDir()
+	machine := writeFile(t, t.TempDir(), "harness.local", `default = "claude-code"
+enabled = ["claude-code", "mimo"]
+
+[mimo]
+home = "`+home+`"
+`)
+	l, err := mergeLayers(filepath.Join(repoRoot(t), profileDirGroup, profileDirName), machine, "")
+	if err != nil {
+		t.Fatalf("слои харнесов: %v", err)
+	}
+	return l
+}
+
+// TestMimoQuotaProfile: у четвёртой подписки нет публичного эндпоинта остатка,
+// секция [quota] пуста, и корректор для неё выключен. Тест стоит на двух вещах:
+// профиль грузится целиком (половинчатая секция это отказ загрузки, и подписка
+// выпала бы из enabled вся), а лестница предложена профилем на все четыре
+// яруса, и ступени домашние, без уезда в чужие подписки.
+func TestMimoQuotaProfile(t *testing.T) {
+	l := mimoLayers(t)
+	if q := quotaSpecOf(l, "mimo"); q != nil {
+		t.Fatalf("у mimo объявилась квота: %+v", q)
+	}
+	s := l.Setup["mimo"]
+	if !s.mapped() || !s.Suggested {
+		t.Fatalf("лестница mimo не предложена профилем: %+v", s)
+	}
+	for _, tier := range tierNames {
+		a := s.Map[tier]
+		if a.Harness != "mimo" || a.Model == "" {
+			t.Fatalf("ярус %s не домашняя ступень: %+v", tier, a)
+		}
+	}
+}
+
 const halfWindow = weekWindow / 2
 
 // Возрасты снимка по обе стороны порога свежести: от них зависит только сдвиг

@@ -131,7 +131,7 @@ if (back.value !== "разберись с расходом подписки") {
 
 // --- первая реплика поднимает сессию и называет свою запись ---
 st = await sandbox.chatState("demo", "blank-1", board);
-sandbox.chatRaise("demo", st, "почему поезд встал", "opus", () => {}).catch(() => {});
+sandbox.chatRaise("demo", st, "почему поезд встал", { model: "opus", harness: "" }, () => {}).catch(() => {});
 await settle();
 const order = bodies["/api/projects/demo/chats"];
 if (!order || order.chat !== "blank-1") {

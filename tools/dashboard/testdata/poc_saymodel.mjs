@@ -5,9 +5,11 @@
 // agentctl, и пока лестница ярусов до него не доехала, выпадающий список
 // схлопывался в одну строку с текущей моделью, молча и без объяснений.
 //
-// Предмет стенда две стороны. Лестница приехала: выбор в незачатом разговоре
+// Предмет стенда три стороны. Лестница приехала: выбор в незачатом разговоре
 // виден весь, выбранное запоминается за записью и уезжает в подъём первой
-// репликой, то есть сессия рождается на выбранной модели. Лестницы нет: список
+// репликой, то есть сессия рождается на выбранной модели. Повтор имени у двух
+// подписок различим: строка списка называет квоту текстом, и выбранная пара
+// едет в память записи и в подъём как есть (DK-1281). Лестницы нет: список
 // говорит словами, что выбирать нечем, а причина стоит на нём подсказкой.
 //
 // Зовётся: node testdata/poc_saymodel.mjs static/app.js
@@ -30,9 +32,12 @@ const models = [
   { model: "haiku", tier: "mini", harness: "claude-code" },
   { model: "sonnet", tier: "base", harness: "claude-code" },
   { model: "opus", tier: "pro", harness: "claude-code", default: true },
+  // Честный повтор имени у второй подписки: модели с одним именем у двух
+  // подписок в списке две, и различает их только квота в тексте строки.
+  { model: "sonnet", tier: "base", harness: "glm-code" },
 ];
 const blank = { id: "blank-7", project: "demo", blank: true, state: "not-started", idle: true,
-  model: "opus", mtime: "2026-08-29T12:00:00+03:00", tasks: [] };
+  model: "opus", pickHarness: "claude-code", mtime: "2026-08-29T12:00:00+03:00", tasks: [] };
 
 let ladder = models;
 let note = "";
@@ -42,10 +47,12 @@ const { sandbox, timers } = makeSandbox(app, (path, init) => {
   const p = String(path);
   if (init && init.method === "POST") {
     if (p.endsWith("/model")) {
-      kept.push(JSON.parse(init.body).model);
+      kept.push(JSON.parse(init.body));
       // Ручка модели пишет выбор в память записи: следующий список отдаст его.
-      blank.model = JSON.parse(init.body).model;
-      return { model: blank.model };
+      const pick = JSON.parse(init.body);
+      blank.model = pick.model;
+      blank.pickHarness = pick.harness;
+      return { model: pick.model, harness: pick.harness };
     }
     if (p.endsWith("/chats")) {
       raised.push(JSON.parse(init.body));
@@ -84,35 +91,67 @@ let panel = sandbox.chatPanel("demo", st);
 await settle();
 let box = sel(panel);
 const names = (box.children || []).map((o) => String(o.textContent || ""));
-for (const want of ["haiku", "sonnet", "opus"]) {
+for (const want of ["haiku (claude-code)", "opus (claude-code)"]) {
   if (!names.includes(want)) fail("модели " + want + " в выборе нет: " + names.join(", "));
 }
+// Повтор имени у двух подписок стоит двумя строками, и каждая называет квоту:
+// голое имя в этом списке не выбирает ничего, кроме первой попавшейся квоты.
+for (const want of ["sonnet (claude-code)", "sonnet (glm-code)"]) {
+  if (!names.includes(want)) fail("повтор имени не подписан квотой: " + names.join(", "));
+}
 
-// Выбор в незачатом разговоре запоминается за записью, а не за вкладкой: он
-// обязан пережить перезагрузку и уехать в подъём.
-box.value = "sonnet";
+// Выбор повтора запоминается за записью парой, а не одним именем: сессия
+// обязана подняться квотой выбранной строки, и имя без подписки сюда не
+// доезжает. Стенд выбирает вторую строку повтора флагом selected, как это
+// делает сам экран: value у повтора одно на две строки.
+const repeat = (box.children || []).find((o) => String(o.textContent || "") === "sonnet (glm-code)");
+if (!repeat) fail("строки повтора с квотой glm-code в списке нет");
+repeat.selected = true;
 box.handlers.change({});
 await settle();
-if (!kept.includes("sonnet")) fail("выбор модели не уехал в память записи: " + kept.join(", "));
+const keptPair = kept.find((k) => k.model === "sonnet" && k.harness === "glm-code");
+if (!keptPair) fail("выбор повтора не уехал парой с подпиской: " + JSON.stringify(kept));
 
-// Первая реплика поднимает сессию именно на выбранной модели.
+// Первая реплика поднимает сессию на выбранной паре: подписка подъёма это
+// подписка выбора, а не первая, у которой имя домашнее.
 st = await sandbox.chatState("demo", "blank-7", board);
 panel = sandbox.chatPanel("demo", st);
 await settle();
-const raise = sandbox.chatRaise("demo", st, "первая реплика",
-  st.entry ? st.entry.model : "", () => {});
+const pick = st.entry && st.entry.model
+  ? { model: st.entry.model, harness: st.entry.pickHarness || "" }
+  : { model: "opus", harness: "" };
+const raise = sandbox.chatRaise("demo", st, "первая реплика", pick, () => {});
 await settle();
 await tick(timers, 4);
 await raise;
 if (!raised.length) fail("подъём не состоялся вовсе");
-if (raised[0].model !== "sonnet") {
-  fail("сессия поднята не на выбранной модели: " + JSON.stringify(raised[0]));
+if (raised[0].model !== "sonnet" || raised[0].harness !== "glm-code") {
+  fail("сессия поднята не выбранной парой: " + JSON.stringify(raised[0]));
 }
 if (raised[0].chat !== "blank-7") {
   fail("подъём не пришит к записи разговора: " + JSON.stringify(raised[0]));
 }
 
+// Живой разговор показывается моделью с квотой своего транскрипта: короткое
+// имя гасило и поставщика агрегатора, и квоту, и человек читал «fable» у
+// разговора, идущего чужой подпиской (DK-1281).
+blank.state = "live";
+blank.liveModel = "anthropic/claude-opus-5.5";
+blank.harness = "routerai";
+st = await sandbox.chatState("demo", "blank-7", board);
+panel = sandbox.chatPanel("demo", st);
+await settle();
+box = sel(panel);
+const shownLive = (box.children || []).find((o) => o.selected);
+if (!shownLive || String(shownLive.textContent || "") !== "anthropic/claude-opus-5.5 (routerai)") {
+  fail("живой разговор не назван моделью с квотой: " +
+    (shownLive ? shownLive.textContent : "нет выбранной строки"));
+}
+
 // Лестницы нет: список говорит словами, что выбирать нечем.
+blank.state = "not-started";
+blank.liveModel = "";
+blank.harness = "";
 ladder = [];
 note = "лестница ярусов пуста: agentctl harness --json не назвал ни одной модели";
 st = await sandbox.chatState("demo", "blank-7", board);

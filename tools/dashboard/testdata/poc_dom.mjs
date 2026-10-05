@@ -173,6 +173,44 @@ export function makeNode(tag) {
     return false;
   };
   Object.defineProperty(node, "childElementCount", { get: () => node.children.length });
+  // Выбранные строки select. Ключ модели в опциях списка это пара
+  // «модель+подписка», и имя у двух подписок повторяется: обработчик смены
+  // читает пару с выбранной опции, а не с одного value (DK-1281). Стенд
+  // выбирает повтор имени флагом selected, как это делает сам экран.
+  if (node.tagName === "SELECT") {
+    Object.defineProperty(node, "selectedOptions", {
+      get: () => node.children.filter((kid) => kid.tagName === "OPTION" && kid.selected),
+    });
+    // value у select выбирает строку с этим именем, как в браузере: стенды
+    // заводят выбор присвоением value, и без синхронизации выбранной
+    // оставалась прежняя строка.
+    let val = "";
+    Object.defineProperty(node, "value", {
+      get: () => val,
+      set: (v) => {
+        val = String(v);
+        const hit = (node.children || []).find((kid) => kid.tagName === "OPTION" && kid.value === val);
+        if (hit) hit.selected = true;
+      },
+    });
+  }
+  // Выбор опции в одиночном select снимает прежнюю выбранную строку, как в
+  // браузере: без этого у повтора имени с одним value на две строки выбранной
+  // оставалась первая, и стенд проверял не ту строку, которую выбрал человек.
+  if (node.tagName === "OPTION") {
+    let chosen = false;
+    Object.defineProperty(node, "selected", {
+      get: () => chosen,
+      set: (on) => {
+        chosen = Boolean(on);
+        if (chosen && node.parentNode && node.parentNode.tagName === "SELECT") {
+          for (const kid of node.parentNode.children || []) {
+            if (kid !== node && kid.tagName === "OPTION") kid.selected = false;
+          }
+        }
+      },
+    });
+  }
   // Высота считается по числу узлов внутри: прокрутка это предмет проверки, и
   // без модели высоты стенд не отличил бы вставшую ленту от съехавшей. Своя
   // высота (own) задаётся стендом там, где узел изображает картинку.

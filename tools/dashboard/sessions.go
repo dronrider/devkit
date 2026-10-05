@@ -2550,9 +2550,16 @@ func readSessionModel(path string) string {
 // claude-fable-5 это fable, claude-sonnet-4-5-20250929 это sonnet. Таблица та
 // же, что у agentctl: ярусы там названы этими же словами, и список выбора в
 // панели собран из них.
+//
+// Каталожное имя агрегатора (провайдер/модель) не режется вовсе: «fable»
+// вместо anthropic/claude-fable-5.1 гасило и поставщика, и квоту, которой идёт
+// разговор, а короткое имя первой подписки ничем не честнее полного (DK-1281).
 func modelShort(id string) string {
 	if id == "" {
 		return ""
+	}
+	if strings.Contains(id, "/") {
+		return id
 	}
 	low := strings.ToLower(id)
 	for _, name := range []string{"fable", "opus", "sonnet", "haiku"} {

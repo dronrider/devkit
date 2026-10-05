@@ -98,17 +98,36 @@ func (s *server) chatModelNote() string {
 		"выбирать не из чего. Ярусы прописываются в машинном слое харнесов."
 }
 
-// chatHarnessOf называет подписку, чьей моделью просят поднять разговор: у
+// chatHarnessOf называет подписку, чьей квотой просят поднять разговор: у
 // второй подписки клиент поднимается своим каталогом конфигурации, и без этого
 // сессия ушла бы на чужую квоту.
 //
-// Ведёт на подписку-владельца, у которой модель домашняя: уехавшая ссылкой
-// ступень чужой подписки в списке моделей вообще не появляется отдельной
-// строкой (chatModelOpts), но защита остаётся и здесь на случай прямого
-// вызова с именем такой модели, чтобы не поднять клиента не той подписки
-// только по порядку харнесов (DK-1177).
-func (s *server) chatHarnessOf(model string) *Harness {
+// Именованная подписка ключа выбора старше всего: повтор имени у двух подписок
+// различим только ею, и молчаливый уход на владельца по порядку харнесов это
+// разговор на чужой квоте (DK-1281). Именованная берётся, когда модель и правда
+// её ступень, домашняя или уехавшая ссылкой.
+//
+// Без имени в ключе ведёт на подписку-владельца, у которой модель домашняя:
+// уехавшая ссылкой ступень чужой подписки в списке моделей вообще не появляется
+// отдельной строкой (chatModelOpts), но защита остаётся и здесь на случай
+// прямого вызова с именем такой модели, чтобы не поднять клиента не той
+// подписки только по порядку харнесов (DK-1177). Пара из старой записи или
+// изменившейся раскладки, которой в списке уже нет, идёт этой же запасной
+// дорогой: подъём отказывает ей лишь чекой обвязки, как прежде.
+func (s *server) chatHarnessOf(model, harness string) *Harness {
 	view := s.harnesses()
+	if harness != "" {
+		for i := range view.Harnesses {
+			if view.Harnesses[i].Name != harness {
+				continue
+			}
+			for _, m := range view.Harnesses[i].Models {
+				if m.Model == model {
+					return &view.Harnesses[i]
+				}
+			}
+		}
+	}
 	var away *Harness
 	for i := range view.Harnesses {
 		for _, m := range view.Harnesses[i].Models {
@@ -158,14 +177,20 @@ type chatEntry struct {
 	// Born это метка первой записи транскрипта: когда разговор заведён. По ней
 	// панель отличает разговор, родившийся от её подъёма, от прежнего жильца
 	// того же имени tmux (DK-851).
-	Born    string   `json:"born,omitempty"`
-	Tasks   []string `json:"tasks,omitempty"`
-	Model   string   `json:"model,omitempty"`
-	Tmux    string   `json:"tmux,omitempty"`
-	State   string   `json:"state"`
-	Tree    string   `json:"tree,omitempty"`
-	Branch  string   `json:"branch,omitempty"`
-	Harness string   `json:"harness,omitempty"`
+	Born  string   `json:"born,omitempty"`
+	Tasks []string `json:"tasks,omitempty"`
+	Model string   `json:"model,omitempty"`
+	// PickHarness это подписка сохранённого выбора Model, ею разговор поднимется
+	// следующим резюмом (DK-1281). Поле Harness ниже называет подписку
+	// транскрипта, то есть чьей квотой разговор идёт сейчас: расходятся они у
+	// мёртвого разговора со сменённой моделью. Пусто у старых записей и
+	// умолчания, и тогда владелец определяется порядком харнесов.
+	PickHarness string `json:"pickHarness,omitempty"`
+	Tmux        string `json:"tmux,omitempty"`
+	State       string `json:"state"`
+	Tree        string `json:"tree,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	Harness     string `json:"harness,omitempty"`
 	// Живая сессия из реестра клиента: сокет канала, pid, слово про то, где она
 	// идёт, и её состояние (idle значит «ждёт ввода»). Пусто значит, что
 	// процесса у диалога нет вовсе.
@@ -604,6 +629,11 @@ func chatStoreDir(home string) string {
 
 type chatStore struct {
 	Model string `json:"model,omitempty"`
+	// Harness называет подписку сохранённого выбора: ключ выбора с DK-1281
+	// двухчастный, и разговор поднимается квотой этого поля, а не первой, у
+	// которой модель домашняя. Пусто у старых записей и умолчания, и тогда
+	// владельца ищет порядок chatHarnessOf.
+	Harness string `json:"harness,omitempty"`
 	// Hidden убирает чат из списков насовсем: им помечены пробные чаты, поднятые
 	// ради проверки дашборда, у которых метки в промпте не было.
 	Hidden bool `json:"hidden,omitempty"`
@@ -736,21 +766,65 @@ func (s *server) chatSeenMark(sid string) {
 // и ни то, ни другое не вправе уводить запись из своего каталога.
 var chatKeyRe = regexp.MustCompile(`^[A-Za-z0-9._@-]{1,120}$`)
 
-// chatModel называет модель диалога. Порядок такой: своя запись при сессии,
+// chatChoice называет пару «модель+подписка», которой поднимается диалог:
+// ключ выбора с DK-1281 двухчастный, и квота едет рядом с моделью всю дорогу
+// до подъёма. Порядок тот же, что был у одной модели: своя запись при сессии,
 // запись при имени tmux-сессии (её кладёт подъём нового диалога, когда ID
-// сессии ещё не родился), дальше умолчание.
-func (s *server) chatModel(sid, tmux string) string {
+// сессии ещё не родился), дальше умолчание. Подписка пуста у старых записей и
+// умолчания, и владелец тогда ищется порядком харнесов (chatHarnessOf).
+func (s *server) chatChoice(sid, tmux string) (string, string) {
 	if sid != "" && chatKeyRe.MatchString(sid) {
 		if st := s.chatStoreRead(sid); st.Model != "" {
-			return st.Model
+			return st.Model, st.Harness
 		}
 	}
 	if tmux != "" && chatKeyRe.MatchString(tmux) {
 		if st := s.chatStoreRead("tmux-" + tmux); st.Model != "" {
-			return st.Model
+			return st.Model, st.Harness
 		}
 	}
-	return chatModelDefault
+	return chatModelDefault, ""
+}
+
+// chatModel называет имя модели выбора без подписки: показу работ и фильтрам
+// квота не нужна, сводка работ зовёт подписку своим полем Harness.
+func (s *server) chatModel(sid, tmux string) string {
+	model, _ := s.chatChoice(sid, tmux)
+	return model
+}
+
+// chatModelName подписывает выбор квотой для человека: повтор имени у двух
+// подписок различим только ею, и разделитель смены модели в ленте обязан
+// называть обе стороны парами, иначе смена читается сменой имени там, где
+// менялась квота. Пустая подписка называется голым именем, как прежде.
+func chatModelName(model, harness string) string {
+	if harness == "" {
+		return model
+	}
+	return model + " (" + harness + ")"
+}
+
+// chatPairKnown сверяет пару «модель+подписка» с раскладкой: подписка включена
+// и модель это её ступень, домашняя либо уехавшая ссылкой. Выбор панели рождается
+// из той же раскладки, и несовпадение значит устаревший список на экране: молча
+// поднять разговор подпиской-владельцем значило бы отправить его на чужую квоту
+// (DK-1281), честнее отказать и дождаться свежего списка.
+func (s *server) chatPairKnown(model, harness string) bool {
+	if harness == "" {
+		return true
+	}
+	view := s.harnesses()
+	for i := range view.Harnesses {
+		if view.Harnesses[i].Name != harness {
+			continue
+		}
+		for _, m := range view.Harnesses[i].Models {
+			if m.Model == model {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // chatFile это транскрипт вместе с проектом, из чьего обхода он пришёл: общий
@@ -1030,6 +1104,7 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			// говорит про неё больше, чем «по дереву задачи».
 			note = ""
 		}
+		choiceModel, choicePick := s.chatChoice(f.ID, winName)
 		e := chatEntry{
 			ID: f.ID, Project: f.projName,
 			Title: head.First, First: head.First, Summary: head.Summary,
@@ -1039,12 +1114,13 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 			LiveModel: modelShort(readSessionModel(f.path)),
 			Own:       winName != "",
 			Tmux:      winName, Tree: f.suffix, Branch: head.Branch,
-			Harness:  names[f.root],
-			Model:    s.chatModel(f.ID, winName),
-			Archived: store.Archived,
-			Hidden:   store.Hidden,
-			Goal:     goalTurnGoal(store.Hidden, head.First),
-			Parent:   last.Parent,
+			Harness:     names[f.root],
+			Model:       choiceModel,
+			PickHarness: choicePick,
+			Archived:    store.Archived,
+			Hidden:      store.Hidden,
+			Goal:        goalTurnGoal(store.Hidden, head.First),
+			Parent:      last.Parent,
 		}
 		if bound == boundLead {
 			e.Leads = headTasks(last, f.suffix)
@@ -1608,8 +1684,9 @@ func (s *server) handleChatBlank(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ID    string `json:"id"`
-		Model string `json:"model"`
+		ID      string `json:"id"`
+		Model   string `json:"model"`
+		Harness string `json:"harness"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"model\": \"opus\"}"})
@@ -1625,15 +1702,23 @@ func (s *server) handleChatBlank(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = chatModelDefault
 	}
+	harness := strings.TrimSpace(body.Harness)
+	if !s.chatPairKnown(model, harness) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
+			"модель %s не ступень подписки %s: список моделей устарел, обновите экран",
+			model, harness)})
+		return
+	}
 	key := chatBlankID()
-	rec := chatStore{Blank: true, Born: s.now().Unix(), Project: found.Name, Task: id, Model: model}
+	rec := chatStore{Blank: true, Born: s.now().Unix(), Project: found.Name, Task: id, Model: model, Harness: harness}
 	if err := s.chatStoreWrite(key, rec); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("запись чата не завелась: %v", err)})
 		return
 	}
-	s.logf("заведён чат %s в %s (модель %s, задача %q): сессию поднимет первая реплика", key, found.Name, model, id)
-	writeJSON(w, http.StatusOK, map[string]any{"id": key, "model": model, "task": id,
+	s.logf("заведён чат %s в %s (модель %s, задача %q): сессию поднимет первая реплика",
+		key, found.Name, chatModelName(model, harness), id)
+	writeJSON(w, http.StatusOK, map[string]any{"id": key, "model": model, "harness": harness, "task": id,
 		"message": "чат заведён: сессия поднимется первой репликой"})
 }
 
@@ -1682,8 +1767,9 @@ func (s *server) handleChatDraft(w http.ResponseWriter, r *http.Request) {
 // chatBlankLift пришивает поднятую сессию к незачатой записи: имя tmux ляжет в
 // неё сразу, а ID сессии припишет список, когда клиент назовётся в реестре.
 // Модель тут переписывается той, которой сессию подняли на самом деле: с этой
-// минуты запись говорит о живом разговоре, а не о намерении.
-func (s *server) chatBlankLift(sid, sess, model string) {
+// минуты запись говорит о живом разговоре, а не о намерении. Подписка едет
+// рядом с моделью тем же ключом (DK-1281).
+func (s *server) chatBlankLift(sid, sess, model, harness string) {
 	if sid == "" || !chatKeyRe.MatchString(sid) {
 		return
 	}
@@ -1693,7 +1779,7 @@ func (s *server) chatBlankLift(sid, sess, model string) {
 	}
 	st.Tmux, st.Draft, st.Lifted = sess, "", s.now().Unix()
 	if model != "" {
-		st.Model = model
+		st.Model, st.Harness = model, harness
 	}
 	if err := s.chatStoreWrite(sid, st); err != nil {
 		s.logf("запись чата %s не запомнила сессию %s: %v", sid, sess, err)
@@ -2053,6 +2139,10 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		ID    string `json:"id"`
 		Text  string `json:"text"`
 		Model string `json:"model"`
+		// Harness называет подписку выбранной модели: ключ выбора двухчастный,
+		// и квота подъёма называется тем же ключом, каким человек выбрал строку
+		// списка (DK-1281).
+		Harness string `json:"harness"`
 		// Chat называет незачатую запись, из которой человек пишет: подъём
 		// пришьёт к ней поднятую сессию, и разговор останется той же строкой
 		// списка, на которой он начался.
@@ -2087,6 +2177,13 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = chatModelDefault
 	}
+	harness := strings.TrimSpace(body.Harness)
+	if !s.chatPairKnown(model, harness) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
+			"модель %s не ступень подписки %s: список моделей устарел, обновите экран",
+			model, harness)})
+		return
+	}
 	if m := tmuxMissingCheck(); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
@@ -2095,28 +2192,30 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	if m := s.chatHooksGap(model); m != "" {
+	if m := s.chatHooksGap(model, harness); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
 	dir := chatTree(found.Path, id)
 	sess := chatNewName(id, tmuxAliveFn())
-	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model}); err != nil {
+	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness}); err != nil {
 		s.logf("модель чата %s не записалась: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, ""), model, "", text, "", s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, ""), model, "", text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("подъём чата в %s не удался: %s", found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
 		return
 	}
-	s.chatBlankLift(blank, sess, model)
+	s.chatBlankLift(blank, sess, model, harness)
 	s.chatRaised(sess, blank, id, found.Name)
-	s.logf("чат поднят в %s (tmux-сессия %s, модель %s, дерево %s)", found.Name, sess, model, dir)
+	s.logf("чат поднят в %s (tmux-сессия %s, модель %s, дерево %s)",
+		found.Name, sess, chatModelName(model, harness), dir)
 	writeJSON(w, http.StatusOK, map[string]string{
-		"way": "new", "tmux": sess, "model": model, "tree": dir,
-		"message": fmt.Sprintf("чат поднят в tmux-сессии %s моделью %s: ID сессии встанет в списке первым её ходом", sess, model)})
+		"way": "new", "tmux": sess, "model": model, "harness": harness, "tree": dir,
+		"message": fmt.Sprintf("чат поднят в tmux-сессии %s моделью %s: ID сессии встанет в списке первым её ходом",
+			sess, chatModelName(model, harness))})
 }
 
 // chatTree выбирает каталог подъёма: боковое дерево задачи предпочитается
@@ -3120,8 +3219,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	if !okTree {
 		dir = found.Path
 	}
-	model := s.chatModel(sid, last.Tmux)
-	if m := s.chatHooksGap(model); m != "" {
+	model, harness := s.chatChoice(sid, last.Tmux)
+	if m := s.chatHooksGap(model, harness); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
@@ -3132,7 +3231,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// на последнюю (инцидент с чатом DK-460).
 	text = withLost(s.lostSaid(sid, info.mod), text)
 	sess := chatNewName(task, alive)
-	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid}); err != nil {
+	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
 	if m := clientMissing(defaultClient); m != "" {
@@ -3140,7 +3239,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(task, sess, sid), model, sid, text, "", s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(task, sess, sid), model, sid, text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял продолжение чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -3666,27 +3765,28 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 	if store := s.chatStoreRead(sid); task == "" && store.Blank {
 		task = store.Task
 	}
-	model := s.chatModel(sid, "")
-	if m := s.chatHooksGap(model); m != "" {
+	model, harness := s.chatChoice(sid, "")
+	if m := s.chatHooksGap(model, harness); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
 	sess := chatNewName(task, tmuxAliveFn())
-	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid}); err != nil {
+	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", chatTree(found.Path, task),
-		chatCmd(s.launchEnv(task, sess, sid), model, "", text, "", s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(task, sess, sid), model, "", text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял сессию чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
 		return
 	}
-	s.chatBlankLift(sid, sess, model)
+	s.chatBlankLift(sid, sess, model, harness)
 	s.chatRaised(sess, sid, task, found.Name)
 	s.chatSayDone(sid, claim, "start")
 	s.saidSay(saidSessionKey(sid), text, "start")
-	s.logf("чат %s без сессии поднят репликой человека (tmux-сессия %s, модель %s)", sid, sess, model)
+	s.logf("чат %s без сессии поднят репликой человека (tmux-сессия %s, модель %s)",
+		sid, sess, chatModelName(model, harness))
 	resp := map[string]any{"way": "start", "tmux": sess, "model": model,
 		"message": fmt.Sprintf(
 			"сессии у чата не было: реплика поднята заказом новой сессии в tmux %s", sess)}
@@ -3694,7 +3794,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 	// стоит на вопросе, не делая ни хода. Сказать об этом надо сразу, а не
 	// оставлять человека перед пустой лентой на минуту: вопрос придёт в панель
 	// кнопками, и об этом тут же и написано.
-	if note := s.trustNote(s.chatHarnessOf(model), found.Path); note != "" {
+	if note := s.trustNote(s.chatHarnessOf(model, harness), found.Path); note != "" {
 		resp["trust"] = note
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -3851,7 +3951,8 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Model string `json:"model"`
+		Model   string `json:"model"`
+		Harness string `json:"harness"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"model\": \"sonnet\"}"})
@@ -3862,9 +3963,16 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустая модель ничего не значит"})
 		return
 	}
-	was := s.chatModel(sid, "")
+	harness := strings.TrimSpace(body.Harness)
+	if !s.chatPairKnown(model, harness) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": fmt.Sprintf(
+			"модель %s не ступень подписки %s: список моделей устарел, обновите экран",
+			model, harness)})
+		return
+	}
+	wasModel, wasHarness := s.chatChoice(sid, "")
 	st := s.chatStoreRead(sid)
-	st.Model = model
+	st.Model, st.Harness = model, harness
 	if err := s.chatStoreWrite(sid, st); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("модель не записалась: %v", err)})
 		return
@@ -3873,12 +3981,16 @@ func (s *server) handleChatModel(w http.ResponseWriter, r *http.Request) {
 	// читает ответы двух разных моделей подряд и не видит, где кончилась одна
 	// и началась другая. Разделитель живёт журналом разговора, а не памятью
 	// панели: он обязан пережить и перерисовку, и перезагрузку страницы.
-	if was != "" && was != model {
-		s.saidMark(saidSessionKey(sid), fmt.Sprintf("модель изменена: %s -> %s", was, model))
+	// Имя подписывается квотой: смена бывает сменой квоты при том же имени, и
+	// голое имя скрыло бы её (DK-1281).
+	if wasModel != "" && (wasModel != model || wasHarness != harness) {
+		s.saidMark(saidSessionKey(sid), fmt.Sprintf("модель изменена: %s -> %s",
+			chatModelName(wasModel, wasHarness), chatModelName(model, harness)))
 	}
-	s.logf("модель чата %s в %s теперь %s", sid, found.Name, model)
-	writeJSON(w, http.StatusOK, map[string]string{"session": sid, "model": model,
-		"message": fmt.Sprintf("модель чата теперь %s: она возьмётся на следующем подъёме или резюме сессии", model)})
+	s.logf("модель чата %s в %s теперь %s", sid, found.Name, chatModelName(model, harness))
+	writeJSON(w, http.StatusOK, map[string]string{"session": sid, "model": model, "harness": harness,
+		"message": fmt.Sprintf("модель чата теперь %s: она возьмётся на следующем подъёме или резюме сессии",
+			chatModelName(model, harness))})
 }
 
 // saidAt это время разговора для списка: метка последней содержательной реплики,
@@ -4022,15 +4134,15 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	if !okTree {
 		dir = found.Path
 	}
-	model := s.chatModel(sid, e.Tmux)
-	if m := s.chatHooksGap(model); m != "" {
+	model, harness := s.chatChoice(sid, e.Tmux)
+	if m := s.chatHooksGap(model, harness); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
 	sess := chatNewName(id, tmuxAliveFn())
-	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, From: sid})
+	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, sid), model, sid, prompt(sess), "", s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, sid), model, sid, prompt(sess), "", s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял продолжение работы %s: %s", id, procErr(err))})
 		return
@@ -4435,15 +4547,15 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text, nam
 	if tree := filepath.Join(filepath.Dir(found.Path), filepath.Base(found.Path)+"-"+strings.ToLower(id)); isDir(tree) {
 		dir = tree
 	}
-	model := chatModelDefault
-	if m := s.chatHooksGap(model); m != "" {
+	model, harness := chatModelDefault, ""
+	if m := s.chatHooksGap(model, harness); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model})
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, ""), model, "", text, name, s.chatHarnessOf(model), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, ""), model, "", text, name, s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял новый чат %s: %s", id, procErr(err))})
 		return

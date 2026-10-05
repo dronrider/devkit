@@ -275,7 +275,7 @@ func TestChatModelOptsCollapsesViaPair(t *testing.T) {
 
 	// chatHarnessOf ведёт на подписку-владельца, а не на первую по порядку
 	// (втораяtest стоит в фикстуре раньше перваяtest).
-	if h := e.s.chatHarnessOf("модель-pro"); h == nil || h.Name != "перваяtest" {
+	if h := e.s.chatHarnessOf("модель-pro", ""); h == nil || h.Name != "перваяtest" {
 		t.Fatalf("chatHarnessOf(модель-pro) = %+v, жду перваяtest", h)
 	}
 }

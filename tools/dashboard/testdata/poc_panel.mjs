@@ -14,10 +14,11 @@ import { dirname, join } from "node:path";
 
 const chats = [
   { id: "aaaa1111-1111", title: "Выполни XR-1", mtime: "2026-08-13T10:02:00+03:00",
-    tasks: ["XR-1", "XR-9"], model: "sonnet", liveModel: "sonnet", own: true,
+    tasks: ["XR-1", "XR-9"], model: "sonnet", pickHarness: "claude-code",
+    liveModel: "sonnet", harness: "claude-code", own: true,
     tmux: "chat-XR-1-1", state: "live", tree: "xr-1", idle: true },
   { id: "bbbb2222-2222", title: "Верни XR-1 на доработку", mtime: "2026-08-12T09:00:00+03:00",
-    tasks: ["XR-1"], model: "opus", state: "dead" },
+    tasks: ["XR-1"], model: "opus", pickHarness: "claude-code", state: "dead" },
   { id: "cccc3333-3333", title: "почини роутер", mtime: "2026-08-13T10:04:00+03:00",
     tasks: [], model: "opus", state: "vscode" },
 ];
@@ -110,11 +111,11 @@ if (tag(head, "SELECT")) fail("выбор модели остался в шап�
 const sendRow = byClass(sandbox.chatPanel("demo", st), "crow");
 const sel = tag(sendRow, "SELECT");
 if (!sel) fail("выбора модели нет в строке отправки: " + dump(sendRow).slice(0, 200));
-if (!dump(sel).includes("fable") || !dump(sel).includes("glm-5.3")) {
-  fail("в списке моделей нет верхнего яруса или второй подписки: " + dump(sel));
+// Строка списка называет модель с квотой: имя повторяется у двух подписок, и
+// без квоты в тексте строки выбор неразличим (DK-1281). Ярус остался в подсказке.
+if (!dump(sel).includes("fable (claude-code)") || !dump(sel).includes("glm-5.3 (glm-code)")) {
+  fail("в списке моделей нет верхнего яруса или второй подписки с квотой: " + dump(sel));
 }
-// Имена короткие: ярус с подпиской ушли в подсказку, скобок в списке нет.
-if (dump(sel).includes("(")) fail("в именах моделей остались скобки: " + dump(sel));
 // Выбор стоит левее кнопки продолжения работы.
 const order = (sendRow.children || []).map((k) => String(k.className || "") + "/" + k.tagName);
 const atModel = order.findIndex((k) => k.includes("cmodel"));
@@ -228,13 +229,15 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
 }
 
 // --- вторая подписка: модель называет сама подписка ---
-// Заказ второй подписки явной модели не несёт, а история разговора живёт в её
-// профиле: селектор тут не действие, а честный текст, и смена в нём ничего не
-// шлёт. Имени подписки отдельной меткой рядом с селектором нет: оно живёт в
-// подсказке, а метка выглядела кнопкой и путала (замечание пользователя).
+// Живой разговор второй подписки моделью отсюда не переубедить: смена модели
+// это рамка резюма в каталоге первой подписки, а история живёт в каталоге
+// второй. Селектор тут не действие, а честный текст: строка называет модель с
+// квотой, а подписка словами стоит в подсказке. Отдельной метки рядом с
+// селектором нет: метка выглядела кнопкой и путала (замечание пользователя).
 {
   const stGlm = await sandbox.chatState("demo", "aaaa1111-1111", board);
-  stGlm.entry = Object.assign({}, stGlm.entry, { model: "glm-5.3", liveModel: "glm-5.3", own: true });
+  stGlm.entry = Object.assign({}, stGlm.entry,
+    { model: "glm-5.3", pickHarness: "glm-code", liveModel: "glm-5.3", harness: "glm-code", own: true });
   const glm = sandbox.chatPanel("demo", stGlm);
   const sel = tag(glm, "SELECT");
   if (!sel.disabled) fail("селектор второй подписки предлагает смену модели");
@@ -244,8 +247,8 @@ if (!dump(rows).includes("ничего не нашлось")) fail("поиск �
   if (byClass(glm, "cdlive")) {
     fail("рядом с селектором осталась метка подписки: " + dump(byClass(glm, "cdlive")));
   }
-  if (dump(glm).includes("glm-code")) {
-    fail("имя подписки написано в панели текстом, а не подсказкой: " + dump(glm).slice(0, 300));
+  if (!dump(sel).includes("glm-5.3 (glm-code)")) {
+    fail("строка выбора не назвала модель с квотой: " + dump(sel));
   }
   const was = posted.length;
   sel.value = "opus";

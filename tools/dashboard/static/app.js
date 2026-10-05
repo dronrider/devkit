@@ -9104,17 +9104,31 @@ async function archiveChat(project, sid, on) {
   return r.ok;
 }
 
+// Выбор модели хранится парой «модель+подписка»: одно имя у двух подписок
+// ничего не выбирает, и квота едет с именем от списка до подъёма (DK-1281).
+// Прежняя запись была голым именем, и она читается как выбор без подписки.
 function chatModelPref() {
+  let raw = "";
   try {
-    return localStorage.getItem(CHAT_MODEL_KEY) || "opus";
+    raw = localStorage.getItem(CHAT_MODEL_KEY);
   } catch (err) {
-    return "opus";
+    raw = "";
   }
+  if (!raw) return { model: "opus", harness: "" };
+  try {
+    const v = JSON.parse(raw);
+    if (v && typeof v.model === "string") {
+      return { model: v.model, harness: typeof v.harness === "string" ? v.harness : "" };
+    }
+  } catch (err) {
+    // голое имя из прежней записи: читается ниже как выбор без подписки
+  }
+  return { model: raw, harness: "" };
 }
 
-function chatModelSet(m) {
+function chatModelSet(model, harness) {
   try {
-    localStorage.setItem(CHAT_MODEL_KEY, m);
+    localStorage.setItem(CHAT_MODEL_KEY, JSON.stringify({ model, harness }));
   } catch (err) {
     // см. chatFilterSet
   }
@@ -9901,17 +9915,31 @@ function chatDropOpen(project, st, anchor, again) {
 }
 
 // Шапка окна: выбор диалога, «+», модель, переключатель фильтра и крестик.
+// chatModelName подписывает выбор квотой: повтор имени у двух подписок
+// различим только ею, и подпись стоит в самом тексте строки, а не отдельной
+// меткой рядом: метка выглядела кнопкой и путала, текст строкой кнопкой не
+// выглядит (DK-1281, отвергнутая метка прежде DK-1177).
+function chatModelName(model, harness) {
+  return harness ? model + " (" + harness + ")" : model;
+}
+
 // Больше входов в разговор нигде нет: с экрана задачи окно открывает тот же
 // значок в шапке дашборда.
 // Выбор модели стоит в строке отправки, слева от кнопки продолжения: меняют
 // модель перед репликой, а не перед чтением ленты, и тянуться за ней в шапку
-// было незачем (замечание 8 четырнадцатого круга POC). Имена в списке короткие:
-// ярус с подпиской ушли в подсказку, скобки из списка ушли совсем.
+// было незачем (замечание 8 четырнадцатого круга POC). Ключ выбора двухчастный
+// «модель+подписка», и квота названа текстом самой строки: имя одно у двух
+// подписок, и без квоты выбор неразличим (DK-1281). Ярус остался в подсказке.
 function modelPick(project, st) {
   const model = el("select", "cdsel");
   model.setAttribute("aria-label", "Модель агента");
   const live = st.entry ? st.entry.liveModel : "";
-  const cur = st.entry ? st.entry.model || chatModelPref() : chatModelPref();
+  // Сохранённый выбор записи хранит пару; пустая подписка в нём это старая
+  // запись, и разговор на ней поднимается подпиской-владельцем по порядку
+  // харнесов, как прежде.
+  const cur = st.entry && st.entry.model
+    ? { model: st.entry.model, harness: st.entry.pickHarness || "" }
+    : chatModelPref();
   const isLive = Boolean(st.entry && st.entry.state === "live");
   // Чужую живую сессию выбором с дашборда не переубедить: её клиент уже
   // поднят, и модель у него своя до самого резюма.
@@ -9919,20 +9947,30 @@ function modelPick(project, st) {
   // Живая сессия показывается своей настоящей моделью: молча показывать выбор
   // поверх работающей модели значило бы врать (замечание пользователя: выбран
   // opus, работает fable). Своя живая сессия называет модель записью подъёма,
-  // а не транскриптом, поэтому смена видна в списке сразу же.
-  const shown = isLive && live ? live : cur;
+  // а не транскриптом, поэтому смена видна в списке сразу же. Подписка живого
+  // разговора это подписка его транскрипта: чьей квотой он идёт сейчас.
+  const shown = isLive && live
+    ? { model: live, harness: st.entry.harness || "" }
+    : cur;
   // Лестница приезжает от agentctl: имя модели, ярус и подписка, чьей квотой
   // она платится. Своего перечня имён у панели нет, иначе новая подписка на
   // машине не появилась бы тут вовсе.
+  const same = (m, pick) => m.model === pick.model && (m.harness || "") === (pick.harness || "");
   const opts = (st.models || []).slice();
-  for (const name of [cur, shown]) {
-    if (name && !opts.some((m) => m.model === name)) opts.unshift({ model: name, tier: "", harness: "" });
+  for (const pick of [cur, shown]) {
+    if (pick.model && !opts.some((m) => same(m, pick))) {
+      opts.unshift({ model: pick.model, tier: "", harness: pick.harness || "" });
+    }
   }
   for (const m of opts) {
-    const o = el("option", "", m.model);
+    const o = el("option", "", chatModelName(m.model, m.harness));
     o.value = m.model;
+    // Пара едет атрибутами выбранной опции: имя одно у двух подписок, и
+    // одного value на различие не хватает.
+    o.dataset.model = m.model;
+    o.dataset.harness = m.harness || "";
     if (m.tier) o.title = m.tier + ", " + m.harness;
-    if (m.model === shown) o.selected = true;
+    if (same(m, shown)) o.selected = true;
     model.append(o);
   }
   // Пустая лестница видна там, где человек её и ищет: он открывает список и
@@ -9944,8 +9982,9 @@ function modelPick(project, st) {
     none.disabled = true;
     model.append(none);
   }
-  const why = (st.models || []).find((m) => m.model === shown);
-  model.title = why ? shown + ": ярус " + why.tier + ", подписка " + why.harness
+  const why = (st.models || []).find((m) => same(m, shown)) ||
+    (st.models || []).find((m) => m.model === shown.model);
+  model.title = why ? shown.model + ": ярус " + why.tier + ", подписка " + why.harness
     : (st.modelsNote || "Модель агента");
   const harnessOf = (name) => (((st.models || []).find((m) => m.model === name) || {}).harness) || "";
   const mainHarness = (((st.models || []).find((m) => m.default) || {}).harness) || "";
@@ -9953,10 +9992,8 @@ function modelPick(project, st) {
   // модели это рамка devkit-remodel, а она поднимает резюм в каталоге
   // первой подписки, история же разговора живёт в каталоге второй, и на
   // другой подписке её не продолжить. Селектор там не действие, а честный
-  // текст: подписку называет подсказка. Отдельной метки с именем подписки
-  // рядом не стоит: имя модели и так называет подписку однозначно, а метка
-  // выглядела кнопкой и путала.
-  const own = harnessOf(shown);
+  // текст: подписку называет и текст строки, и подсказка.
+  const own = shown.harness || harnessOf(shown.model);
   const second = Boolean(isLive && own && mainHarness && own !== mainHarness);
   if (alien) {
     model.disabled = true;
@@ -9974,19 +10011,26 @@ function modelPick(project, st) {
     // подписки менять отсюда нечего, и молча писать выбор в память диалога
     // значило бы обещать смену, которой не будет.
     if (model.disabled) return;
-    const pick = model.value;
-    if (pick === shown) return;
-    chatModelSet(pick);
+    const sel = model.selectedOptions[0];
+    const pick = {
+      model: sel && sel.dataset.model ? sel.dataset.model : model.value,
+      harness: sel && sel.dataset.harness ? sel.dataset.harness : "",
+    };
+    if (same(pick, shown)) return;
+    chatModelSet(pick.model, pick.harness);
     // Про удачную смену карточка не всплывает: выбранное имя стоит в самом
     // списке, а у заведённого разговора про смену говорит разделитель ленты.
     // Карточка поверх экрана повторяла это третий раз (замечание
     // пользователя). Отказ карточкой остаётся: он ничем больше не виден.
     if (!st.sid) {
       if (st.blank) {
-        chatModelKeep(project, st.blank, pick);
-        // Выбранное имя нужно тут же и подъёму: он читает модель из записи
+        chatModelKeep(project, st.blank, pick.model, pick.harness);
+        // Выбранная пара нужна тут же и подъёму: он читает выбор из записи
         // панели, а перерисовка приедет позже реплики.
-        if (st.entry) st.entry.model = pick;
+        if (st.entry) {
+          st.entry.model = pick.model;
+          st.entry.pickHarness = pick.harness;
+        }
       }
       return;
     }
@@ -10010,7 +10054,7 @@ function modelPick(project, st) {
 // модели, думая, что сменил её.
 async function modelSwitch(project, st, pick, live) {
   const at = chatsURL(project) + "/" + encodeURIComponent(st.sid);
-  const set = await api(at + "/model", { method: "POST", body: { model: pick } });
+  const set = await api(at + "/model", { method: "POST", body: { model: pick.model, harness: pick.harness } });
   if (!set.ok) {
     sayResult(apiSaid(set), true);
     return;
@@ -10025,7 +10069,7 @@ async function modelSwitch(project, st, pick, live) {
     await repaintChat();
     return;
   }
-  const r = await api(at + "/say", { method: "POST", body: { text: chatRemodelSay(pick) } });
+  const r = await api(at + "/say", { method: "POST", body: { text: chatRemodelSay(pick.model) } });
   if (!r.ok) sayResult(apiSaid(r), true);
   if (r.ok && r.body.way === "resume") chatWait(project, r.body.tmux).catch(console.error);
   await repaintChat();
@@ -11579,8 +11623,9 @@ function chatSayFocusFresh(st) {
 // человек не мог ни увидеть его в списке, ни завести рядом второй, ни
 // набрать в них разное (жалоба пользователя).
 async function chatBlankMake(project, task) {
+  const pick = chatModelPref();
   const r = await api(chatsURL(project) + "/blank",
-    { method: "POST", body: { id: task || "", model: chatModelPref() } });
+    { method: "POST", body: { id: task || "", model: pick.model, harness: pick.harness } });
   if (!r.ok || !r.body.id) {
     sayResult(r.body.error || "новый чат не завёлся", true);
     return "";
@@ -11601,13 +11646,13 @@ function chatDraftPush(project, id, text) {
 
 // chatModelKeep пишет модель незачатого разговора в его память: выбор, сделанный
 // до первой реплики, обязан пережить перезагрузку вкладки и уехать в подъём.
-function chatModelKeep(project, id, model) {
+function chatModelKeep(project, id, model, harness) {
   api(chatsURL(project) + "/" + encodeURIComponent(id) + "/model",
-    { method: "POST", body: { model } }).catch(console.error);
+    { method: "POST", body: { model, harness } }).catch(console.error);
 }
 
-async function chatRaise(project, st, text, model, onTmux) {
-  const body = { text, model };
+async function chatRaise(project, st, text, pick, onTmux) {
+  const body = { text, model: pick.model, harness: pick.harness };
   if (st.task) body.id = st.task;
   // Подъём из записи пришивается к ней: разговор останется той же строкой
   // списка, на которой он начался, и адрес панели переедет на живую сессию сам.
@@ -13005,7 +13050,10 @@ function chatPanel(project, st) {
     // всякого участия. Второй смерти подряд довольно: дальше пузырь называет
     // причину строкой, и дожимать её нечем (DK-1011).
     const lift = (wire, tries) => {
-      chatRaise(project, st, wire, st.entry ? st.entry.model : chatModelPref(),
+      chatRaise(project, st, wire,
+        st.entry && st.entry.model
+          ? { model: st.entry.model, harness: st.entry.pickHarness || "" }
+          : chatModelPref(),
         (name) => echo.mark(m, name))
         .then((got) => {
           if (got === false) {

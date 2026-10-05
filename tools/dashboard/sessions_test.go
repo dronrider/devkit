@@ -3027,3 +3027,23 @@ func TestSubPlanOwnerEdges(t *testing.T) {
 		t.Error("план свежее закрытой работы нашёл хозяина")
 	}
 }
+
+// Короткое имя модели не гасит поставщика агрегатора: имя каталога
+// «провайдер/модель» это другой поставщик и другая квота, а не то же самое
+// имя с лишним хвостом, а показывалось оно усечённым до знакомого слова
+// (DK-1281). Свои имена клиента режутся по-прежнему.
+func TestModelShortKeepsProvider(t *testing.T) {
+	cases := []struct{ id, want string }{
+		{"", ""},
+		{"claude-opus-5-20261001", "opus"},
+		{"fable-max-rc", "fable"},
+		{"glm-5.3", "glm-5.3"},
+		{"anthropic/claude-opus-5.5", "anthropic/claude-opus-5.5"},
+		{"z-ai/glm-5.3", "z-ai/glm-5.3"},
+	}
+	for _, c := range cases {
+		if got := modelShort(c.id); got != c.want {
+			t.Errorf("modelShort(%q) = %q, жду %q", c.id, got, c.want)
+		}
+	}
+}

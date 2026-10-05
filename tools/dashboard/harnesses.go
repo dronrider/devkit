@@ -168,13 +168,13 @@ func hooksGapNote(h *Harness) string {
 	return h.HooksGap
 }
 
-// chatHooksGap судит подписку, которой поднимется разговор выбранной моделью, и
-// кладёт отказ в журнал дашборда: панель его показывает, а журнал хранит, чем
-// был закрыт подъём.
-func (s *server) chatHooksGap(model string) string {
-	gap := hooksGapNote(s.chatHarnessOf(model))
+// chatHooksGap судит подписку, которой поднимется разговор выбранной парой
+// «модель+подписка», и кладёт отказ в журнал дашборда: панель его показывает, а
+// журнал хранит, чем был закрыт подъём.
+func (s *server) chatHooksGap(model, harness string) string {
+	gap := hooksGapNote(s.chatHarnessOf(model, harness))
 	if gap != "" {
-		s.logf("подъём чата на модели %s отклонён: %s", model, gap)
+		s.logf("подъём чата на модели %s отклонён: %s", chatModelName(model, harness), gap)
 	}
 	return gap
 }

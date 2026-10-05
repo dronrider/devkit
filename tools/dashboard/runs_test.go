@@ -1842,3 +1842,22 @@ func TestRunStartSweepIsReported(t *testing.T) {
 		}
 	}
 }
+
+// Широкая кнопка запуска и кнопка строки шлют подписку пустой, пока человек
+// её не выбрал. Подстановка умолчания в fire закрывала серверной ветке via
+// дорогу с самых частых кнопок, и запуск шёл подпиской по умолчанию вопреки
+// вердикту (замечание 1 ревью DK-1292). Проверка по тексту static/app.js
+// достаточна: правка сама и есть текст кнопки, гонять ради него DOM незачем.
+func TestStaticRunButtonsEmptyHarness(t *testing.T) {
+	js := readFile(t, filepath.Join("static", "app.js"))
+	for _, gone := range []string{"fire(wide, pinned || harnessDefault())", "fire(pin || harnessDefault())"} {
+		if strings.Contains(js, gone) {
+			t.Errorf("в static/app.js кнопка запуска подставляет подписку умолчания: %q", gone)
+		}
+	}
+	for _, want := range []string{"fire(wide, pinned)", "fire(pin)"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("в static/app.js нет %q: без выбора человека подписка уйдёт непустой", want)
+		}
+	}
+}

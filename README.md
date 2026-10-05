@@ -149,7 +149,7 @@ flowchart TD
   см. [tools/dashboard/README.md](tools/dashboard/README.md).
 - `kit/harness/` - профили инструментов, в которых живёт сессия агента
   (`claude-code.toml`, по профилю на каждую подписку после первой: `glm-code.toml`,
-  `routerai.toml` и дальше по одному на инструмент): что инструмент умеет
+  `routerai.toml`, `mimo.toml` и дальше по одному на инструмент): что инструмент умеет
   по пяти осям (детект, правила, делегирование, хуки, квота). Читают профили
   agentctl и devkitctl, разбор в [tools/agentctl/README.md](tools/agentctl/README.md).
 - `kit/agents/` - определения субагентов, по одному на уровень effort из маппинга

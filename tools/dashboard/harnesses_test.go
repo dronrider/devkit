@@ -59,6 +59,20 @@ func writeAgentctlPick(t *testing.T, bin, layout, tier string) {
 		"\nJSON\n;;\npick)\nprintf '"+said+"'\n;;\n*)\nexit 1\n;;\nesac")
 }
 
+// writeAgentctlVerdict это та же фикстура с подпиской в вердикте (строка via) и
+// ответом на exec: так обёртка подписки отвечает на пробу входа. Пустой execSaid
+// значит живой вход, непустой печатается и уходит кодом 1, как отказ клиента.
+func writeAgentctlVerdict(t *testing.T, bin, layout, tier, via, execSaid string) {
+	t.Helper()
+	said := "model: модель-pro\neffort: high\ntier: " + tier + "\nvia: " + via + "\n"
+	probe := "exit 0"
+	if execSaid != "" {
+		probe = "echo '" + execSaid + "'\nexit 1"
+	}
+	writeScript(t, bin, "agentctl", "case \"$1\" in\nharness)\ncat <<'JSON'\n"+layout+
+		"\nJSON\n;;\npick)\nprintf '"+said+"'\n;;\nexec)\n"+probe+"\n;;\n*)\nexit 1\n;;\nesac")
+}
+
 func getHarnesses(t *testing.T, e *testEnv, c *http.Client) HarnessView {
 	t.Helper()
 	resp := doReq(t, c, "GET", e.srv.URL+"/api/harnesses", "")

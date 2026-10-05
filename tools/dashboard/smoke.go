@@ -512,9 +512,13 @@ func smokeClientBody(runs, name, journal, binds string) string {
 	// Заказ это последний аргумент команды, а не позиционный: между именем
 	// клиента и -p стоят флаги запуска (--permission-mode auto у второй
 	// подписки), и взятый по номеру аргумент ловил бы флаг вместо заказа.
+	// Проба входа перед запуском (loginProbe) зовёт клиента тем же словом `ок`:
+	// на неё фикстура отвечает молча, чтобы проба не принималась за поднятую
+	// работу.
 	body := fmt.Sprintf("for a; do said=\"$a\"; done\n"+
+		"[ \"$said\" = %s ] && exit 0\n"+
 		"printf '%s: подписка %%s, заказ %%s\\n' \"$DEVKIT_HARNESS\" \"$said\" >> %s\n",
-		name, shQuote(runs))
+		shQuote(loginProbeWord), name, shQuote(runs))
 	if journal == "" {
 		return body + "exit 0\n"
 	}

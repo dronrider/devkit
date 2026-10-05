@@ -619,9 +619,12 @@ func (s *server) workTitle(projPath, said, sid string) string {
 //
 // Простой признаётся только доказанным: запись реестра клиента говорит idle, и
 // транскрипт это подтверждает (тот же двойной признак, каким занятость чата
-// меряет handleChatStatus). Сессия, о которой в реестре нет записи, остаётся
-// работой, как и раньше: неизвестность это не повод снимать «Стоп» с идущего
-// конвейера.
+// меряет handleChatStatus). Живой считается и сессия, чьи субагенты ещё пишут:
+// супервизор между делегированиями стоит без собственного хода, и признание
+// его досчитавшимся стоило живого разговора при запуске (та же мера, что у
+// workState, живой случай DK-1286). Сессия, о которой в реестре нет записи,
+// остаётся работой, как и раньше: неизвестность это не повод снимать «Стоп» с
+// идущего конвейера.
 func (s *server) tmuxTalk(projPath string) map[string]bool {
 	talk := map[string]bool{}
 	for _, p := range s.peers() {
@@ -632,7 +635,7 @@ func (s *server) tmuxTalk(projPath string) map[string]bool {
 			continue
 		}
 		if info, ok := findSession(s.transcriptRoots(), projPath, p.SessionID); ok &&
-			s.sessionBusy(info.path, s.now()) {
+			(s.sessionBusy(info.path, s.now()) || s.subBusyOf(info.path, s.now())) {
 			continue
 		}
 		talk[name] = true

@@ -155,6 +155,29 @@ func (s *server) sayStop(root, project, id, kind string) string {
 	return ""
 }
 
+// saySweep зовёт уведомителя поводом run_stop о снятом запуском остатке
+// разговора. Снятие стоящей сессии прежде оставляло след только в журнале
+// дашборда, и два живых резюма супервизора погибли молча: лента разговора
+// перестала расти, а почему, не было сказано нигде (живой случай, DK-1286 в
+// 22:12 и 22:17). Возврат это приписка о непосланном уведомлении, а не отказ:
+// сессия уже снята, и отменять запуск из-за ленты нельзя.
+func (s *server) saySweep(root, project, id, sess string) string {
+	np := notifierPath(s.cfg.Roots)
+	if np == "" {
+		return notifierMissing
+	}
+	title := fmt.Sprintf("%s: %s запуск снял остаток разговора", project, id)
+	body := fmt.Sprintf("tmux-сессия %s считалась досчитавшейся и снята запуском; "+
+		"разговор, если он был жив, продолжится новым запуском с состояния на диске", sess)
+	cmd := exec.Command("python3", np, "--reason", "run_stop",
+		"--task", id, "--project", project, title, body)
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Sprintf("уведомление о снятии не отправлено: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return ""
+}
+
 // runPrompt это заказ сессии конвейера одиночной задачи: свежая
 // сессия-диспетчер ведёт строку по обычным скиллам доски, как это делается
 // руками, своих шагов конвейера у дашборда нет. Заказ зависит от статуса
@@ -232,6 +255,25 @@ const defaultClient = "claude"
 // нижний не тянет работу конвейера.
 const fallbackTier = "pro"
 
+// pickLines разбирает машинные строки вердикта: ярус и подписку (via). Пустое
+// значение значит, что вердикт этого не назвал; via у битого назначения
+// печатается прочерком, и прочерк читается тем же пустым словом.
+func pickLines(out []byte) (tier, via string) {
+	for _, ln := range strings.Split(string(out), "\n") {
+		ln = strings.TrimSpace(ln)
+		if rest, ok := strings.CutPrefix(ln, "tier:"); ok {
+			tier = strings.TrimSpace(rest)
+		}
+		if rest, ok := strings.CutPrefix(ln, "via:"); ok {
+			via = strings.TrimSpace(rest)
+		}
+	}
+	if via == "-" {
+		via = ""
+	}
+	return tier, via
+}
+
 // pickTier спрашивает у вердикта, каким ярусом закрывать задачу. Назначающий
 // тут вердикт, а не дашборд: правило доски велит брать исполнителя и ярус у
 // agentctl pick, а не выбирать глазом. Вторая строка это слова про то, откуда
@@ -247,35 +289,76 @@ func (s *server) pickTier(dir, id, role string) (string, string) {
 		return fallbackTier, fmt.Sprintf("вердикт agentctl pick не ответил (%s): ярус %s",
 			procErr(err), fallbackTier)
 	}
-	for _, ln := range strings.Split(string(out), "\n") {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(ln), "tier:"); ok {
-			if tier := strings.TrimSpace(rest); tier != "" {
-				return tier, "ярус " + tier + " по вердикту agentctl pick"
-			}
-		}
+	tier, _ := pickLines(out)
+	if tier == "" {
+		return fallbackTier, fmt.Sprintf("вердикт agentctl pick яруса не назвал: ярус %s", fallbackTier)
 	}
-	return fallbackTier, fmt.Sprintf("вердикт agentctl pick яруса не назвал: ярус %s", fallbackTier)
+	return tier, "ярус " + tier + " по вердикту agentctl pick"
 }
 
-// runTier сводит два голоса про ярус: выбор человека и вердикт. Человек
-// сильнее, вердикт назначает, когда человек не выбирал. Имя, выбранное
-// человеком, сверяется с раскладкой подписки той же проверкой, что и имя самой
-// подписки: устаревший экран не должен поднимать работу неизвестно чем.
-func (s *server) runTier(dir, id, want string, h *Harness, goal bool) (string, string, string) {
-	if want != "" {
-		if h != nil && len(h.tierNames()) > 0 && h.tierModel(want) == "" {
-			return "", "", fmt.Sprintf("яруса %s в раскладке машины нет, ярусы подписки: %s",
-				want, strings.Join(h.tierNames(), ", "))
+// runAssign решает, какой подпиской и ярусом поднимается запуск. Голоса о
+// ярусе те же, что и раньше: ярус назначает вердикт, выбор человека сильнее, у
+// цели вердикта на весь цикл нет и первый виток идёт pro. Подписка без выбора
+// руки берётся у того же вердикта, словом via: квота, которой вердикт
+// разворачивает ярус в модель, и квота подъёма обязаны быть одной. Прежде
+// запуск молча поднимал клиента подписки по умолчанию с моделью чужой подписки,
+// и сессия умирала на первом же ходе, если у подписки по умолчанию не было
+// живого входа (живой случай, четыре запуска DK-1286 вечером 02.10). Имя
+// подписки, выбранное человеком или вердиктом, сверяется с раскладкой машины:
+// устаревший экран и битое назначение не должны поднимать работу неизвестно
+// чем, и тихий съезд на подписку по умолчанию обманывал бы обе квоты.
+func (s *server) runAssign(dir, id, wantTier, wantHarness string, goal bool) (*Harness, string, string, string) {
+	// Вердикт спрашивается одним заходом на оба вопроса: ярус и подписка
+	// назначаются одной строкой машины, и второй подпроцесс звал бы утилиту
+	// за тем же ответом.
+	var vtTier, vtVia, said string
+	if !goal {
+		out, err := runProcQuiet(dir, true, binPath(agentctlBin), "pick", id)
+		if err != nil {
+			said = fmt.Sprintf("вердикт agentctl pick не ответил (%s): ярус %s",
+				procErr(err), fallbackTier)
+		} else {
+			vtTier, vtVia = pickLines(out)
 		}
-		return want, "ярус " + want + " выбран рукой", ""
+	}
+	var harness *Harness
+	switch {
+	case wantHarness != "":
+		h, why := s.harnesses().pick(wantHarness)
+		if h == nil {
+			return nil, "", "", why
+		}
+		harness = h
+	case vtVia != "":
+		h, why := s.harnesses().pick(vtVia)
+		if h == nil {
+			return nil, "", "", why + "; подписку назвал вердикт запуска"
+		}
+		harness = h
+	}
+	own := harness
+	if own == nil {
+		own = s.harnesses().byDefault()
+	}
+	if wantTier != "" {
+		if own != nil && len(own.tierNames()) > 0 && own.tierModel(wantTier) == "" {
+			return nil, "", "", fmt.Sprintf("яруса %s в раскладке машины нет, ярусы подписки: %s",
+				wantTier, strings.Join(own.tierNames(), ", "))
+		}
+		return harness, wantTier, "ярус " + wantTier + " выбран рукой", ""
 	}
 	// У цели вердикта на весь цикл нет: витки режет потолок из раздела
 	// «Бюджет», а ярус первого витка это тот же pro, что у разбора.
 	if goal {
-		return fallbackTier, "ярус " + fallbackTier + " по умолчанию цикла цели", ""
+		return harness, fallbackTier, "ярус " + fallbackTier + " по умолчанию цикла цели", ""
 	}
-	tier, said := s.pickTier(dir, id, "")
-	return tier, said, ""
+	switch {
+	case vtTier != "":
+		return harness, vtTier, "ярус " + vtTier + " по вердикту agentctl pick", ""
+	case said != "":
+		return harness, fallbackTier, said, ""
+	}
+	return harness, fallbackTier, fmt.Sprintf("вердикт agentctl pick яруса не назвал: ярус %s", fallbackTier), ""
 }
 
 // clientMissing называет ненайденный клиент до подъёма tmux-сессии: сессия с
@@ -292,6 +375,56 @@ func clientMissing(bin string) string {
 
 func claudeMissing() string {
 	return clientMissing(defaultClient)
+}
+
+// loginProbeWord это реплика пробы входа: короткий заказ печатного режима,
+// ответ на неё стоит одну мелкую генерацию, а отказ входа приходит вовсе без
+// квоты, первым же ответом клиента.
+const loginProbeWord = "ок"
+
+// loginProbe проверяет до подъёма, что у подписки живой вход. Клиент с истёкшим
+// токеном на любую реплику отвечает служебной строкой про вход и дальше не
+// работает, и запуск поднимал бы сессию, обречённую на первый же ход (живой
+// случай, четыре запуска DK-1286). Проба идёт тем же клиентом и той же
+// обвязкой, что и сам запуск: вход второй подписки живёт в её каталоге
+// конфигурации, и голый клиент проверял бы первую. Отказ узнаётся по служебной
+// строке тем же разбором, каким её узнаёт лента чатов (loginGone), строка за
+// строкой: клиент печатает отказ среди своей рамки. Всякая другая беда пробы,
+// включая съём по сроку и ненайденный бинарь, запускает работу как шла: проба
+// не должна ронять запуск, которому она ничего не сказала.
+func (s *server) loginProbe(h *Harness) string {
+	bin := defaultClient
+	args := []string{"-p", loginProbeWord}
+	if h != nil {
+		if !h.Default {
+			bin = binPath(agentctlBin)
+			args = append([]string{"exec", "--harness", h.Name, "--", h.Bin}, args...)
+		} else if h.Bin != "" {
+			bin = h.Bin
+		}
+	}
+	dir, err := serviceDir("")
+	if err != nil {
+		s.logf("проба входа не состоялась: %v", err)
+		return ""
+	}
+	out, err := runProcQuietAt(realHome(), dir, true, bin, args...)
+	said := strings.TrimSpace(string(out))
+	if err != nil {
+		said = strings.TrimSpace(said + " " + procErr(err))
+	}
+	for _, ln := range strings.Split(said, "\n") {
+		if !loginGone(ln) {
+			continue
+		}
+		name := defaultClient
+		if h != nil && h.Name != "" {
+			name = h.Name
+		}
+		return fmt.Sprintf("подписка %s: вход в клиента истёк, сессия умерла бы на первом же ходу; "+
+			"зайдите на машину, выполните /login в терминале и повторите запуск", name)
+	}
+	return ""
 }
 
 // harnessTail это хвост строки журнала про выбранную подписку: по журналу
@@ -575,27 +708,28 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		// кончился строкой и остался стоять на приглашении). Работой строка его
 		// не считает, кнопку запуска показывает, и отказывать тут значило бы
 		// обещать кнопкой то, чего ручка не делает: остаток снимается, а на его
-		// месте поднимается заказанная работа.
+		// месте поднимается заказанная работа. Снятие пишется и в ленту
+		// уведомлений: молча оно уже губило живые разговоры (DK-1292).
 		s.logf("запуск %s в %s: остаток разговора в tmux-сессии %s снят", id, found.Name, name)
 		s.chatWatchOff(name)
 		runProc("tmux", "kill-session", "-t", name)
-	}
-	// Выбранная подписка сверяется с раскладкой машины: имени, которого в ней
-	// нет, верить нельзя, иначе экран, устаревший на смену конфига, поднимал бы
-	// сессию неизвестно на чём. Проверка одна на цель и на задачу: витки цели
-	// платятся той же квотой, которую человек выбрал (замечание пользователя).
-	var harness *Harness
-	if body.Harness != "" {
-		h, why := s.harnesses().pick(body.Harness)
-		if h == nil {
-			s.logf("запуск %s в %s отклонён: %s", id, found.Name, why)
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
-			return
+		if note := s.saySweep(found.Path, found.Name, id, name); note != "" {
+			s.logf("%s", note)
 		}
-		harness = h
 	}
-	// Ярус называется до подъёма: у задачи его назначает вердикт, у цели это
-	// pro, и выбор человека сильнее обоих.
+	// Подписка и ярус назначаются до подъёма: у задачи обоих назначает вердикт
+	// (ярус tier, подписка via), выбор человека сильнее обоих, у цели ярус это
+	// pro, а подписка без выбора идёт по умолчанию. Выбранные имена сверяются
+	// с раскладкой машины: имени, которого в ней нет, верить нельзя, иначе
+	// экран, устаревший на смену конфига, поднимал бы сессию неизвестно на чём.
+	// Проверка одна на цель и на задачу: витки цели платятся той же квотой,
+	// которую человек выбрал (замечание пользователя).
+	harness, tier, tierWhy, tierBad := s.runAssign(found.Path, id, body.Tier, body.Harness, kind == "goal")
+	if tierBad != "" {
+		s.logf("запуск %s в %s отклонён: %s", id, found.Name, tierBad)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tierBad})
+		return
+	}
 	own := harness
 	if own == nil {
 		own = s.harnesses().byDefault()
@@ -605,10 +739,11 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": gap})
 		return
 	}
-	tier, tierWhy, tierBad := s.runTier(found.Path, id, body.Tier, own, kind == "goal")
-	if tierBad != "" {
-		s.logf("запуск %s в %s отклонён: %s", id, found.Name, tierBad)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tierBad})
+	// Живой вход проверяется до подъёма клиента: сессия на истёкшем входе
+	// умирает на первом же ходе, и человек получает молчание вместо работы.
+	if m := s.loginProbe(own); m != "" {
+		s.logf("запуск %s в %s отклонён: %s", id, found.Name, m)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
 	// Лестница носителей цели, как у задачи (DK-1009). Ступень чата поднимает

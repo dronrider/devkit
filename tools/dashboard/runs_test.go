@@ -1687,3 +1687,158 @@ func TestTaskClosedRowSurvivesDepListRefusal(t *testing.T) {
 		t.Errorf("отказ dep list у живой строки: %d %s", resp.StatusCode, text)
 	}
 }
+
+// Запуск без выбора руки поднимает чат той подпиской, которую назвал вердикт
+// (строка via), а не подпиской по умолчанию. Прежде via не читался вовсе: на
+// машине, где у подписки по умолчанию не было входа, четыре запуска DK-1286
+// подряд поднимали чат на ней и получали «Login expired» (DK-1292).
+func TestRunStartHarnessFromVerdict(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "")
+	writeAgentctlVerdict(t, e.bin, harnessTiersFixture, "pro", "втораяtest", "")
+	writeScript(t, e.bin, "клиент-2", "exit 0")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск по вердикту: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"harness":"втораяtest"`) {
+		t.Errorf("ответ не назвал подписку вердикта: %s", text)
+	}
+	got := readFile(t, tmuxLog)
+	if !strings.Contains(got, "-- agentctl exec --harness 'втораяtest' -- 'клиент-2' --permission-mode auto") {
+		t.Errorf("чат поднят мимо подписки вердикта:\n%s", got)
+	}
+	if !strings.Contains(got, "--model 'вторая-pro'") {
+		t.Errorf("модель яруса подписки вердикта не доехала:\n%s", got)
+	}
+}
+
+// Прочерк на месте подписки (ярус разворачивать нечем) оставляет прежнюю
+// дорогу, выбор человека сильнее вердикта, а имя, которого на машине нет,
+// отбивается словами и до всякой сессии.
+func TestRunStartVerdictHarnessEdges(t *testing.T) {
+	t.Run("прочерк", func(t *testing.T) {
+		e, c, tmuxLog := runsEnv(t, "")
+		writeAgentctlVerdict(t, e.bin, harnessTiersFixture, "pro", "-", "")
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+		if text := body(t, resp); resp.StatusCode != http.StatusOK {
+			t.Fatalf("запуск с прочерком: %d %s", resp.StatusCode, text)
+		}
+		if got := readFile(t, tmuxLog); strings.Contains(got, "agentctl exec") {
+			t.Errorf("прочерк вердикта завернул запуск в exec:\n%s", got)
+		}
+	})
+	t.Run("рука сильнее вердикта", func(t *testing.T) {
+		e, c, tmuxLog := runsEnv(t, "")
+		writeAgentctlVerdict(t, e.bin, harnessTiersFixture, "pro", "перваяtest", "")
+		writeScript(t, e.bin, "клиент-2", "exit 0")
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs",
+			`{"id": "XR-002", "harness": "втораяtest"}`)
+		if text := body(t, resp); resp.StatusCode != http.StatusOK {
+			t.Fatalf("запуск выбранной подпиской: %d %s", resp.StatusCode, text)
+		}
+		if got := readFile(t, tmuxLog); !strings.Contains(got, "exec --harness 'втораяtest'") {
+			t.Errorf("выбор человека не перебил вердикт:\n%s", got)
+		}
+	})
+	t.Run("вердикт назвал неизвестную подписку", func(t *testing.T) {
+		e, c, tmuxLog := runsEnv(t, "")
+		writeAgentctlVerdict(t, e.bin, harnessTiersFixture, "pro", "четвёртаяtest", "")
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "вердикт") {
+			t.Fatalf("неизвестная подписка вердикта: %d %s, ожидал 400 со словами про вердикт", resp.StatusCode, text)
+		}
+		if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+			t.Errorf("сессию всё равно подняли: %s", got)
+		}
+	})
+}
+
+// Подписка без живого входа отбивается внятной ошибкой до подъёма клиента:
+// окно на истёкшем входе отвечало бы «Login expired» на любое слово, а работа
+// числилась бы запущенной (DK-1292).
+func TestRunStartLoginGoneRefused(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "")
+	writeAgentctlVerdict(t, e.bin, harnessTiersFixture, "pro", "втораяtest", "Login expired. Please run /login")
+	writeScript(t, e.bin, "клиент-2", "exit 0")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("запуск без входа: %d %s, ожидал 502", resp.StatusCode, text)
+	}
+	for _, want := range []string{"втораяtest", "вход в клиента истёк", "/login"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в отказе нет %q: %s", want, text)
+		}
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("клиента подняли, хотя входа нет: %s", got)
+	}
+}
+
+// Сбой самой пробы входа запуск не роняет: отказом служит только внятный
+// ответ клиента про вход.
+func TestRunStartLoginProbeFailureDoesNotRefuse(t *testing.T) {
+	e, c, _ := runsEnv(t, "")
+	writeAgentctlVerdict(t, e.bin, harnessTiersFixture, "pro", "втораяtest", "exec: что-то сломалось")
+	writeScript(t, e.bin, "клиент-2", "exit 0")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("сбой пробы остановил запуск: %d %s", resp.StatusCode, text)
+	}
+}
+
+// Сессия задачи, у которой живут фоновые субагенты, не досчитавшийся
+// разговор: супервизор между делегированиями стоит без своего хода, но работа
+// его идёт. Запуск такую сессию не снимает и отвечает занятостью (DK-1286: два
+// живых резюма погибли от такого снятия).
+func TestRunStartKeepsSupervisorWithLiveSubagents(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "task-XR-002\t1\t1786000000\n")
+	now := time.Date(2026, 10, 2, 22, 12, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "bbbb2222-2222-4222-8222-222222222222"
+	path := writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-time.Hour))
+	writePeerTmux(t, e.home, sid, "task-XR-002:@1.%1", "idle")
+	sub := writeSubLog(t, path, "a1", "делегирование", "{}\n")
+	if err := os.Chtimes(sub, now.Add(-10*time.Second), now.Add(-10*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("запуск при живых субагентах: %d %s, ожидал 409", resp.StatusCode, text)
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "kill-session") {
+		t.Errorf("сессия живого супервизора снята: %s", got)
+	}
+}
+
+// Настоящий остаток разговора снимается запуском, но молча это не проходит:
+// уведомитель получает повод run_stop с задачей и проектом, чтобы лента
+// разговора не обрывалась без слов.
+func TestRunStartSweepIsReported(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "task-XR-002\t1\t1786000000\n")
+	now := time.Date(2026, 10, 2, 22, 12, 0, 0, time.UTC)
+	e.s.now = func() time.Time { return now }
+	sid := "cccc3333-3333-4333-8333-333333333333"
+	writeSession(t, e.home, e.proj, "", sid, transcriptFixture, now.Add(-time.Hour))
+	writePeerTmux(t, e.home, sid, "task-XR-002:@1.%1", "idle")
+	notifyCalls := filepath.Join(e.home, "notify.calls")
+	writeNotifyFake(t, filepath.Dir(e.proj), notifyCalls)
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
+	if text := body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("запуск поверх остатка: %d %s", resp.StatusCode, text)
+	}
+	if got := readFile(t, tmuxLog); !strings.Contains(got, "kill-session -t =task-XR-002") {
+		t.Errorf("остаток разговора не снят: %s", got)
+	}
+	got := readFile(t, notifyCalls)
+	for _, want := range []string{"--reason\trun_stop\t", "--task\tXR-002\t", "--project\tdemo\t", "снял остаток разговора"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("снятие остатка ушло без %q: %q", want, got)
+		}
+	}
+}

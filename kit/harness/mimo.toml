@@ -29,15 +29,15 @@ mode = "cli"
 command = ["claude", "-p", "{prompt}", "--model", "{model}", "--effort", "{effort}", "--session-id", "{session}"]
 agents_dir = "{home}/agents"
 agents_format = "claude-code"
-# Имена временные до смока с живым ключом. Серия V2.6 анонсирована из трёх
-# моделей, точный список даёт GET /v1/models, и все четыре яруса стоят на одном
-# имени из анонса.
+# План отдаёт две текстовые модели серии V2.6: flash и pro. Каталожные
+# mimo-v2.6-pro[1m] и mimo-v2.6-pro-ultraspeed плану недоступны, и верхние
+# ярусы стоят на pro.
 # Алиасы первой лестницы, которыми клиент принимает параметр model у субагента,
 # сворачиваются на эти же модели подстановками в env каталога подписки
 # (ANTHROPIC_DEFAULT_<АЛИАС>_MODEL); их раскладывает и сверяет доктор, разбор
 # в docs/lld/DK-090-heterogeneous-ladder.md, «Дорога модели из вердикта до
 # клиента» (DK-751).
-map_mini = "mimo-v2.6-pro"
+map_mini = "mimo-v2.6-flash"
 map_base = "mimo-v2.6-pro"
 map_pro = "mimo-v2.6-pro"
 map_max = "mimo-v2.6-pro"

@@ -727,11 +727,14 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 			}
 			s.Env = env
 			// Пустая строка в списке чата это опечатка, а не модель: в ответе
-			// подписки она стала бы строкой выбора без имени.
+			// подписки она стала бы строкой выбора без имени. Строка не едет
+			// дальше, а опечатка остаётся видимой предупреждением.
 			for _, model := range t.Arr("chat") {
 				if model != "" {
 					s.Chat = append(s.Chat, model)
+					continue
 				}
+				l.Warns = append(l.Warns, fmt.Sprintf("%s: [%s] пустая строка в списке chat пропущена", machinePath, name))
 			}
 			l.Setup[name] = s
 		}

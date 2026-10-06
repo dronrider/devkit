@@ -645,7 +645,7 @@ chat = ["модель-чата", "вторая-чата"]
 [secondcli]
 home = "~/.claude-second"
 env = ["CLAUDE_CONFIG_DIR={home}"]
-chat = ["вторая-чата"]
+chat = ["вторая-чата", ""]
 `)
 	text, err := cmdHarnessJSON(kit)
 	if err != nil {
@@ -662,6 +662,7 @@ chat = ["вторая-чата"]
 			} `json:"models"`
 			Chat []string `json:"chat"`
 		} `json:"harnesses"`
+		Warns []string `json:"warns"`
 	}
 	if err := json.Unmarshal([]byte(text), &v); err != nil {
 		t.Fatalf("ответ не разобрался (%v):\n%s", err, text)
@@ -684,6 +685,13 @@ chat = ["вторая-чата"]
 	}
 	if tiers["secondcli"] != 0 {
 		t.Fatalf("у секции без лестницы %d ступеней, жду ноль:\n%s", tiers["secondcli"], text)
+	}
+	// Пустая строка в списке это опечатка: в ответе её нет (список secondcli
+	// выше сверен со строкой одной), а след остаётся предупреждением, опечатка
+	// без следа не читалась бы ничем.
+	joined := strings.Join(v.Warns, "\n")
+	if !strings.Contains(joined, "пустая строка в списке chat") {
+		t.Fatalf("нет предупреждения о пустой строке в %v", v.Warns)
 	}
 }
 

@@ -10,8 +10,10 @@
 # считает показ блока квоты из чисел снимка.
 #
 # Эндпоинт использования открывается куками сессии учётной записи кабинета,
-# ключ модели его не открывает. Куки лежат в хранилище секретов под именем
-# mimo-token: скрипт перезапускает себя через secretctl exec и получает их
+# ключ модели его не открывает. Куки лежат в хранилище секретов под собственным
+# именем mimo-cabinet-cookie, а ключ модели остаётся под именем mimo-token:
+# у этой подписки ключ и куки разные, и имя на двоих затирало бы единственную
+# копию ключа. Скрипт перезапускает себя через secretctl exec и получает куки
 # переменной окружения, значение не печатается. Адрес кабинета живёт в машинном
 # конфиге квоты (~/.devkit/quota.local, ключ mimo-cabinet), потому что адрес в
 # коммитируемые тексты не едет. Окно трат считается по истории сэмплов
@@ -28,8 +30,8 @@ fi
 # Куки приезжают переменной окружения с дефисом в имени, поэтому наличие
 # проверяется printenv, а не подстановкой оболочки. Перезапуск через secretctl
 # идёт один раз: после него переменная уже стоит.
-if ! printenv mimo-token >/dev/null 2>&1; then
-	exec secretctl exec mimo-token -- /bin/sh "$0"
+if ! printenv mimo-cabinet-cookie >/dev/null 2>&1; then
+	exec secretctl exec mimo-cabinet-cookie -- /bin/sh "$0"
 fi
 
 python3 - <<'PY'
@@ -62,12 +64,12 @@ if not (cabinet.startswith("https://") or cabinet.startswith("http://")):
     fail("в %s нет строки mimo-cabinet = <адрес кабинета>: адрес эндпоинта "
          "использования живёт в машинном конфиге, не в репозитории" % conf)
 
-cookie = os.environ.get("mimo-token", "").strip()
+cookie = os.environ.get("mimo-cabinet-cookie", "").strip()
 if not cookie:
-    fail("секрет mimo-token пуст: положите в него куки сессии кабинета целиком")
+    fail("секрет mimo-cabinet-cookie пуст: положите в него куки сессии кабинета целиком")
 if "serviceToken=" not in cookie:
-    fail("в mimo-token не куки кабинета: значения без serviceToken= ключом "
-         "модели эндпоинт не открываются, положите заголовок Cookie из кабинета")
+    fail("в mimo-cabinet-cookie не куки кабинета: значения без serviceToken= "
+         "эндпоинт не открываются, положите заголовок Cookie из кабинета")
 
 now = datetime.datetime.now().replace(second=0, microsecond=0)
 
@@ -88,7 +90,7 @@ try:
 except urllib.error.HTTPError as e:
     if e.code in (301, 302, 303, 307, 401):
         fail("сессия кабинета истекла: войдите в кабинет заново и обновите "
-             "секрет mimo-token (куки сессии)")
+             "секрет mimo-cabinet-cookie (куки сессии)")
     fail("эндпоинт использования ответил %s" % e.code)
 except OSError as e:
     fail("запрос использования не прошёл: %s" % e)

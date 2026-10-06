@@ -1173,7 +1173,7 @@ func TestMimoSnapScript(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("mimo-token", "api-platform_serviceToken=cabinet-session; userId=7")
+	t.Setenv("mimo-cabinet-cookie", "api-platform_serviceToken=cabinet-session; userId=7")
 	writeFile(t, filepath.Join(home, ".devkit"), "quota.local", "mimo-cabinet = "+srv.URL+"\n")
 
 	// Спец из настоящего профиля репозитория, снимок во временный каталог:

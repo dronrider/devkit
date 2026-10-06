@@ -144,7 +144,8 @@ var knownEvents = []string{"write", "session-start", "notify", "subagent-done", 
 var machineRootKeys = []keySpec{{"default", subtoml.KindStr}, {"enabled", subtoml.KindArr}}
 
 var machineHarnessKeys = []keySpec{{"mini", subtoml.KindStr}, {"base", subtoml.KindStr}, {"pro", subtoml.KindStr},
-	{"max", subtoml.KindStr}, {"budget", subtoml.KindInt}, {"bin", subtoml.KindStr}, {"home", subtoml.KindStr}, {"env", subtoml.KindArr}}
+	{"max", subtoml.KindStr}, {"chat", subtoml.KindArr}, {"budget", subtoml.KindInt}, {"bin", subtoml.KindStr},
+	{"home", subtoml.KindStr}, {"env", subtoml.KindArr}}
 
 // Плейсхолдер каталога харнеса в значениях env. Тот же, что понимает генератор
 // раскладки в путях профиля (tools/devkitctl/rules.py): каталог на машине один,
@@ -617,6 +618,10 @@ type setup struct {
 	// окружение подпроцесса».
 	Home string
 	Env  []envPair
+	// Модели чата сверх лестницы (ключ chat секции): их показывает панель
+	// разговора дашборда строками с этой подпиской, а вердикт pick по ним
+	// задачи не назначает, назначение остаётся на лестнице.
+	Chat []string
 }
 
 func (s *setup) mapped() bool { return s != nil && len(s.Map) == len(tierNames) }
@@ -721,6 +726,13 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 				return nil, err
 			}
 			s.Env = env
+			// Пустая строка в списке чата это опечатка, а не модель: в ответе
+			// подписки она стала бы строкой выбора без имени.
+			for _, model := range t.Arr("chat") {
+				if model != "" {
+					s.Chat = append(s.Chat, model)
+				}
+			}
 			l.Setup[name] = s
 		}
 	}
@@ -1286,6 +1298,10 @@ type harnessJSON struct {
 	// перечень имён там разошёлся бы с лестницей на первой же смене поставщика,
 	// а имён харнесов в чужом коде не должно быть вовсе.
 	Models []harnessModelJSON `json:"models,omitempty"`
+	// Chat это модели чата сверх лестницы, ключ chat секции машинного слоя.
+	// Панель разговора показывает их строками с этой подпиской, яруса у строк
+	// нет и дефолтом они не становятся, а вердикт pick список не читает.
+	Chat []string `json:"chat,omitempty"`
 	// HooksGap это находка, когда в настройках включённого харнеса нет хуков
 	// devkit; пусто, когда обвязка на месте. Поднимать на таком харнесе нечего,
 	// и потребитель (дашборд) отказывает подъёму до запуска клиента.
@@ -1379,6 +1395,7 @@ func cmdHarnessJSON(start string) (string, error) {
 				h.Models = append(h.Models, harnessModelJSON{Tier: tier, Model: m, Via: l.Setup[name].viaOf(tier, name)})
 			}
 		}
+		h.Chat = l.Setup[name].chatOf()
 		v.Harnesses = append(v.Harnesses, h)
 	}
 	if len(l.Enabled) == 0 {
@@ -1432,6 +1449,15 @@ func (s *setup) homeOf() string {
 		return ""
 	}
 	return s.Home
+}
+
+// chatOf отдаёт модели чата секции, переживая её отсутствие: включённый харнес
+// бывает и без своей секции машинного слоя.
+func (s *setup) chatOf() []string {
+	if s == nil {
+		return nil
+	}
+	return s.Chat
 }
 
 // cmdHarness это окно в резолв: любой сдвиг поведения между машинами

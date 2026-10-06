@@ -284,6 +284,8 @@ func TestMachineConfigTypes(t *testing.T) {
 			"mini: жду строку, вижу целое"},
 		{"бюджет строкой", "enabled = [\"claude-code\"]\n\n[claude-code]\nmini = \"h\"\nbase = \"s\"\npro = \"o\"\nmax = \"f\"\nbudget = \"200\"\n", "",
 			"budget: жду целое, вижу строку"},
+		{"chat строкой", "enabled = [\"claude-code\"]\n\n[claude-code]\nmini = \"h\"\nbase = \"s\"\npro = \"o\"\nmax = \"f\"\nchat = \"модель\"\n", "",
+			"chat: жду массив строк, вижу строку"},
 		{"enabled проекта строкой", "enabled = [\"claude-code\"]\n", "enabled = \"claude-code\"\n",
 			"enabled: жду массив строк, вижу строку"},
 	}
@@ -618,6 +620,70 @@ max = "cheap"
 	}
 	if strings.Contains(text, `"via"`) == false {
 		t.Fatalf("поле via не встретилось в ответе вовсе:\n%s", text)
+	}
+}
+
+// TestCmdHarnessJSONChat: модели чата сверх лестницы (ключ chat машинного
+// слоя, DK-1298) едут в ответе своей подписки. Список живёт рядом с лестницей,
+// а не внутри неё: у строк его яруса нет, и ярусную половину вердикта pick они
+// не трогают. Секция без лестницы, но со списком чата, тоже законна: подписка
+// бывает нужной только для разговоров.
+func TestCmdHarnessJSONChat(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "homecli", echoProfile)
+	writeProfile(t, kit, "secondcli", echoProfile)
+	writeMachine(t, kit, `enabled = ["homecli", "secondcli"]
+default = "homecli"
+
+[homecli]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+chat = ["модель-чата", "вторая-чата"]
+
+[secondcli]
+home = "~/.claude-second"
+env = ["CLAUDE_CONFIG_DIR={home}"]
+chat = ["вторая-чата"]
+`)
+	text, err := cmdHarnessJSON(kit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Разбор через собственный тип теста, а не через harnessJSON пакета: на
+	// старом коде поля chat там ещё нет, и привязка к нему обратила бы красноту
+	// regcheck в ошибку сборки, а не в честный красный прогон.
+	var v struct {
+		Harnesses []struct {
+			Name   string `json:"name"`
+			Models []struct {
+				Tier string `json:"tier"`
+			} `json:"models"`
+			Chat []string `json:"chat"`
+		} `json:"harnesses"`
+	}
+	if err := json.Unmarshal([]byte(text), &v); err != nil {
+		t.Fatalf("ответ не разобрался (%v):\n%s", err, text)
+	}
+	tiers := map[string]int{}
+	chat := map[string][]string{}
+	for _, h := range v.Harnesses {
+		tiers[h.Name] = len(h.Models)
+		chat[h.Name] = h.Chat
+	}
+	if list := chat["homecli"]; strings.Join(list, ",") != "модель-чата,вторая-чата" {
+		t.Fatalf("список чата домашней подписки %v, жду две строки без яруса", list)
+	}
+	if list := chat["secondcli"]; strings.Join(list, ",") != "вторая-чата" {
+		t.Fatalf("список чата секции без лестницы %v, жду одну строку", list)
+	}
+	// Лестница остаётся лестницей: список чата не подмешивается в модели ярусов.
+	if tiers["homecli"] != 4 {
+		t.Fatalf("в лестнице домашней подписки %d ступеней, жду четыре:\n%s", tiers["homecli"], text)
+	}
+	if tiers["secondcli"] != 0 {
+		t.Fatalf("у секции без лестницы %d ступеней, жду ноль:\n%s", tiers["secondcli"], text)
 	}
 }
 

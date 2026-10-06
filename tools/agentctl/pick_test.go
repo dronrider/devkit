@@ -294,6 +294,32 @@ func TestCmdPick(t *testing.T) {
 	}
 }
 
+// TestPickIgnoresChatModels: список чата сверх лестницы (ключ chat машинного
+// слоя, DK-1298) ярусную половину вердикта не трогает: задачи назначаются
+// лестницей, и модель в строке вердикта остаётся моделью яруса, а не строкой
+// из списка чата. Сторож на будущее: прочитай его pick, и конвейер задач
+// переехал бы на модели, выбранные для разговоров.
+func TestPickIgnoresChatModels(t *testing.T) {
+	root := writeBoard(t)
+	setupLadder(t, `default = "claude-code"
+enabled = ["claude-code"]
+
+[claude-code]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+chat = ["модель-чата", "вторая-чата"]
+`)
+	out, err := cmdPick(root, "T-007", roleExec, "")
+	if err != nil {
+		t.Fatalf("pick: %v", err)
+	}
+	if !strings.HasPrefix(out, "model: sonnet\neffort: high\ntier: base\n") {
+		t.Fatalf("вердикт ушёл с лестницы при ключе chat: %q", out)
+	}
+}
+
 // TestPickMBandSameVerdictAcrossHarnesses: полоса цены M это решение ярусной
 // оси, а харнес разворачивает ярус в модель последним шагом, поэтому вердикт
 // по одной задаче обязан совпасть на профилях обеих подписок вплоть до строк

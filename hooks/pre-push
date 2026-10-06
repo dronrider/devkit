@@ -7,6 +7,7 @@
 # сессии агента у него в окружении нет.
 [ -n "$DEVKIT_PUSH_OK" ] && exit 0
 [ -n "$CLAUDECODE$CLAUDE_CODE_ENTRYPOINT$CURSOR_AGENT" ] || exit 0
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 # Пуш, где в диффе только доска (docs/TASKS.md, docs/TASKS-archive.md,
 # docs/tasks/), рубеж пропускает сам: правило требует пушить коммит доски
@@ -28,31 +29,9 @@
 # PATH (например хук стоит в проекте без установленного devkit) калитка
 # откатывается к прежнему правилу «весь диапазон это доска».
 #
-# DK-796: в корп-контуре боковые директории лежат подкаталогами одного
-# репозитория, и путь доски считается от корня доски проекта, а не от корня
-# репозитория. Корень ищется подъёмом от каталога файла; послабление включает
-# привязка .devkit/tracker.local у этого корня, и вложенный docs/TASKS.md
-# стенда внутри обычного проекта за доску не сходит.
-is_board_file() {
-    orig=$1
-    case "$orig" in
-        docs/TASKS.md|docs/TASKS-archive.md|docs/tasks/*) return 0 ;;
-    esac
-    d=${orig%/*}
-    while [ -n "$d" ] && [ "$d" != "." ]; do
-        if [ -f "$d/docs/TASKS.md" ]; then
-            [ -f "$d/.devkit/tracker.local" ] || return 1
-            case "$orig" in
-                "$d"/docs/TASKS.md|"$d"/docs/TASKS-archive.md|"$d"/docs/tasks/*) return 0 ;;
-            esac
-            return 1
-        fi
-        next=${d%/*}
-        [ "$next" = "$d" ] && break
-        d=$next
-    done
-    return 1
-}
+# DK-796: путь доски в корп-контуре считается от корня боковой директории,
+# а не от корня репозитория. Критерий (подъём к ближайшему docs/TASKS.md и
+# привязка .devkit/tracker.local у этого корня) живёт в check-board-files.py.
 zero=0000000000000000000000000000000000000000
 board=
 while read -r local_ref local_sha remote_ref remote_sha; do
@@ -71,14 +50,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         # исход не зависит от diff.renames в конфиге пользователя.
         files=$(git diff --no-renames --name-only "$remote_sha" "$local_sha" 2>/dev/null) || break
         [ -n "$files" ] || break
-        non_board=
-        while IFS= read -r f; do
-            [ -n "$f" ] || continue
-            is_board_file "$f" || { non_board=y; break; }
-        done <<EOF
-$files
-EOF
-        [ -n "$non_board" ] && break
+        printf '%s\n' "$files" | python3 "$here/check-board-files.py" || break
         board=y
     fi
 done

@@ -13,8 +13,9 @@ import (
 	"time"
 )
 
-// Съёмщик панели /usage: одноразовая tmux-сессия, claude из PATH, команда,
-// ожидание отрисовки, capture-pane, парсинг, запись снимка, уборка сессии.
+// Съёмщик панели /usage: одноразовая tmux-сессия, claude по абсолюту пути из
+// PATH процесса, команда, ожидание отрисовки, capture-pane, парсинг, запись
+// снимка, уборка сессии.
 // Дорога эта запасная: первым делом снимок читает кеш расхода самого клиента
 // (usagecache.go), и разбор нарисованного текста остаётся для машин, где кеша
 // нет. Своего эндпоинта у devkit по-прежнему нет, расчёт серверный, поэтому обе
@@ -522,7 +523,12 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return snapshot{}, fmt.Errorf("tmux в PATH нет, снимать панель /usage нечем; снимок пишется и руками: %s", path)
 	}
-	if _, err := exec.LookPath("claude"); err != nil {
+	// Путь клиента разрешается здесь, в процессе съёмщика, и уезжает в tmux
+	// абсолютом. Сессию поднимает логин-оболочка, её профиль ставит свои префиксы
+	// PATH вперёд всего остального, и клиент по имени доставался не тот, которого
+	// выбрал съёмщик (DK-1307): профиль не участвует в выборе клиента.
+	client, err := exec.LookPath("claude")
+	if err != nil {
 		return snapshot{}, fmt.Errorf("claude в PATH нет, снимать панель /usage нечем; снимок пишется и руками: %s", path)
 	}
 	reapUsageOrphans(tmuxRun, ownerAlive)
@@ -537,7 +543,7 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 		return snapshot{}, fmt.Errorf("каталог подъёма клиента не выбран (%v), снимок не тронут", err)
 	}
 	args = append(args, "-c", dir)
-	if out, err := tmuxRun(append(args, "claude")...); err != nil {
+	if out, err := tmuxRun(append(args, client)...); err != nil {
 		return snapshot{}, fmt.Errorf("tmux не поднял сессию: %v %s", err, out)
 	}
 	defer tmuxRun("kill-session", "-t", session)

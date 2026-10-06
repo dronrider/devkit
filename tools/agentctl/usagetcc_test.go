@@ -51,6 +51,45 @@ func TestSnapUsagePanelNamesDir(t *testing.T) {
 	}
 }
 
+// TestSnapUsagePanelRaisesClientPath: клиент поднимается абсолютным путём,
+// разрешённым в процессе съёмщика. Сессию tmux стартует логин-оболочка, её
+// профиль дописывает свои префиксы PATH вперёд всего остального, и клиент по
+// имени доставался профилю: на машине с двумя claude съём шёл не тем,
+// которого выбрал съёмщик, а стенд не мог удержать подложного клиента
+// (DK-1307). tmux тут подменён скриптом, как и в соседнем тесте: ему довольно
+// записать доводы подъёма и отказать, дальше съёмщик уходит сам.
+func TestSnapUsagePanelRaisesClientPath(t *testing.T) {
+	bin := t.TempDir()
+	raise := filepath.Join(t.TempDir(), "raise")
+	script := "#!/bin/sh\nif [ \"$1\" = new-session ]; then printf '%s\\n' \"$*\" >" + raise + "; exit 1; fi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	home := t.TempDir()
+	q := specAt(t, filepath.Join(home, ".devkit", "quota", "claude-code.local"))
+	q.Home = home
+
+	if _, err := snapUsagePanel(q, testNow); err == nil {
+		t.Fatal("стенд оборвал подъём, а съёмщик отказа не вернул")
+	}
+	raw, err := os.ReadFile(raise)
+	if err != nil {
+		t.Fatalf("доводы подъёма не записались: %v", err)
+	}
+	args := strings.Fields(strings.TrimSpace(string(raw)))
+	if len(args) == 0 {
+		t.Fatal("доводы подъёма пусты")
+	}
+	if got, want := args[len(args)-1], filepath.Join(bin, "claude"); got != want {
+		t.Fatalf("клиент поднят как %q вместо абсолютного пути %q: путь выбирает профиль логин-оболочки сессии, а не съёмщик", got, want)
+	}
+}
+
 // clientdirCheck это та же проверка каталога, что в internal/clientdir, своими
 // словами: стенд обязан судить о каталоге сам, иначе правка и её мерка
 // съезжали бы вместе.

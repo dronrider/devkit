@@ -658,3 +658,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1286 | Подъём без хуков паркуется находкой, заготовка уходит по мёртвому tmux | task | P2 | 2026-10-03 | [tasks/archive/2026/DK-1286.md](tasks/archive/2026/DK-1286.md) |
 | DK-1295 | Битая ссылка в kit/skills/board-groom/SKILL.md:107 | bug | P3 | 2026-10-03 | [tasks/archive/2026/DK-1295.md](tasks/archive/2026/DK-1295.md) |
 | DK-350 | Дашборд: форма заведения помнит черновики, лишние поля гасятся | bug | P1 | 2026-10-03 | [tasks/archive/2026/DK-350.md](tasks/archive/2026/DK-350.md) |
+| DK-1292 | запуск задачи поднимает чат мимо харнеса вердикта | bug | P1 | 2026-10-06 | [tasks/archive/2026/DK-1292.md](tasks/archive/2026/DK-1292.md) |

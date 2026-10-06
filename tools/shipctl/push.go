@@ -127,7 +127,7 @@ func rangeVerdict(root, remoteSHA, localSHA string) error {
 		if err != nil {
 			return err
 		}
-		if boardOnly(files) {
+		if boardOnly(root, files) {
 			continue
 		}
 		id := firstID(subj, pref)
@@ -230,7 +230,7 @@ func hasCodeCommit(root, remoteSHA, localSHA string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if !boardOnly(files) {
+		if !boardOnly(root, files) {
 			return true, nil
 		}
 	}

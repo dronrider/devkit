@@ -29,8 +29,10 @@ func firstID(s, pref string) string { return merged.FirstID(s, pref) }
 // префиксов, см. README).
 func isRevertSubject(subj string) bool { return merged.IsRevert(subj) }
 
-// boardOnly: коммит трогает только доску и файлы задач.
-func boardOnly(files string) bool { return merged.BoardOnly(files) }
+// boardOnly: коммит трогает только доску и файлы задач. Пути сверяются от
+// корня доски; в корп-контуре боковые директории лежат подкаталогами
+// репозитория, и корень доски ищется подъёмом от файла (DK-796).
+func boardOnly(root, files string) bool { return merged.BoardOnlyAt(root, files) }
 
 // Раздел «Выкат» в файле задачи держит коммиты, которые shipctl слил под этим
 // ID. До него связь задачи с её коммитами выводилась поиском ID в subject

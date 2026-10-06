@@ -363,3 +363,72 @@ func TestPushGateOutsideBoard(t *testing.T) {
 		t.Fatalf("заметка ревью должна пропускать код вне доски: %v", err)
 	}
 }
+
+// corpRepo собирает репозиторий контурной раскладки: боковые директории
+// проектов лежат подкаталогами одного репозитория, доска каждого это
+// <проект>/docs/TASKS.md, привязка корп-контура у корня доски (DK-796).
+func corpRepo(t *testing.T) (root, base string) {
+	t.Helper()
+	root = t.TempDir()
+	gitT(t, root, "init", "-q", "-b", "main")
+	gitT(t, root, "config", "user.email", "test@test")
+	gitT(t, root, "config", "user.name", "test")
+	write(t, root, "authn/docs/TASKS.md", "# Доска authn\n")
+	write(t, root, "authn/docs/tasks/AU-001.md", "# AU-001\n")
+	write(t, root, "authn/.devkit/tracker.local", "repo = ../../authn\n")
+	write(t, root, "cap_autotests/docs/TASKS.md", "# Доска cap_autotests\n")
+	write(t, root, "cap_autotests/docs/tasks/CA-001.md", "# CA-001\n")
+	write(t, root, "cap_autotests/.devkit/tracker.local", "repo = ../../cap_autotests\n")
+	write(t, root, "README.md", "контур\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "seed")
+	return root, gitT(t, root, "rev-parse", "HEAD")
+}
+
+// TestPushCorpNestedBoardPasses: коммит доски подкаталога контура проходит
+// --check-only без ID в subject и без следа ревью, как и домашняя доска.
+// До DK-796 путь authn/docs/TASKS.md не сходил под docs/TASKS.md от корня
+// репозитория, и калитка считала его кодом.
+func TestPushCorpNestedBoardPasses(t *testing.T) {
+	root, base := corpRepo(t)
+	write(t, root, "authn/docs/TASKS.md", "# Доска authn\n| AU-001 | ход |\n")
+	write(t, root, "authn/docs/tasks/AU-001.md", "# AU-001\nход\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "chore(authn): доска проекта с префиксом AU")
+	head := gitT(t, root, "rev-parse", "HEAD")
+
+	_, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: base, LocalSHA: head})
+	if err != nil {
+		t.Fatalf("коммит доски подкаталога должен проходить check-only: %v", err)
+	}
+}
+
+// TestPushCorpNestedTaskFilePasses: правка файла задачи боковой директории
+// (cap_autotests/docs/tasks/CA-001.md) идёт тем же порядком, что и доска.
+func TestPushCorpNestedTaskFilePasses(t *testing.T) {
+	root, base := corpRepo(t)
+	write(t, root, "cap_autotests/docs/tasks/CA-001.md", "# CA-001\nход\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): CA-001 ход")
+	head := gitT(t, root, "rev-parse", "HEAD")
+
+	_, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: base, LocalSHA: head})
+	if err != nil {
+		t.Fatalf("правка файла задачи подкаталога должна проходить check-only: %v", err)
+	}
+}
+
+// TestPushNestedStandBoardStillRefused: вложенный docs/TASKS.md без привязки
+// корп-контура (стенд tools/obeycheck/testdata/project внутри обычного
+// проекта) за доску не сходит и по-прежнему отбивается как код.
+func TestPushNestedStandBoardStillRefused(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	write(t, root, "tools/obeycheck/testdata/project/docs/TASKS.md", "# стенд\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "правка стенда с доской")
+
+	if err := checkOnly(t, root); err == nil {
+		t.Fatal("правка стенда с доской должна отбиваться по-прежнему")
+	}
+}

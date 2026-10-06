@@ -1834,7 +1834,7 @@ func taskCommits(root, main, id string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if boardOnly(files) {
+		if boardOnly(root, files) {
 			continue
 		}
 		shas = append(shas, sha)
@@ -1964,7 +1964,7 @@ func rangeBoardOnly(root, from, to string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if !boardOnly(files) {
+		if !boardOnly(root, files) {
 			return false, nil
 		}
 	}

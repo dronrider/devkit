@@ -608,6 +608,11 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 			if err := checkQuestionCeiling(b, root, id); err != nil {
 				return "", err
 			}
+			// Память секции едет с самой парковкой, а не только с ask: ответ
+			// на move-парковку иначе уводил бы строку в In progress (DK-839).
+			if err := rememberAskFrom(root, id, row.Sect, reason); err != nil {
+				return "", err
+			}
 		}
 		moved.Title = row.Title + " [блок: " + reason + "]"
 	case row.Sect == SectBlocked:

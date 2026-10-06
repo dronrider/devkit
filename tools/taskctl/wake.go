@@ -271,6 +271,18 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 		logWake(root, w, 0)
 		return fmt.Sprintf("%s: %s, строка в %s; голову не поднимаю, это цель: её цикл переживает ожидание сам", w.ID, w.cause(), to), true
 	}
+	// Голова поднимается только у продолжаемой работы. Строка, вернувшаяся в
+	// Backlog, не начата, и конвейер её не трогает: подъём работал бы
+	// неначатой строкой, и её мог взять второй потребитель (DK-839,
+	// замечание 1). Check ждёт приёмки, а не прохода.
+	if to == SectBacklog || to == SectCheck {
+		logWake(root, w, 0)
+		why := "строка не начата"
+		if to == SectCheck {
+			why = "строка ждёт приёмки"
+		}
+		return fmt.Sprintf("%s: %s, строка в %s; голову не поднимаю: %s", w.ID, w.cause(), to, why), true
+	}
 	out, code, err := raiseHead(root, w.ID, ro)
 	logWake(root, w, code)
 	said := strings.Join(strings.Fields(strings.ReplaceAll(strings.TrimSpace(out), "\n", "; ")), " ")

@@ -313,11 +313,81 @@ func TestWakeQuestionReturnsToRememberedSection(t *testing.T) {
 	if err != nil || failed {
 		t.Fatalf("подъём по ID упал: %v\n%s", err, out)
 	}
-	if len(*calls) != 1 {
-		t.Fatalf("жду подъём головы, а было %+v", *calls)
+	if len(*calls) != 0 {
+		t.Fatalf("возврат в backlog не поднимает голову, а было %+v", *calls)
 	}
 	if got := sectOf(t, root, "XR-004"); got != SectBacklog {
 		t.Fatalf("строка должна вернуться в backlog, а стоит в %s", got)
+	}
+}
+
+// TestAskFromBacklogCycle: живой цикл вопроса из Backlog. Ask паркует строку с
+// памятью секции, ответ через wake возвращает её в Backlog и голову не
+// поднимает: конвейер не работает неначатой строкой (DK-839, замечание 1).
+func TestAskFromBacklogCycle(t *testing.T) {
+	root := setup(t)
+	calls := recordRaise(t)
+	st := newAskStand(t)
+	st.deps.Park = func(id, reason string) (string, error) {
+		return cmdMove(root, id, SectBlocked, reason, CommitOpts{})
+	}
+	if _, err := st.run(root, AskParams{ID: "XR-004", Question: "нужна схема"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := sectOf(t, root, "XR-004"); got != SectBlocked {
+		t.Fatalf("ask не припарковал строку из Backlog: %s", got)
+	}
+	out, failed, err := cmdWake(root, []string{"XR-004"}, wakeOpts{})
+	if err != nil || failed {
+		t.Fatalf("wake упал: %v\n%s", err, out)
+	}
+	if got := sectOf(t, root, "XR-004"); got != SectBacklog {
+		t.Fatalf("строка должна вернуться в backlog, а стоит в %s", got)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("голову поднимать нельзя, строка в backlog: %+v", *calls)
+	}
+	if !strings.Contains(out, "голову не поднимаю") {
+		t.Fatalf("отчёт не назвал пропуск подъёма: %s", out)
+	}
+}
+
+// TestMoveQuestionRemembersSection: move с причиной «вопрос:» пишет ту же
+// память секции, что и ask (DK-839, замечание 2). Ответ возвращает строку
+// туда, откуда её увели, а не в In progress.
+func TestMoveQuestionRemembersSection(t *testing.T) {
+	root := setup(t)
+	calls := recordRaise(t)
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "вопрос: нужна схема", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	out, failed, err := cmdWake(root, []string{"XR-004"}, wakeOpts{})
+	if err != nil || failed {
+		t.Fatalf("wake упал: %v\n%s", err, out)
+	}
+	if got := sectOf(t, root, "XR-004"); got != SectBacklog {
+		t.Fatalf("move-парковка должна помнить backlog, а строка в %s", got)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("возврат в backlog не поднимает голову, а было %+v", *calls)
+	}
+}
+
+// TestWakeQuestionToInProgressRaisesHead: возврат в In progress это продолжение
+// работы, и голова поднимается. Иначе ответ на вопрос останавливал бы конвейер.
+func TestWakeQuestionToInProgressRaisesHead(t *testing.T) {
+	root := setup(t)
+	calls := recordRaise(t)
+	parkRow(t, root, "XR-005", "вопрос: нужна схема")
+	out, failed, err := cmdWake(root, []string{"XR-005"}, wakeOpts{})
+	if err != nil || failed {
+		t.Fatalf("wake упал: %v\n%s", err, out)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("возврат в in-progress поднимает голову, а было %+v", *calls)
+	}
+	if got := sectOf(t, root, "XR-005"); got != SectInProgress {
+		t.Fatalf("строка должна быть в in-progress, а стоит в %s", got)
 	}
 }
 

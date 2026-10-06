@@ -278,9 +278,30 @@ func askPark(p AskParams, d askDeps, out []string, text string) (string, error) 
 	}
 	out = append(out, strings.TrimSpace(msg))
 	out = append(out, fmt.Sprintf(
-		"%s: задача припаркована вопросом: заход кончается рубежом, ответ снимет признак и разбудит "+
-			"строку тиком сторожка", p.ID))
+		"%s: задача припаркована вопросом: заход кончается рубежом, ответ снимет признак и вернёт "+
+			"строку в прежнюю секцию тиком сторожка", p.ID))
 	return strings.Join(out, "\n"), nil
+}
+
+// rememberAskFrom кладёт в признак секцию, откуда строку уводит парковка
+// вопросом. Память принадлежит самой парковке (cmdMove), а не только ask:
+// move с причиной «вопрос:» иначе оставлял бы ответ без адреса возврата
+// (DK-839, замечание 2). Существующий признак переписывается заменой, вопросы
+// и сессия остаются.
+func rememberAskFrom(root, id, from, reason string) error {
+	main := stage.MainRoot(root)
+	name := chat.TaskName(id)
+	a, ok := chat.ReadAsk(chat.AskPath(main, name))
+	if !ok {
+		q := chat.Question{Text: strings.TrimSpace(strings.TrimPrefix(reason, "вопрос:"))}
+		a = chat.Ask{Task: id, From: from, Questions: []chat.Question{q}}
+	} else {
+		a.From = from
+		if a.Task == "" {
+			a.Task = id
+		}
+	}
+	return chat.WriteAsk(main, name, a)
 }
 
 // askReasonLimit это потолок сути вопроса в причине блока: причина едет одной

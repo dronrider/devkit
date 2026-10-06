@@ -1422,9 +1422,10 @@ func TestRewriteLinksSkipsCodeBlocks(t *testing.T) {
 	}
 }
 
-// TestMoveBlockedOnlyFromWork: заблокированной бывает только начатая задача
-// (RULES.board.md, «Трекинг задач» п. 4). Строку из Backlog разблокировать
+// TestMoveBlockedOnlyFromWork: прочие блоки по-прежнему требуют начатой
+// задачи (RULES.board.md, «Трекинг задач» п. 4). Строку из Backlog разблокировать
 // некому, а Blocked у неё значил бы просто «не начали», как весь Backlog.
+// Вопрос человеку здесь ни при чём: его держит TestMoveBlockedQuestionFromBacklog.
 func TestMoveBlockedOnlyFromWork(t *testing.T) {
 	root := setup(t)
 	_, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо", CommitOpts{})
@@ -1446,6 +1447,28 @@ func TestMoveBlockedOnlyFromWork(t *testing.T) {
 	}
 	if _, err := cmdMove(root, "XR-004", SectBlocked, "ждём железо", CommitOpts{}); err != nil {
 		t.Fatalf("начатую задачу блокировать можно: %v", err)
+	}
+}
+
+// TestMoveBlockedQuestionFromBacklog: вопрос человеку паркует строку из любого
+// статуса, включая Backlog (DK-839). До правки перевод в blocked был запрещён
+// строке из Backlog целиком, taskctl ask отвечал «блокировать нечего», а
+// конвейер шёл следующим заказом поверх открытого вопроса.
+func TestMoveBlockedQuestionFromBacklog(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdMove(root, "XR-004", SectBlocked, "вопрос: нужна схема", CommitOpts{}); err != nil {
+		t.Fatalf("вопрос из Backlog должен парковать строку: %v", err)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := b.find("XR-004")
+	if r.Sect != SectBlocked {
+		t.Fatalf("строка не в Blocked: %s", r.Sect)
+	}
+	if !strings.Contains(r.Title, "[блок: вопрос: нужна схема]") {
+		t.Fatalf("причина блока не «вопрос: ...»: %s", r.Title)
 	}
 }
 

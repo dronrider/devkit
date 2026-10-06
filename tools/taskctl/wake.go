@@ -247,29 +247,36 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 			return fmt.Sprintf("%s: %s, а голову поднять нечем, строка стоит в %s: %v", w.ID, w.cause(), row.Sect, err), false
 		}
 	}
+	// Секция возврата читается до снятия признака: он один несёт, откуда
+	// строку увели парковкой вопроса (DK-839). Старый признак без секции
+	// возвращает строку в In progress, как и было.
+	to := SectInProgress
 	if w.Class == classAsk {
+		if a, ok := chat.ReadAsk(chat.AskPath(stage.MainRoot(root), chat.TaskName(w.ID))); ok && a.From != "" {
+			to = a.From
+		}
 		dropTaskAsks(root, w.ID)
 	}
-	if row.Sect != SectInProgress {
+	if row.Sect != to {
 		var c CommitOpts
 		if o.commit {
 			c = CommitOpts{Msg: fmt.Sprintf("docs(tasks): %s %s", w.ID, wakeWords(w.Class)), Push: o.push}
 		}
-		if _, err := cmdMove(root, w.ID, SectInProgress, "", c); err != nil {
+		if _, err := cmdMove(root, w.ID, to, "", c); err != nil {
 			return fmt.Sprintf("%s: %s, а строка из %s не вышла: %v", w.ID, w.cause(), row.Sect, err), false
 		}
 	}
 	if goal {
 		logWake(root, w, 0)
-		return fmt.Sprintf("%s: %s, строка в In progress; голову не поднимаю, это цель: её цикл переживает ожидание сам", w.ID, w.cause()), true
+		return fmt.Sprintf("%s: %s, строка в %s; голову не поднимаю, это цель: её цикл переживает ожидание сам", w.ID, w.cause(), to), true
 	}
 	out, code, err := raiseHead(root, w.ID, ro)
 	logWake(root, w, code)
 	said := strings.Join(strings.Fields(strings.ReplaceAll(strings.TrimSpace(out), "\n", "; ")), " ")
 	if err != nil {
-		return fmt.Sprintf("%s: %s, строка в In progress, а подъём отказал: %v", w.ID, w.cause(), err), false
+		return fmt.Sprintf("%s: %s, строка в %s, а подъём отказал: %v", w.ID, w.cause(), to, err), false
 	}
-	return fmt.Sprintf("%s: %s, строка в In progress; %s", w.ID, w.cause(), said), true
+	return fmt.Sprintf("%s: %s, строка в %s; %s", w.ID, w.cause(), to, said), true
 }
 
 // logWake пишет подъём в журнал .devkit/log проекта: разряд и ID предпосылки

@@ -118,6 +118,7 @@ BIND_KEYS = ("сессия", "задача", "проект", "дерево", "т
 # taskctl decide --chat (DK-864), читают подхват и сторожок.
 ASK_SESSION = "сессия "
 ASK_TASK = "задача "
+ASK_FROM = "секция "
 # Метка «без срока» на месте штампа времени (internal/chat.AskForever,
 # DK-715): признак без неё живёт до ответа, а не до часов.
 ASK_FOREVER = "-"
@@ -399,7 +400,7 @@ def ask_fields(path):
         until = stamp_at(first)
         if until is None:
             return None
-    out = {"until": until, "session": "", "task": "", "questions": []}
+    out = {"until": until, "session": "", "task": "", "from": "", "questions": []}
     body = []
     for ln in lines[1:]:
         ln = ln.strip()
@@ -407,6 +408,8 @@ def ask_fields(path):
             out["session"] = ln[len(ASK_SESSION):].strip()
         elif ln.startswith(ASK_TASK):
             out["task"] = ln[len(ASK_TASK):].strip()
+        elif ln.startswith(ASK_FROM):
+            out["from"] = ln[len(ASK_FROM):].strip()
         elif ln:
             body.append(ln)
     if body:

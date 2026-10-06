@@ -227,7 +227,15 @@ func runAsk(root string, p AskParams, d askDeps, env func(string) string) (strin
 	}
 	// Признак без срока: DK-715 меняет саму жизнь ожидания, оно живёт до
 	// ответа, что бы ни показали часы, и панель прячет обратный отсчёт.
-	if err := chat.WriteAsk(main, name, chat.Ask{Session: sid, Task: p.ID, Questions: qs}); err != nil {
+	// Секция строки запоминается тут же: после ответа строка возвращается
+	// туда, откуда её увели парковкой (DK-839, развилка «возврат»).
+	from := ""
+	if b, err := LoadBoard(boardPath(main)); err == nil {
+		if row := b.find(p.ID); row != nil {
+			from = row.Sect
+		}
+	}
+	if err := chat.WriteAsk(main, name, chat.Ask{Session: sid, Task: p.ID, From: from, Questions: qs}); err != nil {
 		return "", err
 	}
 	// Уведомитель зовётся сразу: человек узнаёт про вопрос немедленно, а не

@@ -293,6 +293,34 @@ func TestWakeNamedQuestion(t *testing.T) {
 	}
 }
 
+// TestWakeQuestionReturnsToRememberedSection: после ответа строка возвращается
+// туда, откуда её увели парковкой вопроса (DK-839, развилка «возврат»).
+// Секция запоминается в признаке ожидания строкой «секция <имя>», и до правки
+// обход ждущих всегда уводил разбуженную строку в In progress, даже когда
+// вопрос её поднял из Backlog.
+func TestWakeQuestionReturnsToRememberedSection(t *testing.T) {
+	root := setup(t)
+	calls := recordRaise(t)
+	parkRow(t, root, "XR-004", "вопрос: нужна схема")
+	ask := chat.AskPath(root, chat.TaskName("XR-004"))
+	if err := os.MkdirAll(filepath.Dir(ask), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ask, []byte("-\nсекция backlog\nзадача XR-004\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, failed, err := cmdWake(root, []string{"xr-004"}, wakeOpts{})
+	if err != nil || failed {
+		t.Fatalf("подъём по ID упал: %v\n%s", err, out)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("жду подъём головы, а было %+v", *calls)
+	}
+	if got := sectOf(t, root, "XR-004"); got != SectBacklog {
+		t.Fatalf("строка должна вернуться в backlog, а стоит в %s", got)
+	}
+}
+
 // Строка цели выходит из Blocked, а голова задачи поверх её цикла не встаёт.
 func TestWakeGoalRowOnlyUnparks(t *testing.T) {
 	root := setup(t)

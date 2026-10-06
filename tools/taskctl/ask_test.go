@@ -275,6 +275,25 @@ func TestAskSurvivesTheRefusedParking(t *testing.T) {
 	}
 }
 
+// TestAskRemembersTheSection: писатель кладёт в признак секцию строки, откуда
+// её увели парковкой вопроса (DK-839, развилка «возврат»). Строка лежит в
+// Backlog, и до правки признак не знал, откуда её взяли: пробуждение уводило
+// разбуженную строку в In progress, а ей место было в Backlog.
+func TestAskRemembersTheSection(t *testing.T) {
+	root := setup(t)
+	st := newAskStand(t)
+	if _, err := st.run(root, AskParams{ID: "XR-004", Question: "нужна схема"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(chat.AskPath(root, chat.TaskName("XR-004")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "секция backlog") {
+		t.Fatalf("в признаке нет секции строки:\n%s", raw)
+	}
+}
+
 // Вопроса нет ни ключом, ни пачкой: команда отбивается, а не спрашивает
 // пустоту, и признака после отказа не остаётся.
 func TestAskNeedsAQuestion(t *testing.T) {

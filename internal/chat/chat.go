@@ -333,6 +333,7 @@ type Ask struct {
 	Until     time.Time
 	Session   string
 	Task      string
+	From      string
 	Questions []Question
 }
 
@@ -364,6 +365,7 @@ func (a Ask) UnixUntil() int64 {
 const (
 	askSessionKey = "сессия "
 	askTaskKey    = "задача "
+	askFromKey    = "секция "
 )
 
 // Text собирает тело признака.
@@ -378,6 +380,9 @@ func (a Ask) Text() string {
 	}
 	if a.Task != "" {
 		out = append(out, askTaskKey+a.Task)
+	}
+	if a.From != "" {
+		out = append(out, askFromKey+a.From)
 	}
 	if len(a.Questions) > 0 {
 		if data, err := json.Marshal(Pack{Questions: a.Questions}); err == nil {
@@ -414,6 +419,8 @@ func ParseAsk(text string) (Ask, bool) {
 			a.Session = strings.TrimSpace(strings.TrimPrefix(s, askSessionKey))
 		case strings.HasPrefix(s, askTaskKey):
 			a.Task = strings.TrimSpace(strings.TrimPrefix(s, askTaskKey))
+		case strings.HasPrefix(s, askFromKey):
+			a.From = strings.TrimSpace(strings.TrimPrefix(s, askFromKey))
 		case s != "":
 			body = append(body, s)
 		}

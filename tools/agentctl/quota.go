@@ -238,6 +238,20 @@ type rubLine struct {
 	Rub  int
 }
 
+// credLine это строка снимка с числом кредитов подписки, значением вида
+// «12345 кред 5ч». Пишет её съёмщик пакета кредитов (Token Plan): процент в
+// ответе эндпоинта грубый, а точный считается из израсходованного и лимита,
+// поэтому снимок несёт сами числа. Имена строк, window5h_cred, balance_cred
+// и spent_cred, принадлежат типу провайдера, как рублёвые, и разбор смотрит
+// на значение. Хвост за «кред» это размер окна трат, когда история снимков
+// короче полного окна: подпись для человека и экрана, разбор её хранит и
+// возвращает записью без изменений.
+type credLine struct {
+	Name string
+	Cred int64
+	Tail string
+}
+
 // snapshot это разобранный файл снимка. Warns копятся вместо ошибок: битая
 // строка или незнакомый ключ отбрасывают своё, а остальной снимок работает.
 // Partial это бакеты, которых в снимке нет не потому, что их нет у подписки, а
@@ -251,6 +265,7 @@ type snapshot struct {
 	Taken    time.Time
 	Buckets  []bucket
 	Rubles   []rubLine
+	Creds    []credLine
 	Partial  map[string]string
 	Borrowed map[string]string
 	Warns    []string
@@ -501,6 +516,10 @@ func (q *quotaSpec) parse(text string) snapshot {
 			s.Rubles = append(s.Rubles, r)
 			continue
 		}
+		if c, ok := parseCredLine(key, val); ok {
+			s.Creds = append(s.Creds, c)
+			continue
+		}
 		if !q.known(key) {
 			s.Warns = append(s.Warns, fmt.Sprintf("неизвестный ключ снимка %q, пропущен", key))
 			continue
@@ -552,6 +571,28 @@ func parseRubLine(name, val string) (rubLine, bool) {
 		return rubLine{}, false
 	}
 	return rubLine{Name: name, Rub: r}, true
+}
+
+// parseCredLine разбирает значение вида «12345 кред 5ч»: число кредитов
+// подписки и необязательный размер окна трат следом. Узнаётся по значению,
+// как рублёвая строка: перечень имён это договорённость типа провайдера, и
+// снимок читатели разбирают одинаково у всех таких служб. Хвост за «кред»
+// хранится как есть: это подпись о короткой истории, а не число для расчёта.
+func parseCredLine(name, val string) (credLine, bool) {
+	n, rest, ok := strings.Cut(strings.TrimSpace(val), " ")
+	if !ok || name == "" {
+		return credLine{}, false
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 || fields[0] != "кред" {
+		return credLine{}, false
+	}
+	c, err := strconv.ParseInt(n, 10, 64)
+	if err != nil || c < 0 {
+		return credLine{}, false
+	}
+	tail := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rest), "кред"))
+	return credLine{Name: name, Cred: c, Tail: tail}, true
 }
 
 // parseBucket разбирает значение вида «34% сброс 2026-08-04T10:00».
@@ -606,6 +647,13 @@ func (q *quotaSpec) write(s snapshot) error {
 	}
 	for _, r := range s.Rubles {
 		fmt.Fprintf(&b, "%s = %d руб\n", r.Name, r.Rub)
+	}
+	for _, c := range s.Creds {
+		if c.Tail != "" {
+			fmt.Fprintf(&b, "%s = %d кред %s\n", c.Name, c.Cred, c.Tail)
+			continue
+		}
+		fmt.Fprintf(&b, "%s = %d кред\n", c.Name, c.Cred)
 	}
 	for _, name := range s.partialNames() {
 		fmt.Fprintf(&b, "%s%s: %s\n", partialNote, name, s.Partial[name])
@@ -926,6 +974,13 @@ func cmdQuota(q *quotaSpec, now time.Time) (string, error) {
 	}
 	for _, r := range s.Rubles {
 		fmt.Fprintf(&b, "%s: %d руб\n", r.Name, r.Rub)
+	}
+	for _, c := range s.Creds {
+		if c.Tail != "" {
+			fmt.Fprintf(&b, "%s: %d кред %s\n", c.Name, c.Cred, c.Tail)
+			continue
+		}
+		fmt.Fprintf(&b, "%s: %d кред\n", c.Name, c.Cred)
 	}
 	for _, name := range s.partialNames() {
 		fmt.Fprintf(&b, "%s: в панели его не было, %s\n", name, s.Partial[name])

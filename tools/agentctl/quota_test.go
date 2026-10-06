@@ -127,15 +127,28 @@ home = "`+home+`"
 	return l
 }
 
-// TestMimoQuotaProfile: у четвёртой подписки нет публичного эндпоинта остатка,
-// секция [quota] пуста, и корректор для неё выключен. Тест стоит на двух вещах:
-// профиль грузится целиком (половинчатая секция это отказ загрузки, и подписка
-// выпала бы из enabled вся), а лестница предложена профилем на все четыре
-// яруса, и ступени домашние, без уезда в чужие подписки.
+// TestMimoQuotaProfile: у четвёртой подписки остаток пакета кредитов снимает
+// сменный съёмщик из кабинета платформы, и месячный бакет держит корректор
+// включённым. Тест стоит на двух вещах: профиль грузится целиком (половинчатая
+// секция это отказ загрузки, и подписка выпала бы из enabled вся), а лестница
+// предложена профилем на все четыре яруса, и ступени домашние, без уезда в
+// чужие подписки.
 func TestMimoQuotaProfile(t *testing.T) {
 	l := mimoLayers(t)
-	if q := quotaSpecOf(l, "mimo"); q != nil {
-		t.Fatalf("у mimo объявилась квота: %+v", q)
+	q := quotaSpecOf(l, "mimo")
+	if q == nil {
+		t.Fatal("у mimo нет объявления квоты: профиль вернулся к пустой секции [quota]")
+	}
+	if q.Snap != snapScript || q.Script != "snap/mimo.sh" {
+		t.Fatalf("остаток снимает не съёмщик из kit/harness/snap: %+v", q)
+	}
+	if !contains(q.Buckets, "month_plan") || q.Required != "month_plan" {
+		t.Fatalf("бакет месячного пакета не объявлен: %v, обязательный %q", q.Buckets, q.Required)
+	}
+	for _, tier := range tierNames {
+		if !contains(q.Spend[tier], "month_plan") {
+			t.Fatalf("ярус %s тратит не из месячного пакета: %v", tier, q.Spend[tier])
+		}
 	}
 	s := l.Setup["mimo"]
 	if !s.mapped() || !s.Suggested {
@@ -146,6 +159,81 @@ func TestMimoQuotaProfile(t *testing.T) {
 		if a.Harness != "mimo" || a.Model == "" {
 			t.Fatalf("ярус %s не домашняя ступень: %+v", tier, a)
 		}
+	}
+}
+
+// TestSnapshotCredLines: строки «N кред» это снимок провайдера с пакетом
+// кредитов на месяц: траты окна с подписью его размера, остаток из лимита и
+// израсходованное число, из которого показ пересчитывает точный процент.
+// Строка узнаётся по значению, а не по имени: формат один на всех провайдеров
+// такого типа. Проверка идёт печатью cmdQuota, а не полями структур: так тест
+// собирается и на коде до правки и ловит именно её (regcheck).
+func TestSnapshotCredLines(t *testing.T) {
+	l := mimoLayers(t)
+	q := quotaSpecOf(l, "mimo")
+	if q == nil {
+		t.Fatal("у mimo нет объявления квоты")
+	}
+	path := filepath.Join(t.TempDir(), "mimo.local")
+	q.Path, q.From = path, path
+	content := "taken = 2026-10-06T09:00\n" +
+		"month_plan = 43% сброс 2026-10-31T23:59\n" +
+		"window5h_cred = 123456789 кред 5ч\n" +
+		"balance_cred = 876543211 кред\n" +
+		"spent_cred = 653456789 кред\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	printed := func() string {
+		t.Helper()
+		out, err := cmdQuota(q, testNow)
+		if err != nil {
+			t.Fatalf("снимок не прочитан: %v", err)
+		}
+		return out
+	}
+	out := printed()
+	if strings.Contains(out, "предупреждение") {
+		t.Fatalf("кредитные строки встали предупреждением:\n%s", out)
+	}
+	for _, want := range []string{
+		"window5h_cred: 123456789 кред 5ч",
+		"balance_cred: 876543211 кред",
+		"spent_cred: 653456789 кред",
+		"month_plan: потрачено 43%",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("в печати снимка нет строки %q:\n%s", want, out)
+		}
+	}
+
+	// Запись refresh переживает собственный разбор: подпись размера окна это
+	// часть строки, и после записи она обязана остаться на месте.
+	s, err := q.read()
+	if err != nil {
+		t.Fatalf("снимок не прочитан: %v", err)
+	}
+	if err := q.write(s); err != nil {
+		t.Fatalf("запись снимка: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "window5h_cred = 123456789 кред 5ч\n") {
+		t.Fatalf("после записи подпись окна пропала:\n%s", raw)
+	}
+
+	// Отрицательное число это не кредиты: съёмщик клэмпит значения сам, а
+	// минус в снимке значит битую строку, и она обязана назваться
+	// предупреждением.
+	broken := "taken = 2026-10-06T09:00\nwindow5h_cred = -5 кред\n"
+	if err := os.WriteFile(path, []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out = printed()
+	if !strings.Contains(out, "неизвестный ключ снимка \"window5h_cred\"") {
+		t.Fatalf("минус прошёл в снимок или назвался иначе:\n%s", out)
 	}
 }
 

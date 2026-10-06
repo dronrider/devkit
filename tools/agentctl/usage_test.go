@@ -1147,6 +1147,142 @@ home = "` + home + `"
 	})
 }
 
+// TestMimoSnapScript гоняет съёмщик Token Plan профиля mimo (DK-1304) на
+// локальном сервере с ответом, снятым с кабинета платформы живьём. Эндпоинт
+// использования открывается куками сессии кабинета, а не ключом модели, и тест
+// кладёт куки переменной окружения съёмщика: перезапуска через secretctl в
+// стенде нет, живое хранилище не трогается. Адрес кабинета и история сэмплов
+// живут во временном HOME, как у съёмщика на машине.
+func TestMimoSnapScript(t *testing.T) {
+	body := readFixture(t, "mimo-tokenplan-usage.json")
+	requests := 0
+	var cookie string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path != "/tokenPlan/usage":
+			http.NotFound(w, r)
+		case !strings.Contains(r.Header.Get("Cookie"), "api-platform_serviceToken="):
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			requests++
+			cookie = r.Header.Get("Cookie")
+			_, _ = w.Write([]byte(body))
+		}
+	}))
+	defer srv.Close()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("mimo-token", "api-platform_serviceToken=cabinet-session; userId=7")
+	writeFile(t, filepath.Join(home, ".devkit"), "quota.local", "mimo-cabinet = "+srv.URL+"\n")
+
+	// Спец из настоящего профиля репозитория, снимок во временный каталог:
+	// копия профиля здесь разъехалась бы с тем, по чему работает машина.
+	mimoHome := func(t *testing.T) *quotaSpec {
+		t.Helper()
+		q := quotaSpecOf(mimoLayers(t), "mimo")
+		if q == nil {
+			t.Fatal("у mimo нет объявления квоты: профиль вернулся к пустой секции [quota]")
+		}
+		snapPath := filepath.Join(t.TempDir(), "quota", "mimo.local")
+		q.Path, q.From = snapPath, snapPath
+		return q
+	}
+
+	t.Run("живой ответ ложится в снимок кредитами", func(t *testing.T) {
+		q := mimoHome(t)
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+			t.Fatalf("съёмщик отказал: %v", err)
+		}
+		file, err := os.ReadFile(q.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Процент месячного пакета груб в самом ответе: съёмщик пересчитывает его
+		// из израсходованного и лимита, 42.71 округляется в 43.
+		for _, want := range []string{"month_plan = 43% сброс", "window5h_cred = 0 кред 0м",
+			"balance_cred = 876543211 кред", "spent_cred = 653456789 кред"} {
+			if !strings.Contains(string(file), want) {
+				t.Fatalf("в снимке нет строки %q:\n%s", want, file)
+			}
+		}
+		out, err := cmdQuota(q, testNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "window5h_cred: 0 кред 0м") {
+			t.Fatalf("печать снимка не назвала кредовые строки:\n%s", out)
+		}
+		// Куки уходят заголовком одного запроса: серия подряд ловится платформой
+		// ответом 429, и съёмщик не долбит эндпоинт.
+		if requests != 1 {
+			t.Fatalf("съёмщик сходил в эндпоинт %d раз, жду один", requests)
+		}
+		if !strings.Contains(cookie, "userId=7") {
+			t.Fatalf("куки сессии не дошли до эндпоинта: %q", cookie)
+		}
+	})
+
+	t.Run("окно трат считается от базового сэмпла истории", func(t *testing.T) {
+		old := time.Now().Add(-6 * time.Hour).Format("2006-01-02T15:04")
+		mid := time.Now().Add(-2 * time.Hour).Format("2006-01-02T15:04")
+		hist := filepath.Join(home, ".devkit", "quota", "mimo.history.local")
+		if err := os.WriteFile(hist, []byte(old+" 600000000\n"+mid+" 640000000\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		q := mimoHome(t)
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+			t.Fatalf("съёмщик отказал: %v", err)
+		}
+		file, err := os.ReadFile(q.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Окно это израсходованное минус базовый сэмпл, 653456789 - 600000000, и
+		// размер окна снят с базы: целых пять часов.
+		if !strings.Contains(string(file), "window5h_cred = 53456789 кред 5ч") {
+			t.Fatalf("окно трат не сошлось с историей:\n%s", file)
+		}
+		kept, err := os.ReadFile(hist)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := len(strings.Fields(strings.TrimSpace(string(kept)))) / 2; n != 3 {
+			t.Fatalf("в истории %d сэмплов, жду 3 (база и два свежих):\n%s", n, kept)
+		}
+
+		// Принесённые кредиты тратой не считаются: окно ждёт следующего расхода.
+		keptBody := body
+		body = strings.Replace(keptBody, `"used":653456789`, `"used":590000000`, 1)
+		defer func() { body = keptBody }()
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err != nil {
+			t.Fatalf("съёмщик отказал: %v", err)
+		}
+		file, err = os.ReadFile(q.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(file), "window5h_cred = 0 кред") {
+			t.Fatalf("принесённые кредиты ушли в минус по окну:\n%s", file)
+		}
+	})
+
+	t.Run("истёкшая сессия отказывает словами, файл не тронут", func(t *testing.T) {
+		expired := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		defer expired.Close()
+		writeFile(t, filepath.Join(home, ".devkit"), "quota.local", "mimo-cabinet = "+expired.URL+"\n")
+		q := mimoHome(t)
+		before := seedSnapshot(t, q, "taken = 2026-08-01T10:00\n")
+		if _, _, err := cmdQuotaRefresh(q, testNow, false); err == nil ||
+			!strings.Contains(err.Error(), "сессия кабинета истекла") {
+			t.Fatalf("истёкшая сессия прошла как снимок: %v", err)
+		}
+		sameFile(t, q.Path, before)
+	})
+}
+
 // seedSnapshot кладёт прежний снимок и возвращает его содержимое: отказ съёмщика
 // обязан оставить файл ровно таким, каким он был.
 func seedSnapshot(t *testing.T, q *quotaSpec, text string) []byte {

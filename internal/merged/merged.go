@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -179,7 +180,7 @@ func (b *Book) isWork(sha string) (bool, error) {
 	if b.work == nil {
 		b.work = map[string]bool{}
 	}
-	b.work[sha] = !BoardOnly(files)
+	b.work[sha] = !BoardOnlyAt(b.root, files)
 	return b.work[sha], nil
 }
 
@@ -330,7 +331,7 @@ func (b *Book) fillWork(shas []string) {
 		// Про него спросят отдельным вызовом, и отказ git останется
 		// отказом, а не превратится в «коммит без файлов».
 		for sha := range said {
-			b.work[sha] = !BoardOnly(strings.Join(files[sha], "\n"))
+			b.work[sha] = !BoardOnlyAt(b.root, strings.Join(files[sha], "\n"))
 		}
 	}
 }
@@ -601,18 +602,71 @@ func IsRevert(subj string) bool {
 
 // BoardOnly отвечает, трогает ли коммит только доску и файлы задач. files это
 // вывод `git show --name-only`, путь на строку. Состояние доски двигает
-// taskctl, и такая правка работой задачи не считается.
+// taskctl, и такая правка работой задачи не считается. Пути сверяются от корня
+// доски домашнего проекта; контурную раскладку с боковыми директориями в
+// подкаталогах судит BoardOnlyAt.
 func BoardOnly(files string) bool {
 	for _, f := range strings.Split(files, "\n") {
 		f = strings.TrimSpace(f)
 		if f == "" {
 			continue
 		}
-		if f != "docs/TASKS.md" && f != "docs/TASKS-archive.md" && !strings.HasPrefix(f, "docs/tasks/") {
+		if !isBoardRel(f) {
 			return false
 		}
 	}
 	return true
+}
+
+// BoardOnlyAt как BoardOnly, но принимает корень репозитория и дополнительно
+// признаёт доску боковой директории корп-контура: `<проект>/docs/TASKS.md` и
+// родня, когда `<проект>` это корень доски с привязкой .devkit/tracker.local.
+// Корень доски ищется подъёмом от каталога правленого файла: pre-push зовёт
+// проверку из корня репозитория, где боковых директорий несколько, и один корень
+// от cwd там не находится (DK-796). Без привязки вложенный docs/TASKS.md стенда
+// внутри обычного проекта за доску не сходит.
+func BoardOnlyAt(root, files string) bool {
+	for _, f := range strings.Split(files, "\n") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if isBoardRel(f) {
+			continue
+		}
+		if root == "" || !isCorpBoardRel(root, f) {
+			return false
+		}
+	}
+	return true
+}
+
+// isBoardRel сверяет путь от корня доски: сама доска, архив и файлы задач.
+func isBoardRel(f string) bool {
+	return f == "docs/TASKS.md" || f == "docs/TASKS-archive.md" || strings.HasPrefix(f, "docs/tasks/")
+}
+
+// isCorpBoardRel поднимается от каталога файла к ближайшему корню доски и
+// сверяет путь от него. Послабление включает привязка корп-контура у этого
+// корня; ближайший корень без привязки гасит обход, и стенд с доской внутри
+// проекта остаётся кодом.
+func isCorpBoardRel(root, f string) bool {
+	dir := path.Dir(f)
+	for dir != "." && dir != "/" && dir != "" {
+		abs := filepath.Join(root, filepath.FromSlash(dir))
+		if _, err := os.Stat(filepath.Join(abs, "docs", "TASKS.md")); err == nil {
+			if _, err := os.Stat(filepath.Join(abs, ".devkit", "tracker.local")); err != nil {
+				return false
+			}
+			return isBoardRel(strings.TrimPrefix(f, dir+"/"))
+		}
+		parent := path.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
+	return false
 }
 
 // inRecord сверяет полный sha из лога с записанным сокращённым.

@@ -231,6 +231,40 @@ func TestBoardOnly(t *testing.T) {
 	}
 }
 
+// TestBoardOnlyAtCorpNested: в корп-контуре боковые директории лежат
+// подкаталогами репозитория, и доска проекта узнаётся от корня доски с
+// привязкой tracker.local (DK-796). Стенд без привязки за доску не сходит.
+func TestBoardOnlyAtCorpNested(t *testing.T) {
+	root := t.TempDir()
+	for _, p := range []string{
+		"authn/docs/TASKS.md",
+		"authn/docs/tasks/AU-001.md",
+		"authn/.devkit/tracker.local",
+		"tools/obeycheck/testdata/project/docs/TASKS.md",
+	} {
+		if err := os.MkdirAll(filepath.Join(root, filepath.Dir(p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, p), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := map[string]bool{
+		"authn/docs/TASKS.md":                  true,
+		"authn/docs/tasks/AU-001.md":           true,
+		"authn/docs/TASKS-archive.md":          true,
+		"authn/src/main.go":                    false,
+		"tools/obeycheck/testdata/project/docs/TASKS.md": false,
+		"docs/TASKS.md":                        true,
+		"cap_autotests/docs/TASKS.md":          false, // привязки нет
+	}
+	for files, want := range cases {
+		if got := BoardOnlyAt(root, files); got != want {
+			t.Errorf("BoardOnlyAt(%q, %q) = %v, ждали %v", root, files, got, want)
+		}
+	}
+}
+
 func TestIsRevert(t *testing.T) {
 	cases := map[string]bool{
 		"revert: DK-1 x":             true,

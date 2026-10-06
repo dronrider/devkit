@@ -154,7 +154,7 @@ func TestCloseWakesParkedOnClose(t *testing.T) {
 		}
 	}
 	log, _ := os.ReadFile(filepath.Join(root, ".devkit", "log"))
-	if !strings.Contains(string(log), "\ttaskctl\twake XR-004 закрытие: XR-005\t0\n") {
+	if !strings.Contains(string(log), "\ttaskctl\twake XR-004 закрытие: XR-005\t0\tуспех\n") {
 		t.Fatalf("подъёма нет в .devkit/log:\n%s", log)
 	}
 }

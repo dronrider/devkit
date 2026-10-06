@@ -52,8 +52,8 @@ func TestRunLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("журнал не записан: %v", err)
 	}
-	if !strings.Contains(string(data), "\ttaskctl\tlint\t0\n") ||
-		!strings.Contains(string(data), "\ttaskctl\tshow\t1\n") {
+	if !strings.Contains(string(data), "\ttaskctl\tlint\t0\tуспех\n") ||
+		!strings.Contains(string(data), "\ttaskctl\tshow\t1\tотворот\n") {
 		t.Fatalf("строки журнала: %q", data)
 	}
 

@@ -206,7 +206,7 @@ func TestArmedChainStartsByMerges(t *testing.T) {
 		t.Fatalf("старт не снял взвод: %q", got)
 	}
 	log, _ := os.ReadFile(filepath.Join(root, ".devkit", "log"))
-	if !strings.Contains(string(log), "\ttaskctl\twake XR-003 взвод\t0\n") {
+	if !strings.Contains(string(log), "\ttaskctl\twake XR-003 взвод\t0\tуспех\n") {
 		t.Fatalf("подъёма по взводу нет в .devkit/log:\n%s", log)
 	}
 	// Второй уровень: XR-004 ждала XR-003 и стартует по её слиянию.

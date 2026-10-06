@@ -526,11 +526,20 @@ func snapUsagePanel(q *quotaSpec, now time.Time) (snapshot, error) {
 	// Путь клиента разрешается здесь, в процессе съёмщика, и уезжает в tmux
 	// абсолютом. Сессию поднимает логин-оболочка, её профиль ставит свои префиксы
 	// PATH вперёд всего остального, и клиент по имени доставался не тот, которого
-	// выбрал съёмщик (DK-1307): профиль не участвует в выборе клиента.
+	// выбрал съёмщик (DK-1307): профиль не участвует в выборе клиента. LookPath
+	// с относительной компонентой PATH возвращает относительный путь с ErrDot, а
+	// сессия стартует с каталогом «-c» отличным от cwd съёмщика: относительный
+	// клиент там не находился бы, поэтому ErrDot пропускается, а абсолют
+	// достраивается здесь же.
 	client, err := exec.LookPath("claude")
-	if err != nil {
+	if err != nil && !errors.Is(err, exec.ErrDot) {
 		return snapshot{}, fmt.Errorf("claude в PATH нет, снимать панель /usage нечем; снимок пишется и руками: %s", path)
 	}
+	absClient, err := filepath.Abs(client)
+	if err != nil {
+		return snapshot{}, fmt.Errorf("клиент %s не готов к съёму: путь не приведён к абсолютному (%v), снимок не тронут", client, err)
+	}
+	client = absClient
 	reapUsageOrphans(tmuxRun, ownerAlive)
 	session := fmt.Sprintf("agentctl-usage-%d", os.Getpid())
 	args := []string{"new-session", "-d", "-s", session, "-x", strconv.Itoa(usagePaneCols), "-y", strconv.Itoa(usagePaneRows)}
@@ -857,8 +866,6 @@ func panelNoBreakdown(pane string) string {
 	}
 	return ""
 }
-
-
 
 func capturePane(session string) (string, error) {
 	return tmuxRun("capture-pane", "-p", "-t", session)

@@ -90,6 +90,59 @@ func TestSnapUsagePanelRaisesClientPath(t *testing.T) {
 	}
 }
 
+// TestSnapUsagePanelRaisesClientPathRelative: LookPath с относительной
+// компонентой PATH возвращает относительный путь, а сессия стартует с каталогом
+// «-c» отличным от cwd съёмщика, и относительный клиент там не находился бы.
+// Подложный claude лежит в подкаталоге временного каталога, PATH начинается
+// относительной компонентой, cwd теста стоит на родителе, а подложный tmux
+// прописан абсолютной компонентой следом: довод подъёма обязан выйти абсолютом.
+func TestSnapUsagePanelRaisesClientPathRelative(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raise := filepath.Join(t.TempDir(), "raise")
+	script := "#!/bin/sh\nif [ \"$1\" = new-session ]; then printf '%s\\n' \"$*\" >" + raise + "; exit 1; fi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(root, "bin", "claude"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	absBin := filepath.Join(root, "absbin")
+	if err := os.Mkdir(absBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(absBin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", "bin"+string(os.PathListSeparator)+absBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	home := t.TempDir()
+	q := specAt(t, filepath.Join(home, ".devkit", "quota", "claude-code.local"))
+	q.Home = home
+	// Каталог теста меняется уже после specAt: профили ищутся от repoRoot, а тот
+	// стоит на cwd пакета, и временный каталог сбил бы поиск до старта.
+	t.Chdir(root)
+
+	_, snapErr := snapUsagePanel(q, testNow)
+	raw, err := os.ReadFile(raise)
+	if err != nil {
+		t.Fatalf("доводы подъёма не записались, отказ съёмщика %q: %v", snapErr, err)
+	}
+	if snapErr == nil {
+		t.Fatal("стенд оборвал подъём, а съёмщик отказа не вернул")
+	}
+	args := strings.Fields(strings.TrimSpace(string(raw)))
+	if len(args) == 0 {
+		t.Fatal("доводы подъёма пусты")
+	}
+	got := args[len(args)-1]
+	if !filepath.IsAbs(got) {
+		t.Fatalf("клиент поднят как %q: путь относителен, а сессия стартует с каталогом «-c» отличным от cwd съёмщика, клиента там нет", got)
+	}
+	if want := filepath.Join(root, "bin", "claude"); got != want {
+		t.Fatalf("клиент поднят как %q вместо %q: относительная компонента PATH увела выбор мимо подложного bin", got, want)
+	}
+}
+
 // clientdirCheck это та же проверка каталога, что в internal/clientdir, своими
 // словами: стенд обязан судить о каталоге сам, иначе правка и её мерка
 // съезжали бы вместе.

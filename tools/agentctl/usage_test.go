@@ -287,7 +287,6 @@ func TestPaneBlocker(t *testing.T) {
 	}
 }
 
-
 // TestPanelWaiter: панель приезжает не одним кадром, и первый успешный разбор
 // это ещё не повод писать снимок. Ждём не секунды, а слово самой панели.
 func TestPanelWaiter(t *testing.T) {

@@ -94,3 +94,75 @@ func TestLintMainAheadSilentWithoutOrigin(t *testing.T) {
 		}
 	}
 }
+
+// TestLintMainAheadSilentOnCorpNestedBoard: чистая доска боковой директории
+// контура (<проект>/docs/TASKS.md с привязкой tracker.local) впереди origin
+// находки не даёт, как и домашняя (DK-796). Привязка лежит в базе, а в
+// коммит впереди origin идёт одна доска.
+func TestLintMainAheadSilentOnCorpNestedBoard(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	proj := filepath.Join(root, "authn")
+	if err := os.MkdirAll(filepath.Join(proj, "docs", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(proj, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "docs", "TASKS.md"), []byte("# доска\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, ".devkit", "tracker.local"), []byte("repo = .\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", ".")
+	gitOut(t, root, "commit", "-q", "-m", "corp: обвязка authn")
+	bareOrigin(t, root)
+	if err := os.WriteFile(filepath.Join(proj, "docs", "TASKS.md"), []byte("# доска\nход\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", ".")
+	gitOut(t, root, "commit", "-q", "-m", "chore(authn): доска проекта")
+
+	finds, err := cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range finds {
+		if strings.Contains(f, "main впереди") {
+			t.Fatalf("доска подкаталога контура не должна давать находку: %q", f)
+		}
+	}
+}
+
+// TestLintMainAheadCountsNestedStandBoard: вложенный docs/TASKS.md без привязки
+// (стенд внутри обычного проекта) остаётся кодом и находку даёт.
+func TestLintMainAheadCountsNestedStandBoard(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	bareOrigin(t, root)
+	stand := filepath.Join(root, "tools", "obeycheck", "testdata", "project", "docs")
+	if err := os.MkdirAll(stand, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stand, "TASKS.md"), []byte("# стенд\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", ".")
+	gitOut(t, root, "commit", "-q", "-m", "правка стенда с доской")
+
+	finds, err := cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found string
+	for _, f := range finds {
+		if strings.Contains(f, "main впереди") {
+			found = f
+			break
+		}
+	}
+	if found == "" {
+		t.Fatal("правка стенда с доской должна давать находку как код")
+	}
+}

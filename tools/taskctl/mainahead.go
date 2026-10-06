@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -48,7 +51,7 @@ func mainAheadFinds(root string) []string {
 		if err != nil {
 			continue
 		}
-		if boardOnlyFiles(files) {
+		if boardOnlyFiles(root, files) {
 			continue
 		}
 		shas = append(shas, sha)
@@ -67,18 +70,46 @@ func mainAheadFinds(root string) []string {
 
 // boardOnlyFiles отвечает, что все файлы в списке это доска (docs/TASKS.md,
 // docs/TASKS-archive.md, docs/tasks/). Тот же критерий, что boardOnly в
-// tools/shipctl/ops.go: taskctl и shipctl это разные go-модули, а
-// классификатор на три строки не стоит выносить в общий пакет ради одного
-// вызова с каждой стороны.
-func boardOnlyFiles(files string) bool {
+// tools/shipctl: taskctl и shipctl это разные go-модули, а классификатор на три
+// строки не стоит выносить в общий пакет ради одного вызова с каждой стороны.
+// В корп-контуре боковые директории лежат подкаталогами репозитория, и корень
+// доски ищется подъёмом от файла, когда у корня есть привязка tracker.local
+// (DK-796).
+func boardOnlyFiles(root, files string) bool {
 	for _, f := range strings.Split(files, "\n") {
 		f = strings.TrimSpace(f)
 		if f == "" {
 			continue
 		}
-		if f != "docs/TASKS.md" && f != "docs/TASKS-archive.md" && !strings.HasPrefix(f, "docs/tasks/") {
+		if boardRel(f) {
+			continue
+		}
+		if root == "" || !corpBoardRel(root, f) {
 			return false
 		}
 	}
 	return true
+}
+
+func boardRel(f string) bool {
+	return f == "docs/TASKS.md" || f == "docs/TASKS-archive.md" || strings.HasPrefix(f, "docs/tasks/")
+}
+
+func corpBoardRel(root, f string) bool {
+	dir := path.Dir(f)
+	for dir != "." && dir != "/" && dir != "" {
+		abs := filepath.Join(root, filepath.FromSlash(dir))
+		if _, err := os.Stat(filepath.Join(abs, "docs", "TASKS.md")); err == nil {
+			if _, err := os.Stat(filepath.Join(abs, ".devkit", "tracker.local")); err != nil {
+				return false
+			}
+			return boardRel(strings.TrimPrefix(f, dir+"/"))
+		}
+		parent := path.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
+	return false
 }

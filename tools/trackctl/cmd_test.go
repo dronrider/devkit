@@ -265,7 +265,7 @@ func TestLogRunWritesLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	line := strings.TrimSpace(string(data))
-	if !strings.Contains(line, "\ttrackctl\ttake\t0") {
+	if !strings.Contains(line, "\ttrackctl\ttake\t0\tуспех") {
 		t.Fatalf("строка журнала: %q", line)
 	}
 }

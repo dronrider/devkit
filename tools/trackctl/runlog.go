@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 // Стартовая директория и подкоманда для журнала, выставляет main до разбора.
@@ -31,5 +33,5 @@ func logRun(code int) {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s\ttrackctl\t%s\t%d\n", time.Now().Format("2006-01-02T15:04:05"), logCmd, code)
+	fmt.Fprintf(f, "%s\ttrackctl\t%s\t%d\t%s\n", time.Now().Format("2006-01-02T15:04:05"), logCmd, code, taskhead.ExitClass(code))
 }

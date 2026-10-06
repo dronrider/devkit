@@ -119,8 +119,8 @@ func spentHours(d time.Duration) string {
 }
 
 // runTimes собирает отметки журнала запусков боковой директории. Строка журнала
-// это «время \t утилита \t команда \t код», всё прочее пропускается, включая
-// собственные записи ворклогов (у них колонок больше).
+// это «время \t утилита \t команда \t код \t разряд», всё прочее пропускается,
+// включая собственные записи ворклогов (у них колонок больше).
 func runTimes(root string) ([]time.Time, error) {
 	f, err := os.Open(filepath.Join(root, ".devkit", "log"))
 	if err != nil {
@@ -134,7 +134,7 @@ func runTimes(root string) ([]time.Time, error) {
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		parts := strings.Split(sc.Text(), "\t")
-		if len(parts) != 4 {
+		if len(parts) != 4 && len(parts) != 5 {
 			continue
 		}
 		ts, err := time.ParseInLocation(stampLayout, parts[0], time.Local)

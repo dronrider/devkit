@@ -124,8 +124,8 @@
 
   devkitctl stats [--context] [-C dir]
       сводка по журналу запусков .devkit/log: частота команд (утилита, команда),
-      доля ошибок, отсортировано по частоте убыванием, в конце итоговая строка
-      по всему журналу; битые строки молча пропускаются.
+      разбивка штатного отворота и поломки, отсортировано по частоте убыванием,
+      в конце итоговая строка по всему журналу; битые строки молча пропускаются.
       --context берёт второй источник, журналы сессий харнеса
       (~/.claude/projects/<слепок пути проекта>/*.jsonl), и печатает, куда ушёл
       объём: старт против истории, перезаписи префикса с их ценой, топ тулов по
@@ -956,6 +956,17 @@ def check_gowork(root, deploy, test):
     return findings
 
 
+def exit_class(code):
+    """Разряд кода выхода для строки журнала: успех, штатный отворот либо
+    поломка. Топ отказов по разряду отделяет нормальные ответы ворот и
+    ожиданий от того, что чинить."""
+    if code == 0:
+        return "успех"
+    if code == 1 or code == 3:
+        return "отворот"
+    return "поломка"
+
+
 def log_run(root, cmd, code):
     # Журнал запусков, общий с tools/taskctl/shipctl/regcheck: статистика, какие
     # команды реально гоняются и как часто падают. Только там, где есть
@@ -965,8 +976,9 @@ def log_run(root, cmd, code):
         return
     try:
         with (d / "log").open("a", encoding="utf-8") as f:
-            f.write("%s\tdevkitctl\t%s\t%d\n"
-                    % (datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), cmd, code))
+            f.write("%s\tdevkitctl\t%s\t%d\t%s\n"
+                    % (datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), cmd, code,
+                       exit_class(code)))
     except OSError:
         pass
 
@@ -3389,11 +3401,11 @@ def stats(start, ctx=False):
         return 2
 
     runs = {}
-    total_runs, total_errors = 0, 0
+    total_runs, total_refuse, total_break = 0, 0, 0
 
     for ln in log_file.read_text(encoding="utf-8", errors="replace").splitlines():
         parts = ln.split('\t')
-        if len(parts) != 4:
+        if len(parts) not in (4, 5):
             continue
         try:
             code = int(parts[3])
@@ -3403,15 +3415,23 @@ def stats(start, ctx=False):
         tool = parts[1]
         cmd = parts[2]
         key = (tool, cmd)
+        if len(parts) == 5 and parts[4] in ("успех", "отворот", "поломка"):
+            klass = parts[4]
+        else:
+            klass = exit_class(code)
 
         if key not in runs:
-            runs[key] = [0, 0]
+            runs[key] = [0, 0, 0]
         runs[key][0] += 1
-        if code != 0:
+        if klass == "отворот":
             runs[key][1] += 1
+        elif klass == "поломка":
+            runs[key][2] += 1
         total_runs += 1
-        if code != 0:
-            total_errors += 1
+        if klass == "отворот":
+            total_refuse += 1
+        elif klass == "поломка":
+            total_break += 1
 
     if total_runs == 0:
         sys.stderr.write("журнал пуст: %s\n" % RUN_LOG)
@@ -3420,13 +3440,15 @@ def stats(start, ctx=False):
     sorted_runs = sorted(runs.items(), key=lambda x: x[1][0], reverse=True)
 
     max_len = max(len(f"{t} {c}") for (t, c), _ in sorted_runs)
-    for (tool, cmd), (count, errors) in sorted_runs:
+    for (tool, cmd), (count, refuse, brk) in sorted_runs:
         key_str = f"{tool} {cmd}"
-        error_pct = round(100 * errors / count)
-        print(f"{key_str:<{max_len}}  {count:>3}   ошибок {errors} ({error_pct}%)")
+        r_pct = round(100 * refuse / count)
+        b_pct = round(100 * brk / count)
+        print(f"{key_str:<{max_len}}  {count:>3}   отворот {refuse} ({r_pct}%), поломка {brk} ({b_pct}%)")
 
-    total_pct = round(100 * total_errors / total_runs)
-    print(f"{'итого':<{max_len}}  {total_runs:>3}   ошибок {total_errors} ({total_pct}%)")
+    r_pct = round(100 * total_refuse / total_runs)
+    b_pct = round(100 * total_break / total_runs)
+    print(f"{'итого':<{max_len}}  {total_runs:>3}   отворот {total_refuse} ({r_pct}%), поломка {total_break} ({b_pct}%)")
 
     return 0
 

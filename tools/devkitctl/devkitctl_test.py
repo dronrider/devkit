@@ -19,13 +19,14 @@ from testenv import (BINARY_STUB, BREW_STUB, GO_STUB, SandboxCase, build, execut
 
 MARKER = re.compile(r"^<!-- devkit:generated body=[0-9a-f]{12} -->$")
 
-LOG = ("2026-07-29T01:02:41\tshipctl\tmerge\t0\n"
-       "2026-07-29T01:02:41\tshipctl\tmerge\t0\n"
-       "2026-07-29T01:02:40\ttaskctl\tmove\t0\n"
-       "2026-07-29T01:02:40\ttaskctl\tmove\t0\n"
-       "2026-07-29T01:02:40\ttaskctl\tmove\t0\n"
-       "2026-07-29T01:02:40\ttaskctl\tmove\t1\n"
-       "2026-07-29T01:02:41\tregcheck\trun\t1\n"
+LOG = ("2026-07-29T01:02:41\tshipctl\tmerge\t0\tуспех\n"
+       "2026-07-29T01:02:41\tshipctl\tmerge\t0\tуспех\n"
+       "2026-07-29T01:02:40\ttaskctl\tmove\t0\tуспех\n"
+       "2026-07-29T01:02:40\ttaskctl\tmove\t0\tуспех\n"
+       "2026-07-29T01:02:40\ttaskctl\tmove\t0\tуспех\n"
+       "2026-07-29T01:02:40\ttaskctl\tmove\t1\tотворот\n"
+       "2026-07-29T01:02:41\tregcheck\trun\t1\tотворот\n"
+       "2026-07-29T01:02:41\tregcheck\trun\t2\tполомка\n"
        "2026-07-29T01:02:41\tbroken\tline\tbroken\n"
        "2026-07-29T01:02:41\tbroken\tcode\tbad\n")
 
@@ -2028,7 +2029,28 @@ class StatsTest(SandboxCase):
 
     def test_error_share(self):
         line = [ln for ln in self.out.split("\n") if "taskctl move" in ln][0]
-        self.assertIn("ошибок 1 (25%)", line, "taskctl move должно иметь 1 ошибку (25%)")
+        self.assertIn("отворот 1 (25%)", line, "taskctl move должно иметь 1 отворот (25%)")
+        self.assertIn("поломка 0 (0%)", line, "у taskctl move поломок нет")
+
+    def test_class_split(self):
+        # Разряд кода выхода делит штатный отворот и поломку: regcheck несёт
+        # оба, и в сводке они стоят раздельно, а не одной кучкой «ошибок».
+        line = [ln for ln in self.out.split("\n") if "regcheck" in ln][0]
+        self.assertIn("отворот 1 (50%)", line, "regcheck должно иметь 1 отворот (50%)")
+        self.assertIn("поломка 1 (50%)", line, "regcheck должно иметь 1 поломку (50%)")
+
+    def test_old_log_lines_derive_class(self):
+        # Строки старого формата без разряда читаются по коду выхода.
+        old = self.box.root / "oldlog"
+        write(old / ".devkit" / "log",
+              "2026-07-29T01:02:40\ttaskctl\tmove\t1\n"
+              "2026-07-29T01:02:40\ttaskctl\tmove\t2\n"
+              "2026-07-29T01:02:40\ttaskctl\tmove\t0\n")
+        rc, out = self.box.dkctl_run("stats", "-C", str(old))
+        self.assertEqual(rc, 0, "stats по старому журналу упал: %s" % out)
+        line = [ln for ln in out.split("\n") if "taskctl move" in ln][0]
+        self.assertIn("отворот 1 (33%)", line, "код 1 из старой строки это отворот")
+        self.assertIn("поломка 1 (33%)", line, "код 2 из старой строки это поломка")
 
     def test_broken_lines_are_skipped(self):
         lines = [ln for ln in self.out.split("\n") if ln and "итого" not in ln]

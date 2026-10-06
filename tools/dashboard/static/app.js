@@ -1641,14 +1641,39 @@ function numWord(n) {
 // «что будет, если не выбирать», и у задачи Check ответ свой (её вели своей
 // подпиской). Всё, что ушло со строки (даты сброса, возраст снимка, признак
 // умолчания), осталось подсказкой по наведению: место оно не занимает.
+// harnessRowPlan ставит на полосу подписки с пакетом кредитов процент с темпом
+// и траты окна: два числа, как у процентов прочих подписок, только второе не
+// процент окна, а потраченное кредитами.
+function harnessRowPlan(row, said, p) {
+  const one = el("span", "hq");
+  one.append(el("em", "", "подписка"));
+  one.append(el("b", "", p.pct_text || (p.pct.toFixed(3) + "%")));
+  row.append(one);
+  said.push("подписка " + (p.pct_text || p.pct.toFixed(3) + "%") +
+    (p.tempo ? ", темп " + p.tempo : ""));
+  const two = el("span", "hq");
+  two.append(el("em", "", "за " + (p.window || "5ч")));
+  two.append(el("b", "", p.spent_text || fmtCred(p.spent_5h)));
+  row.append(two);
+  said.push("за " + (p.window || "5ч") + " " + (p.spent_text || fmtCred(p.spent_5h)) +
+    ", осталось " + (p.pair_text || fmtCred(p.left)));
+}
+
 function harnessRow(h, pin) {
   const own = pin ? h.name === pin : Boolean(h.default);
   const row = el("button", "hrow" + (own ? " on" : ""));
   row.type = "button";
   row.append(el("b", "hname", h.name));
-  const snap = quotaEvery(quotaView).find((q) => q.name === h.name) || null;
-  const buckets = snap ? quotaShowBuckets(snap).slice(0, 2) : [];
   const said = [h.name + (h.default ? ", подписка по умолчанию" : "")];
+  const snap = quotaEvery(quotaView).find((q) => q.name === h.name) || null;
+  if (snap && snap.plan) {
+    harnessRowPlan(row, said, snap.plan);
+    if (snap.age) said.push("снимок " + snap.age + " назад");
+    else if (snap.stale) said.push(snap.note || "возраст снимка неизвестен");
+    withTip(row, said.join("; "));
+    return row;
+  }
+  const buckets = snap ? quotaShowBuckets(snap).slice(0, 2) : [];
   for (const b of buckets) {
     const one = el("span", "hq");
     if (b.is_rub) {
@@ -17289,11 +17314,91 @@ function rubWord(name) {
 function quotaShowBuckets(h) {
   const all = (h && h.buckets) || [];
   const rub = all.filter((b) => b.is_rub);
-  return rub.length ? rub : all;
+  if (rub.length) return rub;
+  // Кредитные строки пакета Token Plan расходуются показом плана: сырыми они
+  // читались бы трёмя голыми числами без процента и темпа.
+  const plain = all.filter((b) => !b.is_cred);
+  return plain.length ? plain : all;
+}
+
+// fmtCred сжимает число кредитов до порядка B и M: лимит пакета живёт в
+// миллиардах, траты окна в миллионах, и полные числа в колонку шириной с
+// ладонь не влезали (макет DK-1304). Порядок и есть подпись числа.
+function fmtCred(n) {
+  if (n >= 1e9) return Math.round(n / 1e8) / 10 + "B";
+  if (n >= 1e6) return Math.round(n / 1e5) / 10 + "M";
+  return String(n);
+}
+
+// tempoClass даёт точке темпа цвет и класс макета: медленный расход синий,
+// ровный зелёный, быстрый жёлтый. Цвет говорит то же, что слово, и виден с
+// угла; резкий перерасход держит красный в запасе.
+function tempoClass(word) {
+  if (word === "медленно") return "slow";
+  if (word === "быстро") return "fast";
+  return "ok";
+}
+
+// meterClass даёт заливке градусника цвет по проценту: до семидесяти процентов
+// обычный, дальше жёлтый, за девяносто красный. Границы макета DK-1304.
+function meterClass(pct) {
+  if (pct > 90) return "d";
+  if (pct > 70) return "w";
+  return "";
+}
+
+// planRows рисует показ пакета кредитов двумя строками макета A: в шапке имя
+// «Token Plan», первая строка несёт траты окна и остаток парой «2.3B/5.0B»,
+// вторая процент с тремя знаками, градусник и слово темпа с цветной точкой.
+function planRows(h) {
+  const p = h.plan;
+  const out = [el("h4", "tp-name", "Token Plan")];
+  const tp = el("div", "tp tpA");
+  const row1 = el("div", "tp-row");
+  const left1 = el("span", "tp-left");
+  left1.append(el("span", "k", "за " + (p.window || "5ч")));
+  left1.append(el("b", "", p.spent_text || fmtCred(p.spent_5h)));
+  row1.append(left1);
+  const right1 = el("span", "tp-right");
+  right1.append(el("span", "k", "осталось"));
+  const pair = p.pair_text || (fmtCred(p.left) + "/" + fmtCred(p.limit || p.left));
+  const pairEl = el("b", "", pair);
+  pairEl.title = "остаток " + p.left + " из лимита " + (p.limit || p.left) + " кредитов";
+  right1.append(pairEl);
+  row1.append(right1);
+  tp.append(row1);
+  const row2 = el("div", "tp-row");
+  row2.append(el("span", "tp-left", el("b", "", p.pct_text || (p.pct.toFixed(3) + "%"))));
+  const meter = el("span", "meter");
+  const fill = el("i", meterClass(p.pct));
+  fill.style.width = Math.max(0, Math.min(100, p.pct)) + "%";
+  meter.append(fill);
+  row2.append(meter);
+  if (p.tempo) {
+    const pace = el("span", "pace");
+    pace.append(el("span", "dot " + tempoClass(p.tempo)));
+    pace.append(el("span", "k", "темп:"));
+    pace.append(el("span", "w", p.tempo));
+    pace.title = "скорость последних часов против ровного расхода до сброса";
+    row2.append(pace);
+  }
+  tp.append(row2);
+  out.push(tp);
+  // Чего-то из чисел в снимке нет, и это названо словами: молчаливое поле
+  // читалось бы нулём, а ноль у остатка это «лимит исчерпан».
+  if (p.note) out.push(el("div", "qnote", p.note));
+  return out;
 }
 
 function quotaRow(b) {
   const row = el("div", "qrow" + (b.expired ? " expired" : ""));
+  if (b.is_cred) {
+    const name = el("em", "", bucketWord(b.name));
+    name.title = b.name;
+    row.append(name);
+    row.append(el("b", "", fmtCred(b.cred || 0) + (b.window ? " за " + b.window : "")));
+    return row;
+  }
   if (b.is_rub) {
     // Рублёвая строка провайдера с оплатой с баланса: сумма деньгами, без
     // градусника и даты сброса, окно у суммы своё и не сбрасывается само.
@@ -17406,7 +17511,11 @@ function quotaNodes(view) {
       out.push(el("div", "qnote stale", h.note || "снимка нет: остаток неизвестен"));
       continue;
     }
-    for (const b of quotaShowBuckets(h)) out.push(quotaRow(b));
+    if (h.plan) {
+      out.push(...planRows(h));
+    } else {
+      for (const b of quotaShowBuckets(h)) out.push(quotaRow(b));
+    }
     // Возраст снимка виден цветом, а не словом «протух»: слово ничего не
     // говорило о том, насколько всё плохо, и стояло почти всегда (замечание 21).
     const note = el("div", "qnote");

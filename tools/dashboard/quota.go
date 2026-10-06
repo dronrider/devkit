@@ -70,6 +70,14 @@ type QuotaBucket struct {
 	// встанет в тот же показ без правки экрана.
 	Rub   int  `json:"rub,omitempty"`
 	IsRub bool `json:"is_rub,omitempty"`
+	// Cred это число кредитов подписки, IsCred признак кредитной строки, Window
+	// размер её окна трат («5ч», «2ч 15м»), когда история снимков короче
+	// полного окна. Разбор смотрит на значение, как у рублёвой: имена
+	// window5h_cred, balance_cred и spent_cred это договорённость типа
+	// провайдера с пакетом кредитов, и следующий такой встанет без правки.
+	Cred   int64  `json:"cred,omitempty"`
+	IsCred bool   `json:"is_cred,omitempty"`
+	Window string `json:"window,omitempty"`
 }
 
 // QuotaHarness это одна подписка. Age идёт словами, а не секундами: возраст
@@ -87,6 +95,10 @@ type QuotaHarness struct {
 	Note    string        `json:"note,omitempty"`
 	Buckets []QuotaBucket `json:"buckets"`
 	Warns   []string      `json:"warns,omitempty"`
+	// Plan это показ пакета кредитов Token Plan двумя строками блока: траты
+	// окна с остатком и процент с темпом. Он собирается из строк «N кред»
+	// снимка и стоит только у провайдеров такого типа.
+	Plan *QuotaPlan `json:"plan,omitempty"`
 }
 
 // QuotaView это ответ ручки. Пустота называется словами полем Note: каталога
@@ -227,6 +239,7 @@ func parseQuotaSnapshot(name, text string, now time.Time, maxAge time.Duration) 
 	if len(h.Buckets) == 0 && h.Note == "" {
 		h.Note = "бакетов в снимке нет"
 	}
+	h.Plan = tokenPlanOf(&h, now)
 	return h
 }
 
@@ -257,7 +270,16 @@ func parseQuotaBucket(name, val string) (QuotaBucket, error) {
 				return QuotaBucket{Name: name, Rub: r, IsRub: true}, nil
 			}
 		}
-		return QuotaBucket{}, fmt.Errorf("жду процент потраченного либо сумму в рублях, вижу %q", val)
+		if cut {
+			fields := strings.Fields(tail)
+			if len(fields) > 0 && fields[0] == "кред" {
+				if c, err := strconv.ParseInt(n, 10, 64); err == nil && c >= 0 {
+					w := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(tail), "кред"))
+					return QuotaBucket{Name: name, Cred: c, IsCred: true, Window: w}, nil
+				}
+			}
+		}
+		return QuotaBucket{}, fmt.Errorf("жду процент потраченного, сумму в рублях либо число кредитов, вижу %q", val)
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(pct))
 	if err != nil || n < 0 || n > 100 {
@@ -274,6 +296,187 @@ func parseQuotaBucket(name, val string) (QuotaBucket, error) {
 	}
 	b.Reset = reset.Format(quotaTimeLayout)
 	return b, nil
+}
+
+// QuotaPlan это показ пакета кредитов (Token Plan) двумя строками блока по
+// макету DK-1304: первая несёт потраченное за окно и остаток из лимита парой
+// «2.3B/5.0B», вторая процент подписки с тремя знаками и слово темпа.
+// Собирается на стороне ответа ручки, а не клиента: слова темпа, границы
+// короткого окна и сжатие чисел до B/M проверяются тестами, а фронт только
+// рисует готовые строки (SpentText, PairText, PctText).
+type QuotaPlan struct {
+	Spent5h   int64   `json:"spent_5h"`
+	Window    string  `json:"window,omitempty"`
+	Left      int64   `json:"left"`
+	Limit     int64   `json:"limit"`
+	Pct       float64 `json:"pct"`
+	Tempo     string  `json:"tempo,omitempty"`
+	Note      string  `json:"note,omitempty"`
+	SpentText string  `json:"spent_text,omitempty"`
+	PairText  string  `json:"pair_text,omitempty"`
+	PctText   string  `json:"pct_text,omitempty"`
+}
+
+// Слова темпа и пороговые доли ровного расхода. Зазор по трети в обе стороны:
+// окно трат короткое и шумное, и без зазора слово дёргалось бы на каждом
+// снимке, а человеку по нему решать, усиливать работу или притормозить.
+const (
+	tempoSlow = "медленно"
+	tempoEven = "в темпе"
+	tempoFast = "быстро"
+	tempoLow  = 0.7
+	tempoHigh = 1.3
+)
+
+// tokenPlanOf собирает показ плана из строк снимка. Ничего кредитного в снимке
+// нет, значит подписка не такого типа и показа у неё не будет. Чего-то из
+// чисел нет, и это называется словами: молчащее поле читалось бы нулём, ноль
+// у остатка это «лимит исчерпан», а у окна «за пять часов не потрачено
+// ничего».
+func tokenPlanOf(h *QuotaHarness, now time.Time) *QuotaPlan {
+	var spent5h, balance, spent, pctBucket *QuotaBucket
+	for i := range h.Buckets {
+		b := &h.Buckets[i]
+		switch b.Name {
+		case "window5h_cred":
+			spent5h = b
+		case "balance_cred":
+			balance = b
+		case "spent_cred":
+			spent = b
+		case "month_plan":
+			pctBucket = b
+		}
+	}
+	if spent5h == nil && balance == nil && spent == nil && pctBucket == nil {
+		return nil
+	}
+	p := &QuotaPlan{}
+	var notes []string
+	if spent5h != nil {
+		p.Spent5h = spent5h.Cred
+		p.Window = spent5h.Window
+	} else {
+		notes = append(notes, "траты окна в снимке нет")
+	}
+	if balance != nil {
+		p.Left = balance.Cred
+	} else {
+		notes = append(notes, "остатка из лимита в снимке нет")
+	}
+	var havePct bool
+	switch {
+	case spent != nil && balance != nil && spent.Cred+balance.Cred > 0:
+		p.Limit = spent.Cred + balance.Cred
+		p.Pct = float64(spent.Cred) / float64(p.Limit) * 100
+		havePct = true
+	case spent != nil && balance != nil:
+		p.Limit = spent.Cred + balance.Cred
+		notes = append(notes, "лимит нулевой, процент не собран")
+	case pctBucket != nil:
+		p.Pct = float64(pctBucket.Used)
+		notes = append(notes, "процент грубый, чисел для пересчёта в снимке нет")
+		havePct = true
+	default:
+		notes = append(notes, "процента в снимке нет")
+	}
+	var reset time.Time
+	if pctBucket != nil && pctBucket.Reset != "" {
+		if t, err := parseQuotaTime(pctBucket.Reset); err == nil {
+			reset = t
+		}
+	}
+	p.Tempo = tempoWord(p, reset, now)
+	p.Note = strings.Join(notes, ", ")
+	if spent5h != nil {
+		p.SpentText = fmtCred(p.Spent5h)
+	}
+	if balance != nil && p.Limit > 0 {
+		p.PairText = credPair(p.Left, p.Limit)
+	}
+	if havePct {
+		p.PctText = strconv.FormatFloat(p.Pct, 'f', 3, 64) + "%"
+	}
+	return p
+}
+
+// fmtCred сжимает число кредитов до порядка с одним знаком: лимит пакета живёт
+// в миллиардах, траты окна в миллионах, и полные числа в колонку шириной с
+// ладонь не влезают (макет DK-1304). Порядок и есть подпись числа: 12.4M,
+// 820.5M, 2.3B. Числа меньше миллиона остаются как есть.
+func fmtCred(n int64) string {
+	switch {
+	case n >= 1e9:
+		return strconv.FormatFloat(float64(n)/1e9, 'f', 1, 64) + "B"
+	case n >= 1e6:
+		return strconv.FormatFloat(float64(n)/1e6, 'f', 1, 64) + "M"
+	default:
+		return strconv.FormatInt(n, 10)
+	}
+}
+
+// credPair пишет пару «осталось/лимит» первой строки макета: 2.3B/5.0B. Оба
+// числа сжимаются одинаково, чтобы порядок читался с одного взгляда.
+func credPair(left, limit int64) string {
+	return fmtCred(left) + "/" + fmtCred(limit)
+}
+
+// tempoWord называет темп трат: скорость последних часов против ровного
+// расхода остатка до сброса. Пустая строка значит, что темп не собран: окно
+// ещё нулевой длины, даты сброса нет или сброс уже прошёл, и слово здесь
+// врало бы увереннее молчания.
+func tempoWord(p *QuotaPlan, reset time.Time, now time.Time) string {
+	span, ok := spanHours(p.Window)
+	if !ok || span <= 0 {
+		return ""
+	}
+	left := reset.Sub(now)
+	if reset.IsZero() || left <= 0 {
+		return ""
+	}
+	recent := float64(p.Spent5h) / span
+	even := float64(p.Left) / (left.Hours())
+	switch {
+	case even <= 0:
+		if recent > 0 {
+			return tempoFast
+		}
+		return tempoSlow
+	case recent/even < tempoLow:
+		return tempoSlow
+	case recent/even > tempoHigh:
+		return tempoFast
+	default:
+		return tempoEven
+	}
+}
+
+// spanHours разбирает подпись размера окна («5ч», «2ч 15м», «45м») в часы.
+func spanHours(s string) (float64, bool) {
+	var hours float64
+	seen := false
+	for _, tok := range strings.Fields(s) {
+		var n float64
+		switch {
+		case strings.HasSuffix(tok, "ч"):
+			v, err := strconv.ParseFloat(strings.TrimSuffix(tok, "ч"), 64)
+			if err != nil || v < 0 {
+				return 0, false
+			}
+			n = v
+		case strings.HasSuffix(tok, "м"):
+			v, err := strconv.ParseFloat(strings.TrimSuffix(tok, "м"), 64)
+			if err != nil || v < 0 {
+				return 0, false
+			}
+			n = v / 60
+		default:
+			return 0, false
+		}
+		hours += n
+		seen = true
+	}
+	return hours, seen
 }
 
 func parseQuotaTime(s string) (time.Time, error) {

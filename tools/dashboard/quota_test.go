@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -673,6 +674,244 @@ func TestQuotaBucketExpired(t *testing.T) {
 	}
 	if !strings.Contains(readFile(t, "static/app.js"), "сброшен ") {
 		t.Fatal("строка показа не подписывает прошедший сброс словом «сброшен»")
+	}
+}
+
+// planNow это «сейчас» тестов плана: 25 дней до конца календарного месяца,
+// чтобы ровный расход остатка считался на длинном плече и не шатался от
+// минуты теста.
+var planNow = time.Date(2026, 10, 6, 18, 30, 0, 0, time.Local)
+
+// planFixture это снимок пакета кредитов: месячный бакет для корректора и три
+// строки чисел, из которых показ собирает свои две строки. Израсходованное и
+// остаток дают процент 42.7096...: грубые 43% бакета рядом видны как(rounded)
+// огрубление ответа эндпоинта.
+const planFixture = "taken = 2026-10-06T18:05\n" +
+	"month_plan = 43% сброс 2026-10-31T23:59\n" +
+	"window5h_cred = 123456789 кред 5ч\n" +
+	"balance_cred = 876543211 кред\n" +
+	"spent_cred = 653456789 кред\n"
+
+// planWith меняет строку окна трат: от неё зависит слово темпа и подпись
+// размера окна.
+func planWith(windowLine string) string {
+	var b strings.Builder
+	for _, ln := range strings.Split(planFixture, "\n") {
+		if strings.HasPrefix(ln, "window5h_cred") {
+			if windowLine == "" {
+				continue
+			}
+			fmt.Fprintln(&b, windowLine)
+			continue
+		}
+		if ln != "" {
+			fmt.Fprintln(&b, ln)
+		}
+	}
+	return b.String()
+}
+
+// TestQuotaPlanSnapshot: снимок пакета кредитов собирается в показ плана из
+// двух строк макета: числа кредитов разбираются строками «N кред», процент
+// пересчитывается из израсходованного и лимита тремя знаками, темп словом.
+// Траты окна в 17 раз быстрее ровного расхода остатка, и слово «быстро» здесь
+// говорит именно об отношении скоростей, а не о величине числа.
+func TestQuotaPlanSnapshot(t *testing.T) {
+	h := parseQuotaSnapshot("cred-plan", planFixture, planNow, quotaconf.Default)
+	if h.Plan == nil {
+		t.Fatalf("показ плана не собрался: %+v", h)
+	}
+	p := h.Plan
+	if p.Spent5h != 123456789 || p.Window != "5ч" {
+		t.Fatalf("траты окна разобраны не так: %+v", p)
+	}
+	if p.Left != 876543211 {
+		t.Fatalf("остаток из лимита разобран не так: %+v", p)
+	}
+	if math.Abs(p.Pct-42.7096) > 0.001 {
+		t.Fatalf("процент подписки %f, жду 42.7096", p.Pct)
+	}
+	if p.Tempo != "быстро" {
+		t.Fatalf("темп %q, жду «быстро»", p.Tempo)
+	}
+	if p.Note != "" {
+		t.Fatalf("у полного снимка собрались слова: %+v", p)
+	}
+	var haveCred bool
+	for _, b := range h.Buckets {
+		if b.Name == "window5h_cred" && b.IsCred && b.Cred == 123456789 && b.Window == "5ч" {
+			haveCred = true
+		}
+	}
+	if !haveCred {
+		t.Fatalf("кредитная строка не разобралась бакетом: %+v", h.Buckets)
+	}
+}
+
+// TestQuotaPlanTempoWords: слово темпа это отношение скорости последних часов
+// к ровному расходу остатка до сброса, и все три слова собираются на одном и
+// том же снимке с разной строкой окна. Короткая история подписывается своим
+// размером, а не прикидывается полным окном.
+func TestQuotaPlanTempoWords(t *testing.T) {
+	cases := []struct {
+		line string
+		word string
+	}{
+		{"window5h_cred = 1000000 кред 5ч", "медленно"},
+		{"window5h_cred = 7300000 кред 5ч", "в темпе"},
+		{"window5h_cred = 123456789 кред 5ч", "быстро"},
+		{"window5h_cred = 3000000 кред 2ч 15м", "в темпе"},
+	}
+	for _, c := range cases {
+		h := parseQuotaSnapshot("cred-plan", planWith(c.line), planNow, quotaconf.Default)
+		if h.Plan == nil || h.Plan.Tempo != c.word {
+			t.Fatalf("строка %q дала темп %q, жду %q", c.line, h.Plan.Tempo, c.word)
+		}
+	}
+	// Первая строка истории даёт окно нулевой длины: траты честный ноль, а
+	// слова темпа на нулевом окне нет, и это молчание честное.
+	h := parseQuotaSnapshot("cred-plan", planWith("window5h_cred = 0 кред 0м"), planNow, quotaconf.Default)
+	if h.Plan.Tempo != "" || h.Plan.Spent5h != 0 || h.Plan.Window != "0м" {
+		t.Fatalf("нулевое окно дало темп %q и траты %d: %+v", h.Plan.Tempo, h.Plan.Spent5h, h.Plan)
+	}
+}
+
+// TestQuotaPlanMissingWords: отсутствующие числа называются словами, а не
+// молчанием: ноль у остатка читался бы «лимит исчерпан», а ноль у окна
+// «ничего не потрачено». Снимок без чисел оставляет грубый процент бакета и
+// подпись, что точного пересчёта не было.
+func TestQuotaPlanMissingWords(t *testing.T) {
+	text := "taken = 2026-10-06T18:05\n" +
+		"month_plan = 43% сброс 2026-10-31T23:59\n"
+	h := parseQuotaSnapshot("cred-plan", text, planNow, quotaconf.Default)
+	if h.Plan == nil {
+		t.Fatalf("показ плана не собрался: %+v", h)
+	}
+	if p := h.Plan; p.Pct != 43 || p.Spent5h != 0 || p.Left != 0 || p.Tempo != "" {
+		t.Fatalf("грубый запас не собрался: %+v", p)
+	}
+	for _, want := range []string{"траты окна в снимке нет", "остатка из лимита в снимке нет", "процент грубый"} {
+		if !strings.Contains(h.Plan.Note, want) {
+			t.Fatalf("в словах плана нет %q: %q", want, h.Plan.Note)
+		}
+	}
+
+	// Прошедший сброс глушит темп: ровный расход до даты в прошлом не
+	// считается, и слово врало бы увереннее молчания.
+	h = parseQuotaSnapshot("cred-plan", planFixture, planNow.Add(26*24*time.Hour), quotaconf.Default)
+	if h.Plan.Tempo != "" {
+		t.Fatalf("после сброса темп остался: %q", h.Plan.Tempo)
+	}
+}
+
+// TestQuotaPlanReachesAPI: показ плана доезжает до ответа ручки целиком:
+// фронт рисует готовые числа, и пропажа любого поля в JSON это тихо пустая
+// строка блока.
+func TestQuotaPlanReachesAPI(t *testing.T) {
+	e := newTestEnv(t)
+	e.s.now = func() time.Time { return planNow }
+	writeQuota(t, e.home, "cred-plan", planFixture)
+	view := getQuota(t, e)
+	if len(view.Harnesses) != 1 || view.Harnesses[0].Plan == nil {
+		t.Fatalf("план не доехал до ответа ручки: %+v", view.Harnesses)
+	}
+	if p := view.Harnesses[0].Plan; p.Tempo != "быстро" || p.Window != "5ч" {
+		t.Fatalf("план доехал не целиком: %+v", p)
+	}
+}
+
+// TestFmtCredOrder: числа сжимаются до порядка с одним знаком, как в макете
+// DK-1304: 12.4M, 820.5M, 2.3B. Числа меньше миллиона остаются как есть, и
+// это тоже часть договора: траты окна в тысячах читаются полными.
+func TestFmtCredOrder(t *testing.T) {
+	cases := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0"},
+		{1234, "1234"},
+		{999999, "999999"},
+		{1000000, "1.0M"},
+		{12400000, "12.4M"},
+		{820500000, "820.5M"},
+		{1000000000, "1.0B"},
+		{2300000000, "2.3B"},
+		{5000000000, "5.0B"},
+	}
+	for _, c := range cases {
+		if got := fmtCred(c.n); got != c.want {
+			t.Fatalf("fmtCred(%d) = %q, жду %q", c.n, got, c.want)
+		}
+	}
+	if got := credPair(2300000000, 5000000000); got != "2.3B/5.0B" {
+		t.Fatalf("credPair = %q, жду «2.3B/5.0B»", got)
+	}
+	if got := credPair(12400000, 820500000); got != "12.4M/820.5M" {
+		t.Fatalf("credPair = %q, жду «12.4M/820.5M»", got)
+	}
+}
+
+// TestQuotaPlanTexts: готовые строки макета собираются на стороне ручки:
+// сжатое трат окна, пара «осталось/лимит» и процент тремя знаками. Фронт их
+// только рисует, и проверка формата живёт здесь, а не в браузере.
+func TestQuotaPlanTexts(t *testing.T) {
+	h := parseQuotaSnapshot("cred-plan", planFixture, planNow, quotaconf.Default)
+	if h.Plan == nil {
+		t.Fatalf("показ плана не собрался: %+v", h)
+	}
+	p := h.Plan
+	if p.SpentText != "123.5M" {
+		t.Fatalf("траты окна сжаты в %q, жду «123.5M»", p.SpentText)
+	}
+	if p.PairText != "876.5M/1.5B" {
+		t.Fatalf("пара «осталось/лимит» %q, жду «876.5M/1.5B»", p.PairText)
+	}
+	if p.PctText != "42.710%" {
+		t.Fatalf("процент %q, жду «42.710%%»", p.PctText)
+	}
+	if p.Limit != 1530000000 {
+		t.Fatalf("лимит %d, жду 1530000000", p.Limit)
+	}
+}
+
+// TestQuotaPlanShortWindow: короткая история сокращает окно трат и подписывает
+// его размером. Разность снимков считается от базового сэмпла на краю окна, и
+// подпись «2ч 15м» честнее, чем прикидка полных пяти часов.
+func TestQuotaPlanShortWindow(t *testing.T) {
+	h := parseQuotaSnapshot("cred-plan", planWith("window5h_cred = 3000000 кред 2ч 15м"), planNow, quotaconf.Default)
+	if h.Plan == nil {
+		t.Fatalf("показ плана не собрался: %+v", h)
+	}
+	if h.Plan.Window != "2ч 15м" {
+		t.Fatalf("окно %q, жду «2ч 15м»", h.Plan.Window)
+	}
+	if h.Plan.SpentText != "3.0M" {
+		t.Fatalf("траты окна сжаты в %q, жду «3.0M»", h.Plan.SpentText)
+	}
+	// Окно нулевой длины: траты честный ноль, размер подписан «0м».
+	h = parseQuotaSnapshot("cred-plan", planWith("window5h_cred = 0 кред 0м"), planNow, quotaconf.Default)
+	if h.Plan.Window != "0м" || h.Plan.SpentText != "0" {
+		t.Fatalf("нулевое окно дало %q и %q: %+v", h.Plan.Window, h.Plan.SpentText, h.Plan)
+	}
+}
+
+// TestQuotaPlanStale: протухший снимок пакета кредитов не молчит: возраст
+// едет словами рядом с показом, и тишина в блоке на штатную работу не похожа.
+func TestQuotaPlanStale(t *testing.T) {
+	h := parseQuotaSnapshot("cred-plan", planFixture, planNow.Add(3*time.Hour), quotaconf.Default)
+	if h.Plan == nil {
+		t.Fatalf("показ плана не собрался: %+v", h)
+	}
+	if !h.Stale {
+		t.Fatalf("трёхчасовой снимок не помечен протухшим: %+v", h)
+	}
+	if h.Age == "" {
+		t.Fatalf("возраст протухшего снимка молчит: %+v", h)
+	}
+	// Показ плана при этом остаётся: протухание это про возраст данных, а не
+	// про пропажу чисел.
+	if h.Plan.PctText == "" || h.Plan.SpentText == "" {
+		t.Fatalf("протухший снимок потерял числа плана: %+v", h.Plan)
 	}
 }
 

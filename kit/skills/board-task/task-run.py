@@ -649,6 +649,35 @@ class Pipeline:
             return ""
         return first.split(mark, 1)[1].split()[0].strip()
 
+    def main_root(self):
+        """Основной чекаут по git-common-dir, каким его считает stage.MainRoot.
+        Вне git и при недоступном git остаётся то, что дали."""
+        try:
+            p = subprocess.run(
+                ["git", "-C", self.proj, "rev-parse", "--path-format=absolute",
+                 "--git-common-dir"],
+                capture_output=True, text=True)
+        except OSError:
+            return self.proj
+        if p.returncode != 0:
+            return self.proj
+        common = (p.stdout or "").strip()
+        if not common:
+            return self.proj
+        main = os.path.dirname(common)
+        return main if main and main != "." else self.proj
+
+    def open_ask(self):
+        """Путь признака ожидания вопроса, если он лежит, иначе пусто. Писатель
+        кладёт его в основной чекаут (taskctl ask, stage.MainRoot), а оболочка
+        живёт в дереве задачи: спрашиваются оба (DK-839)."""
+        name = "task-%s.ask" % self.id.upper()
+        for root in (self.proj, self.main_root()):
+            path = os.path.join(root, ".devkit", "chat", name)
+            if os.path.isfile(path):
+                return path
+        return ""
+
     def check_kind(self, said, sect):
         """Вид приёмки строки в check из пометки taskctl. Пометка идёт с
         отступа, а сама строка доски с решётки таблицы, и слово «вид» из чужого
@@ -1387,6 +1416,9 @@ class Pipeline:
             if after == PARKED:
                 self.stop(0, after, "задача запаркована и ждёт человека", reason="wait_human",
                           loud=not self.replied)
+            if self.open_ask():
+                self.stop(0, after, "вопрос человеку ждёт ответа", reason="wait_human",
+                          loud=not self.replied)
             if self.waits_user(told, after):
                 self.stop(0, after, "задача ждёт приёмки человеком", reason="task_check",
                           loud=not self.replied)
@@ -1503,6 +1535,11 @@ class Pipeline:
         why, reason = "", ""
         if sect == PARKED:
             why, reason = "задача запаркована и ждёт человека", "wait_human"
+        elif self.open_ask():
+            # Признак ожидания вопроса лежит, а строка не в blocked: парковка
+            # ответила отказом, и долбить проходами поверх вопроса нельзя
+            # (DK-839).
+            why, reason = "вопрос человеку ждёт ответа", "wait_human"
         elif self.waits_user(said, sect):
             why, reason = "задача ждёт приёмки человеком", "task_check"
         if why:
@@ -1543,6 +1580,9 @@ class Pipeline:
                 self.stop(0, after, "задача закрыта", loud=False)
             if after == PARKED:
                 self.stop(0, after, "задача запаркована и ждёт человека", reason="wait_human",
+                          loud=not self.replied)
+            if self.open_ask():
+                self.stop(0, after, "вопрос человеку ждёт ответа", reason="wait_human",
                           loud=not self.replied)
             if self.hands_over(told, after):
                 self.hand_over(after)

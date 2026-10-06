@@ -64,9 +64,10 @@ if tail:
 
 # Стаб головы: играет очередную строку сценария и записывает заказ, с которым
 # его подняли. Строки сценария: «работа» ничего не делает, «закрой» уводит
-# строку в архив, «паркуй» в blocked, «падение» выходит ненулевым кодом.
-# Сценарий кончился, значит повторяется последняя строка: голова, которая не
-# двигает строку, так и не двигает её до конца.
+# строку в архив, «паркуй» в blocked, «падение» выходит ненулевым кодом,
+# «вопрос» кладёт признак ожидания .ask. Сценарий кончился, значит повторяется
+# последняя строка: голова, которая не двигает строку, так и не двигает её до
+# конца.
 CLAUDE_STUB = r'''#!/usr/bin/env python3
 import json
 import os
@@ -117,6 +118,13 @@ elif step == "падение":
     sys.exit(1)
 elif step == "ожидание":
     wait_mark("срок")
+elif step == "вопрос":
+    # Признак ожидания вопроса, каким его кладёт taskctl ask. Парковка тут
+    # ответила отказом (строка не в работе), и признак лежит один.
+    d = os.path.join(os.environ["HOME"], ".devkit", "chat")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "task-DK-1.ask"), "w", encoding="utf-8") as f:
+        f.write("-\nзадача DK-1\n")
 '''
 
 
@@ -603,6 +611,46 @@ class TestPasses(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(len(s.orders()), 1)
         self.assertIn("ждёт человека", r.stdout)
+
+    def test_ask_flag_stops_the_pipeline(self):
+        # Предмет DK-839: заказ конвейера перекрывал вопрос человеку. Признак
+        # ожидания .ask лежит во входе, парковка ответила отказом (строка не в
+        # работе), и конец прохода обязан встать стопом, а не заказывать
+        # следующий.
+        s = self.stand(plan="вопрос")
+        r = s.run()
+        self.assertEqual(r.returncode, 0, s.why(r))
+        self.assertEqual(len(s.orders()), 1, s.orders())
+        self.assertIn("вопрос", r.stdout)
+        self.assertTrue([l for l in s.journal() if "вопрос" in l], s.journal())
+
+    def test_ask_flag_stops_before_the_pass(self):
+        # Признак лежит до старта: оболочка не поднимает голову, а встаёт тем
+        # же стопом. Так выглядит второй заход после отказа парковки.
+        s = self.stand(plan="работа")
+        d = os.path.join(s.root, ".devkit", "chat")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "task-DK-1.ask"), "w", encoding="utf-8") as f:
+            f.write("-\n")
+        r = s.run()
+        self.assertEqual(r.returncode, 0, s.why(r))
+        self.assertEqual(s.orders(), [], s.orders())
+        self.assertIn("вопрос", r.stdout)
+
+    def test_lying_reply_beats_the_ask_stop(self):
+        # Реплика человека старше ожидания: ждёт он как раз ответа. Голова,
+        # поднятая по реплике, проходит ход, а конец прохода снова встаёт
+        # стопом: признак ещё лежит.
+        s = self.stand(plan="работа")
+        d = os.path.join(s.root, ".devkit", "chat")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "task-DK-1.ask"), "w", encoding="utf-8") as f:
+            f.write("-\n")
+        s.reply("отвечаю на вопрос")
+        r = s.run("--order", REPLY)
+        self.assertEqual(r.returncode, 0, s.why(r))
+        self.assertEqual(s.orders(), [REPLY], s.orders())
+        self.assertIn("лежит реплика", r.stdout)
 
     def test_user_acceptance_stops_the_pipeline(self):
         s = self.stand(sect="check-user")

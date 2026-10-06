@@ -9958,11 +9958,21 @@ function modelPick(project, st) {
   const same = (m, pick) => m.model === pick.model && (m.harness || "") === (pick.harness || "");
   const opts = (st.models || []).slice();
   for (const pick of [cur, shown]) {
-    if (pick.model && !opts.some((m) => same(m, pick))) {
-      opts.unshift({ model: pick.model, tier: "", harness: pick.harness || "" });
-    }
+    if (!pick.model || opts.some((m) => same(m, pick))) continue;
+    // Строка без квоты приезжает только для имени, которого в лестнице нет:
+    // рядом с подписанной строкой того же имени голая строка плодит два ряда
+    // про одну квоту, и человек снова гадает, чем платится разговор
+    // (замечание 1 ревью DK-1281).
+    if (!pick.harness && opts.some((m) => m.model === pick.model)) continue;
+    opts.unshift({ model: pick.model, tier: "", harness: pick.harness || "" });
   }
-  for (const m of opts) {
+  // Выбор без подписки ложится на первую строку своего имени: владелец по
+  // порядку харнессов у безымянного подъёма и у этой строки один.
+  let chosen = opts.findIndex((m) => same(m, shown));
+  if (chosen < 0 && shown.model && !shown.harness) {
+    chosen = opts.findIndex((m) => m.model === shown.model);
+  }
+  for (const [i, m] of opts.entries()) {
     const o = el("option", "", chatModelName(m.model, m.harness));
     o.value = m.model;
     // Пара едет атрибутами выбранной опции: имя одно у двух подписок, и
@@ -9970,7 +9980,7 @@ function modelPick(project, st) {
     o.dataset.model = m.model;
     o.dataset.harness = m.harness || "";
     if (m.tier) o.title = m.tier + ", " + m.harness;
-    if (same(m, shown)) o.selected = true;
+    if (i === chosen) o.selected = true;
     model.append(o);
   }
   // Пустая лестница видна там, где человек её и ищет: он открывает список и

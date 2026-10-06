@@ -100,6 +100,26 @@ for (const want of ["sonnet (claude-code)", "sonnet (glm-code)"]) {
   if (!names.includes(want)) fail("повтор имени не подписан квотой: " + names.join(", "));
 }
 
+// Старая запись без подписки в выборе: имя в лестнице стоит подписанной
+// строкой, и голого ряда рядом с ней быть не должно, а выбранной оказывается
+// сама подписанная строка: владелец у безымянного подъёма тот же (замечание
+// 1 ревью DK-1281).
+blank.pickHarness = "";
+st = await sandbox.chatState("demo", "blank-7", board);
+panel = sandbox.chatPanel("demo", st);
+await settle();
+box = sel(panel);
+const bare = (box.children || []).map((o) => String(o.textContent || ""));
+if (bare.includes("opus")) {
+  fail("голая строка имени стоит рядом с подписанной: " + bare.join(", "));
+}
+const onName = (box.children || []).find((o) => o.selected);
+if (!onName || String(onName.textContent || "") !== "opus (claude-code)") {
+  fail("выбор без подписки не лёг на подписанную строку имени: " +
+    (onName ? onName.textContent : "нет выбранной строки"));
+}
+blank.pickHarness = "claude-code";
+
 // Выбор повтора запоминается за записью парой, а не одним именем: сессия
 // обязана подняться квотой выбранной строки, и имя без подписки сюда не
 // доезжает. Стенд выбирает вторую строку повтора флагом selected, как это
@@ -165,5 +185,19 @@ if (!said.includes("выбора нет")) {
 if (!String(box.title).includes("лестница ярусов пуста")) {
   fail("причина пустого выбора не стоит подсказкой: " + box.title);
 }
+
+// Имени в лестнице нет вовсе: строка без квоты это честный способ сказать,
+// что владелец у неё один по порядку харнессов, и такая строка остаётся.
+blank.model = "fable";
+blank.pickHarness = "";
+ladder = models;
+note = "";
+st = await sandbox.chatState("demo", "blank-7", board);
+panel = sandbox.chatPanel("demo", st);
+await settle();
+box = sel(panel);
+const stranger = (box.children || []).find((o) => String(o.textContent || "") === "fable");
+if (!stranger) fail("имени вне лестницы нет строкой выбора вовсе");
+if (stranger && !stranger.selected) fail("строка имени вне лестницы не выбрана");
 
 console.log("poc_saymodel: ok");

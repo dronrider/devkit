@@ -374,6 +374,7 @@ func corpRepo(t *testing.T) (root, base string) {
 	gitT(t, root, "config", "user.email", "test@test")
 	gitT(t, root, "config", "user.name", "test")
 	write(t, root, "authn/docs/TASKS.md", "# Доска authn\n")
+	write(t, root, "authn/docs/TASKS-archive.md", "| архив authn |\n")
 	write(t, root, "authn/docs/tasks/AU-001.md", "# AU-001\n")
 	write(t, root, "authn/.devkit/tracker.local", "repo = ../../authn\n")
 	write(t, root, "cap_autotests/docs/TASKS.md", "# Доска cap_autotests\n")
@@ -392,6 +393,7 @@ func corpRepo(t *testing.T) (root, base string) {
 func TestPushCorpNestedBoardPasses(t *testing.T) {
 	root, base := corpRepo(t)
 	write(t, root, "authn/docs/TASKS.md", "# Доска authn\n| AU-001 | ход |\n")
+	write(t, root, "authn/docs/TASKS-archive.md", "| архив authn |\n| AU-001 | сдана |\n")
 	write(t, root, "authn/docs/tasks/AU-001.md", "# AU-001\nход\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "chore(authn): доска проекта с префиксом AU")

@@ -112,6 +112,9 @@ func TestLintMainAheadSilentOnCorpNestedBoard(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(proj, "docs", "TASKS.md"), []byte("# доска\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(proj, "docs", "TASKS-archive.md"), []byte("| архив |\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(proj, ".devkit", "tracker.local"), []byte("repo = .\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +122,9 @@ func TestLintMainAheadSilentOnCorpNestedBoard(t *testing.T) {
 	gitOut(t, root, "commit", "-q", "-m", "corp: обвязка authn")
 	bareOrigin(t, root)
 	if err := os.WriteFile(filepath.Join(proj, "docs", "TASKS.md"), []byte("# доска\nход\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "docs", "TASKS-archive.md"), []byte("| архив |\n| AU-001 | сдана |\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	gitOut(t, root, "add", ".")

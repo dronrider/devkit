@@ -34,21 +34,22 @@
 # привязка .devkit/tracker.local у этого корня, и вложенный docs/TASKS.md
 # стенда внутри обычного проекта за доску не сходит.
 is_board_file() {
-    f=$1
-    case "$f" in
+    orig=$1
+    case "$orig" in
         docs/TASKS.md|docs/TASKS-archive.md|docs/tasks/*) return 0 ;;
     esac
-    d=${f%/*}
-    while [ "$d" != "$f" ] && [ -n "$d" ] && [ "$d" != "." ]; do
+    d=${orig%/*}
+    while [ -n "$d" ] && [ "$d" != "." ]; do
         if [ -f "$d/docs/TASKS.md" ]; then
             [ -f "$d/.devkit/tracker.local" ] || return 1
-            case "$f" in
+            case "$orig" in
                 "$d"/docs/TASKS.md|"$d"/docs/TASKS-archive.md|"$d"/docs/tasks/*) return 0 ;;
             esac
             return 1
         fi
-        f=$d
-        d=${d%/*}
+        next=${d%/*}
+        [ "$next" = "$d" ] && break
+        d=$next
     done
     return 1
 }

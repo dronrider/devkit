@@ -370,6 +370,16 @@ def die(text, code=2):
     sys.exit(code)
 
 
+def exit_class(code):
+    """Разряд кода выхода для строки журнала: успех, штатный отворот либо
+    поломка. Тот же словарь, что у devkitctl.stats."""
+    if code == 0:
+        return "успех"
+    if code == 1 or code == 3:
+        return "отворот"
+    return "поломка"
+
+
 def head_keys(path):
     """Секция [head] профиля харнеса. Значения там строки и массивы строк в
     двойных кавычках, их запись совпадает с JSON, и разбор идёт им."""
@@ -786,7 +796,7 @@ class Pipeline:
             return
         try:
             with open(os.path.join(dirp, "log"), "a", encoding="utf-8") as f:
-                f.write("%s\ttask-run\t%s\t%d\n" % (time.strftime(STAMP), text, code))
+                f.write("%s\ttask-run\t%s\t%d\t%s\n" % (time.strftime(STAMP), text, code, exit_class(code)))
         except OSError as e:
             self.say("строка журнала не записана (%s)" % e)
 

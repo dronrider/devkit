@@ -2068,6 +2068,20 @@ class StatsTest(SandboxCase):
         rc, _ = self.box.dkctl_run("stats", "-C", str(bad))
         self.assertEqual(rc, 2, "stats с одними битыми строками должен вернуть код 2")
 
+    def test_date_window(self):
+        # --from --to режут журнал по дате строки, как у spend.
+        wide = self.box.root / "wide"
+        write(wide / ".devkit" / "log",
+              "2026-07-28T10:00:00\ttaskctl\tmove\t0\tуспех\n"
+              "2026-07-29T10:00:00\ttaskctl\tmove\t0\tуспех\n"
+              "2026-07-30T10:00:00\ttaskctl\tmove\t0\tуспех\n")
+        rc, out = self.box.dkctl_run("stats", "-C", str(wide),
+                                     "--from", "2026-07-29", "--to", "2026-07-29")
+        self.assertEqual(rc, 0, "stats с окном упал: %s" % out)
+        line = [ln for ln in out.split("\n") if "taskctl move" in ln][0]
+        self.assertIn("1", line, "в окне одна строка, а не три")
+        self.assertNotIn("3", line, "строки вне окна не должны попадать")
+
 
 class FreshConnectTest(SandboxCase):
     """Подключение обычного проекта с нуля, как его гоняет CONNECT.md (DK-125):

@@ -122,10 +122,11 @@
       стоит денег и требует сети, поэтому команда отдельная, а не проверка
       доктора; несвежая раскладка на машине это отказ мерить
 
-  devkitctl stats [--context] [-C dir]
+  devkitctl stats [--context] [--from ДАТА] [--to ДАТА] [-C dir]
       сводка по журналу запусков .devkit/log: частота команд (утилита, команда),
       разбивка штатного отворота и поломки, отсортировано по частоте убыванием,
-      в конце итоговая строка по всему журналу; битые строки молча пропускаются.
+      в конце итоговая строка; битые строки молча пропускаются.
+      --from и --to режут журнал по дате строки (ГГГГ-ММ-ДД), как у spend.
       --context берёт второй источник, журналы сессий харнеса
       (~/.claude/projects/<слепок пути проекта>/*.jsonl), и печатает, куда ушёл
       объём: старт против истории, перезаписи префикса с их ценой, топ тулов по
@@ -3388,7 +3389,7 @@ def drain_run(start, all_projects=False):
     return 0
 
 
-def stats(start, ctx=False):
+def stats(start, ctx=False, date_from="", date_to=""):
     if ctx:
         # Журналы сессий харнес кладёт по слепку пути проекта, а сессия живёт в
         # клоне, поэтому тут корень остаётся клоном и в корп-контуре.
@@ -3400,12 +3401,22 @@ def stats(start, ctx=False):
         sys.stderr.write("журнал запусков не найден: %s\n" % RUN_LOG)
         return 2
 
+    def _in_window(ts):
+        day = ts[:10]
+        if date_from and day < date_from:
+            return False
+        if date_to and day > date_to:
+            return False
+        return True
+
     runs = {}
     total_runs, total_refuse, total_break = 0, 0, 0
 
     for ln in log_file.read_text(encoding="utf-8", errors="replace").splitlines():
         parts = ln.split('\t')
         if len(parts) not in (4, 5):
+            continue
+        if not _in_window(parts[0]):
             continue
         try:
             code = int(parts[3])
@@ -3806,6 +3817,10 @@ def main(argv):
     s.add_argument("-C", dest="dir", default=".", help="директория проекта")
     s.add_argument("--context", action="store_true",
                    help="разбивка объёма по журналам сессий вместо журнала запусков")
+    s.add_argument("--from", dest="date_from", default="",
+                   help="дата начала окна (ГГГГ-ММ-ДД), как у spend")
+    s.add_argument("--to", dest="date_to", default="",
+                   help="дата конца окна (ГГГГ-ММ-ДД), как у spend")
     dr = sub.add_parser("drain", help="замер расхода контекста по журналам сессий")
     dr.add_argument("-C", dest="dir", default=".", help="директория проекта")
     dr.add_argument("--all", action="store_true",
@@ -3883,7 +3898,7 @@ def main(argv):
     elif a.cmd == "drain":
         rc = drain_run(a.dir, a.all)
     else:
-        rc = stats(a.dir, a.context)
+        rc = stats(a.dir, a.context, a.date_from, a.date_to)
     # Журнал запусков в корп-контуре лежит там же, где остальные рабочие файлы,
     # то есть в боковой директории: в дереве клона .devkit нет. У build своего
     # -C нет, он собирает чекаут devkit, и запуск ложится в его же журнал.

@@ -682,3 +682,23 @@ func TestReplyOrderIsOneForShellAndCallers(t *testing.T) {
 		t.Fatalf("заказ не держит инвариант границ, статус строки: %q", order)
 	}
 }
+
+// Разряд кода выхода: журнал запусков печатает его, stats по нему делит
+// штатный отворот и поломку.
+func TestExitClass(t *testing.T) {
+	cases := []struct {
+		code int
+		want string
+	}{
+		{CodeRaised, "успех"},
+		{CodeCalled, "отворот"},
+		{CodeBusy, "отворот"},
+		{CodeSetup, "поломка"},
+		{7, "поломка"},
+	}
+	for _, c := range cases {
+		if got := ExitClass(c.code); got != c.want {
+			t.Errorf("ExitClass(%d) = %q, жду %q", c.code, got, c.want)
+		}
+	}
+}

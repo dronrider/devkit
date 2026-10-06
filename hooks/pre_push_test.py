@@ -272,6 +272,39 @@ class TestBoardGateWithShipctl(unittest.TestCase):
         head = self.commit("docs(tasks): DK-001 ход", {"docs/tasks/DK-001.md": "# DK-001\nход\n"})
         self.assertEqual(self.push(head, self.base, CLAUDECODE="1").returncode, 0)
 
+    def test_corp_nested_board_passes(self):
+        """DK-796: боковая директория контура лежит подкаталогом репозитория,
+        доска проекта это <проект>/docs/TASKS.md с привязкой tracker.local.
+        Коммит доски подкаталога проходит без shipctl в PATH."""
+        corp = self.commit("доска authn", {
+            "authn/docs/TASKS.md": "# доска authn\n",
+            "authn/docs/tasks/AU-001.md": "# AU-001\n",
+            "authn/.devkit/tracker.local": "repo = ../../authn\n",
+        })
+        head = self.commit("chore(authn): доска проекта", {
+            "authn/docs/TASKS.md": "# доска authn\nход\n",
+        })
+        self.assertEqual(self.push(head, corp, CLAUDECODE="1").returncode, 0)
+
+    def test_corp_nested_task_file_passes(self):
+        corp = self.commit("файл задачи authn", {
+            "authn/docs/TASKS.md": "# доска authn\n",
+            "authn/docs/tasks/CA-001.md": "# CA-001\n",
+            "authn/.devkit/tracker.local": "repo = ../../authn\n",
+        })
+        head = self.commit("docs(tasks): CA-001 ход", {
+            "authn/docs/tasks/CA-001.md": "# CA-001\nход\n",
+        })
+        self.assertEqual(self.push(head, corp, CLAUDECODE="1").returncode, 0)
+
+    def test_nested_stand_board_still_refused(self):
+        """DK-796: вложенный docs/TASKS.md без привязки корп-контура (стенд
+        внутри обычного проекта) за доску не сходит и отбивается как раньше."""
+        head = self.commit("правка стенда", {
+            "tools/obeycheck/testdata/project/docs/TASKS.md": "# стенд\n",
+        })
+        self.assertEqual(self.push(head, self.base, CLAUDECODE="1").returncode, 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=0)

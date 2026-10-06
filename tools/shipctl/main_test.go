@@ -22,7 +22,7 @@ func TestRunLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("журнал не записан: %v", err)
 	}
-	if !strings.Contains(string(data), "\tshipctl\tstatus\t0\n") {
+	if !strings.Contains(string(data), "\tshipctl\tstatus\t0\tуспех\n") {
 		t.Fatalf("строки журнала: %q", data)
 	}
 

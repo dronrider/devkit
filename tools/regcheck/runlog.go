@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 // logRun дописывает строку о запуске в журнал .devkit/log репозитория, как
@@ -25,5 +27,5 @@ func logRun(startDir string, code int) {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s\tregcheck\trun\t%d\n", time.Now().Format("2006-01-02T15:04:05"), code)
+	fmt.Fprintf(f, "%s\tregcheck\trun\t%d\t%s\n", time.Now().Format("2006-01-02T15:04:05"), code, taskhead.ExitClass(code))
 }

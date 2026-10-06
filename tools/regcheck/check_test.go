@@ -57,7 +57,7 @@ func TestRunLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("журнал не записан: %v", err)
 	}
-	if !strings.Contains(string(data), "\tregcheck\trun\t1\n") {
+	if !strings.Contains(string(data), "\tregcheck\trun\t1\tотворот\n") {
 		t.Fatalf("строки журнала: %q", data)
 	}
 }

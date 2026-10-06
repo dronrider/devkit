@@ -42,6 +42,9 @@ type Harness struct {
 	// собирает выбор модели. Имён тут дашборд не сочиняет, всё приезжает
 	// ответом agentctl.
 	Models []HarnessModel `json:"models,omitempty"`
+	// Chat это модели чата сверх лестницы (ключ chat машинного слоя): те же
+	// строки выбора, но без яруса, и дефолтом они не становятся.
+	Chat []string `json:"chat,omitempty"`
 	// HooksGap это находка agentctl, когда в настройках подписки нет хуков
 	// devkit (DK-1286). Сессия, поднятая на такой подписке, не пишет журнал и идёт
 	// мимо сторожей, поэтому подъём отказывает ей до запуска клиента.
@@ -91,6 +94,7 @@ type agentctlHarnesses struct {
 			Model string `json:"model"`
 			Via   string `json:"via"`
 		} `json:"models"`
+		Chat []string `json:"chat"`
 	} `json:"harnesses"`
 	ExecRotateTokens int      `json:"exec_rotate_tokens"`
 	Note             string   `json:"note"`
@@ -148,6 +152,11 @@ func readHarnesses() HarnessView {
 				hh.Models = append(hh.Models, HarnessModel{Tier: m.Tier, Model: m.Model, Via: m.Via})
 			}
 		}
+		for _, c := range h.Chat {
+			if c != "" {
+				hh.Chat = append(hh.Chat, c)
+			}
+		}
 		view.Harnesses = append(view.Harnesses, hh)
 	}
 	if len(view.Harnesses) == 0 {
@@ -188,6 +197,18 @@ func (h *Harness) tierModel(tier string) string {
 		}
 	}
 	return ""
+}
+
+// hasChat отвечает, названа ли модель в списке чата подписки. Строки этого
+// списка домашние у неё всегда: на чужую подписку они не уезжают, у ярусной
+// ступени для этого есть поле Via, а тут его нет.
+func (h *Harness) hasChat(model string) bool {
+	for _, c := range h.Chat {
+		if c == model {
+			return true
+		}
+	}
+	return false
 }
 
 // pick находит подписку по имени. Второе возвращаемое значение это причина

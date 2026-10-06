@@ -279,3 +279,102 @@ func TestChatModelOptsCollapsesViaPair(t *testing.T) {
 		t.Fatalf("chatHarnessOf(модель-pro) = %+v, жду перваяtest", h)
 	}
 }
+
+// harnessChatFixture это раскладка со списком чата сверх лестницы (DK-1298):
+// у «перваяtest» одна строка сверх лестницы, у «втораяtest» список повторяет её
+// же ступень base и держит ещё одну свою строку.
+const harnessChatFixture = `{
+  "default": "перваяtest",
+  "source": "фикстура",
+  "harnesses": [
+    {"name": "перваяtest", "enabled": true, "default": true, "bin": "клиент-1",
+     "models": [{"tier": "pro", "model": "модель-pro"}],
+     "chat": ["модель-чата"]},
+    {"name": "втораяtest", "enabled": true, "default": false, "bin": "клиент-2",
+     "models": [{"tier": "base", "model": "вторая-base"}],
+     "chat": ["вторая-base", "вторая-чата"]}
+  ]
+}`
+
+// TestChatModelOptsBeyondLadder: модели чата сверх лестницы показываются
+// строками с подпиской-владельцем, яруса у строки нет и дефолтом она не
+// становится (DK-1298). Повтор модели лестнице внутри одной подписки второй
+// строки не даёт, а владелец подъёма и сверка пары ведут по списку чата так
+// же, как по лестнице.
+func TestChatModelOptsBeyondLadder(t *testing.T) {
+	e := newTestEnv(t)
+	writeAgentctlFake(t, e.bin, harnessChatFixture)
+
+	opts := e.s.chatModelOpts()
+	rows := map[string]chatModelOpt{}
+	for _, o := range opts {
+		rows[o.Model+"/"+o.Harness] = o
+	}
+	extra := rows["модель-чата/перваяtest"]
+	if extra.Model == "" || extra.Tier != "" || extra.Harness != "перваяtest" || extra.Default {
+		t.Fatalf("строка сверх лестницы пришла как %+v, жду строку без яруса и без дефолта", extra)
+	}
+	if _, ok := rows["вторая-чата/втораяtest"]; !ok {
+		t.Fatalf("строка чата второйtest потерялась: %+v", opts)
+	}
+	count := 0
+	for _, o := range opts {
+		if o.Model == "вторая-base" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("«вторая-base» в списке %d раз, жду одну строку (лестница и список чата одной подписки): %+v", count, opts)
+	}
+	if o := rows["модель-pro/перваяtest"]; !o.Default {
+		t.Fatalf("дефолт остался на ярусе pro, а строка пришла как %+v", o)
+	}
+
+	// Владелец строки чата это её подписка: и с именем в ключе, и без него.
+	if h := e.s.chatHarnessOf("модель-чата", ""); h == nil || h.Name != "перваяtest" {
+		t.Fatalf("chatHarnessOf(модель-чата) = %+v, жду перваяtest", h)
+	}
+	if h := e.s.chatHarnessOf("модель-чата", "перваяtest"); h == nil || h.Name != "перваяtest" {
+		t.Fatalf("chatHarnessOf(модель-чата, перваяtest) = %+v, жду перваяtest", h)
+	}
+	// Сверка пары пускает строку своего списка и отказывает чужой подписке.
+	if !e.s.chatPairKnown("модель-чата", "перваяtest") {
+		t.Fatalf("пара модель-чата/перваяtest отвергнута, жду пропуск")
+	}
+	if e.s.chatPairKnown("модель-чата", "втораяtest") {
+		t.Fatalf("модель-чата прошла сверку с чужой подпиской втораяtest")
+	}
+}
+
+// Список чата доезжает и до ручки подписок: транспорт сквозной, панель
+// разговора собирает выбор из ответа /api/chats, а экран запуска читает
+// /api/harnesses, и поля у обоих повторяют машинный вид. Ответ разбирается
+// собственным типом теста, а не Harness пакета: на старом коде поля Chat там
+// ещё нет, и краснота regcheck была бы ошибкой сборки, а не честным прогоном.
+func TestHarnessesCarriesChat(t *testing.T) {
+	e := newTestEnv(t)
+	writeAgentctlFake(t, e.bin, harnessChatFixture)
+	resp := doReq(t, e.loggedClient(t), "GET", e.srv.URL+"/api/harnesses", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("список подписок: %d %s", resp.StatusCode, text)
+	}
+	var v struct {
+		Harnesses []struct {
+			Name string   `json:"name"`
+			Chat []string `json:"chat"`
+		} `json:"harnesses"`
+	}
+	if err := json.Unmarshal([]byte(text), &v); err != nil {
+		t.Fatalf("ответ не разобрался (%v): %s", err, text)
+	}
+	if len(v.Harnesses) != 2 {
+		t.Fatalf("подписок %d, жду две: %s", len(v.Harnesses), text)
+	}
+	if got := strings.Join(v.Harnesses[0].Chat, ","); got != "модель-чата" {
+		t.Fatalf("список чата первой подписки %q", got)
+	}
+	if got := strings.Join(v.Harnesses[1].Chat, ","); got != "вторая-base,вторая-чата" {
+		t.Fatalf("список чата второй подписки %q", got)
+	}
+}

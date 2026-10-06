@@ -10019,7 +10019,12 @@ function modelPick(project, st) {
   }
   const why = (st.models || []).find((m) => same(m, shown)) ||
     (st.models || []).find((m) => m.model === shown.model);
-  model.title = why ? shown.model + ": ярус " + why.tier + ", подписка " + why.harness
+  // У моделей сверх лестницы яруса нет, и слово «ярус» с пустым значением в
+  // подсказку не едет.
+  model.title = why
+    ? (why.tier
+      ? shown.model + ": ярус " + why.tier + ", подписка " + why.harness
+      : shown.model + ": сверх лестницы, подписка " + why.harness)
     : (st.modelsNote || "Модель агента");
   const harnessOf = (name) => (((st.models || []).find((m) => m.model === name) || {}).harness) || "";
   const mainHarness = (((st.models || []).find((m) => m.default) || {}).harness) || "";

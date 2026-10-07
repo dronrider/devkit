@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/taskform"
@@ -329,6 +330,11 @@ func cmdShow(root, id string) (string, error) {
 		rel := fmt.Sprintf("tasks/%s.md", id)
 		if _, err := os.Stat(filepath.Join(root, "docs", rel)); err == nil {
 			out = append(out, "файл задачи: docs/"+rel)
+			for _, p := range lldRefs(root, rel) {
+				out = append(out, "дизайн: "+p)
+			}
+		} else if p := linkedDoc(root, row.Link, rel); p != "" {
+			out = append(out, "постановка по ссылке строки: "+p)
 		} else {
 			out = append(out, fmt.Sprintf("файла задачи нет (создаст taskctl file %s)", id))
 		}
@@ -375,6 +381,74 @@ func cmdShow(root, id string) (string, error) {
 		return head + "\n" + strings.TrimRight(string(text), "\n"), nil
 	}
 	return "", fmt.Errorf("%s нет ни на доске, ни в архиве, ни в черновиках", id)
+}
+
+// linkedDoc отвечает путём документа, когда ссылка строки ведёт не в файл
+// задачи, а в другой документ, обычно LLD (RULES.board.md, «Трекинг задач»
+// п. 6): постановка у такой строки есть, и «файла нет» про неё врёт.
+func linkedDoc(root, link, rel string) string {
+	m := linkRe.FindStringSubmatch(link)
+	if m == nil {
+		return ""
+	}
+	target := strings.TrimSpace(m[1])
+	if i := strings.IndexByte(target, '#'); i >= 0 {
+		target = target[:i]
+	}
+	if target == "" || target == rel || strings.HasPrefix(target, "/") || hasDotDotSeg(target) {
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(root, "docs", filepath.FromSlash(target))); err != nil {
+		return ""
+	}
+	return "docs/" + target
+}
+
+// lldRefRe ловит путь в docs/lld как угодно записанный: markdown-ссылкой от
+// docs/ или docs/tasks/ («lld/...», «../lld/...») и прозой в бэктиках
+// («docs/lld/...»), потому что в живых файлах задач встречаются все три
+// написания, а читателю show нужен путь от корня.
+var lldRefRe = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])(lld/[A-Za-z0-9._-]+\.md)`)
+
+// hasDotDotSeg отвечает, есть ли в слэш-пути сегмент «..»: filepath.Join
+// такой путь молча причистит к родителю, и os.Stat уйдёт за пределы docs.
+// Точки внутри имени файла («a..b.md») сегментом «..» не считаются.
+func hasDotDotSeg(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// lldRefs собирает из файла задачи ссылки на дизайн: до сих пор путь к LLD
+// жил только прозой внутри файла, и со строки show его было не достать.
+func lldRefs(root, rel string) []string {
+	data, err := os.ReadFile(filepath.Join(root, "docs", filepath.FromSlash(rel)))
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range lldRefRe.FindAllStringSubmatch(string(data), -1) {
+		p := m[1]
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		// Регулярка сегодня ловит один сегмент после lld/, но отсев держим
+		// отдельным инвариантом: класс символов могут расширить на вложенные
+		// пути, и обход не должен начать пролезать вместе с ним.
+		if hasDotDotSeg(p) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, "docs", filepath.FromSlash(p))); err != nil {
+			continue
+		}
+		out = append(out, "docs/"+p)
+	}
+	return out
 }
 
 // showTimes считает даты строк для одной задачи тем же путём, что и list:

@@ -218,3 +218,139 @@ func TestShowWithDependencies(t *testing.T) {
 		t.Errorf("XR-100 должна быть после XR-101:\n%s", out)
 	}
 }
+
+// regcheck:test-begin
+//
+// Поведение show по ссылке строки и по ссылкам на дизайн из файла задачи.
+// Тесты зовут только cmdShow и собственные фикстуры, чтобы regcheck перенёс
+// их на старый код целиком; юнит hasDotDotSeg стоит вне этого региона.
+func lldBoardSetup(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	tasks := filepath.Join(root, "docs", "tasks")
+	lld := filepath.Join(root, "docs", "lld")
+	for _, dir := range []string{tasks, lld} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	board := `# Тест: доска (префикс XR)
+
+## In progress
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|--------|---|---|------|--------|
+| XR-200 | Дизайн без файла задачи | task | P3 | 5 (0+3+1+0+1) | S | [lld/XR-200.md](lld/XR-200.md) |
+| XR-201 | Задача со ссылками на дизайн | task | P3 | 5 (0+3+1+0+1) | S | [tasks/XR-201.md](tasks/XR-201.md) |
+| XR-202 | Ссылка на несуществующий документ | task | P3 | 5 (0+3+1+0+1) | S | [lld/nope.md](lld/nope.md) |
+
+## Check
+
+Нет.
+
+## Backlog
+
+Нет.
+
+## Blocked
+
+Нет.
+`
+	if err := os.WriteFile(boardPath(root), []byte(board), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	write := func(rel, body string) {
+		if err := os.WriteFile(filepath.Join(root, "docs", filepath.FromSlash(rel)), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("lld/XR-200.md", "# Дизайн XR-200\n")
+	write("lld/XR-210-design.md", "# Дизайн XR-210\n")
+	write("lld/XR-211-design.md", "# Дизайн XR-211\n")
+	write("lld/a..b.md", "# Дизайн с точками в имени\n")
+	write("tasks/XR-201.md", `# XR-201
+
+Разбор в LLD [XR-210](../lld/XR-210-design.md), детали в `+"`docs/lld/XR-211-design.md`"+` и повтор
+ссылки [lld/XR-210-design.md](lld/XR-210-design.md), плюс путь на несуществующий
+`+"`lld/nope.md`"+`, обход `+"`lld/../../RULES.md`"+` и легальные точки
+[lld/a..b.md](lld/a..b.md).
+`)
+	return root
+}
+
+func TestShowResolvesRowLinkToDoc(t *testing.T) {
+	root := lldBoardSetup(t)
+
+	out, err := cmdShow(root, "XR-200")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "постановка по ссылке строки: docs/lld/XR-200.md") {
+		t.Errorf("show не назвал документ по ссылке строки:\n%s", out)
+	}
+	if strings.Contains(out, "файла задачи нет") {
+		t.Errorf("у строки с живой ссылкой не должно быть «файла задачи нет»:\n%s", out)
+	}
+
+	// Ссылка на несуществующий документ разыменовывать нечем: честное
+	// «файла задачи нет», а не пустая строка про постановку.
+	out, err = cmdShow(root, "XR-202")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "файла задачи нет (создаст taskctl file XR-202)") {
+		t.Errorf("мертвая ссылка должна оставить «файла задачи нет»:\n%s", out)
+	}
+}
+
+func TestShowPrintsDesignFromTaskFile(t *testing.T) {
+	root := lldBoardSetup(t)
+
+	out, err := cmdShow(root, "XR-201")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Оба написания даёт один путь от корня, повтор ссылки печатается один
+	// раз, несуществующий путь не печатается.
+	for _, want := range []string{
+		"файл задачи: docs/tasks/XR-201.md",
+		"дизайн: docs/lld/XR-210-design.md",
+		"дизайн: docs/lld/XR-211-design.md",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("в show нет %q:\n%s", want, out)
+		}
+	}
+	if got := strings.Count(out, "дизайн: docs/lld/XR-210-design.md"); got != 1 {
+		t.Errorf("повторная ссылка напечатана %d раз вместо одного:\n%s", got, out)
+	}
+	if strings.Contains(out, "lld/nope.md") {
+		t.Errorf("несуществующий документ не должен печататься:\n%s", out)
+	}
+	// Обход каталога не печатается даже существующим путём, а точки внутри
+	// имени файла легальны и дизайном остаются.
+	if strings.Contains(out, "../..") || strings.Contains(out, "RULES.md") {
+		t.Errorf("обход за пределы docs не должен печататься:\n%s", out)
+	}
+	if !strings.Contains(out, "дизайн: docs/lld/a..b.md") {
+		t.Errorf("легальное имя с точками не напечатано:\n%s", out)
+	}
+}
+
+// regcheck:test-end
+
+func TestHasDotDotSeg(t *testing.T) {
+	for p, want := range map[string]bool{
+		"lld/../../RULES.md": true,
+		"lld/../XR-1.md":     true,
+		"../lld/XR-1.md":     true,
+		"..":                 true,
+		"lld/a..b.md":        false,
+		"lld/..design.md":    false,
+		"lld/XR-1.md":        false,
+	} {
+		if got := hasDotDotSeg(p); got != want {
+			t.Errorf("hasDotDotSeg(%q) = %v, хочу %v", p, got, want)
+		}
+	}
+}

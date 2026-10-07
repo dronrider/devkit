@@ -55,7 +55,7 @@ client = ["claude", "--permission-mode", "auto"]
 model = ["--model", "{model}"]
 session = ["--session-id", "{session}"]
 name = ["--name", "{name}"]
-resume = ["claude", "--resume", "{session}"]
+resume = ["claude", "--resume", "{session}", "--model", "{model}"]
 turn_end = "turn-mark"
 wait_cap = "2h"
 

@@ -19,7 +19,6 @@ import (
 	"github.com/dronrider/devkit/internal/sessions"
 	"github.com/dronrider/devkit/internal/spend"
 	"github.com/dronrider/devkit/internal/stage"
-	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Виды статей.
@@ -442,28 +441,23 @@ func (s *spendItems) list() []*spendItem {
 	return out
 }
 
-// spendStands читает отметки стенда файла задачи: расход прогона кладёт туда
-// сам obeycheck, пока цел его временный дом. Прогон без `--task` следа не
-// оставляет и в свод не входит вовсе.
-func spendStands(root, id string, p spendPeriod) (spend.Usage, int) {
-	path, ok := spendTaskFile(root, id)
-	if !ok {
-		return spend.Usage{}, 0
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return spend.Usage{}, 0
-	}
+// spendStands считает статью «стенд» по журналу запусков стенда. Числа
+// приносит сам obeycheck, пока цел его временный дом, и кладёт строкой на
+// каждый запуск: отметка файла задачи одна на ключ и повтор её заменяет, а
+// журнал хранит все замеры (DK-1309). В свод идут только зачтённые строки
+// (с --task и повторами от spend.MinRepeats): разведка, обрывы и запуск без
+// --task в журнале видны, но статью не растят (контракт DK-913).
+func spendStands(home, id string, p spendPeriod) (spend.Usage, int) {
 	var out spend.Usage
 	runs := 0
-	for _, m := range taskform.StandMarks(string(data)) {
-		if !m.Tokens() {
+	for _, r := range spend.ReadRuns(home) {
+		if r.Task != id || !r.Credited() || r.Usage.Empty() {
 			continue
 		}
-		if p.set && !p.holds(m.When) {
+		if p.set && !p.holds(r.When) {
 			continue
 		}
-		out = out.Add(spend.Usage{Turns: m.Turns, Output: m.Output, Input: m.Input, CacheRead: m.CacheRead})
+		out = out.Add(r.Usage)
 		runs++
 	}
 	return out, runs

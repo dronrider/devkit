@@ -3,13 +3,14 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dronrider/devkit/internal/sessions"
+	"github.com/dronrider/devkit/internal/spend"
 	"github.com/dronrider/devkit/internal/stage"
-	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Сессии синтетической машины. Восемь первых знаков у каждой свои: журнал
@@ -192,19 +193,10 @@ func TestSpendItemsByTask(t *testing.T) {
 	timeNow = func() time.Time { return spendDay(15, 0) }
 	spendMachine(t, root, home)
 
-	// След прогона стенда с числами, снятыми до сноса временного дома.
-	path := filepath.Join(root, "docs", "tasks", "XR-005.md")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mark := taskform.StandMark{Tree: "1a2b3c4d", Print: "ab12cd34", Base: "нет", Tier: "base",
-		Repeats: 3, Scenarios: []string{"41"}, Turns: 12, Output: 4000, Input: 200, CacheRead: 9000}
-	doc := taskform.InsertIntoSection(string(data), taskform.Verification,
-		taskform.StandLine(mark, spendDay(13, 0), "зачтён"))
-	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	// След прогона стенда с числами, снятыми до сноса временного дома:
+	// строка журнала запусков, а не отметка файла задачи (DK-1309).
+	spendWriteRun(t, home, "ob-a", "XR-005", 3, "ok", spendDay(13, 0),
+		spend.Usage{Turns: 12, Output: 4000, Input: 200, CacheRead: 9000, CacheWrite: 40})
 
 	msg, err := cmdSpend(root, "XR-005")
 	if err != nil {
@@ -297,26 +289,85 @@ func TestSpendSetupStage(t *testing.T) {
 	}
 }
 
-// TestSpendStandWithoutTokens: прогон стенда без чисел (отметка, писанная до
-// DK-913, и разведочный прогон без --task) в свод не входит вовсе.
-func TestSpendStandWithoutTokens(t *testing.T) {
-	root := setup(t)
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	path := filepath.Join(root, "docs", "tasks", "XR-005.md")
-	data, err := os.ReadFile(path)
+// spendWriteRun кладёт строку журнала запусков стенда в подменный дом.
+// Пишется файлом напрямую: тест статьи «стенд» обязан собираться и на том
+// коде, где журнала ещё нет, иначе regcheck не докажет красноту.
+func spendWriteRun(t *testing.T, home, id, task string, k int, status string, when time.Time, u spend.Usage) {
+	t.Helper()
+	path := filepath.Join(home, ".devkit", "obeycheck-runs.tsv")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	credited := "0"
+	if task != "" && k >= 3 && status == "ok" {
+		credited = "1"
+	}
+	line := strings.Join([]string{
+		when.Format(time.RFC3339), id, task, strconv.Itoa(k), status, credited,
+		strconv.Itoa(u.Turns), strconv.Itoa(u.Output), strconv.Itoa(u.Input),
+		strconv.Itoa(u.CacheRead), strconv.Itoa(u.CacheWrite),
+	}, "\t") + "\n"
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mark := taskform.StandMark{Tree: "1a2b3c4d", Print: "ab12cd34", Base: "нет", Tier: "base",
-		Repeats: 3, Scenarios: []string{"41"}}
-	doc := taskform.InsertIntoSection(string(data), taskform.Verification,
-		taskform.StandLine(mark, spendDay(13, 0), "зачтён"))
-	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+	defer f.Close()
+	if _, err := f.WriteString(line); err != nil {
 		t.Fatal(err)
 	}
-	if u, runs := spendStands(root, "XR-005", spendPeriod{}); runs != 0 || !u.Empty() {
-		t.Fatalf("отметка без чисел вошла в свод: %d прогонов, %+v", runs, u)
+}
+
+// TestSpendStandsFromJournal: статья «стенд» считает зачтённые замеры из
+// журнала запусков и сходится с его суммой. Разведка, обрывы и запуск без
+// --task в журнале видны, в свод не идут (контракт DK-913).
+func TestSpendStandsFromJournal(t *testing.T) {
+	home := t.TempDir()
+	spendWriteRun(t, home, "ob-1", "XR-005", 5, "ok", spendDay(13, 0),
+		spend.Usage{Turns: 12, Output: 4000, Input: 200, CacheRead: 9000, CacheWrite: 40})
+	spendWriteRun(t, home, "ob-2", "XR-005", 5, "ok", spendDay(14, 0),
+		spend.Usage{Turns: 3, Output: 500, Input: 50, CacheRead: 1000, CacheWrite: 10})
+	// Разведка, обрыв и запуск без --task: в журнале, не в своде.
+	spendWriteRun(t, home, "ob-3", "XR-005", 2, "ok", spendDay(14, 30),
+		spend.Usage{Turns: 9, Output: 900, Input: 90, CacheRead: 900})
+	spendWriteRun(t, home, "ob-4", "XR-005", 5, "abort", spendDay(14, 40),
+		spend.Usage{Turns: 7, Output: 700, Input: 70, CacheRead: 700})
+	spendWriteRun(t, home, "ob-5", "", 5, "ok", spendDay(14, 50),
+		spend.Usage{Turns: 4, Output: 400, Input: 40, CacheRead: 400})
+
+	u, runs := spendStands(home, "XR-005", spendPeriod{})
+	if runs != 2 {
+		t.Fatalf("прогонов %d, хочу 2", runs)
+	}
+	if u.Output != 4500 || u.CacheWrite != 50 || u.Turns != 15 {
+		t.Fatalf("сумма зачтённых замеров %+v", u)
+	}
+}
+
+// TestSpendStandsKeepsEachLaunch: повтор замера не стирает числа прошлого
+// прогона: статья «стенд» складывает все запуски, а не только последний.
+func TestSpendStandsKeepsEachLaunch(t *testing.T) {
+	home := t.TempDir()
+	outs := []int{100, 200, 300}
+	for i, out := range outs {
+		spendWriteRun(t, home, "ob-"+string(rune('a'+i)), "XR-005", 5, "ok",
+			spendDay(13+i, 0), spend.Usage{Turns: 1, Output: out, CacheWrite: out / 10})
+	}
+	u, runs := spendStands(home, "XR-005", spendPeriod{})
+	if runs != 3 {
+		t.Fatalf("прогонов %d, хочу 3: повтор стёр прошлые", runs)
+	}
+	if u.Output != 600 || u.CacheWrite != 60 {
+		t.Fatalf("сумма повторов %+v", u)
+	}
+}
+
+// TestSpendStandWithoutTokens: строка журнала без чисел (прогон до DK-913) в
+// свод не входит вовсе.
+func TestSpendStandWithoutTokens(t *testing.T) {
+	home := t.TempDir()
+	spendWriteRun(t, home, "ob-1", "XR-005", 3, "ok", spendDay(13, 0), spend.Usage{})
+	if u, runs := spendStands(home, "XR-005", spendPeriod{}); runs != 0 || !u.Empty() {
+		t.Fatalf("строка без чисел вошла в свод: %d прогонов, %+v", runs, u)
 	}
 }
 

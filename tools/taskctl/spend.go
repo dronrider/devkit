@@ -207,7 +207,7 @@ func cmdSpend(root, id string) (string, error) {
 	home := stage.Home()
 	crew := newSpendCrew(home, main)
 	items, loose, blind := crew.taskItems(id, stages, spendPeriod{})
-	if stand, runs := spendStands(root, id, spendPeriod{}); runs > 0 {
+	if stand, runs := spendStands(home, id, spendPeriod{}); runs > 0 {
 		items.add(itemStand, id, stand)
 		items.get(itemStand, id).parts = runs
 	}
@@ -315,7 +315,7 @@ func spendTotalLine(root, id string, now time.Time) (string, bool) {
 	stages, _ := spendStages(root, main, id)
 	crew := newSpendCrew(home, main)
 	items, loose, blind := crew.taskItems(id, stages, spendPeriod{})
-	if stand, runs := spendStands(root, id, spendPeriod{}); runs > 0 {
+	if stand, runs := spendStands(home, id, spendPeriod{}); runs > 0 {
 		items.add(itemStand, id, stand)
 	}
 	list := items.list()
@@ -508,7 +508,7 @@ func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
 		byTask[m.task] = byTask[m.task].Add(cut)
 	}
 	for _, id := range spendIDs(root) {
-		stand, runs := spendStands(root, id, p)
+		stand, runs := spendStands(home, id, p)
 		if runs == 0 {
 			continue
 		}

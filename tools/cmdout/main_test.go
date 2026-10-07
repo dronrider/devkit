@@ -193,6 +193,56 @@ func TestBinaryExitCodePassThrough(t *testing.T) {
 	}
 }
 
+// TestRunLog: запуск оставляет в журнале .devkit/log строку с разрядом кода
+// выхода, тем же словарём, каким его считает devkitctl stats. Вне корня
+// репозитория журнал не заводится.
+func TestRunLog(t *testing.T) {
+	bin := buildBinary(t)
+	root := setupRepo(t)
+	run := func(script string, want int) {
+		t.Helper()
+		cmd := exec.Command(bin, "sh", "-c", script)
+		cmd.Dir = root
+		got := 0
+		if err := cmd.Run(); err != nil {
+			ee, ok := err.(*exec.ExitError)
+			if !ok {
+				t.Fatalf("запуск %q: %v", script, err)
+			}
+			got = ee.ExitCode()
+		}
+		if got != want {
+			t.Fatalf("%q: exit %d, хотели %d", script, got, want)
+		}
+	}
+	run("exit 0", 0)
+	run("exit 1", 1)
+	run("exit 7", 7)
+	data, err := os.ReadFile(filepath.Join(root, ".devkit", "log"))
+	if err != nil {
+		t.Fatalf("журнал не записан: %v", err)
+	}
+	for _, want := range []string{
+		"\tcmdout\trun\t0\tуспех\n",
+		"\tcmdout\trun\t1\tотворот\n",
+		"\tcmdout\trun\t7\tполомка\n",
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("нет строки %q в журнале: %q", want, data)
+		}
+	}
+
+	loose := t.TempDir()
+	cmd := exec.Command(bin, "sh", "-c", "exit 0")
+	cmd.Dir = loose
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("запуск вне репозитория: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(loose, ".devkit", "log")); err == nil {
+		t.Fatal("вне корня репозитория журнал не заводится")
+	}
+}
+
 // ageCmdoutDir кладёт каталог вывода с указанным содержимым и mtime. Порог
 // чистки это возраст, а не количество, и фиксация mtime делает тест независимым
 // от того, когда его запустили.

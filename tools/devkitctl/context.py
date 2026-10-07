@@ -38,6 +38,11 @@ PROJECTS = "~/.claude/projects"
 # хвостовую строку, иначе на живой машине вывод уезжает на десятки экранов.
 TOP_REWRITES = 10
 TOP_TOOLS = 8
+# Порог простоя в секундах, за которым перезапись списывается на истечение
+# TTL кеша. Пятиминутный TTL это умолчание провайдера, часовой (extended)
+# встречается на длинных потоках. Порог середины между ними не нужен: причина
+# «простой» ставится уже по пятиминутному, а часовой только шире её.
+TTL_SHORT = 300
 
 
 def slug(path):
@@ -92,6 +97,7 @@ def requests(path):
             "input": int(usage.get("input_tokens") or 0),
             "output": int(usage.get("output_tokens") or 0),
             "model": msg.get("model") or "?",
+            "ts": rec.get("timestamp") or "",
         }
         if req["write"] + req["read"] + req["input"] == 0:
             continue
@@ -109,6 +115,60 @@ def rewrites(reqs):
         cur, prev = reqs[i], reqs[i - 1]
         if cur["read"] < prev["read"] and cur["write"] > cur["read"]:
             out.append(i)
+    return out
+
+
+def parse_ts(ts):
+    """Момент запроса из строки журнала, None если поля нет или оно битое."""
+    if not ts:
+        return None
+    from datetime import datetime, timezone
+    try:
+        s = ts.replace("Z", "+00:00")
+        return datetime.fromisoformat(s)
+    except (ValueError, AttributeError):
+        return None
+
+
+def gaps(reqs):
+    """Простои между соседними запросами потока в секундах.
+
+    Возвращает список пар (номер запроса, простой перед ним) для запросов
+    с известным временем. Простой перед первым запросом не считается: поток
+    ещё не начался.
+    """
+    out = []
+    for i in range(1, len(reqs)):
+        prev_ts = parse_ts(reqs[i - 1].get("ts"))
+        cur_ts = parse_ts(reqs[i].get("ts"))
+        if prev_ts is None or cur_ts is None:
+            continue
+        delta = (cur_ts - prev_ts).total_seconds()
+        if delta >= 0:
+            out.append((i, delta))
+    return out
+
+
+def rewrite_causes(reqs):
+    """Причины перезаписи префикса: простой, смена модели, правка головы.
+
+    Для каждого номера перезаписи (rewrites) называется причина:
+      простой   - перед запросом был простой дольше порога TTL;
+      модель    - сменилась модель относительно предыдущего запроса;
+      голова    - иное (правка головы харнесом, компакция, прочее).
+    Когда причин несколько, первая по важности: простой, модель, голова.
+    """
+    gap_map = dict(gaps(reqs))
+    out = {}
+    for i in rewrites(reqs):
+        cur, prev = reqs[i], reqs[i - 1]
+        idle = gap_map.get(i, 0)
+        if idle >= TTL_SHORT:
+            out[i] = "простой"
+        elif cur.get("model") != prev.get("model"):
+            out[i] = "модель"
+        else:
+            out[i] = "голова"
     return out
 
 
@@ -132,7 +192,7 @@ def collect(directory):
     data = {
         "streams": 0, "subagents": 0, "requests": 0,
         "start": 0, "history": 0, "read": 0, "output": 0,
-        "rewrites": [], "models": {}, "tools": {},
+        "rewrites": [], "models": {}, "tools": {}, "causes": {},
     }
     for path in streams(directory):
         reqs = requests(path)
@@ -153,11 +213,15 @@ def collect(directory):
         # Имя потока в отчёте короткое: полный id никуда не ведёт, а глазом по
         # нему сравнивают строки между собой.
         name = path.stem[6:] if path.stem.startswith("agent-") else path.stem
+        causes = rewrite_causes(reqs)
         for i in rewrites(reqs):
+            cause = causes.get(i, "голова")
+            data["causes"][cause] = data["causes"].get(cause, 0) + reqs[i]["write"]
             data["rewrites"].append({
                 "stream": name[:8], "n": i + 1, "of": len(reqs),
                 "write": reqs[i]["write"],
                 "read": reqs[i]["read"], "was": reqs[i - 1]["read"],
+                "cause": cause,
             })
         for name, size in tool_volume(path).items():
             data["tools"][name] = data["tools"].get(name, 0) + size
@@ -195,10 +259,14 @@ def report(directory, out):
     cost = sum(r["write"] for r in rw)
     out.write("\nперезаписи префикса после старта: %d из %d запросов (%d%%), записано %s токенов\n"
               % (len(rw), data["requests"], round(100 * len(rw) / data["requests"]), num(cost)))
+    causes = sorted(data["causes"].items(), key=lambda kv: -kv[1])
+    if causes:
+        out.write("причины: %s\n"
+                  % ", ".join("%s %s" % (c, num(v)) for c, v in causes))
     for r in rw[:TOP_REWRITES]:
-        out.write("  %-8s  запрос %d из %d: записано %s, чтение просело %s -> %s\n"
+        out.write("  %-8s  запрос %d из %d: записано %s, чтение просело %s -> %s  [%s]\n"
                   % (r["stream"], r["n"], r["of"], num(r["write"]),
-                     num(r["was"]), num(r["read"])))
+                     num(r["was"]), num(r["read"]), r.get("cause", "голова")))
     if len(rw) > TOP_REWRITES:
         out.write("  и ещё %d\n" % (len(rw) - TOP_REWRITES))
 

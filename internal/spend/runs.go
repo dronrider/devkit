@@ -10,10 +10,12 @@ package spend
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -64,8 +66,10 @@ func RunsPath(home string) string {
 // WriteRun кладёт строку журнала, заменяя прошлую с тем же ID запуска.
 // Повторный прогон своего ключа в файле задачи отметку заменяет, а строки
 // журнала живут рядом: у каждого запуска своя, и повтор не стирает числа
-// прошлого. Провал записи ронять прогон не должен: расход уже собран, и
-// потеря строки журнала хуже потери запуска, но не смертельна для свода.
+// прошлого. Запись идёт под flock: два одновременных прогона читают и
+// переписывают весь файл, и без замка строка одного затирает строку другого.
+// Провал записи ронять прогон не должен: расход уже собран, и потеря строки
+// журнала хуже потери запуска, но не смертельна для свода.
 func WriteRun(home string, r RunRow) error {
 	path := RunsPath(home)
 	if path == "" {
@@ -80,11 +84,20 @@ func WriteRun(home string, r RunRow) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	line := formatRun(r) + "\n"
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
 		return err
 	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return err
+	}
+	line := formatRun(r)
 	var out []string
 	found := false
 	for _, ln := range strings.Split(string(data), "\n") {
@@ -92,16 +105,24 @@ func WriteRun(home string, r RunRow) error {
 			continue
 		}
 		if runIDOf(ln) == r.ID {
-			out = append(out, line[:len(line)-1])
+			out = append(out, line)
 			found = true
 			continue
 		}
 		out = append(out, ln)
 	}
 	if !found {
-		out = append(out, line[:len(line)-1])
+		out = append(out, line)
 	}
-	return os.WriteFile(path, []byte(strings.Join(out, "\n")+"\n"), 0o644)
+	body := strings.Join(out, "\n") + "\n"
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
+	}
+	_, err = f.WriteString(body)
+	return err
 }
 
 // ReadRuns читает журнал запусков. Битая строка пропускается молча: журнал
@@ -126,13 +147,12 @@ func ReadRuns(home string) []RunRow {
 	return out
 }
 
-// RunUsage складывает расход зачтённых запусков задачи. Числа идут ровно те,
-// что лежат в журнале: сход статьи «стенд» с суммой журнала держится на
-// одном источнике. Строка без чисел (прогон, из которого снять было нечего)
-// в сумму и в счёт не входит.
-func RunUsage(home, task string) (Usage, int) {
-	var out Usage
-	n := 0
+// CreditedRuns достаёт зачтённые строки журнала с непустым расходом. Строка
+// без чисел (прогон, из которого снять было нечего) в сумму и в счёт не
+// входит. Фильтр один на журнал: его зовут и сход статьи «стенд», и суммы
+// прогонов, иначе две стороны разъедутся при правке одной из них.
+func CreditedRuns(home, task string) []RunRow {
+	var out []RunRow
 	for _, r := range ReadRuns(home) {
 		if task != "" && r.Task != task {
 			continue
@@ -140,10 +160,21 @@ func RunUsage(home, task string) (Usage, int) {
 		if !r.Credited() || r.Usage.Empty() {
 			continue
 		}
-		out = out.Add(r.Usage)
-		n++
+		out = append(out, r)
 	}
-	return out, n
+	return out
+}
+
+// RunUsage складывает расход зачтённых запусков задачи. Числа идут ровно те,
+// что лежат в журнале: сход статьи «стенд» с суммой журнала держится на
+// одном источнике.
+func RunUsage(home, task string) (Usage, int) {
+	var out Usage
+	rows := CreditedRuns(home, task)
+	for _, r := range rows {
+		out = out.Add(r.Usage)
+	}
+	return out, len(rows)
 }
 
 // formatRun собирает строку журнала. Разделитель это таб: числа и ID не

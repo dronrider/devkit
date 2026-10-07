@@ -1,8 +1,10 @@
 package spend
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -66,6 +68,66 @@ func TestWriteRunReplacesSameID(t *testing.T) {
 	}
 	if rows[0].Credited() {
 		t.Fatal("обрыв не должен идти в свод")
+	}
+}
+
+// TestWriteRunConcurrentKeepsEachLaunch: два одновременных прогона не теряют
+// строки друг друга. Журнал переписывается целиком, и без замка последняя
+// запись затирает чужую строку.
+func TestWriteRunConcurrentKeepsEachLaunch(t *testing.T) {
+	home := t.TempDir()
+	const n = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r := runRow()
+			r.ID = fmt.Sprintf("ob-%d", i)
+			r.Usage.Output = 100 + i
+			if err := WriteRun(home, r); err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	rows := ReadRuns(home)
+	if len(rows) != n {
+		t.Fatalf("строк журнала %d, хочу %d", len(rows), n)
+	}
+}
+
+// TestRunUsageMatchesCreditedRuns: сумма прогонов и выборка зачтённых идут
+// из одного фильтра. Разойдутся они, и сход статьи «стенд» с журналом
+// станет проверять сам себя.
+func TestRunUsageMatchesCreditedRuns(t *testing.T) {
+	home := t.TempDir()
+	a := runRow()
+	if err := WriteRun(home, a); err != nil {
+		t.Fatal(err)
+	}
+	b := runRow()
+	b.ID = "ob-2"
+	b.Usage = Usage{Turns: 1, Output: 50, CacheWrite: 5}
+	if err := WriteRun(home, b); err != nil {
+		t.Fatal(err)
+	}
+	u, n := RunUsage(home, "XR-005")
+	rows := CreditedRuns(home, "XR-005")
+	if n != len(rows) {
+		t.Fatalf("счёт %d против выборки %d", n, len(rows))
+	}
+	var want Usage
+	for _, r := range rows {
+		want = want.Add(r.Usage)
+	}
+	if u != want {
+		t.Fatalf("сумма %+v против выборки %+v", u, want)
 	}
 }
 

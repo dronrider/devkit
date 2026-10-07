@@ -119,12 +119,16 @@ func (j *runJournal) finish(status string, usage spend.Usage) {
 	j.status = status
 	j.usage = usage
 	j.write()
+	if j.lastErr != nil {
+		fmt.Fprintf(os.Stderr, "журнал запусков: финальный статус %q не сохранён: %v\n", status, j.lastErr)
+	}
 	j.finalized = true
 }
 
 // write дописывает строку в журнал. Провал записи не роняет прогон: числа
-// уже собраны, и журнала без них хватит на глаз, а остановка стенда из-за
-// полного дома стоила бы всего прогона.
+// уже собраны, и остановка стенда из-за полного дома стоила бы всего
+// прогона. Молчать при этом нельзя: без строки расход в свод не дойдёт, и
+// отказ обязан быть виден наружу (DK-1309).
 func (j *runJournal) write() {
 	err := spend.WriteRun(j.home, spend.RunRow{
 		ID:      j.id,
@@ -135,6 +139,9 @@ func (j *runJournal) write() {
 		Usage:   j.usage,
 	})
 	j.lastErr = err
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "журнал запусков: %v\n", err)
+	}
 }
 
 // watchSignals ловит остановку с терминала: строка успевает уехать в журнал

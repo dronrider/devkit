@@ -158,9 +158,9 @@ func TestStandGateException(t *testing.T) {
 func TestStandLineCarriesCacheWrite(t *testing.T) {
 	m := StandMark{Tree: "1a2b3c4d", Print: "ab12cd34", Base: "нет", Tier: "base",
 		Repeats: 3, Scenarios: []string{"41"},
-		Turns: 12, Output: 4000, Input: 200, CacheRead: 9000}
+		Turns: 12, Output: 4000, Input: 200, CacheRead: 9000, CacheWrite: 7}
 	line := StandLine(m, when(), "зачтён")
-	if !strings.Contains(line, "запись кэша ") {
-		t.Fatalf("в отметке нет записи кэша: %s", line)
+	if !strings.Contains(line, "запись кэша 7") {
+		t.Fatalf("в отметке нет записи кэша 7: %s", line)
 	}
 }

@@ -446,14 +446,12 @@ func (s *spendItems) list() []*spendItem {
 // каждый запуск: отметка файла задачи одна на ключ и повтор её заменяет, а
 // журнал хранит все замеры (DK-1309). В свод идут только зачтённые строки
 // (с --task и повторами от spend.MinRepeats): разведка, обрывы и запуск без
-// --task в журнале видны, но статью не растят (контракт DK-913).
+// --task в журнале видны, но статью не растят (контракт DK-913). Фильтр
+// зачтённых берётся у журнала целиком, чтобы сход не разъезжался.
 func spendStands(home, id string, p spendPeriod) (spend.Usage, int) {
 	var out spend.Usage
 	runs := 0
-	for _, r := range spend.ReadRuns(home) {
-		if r.Task != id || !r.Credited() || r.Usage.Empty() {
-			continue
-		}
+	for _, r := range spend.CreditedRuns(home, id) {
 		if p.set && !p.holds(r.When) {
 			continue
 		}

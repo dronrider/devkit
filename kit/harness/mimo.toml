@@ -39,7 +39,7 @@ agents_format = "claude-code"
 # в docs/lld/DK-090-heterogeneous-ladder.md, «Дорога модели из вердикта до
 # клиента» (DK-751).
 map_mini = "mimo-v2.6-flash"
-map_base = "mimo-v2.6-pro"
+map_base = "mimo-v2.6-flash"
 map_pro = "mimo-v2.6-pro"
 map_max = "mimo-v2.6-pro"
 

@@ -126,18 +126,6 @@ func ReadRuns(home string) []RunRow {
 	return out
 }
 
-// CreditedRuns отдаёт строки журнала, идущие в свод статьёй «стенд», уже
-// с посчитанным признаком Credited.
-func CreditedRuns(home string) []RunRow {
-	var out []RunRow
-	for _, r := range ReadRuns(home) {
-		if r.Credited() {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
 // RunUsage складывает расход зачтённых запусков задачи. Числа идут ровно те,
 // что лежат в журнале: сход статьи «стенд» с суммой журнала держится на
 // одном источнике. Строка без чисел (прогон, из которого снять было нечего)

@@ -38,13 +38,6 @@ type runJournal struct {
 // сигналу: без строки расход пропадал бы вместе с процессом.
 var activeJournal *runJournal
 
-// newRunJournal заводит журнал запуска в доме пользователя: временный HOME
-// прогона сносится вместе с транскриптами.
-func newRunJournal(task string, repeats int) *runJournal {
-	home, _ := os.UserHomeDir()
-	return startRunJournal(home, task, repeats)
-}
-
 // startRunJournal пишет первую строку запуска. ID короткий и свой у каждого
 // запуска: повтор ключа в файле задачи отметку заменяет, а строки журнала
 // живут рядом.

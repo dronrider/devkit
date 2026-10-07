@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,7 +29,7 @@ func TestCmdRotate(t *testing.T) {
 			kit := fakeKit(t)
 			writeProfile(t, kit, "homecli", echoProfile)
 			writeMachine(t, kit, "enabled = [\"homecli\"]\ndefault = \"homecli\"\n"+c.line)
-			text, err := cmdRotate(kit)
+			text, err := cmdRotate(kit, "", "", false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,7 +61,7 @@ func TestCmdRotateMatchesHarnessJSON(t *testing.T) {
 	kit := fakeKit(t)
 	writeProfile(t, kit, "homecli", echoProfile)
 	writeMachine(t, kit, "enabled = [\"homecli\"]\ndefault = \"homecli\"\n")
-	text, err := cmdRotate(kit)
+	text, err := cmdRotate(kit, "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,5 +75,43 @@ func TestCmdRotateMatchesHarnessJSON(t *testing.T) {
 	}
 	if !strings.HasPrefix(text, "rotate: "+strconv.Itoa(execRotateDefault)+"\n") {
 		t.Fatalf("команда и раскладка разъехались:\n%s", text)
+	}
+}
+
+// TestRotateMark: строка журнала о ротации несёт прежний и новый адрес сессии
+// и порог. Молчание за работу не считается (DoD DK-1312), строка пишется
+// в turns.log тем же форматом, что turn-mark.py.
+func TestRotateMark(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "homecli", echoProfile)
+	writeMachine(t, kit, "enabled = [\"homecli\"]\ndefault = \"homecli\"\n")
+	logFile := filepath.Join(t.TempDir(), "turns.log")
+	t.Setenv("DEVKIT_TURN_MARK_LOG", logFile)
+	text, err := cmdRotate(kit, "old-sess-1", "new-sess-2", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "ход ротация") {
+		t.Fatalf("в ответе нет строки ротации:\n%s", text)
+	}
+	if !strings.Contains(text, "сессия old-sess-1") {
+		t.Fatalf("строка не называет прежнюю сессию:\n%s", text)
+	}
+	if !strings.Contains(text, "новая new-sess-2") {
+		t.Fatalf("строка не называет новую сессию:\n%s", text)
+	}
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("журнал не записан: %v", err)
+	}
+	logText := string(data)
+	if !strings.Contains(logText, "ход ротация") {
+		t.Fatalf("в журнале нет строки ротации:\n%s", logText)
+	}
+	if !strings.Contains(logText, "новая new-sess-2") {
+		t.Fatalf("в журнале нет новой сессии:\n%s", logText)
+	}
+	if !strings.Contains(logText, "порог-") {
+		t.Fatalf("в журнале нет порога:\n%s", logText)
 	}
 }

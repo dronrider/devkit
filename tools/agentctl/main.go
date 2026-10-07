@@ -153,7 +153,10 @@ const usageText = `agentctl: выбор исполнителя под задач
                           потолок 3 по умолчанию, а строка зовёт agentctl
                           quota refresh
   rotate                  порог ротации исполнителя-субагента: первая строка
-                          машинная (rotate: N), вторая называет источник числа.
+       [--mark]           машинная (rotate: N), вторая называет источник числа.
+       [--old <ID>]       --mark дописывает строку журнала сессий о ротации:
+       [--new <ID>]       прежний и новый адрес, порог. Строка бронируется
+                          один раз общей механикой (стык с DK-662).
                           Порог берётся из ключа exec_rotate_tokens машинного
                           конфига ~/.devkit/harness.local, а без ключа из
                           умолчания agentctl; то же число уезжает полем
@@ -550,8 +553,11 @@ func main() {
 	case "rotate":
 		fs := flag.NewFlagSet("rotate", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
+		mark := fs.Bool("mark", false, "дописать строку журнала о ротации")
+		oldSess := fs.String("old", "", "прежний адрес сессии для отметки")
+		newSess := fs.String("new", "", "новый адрес сессии для отметки")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "rotate")
-		msg, err = cmdRotate(*dir)
+		msg, err = cmdRotate(*dir, *oldSess, *newSess, *mark)
 	case "help":
 		fmt.Print(usageText)
 		return

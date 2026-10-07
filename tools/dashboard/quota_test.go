@@ -93,6 +93,31 @@ func TestQuotaTwoHarnesses(t *testing.T) {
 	}
 }
 
+// История сэмплов съёмщика в том же каталоге подпиской не считается. Файл
+// <харнес>.history.local лежит тем же суффиксом, строки в нём не в формате
+// снимка, и без фильтра в панели висела фантомная подписка с неразобранными
+// строками истории (живой случай: «mimo.history» и «routerai.history»).
+func TestQuotaSkipsHistoryFiles(t *testing.T) {
+	e := newTestEnv(t)
+	e.s.now = func() time.Time { return quotaNow }
+	writeQuota(t, e.home, "harness-one", quotaFixtureA)
+	writeQuota(t, e.home, "mimo.history",
+		"2026-10-07T17:46 12820596104\n2026-10-07T17:56 12835865684\n")
+	writeQuota(t, e.home, "routerai.history", "2026-10-07T13:18 824.0867232235037\n")
+
+	view := getQuota(t, e)
+	if len(view.Harnesses) != 1 {
+		var names []string
+		for _, h := range view.Harnesses {
+			names = append(names, h.Name)
+		}
+		t.Fatalf("история сэмплов попала в подписки: %v", names)
+	}
+	if view.Harnesses[0].Name != "harness-one" {
+		t.Fatalf("подписка не та: %s", view.Harnesses[0].Name)
+	}
+}
+
 // Протухший снимок подписан честно: показ остатка не должен выглядеть свежим
 // там, где сам выбор моделей снимку уже не верит.
 func TestQuotaStale(t *testing.T) {

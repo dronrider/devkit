@@ -38,6 +38,12 @@ const (
 	quotaRel = "quota"
 	// Снимок это файл <харнес>.local, как его кладёт agentctl.
 	quotaSuffix = ".local"
+	// История сэмплов съёмщика лежит рядом тем же суффиксом
+	// (<харнес>.history.local) и подпиской не является: её строки в формате
+	// снимка не стоят, и в ответе ручки она читалась бы отдельной подпиской
+	// с неразобранными строками (живой случай: фантомная строка
+	// «<харнес>.history» в панели квоты).
+	quotaHistorySuffix = ".history"
 	// Момент снятия и даты сброса пишутся местным временем без секунд.
 	quotaTimeLayout = "2006-01-02T15:04"
 )
@@ -176,6 +182,9 @@ func readQuota(home string, now time.Time) (view QuotaView) {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), quotaSuffix)
+		if strings.HasSuffix(name, quotaHistorySuffix) {
+			continue
+		}
 		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
 			view.Harnesses = append(view.Harnesses, QuotaHarness{Name: name,

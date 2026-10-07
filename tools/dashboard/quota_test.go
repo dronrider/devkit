@@ -548,6 +548,22 @@ func TestStaticQuotaFailLine(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Экран блока Token Plan сторожит стенд testdata/poc_quotaplan.mjs: обе строки
+// показа несут числа снимка, а не строковое приведение узла. Живой случай:
+// вторая строка карточки mimo печатала вместо процента "[object HTMLElement]".
+func TestStaticQuotaPlanLine(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд блока Token Plan пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_quotaplan.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("строки блока Token Plan: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Абзац отказа не уезжает на экран целиком: строка панели говорит, что снимок
 // не обновился, а фразы того, кто отказал, лежат причиной за нажатием. Живой
 // случай: agentctl объясняет человеку в терминале правильно и целыми

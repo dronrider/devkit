@@ -17373,7 +17373,9 @@ function planRows(h) {
   row1.append(right1);
   tp.append(row1);
   const row2 = el("div", "tp-row");
-  row2.append(el("span", "tp-left", el("b", "", p.pct_text || (p.pct.toFixed(3) + "%"))));
+  const pctLeft = el("span", "tp-left");
+  pctLeft.append(el("b", "", p.pct_text || (p.pct.toFixed(3) + "%")));
+  row2.append(pctLeft);
   const meter = el("span", "meter");
   const fill = el("i", meterClass(p.pct));
   fill.style.width = Math.max(0, Math.min(100, p.pct)) + "%";

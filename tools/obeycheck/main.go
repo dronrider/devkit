@@ -76,6 +76,9 @@ const defaultAgentCmd = "claude -p --output-format stream-json --verbose --dange
 
 func fail(err error) {
 	fmt.Fprintln(os.Stderr, "ошибка:", err)
+	if activeJournal != nil {
+		activeJournal.abort()
+	}
 	logRun(".", 2)
 	os.Exit(2)
 }
@@ -212,6 +215,9 @@ func main() {
 		}
 	}
 
+	// Журнал запуска ведётся всегда, и без --task тоже: разведка и обрывы
+	// числа в свод не несут, но след оставить обязаны (DK-1309).
+	j := newRunJournal(*task, *repeats)
 	res, err := Run(Params{
 		Scenarios:  scen,
 		Layouts:    fs.Args(),
@@ -229,10 +235,14 @@ func main() {
 		Preflight:  !*noPreflight,
 		Timeout:    *timeout,
 		Progress:   os.Stderr,
+		Journal:    j,
 	})
 	if err != nil {
 		fail(err)
 	}
+	// Зачёт ставится до отметки файла задачи: упавшая отметка не должна
+	// обнулять уже собранные числа прогона.
+	j.ok(res.Usage)
 	fmt.Println(res.Report)
 	if taskPath != "" {
 		tier := *tier

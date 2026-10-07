@@ -58,7 +58,7 @@ func TestHomeUsageSumsStandSessions(t *testing.T) {
 func TestTaskNoteCarriesTokens(t *testing.T) {
 	p := taskDoc(t)
 	n := standNote(t, scenarios(t, "press"), baseOld)
-	n.Usage = spend.Usage{Turns: 120, Output: 45210, Input: 3100, CacheRead: 2100000}
+	n.Usage = spend.Usage{Turns: 120, Output: 45210, Input: 3100, CacheRead: 2100000, CacheWrite: 40000}
 	if err := n.write(p); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestTaskNoteCarriesTokens(t *testing.T) {
 		t.Fatalf("отметок %d", len(marks))
 	}
 	m := marks[0]
-	if m.Turns != 120 || m.Output != 45210 || m.Input != 3100 || m.CacheRead != 2100000 {
+	if m.Turns != 120 || m.Output != 45210 || m.Input != 3100 || m.CacheRead != 2100000 || m.CacheWrite != 40000 {
 		t.Fatalf("числа отметки %+v", m)
 	}
 }

@@ -32,6 +32,9 @@ type Params struct {
 	Preflight  bool     // пробный прогон перед полным проходом
 	Timeout    time.Duration
 	Progress   io.Writer // построчный ход прогона, обычно stderr
+	// Journal держит строку запуска: сюда уезжает расход после каждой
+	// сессии, пока дом цел. Пустой оставляет прогон без журнала (тесты).
+	Journal *runJournal
 }
 
 // Обёртка субагентского конца. Резидент у исполнителя тот же, а поведение
@@ -347,8 +350,9 @@ func Run(p Params) (Result, error) {
 	if p.Preflight {
 		u, err := p.preflight(work)
 		used = used.Add(u)
+		p.Journal.update(used)
 		if err != nil {
-			return Result{}, err
+			return Result{Usage: used}, err
 		}
 	}
 	// Калибровка судьи идёт следом за пробой и до первой сессии: судья, который
@@ -356,11 +360,13 @@ func Run(p Params) (Result, error) {
 	if needsJudge(live) {
 		j, err := newJudge(work, p.Judge, p.JudgeModel, p.HomeSeed, p.UserHome, p.Timeout)
 		if err != nil {
-			return Result{}, err
+			p.Journal.update(used)
+			return Result{Usage: used}, err
 		}
 		p.jury = j
 		if err := p.calibrate(live); err != nil {
-			return Result{}, err
+			p.Journal.update(used)
+			return Result{Usage: used}, err
 		}
 	}
 
@@ -372,7 +378,11 @@ func Run(p Params) (Result, error) {
 				dir := filepath.Join(work, fmt.Sprintf("%s-%s-%d", s.ID, filepath.Base(layout), i))
 				a, err := p.runOnce(s, layout, i, dir)
 				if err != nil {
-					return Result{}, err
+					// Обрыв сохраняет собранный расход: дом сейчас снесут,
+					// и без строки журнала числа пропали бы вместе с ним.
+					used = used.Add(a.Usage)
+					p.Journal.update(used)
+					return Result{Usage: used}, err
 				}
 				done++
 				word := "зелено"
@@ -387,6 +397,7 @@ func Run(p Params) (Result, error) {
 				}
 				p.say("[%d/%d] %s / %s / повтор %d: %s", done, total, s.ID, filepath.Base(layout), i, word)
 				used = used.Add(a.Usage)
+				p.Journal.update(used)
 				r.Cells[li].Attempts = append(r.Cells[li].Attempts, a)
 				if !p.Keep {
 					os.RemoveAll(dir)
@@ -406,6 +417,7 @@ func Run(p Params) (Result, error) {
 		// Дом судьи живёт от калибровки до последней клетки и сносится вместе
 		// с каталогом прогона, поэтому складывается он здесь, а не по клеткам.
 		used = used.Add(homeUsage(p.jury.Home))
+		p.Journal.update(used)
 	}
 	return Result{Report: render(rows, p.Layouts, p.Repeats, p.Base), Rows: rows, Failed: failed, Usage: used}, nil
 }

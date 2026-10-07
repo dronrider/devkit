@@ -15,8 +15,9 @@ import (
 // minTaskRepeats это нижняя граница повторов, при которой прогон считается
 // замером, а не разведкой. Одна и две сессии на раскладку не отличают правку от
 // случайности ни при каком тесте, и след такого прогона обманывал бы ворота
-// слияния.
-const minTaskRepeats = 3
+// слияния. Значение общее со сводом (spend.MinRepeats): разойдись оно, статья
+// «стенд» считала бы другой набор запусков, чем тот, что пишет след.
+const minTaskRepeats = spend.MinRepeats
 
 // note это всё, что стенд знает о прогоне к моменту записи в файл задачи.
 type note struct {
@@ -201,17 +202,18 @@ func (n note) write(path string) error {
 	}
 	ids := scenarioIDs(n.Scenarios)
 	mark := taskform.StandMark{
-		Turns:     n.Usage.Turns,
-		Output:    n.Usage.Output,
-		Input:     n.Usage.Input,
-		CacheRead: n.Usage.CacheRead,
-		Failed:    n.Failed,
-		Tree:      tree,
-		Print:     fp,
-		Base:      n.Base,
-		Tier:      n.Tier,
-		Repeats:   n.Repeats,
-		Scenarios: ids,
+		Turns:      n.Usage.Turns,
+		Output:     n.Usage.Output,
+		Input:      n.Usage.Input,
+		CacheRead:  n.Usage.CacheRead,
+		CacheWrite: n.Usage.CacheWrite,
+		Failed:     n.Failed,
+		Tree:       tree,
+		Print:      fp,
+		Base:       n.Base,
+		Tier:       n.Tier,
+		Repeats:    n.Repeats,
+		Scenarios:  ids,
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

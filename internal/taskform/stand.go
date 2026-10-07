@@ -32,6 +32,7 @@ const (
 	standOutWord   = "вывод "
 	standInWord    = "вход "
 	standCacheWord = "кэш "
+	standCWrWord   = "запись кэша "
 )
 
 // standTailWords это слова, которыми кончается отметка после списка
@@ -55,10 +56,11 @@ type StandMark struct {
 	// них нечего. Числа складывает сам стенд до сноса и кладёт сюда, а свод
 	// печатает их статьёй «стенд» на ID задачи (DK-913). У отметки, писанной
 	// до DK-913, нули: прогон был, а чисел с него не осталось.
-	Turns     int
-	Output    int
-	Input     int
-	CacheRead int
+	Turns      int
+	Output     int
+	Input      int
+	CacheRead  int
+	CacheWrite int
 	// When это момент прогона из головы отметки. По нему прогон попадает в
 	// срез свода за период.
 	When time.Time
@@ -66,7 +68,7 @@ type StandMark struct {
 
 // Tokens отвечает, несёт ли отметка числа расхода.
 func (m StandMark) Tokens() bool {
-	return m.Turns+m.Output+m.Input+m.CacheRead > 0
+	return m.Turns+m.Output+m.Input+m.CacheRead+m.CacheWrite > 0
 }
 
 // SameKey отвечает, тот ли у отметки ключ записи: список сценариев вместе с
@@ -95,9 +97,9 @@ func StandLine(m StandMark, when time.Time, tail string) string {
 	// словом хвоста, и поле, приписанное следом, читалось бы именем сценария.
 	tokens := ""
 	if m.Tokens() {
-		tokens = fmt.Sprintf("%s%d, %s%d, %s%d, %s%d, ",
+		tokens = fmt.Sprintf("%s%d, %s%d, %s%d, %s%d, %s%d, ",
 			standTurnsWord, m.Turns, standOutWord, m.Output,
-			standInWord, m.Input, standCacheWord, m.CacheRead)
+			standInWord, m.Input, standCacheWord, m.CacheRead, standCWrWord, m.CacheWrite)
 	}
 	return fmt.Sprintf("%s %s, %s%s, %s%s, %s%s, %s%s, %s%d, %s%s%s, %s.",
 		head, when.Format("2006-01-02 15:04"),
@@ -145,6 +147,7 @@ func StandMarks(doc string) []StandMark {
 		m.Output = standNumber(t, standOutWord)
 		m.Input = standNumber(t, standInWord)
 		m.CacheRead = standNumber(t, standCacheWord)
+		m.CacheWrite = standNumber(t, standCWrWord)
 		m.When = standWhen(t)
 		out = append(out, m)
 	}

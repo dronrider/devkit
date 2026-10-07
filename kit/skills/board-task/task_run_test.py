@@ -556,6 +556,22 @@ class Stand:
         shutil.rmtree(self.root, ignore_errors=True)
 
 
+class TestExitClass(unittest.TestCase):
+    """Разряд кода выхода для строки журнала. Словарь общий с devkitctl
+    stats, и расхождение в нём сломало бы счётчик отказов."""
+
+    def test_zero_is_success(self):
+        self.assertEqual(task_run.exit_class(0), "успех")
+
+    def test_one_and_three_are_turnbacks(self):
+        self.assertEqual(task_run.exit_class(1), "отворот")
+        self.assertEqual(task_run.exit_class(3), "отворот")
+
+    def test_other_codes_are_breakage(self):
+        self.assertEqual(task_run.exit_class(2), "поломка")
+        self.assertEqual(task_run.exit_class(7), "поломка")
+
+
 class TestPasses(unittest.TestCase):
     """Голова выходит, а конвейер живёт: следующий проход поднимается тем же
     порядком, пока строка не закрыта."""
@@ -596,6 +612,16 @@ class TestPasses(unittest.TestCase):
         self.assertIn("task-DK-1", first[0])
         self.assertIn("DK-1 в in-progress", first[0])
         self.assertIn("\ttask-run\t", first[0])
+        self.assertTrue(first[0].endswith("\t0\tуспех"), first[0])
+
+    def test_head_exit_class_naming_in_the_journal(self):
+        # Пятый столбец называет разряд тем же словарём, что считает
+        # devkitctl stats: штатный отворот головы не смешивается с поломкой.
+        s = self.stand(plan="падение")
+        s.run()
+        lines = [l for l in s.journal() if "выход головы" in l]
+        self.assertTrue(lines, s.journal())
+        self.assertTrue(lines[0].endswith("\t1\tотворот"), lines[0])
 
     def test_closed_task_raises_nobody(self):
         s = self.stand(sect="архиве")

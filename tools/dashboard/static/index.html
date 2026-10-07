@@ -9,22 +9,27 @@
 <body>
 <div class="screen" id="screen">
   <aside class="side">
-    <div class="brand">
-      <span class="logo" id="logo-side" title="На главную">dk</span>
-      <div>
-        <h1>Дашборд devkit</h1>
-        <p id="brand-note"></p>
+    <!-- прокрутка колонки живёт на внутреннем узле: хват (.sgrab) стоит
+         прямым ребёнком .side, при переполнении он остаётся на месте и не
+         накрывает полоску прокрутки -->
+    <div class="sbody">
+      <div class="brand">
+        <span class="logo" id="logo-side" title="На главную">dk</span>
+        <div>
+          <h1>Дашборд devkit</h1>
+          <p id="brand-note"></p>
+        </div>
+        <button class="sfold" id="side-fold" aria-label="Свернуть колонку меню" title="Свернуть колонку меню: место достанется доске" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 7.5L10 12l4.5 4.5"></path><path d="M18 5.5v13"></path></svg></button>
       </div>
-      <button class="sfold" id="side-fold" aria-label="Свернуть колонку меню" title="Свернуть колонку меню: место достанется доске" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 7.5L10 12l4.5 4.5"></path><path d="M18 5.5v13"></path></svg></button>
+      <div class="sgroup">Проекты</div>
+      <nav id="projects"></nav>
+      <div class="sgroup">Разделы</div>
+      <div class="sitem" id="nav-home">Главная</div>
+      <div class="sitem" id="nav-board">Доска</div>
+      <div class="sitem" id="nav-lld">LLD</div>
+      <div class="squota" id="quota"></div>
+      <div class="sfoot"><button id="logout" class="btn">Выйти</button></div>
     </div>
-    <div class="sgroup">Проекты</div>
-    <nav id="projects"></nav>
-    <div class="sgroup">Разделы</div>
-    <div class="sitem" id="nav-home">Главная</div>
-    <div class="sitem" id="nav-board">Доска</div>
-    <div class="sitem" id="nav-lld">LLD</div>
-    <div class="squota" id="quota"></div>
-    <div class="sfoot"><button id="logout" class="btn">Выйти</button></div>
     <i class="sgrab" id="sgrab" role="separator" aria-orientation="vertical" aria-label="Ширина колонки меню" title="Ширина колонки меню"></i>
   </aside>
   <main class="bmain">

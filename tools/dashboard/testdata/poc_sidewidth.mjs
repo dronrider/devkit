@@ -20,6 +20,26 @@ if (!html.includes('id="sgrab"')) {
   fail("в index.html нет хвата колонки id=\"sgrab\"");
 }
 
+// Хват живёт вне прокрутки: содержимое колонки прокручивается внутренним
+// узлом .sbody, а сам хват стоит прямым ребёнком .side. При переполнении
+// колонки хват остаётся на месте и полоску прокрутки не накрывает.
+if (!html.includes('class="sbody"')) {
+  fail("в index.html нет внутреннего узла прокрутки .sbody колонки");
+}
+if (html.indexOf('id="sgrab"') < html.indexOf('class="sbody"')) {
+  fail("хват sgrab стоит до узла прокрутки sbody: он ложится после содержимого");
+}
+if (!/<i class="sgrab"[^>]*><\/i>\s*<\/aside>/.test(html)) {
+  fail("хват sgrab не прямой ребёнок .side");
+}
+const css = fs.readFileSync(path.join(path.dirname(app), "style.css"), "utf8");
+if (/\.side\s*\{[^}]*overflow/.test(css)) {
+  fail(".side прокручивается сама: overflow уходит на внутренний узел .sbody");
+}
+if (!/\.sbody\s*\{[^}]*overflow-y:\s*auto/.test(css)) {
+  fail("в правиле .sbody нет прокрутки overflow-y:auto");
+}
+
 const { sandbox, byId, store } = makeSandbox(app, () => ({}));
 await settle();
 

@@ -121,7 +121,7 @@ a:hover{text-decoration:underline}
 .screen{display:flex;height:100%}
 
 /* боковая колонка (ноутбук) */
-.side{width:248px;flex:none;border-right:1px solid var(--line);background:var(--bg1);display:flex;flex-direction:column;padding:20px 14px 18px;overflow-y:auto}
+.side{width:248px;flex:none;position:relative;border-right:1px solid var(--line);background:var(--bg1);display:flex;flex-direction:column;padding:20px 14px 18px;overflow-y:auto}
 .brand{display:flex;align-items:center;gap:11px;padding:2px 10px 16px;border-bottom:1px solid var(--line);margin-bottom:14px}
 /* сворачивание боковой колонки (замечание пользователя: «редко нужна, но
    всегда отжирает пространство»). Убирается она целиком, а не ужимается в
@@ -156,6 +156,12 @@ a:hover{text-decoration:underline}
 .sitem.off:hover{background:none}
 .sitem .n{margin-left:auto;font:500 11px var(--mono);color:var(--tx3)}
 .sfoot{border-top:1px solid var(--line);padding:14px 10px 0}
+/* хват ширины колонки на её правом крае: горячая зона шире полоски, как у
+   панели разговора, и живёт она вместе с колонкой: свернул колонку, хвата
+   тоже нет */
+.sgrab{position:absolute;right:0;top:0;bottom:0;width:16px;cursor:col-resize;background:none;touch-action:none;z-index:2}
+.sgrab::before{content:"";position:absolute;right:0;top:0;bottom:0;width:5px}
+.sgrab:hover::before{background:color-mix(in oklab,var(--acc) 30%,transparent)}
 /* остаток подписок в подвале колонки (макет «00 Главная»): полоска на бакет,
    процент это потраченное, подпись под группой говорит возраст снимка. Блок
    прижат книзу, поэтому свободное место колонки достаётся ему, а не кнопке
@@ -1622,8 +1628,9 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
    (меню, экран, чат) стояли на разной высоте и разъезжались по вертикали. */
 
 /* 15: отступы между колонкой, экраном и панелью ужаты. Ширина колонки тоже:
-   на 248 точках она держала пустое поле справа от каждого пункта. */
-.side{width:208px;padding:12px 10px 12px}
+   на 248 точках она держала пустое поле справа от каждого пункта. Ширина
+   теперь в переменной --sw, её ставит хват sgrab и помнит память браузера. */
+.side{width:var(--sw,208px);padding:12px 10px 12px}
 .brand{padding:0 6px 10px;margin-bottom:10px;gap:9px}
 .cpin{padding:12px 12px 12px}
 

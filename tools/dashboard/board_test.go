@@ -882,6 +882,22 @@ func TestScreenKeepsPlaceOnRefresh(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Ширина колонки меню в руках человека: хват на правом крае тянет колонку,
+// ширина живёт в переменной корня и в памяти браузера, пределы держат снизу
+// читаемость, сверху полосу доски. Стенд testdata/poc_sidewidth.mjs.
+func TestStaticSideWidth(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд хвата колонки пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_sidewidth.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("хват ширины колонки: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // DK-350: форма заведения помнит черновики, экран накопителя открывает
 // форму черновиком. Статика проверяется статическим тестом (без браузера).
 func TestDraftNewForm(t *testing.T) {

@@ -8407,6 +8407,97 @@ function wireChatGrab(grab) {
   window.addEventListener("blur", () => release(null));
 }
 
+// Ширина колонки меню слева. Хват стоит на её правом крае, мера это расстояние
+// от левого края окна до пальца. Пределы свои: снизу колонка уже нечитаема,
+// сверху её потолок и полоса доски рядом считаются одним числом (замечание
+// пользователя: на 208 точках в колонку ничего не влезало и раздвинуть её
+// было нечем).
+const SIDE_W_KEY = "devkit.side.width";
+const SIDE_W_MIN = 176;
+const SIDE_W_DEF = 208;
+const SIDE_W_MAX = 480;
+// Полоса доски, которая остаётся видной рядом с самой широкой колонкой: за
+// неё берутся, чтобы вернуть колонку назад.
+const SIDE_W_KEEP = 560;
+
+function sideMax() {
+  const win = typeof window !== "undefined" && window.innerWidth ? window.innerWidth : 0;
+  if (!win) return SIDE_W_MAX;
+  return Math.max(SIDE_W_MIN, Math.min(SIDE_W_MAX, win - SIDE_W_KEEP));
+}
+
+function sideClamp(w) {
+  return Math.max(SIDE_W_MIN, Math.min(sideMax(), Math.round(w) || SIDE_W_DEF));
+}
+
+// Ширина уезжает в корень переменной той же дорогой, что и у панели разговора:
+// объявление ширины узла меняет только свой автор, а переменную меняет хват.
+function putSideWidth(w) {
+  const px = sideClamp(w);
+  document.documentElement.style.setProperty("--sw", px + "px");
+  // Колонка отнимает ширину у доски рядом, и колонки таблиц ложатся заново.
+  tblWidthsAll();
+  return px;
+}
+
+// Память ширины хранит запрошенное человеком, а читается она через пределы:
+// колонка, растянутая на широком мониторе, не должна усыхать навсегда от
+// одного захода с ноутбука.
+function sideWidth() {
+  let saved = 0;
+  try {
+    saved = Number(localStorage.getItem(SIDE_W_KEY)) || 0;
+  } catch (err) {
+    // Приватное окно запрещает хранилище: колонка тогда живёт шириной по
+    // умолчанию, но тянется.
+    saved = 0;
+  }
+  return sideClamp(saved || SIDE_W_DEF);
+}
+
+function saveSideWidth(w) {
+  try {
+    localStorage.setItem(SIDE_W_KEY, String(Math.max(SIDE_W_MIN, Math.round(w) || SIDE_W_DEF)));
+  } catch (err) {
+    return;
+  }
+}
+
+// Хват колонки. Правила тяги те же, что у панели разговора: зажатая кнопка
+// проверяется на каждом движении, а не одним флагом, и потеря захвата, и
+// размытие окна гасят тягу сразу.
+function wireSideGrab(grab) {
+  if (!grab) return;
+  let held = 0;
+  const width = (ev) => putSideWidth(ev.clientX);
+  const release = (ev) => {
+    if (!held) return;
+    held = 0;
+    saveSideWidth(ev && ev.clientX !== undefined ? width(ev) : sideWidth());
+  };
+  grab.addEventListener("pointerdown", (ev) => {
+    // Тянут левой кнопкой: правая открывает меню, и хват под ней остался бы
+    // зажатым после того, как меню закрыли.
+    if (ev.button !== undefined && ev.button !== 0) return;
+    held = ev.pointerId === undefined ? 1 : ev.pointerId + 1;
+    if (grab.setPointerCapture) grab.setPointerCapture(ev.pointerId);
+    if (ev.preventDefault) ev.preventDefault();
+  });
+  grab.addEventListener("pointermove", (ev) => {
+    if (!held) return;
+    if (ev.buttons === 0) {
+      release(ev);
+      return;
+    }
+    width(ev);
+  });
+  grab.addEventListener("pointerup", release);
+  grab.addEventListener("pointercancel", release);
+  grab.addEventListener("lostpointercapture", release);
+  window.addEventListener("pointerup", release);
+  window.addEventListener("blur", () => release(null));
+}
+
 // Экран под панелью: адрес без хвоста разговора. Старые адреса ложатся сюда же,
 // поэтому «закрыть» с них ведёт на доску или на экран задачи, а не в пустоту.
 // Последний открытый разговор помнится между заходами: человек возвращается в
@@ -18199,8 +18290,10 @@ document.addEventListener("visibilitychange", () => {
 // Место под таблицу меняется не одной перерисовкой: окно тянут за угол, экран
 // поворачивают, панель разговора забирает половину ширины. Ширины при этом
 // перекладываются на месте, без пересборки списка: числа лежат переменными
-// корня, и поставить их заново дешевле, чем собрать строки.
-window.addEventListener("resize", tblWidthsAll);
+// корня, и поставить их заново дешевле, чем собрать строки. Колонка меню при
+// новом размере окна перечитывает свою ширину из памяти: предел её считается
+// от окна, и узкое окно сжимает колонку, растянутую на широком мониторе.
+window.addEventListener("resize", () => putSideWidth(sideWidth()));
 // Поле поиска в шапке живёт разметкой, а не сборкой экрана: шапка стоит над
 // любым из них, и перерисовка доски поле не задевает.
 wireFindField(document.getElementById("hq"), document.getElementById("hq-clear"));
@@ -18209,6 +18302,8 @@ wireFindField(document.getElementById("hq"), document.getElementById("hq-clear")
 // открытая по ссылке панель не прыгала с умолчания на своё.
 putChatWidth(chatWidth());
 wireChatGrab(document.getElementById("cgrab"));
+putSideWidth(sideWidth());
+wireSideGrab(document.getElementById("sgrab"));
 wireFindKey();
 wireNewKey();
 // Блок квоты рисуется до первого ответа сервера: пустая рамка в подвале

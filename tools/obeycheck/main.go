@@ -156,14 +156,16 @@ func main() {
 	if err := checkBase(*base); err != nil {
 		fail(err)
 	}
-	// Файл задачи и число повторов проверяются до прогона: узнать о разведке
-	// после двухсот сессий значит потерять их зря.
+	// Журнал заводится до разбора --task: разведка до сессий не доходит,
+	// а строку в журнале оставить обязана (DK-1309). Отказ тоже проверяется
+	// до прогона, чтобы узнать о разведке до двухсот сессий.
+	home, _ := os.UserHomeDir()
+	j, jerr := openRunJournal(home, *task, *repeats)
+	if jerr != nil {
+		fail(jerr)
+	}
 	taskPath := ""
 	if *task != "" {
-		if *repeats < minTaskRepeats {
-			fail(fmt.Errorf("--task %s при -k %d это разведка, а не замер: следу в файле задачи нужно "+
-				"хотя бы %d повтора на раскладку", *task, *repeats, minTaskRepeats))
-		}
 		if taskPath, err = taskFile(root, ".", *task); err != nil {
 			fail(err)
 		}
@@ -215,9 +217,8 @@ func main() {
 		}
 	}
 
-	// Журнал запуска ведётся всегда, и без --task тоже: разведка и обрывы
-	// числа в свод не несут, но след оставить обязаны (DK-1309).
-	j := newRunJournal(*task, *repeats)
+	// Журнал уже ведётся, и без --task тоже: разведка и обрывы числа в
+	// свод не несут, но след оставить обязаны (DK-1309).
 	res, err := Run(Params{
 		Scenarios:  scen,
 		Layouts:    fs.Args(),

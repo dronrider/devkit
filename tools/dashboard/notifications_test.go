@@ -654,7 +654,8 @@ func TestStaticFeedHeadAndIcons(t *testing.T) {
 	}
 	page := readFile(t, filepath.Join("static", "index.html"))
 	for _, want := range []string{`id="icons"`, `data-ico="i-stop"`, `data-ico="i-wait"`,
-		`data-ico="i-done"`, `data-ico="close"`, "<svg viewBox=\"0 0 24 24\""} {
+		`data-ico="i-done"`, `data-ico="i-fail"`, `data-ico="i-checks"`,
+		`data-ico="close"`, "<svg viewBox=\"0 0 24 24\""} {
 		if !strings.Contains(page, want) {
 			t.Errorf("в static/index.html нет значка %q", want)
 		}

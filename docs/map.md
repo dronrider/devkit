@@ -1,4 +1,4 @@
-<!-- devkit:generated map body=e4169afdc3696aec -->
+<!-- devkit:generated map body=643db482e5032aee -->
 
 # Карта проекта
 
@@ -14,7 +14,7 @@ internal: общий go-модуль каркаса утилит
 tools/agentctl: выбор исполнителя под задачу
 tools/cmdout: длинный вывод команд файлом, агенту выжимка
 tools/dashboard: веб-дашборд агентской разработки
-tools/devkitctl: обвязка проекта
+tools/devkitctl: обвязка проекта с поддержкой кеша длинных потоков
 tools/obeycheck: стенд послушания
 tools/regcheck: краснота регрессионного теста
 tools/secretctl: имена агенту, значение в подпроцесс

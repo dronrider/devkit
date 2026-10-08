@@ -2262,6 +2262,9 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 
 /* кнопка копирования в подписи пузыря: рядом с автором, проявляется наведением */
 .msg .bb .mm{display:flex;align-items:center;justify-content:flex-end;gap:8px}
+.msg .bb .mm .mstate{display:inline-flex;align-items:center;gap:4px;flex:none}
+.msg .bb .mm .mstate svg{width:12px;height:12px;flex:none}
+.msg .bb .mm .mstate .mstw{white-space:nowrap}
 .msg .bb .mm .foldcp{opacity:0}
 .msg:hover .bb .mm .foldcp,.msg .bb .mm .foldcp.ok,.msg .bb .mm .foldcp.bad{opacity:1}
 .msg .bb .mm .foldcp.ok{color:var(--run)}

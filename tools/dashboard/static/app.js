@@ -7194,10 +7194,22 @@ function markEl(text) {
   return wrap;
 }
 
+// Отметка доставки в подписи: иконка строки как в мессенджерах и короткое
+// слово рядом. Длинная причина уезжает подсказкой подписи, а не припиской
+// под словами человека (DK-1328).
+function stateMark(kind, word) {
+  const ico = kind === "fail" ? "i-fail" : kind === "done" ? "i-done"
+    : kind === "read" ? "i-checks" : "i-wait";
+  const mark = el("span", "mstate m-" + kind);
+  mark.append(icon(ico), el("span", "mstw", word));
+  return mark;
+}
+
 // Подпись сидит внутри пузыря, справа внизу: снаружи она занимала свою строку
 // на каждое сообщение и растягивала ленту вдвое (замечание 6 двенадцатого
-// круга POC). Пустая подпись не рисуется вовсе.
-function chatBubble(who, text, meta, tip, quote) {
+// круга POC). Пустая подпись не рисуется вовсе. Состояние доставки стоит
+// отметкой с иконкой, а причина её живёт подсказкой подписи.
+function chatBubble(who, text, meta, tip, quote, mark) {
   const wrap = el("div", "msg" + (who === "вы" ? " me" : ""));
   // Слова реплики остаются при пузыре: по ним панель узнаёт блок вопроса и
   // разбирает его строки вариантов (DK-864). В разметке от блока остаётся
@@ -7214,6 +7226,7 @@ function chatBubble(who, text, meta, tip, quote) {
   bb.append(mdRender(wrap.mdText, chatFeedAt()));
   const said = meta ? who + ", " + meta : who;
   const foot = el("div", "mm", said);
+  if (mark) foot.append(mark);
   // Служебная обвязка живёт подсказкой подписи: в пузыре ей места нет, а
   // терять её незачем (адрес доставки у реплики, ушедшей каналом панели).
   if (tip) withFull(foot, tip);
@@ -7933,13 +7946,13 @@ const SENT_META = {
 // доставленная реплика выглядела бы ждущей до следующего открытия чата.
 const OUTBOX_POLL = 15000;
 
-// Подпись доставленной реплики. Время у отметки есть всегда, а сессия не
-// всегда: строку, съеденную вопросом витка (--ask), не называл никакой виток,
-// и пустая скобка там была бы вопросом без ответа.
+// Детали доставки для подсказки подписи. Время у отметки есть всегда, а сессия
+// не всегда: строку, съеденную вопросом витка (--ask), не называл никакой
+// виток, и пустая скобка там была бы вопросом без ответа.
 function deliveredMeta(mark) {
-  if (!mark) return SENT_META.delivered;
+  if (!mark) return "";
   const at = mark.at ? localTime(mark.at) : "";
-  return SENT_META.delivered + (at ? " в " + at : "") +
+  return (at ? "в " + at : "") +
     (mark.session ? ", сессия " + String(mark.session).slice(0, 8) : "");
 }
 
@@ -8026,21 +8039,31 @@ function makeOutbox(project, id, box, url, opts) {
   let stopped = false;
   const told = new Set();
 
-  // Долгая неудача не выглядит отправленной: после OUTBOX_STUCK подпись
-  // называет причину и считает минуты, а до того «в очереди» одинаково
-  // подходит и идущему запросу, и первым неудачным попыткам.
-  const label = (m) => {
-    if (m.state === "delivered") return deliveredMeta(m.mark);
-    if (m.state !== "queued") return SENT_META[m.state];
+  // Долгая неудача не выглядит отправленной: после OUTBOX_STUCK подсказка
+  // подписи называет причину и считает минуты, а до того «в очереди»
+  // одинаково подходит и идущему запросу, и первым неудачным попыткам.
+  const stateOf = (m) => {
+    if (m.state === "delivered") {
+      return { kind: "done", word: SENT_META.delivered, tip: deliveredMeta(m.mark) };
+    }
+    if (m.state === "read") return { kind: "read", word: SENT_META.read, tip: "" };
+    if (m.state !== "queued") {
+      return { kind: "wait", word: SENT_META[m.state] || SENT_META.queued, tip: "" };
+    }
     const held = m.since ? Date.now() - m.since : 0;
-    if (held < OUTBOX_STUCK) return SENT_META.queued;
-    return "в очереди " + Math.max(1, Math.round(held / 60000)) + " мин, связи нет";
+    if (held < OUTBOX_STUCK) return { kind: "wait", word: SENT_META.queued, tip: "" };
+    return {
+      kind: "wait",
+      word: SENT_META.queued,
+      tip: "связи нет, " + Math.max(1, Math.round(held / 60000)) + " мин",
+    };
   };
 
   const bubble = (m) => {
-    const wrap = chatBubble("вы", m.text, (m.at ? m.at + ", " : "") + label(m));
+    const st = stateOf(m);
+    const wrap = chatBubble("вы", m.text, m.at || "", st.tip, null, stateMark(st.kind, st.word));
     wrap.classList.add("m-" + m.state);
-    if (m.state === "queued" && label(m) !== SENT_META.queued) wrap.classList.add("m-stuck");
+    if (m.state === "queued" && st.tip) wrap.classList.add("m-stuck");
     return wrap;
   };
 
@@ -8049,8 +8072,10 @@ function makeOutbox(project, id, box, url, opts) {
     // Чужая строка тоже несёт своё состояние: положить её мог другой браузер
     // или рука, а доставка у неё та же самая.
     for (const line of others) {
-      box.append(chatBubble("вы", line,
-        marks.has(line) ? deliveredMeta(marks.get(line)) : "ждёт витка"));
+      const mark = marks.get(line);
+      box.append(chatBubble("вы", line, "", mark ? deliveredMeta(mark) : "",
+        null, stateMark(mark ? "done" : "wait",
+          mark ? SENT_META.delivered : SENT_META.waiting)));
     }
     for (const m of mine) box.append(bubble(m));
     if (failed) box.append(el("div", "error", failed));
@@ -11925,9 +11950,9 @@ async function chatWait(project, name, addr) {
 }
 
 // Причина на пузыре первой реплики, когда подъём идёт дольше обычного: не
-// провал, а ожидание, у которого назван виновник и обещан исход.
-const CHAT_WAIT_WHY = "сессия поднимается дольше обычного, возможно клиент " +
-  "ждёт ответа в своём терминале; чат встанет сам, как только сессия назовётся";
+// провал, а ожидание, у которого назван виновник. Подсказка короткая, без
+// разбора ситуации (DK-1328).
+const CHAT_WAIT_WHY = "сессия поднимается дольше обычного";
 
 // Возраст хода словами для плашки: в первую минуту читаются секунды, дальше
 // минуты с секундами, а после часа секунды в счётчике уже не разглядеть, и
@@ -12458,18 +12483,16 @@ function echoRead(project, addr) {
 
 // Причина у пузыря, пережившего перерисовку или перезагрузку до подтверждения.
 // Сама отправка успела уйти, но эха из транскрипта панель ещё не видела.
-// Прежде тут стояли «доставка не подтверждена» и «эхо из транскрипта», то есть
-// наше устройство целиком: человеку нужно знать, дошло ли и почему это до сих
-// пор непонятно.
-const ECHO_LOST_WHY = "дошло ли, неизвестно. Агент этого ещё не повторил";
+// Прежде тут стояло «эхо из транскрипта», то есть наше устройство целиком:
+// человеку нужно знать, дошло ли.
+const ECHO_LOST_WHY = "дошло ли, неизвестно";
 
 // Слова у реплики, которая легла во вход задачи и ждёт там. Ведущей сессии у
 // задачи нет ни одной, и забрать безадресную строку вправе только та сессия,
-// что задачу ведёт: пузырь называет очередь и того, кто её разберёт. Слова эти
-// сервер говорит и сам, а тут они запасные, на случай ответа без причины.
+// что задачу ведёт: пузырь называет очередь. Слова эти сервер говорит и сам, а
+// тут они запасные, на случай ответа без причины.
 function taskQueueWhy(task) {
-  return "в очереди задачи" + (task ? " " + task : "") +
-    ": сессия заберёт строку первым же ходом";
+  return "в очереди задачи" + (task ? " " + task : "");
 }
 
 // Заходов подъёма сессии первой репликой: панель поднимает её сама и второй
@@ -12568,17 +12591,26 @@ function makeEcho(project, box, feedBox, addr, resend) {
     // называется тут, потому что рисовать их могут и до первой отрисовки ленты.
     chatFeedIn(project);
     for (const m of mine) {
-      // Состояние реплики это одна строка подписи, и кнопок в пузыре нет ни у
-      // одного состояния (DK-1011). Реплика, легшая в очередь (вход задачи,
-      // очередь харнеса или клиента), называет очередь и того, кто её
-      // разберёт. Реплика, которую взяли, но которой не дали хода (агент стоит
-      // на вопросе разрешения в своём окне), доставленной не считается, и
-      // причина сама говорит, чем ответить.
-      const meta = m.state === "held" && m.queue ? (m.why || "в очереди")
-        : m.state === "held" ? "не доставлено: " + (m.why || "агенту её не отдали")
-        : m.state === "bad" ? (stopped ? "не ушло" : "не ушло, дожимаю")
-        : m.state === "sent" ? "доставлено" : "отправляется...";
-      const wrap = chatBubble("вы", m.text, m.sel ? meta + ", с выделением" : meta);
+      // Кнопок в пузыре нет ни у одного состояния (DK-1011). Состояние
+      // доставки стоит иконкой с коротким словом, а длинная причина уходит
+      // подсказкой подписи: реплика человека остаётся чистым текстом
+      // (DK-1328). Реплика в очереди (вход задачи, очередь харнеса или
+      // клиента) зовётся очередью, недоставленная называет причину в подсказке.
+      let mark, why = "";
+      if (m.state === "held" && m.queue) {
+        mark = stateMark("wait", "в очереди");
+        why = m.why || "";
+      } else if (m.state === "held") {
+        mark = stateMark("fail", "не доставлено");
+        why = m.why || "агенту её не отдали";
+      } else if (m.state === "bad") {
+        mark = stateMark("fail", stopped ? "не ушло" : "не ушло, дожимаю");
+      } else if (m.state === "sent") {
+        mark = stateMark("done", "доставлено");
+      } else {
+        mark = stateMark("wait", "отправляется...");
+      }
+      const wrap = chatBubble("вы", m.text, m.sel ? "с выделением" : "", why, null, mark);
       wrap.classList.add("m-local", "m-" + m.state);
       if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
       if (m.pic) wrap.append(shotThumb(m.pic.data, m.pic.name));

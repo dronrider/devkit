@@ -735,7 +735,7 @@ func TestStaticPanelKnowsStartAndStuck(t *testing.T) {
 	for _, want := range []string{`if (r.body.stuck && r.body.way === "held") echo.held(m, r.body.stuck);`,
 		`else if (r.body.stuck) echo.queued(m, r.body.stuck);`,
 		`if (r.body.way === "start")`, `chatWait(project, r.body.tmux)`,
-		`m.state === "held" ? "не доставлено: "`} {
+		`function stateMark(kind, word)`, `stateMark("fail", "не доставлено")`} {
 		if !strings.Contains(app, want) {
 			t.Errorf("в static/app.js нет %q", want)
 		}
@@ -2015,7 +2015,7 @@ func TestTaskMessageUndeliveredWithoutLead(t *testing.T) {
 	if !strings.Contains(text, `"undelivered":true`) {
 		t.Errorf("ответ не назвал реплику недоставленной: %s", text)
 	}
-	if !strings.Contains(text, "отвечать некому") {
+	if !strings.Contains(text, "работа по задаче не идёт") {
 		t.Errorf("ответ не назвал причину словами: %s", text)
 	}
 	// Текст человека при этом не теряется: строка лежит во входе и ждёт свою

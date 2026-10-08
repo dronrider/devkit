@@ -22,12 +22,17 @@
 «простой дешевле перезаписи») и цену.
 
 Интеграция: команда `devkitctl cachekeep` обходит журналы сессий проекта,
-находит простаивающие потоки и принимает решение по каждому. Реальная отправка
-продлевающего запроса идёт через клиент харнеса (CLI), на стенде она
-подменяется заглушкой: синтетический поток держит механику, падение перезаписи
-видно на настоящем заходе.
+находит простаивающие потоки и принимает решение по каждому. Продлевающий
+запрос уходит через клиент харнеса (CLI) с тем же resume и моделью, что у
+потока, и коротким запросом `-p`: тот же префикс читается по ставке чтения,
+TTL кеша продлевается. Строка журнала «продлил» пишется только о запросе,
+который реально ушёл; отказ отправки виден строкой stderr, молчание за
+работу не считается. На стенде отправка подменяется заглушкой: синтетический
+поток держит механику, падение перезаписи видно на настоящем заходе.
 """
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -49,6 +54,12 @@ PING_MARGIN = 0.8
 # Журнал отметок механики: тот же файл, что у turn-mark.py.
 TURNS_LOG = os.path.join(os.path.expanduser("~"), ".devkit", "turns.log")
 TURNS_ENV = "DEVKIT_TURN_MARK_LOG"
+# Короткий запрос продления: один символ, ответ модели не нужен. Запрос читает
+# тот же префикс по ставке чтения и продлевает TTL кеша.
+KEEPALIVE_PROMPT = "кэш"
+# Resume умолчания, когда профиль харнеса не прочитан: то же, что head.resume
+# профиля claude-code. Клиент читает его снаружи и передаёт сюда.
+DEFAULT_RESUME = ["claude", "--resume", "{session}", "--model", "{model}"]
 
 
 def pings_needed(idle_seconds, ttl):
@@ -104,6 +115,39 @@ def detect_ttl(reqs):
     return TTL_SHORT
 
 
+def keepalive_argv(session, model, resume=None):
+    """Команда продлевающего запроса: resume профиля плюс короткий запрос.
+
+    {session} и {model} подставляются, как в ResumeCommand; модель обязана
+    быть той же, что у потока, иначе смена модели перепишет префикс (кейс 6).
+    Ключ -p едет хвостом: за `--` обёртки agentctl exec он попадает клиенту.
+    """
+    base = resume if resume else DEFAULT_RESUME
+    out = [s.replace("{session}", session).replace("{model}", model) for s in base]
+    return out + ["-p", KEEPALIVE_PROMPT]
+
+
+def send_keepalive(session, model, root, resume=None, home=None, timeout=120):
+    """Продлевающий запрос через клиент харнеса. True, если запрос ушёл.
+
+    resume это head.resume профиля харнеса; без него берётся DEFAULT_RESUME.
+    Отказ запуска и ненулевой код клиента это False: строка «продлил» после
+    этого не пишется. На стенде функция подменяется заглушкой.
+    """
+    cmd = keepalive_argv(session, model, resume=resume)
+    env = dict(os.environ)
+    if home:
+        env["HOME"] = str(home)
+    try:
+        p = subprocess.run(cmd, cwd=str(root), env=env, capture_output=True,
+                           timeout=timeout)
+        return p.returncode == 0
+    except (OSError, subprocess.TimeoutExpired) as e:
+        sys.stderr.write("cachekeep: продлевающий запрос %s не ушёл: %s\n"
+                         % (session, e))
+        return False
+
+
 def decide_stream(path, now=None):
     """Решение по одному потоку: продлевать кеш или дать ему истечь.
 
@@ -139,6 +183,7 @@ def decide_stream(path, now=None):
         "cost_keep": cost_k,
         "cost_rewrite": cost_r,
         "pings": pings_needed(idle, ttl),
+        "model": reqs[-1].get("model") or "",
     }
 
 
@@ -146,6 +191,8 @@ def journal_line(stream, keep, cost, idle, home=None):
     """Строка журнала о решении механики: видна снаружи, молчание не считается.
 
     Формат именованными полями как у turn-mark.py, слово хода «кэш».
+    Отказ записи не глотается: уходит строкой stderr, и след механики
+    теряется громко, а не молча (замечание 7 ревью DK-1312).
     """
     log = os.environ.get(TURNS_ENV) or TURNS_LOG
     if home:
@@ -159,16 +206,19 @@ def journal_line(stream, keep, cost, idle, home=None):
         os.makedirs(os.path.dirname(log), exist_ok=True)
         with open(log, "a", encoding="utf-8") as f:
             f.write(line)
-    except OSError:
-        pass
+    except OSError as e:
+        sys.stderr.write("cachekeep: строка журнала не записана в %s: %s\n" % (log, e))
     return line
 
 
-def scan_project(root, now=None, home=None):
+def scan_project(root, now=None, home=None, sender=None, resume=None, dry_run=False):
     """Обход журналов сессий проекта: решения по простаивающим потокам.
 
-    Возвращает список решений (decide_stream). Строки журнала пишутся
-    по каждому потоку, у которого есть простой (idle > 0).
+    Возвращает список решений (decide_stream). Продлевающий запрос уходит
+    по каждому потоку, где решение «продлевать» и простой длиннее TTL
+    (pings > 0). Строка «продлил» пишется только о реально ушедшем запросе;
+    строка «истёк» пишется о решении не продлевать. sender это подмена
+    отправки на стенде; dry_run принимает решения, ничего не отправляя.
     """
     directory = context.logs_dir(root, home=home)
     if not directory.is_dir():
@@ -179,6 +229,16 @@ def scan_project(root, now=None, home=None):
         if d is None:
             continue
         out.append(d)
-        if d["idle"] > 0:
-            journal_line(d["stream"], d["keep"], d["cost_keep"], d["idle"], home=home)
+        if d["idle"] <= 0:
+            continue
+        sent = False
+        if d["keep"] and d["pings"] > 0 and not dry_run:
+            send = sender if sender is not None else send_keepalive
+            sent = bool(send(d["stream"], d.get("model") or "", root,
+                             resume=resume, home=home))
+        d["sent"] = sent
+        if sent:
+            journal_line(d["stream"], True, d["cost_keep"], d["idle"], home=home)
+        elif not d["keep"]:
+            journal_line(d["stream"], False, d["cost_rewrite"], d["idle"], home=home)
     return out

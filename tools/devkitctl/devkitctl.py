@@ -179,6 +179,7 @@
 import argparse
 import board
 import build
+import cachekeep
 import catchup
 import codemap
 import context
@@ -3371,6 +3372,36 @@ def stats_context(start):
     return 0
 
 
+def cachekeep_run(start, dry_run=False):
+    """Поддержание кеша длинного потока: решения и продлевающие запросы.
+
+    Resume профиля харнеса читается по DEVKIT_HARNESS (умолчание claude-code).
+    dry_run принимает решения, ничего не отправляя: строка журнала о
+    продлении при нём не пишется, «истёк» пишется как обычно.
+    """
+    root, _ = project_root(start)
+    name = os.environ.get("DEVKIT_HARNESS") or "claude-code"
+    resume = cachekeep.DEFAULT_RESUME
+    profile_path = DEVKIT / "kit" / "harness" / ("%s.toml" % name)
+    try:
+        doc = harness.parse(name, profile_path.read_text(encoding="utf-8"))
+        got = doc.arr_of("head", "resume")
+        if got:
+            resume = got
+    except (OSError, harness.TomlError) as e:
+        sys.stderr.write("cachekeep: профиль %s не прочитан (%s), беру умолчание\n"
+                         % (name, e))
+    decisions = cachekeep.scan_project(root, resume=resume, dry_run=dry_run)
+    if not decisions:
+        sys.stderr.write("журналы сессий не найдены или потоков нет: %s\n" % root)
+        return 2
+    kept = sum(1 for d in decisions if d.get("sent"))
+    expired = sum(1 for d in decisions if not d.get("keep"))
+    sys.stdout.write("потоков %d, продлено %d, истекло %d\n"
+                     % (len(decisions), kept, expired))
+    return 0
+
+
 def drain_run(start, all_projects=False):
     # --all ходит по всему ~/.claude/projects, как разовый скрипт tstats.py;
     # без него разбирается слепок пути текущего проекта, тот же, что у stats
@@ -3825,6 +3856,11 @@ def main(argv):
     dr.add_argument("-C", dest="dir", default=".", help="директория проекта")
     dr.add_argument("--all", action="store_true",
                    help="разобрать весь ~/.claude/projects, как разовый скрипт tstats.py")
+    ck = sub.add_parser("cachekeep",
+                        help="поддержание кеша длинного потока в простое")
+    ck.add_argument("-C", dest="dir", default=".", help="директория проекта")
+    ck.add_argument("--dry-run", action="store_true",
+                    help="решения без отправки продлевающих запросов")
     g = sub.add_parser("watch", help="сторожок цикла цели: позвать по вставшим")
     g.add_argument("--idle", type=int, default=0,
                    help="порог простоя в минутах, по умолчанию %d" % (watch.IDLE // 60))
@@ -3897,6 +3933,8 @@ def main(argv):
         rc = waitcheck.main()
     elif a.cmd == "drain":
         rc = drain_run(a.dir, a.all)
+    elif a.cmd == "cachekeep":
+        rc = cachekeep_run(a.dir, a.dry_run)
     else:
         rc = stats(a.dir, a.context, a.date_from, a.date_to)
     # Журнал запусков в корп-контуре лежит там же, где остальные рабочие файлы,

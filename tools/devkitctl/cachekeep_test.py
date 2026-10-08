@@ -112,6 +112,14 @@ class CacheKeepStreamTest(SandboxCase):
         os.environ.pop("DEVKIT_TURN_MARK_LOG", None)
         super().tearDown()
 
+    def _reset_logs(self):
+        """Стереть потоки и журнал: стенд общий на класс, scan_project видит всех."""
+        if self.logs.exists():
+            for p in self.logs.glob("*.jsonl"):
+                p.unlink()
+        if self.turns_log.exists():
+            self.turns_log.unlink()
+
     def _write_stream(self, name, reqs):
         path = self.logs / (name + ".jsonl")
         write_stream(path, reqs)
@@ -160,6 +168,7 @@ class CacheKeepStreamTest(SandboxCase):
         self.assertFalse(d["keep"], "длинный простой: перезапись дешевле")
 
     def test_journal_line_written(self):
+        self._reset_logs()
         base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
         reqs = [
             make_raw(100000, 0, 50, 10, "m1", self._ts(base, 0)),
@@ -167,11 +176,13 @@ class CacheKeepStreamTest(SandboxCase):
         ]
         path = self._write_stream("stream4", reqs)
         now = base.timestamp() + 400
-        cachekeep.scan_project(self.proj.resolve(), now=now, home=self.box.home)
+        cachekeep.scan_project(self.proj.resolve(), now=now, home=self.box.home,
+                               sender=lambda *a, **k: True)
         self.assertTrue(self.turns_log.exists(), "журнал должен быть записан")
         content = self.turns_log.read_text(encoding="utf-8")
         self.assertIn("кэш", content, "строка журнала должна нести слово кэш")
         self.assertIn("сессия stream4", content, "строка журнала должна называть сессию")
+        self.assertIn("продлил", content, "ушедший запрос даёт строку «продлил»")
 
     def test_detect_ttl_short(self):
         base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
@@ -218,6 +229,7 @@ class CacheKeepStreamTest(SandboxCase):
                          "перезапись без простоя и без смены модели это голова")
 
     def test_report_shows_causes(self):
+        self._reset_logs()
         base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
         reqs = [
             make_raw(100000, 0, 50, 10, "m1", self._ts(base, 0)),
@@ -233,6 +245,105 @@ class CacheKeepStreamTest(SandboxCase):
         text = "".join(out)
         self.assertIn("причины:", text, "отчёт должен называть причины перезаписей")
         self.assertIn("простой", text, "причина простой должна быть в отчёте")
+
+    def test_keepalive_sent_on_keep(self):
+        """Решение «продлевать» и простой длиннее TTL уводят запрос, и строка
+        журнала «продлил» пишется только о реально ушедшей работе."""
+        self._reset_logs()
+        base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
+        reqs = [
+            make_raw(200000, 0, 50, 10, "m1", self._ts(base, 0)),
+            make_raw(500, 199000, 30, 10, "m1", self._ts(base, 10)),
+        ]
+        self._write_stream("stream6", reqs)
+        now = base.timestamp() + 400
+        calls = []
+
+        def sender(session, model, root, **kw):
+            calls.append((session, model))
+            return True
+
+        cachekeep.scan_project(self.proj.resolve(), now=now, home=self.box.home,
+                               sender=sender)
+        self.assertEqual(calls, [("stream6", "m1")],
+                         "запрос уходит один раз, с моделью потока")
+        content = self.turns_log.read_text(encoding="utf-8")
+        self.assertIn("продлил", content, "ушедший запрос даёт строку «продлил»")
+
+    def test_no_send_when_rewrite_cheaper(self):
+        """Длинный простой: перезапись дешевле, запрос не уходит, строка «истёк»."""
+        self._reset_logs()
+        base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
+        reqs = [
+            make_raw(200000, 0, 50, 10, "m1", self._ts(base, 0)),
+            make_raw(500, 199000, 30, 10, "m1", self._ts(base, 10)),
+        ]
+        self._write_stream("stream7", reqs)
+        now = base.timestamp() + 7200
+        calls = []
+
+        def sender(session, model, root, **kw):
+            calls.append(session)
+            return True
+
+        cachekeep.scan_project(self.proj.resolve(), now=now, home=self.box.home,
+                               sender=sender)
+        self.assertEqual(calls, [], "запрос не уходит, когда перезапись дешевле")
+        content = self.turns_log.read_text(encoding="utf-8")
+        self.assertIn("истёк", content, "решение не продлевать видно строкой «истёк»")
+        self.assertNotIn("продлил", content, "«продлил» без работы не пишется")
+
+    def test_no_journal_when_send_fails(self):
+        """Отказ отправки не даёт строки «продлил»: молчание за работу не считается."""
+        self._reset_logs()
+        base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
+        reqs = [
+            make_raw(200000, 0, 50, 10, "m1", self._ts(base, 0)),
+            make_raw(500, 199000, 30, 10, "m1", self._ts(base, 10)),
+        ]
+        self._write_stream("stream8", reqs)
+        now = base.timestamp() + 400
+
+        def sender(session, model, root, **kw):
+            return False
+
+        cachekeep.scan_project(self.proj.resolve(), now=now, home=self.box.home,
+                               sender=sender)
+        content = self.turns_log.read_text(encoding="utf-8") if self.turns_log.exists() else ""
+        self.assertNotIn("продлил", content,
+                         "не ушедший запрос не заявляет работу строкой «продлил»")
+
+    def test_keepalive_argv_fills_model(self):
+        argv = cachekeep.keepalive_argv("S1", "mimo-v2.6-pro")
+        self.assertIn("S1", argv, "resume несёт сессию")
+        self.assertIn("mimo-v2.6-pro", argv, "resume несёт модель, а не {model}")
+        self.assertNotIn("{model}", argv, "литеральный {model} до текста зова не доезжает")
+        self.assertNotIn("{session}", argv, "литеральный {session} до текста зова не доезжает")
+        self.assertIn("-p", argv, "короткий запрос приставлен хвостом")
+        self.assertEqual(argv[-1], cachekeep.KEEPALIVE_PROMPT,
+                         "короткий запрос последним аргументом")
+
+    def test_keepalive_argv_wrapped_harness(self):
+        resume = ["agentctl", "exec", "--harness", "mimo", "--",
+                  "claude", "--resume", "{session}", "--model", "{model}"]
+        argv = cachekeep.keepalive_argv("S2", "m1", resume=resume)
+        self.assertEqual(argv[:5], ["agentctl", "exec", "--harness", "mimo", "--"],
+                         "обёртка сохраняется")
+        self.assertIn("m1", argv, "модель подставлена")
+        self.assertEqual(argv[-2:], ["-p", cachekeep.KEEPALIVE_PROMPT],
+                         "-p хвостом уходит клиенту после --")
+
+    def test_journal_error_is_visible(self,):
+        """Отказ записи журнала виден stderr, а не глотается (замечание 7)."""
+        import io
+        import unittest.mock
+        base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
+        err = io.StringIO()
+        with unittest.mock.patch("builtins.open", side_effect=OSError("диск полон")):
+            with unittest.mock.patch("sys.stderr", err):
+                cachekeep.journal_line("s1", True, 0, 10, home=self.box.home)
+        self.assertIn("не записана", err.getvalue(),
+                      "отказ записи уходит строкой stderr")
 
 
 class HarnessResumeModelTest(unittest.TestCase):
@@ -256,6 +367,33 @@ class HarnessResumeModelTest(unittest.TestCase):
                                   "%s: resume должен нести --model" % name)
                     self.assertIn("{model}", line,
                                   "%s: resume должен подставлять {model}" % name)
+
+    def test_resume_argv_fills_model(self):
+        """argv ResumeCommand несёт модель, а не литеральный {model} (замечание 3)."""
+        kit = Path(__file__).resolve().parent.parent.parent / "kit" / "harness"
+        for name in self.PROFILES:
+            path = kit / name
+            text = path.read_text(encoding="utf-8")
+            resume = None
+            in_head = False
+            for line in text.splitlines():
+                if line.strip() == "[head]":
+                    in_head = True
+                elif line.startswith("[") and in_head:
+                    in_head = False
+                if in_head and "resume" in line and "=" in line:
+                    raw = line.split("=", 1)[1].strip()
+                    resume = [p.strip().strip('"') for p in raw.strip("[]").split(",")]
+                    break
+            self.assertIsNotNone(resume, "%s: resume в [head] не найден" % name)
+            argv = cachekeep.keepalive_argv("SID", "the-model", resume=resume)
+            joined = " ".join(argv)
+            self.assertIn("the-model", joined,
+                          "%s: argv должен нести подставленную модель" % name)
+            self.assertNotIn("{model}", joined,
+                             "%s: литеральный {model} не должен оставаться в argv" % name)
+            self.assertIn("SID", joined,
+                          "%s: argv должен нести подставленную сессию" % name)
 
 
 if __name__ == "__main__":

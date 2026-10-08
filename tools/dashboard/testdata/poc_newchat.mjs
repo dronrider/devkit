@@ -101,7 +101,7 @@ if (!pendRow || !String(pendRow.className).includes("gtop")) {
 
 // --- плашка о подъёме сессии видна, а не пустота ---
 const plate = byClass(panel, "busyrow");
-if (!plate || plate.hidden || !dump(plate).includes("сессия поднимается")) {
+if (!plate || plate.hidden || !dump(plate).includes("агент запускается")) {
   fail("плашки о подъёме сессии нет: " + (plate ? dump(plate) : "узла нет"));
 }
 
@@ -139,7 +139,7 @@ if (!dump(panel2).includes("отправляется")) {
 }
 // И плашка о подъёме сессии на месте: реплика в полёте, пустота врала бы.
 const plate2 = byClass(panel2, "busyrow");
-if (!plate2 || plate2.hidden || !dump(plate2).includes("сессия поднимается")) {
+if (!plate2 || plate2.hidden || !dump(plate2).includes("агент запускается")) {
   fail("после перерисовки плашка о подъёме пропала");
 }
 

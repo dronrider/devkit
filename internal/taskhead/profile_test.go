@@ -29,7 +29,8 @@ func TestRealProfilesNameTheHead(t *testing.T) {
 		if h.Bin != "claude" || len(h.Client) == 0 || h.TurnEnd != TurnMark {
 			t.Fatalf("%s: голова %+v", name, h)
 		}
-		if got := strings.Join(h.ResumeCommand("S1"), " "); !strings.Contains(got, "--resume S1") {
+		if got := strings.Join(h.ResumeCommand("S1", "opus"), " "); !strings.Contains(got, "--resume S1") ||
+			!strings.Contains(got, "--model opus") || strings.Contains(got, "{model}") {
 			t.Fatalf("%s: резюм %q", name, got)
 		}
 		cmd := strings.Join(h.Command("opus", "S2", "DK-1 работа"), " ")

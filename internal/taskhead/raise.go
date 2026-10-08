@@ -514,7 +514,7 @@ func (q Request) callHuman(head Head, res *Result) {
 	why := strings.Join(res.Lines, "; ")
 	text := fmt.Sprintf("голову %s поднять нечем: %s. Поднять руками: %s", q.ID, why, q.Command())
 	if sid, _ := sessions.Load(q.Home).Leads(q.ID); sid != "" {
-		if resume := head.ResumeCommand(sid); len(resume) > 0 {
+		if resume := head.ResumeCommand(sid, q.Model); len(resume) > 0 {
 			text += "; продолжить прошлую сессию: cd " + shQuote(q.Root) + " && " + shellJoin(resume)
 		}
 	}

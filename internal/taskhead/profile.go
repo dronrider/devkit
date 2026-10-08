@@ -170,12 +170,14 @@ func (h Head) Command(model, session, name string) []string {
 }
 
 // ResumeCommand это команда продолжения сессии sid. Пусто, когда профиль её
-// не называет.
-func (h Head) ResumeCommand(sid string) []string {
+// не называет. Модель подставляется тем же fill, что и в Command: без неё в
+// текст громкого зова уезжал бы литеральный {model}, и продолжение уходило
+// человеку сломанной командой (замечание 3 ревью DK-1312).
+func (h Head) ResumeCommand(sid, model string) []string {
 	if len(h.Resume) == 0 || sid == "" {
 		return nil
 	}
-	return fill(h.Resume, "{session}", sid)
+	return fill(fill(h.Resume, "{session}", sid), "{model}", model)
 }
 
 func fill(list []string, mark, val string) []string {

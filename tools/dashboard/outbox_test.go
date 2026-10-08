@@ -68,6 +68,24 @@ func TestFeedDropsEchoedSaid(t *testing.T) {
 	}
 }
 
+// Клиент пишет в транскрипт реплику, пришедшую скобочной вставкой, обёрткой
+// pasted_content, а журнал хранит слова человека без неё. Обёртка это не слова
+// человека: пузырь показывает их без тегов, и эхо ту же реплику вытесняет, а
+// не даёт второй пузырь.
+func TestFeedUnwrapsPastedEcho(t *testing.T) {
+	e, c := chatEnv(t)
+	wrapped := `{"type":"user","message":{"role":"user","content":"\n\n<pasted_content id=\"552a\">\nработа идёт\n</pasted_content id=\"552a\">\n"},"timestamp":"2026-08-17T10:00:01.000Z","gitBranch":"main"}` + "\n"
+	writeSession(t, e.home, e.proj, "", "aaaa-1111", wrapped, time.Now())
+	if err := e.s.saidPut(saidSessionKey("aaaa-1111"),
+		saidRec{Time: "2026-08-17T10:00:05Z", Text: "работа идёт"}); err != nil {
+		t.Fatal(err)
+	}
+	got := userTexts(saidFeed(t, c, e, "aaaa-1111"))
+	if len(got) != 1 || got[0] != "работа идёт" {
+		t.Fatalf("обёртка вставки дала дубль или осталась в пузыре: %q", got)
+	}
+}
+
 // Ответ задаче уходит безадресной строкой во вход и в транскрипт не попадает
 // вовсе. Журнал разговора задачи показывает его ленте той сессии, что задачу
 // ведёт.

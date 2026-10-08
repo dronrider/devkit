@@ -115,3 +115,23 @@ func TestRotateMark(t *testing.T) {
 		t.Fatalf("в журнале нет порога:\n%s", logText)
 	}
 }
+
+// TestRotateMarkError: отказ записи журнала возвращается вызывающему, а не
+// глотается (замечание 7 ревью DK-1312).
+func TestRotateMarkError(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "homecli", echoProfile)
+	writeMachine(t, kit, "enabled = [\"homecli\"]\ndefault = \"homecli\"\n")
+	blocker := filepath.Join(t.TempDir(), "afile")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_TURN_MARK_LOG", filepath.Join(blocker, "turns.log"))
+	_, err := cmdRotate(kit, "old-sess-1", "new-sess-2", true)
+	if err == nil {
+		t.Fatal("отказ записи журнала молчит, а должен возвращать ошибку")
+	}
+	if !strings.Contains(err.Error(), "журнал") && !strings.Contains(err.Error(), "строка") {
+		t.Fatalf("ошибка не называет журнал: %v", err)
+	}
+}

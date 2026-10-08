@@ -58,7 +58,10 @@ func cmdRotate(start, oldSess, newSess string, mark bool) (string, error) {
 	}
 	text := fmt.Sprintf("rotate: %d\n%s", n, why)
 	if mark {
-		line := rotateMark(oldSess, newSess, n)
+		line, err := rotateMark(oldSess, newSess, n)
+		if err != nil {
+			return text, err
+		}
 		text += "\n" + line
 	}
 	return text, nil
@@ -66,25 +69,29 @@ func cmdRotate(start, oldSess, newSess string, mark bool) (string, error) {
 
 // rotateMark пишет строку журнала сессий о ротации и возвращает её.
 // Формат именованными полями как у turn-mark.py: слово хода «ротация»,
-// повод несёт порог, новая сессия отдельным полем «новая».
-func rotateMark(oldSess, newSess string, threshold int) string {
+// повод несёт порог, новая сессия отдельным полем «новая». Отказ записи
+// возвращается вызывающему: след механики теряется громко, а не молча
+// (замечание 7 ревью DK-1312).
+func rotateMark(oldSess, newSess string, threshold int) (string, error) {
 	ts := time.Now().Format("2006-01-02T15:04:05")
 	line := fmt.Sprintf("%s сессия %s ход ротация повод порог-%d дерево - новая %s\n",
 		ts, dashlessField(oldSess), threshold, dashlessField(newSess))
 	logPath := turnsLogPath()
 	if logPath == "" {
-		return line
+		return line, fmt.Errorf("журнал сессий не найден: DEVKIT_TURN_MARK_LOG пуст, HOME не дал пути")
 	}
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		return line
+		return line, fmt.Errorf("журнал сессий %s не создан: %w", logPath, err)
 	}
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return line
+		return line, fmt.Errorf("журнал сессий %s не открыт: %w", logPath, err)
 	}
 	defer f.Close()
-	fmt.Fprint(f, line)
-	return line
+	if _, err := fmt.Fprint(f, line); err != nil {
+		return line, fmt.Errorf("строка ротации не записана в %s: %w", logPath, err)
+	}
+	return line, nil
 }
 
 // turnsLogPath отдаёт путь журнала отметок ходов: тот же файл, что пишет

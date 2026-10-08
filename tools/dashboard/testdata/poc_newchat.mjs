@@ -10,7 +10,7 @@
 //
 // Зовётся: node testdata/poc_newchat.mjs static/app.js
 
-import { makeSandbox, settle, dump, byClass, fail, appPathArg }
+import { makeSandbox, settle, dump, tipOf, byClass, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
@@ -159,10 +159,14 @@ if (!plate2 || plate2.hidden || !dump(plate2).includes("сессия подни�
   await settle();
   if (!await fireNext(0)) fail("переворот созревшего пузыря не запланирован");
   const said3 = dump(panel3).replace(/\s+/g, " ");
-  if (!said3.includes("дольше обычного")) {
-    fail("у созревшего пузыря нет причины от времени отправки: " + said3.slice(0, 400));
+  const why3 = tipOf(panel3);
+  if (!why3.includes("дольше обычного")) {
+    fail("у созревшего пузыря нет причины в подсказке подписи: " + why3);
   }
   if (!said3.includes("не доставлено")) fail("созревший пузырь не помечен недоставленным: " + said3.slice(0, 400));
+  if (said3.includes("дольше обычного")) {
+    fail("длинная причина перебила текст реплики: " + said3.slice(0, 400));
+  }
   const plate3 = byClass(panel3, "busyrow");
   if (plate3 && !plate3.hidden) fail("плашка о подъёме мигает поверх причины");
 }

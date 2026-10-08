@@ -303,6 +303,13 @@ export function allByClass(node, cls) {
   return out;
 }
 
+// tipOf собирает подсказки подписей одной строкой. Dump обходит только текст,
+// а длинная причина доставки живёт title узла подписи (DK-1328): стенду судить
+// о причине, не различая, в каком пузыре она стоит.
+export function tipOf(node) {
+  return allByClass(node, "mm").map((n) => n.title || "").filter(Boolean).join(" ");
+}
+
 // deepBtn ищет кнопку по подписи или по классу. Подпись у кнопок дашборда
 // лежит в дочернем узле (barBtn кладёт значок и текст), поэтому по textContent
 // самой кнопки её не найти.

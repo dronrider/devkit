@@ -14,12 +14,12 @@
 //
 // Зовётся: node testdata/poc_taskqueue.mjs static/app.js
 
-import { makeSandbox, settle, tag, deepBtn, dump, fail, appPathArg } from "./poc_dom.mjs";
+import { makeSandbox, settle, tag, deepBtn, dump, tipOf, fail, appPathArg } from "./poc_dom.mjs";
 
 const app = appPathArg();
 
-const QUEUE = "реплика уже лежит в очереди задачи и ждёт первого хода её сессии";
-const WHY = "работа по задаче не идёт, отвечать некому, и реплика ждёт во входе задачи";
+const QUEUE = "реплика уже в очереди задачи";
+const WHY = "работа по задаче не идёт, реплика ждёт во входе задачи";
 const SAID = "А почему задача заблокирована?";
 
 const board = { sections: [{ key: "blocked", rows: [
@@ -87,8 +87,8 @@ await settle();
   if (!said.includes(SAID)) {
     fail("после дожима панель опустела, текст человека пропал: " + said.slice(0, 400));
   }
-  if (!said.includes(WHY)) {
-    fail("пузырь не назвал очередь задачи: " + said.slice(0, 400));
+  if (!tipOf(panel).includes(WHY)) {
+    fail("пузырь не назвал очередь задачи в подсказке: " + tipOf(panel));
   }
 }
 
@@ -102,6 +102,9 @@ await settle();
   const said = dump(panel);
   if (!said.includes(SAID)) {
     fail("пузырь снялся по таймеру, текст человека потерялся: " + said.slice(0, 400));
+  }
+  if (!tipOf(panel).includes(WHY)) {
+    fail("после второй ходки таймеров пузырь перестал называть очередь: " + tipOf(panel));
   }
   if (calls.some((c) => c.way === "DELETE")) {
     fail("панель зачем-то сняла строку из очереди задачи: " + JSON.stringify(calls));

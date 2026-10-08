@@ -71,6 +71,14 @@ function dump(node) {
   return [own, ...(node.children || []).map(dump)].join(" ");
 }
 
+// Подсказки подписей: dump обходит только текст, а длинная причина доставки
+// живёт title узла подписи (DK-1328).
+function tipOf(node) {
+  if (!node) return "";
+  const own = node.title || "";
+  return [own, ...(node.children || []).map(tipOf)].filter(Boolean).join(" ");
+}
+
 // Классы поддерева: состояние реплики видно и по подписи, и по классу пузыря.
 function classes(node) {
   if (!node) return "";
@@ -291,13 +299,20 @@ if (dump(box).includes("ждёт витка")) {
   fail("реплика без связи выглядит отправленной: " + dump(box));
 }
 
-// Долгая неудача говорит словами, а не молчит.
+// Долгая неудача говорит словами в подсказке подписи (DK-1328), а не молчит.
 now += 5 * 60 * 1000;
 link = "down";
 await tick();
 shown = dump(box);
-if (!shown.includes("связи нет") || !/в очереди \d+ мин/.test(shown)) {
-  fail("залежавшаяся реплика не говорит, сколько не уходит: " + shown);
+const stuckTip = tipOf(box);
+if (!stuckTip.includes("связи нет") || !/связи нет, \d+ мин/.test(stuckTip)) {
+  fail("залежавшаяся реплика не говорит в подсказке, сколько не уходит: " + stuckTip);
+}
+if (!shown.includes("в очереди")) {
+  fail("залежавшаяся реплика потеряла короткое слово очереди: " + shown);
+}
+if (shown.includes("связи нет")) {
+  fail("длинная причина перебила текст реплики: " + shown);
 }
 if (!classes(box).includes("m-stuck")) {
   fail("залежавшаяся реплика ничем не отличается от свежей: " + classes(box));

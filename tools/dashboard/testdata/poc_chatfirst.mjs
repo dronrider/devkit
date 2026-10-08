@@ -13,7 +13,7 @@
 //
 // Зовётся: node testdata/poc_chatfirst.mjs static/app.js
 
-import { makeSandbox, settle, dump, tag, byClass, allByClass, deepBtn, fail, appPathArg }
+import { makeSandbox, settle, dump, tipOf, tag, byClass, allByClass, deepBtn, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
@@ -187,10 +187,9 @@ const asks = (panel) => {
     fail("после перезагрузки лента снова просит написать уже отправленное");
   }
   // Срок ожидания эха истекает: отложенный вызов зовётся так же, как его
-  // позвало бы время. Причина, которую пузырь называет после этого, говорила
-  // «доставка не подтверждена» и «эха из транскрипта ещё нет», то есть наше
-  // устройство целиком. Человеку тут надо знать одно: дошло ли, и почему это
-  // до сих пор непонятно.
+  // позвало бы время. Причина живёт подсказкой подписи (DK-1328) и говорит
+  // человеку одно: дошло ли. Прежде тут стояли «доставка не подтверждена» и
+  // «эха из транскрипта ещё нет», то есть наше устройство целиком.
   //
   // Список тут снимок, а не живой массив: перечень минутных опросов страницы
   // (DK-1119, тик возраста этапа) сам себя переставляет тем же setTimeout на
@@ -200,14 +199,18 @@ const asks = (panel) => {
     if (t.ms >= 30000 && t.fn) t.fn();
   }
   await settle();
-  const why = dump(allByClass(back, "m-local")[0] || {}).replace(/\s+/g, " ");
+  const why = tipOf(allByClass(back, "m-local")[0] || {}).replace(/\s+/g, " ");
+  const words = dump(allByClass(back, "m-local")[0] || {}).replace(/\s+/g, " ");
   for (const word of ["эха", "транскрипт", "доставка не подтверждена"]) {
-    if (why.includes(word)) {
-      fail("на пузыре наша механика вместо дела человека: " + why.slice(0, 200));
+    if (why.includes(word) || words.includes(word)) {
+      fail("на пузыре наша механика вместо дела человека: " + (why + " " + words).slice(0, 200));
     }
   }
-  if (!why.includes("дошло ли") || !why.includes("не повторил")) {
+  if (!why.includes("дошло ли")) {
     fail("причина у пузыря не сказана словами человека: " + why.slice(0, 200));
+  }
+  if (words.includes("дошло ли")) {
+    fail("длинная причина перебила текст реплики: " + words.slice(0, 200));
   }
 }
 

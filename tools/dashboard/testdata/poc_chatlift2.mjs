@@ -11,7 +11,7 @@
 //
 // Зовётся: node testdata/poc_chatlift2.mjs static/app.js
 
-import { makeSandbox, settle, dump, tag, deepBtn, fail, appPathArg } from "./poc_dom.mjs";
+import { makeSandbox, settle, dump, tipOf, tag, deepBtn, fail, appPathArg } from "./poc_dom.mjs";
 
 const app = appPathArg();
 
@@ -90,7 +90,7 @@ async function sendFirst() {
   }
 }
 
-// --- вторая смерть подряд: причина строкой, кнопок нет ---
+// --- вторая смерть подряд: причина в подсказке, кнопок нет ---
 {
   raises = 0;
   secondLives = false;
@@ -101,8 +101,11 @@ async function sendFirst() {
   if (!said.includes("подними работу по XR-1")) {
     fail("две смерти унесли с собой текст человека: " + said.slice(0, 300));
   }
-  if (!said.includes("умер")) {
-    fail("вторая смерть подряд не названа на пузыре: " + said.slice(0, 300));
+  if (!tipOf(panel).includes("умер")) {
+    fail("вторая смерть подряд не названа в подсказке подписи: " + tipOf(panel));
+  }
+  if (!said.includes("не доставлено")) {
+    fail("пузырь после двух смертей не помечен недоставленным: " + said.slice(0, 300));
   }
   for (const word of ["повторить", "отменить", "открыть живой чат"]) {
     if (deepBtn(panel, word)) fail("у пузыря осталась кнопка «" + word + "»");

@@ -9,7 +9,7 @@
 //
 // Зовётся: node testdata/poc_chatnobtn.mjs static/app.js
 
-import { makeSandbox, settle, dump, fail, byClass, deepBtn, appPathArg } from "./poc_dom.mjs";
+import { makeSandbox, settle, dump, tipOf, fail, byClass, deepBtn, appPathArg } from "./poc_dom.mjs";
 
 const SID = "ffff6666-0001";
 const BAD = "реплика, не ушедшая в живой чат";
@@ -82,8 +82,11 @@ for (const t of timers.splice(0)) t.fn();
 await settle();
 box = byClass(livePin(), "mlocal");
 if (!box || !dump(box).includes(NEW)) fail("пузырь первой реплики не восстановился");
-if (!dump(box).includes("дольше обычного")) {
-  fail("у дозревшего пузыря нет причины строкой: " + dump(box).slice(0, 300));
+if (!tipOf(box).includes("дольше обычного")) {
+  fail("у дозревшего пузыря нет причины в подсказке подписи: " + tipOf(box));
+}
+if (!dump(box).includes("не доставлено")) {
+  fail("дозревший пузырь не помечен коротким словом недоставки: " + dump(box).slice(0, 300));
 }
 noButtons(box, "дозревшая первая реплика");
 // Текст человека при этом никуда не девается: снять пузырь рукой нечем, и

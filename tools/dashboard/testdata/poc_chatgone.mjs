@@ -13,14 +13,14 @@
 //
 // Зовётся: node testdata/poc_chatgone.mjs static/app.js
 
-import { makeSandbox, settle, tag, deepBtn, dump, fail, appPathArg }
+import { makeSandbox, settle, tag, deepBtn, dump, tipOf, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
 
 const DEAD = "aaaa5030-1111-4111-8111-111111111111";
 const LIVE = "bbbb5031-2222-4222-8222-222222222222";
-const WHY = "сессия разговора снята: работу подняли заново, ответить в ней нечем";
+const WHY = "разговор снят, ответить некуда";
 const FRESH = "chat-DK-503-7";
 
 // Снятый разговор приезжает с признаком gone и адресом выхода goneTo: имя его
@@ -92,11 +92,12 @@ if (!say.body.includes("Ко мне вопросы в этом чате оста
 
 // --- пузыря «не доставлено» и кнопок в панели нет ---
 const said = dump(panel);
+const tips = tipOf(panel);
 if (said.includes("не доставлено")) {
   fail("реплика, уехавшая резюмом, помечена недоставленной: " + said);
 }
-if (said.includes(WHY)) {
-  fail("плашка снятого разговора осталась в панели: " + said);
+if (said.includes(WHY) || tips.includes(WHY)) {
+  fail("плашка снятого разговора осталась в панели: " + said + " / " + tips);
 }
 for (const word of ["повторить", "отменить", "открыть живой чат", "поднять работу по задаче"]) {
   if (deepBtn(panel, word)) fail("в панели осталась кнопка «" + word + "»");

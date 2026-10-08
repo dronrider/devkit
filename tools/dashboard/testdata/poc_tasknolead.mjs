@@ -12,12 +12,12 @@
 //
 // Зовётся: node testdata/poc_tasknolead.mjs static/app.js
 
-import { makeSandbox, settle, tag, deepBtn, dump, fail, appPathArg }
+import { makeSandbox, settle, tag, deepBtn, dump, tipOf, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
 
-const WHY = "работа по задаче не идёт, отвечать некому, и реплика ждёт во входе задачи";
+const WHY = "работа по задаче не идёт, реплика ждёт во входе задачи";
 const SAID = "А почему задача заблокирована?";
 
 // Строка стоит с вопросом, живых разговоров у задачи нет ни одного.
@@ -69,7 +69,10 @@ await settle();
   if (said.includes("доставлено") && !said.includes("не доставлено")) {
     fail("пузырь отчитался доставкой, которой не было: " + said);
   }
-  if (!said.includes(WHY)) fail("очередь задачи не названа словами: " + said);
+  if (!tipOf(panel).includes(WHY)) fail("очередь задачи не названа в подсказке: " + tipOf(panel));
+  if (said.includes("работа по задаче не идёт")) {
+    fail("длинная причина перебила текст реплики: " + said);
+  }
   if (!said.includes(SAID)) fail("текст человека пропал из панели: " + said);
 }
 
@@ -90,8 +93,8 @@ await settle();
   if (!said.includes(SAID)) {
     fail("пузырь снялся по таймеру, и текст человека потерялся: " + said);
   }
-  if (!said.includes(WHY)) {
-    fail("после таймеров пузырь перестал говорить об очереди: " + said);
+  if (!tipOf(panel).includes(WHY)) {
+    fail("после таймеров пузырь перестал говорить об очереди: " + tipOf(panel));
   }
 }
 

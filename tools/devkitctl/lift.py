@@ -486,7 +486,9 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
             mark_lifted(root, f.id, home)
             lines.append("задача %s в %s: %s, поднята адресным заказом: %s"
                          % (f.id, root, f.why, words))
-            lines.append(notify_lift(root, f.id, task, call=call))
+            lines.append(notify_lift(root, f.id,
+                                     "ответить на лежащую реплику" if f.reply else task,
+                                     call=call))
             lines.append(record_lift(root, f.id, task, call=call))
             continue
         lines.append("задача %s в %s: подъём отбит кодом %d: %s" % (f.id, root, code, words))
@@ -610,7 +612,9 @@ def insert_into(text, heading, line):
 def record_lift(root, tid, task, call=None):
     """Запись подъёма в файл задачи на ветке, коммитом туда же, как пишет
     снятие очередь. Без дерева запись некуда писать, и об этом говорит строка
-    отчёта: подъём не повод оставить грязь в основном чекауте (DK-1322)."""
+    отчёта: подъём не повод оставить грязь в основном чекауте (DK-1322).
+    Пишет без замка, как appendRecord и flushStages. Гонка дорог теряет
+    запись, а не данные, и грязным деревом отбивается следующее слияние."""
     wt = task_tree(root, tid, call=call)
     if not wt:
         return "задача %s: запись подъёма не легла, дерева ветки нет" % tid

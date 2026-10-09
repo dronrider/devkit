@@ -556,6 +556,21 @@ class ReplyCase(unittest.TestCase):
         self.assertNotIn("--order", argv)
         self.assertIn("во входе чата лежит реплика человека", " ".join(lines))
 
+    def test_reply_lift_notifies_the_reply_task(self):
+        """Уведомление подъёма строки с репликой называет задание ответить
+        человеку, а не продолжать строку: продолжение увело бы голову в
+        старую работу мимо слов человека (DK-1322)."""
+        self.lying("DK-40")
+        call = Fake(board([row("DK-40", "проверка", "сессии нет, брошена")], key="check"))
+        with unittest.mock.patch("watch.shout", return_value="отправлено") as shout:
+            lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                           home=str(self.home))
+        self.assertEqual(raised, 1)
+        self.assertEqual(shout.call_count, 1, "уведомления о подъёме не было")
+        body = shout.call_args[0][1]
+        self.assertIn("ответить на лежащую реплику", body)
+        self.assertNotIn("задание: продолжать строку", body)
+
 
 class ReplyCallCase(unittest.TestCase):
     """Зов человеку к реплике, которой не досталось головы за три попытки.

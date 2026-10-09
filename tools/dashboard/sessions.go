@@ -1402,8 +1402,12 @@ func forgetPeerKinds() {
 
 func readPeerKinds() map[string]string {
 	out := map[string]string{}
-	for _, dir := range peerRegistryDirs() {
-		entries, err := os.ReadDir(dir)
+	// Каталоги накладываются первым выигрышем: Dirs ставит старый
+	// ~/.claude/sessions последним, и его остаточная запись не должна
+	// затирать свежую запись подписки с тем же именем сессии.
+	dirs := peerRegistryDirs()
+	for i := len(dirs) - 1; i >= 0; i-- {
+		entries, err := os.ReadDir(dirs[i])
 		if err != nil {
 			continue
 		}
@@ -1411,7 +1415,7 @@ func readPeerKinds() map[string]string {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 				continue
 			}
-			data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			data, err := os.ReadFile(filepath.Join(dirs[i], e.Name()))
 			if err != nil {
 				continue
 			}

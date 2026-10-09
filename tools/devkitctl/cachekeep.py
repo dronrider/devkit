@@ -22,14 +22,33 @@
 «простой дешевле перезаписи») и цену.
 
 Интеграция: команда `devkitctl cachekeep` обходит журналы сессий проекта,
-находит простаивающие потоки и принимает решение по каждому. Продлевающий
-запрос уходит через клиент харнеса (CLI) с тем же resume и моделью, что у
-потока, и коротким запросом `-p`: тот же префикс читается по ставке чтения,
-TTL кеша продлевается. Строка журнала «продлил» пишется только о запросе,
-который реально ушёл; отказ отправки виден строкой stderr, молчание за
-работу не считается. На стенде отправка подменяется заглушкой: синтетический
-поток держит механику, падение перезаписи видно на настоящем заходе.
+находит простаивающие потоки и принимает решение по каждому. Журналы лежат
+не в одном дереве: сессии конвейера пишут в дом своего харнеса (машинный
+слой `~/.devkit/harness.local`, ключ home секции), и обход видит их все,
+сток-дом `~/.claude/projects` плюс дома включённых харнесов. У дома харнеса
+журналы лежат сразу в `<home>/projects/<слепок>`, а не в `<home>/.claude`:
+ключ home это каталог конфигурации клиента (CLAUDE_CONFIG_DIR). Продлевающий
+запрос уходит через клиент того харнеса, чей дом нашли: resume читается из
+профиля `kit/harness/<имя>.toml`, и обёртка `agentctl exec` кладёт пары
+окружения подписки сама. Журнал отметок при этом один на машину
+(`~/.devkit/turns.log`) и по домам подписок не расползается.
+
+Продлевающий запрос несёт тот же resume и модель, что у потока, и короткий
+хвост `-p`: тот же префикс читается по ставке чтения, TTL кеша продлевается.
+Строка журнала «продлил» пишется только о запросе, который реально ушёл;
+отказ отправки виден строкой stderr, молчание за работу не считается.
+На стенде отправка подменяется заглушкой: синтетический поток держит
+механику, падение перезаписи видно на настоящем заходе.
+
+Мёртвое дерево не разбирается и не продлевается тысячами запросов. Решение
+по цене уже гасит продление само: простой длиннее порога пересечения делает
+перезапись дешевле, и запрос не уходит. Строка «истёк» пишется только пока
+решение свежее (простой в пределах окна истечения), а не о каждом обходе
+давно остывшего потока. Тик сторожка зовёт обход с горизонтом разбора
+(`--max-idle`): потоки, чей журнал не менялся дольше горизонта, пропускаются
+до разбора файла.
 """
+import math
 import os
 import subprocess
 import sys
@@ -37,6 +56,8 @@ import time
 from pathlib import Path
 
 import context
+import harness
+import rules
 import sessions
 
 # Ставки провайдера относительно базовой цены входа. Чтение кеша это 0.1x,
@@ -60,6 +81,85 @@ KEEPALIVE_PROMPT = "кэш"
 # Resume умолчания, когда профиль харнеса не прочитан: то же, что head.resume
 # профиля claude-code. Клиент читает его снаружи и передаёт сюда.
 DEFAULT_RESUME = ["claude", "--resume", "{session}", "--model", "{model}"]
+# Харнес сток-дома журналов: его home это сам ~, поэтому его журналы лежат
+# в ~/.claude/projects. Дом идёт обходом первым, включён он в машинном слое
+# или нет.
+STOCK_HARNESS = "claude-code"
+
+
+def _profiles_dir():
+    """Каталог профилей харнесов того чекаута, из которого модуль работает."""
+    return Path(__file__).resolve().parent.parent.parent / "kit" / "harness"
+
+
+def harness_resume(name, profiles_dir=None):
+    """head.resume профиля харнеса, DEFAULT_RESUME при его отсутствии.
+
+    Продлевающий запрос обязан уходить клиентом того харнеса, чей дом нашли:
+    resume несёт обёртку agentctl exec с парами окружения подписки.
+    """
+    path = Path(profiles_dir or _profiles_dir()) / ("%s.toml" % name)
+    try:
+        doc = harness.parse(path.name, path.read_text(encoding="utf-8"))
+        got = doc.arr_of("head", "resume")
+        if got:
+            return got
+    except (OSError, harness.TomlError):
+        pass
+    return list(DEFAULT_RESUME)
+
+
+def project_homes(root, machine_path=None, profiles_dir=None):
+    """Дома журналов проекта по харнесам машины.
+
+    Возврат это список записей {harness, dir, resume}: сток-дом
+    ~/.claude/projects/<слепок> первым, дальше дома включённых харнесов
+    с ключом home в машинном слое, у каждого журналы лежат в
+    <home>/projects/<слепок>. Слепок корня один и тот же в каждом доме.
+    """
+    stock = context.logs_dir(root)
+    entries = [{
+        "harness": STOCK_HARNESS,
+        "dir": stock,
+        "resume": harness_resume(STOCK_HARNESS, profiles_dir),
+    }]
+    homes = rules.machine_homes(machine_path)
+    enabled, _findings = rules.enabled_harnesses(None, profiles_dir or _profiles_dir(),
+                                                 machine_path)
+    seen = {str(stock)}
+    for name, _profile in enabled:
+        home = homes.get(name)
+        if not home:
+            continue
+        d = Path(home) / "projects" / context.slug(root)
+        if str(d) in seen:
+            continue
+        seen.add(str(d))
+        entries.append({
+            "harness": name,
+            "dir": d,
+            "resume": harness_resume(name, profiles_dir),
+        })
+    return entries
+
+
+def corpus_dirs(machine_path=None, profiles_dir=None):
+    """Корни журналов всех домов машины: drain --all ходит по ним целиком."""
+    dirs = [context.projects_dir()]
+    homes = rules.machine_homes(machine_path)
+    enabled, _findings = rules.enabled_harnesses(None, profiles_dir or _profiles_dir(),
+                                                 machine_path)
+    seen = {str(dirs[0])}
+    for name, _profile in enabled:
+        home = homes.get(name)
+        if not home:
+            continue
+        d = Path(home) / "projects"
+        if str(d) in seen:
+            continue
+        seen.add(str(d))
+        dirs.append(d)
+    return dirs
 
 
 def pings_needed(idle_seconds, ttl):
@@ -71,7 +171,6 @@ def pings_needed(idle_seconds, ttl):
     if idle_seconds <= ttl:
         return 0
     interval = ttl * PING_MARGIN
-    import math
     return max(1, math.ceil((idle_seconds - ttl) / interval))
 
 
@@ -187,21 +286,36 @@ def decide_stream(path, now=None):
     }
 
 
-def journal_line(stream, keep, cost, idle, home=None):
+def expiry_window(ttl):
+    """Простой, за которым строка «истёк» уже не пишется, секунды.
+
+    Кеш пущен под перезапись в момент пересечения порога выгоды, и строка
+    отмечает этот момент, а не каждый обход давно остывшего потока: иначе
+    мёртвое дерево в тысячу потоков писало бы строку на каждый тик. Окно это
+    порог пересечения плюс один интервал продления, чтобы тик успел попасть
+    внутрь.
+    """
+    rate = CACHE_WRITE_RATE if ttl <= TTL_SHORT else CACHE_WRITE_RATE_LONG
+    spans = math.ceil(rate / CACHE_READ_RATE) + 1
+    return ttl + spans * ttl * PING_MARGIN
+
+
+def journal_line(stream, keep, cost, idle, harness_name=None):
     """Строка журнала о решении механики: видна снаружи, молчание не считается.
 
-    Формат именованными полями как у turn-mark.py, слово хода «кэш».
-    Отказ записи не глотается: уходит строкой stderr, и след механики
-    теряется громко, а не молча (замечание 7 ревью DK-1312).
+    Формат именованными полями как у turn-mark.py, слово хода «кэш». Журнал
+    один на машину (~/.devkit/turns.log) и по домам подписок не расползается;
+    нестоковый харнес назван в строке, чтобы дома различались. Отказ записи
+    не глотается: уходит строкой stderr, и след механики теряется громко,
+    а не молча (замечание 7 ревью DK-1312).
     """
     log = os.environ.get(TURNS_ENV) or TURNS_LOG
-    if home:
-        log = os.path.join(str(home), ".devkit", "turns.log")
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     decision = "продлил" if keep else "истёк"
-    line = "%s сессия %s ход кэш повод %s дерево %s\n" % (
-        ts, stream, decision, "простой %.0fs" % idle)
+    whose = "" if harness_name in (None, STOCK_HARNESS) else " харнес %s" % harness_name
+    line = "%s сессия %s ход кэш повод %s%s дерево %s\n" % (
+        ts, stream, decision, whose, "простой %.0fs" % idle)
     try:
         os.makedirs(os.path.dirname(log), exist_ok=True)
         with open(log, "a", encoding="utf-8") as f:
@@ -211,23 +325,45 @@ def journal_line(stream, keep, cost, idle, home=None):
     return line
 
 
-def scan_project(root, now=None, home=None, sender=None, resume=None, dry_run=False):
-    """Обход журналов сессий проекта: решения по простаивающим потокам.
+def _epoch(now):
+    """Момент счёта секундами: now бывает числом, datetime или None (живое время)."""
+    from datetime import datetime
+    if now is None:
+        return time.time()
+    if isinstance(now, datetime):
+        return now.timestamp()
+    return now
 
-    Возвращает список решений (decide_stream). Продлевающий запрос уходит
-    по каждому потоку, где решение «продлевать» и простой длиннее TTL
-    (pings > 0). Строка «продлил» пишется только о реально ушедшем запросе;
-    строка «истёк» пишется о решении не продлевать. sender это подмена
+
+def scan_home(entry, root, now=None, sender=None, dry_run=False, max_idle=None):
+    """Обход одного дома журналов: решения по потокам и продлевающие запросы.
+
+    entry это запись из project_homes: дом, харнес и его resume. Продлевающий
+    запрос уходит по каждому потоку, где решение «продлевать» и простой
+    длиннее TTL (pings > 0), клиентом харнеса этого дома. Строка «продлил»
+    пишется только о реально ушедшем запросе; строка «истёк» пишется, пока
+    решение свежее (простой в окне истечения). max_idle это горизонт разбора
+    в секундах: потоки, чей журнал не менялся дольше, пропускаются до чтения
+    файла, чтобы тик не разбирал чужие мёртвые деревья. sender это подмена
     отправки на стенде; dry_run принимает решения, ничего не отправляя.
     """
-    directory = context.logs_dir(root, home=home)
+    directory = Path(entry["dir"])
     if not directory.is_dir():
         return []
+    stamp = _epoch(now)
     out = []
     for path in context.streams(directory):
+        if max_idle is not None:
+            try:
+                fresh = stamp - path.stat().st_mtime
+            except OSError:
+                fresh = 0.0
+            if fresh > max_idle:
+                continue
         d = decide_stream(path, now=now)
         if d is None:
             continue
+        d["harness"] = entry["harness"]
         out.append(d)
         if d["idle"] <= 0:
             continue
@@ -235,10 +371,37 @@ def scan_project(root, now=None, home=None, sender=None, resume=None, dry_run=Fa
         if d["keep"] and d["pings"] > 0 and not dry_run:
             send = sender if sender is not None else send_keepalive
             sent = bool(send(d["stream"], d.get("model") or "", root,
-                             resume=resume, home=home))
+                             resume=entry["resume"]))
         d["sent"] = sent
+        d["expired"] = False
         if sent:
-            journal_line(d["stream"], True, d["cost_keep"], d["idle"], home=home)
-        elif not d["keep"]:
-            journal_line(d["stream"], False, d["cost_rewrite"], d["idle"], home=home)
+            journal_line(d["stream"], True, d["cost_keep"], d["idle"],
+                         harness_name=entry["harness"])
+        elif not d["keep"] and d["idle"] <= expiry_window(d["ttl"]):
+            d["expired"] = True
+            journal_line(d["stream"], False, d["cost_rewrite"], d["idle"],
+                         harness_name=entry["harness"])
     return out
+
+
+def scan_all(root, now=None, sender=None, dry_run=False, max_idle=None,
+             machine_path=None, profiles_dir=None):
+    """Обход всех домов журналов проекта: сток и дома включённых харнесов."""
+    out = []
+    for entry in project_homes(root, machine_path=machine_path, profiles_dir=profiles_dir):
+        out += scan_home(entry, root, now=now, sender=sender, dry_run=dry_run,
+                         max_idle=max_idle)
+    return out
+
+
+def scan_project(root, now=None, home=None, sender=None, resume=None, dry_run=False):
+    """Обход сток-дома журналов проекта: разовый прогон и вход тестов.
+
+    Дом нестандартного ~ задаётся home, остальное то же, что у scan_home.
+    """
+    entry = {
+        "harness": STOCK_HARNESS,
+        "dir": context.logs_dir(root, home=home),
+        "resume": resume if resume is not None else harness_resume(STOCK_HARNESS),
+    }
+    return scan_home(entry, root, now=now, sender=sender, dry_run=dry_run)

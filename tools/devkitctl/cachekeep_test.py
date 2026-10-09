@@ -11,7 +11,7 @@ import unittest
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from testenv import SandboxCase
+from testenv import SandboxCase, fake_home
 
 import cachekeep
 import context
@@ -271,7 +271,7 @@ class CacheKeepStreamTest(SandboxCase):
         self.assertIn("продлил", content, "ушедший запрос даёт строку «продлил»")
 
     def test_no_send_when_rewrite_cheaper(self):
-        """Длинный простой: перезапись дешевле, запрос не уходит, строка «истёк»."""
+        """Перезапись дешевле: запрос не уходит, строка «истёк» у свежего решения."""
         self._reset_logs()
         base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
         reqs = [
@@ -279,7 +279,9 @@ class CacheKeepStreamTest(SandboxCase):
             make_raw(500, 199000, 30, 10, "m1", self._ts(base, 10)),
         ]
         self._write_stream("stream7", reqs)
-        now = base.timestamp() + 7200
+        # Простой 3500s: продлений уже 14 по цене 1.4x против перезаписи 1.25x,
+        # решение «истёк» при этом свежее и строку пишет.
+        now = base.timestamp() + 3500
         calls = []
 
         def sender(session, model, root, **kw):
@@ -292,6 +294,64 @@ class CacheKeepStreamTest(SandboxCase):
         content = self.turns_log.read_text(encoding="utf-8")
         self.assertIn("истёк", content, "решение не продлевать видно строкой «истёк»")
         self.assertNotIn("продлил", content, "«продлил» без работы не пишется")
+
+    def test_long_dead_stream_leaves_no_journal(self):
+        """Давно остывший поток не пишет «истёк» на каждом обходе: строка
+        отмечает момент истечения, а не каждое напоминание о мёртвом дереве."""
+        self._reset_logs()
+        base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
+        reqs = [
+            make_raw(200000, 0, 50, 10, "m1", self._ts(base, 0)),
+            make_raw(500, 199000, 30, 10, "m1", self._ts(base, 10)),
+        ]
+        self._write_stream("stream7d", reqs)
+
+        def sender(session, model, root, **kw):
+            return True
+
+        cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 7200,
+                               home=self.box.home, sender=sender)
+        cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 9000,
+                               home=self.box.home, sender=sender)
+        content = (self.turns_log.read_text(encoding="utf-8")
+                   if self.turns_log.exists() else "")
+        self.assertNotIn("истёк", content,
+                         "простой за окном истечения журнала не пишет")
+        self.assertNotIn("продлил", content, "мёртвый поток не продлевается")
+
+    def test_expiry_window_covers_the_crossover(self):
+        """Окно истечения накрывает порог пересечения пятиминутного TTL."""
+        self.assertEqual(cachekeep.expiry_window(300), 3660,
+                         "окно это порог пересечения плюс один интервал")
+
+    def test_expired_flag_only_for_fresh_expiry(self):
+        """Признак «истёк» ставится у свежего решения, а не у каждого мёртвого
+        потока: сводка по нему не помечает мёртвое дерево значимым на каждом тике."""
+        self._reset_logs()
+        base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
+        reqs = [
+            make_raw(200000, 0, 50, 10, "m1", self._ts(base, 0)),
+            make_raw(500, 199000, 30, 10, "m1", self._ts(base, 10)),
+        ]
+        self._write_stream("stream7e", reqs)
+
+        def sender(session, model, root, **kw):
+            return True
+
+        got = cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 3500,
+                                     home=self.box.home, sender=sender)
+        self.assertEqual(len(got), 1)
+        self.assertTrue(got[0]["expired"],
+                        "свежее решение не продлевать несёт признак «истёк»")
+        self.assertFalse(got[0]["sent"], "запрос не ушёл, признак отправки пуст")
+        self._reset_logs()
+        self._write_stream("stream7e", reqs)
+        got = cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 7200,
+                                     home=self.box.home, sender=sender)
+        self.assertEqual(len(got), 1)
+        self.assertFalse(got[0]["expired"],
+                         "давно остывший поток признака «истёк» не несёт")
+        self.assertFalse(got[0]["keep"], "решение по цене всё ещё «не продлевать»")
 
     def test_no_journal_when_send_fails(self):
         """Отказ отправки не даёт строки «продлил»: молчание за работу не считается."""
@@ -341,9 +401,174 @@ class CacheKeepStreamTest(SandboxCase):
         err = io.StringIO()
         with unittest.mock.patch("builtins.open", side_effect=OSError("диск полон")):
             with unittest.mock.patch("sys.stderr", err):
-                cachekeep.journal_line("s1", True, 0, 10, home=self.box.home)
+                cachekeep.journal_line("s1", True, 0, 10)
         self.assertIn("не записана", err.getvalue(),
                       "отказ записи уходит строкой stderr")
+
+
+class CacheKeepHomesTest(SandboxCase):
+    """Дома журналов по харнесам: обход машины, resume по дому, один журнал."""
+
+    def setUp(self):
+        super().setUp()
+        self.proj = Path(self.box.root / "ckproj-homes")
+        self.proj.mkdir(exist_ok=True)
+        # Машинный слой стенда: включён glm-code с собственным домом, сток
+        # читается тем же ~/ подставного дома.
+        self.glm = self.box.home / "glm-home"
+        self.conf = self.box.home / ".devkit" / "harness.local"
+        self.conf.write_text(
+            'enabled = ["glm-code"]\n\n[glm-code]\nhome = "%s"\n' % self.glm,
+            encoding="utf-8")
+        self.turns_log = self.box.home / ".devkit" / "turns.log"
+        os.environ["DEVKIT_TURN_MARK_LOG"] = str(self.turns_log)
+        self.slug = context.slug(self.proj.resolve())
+        self.stock = self.box.home / ".claude" / "projects" / self.slug
+        self.glm_logs = self.glm / "projects" / self.slug
+        # Стенд общий на класс: потоки и журнал стираются на каждый тест,
+        # иначе один тест видит дерево другого как своё.
+        self._reset_logs()
+
+    def _reset_logs(self):
+        for d in (self.stock, self.glm_logs):
+            if d.exists():
+                for p in d.glob("*.jsonl"):
+                    p.unlink()
+        if self.turns_log.exists():
+            self.turns_log.unlink()
+
+    def tearDown(self):
+        os.environ.pop("DEVKIT_TURN_MARK_LOG", None)
+        super().tearDown()
+
+    def _idle_stream(self, name):
+        """Поток с простоем чуть больше пятиминутного TTL: продление выгодно.
+
+        Имя файла несёт суффикс .jsonl: обход видит только журналы с ним.
+        """
+        base = datetime(2026, 10, 9, 12, 0, 0, tzinfo=timezone.utc)
+        reqs = [
+            make_raw(200000, 0, 50, 10, "m1", base.strftime("%Y-%m-%dT%H:%M:%S.000Z")),
+            make_raw(500, 199000, 30, 10, "m1",
+                     (base + timedelta(seconds=10)).strftime("%Y-%m-%dT%H:%M:%S.000Z")),
+        ]
+        write_stream(self.glm_logs / (name + ".jsonl"), reqs)
+        return base
+
+    def test_project_homes_see_stock_and_harness(self):
+        """Обход видит сток-дом и дом включённого харнеса, у каждого свой resume."""
+        with fake_home(self.box.home):
+            entries = cachekeep.project_homes(
+                self.proj.resolve(), machine_path=str(self.conf),
+                profiles_dir=self.box.dk / "kit" / "harness")
+        self.assertEqual([e["harness"] for e in entries],
+                         ["claude-code", "glm-code"],
+                         "сток первым, дальше дом включённого харнеса")
+        self.assertEqual(entries[0]["dir"], self.stock,
+                         "сток-дом это ~/.claude/projects/<слепок>")
+        self.assertEqual(entries[1]["dir"], self.glm_logs,
+                         "дом харнеса это <home>/projects/<слепок>, без .claude")
+        self.assertEqual(entries[1]["resume"][:4],
+                         ["agentctl", "exec", "--harness", "glm-code", "--"][:4],
+                         "продление дома glm уходит клиентом glm через обёртку")
+        self.assertEqual(entries[0]["resume"][0], "claude",
+                         "сток-дом продлевается штатным клиентом без обёртки")
+
+    def test_scan_all_sends_with_resume_of_the_house(self):
+        """Продлевающий запрос уходит resume того харнеса, чей дом нашли."""
+        base = self._idle_stream("glmstream")
+        calls = []
+
+        def sender(session, model, root, **kw):
+            calls.append((session, kw.get("resume")))
+            return True
+
+        with fake_home(self.box.home):
+            got = cachekeep.scan_all(
+                self.proj.resolve(), now=base.timestamp() + 400, sender=sender,
+                machine_path=str(self.conf),
+                profiles_dir=self.box.dk / "kit" / "harness")
+        glm = [d for d in got if d["harness"] == "glm-code"]
+        self.assertEqual(len(glm), 1, "поток дома glm получил решение")
+        self.assertEqual(
+            calls,
+            [("glmstream", cachekeep.harness_resume(
+                "glm-code", self.box.dk / "kit" / "harness"))],
+            "запрос ушёл resume профиля glm-code")
+        content = self.turns_log.read_text(encoding="utf-8")
+        self.assertIn("продлил", content, "ушедший запрос отмечен строкой")
+        self.assertIn("харнес glm-code", content,
+                      "строка журнала называет дом подписки")
+        self.assertFalse((self.glm / ".devkit" / "turns.log").exists(),
+                         "журнал отметок один на машину и в дом подписки не пишется")
+
+    def test_max_idle_skips_stale_files(self):
+        """Горизонт разбора пропускает поток, молчащий дольше него, до чтения."""
+        base = self._idle_stream("oldstream")
+        path = self.glm_logs / "oldstream.jsonl"
+        old = base.timestamp() - 7 * 3600
+        os.utime(str(path), (old, old))
+        entry = {"harness": "glm-code", "dir": self.glm_logs,
+                 "resume": cachekeep.DEFAULT_RESUME}
+        # dry_run на обоих заходах: тест меряет горизонт разбора, а не отправку,
+        # и настоящий клиент продления на стенде запускаться не должен.
+        got = cachekeep.scan_home(entry, self.proj.resolve(),
+                                  now=base.timestamp() + 400, dry_run=True,
+                                  max_idle=6 * 3600)
+        self.assertEqual(got, [], "файл за горизонтом не разбирается")
+        got = cachekeep.scan_home(entry, self.proj.resolve(),
+                                  now=base.timestamp() + 400, dry_run=True)
+        self.assertEqual(len(got), 1, "без горизонта поток разбирается")
+
+    def test_corpus_dirs_see_stock_and_harness(self):
+        """Корни журналов всех домов: drain --all ходит и по дому подписки."""
+        with fake_home(self.box.home):
+            dirs = cachekeep.corpus_dirs(machine_path=str(self.conf),
+                                         profiles_dir=self.box.dk / "kit" / "harness")
+        self.assertIn(self.box.home / ".claude" / "projects", dirs,
+                      "сток-корень в обходе")
+        self.assertIn(self.glm / "projects", dirs,
+                      "корень дома харнеса в обходе, без .claude")
+
+    def test_dry_run_sends_nothing(self):
+        """Сухой прогон принимает решения и не шлёт продлевающих запросов."""
+        base = self._idle_stream("drystream")
+        calls = []
+
+        def sender(session, model, root, **kw):
+            calls.append(session)
+            return True
+
+        entry = {"harness": "glm-code", "dir": self.glm_logs,
+                 "resume": cachekeep.DEFAULT_RESUME}
+        got = cachekeep.scan_home(entry, self.proj.resolve(),
+                                  now=base.timestamp() + 400, sender=sender,
+                                  dry_run=True)
+        self.assertEqual(len(got), 1, "решение принято")
+        self.assertFalse(got[0].get("sent"), "на сухом прогоне отправки нет")
+        self.assertEqual(calls, [], "sender на сухом прогоне не звался")
+
+    def test_cli_keys_dry_run_and_max_idle(self):
+        """Ключи cachekeep --dry-run и --max-idle доходят до разбора."""
+        self._idle_stream("clistream")
+        rc, out = self.box.dkctl_run("cachekeep", "-C", str(self.proj),
+                                     "--dry-run", "--max-idle", "60")
+        self.assertIn(rc, (0, 2), "живой вызов с ключами упал: %s" % out)
+        self.assertNotIn("Traceback", out, "вызов с ключами упал трейсбеком")
+
+    def test_stats_context_and_drain_see_harness_home(self):
+        """stats --context и drain читают дом подписки, а не только сток."""
+        self._idle_stream("homestats")
+        self.assertFalse((self.stock / "homestats.jsonl").exists(),
+                         "сток на этом тесте пуст, обход обязан взять дом харнеса")
+        rc, out = self.box.dkctl_run("stats", "--context", "-C", str(self.proj))
+        self.assertEqual(rc, 0, "stats --context упал: %s" % out)
+        self.assertIn("дом журналов харнеса glm-code", out,
+                      "stats --context называет дом подписки")
+        rc, out = self.box.dkctl_run("drain", "-C", str(self.proj))
+        self.assertEqual(rc, 0, "drain упал: %s" % out)
+        self.assertNotIn("Traceback", out, "drain упал трейсбеком")
+        self.assertIn("вызовов", out, "drain разобрал журналы дома подписки")
 
 
 class HarnessResumeModelTest(unittest.TestCase):

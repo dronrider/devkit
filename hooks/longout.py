@@ -3,7 +3,7 @@
 вместо полного вывода команды. Порог и формат выжимки живут в internal/frame
 (docs/lld/DK-137-cmdout-wrapper.md), их python-часть не переизобретает: хук
 кладёт вывод в подкоманду `cmdout digest` и подставляет её ответ каналом
-подмены (hookSpecificOutput.updatedToolOutput, docs/lld/DK-136-cmdout-wrapper.md).
+подмены (hookSpecificOutput.updatedToolOutput, docs/lld/DK-136-live-chat.md).
 
 Короткий вывод подкоманда оставляет в покое, и хук молчит же: команда доходит
 до модели целиком, файл полного вывода не заводится. Так же хук молчит без

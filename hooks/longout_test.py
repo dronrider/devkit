@@ -155,9 +155,13 @@ class TestLongOutputSubstituted(Stand):
                 if ln.startswith("path: ")][0][len("path: "):]
         self.assertIn("-git/out", path)
 
-    def test_other_fields_of_response_are_kept(self):
+    def test_substitution_has_only_documented_fields(self):
+        # Справка харнеса показывает объект из четырёх полей; лишние копия
+        # tool_response (noOutputExpected и прочие) не несёт, схема клиента
+        # несовпадение полей отбивает молча.
         r = self.hook(self.event(self.long_output()))
         out = json.loads(r.stdout)["hookSpecificOutput"]["updatedToolOutput"]
+        self.assertEqual(set(out), {"stdout", "stderr", "interrupted", "isImage"})
         self.assertFalse(out["interrupted"])
         self.assertFalse(out["isImage"])
 

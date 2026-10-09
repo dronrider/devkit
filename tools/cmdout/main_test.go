@@ -418,11 +418,14 @@ func TestBinaryDigestLongSummary(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("digest длинного stdin: exit %d", code)
 	}
-	if !strings.HasPrefix(out, "exit: 0\n") {
-		t.Errorf("первая строка: %q, хотели «exit: 0»", strings.SplitN(out, "\n", 2)[0])
+	// Поля exit в выжимке digest нет: кода возврата команды в событии
+	// PostToolUse нет, и всегдашний 0 врал бы «нет различий» на git diff с
+	// различиями.
+	if strings.Contains(out, "exit: ") {
+		t.Errorf("выжимка несёт поле exit: %q", out)
 	}
-	if !strings.Contains(out, "lines_total: 150") {
-		t.Errorf("lines_total не 150: %q", out)
+	if !strings.HasPrefix(out, "lines_total: 150\n") {
+		t.Errorf("первая строка: %q, хотели «lines_total: 150»", strings.SplitN(out, "\n", 2)[0])
 	}
 	if !strings.HasSuffix(out, "\n") {
 		t.Errorf("выжимка без перевод строки: %q", out)

@@ -76,9 +76,13 @@ def run_hook(protocol):
         # Ниже порога, вне git-дерева или на старом бинаре подкоманда молчит,
         # и молчание её означает «подменять нечего»: вывод доходит как есть.
         return 0
-    substitute = dict(response)
-    substitute["stdout"] = proc.stdout
-    substitute["stderr"] = ""
+    # Подмена держит ровно четыре поля справки: копия всего tool_response
+    # несла бы лишние (noOutputExpected и прочие), а схема клиента отбивает
+    # несовпадение молча.
+    substitute = {"stdout": proc.stdout,
+                  "stderr": "",
+                  "interrupted": bool(response.get("interrupted")),
+                  "isImage": bool(response.get("isImage"))}
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
                                              "updatedToolOutput": substitute}},
                      ensure_ascii=False))

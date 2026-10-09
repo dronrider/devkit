@@ -32,14 +32,21 @@ func deadPID(t *testing.T) int {
 // writePeer кладёт запись реестра клиента в дом home.
 func writePeer(t *testing.T, home, sid string, pid int, touched time.Time) {
 	t.Helper()
-	if err := os.MkdirAll(peers.Dir(home), 0o755); err != nil {
+	writePeerIn(t, peers.Dir(home), sid, pid, touched)
+}
+
+// writePeerIn кладёт запись в указанный каталог реестра: у каталога подписки
+// из CLAUDE_CONFIG_DIR путь к дому не относится.
+func writePeerIn(t *testing.T, dir, sid string, pid int, touched time.Time) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	data, err := json.Marshal(peers.Peer{PID: pid, SessionID: sid, Status: "busy", Updated: touched.UnixMilli()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(peers.Dir(home), sid+".json"), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, sid+".json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -118,6 +125,35 @@ func TestShowPrintsStageLine(t *testing.T) {
 	}
 	if !strings.Contains(out, "\n  этап: разработка, 2 дня, сессии нет, брошена\n") {
 		t.Fatalf("show без строки этапа:\n%s", out)
+	}
+}
+
+// TestShowReadsSessionFromConfigDir: клиент пишет реестр в каталог подписки
+// из CLAUDE_CONFIG_DIR, а старый ~/.claude/sessions оставляет пустым. Строка
+// такой сессии говорит «сессия жива», а не «сессии нет, брошена» (DK-1335).
+func TestShowReadsSessionFromConfigDir(t *testing.T) {
+	root := checkBoardSetup(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	old := timeNow
+	t.Cleanup(func() { timeNow = old })
+	timeNow = func() time.Time { return stageNow }
+	main := stage.MainRoot(root)
+
+	writePeerIn(t, filepath.Join(cfg, "sessions"), "s-live", os.Getpid(), stageNow.Add(-time.Minute))
+	openAs(t, home, main, "XR-020", stage.Dev, "s-live", stageNow.Add(-time.Hour))
+
+	out, err := cmdShow(root, "XR-020")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "сессия жива") {
+		t.Fatalf("запись из каталога подписки не дочитана, в show нет живой сессии:\n%s", out)
+	}
+	if strings.Contains(out, "сессии нет, брошена") {
+		t.Fatalf("пустой старый каталог выдан за брошенную сессию:\n%s", out)
 	}
 }
 

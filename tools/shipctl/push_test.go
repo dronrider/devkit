@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -432,5 +434,114 @@ func TestPushNestedStandBoardStillRefused(t *testing.T) {
 
 	if err := checkOnly(t, root); err == nil {
 		t.Fatal("правка стенда с доской должна отбиваться по-прежнему")
+	}
+}
+
+// TestPushGateAutonomousTaskBranchPasses: DK-1324, калитка веток задач.
+// autonomous=true в deploy.local основного чекаута, текущая ветка это ветка
+// задачи (xr-001), код с легитимным ID проходит без следа ревью.
+func TestPushGateAutonomousTaskBranchPasses(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	writeDeployCfg(t, root, "autonomous = true\n")
+	gitT(t, root, "checkout", "-q", "-b", "xr-001")
+	// Строку уровня снимаем: только автономность должна пускать этот диапазон,
+	// а не случайно оставшийся след ревью из фикстуры.
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001\n\n## Ревью\n\n- гонка без уровня\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 ревью без уровня")
+	codeCommit(t, root, "XR-001", "feature.txt")
+
+	if err := checkOnly(t, root); err != nil {
+		t.Fatalf("автономный режим и ветка задачи должны пускать код без следа ревью: %v", err)
+	}
+}
+
+// TestPushGateAutonomousMainStillRefused: DK-1324, main остаётся вопросом
+// человека. Даже при autonomous=true пуш main без следа ревью отбивается.
+func TestPushGateAutonomousMainStillRefused(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	writeDeployCfg(t, root, "autonomous = true\n")
+	codeCommit(t, root, "XR-001", "feature.txt")
+
+	err := checkOnly(t, root)
+	if err == nil {
+		t.Fatal("main без следа ревью должен отбиваться даже при autonomous=true")
+	}
+	if !strings.Contains(err.Error(), "нет следа ревью") {
+		t.Fatalf("отказ не называет причину: %v", err)
+	}
+}
+
+// TestPushGateAutonomousFromWorktreeReadsPrimaryRoot: DK-1324, deploy.local
+// лежит в основном чекауте (gitignored), worktree его не несёт. Пуш из
+// worktree задачи читает autonomous через primaryRoot и пускает код.
+func TestPushGateAutonomousFromWorktreeReadsPrimaryRoot(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	bare := addRemote(t, root)
+	writeDeployCfg(t, root, "autonomous = true\n")
+	wt := filepath.Join(t.TempDir(), "wt-xr-001")
+	gitT(t, root, "worktree", "add", "-q", "-b", "xr-001-wt", wt, "main")
+	write(t, wt, "feature.txt", "правка\n")
+	// Строку уровня в файле задачи снимаем: иначе ворот отпустил бы диапазон
+	// по следу ревью, не читая deploy.local из основного чекаута.
+	write(t, wt, "docs/tasks/XR-001.md", "# XR-001\n\n## Ревью\n\n- гонка без уровня\n")
+	gitT(t, wt, "add", ".")
+	gitT(t, wt, "commit", "-qm", "feat: XR-001 правка из worktree")
+
+	remote := gitT(t, wt, "rev-parse", "origin/main")
+	local := gitT(t, wt, "rev-parse", "HEAD")
+	if _, err := cmdPush(wt, PushParams{CheckOnly: true, RemoteSHA: remote, LocalSHA: local}); err != nil {
+		t.Fatalf("пуш из worktree при autonomous=true в основном чекауте должен проходить: %v", err)
+	}
+	_ = bare
+}
+
+// TestPushGateNonAutonomousTaskBranchStillRefused: DK-1324, при
+// autonomous=false (значение по умолчанию) ветка задачи без следа ревью
+// отбивается как раньше.
+func TestPushGateNonAutonomousTaskBranchStillRefused(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	writeDeployCfg(t, root, "autonomous = false\n")
+	gitT(t, root, "checkout", "-q", "-b", "xr-001")
+	// Строку уровня в файле задачи снимаем: фикстура setup несёт её, и с ней
+	// ворот отпустил бы диапазон, не проверив автономность.
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001\n\n## Ревью\n\n- гонка без уровня\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 ревью без уровня")
+	codeCommit(t, root, "XR-001", "feature.txt")
+
+	err := checkOnly(t, root)
+	if err == nil {
+		t.Fatal("при autonomous=false ветка задачи без следа ревью должна отбиваться")
+	}
+	if !strings.Contains(err.Error(), "нет следа ревью") {
+		t.Fatalf("отказ не называет причину: %v", err)
+	}
+}
+
+// TestPushRuleCarriesAutonomyException: DK-1324, правило Git в RULES.core.md
+// несёт второе исключение про автономный режим shipctl, иначе агент в
+// автономном проекте стоял бы на рядовом пуше ветки задачи, прочитав запрет.
+func TestPushRuleCarriesAutonomyException(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "RULES.core.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitSec, after, ok := strings.Cut(string(data), "## Git")
+	if !ok {
+		t.Fatal("в RULES.core.md нет раздела Git")
+	}
+	gitSec = after
+	if idx := strings.Index(gitSec, "\n## "); idx >= 0 {
+		gitSec = gitSec[:idx]
+	}
+	if !strings.Contains(gitSec, "автономный режим shipctl") {
+		t.Fatal("раздел Git не несёт второго исключения про автономный режим shipctl")
+	}
+	if !strings.Contains(gitSec, "Исключений два") {
+		t.Fatal("раздел Git не называет число исключений")
 	}
 }

@@ -36,6 +36,21 @@ func cmdPush(root string, p PushParams) (string, error) {
 		if err := rangeVerdict(root, p.RemoteSHA, p.LocalSHA); err != nil {
 			return "", err
 		}
+		// DK-1324: в автономном режиме ворот следа ревью для веток задач
+		// снимается, коммиты с легитимным ID задачи проходят без спроса.
+		// deploy.local лежит в основном чекауте (gitignored), поэтому читаем
+		// его через primaryRoot, а не от cwd worktree: из worktree задачи
+		// файл не виден. branchTaskID возвращает ID, если текущая ветка
+		// это ветка задачи (dk-1324, dk-1324-worktree), и пустую строку для
+		// main и прочих веток: main остаётся вопросом человека.
+		if primary, _, perr := primaryRoot(root); perr == nil {
+			if cfg, cerr := loadDeployConfig(primary); cerr == nil && cfg.Autonomous {
+				if branchTaskID(root) != "" {
+					return fmt.Sprintf("диапазон %s..%s пропущен: автономный режим, ветка задачи",
+						short(p.RemoteSHA), short(p.LocalSHA)), nil
+				}
+			}
+		}
 		if err := reviewTraceGate(root, p.RemoteSHA, p.LocalSHA); err != nil {
 			return "", err
 		}

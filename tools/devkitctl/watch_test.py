@@ -457,6 +457,27 @@ class CacheKeepTickTest(Stand):
         self.assertNotIn("кеш", self.journal(),
                          "пустой обход не пишет строк в журнал сторожка")
 
+    def test_cachekeep_call_drops_harness_narrowing(self):
+        """Тик продлевает все дома: DEVKIT_HARNESS не сужает дочерний обход.
+
+        Сужение по харнесу остаётся прямой команде cachekeep, а тик, запущенный
+        из сессии под харнесом, обязан видеть дома всех подписок.
+        """
+        self.entry(seen_minutes=1)
+        self.goallog(1)
+        os.environ["DEVKIT_HARNESS"] = "mimo"
+        try:
+            rc, out, call = self.sweep()
+        finally:
+            os.environ.pop("DEVKIT_HARNESS", None)
+        self.assertEqual(rc, 0, out)
+        calls = call.argv_with("cachekeep")
+        self.assertEqual(len(calls), 1, "продление зовётся один раз")
+        idx = call.calls.index(calls[0])
+        env = call.kwargs[idx].get("env") or {}
+        self.assertNotIn("DEVKIT_HARNESS", env,
+                         "дочерний вызов идёт без сужения по харнесу")
+
 PARK_HEAD = """# Задачи стенда
 
 ## In progress

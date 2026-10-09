@@ -3080,6 +3080,11 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 				pick := strings.TrimSpace(ask.Options[opt-1].Text)
 				s.chatSayDone(sid, claim, "answer")
 				s.saidSay(saidSessionKey(sid), text, "answer")
+				// Вопрос отпущен, и реплики, легшие в очередь при запертости,
+				// уезжают в окно следом за ответом (DoD DK-1300).
+				if n := s.askHoldSend(sid, term); n > 0 {
+					s.logf("очередь реплик чата %s уехала в окно за ответом словами: %d", sid, n)
+				}
 				s.logf("реплика чата %s отпустила запертый вопрос: пункт %d (%s)", sid, opt, pick)
 				writeJSON(w, http.StatusOK, map[string]any{"way": "answer", "tmux": term, "option": opt,
 					"note":    fmt.Sprintf("ответ подан клавишами в запертый вопрос: пункт %d (%s)", opt, pick),
@@ -3096,15 +3101,19 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		// Свободные слова в модальный вопрос не печатаются: латинская буква в
 		// них сработала бы горячей клавишей диалога, и реплика человека нажала
 		// бы кнопку за него. Сокет кладёт такую реплику в очередь клиента
-		// (дорога ниже), а без сокета она остаётся у панели пузырём с
-		// причиной, а не теряется в диалоге молча. Кнопок у пузыря нет ни у
-		// одного состояния (DK-1011), и ответ на этот случай несёт дорогу
-		// «held»: по ней панель отличает недоставку от очереди.
+		// (дорога ниже), а без сокета она ложится в очередь панели и уезжает в
+		// окно сразу после ответа на вопрос (DoD DK-1300): терять её нельзя,
+		// а слово причины ведёт к блоку вопроса панели. Кнопок у пузыря нет ни
+		// у одного состояния (DK-1011).
 		stuckDialog = true
 		if _, ok := s.peers()[sid]; !ok {
-			s.logf("реплика чата %s не поехала: %s", sid, stuckAskSayWord)
-			writeJSON(w, http.StatusOK, map[string]any{"way": "held", "tmux": term,
-				"stuck": stuckAskSayWord})
+			s.askHoldPut(sid, text)
+			s.chatSayDone(sid, claim, "queued")
+			s.saidSay(saidSessionKey(sid), text, "queued")
+			s.logf("реплика чата %s легла в очередь запертого вопроса: %s", sid, stuckAskSayWord)
+			writeJSON(w, http.StatusOK, map[string]any{"way": "queued", "tmux": term,
+				"stuck":   stuckAskSayWord,
+				"message": "реплика в очереди панели: уедет в окно сразу после ответа на вопрос"})
 			return
 		}
 	}
@@ -3296,12 +3305,12 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// stuckAskSayWord это слова недоставленной реплики при запертом вопросе без
-// сокета. Это единственная дорога, где реплике ехать некуда, и панель держит
-// пузырь с этой причиной в подсказке подписи (DK-1328). Подсказка про пункт
-// вопроса в ленте тут не стоит: пока DK-1300 не сделана, она ведёт к тому,
-// чего в панели нет.
-const stuckAskSayWord = "агент ждёт разрешения в своём окне"
+// stuckAskSayWord это слова запертости при открытом вопросе: ими ручка
+// называет причину и в ответе на реплику, и в признаке списка чатов, и панель
+// держит их пузырём (DK-1328). Хвост ведёт к блоку вопроса панели: там же
+// человек отвечает, а свободная реплика при открытом вопросе ложится в
+// очередь и уезжает в окно сразу после ответа (DoD DK-1300).
+const stuckAskSayWord = "агент ждёт разрешения в своём окне: ответьте в блоке вопроса панели"
 
 // sayTermOf находит терминальный вход разговора: имя живой tmux-сессии, чьим
 // хозяином реестр называет этот же разговор. Пустой ответ значит, что дороги
@@ -3464,7 +3473,7 @@ func (s *server) chatStuckMark(sid string) (why, mark string) {
 		// вопросом (вызов инструмента, которым вопрос и вызван), и «ход свежее
 		// вопроса» ответа на вопрос не доказывает. Закрывает запись следующее
 		// событие сессии, и так это работало до сих пор.
-		return "агент ждёт разрешения в своём окне", mark
+		return stuckAskSayWord, mark
 	}
 	return "", ""
 }
@@ -3527,6 +3536,10 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
+	// Признак запертости один на все дороги вопроса: и на список чатов, и сюда
+	// он приходит словом журнала уведомителя (DoD DK-1300). Панель по нему
+	// показывает плашку состояния, когда снимок панели вопрос не собрал.
+	stuck := s.chatStuck(sid)
 	ask := tmuxAskOf(name)
 	info, hasInfo := findSession(s.transcriptRoots(), found.Path, sid)
 	echo := false
@@ -3542,16 +3555,27 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(ask.Options) == 0 {
 		// Клиент, по всем признакам стоящий на вопросе, а вопрос с панели не
-		// собрался: это повод чинить разбор, и говорится он строкой в журнал,
-		// а не плашкой человеку (решение пользователя). Плашка тут ничего не
-		// объясняла и ничего не предлагала, а вылезала и на уже отвеченном
-		// опросе.
+		// собрался: это повод чинить разбор, и говорится он строкой в журнал.
+		// Без запертости панель по-прежнему молчит: плашка ничего не
+		// объясняла и вылезала и на уже отвеченном опросе (решение
+		// пользователя). С запертостью это другой разбор (DoD DK-1300):
+		// признак журнала едет в ответ, и панель показывает плашку состояния
+		// вместо тишины, неотличимой от штатной работы.
 		s.askQuietLog(sid, name, found.Path, echo)
-		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
-			"note": fmt.Sprintf("клиент %s ни о чём не спрашивает", name)})
+		out := map[string]any{"session": sid, "tmux": name}
+		if stuck != "" {
+			out["stuck"] = stuck
+		} else {
+			out["note"] = fmt.Sprintf("клиент %s ни о чём не спрашивает", name)
+		}
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name, "ask": ask})
+	out := map[string]any{"session": sid, "tmux": name, "ask": ask}
+	if stuck != "" {
+		out["stuck"] = stuck
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // agentAsk собирает вопрос агента, адресованный этому разговору. Скан тот же,
@@ -3654,6 +3678,46 @@ func (s *server) askAnswered(sid string) {
 	s.mu.Unlock()
 }
 
+// askHoldPut кладёт реплику в очередь запертого вопроса: в открытый виджет
+// свободные слова не печатаются (латинская буква сработала бы горячей
+// клавишей), а сокета у разговора нет, чтобы клиент взял её сам. Очередь
+// хранит текст в порядке отправки и уезжает в окно, как только человек
+// ответит на вопрос (DoD DK-1300).
+func (s *server) askHoldPut(sid, text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.askHold == nil {
+		s.askHold = map[string][]string{}
+	}
+	s.askHold[sid] = append(s.askHold[sid], text)
+}
+
+// askHoldSend сливает очередь запертого вопроса в окно после ответа. Порядок
+// очереди это порядок отправки, и ошибка первой подачи держит остальные:
+// клиент кончился посреди слива, и досылать в его окно дальше нельзя.
+// Остаток возвращается в очередь на случай следующего ответа, а уехавшие
+// считаются ответом ручки. Возвращает, сколько реплик уехало.
+func (s *server) askHoldSend(sid, term string) int {
+	s.mu.Lock()
+	queue := s.askHold[sid]
+	delete(s.askHold, sid)
+	s.mu.Unlock()
+	for i, text := range queue {
+		if err := chatSend(term, text); err != nil {
+			s.mu.Lock()
+			if s.askHold == nil {
+				s.askHold = map[string][]string{}
+			}
+			s.askHold[sid] = append(queue[i:], s.askHold[sid]...)
+			s.mu.Unlock()
+			s.logf("очередь реплик чата %s уехать не до конца: %v, в очереди осталось %d",
+				sid, err, len(queue)-i)
+			return i
+		}
+	}
+	return len(queue)
+}
+
 // askEchoTail это сколько последних записей ленты сверяется с вопросом: эхо
 // стоит в панели терминала последним, и копать глубже незачем.
 const askEchoTail = 12
@@ -3724,9 +3788,16 @@ func (s *server) handleChatAskAnswer(w http.ResponseWriter, r *http.Request) {
 	said := pick.Text
 	s.askAnswered(sid)
 	s.logf("ответ на вопрос клиента %s в %s: пункт %d (%s)", name, found.Name, body.Option, said)
+	msg := "ответ отправлен клиенту: " + said
+	// Вопрос отпущен, и реплики, легшие в очередь при запертости, уезжают в
+	// окно следом за ответом (DoD DK-1300): без этого слива очередь висела бы
+	// до следующего ответа, а человек считал бы реплики потерянными.
+	if n := s.askHoldSend(sid, name); n > 0 {
+		msg += fmt.Sprintf("; очередь панели уехала в окно следом, реплик: %d", n)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"session": sid, "tmux": name,
 		"option": body.Option, "said": said,
-		"message": "ответ отправлен клиенту: " + said})
+		"message": msg})
 }
 
 // chatSidOf разбирает адрес разговора: проект и сессию. Дальше дороги две, и

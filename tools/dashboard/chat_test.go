@@ -720,6 +720,61 @@ exit 0`)
 	}
 }
 
+// Свободная реплика при открытом вопросе разрешения не теряется и не
+// выглядит доставленной: она ложится в очередь панели и уезжает в окно сразу
+// после ответа на вопрос (DoD DK-1300, случай 02). Прежняя дорога без сокета
+// отдавала её словами «не доставлено» (held), и пузырь висел бы вечно.
+func TestChatSayQueuedUntilAskAnswer(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "bbbb-2222-3333-4444"
+	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
+	writeBinds(t, e.home, "2026-08-20T12:00:00 сессия "+sid+
+		" задача - проект demo дерево "+e.proj+" транскрипт "+standTranscript(e.home, "t")+" "+
+		"источник заказ повод startup tmux chat-13\n")
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid)})
+	sent := filepath.Join(e.home, "sent.log")
+	writeScript(t, e.bin, "tmux", `case "$1" in
+capture-pane) printf '%s' `+shQuote(livePermPane)+`;;
+send-keys) shift; echo "$@" >> `+sent+`;;
+ls) printf 'chat-13\t1\t1786000000\n';;
+esac
+exit 0`)
+
+	// Свободные слова в открытый виджет не печатаются: реплика в очереди, и
+	// причина та же, что у пузыря недоставленной.
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		sayBody("свободная реплика", "m-1"))
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика при открытом вопросе: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"way":"queued"`) {
+		t.Errorf("реплика не легла в очередь: %s", text)
+	}
+	if !strings.Contains(text, "ждёт разрешения") {
+		t.Errorf("очередь не назвала запертость: %s", text)
+	}
+	if keys := readFile(t, sent); strings.Contains(keys, "свободная реплика") {
+		t.Errorf("реплика напечаталась в открытый виджет: %q", keys)
+	}
+
+	// Ответ на вопрос уходит клавишами, и очередь едет в окно следом за ним:
+	// в журнале подач сперва номер пункта, потом реплика человека.
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/ask", `{"option": 1}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ответ на вопрос: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "очеред") {
+		t.Errorf("ответ не назвал слив очереди: %s", text)
+	}
+	keys := readFile(t, sent)
+	at, reply := strings.Index(keys, "-t =chat-13: 1"), strings.Index(keys, "свободная реплика")
+	if at < 0 || reply < 0 || at > reply {
+		t.Errorf("после ответа очередь не уехала в окно сперва номером, потом репликой: %q", keys)
+	}
+}
+
 // permissionNotify это строка журнала уведомителя про запрос разрешения, как её
 // пишет hooks/notify.py: ID сессии там обрезан до восьми знаков.
 func permissionNotify(sid string) string {

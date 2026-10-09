@@ -2032,8 +2032,10 @@ class ReviewPollTest(Stand):
         self.assertEqual(a.argv_with("round"), [])
 
 
-class ResumeTest(Stand):
-    """Подъём упавшего хода (DK-510).
+class ResumeHelpers:
+    """Хелперы стенда подъёма упавшего хода: журнал уведомителя, реестр чатов,
+    панель в tmux и счёт попыток. Миксин идёт первым в bases у тестовых
+    классов и сам собой не собирается: свой setUp он собирает суперклассом.
 
     Стенд свой: журнал уведомителя с поводом, реестр чатов с адресом и tmux,
     подменённый запускателем. Проверяется решение сторожа (подать реплику,
@@ -2043,17 +2045,19 @@ class ResumeTest(Stand):
     FULL = "3d1c4c04-41c6-4773-9926-abcd2a8ea42a"
 
     def setUp(self):
-        Stand.setUp(self)
+        super().setUp()
         self.call = Fake()
         self.tmux = "/usr/bin/tmux"
 
-    def notify(self, reason, ago_minutes=1, sid=None, task="DK-901"):
+    def notify(self, reason, ago_minutes=1, sid=None, task="DK-901", text=None):
         """Строка журнала уведомителя. Формат тот же, что пишет hooks/notify.py:
-        ключ и значение через пробел, текст баннера хвостом."""
+        ключ и значение через пробел, текст баннера хвостом. Свой текст кладётся
+        парой (заголовок, тело), без него в хвосте прежние «стенд» и «повод»."""
         when = stamp(self.now - timedelta(minutes=ago_minutes))
+        title, body = text if text is not None else ("стенд", "повод")
         line = ("%s сессия %s повод %s уровень громкий бэкенд terminal-notifier "
-                "цель - задача %s проект стенд код возврата: 0 текст «стенд» «повод»\n"
-                % (when, sid or self.SID, reason, task))
+                "цель - задача %s проект стенд код возврата: 0 текст «%s» «%s»\n"
+                % (when, sid or self.SID, reason, task, title, body))
         path = self.home / ".devkit" / "notify.log"
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(str(path), "a", encoding="utf-8") as f:
@@ -2093,6 +2097,22 @@ class ResumeTest(Stand):
     def state(self):
         return watch.read_resume(self.home)
 
+    def task_file(self, task="DK-901", body="- Разработка: раз.\n"):
+        """Файл задачи с разделами «Ход работы» и «Сценарий проверки»: в
+        «Ход работы» ложится исход дежурному, соседний раздел проверяет, что
+        запись встаёт перед ним, а не в конец файла."""
+        path = self.proj / "docs" / "tasks" / ("%s.md" % task)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# %s\n\n## Что происходит\n\nстенд\n\n## Ход работы\n\n%s\n"
+                        "## Сценарий проверки\n\n1. шаг\n" % (task, body),
+                        encoding="utf-8")
+        return path
+
+    def stage_lines(self, task="DK-901"):
+        """Строки раздела «Ход работы» файла задачи."""
+        text = (self.proj / "docs" / "tasks" / ("%s.md" % task)).read_text(encoding="utf-8")
+        return watch.goal_section(text, "Ход работы")
+
     def run_fake(self, code, out=""):
         """Запускатель, у которого `taskctl run` отвечает кодом code, а tmux
         штатно: панель жива."""
@@ -2104,6 +2124,12 @@ class ResumeTest(Stand):
                     return subprocess.CompletedProcess(argv, code, out, None)
                 return subprocess.CompletedProcess(argv, 0, "", None)
         return RunFake()
+
+
+class ResumeTest(ResumeHelpers, Stand):
+    """Подъём упавшего хода: решение сторожа на свежем падении. Видимость
+    падения сквозь последующие уведомления, исход дежурному и доведение
+    проверяет соседний ResumeFailedTest (DK-1321)."""
 
     def test_failed_turn_wakes_the_same_pane(self):
         # Ход упал, сеть есть, панель окна задачи жива: подъём идёт командой
@@ -2191,26 +2217,6 @@ class ResumeTest(Stand):
         self.assertIn("сети нет", " ".join(lines))
         self.assertEqual(self.state()[self.SID]["tries"], 0)
 
-    def test_tries_run_out_and_call_the_human(self):
-        # Три подъёма не помогли: сторож зовёт человека громко и больше не
-        # подаёт реплик.
-        self.chat(transcript_ago_minutes=40)
-        for n in range(watch.RESUME_TRIES):
-            self.notify("turn_failed", 30 - n * 5)
-            self.resume()
-        self.notify("turn_failed", 10)
-        lines = self.resume()
-        self.assertEqual(len(self.call.argv_with("notify.py")), 1,
-                         "человека не позвали: %s" % self.call.calls)
-        self.assertIn("попытки подъёма кончились", " ".join(lines))
-        self.assertIn("claude --resume", " ".join(str(x) for a in self.call.argv_with("notify.py")
-                                                  for x in a))
-        # Следующий тик молчит: баннер каждые пять минут человек выключит вместе
-        # со сторожком.
-        self.notify("turn_failed", 5)
-        self.assertEqual(self.resume(), [])
-        self.assertEqual(len(self.call.argv_with("notify.py")), 1)
-
     def test_running_turn_holds_back_the_call(self):
         # Последняя реплика подъёма сработала, но ход ещё идёт: своего повода в
         # журнале уведомителя он не написал, а транскрипт пишется. Живой
@@ -2256,12 +2262,26 @@ class ResumeTest(Stand):
 
     def test_old_failure_is_not_raised(self):
         # Падение старше потолка: имя панели к этому сроку носит уже другой
-        # разговор, и реплика уехала бы чужому.
+        # разговор, и реплика уехала бы чужому. Исчерпание заранее: попытки на
+        # такое не тратятся, исход уходит дежурному записью в задачу да
+        # уведомлением (DK-1321).
+        self.task_file()
         self.notify("turn_failed", watch.RESUME_STALE // 60 + 60)
-        self.chat()
+        self.chat(transcript_ago_minutes=watch.RESUME_STALE // 60 + 120)
         lines = self.resume()
-        self.assertEqual(self.keys(), [])
-        self.assertIn("подъём не подаётся", " ".join(lines))
+        self.assertEqual(self.keys(), [], "старое падение поднимали: %s" % self.call.calls)
+        self.assertEqual(self.ran(), [], "старое падение поднимали: %s" % self.call.calls)
+        self.assertEqual(len(self.call.argv_with("notify.py")), 1,
+                         "исход не ушёл дежурному: %s" % self.call.calls)
+        record = "\n".join(self.stage_lines())
+        self.assertIn(watch.DUTY_MARK, record, "записи в файле задачи нет: %s" % record)
+        self.assertIn("простой старше двенадцати часов", record)
+        self.assertIn("исход дежурному", " ".join(lines))
+        self.assertEqual(self.state()[self.SID]["tries"], 0,
+                         "на старое падение потрачена попытка")
+        # Тот же тик второй раз молчит: повтор того же исхода не нужен.
+        self.assertEqual(self.resume(), [])
+        self.assertEqual(len(self.call.argv_with("notify.py")), 1)
 
     def test_dead_pane_spends_no_try(self):
         # Панель умерла вместе с процессом: tmux отвечает отказом на has-session.
@@ -2285,6 +2305,104 @@ class ResumeTest(Stand):
                   taskctl=TASKCTL, shipctl=SHIPCTL, agentctl=AGENTCTL, dashboard=DASHBOARD,
                   tmux=self.tmux, probe=lambda: True)
         self.assertIn("ход упал, подъём 1", out.getvalue())
+
+
+class ResumeFailedTest(ResumeHelpers, Stand):
+    """Видимость падения и исход дежурному (DK-1321).
+
+    Падение должно дотянуться через последующие уведомления простоя, три
+    отказа подряд и простой старше двенадцати часов кончаются исходом дежурному
+    (запись в файле задачи да уведомление), пустой баланс уходит туда же сразу,
+    а доведение проверяет тик тем же прогоном сценария."""
+
+    def duty_shouts(self):
+        """Зовы уведомителем в этом стенде: от падения они идут только из
+        исхода дежурному, прочие зовы сторожка тик в эти тесты не несёт."""
+        return self.call.argv_with("notify.py")
+
+    def test_idle_notice_keeps_the_failure(self):
+        # Шаг 1 сценария: падение, а через минуту уведомление простоя. Раньше
+        # последний повод сеанса падение съедал, и резюм не подавалось ни разу.
+        self.task_file()
+        self.notify("turn_failed")
+        self.notify("idle_prompt")
+        self.chat()
+        lines = self.resume()
+        self.assertEqual(self.ran(), [[TASKCTL, "-C", str(self.proj), "run", "DK-901",
+                                       "--order", watch.RESUME_WORD]], self.call.calls)
+        self.assertIn("подъём 1 из %d" % watch.RESUME_TRIES, " ".join(lines))
+        self.assertEqual(self.state()[self.SID]["tries"], 1)
+
+    def test_three_failures_end_in_a_duty_record(self):
+        # Шаг 2 сценария: три подряд падения, и на четвёртом тике исход уходит
+        # дежурному записью в задачу да уведомлением.
+        self.task_file()
+        self.chat(transcript_ago_minutes=40)
+        for n in range(watch.RESUME_TRIES):
+            self.notify("turn_failed", 30 - n * 5)
+            self.resume()
+        self.assertEqual(len(self.ran()), watch.RESUME_TRIES, self.call.calls)
+        self.notify("turn_failed", 10)
+        lines = self.resume()
+        self.assertEqual(len(self.duty_shouts()), 1,
+                         "исход не ушёл дежурному: %s" % self.call.calls)
+        record = "\n".join(self.stage_lines())
+        self.assertIn(watch.DUTY_MARK, record, "записи в файле задачи нет: %s" % record)
+        self.assertIn("подъём не помог %d раз подряд" % watch.RESUME_TRIES, record)
+        self.assertIn("исход дежурному", " ".join(lines))
+        self.assertEqual(self.state()[self.SID]["said"], "эскалация")
+        # Тот же тик второй раз молчит: баннер каждые пять минут человек
+        # выключит вместе со сторожком, и запись не дублируется.
+        self.assertEqual(self.resume(), [])
+        self.assertEqual(len(self.duty_shouts()), 1)
+        marks = [ln for ln in self.stage_lines() if watch.DUTY_MARK in ln]
+        self.assertEqual(len(marks), 1, "исход записан дважды: %s" % record)
+
+    def test_debt_outcome_goes_to_duty_at_once(self):
+        # Шаг 3 сценария: падение с пустым балансом подписки. Резюм его не
+        # вылечит, поэтому исход уходит дежурному сразу с названием причины и
+        # без единой попытки, а уведомление простоя его не прячет.
+        self.task_file()
+        self.chat()
+        self.notify("turn_failed", text=("ход упал (API Error)",
+                                         "API Error: 402 Insufficient balance"))
+        self.notify("idle_prompt")
+        lines = self.resume()
+        self.assertEqual(self.ran(), [],
+                         "исход с пустым балансом поднимали резюмом: %s" % self.call.calls)
+        self.assertEqual(self.keys(), [],
+                         "исход с пустым балансом поднимали репликой: %s" % self.call.calls)
+        self.assertEqual(self.state()[self.SID]["tries"], 0,
+                         "попытка потрачена на пустой баланс")
+        record = "\n".join(self.stage_lines())
+        self.assertIn(watch.DUTY_MARK, record, "записи в файле задачи нет: %s" % record)
+        self.assertIn(watch.DEBT_MARK, record, "причина не названа: %s" % record)
+        self.assertIn("исход дежурному", " ".join(lines))
+        shouts = self.duty_shouts()
+        self.assertEqual(len(shouts), 1, "исход не ушёл дежурному: %s" % self.call.calls)
+        self.assertIn(watch.DEBT_MARK, " ".join(str(x) for a in shouts for x in a),
+                      "причина не названа в уведомлении: %s" % shouts)
+        # Тот же тик второй раз молчит.
+        self.assertEqual(self.resume(), [])
+        self.assertEqual(len(self.duty_shouts()), 1)
+
+    def test_tick_lifts_and_checks_the_run(self):
+        # Шаги 1 и 4 сценария в одном тике: падение сквозь уведомление простоя
+        # поднимается, и тот же тик доверяет проверку `shipctl check-run`.
+        self.notify("turn_failed")
+        self.notify("idle_prompt")
+        self.chat()
+        self.board(in_progress=False)
+        self.entry(seen_minutes=1)
+        call = CheckFake(reps=[RAISED])
+        out = io.StringIO()
+        rc = watch.run(now=self.now, idle=45 * 60, home=self.home, out=out, call=call,
+                       taskctl=TASKCTL, shipctl=SHIPCTL, agentctl=AGENTCTL,
+                       dashboard=DASHBOARD, tmux=self.tmux, probe=lambda: True)
+        text = out.getvalue()
+        self.assertIn("ход упал, подъём 1", text)
+        self.assertIn("прогон сценария поднят", text)
+        self.assertEqual(rc, 0, text)
 
 
 class TestRegistryPane(unittest.TestCase):

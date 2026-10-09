@@ -144,6 +144,83 @@ class OrderCase(unittest.TestCase):
         self.assertIn("Другую работу с доски не бери", argv[argv.index("--order") + 1])
 
 
+class LiftCall:
+    """Подстава подпроцесса для подъёма с деревом: git отдаёт список worktree,
+    всё остальное ответ доски. Один Fake на всё роняет разбор поручения:
+    worktree list получил бы json доски и вернул пустой список."""
+
+    def __init__(self, out="", trees=""):
+        self.calls = []
+        self.out = out
+        self.trees = trees
+
+    def __call__(self, argv, **kw):
+        self.calls.append(argv)
+        if argv and argv[0] == "git":
+            return subprocess.CompletedProcess(argv, 0, self.trees, "")
+        return subprocess.CompletedProcess(argv, 0, self.out, "")
+
+
+class LiftRowsCase(unittest.TestCase):
+    """Подъём строки с поручением (DK-1322): задание, запись в задаче и
+    уведомление.
+
+    Очередь слияний кладёт при снятии поручение строкой записи в файл задачи
+    на ветке, а подъём передаёт его исполнителю в заказе: уведомление без
+    поручения не кончается разбором, и строка стоит мёртвым грузом."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.home)]))
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.root)]))
+        tasks = self.root / "docs" / "tasks"
+        tasks.mkdir(parents=True)
+        self.task_file = tasks / "DK-7.md"
+
+    def stand(self, rows, task_text):
+        self.task_file.write_text(task_text, encoding="utf-8")
+        trees = "worktree %s\nbranch refs/heads/dk-7-fix\n" % self.root
+        return LiftCall(board(rows), trees)
+
+    def test_lift_passes_assignment(self):
+        call = self.stand(
+            [row("DK-7", "слияние", "сессии нет, брошена")],
+            "# DK-7: строка\n\n## Выкат\n\n- 2026-10-09 снята с очереди слияний: "
+            "краснота в диффе задачи; поручение: разобрать снятие и вернуть "
+            "строку в очередь (shipctl queue --free DK-7)\n")
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 1)
+        orders = [" ".join(a) for a in call.calls if "run" in a]
+        self.assertTrue(orders, "заказа не было")
+        self.assertIn("Поручение: разобрать снятие и вернуть строку в очередь",
+                      orders[0])
+        doc = self.task_file.read_text(encoding="utf-8")
+        self.assertIn("строка поднята тиком", doc)
+        tail = doc.split("строка поднята тиком", 1)[1]
+        self.assertIn("поручение: разобрать снятие", tail)
+        said = " ".join(lines)
+        self.assertIn("уведомление о подъёме", said)
+        self.assertIn("запись подъёма в", said)
+
+    def test_lift_without_assignment_keeps_plain_order(self):
+        """Строка без поручения поднимается обычным заказом, без чужих слов."""
+        call = self.stand(
+            [row("DK-7", "разработка", "сессии нет, брошена")],
+            "# DK-7: строка\n\n## Ход работы\n")
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 1)
+        orders = [" ".join(a) for a in call.calls if "run" in a]
+        self.assertTrue(orders, "заказа не было")
+        self.assertIn("продолжай DK-7", orders[0])
+        self.assertNotIn("Поручение", orders[0])
+        doc = self.task_file.read_text(encoding="utf-8")
+        self.assertIn("строка поднята тиком", doc)
+        self.assertIn("## Выкат", doc)
+
+
 class CapacityCase(unittest.TestCase):
     """Ёмкость: поднимается не больше свободных мест."""
 

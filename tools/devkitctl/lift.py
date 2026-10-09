@@ -55,6 +55,20 @@ WORK_SECTIONS = ("in-progress", "check")
 # и запрещает брать другую работу.
 ORDER = "продолжай %s, эту строку ты уже вёл. Другую работу с доски не бери"
 
+# Поручение в файле задачи. Очередь слияний кладёт его строкой записи при
+# снятии (shipctl queueTrace), и подъём передаёт его исполнителю в заказе:
+# уведомление без поручения не кончается разбором, и строка стоит мёртвым
+# грузом (DK-1322).
+ASSIGN = "поручение:"
+
+# Раздел файла задачи, куда shipctl пишет машинные записи слияния и снятия,
+# и куда ложится запись подъёма (taskform.Merged).
+MERGED = "## Выкат"
+
+# Заголовок, перед которым встаёт «Выкат», если его нет: по форме Verification
+# идёт следом за Merged (taskform.Sections).
+VERIFY = "## Проверка"
+
 # Заказ голове, поднятой лежащей репликой, собирает сама лестница по флагу
 # `taskctl run --reply` (taskhead.ReplyOrder): текст один на всех зовущих, и
 # второй копии его на python не заводится.
@@ -459,12 +473,21 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
             lines.append("задача %s в %s: %s, поднялась бы заказом" % (f.id, root, f.why))
             raised += 1
             continue
-        code, words = run_order(root, f.id, f.order, call=call, taskctl=taskctl, reply=f.reply)
+        order = f.order
+        task = "" if f.reply else assignment(root, f.id, call=call)
+        if task:
+            # Поручение из файла задачи едет в заказе: поднятая сессия
+            # узнаёт, что строку сняли и что с ней делать, а не только
+            # продолжает старую работу (DK-1322).
+            order += ". Поручение: " + task
+        code, words = run_order(root, f.id, order, call=call, taskctl=taskctl, reply=f.reply)
         if code == 0:
             raised += 1
             mark_lifted(root, f.id, home)
             lines.append("задача %s в %s: %s, поднята адресным заказом: %s"
                          % (f.id, root, f.why, words))
+            lines.append(notify_lift(root, f.id, task, call=call))
+            lines.append(record_lift(root, f.id, task, call=call))
             continue
         lines.append("задача %s в %s: подъём отбит кодом %d: %s" % (f.id, root, code, words))
         # Лестница зовёт человека сама, когда голову поднять нечем (код 1), и
@@ -505,6 +528,133 @@ def run_order(root, tid, order, call=None, taskctl=None, reply=False):
     except OSError as e:
         return 1, str(e)
     return p.returncode, " ".join((p.stdout or "").split())
+
+
+def branch_of_task(branch, tid):
+    """Ветка названа по ID строчными, с хвостом-слагом или без: та же форма,
+    что у branchOfTask в shipctl."""
+    b, low = branch.lower(), tid.lower()
+    return b == low or b.startswith(low + "-")
+
+
+def task_tree(root, tid, call=None):
+    """Дерево ветки задачи по списку worktree, тем же разбором, что у
+    shipctl taskWorktree. Дерева может не быть (копию окна переключили),
+    тогда возвращается пустая строка."""
+    call = subprocess.run if call is None else call
+    try:
+        p = call(["git", "-C", root, "worktree", "list", "--porcelain"],
+                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except OSError:
+        return ""
+    path = ""
+    for ln in (p.stdout or "").splitlines():
+        if ln.startswith("worktree "):
+            path = ln[len("worktree "):].strip()
+        elif ln.startswith("branch refs/heads/"):
+            if path and branch_of_task(ln[len("branch refs/heads/"):], tid) and os.path.isdir(path):
+                return path
+            path = ""
+    return ""
+
+
+def assignment(root, tid, call=None):
+    """Поручение из файла задачи: последняя строка с меткой ASSIGN, как её
+    кладёт очередь слияний при снятии. Пусто, если поручения нет либо дерева
+    нет: подъём тогда идёт обычным заказом."""
+    wt = task_tree(root, tid, call=call)
+    if not wt:
+        return ""
+    try:
+        with open(os.path.join(wt, "docs", "tasks", tid + ".md"),
+                  encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return ""
+    found = ""
+    for ln in text.splitlines():
+        if ASSIGN in ln:
+            found = ln.split(ASSIGN, 1)[1].strip()
+    return found
+
+
+def insert_into(text, heading, line):
+    """Строка в конец раздела; раздел без него заводится на своём месте по
+    форме: перед «Проверкой», иначе в конец файла. Порядок разделов тот же,
+    что у taskform (Merged перед Verification), тут его грубая копия на одну
+    строку: python-часть не тащит taskform целиком."""
+    lines = text.splitlines()
+    for i, ln in enumerate(lines):
+        if ln.strip() != heading:
+            continue
+        j = i + 1
+        while j < len(lines) and not lines[j].startswith("## "):
+            j += 1
+        k = j
+        while k > i + 1 and not lines[k - 1].strip():
+            k -= 1
+        lines.insert(k, line)
+        if k + 1 < len(lines) and lines[k + 1].strip():
+            lines.insert(k + 1, "")
+        return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    block = ["", heading, "", line]
+    for i, ln in enumerate(lines):
+        if ln.strip() == VERIFY:
+            lines[i:i] = block
+            return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines + block) + "\n"
+
+
+def record_lift(root, tid, task, call=None):
+    """Запись подъёма в файл задачи на ветке, коммитом туда же, как пишет
+    снятие очередь. Без дерева запись некуда писать, и об этом говорит строка
+    отчёта: подъём не повод оставить грязь в основном чекауте (DK-1322)."""
+    wt = task_tree(root, tid, call=call)
+    if not wt:
+        return "задача %s: запись подъёма не легла, дерева ветки нет" % tid
+    rel = os.path.join("docs", "tasks", tid + ".md")
+    path = os.path.join(wt, rel)
+    line = "- " + time.strftime("%Y-%m-%d") + " строка поднята тиком"
+    if task:
+        line += "; " + ASSIGN + " " + task
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError as e:
+        return "задача %s: запись подъёма не легла, %s" % (tid, e)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(insert_into(text, MERGED, line))
+    except OSError as e:
+        return "задача %s: запись подъёма не легла, %s" % (tid, e)
+    run = subprocess.run if call is None else call
+    try:
+        run(["git", "-C", wt, "add", "--", rel],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        p = run(["git", "-C", wt, "commit", "-q", "-m",
+                 "docs(tasks): %s строка поднята" % tid, "--", rel],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        return "задача %s: запись подъёма не закоммичена, %s" % (tid, e)
+    if getattr(p, "returncode", 0) != 0:
+        words = " ".join((getattr(p, "stdout", "") or "").split())
+        return "задача %s: запись подъёма не закоммичена, %s" % (tid, words)
+    return "задача %s: запись подъёма в %s" % (tid, rel)
+
+
+def notify_lift(root, tid, task, call=None):
+    """Уведомление о подъёме: поднятая строка получает задание, запись в
+    задаче и уведомление, и без последнего подъём неотличим от бездействия
+    (DK-1322)."""
+    import watch
+    body = "строка поднята тиком, " + (
+        (ASSIGN + " " + task) if task else "задание: продолжать строку")
+    said = watch.shout("%s: задача %s поднята"
+                       % (os.path.basename(root.rstrip("/")), tid),
+                       body, root, call=call, task=tid)
+    return "задача %s в %s: уведомление о подъёме, %s" % (tid, root, said)
 
 
 def dead_pid(pid):

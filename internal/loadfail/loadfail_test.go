@@ -34,6 +34,36 @@ FAIL
 	}
 }
 
+// Собственные сроки девкита говорят каждый своим глаголом («не ответил»,
+// «не кончился», «не напечатал»), и все они про одно и то же: подпроцесс не
+// уложился в срок. Фигура «не ... за <срок>» обязана узнавать их без
+// поимённого списка, иначе новая подпись уходит в чужую красноту и съедает
+// повтор слияния.
+func TestLoadTakesDevkitDeadlineFamily(t *testing.T) {
+	for _, out := range []string{
+		`--- FAIL: TestClientLoginTrustAskedAndPassed (2.95s)
+    clientlogin_test.go:368: подъём входа не прошёл вопрос доверия: 502, {"error":"клиент не напечатал ссылку авторизации за 2s: вид панели входа, видимо, сменился, разбор надо чинить"}
+FAIL
+`,
+		`--- FAIL: TestGitRunKillsOrphan (30.01s)
+    gitrun_test.go:120: git status не кончился за 2s и убит вместе с потомками
+FAIL
+`,
+		`--- FAIL: TestSocketQuietCloses (5.02s)
+    sock_test.go:44: клиент: тишина в сокете за 1.5s (read tcp 127.0.0.1)
+FAIL
+`,
+		`--- FAIL: TestPocChromeAnswers (60.00s)
+    poc_browser_test.go:20: chrome не ответил за срок
+FAIL
+`,
+	} {
+		if load, _ := Load(out); !load {
+			t.Errorf("подпись срока не узналась в блоке:\n%s", out)
+		}
+	}
+}
+
 // Настоящая поломка признака не несёт, и вердикт обязан остаться своим:
 // ложный ноль тут дороже ложной единицы.
 func TestLoadRefusesPlainFailure(t *testing.T) {
@@ -43,6 +73,38 @@ FAIL
 `
 	if load, _ := Load(out); load {
 		t.Error("провал без признака срока назван нагрузочным")
+	}
+}
+
+// Глагол из сроковой семьи без срока это функциональный провал, а не
+// кончившееся время: «wrap не напечатал ссылку» сбоят на своей логике и под
+// любой нагрузкой.
+func TestLoadRefusesVerbWithoutDeadline(t *testing.T) {
+	for _, out := range []string{
+		`--- FAIL: TestWrapPrintsSummary (0.02s)
+    wrap_test.go:15: wrap не напечатал ссылку на задачу
+FAIL
+`,
+		`--- FAIL: TestBoardFileOpens (0.03s)
+    board_test.go:22: доска не прочиталась: EOF
+FAIL
+`,
+	} {
+		if load, _ := Load(out); load {
+			t.Errorf("обычный провал с глаголом из сроковой семьи назван нагрузочным:\n%s", out)
+		}
+	}
+}
+
+// Попытки это не стенное время: «не устоялся за 3 попыток» говорит про
+// конкуренцию за файл, а не про срок, и граница держится единицей измерения.
+func TestLoadRefusesAttemptsNotTime(t *testing.T) {
+	out := `--- FAIL: TestLockSettles (1.20s)
+    lock_test.go:57: замок demo не устоялся за 3 попыток: файл на диске меняется быстрее, чем идёт проверка
+FAIL
+`
+	if load, _ := Load(out); load {
+		t.Error("«за 3 попыток» принято за срок и названо нагрузочным падением")
 	}
 }
 

@@ -320,6 +320,48 @@ class TestBoardGateWithShipctl(unittest.TestCase):
         head = self.commit("docs(tasks): DK-001 ход", {"docs/tasks/DK-001.md": "# DK-001\nход\n"})
         self.assertEqual(self.push(head, self.base, CLAUDECODE="1").returncode, 0)
 
+    # DK-1324: автономный режим. deploy.local читает shipctl от корня
+    # репозитория, pre-push тем же shipctl судит диапазон.
+    def autonomous(self):
+        os.makedirs(os.path.join(self.repo, ".devkit"), exist_ok=True)
+        with open(os.path.join(self.repo, ".devkit", "deploy.local"), "w") as f:
+            f.write("autonomous = true\n")
+
+    def push_ref(self, ref, local, remote, **env):
+        line = "refs/heads/%s %s refs/heads/%s %s\n" % (ref, local, ref, remote)
+        env["PATH"] = self.bindir + os.pathsep + os.environ.get("PATH", "")
+        return run(stdin=line, cwd=self.repo, **env)
+
+    def test_autonomous_task_branch_bare_push_passes(self):
+        """Автономность и ветка задачи: голый git push кода с легитимным ID
+        проходит pre-push без DEVKIT_PUSH_OK, следа ревью не требуется."""
+        self.autonomous()
+        self.git("checkout", "-q", "-b", "dk-001")
+        head = self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
+        r = self.push_ref("dk-001", head, self.base, CLAUDECODE="1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_autonomous_main_bare_push_still_refused(self):
+        """Main остаётся вопросом человеку даже при autonomous = true."""
+        self.autonomous()
+        head = self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
+        r = self.push_ref("main", head, self.base, CLAUDECODE="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("taskctl", r.stderr)
+        self.assertNotIn("DEVKIT_PUSH_OK", r.stderr)
+        self.assertNotIn("--no-verify", r.stderr)
+
+    def test_autonomous_bare_code_without_id_still_refused(self):
+        """Голый git push не расширяется: код без ID задачи отбивается и в
+        автономном режиме, калитка пропускает только легитимный код ветки."""
+        self.autonomous()
+        self.git("checkout", "-q", "-b", "dk-001")
+        head = self.commit("код без задачи", {"tools/app.txt": "правка\n"})
+        r = self.push_ref("dk-001", head, self.base, CLAUDECODE="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("taskctl", r.stderr)
+        self.assertNotIn("DEVKIT_PUSH_OK", r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=0)

@@ -381,6 +381,13 @@ CHAT_POINTER_HOOK = "chat-pointer.py"
 # субагента уезжает в чужое дерево, а это не то же самое, что выборка прозы без
 # следа.
 TREE_HOOK = "tree-mark.py"
+# Рубеж длинного вывода (DK-499): PostToolUse на Bash своим матчером, потому что
+# режет вывод команды, а не запись файла. Тем же порядком стоит TREE_HOOK, и
+# событие оба различают сами. Категория сообщения в hook_gaps своя: без рубежа
+# длинный вывод льётся в контекст целиком, и каждый килобайт лога платится
+# каждым следующим ходом сессии, а это не то же самое, что потерянная привязка
+# дерева задачи.
+LONGOUT_HOOK = "longout.py"
 # Хуки, переименованные в devkit: прежнее имя файла и нынешнее (DK-440). Строка
 # с прежним именем зовёт файл, которого в чекауте уже нет, и харнес спотыкается
 # на ней каждым ходом, поэтому доктор не дополняет раскладку новой строкой, а
@@ -449,6 +456,7 @@ HOOK_LAYOUT = (
     ("PostToolUse", PRE_MATCHER, "python3 %s/hooks/phase-budget.py --hook claude-code"),
     ("PostToolUse", PRE_MATCHER, "python3 %s/hooks/prose-mark.py --hook claude-code"),
     ("PostToolUse", PRE_MATCHER, "python3 %s/hooks/tree-mark.py --hook claude-code"),
+    ("PostToolUse", PRE_MATCHER, "python3 %s/hooks/longout.py --hook claude-code"),
     ("SessionStart", "", "python3 %s/hooks/prose-mark.py --hook claude-code"),
     ("SubagentStop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
     ("Stop", "", "python3 %s/hooks/agent-watch.py --hook claude-code"),
@@ -1697,6 +1705,12 @@ def hook_gaps(text, settings):
                             "субагента, и правка уезжает в чужое дерево того же репозитория "
                             "молча (hooks/README.md)"
                             % (TREE_HOOK, settings, "check-tree-write.py"))
+        elif script == LONGOUT_HOOK:
+            findings.append("рубеж длинного вывода %s не подключён на событии PostToolUse "
+                            "Bash в %s: каждый длинный вывод льётся в контекст целиком, "
+                            "и следующий ход платит за него уже прочитанными "
+                            "токенами (hooks/README.md)"
+                            % (LONGOUT_HOOK, settings))
         elif script == CHAT_POINTER_HOOK:
             findings.append("указатель на скилл chat %s не подключён на событии UserPromptSubmit "
                             "в %s: второй ход подряд идёт мимо скилла chat молча, и разговор с "

@@ -17475,12 +17475,13 @@ function meterClass(pct) {
   return "";
 }
 
-// planRows рисует показ пакета кредитов двумя строками макета A: в шапке имя
-// «Token Plan», первая строка несёт траты окна и остаток парой «2.3B/5.0B»,
-// вторая процент с тремя знаками, градусник и слово темпа с цветной точкой.
+// planRows рисует показ пакета кредитов двумя строками макета A. Имя пакета
+// стоит в скобках у имени подписки (см. quotaNodes). Первая строка несёт
+// траты окна и остаток парой «2.3B/5.0B», вторая процент с тремя знаками,
+// градусник и слово темпа с цветной точкой.
 function planRows(h) {
   const p = h.plan;
-  const out = [el("h4", "tp-name", "Token Plan")];
+  const out = [];
   const tp = el("div", "tp tpA");
   const row1 = el("div", "tp-row");
   const left1 = el("span", "tp-left");
@@ -17633,7 +17634,7 @@ function quotaNodes(view) {
     out.push(...quotaFailNodes(view.fail));
   }
   for (const h of quotaEvery(view)) {
-    out.push(el("div", "qsub", h.name));
+    out.push(el("div", "qsub", h.plan ? h.name + " (Token Plan)" : h.name));
     // Подписка без снимка стоит строкой со словами, а не пропуском: список
     // снимков собирается по файлам каталога, и подписка без съёмщика не
     // попадала в него вовсе, а молчание читалось как «всё в порядке».

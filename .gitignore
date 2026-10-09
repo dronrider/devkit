@@ -7,6 +7,7 @@ tools/shipctl/shipctl
 tools/agentctl/agentctl
 tools/dashboard/dashboard
 tools/obeycheck/obeycheck
+tools/cmdout/cmdout
 
 # Каталог релизной сборки по умолчанию (devkitctl build --release): тарболлы и
 # суммы собираются по месту, в git им делать нечего.

@@ -449,6 +449,57 @@ func TestSummarizeThreshold(t *testing.T) {
 	}
 }
 
+// TestOverThreshold держит границу порога теми же числами, что и Summarize:
+// подкоманда digest зовёт проверку до записи файла, и разъехавшиеся решения
+// вернули бы подмену там, где Summarize отдаёт вывод как есть (DK-499).
+func TestOverThreshold(t *testing.T) {
+	var lines strings.Builder
+	for i := 1; i <= 99; i++ {
+		fmt.Fprintf(&lines, "%d\n", i)
+	}
+	if OverThreshold([]byte(lines.String())) {
+		t.Error("99 строк должны быть ниже порога")
+	}
+	lines.WriteString("100\n")
+	if !OverThreshold([]byte(lines.String())) {
+		t.Error("100 строк должны быть на пороге")
+	}
+	short := strings.Repeat("x", 4095)
+	if OverThreshold([]byte(short)) {
+		t.Error("4095 рун должны быть ниже порога")
+	}
+	if !OverThreshold([]byte(short + "x")) {
+		t.Error("4096 рун должны быть на пороге")
+	}
+	// Мультибайтный вывод меряется рунами, а не байтами: 2048 рун «ё» это
+	// 4096 байт, но только половина порога по рунам.
+	if OverThreshold([]byte(strings.Repeat("ё", 2048))) {
+		t.Error("2048 рун «ё» (4096 байт) должны быть ниже порога")
+	}
+	if !OverThreshold([]byte(strings.Repeat("ё", 4096))) {
+		t.Error("4096 рун «ё» должны быть на пороге")
+	}
+}
+
+// TestOverThresholdMatchesSummarize решение порога и Summarize это одно и то
+// же: на обеих сторонах границы Summarized совпадает с OverThreshold.
+func TestOverThresholdMatchesSummarize(t *testing.T) {
+	root := setupRepo(t)
+	var b strings.Builder
+	for i := 1; i <= 99; i++ {
+		fmt.Fprintf(&b, "%d\n", i)
+	}
+	for _, extra := range []string{"", "100\n"} {
+		b.WriteString(extra)
+		out := []byte(b.String())
+		s := Summarize(root, []string{"seq"}, out, 0)
+		if s.Summarized != OverThreshold(out) {
+			t.Fatalf("%d рун: Summarized=%v, OverThreshold=%v",
+				len(out), s.Summarized, OverThreshold(out))
+		}
+	}
+}
+
 // TestSummarizeSignificant это регрессионный тест бага DK-266: вывод со
 // значимым маркером (FAIL, panic:) в середине и хвостом без маркеров на старом
 // tail(out) показывал только хвост, на Summarize маркер ловится в significant.

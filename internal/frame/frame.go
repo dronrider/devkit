@@ -97,13 +97,22 @@ func Capture(dir string, argv []string) (*Summary, error) {
 func Summarize(dir string, argv []string, out []byte, exit int) *Summary {
 	s := &Summary{Exit: exit}
 	s.Path = writeFull(dir, argv, out)
-	lines := splitLines(string(out))
-	if utf8.RuneCount(out) >= thresholdRunes || len(lines) >= thresholdLines {
-		buildSummary(s, lines)
+	if OverThreshold(out) {
+		buildSummary(s, splitLines(string(out)))
 	} else {
 		s.Raw = string(out)
 	}
 	return s
+}
+
+// OverThreshold сообщает, что вывод взят порогом выжимки: на пороге и выше
+// Summarize строит сводку, ниже отдаёт вывод как есть. Нужна проверка
+// подкоманде digest (DK-499): она не должна писать файл полного вывода ниже
+// порога, ради короткой команды заводить каталог в .devkit/cmdout нечего, а
+// Summarize пишет его всегда. Порог живёт тут же, что и решение в Summarize,
+// и разъехаться они не могут.
+func OverThreshold(out []byte) bool {
+	return utf8.RuneCount(out) >= thresholdRunes || len(splitLines(string(out))) >= thresholdLines
 }
 
 // writeFull кладёт полный вывод файлом в .devkit/cmdout/<timestamp>-<slug>/out

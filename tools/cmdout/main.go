@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -23,6 +24,7 @@ const usageText = `cmdout: вывод команды -> файлу, агенту
 
   cmdout [--version] <команда ...>
   cmdout clean [--days N] [--dry-run]
+  cmdout digest [слово]
 
   --version    печатает строку версии и выходит, до разбора команды
 
@@ -36,6 +38,15 @@ const usageText = `cmdout: вывод команды -> файлу, агенту
 как и порог выжимки, чтобы чистка и запись не разъехались. --dry-run печатает
 пути каталогов под удаление, не трогая файлы. doctor зовёт clean подпроцессом,
 порог ему не дублируется: на сухом прогоне он видит, что cmdout счёл устаревшим.
+
+Подкоманда digest берёт готовый вывод из stdin, а не запускает команду: её
+зовёт PostToolUse-хук длинного вывода (hooks/longout.py, DK-499), у которого
+вывод Bash уже лежит в событии. На пороге и выше печатается выжимка, полный
+текст уходит файлом, как у обычного прогона; ниже порога подкоманда молчит и
+ничего не пишет, чтобы короткая команда прошла в контекст нетронутой и не
+оставляла после себя пустых каталогов. Необязательное слово после digest
+держит slug имени каталога (первое слово команды), без него slug падает на
+«cmd».
 `
 
 func main() {
@@ -56,6 +67,9 @@ func main() {
 func run(args []string) int {
 	if len(args) > 0 && args[0] == "clean" {
 		return runClean(args[1:])
+	}
+	if len(args) > 0 && args[0] == "digest" {
+		return runDigest(args[1:])
 	}
 	summary, err := frame.Capture(".", args)
 	if err != nil {
@@ -105,5 +119,33 @@ func runClean(args []string) int {
 		fmt.Fprintf(os.Stderr, "почищено %d каталогов, освобождено %d байт\n",
 			len(stats.Removed), stats.Bytes)
 	}
+	return 0
+}
+
+// runDigest берёт готовый вывод из stdin и строит по нему выжимку для
+// PostToolUse-хука длинного вывода (DK-499): событие Bash уже содержит вывод,
+// запускать команду заново некому. Порог смотрит frame.OverThreshold до
+// Summarize: ниже порога stdin уходит молча и без файла, чтобы короткая команда
+// дошла до модели нетронутой и не оставляла после себя пустого каталога в
+// .devkit/cmdout. На пороге Summarize пишет полный текст файлом и печатается
+// сводка. Выход 0 при пустом stdout означает «подменять нечего», и хук
+// оставляет вывод как есть; так же ведёт себя подкоманда вне git-дерева, где
+// полного файла не будет: без файла на диске подмена потеряла бы текст.
+func runDigest(args []string) int {
+	in, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ошибка: чтение stdin:", err)
+		return 1
+	}
+	if !frame.OverThreshold(in) {
+		return 0
+	}
+	// Пустой argv не ошибочен: без слова слог падает на «cmd», и сводка
+	// строится, как и у Summarize из прочего готового вывода.
+	summary := frame.Summarize(".", args, in, 0)
+	if summary.Path == "" {
+		return 0
+	}
+	fmt.Print(summary.Render())
 	return 0
 }

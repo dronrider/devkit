@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -364,5 +365,124 @@ func TestBinaryCleanBadDays(t *testing.T) {
 		t.Fatal("ожидали ненулевой exit на отрицательном --days")
 	} else if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 {
 		t.Fatalf("exit на отрицательном --days: %v, хотели 2", err)
+	}
+}
+
+// digest возвращает (вывод, exit) подкоманды digest с текстом на stdin.
+func digest(t *testing.T, bin, dir, input string, args ...string) (string, int) {
+	t.Helper()
+	cmd := exec.Command(bin, append([]string{"digest"}, args...)...)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(input)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("запуск digest: %v\n%s", err, out)
+		}
+		code = ee.ExitCode()
+	}
+	return string(out), code
+}
+
+// TestBinaryDigestShortQuiet: ниже порога digest молчит и не заводит каталога
+// в .devkit/cmdout. Короткая команда хука должна пройти в контекст
+// нетронутой, а пустые каталоги после каждой правки это мусор (DK-499).
+func TestBinaryDigestShortQuiet(t *testing.T) {
+	bin := buildBinary(t)
+	root := setupRepo(t)
+	out, code := digest(t, bin, root, "ping\n")
+	if code != 0 || out != "" {
+		t.Fatalf("короткий stdin: exit %d, вывод %q; хотели 0 и пусто", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".devkit", "cmdout")); err == nil {
+		// Каталог создавался при setupRepo, сверяется содержимое.
+		entries, _ := os.ReadDir(filepath.Join(root, ".devkit", "cmdout"))
+		if len(entries) != 0 {
+			t.Errorf("короткий stdin оставил каталоги: %d", len(entries))
+		}
+	}
+}
+
+// TestBinaryDigestLongSummary: на пороге печатается выжимка тем же порядком
+// полей, что и у обычного прогона, а полный текст ложится файлом.
+func TestBinaryDigestLongSummary(t *testing.T) {
+	bin := buildBinary(t)
+	root := setupRepo(t)
+	var b strings.Builder
+	for i := 1; i <= 150; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	out, code := digest(t, bin, root, b.String())
+	if code != 0 {
+		t.Fatalf("digest длинного stdin: exit %d", code)
+	}
+	if !strings.HasPrefix(out, "exit: 0\n") {
+		t.Errorf("первая строка: %q, хотели «exit: 0»", strings.SplitN(out, "\n", 2)[0])
+	}
+	if !strings.Contains(out, "lines_total: 150") {
+		t.Errorf("lines_total не 150: %q", out)
+	}
+	if !strings.HasSuffix(out, "\n") {
+		t.Errorf("выжимка без перевод строки: %q", out)
+	}
+	pathLine := ""
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "path: ") {
+			pathLine = strings.TrimPrefix(l, "path: ")
+		}
+	}
+	if pathLine == "" {
+		t.Fatalf("path строка пропала: %q", out)
+	}
+	data, err := os.ReadFile(pathLine)
+	if err != nil || string(data) != b.String() {
+		t.Errorf("файл полного вывода: err=%v, %d байт; хотели файл с %d символами",
+			err, len(data), len(b.String()))
+	}
+}
+
+// TestBinaryDigestSlug: слово после digest держит slug каталога вывода.
+// Хук берёт его от первого слова команды, и без слова слог падает на «cmd».
+func TestBinaryDigestSlug(t *testing.T) {
+	bin := buildBinary(t)
+	root := setupRepo(t)
+	var b strings.Builder
+	for i := 1; i <= 120; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	out, code := digest(t, bin, root, b.String(), "git")
+	if code != 0 {
+		t.Fatalf("digest: exit %d", code)
+	}
+	if !strings.Contains(out, "-git/out") {
+		t.Errorf("slug не в пути: %q", out)
+	}
+}
+
+// TestBinaryDigestOutsideGit: вне git-дерева полного файла не будет, и digest
+// молчит, чтобы хук не подменял вывод текстом, которого нигде не сохранил.
+func TestBinaryDigestOutsideGit(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	var b strings.Builder
+	for i := 1; i <= 150; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	out, code := digest(t, bin, dir, b.String())
+	if code != 0 || out != "" {
+		t.Fatalf("digest вне git: exit %d, вывод %q; хотели 0 и пусто", code, out)
+	}
+}
+
+// TestBinaryDigestEmptyStdin: пустой stdin это короткий вывод, порог не
+// срабатывает и файла нет.
+func TestBinaryDigestEmptyStdin(t *testing.T) {
+	bin := buildBinary(t)
+	root := setupRepo(t)
+	out, code := digest(t, bin, root, "")
+	if code != 0 || out != "" {
+		t.Fatalf("пустой stdin: exit %d, вывод %q; хотели 0 и пусто", code, out)
 	}
 }

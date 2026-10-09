@@ -93,17 +93,20 @@ func TestQuotaTwoHarnesses(t *testing.T) {
 	}
 }
 
-// История сэмплов съёмщика в том же каталоге подпиской не считается. Файл
-// <харнес>.history.local лежит тем же суффиксом, строки в нём не в формате
-// снимка, и без фильтра в панели висела фантомная подписка с неразобранными
-// строками истории (живой случай: «mimo.history» и «routerai.history»).
-func TestQuotaSkipsHistoryFiles(t *testing.T) {
+// Сторонние файлы съёмщика в том же каталоге подписками не считаются. Файлы
+// <харнес>.history.local с историей сэмплов и <харнес>.renew.local с метками
+// обновления сессии лежат тем же суффиксом. Строки в них не в формате снимка.
+// Без фильтра в панели висели фантомные подписки с неразобранными строками
+// (живой случай: «mimo.history», «routerai.history» и «mimo.renew»).
+func TestQuotaSkipsSideFiles(t *testing.T) {
 	e := newTestEnv(t)
 	e.s.now = func() time.Time { return quotaNow }
 	writeQuota(t, e.home, "harness-one", quotaFixtureA)
 	writeQuota(t, e.home, "mimo.history",
 		"2026-10-07T17:46 12820596104\n2026-10-07T17:56 12835865684\n")
 	writeQuota(t, e.home, "routerai.history", "2026-10-07T13:18 824.0867232235037\n")
+	writeQuota(t, e.home, "mimo.renew",
+		"attempted=2026-10-08T23:12\nrenewed=2026-10-08T23:12\n")
 
 	view := getQuota(t, e)
 	if len(view.Harnesses) != 1 {
@@ -111,7 +114,7 @@ func TestQuotaSkipsHistoryFiles(t *testing.T) {
 		for _, h := range view.Harnesses {
 			names = append(names, h.Name)
 		}
-		t.Fatalf("история сэмплов попала в подписки: %v", names)
+		t.Fatalf("сторонний файл попал в подписки: %v", names)
 	}
 	if view.Harnesses[0].Name != "harness-one" {
 		t.Fatalf("подписка не та: %s", view.Harnesses[0].Name)

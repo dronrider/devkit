@@ -44,6 +44,12 @@ const (
 	// с неразобранными строками (живой случай: фантомная строка
 	// «<харнес>.history» в панели квоты).
 	quotaHistorySuffix = ".history"
+	// Метки обновления сессии съёмщика лежат тем же суффиксом
+	// (<харнес>.renew.local) и подпиской тоже не являются. Строки в них
+	// начинаются с «attempted=» и «renewed=». Без фильтра в панели висела
+	// фантомная подписка с неразобранными строками (живой случай:
+	// «<харнес>.renew» в панели квоты).
+	quotaRenewSuffix = ".renew"
 	// Момент снятия и даты сброса пишутся местным временем без секунд.
 	quotaTimeLayout = "2006-01-02T15:04"
 )
@@ -182,7 +188,8 @@ func readQuota(home string, now time.Time) (view QuotaView) {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), quotaSuffix)
-		if strings.HasSuffix(name, quotaHistorySuffix) {
+		if strings.HasSuffix(name, quotaHistorySuffix) ||
+			strings.HasSuffix(name, quotaRenewSuffix) {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(dir, e.Name()))

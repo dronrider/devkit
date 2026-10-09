@@ -114,6 +114,7 @@ DK-932).
 """
 import importlib.util
 import json
+import cachekeep
 import launchd
 import os
 import re
@@ -1434,9 +1435,10 @@ NO_DRAIN = "разлив не нужен"
 
 
 # Горизонт разбора продлений, минуты: потоки, молчащие дольше, тик не читает.
-# Живое окно продления короче (порог выгоды гасит продление примерно за час
-# пятиминутного TTL), так что горизонт режет только разбор мёртвых деревьев.
-CACHEKEEP_IDLE_MIN = 360
+# Окно продления часового TTL доходит до порога выгоды (около 16 часов
+# простоя), и горизонт берётся из окна истечения, чтобы не резать живые
+# потоки после перерыва тика; дальше режутся только мёртвые деревья.
+CACHEKEEP_IDLE_MIN = int((cachekeep.keep_horizon() + 59) // 60)
 
 
 def cache_keep(root, call=None, devkitctl=None):
@@ -1454,7 +1456,9 @@ def cache_keep(root, call=None, devkitctl=None):
     а повторять уведомление из сторожка значило бы звонить дважды.
 
     PATH собирается как у съёма квоты: продлевающий запрос уходит клиентом
-    харнеса через agentctl, которого системный PATH launchd не знает."""
+    харнеса через agentctl, которого системный PATH launchd не знает. Тик
+    обходит все дома подписок, поэтому DEVKIT_HARNESS из окружения сессии
+    до дочернего вызова не доходит: сужение остаётся прямой команде cachekeep."""
     call = subprocess.run if call is None else call
     bin = devkit_bin("devkitctl") if devkitctl is None else devkitctl
     name = os.path.basename(root.rstrip("/"))
@@ -1464,6 +1468,7 @@ def cache_keep(root, call=None, devkitctl=None):
     import dashboard
     env = dict(os.environ)
     env["PATH"] = dashboard.agent_path(bin)
+    env.pop("DEVKIT_HARNESS", None)
     try:
         p = call([bin, "-C", root, "cachekeep", "--max-idle", str(CACHEKEEP_IDLE_MIN)],
                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)

@@ -15,6 +15,7 @@ from testenv import SandboxCase, fake_home
 
 import cachekeep
 import context
+import watch
 
 
 def make_req(write, read, input_t, output, model, ts):
@@ -455,6 +456,28 @@ class CacheKeepHomesTest(SandboxCase):
         write_stream(self.glm_logs / (name + ".jsonl"), reqs)
         return base
 
+    def _hourly_stream(self, name, idle_after=0):
+        """Поток с часовым TTL и простоем idle_after секунд после последнего запроса.
+
+        Пауза-перезапись между пятью минутами и полутора часами подписывает
+        часовой TTL (detect_ttl). mtime журнала ставится на момент последнего
+        запроса, чтобы горизонт разбора мерял тот же простой, что и решение.
+        """
+        base = datetime(2026, 10, 9, 12, 0, 0, tzinfo=timezone.utc)
+
+        def ts(off):
+            return (base + timedelta(seconds=off)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        reqs = [
+            make_raw(200000, 0, 50, 10, "m1", ts(0)),
+            make_raw(500, 199000, 30, 10, "m1", ts(10)),
+            make_raw(90000, 500, 30, 10, "m1", ts(3700)),
+        ]
+        path = self.glm_logs / (name + ".jsonl")
+        write_stream(path, reqs)
+        last = base.timestamp() + 3700
+        os.utime(str(path), (last, last))
+        return last + idle_after
+
     def test_project_homes_see_stock_and_harness(self):
         """Обход видит сток-дом и дом включённого харнеса, у каждого свой resume."""
         with fake_home(self.box.home):
@@ -519,6 +542,48 @@ class CacheKeepHomesTest(SandboxCase):
         got = cachekeep.scan_home(entry, self.proj.resolve(),
                                   now=base.timestamp() + 400, dry_run=True)
         self.assertEqual(len(got), 1, "без горизонта поток разбирается")
+
+    def test_horizon_covers_hourly_ttl_keepalive_window(self):
+        """Горизонт тика не режет поток часового TTL в окне продления.
+
+        Простой 8 часов: для часового TTL продление ещё дешевле перезаписи
+        (порог пересечения около 16 часов), и горизонт разбора обязан пустить
+        такой поток к решению, а не отрезать как мёртвое дерево. Прежние
+        шесть часов горизонта такой поток пропускали, и возврат платил
+        перезапись.
+        """
+        now = self._hourly_stream("h8", idle_after=8 * 3600)
+        entry = {"harness": "glm-code", "dir": self.glm_logs,
+                 "resume": cachekeep.DEFAULT_RESUME}
+        # dry_run: тест меряет горизонт разбора, а не отправку.
+        got = cachekeep.scan_home(entry, self.proj.resolve(), now=now,
+                                  dry_run=True, max_idle=watch.CACHEKEEP_IDLE_MIN * 60)
+        self.assertEqual(len(got), 1,
+                         "поток часового TTL с простоем 8 часов не пропускается")
+        self.assertEqual(got[0]["ttl"], 3600, "TTL потока часовой")
+        self.assertTrue(got[0]["keep"], "решение «продлевать»")
+        self.assertGreaterEqual(
+            watch.CACHEKEEP_IDLE_MIN * 60, 8 * 3600,
+            "горизонт тика покрывает восемь часов простоя часового TTL")
+
+    def test_direct_cachekeep_narrows_by_harness_env(self):
+        """Прямая команда с DEVKIT_HARNESS обходит только его дом.
+
+        Ручное сужение остаётся за прямым вызовом; тик его не наследует.
+        """
+        self._hourly_stream("stockside", idle_after=400)
+        write_stream(self.stock / "stockside.jsonl",
+                     [make_raw(200000, 0, 50, 10, "m1",
+                               "2026-10-09T12:00:00.000Z"),
+                      make_raw(500, 199000, 30, 10, "m1",
+                               "2026-10-09T12:00:10.000Z")])
+        rc, out = self.box.dkctl_run("cachekeep", "-C", str(self.proj),
+                                     "--dry-run",
+                                     env={"DEVKIT_HARNESS": "glm-code"})
+        self.assertIn(rc, (0, 2), "прямой вызов с сужением упал: %s" % out)
+        self.assertIn("дом glm-code", out, "сужение оставляет дом харнеса")
+        self.assertNotIn("дом claude-code", out,
+                         "сужение убирает чужие дома из обхода")
 
     def test_corpus_dirs_see_stock_and_harness(self):
         """Корни журналов всех домов: drain --all ходит и по дому подписки."""

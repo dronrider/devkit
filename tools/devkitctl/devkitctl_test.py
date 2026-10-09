@@ -362,6 +362,22 @@ class ProjectFindingsTest(SandboxCase):
         self.assertNotIn_("chat-pointer.py не подключён", out,
                           "подключённый указатель попал в находку")
 
+    def test_5i_longout_hook(self):
+        # Рубеж длинного вывода (DK-499) стоит на PostToolUse Bash, и его
+        # пропажа это находка: каждый длинный вывод льётся в контекст целиком.
+        full = read(self.settings)
+        drop_lines(self.settings, "longout.py")
+        _, out = self.box.doctor(self.proj)
+        self.assertIn_("рубеж длинного вывода longout.py не подключён на событии "
+                       "PostToolUse Bash", out,
+                       "нет находки про неподключённый рубеж длинного вывода")
+        self.assertIn_("длинный вывод льётся в контекст целиком", out,
+                       "находка не говорит, что ломается без рубежа")
+        write(self.settings, full)
+        _, out = self.box.doctor(self.proj)
+        self.assertNotIn_("longout.py не подключён", out,
+                          "подключённый рубеж попал в находку")
+
     def test_5b_retry_watchdog_key(self):
         # Без env-ключа недокументированного ретрай-вотчдога доктор называет
         # это находкой (стенд DK-172 разницы в поведении с ключом не нашёл, но
@@ -2437,6 +2453,10 @@ class HarnessHooksTest(SandboxCase):
         self.assertEqual(len([c for c in post if "phase-budget.py" in c]), 1, post)
         self.assertEqual(len([c for c in post if "prose-mark.py" in c]), 1, post)
         self.assertEqual(len([c for c in post if "tree-mark.py" in c]), 1, post)
+        # Рубеж длинного вывода (DK-499) стоит той же строкой Bash: режет
+        # вывод команды, а не запись файла, и уходит свой хук, а не чужая
+        # проверка.
+        self.assertEqual(len([c for c in post if "longout.py" in c]), 1, post)
         chat = [h["command"] for g in hooks["PostToolUse"] if not g.get("matcher")
                 for h in g["hooks"]]
         self.assertEqual(len(chat), 2, chat)
@@ -2514,7 +2534,10 @@ class HarnessHooksTest(SandboxCase):
         self.assertNotIn_("env-ключ", out, "повторный --fix вписал вотчдог второй раз")
         post = [h["command"] for g in json.loads(read(self.settings))["hooks"]["PostToolUse"]
                 for h in g["hooks"]]
-        self.assertEqual(len(post), 12, post)
+        # 13 это шесть проверок текстов, подхват реплики, отметка работы,
+        # сторож фоновых работ, три рубежа Bash и рубеж длинного вывода
+        # (DK-499).
+        self.assertEqual(len(post), 13, post)
 
     def test_hooks_from_a_stray_tree_are_repointed(self):
         # DK-582: строка с путём чужого дерева выглядит подключённым хуком, и по

@@ -1955,10 +1955,10 @@ func TestSessionPlanByTmuxName(t *testing.T) {
 // пользователя).
 func TestPeerReplyAuthorBySource(t *testing.T) {
 	dir := t.TempDir()
-	old := peerRegistryDir
-	peerRegistryDir = func() string { return dir }
+	old := peerRegistryDirs
+	peerRegistryDirs = func() []string { return []string{dir} }
 	t.Cleanup(func() {
-		peerRegistryDir = old
+		peerRegistryDirs = old
 		forgetPeerKinds()
 	})
 	live := `{"pid":1,"sessionId":"aaa","name":"devkit-20","kind":"interactive"}`

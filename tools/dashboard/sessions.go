@@ -1384,12 +1384,13 @@ func peerKind(name string) string {
 	return peerKinds.kind[name]
 }
 
-// peerRegistryDir это каталог реестра живых сессий клиента. Он машинный, а не
-// проектный, и живёт в настоящем доме человека: у второго экземпляра дашборда
-// (POC) свой подложный дом, а клиент пишет реестр всё равно в настоящий.
-// Отдельной переменной он ради стенда: подсовывать стенду настоящий реестр
-// машины значило бы проверять чужие живые сессии.
-var peerRegistryDir = func() string { return peerDir(realHomeOr("")) }
+// peerRegistryDirs это каталоги реестра живых сессий клиента. Они машинные, а
+// не проектные, и живут в настоящем доме человека: у второго экземпляра
+// дашборда (POC) свой подложный дом, а клиент пишет реестр в каталог подписки
+// настоящего дома (DK-1335). Отдельной переменной они ради стенда:
+// подсовывать стенду настоящий реестр машины значило бы проверять чужие
+// живые сессии.
+var peerRegistryDirs = func() []string { return peerDirs(realHomeOr("")) }
 
 // forgetPeerKinds сбрасывает кэш реестра: зовётся стендом, у которого реестр
 // меняется в пределах одного прогона.
@@ -1401,24 +1402,25 @@ func forgetPeerKinds() {
 
 func readPeerKinds() map[string]string {
 	out := map[string]string{}
-	dir := peerRegistryDir()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return out
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+	for _, dir := range peerRegistryDirs() {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
 		}
-		var p peer
-		if json.Unmarshal(data, &p) != nil || p.Name == "" {
-			continue
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				continue
+			}
+			var p peer
+			if json.Unmarshal(data, &p) != nil || p.Name == "" {
+				continue
+			}
+			out[p.Name] = p.Kind
 		}
-		out[p.Name] = p.Kind
 	}
 	return out
 }

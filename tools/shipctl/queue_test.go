@@ -246,6 +246,9 @@ func TestQueueLeavesOnRetryLimit(t *testing.T) {
 		!strings.Contains(string(doc), "повторов 3 из 3") {
 		t.Errorf("записи об уходе по потолку в файле задачи нет:\n%s", doc)
 	}
+	if !strings.Contains(string(doc), "поручение: разобрать снятие") {
+		t.Errorf("уход по потолку без поручения исполнителю:\n%s", doc)
+	}
 	if st := gitT(t, wt.Path, "status", "--porcelain"); st != "" {
 		t.Errorf("дерево задачи осталось грязным:\n%s", st)
 	}
@@ -263,11 +266,15 @@ func TestQueueLeavesOnRetryLimit(t *testing.T) {
 	}
 }
 
-// TestQueueDropsOnOwnRed: своя краснота повтора не получает. Строка уходит из
-// очереди сразу, с записью в файл задачи на её же ветке, и проход встаёт: в
-// main поехало бы то, что тесты только что назвали сломанным.
-func TestQueueDropsOnOwnRed(t *testing.T) {
+// TestQueueTraceOnOutOfLine: своя краснота повтора не получает. Строка уходит
+// из очереди сразу, с записью поручения в файл задачи на её же ветке и с
+// уведомлением, где поручение повторено: уведомление без поручения не
+// кончается разбором, и строка стоит мёртвым грузом (DK-1322). Проход встаёт:
+// в main поехало бы то, что тесты только что назвали сломанным.
+func TestQueueTraceOnOutOfLine(t *testing.T) {
 	root := queueSetup(t)
+	t.Setenv("DEVKIT_NOTIFY_OFF", "")
+	calls := writeNotifyStub(t, root)
 	msg, err := cmdQueue(root, QueueParams{Drain: true, Test: ownRedTest})
 	if err != nil {
 		t.Fatalf("своя краснота выводит строку из очереди, а не валит разлив: %v", err)
@@ -291,6 +298,59 @@ func TestQueueDropsOnOwnRed(t *testing.T) {
 	}
 	if !strings.Contains(string(doc), "снята с очереди слияний") {
 		t.Errorf("записи в файле задачи нет:\n%s", doc)
+	}
+	if !strings.Contains(string(doc), "поручение: разобрать снятие") ||
+		!strings.Contains(string(doc), "shipctl queue --free XR-001") {
+		t.Errorf("запись снята без поручения исполнителю:\n%s", doc)
+	}
+	got, rerr := os.ReadFile(calls)
+	if rerr != nil {
+		t.Fatalf("уведомитель не позван: %v", rerr)
+	}
+	line := strings.TrimSpace(string(got))
+	if !strings.Contains(line, "поручение: разобрать снятие") ||
+		!strings.Contains(line, "shipctl queue --free XR-001") {
+		t.Fatalf("уведомление ушло без поручения: %q", line)
+	}
+	if !strings.Contains(line, "--task\tXR-001\t") {
+		t.Fatalf("уведомление ушло без поля задачи: %q", line)
+	}
+	if st := gitT(t, wt.Path, "status", "--porcelain"); st != "" {
+		t.Errorf("дерево задачи осталось грязным:\n%s", st)
+	}
+}
+
+// TestQueueTraceOnHold: ручной hold раньше был тих, наклейка ставилась без
+// записи и уведомления. Теперь снятие руками оставляет тот же след, что и
+// снятие разливом (DK-1322).
+func TestQueueTraceOnHold(t *testing.T) {
+	root := queueSetup(t)
+	t.Setenv("DEVKIT_NOTIFY_OFF", "")
+	calls := writeNotifyStub(t, root)
+	if _, err := cmdQueue(root, QueueParams{Hold: "XR-001", Reason: "жду ответа смежника"}); err != nil {
+		t.Fatal(err)
+	}
+	wt, err := taskWorktree(root, "XR-001")
+	if err != nil || wt == nil {
+		t.Fatalf("дерево задачи не нашлось: %v", err)
+	}
+	doc, err := os.ReadFile(taskFilePath(wt.Path, "XR-001"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doc), "снята с очереди слияний: жду ответа смежника") {
+		t.Errorf("ручной hold остался тихим, записи в файле задачи нет:\n%s", doc)
+	}
+	if !strings.Contains(string(doc), "поручение: разобрать снятие") {
+		t.Errorf("hold без поручения: %s", doc)
+	}
+	got, rerr := os.ReadFile(calls)
+	if rerr != nil {
+		t.Fatalf("уведомитель не позван: %v", rerr)
+	}
+	line := strings.TrimSpace(string(got))
+	if !strings.Contains(line, "жду ответа смежника") || !strings.Contains(line, "поручение:") {
+		t.Fatalf("уведомление ручного hold без причины или без поручения: %q", line)
 	}
 	if st := gitT(t, wt.Path, "status", "--porcelain"); st != "" {
 		t.Errorf("дерево задачи осталось грязным:\n%s", st)
@@ -322,6 +382,26 @@ func TestQueueHoldAndFree(t *testing.T) {
 	}
 	if m := loadQueue(root).Tasks["XR-001"]; m == nil || m.Held || m.Tries != 0 {
 		t.Fatalf("наклейка после возврата: %+v", m)
+	}
+}
+
+// TestQueueShowsHoldAge: снятая строка печатается с возрастом снятия, иначе
+// недельная снятая неотличима от вчерашней, а разбор её откладывается до
+// бесконечности (DK-1322).
+func TestQueueShowsHoldAge(t *testing.T) {
+	root := queueSetup(t)
+	if _, err := cmdQueue(root, QueueParams{Hold: "XR-001", Reason: "ждём смежника"}); err != nil {
+		t.Fatal(err)
+	}
+	queueMutate(root, func(st *queueState) {
+		st.Tasks["XR-001"].At = time.Now().Add(-48 * time.Hour)
+	})
+	msg, err := cmdQueue(root, QueueParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "снята XR-001") || !strings.Contains(msg, "2 дн назад") {
+		t.Fatalf("возраст снятия не напечатан: %q", msg)
 	}
 }
 

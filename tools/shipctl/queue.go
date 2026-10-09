@@ -189,15 +189,35 @@ func queueRows(root string, b *board) ([]queueItem, error) {
 	return items, nil
 }
 
+// sinceWords складывает возраст одной строкой словами: минуты в первые часы,
+// часы до суток, дальше дни. Возраст печатается у снятой строки, чтобы разбор
+// её откладывался не бесконечно (DK-1322).
+func sinceWords(d time.Duration) string {
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%d мин", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d ч", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%d дн", int(d.Hours()/24))
+	}
+}
+
 // queueLines печатает очередь строками: позиция, задача, ранг, повторы и
 // причина прошлого отказа. Снятая строка идёт с пометкой и позиции не
-// занимает: она в составе не участвует, пока её не вернули.
+// занимает: она в составе не участвует, пока её не вернули. Возраст снятия
+// печатается рядом с причиной: снятая строка неделями без него неотличима от
+// вчерашней, и разбор её откладывается до бесконечности (DK-1322).
 func queueLines(items []queueItem) []string {
 	var out []string
 	pos := 0
 	for _, it := range items {
 		if it.Mark.Held {
-			out = append(out, fmt.Sprintf("    снята %s (ранг %d): %s", it.ID, it.Rank, it.Mark.Reason))
+			age := ""
+			if !it.Mark.At.IsZero() {
+				age = ", " + sinceWords(time.Since(it.Mark.At)) + " назад"
+			}
+			out = append(out, fmt.Sprintf("    снята %s (ранг %d%s): %s", it.ID, it.Rank, age, it.Mark.Reason))
 			continue
 		}
 		pos++
@@ -298,7 +318,11 @@ func cmdQueue(root string, p QueueParams) (string, error) {
 		if p.Reason == "" {
 			return "", fmt.Errorf("снятию с очереди нужна причина: --reason \"чем снята\"")
 		}
-		return queueHold(root, p.Hold, p.Reason), nil
+		// Ручное снятие оставляет тот же след, что и снятие разливом: запись
+		// с поручением в файле задачи и уведомление. Раньше hold был тих:
+		// наклейка ставилась, а автор узнавал о снятии только грепом очереди
+		// (DK-1322).
+		return queueOutOfLine(root, p.Hold, p.Reason), nil
 	case p.Free != "":
 		return queueFree(root, p.Free), nil
 	case p.Drain:
@@ -434,16 +458,29 @@ func queueOutOfLine(root, id, why string) string {
 	return queueHold(root, id, why) + queueTrace(root, id, why)
 }
 
-// queueTrace оставляет след снятия там, где его найдёт автор: запись в файле
-// задачи уезжает коммитом ветки, уведомление уходит сразу. Наклейка машинная
-// и живёт отдельно, её ставит queueHold либо потолок повторов в queueRetry.
-// Дерева у ветки может не быть (копию окна переключили), и тогда остаётся
-// наклейка с уведомлением: писать в файл на main нельзя, он стал бы
-// незакоммиченной правкой и отбил следующее слияние.
+// queueAssign формулирует поручение по снятой строке: разобрать причину
+// снятия и вернуть строку в очередь. Одна форма на все причины, потому что
+// разбор причины это дело исполнителя, а поручение одно: починить и вернуть.
+// Вместе с записью и уведомлением оно доводит исход до исполнителя, а
+// поднимает строку с этим поручением lift_rows (DK-1322).
+func queueAssign(id string) string {
+	return fmt.Sprintf("поручение: разобрать снятие и вернуть строку в очередь (shipctl queue --free %s)", id)
+}
+
+// queueTrace оставляет след снятия там, где его найдёт автор: запись с
+// поручением в файле задачи уезжает коммитом ветки, то же поручение уходит в
+// уведомлении. Уведомление без поручения не кончается разбором: автор
+// узнаёт, что строка снята, но не то, что с ней делать, и строка стоит
+// мёртвым грузом (DK-1322). Наклейка машинная и живёт отдельно, её ставит
+// queueHold либо потолок повторов в queueRetry. Дерева у ветки может не быть
+// (копию окна переключили), и тогда остаётся наклейка с уведомлением: писать
+// в файл на main нельзя, он стал бы незакоммиченной правкой и отбил
+// следующее слияние.
 func queueTrace(root, id, why string) string {
+	assign := queueAssign(id)
 	note := ""
 	if wt, err := taskWorktree(root, id); err == nil && wt != nil {
-		if err := appendRecord(wt.Path, id, "снята с очереди слияний: "+why); err == nil {
+		if err := appendRecord(wt.Path, id, "снята с очереди слияний: "+why+"; "+assign); err == nil {
 			rel := "docs/tasks/" + id + ".md"
 			if _, err := git(wt.Path, "commit", "-m",
 				fmt.Sprintf("docs(tasks): %s снята с очереди слияний", id), "--", rel); err == nil {
@@ -451,7 +488,7 @@ func queueTrace(root, id, why string) string {
 			}
 		}
 	}
-	return note + notify(root, id, "очередь слияний: "+id+" снята", why)
+	return note + notify(root, id, "очередь слияний: "+id+" снята", why+"; "+assign)
 }
 
 // firstLine берёт первую строку многострочного отчёта: в строку разлива идёт

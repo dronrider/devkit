@@ -402,6 +402,60 @@ TASKCTL = "/bin/подставной-taskctl"
 SHIPCTL = "/bin/подставной-shipctl"
 AGENTCTL = "/bin/подставной-agentctl"
 DASHBOARD = "/bin/подставной-dashboard"
+DEVKITCTL = "/bin/подставной-devkitctl"
+
+
+class CacheKeepTickTest(Stand):
+    """Продление кеша тем же тиком (DK-1312): зовётся по корню, провал не
+    поднимает код, пустой обход молчит нулём."""
+
+    def sweep(self, code=0, out_text=""):
+        call = Fake(code=code, out=out_text)
+        out = io.StringIO()
+        rc = watch.run(now=self.now, home=self.home, out=out, call=call,
+                       shipctl=SHIPCTL, agentctl=AGENTCTL, devkitctl=DEVKITCTL)
+        return rc, out.getvalue(), call
+
+    def journal(self):
+        path = self.home / ".devkit" / "goal-watch.log"
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def test_tick_calls_cachekeep_per_root(self):
+        self.entry(seen_minutes=1)
+        self.goallog(1)
+        rc, out, call = self.sweep()
+        self.assertEqual(rc, 0, out)
+        calls = call.argv_with("cachekeep")
+        self.assertEqual(len(calls), 1, "продление зовётся один раз на корень")
+        self.assertIn(str(self.proj), calls[0], "вызов несёт корень обхода")
+        self.assertIn("--max-idle", calls[0], "вызов несёт горизонт разбора")
+
+    def test_kept_stream_is_notable(self):
+        self.entry(seen_minutes=1)
+        self.goallog(1)
+        rc, out, _ = self.sweep(out_text="всего потоков 2, продлено 1, истекло 0\n")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("продлено 1", out, "отчёт тика несёт состоявшееся продление")
+        self.assertIn("продлено 1", self.journal(),
+                      "состоявшееся продление отмечается в журнале сторожка")
+
+    def test_failure_does_not_raise_the_tick(self):
+        self.entry(seen_minutes=1)
+        self.goallog(1)
+        rc, out, _ = self.sweep(code=3, out_text="сломалось")
+        # Код 3 это провал самого вызова: строка в отчёте и журнале есть,
+        # а код тика стоит на живой цели, провал продления его не поднимает.
+        self.assertEqual(rc, 0, out)
+        self.assertIn("упало с кодом 3", out)
+        self.assertIn("упало с кодом 3", self.journal())
+
+    def test_empty_sweep_stays_silent(self):
+        self.entry(seen_minutes=1)
+        self.goallog(1)
+        rc, out, _ = self.sweep()
+        self.assertIn("продлений не нужно", out)
+        self.assertNotIn("кеш", self.journal(),
+                         "пустой обход не пишет строк в журнал сторожка")
 
 PARK_HEAD = """# Задачи стенда
 

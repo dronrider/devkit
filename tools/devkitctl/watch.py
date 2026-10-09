@@ -67,6 +67,17 @@ DK-932).
 чужим заходом конвейере, а провал деплоя не поднимает код тика: уведомление
 шлёт сам shipctl через признак провала и taskctl fail.
 
+Тем же тиком продлевается кеш простаивающих потоков (DK-1312): по каждому
+корню обхода тик зовёт `devkitctl -C <корень> cachekeep --max-idle <минуты>`,
+и простаивающий поток получает дешёвое чтение кеша вместо платной перезаписи
+префикса по возвращении. Обход внутри идёт по всем домам журналов машины,
+стоку и домам включённых харнесов, поэтому живые сессии конвейера найдутся
+в доме своего харнеса. Горизонт разбора держит тик на живых и недавних
+потоках: мёртвое дерево тик не разбирает и не продлевает тысячами запросов,
+а решение по цене само гасит продление, когда перезапись становится дешевле.
+Провал вызова не поднимает код тика, пустой обход молчит нулём, уведомлений
+на пустом месте нет.
+
 Тем же тиком свежеет снимок квоты обеих подписок (DK-633): тик зовёт
 `agentctl quota refresh --all --if-stale`, и протухший снимок переснимается и
 тогда, когда на машине не идёт ни одной сессии, а дашборд выключен. Съём,
@@ -1422,6 +1433,51 @@ def quota_snap(call=None, agentctl=None):
 NO_DRAIN = "разлив не нужен"
 
 
+# Горизонт разбора продлений, минуты: потоки, молчащие дольше, тик не читает.
+# Живое окно продления короче (порог выгоды гасит продление примерно за час
+# пятиминутного TTL), так что горизонт режет только разбор мёртвых деревьев.
+CACHEKEEP_IDLE_MIN = 360
+
+
+def cache_keep(root, call=None, devkitctl=None):
+    """Продление кеша простаивающих потоков корня (DK-1312): тик зовёт
+    `devkitctl -C <корень> cachekeep --max-idle <минуты>`, и поток, простаивающий
+    дольше TTL кеша, получает продлевающий запрос клиентом своего харнеса,
+    пока чтение дешевле перезаписи префикса. Дома журналов, resume по харнесу
+    и порог выгоды решает сам cachekeep, тик его только будит, с горизонтом
+    разбора, чтобы не читать чужие мёртвые деревья каждые пять минут.
+
+    Пустой обход (нет журналов, нет решений, нечего продлевать) выходит нулём
+    или кодом 2 и значимым не считается: иначе журнал сторожка тонул бы в нём
+    на каждом тике. Значимым считается состоявшееся продление, истечение кеша
+    и провал вызова. Провал не поднимает код тика: строка о нём идёт в журнал,
+    а повторять уведомление из сторожка значило бы звонить дважды.
+
+    PATH собирается как у съёма квоты: продлевающий запрос уходит клиентом
+    харнеса через agentctl, которого системный PATH launchd не знает."""
+    call = subprocess.run if call is None else call
+    bin = devkit_bin("devkitctl") if devkitctl is None else devkitctl
+    name = os.path.basename(root.rstrip("/"))
+    if not bin:
+        return ("корень %s: бинаря devkitctl нет ни в PATH, ни в каталогах "
+                "релиза: кеш простаивающих потоков не продлевается" % name), True
+    import dashboard
+    env = dict(os.environ)
+    env["PATH"] = dashboard.agent_path(bin)
+    try:
+        p = call([bin, "-C", root, "cachekeep", "--max-idle", str(CACHEKEEP_IDLE_MIN)],
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    except OSError as e:
+        return ("корень %s: продление кеша не вышло, %s" % (name, e)), True
+    text = " ".join((p.stdout or "").split())
+    if p.returncode not in (0, 2):
+        return ("корень %s: продление кеша упало с кодом %d: %s"
+                % (name, p.returncode, text)), True
+    if re.search(r"продлено [1-9]|истекло [1-9]", text):
+        return ("корень %s: %s" % (name, text)), True
+    return ("корень %s: %s" % (name, text if text else "продлений не нужно")), False
+
+
 def drain(root, call=None, shipctl=None):
     """Разлив поезда корня (LLD DK-306, решения 2 и 4): тик зовёт
     `shipctl -C <корень> ship --drain`, чтобы поезд, оставшийся без получателя
@@ -1881,7 +1937,7 @@ def heartbeat(home=None):
 
 
 def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipctl=None,
-        agentctl=None, dashboard=None, tmux=None, probe=None):
+        agentctl=None, dashboard=None, tmux=None, probe=None, devkitctl=None):
     """Обход реестра. Возврат 0 всё движется, 1 нашёлся вставший цикл."""
     now = datetime.now() if now is None else now
     home = default_home() if home is None else home
@@ -1952,6 +2008,13 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     # решение 4). Корень без доски пропускается: разливать там нечего, и
     # строка об отказе только плодила бы шум.
     for root in sorted(swept):
+        # Продление кеша идёт по корню до взгляда на доску: кеш простаивающего
+        # потока живёт в доме журналов его харнеса, а не в строке задачи, и
+        # корню без доски продление нужно ровно так же (DK-1312).
+        line, notable = cache_keep(root, timed(root), devkitctl)
+        out.write(line + "\n")
+        if notable:
+            log_line(line, home)
         if not board_present(root):
             continue
         line, notable = merge_queue(root, timed(root), shipctl)

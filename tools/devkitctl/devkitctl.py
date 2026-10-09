@@ -3359,63 +3359,100 @@ def weigh_resident(start, runs, limit, model, prompt):
 
 def stats_context(start):
     root, _ = project_root(start)
-    directory = context.logs_dir(root)
-    if not directory.is_dir():
-        sys.stderr.write("журналы сессий не найдены: %s\n"
-                         "харнес пишет их по слепку пути проекта, и для %s такой директории нет: "
-                         "сессий отсюда не было либо проект открывали из другой директории\n"
-                         % (directory, root))
-        return 2
-    if not context.report(directory, sys.stdout):
-        sys.stderr.write("в журналах сессий нет запросов с расходом: %s\n" % directory)
+    entries = cachekeep.project_homes(root)
+    shown = 0
+    found = []
+    for entry in entries:
+        directory = Path(entry["dir"])
+        if not directory.is_dir():
+            continue
+        found.append(directory)
+        sys.stdout.write("дом журналов харнеса %s\n" % entry["harness"])
+        if context.report(directory, sys.stdout):
+            shown += 1
+    if not shown:
+        if not found:
+            sys.stderr.write("журналы сессий не найдены: %s\n"
+                             "харнесы пишут их по слепку пути проекта (сток в ~/.claude/projects, "
+                             "подписки в домах машинного слоя), и для %s такой директории нет: "
+                             "сессий отсюда не было либо проект открывали из другой директории\n"
+                             % (", ".join(str(e["dir"]) for e in entries), root))
+        else:
+            sys.stderr.write("в журналах сессий нет запросов с расходом: %s\n"
+                             % ", ".join(str(d) for d in found))
         return 2
     return 0
 
 
-def cachekeep_run(start, dry_run=False):
+def cachekeep_run(start, dry_run=False, max_idle=None):
     """Поддержание кеша длинного потока: решения и продлевающие запросы.
 
-    Resume профиля харнеса читается по DEVKIT_HARNESS (умолчание claude-code).
-    dry_run принимает решения, ничего не отправляя: строка журнала о
-    продлении при нём не пишется, «истёк» пишется как обычно.
+    Обход идёт по всем домам журналов машины: стоку и домам включённых харнесов,
+    resume берётся по харнесу каждого дома. DEVKIT_HARNESS сужает обход до
+    одного харнеса. dry_run принимает решения, ничего не отправляя: строка
+    журнала о продлении при нём не пишется, «истёк» пишется как обычно.
+    max_idle это горизонт разбора в секундах: потоки, молчащие дольше,
+    пропускаются до чтения файла.
     """
     root, _ = project_root(start)
-    name = os.environ.get("DEVKIT_HARNESS") or "claude-code"
-    resume = cachekeep.DEFAULT_RESUME
-    profile_path = DEVKIT / "kit" / "harness" / ("%s.toml" % name)
-    try:
-        doc = harness.parse(name, profile_path.read_text(encoding="utf-8"))
-        got = doc.arr_of("head", "resume")
-        if got:
-            resume = got
-    except (OSError, harness.TomlError) as e:
-        sys.stderr.write("cachekeep: профиль %s не прочитан (%s), беру умолчание\n"
-                         % (name, e))
-    decisions = cachekeep.scan_project(root, resume=resume, dry_run=dry_run)
-    if not decisions:
+    entries = cachekeep.project_homes(root, profiles_dir=DEVKIT / "kit" / "harness")
+    only = os.environ.get("DEVKIT_HARNESS")
+    if only:
+        entries = [e for e in entries if e["harness"] == only]
+    total, kept, expired = 0, 0, 0
+    for entry in entries:
+        decisions = cachekeep.scan_home(entry, root, dry_run=dry_run, max_idle=max_idle)
+        if not decisions:
+            continue
+        home_kept = sum(1 for d in decisions if d.get("sent"))
+        # «Истёк» в сводке это свежее истечение со строкой журнала, а не каждый
+        # обход давно остывшего потока: иначе тик сторожка помечал бы мёртвое
+        # дерево значимым на каждом витке.
+        home_expired = sum(1 for d in decisions if d.get("expired"))
+        kept += home_kept
+        expired += home_expired
+        total += len(decisions)
+        sys.stdout.write("дом %s: потоков %d, продлено %d, истекло %d\n"
+                         % (entry["harness"], len(decisions),
+                            home_kept, home_expired))
+    if not total:
         sys.stderr.write("журналы сессий не найдены или потоков нет: %s\n" % root)
         return 2
-    kept = sum(1 for d in decisions if d.get("sent"))
-    expired = sum(1 for d in decisions if not d.get("keep"))
-    sys.stdout.write("потоков %d, продлено %d, истекло %d\n"
-                     % (len(decisions), kept, expired))
+    sys.stdout.write("всего потоков %d, продлено %d, истекло %d\n"
+                     % (total, kept, expired))
     return 0
 
 
 def drain_run(start, all_projects=False):
-    # --all ходит по всему ~/.claude/projects, как разовый скрипт tstats.py;
-    # без него разбирается слепок пути текущего проекта, тот же, что у stats
-    # --context. Журналы сессий харнес кладёт по слепку пути, а сессия живёт в
-    # клоне, поэтому корень здесь остаётся клоном и в корп-контуре.
-    directory = context.projects_dir() if all_projects else context.logs_dir(project_root(start)[0])
-    label = "весь корпус" if all_projects else str(directory)
-    if not directory.is_dir():
-        sys.stderr.write("журналы сессий не найдены: %s\n"
-                         "харнес пишет их по слепку пути проекта, и для сессий отсюда "
-                         "такой директории нет\n" % label)
-        return 2
-    if not drain.report(directory, sys.stdout):
-        sys.stderr.write("в журналах сессий нет вызовов инструментов: %s\n" % label)
+    # --all ходит по всем корням журналов машины, стоку и домам харнесов,
+    # как разовый скрипт tstats.py; без него разбирается слепок пути текущего
+    # проекта во всех тех же домах, тот же набор, что у stats --context
+    # и cachekeep. Журналы сессий харнес кладёт по слепку пути, а сессия
+    # живёт в клоне, поэтому корень здесь остаётся клоном и в корп-контуре.
+    root = project_root(start)[0]
+    dirs = (cachekeep.corpus_dirs() if all_projects
+            else [e["dir"] for e in cachekeep.project_homes(root)])
+    shown = 0
+    found = []
+    seen = set()
+    for directory in dirs:
+        if str(directory) in seen:
+            continue
+        seen.add(str(directory))
+        if not directory.is_dir():
+            continue
+        found.append(directory)
+        shown += 1 if drain.report(directory, sys.stdout) else 0
+    if not shown:
+        label = "весь корпус" if all_projects else ", ".join(str(d) for d in dirs)
+        if not found:
+            sys.stderr.write("журналы сессий не найдены: %s\n"
+                             "харнесы пишут их по слепку пути проекта, и для сессий отсюда "
+                             "такой директории нет\n" % label)
+        else:
+            sys.stderr.write("в журналах сессий нет вызовов инструментов: %s\n"
+                             % (label if all_projects
+                                else ", ".join(str(d) for d in found)))
         return 2
     return 0
 
@@ -3855,12 +3892,16 @@ def main(argv):
     dr = sub.add_parser("drain", help="замер расхода контекста по журналам сессий")
     dr.add_argument("-C", dest="dir", default=".", help="директория проекта")
     dr.add_argument("--all", action="store_true",
-                   help="разобрать весь ~/.claude/projects, как разовый скрипт tstats.py")
+                   help="разобрать весь корпус журналов машины: сток и дома харнесов, "
+                        "как разовый скрипт tstats.py")
     ck = sub.add_parser("cachekeep",
                         help="поддержание кеша длинного потока в простое")
     ck.add_argument("-C", dest="dir", default=".", help="директория проекта")
     ck.add_argument("--dry-run", action="store_true",
                     help="решения без отправки продлевающих запросов")
+    ck.add_argument("--max-idle", dest="max_idle", type=int, default=0,
+                    help="горизонт разбора в минутах: потоки, молчащие дольше, "
+                         "пропускаются до чтения файла")
     g = sub.add_parser("watch", help="сторожок цикла цели: позвать по вставшим")
     g.add_argument("--idle", type=int, default=0,
                    help="порог простоя в минутах, по умолчанию %d" % (watch.IDLE // 60))
@@ -3934,7 +3975,7 @@ def main(argv):
     elif a.cmd == "drain":
         rc = drain_run(a.dir, a.all)
     elif a.cmd == "cachekeep":
-        rc = cachekeep_run(a.dir, a.dry_run)
+        rc = cachekeep_run(a.dir, a.dry_run, a.max_idle * 60 if a.max_idle else None)
     else:
         rc = stats(a.dir, a.context, a.date_from, a.date_to)
     # Журнал запусков в корп-контуре лежит там же, где остальные рабочие файлы,

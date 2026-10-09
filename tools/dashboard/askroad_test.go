@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -372,6 +373,140 @@ func TestAskQuietSilentWithoutNotifyLog(t *testing.T) {
 	for _, ln := range lc.lines {
 		if strings.Contains(ln, "похоже ждёт ответа") {
 			t.Fatalf("без журнала уведомителя ушла жалоба на молчащий вопрос: %s", ln)
+		}
+	}
+}
+
+// livePermPane это вопрос разрешения ручного режима, снятый с живой панели
+// 2026-10-09 (стенд dk1300-stand, клиент v2.1.295): человек попросил выполнить
+// bash-команду, и клиент встал на «Do you want to proceed?». Рамки его блоков
+// набраны знаком U+254C, которого нет в frameRunes, а подсказка под вариантами
+// своя (Esc to cancel, Tab to amend), про стрелки в ней ничего не сказано.
+// Глифы виджета стоят эскейпами, как в frameRunes: на панели клиента это
+// чужие знаки, сверяются они как есть.
+var livePermPane = strings.Join([]string{
+	"  Ran 1 shell command",
+	"",
+	"\u276f выполни bash-команду: ls /etc",
+	"",
+	"\u23fa Listing files in /etc",
+	"  \u23bf  $ ls /etc",
+	"",
+	strings.Repeat("\u2500", 80),
+	" Bash command",
+	" Tip: auto mode handles these prompts for you \u2014 choose \"switch to auto mode\"",
+	" below",
+	" List files in /etc",
+	strings.Repeat("\u254c", 100),
+	" ls /etc",
+	strings.Repeat("\u254c", 100),
+	" Do you want to proceed?",
+	" \u276f 1. Yes",
+	"   2. Yes, allow reading from /private/etc from this project",
+	"   3. Yes, and switch to auto mode \u00b7 auto mode handles these prompts for you",
+	"   4. No",
+	"",
+	" Esc to cancel \u00b7 Tab to amend",
+}, "\n")
+
+// Вопрос разрешения ручного режима доходит панели блоком вопроса, а ответ из
+// блока уезжает в окно клиента клавишами (DoD DK-1300, случай 01): снимок
+// живой панели, четыре пункта и способ ответа номером. Признак запертости
+// едет тем же словом, что и на списке чатов: признак один.
+func TestChatAskPermissionPromptBlock(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.Local)
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	e, c, _ := askRoadEnv(t, sid, "XR-1", now)
+	askRoadPane(t, e, livePermPane)
+
+	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/ask"
+	resp := doReq(t, c, "GET", at, "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("вопрос разрешения: %d %s", resp.StatusCode, text)
+	}
+	var got struct {
+		Ask   tmuxAsk `json:"ask"`
+		Stuck string  `json:"stuck"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("ответ ручки не разобрался: %v\n%s", err, text)
+	}
+	if len(got.Ask.Options) != 4 {
+		t.Fatalf("вариантов разобрано %d, жду четыре: %+v", len(got.Ask.Options), got.Ask)
+	}
+	if got.Ask.Options[0].Text != "Yes" || got.Ask.Options[3].Text != "No" {
+		t.Errorf("варианты приехали не те: %+v", got.Ask.Options)
+	}
+	if got.Ask.Keys != askKeysDigit {
+		t.Errorf("способ ответа %q, жду номер пункта: на живом стенде цифра подтверждает сама", got.Ask.Keys)
+	}
+	if !strings.Contains(got.Ask.Text, "Do you want to proceed?") {
+		t.Errorf("текст вопроса не доехал: %q", got.Ask.Text)
+	}
+	if got.Stuck == "" {
+		t.Errorf("ручка не назвала запертость одним признаком со списком чатов: %s", text)
+	}
+
+	// Ответ из блока доезжает в окно: номер пункта и подтверждение уходят
+	// клавишами в ту же tmux-сессию.
+	sent := filepath.Join(e.home, "sent.log")
+	writeScript(t, e.bin, "tmux", `case "$1" in
+capture-pane) printf '%s' `+shQuote(livePermPane)+`;;
+send-keys) shift; echo "$@" >> `+sent+`;;
+ls) printf 'chat-13\t1\t1786000000\n';;
+esac
+exit 0`)
+	resp = doReq(t, c, "POST", at, `{"option": 4}`)
+	if text = body(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("ответ на вопрос: %d %s", resp.StatusCode, text)
+	}
+	keys := readFile(t, sent)
+	if !strings.Contains(keys, "-t =chat-13: 4") || !strings.Contains(keys, "Enter") {
+		t.Errorf("ответ не подан клавишами: %q", keys)
+	}
+}
+
+// Журнал уведомителя запер вопрос, а разбор снимка его не собрал (DoD DK-1300,
+// случай 03): ручка обязана назвать запертость словами, а панель показать
+// плашку состояния в том же боксе, что и блок вопроса. Молчание здесь
+// неотличимо от штатной работы, а подсказка без плашки вела бы к блоку,
+// которого нет.
+func TestChatAskStuckSignWithoutPane(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.Local)
+	sid := "eeee5555-5555-4555-8555-555555555555"
+	e, c, _ := askRoadEnv(t, sid, "XR-1", now)
+	askRoadPane(t, e, " Разбор снимка не собрал вопроса.\n\n\u276f \n")
+
+	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/ask"
+	text := body(t, doReq(t, c, "GET", at, ""))
+	if strings.Contains(text, `"ask"`) {
+		t.Fatalf("несобранный снимок выдал себя вопросом: %s", text)
+	}
+	if !strings.Contains(text, `"stuck"`) {
+		t.Fatalf("запертость по журналу не доехала в ответ: %s", text)
+	}
+	if strings.Contains(text, "ни о чём не спрашивает") {
+		t.Errorf("пустой снимок промолчал о запертости: %s", text)
+	}
+
+	// Свободная реплика при несобранном вопросе тоже в очереди, а слова
+	// подсказки ведут к блоку вопроса панели (DoD DK-1300, пункт 3).
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		sayBody("а реплика?", "m-1"))
+	said := body(t, resp)
+	if !strings.Contains(said, `"way":"queued"`) || !strings.Contains(said, "блоке вопроса панели") {
+		t.Errorf("реплика не легла в очередь с подсказкой: %s", said)
+	}
+
+	// Панель знает запертость и без вариантов: плашка состояния стоит в том же
+	// боксе, что и блок вопроса, и называет случай словами.
+	app := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{`Клиент ждёт разрешения`,
+		`она встанет в очередь и уедет в окно сразу после ответа на вопрос`,
+		`Запертый вопрос, которого снимок панели не собрал`} {
+		if !strings.Contains(app, want) {
+			t.Errorf("в static/app.js нет плашки запертости %q", want)
 		}
 	}
 }

@@ -168,8 +168,8 @@ func TestChatSayFreesLockedPermission(t *testing.T) {
 
 // Свободные слова на запертом вопросе в виджет не печатаются: латинская буква
 // в них сработала бы горячей клавишей, и реплика нажала бы кнопку за человека.
-// С сокетом реплика едет в очередь клиента с пометкой, без сокета остаётся у
-// панели с причиной, а не теряется молча.
+// С сокетом реплика едет в очередь клиента с пометкой, без сокета ложится в
+// очередь панели и уезжает в окно сразу после ответа на вопрос (DK-1300).
 func TestChatSayFreeWordsSkipLockedDialog(t *testing.T) {
 	t.Run("с сокетом", func(t *testing.T) {
 		sid := "eeee7777-5555-4555-8555-555555555555"
@@ -209,10 +209,10 @@ func TestChatSayFreeWordsSkipLockedDialog(t *testing.T) {
 			`{"text": "why did you stop"}`)
 		said := body(t, resp)
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("отказ должен быть удачей с причиной, панель повторит: %d %s", resp.StatusCode, said)
+			t.Fatalf("реплика должна лечь в очередь с причиной: %d %s", resp.StatusCode, said)
 		}
-		if !strings.Contains(said, `"held"`) || !strings.Contains(said, "ждёт разрешения") {
-			t.Fatalf("недоставленная реплика не названа причиной: %s", said)
+		if !strings.Contains(said, `"queued"`) || !strings.Contains(said, "ждёт разрешения") {
+			t.Fatalf("реплика не легла в очередь с причиной: %s", said)
 		}
 		if data, _ := os.ReadFile(sent); strings.Contains(string(data), "why") {
 			t.Fatalf("свободные слова напечатались в модальный виджет: %s", data)
@@ -223,7 +223,8 @@ func TestChatSayFreeWordsSkipLockedDialog(t *testing.T) {
 // Кривая перерисовка оставила на панели варианты и подсказку, а знак курсора
 // потеряла: ответ клавишами не считается, и реплика едет дорогами ниже, как
 // свободные слова. С сокетом она ложится в очередь клиента и разбирается им
-// после ответа на вопрос, без сокета остаётся у панели с причиной. Падать
+// после ответа на вопрос, без сокета ложится в очередь панели тем же порядком
+// (DK-1300). Падать
 // «курсора в виджете не видно» на живом сокете нельзя: вопрос висит, и реплика
 // человека агенту нужна (живой случай chat-34).
 func TestChatSayCrookedWidgetQueuesReply(t *testing.T) {
@@ -265,10 +266,10 @@ func TestChatSayCrookedWidgetQueuesReply(t *testing.T) {
 			`{"text": "да"}`)
 		said := body(t, resp)
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("отказ должен быть удачей с причиной, панель повторит: %d %s", resp.StatusCode, said)
+			t.Fatalf("реплика должна лечь в очередь с причиной: %d %s", resp.StatusCode, said)
 		}
-		if !strings.Contains(said, `"held"`) || !strings.Contains(said, "ждёт разрешения") {
-			t.Fatalf("недоставленная реплика не названа причиной: %s", said)
+		if !strings.Contains(said, `"queued"`) || !strings.Contains(said, "ждёт разрешения") {
+			t.Fatalf("реплика не легла в очередь с причиной: %s", said)
 		}
 		if data, _ := os.ReadFile(sent); strings.Contains(string(data), "Enter") {
 			t.Fatalf("клавиши ушли в виджет без курсора: %s", data)

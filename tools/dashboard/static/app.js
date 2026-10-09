@@ -13312,10 +13312,12 @@ function chatPanel(project, st) {
           // уехала текстом мимо терминала. Удача обычной доставки молчит.
           if (r.body.note) sayResult(r.body.note);
           // Ответ с полем stuck говорит, что хода реплике не дали. Дорога
-          // «held» это единственный случай, где ей ехать некуда: агент стоит
-          // на запертом вопросе, а сокета у него нет. Все прочие это очередь,
-          // которую разберут без человека (очередь харнеса на сбросе
-          // подписки, очередь вставшего клиента), и пузырь называет её.
+          // «queued» это очередь панели при запертом вопросе: реплика уедет
+          // в окно сразу после ответа на вопрос (DK-1300), и пузырь зовёт её
+          // очередью. «held» это прежний ответ, где ехать было некуда, пузырь
+          // держит тогда одну причину без кнопки. Все прочие stuck это
+          // очереди, которые разберут без человека (очередь харнеса на сбросе
+          // подписки, очередь вставшего клиента), и пузырь называет их.
           if (r.body.stuck && r.body.way === "held") echo.held(m, r.body.stuck);
           else if (r.body.stuck) echo.queued(m, r.body.stuck);
           else echo.sent(m);
@@ -13599,6 +13601,9 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
       const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
       if (stop) return;
       const ask = (r.ok && r.body.ask) || null;
+      // Запертость журнала приходит тем же ответом и без разобранного вопроса:
+      // плашка состояния стоит в том же боксе, что и блок (DK-1300, случай 03).
+      const stuck = (r.ok && r.body.stuck) || "";
       // Признак ожидания и есть тот повод, по которому панель добавляет галочки:
       // заход спросил человека текстом и стоит, пока ответа нет.
       pick.on = Boolean(ask && ask.kind === "agent");
@@ -13608,7 +13613,7 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
       pick.forks = pick.on ? askForkNames(ask) : null;
       askPickWire(feed, ta, pick);
       askBlindCount(feed, pick, ask);
-      paintClientAsk(project, st, box, ask, tick, pick);
+      paintClientAsk(project, st, box, ask, tick, pick, stuck);
       // Опрос идёт и при открытом вопросе: виджет меняется не только от наших
       // нажатий (человек вправе ответить и руками в tmux), а перерисовка стоит
       // на подписи снимка, поэтому лишних сборок блока это не даёт.
@@ -13794,13 +13799,31 @@ function paintAgentBlind(box, ask) {
   box.append(words);
 }
 
-function paintClientAsk(project, st, box, ask, again, pick) {
+// Плашка запертого вопроса (DK-1300, случай 03): журнал уведомителя запер
+// вопрос, а разбор снимка панели варианты не собрал. Молчание здесь
+// неотличимо от штатной работы, поэтому бокс гаснет только без запертости:
+// плашка называет случай, держит слово причины и ведёт к блоку вопроса, а
+// пока блок не собрался, говорит, чем ответить и что будет с репликой.
+function paintAskStuck(box, stuck) {
+  const head = el("div", "caskh");
+  head.append(el("b", "", "Клиент ждёт разрешения"));
+  box.replaceChildren(head);
+  box.append(el("div", "caskhint", stuck));
+  box.append(el("div", "casks",
+    "Запертый вопрос, которого снимок панели не собрал: признак запертости стоит по журналу уведомителя, а вариантов снимок не дал."));
+  box.append(el("div", "casks",
+    "Свободная реплика никуда не теряется: она встанет в очередь и уедет в окно сразу после ответа на вопрос."));
+  box.append(el("div", "casks",
+    "Отвечайте в блоке вопроса панели, когда он соберётся здесь; если блок не появился, ответьте в окне клиента сами."));
+}
+
+function paintClientAsk(project, st, box, ask, again, pick, stuck) {
   // Блок пересобирается только тогда, когда снимок и правда сменился: опрос
   // ходит по кругу, и сборка на каждый заход стирала бы набранное в поле
   // своего ответа и мигала бы на ровном месте. Разобранный блок в подписи
   // тоже стоит: подсказка вместо молчания приходит и уходит от него.
   const blind = Boolean(pick && pick.blind >= ASK_BLIND);
-  const sign = ask ? JSON.stringify(ask) + (blind ? "|слепой" : "") : "";
+  const sign = (ask ? JSON.stringify(ask) + (blind ? "|слепой" : "") : "") + (stuck ? "|" + stuck : "");
   if (box.dataset.ask === sign) return;
   box.dataset.ask = sign;
   // Занятость прошлого вопроса снимается вместе с его снимком: класс вешает
@@ -13835,6 +13858,15 @@ function paintClientAsk(project, st, box, ask, again, pick) {
     return;
   }
   if (!ask || !(ask.options || []).length) {
+    // Запертость без разобранного вопроса это не пустой экран, а повод
+    // показать плашку состояния в том же боксе (DK-1300, случай 03): иначе
+    // человек видит тишину, неотличимую от штатной работы, а слова подсказки
+    // вели бы к блоку, которого нет.
+    if (stuck) {
+      box.hidden = false;
+      paintAskStuck(box, stuck);
+      return;
+    }
     box.hidden = true;
     box.replaceChildren();
     return;

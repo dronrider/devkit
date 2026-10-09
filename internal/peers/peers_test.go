@@ -23,20 +23,30 @@ func deadPID(t *testing.T) int {
 
 func write(t *testing.T, home, name string, p Peer) {
 	t.Helper()
-	if err := os.MkdirAll(Dir(home), 0o755); err != nil {
+	writeIn(t, Dir(home), name, p)
+}
+
+// writeIn кладёт запись в произвольный каталог реестра: каталог подписки из
+// окружения и соседние подписки лежат не в доме, который тест зовёт.
+func writeIn(t *testing.T, dir, name string, p Peer) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(Dir(home), name), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestLoadDropsDeadAndDedupes(t *testing.T) {
 	home := t.TempDir()
+	// Прогон из-под живой сессии несёт свой CLAUDE_CONFIG_DIR, и чужие записи
+	// сломали бы счёт.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	now := time.Date(2026, 9, 10, 15, 30, 0, 0, time.Local)
 	write(t, home, "1.json", Peer{PID: os.Getpid(), SessionID: "live", Status: "busy", Updated: now.UnixMilli()})
 	write(t, home, "2.json", Peer{PID: deadPID(t), SessionID: "dead", Status: "busy", Updated: now.UnixMilli()})
@@ -58,6 +68,28 @@ func TestLoadDropsDeadAndDedupes(t *testing.T) {
 	}
 	if Load(filepath.Join(home, "нет"), false) == nil {
 		t.Fatal("без каталога жду пустую карту, а не nil")
+	}
+}
+
+// TestLoadWalksRegistryDirs: клиент пишет реестр в каталог подписки из
+// CLAUDE_CONFIG_DIR, соседние подписки дома живут в ~/.devkit/claude-*/
+// sessions, а старый ~/.claude/sessions остаётся пустым. Load читает все три
+// дороги, и запись из старого каталога не заслоняет остальные (DK-1335).
+func TestLoadWalksRegistryDirs(t *testing.T) {
+	home := t.TempDir()
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	now := time.Date(2026, 9, 10, 15, 30, 0, 0, time.Local)
+	me := os.Getpid()
+	writeIn(t, filepath.Join(cfg, "sessions"), "1.json", Peer{PID: me, SessionID: "cfg", Updated: now.UnixMilli()})
+	writeIn(t, filepath.Join(home, ".devkit", "claude-glm", "sessions"), "2.json", Peer{PID: me, SessionID: "near", Updated: now.UnixMilli()})
+	write(t, home, "3.json", Peer{PID: me, SessionID: "old", Updated: now.UnixMilli()})
+
+	all := Load(home, false)
+	for _, sid := range []string{"cfg", "near", "old"} {
+		if all[sid].SessionID != sid {
+			t.Errorf("запись %q не прочитана: %+v", sid, all)
+		}
 	}
 }
 

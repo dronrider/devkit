@@ -1,7 +1,9 @@
-// Пакет peers читает реестр живых сессий клиента, ~/.claude/sessions/<pid>.json,
-// и по нему отвечает, стоит ли за задачей живая сессия. Реестр пишет сам
-// клиент: запись на процесс, в ней ID сессии, состояние и время последнего
-// касания. Запись переживает падение клиента, поэтому живость это не наличие
+// Пакет peers читает реестр живых сессий клиента, <pid>.json в каталогах
+// реестра (Dirs: каталог подписки из CLAUDE_CONFIG_DIR, соседние подписки и
+// старый ~/.claude/sessions), и по нему отвечает, стоит ли за задачей живая
+// сессия. Реестр пишет сам клиент: запись на процесс, в ней ID сессии,
+// состояние и время последнего касания. Запись переживает падение клиента,
+// поэтому живость это не наличие
 // файла, а живой процесс за ним, проверенный сигналом ноль.
 //
 // Читателей у реестра двое, дашборд и taskctl, и рубеж молчания у них один
@@ -30,8 +32,39 @@ const IdleAfter = 20 * time.Minute
 // pid. Путь машинный, своей настройки у него нет, его знает сам клиент.
 const SockDir = "/tmp/cc-socks"
 
-// Dir это каталог реестра внутри дома пользователя.
+// Dir это старый каталог реестра внутри дома пользователя. Клиент новой
+// раскладки пишет в каталог подписки, но дорога сюда остаётся: старые дома
+// записи не переоформляли (DK-1335).
 func Dir(home string) string { return filepath.Join(home, ".claude", "sessions") }
+
+// Dirs собирает каталоги, где клиент мог оставить записи реестра: каталог
+// своей подписки из CLAUDE_CONFIG_DIR, соседние подписки дома в
+// ~/.devkit/claude-*/sessions и старый ~/.claude/sessions. Один и тот же
+// путь возвращается однажды, а порядок для читателя неважен: Load сводит
+// записи по времени касания.
+func Dirs(home string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(dir string) {
+		if dir == "" || seen[dir] {
+			return
+		}
+		seen[dir] = true
+		out = append(out, dir)
+	}
+	if cfg := os.Getenv("CLAUDE_CONFIG_DIR"); cfg != "" {
+		add(filepath.Join(cfg, "sessions"))
+	}
+	if home != "" {
+		if near, err := filepath.Glob(filepath.Join(home, ".devkit", "claude-*", "sessions")); err == nil {
+			for _, dir := range near {
+				add(dir)
+			}
+		}
+	}
+	add(Dir(home))
+	return out
+}
 
 // Peer это живая сессия машины из реестра клиента.
 type Peer struct {
@@ -101,38 +134,41 @@ func (p Peer) Fresh(now time.Time) bool {
 
 // Load читает реестр целиком, живые записи или все. Ключ это ID сессии.
 // Мёртвые записи нужны одному месту, состоянию чата дашборда: остальным они
-// врали бы живой работой. Нет каталога, значит нет и сессий: пустая карта, а
-// не ошибка.
+// врали бы живой работой. Каталоги собирает Dirs, и нет ни одного с записями,
+// значит нет и сессий: пустая карта, а не ошибка.
 func Load(home string, onlyAlive bool) map[string]Peer {
 	out := map[string]Peer{}
-	entries, err := os.ReadDir(Dir(home))
-	if err != nil {
-		return out
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(Dir(home), e.Name()))
+	for _, dir := range Dirs(home) {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
 		}
-		var p Peer
-		if json.Unmarshal(data, &p) != nil || p.SessionID == "" {
-			continue
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				continue
+			}
+			var p Peer
+			if json.Unmarshal(data, &p) != nil || p.SessionID == "" {
+				continue
+			}
+			if p.Sock == "" {
+				p.Sock = filepath.Join(SockDir, fmt.Sprintf("%d.sock", p.PID))
+			}
+			if onlyAlive && !p.Alive() {
+				continue
+			}
+			// Одна сессия бывает записана дважды (перезапуск клиента с тем же ID
+			// либо одна запись в двух каталогах): выигрывает свежая запись, у неё
+			// живой сокет.
+			if old, ok := out[p.SessionID]; ok && old.Updated > p.Updated {
+				continue
+			}
+			out[p.SessionID] = p
 		}
-		if p.Sock == "" {
-			p.Sock = filepath.Join(SockDir, fmt.Sprintf("%d.sock", p.PID))
-		}
-		if onlyAlive && !p.Alive() {
-			continue
-		}
-		// Одна сессия бывает записана дважды (перезапуск клиента с тем же ID):
-		// выигрывает свежая запись, у неё живой сокет.
-		if old, ok := out[p.SessionID]; ok && old.Updated > p.Updated {
-			continue
-		}
-		out[p.SessionID] = p
 	}
 	return out
 }

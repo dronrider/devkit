@@ -165,13 +165,15 @@ func TestPulseOwnAskKeepsScanAndOptions(t *testing.T) {
 	}
 }
 
-// Стенд фронта: вопрос агента стоит в ленте текстом, а панель по признаку
-// ожидания добавляет к нему одну галочку слева от каждой строки варианта
-// (DK-864). Отметка собирает строку ответа в поле ввода, снятая её оттуда
-// убирает, отправляет обычная кнопка чата. Проверка по тексту static/app.js
-// тут не годится: разметку держал и прежний тест, а человек вопроса не видел.
-// Стенд рисует ленту в поддельном DOM (testdata/poc_askpick.mjs). Без node шаг
-// пропускается: узел стенда, а не рабочей части.
+// Стенд фронта: вопрос агента рисует карточка из признака ожидания, и
+// галочки стоят при её вариантах (DK-1235). Реплика «кэш» от продления кеша
+// и промах копирования блока галочек не снимают, плашек про отсутствующий
+// блок нет вовсе. Отметка собирает строку ответа в поле ввода, снятая её
+// оттуда убирает, отправляет обычная кнопка чата. Проверка по тексту
+// static/app.js тут не годится: разметку держал и прежний тест, а человек
+// вопроса не видел. Стенд рисует карточку в поддельном DOM
+// (testdata/poc_askpick.mjs). Без node шаг пропускается: узел стенда, а не
+// рабочей части.
 func TestStaticAskPicksInReply(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -209,27 +211,29 @@ func TestStaticAskPollSurvivesFetchFailure(t *testing.T) {
 
 // Прежний блок вопроса агента с кнопками и табами убран целиком: он читался
 // формой поверх разговора, запирал чат до ответа и терял рекомендацию по
-// дороге. Разбор снимка панели tmux остался, но за вопросами самого клиента
-// (доверие каталогу, вход по /login), и стенд следит, чтобы вместе с блоком не
-// уехала эта половина.
+// дороге. Плашка «Заход ждёт ответа» и разбор слов реплики ушли следом
+// (DK-1235): вопрос рисует карточка из признака ожидания, и мёртвого кода за
+// плашкой не остаётся. Разбор снимка панели tmux остался, но за вопросами
+// самого клиента (доверие каталогу, вход по /login), и стенд следит, чтобы
+// вместе с блоком не уехала эта половина.
 //
-// Поле `steps` признака приметой прежнего блока больше не считается (DK-892).
-// Вопросов в пачке до четырёх, и подсказка при неузнанном блоке называет их
-// все, иначе человек отвечал бы на один из четырёх (замечание 2 ревью). Табы,
-// своя отправка и поле свободного ответа остались запрещены поимённо: блоком с
-// кнопками подсказка от этого не становится.
+// Табы, своя отправка и поле свободного ответа остались запрещены поимённо:
+// карточкой с кнопками они от этого не становятся.
 func TestStaticAgentAskWidgetGone(t *testing.T) {
 	js := readFile(t, filepath.Join("static", "app.js"))
 	for _, gone := range []string{"paintAgentAsk", "askSay", "box.askSaid", "box.askStep",
-		"askStepShell", "askFreeField", "ask.said"} {
+		"askStepShell", "askFreeField", "ask.said",
+		"paintAgentBlind", "askBlindCount", "askBlindSteps", "askPickWire",
+		"askChatPicks", "askUnfence", "askForkNames", "askPickBare", "ASK_BLIND",
+		"ASK_FORK_RE", "ASK_PICK_RE", "ASK_PICK_TAIL", "Заход ждёт ответа"} {
 		if strings.Contains(js, gone) {
-			t.Errorf("в static/app.js остался прежний блок вопроса агента: %q", gone)
+			t.Errorf("в static/app.js остался мёртвый код вопроса: %q", gone)
 		}
 	}
-	for _, want := range []string{"function paintClientAsk(", "function askPickWire(",
-		"function askBlindSteps("} {
+	for _, want := range []string{"function paintClientAsk(", "function paintAgentCard(",
+		"function askCardSteps("} {
 		if !strings.Contains(js, want) {
-			t.Errorf("в static/app.js нет %q: вопрос клиента или галочки не соберутся", want)
+			t.Errorf("в static/app.js нет %q: карточка вопроса не соберётся", want)
 		}
 	}
 }
@@ -250,24 +254,46 @@ func TestStaticAskHeaderGap(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
-// Виджет несёт задачу и время вопроса (DK-1204): признак адресован сессии, а
-// не задаче, и панель показывает его в чате той задачи, к которой сессия
-// привязана сейчас. Плашка «Заход ждёт ответа» без задачи и времени в чате соседней
-// строки читалась как свой свежий вопрос. Время это mtime файла признака, тот
-// же момент, с которого заход стоит.
+// Виджет несёт задачу, время вопроса и имя развилки (DK-1204, DK-1235):
+// признак адресован сессии, а не задаче, и панель показывает его в чате той
+// задачи, к которой сессия привязана сейчас. Карточка без задачи и времени в
+// чате соседней строки читалась как свой свежий вопрос. Имя развилки карточка
+// кладёт в строку ответа «имя N», и разбирает её дальше taskctl decide
+// --answer. Время это mtime файла признака, тот же момент, с которого заход
+// стоит.
 func TestAgentAskOfCarriesTaskAndSince(t *testing.T) {
 	h := handedAsk{Name: "task-XR-9", Since: 1_758_000_000, Ask: chat.Ask{Task: "XR-9",
-		Questions: []chat.Question{{Text: "куда катить"}}}}
+		Questions: []chat.Question{{Text: "«печать»: куда катить", Options: []chat.Option{
+			{Label: "в прод"}, {Label: "в main"},
+		}}}}}
 	// Виджет сверяется по JSON, как его читает панель: поле since появилось
-	// этой правкой, и regcheck собирает тест на базе, где его в типе ещё нет.
+	// одной правкой, fork другой, и regcheck собирает тест на базе, где их в
+	// типе ещё нет.
 	data, err := json.Marshal(agentAskOf(h))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"task":"XR-9"`, `"since":1758000000`} {
+	for _, want := range []string{`"task":"XR-9"`, `"since":1758000000`, `"fork":"печать"`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("в виджете нет %s: %s", want, data)
 		}
+	}
+}
+
+// TestAgentAskOfFreeQuestionHasNoFork: у свободного вопроса `taskctl ask
+// --question` имени развилки в голове нет, и строка ответа ему не собирается:
+// карточка показывает варианты строками без галочек.
+func TestAgentAskOfFreeQuestionHasNoFork(t *testing.T) {
+	h := handedAsk{Name: "task-XR-9", Since: 1_758_000_000, Ask: chat.Ask{Task: "XR-9",
+		Questions: []chat.Question{{Text: "чем держать очередь?", Options: []chat.Option{
+			{Label: "замком"}, {Label: "руками"},
+		}}}}}
+	data, err := json.Marshal(agentAskOf(h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"fork"`) {
+		t.Fatalf("свободный вопрос получил имя развилки: %s", data)
 	}
 }
 

@@ -7211,19 +7211,13 @@ function stateMark(kind, word) {
 // отметкой с иконкой, а причина её живёт подсказкой подписи.
 function chatBubble(who, text, meta, tip, quote, mark) {
   const wrap = el("div", "msg" + (who === "вы" ? " me" : ""));
-  // Слова реплики остаются при пузыре: по ним панель узнаёт блок вопроса и
-  // разбирает его строки вариантов (DK-864). В разметке от блока остаётся
-  // обычный нумерованный список, и обратно из него текст не собрать.
-  // Ограждение кода вокруг блока снимается тут же, одной подготовкой на разбор
-  // и на рисовку: иначе номера строк у них разошлись бы (DK-892).
-  wrap.mdText = askUnfence(text);
   const bb = el("div", "bb");
   // Цитата стоит первой строкой пузыря, над словами: так её ставят
   // мессенджеры, и так она читается ответом на названное.
   if (quote) bb.append(quote);
   // Упоминания задач и документов в реплике становятся ссылками, и ведут они в
   // проект этой ленты: разговор бывает чужой, а адрес на доске свой.
-  bb.append(mdRender(wrap.mdText, chatFeedAt()));
+  bb.append(mdRender(text, chatFeedAt()));
   const said = meta ? who + ", " + meta : who;
   const foot = el("div", "mm", said);
   if (mark) foot.append(mark);
@@ -13887,96 +13881,12 @@ function paintClientAsk(project, st, box, ask, again, ta, pick, stuck) {
   box.append(list);
 }
 
-// Галочки при строках вариантов (DK-864). Вопрос человеку приходит текстом в
-// ленте: блок печатает утилита из перечня развилок записи (taskctl decide
-// --chat), агент вставляет его в реплику как есть. Панель по признаку ожидания
-// добавляет к такой реплике одну только галочку слева от каждой строки
-// варианта. Ни рамки, ни шапки, ни табов, ни своей кнопки отправки тут нет:
-// прежний блок читался формой поверх разговора, работать с чатом до ответа не
-// давал, а рекомендацию варианта терял по дороге (пять претензий пользователя,
-// «совершенно неудобный, даже раздражающий»).
-//
+// Отметки карточки вопроса (DK-1235). Галочка стоит при варианте на самой
+// карточке из признака ожидания, и слова реплики для этого не спрашивают.
 // Отвечает человек обычной репликой: отметка дописывает строку ответа в поле
 // ввода, снятая её оттуда убирает, а отправляет обычная кнопка чата. Ответ
 // уезжает той же дорогой, что всякая другая реплика, и признак ожидания
 // снимает та же ручка ответа.
-
-// Строка развилки: имя в ёлочках, за ним вопрос.
-const ASK_FORK_RE = /^«([^»]+)»\s*:/;
-
-// Строка варианта: номер в начале строки. Тем же номером человек называет
-// вариант в ответе, и по нему же панель узнаёт строку.
-const ASK_PICK_RE = /^\s*(\d{1,2})[.)]\s+\S/;
-
-// Последняя строка блока. По ней блок вопроса отличается от всякого другого
-// нумерованного списка в реплике: галочкам в пересказе плана делать нечего.
-const ASK_PICK_TAIL = "ответ строкой:";
-
-// askChatPicks разбирает блок вопроса в словах реплики: какая развилка, какой
-// номер и на какой строке он стоит. Блока в реплике нет, значит и отмечать
-// нечего. На последней строке блок кончается, и номера ниже неё галочек не
-// получают: там стоит раскладка кейсов состава, по кейсу на строку (DK-969).
-// Отмечают в блоке составы, а кейсы правят номерами прямо в строке ответа.
-function askChatPicks(text) {
-  const lines = String(text || "").split("\n");
-  const out = [];
-  let fork = "";
-  let live = false;
-  let tail = false;
-  lines.forEach((line, i) => {
-    const head = ASK_FORK_RE.exec(line);
-    if (head) {
-      fork = head[1];
-      live = true;
-      return;
-    }
-    if (line.trim().startsWith(ASK_PICK_TAIL)) {
-      tail = true;
-      live = false;
-      fork = "";
-      return;
-    }
-    if (live && fork && ASK_PICK_RE.test(line)) {
-      out.push({ fork, num: Number(ASK_PICK_RE.exec(line)[1]), line: i });
-    }
-  });
-  return tail ? out : [];
-}
-
-// Строка ограждения кода: тройные обратные кавычки, с языком после них или без.
-const ASK_FENCE_RE = /^\s*```/;
-
-// askUnfence снимает ограждение кода вокруг блока вопроса (DK-892). Агент
-// вставляет блок в реплику тройными кавычками, хотя правила говорят обратное:
-// общие правила письма харнеса кладут сниппеты в ограждение и перевешивают.
-// Рисовка собирает ограждённое одним узлом pre, пунктов li с data-mdline там не
-// появляется, и галочкам сесть некуда, а человек читает вопрос портянкой.
-// Строки ограждения гасятся на месте, пустыми: номера строк блока остаются
-// теми же, и разбор с рисовкой сходятся на одном тексте. Гасится только то
-// ограждение, внутри которого и правда лежит блок вопроса, поэтому сниппет
-// команды в той же реплике остаётся кодом.
-function askUnfence(text) {
-  const lines = String(text || "").split("\n");
-  let open = -1;
-  const drop = (at, to) => {
-    if (!askChatPicks(lines.slice(at + 1, to).join("\n")).length) return;
-    lines[at] = "";
-    if (to < lines.length) lines[to] = "";
-  };
-  for (let i = 0; i < lines.length; i++) {
-    if (!ASK_FENCE_RE.test(lines[i])) continue;
-    if (open < 0) {
-      open = i;
-      continue;
-    }
-    drop(open, i);
-    open = -1;
-  }
-  // Незакрытое ограждение рисовка тянет до конца реплики, и блок внутри него
-  // пропадает тем же порядком.
-  if (open >= 0) drop(open, lines.length);
-  return lines.join("\n");
-}
 
 // askPickSaid собирает строку ответа из отмеченного: «печать 1, ответ 3». Тот
 // же вид разбирает taskctl decide --answer.
@@ -14001,116 +13911,6 @@ function askPickPut(ta, state, said) {
   else if (said) text = text.trim() ? text.trim() + " " + said : said;
   ta.value = text.trim();
   state.put = said;
-}
-
-// askPickBare снимает галочки с реплики: строки блока остаются словами, уходит
-// одна отметка.
-function askPickBare(msg) {
-  for (const own of msg.askMarks || []) {
-    if (own.mark.remove) own.mark.remove();
-  }
-  msg.askMarks = null;
-}
-
-// askForkNames собирает имена развилок, о которых стоит признак ожидания
-// (DK-892). Текст вопроса начинается именем в ёлочках: признак собирается из
-// того же перечня развилок записи, что и блок в реплике (chatQuestions в
-// taskctl, agentAskOf в waiting.go), поэтому имена у них одни. Вопросов в
-// пачке до четырёх и едут они полем steps, а единственный вопрос steps не
-// заводит вовсе и лежит в text. Имя шага (step.name) тут не смотрится: оно
-// собрано из того же текста, обрезанного под ширину таба, и своего имени
-// развилки не несёт.
-//
-// Пустой набор это тоже ответ, и значит он «признак не про блок». Свободный
-// вопрос от `taskctl ask --question` едет текстом как есть, без ёлочек, а блок
-// печатает одна команда `decide --chat`, и имя развилки в нём стоит всегда.
-function askForkNames(ask) {
-  const out = new Set();
-  const add = (text) => {
-    const head = ASK_FORK_RE.exec(String(text || "").trim());
-    if (head) out.add(head[1]);
-  };
-  for (const step of (ask && ask.steps) || []) {
-    if (step) add(step.text);
-  }
-  if (ask) add(ask.text);
-  return out;
-}
-
-// askPickWire вешает галочки на реплику с блоком той развилки, о которой стоит
-// признак, и снимает их, когда ответа больше не ждут. Зовут её опрос признака и
-// всякая перерисовка ленты: реплика с блоком приходит после признака, а узлы
-// пузырей лента пересобирает своим порядком.
-//
-// Имена развилок тут не украшение. Разговор идёт развилка за развилкой, и
-// отвеченный блок остаётся в ленте выше: без сверки имён панель брала первый
-// блок с конца, принимала закрытый вопрос за живой, вешала на него галочки и
-// молчала о том, про который её и спросили (провал приёмки DK-892). Признак без
-// имён развилок галочек не даёт вовсе: блок печатает одна команда `decide
-// --chat`, а свободный вопрос `ask --question` стоит про другое, и прежний
-// порядок «первый блок с конца» вернул бы на нём ту же поломку.
-//
-// Дно поиска это последняя реплика человека. Выше неё лежит прочитанное и
-// закрытое, и повторный вопрос по той же развилке нашёл бы там имя своей
-// развилки в отвеченном блоке, где варианты уже другие.
-function askPickWire(feed, ta, state) {
-  if (!feed || !ta) return;
-  const msgs = feed.querySelectorAll(".msg") || [];
-  let at = null;
-  let picks = [];
-  const forks = state.forks;
-  if (state.on && forks && forks.size) {
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].classList && msgs[i].classList.contains("me")) break;
-      const got = askChatPicks(msgs[i].mdText).filter((pick) => forks.has(pick.fork));
-      if (got.length) {
-        at = msgs[i];
-        picks = got;
-        break;
-      }
-    }
-  }
-  // Отвеченный блок остаётся в ленте обычным текстом: галочка при нём соврала
-  // бы, что ответа всё ещё ждут.
-  for (const msg of msgs) {
-    if (msg !== at && msg.askMarks) askPickBare(msg);
-  }
-  // Нашёлся ли блок, помнит сама память галочек: по этому признаку панель
-  // говорит словами, что вопрос стоит, а разобрать его не вышло (DK-892).
-  state.seen = Boolean(at);
-  if (!at) {
-    askPickPut(ta, state, "");
-    return;
-  }
-  if (at.askMarks) return;
-  const byLine = new Map();
-  for (const li of at.querySelectorAll("li") || []) {
-    const line = li.dataset ? li.dataset.mdline : "";
-    if (line !== undefined && line !== "") byLine.set(String(line), li);
-  }
-  const marks = [];
-  at.askMarks = marks;
-  for (const pick of picks) {
-    const li = byLine.get(String(pick.line));
-    if (!li) continue;
-    const said = askPickWord(pick);
-    const mark = el("button", "caskpick");
-    mark.type = "button";
-    mark.setAttribute("role", "checkbox");
-    mark.setAttribute("aria-label", "Ответить «" + said + "»");
-    // Отмеченное переживает пересборку ленты: узел пузыря собирается заново, а
-    // строка ответа так и стоит в поле ввода, и галочка обязана с ней сойтись.
-    askPickMark(mark, (state.put || "").split(", ").includes(said));
-    mark.append(el("span", "caskbox"));
-    mark.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      askPickMark(mark, !mark.classList.contains("on"));
-      askPickPut(ta, state, askPickSaid(marks));
-    });
-    li.prepend(mark);
-    marks.push({ mark, pick });
-  }
-  askPickPut(ta, state, askPickSaid(marks));
 }
 
 // askPickMark ставит и снимает саму отметку: вид её и слово для чтения с

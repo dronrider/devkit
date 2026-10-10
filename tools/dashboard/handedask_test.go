@@ -200,15 +200,15 @@ func TestChatSaySettlesDelegateAsk(t *testing.T) {
 }
 
 // Проводка вопроса розданной работы в статике: ожидание разговора приезжает
-// полем own_wait, а сам вопрос стоит текстом в ленте, и панель вешает при его
-// вариантах галочки (askPickWire, стенд TestStaticAskPicksInReply). Плашки с
-// плоскими строками тут больше нет: она показывала варианты текстом и не
-// показывала вопрос своей задачи вовсе (DK-652).
+// полем own_wait, а вопрос рисует карточка из признака (paintAgentCard, стенд
+// TestStaticAskPicksInReply). Плашки с плоскими строками тут больше нет: она
+// показывала варианты текстом и не показывала вопрос своей задачи вовсе
+// (DK-652).
 func TestStaticHandedAskWiring(t *testing.T) {
 	js := readFile(t, filepath.Join("static", "app.js"))
-	// askWhenWord и слово «спросил в» это шапка плашки «Заход ждёт ответа»:
-	// без задачи и времени вопрос в чужом чате читался как свой (DK-1204).
-	for _, want := range []string{"own_wait", "askPickWire", "askWhenWord(ask.since)", "\"спросил в \""} {
+	// askWhenWord и слово «спросил в» это шапка карточки: без задачи и времени
+	// вопрос в чужом чате читался как свой (DK-1204).
+	for _, want := range []string{"own_wait", "paintAgentCard", "askWhenWord(ask.since)", "\"спросил в \""} {
 		if !strings.Contains(js, want) {
 			t.Errorf("в static/app.js нет %q: вопрос агента не соберётся", want)
 		}

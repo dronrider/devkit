@@ -267,10 +267,9 @@ type agentStep struct {
 	Options []tmuxPick `json:"options,omitempty"`
 }
 
-// askForkHeadRe узнаёт имя развилки в голове вопроса: «имя»: вопрос. Тот же
-// разбор, что у блока в реплике (ASK_FORK_RE в static/app.js), и имена у
-// признака и у блока одни: и то и другое собирается из перечня развилок
-// записи (chatQuestions в taskctl).
+// askForkHeadRe узнаёт имя развилки в голове вопроса: «имя»: вопрос. Имя
+// едет в карточку панели строкой ответа (Fork), и собирается оно из того же
+// перечня развилок записи, что и вопрос (chatQuestions в taskctl).
 var askForkHeadRe = regexp.MustCompile(`^«([^»]+)»\s*:`)
 
 // askForkName вырезает имя развилки из текста вопроса. Пустая строка значит

@@ -136,8 +136,10 @@ func TestChatBlockWithoutForks(t *testing.T) {
 
 // TestChatPanelWritesAsk: в сессии панели та же команда кладёт признак
 // ожидания, зовёт уведомитель и паркует строку (DK-864, решение «печать»).
-// Раньше это делал хук ask-panel.py на вызове виджета вопроса. Блок при этом
-// один и тот же: заход автоматики получает те же строки без признака.
+// Раньше это делал хук ask-panel.py на вызове виджета вопроса. Блок в реплику
+// при этом не копируется: вопрос рисует панель карточкой из признака, и
+// команда прямо говорит об этом (DK-1235). Заход автоматики без панели
+// получает блок как есть, и там его копируют знак в знак.
 func TestChatPanelWritesAsk(t *testing.T) {
 	root := setup(t)
 	askForks(t, root, "XR-005", [][]string{
@@ -163,6 +165,14 @@ func TestChatPanelWritesAsk(t *testing.T) {
 	if len(ask.Questions[0].Options) != 2 || !ask.Questions[0].Options[0].Recommended {
 		t.Fatalf("варианты не доехали до признака: %+v", ask.Questions[0])
 	}
+	for _, w := range []string{"карточкой", "не копируй", "в пачке развилок 1"} {
+		if !strings.Contains(panel, w) {
+			t.Fatalf("панельный заход без %q:\n%s", w, panel)
+		}
+	}
+	if strings.Contains(panel, chatAnswerHint) || strings.Contains(panel, "\n«печать»:") {
+		t.Fatalf("в панельный заход уехал копируемый блок:\n%s", panel)
+	}
 
 	plain := newAskStand(t)
 	plain.deps.Main = root
@@ -170,8 +180,11 @@ func TestChatPanelWritesAsk(t *testing.T) {
 	if len(plain.parked) != 0 || len(plain.notes) != 0 {
 		t.Fatalf("заход автоматики завёл признак: %v %v", plain.parked, plain.notes)
 	}
-	if blockOf(panel) != blockOf(bot) {
-		t.Fatalf("блок разошёлся между панелью и заходом автоматики:\n%s\n---\n%s", panel, bot)
+	if !strings.Contains(bot, chatAnswerHint) || !strings.Contains(bot, "\n«печать»:") {
+		t.Fatalf("заход автоматики без блока:\n%s", bot)
+	}
+	if strings.Contains(bot, "не копируй") {
+		t.Fatalf("заход автоматики получил указание панели:\n%s", bot)
 	}
 }
 

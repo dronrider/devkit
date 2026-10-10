@@ -14,8 +14,11 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # сразу (RULES.board.md, «Трекинг задач» п. 9), а у правки файла задачи,
 # сделанной руками, флагов -m/--push нет, и без этой калитки её путём
 # оставался бы обход DEVKIT_PUSH_OK (DK-119). Всё, что не разобрать как
-# движение вперёд от известного ремоута (новая ветка, удаление, дивергенция,
-# неизвестный sha), доской не считается и идёт под отбой ниже.
+# движение вперёд от известного ремоута (удаление, дивергенция, неизвестный
+# sha), доской не считается и идёт под отбой ниже. Новая ветка (нулевой
+# remote_sha) тоже под отбой, но только пока в PATH нет shipctl: с ним
+# первый пуш судит сама калитка (shipctl push --check-only), и в
+# автономном режиме ветка задачи проходит (DK-1324).
 #
 # DK-602: критерий внутри диапазона не «весь диапазон это доска», а «каждый
 # код-коммит (дифф вне docs/TASKS.md, docs/TASKS-archive.md и docs/tasks/)
@@ -38,13 +41,18 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     [ -n "$local_ref" ] || continue
     board=
     [ "$local_sha" = "$zero" ] && break
-    [ "$remote_sha" = "$zero" ] && break
-    git cat-file -e "$remote_sha" 2>/dev/null || break
-    git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null || break
+    if [ "$remote_sha" != "$zero" ]; then
+        git cat-file -e "$remote_sha" 2>/dev/null || break
+        git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null || break
+    fi
     if command -v shipctl >/dev/null 2>&1; then
-        shipctl push --check-only "$remote_sha" "$local_sha" >/dev/null 2>&1 || break
+        # remote_ref (пушимая ссылка) нужен калитке DK-1324: автономный
+        # режим пускает только пушимую ветку задачи, пустой ref обход не
+        # открывает. Нулевой remote_sha (новая ветка) тоже судит калитка.
+        shipctl push --check-only "$remote_sha" "$local_sha" "$remote_ref" >/dev/null 2>&1 || break
         board=y
     else
+        [ "$remote_sha" = "$zero" ] && break
         # --no-renames: у переименования --name-only печатает только путь
         # назначения, и перенос кода в docs/tasks/ сошёл бы за доску; заодно
         # исход не зависит от diff.renames в конфиге пользователя.

@@ -327,10 +327,17 @@ class TestBoardGateWithShipctl(unittest.TestCase):
         with open(os.path.join(self.repo, ".devkit", "deploy.local"), "w") as f:
             f.write("autonomous = true\n")
 
-    def push_ref(self, ref, local, remote, **env):
-        line = "refs/heads/%s %s refs/heads/%s %s\n" % (ref, local, ref, remote)
+    def push_line(self, local_ref, local_sha, remote_ref, remote_sha, **env):
+        """Строка stdin в том виде, в каком её шлёт git: local_ref local_sha
+        remote_ref remote_sha. Пара HEAD:main нужна, чтобы судить пушимую
+        ссылку, а не текущую ветку (DK-1324)."""
+        line = "%s %s %s %s\n" % (local_ref, local_sha, remote_ref, remote_sha)
         env["PATH"] = self.bindir + os.pathsep + os.environ.get("PATH", "")
         return run(stdin=line, cwd=self.repo, **env)
+
+    def push_ref(self, ref, local, remote, **env):
+        return self.push_line("refs/heads/%s" % ref, local,
+                              "refs/heads/%s" % ref, remote, **env)
 
     def test_autonomous_task_branch_bare_push_passes(self):
         """Автономность и ветка задачи: голый git push кода с легитимным ID
@@ -361,6 +368,49 @@ class TestBoardGateWithShipctl(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("taskctl", r.stderr)
         self.assertNotIn("DEVKIT_PUSH_OK", r.stderr)
+
+    def test_autonomous_head_main_push_refused(self):
+        """DK-1324: пуш HEAD:main из-под ветки задачи обходом не идёт, судит
+        пушимую ссылка: main без следа ревью отбивается."""
+        self.autonomous()
+        self.git("checkout", "-q", "-b", "dk-001")
+        head = self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
+        r = self.push_line("HEAD", head, "main", self.base, CLAUDECODE="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("taskctl", r.stderr)
+        self.assertNotIn("DEVKIT_PUSH_OK", r.stderr)
+        self.assertNotIn("--no-verify", r.stderr)
+
+    def test_autonomous_new_task_branch_first_push_passes(self):
+        """DK-1324: первый пуш новой ветки задачи (нулевой remote_sha) в
+        автономном режиме проходит pre-push: нулевой remote судит сама
+        калитка, раньше хук отбивал его до shipctl."""
+        self.autonomous()
+        self.git("checkout", "-q", "-b", "dk-001")
+        head = self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
+        r = self.push_ref("dk-001", head, ZERO, CLAUDECODE="1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_new_task_branch_refused_without_autonomy(self):
+        """DK-1324: без autonomous = true первый пуш новой ветки отбивается
+        как раньше."""
+        self.git("checkout", "-q", "-b", "dk-001")
+        head = self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
+        r = self.push_ref("dk-001", head, ZERO, CLAUDECODE="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("taskctl", r.stderr)
+        self.assertNotIn("DEVKIT_PUSH_OK", r.stderr)
+        self.assertNotIn("--no-verify", r.stderr)
+
+    def test_autonomous_new_foreign_branch_first_push_refused(self):
+        """DK-1324: первый пуш чужой ветки в автономном режиме отбивается,
+        обход открывает только ветка задачи."""
+        self.autonomous()
+        self.git("checkout", "-q", "-b", "feature")
+        head = self.commit("feat: DK-001 правка", {"tools/app.txt": "правка\n"})
+        r = self.push_ref("feature", head, ZERO, CLAUDECODE="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("taskctl", r.stderr)
 
 
 if __name__ == "__main__":

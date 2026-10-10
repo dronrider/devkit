@@ -133,6 +133,49 @@ class TestHook(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("glab mr create", r.stderr)
 
+    def last_call(self):
+        calls = self.called()
+        self.assertTrue(calls, "shipctl не зван")
+        return calls[-1].split()
+
+    def test_push_passes_current_branch_ref(self):
+        # DK-1324: голый git push несёт калитке пушимую ссылку текущей ветки.
+        self.git("checkout", "-q", "-b", "dk-001")
+        self.shipctl(1)
+        self.fire("git push")
+        self.assertEqual(self.last_call()[-1], "refs/heads/dk-001")
+
+    def test_push_refspec_passes_destination_ref(self):
+        # DK-1324: у git push HEAD:main судится пушимая пара, а не текущая
+        # ветка: обход идёт по ссылке назначения.
+        self.git("checkout", "-q", "-b", "dk-001")
+        self.shipctl(1)
+        self.fire("git push origin HEAD:main")
+        self.assertEqual(self.last_call()[-1], "refs/heads/main")
+
+    def test_push_bare_name_passes_branch_only_if_local(self):
+        # DK-1324: одиночное имя это ветка, только когда локально есть
+        # refs/heads/<имя>; иное (тег) судится без аргумента ref.
+        self.shipctl(1)
+        self.fire("git push origin main")
+        self.assertEqual(self.last_call()[-1], "refs/heads/main")
+        self.fire("git push origin v1")
+        self.assertNotIn("refs/heads/v1", self.last_call())
+
+    def test_push_multiple_refspecs_pass_no_ref(self):
+        # DK-1324: несколько refspec неоднозначны, ref калитке не идёт.
+        self.shipctl(1)
+        self.fire("git push origin main main")
+        self.assertFalse(self.last_call()[-1].startswith("refs/heads/"),
+                         self.last_call())
+
+    def test_mr_create_carries_current_branch(self):
+        # DK-1324: MR уходит из текущей ветки, её же калитка и судит.
+        self.git("checkout", "-q", "-b", "dk-001")
+        self.shipctl(1)
+        self.fire("glab mr create --title x")
+        self.assertEqual(self.last_call()[-1], "refs/heads/dk-001")
+
     def test_command_without_push_passes(self):
         self.shipctl(1)
         r = self.fire("git status --short")

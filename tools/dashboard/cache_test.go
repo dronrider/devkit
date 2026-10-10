@@ -144,6 +144,45 @@ func awaitFly(t *testing.T, s *server, dir string) {
 	t.Fatal("фоновый подъём доски не закрылся: полёт по дереву завис")
 }
 
+// Полёт возвращает слот тому семафору, что занял. Тестовый стенд сужает
+// потолок подменой taskctlGate, и полёт, чей leave шёл по глобалу, уносил слот
+// чужому семафору: занятый недосчитывался, чужой вис на пустом канале, и вслед
+// за ним до таймаута сьюты вис TestBoardSlowCountsQueueWait.
+func TestFlightLeavesTheGateItEntered(t *testing.T) {
+	e := newTestEnv(t)
+	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", boardFixtureJSON))
+	old := taskctlGate
+	entered := newGate(2)
+	taskctlGate = entered
+	t.Cleanup(func() {
+		e.s.boardProbe = nil
+		taskctlGate = old
+	})
+
+	swapped := make(chan struct{})
+	var once sync.Once
+	e.s.boardProbe = func(string) {
+		// Подмена семафора между входом полёта и его уборкой: ровно та
+		// оконность, в которой уборка по глобалу уходила чужому семафору.
+		taskctlGate = newGate(1)
+		once.Do(func() { close(swapped) })
+	}
+	done := make(chan struct{})
+	go func() {
+		e.s.fly(e.proj, "", false, &boardFlight{done: make(chan struct{})})
+		close(done)
+	}()
+	<-swapped
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("полёт не закрылся: слот ушёл чужому семафору, уборка обязана возвращать его занятому")
+	}
+	if live, waiting := entered.counts(); live != 0 || waiting != 0 {
+		t.Fatalf("занятый семафор: живых %d, ждут %d, жду нули", live, waiting)
+	}
+}
+
 // Причина отказа не запоминается: поднятый taskctl доезжает до экрана
 // следующим запросом, а не по выходе срока. Молчание тут различимо и без
 // памяти, и с ней.

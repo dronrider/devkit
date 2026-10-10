@@ -66,10 +66,11 @@ func (e *testEnv) round(t *testing.T) {
 func narrowGate(t *testing.T) (free func()) {
 	t.Helper()
 	old := taskctlGate
-	taskctlGate = newGate(1)
-	taskctlGate.enter()
+	g := newGate(1)
+	taskctlGate = g
+	g.enter()
 	var once sync.Once
-	free = func() { once.Do(func() { taskctlGate.leave() }) }
+	free = func() { once.Do(g.leave) }
 	t.Cleanup(func() {
 		free()
 		taskctlGate = old

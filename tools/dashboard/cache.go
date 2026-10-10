@@ -221,7 +221,11 @@ func (s *server) fly(dir, stamp string, stamped bool, fl *boardFlight) {
 	// медленным. Замер от входа дал бы «уложился в порог» там, где человек
 	// смотрел на пустой экран втрое дольше (замечание ревью DK-1168).
 	queued := s.now()
-	taskctlGate.enter()
+	// Слот возвращается тому же семафору, что и занят: подмена taskctlGate
+	// (стенд сужает потолок) не должна уводить leave на чужой семафор, иначе
+	// счёт ломается и полёт виснет на пустом канале.
+	g := taskctlGate
+	g.enter()
 	begun := s.now()
 	defer func() {
 		if v := recover(); v != nil {
@@ -232,7 +236,7 @@ func (s *server) fly(dir, stamp string, stamped bool, fl *boardFlight) {
 		s.mu.Lock()
 		delete(s.flights, dir)
 		s.mu.Unlock()
-		taskctlGate.leave()
+		g.leave()
 		close(fl.done)
 	}()
 	if s.boardProbe != nil {

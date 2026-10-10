@@ -230,13 +230,16 @@ func reviewNote(t *testing.T, root, line string) {
 	gitT(t, root, "notes", "--ref=review", "add", "-f", "-m", line, "HEAD")
 }
 
-// checkOnly зовёт проверку диапазона от origin/main до main тем же способом,
-// каким её зовёт hooks/pre-push.
+// checkOnly зовёт проверку диапазона от origin/main до текущей ветки тем же
+// способом, каким её зовёт hooks/pre-push: парой sha и пушимой ссылкой
+// текущей ветки.
 func checkOnly(t *testing.T, root string) error {
 	t.Helper()
 	remote := gitT(t, root, "rev-parse", "origin/main")
 	local := gitT(t, root, "rev-parse", "HEAD")
-	_, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: remote, LocalSHA: local})
+	branch := gitT(t, root, "rev-parse", "--abbrev-ref", "HEAD")
+	_, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: remote, LocalSHA: local,
+		PushedRef: "refs/heads/" + branch})
 	return err
 }
 
@@ -492,7 +495,8 @@ func TestPushGateAutonomousFromWorktreeReadsPrimaryRoot(t *testing.T) {
 
 	remote := gitT(t, wt, "rev-parse", "origin/main")
 	local := gitT(t, wt, "rev-parse", "HEAD")
-	if _, err := cmdPush(wt, PushParams{CheckOnly: true, RemoteSHA: remote, LocalSHA: local}); err != nil {
+	if _, err := cmdPush(wt, PushParams{CheckOnly: true, RemoteSHA: remote, LocalSHA: local,
+		PushedRef: "refs/heads/xr-001-wt"}); err != nil {
 		t.Fatalf("пуш из worktree при autonomous=true в основном чекауте должен проходить: %v", err)
 	}
 	_ = bare
@@ -518,6 +522,117 @@ func TestPushGateNonAutonomousTaskBranchStillRefused(t *testing.T) {
 		t.Fatal("при autonomous=false ветка задачи без следа ревью должна отбиваться")
 	}
 	if !strings.Contains(err.Error(), "нет следа ревью") {
+		t.Fatalf("отказ не называет причину: %v", err)
+	}
+}
+
+// TestPushGateAutonomousHeadMainRefused: DK-1324, обход судит пушимую ссылку,
+// а не текущую ветку работы: git push HEAD:main из-под ветки задачи обходом
+// не идёт, и без следа ревью пуш main отбивается.
+func TestPushGateAutonomousHeadMainRefused(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	writeDeployCfg(t, root, "autonomous = true\n")
+	gitT(t, root, "checkout", "-q", "-b", "xr-001")
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001\n\n## Ревью\n\n- гонка без уровня\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 ревью без уровня")
+	codeCommit(t, root, "XR-001", "feature.txt")
+
+	remote := gitT(t, root, "rev-parse", "origin/main")
+	local := gitT(t, root, "rev-parse", "HEAD")
+	_, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: remote, LocalSHA: local,
+		PushedRef: "refs/heads/main"})
+	if err == nil {
+		t.Fatal("пуш HEAD:main из-под ветки задачи должен отбиваться без следа ревью")
+	}
+	if !strings.Contains(err.Error(), "нет следа ревью") {
+		t.Fatalf("отказ не называет причину: %v", err)
+	}
+}
+
+// TestPushGateAutonomousNewTaskBranchFirstPushPasses: DK-1324, первый пуш
+// новой ветки задачи (нулевой remote_sha) в автономном режиме проходит:
+// диапазон первых коммитов меряется от origin/main, вершина ветки после
+// пуша становится опорой следующих.
+func TestPushGateAutonomousNewTaskBranchFirstPushPasses(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	writeDeployCfg(t, root, "autonomous = true\n")
+	gitT(t, root, "checkout", "-q", "-b", "xr-001")
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001\n\n## Ревью\n\n- гонка без уровня\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 ревью без уровня")
+	codeCommit(t, root, "XR-001", "feature.txt")
+
+	local := gitT(t, root, "rev-parse", "HEAD")
+	_, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: strings.Repeat("0", 40),
+		LocalSHA: local, PushedRef: "refs/heads/xr-001"})
+	if err != nil {
+		t.Fatalf("первый пуш ветки задачи при autonomous=true должен проходить: %v", err)
+	}
+}
+
+// TestPushGateAutonomousNewBareCodeWithoutIDRefused: DK-1324, голый код без
+// ID задачи не уходит и первым пушем: диапазон меряется от origin/main,
+// когда remote в дереве есть.
+func TestPushGateAutonomousNewBareCodeWithoutIDRefused(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	writeDeployCfg(t, root, "autonomous = true\n")
+	gitT(t, root, "checkout", "-q", "-b", "xr-001")
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001\n\n## Ревью\n\n- гонка без уровня\n")
+	gitT(t, root, "add", ".")
+	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 ревью без уровня")
+	codeCommit(t, root, "", "feature.txt")
+
+	local := gitT(t, root, "rev-parse", "HEAD")
+	_, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: strings.Repeat("0", 40),
+		LocalSHA: local, PushedRef: "refs/heads/xr-001"})
+	if err == nil {
+		t.Fatal("голый код без ID должен отбиваться и первым пушем ветки задачи")
+	}
+	if !strings.Contains(err.Error(), "код без ID задачи") {
+		t.Fatalf("отказ не называет причину: %v", err)
+	}
+}
+
+// TestPushGateAutonomousNewForeignBranchFirstPushRefused: DK-1324, первый пуш
+// чужой ветки в автономном режиме отбивается: обход открывает только ветка
+// задачи.
+func TestPushGateAutonomousNewForeignBranchFirstPushRefused(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	writeDeployCfg(t, root, "autonomous = true\n")
+	gitT(t, root, "checkout", "-q", "-b", "feature")
+	codeCommit(t, root, "XR-001", "feature.txt")
+
+	local := gitT(t, root, "rev-parse", "HEAD")
+	_, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: strings.Repeat("0", 40),
+		LocalSHA: local, PushedRef: "refs/heads/feature"})
+	if err == nil {
+		t.Fatal("первый пуш чужой ветки должен отбиваться даже при autonomous=true")
+	}
+	if !strings.Contains(err.Error(), "новая ветка") {
+		t.Fatalf("отказ не называет причину: %v", err)
+	}
+}
+
+// TestPushGateAutonomousNewTaskBranchWithoutAutonomyRefused: DK-1324, без
+// autonomous = true первый пуш ветки задачи отбивается как раньше.
+func TestPushGateAutonomousNewTaskBranchWithoutAutonomyRefused(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	addRemote(t, root)
+	gitT(t, root, "checkout", "-q", "-b", "xr-001")
+	codeCommit(t, root, "XR-001", "feature.txt")
+
+	local := gitT(t, root, "rev-parse", "HEAD")
+	_, err := cmdPush(root, PushParams{CheckOnly: true, RemoteSHA: strings.Repeat("0", 40),
+		LocalSHA: local, PushedRef: "refs/heads/xr-001"})
+	if err == nil {
+		t.Fatal("при autonomous=false первый пуш ветки задачи должен отбиваться")
+	}
+	if !strings.Contains(err.Error(), "новая ветка") {
 		t.Fatalf("отказ не называет причину: %v", err)
 	}
 }

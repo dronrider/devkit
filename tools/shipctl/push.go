@@ -16,6 +16,13 @@ type PushParams struct {
 	// строке stdin вызова pre-push, сама команда push вычисляет диапазон
 	// сама через origin/main и текущий main.
 	RemoteSHA, LocalSHA string
+	// PushedRef это пушимая ссылка (remote_ref из строки pre-push, вида
+	// refs/heads/dk-1324). По ней DK-1324 судит, что пуш идёт в ветку
+	// задачи: обход идёт только когда пушимая ссылка это ветка задачи, а
+	// не когда текущая ветка работы совпала с ней случайно (git push
+	// HEAD:main из-под ветки задачи обходом не идёт). Пустая строка
+	// обход не открывает: судить нечего.
+	PushedRef string
 }
 
 // cmdPush пушит main калиткой DK-602: пропускает диапазон, где каждый
@@ -27,35 +34,14 @@ type PushParams struct {
 // сессиям до следующего выката (DK-602).
 //
 // Проверка диапазона общая с хуком: pre-push зовёт `shipctl push
-// --check-only <remote_sha> <local_sha>` и решает по коду выхода, не
-// дублируя разбор коммитов в shell. С CheckOnly команда только проверяет
-// названную пару sha и ничего не пушит; без него она сама находит текущий
-// main и origin/main и после успешной проверки пушет.
+// --check-only <remote_sha> <local_sha> [ref]` и решает по коду выхода, не
+// дублируя разбор коммитов в shell; ref там пушимая ссылка, по ней DK-1324
+// судит автономный обход. С CheckOnly команда только проверяет названную
+// пару sha и ничего не пушит; без него она сама находит текущий main и
+// origin/main и после успешной проверки пушет.
 func cmdPush(root string, p PushParams) (string, error) {
 	if p.CheckOnly {
-		if err := rangeVerdict(root, p.RemoteSHA, p.LocalSHA); err != nil {
-			return "", err
-		}
-		// DK-1324: в автономном режиме ворот следа ревью для веток задач
-		// снимается, коммиты с легитимным ID задачи проходят без спроса.
-		// deploy.local лежит в основном чекауте (gitignored), поэтому читаем
-		// его через primaryRoot, а не от cwd worktree: из worktree задачи
-		// файл не виден. branchTaskID возвращает ID, если текущая ветка
-		// это ветка задачи (dk-1324, dk-1324-worktree), и пустую строку для
-		// main и прочих веток: main остаётся вопросом человека.
-		if primary, _, perr := primaryRoot(root); perr == nil {
-			if cfg, cerr := loadDeployConfig(primary); cerr == nil && cfg.Autonomous {
-				if branchTaskID(root) != "" {
-					return fmt.Sprintf("диапазон %s..%s пропущен: автономный режим, ветка задачи",
-						short(p.RemoteSHA), short(p.LocalSHA)), nil
-				}
-			}
-		}
-		if err := reviewTraceGate(root, p.RemoteSHA, p.LocalSHA); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("диапазон %s..%s пропущен: доска либо код со следом ревью",
-			short(p.RemoteSHA), short(p.LocalSHA)), nil
+		return checkOnlyVerdict(root, p)
 	}
 	primary, _, err := primaryRoot(root)
 	if err != nil {
@@ -95,6 +81,70 @@ func cmdPush(root string, p PushParams) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%s запушен, %s..%s", main, short(remoteSHA), short(localSHA)), nil
+}
+
+// checkOnlyVerdict судит пару sha вместо пуша: что пропустить, а что отбить,
+// решает калитка DK-602 (диапазон коммитов), ворот следа ревью и автономный
+// режим DK-1324. Порядок важен: новый пуш (нулевой remote_sha) мерить не с
+// чего, его судит только автономность по пушимой ссылке, а остальное идёт
+// прежним ходом.
+func checkOnlyVerdict(root string, p PushParams) (string, error) {
+	zero := "0000000000000000000000000000000000000000"
+	branch := pushedBranchName(p.PushedRef)
+	// DK-1324: в автономном режиме ворот следа ревью для веток задач
+	// снимается, коммиты с легитимным ID задачи проходят без спроса. Судит
+	// обход пушимую ссылку, а не текущую ветку работы: git push HEAD:main
+	// из-под ветки задачи обходом не идёт, main остаётся вопросом человеку.
+	// Ветка первой: имя проверить дешевле, чем открыть deploy.local.
+	autonomousTask := branch != "" && taskIDFromBranch(root, branch) != "" && autonomousOn(root)
+	if p.RemoteSHA == zero {
+		// Первый пуш ветки: remote_sha нулевой, движение вперёд от
+		// известного ремоута мерять не с чего. Пусть судит калитка: ветка
+		// задачи в автономном режиме проходит, остальное под отбой.
+		// Диапазон первых коммитов меряется от origin/main, когда remote в
+		// дереве есть, чтобы голый код без ID не ушёл молча; после пуша
+		// опорой следующих становится вершина ветки, а слияние в main
+		// держат ворота shipctl merge.
+		if !autonomousTask {
+			name := strings.TrimSpace(p.PushedRef)
+			if name == "" {
+				name = "ссылка без имени"
+			}
+			return "", fmt.Errorf("новая ветка %s: первый пуш из сессии агента идёт только в автономном режиме и только на ветку задачи", name)
+		}
+		if main, merr := mainBranch(root); merr == nil {
+			if base, berr := git(root, "rev-parse", "--verify", "--quiet", "origin/"+main); berr == nil {
+				if err := rangeVerdict(root, strings.TrimSpace(base), p.LocalSHA); err != nil {
+					return "", err
+				}
+			}
+		}
+		return fmt.Sprintf("новая ветка %s пропущена: автономный режим, ветка задачи", branch), nil
+	}
+	if err := rangeVerdict(root, p.RemoteSHA, p.LocalSHA); err != nil {
+		return "", err
+	}
+	if autonomousTask {
+		return fmt.Sprintf("диапазон %s..%s пропущен: автономный режим, ветка задачи",
+			short(p.RemoteSHA), short(p.LocalSHA)), nil
+	}
+	if err := reviewTraceGate(root, p.RemoteSHA, p.LocalSHA); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("диапазон %s..%s пропущен: доска либо код со следом ревью",
+		short(p.RemoteSHA), short(p.LocalSHA)), nil
+}
+
+// autonomousOn говорит, включён ли автономный режим (DK-1324) по deploy.local
+// основного чекаута: файл gitignored и лежит в нём, из worktree задачи он не
+// виден, поэтому читается через primaryRoot.
+func autonomousOn(root string) bool {
+	primary, _, err := primaryRoot(root)
+	if err != nil {
+		return false
+	}
+	cfg, err := loadDeployConfig(primary)
+	return err == nil && cfg.Autonomous
 }
 
 // rangeVerdict решает критерий DK-602 для диапазона remote..local: пуск
@@ -258,21 +308,43 @@ func hasCodeCommit(root, remoteSHA, localSHA string) (bool, error) {
 // про задачу доски или доски тут нет вовсе, и след ревью остаётся искать в
 // заметке.
 func branchTaskID(root string) string {
+	branch, err := git(root, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return taskIDFromBranch(root, branch)
+}
+
+// taskIDFromBranch то же имя задачи, но по названной ветке: её зовёт
+// автономный обход DK-1324 по пушимой ссылке, когда текущая ветка работы
+// может быть и не пушимой.
+func taskIDFromBranch(root, branch string) string {
 	b, err := loadBoard(root)
 	if err != nil {
 		return ""
 	}
 	pref := b.prefixOr("DK")
-	branch, err := git(root, "rev-parse", "--abbrev-ref", "HEAD")
-	if err != nil {
-		return ""
-	}
 	m := regexp.MustCompile(`(?i)^`+regexp.QuoteMeta(pref)+`-([0-9]+)($|-)`).
 		FindStringSubmatch(strings.TrimSpace(branch))
 	if m == nil {
 		return ""
 	}
 	return pref + "-" + m[1]
+}
+
+// pushedBranchName срезает с пушимой ссылки префикс refs/heads/: по остатку
+// автономный режим узнаёт ветку задачи. Тег и прочие refs дают пустую
+// строку, голое имя ветки проходит как есть: без префикса регексп задачи
+// всё равно не соберётся на случайном тексте.
+func pushedBranchName(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if strings.HasPrefix(ref, "refs/heads/") {
+		return strings.TrimPrefix(ref, "refs/heads/")
+	}
+	if strings.HasPrefix(ref, "refs/") {
+		return ""
+	}
+	return ref
 }
 
 // checkRoot находит дерево для проверки диапазона. Доска главнее: в проекте с

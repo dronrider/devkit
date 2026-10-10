@@ -85,7 +85,7 @@ const usageText = `shipctl: слияние и откат задач по пра�
                                   краснота в счёт не идёт, читает журнал
                                   .devkit/test-runs.log
   push [--check-only <remote_sha> пуш main калиткой DK-602: пропускает
-        <local_sha>]              диапазон, где каждый код-коммит (дифф вне
+        <local_sha> [ref]]        диапазон, где каждый код-коммит (дифф вне
                                   docs/TASKS.md, docs/TASKS-archive.md и
                                   docs/tasks/) несёт в subject ID задачи не из
                                   Backlog, а голый код без такого ID отбивает
@@ -94,7 +94,11 @@ const usageText = `shipctl: слияние и откат задач по пра�
                                   запирает следующий пуш чистой доски.
                                   --check-only только проверяет названную пару
                                   sha и ничего не пушит, этим флагом её зовёт
-                                  hooks/pre-push вместо своего разбора диапазона
+                                  hooks/pre-push вместо своего разбора
+                                  диапазона; третий аргумент ref это пушимая
+                                  ссылка, по ней в автономном режиме DK-1324
+                                  обход идёт только для ветки задачи и
+                                  включает первый пуш новой ветки
 
 Команды тестов и выката передаются строкой и выполняются через sh -c. Без
 --test команда тестов берётся из ключа test в .devkit/deploy.local, а нет ни
@@ -320,8 +324,11 @@ func main() {
 		fs.BoolVar(&p.CheckOnly, "check-only", false, "только проверить диапазон remote_sha local_sha, не пушить (для hooks/pre-push)")
 		pos := frame.ParseArgs(fs, args[1:])
 		if p.CheckOnly {
-			needArgs(pos, 2, 2, "push --check-only <remote_sha> <local_sha>")
+			needArgs(pos, 2, 3, "push --check-only <remote_sha> <local_sha> [ref]")
 			p.RemoteSHA, p.LocalSHA = pos[0], pos[1]
+			if len(pos) == 3 {
+				p.PushedRef = pos[2]
+			}
 			// Проверка диапазона стоит и в репозитории без доски: ворот следа
 			// ревью там единственный, и отказ поиска доски запирал бы пуш
 			// вместо разбора.

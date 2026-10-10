@@ -2745,6 +2745,70 @@ func TestMetaLineNotHumanReply(t *testing.T) {
 	}
 }
 
+// Продление кеша (DK-1349) в ленте это служебная помета, а не диалог: ни
+// реплики «кэш», ни ответа «ок». Рамку devkit-cachekeep кладёт cachekeep,
+// ответ модели после неё в разговор не идёт.
+func TestCachekeepMarkNotDialog(t *testing.T) {
+	keep := "<devkit-cachekeep>Служебное продление кеша сессии. Молчи." +
+		"</devkit-cachekeep>"
+	data := []byte(
+		fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
+			`"timestamp":%q,"gitBranch":"main"}`, keep, "2026-10-10T12:00:00Z") + "\n" +
+			fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+				`[{"type":"text","text":"ок"}]},"timestamp":%q,"gitBranch":"main"}`,
+				"2026-10-10T12:00:01Z") + "\n")
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	if len(got) != 1 {
+		t.Fatalf("записей в ленте %d, ждал одну помету: %+v", len(got), got)
+	}
+	note := got[0]
+	if note.Role != roleNote {
+		t.Fatalf("продление выдано за реплику разговора: role=%q", note.Role)
+	}
+	if note.Mark != "cachekeep" {
+		t.Fatalf("помета продления %q, жду cachekeep: %+v", note.Mark, note)
+	}
+	if note.Text != "продление кеша" {
+		t.Fatalf("заголовок пометы %q, жду «продление кеша»: %+v", note.Text, note)
+	}
+	joined := note.Text + note.Note
+	for _, banned := range []string{"кэш", "ок", "Молчи", "devkit-cachekeep"} {
+		if strings.Contains(joined, banned) {
+			t.Fatalf("помета несёт слова разговора (%q): %+v", banned, note)
+		}
+	}
+}
+
+// После продления кеша ответ модели в разговор не идёт, даже если модель
+// всё-таки ответила. Глушится весь ход до следующей реплики человека.
+func TestCachekeepMutesAgentReply(t *testing.T) {
+	keep := "<devkit-cachekeep>Служебное продление кеша. Молчи.</devkit-cachekeep>"
+	data := []byte(
+		fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
+			`"timestamp":%q,"gitBranch":"main"}`, keep, "2026-10-10T12:00:00Z") + "\n" +
+			fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+				`[{"type":"text","text":"ок"}]},"timestamp":%q,"gitBranch":"main"}`,
+				"2026-10-10T12:00:01Z") + "\n" +
+			fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
+				`"timestamp":%q,"gitBranch":"main"}`, "продолжай", "2026-10-10T12:00:02Z") + "\n" +
+			fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+				`[{"type":"text","text":"готово"}]},"timestamp":%q,"gitBranch":"main"}`,
+				"2026-10-10T12:00:03Z") + "\n")
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	var texts []string
+	for _, r := range got {
+		if r.Role == "user" || r.Role == "assistant" {
+			texts = append(texts, r.Role+":"+r.Text)
+		}
+	}
+	if len(texts) != 2 {
+		t.Fatalf("реплик разговора %d, ждал две: %v", len(texts), texts)
+	}
+	if texts[0] != "user:продолжай" || texts[1] != "assistant:готово" {
+		t.Fatalf("состав разговора разошёлся: %v", texts)
+	}
+}
+
 // Планы субагентов одной сессии видны все. CLAUDE_CODE_SESSION_ID у субагентов
 // пачки общий, и по адресу <sid>-sub.json два исполнителя писали план поверх
 // соседского: у DK-641 и DK-642 ход работы снаружи пропал вовсе (DK-527).

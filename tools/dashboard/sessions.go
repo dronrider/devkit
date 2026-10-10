@@ -1174,6 +1174,9 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 	// отвечает на пачку замечаний одним сообщением, и цитируется последняя из
 	// пачки, а о самой пачке говорит признак.
 	askText, askKey, askAt := "", "", 0
+	// Продление кеша просит молчать, но модель иногда отвечает «ок». Ответ
+	// после служебного продления в разговор не идёт: это не диалог (DK-1349).
+	muteAfterKeepalive := false
 	add := func(item reply) {
 		if item.Role == roleThink {
 			if at, err := time.Parse(time.RFC3339, item.Time); err == nil && !prev.IsZero() {
@@ -1247,6 +1250,12 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 					Note: compactWord, Mark: compactMark})
 				continue
 			}
+			if rec.Type == "assistant" && muteAfterKeepalive {
+				continue
+			}
+			if rec.Type == "user" {
+				muteAfterKeepalive = cachekeepOnly(s)
+			}
 			addUser(add, rec.Type, rec.Timestamp, s, rec.IsMeta)
 			continue
 		}
@@ -1264,6 +1273,9 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
 			continue
 		}
+		if rec.Type == "assistant" && muteAfterKeepalive {
+			continue
+		}
 		for _, b := range blocks {
 			switch b.Type {
 			case "text":
@@ -1274,6 +1286,13 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 					add(reply{Role: roleNote, Time: rec.Timestamp, Text: b.Text,
 						Note: compactWord, Mark: compactMark})
 					continue
+				}
+				if rec.Type == "user" {
+					if cachekeepOnly(b.Text) {
+						muteAfterKeepalive = true
+					} else if strings.TrimSpace(b.Text) != "" {
+						muteAfterKeepalive = false
+					}
 				}
 				addUser(add, rec.Type, rec.Timestamp, b.Text, rec.IsMeta)
 			case "thinking":
@@ -1604,6 +1623,10 @@ var svcTags = []svcTag{
 	{name: "bash-input", show: true, word: "команда терминала"},
 	{name: "bash-stdout", show: true, word: "вывод терминала"},
 	{name: "bash-stderr", show: true, word: "stderr терминала"},
+	// Продление кеша из cachekeep (DK-1349): служебный ход без диалога.
+	// Реплика описывает себя и просит молчать, ответ модели в разговор
+	// не идёт, человеку остаётся короткая помета не-диалоговой формы.
+	{name: "devkit-cachekeep", show: true, word: "продление кеша"},
 }
 
 // svcRe собирает вырезалку на каждый известный тег: тело берётся нежадно до
@@ -1664,6 +1687,10 @@ func svcNote(tag svcTag, body string) svcLine {
 			return svcLine{}
 		}
 		return svcLine{head: tag.word, body: truncate(body, toolBodyLimit)}
+	case "devkit-cachekeep":
+		// Помета продления: тело служебной реплики человеку не нужно,
+		// остаётся одна строка не-диалоговой формы.
+		return svcLine{head: tag.word, mark: "cachekeep"}
 	}
 	return svcLine{head: tag.word}
 }
@@ -1872,6 +1899,17 @@ func cutSelection(text string) (sel, file, rest string) {
 		return "", "", text
 	}
 	return m[2], m[1], strings.TrimSpace(text[len(m[0]):])
+}
+
+// cachekeepOnly узнаёт реплику продления кеша: целиком служебная рамка
+// devkit-cachekeep, без слов человека. Такой реплике в ленте место одной
+// пометой, а ответ модели после неё в разговор не идёт (DK-1349).
+func cachekeepOnly(text string) bool {
+	if !strings.Contains(text, "<devkit-cachekeep") {
+		return false
+	}
+	said, _ := splitService(text)
+	return said == ""
 }
 
 // splitService вырезает из реплики известные служебные вставки. Первый ответ

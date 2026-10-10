@@ -773,6 +773,55 @@ exit 0`)
 	if at < 0 || reply < 0 || at > reply {
 		t.Errorf("после ответа очередь не уехала в окно сперва номером, потом репликой: %q", keys)
 	}
+
+	// Того же результата даёт ответ словами в /say: номер пункта подаётся
+	// клавишами, очередь едет следом (замечание ревью DK-1300: дорога ответа
+	// словами ничем не была покрыта, вызов askHoldSend на ней тест не
+	// отличал от его отсутствия).
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		sayBody("ещё реплика в очереди", "m-2"))
+	if text = body(t, resp); !strings.Contains(text, `"way":"queued"`) {
+		t.Fatalf("повторная реплика не легла в очередь: %s", text)
+	}
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid)}) // признак запертости встал снова
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", sayBody("2", "m-3"))
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ответ словами: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"way":"answer"`) {
+		t.Fatalf("номер словами не поехал дорогой ответа: %s", text)
+	}
+	keys = readFile(t, sent)
+	at, reply = strings.LastIndex(keys, "-t =chat-13: 2"), strings.LastIndex(keys, "ещё реплика в очереди")
+	if at < 0 || reply < 0 || at > reply {
+		t.Errorf("ответ словами не снял очередь: сперва номер пункта, потом реплика: %q", keys)
+	}
+
+	// Дренаж: человек ответил на вопрос руками в tmux, признак запертости спал,
+	// а кнопки панели никто не нажимал. Реплика едет в окно с первым же
+	// опросом ручки, иначе висела бы в очереди до следующего ответа из панели
+	// (замечание ревью DK-1300).
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		sayBody("третья реплика", "m-4"))
+	if text = body(t, resp); !strings.Contains(text, `"way":"queued"`) {
+		t.Fatalf("реплика перед дренажом не легла в очередь: %s", text)
+	}
+	writeNotifyLog(t, e.home, []string{permissionNotify(sid),
+		"2026-08-20T12:10:00 сессия " + sid[:8] +
+			" повод turn_done уровень фоновый бэкенд terminal-notifier цель - задача - проект demo " +
+			"код возврата: 0 текст «devkit: ход кончился» «готово»"})
+	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/chats/"+sid+"/ask", "")
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("опрос после спада запертости: %d %s", resp.StatusCode, text)
+	}
+	if strings.Contains(text, "stuck") {
+		t.Errorf("признак запертости пережил конец хода: %s", text)
+	}
+	if keys = readFile(t, sent); !strings.Contains(keys, "третья реплика") {
+		t.Errorf("очередь не уехала в окно по дренажу опроса: %q", keys)
+	}
 }
 
 // permissionNotify это строка журнала уведомителя про запрос разрешения, как её

@@ -106,6 +106,22 @@ def named(extra):
     return bool(extra) and not str(extra[0]).startswith("-")
 
 
+def run_filter(extra):
+    """Ключ `-run` из хвоста go test и его имя отбора, либо (None, extra).
+
+    Питоновой сюите `-run` незнаком: её `suite.py` и `unittest discover` имени
+    теста не принимают. Хвост сценария проверки пишется по образцу go
+    (`-run DutyAgent`), и здесь он переводится в отбор `unittest -k`, которому
+    имя класса или метода подходит как есть. Го-модулю ключ уезжает как есть.
+    """
+    extra = list(extra)
+    if len(extra) >= 2 and str(extra[0]) == "-run":
+        return str(extra[1]), extra[2:]
+    if extra and str(extra[0]).startswith("-run="):
+        return str(extra[0])[5:], extra[1:]
+    return None, extra
+
+
 def build(path, how, share, extra):
     """Команда прогона: (argv, env) с долей бюджета и пониженным приоритетом.
 
@@ -116,15 +132,26 @@ def build(path, how, share, extra):
     без своего раннера: ни перебор, ни `suite.py` имени не принимают.
     """
     extra = list(extra)
+    filt, extra = run_filter(extra)
     if how == "go":
         # Свой `-timeout` агента старше умолчания: пакет, которому двадцати
         # минут мало, иначе нечем было бы прогнать вовсе (замечание ревью
-        # круга 1). Остальные ключи расчёта обёртка держит сама.
+        # круга 1). Остальные ключи расчёта обёртка держит сама. `-run` тут
+        # родной, он уже вернулся в хвост через run_filter.
         argv = ["go", "test", "-count=1"]
         if not any(str(t).split("=", 1)[0] == "-timeout" for t in extra):
             argv.append("-timeout=" + GO_TIMEOUT)
         argv.append("./...")
+        if filt is not None:
+            extra = ["-run", filt] + extra
         argv = parallel.with_share("go:x", argv, share) + extra
+    elif filt is not None:
+        # `unittest -k` сравнивает с именем целиком (fnmatch), а go `-run`
+        # берёт подстроку: звёзды с обеих сторон держат ту же ширину отбора.
+        # Отбор идёт через discover: одних ключей `-k` без имени теста
+        # загрузчику недостаточно, и ноль прогонов выглядит как зелень.
+        argv = [sys.executable, "-m", "unittest", "discover", "-p", "*_test.py",
+                "-k", "*" + filt + "*"] + extra
     elif named(extra):
         argv = [sys.executable, "-m", "unittest"] + extra
     elif how == "suite":

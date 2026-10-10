@@ -64,9 +64,13 @@ class DutyAgentTest(unittest.TestCase):
         return [a for a in call.calls if a and a[0] == self.bin and "run" in a]
 
     def notifies(self, call=None):
-        """Вызовы самого уведомителя: первый аргумент, а не цитата в заказе."""
+        """Вызовы самого уведомителя: путь скрипта вторым аргументом.
+
+        Текст заказа дежурному цитирует hooks/notify.py, и поиск по всему
+        argv ловил бы сам заказ; здесь берётся аргумент имени скрипта.
+        """
         call = call or self.call
-        return [a for a in call.calls if a and "notify.py" in str(a[0])]
+        return [a for a in call.calls if len(a) > 1 and "notify.py" in str(a[1])]
 
     # Шаг 1: тик поднимает дежурного по маркеру и разбирает исход.
 
@@ -114,13 +118,37 @@ class DutyAgentTest(unittest.TestCase):
         self.assertEqual(self.notifies(), [],
                          "громкий зов ушёл до разбора дежурного: %s" % self.call.calls)
 
-    def test_spawn_failure_names_the_loud_tail(self):
-        # Разбор не начался: громкий зов здесь это его хвост, а не зов до разбора.
+    def test_spawn_failure_retries_next_tick(self):
+        # Разбор не начался: подпись не пишется, повтор идёт ближайшим тиком
+        # и исход не виснет (замечание ревью). Громкий зов раньше потолка
+        # не уходит: это хвост постоянного сбоя, его держит тест потолка.
         self.task_file([self.WHY])
         call = Fake(code=2, out="лестница отказала")
         lines = self.duty_lines(call=call)
-        self.assertIn("громкий зов", " ".join(lines))
-        self.assertEqual(self.notifies(call), [])
+        self.assertEqual(len(self.runs(call)), 1, call.calls)
+        self.assertEqual(duty.read_state(home=self.home), set(),
+                         "неудачный подъём занял подпись, повтора не будет")
+        self.assertIn("повтор тиком", " ".join(lines))
+        call2 = Fake(code=2, out="лестница отказала")
+        self.duty_lines(call=call2)
+        self.assertEqual(len(self.runs(call2)), 1, "неудачный подъём не повторился")
+        self.assertEqual(self.notifies(call2), [], "зов ушёл раньше потолка")
+
+    def test_spawn_ceiling_shouts_and_stops_retry(self):
+        # Постоянный сбой подъёма добивается потолком попыток: человеку идёт
+        # реальный громкий зов, подпись занимает запись и наружу больше не
+        # долбят (замечание ревью).
+        self.task_file([self.WHY])
+        for _ in range(duty.SPAWN_TRIES):
+            call = Fake(code=2, out="лестница отказала")
+            lines = self.duty_lines(call=call)
+        self.assertEqual(len(self.notifies(call)), 1,
+                         "на потолке подъёмов человека не позвали: %s" % call.calls)
+        self.assertIn("громкий зов человеку ушёл", " ".join(lines))
+        self.assertIn(duty.signature(self.WHY), duty.read_state(home=self.home))
+        call2 = Fake(code=2)
+        self.duty_lines(call=call2)
+        self.assertEqual(self.runs(call2), [], "после потолка поднимают снова")
 
     # Шаг 4: одинаковые отказы в разбор не входят (граница DK-1115).
 

@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -47,9 +48,14 @@ DUTY_MARK = "эскалация дежурному"
 # Раздел файла задачи, где лежат записи исхода.
 STAGE_SECTION = "Ход работы"
 
-# Память подъёма: JSON-строки {"when", "root", "task", "sig"} на каждую
-# взятую запись и на каждый отказ, уже известный дежурному.
+# Память подъёма: JSON-строки двух видов. {"when", "sig"} на взятую запись,
+# {"when", "sig", "fail": true} на неудачный подъём (подпись ещё не занята).
 DUTY_STATE = "~/.devkit/watch.duty"
+
+# Потолок неудачных подъёмов одной записи. Ниже его подпись не пишется и
+# повтор идёт ближайшим тиком; на потолке исход добивается громким зовом
+# человеку и подписью, чтобы не долбить наружу вечно.
+SPAWN_TRIES = 3
 
 # Суффикс причины с ID сессии. Он различает два падения одного и того же
 # отказа, а для границы DK-1115 нужна сама причина, без адреса сессии.
@@ -136,21 +142,43 @@ def state_path(home=None):
 
 
 def read_state(home=None):
-    """Память подъёма: множество подписей, уже известных дежурному."""
+    """Память подъёма: множество подписей, уже взятых дежурным.
+
+    Строки неудачных подъёма сюда не входят: подпись на отказе ещё не
+    занята, и запись ждёт повтора.
+    """
     sigs = set()
+    for rec in _read_records(home):
+        sig = rec.get("sig")
+        if sig and not rec.get("fail"):
+            sigs.add(sig)
+    return sigs
+
+
+def read_fails(home=None):
+    """Счёт неудачных подъёмов по подписям: {sig: сколько раз отказали}."""
+    fails = {}
+    for rec in _read_records(home):
+        sig = rec.get("sig")
+        if sig and rec.get("fail"):
+            fails[sig] = fails.get(sig, 0) + 1
+    return fails
+
+
+def _read_records(home=None):
     try:
         text = state_path(home).read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return sigs
+        return []
+    out = []
     for ln in text.splitlines():
         try:
             rec = json.loads(ln)
         except ValueError:
             continue
-        sig = rec.get("sig")
-        if sig:
-            sigs.add(sig)
-    return sigs
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
 
 
 def write_state(sigs, home=None):
@@ -162,6 +190,18 @@ def write_state(sigs, home=None):
             for sig in sorted(sigs):
                 f.write(json.dumps({"when": datetime.now().isoformat(timespec="seconds"),
                                     "sig": sig}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def write_fail(sig, home=None):
+    """Пишет неудачный подъём: подпись остаётся незанятой."""
+    path = state_path(home)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(str(path), "a", encoding="utf-8") as f:
+            f.write(json.dumps({"when": datetime.now().isoformat(timespec="seconds"),
+                                "sig": sig, "fail": True}, ensure_ascii=False) + "\n")
     except OSError:
         pass
 
@@ -184,6 +224,7 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True):
     if not marks:
         return lines
     known = read_state(home=home)
+    fails = read_fails(home=home)
     fresh = set()
     seen = set()
     for task, why, raw in marks:
@@ -202,17 +243,30 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True):
                          % (root, task, sig))
             continue
         said, code = spawn(root, task, why, call=call, taskctl=taskctl)
-        fresh.add(sig)
         if code == 0:
+            fresh.add(sig)
             lines.append("корень %s: дежурный поднят по %s, отказ «%s»; %s"
                          % (root, task, sig, said))
-        else:
-            # Разбор не начался, и громкий зов здесь это его хвост: дальше
-            # тик разбирать не будет, и молчание оставило бы исход висеть.
-            lines.append("корень %s: дежурного по %s не поднять, отказ «%s»; %s"
-                         % (root, task, sig, said))
-            lines.append("корень %s: громкий зов человеку остаётся хвостом "
-                         "неудавшегося разбора" % root)
+            continue
+        # Разбор не начался. Подпись не пишется: повтор идёт ближайшим тиком
+        # и исход не виснет (замечание ревью). Постоянный сбой добивается
+        # потолком попыток с реальным зовом, и только тогда подпись занимает
+        # запись, чтобы не долбить наружу вечно.
+        n = fails.get(sig, 0) + 1
+        write_fail(sig, home=home)
+        if n < SPAWN_TRIES:
+            lines.append("корень %s: дежурного по %s не поднять, отказ «%s» "
+                         "(попытка %d из %d), повтор тиком; %s"
+                         % (root, task, sig, n, SPAWN_TRIES, said))
+            continue
+        note = shout("разбор дежурного не поднять",
+                     "Задача %s: дежурный не поднялся %d раз, отказ «%s». %s. "
+                     "Громкий зов это хвост неудавшегося подъёма."
+                     % (task, n, sig, said),
+                     root, call=call, task=task)
+        fresh.add(sig)
+        lines.append("корень %s: дежурного по %s не поднять %d раз, отказ «%s»; "
+                     "%s; громкий зов человеку ушёл" % (root, task, n, sig, note))
     if fresh:
         remember_many(fresh, home=home)
     return lines
@@ -240,6 +294,24 @@ def spawn(root, task, why, call=None, taskctl=None):
     except OSError as e:
         return str(e), 2
     return " ".join((p.stdout or "").split()), p.returncode
+
+
+def shout(title, body, root, call=None, task=None):
+    """Громкий зов уведомителем: хвост неудавшегося подъёма.
+
+    Тот же уведомитель, что у сторожа, громкий уровень по умолчанию.
+    """
+    call = subprocess.run if call is None else call
+    notif = str(Path(__file__).resolve().parents[2] / "hooks" / "notify.py")
+    argv = [sys.executable, notif]
+    if task:
+        argv += ["--task", task]
+    try:
+        p = call(argv + [title, body], cwd=str(root),
+                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        return str(e)
+    return (p.stdout or "").strip() or "отправлено"
 
 
 def which(name):

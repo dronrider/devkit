@@ -2155,6 +2155,29 @@ class OneEntryTest(unittest.TestCase):
         self.assertEqual(got.returncode, 0, got.stderr)
         self.assertTrue(self.stand.orders(), s_orders(self.stand))
 
+    def test_stale_foreign_work_is_ignored(self):
+        # После ребута или kill -9 файл реестра остаётся с state=running.
+        # Протухшая запись это не живой чужой заход (DK-1317).
+        stale = time.time() - 25 * 3600
+        self.stand.foreign(agents={
+            "a1": {"type": "exec-high", "description": "работа DK-1",
+                   "output": "", "started": stale, "done": 0,
+                   "state": "running", "told": False, "job": "subagent"}})
+        got = self.stand.run()
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertTrue(self.stand.orders(), s_orders(self.stand))
+
+    def test_foreign_reviewer_is_ignored(self):
+        # Ревизия идёт в другом дереве и работой строки не считается:
+        # правило «один заход» держит работы, которые строку двигают.
+        self.stand.foreign(agents={
+            "a1": {"type": "review-high", "description": "ревью DK-1",
+                   "output": "", "started": time.time(), "done": 0,
+                   "state": "running", "told": False, "job": "subagent"}})
+        got = self.stand.run()
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertTrue(self.stand.orders(), s_orders(self.stand))
+
 
 def s_orders(s):
     return "заказы: %s, журнал:\n%s" % (s.orders(), "\n".join(s.journal()))

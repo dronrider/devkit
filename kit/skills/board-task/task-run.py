@@ -342,6 +342,10 @@ SEND_PAUSE = 0.25
 LOCK_FROM_ENV = "DEVKIT_TASK_LOCK_FROM"
 LOCK_YOUNG = 5
 BUSY = 3
+# Жизнь записи реестра чужой сессии: дольше этого срока работа уже не живая,
+# хотя state остался running (ребут, kill -9). Порог тот же, что в sweep
+# hooks/agent-watch.py (LIFETIME).
+FOREIGN_LIFETIME = 24 * 60 * 60
 # Профиль харнеса, из которого берётся клиент, когда хвоста после `--` нет.
 HARNESS_DIR = os.path.normpath(os.path.join(HERE, "..", "..", "harness"))
 HARNESS_ENV = "DEVKIT_HARNESS"
@@ -898,10 +902,15 @@ class Pipeline:
         чужой сессии, чья работа называет этот ID. Ручной старт с субагентами
         замок не берёт, и без этой проверки конвейер поднимал вторую голову в
         том же дереве: на DK-1176 исход свела случайность (DK-1317). Своё окно
-        к моменту проверки ещё не поднято, и всё живое на задаче чужое."""
+        к моменту проверки ещё не поднято, и всё живое на задаче чужое.
+        Протухшая запись реестра (старше FOREIGN_LIFETIME) живым заходом не
+        считается: после ребута или kill -9 файл остаётся с state=running.
+        Ревизия идёт в другом дереве и работой строки не считается: review-*
+        чужим заходом не бывает."""
         root = (os.environ.get(AGENTS_ENV) or "").strip() or AGENTS_DIR
         me = "".join(c for c in (self.sid or "") if c.isalnum() or c in "-_")
         id_re = re.compile(r"\b%s\b" % re.escape(self.id.upper()))
+        now = time.time()
         found = []
         try:
             names = os.listdir(root)
@@ -918,11 +927,24 @@ class Pipeline:
                     data = json.load(f)
             except (OSError, ValueError):
                 continue
-            agents = data.get("agents") if isinstance(data, dict) else None
+            if not isinstance(data, dict):
+                continue
+            updated = data.get("updated")
+            if isinstance(updated, (int, float)) and now - float(updated) >= FOREIGN_LIFETIME:
+                continue
+            agents = data.get("agents")
             if not isinstance(agents, dict):
                 continue
             for v in agents.values():
                 if not isinstance(v, dict) or v.get("state") != AGENT_RUNNING:
+                    continue
+                started = v.get("started")
+                if isinstance(started, (int, float)) and now - float(started) >= FOREIGN_LIFETIME:
+                    continue
+                kind = str(v.get("type") or "")
+                # Ревизия идёт в другом дереве и работой строки не считается:
+                # правило «один заход» держит работы, которые строку двигают.
+                if kind.startswith("review-"):
                     continue
                 text = " ".join(str(v.get(k) or "")
                                 for k in ("description", "command", "type"))

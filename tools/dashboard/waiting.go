@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -233,18 +234,21 @@ const askStepCut = 28
 
 // agentAsk это вопрос агента, адресованный разговору. Поля повторяют снимок
 // панели клиента (kind, text, options, steps); своего тут
-// четыре поля, и все четыре про то, чего у клиентского вопроса нет: чья
-// задача ждёт, с какого момента, до какого срока и какие вопросы стоят за
-// этим следующими. Время вопроса нужно плашке «Заход ждёт ответа»: признак
-// адресован сессии, панель показывает его в чате той задачи, к которой сессия
-// привязана сейчас, и там вопрос без задачи и времени читался как свой и
-// свежий (DK-1204).
+// пять полей, и все про то, чего у клиентского вопроса нет: чья
+// задача ждёт, с какого момента, до какого срока, какие вопросы стоят за
+// этим следующими и имя развилки. Время вопроса и задача идут в шапку
+// карточки: признак адресован сессии, панель показывает его в чате той
+// задачи, к которой сессия привязана сейчас, и там вопрос без задачи и
+// времени читался как свой и свежий (DK-1204). Имя развилки нужно строке
+// ответа: галочка карточки собирает «имя номер», и разбирать его дальше
+// будет taskctl decide --answer.
 type agentAsk struct {
 	Kind    string      `json:"kind"`
 	Task    string      `json:"task,omitempty"`
 	Since   int64       `json:"since,omitempty"`
 	Until   int64       `json:"until,omitempty"`
 	Rest    []string    `json:"rest,omitempty"`
+	Fork    string      `json:"fork,omitempty"`
 	Text    string      `json:"text,omitempty"`
 	Options []tmuxPick  `json:"options,omitempty"`
 	Steps   []agentStep `json:"steps,omitempty"`
@@ -252,12 +256,30 @@ type agentAsk struct {
 
 // agentStep это один вопрос пачки. Вопросы едут на экран все разом, а не по
 // одному: переход между шагами у вопроса агента ничего не отправляет и никуда
-// не ходит, ответы копятся в самой панели и уезжают одной репликой.
+// не ходит, ответы копятся в самой панели и уезжают одной репликой. Fork
+// называет развилку из головы вопроса («имя»: ...); у свободного вопроса
+// `taskctl ask --question` его нет, и галочки там не собирают строку ответа.
 type agentStep struct {
 	Name    string     `json:"name"`
 	Now     bool       `json:"now,omitempty"`
+	Fork    string     `json:"fork,omitempty"`
 	Text    string     `json:"text,omitempty"`
 	Options []tmuxPick `json:"options,omitempty"`
+}
+
+// askForkHeadRe узнаёт имя развилки в голове вопроса: «имя»: вопрос. Тот же
+// разбор, что у блока в реплике (ASK_FORK_RE в static/app.js), и имена у
+// признака и у блока одни: и то и другое собирается из перечня развилок
+// записи (chatQuestions в taskctl).
+var askForkHeadRe = regexp.MustCompile(`^«([^»]+)»\s*:`)
+
+// askForkName вырезает имя развилки из текста вопроса. Пустая строка значит
+// свободный вопрос без имени, и строка ответа такому не собирается.
+func askForkName(text string) string {
+	if m := askForkHeadRe.FindStringSubmatch(strings.TrimSpace(text)); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 // agentAskOf собирает виджет из признака ожидания. Пустой вид значит, что
@@ -270,13 +292,14 @@ func agentAskOf(h handedAsk) agentAsk {
 			continue
 		}
 		step := agentStep{Name: fmt.Sprintf("%d. %s", i+1, truncate(text, askStepCut)),
-			Text: text, Options: agentPicks(q.Options)}
+			Fork: askForkName(text), Text: text, Options: agentPicks(q.Options)}
 		out.Steps = append(out.Steps, step)
 	}
 	if len(out.Steps) == 0 {
 		return agentAsk{}
 	}
 	out.Steps[0].Now = true
+	out.Fork = out.Steps[0].Fork
 	out.Text, out.Options = out.Steps[0].Text, out.Steps[0].Options
 	if len(out.Steps) == 1 {
 		out.Steps = nil

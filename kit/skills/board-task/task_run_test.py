@@ -663,6 +663,16 @@ class TestPasses(unittest.TestCase):
         self.assertEqual(s.orders(), [], s.orders())
         self.assertIn("вопрос", r.stdout)
 
+    def test_duty_head_stops_after_one_pass(self):
+        # Дежурный кончает разбор одним проходом (DK-1323): исход это вопрос
+        # либо черновик, и следующий проход ушёл бы в правки, которых
+        # дежурному не положено.
+        s = self.stand(plan="работа")
+        r = s.run("--order", task_run.DUTY_ORDER + "DK-1: ход упал, исход дежурному")
+        self.assertEqual(r.returncode, 0, s.why(r))
+        self.assertEqual(len(s.orders()), 1, s.orders())
+        self.assertIn("разбор дежурного", r.stdout)
+
     def test_lying_reply_beats_the_ask_stop(self):
         # Реплика человека старше ожидания: ждёт он как раз ответа. Голова,
         # поднятая по реплике, проходит ход, а конец прохода снова встаёт

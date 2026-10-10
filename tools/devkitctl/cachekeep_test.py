@@ -96,6 +96,39 @@ class CacheKeepLogicTest(unittest.TestCase):
         self.assertEqual(cachekeep.rewrite_cost(100000, 300), 125000,
                          "пятиминутный TTL: перезапись стоит 1.25x")
 
+    def test_keepalive_prompt_describes_itself(self):
+        """Реплика продления описывает себя как служебную (DK-1349).
+
+        Одно слово «кэш» было загадкой: агенты не знали, что отвечать, и
+        кто-то поднимал диагностику кеша с субагентами.
+        """
+        p = cachekeep.KEEPALIVE_PROMPT
+        self.assertNotEqual(p, "кэш", "одно слово «кэш» и есть симптом")
+        self.assertIn("devkit-cachekeep", p, "рамка для ленты дашборда")
+        self.assertTrue(p.startswith("<devkit-cachekeep>"),
+                        "рамка открывает реплику")
+        self.assertTrue(p.endswith("</devkit-cachekeep>"),
+                        "рамка закрывает реплику")
+        low = p.lower()
+        self.assertIn("служебн", low, "реплика называет себя служебной")
+        self.assertIn("молчи", low, "реплика просит молчать")
+        self.assertIn("инструмент", low, "реплика гасит инструменты")
+        self.assertIn("субагент", low, "реплика гасит субагентов")
+
+    def test_keepalive_cost_counts_reply(self):
+        """Траты на продлевающий ход замерены вместе с ответом модели (DoD 6)."""
+        prefix, idle, ttl = 100000, 400, 300
+        pings = cachekeep.pings_needed(idle, ttl)
+        self.assertGreater(pings, 0, "простой длиннее TTL даёт продления")
+        only_read = pings * prefix * cachekeep.CACHE_READ_RATE
+        with_reply = cachekeep.keepalive_cost(prefix, idle, ttl)
+        self.assertGreater(with_reply, only_read,
+                           "ответ модели не входит в цену хода")
+        reply_per_ping = (with_reply - only_read) / pings
+        self.assertGreater(reply_per_ping, 0, "ответ модели стоит токенов")
+        self.assertLess(reply_per_ping, prefix * cachekeep.CACHE_READ_RATE,
+                        "молчаливый минимум дешевле чтения префикса")
+
 
 class CacheKeepStreamTest(SandboxCase):
     """Решения по синтетическому потоку: тайминги, TTL, строки журнала."""
@@ -393,6 +426,35 @@ class CacheKeepStreamTest(SandboxCase):
         self.assertIn("m1", argv, "модель подставлена")
         self.assertEqual(argv[-2:], ["-p", cachekeep.KEEPALIVE_PROMPT],
                          "-p хвостом уходит клиенту после --")
+
+    def test_keepalive_argv_disables_tools(self):
+        """Пинг не поднимает ход с инструментами (DoD 6)."""
+        argv = cachekeep.keepalive_argv("S1", "m1")
+        self.assertEqual(argv[-2:], ["-p", cachekeep.KEEPALIVE_PROMPT],
+                         "реплика остаётся хвостом после --tools")
+        self.assertIn("--tools", argv, "инструменты клиента гасятся")
+        i = argv.index("--tools")
+        self.assertEqual(argv[i + 1], "", "список инструментов пустой")
+        self.assertLess(i, argv.index("-p"), "--tools стоит до -p")
+
+    def test_send_keepalive_sets_silent(self):
+        """Продление уходит с DEVKIT_SILENT=1 (DoD 4, кейс 4)."""
+        import unittest.mock
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            captured["env"] = kw.get("env") or {}
+            class P:
+                returncode = 0
+            return P()
+
+        with unittest.mock.patch("subprocess.run", side_effect=fake_run):
+            ok = cachekeep.send_keepalive("S1", "m1", Path("/tmp"))
+        self.assertTrue(ok, "запрос считается ушедшим")
+        self.assertEqual(captured["env"].get("DEVKIT_SILENT"), "1",
+                         "хуки должны молчать на служебном вызове")
+        self.assertIn("-p", captured["cmd"], "реплика ушла клиенту")
 
     def test_journal_error_is_visible(self,):
         """Отказ записи журнала виден stderr, а не глотается (замечание 7)."""

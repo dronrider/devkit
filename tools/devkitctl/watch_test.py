@@ -430,6 +430,22 @@ class CacheKeepTickTest(Stand):
         self.assertIn(str(self.proj), calls[0], "вызов несёт корень обхода")
         self.assertIn("--max-idle", calls[0], "вызов несёт горизонт разбора")
 
+    def test_cachekeep_argv_puts_subcommand_first(self):
+        """Дочерняя команда собирается в форме, которую принимает devkitctl.
+
+        Флаг -C живёт в самой подкоманде cachekeep, поэтому перед ней тик не
+        ставит ничего: путь уезжает после подкоманды, иначе разбор аргументов
+        падает на старте и пустой обход не отличим от провала.
+        """
+        fake = Fake()
+        watch.cache_keep(str(self.proj), call=fake, devkitctl=DEVKITCTL)
+        self.assertEqual(len(fake.calls), 1, "продление зовётся один раз")
+        self.assertEqual(
+            fake.calls[0],
+            [DEVKITCTL, "cachekeep", "-C", str(self.proj),
+             "--max-idle", str(watch.CACHEKEEP_IDLE_MIN)],
+            "подкоманда идёт первой, -C после неё")
+
     def test_kept_stream_is_notable(self):
         self.entry(seen_minutes=1)
         self.goallog(1)

@@ -68,7 +68,7 @@ DK-932).
 шлёт сам shipctl через признак провала и taskctl fail.
 
 Тем же тиком продлевается кеш простаивающих потоков (DK-1312): по каждому
-корню обхода тик зовёт `devkitctl -C <корень> cachekeep --max-idle <минуты>`,
+корню обхода тик зовёт `devkitctl cachekeep -C <корень> --max-idle <минуты>`,
 и простаивающий поток получает дешёвое чтение кеша вместо платной перезаписи
 префикса по возвращении. Обход внутри идёт по всем домам журналов машины,
 стоку и домам включённых харнесов, поэтому живые сессии конвейера найдутся
@@ -1605,7 +1605,7 @@ CACHEKEEP_IDLE_MIN = int((cachekeep.keep_horizon() + 59) // 60)
 
 def cache_keep(root, call=None, devkitctl=None):
     """Продление кеша простаивающих потоков корня (DK-1312): тик зовёт
-    `devkitctl -C <корень> cachekeep --max-idle <минуты>`, и поток, простаивающий
+    `devkitctl cachekeep -C <корень> --max-idle <минуты>`, и поток, простаивающий
     дольше TTL кеша, получает продлевающий запрос клиентом своего харнеса,
     пока чтение дешевле перезаписи префикса. Дома журналов, resume по харнесу
     и порог выгоды решает сам cachekeep, тик его только будит, с горизонтом
@@ -1632,7 +1632,7 @@ def cache_keep(root, call=None, devkitctl=None):
     env["PATH"] = dashboard.agent_path(bin)
     env.pop("DEVKIT_HARNESS", None)
     try:
-        p = call([bin, "-C", root, "cachekeep", "--max-idle", str(CACHEKEEP_IDLE_MIN)],
+        p = call([bin, "cachekeep", "-C", root, "--max-idle", str(CACHEKEEP_IDLE_MIN)],
                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     except OSError as e:
         return ("корень %s: продление кеша не вышло, %s" % (name, e)), True

@@ -44,9 +44,9 @@
 Журнал держателя лежит в ~/.devkit/goal-hold.log: по нему разбирается и
 удержанный ход, и отпущенный, и причина отпускания.
 """
+import importlib.util
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -79,13 +79,11 @@ IN_PROGRESS = "In progress"
 BOARD = "docs/TASKS.md"
 GOAL_LOG = ".devkit/goal-%s.log"
 # Признак ожидания ответа человека лежит рядом со входом разговора задачи
-# (LLD DK-430, решение 2). Первой строкой в нём срок либо метка «без срока»,
-# ниже поле с сессией, которая ждёт.
+# (LLD DK-430, решение 2). Формат его держит internal/chat, а читается он тут
+# разбором hooks/chat-in.py: своя копия формата разъехалась с писателем и
+# держала ход вопреки вопросу.
 CHAT_DIRS = ("chat", "mail")
 ASK_GLOB = ".ask"
-ASK_SESSION = "сессия:"
-ASK_FOREVER = "без срока"
-ASK_STAMP = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?$")
 # Повод уведомления о воронке. Слово то же, что у стопов цикла в скилле
 # goal-loop: человек читает ленту по поводам.
 NOTIFY_REASON = "goal_stop"
@@ -188,31 +186,50 @@ def board_section(root, goal):
     return ""
 
 
-def asked(root, session):
+def chat_in():
+    """Модуль подхвата реплики hooks/chat-in.py либо None. Его разбором
+    читается признак ожидания: вторая копия формата разъехалась бы с
+    писателем internal/chat на первой же правке. Дефис в имени файла не
+    годится для import, поэтому модуль грузится по пути, как у chat_hook в
+    tools/devkitctl/watch.py."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chat-in.py")
+    try:
+        spec = importlib.util.spec_from_file_location("goal_hold_chat_in", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except (OSError, ImportError, SyntaxError):
+        return None
+
+
+def asked(root, session, goal=None, env=None):
     """Ждёт ли эта сессия ответа человека: рядом со входом разговора лежит её
     признак ожидания. Вопрос, без которого работа не едет, это законный конец
-    хода, и держать такую сессию нельзя."""
+    хода, и держать такую сессию нельзя. None значит, что признак лежит, а
+    разобрать его нечем, и ход в этом случае не держится: слепой держатель
+    запер бы сессию, спросившую человека."""
+    names = []
     for sub in CHAT_DIRS:
         d = os.path.join(root, ".devkit", sub)
         try:
-            names = sorted(os.listdir(d))
+            listing = sorted(os.listdir(d))
         except OSError:
             continue
-        for name in names:
-            if not name.endswith(ASK_GLOB):
-                continue
-            try:
-                with open(os.path.join(d, name), encoding="utf-8", errors="replace") as f:
-                    lines = f.read().split("\n")
-            except OSError:
-                continue
-            first = (lines[0] if lines else "").strip()
-            if first != ASK_FOREVER and not ASK_STAMP.match(first):
-                continue
-            for ln in lines[1:]:
-                ln = ln.strip()
-                if ln.startswith(ASK_SESSION) and ln[len(ASK_SESSION):].strip() == session:
-                    return True
+        for name in listing:
+            if name.endswith(ASK_GLOB):
+                names.append(os.path.join(d, name))
+    hook = chat_in()
+    if hook is None:
+        # Без разбора держатель не действует, как watch.py: сначала строка
+        # журнала, что разобрать нечем, и только потом решение о ходе.
+        log(goal, "слепой разбор", "подхват реплики hooks/chat-in.py не загрузился", env)
+        return None if names else False
+    for path in names:
+        fields = hook.ask_fields(path)
+        if fields and fields.get("session") == session:
+            return True
     return False
 
 
@@ -278,8 +295,11 @@ def decide(entry, path, event, env=None, call=None):
         if section != IN_PROGRESS:
             return False, ("цель стоит в разделе «%s»" % section if section
                            else "строки цели на доске нет, цель закрыта")
-    if asked(root, event.session):
+    wait = asked(root, event.session, goal, env)
+    if wait:
         return False, "сессия ждёт ответа человека"
+    if wait is None:
+        return False, "признак ожидания не разобран"
     mark = trace(root, goal, entry.get("file"))
     idle = 0
     try:

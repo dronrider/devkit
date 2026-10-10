@@ -40,6 +40,19 @@ BOARD = """# Задачи стенда
 ROW = "| %s | Цель: стенд | task | P1 | 60 (50+5+3+0+2) | XL | [tasks/%s.md](tasks/%s.md) |"
 
 
+def ask_text(sid, task="DK-901", section="", questions=None):
+    """Признак ожидания в формате писателя internal/chat.Ask.Text: метка срока
+    первой строкой («-» это AskForever), поля «сессия », «задача » и «секция »
+    с пробелом, ниже пачка вопросов JSON."""
+    lines = ["-", "сессия " + sid, "задача " + task]
+    if section:
+        lines.append("секция " + section)
+    if questions:
+        lines.append(json.dumps({"questions": [{"text": q} for q in questions]},
+                                ensure_ascii=False))
+    return "\n".join(lines) + "\n"
+
+
 class Sink:
     """Приёмник решения хука: текст block либо None, когда хук промолчал."""
 
@@ -199,10 +212,24 @@ class HoldTest(Stand):
         d = os.path.join(self.proj, ".devkit", "chat")
         os.makedirs(d)
         with open(os.path.join(d, "task-DK-901.ask"), "w", encoding="utf-8") as f:
-            f.write("без срока\nсессия: %s\nзадача: DK-901\nкакой из двух путей берём\n" % SID)
+            f.write(ask_text(SID, questions=["какой из двух путей берём"]))
         decision, _ = self.stop()
         self.assertIsNone(decision, "ход держится на вопросе человеку: %s" % decision)
         self.assertIn("ждёт ответа", self.journal())
+
+    def test_ask_written_like_taskctl_releases_the_turn(self):
+        # Живой формат писателя taskctl ask (internal/chat.Ask.Text), каким его
+        # кладёт `taskctl decide --chat`: метка «-», поля с пробелом, секция и
+        # вопросы JSON. Старый разбор хука такого файла не читал и держал ход
+        # вопреки вопросу, то есть сессия не могла дождаться человека.
+        self.entry()
+        d = os.path.join(self.proj, ".devkit", "chat")
+        os.makedirs(d)
+        with open(os.path.join(d, "task-DK-901.ask"), "w", encoding="utf-8") as f:
+            f.write(ask_text(SID, section="blocked",
+                             questions=["какой из двух путей берём"]))
+        decision, _ = self.stop()
+        self.assertIsNone(decision, "живой формат признака не отпустил ход: %s" % decision)
 
     def test_question_of_another_session_does_not_release(self):
         # Признак ожидания соседней сессии этой сессии не касается.
@@ -210,9 +237,42 @@ class HoldTest(Stand):
         d = os.path.join(self.proj, ".devkit", "chat")
         os.makedirs(d)
         with open(os.path.join(d, "task-DK-901.ask"), "w", encoding="utf-8") as f:
-            f.write("без срока\nсессия: другая-сессия\nзадача: DK-901\nвопрос\n")
+            f.write(ask_text("другая-сессия", questions=["вопрос"]))
         decision, _ = self.stop()
         self.assertIsNotNone(decision, "чужое ожидание отпустило ход")
+
+    def test_unparsable_wait_flag_releases_the_turn(self):
+        # Признак ожидания лежит, а подхват реплики не загрузился: разобрать
+        # его нечем, и держать ход вслепую нельзя, иначе сессия, спросившая
+        # человека, заперта держателем. Образец поведения тот же, что у watch.py.
+        self.entry()
+        d = os.path.join(self.proj, ".devkit", "chat")
+        os.makedirs(d)
+        with open(os.path.join(d, "task-DK-901.ask"), "w", encoding="utf-8") as f:
+            f.write(ask_text(SID, questions=["вопрос"]))
+        orig = hold.chat_in
+        hold.chat_in = lambda: None
+        try:
+            decision, _ = self.stop()
+        finally:
+            hold.chat_in = orig
+        self.assertIsNone(decision, "слепой разбор признака удержал ход: %s" % decision)
+        self.assertIn("не загрузился", self.journal())
+        self.assertIn("не разобран", self.journal())
+
+    def test_unloadable_hook_without_a_wait_flag_keeps_holding(self):
+        # Слепота без признака ожидания хода не отпускает: спрашивать некого и
+        # ждать нечего, держатель работает как обычно. Строка журнала про
+        # незагрузившийся подхват при этом лежит рядом с «ход удержан».
+        self.entry()
+        orig = hold.chat_in
+        hold.chat_in = lambda: None
+        try:
+            decision, _ = self.stop()
+        finally:
+            hold.chat_in = orig
+        self.assertIsNotNone(decision, "слепота без признака отдала ход")
+        self.assertIn("не загрузился", self.journal())
 
 
 class FunnelTest(Stand):

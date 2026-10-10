@@ -234,6 +234,23 @@ def shell(state):
         json.dump(body, f, ensure_ascii=False)
 
 
+def both(state):
+    """Реестр с фоновой командой и субагентом разом: стоп конвейера застал
+    оба хвоста, и каждый обязан получить свою запись."""
+    os.makedirs(agents, exist_ok=True)
+    now = time.time()
+    body = {"session": sid, "updated": now,
+            "agents": {
+                "b1": {"type": "", "description": "слияние", "job": "shell",
+                       "command": "shipctl merge DK-1", "output": "",
+                       "started": now, "done": 0, "state": state, "told": False},
+                "a1": {"type": "exec-high", "description": "работа",
+                       "output": "", "started": now, "done": 0,
+                       "state": state, "told": False}}}
+    with open(os.path.join(agents, sid + ".json"), "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False)
+
+
 def wait_mark(kind, target="", secs=3, note="жду соседа"):
     """Отметка машинного ожидания за `agentctl wait`: запись на задачу теми же
     полями, какими её кладёт утилита (tools/agentctl/wait.go). На стенде утилиты
@@ -315,6 +332,12 @@ while True:
         # сдвинув. Реестр сторожа при этом держит живую команду.
         shell("running")
         seen = hits("живой фоновой команде")
+    elif step == "хвосты и закрой":
+        # Стоп конвейера застал живые хвосты: фоновую команду, субагента и
+        # отложенную реплику во входе чата. Задача уходит в архив, а хвосты
+        # остаются живыми до самого стопа: так их гасил штатный стоп DK-796.
+        both("running")
+        open(state, "w", encoding="utf-8").write("архиве\n")
     elif step == "вопрос":
         mark("ждёт", "permission_prompt")
         time.sleep(0.3)
@@ -551,6 +574,34 @@ class Stand:
             return []
         with open(path, encoding="utf-8") as f:
             return [l.rstrip("\n") for l in f if l.strip() != ""]
+
+    def task_file(self):
+        """Файл задачи стенда: запись хвоста стопа пишется туда же, куда её
+        пишет возврат проверки, в раздел «Ход работы»."""
+        path = os.path.join(self.root, "docs", "tasks", "DK-1.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if not os.path.isfile(path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("# DK-1\n\n## Ход работы\n\n- Постановка: черновик, 2026-10-10.\n")
+        return path
+
+    def tails(self):
+        """Строки «Хвост:» из файла задачи стенда."""
+        path = self.task_file()
+        with open(path, encoding="utf-8") as f:
+            return [l.rstrip("\n") for l in f.read().splitlines() if l.startswith("- Хвост:")]
+
+    def foreign(self, sid="ffff0001-0000-4000-8000-000000000001", agents=None):
+        """Реестр чужой сессии: ручной старт с субагентами, замок он не берёт."""
+        d = os.path.join(self.root, "agents")
+        os.makedirs(d, exist_ok=True)
+        now = time.time()
+        body = {"session": sid, "updated": now, "agents": agents or {
+            "a1": {"type": "exec-high", "description": "работа DK-1",
+                   "output": "", "started": now, "done": 0,
+                   "state": "running", "told": False, "job": "subagent"}}}
+        with open(os.path.join(d, sid + ".json"), "w", encoding="utf-8") as f:
+            json.dump(body, f, ensure_ascii=False)
 
     def drop(self):
         shutil.rmtree(self.root, ignore_errors=True)
@@ -878,8 +929,11 @@ class TestReplyHeadSleepsQuietly(unittest.TestCase):
         with self.assertRaises(SystemExit):
             pipe.run_live()
         self.assertFalse(pipe.replied)
-        self.assertEqual(pipe.shout.call_count, 1, pipe.shout.call_args_list)
-        self.assertEqual(pipe.shout.call_args[0][0], "task_check")
+        # Лежащая во входе реплика для обычной головы это хвост: её никто не
+        # поднимал, и стоп уносит её с собой. Уведомления два: хвост и стоп.
+        self.assertEqual(pipe.shout.call_count, 2, pipe.shout.call_args_list)
+        self.assertEqual(pipe.shout.call_args_list[0][0][0], "run_tail")
+        self.assertEqual(pipe.shout.call_args_list[1][0][0], "task_check")
 
 
 class TestLiveHead(unittest.TestCase):
@@ -1935,6 +1989,175 @@ class TestProfileClient(unittest.TestCase):
             task_run.parse_args(["DK-1", "-C", self.tmp])
         self.assertEqual(got.exception.code, 2)
         self.assertIn("нет-такого.toml", err.getvalue())
+
+
+class StopTailsTest(unittest.TestCase):
+    """Хвосты долга при стопе конвейера (DK-1317). Стоп смотрит только на
+    статус задачи и для закрытой молчалив, а фоновая команда, живой субагент и
+    отложенная реплика умирают вместе с окном без записи и уведомления. Каждый
+    хвост обязан получить и то, и другое, и гаснуть вслух."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="task-run-tails-")
+        os.makedirs(os.path.join(self.root, ".devkit"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        os.environ[task_run.AGENTS_ENV] = self.root
+        self.addCleanup(os.environ.pop, task_run.AGENTS_ENV, None)
+        self.pipe = task_run.Pipeline(task_run.parse_args(
+            ["DK-1", "-C", self.root, "--", "claude"]))
+        self.pipe.sid = SID
+        self.pipe.shout = unittest.mock.Mock()
+        self.task_file()
+
+    def registry(self, agents):
+        with open(os.path.join(self.root, SID + ".json"), "w", encoding="utf-8") as f:
+            json.dump({"session": SID, "updated": 0, "agents": agents}, f, ensure_ascii=False)
+
+    def task_file(self):
+        path = os.path.join(self.root, "docs", "tasks", "DK-1.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if not os.path.isfile(path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("# DK-1\n\n## Ход работы\n\n- Постановка: черновик, 2026-10-10.\n")
+        return path
+
+    def task_body(self):
+        with open(self.task_file(), encoding="utf-8") as f:
+            return f.read()
+
+    def test_running_shell_is_written_and_called(self):
+        self.registry({"b1": {"type": "", "state": "running", "job": "shell",
+                              "command": "shipctl merge DK-1"}})
+        self.pipe.account_tails("задача закрыта")
+        body = self.task_body()
+        self.assertIn("- Хвост:", body, body)
+        self.assertIn("shipctl merge DK-1", body, body)
+        self.assertEqual(self.pipe.shout.call_count, 1, self.pipe.shout.call_args_list)
+        self.assertEqual(self.pipe.shout.call_args[0][0], "run_tail")
+
+    def test_live_subagent_is_written_and_called(self):
+        self.registry({"a1": {"type": "exec-high", "state": "running", "job": "subagent"}})
+        self.pipe.account_tails("задача закрыта")
+        body = self.task_body()
+        self.assertIn("- Хвост:", body, body)
+        self.assertIn("exec-high", body, body)
+        self.assertEqual(self.pipe.shout.call_count, 1, self.pipe.shout.call_args_list)
+
+    def test_lying_reply_is_written_and_called(self):
+        self.reply("продолжай работу")
+        self.pipe.account_tails("задача закрыта")
+        body = self.task_body()
+        self.assertIn("- Хвост:", body, body)
+        self.assertIn("продолжай работу", body, body)
+        self.assertEqual(self.pipe.shout.call_count, 1, self.pipe.shout.call_args_list)
+
+    def test_every_tail_is_written(self):
+        self.registry({
+            "a1": {"type": "exec-high", "state": "running", "job": "subagent"},
+            "b1": {"type": "", "state": "running", "job": "shell",
+                   "command": "git push origin dk-1"},
+        })
+        self.reply("продолжай работу")
+        self.pipe.account_tails("задача закрыта")
+        body = self.task_body()
+        self.assertEqual(body.count("- Хвост:"), 3, body)
+        self.assertEqual(self.pipe.shout.call_count, 3, self.pipe.shout.call_args_list)
+
+    def test_no_tails_writes_nothing(self):
+        self.pipe.account_tails("задача закрыта")
+        self.assertNotIn("- Хвост:", self.task_body())
+        self.assertEqual(self.pipe.shout.call_count, 0)
+
+    def test_quiet_stop_still_accounts_tails(self):
+        # Штатный стоп закрытой задачи молчалив (loud=False), и молчал вместе с
+        # ним и учёт хвостов: строка и уведомление о потере не уходили.
+        self.registry({"b1": {"type": "", "state": "running", "job": "shell",
+                              "command": "shipctl merge DK-1"}})
+        self.pipe.shout = unittest.mock.Mock()
+        with unittest.mock.patch.object(self.pipe, "drop_head"), \
+                unittest.mock.patch.object(self.pipe, "log"), \
+                unittest.mock.patch("sys.exit", side_effect=SystemExit) as gone:
+            with self.assertRaises(SystemExit):
+                self.pipe.stop(0, "архиве", "задача закрыта", loud=False)
+        self.assertEqual(gone.call_count, 1)
+        self.assertIn("- Хвост:", self.task_body())
+        # Одно уведомление на хвост, стоп сам остаётся тихим.
+        self.assertEqual(self.pipe.shout.call_count, 1, self.pipe.shout.call_args_list)
+        self.assertEqual(self.pipe.shout.call_args[0][0], "run_tail")
+
+    def test_stand_stop_with_live_tails(self):
+        # Стенд, где стоп конвейера гасит фоновую команду, субагента и
+        # отложенную реплику. Сценарий проверки, шаг 1.
+        s = Stand(sect="in-progress", plan="хвосты и закрой", live=True, pause="0")
+        self.addCleanup(s.drop)
+        s.task_file()
+        s.reply("продолжай работу")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, s.why(got))
+        tails = s.tails()
+        self.assertEqual(len(tails), 3, tails)
+        joined = "\n".join(tails)
+        self.assertIn("shipctl merge DK-1", joined)
+        self.assertIn("exec-high", joined)
+        self.assertIn("продолжай работу", joined)
+
+    def reply(self, text):
+        d = os.path.join(self.root, ".devkit", "chat")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "task-DK-1.in"), "a", encoding="utf-8") as f:
+            f.write("2026-10-10 12:00, из дашборда: %s\n" % text)
+
+
+class OneEntryTest(unittest.TestCase):
+    """Один заход на задачу (DK-1317). Ручной старт с субагентами замок не
+    берёт, и конвейер поднимал вторую голову в том же дереве: на DK-1176 исход
+    свела случайность. Строку с чужим заходом конвейер не поднимает."""
+
+    def setUp(self):
+        # «работа|закрой»: первый проход ведёт строку, второй закрывает.
+        # Отказ по чужому заходу уходит раньше первого заказа, а исход
+        # «чужого нет» обязан доезжать до штатного стопа.
+        self.stand = Stand(sect="in-progress", plan="работа|закрой")
+        self.addCleanup(self.stand.drop)
+
+    def test_foreign_subagent_stops_with_busy(self):
+        self.stand.foreign()
+        got = self.stand.run()
+        self.assertEqual(got.returncode, 3, got.stderr)
+        self.assertIn("чужой заход", got.stderr)
+        self.assertEqual(self.stand.orders(), [], "голова поднята поверх чужого захода")
+
+    def test_foreign_shell_stops_with_busy(self):
+        self.stand.foreign(agents={
+            "b1": {"type": "", "description": "слияние", "job": "shell",
+                   "command": "shipctl merge DK-1", "output": "",
+                   "started": time.time(), "done": 0, "state": "running",
+                   "told": False}})
+        got = self.stand.run()
+        self.assertEqual(got.returncode, 3, got.stderr)
+        self.assertEqual(self.stand.orders(), [], "голова поднята поверх чужой команды")
+
+    def test_foreign_work_on_another_task_is_ignored(self):
+        self.stand.foreign(agents={
+            "a1": {"type": "exec-high", "description": "работа DK-2",
+                   "output": "", "started": time.time(), "done": 0,
+                   "state": "running", "told": False, "job": "subagent"}})
+        got = self.stand.run()
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertTrue(self.stand.orders(), s_orders(self.stand))
+
+    def test_finished_foreign_work_is_ignored(self):
+        self.stand.foreign(agents={
+            "a1": {"type": "exec-high", "description": "работа DK-1",
+                   "output": "", "started": time.time(), "done": time.time(),
+                   "state": "done", "told": True, "job": "subagent"}})
+        got = self.stand.run()
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertTrue(self.stand.orders(), s_orders(self.stand))
+
+
+def s_orders(s):
+    return "заказы: %s, журнал:\n%s" % (s.orders(), "\n".join(s.journal()))
 
 
 if __name__ == "__main__":

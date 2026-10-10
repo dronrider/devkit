@@ -89,8 +89,18 @@ turn-mark.py, и сессия, поднятая до того, как он лё�
 следующего конца хода. Голова просыпается по концу субагента и по концу
 команды. Ход ей поднимает харнес, а не оболочка.
 
-Третье ожидание это машинное событие снаружи сессии: отбитое слияние ждёт
-коммита соседа, фоновое дело идёт своим чередом. Такой ход сессия отмечает
+Стоп конвейера учитывает живые хвосты: фоновую команду, субагента и
+отложенную реплику во входе чата. Каждый хвост получает запись в «Ходе
+работы» файла задачи и уведомление, и гаснет вслух. Молчаливого стопа у
+конвейера нет: закрытая задача останавливает цикл тихо, но пропажа работы
+называется всегда (DK-1317).
+
+На задаче один заход. Строку с чужим живым заходом конвейер не поднимает:
+ручной старт с субагентами замок не берёт, и вторая голова в том же дереве
+только мешает. Проверка идёт по живому субагенту либо команде чужой сессии
+и по замку задачи (DK-1317).
+
+Третье ожидание это машинное событие снаружи сессии: отбитое слияние ждёткоммита соседа, фоновое дело идёт своим чередом. Такой ход сессия отмечает
 командой `agentctl wait` (условие и срок, запись в ~/.devkit/waits на задачу), а
 оболочка читает условие с диска и ждёт за неё. Конец процесса и час она
 проверяет сама, слияние и закрытие соседней строки спрашивает у
@@ -242,6 +252,9 @@ WAIT_STALE = "отметка прошлого запуска"
 # писатель с закрывателем обязаны называть один вид: закрытие ищет незакрытый
 # этап именно этого вида, чужой живой этап не трогая.
 WAIT_STAGE = "ждёт события"
+# Раздел файла задачи, куда пишется запись хвоста при стопе. Тот же раздел,
+# куда уезжает возврат проверки (tools/taskctl/fail.go, stageSection).
+TASK_SECTION = "## Ход работы"
 WAIT_SHUT_LIMIT = 30
 
 # Реестр субагентов сессии. Его пишет сторож hooks/agent-watch.py, по файлу на
@@ -813,8 +826,115 @@ class Pipeline:
         except OSError as e:
             self.say("уведомление не отправлено (%s)" % e)
 
+    def account_tails(self, why):
+        """Живые хвосты на стопе: каждый получает запись в задаче и уведомление.
+        Штатный стоп закрытой задачи молчалив, и молчал вместе с ним и учёт
+        хвостов: фоновая команда старта ветки и отложенная реплика умирали
+        вместе с окном без строки и уведомления (DK-1317). Доезжать их
+        принудительно нельзя: команда после стопа уже не нужна, а реплика
+        устаревает. Гаснуть каждый хвост обязан вслух."""
+        tails = []
+        for cmd in self.shells():
+            tails.append(("фоновая команда «%s»" % cmd, cmd))
+        for kind in self.busy():
+            tails.append(("субагент %s" % kind, kind))
+        # Реплика, поднявшая эту голову, это её ход, а не брошенный хвост: она
+        # отвечает в ленту и засыпает тем же стопом (DK-1194). Хвостом реплика
+        # становится только перед головой, которую она не поднимала.
+        reply = self.lying_reply()
+        if reply and not (self.replying() or self.replied):
+            cut = reply if len(reply) <= SHELL_CUT else reply[:SHELL_CUT] + "..."
+            tails.append(("отложенная реплика «%s»" % cut, cut))
+        for what, _ in tails:
+            self.tail_mark(what)
+            self.shout("run_tail",
+                       "%s: %s хвост снят стопом" % (self.project, self.id),
+                       "%s, %s" % (what, why))
+            self.log("хвост снят стопом: %s, %s, %s" % (what, why, self.id), 0)
+        return tails
+
+    def tail_mark(self, what):
+        """Запись хвоста в раздел «Ход работы» файла задачи, тем же местом, куда
+        уезжает возврат проверки. Файла может не быть (черновик, архив), и
+        запись тогда пропускается: уведомление и журнал строки уже ушли."""
+        line = "- Хвост: %s, снят стопом конвейера, %s." % (what, time.strftime("%Y-%m-%d"))
+        path = os.path.join(self.proj, "docs", "tasks", self.id + ".md")
+        try:
+            with open(path, encoding="utf-8") as f:
+                body = f.read()
+        except OSError:
+            self.say("файла задачи нет (%s), запись хвоста некуда" % path)
+            return
+        lines = body.splitlines()
+        start, end = None, len(lines)
+        for i, ln in enumerate(lines):
+            if not ln.startswith("## "):
+                continue
+            if start is not None:
+                end = i
+                break
+            if ln.strip() == TASK_SECTION:
+                start = i
+        if start is None:
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines.append(TASK_SECTION)
+            lines.append("")
+            lines.append(line)
+        else:
+            at = end
+            while at > start + 1 and not lines[at - 1].strip():
+                at -= 1
+            lines.insert(at, line)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        except OSError as e:
+            self.say("запись хвоста в файл задачи не ушла (%s)" % e)
+
+    def foreign_entry(self):
+        """Живой чужой заход по этой задаче: субагент либо фоновая команда
+        чужой сессии, чья работа называет этот ID. Ручной старт с субагентами
+        замок не берёт, и без этой проверки конвейер поднимал вторую голову в
+        том же дереве: на DK-1176 исход свела случайность (DK-1317). Своё окно
+        к моменту проверки ещё не поднято, и всё живое на задаче чужое."""
+        root = (os.environ.get(AGENTS_ENV) or "").strip() or AGENTS_DIR
+        me = "".join(c for c in (self.sid or "") if c.isalnum() or c in "-_")
+        id_re = re.compile(r"\b%s\b" % re.escape(self.id.upper()))
+        found = []
+        try:
+            names = os.listdir(root)
+        except OSError:
+            return found
+        for name in names:
+            if not name.endswith(".json"):
+                continue
+            sid = name[:-5]
+            if me and sid == me:
+                continue
+            try:
+                with open(os.path.join(root, name), encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError):
+                continue
+            agents = data.get("agents") if isinstance(data, dict) else None
+            if not isinstance(agents, dict):
+                continue
+            for v in agents.values():
+                if not isinstance(v, dict) or v.get("state") != AGENT_RUNNING:
+                    continue
+                text = " ".join(str(v.get(k) or "")
+                                for k in ("description", "command", "type"))
+                if not id_re.search(text):
+                    continue
+                what = str(v.get("type") or v.get("command")
+                           or v.get("description") or "-")
+                found.append("%s (%s)" % (what, sid[:8]))
+        return found
+
     def stop(self, code, sect, why, reason="", loud=True):
         self.say("стоп: %s (задача в %s)" % (why, sect or "неизвестно где"))
+        self.account_tails(why)
         self.drop_head()
         self.log("конвейер %s встал: %s, %s в %s" % (self.sess, why, self.id, sect or "неизвестно где"), code)
         if loud:
@@ -1567,9 +1687,20 @@ class Pipeline:
         return sect
 
     def run(self):
+        self.refuse_foreign()
         if self.live_ready():
             return self.run_live()
         return self.run_passes()
+
+    def refuse_foreign(self):
+        """Не поднимать строку с чужим заходом. Один заход на задачу: ручной
+        старт с субагентами жив, и вторая голова только мешает (DK-1317)."""
+        found = self.foreign_entry()
+        if not found:
+            return
+        said = "чужой заход по %s: %s" % (self.id, ", ".join(found))
+        self.log(said + ", голова не поднимается", BUSY)
+        die(said + ", строку с чужим заходом конвейер не поднимает", BUSY)
 
     def run_passes(self):
         # Проходы считаются вычетом: ожидание это не проход, и потолок его не

@@ -33,6 +33,9 @@ type securityRunner interface {
 	// Keychain «запись не найдена» это тоже error: различать её с вызывающим
 	// кодом не нужно, у secretctl своя missingSecret по маркеру в Dir.
 	Find(service, account string) (string, error)
+	// Add кладёт или заменяет запись (-U): значение уходит в security по
+	// stdin, а не аргументом, потому что argv виден в ps.
+	Add(service, account, value string) error
 }
 
 // realSecurity зовёт системный бинарь security. Флаг -w печатает только пароль
@@ -57,6 +60,51 @@ func (r *realSecurity) Find(service, account string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// Add зовёт add-generic-password с флагом обновления: -U заменяет существующую
+// запись и создаёт отсутствующую. Значение едет командой из stdin в режиме
+// бинаря -i, и у этого входа две предпосылки. Аргументом его не пишем: argv
+// виден в ps, и туда секрет не уходит ни в каком виде. Обычный же stdin при
+// хвостовом -w бинарь читает с подтверждением и держит в буфере не больше
+// 128 байт, так что длинная запись проходила с кодом 0, а в Keychain ложился
+// короткий кусок. Команда из stdin в -i разбирается целиком, проверено до
+// четырёх килобайт. Перевод строки команду разбивает, поэтому значение с ним
+// сюда не кладётся, а спецсимволы закрываются обратным слэшем.
+func (r *realSecurity) Add(service, account, value string) error {
+	if strings.ContainsAny(value, "\r\n") {
+		return fmt.Errorf("в значении перевод строки: команда security -i построчная, в Keychain его не положить")
+	}
+	cmd := exec.Command(r.Path, "-i")
+	cmd.Stdin = strings.NewReader("add-generic-password -U -s " +
+		secEscape(service) + " -a " + secEscape(account) + " -w " +
+		secEscape(value) + "\n")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		hint := strings.TrimSpace(stderr.String())
+		if hint != "" {
+			return fmt.Errorf("%s: %w", hint, err)
+		}
+		return err
+	}
+	return nil
+}
+
+// secEscape закрывает спецсимволы разборщика команд security -i обратным
+// слэшем: без него пробел обрывал значение, а кавычка меняла кавычки внутри.
+// Перед обычным символом разборщик слэш снимает, поэтому закрывается только
+// то, что ему мешает, и обычные значения уходят как есть.
+func secEscape(v string) string {
+	const specials = " \t\"'\\$`;|&<>#*?!~^()[]"
+	var b strings.Builder
+	for _, ch := range v {
+		if strings.ContainsRune(specials, ch) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(ch)
+	}
+	return b.String()
 }
 
 type realSecurity struct {
@@ -87,4 +135,25 @@ func (b *KeychainBackend) Get(name string) (string, error) {
 		return "", fmt.Errorf("не достал секрет %q из Keychain: %w", name, err)
 	}
 	return value, nil
+}
+
+// Set кладёт значение в Keychain, потом ставит маркер в Dir. Маркер это
+// источник правды для names, и без него новая запись в перечне не появилась бы.
+// Порядок обратный чтению: сначала значение, потом маркер, чтобы обрыв на
+// Keychain не оставлял маркер без секрета под ним.
+func (b *KeychainBackend) Set(name, value string) error {
+	if !validName(name) {
+		return badName(name)
+	}
+	if err := b.Security.Add(b.Service, name, value); err != nil {
+		return fmt.Errorf("не записал секрет %q в Keychain: %w", name, err)
+	}
+	if err := os.MkdirAll(b.Dir, 0o700); err != nil {
+		return fmt.Errorf("не создал директорию маркеров: %w", err)
+	}
+	marker := filepath.Join(b.Dir, name)
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		return fmt.Errorf("не поставил маркер секрета %q: %w", name, err)
+	}
+	return nil
 }

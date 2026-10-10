@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -137,6 +139,8 @@ type fakeSecurity struct {
 	values  map[string]string
 	missing map[string]bool
 	err     error
+	// addedService и addedAccount помнят последний вызов Add.
+	addedService, addedAccount string
 }
 
 func (f *fakeSecurity) Find(service, account string) (string, error) {
@@ -150,6 +154,20 @@ func (f *fakeSecurity) Find(service, account string) (string, error) {
 		return v, nil
 	}
 	return "", fmt.Errorf("The specified item could not be found in the keychain.")
+}
+
+// Add кладёт значение в тот же словарь, что читает Find, и запоминает пару
+// service/account: тест сверяет, что запись ушла в правильное пространство имён.
+func (f *fakeSecurity) Add(service, account, value string) error {
+	if f.err != nil {
+		return f.err
+	}
+	if f.values == nil {
+		f.values = map[string]string{}
+	}
+	f.values[account] = value
+	f.addedService, f.addedAccount = service, account
+	return nil
 }
 
 func TestKeychainBackendGetReturnsValue(t *testing.T) {
@@ -225,6 +243,148 @@ func TestKeychainBackendRejectsBadName(t *testing.T) {
 		if _, err := b.Get(bad); err == nil {
 			t.Fatalf("имя %q прошло валидацию, жду отказ", bad)
 		}
+	}
+}
+
+// Set файла читается тем же Get: значение ложится с правами 0600, и директория
+// создаётся, если хранилища ещё не было (чистая машина).
+func TestFileBackendSetRoundTrip(t *testing.T) {
+	dir := makeSecretsDir(t, map[string]string{})
+	b := &FileBackend{Dir: dir}
+	if err := b.Set("FRESH", "value-1"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := b.Get("FRESH")
+	if err != nil || v != "value-1" {
+		t.Fatalf("после Set: %q, %v", v, err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "FRESH"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("права файла: %o, жду 600", perm)
+	}
+}
+
+// Set в Keychain идёт в то же пространство имён, что и чтение, и ставит
+// маркер в Dir: без маркера names о новом секрете не узнал бы.
+func TestKeychainBackendSetStoresAndWritesMarker(t *testing.T) {
+	dir := makeSecretsDir(t, map[string]string{})
+	fake := &fakeSecurity{}
+	b := &KeychainBackend{Dir: dir, Service: "devkit.secretctl", Security: fake}
+	if err := b.Set("KC_NEW", "kc-put-value"); err != nil {
+		t.Fatal(err)
+	}
+	if fake.addedService != "devkit.secretctl" || fake.addedAccount != "KC_NEW" {
+		t.Fatalf("запись ушла в %q/%q, жду devkit.secretctl/KC_NEW", fake.addedService, fake.addedAccount)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "KC_NEW")); err != nil {
+		t.Fatalf("маркер не появился: %v", err)
+	}
+	v, err := b.Get("KC_NEW")
+	if err != nil || v != "kc-put-value" {
+		t.Fatalf("после Set читается %q, %v", v, err)
+	}
+}
+
+// BadName ловит и запись: поддельное имя не доходит ни до файловой системы,
+// ни до account в Keychain.
+func TestSetRefusesBadNameBothBackends(t *testing.T) {
+	dir := makeSecretsDir(t, map[string]string{})
+	fake := &fakeSecurity{}
+	for _, b := range []Backend{
+		&FileBackend{Dir: dir},
+		&KeychainBackend{Dir: dir, Service: "devkit.secretctl", Security: fake},
+	} {
+		if err := b.Set("../outside", "evil"); err == nil {
+			t.Fatalf("%T пропустил поддельное имя", b)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "outside")); !os.IsNotExist(err) {
+		t.Fatalf("файл создан мимо хранилища: %v", err)
+	}
+	if fake.addedAccount != "" {
+		t.Fatalf("поддельное имя дошло до Keychain: %q", fake.addedAccount)
+	}
+}
+
+// Add зовёт настоящий бинарь security, и его контракт ловится заглушкой вместо
+// Keychain. Входов у значения два, и оба здесь под замком: пароль аргументом
+// уходит в argv, где его видит ps, а обычный stdin бинарь держит не больше
+// 128 байт и длинную запись молча обрезает. Живой путь один: команда из stdin
+// в режиме -i, она разбирается целиком. Стаб пишет argv и stdin разными
+// файлами, тест сверяет, что аргументов у процесса нет, а в stdin лежит
+// команда с полным значением, спецсимволы закрыты обратным слэшем.
+func TestRealSecurityAddWritesCommandViaStdin(t *testing.T) {
+	dir := t.TempDir()
+	argvFile := filepath.Join(dir, "argv")
+	stdinFile := filepath.Join(dir, "stdin")
+	stub := filepath.Join(dir, "security")
+	script := "#!/bin/sh\nprintf '%s' \"$*\" > " + argvFile +
+		"\ncat > " + stdinFile + "\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := &realSecurity{Path: stub}
+
+	long := "api-platform_serviceToken=" + strings.Repeat("x", 300)
+	if err := r.Add("devkit.secretctl", "PROBE", long); err != nil {
+		t.Fatal(err)
+	}
+	argv, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(argv) != "-i" {
+		t.Fatalf("argv security: %q, жду только -i (значение в argv видно в ps)", argv)
+	}
+	data, err := os.ReadFile(stdinFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "add-generic-password -U -s devkit.secretctl -a PROBE -w " + long + "\n"
+	if string(data) != want {
+		t.Fatalf("stdin для security: %q, жду команду с полным значением", data)
+	}
+
+	// Спецсимволы значения: пробел, кавычки и точка с запятой закрываются
+	// обратным слэшем, остальное идёт как есть.
+	if err := r.Add("devkit.secretctl", "PROBE", `a=b; "c d" 'e'`); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(stdinFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = `add-generic-password -U -s devkit.secretctl -a PROBE -w a=b\;\ \"c\ d\"\ \'e\'` + "\n"
+	if string(data) != want {
+		t.Fatalf("stdin со спецсимволами: %q, жду %q", data, want)
+	}
+}
+
+// Живая проверка на настоящем Keychain: значение длиннее 128 байт сохраняется
+// целиком и обратно читается. Ровно это ломал старый stdin-вход бинаря security:
+// запись проходила с кодом 0, а в хранилище ложился короткий кусок. Заглушка
+// такое не воспроизводит, поэтому кейс и едет на настоящем бинаре, под macOS.
+func TestRealSecurityAddLongValueRoundTrip(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("живой Keychain есть только на macOS")
+	}
+	const service, account = "devkit.secretctl-test", "LONG_VALUE_PROBE"
+	r := &realSecurity{Path: "/usr/bin/security"}
+	defer exec.Command("/usr/bin/security", "delete-generic-password",
+		"-s", service, "-a", account).Run()
+	long := "api-platform_serviceToken=" + strings.Repeat("x", 300)
+	if err := r.Add(service, account, long); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Find(service, account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != long {
+		t.Fatalf("в Keychain %d байт, жду %d: значение обрезано", len(got), len(long))
 	}
 }
 

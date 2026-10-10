@@ -3,7 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 )
 
 const usageText = `secretctl: имена агенту, значение в подпроцесс
@@ -17,6 +19,10 @@ const usageText = `secretctl: имена агенту, значение в по�
   exec <имя> -- <команда> ...    запускает команду в подпроцессе, подставив
                                  значение секрета в его окружение: имя
                                  переменной равно имени секрета
+  set <имя>                      записывает значение секрета или заменяет
+                                 прежнее: значение читается по stdin, а не
+                                 аргументом, аргумент виден в ps; при успехе
+                                 команда молчит
 
 Бэкенд выбирается по окружению: macOS Keychain через security CLI, когда
 доступен; файлы с правами 0600 в ином случае. Разбор в
@@ -100,6 +106,33 @@ func main() {
 		}
 		if code != 0 {
 			os.Exit(code)
+		}
+	case "set":
+		// Значение по stdin, не аргументом: argv процесса читается из ps,
+		// и секрет туда не попадает ни в каком виде. Края обрезаются тем же
+		// TrimSpace, которым значение читается, иначе случайный перевод
+		// строки из пайпа ложился бы в хранилище хвостом.
+		fs := flag.NewFlagSet("set", flag.ExitOnError)
+		fs.Usage = func() { fmt.Fprint(os.Stderr, usageText) }
+		fs.Parse(args[1:])
+		if fs.NArg() != 1 {
+			fail(fmt.Errorf("жду одно имя секрета: set <имя>"))
+		}
+		name := fs.Arg(0)
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fail(fmt.Errorf("не прочитал stdin для секрета %q: %w", name, err))
+		}
+		value := strings.TrimSpace(string(data))
+		if value == "" {
+			fail(fmt.Errorf("пустое значение секрета %q: значение уходит по stdin", name))
+		}
+		backend, err := defaultBackend()
+		if err != nil {
+			fail(err)
+		}
+		if err := backend.Set(name, value); err != nil {
+			fail(err)
 		}
 	case "help":
 		fmt.Print(usageText)

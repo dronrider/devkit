@@ -16,7 +16,15 @@ import (
 // бинарь читает то же временное хранилище, что и assertions.
 func runSecretctlAux(t *testing.T, bin string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
+	return runSecretctlStdin(t, bin, "", args...)
+}
+
+// runSecretctlStdin то же, но со stdin-ом: set читает значение секрета
+// оттуда, и без этого входа команду не проверить.
+func runSecretctlStdin(t *testing.T, bin, stdin string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
 	cmd := exec.Command(bin, args...)
+	cmd.Stdin = strings.NewReader(stdin)
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
@@ -233,6 +241,7 @@ func TestNoSubcommandPrintsValue(t *testing.T) {
 		{"--help"},
 		{"-h"},
 		{"get", "API_TOKEN"},
+		{"set", "API_TOKEN"},
 		{"show", "API_TOKEN"},
 		{"print", "API_TOKEN"},
 		{"value", "API_TOKEN"},
@@ -294,5 +303,91 @@ func TestUnknownCommandExitsNonZero(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "frobnicate") {
 		t.Fatalf("отказ не назвал неизвестную команду: %q", stderr)
+	}
+}
+
+// set кладёт значение со stdin в хранилище: новое имя появляется в файле и в
+// names, а сама команда при успехе молчит, как и exec.
+func TestSetWritesNewSecret(t *testing.T) {
+	bin := buildSecretctl(t)
+	setupSecretsEnv(t, map[string]string{})
+	stdout, stderr, code := runSecretctlStdin(t, bin, "cookie-value-77\n", "set", "CABINET_COOKIE")
+	if code != 0 {
+		t.Fatalf("set упал (%d): stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("set при успехе печатает: %q", stdout)
+	}
+	data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".devkit", "secrets", "CABINET_COOKIE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "cookie-value-77" {
+		t.Fatalf("в хранилище: %q", data)
+	}
+	stdout, _, _ = runSecretctlAux(t, bin, "names")
+	if !strings.Contains(stdout, "CABINET_COOKIE") {
+		t.Fatalf("set не появился в names: %q", stdout)
+	}
+}
+
+// Повторная запись заменяет прежнее значение целиком и не оставляет tmp-файла:
+// съёмщик обновляет куки сессии через эту команду, и подмена обязана быть
+// атомарной.
+func TestSetReplacesExistingValue(t *testing.T) {
+	bin := buildSecretctl(t)
+	setupSecretsEnv(t, map[string]string{"CABINET_COOKIE": "old"})
+	_, stderr, code := runSecretctlStdin(t, bin, "new", "set", "CABINET_COOKIE")
+	if code != 0 {
+		t.Fatalf("set упал: %q", stderr)
+	}
+	dir := filepath.Join(os.Getenv("HOME"), ".devkit", "secrets")
+	data, err := os.ReadFile(filepath.Join(dir, "CABINET_COOKIE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new" {
+		t.Fatalf("значение не заменилось: %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "CABINET_COOKIE.tmp")); !os.IsNotExist(err) {
+		t.Fatalf("tmp-файл остался после подмены: %v", err)
+	}
+}
+
+// Пустое значение это отказ с именем секрета: случайный пайп без данных не
+// должен затирать хранилище, и прежнее значение обязано пережить отказ.
+func TestSetRefusesEmptyStdinKeepsOldValue(t *testing.T) {
+	bin := buildSecretctl(t)
+	setupSecretsEnv(t, map[string]string{"CABINET_COOKIE": "keep-me"})
+	_, stderr, code := runSecretctlStdin(t, bin, "  \n", "set", "CABINET_COOKIE")
+	if code == 0 {
+		t.Fatalf("пустое значение прошло: stderr=%q", stderr)
+	}
+	if !strings.Contains(stderr, "CABINET_COOKIE") {
+		t.Fatalf("отказ не назвал имя секрета: %q", stderr)
+	}
+	data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".devkit", "secrets", "CABINET_COOKIE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "keep-me" {
+		t.Fatalf("отказ затёр прежнее значение: %q", data)
+	}
+}
+
+// Имя проходит тот же алфавит, что и у чтения: обход вида ../ не пишет файл
+// мимо директории хранилища.
+func TestSetRefusesBadName(t *testing.T) {
+	bin := buildSecretctl(t)
+	setupSecretsEnv(t, map[string]string{})
+	_, stderr, code := runSecretctlStdin(t, bin, "evil", "set", "../outside")
+	if code == 0 {
+		t.Fatalf("поддельное имя прошло: stderr=%q", stderr)
+	}
+	if !strings.Contains(stderr, "../outside") {
+		t.Fatalf("отказ не назвал имя: %q", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".devkit", "outside")); !os.IsNotExist(err) {
+		t.Fatalf("файл создан мимо хранилища: %v", err)
 	}
 }

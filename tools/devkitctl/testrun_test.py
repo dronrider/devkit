@@ -156,6 +156,21 @@ class CommandTest(Stand):
         self.assertEqual(argv[-4:], ["unittest", "discover", "-p", "*_test.py"])
         self.assertIsNone(env, "питоновая сюита идёт с окружением раннера")
 
+    def test_run_filter_goes_to_unittest_k_for_python(self):
+        # Хвост сценария пишется по образцу go (`-run DutyAgent`), а питоновая
+        # сюита имени теста не принимает: ключ переводится в отбор unittest -k.
+        d = self.pkg("own")
+        testenv.write(d / "suite.py", "raise SystemExit(0)\n")
+        argv, _ = testrun.build(d, "suite", 6, ["-run", "DutyAgent"])
+        self.assertEqual(argv[-6:], ["unittest", "discover", "-p", "*_test.py",
+                                     "-k", "*DutyAgent*"])
+        self.assertNotIn("suite.py", argv)
+
+    def test_run_filter_keeps_go_flag(self):
+        argv, _ = testrun.build(self.root / "tools" / "x", "go", 2,
+                                ["-run", "TestX"])
+        self.assertEqual(argv[-3:], ["./...", "-run", "TestX"])
+
 
 class RunTest(Stand):
     def test_green_run_returns_zero_and_prints_component_line(self):

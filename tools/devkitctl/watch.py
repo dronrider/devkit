@@ -1088,20 +1088,6 @@ def run_head(root, task, call=None, taskctl=None):
     return p.returncode, " ".join((p.stdout or "").split())
 
 
-def session_resume(sid, name=None):
-    """Команда продолжения сессии из профиля харнеса: ключ resume секции [head]
-    (DK-931). Профиль берётся тот же, что у `taskctl run`: DEVKIT_HARNESS, а без
-    неё claude-code. Пусто, когда профиль её не называет или не читается."""
-    import harness
-    name = name or os.environ.get("DEVKIT_HARNESS", "").strip() or "claude-code"
-    path = DEVKIT / "kit" / "harness" / (name + ".toml")
-    try:
-        doc = harness.parse(name, path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, harness.TomlError):
-        return ""
-    return " ".join(w.replace("{session}", sid) for w in doc.arr_of("head", "resume"))
-
-
 def lift_rows(root, call=None, taskctl=None, home=None):
     """Подъём строк, оставшихся в работе без живой сессии (DK-1157). Возврат это
     строки отчёта, как у пробуждения и страховки.
@@ -1115,6 +1101,19 @@ def lift_rows(root, call=None, taskctl=None, home=None):
         return lines
     except Exception as e:
         return ["корень %s: подъём осиротевших строк не отработал, %s" % (root, e)]
+
+
+def duty_rows(root, call=None, taskctl=None, home=None):
+    """Дежурный по записям исхода корня (DK-1323). Возврат это строки отчёта.
+
+    Стоит за подъёмом осиротевших строк: одна и та же работа не должна
+    уезжать и туда, и сюда. Саму механику держит модуль duty, тик только зовёт
+    её по корню."""
+    import duty
+    try:
+        return duty.duty_root(root, call=call, taskctl=taskctl, home=home)
+    except Exception as e:
+        return ["корень %s: разбор дежурного не отработал, %s" % (root, e)]
 
 
 def resume_failed(now, call=None, home=None, tmux=None, probe=None, taskctl=None):
@@ -1179,18 +1178,16 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None, taskctl=None
         root = field(row, "дерево") or here()
 
         def outcome(title, why):
-            # Исход идёт дежурному: строка в файле задачи и уведомление. Сам
-            # слой дежурного строит DK-1323, здесь остаётся его адрес, по
-            # которому тик дежурного поднимется. Команда продолжения берётся из
-            # профиля харнеса (DK-931): у второй подписки она своя, и прибитая
-            # строка клиента первой звала бы не того клиента.
-            by_hand = session_resume(field(row, "сессия") or sid) or (
-                "taskctl run %s -C %s" % (task, root) if task else "реплика в окне разговора")
+            # Исход идёт дежурному: строка в файле задачи и фоновое уведомление
+            # (DK-1323). Слой дежурного поднимается тиком по метке записи, а
+            # громкий зов человеку остаётся хвостом его разбора, а не этим
+            # уведомлением. Команда продолжения в тихий уведомитель не едет:
+            # её носит хвост разбора, когда ясно, чем кончился исход.
             note = task_record(root, task, "%s, сессия %s" % (why, sid), now)
             said = shout(title, "%s в %s: %s. Исход дежурному: запись в файл задачи "
-                                "и это уведомление; продолжить руками: %s"
-                         % (sid, os.path.basename(root.rstrip("/")), why, by_hand),
-                         root, call, task)
+                                "и это фоновое уведомление; поднимется дежурный"
+                         % (sid, os.path.basename(root.rstrip("/")), why),
+                         root, call, task, quiet=True)
             keep("эскалация", "сессия %s: %s; исход дежурному, %s; %s"
                               % (sid, why, note, said))
 
@@ -1841,13 +1838,18 @@ def check_run(root, call=None, shipctl=None, home=None):
     return ("корень %s: %s" % (name, "; ".join(lines))), journal
 
 
-def shout(title, body, root, call=None, task=None):
-    """Громкий зов уведомителем. Зовётся он из корня проекта, как из оболочки
-    goal-run: по рабочему дереву уведомитель собирает заголовок баннера и цель
-    перехода по клику. Цель едет ключом `--task`: по полю события лента
-    дашборда ведёт от вставшего цикла к строке цели (DK-323)."""
+def shout(title, body, root, call=None, task=None, quiet=False):
+    """Зов уведомителем: громкий по умолчанию, фоновый ключом quiet.
+
+    Зовётся он из корня проекта, как из оболочки goal-run: по рабочему дереву
+    уведомитель собирает заголовок баннера и цель перехода по клику. Цель едет
+    ключом `--task`: по полю события лента дашборда ведёт от вставшего цикла к
+    строке цели (DK-323). Фоновый уровень идёт исходу дежурному (DK-1323):
+    громкий зов там остаётся хвостом разбора."""
     call = subprocess.run if call is None else call
     argv = [sys.executable, str(NOTIFIER)]
+    if quiet:
+        argv.append("--quiet")
     if task:
         argv += ["--task", task]
     try:
@@ -2148,6 +2150,9 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
             for lline in lift_rows(root, timed(root), taskctl, home=home):
                 out.write(lline + "\n")
                 log_line(lline, home)
+            for dline in duty_rows(root, timed(root), taskctl, home=home):
+                out.write(dline + "\n")
+                log_line(dline, home)
             for cline in close_agent(root, timed(root), taskctl):
                 out.write(cline + "\n")
                 log_line(cline, home)
@@ -2165,6 +2170,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
                      + waiters(root, timed(root), taskctl)
                      + park_stale(root, now, timed(root), taskctl, home=home)
                      + lift_rows(root, timed(root), taskctl, home=home)
+                     + duty_rows(root, timed(root), taskctl, home=home)
                      + close_agent(root, timed(root), taskctl)
                      + review_poll(root, now, timed(root), taskctl, dashboard)):
             out.write(line + "\n")

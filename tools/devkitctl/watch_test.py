@@ -2173,6 +2173,19 @@ class ResumeHelpers:
         tmux = self.tmux if tmux is None else tmux
         return watch.resume_failed(self.now, call, self.home, tmux, lambda: online, taskctl)
 
+    def duty_shouts(self):
+        """Уведомления исхода дежурному в этом стенде: от падения они идут
+        только оттуда, прочие зовы сторожка тик в эти тесты не несёт."""
+        return self.call.argv_with("notify.py")
+
+    def assert_quiet_escalation(self):
+        """Исход ушёл фоновым уведомлением, а не громким зовом (DK-1323):
+        громкий зов это хвост разбора дежурного, а не его начало."""
+        notes = self.duty_shouts()
+        self.assertEqual(len(notes), 1, "исход не ушёл дежурному: %s" % self.call.calls)
+        self.assertIn("--quiet", notes[0],
+                      "исход ушёл громким зовом раньше разбора: %s" % notes)
+
     def ran(self, call=None):
         """Подъёмы через `taskctl run`."""
         call = self.call if call is None else call
@@ -2364,6 +2377,7 @@ class ResumeTest(ResumeHelpers, Stand):
         self.assertEqual(self.ran(), [], "старое падение поднимали: %s" % self.call.calls)
         self.assertEqual(len(self.call.argv_with("notify.py")), 1,
                          "исход не ушёл дежурному: %s" % self.call.calls)
+        self.assert_quiet_escalation()
         record = "\n".join(self.stage_lines())
         self.assertIn(watch.DUTY_MARK, record, "записи в файле задачи нет: %s" % record)
         self.assertIn("простой старше двенадцати часов", record)
@@ -2406,11 +2420,6 @@ class ResumeFailedTest(ResumeHelpers, Stand):
     (запись в файле задачи да уведомление), пустой баланс уходит туда же сразу,
     а доведение проверяет тик тем же прогоном сценария."""
 
-    def duty_shouts(self):
-        """Зовы уведомителем в этом стенде: от падения они идут только из
-        исхода дежурному, прочие зовы сторожка тик в эти тесты не несёт."""
-        return self.call.argv_with("notify.py")
-
     def test_idle_notice_keeps_the_failure(self):
         # Шаг 1 сценария: падение, а через минуту уведомление простоя. Раньше
         # последний повод сеанса падение съедал, и резюм не подавалось ни разу.
@@ -2437,12 +2446,13 @@ class ResumeFailedTest(ResumeHelpers, Stand):
         lines = self.resume()
         self.assertEqual(len(self.duty_shouts()), 1,
                          "исход не ушёл дежурному: %s" % self.call.calls)
+        self.assert_quiet_escalation()
         record = "\n".join(self.stage_lines())
         self.assertIn(watch.DUTY_MARK, record, "записи в файле задачи нет: %s" % record)
         self.assertIn("подъём не помог %d раз подряд" % watch.RESUME_TRIES, record)
         self.assertIn("исход дежурному", " ".join(lines))
         self.assertEqual(self.state()[self.SID]["said"], "эскалация")
-        # Тот же тик второй раз молчит: баннер каждые пять минут человек
+        # Тот же тик второй раз молчит: уведомление каждые пять минут человек
         # выключит вместе со сторожком, и запись не дублируется.
         self.assertEqual(self.resume(), [])
         self.assertEqual(len(self.duty_shouts()), 1)
@@ -2471,6 +2481,7 @@ class ResumeFailedTest(ResumeHelpers, Stand):
         self.assertIn("исход дежурному", " ".join(lines))
         shouts = self.duty_shouts()
         self.assertEqual(len(shouts), 1, "исход не ушёл дежурному: %s" % self.call.calls)
+        self.assert_quiet_escalation()
         self.assertIn(watch.DEBT_MARK, " ".join(str(x) for a in shouts for x in a),
                       "причина не названа в уведомлении: %s" % shouts)
         # Тот же тик второй раз молчит.

@@ -2809,6 +2809,62 @@ func TestCachekeepMutesAgentReply(t *testing.T) {
 	}
 }
 
+// Живая лента дочитывает транскрипт кусками (newChunk), и глушение ответа
+// после продления обязано переживать границу куска. Иначе «ок» приезжает
+// отдельной порцией и остаётся в диалоге (возврат DK-1349).
+func TestCachekeepMutesAcrossChunks(t *testing.T) {
+	keep := "<devkit-cachekeep>Служебное продление кеша. Молчи.</devkit-cachekeep>"
+	file := filepath.Join(t.TempDir(), "t.jsonl")
+	user := func(content string) string {
+		return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
+			`"timestamp":%q,"gitBranch":"main"}`, content, "2026-10-10T12:00:00Z")
+	}
+	assistant := func(text string) string {
+		return fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+			`[{"type":"text","text":%q}]},"timestamp":%q,"gitBranch":"main"}`,
+			text, "2026-10-10T12:00:01Z")
+	}
+	appendLine := func(line string) {
+		f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Первый кусок: одна служебная реплика продления.
+	if err := os.WriteFile(file, []byte(user(keep)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first, _, off := newChunk(file, "s", 0, false)
+	if len(first) != 1 || first[0].Mark != "cachekeep" {
+		t.Fatalf("первый кусок: ждал одну помету продления, %+v", first)
+	}
+	// Второй кусок приходит позже: модель всё-таки ответила «ок».
+	appendLine(assistant("ок"))
+	second, _, off := newChunk(file, "s", off, false)
+	for _, r := range second {
+		if r.Role == "user" || r.Role == "assistant" {
+			t.Fatalf("ответ после продления ушёл в диалог из второго куска: %+v", r)
+		}
+	}
+	// Третий кусок: реплика человека снимает глушение.
+	appendLine(user("продолжай"))
+	appendLine(assistant("готово"))
+	third, _, _ := newChunk(file, "s", off, false)
+	var texts []string
+	for _, r := range third {
+		if r.Role == "user" || r.Role == "assistant" {
+			texts = append(texts, r.Role+":"+r.Text)
+		}
+	}
+	if len(texts) != 2 || texts[0] != "user:продолжай" || texts[1] != "assistant:готово" {
+		t.Fatalf("после реплики человека разговор не пошёл: %v", texts)
+	}
+}
+
 // Планы субагентов одной сессии видны все. CLAUDE_CODE_SESSION_ID у субагентов
 // пачки общий, и по адресу <sid>-sub.json два исполнителя писали план поверх
 // соседского: у DK-641 и DK-642 ход работы снаружи пропал вовсе (DK-527).

@@ -1153,6 +1153,11 @@ type parseSpan struct {
 	src  string
 	off  int64
 	side bool
+	// mute это глушение ответа модели после служебного продления кеша,
+	// приехавшее из прошлого куска того же файла. Живая лента дочитывает
+	// транскрипт порциями, и без этого признака «ок» после пинга уезжает
+	// в диалог отдельной записью (DK-1349).
+	mute bool
 }
 
 func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
@@ -1176,7 +1181,9 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 	askText, askKey, askAt := "", "", 0
 	// Продление кеша просит молчать, но модель иногда отвечает «ок». Ответ
 	// после служебного продления в разговор не идёт: это не диалог (DK-1349).
-	muteAfterKeepalive := false
+	// Признак приезжает из прошлого куска файла (sp.mute) и живёт до
+	// следующей реплики человека.
+	muteAfterKeepalive := sp.mute
 	add := func(item reply) {
 		if item.Role == roleThink {
 			if at, err := time.Parse(time.RFC3339, item.Time); err == nil && !prev.IsZero() {
@@ -1910,6 +1917,88 @@ func cachekeepOnly(text string) bool {
 	}
 	said, _ := splitService(text)
 	return said == ""
+}
+
+// lastUserIsCachekeep смотрит на последнюю реплику человека до смещения off
+// в том же файле. Живая лента дочитывает транскрипт кусками, и глушение
+// ответа после продления обязано пережить границу куска: иначе «ок»
+// приезжает отдельной порцией и остаётся в диалоге (DK-1349). Чтение идёт
+// мимо счётчика feedIO: след ленты меряет её заходы, а не поиск пометы.
+func lastUserIsCachekeep(file string, off int64) bool {
+	if off <= 0 {
+		return false
+	}
+	const window = 256 << 10
+	from := off - window
+	if from < 0 {
+		from = 0
+	}
+	data := readWindow(file, from, off)
+	if from > 0 {
+		if cut := bytes.IndexByte(data, '\n'); cut >= 0 {
+			data = data[cut+1:]
+		} else {
+			return false
+		}
+	}
+	lines := bytes.Split(data, []byte("\n"))
+	for i := len(lines) - 1; i >= 0; i-- {
+		ln := lines[i]
+		if len(ln) == 0 {
+			continue
+		}
+		var rec struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(ln, &rec) != nil || rec.Type != "user" {
+			continue
+		}
+		var s string
+		if json.Unmarshal(rec.Message.Content, &s) == nil {
+			return cachekeepOnly(s)
+		}
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			return false
+		}
+		for _, b := range blocks {
+			if b.Type == "text" {
+				return cachekeepOnly(b.Text)
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// readWindow читает кусок файла [from, to) без счётчика feedIO.
+func readWindow(file string, from, to int64) []byte {
+	if to <= from {
+		return nil
+	}
+	f, err := os.Open(file)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	if _, err := f.Seek(from, io.SeekStart); err != nil {
+		return nil
+	}
+	buf := make([]byte, to-from)
+	n, err := io.ReadFull(f, buf)
+	if n == 0 {
+		return nil
+	}
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return buf[:n]
+	}
+	return buf[:n]
 }
 
 // splitService вырезает из реплики известные служебные вставки. Первый ответ

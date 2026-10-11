@@ -218,7 +218,11 @@ func readTail(file, src, label string, size int64, side bool) feedPart {
 	}
 	data = lastComplete(data)
 	part := feedPart{src: src, file: file, whole: from == 0, end: from + int64(len(data)), size: size}
-	part.items = parseRepliesSpan(data, 0, parseSpan{src: src, off: from, side: side})
+	mute := false
+	if bytes.Contains(data, []byte(`"type":"assistant"`)) {
+		mute = lastUserIsCachekeep(file, from)
+	}
+	part.items = parseRepliesSpan(data, 0, parseSpan{src: src, off: from, side: side, mute: mute})
 	if side {
 		part.items = sideItems(part.items, label, part.whole)
 	}
@@ -251,7 +255,11 @@ func newChunk(file, src string, off int64, side bool) ([]reply, []byte, int64) {
 	if len(data) == 0 {
 		return nil, nil, off
 	}
-	items := parseRepliesSpan(data, 0, parseSpan{src: src, off: off, side: side})
+	mute := false
+	if bytes.Contains(data, []byte(`"type":"assistant"`)) {
+		mute = lastUserIsCachekeep(file, off)
+	}
+	items := parseRepliesSpan(data, 0, parseSpan{src: src, off: off, side: side, mute: mute})
 	return items, data, off + int64(len(data))
 }
 

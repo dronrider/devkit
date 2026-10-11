@@ -97,23 +97,19 @@ class CacheKeepLogicTest(unittest.TestCase):
                          "пятиминутный TTL: перезапись стоит 1.25x")
 
     def test_keepalive_prompt_describes_itself(self):
-        """Реплика продления описывает себя как служебную (DK-1349).
+        """Текст продления дословный, формулировка пользователя (DK-1349).
 
-        Одно слово «кэш» было загадкой: агенты не знали, что отвечать, и
-        кто-то поднимал диагностику кеша с субагентами.
+        Раздутый текст с «молчи» вымогал ответ «молчу». Нужен дословный
+        запрет отвечать и реагировать, включая падеж «для продление».
         """
-        p = cachekeep.KEEPALIVE_PROMPT
-        self.assertNotEqual(p, "кэш", "одно слово «кэш» и есть симптом")
-        self.assertIn("devkit-cachekeep", p, "рамка для ленты дашборда")
-        self.assertTrue(p.startswith("<devkit-cachekeep>"),
-                        "рамка открывает реплику")
-        self.assertTrue(p.endswith("</devkit-cachekeep>"),
-                        "рамка закрывает реплику")
-        low = p.lower()
-        self.assertIn("служебн", low, "реплика называет себя служебной")
-        self.assertIn("молчи", low, "реплика просит молчать")
-        self.assertIn("инструмент", low, "реплика гасит инструменты")
-        self.assertIn("субагент", low, "реплика гасит субагентов")
+        want = ("Это служебное сообщение для продление кеша сессии. "
+                "На него отвечать и реагировать строго запрещено.")
+        self.assertEqual(cachekeep.KEEPALIVE_PROMPT, want,
+                         "текст реплики дословный, формулировка пользователя")
+        self.assertIn("для продление", cachekeep.KEEPALIVE_PROMPT,
+                      "падеж пользователя сохраняется как есть")
+        self.assertNotIn("молчи", cachekeep.KEEPALIVE_PROMPT.lower(),
+                         "слово «молчи» вымогало ответ «молчу»")
 
     def test_keepalive_cost_counts_reply(self):
         """Траты на продлевающий ход замерены вместе с ответом модели (DoD 6)."""

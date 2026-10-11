@@ -1,14 +1,15 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // makeSecretsDir раскладывает временное хранилище: отдельная HOME с .devkit/
@@ -363,24 +364,58 @@ func TestRealSecurityAddWritesCommandViaStdin(t *testing.T) {
 	}
 }
 
+// Поле Timeout впрыскивает предел в обёртку: зависший security снимается по
+// сроку, и вызывающий получает errSecurityTimeout (errors.Is), а не молчание.
+// Символы поля и ошибки здесь нарочно: файл не переносится на старый код
+// целиком, контракт без новых символов держит timeout_test.go.
+func TestRealSecurityTimeoutFieldReturnsNamedError(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "security")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nsleep 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := &realSecurity{Path: stub, Timeout: time.Second}
+	for name, call := range map[string]func() error{
+		"Add":  func() error { return r.Add("devkit.secretctl", "PROBE", "value") },
+		"Find": func() error { _, err := r.Find("devkit.secretctl", "PROBE"); return err },
+	} {
+		if err := call(); !errors.Is(err, errSecurityTimeout) {
+			t.Fatalf("%s: %v, жду errSecurityTimeout", name, err)
+		}
+	}
+}
+
 // Живая проверка на настоящем Keychain: значение длиннее 128 байт сохраняется
 // целиком и обратно читается. Ровно это ломал старый stdin-вход бинаря security:
 // запись проходила с кодом 0, а в хранилище ложился короткий кусок. Заглушка
 // такое не воспроизводит, поэтому кейс и едет на настоящем бинаре, под macOS.
+// Без авторизации UI security встаёт в ожидании диалога: короткий предел снимает
+// вызов, шаг пропускается с названной причиной, и полный прогон headless
+// остаётся зелёным.
 func TestRealSecurityAddLongValueRoundTrip(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("живой Keychain есть только на macOS")
 	}
 	const service, account = "devkit.secretctl-test", "LONG_VALUE_PROBE"
-	r := &realSecurity{Path: "/usr/bin/security"}
-	defer exec.Command("/usr/bin/security", "delete-generic-password",
-		"-s", service, "-a", account).Run()
+	r := &realSecurity{Path: "/usr/bin/security", Timeout: 5 * time.Second}
+	defer func() {
+		// Отдельный короткий предел: уборка идёт и после пропуска, и не должна
+		// стоять столько же, сколько сам зависший вызов.
+		(&realSecurity{Path: r.Path, Timeout: time.Second}).runSecurity("",
+			"delete-generic-password", "-s", service, "-a", account)
+	}()
 	long := "api-platform_serviceToken=" + strings.Repeat("x", 300)
 	if err := r.Add(service, account, long); err != nil {
+		if errors.Is(err, errSecurityTimeout) {
+			t.Skip("авторизация Keychain недоступна: security снят по пределу ожидания")
+		}
 		t.Fatal(err)
 	}
 	got, err := r.Find(service, account)
 	if err != nil {
+		if errors.Is(err, errSecurityTimeout) {
+			t.Skip("авторизация Keychain недоступна: security снят по пределу ожидания")
+		}
 		t.Fatal(err)
 	}
 	if got != long {

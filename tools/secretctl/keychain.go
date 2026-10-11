@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // KeychainBackend хранит значения секретов в macOS Keychain через бинарь
@@ -41,25 +44,11 @@ type securityRunner interface {
 // realSecurity зовёт системный бинарь security. Флаг -w печатает только пароль
 // на stdout; без него security выводит метаданные записи, а пароль глушит.
 func (r *realSecurity) Find(service, account string) (string, error) {
-	cmd := exec.Command(r.Path, "find-generic-password", "-s", service, "-a", account, "-w")
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	// stderr security при ошибке пишет «The specified item could not be found
-	// in the keychain.» и подобное: это текст причины, не значение. Однако
-	// токен в stderr не пишется никогда (только в stdout с -w), поэтому
-	// копируем stderr в свой, чтобы продиагностировать отказ без потери
-	// значения: stderr secretctl не считается утечкой, его видит оператор, а
-	// не модель.
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		hint := strings.TrimSpace(stderr.String())
-		if hint != "" {
-			return "", fmt.Errorf("%s: %w", hint, err)
-		}
-		return "", err
+	stdout, stderr, err := r.runSecurity("", "find-generic-password", "-s", service, "-a", account, "-w")
+	if err != nil {
+		return "", securityErr(stderr, err)
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return strings.TrimSpace(stdout), nil
 }
 
 // Add зовёт add-generic-password с флагом обновления: -U заменяет существующую
@@ -75,18 +64,11 @@ func (r *realSecurity) Add(service, account, value string) error {
 	if strings.ContainsAny(value, "\r\n") {
 		return fmt.Errorf("в значении перевод строки: команда security -i построчная, в Keychain его не положить")
 	}
-	cmd := exec.Command(r.Path, "-i")
-	cmd.Stdin = strings.NewReader("add-generic-password -U -s " +
-		secEscape(service) + " -a " + secEscape(account) + " -w " +
-		secEscape(value) + "\n")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		hint := strings.TrimSpace(stderr.String())
-		if hint != "" {
-			return fmt.Errorf("%s: %w", hint, err)
-		}
-		return err
+	_, stderr, err := r.runSecurity("add-generic-password -U -s "+
+		secEscape(service)+" -a "+secEscape(account)+" -w "+
+		secEscape(value)+"\n", "-i")
+	if err != nil {
+		return securityErr(stderr, err)
 	}
 	return nil
 }
@@ -109,6 +91,70 @@ func secEscape(v string) string {
 
 type realSecurity struct {
 	Path string
+	// Timeout это предел ожидания одного вызова security. Ноль берёт
+	// значение из SECRETCTL_SECURITY_TIMEOUT, а без неё defaultSecurityTimeout.
+	// Поле впрыскиваемое: живой тест ставит короткий предел, чтобы headless
+	// не стоял в ожидании авторизации UI.
+	Timeout time.Duration
+}
+
+// defaultSecurityTimeout это предел ожидания security в проде. Keychain в
+// headless вечно держит makeLoginAuthUI -> AuthorizationCopyRights, и без
+// предела вызывающий ждёт вместе с подпроцессом до потолка go test.
+const defaultSecurityTimeout = 30 * time.Second
+
+// errSecurityTimeout называет снятый по пределу подпроцесс: ответа не было,
+// ждать дальше нельзя. От прочих ошибок security его отличает вызывающий
+// (errors.Is) и принимает решение пропустить шаг либо отказать.
+var errSecurityTimeout = errors.New("security снят по пределу ожидания")
+
+func (r *realSecurity) waitLimit() time.Duration {
+	if r.Timeout > 0 {
+		return r.Timeout
+	}
+	if v := os.Getenv("SECRETCTL_SECURITY_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultSecurityTimeout
+}
+
+// runSecurity зовёт бинарь security с пределом своего подпроцесса: по
+// истечении подпроцесс убивается, трубы закрываются по WaitDelay, и вызывающий
+// получает errSecurityTimeout. Предел свой у каждого вызова: Find и Add зовут
+// помощника и не дублируют ожидание.
+func (r *realSecurity) runSecurity(stdin string, args ...string) (stdout, stderr string, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), r.waitLimit())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, r.Path, args...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	// Без WaitDelay Run ждёт трубу, а её после убийства процесса может
+	// держать открытой его выживший потомок.
+	cmd.WaitDelay = time.Second
+	err = cmd.Run()
+	if ctx.Err() != nil {
+		return "", "", fmt.Errorf("%w: %s %v", errSecurityTimeout, r.Path, args)
+	}
+	return outBuf.String(), errBuf.String(), err
+}
+
+// securityErr поднимает отказ вызова: stderr security при ошибке пишет
+// «The specified item could not be found in the keychain.» и подобное, это
+// текст причины, не значение. Токен в stderr не пишется никогда (только в
+// stdout с -w), поэтому hint уезжает в ошибку без потери значения: stderr
+// secretctl не считается утечкой, его видит оператор, а не модель.
+func securityErr(stderr string, err error) error {
+	hint := strings.TrimSpace(stderr)
+	if hint != "" {
+		return fmt.Errorf("%s: %w", hint, err)
+	}
+	return err
 }
 
 func (b *KeychainBackend) Names() ([]string, error) {

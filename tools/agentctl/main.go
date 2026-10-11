@@ -152,14 +152,22 @@ const usageText = `agentctl: выбор исполнителя под задач
                           вердикт pick); нет снимка или он протух, значит
                           потолок 3 по умолчанию, а строка зовёт agentctl
                           quota refresh
-  rotate                  порог ротации исполнителя-субагента: первая строка
-       [--mark]           машинная (rotate: N), вторая называет источник числа.
-       [--old <ID>]       --mark дописывает строку журнала сессий о ротации:
-       [--new <ID>]       прежний и новый адрес, порог. Строка бронируется
-                          один раз общей механикой (стык с DK-662).
-                          Порог берётся из ключа exec_rotate_tokens машинного
-                          конфига ~/.devkit/harness.local, а без ключа из
-                          умолчания agentctl; то же число уезжает полем
+  rotate                  порог ротации: первая строка машинная (rotate: N),
+       [--mark]           вторая называет источник числа. --mark дописывает
+       [--old <ID>]       строку журнала сессий о ротации: прежний и новый
+       [--new <ID>]       адрес, порог. Строка бронируется один раз общей
+       [--dispatcher]     механикой (стык с DK-662). --dispatcher берёт порог
+       [--self]           диспетчера (ключ dispatcher_rotate_tokens, умолчание
+       [--session <ID>]   150k) вместо исполнительского. --self или --session
+                          мерят контекст сессии токенами и печатают две
+                          строки: context и verdict over|under, вердикт читает
+                          оболочка при решении о ротации; --self берёт адрес
+                          из CLAUDE_CODE_SESSION_ID. Счётчик стенда
+                          DEVKIT_CONTEXT_TOKENS перебивает чтение транскрипта.
+                          Исполнительский порог берётся из ключа
+                          exec_rotate_tokens машинного конфига
+                          ~/.devkit/harness.local, без ключа из умолчания
+                          agentctl; то же число уезжает полем
                           exec_rotate_tokens в agentctl harness --json
 
 Калибр исполнителя считается ярусами лестницы mini -> base -> pro -> max, а в
@@ -556,8 +564,21 @@ func main() {
 		mark := fs.Bool("mark", false, "дописать строку журнала о ротации")
 		oldSess := fs.String("old", "", "прежний адрес сессии для отметки")
 		newSess := fs.String("new", "", "новый адрес сессии для отметки")
+		dispatch := fs.Bool("dispatcher", false, "порог ротации диспетчера вместо исполнительского")
+		self := fs.Bool("self", false, "мерить контекст этой сессии")
+		sess := fs.String("session", "", "мерить контекст названной сессии")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "rotate")
-		msg, err = cmdRotate(*dir, *oldSess, *newSess, *mark)
+		measure := ""
+		switch {
+		case *self && *sess != "":
+			fail(fmt.Errorf("--self и --session не складываются: адрес своей сессии кладёт клиент, второй источник незачем"))
+		case *self:
+			measure = "self"
+		case *sess != "":
+			measure = *sess
+		}
+		msg, err = cmdRotate(*dir, rotateOpts{oldSess: *oldSess, newSess: *newSess,
+			mark: *mark, dispatch: *dispatch, measure: measure})
 	case "help":
 		fmt.Print(usageText)
 		return

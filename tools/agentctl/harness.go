@@ -641,7 +641,15 @@ type layers struct {
 	// конфига. Ноль значит ключ не задан или бит, и на такой ноль умолчание
 	// ставит execRotate; слой тут только транспорт.
 	ExecRotateTokens int
-	Warns            []string
+	// DispatcherRotateTokens это порог ротации диспетчера-сессии по
+	// контексту: верхнеуровневый ключ dispatcher_rotate_tokens машинного
+	// конфига (DK-662). Боль диспетчера названа числом 150k панели /usage,
+	// и один ключ на него и исполнителя разъехал бы эти числа молча,
+	// поэтому порог живёт отдельным ключом рядом с exec_rotate_tokens.
+	// Ноль значит ключ не задан или бит, умолчание ставит
+	// dispatcherRotate; слой тут только транспорт.
+	DispatcherRotateTokens int
+	Warns                 []string
 }
 
 func readConfig(path string) (*subtoml.Doc, error) {
@@ -684,6 +692,13 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 				l.ExecRotateTokens = v.Int
 			} else {
 				l.Warns = append(l.Warns, fmt.Sprintf("%s: ключ exec_rotate_tokens ждёт целое больше нуля, значение пропущено", machinePath))
+			}
+		}
+		if v, ok := mdoc.Table("").Get("dispatcher_rotate_tokens"); ok {
+			if v.Kind == subtoml.KindInt && v.Int > 0 {
+				l.DispatcherRotateTokens = v.Int
+			} else {
+				l.Warns = append(l.Warns, fmt.Sprintf("%s: ключ dispatcher_rotate_tokens ждёт целое больше нуля, значение пропущено", machinePath))
 			}
 		}
 		for _, name := range mdoc.Order {
@@ -1331,9 +1346,14 @@ type harnessesJSON struct {
 	// ExecRotateTokens это порог ротации исполнителя-субагента: ключ
 	// exec_rotate_tokens машинного конфига, а без ключа умолчание agentctl.
 	// Поле всегда заполнено, потребителю считать умолчание не из чего.
-	ExecRotateTokens int      `json:"exec_rotate_tokens"`
-	Note             string   `json:"note,omitempty"`
-	Warns            []string `json:"warns,omitempty"`
+	ExecRotateTokens int `json:"exec_rotate_tokens"`
+	// DispatcherRotateTokens это порог ротации диспетчера-сессии по
+	// контексту: ключ dispatcher_rotate_tokens того же конфига, умолчание
+	// agentctl. Порог исполнителя и порог диспетчера разные числа на разную
+	// боль, и поле живёт отдельно (DK-662).
+	DispatcherRotateTokens int      `json:"dispatcher_rotate_tokens"`
+	Note                   string   `json:"note,omitempty"`
+	Warns                  []string `json:"warns,omitempty"`
 }
 
 // clientBin отвечает, чем поднимается клиент харнеса. Порядок тот же, каким
@@ -1375,8 +1395,9 @@ func cmdHarnessJSON(start string) (string, error) {
 		return "", err
 	}
 	rotate, _ := execRotate(l, machineConfigPath())
+	drotate, _ := dispatcherRotate(l, machineConfigPath())
 	v := harnessesJSON{Default: l.Default, Source: l.Source, Harnesses: []harnessJSON{},
-		ExecRotateTokens: rotate, Warns: l.Warns}
+		ExecRotateTokens: rotate, DispatcherRotateTokens: drotate, Warns: l.Warns}
 	var names []string
 	for name := range l.Setup {
 		names = append(names, name)

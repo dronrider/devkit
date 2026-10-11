@@ -2941,6 +2941,134 @@ func TestCachekeepMutesToolResult(t *testing.T) {
 	}
 }
 
+// Цитата служебного текста в словах человека это разговор, а не продление:
+// вопрос о словах пинга не вычёркивается пометой и не гасит ответ (DK-1349,
+// замечание ревью). Узнаётся продление дословным текстом, а не подстрокой.
+func TestCachekeepQuotedPhraseIsDialog(t *testing.T) {
+	quoted := "вопрос: как быть с текстом «Это служебное сообщение для продление кеша сессии» в чате?"
+	data := []byte(
+		fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
+			`"timestamp":%q,"gitBranch":"main"}`, quoted, "2026-10-10T12:00:00Z") + "\n" +
+			fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+				`[{"type":"text","text":"цитата это не пинг"}]},"timestamp":%q,"gitBranch":"main"}`,
+				"2026-10-10T12:00:01Z") + "\n")
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	var texts []string
+	for _, r := range got {
+		if r.Role == "user" || r.Role == "assistant" {
+			texts = append(texts, r.Role+":"+r.Text)
+		}
+	}
+	if len(texts) != 2 {
+		t.Fatalf("реплик разговора %d, ждал две, цитату и ответ: %v; %+v", len(texts), texts, got)
+	}
+	if texts[0] != "user:"+quoted || texts[1] != "assistant:цитата это не пинг" {
+		t.Fatalf("цитата служебного текста ушла не в диалог: %v", texts)
+	}
+	for _, r := range got {
+		if r.Mark == "cachekeep" {
+			t.Fatalf("цитата превратилась в помету продления: %+v", r)
+		}
+	}
+}
+
+// Пустая реплика на границе куска не снимает глушение: lastUserIsCachekeep
+// обязан пропускать её так же, как её пропускает parseRepliesSpan (DK-1349,
+// замечание ревью). Прежде поиск останавливался на пустом content, и «ок»
+// после продления приезжало в диалог отдельной порцией.
+func TestCachekeepEmptyUserKeepsMuteAcrossChunks(t *testing.T) {
+	keep := "Это служебное сообщение для продление кеша сессии. На него отвечать и реагировать строго запрещено."
+	file := filepath.Join(t.TempDir(), "t.jsonl")
+	appendLine := func(line string) {
+		f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keepLine := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
+		`"timestamp":%q,"gitBranch":"main"}`, keep, "2026-10-10T12:00:00Z")
+	emptyLine := `{"type":"user","message":{"role":"user","content":""},` +
+		`"timestamp":"2026-10-10T12:00:01Z","gitBranch":"main"}`
+	okLine := fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+		`[{"type":"text","text":"ок"}]},"timestamp":%q,"gitBranch":"main"}`,
+		"2026-10-10T12:00:02Z")
+	if err := os.WriteFile(file, []byte(keepLine+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, off := newChunk(file, "s", 0, false)
+	appendLine(emptyLine)
+	_, _, off = newChunk(file, "s", off, false)
+	appendLine(okLine)
+	third, _, _ := newChunk(file, "s", off, false)
+	for _, r := range third {
+		if r.Role == "user" || r.Role == "assistant" {
+			t.Fatalf("пустая реплика на границе куска сняла глушение: %+v", r)
+		}
+	}
+}
+
+// Запись без текстовых блоков (только tool_result) тоже не значимая реплика
+// человека: поиск последней реплики идёт дальше, и глушение после продления
+// переживает такую запись на границе куска (DK-1349, замечание ревью).
+func TestCachekeepToolResultKeepsMuteAcrossChunks(t *testing.T) {
+	keep := "Это служебное сообщение для продление кеша сессии. На него отвечать и реагировать строго запрещено."
+	file := filepath.Join(t.TempDir(), "t.jsonl")
+	appendLine := func(line string) {
+		f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(line + "\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keepLine := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
+		`"timestamp":%q,"gitBranch":"main"}`, keep, "2026-10-10T12:00:00Z")
+	toolLine := `{"type":"user","message":{"role":"user","content":[` +
+		`{"type":"tool_result","tool_use_id":"t1","content":"вывод",` +
+		`"is_error":false}]},"timestamp":"2026-10-10T12:00:01Z","gitBranch":"main"}`
+	okLine := fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+		`[{"type":"text","text":"ок"}]},"timestamp":%q,"gitBranch":"main"}`,
+		"2026-10-10T12:00:02Z")
+	if err := os.WriteFile(file, []byte(keepLine+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, off := newChunk(file, "s", 0, false)
+	appendLine(toolLine)
+	_, _, off = newChunk(file, "s", off, false)
+	appendLine(okLine)
+	third, _, _ := newChunk(file, "s", off, false)
+	for _, r := range third {
+		if r.Role == "user" || r.Role == "assistant" {
+			t.Fatalf("tool_result на границе куска снял глушение: %+v", r)
+		}
+	}
+}
+
+// Страница истории через ?before= не вытесняет живую помету продления:
+// fresh() у пометы cachekeep вычёркивает прежние, и старая отметка из
+// догруженной страницы уносила последнее продление (DK-1349, замечание
+// ревью). Стенд testdata/poc_cachefeed.mjs держит пару «живая помета +
+// страница истории». Без node шаг пропускается: узел стенда, а не рабочей
+// части.
+func TestStaticCachekeepHistoryKeepsLiveMark(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд пометы продления против истории пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_cachefeed.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("история вытеснила живую помету продления: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Планы субагентов одной сессии видны все. CLAUDE_CODE_SESSION_ID у субагентов
 // пачки общий, и по адресу <sid>-sub.json два исполнителя писали план поверх
 // соседского: у DK-641 и DK-642 ход работы снаружи пропал вовсе (DK-527).

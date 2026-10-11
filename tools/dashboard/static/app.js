@@ -6680,12 +6680,22 @@ async function wireFeed(project, sid, opts) {
   updateStart();
   // Запись уже в ленте: ключ приходит с сервера, а у старого ответа без ключа
   // остаётся номер, и тогда отсев идёт по нему.
-  const fresh = (item) => {
+  const fresh = (item, historic) => {
     const key = itemKey(item);
     // Одна обновляемая отметка продления кеша: новое содержимое переписывает
     // прежнее, строки не плодятся ни на каждый пинг, ни на заход обновления
-    // (DK-1349, замечание приёмки 1).
+    // (DK-1349, замечание приёмки 1). Страница истории живую помету не
+    // вытесняет: иначе подгрузка вверх возвращает старую отметку вместо
+    // последнего продления (замечание ревью).
     if (item.mark === "cachekeep") {
+      if (historic) {
+        for (let i = talk.length - 1; i >= 0; i--) {
+          if (talk[i].mark === "cachekeep") {
+            shown.delete(key);
+            return false;
+          }
+        }
+      }
       for (let i = talk.length - 1; i >= 0; i--) {
         if (talk[i].mark === "cachekeep") {
           shown.delete(itemKey(talk[i]));
@@ -6843,7 +6853,7 @@ async function wireFeed(project, sid, opts) {
     // Отсев по ключу тут не украшение: страницы истории приходят с сервера,
     // который каждый раз собирает ленту заново, и запись с края страницы
     // приезжала вторым разом.
-    const add = items.filter((it) => fresh(it) && keep(it) && !seenSaid(it));
+    const add = items.filter((it) => fresh(it, true) && keep(it) && !seenSaid(it));
     if (items.length) {
       firstKey = itemCursor(items[0]);
       pages += 1;

@@ -1952,9 +1952,6 @@ func cutSelection(text string) (sel, file, rest string) {
 	return m[2], m[1], strings.TrimSpace(text[len(m[0]):])
 }
 
-// cachekeepOnly узнаёт реплику продления кеша: целиком служебная рамка
-// devkit-cachekeep, без слов человека. Такой реплике в ленте место одной
-// пометой, а ответ модели после неё в разговор не идёт (DK-1349).
 // cachekeepBody это дословный текст служебной реплики продления (DK-1349,
 // замечание приёмки 2): формулировка пользователя сохраняется как есть,
 // включая падеж «для продление».
@@ -1970,9 +1967,11 @@ const cachekeepMark = "cachekeep"
 // cachekeepOnly узнаёт реплику продления кеша: дословный текст служебной
 // реплики либо старая рамка devkit-cachekeep из прошлых транскриптов. Такой
 // реплике в ленте место одной обновляемой пометы, а ответ модели после неё
-// в разговор не идёт (DK-1349).
+// в разговор не идёт (DK-1349). Цитата служебного текста в словах человека
+// продлением не считается: иначе вопрос о словах пинга вычёркивался пометой
+// и гасил диалог (замечание ревью).
 func cachekeepOnly(text string) bool {
-	if strings.Contains(text, "сообщение для продление кеша") {
+	if strings.TrimSpace(text) == cachekeepBody {
 		return true
 	}
 	if !strings.Contains(text, "<devkit-cachekeep") {
@@ -2019,8 +2018,15 @@ func lastUserIsCachekeep(file string, off int64) bool {
 		if json.Unmarshal(ln, &rec) != nil || rec.Type != "user" {
 			continue
 		}
+		// Пустая реплика и запись без значимого текста не значимы и тут:
+		// как их пропускает parseRepliesSpan, глушение снимает только живое
+		// слово человека. Остановиться на них значило уронить глушение на
+		// границе куска (замечание ревью).
 		var s string
 		if json.Unmarshal(rec.Message.Content, &s) == nil {
+			if strings.TrimSpace(s) == "" {
+				continue
+			}
 			return cachekeepOnly(s)
 		}
 		var blocks []struct {
@@ -2030,12 +2036,17 @@ func lastUserIsCachekeep(file string, off int64) bool {
 		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
 			return false
 		}
+		word := ""
 		for _, b := range blocks {
-			if b.Type == "text" {
-				return cachekeepOnly(b.Text)
+			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+				word = b.Text
+				break
 			}
 		}
-		return false
+		if word == "" {
+			continue
+		}
+		return cachekeepOnly(word)
 	}
 	return false
 }

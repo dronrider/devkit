@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/chat"
 )
 
 // Первый раунд интервью спрашивает про кейсы записи тремя составами, узким,
@@ -77,6 +79,42 @@ func TestChatBlockRollsCases(t *testing.T) {
 		if !strings.Contains(roll, "\n"+w) {
 			t.Fatalf("в раскладке нет строки %q:\n%s", w, roll)
 		}
+	}
+}
+
+// TestChatAskCarriesLineupRoll: панельный заход кладёт раскладку кейсов в
+// текст вопроса признака. Блок он не копирует, и без номеров в признаке
+// человек не ответит «состав 2, минус 4»: карточка печатает текст вопроса
+// строками (DK-1235, DK-1318).
+func TestChatAskCarriesLineupRoll(t *testing.T) {
+	root := setup(t)
+	caseFork(t, root, "XR-005")
+	st := newAskStand(t)
+	st.deps.Main = root
+	chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &st.deps,
+		map[string]string{askTmuxEnv: "chat-XR-005-1", askSessionEnv: "aaa-1"})
+	ask, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName("XR-005")))
+	if !ok {
+		t.Fatal("признака ожидания нет")
+	}
+	if len(ask.Questions) != 1 {
+		t.Fatalf("в признаке не один вопрос: %+v", ask.Questions)
+	}
+	text := ask.Questions[0].Text
+	for _, w := range []string{
+		"раскладка кейсов развилки «кейсы»",
+		"состав 1, сбалансированный:",
+		"1. человек видит три состава",
+		"4. панель вешает галочки на составы",
+		chatLineupHint,
+	} {
+		if !strings.Contains(text, w) {
+			t.Fatalf("в признаке нет раскладки %q:\n%s", w, text)
+		}
+	}
+	opts := ask.Questions[0].Options
+	if len(opts) != 3 || !strings.Contains(opts[0].Label, "сбалансированный состав") {
+		t.Fatalf("варианты признака не головы составов: %+v", opts)
 	}
 }
 

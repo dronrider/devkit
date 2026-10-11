@@ -140,8 +140,9 @@ func chatForkBlock(f taskform.Fork) string {
 const chatLineupHint = "правка состава: «состав 2, минус 4, плюс <свой кейс>», номер кейса из раскладки выше"
 
 // chatLineupRoll собирает раскладку кейсов: по составу блоком, по кейсу на
-// строку. Стоит она ниже последней строки блока, и карточка панели туда не
-// доходит: отмечают там составы, а кейсы правят номерами в строке ответа.
+// строку. В блоке она стоит ниже последней строки, а в признаке ожидания
+// въезжает текстом вопроса: карточка панели печатает её строками, и номера
+// кейсов остаются у человека для правки «состав 2, минус 4» (DK-1235).
 func chatLineupRoll(f taskform.Fork) string {
 	lineups, ok := f.Lineups()
 	if !ok {
@@ -183,10 +184,18 @@ func chatBody(forks []taskform.Fork, tail string) string {
 
 // chatQuestions переводит пачку в формат признака ожидания. По признаку
 // панель знает, что сессия ждёт, а подхват отдаёт ждущему реплики человека.
+// Раскладка кейсов едет в тексте вопроса: панельный заход блок не копирует,
+// и без номеров кейсов в признаке человек не ответит «состав 2, минус 4»
+// (DK-1235, DK-1318). Варианты остаются головами составов, галочки стоят
+// на составах.
 func chatQuestions(forks []taskform.Fork) []chat.Question {
 	var out []chat.Question
 	for _, f := range forks {
-		q := chat.Question{Text: fmt.Sprintf("«%s»: %s", f.Name, f.Question)}
+		text := fmt.Sprintf("«%s»: %s", f.Name, f.Question)
+		if roll := chatLineupRoll(f); roll != "" {
+			text += "\n\n" + roll
+		}
+		q := chat.Question{Text: text}
 		lineups, short := f.Lineups()
 		for i, c := range f.Choices() {
 			if short {

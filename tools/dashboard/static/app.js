@@ -13742,7 +13742,12 @@ function paintAgentCard(box, ask, ta, pick) {
   const marks = [];
   const steps = askCardSteps(ask);
   steps.forEach((step) => {
-    box.append(el("div", "casks", step.text || "заход спросил и ждёт"));
+    // Текст вопроса может нести раскладку кейсов строками (chatQuestions):
+    // панель печатает их по одной, и номера кейсов остаются для правки
+    // «состав 2, минус 4» (DK-1235, DK-1318).
+    for (const line of String(step.text || "заход спросил и ждёт").split("\n")) {
+      if (line.trim()) box.append(el("div", "casks", line));
+    }
     const fork = step.fork || "";
     (step.options || []).forEach((opt, i) => {
       const num = i + 1;

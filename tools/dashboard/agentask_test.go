@@ -264,16 +264,18 @@ func TestStaticAskHeaderGap(t *testing.T) {
 func TestAgentAskOfCarriesTaskAndSince(t *testing.T) {
 	h := handedAsk{Name: "task-XR-9", Since: 1_758_000_000, Ask: chat.Ask{Task: "XR-9",
 		Questions: []chat.Question{{Text: "«печать»: куда катить", Options: []chat.Option{
-			{Label: "в прод"}, {Label: "в main"},
+			{Label: "в прод", Note: "сразу", Recommended: true}, {Label: "в main"},
 		}}}}}
 	// Виджет сверяется по JSON, как его читает панель: поле since появилось
 	// одной правкой, fork другой, и regcheck собирает тест на базе, где их в
-	// типе ещё нет.
+	// типе ещё нет. Пометка рекомендации собирается тем же словом, что и
+	// карточка: agentPicks кладёт в desc «советует агент» плюс note.
 	data, err := json.Marshal(agentAskOf(h))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"task":"XR-9"`, `"since":1758000000`, `"fork":"печать"`} {
+	for _, want := range []string{`"task":"XR-9"`, `"since":1758000000`, `"fork":"печать"`,
+		`"desc":"советует агент. сразу"`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("в виджете нет %s: %s", want, data)
 		}

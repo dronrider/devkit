@@ -92,9 +92,9 @@ func secEscape(v string) string {
 type realSecurity struct {
 	Path string
 	// Timeout это предел ожидания одного вызова security. Ноль берёт
-	// значение из SECRETCTL_SECURITY_TIMEOUT, а без неё defaultSecurityTimeout.
-	// Поле впрыскиваемое: живой тест ставит короткий предел, чтобы headless
-	// не стоял в ожидании авторизации UI.
+	// значение из SECRETCTL_SECURITY_TIMEOUT, а переменная не задана -
+	// defaultSecurityTimeout. Поле впрыскиваемое: живой тест ставит короткий
+	// предел, чтобы headless не стоял в ожидании авторизации UI.
 	Timeout time.Duration
 }
 
@@ -108,16 +108,29 @@ const defaultSecurityTimeout = 30 * time.Second
 // (errors.Is) и принимает решение пропустить шаг либо отказать.
 var errSecurityTimeout = errors.New("security снят по пределу ожидания")
 
-func (r *realSecurity) waitLimit() time.Duration {
+// errBadSecurityTimeout называет отвергнутое значение предела из переменной
+// окружения. Падение выбрано вместо отката к умолчанию: короткий предел
+// обычно ставят под headless, и молчаливый откат возвращает то самое долгое
+// ожидание, от которого убегают.
+var errBadSecurityTimeout = errors.New("SECRETCTL_SECURITY_TIMEOUT отвергнута")
+
+func (r *realSecurity) waitLimit() (time.Duration, error) {
 	if r.Timeout > 0 {
-		return r.Timeout
+		return r.Timeout, nil
 	}
-	if v := os.Getenv("SECRETCTL_SECURITY_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
+	v, ok := os.LookupEnv("SECRETCTL_SECURITY_TIMEOUT")
+	if !ok {
+		return defaultSecurityTimeout, nil
 	}
-	return defaultSecurityTimeout
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, fmt.Errorf("%w: пустое значение", errBadSecurityTimeout)
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("%w: %q", errBadSecurityTimeout, v)
+	}
+	return d, nil
 }
 
 // runSecurity зовёт бинарь security с пределом своего подпроцесса: по
@@ -125,7 +138,11 @@ func (r *realSecurity) waitLimit() time.Duration {
 // получает errSecurityTimeout. Предел свой у каждого вызова: Find и Add зовут
 // помощника и не дублируют ожидание.
 func (r *realSecurity) runSecurity(stdin string, args ...string) (stdout, stderr string, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), r.waitLimit())
+	limit, err := r.waitLimit()
+	if err != nil {
+		return "", "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.Path, args...)
 	if stdin != "" {

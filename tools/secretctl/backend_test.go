@@ -385,6 +385,31 @@ func TestRealSecurityTimeoutFieldReturnsNamedError(t *testing.T) {
 	}
 }
 
+// Неверная SECRETCTL_SECURITY_TIMEOUT не уходит молча в умолчание. Падение с
+// errBadSecurityTimeout выбрано вместо отката к 30s: короткий предел обычно
+// ставят под headless, и молчаливый откат возвращает долгое ожидание. Кейсы
+// без единицы, пустые после trim и с нулём - это тот же отказ разбора.
+func TestWaitLimitRejectsBadEnv(t *testing.T) {
+	r := &realSecurity{Path: "security"}
+	for _, v := range []string{"5", "  ", "abc", "0s", "-1s", ""} {
+		t.Setenv("SECRETCTL_SECURITY_TIMEOUT", v)
+		if _, err := r.waitLimit(); !errors.Is(err, errBadSecurityTimeout) {
+			t.Fatalf("waitLimit(%q) = %v, жду errBadSecurityTimeout", v, err)
+		}
+	}
+	t.Setenv("SECRETCTL_SECURITY_TIMEOUT", "2s")
+	d, err := r.waitLimit()
+	if err != nil || d != 2*time.Second {
+		t.Fatalf("waitLimit(2s) = %v, %v, жду 2s без ошибки", d, err)
+	}
+	r.Timeout = time.Second
+	t.Setenv("SECRETCTL_SECURITY_TIMEOUT", "abc")
+	d, err = r.waitLimit()
+	if err != nil || d != time.Second {
+		t.Fatalf("поле Timeout должно перебивать переменную: %v, %v", d, err)
+	}
+}
+
 // Живая проверка на настоящем Keychain: значение длиннее 128 байт сохраняется
 // целиком и обратно читается. Ровно это ломал старый stdin-вход бинаря security:
 // запись проходила с кодом 0, а в хранилище ложился короткий кусок. Заглушка

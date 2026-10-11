@@ -6415,6 +6415,12 @@ function thinkWord(ms) {
 
 function replyEl(item) {
   if (item.role === "note") {
+    // Помета продления кеша: одна короткая строка не-диалоговой формы,
+    // время переписывается вместе с ней, строки не плодятся (DK-1349).
+    if (item.mark === "cachekeep") {
+      const when = item.time ? ", " + localTime(item.time) : "";
+      return el("div", "svcline", (item.text || "продление кеша") + when);
+    }
     // Служебная вставка харнеса: уведомление о фоновом агенте, слэш-команда.
     // Стоит серой строкой между репликами, а не пузырём: пузырь означает, что
     // это сказал человек, а сказал это харнес.
@@ -6676,6 +6682,20 @@ async function wireFeed(project, sid, opts) {
   // остаётся номер, и тогда отсев идёт по нему.
   const fresh = (item) => {
     const key = itemKey(item);
+    // Одна обновляемая отметка продления кеша: новое содержимое переписывает
+    // прежнее, строки не плодятся ни на каждый пинг, ни на заход обновления
+    // (DK-1349, замечание приёмки 1).
+    if (item.mark === "cachekeep") {
+      for (let i = talk.length - 1; i >= 0; i--) {
+        if (talk[i].mark === "cachekeep") {
+          shown.delete(itemKey(talk[i]));
+          talk.splice(i, 1);
+        }
+      }
+      shown.delete(key);
+      shown.add(key);
+      return true;
+    }
     if (shown.has(key)) return false;
     shown.add(key);
     return true;

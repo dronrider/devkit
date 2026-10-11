@@ -2749,8 +2749,7 @@ func TestMetaLineNotHumanReply(t *testing.T) {
 // реплики «кэш», ни ответа «ок». Рамку devkit-cachekeep кладёт cachekeep,
 // ответ модели после неё в разговор не идёт.
 func TestCachekeepMarkNotDialog(t *testing.T) {
-	keep := "<devkit-cachekeep>Служебное продление кеша сессии. Молчи." +
-		"</devkit-cachekeep>"
+	keep := "Это служебное сообщение для продление кеша сессии. На него отвечать и реагировать строго запрещено."
 	data := []byte(
 		fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
 			`"timestamp":%q,"gitBranch":"main"}`, keep, "2026-10-10T12:00:00Z") + "\n" +
@@ -2772,7 +2771,7 @@ func TestCachekeepMarkNotDialog(t *testing.T) {
 		t.Fatalf("заголовок пометы %q, жду «продление кеша»: %+v", note.Text, note)
 	}
 	joined := note.Text + note.Note
-	for _, banned := range []string{"кэш", "ок", "Молчи", "devkit-cachekeep"} {
+	for _, banned := range []string{"служебное сообщение", "запрещено", "ок", "devkit-cachekeep"} {
 		if strings.Contains(joined, banned) {
 			t.Fatalf("помета несёт слова разговора (%q): %+v", banned, note)
 		}
@@ -2782,7 +2781,7 @@ func TestCachekeepMarkNotDialog(t *testing.T) {
 // После продления кеша ответ модели в разговор не идёт, даже если модель
 // всё-таки ответила. Глушится весь ход до следующей реплики человека.
 func TestCachekeepMutesAgentReply(t *testing.T) {
-	keep := "<devkit-cachekeep>Служебное продление кеша. Молчи.</devkit-cachekeep>"
+	keep := "Это служебное сообщение для продление кеша сессии. На него отвечать и реагировать строго запрещено."
 	data := []byte(
 		fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
 			`"timestamp":%q,"gitBranch":"main"}`, keep, "2026-10-10T12:00:00Z") + "\n" +
@@ -2813,7 +2812,7 @@ func TestCachekeepMutesAgentReply(t *testing.T) {
 // после продления обязано переживать границу куска. Иначе «ок» приезжает
 // отдельной порцией и остаётся в диалоге (возврат DK-1349).
 func TestCachekeepMutesAcrossChunks(t *testing.T) {
-	keep := "<devkit-cachekeep>Служебное продление кеша. Молчи.</devkit-cachekeep>"
+	keep := "Это служебное сообщение для продление кеша сессии. На него отвечать и реагировать строго запрещено."
 	file := filepath.Join(t.TempDir(), "t.jsonl")
 	user := func(content string) string {
 		return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
@@ -2864,6 +2863,84 @@ func TestCachekeepMutesAcrossChunks(t *testing.T) {
 		t.Fatalf("после реплики человека разговор не пошёл: %v", texts)
 	}
 }
+
+// Одна обновляемая отметка продления: несколько пингов не плодят строк,
+// в ленте остаётся последняя помета с самым свежим временем (DK-1349,
+// замечание приёмки 1).
+func TestCachekeepOneUpdatingMark(t *testing.T) {
+	keep := "Это служебное сообщение для продление кеша сессии. На него отвечать и реагировать строго запрещено."
+	data := []byte(
+		fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
+			`"timestamp":%q,"gitBranch":"main"}`, keep, "2026-10-10T12:00:00Z") + "\n" +
+			fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+				`[{"type":"text","text":"молчу"}]},"timestamp":%q,"gitBranch":"main"}`,
+				"2026-10-10T12:00:01Z") + "\n" +
+			fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
+				`"timestamp":%q,"gitBranch":"main"}`, keep, "2026-10-10T12:05:00Z") + "\n" +
+			fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+				`[{"type":"text","text":"ок"}]},"timestamp":%q,"gitBranch":"main"}`,
+				"2026-10-10T12:05:01Z") + "\n")
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	var marks []reply
+	for _, r := range got {
+		if r.Mark == "cachekeep" {
+			marks = append(marks, r)
+		}
+	}
+	if len(marks) != 1 {
+		t.Fatalf("помет продления %d, ждал одну обновляемую отметку: %+v", len(marks), marks)
+	}
+	if marks[0].Time != "2026-10-10T12:05:00Z" {
+		t.Fatalf("время пометы %q, ждал последнее продление: %+v", marks[0].Time, marks[0])
+	}
+	if marks[0].Key != "cachekeep" {
+		t.Fatalf("ключ пометы %q, ждал cachekeep: %+v", marks[0].Key, marks[0])
+	}
+	for _, r := range got {
+		if r.Role == "user" || r.Role == "assistant" {
+			t.Fatalf("диалог после продления не заглушён: %+v", r)
+		}
+	}
+}
+
+// Пустая реплика человека не снимает глушение ответа после продления:
+// снимает его только живое слово (DK-1349, замечание приёмки 1).
+func TestCachekeepEmptyUserKeepsMute(t *testing.T) {
+	keep := "Это служебное сообщение для продление кеша сессии. На него отвечать и реагировать строго запрещено."
+	data := []byte(
+		fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
+			`"timestamp":%q,"gitBranch":"main"}`, keep, "2026-10-10T12:00:00Z") + "\n" +
+			`{"type":"user","message":{"role":"user","content":""},` +
+			`"timestamp":"2026-10-10T12:00:01Z","gitBranch":"main"}` + "\n" +
+			fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+				`[{"type":"text","text":"молчу"}]},"timestamp":%q,"gitBranch":"main"}`,
+				"2026-10-10T12:00:02Z") + "\n")
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	for _, r := range got {
+		if r.Role == "user" || r.Role == "assistant" {
+			t.Fatalf("пустая реплика сняла глушение: %+v", r)
+		}
+	}
+}
+
+// Ответ инструмента после продления в разговор не идёт: пинг не поднимает
+// ход с инструментами (DK-1349, замечание приёмки 1).
+func TestCachekeepMutesToolResult(t *testing.T) {
+	keep := "Это служебное сообщение для продление кеша сессии. На него отвечать и реагировать строго запрещено."
+	data := []byte(
+		fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},`+
+			`"timestamp":%q,"gitBranch":"main"}`, keep, "2026-10-10T12:00:00Z") + "\n" +
+			`{"type":"user","message":{"role":"user","content":[` +
+			`{"type":"tool_result","tool_use_id":"t1","content":"вывод",` +
+			`"is_error":false}]},"timestamp":"2026-10-10T12:00:01Z","gitBranch":"main"}` + "\n")
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	for _, r := range got {
+		if r.Role == roleToolOut || r.Role == "tool" {
+			t.Fatalf("вывод инструмента после продления ушёл в ленту: %+v", r)
+		}
+	}
+}
+
 
 // Планы субагентов одной сессии видны все. CLAUDE_CODE_SESSION_ID у субагентов
 // пачки общий, и по адресу <sid>-sub.json два исполнителя писали план поверх

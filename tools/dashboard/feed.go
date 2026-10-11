@@ -508,6 +508,24 @@ func mergeParts(parts []feedPart, want int) ([]reply, time.Time, bool) {
 		it.Note, it.Text = head, all[pick].it.Text
 		drop[pick] = true
 	}
+	// Одна обновляемая отметка продления кеша: из нескольких продлений в
+	// ленте остаётся последняя, строки не плодятся (DK-1349, замечание 1).
+	ck := -1
+	for i := range all {
+		if drop[i] {
+			continue
+		}
+		if all[i].it.Mark == "cachekeep" {
+			ck = i
+		}
+	}
+	if ck >= 0 {
+		for i := range all {
+			if all[i].it.Mark == "cachekeep" && i != ck {
+				drop[i] = true
+			}
+		}
+	}
 	out := make([]reply, 0, len(all))
 	// Время слияния держится рядом с записями: у границы окна метки может не
 	// быть своей вовсе, а протянутую от предыдущей записи взять больше неоткуда.

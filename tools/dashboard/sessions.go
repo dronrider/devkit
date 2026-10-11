@@ -1196,7 +1196,11 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 			prev = at
 		}
 		item.Seq = seq
-		if sp.src != "" {
+		if item.Mark == cachekeepMark {
+			// Одна обновляемая отметка продления: у всех продлений один
+			// ключ, новое содержимое переписывает прежнее (DK-1349).
+			item.Key = cachekeepMark
+		} else if sp.src != "" {
 			item.Key = sp.src + ":" + strconv.FormatInt(sp.off+lineAt, 10) + "." + strconv.Itoa(blk)
 		}
 		blk++
@@ -1261,7 +1265,13 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 				continue
 			}
 			if rec.Type == "user" {
-				muteAfterKeepalive = cachekeepOnly(s)
+				// Пустая и служебная реплика глушение не снимают: снимает его
+				// только живое слово человека (DK-1349, замечание приёмки).
+				if cachekeepOnly(s) {
+					muteAfterKeepalive = true
+				} else if strings.TrimSpace(s) != "" {
+					muteAfterKeepalive = false
+				}
 			}
 			addUser(add, rec.Type, rec.Timestamp, s, rec.IsMeta)
 			continue
@@ -1319,6 +1329,12 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 					Text: toolBody(b.Input), Args: toolArgs(b.Input), ToolID: b.ID,
 					Human: b.Name == sendTool && dash[sendToTarget(b.Input)]})
 			case "tool_result":
+				// Ответ инструмента после продления кеша в разговор не
+				// идёт: служебный пинг не поднимает ход с инструментами,
+				// и случайный хвост после него не диалог (DK-1349).
+				if rec.Type == "user" && muteAfterKeepalive {
+					continue
+				}
 				// Вывод инструмента показывается как есть, обрезанным по длине:
 				// по нему видно, что агент делает, а свёрнутая строка «Bash»
 				// про это молчала.
@@ -1333,6 +1349,27 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 			}
 		}
 	}
+	// Одна обновляемая отметка продления: лишние строки не плодятся,
+	// в ленте остаётся последняя помета с самым свежим временем (DK-1349).
+	{
+		ck := -1
+		for i := range out {
+			if out[i].Mark == cachekeepMark {
+				ck = i
+			}
+		}
+		if ck >= 0 {
+			filtered := out[:0]
+			for i := range out {
+				if out[i].Mark == cachekeepMark && i != ck {
+					continue
+				}
+				filtered = append(filtered, out[i])
+			}
+			out = filtered
+		}
+	}
+
 	return out
 }
 
@@ -1633,7 +1670,7 @@ var svcTags = []svcTag{
 	// Продление кеша из cachekeep (DK-1349): служебный ход без диалога.
 	// Реплика описывает себя и просит молчать, ответ модели в разговор
 	// не идёт, человеку остаётся короткая помета не-диалоговой формы.
-	{name: "devkit-cachekeep", show: true, word: "продление кеша"},
+	{name: "devkit-cachekeep", show: true, word: cachekeepWord},
 }
 
 // svcRe собирает вырезалку на каждый известный тег: тело берётся нежадно до
@@ -1697,7 +1734,7 @@ func svcNote(tag svcTag, body string) svcLine {
 	case "devkit-cachekeep":
 		// Помета продления: тело служебной реплики человеку не нужно,
 		// остаётся одна строка не-диалоговой формы.
-		return svcLine{head: tag.word, mark: "cachekeep"}
+		return svcLine{head: cachekeepWord, mark: cachekeepMark}
 	}
 	return svcLine{head: tag.word}
 }
@@ -1742,6 +1779,13 @@ func unwrapDispatch(text string) (string, string, bool) {
 // несущая ничего, пузыря не заводит вовсе.
 func addUser(add func(reply), role, at, text string, meta bool) {
 	text = cutPasted(text)
+	// Продление кеша это служебный ход, а не реплика человека: в ленте
+	// остаётся одна короткая помета не-диалоговой формы, и её место знает
+	// сам разбор, а не вырезание тегов (DK-1349, замечание приёмки 1).
+	if cachekeepOnly(text) {
+		add(reply{Role: roleNote, Time: at, Text: cachekeepWord, Mark: cachekeepMark})
+		return
+	}
 	// Скилл приезжает в ленту дважды: вызовом инструмента Skill и следом
 	// простынёй самого скилла, которую харнес кладёт репликой человека. Второе
 	// это инструкция модели, а не разговор, и показывать её незачем вовсе:
@@ -1911,7 +1955,26 @@ func cutSelection(text string) (sel, file, rest string) {
 // cachekeepOnly узнаёт реплику продления кеша: целиком служебная рамка
 // devkit-cachekeep, без слов человека. Такой реплике в ленте место одной
 // пометой, а ответ модели после неё в разговор не идёт (DK-1349).
+// cachekeepBody это дословный текст служебной реплики продления (DK-1349,
+// замечание приёмки 2): формулировка пользователя сохраняется как есть,
+// включая падеж «для продление».
+const cachekeepBody = "Это служебное сообщение для продление кеша сессии. На него отвечать и реагировать строго запрещено."
+
+// cachekeepWord это короткая служебная помета продления в ленте.
+const cachekeepWord = "продление кеша"
+
+// cachekeepMark это машинная помета записи продления: по ней кружок и
+// обновляемая отметка ленты, слова заголовка тут меняются, а пометка нет.
+const cachekeepMark = "cachekeep"
+
+// cachekeepOnly узнаёт реплику продления кеша: дословный текст служебной
+// реплики либо старая рамка devkit-cachekeep из прошлых транскриптов. Такой
+// реплике в ленте место одной обновляемой пометы, а ответ модели после неё
+// в разговор не идёт (DK-1349).
 func cachekeepOnly(text string) bool {
+	if strings.Contains(text, "сообщение для продление кеша") {
+		return true
+	}
 	if !strings.Contains(text, "<devkit-cachekeep") {
 		return false
 	}

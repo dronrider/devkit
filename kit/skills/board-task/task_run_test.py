@@ -1983,19 +1983,28 @@ class TestProfileClient(unittest.TestCase):
         patch = unittest.mock.patch.dict(os.environ, {"DEVKIT_HARNESS": ""})
         patch.start()
         self.addCleanup(patch.stop)
+        task_run._asked_default = None
+        self.addCleanup(setattr, task_run, "_asked_default", None)
         # Стаб agentctl на случай, когда машина несёт чужой default: без него
         # разбор имени уходит в живой машинный слой.
         self.stub_agentctl("claude-code")
 
-    def stub_agentctl(self, default):
-        """Стаб agentctl harness --json с названным default машинного слоя."""
-        body = json.dumps({"default": default, "source": "стенд", "harnesses": []},
-                          ensure_ascii=False)
+    def stub_agentctl(self, default=None, body=None, script=None):
+        """Стаб agentctl harness --json. default задаёт поле default живого
+        ответа, body задаёт готовый stdout, script задаёт тело стаба целиком (отказ,
+        не JSON, зависший ответ)."""
+        if script is None:
+            if body is None:
+                body = json.dumps({"default": default or "", "source": "стенд",
+                                   "harnesses": []}, ensure_ascii=False)
+            # /bin/cat: у стенда PATH без системных каталогов, а стаб должен
+            # отвечать и там.
+            script = "#!/bin/sh\n/bin/cat <<'EOF'\n%s\nEOF\n" % body
         stub = os.path.join(self.tmp, "bin")
         os.makedirs(stub, exist_ok=True)
         path = os.path.join(stub, "agentctl")
         with open(path, "w", encoding="utf-8") as f:
-            f.write("#!/bin/sh\ncat <<'EOF'\n%s\nEOF\n" % body)
+            f.write(script)
         os.chmod(path, 0o755)
         patch = unittest.mock.patch.dict(
             os.environ, {"PATH": stub + os.pathsep + os.environ.get("PATH", "")})
@@ -2043,10 +2052,50 @@ class TestProfileClient(unittest.TestCase):
         self.assertEqual(span, 30 * 60)
 
     def test_default_falls_back_without_agentctl(self):
-        # Без agentctl в PATH остаётся прежний claude-code.
-        with unittest.mock.patch.dict(os.environ, {"PATH": self.tmp}):
+        # Без agentctl в PATH остаётся прежний claude-code, и молча: fallback
+        # тут штатный, а не след увода на другую подписку.
+        err = io.StringIO()
+        with unittest.mock.patch.dict(os.environ, {"PATH": self.tmp}), \
+                unittest.mock.patch("sys.stderr", err):
             opts = task_run.parse_args(["DK-1", "-C", self.tmp])
         self.assertEqual(opts["client"], ["claude", "--permission-mode", "auto"])
+        self.assertNotIn("agentctl", err.getvalue())
+
+    def test_warns_when_agentctl_refuses(self):
+        # Отказ живой утилиты не проглатывается: fallback на DEFAULT_HARNESS
+        # со строкой в stderr (замечание 2 ревью DK-1364).
+        self.stub_agentctl(script="#!/bin/sh\nexit 1\n")
+        err = io.StringIO()
+        with unittest.mock.patch("sys.stderr", err):
+            opts = task_run.parse_args(["DK-1", "-C", self.tmp])
+        self.assertEqual(opts["client"], ["claude", "--permission-mode", "auto"])
+        said = err.getvalue()
+        self.assertIn("agentctl harness --json", said)
+        self.assertIn("имя профиля", said)
+
+    def test_warns_when_agentctl_answers_not_json(self):
+        self.stub_agentctl(body="не json")
+        err = io.StringIO()
+        with unittest.mock.patch("sys.stderr", err):
+            task_run.parse_args(["DK-1", "-C", self.tmp])
+        self.assertIn("не JSON", err.getvalue())
+
+    def test_times_out_on_hung_agentctl(self):
+        # Зов agentctl идёт со сроком: подъём не висит на утилите
+        # (замечание 1 ревью DK-1364). Стаб спит и после сна кладёт отметку
+        # конца. Разбор обязан вернуться, пока стаб спит: отметки ещё нет.
+        done = os.path.join(self.tmp, "done")
+        self.stub_agentctl(script="#!/bin/sh\n/bin/sleep 30\ntouch " + done + "\n")
+        old = task_run.HARNESS_ASK_LIMIT
+        task_run.HARNESS_ASK_LIMIT = 0.2
+        self.addCleanup(setattr, task_run, "HARNESS_ASK_LIMIT", old)
+        err = io.StringIO()
+        with unittest.mock.patch("sys.stderr", err):
+            opts = task_run.parse_args(["DK-1", "-C", self.tmp])
+        self.assertFalse(os.path.exists(done),
+                         "разбор дождался конца зависшего agentctl, срока зова нет")
+        self.assertEqual(opts["client"], ["claude", "--permission-mode", "auto"])
+        self.assertIn("agentctl harness --json", err.getvalue())
 
 
 class StopTailsTest(unittest.TestCase):

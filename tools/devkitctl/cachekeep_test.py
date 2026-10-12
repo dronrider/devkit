@@ -52,6 +52,35 @@ def write_stream(path, reqs):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
+def ping_user(ts, text=None, block=False):
+    """Реплика продлевающего хода в журнале: строка либо текстовый блок.
+
+    Текст по умолчанию это дословный KEEPALIVE_PROMPT, как его пишет клиент
+    resume -p. Старую рамку передают текстом: в тех транскриптах она тоже
+    встречается, и разбор обязан узнавать обе формы.
+    """
+    body = cachekeep.KEEPALIVE_PROMPT if text is None else text
+    content = [{"type": "text", "text": body}] if block else body
+    return {
+        "type": "user",
+        "message": {"role": "user", "content": content},
+        "timestamp": ts,
+        "uuid": "up_%s" % ts,
+    }
+
+
+def ping_pair(ts, model="m1", read=199500, text=None, block=False):
+    """Служебный продлевающий ход целиком: реплика плюс ответ с usage.
+
+    Клиент resume -p дописывает в журнал пару записей, и ответ несёт usage
+    чтения кеша: без фильтра такие ходы сидят в часах простоя как настоящие.
+    """
+    return [
+        ping_user(ts, text=text, block=block),
+        make_raw(0, read, 20, 5, model, ts),
+    ]
+
+
 class CacheKeepLogicTest(unittest.TestCase):
     """Чистая логика решений: цены, порог пересечения, число продлений."""
 
@@ -125,6 +154,28 @@ class CacheKeepLogicTest(unittest.TestCase):
         self.assertLess(reply_per_ping, prefix * cachekeep.CACHE_READ_RATE,
                         "молчаливый минимум дешевле чтения префикса")
 
+    def test_service_reply_forms(self):
+        """Формы служебной реплики те же, что узнаёт лента дашборда: дословный
+        текст и старая рамка без слов человека. Цитата в словах человека
+        продлением не считается, иначе разговор о пинге выпадал из разбора."""
+        self.assertTrue(context.is_service_reply(cachekeep.KEEPALIVE_PROMPT),
+                        "дословный текст реплики служебный")
+        self.assertTrue(context.is_service_reply("  %s\n" % cachekeep.KEEPALIVE_PROMPT),
+                        "обрамление пробелами не прячет дословный текст")
+        frame = ("<devkit-cachekeep>Служебное продление кеша сессии."
+                 " Молчи.</devkit-cachekeep>")
+        self.assertTrue(context.is_service_reply(frame),
+                        "старая рамка без слов человека служебная")
+        quoted = "как быть с «%s» в чате?" % cachekeep.KEEPALIVE_PROMPT
+        self.assertFalse(context.is_service_reply(quoted),
+                         "цитата в словах человека остаётся разговором")
+        self.assertFalse(context.is_service_reply(frame + " и вопрос"),
+                         "рамка со словами человека остаётся разговором")
+        self.assertFalse(context.is_service_reply("обычная реплика"),
+                         "обычная реплика не служебная")
+        self.assertFalse(context.is_service_reply(None),
+                         "отсутствие текста не служебная реплика")
+
 
 class CacheKeepStreamTest(SandboxCase):
     """Решения по синтетическому потоку: тайминги, TTL, строки журнала."""
@@ -196,6 +247,101 @@ class CacheKeepStreamTest(SandboxCase):
         d = cachekeep.decide_stream(path, now=now)
         self.assertIsNotNone(d, "решение по потоку должно быть")
         self.assertFalse(d["keep"], "длинный простой: перезапись дешевле")
+
+    def test_service_pings_do_not_reset_idle(self):
+        """Замер 2026-10-12, замечание 3: продлевающий ход сам ложится в журнал
+        запросом с usage и на старом коде сбрасывал часы простоя, не давая
+        простою дойти до порога выгоды. Часы идут от последнего настоящего
+        хода, служебные пинги из них исключены."""
+        base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
+        recs = [
+            make_raw(200000, 0, 50, 10, "m1", self._ts(base, 0)),
+            make_raw(500, 199000, 30, 10, "m1", self._ts(base, 10)),
+        ]
+        # Цепочка пингов каждые 240s после последнего настоящего хода: реплики
+        # едут строкой, блоками и старой рамкой, разбор узнаёт все формы.
+        for k in range(13):
+            at = self._ts(base, 400 + 240 * k)
+            if k == 12:
+                recs += ping_pair(at, text="<devkit-cachekeep>"
+                                  "Служебное продление кеша сессии. Молчи."
+                                  "</devkit-cachekeep>")
+            else:
+                recs += ping_pair(at, block=(k % 3 == 1))
+        path = self._write_stream("streamPing", recs)
+        now = base.timestamp() + 3310
+        d = cachekeep.decide_stream(path, now=now)
+        self.assertIsNotNone(d, "решение по потоку должно быть")
+        self.assertAlmostEqual(d["idle"], 3300, delta=1,
+                               msg="простой идёт от последнего настоящего хода")
+        self.assertFalse(d["keep"],
+                         "простой за порогом выгоды: перезапись дешевле")
+
+    def test_scan_after_pings_writes_expired_and_stops(self):
+        """Продлеваемый пингами поток за порогом выгоды получает одно решение:
+        «истёк» в окне истечения с настоящим простоем, и запрос не уходит."""
+        self._reset_logs()
+        base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
+        recs = [
+            make_raw(200000, 0, 50, 10, "m1", self._ts(base, 0)),
+            make_raw(500, 199000, 30, 10, "m1", self._ts(base, 10)),
+        ]
+        for k in range(13):
+            recs += ping_pair(self._ts(base, 400 + 240 * k))
+        self._write_stream("streamPing2", recs)
+        calls = []
+
+        def sender(session, model, root, **kw):
+            calls.append(session)
+            return True
+
+        got = cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 3310,
+                                     home=self.box.home, sender=sender)
+        self.assertEqual(calls, [], "за порогом выгоды запрос не уходит")
+        self.assertTrue(got[0]["expired"], "решение несёт признак «истёк»")
+        content = self.turns_log.read_text(encoding="utf-8")
+        self.assertIn("истёк", content, "решение видно строкой «истёк»")
+        self.assertNotIn("продлил", content, "«продлил» без работы не пишется")
+        self.assertIn("простой 3300s", content,
+                      "строка журнала несёт настоящий простой")
+
+    def test_pings_mid_journal_keep_prefix_and_ttl(self):
+        """Пинги в середине журнала не ломают разбор потока: объём префикса
+        считается по первому настоящему ходу, а настоящая пауза не режется
+        пингом на куски меньше пятиминутного порога."""
+        base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
+        recs = [
+            make_raw(100000, 0, 50, 10, "m1", self._ts(base, 0)),
+            make_raw(500, 99500, 30, 10, "m1", self._ts(base, 10)),
+        ]
+        recs += ping_pair(self._ts(base, 240))
+        recs.append(make_raw(90000, 500, 30, 10, "m1", self._ts(base, 400)))
+        path = self._write_stream("streamPing3", recs)
+        reqs = context.real_requests(path)
+        self.assertEqual(len(reqs), 3, "служебный ход из разбора исключён")
+        self.assertEqual(cachekeep.stream_prefix_tokens(reqs), 100050,
+                         "префикс считается по первому настоящему ходу")
+        self.assertEqual(cachekeep.detect_ttl(reqs), 3600,
+                         "пауза 390s перед перезаписью не резалась пингом")
+
+    def test_real_turn_after_pings_keeps_extension(self):
+        """Настоящий ход после цепочки пингов возвращает поток к штатному
+        продлению: часы пошли от него, и решение «продлевать» остаётся."""
+        base = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
+        recs = [
+            make_raw(200000, 0, 50, 10, "m1", self._ts(base, 0)),
+            make_raw(500, 199000, 30, 10, "m1", self._ts(base, 10)),
+        ]
+        for k in range(6):
+            recs += ping_pair(self._ts(base, 400 + 240 * k))
+        recs.append(make_raw(500, 199000, 30, 10, "m1", self._ts(base, 2600)))
+        self._write_stream("streamPing4", recs)
+        now = base.timestamp() + 3000
+        d = cachekeep.decide_stream(self.logs / "streamPing4.jsonl", now=now)
+        self.assertAlmostEqual(d["idle"], 400, delta=1,
+                               msg="часы пошли от последнего настоящего хода")
+        self.assertTrue(d["keep"], "живой поток продлевается как раньше")
+        self.assertGreaterEqual(d["pings"], 1, "простой за TTL требует продления")
 
     def test_journal_line_written(self):
         self._reset_logs()

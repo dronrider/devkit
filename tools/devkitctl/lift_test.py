@@ -37,6 +37,12 @@ def row(tid, stage, session):
             "stage_session": session}
 
 
+def since(age=0):
+    """Метка открытия этапа на age секунд раньше сейчас, той же формой, какой
+    её отдаёт `taskctl list --json` в поле stage_since."""
+    return time.time() - age
+
+
 class Fake:
     """Подстава подпроцесса: помнит вызовы и отдаёт заготовленные ответы."""
 
@@ -82,6 +88,64 @@ class OrphanRowsCase(unittest.TestCase):
     def test_busy_counted(self):
         rows = [row("DK-6", "разработка", "сессия жива"),
                 row("DK-7", "слияние", "сессии нет, брошена")]
+        self.assertEqual(lift.busy_count(rows), 1)
+
+
+class SilentCase(unittest.TestCase):
+    """Молчание дольше рубежа поднимается как брошенная строка (DK-1361).
+
+    Сессии DK-1317 и DK-1323 умерли молча и стояли в рабочих этапах сутками:
+    подъём брал только брошенные, и строки молча ждали рук. Смерть исполнителя
+    доказывает одно молчание, начавшееся на самом этапе, а молчание старше
+    этапа принадлежит окну, которое строку лишь перевело, и такую строку
+    подъём не трогает.
+    """
+
+    def test_past_edge_picked(self):
+        rows = [dict(row("DK-40", "ревью", "сессия молчит 125 минут"),
+                     stage_since=since(3 * 60 * 60))]
+        self.assertEqual([r["id"] for r in lift.orphan_rows(rows)], ["DK-40"])
+
+    def test_below_edge_left_alone(self):
+        rows = [dict(row("DK-41", "ревью", "сессия молчит 25 минут"),
+                     stage_since=since(3 * 60 * 60))]
+        self.assertEqual(lift.orphan_rows(rows), [])
+
+    def test_without_age_left_alone(self):
+        """Запись без времени касания возраста молчания не несёт, и подъём по
+        ней не судит: строка остаётся за исполнителем."""
+        rows = [row("DK-42", "ревью", "сессия молчит, касания не записано")]
+        self.assertEqual(lift.orphan_rows(rows), [])
+
+    def test_older_than_stage_left_alone(self):
+        rows = [dict(row("DK-43", "разработка", "сессия молчит 2776 минут"),
+                     stage_since=since(30 * 60))]
+        self.assertEqual(lift.orphan_rows(rows), [])
+
+    def test_touch_grace_still_stage_touch(self):
+        """Касание за час до открытия этапа считается касанием этапа: сессия,
+        перевёдшая строку и замолчавшая на ней, это умерший исполнитель."""
+        rows = [dict(row("DK-49", "разработка", "сессия молчит 125 минут"),
+                     stage_since=since(70 * 60))]
+        self.assertEqual([r["id"] for r in lift.orphan_rows(rows)], ["DK-49"])
+
+    def test_dead_and_silent_alike(self):
+        """Мёртвый процесс и молчание дольше рубежа идут одной дорогой."""
+        rows = [row("DK-44", "слияние", "сессии нет, брошена"),
+                dict(row("DK-45", "ревью", "сессия молчит 125 минут"),
+                     stage_since=since(3 * 60 * 60))]
+        self.assertEqual([r["id"] for r in lift.orphan_rows(rows)],
+                         ["DK-44", "DK-45"])
+
+    def test_wait_stage_left_alone(self):
+        rows = [dict(row("DK-46", "ждёт человека", "сессия молчит 125 минут"),
+                     stage_since=since())]
+        self.assertEqual(lift.orphan_rows(rows), [])
+
+    def test_silent_not_busy(self):
+        rows = [row("DK-47", "разработка", "сессия жива"),
+                dict(row("DK-48", "ревью", "сессия молчит 125 минут"),
+                     stage_since=since(3 * 60 * 60))]
         self.assertEqual(lift.busy_count(rows), 1)
 
 
@@ -220,6 +284,26 @@ class LiftRowsCase(unittest.TestCase):
         self.assertIn("строка поднята тиком", doc)
         self.assertIn("## Выкат", doc)
 
+    def test_lift_silent_row_with_record_and_notice(self):
+        """Молчащая дольше рубежа поднимается тем же заказом и получает запись
+        в задаче и уведомление (DK-1361)."""
+        call = self.stand(
+            [dict(row("DK-7", "ревью", "сессия молчит 125 минут"),
+                  stage_since=since(3 * 60 * 60))],
+            "# DK-7: строка\n\n## Ход работы\n")
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 1)
+        orders = [" ".join(a) for a in call.calls if "run" in a]
+        self.assertTrue(orders, "заказа не было")
+        self.assertIn("продолжай DK-7", orders[0])
+        self.assertIn("сессия молчит 125 минут", " ".join(lines))
+        doc = self.task_file.read_text(encoding="utf-8")
+        self.assertIn("строка поднята тиком", doc)
+        said = " ".join(lines)
+        self.assertIn("уведомление о подъёме", said)
+        self.assertIn("запись подъёма в", said)
+
 
 class CapacityCase(unittest.TestCase):
     """Ёмкость: поднимается не больше свободных мест."""
@@ -328,21 +412,53 @@ class TriesCase(unittest.TestCase):
                                    now=time.time() - lift.SETTLE * (3 - n) - 60)
         self.assertEqual(got, 3)
 
-    def test_spent_row_left_alone(self):
-        for n in range(lift.LIFT_TRIES):
-            lift.mark_lifted("/root", "DK-21", home=str(self.home),
-                             now=time.time() - lift.SETTLE - 60)
-        call = Fake(board([row("DK-21", "проверка", "сессии нет, брошена")]))
-        lines, raised = lift.lift_root("/root", call=call, taskctl="taskctl",
-                                       home=str(self.home))
-        self.assertEqual(raised, 0)
-        self.assertIn("сессия не удержалась", " ".join(lines))
-        self.assertIn("ждёт человека", " ".join(lines))
-
     def test_forgotten_mark_starts_over(self):
         lift.mark_lifted("/root", "DK-22", home=str(self.home),
                          now=time.time() - lift.FORGET - 60)
         self.assertEqual(lift.marks(home=str(self.home)), {})
+
+
+class DutyCase(unittest.TestCase):
+    """Исчерпание попыток подъёма кончается исходом дежурному (DK-1361):
+    записью в задаче и фоновым уведомлением, как исчерпание подъёма упавшего
+    хода. Строка не остаётся ждать человека молча."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.home)]))
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.root)]))
+        tasks = self.root / "docs" / "tasks"
+        tasks.mkdir(parents=True)
+        self.task_file = tasks / "DK-21.md"
+        self.task_file.write_text("# DK-21: строка\n\n## Ход работы\n",
+                                  encoding="utf-8")
+
+    def spent(self):
+        for _ in range(lift.LIFT_TRIES):
+            lift.mark_lifted(str(self.root), "DK-21", home=str(self.home),
+                             now=time.time() - lift.SETTLE - 60)
+
+    def test_exhaustion_escalates_once(self):
+        self.spent()
+        call = Fake(board([row("DK-21", "проверка", "сессии нет, брошена")]))
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 0)
+        said = " ".join(lines)
+        self.assertIn("сессия не удержалась", said)
+        self.assertIn("исход дежурному", said)
+        doc = self.task_file.read_text(encoding="utf-8")
+        self.assertIn("эскалация дежурному", doc)
+        self.assertIn("подъём не помог 3 раз подряд", doc)
+        # Второй заход по той же строке не повторяет ни записи, ни зова:
+        # счётчик попыток сверх потолка значит, что исход уже ушёл.
+        lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                       home=str(self.home))
+        shouts = [a for a in call.calls if "notify.py" in " ".join(a)]
+        self.assertEqual(len(shouts), 1)
+        self.assertEqual(self.task_file.read_text(encoding="utf-8").count(
+            "эскалация дежурному"), 1)
 
 
 class TickCase(unittest.TestCase):

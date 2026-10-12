@@ -1950,7 +1950,9 @@ const hiddenEnv = "DEVKIT_HIDDEN=1"
 // сутками раньше. Ценой этому были две умершие работы: рубеж синхронности
 // считал конвейер живым окном и пропускал фоновые вызовы, а голова уносила их с
 // собой. Пустой entrypoint тут и лечение: клиент печатного режима ставит себе
-// sdk-cli сам, когда переменной нет вовсе.
+// sdk-cli сам, когда переменной нет вовсе. Той же дорогой приезжает
+// CLAUDE_CONFIG_DIR чужой подписки, и голый клиент головы с ним уезжал на чужой
+// счёт (DK-1364).
 //
 // Своя метка вычищается наравне с чужими переменными, и по той же причине.
 // Наследуется она тем же каналом: сессия конвейера метку несёт, а всё, что из
@@ -1961,7 +1963,8 @@ var foreignVars = []string{
 	"CLAUDE_CODE_ENTRYPOINT", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID",
 	"CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_MESSAGING_SOCKET",
 	"CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_ENV_FILE",
-	"CLAUDE_PROJECT_DIR", "AI_AGENT", "DEVKIT_HEADLESS", "DEVKIT_HIDDEN",
+	"CLAUDE_PROJECT_DIR", "AI_AGENT", "CLAUDE_CONFIG_DIR", "DEVKIT_HEADLESS",
+	"DEVKIT_HIDDEN",
 }
 
 // dropForeign это голова команды, вычищающая чужое наследство. Пары окружения

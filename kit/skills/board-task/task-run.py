@@ -435,19 +435,49 @@ def head_keys(path):
     return keys
 
 
+# Уже спрошенный default машинного слоя: профиль клиента и потолок ожидания
+# зовут разбор имени дважды, а строку об отказе хватит одной.
+_asked_default = None
+
+
 def machine_default_harness():
     """default машинного слоя из `agentctl harness --json`, поле default.
     Источник один на всю машину, и утилита сводит слои конфигурации сама:
-    чтение harness.local оболочкой означало бы третью копию разбора. Без
-    agentctl в PATH, при его отказе и при пустом default остаётся DEFAULT_HARNESS."""
+    чтение harness.local оболочкой означало бы третью копию разбора.
+
+    Утилиты нет в PATH: молча DEFAULT_HARNESS, это случай из DoD. Утилита
+    есть, но отказалась (срок, ненулевой код, не JSON): тоже DEFAULT_HARNESS
+    и перед тем строка в stderr. Без неё голова снова уехала бы на зашитое
+    значение без следа. Пустой default у живого ответа молча оставляет
+    DEFAULT_HARNESS, утилита сказала, что default не задан."""
+    global _asked_default
+    if _asked_default is not None:
+        return _asked_default
+    _asked_default = _ask_machine_default()
+    return _asked_default
+
+
+def _ask_machine_default():
     try:
         p = subprocess.run(["agentctl", "harness", "--json"],
                            capture_output=True, text=True, timeout=HARNESS_ASK_LIMIT)
-    except (OSError, subprocess.TimeoutExpired):
+    except FileNotFoundError:
+        return DEFAULT_HARNESS
+    except (OSError, subprocess.TimeoutExpired) as e:
+        sys.stderr.write("task-run: agentctl harness --json: %s, имя профиля %s\n"
+                         % (e, DEFAULT_HARNESS))
+        return DEFAULT_HARNESS
+    if p.returncode != 0:
+        said = (p.stderr or "").strip()
+        sys.stderr.write(
+            "task-run: agentctl harness --json отказал (код %s)%s, имя профиля %s\n"
+            % (p.returncode, (": " + said) if said else "", DEFAULT_HARNESS))
         return DEFAULT_HARNESS
     try:
         got = json.loads(p.stdout or "")
     except ValueError:
+        sys.stderr.write("task-run: agentctl harness --json ответил не JSON, имя профиля %s\n"
+                         % DEFAULT_HARNESS)
         return DEFAULT_HARNESS
     name = (got.get("default") or "").strip()
     return name or DEFAULT_HARNESS

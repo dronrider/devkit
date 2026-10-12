@@ -226,16 +226,32 @@ func TestDashboardSmokeSayEndedNoTask(t *testing.T) {
 		e.proj+" транскрипт "+path+" источник заказ повод startup tmux chat-7\n")
 
 	// Фиктивный клиент дописывает ответ агента в транскрипт того же разговора:
-	// ровно это делает `claude --resume`, и ровно этого ждёт лента. Ответ идёт
+	// ровно это делает `клиент-1 --resume`, и ровно этого ждёт лента. Ответ идёт
 	// только на резюм: тем же именем сервер зовёт клиента за заголовком
-	// разговора (`claude -p`), и без разбора аргументов ответ появился бы в
-	// ленте сам собой, без всякой реплики.
-	writeScript(t, e.bin, "claude", fmt.Sprintf(`case "$*" in
+	// разговора (`клиент-1 -p`), и без разбора аргументов ответ появился бы в
+	// ленте сам собой, без всякой реплики. Клиент называется именем из
+	// фикстуры подписок: чат идёт обвязкой agentctl exec (DK-1271), и она
+	// зовёт бин подписки по умолчанию, а не голый claude.
+	writeScript(t, e.bin, "клиент-1", fmt.Sprintf(`case "$*" in
 *--resume*)
   printf '%%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]},"timestamp":"%s","gitBranch":"main"}' >> %q
   ;;
 esac
 exit 0`, smokeSayWord, time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), path))
+	// Обёртка agentctl exec передаёт команду клиенту подписки: без этого
+	// фикстурный agentctl из newTestEnv только печатает JSON и не зовёт бин.
+	writeScript(t, e.bin, "agentctl", `case "$1 $2" in
+"harness --json")
+  cat <<'JSON'
+`+harnessJSONFixture+`
+JSON
+  ;;
+"exec --harness")
+  shift 4
+  exec "$@"
+  ;;
+esac
+exit 0`)
 	// Фиктивный tmux не только записывает вызов, но и исполняет команду
 	// подъёма: без этого сквозной путь обрывался бы на границе процесса, и
 	// ответа агента в ленте не появилось бы ни при какой правке.

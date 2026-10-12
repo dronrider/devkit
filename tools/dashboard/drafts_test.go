@@ -259,8 +259,10 @@ func TestDraftGroomPrompt(t *testing.T) {
 		"new-session -d -s task-XR-005 -c " + e.proj + " ",
 		// Правила плана и канала в текст заказа больше не приписываются
 		// (DK-612): их доставляет хук старта сессии. Имя головы («<ID>
-		// груминг», DK-879) стоит перед заказом.
-		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' claude --model 'модель-pro' --name 'XR-005 груминг' '" +
+		// груминг», DK-879) стоит перед заказом. Всякая подписка, и дефолт
+		// тоже, поднимается обвязкой agentctl exec (DK-1271).
+		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' ",
+		"' exec --harness 'перваяtest' -- 'клиент-1' --model 'модель-pro' --name 'XR-005 груминг' '" +
 			groomPrompt("XR-005", "", draftModeGroom) + "'",
 	} {
 		if !strings.Contains(got, want) {
@@ -484,7 +486,10 @@ func TestDraftGroomNoTmuxLogged(t *testing.T) {
 	if err := os.Remove(filepath.Join(e.bin, "tmux")); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", e.bin)
+	writeAgentctlFake(t, e.bin, harnessTiersFixture)
+	// PATH сужается до каталога фикстур и /bin (для cat в скрипте agentctl):
+	// настоящий tmux иначе нашёлся бы в системных путях.
+	t.Setenv("PATH", e.bin+string(os.PathListSeparator)+"/bin")
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadGateway {
@@ -550,7 +555,7 @@ func TestDraftGroomAsk(t *testing.T) {
 	if !strings.Contains(text, "уточнение уехало в заказ") {
 		t.Errorf("ответ не говорит, что уточнение уехало новой ходкой: %s", text)
 	}
-	want := "claude --model 'модель-pro' --name '" + id + " груминг' '" +
+	want := "' exec --harness 'перваяtest' -- 'клиент-1' --model 'модель-pro' --name '" + id + " груминг' '" +
 		groomPrompt(id, "оставить эту, вторую снять", draftModeGroom) + "'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("уточнение не доехало до заказа сессии:\n%s\nжду %q", got, want)
@@ -616,12 +621,12 @@ func TestDraftGroomAskQuoting(t *testing.T) {
 	logged := readFile(t, tmuxLog)
 	// Перед заказом в команде стоит ярус («--model 'модель-pro'»), и разбирается
 	// тут сам заказ: он лежит последним аргументом, за первой же кавычкой после
-	// имени клиента.
-	cut := strings.LastIndex(logged, "claude ")
+	// имени клиента (клиент дефолтной подписки под обвязкой agentctl exec).
+	cut := strings.LastIndex(logged, "'клиент-1' ")
 	if cut < 0 {
 		t.Fatalf("сессия с заказом не поднялась:\n%s", logged)
 	}
-	tail := logged[cut+len("claude "):]
+	tail := logged[cut+len("'клиент-1' "):]
 	at := strings.Index(tail, "'Проведи груминг")
 	if at < 0 {
 		t.Fatalf("заказа в команде нет:\n%s", logged)
@@ -763,8 +768,9 @@ func TestDraftGroomUnknownHarnessRefused(t *testing.T) {
 	}
 }
 
-// Без выбора подписки обвязки в заказе нет вовсе: разбор идёт клиентом
-// подписки по умолчанию. Ярус при этом назван явно, см. стенд ниже.
+// Без выбора подписки разбор идёт подпиской по умолчанию, и она заворачивается
+// в ту же обвязку agentctl exec, что и чужая (DK-1271): путь не должен
+// зависеть от окружения serve. Ярус при этом назван явно, см. стенд ниже.
 func TestDraftGroomWithoutHarnessStaysPlain(t *testing.T) {
 	e, c, _ := draftsEnv(t)
 	tmuxLog := filepath.Join(e.home, "tmux.log")
@@ -778,11 +784,11 @@ func TestDraftGroomWithoutHarnessStaysPlain(t *testing.T) {
 		t.Fatalf("груминг без выбора: %d %s", resp.StatusCode, body(t, resp))
 	}
 	got := readFile(t, tmuxLog)
-	if strings.Contains(got, "exec --harness") {
-		t.Errorf("разбор без выбора завернули в обвязку подписки: %s", got)
+	if !strings.Contains(got, "exec --harness 'перваяtest'") {
+		t.Errorf("разбор без выбора поднялся мимо обвязки подписки: %s", got)
 	}
 	// Имя головы («<ID> груминг», DK-879) ставится и подписке по умолчанию.
-	if !strings.Contains(got, "claude --model 'модель-pro' --name '"+id+" груминг' 'Проведи груминг "+id) {
+	if !strings.Contains(got, "' exec --harness 'перваяtest' -- 'клиент-1' --model 'модель-pro' --name '"+id+" груминг' 'Проведи груминг "+id) {
 		t.Errorf("заказ разбора поехал не тем клиентом: %s", got)
 	}
 }

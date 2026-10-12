@@ -863,10 +863,14 @@ func TestChatCmdSecondHarnessCarriesAutoPermissionMode(t *testing.T) {
 		t.Errorf("резюм второй подписки без режима разрешений: %s", again)
 	}
 	// Подписке по умолчанию флаг не ставится: её режим настраивает сам человек,
-	// и дашборд в него не лезет.
-	def := chatCmd("", "opus", "", "посмотри доску", "", nil, "agentctl")
+	// и дашборд в него не лезет. Обёртка exec при этом стоит (DK-1271).
+	def := chatCmd("", "opus", "", "посмотри доску", "",
+		&Harness{Name: "перваяtest", Bin: "клиент-1", Default: true}, "agentctl")
 	if strings.Contains(def, "--permission-mode") {
 		t.Errorf("режим разрешений уехал в заказ подписки по умолчанию: %s", def)
+	}
+	if !strings.Contains(def, "exec --harness 'перваяtest'") {
+		t.Errorf("заказ подписки по умолчанию потерял обёртку exec: %s", def)
 	}
 }
 
@@ -960,16 +964,15 @@ func TestChatCmdSecondHarnessCarriesModel(t *testing.T) {
 	if !strings.Contains(again, " --model 'glm-5.3-flash'") {
 		t.Errorf("резюм второй подписки потерял модель яруса: %s", again)
 	}
-	// Подписка по умолчанию остаётся с моделью: выбор селектора панели работает
-	// как работал.
-	def := chatCmd("", "opus", "", "посмотри доску", "", nil, "agentctl")
-	if !strings.Contains(def, " --model 'opus'") {
-		t.Errorf("заказ подписки по умолчанию потерял модель: %s", def)
-	}
+	// Подписка по умолчанию остаётся с моделью и обёрткой exec: выбор селектора
+	// панели работает как работал (DK-1271).
 	byDef := chatCmd("", "opus", "", "посмотри доску", "",
 		&Harness{Name: "перваяtest", Bin: "клиент-1", Default: true}, "agentctl")
 	if !strings.Contains(byDef, " --model 'opus'") {
 		t.Errorf("заказ default-харнеса потерял модель: %s", byDef)
+	}
+	if !strings.Contains(byDef, "exec --harness 'перваяtest'") {
+		t.Errorf("заказ default-харнеса потерял обёртку exec: %s", byDef)
 	}
 }
 
@@ -977,11 +980,12 @@ func TestChatCmdSecondHarnessCarriesModel(t *testing.T) {
 // канала и ротации исполнителя дашборд к тексту больше не клеит (DK-612), их
 // доставляет хук старта сессии и скиллы chat, work-plan.
 func TestChatCmdCarriesOnlyHumanWords(t *testing.T) {
-	fresh := chatCmd("", "opus", "", "посмотри доску", "", nil, "agentctl")
+	def := &Harness{Name: "перваяtest", Bin: "клиент-1", Default: true}
+	fresh := chatCmd("", "opus", "", "посмотри доску", "", def, "agentctl")
 	if !strings.HasSuffix(fresh, " 'посмотри доску'") {
 		t.Errorf("в заказе подъёма не только слова человека: %s", fresh)
 	}
-	again := chatCmd("", "opus", "aaaa-1111", "и что вышло", "", nil, "agentctl")
+	again := chatCmd("", "opus", "aaaa-1111", "и что вышло", "", def, "agentctl")
 	if !strings.HasSuffix(again, " 'и что вышло'") {
 		t.Errorf("в резюмном заказе не только слова человека: %s", again)
 	}
@@ -990,6 +994,18 @@ func TestChatCmdCarriesOnlyHumanWords(t *testing.T) {
 	}
 	if got := goalContinuePrompt("XR-100", ""); got != "Продолжай цель XR-100." {
 		t.Errorf("вводная продолжения цели несёт лишнее: %s", got)
+	}
+}
+
+// Подписка, что не определилась, получает отказ с подсказкой доктора, а не
+// голый клиент (DK-1271, кейс 3).
+func TestChatCmdNilHarnessRefuses(t *testing.T) {
+	got := chatCmd("", "opus", "", "посмотри доску", "", nil, "agentctl")
+	if !strings.Contains(got, "devkitctl doctor --fix") {
+		t.Errorf("отказ без подписки без подсказки доктора: %s", got)
+	}
+	if strings.Contains(got, "exec --harness") {
+		t.Errorf("отказ без подписки всё равно завернули в обвязку: %s", got)
 	}
 }
 

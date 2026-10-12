@@ -1626,6 +1626,12 @@ func (s *smoke) stepHarnessRun() (string, error) {
 	if !strings.Contains(refusal.Error, "на машине нет") {
 		return "", fmt.Errorf("незнакомая подписка отбита выдуманной причиной: %s", refusal.Error)
 	}
+	// Журнал поднятых сессий обнуляется до запуска: цель шагом 5 уже писала
+	// туда строку своего клиента через обвязку agentctl exec (DK-1271), и
+	// проверка «чужой подписки» ниже смотрит только на строки этого запуска.
+	if err := os.WriteFile(s.runsFile(), nil, 0o644); err != nil {
+		return "", err
+	}
 	var v struct {
 		Session string `json:"session"`
 		Harness string `json:"harness"`

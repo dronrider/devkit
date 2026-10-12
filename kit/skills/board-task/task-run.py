@@ -319,15 +319,19 @@ TMUX_ENV = "DEVKIT_TMUX"
 # tools/dashboard/chats.go), и держится он в двух местах потому, что языка у
 # подъёмщиков два. Дорога наследства неочевидная: tmux-сервер переживает ту
 # сессию, из которой его завели однажды, и раздаёт её окружение всем новым
-# окнам, а клиент вдобавок ставит свои пары каждому вызову Bash. Окно, поднятое
-# дашбордом, эту чистку уже прошло, а поднятое `taskctl run` из тика или руками
-# из живой оболочки не проходило (DK-852). Признак hidden (DEVKIT_HIDDEN) тут
-# не снимается: его подъёмщик ставит нарочно, и читает его хук старта уже в
-# самой голове.
+# окнам, а клиент вдобавок ставит свои пары каждому вызову Bash. То же
+# наследство несёт CLAUDE_CONFIG_DIR чужой подписки: голый клиент головы
+# стартовал бы с каталогом конфигурации соседней подписки и списывал расход
+# на неё (DK-1364). Свой каталог подписке кладёт agentctl exec поверх
+# очищенного окружения, поэтому чистка безопасна для всех профилей. Окно,
+# поднятое дашбордом, эту чистку уже прошло, а поднятое `taskctl run` из тика
+# или руками из живой оболочки не проходило (DK-852). Признак hidden
+# (DEVKIT_HIDDEN) тут не снимается: его подъёмщик ставит нарочно, и читает его
+# хук старта уже в самой голове.
 FOREIGN_ENV = ("CLAUDE_CODE_ENTRYPOINT", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID",
                "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_MESSAGING_SOCKET",
                "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_ENV_FILE",
-               "CLAUDE_PROJECT_DIR", "AI_AGENT")
+               "CLAUDE_PROJECT_DIR", "AI_AGENT", "CLAUDE_CONFIG_DIR")
 # Как часто оболочка заглядывает в журнал отметок. Реже держать незачем, файл
 # крошечный, чаще незачем тоже. Между проходами и так стоит пауза.
 WATCH_STEP = 3
@@ -356,7 +360,11 @@ FOREIGN_LIFETIME = 24 * 60 * 60
 # Профиль харнеса, из которого берётся клиент, когда хвоста после `--` нет.
 HARNESS_DIR = os.path.normpath(os.path.join(HERE, "..", "..", "harness"))
 HARNESS_ENV = "DEVKIT_HARNESS"
+# Имя профиля, когда нет ни хвоста, ни переменной, и agentctl не назвал default
+# машинного слоя. Сколько ждать ответа agentctl, решает тот же короткий срок,
+# что у прочих одноразовых вопросов утилите.
 DEFAULT_HARNESS = "claude-code"
+HARNESS_ASK_LIMIT = 5
 TURN_EXIT = "exit"
 
 USAGE = __doc__
@@ -427,9 +435,34 @@ def head_keys(path):
     return keys
 
 
+def machine_default_harness():
+    """default машинного слоя из `agentctl harness --json`, поле default.
+    Источник один на всю машину, и утилита сводит слои конфигурации сама:
+    чтение harness.local оболочкой означало бы третью копию разбора. Без
+    agentctl в PATH, при его отказе и при пустом default остаётся DEFAULT_HARNESS."""
+    try:
+        p = subprocess.run(["agentctl", "harness", "--json"],
+                           capture_output=True, text=True, timeout=HARNESS_ASK_LIMIT)
+    except (OSError, subprocess.TimeoutExpired):
+        return DEFAULT_HARNESS
+    try:
+        got = json.loads(p.stdout or "")
+    except ValueError:
+        return DEFAULT_HARNESS
+    name = (got.get("default") or "").strip()
+    return name or DEFAULT_HARNESS
+
+
+def harness_name(name=None):
+    """Имя профиля харнеса: названное зовущим, иначе из HARNESS_ENV, иначе
+    default машинного слоя. Порядок один с taskhead.HarnessName."""
+    return (name or (os.environ.get(HARNESS_ENV) or "").strip()
+            or machine_default_harness())
+
+
 def profile_client(name=None):
     """Клиент головы из профиля харнеса и признак печатной череды."""
-    name = name or (os.environ.get(HARNESS_ENV) or "").strip() or DEFAULT_HARNESS
+    name = harness_name(name)
     path = os.path.join(HARNESS_DIR, name + ".toml")
     if not os.path.isfile(path):
         die("клиент не назван: хвоста после -- нет, а профиля харнеса %s нет" % path)
@@ -452,11 +485,11 @@ def parse_span(text):
 
 def profile_cap(name=None):
     """Потолок срока ожидания в секундах и место, откуда он взят. Профиль
-    выбирается так же, как у клиента головы: DEVKIT_HARNESS, иначе
-    claude-code, и так же его выбирает agentctl wait. Кривое значение
-    останавливает оболочку: молча подменённый потолок неотличим от
-    настоящего."""
-    name = name or (os.environ.get(HARNESS_ENV) or "").strip() or DEFAULT_HARNESS
+    выбирается так же, как у клиента головы: DEVKIT_HARNESS, иначе default
+    машинного слоя, иначе claude-code, и так же его выбирает agentctl wait.
+    Кривое значение останавливает оболочку: молча подменённый потолок
+    неотличим от настоящего."""
+    name = harness_name(name)
     path = os.path.join(HARNESS_DIR, name + ".toml")
     default = parse_span(WAIT_CAP_DEFAULT)
     if not os.path.isfile(path):

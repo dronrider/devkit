@@ -75,8 +75,8 @@ import sys
 import time
 
 # Пары, по которым тест смотрит окружение поднятой головы: чужое наследство
-# агентской сессии, а рядом с ним дом подписки и признак hidden, которые
-# чистка трогать не должна.
+# агентской сессии и каталог конфигурации чужой подписки, а признак hidden
+# чистка трогать не должна: его подъёмщик ставит нарочно.
 WATCHED = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDECODE",
            "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_PID", "AI_AGENT",
            "CLAUDE_CONFIG_DIR", "DEVKIT_HIDDEN")
@@ -168,8 +168,8 @@ import sys
 import time
 
 # Пары, по которым тест смотрит окружение поднятой головы: чужое наследство
-# агентской сессии, а рядом с ним дом подписки и признак hidden, которые
-# чистка трогать не должна.
+# агентской сессии и каталог конфигурации чужой подписки, а признак hidden
+# чистка трогать не должна: его подъёмщик ставит нарочно.
 WATCHED = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDECODE",
            "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_PID", "AI_AGENT",
            "CLAUDE_CONFIG_DIR", "DEVKIT_HIDDEN")
@@ -996,13 +996,15 @@ class TestLiveHead(unittest.TestCase):
 
     # Наследство чужой агентской сессии, каким его видит окно конвейера:
     # tmux-сервер раздаёт окружение той сессии, из которой его завели, а клиент
-    # ставит свои пары каждому вызову Bash (DK-852).
+    # ставит свои пары каждому вызову Bash (DK-852). Каталог конфигурации чужой
+    # подписки сюда же: голый клиент головы не должен его видеть (DK-1364).
     FOREIGN = {"CLAUDE_CODE_SESSION_ID": "чужая-сессия",
                "CLAUDE_CODE_CHILD_SESSION": "1",
                "CLAUDECODE": "1",
                "CLAUDE_CODE_ENTRYPOINT": "claude-vscode",
                "CLAUDE_PID": "4242",
-               "AI_AGENT": "1"}
+               "AI_AGENT": "1",
+               "CLAUDE_CONFIG_DIR": "/чужой/каталог/подписки"}
 
     def test_live_head_drops_the_foreign_session(self):
         # Предмет DK-852: голова получала метку субагента и чужой ID сессии, и
@@ -1014,15 +1016,18 @@ class TestLiveHead(unittest.TestCase):
         for name in self.FOREIGN:
             self.assertEqual(got[name], "", "%s доехала до живой головы" % name)
 
-    def test_live_head_keeps_its_own_pairs(self):
-        # Чистка снимает чужое, а своё оставляет: дом второй подписки и признак
-        # hidden подъёмщик ставит нарочно, и читают их уже в самой голове.
+    def test_live_head_keeps_hidden_and_drops_config_dir(self):
+        # Чистка снимает чужое, а признак hidden оставляет: его подъёмщик ставит
+        # нарочно, и читает его хук старта уже в самой голове. Каталог
+        # конфигурации подписки снимается наравне с чужим наследством: свой
+        # кладёт agentctl exec поверх очищенного окружения, а голый клиент без
+        # обвязки не должен видеть чужой CLAUDE_CONFIG_DIR из tmux (DK-1364).
         s = self.stand(plan="закрой")
         extra = dict(self.FOREIGN)
-        extra.update({"CLAUDE_CONFIG_DIR": "/дом/подписки", "DEVKIT_HIDDEN": "1"})
+        extra.update({"DEVKIT_HIDDEN": "1"})
         s.run(extra=extra)
         got = dict(l.split("=", 1) for l in s.lines("окружение"))
-        self.assertEqual(got["CLAUDE_CONFIG_DIR"], "/дом/подписки")
+        self.assertEqual(got["CLAUDE_CONFIG_DIR"], "", "чужой CLAUDE_CONFIG_DIR доехал до живой головы")
         self.assertEqual(got["DEVKIT_HIDDEN"], "1")
 
     def test_headless_pass_drops_the_foreign_session(self):
@@ -1975,9 +1980,27 @@ class TestProfileClient(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="task-run-profile-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.env = unittest.mock.patch.dict(os.environ, {"DEVKIT_HARNESS": ""})
-        self.env.start()
-        self.addCleanup(self.env.stop)
+        patch = unittest.mock.patch.dict(os.environ, {"DEVKIT_HARNESS": ""})
+        patch.start()
+        self.addCleanup(patch.stop)
+        # Стаб agentctl на случай, когда машина несёт чужой default: без него
+        # разбор имени уходит в живой машинный слой.
+        self.stub_agentctl("claude-code")
+
+    def stub_agentctl(self, default):
+        """Стаб agentctl harness --json с названным default машинного слоя."""
+        body = json.dumps({"default": default, "source": "стенд", "harnesses": []},
+                          ensure_ascii=False)
+        stub = os.path.join(self.tmp, "bin")
+        os.makedirs(stub, exist_ok=True)
+        path = os.path.join(stub, "agentctl")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\ncat <<'EOF'\n%s\nEOF\n" % body)
+        os.chmod(path, 0o755)
+        patch = unittest.mock.patch.dict(
+            os.environ, {"PATH": stub + os.pathsep + os.environ.get("PATH", "")})
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def test_client_comes_from_the_profile(self):
         opts = task_run.parse_args(["DK-1", "-C", self.tmp])
@@ -1999,6 +2022,31 @@ class TestProfileClient(unittest.TestCase):
             task_run.parse_args(["DK-1", "-C", self.tmp])
         self.assertEqual(got.exception.code, 2)
         self.assertIn("нет-такого.toml", err.getvalue())
+
+    def test_client_follows_machine_default(self):
+        # Предмет DK-1364: без имени и переменной профиль берёт default
+        # машинного слоя у `agentctl harness --json`, а не хардкод claude-code.
+        with open(os.path.join(self.tmp, "mimo.toml"), "w", encoding="utf-8") as f:
+            f.write('[head]\nclient = ["mimo-client", "--flag"]\n')
+        self.stub_agentctl("mimo")
+        with unittest.mock.patch.object(task_run, "HARNESS_DIR", self.tmp):
+            opts = task_run.parse_args(["DK-1", "-C", self.tmp])
+        self.assertEqual(opts["client"], ["mimo-client", "--flag"])
+
+    def test_cap_follows_machine_default(self):
+        # Потолок ожидания читается тем же профилем, что и клиент (DK-1364).
+        with open(os.path.join(self.tmp, "mimo.toml"), "w", encoding="utf-8") as f:
+            f.write('[head]\nclient = ["mimo-client"]\nwait_cap = "30m"\n')
+        self.stub_agentctl("mimo")
+        with unittest.mock.patch.object(task_run, "HARNESS_DIR", self.tmp):
+            span, _from = task_run.profile_cap()
+        self.assertEqual(span, 30 * 60)
+
+    def test_default_falls_back_without_agentctl(self):
+        # Без agentctl в PATH остаётся прежний claude-code.
+        with unittest.mock.patch.dict(os.environ, {"PATH": self.tmp}):
+            opts = task_run.parse_args(["DK-1", "-C", self.tmp])
+        self.assertEqual(opts["client"], ["claude", "--permission-mode", "auto"])
 
 
 class StopTailsTest(unittest.TestCase):

@@ -226,6 +226,11 @@ func runsEnv(t *testing.T, sessions string) (*testEnv, *http.Client, string) {
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeTmuxFake(t, e.bin, tmuxLog, sessions)
 	writeScript(t, e.bin, "claude", "exit 0")
+	// Клиент подписки по умолчанию ложится в PATH: без него проверка
+	// ненайденного клиента ловила бы не тот бинарь, а запуск цели не дошёл бы
+	// до ступени чата (DK-1271). Клиент второй подписки кладут только те стенды,
+	// которым он нужен: его отсутствие проверяет отдельный случай.
+	writeScript(t, e.bin, "клиент-1", "exit 0")
 	// Раскладка подписок и вердикт приезжают фикстурой: живой agentctl отвечал
 	// бы по машине разработчика, и ярус запуска ездил бы от неё.
 	writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
@@ -288,8 +293,13 @@ func readFile(t *testing.T, path string) string {
 // проваливается, и подъём уходит ступенью ниже, к headless-оболочке.
 func dropGoalClient(t *testing.T, e *testEnv) {
 	t.Helper()
-	if err := os.Remove(filepath.Join(e.bin, defaultClient)); err != nil {
-		t.Fatal(err)
+	// Снимается клиент выбранной подписки, а не только голый claude: запуск
+	// цели теперь всегда идёт обёрткой подписки (DK-1271), и её бинарь и есть
+	// тот, чьё отсутствие открывает headless-ступень.
+	for _, name := range []string{defaultClient, "клиент-1"} {
+		if err := os.Remove(filepath.Join(e.bin, name)); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
 	}
 	// PATH сужается до каталога фикстур: настоящий клиент машины иначе нашёлся
 	// бы поверх снятого, и ступень чата сработала бы. Каталог python3 остаётся
@@ -841,7 +851,7 @@ func TestRunStartGoalRunMissing(t *testing.T) {
 	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(text, "goal-run.py не нашёлся") {
 		t.Fatalf("без goal-run: %d %s, ожидал 502 с именем пропажи", resp.StatusCode, text)
 	}
-	if !strings.Contains(text, "claude не нашёлся") {
+	if !strings.Contains(text, "клиент-1 не нашёлся") {
 		t.Errorf("ответ не назвал причину ступени чата: %s", text)
 	}
 }
@@ -879,18 +889,41 @@ func TestRunStartNoTmux(t *testing.T) {
 	}
 }
 
-// Ненайденный claude ловится до подъёма сессии: сессия с ненайденной
-// командой умерла бы молча, и стоп был бы неотличим от запуска.
+// Ненайденный клиент подписки ловится до подъёма сессии: сессия с ненайденной
+// командой умерла бы молча, и стоп был бы неотличим от запуска. Имя клиента
+// приезжает раскладкой подписки (DK-1271), а не зашитым claude.
 func TestRunStartNoClaude(t *testing.T) {
 	e, c, _ := runsEnv(t, "")
-	if err := os.Remove(filepath.Join(e.bin, "claude")); err != nil {
+	if err := os.Remove(filepath.Join(e.bin, "клиент-1")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", e.bin)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-002"}`)
 	text := body(t, resp)
-	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(text, "claude не нашёлся") {
-		t.Fatalf("без claude: %d %s", resp.StatusCode, text)
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(text, "клиент-1 не нашёлся") {
+		t.Fatalf("без клиента подписки: %d %s", resp.StatusCode, text)
+	}
+}
+
+// Пустой машинный слой даёт отказ 502 до подъёма сессии (DK-1271, кейс 3):
+// подписка не определилась, и запуск мимо обвязки не идёт. Прежде
+// hooksGapNote(nil) возвращал пусто, и handleRunStart отвечал 200 «цель
+// поднята», а chatCmd с nil печатал отказ в tmux и сессия сразу умирала.
+func TestRunStartNilHarnessRefused(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "")
+	writeAgentctlFake(t, e.bin, `{"harnesses": []}`)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("пустой машинный слой: %d %s, ожидал 502", resp.StatusCode, text)
+	}
+	for _, want := range []string{"подписка не определилась", "devkitctl doctor --fix"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в отказе нет %q: %s", want, text)
+		}
+	}
+	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
+		t.Errorf("сессия поднялась вопреки отказу: %s", got)
 	}
 }
 
@@ -1460,6 +1493,7 @@ func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
 			tmuxLog := filepath.Join(e.home, "tmux.log")
 			writeTmuxFake(t, e.bin, tmuxLog, "")
 			writeScript(t, e.bin, "claude", "exit 0")
+			writeScript(t, e.bin, "клиент-1", "exit 0")
 			writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
 			writeTaskRunFake(t, filepath.Dir(e.proj))
 			c := e.loggedClient(t)

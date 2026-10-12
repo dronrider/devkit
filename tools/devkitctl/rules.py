@@ -203,9 +203,10 @@ def machine_homes(machine_path=None):
 
 def machine_default(machine_path=None):
     # Имя подписки по умолчанию из машинного слоя: верхнеуровневый ключ
-    # default. Отсутствие конфига даёт "claude-code" (то же умолчание, что у
-    # agentctl mergeLayers), а битый конфиг молчит: про него уже сказал
-    # enabled_harnesses, и вторая та же находка была бы шумом.
+    # default. Отсутствие конфига и отсутствие ключа дают "claude-code" (то же
+    # умолчание, что у agentctl mergeLayers и byDefault в дашборде), а битый
+    # конфиг молчит: про него уже сказал enabled_harnesses, и вторая та же
+    # находка была бы шумом.
     path = Path(os.path.expanduser(machine_path or MACHINE_CONFIG))
     if not path.exists():
         return "claude-code"
@@ -213,7 +214,7 @@ def machine_default(machine_path=None):
         d = harness.parse(str(path), read_text(path))
     except harness.TomlError:
         return ""
-    return d.str_of("", "default") or ""
+    return d.str_of("", "default") or "claude-code"
 
 
 def machine_tiers(machine_path=None):

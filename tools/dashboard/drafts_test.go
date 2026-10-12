@@ -771,7 +771,7 @@ func TestDraftGroomUnknownHarnessRefused(t *testing.T) {
 // Без выбора подписки разбор идёт подпиской по умолчанию, и она заворачивается
 // в ту же обвязку agentctl exec, что и чужая (DK-1271): путь не должен
 // зависеть от окружения serve. Ярус при этом назван явно, см. стенд ниже.
-func TestDraftGroomWithoutHarnessStaysPlain(t *testing.T) {
+func TestDraftGroomDefaultHarnessUsesWrapper(t *testing.T) {
 	e, c, _ := draftsEnv(t)
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeTmuxFake(t, e.bin, tmuxLog, "")

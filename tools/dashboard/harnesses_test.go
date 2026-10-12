@@ -42,7 +42,7 @@ const harnessTiersFixture = `{
 
 func writeAgentctlFake(t *testing.T, bin, out string) {
 	t.Helper()
-	writeScript(t, bin, "agentctl", "cat <<'JSON'\n"+out+"\nJSON")
+	writeScript(t, bin, "agentctl", "/bin/cat <<'JSON'\n"+out+"\nJSON")
 }
 
 // writeAgentctlPick кладёт фикстуру agentctl, которая отвечает на оба вопроса
@@ -55,7 +55,7 @@ func writeAgentctlPick(t *testing.T, bin, layout, tier string) {
 	if tier != "" {
 		said += "tier: " + tier + "\n"
 	}
-	writeScript(t, bin, "agentctl", "case \"$1\" in\nharness)\ncat <<'JSON'\n"+layout+
+	writeScript(t, bin, "agentctl", "case \"$1\" in\nharness)\n/bin/cat <<'JSON'\n"+layout+
 		"\nJSON\n;;\npick)\nprintf '"+said+"'\n;;\n*)\nexit 1\n;;\nesac")
 }
 
@@ -69,7 +69,7 @@ func writeAgentctlVerdict(t *testing.T, bin, layout, tier, via, execSaid string)
 	if execSaid != "" {
 		probe = "echo '" + execSaid + "'\nexit 1"
 	}
-	writeScript(t, bin, "agentctl", "case \"$1\" in\nharness)\ncat <<'JSON'\n"+layout+
+	writeScript(t, bin, "agentctl", "case \"$1\" in\nharness)\n/bin/cat <<'JSON'\n"+layout+
 		"\nJSON\n;;\npick)\nprintf '"+said+"'\n;;\nexec)\n"+probe+"\n;;\n*)\nexit 1\n;;\nesac")
 }
 

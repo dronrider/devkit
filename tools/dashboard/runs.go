@@ -733,6 +733,13 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if own == nil {
 		own = s.harnesses().byDefault()
 	}
+	if own == nil {
+		gap := "подписка не определилась: agentctl harness --json не назвал её, " +
+			"а чат мимо обвязки не идёт; разложить слой: devkitctl doctor --fix"
+		s.logf("запуск %s в %s отклонён: %s", id, found.Name, gap)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": gap})
+		return
+	}
 	if gap := hooksGapNote(own); gap != "" {
 		s.logf("запуск %s в %s отклонён: %s", id, found.Name, gap)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": gap})
@@ -764,8 +771,8 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		client := defaultClient
-		if harness != nil {
-			client = harness.Bin
+		if own != nil {
+			client = own.Bin
 		}
 		model := chatModelDefault
 		if own != nil {
@@ -846,8 +853,8 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := defaultClient
-	if harness != nil {
-		client = harness.Bin
+	if own != nil {
+		client = own.Bin
 	}
 	if m := clientMissing(client); m != "" {
 		s.logf("запуск задачи %s в %s не удался: %s", id, found.Name, m)
@@ -858,8 +865,8 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	// записи показывала бы в селекторе умолчание первой подписки поверх
 	// второй (живой случай, запуск DK-269 показывал opus). Пишется модель того
 	// же яруса, которым идёт работа, и он же уезжает в заказ клиенту.
-	if harness != nil {
-		if m := harness.tierModel(tier); m != "" {
+	if own != nil {
+		if m := own.tierModel(tier); m != "" {
 			if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: m}); err != nil {
 				s.logf("модель конвейера %s не записалась: %v", sess, err)
 			}
@@ -873,7 +880,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 	if own != nil {
 		model = own.tierModel(tier)
 	}
-	res, err := s.startTaskSession(found, id, sess, harness, model,
+	res, err := s.startTaskSession(found, id, sess, own, model,
 		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false)
 	if err != nil {
 		// Замок держит голова, поднятая мимо кнопки (тик командой `taskctl

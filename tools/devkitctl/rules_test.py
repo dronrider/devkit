@@ -493,6 +493,20 @@ class MachinePathsUnitsTest(unittest.TestCase):
         self.assertIn("разного текста", findings[0])
         self.assertIn("своя строка импорта", findings[0], "находка не назвала, чем харнесы разошлись")
 
+    def test_default_subscription_falls_back_to_claude_code(self):
+        # Имя подписки по умолчанию для plist и обёртки exec (DK-1271): без
+        # конфига и без ключа default берётся claude-code, как у agentctl
+        # mergeLayers. Раньше отсутствие ключа отдавало пусто, и doctor --fix
+        # не генерировал агента вовсе.
+        self.assertEqual(rules.machine_default(str(self.conf)), "claude-code")
+        write(self.conf, 'enabled = ["claude-code"]\n')
+        self.assertEqual(rules.machine_default(str(self.conf)), "claude-code")
+        write(self.conf, 'default = "glm-code"\nenabled = ["claude-code", "glm-code"]\n')
+        self.assertEqual(rules.machine_default(str(self.conf)), "glm-code")
+        write(self.conf, "default = [\n")
+        self.assertEqual(rules.machine_default(str(self.conf)), "",
+                         "битый конфиг обязан молчать: про него уже сказала другая находка")
+
 
 class CoreBudgetTest(unittest.TestCase):
     """Разрез ядра: за резидентную часть правил платит каждый запрос каждой

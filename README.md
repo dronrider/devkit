@@ -162,8 +162,9 @@ flowchart TD
   agentctl и devkitctl, разбор в [tools/agentctl/README.md](tools/agentctl/README.md).
 - `kit/agents/` - определения субагентов, по одному на уровень effort из маппинга
   agentctl и на роль (`exec-*` исполняют задачу, `review-*` ревьюят дифф);
-  раскладывает их `devkitctl doctor --fix` по каталогу `[delegate] agents_dir`
-  каждого включённого харнеса.
+  там же `dispatch.md` для сессии диспетчера после ротации, его процессный
+  резидент это `RULES.dispatch.md`. Раскладывает их `devkitctl doctor --fix`
+  по каталогу `[delegate] agents_dir` каждого включённого харнеса.
 - `kit/skills/` - процедуры, общие всем проектам, по директории с `SKILL.md` на
   каждую: `board-task` ведёт задачу доски от строки до закрытия, `board-ship`
   двигает её код (ветка, ревью, слияние, выкат, откат), `review` ревьюит

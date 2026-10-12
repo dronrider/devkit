@@ -2,8 +2,10 @@ package taskhead
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -52,17 +54,42 @@ type Head struct {
 const HarnessEnv = "DEVKIT_HARNESS"
 
 // DefaultHarness это профиль, которым поднимается голова, когда имени нет ни
-// у зовущего, ни в HarnessEnv.
+// у зовущего, ни в HarnessEnv, и agentctl не назвал default машинного слоя.
 const DefaultHarness = "claude-code"
 
 // HarnessName это имя профиля головы: названное зовущим, иначе из HarnessEnv,
-// иначе DefaultHarness. Порядок один у taskctl run и у дашборда.
+// иначе default машинного слоя. Порядок один у taskctl run и у дашборда.
 func HarnessName(name string) string {
 	if name = strings.TrimSpace(name); name != "" {
 		return name
 	}
 	if name = strings.TrimSpace(os.Getenv(HarnessEnv)); name != "" {
 		return name
+	}
+	return machineDefaultHarness()
+}
+
+// machineDefaultHarness берёт default машинного слоя у `agentctl harness --json`,
+// поле default. Утилита сводит слои конфигурации сама: чтение harness.local тут
+// означало бы третью копию разбора. Без agentctl в PATH, при отказе утилиты и
+// при пустом default остаётся DefaultHarness.
+func machineDefaultHarness() string {
+	bin, err := exec.LookPath("agentctl")
+	if err != nil {
+		return DefaultHarness
+	}
+	out, err := exec.Command(bin, "harness", "--json").Output()
+	if err != nil {
+		return DefaultHarness
+	}
+	var v struct {
+		Default string `json:"default"`
+	}
+	if err := json.Unmarshal(out, &v); err != nil {
+		return DefaultHarness
+	}
+	if d := strings.TrimSpace(v.Default); d != "" {
+		return d
 	}
 	return DefaultHarness
 }

@@ -364,9 +364,11 @@ func TestHeadlessDropsCallerWindow(t *testing.T) {
 	}
 }
 
-// Имя профиля: названное зовущим, иначе из окружения, иначе умолчание.
+// Имя профиля: названное зовущим, иначе из окружения, иначе default машинного
+// слоя. Здесь порядок шагов, источник default проверяет profile_test.
 func TestHarnessName(t *testing.T) {
 	t.Setenv(HarnessEnv, "")
+	t.Setenv("PATH", t.TempDir())
 	if got := HarnessName(""); got != DefaultHarness {
 		t.Errorf("без имени и окружения %q, ждал %q", got, DefaultHarness)
 	}

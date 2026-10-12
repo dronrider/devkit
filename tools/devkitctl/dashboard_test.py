@@ -113,6 +113,19 @@ class AgentTest(Stand):
         self.assertIn("<key>PATH</key><string>%s" % self.binary.parent, text)
         self.assertTrue(call.argv_with("bootstrap"), "launchd не позван: %s" % call.calls)
 
+    def test_fix_wraps_serve_in_agentctl_exec(self):
+        # Обёртка agentctl exec в plist (DK-1271): serve поднимается с
+        # харнес-парами машинного слоя, и чаты дефолта не зависят от окружения
+        # serve. Без обёртки дефолтная подписка падала на Login expired после
+        # рестарта агента без харнес-пар.
+        f, d, _ = self.check(fix=True)
+        self.assertEqual(f, [])
+        text = self.plist.read_text(encoding="utf-8")
+        self.assertIn("<string>exec</string>", text)
+        self.assertIn("<string>--harness</string>", text)
+        self.assertIn("<string>claude-code</string>", text)
+        self.assertIn("<string>--</string>", text)
+
     def test_agent_pointing_elsewhere(self):
         self.check(fix=True)
         old = self.plist.read_text(encoding="utf-8").replace(str(self.binary), "/старый/бинарь")

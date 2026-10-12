@@ -26,6 +26,7 @@ import urllib.request
 from pathlib import Path
 
 import launchd
+import rules
 
 LABEL = "ru.devkit.dashboard"
 PLIST = "~/Library/LaunchAgents/%s.plist" % LABEL
@@ -190,11 +191,16 @@ def agent_path(binary):
     return ":".join(out)
 
 
-def plist_text(binary, log):
+def plist_text(argv, log):
     """Тело launchd-агента: KeepAlive держит демон живым, журнал процесса
     совмещён с журналом сервера (обе стороны пишут дозаписью), а PATH задан
-    явно, потому что умолчание launchd не знает ни брю, ни каталога бинарей."""
-    return "\n".join([
+    явно, потому что умолчание launchd не знает ни брю, ни каталога бинарей.
+
+    argv это полный список ProgramArguments: обёртка agentctl exec с именем
+    машинного default, дальше бинарь дашборда и serve (DK-1271). Без обёртки
+    serve поднимался голым и чаты дефолта падали на Login expired после
+    рестарта без харнес-окружения."""
+    rows = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
         '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -203,12 +209,14 @@ def plist_text(binary, log):
         '  <key>Label</key><string>%s</string>' % LABEL,
         '  <key>ProgramArguments</key>',
         '  <array>',
-        '    <string>%s</string>' % binary,
-        '    <string>serve</string>',
+    ]
+    for a in argv:
+        rows.append('    <string>%s</string>' % a)
+    rows += [
         '  </array>',
         '  <key>EnvironmentVariables</key>',
         '  <dict>',
-        '    <key>PATH</key><string>%s</string>' % agent_path(binary),
+        '    <key>PATH</key><string>%s</string>' % agent_path(argv[0]),
         '  </dict>',
         '  <key>KeepAlive</key><true/>',
         '  <key>RunAtLoad</key><true/>',
@@ -217,19 +225,25 @@ def plist_text(binary, log):
         '</dict>',
         '</plist>',
         '',
-    ])
+    ]
+    return "\n".join(rows)
 
 
 def binary_of(text):
-    """Путь бинаря, прописанный в готовом plist: первый <string> внутри
-    ProgramArguments."""
+    """Путь бинаря дашборда в готовом plist. Обёртка agentctl exec кладёт его
+    после разделителя --; старый формат без обёртки держит его первым
+    <string> внутри ProgramArguments."""
+    parts = []
     for ln in text.splitlines():
         ln = ln.strip()
         if ln.startswith("<string>") and ln.endswith("</string>"):
             val = ln[len("<string>"):-len("</string>")]
             if val != LABEL:
-                return val
-    return ""
+                parts.append(val)
+    for i, p in enumerate(parts):
+        if p == "--" and i + 1 < len(parts):
+            return parts[i + 1]
+    return parts[0] if parts else ""
 
 
 def loaded(call=None):
@@ -298,12 +312,24 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None,
     if not binary:
         return ["бинаря dashboard нет в PATH: дашборд не поднять; поставить бинари "
                 "(devkitctl update или build) и повторить doctor --fix"], []
+    agentctl = which("agentctl")
+    if not agentctl:
+        return ["бинаря agentctl нет в PATH: launchd-агент дашборда с обёрткой "
+                "agentctl exec не сгенерировать, а без неё serve поднимается голым "
+                "и чаты дефолта падают на Login expired; поставить бинари "
+                "(devkitctl update или build) и повторить doctor --fix"], []
+    harness_name = rules.machine_default(str(Path(home) / ".devkit" / "harness.local"))
+    if not harness_name:
+        return ["машинный слой харнесов не назвал default: launchd-агент с обёрткой "
+                "agentctl exec не сгенерировать; проверить ключ default в "
+                "~/.devkit/harness.local и повторить doctor --fix"], []
     had_token = bool(_read_token(home))
     if fix:
         ensure_conf(home, main)
     plist = home_path(home, PLIST)
     log = home_path(home, LOG)
-    want = plist_text(binary, log)
+    argv = [agentctl, "exec", "--harness", harness_name, "--", binary, "serve"]
+    want = plist_text(argv, log)
     have = plist.read_text(encoding="utf-8", errors="replace") if plist.exists() else ""
     if have != want:
         why = ("дашборд не подключён" if not have else

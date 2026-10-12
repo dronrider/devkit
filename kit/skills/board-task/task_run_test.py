@@ -106,6 +106,10 @@ with open(os.path.join(os.environ["HOME"], "окружение"), "w", encoding=
     f.write("\n".join("%s=%s" % (k, os.environ.get(k, "")) for k in WATCHED) + "\n")
 with open(calls, "a", encoding="utf-8") as f:
     f.write(order + "\n")
+# Полная команда подъёма: по ней тест видит флаги клиента, модель яруса
+# например, а не один заказ прохода.
+with open(calls + ".argv", "a", encoding="utf-8") as f:
+    f.write(" ".join(sys.argv[1:]) + "\n")
 n = 0
 with open(calls, encoding="utf-8") as f:
     n = len([l for l in f if l.strip() != ""])
@@ -181,6 +185,15 @@ plan = os.environ["DEVKIT_TEST_PLAN"].split("|")
 inbox = os.environ["DEVKIT_TEST_INBOX"]
 sid = os.environ["DEVKIT_TEST_SID"]
 devkit = os.path.join(home, ".devkit")
+# Ротация поднимает в окне вторую жизнь клиента, и адрес новой сессии обязан
+# отличаться от прежнего: строка журнала ротации называет оба, а совпадающие
+# адреса сделали бы её пустой. Второй адрес стаб берёт по своей же записи в
+# реестре: запись первого процесса уже лежит в журнале.
+if os.path.isfile(os.path.join(devkit, "sessions.log")):
+    with open(os.path.join(devkit, "sessions.log"), encoding="utf-8") as f:
+        lived = sum(1 for l in f if ("tmux " + os.environ.get("DEVKIT_TMUX", "-") + " ") in l)
+    if lived:
+        sid = os.environ.get("DEVKIT_TEST_SID2") or sid
 os.makedirs(devkit, exist_ok=True)
 turns = os.environ.get("DEVKIT_TURN_MARK_LOG") or os.path.join(devkit, "turns.log")
 agents = os.environ.get("DEVKIT_AGENT_WATCH_DIR") or os.path.join(devkit, "agents")
@@ -299,10 +312,25 @@ if "ротация" in plan:
     # с чужими.
     crowd(800)
 
-order, at = sys.argv[-1], 0
+# Окно второй жизни не видит ввода первой: у нового окна свой пустой вход,
+# а строки прежней остаются лежать в общем файле стенда. Своё место во входе
+# стаб берёт по размеру файла на старте, иначе ротация дала бы новой голове
+# чужой остовор заказом.
+at = os.path.getsize(inbox) if os.path.exists(inbox) else 0
+order, argv_live = sys.argv[-1], True
 while True:
     with open(calls, "a", encoding="utf-8") as f:
         f.write(order + "\n")
+    # Заказ хвоста ротации голова узнаёт по началу строки, той же, какой его
+    # собирает оболочка. Сводка дописывается файлом, как просит заказ, а ход
+    # завершается обычной отметкой ниже. Без пути хвоста в окружении заказ
+    # играется как обычный: так стенд разводит ротацию состоявшуюся и
+    # отложенную.
+    rotate_order = os.environ.get("DEVKIT_TEST_ROTATE_ORDER") or ""
+    tail = os.environ.get("DEVKIT_TEST_TAIL") or ""
+    if rotate_order and tail and order.startswith(rotate_order):
+        with open(tail, "w", encoding="utf-8") as f:
+            f.write("хвост: что сделано, что дальше, что выяснено\n")
     with open(os.path.join(home, "pids"), "a", encoding="utf-8") as f:
         f.write("%d\n" % os.getpid())
     # Шаг сценария считается по числу отработанных заказов, а не по счётчику
@@ -312,10 +340,12 @@ while True:
         n = len([l for l in f if l.strip()])
     step = plan[min(n, len(plan)) - 1]
     seen = 0
-    if n == 1:
-        # Первый заказ приходит аргументом, а не строкой окна, и ход по нему
-        # хук отмечает так же, как всякий другой: «начат» тут есть.
+    if argv_live:
+        # Первый заказ своей жизни окна приходит аргументом, а не строкой окна,
+        # и ход по нему хук отмечает так же, как всякий другой: «начат» тут
+        # есть. Жизней у окна бывает две: вторую поднимает ротация.
         mark("начат")
+        argv_live = False
     if step == "закрой":
         open(state, "w", encoding="utf-8").write("архиве\n")
     elif step == "паркуй":
@@ -464,6 +494,44 @@ while True:
 
 
 SID = "5a750327-a8b5-4d2f-9aab-46cf862d2c47"
+# Адрес второй жизни окна: ротация поднимает свежую сессию, и у неё свой ID.
+SID2 = "6b861438-b9c6-4e30-9bbc-57d0973e3581"
+
+
+# Стаб agentctl для ротации (DK-662): мерку контекста и строку журнала играет
+# теми же строками, какими отвечает живая утилита. Вердикт считается
+# подставленным счётчиком DEVKIT_CONTEXT_TOKENS против предела из
+# DEVKIT_TEST_ROTATE_LIMIT, а перевод числа в вердикт уже покрыт своими
+# тестами go: здесь проверяется договор оболочки с утилитой, а не арифметика.
+ROTATE_STUB = r'''#!/usr/bin/env python3
+import os
+import sys
+
+args = sys.argv[1:]
+with open(os.environ["DEVKIT_TEST_ROTATE_CALLS"], "a", encoding="utf-8") as f:
+    f.write(" ".join(args) + "\n")
+if args[:2] == ["harness", "--json"]:
+    sys.stdout.write((os.environ.get("DEVKIT_TEST_HARNESS_JSON") or "{}") + "\n")
+    sys.exit(0)
+if args[:1] == ["rotate"] and "--mark" in args:
+    sys.exit(0)
+if args[:1] == ["rotate"] and "--session" in args:
+    raw_limit = os.environ.get("DEVKIT_TEST_ROTATE_LIMIT") or ""
+    try:
+        tokens = int(os.environ.get("DEVKIT_CONTEXT_TOKENS") or "0")
+        limit = int(raw_limit) if raw_limit else 0
+    except ValueError:
+        sys.exit(2)
+    # Без предела из окружения вердикт всегда «под»: счётчик стенда считается
+    # неподставленным, и проходы идут как шли.
+    over = bool(limit) and tokens >= limit
+    sys.stdout.write("rotate: %d\nстенд\ncontext: %d\nverdict: %s\n"
+                     "(счётчик стенда DEVKIT_CONTEXT_TOKENS)\n"
+                     % (limit, tokens, "over" if over else "under"))
+    sys.exit(0)
+sys.stderr.write("стаб не знает команды: %s\n" % " ".join(args))
+sys.exit(2)
+'''
 
 
 def write_stub(path, body):
@@ -491,6 +559,10 @@ class Stand:
         write_stub(os.path.join(self.bin, "claude-stub"), CLAUDE_STUB)
         write_stub(os.path.join(self.bin, "claude-live"), LIVE_STUB)
         write_stub(os.path.join(self.bin, "tmux"), TMUX_STUB)
+        write_stub(os.path.join(self.bin, "agentctl"), ROTATE_STUB)
+        self.rotate_log = os.path.join(self.root, "rotate-calls")
+        # Хвост ротации задачи стенда: живая голова пишет его по заказу.
+        self.tail = os.path.join(self.root, ".devkit", "task-DK-1.tail")
         self.plan = plan
         self.live = live
         self.pause = pause
@@ -505,6 +577,12 @@ class Stand:
             "DEVKIT_TEST_PLAN": self.plan,
             "DEVKIT_TEST_INBOX": self.inbox,
             "DEVKIT_TEST_SID": SID,
+            "DEVKIT_TEST_SID2": SID2,
+            # Ротация (DK-662): стаб agentctl пишет свои вызовы отдельно от
+            # заказов головы, живой стаб узнаёт заказ хвоста по началу строки,
+            # а предел вердикта стенд задаёт сам, не подражая числу утилиты.
+            "DEVKIT_TEST_ROTATE_CALLS": self.rotate_log,
+            "DEVKIT_TEST_ROTATE_ORDER": task_run.ROTATE_ORDER,
             # Окно живой головы: стаб tmux отвечает про него has-session, и без
             # этого слова оболочка идёт печатной чередой, как шла.
             "DEVKIT_TEST_TMUX": "живая" if self.live else "нет",
@@ -567,6 +645,15 @@ class Stand:
     def orders(self):
         with open(self.calls, encoding="utf-8") as f:
             return [l.rstrip("\n") for l in f if l.strip() != ""]
+
+    def rotate_calls(self):
+        """Вызовы стаба agentctl: мерки контекста и строки журнала ротации.
+        Пустой список значит и пустой файл: оболочка утилиту не звала."""
+        try:
+            with open(self.rotate_log, encoding="utf-8") as f:
+                return [l.rstrip("\n") for l in f if l.strip() != ""]
+        except OSError:
+            return []
 
     def journal(self):
         path = os.path.join(self.root, ".devkit", "log")
@@ -1275,6 +1362,153 @@ class TestLiveHead(unittest.TestCase):
         got = s.run()
         self.assertEqual(got.returncode, 1, s.why(got))
         self.assertTrue([l for l in s.journal() if "живая голова вышла" in l], s.journal())
+
+
+class TestLiveRotation(unittest.TestCase):
+    """Ротация живой головы по порогу контекста (DK-662): сжатие остаётся
+    первым дешёвым шагом, эта мерка идёт вторым порогом поверх него. Хвост
+    пишется файлом до строки журнала, при живых субагентах ротация не идёт, а
+    печатная голова не ротируется вовсе: её проходы и так одноразовые."""
+
+    def setUp(self):
+        self.stands = []
+
+    def tearDown(self):
+        for s in self.stands:
+            s.drop()
+
+    def stand(self, **kw):
+        s = Stand(live=True, **kw)
+        self.stands.append(s)
+        return s
+
+    def over(self, s, **kw):
+        """Окружение с контекстом над порогом и головой, которая дописывает
+        хвост по заказу. Ключ без DEVKIT_TEST_TAIL разводит ротацию
+        состоявшуюся и отложенную: без пути стаб играет заказ как обычный
+        проход, и хвоста нет."""
+        env = {"DEVKIT_CONTEXT_TOKENS": "900000", "DEVKIT_TEST_ROTATE_LIMIT": "150000",
+               "DEVKIT_TEST_TAIL": s.tail}
+        env.update(kw)
+        return env
+
+    def rotated(self, s):
+        """Строка журнала о ротации: оба адреса на месте."""
+        return [l for l in s.journal() if "ротация" in l and "пересоздана" in l]
+
+    def test_over_threshold_rotates_the_head(self):
+        # Контекст прошёл порог: проход получает заказ хвоста, голова дописывает
+        # сводку файлом, сессия снимается и поднимается новая с вводной хвоста,
+        # а строка журнала называет оба адреса и пишется после нового.
+        s = self.stand(plan="работа|работа|закрой")
+        got = s.run(extra=self.over(s))
+        self.assertEqual(got.returncode, 0, s.why(got))
+        # Проходов три: обычный, заказ хвоста и вводная хвоста. Вводная
+        # многострочная, и по строкам файла заказов их две, поэтому счёт
+        # проходов идёт по pid стаба: одному на проход.
+        pids = s.lines("pids")
+        self.assertEqual(len(pids), 3, pids)
+        orders = s.orders()
+        tail_orders = [o for o in orders if o.startswith(task_run.ROTATE_ORDER)]
+        self.assertEqual(len(tail_orders), 1, orders)
+        self.assertIn(s.tail, tail_orders[0], orders)
+        with open(s.calls, encoding="utf-8") as f:
+            body = f.read()
+        self.assertTrue(body.endswith("%s\n\nХвост прежней сессии в %s: начни с него.\n"
+                                      % (orders[0], s.tail)), body)
+        self.assertTrue(os.path.isfile(s.tail), "хвост ротации не дописан")
+        marks = [c for c in s.rotate_calls() if "--mark" in c]
+        self.assertEqual(len(marks), 1, s.rotate_calls())
+        self.assertIn("--old %s" % SID, marks[0], marks)
+        self.assertIn("--new %s" % SID2, marks[0], marks)
+        self.assertTrue(self.rotated(s), s.journal())
+        # Сессий у окна было две: голову действительно пересоздали.
+        self.assertEqual(len(set(s.lines("pids"))), 2, s.lines("pids"))
+
+    def test_under_threshold_keeps_the_session(self):
+        # Под порогом всё идёт как шло: одна сессия, заказа хвоста нет.
+        s = self.stand(plan="работа|закрой")
+        got = s.run(extra={"DEVKIT_CONTEXT_TOKENS": "10", "DEVKIT_TEST_TAIL": s.tail})
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual([o for o in s.orders() if o.startswith(task_run.ROTATE_ORDER)],
+                         [], s.orders())
+        self.assertEqual([c for c in s.rotate_calls() if "--mark" in c], [],
+                         s.rotate_calls())
+        self.assertEqual(len(set(s.lines("pids"))), 1, s.lines("pids"))
+
+    def test_rotation_waits_for_live_agents(self):
+        # При живых субагентах ротация не идёт: их конец поднимает ход, и до
+        # мерки контекста граница прохода добирается только по чистому реестру.
+        s = self.stand(plan="субагенты|работа|закрой")
+        got = s.run(extra=self.over(s))
+        self.assertEqual(got.returncode, 0, s.why(got))
+        marks = [c for c in s.rotate_calls() if "--mark" in c]
+        self.assertEqual(len(marks), 1, s.rotate_calls())
+        self.assertTrue(self.rotated(s), s.journal())
+
+    def test_rotation_gives_up_without_the_tail(self):
+        # Голова приняла заказ хвоста за обычное продолжение и сводку не
+        # дописала: ротация откладывается со строкой в журнале, строка журнала
+        # ротации не пишется, а проходы идут и кончаются своим потолком.
+        s = self.stand(plan="работа|работа|работа")
+        got = s.run("--passes", "4",
+                    extra={"DEVKIT_CONTEXT_TOKENS": "900000",
+                           "DEVKIT_TEST_ROTATE_LIMIT": "150000"})
+        self.assertEqual(got.returncode, 1, s.why(got))
+        self.assertTrue([l for l in s.journal() if "хвост ротации не дописан" in l],
+                        s.journal())
+        self.assertEqual([c for c in s.rotate_calls() if "--mark" in c], [],
+                         s.rotate_calls())
+        self.assertFalse(os.path.isfile(s.tail), "хвоста никто не дописывал")
+
+    def test_printed_head_is_never_rotated(self):
+        # Печатная голова это череда одноразовых прогонов: мерки контекста и
+        # строки журнала ротации у неё нет, проходы идут как шли. Счётчик
+        # подставлен и над порогом: отсутствие ротации это не молчание счётчика.
+        s = Stand(plan="работа|закрой")
+        self.stands.append(s)
+        got = s.run(extra={"DEVKIT_CONTEXT_TOKENS": "900000",
+                           "DEVKIT_TEST_ROTATE_LIMIT": "150000"})
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual(s.rotate_calls(), [], s.rotate_calls())
+        self.assertEqual([o for o in s.orders() if o.startswith(task_run.ROTATE_ORDER)],
+                         [], s.orders())
+
+
+class TestTier(unittest.TestCase):
+    """Ярус модели проходов (DK-662): разворачивается в модель раскладкой
+    машины один раз на прогон и едет флагом --model каждому проходу, а
+    неизвестный ярус отказывает до первого сожжённого прохода."""
+
+    def setUp(self):
+        self.stands = []
+
+    def tearDown(self):
+        for s in self.stands:
+            s.drop()
+
+    def layout(self):
+        return {"DEVKIT_TEST_HARNESS_JSON": json.dumps(
+            {"default": "homecli", "harnesses": [
+                {"name": "homecli", "models": [{"tier": "mini", "model": "steady-mini"}]}]})}
+
+    def test_tier_names_the_model_of_every_pass(self):
+        s = Stand(plan="работа|закрой")
+        self.stands.append(s)
+        got = s.run("--tier", "mini", extra=self.layout())
+        self.assertEqual(got.returncode, 0, s.why(got))
+        argv = s.lines("calls.argv")
+        self.assertTrue(argv, argv)
+        for line in argv:
+            self.assertIn("--model steady-mini", line, line)
+
+    def test_unknown_tier_refuses_before_the_first_pass(self):
+        s = Stand(plan="закрой")
+        self.stands.append(s)
+        got = s.run("--tier", "mega", extra=self.layout())
+        self.assertEqual(got.returncode, 2, s.why(got))
+        self.assertIn("яруса mega у подписки homecli нет", got.stderr, got.stderr)
+        self.assertEqual(s.orders(), [], s.orders())
 
 
 # Стаб agentctl для условий «слита» и «закрыта»: код выхода берётся из файла

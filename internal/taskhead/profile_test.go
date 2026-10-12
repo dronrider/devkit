@@ -17,6 +17,60 @@ func writeProfile(t *testing.T, body string) string {
 	return p
 }
 
+// stubAgentctl кладёт в PATH стаб agentctl, который на `harness --json` печатает
+// body. Пустой body значит отказ утилиты. Стаб нужен стенду имени профиля:
+// настоящий agentctl читает живой машинный слой, а тесту нужен свой default.
+func stubAgentctl(t *testing.T, body string) {
+	t.Helper()
+	bin := t.TempDir()
+	script := "#!/bin/sh\n"
+	if body == "" {
+		script += "exit 1\n"
+	} else {
+		script += "cat <<'EOF'\n" + body + "\nEOF\n"
+	}
+	if err := os.WriteFile(filepath.Join(bin, "agentctl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// Имя профиля при пустых имени и переменной берёт default машинного слоя у
+// `agentctl harness --json` (DK-1364): тик goal-watch поднимает голову без
+// --harness, и хардкод claude-code уводил её на чужую подписку.
+func TestHarnessNameTakesMachineDefault(t *testing.T) {
+	t.Setenv(HarnessEnv, "")
+	stubAgentctl(t, `{"default":"mimo","source":"/home/u/.devkit/harness.local","harnesses":[]}`)
+	if got := HarnessName(""); got != "mimo" {
+		t.Errorf("без имени и окружения %q, ждал default машинного слоя", got)
+	}
+	// Названное имя и переменная идут впереди машинного default.
+	if got := HarnessName("другой"); got != "другой" {
+		t.Errorf("названное имя %q, ждал его, а не машинный default", got)
+	}
+	t.Setenv(HarnessEnv, "из-окружения")
+	if got := HarnessName(""); got != "из-окружения" {
+		t.Errorf("переменная %q, ждал её, а не машинный default", got)
+	}
+}
+
+// Без agentctl в PATH и при пустом default остаётся прежний claude-code.
+func TestHarnessNameFallsBackWithoutAgentctl(t *testing.T) {
+	t.Setenv(HarnessEnv, "")
+	t.Setenv("PATH", t.TempDir())
+	if got := HarnessName(""); got != DefaultHarness {
+		t.Errorf("без agentctl %q, ждал %q", got, DefaultHarness)
+	}
+	stubAgentctl(t, `{"default":"","source":"x","harnesses":[]}`)
+	if got := HarnessName(""); got != DefaultHarness {
+		t.Errorf("с пустым default %q, ждал %q", got, DefaultHarness)
+	}
+	stubAgentctl(t, "не json")
+	if got := HarnessName(""); got != DefaultHarness {
+		t.Errorf("с неразборным ответом %q, ждал %q", got, DefaultHarness)
+	}
+}
+
 // Настоящие профили обоих харнесов называют клиента и резюм: прибитой строки
 // клиента в коде больше нет, и профиль без них оставил бы подъём без головы.
 func TestRealProfilesNameTheHead(t *testing.T) {

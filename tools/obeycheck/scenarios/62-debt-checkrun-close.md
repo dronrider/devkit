@@ -1,7 +1,7 @@
 # конвейерная сдача: хвост долга закрывает проверяющий
 
 конец: сессия
-предмет: kit/skills/board-debt/SKILL.md «Когда скилл зовётся»; internal/checkrun/checkrun.go
+предмет: kit/skills/board-debt/SKILL.md «Когда скилл зовётся»
 
 ## Подготовка
 

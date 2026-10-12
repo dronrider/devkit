@@ -43,6 +43,37 @@ TOP_TOOLS = 8
 # встречается на длинных потоках. Порог середины между ними не нужен: причина
 # «простой» ставится уже по пятиминутному, а часовой только шире её.
 TTL_SHORT = 300
+# Служебная реплика продления кеша и её формы в транскриптах (DK-1349). Текст
+# дословный, формулировка пользователя; рамка devkit-cachekeep это старая
+# форма из транскриптов до дословного текста. Формы живут здесь, в разборе
+# журналов: cachekeep импортирует их отсюда, а не наоборот, потому что сам
+# импортирует context (цикл импорта). Лента дашборда узнаёт ту же пару форм
+# в tools/dashboard/sessions.go (cachekeepOnly), и наборы держатся равными.
+CACHEKEEP_PROMPT = (
+    "Это служебное сообщение для продление кеша сессии. "
+    "На него отвечать и реагировать строго запрещено."
+)
+# Имя старой рамки и её разбор: пара тегов с любым содержимым внутри.
+CACHEKEEP_FRAME = "devkit-cachekeep"
+_cachekeep_frame_re = re.compile(
+    r"(?s)<%s(?:\s[^>]*)?>(.*?)</%s>" % (CACHEKEEP_FRAME, CACHEKEEP_FRAME))
+
+
+def is_service_reply(text):
+    """Служебная ли это реплика продления кеша (DK-1349).
+
+    Форм те же две, что узнаёт лента дашборда: дословный текст реплики либо
+    старая рамка без слов человека вокруг. Цитата служебного текста в словах
+    человека продлением не считается, иначе разговор о пинге выпадал бы
+    из разбора как служебный.
+    """
+    if not isinstance(text, str):
+        return False
+    if text.strip() == CACHEKEEP_PROMPT:
+        return True
+    if "<%s" % CACHEKEEP_FRAME not in text:
+        return False
+    return _cachekeep_frame_re.sub("", text).strip() == ""
 
 
 def slug(path):
@@ -76,9 +107,51 @@ def requests(path):
     Запись с `usage` повторяется по числу итераций ответа, и все копии несут
     одинаковые числа: без склейки по `requestId` объём сессии вырос бы в разы.
     """
+    return _requests(path, drop_service=False)
+
+
+def real_requests(path):
+    """Запросы потока без служебных продлевающих ходов (DK-1349).
+
+    Продлевающий ход сам ложится в журнал запросом с usage: без фильтра он
+    сбрасывал часы простоя в решениях cachekeep и резал паузы в detect_ttl.
+    Служебным считается запрос, чья ближайшая реплика человека узнаётся
+    как продление (is_service_reply); настоящая работа остаётся на месте.
+    """
+    return _requests(path, drop_service=True)
+
+
+def _user_text(rec):
+    """Текст реплики человека из записи: строка либо первый текстовый блок.
+
+    Запись с tool_result без текстовых блоков репликой не считается: это
+    продолжение того же хода, и прежняя реплика человека держится.
+    """
+    msg = rec.get("message")
+    if not isinstance(msg, dict):
+        return None
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str) and text.strip():
+                    return text
+    return None
+
+
+def _requests(path, drop_service):
     seen = set()
     out = []
+    last_user = None
     for rec in sessions.records(path):
+        if rec.get("type") == "user":
+            text = _user_text(rec)
+            if text is not None:
+                last_user = text
+            continue
         if rec.get("type") != "assistant":
             continue
         msg = rec.get("message")
@@ -91,6 +164,13 @@ def requests(path):
         if key in seen:
             continue
         seen.add(key)
+        service = is_service_reply(last_user)
+        # Связка «реплика человека - ответ» отработана: свой ответ у реплики
+        # один, и хвост служебного текста не вычёркивает настоящие ходы,
+        # приехавшие после продлевающего.
+        last_user = None
+        if drop_service and service:
+            continue
         req = {
             "write": int(usage.get("cache_creation_input_tokens") or 0),
             "read": int(usage.get("cache_read_input_tokens") or 0),

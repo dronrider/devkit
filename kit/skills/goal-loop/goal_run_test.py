@@ -274,6 +274,11 @@ class Stand:
         # --foreground спрашивает теперь имя окна цели, и настоящий tmux машины
         # отвечал бы ей про чужие сессии.
         write_exec(os.path.join(root, "bin", "tmux"), TMUX_STUB)
+        # Стаб agentctl кладётся так же всякому стенду: без него ротация
+        # витков (DK-662) мерила бы контекст живой утилитой машины, и стенд
+        # зависел бы от её конфига. Без подставленного счётчика стаб отвечает
+        # «под порогом», и цикл идёт как шёл.
+        write_exec(os.path.join(root, "bin", "agentctl"), AGENTCTL_STUB)
         return root
 
     def env(self, root, pause="0"):
@@ -319,6 +324,24 @@ class Stand:
                 return f.read()
         except OSError:
             return ""
+
+    def rotate_calls(self, root):
+        """Вызовы стаба agentctl на ротацию: мерки контекста и строки
+        журнала. Пустой список значит и пустой файл: оболочка утилиту не
+        звала."""
+        try:
+            with open(os.path.join(root, "rotate-calls"), encoding="utf-8") as f:
+                return [l.rstrip("\n") for l in f if l.strip() != ""]
+        except OSError:
+            return []
+
+    def sessions_named(self, root):
+        """Имена витков по порядку: стаб снимает их из замка во время витка."""
+        try:
+            with open(os.path.join(root, "sessions"), encoding="utf-8") as f:
+                return [l.strip() for l in f if l.strip() != ""]
+        except OSError:
+            return []
 
     def notify_log(self, root):
         try:
@@ -1253,6 +1276,35 @@ if args[:1] == ["exec"]:
         f.write(" ".join(args) + "\n")
     cut = args.index("--")
     os.execvp(args[cut + 1], args[cut + 1:])
+if args[:1] == ["rotate"]:
+    # Ротация витков (DK-662): мерка контекста и строка журнала играются
+    # теми же строками, что отвечает живая утилита. Вердикт считается
+    # подставленным счётчиком DEVKIT_CONTEXT_TOKENS против предела
+    # DEVKIT_TEST_ROTATE_LIMIT, а перевод числа в вердикт уже покрыт своими
+    # тестами go: здесь проверяется договор оболочки с утилитой, а не
+    # арифметика. Ключ DEVKIT_TEST_ROTATE_FAIL играет отказ утилиты: у
+    # слепой мерки свой договор, и цикл обязан ехать дальше.
+    with open(os.path.join(root, "rotate-calls"), "a", encoding="utf-8") as f:
+        f.write(" ".join(args) + "\n")
+    if os.environ.get("DEVKIT_TEST_ROTATE_FAIL"):
+        sys.stderr.write("стенд: мерка запрещена ключом\n")
+        sys.exit(2)
+    if "--mark" in args:
+        sys.exit(0)
+    if "--session" in args:
+        raw_limit = os.environ.get("DEVKIT_TEST_ROTATE_LIMIT") or ""
+        try:
+            tokens = int(os.environ.get("DEVKIT_CONTEXT_TOKENS") or "0")
+            limit = int(raw_limit) if raw_limit else 0
+        except ValueError:
+            sys.exit(2)
+        # Без предела из окружения вердикт всегда «под»: счётчик стенда
+        # считается неподставленным, и витки идут как шли.
+        over = bool(limit) and tokens >= limit
+        sys.stdout.write("rotate: %d\nстенд\ncontext: %d\nverdict: %s\n"
+                         "(счётчик стенда DEVKIT_CONTEXT_TOKENS)\n"
+                         % (limit, tokens, "over" if over else "under"))
+        sys.exit(0)
 sys.exit("стаб agentctl: неизвестная команда %s" % args)
 '''
 
@@ -1316,7 +1368,6 @@ class HarnessTests(Stand, unittest.TestCase):
         и незнакомый ярус это отказ словами до первого витка, а не молчаливый
         дефолт посреди цикла."""
         root = self.stand("continue", "done")
-        write_exec(os.path.join(root, "bin", "agentctl"), AGENTCTL_STUB)
         p = self.goal_run(root, "DK-100", "--tier", "космос", "--foreground")
         self.assertNotEqual(p.returncode, 0, "незнакомый ярус прошёл: %s" % p.stdout)
         self.assertIn("яруса космос", p.stdout, "отказ не назвал ярус: %s" % p.stdout)
@@ -1325,7 +1376,6 @@ class HarnessTests(Stand, unittest.TestCase):
     def test_cycle_turn_carries_tier_model(self):
         """Ярус доезжает до самой команды витка, а не только до разбора флагов."""
         root = self.stand("continue", "done")
-        write_exec(os.path.join(root, "bin", "agentctl"), AGENTCTL_STUB)
         p = self.goal_run(root, "DK-100", "--tier", "base", "--foreground")
         self.assertEqual(p.returncode, 0, "цикл с ярусом не прошёл: %s" % p.stdout)
         with open(os.path.join(root, "calls"), encoding="utf-8") as f:
@@ -1354,7 +1404,6 @@ class HarnessTests(Stand, unittest.TestCase):
 
     def test_cycle_runs_turn_through_chosen_harness(self):
         root = self.stand("continue", "done")
-        write_exec(os.path.join(root, "bin", "agentctl"), AGENTCTL_STUB)
         # Клиент второй подписки это тот же стаб: витки он играет так же, а
         # предмет проверки в том, кем он поднят.
         write_exec(os.path.join(root, "bin", "клиент-2"), CLAUDE_STUB)
@@ -1369,7 +1418,6 @@ class HarnessTests(Stand, unittest.TestCase):
 
     def test_unknown_harness_refused_before_turns(self):
         root = self.stand("done")
-        write_exec(os.path.join(root, "bin", "agentctl"), AGENTCTL_STUB)
         p = self.goal_run(root, "DK-100", "--harness", "какая-то", "--foreground")
         self.assertNotEqual(p.returncode, 0, "неизвестная подписка прошла: %s" % p.stdout)
         self.assertIn("в раскладке машины нет", p.stdout)
@@ -1377,7 +1425,6 @@ class HarnessTests(Stand, unittest.TestCase):
 
     def test_disabled_harness_refused(self):
         root = self.stand("done")
-        write_exec(os.path.join(root, "bin", "agentctl"), AGENTCTL_STUB)
         p = self.goal_run(root, "DK-100", "--harness", "третьяtest", "--foreground")
         self.assertNotEqual(p.returncode, 0, "выключенная подписка прошла: %s" % p.stdout)
         self.assertIn("выключена", p.stdout)
@@ -1410,6 +1457,69 @@ class HarnessTests(Stand, unittest.TestCase):
         self.assertTrue(new, "tmux-сессию не поднимали: %r" % seen)
         self.assertIn("--harness", " ".join(new[-1]),
                        "своя tmux-сессия цикла потеряла подписку: %r" % new[-1])
+
+
+class CycleRotationTests(Stand, unittest.TestCase):
+    """Ротация витков по порогу контекста (DK-662): сжатие остаётся первым
+    дешёвым шагом, а порог ротации идёт вторым, поверх него. Оболочка
+    перемеривает законченный виток, над порогом поднимает следующий свежей
+    сессией со строкой журнала ротации о прежнем и новом адресе. Хвост едет
+    состоянием на диске, как и между любыми витками, и отдельной передачи
+    тут нет. Слепая мерка глушит ротацию, а не цикл."""
+
+    def over(self):
+        return {"DEVKIT_CONTEXT_TOKENS": "900000", "DEVKIT_TEST_ROTATE_LIMIT": "150000"}
+
+    def test_over_threshold_rotates_the_turn(self):
+        # Витки над порогом сменяются свежими сессиями: мерка после каждого
+        # продолжившего витка, строка журнала ротации с парой адресов до
+        # подъёма следующего. Стоп-маркер меркой не занимается: цикл кончился,
+        # ротировать некого.
+        root = self.stand("continue запись", "continue запись", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground", extra=self.over())
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.turns_done(root), 3)
+        sids = self.sessions_named(root)
+        self.assertEqual(len(sids), 3, sids)
+        self.assertEqual(len(set(sids)), 3, "витки и без ротации свежие: %s" % sids)
+        marks = [c for c in self.rotate_calls(root) if "--mark" in c]
+        self.assertEqual(len(marks), 2, self.rotate_calls(root))
+        self.assertIn("--old %s" % sids[0], marks[0], marks)
+        self.assertIn("--new %s" % sids[1], marks[0], marks)
+        self.assertIn("--old %s" % sids[1], marks[1], marks)
+        self.assertIn("--new %s" % sids[2], marks[1], marks)
+        measures = [c for c in self.rotate_calls(root) if "--session" in c]
+        self.assertEqual(len(measures), 2, self.rotate_calls(root))
+        log = self.shell_log(root)
+        self.assertIn("контекст витка 1 прошёл порог ротации", log)
+        self.assertIn("сессия %s пересоздана как %s" % (sids[0], sids[1]), log)
+        self.assertIn("сессия %s пересоздана как %s" % (sids[1], sids[2]), log)
+
+    def test_under_threshold_keeps_turns_as_they_were(self):
+        # Под порогом всё идёт как шло: мерка зовётся, строк ротации нет.
+        root = self.stand("continue запись", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground",
+                          extra={"DEVKIT_CONTEXT_TOKENS": "10",
+                                 "DEVKIT_TEST_ROTATE_LIMIT": "150000"})
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.turns_done(root), 2)
+        calls = self.rotate_calls(root)
+        self.assertEqual([c for c in calls if "--mark" in c], [], calls)
+        self.assertEqual(len([c for c in calls if "--session" in c]), 1, calls)
+        self.assertNotIn("ротация", self.shell_log(root))
+
+    def test_blind_measure_does_not_stop_the_cycle(self):
+        # Мерка молчит отказом утилиты: ротация глухая, а цикл едет дальше.
+        # Слепота называется один раз на цикл, а не на каждом витке.
+        root = self.stand("continue запись", "continue запись", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground",
+                          extra={"DEVKIT_TEST_ROTATE_FAIL": "1"})
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.turns_done(root), 3)
+        calls = self.rotate_calls(root)
+        self.assertEqual([c for c in calls if "--mark" in c], [], calls)
+        self.assertEqual(self.shell_log(root).count("мерка ротации не посчиталась"), 1,
+                         self.shell_log(root))
 
 
 if __name__ == "__main__":

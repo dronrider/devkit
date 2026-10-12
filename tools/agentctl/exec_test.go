@@ -155,18 +155,46 @@ max = "strong"
 	}
 }
 
-// TestExecDefaultHarnessWithoutEnv: харнес по умолчанию пар окружения не
-// требует, он и так поднимается домашним каталогом. Иначе выбор подписки не
-// работал бы на машине с одной подпиской, где выбирать нечего.
-func TestExecDefaultHarnessWithoutEnv(t *testing.T) {
+// TestExecRefusesDefaultHarnessWithoutEnv: харнес по умолчанию без пар
+// окружения это отказ, а не тихий пропуск обвязки (DK-1271, кейс 3). Без пар
+// команда пошла бы мимо обвязки подписки, и чат поднимался на профиле первой
+// подписки с истёкшим входом.
+func TestExecRefusesDefaultHarnessWithoutEnv(t *testing.T) {
 	kit := execKit(t)
+	_, err := cmdExec(kit, "homecli", []string{"/bin/sh", "-c", "exit 0"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("жду отказ: default без пар окружения поднялся бы мимо обвязки")
+	}
+	for _, want := range []string{"homecli", "devkitctl doctor --fix"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("в отказе нет %q: %v", want, err)
+		}
+	}
+}
+
+// TestExecDefaultHarnessWithEnv: default с парами окружения поднимается
+// обвязкой как обычная подписка: пары кладутся, имя харнеса едет в
+// DEVKIT_HARNESS.
+func TestExecDefaultHarnessWithEnv(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "homecli", echoProfile)
+	writeMachine(t, kit, `enabled = ["homecli"]
+default = "homecli"
+
+[homecli]
+env = ["CLAUDE_CONFIG_DIR=~/.claude-home"]
+`)
 	work := realPath(t, t.TempDir())
 	dump := filepath.Join(work, "env.txt")
 	if code, out := execOut(t, kit, "homecli", execEnvDump(dump)); code != 0 {
 		t.Fatalf("код возврата %d, жду 0: %s", code, out)
 	}
-	if env := dumpedEnv(t, kit, work); env[harnessEnv] != "homecli" {
+	env := dumpedEnv(t, kit, work)
+	if env[harnessEnv] != "homecli" {
 		t.Fatalf("харнес команды %q, жду homecli", env[harnessEnv])
+	}
+	if env["CLAUDE_CONFIG_DIR"] == "" {
+		t.Fatalf("пара окружения не легла: %v", env)
 	}
 }
 

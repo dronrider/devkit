@@ -148,7 +148,8 @@ flowchart TD
   текущие работы проектов с телефона и ноутбука, статика вшита в бинарь, вход
   по своему токену с подписанной кукой. Своей базы нет, доску сервер берёт
   подпроцессом `taskctl list --json`, а процесс держит launchd-агент, который
-  кладёт `devkitctl doctor --fix`,
+  кладёт `devkitctl doctor --fix` и запускает serve обёрткой `agentctl exec`
+  (DK-1271): чаты всех подписок не зависят от окружения serve,
   см. [tools/dashboard/README.md](tools/dashboard/README.md).
 - `kit/harness/` - профили инструментов, в которых живёт сессия агента
   (`claude-code.toml`, по профилю на каждую подписку после первой: `glm-code.toml`,

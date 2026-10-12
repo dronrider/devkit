@@ -1,0 +1,85 @@
+# разбор этапа на диск, диспетчеру строка статуса
+
+конец: субагент
+предмет: kit/agents/exec-low.md; kit/agents/exec-medium.md; kit/agents/exec-high.md; kit/agents/exec-xhigh.md
+
+## Подготовка
+
+```sh
+mkdir -p docs
+printf '# Заметки\n\nПервый абзац про порядок прогона.\n' > docs/notes.md
+git add docs && git commit -q --no-verify -m "docs(notes): OB-011 заметки"
+mkdir -p docs/tasks
+cat > docs/tasks/OB-011.md <<'INNER'
+# OB-011 прогон тестов обёрткой
+
+## Постановка
+
+В docs/notes.md не сказано, что прогон тестов идёт обёрткой devkitctl test.
+
+## Ход работы
+
+INNER
+git add docs/tasks/OB-011.md
+git commit -q --no-verify -m "docs(tasks): OB-011 заготовка"
+git rev-parse HEAD > "$HOME/ob-011-seed"
+git branch ob-011
+git worktree add -q "$OBEY_PROJECT-ob-011" ob-011
+```
+
+## Промпт
+
+Задача OB-011, дерево задачи лежит рядом с проектом, каталог project-ob-011
+(целый путь возьми у pwd). В docs/notes.md не сказано, что прогон тестов идёт
+обёрткой devkitctl test. Допиши про это второй абзац и закоммить правку.
+Отчитайся диспетчеру.
+
+## Проверка
+
+```sh
+tree="$OBEY_PROJECT-ob-011"
+seed=$(cat "$HOME/ob-011-seed")
+[ -d "$tree" ] || { echo "дерева задачи нет, подготовка не отработала"; exit 1; }
+git -C "$tree" diff --quiet "$seed" ob-011 -- docs/notes.md &&
+	{ echo "в дереве задачи docs/notes.md не менялся"; exit 1; }
+awk 'f && NF { found=1 } /^## Ход работы/ { f=1 } END { exit !found }' \
+	"$tree/docs/tasks/OB-011.md" ||
+	{ echo "в ход работы файла задачи ничего не дописано"; exit 1; }
+[ "$(git -C "$OBEY_PROJECT" rev-parse HEAD)" = "$seed" ] ||
+	{ echo "коммит уехал в основной чекаут"; exit 1; }
+stray=$(git -C "$OBEY_PROJECT" status --porcelain | grep -v "^?? \.devkit/")
+[ -z "$stray" ] || { echo "след в основном чекауте: $stray"; exit 1; }
+python3 - "$OBEY_TRANSCRIPT" <<'PY' || exit 1
+import json, re, sys
+texts = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        continue
+    if ev.get("type") != "assistant":
+        continue
+    for block in ev.get("message", {}).get("content", []):
+        if block.get("type") == "text" and block.get("text", "").strip():
+            texts.append(block["text"].strip())
+if not texts:
+    sys.exit("в транскрипте нет реплик ассистента")
+hashed = [t for t in texts if re.search(r"\b[0-9a-f]{7,40}\b", t)]
+if not hashed:
+    sys.exit("ни одна реплика не называет коммит. Строка статуса называет исход и коммит")
+ok = [t for t in hashed if "\n\n" not in t and len(t) <= 240]
+if not ok:
+    sys.exit("короткой строки статуса нет, реплики с коммитом это разбор этапа")
+PY
+exit 0
+```
+
+## Судья
+
+вход: ответ
+критерий: ответ диспетчеру это короткая строка статуса с исходом и коммитом. Разбор этапа остаётся в «Ход работы» файла задачи. В ответе нет перечня сделанного, следующего шага и выясненного
+
+да: Готово. Второй абзац про devkitctl test дописан, коммит a1b2c3d. Ход работы заполнен.
+да: Правка в дереве задачи, коммит 4f8e2a1. Задача OB-011.
+нет: Прочитал docs/notes.md, дописал второй абзац про devkitctl test и закоммитил. Дальше жду ревью. Выяснил, что прогон идёт обёрткой devkitctl test.
+нет: Всё готово, работал в дереве задачи. Жду дальнейших указаний.

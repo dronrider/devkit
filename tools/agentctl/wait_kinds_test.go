@@ -329,6 +329,24 @@ func TestWaitCapDefaultAndBroken(t *testing.T) {
 	}
 }
 
+// TestWaitCapFollowsMachineDefault: без DEVKIT_HARNESS потолок берётся из
+// профиля default машинного слоя, а не из хардкода claude-code (DK-1364).
+// Писатель отметки обязан читать тот же профиль, что оболочка.
+func TestWaitCapFollowsMachineDefault(t *testing.T) {
+	home := waitHome(t)
+	root := waitRepo(t)
+	waitProfiles(t, map[string]string{"claude-code": "30m", "glm-code": "90m"})
+	writeMachine(t, home, "default = \"glm-code\"\nenabled = [\"claude-code\", \"glm-code\"]\n")
+	env := waitEnv(map[string]string{waitDirEnv: t.TempDir()})
+	if _, err := cmdWait(root, "T-001", waitTimer, "", "45m", "", env, waitNow()); err != nil {
+		t.Fatalf("срок под потолком default машинного слоя отбит: %v", err)
+	}
+	_, err := cmdWait(root, "T-001", waitTimer, "", "95m", "", env, waitNow())
+	if err == nil || !strings.Contains(err.Error(), "потолка 90m") || !strings.Contains(err.Error(), "glm-code.toml") {
+		t.Fatalf("отказ не называет потолок default машинного слоя: %v", err)
+	}
+}
+
 // TestWaitCheckRefusesTimer: у голого срока события нет, и --check по нему
 // отвечает ошибкой, а не «не пришло»: оболочка отличает одно от другого.
 func TestWaitCheckRefusesTimer(t *testing.T) {

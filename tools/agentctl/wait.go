@@ -40,7 +40,7 @@ const (
 	waitStamp   = "2006-01-02T15:04:05"
 	// Потолок срока, когда профиль харнеса его не называет. Ключ профиля
 	// читает и оболочка task-run.py, и профиль у них выбирается одинаково:
-	// DEVKIT_HARNESS, иначе claude-code.
+	// DEVKIT_HARNESS, иначе default машинного слоя, иначе claude-code.
 	waitCapDefault     = "2h"
 	waitCapKey         = "wait_cap"
 	waitHarnessDefault = "claude-code"
@@ -104,15 +104,16 @@ func waitDir(env func(string) string) (string, error) {
 }
 
 // waitCapOf берёт потолок из секции [head] профиля харнеса. Профиль называет
-// DEVKIT_HARNESS, иначе claude-code: так же его выбирает оболочка, и потолок
-// у писателя отметки и у её читателя один. Профиль без ключа и машина без
-// каталога профилей получают двухчасовое умолчание, а кривое значение даёт
-// отказ: молча подменённый потолок неотличим от настоящего.
+// DEVKIT_HARNESS, иначе default машинного слоя, иначе claude-code: так же его
+// выбирает оболочка, и потолок у писателя отметки и у её читателя один.
+// Профиль без ключа и машина без каталога профилей получают двухчасовое
+// умолчание, а кривое значение даёт отказ: молча подменённый потолок
+// неотличим от настоящего.
 func waitCapOf(start string, env func(string) string) (waitLimit, error) {
 	def, _ := time.ParseDuration(waitCapDefault)
 	name := strings.TrimSpace(env(harnessEnv))
 	if name == "" {
-		name = waitHarnessDefault
+		name = waitDefaultHarness(start)
 	}
 	dir, err := harnessDir(start)
 	if err != nil {
@@ -134,6 +135,26 @@ func waitCapOf(start string, env func(string) string) (waitLimit, error) {
 		return waitLimit{}, fmt.Errorf("профиль %s: [head] %s = %q не разобран, жду вид 90m, 2h", p.Path, waitCapKey, raw)
 	}
 	return waitLimit{span, raw, "профиль " + p.Path}, nil
+}
+
+// waitDefaultHarness берёт default машинного слоя тем же слиянием слоёв, что
+// и `agentctl harness --json`. Утилита сводит конфигурацию сама: чтение
+// harness.local отдельным разбором означало бы ещё одну копию парсера. Без
+// каталога профилей, при отказе слияния и при пустом default остаётся
+// waitHarnessDefault, и потолок не расходится с оболочкой.
+func waitDefaultHarness(start string) string {
+	dir, err := harnessDir(start)
+	if err != nil {
+		return waitHarnessDefault
+	}
+	l, err := mergeLayers(dir, machineConfigPath(), projectConfigPath(start))
+	if err != nil {
+		return waitHarnessDefault
+	}
+	if d := strings.TrimSpace(l.Default); d != "" {
+		return d
+	}
+	return waitHarnessDefault
 }
 
 func waitKnown(kind string) bool {

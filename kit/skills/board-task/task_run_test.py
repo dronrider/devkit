@@ -1475,6 +1475,81 @@ class TestLiveRotation(unittest.TestCase):
                          [], s.orders())
 
 
+class TestRotateHandoff(unittest.TestCase):
+    """Обрыв посреди передачи хвоста (DK-662). Хвост пишется файлом до строки
+    журнала, строку mark дописывает только успешная запись: пока реестр не
+    назвал адрес новой сессии, строки нет, а дела уже лежат на диске."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="task-run-handoff-")
+        os.makedirs(os.path.join(self.root, ".devkit"))
+        self.pipe = task_run.Pipeline(task_run.parse_args(
+            ["DK-1", "-C", self.root, "--", "claude"]))
+        self.pipe.sid = SID
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def tail(self):
+        path = self.pipe.rotate_tail()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("хвост: что сделано, что дальше, что выяснено\n")
+        return path
+
+    def test_tail_survives_the_unnamed_new_session(self):
+        # Голова дописала хвост, реестр промолчал об адресе новой сессии:
+        # строка журнала не пишется, файл хвоста остаётся лежать.
+        self.tail()
+        self.pipe.rotate_ask = time.time()
+        self.pipe.drop_head = unittest.mock.Mock()
+        self.pipe.raise_head = unittest.mock.Mock()
+        self.pipe.wait_session = lambda: ""
+        self.pipe.rotate_note = unittest.mock.Mock()
+        self.pipe.say = unittest.mock.Mock()
+        self.assertIsNone(self.pipe.rotate())
+        self.assertTrue(os.path.isfile(self.pipe.rotate_tail()),
+                        "дела потеряны вместе со строкой журнала")
+        self.pipe.rotate_note.assert_not_called()
+        said = " ".join(str(c) for c in self.pipe.say.call_args_list)
+        self.assertIn("строка журнала не записана", said)
+
+    def test_mark_follows_the_fresh_tail(self):
+        # Строка журнала идёт после файла хвоста и после того, как новый
+        # адрес известен: mark зовётся с парой адресов, хвост к этому
+        # моменту уже лежит на диске.
+        path = self.tail()
+        self.pipe.rotate_ask = time.time() - 1
+        self.pipe.drop_head = unittest.mock.Mock()
+        self.pipe.raise_head = unittest.mock.Mock()
+        self.pipe.wait_session = lambda: SID2
+        seen = []
+
+        def note(old, new):
+            seen.append((old, new, os.path.isfile(path)))
+
+        self.pipe.rotate_note = note
+        self.pipe.log = unittest.mock.Mock()
+        self.pipe.say = unittest.mock.Mock()
+        self.assertEqual(self.pipe.rotate(), "пересоздана")
+        self.assertEqual(seen, [(SID, SID2, True)], seen)
+
+    def test_stale_tail_is_not_marked(self):
+        # Хвост прошлого запуска лежит на диске давно: свежести файла не
+        # хватает, ротация откладывается, и mark не зовётся ни с какими
+        # адресами.
+        path = self.tail()
+        old = time.time() - 3600
+        os.utime(path, (old, old))
+        self.pipe.rotate_ask = time.time()
+        self.pipe.rotate_note = unittest.mock.Mock()
+        self.pipe.say = unittest.mock.Mock()
+        self.assertIsNone(self.pipe.rotate())
+        self.pipe.rotate_note.assert_not_called()
+        said = " ".join(str(c) for c in self.pipe.say.call_args_list)
+        self.assertIn("хвост ротации не дописан", said)
+
+
 class TestTier(unittest.TestCase):
     """Ярус модели проходов (DK-662): разворачивается в модель раскладкой
     машины один раз на прогон и едет флагом --model каждому проходу, а

@@ -125,14 +125,17 @@ def _user_text(rec):
     """Текст реплики человека из записи: строка либо первый текстовый блок.
 
     Запись с tool_result без текстовых блоков репликой не считается: это
-    продолжение того же хода, и прежняя реплика человека держится.
+    продолжение того же хода, и прежняя реплика человека держится. Пустая и
+    пробельная строка content тоже незначима, как пустой текстовый блок, иначе
+    она перекрывала бы реплику между служебным ходом и его ответом, и пара
+    «служебная реплика - ответ» разваливалась бы в real_requests.
     """
     msg = rec.get("message")
     if not isinstance(msg, dict):
         return None
     content = msg.get("content")
     if isinstance(content, str):
-        return content
+        return content if content.strip() else None
     if isinstance(content, list):
         for block in content:
             if isinstance(block, dict) and block.get("type") == "text":

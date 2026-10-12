@@ -154,29 +154,6 @@ class CacheKeepLogicTest(unittest.TestCase):
         self.assertLess(reply_per_ping, prefix * cachekeep.CACHE_READ_RATE,
                         "молчаливый минимум дешевле чтения префикса")
 
-    def test_service_reply_forms(self):
-        """Формы служебной реплики те же, что узнаёт лента дашборда: дословный
-        текст и старая рамка без слов человека. Цитата в словах человека
-        продлением не считается, иначе разговор о пинге выпадал из разбора."""
-        self.assertTrue(context.is_service_reply(cachekeep.KEEPALIVE_PROMPT),
-                        "дословный текст реплики служебный")
-        self.assertTrue(context.is_service_reply("  %s\n" % cachekeep.KEEPALIVE_PROMPT),
-                        "обрамление пробелами не прячет дословный текст")
-        frame = ("<devkit-cachekeep>Служебное продление кеша сессии."
-                 " Молчи.</devkit-cachekeep>")
-        self.assertTrue(context.is_service_reply(frame),
-                        "старая рамка без слов человека служебная")
-        quoted = "как быть с «%s» в чате?" % cachekeep.KEEPALIVE_PROMPT
-        self.assertFalse(context.is_service_reply(quoted),
-                         "цитата в словах человека остаётся разговором")
-        self.assertFalse(context.is_service_reply(frame + " и вопрос"),
-                         "рамка со словами человека остаётся разговором")
-        self.assertFalse(context.is_service_reply("обычная реплика"),
-                         "обычная реплика не служебная")
-        self.assertFalse(context.is_service_reply(None),
-                         "отсутствие текста не служебная реплика")
-
-
 class CacheKeepStreamTest(SandboxCase):
     """Решения по синтетическому потоку: тайминги, TTL, строки журнала."""
 

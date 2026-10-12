@@ -1,6 +1,7 @@
 package taskhead
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,15 +21,26 @@ func writeProfile(t *testing.T, body string) string {
 // stubAgentctl кладёт в PATH стаб agentctl, который на `harness --json` печатает
 // body. Пустой body значит отказ утилиты. Стаб нужен стенду имени профиля:
 // настоящий agentctl читает живой машинный слой, а тесту нужен свой default.
-func stubAgentctl(t *testing.T, body string) {
+func stubAgentctl(t *testing.T, body string) string {
 	t.Helper()
-	bin := t.TempDir()
-	script := "#!/bin/sh\n"
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "called")
+	script := "#!/bin/sh\necho ran >> " + marker + "\n"
 	if body == "" {
 		script += "exit 1\n"
 	} else {
-		script += "cat <<'EOF'\n" + body + "\nEOF\n"
+		// /bin/cat: у стенда PATH без системных каталогов, а стаб должен
+		// отвечать и там.
+		script += "/bin/cat <<'EOF'\n" + body + "\nEOF\n"
 	}
+	stubAgentctlScript(t, script)
+	return marker
+}
+
+// stubAgentctlScript кладёт в PATH стаб agentctl с произвольным телом.
+func stubAgentctlScript(t *testing.T, script string) {
+	t.Helper()
+	bin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(bin, "agentctl"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -65,9 +77,99 @@ func TestHarnessNameFallsBackWithoutAgentctl(t *testing.T) {
 	if got := HarnessName(""); got != DefaultHarness {
 		t.Errorf("с пустым default %q, ждал %q", got, DefaultHarness)
 	}
+}
+
+// captureStderr подменяет os.Stderr на пайпу и возвращает чтение её.
+func captureStderr(t *testing.T) func() string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = old })
+	return func() string {
+		w.Close()
+		os.Stderr = old
+		b, _ := io.ReadAll(r)
+		r.Close()
+		return string(b)
+	}
+}
+
+// Отказ живой утилиты не проглатывается: голова уходит на DefaultHarness, но
+// перед тем строка в stderr. Без неё кривая конфигурация снова уводит подъём
+// на зашитое значение без следа (замечание 2 ревью DK-1364).
+func TestHarnessNameWarnsWhenAgentctlRefuses(t *testing.T) {
+	t.Setenv(HarnessEnv, "")
+	stubAgentctl(t, "") // exit 1
+	read := captureStderr(t)
+	if h := HarnessName(""); h != DefaultHarness {
+		t.Errorf("при отказе утилиты %q, ждал %q", h, DefaultHarness)
+	}
+	said := read()
+	if !strings.Contains(said, "agentctl harness --json") {
+		t.Errorf("отказ agentctl не оставил строки в stderr, а увёл голову на %q: %q", DefaultHarness, said)
+	}
+	// Не JSON от живой утилиты тоже считается отказом со строкой.
 	stubAgentctl(t, "не json")
-	if got := HarnessName(""); got != DefaultHarness {
-		t.Errorf("с неразборным ответом %q, ждал %q", got, DefaultHarness)
+	read = captureStderr(t)
+	if h := HarnessName(""); h != DefaultHarness {
+		t.Errorf("с неразборным ответом %q, ждал %q", h, DefaultHarness)
+	}
+	if said := read(); !strings.Contains(said, "agentctl harness --json") {
+		t.Errorf("неразборный ответ agentctl не оставил строки: %q", said)
+	}
+}
+
+// Утилиты нет: молча, по DoD. Строка об отсутствии не нужна, fallback тут
+// штатный, а не след увода на другую подписку.
+func TestHarnessNameSilentWithoutAgentctl(t *testing.T) {
+	t.Setenv(HarnessEnv, "")
+	t.Setenv("PATH", t.TempDir())
+	read := captureStderr(t)
+	if h := HarnessName(""); h != DefaultHarness {
+		t.Errorf("без agentctl %q, ждал %q", h, DefaultHarness)
+	}
+	if said := read(); strings.TrimSpace(said) != "" {
+		t.Errorf("без agentctl в PATH ждал молчания, а пришло %q", said)
+	}
+	// Пустой default у живого ответа: утилита сказала «не задан», тоже молча.
+	// Маркер держит зов: без него старый код вернул бы DefaultHarness, не
+	// спросив, и тест молчал бы вместе с ним.
+	marker := stubAgentctl(t, `{"default":"","source":"x","harnesses":[]}`)
+	read = captureStderr(t)
+	if h := HarnessName(""); h != DefaultHarness {
+		t.Errorf("с пустым default %q, ждал %q", h, DefaultHarness)
+	}
+	if said := read(); strings.TrimSpace(said) != "" {
+		t.Errorf("пустой default не ошибка, ждал молчания, а пришло %q", said)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("agentctl harness --json не звали: default берётся у утилиты даже пустым")
+	}
+}
+
+// Зов agentctl идёт со сроком: подъём не должен висеть на утилите
+// (замечание 1 ревью DK-1364). Стаб спит и после сна кладёт отметку конца.
+// HarnessName обязана вернуться, пока стаб спит: отметки ещё нет. Факт
+// виден без стенного времени, дожидание конца стаба на старом коде её
+// кладёт и роняет тест.
+func TestHarnessNameTimesOutOnHungAgentctl(t *testing.T) {
+	t.Setenv(HarnessEnv, "")
+	done := filepath.Join(t.TempDir(), "done")
+	stubAgentctlScript(t, "#!/bin/sh\n/bin/sleep 8\ntouch "+done+"\n")
+	read := captureStderr(t)
+	h := HarnessName("")
+	if _, err := os.Stat(done); err == nil {
+		t.Errorf("HarnessName дождалась конца зависшего agentctl, срока зова нет")
+	}
+	if h != DefaultHarness {
+		t.Errorf("при зависшей утилите %q, ждал %q", h, DefaultHarness)
+	}
+	if said := read(); !strings.Contains(said, "agentctl harness --json") {
+		t.Errorf("зависший agentctl не оставил строки: %q", said)
 	}
 }
 

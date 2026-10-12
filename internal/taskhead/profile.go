@@ -2,12 +2,14 @@ package taskhead
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Признаки конца хода, которые понимает оболочка. turn-mark это отметка хука
@@ -66,32 +68,47 @@ func HarnessName(name string) string {
 	if name = strings.TrimSpace(os.Getenv(HarnessEnv)); name != "" {
 		return name
 	}
-	return machineDefaultHarness()
+	d, err := machineDefaultHarness()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "taskhead: имя профиля без имени: %v\n", err)
+	}
+	return d
 }
+
+// machineAskWait ограничивает вопрос agentctl: подъём головы не должен висеть
+// на утилите. Тот же срок держит HARNESS_ASK_LIMIT в оболочке task-run.
+const machineAskWait = 5 * time.Second
 
 // machineDefaultHarness берёт default машинного слоя у `agentctl harness --json`,
 // поле default. Утилита сводит слои конфигурации сама: чтение harness.local тут
-// означало бы третью копию разбора. Без agentctl в PATH, при отказе утилиты и
-// при пустом default остаётся DefaultHarness.
-func machineDefaultHarness() string {
+// означало бы третью копию разбора.
+//
+// Утилиты нет в PATH: молча DefaultHarness, это случай из DoD. Утилита есть,
+// но отказалась (срок, ненулевой код, не JSON): тоже DefaultHarness, и перед
+// тем строка в stderr. Без неё голова снова уехала бы на зашитое значение
+// без следа, та же болезнь, что DK-1364. Пустой default у живого ответа молча
+// оставляет DefaultHarness, утилита сказала, что default не задан.
+func machineDefaultHarness() (string, error) {
 	bin, err := exec.LookPath("agentctl")
 	if err != nil {
-		return DefaultHarness
+		return DefaultHarness, nil
 	}
-	out, err := exec.Command(bin, "harness", "--json").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), machineAskWait)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "harness", "--json").Output()
 	if err != nil {
-		return DefaultHarness
+		return DefaultHarness, fmt.Errorf("agentctl harness --json отказал: %w", err)
 	}
 	var v struct {
 		Default string `json:"default"`
 	}
 	if err := json.Unmarshal(out, &v); err != nil {
-		return DefaultHarness
+		return DefaultHarness, fmt.Errorf("agentctl harness --json ответил не JSON: %w", err)
 	}
 	if d := strings.TrimSpace(v.Default); d != "" {
-		return d
+		return d, nil
 	}
-	return DefaultHarness
+	return DefaultHarness, nil
 }
 
 // ProfilePath называет профиль харнеса name в дереве devkit.

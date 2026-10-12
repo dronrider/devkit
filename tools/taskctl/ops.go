@@ -669,6 +669,17 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	if doc != "" {
 		paths = append(paths, doc)
 	}
+	// Сдача в Check открывает отметку долга (DK-1356): хвост разбора виден
+	// всякому маршруту, закрывает его board-debt у ручной сдачи и проверяющий
+	// у конвейерной. Отметка не пишется только в обход файла задачи, и молчать
+	// об этом нельзя: невидимый хвост это тот же потерянный.
+	if target == SectCheck {
+		if p, err := openDebtMark(root, id, now); err != nil {
+			note += fmt.Sprintf("\n%s: отметка долга не записана: %v", id, err)
+		} else if p != "" && p != doc {
+			paths = append(paths, p)
+		}
+	}
 	tail, err := c.apply(root, paths)
 	if err != nil {
 		return "", err
@@ -897,6 +908,11 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	// Открытая человеческая развилка держит и закрытие, тем же чтением
 	// перечня, что и старт (LLD DK-552, решение 2).
 	if err := closeForkGate(root, p.ID); err != nil {
+		return "", err
+	}
+	// Открытая отметка долга держит закрытие тем же порядком (DK-1356): хвост
+	// разбора закрывается одной командой, и называет её ворот.
+	if err := closeDebtGate(root, p.ID); err != nil {
 		return "", err
 	}
 	date := p.Date

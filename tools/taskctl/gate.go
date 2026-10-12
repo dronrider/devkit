@@ -454,3 +454,20 @@ func closeForkGate(root, id string) error {
 	}
 	return fmt.Errorf("%s", taskform.ForkGateNote(id, "закрытие задачи", held))
 }
+
+// closeDebtGate не даёт закрыть задачу с открытым хвостом долга (DK-1356).
+// Отметку открывает сам перевод в Check, а закрывает разбор по скиллу
+// board-debt: у ручной сдачи его зовёт исполнитель, у конвейерной шаг лежит в
+// заказе проверяющего. Сессия разбора может оборваться, и без ворот хвост
+// уезжал бы в архив молча, возвращаясь переделкой. Файла задачи нет значит и
+// отметки нет: строки без файла ворота не держат.
+func closeDebtGate(root, id string) error {
+	data, err := os.ReadFile(taskFilePath(root, id))
+	if err != nil {
+		return nil
+	}
+	if !taskform.DebtHeld(string(data)) {
+		return nil
+	}
+	return fmt.Errorf("%s", taskform.DebtGateNote(id))
+}

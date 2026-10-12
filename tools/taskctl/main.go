@@ -682,6 +682,15 @@ func main() {
 		pos := frame.ParseArgs(fs, args[1:])
 		needArgs(pos, 1, 1, "debt <ID> [--off] [-m ... --push]")
 		msg, err = cmdDebt(root(*dir), pos[0], p)
+	case "debt-done":
+		fs := flag.NewFlagSet("debt-done", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		var p DebtDoneParams
+		commitFlags(fs, &p.Commit)
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 2, 2, `debt-done <ID> "пересечений нет" [-m ... --push]`)
+		p.Note = pos[1]
+		msg, err = cmdDebtDone(root(*dir), pos[0], p)
 	case "arm":
 		fs := flag.NewFlagSet("arm", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

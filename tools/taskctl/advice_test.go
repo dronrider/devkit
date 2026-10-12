@@ -117,6 +117,9 @@ func TestMoveAndClosePrintNextStep(t *testing.T) {
 		t.Fatalf("перевод в Check без подсказки: %q", msg)
 	}
 
+	if _, err := cmdDebtDone(root, "XR-002", DebtDoneParams{Note: "пересечений нет"}); err != nil {
+		t.Fatal(err)
+	}
 	msg, err = cmdClose(root, CloseParams{ID: "XR-002", Date: "2026-08-09"})
 	if err != nil {
 		t.Fatal(err)

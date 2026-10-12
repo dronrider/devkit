@@ -2,9 +2,13 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Метка технического долга (DK-624, развилка «метка»). Долг это строка, после
@@ -84,6 +88,76 @@ func cmdDebt(root, id string, p DebtParams) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%s %s: %s%s", id, verb, row.Title, tail), nil
+}
+
+// openDebtMark пишет открытую отметку долга в раздел «Ход работы» файла
+// задачи. Зовёт её перевод в Check: сдача приехала, дифф круга готов, и хвост
+// разбора долга виден снаружи, какой бы маршрут строку ни перевёл. Уже
+// открытая отметка переживает возврат на доработку молча: последний перевод
+// снова ждёт разбора, и второй строки то же состояние не описывает точнее.
+// Возврат это относительный путь файла, если отметка легла. Файла нет значит и
+// читателя нет, а ронять перевод из-за отметки нельзя, поэтому ошибка пишется
+// в хвост сообщения самим вызывающим.
+func openDebtMark(root, id string, now time.Time) (string, error) {
+	path := taskFilePath(root, id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if taskform.DebtHeld(string(data)) {
+		return "", nil
+	}
+	line := fmt.Sprintf("- %s у диффа, %s.", taskform.DebtOpenNote, now.Format("2006-01-02 15:04"))
+	if err := os.WriteFile(path, []byte(taskform.InsertIntoSection(string(data), stageSection, line)), 0o644); err != nil {
+		return "", err
+	}
+	return filepath.Join("docs", "tasks", id+".md"), nil
+}
+
+// DebtDoneParams это аргументы команды `taskctl debt-done`.
+type DebtDoneParams struct {
+	Note   string // итог разбора: «пересечений нет» либо «взята <ID долга>»
+	Now    time.Time
+	Commit CommitOpts
+}
+
+// cmdDebtDone закрывает открытую отметку долга итогом разбора. Доску команда
+// не трогает, поэтому работает и из дерева задачи: закрывает хвост тот, кто
+// разбирал, исполнитель у ручной сдачи и проверяющий у конвейерной. Открытой
+// отметки нет значит закрывать нечего, и это не отказ: заказ проверяющего
+// называет шаг безусловно, и уже закрытый хвост не должен ронять прогон.
+func cmdDebtDone(root, id string, p DebtDoneParams) (string, error) {
+	if err := p.Commit.validate(); err != nil {
+		return "", err
+	}
+	note := strings.TrimSpace(p.Note)
+	if note == "" {
+		return "", fmt.Errorf("итог разбора обязателен: \"пересечений нет\" либо \"взята <ID долга>\"")
+	}
+	if !idRe.MatchString(id) {
+		return "", fmt.Errorf("%q не похож на ID задачи", id)
+	}
+	path := taskFilePath(root, id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if !taskform.DebtHeld(string(data)) {
+		return fmt.Sprintf("%s: открытой отметки долга нет, закрывать нечего", id), nil
+	}
+	now := p.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	line := fmt.Sprintf("- %s, %s, %s.", taskform.DebtDoneNote, note, now.Format("2006-01-02 15:04"))
+	if err := os.WriteFile(path, []byte(taskform.InsertIntoSection(string(data), stageSection, line)), 0o644); err != nil {
+		return "", err
+	}
+	tail, err := p.Commit.apply(root, []string{filepath.Join("docs", "tasks", id+".md")})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s: хвост долга закрыт, %s%s", id, note, tail), nil
 }
 
 // lintTails ловит сломанный порядок хвостов заголовка. Порядок фиксирован

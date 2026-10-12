@@ -236,6 +236,9 @@ func TestCloseRejectsFailed(t *testing.T) {
 	if _, err := cmdFail(root, FailParams{ID: "XR-005", Clear: true}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := cmdDebtDone(root, "XR-005", DebtDoneParams{Note: "пересечений нет"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := cmdClose(root, CloseParams{ID: "XR-005"}); err != nil {
 		t.Fatalf("после погашения закрытие должно проходить: %v", err)
 	}

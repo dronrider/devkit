@@ -163,6 +163,9 @@ func TestCloseFlushesStagesBeforeArchive(t *testing.T) {
 	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := cmdDebtDone(root, "XR-005", DebtDoneParams{Note: "пересечений нет"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-08-16"}); err != nil {
 		t.Fatal(err)
 	}

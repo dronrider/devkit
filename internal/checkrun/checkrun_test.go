@@ -132,6 +132,23 @@ func TestOrderByAccept(t *testing.T) {
 	}
 }
 
+// regcheck:test-begin
+//
+// TestOrderCarriesDebtStep: DK-1356. Конвейерная сдача бежит мимо исполнителя,
+// и хвост долга у неё разбирает проверяющий. Шаг лежит в заказе у любого вида
+// приёмки, до которого конвейер вообще доносит проверяющего, и называет команду
+// закрытия отметки.
+func TestOrderCarriesDebtStep(t *testing.T) {
+	for _, accept := range []string{"", AcceptMixed} {
+		order := Order("XR-1", "sonnet", accept)
+		if !strings.Contains(order, "board-debt") || !strings.Contains(order, `taskctl debt-done XR-1 "пересечений нет"`) {
+			t.Fatalf("заказ (%s) не несёт шаг долга с командой закрытия: %s", accept, order)
+		}
+	}
+}
+
+// regcheck:test-end
+
 // project собирает синтетический проект: обвязка выката и файлы задач.
 func project(t *testing.T, cfg string, docs map[string]string) string {
 	t.Helper()

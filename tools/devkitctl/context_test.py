@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Разбор журналов сессий: stats --context на фикстуре с известной подписью
-перезаписи префикса. Журналы харнес кладёт по слепку пути проекта, поэтому
-фикстура раскладывается под подставным HOME в директорию слепка временного
-проекта.
+"""Разбор журналов сессий: формы служебной реплики, разбор потока и
+stats --context на фикстуре с известной подписью перезаписи префикса.
+Журналы харнес кладёт по слепку пути проекта, поэтому фикстура
+раскладывается под подставным HOME в директорию слепка временного проекта.
 """
+import json
 import re
 import shutil
 import unittest
@@ -14,6 +15,85 @@ from testenv import HERE, SandboxCase, context, git_init, write
 LOG = ("2026-07-29T01:02:41\tshipctl\tmerge\t0\n"
        "2026-07-29T01:02:40\ttaskctl\tmove\t0\n"
        "2026-07-29T01:02:40\ttaskctl\tmove\t1\n")
+
+
+def assistant_raw(read, ts):
+    """Сырая запись ответа с usage для журнала потока."""
+    return {
+        "type": "assistant",
+        "requestId": "req_%s" % ts,
+        "message": {
+            "model": "m1",
+            "usage": {
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": read,
+                "input_tokens": 20,
+                "output_tokens": 5,
+            },
+        },
+        "timestamp": ts,
+        "uuid": "u_%s" % ts,
+    }
+
+
+def user_rec(content, ts):
+    """Сырая запись реплики человека для журнала потока."""
+    return {
+        "type": "user",
+        "message": {"role": "user", "content": content},
+        "timestamp": ts,
+        "uuid": "up_%s" % ts,
+    }
+
+
+class ServiceReplyTest(unittest.TestCase):
+    """Формы служебной реплики и разбор потока вокруг неё."""
+
+    def test_service_reply_forms(self):
+        """Формы служебной реплики те же, что узнаёт лента дашборда: дословный
+        текст и старая рамка без слов человека. Цитата в словах человека
+        продлением не считается, иначе разговор о пинге выпадал из разбора."""
+        prompt = context.CACHEKEEP_PROMPT
+        self.assertTrue(context.is_service_reply(prompt),
+                        "дословный текст реплики служебный")
+        self.assertTrue(context.is_service_reply("  %s\n" % prompt),
+                        "обрамление пробелами не прячет дословный текст")
+        frame = ("<devkit-cachekeep>Служебное продление кеша сессии."
+                 " Молчи.</devkit-cachekeep>")
+        self.assertTrue(context.is_service_reply(frame),
+                        "старая рамка без слов человека служебная")
+        quoted = "как быть с «%s» в чате?" % prompt
+        self.assertFalse(context.is_service_reply(quoted),
+                         "цитата в словах человека остаётся разговором")
+        self.assertFalse(context.is_service_reply(frame + " и вопрос"),
+                         "рамка со словами человека остаётся разговором")
+        self.assertFalse(context.is_service_reply("обычная реплика"),
+                         "обычная реплика не служебная")
+        self.assertFalse(context.is_service_reply(None),
+                         "отсутствие текста не служебная реплика")
+
+    def test_empty_user_between_pair_keeps_service_drop(self):
+        """Пустая реплика между служебным ходом и его ответом пару не сбивает:
+        незначимая строка content не перекрывает last_user, и real_requests
+        выкидывает служебный ход (запись одна вместо двух)."""
+        recs = [
+            user_rec("обычный вопрос", "2026-10-12T09:59:00.000Z"),
+            assistant_raw(190000, "2026-10-12T09:59:01.000Z"),
+            user_rec(context.CACHEKEEP_PROMPT, "2026-10-12T10:00:00.000Z"),
+            user_rec("", "2026-10-12T10:00:01.000Z"),
+            assistant_raw(199500, "2026-10-12T10:00:02.000Z"),
+        ]
+        path = Path(HERE / "testdata" / "ctx-empty-user.jsonl")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                for r in recs:
+                    f.write(json.dumps(r, ensure_ascii=False) + "\n")
+            reqs = context.real_requests(path)
+            self.assertEqual(len(reqs), 1,
+                             "служебный ход с пустой репликой между пары должен выпасть")
+        finally:
+            if path.exists():
+                path.unlink()
 
 
 class ContextStatsTest(SandboxCase):

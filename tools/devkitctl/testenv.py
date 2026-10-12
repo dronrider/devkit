@@ -548,9 +548,10 @@ class Sandbox:
         стенд не кладёт, поэтому живость по /healthz доктор тут не меряет:
         сервер, который ни разу не стартовал, ещё не породил конфига."""
         home = Path(home)
+        argv = [str(self.bin / "agentctl"), "exec", "--harness", "claude-code",
+                "--", str(self.bin / "dashboard"), "serve"]
         write(home / dashboard.PLIST[2:],
-              dashboard.plist_text(self.bin / "dashboard",
-                                   home / dashboard.LOG[2:]))
+              dashboard.plist_text(argv, home / dashboard.LOG[2:]))
         return home
 
     def global_rules(self, home, dk=None):

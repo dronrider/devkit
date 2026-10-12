@@ -582,6 +582,9 @@ func TestHeadlessMarkOnlyForPipeline(t *testing.T) {
 	if !strings.Contains(dropForeign(), "-u DEVKIT_HIDDEN") {
 		t.Errorf("унаследованный признак hidden не снимается чисткой: %s", dropForeign())
 	}
+	if !strings.Contains(dropForeign(), "-u CLAUDE_CONFIG_DIR") {
+		t.Errorf("чужой каталог конфигурации подписки не снимается чисткой: %s", dropForeign())
+	}
 	hiddenHead := s.headlessEnv("XR-7", "task-XR-7", true)
 	if !strings.Contains(hiddenHead, hiddenEnv) {
 		t.Fatalf("окружение прогона без человека без признака hidden: %s", hiddenHead)

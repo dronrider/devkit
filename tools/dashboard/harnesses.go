@@ -179,9 +179,18 @@ func hooksGapNote(h *Harness) string {
 
 // chatHooksGap судит подписку, которой поднимется разговор выбранной парой
 // «модель+подписка», и кладёт отказ в журнал дашборда: панель его показывает, а
-// журнал хранит, чем был закрыт подъём.
+// журнал хранит, чем был закрыт подъём. Подписка, что не определилась вовсе,
+// тоже отказ: чат не идёт мимо обвязки, а получает внятный отказ с подсказкой
+// доктора (DK-1271, кейс 3).
 func (s *server) chatHooksGap(model, harness string) string {
-	gap := hooksGapNote(s.chatHarnessOf(model, harness))
+	h := s.chatHarnessOf(model, harness)
+	if h == nil {
+		gap := "подписка не определилась: agentctl harness --json не назвал её, " +
+			"а чат мимо обвязки не идёт; разложить слой: devkitctl doctor --fix"
+		s.logf("подъём чата на модели %s отклонён: %s", chatModelName(model, harness), gap)
+		return gap
+	}
+	gap := hooksGapNote(h)
 	if gap != "" {
 		s.logf("подъём чата на модели %s отклонён: %s", chatModelName(model, harness), gap)
 	}

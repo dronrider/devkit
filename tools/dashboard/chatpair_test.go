@@ -49,8 +49,8 @@ exit 0`)
 
 // Первая реплика поднимает разговор квотой выбранной строки повтора: обёртка
 // agentctl exec называет подписку, чьими парами окружения платится клиент.
-// Выбор без подписки живёт по-старому: владельца ищет порядок харнесов, и
-// домашняя подписка по умолчанию обходится без обёртки вовсе.
+// Выбор без подписки идёт подпиской по умолчанию, и она заворачивается в ту же
+// обвязку agentctl exec (DK-1271): путь не зависит от окружения serve.
 func TestChatRaiseOnNamedHarness(t *testing.T) {
 	e, c, tmuxLog := pairEnv(t)
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats",
@@ -73,8 +73,8 @@ func TestChatRaiseOnNamedHarness(t *testing.T) {
 		t.Fatalf("подъём без подписки: %d %s", resp.StatusCode, body(t, resp))
 	}
 	tail := readFile(t, tmuxLog)[was:]
-	if strings.Contains(tail, "exec --harness") {
-		t.Fatalf("домашняя подписка поднялась с чужой обёрткой: %s", tail)
+	if !strings.Contains(tail, "exec --harness 'перваяtest'") {
+		t.Fatalf("домашняя подписка поднялась мимо обвязки: %s", tail)
 	}
 	if !strings.Contains(tail, "--model 'sonnet'") {
 		t.Fatalf("подъём без подписки не назвал модель: %s", tail)

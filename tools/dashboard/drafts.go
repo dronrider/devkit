@@ -439,13 +439,18 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	}
 	// Ярус разворачивается в модель раскладкой машины, и сверяется он с ней же:
 	// имени яруса, которого у подписки нет, верить нельзя, как и имени подписки.
-	// Названного яруса в теле может не быть вовсе, тогда берётся pro; не знает
-	// раскладка и его (пустой список, agentctl не отвечает), значит разбор идёт
-	// как раньше, клиентом без модели: отказывать тут не за что.
+	// Названного яруса в теле может не быть вовсе, тогда берётся pro.
 	view := s.harnesses()
 	own := harness
 	if own == nil {
 		own = view.byDefault()
+	}
+	if own == nil {
+		gap := "подписка не определилась: agentctl harness --json не назвал её, " +
+			"а разбор мимо обвязки не идёт; разложить слой: devkitctl doctor --fix"
+		s.logf("груминг %s в %s отклонён: %s", id, found.Name, gap)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": gap})
+		return
 	}
 	if gap := hooksGapNote(own); gap != "" {
 		s.logf("груминг %s в %s отклонён: %s", id, found.Name, gap)
@@ -514,7 +519,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// накопителя, и найти её потом можно тем же списком чатов.
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
 		groomCmd(s.launchEnv(id, sess, ""), groomPrompt(id, ask, mode),
-			harness, model, id+" груминг")); err != nil {
+			own, model, id+" груминг")); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("груминг %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
@@ -526,7 +531,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// немую петлю ожидания, ради которой затевалась DK-728. Разговора у разбора
 	// пока нет, поэтому смерть поедет в журнал задачи.
 	s.chatRaised(sess, "", id, found.Name)
-	s.logf("груминг %s в %s поднят (tmux-сессия %s%s)", id, found.Name, sess, harnessTail(harness))
+	s.logf("груминг %s в %s поднят (tmux-сессия %s%s)", id, found.Name, sess, harnessTail(own))
 	// Хвост про исход дописывается ко всякому варианту сообщения о подъёме:
 	// человек выбрал «выполнить», и это должно быть слышно, чем бы ни
 	// кончилась остальная фраза (DK-1043).
@@ -560,9 +565,9 @@ func groomLiftTail(mode string) string {
 	return ""
 }
 
-// groomCmd собирает команду сессии разбора. Клиент чужой подписки поднимается
-// её же обвязкой (agentctl exec), как у чата и у конвейера задачи: пары
-// окружения второй подписки собирает она, а не дашборд, и режим разрешений ей
+// groomCmd собирает команду сессии разбора. Всякая подписка поднимается
+// обвязкой (agentctl exec), как у чата и у конвейера задачи: пары окружения
+// собирает она, а не дашборд (DK-1271). Режим разрешений чужой подписке
 // называется флагом, иначе свежий профиль встал бы на первом же вопросе.
 // Окружение приходит доводом: собирает его одно место на все дороги подъёма
 // (launchEnv). Прежде разбор звал сборку сам, и стоило ей разойтись с прочими
@@ -573,10 +578,16 @@ func groomLiftTail(mode string) string {
 // незачем (DK-879). Разбор всегда свежая сессия, резюма у него не бывает, и
 // имя ставится безусловно.
 func groomCmd(env, prompt string, h *Harness, model, name string) string {
-	client := defaultClient
-	if h != nil && !h.Default {
-		client = shQuote(binPath(agentctlBin)) + " exec --harness " + shQuote(h.Name) +
-			" -- " + shQuote(h.Bin) + " --permission-mode auto"
+	if h == nil {
+		return env + "echo " + shQuote("подписка не определилась: agentctl harness --json не назвал её, "+
+			"а разбор мимо обвязки не идёт; разложить слой: devkitctl doctor --fix") + " >&2; exit 1"
+	}
+	// Всякая подписка поднимается обвязкой agentctl exec, как у чата и у
+	// конвейера задачи: пары окружения собирает она, а не дашборд (DK-1271).
+	client := shQuote(binPath(agentctlBin)) + " exec --harness " + shQuote(h.Name) +
+		" -- " + shQuote(h.Bin)
+	if !h.Default {
+		client += " --permission-mode auto"
 	}
 	if model != "" {
 		// Ярус разбора называется явно всякой подписке: без флага клиент берёт

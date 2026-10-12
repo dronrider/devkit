@@ -396,12 +396,11 @@ func (s *server) loginProbe(h *Harness) string {
 	bin := defaultClient
 	args := []string{"-p", loginProbeWord}
 	if h != nil {
-		if !h.Default {
-			bin = binPath(agentctlBin)
-			args = append([]string{"exec", "--harness", h.Name, "--", h.Bin}, args...)
-		} else if h.Bin != "" {
-			bin = h.Bin
-		}
+		// Проба идёт той же обвязкой, что и сам запуск: всякая подписка
+		// поднимается через agentctl exec (DK-1271), и голый клиент проверял бы
+		// не ту конфигурацию.
+		bin = binPath(agentctlBin)
+		args = append([]string{"exec", "--harness", h.Name, "--", h.Bin}, args...)
 	}
 	dir, err := serviceDir("")
 	if err != nil {
@@ -776,7 +775,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		}
 		rung := clientMissing(client)
 		if rung == "" {
-			rung = s.startGoalChat(found, id, sess, model, harness)
+			rung = s.startGoalChat(found, id, sess, model, own)
 		}
 		if rung == "" {
 			s.logf("цель %s поднята в %s ступенью чата (tmux-сессия %s%s), %s",

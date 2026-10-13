@@ -685,3 +685,5 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1350 | снимок квоты мимо не освежается: secretctl set нет [приёмка: mixed] | bug | P2 | 2026-10-12 | [tasks/archive/2026/DK-1350.md](tasks/archive/2026/DK-1350.md) |
 | DK-1362 | Часы простоя cachekeep сбрасываются продлевающим ходом | bug | P1 | 2026-10-13 | [tasks/archive/2026/DK-1362.md](tasks/archive/2026/DK-1362.md), `2879bca99`, `73789da2e`, `cf6a0c01e`, `281b4ff4e`, `a8219c02b`, `da5a4dd81`, `7a38de35e`, `6bcbfa238` |
 | DK-1361 | молчащая сессия на этапе не поднимается: lift берёт только брошенную | task | P0 | 2026-10-13 | [tasks/archive/2026/DK-1361.md](tasks/archive/2026/DK-1361.md) |
+| DK-1364 | голова без имени харнеса берёт default машинного слоя, а не хардкод | bug | P1 | 2026-10-13 | [tasks/archive/2026/DK-1364.md](tasks/archive/2026/DK-1364.md) |
+| DK-1271 | подъём чата дефолтной подписки не зависит от окружения serve | bug | P1 | 2026-10-13 | [tasks/archive/2026/DK-1271.md](tasks/archive/2026/DK-1271.md) |

@@ -283,6 +283,9 @@ func TestSubagentEnd(t *testing.T) {
 	if !strings.Contains(string(tr), "Спавни субагента с определением exec-medium") {
 		t.Fatalf("промпт не обёрнут для субагентского конца: %s", tr)
 	}
+	if !strings.Contains(string(tr), "повтори его без своих добавлений") {
+		t.Fatalf("обёртка не просит передать отчёт субагента без своих добавлений: %s", tr)
+	}
 	if _, err := os.Stat(filepath.Join(p.Work, "session-only-full-1")); err == nil {
 		t.Fatal("пропущенный сценарий всё-таки гонялся")
 	}

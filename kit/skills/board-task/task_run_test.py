@@ -1445,6 +1445,9 @@ class TestWaitKinds(WaitStand):
         path = os.path.join(harness, "claude-code.toml")
         with open(path, "w", encoding="utf-8") as f:
             f.write('[detect]\n\n[head]\nclient = ["claude"]\n' + head)
+        # Имя профиля стенд держит своим ключом: default машинного слоя в
+        # чужом окружении отдаёт чужое имя, и wait_cap стенда не читается.
+        os.environ[task_run.HARNESS_ENV] = "claude-code"
         patch = unittest.mock.patch.object(task_run, "HARNESS_DIR", harness)
         patch.start()
         self.addCleanup(patch.stop)

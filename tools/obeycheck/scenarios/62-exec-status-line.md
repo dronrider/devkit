@@ -2,6 +2,7 @@
 
 конец: субагент
 предмет: kit/agents/exec-low.md; kit/agents/exec-medium.md; kit/agents/exec-high.md; kit/agents/exec-xhigh.md
+окружение: DEVKIT_PUSH_OK=1
 
 ## Подготовка
 

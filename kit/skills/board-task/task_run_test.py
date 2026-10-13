@@ -524,7 +524,7 @@ if args[:1] == ["rotate"] and "--session" in args:
         sys.exit(2)
     # Без предела из окружения вердикт всегда «под»: счётчик стенда считается
     # неподставленным, и проходы идут как шли.
-    over = bool(limit) and tokens >= limit
+    over = bool(limit) and tokens > limit
     sys.stdout.write("rotate: %d\nстенд\ncontext: %d\nverdict: %s\n"
                      "(счётчик стенда DEVKIT_CONTEXT_TOKENS)\n"
                      % (limit, tokens, "over" if over else "under"))
@@ -1499,7 +1499,8 @@ class TestRotateHandoff(unittest.TestCase):
 
     def test_tail_survives_the_unnamed_new_session(self):
         # Голова дописала хвост, реестр промолчал об адресе новой сессии:
-        # строка журнала не пишется, файл хвоста остаётся лежать.
+        # строка журнала не пишется, файл хвоста остаётся лежать, адрес
+        # мёртвой сессии обнуляется.
         self.tail()
         self.pipe.rotate_ask = time.time()
         self.pipe.drop_head = unittest.mock.Mock()
@@ -1507,12 +1508,49 @@ class TestRotateHandoff(unittest.TestCase):
         self.pipe.wait_session = lambda: ""
         self.pipe.rotate_note = unittest.mock.Mock()
         self.pipe.say = unittest.mock.Mock()
-        self.assertIsNone(self.pipe.rotate())
+        self.assertEqual(self.pipe.rotate(), "без адреса")
+        self.assertEqual(self.pipe.sid, "", "адрес мёртвой сессии остался жить")
         self.assertTrue(os.path.isfile(self.pipe.rotate_tail()),
                         "дела потеряны вместе со строкой журнала")
         self.pipe.rotate_note.assert_not_called()
         said = " ".join(str(c) for c in self.pipe.say.call_args_list)
         self.assertIn("строка журнала не записана", said)
+
+    def test_unnamed_new_session_gets_no_second_order(self):
+        # Стык rotate()->run_live: реестр промолчал об адресе новой сессии, а
+        # голова уже поднята с вводной хвоста. Повторный заказ поверх вводной
+        # слать нельзя, и run_live его не шлёт: ротация без адреса это смена
+        # сессии, а не повод для обычного продолжения.
+        self.tail()
+        self.pipe.rotate_ask = time.time()
+        self.pipe.preflight = lambda: "in-progress"
+        self.pipe.raise_head = unittest.mock.Mock()
+        self.pipe.wait_session = unittest.mock.Mock(side_effect=[SID, ""])
+        self.pipe.wait_turn = unittest.mock.Mock(side_effect=["конец", SystemExit(0)])
+        self.pipe.show = lambda: "in-progress\n"
+        self.pipe.status = lambda said: "in-progress"
+        self.pipe.busy = lambda: []
+        self.pipe.shells = lambda: []
+        self.pipe.held = lambda n, after: 0
+        self.pipe.open_ask = lambda: False
+        self.pipe.duty = lambda: False
+        self.pipe.waits_user = lambda told, after: False
+        self.pipe.hands_over = lambda told, after: False
+        self.pipe.taken = lambda: False
+        self.pipe.pause = lambda: 0
+        self.pipe.send_order = unittest.mock.Mock(return_value=True)
+        self.pipe.rotate_note = unittest.mock.Mock()
+        self.pipe.drop_head = unittest.mock.Mock()
+        self.pipe.say = unittest.mock.Mock()
+        self.pipe.log = unittest.mock.Mock()
+        with self.assertRaises(SystemExit):
+            self.pipe.run_live()
+        self.pipe.send_order.assert_not_called()
+        self.assertEqual(self.pipe.sid, "")
+        self.pipe.rotate_note.assert_not_called()
+        # Вводная хвоста ушла подъёмом новой головы, а не заказом прохода.
+        self.assertEqual(self.pipe.raise_head.call_count, 2,
+                         self.pipe.raise_head.call_args_list)
 
     def test_mark_follows_the_fresh_tail(self):
         # Строка журнала идёт после файла хвоста и после того, как новый

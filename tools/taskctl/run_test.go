@@ -203,8 +203,16 @@ func pickStand(t *testing.T, dk, verdict string) (logs, bin string) {
 	if verdict != "" {
 		answer = "printf 'model: " + verdict + "\\neffort: high\\ntier: pro\\n'"
 	}
+	// harness --json отвечает default машинного слоя и в pick.log не пишется:
+	// там лежат только зовы вердикта. Пустой HarnessEnv выше кладёт в этот зов
+	// default, он же профиль клиента в стенде.
+	agentctlStub := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"harness) printf '{\"default\":\"claude-code\"}'; exit 0 ;;\n" +
+		"esac\n" +
+		"echo \"$DEVKIT_HARNESS $*\" >> \"$STUB_LOGS/pick.log\"\n" + answer + "\n"
 	stubs := map[string]string{
-		"agentctl": "#!/bin/sh\necho \"$DEVKIT_HARNESS $*\" >> \"$STUB_LOGS/pick.log\"\n" + answer + "\n",
+		"agentctl": agentctlStub,
 		"python3":  headStub,
 		"tmux":     "#!/bin/sh\nexit 1\n",
 		"claude":   "#!/bin/sh\nexit 0\n",

@@ -1300,7 +1300,7 @@ if args[:1] == ["rotate"]:
             sys.exit(2)
         # Без предела из окружения вердикт всегда «под»: счётчик стенда
         # считается неподставленным, и витки идут как шли.
-        over = bool(limit) and tokens >= limit
+        over = bool(limit) and tokens > limit
         sys.stdout.write("rotate: %d\nстенд\ncontext: %d\nverdict: %s\n"
                          "(счётчик стенда DEVKIT_CONTEXT_TOKENS)\n"
                          % (limit, tokens, "over" if over else "under"))

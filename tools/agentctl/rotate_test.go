@@ -107,8 +107,10 @@ func TestCmdRotateMeasure(t *testing.T) {
 		want     string
 	}{
 		{"под порогом", "120000", false, "verdict: under"},
+		{"на пороге", "500000", false, "verdict: under"},
 		{"над порогом", "600000", false, "verdict: over"},
 		{"диспетчер под порогом", "140000", true, "verdict: under"},
+		{"диспетчер на пороге", "150000", true, "verdict: under"},
 		{"диспетчер над порогом", "160000", true, "verdict: over"},
 	}
 	for _, c := range cases {

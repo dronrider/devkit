@@ -1465,12 +1465,16 @@ class TestLiveRotation(unittest.TestCase):
         # Печатная голова это череда одноразовых прогонов: мерки контекста и
         # строки журнала ротации у неё нет, проходы идут как шли. Счётчик
         # подставлен и над порогом: отсутствие ротации это не молчание счётчика.
+        # Проба имени профиля (DK-1364) зовёт agentctl harness --json на старте
+        # каждого прогона и ротацией не считается: за счётом остаётся всё
+        # остальное, лишний зов утилиты тест увидит.
         s = Stand(plan="работа|закрой")
         self.stands.append(s)
         got = s.run(extra={"DEVKIT_CONTEXT_TOKENS": "900000",
                            "DEVKIT_TEST_ROTATE_LIMIT": "150000"})
         self.assertEqual(got.returncode, 0, s.why(got))
-        self.assertEqual(s.rotate_calls(), [], s.rotate_calls())
+        rest = [c for c in s.rotate_calls() if not c.startswith("harness")]
+        self.assertEqual(rest, [], s.rotate_calls())
         self.assertEqual([o for o in s.orders() if o.startswith(task_run.ROTATE_ORDER)],
                          [], s.orders())
 

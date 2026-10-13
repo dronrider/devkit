@@ -365,6 +365,10 @@ a:hover{text-decoration:underline}
 .caskpick:hover .caskbox{border-color:var(--acc)}
 .caskpick:focus:not(:focus-visible){outline:none}
 .caskpick:focus-visible{outline:2px solid var(--acc);outline-offset:1px;border-radius:6px}
+/* Строка варианта в ленте чуть подсвечена: спокойный фон с малой долей
+   акцента, без рамки карточки. Подсветка живёт на строке списка, пока жив
+   признак ожидания (DK-1374). */
+.casklit{background:color-mix(in oklab,var(--acc) 10%,transparent);border-radius:6px;padding:2px 6px;margin:2px -6px}
 .caskwords{display:flex;flex-direction:column;gap:2px;min-width:0}
 .casklabel{font:500 12.5px var(--sans);color:var(--tx)}
 .caskwhy{font:400 11.5px/1.45 var(--sans);color:var(--tx3)}

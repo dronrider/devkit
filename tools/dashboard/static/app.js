@@ -12982,7 +12982,7 @@ function chatPanel(project, st) {
   // признаку ожидания вешает галочки при строках вариантов (DK-864). Тут
   // помнится, ждут ли ответа и что галочки уже дописали в поле ввода: строку
   // ответа надо не только собрать, но и убрать со снятой отметки.
-  const askPick = { on: false, put: "" };
+  const askPick = { on: false, put: "", ask: null };
   // Разговор без процесса красит общий индикатор остановкой вместо отдельной
   // строки с кнопкой (DK-701). Кнопки «Поднять» тут больше нет: молчание не
   // отличалось от живого разговора, и человек нажимал её не зная, поднимется
@@ -13564,6 +13564,7 @@ function chatPanel(project, st) {
       }, (list) => {
         echo.reconcile(list);
         loginSawAll(bye, list);
+        askPickWire(feed, ta, askPick);
       }, again).catch(console.error);
     }
   };
@@ -13615,15 +13616,18 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
       // Запертость журнала приходит тем же ответом и без разобранного вопроса:
       // плашка состояния стоит в том же боксе, что и блок (DK-1300, случай 03).
       const stuck = (r.ok && r.body.stuck) || "";
-      // Признак ожидания и есть тот повод, по которому панель рисует карточку
-      // вопроса: заход спросил человека и стоит, пока ответа нет. Галочки
-      // живут на карточке, а не в тексте реплики (DK-1235).
+      // Признак ожидания и есть тот повод, по которому панель вешает галочки
+      // на строки вариантов в ленте: заход спросил человека и стоит, пока
+      // ответа нет (DK-864, форма DK-1374). Слова реплики для этого не
+      // разбираются: набор галочек держит признак.
       pick.on = Boolean(ask && ask.kind === "agent");
+      pick.ask = pick.on ? ask : null;
       if (!pick.on && pick.put) askPickPut(ta, pick, "");
       paintClientAsk(project, st, box, ask, tick, ta, pick, stuck);
-      // Опрос идёт и при открытом вопросе: виджет меняется не только от наших
+      askPickWire(feed, ta, pick);
+      // Опрос идёт и при открытом вопросе: галочки вешаются не только от наших
       // нажатий (человек вправе ответить и руками в tmux), а перерисовка стоит
-      // на подписи снимка, поэтому лишних сборок блока это не даёт.
+      // на подписи снимка, поэтому лишних сборок это не даёт.
     } catch (err) {
       // Молчим: следующий шаг всё равно планируется ниже, а строка в консоли
       // на каждый обрыв связи только шумела бы.
@@ -13718,24 +13722,8 @@ function paintAskpassAsk(project, st, box, ask) {
   box.append(row);
 }
 
-// Слово о том, когда встал вопрос: часы местные, а день добавляется, когда
-// вопрос не сегодняшний. Возраст словами тут не годится: он растёт с каждым
-// кругом опроса, а человеку надо сверить время с записью развилки и с
-// журналом, где стоит абсолютное время.
-function askWhenWord(sec) {
-  if (!sec) return "";
-  const at = sec * 1000;
-  const d = new Date(at);
-  const today = new Date();
-  const sameDay = d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth()
-    && d.getDate() === today.getDate();
-  const clock = clockWord(at);
-  if (sameDay || !clock) return clock;
-  return String(d.getDate()).padStart(2, "0") + "." + String(d.getMonth() + 1).padStart(2, "0") + " " + clock;
-}
-
-// Вопросы карточки: пачка едет полем `steps`, одиночный вопрос ручка дублирует
-// в `text` и `options` (agentAskOf в waiting.go). Карточка печатает всю пачку:
+// Вопросы признака: пачка едет полем `steps`, одиночный вопрос ручка дублирует
+// в `text` и `options` (agentAskOf в waiting.go). Галочки вешаются на всю пачку:
 // промах DK-891 случился как раз на четырёх развилках, и человек, которому
 // показали одну, ответил бы на одну.
 function askCardSteps(ask) {
@@ -13744,68 +13732,159 @@ function askCardSteps(ask) {
   return [{ fork: ask.fork, text: ask.text, options: ask.options }];
 }
 
-// Карточка вопроса агента (DK-1235). Вопрос приходит признаком ожидания, и
-// панель рисует его сама: галочки стоят при вариантах на карточке, пока жив
-// признак, и слов реплики для этого не спрашивают. Промах копирования блока
-// агентом, реплика «кэш» от продления кеша и своя реплика человека галочек не
-// снимают: плашек про отсутствующий блок на панели нет вовсе. Шапка называет
-// задачу и время вопроса (DK-1204), снимает карточку снятие признака кнопкой
-// панели или сторожем, а не реплика ответа.
+// Галочки при строках вариантов в ленте (DK-864, форма DK-1374). Вопрос идёт
+// текстом реплики разговора, а панель по признаку ожидания вешает интерактивные
+// галочки на строки вариантов и чуть подсвечивает их. Признак, а не разбор
+// реплики, держит и набор галочек, и живучесть: пока он жив, отметки стоят,
+// реплика «кэш» от продления кеша и своя реплика человека их не снимают. При
+// промахе копирования блока агентом панель дописывает те же строки вопроса
+// текстом той же формы в конец ленты, и галочки висят на них. Плашек про
+// отсутствующий блок и карточек с шапкой вовсе нет.
 //
 // Отметка собирает строку ответа «имя развилки и номер» в поле ввода, снятая
 // её оттуда убирает, отправляет обычная кнопка чата. У свободного вопроса
 // `taskctl ask --question` имени развилки нет, и варианты там идут строками
 // без галочек: отвечают на него своими словами.
-function paintAgentCard(box, ask, ta, pick) {
-  const head = el("div", "caskh");
-  head.append(el("b", "", "Вопрос ждёт ответа"));
-  // Задача и время вопроса стоят в шапке: признак адресован сессии, и панель
-  // показывает его в чате той задачи, к которой сессия привязана сейчас. Без
-  // имени задачи чужой вопрос в чате соседней строки читался как свой
-  // (DK-1204).
-  const when = askWhenWord(ask.since);
-  const who = [ask.task || "", when ? "спросил в " + when : ""].filter(Boolean).join(", ");
-  if (who) head.append(el("span", "n", who));
-  const left = waitLeft(ask.until, Date.now());
-  if (left) head.append(el("span", "n", left === "срок вышел" ? left : "осталось " + left));
-  box.replaceChildren(head);
-  const marks = [];
-  const steps = askCardSteps(ask);
-  steps.forEach((step) => {
-    // Текст вопроса может нести раскладку кейсов строками (chatQuestions):
-    // панель печатает их по одной, и номера кейсов остаются для правки
-    // «состав 2, минус 4» (DK-1235, DK-1318).
-    for (const line of String(step.text || "заход спросил и ждёт").split("\n")) {
-      if (line.trim()) box.append(el("div", "casks", line));
-    }
+
+// askPickLabel достаёт текст варианта из строки списка: подсказка «рекомендую:»
+// это пометка рекомендации, а не часть слова варианта.
+function askPickLabel(text) {
+  return String(text || "").replace(/\s+/g, " ").trim()
+    .replace(/^рекомендую:\s*/, "").trim();
+}
+
+// askPickText сводит поддерево к словам. У настоящего DOM textContent уже
+// собирает детей, а узел стенда держит только свой текст, и сверка по нему
+// молчала бы на всём дереве. Обход идёт childNodes там, где они есть, и
+// children там, где текст лежит в списке детей.
+function askPickText(node) {
+  if (!node) return "";
+  const tag = String(node.tagName || "");
+  if (node.nodeType === 3 || tag === "#text" || tag === "#TEXT") {
+    return String(node.textContent || "");
+  }
+  let kids = node.childNodes;
+  if (!kids || !kids.length) kids = node.children;
+  if (!kids || !kids.length) return String(node.textContent || "");
+  let out = "";
+  for (let i = 0; i < kids.length; i++) out += askPickText(kids[i]);
+  return out;
+}
+
+// askPickWanted собирает галочки из признака: имя развилки и номер варианта
+// берутся оттуда, а не из текста реплики.
+function askPickWanted(ask) {
+  const out = [];
+  for (const step of askCardSteps(ask)) {
     const fork = step.fork || "";
+    if (!fork) continue;
     (step.options || []).forEach((opt, i) => {
-      const num = i + 1;
-      if (!fork) {
-        box.append(el("div", "caskflat", num + ". " + (opt.text || "")));
-        return;
-      }
-      const said = askPickWord({ fork, num });
-      const mark = el("button", "caskpick");
-      mark.type = "button";
-      mark.setAttribute("role", "checkbox");
-      mark.setAttribute("aria-label", "Ответить «" + said + "»");
-      askPickMark(mark, (pick.put || "").split(", ").includes(said));
-      mark.append(el("span", "caskbox"));
-      mark.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        askPickMark(mark, !mark.classList.contains("on"));
-        askPickPut(ta, pick, askPickSaid(marks));
-      });
-      const row = el("div", "caskflat");
-      row.append(mark);
-      row.append(el("span", "", num + ". " + (opt.text || "")));
-      if (opt.desc) row.append(el("span", "caskwhy", opt.desc));
-      box.append(row);
-      marks.push({ mark, pick: { fork, num } });
+      out.push({ fork, num: i + 1, label: askPickLabel(opt.text) });
     });
+  }
+  return out;
+}
+
+// askPickMatch находит строки списка под варианты признака. Слово варианта
+// сверяется после снятия пометки рекомендации; чужие нумерованные списки
+// (план, раскладка кейсов) остаются нетронутыми.
+function askPickMatch(root, wanted) {
+  const used = new Set();
+  const out = [];
+  for (const li of root.querySelectorAll("li")) {
+    const label = askPickLabel(askPickText(li));
+    for (let i = 0; i < wanted.length; i++) {
+      if (used.has(i) || !wanted[i].label || wanted[i].label !== label) continue;
+      used.add(i);
+      out.push({ li, pick: wanted[i] });
+      break;
+    }
+  }
+  return out;
+}
+
+// askPickTargets ищет строки вариантов с конца ленты: свежий вопрос важнее
+// старых реплик, а служебная «кэш» своих строк вариантов не несёт.
+function askPickTargets(feed, wanted) {
+  const msgs = feed.querySelectorAll(".msg");
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const hits = askPickMatch(msgs[i], wanted);
+    if (hits.length) return hits;
+  }
+  return [];
+}
+
+// askPickSees говорит, что строки вопроса уже стоят в ленте: копия блока
+// или прошлая допись панели. Без этого панель дописывает их сама.
+function askPickSees(feed, steps) {
+  const text = askPickText(feed);
+  return steps.every((step) => {
+    const head = String(step.text || "").split("\n")[0].trim();
+    return !head || text.includes(head);
   });
-  askPickPut(ta, pick, askPickSaid(marks));
+}
+
+// askSameFormText собирает строки вопроса той же формы, каким их печатает
+// taskctl decide --chat: голова развилки и пронумерованные варианты. Панель
+// дописывает их текстом реплики при промахе копирования.
+function askSameFormText(steps) {
+  const parts = [];
+  for (const step of steps) {
+    const lines = [step.text || "заход спросил и ждёт"];
+    (step.options || []).forEach((opt, i) => {
+      const rec = /советует агент/.test(opt.desc || "");
+      lines.push((i + 1) + ". " + (rec ? "рекомендую: " : "") + (opt.text || ""));
+    });
+    parts.push(lines.join("\n"));
+  }
+  return parts.join("\n\n");
+}
+
+// askPickFallback дописывает строки вопроса текстом той же формы в конец
+// ленты: пузырь реплики, а не карточка и не плашка.
+function askPickFallback(steps) {
+  const wrap = el("div", "msg askfb");
+  const bb = el("div", "bb");
+  bb.append(mdRender(askSameFormText(steps), chatFeedAt()));
+  wrap.append(bb);
+  return wrap;
+}
+
+// askPickWire вешает галочки на строки вариантов и держит их, пока жив
+// признак ожидания. Зовётся опросом вопроса и всякой перерисовкой ленты:
+// синтетическая допись и отметки не переживают sync, а признак переживает.
+function askPickWire(feed, ta, pick) {
+  for (const old of feed.querySelectorAll(".caskpick")) old.remove();
+  for (const li of feed.querySelectorAll(".casklit")) li.classList.remove("casklit");
+  const oldFb = feed.querySelector(".askfb");
+  if (oldFb) oldFb.remove();
+  if (!pick.on || !pick.ask) return;
+  const steps = askCardSteps(pick.ask);
+  const wanted = askPickWanted(pick.ask);
+  let hits = wanted.length ? askPickTargets(feed, wanted) : [];
+  if (!askPickSees(feed, steps) || (wanted.length && !hits.length)) {
+    const fb = askPickFallback(steps);
+    feed.append(fb);
+    if (!hits.length) hits = askPickMatch(fb, wanted);
+  }
+  const marks = [];
+  for (const hit of hits) {
+    hit.li.classList.add("casklit");
+    const said = askPickWord(hit.pick);
+    const mark = el("button", "caskpick");
+    mark.type = "button";
+    mark.setAttribute("role", "checkbox");
+    mark.setAttribute("aria-label", "Ответить «" + said + "»");
+    askPickMark(mark, (pick.put || "").split(", ").includes(said));
+    mark.append(el("span", "caskbox"));
+    mark.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      askPickMark(mark, !mark.classList.contains("on"));
+      askPickPut(ta, pick, askPickSaid(marks));
+    });
+    hit.li.prepend(mark);
+    marks.push({ mark, pick: hit.pick });
+  }
 }
 
 // Плашка запертого вопроса (DK-1300, случай 03): журнал уведомителя запер
@@ -13846,14 +13925,12 @@ function paintClientAsk(project, st, box, ask, again, ta, pick, stuck) {
     paintAskpassAsk(project, st, box, ask);
     return;
   }
-  // Вопрос агента рисуется карточкой из признака ожидания (DK-1235): галочки
-  // стоят при вариантах на самой карточке, пока жив признак, и текст реплики
-  // для этого не разбирается. Промах копирования блока агентом и служебная
-  // реплика «кэш» от продления кеша галочек не снимают, плашек про
-  // отсутствующий блок на панели нет вовсе.
+  // Вопрос агента идёт текстом в ленте (DK-1374): отдельной карточки над
+  // полем ввода нет, галочки висят при строках вариантов (askPickWire), а
+  // бокс над полем остаётся пустым и скрытым.
   if (ask && ask.kind === "agent") {
-    box.hidden = false;
-    paintAgentCard(box, ask, ta, pick);
+    box.hidden = true;
+    box.replaceChildren();
     return;
   }
   if (!ask || !(ask.options || []).length) {
@@ -13916,12 +13993,12 @@ function paintClientAsk(project, st, box, ask, again, ta, pick, stuck) {
   box.append(list);
 }
 
-// Отметки карточки вопроса (DK-1235). Галочка стоит при варианте на самой
-// карточке из признака ожидания, и слова реплики для этого не спрашивают.
-// Отвечает человек обычной репликой: отметка дописывает строку ответа в поле
-// ввода, снятая её оттуда убирает, а отправляет обычная кнопка чата. Ответ
-// уезжает той же дорогой, что всякая другая реплика, и признак ожидания
-// снимает та же ручка ответа.
+// Отметки при строках вариантов (DK-864, форма DK-1374). Галочка стоит при
+// строке варианта в ленте, и слова реплики для этого не спрашивают. Отвечает
+// человек обычной репликой: отметка дописывает строку ответа в поле ввода,
+// снятая её оттуда убирает, а отправляет обычная кнопка чата. Ответ уезжает
+// той же дорогой, что всякая другая реплика, и признак ожидания снимает та же
+// ручка ответа.
 
 // askPickSaid собирает строку ответа из отмеченного: «печать 1, ответ 3». Тот
 // же вид разбирает taskctl decide --answer.

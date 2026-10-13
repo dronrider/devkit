@@ -209,31 +209,30 @@ func TestStaticAskPollSurvivesFetchFailure(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
-// Прежний блок вопроса агента с кнопками и табами убран целиком: он читался
-// формой поверх разговора, запирал чат до ответа и терял рекомендацию по
-// дороге. Плашка «Заход ждёт ответа» и разбор слов реплики ушли следом
-// (DK-1235): вопрос рисует карточка из признака ожидания, и мёртвого кода за
-// плашкой не остаётся. Разбор снимка панели tmux остался, но за вопросами
-// самого клиента (доверие каталогу, вход по /login), и стенд следит, чтобы
-// вместе с блоком не уехала эта половина.
+// Карточка вопроса «Вопрос ждёт ответа» отвергнута на приёмке DK-1235 и
+// убрана целиком (DK-1374): вопрос идёт текстом в ленте, галочки висят при
+// строках вариантов, а при промахе копирования панель дописывает те же
+// строки текстом той же формы. Разбор снимка панели tmux остался, но за
+// вопросами самого клиента (доверие каталогу, вход по /login), и стенд
+// следит, чтобы вместе с карточкой не уехала эта половина.
 //
 // Табы, своя отправка и поле свободного ответа остались запрещены поимённо:
-// карточкой с кнопками они от этого не становятся.
+// галочками в ленте они от этого не становятся.
 func TestStaticAgentAskWidgetGone(t *testing.T) {
 	js := readFile(t, filepath.Join("static", "app.js"))
 	for _, gone := range []string{"paintAgentAsk", "askSay", "box.askSaid", "box.askStep",
 		"askStepShell", "askFreeField", "ask.said",
-		"paintAgentBlind", "askBlindCount", "askBlindSteps", "askPickWire",
-		"askChatPicks", "askUnfence", "askForkNames", "askPickBare", "ASK_BLIND",
-		"ASK_FORK_RE", "ASK_PICK_RE", "ASK_PICK_TAIL", "Заход ждёт ответа"} {
+		"paintAgentBlind", "askBlindCount", "askBlindSteps",
+		"paintAgentCard", "askUnfence", "askForkNames", "ASK_BLIND",
+		"Вопрос ждёт ответа", "Заход ждёт ответа"} {
 		if strings.Contains(js, gone) {
 			t.Errorf("в static/app.js остался мёртвый код вопроса: %q", gone)
 		}
 	}
-	for _, want := range []string{"function paintClientAsk(", "function paintAgentCard(",
-		"function askCardSteps("} {
+	for _, want := range []string{"function paintClientAsk(",
+		"function askPickWire(", "function askPickSaid(", "function askCardSteps("} {
 		if !strings.Contains(js, want) {
-			t.Errorf("в static/app.js нет %q: карточка вопроса не соберётся", want)
+			t.Errorf("в static/app.js нет %q: галочки при строках вариантов не соберутся", want)
 		}
 	}
 }

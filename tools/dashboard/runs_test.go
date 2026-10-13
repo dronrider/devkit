@@ -1447,6 +1447,9 @@ func TestRunStartUserAcceptClosesWithoutSession(t *testing.T) {
 	runTaskctl(t, e.proj, "set", "XR-004", "--accept", "user")
 	goalDoc(t, e, "XR-004", userAcceptDoc)
 	runTaskctl(t, e.proj, "move", "XR-004", "check")
+	// Отметку долга открывает сам перевод в Check, а close держит открытую
+	// отметку. Хвост закрывает тот, кто сдаёт, здесь тот же шаг.
+	runTaskctl(t, e.proj, "debt-done", "XR-004", "пересечений нет")
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-004"}`)
 	text := body(t, resp)

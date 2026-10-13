@@ -37,6 +37,11 @@ func chatEnv(t *testing.T) (*testEnv, *http.Client) {
 	t.Helper()
 	e := newTestEnv(t)
 	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", chatBoardJSON))
+	// Клиент подписки по умолчанию ложится в PATH: подъём чата смотрит bin
+	// харнеса раскладки, а не голое имя (DK-1271), и без болванки стенд
+	// заворачивает реплику до tmux. Клиент второй подписки кладут стенды,
+	// которым выбрана она.
+	writeClientFakes(t, e.bin, "клиент-1")
 	return e, e.loggedClient(t)
 }
 
@@ -344,6 +349,7 @@ func parkedRaiseEnv(t *testing.T) (*testEnv, string) {
 	writeTmuxFake(t, e.bin, tmuxLog, `goal-XR-9\ntask-XR-5\nчужая-сессия\n`)
 	writeScript(t, e.bin, "claude", "exit 0")
 	writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
+	writeClientFakes(t, e.bin, "клиент-1", "клиент-2")
 	writeTaskRunFake(t, filepath.Dir(e.proj))
 	writePermsFake(t, filepath.Dir(e.proj), false)
 	useHeadHome(t, e)
@@ -3263,6 +3269,7 @@ func replyEnv(t *testing.T) (*testEnv, *http.Client, string) {
 	writeTmuxFake(t, e.bin, tmuxLog, `чужая-сессия\n`)
 	writeScript(t, e.bin, "claude", "exit 0")
 	writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
+	writeClientFakes(t, e.bin, "клиент-1", "клиент-2")
 	writeTaskRunFake(t, filepath.Dir(e.proj))
 	writePermsFake(t, filepath.Dir(e.proj), false)
 	useHeadHome(t, e)

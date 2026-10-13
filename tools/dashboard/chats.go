@@ -175,6 +175,19 @@ func (s *server) chatHarnessOf(model, harness string) *Harness {
 	return view.byDefault()
 }
 
+// chatClientMissing проверяет клиента той подписки, которой чат поднимается.
+// Имя клиента берётся раскладкой (bin харнеса), а не зашитой константой:
+// на машине, где подписку по умолчанию обслуживает иной бин, требование
+// голого claude в PATH заворачивало подъём мимо вины клиента (DK-1271).
+func (s *server) chatClientMissing(model, harness string) string {
+	h := s.chatHarnessOf(model, harness)
+	if h == nil || h.Bin == "" {
+		return "подписка не определилась: agentctl harness --json не назвал её, " +
+			"а чат мимо обвязки не идёт; разложить слой: devkitctl doctor --fix"
+	}
+	return clientMissing(h.Bin)
+}
+
 // Состояния диалога. live это живой процесс в tmux, которым правит дашборд;
 // vscode это свежий транскрипт без своей tmux-сессии, то есть окно человека, и
 // писать туда с дашборда нечем; dead это кончившийся процесс, его продолжает
@@ -2232,7 +2245,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	if m := clientMissing(defaultClient); m != "" {
+	if m := s.chatClientMissing(model, harness); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
@@ -3287,7 +3300,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
-	if m := clientMissing(defaultClient); m != "" {
+	if m := s.chatClientMissing(model, harness); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
@@ -3876,10 +3889,6 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	if m := clientMissing(defaultClient); m != "" {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
-		return
-	}
 	recs := s.bindsAll()
 	task := ""
 	if t := sessions.Touched(recs[sid]); len(t) > 0 {
@@ -3893,6 +3902,10 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 	}
 	model, harness := s.chatChoice(sid, "")
 	if m := s.chatHooksGap(model, harness); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
+	if m := s.chatClientMissing(model, harness); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
@@ -4665,16 +4678,16 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text, nam
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	if m := clientMissing(defaultClient); m != "" {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
-		return
-	}
 	dir := found.Path
 	if tree := filepath.Join(filepath.Dir(found.Path), filepath.Base(found.Path)+"-"+strings.ToLower(id)); isDir(tree) {
 		dir = tree
 	}
 	model, harness := chatModelDefault, ""
 	if m := s.chatHooksGap(model, harness); m != "" {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
+	if m := s.chatClientMissing(model, harness); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}

@@ -36,14 +36,19 @@ const pairLayout = `{
 func pairEnv(t *testing.T) (*testEnv, *http.Client, string) {
 	t.Helper()
 	e, c := chatEnv(t)
+	// PATH замкнут на стенде: подъём чата не должен требовать claude в PATH
+	// машины, клиент берётся раскладкой подписки (DK-1271). Стенд держит только
+	// свои фикстуры и штатный /bin, поэтому проверка клиента на голом claude
+	// здесь краснеет, а проверка bin харнеса зеленеет.
+	t.Setenv("PATH", e.bin+string(os.PathListSeparator)+"/bin")
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
 case "$1" in
 ls) `+tmuxNoServer+`;;
 esac
 exit 0`)
-	writeScript(t, e.bin, "claude", "exit 0")
 	writeAgentctlFake(t, e.bin, pairLayout)
+	writeClientFakes(t, e.bin, "клиент-1", "клиент-3")
 	return e, c, tmuxLog
 }
 

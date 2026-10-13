@@ -45,6 +45,18 @@ func writeAgentctlFake(t *testing.T, bin, out string) {
 	writeScript(t, bin, "agentctl", "/bin/cat <<'JSON'\n"+out+"\nJSON")
 }
 
+// writeClientFakes кладёт болванки клиентов подписок, которых требует подъём
+// чата: проверка клиента смотрит bin харнеса (DK-1271), и без болванки в PATH
+// стенда проверка заворачивает подъём, хотя tmux-журнал клиент и не зовёт.
+// Стенды, которым клиент второй подписки нужен отсутствующим, болванки сами
+// не зовут.
+func writeClientFakes(t *testing.T, bin string, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		writeScript(t, bin, name, "exit 0")
+	}
+}
+
 // writeAgentctlPick кладёт фикстуру agentctl, которая отвечает на оба вопроса
 // запуска: раскладкой на harness --json и машинными строками вердикта на
 // pick <ID>. Ярус вердикта называет стенд, пустой ярус это молчащий вердикт

@@ -46,6 +46,10 @@ ls) `+tmuxNoServer+`;;
 esac
 exit 0`)
 	writeScript(t, e.bin, "claude", "exit 0")
+	// Стенд поднимает и вторую подписку: проверка клиента берёт bin харнеса
+	// (DK-1271), и без болванки отказ приходил бы от неё, а не от находки
+	// хуков.
+	writeClientFakes(t, e.bin, "клиент-2")
 	writeAgentctlFake(t, e.bin, hooksGapLayout(second))
 	return e, c, tmuxLog
 }

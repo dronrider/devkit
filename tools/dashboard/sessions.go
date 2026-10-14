@@ -1125,6 +1125,37 @@ func toolNote(input map[string]any) string {
 	return ""
 }
 
+// syntheticModel помечает записи, которые подставил сам харнес: модели в них
+// не было (пустые замены ответа, отказы сеанса, служебные вставки).
+const syntheticModel = "<synthetic>"
+
+// noResponseWord это пустая замена ответа, которую харнес кладёт вместо
+// реплики модели, когда отвечать не на что (возобновление с продолжением).
+const noResponseWord = "No response requested."
+
+// synthNoResponse узнаёт запись харнеса именно с пустой заменой ответа. Текст
+// бывает и строкой, и блоком, как у настоящего ответа. Остальные записи под
+// <synthetic> это отказы сеанса, они в ленте свои.
+func synthNoResponse(content json.RawMessage) bool {
+	var s string
+	if json.Unmarshal(content, &s) == nil {
+		return s == noResponseWord
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(content, &blocks) != nil {
+		return false
+	}
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text == noResponseWord {
+			return true
+		}
+	}
+	return false
+}
+
 // parseReplies разбирает строки jsonl в реплики, нумеруя с startSeq: живое
 // дострение продолжает счёт, и пагинация назад не съезжает. Битая строка
 // пропускается без обрушения ленты, служебные записи (queue-operation,
@@ -1243,12 +1274,21 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 			IsMeta           bool `json:"isMeta"`
 			Message          struct {
 				Content json.RawMessage `json:"content"`
+				Model   string          `json:"model"`
 			} `json:"message"`
 		}
 		if err := json.Unmarshal([]byte(ln), &rec); err != nil {
 			continue
 		}
 		if (rec.IsSidechain && !sp.side) || (rec.Type != "user" && rec.Type != "assistant") {
+			continue
+		}
+		// Пустая замена ответа, которую харнес кладёт сам: возобновление
+		// сессии без продолжаемого хода и прочие случаи, где модель в ответ
+		// не ходила. Пузырём она была бы враньём, и в ленту не идёт. Ошибки
+		// харнеса под тем же <synthetic> остаются: замалывать отказ сеанса
+		// значило бы прятать от человека настоящую беду.
+		if rec.Message.Model == syntheticModel && synthNoResponse(rec.Message.Content) {
 			continue
 		}
 		var s string

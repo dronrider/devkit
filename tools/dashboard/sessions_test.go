@@ -2745,6 +2745,47 @@ func TestMetaLineNotHumanReply(t *testing.T) {
 	}
 }
 
+// Пустая замена ответа «No response requested», которую харнес кладёт сам под
+// возобновлением с продолжением, в ленту не идёт: записи под ней нет модели,
+// и пузырём она была бы враньём. Отказ сеанса под тем же <synthetic> остаётся
+// видимым, иначе из чата пропадала бы настоящая беда.
+func TestSyntheticNoResponseHidden(t *testing.T) {
+	meta := fmt.Sprintf(
+		`{"type":"user","isMeta":true,"message":{"role":"user","content":%q},`+
+			`"timestamp":%q,"gitBranch":"main"}`,
+		"Continue from where you left off.", "2026-07-30T10:46:00Z") + "\n"
+	filler := fmt.Sprintf(
+		`{"type":"assistant","message":{"role":"assistant","model":%q,"content":`+
+			`[{"type":"text","text":"No response requested."}]},`+
+			`"timestamp":%q,"gitBranch":"main"}`,
+		"<synthetic>", "2026-07-30T10:46:01Z") + "\n"
+	got := parseRepliesSpan([]byte(meta+filler), 0, parseSpan{src: "s"})
+	if len(got) != 1 {
+		t.Fatalf("записей в ленте %d, ждал одну помету: %+v", len(got), got)
+	}
+	if got[0].Role != roleNote {
+		t.Fatalf("пустая замена ответа вылазит пузырём: role=%q", got[0].Role)
+	}
+	// Текст бывает и голой строкой в message.content.
+	fillerStr := fmt.Sprintf(
+		`{"type":"assistant","message":{"role":"assistant","model":%q,"content":`+
+			`%q},"timestamp":%q,"gitBranch":"main"}`,
+		"<synthetic>", "No response requested.", "2026-07-30T10:46:02Z") + "\n"
+	if got := parseRepliesSpan([]byte(fillerStr), 0, parseSpan{src: "s"}); len(got) != 0 {
+		t.Fatalf("строчная пустая замена в ленте: %+v", got)
+	}
+	// Отказ харнеса той же пометки остаётся разговором.
+	errLine := fmt.Sprintf(
+		`{"type":"assistant","message":{"role":"assistant","model":%q,"content":`+
+			`[{"type":"text","text":"API Error: 529 Overloaded."}]},`+
+			`"timestamp":%q,"gitBranch":"main"}`,
+		"<synthetic>", "2026-07-30T10:46:03Z") + "\n"
+	got = parseRepliesSpan([]byte(errLine), 0, parseSpan{src: "s"})
+	if len(got) != 1 || !strings.Contains(got[0].Text, "529") {
+		t.Fatalf("отказ сеанса замалчан: %+v", got)
+	}
+}
+
 // Продление кеша (DK-1349) в ленте это служебная помета, а не диалог: ни
 // реплики «кэш», ни ответа «ок». Рамку devkit-cachekeep кладёт cachekeep,
 // ответ модели после неё в разговор не идёт.

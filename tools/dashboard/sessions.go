@@ -1156,6 +1156,424 @@ func synthNoResponse(content json.RawMessage) bool {
 	return false
 }
 
+// Сырые теги текстовой разметки вызовов собираются из кусков: готовая строка
+// тега в тексте агента парсится харнесом как настоящий вызов, и в исходнике
+// её не держим целиком.
+const (
+	xmlLT   = "<"
+	xmlGT   = ">"
+	xmlEnd  = "/"
+	dsmlBar = "\uFF5C"
+)
+
+// toolCallOpen и родня это границы вставки вызова в тексте реплики. Два
+// формата: основной (обёртка, элемент вызова с именем после знака равенства,
+// элементы параметров) и DSML (блок tool_calls, элементы invoke и parameter с
+// именем в атрибуте, имя блока может нести служебные вертикальные черты).
+// Шлюзы моделей чужие, и разбор ленты сворачивает вставку сам (DK-1378).
+var (
+	toolCallOpen   = xmlLT + "tool" + "_call" + xmlGT
+	toolCallClose  = xmlLT + xmlEnd + "tool" + "_call" + xmlGT
+	toolCallsOpen  = xmlLT + "tool" + "_calls" + xmlGT
+	toolCallsClose = xmlLT + xmlEnd + "tool" + "_calls" + xmlGT
+	dsmlCallsOpen  = xmlLT + dsmlBar + "DSML" + dsmlBar + "tool" + "_calls" + xmlGT
+	dsmlCallsClose = xmlLT + xmlEnd + dsmlBar + "DSML" + dsmlBar + "tool" + "_calls" + xmlGT
+	fnEqPrefix     = xmlLT + "function" + "="
+	fnNamePrefix   = xmlLT + "function" + ` name="`
+	fnClose        = xmlLT + xmlEnd + "function" + xmlGT
+	invPrefix      = xmlLT + "invoke"
+	dsmlInvPrefix  = xmlLT + dsmlBar + "DSML" + dsmlBar + "invoke"
+	invClose       = xmlLT + xmlEnd + "invoke" + xmlGT
+	dsmlInvClose   = xmlLT + xmlEnd + dsmlBar + "DSML" + dsmlBar + "invoke" + xmlGT
+	parEqPrefix    = xmlLT + "parameter" + "="
+	parNamePrefix  = xmlLT + "parameter" + ` name="`
+	parClose       = xmlLT + xmlEnd + "parameter" + xmlGT
+	dsmlParPrefix  = xmlLT + dsmlBar + "DSML" + dsmlBar + "parameter"
+	dsmlParClose   = xmlLT + xmlEnd + dsmlBar + "DSML" + dsmlBar + "parameter" + xmlGT
+)
+
+// markupStarts это теги, с которых начинается вставка вызова либо её обрывок:
+// обёртка целиком, элемент вызова и даже один параметр. Сворачивается всё, что
+// начинается таким тегом, иначе на сломанном вызове портянка вернётся в ленту.
+var markupStarts = []string{
+	toolCallOpen, toolCallsOpen, dsmlCallsOpen,
+	fnEqPrefix, fnNamePrefix, invPrefix, dsmlInvPrefix,
+	parEqPrefix, parNamePrefix, dsmlParPrefix,
+}
+
+// toolCard это свёрнутая вставка текстовой разметки: разобранный вызов с
+// именем и полями либо обрывок, пошедший в тело карточки как есть.
+type toolCard struct {
+	tool string
+	args map[string]any
+	raw  string
+}
+
+// feedReply собирает карточку хода в том же виде, что и настоящий tool_use:
+// имя, пояснение, подпись и тело берутся теми же функциями, что и у
+// структурированного хода.
+func (c toolCard) feedReply(at string) reply {
+	if c.tool == "" && c.args == nil {
+		return reply{Role: "tool", Time: at, Text: truncate(c.raw, toolBodyLimit)}
+	}
+	return reply{Role: "tool", Time: at, Tool: c.tool,
+		Note: toolNote(c.args), About: toolAbout(c.args),
+		Text: toolBody(c.args), Args: toolArgs(c.args)}
+}
+
+// findMarkupStart ищет ближайший тег вставки на позиции не раньше from.
+func findMarkupStart(s string, from int) int {
+	best := -1
+	for _, p := range markupStarts {
+		i := strings.Index(s[from:], p)
+		if i < 0 {
+			continue
+		}
+		at := from + i
+		if best < 0 || at < best {
+			best = at
+		}
+	}
+	return best
+}
+
+// takeTagAfter находит закрывающий тег name и отдаёт смещение за ним.
+func takeTagAfter(s string, from int, close string) (int, bool) {
+	i := strings.Index(s[from:], close)
+	if i < 0 {
+		return 0, false
+	}
+	return from + i + len(close), true
+}
+
+// attrValue достаёт значение атрибута name="..."; имя и кавычки в строке
+// собраны из кусков, как и теги.
+func attrValue(openTag string) string {
+	const key = "name" + `="`
+	i := strings.Index(openTag, key)
+	if i < 0 {
+		return ""
+	}
+	rest := openTag[i+len(key):]
+	j := strings.IndexByte(rest, '"')
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
+}
+
+// tagWord вынимает имя тега после открывающего слэша: по нему узнаётся
+// элемент вызова в обеих формах вставки.
+func isFnOpen(s string, at int) bool {
+	rest := s[at:]
+	return strings.HasPrefix(rest, fnEqPrefix) ||
+		strings.HasPrefix(rest, fnNamePrefix) ||
+		strings.HasPrefix(rest, invPrefix) ||
+		strings.HasPrefix(rest, dsmlInvPrefix)
+}
+
+func isWrapperOpen(s string, at int) bool {
+	rest := s[at:]
+	return strings.HasPrefix(rest, toolCallOpen) ||
+		strings.HasPrefix(rest, toolCallsOpen) ||
+		strings.HasPrefix(rest, dsmlCallsOpen)
+}
+
+// markupPiece это кусок текста агента после сворачивания: слова либо одна
+// карточка хода. Куски идут в порядке исходного текста, и лента показывает
+// вызов на своём месте, а не пачкой впереди реплики.
+type markupPiece struct {
+	text string
+	card *toolCard
+}
+
+// splitToolMarkup вынимает из текста агента вставки разметки вызовов и
+// отдаёт слова вокруг отдельными кусками. Текст человека сюда не приходит:
+// человек вправе цитировать разметку, и цитата остаётся репликой.
+func splitToolMarkup(text string) []markupPiece {
+	if findMarkupStart(text, 0) < 0 {
+		return []markupPiece{{text: text}}
+	}
+	var out []markupPiece
+	i := 0
+	for i <= len(text) {
+		st := findMarkupStart(text, i)
+		if st < 0 {
+			out = appendTextPiece(out, text[i:])
+			break
+		}
+		out = appendTextPiece(out, text[i:st])
+		end, cards := consumeMarkup(text, st)
+		for _, c := range cards {
+			c := c
+			out = append(out, markupPiece{card: &c})
+		}
+		if end <= i {
+			// защита от петли на пустой вставке
+			end = st + 1
+		}
+		i = end
+	}
+	return out
+}
+
+// appendTextPiece кладёт слова куском, если после обрезки краёв что-то осталось.
+func appendTextPiece(out []markupPiece, text string) []markupPiece {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return out
+	}
+	return append(out, markupPiece{text: t})
+}
+
+// consumeMarkup сворачивает одну вставку: от тега начала до закрывающего тега
+// обёртки либо до следующей обёртки. Неразобранное уходит телом карточки.
+func consumeMarkup(text string, start int) (int, []toolCard) {
+	for _, pair := range [][2]string{
+		{toolCallOpen, toolCallClose},
+		{toolCallsOpen, toolCallsClose},
+		{dsmlCallsOpen, dsmlCallsClose},
+	} {
+		if !strings.HasPrefix(text[start:], pair[0]) {
+			continue
+		}
+		if end, ok := takeTagAfter(text, start+len(pair[0]), pair[1]); ok {
+			return end, parseMarkupChunk(text[start:end])
+		}
+		// Незакрытая обёртка держит свои элементы внутри: внутренний тег не
+		// отрезает её посреди, и границей служит следующая обёртка либо пустая
+		// строка перед словами. Иначе портянка вернётся в ленту кусками.
+		if end, ok := findWrapperBreak(text, start+len(pair[0])); ok {
+			return end, parseMarkupChunk(text[start:end])
+		}
+		return len(text), parseMarkupChunk(text[start:])
+	}
+	// Одиночный элемент вызова или параметра без обёртки.
+	next := findMarkupStart(text, start+1)
+	limit := len(text)
+	if next >= 0 {
+		limit = next
+	}
+	if isFnOpen(text, start) {
+		for _, c := range []string{fnClose, invClose, dsmlInvClose} {
+			if end, ok := takeTagAfter(text, start, c); ok && end <= limit {
+				limit = end
+				break
+			}
+		}
+	}
+	return limit, parseMarkupChunk(text[start:limit])
+}
+
+// findWrapperBreak ищет конец незакрытой обёртки: ближайший тег следующей
+// обёртки либо пустую строку, после которой идут слова.
+func findWrapperBreak(s string, from int) (int, bool) {
+	best := -1
+	for i := from; i < len(s); {
+		at := findMarkupStart(s, i)
+		if at < 0 {
+			break
+		}
+		if isWrapperOpen(s, at) {
+			best = at
+			break
+		}
+		i = at + 1
+	}
+	// Пустая строка перед словами тоже обрывает обрывок: хвост прозы остаётся
+	// репликой, а не телом карточки.
+	if nl := strings.Index(s[from:], "\n\n"); nl >= 0 {
+		at := from + nl + 2
+		if best < 0 || at < best {
+			best = at
+		}
+	}
+	if best < 0 {
+		return 0, false
+	}
+	return best, true
+}
+
+// parseMarkupChunk разбирает тело вставки: элементы вызова идут карточками,
+// а обрывок без единого разборного элемента становится одной карточкой с
+// сырым текстом.
+func parseMarkupChunk(chunk string) []toolCard {
+	var cards []toolCard
+	for _, c := range parseEqCalls(chunk) {
+		cards = append(cards, c)
+	}
+	for _, c := range parseAttrCalls(chunk) {
+		cards = append(cards, c)
+	}
+	if len(cards) > 0 {
+		return cards
+	}
+	t := strings.TrimSpace(chunk)
+	if t == "" {
+		return nil
+	}
+	return []toolCard{{raw: t}}
+}
+
+// parseEqCalls разбирает основной формат: элемент вызова с именем после знака
+// равенства и параметры тем же способом.
+func parseEqCalls(chunk string) []toolCard {
+	var cards []toolCard
+	pos := 0
+	for pos < len(chunk) {
+		at := strings.Index(chunk[pos:], fnEqPrefix)
+		if at < 0 {
+			break
+		}
+		at += pos
+		name, body, end, ok := takeEqElem(chunk, at, "function")
+		if !ok {
+			break
+		}
+		cards = append(cards, toolCard{tool: name, args: parseEqParams(body)})
+		pos = end
+	}
+	return cards
+}
+
+// parseAttrCalls разбирает DSML и родню: имя инструмента и ключи параметров
+// лежат в атрибуте name.
+func parseAttrCalls(chunk string) []toolCard {
+	var cards []toolCard
+	for _, prefix := range []string{dsmlInvPrefix, invPrefix, fnNamePrefix} {
+		pos := 0
+		for pos < len(chunk) {
+			at := strings.Index(chunk[pos:], prefix)
+			if at < 0 {
+				break
+			}
+			at += pos
+			openEnd := strings.IndexByte(chunk[at:], xmlGT[0])
+			if openEnd < 0 {
+				break
+			}
+			openTag := chunk[at : at+openEnd+1]
+			name := attrValue(openTag)
+			body, end, ok := takeAttrBody(chunk, at+openEnd+1, prefix)
+			if !ok {
+				break
+			}
+			cards = append(cards, toolCard{tool: name, args: parseAttrParams(body)})
+			pos = end
+		}
+		if len(cards) > 0 {
+			return cards
+		}
+	}
+	return cards
+}
+
+// takeEqElem достаёт элемент вида «тег=имя ... /тег» и отдаёт имя, тело и
+// позицию за закрывающим тегом. Незакрытый элемент отдаёт хвост целиком.
+func takeEqElem(s string, at int, tag string) (name, body string, end int, ok bool) {
+	prefix := xmlLT + tag + "="
+	if !strings.HasPrefix(s[at:], prefix) {
+		return "", "", 0, false
+	}
+	gt := strings.IndexByte(s[at+len(prefix):], xmlGT[0])
+	if gt < 0 {
+		return "", "", 0, false
+	}
+	name = s[at+len(prefix) : at+len(prefix)+gt]
+	rest := at + len(prefix) + gt + 1
+	closeTag := xmlLT + xmlEnd + tag + xmlGT
+	if e, found := takeTagAfter(s, rest, closeTag); found {
+		return name, s[rest : e-len(closeTag)], e, true
+	}
+	return name, s[rest:], len(s), true
+}
+
+// takeAttrBody достаёт тело элемента с именем в атрибуте: от конца открытого
+// тега до парного закрытого.
+func takeAttrBody(s string, bodyAt int, prefix string) (body string, end int, ok bool) {
+	var closeTag string
+	switch {
+	case strings.HasPrefix(prefix, dsmlInvPrefix):
+		closeTag = dsmlInvClose
+	case strings.HasPrefix(prefix, dsmlParPrefix):
+		closeTag = dsmlParClose
+	case strings.HasPrefix(prefix, invPrefix):
+		closeTag = invClose
+	case strings.HasPrefix(prefix, parNamePrefix):
+		closeTag = parClose
+	default:
+		closeTag = fnClose
+	}
+	if e, found := takeTagAfter(s, bodyAt, closeTag); found {
+		return s[bodyAt : e-len(closeTag)], e, true
+	}
+	return s[bodyAt:], len(s), true
+}
+
+// parseEqParams вынимает параметры основного формата: ключ после знака
+// равенства, значение в тексте элемента.
+func parseEqParams(body string) map[string]any {
+	out := map[string]any{}
+	pos := 0
+	for pos < len(body) {
+		at := strings.Index(body[pos:], parEqPrefix)
+		if at < 0 {
+			break
+		}
+		at += pos
+		name, val, end, ok := takeEqElem(body, at, "parameter")
+		if !ok {
+			break
+		}
+		if strings.TrimSpace(val) != "" {
+			out[name] = val
+		}
+		if end <= pos {
+			break
+		}
+		pos = end
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// parseAttrParams вынимает параметры DSML: ключ в атрибуте name.
+func parseAttrParams(body string) map[string]any {
+	out := map[string]any{}
+	for _, prefix := range []string{dsmlParPrefix, parNamePrefix} {
+		pos := 0
+		for pos < len(body) {
+			at := strings.Index(body[pos:], prefix)
+			if at < 0 {
+				break
+			}
+			at += pos
+			openEnd := strings.IndexByte(body[at:], xmlGT[0])
+			if openEnd < 0 {
+				break
+			}
+			key := attrValue(body[at : at+openEnd+1])
+			val, end, ok := takeAttrBody(body, at+openEnd+1, prefix)
+			if !ok {
+				break
+			}
+			if key != "" && strings.TrimSpace(val) != "" {
+				out[key] = val
+			}
+			if end <= pos {
+				break
+			}
+			pos = end
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // parseReplies разбирает строки jsonl в реплики, нумеруя с startSeq: живое
 // дострение продолжает счёт, и пагинация назад не съезжает. Битая строка
 // пропускается без обрушения ленты, служебные записи (queue-operation,
@@ -1313,7 +1731,7 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 					muteAfterKeepalive = false
 				}
 			}
-			addUser(add, rec.Type, rec.Timestamp, s, rec.IsMeta)
+			addAgentText(add, rec.Type, rec.Timestamp, s, rec.IsMeta)
 			continue
 		}
 		var blocks []struct {
@@ -1351,7 +1769,7 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 						muteAfterKeepalive = false
 					}
 				}
-				addUser(add, rec.Type, rec.Timestamp, b.Text, rec.IsMeta)
+				addAgentText(add, rec.Type, rec.Timestamp, b.Text, rec.IsMeta)
 			case "thinking":
 				// Текст размышлений едет в ленту (POC ветки poc-chat): прежде
 				// сервер выбрасывал его, и на экране стояла метка «размышления
@@ -1811,6 +2229,24 @@ func unwrapDispatch(text string) (string, string, bool) {
 	}
 	inner := dispatchTailRe.ReplaceAllString(m[2], "")
 	return strings.TrimSpace(inner), dispatchWord(m[1]), true
+}
+
+// addAgentText кладёт текст агента: вставки текстовой разметки вызовов
+// сворачиваются карточками хода, слова вокруг идут прежним путём реплики.
+// Текст человека сюда не приходит, и цитата разметки в реплике человека
+// остаётся словами (DK-1378).
+func addAgentText(add func(reply), role, at, text string, meta bool) {
+	if role != "assistant" {
+		addUser(add, role, at, text, meta)
+		return
+	}
+	for _, p := range splitToolMarkup(text) {
+		if p.card != nil {
+			add(p.card.feedReply(at))
+			continue
+		}
+		addUser(add, role, at, p.text, meta)
+	}
 }
 
 // addUser кладёт в ленту реплику роли user (и текстовый блок ответа агента тем

@@ -3412,3 +3412,248 @@ func TestModelShortKeepsProvider(t *testing.T) {
 		}
 	}
 }
+
+// Сырые теги в тестах собираются из кусков, как и в разборе: готовая строка
+// тега в тексте агента парсится харнесом как настоящий вызов. Куски лежат
+// здесь же, чтобы тест пережил отсутствие новых имён в базе (regcheck).
+const (
+	tLT  = "<"
+	tGT  = ">"
+	tEnd = "/"
+	tBar = "\uFF5C"
+)
+
+func tTag(name string) string  { return tLT + name + tGT }
+func tEndTag(name string) string { return tLT + tEnd + name + tGT }
+
+func tMainOpen() string  { return tTag("tool" + "_call") }
+func tMainClose() string { return tEndTag("tool" + "_call") }
+func tFnOpen(tool string) string {
+	return tLT + "function" + "=" + tool + tGT
+}
+func tFnClose() string { return tEndTag("function") }
+func tParOpen(key string) string {
+	return tLT + "parameter" + "=" + key + tGT
+}
+func tParClose() string { return tEndTag("parameter") }
+
+func tDsmlCallsOpen() string {
+	return tLT + tBar + "DSML" + tBar + "tool" + "_calls" + tGT
+}
+func tDsmlCallsClose() string {
+	return tLT + tEnd + tBar + "DSML" + tBar + "tool" + "_calls" + tGT
+}
+func tDsmlInvOpen(tool string) string {
+	return tLT + tBar + "DSML" + tBar + "invoke" + ` name="` + tool + `"` + tGT
+}
+func tDsmlInvClose() string {
+	return tLT + tEnd + tBar + "DSML" + tBar + "invoke" + tGT
+}
+func tDsmlParOpen(key string) string {
+	return tLT + tBar + "DSML" + tBar + "parameter" + ` name="` + key + `"` + tGT
+}
+func tDsmlParClose() string {
+	return tLT + tEnd + tBar + "DSML" + tBar + "parameter" + tGT
+}
+
+// mkMainCall собирает вставку основного формата из кусков тегов: готовая
+// строка тега в тексте агента парсится харнесом как настоящий вызов.
+func mkMainCall(tool string, params [][2]string) string {
+	var b strings.Builder
+	b.WriteString(tMainOpen())
+	b.WriteString(tFnOpen(tool))
+	for _, kv := range params {
+		b.WriteString(tParOpen(kv[0]) + kv[1] + tParClose())
+	}
+	b.WriteString(tFnClose())
+	b.WriteString(tMainClose())
+	return b.String()
+}
+
+// mkDsmlCall собирает вставку DSML: имя инструмента и ключи в атрибуте name.
+func mkDsmlCall(tool string, params [][2]string) string {
+	var b strings.Builder
+	b.WriteString(tDsmlCallsOpen())
+	b.WriteString(tDsmlInvOpen(tool))
+	for _, kv := range params {
+		b.WriteString(tDsmlParOpen(kv[0]) + kv[1] + tDsmlParClose())
+	}
+	b.WriteString(tDsmlInvClose())
+	b.WriteString(tDsmlCallsClose())
+	return b.String()
+}
+
+// assistantTextLine кладёт текст агента строкой транскрипта.
+func assistantTextLine(ts, text string) string {
+	raw, err := json.Marshal(text)
+	if err != nil {
+		panic(err)
+	}
+	return fmt.Sprintf(
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":%s}]},"timestamp":%q}`,
+		raw, ts) + "\n"
+}
+
+// userTextLine кладёт текст человека строкой транскрипта.
+func userTextLine(ts, text string) string {
+	raw, err := json.Marshal(text)
+	if err != nil {
+		panic(err)
+	}
+	return fmt.Sprintf(
+		`{"type":"user","message":{"role":"user","content":%s},"timestamp":%q}`,
+		raw, ts) + "\n"
+}
+
+// Вставка текстовой разметки вызова в реплике агента сворачивается карточкой
+// хода, как настоящий tool_use: имя, поля и подпись берутся теми же
+// функциями, слова вокруг остаются репликой (DK-1378).
+func TestToolMarkupMainFormatFolded(t *testing.T) {
+	call := mkMainCall("Bash", [][2]string{
+		{"command", "taskctl list"},
+		{"description", "Показать доску"},
+	})
+	data := []byte(assistantTextLine("2026-10-14T10:00:00Z", "Смотрю доску. "+call+" Готово."))
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	if len(got) != 3 {
+		t.Fatalf("записей %d, жду три (реплика, карточка, реплика): %+v", len(got), got)
+	}
+	if got[0].Role != "assistant" || got[0].Text != "Смотрю доску." {
+		t.Fatalf("слова до вставки не реплика: %+v", got[0])
+	}
+	card := got[1]
+	if card.Role != "tool" || card.Tool != "Bash" {
+		t.Fatalf("вставка не карточка хода: %+v", card)
+	}
+	if card.Note != "taskctl list" {
+		t.Fatalf("подпись карточки %q: %+v", card.Note, card)
+	}
+	if card.About != "Показать доску" {
+		t.Fatalf("пояснение карточки %q: %+v", card.About, card)
+	}
+	if !strings.Contains(card.Text, "command: taskctl list") {
+		t.Fatalf("тело карточки без поля вызова: %q", card.Text)
+	}
+	if card.Args["command"] != "taskctl list" {
+		t.Fatalf("поля вызова не доехали: %+v", card.Args)
+	}
+	if got[2].Role != "assistant" || got[2].Text != "Готово." {
+		t.Fatalf("слова после вставки не реплика: %+v", got[2])
+	}
+}
+
+// DSML-вставка (блок tool_calls с элементами invoke и parameter, имя в
+// атрибуте) сворачивается той же карточкой.
+func TestToolMarkupDsmlFormatFolded(t *testing.T) {
+	call := mkDsmlCall("Read", [][2]string{
+		{"file_path", "/tmp/notes.md"},
+		{"description", "Прочитать заметки"},
+	})
+	data := []byte(assistantTextLine("2026-10-14T10:01:00Z", "Читаю заметки. "+call))
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	if len(got) != 2 {
+		t.Fatalf("записей %d, жду реплику и карточку: %+v", len(got), got)
+	}
+	card := got[1]
+	if card.Role != "tool" || card.Tool != "Read" {
+		t.Fatalf("DSML-вставка не карточка хода: %+v", card)
+	}
+	if card.Note != "/tmp/notes.md" {
+		t.Fatalf("подпись карточки %q: %+v", card.Note, card)
+	}
+	if card.About != "Прочитать заметки" {
+		t.Fatalf("пояснение карточки %q: %+v", card.About, card)
+	}
+	if card.Args["file_path"] != "/tmp/notes.md" {
+		t.Fatalf("поля вызова не доехали: %+v", card.Args)
+	}
+}
+
+// Обрывок разметки тоже сворачивается: неразобранное уходит телом карточки,
+// и портянка не возвращается в ленту (DK-1378, развилка «обрывки»).
+func TestToolMarkupBrokenFragmentFolded(t *testing.T) {
+	// Обёртка с именем и полем, но без закрывающего тега.
+	broken := tMainOpen() + tFnOpen("Bash") + tParOpen("command") + "ls"
+	data := []byte(assistantTextLine("2026-10-14T10:02:00Z", "Проверяю. "+broken))
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	if len(got) != 2 {
+		t.Fatalf("записей %d, жду реплику и карточку обрывка: %+v", len(got), got)
+	}
+	if got[0].Text != "Проверяю." {
+		t.Fatalf("слова вокруг потеряны: %+v", got[0])
+	}
+	card := got[1]
+	if card.Role != "tool" {
+		t.Fatalf("обрывок не свёрнут карточкой: %+v", card)
+	}
+	if card.Tool != "Bash" {
+		t.Fatalf("имя из обрывка не разобрано: %+v", card)
+	}
+	if !strings.Contains(card.Text, "command: ls") {
+		t.Fatalf("тело обрывка без разобранных полей: %q", card.Text)
+	}
+}
+
+// Совсем неразборный обрывок уходит в тело карточки как есть, слова после
+// пустой строки остаются репликой.
+func TestToolMarkupRawFragmentFolded(t *testing.T) {
+	broken := tMainOpen() + " обрывок без элементов"
+	data := []byte(assistantTextLine("2026-10-14T10:03:00Z", broken+"\n\nхвост"))
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	if len(got) != 2 {
+		t.Fatalf("записей %d, жду карточку и хвост: %+v", len(got), got)
+	}
+	if got[0].Role != "tool" || !strings.Contains(got[0].Text, "обрывок без элементов") {
+		t.Fatalf("сырой обрывок не телом карточки: %+v", got[0])
+	}
+	if got[1].Role != "assistant" || got[1].Text != "хвост" {
+		t.Fatalf("хвост после обрывка потерян: %+v", got[1])
+	}
+}
+
+// Цитата разметки в реплике человека остаётся словами: человек вправе
+// процитировать вставку, и править её нельзя (DK-1378, границы).
+func TestToolMarkupHumanQuoteKept(t *testing.T) {
+	call := mkMainCall("Bash", [][2]string{{"command", "ls"}})
+	data := []byte(userTextLine("2026-10-14T10:04:00Z", "Смотри, что прислала модель: "+call))
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	if len(got) != 1 {
+		t.Fatalf("записей %d, жду одну реплику человека: %+v", len(got), got)
+	}
+	if got[0].Role != "user" {
+		t.Fatalf("цитата уехала из реплики человека: %+v", got[0])
+	}
+	if !strings.Contains(got[0].Text, "Смотри, что прислала модель") {
+		t.Fatalf("слова человека потеряны: %q", got[0].Text)
+	}
+	if !strings.Contains(got[0].Text, "Bash") {
+		t.Fatalf("цитата разметки вырезана из реплики человека: %q", got[0].Text)
+	}
+}
+
+// Дубль рядом с настоящим ходом показывается обеими карточками: разбор ленты
+// не знает, какая карточка настоящая (DK-1378, развилка «дубли»).
+func TestToolMarkupDuplicateKeepsBothCards(t *testing.T) {
+	call := mkMainCall("Bash", [][2]string{{"command", "taskctl list"}})
+	data := []byte(
+		assistantTextLine("2026-10-14T10:05:00Z", call) +
+			fmt.Sprintf(
+				`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"taskctl list"}}]},"timestamp":%q}`,
+				"2026-10-14T10:05:01Z") + "\n")
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	var cards []reply
+	for _, r := range got {
+		if r.Role == "tool" {
+			cards = append(cards, r)
+		}
+	}
+	if len(cards) != 2 {
+		t.Fatalf("карточек %d, жду обе (текстовая и настоящая): %+v", len(cards), got)
+	}
+	if cards[0].Tool != "Bash" || cards[1].Tool != "Bash" {
+		t.Fatalf("карточки без имени инструмента: %+v", cards)
+	}
+	if cards[1].ToolID != "t1" {
+		t.Fatalf("настоящий ход потерял идентификатор: %+v", cards[1])
+	}
+}

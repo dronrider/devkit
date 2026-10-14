@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // Живой статус агента, сторона транскрипта: сессии проекта из каталогов
@@ -1303,11 +1304,12 @@ func splitToolMarkup(text string) []markupPiece {
 			break
 		}
 		out = appendTextPiece(out, text[i:st])
-		end, cards := consumeMarkup(text, st)
+		end, cards, tail := consumeMarkup(text, st)
 		for _, c := range cards {
 			c := c
 			out = append(out, markupPiece{card: &c})
 		}
+		out = appendTextPiece(out, tail)
 		if end <= i {
 			// защита от петли на пустой вставке
 			end = st + 1
@@ -1326,9 +1328,10 @@ func appendTextPiece(out []markupPiece, text string) []markupPiece {
 	return append(out, markupPiece{text: t})
 }
 
-// consumeMarkup сворачивает одну вставку: от тега начала до закрывающего тега
-// обёртки либо до следующей обёртки. Неразобранное уходит телом карточки.
-func consumeMarkup(text string, start int) (int, []toolCard) {
+// consumeMarkup сворачивает одну вставку: от тега начала до конца разборного
+// элемента либо до обрыва обёртки. Хвост куска после последнего элемента
+// отдаётся словами, чтобы проза не приклеивалась к карточке.
+func consumeMarkup(text string, start int) (int, []toolCard, string) {
 	for _, pair := range [][2]string{
 		{toolCallOpen, toolCallClose},
 		{toolCallsOpen, toolCallsClose},
@@ -1338,15 +1341,18 @@ func consumeMarkup(text string, start int) (int, []toolCard) {
 			continue
 		}
 		if end, ok := takeTagAfter(text, start+len(pair[0]), pair[1]); ok {
-			return end, parseMarkupChunk(text[start:end])
+			cards, tail := parseMarkupChunk(text[start:end])
+			return end, cards, tail
 		}
 		// Незакрытая обёртка держит свои элементы внутри: внутренний тег не
 		// отрезает её посреди, и границей служит следующая обёртка либо пустая
 		// строка перед словами. Иначе портянка вернётся в ленту кусками.
 		if end, ok := findWrapperBreak(text, start+len(pair[0])); ok {
-			return end, parseMarkupChunk(text[start:end])
+			cards, tail := parseMarkupChunk(text[start:end])
+			return end, cards, tail
 		}
-		return len(text), parseMarkupChunk(text[start:])
+		cards, tail := parseMarkupChunk(text[start:])
+		return len(text), cards, tail
 	}
 	// Одиночный элемент вызова или параметра без обёртки.
 	next := findMarkupStart(text, start+1)
@@ -1362,7 +1368,8 @@ func consumeMarkup(text string, start int) (int, []toolCard) {
 			}
 		}
 	}
-	return limit, parseMarkupChunk(text[start:limit])
+	cards, tail := parseMarkupChunk(text[start:limit])
+	return limit, cards, tail
 }
 
 // findWrapperBreak ищет конец незакрытой обёртки: ближайший тег следующей
@@ -1395,30 +1402,94 @@ func findWrapperBreak(s string, from int) (int, bool) {
 }
 
 // parseMarkupChunk разбирает тело вставки: элементы вызова идут карточками,
-// а обрывок без единого разборного элемента становится одной карточкой с
-// сырым текстом.
-func parseMarkupChunk(chunk string) []toolCard {
-	var cards []toolCard
+// хвост после последнего элемента отдаётся словами. Обрывок без единого
+// разборного элемента становится одной карточкой с сырым текстом.
+func parseMarkupChunk(chunk string) (cards []toolCard, tail string) {
+	last := 0
 	for _, c := range parseEqCalls(chunk) {
-		cards = append(cards, c)
+		cards = append(cards, c.card)
+		if c.end > last {
+			last = c.end
+		}
 	}
 	for _, c := range parseAttrCalls(chunk) {
-		cards = append(cards, c)
+		cards = append(cards, c.card)
+		if c.end > last {
+			last = c.end
+		}
 	}
 	if len(cards) > 0 {
-		return cards
+		return cards, stripMarkup(chunk[last:])
 	}
 	t := strings.TrimSpace(chunk)
 	if t == "" {
-		return nil
+		return nil, ""
 	}
-	return []toolCard{{raw: t}}
+	return []toolCard{{raw: t}}, ""
+}
+
+// stripMarkup убирает известные теги из хвоста куска: закрытие обёртки это
+// часть вставки, а не слова реплики.
+func stripMarkup(s string) string {
+	for _, tag := range []string{
+		toolCallOpen, toolCallClose,
+		toolCallsOpen, toolCallsClose,
+		dsmlCallsOpen, dsmlCallsClose,
+		fnClose, invClose, dsmlInvClose,
+		parClose, dsmlParClose,
+	} {
+		s = strings.ReplaceAll(s, tag, " ")
+	}
+	return strings.TrimSpace(s)
+}
+
+// parsedCall это разобранный элемент вызова с позицией за его концом: она
+// отрезает хвост куска, который остаётся словами.
+type parsedCall struct {
+	card toolCard
+	end  int
+}
+
+// splitUnclosedValue режет значение незакрытого параметра: до перевода строки
+// либо до прозы после пробела, чтобы слова реплики не склеивались с полем.
+func splitUnclosedValue(s string) (val, rest string) {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		val, rest = s[:i], s[i:]
+	} else {
+		val = s
+	}
+	for i := 0; i < len(val); {
+		sp := strings.IndexByte(val[i:], ' ')
+		if sp < 0 {
+			break
+		}
+		at := i + sp
+		if isProseAfterSpace(val[at+1:]) {
+			rest = val[at:] + rest
+			val = val[:at]
+			break
+		}
+		i = at + 1
+	}
+	return val, rest
+}
+
+// isProseAfterSpace узнаёт начало прозы: после пробела идёт слово с прописной
+// буквы, а не продолжение значения.
+func isProseAfterSpace(s string) bool {
+	for _, r := range s {
+		if r == ' ' || r == '\t' {
+			continue
+		}
+		return unicode.IsUpper(r)
+	}
+	return false
 }
 
 // parseEqCalls разбирает основной формат: элемент вызова с именем после знака
 // равенства и параметры тем же способом.
-func parseEqCalls(chunk string) []toolCard {
-	var cards []toolCard
+func parseEqCalls(chunk string) []parsedCall {
+	var out []parsedCall
 	pos := 0
 	for pos < len(chunk) {
 		at := strings.Index(chunk[pos:], fnEqPrefix)
@@ -1426,20 +1497,28 @@ func parseEqCalls(chunk string) []toolCard {
 			break
 		}
 		at += pos
-		name, body, end, ok := takeEqElem(chunk, at, "function")
+		name, body, bodyAt, end, closed, ok := takeEqElem(chunk, at, "function")
 		if !ok {
 			break
 		}
-		cards = append(cards, toolCard{tool: name, args: parseEqParams(body)})
+		args, argEnd := parseEqParams(body)
+		if !closed {
+			end = bodyAt + argEnd
+		}
+		out = append(out, parsedCall{card: toolCard{tool: name, args: args}, end: end})
+		if end <= pos {
+			break
+		}
 		pos = end
 	}
-	return cards
+	return out
 }
 
 // parseAttrCalls разбирает DSML и родню: имя инструмента и ключи параметров
-// лежат в атрибуте name.
-func parseAttrCalls(chunk string) []toolCard {
-	var cards []toolCard
+// лежат в атрибуте name. Семейства разбираются все, смесь в одном куске не
+// теряет второе.
+func parseAttrCalls(chunk string) []parsedCall {
+	var out []parsedCall
 	for _, prefix := range []string{dsmlInvPrefix, invPrefix, fnNamePrefix} {
 		pos := 0
 		for pos < len(chunk) {
@@ -1454,43 +1533,49 @@ func parseAttrCalls(chunk string) []toolCard {
 			}
 			openTag := chunk[at : at+openEnd+1]
 			name := attrValue(openTag)
-			body, end, ok := takeAttrBody(chunk, at+openEnd+1, prefix)
+			bodyAt := at + openEnd + 1
+			body, end, closed, ok := takeAttrBody(chunk, bodyAt, prefix)
 			if !ok {
 				break
 			}
-			cards = append(cards, toolCard{tool: name, args: parseAttrParams(body)})
+			args, argEnd := parseAttrParams(body)
+			if !closed {
+				end = bodyAt + argEnd
+			}
+			out = append(out, parsedCall{card: toolCard{tool: name, args: args}, end: end})
+			if end <= pos {
+				break
+			}
 			pos = end
 		}
-		if len(cards) > 0 {
-			return cards
-		}
 	}
-	return cards
+	return out
 }
 
-// takeEqElem достаёт элемент вида «тег=имя ... /тег» и отдаёт имя, тело и
-// позицию за закрывающим тегом. Незакрытый элемент отдаёт хвост целиком.
-func takeEqElem(s string, at int, tag string) (name, body string, end int, ok bool) {
+// takeEqElem достаёт элемент вида «тег=имя ... /тег» и отдаёт имя, тело,
+// позицию тела, позицию за элементом и признак закрытого тега. Незакрытый
+// элемент отдаёт хвост целиком, его конец уточняет разбор параметров.
+func takeEqElem(s string, at int, tag string) (name, body string, bodyAt, end int, closed, ok bool) {
 	prefix := xmlLT + tag + "="
 	if !strings.HasPrefix(s[at:], prefix) {
-		return "", "", 0, false
+		return "", "", 0, 0, false, false
 	}
 	gt := strings.IndexByte(s[at+len(prefix):], xmlGT[0])
 	if gt < 0 {
-		return "", "", 0, false
+		return "", "", 0, 0, false, false
 	}
 	name = s[at+len(prefix) : at+len(prefix)+gt]
 	rest := at + len(prefix) + gt + 1
 	closeTag := xmlLT + xmlEnd + tag + xmlGT
 	if e, found := takeTagAfter(s, rest, closeTag); found {
-		return name, s[rest : e-len(closeTag)], e, true
+		return name, s[rest : e-len(closeTag)], rest, e, true, true
 	}
-	return name, s[rest:], len(s), true
+	return name, s[rest:], rest, len(s), false, true
 }
 
 // takeAttrBody достаёт тело элемента с именем в атрибуте: от конца открытого
-// тега до парного закрытого.
-func takeAttrBody(s string, bodyAt int, prefix string) (body string, end int, ok bool) {
+// тега до парного закрытого. Незакрытый отдаёт хвост целиком.
+func takeAttrBody(s string, bodyAt int, prefix string) (body string, end int, closed, ok bool) {
 	var closeTag string
 	switch {
 	case strings.HasPrefix(prefix, dsmlInvPrefix):
@@ -1505,43 +1590,52 @@ func takeAttrBody(s string, bodyAt int, prefix string) (body string, end int, ok
 		closeTag = fnClose
 	}
 	if e, found := takeTagAfter(s, bodyAt, closeTag); found {
-		return s[bodyAt : e-len(closeTag)], e, true
+		return s[bodyAt : e-len(closeTag)], e, true, true
 	}
-	return s[bodyAt:], len(s), true
+	return s[bodyAt:], len(s), false, true
 }
 
 // parseEqParams вынимает параметры основного формата: ключ после знака
-// равенства, значение в тексте элемента.
-func parseEqParams(body string) map[string]any {
+// равенства, значение в тексте элемента. Отдаёт и конец последнего
+// параметра, по нему режется хвост незакрытого вызова.
+func parseEqParams(body string) (map[string]any, int) {
 	out := map[string]any{}
 	pos := 0
+	end := 0
 	for pos < len(body) {
 		at := strings.Index(body[pos:], parEqPrefix)
 		if at < 0 {
 			break
 		}
 		at += pos
-		name, val, end, ok := takeEqElem(body, at, "parameter")
+		name, val, valAt, elemEnd, closed, ok := takeEqElem(body, at, "parameter")
 		if !ok {
 			break
+		}
+		if !closed {
+			val, _ = splitUnclosedValue(val)
+			elemEnd = valAt + len(val)
 		}
 		if strings.TrimSpace(val) != "" {
 			out[name] = val
 		}
+		end = elemEnd
 		if end <= pos {
 			break
 		}
 		pos = end
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, end
 	}
-	return out
+	return out, end
 }
 
-// parseAttrParams вынимает параметры DSML: ключ в атрибуте name.
-func parseAttrParams(body string) map[string]any {
+// parseAttrParams вынимает параметры DSML: ключ в атрибуте name. Отдаёт конец
+// последнего параметра, как и разбор основного формата.
+func parseAttrParams(body string) (map[string]any, int) {
 	out := map[string]any{}
+	end := 0
 	for _, prefix := range []string{dsmlParPrefix, parNamePrefix} {
 		pos := 0
 		for pos < len(body) {
@@ -1555,23 +1649,31 @@ func parseAttrParams(body string) map[string]any {
 				break
 			}
 			key := attrValue(body[at : at+openEnd+1])
-			val, end, ok := takeAttrBody(body, at+openEnd+1, prefix)
+			valAt := at + openEnd + 1
+			val, elemEnd, closed, ok := takeAttrBody(body, valAt, prefix)
 			if !ok {
 				break
+			}
+			if !closed {
+				val, _ = splitUnclosedValue(val)
+				elemEnd = valAt + len(val)
 			}
 			if key != "" && strings.TrimSpace(val) != "" {
 				out[key] = val
 			}
-			if end <= pos {
+			if elemEnd > end {
+				end = elemEnd
+			}
+			if elemEnd <= pos {
 				break
 			}
-			pos = end
+			pos = elemEnd
 		}
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, end
 	}
-	return out
+	return out, end
 }
 
 // parseReplies разбирает строки jsonl в реплики, нумеруя с startSeq: живое

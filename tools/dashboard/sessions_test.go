@@ -3437,6 +3437,11 @@ func tParOpen(key string) string {
 }
 func tParClose() string { return tEndTag("parameter") }
 
+func tInvNameOpen(tool string) string {
+	return tLT + "invoke" + ` name="` + tool + `"` + tGT
+}
+func tInvClose() string { return tEndTag("invoke") }
+
 func tDsmlCallsOpen() string {
 	return tLT + tBar + "DSML" + tBar + "tool" + "_calls" + tGT
 }
@@ -3628,6 +3633,66 @@ func TestToolMarkupHumanQuoteKept(t *testing.T) {
 	}
 	if !strings.Contains(got[0].Text, "Bash") {
 		t.Fatalf("цитата разметки вырезана из реплики человека: %q", got[0].Text)
+	}
+}
+
+// Слова сразу за обрывком без пустой строки остаются репликой: граница
+// вставки это конец разборного элемента, а не пустая строка (DK-1378).
+func TestToolMarkupFragmentWithWordsKept(t *testing.T) {
+	// Незакрытый parameter не склеивает хвост прозы со значением.
+	broken := tMainOpen() + tFnOpen("Bash") + tParOpen("command") + "ls"
+	data := []byte(assistantTextLine("2026-10-14T10:06:00Z", "Проверяю. "+broken+" Повторяю ход."))
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	if len(got) != 3 {
+		t.Fatalf("записей %d, жду три (реплика, карточка, реплика): %+v", len(got), got)
+	}
+	if got[0].Text != "Проверяю." {
+		t.Fatalf("слова до обрывка потеряны: %+v", got[0])
+	}
+	card := got[1]
+	if card.Role != "tool" || card.Tool != "Bash" {
+		t.Fatalf("обрывок не свёрнут карточкой: %+v", card)
+	}
+	if card.Args["command"] != "ls" {
+		t.Fatalf("хвост прозы приклеился к полю: %+v", card.Args)
+	}
+	if got[2].Role != "assistant" || got[2].Text != "Повторяю ход." {
+		t.Fatalf("слова после обрывка без пустой строки не реплика: %+v", got[2])
+	}
+
+	// Закрытые parameter и function без закрытия обёртки тоже отдают хвост.
+	done := tMainOpen() + tFnOpen("Bash") + tParOpen("command") + "ls" + tParClose() + tFnClose()
+	data = []byte(assistantTextLine("2026-10-14T10:07:00Z", "Проверяю. "+done+" Повторяю ход."))
+	got = parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	if len(got) != 3 {
+		t.Fatalf("записей %d, жду три у закрытых элементов: %+v", len(got), got)
+	}
+	if got[1].Role != "tool" || got[1].Tool != "Bash" || got[1].Args["command"] != "ls" {
+		t.Fatalf("закрытые элементы не карточка: %+v", got[1])
+	}
+	if got[2].Role != "assistant" || got[2].Text != "Повторяю ход." {
+		t.Fatalf("хвост после закрытых элементов потерян: %+v", got[2])
+	}
+}
+
+// Смесь семейств в одном куске разбирается вся: карточки не теряются
+// (DK-1378).
+func TestToolMarkupMixedAttrFamilies(t *testing.T) {
+	dsml := tDsmlInvOpen("Read") + tDsmlParOpen("file_path") + "a" + tDsmlParClose() + tDsmlInvClose()
+	plain := tInvNameOpen("Bash") + tParOpen("command") + "ls" + tParClose() + tInvClose()
+	data := []byte(assistantTextLine("2026-10-14T10:08:00Z", tMainOpen()+dsml+plain))
+	got := parseRepliesSpan(data, 0, parseSpan{src: "s"})
+	var cards []reply
+	for _, r := range got {
+		if r.Role == "tool" {
+			cards = append(cards, r)
+		}
+	}
+	if len(cards) != 2 {
+		t.Fatalf("карточек %d, жду две (DSML и invoke): %+v", len(cards), got)
+	}
+	if cards[0].Tool != "Read" || cards[1].Tool != "Bash" {
+		t.Fatalf("смесь семейств разобрана не вся: %+v", cards)
 	}
 }
 

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
-	"github.com/dronrider/devkit/internal/sessions"
 )
 
 // Вопрос розданной работы доезжает до раздавшего разговора. Субагент ходит с
@@ -95,47 +94,147 @@ func TestPulseHandedAskIgnoresForeignAndStale(t *testing.T) {
 	}
 }
 
-// Скан признаков: ближний срок первым, варианты вопроса разворачиваются в
-// строки экрана с пометкой рекомендованного.
+// foreignProject кладёт рядом с demo второй проект машины и отдаёт его путь:
+// признак вопроса по чужой задаче лежит в дереве её проекта, а не в том, где
+// живёт спрашивающий разговор.
+func foreignProject(t *testing.T, e *testEnv) string {
+	t.Helper()
+	dir := filepath.Join(e.home, "projects", "other")
+	mkProject(t, dir)
+	return dir
+}
+
+// Скан признаков идёт по всем деревьям машины, и порядок вопросов сводится
+// один на все деревья: спросившие в разных проектах отвечают вразнобой, и
+// первым обязан встать спросивший раньше, а не спросивший раньше своего
+// дерева. Варианты вопроса разворачиваются в строки экрана с пометкой
+// рекомендованного.
 // Порядок вопросов без срока (DK-715) считается по времени файла, а не по
 // дедлайну: срока у признака больше нет, и отвечают тому, кто спросил раньше,
 // а не тому, у кого «горит» сильнее. Время файла тут проставлено руками
 // (os.Chtimes), а не выведено из порядка записи: обе записи в тесте ложатся
 // в одну секунду по живым часам, а mtime у признака секундной точности.
 func TestHandedAsksOrderAndLines(t *testing.T) {
-	dir := t.TempDir()
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
-	early := chat.Ask{Session: "aaa-1", Task: "XR-2",
+	e, c := pulseEnv(t, now)
+	foreign := foreignProject(t, e)
+	seen := now.Add(-5 * time.Second)
+	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."), seen)
+	writeBinds(t, e.home, bindRecord(e.home, "2026-08-20T11:59:00", "aaa-1", "XR-1", "заказ"))
+	early := chat.Ask{Session: "aaa-1", Task: "OT-2",
 		Questions: []chat.Question{{Text: "режем строку"}}}
 	late := chat.Ask{Session: "aaa-1", Task: "XR-3",
 		Questions: []chat.Question{{Text: "куда катить", Options: []chat.Option{
 			{Label: "в прод", Note: "сразу", Recommended: true},
 			{Label: "в стенд"},
 		}}}}
-	stamps := map[string]time.Time{"XR-2": now.Add(-10 * time.Minute), "XR-3": now.Add(-time.Minute)}
+	trees := map[string]string{"OT-2": foreign, "XR-3": e.proj}
+	stamps := map[string]time.Time{"OT-2": now.Add(-10 * time.Minute), "XR-3": now.Add(-time.Minute)}
 	for _, a := range []chat.Ask{early, late} {
-		if err := chat.WriteAsk(dir, chat.TaskName(a.Task), a); err != nil {
+		tree := trees[a.Task]
+		if err := chat.WriteAsk(tree, chat.TaskName(a.Task), a); err != nil {
 			t.Fatal(err)
 		}
 		at := stamps[a.Task]
-		if err := os.Chtimes(chat.AskPath(dir, chat.TaskName(a.Task)), at, at); err != nil {
+		if err := os.Chtimes(chat.AskPath(tree, chat.TaskName(a.Task)), at, at); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got := handedAsks(dir, "aaa-1", sessions.Binds{}, now)
-	if len(got) != 2 || got[0].Ask.Task != "XR-2" || got[1].Ask.Task != "XR-3" {
-		t.Fatalf("порядок вопросов не по времени файла: %+v", got)
+	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
+	if len(p.Asks) != 2 || p.Asks[0].Task != "OT-2" || p.Asks[1].Task != "XR-3" {
+		t.Fatalf("порядок вопросов не по времени файла: %+v", p.Asks)
 	}
-	w := handedWaiting(got[1])
 	want := []string{"куда катить", "* в прод сразу", "- в стенд"}
-	if strings.Join(w.Questions, "|") != strings.Join(want, "|") {
-		t.Fatalf("строки вопроса собрались не так: %q", w.Questions)
+	if strings.Join(p.Asks[1].Questions, "|") != strings.Join(want, "|") {
+		t.Fatalf("строки вопроса собрались не так: %q", p.Asks[1].Questions)
 	}
-	if w.Task != "XR-3" || w.Until != 0 {
-		t.Fatalf("задача потерялась или срок не нулевой у признака без дедлайна: %+v", w)
+	if p.Asks[1].Until != 0 {
+		t.Fatalf("срок не нулевой у признака без дедлайна: %+v", p.Asks[1])
 	}
-	if deleg := handedAsks(dir, "up-1", sessions.Binds{"aaa-1": {Parent: "up-1"}}, now); len(deleg) != 2 {
-		t.Fatalf("вопросы делегата не привелись к родителю: %+v", deleg)
+}
+
+// Вопрос по задаче чужого проекта доезжает пульсу спрашивающего разговора.
+// Признак лежит в дереве задачи, туда его кладёт taskctl ask основного
+// чекаута, а разговор спрашивающего живёт в другом проекте: конвейер
+// диспетчера спрашивает по чужой доске из своего окна, и скан по одному
+// дереву оставлял разговор без вопроса вовсе (живой случай DK-1379).
+func TestPulseHandedAskFromForeignProject(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.Local)
+	e, c := pulseEnv(t, now)
+	foreign := foreignProject(t, e)
+	seen := now.Add(-5 * time.Second)
+	writeSession(t, e.home, e.proj, "", "aaa-1", pulseTranscript(seen, "Bash", "go build ./..."), seen)
+	writeBinds(t, e.home, bindRecord(e.home, "2026-10-14T11:59:00", "aaa-1", "XR-1", "заказ"))
+	writeAskFor(t, foreign, "OT-7", "aaa-1", now.Add(20*time.Minute))
+
+	p := getPulse(t, e, c, "task=XR-1&sid=aaa-1")
+	if p.OwnWait == nil || p.OwnWait.Task != "OT-7" {
+		t.Fatalf("вопрос чужого дерева не дошёл до разговора спрашивающего: %+v", p.OwnWait)
+	}
+	if len(p.Asks) != 1 || len(p.Asks[0].Questions) == 0 {
+		t.Fatalf("вопросы для плашки не приехали: %+v", p.Asks)
+	}
+	if p.State != pulseWait {
+		t.Errorf("кольцо не показало ожидание: %q", p.State)
+	}
+}
+
+// Тот же вопрос виджетом у ручки вопроса: галочки вариантов вешаются на
+// строки вопроса в разговоре спрашивающего, какой бы проект ни держал задачу.
+func TestChatAskHandedFromForeignProject(t *testing.T) {
+	sid := "aaaa1111-1111-4111-8111-111111111111"
+	e, c := chatEnv(t)
+	foreign := foreignProject(t, e)
+	writeAskPack(t, foreign, "OT-7", sid, time.Now().Add(5*time.Minute), chat.Question{
+		Text: "снимаем ребро или ждём",
+		Options: []chat.Option{
+			{Label: "снимаем", Note: "слиянием", Recommended: true},
+			{Label: "ждём"},
+		},
+	})
+
+	ask := askOf(t, e, c, sid)
+	if ask.Kind != askKindAgent || ask.Task != "OT-7" {
+		t.Fatalf("виджет вопроса чужого дерева не собрался: %+v", ask)
+	}
+	if len(ask.Options) != 2 || ask.Options[0].Text != "снимаем" {
+		t.Fatalf("варианты чужого дерева не приехали: %+v", ask.Options)
+	}
+}
+
+// Ответ репликой в разговоре спрашивающего ложится во вход дерева задачи и
+// снимает признак там же: вход слушает ждущий инструмент именно того дерева,
+// а припаркованную строку будит её сторожок.
+func TestChatSaySettlesForeignAsk(t *testing.T) {
+	sid := "abab1111-2222-4333-8444-555566667777"
+	e, c, frames := askSayEnvNoTerm(t, sid)
+	foreign := foreignProject(t, e)
+	writeAskSign(t, foreign, "task-OT-7", sid, "OT-7", time.Now().Add(5*time.Minute))
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		sayBody("снимаем слиянием", "h-3"))
+	said := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ответ раздавшего разговора отбит: %d %s", resp.StatusCode, said)
+	}
+	if got := frames(); len(got) != 0 {
+		t.Fatalf("реплика ушла в сокет клиента мимо ждущего: %q", got)
+	}
+	lines := chatLines(t, foreign, "task-OT-7")
+	if len(lines) != 1 {
+		t.Fatalf("во входе дерева задачи строк %d, ждали одну: %q", len(lines), lines)
+	}
+	if chat.Addressee(lines[0]) != "" || chat.Said(lines[0]) != "снимаем слиянием" {
+		t.Fatalf("реплика легла не той строкой: %q", lines[0])
+	}
+	if _, ok := chat.ReadAsk(chat.AskPath(foreign, "task-OT-7")); ok {
+		t.Fatal("признак ожидания в дереве задачи не снялся")
+	}
+	if lines := chatLines(t, e.proj, "task-OT-7"); len(lines) != 0 {
+		t.Fatalf("ответ лёг в дерево разговора, где его никто не читает: %q", lines)
+	}
+	if !strings.Contains(said, `"ask"`) || !strings.Contains(said, "OT-7") {
+		t.Fatalf("ручка не назвала дорогу и задачу вопроса: %s", said)
 	}
 }
 

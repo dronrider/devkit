@@ -97,29 +97,46 @@ func askWaiting(tree, id string, now time.Time) (Waiting, bool) {
 }
 
 // handedAsk это живой признак ожидания, найденный по сессии, а не по строке
-// доски: имя разговора нужно ответу, разобранный признак экрану.
+// доски: имя разговора нужно ответу, разобранный признак экрану. Tree называет
+// дерево, в котором признак лежит: лежит он в дереве задачи, а разговор
+// спрашивающего может жить и в другом проекте, и ответ обязан вернуться в то
+// дерево, чей вход слушает ждущий.
 type handedAsk struct {
 	Name  string
 	Ask   chat.Ask
+	Tree  string
 	Since int64
 }
 
 // handedAsks находит вопросы, адресованные разговору sid, под какой бы задачей
-// они ни лежали. Субагент ходит с ID внешней сессии, и признак, положенный им
-// из чужого дерева, несёт сессию раздавшего разговора; у делегата второй
-// подписки сессия своя, и его вопрос приводит к родителю реестр. До этого
-// скана вопрос был виден только в разговоре задачи, а человек сидел в том
-// разговоре, откуда работу раздал, и молчал до самой парковки (живые случаи
-// DK-517, DK-543 и слияние цели DK-397). Вопросов бывает несколько, пачка
-// исполнителей спрашивает вразнобой: отвечают им по одному, ближний срок
+// и в каком бы дереве они ни лежали. Субагент ходит с ID внешней сессии, и
+// признак, положенный им из чужого дерева, несёт сессию раздавшего разговора;
+// у делегата второй подписки сессия своя, и его вопрос приводит к родителю
+// реестр. До этого скана вопрос был виден только в разговоре задачи, а человек
+// сидел в том разговоре, откуда работу раздал, и молчал до самой парковки
+// (живые случаи DK-517, DK-543 и слияние цели DK-397). Сам скан при этом
+// ходил по одному дереву, а признак лежит в дереве задачи: разговор, из
+// которого спросили по чужой доске, вопроса не получал вовсе (живой случай
+// DK-1379), поэтому обходят все проекты машины. Вопросов бывает несколько,
+// пачка исполнителей спрашивает вразнобой: отвечают им по одному, ближний срок
 // первым.
-func handedAsks(projPath, sid string, b sessionBinds, now time.Time) []handedAsk {
+func (s *server) handedAsks(sid string, b sessionBinds, now time.Time) []handedAsk {
 	if sid == "" {
 		return nil
 	}
 	// Обход признаков общий с полкой ждущих (waitshelf.go), разница только в
 	// отборе: разговору нужны свои вопросы, полке все.
-	return askScan(projPath, now, func(a chat.Ask) bool { return askForChat(a, sid, b) })
+	keep := func(a chat.Ask) bool { return askForChat(a, sid, b) }
+	projects, _ := s.projects()
+	var out []handedAsk
+	for _, p := range projects {
+		out = append(out, askScan(p.Path, now, keep)...)
+	}
+	// Порядок сводится один на все деревья: спросившие в разных проектах
+	// отвечают вразнобой, и раньше всех обязан встать спросивший раньше, а не
+	// раньше всех своего дерева.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Since < out[j].Since })
+	return out
 }
 
 // askForChat говорит, адресован ли признак ожидания разговору sid. Своя сессия
@@ -143,32 +160,40 @@ func askForChat(a chat.Ask, sid string, b sessionBinds) bool {
 // для разговора у неё не нашлось. Развилок тут три, и до этой правки все они
 // сходились в одну строку журнала «разбор надо чинить»: вопросов за разговором
 // нет вовсе, признак лежит живым, но ждёт чужую сессию, признак лежит с вышедшим
-// сроком. Разложить их без второго захода это и есть смысл строки.
-func askSignWhy(projPath, sid string, b sessionBinds, now time.Time) string {
-	entries, err := os.ReadDir(chat.Root(projPath))
-	if err != nil && !os.IsNotExist(err) {
-		return "вход разговоров не читается: " + err.Error()
-	}
+// сроком. Разложить их без второго захода это и есть смысл строки. Обход тот
+// же, что у скана вопросов: все деревья машины, иначе признак чужого дерева
+// подводил бы строку «вопросов нет», хотя он лежит и ждёт.
+func (s *server) askSignWhy(sid string, b sessionBinds, now time.Time) string {
 	var alien, stale []string
-	for _, e := range entries {
-		name, found := strings.CutSuffix(e.Name(), chat.AskSuffix)
-		if !found || e.IsDir() {
+	projects, _ := s.projects()
+	for _, p := range projects {
+		entries, err := os.ReadDir(chat.Root(p.Path))
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return "вход разговоров не читается: " + err.Error()
+			}
 			continue
 		}
-		a, ok := chat.ReadAsk(chat.AskPath(projPath, name))
-		if !ok {
-			continue
-		}
-		who := a.Task
-		if who == "" {
-			who = name
-		}
-		if !a.Live(now) {
-			stale = append(stale, fmt.Sprintf("%s (срок вышел в %s)", who, a.Until.Format("15:04:05")))
-			continue
-		}
-		if !askForChat(a, sid, b) {
-			alien = append(alien, fmt.Sprintf("%s (ждёт сессию %s)", who, shortSession(a.Session)))
+		for _, e := range entries {
+			name, found := strings.CutSuffix(e.Name(), chat.AskSuffix)
+			if !found || e.IsDir() {
+				continue
+			}
+			a, ok := chat.ReadAsk(chat.AskPath(p.Path, name))
+			if !ok {
+				continue
+			}
+			who := a.Task
+			if who == "" {
+				who = name
+			}
+			if !a.Live(now) {
+				stale = append(stale, fmt.Sprintf("%s (срок вышел в %s)", who, a.Until.Format("15:04:05")))
+				continue
+			}
+			if !askForChat(a, sid, b) {
+				alien = append(alien, fmt.Sprintf("%s (ждёт сессию %s)", who, shortSession(a.Session)))
+			}
 		}
 	}
 	sort.Strings(alien)

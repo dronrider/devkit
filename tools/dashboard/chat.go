@@ -107,7 +107,7 @@ func (s *server) sayToAsk(p *Project, info sessionInfo, sid, text string, recs m
 	if done, ok := s.ownAskReply(p, info, sid, name, text, hasTerm); ok {
 		return done, true
 	}
-	return s.handedAskReply(p, sid, text, hasTerm)
+	return s.handedAskReply(sid, text, hasTerm)
 }
 
 // ownAskReply отвечает на вопрос, который задан в разговоре этой же задачи:
@@ -158,13 +158,15 @@ func (s *server) ownAskReply(p *Project, info sessionInfo, sid, name, text strin
 
 // handedAskReply отвечает на вопрос розданной работы: признак лежит под именем
 // чужой задачи, а сессией в нём назван этот разговор (субагент ходит с ID
-// внешней сессии) либо его делегат по реестру. Строка идёт безадресной во вход
-// основного чекаута: его опрашивает само ожидание, а не дождавшийся срока
-// заход оставляет её сторожку, и та же строка будит припаркованную вопросом
-// задачу. Вопросов бывает несколько, пачка исполнителей спрашивает вразнобой:
-// ответ уезжает ближнему по сроку, остальные названы в ответе ручки.
-func (s *server) handedAskReply(p *Project, sid, text string, hasTerm bool) (map[string]any, bool) {
-	asks := handedAsks(p.Path, sid, s.binds(), s.now())
+// внешней сессии) либо его делегат по реестру. Задача при этом может стоять и
+// на чужой доске: признак лежит в дереве задачи, и ответ идёт безадресной
+// строкой во вход именно того дерева, которое опрашивает ждущий, а не
+// дождавшийся срока заход оставляет строку сторожку, и она будит
+// припаркованную вопросом задачу. Вопросов бывает несколько, пачка
+// исполнителей спрашивает вразнобой: ответ уезжает ближнему по сроку,
+// остальные названы в ответе ручки.
+func (s *server) handedAskReply(sid, text string, hasTerm bool) (map[string]any, bool) {
+	asks := s.handedAsks(sid, s.binds(), s.now())
 	if len(asks) == 0 {
 		return nil, false
 	}
@@ -172,10 +174,10 @@ func (s *server) handedAskReply(p *Project, sid, text string, hasTerm bool) (map
 	if hasTerm {
 		// Раздавший разговор жив и отвечает на клавиши сам: текст едет ему
 		// дорогой ниже, а тут только снимается признак и возвращается строка.
-		s.settleAsk(p.Path, h.Name, h.Ask.Task, h.Ask.Session)
+		s.settleAsk(h.Tree, h.Name, h.Ask.Task, h.Ask.Session)
 		return nil, false
 	}
-	lying, _, err := putChat(p.Path, h.Name, text, chat.TaskLine(s.now(), text))
+	lying, _, err := putChat(h.Tree, h.Name, text, chat.TaskLine(s.now(), text))
 	if err != nil {
 		// Вход не взял строку: обычная дорога тут лучше отказа, реплика уедет
 		// сокетом и человек её не потеряет.
@@ -185,7 +187,7 @@ func (s *server) handedAskReply(p *Project, sid, text string, hasTerm bool) (map
 	// Признак ожидания снимается ответом (DK-715): строка припаркованной
 	// задачи будит её тиком сторожка, а признак без срока висел бы до второго
 	// вопроса, если бы не снялся тут же.
-	if err := chat.DropAsk(p.Path, h.Name); err != nil {
+	if err := chat.DropAsk(h.Tree, h.Name); err != nil {
 		s.logf("признак ожидания разговора %s не снялся после ответа: %v", h.Name, err)
 	}
 	out := map[string]any{"way": "ask", "chat": h.Name, "task": h.Ask.Task,

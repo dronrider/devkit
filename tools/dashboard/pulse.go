@@ -689,7 +689,7 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 	// вопрос находится тем же сканом, потому что сессией в признаке названа эта
 	// же сессия, и приезжает на экран с вариантами.
 	if sid != "" {
-		for _, h := range handedAsks(found.Path, sid, s.binds(), now) {
+		for _, h := range s.handedAsks(sid, s.binds(), now) {
 			out.Asks = append(out.Asks, handedWaiting(h))
 		}
 	}

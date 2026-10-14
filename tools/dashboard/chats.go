@@ -3549,7 +3549,7 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	// файл, а живой tmux ему не нужен вовсе. Спрашивает тут заход, который сам
 	// же и ждёт ответа, значит клиент занят нашим инструментом, а не своим
 	// вопросом, и разбирать его панель незачем.
-	if agent, ok := s.agentAsk(found.Path, sid); ok {
+	if agent, ok := s.agentAsk(sid); ok {
 		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "task": agent.Task, "ask": agent})
 		return
 	}
@@ -3602,7 +3602,7 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		// пользователя). С запертостью это другой разбор (DoD DK-1300):
 		// признак журнала едет в ответ, и панель показывает плашку состояния
 		// вместо тишины, неотличимой от штатной работы.
-		s.askQuietLog(sid, name, found.Path, echo)
+		s.askQuietLog(sid, name, echo)
 		out := map[string]any{"session": sid, "tmux": name}
 		if stuck != "" {
 			out["stuck"] = stuck
@@ -3621,11 +3621,11 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 
 // agentAsk собирает вопрос агента, адресованный этому разговору. Скан тот же,
 // каким пульс находит вопросы розданной работы, и своей задачи он тоже: сессией
-// в признаке названа эта сессия, под каким бы именем признак ни лежал.
-// Отвечают ближнему по сроку, остальные названы в поле rest, чтобы человек знал
-// про очередь.
-func (s *server) agentAsk(projPath, sid string) (agentAsk, bool) {
-	asks := handedAsks(projPath, sid, s.binds(), s.now())
+// в признаке названа эта сессия, под каким бы именем и в каком бы дереве
+// признак ни лежал. Отвечают ближнему по сроку, остальные названы в поле rest,
+// чтобы человек знал про очередь.
+func (s *server) agentAsk(sid string) (agentAsk, bool) {
+	asks := s.handedAsks(sid, s.binds(), s.now())
 	if len(asks) == 0 {
 		return agentAsk{}, false
 	}
@@ -3649,7 +3649,7 @@ const askQuietWindow = 5 * time.Minute
 // каждая отчитывается своими словами: одна строка на обе не давала разложить
 // случай и стоила второго захода (живой случай DK-695, девять строк за двое
 // суток). Человеку тут сказать нечего, он и так видит своё окно.
-func (s *server) askQuietLog(sid, name, projPath string, echo bool) {
+func (s *server) askQuietLog(sid, name string, echo bool) {
 	why, mark := s.chatStuckMark(sid)
 	if why == "" {
 		return
@@ -3667,7 +3667,7 @@ func (s *server) askQuietLog(sid, name, projPath string, echo bool) {
 	s.askQuiet[sid] = now
 	s.mu.Unlock()
 	s.logf("клиент %s похоже ждёт ответа, а показывать нечего: дорога признака ожидания: %s; "+
-		"дорога снимка панели: %s", name, askSignWhy(projPath, sid, s.binds(), now),
+		"дорога снимка панели: %s", name, s.askSignWhy(sid, s.binds(), now),
 		s.askPaneWhy(sid, echo, mark))
 }
 

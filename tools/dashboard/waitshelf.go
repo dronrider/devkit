@@ -141,7 +141,7 @@ func askScan(projPath string, now time.Time, keep func(chat.Ask) bool) []handedA
 		if keep != nil && !keep(a) {
 			continue
 		}
-		h := handedAsk{Name: name, Ask: a}
+		h := handedAsk{Name: name, Ask: a, Tree: projPath}
 		if fi, err := os.Stat(path); err == nil {
 			h.Since = fi.ModTime().Unix()
 		}

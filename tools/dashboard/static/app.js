@@ -5769,8 +5769,11 @@ function pane(title, sub) {
   return { card, head, sub: subEl, body };
 }
 
-function say(box, cls, text) {
-  box.replaceChildren(el("div", cls, text));
+function say(box, cls, text, keep) {
+  // keep это узлы, которые стоят в коробке постоянно (местные пузыри в скролле
+  // ленты) и переживают слова пустоты и ошибки: у пустого чата свои реплики
+  // тоже показываются, а не стираются заглушкой (DK-1379).
+  box.replaceChildren(el("div", cls, text), ...(keep || []));
 }
 
 // Строка журнала: время отдельным тоном, как в макете «03 Агент».
@@ -6645,6 +6648,13 @@ async function wireFeed(project, sid, opts) {
   if (!had) atStart.hidden = true;
   const box = list || el("div", opts.list || "");
   if (!had || !list) opts.box.replaceChildren(atStart, box);
+  // Местные пузыри стоят в этом же скролле после транскрипта (DK-1379):
+  // собственный контейнер, а не строка в общем списке, потому что sync
+  // стирает лишних детей списка с конца, и строка пузыря уходила бы первой
+  // при каждой перерисовке транскрипта. Сборка ленты контейнер не трогает.
+  if (opts.local && opts.box.children[opts.box.children.length - 1] !== opts.local) {
+    opts.box.append(opts.local);
+  }
 
   // Снятая лента помечает себя сама, а не только общим списком остановок:
   // поток поднимается после ответа сервера, и уход с ленты застаёт кусок на
@@ -7239,7 +7249,7 @@ function stateMark(kind, word) {
 // на каждое сообщение и растягивала ленту вдвое (замечание 6 двенадцатого
 // круга POC). Пустая подпись не рисуется вовсе. Состояние доставки стоит
 // отметкой с иконкой, а причина её живёт подсказкой подписи.
-function chatBubble(who, text, meta, tip, quote, mark) {
+function chatBubble(who, text, meta, tip, quote, mark, extra) {
   const wrap = el("div", "msg" + (who === "вы" ? " me" : ""));
   const bb = el("div", "bb");
   // Цитата стоит первой строкой пузыря, над словами: так её ставят
@@ -7259,6 +7269,9 @@ function chatBubble(who, text, meta, tip, quote, mark) {
   // длинной ещё и прокрутка убегает (замечание пользователя). Кнопка стоит у
   // обоих пузырей, и своего, и агентского: причина одна и та же.
   if (String(text || "").trim()) foot.append(copyBtn(text));
+  // Посторонняя кнопка подписи (снятие застрявшей реплики): встаёт последней,
+  // после отметки доставки и копирования.
+  if (extra) foot.append(extra);
   bb.append(foot);
   wrap.append(bb);
   return wrap;
@@ -7924,7 +7937,7 @@ function shotURL(path) {
     "/shot?name=" + encodeURIComponent(name);
 }
 
-function wireChatFeed(project, feed, sid, onItem, onFeed, keep) {
+function wireChatFeed(project, feed, sid, onItem, onFeed, keep, local) {
   chatShotProject = project;
   chatShotSid = sid;
   chatFeedIn(project);
@@ -7934,6 +7947,7 @@ function wireChatFeed(project, feed, sid, onItem, onFeed, keep) {
     keep,
     box: feed,
     scroll: feed,
+    local,
     list: "mlist",
     tail: CHAT_TAIL,
     days: true,
@@ -9140,25 +9154,14 @@ function chatBornOf(chats, tmux, lifted) {
   return best;
 }
 
-// chatSewn ищет диалог, который родила застрявшая на адресе new реплика.
-// Узнавание двумя ключами по убыванию силы: имя tmux-сессии подъёма, если
-// персист его помнит (со сверкой рождения, chatBornOf), и сама первая реплика,
-// ведь она уехала клиенту первым аргументом и легла в транскрипт первой, то
-// есть стала заголовком диалога в списке. Пустой ответ значит, что сессия ещё
-// не родилась либо реплика пропала вместе с tmux, и тогда пузырь честно
+// chatSewn ищет диалог, который родила застрявшая на адресе new реплика:
+// узнавание общим помощником chatSewMatch. Пустой ответ значит, что сессия
+// ещё не родилась либо реплика пропала вместе с tmux, и тогда пузырь честно
 // остаётся held.
-// Ключ byName отключает первую дорогу: у незачатой записи имя tmux носит она
-// сама, и по имени пришивает только сервер (grown), а сверка по тексту у неё
-// остаётся (раздел «Границы» постановки DK-851).
 function chatSewn(project, addr, chats, byName = true) {
   for (const rec of echoRead(project, addr)) {
     if (rec.state !== "held" && rec.state !== "wait") continue;
-    const born = byName ? chatBornOf(chats, rec.tmux, rec.born) : null;
-    if (born) return born.id;
-    // Первая реплика сверяется со своим полем, а не с заголовком: заголовок
-    // у диалога бывает от харнеса и с первой репликой не совпадает.
-    const hit = (chats || []).find((c) => !c.archived && !c.blank &&
-      sameSaid(c.first || c.title, rec.wire || rec.text));
+    const hit = chatSewMatch(rec, chats, byName);
     if (hit) return hit.id;
   }
   return "";
@@ -9178,6 +9181,26 @@ function sameSaid(title, said) {
   const n = Math.min(a.length, b.length);
   if (n < SEW_MIN) return false;
   return a.slice(0, n) === b.slice(0, n);
+}
+
+// chatSewMatch ищет разговор, к которому пришивается запись очереди
+// исходящих. Ключи узнавания идут по убыванию силы: имя tmux-сессии подъёма,
+// если персист его помнит (со сверкой рождения, chatBornOf), и сама первая
+// реплика, ведь она уехала клиенту первым аргументом и легла в транскрипт
+// первой, то есть стала заголовком диалога в списке. Набор ключей один на
+// обоих потребителей, пришивание нерождённой двери (chatSewn) и разбор
+// дверного ключа родившейся (echoSweep): сменись он в одном месте, запись
+// разбиралась бы иначе, чем жила. Ключ byName отключает дорогу по имени:
+// у незачатой записи имя tmux носит она сама, и по имени пришивает только
+// сервер (grown), а сверка по тексту остаётся (раздел «Границы» постановки
+// DK-851).
+function chatSewMatch(rec, chats, byName = true) {
+  const born = byName ? chatBornOf(chats, rec.tmux, rec.born) : null;
+  if (born) return born;
+  // Первая реплика сверяется со своим полем, а не с заголовком: заголовок
+  // у диалога бывает от харнеса и с первой репликой не совпадает.
+  return (chats || []).find((c) => !c.archived && !c.blank &&
+    sameSaid(c.first || c.title, rec.wire || rec.text)) || null;
 }
 
 // Состояние переключателя фильтра по задаче живёт в localStorage: человек
@@ -12489,6 +12512,11 @@ function echoRead(project, addr) {
       state: m.state === "held" || m.state === "wait" ? m.state : "bad",
       why: m.why ? String(m.why) : "",
       tmux: m.tmux ? String(m.tmux) : "",
+      // Простой реплики считается с первой попытки: дожим заводит новую запись
+      // с тем же ключом, и без своего поля порог снятия отсчитывался бы
+      // заново с каждой попыткой (DK-1379). Записи, лежащие с прежней правки,
+      // берут временем рождения.
+      since: m.since || m.born || Date.now(),
       // Очередь и задача переживают перезагрузку вместе с пузырём: реплика,
       // легшая во вход задачи, обязана и после неё называть очередь, а не
       // недоставку. Прежде оба поля писались в персист и не читались из него.
@@ -12537,7 +12565,7 @@ function echoWrite(project, addr, list) {
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait")
       .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state,
         why: m.why || "", tmux: m.tmux || "", id: m.id || "",
-        queue: Boolean(m.queue), task: m.task || "" }));
+        queue: Boolean(m.queue), task: m.task || "", since: m.since || m.born }));
     if (keep.length) {
       localStorage.setItem(ECHO_KEY + project + "/" + addr, JSON.stringify(keep));
     } else {
@@ -12572,7 +12600,52 @@ function echoMove(project, from, to) {
   }
 }
 
-function makeEcho(project, box, feedBox, addr, resend) {
+// Разбор дверного ключа при открытии двери с родившимся разговором (DK-1379).
+// Очередь исходящих прежде жила ключом двери, и застрявшая реплика показывалась
+// над любым разговором, в который дверь разрешится при открытии. Теперь очередь
+// живёт ключом разговора, а записи, оставшиеся в дверном ключе со старых времён
+// или с дороги без адресата (вход ждущей задачи), разбираются здесь, записью на
+// запись: узнанная общим с пришиванием набором ключей (chatSewMatch)
+// переезжает в ключ своего разговора, неузнанная снимается показом один раз.
+// Узнать её адресата
+// нечем, а молча оставить в дверном ключе нельзя: ключ этот больше никто не
+// читает, и реплика зависла бы в памяти браузера навсегда. Возврат это записи
+// на показ один раз, панель сама решает, что с ними делать.
+function echoSweep(project, door, chats) {
+  const rest = [];
+  try {
+    const key = ECHO_KEY + project + "/";
+    for (const rec of echoRead(project, door)) {
+      const hit = chatSewMatch(rec, chats);
+      if (!hit) {
+        // Показ один раз честен и словами: реплика не ушедшая и не ждущая
+        // больше ничего, разговор её не найден, и через эту панель она
+        // снимается с двери совсем.
+        if (rec.state === "wait" || rec.state === "bad") {
+          rest.push(Object.assign({}, rec, { state: "held",
+            why: "осталась от прежнего адреса двери, разговор не найден" }));
+        } else rest.push(rec);
+        continue;
+      }
+      let was = [];
+      try { was = JSON.parse(localStorage.getItem(key + hit.id) || "[]"); } catch (err) {}
+      if (!Array.isArray(was)) was = [];
+      was.push({ text: rec.text, wire: rec.wire, born: rec.born, state: rec.state,
+        why: rec.why || "", tmux: rec.tmux || "", id: rec.id || "",
+        queue: Boolean(rec.queue), task: rec.task || "", since: rec.since || rec.born });
+      localStorage.setItem(key + hit.id, JSON.stringify(was));
+    }
+    localStorage.removeItem(key + door);
+  } catch (err) {
+    // Хранилище закрыто или битое: разбор повторится при следующем открытии
+    // двери, показывать пустоту вместо панели из-за него не стоит.
+  }
+  return rest;
+}
+
+// once это записи, снятые с дверного ключа разбором echoSweep: показываются
+// один раз, в персист не встают и не дожимаются (DK-1379).
+function makeEcho(project, box, feedBox, addr, resend, once) {
   // Ключ у местной реплики свой и сквозной: sync рисует ленту по ключам, и
   // без устойчивого ключа пузырь пересобирался бы на каждой перерисовке.
   let seq = 0;
@@ -12581,7 +12654,14 @@ function makeEcho(project, box, feedBox, addr, resend) {
   // перерисовке, и без памяти вторая одинаковая реплика снималась бы копией
   // первой.
   const claimed = new Set();
-  const save = () => { if (addr) echoWrite(project, addr, mine); };
+  // Простой реплики переживает её попытки: дожим снимает запись и заводит
+  // новую с тем же ключом, а порог снятия считается с первой попытки, и без
+  // карты ключ -> время он обнулялся бы каждым дожимом.
+  const sinceOf = new Map();
+  const save = () => {
+    if (!addr) return;
+    echoWrite(project, addr, mine.filter((m) => !m.once));
+  };
 
   // Заглушка ленты и своя реплика на экране не уживаются: лента пустого чата
   // просит написать первую реплику, и стоять эта просьба поверх уже отправленной
@@ -12615,9 +12695,8 @@ function makeEcho(project, box, feedBox, addr, resend) {
     // называется тут, потому что рисовать их могут и до первой отрисовки ленты.
     chatFeedIn(project);
     for (const m of mine) {
-      // Кнопок в пузыре нет ни у одного состояния (DK-1011). Состояние
-      // доставки стоит иконкой с коротким словом, а длинная причина уходит
-      // подсказкой подписи: реплика человека остаётся чистым текстом
+      // Состояние доставки стоит иконкой с коротким словом, а длинная причина
+      // уходит подсказкой подписи: реплика человека остаётся чистым текстом
       // (DK-1328). Реплика в очереди (вход задачи, очередь харнеса или
       // клиента) зовётся очередью, недоставленная называет причину в подсказке.
       let mark, why = "";
@@ -12634,7 +12713,24 @@ function makeEcho(project, box, feedBox, addr, resend) {
       } else {
         mark = stateMark("wait", "отправляется...");
       }
-      const wrap = chatBubble("вы", m.text, m.sel ? "с выделением" : "", why, null, mark);
+      // Исход руками у застрявшей реплики: кнопки повтора и отмены в пузыре
+      // нет по-прежнему (DK-1011, дожим это дело дашборда), но у реплики,
+      // стоящей недоставленной дольше порога простоя, дожим уже не обещает
+      // доставки, и снять её руками становится честнее, чем держать вечно
+      // (DK-1379, решение человека). Кнопка видна всегда, а не по наведению:
+      // застрявшую реплику снимают и с телефона.
+      let off = null;
+      if ((m.state === "bad" || m.state === "held") &&
+          Date.now() - (m.since || m.born || 0) >= ECHO_STUCK_MS) {
+        off = el("button", "foldcp mdrop", "Снять");
+        off.title = "убрать реплику из панели: дожим её уже не закончит";
+        off.setAttribute("aria-label", off.title);
+        off.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          drop(m);
+        });
+      }
+      const wrap = chatBubble("вы", m.text, m.sel ? "с выделением" : "", why, null, mark, off);
       wrap.classList.add("m-local", "m-" + m.state);
       if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
       if (m.pic) wrap.append(shotThumb(m.pic.data, m.pic.name));
@@ -12649,6 +12745,7 @@ function makeEcho(project, box, feedBox, addr, resend) {
     // Лента доезжает до своей реплики: человек нажал отправку и обязан увидеть,
     // что она встала.
     if (feedBox) feedBox.scrollTop = feedBox.scrollHeight;
+    armStuck();
   };
 
   const drop = (m) => {
@@ -12656,6 +12753,22 @@ function makeEcho(project, box, feedBox, addr, resend) {
     if (at >= 0) mine.splice(at, 1);
     save();
     draw();
+  };
+
+  // Порог простоя наступает сам, без нажатий, и единственный ждущий таймер
+  // доводит кнопку снятия до экрана: без него кнопка у реплики, ставшей
+  // недоставленной ровно на порог, ждала бы первой попавшейся перерисовки.
+  let stuckTimer = 0;
+  const armStuck = () => {
+    if (stuckTimer) return;
+    let next = 0;
+    for (const m of mine) {
+      if (m.state !== "bad" && m.state !== "held") continue;
+      const left = (m.since || m.born || 0) + ECHO_STUCK_MS - Date.now();
+      if (left > 0 && (!next || left < next)) next = left;
+    }
+    if (!next) return;
+    stuckTimer = setTimeout(() => { stuckTimer = 0; draw(); }, next);
   };
 
   // Автодожим: пока в списке есть неушедшее, панель пробует отправку снова по
@@ -12671,6 +12784,10 @@ function makeEcho(project, box, feedBox, addr, resend) {
     for (const m of bad) {
       const again = m.retry || resend;
       if (!again) continue;
+      // Показ один раз не дожимается: реплика снята со старого адреса двери,
+      // адресата у неё нет, и слать её в открытый разговор значило бы
+      // доставить её туда, где её никто не ждал.
+      if (m.once) continue;
       // Пока попытка не разрешилась, второй её не заводится: неразрешённая
       // отправка это не отказ, и слать поверх неё значило бы множить копии на
       // ровном месте. Ключ записи едет в повтор, чтобы сервер узнал в нём ту же
@@ -12727,16 +12844,27 @@ function makeEcho(project, box, feedBox, addr, resend) {
   if (addr) {
     for (const rec of echoRead(project, addr)) {
       seq += 1;
+      sinceOf.set(rec.id, rec.since);
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
-        state: rec.state, why: rec.why, born: rec.born, tmux: rec.tmux,
-        queue: rec.queue, task: rec.task,
+        state: rec.state, why: rec.why, born: rec.born, since: rec.since,
+        tmux: rec.tmux, queue: rec.queue, task: rec.task,
         retry: (again) => resend(again, rec.id) });
+    }
+    // Снятые с дверного ключа показываются один раз: в персист их пишет разбор
+    // echoSweep и там же снимает ключ, а тут они только стоят в ленте до
+    // следующей пересборки панели, и сверка может снять их эхом, если текст
+    // нашёлся в транскрипте этого разговора.
+    for (const rec of once || []) {
+      seq += 1;
+      mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
+        state: rec.state, why: rec.why, born: rec.born, since: rec.since,
+        tmux: rec.tmux, queue: rec.queue, task: rec.task, once: true });
     }
     if (mine.length) {
       draw();
       // Дожим только неушедшему: held ждёт эха или руки человека, и слать его
       // самим значило бы дублировать реплику, которую клиент уже держит.
-      if (mine.some((m) => m.state === "bad")) plan();
+      if (mine.some((m) => m.state === "bad" && !m.once)) plan();
       for (const m of mine) {
         if (m.state === "wait") ripen(m);
       }
@@ -12756,6 +12884,8 @@ function makeEcho(project, box, feedBox, addr, resend) {
       stopped = true;
       if (timer) clearTimeout(timer);
       timer = null;
+      if (stuckTimer) clearTimeout(stuckTimer);
+      stuckTimer = 0;
       for (const t of flips) clearTimeout(t);
       flips.length = 0;
       if (typeof window !== "undefined" && window.removeEventListener) {
@@ -12769,9 +12899,13 @@ function makeEcho(project, box, feedBox, addr, resend) {
     add(text, retry, wire, sel, pic, id) {
       seq += 1;
       // Ключ записи держится за саму запись: повтор той же реплики едет с тем
-      // же ключом, иначе сервер видит не повтор, а новую реплику.
-      const m = { key: "local-" + seq, id: id || msgKey(), text, wire: wire || text, sel, pic,
-        state: "wait", born: Date.now(), retry };
+      // же ключом, иначе сервер видит не повтор, а новую реплику. Простой
+      // берётся от первой попытки с этим ключом: дожим это та же реплика, а не
+      // новая, и порог снятия не должен обнуляться каждой попыткой.
+      const key = id || msgKey();
+      const m = { key: "local-" + seq, id: key, text, wire: wire || text, sel, pic,
+        state: "wait", born: Date.now(), since: sinceOf.get(key) || Date.now(), retry };
+      sinceOf.set(key, m.since);
       mine.push(m);
       // Запись сразу: перерисовка панели во время отправки съедала пузырь
       // вместе с текстом, и первая реплика нового чата пропадала с экрана.
@@ -12906,16 +13040,26 @@ const ECHO_HOLD = 10000;
 // полторы секунды), и оба ожидания кончаются одним словом.
 const ECHO_WAIT_MS = 60000;
 
+// Порог простоя, после которого у недоставленной реплики появляется кнопка
+// снятия: дожим работает шагами до минуты, и за минуту безуспешных попыток
+// реплика уже стояла несколько заходов дожима подряд. Раньше кнопки в пузыре
+// не было вовсе (DK-1011), но у безнадёжной реплики дожим не кончается сам, и
+// снять её руками стало честнее, чем держать вечно (DK-1379, решение человека).
+const ECHO_STUCK_MS = 60000;
+
 // Тело окна: лента, свои неотражённые реплики, подпись про доставку, индикатор
 // работы и поле ввода.
 function chatPanel(project, st) {
   const wrap = el("div", "chatwrap");
   const way = chatWay(st);
   const feed = el("div", "msgs chatfeed");
-  // Свои реплики, ещё не вернувшиеся из транскрипта, стоят сразу под лентой:
-  // они и есть её продолжение, просто эха у них пока нет.
+  // Свои реплики, ещё не вернувшиеся из транскрипта, стоят в скролле ленты,
+  // следом за транскриптом: они и есть её продолжение, просто эха у них пока
+  // нет. Прежде контейнер стоял вне скролла, длинный разговор уносил пузырь из
+  // поля зрения, и с ним терялось знание о недоставленной реплике (DK-1379).
   const pend = el("div", "msgs mlocal");
-  wrap.append(feed, pend);
+  feed.append(pend);
+  wrap.append(feed);
   // Очередь своих реплик поднимает arm() внизу: она же поднимает её заново,
   // когда человек возвращается в этот разговор. Отправка и лента берут echo
   // по ссылке в момент нажатия, поэтому переподнятая очередь доезжает до них
@@ -13489,8 +13633,19 @@ function chatPanel(project, st) {
     // Дожим неушедшего зовёт ту же отправку, что и кнопка. Очередь поднимается
     // заново: остановленная закрытием, она больше не дожимает и не принимает
     // реплик, и вернувшийся в разговор человек писал бы в мёртвую очередь.
-    echo = makeEcho(project, pend, feed, st.addr || st.sid,
-      (more, id) => post(more, null, null, id));
+    // Ключ очереди это разговор, а не дверь: реплика уезжает ручкой /say
+    // своего sid, и очередь обязана жить тем же ключом, иначе дверь, открывающая
+    // каждый раз другой разговор (чат доски, чат задачи), показывала чужие
+    // пузыри над очередным разговором (DK-1379). Дверной адрес остаётся у
+    // разговора, который ещё не родился: сессию поднимет сама первая реплика,
+    // и пришивание перенесёт запись в ключ родившегося sid.
+    // Открывшаяся с родившимся разговором дверь заодно разбирает свой старый
+    // ключ: узнанные записи переезжают в ключ своего разговора, неузнанные
+    // показываются один раз и снимаются.
+    const legacy = st.sid && st.addr && st.addr !== st.sid
+      ? echoSweep(project, st.addr, st.chats) : [];
+    echo = makeEcho(project, pend, feed, st.sid || st.addr,
+      (more, id) => post(more, null, null, id), legacy);
     chatLive.push(echo.clear, echo.stop);
     // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
     // работе поверх причины значило бы врать.
@@ -13530,11 +13685,11 @@ function chatPanel(project, st) {
     chatLive.push(() => document.removeEventListener("selectionchange", catchSel));
     watchClientAsk(project, st, askBox, feed, ta, askPick);
     if (st.error) {
-      if (!again) say(feed, "error", st.error);
+      if (!again) say(feed, "error", st.error, [pend]);
     } else if (st.lost) {
       // Ленту потерянного адреса не открыть, и честнее сказать это словами, чем
       // показать пустоту или ошибку загрузки.
-      if (!again) say(feed, "empty", "разговора с этим адресом в проекте нет");
+      if (!again) say(feed, "empty", "разговора с этим адресом в проекте нет", [pend]);
     } else if (!st.sid) {
       if (!again) {
         // Слова пустой ленты пишутся до пузырей и после них снимаются: реплика,
@@ -13552,7 +13707,7 @@ function chatPanel(project, st) {
           // короткое предложение про то, с чего начать.
           : st.task
           ? "разговоров по задаче ещё не было, напишите первую реплику"
-          : (st.note || "чатов тут пока нет, заведите новый кнопкой «+»"));
+          : (st.note || "чатов тут пока нет, заведите новый кнопкой «+»"), [pend]);
         echo.redraw();
       }
     } else {
@@ -13565,7 +13720,7 @@ function chatPanel(project, st) {
         echo.reconcile(list);
         loginSawAll(bye, list);
         askPickWire(feed, ta, askPick);
-      }, again).catch(console.error);
+      }, again, pend).catch(console.error);
     }
   };
   arm(false);

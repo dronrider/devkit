@@ -2268,6 +2268,9 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 .msg .bb .mm .foldcp{opacity:0}
 .msg:hover .bb .mm .foldcp,.msg .bb .mm .foldcp.ok,.msg .bb .mm .foldcp.bad{opacity:1}
 .msg .bb .mm .foldcp.ok{color:var(--run)}
+/* снятие застрявшей реплики (DK-1379): видна всегда, а не по наведению, её
+   нажимают и с телефона, и по ней реплика уходит из панели навсегда */
+.msg .bb .mm .mdrop{opacity:1;color:var(--tx2)}
 
 /* пустой строки статуса не бывает: кнопки режимов уезжают в строку названия */
 .thline .thmodes{margin-left:auto;align-self:center}

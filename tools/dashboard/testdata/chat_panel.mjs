@@ -694,12 +694,137 @@ const bindTip = (head) => {
   }
 }
 
+// --- очередь исходящих живёт разговором, а не дверью (DK-1379) ---
+// Живой случай: застрявшая реплика лежала в ключе двери, а дверь открывает
+// каждый раз другой разговор (задача ведёт в свежий чат задачи, чат доски в
+// последний разговор), и реплика висела над чужой лентой без шанса сняться.
+// Теперь запись узнаётся по первой реплике разговора и уезжает в его ключ,
+// неузнанная показывается один раз и снимается с двери совсем.
+{
+  const doorKey = "devkit.chat.pend.demo/XR-1";
+  const mineKey = "devkit.chat.pend.demo/" + mine.id;
+  const old = Date.now() - 300000;
+  const tipsOf = (node) => {
+    let out = node.title ? node.title + " " : "";
+    for (const kid of node.children || []) out += tipsOf(kid);
+    return out;
+  };
+
+  // Неузнанная запись в ключе двери: чужой разговор двери её не показывает.
+  store.set(doorKey, JSON.stringify([{ text: "продли подписку GLM",
+    wire: "продли подписку GLM", state: "wait", born: old, since: old, id: "dk1" }]));
+  posted.length = 0;
+  const otherSt = await sandbox.chatState("demo", loose.id, board, []);
+  const pOther = sandbox.chatPanel("demo", otherSt);
+  await settle();
+  if (dump(pOther).includes("продли подписку GLM")) {
+    fail("чужой разговор двери показал её застрявшую реплику: " + dump(pOther).slice(0, 300));
+  }
+
+  // Открытие самой двери разбирает ключ: неузнанная показана один раз.
+  st = await sandbox.chatState("demo", "XR-1", board);
+  let p = sandbox.chatPanel("demo", st);
+  await settle();
+  if (!dump(p).includes("продли подписку GLM")) {
+    fail("снятая с двери реплика не показана ни разу: " + dump(p).slice(0, 300));
+  }
+  if (!tipsOf(p).includes("разговор не найден")) {
+    fail("показанной один раз реплике не названа причина: " + tipsOf(p).slice(0, 300));
+  }
+  if (store.get(doorKey)) {
+    fail("дверной ключ пережил разбор: " + store.get(doorKey));
+  }
+  if ((store.get(mineKey) || "").includes("продли подписку GLM")) {
+    fail("неузнанная реплика уехала в чужой разговор: " + store.get(mineKey));
+  }
+  if (posted.some((path) => path.includes("/say"))) {
+    fail("запись без адресата дожимается в чужой разговор: " + JSON.stringify(posted));
+  }
+
+  // Показ один раз: пересборка панели снятое не возвращает.
+  sandbox.closeChatLive();
+  p = sandbox.chatPanel("demo", st);
+  await settle();
+  if (dump(p).includes("продли подписку GLM")) {
+    fail("показанная один раз реплика вернулась после пересборки: " + dump(p).slice(0, 300));
+  }
+
+  // Узнанная по имени подъёма запись уезжает в ключ своего разговора: реплика
+  // помнит, какую сессию подняла, и реестр называет разговор этим же именем.
+  const wasReg = chatRegistry;
+  chatRegistry = () => [chatOf(mine, {
+    tmux: "chat-dk1379-1", born: new Date(old + 5000).toISOString() })];
+  store.set(doorKey, JSON.stringify([{ text: "продли подписку GLM на месяц",
+    wire: "продли подписку GLM на месяц", state: "bad",
+    born: old, since: old, tmux: "chat-dk1379-1", id: "dk2" }]));
+  sandbox.closeChatLive();
+  const sewnSt = await sandbox.chatState("demo", "XR-1", board);
+  p = sandbox.chatPanel("demo", sewnSt);
+  await settle();
+  if (!dump(p).includes("продли подписку GLM на месяц")) {
+    fail("пришитая к разговору реплика не показана: " + dump(p).slice(0, 300));
+  }
+  const moved = JSON.parse(store.get(mineKey) || "[]");
+  if (!moved.some((m) => m.text === "продли подписку GLM на месяц")) {
+    fail("пришитая запись не переехала в ключ разговора: " + store.get(mineKey));
+  }
+  if (store.get(doorKey)) {
+    fail("дверной ключ пережил разбор пришитой записи: " + store.get(doorKey));
+  }
+  chatRegistry = wasReg;
+
+  // Застрявшая реплика снимается рукой, а свежая ждёт дожима.
+  store.set(mineKey, JSON.stringify([{ text: "застрявшая реплика разговора",
+    wire: "застрявшая реплика разговора", state: "bad", born: old, since: old, id: "dk3" }]));
+  sandbox.closeChatLive();
+  p = sandbox.chatPanel("demo", st);
+  await settle();
+  const feed = byClass(p, "chatfeed");
+  if (!feed) fail("скролла ленты в панели нет: " + dump(p).slice(0, 200));
+  if (!dump(feed).includes("застрявшая реплика разговора")) {
+    fail("свои пузыри стоят вне скролла ленты: " + dump(p).slice(0, 300));
+  }
+  const list = byClass(feed, "mlist");
+  const local = byClass(feed, "mlocal");
+  if (!list || !local) {
+    fail("в скролле нет списка ленты или своих пузырей: " + dump(feed).slice(0, 300));
+  }
+  if (feed.children.indexOf(list) >= feed.children.indexOf(local)) {
+    fail("свои пузыри стоят не следом за транскриптом: " +
+      feed.children.map((n) => n.className).join(" | "));
+  }
+  const off = button(p, "Снять");
+  if (!off) fail("у застрявшей реплики нет кнопки снятия: " + dump(p).slice(0, 300));
+  off.handlers.click({ stopPropagation: () => {} });
+  await settle();
+  if (dump(p).includes("застрявшая реплика разговора")) {
+    fail("снятая рукой реплика осталась на экране: " + dump(p).slice(0, 300));
+  }
+  if (store.get(mineKey)) {
+    fail("снятая рукой реплика осталась в памяти браузера: " + store.get(mineKey));
+  }
+
+  // Свежая недоставленная кнопки не имеет: дожим ещё обещает доставку.
+  store.set(mineKey, JSON.stringify([{ text: "только что не ушло",
+    wire: "только что не ушло", state: "bad", born: Date.now(), since: Date.now(), id: "dk4" }]));
+  sandbox.closeChatLive();
+  p = sandbox.chatPanel("demo", st);
+  await settle();
+  if (button(p, "Снять")) {
+    fail("у свежей недоставленной реплики уже стоит кнопка снятия: " + dump(p).slice(0, 300));
+  }
+  store.delete(mineKey);
+}
+
 console.log("подпись узнавания задачи: чужая доска названа словами в шапке");
 
 console.log("привязка разговора к задаче: кнопка в шапке, поле номера, ручка сессии");
 
 console.log("очередь исходящих панели: неушедшее говорит про дожим, переживает перезагрузку" +
   " и уходит само по возвращении связи");
+
+console.log("ключ очереди: дверные записи разбираются при открытии двери, пришитая уезжает" +
+  " в свой разговор, неузнанная показана один раз, застрявшая снимается рукой из скролла ленты");
 
 console.log("список разговоров: состояние, модель и задачи видны, открытый отмечен, поиск" +
   " режет список, переключение заменяет адрес, пустота названа словами сервера");

@@ -180,7 +180,22 @@ if (everywhere.includes("не назвала себя в реестре")) {
 
 // --- сессия назвалась: лента пришивается без действий человека ---
 found = true;
-if (!await fireNext(5000)) fail("фонового опроса (5s) после минуты нет");
+// Кроме пришивания, свои 5-секундные таймеры ставят опросы панели (пульс
+// слота), и стоят они в очереди раньше фонового опроса реестра. Выстрел
+// по первому попаданию доставался пульсу, а пришивание не проверялось
+// вовсе, поэтому стреляются все висящие 5s по порядку.
+{
+  let shot = false;
+  const edge = timers.length;
+  for (let i = 0; i < edge; i += 1) {
+    if (fired.has(i) || timers[i].ms !== 5000) continue;
+    fired.add(i);
+    shot = true;
+    timers[i].fn();
+    await settle();
+  }
+  if (!shot) fail("фонового опроса (5s) после минуты нет");
+}
 await settle();
 if (!String(sandbox.location.hash).includes("f00dcafe-0001")) {
   fail("панель не переехала на найденный диалог: " + sandbox.location.hash);

@@ -13787,7 +13787,9 @@ function askPickWanted(ask) {
 
 // askPickMatch находит строки списка под варианты признака. Слово варианта
 // сверяется после снятия пометки рекомендации; чужие нумерованные списки
-// (план, раскладка кейсов) остаются нетронутыми.
+// (план, раскладка кейсов) остаются нетронутыми. Полное совпадение всех
+// wanted: частичный набор не считается находкой, иначе галочки разъезжаются
+// по старой реплике с теми же словами (DK-1374, замечание 1 круга).
 function askPickMatch(root, wanted) {
   const used = new Set();
   const out = [];
@@ -13800,35 +13802,56 @@ function askPickMatch(root, wanted) {
       break;
     }
   }
-  return out;
+  return out.length === wanted.length ? out : [];
 }
 
-// askPickTargets ищет строки вариантов с конца ленты: свежий вопрос важнее
-// старых реплик, а служебная «кэш» своих строк вариантов не несёт.
-function askPickTargets(feed, wanted) {
+// askPickHeads собирает головы вопроса. По ним панель находит свою реплику
+// среди чужих списков с теми же словами вариантов.
+function askPickHeads(steps) {
+  return steps.map((step) => String(step.text || "").split("\n")[0].trim())
+    .filter(Boolean);
+}
+
+// askPickHost ищет реплику с головами текущего вопроса. Список вариантов из
+// прошлого вопроса или из плана с теми же словами не подходит: галочки должны
+// стоять на своём вопросе.
+function askPickHost(feed, heads) {
+  if (!heads.length) return null;
   const msgs = feed.querySelectorAll(".msg");
   for (let i = msgs.length - 1; i >= 0; i--) {
-    const hits = askPickMatch(msgs[i], wanted);
-    if (hits.length) return hits;
+    const text = askPickText(msgs[i]);
+    if (heads.every((head) => text.includes(head))) return msgs[i];
   }
-  return [];
+  return null;
 }
 
-// askPickSees говорит, что строки вопроса уже стоят в ленте: копия блока
-// или прошлая допись панели. Без этого панель дописывает их сама.
-function askPickSees(feed, steps) {
-  const text = askPickText(feed);
-  return steps.every((step) => {
-    const head = String(step.text || "").split("\n")[0].trim();
-    return !head || text.includes(head);
-  });
+// askWhenWord печатает часы местные, день добавляется для вчерашнего вопроса.
+function askWhenWord(sec) {
+  if (!sec) return "";
+  const at = sec * 1000;
+  const d = new Date(at);
+  const today = new Date();
+  const sameDay = d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth()
+    && d.getDate() === today.getDate();
+  const clock = clockWord(at);
+  if (sameDay || !clock) return clock;
+  return String(d.getDate()).padStart(2, "0") + "." + String(d.getMonth() + 1).padStart(2, "0") + " " + clock;
+}
+
+// askPickMeta печатает строку вопроса с задачей и временем (DK-1204). Без неё вопрос
+// сессии, привязанной к соседней задаче, в чужом чате читается своим.
+function askPickMeta(ask) {
+  const when = askWhenWord(ask && ask.since);
+  const who = ask && ask.task ? "вопрос по " + ask.task : "вопрос агента";
+  return when ? who + ", спросил в " + when : who;
 }
 
 // askSameFormText собирает строки вопроса той же формы, каким их печатает
-// taskctl decide --chat: голова развилки и пронумерованные варианты. Панель
-// дописывает их текстом реплики при промахе копирования.
-function askSameFormText(steps) {
-  const parts = [];
+// taskctl decide --chat: строка с задачей и временем, голова развилки и
+// пронумерованные варианты. Панель дописывает их текстом реплики при промахе
+// копирования и при частичном совпадении.
+function askSameFormText(steps, ask) {
+  const parts = [askPickMeta(ask)];
   for (const step of steps) {
     const lines = [step.text || "заход спросил и ждёт"];
     (step.options || []).forEach((opt, i) => {
@@ -13842,10 +13865,10 @@ function askSameFormText(steps) {
 
 // askPickFallback дописывает строки вопроса текстом той же формы в конец
 // ленты: пузырь реплики, а не карточка и не плашка.
-function askPickFallback(steps) {
+function askPickFallback(steps, ask) {
   const wrap = el("div", "msg askfb");
   const bb = el("div", "bb");
-  bb.append(mdRender(askSameFormText(steps), chatFeedAt()));
+  bb.append(mdRender(askSameFormText(steps, ask), chatFeedAt()));
   wrap.append(bb);
   return wrap;
 }
@@ -13853,6 +13876,9 @@ function askPickFallback(steps) {
 // askPickWire вешает галочки на строки вариантов и держит их, пока жив
 // признак ожидания. Зовётся опросом вопроса и всякой перерисовкой ленты:
 // синтетическая допись и отметки не переживают sync, а признак переживает.
+// Поиск привязан к реплике с головой вопроса, и все wanted должны сесть на
+// её строки списка; иначе панель дописывает строки той же формы и вешает
+// галочки на них. Частичный набор на чужом списке не считается находкой.
 function askPickWire(feed, ta, pick) {
   for (const old of feed.querySelectorAll(".caskpick")) old.remove();
   for (const li of feed.querySelectorAll(".casklit")) li.classList.remove("casklit");
@@ -13861,11 +13887,24 @@ function askPickWire(feed, ta, pick) {
   if (!pick.on || !pick.ask) return;
   const steps = askCardSteps(pick.ask);
   const wanted = askPickWanted(pick.ask);
-  let hits = wanted.length ? askPickTargets(feed, wanted) : [];
-  if (!askPickSees(feed, steps) || (wanted.length && !hits.length)) {
-    const fb = askPickFallback(steps);
+  const heads = askPickHeads(steps);
+  let host = askPickHost(feed, heads);
+  let hits = host && wanted.length ? askPickMatch(host, wanted) : [];
+  const needCopy = !host || (wanted.length > 0 && !hits.length);
+  if (needCopy) {
+    const fb = askPickFallback(steps, pick.ask);
     feed.append(fb);
-    if (!hits.length) hits = askPickMatch(fb, wanted);
+    host = fb;
+    hits = wanted.length ? askPickMatch(fb, wanted) : [];
+  } else if (host) {
+    // Строка с задачей и временем стоит у вопроса текстом, а не шапкой.
+    const meta = askPickMeta(pick.ask);
+    if (!askPickText(host).includes(meta)) {
+      const line = el("div", "askmeta");
+      line.append(mdRender(meta, chatFeedAt()));
+      const bb = host.querySelector && host.querySelector(".bb");
+      (bb || host).append(line);
+    }
   }
   const marks = [];
   for (const hit of hits) {

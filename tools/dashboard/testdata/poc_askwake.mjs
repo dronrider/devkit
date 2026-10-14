@@ -24,9 +24,14 @@ const SID = "aaaa1111-1111-4111-8111-111111111111";
 const since = Math.floor(Date.now() / 1000) - 120;
 const until = Math.floor(Date.now() / 1000) + 300;
 
+// Строка с задачей и временем (DK-1204), первая строка блока вопроса.
+const sinceAt = new Date(since * 1000);
+const metaLine = "вопрос по DK-964, спросил в " +
+  String(sinceAt.getHours()).padStart(2, "0") + ":" + String(sinceAt.getMinutes()).padStart(2, "0");
+
 // Блок вопроса слово в слово таким, каким его печатает taskctl decide --chat.
 const block = [
-  "Спросил по развилкам записи.",
+  metaLine,
   "",
   "«печать»: кто собирает текст вопроса в чат?",
   "1. рекомендую: утилита печатает блок из перечня развилок",

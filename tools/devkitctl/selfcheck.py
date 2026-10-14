@@ -309,6 +309,11 @@ def circle(cmd_run, proj, log):
         merged["out"] += "\nвыкат не оставил метку .devkit/selfcheck-deployed"
         log("  слияние с выкатом: не прошёл")
         return steps
+    # Отметку долга открывает перевод в Check внутри merge. В конвейере хвост
+    # закрывает проверяющий по заказу checkrun, круг зовёт тот же шаг сам.
+    if go("разбор долга", ["taskctl", "-C", str(proj), "debt-done", TASK,
+                           "пересечений нет"]) != 0:
+        return steps
     go("закрытие задачи", ["taskctl", "-C", str(proj), "close", TASK,
                            "-m", "docs(tasks): %s проверка связки закрыта" % TASK,
                            "--push"])

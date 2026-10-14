@@ -451,6 +451,13 @@ def event_wait(cmd_run, proj, home, mode_file, heads_log):
     why = woke(cmd_run, proj, home, heads_log, ARMED)
     if why:
         return step("%s не стартовала по слиянию %s: %s" % (ARMED, DEP, why), 1, merge_out)
+    # Перевод в Check, которым заканчивается merge, открывает отметку долга.
+    # В конвейере хвост закрывает проверяющий по заказу checkrun, стенд зовёт
+    # тот же шаг сам, и без него close отобьётся на открытой отметке.
+    rc, debt_out = cmd_run(["taskctl", "-C", str(proj), "debt-done", DEP,
+                            "пересечений нет"])
+    if rc != 0:
+        return step("хвост долга предпосылки не разобран", rc, debt_out)
     rc, close_out = cmd_run(["taskctl", "-C", str(proj), "close", DEP,
                              "-m", "docs(tasks): %s предпосылка закрыта" % DEP,
                              "--push"])

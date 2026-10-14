@@ -3423,7 +3423,7 @@ const (
 	tBar = "\uFF5C"
 )
 
-func tTag(name string) string  { return tLT + name + tGT }
+func tTag(name string) string    { return tLT + name + tGT }
 func tEndTag(name string) string { return tLT + tEnd + name + tGT }
 
 func tMainOpen() string  { return tTag("tool" + "_call") }

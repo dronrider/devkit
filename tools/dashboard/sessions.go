@@ -1262,8 +1262,8 @@ func attrValue(openTag string) string {
 	return rest[:j]
 }
 
-// tagWord вынимает имя тега после открывающего слэша: по нему узнаётся
-// элемент вызова в обеих формах вставки.
+// isFnOpen узнаёт элемент вызова в обеих формах вставки: имя после знака
+// равенства либо в атрибуте name.
 func isFnOpen(s string, at int) bool {
 	rest := s[at:]
 	return strings.HasPrefix(rest, fnEqPrefix) ||

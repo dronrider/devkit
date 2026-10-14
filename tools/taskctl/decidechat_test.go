@@ -42,10 +42,11 @@ func chatRun(t *testing.T, root string, p DecideParams, d *askDeps, env map[stri
 }
 
 // TestChatBlockNumbersOptions: блок вопроса печатается из перечня развилок.
-// Имя развилки стоит в голове, варианты пронумерованы с единицы,
-// рекомендованный идёт первым и назван словом, а последняя строка называет три
-// вида ответа. Номер стоит в начале строки: по нему панель находит вариант в
-// реплике и вешает галочку слева.
+// Первая строка называет задачу и время вопроса (DK-1204), имя развилки стоит
+// в голове, варианты пронумерованы с единицы, рекомендованный идёт первым и
+// назван словом, а последняя строка называет три вида ответа. Номер стоит в
+// начале строки: по нему человек называет ответ «имя N», а панель вешает
+// галочку по слову варианта на строке списка (DK-1374).
 func TestChatBlockNumbersOptions(t *testing.T) {
 	root := setup(t)
 	askForks(t, root, "XR-005", [][]string{
@@ -53,6 +54,9 @@ func TestChatBlockNumbersOptions(t *testing.T) {
 		{"ответ", "имя развилки и номер варианта", "какой формы ответ человека?", "только словами", "кнопкой панели"},
 	})
 	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, botEnv)
+	if !strings.Contains(got, "вопрос по XR-005, спросил в ") {
+		t.Fatalf("в блоке нет строки с задачей и временем:\n%s", got)
+	}
 	want := []string{
 		"«печать»: кто собирает текст вопроса?",
 		"1. рекомендую: утилита печатает блок, штампы дешевле машиной",
@@ -85,7 +89,7 @@ func TestChatBlockHeadBansFence(t *testing.T) {
 		{"печать", "утилита печатает блок", "кто собирает текст вопроса?", "агент собирает по шаблону"},
 	})
 	got := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, botEnv)
-	for _, w := range []string{"тройные обратные кавычки", "«ответ строкой:»", "галочки"} {
+	for _, w := range []string{"слова вариантов не переписывай", "тройные обратные кавычки", "«ответ строкой:»", "галочки"} {
 		if !strings.Contains(got, w) {
 			t.Fatalf("шапка не сказала про %q:\n%s", w, got)
 		}
@@ -165,7 +169,7 @@ func TestChatPanelWritesAsk(t *testing.T) {
 	if len(ask.Questions[0].Options) != 2 || !ask.Questions[0].Options[0].Recommended {
 		t.Fatalf("варианты не доехали до признака: %+v", ask.Questions[0])
 	}
-	for _, w := range []string{"в пачке развилок 1", chatAnswerHint, "\n«печать»:"} {
+	for _, w := range []string{"в пачке развилок 1", chatAnswerHint, "вопрос по XR-005, спросил в ", "\n«печать»:"} {
 		if !strings.Contains(panel, w) {
 			t.Fatalf("панельный заход без копируемого блока %q:\n%s", w, panel)
 		}

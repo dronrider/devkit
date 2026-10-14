@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/taskform"
@@ -93,9 +94,11 @@ const chatAnswerHint = "ответ строкой: «имя 1, имя 2», св�
 // своими словами (DK-891 и DK-1177). Строка стоит в шапке, выше блока: ниже
 // его агент уже скопировал. Панельному заходу она печатается наравне с
 // остальными: блок снова идёт в реплику, и галочки висят на строках вариантов
-// этой реплики (DK-1374).
-const chatFormatWarn = "галочки в панели встают на строки с номерами: " +
-	"тройные обратные кавычки вокруг блока и свои слова вместо хвоста " +
+// этой реплики. Слова вариантов панель сверяет с признаком, поэтому их нельзя
+// переписывать, а строки списка нельзя сбивать (DK-1374).
+const chatFormatWarn = "слова вариантов не переписывай, строки списка не сбивай: " +
+	"галочки в панели встают по слову варианта на строке списка, " +
+	"а тройные обратные кавычки вокруг блока и свои слова вместо хвоста " +
 	"«ответ строкой:» оставляют человека без выбора"
 
 // chatPanelNote это шапка панельного захода: вопрос идёт текстом в ленте, и
@@ -107,7 +110,7 @@ const chatPanelNote = "вопрос идёт текстом в ленте, бл�
 
 // chatOptionLine собирает строку варианта. Номер идёт первым и отделён точкой
 // с пробелом. Тем же номером человек называет вариант в ответе «имя N», а
-// панель вешает галочку напротив строки с этим номером.
+// панель вешает галочку на строку списка с этим словом варианта.
 func chatOptionLine(n int, c taskform.ForkChoice) string {
 	if c.Recommended {
 		return fmt.Sprintf("%d. рекомендую: %s", n, c.Text)
@@ -161,9 +164,28 @@ func chatLineupRoll(f taskform.Fork) string {
 	return strings.Join(out, "\n")
 }
 
-// chatBlock собирает блок вопроса из пачки развилок: развилки, хвост про вид
-// ответа и раскладки составов.
-func chatBlock(forks []taskform.Fork) string { return chatBody(forks, chatAnswerHint) }
+// chatWhenWord печатает время вопроса местное, с днём для вчерашнего.
+func chatWhenWord(t time.Time) string {
+	now := time.Now()
+	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
+		return t.Format("15:04")
+	}
+	return t.Format("02.01 15:04")
+}
+
+// chatMetaLine это первая строка блока: чья задача и когда спросили (DK-1204).
+// Без неё вопрос сессии, привязанной к соседней задаче, в чужом чате читается
+// своим. Строка едет текстом вопроса; карточек с шапкой в ленте больше нет
+// (DK-1374).
+func chatMetaLine(id string) string {
+	return fmt.Sprintf("вопрос по %s, спросил в %s", id, chatWhenWord(time.Now()))
+}
+
+// chatBlock собирает блок вопроса из пачки развилок: строка с задачей и
+// временем, развилки, хвост про вид ответа и раскладки составов.
+func chatBlock(id string, forks []taskform.Fork) string {
+	return chatMetaLine(id) + "\n\n" + chatBody(forks, chatAnswerHint)
+}
 
 // chatBody собирает тело вопроса с произвольным хвостом. Пустой хвост это
 // форма диалога: вид ответа там называет сама оболочка, а строка «ответ
@@ -252,7 +274,7 @@ func decideChat(root, doc string, p DecideParams, d askDeps, env func(string) st
 		}
 		head := fmt.Sprintf("%s: в пачке развилок %d, %s%s", p.ID, len(pack), chatPanelNote, more)
 		out := []string{head, chatFormatWarn}
-		return strings.Join(out, "\n") + "\n\n" + chatBlock(pack), nil
+		return strings.Join(out, "\n") + "\n\n" + chatBlock(p.ID, pack), nil
 	}
 	if sign == "" {
 		head := fmt.Sprintf("%s: в пачке развилок %d, %s: те же варианты идут диалогом выбора оболочки, а не блоком в реплику%s",
@@ -264,7 +286,7 @@ func decideChat(root, doc string, p DecideParams, d askDeps, env func(string) st
 	head := fmt.Sprintf("%s: в пачке развилок %d, заход поднят автоматикой, %s, блок ниже идёт в реплику как есть%s",
 		p.ID, len(pack), sign, more)
 	out := []string{head, chatFormatWarn}
-	return strings.Join(out, "\n") + "\n\n" + chatBlock(pack), nil
+	return strings.Join(out, "\n") + "\n\n" + chatBlock(p.ID, pack), nil
 }
 
 // chatRecommended это ответ, закрывающий всю пачку рекомендациями.

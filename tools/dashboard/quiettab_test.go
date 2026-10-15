@@ -27,6 +27,7 @@ import (
 // Каждый из них обязан ходить через выключатель видимости.
 var pollNames = []string{
 	"OUTBOX_POLL", "PULSE_POLL", "ASK_POLL", "WAIT_POLL", "SESS_POLL", "DRAFT_GROOM_POLL",
+	"RES_POLL",
 }
 
 // TestStaticPollsGoThroughVisibilityGate: голого таймера у периодического

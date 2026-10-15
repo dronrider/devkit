@@ -147,9 +147,30 @@ a:hover{text-decoration:underline}
 .logo:hover{background:color-mix(in oklab,var(--acc) 24%,var(--bg3));border-color:color-mix(in oklab,var(--acc) 60%,transparent);color:var(--tx)}
 .logo.here,.logo.here:hover{cursor:default;color:var(--tx2);background:var(--bg2);border-color:var(--line2)}
 .logo-top{display:none}
+/* кольца ресурсов у иконки dk (DK-1388): внешнее кольцо процессор, внутреннее
+   память, старт с двенадцати часов. Кольца тонкие и буквы dk остаются центром,
+   клик ведёт на главную как и раньше, числа едут подсказкой наведения */
+.logo{position:relative}
+.logo svg.lrings{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);pointer-events:none}
+.lrings .track{stroke:var(--line2);opacity:.5}
+.lrings .arc{stroke:var(--run)}
+.lrings .arc.w{stroke:var(--wait)}
+.lrings .arc.d{stroke:var(--block)}
 .brand h1{margin:0;font:600 15px var(--sans);color:var(--tx)}
 .brand p{margin:3px 0 0;font:400 11.5px var(--mono);color:var(--tx3)}
 .sgroup{font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;color:var(--tx3);padding:12px 10px 7px}
+/* сворачиваемые разделы колонки (DK-1388): шапка раздела это кнопка с той же
+   подписью, что была у заголовка группы, каретка на её правом краю. Тело
+   прячется классом, состояние помнится между заходами */
+.shead{display:flex;align-items:center;gap:6px;width:100%;padding:12px 10px 7px;border:0;background:none;font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;color:var(--tx3);cursor:pointer;text-align:left}
+.shead:hover{color:var(--tx2)}
+.shead .icaret{margin-left:auto;flex:none;opacity:.65;transition:transform .15s}
+.sect.folded .icaret{transform:rotate(-90deg)}
+.sect.folded nav,.sect.folded .sect-body{display:none}
+.sect-body{padding:0 10px}
+/* строка свёрнутых ресурсов: два числа в самой шапке, раскрытие раздела
+   спрашивает подробности, а не само существование данных */
+.shead .rbrief{font:500 10.5px var(--mono);letter-spacing:0;text-transform:none;color:var(--tx3);white-space:nowrap}
 .sitem{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;font:500 13px var(--sans);color:var(--tx2);cursor:pointer}
 .sitem:hover{background:var(--bg2)}
 .sitem.on{background:var(--bg3);color:var(--tx)}
@@ -167,7 +188,9 @@ a:hover{text-decoration:underline}
    процент это потраченное, подпись под группой говорит возраст снимка. Блок
    прижат книзу, поэтому свободное место колонки достаётся ему, а не кнопке
    выхода под ним. */
-.squota{margin-top:auto;border-top:1px solid var(--line);padding:14px 10px 12px}
+.squota{margin-top:auto;border-top:1px solid var(--line)}
+.squota .shead{padding:14px 10px 2px}
+.squota .sect-body{padding:0 10px 12px}
 .squota h4{margin:0 0 10px;font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;color:var(--tx3)}
 .qsub{font:600 11.5px var(--mono);color:var(--tx2);margin:10px 0 7px}
 .qsub:first-of-type{margin-top:0}
@@ -176,6 +199,16 @@ a:hover{text-decoration:underline}
 .qrow b{font-weight:500;min-width:30px;text-align:right}
 .qrow.expired b,.qrow.expired .meter i{opacity:.45}
 .qres{color:var(--tx3);white-space:nowrap}
+/* полосы владельцев ресурсов: цвет это имя владельца, а не степень нагрузки,
+   степень красит кольца у иконки. Сессии синим, дашборд голубым, прочее серым */
+.meter i.p-sess{background:var(--deleg)}
+.meter i.p-dash{background:var(--talk)}
+.meter i.p-other{background:var(--line2)}
+.rload{font:500 11px var(--mono);color:var(--tx3);margin:2px 0 10px}
+/* строка топа сессий: имя длиннее имени бакета, ему достаётся вся ширина
+   строки с обрезкой, а не фиксированный столбик */
+.qrow.rtop em{width:auto;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qrow.rtop b{min-width:56px}
 .meter{flex:1;min-width:24px;height:4px;border-radius:2px;background:var(--bg3);overflow:hidden}
 .meter i{display:block;height:100%;border-radius:2px;background:var(--acc)}
 .qnote{font:400 10.5px/1.45 var(--mono);color:var(--tx3);margin-top:6px}
@@ -202,6 +235,9 @@ a:hover{text-decoration:underline}
 /* карточка на главной: на ноутбуке остаток стоит в колонке, и второй раз его
    тут не показываем. */
 .qcard{display:none}
+/* карточка ресурсов на главной живёт той же жизнью: на ноутбуке раздел стоит
+   в колонке, второго раза его тут нет */
+.rescard{display:none}
 
 /* главная колонка */
 .bmain{flex:1;display:flex;flex-direction:column;padding:var(--airy) var(--air) 0;overflow:hidden;min-width:0}
@@ -1264,6 +1300,7 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
      главную. Строка шире, чем в колонке, поэтому имя бакета не жмётся. */
   .squota{margin-top:0}
   .qcard{display:block;margin-top:14px;border-top:none;padding:14px 16px 12px}
+  .rescard{display:block;margin-top:14px;border-top:none;padding:14px 16px 12px}
   .qrow{font-size:12px;min-height:22px}
   .qrow em{width:78px}
   .qnote{font-size:11.5px}

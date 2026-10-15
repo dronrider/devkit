@@ -16826,7 +16826,13 @@ function renderHome(projects) {
   const quota = el("div", "card qcard squota");
   quota.id = "quota-card";
   groups.append(quota);
+  // Ресурсы стоят рядом с квотной карточкой: колонки на узком экране нет, а
+  // спрос на «что с машиной» с телефона тот же.
+  const resCard = el("div", "card rescard squota");
+  resCard.id = "res-card";
+  groups.append(resCard);
   paintQuota();
+  paintResources();
 }
 
 // Экран «Агенты» (макет «08 Агенты»): живые работы всех проектов одним
@@ -17727,8 +17733,9 @@ function quotaTook(taken) {
   return m ? m[1] : "";
 }
 
-function quotaNodes(view) {
-  const out = [el("h4", "", "Квота подписок")];
+function quotaNodes(view, withHead) {
+  // Заголовок нужен карточке на главной, а в колонке его несёт шапка раздела.
+  const out = withHead ? [el("h4", "", "Квота подписок")] : [];
   if (!view) {
     out.push(el("div", "qnote", "снимки читаются..."));
     return out;
@@ -17777,18 +17784,255 @@ function quotaNodes(view) {
 }
 
 // paintQuota рисует блок там, где он сейчас есть: колонка стоит над любым
-// экраном, карточка живёт только на главной.
+// экраном, карточка живёт только на главной и несёт свой заголовок, потому что
+// шапки раздела колонки на ней нет.
 function paintQuota() {
-  for (const id of ["quota", "quota-card"]) {
-    const box = document.getElementById(id);
-    if (box) box.replaceChildren(...quotaNodes(quotaView));
-  }
+  const col = document.getElementById("quota");
+  if (col) col.replaceChildren(...quotaNodes(quotaView, false));
+  const card = document.getElementById("quota-card");
+  if (card) card.replaceChildren(...quotaNodes(quotaView, true));
 }
 
 async function refreshQuota() {
   const r = await api("/api/quota");
   quotaView = r.body;
   paintQuota();
+}
+
+// Ресурсы машины (DK-1388): кольца процессора и памяти у иконки dk, раздел
+// колонки с полосами владельцев и топом сессий, карточка на главной для узкого
+// экрана. Съём живой: сессия пошла, машина приподнялась, кольцо налилось, и
+// частота та же, что у списка сессий, чтобы обе картины двигались разом.
+const RES_POLL = 2500;
+
+let resView = null;
+
+// Пороги цвета колец те же, что у градусников квоты: зелёный до семидесяти,
+// янтарный до девяноста, дальше красный. Кольцо тонкое, и цвет в нём читается
+// с угла, раньше самих чисел.
+function ringLevel(pct) {
+  if (pct > 90) return "d";
+  if (pct > 70) return "w";
+  return "";
+}
+
+// Процент кольцами и строками круглым: доли процента на кольце шириной в
+// ладонь не читаются, а дрожание последнего знака отвлекает.
+function resPct(pct) {
+  return Math.round(pct || 0) + "%";
+}
+
+// Объём из килобайтов: гигабайты с одним знаком после запятой, мегабайты
+// целыми. Десятичная дробь с запятой, точка читалась бы чужой.
+function resKB(kb) {
+  if (kb >= 1024 * 1024) {
+    return (Math.round(kb / 104857.6) / 10).toFixed(1).replace(".", ",") + " ГБ";
+  }
+  if (kb >= 1024) return Math.round(kb / 1024) + " МБ";
+  return (kb || 0) + " КБ";
+}
+
+// Число с одним знаком после запятой: средняя нагрузка и проценты владельцев
+// живут в этих порядках.
+function resNum(n) {
+  return String(Math.round((n || 0) * 10) / 10).replace(".", ",");
+}
+
+// Сворачивание разделов колонки: проекты, ресурсы и квота. Состояние помнится
+// тем же способом, что и свёрнутая колонка, а ресурсы встречают свёрнутыми:
+// два числа в заголовке говорят главное, остальное разворачивается по спросу.
+const SECT_KEY = "devkit.fold.";
+
+function sectDefault(name) {
+  return name === "res";
+}
+
+function sectFolded(name) {
+  try {
+    const v = localStorage.getItem(SECT_KEY + name);
+    return v === null ? sectDefault(name) : v === "1";
+  } catch (err) {
+    // Приватное окно запрещает хранилище: разделы живут умолчаниями.
+    return sectDefault(name);
+  }
+}
+
+function putSectFold(name, off) {
+  const sect = document.getElementById("sect-" + name);
+  if (sect && sect.classList) sect.classList.toggle("folded", off);
+  const head = document.getElementById(name + "-head");
+  if (head) head.setAttribute("aria-expanded", off ? "false" : "true");
+}
+
+function foldSect(name, off) {
+  try {
+    localStorage.setItem(SECT_KEY + name, off ? "1" : "0");
+  } catch (err) {
+    // Память недоступна: на этот заход раздел всё равно свернётся.
+  }
+  putSectFold(name, off);
+}
+
+// Кольца у иконки dk: внешнее это процессор, внутреннее память. Оба тонкие,
+// буквы dk остаются центром, клик по-прежнему ведёт на главную, а числа едут
+// подсказкой наведения.
+const RES_RING_OUT = 15.2;
+const RES_RING_IN = 11.6;
+const RES_RING_W = 1.6;
+
+// Узлы колец держатся прямыми ссылками, а не выборкой по классу: составной
+// селектор у дуги нужен только чтобы её перечитать, а перечитывать нечего,
+// всё живёт с момента постройки.
+const resRingNodes = new Map();
+
+function resRings(logo) {
+  let rings = resRingNodes.get(logo);
+  if (!rings) {
+    const svg = svgEl("svg", "lrings");
+    svgAttrs(svg, { viewBox: "0 0 34 34", "aria-hidden": "true" });
+    const mk = (cls) => {
+      const c = svgEl("circle", cls);
+      svg.append(c);
+      return c;
+    };
+    rings = {
+      cpuTrack: mk("track cpu"),
+      cpuArc: mk("arc cpu"),
+      ramTrack: mk("track ram"),
+      ramArc: mk("arc ram"),
+    };
+    logo.append(svg);
+    resRingNodes.set(logo, rings);
+  }
+  return rings;
+}
+
+// Дуга кольца по проценту: доля длины окружности, старт с двенадцати часов
+// держит поворот самого узла.
+function resArc(node, r, pct) {
+  const len = 2 * Math.PI * r;
+  const span = len * Math.max(0, Math.min(100, pct || 0)) / 100;
+  svgAttrs(node, {
+    cx: 17, cy: 17, r: r.toFixed(1), fill: "none", "stroke-width": RES_RING_W,
+    "stroke-dasharray": span.toFixed(2) + " " + (len - span).toFixed(2),
+  });
+}
+
+function paintResRings() {
+  const v = resView;
+  const cpu = v && v.cpu ? v.cpu.pct : 0;
+  const mem = v && v.mem ? v.mem.pct : 0;
+  for (const id of ["logo-side", "logo-top"]) {
+    const logo = document.getElementById(id);
+    if (!logo) continue;
+    const rings = resRings(logo);
+    resArc(rings.cpuTrack, RES_RING_OUT, 100);
+    resArc(rings.ramTrack, RES_RING_IN, 100);
+    resArc(rings.cpuArc, RES_RING_OUT, cpu);
+    resArc(rings.ramArc, RES_RING_IN, mem);
+    rings.cpuArc.setAttribute("class", "arc cpu " + ringLevel(cpu));
+    rings.ramArc.setAttribute("class", "arc ram " + ringLevel(mem));
+    // Подсказка логотипа держит и переход, и числа: наведение спрашивает
+    // «что это», и ответ обязан назвать обе вещи.
+    const parts = ["На главную"];
+    if (v) {
+      let line = "процессор " + resPct(cpu) + ", память " + resPct(mem);
+      if (v.mem && v.mem.total_kb) line += " из " + resKB(v.mem.total_kb);
+      parts.push(line);
+    }
+    if (v && v.note) parts.push(v.note);
+    logo.title = parts.join("\n");
+  }
+}
+
+// Слова и цвета владельцев полос: сервер шлёт ключи, показ держит клиент.
+// Цвет владельца это его имя, а не степень нагрузки: степень красит кольца,
+// и одна шкала на два смысла читалась бы сменой владельца на перегрузе.
+const RES_PARTS = {
+  sessions: ["сессии", "p-sess"],
+  dashboard: ["дашборд", "p-dash"],
+  other: ["прочее", "p-other"],
+};
+
+// Полосы одного прибора: заголовок со значением всей машины и три строки
+// владельцев той же шкалой.
+function resGauge(title, gauge, isMem) {
+  if (!gauge) return [];
+  const head = el("div", "qsub", title + " " + resPct(gauge.pct) +
+    (isMem && gauge.total_kb ? " (" + resKB(gauge.used_kb) + " из " + resKB(gauge.total_kb) + ")" : ""));
+  const out = [head];
+  for (const p of gauge.parts || []) {
+    const [word, cls] = RES_PARTS[p.name] || [p.name, ""];
+    const row = el("div", "qrow");
+    row.append(el("em", "", word));
+    const pct = isMem && gauge.total_kb ? p.rss_kb / gauge.total_kb * 100 : p.cpu_pct;
+    const meter = el("span", "meter");
+    const fill = el("i", cls);
+    fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+    meter.append(fill);
+    row.append(meter);
+    row.append(el("b", "", isMem ? resKB(p.rss_kb) : resPct(p.cpu_pct)));
+    out.push(row);
+  }
+  return out;
+}
+
+// Топ сессий: пять строк по процессору и пять по памяти, у каждой строки
+// второй показатель подсказкой.
+function resTop(label, rows, byMem) {
+  if (!rows || !rows.length) return [];
+  const out = [el("div", "qsub", "Сессии " + label)];
+  for (const r of rows) {
+    const row = el("div", "qrow rtop");
+    row.append(el("em", "", r.name || r.id));
+    row.append(el("b", "", byMem ? resKB(r.rss_kb) : resPct(r.cpu_pct)));
+    row.title = byMem ? "процессор " + resPct(r.cpu_pct) : "память " + resKB(r.rss_kb);
+    out.push(row);
+  }
+  return out;
+}
+
+// Тело раздела ресурсов: отказ съёма словами, приборы, средняя нагрузка и топ.
+function resNodes(view) {
+  if (!view) return [el("div", "qnote", "ресурсы читаются...")];
+  const out = [];
+  if (view.note) out.push(el("div", "qnote", view.note));
+  out.push(...resGauge("Процессор", view.cpu, false));
+  out.push(...resGauge("Память", view.mem, true));
+  if (view.load && view.load.length === 3) {
+    out.push(el("div", "rload", "средняя нагрузка " +
+      view.load.map(resNum).join(" ")));
+  }
+  out.push(...resTop("по процессору", view.top_cpu, false));
+  out.push(...resTop("по памяти", view.top_mem, true));
+  return out;
+}
+
+// paintResources рисует всё, что у ресурсов есть: кольца у иконок, строку
+// свёрнутого раздела, тело развёрнутого и карточку на главной.
+function paintResources() {
+  paintResRings();
+  const v = resView;
+  const brief = document.getElementById("res-brief");
+  if (brief) {
+    brief.textContent = v && (v.cpu || v.mem)
+      ? "cpu " + resPct(v.cpu ? v.cpu.pct : 0) + ", mem " + resPct(v.mem ? v.mem.pct : 0)
+      : "";
+  }
+  const col = document.getElementById("res");
+  if (col) col.replaceChildren(...resNodes(v));
+  const card = document.getElementById("res-card");
+  if (card) card.replaceChildren(el("h4", "", "Ресурсы машины"), ...resNodes(v));
+}
+
+async function pollResources() {
+  const r = await api("/api/resources");
+  // Молчание сервера экран не трогает: следующий круг спросит снова, а стирать
+  // кольца ради обрыва связи незачем.
+  if (r.ok) {
+    resView = r.body;
+    paintResources();
+  }
 }
 
 // Сколько отказов связи подряд экран терпит молча. Одиночный отказ это штатная
@@ -18448,8 +18692,19 @@ wireSideGrab(document.getElementById("sgrab"));
 wireFindKey();
 wireNewKey();
 // Блок квоты рисуется до первого ответа сервера: пустая рамка в подвале
-// колонки читалась бы как «подписок нет».
+// колонки читалась бы как «подписок нет». Ресурсы и их кольца живут той же
+// жизнью, а опрос их стоит над всеми экранами: колонка не зависит от таба.
 paintQuota();
+paintResources();
+pollEvery(RES_POLL, pollResources);
+pollResources().catch(console.error);
+// Разделы колонки сворачиваются и разворачиваются нажатием шапки, состояние
+// читается из памяти до первой отрисовки, чтобы раздел не прыгал.
+for (const name of ["projects", "res", "quota"]) {
+  const head = document.getElementById(name + "-head");
+  if (head) head.addEventListener("click", () => { foldSect(name, !sectFolded(name)); });
+  putSectFold(name, sectFolded(name));
+}
 wireFlash();
 // Последний открытый разговор возвращается сам: адрес без хвоста при
 // запомненном диалоге дорисовывается им, и человек застаёт дашборд там же, где

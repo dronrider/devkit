@@ -121,6 +121,14 @@ type server struct {
 	quotaErrAt time.Time
 	quotaSaid  bool
 
+	// Сводка ресурсов машины (resources.go): последний снимок и идущий съём.
+	// Замок свой, отдельный от mu: съём стоит подпроцессов и системных
+	// вызовов, и держать под ними общий замок сервера нельзя.
+	resMu    sync.Mutex
+	resFly   *resFlight
+	resView  ResView
+	resBorn  time.Time
+
 	// Память о записях очереди исходящих, уже уехавших в сессию (outbox.go):
 	// по ней повтор отправителя узнаётся и второй раз не доставляется.
 	says map[string]sayClaim
@@ -337,6 +345,7 @@ func (s *server) handler() http.Handler {
 	// открывается оно с любого экрана, в том числе с главной (DK-696).
 	mux.HandleFunc("GET /api/waiting", s.auth(s.handleWaitShelf))
 	mux.HandleFunc("GET /api/quota", s.auth(s.handleQuota))
+	mux.HandleFunc("GET /api/resources", s.auth(s.handleResources))
 	mux.HandleFunc("GET /api/harnesses", s.auth(s.handleHarnesses))
 	mux.HandleFunc("GET /api/projects/{p}/chats/{sid}/ask", s.auth(s.handleChatAsk))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/ask", s.auth(s.handleChatAskAnswer))

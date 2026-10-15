@@ -164,7 +164,7 @@ a:hover{text-decoration:underline}
    прячется классом, состояние помнится между заходами */
 .shead{display:flex;align-items:center;gap:6px;width:100%;padding:12px 10px 7px;border:0;background:none;font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;color:var(--tx3);cursor:pointer;text-align:left}
 .shead:hover{color:var(--tx2)}
-.shead .icaret{margin-left:auto;flex:none;opacity:.65;transition:transform .15s}
+.shead .icaret{width:13px;height:13px;margin-left:auto;flex:none;opacity:.65;transition:transform .15s}
 .sect.folded .icaret{transform:rotate(-90deg)}
 .sect.folded nav,.sect.folded .sect-body{display:none}
 .sect-body{padding:0 10px}

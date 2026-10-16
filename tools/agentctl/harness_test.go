@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -89,6 +90,120 @@ func TestProfileClaudeCode(t *testing.T) {
 	}
 }
 
+// TestProfileCodex: профиль Codex назван без предупреждений, детект идёт по
+// непустой CODEX_THREAD_ID, правила едут вклейкой, навыки ложатся в каталог,
+// который клиент сам подхватывает.
+func TestProfileCodex(t *testing.T) {
+	p, err := loadProfile(filepath.Join("..", "..", "kit", "harness"), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Warns) != 0 {
+		t.Fatalf("предупреждения на своём же профиле: %v", p.Warns)
+	}
+	cases := []struct{ section, key, want string }{
+		{"detect", "env", "CODEX_THREAD_ID"},
+		{"detect", "bin", "codex"},
+		{"rules", "mode", "embed"},
+		{"delegate", "mode", "cli"},
+		{"delegate", "map_mini", "gpt-6.1-sol"},
+		{"delegate", "map_base", "gpt-6.1-sol"},
+		{"delegate", "map_pro", "gpt-6.1-sol"},
+		{"delegate", "map_max", "gpt-6.1-sol"},
+		{"skills", "dir", "~/.agents/skills"},
+		{"skills", "discovery", "auto"},
+	}
+	for _, c := range cases {
+		if got := p.section(c.section).Str(c.key); got != c.want {
+			t.Fatalf("[%s] %s = %q, жду %q", c.section, c.key, got, c.want)
+		}
+	}
+	// Точное значение CODEX_THREAD_ID профиль не называет: идентификатор живой
+	// сессии заранее неизвестен, детект годен на любое непустое значение.
+	if got := p.section("detect").Str("value"); got != "" {
+		t.Fatalf("[detect] value = %q, жду детект по любому непустому значению", got)
+	}
+	// Тонкого файла у embed-харнеса нет вовсе: Codex его импорты не
+	// разворачивает, правила едут вклейкой в AGENTS.md.
+	if got := p.section("rules").Str("file"); got != "" {
+		t.Fatalf("[rules] file = %q, у embed-харнеса тонкого файла нет", got)
+	}
+	if !p.section("hooks").Empty() {
+		t.Fatalf("[hooks] непуст, а протокол хуков Claude Code Codex не приписан")
+	}
+	if !p.section("quota").Empty() {
+		t.Fatalf("[quota] непуста, а съёмщика остатка у профиля нет")
+	}
+	if p.Doc.Has("head") {
+		t.Fatalf("секция [head] есть, а интерактивная голова без хука конца хода профилю не положена")
+	}
+	// Команда делегирования: промпт, модель и усилие едут плейсхолдерами,
+	// песочница рабочая, обходов одобрений в команде нет.
+	argv := p.section("delegate").Arr("command")
+	joined := strings.Join(argv, " ")
+	for _, mark := range []string{"{prompt}", "{model}", "{effort}"} {
+		if !strings.Contains(joined, mark) {
+			t.Fatalf("в команде делегирования нет %s: %v", mark, argv)
+		}
+	}
+	if !strings.Contains(joined, "workspace-write") {
+		t.Fatalf("песочница workspace-write в команде не сохранена: %v", argv)
+	}
+	if strings.Contains(joined, "dangerously") {
+		t.Fatalf("в команде обход одобрений: %v", argv)
+	}
+	if strings.Contains(joined, "{session}") {
+		t.Fatalf("codex exec имени сессии не принимает, {session} в команде не жилец: %v", argv)
+	}
+}
+
+// TestCodexDelegateCommand: плейсхолдеры профиля Codex подставляются в команду
+// так, как их прочитает клиент: усилие уезжает значением ключа конфига.
+func TestCodexDelegateCommand(t *testing.T) {
+	p, err := loadProfile(filepath.Join("..", "..", "kit", "harness"), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := substituteCommand(p.section("delegate").Arr("command"), map[string]string{
+		"model": "gpt-6.1-sol", "effort": "high", "prompt": "тело задачи",
+	})
+	want := []string{"codex", "exec", "--sandbox", "workspace-write", "--model", "gpt-6.1-sol",
+		"-c", `model_reasoning_effort="high"`, "тело задачи"}
+	if !slices.Equal(argv, want) {
+		t.Fatalf("команда %q, жду %q", argv, want)
+	}
+}
+
+// TestDetectCodexThread: детект профиля Codex срабатывает на любом непустом
+// значении CODEX_THREAD_ID и не срабатывает на пустом.
+func TestDetectCodexThread(t *testing.T) {
+	dir := filepath.Join("..", "..", "kit", "harness")
+	machine := writeFile(t, t.TempDir(), machineConfigName, "enabled = [\"codex\"]\ndefault = \"codex\"\n")
+	l, err := mergeLayers(dir, machine, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := resolveHarness(l, "", func(k string) string {
+		if k == "CODEX_THREAD_ID" {
+			return "01a14473-e714-7fa0-b2fd-a2e1d18cbff9"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Name != "codex" || !strings.Contains(r.How, "CODEX_THREAD_ID") {
+		t.Fatalf("харнес %q (%s), жду codex по CODEX_THREAD_ID", r.Name, r.How)
+	}
+	r, err = resolveHarness(l, "", func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Name != "codex" || !strings.Contains(r.How, "default") {
+		t.Fatalf("харнес %q (%s), жду default при пустом окружении", r.Name, r.How)
+	}
+}
+
 // writeProfiles кладёт во временную директорию профили с заданными режимами
 // делегирования и переменными детекта.
 func writeProfiles(t *testing.T, specs map[string][2]string) string {
@@ -159,7 +274,7 @@ func TestMergeWithoutMachineConfig(t *testing.T) {
 func TestMergeMachineConfig(t *testing.T) {
 	dir := writeProfiles(t, map[string][2]string{
 		"claude-code": {"CLAUDECODE", "native"},
-		"codex":       {"CODEX_HOME", "cli"},
+		"codex":       {"CODEX_THREAD_ID", "cli"},
 	})
 	home := t.TempDir()
 	machine := writeFile(t, home, "harness.local", `default = "codex"
@@ -310,7 +425,7 @@ func TestMachineConfigTypes(t *testing.T) {
 func TestProjectNarrow(t *testing.T) {
 	dir := writeProfiles(t, map[string][2]string{
 		"claude-code": {"CLAUDECODE", "native"},
-		"codex":       {"CODEX_HOME", "cli"},
+		"codex":       {"CODEX_THREAD_ID", "cli"},
 	})
 	machine := writeFile(t, t.TempDir(), "harness.local", `default = "claude-code"
 enabled = ["claude-code", "codex"]
@@ -357,7 +472,7 @@ max = "fable"
 func TestResolveHarness(t *testing.T) {
 	dir := writeProfiles(t, map[string][2]string{
 		"claude-code": {"CLAUDECODE", "native"},
-		"codex":       {"CODEX_HOME", "cli"},
+		"codex":       {"CODEX_THREAD_ID", "cli"},
 		"gemini":      {"GEMINI_CLI", "cli"},
 		"quiet":       {"", "none"},
 	})
@@ -386,7 +501,7 @@ max = "fable"
 		{"переменная сильнее детекта", "codex", map[string]string{"CLAUDECODE": "1", "DEVKIT_HARNESS": "codex"}, "переменная DEVKIT_HARNESS", "", ""},
 		{"детект по окружению", "claude-code", map[string]string{"CLAUDECODE": "1"}, "детект по переменной CLAUDECODE", "", ""},
 		{"чужое значение переменной не детект", "claude-code", map[string]string{"CLAUDECODE": "0"}, "default машинного конфига", "", ""},
-		{"неоднозначный детект уходит в default", "claude-code", map[string]string{"CLAUDECODE": "1", "CODEX_HOME": "1"}, "default машинного конфига", "", "неоднозначен"},
+		{"неоднозначный детект уходит в default", "claude-code", map[string]string{"CLAUDECODE": "1", "CODEX_THREAD_ID": "1"}, "default машинного конфига", "", "неоднозначен"},
 		{"сессия внутри невключённого", "claude-code", map[string]string{"GEMINI_CLI": "1"}, "default машинного конфига", "", "сессия внутри gemini"},
 		{"пусто вокруг, остаётся default", "claude-code", nil, "default машинного конфига", "", ""},
 	}

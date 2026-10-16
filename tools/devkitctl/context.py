@@ -220,6 +220,9 @@ def deduped(path):
             if (prev is not None and ts is not None and prev[1] is not None
                     and fp == prev[0]
                     and 0 <= (ts - prev[1]).total_seconds() <= DUP_WINDOW):
+                # Окно меряется от соседней записи, а не от первой копии:
+                # цепочка шире окна склеивается вся (замечание ревью DK-1390).
+                prev = (fp, ts)
                 continue
             prev = (fp, ts)
         yield rec, bad

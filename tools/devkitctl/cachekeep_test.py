@@ -714,6 +714,17 @@ class CacheKeepNoRequestIdTest(SandboxCase):
         self.assertEqual(len(context.requests(path)), 2,
                          "ходы с одинаковыми числами вдали друг от друга живы")
 
+    def test_duplicate_chain_wider_than_window_glues(self):
+        """Цепочка копий шире окна склеивается вся: окно меряется между
+        соседними копиями, а не от первой до последней."""
+        base = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        recs = [make_norid(500, 99000, 30, 10, "m1", self._ts(base, 0), "u1"),
+                make_norid(500, 99000, 30, 10, "m1", self._ts(base, 6), "u2"),
+                make_norid(500, 99000, 30, 10, "m1", self._ts(base, 13), "u3")]
+        path = self._write_stream("dupchain", recs)
+        self.assertEqual(len(context.requests(path)), 1,
+                         "цепочка копий шире окна считается одним запросом")
+
     def test_service_duplicates_dropped_wholly(self):
         """Служебный ход дублями выкидывается целиком, обеими записями: часы
         простоя идут от последнего настоящего хода."""

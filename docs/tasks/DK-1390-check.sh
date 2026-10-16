@@ -7,7 +7,9 @@
 # из него же. Поток записан дублями без requestId, как пишут ответы
 # glm-code и mimo, и часы простоя со склейкой проверяются на форме живых
 # журналов. Рассчитан на чистый HOME. На живом доме он тронул бы журнал
-# отметок и стоп-кран.
+# отметок и стоп-кран. Указатель харнеса DEVKIT_HARNESS снимается с прогонов
+# нарочно: с ним обход сужается до одного дома харнеса, и сток-дом со
+# синтетическим потоком выпадает из разбора.
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 PROJ="$HOME/ckproj"
@@ -75,7 +77,7 @@ print("дом построен: %s" % name)
 PY
 
 echo "--- сухой прогон без стоп-крана"
-out=$(DEVKIT_TURN_MARK_LOG="$JOURNAL" python3 "$ROOT/tools/devkitctl/devkitctl.py" cachekeep -C "$PROJ" --dry-run 2>&1)
+out=$(env -u DEVKIT_HARNESS DEVKIT_TURN_MARK_LOG="$JOURNAL" python3 "$ROOT/tools/devkitctl/devkitctl.py" cachekeep -C "$PROJ" --dry-run 2>&1)
 echo "$out"
 echo "$out" | grep -q "продлено 1" || {
 	echo "FAILED: решение продлевать не найдено, дубли мешают часам простоя"
@@ -89,7 +91,7 @@ fi
 echo "--- сухой прогон со стоп-краном"
 mkdir -p "$HOME/.devkit"
 printf 'cachekeep = off\n' > "$HOME/.devkit/watch.local"
-out=$(DEVKIT_TURN_MARK_LOG="$JOURNAL" python3 "$ROOT/tools/devkitctl/devkitctl.py" cachekeep -C "$PROJ" --dry-run 2>&1)
+out=$(env -u DEVKIT_HARNESS DEVKIT_TURN_MARK_LOG="$JOURNAL" python3 "$ROOT/tools/devkitctl/devkitctl.py" cachekeep -C "$PROJ" --dry-run 2>&1)
 echo "$out"
 echo "$out" | grep -q "продлено 0" || {
 	echo "FAILED: стоп-кран не погасил продление"

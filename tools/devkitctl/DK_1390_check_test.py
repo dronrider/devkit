@@ -28,7 +28,7 @@ ROOT = SCRIPT.parent.parent.parent
 class CheckScriptTest(unittest.TestCase):
     """Прогон сценария целиком: исход говорит громче разбора вывода."""
 
-    def run_script(self, crane=False):
+    def run_script(self, crane=False, harness=None):
         home = tempfile.mkdtemp(prefix="dk-1390-check-test-")
         self.addCleanup(shutil.rmtree, home, True)
         if crane:
@@ -41,6 +41,8 @@ class CheckScriptTest(unittest.TestCase):
         for key in list(env):
             if key.startswith("DEVKIT_"):
                 del env[key]
+        if harness is not None:
+            env["DEVKIT_HARNESS"] = harness
         return subprocess.run(["sh", str(SCRIPT)], cwd=str(ROOT), env=env,
                               capture_output=True, text=True, timeout=120)
 
@@ -59,6 +61,17 @@ class CheckScriptTest(unittest.TestCase):
                             "сценарий зеленеет при заранее выключенном продлении:\n%s%s"
                             % (p.stdout, p.stderr))
         self.assertIn("FAILED", p.stdout)
+
+    def test_green_with_inherited_harness_pointer(self):
+        # Обкатка наследует среду поднявшей её сессии, и указатель харнеса
+        # сужал обход cachekeep до одного дома, мимо сток-дома с
+        # синтетическим потоком. Сценарий снимает указатель сам и зеленеет
+        # в любой среде.
+        p = self.run_script(harness="glm-code")
+        self.assertEqual(p.returncode, 0,
+                         "сценарий красный при унаследованном DEVKIT_HARNESS:\n%s%s"
+                         % (p.stdout, p.stderr))
+        self.assertIn("OK", p.stdout)
 
 
 if __name__ == "__main__":

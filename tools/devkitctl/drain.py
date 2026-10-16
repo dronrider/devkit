@@ -125,7 +125,9 @@ def _collect_stream(path, data):
     """
     pending = {}
     reads_here = Counter()
-    for rec, bad in sessions.parsed(path):
+    # Разбор идёт через склейку дублей context: без неё каждый запрос без
+    # requestId считался бы вдвое и по токенам, и по вызовам тулов (DK-1390).
+    for rec, bad in context.deduped(path):
         if bad:
             data["lines_bad"] += 1
         if rec is None:

@@ -105,9 +105,12 @@ def requests(path):
     """Запросы одного потока по порядку, без повторов.
 
     Запись с `usage` повторяется по числу итераций ответа, и все копии несут
-    одинаковые числа: без склейки по `requestId` объём сессии вырос бы в разы.
+    одинаковые числа: без склейки объём сессии вырос бы в разы. У харнесов
+    с `requestId` копии несут его одинаково, а без него (glm-code, mimo)
+    копии пишутся подряд с той же парой чисел usage в доли секунды друг от
+    друга, и запасной ключ это точные числа с окном DK-1390.
     """
-    return _requests(path, drop_service=False)
+    return [r for r, _service in _pairs(path)]
 
 
 def real_requests(path):
@@ -118,7 +121,28 @@ def real_requests(path):
     Служебным считается запрос, чья ближайшая реплика человека узнаётся
     как продление (is_service_reply); настоящая работа остаётся на месте.
     """
-    return _requests(path, drop_service=True)
+    return [r for r, service in _pairs(path) if not service]
+
+
+def last_service_ts(path):
+    """Момент последнего служебного продлевающего запроса потока, epoch-секунды.
+
+    Запасная память о пинге рядом с журналом отметок (DK-1390): в старых
+    сессиях служебной реплики может не быть, тогда None.
+    """
+    best = None
+    for req, service in _pairs(path):
+        if not service:
+            continue
+        ts = parse_ts(req.get("ts"))
+        if ts is not None:
+            best = ts
+    if best is None:
+        return None
+    if best.tzinfo is None:
+        from datetime import timezone
+        best = best.replace(tzinfo=timezone.utc)
+    return best.timestamp()
 
 
 def _user_text(rec):
@@ -145,11 +169,69 @@ def _user_text(rec):
     return None
 
 
-def _requests(path, drop_service):
+def _usage_fingerprint(msg):
+    """Отпечаток ответа числами usage и моделью: у копий одного запроса
+    числа совпадают дословно, это проверено на живых файлах DK-1390."""
+    u = msg.get("usage")
+    return (int(u.get("cache_creation_input_tokens") or 0),
+            int(u.get("cache_read_input_tokens") or 0),
+            int(u.get("input_tokens") or 0),
+            int(u.get("output_tokens") or 0),
+            msg.get("model") or "?")
+
+
+# Окно склейки дублей без requestId, секунды. Копии одного запроса пишутся
+# подряд с разницей в доли секунды, а настоящий ход с теми же числами так
+# близко не приходит: окно отличает второе от первого (DK-1390).
+DUP_WINDOW = 10.0
+
+
+def deduped(path):
+    """Записи потока как (record, is_bad) без дублей ассистентских записей.
+
+    Дубль это копия ответа того же запроса: с `requestId` копии несут его
+    одинаково, без него склейка идёт по отпечатку usage соседних записей
+    внутри окна. Записи не ассистентские и без usage проходят насквозь:
+    дублируется только ответ, реплики человека по одному разу. Разбор
+    объёмных метрик (stats --context, drain) ходит через этот один генератор,
+    иначе каждый считал бы запросы вдвое (DK-1390).
+    """
     seen = set()
+    prev = None
+    for rec, bad in sessions.parsed(path):
+        if rec is None or rec.get("type") != "assistant":
+            yield rec, bad
+            continue
+        msg = rec.get("message")
+        if not isinstance(msg, dict) or not isinstance(msg.get("usage"), dict):
+            yield rec, bad
+            continue
+        rid = rec.get("requestId")
+        if rid:
+            # Поток с requestId не смешивается с отпечатком: смешение оставило
+            # бы дубль без защиты, если копии расстались с полем.
+            prev = None
+            if rid in seen:
+                continue
+            seen.add(rid)
+        else:
+            fp = _usage_fingerprint(msg)
+            ts = parse_ts(rec.get("timestamp"))
+            if (prev is not None and ts is not None and prev[1] is not None
+                    and fp == prev[0]
+                    and 0 <= (ts - prev[1]).total_seconds() <= DUP_WINDOW):
+                continue
+            prev = (fp, ts)
+        yield rec, bad
+
+
+def _pairs(path):
+    """Запросы потока парами (запрос, служебный ли), по порядку, без повторов."""
     out = []
     last_user = None
-    for rec in sessions.records(path):
+    for rec, _bad in deduped(path):
+        if rec is None:
+            continue
         if rec.get("type") == "user":
             text = _user_text(rec)
             if text is not None:
@@ -163,17 +245,11 @@ def _requests(path, drop_service):
         usage = msg.get("usage")
         if not isinstance(usage, dict):
             continue
-        key = rec.get("requestId") or rec.get("uuid")
-        if key in seen:
-            continue
-        seen.add(key)
         service = is_service_reply(last_user)
         # Связка «реплика человека - ответ» отработана: свой ответ у реплики
         # один, и хвост служебного текста не вычёркивает настоящие ходы,
         # приехавшие после продлевающего.
         last_user = None
-        if drop_service and service:
-            continue
         req = {
             "write": int(usage.get("cache_creation_input_tokens") or 0),
             "read": int(usage.get("cache_read_input_tokens") or 0),
@@ -184,7 +260,7 @@ def _requests(path, drop_service):
         }
         if req["write"] + req["read"] + req["input"] == 0:
             continue
-        out.append(req)
+        out.append((req, service))
     return out
 
 

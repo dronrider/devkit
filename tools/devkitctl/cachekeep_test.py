@@ -81,6 +81,45 @@ def ping_pair(ts, model="m1", read=199500, text=None, block=False):
     ]
 
 
+def make_norid(write, read, input_t, output, model, ts, uuid):
+    """Сырая запись без requestId, как пишут ответы glm-code и mimo (DK-1390).
+
+    У копий одного запроса uuid разные, и прежняя склейка по requestId с
+    запасным uuid считала каждый запрос дважды.
+    """
+    return {
+        "type": "assistant",
+        "uuid": uuid,
+        "message": {
+            "model": model,
+            "usage": {
+                "cache_creation_input_tokens": write,
+                "cache_read_input_tokens": read,
+                "input_tokens": input_t,
+                "output_tokens": output,
+            },
+        },
+        "timestamp": ts,
+    }
+
+
+def dup_pair(write, read, input_t, output, model, ts):
+    """Две копии одного ответа без requestId: uuid разные, время в долях секунды."""
+    head, sep, tail = ts.partition(".")
+    assert sep, "время стенда несёт миллисекунды: %s" % ts
+    return [
+        make_norid(write, read, input_t, output, model, "%s.000%s" % (head, tail), "a_%s" % head),
+        make_norid(write, read, input_t, output, model, "%s.200%s" % (head, tail), "b_%s" % head),
+    ]
+
+
+def ping_dup_pair(ts, model="m1", read=199500):
+    """Служебный продлевающий ход дублями без requestId: реплика плюс две копии
+    ответа. На старом коде вторая копия оставалась в разборе настоящим ходом
+    и не давала простою стареть (DK-1390)."""
+    return [ping_user(ts)] + dup_pair(0, read, 20, 5, model, ts)
+
+
 class CacheKeepLogicTest(unittest.TestCase):
     """Чистая логика решений: цены, порог пересечения, число продлений."""
 
@@ -165,8 +204,16 @@ class CacheKeepStreamTest(SandboxCase):
         self.logs.mkdir(parents=True, exist_ok=True)
         self.turns_log = self.box.home / ".devkit" / "turns.log"
         os.environ["DEVKIT_TURN_MARK_LOG"] = str(self.turns_log)
+        # Стоп-кран продления читается по HOME, и стенд обязан судить по
+        # подставному дому: живой `cachekeep = off` гасил бы отправки.
+        self._real_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(self.box.home)
 
     def tearDown(self):
+        if self._real_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self._real_home
         os.environ.pop("DEVKIT_TURN_MARK_LOG", None)
         super().tearDown()
 
@@ -586,6 +633,230 @@ class CacheKeepStreamTest(SandboxCase):
                 cachekeep.journal_line("s1", True, 0, 10)
         self.assertIn("не записана", err.getvalue(),
                       "отказ записи уходит строкой stderr")
+
+
+class CacheKeepNoRequestIdTest(SandboxCase):
+    """Харнесы без requestId (DK-1390): дубли склеиваются, простой стареет,
+    пинг привязан к TTL, субагенты и стоп-кран гасят продление."""
+
+    def setUp(self):
+        super().setUp()
+        self.proj = Path(self.box.root / "ckproj-norid")
+        self.proj.mkdir(exist_ok=True)
+        self.logs = self.box.home / ".claude" / "projects" / context.slug(self.proj.resolve())
+        self.logs.mkdir(parents=True, exist_ok=True)
+        self.turns_log = self.box.home / ".devkit" / "turns.log"
+        os.environ["DEVKIT_TURN_MARK_LOG"] = str(self.turns_log)
+        self._real_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(self.box.home)
+        self._reset_logs()
+
+    def tearDown(self):
+        if self._real_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self._real_home
+        os.environ.pop("DEVKIT_TURN_MARK_LOG", None)
+        super().tearDown()
+
+    def _reset_logs(self):
+        if self.logs.exists():
+            for p in self.logs.rglob("*.jsonl"):
+                p.unlink()
+        if self.turns_log.exists():
+            self.turns_log.unlink()
+        conf = self.box.home / ".devkit" / "watch.local"
+        if conf.exists():
+            conf.unlink()
+
+    def _write_stream(self, name, recs):
+        path = self.logs / (name + ".jsonl")
+        write_stream(path, recs)
+        return path
+
+    def _ts(self, base, offset_seconds):
+        dt = base + timedelta(seconds=offset_seconds)
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    def _idle_prefix(self, base):
+        """Поток с простоем чуть больше TTL: префикс 200k, последний ход на
+        десятой секунде."""
+        return (dup_pair(200000, 0, 50, 10, "m1", self._ts(base, 0))
+                + dup_pair(500, 199000, 30, 10, "m1", self._ts(base, 10)))
+
+    def test_duplicates_glue_by_usage_numbers(self):
+        """Две копии одного ответа без requestId склеиваются в один запрос, и
+        объёмные метрики считают его один раз."""
+        base = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        path = self._write_stream("dupvol", self._idle_prefix(base))
+        reqs = context.requests(path)
+        self.assertEqual(len(reqs), 2, "копии одного запроса склеены")
+        self.assertEqual(reqs[0]["write"], 200000, "первый запрос один раз")
+        data = context.collect(self.logs)
+        self.assertEqual(data["requests"], 2,
+                         "stats --context считает склеенные запросы")
+        self.assertEqual(data["start"], 200050,
+                         "объём старта не задваивается")
+        import drain
+        volume = drain.collect(self.logs)
+        self.assertEqual(volume["tok"]["input_tokens"], 80,
+                         "drain считает вход склеенных запросов один раз")
+        self.assertEqual(volume["tok"]["cache_read_input_tokens"], 199000,
+                         "drain считает чтение кеша без задвоения")
+
+    def test_real_turns_with_same_numbers_stay(self):
+        """Настоящие ходы подряд с одинаковыми числами не съедаются окном:
+        между ними минуты, а не доли секунды."""
+        base = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        recs = [make_norid(500, 99000, 30, 10, "m1", self._ts(base, 0), "u1"),
+                make_norid(500, 99000, 30, 10, "m1", self._ts(base, 60), "u2")]
+        path = self._write_stream("samenums", recs)
+        self.assertEqual(len(context.requests(path)), 2,
+                         "ходы с одинаковыми числами вдали друг от друга живы")
+
+    def test_service_duplicates_dropped_wholly(self):
+        """Служебный ход дублями выкидывается целиком, обеими записями: часы
+        простоя идут от последнего настоящего хода."""
+        base = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        recs = self._idle_prefix(base) + ping_dup_pair(self._ts(base, 400))
+        path = self._write_stream("dupservice", recs)
+        self.assertEqual(len(context.real_requests(path)), 2,
+                         "служебный ход исключён обеими копиями")
+        d = cachekeep.decide_stream(path, now=base.timestamp() + 700)
+        self.assertAlmostEqual(d["idle"], 690, delta=1,
+                               msg="простой идёт от настоящего хода, не от пинга")
+
+    def test_idle_ages_with_duplicate_pings(self):
+        """Случай «простой не стареет» (замер 2026-10-15): пинги каждые 300
+        секунд дублями без requestId не замораживают часы, и решение снимается
+        по порогу выгоды."""
+        base = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        recs = self._idle_prefix(base)
+        for k in range(14):
+            recs += ping_dup_pair(self._ts(base, 400 + 300 * k))
+        path = self._write_stream("dupage", recs)
+        now = base.timestamp() + 400 + 300 * 13 + 10
+        d = cachekeep.decide_stream(path, now=now)
+        self.assertAlmostEqual(d["idle"], 4300, delta=1,
+                               msg="простой растёт сквозь пинги")
+        self.assertFalse(d["keep"],
+                         "простой за порогом выгоды: перезапись дешевле")
+
+    def test_ping_waits_ttl_margin(self):
+        """Второй пинг раньше ttl * PING_MARGIN не уходит: тик сам по себе
+        пинг не поднимает, интервал считается от прошлого пинга."""
+        self._reset_logs()
+        base = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        self._write_stream("dupinterval", self._idle_prefix(base))
+        calls = []
+
+        def sender(session, model, root, **kw):
+            calls.append(session)
+            return True
+
+        cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 400,
+                               home=self.box.home, sender=sender)
+        self.assertEqual(calls, ["dupinterval"], "первый пинг ушёл")
+        cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 460,
+                               home=self.box.home, sender=sender)
+        self.assertEqual(calls, ["dupinterval"],
+                         "второй пинг раньше ttl * 0.8 не уходит")
+        cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 640,
+                               home=self.box.home, sender=sender)
+        self.assertEqual(calls, ["dupinterval"] * 2,
+                         "через интервал продления пинг уходит снова")
+        content = self.turns_log.read_text(encoding="utf-8")
+        self.assertEqual(content.count("продлил"), 2,
+                         "журнал несёт оба ушедших пинга")
+
+    def test_first_ping_keeps_cache_alive(self):
+        """Первого пинга не было: он уходит на 80% TTL, пока кеш ещё жив, а не
+        по тику сторожка на мёртвом кеше."""
+        self._reset_logs()
+        base = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        self._write_stream("dupfirst", self._idle_prefix(base))
+        calls = []
+
+        def sender(session, model, root, **kw):
+            calls.append(session)
+            return True
+
+        cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 245,
+                               home=self.box.home, sender=sender)
+        self.assertEqual(calls, [], "до 80% TTL пинг не уходит, кеш жив")
+        cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 260,
+                               home=self.box.home, sender=sender)
+        self.assertEqual(calls, ["dupfirst"],
+                         "на 80% TTL первый пинг уходит до истечения")
+
+    def test_dead_ping_moves_ttl_to_hourly(self):
+        """Мёртвый пинг (чтение 0 при входе объёмом с префикс) считается
+        перезаписью: часовая подпись находится и без cache_creation."""
+        base = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        reqs = [
+            make_req(0, 0, 100050, 10, "m1", self._ts(base, 0)),
+            make_req(0, 99900, 30, 10, "m1", self._ts(base, 10)),
+            make_req(0, 0, 100100, 12, "m1", self._ts(base, 3700)),
+        ]
+        self.assertEqual(cachekeep.detect_ttl(reqs), 3600,
+                         "мёртвый пинг после часовой паузы подписывает часовой TTL")
+        short = [
+            make_req(0, 0, 100050, 10, "m1", self._ts(base, 0)),
+            make_req(0, 99900, 30, 10, "m1", self._ts(base, 10)),
+            make_req(0, 99800, 100, 12, "m1", self._ts(base, 3700)),
+        ]
+        self.assertEqual(cachekeep.detect_ttl(short), 300,
+                         "обычный ход с чтением кеша перезаписью не считается")
+
+    def test_subagent_stream_gets_no_extension(self):
+        """Субагентский поток не продлевается вовсе: возврата к нему не бывает,
+        любой пинг туда чистый убыток."""
+        self._reset_logs()
+        base = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        sub = self.logs / "sess-a1" / "subagents" / "agent-1.jsonl"
+        write_stream(sub, self._idle_prefix(base))
+        calls = []
+
+        def sender(session, model, root, **kw):
+            calls.append(session)
+            return True
+
+        got = cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 400,
+                                     home=self.box.home, sender=sender)
+        self.assertEqual(got, [], "субагентский поток не разбирается")
+        self.assertEqual(calls, [], "субагентскому потоку пинг не уходит")
+        self.assertFalse(self.turns_log.exists(),
+                         "журнал молчит о субагентском потоке")
+
+    def test_stop_crank_disables_extension(self):
+        """Строка `cachekeep = off` в watch.local гасит продление целиком:
+        запросов нет, журнал пуст, решения при этом считаются."""
+        self._reset_logs()
+        base = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+        self._write_stream("dupcrank", self._idle_prefix(base))
+        conf = self.box.home / ".devkit" / "watch.local"
+        conf.write_text("cachekeep = off\n", encoding="utf-8")
+        calls = []
+
+        def sender(session, model, root, **kw):
+            calls.append(session)
+            return True
+
+        got = cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 400,
+                                     home=self.box.home, sender=sender)
+        self.assertEqual(len(got), 1, "решение по потоку принято")
+        self.assertTrue(got[0]["keep"], "решение «продлевать» на месте")
+        self.assertFalse(got[0]["sent"], "при кране запрос не уходит")
+        self.assertEqual(calls, [], "отправки при кране нет")
+        self.assertFalse(self.turns_log.exists(),
+                         "журнал при кране пуст, ни «продлил», ни «истёк»")
+        conf.write_text("idle = 5\n", encoding="utf-8")
+        cachekeep.scan_project(self.proj.resolve(), now=base.timestamp() + 400,
+                               home=self.box.home, sender=sender)
+        self.assertEqual(calls, ["dupcrank"],
+                         "без строки крана продление работает")
+        self.assertIn("продлил", self.turns_log.read_text(encoding="utf-8"),
+                      "ушедший запрос отмечен строкой")
 
 
 class CacheKeepHomesTest(SandboxCase):

@@ -3164,6 +3164,62 @@ class SecondSubscriptionLayoutTest(SandboxCase):
         super().tearDownClass()
 
 
+class CodexLayoutTest(SandboxCase):
+    """Раскладка Codex на пустом проекте (DK-1359): правила вклейкой в
+    AGENTS.md, навыки в каталог, который клиент сканирует сам, повторный
+    --fix ничего не переписывает.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # Песок нарезку ядра не копирует, а без неё глубина core деградирует в
+        # полный текст (actual_depth), и пустая вклейка не сложилась бы ни разу.
+        # Дописываем нарезку, как на живой машине, и коммитим: песок держит
+        # чистое дерево.
+        write(cls.box.dk / "RULES.core.md", "# ядро\n\nтекст ядра.\n")
+        git(cls.box.dk, "add", "-A")
+        git(cls.box.dk, "commit", "-qm", "нарезка ядра")
+        cls.proj = cls.box.project("cxproj")
+        cls.box.dkctl_run("new", "--no-board", "-C", str(cls.proj))
+        cls.home = cls.box.root / "cxhome"
+        cls.home.mkdir()
+        cls.machine = cls.home / ".devkit" / "harness.local"
+
+    def doc(self, *args):
+        return self.box.doctor(self.proj, *args, home=self.home)
+
+    def test_01_fix_lays_rules_and_skills(self):
+        write(self.machine, 'enabled = ["claude-code", "codex"]\ndefault = "claude-code"\n')
+        _, out = self.doc("--fix")
+        self.assertIn_("вклейка правил добавлена в AGENTS.md: импортов не понимает codex", out,
+                       "доктор промолчал про вклейку правил Codex")
+        self.doc("--fix")
+        self.assertIn_("devkit:rules begin", read(self.proj / "AGENTS.md"),
+                       "Codex получил AGENTS.md без вклейки правил")
+        self.assertTrue((self.home / ".agents" / "skills" / "board-batch" / "SKILL.md").is_file(),
+                        "навыки не легли в каталог, который Codex сканирует сам")
+        self.assertTrue((self.home / ".claude" / "skills" / "board-batch" / "SKILL.md").is_file(),
+                        "навыки первого харнеса пропали при включении Codex")
+        # Проект без доски стоит на глубине core, а ядро общих правил везёт
+        # глобальная точка, embed-харнесу она не положена: тело вклейки пустое,
+        # и это ожидаемая раскладка, а не потеря.
+        found = rules.find_block(read(self.proj / "AGENTS.md"))
+        self.assertIsNotNone(found, "вклейка правил в AGENTS.md не нашлась")
+        self.assertEqual(found[3].strip(), "",
+                         "на проекте без доски тело вклейки не пустое: %r" % found[3][:80])
+
+    def test_02_repeated_fix_changes_nothing(self):
+        # Шаг приёмки гоняет этот тест отдельно от предыдущего, поэтому машинный
+        # слой и первая раскладка тут свои.
+        write(self.machine, 'enabled = ["claude-code", "codex"]\ndefault = "claude-code"\n')
+        self.doc("--fix")
+        before = snapshot(self.home)
+        _, out = self.doc("--fix")
+        self.assertNotIn_("починено", out, "повторный --fix чинит уже разложенное")
+        self.assertEqual(snapshot(self.home), before, "повторный --fix переписал раскладку")
+
+
 class SinglePointOfBuildTest(unittest.TestCase):
     """Точка сборки одна, и советует доктор её же.
 

@@ -126,6 +126,61 @@ class AltSubProfileTest(unittest.TestCase):
                          "у второй подписки объявлен детект, а он неоднозначен по построению")
 
 
+class CodexProfileTest(unittest.TestCase):
+    """Профиль Codex валиден с обеих сторон и носит те ключи, на которых стоит
+    его механика: детект по непустой CODEX_THREAD_ID, вклейка правил в
+    AGENTS.md, делегирование командой codex exec, навыки в каталоге, который
+    клиент подхватывает сам (питоновская половина пары, Go-половина в
+    TestProfileCodex).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        path = DEVKIT_SRC / "kit" / "harness" / "codex.toml"
+        cls.prof = harness.parse(path.name, read(path))
+        harness.validate_profile(cls.prof)
+
+    def test_detect_names_live_session(self):
+        self.assertEqual(self.prof.str_of("detect", "env"), "CODEX_THREAD_ID",
+                         "детект Codex идёт не по переменной живой сессии")
+        self.assertEqual(self.prof.str_of("detect", "value"), "",
+                         "[detect] value задан, а идентификатор сессии заранее не назван")
+        self.assertEqual(self.prof.str_of("detect", "bin"), "codex")
+
+    def test_rules_travel_embedded(self):
+        self.assertEqual(self.prof.str_of("rules", "mode"), "embed",
+                         "Codex импортов не разворачивает, правила едут только вклейкой")
+        self.assertEqual(self.prof.str_of("rules", "file"), "",
+                         "у embed-харнеса тонкого файла нет")
+
+    def test_delegate_command_carries_marks(self):
+        self.assertEqual(self.prof.str_of("delegate", "mode"), "cli")
+        argv = self.prof.arr_of("delegate", "command")
+        self.assertTrue(argv, "команда делегирования не объявлена")
+        joined = " ".join(argv)
+        for mark in ("{prompt}", "{model}", "{effort}", "workspace-write"):
+            self.assertIn(mark, joined, "в команде делегирования нет %s: %s" % (mark, argv))
+        for outsider in ("dangerously", "{session}"):
+            self.assertNotIn(outsider, joined,
+                             "в команде делегирования %s, а клиенту его не положено" % outsider)
+        for tier in ("mini", "base", "pro", "max"):
+            self.assertEqual(self.prof.str_of("delegate", "map_" + tier), "gpt-6.1-sol",
+                             "ярус %s маппится не в модель каталога клиента" % tier)
+
+    def test_skills_lay_into_client_dir(self):
+        self.assertEqual(self.prof.str_of("skills", "dir"), "~/.agents/skills",
+                         "навыки кладутся не в каталог, который клиент сканирует сам")
+        self.assertEqual(self.prof.str_of("skills", "discovery"), "auto",
+                         "скан каталога навыков у клиента автоматический, указатель не нужен")
+        self.assertEqual(self.prof.str_of("skills", "format"), "claude-code")
+
+    def test_machine_axes_are_empty(self):
+        for name in ("hooks", "quota"):
+            self.assertFalse(self.prof.table(name), "секция [%s] непуста, а механики у Codex нет" % name)
+        self.assertIsNone(self.prof.table("head"),
+                          "интерактивной головы без хука конца хода профилю не положено")
+
+
 class ProjectNarrowingTest(SandboxCase):
     """Проектный слой только сужает машинный список: профиль embed-tool на
     месте, но в машинном слое его нет, и сужением его не включить. Остаться

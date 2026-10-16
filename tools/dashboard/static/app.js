@@ -17954,57 +17954,79 @@ const RES_PARTS = {
   other: ["прочее", "p-other"],
 };
 
-// Полосы одного прибора: заголовок со значением всей машины и три строки
-// владельцев той же шкалой.
-function resGauge(title, gauge, isMem) {
-  if (!gauge) return [];
-  const head = el("div", "qsub", title + " " + resPct(gauge.pct) +
-    (isMem && gauge.total_kb ? " (" + resKB(gauge.used_kb) + " из " + resKB(gauge.total_kb) + ")" : ""));
-  const out = [head];
-  for (const p of gauge.parts || []) {
+// Одна полоска владельца: та же шкала, что у кольца, и тот же цвет, что у
+// слова в строке.
+function resBar(pct, cls, val) {
+  const line = el("span", "rline");
+  const meter = el("span", "meter");
+  const fill = el("i", cls);
+  fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+  meter.append(fill);
+  line.append(meter, el("b", "", val));
+  return line;
+}
+
+// Таблица владельцев: строка на владельца, слово названо один раз, а процессор
+// и память едут двумя плотными полосками в той же строке. Прежде два блока
+// повторяли друг друга строем и различались одними цифрами (возврат человека
+// 2026-10-16). Значения различаются сами: процент это процессор, объём память.
+function resOwners(view) {
+  const cpu = view.cpu || {};
+  const mem = view.mem || {};
+  const sum = el("div", "rsum", "процессор " + resPct(cpu.pct) + ", память " + resPct(mem.pct) +
+    (mem.total_kb ? " (" + resKB(mem.used_kb) + " из " + resKB(mem.total_kb) + ")" : ""));
+  const out = [sum];
+  for (const p of cpu.parts || mem.parts || []) {
     const [word, cls] = RES_PARTS[p.name] || [p.name, ""];
-    const row = el("div", "qrow");
+    const row = el("div", "rrow");
     row.append(el("em", "", word));
-    const pct = isMem && gauge.total_kb ? p.rss_kb / gauge.total_kb * 100 : p.cpu_pct;
-    const meter = el("span", "meter");
-    const fill = el("i", cls);
-    fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
-    meter.append(fill);
-    row.append(meter);
-    row.append(el("b", "", isMem ? resKB(p.rss_kb) : resPct(p.cpu_pct)));
+    const dual = el("span", "rdual");
+    dual.append(resBar(p.cpu_pct, cls, resPct(p.cpu_pct)));
+    const mpct = mem.total_kb ? p.rss_kb / mem.total_kb * 100 : 0;
+    dual.append(resBar(mpct, cls, resKB(p.rss_kb)));
+    row.append(dual);
     out.push(row);
   }
   return out;
 }
 
-// Топ сессий: пять строк по процессору и пять по памяти, у каждой строки
-// второй показатель подсказкой.
-function resTop(label, rows, byMem) {
+// Топ сессий по памяти: имя ведёт в разговор сессии, проект разговора называет
+// сервер, и чужая доска едет в адресе разделителем. Второй показатель стоит
+// подсказкой на имени (возврат человека 2026-10-16: топ по процессору места
+// занимал много, а пользы не нёс).
+function resTop(rows) {
   if (!rows || !rows.length) return [];
-  const out = [el("div", "qsub", "Сессии " + label)];
+  const out = [el("div", "qsub", "Сессии по памяти")];
   for (const r of rows) {
     const row = el("div", "qrow rtop");
-    row.append(el("em", "", r.name || r.id));
-    row.append(el("b", "", byMem ? resKB(r.rss_kb) : resPct(r.cpu_pct)));
-    row.title = byMem ? "процессор " + resPct(r.cpu_pct) : "память " + resKB(r.rss_kb);
+    const name = el("button", "alink", r.name || r.id);
+    name.type = "button";
+    name.title = "Открыть разговор сессии, процессор " + resPct(r.cpu_pct);
+    name.addEventListener("click", () => {
+      const at = shownProject || route().proj;
+      openChat(r.proj && r.proj !== at ? r.proj + CHAT_PROJ_SEP + r.id : r.id);
+    });
+    row.append(name);
+    row.append(el("b", "", resKB(r.rss_kb)));
     out.push(row);
   }
   return out;
 }
 
-// Тело раздела ресурсов: отказ съёма словами, приборы, средняя нагрузка и топ.
+// Тело раздела ресурсов: отказ съёма словами, таблица владельцев, средняя
+// нагрузка с числом живых сессий и топ по памяти.
 function resNodes(view) {
   if (!view) return [el("div", "qnote", "ресурсы читаются...")];
   const out = [];
   if (view.note) out.push(el("div", "qnote", view.note));
-  out.push(...resGauge("Процессор", view.cpu, false));
-  out.push(...resGauge("Память", view.mem, true));
+  out.push(...resOwners(view));
+  const stat = [];
   if (view.load && view.load.length === 3) {
-    out.push(el("div", "rload", "средняя нагрузка " +
-      view.load.map(resNum).join(" ")));
+    stat.push("средняя нагрузка " + view.load.map(resNum).join(" "));
   }
-  out.push(...resTop("по процессору", view.top_cpu, false));
-  out.push(...resTop("по памяти", view.top_mem, true));
+  if (view.sessions) stat.push("живых сессий " + view.sessions);
+  if (stat.length) out.push(el("div", "rload", stat.join(", ")));
+  out.push(...resTop(view.top_mem));
   return out;
 }
 

@@ -77,6 +77,28 @@ func TestResourcesView(t *testing.T) {
 	e := newTestEnv(t)
 	e.s.now = func() time.Time { return time.Date(2026, 10, 15, 12, 0, 0, 0, time.Local) }
 	resSeams(t)
+	// Каталог первой сессии ведёт в проект стенда: имя строки топа ссылается
+	// в разговор, а разговор адресуется доской своего проекта.
+	demo := ""
+	projects, _ := e.s.projects()
+	for _, p := range projects {
+		if p.Name == "demo" {
+			demo = p.Path
+		}
+	}
+	if demo == "" {
+		t.Fatal("проект стенда не нашёлся")
+	}
+	withCwd := map[string]peer{}
+	for id, p := range resPeersFixture {
+		if id == "sess-one" {
+			p.Cwd = demo
+		}
+		withCwd[id] = p
+	}
+	oldPeers := resPeers
+	resPeers = func(string) map[string]peer { return withCwd }
+	t.Cleanup(func() { resPeers = oldPeers })
 
 	view := getRes(t, e)
 	if view.Note != "" {
@@ -111,6 +133,11 @@ func TestResourcesView(t *testing.T) {
 	if len(view.Load) != 3 || view.Load[2] != 3 {
 		t.Fatalf("средняя нагрузка %v, жду минуту, пять и пятнадцать", view.Load)
 	}
+	// Живых сессий считает реестр, а не снимок процессов: и та, что процессов
+	// не занимает, стоит в числе.
+	if view.Sessions != 2 {
+		t.Fatalf("живых сессий %d, жду две", view.Sessions)
+	}
 	// Ушедшая сессия без процессов в топ не попадает: топ из занимающих.
 	if len(view.TopCPU) != 1 || view.TopCPU[0].ID != "sess-one" || view.TopCPU[0].Name != "задача один" {
 		t.Fatalf("топ по процессору %+v", view.TopCPU)
@@ -118,8 +145,36 @@ func TestResourcesView(t *testing.T) {
 	if !almost(view.TopCPU[0].CPU, 3.5) || view.TopCPU[0].RSSKB != 350000 {
 		t.Fatalf("строка топа %+v", view.TopCPU[0])
 	}
+	if view.TopCPU[0].Proj != "demo" {
+		t.Fatalf("проект строки топа %q, жду demo", view.TopCPU[0].Proj)
+	}
 	if len(view.TopMem) != 1 || view.TopMem[0].ID != "sess-one" {
 		t.Fatalf("топ по памяти %+v", view.TopMem)
+	}
+	if view.TopMem[0].Proj != "demo" {
+		t.Fatalf("проект строки топа по памяти %q, жду demo", view.TopMem[0].Proj)
+	}
+}
+
+// Проект строки топа узнаётся по рабочему каталогу сессии: ворктри внутри
+// чекаута достаётся самому глубокому корню, чужой каталог остаётся без
+// проекта, а сессия без каталога не трогается вовсе.
+func TestResTopProj(t *testing.T) {
+	rows := []ResSession{{ID: "in-tree"}, {ID: "in-checkout"}, {ID: "outside"}, {ID: "nowhere"}}
+	projects := []Project{
+		{Name: "outer", Path: "/machine/outer"},
+		{Name: "inner", Path: "/machine/outer/inner"},
+	}
+	resTopProj(rows, map[string]string{
+		"in-tree":     "/machine/outer/inner/tree",
+		"in-checkout": "/machine/outer",
+		"outside":     "/machine/elsewhere",
+	}, projects)
+	want := []string{"inner", "outer", "", ""}
+	for i := range rows {
+		if rows[i].Proj != want[i] {
+			t.Fatalf("проект строки %s: %q, жду %q", rows[i].ID, rows[i].Proj, want[i])
+		}
 	}
 }
 

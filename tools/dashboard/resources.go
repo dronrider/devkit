@@ -46,14 +46,15 @@ var (
 
 // ResView это сводка ресурсов машины для колонки и карточки ресурсов.
 type ResView struct {
-	CPU    ResCPU       `json:"cpu"`
-	Mem    ResMem       `json:"mem"`
-	Load   []float64    `json:"load,omitempty"`
-	Cores  int          `json:"cores"`
-	TopCPU []ResSession `json:"top_cpu,omitempty"`
-	TopMem []ResSession `json:"top_mem,omitempty"`
-	Note   string       `json:"note,omitempty"`
-	At     int64        `json:"at"`
+	CPU      ResCPU       `json:"cpu"`
+	Mem      ResMem       `json:"mem"`
+	Load     []float64    `json:"load,omitempty"`
+	Cores    int          `json:"cores"`
+	Sessions int          `json:"sessions,omitempty"`
+	TopCPU   []ResSession `json:"top_cpu,omitempty"`
+	TopMem   []ResSession `json:"top_mem,omitempty"`
+	Note     string       `json:"note,omitempty"`
+	At       int64        `json:"at"`
 }
 
 // ResCPU это процессор машины: процент всей машины и доли владельцев. Проценты
@@ -81,9 +82,12 @@ type ResPart struct {
 }
 
 // ResSession это строка топа: сессия реестра с её процессором и памятью.
+// Proj называет доску, к которой сессия относится по своему рабочему каталогу:
+// имя строки ведёт в разговор, а разговор адресуется проектом.
 type ResSession struct {
 	ID    string  `json:"id"`
 	Name  string  `json:"name,omitempty"`
+	Proj  string  `json:"proj,omitempty"`
 	CPU   float64 `json:"cpu_pct"`
 	RSSKB int64   `json:"rss_kb"`
 }
@@ -166,10 +170,15 @@ func (s *server) resCollect() ResView {
 		notes = append(notes, err.Error())
 	} else {
 		reg := resPeers(s.cfg.Home)
+		view.Sessions = len(reg)
 		spread := machload.Attribute(procs, resRoots(reg))
 		parts = resParts(spread, view.Cores)
 		view.CPU = ResCPU{Pct: machPct(machload.Total(procs).CPU, coresF(view.Cores)), Parts: parts}
 		view.TopCPU, view.TopMem = resTops(spread, reg, view.Cores)
+		cwds := resCwds(reg)
+		projects, _ := s.projects()
+		resTopProj(view.TopCPU, cwds, projects)
+		resTopProj(view.TopMem, cwds, projects)
 	}
 	if mem, err := resPressure(); err != nil {
 		notes = append(notes, err.Error())
@@ -251,6 +260,42 @@ func resTops(spread map[string]machload.Spread, reg map[string]peer, cores int) 
 	})
 	topMem = append(topMem, rows[:n]...)
 	return topCPU, topMem
+}
+
+// resCwds собирает рабочие каталоги живых сессий по их id: каталог говорит, к
+// какому чекауту сессия относится, а значит, чья доска ей хозяин.
+func resCwds(reg map[string]peer) map[string]string {
+	cwds := make(map[string]string, len(reg))
+	for _, p := range reg {
+		if p.Cwd != "" {
+			cwds[p.SessionID] = p.Cwd
+		}
+	}
+	return cwds
+}
+
+// resTopProj называет проект строк топа по рабочему каталогу сессии: имя строки
+// ведёт в разговор, а разговор живёт у доски своего проекта. Сессии одной машины
+// раскиданы по проектам, и совпадение доски на экране не гарантировано. Из
+// подходящих корней берётся самый глубокий: ворктри лежит внутри чекаута.
+func resTopProj(rows []ResSession, cwds map[string]string, projects []Project) {
+	for i := range rows {
+		dir := cwds[rows[i].ID]
+		if dir == "" {
+			continue
+		}
+		best, deep := "", 0
+		for _, p := range projects {
+			if p.Path == "" ||
+				dir != p.Path && !strings.HasPrefix(dir, p.Path+string(os.PathSeparator)) {
+				continue
+			}
+			if len(p.Path) > deep {
+				best, deep = p.Name, len(p.Path)
+			}
+		}
+		rows[i].Proj = best
+	}
 }
 
 // coresF это число ядер для перевода сумм ps в проценты машины: ноль ядер

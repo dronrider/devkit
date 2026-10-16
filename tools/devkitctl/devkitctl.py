@@ -3404,7 +3404,9 @@ def cachekeep_run(start, dry_run=False, max_idle=None):
     Обход идёт по всем домам журналов машины: стоку и домам включённых харнесов,
     resume берётся по харнесу каждого дома. DEVKIT_HARNESS сужает обход до
     одного харнеса. dry_run принимает решения, ничего не отправляя: строка
-    журнала о продлении при нём не пишется, «истёк» пишется как обычно.
+    журнала о продлении при нём не пишется, «истёк» пишется как обычно,
+    а «продлено» в сводке считает решения продлевать. Стоп-кран
+    `cachekeep = off` в ~/.devkit/watch.local гасит продление целиком.
     max_idle это горизонт разбора в секундах: потоки, молчащие дольше,
     пропускаются до чтения файла.
     """
@@ -3413,12 +3415,16 @@ def cachekeep_run(start, dry_run=False, max_idle=None):
     only = os.environ.get("DEVKIT_HARNESS")
     if only:
         entries = [e for e in entries if e["harness"] == only]
+    off = cachekeep.extension_off()
     total, kept, expired = 0, 0, 0
     for entry in entries:
         decisions = cachekeep.scan_home(entry, root, dry_run=dry_run, max_idle=max_idle)
         if not decisions:
             continue
-        home_kept = sum(1 for d in decisions if d.get("sent"))
+        # На сухом прогоне отправок нет, и «продлено» считает решения; кран
+        # гасит и решения: продление выключено целиком.
+        home_kept = sum(1 for d in decisions
+                        if d.get("sent") or (dry_run and not off and d.get("keep")))
         # «Истёк» в сводке это свежее истечение со строкой журнала, а не каждый
         # обход давно остывшего потока: иначе тик сторожка помечал бы мёртвое
         # дерево значимым на каждом витке.

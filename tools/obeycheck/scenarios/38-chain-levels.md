@@ -1,7 +1,7 @@
 # взвести цепочку задач по просьбе в чате
 
 конец: сессия
-предмет: kit/skills/board-task/SKILL.md «Цепочка по просьбе человека»
+предмет: kit/skills/board-task/SKILL.md «Цепочка по просьбе человека»; kit/skills/board-task/chain.md
 
 ## Промпт
 

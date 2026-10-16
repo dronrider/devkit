@@ -311,6 +311,10 @@ func cmdServe(home, staticDir string) error {
 	// Сторож поднятых сессий: смерть подъёма замечает он, когда на разговор
 	// никто не смотрит (chatwatch.go).
 	go srv.chatWatchKeeper(keeperStop)
+	// Снятие разговоров за простой: ход, молчавший дольше порога из машинного
+	// конфига, закрывает окно сам той же точкой, что и уборка в архив
+	// (chatidle.go, DK-828).
+	go srv.chatIdleKeeper(keeperStop)
 	for _, e := range cfg.Errs {
 		logf("конфиг: %s", e)
 	}

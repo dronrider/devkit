@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeConf(t *testing.T, home, text string) string {
@@ -81,6 +82,53 @@ func TestLoadConfigUnknownKey(t *testing.T) {
 	writeConf(t, home, "root = /x\nhost = 1.2.3.4\n")
 	if _, err := LoadConfig(home); err == nil || !strings.Contains(err.Error(), "host") {
 		t.Fatalf("незнакомый ключ должен ронять старт, получил %v", err)
+	}
+}
+
+// Порог простоя читается в трёх видах: duration, сутки и недели. Битое
+// значение роняет старт, как всякий непонятый ключ (DK-828).
+func TestLoadConfigChatIdle(t *testing.T) {
+	home := t.TempDir()
+	for val, want := range map[string]time.Duration{
+		"3d":  72 * time.Hour,
+		"2w":  14 * 24 * time.Hour,
+		"30m": 30 * time.Minute,
+	} {
+		writeConf(t, home, "root = /x\nchat_idle = "+val+"\n")
+		cfg, err := LoadConfig(home)
+		if err != nil {
+			t.Fatalf("chat_idle = %s: %v", val, err)
+		}
+		if cfg.ChatIdle != want {
+			t.Errorf("chat_idle = %s прочитался как %v, ожидал %v", val, cfg.ChatIdle, want)
+		}
+	}
+	for _, bad := range []string{"3x", "0", "-1h", "d", ""} {
+		writeConf(t, home, "root = /x\nchat_idle = "+bad+"\n")
+		if _, err := LoadConfig(home); err == nil {
+			t.Errorf("порог %q должен ронять старт", bad)
+		}
+	}
+}
+
+// Без ключа работает умолчание, ключ его перебивает; решение о том, чей порог
+// звать, принимает chatIdleAfter (DK-828).
+func TestChatIdleDefault(t *testing.T) {
+	home := t.TempDir()
+	cfg, err := LoadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ChatIdle != 0 {
+		t.Fatalf("без ключа порог %v, ожидал ноль", cfg.ChatIdle)
+	}
+	s := &server{cfg: cfg}
+	if got := s.chatIdleAfter(); got != chatIdleDefault {
+		t.Errorf("умолчание %v, ожидал %v", got, chatIdleDefault)
+	}
+	cfg.ChatIdle = 30 * time.Minute
+	if got := s.chatIdleAfter(); got != 30*time.Minute {
+		t.Errorf("ключ не перебил умолчание: %v", got)
 	}
 }
 

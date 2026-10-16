@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Конфиг живёт в ~/.devkit/dashboard.local до машинного конфига DK-042,
@@ -19,6 +20,10 @@ const (
 	// Порт по умолчанию по номеру цели DK-112.
 	defaultPort = 7112
 	logRel      = ".devkit/dashboard.log"
+	// chatIdleDefault это порог простоя разговора по умолчанию: разговор, в
+	// котором ход не шёл трое суток, дашборд снимает сам (chatidle.go). Умолчание
+	// названо в README, раздел «Конфиг».
+	chatIdleDefault = 72 * time.Hour
 )
 
 type Config struct {
@@ -28,6 +33,10 @@ type Config struct {
 	Addr  string
 	Port  int
 	Token string
+	// ChatIdle это порог простоя разговора (ключ chat_idle): разговор, в
+	// котором ход не шёл дольше порога, дашборд снимает сам. Ноль значит «ключа
+	// не было», и работает умолчание.
+	ChatIdle time.Duration
 	// Ошибки наполнения, с которыми сервер живёт: их называют старт в журнале
 	// и /healthz, потому что молчание тут неотличимо от «проектов нет».
 	Errs []string
@@ -91,8 +100,14 @@ func LoadConfig(home string) (*Config, error) {
 			cfg.Port = p
 		case "token":
 			cfg.Token = val
+		case "chat_idle":
+			d, err := parseIdleSpan(val)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: ключ chat_idle: %v", cfg.Path, i+1, err)
+			}
+			cfg.ChatIdle = d
 		default:
-			return nil, fmt.Errorf("%s:%d: незнакомый ключ %q, жду root / addr / port / token", cfg.Path, i+1, key)
+			return nil, fmt.Errorf("%s:%d: незнакомый ключ %q, жду root / addr / port / token / chat_idle", cfg.Path, i+1, key)
 		}
 	}
 	if len(cfg.Roots) == 0 {
@@ -104,6 +119,29 @@ func LoadConfig(home string) (*Config, error) {
 func (c *Config) noRoots() {
 	c.Errs = append(c.Errs, fmt.Sprintf(
 		"в %s нет ни одной строки root: искать проекты негде, дописать «root = ~/projects»", c.Path))
+}
+
+// parseIdleSpan разбирает срок из машинного конфига: длительность вида 72h,
+// 30m (time.ParseDuration) либо число суток и недель с суффиксом d/w (3d, 2w).
+// Суток у time.ParseDuration нет, а порог простоя человек пишет сутками.
+func parseIdleSpan(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if n := len(s); n > 1 {
+		if unit := s[n-1]; unit == 'd' || unit == 'w' {
+			if num, err := strconv.Atoi(s[:n-1]); err == nil && num > 0 {
+				days := num
+				if unit == 'w' {
+					days *= 7
+				}
+				return time.Duration(days) * 24 * time.Hour, nil
+			}
+		}
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("порог %q не читается как срок: жду 72h, 30m либо число суток или недель с суффиксом d/w (3d, 2w)", s)
+	}
+	return d, nil
 }
 
 // ListenAddr собирает адрес прослушивания; пустой addr слушает все

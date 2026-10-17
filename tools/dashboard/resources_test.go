@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -36,19 +37,18 @@ var resPeersFixture = map[string]peer{
 // из снимка, память занята ровно наполовину.
 func resSeams(t *testing.T) {
 	t.Helper()
-	oldProcs, oldPressure, oldLoad, oldReg, oldSelf, oldCores :=
-		resProcs, resPressure, resLoadAvg, resPeers, resSelf, resCores
+	oldProcs, oldPressure, oldReg, oldSelf, oldCores :=
+		resProcs, resPressure, resPeers, resSelf, resCores
 	resProcs = func() ([]machload.Proc, error) { return resProcsFixture, nil }
 	resPressure = func() (machload.Mem, error) {
 		return machload.Mem{Total: 16 << 30, Used: 8 << 30, UsedPct: 50}, nil
 	}
-	resLoadAvg = func() ([3]float64, error) { return [3]float64{1, 2, 3}, nil }
 	resPeers = func(string) map[string]peer { return resPeersFixture }
 	resSelf = func() int { return 200 }
 	resCores = func() int { return 10 }
 	t.Cleanup(func() {
-		resProcs, resPressure, resLoadAvg, resPeers, resSelf, resCores =
-			oldProcs, oldPressure, oldLoad, oldReg, oldSelf, oldCores
+		resProcs, resPressure, resPeers, resSelf, resCores =
+			oldProcs, oldPressure, oldReg, oldSelf, oldCores
 	})
 }
 
@@ -130,9 +130,6 @@ func TestResourcesView(t *testing.T) {
 	if len(view.Mem.Parts) != 3 || view.Mem.Parts[0].RSSKB != 350000 {
 		t.Fatalf("доли памяти %+v", view.Mem.Parts)
 	}
-	if len(view.Load) != 3 || view.Load[2] != 3 {
-		t.Fatalf("средняя нагрузка %v, жду минуту, пять и пятнадцать", view.Load)
-	}
 	// Живых сессий считает реестр, а не снимок процессов: и та, что процессов
 	// не занимает, стоит в числе.
 	if view.Sessions != 2 {
@@ -200,8 +197,32 @@ func TestResourcesRefusalInWords(t *testing.T) {
 	if !almost(view.Mem.Pct, 50) {
 		t.Fatalf("память жива и без ps: %+v", view.Mem)
 	}
-	if len(view.Load) != 3 {
-		t.Fatalf("средняя нагрузка жива и без ps: %v", view.Load)
+}
+
+// Возврат 2026-10-17: строка средней нагрузки ушла из раздела ресурсов, а с
+// ней и поле load из ответа /api/resources вместе со съёмом. Число живых
+// сессий остаётся: оно шло отдельным требованием 2026-10-16.
+func TestResourcesViewDropsLoad(t *testing.T) {
+	e := newTestEnv(t)
+	resSeams(t)
+	c := e.loggedClient(t)
+	resp, err := c.Get(e.srv.URL + "/api/resources")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("код ответа %d, жду 200", resp.StatusCode)
+	}
+	raw := body(t, resp)
+	if strings.Contains(raw, `"load"`) {
+		t.Fatalf("ответ /api/resources ещё несёт поле load: %s", raw)
+	}
+	var view ResView
+	if err := json.Unmarshal([]byte(raw), &view); err != nil {
+		t.Fatalf("ответ ресурсов не разобрался: %v", err)
+	}
+	if view.Sessions != 2 {
+		t.Fatalf("живых сессий %d, жду две: число осталось при ушедшей нагрузке", view.Sessions)
 	}
 }
 

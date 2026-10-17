@@ -17839,12 +17839,6 @@ function resMB(kb) {
   return String(Math.round((kb || 0) / 1024));
 }
 
-// Число с одним знаком после запятой: средняя нагрузка и проценты владельцев
-// живут в этих порядках.
-function resNum(n) {
-  return String(Math.round((n || 0) * 10) / 10).replace(".", ",");
-}
-
 // Сворачивание разделов колонки: проекты, ресурсы и подписки. Состояние
 // помнится тем же способом, что и свёрнутая колонка, а ресурсы встречают
 // свёрнутыми: проценты машины видны кольцами у иконки dk, остальное
@@ -17963,9 +17957,11 @@ const RES_PARTS = {
 };
 
 // Одна полоска владельца: та же шкала, что у кольца, и тот же цвет, что у
-// слова в строке.
-function resBar(pct, cls, val) {
+// слова в строке. Перед линией стоит значок метрики: у квотных строк на этом
+// месте подпись бакета, и полоска повторяет их строй (возврат 2026-10-17).
+function resBar(pct, cls, val, ico) {
   const line = el("span", "rline");
+  if (ico) line.append(icon(ico));
   const meter = el("span", "meter");
   const fill = el("i", cls);
   fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
@@ -17998,9 +17994,9 @@ function resOwners(view) {
     const row = el("div", "rowner");
     row.append(el("em", "", word));
     const dual = el("span", "rdual");
-    dual.append(resBar(p.cpu_pct, cls, resPct(p.cpu_pct)));
+    dual.append(resBar(p.cpu_pct, cls, resPct(p.cpu_pct), "i-cpu"));
     const mpct = mem.total_kb ? p.rss_kb / mem.total_kb * 100 : 0;
-    dual.append(resBar(mpct, cls, resKB(p.rss_kb)));
+    dual.append(resBar(mpct, cls, resKB(p.rss_kb), "i-ram"));
     row.append(dual);
     out.push(row);
   }
@@ -18032,19 +18028,16 @@ function resTop(rows) {
   return out;
 }
 
-// Тело раздела ресурсов: отказ съёма словами, таблица владельцев, средняя
-// нагрузка с числом живых сессий и топ по памяти.
+// Тело раздела ресурсов: отказ съёма словами, таблица владельцев, число
+// живых сессий и топ по памяти. Средней нагрузки в разделе нет: человек
+// назвал строку ненужной, кольца у иконки дают картину машины (возврат
+// 2026-10-17).
 function resNodes(view) {
   if (!view) return [el("div", "qnote", "ресурсы читаются...")];
   const out = [];
   if (view.note) out.push(el("div", "qnote", view.note));
   out.push(...resOwners(view));
-  const stat = [];
-  if (view.load && view.load.length === 3) {
-    stat.push("средняя нагрузка " + view.load.map(resNum).join(" "));
-  }
-  if (view.sessions) stat.push("живых сессий " + view.sessions);
-  if (stat.length) out.push(el("div", "rload", stat.join(", ")));
+  if (view.sessions) out.push(el("div", "rload", "живых сессий " + view.sessions));
   out.push(...resTop(view.top_mem));
   return out;
 }

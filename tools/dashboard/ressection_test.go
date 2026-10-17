@@ -103,6 +103,20 @@ func paddingValue(body string) string {
 	return strings.TrimSpace(val)
 }
 
+// declOf вынимает значение объявления свойства из тела правила: у
+// «gap:8px;color:var(--tx)» это 8px для gap, пустая строка, если свойства нет.
+func declOf(body, prop string) string {
+	at := strings.Index(body, prop+":")
+	if at < 0 {
+		return ""
+	}
+	val := body[at+len(prop)+1:]
+	if end := strings.IndexAny(val, ";}"); end >= 0 {
+		val = val[:end]
+	}
+	return strings.TrimSpace(val)
+}
+
 // Возврат 2026-10-17: разделы колонки раздулись отступами, потому что шапки
 // несли класс shead, занятый заголовком секции таблицы задач, и его позднее
 // правило каскадом приносило шапкам чужие паддинги с кеглем. Проверка держит
@@ -208,5 +222,82 @@ func TestStaticQuotaSectionTitle(t *testing.T) {
 	}
 	if !strings.Contains(readStatic(t, "app.js"), `el("h4", "", "Подписки")`) {
 		t.Error("карточка подписок на главной не названа «Подписки»")
+	}
+}
+
+// Возврат 2026-10-17: полоски владельцев стояли стилистически чужими рядом
+// с квотными: тоньше на пиксель, своим шагом решётки и без подписей перед
+// линиями. Проверка сверяет строй полосок со строками квот: линии берут
+// базовую .meter без переопределения высоты, отступы строк и внутренние шаги
+// равны .qrow, перед каждой линией стоит значок метрики, ширина значения
+// равна квотному проценту.
+func TestStaticResBarsFollowQuotaRows(t *testing.T) {
+	js := readStatic(t, "app.js")
+	if !strings.Contains(jsBody(js, "function resBar(pct, cls, val, ico) {"), "icon(ico)") {
+		t.Error("полоска владельца не принимает значок метрики перед линией")
+	}
+	owners := jsBody(js, "function resOwners(view) {")
+	if owners == "" {
+		t.Fatal("таблица владельцев не собирается: разбор смотрит не туда")
+	}
+	for _, call := range []string{`resPct(p.cpu_pct), "i-cpu")`, `resKB(p.rss_kb), "i-ram")`} {
+		if !strings.Contains(owners, call) {
+			t.Errorf("строка владельца не подписывает полоску значком: нет вызова %s", call)
+		}
+	}
+	var qrow, qrowB, meter, rowner, rdual, rline, rlineB string
+	var rlineSvg bool
+	rules := cssRules(readStatic(t, "style.css"))
+	for _, rule := range rules {
+		switch rule[0] {
+		case ".qrow":
+			if qrow == "" {
+				qrow = rule[1]
+			}
+		case ".qrow b":
+			qrowB = rule[1]
+		case ".meter":
+			meter = rule[1]
+		case ".rowner":
+			if rowner == "" {
+				rowner = rule[1]
+			}
+		case ".rdual":
+			rdual = rule[1]
+		case ".rline":
+			rline = rule[1]
+		case ".rline b":
+			rlineB = rule[1]
+		case ".rline svg":
+			rlineSvg = strings.Contains(rule[1], "width:")
+		}
+	}
+	step := declOf(qrow, "margin-bottom")
+	if step == "" || declOf(rowner, "margin-bottom") != step {
+		t.Errorf("отступ строки владельцев «%s» не равен шагу квотных строк «%s»: раздел стоит неоднородно", declOf(rowner, "margin-bottom"), step)
+	}
+	if declOf(rdual, "gap") != step {
+		t.Errorf("шаг между полосками владельца «%s» не равен шагу квотных строк «%s»", declOf(rdual, "gap"), step)
+	}
+	if g := declOf(qrow, "gap"); declOf(rline, "gap") != g {
+		t.Errorf("внутренний шаг полоски «%s» не равен шагу строки квот «%s»", declOf(rline, "gap"), g)
+	}
+	h := declOf(meter, "height")
+	for _, rule := range rules {
+		if !cssSubject(rule[0], "meter") {
+			continue
+		}
+		if got := declOf(rule[1], "height"); got != "" && got != h {
+			t.Errorf("линия правила %s выше или ниже квотной подложки: %s против %s", rule[0], got, h)
+		}
+	}
+	if w := declOf(qrowB, "min-width"); declOf(rlineB, "min-width") != w {
+		t.Errorf("ширина значения полоски «%s» не равна ширине квотного процента «%s»", declOf(rlineB, "min-width"), w)
+	}
+	if strings.Contains(rlineB, "color") {
+		t.Error("значение полоски красится своим цветом: квотный процент красит строка")
+	}
+	if !rlineSvg {
+		t.Error("значку метрики перед линией не задан размер: svg без ширины рисуется 300 на 150")
 	}
 }

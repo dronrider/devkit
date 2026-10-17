@@ -205,21 +205,23 @@ a:hover{text-decoration:underline}
 .meter i.p-other{background:var(--line2)}
 .rload{font:500 11px var(--mono);color:var(--tx3);margin:2px 0 10px}
 /* таблица владельцев ресурсов (возврат 2026-10-16): слово названо один раз,
-   процессор и память едут двумя плотными полосками в строке владельца.
-   Класс строки свой, без паддингов и рамок: rrow занят строкой ранговой
-   карточки, и её поздние правила каскадом дули строку вдвое (возврат
-   2026-10-17). Сводка над таблицей несёт значки вместо слов и память парой
-   мегабайт занятого и свободного, размер значку даёт место вставки
-   (возврат 2026-10-17) */
+   процессор и память едут двумя полосками в строке владельца. Класс строки
+   свой, без паддингов и рамок: rrow занят строкой ранговой карточки, и её
+   поздние правила каскадом дули строку вдвое (возврат 2026-10-17). Сводка
+   над таблицей несёт значки вместо слов и память парой мегабайт занятого и
+   свободного, размер значку даёт место вставки (возврат 2026-10-17).
+   Полоски повторяют строй строк квот: базовая .meter без переопределения
+   высоты, отступы и шаги из .qrow, перед линией стоит значок метрики, как
+   у квот подпись бакета (возврат 2026-10-17) */
 .rsum{display:flex;align-items:center;gap:6px;font:500 11px var(--mono);color:var(--tx2);margin:0 0 7px}
 .rsum svg{width:12px;height:12px;flex:none}
 .rsum b{font-weight:500;min-width:30px}
-.rowner{display:flex;align-items:center;gap:8px;margin-bottom:5px;font:500 11px var(--mono);color:var(--tx2)}
+.rowner{display:flex;align-items:center;gap:8px;margin-bottom:8px;font:500 11px var(--mono);color:var(--tx2)}
 .rowner em{font-style:normal;width:62px;flex:none;color:var(--tx3)}
-.rdual{flex:1;min-width:0;display:grid;gap:3px}
-.rline{display:flex;align-items:center;gap:6px}
-.rline .meter{height:3px}
-.rline b{font-weight:500;min-width:52px;text-align:right;color:var(--tx3)}
+.rdual{flex:1;min-width:0;display:grid;gap:8px}
+.rline{display:flex;align-items:center;gap:8px}
+.rline svg{width:12px;height:12px;flex:none}
+.rline b{font-weight:500;min-width:30px;text-align:right}
 /* строка топа сессий: имя длиннее имени бакета, ему достаётся вся ширина
    строки с обрезкой, а не фиксированный столбик. Имя это ссылка в разговор
    сессии, строки стоят плотно (возврат 2026-10-16). Модификатор свой, а не

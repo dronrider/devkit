@@ -38,7 +38,6 @@ const resTopLen = 5
 var (
 	resProcs    = func() ([]machload.Proc, error) { return machload.Procs(runProcHome) }
 	resPressure = func() (machload.Mem, error) { return machload.MemPressure(runProcHome) }
-	resLoadAvg  = machload.LoadAvg
 	resPeers    = func(home string) map[string]peer { return peers.Load(home, true) }
 	resSelf     = os.Getpid
 	resCores    = runtime.NumCPU
@@ -48,7 +47,6 @@ var (
 type ResView struct {
 	CPU      ResCPU       `json:"cpu"`
 	Mem      ResMem       `json:"mem"`
-	Load     []float64    `json:"load,omitempty"`
 	Cores    int          `json:"cores"`
 	Sessions int          `json:"sessions,omitempty"`
 	TopCPU   []ResSession `json:"top_cpu,omitempty"`
@@ -158,9 +156,9 @@ func (s *server) resTakeoff(fl *resFlight) {
 	fl.view = s.resCollect()
 }
 
-// resCollect снимает машину одной картинкой: ps одним подпроцессом, память и
-// средняя нагрузка системным вызовом. Отказ любого съёма едет словами в
-// заметку сводки, а не нулями: нуль на кольце неотличим от свободной машины.
+// resCollect снимает машину одной картинкой: ps одним подпроцессом, память
+// системным вызовом. Отказ любого съёма едет словами в заметку сводки, а не
+// нулями: нуль на кольце неотличим от свободной машины.
 func (s *server) resCollect() ResView {
 	view := ResView{At: s.now().UnixMilli(), Cores: resCores()}
 	var notes []string
@@ -184,11 +182,6 @@ func (s *server) resCollect() ResView {
 		notes = append(notes, err.Error())
 	} else {
 		view.Mem = ResMem{Pct: mem.UsedPct, UsedKB: mem.Used / 1024, TotalKB: mem.Total / 1024, Parts: parts}
-	}
-	if load, err := resLoadAvg(); err != nil {
-		notes = append(notes, err.Error())
-	} else {
-		view.Load = load[:]
 	}
 	view.Note = strings.Join(notes, "; ")
 	return view

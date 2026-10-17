@@ -76,6 +76,35 @@ func TestDropTakesOwnLineOnly(t *testing.T) {
 	}
 }
 
+// Дозор мёртвых окон снимает перечисленные строки целиком, по самой строке:
+// запись уже легла в файл задачи, и сверка по хвосту реплики сняла бы заодно
+// рукописную копию с теми же словами (DK-1399).
+func TestTakeLinesRemovesExactLines(t *testing.T) {
+	tree := t.TempDir()
+	board := TaskLine(at(), "тот же текст")
+	bare := "тот же текст"
+	other := TaskLine(at().Add(time.Minute), "иная реплика")
+	src := Path(tree, "task-XR-1")
+	if err := os.MkdirAll(Root(tree), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte(strings.Join([]string{board, bare, other}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gone, err := TakeLines(tree, "task-XR-1", []string{board, other})
+	if err != nil || gone != 2 {
+		t.Fatalf("снято строк %d: %v", gone, err)
+	}
+	rest := ReadLines(src)
+	if len(rest) != 1 || rest[0] != bare {
+		t.Fatalf("во входе осталось %v, ожидал одну рукописную копию", rest)
+	}
+	// Повтор снятия молчит: перечисленных строк уже нет, и это не ошибка.
+	if gone, err := TakeLines(tree, "task-XR-1", []string{board}); err != nil || gone != 0 {
+		t.Fatalf("повторное снятие забрало %d строк: %v", gone, err)
+	}
+}
+
 // Ждущий забирает своё и только своё: безадресную строку и адресованную себе.
 // Реплика чужой сессии остаётся лежать, её разнесёт подхват своим ходом.
 func TestTakeLeavesForeignLines(t *testing.T) {

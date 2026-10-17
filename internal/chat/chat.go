@@ -227,6 +227,47 @@ func Drop(tree, name, text string) (int, error) {
 	return gone, nil
 }
 
+// TakeLines снимает из входа разговора перечисленные строки целиком, по самой
+// строке, а не по тексту реплики. Так дозор мёртвых окон забирает запись,
+// которую уже отложил в файл задачи: сверка по хвосту, как у Drop, сняла бы и
+// рукописную копию чужой реплики с тем же текстом. Возврат это число снятых
+// строк: он меньше длины lines, когда часть входа разобрал подхват.
+func TakeLines(tree, name string, lines []string) (int, error) {
+	if len(lines) == 0 {
+		return 0, nil
+	}
+	gone := make(map[string]bool, len(lines))
+	for _, l := range lines {
+		gone[l] = true
+	}
+	src := Path(tree, name)
+	if len(ReadLines(src)) == 0 {
+		return 0, nil
+	}
+	lock, err := Lock(filepath.Join(Root(tree), name+LockSuffix))
+	if err != nil {
+		return 0, err
+	}
+	defer lock.Close()
+	rest := ReadLines(src)
+	keep := make([]string, 0, len(rest))
+	n := 0
+	for _, l := range rest {
+		if gone[l] {
+			n++
+			continue
+		}
+		keep = append(keep, l)
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	if err := writeLines(src, keep); err != nil {
+		return 0, fmt.Errorf("вход разговора не переписался: %v", err)
+	}
+	return n, nil
+}
+
 // Take забирает из входа строки, которые причитаются ждущей сессии sid:
 // безадресные и адресованные ей самой. Остальные остаются лежать, их разнесёт
 // подхват своим ходом. Пустой возврат значит, что говорить пока нечего.

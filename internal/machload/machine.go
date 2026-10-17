@@ -8,11 +8,10 @@ import (
 	"strings"
 )
 
-// Память машины и средняя нагрузка читаются системным вызовом sysctl, а не
-// подпроцессом: ps и vm_stat дают большую часть картины, но объём всей памяти
-// и средняя нагрузка у системы спрашиваются дешевле и без ребёнка. Шов
-// sysctlRead держит стенд: боевая машина зовёт системный вызов, тест кладёт
-// сырой ответ.
+// Память машины читается системным вызовом sysctl, а не подпроцессом: ps и
+// vm_stat дают большую часть картины, но объём всей памяти у системы
+// спрашивается дешевле и без ребёнка. Шов sysctlRead держит стенд: боевая
+// машина зовёт системный вызов, тест кладёт сырой ответ.
 var sysctlRead = sysctlRaw
 
 // Mem это снимок памяти машины: вся, занятая и доля занятой в процентах.
@@ -98,48 +97,4 @@ func ParseBytes(raw []byte) (int64, error) {
 	var buf [8]byte
 	copy(buf[:], raw)
 	return int64(binary.LittleEndian.Uint64(buf[:])), nil
-}
-
-// LoadAvg отдаёт среднюю нагрузку машины за минуту, пять и пятнадцать.
-func LoadAvg() ([3]float64, error) {
-	raw, err := sysctlRead("vm.loadavg")
-	if err != nil {
-		return [3]float64{}, fmt.Errorf("средняя нагрузка не прочиталась: %w", err)
-	}
-	return ParseLoadAvg(raw)
-}
-
-// loadavgCeiling это потолок осмысленного значения средней нагрузки: выше
-// число получается только из сломанного масштаба, и такой разбор отказывает,
-// а не несёт чушь на экран.
-const loadavgCeiling = 1 << 20
-
-// ParseLoadAvg разбирает структуру loadavg системного вызова: три числа с
-// фиксированной точкой и масштаб. Длина структуры расходится по системам, и
-// масштаб читается из неё самой, а не зашивается числом. Байты идут в порядке
-// машины, у больших макосных машин это little-endian. Замыкающий ноль структуры
-// бывает срезан библиотекой, и недостающий байт масштаба читается нулём.
-func ParseLoadAvg(raw []byte) ([3]float64, error) {
-	if len(raw) < 16 {
-		return [3]float64{}, fmt.Errorf("жду структуру средней нагрузки, пришло %d байт", len(raw))
-	}
-	scale := uint64(1024)
-	if len(raw) >= 23 {
-		var tail [8]byte
-		copy(tail[:], raw[16:])
-		if v := binary.LittleEndian.Uint64(tail[:]); v > 0 {
-			scale = v
-		}
-	} else if v := uint64(binary.LittleEndian.Uint32(raw[12:16])); v > 0 {
-		scale = v
-	}
-	var out [3]float64
-	for i := range out {
-		v := float64(binary.LittleEndian.Uint32(raw[i*4:i*4+4])) / float64(scale)
-		if v < 0 || v > loadavgCeiling {
-			return [3]float64{}, fmt.Errorf("средняя нагрузка %g не лезет в масштаб %d", v, scale)
-		}
-		out[i] = v
-	}
-	return out, nil
 }

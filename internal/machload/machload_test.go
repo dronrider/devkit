@@ -136,66 +136,6 @@ func TestParseVMStatRefusesSilence(t *testing.T) {
 	}
 }
 
-// loadavgRaw собирает структуру средней нагрузки с масштабом в длинном поле:
-// три числа с фиксированной точкой и масштаб u64 на смещении шестнадцать.
-func loadavgRaw(one, five, fifteen uint32, scale uint64) []byte {
-	out := make([]byte, 24)
-	binary.LittleEndian.PutUint32(out[0:], one)
-	binary.LittleEndian.PutUint32(out[4:], five)
-	binary.LittleEndian.PutUint32(out[8:], fifteen)
-	binary.LittleEndian.PutUint64(out[16:], scale)
-	return out
-}
-
-func TestParseLoadAvgLongScale(t *testing.T) {
-	got, err := ParseLoadAvg(loadavgRaw(1536, 1280, 1024, 1024))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := [3]float64{1.5, 1.25, 1}
-	if got != want {
-		t.Fatalf("средняя %v, жду %v", got, want)
-	}
-}
-
-// Живой vm.loadavg приходит усечённым до двадцати трёх байт: срезанный ноль
-// принадлежал масштабу, и разбор дочитывает его нулём.
-func TestParseLoadAvgTrimmedScale(t *testing.T) {
-	got, err := ParseLoadAvg(loadavgRaw(2048, 4096, 6144, 2048)[:23])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != [3]float64{1, 2, 3} {
-		t.Fatalf("средняя %v, жду единицу, двойку и тройку", got)
-	}
-}
-
-// Короткая структура отдаёт масштаб целым на смещении двенадцать, и разбор
-// обязан прочесть и её.
-func TestParseLoadAvgShortScale(t *testing.T) {
-	raw := loadavgRaw(2048, 2048, 2048, 1)[:16]
-	binary.LittleEndian.PutUint32(raw[12:], 2048)
-	got, err := ParseLoadAvg(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != [3]float64{1, 1, 1} {
-		t.Fatalf("средняя %v, жду единицы", got)
-	}
-}
-
-func TestParseLoadAvgRefusesBrokenScale(t *testing.T) {
-	if _, err := ParseLoadAvg([]byte{1, 2, 3}); err == nil {
-		t.Fatal("обрубок структуры разобрался: чтение обязано отказать")
-	}
-	// Масштаб ноль подменяется умолчанием, а вот число сверх всякого смысла
-	// отказывает словами, а не едет на экран.
-	broken := loadavgRaw(^uint32(0), 0, 0, 1)
-	if _, err := ParseLoadAvg(broken); err == nil {
-		t.Fatal("бессмысленное значение средней нагрузки прошло на экран")
-	}
-}
-
 func TestParseBytes(t *testing.T) {
 	raw := make([]byte, 8)
 	binary.LittleEndian.PutUint64(raw, 17179869184)
@@ -217,20 +157,5 @@ func TestParseBytes(t *testing.T) {
 	}
 	if _, err := ParseBytes(raw[:4]); err == nil {
 		t.Fatal("обрубок числа прочитался: разбор обязан отказать")
-	}
-}
-
-// LoadAvg идёт через шов системного вызова: стенд кладёт сырой ответ и не
-// зависит от системы прогона.
-func TestLoadAvgThroughSeam(t *testing.T) {
-	old := sysctlRead
-	sysctlRead = func(name string) ([]byte, error) { return loadavgRaw(1024, 2048, 3072, 1024), nil }
-	defer func() { sysctlRead = old }()
-	got, err := LoadAvg()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != [3]float64{1, 2, 3} {
-		t.Fatalf("средняя %v, жду единицу, двойку и тройку", got)
 	}
 }

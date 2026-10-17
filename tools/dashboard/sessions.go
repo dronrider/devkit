@@ -947,9 +947,13 @@ type reply struct {
 	// уезжает префиксом реплики, той же дорогой, что и выделение.
 	Pick       string `json:"pick,omitempty"`
 	PickScreen string `json:"pickScreen,omitempty"`
-	// Shot это путь картинки, приложенной к реплике: агент читает её сам, а
-	// лента показывает миниатюру.
-	Shot string `json:"shot,omitempty"`
+	// Shots это пути картинок, приложенных к реплике: агент читает их сам, а
+	// лента показывает миниатюры. Картинок в одной реплике бывает несколько.
+	Shots []string `json:"shots,omitempty"`
+	// Frags это пути текстовых фрагментов, приложенных к реплике: длинная
+	// вставка едет файлом, а лента показывает её свёрнутым блоком с полным
+	// текстом по развороту.
+	Frags []string `json:"frags,omitempty"`
 	// Human помечает ход, которым агент обратился к человеку: отправка в панель
 	// каналом сессий это реплика разговора, а не служебный ход инструмента.
 	Human bool `json:"human,omitempty"`
@@ -2381,13 +2385,13 @@ func addUser(add func(reply), role, at, text string, meta bool) {
 	if inner, name, wrapped := unwrapPeer(text); wrapped {
 		w := cutWraps(inner)
 		add(reply{Role: role, Time: at, Text: w.rest, Note: peerSource(name),
-			Who: peerAuthor(name), Sel: w.sel, SelFile: w.file, Shot: w.shot,
-			Pick: w.pick, PickScreen: w.screen})
+			Who: peerAuthor(name), Sel: w.sel, SelFile: w.file, Shots: w.shots,
+			Frags: w.frags, Pick: w.pick, PickScreen: w.screen})
 		return
 	}
-	if w := cutWraps(text); w.shot != "" || w.pick != "" || w.sel != "" {
+	if w := cutWraps(text); len(w.shots) > 0 || len(w.frags) > 0 || w.pick != "" || w.sel != "" {
 		add(reply{Role: role, Time: at, Text: w.rest, Sel: w.sel, SelFile: w.file,
-			Shot: w.shot, Pick: w.pick, PickScreen: w.screen})
+			Shots: w.shots, Frags: w.frags, Pick: w.pick, PickScreen: w.screen})
 		return
 	}
 	said, notes := splitService(text)
@@ -2439,8 +2443,14 @@ var pickWrapRe = regexp.MustCompile(`(?s)\A<picked screen="([^"]*)">\n(.*?)\n</p
 
 // shotWrapRe ловит приложенную картинку. Стоит она первым префиксом, перед
 // выделением: так реплика читается сверху вниз, сначала что показали, потом что
-// выделили, потом слова.
+// выделили, потом слова. Картинок в одной реплике бывает несколько, и срез
+// снимает их все.
 var shotWrapRe = regexp.MustCompile(`(?s)\A<screenshot file="([^"]*)">\n.*?\n</screenshot>\n?`)
+
+// fragWrapRe ловит приложенный текстовый фрагмент: длинная вставка едет файлом
+// в каталог загрузок, а реплика несёт ссылку, и агент читает файл сам. Стоит
+// префиксом после снимков, той же дорогой, что и выделение.
+var fragWrapRe = regexp.MustCompile(`(?s)\A<fragment file="([^"]*)">\n.*?\n</fragment>\n?`)
 
 // pastedWrapRe ловит обёртку вставки. Скобочная вставка приезжает в транскрипт
 // тегами клиента <pasted_content id="...">, и id повторяется в закрывающем
@@ -2469,6 +2479,10 @@ func cutFirstWraps(text string) string {
 			text = strings.TrimLeft(text[len(m):], "\n")
 			continue
 		}
+		if m := fragWrapRe.FindString(text); m != "" {
+			text = strings.TrimLeft(text[len(m):], "\n")
+			continue
+		}
 		if m := selWrapRe.FindString(text); m != "" {
 			text = strings.TrimLeft(text[len(m):], "\n")
 			continue
@@ -2481,22 +2495,15 @@ func cutFirstWraps(text string) string {
 	}
 }
 
-// cutShot отрезает префикс картинки от остального.
-func cutShot(text string) (string, string) {
-	m := shotWrapRe.FindStringSubmatch(text)
-	if m == nil {
-		return "", text
-	}
-	return m[1], strings.TrimSpace(text[len(m[0]):])
-}
-
 // cutSelection отрезает префикс выделения от слов человека. Пустое выделение
 // значит, что реплика приехала без него, и это обычный случай.
-// wraps это приложенное к реплике, снятое с её начала: снимок экрана, места
-// пикера и выделенный кусок текста. Порядок съёма один на все дороги реплики,
-// потому что кладёт префиксы панель в том же порядке.
+// wraps это приложенное к реплике, снятое с её начала: снимки экрана, текстовые
+// фрагменты, места пикера и выделенный кусок текста. Снимков и фрагментов в
+// одной реплике бывает несколько, остальное по одному блоку. Порядок съёма один
+// на все дороги реплики, потому что кладёт префиксы панель в том же порядке.
 type wraps struct {
-	shot   string
+	shots  []string
+	frags  []string
 	pick   string
 	screen string
 	sel    string
@@ -2506,9 +2513,25 @@ type wraps struct {
 
 func cutWraps(text string) wraps {
 	var w wraps
-	w.shot, w.rest = cutShot(text)
-	w.pick, w.screen, w.rest = cutPicked(w.rest)
-	w.sel, w.file, w.rest = cutSelection(w.rest)
+	for {
+		m := shotWrapRe.FindStringSubmatch(text)
+		if m == nil {
+			break
+		}
+		w.shots = append(w.shots, m[1])
+		text = strings.TrimLeft(text[len(m[0]):], "\n")
+	}
+	for {
+		m := fragWrapRe.FindStringSubmatch(text)
+		if m == nil {
+			break
+		}
+		w.frags = append(w.frags, m[1])
+		text = strings.TrimLeft(text[len(m[0]):], "\n")
+	}
+	w.pick, w.screen, text = cutPicked(text)
+	w.sel, w.file, w.rest = cutSelection(text)
+	w.rest = strings.TrimSpace(w.rest)
 	return w
 }
 

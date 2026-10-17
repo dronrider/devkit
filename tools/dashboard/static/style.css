@@ -2052,6 +2052,19 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .shotx{position:absolute;top:14px;right:14px;width:32px;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
 .shotx svg{width:14px;height:14px;display:block}
 .shotx:hover{border-color:var(--acc);color:var(--tx)}
+/* Разворот длинной вставки поверх страницы: текст читают и копируют, а сама
+   вставка свёрнута в блок у реплики. Копирование стоит у правого нижнего угла,
+   под крестиком, чтобы большой текст не закрывал ни то, ни другое. */
+.fragbig{flex-direction:column;align-items:stretch;cursor:default}
+.fragbig .fragpre{flex:1;min-height:0;overflow:auto;margin:0 0 10px;padding:14px 16px;border-radius:10px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:400 12px/1.55 var(--mono);white-space:pre-wrap;word-break:break-word;cursor:text}
+.fragcp{position:absolute;top:58px;right:14px;width:auto;padding:0 12px;font:500 12px var(--sans)}
+/* Блок фрагмента в коробке отправки кликабелен сам: разворот открывается по
+   нему, а не по узкой кнопке. Повторная вставка той же простыни не добавляет
+   второй блок, а подсвечивает стоящий: вставка дошла и так. */
+.cfrag{cursor:pointer}
+.cclip.hi{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
+@keyframes cliphi{0%{transform:scale(0.96)}100%{transform:scale(1)}}
+.cclip.hi{animation:cliphi 0.25s ease-out}
 
 /* диалог цепочки (DK-942): уровни набираются списком задач, план приходит
    предпросмотром. Живёт он поверх страницы, как разворот снимка, и закрывается

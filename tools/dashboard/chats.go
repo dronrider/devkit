@@ -303,6 +303,10 @@ type chatEntry struct {
 	// Draft это набранная в незачатом разговоре реплика: держать её негде,
 	// кроме памяти диалога, и панель забирает её отсюда.
 	Draft string `json:"draft,omitempty"`
+	// Files это вложения черновика незачатого разговора: панель забирает их
+	// отсюда той же дорогой, что и текст, и собранное сообщение переживает
+	// перезагрузку вкладки целиком.
+	Files []chatUpload `json:"files,omitempty"`
 	// Own говорит, дашбордова ли это сессия: только у своей смена модели
 	// действует сразу следующим подъёмом, чужую до резюма не переубедить.
 	Own bool `json:"own,omitempty"`
@@ -762,6 +766,22 @@ type chatStore struct {
 	// нет, и с чужого экрана такой разговор выглядел бы пустым. Он же говорит
 	// уборке, что запись человеку нужна.
 	Draft string `json:"draft,omitempty"`
+	// Files это вложения, приложенные к черновику незачатого разговора: сами
+	// файлы уже лежат в каталоге загрузок, а запись держит ссылки, чтобы
+	// черновик пережил перезагрузку вкладки. Данные вложения тут не хранятся:
+	// вставка бывает в мегабайты, и ей место в файле, а не в памяти записи.
+	// Список говорит уборке то же, что и текст: запись человеку нужна.
+	Files []chatUpload `json:"files,omitempty"`
+}
+
+// chatUpload это ссылка на вложение черновика: вид, имя и путь файла в каталоге
+// загрузок. Вид это image либо frag, и по нему панель рисует миниатюру или
+// свёрнутый фрагмент.
+type chatUpload struct {
+	Kind  string `json:"kind,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Path  string `json:"path,omitempty"`
+	Bytes int    `json:"bytes,omitempty"`
 }
 
 func (s *server) chatStoreRead(key string) chatStore {
@@ -1548,6 +1568,7 @@ const chatGrownLife = chatWindowDays * 24 * time.Hour
 // Заодно тут стоит уборка: список спрашивают постоянно, и отдельного сторожка
 // для неё заводить незачем.
 func (s *server) chatBlankList(proj string) []chatEntry {
+	s.chatUploadSweep()
 	ents, err := os.ReadDir(chatStoreDir(s.cfg.Home))
 	if err != nil {
 		return nil
@@ -1596,7 +1617,7 @@ func (s *server) chatBlankList(proj string) []chatEntry {
 			continue
 		}
 		e := chatEntry{ID: id, Blank: true, State: chatNotStarted, Idle: true,
-			Grown: st.Grown, Draft: st.Draft, Tmux: st.Tmux,
+			Grown: st.Grown, Draft: st.Draft, Files: st.Files, Tmux: st.Tmux,
 			Model: st.Model, Archived: st.Archived}
 		if proj == "" {
 			e.Project = st.Project
@@ -1628,7 +1649,10 @@ func (s *server) chatBlankSweep(id string, st chatStore) bool {
 			return false
 		}
 	} else {
-		if st.Draft != "" {
+		// Вложение черновика держит запись так же, как текст: вставка бывает
+		// собранной заранее и без слов, и терять её из-за отсутствия текста
+		// незачем.
+		if st.Draft != "" || len(st.Files) > 0 {
 			return false
 		}
 		if st.Tmux != "" {
@@ -1649,6 +1673,15 @@ func (s *server) chatBlankSweep(id string, st chatStore) bool {
 		s.logf("брошенная запись чата %s не стёрлась: %v", id, err)
 		return false
 	}
+	// Незачатая запись уносит и свои вложения: файла без записи ничей, и
+	// разговор, если он всё же случился, ссылается на вложения своего sid,
+	// а не этого ключа. Выросшая и поднятая записи файлы держат: их пути уже
+	// стоят в репликах живого разговора.
+	if st.Grown == "" && st.Tmux == "" {
+		if err := os.RemoveAll(s.shotDir(id)); err != nil {
+			s.logf("вложения чата %s не стёрлись: %v", id, err)
+		}
+	}
 	why := "в ней так и не сказали ни слова"
 	if st.Grown != "" {
 		why = "разговор давно идёт сессией " + st.Grown
@@ -1657,6 +1690,37 @@ func (s *server) chatBlankSweep(id string, st chatStore) bool {
 	}
 	s.logf("запись чата %s стёрта: %s", id, why)
 	return true
+}
+
+// chatUploadLife это срок жизни вложений, чей ключ не стал разговором: реплика
+// ждущей задаче кладёт файл под ключом «new-», хозяин у которого не появится
+// никогда. Свежий файл трогать нельзя, реплика с ним ещё может лежать в очереди,
+// а через неделю это уже мусор, как и полные выводы отладочных прогонов.
+const chatUploadLife = 7 * 24 * time.Hour
+
+// chatUploadSweep метёт каталог загрузок от вложений без хозяина. Проход стоит
+// в общем списке разговоров: его спрашивают постоянно, и отдельного сторожка
+// для метлы заводить незачем.
+func (s *server) chatUploadSweep() {
+	ents, err := os.ReadDir(s.shotDir(""))
+	if err != nil {
+		return
+	}
+	for _, de := range ents {
+		name := de.Name()
+		if !de.IsDir() || !strings.HasPrefix(name, "new-") {
+			continue
+		}
+		fi, err := de.Info()
+		if err != nil || s.now().Sub(fi.ModTime()) <= chatUploadLife {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(s.shotDir(""), name)); err != nil {
+			s.logf("вложения %s не стёрлись: %v", name, err)
+			continue
+		}
+		s.logf("вложения %s стёрты: ключ не стал разговором, неделя прошла", name)
+	}
 }
 
 // handleChatDrop закрывает запись разговора рукой. Отсев по сроку убирает
@@ -1713,6 +1777,11 @@ func (s *server) handleChatDrop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("запись чата не закрылась: %v", err)})
 		return
+	}
+	// Закрытая запись уносит свои вложения: хозяина у них больше нет, и
+	// оставлять файлы сиротами значило бы копить каталог загрузок вечно.
+	if err := os.RemoveAll(s.shotDir(sid)); err != nil {
+		s.logf("вложения чата %s не стёрлись: %v", sid, err)
 	}
 	s.logf("запись чата %s закрыта рукой", sid)
 	writeJSON(w, http.StatusOK, map[string]any{"chat": sid, "message": "запись закрыта"})
@@ -1788,8 +1857,21 @@ func (s *server) handleChatDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Text string `json:"text"`
+		// Files это ссылки вложений черновика: панель шлёт их тем же запросом,
+		// что и текст, и пустой список очищает прежний. Отсутствие поля у
+		// старой панели вложения не трогает.
+		Files *[]chatUpload `json:"files"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
+		// Тело сверх предела это своя причина, а не «жду JSON»: длинная вставка
+		// в поле и есть главный посетитель ручки, и человек обязан узнать про
+		// размер, а не про разбор.
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("черновик длиннее предела %d КБ: длинную вставку панель складывает фрагментом", msgBodyLimit/1024)})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
 		return
 	}
@@ -1803,6 +1885,9 @@ func (s *server) handleChatDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st.Draft = body.Text
+	if body.Files != nil {
+		st.Files = *body.Files
+	}
 	if err := s.chatStoreWrite(sid, st); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("черновик не записался: %v", err)})
@@ -1824,7 +1909,10 @@ func (s *server) chatBlankLift(sid, sess, model, harness string) {
 	if !st.Blank || st.Grown != "" {
 		return
 	}
-	st.Tmux, st.Draft, st.Lifted = sess, "", s.now().Unix()
+	// Черновик и его вложения отработали: файлы остались лежать под своим
+	// ключом, но принадлежат теперь разговору, и держать ссылки в записи
+	// незачем.
+	st.Tmux, st.Draft, st.Files, st.Lifted = sess, "", nil, s.now().Unix()
 	if model != "" {
 		st.Model, st.Harness = model, harness
 	}
@@ -3027,6 +3115,16 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		MsgID string `json:"msg_id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
+		// Тело сверх предела это своя причина, а не «жду JSON»: длинная вставка
+		// из чужого редактора и есть главный посетитель ручки, и сообщение
+		// «что-то не экранируется» родилось именно из молчаливого смешения
+		// этих двух причин.
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("реплика длиннее предела %d КБ: длинную вставку панель складывает фрагментом", msgBodyLimit/1024)})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
 		return
 	}
@@ -4579,6 +4677,23 @@ func (s *server) shotDir(sid string) string {
 	return filepath.Join(s.cfg.Home, ".devkit", "uploads", sid)
 }
 
+// uploadName подбирает имя вложения, не занятое соседом: имена режутся с
+// точностью до секунды, а вставляют вложения друг за другом, и второй снимок
+// той же секунды не должен затирать первый.
+func (s *server) uploadName(dir, ext string) (string, string) {
+	base := s.now().Format("20060102T150405")
+	for at := 0; ; at++ {
+		name := base + ext
+		if at > 0 {
+			name = fmt.Sprintf("%s-%d%s", base, at, ext)
+		}
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return name, path
+		}
+	}
+}
+
 // shotLimit держит вложение в берегах: скриншот экрана это единицы мегабайт, а
 // всё, что больше, в реплику по ошибке.
 const shotLimit = 12 << 20
@@ -4632,8 +4747,7 @@ func (s *server) handleChatShot(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("каталог вложений не создался: %v", err)})
 		return
 	}
-	name := fmt.Sprintf("%s%s", s.now().Format("20060102T150405"), ext)
-	path := filepath.Join(dir, name)
+	name, path := s.uploadName(dir, ext)
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("вложение не записалось: %v", err)})
 		return
@@ -4665,6 +4779,95 @@ func (s *server) handleChatShotGet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "вложения нет"})
 		return
 	}
+	http.ServeFile(w, r, path)
+}
+
+// clipLimit держит текстовое вложение в берегах. Предел много выше тела реплики
+// нарочно: фрагмент и есть способ пронести длинную вставку мимо него, а всё,
+// что больше восьми мегабайт, в реплику попадает по ошибке.
+const clipLimit = 8 << 20
+
+// handleChatClip кладёт текстовый фрагмент файлом в каталог вложений, той же
+// дорогой, что и снимок экрана: реплика понесёт ссылку, а файл агент читает
+// сам. Вставка приезжает текстом, а не base64, и записывается как есть, до
+// переводов каретки включительно: код и лог не должны меняться по дороге.
+func (s *server) handleChatClip(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "фрагмент чата")
+	if found == nil {
+		return
+	}
+	sid := r.PathValue("sid")
+	if !chatKeyRe.MatchString(sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id чата", sid)})
+		return
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, clipLimit+(clipLimit/3))).Decode(&body); err != nil {
+		// Тело сверх предела это своя причина, а не «жду JSON»: длинная вставка
+		// и есть главный посетитель ручки.
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("фрагмент длиннее предела %d МБ: вставку режут на части", clipLimit>>20)})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	text := strings.ReplaceAll(strings.ReplaceAll(body.Text, "\r\n", "\n"), "\r", "\n")
+	if strings.TrimSpace(text) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустой фрагмент класть некуда"})
+		return
+	}
+	if len(text) > clipLimit {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("фрагмент длиннее предела %d МБ: вставку режут на части", clipLimit>>20)})
+		return
+	}
+	dir := s.shotDir(sid)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("каталог вложений не создался: %v", err)})
+		return
+	}
+	name, path := s.uploadName(dir, ".txt")
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("вложение не записалось: %v", err)})
+		return
+	}
+	s.logf("фрагмент чата %s лёг в %s (%d КБ)", sid, path, len(text)/1024)
+	writeJSON(w, http.StatusOK, map[string]any{"path": path, "name": name, "bytes": len(text)})
+}
+
+// handleChatClipGet отдаёт текстовый фрагмент из каталога вложений: свёрнутый
+// блок ленты разворачивается полным текстом, а браузеру файл с диска иначе не
+// достать. Путь проверяется по каталогу вложений, как у картинки.
+func (s *server) handleChatClipGet(w http.ResponseWriter, r *http.Request) {
+	if s.findProject(w, r, "фрагмент чата") == nil {
+		return
+	}
+	sid := r.PathValue("sid")
+	if !chatKeyRe.MatchString(sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "битый id чата"})
+		return
+	}
+	name := filepath.Base(r.URL.Query().Get("name"))
+	if name == "." || name == string(filepath.Separator) || strings.Contains(name, "..") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "битое имя вложения"})
+		return
+	}
+	path := filepath.Join(s.shotDir(sid), name)
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "вложения нет"})
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	http.ServeFile(w, r, path)
 }
 

@@ -323,6 +323,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{p}/chats/{sid}/status", s.auth(s.handleChatStatus))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/shot", s.auth(s.handleChatShot))
 	mux.HandleFunc("GET /api/projects/{p}/chats/{sid}/shot", s.auth(s.handleChatShotGet))
+	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/clip", s.auth(s.handleChatClip))
+	mux.HandleFunc("GET /api/projects/{p}/chats/{sid}/clip", s.auth(s.handleChatClipGet))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/model", s.auth(s.handleChatModel))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/archive", s.auth(s.handleChatArchive))
 	mux.HandleFunc("POST /api/projects/{p}/chats/{sid}/drop", s.auth(s.handleChatDrop))

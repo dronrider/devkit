@@ -7533,6 +7533,36 @@ function pickFold(screen, text) {
   return foldEl("selq", "место экрана", text, screen, text);
 }
 
+// Свёрнутый фрагмент при пузыре: полное содержимое лежит файлом на машине, и
+// лента тянет его ручкой вложений при первом развороте. До разворота в ленте
+// стоит только имя файла: текст вставки закрывал бы собой разговор, как и
+// простыня выделения. Копирование появляется вместе с текстом: фрагмент
+// уносят в редактор целиком.
+function fragFold(path) {
+  const box = el("div", "selq fragq fold");
+  const top = foldHead("фрагмент", baseName(path), "");
+  const car = foldCar();
+  top.append(car);
+  const body = el("pre", "foldb", "");
+  body.hidden = true;
+  top.addEventListener("click", () => {
+    body.hidden = !body.hidden;
+    car.set(!body.hidden);
+    box.classList.toggle("open", !body.hidden);
+    if (body.hidden || body.dataset.got) return;
+    body.textContent = "читаю файл...";
+    fetchClip(path).then((text) => {
+      body.dataset.got = "1";
+      body.textContent = text;
+      top.append(copyBtn(text));
+    }).catch((err) => {
+      body.textContent = "фрагмент не прочитался: " + err;
+    });
+  });
+  box.append(top, body);
+  return box;
+}
+
 // Блок работы субагента: заголовок с подписью и счётом ходов, внутри та же
 // лента. Свёрнут по умолчанию, разворачивается кликом; последняя строка видна
 // в заголовке, чтобы по ней было видно, чем субагент занят прямо сейчас.
@@ -7844,20 +7874,23 @@ function chatItem(item) {
     if (item.note) bits.push(item.note);
     if (item.sel) bits.push("с выделением");
     if (item.pick) bits.push("с местом экрана");
+    if ((item.shots || []).length) bits.push("с картинкой");
+    if ((item.frags || []).length) bits.push("с фрагментом");
     const wrap = chatBubble(who, item.text, bits.join(", "), "", item.quote ? quoteEl(item) : null);
     if (item.sel) wrap.append(selFold(item.selFile || "постановка", item.sel));
     // Места экрана стоят при пузыре своим свёрнутым блоком: в самой реплике им
     // места нет, а терять описатель незачем, по нему находят место в коде.
     if (item.pick) wrap.append(pickFold(item.pickScreen || "", item.pick));
-    if (item.shot) {
+    for (const p of item.shots || []) {
       // Картинка лежит файлом на машине, и браузеру её отдаёт ручка вложений.
-      const thumb = shotThumb(shotURL(item.shot), baseName(item.shot));
+      const thumb = shotThumb(shotURL(p), baseName(p));
       thumb.addEventListener("error", () => {
         thumb.hidden = true;
-        wrap.append(el("div", "svcline", "картинка не открылась: " + item.shot));
+        wrap.append(el("div", "svcline", "картинка не открылась: " + p));
       });
       wrap.append(thumb);
     }
+    for (const p of item.frags || []) wrap.append(fragFold(p));
     return wrap;
   }
   return replyEl(item);
@@ -7924,6 +7957,65 @@ function shotShut() {
   const box = shotLens;
   shotLens = null;
   document.removeEventListener("keydown", shotKey);
+  if (!box) return;
+  if (box.parentElement && box.parentElement.removeChild) box.parentElement.removeChild(box);
+  else if (document.body.removeChild) document.body.removeChild(box);
+}
+
+// Чтение фрагмента с сервера: полный текст лежит файлом в каталоге загрузок, и
+// берётся ручкой вложений, как картинка миниатюрой. Владелец называется
+// каталогом самого пути, как у адреса картинки: лента бывает открыта другим
+// разговором, а вложение лежит у своего хозяина.
+async function fetchClip(path) {
+  const parts = String(path || "").split("/").filter(Boolean);
+  const name = parts[parts.length - 1] || "";
+  const owner = parts.length > 1 ? parts[parts.length - 2] : chatShotSid;
+  const resp = await fetch(chatsURL(chatShotProject) + "/" + encodeURIComponent(owner) +
+    "/clip?name=" + encodeURIComponent(name));
+  if (!resp.ok) throw new Error("ответ " + resp.status);
+  return resp.text();
+}
+
+// Разворот фрагмента поверх страницы: текст читают и копируют, а меняют его
+// удалением и повторной вставкой. Узел живёт при body, как разворот снимка:
+// лента прокручивается, и разворачиваться большой вставке в ней некуда.
+let fragLens = null;
+
+function fragOpen(text, name) {
+  fragShut();
+  const box = el("div", "shotbig fragbig");
+  box.id = "shotbig";
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-label", "фрагмент " + (name || "чата"));
+  const pre = el("pre", "fragpre", text);
+  box.append(pre);
+  const copy = el("button", "shotx fragcp", "Копировать");
+  copy.title = "Скопировать фрагмент целиком";
+  copy.setAttribute("aria-label", copy.title);
+  copy.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    copyInto(copy, text);
+  });
+  box.append(copy);
+  const shut = el("button", "shotx");
+  shut.title = "Закрыть фрагмент";
+  shut.setAttribute("aria-label", shut.title);
+  shut.append(icon("close"));
+  box.append(shut);
+  box.addEventListener("click", () => { fragShut(); });
+  fragLens = box;
+  document.body.append(box);
+  document.addEventListener("keydown", fragKey);
+}
+
+function fragKey(ev) {
+  if (ev.key === "Escape") fragShut();
+}
+
+function fragShut() {
+  const box = fragLens;
+  fragLens = null;
+  document.removeEventListener("keydown", fragKey);
   if (!box) return;
   if (box.parentElement && box.parentElement.removeChild) box.parentElement.removeChild(box);
   else if (document.body.removeChild) document.body.removeChild(box);
@@ -8595,20 +8687,60 @@ function chatTaskLastSet(task, sid) {
   }
 }
 
-// Вложение хранится рядом с черновиком, но в памяти страницы, а не в
-// localStorage: снимок это dataURL в мегабайты, хранилище на нём отказывает по
-// квоте и уносит заодно текст черновика. Переключение разговора память не
-// трогает, и вставленная картинка возвращается вместе с недописанной репликой
-// (замечание 6).
-const chatShots = new Map();
+// Вложения реплики живут списком в памяти страницы, а не в localStorage:
+// снимок это dataURL в мегабайты, и хранилище на нём отказывает по квоте,
+// унося заодно текст черновика. Ссылки на вложения (вид, имя, путь файла) в
+// хранилище едут: они крошечные, и по ним начатый разговор возвращает
+// вложения после перезагрузки, а данные читаются ручками сервера. У
+// незачатого разговора ссылки держит сама запись на сервере. Переключение
+// разговора память не трогает, и вложения возвращаются вместе с недописанной
+// репликой (замечание 6).
+const chatClips = new Map();
 
-function chatShotRead(addr) {
-  return chatShots.get(addr) || null;
+function chatClipsRead(addr) {
+  return chatClips.get(addr) || null;
 }
 
-function chatShotWrite(addr, pic) {
-  if (pic) chatShots.set(addr, pic);
-  else chatShots.delete(addr);
+function chatClipsWrite(addr, list) {
+  if (list && list.length) chatClips.set(addr, list);
+  else chatClips.delete(addr);
+}
+
+// Ссылка без данных: то, что идёт в хранилище и в запись незачатого разговора.
+function clipLean(c) {
+  return { kind: c.kind || "", name: c.name || "", path: c.path || "", bytes: c.bytes || 0 };
+}
+
+function chatClipsStoredRead(addr) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CHAT_DRAFT_KEY + addr + ".clips") || "[]");
+    return Array.isArray(raw) ? raw : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function chatClipsStoredWrite(addr, list) {
+  try {
+    if (list && list.length) {
+      localStorage.setItem(CHAT_DRAFT_KEY + addr + ".clips", JSON.stringify(list.map(clipLean)));
+    } else {
+      localStorage.removeItem(CHAT_DRAFT_KEY + addr + ".clips");
+    }
+  } catch (err) {
+    // приватный режим браузера: ссылки живут до перезагрузки
+  }
+}
+
+// Порог свёртки вставки во фрагмент. Тот же порог, что у выжимки вывода
+// команд (thresholdRunes в internal/frame/frame.go): чат и вывод команд не
+// должны расходиться в том, что считать большим. Считается символами, а не
+// байтами: кириллица в UTF-8 тяжелее втрое, и байтовый порог резал бы её
+// раньше латиницы.
+const CHAT_FOLD_RUNES = 4096;
+
+function runesOf(text) {
+  return Array.from(String(text || "")).length;
 }
 
 function chatDraftRead(addr) {
@@ -11841,10 +11973,14 @@ async function chatBlankMake(project, task) {
 // chatDraftPush держит набранный текст при самой записи. У начатого разговора
 // черновик держит вкладка, у незачатого держать его негде: транскрипта нет. Он
 // же говорит уборке, что запись человеку нужна, и брошенной её не считают.
-function chatDraftPush(project, id, text) {
+// Ссылки на вложения едут тем же черновиком: после перезагрузки вкладки блоки
+// возвращаются на место по путям, сами файлы на сервере уже лежат.
+function chatDraftPush(project, id, text, files) {
   if (!id) return;
+  const body = { text };
+  if (files) body.files = files;
   api(chatsURL(project) + "/" + encodeURIComponent(id) + "/draft",
-    { method: "POST", body: { text } }).catch(console.error);
+    { method: "POST", body }).catch(console.error);
 }
 
 // chatModelKeep пишет модель незачатого разговора в его память: выбор, сделанный
@@ -12398,6 +12534,25 @@ function shotPrefix(path) {
   return '<screenshot file="' + path + '">\nвставлен снимок экрана\n</screenshot>\n';
 }
 
+// Префикс фрагмента той же формой: путь для агента, размер в строке-теле, чтобы
+// и человек по эху видел, сколько лежит во вложении.
+function fragPrefix(path, bytes) {
+  const kb = Math.max(1, Math.round((bytes || 0) / 1024));
+  return '<fragment file="' + path + '">\nвставлен фрагмент ' + kb + ' КБ\n</fragment>\n';
+}
+
+// Префиксы всех вложений реплики: снимки, потом фрагменты, перед словами
+// человека. Порядок тот же, в каком их снимает сервер, иначе эхо и пузырь
+// разойдутся в том, что считать словами.
+function attachPrefix(list) {
+  let out = "";
+  for (const c of list || []) {
+    if (!c.path) continue;
+    out += c.kind === "image" ? shotPrefix(c.path) : fragPrefix(c.path, c.bytes);
+  }
+  return out;
+}
+
 // Пикер элементов экрана. Замечание про место на экране человек описывает
 // словами («та строка с рангом слева»), и исполнитель ищет это место в app.js
 // наугад. Пикер даёт ткнуть в само место: в реплику уезжает описатель, по
@@ -12733,7 +12888,10 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       const wrap = chatBubble("вы", m.text, m.sel ? "с выделением" : "", why, null, mark, off);
       wrap.classList.add("m-local", "m-" + m.state);
       if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
-      if (m.pic) wrap.append(shotThumb(m.pic.data, m.pic.name));
+      for (const c of m.clips || []) {
+        if (c.kind === "image" && c.path) wrap.append(shotThumb(shotURL(c.path), c.name || "снимок"));
+        else if (c.kind === "frag" && c.path) wrap.append(fragFold(c.path));
+      }
       // Местный пузырь встаёт в ту же разметку строки ленты, что и запись из
       // транскрипта: без обёртки frow он рисовался без левой колонки с нитью и
       // кружком, и по приходе эха реплика прыгала вправо на ширину этой колонки.
@@ -12839,8 +12997,9 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
   };
 
   // Неушедшее с прошлого захода: перезагрузка страницы больше не теряет
-  // набранное. Выделение и картинка с ним не едут, они живут одним заходом, и
-  // восстановленная реплика уходит словами (POC, замечание про телефон).
+  // набранное. Выделение живёт одним заходом, а вложения уехали на сервер
+  // раньше реплики и стоят в её проводе: повтор едет тем же проводом, и файлы
+  // второй раз не кладутся.
   if (addr) {
     for (const rec of echoRead(project, addr)) {
       seq += 1;
@@ -12848,7 +13007,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
         state: rec.state, why: rec.why, born: rec.born, since: rec.since,
         tmux: rec.tmux, queue: rec.queue, task: rec.task,
-        retry: (again) => resend(again, rec.id) });
+        retry: (again) => resend(again, rec.id, rec.wire) });
     }
     // Снятые с дверного ключа показываются один раз: в персист их пишет разбор
     // echoSweep и там же снимает ключ, а тут они только стоят в ленте до
@@ -12893,17 +13052,17 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       }
     },
     // Пузырь встаёт до похода на сервер: отправка видна мгновенно.
-    // wire это то, что ушло агенту (с префиксом выделения), и сверка эха идёт
-    // по нему: в транскрипте лежит именно он. text это слова человека, их и
-    // видно в пузыре.
-    add(text, retry, wire, sel, pic, id) {
+    // wire это то, что ушло агенту (с префиксами вложений и выделения), и
+    // сверка эха идёт по нему: в транскрипте лежит именно он. text это слова
+    // человека, их и видно в пузыре, а вложения стоят при них своими блоками.
+    add(text, retry, wire, sel, clips, id) {
       seq += 1;
       // Ключ записи держится за саму запись: повтор той же реплики едет с тем
       // же ключом, иначе сервер видит не повтор, а новую реплику. Простой
       // берётся от первой попытки с этим ключом: дожим это та же реплика, а не
       // новая, и порог снятия не должен обнуляться каждой попыткой.
       const key = id || msgKey();
-      const m = { key: "local-" + seq, id: key, text, wire: wire || text, sel, pic,
+      const m = { key: "local-" + seq, id: key, text, wire: wire || text, sel, clips,
         state: "wait", born: Date.now(), since: sinceOf.get(key) || Date.now(), retry };
       sinceOf.set(key, m.since);
       mine.push(m);
@@ -13175,7 +13334,7 @@ function chatPanel(project, st) {
     (st.blank && st.entry ? st.entry.draft || "" : "");
   const draftSave = (text) => {
     chatDraftWrite(st.addr, text);
-    if (st.blank) chatDraftPush(project, st.blank, text);
+    if (st.blank) chatDraftPush(project, st.blank, text, attach.map(clipLean));
   };
   const savedHeight = chatDraftHeight(st.addr);
   if (savedHeight > 0) ta.style.height = savedHeight + "px";
@@ -13198,13 +13357,29 @@ function chatPanel(project, st) {
   const clips = el("div", "cclips");
   row.append(clips);
   let pinnedSel = null;
-  let shot = chatShotRead(st.addr);
+  // Вложения реплики лежат списком: снимков и фрагментов бывает по несколько,
+  // и каждое добавляется и снимается само по себе. После отправки список
+  // пустеет, и та же вставка в следующей реплике не считается повтором.
+  let attach = chatClipsRead(st.addr) || chatClipsStoredRead(st.addr) ||
+    (st.blank && st.entry ? st.entry.files || [] : []);
   // Места экрана, выбранные пикером: описатели, снятые в момент нажатия.
   let picks = [];
+  // Ссылки на вложения лежат рядом с черновиком: начатому разговору их держит
+  // вкладка, а незачатому сам сервер своей записью. Отправленное пустеет в
+  // обоих местах сразу, чтобы повторная вставка не находила старого.
+  let attachPushed = "";
+  const attachKeep = () => {
+    const lean = JSON.stringify(attach.map(clipLean));
+    chatClipsWrite(st.addr, attach);
+    if (lean === attachPushed) return;
+    attachPushed = lean;
+    if (st.sid) chatClipsStoredWrite(st.addr, attach);
+    else if (st.blank) chatDraftPush(project, st.blank, ta.value, attach.map(clipLean));
+  };
   const drawClips = () => {
-    // Отрисовка блоков заодно и запоминает вложение: меняют его только тут же
-    // рядом, и держать запись в трёх местах незачем.
-    chatShotWrite(st.addr, shot);
+    // Отрисовка блоков заодно и запоминает вложения: меняют их только тут же
+    // рядом, и держать запись в нескольких местах незачем.
+    attachKeep();
     clips.replaceChildren();
     if (pinnedSel) {
       const chip = el("div", "cclip");
@@ -13232,23 +13407,46 @@ function chatPanel(project, st) {
       chip.append(off);
       clips.append(chip);
     }
-    if (shot) {
-      const chip = el("div", "cclip");
-      const thumb = el("img", "cshot");
-      // Не загрузившаяся картинка называет себя словами: значок битого
-      // изображения от браузера человеку ничего не объясняет, и ровно на нём
-      // спор о «кривой вставке» и стоял (замечание тринадцатого круга POC).
-      thumb.addEventListener("error", () => {
-        thumb.hidden = true;
-        chip.append(el("span", "bad", "картинка не показалась"));
-      });
-      thumb.src = shot.data;
-      chip.append(thumb);
-      chip.append(el("span", "", shot.name));
+    for (const clip of attach) {
+      const chip = el("div", "cclip cfrag" + (clip.hi ? " hi" : ""));
       const off = el("button", "cclipx");
-      off.append(icon("close"));
-      off.title = "Убрать картинку";
-      off.addEventListener("click", () => { shot = null; drawClips(); });
+      if (clip.kind === "image") {
+        const thumb = el("img", "cshot");
+        // Не загрузившаяся картинка называет себя словами: значок битого
+        // изображения от браузера человеку ничего не объясняет, и ровно на нём
+        // спор о «кривой вставке» и стоял (замечание тринадцатого круга POC).
+        thumb.addEventListener("error", () => {
+          thumb.hidden = true;
+          chip.append(el("span", "bad", "картинка не показалась"));
+        });
+        thumb.src = clip.data || (clip.path ? shotURL(clip.path) : "");
+        chip.append(thumb);
+        chip.append(el("span", "", clip.name || "снимок"));
+        chip.classList.remove("cfrag");
+        off.title = "Убрать картинку";
+      } else {
+        chip.append(el("b", "", "фрагмент"));
+        chip.append(withFull(el("span", "", foldPeek(clip.text || clip.name || clip.path || "", 40)),
+          clip.text || ""));
+        // Фрагмент открывается просмотром с копированием, без правки: менять
+        // его удалением и повторной вставкой.
+        if (clip.text) {
+          chip.addEventListener("click", () => { fragOpen(clip.text, clip.name); });
+        } else if (clip.path) {
+          chip.addEventListener("click", () => {
+            fetchClip(clip.path).then((text) => { fragOpen(text, clip.name); }).catch(console.error);
+          });
+        }
+        off.title = "Убрать фрагмент";
+      }
+      if (clip.bad) chip.append(el("span", "bad", "не ушло: " + clip.bad));
+      else if (!clip.path && !clip.bad) chip.append(el("span", "", clip.busy ? "грузится" : "ждёт отправки"));
+      off.setAttribute("aria-label", off.title);
+      off.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        attach = attach.filter((c) => c !== clip);
+        drawClips();
+      });
       chip.append(off);
       clips.append(chip);
     }
@@ -13341,38 +13539,99 @@ function chatPanel(project, st) {
   // рождается только после записи файла. Сессии у чата к этому моменту может и
   // не быть (новый разговор, чужая задача), и тогда файл ложится под свежим
   // ключом: прежде вложение без сессии пропадало молча, картинка не уезжала, и
-  // человек узнавал об этом только от агента (жалоба на чат DK-460).
-  const shotKey = () => st.sid || "new-" + Date.now();
+  // человек узнавал об этом только от агента (жалоба на чат DK-460). Ключом
+  // незачатого разговора стоит его запись на сервере, а не свежая: файл,
+  // положенный мимо записи, не стирался бы вместе с ней.
+  const shotKey = () => st.sid || st.blank || "new-" + Date.now();
 
-  const putShot = async (raw0) => {
-    if (!raw0) return { path: "", error: "" };
-    // Ужимается снимок здесь, а не при вставке: в коробке отправки человек
-    // видит то, что вставил, а на сервер едет то, что пролезет во внешний вход.
-    const pic = await shrinkShot(raw0);
-    // dataURL это «data:<тип>;base64,<данные>»: режется он по первой запятой,
-    // в самом base64 запятых нет. Тип берётся из dataURL, а не из типа
-    // буфера: буфер иногда называет вид иначе, чем то, что реально пришло.
-    const raw = String(pic.data);
-    const cut = raw.indexOf(",");
-    const kind = (raw.match(/^data:([^;,]+)/) || [])[1] || pic.kind;
-    const r = await api(chatsURL(project) + "/" + encodeURIComponent(shotKey()) + "/shot", {
-      method: "POST",
-      body: { kind, data: cut >= 0 ? raw.slice(cut + 1) : raw },
-    });
-    if (!r.ok) return { path: "", error: r.body.error || "картинка не легла" };
-    if (!r.body.path) return { path: "", error: "сервер не назвал путь вложения" };
-    return { path: r.body.path, error: "" };
+  // putClip кладёт одно вложение на сервер и приписывает ему путь. Вложение,
+  // уже лежащее или едущее, обходит попытку: повторная кладка тех же данных
+  // плодила бы файлы.
+  const putClip = async (clip) => {
+    if (!clip || clip.path || clip.busy) return;
+    // Восстановленная ссылка без пути едет без данных: сама вставка умерла
+    // вместе с вкладкой, и повторить её может только человек новой вставкой.
+    if (clip.kind === "image" && !clip.data) {
+      clip.bad = "снимок не пережил перезагрузку";
+      return;
+    }
+    if (clip.kind !== "image" && !clip.text) {
+      clip.bad = "текст не пережил перезагрузку";
+      return;
+    }
+    clip.busy = true;
+    clip.bad = "";
+    try {
+      let r;
+      if (clip.kind === "image") {
+        // Ужимается снимок здесь, а не при вставке: в коробке отправки человек
+        // видит то, что вставил, а на сервер едет то, что пролезет во внешний вход.
+        const pic = await shrinkShot(clip.data);
+        // dataURL это «data:<тип>;base64,<данные>»: режется он по первой запятой,
+        // в самом base64 запятых нет. Тип берётся из dataURL, а не из типа
+        // буфера: буфер иногда называет вид иначе, чем то, что реально пришло.
+        const raw = String(pic.data);
+        const cut = raw.indexOf(",");
+        const kind = (raw.match(/^data:([^;,]+)/) || [])[1] || pic.kind;
+        r = await api(chatsURL(project) + "/" + encodeURIComponent(shotKey()) + "/shot", {
+          method: "POST",
+          body: { kind, data: cut >= 0 ? raw.slice(cut + 1) : raw },
+        });
+      } else {
+        r = await api(chatsURL(project) + "/" + encodeURIComponent(shotKey()) + "/clip", {
+          method: "POST",
+          body: { text: clip.text },
+        });
+      }
+      if (!r.ok) {
+        clip.bad = r.body.error || "вложение не легло";
+        return;
+      }
+      if (!r.body.path) {
+        clip.bad = "сервер не назвал путь вложения";
+        return;
+      }
+      clip.path = r.body.path;
+      clip.bytes = r.body.bytes || clip.bytes || 0;
+    } catch (err) {
+      clip.bad = String(err && err.message || err);
+    } finally {
+      clip.busy = false;
+    }
   };
 
-  const post = (text, sel, pic, key, took) => {
+  // addClip добавляет вложение в список текущей реплики. Точная копия уже
+  // лежащего не добавляется второй раз: существующий блок мигает, и человек
+  // видит, что вставка уже при деле.
+  const addClip = (clip) => {
+    const body = clip.data || clip.text || "";
+    const was = attach.find((c) => c.kind === clip.kind && (c.data || c.text) === body);
+    if (was) {
+      was.hi = true;
+      drawClips();
+      setTimeout(() => { was.hi = false; drawClips(); }, 1200);
+      return;
+    }
+    clip.hi = true;
+    attach = attach.concat([clip]);
+    drawClips();
+    setTimeout(() => { clip.hi = false; drawClips(); }, 1200);
+    putClip(clip).then(drawClips);
+  };
+
+  const post = (text, sel, withClips, key, took, wireHint) => {
     // Пузырь встаёт в ленту до похода на сервер, как в мессенджерах: ждать
     // ответа ручки, а потом ещё и записи в транскрипт, значит показывать
     // человеку пустоту в ответ на нажатие.
     // Агенту едет реплика с префиксом выделения, а в ленте пузырь показывает
     // слова человека и пометку: простыня выделения в ленте закрыла бы разговор.
     const spots = took && took.length ? pickPrefix(took) : "";
-    const wire0 = spots + (sel ? selPrefix(sel) + text : text);
-    const m = echo.add(text, (again, id) => post(again, sel, pic, id, took), wire0, sel, pic, key);
+    const wire0 = wireHint || (spots + (sel ? selPrefix(sel) + text : text));
+    // Повтор восстановленной записи едет с тем же проводом: вложения той
+    // реплики уже лежат на сервере, и строить провод заново значило бы
+    // перечитать их в панель, которой их уже не принадлежит.
+    const m = echo.add(text, (again, id) => post(again, sel, withClips, id, took, wireHint),
+      wire0, sel, withClips, key);
     send.disabled = true;
     const done = () => { send.disabled = Boolean(way.off); };
     // Подъём сессии первой репликой. Умершая сессия подъёма это повод поднять
@@ -13511,21 +13770,30 @@ function chatPanel(project, st) {
         });
     };
     // Не легло вложение, значит реплика не уходит вовсе: агент ответил бы на
-    // половину сказанного, а человек считал бы, что картинку тот видит.
-    // Причина сказана словами, пузырь остаётся с пометкой и повтором.
-    putShot(pic)
-      .then((got) => {
-        if (got.error) {
+    // половину сказанного, а человек считал бы, что картинку или фрагмент тот
+    // видит. Причина сказана словами, пузырь остаётся с пометкой и повтором.
+    // Провод восстановленной записи уже несёт свои префиксы, и догружать
+    // ничего не надо: ключ тот же, и кладка была бы второй.
+    if (wireHint) {
+      go(wireHint);
+      return;
+    }
+    Promise.all((withClips || []).map((c) => putClip(c)))
+      .then(() => {
+        const bad = (withClips || []).find((c) => !c.path);
+        if (bad) {
           echo.bad(m);
-          sayResult("картинка не ушла: " + got.error, true);
+          sayResult("вложение не ушло: " + (bad.bad || "без причины"), true);
+          drawClips();
           done();
           return;
         }
-        go(got.path ? shotPrefix(got.path) + wire0 : wire0);
+        go(attachPrefix(withClips) + wire0);
       })
       .catch((err) => {
         echo.bad(m);
-        sayResult("картинка не ушла: " + err, true);
+        sayResult("вложение не ушло: " + err, true);
+        drawClips();
         done();
         console.error(err);
       });
@@ -13554,10 +13822,11 @@ function chatPanel(project, st) {
     ta.style.height = "";
     // Выделенный в постановке кусок уезжает вместе с репликой: человек
     // выделяет абзац, пишет «поправь этот текст», и агент получает и слова, и
-    // сам текст (замечание 3 девятого круга POC).
-    post(text, pinnedSel || grabSelection(), shot, null, picks);
+    // сам текст (замечание 3 девятого круга POC). Вложения уезжают списком:
+    // снимки и фрагменты одной реплики едут вместе, сколько бы их ни было.
+    post(text, pinnedSel || grabSelection(), attach, null, picks);
     pinnedSel = null;
-    shot = null;
+    attach = [];
     picks = [];
     // Выбор кончился вместе с репликой: места уехали, и держать экран в режиме
     // выбора незачем.
@@ -13566,9 +13835,11 @@ function chatPanel(project, st) {
   };
   // Enter отправляет, перенос строки идёт через Shift+Enter: разговор набирают
   // короткими репликами, и тянуться к кнопке на каждой из них незачем.
-  // Вставка картинки из буфера: скриншот кладётся блоком в строку отправки, а
-  // агенту уезжает ссылкой на файл, который он прочитает своим Read (замечание
-  // 4). Бинарной передачи через канал сессий тут нет и не нужно.
+  // Вставка из буфера: скриншот и длинный текст ложатся блоками в строку
+  // отправки, а агенту уезжают ссылками на файлы, которые он прочитает своим
+  // Read (замечание 4). Бинарной передачи через канал сессий тут нет и не
+  // нужно. Короткий текст остаётся в поле: реплику набирают словами, а не
+  // файлом.
   ta.addEventListener("paste", (ev) => {
     const items = (ev.clipboardData && ev.clipboardData.items) || [];
     for (const it of items) {
@@ -13578,11 +13849,15 @@ function chatPanel(project, st) {
       if (ev.preventDefault) ev.preventDefault();
       const reader = new FileReader();
       reader.onload = () => {
-        shot = { data: String(reader.result || ""), kind: it.type, name: "снимок" };
-        drawClips();
+        addClip({ kind: "image", data: String(reader.result || ""), name: "снимок" });
       };
       reader.readAsDataURL(file);
       return;
+    }
+    const text = ev.clipboardData ? ev.clipboardData.getData("text/plain") : "";
+    if (text && runesOf(text) >= CHAT_FOLD_RUNES) {
+      if (ev.preventDefault) ev.preventDefault();
+      addClip({ kind: "frag", text, name: "фрагмент" });
     }
   });
   // Enter на телефоне это перевод строки, а не отправка: виртуальная
@@ -13645,7 +13920,7 @@ function chatPanel(project, st) {
     const legacy = st.sid && st.addr && st.addr !== st.sid
       ? echoSweep(project, st.addr, st.chats) : [];
     echo = makeEcho(project, pend, feed, st.sid || st.addr,
-      (more, id) => post(more, null, null, id), legacy);
+      (more, id, wire) => post(more, null, null, id, null, wire), legacy);
     chatLive.push(echo.clear, echo.stop);
     // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
     // работе поверх причины значило бы врать.

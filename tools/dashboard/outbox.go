@@ -39,7 +39,12 @@ type saidRec struct {
 	Way     string `json:"way,omitempty"`
 	Sel     string `json:"sel,omitempty"`
 	SelFile string `json:"selFile,omitempty"`
-	Shot    string `json:"shot,omitempty"`
+	// Shot это путь картинки в старой записи журнала, одной на реплику:
+	// вложения стали списком, а строки, лежащие в файле, перезаписи не
+	// подлежат, и старое поле читается наравне с новым.
+	Shot    string   `json:"shot,omitempty"`
+	Shots   []string `json:"shots,omitempty"`
+	Frags   []string `json:"frags,omitempty"`
 }
 
 // saidSrc это приставка источника в ключах записей журнала: ключ выходит
@@ -126,9 +131,13 @@ func saidReplies(lines []string, src string, from int) ([]reply, int) {
 		if rec.Kind == saidKindMark {
 			role = roleMark
 		}
+		shots := rec.Shots
+		if rec.Shot != "" {
+			shots = append([]string{rec.Shot}, shots...)
+		}
 		out = append(out, reply{
 			Role: role, Time: rec.Time, Text: rec.Text,
-			Sel: rec.Sel, SelFile: rec.SelFile, Shot: rec.Shot,
+			Sel: rec.Sel, SelFile: rec.SelFile, Shots: shots, Frags: rec.Frags,
 			Key: src + ":" + strconv.Itoa(idx),
 		})
 	}
@@ -283,13 +292,13 @@ func effTimes(items []reply) []time.Time {
 	return out
 }
 
-// saidOf собирает запись журнала из того, что уехало агенту. Префиксы картинки
+// saidOf собирает запись журнала из того, что уехало агенту. Префиксы вложений
 // и выделения отрезаются тем же разбором, каким их читает лента из транскрипта:
 // в пузыре видны слова человека, а приложенное стоит при них отдельно.
 func saidOf(wire, way string) saidRec {
-	shot, rest := cutShot(wire)
-	sel, file, text := cutSelection(rest)
-	return saidRec{Text: text, Way: way, Sel: sel, SelFile: file, Shot: shot}
+	w := cutWraps(wire)
+	return saidRec{Text: w.rest, Way: way, Sel: w.sel, SelFile: w.file,
+		Shots: w.shots, Frags: w.frags}
 }
 
 // saidMark пишет в журнал разговора пометку-разделитель. Отказ записи стоит

@@ -148,14 +148,42 @@ func TestSessionMessageSeenInFeed(t *testing.T) {
 }
 
 // Приложенное к реплике едет в журнал отдельными полями, как его читает лента
-// из транскрипта: в пузыре слова человека, выделение и картинка при них.
+// из транскрипта: в пузыре слова человека, выделение, картинки и фрагменты при
+// них. Снимков и фрагментов в одной реплике бывает по несколько.
 func TestSaidOfCutsPrefixes(t *testing.T) {
 	wire := "<screenshot file=\"/tmp/a.png\">\nвставлен снимок экрана\n</screenshot>\n" +
+		"<screenshot file=\"/tmp/b.png\">\nвставлен снимок экрана\n</screenshot>\n" +
+		"<fragment file=\"/tmp/c.txt\">\nвставлен фрагмент 4 КБ\n</fragment>\n" +
 		"<selection file=\"постановка\">\nкусок текста\n</selection>\nчто это значит"
 	got := saidOf(wire, "socket")
 	if got.Text != "что это значит" || got.Sel != "кусок текста" ||
-		got.SelFile != "постановка" || got.Shot != "/tmp/a.png" {
+		got.SelFile != "постановка" {
 		t.Fatalf("разбор отправленного: %+v", got)
+	}
+	if len(got.Shots) != 2 || got.Shots[0] != "/tmp/a.png" || got.Shots[1] != "/tmp/b.png" {
+		t.Fatalf("снимки отправленного: %+v", got.Shots)
+	}
+	if len(got.Frags) != 1 || got.Frags[0] != "/tmp/c.txt" {
+		t.Fatalf("фрагменты отправленного: %+v", got.Frags)
+	}
+}
+
+// Старая строка журнала несла один снимок полем shot: записи в файле перезаписи
+// не подлежат, и старое поле читается наравне со списком.
+func TestSaidRepliesMergeLegacyShot(t *testing.T) {
+	lines := []string{
+		`{"time":"2026-10-17T10:00:01Z","text":"один снимок","shot":"/tmp/old.png"}`,
+		`{"time":"2026-10-17T10:00:02Z","text":"два снимка","shots":["/tmp/a.png","/tmp/b.png"],"frags":["/tmp/c.txt"]}`,
+	}
+	got, _ := saidReplies(lines, saidSrc+"sess-x", 0)
+	if len(got) != 2 {
+		t.Fatalf("строки журнала не разобрались: %+v", got)
+	}
+	if len(got[0].Shots) != 1 || got[0].Shots[0] != "/tmp/old.png" {
+		t.Fatalf("старое поле снимка потерялось: %+v", got[0].Shots)
+	}
+	if len(got[1].Shots) != 2 || len(got[1].Frags) != 1 {
+		t.Fatalf("списки вложений не доехали: %+v", got[1])
 	}
 }
 

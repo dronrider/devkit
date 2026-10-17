@@ -360,6 +360,7 @@ func TestQuietCounterCountsPageTurnNotArrival(t *testing.T) {
 	}
 }
 
+// regcheck:test-begin
 // TestQuietCounterSkipsDepartureTurn держит границу круга ухода. Уход
 // ставится в середину раунда рассылки, и хвост раунда уезжает с уходным
 // кругом, хотя отправлен уже после отметки. Такой запрос раунда, начатого до
@@ -382,6 +383,7 @@ func TestQuietCounterSkipsDepartureTurn(t *testing.T) {
 		t.Errorf("после ухода в фон сосчитано %v, а следующим кругом завёлся один запрос квоты", got)
 	}
 }
+// regcheck:test-end
 
 // quietChrome ищет браузер для этого замера. Сверх общего findChrome сюда
 // годится и обычный Chrome из Applications: стендам ширины он не подходит

@@ -8713,10 +8713,12 @@ function clipLean(c) {
 
 function chatClipsStoredRead(addr) {
   try {
-    const raw = JSON.parse(localStorage.getItem(CHAT_DRAFT_KEY + addr + ".clips") || "[]");
-    return Array.isArray(raw) ? raw : [];
+    const raw = localStorage.getItem(CHAT_DRAFT_KEY + addr + ".clips");
+    if (!raw) return null;
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list : null;
   } catch (err) {
-    return [];
+    return null;
   }
 }
 
@@ -13372,6 +13374,13 @@ function chatPanel(project, st) {
     const lean = JSON.stringify(attach.map(clipLean));
     chatClipsWrite(st.addr, attach);
     if (lean === attachPushed) return;
+    // Пустой список на первом касании панели никуда не пишется: своей правды
+    // о вложениях у свежей вкладки ещё нет, а запись незачатого разговора
+    // держит их сама, и пустой черновик стёр бы их с сервера до показа.
+    if (lean === "[]" && !attachPushed) {
+      attachPushed = lean;
+      return;
+    }
     attachPushed = lean;
     if (st.sid) chatClipsStoredWrite(st.addr, attach);
     else if (st.blank) chatDraftPush(project, st.blank, ta.value, attach.map(clipLean));

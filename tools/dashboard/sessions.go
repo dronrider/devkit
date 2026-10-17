@@ -2499,8 +2499,9 @@ func cutFirstWraps(text string) string {
 // значит, что реплика приехала без него, и это обычный случай.
 // wraps это приложенное к реплике, снятое с её начала: снимки экрана, текстовые
 // фрагменты, места пикера и выделенный кусок текста. Снимков и фрагментов в
-// одной реплике бывает несколько, остальное по одному блоку. Порядок съёма один
-// на все дороги реплики, потому что кладёт префиксы панель в том же порядке.
+// одной реплике бывает несколько, остальное по одному блоку. Снимки и фрагменты
+// снимаются одним циклом в любом порядке: панель кладёт их в порядке вставки, и
+// фрагмент перед снимком это обычный случай, а не ошибка человека.
 type wraps struct {
 	shots  []string
 	frags  []string
@@ -2514,20 +2515,17 @@ type wraps struct {
 func cutWraps(text string) wraps {
 	var w wraps
 	for {
-		m := shotWrapRe.FindStringSubmatch(text)
-		if m == nil {
-			break
+		if m := shotWrapRe.FindStringSubmatch(text); m != nil {
+			w.shots = append(w.shots, m[1])
+			text = strings.TrimLeft(text[len(m[0]):], "\n")
+			continue
 		}
-		w.shots = append(w.shots, m[1])
-		text = strings.TrimLeft(text[len(m[0]):], "\n")
-	}
-	for {
-		m := fragWrapRe.FindStringSubmatch(text)
-		if m == nil {
-			break
+		if m := fragWrapRe.FindStringSubmatch(text); m != nil {
+			w.frags = append(w.frags, m[1])
+			text = strings.TrimLeft(text[len(m[0]):], "\n")
+			continue
 		}
-		w.frags = append(w.frags, m[1])
-		text = strings.TrimLeft(text[len(m[0]):], "\n")
+		break
 	}
 	w.pick, w.screen, text = cutPicked(text)
 	w.sel, w.file, w.rest = cutSelection(text)

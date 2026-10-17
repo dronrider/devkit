@@ -39,8 +39,8 @@ func TestChatSayAndDraftRefuseOversizeWithWords(t *testing.T) {
 }
 
 // Разметка панели: порог свёртки вставки равен порогу выжимки команд, вставка
-// длиннее порога идёт блоком, дубликат не добавляется вторым блоком, а префиксы
-// вложений стоят в том порядке, в котором их снимает сервер.
+// длиннее порога идёт блоком, дубликат не добавляется вторым блоком, а ссылки
+// вложений незачатого разговора переживают перезагрузку вкладки.
 func TestStaticChatClipsFoldDedupAndOrder(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	if !strings.Contains(text, "thresholdRunes") {
@@ -63,12 +63,6 @@ func TestStaticChatClipsFoldDedupAndOrder(t *testing.T) {
 	if !strings.Contains(add, "c.kind === clip.kind") || !strings.Contains(add, "was.hi") {
 		t.Fatal("дубликат вставки не подсвечивает стоящий блок")
 	}
-	attach := funcBody(t, text, "function attachPrefix")
-	shotAt := strings.Index(attach, "shotPrefix")
-	fragAt := strings.Index(attach, "fragPrefix")
-	if shotAt < 0 || fragAt < 0 || shotAt > fragAt {
-		t.Fatal("префиксы вложений не в порядке съёма сервером")
-	}
 	if !strings.Contains(funcBody(t, text, "const post = (text, sel, withClips"), "attachPrefix(withClips) + wire0") {
 		t.Fatal("реплика не несёт префиксы всех вложений")
 	}
@@ -76,7 +70,33 @@ func TestStaticChatClipsFoldDedupAndOrder(t *testing.T) {
 	if !strings.Contains(stored, "clipLean") || strings.Contains(funcBody(t, text, "function clipLean"), "data") {
 		t.Fatal("ссылки вложений в хранилище едут с данными")
 	}
+	// Пустое хранилище вкладки читается null, а не пустым списком: пустой
+	// массив в цепочке источников истиннен, и вложения записи незачатого
+	// разговора не доходили до панели.
+	read := funcBody(t, text, "function chatClipsStoredRead")
+	if !strings.Contains(read, "if (!raw) return null") {
+		t.Fatal("пустое хранилище вкладок читается пустым списком, вложения записи не достаются")
+	}
+	// Первое касание панели не пишет пустой список на сервер: он стёр бы
+	// вложения черновика раньше, чем вкладка их показала.
+	keep := funcBody(t, text, "const attachKeep")
+	if !strings.Contains(keep, `lean === "[]" && !attachPushed`) {
+		t.Fatal("первое касание панели проталкивает пустой список вложений на сервер")
+	}
 	if !strings.Contains(text, "resend(again, rec.id, rec.wire)") {
 		t.Fatal("повтор восстановленной записи едет без своего провода")
+	}
+}
+
+// Отправленный провод со смешанным порядком вложений разбирается чисто: панель
+// кладёт префиксы в порядке вставки, и фрагмент перед снимком остаётся обычным
+// случаем. Стенд зовёт только saidOf и смотрит текст, отчего собирается на
+// старом коде, и краснота регрессии видна regcheck.
+func TestSaidOfPeelsMixedOrder(t *testing.T) {
+	wire := "<fragment file=\"/tmp/c.txt\">\nвставлен фрагмент 4 КБ\n</fragment>\n" +
+		"<screenshot file=\"/tmp/a.png\">\nвставлен снимок экрана\n</screenshot>\nчто это значит"
+	got := saidOf(wire, "socket")
+	if got.Text != "что это значит" {
+		t.Fatalf("смешанный порядок вложений оставил обёртку в тексте: %q", got.Text)
 	}
 }

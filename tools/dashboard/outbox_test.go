@@ -168,6 +168,27 @@ func TestSaidOfCutsPrefixes(t *testing.T) {
 	}
 }
 
+// Смешанный порядок вложений снимается целиком: панель кладёт префиксы в
+// порядке вставки, и фрагмент перед снимком это обычная реплика. Съём двумя
+// последовательными проходами оставлял обёртку снимка в тексте, и она уезжала
+// в журнал и пузырь после перезагрузки.
+func TestCutWrapsMixedOrder(t *testing.T) {
+	wire := "<fragment file=\"/tmp/c.txt\">\nвставлен фрагмент 4 КБ\n</fragment>\n" +
+		"<screenshot file=\"/tmp/a.png\">\nвставлен снимок экрана\n</screenshot>\n" +
+		"<fragment file=\"/tmp/d.txt\">\nвставлен ещё фрагмент\n</fragment>\n" +
+		"<screenshot file=\"/tmp/b.png\">\nвставлен второй снимок\n</screenshot>\nчто это значит"
+	w := cutWraps(wire)
+	if w.rest != "что это значит" {
+		t.Fatalf("смешанный порядок оставил обёртку в тексте: %q", w.rest)
+	}
+	if len(w.frags) != 2 || w.frags[0] != "/tmp/c.txt" || w.frags[1] != "/tmp/d.txt" {
+		t.Fatalf("фрагменты смешанного порядка: %+v", w.frags)
+	}
+	if len(w.shots) != 2 || w.shots[0] != "/tmp/a.png" || w.shots[1] != "/tmp/b.png" {
+		t.Fatalf("снимки смешанного порядка: %+v", w.shots)
+	}
+}
+
 // Старая строка журнала несла один снимок полем shot: записи в файле перезаписи
 // не подлежат, и старое поле читается наравне со списком.
 func TestSaidRepliesMergeLegacyShot(t *testing.T) {

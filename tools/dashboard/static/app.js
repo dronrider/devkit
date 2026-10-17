@@ -17970,6 +17970,8 @@ function resBar(pct, cls, val) {
 // и память едут двумя плотными полосками в той же строке. Прежде два блока
 // повторяли друг друга строем и различались одними цифрами (возврат человека
 // 2026-10-16). Значения различаются сами: процент это процессор, объём память.
+// Класс строки свой, а не rrow: то имя несёт строка ранговой карточки, её
+// поздние правила каскадом дули строку владельца паддингами (возврат 2026-10-17).
 function resOwners(view) {
   const cpu = view.cpu || {};
   const mem = view.mem || {};
@@ -17978,7 +17980,7 @@ function resOwners(view) {
   const out = [sum];
   for (const p of cpu.parts || mem.parts || []) {
     const [word, cls] = RES_PARTS[p.name] || [p.name, ""];
-    const row = el("div", "rrow");
+    const row = el("div", "rowner");
     row.append(el("em", "", word));
     const dual = el("span", "rdual");
     dual.append(resBar(p.cpu_pct, cls, resPct(p.cpu_pct)));
@@ -17993,12 +17995,14 @@ function resOwners(view) {
 // Топ сессий по памяти: имя ведёт в разговор сессии, проект разговора называет
 // сервер, и чужая доска едет в адресе разделителем. Второй показатель стоит
 // подсказкой на имени (возврат человека 2026-10-16: топ по процессору места
-// занимал много, а пользы не нёс).
+// занимал много, а пользы не нёс). Модификатор строки свой, а не rtop: то имя
+// несёт шапка ранговой карточки, её правила дули строку топа отступами
+// (возврат 2026-10-17).
 function resTop(rows) {
   if (!rows || !rows.length) return [];
   const out = [el("div", "qsub", "Сессии по памяти")];
   for (const r of rows) {
-    const row = el("div", "qrow rtop");
+    const row = el("div", "qrow rtopmem");
     const name = el("button", "alink", r.name || r.id);
     name.type = "button";
     name.title = "Открыть разговор сессии, процессор " + resPct(r.cpu_pct);

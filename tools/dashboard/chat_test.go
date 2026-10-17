@@ -3449,8 +3449,9 @@ func TestTaskMessageCallsHumanWhenLadderRefuses(t *testing.T) {
 
 // Строку Backlog реплика не поднимает: работу по ней никто не брал, и голова на
 // ней шла бы мимо вердикта agentctl pick и перевода в работу. Секции подъёма те
-// же, что у сирот, In progress и Check. Реплика остаётся недоставленной с
-// причиной, а вход её хранит.
+// же, что у сирот, In progress и Check. Реплика мёртвому окну не доставляется,
+// а держится ответом с причиной (DK-1399): файла задачи у строки стенда нет, и
+// исход остаётся строкой журнала.
 func TestTaskMessageLeavesBacklogRowAlone(t *testing.T) {
 	e, c, tmuxLog := replyEnv(t)
 
@@ -3462,11 +3463,10 @@ func TestTaskMessageLeavesBacklogRowAlone(t *testing.T) {
 	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session -d -s task-XR-2") {
 		t.Fatalf("реплика подняла голову непринятой строке Backlog: %q", got)
 	}
-	if !strings.Contains(text, `"undelivered":true`) {
-		t.Errorf("реплика в Backlog не названа недоставленной: %s", text)
+	if !strings.Contains(text, `"held":true`) || !strings.Contains(text, "Backlog") {
+		t.Errorf("реплика в Backlog не названа удержанной с причиной: %s", text)
 	}
-	src := readFile(t, filepath.Join(e.proj, ".devkit", "chat", "task-XR-2.in"))
-	if !strings.Contains(src, "возьми эту задачу") {
-		t.Fatalf("реплика пропала из входа задачи:\n%s", src)
+	if _, err := os.Stat(filepath.Join(e.proj, ".devkit", "chat", "task-XR-2.in")); !os.IsNotExist(err) {
+		t.Fatalf("реплика мёртвого окна легла в доставку: %v", err)
 	}
 }

@@ -315,6 +315,9 @@ func cmdServe(home, staticDir string) error {
 	// конфига, закрывает окно сам той же точкой, что и уборка в архив
 	// (chatidle.go, DK-828).
 	go srv.chatIdleKeeper(keeperStop)
+	// Дозор мёртвых окон: лежащие реплики задач, которых доставка не дождётся,
+	// откладываются в файлы задач с причиной (chathold.go, DK-1399).
+	go srv.chatHoldKeeper(keeperStop)
 	for _, e := range cfg.Errs {
 		logf("конфиг: %s", e)
 	}

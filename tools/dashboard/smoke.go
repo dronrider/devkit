@@ -1032,22 +1032,42 @@ func (s *smoke) stepMessage() (string, error) {
 }
 
 // stepTaskMessage: ответ задаче ложится безадресной строкой во вход задачи
-// основного чекаута (LLD DK-430, решение 2). Шаг идёт до файла, а не до ответа
-// API: читают этот вход подхват и сторожок, и важно, что строка лежит там, где
-// они её ищут, и без адресата, иначе сторожок не счёл бы её ответом задаче.
+// основного чекаута (LLD DK-430, решение 2). Строке Backlog без ведущей
+// сессии вход не разберёт никто, и её реплика откладывается с отказом
+// доставки (DK-1399), а безадресная строка меряется на идущей цели: у неё
+// живая голова, дорога строки прежняя и звонок лестницы не рождается. Шаг
+// идёт до файла, а не до ответа API: читают этот вход подхват и сторожок, и важно,
+// что строка лежит там, где они её ищут, и без адресата, иначе сторожок не
+// счёл бы её ответом задаче.
 func (s *smoke) stepTaskMessage() (string, error) {
 	const said = "прогон smoke: отвечаю задаче с карточки"
+	// Соседка в Backlog без сессии: реплика в доставку не легла, а ответ
+	// отчитался откладыванием, и повтор не бился бы об отказ вечно.
+	var held struct {
+		Held    bool   `json:"held"`
+		Message string `json:"message"`
+	}
+	if err := s.call("POST", "/api/projects/demo/tasks/"+smokeTask+"/message",
+		fmt.Sprintf(`{"text": %q}`, said), http.StatusOK, &held); err != nil {
+		return "", err
+	}
+	if !held.Held || !strings.Contains(held.Message, "Backlog") {
+		return "", fmt.Errorf("реплика строке Backlog без сессии не отложилась: %+v", held)
+	}
+	if _, err := os.Stat(filepath.Join(s.proj, ".devkit", "chat", "task-"+smokeTask+".in")); !os.IsNotExist(err) {
+		return "", fmt.Errorf("реплика легла в доставку мёртвого окна: %v", err)
+	}
 	var v struct {
 		Chat    string `json:"chat"`
 		Line    string `json:"line"`
 		Tree    string `json:"tree"`
 		Message string `json:"message"`
 	}
-	if err := s.call("POST", "/api/projects/demo/tasks/"+smokeTask+"/message",
+	if err := s.call("POST", "/api/projects/demo/tasks/"+smokeGoal+"/message",
 		fmt.Sprintf(`{"text": %q}`, said), http.StatusOK, &v); err != nil {
 		return "", err
 	}
-	src := filepath.Join(s.proj, ".devkit", "chat", "task-"+smokeTask+".in")
+	src := filepath.Join(s.proj, ".devkit", "chat", "task-"+smokeGoal+".in")
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return "", fmt.Errorf("вход задачи не записался: %v", err)
@@ -1060,7 +1080,7 @@ func (s *smoke) stepTaskMessage() (string, error) {
 	}
 	// Повтор с устаревшего экрана второй строки не заводит: сторожок разбудил
 	// бы строку дважды.
-	if err := s.call("POST", "/api/projects/demo/tasks/"+smokeTask+"/message",
+	if err := s.call("POST", "/api/projects/demo/tasks/"+smokeGoal+"/message",
 		fmt.Sprintf(`{"text": %q}`, said), http.StatusOK, &v); err != nil {
 		return "", err
 	}
@@ -1071,7 +1091,7 @@ func (s *smoke) stepTaskMessage() (string, error) {
 	if n := strings.Count(string(again), said); n != 1 {
 		return "", fmt.Errorf("повтор завёл вторую строку: во входе %d реплик", n)
 	}
-	return fmt.Sprintf("строка «%s» лежит в чате %s чекаута без адресата", v.Line, v.Chat), nil
+	return fmt.Sprintf("строка «%s» лежит в чате %s чекаута без адресата, реплика строке Backlog без сессии отложена без доставки", v.Line, v.Chat), nil
 }
 
 // boardWaiting достаёт состояние ожидания строки из ответа доски.
@@ -1885,7 +1905,13 @@ func (s *smoke) stepNoLead() (string, error) {
 			if n.Reason != "task_nolead" {
 				continue
 			}
-			if n.Kind != "task" || n.ID != smokeTask || n.Project != "demo" {
+			// Чужие звонки этого повода лента несёт штатно: реплика, которую
+			// некому забрать, зовёт человека своей строкой (DK-1194), и шаг
+			// ждёт именно свою.
+			if n.ID != smokeTask {
+				continue
+			}
+			if n.Kind != "task" || n.Project != "demo" {
 				return "", fmt.Errorf("событие пришло не про строку доски: %+v", n)
 			}
 			return fmt.Sprintf("«%s» (задача %s проекта %s, повод %s)",

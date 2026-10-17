@@ -107,7 +107,7 @@ func (s *server) sayToAsk(p *Project, info sessionInfo, sid, text string, recs m
 	if done, ok := s.ownAskReply(p, info, sid, name, text, hasTerm); ok {
 		return done, true
 	}
-	return s.handedAskReply(sid, text, hasTerm)
+	return s.handedAskReply(p.Path, sid, text, hasTerm)
 }
 
 // ownAskReply отвечает на вопрос, который задан в разговоре этой же задачи:
@@ -129,6 +129,27 @@ func (s *server) ownAskReply(p *Project, info sessionInfo, sid, name, text strin
 	tree, ok := sessionTree(p.Path, info.suffix)
 	if !ok {
 		return nil, false
+	}
+	// Мёртвое окно (DK-1399): вопрос остался от задачи, которой на доске нет,
+	// закрытой или от черновика без ведущей сессии. Строка идёт с адресатом
+	// умершей сессии, и не доедет никто: вход разговора разбирает только живой
+	// хозяин. Ответ не принимается с причиной сразу, признак ожидания
+	// снимается, иначе панель держала бы мёртвый вопрос вечно. Вопрос живой
+	// строки доски едет во вход как раньше: припаркованную будит сторожок,
+	// работу поднимет лестница подъёма.
+	if ask.Task != "" && name == chat.TaskName(ask.Task) {
+		if rows, err := s.boardRowsOf(p.Path); err == nil {
+			if why := s.deadAddresseeWhy(p.Path, ask.Task, rows); why != "" {
+				if err := chat.DropAsk(p.Path, name); err != nil {
+					s.logf("признак ожидания разговора %s не снялся после отказа: %v", name, err)
+				}
+				s.logf("ответ на вопрос задачи %s не принят, окно мертво: %s", ask.Task, why)
+				return map[string]any{"way": "ask", "chat": name, "task": ask.Task,
+					"refused": why,
+					"message": fmt.Sprintf(
+						"ответ не принят: %s. Вопрос снят, реплика в доставку не легла", why)}, true
+			}
+		}
 	}
 	// Строка идёт с адресатом и ложится в дерево ждущей сессии: живого
 	// опрашивающего процесса больше нет (DK-715), строку заберёт подхват на
@@ -165,7 +186,7 @@ func (s *server) ownAskReply(p *Project, info sessionInfo, sid, name, text strin
 // припаркованную вопросом задачу. Вопросов бывает несколько, пачка
 // исполнителей спрашивает вразнобой: ответ уезжает ближнему по сроку,
 // остальные названы в ответе ручки.
-func (s *server) handedAskReply(sid, text string, hasTerm bool) (map[string]any, bool) {
+func (s *server) handedAskReply(projPath, sid, text string, hasTerm bool) (map[string]any, bool) {
 	asks := s.handedAsks(sid, s.binds(), s.now())
 	if len(asks) == 0 {
 		return nil, false
@@ -176,6 +197,42 @@ func (s *server) handedAskReply(sid, text string, hasTerm bool) (map[string]any,
 		// дорогой ниже, а тут только снимается признак и возвращается строка.
 		s.settleAsk(h.Tree, h.Name, h.Ask.Task, h.Ask.Session)
 		return nil, false
+	}
+	// Мёртвое окно (DK-1399): ответ розданного разговора ложится безадресной
+	// строкой во вход дерева вопроса, и забрать её способен только ведущий
+	// задачу. Задачи на доске нет, закрыта она или это черновик без сессии,
+	// значит ответ не принят с причиной сразу, а признак ожидания снимается:
+	// мёртвый вопрос держал бы панель в ожидании вечно. Строке Backlog без
+	// ведущей сессии ответ откладывается в файл задачи, как и в ручке задачи.
+	// Живой ждущий ворота не встречает: вопрос розданной работы живёт
+	// разговором спросившего, и строку заберёт его ждущий ход, какая бы ни
+	// была строка доски.
+	if why, onBoard := s.askAddressee(h); why != "" && !s.waiterAlive(projPath, h.Tree, h.Ask.Session) {
+		if err := chat.DropAsk(h.Tree, h.Name); err != nil {
+			s.logf("признак ожидания разговора %s не снялся после отказа: %v", h.Name, err)
+		}
+		if onBoard {
+			if p := s.projectAt(h.Tree); p != nil {
+				id := strings.TrimSpace(h.Ask.Task)
+				line := chat.TaskLine(s.now(), text)
+				filed, ok := s.chatHoldWrite(p, id, []string{line}, why)
+				if ok {
+					s.logf("ответ на вопрос задачи %s в %s отложен в файл задачи: %s", id, p.Name, why)
+					way := "реплика легла во «Входящие» файла задачи и ждёт исполнителя вместе с постановкой"
+					if !filed {
+						way = "файла задачи нет, исход записан строкой журнала дашборда"
+					}
+					return map[string]any{"way": "ask", "chat": h.Name, "task": h.Ask.Task,
+						"held": true, "why": why,
+						"message": fmt.Sprintf("ответ на вопрос задачи %s: %s. %s", id, why, way)}, true
+				}
+			}
+		}
+		s.logf("ответ на вопрос задачи %s не принят, окно мертво: %s", h.Ask.Task, why)
+		return map[string]any{"way": "ask", "chat": h.Name, "task": h.Ask.Task,
+			"refused": why,
+			"message": fmt.Sprintf(
+				"ответ не принят: %s. Вопрос снят, реплика в доставку не легла", why)}, true
 	}
 	lying, _, err := putChat(h.Tree, h.Name, text, chat.TaskLine(s.now(), text))
 	if err != nil {
@@ -600,6 +657,32 @@ func (s *server) handleTaskMessagePost(w http.ResponseWriter, r *http.Request) {
 	}
 	name := chat.TaskName(id)
 	line := chat.TaskLine(s.now(), text)
+	// Ворота мёртвого окна (DK-1399). Строке Backlog или Done без ведущей
+	// сессии вход не разберёт никто: подъём по реплике идёт только строкам
+	// работы, и повтор доставки бился бы об отказ вечно. Реплика откладывается
+	// в файл задачи с причиной, и человек видит исход сразу. Закрытая задача и
+	// черновик сюда не доезжают: разбор строки выше отказал им 404 до ворот.
+	if why := s.deadAddresseeWhy(found.Path, id, rows); why != "" {
+		filed, ok := s.chatHoldWrite(found, id, []string{line}, why)
+		if !ok {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "реплику некому доставить: " + why + ", и в файл задачи она не легла, попробуйте ещё раз"})
+			return
+		}
+		if !filed {
+			s.logf("реплика задаче %s в %s снята без записи: файла задачи нет: %s", id, found.Name, why)
+			writeJSON(w, http.StatusOK, map[string]any{"task": id, "chat": name, "held": true, "why": why,
+				"message": fmt.Sprintf(
+					"реплика никуда не легла: %s. Файла задачи нет, исход записан строкой журнала дашборда", why)})
+			return
+		}
+		s.saidSay(saidTaskKey(id), text, "файл задачи")
+		s.logf("реплика задаче %s в %s отложена в файл задачи: %s", id, found.Name, why)
+		writeJSON(w, http.StatusOK, map[string]any{"task": id, "chat": name, "held": true, "why": why,
+			"message": fmt.Sprintf(
+				"реплика легла во «Входящие» файла задачи: %s. Ответ ждёт исполнителя вместе с постановкой", why)})
+		return
+	}
 	lying, code, err := putChat(found.Path, name, text, line)
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})

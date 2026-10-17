@@ -101,7 +101,7 @@ func (s *server) chatIdleTick() {
 		// Вопрос, адресованный разговору, держит окно: ответ человека доезжает
 		// в разговор, чья сессия поднята, и убивать его под припаркованным
 		// вопросом значит терять ответ.
-		if len(handedAsks(path, e.ID, binds, now)) > 0 {
+		if len(s.handedAsks(e.ID, binds, now)) > 0 {
 			continue
 		}
 		if moved == 0 {

@@ -161,16 +161,15 @@ a:hover{text-decoration:underline}
 .sgroup{font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;color:var(--tx3);padding:12px 10px 7px}
 /* сворачиваемые разделы колонки (DK-1388): шапка раздела это кнопка с той же
    подписью, что была у заголовка группы, каретка на её правом краю. Тело
-   прячется классом, состояние помнится между заходами */
-.shead{display:flex;align-items:center;gap:6px;width:100%;padding:12px 10px 7px;border:0;background:none;font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;color:var(--tx3);cursor:pointer;text-align:left}
-.shead:hover{color:var(--tx2)}
-.shead .icaret{width:13px;height:13px;margin-left:auto;flex:none;opacity:.65;transition:transform .15s}
+   прячется классом, состояние помнится между заходами. Класс шапки свой, а не
+   shead: то имя несёт заголовок секции таблицы задач, и его позднее правило
+   каскадом дуло шапки разделов чужими отступами (возврат 2026-10-17) */
+.sheadc{display:flex;align-items:center;gap:6px;width:100%;padding:12px 10px 7px;border:0;background:none;font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;color:var(--tx3);cursor:pointer;text-align:left}
+.sheadc:hover{color:var(--tx2)}
+.sheadc .icaret{width:13px;height:13px;margin-left:auto;flex:none;opacity:.65;transition:transform .15s}
 .sect.folded .icaret{transform:rotate(-90deg)}
 .sect.folded nav,.sect.folded .sect-body{display:none}
 .sect-body{padding:0 10px}
-/* строка свёрнутых ресурсов: два числа в самой шапке, раскрытие раздела
-   спрашивает подробности, а не само существование данных */
-.shead .rbrief{font:500 10.5px var(--mono);letter-spacing:0;text-transform:none;color:var(--tx3);white-space:nowrap}
 .sitem{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;font:500 13px var(--sans);color:var(--tx2);cursor:pointer}
 .sitem:hover{background:var(--bg2)}
 .sitem.on{background:var(--bg3);color:var(--tx)}
@@ -189,7 +188,7 @@ a:hover{text-decoration:underline}
    прижат книзу, поэтому свободное место колонки достаётся ему, а не кнопке
    выхода под ним. */
 .squota{margin-top:auto;border-top:1px solid var(--line)}
-.squota .shead{padding:14px 10px 2px}
+.squota .sheadc{padding:14px 10px 2px}
 .squota .sect-body{padding:0 10px 12px}
 .squota h4{margin:0 0 10px;font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;color:var(--tx3)}
 .qsub{font:600 11.5px var(--mono);color:var(--tx2);margin:10px 0 7px}
@@ -209,8 +208,12 @@ a:hover{text-decoration:underline}
    процессор и память едут двумя плотными полосками в строке владельца.
    Класс строки свой, без паддингов и рамок: rrow занят строкой ранговой
    карточки, и её поздние правила каскадом дули строку вдвое (возврат
-   2026-10-17) */
-.rsum{font:500 11px var(--mono);color:var(--tx2);margin:0 0 7px}
+   2026-10-17). Сводка над таблицей несёт значки вместо слов и память парой
+   мегабайт занятого и свободного, размер значку даёт место вставки
+   (возврат 2026-10-17) */
+.rsum{display:flex;align-items:center;gap:6px;font:500 11px var(--mono);color:var(--tx2);margin:0 0 7px}
+.rsum svg{width:12px;height:12px;flex:none}
+.rsum b{font-weight:500;min-width:30px}
 .rowner{display:flex;align-items:center;gap:8px;margin-bottom:5px;font:500 11px var(--mono);color:var(--tx2)}
 .rowner em{font-style:normal;width:62px;flex:none;color:var(--tx3)}
 .rdual{flex:1;min-width:0;display:grid;gap:3px}
@@ -641,8 +644,11 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .c-after{background:var(--bg3);color:var(--tx2)}
 .c-after:hover{background:color-mix(in oklab,var(--run) 26%,transparent);color:var(--tx)}
 
-/* строки задач: сетка на ноутбуке, две строки на телефоне */
-.shead{display:flex;align-items:baseline;gap:9px;padding:15px 24px 9px;font:600 13px var(--sans);color:var(--tx)}
+/* строки задач: сетка на ноутбуке, две строки на телефоне. Заголовок секции
+   несёт все объявления сам: шапки разделов колонки ушли на свой класс, и
+   поделенного с ними правила больше нет (возврат 2026-10-17) */
+.shead{display:flex;align-items:baseline;gap:9px;width:100%;padding:15px 24px 9px;border:0;background:none;font:600 13px var(--sans);letter-spacing:0.09em;text-transform:uppercase;color:var(--tx);cursor:pointer;text-align:left}
+.shead:hover{color:var(--tx2)}
 .shead .n{font:500 11.5px var(--mono);color:var(--tx3)}
 /* ярусы секции Blocked: подпись яруса стоит внутри карточки строкой над своим
    куском списка. Нижний ярус тихий: строка ждёт чужую задачу, человека там не

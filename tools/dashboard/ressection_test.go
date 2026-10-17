@@ -81,6 +81,17 @@ func TestStaticResRowsOwnClasses(t *testing.T) {
 // «padding:8px 14px 8px 18px» это 8px, у «padding:0» и правил без паддинга
 // пустая строка.
 func verticalPad(body string) string {
+	fields := strings.Fields(paddingValue(body))
+	if len(fields) == 0 || fields[0] == "0" {
+		return ""
+	}
+	return fields[0]
+}
+
+// paddingValue вынимает значение паддинга правила целиком: у
+// «padding:12px 10px 7px» это сама тройка, у правил без паддинга пустая
+// строка.
+func paddingValue(body string) string {
 	at := strings.Index(body, "padding:")
 	if at < 0 {
 		return ""
@@ -89,9 +100,113 @@ func verticalPad(body string) string {
 	if end := strings.IndexAny(val, ";}"); end >= 0 {
 		val = val[:end]
 	}
-	fields := strings.Fields(val)
-	if len(fields) == 0 || fields[0] == "0" {
-		return ""
+	return strings.TrimSpace(val)
+}
+
+// Возврат 2026-10-17: разделы колонки раздулись отступами, потому что шапки
+// несли класс shead, занятый заголовком секции таблицы задач, и его позднее
+// правило каскадом приносило шапкам чужие паддинги с кеглем. Проверка держит
+// границу: классы шапок читаются из разметки колонки, и кроме компактной
+// базы и квотной подложки ни одно правило с паддингом их не касается.
+func TestStaticColumnSectHeadsOwnClass(t *testing.T) {
+	html := readStatic(t, "index.html")
+	if !strings.Contains(readStatic(t, "app.js"), `el("div", "shead", sec.title)`) {
+		t.Fatal("заголовок секции таблицы задач собирается не по классу shead: разбор смотрит не туда")
 	}
-	return fields[0]
+	headRe := regexp.MustCompile(`<button class="([^"]+)" id="(?:projects|res|quota)-head">`)
+	heads := headRe.FindAllStringSubmatch(html, -1)
+	if len(heads) != 3 {
+		t.Fatalf("шапок разделов колонки нашлось %d: разбор смотрит не туда", len(heads))
+	}
+	allowed := map[string]bool{
+		"12px 10px 7px": true,
+		"14px 10px 2px": true,
+	}
+	rules := cssRules(readStatic(t, "style.css"))
+	for _, m := range heads {
+		for _, cls := range strings.Fields(m[1]) {
+			if cls == "shead" {
+				t.Errorf("шапка раздела несёт класс shead таблицы задач: позднее правило каскадом раздувает её отступами")
+			}
+			var base, quota bool
+			for _, rule := range rules {
+				if !cssSubject(rule[0], cls) {
+					continue
+				}
+				pad := paddingValue(rule[1])
+				if pad == "" {
+					continue
+				}
+				if !allowed[pad] {
+					t.Errorf("класс %s шапки раздела получает паддинг «%s» от правила %s: коллизия с чужим блоком раздувает раздел", cls, pad, rule[0])
+				}
+				if rule[0] == "."+cls {
+					base = true
+				}
+				if rule[0] == ".squota ."+cls {
+					quota = true
+				}
+			}
+			if !base || !quota {
+				t.Errorf("у класса %s нет компактной базы или квотной подложки: шапки разделов остались без правил", cls)
+			}
+		}
+	}
+}
+
+// Возврат 2026-10-17: сводка ресурсов была громоздкой, со словами «процессор»
+// и «память» и скобками гигабайтов, и стояла дважды, в заголовке раздела и в
+// теле. Проверка держит новую границу: слова заменены значками из шаблона,
+// память идёт мегабайтами занятого и свободного через разделитель, сводка
+// живёт только в теле раздела.
+func TestStaticResSummaryIcons(t *testing.T) {
+	js := readStatic(t, "app.js")
+	html := readStatic(t, "index.html")
+	owners := jsBody(js, "function resOwners(view) {")
+	if owners == "" {
+		t.Fatal("таблица владельцев не собирается: разбор смотрит не туда")
+	}
+	for _, piece := range []string{`icon("i-cpu")`, `icon("i-ram")`,
+		`resMB(mem.used_kb) + "/" + resMB(mem.total_kb - mem.used_kb)`} {
+		if !strings.Contains(owners, piece) {
+			t.Errorf("сводка не несёт %s: значки и пара мегабайт обязаны стоять в теле раздела", piece)
+		}
+	}
+	if strings.Contains(owners, "процессор") || strings.Contains(owners, " из ") {
+		t.Error("сводка всё ещё пишет слова или гигабайты в скобках")
+	}
+	if strings.Contains(js, "res-brief") || strings.Contains(html, "res-brief") {
+		t.Error("сводка дублируется строкой заголовка раздела: проценты машины видны кольцами у иконки")
+	}
+	if !strings.Contains(html, `data-ico="i-cpu"`) || !strings.Contains(html, `data-ico="i-ram"`) {
+		t.Error("значки процессора и памяти не лежат в шаблоне icons")
+	}
+	var sized bool
+	for _, rule := range cssRules(readStatic(t, "style.css")) {
+		if rule[0] == ".rsum svg" && strings.Contains(rule[1], "width:") {
+			sized = true
+		}
+	}
+	if !sized {
+		t.Error("значкам сводки не задан размер: svg без ширины браузер рисует 300 на 150")
+	}
+}
+
+// Возврат 2026-10-17: раздел подписок переименован из «Квота подписок».
+// Проверка держит новое имя в шапке колонки и в карточке на главной.
+func TestStaticQuotaSectionTitle(t *testing.T) {
+	for _, s := range [][2]string{
+		{"index.html", readStatic(t, "index.html")},
+		{"app.js", readStatic(t, "app.js")},
+	} {
+		if strings.Contains(s[1], "Квота подписок") {
+			t.Errorf("%s всё ещё называет раздел «Квота подписок»", s[0])
+		}
+	}
+	if !strings.Contains(readStatic(t, "index.html"), "<span>Подписки</span>") {
+		t.Error("шапка раздела подписок не названа «Подписки»")
+	}
+	if !strings.Contains(readStatic(t, "app.js"), `el("h4", "", "Подписки")`) {
+		t.Error("карточка подписок на главной не названа «Подписки»")
+	}
 }

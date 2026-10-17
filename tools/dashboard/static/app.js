@@ -17735,7 +17735,7 @@ function quotaTook(taken) {
 
 function quotaNodes(view, withHead) {
   // Заголовок нужен карточке на главной, а в колонке его несёт шапка раздела.
-  const out = withHead ? [el("h4", "", "Квота подписок")] : [];
+  const out = withHead ? [el("h4", "", "Подписки")] : [];
   if (!view) {
     out.push(el("div", "qnote", "снимки читаются..."));
     return out;
@@ -17832,15 +17832,23 @@ function resKB(kb) {
   return (kb || 0) + " КБ";
 }
 
+// Мегабайты из килобайтов целыми, без единицы: сводка пишет память парой
+// «занято/свободно» с одной единицей на двоих, и гигабайты с дробью ту пару
+// разъезжали (возврат человека 2026-10-17).
+function resMB(kb) {
+  return String(Math.round((kb || 0) / 1024));
+}
+
 // Число с одним знаком после запятой: средняя нагрузка и проценты владельцев
 // живут в этих порядках.
 function resNum(n) {
   return String(Math.round((n || 0) * 10) / 10).replace(".", ",");
 }
 
-// Сворачивание разделов колонки: проекты, ресурсы и квота. Состояние помнится
-// тем же способом, что и свёрнутая колонка, а ресурсы встречают свёрнутыми:
-// два числа в заголовке говорят главное, остальное разворачивается по спросу.
+// Сворачивание разделов колонки: проекты, ресурсы и подписки. Состояние
+// помнится тем же способом, что и свёрнутая колонка, а ресурсы встречают
+// свёрнутыми: проценты машины видны кольцами у иконки dk, остальное
+// разворачивается по спросу.
 const SECT_KEY = "devkit.fold.";
 
 function sectDefault(name) {
@@ -17972,11 +17980,18 @@ function resBar(pct, cls, val) {
 // 2026-10-16). Значения различаются сами: процент это процессор, объём память.
 // Класс строки свой, а не rrow: то имя несёт строка ранговой карточки, её
 // поздние правила каскадом дули строку владельца паддингами (возврат 2026-10-17).
+// Сводка стоит только здесь, в теле раздела: проценты машины видны кольцами у
+// иконки dk, и заголовок раздела своей строки с числами не несёт (возврат
+// 2026-10-17).
 function resOwners(view) {
   const cpu = view.cpu || {};
   const mem = view.mem || {};
-  const sum = el("div", "rsum", "процессор " + resPct(cpu.pct) + ", память " + resPct(mem.pct) +
-    (mem.total_kb ? " (" + resKB(mem.used_kb) + " из " + resKB(mem.total_kb) + ")" : ""));
+  const sum = el("div", "rsum");
+  sum.append(icon("i-cpu"), el("b", "", resPct(cpu.pct)),
+    icon("i-ram"), el("b", "", resPct(mem.pct)));
+  if (mem.total_kb) {
+    sum.append(el("span", "", resMB(mem.used_kb) + "/" + resMB(mem.total_kb - mem.used_kb) + " МБ"));
+  }
   const out = [sum];
   for (const p of cpu.parts || mem.parts || []) {
     const [word, cls] = RES_PARTS[p.name] || [p.name, ""];
@@ -18034,17 +18049,11 @@ function resNodes(view) {
   return out;
 }
 
-// paintResources рисует всё, что у ресурсов есть: кольца у иконок, строку
-// свёрнутого раздела, тело развёрнутого и карточку на главной.
+// paintResources рисует всё, что у ресурсов есть: кольца у иконок, тело
+// развёрнутого раздела и карточку на главной.
 function paintResources() {
   paintResRings();
   const v = resView;
-  const brief = document.getElementById("res-brief");
-  if (brief) {
-    brief.textContent = v && (v.cpu || v.mem)
-      ? "cpu " + resPct(v.cpu ? v.cpu.pct : 0) + ", mem " + resPct(v.mem ? v.mem.pct : 0)
-      : "";
-  }
   const col = document.getElementById("res");
   if (col) col.replaceChildren(...resNodes(v));
   const card = document.getElementById("res-card");

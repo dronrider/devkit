@@ -17822,21 +17822,30 @@ function resPct(pct) {
   return Math.round(pct || 0) + "%";
 }
 
+// Гигабайты числом с одним знаком после запятой: десятичная дробь с запятой,
+// точка читалась бы чужой. Единицу дописывает вызывающий: одиночный объём
+// несёт её сам, а пара «занято/свободно» делит одну на двоих.
+function resGB(kb) {
+  return (Math.round((kb || 0) / 104857.6) / 10).toFixed(1).replace(".", ",");
+}
+
 // Объём из килобайтов: гигабайты с одним знаком после запятой, мегабайты
-// целыми. Десятичная дробь с запятой, точка читалась бы чужой.
+// целыми.
 function resKB(kb) {
-  if (kb >= 1024 * 1024) {
-    return (Math.round(kb / 104857.6) / 10).toFixed(1).replace(".", ",") + " ГБ";
-  }
+  if (kb >= 1024 * 1024) return resGB(kb) + " ГБ";
   if (kb >= 1024) return Math.round(kb / 1024) + " МБ";
   return (kb || 0) + " КБ";
 }
 
-// Мегабайты из килобайтов целыми, без единицы: сводка пишет память парой
-// «занято/свободно» с одной единицей на двоих, и гигабайты с дробью ту пару
-// разъезжали (возврат человека 2026-10-17).
-function resMB(kb) {
-  return String(Math.round((kb || 0) / 1024));
+// Пара «занято/свободно» одной единицей на двоих: от гигабайта доли едут
+// гигабайтами с одним знаком, меньше гигабайта мегабайтами целыми. Единицу
+// выбирает большая доля: на машине с десятками гигабайт мегабайты вытягивали
+// строку зря, а меньшая доля в гигабайтах остаётся короткой «0,2» (возврат
+// человека 2026-10-17). Формат чисел общий с объёмами владельцев рядом.
+function resPair(usedKb, freeKb) {
+  const big = Math.max(usedKb || 0, freeKb || 0) >= 1024 * 1024;
+  const part = (kb) => (big ? resGB(kb) : String(Math.round((kb || 0) / 1024)));
+  return part(usedKb) + "/" + part(freeKb) + (big ? " ГБ" : " МБ");
 }
 
 // Сворачивание разделов колонки: проекты, ресурсы и подписки. Состояние
@@ -17986,7 +17995,7 @@ function resOwners(view) {
   sum.append(icon("i-cpu"), el("b", "", resPct(cpu.pct)),
     icon("i-ram"), el("b", "", resPct(mem.pct)));
   if (mem.total_kb) {
-    sum.append(el("span", "", resMB(mem.used_kb) + "/" + resMB(mem.total_kb - mem.used_kb) + " МБ"));
+    sum.append(el("span", "", resPair(mem.used_kb, mem.total_kb - mem.used_kb)));
   }
   const out = [sum];
   for (const p of cpu.parts || mem.parts || []) {

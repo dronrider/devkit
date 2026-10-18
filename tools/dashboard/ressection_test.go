@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -181,9 +183,9 @@ func TestStaticResSummaryIcons(t *testing.T) {
 		t.Fatal("таблица владельцев не собирается: разбор смотрит не туда")
 	}
 	for _, piece := range []string{`icon("i-cpu")`, `icon("i-ram")`,
-		`resMB(mem.used_kb) + "/" + resMB(mem.total_kb - mem.used_kb)`} {
+		`resPair(mem.used_kb, mem.total_kb - mem.used_kb)`} {
 		if !strings.Contains(owners, piece) {
-			t.Errorf("сводка не несёт %s: значки и пара мегабайт обязаны стоять в теле раздела", piece)
+			t.Errorf("сводка не несёт %s: значки и пара памяти обязаны стоять в теле раздела", piece)
 		}
 	}
 	if strings.Contains(owners, "процессор") || strings.Contains(owners, " из ") {
@@ -204,6 +206,52 @@ func TestStaticResSummaryIcons(t *testing.T) {
 	if !sized {
 		t.Error("значкам сводки не задан размер: svg без ширины браузер рисует 300 на 150")
 	}
+}
+
+// Возврат 2026-10-17: пара занятой и свободной памяти печаталась в сводке
+// мегабайтами всегда, и на машине с десятками гигабайт строка выходила
+// длинной. Проверка держит выбор единицы в тексте хелпера: порог гигабайта
+// считается по большей доле, единица одна на двоих, и тело раздела своей
+// единицы к паре не дописывает.
+func TestStaticResSummaryMemUnits(t *testing.T) {
+	js := readStatic(t, "app.js")
+	pair := jsBody(js, "function resPair(usedKb, freeKb) {")
+	if pair == "" {
+		t.Fatal("пара памяти не собирается: разбор смотрит не туда")
+	}
+	for _, piece := range []string{
+		`Math.max(usedKb || 0, freeKb || 0) >= 1024 * 1024`,
+		`resGB(kb)`, `" ГБ"`, `" МБ"`,
+	} {
+		if !strings.Contains(pair, piece) {
+			t.Errorf("выбор единицы пары не несёт %s: порог гигабайта и одна единица на двоих", piece)
+		}
+	}
+	owners := jsBody(js, "function resOwners(view) {")
+	if owners == "" {
+		t.Fatal("таблица владельцев не собирается: разбор смотрит не туда")
+	}
+	if strings.Contains(owners, `" МБ"`) || strings.Contains(owners, `" ГБ"`) {
+		t.Error("тело раздела дописывает паре свою единицу: единица живёт в хелпере одна")
+	}
+}
+
+// Вид пары на живых числах сторожит стенд testdata/poc_resmem.mjs: он кормит
+// настоящую сводку памятью большой машины, машины меньше гигабайта и
+// несимметричной, где занято меньше гигабайта, а свободно десятки, и читает
+// нарисованную строку. Без node шаг пропускается: узел стенда, а не рабочей
+// части.
+func TestStaticResMemPair(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд пары памяти пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_resmem.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("пара памяти в сводке: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }
 
 // Возврат 2026-10-17: раздел подписок переименован из «Квота подписок».

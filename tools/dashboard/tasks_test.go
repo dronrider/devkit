@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/loadfail"
+	"github.com/dronrider/devkit/internal/sessions"
 )
 
 // Правка строки и файла задачи. Стенд гоняет настоящий taskctl на фикстурной
@@ -88,11 +89,38 @@ func TestMain(m *testing.M) {
 	// его поверх (swapClientHome).
 	clientHomeFn = func(string) string { return spare }
 	code := m.Run()
+	// Пустота запасного дома это рубеж, а не пожелание: подъём головы пишет
+	// строку реестра в машинный дом (runs.go, headRequest), и стенд без
+	// подмены дома (useHeadHome) ложит её сюда. Файл читают все тесты прогона
+	// и все повторы -count одним процессом, и одна строка красит чужие стенды
+	// порядком запуска. Найденные строки сами называют дерево писавшего.
+	if data, err := os.ReadFile(sessions.Path(spare)); err == nil && strings.TrimSpace(string(data)) != "" {
+		fmt.Fprintf(os.Stderr, "запасной дом реестра не пустой, стенд написал в него мимо дома стенда (useHeadHome):\n%s", data)
+		code = 1
+	}
 	os.RemoveAll(spare)
 	if realTaskctlPath != "" {
 		os.RemoveAll(filepath.Dir(realTaskctlPath))
 	}
 	os.Exit(code)
+}
+
+// Второй дом реестра остаётся пустым к концу прогона. Стенд, поднимающий
+// голову без подмены дома, пишет строку реестра в запасной дом, и она красит
+// чужие тесты: TestBindsWithoutTheLog видит чужие записи, а
+// TestDraftGroomDeathSaid отдаёт смерть разбора прежнему жильцу имени
+// task-XR-005, потому что chatDeathSay ищет хозяина имени по реестру обоих
+// домов. Сторож стоит в tasks_test.go, а не рядом с реестром, нарочно: он
+// читает дом после runs_test.go, где живёт подъём головы, и краснеет на
+// писателе в одном прогоне с ним.
+func TestBindsSecondHomeStaysEmpty(t *testing.T) {
+	data, err := os.ReadFile(sessions.Path(realHomeFn()))
+	if err != nil {
+		return
+	}
+	if got := strings.TrimSpace(string(data)); got != "" {
+		t.Fatalf("второй дом реестра не пустой, стенд написал в него мимо дома стенда (useHeadHome):\n%s", got)
+	}
 }
 
 // taskctlFixture кладёт настоящий бинарь на место исполняемой фикстуры в

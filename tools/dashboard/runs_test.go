@@ -1499,6 +1499,10 @@ func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
 			writeScript(t, e.bin, "клиент-1", "exit 0")
 			writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
 			writeTaskRunFake(t, filepath.Dir(e.proj))
+			// Оболочка принимает замок, и подъём пишет строку реестра в
+			// машинный дом. Без подмены дома строка ложится в запасной дом
+			// всего прогона и доезжает чужим тестам с повторами -count.
+			useHeadHome(t, e)
 			c := e.loggedClient(t)
 
 			resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", fmt.Sprintf(`{"id": %q}`, tc.id))

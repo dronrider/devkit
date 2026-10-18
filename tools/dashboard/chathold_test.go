@@ -308,6 +308,29 @@ func TestAskAnswerDeferredForBacklog(t *testing.T) {
 	}
 }
 
+// Раскладку «Входящих» держит один писатель (DK-1399, замечание ревью):
+// holdInbox зовёт addInboxLine цели, и раздел в файле задачи встаёт перед
+// «Журналом», а не второй раскладкой в конец файла. Двумя писателями раздел
+// одной задачи вставал в два разных места смотря кто из них прошёл первым.
+func TestHoldInboxSharesGoalSectionPlace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "XR-2.md")
+	if err := os.WriteFile(path, []byte("# XR-2: постановка\n\n## Что происходит\n\nТекст.\n\n## Журнал\n\n- 2026-10-17 ход\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	line := chat.Line(time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC), "s1", "возьми задачу")
+	if err := holdInbox(path, []string{line}, "строка в Backlog без ведущей сессии",
+		time.Date(2026, 10, 17, 12, 5, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	note := readFile(t, path)
+	if strings.Index(note, "## Входящие") > strings.Index(note, "## Журнал") {
+		t.Fatalf("раздел «Входящие» встал не перед «Журналом»:\n%s", note)
+	}
+	if !strings.Contains(note, "возьми задачу") {
+		t.Fatalf("отложенная реплика не легла в раздел:\n%s", note)
+	}
+}
+
 // Вопрос живой строки разговора принимает ответ по-прежнему: сессия стоит на
 // вопросе начатой задачи без терминала, и ответ едет во вход с адресатом,
 // где его заберёт её следующий ход. Ворота мёртвого окна живых не трогают.

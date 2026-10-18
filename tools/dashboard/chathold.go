@@ -156,10 +156,11 @@ func (s *server) holdFile(projectPath, id string) (abs, rel string, ok bool) {
 
 // holdInbox вписывает отложенные реплики в раздел «Входящие» файла задачи.
 // Раздел тот же, каким живой цели пишутся реплики человека, и будущий
-// исполнитель читает его вместе с постановкой. Раздел ставится в конец файла:
-// у формы файла задачи его нет, запись машинная, как «Входящие» цели. Повтор
-// укладки не удваивает запись: сходимость идёт после записи файла, и не
-// сошедшийся вход повторил бы её следующим проходом.
+// исполнитель читает его вместе с постановкой. Раскладку держит одна
+// addInboxLine: у формы файла задачи раздела нет, и заводится он тем же
+// писателем и на том же месте, что и у цели, а не второй раскладкой в конец
+// файла. Повтор укладки не удваивает запись: сходимость идёт после записи
+// файла, и не сошедшийся вход повторил бы её следующим проходом.
 func holdInbox(path string, lines []string, why string, now time.Time) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -182,48 +183,10 @@ func holdInbox(path string, lines []string, why string, now time.Time) error {
 	if len(fresh) == 0 {
 		return nil
 	}
-	return os.WriteFile(path, []byte(holdInboxPlace(text, fresh)), 0o644)
-}
-
-// holdInboxPlace ставит строки записи в раздел «Входящие» текста файла: в конец
-// раздела, если он есть, и новым разделом в конец файла, если его нет. Пустые
-// строки на стыках держат форму файла: заголовок отделяется от записи, а
-// запись от следующего раздела.
-func holdInboxPlace(text string, fresh []string) string {
-	rows := strings.Split(text, "\n")
-	at := -1
-	for i, r := range rows {
-		if strings.TrimRight(r, " \t") == "## Входящие" {
-			at = i
-			break
-		}
+	for _, l := range fresh {
+		text = addInboxLine(text, l)
 	}
-	if at < 0 {
-		sep := ""
-		if text != "" && !strings.HasSuffix(text, "\n") {
-			sep = "\n"
-		}
-		return text + sep + "\n## Входящие\n\n" + strings.Join(fresh, "\n") + "\n"
-	}
-	end := len(rows)
-	for i := at + 1; i < len(rows); i++ {
-		if strings.HasPrefix(rows[i], "## ") {
-			end = i
-			break
-		}
-	}
-	for end > at+1 && strings.TrimSpace(rows[end-1]) == "" {
-		end--
-	}
-	out := append([]string{}, rows[:end]...)
-	if end > at+1 && strings.TrimSpace(rows[end-1]) != "" {
-		out = append(out, "")
-	}
-	out = append(out, fresh...)
-	if end < len(rows) {
-		out = append(out, "")
-	}
-	return strings.Join(out, "\n")
+	return os.WriteFile(path, []byte(text), 0o644)
 }
 
 // chatHoldWrite вписывает реплики мёртвого окна в файл задачи с причиной.

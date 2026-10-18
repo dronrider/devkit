@@ -209,6 +209,25 @@ func TestStaticAskPollSurvivesFetchFailure(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Стенд фронта ask-дороги (DK-1399, замечание ревью): ответ на мёртвый вопрос
+// панель прежде рисовала отправленным, а причину отказа не показывала. Стенд
+// testdata/poc_askrefused.mjs гоняет три исхода ask-дороги: отказ мёртвого
+// окна словами и ошибкой, откладывание в файл задачи очередью с причиной и
+// принятый ответ доставкой, как раньше. Без node шаг пропускается: узел
+// стенда, а не рабочей части.
+func TestStaticAskOutcomeSaidInPanel(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд ask-дороги пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_askrefused.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("итог ask-дороги не назван в панели: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Карточка вопроса «Вопрос ждёт ответа» отвергнута на приёмке DK-1235 и
 // убрана целиком (DK-1374): вопрос идёт текстом в ленте, галочки висят при
 // строках вариантов, а при промахе копирования панель дописывает те же

@@ -1,0 +1,18 @@
+{
+  "source_refs": {
+    "bug": "71a30cddff9936574c9f13a5d2de620bba96f564",
+    "feature": "07cd996d51f7baefc788d196a22d5d2558ca1b81",
+    "multi": "93ae462813805d92efffdb8ace3016d5d8774f9a",
+    "basis": "c007fccc2"
+  },
+  "files": {
+    "benchmark.md": "b8114776c7da855c8cb6b995b1d04e6705e27adf7691a99d0aee5ea070cef34d",
+    "bug.original.md": "e30168525a026e7bcd47fb877a2874a28822b0d9646c47b20cb9f65bff8726f5",
+    "bug.sources.md": "3883f3abff11808d0781e6be187fa9c4df1d5c87f829e584ce4085fbffafaefc",
+    "feature.original.md": "b9c2f9ed3eddd235fd3eecd1b822bdcf80a525e9d0a965c9e6a4ffe1b713579d",
+    "feature.sources.md": "b82c26be3724a16786b1007438e46fa37a0049c2ce61871b94ad9146c0d94e7e",
+    "manifest.md": "28b70d31a2c0c4e8d0e65b873249752d3ac8909ea7f66d152c9c73f3241c9550",
+    "multi.original.md": "b9625d0d04068a129ff9634425e2da1fdb2f371418f386efd1fecc39c3d93742",
+    "multi.sources.md": "0844ee9fed759a0e2fbaac3843176218a1b125c74417eedbbd7ff65661de6b8f"
+  }
+}

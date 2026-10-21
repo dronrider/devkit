@@ -37,6 +37,10 @@ type Config struct {
 	// котором ход не шёл дольше порога, дашборд снимает сам. Ноль значит «ключа
 	// не было», и работает умолчание.
 	ChatIdle time.Duration
+	// CatchupInterval это интервал круга догона досок из origin (ключ
+	// catchup_interval, catchup.go). Ноль значит «ключа не было», и работает
+	// умолчание.
+	CatchupInterval time.Duration
 	// Ошибки наполнения, с которыми сервер живёт: их называют старт в журнале
 	// и /healthz, потому что молчание тут неотличимо от «проектов нет».
 	Errs []string
@@ -106,8 +110,14 @@ func LoadConfig(home string) (*Config, error) {
 				return nil, fmt.Errorf("%s:%d: ключ chat_idle: %v", cfg.Path, i+1, err)
 			}
 			cfg.ChatIdle = d
+		case "catchup_interval":
+			d, err := parseConfSpan(val, "интервал")
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: ключ catchup_interval: %v", cfg.Path, i+1, err)
+			}
+			cfg.CatchupInterval = d
 		default:
-			return nil, fmt.Errorf("%s:%d: незнакомый ключ %q, жду root / addr / port / token / chat_idle", cfg.Path, i+1, key)
+			return nil, fmt.Errorf("%s:%d: незнакомый ключ %q, жду root / addr / port / token / chat_idle / catchup_interval", cfg.Path, i+1, key)
 		}
 	}
 	if len(cfg.Roots) == 0 {
@@ -121,10 +131,16 @@ func (c *Config) noRoots() {
 		"в %s нет ни одной строки root: искать проекты негде, дописать «root = ~/projects»", c.Path))
 }
 
-// parseIdleSpan разбирает срок из машинного конфига: длительность вида 72h,
-// 30m (time.ParseDuration) либо число суток и недель с суффиксом d/w (3d, 2w).
-// Суток у time.ParseDuration нет, а порог простоя человек пишет сутками.
+// parseIdleSpan разбирает порог простоя из машинного конфига. Разбор общий с
+// остальными сроками, слово «порог» в ошибке называет именно этот ключ.
 func parseIdleSpan(s string) (time.Duration, error) {
+	return parseConfSpan(s, "порог")
+}
+
+// parseConfSpan разбирает срок из машинного конфига: длительность вида 72h,
+// 30m (time.ParseDuration) либо число суток и недель с суффиксом d/w (3d,
+// 2w). Суток у time.ParseDuration нет, а сроки человек пишет сутками.
+func parseConfSpan(s, what string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	if n := len(s); n > 1 {
 		if unit := s[n-1]; unit == 'd' || unit == 'w' {
@@ -139,7 +155,7 @@ func parseIdleSpan(s string) (time.Duration, error) {
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil || d <= 0 {
-		return 0, fmt.Errorf("порог %q не читается как срок: жду 72h, 30m либо число суток или недель с суффиксом d/w (3d, 2w)", s)
+		return 0, fmt.Errorf("%s %q не читается как срок: жду 72h, 30m либо число суток или недель с суффиксом d/w (3d, 2w)", what, s)
 	}
 	return d, nil
 }

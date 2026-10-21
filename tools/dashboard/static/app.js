@@ -3260,19 +3260,33 @@ function boardMoves(board, works) {
     (sec.rows || []).some((row) => rowMoves(row, byID)));
 }
 
-function renderBoard(project, board, works) {
+function renderBoard(project, board, works, lag) {
   const groups = document.getElementById("groups");
   // Число задач считается по самой доске: секции у неё те же, что и на экране.
   let rowsN = 0;
   for (const sec of board.sections || []) rowsN += (sec.rows || []).length;
   countsSet({ tasks: rowsN, sess: (works || []).length });
-  const items = [{
+  const items = [];
+  // Доска позади origin и догон не прошёл: строка стоит над списком, чтобы
+  // устаревшие строки читались после объяснения, почему им нельзя верить.
+  if (lag) {
+    items.push({
+      key: "board-lag",
+      sign: lag,
+      make: () => {
+        const line = el("div", "blag");
+        line.append(el("span", "stale", lag));
+        return line;
+      },
+    });
+  }
+  items.push({
     key: "board-kind",
     // Отпечаток несёт открытый таб и числа на нём: от первого зависит
     // подсветка, от вторых баджи.
     sign: [project, "tasks", rowsN, (works || []).length, shownCounts.drafts].join("|"),
     make: () => boardKindBar(project, "tasks"),
-  }];
+  });
   // Доска это одна таблица на все четыре секции, а не таблица на секцию: шапка
   // колонок тогда одна, стоит она в той же таблице, что и строки, и колонки у
   // них общие. Секция идёт своим tbody с заголовком-полосой сверху.
@@ -3283,7 +3297,7 @@ function renderBoard(project, board, works) {
   }, {
     key: "head",
     sign: tblHeadSign("tasks"),
-    make: () => tblHead("tasks", () => { renderBoard(project, board, works); }),
+    make: () => tblHead("tasks", () => { renderBoard(project, board, works, lag); }),
   }];
   // Полосы кнопок под табами больше нет: «Черновики» переехали в левое меню
   // отдельным разделом со своим адресом, а «Новая задача» в шапку рядом с
@@ -17112,6 +17126,7 @@ function renderHome(projects) {
         plural(total, "задача", "задачи", "задач")));
     }
     const why = projectWhy(p);
+    if (p.stale) row.append(el("span", "stale", p.stale));
     if (why) row.append(el("span", "stale", why));
     row.append(makePlus(p.name));
     row.addEventListener("click", () => { goKeepingChat(p.name); });
@@ -18756,14 +18771,14 @@ async function paint() {
   // три секунды (столько ходит круг у живой работы) незачем: перерисовка по
   // месту дёшева, но не бесплатна, а пока она идёт, список стоит под пальцем
   // (замечание пользователя про дёрганье при листании).
-  const paintSign = boardPaintSign(board, r.body.works || []);
+  const paintSign = boardPaintSign(board, r.body.works || []) + "|" + (r.body.stale || "");
   const groupsBox = document.getElementById("groups");
   if (boardPainted.screen === screen && boardPainted.sign === paintSign &&
     groupsBox && groupsBox.children.length) {
     return;
   }
   boardPainted = { screen, sign: paintSign };
-  renderBoard(current.name, board, r.body.works || []);
+  renderBoard(current.name, board, r.body.works || [], r.body.stale || "");
 }
 
 // Заголовок раздела в шапке: имя и подсказка ставятся одним заходом. Порознь

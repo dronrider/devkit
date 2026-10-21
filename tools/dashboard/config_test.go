@@ -132,6 +132,42 @@ func TestChatIdleDefault(t *testing.T) {
 	}
 }
 
+// Интервал догона читается тем же разбором, что и порог простоя: кривое
+// значение роняет старт, без ключа живёт умолчание догона (DK-1414).
+func TestLoadConfigCatchupInterval(t *testing.T) {
+	home := t.TempDir()
+	writeConf(t, home, "root = /x\ncatchup_interval = 300ms\n")
+	cfg, err := LoadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CatchupInterval != 300*time.Millisecond {
+		t.Fatalf("catchup_interval = %v, ожидал 300ms", cfg.CatchupInterval)
+	}
+	for _, bad := range []string{"3x", "0", "-1m", "m"} {
+		writeConf(t, home, "root = /x\ncatchup_interval = "+bad+"\n")
+		if _, err := LoadConfig(home); err == nil {
+			t.Errorf("интервал %q должен ронять старт", bad)
+		}
+	}
+	writeConf(t, home, "root = /x\n")
+	cfg, err = LoadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CatchupInterval != 0 {
+		t.Fatalf("без ключа интервал %v, ожидал ноль", cfg.CatchupInterval)
+	}
+	s := &server{cfg: cfg}
+	if got := s.cfg.catchupEvery(); got != catchupDefault {
+		t.Errorf("умолчание %v, ожидал %v", got, catchupDefault)
+	}
+	cfg.CatchupInterval = 90 * time.Second
+	if got := s.cfg.catchupEvery(); got != 90*time.Second {
+		t.Errorf("ключ не перебил умолчание: %v", got)
+	}
+}
+
 func TestLoadConfigBadPort(t *testing.T) {
 	home := t.TempDir()
 	for _, bad := range []string{"порт", "0", "70000"} {

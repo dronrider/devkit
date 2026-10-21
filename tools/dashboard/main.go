@@ -318,6 +318,9 @@ func cmdServe(home, staticDir string) error {
 	// Дозор мёртвых окон: лежащие реплики задач, которых доставка не дождётся,
 	// откладываются в файлы задач с причиной (chathold.go, DK-1399).
 	go srv.chatHoldKeeper(keeperStop)
+	// Догон досок из origin (catchup.go): правки доски с другой машины видны
+	// без ручного git pull, гарды держат локальную работу (DK-1414).
+	go srv.boardCatchupKeeper(keeperStop)
 	for _, e := range cfg.Errs {
 		logf("конфиг: %s", e)
 	}

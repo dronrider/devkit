@@ -52,6 +52,13 @@ type server struct {
 	// Сказано ли в журнал про просадку обхода доски по этому дереву. Строка
 	// одна на полосу просадки, снимает её первый уложившийся круг (noteSlow).
 	slowSaid map[string]bool
+	// Память догона досок из origin (catchup.go): дерево -> пометка витрины
+	// «доска позади и почему догон не прошёл», и дерево -> последняя строка
+	// журнала догона, чтобы полоса отказа писалась одной строкой, а не каждым
+	// кругом (тот же приём, что у lagSaid). Пишут фоновые круги догона, читает
+	// каждый список проектов и доска, поэтому под общим s.mu.
+	catchup     map[string]string
+	catchupSaid map[string]string
 	// Память вердиктов отсева боковых деревьев (projects.go): молчащий git не
 	// меняет вердикт, а без прежнего каталог считается деревом.
 	wt *worktreeMemo
@@ -124,10 +131,10 @@ type server struct {
 	// Сводка ресурсов машины (resources.go): последний снимок и идущий съём.
 	// Замок свой, отдельный от mu: съём стоит подпроцессов и системных
 	// вызовов, и держать под ними общий замок сервера нельзя.
-	resMu    sync.Mutex
-	resFly   *resFlight
-	resView  ResView
-	resBorn  time.Time
+	resMu   sync.Mutex
+	resFly  *resFlight
+	resView ResView
+	resBorn time.Time
 
 	// Память о записях очереди исходящих, уже уехавших в сессию (outbox.go):
 	// по ней повтор отправителя узнаётся и второй раз не доставляется.
@@ -210,14 +217,16 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 	return &server{cfg: cfg, static: static, logf: logf, now: time.Now, started: time.Now(),
 		boards: map[string]boardEntry{}, heads: map[string]headEntry{}, humanSaid: map[string]humanSaidEntry{},
 		archive: map[string]archiveEntry{}, deaf: map[string]deafEntry{},
-		flights:   map[string]*boardFlight{},
-		lagSaid:   map[string]bool{},
-		slowSaid:  map[string]bool{},
-		wt:        newWorktreeMemo(),
-		busy:      map[string]busyEntry{},
-		heal:      map[string]healEntry{},
-		probe:     peerProbe,
-		secretTok: cfg.Token}
+		flights:     map[string]*boardFlight{},
+		lagSaid:     map[string]bool{},
+		slowSaid:    map[string]bool{},
+		catchup:     map[string]string{},
+		catchupSaid: map[string]string{},
+		wt:          newWorktreeMemo(),
+		busy:        map[string]busyEntry{},
+		heal:        map[string]healEntry{},
+		probe:       peerProbe,
+		secretTok:   cfg.Token}
 }
 
 // refreshToken отдаёт действующий секрет входа, при нужде перечитывая его из
@@ -626,6 +635,9 @@ type projectInfo struct {
 	Drafts int    `json:"drafts,omitempty"`
 	Works  []Work `json:"works"`
 	Error  string `json:"error,omitempty"`
+	// Stale это пометка догона доски из origin (catchup.go): доска позади
+	// origin и почему догон не прошёл. Пустая значит «свежо».
+	Stale string `json:"stale,omitempty"`
 }
 
 func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -649,7 +661,7 @@ func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
 // projectSummary собирает строку списка проектов: счётчики секций и живые
 // работы, а не прочитанная доска остаётся причиной вместо них.
 func (s *server) projectSummary(p Project) projectInfo {
-	info := projectInfo{Project: p, Works: []Work{}}
+	info := projectInfo{Project: p, Works: []Work{}, Stale: s.boardLagNote(p.Path)}
 	raw, err := s.projectBoard(p.Path)
 	if err != nil {
 		info.Error = err.Error()
@@ -762,6 +774,9 @@ func (s *server) handleBoard(w http.ResponseWriter, r *http.Request) {
 		"board":   boardRuns(raw, works, mine, s.waitLookup(found.Path)),
 		"works":   works,
 		"errors":  []string{},
+		// Пометка догона доски из origin (catchup.go): пустая строка значит,
+		// что доска свежая или догонять её нечего.
+		"stale": s.boardLagNote(found.Path),
 	}
 	// Пустой список работ при ненайденном tmux это не «агенты не работают»,
 	// причина называется и здесь, а не только в /healthz.

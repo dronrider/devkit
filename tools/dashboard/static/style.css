@@ -2314,6 +2314,9 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 .alink:hover{text-decoration:underline}
 
 /* два таба экрана доски: задачи и накопитель черновиков */
+/* Пометка догона доски из origin: строка над табами, слова той же кладки, что
+   и прочие второстепенные пометки экрана. */
+.blag{display:flex;justify-content:center;padding:var(--sp2) 0 0}
 .ktabs{display:flex;gap:var(--sp4);margin-top:var(--airy);border-bottom:1px solid var(--line)}
 .ktab{padding:0 2px var(--airy);border:none;border-bottom:2px solid transparent;background:none;font:500 13.5px var(--sans);color:var(--tx3);cursor:pointer}
 .ktab:hover{color:var(--tx2)}

@@ -702,3 +702,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1399 | Доставка строки чата в мёртвое окно отбивается вечно и молча | bug | P1 | 2026-10-18 | [tasks/archive/2026/DK-1399.md](tasks/archive/2026/DK-1399.md) |
 | DK-1414 | Дашборд сам догоняет доску проекта из origin | task | P2 | 2026-10-22 | [tasks/archive/2026/DK-1414.md](tasks/archive/2026/DK-1414.md) |
 | DK-1001 | Пакет dashboard красит на -count 3 целиком, врозь зелёный [долг] | bug | P3 | 2026-10-22 | [tasks/archive/2026/DK-1001.md](tasks/archive/2026/DK-1001.md) |
+| DK-1416 | board-draft сохраняет фактуру обсуждения и полную структуру | task | P3 | 2026-10-22 | [tasks/archive/2026/DK-1416.md](tasks/archive/2026/DK-1416.md), `3101850ad` |

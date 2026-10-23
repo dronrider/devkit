@@ -107,7 +107,7 @@ func sufText(suf, label string) string {
 	return strings.TrimSpace(strings.TrimSuffix(s, "]"))
 }
 
-func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, clean bool, sv *stageView) jsonRow {
+func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, sv *stageView) jsonRow {
 	base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
 	return jsonRow{
 		ID:     r.ID,
@@ -126,8 +126,8 @@ func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, clean bool
 		// Дата последней правки строки: перевод в статус двигает строку между
 		// секциями доски, то есть правит её, и отдельной даты перевода в доске
 		// нет. Возраст днями остаётся в notes, дашборд показывает дату.
-		Moved:     lineDate(times, r.LineIdx, clean),
-		Notes:     rowNoteParts(root, ed, r.Sect, r, times, clean),
+		Moved:     lineDate(times, r.LineIdx),
+		Notes:     rowNoteParts(root, ed, r.Sect, r, times),
 		jsonStage: sv.mark(r.ID),
 	}
 }
@@ -155,11 +155,7 @@ func cmdListJSON(root, sect string, debtOnly bool) (string, error) {
 		return "", err
 	}
 	ed := newEdges(root, b, arch)
-	clean := boardClean(root)
-	var times map[int]int64
-	if clean {
-		times = boardTimes(root)
-	}
+	times := boardTimes(root)
 	sv := loadStageView(root)
 	keys := []string{SectInProgress, SectCheck, SectBacklog, SectBlocked}
 	if sect != "" {
@@ -176,7 +172,7 @@ func cmdListJSON(root, sect string, debtOnly bool) (string, error) {
 			if debtOnly && !isDebt(r.Title) {
 				continue
 			}
-			sec.Rows = append(sec.Rows, makeJSONRow(root, r, ed, times, clean, sv))
+			sec.Rows = append(sec.Rows, makeJSONRow(root, r, ed, times, sv))
 		}
 		out.Sections = append(out.Sections, sec)
 	}
@@ -206,7 +202,7 @@ func cmdShowJSON(root, id string) (string, error) {
 	}
 	if row := b.find(id); row != nil {
 		out := jsonShow{
-			jsonRow: makeJSONRow(root, row, newEdges(root, b, arch), showTimes(root), true, loadStageView(root)),
+			jsonRow: makeJSONRow(root, row, newEdges(root, b, arch), boardTimes(root), loadStageView(root)),
 			Sect:    row.Sect,
 		}
 		if s := sides[id]; s != nil {

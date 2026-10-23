@@ -119,9 +119,13 @@ func TestListAnnotatesCheckRows(t *testing.T) {
 	}
 }
 
-func TestListNoAnnotationsWhenDirty(t *testing.T) {
+func TestListAnnotatesWhenDirty(t *testing.T) {
 	root := checkBoardSetup(t)
-	// Незакоммиченная правка доски: возраст молчит на всей доске.
+	old := timeNow
+	defer func() { timeNow = old }()
+	timeNow = func() time.Time { return time.Date(2026, 1, 11, 13, 0, 0, 0, time.UTC) } // +10 дней
+	// Незакоммиченная правка доски: blame annotate рабочую копию, возраст
+	// нетронутых строк не гаснет (DK-1337).
 	board, err := os.ReadFile(boardPath(root))
 	if err != nil {
 		t.Fatal(err)
@@ -133,8 +137,8 @@ func TestListNoAnnotationsWhenDirty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, "строка не двигалась") {
-		t.Fatalf("на грязном дереве возраст не должен печататься:\n%s", out)
+	if !strings.Contains(out, "строка не двигалась 10 дней") {
+		t.Fatalf("на грязном дереве возраст нетронутых строк обязан печататься:\n%s", out)
 	}
 	// Пометки Check от чистоты дерева не зависят, они идут не из git.
 	if !strings.Contains(out, "код слит, вид agent") {

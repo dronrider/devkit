@@ -119,22 +119,17 @@ func smokeMark(root, id string) string {
 // момента, а не от настоящих часов.
 var timeNow = time.Now
 
-// boardClean говорит, есть ли у docs/TASKS.md незакоммиченные правки. `git
-// log -L` смотрит на историю коммитов и берёт номера строк из HEAD, а не из
-// рабочей копии: на грязном дереве они разъедутся, и возраст достанется не
-// той строке. Отсутствие git-репозитория тоже считается «грязным»: тогда
-// возраст просто не печатается, а не врёт.
-func boardClean(root string) bool {
-	out, err := exec.Command("git", "-C", root, "status", "--porcelain", "--", "docs/TASKS.md").Output()
-	return err == nil && strings.TrimSpace(string(out)) == ""
-}
-
 // boardTimes возвращает время последней правки каждой строки docs/TASKS.md
 // (ключ это номер строки с нуля, значение unix-секунды). Один `git blame` на
 // всю доску, а не `git log -L` на строку: обход доски это самая частая
 // команда, а запуск git на каждую строку стоил на живой доске секунды против
 // сотых. Режим --incremental вчетверо дешевле построчного порцелана (0.13с
 // против 0.53с на доске devkit), потому что не тащит с собой содержимое строк.
+// Blame annotate рабочую копию, а не HEAD: незакоммиченная правка строки
+// получает нулевой sha с временем «сейчас», нетронутые строки хранят даты
+// своих коммитов. Правки доски без коммита живут минутами (ручные и
+// дашбордные), и гасить из-за них возраст всей доске значит прятать даты у
+// двух сотен строк из-за одной (DK-1337).
 // Дата тут не про перевод в статус, а про последнюю правку строки:
 // отдельного поля под дату перевода в доске нет.
 func boardTimes(root string) map[int]int64 {
@@ -209,12 +204,9 @@ func lineAge(times map[int]int64, lineIdx int) (days int, ok bool) {
 }
 
 // ageLabel собирает возраст строки в человеческую подпись, либо пустую
-// строку, когда возраст не посчитать (грязное дерево, нет git, строка ещё
-// не попадала в коммит).
-func ageLabel(times map[int]int64, lineIdx int, clean bool) string {
-	if !clean {
-		return ""
-	}
+// строку, когда возраст не посчитать (нет git, строка ещё не попадала
+// в коммит).
+func ageLabel(times map[int]int64, lineIdx int) string {
 	days, ok := lineAge(times, lineIdx)
 	if !ok {
 		return ""
@@ -225,11 +217,8 @@ func ageLabel(times map[int]int64, lineIdx int, clean bool) string {
 // lineDate отдаёт дату последней правки строки доски (2006-01-02) для
 // машинного вывода: печать говорит о возрасте днями, а читателю --json
 // удобнее сама дата, из неё возраст считается обратно. Пусто там же, где
-// молчит ageLabel: грязное дерево, нет git, строка ещё не попадала в коммит.
-func lineDate(times map[int]int64, lineIdx int, clean bool) string {
-	if !clean {
-		return ""
-	}
+// молчит ageLabel: нет git, строка ещё не попадала в коммит.
+func lineDate(times map[int]int64, lineIdx int) string {
 	sec, ok := times[lineIdx]
 	if !ok {
 		return ""

@@ -1482,6 +1482,102 @@ func TestRunStartUserAcceptClosesWithoutSession(t *testing.T) {
 	}
 }
 
+// regcheck:test-begin
+//
+// lldUserDoc это файл задачи LLD с пользовательской приёмкой: ссылка на
+// документ дизайна, сценарий и приёмка с барьером, как их требуют ворота
+// move check у не агентского вида.
+const lldUserDoc = `# XR-010: LLD с приёмкой человека
+
+Документ решений: [docs/lld/XR-010-design.md](../lld/XR-010-design.md).
+
+## Сценарий проверки
+
+Открыть доску, нажать «Закрыть» у строки в Check.
+
+## Приёмка
+
+- вид: user
+- барьер «согласие»: закрывать задачу решает человек, машине этого не отдают
+  - спросить у витка: не годится, согласие даёт человек, а не агент
+`
+
+// lldDesignDoc это документ дизайна с кандидатами нарезки: раздел «Нарезка»
+// держит двух кандидатов, из них заведена одна строка.
+const lldDesignDoc = `# XR-010: дизайн
+
+## Решение 1. Шаг
+
+Проза решения.
+
+## Нарезка
+
+- XR-011 (task, M, R=38). Первая строка нарезки.
+- кандидат 2 (task, S, R=35). Вторая строка. После XR-011.
+`
+
+// Кнопка «Закрыть» у LLD с пользовательской приёмкой идёт через те же ворота
+// нарезки, что и ручная команда (DK-489): close без сессии агента обязан
+// отказать на незаведённых кандидатах, а не увезти принятый дизайн в архив
+// текстом. Стенд гоняет настоящий taskctl, отказ ворот виден в ответе кнопки,
+// а после заведения последнего кандидата закрытие проходит.
+func TestRunStartUserAcceptClosesLLDThroughCutGate(t *testing.T) {
+	e, c, gitLog := tasksEnv(t)
+	writeScript(t, e.bin, "git", gitFakeMoving(gitLog))
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	runTaskctl(t, e.proj, "add", "--id", "XR-010", "--title", "LLD: дизайн с нарезкой",
+		"--type", "LLD", "--rank", "50+8+1+0+4", "--accept", "user", "--barrier", "согласие")
+	runTaskctl(t, e.proj, "add", "--id", "XR-011", "--title", "Первая строка нарезки",
+		"--type", "task", "--rank", "50+8+1+0+4", "--accept", "agent")
+	goalDoc(t, e, "XR-010", lldUserDoc)
+	if err := os.MkdirAll(filepath.Join(e.proj, "docs", "lld"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	design := filepath.Join(e.proj, "docs", "lld", "XR-010-design.md")
+	if err := os.WriteFile(design, []byte(lldDesignDoc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runTaskctl(t, e.proj, "move", "XR-010", "check")
+	runTaskctl(t, e.proj, "debt-done", "XR-010", "пересечений нет")
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-010"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("кнопка закрытия приняла LLD с незаведённым кандидатом: %d %s",
+			resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "Нарезка") || !strings.Contains(text, "1 из 2") {
+		t.Fatalf("отказ кнопки не называет шаг нарезки: %s", text)
+	}
+	if got := runTaskctl(t, e.proj, "list", "--json"); !strings.Contains(got, "XR-010") {
+		t.Errorf("строка LLD уехала с доски при отказе ворот: %s", got)
+	}
+
+	fixed := strings.Replace(lldDesignDoc,
+		"- кандидат 2 (task, S, R=35). Вторая строка. После XR-011.",
+		"- XR-012 (task, S, R=35). Вторая строка. После XR-011.", 1)
+	if err := os.WriteFile(design, []byte(fixed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runTaskctl(t, e.proj, "add", "--id", "XR-012", "--title", "Вторая строка нарезки",
+		"--type", "task", "--rank", "25+5+1+0+2", "--accept", "agent")
+
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-010"}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("закрытие нарезанной LLD: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, `"kind":"close"`) || !strings.Contains(text, "XR-010 закрыта") {
+		t.Errorf("в ответе закрытия нет признаков close: %s", text)
+	}
+	if got := readFile(t, filepath.Join(e.proj, "docs", "TASKS-archive.md")); !strings.Contains(got, "XR-010") {
+		t.Errorf("закрытая LLD не легла в архив:\n%s", got)
+	}
+}
+
+// regcheck:test-end
+
 // Закрытие мимо сессии включается ровно для пользовательской приёмки в Check:
 // смешанной закрытие ещё предстоит агентской частью, а пользовательская строка
 // в Backlog это работа, которую никто не проверял.

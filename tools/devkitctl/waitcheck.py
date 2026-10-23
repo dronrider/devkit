@@ -451,6 +451,13 @@ def event_wait(cmd_run, proj, home, mode_file, heads_log):
     why = woke(cmd_run, proj, home, heads_log, ARMED)
     if why:
         return step("%s не стартовала по слиянию %s: %s" % (ARMED, DEP, why), 1, merge_out)
+    # Слияние оставило выкат непроверенным, и отметку smoke в конвейере ставит
+    # прогон проверяющего после выката (checkrun). Стенд зовёт тот же шаг сам,
+    # как зовёт разбор долга: без отметки close отобьётся на непроверенном
+    # выкате (DK-1363).
+    rc, smoke_out = cmd_run(["shipctl", "-C", str(proj), "smoke", DEP])
+    if rc != 0:
+        return step("smoke предпосылки не отмечен", rc, smoke_out)
     # Перевод в Check, которым заканчивается merge, открывает отметку долга.
     # В конвейере хвост закрывает проверяющий по заказу checkrun, стенд зовёт
     # тот же шаг сам, и без него close отобьётся на открытой отметке.

@@ -65,7 +65,7 @@ func TestLaunchSitesNameDir(t *testing.T) {
 // Контроль и статус-вызовы: они не обходят деревьев и не поднимают клиентов,
 // а их утилиты работают по абсолютным путям и своим ключам каталога.
 var dirlessAllow = map[string]launchAllow{
-	"agentctl/corp.go:corpGit":            {1, "git с «-C» по абсолютному пути, дерево не обходит"},
+	"agentctl/corp.go:corpGit":             {1, "git с «-C» по абсолютному пути, дерево не обходит"},
 	"agentctl/run.go:refreshQuotaDetached": {1, "отпочкование quota refresh: съёмщики панелей называют свои каталоги сами (panelDir)"},
 	"agentctl/usage.go:tmuxRun":            {1, "управляющие вызовы tmux, сессии поднимаются с «-c»"},
 	"agentctl/usage.go:ownerAlive":         {1, "статус-вызов ps, дерева не касается"},

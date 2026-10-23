@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/clientdir"
 )
 
 // agentctl exec это запуск чужой команды на выбранной подписке: пары окружения
@@ -74,12 +76,36 @@ func cmdExec(start, name string, argv []string, out, errw io.Writer) (int, error
 	if names := envNames(pairs); len(names) > 0 {
 		tail = ", окружение: " + strings.Join(names, ", ")
 	}
-	fmt.Fprintf(errw, "exec: харнес %s, команда %s%s\n", name, argv[0], tail)
+	workdir, err := execRunDir()
+	if err != nil {
+		return 0, err
+	}
+	fmt.Fprintf(errw, "exec: харнес %s, команда %s, каталог %s%s\n", name, argv[0], workdir, tail)
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = workdir
 	// Ограничитель вложенности exec не ставит: команда тут это не делегированный
 	// исполнитель, а сессия-диспетчер, и делегировать дальше ей и положено.
 	cmd.Env = harnessEnviron(os.Environ(), pairs, name)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout, cmd.Stderr = out, errw
 	return runChild(cmd, errw, "команду выбирает тот, кто зовёт exec")
+}
+
+// execRunDir выбирает рабочий каталог поднимаемой команды: текущий каталог
+// поднявшего, если работать в нём уместно, иначе служебный пустой каталог под
+// домом. Наследуемый каталог раньше уходил команде молча, а у launchd-обёртки
+// (dashboard serve, сменные съёмщики) им оказывался корень файловой системы:
+// поднятое дерево обходило весь диск и поднимало диалоги доступа macOS на имя
+// дашборда (DK-1373). Дом и корень меняются на служебный каталог тем же
+// правилом, что и у входа клиента.
+func execRunDir() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("текущий каталог не найден (%v), команду поднимать негде", err)
+	}
+	home, _ := os.UserHomeDir()
+	if clientdir.Check(cwd, home) == nil {
+		return cwd, nil
+	}
+	return clientdir.Service(home)
 }

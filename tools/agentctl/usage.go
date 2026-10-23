@@ -435,6 +435,16 @@ func snapByScript(q *quotaSpec, now time.Time) (snapshot, error) {
 			q.Harness, q.Harness, machineConfigPath())
 	}
 	cmd := exec.Command(path)
+	// Каталог съёмщика называется тем же правилом, что и каталог панели
+	// (panelDir): доверенное дерево, иначе служебный пустой каталог под домом.
+	// Наследуемый каталог раньше уходил скрипту молча, а launchd-обёртка
+	// поднимала его в корне файловой системы, и поднименное дерево обходило
+	// весь диск с диалогами доступа macOS на имя дашборда (DK-1373).
+	dir, err := panelDir(q)
+	if err != nil {
+		return snapshot{}, fmt.Errorf("каталог для съёмщика %s не выбран (%v), снимок не тронут", path, err)
+	}
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "DEVKIT_HARNESS="+q.Harness)
 	if q.Home != "" {
 		cmd.Env = append(cmd.Env, "DEVKIT_HARNESS_HOME="+q.Home)

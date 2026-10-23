@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/clientdir"
 )
 
 // Запуск чужой команды на выбранной подписке (DK-326, LLD
@@ -13,10 +16,15 @@ import (
 // файлом.
 
 // execEnvDump это команда, складывающая своё окружение в названный файл.
-// Рабочую директорию exec не меняет, поэтому путь идёт аргументом, а не
-// относительным именем.
+// Путь идёт аргументом, а не относительным именем: рабочий каталог команды
+// выбирает сам exec (DK-1373), и относительному имени в нём доверять нельзя.
 func execEnvDump(path string) []string {
 	return []string{"/bin/sh", "-c", `env > "$1"`, "sh", path}
+}
+
+// execCwdDump это команда, складывающая свой рабочий каталог в названный файл.
+func execCwdDump(path string) []string {
+	return []string{"/bin/sh", "-c", `pwd > "$1"`, "sh", path}
 }
 
 func execOut(t *testing.T, start, name string, argv []string) (int, string) {
@@ -115,6 +123,64 @@ env = ["SECRET_TOKEN=`+marker+`"]
 	if !strings.Contains(out, "SECRET_TOKEN") {
 		t.Fatalf("имя переменной не названо, а окружение команды сказать надо:\n%s", out)
 	}
+}
+
+// TestExecNamesWorkingDir: рабочий каталог команды называется явно, а не
+// наследуется молча. Наследованный каталог уходил команде как есть, и у
+// launchd-обёртки exec (агент дашборда, сменные съёмщики) им оказывался корень
+// файловой системы: поднятое дерево обходило весь диск и поднимало диалоги
+// доступа macOS на имя дашборда (DK-1373). Годный каталог поднявшего
+// сохраняется, дом меняется на служебный пустой каталог подъёма клиента.
+func TestExecNamesWorkingDir(t *testing.T) {
+	kit := execKit(t)
+
+	t.Run("каталог поднявшего сохраняется", func(t *testing.T) {
+		work := realPath(t, t.TempDir())
+		dump := filepath.Join(work, "cwd.txt")
+		t.Chdir(work)
+		code, out := execOut(t, kit, "secondcli", execCwdDump(dump))
+		if code != 0 {
+			t.Fatalf("код возврата %d, жду 0: %s", code, out)
+		}
+		raw, err := os.ReadFile(dump)
+		if err != nil {
+			t.Fatalf("команда не оставила след каталога: %v", err)
+		}
+		if got := strings.TrimSpace(string(raw)); got != work {
+			t.Fatalf("команда поднята в %q, ждали каталог поднявшего %q", got, work)
+		}
+	})
+
+	t.Run("дом меняется на служебный пустой", func(t *testing.T) {
+		// Стенд сам ставит HOME временным каталогом кита. Тот же каталог с
+		// развёрнутыми симлинками становится и рабочим: поднятие из дома это
+		// дорога, уходящая в служебный пустой каталог, а развёрнутая запись
+		// нужна, чтобы pwd и HOME совпали до последнего знака, иначе на macOS
+		// их спорили бы /var и /private/var.
+		home := realPath(t, kit)
+		dump := filepath.Join(home, "cwd.txt")
+		t.Setenv("HOME", home)
+		t.Chdir(home)
+		code, out := execOut(t, kit, "secondcli", execCwdDump(dump))
+		if code != 0 {
+			t.Fatalf("код возврата %d, жду 0: %s", code, out)
+		}
+		raw, err := os.ReadFile(dump)
+		if err != nil {
+			t.Fatalf("команда не оставила след каталога: %v", err)
+		}
+		got, err := filepath.EvalSymlinks(strings.TrimSpace(string(raw)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := filepath.EvalSymlinks(filepath.Join(home, clientdir.Base, clientdir.Name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("команда поднята в %q, ждали служебный каталог %q", got, want)
+		}
+	})
 }
 
 // TestExecExitCode: код выхода команды проезжает наружу как есть. Сессию

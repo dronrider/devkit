@@ -155,3 +155,38 @@ func clientdirCheck(dir, home string) error {
 	}
 	return nil
 }
+
+// TestSnapByScriptNamesDir: сменный съёмщик поднимается с названным рабочим
+// каталогом, тем же правилом, что и панель остатка (panelDir): доверенное
+// дерево проекта, иначе служебный пустой каталог под домом харнеса.
+// Наследованный каталог раньше уходил скрипту молча, а launchd-обёртка exec
+// поднимала его в корне файловой системы, и поднятое съёмщиком дерево обходило
+// весь диск с диалогами доступа macOS на имя дашборда (DK-1373). Контракт
+// съёмщика при этом не меняется: свои пути он получает окружением, каталог ему
+// безразличен.
+func TestSnapByScriptNamesDir(t *testing.T) {
+	side := filepath.Join(t.TempDir(), "side")
+	q := scriptSpec(t, "#!/bin/sh\npwd > "+side+"\nprintf 'taken = %s\\nweek_all = 40%% сброс %s\\n' \""+
+		at(testNow)+"\" \""+at(testNow.Add(halfWindow))+"\"\n")
+	if _, err := snapByScript(q, testNow); err != nil {
+		t.Fatalf("съёмщик отказал: %v", err)
+	}
+	raw, err := os.ReadFile(side)
+	if err != nil {
+		t.Fatalf("съёмщик не оставил след каталога: %v", err)
+	}
+	got, err := filepath.EvalSymlinks(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(filepath.Join(q.Home, ".devkit", "client"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("съёмщик поднят в %q, ждали служебный каталог %q", got, want)
+	}
+	if err := clientdirCheck(got, q.Home); err != nil {
+		t.Fatalf("каталог подъёма не годится: %v", err)
+	}
+}

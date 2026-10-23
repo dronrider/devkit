@@ -378,6 +378,14 @@ class ConfTest(Stand):
         conf.write_text("port = мусор\n", encoding="utf-8")
         self.assertEqual(dashboard.conf_port(self.home), dashboard.DEFAULT_PORT)
 
+    def test_roots_lines_and_tilde(self):
+        self.assertEqual(dashboard.conf_roots(self.home), [])
+        conf = self.home / ".devkit" / "dashboard.local"
+        conf.write_text("# корни проектов\nroot = /works\nport = 7112\n"
+                        "root = ~/projects\nroot =\n", encoding="utf-8")
+        self.assertEqual(dashboard.conf_roots(self.home),
+                         [Path("/works"), self.home / "projects"])
+
     def test_probe_uses_configured_port(self):
         conf = self.home / ".devkit" / "dashboard.local"
         conf.write_text("port = 7300\n", encoding="utf-8")

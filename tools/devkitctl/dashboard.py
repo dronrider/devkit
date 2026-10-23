@@ -77,6 +77,29 @@ def conf_port(home):
     return DEFAULT_PORT
 
 
+def conf_roots(home):
+    """Корни поиска проектов из ~/.devkit/dashboard.local, по строке `root` на
+    корень. Разбор терпимый, как у conf_port. Строгий список корней держит
+    сервер, а доктору корни нужны для онбординга деревьев, где дашборд
+    поднимает сессии (DK-1282). Ведущее ~ раскрывается от дома машины.
+    Файла нет или строки root в нём нет значит корней нет."""
+    try:
+        text = home_path(home, CONF).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    roots = []
+    for ln in text.splitlines():
+        key, sep, val = ln.partition("=")
+        if not sep or key.strip() != "root":
+            continue
+        val = val.strip()
+        if val.startswith("~"):
+            roots.append(home_path(home, val))
+        elif val:
+            roots.append(Path(val))
+    return roots
+
+
 def default_root(main):
     """Корень поиска проектов по умолчанию: родитель чекаута devkit. Клон по
     CONNECT.md лежит в `~/projects`, и родитель напрашивается сам; чекаут в

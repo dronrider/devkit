@@ -13,10 +13,12 @@ import subprocess
 
 HERE = Path(sys.argv[1]).resolve().parent
 ROOT = HERE.parents[2]
+ANSWERS_COMMIT = "60515a7979f923f0c406f987008be8631f592763"
+ACCESS_COMMIT = "34c242d64e11ab7f76adfb8fe8209dc641165044"
 
 
 def git(*args):
-    return subprocess.check_output(["git", "-C", str(ROOT), *args], text=True)
+    return subprocess.check_output(["git", "--no-replace-objects", "-C", str(ROOT), *args], text=True)
 
 
 def sha(path):
@@ -28,8 +30,39 @@ def require(condition, message):
         raise SystemExit("ошибка: " + message)
 
 
-frozen = json.loads((HERE / "frozen.json").read_text())
+def from_snapshot(name, commit):
+    path = "docs/tasks/DK-1413/" + name
+    expected = git("rev-parse", commit + ":" + path).strip()
+    actual = git("hash-object", "--no-filters", str(HERE / name)).strip()
+    require(actual == expected, "файл не совпал со снимком " + name)
+
+
 protocol = json.loads((HERE / "runs.json").read_text())
+frozen_commit = protocol["frozen_commit"]
+inputs_commit = protocol["inputs_commit"]
+commits = [frozen_commit, inputs_commit, ANSWERS_COMMIT, ACCESS_COMMIT]
+require(len(set(commits)) == 4, "этапы должны иметь разные снимки")
+for commit in commits:
+    require(re.fullmatch(r"[0-9a-f]{40}", commit), "некорректный ID снимка")
+    require(git("cat-file", "-t", commit).strip() == "commit", "недоступен исходный коммит " + commit)
+for before, after in zip(commits, commits[1:]):
+    require(git("merge-base", before, after).strip() == before, "порядок исходных снимков")
+from_snapshot("runs.json", ANSWERS_COMMIT)
+from_snapshot("frozen.json", frozen_commit)
+frozen = json.loads((HERE / "frozen.json").read_text())
+for name in frozen["files"]:
+    from_snapshot(name, frozen_commit)
+for case in ["bug", "feature", "multi"]:
+    from_snapshot(case + ".prepared.md", inputs_commit)
+for run in protocol["runs"]:
+    stage = ANSWERS_COMMIT if run["name"] == "bug.prepared.v2" else inputs_commit
+    from_snapshot(run["input"], stage)
+    from_snapshot(run["response"], ANSWERS_COMMIT)
+for name in ["bug.prepared.v2.md", "bug.prepared.v2.input.txt"]:
+    from_snapshot(name, ANSWERS_COMMIT)
+for name in ["bug.original.access.json", "bug.prepared.access.json"]:
+    from_snapshot(name, ACCESS_COMMIT)
+print("Снимки: исходные git blob совпали, frozen -> inputs -> answers -> access")
 for name, digest in frozen["files"].items():
     require(sha(HERE / name) == digest, "изменён замороженный файл " + name)
 print(f"Замороженные файлы: {len(frozen['files'])}, отпечатки совпали")
@@ -58,9 +91,6 @@ old_tree = git("ls-tree", "-r", "--name-only", protocol["frozen_commit"], "docs/
 input_tree = git("ls-tree", "-r", "--name-only", protocol["inputs_commit"], "docs/tasks/DK-1413")
 require(".prepared." not in old_tree, "копии уже были в коммите эталона")
 require(".answer." not in input_tree, "ответы уже были в коммите входов")
-require(git("merge-base", protocol["frozen_commit"], protocol["inputs_commit"]).strip() == protocol["frozen_commit"], "порядок эталона и входов")
-for commit in [protocol["frozen_commit"], protocol["inputs_commit"]]:
-    require(git("merge-base", commit, "HEAD").strip() == commit, "коммит не предок HEAD")
 print("Порядок: эталон раньше копий, исходные входы зафиксированы без ответов")
 
 runs = protocol["runs"]

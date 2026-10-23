@@ -537,7 +537,8 @@ class Sandbox:
         log = home / ".devkit" / "goal-watch.log"
         write(home / watch.PLIST[2:],
               watch.plist_text(PY, main / "tools" / "devkitctl" / "devkitctl.py", log,
-                               dashboard.agent_path(self.bin / "dashboard")))
+                               dashboard.agent_path(self.bin / "dashboard"),
+                               dashboard.service_dir(home)))
         write(log, "%s целей под надзором 0, вставших 0\n"
               % datetime.now().strftime(watch.STAMP))
         return home
@@ -551,7 +552,8 @@ class Sandbox:
         argv = [str(self.bin / "agentctl"), "exec", "--harness", "claude-code",
                 "--", str(self.bin / "dashboard"), "serve"]
         write(home / dashboard.PLIST[2:],
-              dashboard.plist_text(argv, home / dashboard.LOG[2:]))
+              dashboard.plist_text(argv, home / dashboard.LOG[2:],
+                                   dashboard.service_dir(home)))
         return home
 
     def global_rules(self, home, dk=None):

@@ -16,6 +16,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import dashboard
 import testenv
 import watch
 
@@ -1737,6 +1738,36 @@ class AgentTest(Stand):
         self.assertIn("<key>EnvironmentVariables</key>", text)
         self.assertIn("<key>PATH</key><string>%s" % self.dashboard_bin.parent, text)
         self.assertTrue(call.argv_with("bootstrap"), "launchd не позван: %s" % call.calls)
+
+    def test_fix_names_working_directory(self):
+        # Рабочий каталог тика (DK-1373): без него демон наследует корень
+        # файловой системы, и дерево запусков тика обходило весь диск с
+        # диалогами доступа macOS на имя демона. Каталогом служит служебный
+        # пустой каталог подъёма клиента (dashboard.service_dir), тот же, что
+        # у launchd-агента дашборда, и заводится он к моменту взвода: launchd
+        # не поднимает процесс с несуществующим WorkingDirectory.
+        f, d, _ = self.check(fix=True)
+        self.assertEqual(f, [])
+        workdir = dashboard.service_dir(self.home)
+        self.assertIn("<key>WorkingDirectory</key><string>%s</string>" % workdir,
+                      self.plist.read_text(encoding="utf-8"))
+        self.assertTrue(workdir.is_dir(), "каталог тика не заведён")
+
+    def test_old_agent_without_workdir_is_rewritten(self):
+        # Агент, положенный до WorkingDirectory, это находка, и --fix
+        # переписывает его: иначе корень файловой системы пережил бы доводку.
+        self.check(fix=True)
+        text = self.plist.read_text(encoding="utf-8")
+        row = "  <key>WorkingDirectory</key><string>%s</string>\n" % dashboard.service_dir(self.home)
+        old = text.replace(row, "")
+        self.assertNotIn("WorkingDirectory", old)
+        self.plist.write_text(old, encoding="utf-8")
+        f, _, _ = self.check()
+        self.assertEqual(len(f), 1, f)
+        f, d, _ = self.check(fix=True)
+        self.assertEqual(f, [])
+        self.assertIn("<key>WorkingDirectory</key>",
+                      self.plist.read_text(encoding="utf-8"))
 
     def test_old_agent_without_path_is_rewritten(self):
         # Агент, положенный до EnvironmentVariables, это находка, и --fix

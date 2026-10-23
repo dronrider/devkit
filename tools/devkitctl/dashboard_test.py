@@ -166,6 +166,36 @@ class AgentTest(Stand):
             path = dashboard.agent_path(str(self.binary))
         self.assertNotIn(".local", path)
 
+    def test_fix_names_working_directory(self):
+        # Рабочий каталог агента (DK-1373): без него демон наследует корень
+        # файловой системы, и дерево его запусков обходило весь диск с
+        # диалогами доступа macOS на имя дашборда. Каталогом служит служебный
+        # пустой каталог подъёма клиента, тот же, что у служебных запусков
+        # самого дашборда, и заводится он к моменту взвода: launchd не поднимает
+        # процесс с несуществующим WorkingDirectory.
+        f, d, _ = self.check(fix=True)
+        self.assertEqual(f, [])
+        workdir = dashboard.service_dir(self.home)
+        self.assertIn("<key>WorkingDirectory</key><string>%s</string>" % workdir,
+                      self.plist.read_text(encoding="utf-8"))
+        self.assertTrue(workdir.is_dir(), "каталог агента не заведён")
+
+    def test_old_agent_without_workdir_is_rewritten(self):
+        # Агент, положенный до WorkingDirectory, это находка, и --fix
+        # переписывает его: иначе корень файловой системы пережил бы доводку.
+        self.check(fix=True)
+        text = self.plist.read_text(encoding="utf-8")
+        row = "  <key>WorkingDirectory</key><string>%s</string>\n" % dashboard.service_dir(self.home)
+        old = text.replace(row, "")
+        self.assertNotIn("WorkingDirectory", old)
+        self.plist.write_text(old, encoding="utf-8")
+        f, _, _ = self.check()
+        self.assertEqual(len(f), 1, f)
+        f, d, _ = self.check(fix=True)
+        self.assertEqual(f, [])
+        self.assertIn("<key>WorkingDirectory</key>",
+                      self.plist.read_text(encoding="utf-8"))
+
     def test_old_agent_without_path_is_rewritten(self):
         # Агент, положенный до EnvironmentVariables, это находка, и --fix
         # переписывает его: иначе дефект PATH пережил бы доводку.

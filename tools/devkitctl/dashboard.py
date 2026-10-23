@@ -191,10 +191,26 @@ def agent_path(binary):
     return ":".join(out)
 
 
-def plist_text(argv, log):
+# Рабочий каталог launchd-агента: служебный пустой каталог подъёма клиента
+# (internal/clientdir, тот же, что у служебных запусков дашборда). Без строки
+# WorkingDirectory демон наследует корень файловой системы, и дочерние процессы
+# обходили бы весь диск, поднимая диалоги доступа macOS именем дашборда
+# (DK-1373). Пустой он нарочно: обходить в нём нечего, а дорогам, которым нужен
+# другой каталог, он безразличен, свои каталоги они называют сами.
+SERVICE_DIR = "~/.devkit/client"
+
+
+def service_dir(home):
+    """Путь служебного каталога подъёма клиента под названным домом."""
+    return home_path(home, SERVICE_DIR)
+
+
+def plist_text(argv, log, workdir):
     """Тело launchd-агента: KeepAlive держит демон живым, журнал процесса
-    совмещён с журналом сервера (обе стороны пишут дозаписью), а PATH задан
-    явно, потому что умолчание launchd не знает ни брю, ни каталога бинарей.
+    совмещён с журналом сервера (обе стороны пишут дозаписью), PATH задан
+    явно, потому что умолчание launchd не знает ни брю, ни каталога бинарей,
+    а рабочий каталог назван, потому что умолчание launchd это корень
+    файловой системы.
 
     argv это полный список ProgramArguments: обёртка agentctl exec с именем
     машинного default, дальше бинарь дашборда и serve (DK-1271). Без обёртки
@@ -218,6 +234,7 @@ def plist_text(argv, log):
         '  <dict>',
         '    <key>PATH</key><string>%s</string>' % agent_path(argv[0]),
         '  </dict>',
+        '  <key>WorkingDirectory</key><string>%s</string>' % workdir,
         '  <key>KeepAlive</key><true/>',
         '  <key>RunAtLoad</key><true/>',
         '  <key>StandardOutPath</key><string>%s</string>' % log,
@@ -326,10 +343,13 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None,
     had_token = bool(_read_token(home))
     if fix:
         ensure_conf(home, main)
+        # Каталог агента обязан существовать к моменту взвода: launchd не
+        # поднимает процесс с несуществующим WorkingDirectory.
+        service_dir(home).mkdir(parents=True, exist_ok=True)
     plist = home_path(home, PLIST)
     log = home_path(home, LOG)
     argv = [agentctl, "exec", "--harness", harness_name, "--", binary, "serve"]
-    want = plist_text(argv, log)
+    want = plist_text(argv, log, service_dir(home))
     have = plist.read_text(encoding="utf-8", errors="replace") if plist.exists() else ""
     if have != want:
         why = ("дашборд не подключён" if not have else

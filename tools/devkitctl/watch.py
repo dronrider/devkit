@@ -2213,7 +2213,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
 
 # -- носитель расписания -----------------------------------------------------
 
-def plist_text(python, script, log, path):
+def plist_text(python, script, log, path, workdir):
     """Тело launchd-агента. Интервал тут короче порога простоя намеренно: порог
     решает, когда звать, а агент только просыпается достаточно часто, чтобы
     любой порог сработал вовремя.
@@ -2221,7 +2221,11 @@ def plist_text(python, script, log, path):
     PATH задан явно тем же сборщиком, что у агента дашборда (dashboard.agent_path):
     без него дети тика (taskctl, shipctl, dashboard, agentctl) получают голый
     системный PATH launchd, не находят себя и молчат, пока в журнал сторожка не
-    заглянут руками (DK-664)."""
+    заглянут руками (DK-664). Рабочий каталог назван тем же служебным пустым
+    каталогом подъёма клиента (dashboard.service_dir): без строки
+    WorkingDirectory тик наследует корень файловой системы, и дерево его
+    запусков обходило бы весь диск с диалогами доступа macOS на имя демона
+    (DK-1373)."""
     return "\n".join([
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
@@ -2239,6 +2243,7 @@ def plist_text(python, script, log, path):
         '  <dict>',
         '    <key>PATH</key><string>%s</string>' % path,
         '  </dict>',
+        '  <key>WorkingDirectory</key><string>%s</string>' % workdir,
         '  <key>StartInterval</key><integer>%d</integer>' % EVERY,
         '  <key>RunAtLoad</key><true/>',
         '  <key>StandardOutPath</key><string>%s</string>' % log,
@@ -2302,7 +2307,8 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None, call=N
                 "(devkitctl update или build) и повторить doctor --fix"], []
     plist = home_path(home, PLIST)
     log = home_path(home, LOG)
-    want = plist_text(sys.executable, script, log, dashboard.agent_path(binary))
+    workdir = dashboard.service_dir(home)
+    want = plist_text(sys.executable, script, log, dashboard.agent_path(binary), workdir)
     have = plist.read_text(encoding="utf-8", errors="replace") if plist.exists() else ""
     if have != want:
         why = ("сторожок цикла цели не подключён" if not have else
@@ -2314,6 +2320,9 @@ def check(fix=False, main=None, from_main=True, home=None, platform=None, call=N
             return ["%s, а devkit тут выложен worktree ветки задачи: чинить из основного чекаута %s"
                     % (why, main)], []
         plist.parent.mkdir(parents=True, exist_ok=True)
+        # Каталог агента обязан существовать к моменту взвода: launchd не
+        # поднимает процесс с несуществующим WorkingDirectory.
+        workdir.mkdir(parents=True, exist_ok=True)
         plist.write_text(want, encoding="utf-8")
         if not launchd.own_home(home, machine):
             return [], [launchd.foreign_line("сторожок цикла цели", home, plist, machine)]

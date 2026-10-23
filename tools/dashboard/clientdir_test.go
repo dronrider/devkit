@@ -147,3 +147,29 @@ func TestRunProcHomeUsesServiceDir(t *testing.T) {
 		t.Fatalf("каталог подъёма не годится: %v", err)
 	}
 }
+
+// Обычный запуск утилит доски тоже называет каталог, а не наследует его у
+// демона: под launchd наследовался бы корень файловой системы, и дерево
+// запусков обходило весь диск с диалогами доступа на имя дашборда (DK-1373).
+// Самим дорогам этот каталог безразличен: свои каталоги они называют сами.
+func TestRunProcNamesServiceDir(t *testing.T) {
+	home := tempClientHome(t)
+	out, err := runProc("pwd")
+	if err != nil {
+		t.Fatalf("запуск отказал: %v", err)
+	}
+	got, err := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(serviceDirOf(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("подпроцесс поднят в %q, ждали служебный каталог %q", got, want)
+	}
+	if err := raiseDirCheck(got, home); err != nil {
+		t.Fatalf("каталог подъёма не годится: %v", err)
+	}
+}

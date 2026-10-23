@@ -82,10 +82,22 @@ func runProcIn(stdin, name string, args ...string) ([]byte, error) {
 }
 
 // runProcEnv это тот же запуск с окружением: пустое наследуется как есть.
+//
+// Рабочий каталог называется и здесь, а не только у runProcQuietAt: без него
+// подпроцесс наследовал каталог демона, под launchd это корень файловой
+// системы, и дитя, обходящее своё дерево, поднимало диалоги доступа macOS на
+// имя дашборда (DK-1373). Каталогом служит служебный пустой каталог подъёма
+// клиента: дорогам, которым нужен другой каталог, он безразличен, потому что
+// свои каталоги они называют сами («-c» у tmux-сессий, «-C» у утилит доски).
 func runProcEnv(env []string, stdin, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), procTimeout)
 	defer cancel()
+	dir, err := serviceDir("")
+	if err != nil {
+		return nil, fmt.Errorf("%s не поднят: %v", name, err)
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
 	cmd.Env = env
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)

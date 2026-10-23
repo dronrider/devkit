@@ -205,3 +205,139 @@ func TestCloseWithoutDeployPasses(t *testing.T) {
 		t.Fatal("строка без выката не закрылась")
 	}
 }
+
+// gitCommitFiles коммитит в тестовом репозитории перечисленные файлы и
+// возвращает сокращённый sha: запись «Выката» держит именно такие, и состав
+// коммита читается по нему тем же git show, каким читает его ворота.
+func gitCommitFiles(t *testing.T, root, msg string, files map[string]string) string {
+	t.Helper()
+	for rel, body := range files {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitOut(t, root, "add", "--", rel)
+	}
+	gitOut(t, root, "commit", "-q", "-m", msg)
+	return gitOut(t, root, "rev-parse", "--short", "HEAD")
+}
+
+// closeThroughCheck проводит строку через ворота перевода и долга: close
+// спрашивает их перед воротами smoke, и без этого тест мерил бы чужой отказ.
+func closeThroughCheck(t *testing.T, root, id string) {
+	t.Helper()
+	if _, err := cmdMove(root, id, SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDebtDone(root, id, DebtDoneParams{Note: "пересечений нет"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCloseDocsMergeWithoutSmoke: регрессия DK-1424. Слияние одной
+// документации прод не меняет, и очередь выката такой задачи не видит
+// (codeCommits в shipctl), а close требовал отметку smoke на ту же запись:
+// проверенная агентская дока не закрывалась ни вручную, ни автоматикой.
+// Теперь docs/-слияние закрывается без отметки, запись слияния сохраняется.
+func TestCloseDocsMergeWithoutSmoke(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	sha := gitCommitFiles(t, root, "docs(lld): XR-005 схема",
+		map[string]string{"docs/lld/xr-005.md": "схема\n"})
+	writeTask(t, root, "XR-005", mergedDoc("XR-005", "- 2026-10-23 слито: "+sha))
+	markRehearsed(t, root)
+	closeThroughCheck(t, root, "XR-005")
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-10-23"}); err != nil {
+		t.Fatalf("слияние одной документации не выкат, отметка не нужна: %v", err)
+	}
+	if onBoard(t, root, "XR-005") {
+		t.Fatal("строка с docs-слиянием не закрылась")
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "archive", "2026", "XR-005.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "слито: "+sha) {
+		t.Fatal("запись слияния не сохранилась в архивном файле")
+	}
+}
+
+// TestCloseMixedMergeNeedsSmoke: код в записи слияния рядом с документацией
+// делает слияние выкатом, и без отметки smoke закрытие отказывает: различение
+// проходит по составу коммитов, а не по доле доки в них.
+func TestCloseMixedMergeNeedsSmoke(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	docs := gitCommitFiles(t, root, "docs(lld): XR-005 схема",
+		map[string]string{"docs/lld/xr-005.md": "схема\n"})
+	code := gitCommitFiles(t, root, "feat: XR-005 правка",
+		map[string]string{"tools/x/main.go": "package main\n"})
+	writeTask(t, root, "XR-005", mergedDoc("XR-005",
+		"- 2026-10-23 слито: "+docs+", "+code))
+	markRehearsed(t, root)
+	closeThroughCheck(t, root, "XR-005")
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-10-23"}); err == nil {
+		t.Fatal("коммит с кодом в записи делает слияние выкатом, отметка нужна")
+	}
+	if !onBoard(t, root, "XR-005") {
+		t.Fatal("строка уехала с доски при отказе ворот")
+	}
+}
+
+// TestCloseCodeMergeSmokeCycle: круг выката на настоящих коммитах кода.
+// Непроверенный выкат держит закрытие, новый выкат следом отметку прошлого
+// круга не прикрывает (DK-1363, DK-1133), и только отметка на последний выкат
+// открывает его: защитные случаи исходного ворота сохраняются вместе с
+// различением docs.
+func TestCloseCodeMergeSmokeCycle(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	first := gitCommitFiles(t, root, "feat: XR-005 правка",
+		map[string]string{"tools/x/main.go": "package main\n"})
+	writeTask(t, root, "XR-005", mergedDoc("XR-005", "- 2026-10-12 слито: "+first))
+	markRehearsed(t, root)
+	closeThroughCheck(t, root, "XR-005")
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-10-23"}); err == nil {
+		t.Fatal("настоящий выкат без отметки smoke обязан держать закрытие")
+	}
+	second := gitCommitFiles(t, root, "feat: XR-005 доработка",
+		map[string]string{"tools/x/main.go": "package main\nfunc f() {}\n"})
+	markRehearsed(t, root)
+	writeTask(t, root, "XR-005", mergedDoc("XR-005",
+		"- 2026-10-12 слито: "+first,
+		"- smoke прогнан, 2026-10-13",
+		"- 2026-10-20 слито: "+second))
+	markRehearsed(t, root)
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-10-23"}); err == nil {
+		t.Fatal("новый выкат после отметки прошлого круга обязан держать закрытие")
+	}
+	if !onBoard(t, root, "XR-005") {
+		t.Fatal("строка уехала с доски при отказе ворот")
+	}
+	writeTask(t, root, "XR-005", mergedDoc("XR-005",
+		"- 2026-10-12 слито: "+first,
+		"- smoke прогнан, 2026-10-13",
+		"- 2026-10-20 слито: "+second,
+		"- smoke прогнан, 2026-10-21"))
+	markRehearsed(t, root)
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-10-23"}); err != nil {
+		t.Fatalf("действующая отметка smoke ворот держать не должна: %v", err)
+	}
+	if onBoard(t, root, "XR-005") {
+		t.Fatal("строка с проверенным выкатом не закрылась")
+	}
+}
+
+// readFile это чтение файла теста одним вызовом: круг доработки дописывает
+// строки записи, и каждый раз читать файл заново многословнее.
+func readFile(t *testing.T, p string) string {
+	t.Helper()
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}

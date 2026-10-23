@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/checkrun"
+	"github.com/dronrider/devkit/internal/merged"
 	"github.com/dronrider/devkit/internal/obey"
 	"github.com/dronrider/devkit/internal/rehearsal"
 	"github.com/dronrider/devkit/internal/stage"
@@ -278,22 +279,40 @@ func closeVerifyGate(root, id string) error {
 // сценария, сломанный прод оставался за закрытой строкой. Сверка та же, что у
 // closable и у очереди выката (LLD DK-400, решение 7: непроверенный выкат это
 // выкат без smoke), а не её копия. Записи слияния нет, значит выката нет
-// (LLD, дока, разбор), и ворота молчат. Круг доработки дописывает в «Выкат»
-// новую строку слияния, и отметка прошлого круга новый выкат не прикрывает:
-// вернувшаяся из Check строка закрывается только после новой отметки.
+// (LLD, дока, разбор), и ворота молчат. Слияние одной документации прод не
+// меняет и выкатом не считается тем же признаком, каким его не видит очередь
+// (DK-1424): строка с проверенной агентской докой закрывается без отметки.
+// Круг доработки дописывает в «Выкат» новую строку слияния, и отметка
+// прошлого круга новый выкат не прикрывает: вернувшаяся из Check строка
+// закрывается только после новой отметки.
 func closeSmokeGate(root, id string) error {
 	data, err := os.ReadFile(taskFilePath(root, id))
 	if err != nil {
 		return nil
 	}
-	if len(taskform.MergedShas(string(data))) == 0 {
-		return nil
-	}
-	if taskform.SmokeCovers(string(data)) {
+	if !uncheckedDeploy(root, data) {
 		return nil
 	}
 	return fmt.Errorf("%s: в «Выкате» есть слияние, а отметки smoke на последний выкат нет: сценарий после выката не прогнан; прогнать его на выкаченном коде, вывод вложить в раздел «Проверка», прогонявшего отметить «agentctl stage %s проверка --by %s», выкат «shipctl smoke %s» и повторить закрытие",
 		id, id, repeatModel(root, id), id)
+}
+
+// uncheckedDeploy отвечает, стоит ли в файле задачи настоящий непроверенный
+// выкат: слияние с кодом за пределами docs/ без действующей на него отметки
+// smoke. Читают его ворота close и отбор closable, чтобы ответ у ручного и
+// автоматического закрытия не разошёлся. Не удалось разобрать состав
+// коммитов значит выкат: ошибиться в сторону требования smoke дешевле, чем
+// в сторону пропуска.
+func uncheckedDeploy(root string, data []byte) bool {
+	if taskform.SmokeCovers(string(data)) {
+		return false
+	}
+	shas := taskform.MergedShas(string(data))
+	if len(shas) == 0 {
+		return false
+	}
+	docs, err := merged.CommitsDocsOnly(root, shas)
+	return err != nil || !docs
 }
 
 // repeatModel это модель для повторного прогона в тексте отказа (DK-1116).

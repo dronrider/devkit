@@ -114,6 +114,29 @@ func TestClosableSkipsHumanKinds(t *testing.T) {
 	}
 }
 
+// TestClosableTakesDocsMerge: слияние одной документации выкатом не считается
+// (DK-1424), и автоматика закрывает такую агентскую строку без отметки smoke
+// той же сверкой, что и ручной close.
+func TestClosableTakesDocsMerge(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := closableBoard(t, checkRow("XR-018", "Дока без выката"))
+	gitSetup(t, root)
+	doc := "# XR-018\n" + fixtureScenario + "\n## Выкат\n\n- 2026-10-23 слито: " +
+		gitCommitFiles(t, root, "docs(lld): XR-018 схема",
+			map[string]string{"docs/lld/xr-018.md": "схема\n"}) + "\n" + fixtureVerification
+	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-018.md"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	markRehearsed(t, root)
+	out, err := cmdClosable(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ready(out); len(got) != 1 || got[0] != "XR-018" {
+		t.Fatalf("docs-слияние без отметки smoke обязано быть готовым, а вывод такой:\n%s", out)
+	}
+}
+
 // TestClosableNeedsSmoke: без отметки smoke на последний выкат сценарий после
 // выката не прогнан, и закрывать нечего.
 func TestClosableNeedsSmoke(t *testing.T) {

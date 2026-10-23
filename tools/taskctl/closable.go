@@ -3,8 +3,6 @@ package main
 import (
 	"os"
 	"strings"
-
-	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Вопрос «кого из Check вправе закрыть автоматика» задаёт тик сторожка
@@ -24,7 +22,8 @@ type closableRow struct {
 }
 
 // closable отбирает строки Check по четырём условиям: секция, вид приёмки
-// agent, действующая на последний выкат отметка smoke и непустой раздел
+// agent, отсутствие непроверенного выката (та же сверка, что у ворот close,
+// и слияние одной документации выкатом не считается) и непустой раздел
 // «Проверка» в файле задачи. Три последних условия это уже стоящие рубежи
 // (LLD DK-292, решение 4 и LLD DK-400, решение 7), собранные в один вердикт.
 //
@@ -48,7 +47,7 @@ func closable(root string, b *Board) []closableRow {
 			out = append(out, closableRow{r.ID, "файла задачи нет: закрывать вслепую нечем"})
 			continue
 		}
-		if !taskform.SmokeCovers(string(data)) {
+		if uncheckedDeploy(root, data) {
 			out = append(out, closableRow{r.ID, "отметки smoke на последний выкат нет: сценарий после выката не прогнан"})
 			continue
 		}

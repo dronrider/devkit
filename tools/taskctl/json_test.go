@@ -312,6 +312,51 @@ func TestListJSONMovedDate(t *testing.T) {
 	}
 }
 
+// Дата приезжает и на доске с незакоммиченными правками: blame annotate
+// рабочую копию, правленая строка получает время правки, нетронутые хранят
+// даты своих коммитов. Прежде любая правка без коммита гасила дату у всех
+// строк разом, и колонка «Дата» дашборда пустовала или мигала (DK-1337).
+func TestListJSONDirtyBoardKeepsMoved(t *testing.T) {
+	root := setup(t)
+	at := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+	gitOut(t, root, "init", "-q", "-b", "main")
+	gitOut(t, root, "config", "user.email", "test@test")
+	gitOut(t, root, "config", "user.name", "test")
+	gitOut(t, root, "add", ".")
+	gitCommitDated(t, root, at, "init")
+
+	// Незакоммиченная правка одной строки: дерево грязное, доска парсится.
+	board, err := os.ReadFile(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirty := strings.Replace(string(board), "Задача в работе", "Задача в работе (правка)", 1)
+	if dirty == string(board) {
+		t.Fatal("строка для правки не нашлась в фикстуре")
+	}
+	if err := os.WriteFile(boardPath(root), []byte(dirty), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := cmdListJSON(root, "", false)
+	if err != nil {
+		t.Fatalf("обход грязной доски: %v", err)
+	}
+	untouched := at.Local().Format("2006-01-02")
+	today := time.Now().Format("2006-01-02")
+	for _, sec := range decodeBoard(t, out).Sections {
+		for _, r := range sec.Rows {
+			want := untouched
+			if r.ID == "XR-005" {
+				want = today
+			}
+			if r.Moved != want {
+				t.Errorf("%s: moved = %q на грязной доске, ожидал %q", r.ID, r.Moved, want)
+			}
+		}
+	}
+}
+
 // Вне git-репозитория даты нет, и поле молчит: выдуманная дата хуже пустого
 // места, там же молчит и возраст в notes.
 func TestListJSONMovedSilentWithoutGit(t *testing.T) {

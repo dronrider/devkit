@@ -190,11 +190,7 @@ func cmdList(root, sect string, debtOnly bool) (string, error) {
 	// печатается как прежде.
 	arch, _ := LoadArchive(archivePath(root))
 	ed := newEdges(root, b, arch)
-	clean := boardClean(root)
-	var times map[int]int64
-	if clean {
-		times = boardTimes(root)
-	}
+	times := boardTimes(root)
 	sv := loadStageView(root)
 	var out []string
 	if note := staleBoardNote(root); note != "" {
@@ -225,7 +221,7 @@ func cmdList(root, sect string, debtOnly bool) (string, error) {
 		}
 		for _, r := range rows {
 			out = append(out, b.Lines[r.LineIdx])
-			out = append(out, rowNotes(root, ed, key, r, times, clean, sv)...)
+			out = append(out, rowNotes(root, ed, key, r, times, sv)...)
 		}
 	}
 	if sect != "" {
@@ -261,9 +257,9 @@ func cmdList(root, sect string, debtOnly bool) (string, error) {
 // Строка этапа идёт второй строкой под пометками у всякой строки с открытым
 // этапом, в какой бы секции та ни стояла (DK-910): на Check и Blocked строки
 // тоже стоят на этапах, и их простой как раз надо видеть.
-func rowNotes(root string, ed *edges, sect string, r *Row, times map[int]int64, clean bool, sv *stageView) []string {
+func rowNotes(root string, ed *edges, sect string, r *Row, times map[int]int64, sv *stageView) []string {
 	var out []string
-	if notes := rowNoteParts(root, ed, sect, r, times, clean); len(notes) > 0 {
+	if notes := rowNoteParts(root, ed, sect, r, times); len(notes) > 0 {
 		out = append(out, "  "+strings.Join(notes, ", "))
 	}
 	if n := sv.note(r.ID); n != "" {
@@ -274,7 +270,7 @@ func rowNotes(root string, ed *edges, sect string, r *Row, times map[int]int64, 
 
 // rowNoteParts отдаёт те же пометки списком без вёрстки: печать склеивает их
 // в строку с отступом, --json кладёт как есть.
-func rowNoteParts(root string, ed *edges, sect string, r *Row, times map[int]int64, clean bool) []string {
+func rowNoteParts(root string, ed *edges, sect string, r *Row, times map[int]int64) []string {
 	var notes []string
 	kind := acceptOf(r.Title)
 	// Взвод и его три состояния идут первыми: это ответ на вопрос «стартует ли
@@ -292,7 +288,7 @@ func rowNoteParts(root string, ed *edges, sect string, r *Row, times map[int]int
 		// (LLD DK-292, решение 2).
 		notes = append(notes, "вид "+kind)
 	}
-	if a := ageLabel(times, r.LineIdx, clean); a != "" {
+	if a := ageLabel(times, r.LineIdx); a != "" {
 		notes = append(notes, a)
 	}
 	// Пометка строки ревью чужого MR: её ведёт опрос тредов, и без неё
@@ -321,7 +317,7 @@ func cmdShow(root, id string) (string, error) {
 		if note != "" {
 			out = append([]string{note}, out...)
 		}
-		out = append(out, rowNotes(root, newEdges(root, b, arch), row.Sect, row, showTimes(root), true, loadStageView(root))...)
+		out = append(out, rowNotes(root, newEdges(root, b, arch), row.Sect, row, boardTimes(root), loadStageView(root))...)
 		s := sides[id]
 		if s == nil {
 			s = &struct{ after, blocks []string }{}
@@ -449,14 +445,4 @@ func lldRefs(root, rel string) []string {
 		out = append(out, "docs/"+p)
 	}
 	return out
-}
-
-// showTimes считает даты строк для одной задачи тем же путём, что и list:
-// blame один на файл, поэтому отдельной дешёвой ветки под show не нужно.
-// Грязная доска гасит возраст там же, где и в list, через пустую карту.
-func showTimes(root string) map[int]int64 {
-	if !boardClean(root) {
-		return nil
-	}
-	return boardTimes(root)
 }

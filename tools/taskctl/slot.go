@@ -219,16 +219,14 @@ func mainDrift(root, id string) int {
 }
 
 // rowIdleHours считает часы простоя строки: возраст последней правки строки
-// доски, максимум с возрастом последнего коммита ветки задачи. Возраст строки
-// честен только на чистой доске: blame берёт номера строк из HEAD, на грязном
-// дереве время досталось бы не той строке. Ноль значит «посчитать нечем», и
-// плата за возврат от него не растет.
-func rowIdleHours(root string, r *Row, times map[int]int64, clean bool) float64 {
+// доски, максимум с возрастом последнего коммита ветки задачи. Blame annotate
+// рабочую копию, поэтому простой честен и на доске с незакоммиченными
+// правками. Ноль значит «посчитать нечем», и плата за возврат от него не
+// растёт.
+func rowIdleHours(root string, r *Row, times map[int]int64) float64 {
 	h := 0.0
-	if clean {
-		if sec, ok := times[r.LineIdx]; ok {
-			h = math.Max(h, timeNow().Sub(time.Unix(sec, 0)).Hours())
-		}
+	if sec, ok := times[r.LineIdx]; ok {
+		h = math.Max(h, timeNow().Sub(time.Unix(sec, 0)).Hours())
 	}
 	if br, _ := unmergedTaskBranch(root, r.ID); br != "" {
 		if sec := branchTipTime(root, br); sec > 0 {
@@ -266,7 +264,6 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("занятость деревьев не известна, опрос tmux сорван: %w", err)
 	}
-	clean := boardClean(root)
 	times := boardTimes(root)
 	ceiling := treeCeiling(limit)
 	live := liveTrees(root, b)
@@ -275,7 +272,7 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 	for _, r := range b.Rows {
 		_, _, _, _, _, _, blockSuf := splitTitle(r.Title)
 		if r.Sect == SectBlocked && strings.HasPrefix(blockReason(blockSuf), "вопрос:") &&
-			rowIdleHours(root, r, times, clean) > slotAwayGate.Hours() {
+			rowIdleHours(root, r, times) > slotAwayGate.Hours() {
 			humanAway = true
 		}
 	}
@@ -325,7 +322,7 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 			// Плата за возврат берётся только у начатой задачи: свежей строке
 			// возвращаться не к чему, её цену входа уже несёт C, и счёт цели
 			// («свежая S: W = 0.8») идёт без платы.
-			idle := rowIdleHours(root, r, times, clean)
+			idle := rowIdleHours(root, r, times)
 			var v float64
 			if p.F > progressBoard {
 				v = rate * math.Min(slotReturnBase+slotReturnPerHour*idle, slotReturnCap)

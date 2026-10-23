@@ -131,28 +131,40 @@ func TestLineAge(t *testing.T) {
 	}
 }
 
-func TestLineAgeSkipsDirtyBoard(t *testing.T) {
+func TestLineAgeDirtyBoard(t *testing.T) {
 	root := t.TempDir()
 	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	simpleGitBoard(t, root, []string{"a", "b", "c"}, t0)
 
-	if boardClean(root) != true {
-		t.Fatal("свежий коммит должен считаться чистым деревом")
-	}
-	if ageLabel(boardTimes(root), 0, true) == "" {
+	if ageLabel(boardTimes(root), 0) == "" {
 		t.Fatal("на чистом дереве возраст обязан считаться")
 	}
 
-	// Незакоммиченная правка board.md: номера строк рабочей копии и HEAD
-	// могут разъехаться, возраст в этот момент лучше не печатать вовсе.
-	if err := os.WriteFile(boardPath(root), []byte("a\nb\nc\nd\n"), 0o644); err != nil {
+	// Незакоммиченная правка строки 2: blame annotate рабочую копию, правка
+	// получает время «сейчас», а нетронутые строки хранят даты своих коммитов.
+	// Гасить из-за правки возраст всей доски значило бы прятать даты у двух
+	// сотен строк из-за одной (DK-1337).
+	if err := os.WriteFile(boardPath(root), []byte("a\nB\nc\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if boardClean(root) {
-		t.Fatal("грязное дерево не должно считаться чистым")
+	times := boardTimes(root)
+
+	// Нетронутая строка 1 считает возраст от коммита t0, а не молчит.
+	old := timeNow
+	defer func() { timeNow = old }()
+	timeNow = func() time.Time { return time.Now() }
+	days, ok := lineAge(times, 0)
+	if !ok || days < 250 {
+		t.Fatalf("lineAge(нетронутая строка) = %d,%v; ожидал счёт от коммита t0", days, ok)
 	}
-	if got := ageLabel(boardTimes(root), 0, boardClean(root)); got != "" {
-		t.Fatalf("на грязном дереве ageLabel должен молчать, получил %q", got)
+	if got := ageLabel(times, 0); got == "" {
+		t.Fatal("на грязном дереве возраст нетронутой строки обязан считаться")
+	}
+
+	// Правленая строка 2 получила время правки, то есть возраст ноль дней.
+	days, ok = lineAge(times, 1)
+	if !ok || days != 0 {
+		t.Fatalf("lineAge(правленая строка) = %d,%v; ожидал 0,true", days, ok)
 	}
 }
 
@@ -164,10 +176,7 @@ func TestLineAgeNoGitRepo(t *testing.T) {
 	if err := os.WriteFile(boardPath(root), []byte("a\nb\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if boardClean(root) {
-		t.Fatal("вне git-репозитория дерево не может считаться чистым")
-	}
-	if got := ageLabel(boardTimes(root), 0, boardClean(root)); got != "" {
+	if got := ageLabel(boardTimes(root), 0); got != "" {
 		t.Fatalf("вне git-репозитория ageLabel должен молчать, получил %q", got)
 	}
 }

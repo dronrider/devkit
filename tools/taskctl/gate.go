@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -471,4 +472,88 @@ func closeDebtGate(root, id string) error {
 		return nil
 	}
 	return fmt.Errorf("%s", taskform.DebtGateNote(id))
+}
+
+// closeCutGate держит на закрытии LLD её нарезку (DK-489): решения документа
+// живут работой доски, а закрытие без нарезки уносило их в архив текстом, про
+// который потом некому вспомнить. У DK-459 так чуть не повисли восемь правок
+// режима POC, у DK-1325 семь этапов внедрения остались разделом решения в
+// день закрытия. Кандидаты читаются из контрактного раздела «Нарезка»
+// документа в docs/lld: нарезанный кандидат несёт ID заведённой строки в
+// голове, а нарезка целью помечена строкой «- цель <ID>». Наличие пометки
+// ворота и проверяют, качество нарезки остаётся за скиллом goal-cut и
+// ревью. Документ не нашёлся значит ворот молчит: у строки без документа
+// спрашивать нечего, и отсутствие самого дизайна держат ворота заведения.
+// Отложенную решением дизайна нарезку гасит пометка-исключение, как у
+// DK-1318 с пробой DK-1413.
+func closeCutGate(root string, row *Row, b *Board, arch *Archive) error {
+	if !isLLD(row.Type) {
+		return nil
+	}
+	if data, err := os.ReadFile(taskFilePath(root, row.ID)); err == nil {
+		if taskform.Exception(string(data), taskform.GateCut) {
+			return nil
+		}
+	}
+	doc := lldDocOf(root, row)
+	if doc == "" {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(root, doc))
+	if err != nil {
+		return nil
+	}
+	rows, goal, found := taskform.CutSection(string(data))
+	switch {
+	case !found:
+		return fmt.Errorf("%s: принятая LLD закрывается с нарезкой, а раздела «Нарезка» в %s нет: выписать кандидатов списком, как в разделе Задачи цели у цели, и нарезать их строками или целью (RULES.board.md, «Трекинг задач» п. 12), а отложенную решением дизайна нарезку загасить пометкой «- Исключение: %s (причина)» в docs/tasks/%s.md и повторить закрытие",
+			row.ID, doc, taskform.GateCut, row.ID)
+	case goal != "":
+		if g := b.find(goal); g != nil {
+			if !goalRow(g.Title) {
+				return fmt.Errorf("%s: раздел «Нарезка» в %s помечен целью %s, а %s целью не является: кандидаты едут списком в файл цели, пометить настоящую цель или нарезать кандидатов строками", row.ID, doc, goal, goal)
+			}
+			return nil
+		}
+		if arch.has(goal) {
+			return nil
+		}
+		return fmt.Errorf("%s: раздел «Нарезка» в %s помечен целью %s, которой нет ни на доске, ни в архиве: завести цель и перенести кандидатов в раздел Задачи цели её файла, либо нарезать строки", row.ID, doc, goal)
+	case len(rows) == 0:
+		return fmt.Errorf("%s: в разделе «Нарезка» %s нет ни одного кандидата: выписать кандидатов из решений списком, как в разделе Задачи цели у цели, либо, если работы из решений не следует, загасить ворот пометкой «- Исключение: %s (причина)» в docs/tasks/%s.md",
+			row.ID, doc, taskform.GateCut, row.ID)
+	}
+	var pending, dead []string
+	for _, r := range rows {
+		if r.TaskID == "" {
+			pending = append(pending, r.Text)
+			continue
+		}
+		if b.find(r.TaskID) == nil && !arch.has(r.TaskID) {
+			dead = append(dead, r.TaskID)
+		}
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("%s: в разделе «Нарезка» %s не заведено строкой или целью кандидатов: %d из %d: нарезать их (одиночные строки задачами, общий бюджет и порядок дают цель со списком по скиллу goal-cut) и вписать выданный ID в голову строки кандидата, повторить закрытие; отложенную нарезку загасить пометкой «- Исключение: %s (причина)» в docs/tasks/%s.md",
+			row.ID, doc, len(pending), len(rows), taskform.GateCut, row.ID)
+	}
+	if len(dead) > 0 {
+		return fmt.Errorf("%s: раздел «Нарезка» %s ссылается на %s, которых нет ни на доске, ни в архиве: исправить ID на живую строку цели или строки нарезки", row.ID, doc, strings.Join(dead, ", "))
+	}
+	return nil
+}
+
+// lldDocOf ищет документ дизайна LLD-строки: сначала по ссылкам файла задачи
+// (файл ссылается на дизайн, а не пересказывает его, п. 3 «Трекинг задач»),
+// затем по ссылке самой строки, как она живёт у LLD в колонке доски. Пустая
+// строка значит документа нет и воротам читать нечего.
+func lldDocOf(root string, row *Row) string {
+	rel := fmt.Sprintf("tasks/%s.md", row.ID)
+	if refs := lldRefs(root, rel); len(refs) > 0 {
+		return refs[0]
+	}
+	if p := linkedDoc(root, row.Link, rel); strings.HasPrefix(p, "docs/lld/") {
+		return p
+	}
+	return ""
 }

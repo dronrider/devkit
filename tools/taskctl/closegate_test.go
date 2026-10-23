@@ -330,14 +330,3 @@ func TestCloseCodeMergeSmokeCycle(t *testing.T) {
 		t.Fatal("строка с проверенным выкатом не закрылась")
 	}
 }
-
-// readFile это чтение файла теста одним вызовом: круг доработки дописывает
-// строки записи, и каждый раз читать файл заново многословнее.
-func readFile(t *testing.T, p string) string {
-	t.Helper()
-	data, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(data)
-}

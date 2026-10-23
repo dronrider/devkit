@@ -18,8 +18,12 @@ import (
 // слитая в main мимо ship/merge однокоммитным исключением из правила доски,
 // либо забытый пуш. Без origin, без main или без опережения находок нет: вне
 // git-репозитория (голая доска в тестовой директории) молчать честнее, чем
-// падать.
+// падать. Доска, вложенная в чужой репозиторий без привязки контура, не судит
+// его опережение: это состояние машины, а не доски (boardJudgesRepo).
 func mainAheadFinds(root string) []string {
+	if !boardJudgesRepo(root) {
+		return nil
+	}
 	main := gitMainBranch(root)
 	if main == "" {
 		return nil
@@ -66,6 +70,30 @@ func mainAheadFinds(root string) []string {
 	}
 	return []string{fmt.Sprintf("%s: main впереди %s на %d %s с кодом, первый %s %q",
 		boardPath(root), up, len(shas), pluralCommits(len(shas)), first, subjs[0])}
+}
+
+// boardJudgesRepo отвечает, вправе ли доска с корнем root судить гит-репозиторий
+// вокруг него. Свой репозиторий доска держит с первого дня, и его опережение
+// это её забота, а стенду внутри чужого дерева (фикстура obeycheck в дереве
+// devkit) гита своего не досталось, и git от него молча поднимается к
+// объемлющему репозиторию. Находка тогда рассказывает про машину, на которой
+// стоит прогон, а не про проверяемую доску: слияние в свежем дереве worktree
+// делит рефы с чекаутом носителя и краснело от незапушенного кода автора
+// сессии (DK-1333). Свой репозиторий узнаётся по пустому префиксу от git
+// (`rev-parse --show-prefix` пуст ровно на вершине репозитория). Исключение
+// это боковая директория корп-контура: привязка .devkit/tracker.local (DK-796)
+// значит, что доска хоть и вложена подкаталогом, а репозиторий вокруг неё
+// её собственный.
+func boardJudgesRepo(root string) bool {
+	prefix, err := gitRun(root, "rev-parse", "--show-prefix")
+	if err != nil {
+		return false
+	}
+	if prefix == "" {
+		return true
+	}
+	_, err = os.Stat(filepath.Join(root, ".devkit", "tracker.local"))
+	return err == nil
 }
 
 // boardOnlyFiles отвечает, что все файлы в списке это доска (docs/TASKS.md,

@@ -172,3 +172,135 @@ func TestLintMainAheadCountsNestedStandBoard(t *testing.T) {
 		t.Fatal("правка стенда с доской должна давать находку как код")
 	}
 }
+
+// standBoard и standArchive это минимальная пустая доска стенда: разделы на
+// месте, строк нет. cmdLint на ней доходит до git-правил, а не отказывает в
+// разборе, и ничего своего не приносит.
+const standBoard = `# стенд: задачи (префикс OB)
+
+## In progress
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+
+## Check (готово, ждёт проверки пользователем)
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+
+## Backlog
+
+| ID | Задача | Тип | P | R | Цена | Ссылка |
+|--------|--------|-----|---|---|------|--------|
+
+## Blocked
+
+Нет.
+`
+
+const standArchive = "# стенд: архив\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
+	"|--------|--------|-----|---|---------|--------|\n"
+
+// writeStandBoard кладёт в dir пустую доску стенда с архивом.
+func writeStandBoard(t *testing.T, dir string) {
+	t.Helper()
+	docs := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		filepath.Join(docs, "TASKS.md"):         standBoard,
+		filepath.Join(docs, "TASKS-archive.md"): standArchive,
+	}
+	for p, body := range files {
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// aheadCodeCommit ставит в main репозитория root незапушенный код-коммит поверх
+// origin: состояние «забытый пуш», которое должно видеть только lint корня
+// этого репозитория.
+func aheadCodeCommit(t *testing.T, root string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("code\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", "app.txt")
+	gitOut(t, root, "commit", "-q", "-m", "fix: мелкий баг")
+}
+
+// TestLintMainAheadSilentOnNestedStand: доска стенда без своего гита не судит
+// опережение main объемлющего репозитория (DK-1333). Фикстура obeycheck лежит
+// в дереве devkit, git от неё поднимается к репозиторию носителя, и прогон
+// слияния в свежем дереве worktree краснел от незапушенного кода автора
+// сессии: TestFixtureProjectPassesLint находил чужой main впереди origin.
+// Тот же незапушенный код виден lint у корня репозитория, как и раньше.
+func TestLintMainAheadSilentOnNestedStand(t *testing.T) {
+	root := setup(t)
+	stand := filepath.Join(root, "tools", "obeycheck", "testdata", "project")
+	writeStandBoard(t, stand)
+	gitSetup(t, root)
+	bareOrigin(t, root)
+	aheadCodeCommit(t, root)
+
+	finds, err := cmdLint(stand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range finds {
+		if strings.Contains(f, "main впереди") {
+			t.Fatalf("стенд без своего гита не судит опережение объемлющего репозитория: %q", f)
+		}
+	}
+
+	finds, err = cmdLint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found string
+	for _, f := range finds {
+		if strings.Contains(f, "main впереди") {
+			found = f
+			break
+		}
+	}
+	if found == "" {
+		t.Fatal("незапушенный код в main должен находиться lint у корня репозитория")
+	}
+}
+
+// TestLintMainAheadJudgesCorpSideDir: боковая директория контура с привязкой
+// tracker.local (DK-796) вложена в свой репозиторий подкаталогом, и его
+// опережение она судит, как и доска на вершине: послабление для стендов не
+// сняло правило с контура.
+func TestLintMainAheadJudgesCorpSideDir(t *testing.T) {
+	root := setup(t)
+	side := filepath.Join(root, "authn")
+	writeStandBoard(t, side)
+	if err := os.MkdirAll(filepath.Join(side, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(side, ".devkit", "tracker.local"), []byte("repo = .\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitSetup(t, root)
+	bareOrigin(t, root)
+	aheadCodeCommit(t, root)
+
+	finds, err := cmdLint(side)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found string
+	for _, f := range finds {
+		if strings.Contains(f, "main впереди") {
+			found = f
+			break
+		}
+	}
+	if found == "" {
+		t.Fatal("доска боковой директории контура должна судить опережение своего репозитория")
+	}
+}

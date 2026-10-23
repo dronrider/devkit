@@ -76,7 +76,7 @@ const moved = async () => {
   if (!String(sandbox.location.hash).includes("demo/new/draft")) {
     fail("пункт «Черновик» увёл не на форму черновика: " + sandbox.location.hash);
   }
-  if (!dump(groups).includes("уровень разбора")) {
+  if (!dump(groups).includes("Уровень разбора:")) {
     fail("открылась не форма черновика: " + dump(groups).replace(/\s+/g, " ").slice(0, 300));
   }
 }
@@ -95,7 +95,7 @@ const moved = async () => {
   // Форма задачи узнаётся подписью своей кнопки и отсутствием поля уровня
   // разбора: оно стоит только у черновика.
   const said = dump(groups).replace(/\s+/g, " ");
-  if (!said.includes("Завести задачу") || said.includes("уровень разбора")) {
+  if (!said.includes("Завести задачу") || said.includes("Уровень разбора")) {
     fail("открылась не форма задачи: " + said.slice(0, 300));
   }
 }

@@ -912,8 +912,10 @@ func TestStaticTaskActionBar(t *testing.T) {
 	// Полосу собирает общая форма трёх экранов (formPage), а действия задачи
 	// приносит ей сам экран: разметка у задачи, черновика и заведения одна.
 	body := funcBody(t, app, "function formPage(")
-	for _, want := range []string{`el("div", "card abar")`, "drop.hidden = true", "drop.hidden = !dirty",
-		"save.disabled = !dirty", `el("span", "div")`} {
+	// Полоса задачи остаётся карточкой, а форме записи черновика тот же
+	// конструктор даёт полосу без карточки, прямо на полях (макет DK-447).
+	for _, want := range []string{`cfg.flatBar ? "abar bare" : "card abar"`, "drop.hidden = true",
+		"drop.hidden = !dirty", "save.disabled = !dirty", `el("span", "div")`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("в полосе действий задачи нет %q", want)
 		}

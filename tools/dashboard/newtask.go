@@ -79,18 +79,18 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 	// проверок ниже: заголовок остаётся одной строкой и не роняет хвост в
 	// тело записи.
 	title := strings.TrimSpace(titleNewlineRe.ReplaceAllString(body.Title, " "))
+	// Фразы отказа те же, что подсвечивает форма на самом поле (макет DK-447):
+	// гонка мимо подсветки (второй клиент, отключённый JS) отвечает теми же
+	// словами, и человек читает один рубеж, а не два разных.
 	if title == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "пустой черновик записывать нечего: жду JSON {\"title\": \"...\", \"body\": \"...\", \"prio\": \"mid\"}"})
+			"error": "поле обязательно для заполнения"})
 		return
 	}
-	// Порог тот же, что подсвечивает форма до отправки: гонка мимо подсветки
-	// (второй клиент, отключённый JS) отбивается тут же человеческой фразой,
-	// а не сырым текстом отказа утилиты из подпроцесса.
 	if n := len([]rune(title)); n > taskform.DraftTitleLimit {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("заголовок черновика длиннее %d символов (%d): по нему черновик узнают в накопителе, тело идёт отдельным полем",
-				taskform.DraftTitleLimit, n)})
+			"error": fmt.Sprintf("превышена допустимая длина поля (%d из %d)",
+				n, taskform.DraftTitleLimit)})
 		return
 	}
 	// Уровень разбора спрашивается на записи, а не в грумминге (DK-520): без

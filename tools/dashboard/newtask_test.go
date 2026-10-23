@@ -156,13 +156,15 @@ func TestDraftTextLimit(t *testing.T) {
 	if id == "" {
 		t.Fatalf("черновик в пределе не завёлся: %v", got)
 	}
-	// Заголовок длиннее 72 символов отбивается сервером своими словами до
-	// всякого похода на taskctl: гонка мимо подсветки формы (второй клиент,
-	// отключённый JS) не должна доехать до подпроцесса и его совета про stdin.
+	// Заголовок длиннее 72 символов отбивается сервером до всякого похода на
+	// taskctl, той же фразой с живым счётчиком, что подсвечивает форма (макет
+	// DK-447): гонка мимо подсветки (второй клиент, отключённый JS) не должна
+	// доехать до подпроцесса и его совета про stdin.
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
 		`{"title": `+strconv.Quote(strings.TrimSpace(strings.Repeat("мысль с телефона, ", 8)))+`, "prio": "mid"}`)
 	text = body(t, resp)
-	if resp.StatusCode == http.StatusOK || !strings.Contains(text, "72") || strings.Contains(text, "stdin") {
+	if resp.StatusCode == http.StatusOK || !strings.Contains(text, "превышена допустимая длина поля (") ||
+		!strings.Contains(text, "из 72") || strings.Contains(text, "stdin") {
 		t.Fatalf("отказ по заголовку: %d %s, ожидал отказ с порогом и без совета про stdin", resp.StatusCode, text)
 	}
 	if git := readFile(t, gitLog); strings.Count(git, "черновик записан с дашборда") != 1 {
@@ -295,10 +297,11 @@ func TestTaskCreateRefusals(t *testing.T) {
 		t.Errorf("уровень мимо шкалы: %d %s, ожидал 400", resp.StatusCode, text)
 	}
 
-	// Пустой черновик отбивается там же и не заводит файла.
+	// Пустой черновик отбивается там же и не заводит файла. Фраза отказа та
+	// же, что подсвечивает форма на обязательном поле (макет DK-447).
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"title": "   ", "prio": "mid"}`)
 	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
-		!strings.Contains(text, "пустой черновик") {
+		!strings.Contains(text, "поле обязательно для заполнения") {
 		t.Errorf("пустой черновик: %d %s", resp.StatusCode, text)
 	}
 	if after := readFile(t, boardPath); after != before {
@@ -552,6 +555,13 @@ func TestStaticNewFormSwitch(t *testing.T) {
 		"Файл задачи docs/tasks/<ID>.md заведётся вместе со строкой",
 		"Черновику доступен только груминг",
 		"в работу его не взять",
+		// Приписка уровня разбора пересказывала всю шкалу и занимала строку:
+		// спрашивает человек о смысле уровня, и ответ стоит за значком
+		// информации рядом со списком (макет DK-447).
+		"уровень разбора на глаз",
+		// Подсказка внутри наименования снята: подпись стоит в верхней грани
+		// рамки поля (макет DK-447).
+		"Заголовок-исход",
 	} {
 		if strings.Contains(text, gone) {
 			t.Errorf("на форме заведения снова стоит подпись %q", gone)
@@ -590,7 +600,7 @@ func TestStaticNewFormSwitch(t *testing.T) {
 	}
 	// Разделы SCQA спрашиваются порознь, своим полем каждый: одним полем
 	// черновик писался простынёй (просьба пользователя).
-	if !strings.Contains(text, "DRAFT_PLACEHOLDER") || !strings.Contains(text, "DRAFT_TEMPLATE") {
+	if !strings.Contains(text, "DRAFT_TEMPLATE") {
 		t.Error("форма черновика молчит про разделы")
 	}
 	// Дороги на доску в теле формы нет: она вела туда же, куда ведёт шапка
@@ -606,13 +616,15 @@ func TestStaticNewFormSwitch(t *testing.T) {
 	}
 }
 
-// Форма черновика встречает человека раздельными полями заголовка и тела
-// (DK-447, черновик DK-1252): заголовок короткая строка без разметки, тело
-// приходит шаблоном разделов, «### Ситуация» и соседи с пустыми местами под
-// текст. Полей на каждый раздел тела форма не заводит: «нужно было просто в
-// поле редактирования вставить шаблон с разделами, а пользователь сам заполнит
-// их, так гораздо гибче» (решение пользователя). Правит шаблон человек руками,
-// а рубеж формы у заголовка: непустая строка не длиннее потолка.
+// Форма черновика встречает человека раздельными полями наименования и
+// описания (DK-447, черновик DK-1252): наименование короткая строка без
+// разметки, описание приходит шаблоном разделов, «### Ситуация» и соседи с
+// пустыми местами под текст. Подписи обоих полей стоят в верхней грани рамок
+// самих полей, подсказок внутри полей нет (макет DK-447). Полей на каждый
+// раздел описания форма не заводит: «нужно было просто в поле редактирования
+// вставить шаблон с разделами, а пользователь сам заполнит их, так гораздо
+// гибче» (решение пользователя). Правит шаблон человек руками, а рубеж формы
+// у наименования: непустая строка не длиннее потолка.
 func TestStaticDraftTemplateForm(t *testing.T) {
 	app := readFile(t, filepath.Join("static", "app.js"))
 	for _, want := range []string{`const DRAFT_TEMPLATE = ["### Ситуация"`,
@@ -629,26 +641,36 @@ func TestStaticDraftTemplateForm(t *testing.T) {
 		}
 	}
 	made := funcBody(t, app, "function renderNew(")
-	// Шаблон кладётся в тело один раз за заход: перерисовка по фокусу окна не
-	// должна возвращать его в очищенное рукой поле, а заголовок шаблоном не
-	// затрагивается вовсе.
+	// Шаблон кладётся в описание один раз за заход: перерисовка по фокусу окна
+	// не должна возвращать его в очищенное рукой поле, а наименование шаблоном
+	// не затрагивается вовсе.
 	for _, want := range []string{"const seeded = draft && !newForm.seeded && !newForm.body.trim();",
 		"if (seeded) newForm.body = DRAFT_TEMPLATE;",
 		"const title = newForm.title.trim();",
-		`bodyArea.setAttribute("aria-label", "тело черновика");`} {
+		`bodyArea.setAttribute("aria-label", "описание черновика");`,
+		`bodyField.append(el("legend", "", DRAFT_BODY_LABEL));`,
+		`titleLegend: draft ? DRAFT_TITLE_LABEL : ""`,
+		`titleLabel: draft ? "наименование черновика" : "заголовок задачи"`} {
 		if !strings.Contains(made, want) {
 			t.Errorf("шаблон кладётся не тем блоком: нет %q", want)
 		}
 	}
-	// Курсор встаёт в заголовок, где человек и начинает.
+	// Курсор встаёт в наименование, где человек и начинает.
 	if !strings.Contains(made, "view.title.setSelectionRange(0, 0)") {
-		t.Error("курсор не ставится в поле заголовка: человек ищет начало сам")
+		t.Error("курсор не ставится в поле наименования: человек ищет начало сам")
 	}
-	// Рубеж ровно утилитин: непустой заголовок и его длина, тело он не
-	// спрашивает.
+	// Рубеж ровно утилитин: непустое наименование и его длина, описание он не
+	// спрашивает. Отказ подсвечивает само поле и говорит универсальной фразой:
+	// пустота после попытки записи, длина сразу и со счётчиком (макет DK-447).
 	stop := funcBody(t, app, "function draftFormRefusal(")
 	if !strings.Contains(stop, `String(form.title || "").trim()`) {
-		t.Error("рубеж формы черновика меряет не заголовок")
+		t.Error("рубеж формы черновика меряет не наименование")
+	}
+	for _, want := range []string{`return form.tried ? "поле обязательно для заполнения" : "";`,
+		`"превышена допустимая длина поля (" + title.length + " из " + DRAFT_TITLE_LIMIT + ")"`} {
+		if !strings.Contains(stop, want) {
+			t.Errorf("отказ формы черновика говорит не фразой макета: нет %q", want)
+		}
 	}
 	for _, gone := range []string{"ситуация не написана", "осложнение не написано"} {
 		if strings.Contains(app, gone) {
@@ -656,28 +678,51 @@ func TestStaticDraftTemplateForm(t *testing.T) {
 		}
 	}
 	if !strings.Contains(app, "DRAFT_TITLE_LIMIT = 72") {
-		t.Error("порога заголовка черновика на форме нет: о нём узнают только с ответа сервера")
+		t.Error("порога наименования черновика на форме нет: о нём узнают только с ответа сервера")
 	}
 }
 
-// Выход с формы заведения: кнопка рядом с записью и Escape. Пустая форма
+// Выход с формы заведения (замечание пользователя: «передумал, а выйти
+// нечем»). У черновика выход это крестик в правом верхнем углу, и набранная
+// форма спрашивает карточкой под ним: «Текст черновика будет утерян.
+// Продолжить?» с кнопками «Не записывать» и «Остаться» (макет DK-447,
+// состояние 5). У задачи осталась кнопка в полосе действий. Пустая форма
 // закрывается сразу, набранная спрашивает и уходит по второму нажатию, туда
-// же, откуда пришли (замечание пользователя: «передумал, а выйти нечем»).
+// же, откуда пришли. Escape ходит той же дорогой.
 func TestStaticNewFormExit(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	form := funcBody(t, text, "function formPage(")
 	if !strings.Contains(form, `barBtn("btn bquit"`) || !strings.Contains(form, "cfg.onQuit(quit)") {
-		t.Error("у формы нет выхода рядом с кнопками записи")
+		t.Error("у формы задачи нет выхода рядом с кнопками записи")
 	}
 	made := funcBody(t, text, "function renderNew(")
-	for _, want := range []string{"onQuit: (btn) => { leaveNew(btn); }",
-		`quitLabel: draft ? "Не записывать" : "Не заводить"`,
+	for _, want := range []string{
+		`el("button", "xbtn")`,
+		`xbtn.append(icon("close"))`,
+		`ask.append(el("p", "", "Текст черновика будет утерян. Продолжить?"))`,
+		`el("button", "btn btn-leave", "Не записывать")`,
+		`el("button", "btn", "Остаться")`,
+		// Крестик остаётся кнопкой выхода и на набранной форме: вопрос встаёт
+		// карточкой под ним, а подпись крестика не меняется.
+		"xbtn.addEventListener(\"click\", () => { leaveNew(xbtn); })",
 		"if (newFormFilled() && !quitArmed) {",
-		`btn.rename(draft ? "Черновик не записан, выйти?" : "Задача не заведена, выйти?")`,
+		`btn.rename("Задача не заведена, выйти?")`,
 		`goKeepingChat(draft ? project + "/drafts" : project)`,
-		"newEscape = () => { leaveNew(view.quit); };"} {
+		"newEscape = () => { leaveNew(view.quit); };",
+		// Кнопки вопроса закрывают его каждая по-своему, и вопрос стоит над
+		// формой, а не в кнопке: ответ «текст будет утерян» виден глазами.
+		"askLeave.addEventListener(\"click\", () => { leaveNew(null); })",
+		"const stayNew = () => {"} {
 		if !strings.Contains(made, want) {
 			t.Errorf("выход с формы собран не тем блоком: нет %q", want)
+		}
+	}
+	// Выход из полосы действий остался только у задачи: у черновика полоса
+	// несёт одни кнопки записи, и «Не записывать» в ней больше нет.
+	for _, want := range []string{`onQuit: draft ? null : (btn) => { leaveNew(btn); }`,
+		`quitLabel: "Не заводить"`} {
+		if !strings.Contains(made, want) {
+			t.Errorf("кнопка выхода стоит не только у задачи: нет %q", want)
 		}
 	}
 	// Клавиша живёт ровно на своём экране и не отбирает Escape у всплывашек.
@@ -690,9 +735,73 @@ func TestStaticNewFormExit(t *testing.T) {
 	if !strings.Contains(text, "\nwireNewKey();") {
 		t.Error("Escape формы заведения никто не подключает")
 	}
-	// Взведённый выход виден собой, а не одним лишь текстом кнопки.
-	if !strings.Contains(readFile(t, filepath.Join("static", "style.css")), ".bquit.armed{") {
-		t.Error("взведённый выход с формы ничем не отличается от обычного")
+	// Взведённый выход виден собой, а не одним лишь текстом кнопки: у задачи
+	// подсветкой кнопки, у черновика крестика и затемнением формы.
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, want := range []string{".bquit.armed{", ".xbtn.on{", ".xscrim{", ".xask{"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("взведённый выход с формы ничем не отличается от обычного: в style.css нет %q", want)
+		}
+	}
+}
+
+// Вид формы записи черновика по утверждённому макету (DK-447, второй круг).
+// Уровень разбора стоит одной строкой: подпись, список и значок информации, а
+// прежняя приписка со шкалой снята. Поля в рамках с подписью в верхней грани.
+// Отказ подсвечивает поле на месте, кнопки гаснут без красной строки в полосе
+// действий, а сама полоса стоит прямо на полях, без карточки.
+func TestStaticDraftFormMockup(t *testing.T) {
+	app := readFile(t, filepath.Join("static", "app.js"))
+	made := funcBody(t, app, "function renderNew(")
+	// Подсказка уровня отвечает на вопрос о смысле уровня, а не пересказывает
+	// шкалу.
+	if !strings.Contains(app, `const PRIO_HINT = "Определяет важность черновика и порядок его разбора в будущем."`) {
+		t.Error("подсказка уровня разбора ушла от вопроса о смысле уровня")
+	}
+	// Строка уровня собирается в один ряд: подпись «Уровень разбора:», список
+	// и значок информации с подсказкой.
+	for _, want := range []string{
+		`prioRow.append(el("span", "flab", "Уровень разбора:"));`,
+		`const prioPick = pickField("", PRIO_VALUES, newForm.prio, (v) => {`,
+		`const infoBtn = el("button", "infobtn", "i");`,
+		`const prioTip = el("div", "itip", PRIO_HINT);`,
+		`tipHeld = popupHold(infoWrap, shutTip);`} {
+		if !strings.Contains(made, want) {
+			t.Errorf("строка уровня разбора собрана не тем блоком: нет %q", want)
+		}
+	}
+	// Обязательное поле подсвечивается попыткой записи, а не на глаз: пустая
+	// нетронутая форма только гасит кнопки, порог длины работает сразу.
+	for _, want := range []string{"newForm.tried = true;",
+		"off: !newFormFilled() || Boolean(err)",
+		`view.titleFrame.classList.toggle("err", Boolean(err))`,
+		`view.titleMsg.textContent = err;`} {
+		if !strings.Contains(made, want) {
+			t.Errorf("подсветка обязательного поля собрана не тем блоком: нет %q", want)
+		}
+	}
+	// Полоса действий без карточки, и гашение сверх отказа работает через
+	// тот же рубеж формы.
+	form := funcBody(t, app, "function formPage(")
+	for _, want := range []string{`cfg.flatBar ? "abar bare" : "card abar"`,
+		"const off = state.off === undefined ? false : Boolean(state.off);",
+		"save.disabled = !dirty || Boolean(refusal) || off;"} {
+		if !strings.Contains(form, want) {
+			t.Errorf("полоса действий формы собрана не тем блоком: нет %q", want)
+		}
+	}
+	css := readFile(t, filepath.Join("static", "style.css"))
+	for _, want := range []string{".lvlrow{", ".infobtn{", ".itip{", ".dfield{", ".dfield legend{",
+		".dfield.err{", ".dmsg{", ".abar.bare{", ".btn-leave{", ".xbtn{", ".xscrim{", ".tpage.nx{"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("в static/style.css нет правила %q", want)
+		}
+	}
+	// На телефоне кнопки записи остаются со словами: пара различается
+	// глаголом, и значки без слов не сказали бы, какой путь выберет человек.
+	phone := css[strings.Index(css, "@media (max-width:900px)"):]
+	if !strings.Contains(phone, ".abar.bare .btn .lb{display:inline}") {
+		t.Error("на телефоне у кнопок записи черновика пропали слова")
 	}
 }
 

@@ -5030,8 +5030,10 @@ function formPage(cfg) {
   // в панели кнопок, а на ноутбуке перед заголовком.
   const numNode = cfg.num ? el("span", "idbig", cfg.num) : null;
   let title = null;
+  let titleFrame = null;
+  let titleMsg = null;
   if (has.title) {
-    title = el("textarea", "tedit" + (cfg.titleTall ? " tbig" : ""));
+    title = el("textarea", cfg.titleLegend ? "" : ("tedit" + (cfg.titleTall ? " tbig" : "")));
     title.value = form.title || "";
     title.rows = 1;
     if (cfg.titleHint) title.placeholder = cfg.titleHint;
@@ -5045,11 +5047,24 @@ function formPage(cfg) {
     };
     title.addEventListener("input", () => { form.title = title.value; fit(); touch(); });
     setTimeout(fit, 0);
-    head.append(title);
+    if (cfg.titleLegend) {
+      // Подпись в верхней грани рамки поля (макет DK-447): рамка отличает поле
+      // от фона без отдельной строки подписи, и форма короче на строку.
+      titleFrame = el("fieldset", "dfield");
+      titleFrame.append(el("legend", "", cfg.titleLegend));
+      titleFrame.append(title);
+      head.append(titleFrame);
+      // Отказ поля стоит под самой рамкой и подсвечивает её, а не полосу
+      // кнопок внизу формы.
+      titleMsg = el("div", "dmsg", "");
+    } else {
+      head.append(title);
+    }
   } else {
     head.append(el("div", "tedit ro dtitle", cfg.titleText || cfg.num || ""));
   }
   page.append(keyed(head, cfg.key + "-head"));
+  if (titleMsg) page.append(titleMsg);
 
   const chips = el("div", "tchips");
   for (const chip of cfg.chips || []) chips.append(chip);
@@ -5188,7 +5203,7 @@ function formPage(cfg) {
   // нетронутой формы нет и самих кнопок правки, они приходят с первым
   // изменением поля вместе с разделителем; на форме заведения сохранять есть
   // что с первого касания, и кнопка там стоит всегда.
-  const bar = el("div", "card abar");
+  const bar = el("div", cfg.flatBar ? "abar bare" : "card abar");
   const save = barBtn("btn btn-acc", cfg.saveLabel || "Сохранить", "i-done");
   // Вторая кнопка сохранения: тот же рубеж и та же ручка, но своя дорога после
   // записи. Форма записи черновика стоит на паре «Сохранить» и «Сохранить и
@@ -5240,6 +5255,8 @@ function formPage(cfg) {
   drop.addEventListener("click", () => { if (cfg.onDrop) cfg.onDrop(); });
   out.bar = bar;
   out.title = title;
+  out.titleFrame = titleFrame;
+  out.titleMsg = titleMsg;
   out.save = save;
   out.saveMore = more;
   out.bad = bad;
@@ -5278,13 +5295,16 @@ function formPage(cfg) {
   out.placeBar = placeBar;
 
   // Рубеж формы спрашивается у экрана: он же говорит, тронута ли она. Отказ
-  // гасит кнопку и стоит словами рядом, а не после похода на сервер.
+  // гасит кнопку и стоит словами рядом, а не после похода на сервер. Порог off
+  // гасит кнопку без слов: у формы черновика отказ подсвечивает поле на месте,
+  // и полоса под кнопками молчит (макет DK-447).
   function touch() {
     const state = (cfg.check ? cfg.check() : null) || {};
     const dirty = Boolean(state.dirty) || Boolean(cfg.always);
     const refusal = dirty ? state.refusal || "" : "";
+    const off = state.off === undefined ? false : Boolean(state.off);
     bad.textContent = refusal;
-    save.disabled = !dirty || Boolean(refusal);
+    save.disabled = !dirty || Boolean(refusal) || off;
     save.hidden = !dirty;
     if (more) {
       more.disabled = save.disabled;
@@ -15993,35 +16013,41 @@ async function renderDraft(project, works, id) {
 // сразу, и пометка говорила неправду (DK-447, приписанный черновик DK-1252).
 const NEW_PLACEHOLDER = "Что нужно сделать и зачем";
 
-// Черновик пишется по SCQA, и заголовок с телом стоят на форме раздельными
-// полями. Прежде поле было одно, заголовком считалась его первая строка, и
-// без двух пустых строк над шаблоном кнопка «Сохранить» гасла молча, не говоря
-// почему (черновик DK-1252). Заголовок это короткая строка без разметки, тело
-// приходит в поле готовым шаблоном подразделов третьего уровня с пустыми
-// местами под текст. Полей на каждый раздел тела форма не заводит: «нужно
-// было просто в поле редактирования вставить шаблон с разделами, а
-// пользователь сам заполнит их, так гораздо гибче» (решение пользователя).
-// Написанное в шаблоне человек волен править как угодно: снять раздел,
-// добавить свой, писать сплошным текстом. Размеченный текст утилита записи
-// кладёт как есть.
-const DRAFT_TITLE_PLACEHOLDER = "Заголовок-исход";
-const DRAFT_PLACEHOLDER = "Разделы: ситуация, осложнение, вопрос, гипотеза";
+// Черновик пишется по SCQA, и наименование с описанием стоят на форме
+// раздельными полями. Прежде поле было одно, наименованием считалась его
+// первая строка, и без двух пустых строк над шаблоном кнопка «Сохранить» гасла
+// молча, не говоря почему (черновик DK-1252). Наименование это короткая строка
+// без разметки, описание приходит в поле готовым шаблоном подразделов третьего
+// уровня с пустыми местами под текст. Полей на каждый раздел описания форма не
+// заводит: «нужно было просто в поле редактирования вставить шаблон с
+// разделами, а пользователь сам заполнит их, так гораздо гибче» (решение
+// пользователя). Написанное в шаблоне человек волен править как угодно: снять
+// раздел, добавить свой, писать сплошным текстом. Размеченный текст утилита
+// записи кладёт как есть.
 const DRAFT_TEMPLATE = ["### Ситуация", "", "", "### Осложнение", "", "",
   "### Вопрос", "", "", "### Гипотеза", ""].join("\n");
-// Порог заголовка держит и утилита записи (TASKFORM.md, раздел «Первая
+// Подписи полей черновика стоят в верхней грани рамки самих полей (макет
+// DK-447): подсказки внутри полей сняты, рамка отличает поле от фона и без них.
+const DRAFT_TITLE_LABEL = "Наименование черновика";
+const DRAFT_BODY_LABEL = "Описание";
+// Порог наименования держит и утилита записи (TASKFORM.md, раздел «Первая
 // строка»), но узнавать о нём после похода на сервер поздно: тот же рубеж
 // стоит на самой форме.
 const DRAFT_TITLE_LIMIT = 72;
 
-// Рубеж формы черновика ровно тот же, что у утилиты записи: непустой заголовок
-// не длиннее потолка. Тело формой не проверяется: человек правит шаблон
-// руками, и отбивать запись за снятый раздел значило бы спорить с его же
-// правкой (решение пользователя).
+// Рубеж формы черновика ровно тот же, что у утилиты записи: непустое
+// наименование не длиннее потолка. Описание формой не проверяется: человек
+// правит шаблон руками, и отбивать запись за снятый раздел значило бы спорить
+// с его же правкой (решение пользователя). Отказ подсвечивает само поле и
+// стоит под ним, а не припиской под кнопками, и фраза у него универсальная для
+// любого поля формы (макет DK-447). Пустое наименование подсвечивается только
+// после попытки записи: нетронутое поле молчит, пока сохранить не попробовали,
+// а порог длины работает сразу и называет живой счётчик.
 function draftFormRefusal(form) {
   const title = String(form.title || "").trim();
-  if (!title) return "у черновика нет заголовка: он идёт первой строкой записи";
+  if (!title) return form.tried ? "поле обязательно для заполнения" : "";
   if (title.length > DRAFT_TITLE_LIMIT) {
-    return "заголовок длиннее " + DRAFT_TITLE_LIMIT + " символов: по нему черновик узнают в накопителе";
+    return "превышена допустимая длина поля (" + title.length + " из " + DRAFT_TITLE_LIMIT + ")";
   }
   return "";
 }
@@ -16038,17 +16064,14 @@ const BARRIER_VALUES = ["", "глаза", "доступ", "необратимо�
 // накопителю сверху, и метка, поставленная им, появлялась бы тогда, когда
 // разбор уже идёт. Значение по умолчанию средний: обычная очередь.
 const PRIO_VALUES = ["high", "mid", "low"];
-const PRIO_HINT = "уровень разбора на глаз: high разбирать ближайшим заходом, " +
-  "mid обычная очередь, low когда-нибудь; потом его правит груминг";
+// Подсказка уровня стоит за значком информации рядом со списком (макет DK-447):
+// прежняя приписка под списком пересказывала всю шкалу и занимала строку, а
+// спрашивает человек о смысле уровня, не о его значениях.
+const PRIO_HINT = "Определяет важность черновика и порядок его разбора в будущем.";
 const ACCEPT_HINT = "Вид приёмки решает, кто проверяет задачу: агентский вид " +
   "закрывается прогоном, у остальных часть шагов остаётся человеку.";
 const ACCEPT_BARRIER_HINT = "Барьер называется из шести, и у каждого своя причина: " +
   "без названного барьера вид не поднимается.";
-// Погашенные поля черновика подписаны тем, кто их заполнит.
-const DRAFT_OFF_TYPE = "тип выдаст груминг";
-const DRAFT_OFF_COST = "цена выдаст груминг";
-const DRAFT_OFF_RANK = "ранг выведет груминг";
-const DRAFT_OFF_PARTS = "поля те же, что у задачи, но пока не заполняются";
 
 // Поля формы переживают перерисовку: доска перечитывается по фокусу окна, и
 // без этого набранный текст пропадал бы при первом же переключении на другое
@@ -16057,7 +16080,7 @@ const DRAFT_OFF_PARTS = "поля те же, что у задачи, но пок
 // переключатель их не теряет.
 const newForm = { project: "", draft: false, title: "", body: "", type: "task", cost: "-",
   parts: [0, 0, 0, 0, 0], accept: "agent", barrier: "", reason: "", prio: "mid",
-  seeded: false, mode: DRAFT_MODE_GROOM };
+  seeded: false, tried: false, mode: DRAFT_MODE_GROOM };
 
 function resetNewForm(project) {
   newForm.project = project;
@@ -16072,6 +16095,7 @@ function resetNewForm(project) {
   newForm.reason = "";
   newForm.prio = "mid";
   newForm.seeded = false;
+  newForm.tried = false;
   newForm.mode = DRAFT_MODE_GROOM;
 }
 
@@ -16082,7 +16106,8 @@ function newFormFilled() {
     const title = String(newForm.title || "").trim();
     const body = String(newForm.body || "");
     // Шаблон разделов сам по себе не написанное: форма с одним шаблоном в
-    // теле и пустым заголовком закрывается молча, как закрывалась пустая.
+    // описании и пустым наименованием закрывается молча, как закрывалась
+    // пустая.
     return title !== "" || (body.trim() !== "" && body !== DRAFT_TEMPLATE);
   }
   const text = String(newForm.title || "");
@@ -16135,10 +16160,10 @@ function renderNew(project, kind) {
   newForm.draft = kind === "draft";
 
   const draft = newForm.draft;
-  // Шаблон разделов встаёт в тело один раз, при заходе на форму. Экран
+  // Шаблон разделов встаёт в описание один раз, при заходе на форму. Экран
   // перечитывается по фокусу окна, и класть шаблон каждой перерисовкой значило
-  // бы возвращать его в очищенное рукой поле, споря с человеком. Заголовок
-  // шаблоном не затрагивается: он остаётся отдельным коротким полем.
+  // бы возвращать его в очищенное рукой поле, споря с человеком. Наименование
+  // шаблоном не затрагивается: оно остаётся отдельным коротким полем.
   const seeded = draft && !newForm.seeded && !newForm.body.trim();
   if (draft && !newForm.seeded) {
     if (seeded) newForm.body = DRAFT_TEMPLATE;
@@ -16146,26 +16171,93 @@ function renderNew(project, kind) {
   }
 
   // Уровень стоит у самого верха формы: это единственное, что черновик
-  // спрашивает сверх заголовка с телом (DK-520).
-  const prioBox = el("div", "accbox");
-  const prioPick = pickField("уровень разбора", PRIO_VALUES, newForm.prio, (v) => {
-    newForm.prio = v;
-    view.touch();
-  });
-  prioPick.querySelector("select").setAttribute("aria-label", "уровень разбора записи накопителя");
-  prioBox.append(prioPick);
-  const prioHint = el("div", "hint", PRIO_HINT);
+  // спрашивает сверх наименования с описанием (DK-520). Строка одна: подпись,
+  // список и значок информации, а прежняя приписка под списком снята (макет
+  // DK-447).
+  const draftLead = [];
+  let xbtn = null;
+  let askScrim = null;
+  if (draft) {
+    // Крестик выхода стоит в правом верхнем углу (макет DK-447, состояние 5) и
+    // заменяет прежнюю кнопку «Не записывать» в полосе действий: решение
+    // «записать или уйти» больше не делит одну полосу с кнопками записи.
+    const xbar = el("div", "xbar");
+    xbtn = el("button", "xbtn");
+    xbtn.type = "button";
+    xbtn.setAttribute("aria-label", "закрыть форму записи");
+    xbtn.append(icon("close"));
+    xbar.append(xbtn);
+    draftLead.push(xbar);
 
-  // Тело черновика это второе поле формы записи, растущее по высоте так же,
-  // как заголовок: текст свободный, разметку подразделов утилита записи
-  // узнаёт сама (DK-1252).
-  const bodyField = el("div", "");
-  bodyField.append(el("span", "flab", "Тело"));
-  const bodyArea = el("textarea", "tedit tbig");
+    const prioRow = el("div", "lvlrow");
+    prioRow.append(el("span", "flab", "Уровень разбора:"));
+    const prioPick = pickField("", PRIO_VALUES, newForm.prio, (v) => {
+      newForm.prio = v;
+      view.touch();
+    });
+    prioPick.querySelector("select").setAttribute("aria-label", "уровень разбора записи накопителя");
+    prioRow.append(prioPick);
+    // Подсказка раскрывается тапом по значку, а не наведением: форму держит
+    // телефон, а палец наведение не держит.
+    const infoWrap = el("span", "infowrap");
+    const infoBtn = el("button", "infobtn", "i");
+    infoBtn.type = "button";
+    infoBtn.setAttribute("aria-label", "что значит уровень разбора");
+    const prioTip = el("div", "itip", PRIO_HINT);
+    prioTip.hidden = true;
+    let tipHeld = null;
+    const shutTip = () => {
+      prioTip.hidden = true;
+      infoBtn.classList.remove("on");
+      tipHeld = null;
+    };
+    infoBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (tipHeld) {
+        popupDrop(tipHeld);
+        shutTip();
+        return;
+      }
+      popupsShut(null);
+      prioTip.hidden = false;
+      infoBtn.classList.add("on");
+      tipHeld = popupHold(infoWrap, shutTip);
+    });
+    infoWrap.append(infoBtn, prioTip);
+    prioRow.append(infoWrap);
+    draftLead.push(prioRow);
+
+    // Вопрос выхода карточкой под крестиком, с затемнением формы: ответ
+    // «текст будет утерян» должен быть виден глазами, а не спрятан в подписи
+    // кнопки (макет DK-447, состояние 5).
+    askScrim = el("div", "xscrim");
+    askScrim.hidden = true;
+    const ask = el("div", "xask");
+    ask.append(el("p", "", "Текст черновика будет утерян. Продолжить?"));
+    const askRow = el("div", "xrow");
+    const askLeave = el("button", "btn btn-leave", "Не записывать");
+    const askStay = el("button", "btn", "Остаться");
+    askRow.append(askLeave, askStay);
+    ask.append(askRow);
+    askScrim.append(ask);
+    xbtn.addEventListener("click", () => { leaveNew(xbtn); });
+    askLeave.addEventListener("click", () => { leaveNew(null); });
+    askStay.addEventListener("click", () => { stayNew(); });
+    // Клик мимо карточки это «остаться»: вопрос закрывается, форма стоит.
+    askScrim.addEventListener("click", (ev) => {
+      if (!ev.target || ev.target === askScrim) stayNew();
+    });
+  }
+
+  // Описание черновика это второе поле формы записи, в такой же рамке с
+  // подписью в грани (макет DK-447) и растущее по высоте от текста: разметку
+  // подразделов утилита записи узнаёт сама (DK-1252).
+  const bodyField = el("fieldset", "dfield");
+  bodyField.append(el("legend", "", DRAFT_BODY_LABEL));
+  const bodyArea = el("textarea", "tbig");
   bodyArea.rows = 1;
   bodyArea.value = newForm.body || "";
-  bodyArea.placeholder = DRAFT_PLACEHOLDER;
-  bodyArea.setAttribute("aria-label", "тело черновика");
+  bodyArea.setAttribute("aria-label", "описание черновика");
   const fitBody = () => {
     bodyArea.style.height = "auto";
     if (bodyArea.scrollHeight) bodyArea.style.height = bodyArea.scrollHeight + "px";
@@ -16214,17 +16306,28 @@ function renderNew(project, kind) {
   box.append(acceptBox, el("div", "hint", ACCEPT_HINT), barrierHint, reasonField);
 
   let view = null;
-  // Уход с формы. Заведение занимает экран целиком, и выйти с него было нечем,
-  // ни крестика, ни отмены (замечание пользователя). Пустая форма закрывается
-  // сразу, набранная спрашивает второй раз, как спрашивает снятие сессии:
-  // написанное не должно пропадать от промаха по кнопке или по клавише.
+  // Уход с формы. Пустая форма закрывается сразу, набранная спрашивает второй
+  // раз, как спрашивает снятие сессии: написанное не должно пропадать от
+  // промаха по кнопке или по клавише. У черновика выход это крестик в углу, и
+  // вопрос потери стоит карточкой под ним (макет DK-447, состояние 5), у
+  // задачи осталась кнопка в полосе действий.
   let quitArmed = false;
+  const stayNew = () => {
+    quitArmed = false;
+    if (askScrim) askScrim.hidden = true;
+    if (xbtn) xbtn.classList.remove("on");
+  };
   const leaveNew = (btn) => {
     if (newFormFilled() && !quitArmed) {
       quitArmed = true;
+      if (draft) {
+        xbtn.classList.add("on");
+        askScrim.hidden = false;
+        return;
+      }
       if (btn) {
         btn.classList.add("armed");
-        btn.rename(draft ? "Черновик не записан, выйти?" : "Задача не заведена, выйти?");
+        btn.rename("Задача не заведена, выйти?");
       }
       return;
     }
@@ -16242,7 +16345,14 @@ function renderNew(project, kind) {
   // кнопки (DK-1043). У «Сохранить» mode это false, и подъёма он не просит
   // вовсе.
   const saveDraft = (mode, harness, tier) => {
-    if (draftFormRefusal(newForm)) return;
+    // Нажатая кнопка записи включает подсветку обязательного поля: до неё
+    // пустое наименование молчит и только гасит кнопки (макет DK-447,
+    // состояние 2).
+    newForm.tried = true;
+    if (draftFormRefusal(newForm)) {
+      view.touch();
+      return;
+    }
     // Заголовок и тело уезжают раздельно, разметку разделов внутри тела
     // утилита записи узнаёт сама, а снятый или добавленный рукой раздел это
     // дело автора.
@@ -16270,16 +16380,23 @@ function renderNew(project, kind) {
     // пользователя).
     // У черновика на экране только он сам: ни карточки приёмки, ни полей
     // строки доски. У задачи наоборот, ни слова про груминг.
-    lead: draft ? [prioBox, prioHint] : [], extra: draft ? [] : [card],
-    // Тело черновика встаёт сразу под заголовком, отдельным полем формы, а не
-    // общим текстом с ним (DK-1252).
+    lead: draft ? draftLead : [], extra: draft ? [] : [card],
+    // Описание черновика встаёт сразу под наименованием, отдельным полем
+    // формы в такой же рамке, а не общим текстом с ним (DK-1252, макет DK-447).
     afterChips: draft ? [bodyField] : [],
     // Форма заведения это та же правка задачи с пустыми полями: правка тут
     // включена всегда, и выключать её нечем, экран для неё и открыт.
     has: draft ? { title: true } : { title: true, type: true, cost: true, rank: true },
-    titleHint: draft ? DRAFT_TITLE_PLACEHOLDER : NEW_PLACEHOLDER, titleTall: !draft,
-    titleLabel: draft ? "заголовок черновика" : "заголовок задачи",
+    // Подпись наименования черновика стоит в верхней грани рамки поля,
+    // подсказка внутри поля снята (макет DK-447). У задачи подпись осталась
+    // подсказкой внутри поля, как была.
+    titleLegend: draft ? DRAFT_TITLE_LABEL : "", titleTall: !draft,
+    titleLabel: draft ? "наименование черновика" : "заголовок задачи",
+    titleHint: draft ? "" : NEW_PLACEHOLDER,
     form: newForm, edit: true, always: true,
+    // Полоса действий черновика без карточки: рамки полей и так держат форму,
+    // и кнопки стоят прямо на них (макет DK-447).
+    flatBar: draft,
     saveLabel: draft ? "Сохранить" : "Завести задачу",
     // У черновика кнопок сохранения две, и расходятся они только дорогой
     // после записи (LLD DK-354, решение 5). Промежуточной карточки с
@@ -16301,8 +16418,10 @@ function renderNew(project, kind) {
         onSave: (harness, tier, mode) => { saveDraft(mode, harness, tier); },
       }
       : null,
-    quitLabel: draft ? "Не записывать" : "Не заводить",
-    onQuit: (btn) => { leaveNew(btn); },
+    // Кнопка «Не заводить» осталась только у задачи: у черновика выход это
+    // крестик в углу формы, и полоса действий несёт одни кнопки записи.
+    quitLabel: "Не заводить",
+    onQuit: draft ? null : (btn) => { leaveNew(btn); },
     actions: [],
     check: () => {
       if (view) paint();
@@ -16310,7 +16429,14 @@ function renderNew(project, kind) {
       // без заголовка и черновика без текста не бывает, а у не агентского вида
       // барьер обязателен.
       if (newForm.draft) {
-        return { dirty: true, refusal: draftFormRefusal(newForm) };
+        // Отказ черновика подсвечивает рамку наименования на месте и молчит в
+        // полосе кнопок (макет DK-447). Кнопки гасит и пустая нетронутая
+        // форма, и показанный отказ: порог длины виден сразу, обязательность
+        // после первой попытки записи.
+        const err = draftFormRefusal(newForm);
+        if (view && view.titleFrame) view.titleFrame.classList.toggle("err", Boolean(err));
+        if (view && view.titleMsg) view.titleMsg.textContent = err;
+        return { dirty: true, refusal: "", off: !newFormFilled() || Boolean(err) };
       }
       return { dirty: true, refusal: draftRefusal(newForm, null) ||
         (newForm.accept !== "agent" && !newForm.barrier
@@ -16358,6 +16484,14 @@ function renderNew(project, kind) {
     },
   });
   groups.append(view.page);
+  // Вопрос выхода накрывает затемнением саму форму, а не экран: карточка
+  // стоит под крестиком, и вне формы затемнению нечего гасить. Позиционируется
+  // для этого только эта страница: экраны с режимом чтения держат описание
+  // абсолютом к общему предку, и новая точка привязки сворачивала бы его.
+  if (draft && askScrim) {
+    view.page.classList.add("nx");
+    view.page.append(askScrim);
+  }
 
   // Форма собрана под свой вид, и переключать в ней нечего: полей чужого вида
   // на ней нет вовсе. Обход тут остаётся ради одного живого поля, барьера: он
@@ -16372,18 +16506,19 @@ function renderNew(project, kind) {
     view.rankNote.textContent = "= " + newForm.parts.join("+");
   }
 
-  // Курсор встаёт в поле заголовка: с него человек и начинает, а тело ждёт
-  // готовым шаблоном разделов ниже. Ставится он только со свежим шаблоном:
-  // перерисовка по фокусу окна не должна выдёргивать курсор из того поля,
-  // где человек пишет.
+  // Курсор встаёт в поле наименования: с него человек и начинает, а описание
+  // ждёт готовым шаблоном разделов ниже. Ставится он только со свежим
+  // шаблоном: перерисовка по фокусу окна не должна выдёргивать курсор из того
+  // поля, где человек пишет.
   if (seeded && view.title && view.title.focus) {
     view.title.focus();
     if (view.title.setSelectionRange) view.title.setSelectionRange(0, 0);
   }
 
-  // Escape уводит с формы той же дорогой, что и кнопка: руки на клавиатуре, и
-  // тянуться к кнопке ради отказа не надо. Вопрос над набранной формой при
-  // этом виден глазами, потому что взводится та же кнопка.
+  // Escape уводит с формы той же дорогой, что и крестик с кнопкой: руки на
+  // клавиатуре, и тянуться к ним ради отказа не надо. Вопрос над набранной
+  // формой при этом виден глазами: у задачи он встаёт в кнопку, у черновика
+  // карточкой под крестиком.
   newEscape = () => { leaveNew(view.quit); };
 
   view.touch();

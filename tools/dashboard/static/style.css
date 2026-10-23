@@ -1020,6 +1020,42 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 /* вид приёмки и барьер в одном ряду, на телефоне переносятся: оба списка
    закрытые, и перенос не рвёт выбор */
 .accbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+/* форма записи черновика (макет DK-447): поля в рамках с подписью в верхней
+   грани, уровень разбора одной строкой со значком информации, выход крестиком
+   в углу. Отказ подсвечивает рамку поля и стоит под ней, а не в полосе
+   кнопок. */
+/* Страница заведения держит вопрос выхода затемнением на себе, а не на всём
+   окне: позиционируется только она, экраны с режимом чтения не трогаются
+   (описание режима чтения лежит абсолютом к общему предку). */
+.tpage.nx{position:relative}
+.xbar{display:flex;justify-content:flex-end;margin:0 0 10px}
+.xbtn{width:30px;height:30px;flex:none;border-radius:9px;border:1px solid var(--line2);background:var(--bg1);color:var(--tx2);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.xbtn svg{width:14px;height:14px}
+.xbtn.on{border-color:var(--acc);color:var(--tx)}
+.lvlrow{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.lvlrow .flab{display:inline;margin:0;flex:none}
+.infowrap{position:relative;display:inline-flex}
+.infobtn{width:16px;height:16px;border-radius:50%;border:1px solid var(--line2);background:var(--bg2);color:var(--tx3);font:600 10px var(--mono);display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;flex:none}
+.infobtn.on{border-color:var(--acc);color:var(--acc);background:color-mix(in oklab,var(--acc) 16%,var(--bg2))}
+.itip{position:absolute;top:22px;left:50%;transform:translateX(-50%);z-index:2;width:200px;background:var(--bg3);border:1px solid var(--line2);border-radius:8px;padding:9px 11px;font:400 12px/1.5 var(--sans);color:var(--tx2);box-shadow:0 8px 20px rgba(0,0,0,0.35)}
+.dfield{border:1px solid var(--line2);border-radius:10px;background:var(--bg1);padding:0 12px 10px;margin:0 0 6px;min-width:0}
+.dfield legend{padding:0 6px;margin-left:2px;font:500 11.5px var(--sans);color:var(--tx3)}
+.dfield textarea{all:unset;display:block;width:100%;color:var(--tx);font:400 14px/1.5 var(--sans);white-space:pre-wrap}
+.dfield textarea.tbig{min-height:108px}
+.dfield:focus-within{border-color:var(--acc)}
+.dfield.err{border-color:var(--block)}
+.dfield.err legend{color:var(--block)}
+.dmsg{font:400 11.5px/1.5 var(--sans);color:var(--block);padding:0 2px 14px}
+.dmsg:empty{display:none}
+.xscrim{position:absolute;inset:0;background:rgba(0,0,0,0.6);z-index:4;display:flex;justify-content:flex-end;align-items:flex-start;padding:44px 16px 0 0}
+.xscrim[hidden]{display:none}
+.xask{width:218px;background:var(--bg2);border:1px solid var(--line2);border-radius:12px;box-shadow:0 22px 54px rgba(0,0,0,0.55);padding:12px}
+.xask p{margin:0 0 10px;font:400 13px/1.5 var(--sans);color:var(--tx)}
+.xask .xrow{display:flex;gap:8px}
+.xask .btn{height:32px;padding:0 10px;font-size:11.5px;flex:1}
+.btn-leave{background:color-mix(in oklab,var(--block) 22%,transparent);border-color:var(--block);color:var(--block)}
+.abar.bare{margin-top:6px;padding:4px 0 0}
+.thline .dfield{flex:1}
 
 /* карточки с хвостом: журнал витка на экране задачи, ход груминга на экране
    черновика */
@@ -1412,6 +1448,15 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
   .abar .btn{height:44px;min-width:44px;padding:0 11px}
   .abar .btn .lb{display:none}
   .abar .btn svg{width:21px;height:21px}
+  /* телефон: кнопки записи черновика остаются со словами и своим размером
+     (макет DK-447). Пара различается глаголом, значок без слов не сказал бы,
+     какой путь выберет человек, и правило выше, прячущее слова у полосы
+     задачи, здесь снимается. */
+  .abar.bare{padding:4px 0 0}
+  .abar.bare .btn{height:36px;min-width:0;padding:0 14px}
+  .abar.bare .btn .lb{display:inline}
+  .abar.bare .btn svg{width:14px;height:14px}
+  .abar.bare .split .more2{width:30px}
   .flashes{top:12px;right:10px;left:10px}
   .flash{width:auto}
   .flash:not(:first-child){display:none}

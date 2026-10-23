@@ -925,6 +925,12 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if err := closeDebtGate(root, p.ID); err != nil {
 		return "", err
 	}
+	// Принятая LLD уезжает в архив с нарезкой (DK-489): кандидаты её
+	// контрактного раздела «Нарезка» обязаны стоять строками или целью, и
+	// оба пути закрытия, команда и кнопка дашборда, сходятся в эти ворота.
+	if err := closeCutGate(root, row, b, arch); err != nil {
+		return "", err
+	}
 	date := p.Date
 	if date == "" {
 		date = time.Now().Format("2006-01-02")

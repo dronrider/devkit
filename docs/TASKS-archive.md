@@ -709,3 +709,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-078 | агентские сценарии с подменённым HOME: тильда в путях раскрывается уже по временному HOME, писать полный путь [долг] | task | P3 | 2026-10-23 | [tasks/archive/2026/DK-078.md](tasks/archive/2026/DK-078.md) |
 | DK-1363 | taskctl close не спрашивает отметку smoke у выката | bug | P1 | 2026-10-23 | [tasks/archive/2026/DK-1363.md](tasks/archive/2026/DK-1363.md) |
 | DK-1337 | [dashboard] В списке задач не отображается дата | bug | P1 | 2026-10-23 | [tasks/archive/2026/DK-1337.md](tasks/archive/2026/DK-1337.md) |
+| DK-1333 | Незапушенный код main роняет слияние через фикстный тест линты | bug | P1 | 2026-10-23 | [tasks/archive/2026/DK-1333.md](tasks/archive/2026/DK-1333.md) |

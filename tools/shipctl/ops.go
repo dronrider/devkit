@@ -536,7 +536,15 @@ func cmdStatus(root string) (string, error) {
 	for _, r := range b.sects["check"] {
 		busy = append(busy, r.ID)
 	}
+	// Окно выката считается по свежему тегу: status это первое, что смотрят
+	// при аномалии окна, и отставший от origin тег рисовал бы её на ровном
+	// месте (DK-1251). При недоступном origin окно остаётся по локальному
+	// тегу, а пометка называет причину, чтобы молчание не выглядело сверкой.
+	tagSyncNote := ""
 	if mainErr == nil {
+		if err := syncDeployTag(root); err != nil {
+			tagSyncNote = "тег " + deployTag + " не сверен с origin, окно выката считается по локальному тегу: " + err.Error()
+		}
 		if train, strays, err = trainTasks(root, main, b); err != nil {
 			return "", err
 		}
@@ -546,6 +554,9 @@ func cmdStatus(root string) (string, error) {
 		if back, err = returned(root, main, b); err != nil {
 			return "", err
 		}
+	}
+	if tagSyncNote != "" {
+		out = append(out, tagSyncNote)
 	}
 	if len(train) > 0 {
 		out = append(out, "поезд: "+strings.Join(train, ", ")+" слиты и ждут выката (shipctl ship)")
@@ -711,6 +722,55 @@ func pushTag(root string) error {
 		return fmt.Errorf("тег %s не запушен (%s), повторить: git push -f origin %s", deployTag, out, deployTag)
 	}
 	return nil
+}
+
+// syncDeployTag подтягивает тег точки выката из origin до расчёта состава:
+// другая машина после своего выката двигает тег в origin, а git fetch origin
+// main и pull существующий тег не обновляют, и отставший клон считает уже
+// выкаченное ждущим поезда (чужой Check попадает в strays) либо не видит
+// выката у задачи в Check (DK-1251). Локальный тег двигается только вперёд,
+// сверкой предка по образцу freshMain: свой непушенный выкат назад не
+// откатывается, следующий push -f его не теряет. Без origin сверять не с чем,
+// а пустой ответ ls-remote значит, что тега на origin нет, и локальное
+// состояние остаётся как есть (случай «тега нет вообще» это открытая строка
+// DK-077, правкой не поглощается).
+func syncDeployTag(root string) error {
+	if _, err := git(root, "config", "--get", "remote.origin.url"); err != nil {
+		return nil
+	}
+	out, err := git(root, "ls-remote", "origin", "refs/tags/"+deployTag)
+	if err != nil {
+		return fmt.Errorf("git ls-remote origin не прошёл, состояние тега %s неизвестно:\n%s", deployTag, cmdoutFrame(root, "git-ls-remote", out))
+	}
+	sha, _, _ := strings.Cut(out, "\t")
+	if sha = strings.TrimSpace(sha); sha == "" {
+		return nil
+	}
+	// Объект тега скачивается до сравнения: без него не проверить предка
+	// чужого коммита и не поставить тег на несуществующий объект.
+	if out, err := git(root, "fetch", "--no-tags", "origin", "refs/tags/"+deployTag); err != nil {
+		return fmt.Errorf("git fetch origin не прошёл, тег %s не скачан:\n%s", deployTag, cmdoutFrame(root, "git-fetch", out))
+	}
+	remote, err := git(root, "rev-parse", "--verify", sha+"^{commit}")
+	if err != nil {
+		return err
+	}
+	local, lerr := git(root, "rev-parse", "--verify", deployTag+"^{commit}")
+	if lerr != nil {
+		_, err := git(root, "tag", "--no-sign", deployTag, remote)
+		return err
+	}
+	if local == remote {
+		return nil
+	}
+	if _, err := git(root, "merge-base", "--is-ancestor", local, remote); err != nil {
+		// Origin позади (свой выкат не запушен, пуш тега не роняет выкат)
+		// либо теги разошлись: локальная точка выката остаётся на месте,
+		// двигать её назад нельзя.
+		return nil
+	}
+	_, err = git(root, "tag", "--no-sign", "-f", deployTag, remote)
+	return err
 }
 
 // stray это осиротевшая задача: код в окне выката есть, а строка ушла из
@@ -941,6 +1001,14 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	main, err := preflightMain(root)
 	if err != nil {
+		return "", err
+	}
+	// Тег точки выката подтягивается до расчёта очереди и состава поезда:
+	// чужой выкат на другой машине уже в origin, а по отставшему тегу его код
+	// попадает в окно deployed..main и роняет слияние воротами strays (DK-1251).
+	// Слияние и так требует свежий origin (freshMain ниже), поэтому недоступный
+	// origin отказывает здесь честной ошибкой, а не неверным составом.
+	if err := syncDeployTag(root); err != nil {
 		return "", err
 	}
 	branch, err := git(root, "rev-parse", "--abbrev-ref", "HEAD")
@@ -1494,6 +1562,12 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	defer unlock()
 	main, err := preflight(root)
 	if err != nil {
+		return "", err
+	}
+	// Тег точки выката подтягивается до расчёта очереди и состава поезда,
+	// под уже взятым замком: чужой выкат в origin по отставшему тегу считался
+	// бы ждущим и ронял бы ship воротами strays либо занятой очередью (DK-1251).
+	if err := syncDeployTag(root); err != nil {
 		return "", err
 	}
 	if _, err := git(root, "checkout", main); err != nil {

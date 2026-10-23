@@ -228,6 +228,15 @@ func cmdSmoke(root string, p SmokeParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Отметка ставится задаче с непроверенным выкатом, а выкат виден по тегу
+	// точки выката: отставший от origin тег не находил бы выкат у задачи в
+	// Check и отказывал бы «нет непроверенного выката» на ровном месте
+	// (DK-1251). При недоступном origin очередь считается по локальному тегу,
+	// а пометка называет причину, иначе отказ выглядел бы приговором.
+	syncNote := ""
+	if err := syncDeployTag(root); err != nil {
+		syncNote = "тег " + deployTag + " не сверен с origin, очередь считается по локальному тегу: " + err.Error()
+	}
 	// Сужение до файлов задачи, как у merge (DK-720): к моменту отметки ветки
 	// уже нет, файлы задачи известны по её слитым коммитам в истории main.
 	taskPaths, err := taskTouchedPaths(root, main, p.ID)
@@ -262,6 +271,9 @@ func cmdSmoke(root string, p SmokeParams) (string, error) {
 		}
 	}
 	if !holds {
+		if syncNote != "" {
+			return "", fmt.Errorf("за %s нет непроверенного выката: очередь она не держит, и отметка ей не нужна; %s", p.ID, syncNote)
+		}
 		return "", fmt.Errorf("за %s нет непроверенного выката: очередь она не держит, и отметка ей не нужна", p.ID)
 	}
 	path := taskFilePath(root, p.ID)
@@ -295,6 +307,9 @@ func cmdSmoke(root string, p SmokeParams) (string, error) {
 			return "", fmt.Errorf("отметка поставлена (коммит %s), но пуш доски не прошёл, повторить git push руками: %v", hash, err)
 		}
 		msg += ", доска запушена"
+	}
+	if syncNote != "" {
+		msg += "\n" + syncNote
 	}
 	return msg, nil
 }

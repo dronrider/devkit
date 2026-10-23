@@ -1458,6 +1458,39 @@ class HarnessTests(Stand, unittest.TestCase):
         self.assertIn("--harness", " ".join(new[-1]),
                        "своя tmux-сессия цикла потеряла подписку: %r" % new[-1])
 
+    def test_tmux_launch_names_dir(self):
+        # Сессия поднимается с каталогом проекта: без «-c» оболочка внутри брала
+        # бы рабочий каталог поднявшего, а цикл из-под launchd получает корень
+        # файловой системы, и витки обходили бы чужие деревья с диалогами
+        # доступа macOS на имя демона (DK-1373).
+        mod = load_goal_run()
+        seen = {}
+
+        class FakeRun:
+            def __init__(self, code):
+                self.returncode = code
+
+        def fake_run(cmd, **kw):
+            seen.setdefault("calls", []).append(cmd)
+            return FakeRun(1 if "has-session" in cmd else 0)
+
+        loop = mod.Loop("DK-100", "/tmp/proj-цель", "втораяtest")
+        loop.lock_busy = lambda: False
+        old_run, old_which = mod.subprocess.run, mod.shutil.which
+        mod.subprocess.run = fake_run
+        mod.shutil.which = lambda name: "/bin/" + name
+        try:
+            with self.assertRaises(SystemExit):
+                loop.launch_tmux()
+        finally:
+            mod.subprocess.run, mod.shutil.which = old_run, old_which
+        new = [c for c in seen.get("calls", []) if "new-session" in c]
+        self.assertTrue(new, "tmux-сессию не поднимали: %r" % seen)
+        args = new[-1]
+        self.assertIn("-c", args, "сессия поднята без каталога: %r" % args)
+        self.assertEqual(args[args.index("-c") + 1], loop.proj,
+                         "сессия поднята не в каталоге проекта: %r" % args)
+
 
 class CycleRotationTests(Stand, unittest.TestCase):
     """Ротация витков по порогу контекста (DK-662): сжатие остаётся первым

@@ -701,7 +701,13 @@ class Loop:
         # goal-<ID>, и без неё ветка --foreground отбила бы сама себя.
         cmd = "DEVKIT_HIDDEN=1 " + "%s=%s " % (OWN_TMUX_ENV, self.sess) + \
             " ".join(shlex.quote(a) for a in args)
-        new = subprocess.run(["tmux", "new-session", "-d", "-s", self.sess, cmd])
+        # Сессия поднимается с каталогом проекта: без «-c» оболочка внутри брала
+        # бы рабочий каталог поднявшего, а цикл, поднятый сторожком launchd,
+        # получает корень файловой системы, и витки обходили бы чужие деревья с
+        # диалогами доступа macOS на имя демона (DK-1373). Витки и так ходят в
+        # проект (cwd=self.proj), каталог сессии держит то же дерево.
+        new = subprocess.run(["tmux", "new-session", "-d", "-s", self.sess,
+                              "-c", self.proj, cmd])
         if new.returncode != 0:
             die("tmux не поднял сессию %s" % self.sess)
         print("цикл цели %s поднят в tmux-сессии %s, журнал %s" % (self.id, self.sess, self.log))

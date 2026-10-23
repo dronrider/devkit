@@ -641,6 +641,42 @@ func BoardOnlyAt(root, files string) bool {
 	return true
 }
 
+// DocsOnly отвечает, не выходит ли список файлов коммита за пределы docs/.
+// files это вывод `git show --name-only`, путь на строку. Правка доки на прод
+// не едет, и слияние из одних таких коммитов выкатом не считается: по этому
+// признаку очередь выката в shipctl и ворота закрытия в taskctl согласованно
+// решают, нужна ли задаче отметка smoke. Признак шире BoardOnly: LLD и README
+// лежат под docs/, работой задачи они считаются, но грузом выката нет.
+func DocsOnly(files string) bool {
+	for _, f := range strings.Split(files, "\n") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if !strings.HasPrefix(f, "docs/") {
+			return false
+		}
+	}
+	return true
+}
+
+// CommitsDocsOnly отвечает, трогают ли все перечисленные коммиты только
+// docs/. shas это коммиты из записи «Выкат» файла задачи, сокращённые или
+// полные. Один коммит с кодом делает ответ ложным, и слияние считается
+// выкатом.
+func CommitsDocsOnly(root string, shas []string) (bool, error) {
+	for _, sha := range shas {
+		files, err := git(root, "show", "--name-only", "--pretty=", sha)
+		if err != nil {
+			return false, err
+		}
+		if !DocsOnly(files) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // isBoardRel сверяет путь от корня доски: сама доска, архив и файлы задач.
 func isBoardRel(f string) bool {
 	return f == "docs/TASKS.md" || f == "docs/TASKS-archive.md" || strings.HasPrefix(f, "docs/tasks/")

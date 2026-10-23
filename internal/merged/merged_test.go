@@ -250,13 +250,13 @@ func TestBoardOnlyAtCorpNested(t *testing.T) {
 		}
 	}
 	cases := map[string]bool{
-		"authn/docs/TASKS.md":                  true,
-		"authn/docs/tasks/AU-001.md":           true,
-		"authn/docs/TASKS-archive.md":          true,
-		"authn/src/main.go":                    false,
+		"authn/docs/TASKS.md":                            true,
+		"authn/docs/tasks/AU-001.md":                     true,
+		"authn/docs/TASKS-archive.md":                    true,
+		"authn/src/main.go":                              false,
 		"tools/obeycheck/testdata/project/docs/TASKS.md": false,
-		"docs/TASKS.md":                        true,
-		"cap_autotests/docs/TASKS.md":          false, // привязки нет
+		"docs/TASKS.md":                                  true,
+		"cap_autotests/docs/TASKS.md":                    false, // привязки нет
 	}
 	for files, want := range cases {
 		if got := BoardOnlyAt(root, files); got != want {
@@ -277,5 +277,44 @@ func TestIsRevert(t *testing.T) {
 		if got := IsRevert(subj); got != want {
 			t.Errorf("IsRevert(%q) = %v, ждали %v", subj, got, want)
 		}
+	}
+}
+
+// TestDocsOnly: признак читает вывод `git show --name-only`, и всё под docs/
+// выкатом не считается: дока, LLD и сама доска на прод не едут.
+func TestDocsOnly(t *testing.T) {
+	cases := map[string]bool{
+		"docs/lld/dk-1.md":                        true,
+		"docs/TASKS.md\n\ndocs/tasks/DK-1.md":     true,
+		"README.md":                               false,
+		"docs/lld/dk-1.md\ntools/taskctl/gate.go": false,
+		"": true,
+	}
+	for files, want := range cases {
+		if got := DocsOnly(files); got != want {
+			t.Errorf("DocsOnly(%q) = %v, ждали %v", files, got, want)
+		}
+	}
+}
+
+// TestCommitsDocsOnly: слияние из одних docs-коммитов выкатом не считается, а
+// один коммит с кодом делает его выкатом. Сокращённый sha из записи «Выката»
+// читается тем же ответом, несуществующий ошибкой: вызывающий решает по ней,
+// что состав не разобран.
+func TestCommitsDocsOnly(t *testing.T) {
+	root := repo(t)
+	docs := commit(t, root, "docs(lld): DK-1 схема", map[string]string{"docs/lld/dk-1.md": "схема\n"})
+	if ok, err := CommitsDocsOnly(root, []string{docs}); err != nil || !ok {
+		t.Fatalf("docs-коммит не признан docs-слиянием: %v, %v", ok, err)
+	}
+	if ok, err := CommitsDocsOnly(root, []string{docs[:8]}); err != nil || !ok {
+		t.Fatalf("сокращённый sha не признан docs-слиянием: %v, %v", ok, err)
+	}
+	code := commit(t, root, "feat: DK-1 правка", map[string]string{"tools/x/main.go": "package main\n"})
+	if ok, err := CommitsDocsOnly(root, []string{docs, code}); err != nil || ok {
+		t.Fatalf("коммит с кодом не сделал слияние выкатом: %v, %v", ok, err)
+	}
+	if _, err := CommitsDocsOnly(root, []string{"1234567"}); err == nil {
+		t.Fatal("несуществующий sha обязан давать ошибку, а не ответ")
 	}
 }

@@ -900,6 +900,12 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if err := closeGate(root, row); err != nil {
 		return "", err
 	}
+	// Непроверенный выкат не уезжает в архив молча (DK-1363): close сверяет
+	// отметку smoke с последним слиянием той же сверкой, что и отбор closable,
+	// а строка без выката закрывается как раньше.
+	if err := closeSmokeGate(root, p.ID); err != nil {
+		return "", err
+	}
 	// Сценарий прогоняет не автор правки (DK-642): прогон под именем
 	// исполнителя разработки закрытия не даёт, отказ называет имя.
 	if err := closeVerifyGate(root, p.ID); err != nil {

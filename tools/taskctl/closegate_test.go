@@ -107,3 +107,101 @@ func TestCloseNeedsAcceptance(t *testing.T) {
 		t.Fatal("строка уехала с доски при отказе ворот")
 	}
 }
+
+// mergedDoc кладёт файл задачи с готовым сценарием, «Проверкой» и разделом
+// «Выкат» из данных строк записи: слияние пишется как его пишет shipctl
+// (tools/shipctl/record.go), строки идут в порядке кругов работы.
+func mergedDoc(id string, record ...string) string {
+	return "# " + id + "\n" + fixtureScenario + "\n## Выкат\n\n" +
+		strings.Join(record, "\n") + "\n" + fixtureVerification
+}
+
+// TestCloseNeedsSmoke: регрессия DK-1363. Сверку отметки smoke с последним
+// выкатом делал только отбор closable, а ручной close уносил строку Check с
+// непроверенным выкатом в архив, и сломанный прод оставался за закрытой
+// строкой. Отказ называет команды прогона и отметки, строка остаётся на доске.
+func TestCloseNeedsSmoke(t *testing.T) {
+	root := setup(t)
+	writeTask(t, root, "XR-005", mergedDoc("XR-005", "- 2026-10-12 слито: 1a2b3c4d5e"))
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDebtDone(root, "XR-005", DebtDoneParams{Note: "пересечений нет"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-10-23"})
+	if err == nil {
+		t.Fatal("close с непроверенным выкатом должен падать")
+	}
+	for _, want := range []string{"agentctl stage XR-005 проверка", "shipctl smoke XR-005"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("в отказе нет команды %q: %v", want, err)
+		}
+	}
+	if !onBoard(t, root, "XR-005") {
+		t.Fatal("строка уехала с доски при отказе ворот")
+	}
+}
+
+// TestCloseSmokeCoverPasses: отметка smoke, стоящая после последнего слияния,
+// открывает закрытие, выкат проверен и строка уезжает с доски.
+func TestCloseSmokeCoverPasses(t *testing.T) {
+	root := setup(t)
+	writeTask(t, root, "XR-005", mergedDoc("XR-005",
+		"- 2026-10-12 слито: 1a2b3c4d5e",
+		"- smoke прогнан, 2026-10-13"))
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDebtDone(root, "XR-005", DebtDoneParams{Note: "пересечений нет"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-10-23"}); err != nil {
+		t.Fatalf("действующая отметка smoke ворот держать не должна: %v", err)
+	}
+	if onBoard(t, root, "XR-005") {
+		t.Fatal("строка с проверенным выкатом не закрылась")
+	}
+}
+
+// TestCloseStaleSmokeRefused: круг доработки после возврата из Check дописывает
+// новое слияние, и отметка прошлого круга новый выкат не прикрывает: до новой
+// отметки закрытие отказывает.
+func TestCloseStaleSmokeRefused(t *testing.T) {
+	root := setup(t)
+	writeTask(t, root, "XR-005", mergedDoc("XR-005",
+		"- 2026-10-10 слито: 1a2b3c4d5e",
+		"- smoke прогнан, 2026-10-11",
+		"- 2026-10-20 слито: 9f8e7d6c5b"))
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDebtDone(root, "XR-005", DebtDoneParams{Note: "пересечений нет"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-10-23"}); err == nil {
+		t.Fatal("отметка прошлого круга не должна прикрывать новый выкат")
+	}
+	if !onBoard(t, root, "XR-005") {
+		t.Fatal("строка уехала с доски при отказе ворот")
+	}
+}
+
+// TestCloseWithoutDeployPasses: строки без раздела «Выкат» (LLD, дока, разбор)
+// закрываются как раньше, ворот smoke они не касаются.
+func TestCloseWithoutDeployPasses(t *testing.T) {
+	root := setup(t)
+	writeTask(t, root, "XR-005", "# XR-005\n"+fixtureScenario+fixtureVerification)
+	if _, err := cmdMove(root, "XR-005", SectCheck, "", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDebtDone(root, "XR-005", DebtDoneParams{Note: "пересечений нет"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-10-23"}); err != nil {
+		t.Fatalf("строка без выката обязана закрываться: %v", err)
+	}
+	if onBoard(t, root, "XR-005") {
+		t.Fatal("строка без выката не закрылась")
+	}
+}

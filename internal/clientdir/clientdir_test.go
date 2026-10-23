@@ -49,6 +49,19 @@ func TestCheckRefusesEmptyDir(t *testing.T) {
 	}
 }
 
+func TestCheckRefusesRoot(t *testing.T) {
+	// Корень достаётся процессу без своего каталога под launchd, и обход
+	// пошёл бы по всему диску с диалогами доступа на имя дашборда (DK-1373).
+	if err := Check("/", "/Users/кто-то"); err == nil {
+		t.Fatal("корень файловой системы прошёл проверку каталогом подъёма")
+	}
+	// Путь, долезающий до корня точками, это тот же каталог, и проверка
+	// обязана узнать его через Clean, как у домовой проверки.
+	if err := Check("/tmp/..", ""); err == nil {
+		t.Fatal("корень, записанный через точки, прошёл проверку")
+	}
+}
+
 func TestCheckRefusesHome(t *testing.T) {
 	home := t.TempDir()
 	if err := Check(home, home); err == nil {

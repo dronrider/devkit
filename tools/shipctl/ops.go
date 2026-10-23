@@ -15,6 +15,7 @@ import (
 	"github.com/dronrider/devkit/internal/frame"
 	"github.com/dronrider/devkit/internal/freshtree"
 	"github.com/dronrider/devkit/internal/gitrun"
+	"github.com/dronrider/devkit/internal/merged"
 	"github.com/dronrider/devkit/internal/stage"
 )
 
@@ -1843,20 +1844,11 @@ func taskCommits(root, main, id string) ([]string, error) {
 }
 
 // docsOnly шире boardOnly: коммит не трогает ничего за пределами docs/.
+// Разбор общий с воротами закрытия taskctl (internal/merged): слияние одной
+// доки выкатом не считается у обеих утилит сразу.
 // Для отката это разные вещи: правку LLD или README revert возвращает вместе
 // с кодом (boardOnly), но на прод она не влияет и грузом выката не считается.
-func docsOnly(files string) bool {
-	for _, f := range strings.Split(files, "\n") {
-		f = strings.TrimSpace(f)
-		if f == "" {
-			continue
-		}
-		if !strings.HasPrefix(f, "docs/") {
-			return false
-		}
-	}
-	return true
-}
+func docsOnly(files string) bool { return merged.DocsOnly(files) }
 
 // rangeDocsOnly отвечает, лежит ли весь диапазон коммитов под docs/. От
 // codeCommits он отличается множеством, а не признаком: там окно выката и

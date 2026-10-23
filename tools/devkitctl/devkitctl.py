@@ -194,6 +194,7 @@ import json
 import leak
 import lift
 import layout
+import onboard
 import os
 import perms
 import plans
@@ -2331,6 +2332,13 @@ def check_machine(fix):
     findings += f
     fixed += d
     f, d = check_alt_sub(fix, main, from_main)
+    findings += f
+    fixed += d
+    # Онбординг деревьев проектов в профиле каждой включённой подписки
+    # (DK-1282). Доверие раскладывается до первого подъёма, вопрос клиента
+    # лента панели не видит.
+    f, d = onboard.check(fix and from_main, profiles, homes,
+                         fix_hint(main, from_main, "отметки доверия деревьям"))
     findings += f
     fixed += d
     # Планы работ сессий рядом со снимком квоты: то же машинное хозяйство

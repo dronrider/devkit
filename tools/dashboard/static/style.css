@@ -1568,6 +1568,13 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .cdarchbtn svg{width:16px;height:16px}
 .cdarchbtn:hover{color:var(--tx);border-color:var(--acc)}
 .cdarchbtn.on{border-color:var(--acc);background:color-mix(in oklab,var(--acc) 18%,var(--bg1));color:var(--tx)}
+/* Кнопка вида списка подписана словом, а не значком: «Все», «Основные» и
+   «Обсуждения» короче объясняют состав, и слово читается на телефоне без
+   наведения. Взведённое положение подсвечено тем же цветом, что и кнопка
+   архива. */
+.cdkindbtn{flex:none;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line2);border-radius:8px;background:var(--bg1);color:var(--tx3);cursor:pointer;padding:0 10px;font-size:12px}
+.cdkindbtn:hover{color:var(--tx);border-color:var(--acc)}
+.cdkindbtn.on{border-color:var(--acc);background:color-mix(in oklab,var(--acc) 18%,var(--bg1));color:var(--tx)}
 .cdrow{position:relative;display:flex;flex-direction:column;gap:4px;padding:7px 9px;border:1px solid var(--line);border-radius:9px;background:var(--bg1);cursor:pointer}
 /* Уборка в архив стоит в углу строки, а не отдельной строкой меню: список
    узкий, и каждая лишняя строка тут дороже значка. */

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -219,10 +220,307 @@ func TestStaticUnassignedWay(t *testing.T) {
 			t.Errorf("в app.js нет %s", want)
 		}
 	}
-	// Прежний выбор адреса кнопкой остался только у цели: строка задачи
-	// открывается своим ID, и журнал назначений решает, какой разговор за ним.
-	if strings.Count(string(app), "run_chat || row.talk_chat || row.id") != 1 {
-		t.Error("выбор run_chat уехал из кнопки цели либо завёлся второй раз")
+	// Кнопка строки открывает адрес записи у всякой записи: выбор run_chat
+	// уехал из кнопки, и журнал назначений решает сам, какой разговор стоит за
+	// адресом (LLD DK-1422, решение 6).
+	if strings.Contains(string(app), "run_chat || row.talk_chat || row.id") {
+		t.Error("выбор run_chat остался в кнопке строки")
+	}
+	// Список различает основные чаты записей и обсуждения: строка записи
+	// несёт признак main, фильтр ходит по кругу, а носитель отрезка не
+	// рисуется отдельной строкой.
+	for _, want := range []string{
+		`CHAT_KIND_KEY`,
+		`Boolean(c.main) === main`,
+		`list.filter((c) => !c.carrier)`,
+		`!c.carrier)`,
+	} {
+		if !strings.Contains(string(app), want) {
+			t.Errorf("в app.js нет %s", want)
+		}
+	}
+}
+
+// convReg кладёт строку реестра конвейера записи: разговор поднят конвейером
+// и окно носит имя задачи, по которому журнал называет носителя.
+func convReg(stamp, sid, task, tmux string) string {
+	return stamp + " сессия " + sid + " задача " + task + " проект demo дерево - транскрипт - " +
+		"источник работа повод taskctl run tmux " + tmux + " панель -\n"
+}
+
+// chatRows читает общий список машины сырыми полями: регрессионный прогон
+// кладёт этот файл на базу без новых полей chatEntry, и доступ по ключам JSON
+// держит файл компилируемым на любой базе (README tools/regcheck).
+func chatRows(t *testing.T, c *http.Client, url string) []map[string]any {
+	t.Helper()
+	resp := doReq(t, c, "GET", url, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("общий список: %d %s", resp.StatusCode, body(t, resp))
+	}
+	var got struct {
+		Chats []map[string]any `json:"chats"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatal(err)
+	}
+	return got.Chats
+}
+
+func rowStr(row map[string]any, key string) string {
+	s, _ := row[key].(string)
+	return s
+}
+
+func rowBool(row map[string]any, key string) bool {
+	b, _ := row[key].(bool)
+	return b
+}
+
+// writeChatStore кладёт запись незачатого разговора в память диалогов.
+func writeChatStore(t *testing.T, home, id string, st chatStore) {
+	t.Helper()
+	if err := os.MkdirAll(chatStoreDir(home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chatStoreDir(home), id+".json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Общий список строит строками записей: назначение журнала собирает разговоры
+// записи в одну её строку с ID, заголовком, видом и стадией, а носитель
+// отрезка отдельной строкой больше не стоит (LLD DK-1422, решение 6).
+func TestChatListMainRows(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Now()
+	writeSession(t, e.home, e.proj, "", "conv-1", plainTalk, now.Add(-time.Minute))
+	writeBinds(t, e.home, convReg("2026-10-23T10:00:00", "conv-1", "XR-4", "task-XR-4"))
+	writeMainChat(t, e.home, mainchat.Line(now,
+		mainchat.Bind{Record: "XR-4", Chat: "tmux-task-XR-4", Project: "demo", Source: mainchat.ByWork}))
+	got := chatRows(t, c, e.srv.URL+"/api/projects/demo/chats?all=1&days=0")
+	if len(got) != 1 {
+		t.Fatalf("в списке не одна строка записи: %v", got)
+	}
+	row := got[0]
+	if rowStr(row, "id") != "XR-4" || !rowBool(row, "main") || rowStr(row, "carrier") != "" {
+		t.Fatalf("строка записи не встала: %v", row)
+	}
+	if rowStr(row, "title") != "XR-4: Начатая задача" || !rowBool(row, "titleNamed") {
+		t.Fatalf("заголовок строки не из записи: %v", row)
+	}
+	if rowStr(row, "kind") != "задача" || rowStr(row, "project") != "demo" {
+		t.Fatalf("вид или проект строки не названы: %v", row)
+	}
+	tasks, _ := row["tasks"].([]any)
+	if len(tasks) != 1 || tasks[0] != "XR-4" {
+		t.Fatalf("строка не ведёт свою задачу: %v", row)
+	}
+}
+
+// Переименование записи обновляет строку: заголовок собирается на лету из
+// доски, и второй заход за списком приносит новое имя без перезапуска.
+func TestChatMainRowRename(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Now()
+	writeSession(t, e.home, e.proj, "", "conv-1", plainTalk, now.Add(-time.Minute))
+	writeBinds(t, e.home, convReg("2026-10-23T10:00:00", "conv-1", "XR-4", "task-XR-4"))
+	writeMainChat(t, e.home, mainchat.Line(now,
+		mainchat.Bind{Record: "XR-4", Chat: "tmux-task-XR-4", Project: "demo", Source: mainchat.ByWork}))
+	renamed := strings.Replace(chatBoardJSON, "Начатая задача", "Переименованная задача", 1)
+	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", renamed))
+	// Отпечаток доски меняет время правки файла, и память отдаёт свежий ответ.
+	touch := time.Now().Add(2 * time.Minute)
+	if err := os.Chtimes(filepath.Join(e.proj, "docs", "TASKS.md"), touch, touch); err != nil {
+		t.Fatal(err)
+	}
+	got := chatRows(t, c, e.srv.URL+"/api/projects/demo/chats?all=1&days=0")
+	if len(got) != 1 || rowStr(got[0], "title") != "XR-4: Переименованная задача" {
+		t.Fatalf("переименование не доехало до строки: %v", got)
+	}
+}
+
+// Сортировка строки записи считается по всей склейке отрезков: время берётся
+// от свежейшего носителя, даже когда действующий разговор в списке не стоит, и
+// строка стоит выше соседа, которого обгоняет склейка.
+func TestChatMainRowGlueOrder(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Now()
+	writeSession(t, e.home, e.proj, "", "chat-a", plainTalk, now.Add(-2*time.Hour))
+	writeSession(t, e.home, e.proj, "", "conv-1", plainTalk, now)
+	writeSession(t, e.home, e.proj, "", "n-1", plainTalk, now.Add(-time.Hour))
+	writeBinds(t, e.home, convReg("2026-10-23T10:00:00", "conv-1", "XR-4", "task-XR-4"))
+	writeMainChat(t, e.home,
+		mainchat.Line(now.Add(-2*time.Hour),
+			mainchat.Bind{Record: "XR-4", Chat: "chat-a", Project: "demo", Source: mainchat.ByHand})+
+			mainchat.Line(now.Add(-time.Hour),
+				mainchat.Bind{Record: "XR-4", Chat: "tmux-task-XR-4", Project: "demo", Source: mainchat.ByMove, Prior: "chat-a"}))
+	got := chatRows(t, c, e.srv.URL+"/api/projects/demo/chats?all=1&days=0")
+	if len(got) != 2 {
+		t.Fatalf("склейка не собрала отрезки в одну строку: %v", got)
+	}
+	if rowStr(got[0], "id") != "XR-4" || rowStr(got[1], "id") != "n-1" {
+		t.Fatalf("строка записи не обогнала соседа склейкой: %v", got)
+	}
+	if rowStr(got[0], "mtime") == "" {
+		t.Fatalf("строка записи без времени склейки: %v", got[0])
+	}
+}
+
+// Снятие назначения возвращает разговору собственную строку: отрезков у
+// записи нет, строка записи не строится, и список показывает носитель как
+// обычный разговор. Пока назначение действует, строка одна и стоит записью:
+// конвейер носителем отдельной строкой не дублируется.
+func TestChatMainRowOff(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Now()
+	writeSession(t, e.home, e.proj, "", "conv-1", plainTalk, now.Add(-time.Minute))
+	writeBinds(t, e.home, convReg("2026-10-23T10:00:00", "conv-1", "XR-4", "task-XR-4"))
+	writeMainChat(t, e.home, mainchat.Line(now.Add(-time.Minute),
+		mainchat.Bind{Record: "XR-4", Chat: "tmux-task-XR-4", Project: "demo", Source: mainchat.ByWork}))
+	got := chatRows(t, c, e.srv.URL+"/api/projects/demo/chats?all=1&days=0")
+	if len(got) != 1 || rowStr(got[0], "id") != "XR-4" || !rowBool(got[0], "main") {
+		t.Fatalf("при действующем назначении список не собран строкой записи: %v", got)
+	}
+	writeMainChat(t, e.home, mainchat.Line(now.Add(-time.Minute),
+		mainchat.Bind{Record: "XR-4", Chat: "tmux-task-XR-4", Project: "demo", Source: mainchat.ByWork})+
+		mainchat.Line(now,
+			mainchat.Bind{Record: "XR-4", Source: mainchat.ByOff}))
+	got = chatRows(t, c, e.srv.URL+"/api/projects/demo/chats?all=1&days=0")
+	if len(got) != 1 || rowStr(got[0], "id") != "conv-1" ||
+		rowBool(got[0], "main") || rowStr(got[0], "carrier") != "" {
+		t.Fatalf("после снятия носитель не вернулся собственной строкой: %v", got)
+	}
+}
+
+// Носитель, запиненный ключом keep, остаётся в ответе с пометкой: панель,
+// стоящая на адресе записи, находит им незачатую заготовку оформления и ленту
+// прежнего адреса, а список строк с пометкой не рисует. У черновика с
+// заготовкой оформления строка записи стоит сама: она строится из накопителя,
+// а заготовка служит ей носителем.
+func TestChatMainRowKeepCarrier(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Now()
+	writeSession(t, e.home, e.proj, "", "conv-1", plainTalk, now.Add(-time.Minute))
+	writeBinds(t, e.home, convReg("2026-10-23T10:00:00", "conv-1", "XR-4", "task-XR-4"))
+	writeChatStore(t, e.home, "blank-seed", chatStore{Blank: true, Project: "demo", Task: "XR-9",
+		Born: now.Add(-time.Minute).Unix(), Draft: "итог постановки"})
+	draft := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-9.md")
+	if err := os.MkdirAll(filepath.Dir(draft), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(draft, []byte("# XR-9: Выделенная запись\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeMainChat(t, e.home,
+		mainchat.Line(now.Add(-time.Minute),
+			mainchat.Bind{Record: "XR-4", Chat: "tmux-task-XR-4", Project: "demo", Source: mainchat.ByWork})+
+			mainchat.Line(now.Add(-time.Minute),
+				mainchat.Bind{Record: "XR-9", Chat: "blank-seed", Project: "demo", Source: mainchat.ByDecor}))
+	url := e.srv.URL + "/api/projects/demo/chats?all=1&days=0&keep=" +
+		url.QueryEscape("tmux-task-XR-4,blank-seed")
+	got := chatRows(t, c, url)
+	byID := map[string]map[string]any{}
+	for _, row := range got {
+		byID[rowStr(row, "id")] = row
+	}
+	if len(byID) != 4 {
+		t.Fatalf("в списке не две строки записи с двумя запиненными носителями: %v", got)
+	}
+	if row := byID["XR-4"]; !rowBool(row, "main") {
+		t.Fatalf("строки задачи нет: %v", row)
+	}
+	if row := byID["conv-1"]; rowStr(row, "carrier") != "XR-4" {
+		t.Fatalf("носитель задачи без пометки: %v", row)
+	}
+	if row := byID["XR-9"]; !rowBool(row, "main") || rowStr(row, "kind") != "черновик" ||
+		rowStr(row, "title") != "XR-9: Выделенная запись" {
+		t.Fatalf("строка черновика не построилась из накопителя: %v", row)
+	}
+	if row := byID["blank-seed"]; !rowBool(row, "blank") || rowStr(row, "carrier") != "XR-9" {
+		t.Fatalf("заготовка оформления не доехала до панели: %v", row)
+	}
+}
+
+// Строка записи называет вид, стадию и цель: цель узнаётся заголовком от
+// слова «Цель:», стадию отдаёт доска, принадлежность цели читается шапкой
+// файла задачи, а черновик до строки доски остаётся черновиком.
+func TestChatMainRowMeta(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Now()
+	board := strings.Replace(chatBoardJSON,
+		`{"id":"XR-4","title":"Начатая задача"`,
+		`{"id":"XR-4","title":"Начатая задача","stage":"разработка"`, 1)
+	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", board))
+	writeSession(t, e.home, e.proj, "", "conv-1", plainTalk, now.Add(-time.Minute))
+	writeSession(t, e.home, e.proj, "", "goal-1", plainTalk, now.Add(-2*time.Minute))
+	writeSession(t, e.home, e.proj, "", "draft-1", plainTalk, now.Add(-3*time.Minute))
+	writeBinds(t, e.home,
+		convReg("2026-10-23T10:00:00", "conv-1", "XR-4", "task-XR-4")+
+			"2026-10-23T10:00:00 сессия goal-1 задача XR-100 проект demo дерево - транскрипт - "+
+			"источник заказ повод startup tmux goal-XR-100 панель -\n"+
+			"2026-10-23T10:00:00 сессия draft-1 задача - проект demo дерево - транскрипт - "+
+			"источник заказ повод startup tmux - панель -\n")
+	writeMainChat(t, e.home,
+		mainchat.Line(now.Add(-time.Minute),
+			mainchat.Bind{Record: "XR-4", Chat: "tmux-task-XR-4", Project: "demo", Source: mainchat.ByWork})+
+			mainchat.Line(now.Add(-2*time.Minute),
+				mainchat.Bind{Record: "XR-100", Chat: "goal-1", Project: "demo", Source: mainchat.ByWork})+
+			mainchat.Line(now.Add(-3*time.Minute),
+				mainchat.Bind{Record: "XR-7", Chat: "draft-1", Project: "demo", Source: mainchat.ByDecor}))
+	// Связь задачи с целью живёт в шапке файла задачи, файл цели на месте.
+	for id, text := range map[string]string{
+		"XR-4":   "# XR-4: Начатая задача\n\nЦель: [tasks/XR-100.md](tasks/XR-100.md)\n\n## Ход работы\n",
+		"XR-100": "# XR-100: пробный цикл\n\n## Цель\n",
+		"XR-7":   "",
+	} {
+		rel := id + ".md"
+		if id == "XR-7" {
+			rel = "drafts/XR-7.md"
+			text = "# XR-7: Черновая запись\n"
+		}
+		p := filepath.Join(e.proj, "docs", "tasks", filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := chatRows(t, c, e.srv.URL+"/api/projects/demo/chats?all=1&days=0")
+	byID := map[string]map[string]any{}
+	for _, row := range got {
+		byID[rowStr(row, "id")] = row
+	}
+	if row := byID["XR-4"]; !rowBool(row, "main") || rowStr(row, "kind") != "задача" ||
+		rowStr(row, "stage") != "разработка" || rowStr(row, "goalOf") != "XR-100" {
+		t.Fatalf("строка задачи без вида, стадии или цели: %v", row)
+	}
+	if row := byID["XR-100"]; !rowBool(row, "main") || rowStr(row, "kind") != "цель" ||
+		rowStr(row, "title") != "XR-100: Цель: пробный цикл" {
+		t.Fatalf("строка цели не узналась: %v", row)
+	}
+	if row := byID["XR-7"]; !rowBool(row, "main") || rowStr(row, "kind") != "черновик" ||
+		rowStr(row, "title") != "XR-7: Черновая запись" {
+		t.Fatalf("черновик не узнался: %v", row)
+	}
+}
+
+// Прежние адреса продолжают открывать прежнюю переписку: поиск по имени tmux
+// находит конвейер носителем, слияние строк записей этот поиск не встречает.
+func TestChatMainRowTmuxSearchUntouched(t *testing.T) {
+	e, c := chatEnv(t)
+	now := time.Now()
+	writeSession(t, e.home, e.proj, "", "conv-1", plainTalk, now.Add(-time.Minute))
+	writeBinds(t, e.home, convReg("2026-10-23T10:00:00", "conv-1", "XR-4", "task-XR-4"))
+	writeMainChat(t, e.home, mainchat.Line(now,
+		mainchat.Bind{Record: "XR-4", Chat: "tmux-task-XR-4", Project: "demo", Source: mainchat.ByWork}))
+	got := chatRows(t, c, e.srv.URL+"/api/projects/demo/chats?all=1&days=0&tmux=task-XR-4")
+	if len(got) != 1 || rowStr(got[0], "id") != "conv-1" || rowBool(got[0], "main") {
+		t.Fatalf("поиск по имени tmux не нашёл носителя: %v", got)
 	}
 }
 

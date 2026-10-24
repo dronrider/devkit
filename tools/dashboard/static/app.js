@@ -9460,6 +9460,42 @@ function chatArchNext(mode) {
   return CHAT_ARCH_MODES[(at + 1) % CHAT_ARCH_MODES.length];
 }
 
+// Вид списка по записям: все строки разом, только основные чаты записей либо
+// только обсуждения, разговоры, основным чатом не служащие. Положение живёт в
+// localStorage тем же порядком, что и кнопка архива: список разбирают
+// заходами, и выставлять вид заново на каждом заходе человеку незачем.
+const CHAT_KIND_KEY = "devkit.chat.kind";
+const CHAT_KIND_MODES = ["all", "main", "talks"];
+const CHAT_KIND_WORD = { all: "Все", main: "Основные", talks: "Обсуждения" };
+const CHAT_KIND_TIP = {
+  all: "Показаны все чаты: оставить только основные",
+  main: "Показаны основные чаты записей: оставить только обсуждения",
+  talks: "Показаны обсуждения: показать все чаты",
+};
+
+function chatKindMode() {
+  try {
+    const got = localStorage.getItem(CHAT_KIND_KEY);
+    return CHAT_KIND_MODES.includes(got) ? got : CHAT_KIND_MODES[0];
+  } catch (err) {
+    return CHAT_KIND_MODES[0];
+  }
+}
+
+function chatKindSet(mode) {
+  try {
+    localStorage.setItem(CHAT_KIND_KEY, mode);
+  } catch (err) {
+    // Приватный режим браузера запрещает запись: положение тогда живёт до
+    // перезагрузки, и это лучше упавшего окна.
+  }
+}
+
+function chatKindNext(mode) {
+  const at = CHAT_KIND_MODES.indexOf(mode);
+  return CHAT_KIND_MODES[(at + 1) % CHAT_KIND_MODES.length];
+}
+
 // chatArchShown режет список по выбранному положению кнопки. Пустой поиск
 // (draw при !q) идёт через него, а набранный запрос (DK-726) режет список сам,
 // мимо этой функции: положение кнопки прячет разговор только для глаза, а не
@@ -9549,7 +9585,16 @@ async function chatState(project, addr, board, works) {
       "/tasks/" + encodeURIComponent(st.task) + "/chat");
     if (m.ok && m.body && m.body.id) st.main = m.body;
   }
-  const r = await api(chatsURL(project) + "?all=1" + chatKeepArg(st));
+  // Виток цели резолвируется до чтения списка: он скрыт из выдачи (DK-847) и
+  // держится в окне флагом удержания, а удержание собирается из sid и самого
+  // витка, которые к запросу уже обязан стоять. Резолвившийся позже адрес
+  // ставил панель на sid без строки в списке, и шапка показывала обрубок
+  // «чат <sid>» вместо заголовка витка (DK-938). Само открытие остаётся
+  // разбору ниже: назначение из журнала, потом живой разговор (DK-446), и
+  // только без них дверь открывает виток (DK-1009).
+  const goalAddr = Boolean(st.task && !st.sid && !st.fresh && isGoalRow(board, st.task));
+  const shell = isGoalRow(board, st.task) && !st.fresh ? goalShell(st.task, works) : null;
+  const r = await api(chatsURL(project) + "?all=1" + chatKeepArg(st, shell));
   if (!r.ok) {
     st.error = r.body.error || "список чатов не прочитался";
     return st;
@@ -9644,7 +9689,6 @@ async function chatState(project, addr, board, works) {
   // памяти вкладки. Стоящей цели это не говорится: её дверь действует и без
   // назначения.
   const goalHere = isGoalRow(board, st.task);
-  const shell = goalHere && !st.fresh ? goalShell(st.task, works) : null;
   const goalRuns = Boolean(shell) ||
     (goalHere && workOnRun((works || []).find((x) => x.id === st.task)));
   if (st.main && !st.fresh && (!goalHere || (st.main.chat && goalRuns))) {
@@ -9684,8 +9728,7 @@ async function chatState(project, addr, board, works) {
   // это чей-то груминг, реплика подняла бы его резюмом, и без живого
   // разговора дверь открывает пустую панель: первая реплика поднимет цели
   // свою сессию, как у задачи (DK-1009). Идущую оболочку цикла кнопка
-  // открывает по sid.
-  const goalAddr = Boolean(st.task && !st.sid && !st.fresh && isGoalRow(board, st.task));
+  // открывает по sid, резолв стоит выше, у чтения списка.
   if (!st.sid && !st.fresh && !st.unassigned) {
     const list = (st.task ? st.chats.filter((c) => (c.tasks || []).includes(st.task))
       : chatVisible(st)).filter((c) => !c.project || c.project === project)
@@ -9700,8 +9743,9 @@ async function chatState(project, addr, board, works) {
   // между ходами мёртв, в список живых он не попадает, и без этой ветки панель
   // шла дальше дорогой задачи: второй сессией рядом с циклом либо вечной
   // плашкой подъёма над запертым полем (DK-1009, замечание ревью). Носитель из
-  // журнала называет тот же виток, и названная им панель остаётся у ручки цели.
-  if (shell && shell.session && !st.sid) st.sid = shell.session;
+  // журнала называет тот же виток, и названная им панель остаётся у ручке цели.
+  // Свежей записи виток не открывают: она ждёт свою сессию.
+  if (shell && shell.session && !st.sid && !st.fresh) st.sid = shell.session;
   // Память подъёма живёт не только у адреса new: разбор записи накопителя
   // поднимают кнопкой её строки, а чат по ней открывают тем же ID, каким
   // открывают чат задачи. Панель с привязкой и без диалога ждёт ровно ту же
@@ -9810,7 +9854,7 @@ function chatMakeTask(st) {
 // последний разговор задачи. Окно режет список по свежести, и без этой
 // оговорки адрес старой беседы выпадал бы из выпадашки, а кнопка задачи
 // заводила бы новый чат вместо её собственного.
-function chatKeepArg(st) {
+function chatKeepArg(st, shell) {
   const keep = [];
   if (st.sid) keep.push(st.sid);
   const last = st.task ? chatTaskLast(st.task) : "";
@@ -9820,6 +9864,10 @@ function chatKeepArg(st) {
   // адрес записи открывает именно его (LLD DK-1422).
   const bound = st.main && st.main.chat ? st.main.chat : "";
   if (bound && !keep.includes(bound)) keep.push(bound);
+  // Виток цели держится тем же запросом: в выдачу он попадает только
+  // удержанием, а резолвится до чтения списка (DK-938).
+  const goalTurn = shell && shell.session ? shell.session : "";
+  if (goalTurn && !keep.includes(goalTurn)) keep.push(goalTurn);
   return keep.length ? "&keep=" + encodeURIComponent(keep.join(",")) : "";
 }
 
@@ -10038,21 +10086,43 @@ function chatDropBtn(project, c, done) {
 function chatOption(project, c, current, done) {
   const row = el("div", "cdrow" + (c.id === current ? " on" : "") + (c.archived ? " arch" : ""));
   row.append(withFull(el("b", "", chatTitle(c)), chatTitle(c)));
-  // Незачатую запись закрывают насовсем, а не прячут в архив: хранить в ней
-  // нечего, и архив оставил бы тот же мусор, только за ширмой («закрыть их я не
-  // могу, просто нет такой возможности», замечание пользователя). Запись с
-  // сессией и разговор с лентой уходят прежней дорогой, архивом: там есть что
-  // хранить, а живую сессию закрытие не трогает.
-  if (c.blank && !c.grown && !c.tmux) {
-    row.append(chatDropBtn(project, c, done));
-  } else {
-    row.append(chatArchBtn(project, c, done));
+  // Строка записи строится на лету из доски и журнала назначений, и своих
+  // кнопок у неё нет: архивировать в ней нечего, а убирается она сама, когда
+  // у записи не остаётся назначенного разговора.
+  if (!c.main) {
+    // Незачатую запись закрывают насовсем, а не прячут в архив: хранить в ней
+    // нечего, и архив оставил бы тот же мусор, только за ширмой («закрыть их я не
+    // могу, просто нет такой возможности», замечание пользователя). Запись с
+    // сессией и разговор с лентой уходят прежней дорогой, архивом: там есть что
+    // хранить, а живую сессию закрытие не трогает.
+    if (c.blank && !c.grown && !c.tmux) {
+      row.append(chatDropBtn(project, c, done));
+    } else {
+      row.append(chatArchBtn(project, c, done));
+    }
   }
   const chips = el("div", "cchips");
   // Принадлежность видна первой: список общий по машине, и без имени проекта
   // строки разных досок неотличимы. Свой проект тоже назван, пустое место у
   // части строк читалось бы пропажей.
   chips.append(el("span", "chip c-proj", c.project || project));
+  // Строка основного чата называет запись, а не разговор: принадлежность цели,
+  // вид записи и её стадия стоят рядом с состоянием, и список отвечает, что за
+  // запись и где она стоит (LLD DK-1422, решение 6).
+  if (c.main) {
+    if (c.goalOf) {
+      const goal = el("span", "chip clicky", c.goalOf);
+      goal.title = "Основной чат цели " + c.goalOf;
+      goal.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        chatDropShut();
+        openChat(chatAddr(c.project || project, c.goalOf));
+      });
+      chips.append(goal);
+    }
+    if (c.kind) chips.append(el("span", "chip", c.kind));
+    if (c.stage) chips.append(el("span", "chip", c.stage));
+  }
   // Живой чат различается занятостью: работает агент или ждёт реплики. У
   // занятого рядом идут минуты хода (DK-893): без них «активна» одинаково
   // выглядит и у хода, начатого секунду назад, и у получасового, а открывать
@@ -10137,8 +10207,11 @@ function chatDropSet(node) {
 function chatPanelNext(project, st, goneId) {
   const only = chatIsTask(st.addr) ? st.addr : chatNewTask(st.addr);
   const scoped = only ? st.chats.filter((c) => (c.tasks || []).includes(only)) : st.chats;
+  // Носитель, служащий отрезком записи, кандидатом не становится: его строку
+  // заменила строка самой записи, и панель уходит на разговор, а не на адрес
+  // записи, с которого она только что ушла.
   const rest = scoped.filter((c) => (!c.project || c.project === project) &&
-    c.id !== goneId && !c.archived);
+    c.id !== goneId && !c.archived && !c.carrier);
   return rest.length ? rest[0].id : CHAT_NEW;
 }
 
@@ -10169,6 +10242,17 @@ function chatDropOpen(project, st, anchor, again) {
     arch.title = CHAT_ARCH_WORD[mode];
     arch.setAttribute("aria-label", arch.title);
     arch.setAttribute("data-mode", mode);
+  };
+  // Кнопка вида списка ходит по кругу «Все», «Основные», «Обсуждения» и
+  // подписана самим положением: слова короче значка архива, и место под них
+  // в шапке есть.
+  const kindBtn = el("button", "cdkindbtn");
+  const paintKind = () => {
+    const mode = chatKindMode();
+    kindBtn.textContent = CHAT_KIND_WORD[mode];
+    kindBtn.className = "cdkindbtn" + (mode === "all" ? "" : " on");
+    kindBtn.title = CHAT_KIND_TIP[mode];
+    kindBtn.setAttribute("aria-label", kindBtn.title);
   };
   const rows = el("div", "cdrows");
   // Догрузка идёт одна за раз: поиск и «показать раньше» ходят за одним и тем
@@ -10203,6 +10287,7 @@ function chatDropOpen(project, st, anchor, again) {
   const draw = () => {
     const q = find.value.trim().toLowerCase();
     paintArch();
+    paintKind();
     for (const [id, wanted] of justToggled) {
       const c = st.chats.find((x) => x.id === id);
       if (c) c.archived = wanted;
@@ -10214,6 +10299,14 @@ function chatDropOpen(project, st, anchor, again) {
     // остаётся в состоянии до следующего открытия панели) и в пустом запросе
     // им делать нечего: список без q это обычный вид, а не выдача поиска.
     let list = q ? st.chats : chatArchShown(st.chats, chatArchMode()).filter((c) => !c.hidden);
+    // Вид списка режет его на основные чаты записей и обсуждения тем же
+    // кругом, что и кнопка архива: состав решает человек под свою привычку, а
+    // набранный запрос ищет по всей машине мимо вида, как и мимо архива.
+    const kind = chatKindMode();
+    if (!q && kind !== "all") {
+      const main = kind === "main";
+      list = list.filter((c) => Boolean(c.main) === main);
+    }
     if (!q) {
       const have = new Set(list.map((c) => c.id));
       const pin = (id) => {
@@ -10224,6 +10317,10 @@ function chatDropOpen(project, st, anchor, again) {
       for (const id of justToggled.keys()) pin(id);
       pin(st.sid);
     }
+    // Носитель, служащий отрезком основного чата записи, отдельной строкой не
+    // стоит (LLD DK-1422): сервер держит его в ответе для панели на адресе
+    // записи, а список не рисует его ни видом, ни поиском.
+    list = list.filter((c) => !c.carrier);
     list = list.filter((c) => {
       if (!q) return true;
       return (c.title || "").toLowerCase().includes(q) ||
@@ -10348,8 +10445,16 @@ function chatDropOpen(project, st, anchor, again) {
     justToggled.clear();
     draw();
   });
+  kindBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    chatKindSet(chatKindNext(chatKindMode()));
+    // Смена вида это другой набор строк, и замер порядка начинается заново:
+    // подмешанный прежний замер переставлял бы соседей на первом же клике.
+    order = null;
+    draw();
+  });
   draw();
-  top.append(find, arch);
+  top.append(find, kindBtn, arch);
   box.append(top, rows);
   anchor.append(box);
   chatDropSet(box);
@@ -11451,15 +11556,12 @@ function rowChatBtn(project, row, works) {
   // носителя журналом назначений, и разговор открывается тот же после
   // закрытия строки, простоя за порогом живости и перезапуска дашборда, а
   // повторный запуск не заводит второго (LLD DK-1422). Прежний выбор
-  // run_chat держался живых признаков работы и умирал вместе с ними.
-  // Цель адресом пока называет себя сама: носителем у неё становится виток,
-  // которого список чатов видит не всегда, и адрес записи ляжет своим
-  // писателем (DK-938, DK-1431).
-  const addr = /^Цель:/.test(row.title || "")
-    ? (row.run_chat || row.talk_chat || row.id)
-    : row.id;
+  // run_chat держался живых признаков работы и умирал вместе с ними, а поля
+  // run_chat и talk_chat остались «Работе агентов». Цель журнал пока не
+  // называет, и её адрес открывается своей дорогой живого витка либо идущей
+  // оболочки, строку же носителя цели положит свой писатель (DK-1431).
   return chatIconBtn(lively ? "Чат по задаче: работа идёт" : "Чат по задаче",
-    "Чат по задаче " + row.id, () => { openChat(chatAddr(project, addr)); }, lively);
+    "Чат по задаче " + row.id, () => { openChat(chatAddr(project, row.id)); }, lively);
 }
 
 // Кнопка стопа: красный квадрат в кружке рядом с отправкой. Прерывает ход, а не
@@ -19120,6 +19222,10 @@ async function paint() {
     // работы приезжают тем же ответом, что и список проектов. Поход за доской
     // стоил тут целого круга по сети и подпроцесса taskctl на каждый переход.
     markNav(rt);
+    // Работы оседают для панели чата, которая рисуется следом и берёт их из
+    // показанных: адрес записи цели разрешается в виток по живой оболочке, и
+    // пустые работы оставляли панель на этом экране без чата вовсе.
+    shownWorks = current.works || [];
     // Заказ отдаётся экрану только если он про тот же проект: имя из адреса и
     // выбранный проект расходятся, когда в адресе стоит незнакомая доска.
     await renderTask(current.name, current.works || [], rt.id,

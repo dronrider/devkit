@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -355,4 +356,242 @@ func (s *server) mainChatAssign(id, chat, project, source string) {
 		Record: id, Chat: chat, Project: project, Source: source}); err != nil {
 		s.logf("назначение основного чата %s не записалось: %v", id, err)
 	}
+}
+
+// Вид записи словами для строки основного чата: цель, задача либо черновик.
+// Тип goal у строк доски ещё не заведён (DK-816), и цель узнаётся заголовком
+// от слова «Цель:», как её узнаёт экран задачи.
+const (
+	mainKindGoal  = "цель"
+	mainKindTask  = "задача"
+	mainKindDraft = "черновик"
+)
+
+// mainAgg это то, что список знает о носителях записи: свежейший из
+// присутствующих (по нему время и место строки) и действующий (по нему
+// состояние). Действующий носитель не обязан присутствовать: передача и
+// простой уводят разговор из списка, а отрезки при этом остаются.
+type mainAgg struct {
+	fresh int
+	last  int
+}
+
+// chatMainRows сшивает список строками записей (LLD DK-1422, решение 6):
+// всякому назначению журнала, чей носитель присутствует в списке, отвечает
+// одна строка самой записи с ID, заголовком, видом и стадией, а носители
+// отрезков отдельными строками больше не стоят. Снятое назначение отрезков не
+// даёт, строка записи не строится, и разговор возвращается собственной строкой.
+// Носитель, запиненный ключом keep, остаётся в ответе с пометкой Carrier:
+// панель, стоящая на адресе записи, находит им ленту носителя и незачатую
+// заготовку оформления, а список строк с пометкой не рисует. Слияние стоит в
+// ручке списка, а не в сборке строк: тем же перечнем меряют живую работу
+// задачи (taskLead), ищут разговор для реплики и читают адрес конвейера, и
+// сшитый перечень ослепил бы их разом.
+func (s *server) chatMainRows(list []chatEntry, keepRaw string, found *Project, all bool) []chatEntry {
+	data := s.mainChatData()
+	binds := mainchat.All(data)
+	if len(binds) == 0 {
+		return list
+	}
+	act := mainchat.Parse(data)
+	keep := chatKeepSet(keepRaw)
+	byID := make(map[string]int, len(list))
+	byWin := map[string]int{}
+	for i := range list {
+		byID[list[i].ID] = i
+		if name := strings.SplitN(list[i].Tmux, ":", 2)[0]; name != "" {
+			byWin[name] = i
+		}
+	}
+	carrier := map[int]string{}
+	carrierKey := map[int]string{}
+	agg := map[string]*mainAgg{}
+	var records []string
+	for _, id := range sortedRecordIDs(binds) {
+		// Снятое назначение отрезков не оставляет: разговоры возвращаются
+		// собственными строками, и строка записи не строится.
+		if act[id].Chat == "" {
+			continue
+		}
+		var a *mainAgg
+		for _, seg := range mainchat.Segments(binds[id]) {
+			i, ok := byID[seg.Chat]
+			if !ok {
+				name, isWin := strings.CutPrefix(seg.Chat, tmuxChatKey)
+				if !isWin {
+					continue
+				}
+				if i, ok = byWin[name]; !ok {
+					continue
+				}
+			}
+			if a == nil {
+				a = &mainAgg{fresh: i, last: -1}
+				agg[id] = a
+				records = append(records, id)
+			}
+			if list[i].Mtime > list[a.fresh].Mtime {
+				a.fresh = i
+			}
+			a.last = i
+			// Один разговор служит отрезком одной записи: повторное назначение
+			// журналу запрещено, и расчёт на это. Служит всё же первый встречный,
+			// а не последний: порядок строк журнала здесь решает спор записей,
+			// которого по инварианту не бывает.
+			if _, holds := carrier[i]; !holds {
+				carrier[i], carrierKey[i] = id, seg.Chat
+			}
+		}
+	}
+	out := make([]chatEntry, 0, len(list)+len(records))
+	for i := range list {
+		id, holds := carrier[i]
+		if !holds {
+			out = append(out, list[i])
+			continue
+		}
+		// Пин панели держит носителя в ответе: старый адрес сессии открывает
+		// прежнюю переписку, а адрес записи находит заготовку и ленту носителя.
+		if !keep[list[i].ID] && !keep[carrierKey[i]] {
+			continue
+		}
+		e := list[i]
+		e.Carrier = id
+		out = append(out, e)
+	}
+	for _, id := range records {
+		a := agg[id]
+		bind := binds[id][len(binds[id])-1]
+		proj := found
+		if bind.Project != "" && bind.Project != found.Name {
+			if !all {
+				continue
+			}
+			p, ok := s.projectByName(bind.Project)
+			if !ok {
+				continue
+			}
+			proj = p
+		}
+		e := chatEntry{ID: id, Tasks: []string{id}, Main: true}
+		if all {
+			e.Project = bind.Project
+		}
+		title, kind, stage, goal := s.mainChatMeta(proj, id)
+		e.Kind, e.Stage, e.GoalOf = kind, stage, goal
+		switch {
+		case title != "" && title != id:
+			e.CustomTitle = id + ": " + title
+		default:
+			e.CustomTitle = id
+		}
+		from := a.fresh
+		if a.last >= 0 {
+			from = a.last
+		}
+		e.State, e.Mtime = list[from].State, list[a.fresh].Mtime
+		out = append(out, e)
+	}
+	return out
+}
+
+// sortedRecordIDs обходит записи журнала порядком ID: карта в Go ходит
+// случайно, а строка записи в списке обязана приезжать тем же составом на
+// каждом заходе, иначе список перерисовывался бы на пустом месте.
+func sortedRecordIDs(binds map[string][]mainchat.Bind) []string {
+	ids := make([]string, 0, len(binds))
+	for id := range binds {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// projectByName находит проект по имени из перечня корней: журнал назначений
+// называет проект словами своих строк, а общему списку нужен путь, чтобы
+// прочитать доску и накопитель записи.
+func (s *server) projectByName(name string) (*Project, bool) {
+	projects, _ := s.projects()
+	for i := range projects {
+		if projects[i].Name == name {
+			return &projects[i], true
+		}
+	}
+	return nil, false
+}
+
+// mainChatMeta собирает строку записи из её источников: заголовок и стадию
+// отдаёт доска, закрытой строке заголовок отдаёт архив, черновику накопитель.
+// Вид записи выводится тем же правилом, каким её узнаёт экран: цель по
+// заголовку от слова «Цель:», черновик по файлу накопителя, остальное задача.
+func (s *server) mainChatMeta(p *Project, id string) (title, kind, stage, goal string) {
+	goal = taskGoalOf(p.Path, id)
+	if raw, err := s.projectBoard(p.Path); err == nil {
+		if rows, err := parseBoardRows(raw); err == nil {
+			if row, ok := rows[id]; ok {
+				kind = mainKindTask
+				if isGoalTitle(row.Title) {
+					kind = mainKindGoal
+				}
+				return row.Title, kind, row.Stage, goal
+			}
+		}
+	}
+	if arch, ok := s.archiveRows(p.Path)[id]; ok {
+		kind = mainKindTask
+		if isGoalTitle(arch.Title) {
+			kind = mainKindGoal
+		}
+		return arch.Title, kind, "", ""
+	}
+	if t, ok := draftTitleOf(p.Path, id); ok {
+		return t, mainKindDraft, "", ""
+	}
+	// Записи без строки, архива и файла остаётся назвать самой: строка стоит,
+	// раз журнал держит живой носитель, и безымянной она была бы загадкой.
+	return id, mainKindTask, "", ""
+}
+
+// taskGoalOf это ID цели, в состав которой входит запись, по строке «Цель: ...»
+// шапки файла задачи. Разбор тот же, что у taskctl (goalKey), второго словаря
+// формата тут нет: пусто, когда строки нет, ссылки нет либо файла цели нет
+// на месте.
+func taskGoalOf(projPath, id string) string {
+	data, err := os.ReadFile(filepath.Join(projPath, "docs", "tasks", id+".md"))
+	if err != nil {
+		return ""
+	}
+	for _, ln := range strings.Split(string(data), "\n") {
+		s := strings.TrimSpace(ln)
+		if strings.HasPrefix(s, "## ") {
+			return ""
+		}
+		if !strings.HasPrefix(s, "Цель:") {
+			continue
+		}
+		key := goalKeyOf(s)
+		if key == "" {
+			return ""
+		}
+		if _, err := os.Stat(filepath.Join(projPath, "docs", "tasks", key+".md")); err != nil {
+			return ""
+		}
+		return key
+	}
+	return ""
+}
+
+// goalKeyOf вынимает из строки «Цель: ...» имя файла ссылки без каталога и
+// суффикса: цель в шапке пишется markdown-ссылкой на её файл.
+func goalKeyOf(line string) string {
+	s := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "Цель:"))
+	if i := strings.Index(s, "["); i >= 0 {
+		if j := strings.Index(s[i:], "]"); j > 0 {
+			s = s[i+1 : i+j]
+		}
+	}
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		s = s[i+1:]
+	}
+	return strings.TrimSuffix(s, ".md")
 }

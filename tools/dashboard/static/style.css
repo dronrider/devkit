@@ -1140,6 +1140,10 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .msg.m-stuck .bb{border-color:color-mix(in oklab,var(--check) 50%,var(--line))}
 .msg.m-stuck .mm{color:var(--check)}
 .cnote{display:flex;align-items:flex-start;gap:8px;padding:9px 14px;border-radius:9px;background:color-mix(in oklab,var(--check) 9%,var(--bg1));border:1px solid color-mix(in oklab,var(--check) 25%,transparent);font:400 12px/1.5 var(--sans);color:var(--tx2);margin:16px 0 10px}
+/* Слова плашки забирают ширину и переносятся, кнопка действия стоит у края
+   своей высоты и не растягивает строку (DK-1427). */
+.cnote>span{flex:1 1 auto;min-width:0}
+.cnote .btn{flex:0 0 auto;align-self:center}
 /* тот же щиток про погашенный ввод: цвет стопа вместо цвета работы */
 .cnote.idle{background:color-mix(in oklab,var(--block) 9%,var(--bg1));border-color:color-mix(in oklab,var(--block) 25%,transparent)}
 /* Плашка разлогина (DK-466): та же плашка разговора, но тревожного цвета и с

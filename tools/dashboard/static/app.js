@@ -9510,6 +9510,16 @@ async function chatState(project, addr, board, works) {
   } else if (addr && addr !== CHAT_BOARD) {
     st.sid = addr;
   }
+  // Адрес записи спрашивает журнал назначений до списка: носитель основного
+  // разговора называется ручкой адреса, и он едет в список флагом удержания,
+  // чтобы разговор, ушедший глубже видимого окна, не выпал из него (LLD
+  // DK-1422). Отказ ручки панель не роняет: без журнала адрес живёт прежней
+  // дорогой списка.
+  if (st.task && !st.fresh) {
+    const m = await api("/api/projects/" + encodeURIComponent(project) +
+      "/tasks/" + encodeURIComponent(st.task) + "/chat");
+    if (m.ok && m.body && m.body.id) st.main = m.body;
+  }
   const r = await api(chatsURL(project) + "?all=1" + chatKeepArg(st));
   if (!r.ok) {
     st.error = r.body.error || "список чатов не прочитался";
@@ -9592,6 +9602,25 @@ async function chatState(project, addr, board, works) {
   // подъёме встаёт даже там, где памяти подъёма нет, в соседней вкладке или
   // после перезагрузки.
   if (st.blank && st.fresh && rec.tmux) st.lift = st.lift || rec.tmux;
+  // Носитель из журнала сильнее памяти вкладки: адрес записи постоянный, и
+  // открывается разговор, назначенный записи, а не тот, что открывали последним
+  // (LLD DK-1422). Поднимающаяся сессия конвейера равна носителю: реплика туда
+  // ушла бы вторым агентом, и панель ждёт её рождения плашкой подъёма, а не
+  // объявляет адрес протухшим из-за транскрипта, которого ещё нет. Цель журнал
+  // пока не называет, и она открывается своей дорогой ниже, а строку её
+  // носителя положит свой писатель (DK-1431). Назначения нет, а строка стоит на
+  // доске и работы за ней нет: панель показывает состояние записи без
+  // разговора, а не первый чат задачи из памяти вкладки.
+  if (st.main && !st.fresh && !isGoalRow(board, st.task)) {
+    const rise = chatLiftOf(project, CHAT_NEW + ":" + st.task) ||
+      workSession(st.task, works);
+    if (st.main.chat) {
+      if (rise && st.main.chat === "tmux-" + rise) st.lift = rise;
+      else st.sid = st.main.chat;
+    } else if (!rise && boardRow(board, st.task)) {
+      st.unassigned = true;
+    }
+  }
   // Задача адреса это фильтр, а не сам чат: открытый ею список показывает чаты
   // задачи. Открывается тот, в котором человек разговаривал последним, а если
   // такого нет или он пропал из списка, то свежий. Выбор по умолчанию ходит
@@ -9609,7 +9638,7 @@ async function chatState(project, addr, board, works) {
   // свою сессию, как у задачи (DK-1009). Идущую оболочку цикла кнопка
   // открывает по sid.
   const goalAddr = Boolean(st.task && !st.sid && !st.fresh && isGoalRow(board, st.task));
-  if (!st.sid && !st.fresh) {
+  if (!st.sid && !st.fresh && !st.unassigned) {
     const list = (st.task ? st.chats.filter((c) => (c.tasks || []).includes(st.task))
       : chatVisible(st)).filter((c) => !c.project || c.project === project)
       .filter((c) => !goalAddr || c.state === "live");
@@ -9728,6 +9757,11 @@ function chatKeepArg(st) {
   if (st.sid) keep.push(st.sid);
   const last = st.task ? chatTaskLast(st.task) : "";
   if (last && !keep.includes(last)) keep.push(last);
+  // Носитель записи из журнала назначений держится в окне списка наравне с
+  // открытым разговором: основной чат записи стареет вместе с историей, а
+  // адрес записи открывает именно его (LLD DK-1422).
+  const bound = st.main && st.main.chat ? st.main.chat : "";
+  if (bound && !keep.includes(bound)) keep.push(bound);
   return keep.length ? "&keep=" + encodeURIComponent(keep.join(",")) : "";
 }
 
@@ -11331,15 +11365,17 @@ function chatIconBtn(tip, aria, open, lively) {
 
 function rowChatBtn(project, row, works) {
   const lively = taskLively(project, row.id, works || shownWorks);
-  // Адрес разговора с идущим ходом называет сама строка (run_chat): при
-  // нескольких рабочих сессиях сервер выбрал свежайшую по последней реплике.
-  // Прежде иконка открывала адрес задачи, панель показывала список её чатов, и
-  // до живого разговора человек делал ещё один клик, выбирая его глазами по
-  // времени (DK-716). Работы за строкой нет, значит адрес задачи и есть
-  // правильный вход: он откроет список или заведёт новый чат.
-  // Разговор без заявленной работы называет то же поле с другой стороны,
-  // talk_chat. Идущий ход в нём есть, и вход в него нужен тот же.
-  const addr = row.run_chat || row.talk_chat || row.id;
+  // Адрес основного чата записи это сама запись: панель разрешает ID в
+  // носителя журналом назначений, и разговор открывается тот же после
+  // закрытия строки, простоя за порогом живости и перезапуска дашборда, а
+  // повторный запуск не заводит второго (LLD DK-1422). Прежний выбор
+  // run_chat держался живых признаков работы и умирал вместе с ними.
+  // Цель адресом пока называет себя сама: носителем у неё становится виток,
+  // которого список чатов видит не всегда, и адрес записи ляжет своим
+  // писателем (DK-938, DK-1431).
+  const addr = /^Цель:/.test(row.title || "")
+    ? (row.run_chat || row.talk_chat || row.id)
+    : row.id;
   return chatIconBtn(lively ? "Чат по задаче: работа идёт" : "Чат по задаче",
     "Чат по задаче " + row.id, () => { openChat(chatAddr(project, addr)); }, lively);
 }
@@ -11478,6 +11514,16 @@ function chatWay(st) {
   if (st.lift) {
     return { kind: "lift", off: true,
       hint: "сессия поднимается, ответить можно будет через несколько секунд", why: "" };
+  }
+  // Записи без назначенного разговора: панель не заводит разговор первой
+  // репликой, а показывает состояние и отдельное действие запуска (LLD DK-1422,
+  // решение 2). История при этом не пропадает: прежние беседы задачи остаются
+  // в списке шапки панели.
+  if (st.unassigned) {
+    return { kind: "unassigned", off: true,
+      hint: "у записи нет разговора, работа начинается кнопкой",
+      why: "У записи нет основного разговора: начните работу, и он появится " +
+        "здесь сам. Прежние беседы открывает список в шапке панели." };
   }
   if (st.fresh || !st.sid) return { kind: "new", off: false, why: "" };
   // Протухший адрес: писать некуда, и резюм по несуществующей сессии обещал бы
@@ -13302,6 +13348,24 @@ function chatPanel(project, st) {
   if (way.why) {
     const note = el("div", "cnote" + (way.off ? " idle" : ""));
     note.append(el("span", "", way.why));
+    // Действие запуска стоит в самой плашке: разговор записи заводит работа, а
+    // не реплика в запертое поле (LLD DK-1422). После запуска панель
+    // собирается заново: адрес тот же, состояние уже другое, и слот со старой
+    // плашкой пережил бы нажатие, спрятав начавшуюся работу.
+    if (way.kind === "unassigned" && st.task) {
+      const go = el("button", "btn btn-sm btn-acc", "Начать работу");
+      go.addEventListener("click", async () => {
+        go.disabled = true;
+        try {
+          await startRun(project, st.task);
+        } finally {
+          go.disabled = false;
+          chatPool.delete(chatOpen);
+          await repaintChat();
+        }
+      });
+      note.append(go);
+    }
     wrap.append(note);
   }
   const busy = makeBusy(project, wrap);
@@ -14047,6 +14111,10 @@ function chatPanel(project, st) {
           : st.lift
           ? "работа поднята, сессия " + st.lift + " вот-вот назовётся в реестре: " +
             "разговор откроется сам, ждать нажатий не надо"
+          : st.unassigned
+          // Слова плашки над лентой уже назвали действие, и лента добавляет
+          // только про историю: у записи без назначения беседы не пропадают.
+          ? "у записи нет назначенного разговора, прежние беседы открывает список в шапке"
           : st.fresh
           ? "новый чат: напишите первую реплику, она и поднимет сессию"
           // Про пустоту говорит либо заголовок панели, либо лента, но не оба

@@ -452,8 +452,11 @@ sys.exit(code)
 	}
 	// Клиента головы собирает секция [head] профиля подписки: у первой это её
 	// клиент, у второй он же за обвязкой agentctl exec, как у второй подписки
-	// кита.
-	tail := "model = [\"--model\", \"{model}\"]\nsession = [\"--session-id\", \"{session}\"]\n"
+	// кита. Строка resume объявляет умение продолжения: подъём чтения
+	// выбирает по ней резюм или свежую сессию (DK-1422), и без неё стенд
+	// ждал бы от подписки свежей сессии.
+	tail := "model = [\"--model\", \"{model}\"]\nsession = [\"--session-id\", \"{session}\"]\n" +
+		"resume = [\"--resume\", \"{session}\"]\n"
 	profiles := map[string]string{
 		smokeHarnessOne: fmt.Sprintf("[head]\nclient = [%q, \"--permission-mode\", \"auto\"]\n", smokeClientOne) + tail,
 		smokeHarnessTwo: fmt.Sprintf("[head]\nclient = [\"agentctl\", \"exec\", \"--harness\", %q, \"--\", %q, "+

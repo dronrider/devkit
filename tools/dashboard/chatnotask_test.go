@@ -57,8 +57,10 @@ func TestChatSayResumeWithoutTask(t *testing.T) {
 		t.Fatalf("дорога реплики не резюм: %s", got)
 	}
 	said := readFile(t, tmuxLog)
-	if !strings.Contains(said, "new-session -d -s chat-1 ") {
-		t.Errorf("продолжение поднято не своей сессией: %s", said)
+	// Подъём занимает имя мёртвого окна (DK-1422, решение 5): разговор без
+	// задачи продолжается в том же имени, и снаружи адрес не меняется.
+	if !strings.Contains(said, "new-session -d -s chat-7 ") {
+		t.Errorf("продолжение поднято не своим окном: %s", said)
 	}
 	if !strings.Contains(said, "--resume '"+sid+"'") {
 		t.Errorf("клиент поднят без продолжения того же разговора: %s", said)
@@ -76,7 +78,7 @@ func TestChatSayResumeWithoutTask(t *testing.T) {
 	}
 	binds := readFile(t, filepath.Join(e.home, ".devkit", "sessions.log"))
 	if !strings.Contains(binds, "сессия "+sid+" задача - ") ||
-		!strings.Contains(binds, "повод резюм чата tmux chat-1") {
+		!strings.Contains(binds, "повод резюм чата tmux chat-7") {
 		t.Errorf("подъём не записан реестром на тот же адрес: %s", binds)
 	}
 }

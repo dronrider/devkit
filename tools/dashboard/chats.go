@@ -3394,7 +3394,15 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// без этого человек пишет три реплики, снимает клин и получает ответ только
 	// на последнюю (инцидент с чатом DK-460).
 	text = withLost(s.lostSaid(sid, info.mod), text)
-	sess := chatNewName(task, alive)
+	// Способ продолжения тот же, что у «Продолжить работу» (LLD DK-1422,
+	// решение 5): харнес без продолжения поднимает свежую сессию того же
+	// разговора, и реплика едет в неё вводной с подкладкой состояния записи.
+	way, resumeSid := "resume", sid
+	if !s.resumeWay(model, harness) {
+		way, resumeSid = "fresh", ""
+		text = s.chatStateLine(task) + text
+	}
+	sess := liftWindow(task, last.Tmux, alive)
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
@@ -3403,7 +3411,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(task, sess, sid), model, sid, text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(task, sess, sid), model, resumeSid, text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
 		msg := fmt.Sprintf("tmux не поднял продолжение чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -3412,21 +3420,29 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// Имя tmux-сессии ложится в реестр на старый ID сразу: хук старта запишет
 	// свою строку, когда клиент родится, а до того мера живости диалога уже
 	// обязана работать, иначе вторая реплика подряд подняла бы второй резюм.
+	reason := "резюм чата"
+	if way != "resume" {
+		reason = "свежая сессия чата"
+	}
 	sessions.Append(sessions.Path(s.cfg.Home),
 		sessions.Line(s.now(), sid, sessions.Bind{Task: task, Source: "заказ",
-			Project: found.Name, Tree: dir, Tmux: sess}, "резюм чата"))
+			Project: found.Name, Tree: dir, Tmux: sess}, reason))
 	s.chatRaised(sess, sid, task, found.Name)
 	// Резюм увёз реплику вводной: дожимать её после этого нечем, иначе тот же
 	// текст приедет и вводной, и повтором.
-	s.chatSayDone(sid, claim, "resume")
-	s.saidSay(saidSessionKey(sid), text, "resume")
-	s.logf("чат %s продолжен резюмом в tmux-сессии %s (модель %s)", sid, sess, model)
-	out := map[string]any{"way": "resume", "tmux": sess, "model": model,
+	s.chatSayDone(sid, claim, way)
+	s.saidSay(saidSessionKey(sid), text, way)
+	liftWord := "резюмом"
+	if way != "resume" {
+		liftWord = "свежей сессией с подкладкой состояния"
+	}
+	s.logf("чат %s продолжен %s в tmux-сессии %s (модель %s)", sid, liftWord, sess, model)
+	out := map[string]any{"way": way, "tmux": sess, "model": model,
 		"message": fmt.Sprintf(
-			"процесса у чата не было: поднят claude --resume в tmux-сессии %s, история продолжена", sess)}
+			"процесса у чата не было: поднят %s в tmux-сессии %s, история продолжена", liftWord, sess)}
 	if sendGone {
 		out["message"] = fmt.Sprintf(
-			"сессия вышла посреди подачи реплики: поднят claude --resume в tmux-сессии %s, реплика уехала вводной", sess)
+			"сессия вышла посреди подачи реплики: поднят %s в tmux-сессии %s, реплика уехала вводной", liftWord, sess)
 	}
 	if bangLine(text) {
 		out["note"] = "живого терминала у сессии не было: строка с ! уехала вводной резюма текстом, терминал её не исполнит"
@@ -4376,20 +4392,44 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	sess := chatNewName(id, tmuxAliveFn())
-	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid})
+	// Выбор способа подъёма (LLD DK-1422, решение 5): транскрипт у головы есть,
+	// и если харнес носителя умеет продолжение, подъём идёт резюмом в то же имя
+	// окна, From-цепочка продолжается. На харнесе без продолжения поднимается
+	// свежая сессия того же разговора, и в её первую реплику подкладывается
+	// доступное состояние записи со ссылками на прежние отрезки.
+	resume := s.resumeWay(model, harness)
+	sess := liftWindow(id, e.Tmux, tmuxAliveFn())
+	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
+		s.logf("настройки чата %s не записались: %v", sess, err)
+	}
+	resumeSid, liftName, order := "", "", prompt(sess)
+	way, reason := "resume", "продолжение работы"
+	if resume {
+		resumeSid = sid
+	} else {
+		way, reason = "fresh", "свежая сессия продолжения"
+		liftName = name
+		order = s.chatStateLine(id) + order
+	}
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, sid), model, sid, prompt(sess), "", s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
+		chatCmd(s.launchEnv(id, sess, sid), model, resumeSid, order, liftName, s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял продолжение работы %s: %s", id, procErr(err))})
 		return
 	}
 	sessions.Append(sessions.Path(s.cfg.Home),
 		sessions.Line(s.now(), sid, sessions.Bind{Task: id, Source: "заказ",
-			Project: found.Name, Tree: dir, Tmux: sess}, "продолжение работы"))
+			Project: found.Name, Tree: dir, Tmux: sess}, reason))
 	s.chatRaised(sess, sid, id, found.Name)
-	s.logf("работа %s продолжена резюмом чата %s в tmux-сессии %s", id, sid, sess)
-	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "resume",
+	// Назначение ведётся за поднятым заходом: носителем записи становится окно
+	// нового захода, и адрес записи открывает его (LLD DK-1422, решение 3).
+	s.mainChatFollow(id, "tmux-"+sess, found.Name)
+	how := "резюмом"
+	if !resume {
+		how = "свежей сессией"
+	}
+	s.logf("работа %s продолжена %s чата %s в tmux-сессии %s", id, how, sid, sess)
+	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": way,
 		"session": sid, "tmux": sess})
 }
 

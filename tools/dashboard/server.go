@@ -323,6 +323,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/arm", s.auth(s.handleTaskArm))
 	mux.HandleFunc("POST /api/projects/{p}/chain", s.auth(s.handleChain))
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/continue", s.auth(s.handleTaskContinue))
+	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/handover", s.auth(s.handleTaskHandover))
 	mux.HandleFunc("POST /api/projects/{p}/runs", s.auth(s.handleRunStart))
 	mux.HandleFunc("POST /api/projects/{p}/chats", s.auth(s.handleChatStart))
 	mux.HandleFunc("POST /api/projects/{p}/chats/blank", s.auth(s.handleChatBlank))

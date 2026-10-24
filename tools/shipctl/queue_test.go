@@ -671,3 +671,60 @@ func TestQueueJSONDependencyDoesNotHideEarlierFailure(t *testing.T) {
 		t.Fatalf("ожидание предпосылки скрыло независимый отказ: %+v", items)
 	}
 }
+
+func TestQueueDraftBranchesDoNotAttemptMerge(t *testing.T) {
+	for _, kind := range []string{"empty", "board"} {
+		t.Run(kind, func(t *testing.T) {
+			root, _ := setup(t, rowInProg, "")
+			devkitDir(t, root)
+			gitT(t, root, "branch", "xr-001-start", "main")
+			if kind == "board" {
+				wt := filepath.Join(t.TempDir(), "draft")
+				gitT(t, root, "worktree", "add", "-q", wt, "xr-001-start")
+				t.Cleanup(func() { git(root, "worktree", "remove", "--force", wt) })
+				write(t, wt, "docs/tasks/XR-001.md", "# XR-001: постановка\n")
+				gitT(t, wt, "add", ".")
+				gitT(t, wt, "commit", "-qm", "docs(tasks): XR-001 постановка")
+			}
+			items := queueJSONItems(t, root, QueueParams{Drain: true, Test: "false"})
+			if len(items) != 0 {
+				t.Fatalf("постановка не вызывает слияние: %+v", items)
+			}
+			if len(loadQueue(root).Tasks) != 0 {
+				t.Fatal("постановка потратила попытку")
+			}
+		})
+	}
+}
+
+func TestQueueReadyCodeStillRequiresReview(t *testing.T) {
+	root := queueSetup(t)
+	// Готовый код без ревью остаётся кандидатом, ворота дают реальный отказ.
+	wt := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-xr-001")
+	write(t, wt, "docs/tasks/XR-001.md", "# XR-001: нет ревью\n")
+	gitT(t, wt, "add", ".")
+	gitT(t, wt, "commit", "-qm", "docs(tasks): XR-001 убрать вердикт")
+	items := queueJSONItems(t, root, QueueParams{Drain: true, Test: "true"})
+	if len(items) == 0 || !items[0].Failed || items[0].Waiting {
+		t.Fatalf("готовая ветка без ревью даёт отказ: %+v", items)
+	}
+}
+
+func TestQueueReadmeChangesAreWork(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	devkitDir(t, root)
+	wt := filepath.Join(t.TempDir(), "docs-work")
+	gitT(t, root, "worktree", "add", "-q", "-b", "xr-001-docs", wt, "main")
+	t.Cleanup(func() { git(root, "worktree", "remove", "--force", wt) })
+	write(t, wt, "README.md", "# Документация\n")
+	gitT(t, wt, "add", ".")
+	gitT(t, wt, "commit", "-qm", "docs: XR-001 инструкция")
+	b, err := loadBoard(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := queueRows(root, b)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("README это работа: %+v, %v", rows, err)
+	}
+}

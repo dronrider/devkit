@@ -162,22 +162,41 @@ type queueItem struct {
 //
 // Ветка ищется по имени, а не по выложенному дереву: копию окна переключают
 // на другую задачу, и дозревающая ветка живёт одним именем. Слияние такую
-// строку не возьмёт и скажет про это словами, а очередь обязана её показать,
-// иначе строка пропадала бы из виду вместе с причиной.
+// строку берёт после первого коммита за пределами файлов доски. Одна
+// постановка остаётся разработкой, без попытки слияния и эскалации.
 func queueRows(root string, b *board) ([]queueItem, error) {
 	names, err := git(root, "branch", "--list", "--format=%(refname:short)")
 	if err != nil {
 		return nil, err
 	}
 	branches := strings.Split(names, "\n")
+	main, err := mainBranch(root)
+	if err != nil {
+		return nil, err
+	}
 	st := loadQueue(root)
 	var items []queueItem
 	for _, r := range b.sects["in-progress"] {
 		has := false
 		for _, n := range branches {
 			if branchOfTask(strings.TrimSpace(n), r.ID) {
-				has = true
-				break
+				commits, err := git(root, "log", main+".."+strings.TrimSpace(n), "--format=%H")
+				if err != nil {
+					return nil, err
+				}
+				for _, sha := range strings.Fields(commits) {
+					files, err := git(root, "show", "--name-only", "--pretty=", sha)
+					if err != nil {
+						return nil, err
+					}
+					if !boardOnly(root, files) {
+						has = true
+						break
+					}
+				}
+				if has {
+					break
+				}
 			}
 		}
 		if !has {

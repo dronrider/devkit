@@ -96,6 +96,41 @@ func TestHandoverRefuses(t *testing.T) {
 	}
 }
 
+// Отказ входа разбирается до правок состояния: битый ярус и пропавший клиент
+// отказывают передачу до строки журнала и до заказа стопа, и разговор не
+// остаётся без носителя с репликами в неразбираемом входе.
+func TestHandoverRefusalKeepsCarrier(t *testing.T) {
+	e, c, tmuxLog := runsEnv(t, "")
+	writeMainChat(t, e.home, mainchat.Line(time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC),
+		mainchat.Bind{Record: "XR-004", Chat: "tmux-task-XR-004", Project: "demo", Source: mainchat.ByWork}))
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks/XR-004/handover",
+		`{"tier": "ярус-которого-нет"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("битый ярус ответила %d, жду 400: %s", resp.StatusCode, body(t, resp))
+	}
+	if err := os.Remove(filepath.Join(e.bin, "клиент-1")); err != nil {
+		t.Fatal(err)
+	}
+	// PATH сужается на каталог стенда: пропажа проверяется в нём, а не по
+	// машине, где болванка клиента могла остаться с другой сессии.
+	t.Setenv("PATH", e.bin)
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks/XR-004/handover", `{}`)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("пропавший клиент ответил %d, жду 502: %s", resp.StatusCode, body(t, resp))
+	}
+	data := readFile(t, mainchat.Path(e.home))
+	if n := strings.Count(data, " назначение XR-004 "); n != 1 || strings.Contains(data, mainchat.ByMove) {
+		t.Fatalf("отказ оставил след в журнале назначений:\n%s", data)
+	}
+	if said := readFile(t, tmuxLog); strings.Contains(said, "kill-session") {
+		t.Fatalf("отказ снял окно носителя:\n%s", said)
+	}
+	code, got := taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-004/chat")
+	if code != http.StatusOK || got.Source != mainchat.ByWork {
+		t.Fatalf("назначение сместилось отказом: %d %+v", code, got)
+	}
+}
+
 // Адресность по голове (решение 4): живой голове текущего носителя реплика
 // идёт адресно, снятая строкой передачи голова адресатом не считается, хотя
 // её окно ещё живо и ход доходит до конца, а ввод назначенной записи не

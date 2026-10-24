@@ -68,9 +68,35 @@ func (s *server) handleTaskHandover(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	// Строка журнала стоит первой: назначение смещается одной строкой до
-	// всякого стопа, и реплика, вошедшая в передачу, ложится безадресно во
-	// вход записи по решению 4. Уходящей голове она уже не достаётся.
+	// Отказы входа разбираются до всякой правки состояния: строка передачи
+	// смещает адрес разговора, и отказ после неё оставил бы запись без
+	// носителя, а реплики уходили бы во вход, который некому разбирать.
+	harness, tier, tierWhy, tierBad := s.runAssign(found.Path, id, body.Tier, body.Harness, false)
+	if tierBad != "" {
+		s.logf("передача %s в %s отклонена: %s", id, found.Name, tierBad)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tierBad})
+		return
+	}
+	// Вердикт подписку не назвал, и подписка по умолчанию становится своей:
+	// тот же откат, что у запуска задачи, иначе проверка клиента смотрела бы
+	// голое умолчание вместо клиента подписки.
+	own := harness
+	if own == nil {
+		own = s.harnesses().byDefault()
+	}
+	client := defaultClient
+	if own != nil {
+		client = own.Bin
+	}
+	if m := clientMissing(client); m != "" {
+		s.logf("передача %s в %s не удалась: %s", id, found.Name, m)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
+		return
+	}
+	// Строка журнала стоит первой среди правок состояния: назначение
+	// смещается одной строкой до всякого стопа, и реплика, вошедшая в
+	// передачу, ложится безадресно во вход записи по решению 4. Уходящей
+	// голове она уже не достаётся.
 	s.mainChatMove(id, bind.Chat, bind.Chat, found.Name)
 	// Стоп уходящей голове существующим «Стопом»: сторож снимается с окна до
 	// его смерти, сессия убивается точным именем, лента получает строку о
@@ -98,22 +124,6 @@ func (s *server) handleTaskHandover(w http.ResponseWriter, r *http.Request) {
 		"работа передана новому диспетчеру: %s, новый поднят в tmux-сессии task-%s", what, id))
 	// Подъём нового носителя после освобождения имени окна: конвейер поднимается
 	// свежим окном и читает состояние с диска, это его способ продолжения.
-	harness, tier, tierWhy, tierBad := s.runAssign(found.Path, id, body.Tier, body.Harness, false)
-	if tierBad != "" {
-		s.logf("передача %s в %s отклонена: %s", id, found.Name, tierBad)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tierBad})
-		return
-	}
-	own := harness
-	client := defaultClient
-	if own != nil {
-		client = own.Bin
-	}
-	if m := clientMissing(client); m != "" {
-		s.logf("передача %s в %s не удалась: %s", id, found.Name, m)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
-		return
-	}
 	model := ""
 	if own != nil {
 		model = own.tierModel(tier)

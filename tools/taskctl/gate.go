@@ -545,15 +545,27 @@ func closeCutGate(root string, row *Row, b *Board, arch *Archive) error {
 
 // lldDocOf ищет документ дизайна LLD-строки: сначала по ссылкам файла задачи
 // (файл ссылается на дизайн, а не пересказывает его, п. 3 «Трекинг задач»),
-// затем по ссылке самой строки, как она живёт у LLD в колонке доски. Пустая
-// строка значит документа нет и воротам читать нечего.
+// затем по ссылке самой строки, как она живёт у LLD в колонке доски. Своим
+// считается документ docs/lld/<ID>-... , чьё имя начинается с ID строки:
+// чужой разбор из первых абзацев (корп-контур у строк DK-074) документом
+// строки не является. Пустая строка значит документа нет и воротам читать
+// нечего.
 func lldDocOf(root string, row *Row) string {
 	rel := fmt.Sprintf("tasks/%s.md", row.ID)
-	if refs := lldRefs(root, rel); len(refs) > 0 {
-		return refs[0]
+	for _, ref := range lldRefs(root, rel) {
+		if ownDesignName(ref, row.ID) {
+			return ref
+		}
 	}
-	if p := linkedDoc(root, row.Link, rel); strings.HasPrefix(p, "docs/lld/") {
+	if p := linkedDoc(root, row.Link, rel); strings.HasPrefix(p, "docs/lld/") && ownDesignName(p, row.ID) {
 		return p
 	}
 	return ""
+}
+
+// ownDesignName отличает свой документ дизайна docs/lld/<ID>-<slug>.md от
+// чужого разбора с другим ID в имени: без слага документ носит имя <ID>.md.
+func ownDesignName(doc, id string) bool {
+	base := filepath.Base(doc)
+	return base == id+".md" || strings.HasPrefix(base, id+"-")
 }

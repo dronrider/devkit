@@ -11,6 +11,46 @@ import (
 	"time"
 )
 
+func TestSpendPeekPreservesGoalCarrier(t *testing.T) {
+	home := t.TempDir()
+	root := writeBoard(t)
+	goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+	watchRegisterRoot := filepath.Join(home, ".devkit", "goals")
+	if err := os.MkdirAll(watchRegisterRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(watchRegisterRoot, "T-100-"+watchSlug(root)+".watch")
+	want := "goal = T-100\nsession = original\nmarker = over\nseen = 2026-08-07T12:00:00\n"
+	if err := os.WriteFile(entry, []byte(want), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "run", ".", "-C", root, "spend", "--goal", "docs/tasks/T-100.md", "--peek")
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	if out, err := cmd.CombinedOutput(); err != nil || !strings.HasPrefix(string(out), "gate: ok\n") {
+		t.Fatalf("spend --peek: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(entry)
+	if err != nil || string(got) != want {
+		t.Fatalf("опрос изменил носителя: %v\n%s", err, got)
+	}
+	if err := os.Remove(entry); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("go", "run", ".", "-C", root, "spend", "--goal", "docs/tasks/T-100.md", "--peek")
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("повторный опрос: %v\n%s", err, out)
+	}
+	if entries := watchEntries(t, home); len(entries) != 0 {
+		t.Fatalf("опрос создал запись носителя: %v", entries)
+	}
+	cmd = exec.Command("go", "run", ".", "-C", root, "spend", "--goal", "docs/tasks/T-100.md", "--peek", "--record")
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "вместе не работают") {
+		t.Fatalf("опрос с записью не отклонён: %v\n%s", err, out)
+	}
+}
+
 func TestGlobalDirParse(t *testing.T) {
 	cases := []struct {
 		args []string

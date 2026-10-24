@@ -32,6 +32,17 @@ func TestFitTightBucket(t *testing.T) {
 	}
 }
 
+func TestFitExplicitUnlimited(t *testing.T) {
+	isolateQuota(t)
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100", goalText("бюджет: без ограничений\nярус: pro\n", ""))
+	out, err := cmdFit(root, goal, testNow)
+	if err != nil || !strings.HasPrefix(out, "fit: ok\n") ||
+		!strings.Contains(out, "числовой потолок для сверки не задан") {
+		t.Fatalf("явно снятый бюджет не принят: %q (%v)", out, err)
+	}
+}
+
 // TestBucketLeft: остаток считается целыми пунктами и вниз не уходит.
 // Панель процентов больше сотни не показывает, но доля в снимке приходит
 // числом, и перерасход должен читаться нулевым остатком, а не отрицательным:

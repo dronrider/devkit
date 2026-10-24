@@ -65,6 +65,9 @@ func cmdFit(root, goalPath string, now time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if budget.Unlimited {
+		return "fit: ok\nбюджет цели без ограничений, числовой потолок для сверки не задан", nil
+	}
 	if len(budget.Limits) == 0 {
 		return "", fmt.Errorf("в разделе «Бюджет» файла %s нет ни одной строки «бюджет: <бакет> <= <проценты>», сверять с остатком нечего", path)
 	}

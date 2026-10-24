@@ -225,6 +225,38 @@ func TestCmdSpendGate(t *testing.T) {
 	}
 }
 
+func TestCmdSpendExplicitUnlimited(t *testing.T) {
+	quota := isolateQuota(t)
+	root := writeBoard(t)
+	goal := goalFile(t, root, "T-100", goalText("бюджет: без ограничений\nярус: pro\n",
+		"- снимок "+at(testNow.Add(-4*time.Hour))+": week_all 10%\n"+
+			"- снимок "+at(testNow.Add(-3*time.Hour))+": week_all 99%\n"+
+			"- снимок "+at(testNow.Add(-2*time.Hour))+": week_all 5%\n"+
+			"- снимок "+at(testNow.Add(-time.Hour))+": week_all 99%\n"))
+	writeSnapshot(t, quota, testNow.Add(-freshAge), bucketAt("week_all", 10, halfWindow))
+	out, err := cmdSpend(root, goal, true, testNow)
+	if err != nil || !strings.HasPrefix(out, "gate: ok\n") ||
+		!strings.Contains(out, "бюджет цели без ограничений") ||
+		!strings.Contains(out, "потолок яруса pro") {
+		t.Fatalf("явно снятый бюджет остановил цель: %s (%v)", out, err)
+	}
+	data, err := os.ReadFile(goal)
+	if err != nil || !strings.Contains(string(data), "- снимок "+at(testNow.Add(-freshAge))) {
+		t.Fatalf("учёт квоты без бюджета потерян: %s (%v)", data, err)
+	}
+}
+
+func TestUnlimitedBudgetRejectsNumericLimits(t *testing.T) {
+	for _, text := range []string{
+		"бюджет: без ограничений\nбюджет: week_all <= 25",
+		"бюджет: week_all <= 25\nбюджет: без ограничений",
+	} {
+		if _, err := parseGoalBudget(strings.Split(text, "\n"), nil); err == nil {
+			t.Fatalf("смешанный бюджет принят: %s", text)
+		}
+	}
+}
+
 // TestCmdSpendResetWindow: сброс недельного окна между витками не обнуляет
 // счётчик цели. Журнал хранит 60%, живой снимок 5%: это новое окно, и расходом
 // идёт оно целиком поверх набранного раньше.

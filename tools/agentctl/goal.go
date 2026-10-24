@@ -42,8 +42,9 @@ type goalLimit struct {
 // goalBudget это разобранный раздел «Бюджет». Потолка яруса может не быть,
 // тогда вердикт pick работает как обычно.
 type goalBudget struct {
-	Limits []goalLimit
-	Tier   string
+	Limits    []goalLimit
+	Tier      string
+	Unlimited bool
 }
 
 // goalSnap это строка снимка из «Журнала»: момент снятия и проценты бакетов.
@@ -97,6 +98,10 @@ func parseGoalBudget(lines []string, q *quotaSpec) (goalBudget, error) {
 		t := goalLine(ln)
 		switch {
 		case strings.HasPrefix(t, goalLimitPrefix):
+			if strings.TrimSpace(strings.TrimPrefix(t, goalLimitPrefix)) == "без ограничений" {
+				b.Unlimited = true
+				continue
+			}
 			l, err := parseGoalLimit(strings.TrimSpace(strings.TrimPrefix(t, goalLimitPrefix)))
 			if err != nil {
 				return b, fmt.Errorf("строка бюджета %q: %v", t, err)
@@ -115,6 +120,9 @@ func parseGoalBudget(lines []string, q *quotaSpec) (goalBudget, error) {
 			}
 			b.Tier = tier
 		}
+	}
+	if b.Unlimited && len(b.Limits) > 0 {
+		return b, fmt.Errorf("бюджет без ограничений нельзя совмещать с числовыми лимитами")
 	}
 	return b, nil
 }
@@ -637,7 +645,7 @@ func cmdSpend(root, goalPath string, record bool, now time.Time) (string, error)
 	if err != nil {
 		return "", err
 	}
-	if len(budget.Limits) == 0 {
+	if len(budget.Limits) == 0 && !budget.Unlimited {
 		return "", fmt.Errorf("в разделе «Бюджет» файла %s нет ни одной строки «бюджет: <бакет> <= <проценты>», гейту нечего считать", path)
 	}
 	chain, warns := parseGoalJournal(goalSection(text, goalJournalSection))
@@ -669,6 +677,9 @@ func cmdSpend(root, goalPath string, record bool, now time.Time) (string, error)
 
 	gate := gateOK
 	var parts, over []string
+	if budget.Unlimited {
+		parts = append(parts, "бюджет цели без ограничений")
+	}
 	for _, l := range budget.Limits {
 		spent := spendOf(chain, l.Bucket)
 		part := fmt.Sprintf("%s: потрачено %d из %d", l.Bucket, spent, l.Limit)

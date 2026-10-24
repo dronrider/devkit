@@ -99,3 +99,31 @@ func TestCmdCheckRefusesOnExhaustedLadder(t *testing.T) {
 		}
 	}
 }
+
+func TestCmdCheckChangesEnabledHarnessForIndependence(t *testing.T) {
+	setupLadder(t, `default = "claude-code"
+enabled = ["glm-code", "claude-code"]
+[glm-code]
+mini = "glm-5.3"
+base = "glm-5.3"
+pro = "glm-5.3"
+max = "glm-5.3"
+[claude-code]
+mini = "z-ai/glm-5.3"
+base = "z-ai/glm-5.3"
+pro = "sonnet"
+max = "opus"
+`)
+	t.Setenv("DEVKIT_HARNESS", "glm-code")
+	root := writeBoard(t)
+	devStage(t, root, "T-007", "glm-5.3")
+	out, err := cmdCheck(root, "T-007")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"model: sonnet", "tier: pro", "harness: claude-code", "подписка claude-code"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("нет %s: %s", want, out)
+		}
+	}
+}

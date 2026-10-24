@@ -10,7 +10,8 @@ import (
 // cmdCheck называет ярус и модель того, кто прогонит сценарий проверки
 // (DK-1116). Ярус берётся вердиктом роли ревью, а независимость держит
 // ступень: модель, совпавшую с моделью разработки, internal/checkrun.Choose
-// меняет на первую ступень выше с другой моделью. Тем же кодом считает подъём
+// меняет на первую ступень выше с другой моделью. Исчерпанную лестницу
+// заменяет другой включённой целиком. Тем же кодом считает подъём
 // после выката, и ручной спавн диспетчером теперь узнаёт модель до работы, а
 // не ловит отказ taskctl close после неё.
 func cmdCheck(root, id string) (string, error) {
@@ -19,7 +20,19 @@ func cmdCheck(root, id string) (string, error) {
 		return "", err
 	}
 	dev, known := checkrun.DevExecutor(root, id)
-	ch := checkrun.Choose(p.V.Tier, ladderOf(p.HC.Models), dev, known)
+	ladders := []checkrun.Ladder{checkerLadder(p.HC.Name, p.HC.Models)}
+	if p.HC.L != nil {
+		for _, name := range p.HC.L.Enabled {
+			if name == p.HC.Name {
+				continue
+			}
+			s := p.HC.L.Setup[name]
+			if s != nil {
+				ladders = append(ladders, checkerLadder(name, tierModels{Map: s.Map, Active: name}))
+			}
+		}
+	}
+	ch := checkrun.ChooseAvailable(p.V.Tier, ladders, dev, known)
 	if ch.Refusal != "" {
 		return "", fmt.Errorf("%s: прогонять некем, %s", id, ch.Refusal)
 	}
@@ -28,6 +41,10 @@ func cmdCheck(root, id string) (string, error) {
 		model = unmappedModel
 	}
 	var says []string
+	via := ch.Harness
+	if ch.Harness != p.HC.Name {
+		says = append(says, "подписка "+ch.Harness+": в текущей лестнице независимой модели нет")
+	}
 	if ch.Stepped {
 		says = append(says, fmt.Sprintf("ярус %s поднят ступенью до %s: модель яруса %s вела разработку",
 			ch.From, ch.Tier, ch.From))
@@ -39,8 +56,8 @@ func cmdCheck(root, id string) (string, error) {
 		says = append(says, "исполнителя разработки записи не назвали, независимость сторожат ворота закрытия")
 	}
 	says = append(says, p.V.Reason)
-	return fmt.Sprintf("model: %s\neffort: %s\ntier: %s\nvia: %s\n%s: %s",
-		model, p.V.Effort, ch.Tier, p.HC.Models.via(ch.Tier), id, strings.Join(says, "; ")), nil
+	return fmt.Sprintf("model: %s\neffort: %s\ntier: %s\nharness: %s\nvia: %s\n%s: %s",
+		model, p.V.Effort, ch.Tier, ch.Harness, via, id, strings.Join(says, "; ")), nil
 }
 
 // ladderOf это лестница подписки глазами отбора: ярусы активного контура снизу
@@ -53,6 +70,14 @@ func ladderOf(tm tierModels) []checkrun.Step {
 		if a, ok := tm.assign(tier); ok {
 			out = append(out, checkrun.Step{Tier: tier, Model: a.Model})
 		}
+	}
+	return out
+}
+
+func checkerLadder(name string, tm tierModels) checkrun.Ladder {
+	out := checkrun.Ladder{Name: name, Steps: ladderOf(tm), Via: map[string]string{}}
+	for _, step := range out.Steps {
+		out.Via[step.Tier] = tm.via(step.Tier)
 	}
 	return out
 }

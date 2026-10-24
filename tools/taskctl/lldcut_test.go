@@ -139,6 +139,41 @@ func TestCloseLLDCutExceptionPasses(t *testing.T) {
 	}
 }
 
+// TestCloseLLDIgnoresForeignDesign: регрессия ревью DK-489. Ссылка на чужой
+// разбор в первых абзацах файла задачи не делает чужой документ дизайном
+// строки: своя ссылка за чужой подхватывается своей, а без своей close
+// молчит, как у строки без документа, а не требует нарезки в чужой.
+func TestCloseLLDIgnoresForeignDesign(t *testing.T) {
+	root := lldCutEnv(t, "## Нарезка\n\n- кандидат 1 (task, M, R=38). Свой кандидат ждёт заведения.\n")
+	if err := os.WriteFile(filepath.Join(root, "docs", "lld", "XR-074-design.md"),
+		[]byte("## Нарезка\n\n- кандидат 1 (task, M, R=38). Чужой кандидат.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(root, "docs", "tasks", "XR-003.md")
+	both := "# XR-003\n\nКорп-контур: [docs/lld/XR-074-design.md](../lld/XR-074-design.md).\n" +
+		"Документ решений: [docs/lld/XR-003-design.md](../lld/XR-003-design.md).\n" +
+		fixtureScenario + fixtureVerification
+	if err := os.WriteFile(p, []byte(both), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := cmdClose(root, CloseParams{ID: "XR-003", Date: "2026-10-23"})
+	if err == nil {
+		t.Fatal("своя ссылка за чужой не подхватилась: нарезка своего документа не прочитана")
+	}
+	if !strings.Contains(err.Error(), "1 из 1") {
+		t.Fatalf("отказ не называет своего кандидата: %v", err)
+	}
+
+	foreign := "# XR-003\n\nКорп-контур: [docs/lld/XR-074-design.md](../lld/XR-074-design.md).\n" +
+		fixtureScenario + fixtureVerification
+	if err := os.WriteFile(p, []byte(foreign), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdClose(root, CloseParams{ID: "XR-003", Date: "2026-10-23"}); err != nil {
+		t.Fatalf("чужая ссылка держит закрытие: %v", err)
+	}
+}
+
 // TestCloseLLDWithoutDesignPasses: строка без документа дизайна воротами
 // нарезки не держится, как не держалась и раньше: отсутствие самого дизайна
 // держат ворота заведения, а не закрытия.

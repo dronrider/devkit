@@ -230,7 +230,7 @@ func planDoneTrace(plan *planFile, idx int, start, home string, a planAddr) (str
 // и без git проверяющие читаются так же, как у ворот вне git, а не молчат.
 func planTraceCtx(start, home string, a planAddr) trace.Ctx {
 	c := trace.Ctx{Again: "этап"}
-	root, err := findRoot(start)
+	root, err := planTraceRoot(start)
 	if err != nil {
 		return c
 	}
@@ -260,6 +260,22 @@ func planTraceCtx(start, home string, a planAddr) trace.Ctx {
 		}
 	}
 	return c
+}
+
+// planTraceRoot называет дерево, по которому plan done спрашивает следы.
+// Первым делом это доска, как у остальных команд, а без доски вверх берётся
+// корень git: беззадачная сессия живёт и в репозитории без доски (решение 6),
+// и следы там читаются по дереву, а не по каталогу, откуда позвали команду.
+func planTraceRoot(start string) (string, error) {
+	root, err := findRoot(start)
+	if err == nil {
+		return root, nil
+	}
+	out, gerr := exec.Command("git", "-C", start, "rev-parse", "--show-toplevel").Output()
+	if gerr != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // planDocsOnly говорит, трогает ли дифф ветки одни тексты docs/: бескодовая

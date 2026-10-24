@@ -325,6 +325,60 @@ func TestPlanDoneTasklessTree(t *testing.T) {
 	}
 }
 
+// TestPlanDoneTasklessNoBoard: беззадачная сессия в репозитории без доски
+// читает следы по этому же дереву (решение 6): пустой корень уводил бы
+// заметку ревью в каталог запуска команды и пропускал ворота молча.
+func TestPlanDoneTasklessNoBoard(t *testing.T) {
+	root, kit := planKit(t)
+	planWriteFile(t, filepath.Join(kit, "task.toml"), "name = \"task\"\ntitle = \"Задача\"\n"+
+		"[tests]\ntitle = \"тесты\"\nby = \"сам\"\ntrace = \"tests\"\n"+
+		"[review]\ntitle = \"ревью\"\nby = \"сам\"\ntrace = \"review\"\n"+
+		"[ship]\ntitle = \"слияние\"\nby = \"сам\"\ntrace = \"merged\"\n")
+	// Дерево без доски: main с одним коммитом, сверху ветка feature-x с кодом.
+	run := func(args ...string) {
+		t.Helper()
+		args = append([]string{"-C", root}, args...)
+		cmd := exec.Command("git", args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	run("config", "user.name", "t")
+	run("config", "user.email", "t@t")
+	planWriteFile(t, filepath.Join(root, "README.md"), "# проба\n")
+	run("add", "README.md")
+	run("commit", "-q", "-m", "корень")
+	run("checkout", "-q", "-b", "feature-x")
+	planWriteFile(t, filepath.Join(root, "code.go"), "package x\n")
+	run("add", "code.go")
+	run("commit", "-q", "-m", "правка без теста")
+	os.Remove(filepath.Join(root, "docs", "TASKS.md"))
+	home := filepath.Dir(root)
+	env := planEnv(map[string]string{"CLAUDE_CODE_SESSION_ID": "s11"})
+	if _, err := planRun(home, "set", nil, "s11", "", false, root, "task", env); err != nil {
+		t.Fatal(err)
+	}
+	// tests держит ветку с кодом без тестовых файлов.
+	_, err := planRun(home, "done", []string{"тесты"}, "s11", "", false, root, "", env)
+	if err == nil || !strings.Contains(err.Error(), "нет тестовых файлов") {
+		t.Fatalf("tests закрылся молча: %v", err)
+	}
+	// review закрывается заметкой на HEAD этого дерева, а не любого другого.
+	if err := reviewnote.Write(root, "HEAD",
+		reviewnote.LevelLine(2, "b2c3d4e", "заметка в дереве работы")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planRun(home, "done", []string{"ревью"}, "s11", "", false, root, "", env); err != nil {
+		t.Fatalf("review с заметкой не прошёл: %v", err)
+	}
+	// merged держит неслитую ветку текущего дерева.
+	_, err = planRun(home, "done", []string{"слияние"}, "s11", "", false, root, "", env)
+	if err == nil || !strings.Contains(err.Error(), "ветка feature-x не слита") {
+		t.Fatalf("merged закрылся молча: %v", err)
+	}
+}
+
 // TestPlanSuffix: суффикс читается при любом наборе хвостов, стоящих позже.
 func TestPlanSuffix(t *testing.T) {
 	cases := map[string]string{

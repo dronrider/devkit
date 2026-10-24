@@ -3,9 +3,12 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/reviewnote"
 )
 
 // planBoard кладёт доску со строками: сборка плана читает тип строки и суффикс
@@ -257,6 +260,68 @@ func TestPlanDoneByWord(t *testing.T) {
 	}
 	if !strings.Contains(out, "след недоступен без задачи, закрыто словом") {
 		t.Fatalf("печать не назвала закрытие словом:\n%s", out)
+	}
+}
+
+// planGitRepo превращает проект planKit в git-репозиторий: коммит доски в
+// main, затем ветка dk-x с коммитом правки кода без теста. Беззадачная сессия
+// работает в таком дереве, и её следы читаются по нему.
+func planGitRepo(t *testing.T, root string) {
+	t.Helper()
+	run := func(args ...string) {
+		t.Helper()
+		args = append([]string{"-C", root}, args...)
+		cmd := exec.Command("git", args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	run("config", "user.name", "t")
+	run("config", "user.email", "t@t")
+	run("add", "docs/TASKS.md")
+	run("commit", "-q", "-m", "доска")
+	run("checkout", "-q", "-b", "dk-x")
+	planWriteFile(t, filepath.Join(root, "code.go"), "package x\n")
+	run("add", "code.go")
+	run("commit", "-q", "-m", "правка без теста")
+}
+
+// TestPlanDoneTasklessTree: у сессии без задачи следы читаются по дереву
+// (решение 6): tests отказывает ветке без тестовых файлов, review проверяется
+// git-заметкой на HEAD, а не разделом несуществующего файла задачи.
+func TestPlanDoneTasklessTree(t *testing.T) {
+	root, kit := planKit(t)
+	planWriteFile(t, filepath.Join(kit, "task.toml"), "name = \"task\"\ntitle = \"Задача\"\n"+
+		"[tests]\ntitle = \"тесты\"\nby = \"сам\"\ntrace = \"tests\"\n"+
+		"[review]\ntitle = \"ревью\"\nby = \"сам\"\ntrace = \"review\"\n")
+	planGitRepo(t, root)
+	home := filepath.Dir(root)
+	env := planEnv(map[string]string{"CLAUDE_CODE_SESSION_ID": "s10"})
+	if _, err := planRun(home, "set", nil, "s10", "", false, root, "task", env); err != nil {
+		t.Fatal(err)
+	}
+	// Ветка без тестовых файлов: молчаливое закрытие было бы пропуском
+	// обязательных тестов у любой беззадачной сессии.
+	_, err := planRun(home, "done", []string{"тесты"}, "s10", "", false, root, "", env)
+	if err == nil || !strings.Contains(err.Error(), "нет тестовых файлов") {
+		t.Fatalf("tests закрылся молча: %v", err)
+	}
+	// Ревью без заметки отказывает словами про заметку, пустого пути
+	// docs/tasks/.md в отказе быть не должно.
+	_, err = planRun(home, "done", []string{"ревью"}, "s10", "", false, root, "", env)
+	if err == nil || !strings.Contains(err.Error(), "заметки ревью на HEAD нет") {
+		t.Fatalf("review без заметки прошёл или отказал не тем: %v", err)
+	}
+	if strings.Contains(err.Error(), "docs/tasks/.md") {
+		t.Fatalf("отказ зовёт в файл задачи без задачи: %v", err)
+	}
+	if err := reviewnote.Write(root, "HEAD",
+		reviewnote.LevelLine(2, "a1b2c3d", "тронут agentctl")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planRun(home, "done", []string{"ревью"}, "s10", "", false, root, "", env); err != nil {
+		t.Fatalf("review с заметкой не прошёл: %v", err)
 	}
 }
 

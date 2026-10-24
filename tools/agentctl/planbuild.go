@@ -235,15 +235,22 @@ func planTraceCtx(start, home string, a planAddr) trace.Ctx {
 		return c
 	}
 	c.Root, c.LogRoot = root, root
+	c.Main = trace.GitMainBranch(root)
 	id := planTask(start, home, a)
 	if id == "" {
+		// Без задачи следы читаются по дереву, как у задачи (решение 6):
+		// веткой работы считается ветка текущего дерева, а review проверяется
+		// git-заметкой на HEAD.
+		if br := trace.CurrentBranch(root); br != "" {
+			c.Branch = br
+			c.DocsBranch = planDocsOnly(root, c.Main, c.Branch)
+		}
 		return c
 	}
 	c.ID = id
 	if data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", id+".md")); err == nil {
 		c.Doc = string(data)
 	}
-	c.Main = trace.GitMainBranch(root)
 	c.Branch, _ = trace.UnmergedTaskBranch(root, id)
 	c.DocsBranch = planDocsOnly(root, c.Main, c.Branch)
 	if rows, err := loadRows(root); err == nil {

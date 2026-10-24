@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/reviewnote"
 )
 
 // TestDictionary: словарь знает все свои слова и семейство stage:<вид>, а
@@ -106,14 +108,15 @@ func gitRepo(t *testing.T) string {
 		t.Helper()
 		args = append([]string{"-C", root}, args...)
 		cmd := exec.Command("git", args...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
 	run("init", "-q", "-b", "main")
+	// Локальные имя и почта: заметки ревью пишутся коммитом, и окружение
+	// теста им не помогает.
+	run("config", "user.name", "t")
+	run("config", "user.email", "t@t")
 	if err := os.WriteFile(filepath.Join(root, "code.go"), []byte("package x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -146,6 +149,53 @@ func TestPathsTouched(t *testing.T) {
 	}
 	if _, known := PathsTouched(root, "main", "нет-ветки", []string{"docs/**"}); known {
 		t.Fatal("чужая ветка дала ответ")
+	}
+}
+
+// TestCheckReviewNote: у сессии без задачи review читается git-заметкой на
+// HEAD, а не разделом файла задачи: файла нет, и отказ обязан называть
+// заметку, а не пустой путь docs/tasks/.md.
+func TestCheckReviewNote(t *testing.T) {
+	root := gitRepo(t)
+	v, why := Check(WordReview, Ctx{Root: root})
+	if v != Lack || !strings.Contains(why, "заметки ревью на HEAD нет") {
+		t.Fatalf("review без заметки прошёл: %v %q", v, why)
+	}
+	if strings.Contains(why, "docs/tasks/.md") {
+		t.Fatalf("отказ зовёт в файл задачи без задачи: %q", why)
+	}
+	if err := reviewnote.Write(root, "HEAD",
+		reviewnote.LevelLine(2, "a1b2c3d", "тронут internal/trace")); err != nil {
+		t.Fatal(err)
+	}
+	if v, why := Check(WordReview, Ctx{Root: root}); v != Have || why != "" {
+		t.Fatalf("review с заметкой не прошёл: %v %q", v, why)
+	}
+}
+
+// TestMergedTaskless: у сессии без задачи веткой работы считается ветка
+// текущего дерева, и несделанное слияние отказывает по ней.
+func TestMergedTaskless(t *testing.T) {
+	root := gitRepo(t)
+	main := GitMainBranch(root)
+	if v, why := Check(WordMerged, Ctx{Root: root, Main: main, Branch: CurrentBranch(root)}); v != Lack ||
+		!strings.Contains(why, "не слита") {
+		t.Fatalf("незалитая ветка прошла: %v %q", v, why)
+	}
+	if v, _ := Check(WordMerged, Ctx{Root: root, Main: main}); v != Have {
+		t.Fatal("без ветки слияния след merged не прошёл")
+	}
+}
+
+// TestCurrentBranch: ветка текущего дерева называется, main и отдельный HEAD
+// считаются отсутствием ветки.
+func TestCurrentBranch(t *testing.T) {
+	root := gitRepo(t)
+	if got := CurrentBranch(root); got != "dk-x" {
+		t.Fatalf("CurrentBranch = %q, жду dk-x", got)
+	}
+	if got := CurrentBranch(t.TempDir()); got != "" {
+		t.Fatalf("вне git названа ветка %q", got)
 	}
 }
 

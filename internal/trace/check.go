@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/rehearsal"
+	"github.com/dronrider/devkit/internal/reviewnote"
 	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskform"
 )
@@ -79,7 +80,11 @@ func Check(word string, c Ctx) (Verdict, string) {
 	case word == WordRehearsal:
 		err = rehearsal.Fresh(c.Root, c.ID, c.Doc, c.Again)
 	case word == WordReview:
-		err = ReviewLevel(c.ID, c.Doc)
+		if c.ID == "" {
+			err = reviewNoteTrace(c)
+		} else {
+			err = ReviewLevel(c.ID, c.Doc)
+		}
 	case word == WordMerged:
 		err = Merged(c)
 	case word == WordVerify:
@@ -144,7 +149,62 @@ func Merged(c Ctx) error {
 	if br, ahead := UnmergedTaskBranch(c.Root, c.ID); br != "" {
 		return fmt.Errorf("%s: ветка %s не слита, впереди main её коммитов %d: сначала «shipctl merge %s», он и переведёт строку", c.ID, br, ahead, c.ID)
 	}
+	// У сессии без задачи веткой работы считается ветка текущего дерева:
+	// несделанное слияние видно по ней так же, как по ветке задачи.
+	if c.ID == "" && c.Branch != "" {
+		if n := gitAhead(c.Root, c.Main, c.Branch); n > 0 {
+			return fmt.Errorf("ветка %s не слита, впереди main её коммитов %d: сначала слияние ветки, потом закрывать этап", c.Branch, n)
+		}
+	}
 	return nil
+}
+
+// reviewNoteTrace проверяет след ревью git-заметкой на HEAD: у сессии без
+// задачи нет файла с разделом «Ревью», и заметка остаётся единственным местом
+// следа. Судит та же пара, что и ворота пуша (reviewTraceGate в shipctl):
+// следом считается заметка со строкой уровня либо круга, а не любой текст.
+func reviewNoteTrace(c Ctx) error {
+	noted, err := reviewnote.Has(c.Root, "HEAD")
+	if err != nil {
+		return fmt.Errorf("след ревью не прочитан: %v", err)
+	}
+	if noted {
+		return nil
+	}
+	return fmt.Errorf(`нет следа ревью: заметки ревью на HEAD нет.
+Ревью идёт по скиллу review свежим контекстом, а не тем, который писал правку.
+След ставится командой taskctl review level <ярлык> <0-3> "причина" (заметка git на HEAD, ref %s),
+  ревью без замечаний это taskctl review clean <ярлык> "пояснение".`,
+		reviewnote.Ref)
+}
+
+// CurrentBranch называет ветку текущего дерева. Пустая строка вне git, при
+// отдельном HEAD и на самой main: у беззадачной сессии ветка работы это
+// текущая ветка, и main ничем не отличается от отсутствия ветки.
+func CurrentBranch(root string) string {
+	br, err := git(root, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return ""
+	}
+	br = strings.TrimSpace(br)
+	if br == "" || br == "HEAD" || br == gitMainBranch(root) {
+		return ""
+	}
+	return br
+}
+
+// gitAhead считает коммиты ветки впереди main, ошибка git считается нулём:
+// спрашивающим хватит общего случая, а падать из-за неё дороже, чем пропустить.
+func gitAhead(root, main, branch string) int {
+	out, err := git(root, "rev-list", "--count", main+".."+branch)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // Verify проверяет прогон сценария чужими руками (DK-642): запись этапа

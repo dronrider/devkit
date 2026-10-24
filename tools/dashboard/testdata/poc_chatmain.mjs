@@ -33,6 +33,9 @@ const chats = [
 ];
 
 const { sandbox, store } = makeSandbox(app, (path, init) => {
+  if (path.includes("/tasks/XR-4/chat")) {
+    return { id: "XR-4", project: "demo", chat: "tmux-task-XR-4" };
+  }
   if (path.includes("/chats")) return { chats, models: [], days: 3, older: false };
   if (path.includes("/sessions/")) return { items: [], start: true };
   if (path.includes("/board")) return { board, works: [] };
@@ -189,7 +192,37 @@ const kindBtn = (drop) => {
   store.set("devkit.chat.kind", "all");
 }
 
+// --- панель на адресе записи: открытый чат это строка записи ---
+{
+  // Ручка адреса называет носителя, и панель стоит на его разговоре, а список
+  // держит запись строкой записи: открытой должна стоять она, а не носитель,
+  // которого список не рисует вовсе.
+  const onRec = await sandbox.chatState("demo", "XR-4", board, []);
+  if (onRec.sid !== "tmux-task-XR-4") {
+    fail("панель на адресе записи не встала на носителя: " + onRec.sid);
+  }
+  sandbox.chatDropShut();
+  sandbox.chatDropOpen("demo", onRec, anchor);
+  const drop = anchor.children[anchor.children.length - 1];
+  const rows = byClass(drop, "cdrows");
+  const said = dump(rows);
+  if (!said.includes("открытый чат")) {
+    fail("на адресе записи нет группы открытого чата: " + said.slice(0, 300));
+  }
+  const top = rows.querySelectorAll(".cdrow")[0];
+  if (!dump(top).includes("XR-4: Начатая задача")) {
+    fail("открытым чатом стоит не строка записи: " + dump(top).slice(0, 200));
+  }
+  if (!String(top.className).includes("on")) {
+    fail("строка записи не подсвечена текущей: " + top.className);
+  }
+  if (has(rows, "разговор носителя")) {
+    fail("носитель прорезался строкой на адресе записи: " + said.slice(0, 300));
+  }
+}
+
 console.log("ок: строка записи стоит с видом, стадией и целью, кнопка строки не " +
   "даёт ни архива, ни крестика, чип цели открывает чат цели, носитель отрезка " +
-  "не рисуется ни видом, ни поиском, а три положения кнопки вида дают три " +
-  "разных набора и переживают перезагрузку");
+  "не рисуется ни видом, ни поиском, три положения кнопки вида дают три " +
+  "разных набора и переживают перезагрузку, а на адресе записи открытым " +
+  "чатом стоит сама строка записи");

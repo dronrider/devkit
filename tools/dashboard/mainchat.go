@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/mainchat"
 	"github.com/dronrider/devkit/internal/sessions"
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Ручка адреса основного чата записи (LLD DK-1422, решения 1 и 2). Адрес это
@@ -525,7 +525,7 @@ func (s *server) projectByName(name string) (*Project, bool) {
 // Вид записи выводится тем же правилом, каким её узнаёт экран: цель по
 // заголовку от слова «Цель:», черновик по файлу накопителя, остальное задача.
 func (s *server) mainChatMeta(p *Project, id string) (title, kind, stage, goal string) {
-	goal = taskGoalOf(p.Path, id)
+	goal = taskform.TaskGoalKey(p.Path, id)
 	if raw, err := s.projectBoard(p.Path); err == nil {
 		if rows, err := parseBoardRows(raw); err == nil {
 			if row, ok := rows[id]; ok {
@@ -550,48 +550,4 @@ func (s *server) mainChatMeta(p *Project, id string) (title, kind, stage, goal s
 	// Записи без строки, архива и файла остаётся назвать самой: строка стоит,
 	// раз журнал держит живой носитель, и безымянной она была бы загадкой.
 	return id, mainKindTask, "", ""
-}
-
-// taskGoalOf это ID цели, в состав которой входит запись, по строке «Цель: ...»
-// шапки файла задачи. Разбор тот же, что у taskctl (goalKey), второго словаря
-// формата тут нет: пусто, когда строки нет, ссылки нет либо файла цели нет
-// на месте.
-func taskGoalOf(projPath, id string) string {
-	data, err := os.ReadFile(filepath.Join(projPath, "docs", "tasks", id+".md"))
-	if err != nil {
-		return ""
-	}
-	for _, ln := range strings.Split(string(data), "\n") {
-		s := strings.TrimSpace(ln)
-		if strings.HasPrefix(s, "## ") {
-			return ""
-		}
-		if !strings.HasPrefix(s, "Цель:") {
-			continue
-		}
-		key := goalKeyOf(s)
-		if key == "" {
-			return ""
-		}
-		if _, err := os.Stat(filepath.Join(projPath, "docs", "tasks", key+".md")); err != nil {
-			return ""
-		}
-		return key
-	}
-	return ""
-}
-
-// goalKeyOf вынимает из строки «Цель: ...» имя файла ссылки без каталога и
-// суффикса: цель в шапке пишется markdown-ссылкой на её файл.
-func goalKeyOf(line string) string {
-	s := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "Цель:"))
-	if i := strings.Index(s, "["); i >= 0 {
-		if j := strings.Index(s[i:], "]"); j > 0 {
-			s = s[i+1 : i+j]
-		}
-	}
-	if i := strings.LastIndex(s, "/"); i >= 0 {
-		s = s[i+1:]
-	}
-	return strings.TrimSuffix(s, ".md")
 }

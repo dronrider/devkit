@@ -10255,6 +10255,13 @@ function chatDropOpen(project, st, anchor, again) {
     kindBtn.setAttribute("aria-label", kindBtn.title);
   };
   const rows = el("div", "cdrows");
+  // Открытым чатом список называет строку записи, когда панель стоит на её
+  // носителе: строку носителя список не рисует, и прижатие самого sid теряло
+  // бы группу «открытый чат» и подсветку текущей строки на адресе записи
+  // (LLD DK-1422, решение 6). Цель ходит своей дорогой: её носителя журнал
+  // пока не называет, и панель на цели стоит на витке.
+  const cur = st.main && st.main.id && st.main.chat && st.sid === st.main.chat
+    ? st.main.id : st.sid;
   // Догрузка идёт одна за раз: поиск и «показать раньше» ходят за одним и тем
   // же списком, и два запроса подряд перезаписывали бы друг друга.
   let loading = false;
@@ -10315,7 +10322,7 @@ function chatDropOpen(project, st, anchor, again) {
         if (c) { list.push(c); have.add(id); }
       };
       for (const id of justToggled.keys()) pin(id);
-      pin(st.sid);
+      pin(cur);
     }
     // Носитель, служащий отрезком основного чата записи, отдельной строкой не
     // стоит (LLD DK-1422): сервер держит его в ответе для панели на адресе
@@ -10335,9 +10342,9 @@ function chatDropOpen(project, st, anchor, again) {
         (order.has(b.id) ? order.get(b.id) : Infinity));
     }
     rows.replaceChildren();
-    for (const g of chatGroups(list, st.sid)) {
+    for (const g of chatGroups(list, cur)) {
       if (g.head) rows.append(el("div", "cdday", g.head));
-      for (const c of g.rows) rows.append(chatOption(project, c, st.sid, done));
+      for (const c of g.rows) rows.append(chatOption(project, c, cur, done));
     }
     if (!list.length) {
       // Пустому списку словами отвечает сервер, чем бы ни было поле поиска:

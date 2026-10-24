@@ -484,15 +484,17 @@ func migCaseFor(src migSource, talks []migTalk, rec string) migCase {
 		c.Note = "подтверждений не набралось"
 	}
 	// Раздел, когда весь спор в самом разговоре: общий либо без ленты.
+	// Причину этих разделов называют сам раздел и строка кандидата, а примечание
+	// о неподтверждённости спорило бы с доказательствами той же строки.
 	onlyShared, onlyNoFeed := true, true
 	for _, cand := range c.Cands {
 		onlyShared = onlyShared && cand.Shared
 		onlyNoFeed = onlyNoFeed && cand.Feed != ""
 	}
 	if onlyShared {
-		c.Kind = migShared
+		c.Kind, c.Note = migShared, ""
 	} else if onlyNoFeed {
-		c.Kind = migNoFeed
+		c.Kind, c.Note = migNoFeed, ""
 	}
 	return c
 }

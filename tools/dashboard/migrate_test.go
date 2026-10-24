@@ -135,6 +135,32 @@ func TestMigP2WorkAssigns(t *testing.T) {
 	}
 }
 
+// Подтверждение П3 из решения 7, рождение записи: строка «оформление» журнала
+// назначений называет разговор, из которого запись вышла. Запись с такой
+// строкой уже связана журналом, ручка адреса открывает её разговор без
+// миграции, и рабочее место пункта это разбор отчёта: применением запись со
+// строкой пропускается. Старым черновикам без строки рождение недоступно,
+// их подтверждает П2 по входу.
+func TestMigBirthFromDecorAssigns(t *testing.T) {
+	src := migFix(t, map[string][]sessionBind{
+		"born-1": {{Project: "demo", Tmux: "task-XR-5", Time: "2026-10-01T10:00:00"}},
+	}, func(s *migSource) { s.Born["XR-5"] = "tmux-task-XR-5" })
+	got := migOne(src, "XR-5")
+	if got.Kind != migClear || got.Auto != "tmux-task-XR-5" {
+		t.Fatalf("рождение не назначило разговор: %+v", got)
+	}
+	if len(got.Cands) != 1 || len(got.Cands[0].Proof) != 1 ||
+		got.Cands[0].Proof[0] != migProofBirth {
+		t.Fatalf("подтверждение не названо рождением: %+v", got.Cands)
+	}
+	// Без строки оформления тот же разговор остаётся спором: имя окна без
+	// работы роль не доказывает.
+	delete(src.Born, "XR-5")
+	if got := migOne(src, "XR-5"); got.Kind != migDisputed || got.Auto != "" {
+		t.Fatalf("рождение без строки оформления сработало: %+v", got)
+	}
+}
+
 // Строка 3. Назначение по свежести исключено: свежий транскрипт и свежая
 // запись реестра роль не доказывают, и в споре со старым подтверждённым
 // разговором выигрывает подтверждённый, а не свежий.
@@ -264,6 +290,11 @@ func TestMigSharedTalkExcluded(t *testing.T) {
 		if got.Kind != migShared || got.Auto != "" || !got.Cands[0].Shared {
 			t.Fatalf("общий разговор назначен записи %s: %+v", rec, got)
 		}
+		// Примечание спора молчит: причину называет сам раздел, а у кандидата
+		// в той же строке стоят доказательства.
+		if got.Note != "" {
+			t.Fatalf("примечание спора у общего разговора записи %s: %q", rec, got.Note)
+		}
 	}
 }
 
@@ -282,11 +313,11 @@ func TestMigEmptyAndNoTranscriptNamed(t *testing.T) {
 		delete(s.Feeds, "nof-1")
 	})
 	if got := migOne(src, "XR-14"); got.Kind != migNoFeed ||
-		got.Cands[0].Feed != migFeedBlank {
+		got.Cands[0].Feed != migFeedBlank || got.Note != "" {
 		t.Fatalf("пустой разговор не назван словом: %+v", got)
 	}
 	if got := migOne(src, "XR-15"); got.Kind != migNoFeed ||
-		got.Cands[0].Feed != migNoFeed {
+		got.Cands[0].Feed != migNoFeed || got.Note != "" {
 		t.Fatalf("отсутствующий транскрипт не назван словом: %+v", got)
 	}
 }

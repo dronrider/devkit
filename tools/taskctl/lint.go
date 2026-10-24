@@ -14,6 +14,11 @@ import (
 
 var linkRe = regexp.MustCompile(`\]\(([^)]+)\)`)
 
+// satelliteIDRe находит в имени файла-спутника ID-префикс до дефиса
+// приставки: «DK-167-check.sh» даёт «DK-167». Регистр важен, строчные
+// служебные логи мимо ID не проходят.
+var satelliteIDRe = regexp.MustCompile(`^([A-ZА-Я]+-\d+)-`)
+
 // cmdLint проверяет инварианты доски и архива. Жёсткие ошибки формата ловит
 // уже разбор, здесь семантика: бакеты, сортировка, дубли, живость ссылок.
 func cmdLint(root string) ([]string, error) {
@@ -369,7 +374,11 @@ func lintDepCycles(rows []*Row, bp string) []string {
 // shipctl держит очередь выката и собирает откат, поэтому расхождение стоит
 // дороже, чем битая ссылка: обе утилиты продолжают работать, но с чужой
 // задачей. Закрытые задачи сюда не попадают, их файлы уезжают в
-// tasks/archive/<год>.
+// tasks/archive/<год>. Файл-спутник <ID>-* (сценарий проверки, лог) судится
+// по тому же правилу и по своему ID-префиксу: после закрытия спутники уезжают
+// в архив вместе с файлом задачи, и оставшийся в docs/tasks живёт без
+// хозяина. Файл без ID-префикса вида <префикс>-<номер> не сирота и не
+// смотрится вовсе.
 func lintOrphanTaskFiles(root string, b *Board, arch *Archive, bp string) []string {
 	entries, err := os.ReadDir(filepath.Join(root, "docs", "tasks"))
 	if err != nil {
@@ -377,18 +386,28 @@ func lintOrphanTaskFiles(root string, b *Board, arch *Archive, bp string) []stri
 	}
 	var finds []string
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+		if e.IsDir() {
 			continue
 		}
-		// Журнал чужого ревью лежит тут же под именем <ID>.review.md, но
-		// файлом задачи не является: судится он по своему ID, а не по имени
-		// с приставкой.
-		id := strings.TrimSuffix(strings.TrimSuffix(e.Name(), ".md"), ".review")
+		name := e.Name()
+		var id, kind string
+		if strings.HasSuffix(name, ".md") {
+			// Журнал чужого ревью лежит тут же под именем <ID>.review.md, но
+			// файлом задачи не является: судится он по своему ID, а не по
+			// имени с приставкой.
+			id = strings.TrimSuffix(strings.TrimSuffix(name, ".md"), ".review")
+			kind = "файл задачи"
+		} else if m := satelliteIDRe.FindStringSubmatch(name); m != nil {
+			id = m[1]
+			kind = "файл-спутник"
+		} else {
+			continue
+		}
 		if b.find(id) != nil || arch.has(id) {
 			continue
 		}
-		finds = append(finds, fmt.Sprintf("%s: файл задачи docs/tasks/%s ни на доске, ни в архиве (ID строки правили задним числом?)",
-			bp, e.Name()))
+		finds = append(finds, fmt.Sprintf("%s: %s docs/tasks/%s ни на доске, ни в архиве (ID строки правили задним числом?)",
+			bp, kind, name))
 	}
 	return finds
 }

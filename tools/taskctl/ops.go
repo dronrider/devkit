@@ -968,6 +968,9 @@ func cmdClose(root string, p CloseParams) (string, error) {
 		if err := rewriteLinksInFile(dst, oldBaseDir, newBaseDir); err != nil {
 			return "", err
 		}
+		if err := rewriteSatelliteRefs(dst, p.ID, year); err != nil {
+			return "", err
+		}
 
 		var err2 error
 		changedFiles, err2 = findAndRewriteReferencesToFile(root, taskFile, dst)
@@ -987,6 +990,14 @@ func cmdClose(root string, p CloseParams) (string, error) {
 			return "", err
 		}
 		journalMoved = filepath.Join("docs", "tasks", "archive", year, p.ID+".review.md")
+	}
+	// Файлы-спутники <ID>-* (сценарии проверки, логи прогонов) уезжают в
+	// архив тем же порядком, что и файл задачи: оставленный в docs/tasks,
+	// спутник переживал бы закрытую строку и висел бы среди живых задач без
+	// хозяина.
+	satellitePaths, err := moveTaskSatellites(root, p.ID, year)
+	if err != nil {
+		return "", err
 	}
 	linkCell := p.Link
 	if linkCell == "" {
@@ -1057,6 +1068,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if journalMoved != "" {
 		paths = append(paths, reviewDraftRel(p.ID), journalMoved)
 	}
+	paths = append(paths, satellitePaths...)
 	paths = append(paths, changedFiles...)
 	tail, err := p.Commit.apply(root, paths)
 	if err != nil {
@@ -1203,6 +1215,50 @@ func rewriteLinksInFile(filePath, oldBaseDir, newBaseDir string) error {
 	})
 
 	return os.WriteFile(filePath, []byte(result), 0o644)
+}
+
+// rewriteSatelliteRefs правит в перенесённом файле задачи пути собственных
+// спутников docs/tasks/<ID>-... на архивный путь. Команды запуска сценариев
+// живут в код-блоках, которые rewriteLinksInFile пропускает, поэтому это
+// отдельная замена по подстроке, а не редактор ссылок.
+func rewriteSatelliteRefs(filePath, id, year string) error {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return err
+	}
+	result := strings.ReplaceAll(string(content),
+		"docs/tasks/"+id+"-",
+		fmt.Sprintf("docs/tasks/archive/%s/%s-", year, id))
+	return os.WriteFile(filePath, []byte(result), 0o644)
+}
+
+// moveTaskSatellites переносит файлы-спутники docs/tasks/<ID>-* в архивный
+// каталог года тем же gitMv, что и файл задачи. Файл задачи <ID>.md и журнал
+// ревью <ID>.review.md под шаблон <ID>-* не попадают, каталоги не трогаются.
+// Возвращаются пути для pathspec коммита: прежний путь уместен только у
+// файлов, которых git знал до переноса.
+func moveTaskSatellites(root, id, year string) ([]string, error) {
+	matches, err := filepath.Glob(filepath.Join(root, "docs", "tasks", id+"-*"))
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, src := range matches {
+		if fi, statErr := os.Stat(src); statErr != nil || fi.IsDir() {
+			continue
+		}
+		rel := filepath.Join("docs", "tasks", filepath.Base(src))
+		dstRel := filepath.Join("docs", "tasks", "archive", year, filepath.Base(src))
+		staged, mvErr := gitMv(root, src, filepath.Join(root, dstRel))
+		if mvErr != nil {
+			return nil, mvErr
+		}
+		if staged {
+			paths = append(paths, rel)
+		}
+		paths = append(paths, dstRel)
+	}
+	return paths, nil
 }
 
 // skipDirs это директории, которые пропускаются при поиске файлов

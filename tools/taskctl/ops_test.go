@@ -884,6 +884,63 @@ func TestCloseWithoutFileKeepsLink(t *testing.T) {
 	}
 }
 
+// TestCloseMovesSatellites: close уносит файлы-спутники <ID>-* в архив вместе
+// с файлом задачи и правит команды их запуска в код-блоках перенесённого
+// файла: редактор ссылок код-блоки пропускает, а сценарий проверки зовут
+// именно оттуда (DK-167).
+func TestCloseMovesSatellites(t *testing.T) {
+	root := setup(t)
+	sat := filepath.Join(root, "docs", "tasks", "XR-005-check.sh")
+	if err := os.WriteFile(sat, []byte("#!/bin/sh\necho check\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskFile := filepath.Join(root, "docs", "tasks", "XR-005.md")
+	orig, err := os.ReadFile(taskFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := "\n```sh\nsh docs/tasks/XR-005-check.sh\n```\n"
+	if err := os.WriteFile(taskFile, append(orig, []byte(block)...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-07-08"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "docs", "tasks", "archive", "2026", "XR-005-check.sh")); err != nil {
+		t.Fatal("спутник не переехал в архив:", err)
+	}
+	if _, err := os.Stat(sat); !os.IsNotExist(err) {
+		t.Fatal("спутник остался среди живых задач")
+	}
+	archived, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "archive", "2026", "XR-005.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(archived), "sh docs/tasks/archive/2026/XR-005-check.sh") {
+		t.Fatalf("команда запуска не переписана на архивный путь:\n%s", archived)
+	}
+}
+
+// Спутник уезжает и без файла задачи: close не оставляет его в docs/tasks
+// из-за отсутствия самого файла постановки.
+func TestCloseMovesSatelliteWithoutTaskFile(t *testing.T) {
+	root := setup(t)
+	dropTaskFile(t, root, "XR-001")
+	sat := filepath.Join(root, "docs", "tasks", "XR-001-check.sh")
+	if err := os.WriteFile(sat, []byte("#!/bin/sh\necho check\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdClose(root, CloseParams{ID: "XR-001", Date: "2026-07-08"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "docs", "tasks", "archive", "2026", "XR-001-check.sh")); err != nil {
+		t.Fatal("спутник не переехал в архив:", err)
+	}
+	if _, err := os.Stat(sat); !os.IsNotExist(err) {
+		t.Fatal("спутник остался среди живых задач")
+	}
+}
+
 func TestSort(t *testing.T) {
 	root := setup(t)
 	// Перемешиваем Backlog: хвост наверх, пару с равным R меняем местами.

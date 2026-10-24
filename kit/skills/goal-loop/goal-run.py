@@ -30,6 +30,7 @@ headless-сессиями, пока виток отвечает маркером
 """
 import importlib.util
 import json
+import fcntl
 import os
 import re
 import shlex
@@ -755,6 +756,42 @@ class Loop:
             self.say("строка ротации %s -> %s не записана: %s"
                      % (old, new, " ".join((p.stdout or "").split())[:200]))
 
+    def main_chat_note(self, sid):
+        """Строка назначения основного чата цели: подъём витка назвал носителем
+        его сессию (LLD DK-1422, решение 1, источник «работа»). Формат общий с
+        internal/mainchat и ручкой адреса записи дашборда, замок тот же, что у
+        журнала с других писателей. Отказ не глотается, а ложится в журнал
+        цикла: лента цели без строки открыла бы прежний виток, и след потери
+        виден сразу. Дом читается в момент записи: тесты поднимают оболочку
+        с временным HOME."""
+        home = os.path.expanduser("~")
+        path = os.path.join(home, ".devkit", "main-chat.log")
+        line = "%s назначение %s разговор %s проект %s источник работа прежде -\n" % (
+            time.strftime(STAMP), self.id, sid, os.path.basename(self.proj.rstrip(os.sep)))
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            fd = os.open(path + ".lock", os.O_CREAT | os.O_RDWR, 0o644)
+        except OSError as e:
+            self.say("строка назначения витка %s не записана (%s): лента цели покажет прежний виток"
+                     % (sid[:8], e))
+            return
+        try:
+            deadline = time.time() + 2
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.time() > deadline:
+                        self.say("строка назначения витка %s не записана: журнал назначений держит сосед"
+                                 % sid[:8])
+                        return
+                    time.sleep(0.1)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line)
+        finally:
+            os.close(fd)
+
     def run_turn(self):
         before = self.journal_entries()
         # Строка о подъёме идёт до сессии, а не после: вывод `claude -p`
@@ -782,6 +819,10 @@ class Loop:
         except OSError as e:
             self.say("имя витка %d не записано в замок (%s): живая реплика доедет "
                       "не раньше следующего витка" % (self.turn, e))
+        # Виток стал носителем основного чата цели: лента собирается отрезками
+        # по строкам журнала назначений, и строка ложится до подъёма клиента,
+        # чтобы адрес цели не отставал от витка на целый ход (DK-1431).
+        self.main_chat_note(sid)
         p = subprocess.run(self.turn_cmd(sid), cwd=self.proj,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         after = self.journal_entries()

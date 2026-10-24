@@ -9,6 +9,7 @@
 """
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -385,6 +386,38 @@ class GoalRunTests(Stand, unittest.TestCase):
             named = f.read().splitlines()
         self.assertEqual(named[:1], ["DK-100"],
                          "виток оболочки не назвал себя дочернему клиенту: %s" % named)
+
+    def test_each_turn_names_itself_the_main_chat_carrier(self):
+        # Подъём витка кладёт строку назначения в журнал основного чата цели
+        # (LLD DK-1422, решение 1): по этим строкам ручка адреса записи
+        # собирает ленту цели из витков, и адрес не отстаёт от витка на ход.
+        # Формат общий с internal/mainchat, поэтому строка читается тем же
+        # разбором, что пишет дашборд.
+        root = self.stand("continue запись", "done запись")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        with open(os.path.join(root, "home", ".devkit", "main-chat.log"),
+                  encoding="utf-8") as f:
+            lines = [l.strip() for l in f if l.strip()]
+        named = self.sessions_named(root)
+        self.assertEqual(len(lines), len(named),
+                         "строк назначения меньше витков: %s" % lines)
+        for line, sid in zip(lines, named):
+            self.assertRegex(
+                line,
+                r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} назначение DK-100 разговор %s "
+                r"проект proj источник работа прежде -$" % re.escape(sid))
+
+    def test_unwritable_main_chat_journal_is_heard_in_shell_log(self):
+        # Отказ журнала назначений не валит цикл, но и не молчит: след ложится
+        # в журнал оболочки, иначе потерянная строка назначения искала бы себя
+        # по ленте цели, которая открыла бы прежний виток.
+        root = self.stand("done запись")
+        with open(os.path.join(root, "home", ".devkit"), "w", encoding="utf-8") as f:
+            f.write("файл на месте каталога журнала\n")
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertIn("строка назначения витка", self.shell_log(root))
 
     def test_wait_mark_holds_the_loop_instead_of_empty_turns(self):
         # Кейс 3 DK-947: виток упёрся в чужую задачу в Check, за которой стоит

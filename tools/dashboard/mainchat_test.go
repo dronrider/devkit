@@ -143,6 +143,31 @@ func TestTaskChatReadsSecondHome(t *testing.T) {
 	}
 }
 
+// Закрытая запись сохраняет адрес: ручка читает её строку из архива наравне
+// с доской, без журнала отдаёт пустого носителя, и панель открывает переписку
+// прежней дорогой списка, а с журналом назначенного диспетчера (DK-1004,
+// миграция прежних разговоров это DK-1432).
+func TestTaskChatHandleClosedRow(t *testing.T) {
+	e := newTestEnv(t)
+	c := e.loggedClient(t)
+	arch := "# Архив (префикс XR)\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
+		"|--------|--------|-----|---|---------|--------|\n" +
+		"| XR-009 | Закрытая с хвостом | bug | P1 | 2026-08-13 | [tasks/archive/2026/XR-009.md](tasks/archive/2026/XR-009.md) |\n"
+	if err := os.WriteFile(filepath.Join(e.proj, "docs", "TASKS-archive.md"), []byte(arch), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, got := taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-009/chat")
+	if code != http.StatusOK || got.Chat != "" || got.Segments != nil {
+		t.Fatalf("закрытая запись без журнала не прочиталась прежним путём: %d %+v", code, got)
+	}
+	writeMainChat(t, e.home, mainchat.Line(time.Date(2026, 10, 23, 21, 14, 0, 0, time.UTC),
+		mainchat.Bind{Record: "XR-009", Chat: "tmux-task-XR-009", Project: "demo", Source: mainchat.ByWork}))
+	code, got = taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-009/chat")
+	if code != http.StatusOK || got.Chat != "tmux-task-XR-009" {
+		t.Fatalf("закрытая запись не получила носителя из журнала: %d %+v", code, got)
+	}
+}
+
 // Старт конвейера пишет строку назначения: подъём назвал разговор записи
 // основным, и адрес после пуска открывает именно его (LLD DK-1422). Повторный
 // пуск дописывает строку, а не отказывает: у записи не больше одного основного,

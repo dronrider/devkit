@@ -172,8 +172,8 @@ func TestLintTails(t *testing.T) {
 // разбор хвостов её переживает. Зависимости, взвод, провал и блокировка читаются
 // при метке так же, как без неё, а сборка заголовка обратно даёт тот же текст.
 func TestDebtKeepsDepAndArmTails(t *testing.T) {
-	title := "Долг [после XR-001, XR-002] [долг] [взвод] [приёмка: mixed] [провал: 500] [блок: ждём железо]"
-	base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(title)
+	title := "Долг [после XR-001, XR-002] [долг] [взвод] [план: poc] [приёмка: mixed] [провал: 500] [блок: ждём железо]"
+	base, deps, debtSuf, armSuf, planSuf, acceptSuf, failSuf, blockSuf := splitTitle(title)
 	if base != "Долг" {
 		t.Fatalf("основа заголовка = %q, ожидал «Долг»", base)
 	}
@@ -186,10 +186,13 @@ func TestDebtKeepsDepAndArmTails(t *testing.T) {
 	if armSuf != " [взвод]" || acceptSuf != " [приёмка: mixed]" {
 		t.Fatalf("взвод = %q, приёмка = %q", armSuf, acceptSuf)
 	}
+	if planSuf != " [план: poc]" {
+		t.Fatalf("хвост плана = %q", planSuf)
+	}
 	if failSuf != " [провал: 500]" || blockSuf != " [блок: ждём железо]" {
 		t.Fatalf("провал = %q, блок = %q", failSuf, blockSuf)
 	}
-	if got := joinTitle(base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf); got != title {
+	if got := joinTitle(base, deps, debtSuf, armSuf, planSuf, acceptSuf, failSuf, blockSuf); got != title {
 		t.Fatalf("сборка обратно дала %q, ожидал %q", got, title)
 	}
 	if !armed(title) {

@@ -78,11 +78,8 @@ func checkQueue(root, id string) (queue, ok bool) {
 	return f[0], true
 }
 
-// hasScenario отвечает, готов ли у задачи сценарий проверки в её файле.
-func hasScenario(root, id string) (has, hasFile bool) {
-	f, ok := taskDocSections(root, id, scenarioSection)
-	return f[0], ok
-}
+// hasScenario переехал в internal/trace: тот же признак спрашивает и след
+// слова «сценарий» у этапа плана (LLD DK-972, решение 6).
 
 // checkMarkLabel собирает признаки строки в Check в одну строку человеку:
 // держит ли очередь выката и каков её вид приёмки. Вид читается из суффикса

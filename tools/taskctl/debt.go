@@ -35,7 +35,7 @@ const debtSuffix = " [долг]"
 
 // isDebt говорит, помечена ли строка долгом.
 func isDebt(title string) bool {
-	_, _, debtSuf, _, _, _, _ := splitTitle(title)
+	_, _, debtSuf, _, _, _, _, _ := splitTitle(title)
 	return debtSuf != ""
 }
 
@@ -63,7 +63,7 @@ func cmdDebt(root, id string, p DebtParams) (string, error) {
 	if row == nil {
 		return "", fmt.Errorf("задачи %s на доске нет", id)
 	}
-	base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
+	base, deps, debtSuf, armSuf, planSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 	if p.Off && debtSuf == "" {
 		return fmt.Sprintf("%s и так без метки долга", id), nil
 	}
@@ -74,7 +74,7 @@ func cmdDebt(root, id string, p DebtParams) (string, error) {
 	if p.Off {
 		want = ""
 	}
-	row.Title = joinTitle(base, deps, want, armSuf, acceptSuf, failSuf, blockSuf)
+	row.Title = joinTitle(base, deps, want, armSuf, planSuf, acceptSuf, failSuf, blockSuf)
 	b.updateLine(row.LineIdx, formatRow(row))
 	if err := b.Save(); err != nil {
 		return "", err
@@ -168,10 +168,10 @@ func cmdDebtDone(root, id string, p DebtDoneParams) (string, error) {
 func lintTails(b *Board, bp string) []string {
 	var finds []string
 	for _, r := range b.Rows {
-		base, _, _, _, _, _, _ := splitTitle(r.Title)
-		for _, t := range []string{"[долг]", "[взвод]", "[приёмка: ", "[провал: ", "[блок: ", "[после "} {
+		base, _, _, _, _, _, _, _ := splitTitle(r.Title)
+		for _, t := range []string{"[долг]", "[взвод]", "[план: ", "[приёмка: ", "[провал: ", "[блок: ", "[после "} {
 			if strings.Contains(base, t) {
-				finds = append(finds, fmt.Sprintf("%s:%d: %s: хвост «%s» стоит не на своём месте, порядок такой: [после ...] [долг] [взвод] [приёмка: ...] [провал: ...] [блок: ...]",
+				finds = append(finds, fmt.Sprintf("%s:%d: %s: хвост «%s» стоит не на своём месте, порядок такой: [после ...] [долг] [взвод] [план: ...] [приёмка: ...] [провал: ...] [блок: ...]",
 					bp, r.LineIdx+1, r.ID, strings.TrimSuffix(t, " ")))
 				break
 			}

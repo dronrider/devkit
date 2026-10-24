@@ -216,6 +216,10 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   arm <ID> [--off]                            взвод строки Backlog: со снятыми
                                               рёбрами она стартует сама ближайшим
                                               обходом ждущих, --off снимает взвод
+  plan <ID> [<имя>] [--off]                   суффикс [план: имя]: план строки
+                                              собирается из названного шаблона,
+                                              минуя выбор по типу; --off снимает,
+                                              без суффикса работает тип строки
   chain [--after ID,...] "уровень 1" ["уровень 2" ...] [--dry-run]
                                               рёбра и взвод уровнями одной
                                               командой, вместо dep add и arm на
@@ -700,6 +704,19 @@ func main() {
 		pos := frame.ParseArgs(fs, args[1:])
 		needArgs(pos, 1, 1, "arm <ID> [--off] [-m ... --push]")
 		msg, err = cmdArm(root(*dir), pos[0], *off, c)
+	case "plan":
+		fs := flag.NewFlagSet("plan", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		off := fs.Bool("off", false, "снять шаблон: план строки собирается по её типу")
+		var p PlanParams
+		commitFlags(fs, &p.Commit)
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 2, "plan <ID> [<имя>] [--off] [-m ... --push]")
+		p.Off = *off
+		if len(pos) > 1 {
+			p.Name = pos[1]
+		}
+		msg, err = cmdPlan(root(*dir), pos[0], p)
 	case "chain":
 		fs := flag.NewFlagSet("chain", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

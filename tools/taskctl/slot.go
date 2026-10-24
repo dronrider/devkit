@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/works"
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // Планировщик слота (LLD DK-400, решение 3): отвечает на вопрос «что делать
@@ -167,7 +168,7 @@ func waitingTrees(root string, b *Board) []string {
 		if r.Sect != SectBlocked || !taskHasTree(root, r.ID) {
 			continue
 		}
-		_, _, _, _, _, _, blockSuf := splitTitle(r.Title)
+		_, _, _, _, _, _, _, blockSuf := splitTitle(r.Title)
 		reason := blockReason(blockSuf)
 		switch {
 		case strings.HasPrefix(reason, "вопрос:"):
@@ -203,7 +204,7 @@ func mainDrift(root, id string) int {
 	if main == "" {
 		return 0
 	}
-	br, _ := unmergedTaskBranch(root, id)
+	br, _ := trace.UnmergedTaskBranch(root, id)
 	if br == "" {
 		return 0
 	}
@@ -228,7 +229,7 @@ func rowIdleHours(root string, r *Row, times map[int]int64) float64 {
 	if sec, ok := times[r.LineIdx]; ok {
 		h = math.Max(h, timeNow().Sub(time.Unix(sec, 0)).Hours())
 	}
-	if br, _ := unmergedTaskBranch(root, r.ID); br != "" {
+	if br, _ := trace.UnmergedTaskBranch(root, r.ID); br != "" {
 		if sec := branchTipTime(root, br); sec > 0 {
 			h = math.Max(h, timeNow().Sub(time.Unix(sec, 0)).Hours())
 		}
@@ -270,7 +271,7 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 	// Недоступность человека это припаркованный вопрос старше часа без ответа.
 	humanAway := false
 	for _, r := range b.Rows {
-		_, _, _, _, _, _, blockSuf := splitTitle(r.Title)
+		_, _, _, _, _, _, _, blockSuf := splitTitle(r.Title)
 		if r.Sect == SectBlocked && strings.HasPrefix(blockReason(blockSuf), "вопрос:") &&
 			rowIdleHours(root, r, times) > slotAwayGate.Hours() {
 			humanAway = true
@@ -282,7 +283,7 @@ func cmdSlot(root string, limit int, resource string) (string, error) {
 	var picks []slotPick
 	treeFull := false
 	for _, r := range b.Rows {
-		_, _, _, _, _, _, blockSuf := splitTitle(r.Title)
+		_, _, _, _, _, _, _, blockSuf := splitTitle(r.Title)
 		reason := blockReason(blockSuf)
 		unc := r.RParts[2]
 		rate, priced := rates[r.Cost]

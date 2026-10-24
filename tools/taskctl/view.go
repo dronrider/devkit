@@ -36,8 +36,8 @@ func ensureTaskFile(root, id string, row *Row) (bool, error) {
 	} else if !os.IsNotExist(err) {
 		return false, err
 	}
-	base, deps, _, _, _, _, _ := splitTitle(row.Title)
-	title := joinTitle(base, deps, "", "", "", "", "")
+	base, deps, _, _, _, _, _, _ := splitTitle(row.Title)
+	title := joinTitle(base, deps, "", "", "", "", "", "")
 	body := fmt.Sprintf("# %s: %s\n", id, title)
 	if needsDoD(row.Type, row.Title) {
 		body += taskFormSkeleton()
@@ -59,7 +59,7 @@ const dodHeading = "## DoD"
 // признак цели в доске один, и DoD такой строке не положен, он живёт в разделе
 // «Цель» файла цели.
 func goalRow(title string) bool {
-	base, _, _, _, _, _, _ := splitTitle(title)
+	base, _, _, _, _, _, _, _ := splitTitle(title)
 	return strings.HasPrefix(base, "Цель:")
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskform"
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 var linkRe = regexp.MustCompile(`\]\(([^)]+)\)`)
@@ -103,6 +104,7 @@ func cmdLint(root string) ([]string, error) {
 	finds = append(finds, lintFailed(b, bp)...)
 	finds = append(finds, lintArmed(root, b, bp)...)
 	finds = append(finds, lintTails(b, bp)...)
+	finds = append(finds, lintPlanNames(root, b, bp)...)
 	finds = append(finds, lintAcceptance(root, b, bp)...)
 	finds = append(finds, lintFormOrder(root, b)...)
 	finds = append(finds, lintForks(root, b)...)
@@ -134,13 +136,13 @@ func lintAcceptance(root string, b *Board, bp string) []string {
 				bp, r.LineIdx+1, r.ID, kind))
 			continue
 		}
-		barrier, _ := parseAcceptance(text)
+		barrier, _ := trace.Acceptance(text)
 		if barrier == "" {
 			finds = append(finds, fmt.Sprintf("%s:%d: %s вид %s, а в «Приёмка» нет строки «- барьер «<ключ>»:»",
 				bp, r.LineIdx+1, r.ID, kind))
 			continue
 		}
-		if _, known := acceptBarriers[barrier]; !known {
+		if _, known := trace.BarrierWanted[barrier]; !known {
 			finds = append(finds, fmt.Sprintf("%s:%d: %s барьер «%s» не из шести",
 				bp, r.LineIdx+1, r.ID, barrier))
 		}
@@ -224,7 +226,7 @@ func lintFailed(b *Board, bp string) []string {
 	var finds []string
 	for _, key := range []string{SectBacklog, SectCheck} {
 		for _, r := range b.Sects[key].Rows {
-			if _, _, _, _, _, failSuf, _ := splitTitle(r.Title); failSuf != "" {
+			if _, _, _, _, _, _, failSuf, _ := splitTitle(r.Title); failSuf != "" {
 				finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с признаком провала проверки%s: он ставится задаче в работе, снять: taskctl fail %s --clear",
 					bp, r.LineIdx+1, r.ID, sectTitles[key], failSuf, r.ID))
 			}
@@ -272,7 +274,7 @@ func lintDeps(root string, b *Board, arch *Archive, bp string) []string {
 	var finds []string
 	for _, r := range b.Rows {
 		where := fmt.Sprintf("%s:%d: %s", bp, r.LineIdx+1, r.ID)
-		_, deps, _, _, _, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _, _, _, _ := splitTitle(r.Title)
 		seen := map[string]bool{}
 		for _, d := range deps {
 			switch {
@@ -289,7 +291,7 @@ func lintDeps(root string, b *Board, arch *Archive, bp string) []string {
 	ed := newEdges(root, b, arch)
 	for _, key := range []string{SectInProgress, SectCheck, SectBlocked} {
 		for _, r := range b.Sects[key].Rows {
-			_, deps, _, _, _, _, _ := splitTitle(r.Title)
+			_, deps, _, _, _, _, _, _ := splitTitle(r.Title)
 			for _, d := range deps {
 				if ok, why := ed.startable(d); !ok {
 					finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с неснятым ребром на %s (%s), вернуть в Backlog",
@@ -310,7 +312,7 @@ func lintDepCycles(rows []*Row, bp string) []string {
 	line := map[string]int{}
 	for _, r := range rows {
 		line[r.ID] = r.LineIdx
-		_, deps, _, _, _, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _, _, _, _ := splitTitle(r.Title)
 		// Ссылку на себя уже ловит отдельная проверка в lintDeps, вторым
 		// циклом в две строки её дублировать незачем.
 		for _, d := range deps {

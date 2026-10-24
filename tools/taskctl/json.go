@@ -108,7 +108,7 @@ func sufText(suf, label string) string {
 }
 
 func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, sv *stageView) jsonRow {
-	base, deps, debtSuf, armSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
+	base, deps, debtSuf, armSuf, _, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
 	return jsonRow{
 		ID:     r.ID,
 		Title:  strings.TrimSpace(base),

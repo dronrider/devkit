@@ -24,20 +24,6 @@ const (
 // четыре строки из пяти дорого глазами.
 var acceptKinds = []string{acceptAgent, acceptMixed, acceptUser}
 
-// acceptBarriers это закрытый список шести барьеров (LLD DK-292, решение 1) и
-// число обходов у каждого. Столько строк перебора обязано стоять в разделе
-// «Приёмка» против названного барьера: у каждого обхода своя исход, и машинный
-// счёт идёт по числу строк. Сам список обходов переедет в ACCEPTANCE.md задачей
-// DK-299, а здесь только ключи и счёт, нужный воротам move check и lint.
-var acceptBarriers = map[string]int{
-	"глаза":         3,
-	"доступ":        4,
-	"необратимость": 4,
-	"секрет":        3,
-	"согласие":      1,
-	"событие":       3,
-}
-
 // acceptSufRe разбирает суффикс «[приёмка: agent|mixed| user]». Сама регулярка
 // живёт в общем пакете accept, её зовёт и shipctl для совета после выката;
 // здесь на неё ссылается splitTitle, снимая суффикс при разборе заголовка.
@@ -180,22 +166,6 @@ func verificationSection(root, id string) (text string, found, ok bool) {
 	return readTaskSection(root, id, verificationHeading)
 }
 
-// parseAcceptance разбирает текст раздела «Приёмка» на ключ барьера и число
-// строк перебора обходов. Ключ пуст, если строки барьера нет. Перебор считается
-// по подсписку второго уровня после строки барьера: ровно те строки, что
-// относятся к обходам названного барьера.
-func parseAcceptance(text string) (barrier string, bypasses int) {
-	lines := strings.Split(text, "\n")
-	sawBarrier := false
-	for _, ln := range lines {
-		if m := acceptBarrierLineRe.FindStringSubmatch(ln); m != nil {
-			barrier = m[1]
-			sawBarrier = true
-			continue
-		}
-		if sawBarrier && acceptBypassRe.MatchString(ln) {
-			bypasses++
-		}
-	}
-	return barrier, bypasses
-}
+// parseAcceptance, acceptBarrierLineRe и acceptBypassRe переехали в
+// internal/trace: тот же разбор спрашивает не только ворот перевода в Check,
+// но и след слова «сценарий» у этапа плана (LLD DK-972, решение 6).

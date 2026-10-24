@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/checkrun"
@@ -15,6 +14,7 @@ import (
 	"github.com/dronrider/devkit/internal/rehearsal"
 	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskform"
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // branchOfTask повторяет опознание ветки задачи из shipctl
@@ -35,38 +35,6 @@ func gitMainBranch(root string) string {
 		}
 	}
 	return ""
-}
-
-// unmergedTaskBranch ищет живую ветку задачи, у которой есть коммиты, не
-// доехавшие до main. Такая ветка значит, что код задачи лежит только у автора,
-// каким бы ни был статус строки. Вне git и в корп-контуре, где доска отдельно
-// от кода, ветки не найдётся, и рубеж молча пропускает: врать про несделанное
-// слияние хуже, чем его не заметить.
-func unmergedTaskBranch(root, id string) (branch string, ahead int) {
-	main := gitMainBranch(root)
-	if main == "" {
-		return "", 0
-	}
-	out, err := exec.Command("git", "-C", root, "for-each-ref",
-		"--format=%(refname:short)", "refs/heads").Output()
-	if err != nil {
-		return "", 0
-	}
-	for _, b := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if b == "" || b == main || !branchOfTask(b, id) {
-			continue
-		}
-		cnt, err := exec.Command("git", "-C", root, "rev-list", "--count", main+".."+b).Output()
-		if err != nil {
-			continue
-		}
-		n, err := strconv.Atoi(strings.TrimSpace(string(cnt)))
-		if err != nil || n == 0 {
-			continue
-		}
-		return b, n
-	}
-	return "", 0
 }
 
 // scenarioElsewhere отвечает, ведёт ли ссылка строки не в файл задачи, а в
@@ -98,7 +66,7 @@ func checkGate(root string, row *Row) error {
 			return err
 		}
 	}
-	if br, ahead := unmergedTaskBranch(root, id); br != "" {
+	if br, ahead := trace.UnmergedTaskBranch(root, id); br != "" {
 		return fmt.Errorf("%s: ветка %s не слита, впереди main её коммитов %d, а Check значит, что код уже доехал до пользователя: сначала «shipctl merge %s», он и переведёт строку", id, br, ahead, id)
 	}
 	// Не агентский вид требует раздел «Приёмка» с перебором обходов
@@ -146,7 +114,7 @@ func scenarioGate(root string, row *Row, again string, needFile bool) error {
 	if scenarioElsewhere(row.Link, id) {
 		return nil
 	}
-	has, hasFile := hasScenario(root, id)
+	has, hasFile := trace.HasScenario(root, id)
 	rel := "docs/tasks/" + id + ".md"
 	switch {
 	case !hasFile && !needFile:
@@ -203,11 +171,11 @@ func acceptGate(root, id, kind, again string) error {
 	if !found {
 		return fmt.Errorf("%s: вид приёмки %s, а раздела «Приёмка» в %s нет: назвать барьер и перебрать обходы (LLD DK-292, решение 1) и повторить %s", id, kind, rel, again)
 	}
-	barrier, bypasses := parseAcceptance(text)
+	barrier, bypasses := trace.Acceptance(text)
 	if barrier == "" {
 		return fmt.Errorf("%s: в разделе «Приёмка» нет строки «- барьер «<ключ>»:», а вид %s её требует", id, kind)
 	}
-	want, known := acceptBarriers[barrier]
+	want, known := trace.BarrierWanted[barrier]
 	if !known {
 		return fmt.Errorf("%s: барьер «%s» в разделе «Приёмка» не из закрытого списка (глаза, доступ, необратимость, секрет, согласие, событие)", id, barrier)
 	}
@@ -251,7 +219,7 @@ func closeAgentGate(root, id string) error {
 // задачи, куда этапы уносит смена статуса, и в незакрытом пакете этапов, где
 // запись прогона лежит до самого закрытия.
 func closeVerifyGate(root, id string) error {
-	lines, pending := stageSources(root, id)
+	lines, pending := trace.StageSources(root, id)
 	runner, ok := stage.LastVerifyRunner(lines, pending)
 	if !ok {
 		return nil
@@ -342,28 +310,13 @@ func repeatModel(root, id string) string {
 // готового имени остаётся прежняя рамка под руку человека.
 const checkModelUnknown = "<модель>"
 
-// stageSources собирает оба источника записей об этапах: строки раздела «Ход
-// работы» и незакрытый пакет из ~/.devkit/runs. Отсутствие файла или раздела
-// это пустой список, ворота по нему молчат.
-func stageSources(root, id string) ([]string, []stage.Stage) {
-	var lines []string
-	if text, found, ok := readTaskSection(root, id, stageSection); ok && found {
-		lines = strings.Split(text, "\n")
-	}
-	rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), id))
-	if err != nil {
-		return lines, nil
-	}
-	return lines, rec.Stages
-}
-
 // lintUnmerged ловит обратную сторону того же рубежа: строка уже в Check, а
 // ветка с её ID живёт с неслитыми коммитами. Так выглядит перевод в обход
 // ворот (правку доски руками отменить некому) и брошенное на полпути слияние.
 func lintUnmerged(root string, b *Board, bp string) []string {
 	var finds []string
 	for _, r := range b.Sects[SectCheck].Rows {
-		if br, ahead := unmergedTaskBranch(root, r.ID); br != "" {
+		if br, ahead := trace.UnmergedTaskBranch(root, r.ID); br != "" {
 			finds = append(finds, fmt.Sprintf("%s:%d: %s в Check, а ветка %s не слита (коммитов впереди main: %d), слить: shipctl merge %s",
 				bp, r.LineIdx+1, r.ID, br, ahead, r.ID))
 		}

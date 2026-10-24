@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // taskctl kinds это сверка назначения видов приёмки (LLD DK-292, решение 6):
@@ -66,7 +67,7 @@ func cmdKinds(root string) (string, error) {
 		// Суффикс стоит, но не разбирается: у строки вида нет, а не «agent по
 		// умолчанию». Так выглядит опечатка в значении при ручной правке
 		// доски, и ноль строк без вида обязан её видеть.
-		_, _, _, _, acceptSuf, _, _ := splitTitle(title)
+		_, _, _, _, _, acceptSuf, _, _ := splitTitle(title)
 		if acceptSuf == "" && strings.Contains(title, "[приёмка:") {
 			noKind = append(noKind, id)
 			return
@@ -89,7 +90,7 @@ func cmdKinds(root string) (string, error) {
 			continue
 		}
 		if row := b.find(tasks[i].id); row != nil {
-			_, _, _, _, _, failSuf, _ := splitTitle(row.Title)
+			_, _, _, _, _, _, failSuf, _ := splitTitle(row.Title)
 			tasks[i].failed = failSuf != ""
 		}
 	}
@@ -222,7 +223,7 @@ func readKindsTask(root, id, kind string, arched bool) kindsTask {
 		path = filepath.Join(root, "docs", "tasks", "archive", "*", id+".md")
 	}
 	if text, found, ok := readSectionGlob(path, acceptanceHeading); ok && found {
-		t.barrier, _ = parseAcceptance(text)
+		t.barrier, _ = trace.Acceptance(text)
 	}
 	if _, found, ok := readSectionGlob(path, mergedSection); ok {
 		t.deploy = found

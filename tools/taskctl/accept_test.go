@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // TestAcceptOfSuffix разбирает вид из заголовка: без суффикса это агентский
@@ -292,7 +294,7 @@ func TestAddAppendsAcceptancePastFencedQuote(t *testing.T) {
 	if !ok || !found {
 		t.Fatalf("раздел не виден читателю gate: ok=%v found=%v", ok, found)
 	}
-	if bar, _ := parseAcceptance(text); bar != "глаза" {
+	if bar, _ := trace.Acceptance(text); bar != "глаза" {
 		t.Errorf("барьер раздела %q, жду «глаза»", bar)
 	}
 }
@@ -477,9 +479,9 @@ func TestParseAcceptanceCountsByBarrier(t *testing.T) {
 		{"- вид: user\n", "", 0},
 	}
 	for _, c := range cases {
-		bar, n := parseAcceptance(c.text)
+		bar, n := trace.Acceptance(c.text)
 		if bar != c.barrier || n != c.bypasses {
-			t.Errorf("parseAcceptance(%q) = %q,%d; ожидал %q,%d", c.text, bar, n, c.barrier, c.bypasses)
+			t.Errorf("trace.Acceptance(%q) = %q,%d; ожидал %q,%d", c.text, bar, n, c.barrier, c.bypasses)
 		}
 	}
 }
@@ -504,7 +506,7 @@ func TestAcceptanceSectionHonoursFences(t *testing.T) {
 	if !found {
 		t.Fatal("свой раздел «Приёмка» не найден за чужим забором")
 	}
-	bar, n := parseAcceptance(text)
+	bar, n := trace.Acceptance(text)
 	if bar != "согласие" {
 		t.Errorf("барьер из чужого блока принят за свой: %q", bar)
 	}

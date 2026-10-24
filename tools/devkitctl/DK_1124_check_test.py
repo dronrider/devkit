@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Стенд для docs/tasks/DK-1124-check.sh.
+"""Стенд для docs/tasks/archive/2026/DK-1124-check.sh.
 
 Сам сценарий это одноразовая проверка задачи и по правилу раскладки
 (README.md, «Раскладка», DK-139) остаётся в `docs/tasks/`, а python это код,
@@ -40,7 +40,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-SCRIPT = Path(__file__).resolve().parent.parent.parent / "docs" / "tasks" / "DK-1124-check.sh"
+SCRIPT = Path(__file__).resolve().parent.parent.parent / "docs" / "tasks" / "archive" / "2026" / "DK-1124-check.sh"
 
 STAND_TOKEN = "stand-token"
 STAND_COOKIE = "session=stand-session"

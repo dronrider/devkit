@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Стенд для docs/tasks/DK-1390-check.sh.
+"""Стенд для docs/tasks/archive/2026/DK-1390-check.sh.
 
 Сценарий проверки задачи по раскладке (README.md, «Раскладка», DK-139)
 остаётся в `docs/tasks/`, а python это код, не материал, и доктор метит
@@ -21,8 +21,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent.parent / "docs" / "tasks" / "DK-1390-check.sh"
-ROOT = SCRIPT.parent.parent.parent
+SCRIPT = Path(__file__).resolve().parent.parent.parent / "docs" / "tasks" / "archive" / "2026" / "DK-1390-check.sh"
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class CheckScriptTest(unittest.TestCase):

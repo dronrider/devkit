@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Стенд для docs/tasks/DK-1168-spawns.sh.
+"""Стенд для docs/tasks/archive/2026/DK-1168-spawns.sh.
 
 Сам сценарий по правилу раскладки (README.md, «Раскладка», DK-139) остаётся в
 `docs/tasks/`, а python это код, не материал: доктор
@@ -18,7 +18,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent.parent / "docs" / "tasks" / "DK-1168-spawns.sh"
+SCRIPT = Path(__file__).resolve().parent.parent.parent / "docs" / "tasks" / "archive" / "2026" / "DK-1168-spawns.sh"
 
 
 class SpawnCountTest(unittest.TestCase):

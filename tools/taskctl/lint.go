@@ -377,10 +377,10 @@ func lintDepCycles(rows []*Row, bp string) []string {
 // дороже, чем битая ссылка: обе утилиты продолжают работать, но с чужой
 // задачей. Закрытые задачи сюда не попадают, их файлы уезжают в
 // tasks/archive/<год>. Файл-спутник <ID>-* (сценарий проверки, лог) судится
-// по тому же правилу и по своему ID-префиксу: после закрытия спутники уезжают
-// в архив вместе с файлом задачи, и оставшийся в docs/tasks живёт без
-// хозяина. Файл без ID-префикса вида <префикс>-<номер> не сирота и не
-// смотрится вовсе.
+// по своему ID-префиксу строже: хозяин обязан быть живой строкой, потому что
+// после закрытия спутники уезжают в архив вместе с файлом задачи, и
+// оставшийся в docs/tasks живёт без хозяина. Файл без ID-префикса вида
+// <префикс>-<номер> не сирота и не смотрится вовсе.
 func lintOrphanTaskFiles(root string, b *Board, arch *Archive, bp string) []string {
 	entries, err := os.ReadDir(filepath.Join(root, "docs", "tasks"))
 	if err != nil {
@@ -392,24 +392,32 @@ func lintOrphanTaskFiles(root string, b *Board, arch *Archive, bp string) []stri
 			continue
 		}
 		name := e.Name()
-		var id, kind string
 		if strings.HasSuffix(name, ".md") {
 			// Журнал чужого ревью лежит тут же под именем <ID>.review.md, но
 			// файлом задачи не является: судится он по своему ID, а не по
 			// имени с приставкой.
-			id = strings.TrimSuffix(strings.TrimSuffix(name, ".md"), ".review")
-			kind = "файл задачи"
-		} else if m := satelliteIDRe.FindStringSubmatch(name); m != nil {
-			id = m[1]
-			kind = "файл-спутник"
-		} else {
+			id := strings.TrimSuffix(strings.TrimSuffix(name, ".md"), ".review")
+			if b.find(id) != nil || arch.has(id) {
+				continue
+			}
+			finds = append(finds, fmt.Sprintf("%s: файл задачи docs/tasks/%s ни на доске, ни в архиве (ID строки правили задним числом?)",
+				bp, name))
 			continue
 		}
-		if b.find(id) != nil || arch.has(id) {
+		m := satelliteIDRe.FindStringSubmatch(name)
+		if m == nil {
 			continue
 		}
-		finds = append(finds, fmt.Sprintf("%s: %s docs/tasks/%s ни на доске, ни в архиве (ID строки правили задним числом?)",
-			bp, kind, name))
+		if b.find(m[1]) != nil {
+			continue
+		}
+		if arch.has(m[1]) {
+			finds = append(finds, fmt.Sprintf("%s: файл-спутник docs/tasks/%s: спутник закрытой задачи %s лежит среди живых",
+				bp, name, m[1]))
+			continue
+		}
+		finds = append(finds, fmt.Sprintf("%s: файл-спутник docs/tasks/%s: хозяина %s нет ни на доске, ни в архиве",
+			bp, name, m[1]))
 	}
 	return finds
 }

@@ -37,15 +37,16 @@ func TestLintOrphanTaskFile(t *testing.T) {
 }
 
 // TestLintOrphanSatelliteFile: сиротой бывает и файл-спутник без расширения
-// .md (сценарий проверки, лог), чей ID-префикс не найден ни на доске, ни в
-// архиве (DK-167). Спутник живой или архивной задачи сиротой не считается, а
-// имя без ID-префикса не смотрится вовсе.
+// .md (сценарий проверки, лог): хозяина ID-префикса нет ни на доске, ни в
+// архиве, либо хозяин закрыт, а спутник остался среди живых файлов (DK-167).
+// Спутник живой задачи не находка, а имя без ID-префикса не смотрится вовсе.
 func TestLintOrphanSatelliteFile(t *testing.T) {
 	root := setup(t)
 	tasks := filepath.Join(root, "docs", "tasks")
 	for _, name := range []string{
 		"XR-005-check.sh",   // живая XR-005, не находка
 		"XR-0005-check.sh",  // правка ID задним числом
+		"XR-0007-check.sh",  // хозяин в архиве, спутник среди живых
 		"round2.log",        // без ID-префикса
 		"x-0007-helper.log", // строчная буква, не ID доски
 	} {
@@ -53,13 +54,17 @@ func TestLintOrphanSatelliteFile(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	archiveByHand(t, root, "XR-0007")
 	finds, err := cmdLint(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(finds, "\n")
-	if !strings.Contains(joined, "файл-спутник docs/tasks/XR-0005-check.sh ни на доске, ни в архиве") {
-		t.Fatalf("осиротевший спутник не найден или назван не спутником: %v", finds)
+	if !strings.Contains(joined, "файл-спутник docs/tasks/XR-0005-check.sh: хозяина XR-0005 нет ни на доске, ни в архиве") {
+		t.Fatalf("осиротевший спутник не найден или назван не хозяином: %v", finds)
+	}
+	if !strings.Contains(joined, "файл-спутник docs/tasks/XR-0007-check.sh: спутник закрытой задачи XR-0007 лежит среди живых") {
+		t.Fatalf("спутник закрытой задачи среди живых не найден: %v", finds)
 	}
 	if strings.Contains(joined, "XR-005-check.sh") || strings.Contains(joined, "round2.log") ||
 		strings.Contains(joined, "x-0007-helper.log") {

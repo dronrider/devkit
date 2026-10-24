@@ -11,7 +11,7 @@
 # нарочно: с ним обход сужается до одного дома харнеса, и сток-дом со
 # синтетическим потоком выпадает из разбора.
 set -eu
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../../../../" && pwd)
 PROJ="$HOME/ckproj"
 JOURNAL="$HOME/.devkit/turns.log"
 

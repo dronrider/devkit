@@ -15,7 +15,7 @@
 # тест глушит настоящий прогон, настоящий HOME и держит потолок HTTP-клиента
 # коротким, а логику порога и разбора конфига гоняет по-настоящему.
 set -eu
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../../../../" && pwd)
 LIMIT=${1:-5}
 HOME_DIR=${DEVKIT_HOME:-$HOME}
 CFG="$HOME_DIR/.devkit/dashboard.local"
@@ -39,7 +39,7 @@ cookies=$(mktemp)
 trap 'rm -f "$cookies"' EXIT
 
 # curl упирается в разрешения Bash харнесса агента (разбор в
-# docs/tasks/DK-1124.md, «Ход работы»): любой вызов, вплоть до
+# docs/tasks/archive/2026/DK-1124.md, «Ход работы»): любой вызов, вплоть до
 # curl --version без байта по сети, отбит списком разрешений на любой
 # машине агента. python3 в контуре разрешён и есть везде, поэтому HTTP-часть
 # идёт через urllib.request и http.cookiejar стандартной библиотеки, без

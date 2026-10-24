@@ -41,7 +41,7 @@ max = "fable"
 bin = "/opt/claude"
 EOF
 cp "$SRC/docs/TASKS.md" "$W/proj/docs/TASKS.md"
-cp "$SRC/docs/tasks/DK-177.md" "$W/proj/docs/tasks/DK-177.md"
+cp "$SRC/docs/tasks/archive/2026/DK-177.md" "$W/proj/docs/tasks/DK-177.md"
 DEVKIT_HOME="$W/devkit"
 export DEVKIT_HOME
 DEVKIT_HARNESS=""

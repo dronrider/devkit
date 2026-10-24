@@ -10696,6 +10696,13 @@ function ringPlan(box, plan) {
   });
 }
 
+// Имя шаблона для печати: у собранного плана это «шаблон <имя>», а план из
+// одних слов агента честно называется «без шаблона».
+function planTpl(tpl) {
+  if (!tpl) return "";
+  return tpl === "без шаблона" ? tpl : "шаблон " + tpl;
+}
+
 // Список плана: галочка у сделанного, стрелка у идущего, пусто у ждущего.
 // Идущий пункт назван формой «делаю» (activeForm), как его пишет сам агент.
 function planList(plan) {
@@ -10713,6 +10720,12 @@ function planList(plan) {
     if (it.src === "sub") {
       row.append(withTip(el("span", "psub", "субагент"),
         "пункт розданной работы: боковой журнал вызова или план самого субагента, а не план сессии"));
+    }
+    // Этап со следом-словом помечен: деления кольца мерят его тем же числом,
+    // а закрывает его слово агента, и читателю кольца стоит это видеть заранее.
+    if (it.trace === "слово") {
+      row.append(withTip(el("span", "psub", "слово"),
+        "этап без машинного следа: закрывается словом агента, а не проверкой"));
     }
     box.append(row);
   }
@@ -10942,7 +10955,11 @@ function fillPop(pop, project, p) {
   pop.replaceChildren();
   // План сессии стоит первым: деления кольца это он, и без списка они немые.
   const plan = (p && p.plan) || [];
-  if (plan.length) pop.append(planList(plan));
+  if (plan.length) {
+    const tpl = planTpl(p && p.plan_template);
+    if (tpl) pop.append(el("div", "prow pempty", tpl));
+    pop.append(planList(plan));
+  }
   const list = (p && p.agents) || [];
   const now = Date.now();
   if (!list.length) {
@@ -11255,7 +11272,8 @@ function wireTaskPlan(project, id, page) {
     card.card.hidden = !plan.length;
     if (!plan.length) return;
     const who = (p.own && p.own.name) || (p.agents || []).map((a) => a.name)[0] || "";
-    card.sub.textContent = who ? "сессия " + who : "";
+    card.sub.textContent = [planTpl(p.plan_template), who ? "сессия " + who : ""]
+      .filter(Boolean).join(", ");
     card.body.replaceChildren(planList(plan));
   };
   const load = async () => {

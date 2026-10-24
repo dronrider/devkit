@@ -2993,8 +2993,9 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"session": sid, "head": info, "total": total, "items": items, "start": start}
 	// План сессии едет вместе с лентой: экран задачи показывает его блоком, а
 	// считать его на клиенте значило бы второй разбор транскрипта.
-	if plan := planOf(s.home(), sid, s.sessionTmux(sid), path, s.now()); plan != nil {
+	if plan, tpl := planOf(s.home(), sid, s.sessionTmux(sid), path, s.now()); plan != nil {
 		resp["plan"] = plan
+		resp["plan_template"] = tpl
 	}
 	if total == 0 {
 		resp["note"] = emptyTranscriptNote
@@ -3123,7 +3124,8 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 			// каталоге не смотрятся вовсе.
 			if now := planStamp(s.home(), sid, tmux); now != planAt {
 				planAt = now
-				sendPlan(w, f, planOf(s.home(), sid, tmux, path, s.now()))
+				plan, _ := planOf(s.home(), sid, tmux, path, s.now())
+				sendPlan(w, f, plan)
 			}
 			// Новый субагент заводит свой файл, и каталог журналов меняется:
 			// по этой метке набор и пересматривается, без чтения мета-файлов
@@ -3211,7 +3213,8 @@ func (s *server) streamSession(w http.ResponseWriter, r *http.Request, sid, path
 			// не ленту, а блок плана и кольцо, поэтому в поток реплик его
 			// класть нечем.
 			if todo, _ := sessionPlan(raw); todo != nil {
-				sendPlan(w, f, planOf(s.home(), sid, tmux, path, s.now()))
+				plan, _ := planOf(s.home(), sid, tmux, path, s.now())
+				sendPlan(w, f, plan)
 			}
 		}
 	}
@@ -3617,6 +3620,10 @@ type planItem struct {
 	Text   string `json:"text"`
 	State  string `json:"state"`
 	Active string `json:"active,omitempty"`
+	// Trace это слово следа пункта плана, собранного из шаблона: «слово»
+	// значит этап на слове агента, и список помечает его честной надписью
+	// (LLD DK-972, решение 6). Пусто у пунктов, которых шаблон не касался.
+	Trace string `json:"trace,omitempty"`
 	// Src называет источник пункта, когда это не слова агента: sub значит, что
 	// пункт собран по боковому журналу субагента, а не написан планом. Пусто у
 	// пунктов самого плана. Без этого человек, сверяющий кольцо с файлом
@@ -3836,7 +3843,7 @@ func subPlans(home, sid string, subs []subWork, now time.Time) []planItem {
 			if seen[base] {
 				continue
 			}
-			plan, at, _ := readPlanFile(file)
+			plan, _, at, _ := readPlanFile(file)
 			if plan == nil {
 				continue
 			}
@@ -3874,12 +3881,13 @@ func subPlans(home, sid string, subs []subWork, now time.Time) []planItem {
 }
 
 // planFileItem это пункт плана, как его пишет агент. Основная пара это text и
-// state, а what, title и status держатся потому, что живые планы пишутся и так:
-// в ~/.devkit/plans текст лежит в what у 59 пунктов и в title у 8, состояние в
-// status у 15. Пункт с текстом в чужом поле раньше оседал в кольце пустотой.
+// state, у пункта из шаблона есть ещё след (LLD DK-972, решение 6): этап на
+// слове агента помечается в списке честной надписью, а не выглядит
+// проверяемым.
 type planFileItem struct {
 	Text  string `json:"text"`
 	State string `json:"state"`
+	Trace string `json:"trace,omitempty"`
 }
 
 // mark это состояние пункта, сведённое к трём известным кольцу. Второе
@@ -3898,35 +3906,52 @@ func (it planFileItem) mark() (string, bool) {
 	return "", false
 }
 
-// planFileItems достаёт пункты из содержимого файла. Вид у плана один, массив
-// пунктов верхнего уровня, и держит его команда agentctl plan (DK-613): до неё
-// каждая сессия собирала JSON руками, и читателю приходилось терпеть ещё и
-// объект с полем stages, steps или items. Второе возвращаемое значение
+// planFileItems достаёт пункты и шапку из содержимого файла. Файл с шапкой
+// называет шаблон, из которого план собран (DK-1143), файл прежнего вида это
+// массив пунктов верхнего уровня, и оба читаются. Второе возвращаемое значение
 // говорит, разобрался ли файл вообще: пустой план это не то же самое, что план
 // нечитаемый.
-func planFileItems(data []byte) ([]planFileItem, bool) {
+func planFileItems(data []byte) ([]planFileItem, string, bool) {
 	var arr []planFileItem
-	if json.Unmarshal(data, &arr) != nil {
-		return nil, false
+	if json.Unmarshal(data, &arr) == nil {
+		return arr, "", true
 	}
-	return arr, true
+	// Объект читается как план, когда несёт пункты либо шапку: посторонние
+	// объекты прежних сессий остаются жалобой на разбор, как и были.
+	var head struct {
+		Template string         `json:"template"`
+		Items    []planFileItem `json:"items"`
+	}
+	var probe map[string]json.RawMessage
+	if json.Unmarshal(data, &probe) != nil {
+		return nil, "", false
+	}
+	_, hasItems := probe["items"]
+	_, hasTpl := probe["template"]
+	if !hasItems && !hasTpl {
+		return nil, "", false
+	}
+	if json.Unmarshal(data, &head) != nil {
+		return nil, "", false
+	}
+	return head.Items, head.Template, true
 }
 
 // readPlanFile читает план сессии из файла. Третье значение это жалоба: файл
 // лежит, а плана из него не вышло. Раньше такой случай возвращался как «плана
 // нет», и ошибка разбора была неотличима от штатной работы.
-func readPlanFile(path string) ([]planItem, time.Time, bool) {
+func readPlanFile(path string) ([]planItem, string, time.Time, bool) {
 	fi, err := os.Stat(path)
 	if err != nil {
-		return nil, time.Time{}, false
+		return nil, "", time.Time{}, false
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, time.Time{}, false
+		return nil, "", time.Time{}, false
 	}
-	raw, ok := planFileItems(data)
+	raw, tpl, ok := planFileItems(data)
 	if !ok {
-		return nil, time.Time{}, true
+		return nil, "", time.Time{}, true
 	}
 	out := make([]planItem, 0, len(raw))
 	for _, it := range raw {
@@ -3939,16 +3964,16 @@ func readPlanFile(path string) ([]planItem, time.Time, bool) {
 			// Чужое состояние это жалоба на весь файл, а не на один пункт:
 			// план пишет команда agentctl plan, и такой файл правили руками
 			// либо он остался от прежнего формата.
-			return nil, time.Time{}, true
+			return nil, "", time.Time{}, true
 		}
-		out = append(out, planItem{Text: truncate(text, 200), State: state})
+		out = append(out, planItem{Text: truncate(text, 200), State: state, Trace: it.Trace})
 	}
 	if len(out) == 0 {
 		// Пустой список пунктов это пустой план, а список, из которого не
 		// вышло ни одного пункта, это всё та же нечитаемая запись.
-		return nil, time.Time{}, len(raw) > 0
+		return nil, "", time.Time{}, len(raw) > 0
 	}
-	return out, fi.ModTime(), false
+	return out, tpl, fi.ModTime(), false
 }
 
 // subDoneLimit это потолок закрытых работ из журналов: у сессии, которая
@@ -4262,9 +4287,13 @@ func withSubWorks(plan []planItem, subs []subWork) []planItem {
 // вовсе, и файл там единственная дорога, а где инструмент работает, прежний
 // способ остаётся живым). Третий это машинный след, и он не спорит со словами,
 // а дополняет их: работа, которую агент раздал и не записал, всё равно видна.
-func planOf(home, sid, tmux, path string, now time.Time) []planItem {
+// Второе возвращаемое значение это шаблон из шапки файла плана: кольцо и блок
+// «План агента» печатают его рядом с пунктами, «без шаблона» виден там же
+// (DK-1143). Пустая строка значит план из слов агента, шаблона у него нет.
+func planOf(home, sid, tmux, path string, now time.Time) ([]planItem, string) {
 	var filePlan []planItem
 	var fileAt time.Time
+	var fileTpl string
 	// Имя файла, который лежит на месте, но планом не читается.
 	var badFile string
 	// Начало сессии берётся у её же журнала первой записью: по нему запасной
@@ -4279,7 +4308,7 @@ func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 			continue
 		}
 		path := planPath(dir, sid)
-		plan, at, bad := readPlanFile(path)
+		plan, atTpl, at, bad := readPlanFile(path)
 		if bad {
 			badFile = path
 		}
@@ -4294,13 +4323,13 @@ func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 		// написать её план было некому. Файл по sid этой проверки не просит,
 		// имя сессии не переиспользуется.
 		if plan == nil && tmux != "" {
-			own, ownAt, _ := readPlanFile(planPath(dir, tmux))
+			own, ownTpl, ownAt, _ := readPlanFile(planPath(dir, tmux))
 			if own != nil && (born.IsZero() || !ownAt.Before(born)) {
-				plan, at = own, ownAt
+				plan, atTpl, at = own, ownTpl, ownAt
 			}
 		}
 		if plan != nil && at.After(fileAt) {
-			filePlan, fileAt = plan, at
+			filePlan, fileAt, fileTpl = plan, at, atTpl
 		}
 	}
 	// Транскрипт разбирается один раз на оба вопроса: и про план из TodoWrite,
@@ -4332,7 +4361,13 @@ func planOf(home, sid, tmux, path string, now time.Time) []planItem {
 	if own := subPlans(home, sid, subs, now); len(own) > 0 {
 		out = append(append([]planItem{}, out...), own...)
 	}
-	return planOrdered(out)
+	// Шаблон называет файл, победивший в выборке: слова транскрипта шаблона не
+	// знают, и молчание тут честнее выдуманного имени.
+	tpl := ""
+	if said != nil && filePlan != nil {
+		tpl = fileTpl
+	}
+	return planOrdered(out), tpl
 }
 
 // planRank это место состояния в списке: сделанное сверху, идущее следом,

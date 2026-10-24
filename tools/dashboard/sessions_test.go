@@ -2114,7 +2114,7 @@ func TestPlanTakesWorksFromSubLogs(t *testing.T) {
 	}
 
 	// Файла плана нет вовсе, и это не повод показывать пустоту.
-	plan := planOf(e.home, "bbb-2", "", path, now)
+	plan, _ := planOf(e.home, "bbb-2", "", path, now)
 	if len(plan) != 4 {
 		t.Fatalf("без файла плана работ из журналов %d, ждал четыре: %+v", len(plan), plan)
 	}
@@ -2147,7 +2147,7 @@ func TestPlanTakesWorksFromSubLogs(t *testing.T) {
 	if err := os.WriteFile(file, []byte(`[{"text":"первая ходка","state":"pending"}]`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	plan = planOf(e.home, "bbb-2", "", path, now)
+	plan, _ = planOf(e.home, "bbb-2", "", path, now)
 	if len(plan) != 4 {
 		t.Fatalf("работ в кольце %d, ждал четыре (пункт плана и три работы мимо него): %+v", len(plan), plan)
 	}
@@ -2206,7 +2206,8 @@ func TestSubWorkLabelFromOrder(t *testing.T) {
 	}
 
 	texts := []string{}
-	for _, it := range planOf(e.home, "bbb-2", "", path, now) {
+	planItems, _ := planOf(e.home, "bbb-2", "", path, now)
+	for _, it := range planItems {
 		texts = append(texts, it.Text)
 	}
 	joined := strings.Join(texts, " | ")
@@ -2443,7 +2444,7 @@ func TestPlanKeepsToItsOwnSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 25, 15, 0, 0, 0, time.Local)
-	plan := planOf(home, "aaa-своя", "chat-семь", mine, now)
+	plan, _ := planOf(home, "aaa-своя", "chat-семь", mine, now)
 	for _, it := range plan {
 		if strings.Contains(it.Text, "Ревью, слияние") {
 			t.Fatalf("в кольцо своей сессии попал пункт чужой: %+v", plan)
@@ -2458,7 +2459,8 @@ func TestPlanKeepsToItsOwnSession(t *testing.T) {
 	if err := os.Remove(planPath(home, "aaa-своя")); err != nil {
 		t.Fatal(err)
 	}
-	for _, it := range planOf(home, "aaa-своя", "chat-семь", mine, now) {
+	planItems, _ := planOf(home, "aaa-своя", "chat-семь", mine, now)
+	for _, it := range planItems {
 		if strings.Contains(it.Text, "Ревью, слияние") {
 			t.Fatalf("чужой план по имени tmux достался сессии: %+v", it)
 		}
@@ -2473,7 +2475,7 @@ func TestPlanKeepsToItsOwnSession(t *testing.T) {
 	if err := os.Chtimes(stale, fresh, fresh); err != nil {
 		t.Fatal(err)
 	}
-	got := planOf(home, "aaa-своя", "chat-семь", mine, now)
+	got, _ := planOf(home, "aaa-своя", "chat-семь", mine, now)
 	if len(got) == 0 || got[0].Text != "Своя работа" {
 		t.Fatalf("свой план по имени tmux потерялся: %+v", got)
 	}
@@ -2511,7 +2513,8 @@ func TestPlanOrderedByState(t *testing.T) {
 
 	now := time.Date(2026, 8, 25, 15, 0, 0, 0, time.UTC)
 	var got []string
-	for _, it := range planOf(home, "ppp-порядок", "", mine, now) {
+	planItems, _ := planOf(home, "ppp-порядок", "", mine, now)
+	for _, it := range planItems {
 		got = append(got, it.Text+"/"+it.State)
 	}
 	want := []string{
@@ -2582,7 +2585,7 @@ func TestPlanFileShape(t *testing.T) {
 		if err := os.WriteFile(path, []byte(c.body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		got, at, bad := readPlanFile(path)
+		got, _, at, bad := readPlanFile(path)
 		if bad != c.bad {
 			t.Errorf("%s: жалоба разбора %v, ждали %v", c.name, bad, c.bad)
 		}
@@ -2620,11 +2623,11 @@ func TestPlanFileTellsAboutBrokenFile(t *testing.T) {
 	if err := os.WriteFile(broken, []byte(`{"task":"DK-397","scope":["static/app.js"]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, bad := readPlanFile(broken); !bad {
+	if _, _, _, bad := readPlanFile(broken); !bad {
 		t.Fatal("нечитаемый файл плана прошёл как отсутствие плана")
 	}
 	now := time.Date(2026, 8, 29, 15, 0, 0, 0, time.Local)
-	got := planOf(home, sid, "", path, now)
+	got, _ := planOf(home, sid, "", path, now)
 	hit := false
 	for _, it := range got {
 		if it.Src == planSrcErr && strings.Contains(it.Text, filepath.Base(broken)) {
@@ -2639,7 +2642,8 @@ func TestPlanFileTellsAboutBrokenFile(t *testing.T) {
 	if err := os.Remove(broken); err != nil {
 		t.Fatal(err)
 	}
-	for _, it := range planOf(home, sid, "", path, now) {
+	planItems, _ := planOf(home, sid, "", path, now)
+	for _, it := range planItems {
 		if it.Src == planSrcErr {
 			t.Fatalf("жалоба на разбор у сессии без файла плана: %+v", it)
 		}
@@ -2681,7 +2685,8 @@ func TestSubWorkEndedClosesTheWork(t *testing.T) {
 	}
 
 	states := map[string]string{}
-	for _, it := range planOf(e.home, "bbb-2", "", path, now) {
+	planItems, _ := planOf(e.home, "bbb-2", "", path, now)
+	for _, it := range planItems {
 		states[strings.SplitN(it.Text, ",", 2)[0]] = it.State
 	}
 	if states["DK-581"] != "in_progress" {
@@ -3139,7 +3144,7 @@ func TestPlanShowsEachSubagentPlan(t *testing.T) {
 	write(sid+"-submit.json", `[{"text":"Чужая запись","state":"pending"}]`)
 
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.Local)
-	plan := planOf(home, sid, "", path, now)
+	plan, _ := planOf(home, sid, "", path, now)
 	seen := map[string]planItem{}
 	for _, it := range plan {
 		seen[it.Text] = it
@@ -3236,7 +3241,7 @@ func TestPlanFoldsClosedSubagentPlan(t *testing.T) {
 	// План, чьей работы в кольце нет вовсе: журнала под него не осталось.
 	write(sid+"-sub-забытый.json", `[{"text":"Разбор","state":"pending"}]`, now.Add(-5*time.Hour))
 
-	plan := planOf(home, sid, "", path, now)
+	plan, _ := planOf(home, sid, "", path, now)
 	seen := map[string]planItem{}
 	for _, it := range plan {
 		seen[it.Text] = it
@@ -3278,7 +3283,7 @@ func TestPlanFoldsClosedSubagentPlan(t *testing.T) {
 	// закрытым планом диспетчера и вернувшимися работами кольцо доходит до
 	// полного круга.
 	later := now.Add(time.Hour)
-	done := planOf(home, sid, "", path, later)
+	done, _ := planOf(home, sid, "", path, later)
 	if len(done) == 0 {
 		t.Fatal("кольцо опустело")
 	}
@@ -3336,7 +3341,7 @@ func TestPlanOwnerSplitsOverlappingSubWorks(t *testing.T) {
 	write(sid+"-sub-поздняя.json",
 		`[{"text":"Шаг","state":"in_progress"}]`, now.Add(-time.Minute))
 
-	plan := planOf(home, sid, "", path, now)
+	plan, _ := planOf(home, sid, "", path, now)
 	seen := map[string]planItem{}
 	for _, it := range plan {
 		seen[it.Text] = it

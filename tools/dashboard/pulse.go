@@ -185,6 +185,10 @@ type Pulse struct {
 	// написал сам агент. По ним кольцо и рисует деления, а подсказка список.
 	// Плана нет это обычный случай: сессия его не заводила.
 	Plan []planItem `json:"plan,omitempty"`
+	// PlanTemplate это имя шаблона из шапки файла плана: кольцо и блок «План
+	// агента» печатают его рядом с пунктами, «без шаблона» виден там же
+	// (LLD DK-972, решение 4). Пусто у плана из одних слов агента.
+	PlanTemplate string `json:"plan_template,omitempty"`
 	// OwnWait это ожидание самого открытого разговора: вопрос, адресованный
 	// его сессии, либо парковка задачи, за которую он отвечает.
 	OwnWait *Waiting `json:"own_wait,omitempty"`
@@ -629,7 +633,7 @@ func (s *server) handlePulse(w http.ResponseWriter, r *http.Request) {
 			// кольцо: у соседнего разговора задачи план свой, и смешанные они
 			// читались бы как один список.
 			if p, ok := paths[e.ID]; ok {
-				out.Plan = planOf(s.cfg.Home, e.ID, e.Tmux, p, s.now())
+				out.Plan, out.PlanTemplate = planOf(s.cfg.Home, e.ID, e.Tmux, p, s.now())
 			}
 			if pulseTesting(step.Tool + " " + step.About) {
 				testing = true

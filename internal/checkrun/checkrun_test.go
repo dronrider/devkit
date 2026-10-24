@@ -7,6 +7,64 @@ import (
 	"testing"
 )
 
+func TestChooseAvailableChangesWholeLadderWithoutLoweringTier(t *testing.T) {
+	ladders := []Ladder{
+		{Name: "glm", Steps: []Step{{"base", "glm-5.3"}, {"pro", "glm-5.3"}, {"max", "glm-5.3"}}},
+		{Name: "router", Steps: []Step{{"base", "z-ai/glm-5.3"}, {"pro", "anthropic/sonnet"}, {"max", "anthropic/opus"}}},
+	}
+	for _, tier := range []string{"base", "pro"} {
+		ch := ChooseAvailable(tier, ladders, "glm-5.3", true)
+		if ch.Refusal != "" || ch.Harness != "router" || ch.Tier != "pro" || ch.Model != "anthropic/sonnet" {
+			t.Fatalf("%s: %+v", tier, ch)
+		}
+	}
+	ch := ChooseAvailable("max", ladders, "glm-5.3", true)
+	if ch.Tier != "max" || ch.Model != "anthropic/opus" {
+		t.Fatalf("ярус понижен: %+v", ch)
+	}
+	ladders[1].Steps = []Step{{"base", "sonnet"}, {"pro", "z-ai/glm-5.3"}, {"max", "z-ai/glm-5.3"}}
+	if ch := ChooseAvailable("pro", ladders, "glm-5.3", true); ch.Refusal == "" {
+		t.Fatalf("провайдерный префикс выдал ту же модель за независимую: %+v", ch)
+	}
+}
+
+func TestChooseProviderPrefixDoesNotMakeAuthorIndependent(t *testing.T) {
+	ch := Choose("base", []Step{{"base", "z-ai/glm-5.3"}, {"pro", "sonnet"}}, "glm-5.3", true)
+	if ch.Model != "sonnet" || !ch.Stepped {
+		t.Fatalf("провайдерный префикс выдал автора за независимого проверяющего: %+v", ch)
+	}
+}
+
+func TestChooseAvailableKeepsPrimaryWhenItCanChoose(t *testing.T) {
+	ladders := []Ladder{{Name: "first", Steps: ladder}, {Name: "second", Steps: []Step{{"base", "other"}}}}
+	ch := ChooseAvailable("base", ladders, "sonnet", true)
+	if ch.Harness != "first" || ch.Tier != "pro" {
+		t.Fatalf("пропущена своя ступень: %+v", ch)
+	}
+	for _, known := range []bool{false, true} {
+		ch := ChooseAvailable("base", ladders, "other", known)
+		if ch.Harness != "first" || ch.Tier != "base" {
+			t.Fatalf("ненужная смена: %+v", ch)
+		}
+	}
+}
+
+func TestParseLaddersUsesEnabledCurrentHarnessBeforeDefault(t *testing.T) {
+	raw := []byte(`{"harnesses":[{"name":"off","enabled":false,"default":true},
+	{"name":"default","enabled":true,"default":true},
+	{"name":"current","enabled":true}]}`)
+	for _, preferred := range []string{"current", "off", ""} {
+		got, note := ParseLadders(raw, preferred)
+		want := "default"
+		if preferred == "current" {
+			want = "current"
+		}
+		if note != "" || len(got) != 2 || got[0].Name != want {
+			t.Fatalf("%s: %+v, %s", preferred, got, note)
+		}
+	}
+}
+
 // Лестница подписки как на машине: снизу вверх, у каждой ступени своя модель.
 var ladder = []Step{{"mini", "haiku"}, {"base", "sonnet"}, {"pro", "opus"}, {"max", "fable"}}
 
@@ -218,9 +276,11 @@ type fake struct {
 	planned []Plan
 }
 
-func (f *fake) Ready(string) (string, bool)   { return f.ready, f.failed }
-func (f *fake) Tier(string) (string, string)  { return f.tier, "ярус " + f.tier + " по вердикту стенда" }
-func (f *fake) Ladder() []Step                { return f.ladder }
+func (f *fake) Ready(string) (string, bool) { return f.ready, f.failed }
+func (f *fake) Tier(string) (string, string) {
+	return f.tier, "ярус " + f.tier + " по вердикту стенда"
+}
+func (f *fake) Ladder() []Step { return f.ladder }
 func (f *fake) Raise(p Plan) Report {
 	f.planned = append(f.planned, p)
 	return Report{Line: p.Raised("стендом"), Raised: true}
@@ -281,5 +341,40 @@ func TestRunOutcomes(t *testing.T) {
 	reps = Run(&fake{}, root, rows, nil)
 	if Failed(reps) || !strings.Contains(reps[0].Line, NoNeed) {
 		t.Fatalf("прогнанная строка: %+v", reps)
+	}
+}
+
+func TestChooseAvailableUsesActualEnabledOwnerAndPartialLadder(t *testing.T) {
+	raw := []byte(`{"harnesses":[
+	{"name":"glm","enabled":true,"default":true,"models":[{"tier":"pro","model":"glm"},{"tier":"max","model":"glm"}]},
+	{"name":"route","enabled":true,"models":[{"tier":"base","model":"too-small"},{"tier":"max","model":"sonnet","via":"owner"}]},
+	{"name":"owner","enabled":true,"models":[]}]}`)
+	ladders, note := ParseLadders(raw, "glm")
+	if note != "" {
+		t.Fatal(note)
+	}
+	ch := ChooseAvailable("pro", ladders, "glm", true)
+	if ch.Harness != "owner" || ch.Tier != "max" || ch.Model != "sonnet" || ch.Refusal != "" {
+		t.Fatalf("выбрана неверная подписка или ярус: %+v", ch)
+	}
+	ladders = ladders[:2]
+	if ch := ChooseAvailable("pro", ladders, "glm", true); ch.Refusal == "" {
+		t.Fatalf("выключенный владелец ступени принят: %+v", ch)
+	}
+}
+
+func TestChooseAvailableSearchesIncompletePrimary(t *testing.T) {
+	ladders := []Ladder{
+		{Name: "primary", Steps: []Step{{"pro", "sonnet"}}},
+		{Name: "secondary", Steps: []Step{{"base", "opus"}}},
+	}
+	ch := ChooseAvailable("base", ladders, "glm", true)
+	if ch.Model != "sonnet" || ch.Tier != "pro" || ch.Harness != "primary" {
+		t.Fatalf("пропущен доступный старший ярус: %+v", ch)
+	}
+	ladders[0].Via = map[string]string{"pro": "disabled"}
+	ch = ChooseAvailable("base", ladders, "glm", true)
+	if ch.Model != "opus" || ch.Tier != "base" || ch.Harness != "secondary" {
+		t.Fatalf("пустая основная лестница скрыла доступную подписку: %+v", ch)
 	}
 }

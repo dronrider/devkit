@@ -15,8 +15,9 @@
 // ценой M ведёт тот же base. Когда модель яруса совпала с моделью разработки,
 // ярус берётся ступенью выше по лестнице подписки. Правило «сценарий
 // прогоняет не автор правки» и ворота taskctl close сравнивают имена моделей,
-// и ступень держит их без правки. Отказ остаётся одному случаю: выше по
-// лестнице модели, отличной от автора, нет.
+// и ступень держит их без правки. Если лестница исчерпана, отбор пробует
+// другие включённые лестницы с того же яруса. Отказ остаётся, когда ни одна
+// из них не даёт независимой модели.
 package checkrun
 
 import (
@@ -156,10 +157,18 @@ type Step struct {
 	Model string `json:"model"`
 }
 
+// Ladder это целая включённая лестница; первая в списке штатная для запуска.
+type Ladder struct {
+	Name  string
+	Steps []Step
+	Via   map[string]string
+}
+
 // Choice это исход выбора модели проверяющего. Model пуста, когда лестница
 // яруса не назвала: зовущий решает сам, поднимать ли тогда вовсе.
 type Choice struct {
 	Tier, Model string
+	Harness     string
 	// From это ярус вердикта, когда модель взята ступенью выше.
 	From    string
 	Stepped bool
@@ -184,11 +193,11 @@ func Choose(tier string, ladder []Step, dev string, known bool) Choice {
 		return Choice{Tier: tier}
 	}
 	model := ladder[at].Model
-	if !known || !strings.EqualFold(model, dev) {
+	if !known || !sameModel(model, dev) {
 		return Choice{Tier: tier, Model: model}
 	}
 	for _, s := range ladder[at+1:] {
-		if s.Model != "" && !strings.EqualFold(s.Model, dev) {
+		if s.Model != "" && !sameModel(s.Model, dev) {
 			return Choice{Tier: s.Tier, Model: s.Model, From: tier, Stepped: true}
 		}
 	}
@@ -196,6 +205,69 @@ func Choose(tier string, ladder []Step, dev string, known bool) Choice {
 		"ярусом %s он достался бы модели %s, а она вела разработку, и ступени выше с другой моделью"+
 			" в раскладке машины нет; сценарий прогоняет не автор правки, поднять другой моделью руками"+
 			" либо развести ярусы в раскладке машины", tier, model)}
+}
+
+func sameModel(a, b string) bool {
+	// Имя у маршрутизатора несёт префикс провайдера, но модель та же.
+	name := func(s string) string {
+		s = strings.TrimSpace(s)
+		if at := strings.LastIndex(s, "/"); at >= 0 {
+			s = s[at+1:]
+		}
+		return s
+	}
+	return strings.EqualFold(name(a), name(b))
+}
+
+// ChooseAvailable меняет целую лестницу лишь при отказе независимости.
+// В каждой следующей лестнице поиск начинается с исходного яруса.
+func ChooseAvailable(tier string, ladders []Ladder, dev string, known bool) Choice {
+	if len(ladders) == 0 {
+		return Choose(tier, nil, dev, known)
+	}
+	enabled := map[string]bool{}
+	for _, ladder := range ladders {
+		enabled[ladder.Name] = true
+	}
+	selectFrom := func(tier string, ladder Ladder) Choice {
+		steps := make([]Step, 0, len(ladder.Steps))
+		for _, step := range ladder.Steps {
+			owner := ladder.Via[step.Tier]
+			if owner == "" || enabled[owner] {
+				steps = append(steps, step)
+			}
+		}
+		ch := Choose(tier, steps, dev, known)
+		ch.Harness = ladder.Via[ch.Tier]
+		if ch.Harness == "" {
+			ch.Harness = ladder.Name
+		}
+		return ch
+	}
+	first := selectFrom(tier, ladders[0])
+	if first.Refusal == "" && first.Model != "" {
+		return first
+	}
+	ranks := map[string]int{"mini": 0, "base": 1, "pro": 2, "max": 3}
+	minimum, valid := ranks[tier]
+	if !valid {
+		return first
+	}
+	for _, ladder := range ladders {
+		for _, candidate := range []string{"mini", "base", "pro", "max"} {
+			if ranks[candidate] < minimum {
+				continue
+			}
+			ch := selectFrom(candidate, ladder)
+			if ch.Refusal == "" && ch.Model != "" {
+				if ch.Tier != tier {
+					ch.From, ch.Stepped = tier, true
+				}
+				return ch
+			}
+		}
+	}
+	return first
 }
 
 // ParseTier достаёт ярус из машинных строк вердикта `agentctl pick`.
@@ -238,6 +310,9 @@ type Plan struct {
 // про то, где встала голова.
 func (p Plan) Raised(where string) string {
 	line := fmt.Sprintf("%s: прогон сценария поднят %s, %s", p.Row.ID, where, p.TierWhy)
+	if p.Choice.Harness != "" {
+		line += ", подписка " + p.Choice.Harness
+	}
 	if p.Choice.Stepped {
 		line += fmt.Sprintf(", ярус %s поднят ступенью до %s: модель яруса %s вела разработку",
 			p.Choice.From, p.Choice.Tier, p.Choice.From)
@@ -321,6 +396,9 @@ func one(c Carrier, root string, rows map[string]Row, id string) Report {
 	tier, why := c.Tier(id)
 	dev, known := DevExecutor(root, id)
 	ch := Choose(tier, c.Ladder(), dev, known)
+	if multi, ok := c.(interface{ Ladders() []Ladder }); ok {
+		ch = ChooseAvailable(tier, multi.Ladders(), dev, known)
+	}
 	if ch.Refusal != "" {
 		return Report{ID: id, Line: id + ": " + NotRaised + ", " + ch.Refusal, Failed: true}
 	}
@@ -386,7 +464,11 @@ type harnessView struct {
 		Name    string `json:"name"`
 		Enabled bool   `json:"enabled"`
 		Default bool   `json:"default"`
-		Models  []Step `json:"models"`
+		Models  []struct {
+			Tier  string `json:"tier"`
+			Model string `json:"model"`
+			Via   string `json:"via"`
+		} `json:"models"`
 	} `json:"harnesses"`
 }
 
@@ -403,6 +485,58 @@ func AskLadder() (string, []Step, string) {
 		return "", nil, "agentctl harness --json не ответил: " + err.Error()
 	}
 	return ParseLadder(out)
+}
+
+// AskLadders отдаёт включённые лестницы, начиная с текущей подписки либо default.
+func AskLadders() ([]Ladder, string) {
+	bin, err := exec.LookPath("agentctl")
+	if err != nil {
+		return nil, "agentctl не нашёлся в PATH"
+	}
+	out, err := ask("", bin, "harness", "--json")
+	if err != nil {
+		return nil, "agentctl harness --json не ответил: " + err.Error()
+	}
+	return ParseLadders(out, os.Getenv("DEVKIT_HARNESS"))
+}
+
+// ParseLadders оставляет только enabled; preferred меняет порядок, но не состав.
+func ParseLadders(raw []byte, preferred string) ([]Ladder, string) {
+	var v harnessView
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, "ответ agentctl harness --json не разобрался: " + err.Error()
+	}
+	var out []Ladder
+	primary := ""
+	for _, h := range v.Harnesses {
+		if h.Enabled {
+			ladder := Ladder{Name: h.Name, Via: map[string]string{}}
+			for _, m := range h.Models {
+				ladder.Steps = append(ladder.Steps, Step{Tier: m.Tier, Model: m.Model})
+				ladder.Via[m.Tier] = m.Via
+			}
+			out = append(out, ladder)
+			if h.Default {
+				primary = h.Name
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, "включённых подписок agentctl не назвал"
+	}
+	for _, h := range out {
+		if h.Name == preferred {
+			primary = preferred
+			break
+		}
+	}
+	for i, h := range out {
+		if h.Name == primary {
+			out = append([]Ladder{h}, append(out[:i], out[i+1:]...)...)
+			break
+		}
+	}
+	return out, ""
 }
 
 // ParseLadder разбирает ответ `agentctl harness --json`: подписка по
@@ -429,7 +563,11 @@ func ParseLadder(raw []byte) (string, []Step, string) {
 		return "", nil, "включённых подписок agentctl не назвал"
 	}
 	h := v.Harnesses[pick]
-	return h.Name, h.Models, ""
+	var steps []Step
+	for _, m := range h.Models {
+		steps = append(steps, Step{Tier: m.Tier, Model: m.Model})
+	}
+	return h.Name, steps, ""
 }
 
 // PermsRel это перечень прав машинного контура внутри чекаута devkit.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -83,9 +84,10 @@ func checkRow(row boardRow) checkrun.Row {
 
 // dashCarrier это носитель дашборда: окно tmux task-<ID> с его окружением.
 type dashCarrier struct {
-	s    *server
-	proj *Project
-	own  *Harness
+	s         *server
+	proj      *Project
+	own       *Harness
+	available []Harness
 }
 
 func (c *dashCarrier) Ready(id string) (string, bool) {
@@ -114,9 +116,8 @@ func (c *dashCarrier) Tier(id string) (string, string) {
 	return c.s.pickTier(c.proj.Path, id, roleReview)
 }
 
-// Ladder это лестница подписки по умолчанию. Подписка тут не выбирается:
-// подъём идёт клиентом по умолчанию, как шла бы кнопка запуска без выбора
-// руки, и раскладка спрашивается только про ярусы.
+// Ladder оставляет исходную лестницу носителю с одной подпиской.
+// Полный отбор независимого проверяющего идёт через Ladders.
 func (c *dashCarrier) Ladder() []checkrun.Step {
 	if c.own == nil || !c.own.Default {
 		return nil
@@ -128,10 +129,47 @@ func (c *dashCarrier) Ladder() []checkrun.Step {
 	return out
 }
 
+func (c *dashCarrier) Ladders() []checkrun.Ladder {
+	var out []checkrun.Ladder
+	add := func(h Harness) {
+		var steps []checkrun.Step
+		via := map[string]string{}
+		for _, m := range h.Models {
+			via[m.Tier] = m.Via
+			steps = append(steps, checkrun.Step{Tier: m.Tier, Model: m.Model})
+		}
+		out = append(out, checkrun.Ladder{Name: h.Name, Steps: steps, Via: via})
+	}
+	if c.own != nil {
+		add(*c.own)
+	}
+	for _, h := range c.available {
+		if c.own == nil || h.Name != c.own.Name {
+			add(h)
+		}
+	}
+	return out
+}
+
 func (c *dashCarrier) Raise(p checkrun.Plan) checkrun.Report {
 	id := p.Row.ID
 	sess := "task-" + id
-	res, err := c.s.startTaskSession(c.proj, id, sess, nil, p.Choice.Model, p.Order, p.Again, "проверка", true)
+	var own *Harness
+	if p.Choice.Harness != "" {
+		for i := range c.available {
+			if c.available[i].Name == p.Choice.Harness {
+				own = &c.available[i]
+				break
+			}
+		}
+		if own == nil && c.own != nil && c.own.Name == p.Choice.Harness {
+			own = c.own
+		}
+		if own == nil {
+			return checkrun.Report{Failed: true, Line: id + ": " + checkrun.NotRaised + ", выбранная подписка больше не включена"}
+		}
+	}
+	res, err := c.s.startTaskSession(c.proj, id, sess, own, p.Choice.Model, p.Order, p.Again, "проверка", true)
 	if err != nil {
 		// Занятый замок это живая голова, поднятая мимо дашборда, и поломкой он
 		// не считается, как и живая tmux-сессия в предполёте.
@@ -152,7 +190,15 @@ func (s *server) checkRunsOf(proj *Project, rows map[string]boardRow, ids []stri
 	for id, row := range rows {
 		conv[id] = checkRow(row)
 	}
-	c := &dashCarrier{s: s, proj: proj, own: s.harnesses().byDefault()}
+	view := s.harnesses()
+	own := view.byDefault()
+	for i := range view.Harnesses {
+		if view.Harnesses[i].Name == os.Getenv("DEVKIT_HARNESS") {
+			own = &view.Harnesses[i]
+			break
+		}
+	}
+	c := &dashCarrier{s: s, proj: proj, own: own, available: view.Harnesses}
 	return checkrun.Run(c, proj.Path, conv, ids)
 }
 

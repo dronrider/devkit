@@ -222,6 +222,8 @@ func TestCheckRunOrderNamesDeveloper(t *testing.T) {
 // на прогон, который ворота закрытия всё равно не примут.
 func TestCheckRunRefusesDeveloperModel(t *testing.T) {
 	e, tmuxLog := checkEnv(t, "")
+	writeAgentctlPick(t, e.bin, strings.Replace(harnessTiersFixture,
+		`"name": "втораяtest", "enabled": true`, `"name": "втораяtest", "enabled": false`, 1), "pro")
 	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc+
 		"\n## Ход работы\n\n- Разработка: субагент модель-pro/high по вердикту pick, 2026-09-02 10:00-11:00.\n")
 
@@ -255,6 +257,29 @@ func TestCheckRunStepsUpOverDeveloperModel(t *testing.T) {
 	}
 	if got := readFile(t, tmuxLog); !strings.Contains(got, "модель-pro") {
 		t.Errorf("голова поднята не моделью ступени выше: %s", got)
+	}
+}
+
+func TestCheckRunPassesIndependentHarnessToCarrier(t *testing.T) {
+	e, tmuxLog := checkEnv(t, "")
+	writeScript(t, e.bin, "клиент-2", "exit 0")
+	layout := `{"harnesses":[
+	{"name":"перваяtest","default":true,"enabled":true,"bin":"клиент-1",
+	 "models":[{"tier":"pro","model":"glm-5.3"},{"tier":"max","model":"glm-5.3"}]},
+	{"name":"втораяtest","enabled":true,"bin":"клиент-2",
+	 "models":[{"tier":"base","model":"z-ai/glm-5.3"},{"tier":"pro","model":"sonnet"}]}]}`
+	writeAgentctlPick(t, e.bin, layout, "pro")
+	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc+
+		"\n## Ход работы\n\n- Разработка: субагент glm-5.3/high по вердикту pick, 2026-09-02 10:00-11:00.\n")
+	rep := checkRunOne(t, e, "XR-003")
+	if !rep.Raised || rep.Failed {
+		t.Fatalf("независимый прогон не поднят: %+v", rep)
+	}
+	got := readFile(t, tmuxLog)
+	for _, want := range []string{"--harness 'втораяtest'", "--model sonnet", "DEVKIT_HARNESS='втораяtest'"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("носитель не получил %s: %s", want, got)
+		}
 	}
 }
 

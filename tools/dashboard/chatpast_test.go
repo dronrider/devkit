@@ -24,9 +24,23 @@ func passTalk(text, at string) string {
 }
 
 // passBind это строка реестра про заход, поднятый дашбордом под именем окна.
+// Поводом рождение зовёт себя startup, работы на заходе может не быть.
 func passBind(home, stamp, sid, task, proj, tmux string) string {
+	return passBindWhy(home, stamp, sid, task, proj, tmux, "startup")
+}
+
+// passBindWhy это строка реестра с названным поводом: работы захода пишут
+// команды доски, и по ним лента подписывает роль (DK-871).
+func passBindWhy(home, stamp, sid, task, proj, tmux, why string) string {
 	return stamp + " сессия " + sid + " задача " + task + " проект demo дерево " + proj +
-		" транскрипт " + standTranscript(home, sid) + " источник заказ повод startup tmux " + tmux + "\n"
+		" транскрипт " + standTranscript(home, sid) + " источник заказ повод " + why + " tmux " + tmux + "\n"
+}
+
+// passWork это строка реестра про работу сессии над задачей: поводом служит
+// команда доски, источник работа.
+func passWork(stamp, sid, task, why string) string {
+	return stamp + " сессия " + sid + " задача " + task + " проект demo дерево - транскрипт -" +
+		" источник работа повод " + why + " tmux - панель -\n"
 }
 
 // Три захода одного окна стоят в списке одной строкой: голова это тот заход,
@@ -135,8 +149,12 @@ exit 0`)
 }
 
 // Лента склеенной строки идёт сверху вниз: прошлые заходы стоят перед нынешним,
-// а границы заходов названы разделителем. История задачи читается тут одним
-// разговором, без перехода в соседнюю запись списка.
+// а границы заходов названы разделителем с ролью и этапом (DK-871). Один чат
+// проходит груминг, разработку и ревью, по времени в склеенной ленте роли не
+// различить, и подпись читается из поводов записей реестра: чем заход кончил,
+// тем и подписан. Заходу без записей работы подпись говорит об этом словами.
+// История задачи читается тут одним разговором, без перехода в соседнюю запись
+// списка.
 func TestChatFeedGluesPastPasses(t *testing.T) {
 	e, c := chatEnv(t)
 	writeScript(t, e.bin, "tmux", `case "$1" in
@@ -149,7 +167,9 @@ exit 0`)
 	writeSession(t, e.home, e.proj, "", "cccc-0003", passTalk("этот заход дописывает доку", "2026-09-04T12:00:00.000Z"), base.Add(2*time.Hour))
 	writeBinds(t, e.home,
 		passBind(e.home, "2026-09-04T10:00:00", "aaaa-0001", "XR-4", e.proj, "task-XR-4"),
+		passWork("2026-09-04T10:30:00", "aaaa-0001", "XR-4", "agentctl stage постановка"),
 		passBind(e.home, "2026-09-04T11:00:00", "bbbb-0002", "XR-4", e.proj, "task-XR-4"),
+		passWork("2026-09-04T11:30:00", "bbbb-0002", "XR-4", "agentctl stage разработка"),
 		passBind(e.home, "2026-09-04T12:00:00", "cccc-0003", "XR-4", e.proj, "task-XR-4"))
 
 	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/sessions/cccc-0003", "")
@@ -169,11 +189,11 @@ exit 0`)
 		order = append(order, it.Role+"|"+it.Text)
 	}
 	want := []string{
-		"mark|" + passMarkWord(1, 3, "aaaa-0001"),
+		"mark|" + passMarkWord(1, 3, "aaaa-0001", "груминг: постановка"),
 		"user|первый заход разобрал постановку",
-		"mark|" + passMarkWord(2, 3, "bbbb-0002"),
+		"mark|" + passMarkWord(2, 3, "bbbb-0002", "исполнение: разработка"),
 		"user|второй заход написал тесты",
-		"mark|" + passMarkWord(3, 3, "cccc-0003"),
+		"mark|" + passMarkWord(3, 3, "cccc-0003", "роль неясна"),
 		"user|этот заход дописывает доку",
 	}
 	if strings.Join(order, "\n") != strings.Join(want, "\n") {

@@ -207,19 +207,30 @@ func (s *server) chatPasses(sid string) []chatPass {
 
 // passMarkWord подписывает границу захода в ленте. Заход назван своим ID: по
 // нему разговор открывается отдельно, и человеку видно, что лента склеена, а
-// не перепутана.
-func passMarkWord(n, of int, id string) string {
-	return fmt.Sprintf("заход %d из %d, сессия %s", n, of, id)
+// не перепутана. Рядом стоит роль захода с этапом: один чат проходит груминг,
+// разработку, ревью и проверку, и по времени в склеенной ленте роли не
+// различить (DK-871).
+func passMarkWord(n, of int, id, role string) string {
+	return fmt.Sprintf("заход %d из %d, сессия %s, %s", n, of, id, role)
 }
 
 // passMark это разделитель ленты между заходами. Роль тут та же, что у пометки
 // смены модели: рубеж разговора рисуется чертой, а не пузырём. Ключ устойчивый,
 // как у всякой записи ленты: пагинация назад режет ленту по ключу.
-func passMark(n, of int, id, at string) reply {
+func passMark(n, of int, id, at, role string) reply {
 	return reply{
-		Role: roleMark, Time: at, Text: passMarkWord(n, of, id),
+		Role: roleMark, Time: at, Text: passMarkWord(n, of, id, role),
 		Key: "pass-" + id + ":0",
 	}
+}
+
+// passRole называет слово подписи захода: роль с этапом выводятся из записей
+// реестра этой сессии таблицей «команда -> роль» (DK-871), и заход, поднятый
+// из терминала и панелью, подписывается одинаково, потому что читается один
+// журнал. Роли нет и в журнале, подпись говорит об этом словами.
+func passRole(recs []sessionBind) string {
+	role, stage, known := sessions.RoleStage(recs)
+	return sessions.RoleWord(role, stage, known)
 }
 
 // passKey уводит ключи записей прошлого захода из-под ключей нынешнего. Ключ
@@ -258,6 +269,9 @@ func (s *server) passFeed(projPath, sid string, items []reply, want int, whole b
 	if len(passes) == 0 {
 		return items, true
 	}
+	// Роль захода читается из тех же записей, что и сама склейка: подпись
+	// ложится на стык захода, и берётся одним чтением журнала на всю ленту.
+	binds := s.bindsAll()
 	roots := s.transcriptRoots()
 	parts := make([]passPart, 0, len(passes))
 	all := true
@@ -292,13 +306,13 @@ func (s *server) passFeed(projPath, sid string, items []reply, want int, whole b
 	of := len(parts) + 1
 	out := make([]reply, 0, len(items)+want)
 	for i, part := range parts {
-		out = append(out, passMark(i+1, of, part.id, part.items[0].Time))
+		out = append(out, passMark(i+1, of, part.id, part.items[0].Time, passRole(binds[part.id])))
 		out = append(out, part.items...)
 	}
 	at := ""
 	if len(items) > 0 {
 		at = items[0].Time
 	}
-	out = append(out, passMark(of, of, sid, at))
+	out = append(out, passMark(of, of, sid, at, passRole(binds[sid])))
 	return append(out, items...), all
 }

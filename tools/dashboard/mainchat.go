@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/mainchat"
@@ -19,7 +20,7 @@ import (
 // handleTaskChat разрешает адрес записи в действующее назначение. Пустой chat
 // в ответе значит, что разговора у записи нет: панель показывает состояние и
 // отдельное действие запуска. Отрезки основной ленты едут порядком строк
-// журнала, подписи на их стыках ложатся отдельно (DK-871).
+// журнала с подписями ролей и этапов на стыках (DK-871).
 func (s *server) handleTaskChat(w http.ResponseWriter, r *http.Request) {
 	found, id, _, _, ok := s.taskRowOf(w, r, true)
 	if !ok {
@@ -29,13 +30,72 @@ func (s *server) handleTaskChat(w http.ResponseWriter, r *http.Request) {
 	data := s.mainChatData()
 	recs := mainchat.All(data)[id]
 	resp := map[string]any{"id": id, "project": found.Name, "chat": "",
-		"segments": mainchat.Segments(recs)}
+		"segments": s.mainChatSegments(recs)}
 	if n := len(recs); n > 0 {
 		resp["chat"] = recs[n-1].Chat
 		resp["source"] = recs[n-1].Source
 		resp["since"] = recs[n-1].Time
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// mainChatSegment это отрезок основной ленты с подписью роли и этапа. Отрезок
+// даёт журнал назначений, а подпись выводится из записей реестра сессий
+// носителя за время отрезка (DK-871): одной историей задача проходит груминг,
+// разработку, ревью и проверку, и отрезки говорят, где какая шла.
+type mainChatSegment struct {
+	mainchat.Segment
+	Role  string `json:"role"`
+	Stage string `json:"stage,omitempty"`
+}
+
+// tmuxChatKey это приставка ключа носителя-конвейера в журнале назначений.
+const tmuxChatKey = "tmux-"
+
+// mainChatSegments подписывает отрезки записи ролями и этапами. Носитель
+// сессия зовётся своим ID, конвейер ключом tmux-<имя окна>, и записи реестра
+// собираются по этой паре за время отрезка: свежая известная роль выигрывает,
+// роли нет и по источнику не выводится, подписью становится неизвестная. У
+// оформления черновика роль своя: отрезок это бывший свободный разговор,
+// ставший основным (DK-1253).
+func (s *server) mainChatSegments(recs []mainchat.Bind) []mainChatSegment {
+	segs := mainchat.Segments(recs)
+	if len(segs) == 0 {
+		return nil
+	}
+	all := s.bindsAll()
+	out := make([]mainChatSegment, 0, len(segs))
+	for _, seg := range segs {
+		var pool []sessionBind
+		if name, ok := strings.CutPrefix(seg.Chat, tmuxChatKey); ok {
+			for _, rs := range all {
+				last := sessions.Last(rs)
+				if strings.SplitN(last.Tmux, ":", 2)[0] == name {
+					pool = append(pool, rs...)
+				}
+			}
+		} else {
+			pool = all[seg.Chat]
+		}
+		var timed []sessionBind
+		for _, r := range pool {
+			if r.Time < seg.Since || (seg.Until != "" && r.Time > seg.Until) {
+				continue
+			}
+			timed = append(timed, r)
+		}
+		sort.SliceStable(timed, func(i, j int) bool { return timed[i].Time < timed[j].Time })
+		label := mainChatSegment{Segment: seg}
+		if role, stage, known := sessions.RoleStage(timed); known {
+			label.Role, label.Stage = role, stage
+		} else if seg.Source == mainchat.ByDecor {
+			label.Role = sessions.RoleFree
+		} else {
+			label.Role = sessions.RoleUnknown
+		}
+		out = append(out, label)
+	}
+	return out
 }
 
 // mainChatData склеивает журналы назначений обоих домов тем же порядком, что

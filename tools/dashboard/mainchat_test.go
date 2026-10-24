@@ -221,3 +221,95 @@ func TestStaticUnassignedWay(t *testing.T) {
 		t.Error("выбор run_chat уехал из кнопки цели либо завёлся второй раз")
 	}
 }
+
+// segmentLabel это отрезок ответа ручки вместе с подписью: роль и этап
+// выводятся из записей реестра сессий носителя (DK-871), и читаются отдельно
+// от полей журнала назначений.
+type segmentLabel struct {
+	Chat  string `json:"chat"`
+	Role  string `json:"role"`
+	Stage string `json:"stage"`
+}
+
+func segmentsLabeled(t *testing.T, c *http.Client, url string) []segmentLabel {
+	t.Helper()
+	resp := doReq(t, c, "GET", url, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ручка адреса ответила %d", resp.StatusCode)
+	}
+	var got struct {
+		Segments []segmentLabel `json:"segments"`
+	}
+	if err := json.Unmarshal([]byte(body(t, resp)), &got); err != nil {
+		t.Fatalf("ответ ручки адреса не разобрался: %v", err)
+	}
+	return got.Segments
+}
+
+// Отрезки основной ленты подписаны ролями и этапами: роль выводится из
+// поводов записей реестра сессий носителя за время отрезка, у оформления
+// черновика отрезок это бывший свободный разговор, а отрезку без известной
+// роли подпись говорит об этом словами. Смена этапов и ролей адрес записи не
+// меняет: один основной чат проходит их без заведения новых (DK-871).
+func TestTaskChatSegmentsLabeledByRoles(t *testing.T) {
+	e := newTestEnv(t)
+	c := e.loggedClient(t)
+	stamp := time.Date(2026, 10, 23, 21, 14, 0, 0, time.UTC)
+	at := func(add time.Duration) string { return stamp.Add(add).Format(mainchat.Stamp) }
+	writeMainChat(t, e.home,
+		mainchat.Line(stamp, mainchat.Bind{Record: "XR-005", Chat: "chat-free", Project: "demo", Source: mainchat.ByDecor})+
+			mainchat.Line(stamp.Add(time.Minute), mainchat.Bind{Record: "XR-005", Chat: "tmux-task-XR-005", Project: "demo", Source: mainchat.ByWork, Prior: "chat-free"}))
+	// Свободный разговор не работал: единственная его запись это рождение.
+	// Конвейер прошёл постановку и разработку, и подпись отрезка берёт итог.
+	writeBinds(t, e.home,
+		at(0)+" сессия free-1 задача - проект demo дерево "+e.proj+" транскрипт - источник заказ повод startup tmux chat-free панель -\n"+
+			at(time.Minute)+" сессия conv-1 задача XR-005 проект demo дерево - транскрипт - источник заказ повод taskctl run tmux task-XR-005 панель -\n"+
+			at(2*time.Minute)+" сессия conv-1 задача XR-005 проект demo дерево - транскрипт - источник работа повод agentctl stage постановка tmux - панель -\n"+
+			at(3*time.Minute)+" сессия conv-1 задача XR-005 проект demo дерево - транскрипт - источник работа повод agentctl stage разработка tmux - панель -\n")
+	want := []segmentLabel{
+		{Chat: "chat-free", Role: "свободный чат"},
+		{Chat: "tmux-task-XR-005", Role: "исполнение", Stage: "разработка"},
+	}
+	got := segmentsLabeled(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-005/chat")
+	if len(got) != len(want) {
+		t.Fatalf("отрезков %d, жду %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("отрезок %d: %+v, жду %+v", i, got[i], want[i])
+		}
+	}
+	// Дальше задача ушла в ревью и проверку выката: подпись отрезка едет за
+	// свежей ролью, а адрес записи остаётся тем же назначением, смена роли
+	// и стадии второй основной чат не заводит.
+	appendBinds(t, e.home,
+		at(4*time.Minute)+" сессия conv-2 задача XR-005 проект demo дерево - транскрипт - источник заказ повод taskctl run tmux task-XR-005 панель -\n"+
+			at(5*time.Minute)+" сессия conv-2 задача XR-005 проект demo дерево - транскрипт - источник работа повод agentctl stage ревью tmux - панель -\n"+
+			at(6*time.Minute)+" сессия conv-2 задача XR-005 проект demo дерево - транскрипт - источник работа повод shipctl smoke XR-005 tmux - панель -\n")
+	got = segmentsLabeled(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-005/chat")
+	if len(got) != 2 || got[1].Role != "проверка выката" {
+		t.Fatalf("после проверки подпись отрезка не поехала за свежей ролью: %+v", got)
+	}
+	code, after := taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-005/chat")
+	if code != http.StatusOK || after.Chat != "tmux-task-XR-005" {
+		t.Fatalf("смена этапов сменила адрес основного чата: %d %+v", code, after)
+	}
+}
+
+// Отрезок без роли в реестре подписан неизвестной ролью словами: молчание
+// было бы неотличимо от отсутствия подписи, и человек не отличил бы разбор
+// от поломки.
+func TestTaskChatSegmentUnknownRole(t *testing.T) {
+	e := newTestEnv(t)
+	c := e.loggedClient(t)
+	stamp := time.Date(2026, 10, 23, 21, 14, 0, 0, time.UTC)
+	writeMainChat(t, e.home, mainchat.Line(stamp,
+		mainchat.Bind{Record: "XR-005", Chat: "chat-quiet", Project: "demo", Source: mainchat.ByHand}))
+	writeBinds(t, e.home,
+		stamp.Format(mainchat.Stamp)+" сессия quiet-1 задача XR-005 проект demo дерево "+e.proj+
+			" транскрипт - источник заказ повод startup tmux chat-quiet панель -\n")
+	got := segmentsLabeled(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-005/chat")
+	if len(got) != 1 || got[0].Role != "роль неясна" || got[0].Stage != "" {
+		t.Fatalf("отрезок без роли не подписан словами: %+v", got)
+	}
+}

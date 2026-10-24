@@ -1146,6 +1146,15 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .cnote .btn{flex:0 0 auto;align-self:center}
 /* тот же щиток про погашенный ввод: цвет стопа вместо цвета работы */
 .cnote.idle{background:color-mix(in oklab,var(--block) 9%,var(--bg1));border-color:color-mix(in oklab,var(--block) 25%,transparent)}
+
+/* Список кандидатов экрана выбора основного чата (DK-1432): прежние
+разговоры записи с датой, репликой и признаками работы. Строка плотнее
+плашки: выбор читается одним взглядом, а не сравнением экранов. */
+.migcands{display:flex;flex-direction:column;gap:6px;margin:0 0 10px}
+.migcand{display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:9px;border:1px solid var(--line);font:400 12px/1.5 var(--sans);color:var(--tx2)}
+.migcand-meta{flex:0 0 auto;color:var(--tx2);opacity:.8}
+.migcand-last{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.migcand .btn{flex:0 0 auto}
 /* Плашка разлогина (DK-466): та же плашка разговора, но тревожного цвета и с
    кнопкой починки. Слова и кнопка переносятся: на узком экране кнопка встаёт
    своей строкой, а не уезжает за край, потому что с телефона путь к починке

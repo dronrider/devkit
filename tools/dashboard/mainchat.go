@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -37,6 +38,26 @@ func (s *server) handleTaskChat(w http.ResponseWriter, r *http.Request) {
 		resp["chat"] = s.mainChatCarrier(recs[n-1].Chat)
 		resp["source"] = recs[n-1].Source
 		resp["since"] = recs[n-1].Time
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	// Записи без строки в журнале разбирает миграция (DK-1432): однозначный
+	// разговор подключается на месте, спорный и общий открывают экран выбора,
+	// без транскрипта и без разговоров называются словами. Запись со снятым
+	// назначением сюда не попадает: рука уже сказала своё слово, и автоматика
+	// его не возвращает.
+	c, bound := s.migResolve(found, id)
+	if bound {
+		resp["chat"] = s.mainChatCarrier(c.Auto)
+		resp["source"] = mainchat.ByMigrate
+	} else if c.Kind != "" {
+		resp["kind"] = c.Kind
+		if c.Note != "" {
+			resp["note"] = c.Note
+		}
+		if len(c.Cands) > 0 {
+			resp["candidates"] = c.Cands
+		}
 	}
 	// Переход между целью и её задачами это навигация, а не перенос
 	// назначения (LLD DK-1422, решение 6): ручка называет обе стороны, и панель
@@ -72,6 +93,97 @@ func (s *server) boardViewOf(projectPath string) (boardView, error) {
 		return boardView{}, err
 	}
 	return parseBoardView(raw)
+}
+
+// handleTaskChatBind ставит записи основной чат выбором человека (LLD DK-1422,
+// решение 7): спорный разбор открывает выбор, и слово человека старше
+// автоматики. Разговором может стать сессия, окно конвейера либо незачатая
+// запись, и инвариант журнала бережёт сам Put: чужое назначение откажет.
+func (s *server) handleTaskChatBind(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found, id, ok := s.taskChatRow(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Chat string `json:"chat"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"chat\": \"<ключ разговора>\"}"})
+		return
+	}
+	chat := strings.TrimSpace(body.Chat)
+	if chat == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ключ разговора пуст"})
+		return
+	}
+	if !s.chatKnown(chat) {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("разговора %s нет среди начатых", chat)})
+		return
+	}
+	err := mainchat.Put(s.cfg.Home, mainchat.Bind{
+		Record: id, Chat: chat, Project: found.Name, Source: mainchat.ByHand})
+	var held *mainchat.HeldError
+	if errors.As(err, &held) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": fmt.Sprintf("разговор уже основной у записи %s", held.Record)})
+		return
+	}
+	if err != nil {
+		s.logf("выбор основного чата %s не записался: %v", id, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	s.logf("рука %s: разговор %s стал основным чатом записи", id, chat)
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "chat": chat, "source": mainchat.ByHand})
+}
+
+// handleTaskChatNew заводит записи новый основной чат: действие экрана выбора
+// для спора, который не хочется решать в пользу старого разговора. Разговор
+// заводится незачатым, сессию поднимет первая реплика, и действующая работа
+// не прерывается.
+func (s *server) handleTaskChatNew(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found, id, ok := s.taskChatRow(w, r)
+	if !ok {
+		return
+	}
+	key := chatBlankID()
+	if err := s.chatStoreWrite(key, chatStore{
+		Blank: true, Born: s.now().Unix(), Project: found.Name, Task: id}); err != nil {
+		s.logf("новый основной чат %s не завёлся: %v", id, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := mainchat.Put(s.cfg.Home, mainchat.Bind{
+		Record: id, Chat: key, Project: found.Name, Source: mainchat.ByHand}); err != nil {
+		s.logf("назначение основного чата %s не записалось: %v", id, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	s.logf("рука %s: заведён новый основной чат %s", id, key)
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "chat": key, "source": mainchat.ByHand})
+}
+
+// chatKnown отвечает, существует ли разговор с таким ключом: сессия в
+// реестре, незачатая запись в памяти разговоров либо окно конвейера. Выбор
+// человека адресует разговор, которого может уже не быть, и отказ словами
+// честнее назначения в пустоту.
+func (s *server) chatKnown(chat string) bool {
+	if strings.HasPrefix(chat, tmuxChatKey) {
+		return true
+	}
+	if _, hit := s.binds()[chat]; hit {
+		return true
+	}
+	return s.chatStoreRead(chat).Blank
 }
 
 // mainChatSegment это отрезок основной ленты с подписью роли и этапа. Отрезок

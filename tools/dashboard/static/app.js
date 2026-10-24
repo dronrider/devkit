@@ -9710,7 +9710,12 @@ async function chatState(project, addr, board, works) {
         } else st.sid = st.main.chat;
       }
     } else if (!rise && boardRow(board, st.task) && !goalHere) {
-      st.unassigned = true;
+      // Разбор миграции приехал словами раздела и кандидатами: спорный случай
+      // открывает выбор, и до решения человека ввод гасится (DK-1432). Раздел
+      // «без разговоров» остаётся прежней плашкой запуска: выбирать не из чего,
+      // и работа сама заведёт разговор.
+      if (st.main.kind && st.main.kind !== "без разговоров") st.choice = st.main;
+      else st.unassigned = true;
     }
   }
   // Задача адреса это фильтр, а не сам чат: открытый ею список показывает чаты
@@ -11710,6 +11715,20 @@ function chatWay(st) {
   // репликой, а показывает состояние и отдельное действие запуска (LLD DK-1422,
   // решение 2). История при этом не пропадает: прежние беседы задачи остаются
   // в списке шапки панели.
+  // Спорный разбор миграции гасит ввод до выбора: реплика случайному
+  // кандидату не уходит, разговор становится основным действием человека,
+  // а не первой строкой в запертое поле (LLD DK-1422, решение 7).
+  if (st.choice) {
+    const words = {
+      "спорно": "У записи несколько прежних разговоров: выберите основной, и панель откроет его ленту.",
+      "общий": "Разговор касался нескольких записей: выберите основной либо начните новый.",
+      "без транскрипта": "Прежние разговоры записи не читаются, транскрипта у них нет: начните новый основной чат."
+    };
+    return { kind: "choice", off: true,
+      hint: "основной чат выбирается из прежних разговоров записи",
+      why: words[st.choice.kind] ||
+        "Основной чат записи выбирается из прежних разговоров." };
+  }
   if (st.unassigned) {
     return { kind: "unassigned", off: true,
       hint: "у записи нет разговора, работа начинается кнопкой",
@@ -13578,6 +13597,62 @@ function chatPanel(project, st) {
     goalOut.pump().catch(console.error);
   }
 
+  // Экран выбора основного чата (DK-1432): кандидаты с датами, последними
+  // репликами и признаками работы, действия «Сделать основным» и «Начать
+  // новый основной чат». После действия панель собирается заново: адрес
+  // записи тот же, а носитель уже назван строкой журнала.
+  if (way.kind === "choice" && st.task && st.choice) {
+    const chatChoiceURL = (tail) => "/api/projects/" + encodeURIComponent(project) +
+      "/tasks/" + encodeURIComponent(st.task) + "/chat/" + tail;
+    const note = el("div", "cnote idle");
+    note.append(el("span", "", way.why));
+    const fresh = el("button", "btn btn-sm btn-acc", "Начать новый основной чат");
+    fresh.addEventListener("click", async () => {
+      fresh.disabled = true;
+      try {
+        const r = await api(chatChoiceURL("new"), { method: "POST", body: {} });
+        if (!r.ok) sayResult(r.body.error || "новый основной чат не завёлся", true);
+      } finally {
+        fresh.disabled = false;
+        chatPool.delete(chatOpen);
+        await repaintChat();
+      }
+    });
+    note.append(fresh);
+    wrap.append(note);
+    const cands = st.choice.candidates || [];
+    if (cands.length) {
+      const list = el("div", "migcands");
+      for (const cand of cands) {
+        const row = el("div", "migcand");
+        const meta = [(cand.date || "").replace("T", " "),
+          cand.proof ? cand.proof.join(", ") : ""];
+        if (cand.shared) meta.push("общий");
+        if (cand.feed) meta.push(cand.feed);
+        row.append(el("span", "migcand-meta", meta.filter(Boolean).join(", ")));
+        row.append(el("span", "migcand-last", cand.last || cand.key));
+        // Общий разговор и разговор без ленты выбором не становятся: первым
+        // записям поднимаются свои чаты, вторым нечего открывать.
+        if (!cand.shared && !cand.feed) {
+          const take = el("button", "btn btn-sm", "Сделать основным");
+          take.addEventListener("click", async () => {
+            take.disabled = true;
+            try {
+              const r = await api(chatChoiceURL("bind"), { method: "POST", body: { chat: cand.key } });
+              if (!r.ok) sayResult(r.body.error || "выбор не записался", true);
+            } finally {
+              take.disabled = false;
+              chatPool.delete(chatOpen);
+              await repaintChat();
+            }
+          });
+          row.append(take);
+        }
+        list.append(row);
+      }
+      wrap.append(list);
+    }
+  }
   if (way.why) {
     const note = el("div", "cnote" + (way.off ? " idle" : ""));
     note.append(el("span", "", way.why));

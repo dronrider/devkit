@@ -61,6 +61,15 @@ const usageText = `dashboard: веб-дашборд агентской разр�
                               известным заказам), --apply уносит названные ID
                               в архив; список смотрит и подтверждает человек,
                               признак hidden эти записи не получают
+  migrate [--apply|--rollback]
+                              разовая миграция старых разговоров к основному
+                              чату записей (DK-1432): без флагов печатает
+                              отчёт по разделам «однозначные, спорные, общие,
+                              без транскрипта», --apply назначает однозначные
+                              активным записям строками источника «миграция»,
+                              --rollback снимает поставленное миграцией,
+                              не трогая переписку; спорные записи решает
+                              человек экраном выбора при первом входе
 
 Вход по токену из конфига: страница /login, кука на 30 дней. Без входа не
 отдаётся ни одна строка данных; открыт один /healthz с версией, аптаймом,
@@ -160,6 +169,17 @@ func main() {
 			fatal(fmt.Errorf("--apply ждёт хотя бы один ID: dashboard chatsweep --apply <ID>..."))
 		}
 		if err := cmdChatSweep(home, ids, os.Stdout); err != nil {
+			fatal(err)
+		}
+	case "migrate":
+		fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+		apply := fs.Bool("apply", false, "назначить однозначные разговоры активным записям")
+		rollback := fs.Bool("rollback", false, "снять назначения, поставленные миграцией")
+		fs.Parse(args[1:])
+		if *apply && *rollback {
+			fatal(fmt.Errorf("--apply и --rollback вместе не зовутся"))
+		}
+		if err := cmdMigrate(home, *apply, *rollback, os.Stdout); err != nil {
 			fatal(err)
 		}
 	case "help", "-h", "--help":

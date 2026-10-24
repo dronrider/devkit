@@ -108,6 +108,11 @@ type server struct {
 	// tmux-сессия -> узнан ли ретрай. Снимок стоит подпроцесса, а спрашивают
 	// его и список чатов, и каждая реплика.
 	quotaSeen map[string]quotaWaitEntry
+	// Память ленивого разбора миграции (migrate.go): запись -> спорный итог
+	// с моментом. Разбор читает всю историю, а спрашивает его опрос панели
+	// записи без назначения, и минутная память держит цену ответа разумной.
+	migMu    sync.Mutex
+	migTried map[string]migTriedEntry
 	// Состояние одноразовой сессии входа клиента (clientlogin.go). Вход на
 	// машине один, и сессия одна: повторные экраны получают ту же ссылку,
 	// а не соседнюю сессию.
@@ -226,6 +231,7 @@ func newServer(cfg *Config, static fs.FS, logf func(string, ...any)) *server {
 		busy:        map[string]busyEntry{},
 		heal:        map[string]healEntry{},
 		probe:       peerProbe,
+		migTried:    map[string]migTriedEntry{},
 		secretTok:   cfg.Token}
 }
 
@@ -313,6 +319,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/projects/{p}/drafts/{id}/groom", s.auth(s.handleDraftGroom))
 	mux.HandleFunc("GET /api/projects/{p}/tasks/{id}", s.auth(s.handleTask))
 	mux.HandleFunc("GET /api/projects/{p}/tasks/{id}/chat", s.auth(s.handleTaskChat))
+	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/chat/bind", s.auth(s.handleTaskChatBind))
+	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/chat/new", s.auth(s.handleTaskChatNew))
 	mux.HandleFunc("PATCH /api/projects/{p}/tasks/{id}", s.auth(s.handleTaskPatch))
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/file", s.auth(s.handleTaskFilePost))
 	mux.HandleFunc("PUT /api/projects/{p}/tasks/{id}/file", s.auth(s.handleTaskFilePut))

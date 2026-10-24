@@ -11,7 +11,8 @@ import (
 // (DK-1116). Ярус берётся вердиктом роли ревью, а независимость держит
 // ступень: модель, совпавшую с моделью разработки, internal/checkrun.Choose
 // меняет на первую ступень выше с другой моделью. Исчерпанную лестницу
-// заменяет другой включённой целиком. Тем же кодом считает подъём
+// заменяет другой допущенной автоматике целиком, а недопущенная включённая
+// подписка в отбор не входит (DK-1453). Тем же кодом считает подъём
 // после выката, и ручной спавн диспетчером теперь узнаёт модель до работы, а
 // не ловит отказ taskctl close после неё.
 func cmdCheck(root, id string) (string, error) {
@@ -20,10 +21,13 @@ func cmdCheck(root, id string) (string, error) {
 		return "", err
 	}
 	dev, known := checkrun.DevExecutor(root, id)
-	ladders := []checkrun.Ladder{checkerLadder(p.HC.Name, p.HC.Models)}
+	var ladders []checkrun.Ladder
+	if p.HC.L == nil || p.HC.L.admitted(p.HC.Name) {
+		ladders = append(ladders, checkerLadder(p.HC.Name, p.HC.Models))
+	}
 	if p.HC.L != nil {
 		for _, name := range p.HC.L.Enabled {
-			if name == p.HC.Name {
+			if name == p.HC.Name || !p.HC.L.admitted(name) {
 				continue
 			}
 			s := p.HC.L.Setup[name]
@@ -31,6 +35,10 @@ func cmdCheck(root, id string) (string, error) {
 				ladders = append(ladders, checkerLadder(name, tierModels{Map: s.Map, Active: name}))
 			}
 		}
+	}
+	if len(ladders) == 0 {
+		return "", fmt.Errorf("%s: прогонять некем, в раскладке машины нет подписок, разрешённых"+
+			" автоматическим назначениям (ключ auto в %s)", id, machineConfigPath())
 	}
 	ch := checkrun.ChooseAvailable(p.V.Tier, ladders, dev, known)
 	if ch.Refusal != "" {

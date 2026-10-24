@@ -140,8 +140,11 @@ var knownEvents = []string{"write", "session-start", "notify", "subagent-done", 
 
 // Свод машинного слоя. Ярусы в секции харнеса обязательны все четыре: сложенные
 // в одну модель соседние ярусы пишутся повторением значения, а пропуск ключа
-// неотличим от забытого.
-var machineRootKeys = []keySpec{{"default", subtoml.KindStr}, {"enabled", subtoml.KindArr}}
+// неотличим от забытого. Ключ auto разрешает автоматические назначения:
+// включённость даёт подписке ручные чаты, а подъёмы без человека идут только
+// по разрешённым (DK-1453).
+var machineRootKeys = []keySpec{{"default", subtoml.KindStr}, {"enabled", subtoml.KindArr},
+	{"auto", subtoml.KindArr}}
 
 var machineHarnessKeys = []keySpec{{"mini", subtoml.KindStr}, {"base", subtoml.KindStr}, {"pro", subtoml.KindStr},
 	{"max", subtoml.KindStr}, {"chat", subtoml.KindArr}, {"budget", subtoml.KindInt}, {"bin", subtoml.KindStr},
@@ -239,6 +242,14 @@ func inList(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// admitted это допуск подписки к автоматическим назначениям: подъёмам
+// проверяющего и другой работе без человека в окне. Разрешена подписка по
+// умолчанию и всё, что машина назвала ключом auto; включённость без допуска
+// оставляет подписке ручные чаты и явный выбор (DK-1453).
+func (l *layers) admitted(name string) bool {
+	return name != "" && (name == l.Default || inList(l.Auto, name))
 }
 
 // checkTypes проверяет типы известных ключей таблицы в порядке свода.
@@ -631,6 +642,11 @@ type layers struct {
 	Dir     string
 	Enabled []string
 	Default string
+	// Auto это подписки, разрешённые автоматическим назначениям (ключ auto
+	// машинного конфига). Пусто значит разрешена только подписка по
+	// умолчанию: включённость подписки и допуск к подъёмам без человека это
+	// разные вещи (DK-1453).
+	Auto []string
 	// Чем объясняется default в резолве: машинным конфигом или его отсутствием.
 	DefaultHow string
 	Setup      map[string]*setup
@@ -684,6 +700,7 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 		}
 		l.Default, l.DefaultHow = mdoc.Table("").Str("default"), "default машинного конфига"
 		l.Enabled = append(l.Enabled, mdoc.Table("").Arr("enabled")...)
+		l.Auto = append(l.Auto, mdoc.Table("").Arr("auto")...)
 		// Ключ читается мягко, а не через machineRootKeys: битое значение не
 		// должно ронять раскладку целиком, диспетчер обойдётся умолчанием, а
 		// причина уезжает предупреждением.
@@ -1324,6 +1341,11 @@ type harnessJSON struct {
 	// devkit; пусто, когда обвязка на месте. Поднимать на таком харнесе нечего,
 	// и потребитель (дашборд) отказывает подъёму до запуска клиента.
 	HooksGap string `json:"hooks_gap,omitempty"`
+	// Auto это допуск к автоматическим назначениям: ключ auto машинного
+	// конфига, а без него подписка по умолчанию. Ручной выбор подписки и
+	// модели признак не ограничивает, по нему отбираются только подъёмы без
+	// человека (DK-1453).
+	Auto bool `json:"auto"`
 }
 
 // harnessModelJSON это одна ступень лестницы: ярус и модель. Формат поля model
@@ -1409,7 +1431,7 @@ func cmdHarnessJSON(start string) (string, error) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		h := harnessJSON{Name: name, Enabled: inList(l.Enabled, name), Default: name == l.Default}
+		h := harnessJSON{Name: name, Enabled: inList(l.Enabled, name), Default: name == l.Default, Auto: l.admitted(name)}
 		h.Bin = clientBin(l.Profiles[name], l.Setup[name])
 		h.Home = l.Setup[name].homeOf()
 		h.Env = envNames(l.Setup[name].envOf())
@@ -1509,6 +1531,20 @@ func cmdHarness(start, want string) (string, error) {
 		fmt.Fprintf(&b, "включены: никого (%s); включить: вписать enabled в %s\n", l.Source, machineConfigPath())
 	} else {
 		fmt.Fprintf(&b, "включены: %s (%s)\n", strings.Join(l.Enabled, ", "), l.Source)
+	}
+	// Допуск автоматических назначений назван своей строкой: включённость и
+	// разрешённость расходятся, и расхождение видно тем же окном, а не
+	// разбором машинного вида.
+	var autoNames []string
+	for _, name := range l.Enabled {
+		if l.admitted(name) {
+			autoNames = append(autoNames, name)
+		}
+	}
+	if len(autoNames) == 0 {
+		fmt.Fprintf(&b, "автоматические назначения: никого из включённых; вписать auto в %s\n", machineConfigPath())
+	} else {
+		fmt.Fprintf(&b, "автоматические назначения: %s\n", strings.Join(autoNames, ", "))
 	}
 	if r.Name != "" {
 		s := l.Setup[r.Name]

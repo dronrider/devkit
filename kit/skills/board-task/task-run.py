@@ -885,11 +885,21 @@ class Pipeline:
         return (self.order or "").startswith(DUTY_ORDER)
 
     def hands_over(self, said, sect):
-        """Сдаётся ли строка проверяющему: вид mixed, выкат без отметки smoke, а
-        голова тут не проверяющий. Своя голова проверки идёт дальше обычными
-        проходами: отметку ставит она, и сдавать ей строку некому."""
-        return (self.check_kind(said, sect) == MIXED_KIND
-                and SMOKE_NONE in (said or "") and not self.checker())
+        """Передать независимую проверку после завершения фоновой работы."""
+        return (self.check_kind(said, sect) in (MIXED_KIND, "agent")
+                and SMOKE_NONE in (said or "") and not self.checker()
+                and (self.head is None or bool(self.sid))
+                and not self.busy() and not self.shells())
+
+    def poll_handoff(self):
+        now = time.time()
+        if now < getattr(self, "handoff_next", 0):
+            return
+        self.handoff_next = now + 30
+        told = self.show()
+        sect = self.status(told)
+        if self.hands_over(told, sect):
+            self.hand_over(sect)
 
     def hand_over(self, sect):
         """Сдать строку проверяющему и выйти без зова человека (DK-947).
@@ -901,7 +911,7 @@ class Pipeline:
         оставшаяся в окне оболочка отбивала бы подъём занятым замком. Работа
         головы к этому моменту кончена, очередь выката держит отметка, и
         конвейер за строкой не стоит."""
-        self.stop(0, sect, "строка сдана проверяющему: вид mixed, отметки smoke нет, "
+        self.stop(0, sect, "строка сдана проверяющему: отметки smoke нет, "
                            "агентскую половину сценария гоняет не автор правки "
                            "(подъём ведут выкат и тик, shipctl check-run)", loud=False)
 
@@ -1361,7 +1371,7 @@ class Pipeline:
             out.append(" ".join(said.split()))
         return out
 
-    def wait_mark(self):
+    def wait_mark(self, consume=True):
         """Отметка машинного ожидания этого прохода или None. Пишет её
         `agentctl wait` файлом на задачу, а условие и срок оболочка разбирает
         сама: разбирать слова хода ей нечем.
@@ -1415,7 +1425,8 @@ class Pipeline:
             self.log("отметка ожидания %s с незнакомым условием %s, %s"
                      % (path, mark.get("kind"), self.id), 0)
             return None
-        self.wait_seen = seen
+        if consume:
+            self.wait_seen = seen
         return mark
 
     def wait_what(self, mark):
@@ -1548,6 +1559,7 @@ class Pipeline:
         начатого хода оболочка не шлёт."""
         until = self.when(mark.get("until"))
         while True:
+            self.poll_handoff()
             now = time.time()
             if self.wait_done(mark, now):
                 return WAIT_EVENT
@@ -1620,7 +1632,20 @@ class Pipeline:
                     elif word in TURN_OVER and begun:
                         return word
                 return ""
+            if not begun or late or self.wait_mark(consume=False):
+                self.poll_handoff()
             quiet = time.time() - mute > self.secs(MUTE_ENV, MUTE_SECONDS)
+            startup = not begun and time.time() - started > self.secs(
+                "DEVKIT_TASK_STARTUP", 120)
+            if not said and startup:
+                self.say("проход %d не начался: проверь запрос доверия каталогу, "
+                         "авторизацию и хук turn-mark.py; живой процесс не "
+                         "подтверждает работу" % n)
+                self.log("запуск без начатого хода, %s, проход %d" % (self.id, n), 0)
+                self.shout("run_stop", "%s: %s ход не начался" % (self.project, self.id),
+                           "проверь запрос доверия каталогу, авторизацию и хук turn-mark.py; "
+                           "клиент оставлен работающим")
+                said = True
             if not said and quiet:
                 self.mute(n, int(time.time() - started))
                 said = True

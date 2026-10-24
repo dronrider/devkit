@@ -906,6 +906,13 @@ class TestPasses(unittest.TestCase):
         self.assertEqual(len(s.orders()), 1, s.orders())
         self.assertTrue([l for l in s.journal() if "сдана проверяющему" in l], s.journal())
 
+    def test_agent_author_releases_pipeline_for_independent_check(self):
+        s = self.stand(sect="check-agent", plan="работа")
+        r = s.run()
+        self.assertEqual(r.returncode, 0, s.why(r))
+        self.assertIn("сдана проверяющему", r.stdout)
+        self.assertEqual(len(s.orders()), 1)
+
     def test_checker_head_hands_the_row_to_nobody(self):
         # Оборотная сторона: голову проверки поднимают заказом прогона на ту же
         # строку mixed без отметки. Сдавать её некому, отметку ставит она сама,
@@ -919,10 +926,9 @@ class TestPasses(unittest.TestCase):
         self.assertEqual(len(s.orders()), 2, s.orders())
 
     def test_agent_acceptance_keeps_the_pipeline(self):
-        # Обратная сторона: агентский вид проверяет сама голова, и вставать
-        # оболочке тут не на чем.
+        # Голова, поднятая проверяющим, продолжает независимый сценарий.
         s = self.stand(sect="check-agent", plan="работа|закрой")
-        r = s.run()
+        r = s.run("--order", task_run.CHECK_ORDER + "DK-1")
         self.assertEqual(r.returncode, 0)
         self.assertNotIn("приёмки человеком", r.stdout)
         self.assertEqual(len(s.orders()), 2, s.orders())
@@ -2050,6 +2056,12 @@ class TestWaitMark(unittest.TestCase):
         self.assertTrue(got, "свежая отметка не взята")
         self.assertIn("жду соседа", self.pipe.wait_what(got))
 
+    def test_handoff_peek_does_not_consume_wait_for_held(self):
+        self.mark()
+        self.assertTrue(self.pipe.wait_mark(consume=False))
+        self.assertTrue(self.pipe.wait_mark())
+        self.assertIsNone(self.pipe.wait_mark())
+
     def test_mark_is_taken_once(self):
         # Запись остаётся лежать после ожидания, и второй раз оболочка по ней
         # вставать не должна: иначе один отбитый merge держал бы конвейер до
@@ -2646,3 +2658,62 @@ def s_orders(s):
 
 if __name__ == "__main__":
     unittest.main(verbosity=0)
+
+
+class TestCheckHandoff(WaitStand):
+    told = "DK-1 в check\n  код слит, вид agent, без отметки smoke\n"
+
+    def prepared(self):
+        p = self.pipe()
+        p.sid = SID
+        p.show = lambda: self.told
+        p.busy = lambda: []
+        p.shells = lambda: []
+        p.hand_over = unittest.mock.Mock(side_effect=SystemExit(0))
+        return p
+
+    def test_agent_author_hands_over_before_another_pass(self):
+        p = self.prepared()
+        self.assertTrue(p.hands_over(self.told, "check"))
+        p.order = task_run.CHECK_ORDER + "DK-1"
+        self.assertFalse(p.hands_over(self.told, "check"))
+
+    def test_handoff_preserves_active_subwork_and_unknown_live_identity(self):
+        p = self.prepared()
+        for busy, shells in [(["exec"], []), ([], ["test"] )]:
+            p.busy, p.shells = lambda: busy, lambda: shells
+            self.assertFalse(p.hands_over(self.told, "check"))
+        p.busy, p.shells = lambda: [], lambda: []
+        p.head, p.sid = object(), ""
+        self.assertFalse(p.hands_over(self.told, "check"))
+        self.assertFalse(p.hands_over("DK-1 в check", "check"))
+
+    def test_turn_wait_hands_over_without_a_finished_mark(self):
+        p = self.prepared()
+        p.notes, p.marks = lambda: [], lambda: []
+        p.head_alive = unittest.mock.Mock(side_effect=[True, False])
+        with self.assertRaises(SystemExit):
+            p.wait_turn(1)
+        p.hand_over.assert_called_once_with("check")
+
+    def test_event_wait_hands_over_before_waiting_for_own_smoke(self):
+        p = self.prepared()
+        p.wait_done = unittest.mock.Mock(return_value=True)
+        with self.assertRaises(SystemExit):
+            p.hold({"kind": task_run.WAIT_CLOSED, "until": "2099-01-01T00:00:00"})
+        p.hand_over.assert_called_once_with("check")
+        p.wait_done.assert_not_called()
+
+    def test_startup_without_turn_is_reported_once_without_stopping_client(self):
+        p = self.prepared()
+        p.show = lambda: "DK-1 в in-progress"
+        p.notes, p.marks = lambda: [], lambda: []
+        p.head_alive = unittest.mock.Mock(side_effect=[True, True, True, False])
+        p.shout, p.drop_head = unittest.mock.Mock(), unittest.mock.Mock()
+        p.say, p.log = unittest.mock.Mock(), unittest.mock.Mock()
+        os.environ["DEVKIT_TASK_STARTUP"] = "0"
+        with unittest.mock.patch.object(task_run.time, "sleep"):
+            self.assertEqual(p.wait_turn(1), "")
+        p.shout.assert_called_once()
+        self.assertIn("доверия", p.shout.call_args.args[2])
+        p.drop_head.assert_not_called()

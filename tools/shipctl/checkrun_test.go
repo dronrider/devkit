@@ -293,6 +293,39 @@ func TestCheckRunRefusesAtTopOfLadder(t *testing.T) {
 	}
 }
 
+func TestCheckRunPassesSelectedIndependentHarnessToTaskctl(t *testing.T) {
+	root, callLog := checkStand(t)
+	bin := t.TempDir()
+	writeAgentctlFake(t, bin, "pro")
+	path := filepath.Join(bin, "agentctl")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"harnesses":[
+	{"name":"glm","enabled":true,"models":[{"tier":"pro","model":"glm-5.3"},{"tier":"max","model":"glm-5.3"}]},
+	{"name":"router","enabled":true,"default":true,"models":[{"tier":"pro","model":"sonnet"}]}]}`
+	if err := os.WriteFile(path, []byte(strings.Replace(string(body), ladderFixture, raw, 1)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("DEVKIT_HARNESS", "glm")
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001\n\n## Ход работы\n\n- Разработка: субагент glm-5.3/high по вердикту pick, 2026-09-11.\n")
+	out, failed, err := cmdCheckRun(root, nil, false)
+	if err != nil || failed {
+		t.Fatalf("%s: %v", out, err)
+	}
+	calls := readCalls(t, callLog)
+	for _, want := range []string{"--harness router", "--model sonnet"} {
+		if !strings.Contains(calls, want) {
+			t.Fatalf("носитель не получил %s: %s", want, calls)
+		}
+	}
+	if !strings.Contains(out, "подписка router") {
+		t.Fatalf("выбор не виден: %s", out)
+	}
+}
+
 // Поднимать нечего значит и говорить нечего: пустой состав утилит не зовёт.
 func TestCheckRunNoteWithoutTasks(t *testing.T) {
 	if note := checkRunNote(t.TempDir(), nil); note != "" {
@@ -307,4 +340,38 @@ func readCalls(t *testing.T, callLog string) string {
 		return ""
 	}
 	return string(data)
+}
+
+func TestCheckRunPassesActualViaToTaskctl(t *testing.T) {
+	root, callLog := checkStand(t)
+	bin := t.TempDir()
+	writeAgentctlFake(t, bin, "pro")
+	path := filepath.Join(bin, "agentctl")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"harnesses":[
+	{"name":"glm","enabled":true,"models":[{"tier":"pro","model":"glm-5.3"},{"tier":"max","model":"glm-5.3"}]},
+	{"name":"router","enabled":true,"default":true,"models":[{"tier":"pro","model":"sonnet","via":"owner"}]},
+	{"name":"owner","enabled":true,"models":[]}]}`
+	if err := os.WriteFile(path, []byte(strings.Replace(string(body), ladderFixture, raw, 1)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("DEVKIT_HARNESS", "glm")
+	write(t, root, "docs/tasks/XR-001.md", "# XR-001\n\n## Ход работы\n\n- Разработка: субагент glm-5.3/high по вердикту pick, 2026-09-11.\n")
+	out, failed, err := cmdCheckRun(root, nil, false)
+	if err != nil || failed {
+		t.Fatalf("%s: %v", out, err)
+	}
+	calls := readCalls(t, callLog)
+	for _, want := range []string{"--harness owner", "--model sonnet"} {
+		if !strings.Contains(calls, want) {
+			t.Fatalf("носитель не получил %s: %s", want, calls)
+		}
+	}
+	if !strings.Contains(out, "подписка owner") {
+		t.Fatalf("выбор не виден: %s", out)
+	}
 }

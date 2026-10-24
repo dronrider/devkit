@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,5 +106,18 @@ func TestRevertWithoutDependentsIsQuiet(t *testing.T) {
 	}
 	if strings.Contains(msg, "ребром на") {
 		t.Fatalf("откат без зависимых заговорил про рёбра:\n%s", msg)
+	}
+}
+
+func TestEdgeWaitHasTypedCause(t *testing.T) {
+	root, _ := setup(t, rowInProgAfter, "")
+	b, err := loadBoard(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = edgeGate(root, b, "XR-001")
+	var wait *dependencyWait
+	if !errors.As(err, &wait) {
+		t.Fatalf("ожидание предпосылки не различимо по типу: %v", err)
 	}
 }

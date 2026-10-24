@@ -163,3 +163,22 @@ func TestShipWithoutDrainDeployFailureNoFailureMark(t *testing.T) {
 		t.Fatal("обычный ship должен звать notify сам")
 	}
 }
+
+func TestShipDrainEmptyTrainKeepsForeignCard(t *testing.T) {
+	root, _ := setup(t, rowInProg, "")
+	path := "docs/tasks/XR-001.md"
+	before, err := os.ReadFile(filepath.Join(root, path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, path, string(before)+"\n- Хвост: незавершённая работа.\n")
+	gitT(t, root, "add", "--", path)
+	status := gitT(t, root, "status", "--porcelain")
+	msg, err := cmdShip(root, ShipParams{Drain: true})
+	if err != nil || !strings.Contains(msg, "поезд пуст") {
+		t.Fatalf("%s: %v", msg, err)
+	}
+	if gitT(t, root, "status", "--porcelain") != status {
+		t.Fatal("чужая карточка попала в коммит")
+	}
+}

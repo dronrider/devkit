@@ -24,6 +24,8 @@ func prereqOf(root string, b *board, id string) (merged.Prereq, error) {
 	return p, nil
 }
 
+type dependencyWait struct{ error }
+
 // edgeGate держит слияние строки, у которой ребро «после» не снято. Так бывает,
 // когда зависимая стартовала на коде предпосылки, а ту потом откатили: ветка
 // несёт код, которого в main уже нет, и слияние встретило бы откаченное
@@ -60,8 +62,8 @@ func edgeGate(root string, b *board, id string) error {
 	if len(why) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%s ждёт предпосылку, ребро «после» не снято (%s): ветка несёт основание, которого в main нет, слияние ждёт нового слияния или закрытия предпосылки; парковка: %s",
-		id, strings.Join(why, "; "), park)
+	return &dependencyWait{fmt.Errorf("%s ждёт предпосылку, ребро «после» не снято (%s): ветка несёт основание, которого в main нет, слияние ждёт нового слияния или закрытия предпосылки; парковка: %s",
+		id, strings.Join(why, "; "), park)}
 }
 
 // dependentsInMain называет строки доски с ребром на id, чья работа уже лежит в

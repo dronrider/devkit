@@ -285,8 +285,33 @@ func queueClear(root, id string) {
 	})
 }
 
+type queueReport struct {
+	ID      string `json:"id,omitempty"`
+	Line    string `json:"line"`
+	Failed  bool   `json:"failed,omitempty"`
+	Waiting bool   `json:"waiting,omitempty"`
+	Merged  bool   `json:"merged,omitempty"`
+}
+
+func cmdQueueJSON(root string, p QueueParams) (string, error) {
+	reports := []queueReport{}
+	p.Report = func(r queueReport) { reports = append(reports, r) }
+	p.Say = nil
+	line, err := cmdQueue(root, p)
+	if err != nil {
+		line = err.Error()
+		reports = append(reports, queueReport{Line: line, Failed: true})
+	}
+	data, marshalErr := json.Marshal(struct {
+		Line  string        `json:"line"`
+		Items []queueReport `json:"items"`
+	}{line, reports})
+	return string(data), marshalErr
+}
+
 // QueueParams это параметры команды queue.
 type QueueParams struct {
+	Report func(queueReport)
 	Drain  bool
 	Hold   string // ID, снимаемый с очереди
 	Free   string // ID, возвращаемый в очередь
@@ -408,6 +433,20 @@ func queueDrain(root string, p QueueParams) (string, error) {
 // печатается хвостом отчёта, иначе пустой заход выглядел бы бездействием без
 // повода.
 func queueTry(root, id string, p QueueParams) (merged bool, note string, stop bool, skip string) {
+	report := queueReport{ID: id, Failed: true}
+	defer func() {
+		if p.Report == nil {
+			return
+		}
+		report.Line = note
+		if skip != "" {
+			report.Line = skip
+		}
+		if merged {
+			report.Failed, report.Merged = false, true
+		}
+		p.Report(report)
+	}()
 	say := p.Say
 	if say == nil {
 		say = func(string) {}
@@ -426,7 +465,11 @@ func queueTry(root, id string, p QueueParams) (merged bool, note string, stop bo
 		return true, id + " слита очередью: " + firstLine(out), false, ""
 	}
 	var red *redError
+	var waiting *dependencyWait
 	switch {
+	case errors.As(mergeErr, &waiting):
+		report.Failed, report.Waiting = false, true
+		return false, "", false, firstLine(mergeErr.Error())
 	case errors.As(mergeErr, &red) && red.Own:
 		return false, queueOutOfLine(root, id, red.Why), true, ""
 	case errors.As(mergeErr, &red) && red.Load:
@@ -445,6 +488,7 @@ func queueTry(root, id string, p QueueParams) (merged bool, note string, stop bo
 	case errors.Is(mergeErr, errRebaseConflict):
 		return false, queueOutOfLine(root, id, "конфликт ребейза, разводить руками"), true, ""
 	case errors.Is(mergeErr, errLockBusy):
+		report.Failed, report.Waiting = false, true
 		return false, noQueue + ": " + mergeErr.Error(), true, ""
 	}
 	// Всё остальное это ворота готовности: строка ещё не доведена, и разлив

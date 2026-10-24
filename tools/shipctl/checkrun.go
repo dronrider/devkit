@@ -49,6 +49,7 @@ type shipCarrier struct {
 	root, home, devkit string
 	harness            string
 	ladder             []checkrun.Step
+	ladders            []checkrun.Ladder
 	note               string
 	asked              bool
 }
@@ -78,9 +79,17 @@ func (c *shipCarrier) Tier(id string) (string, string) { return checkrun.AskTier
 func (c *shipCarrier) Ladder() []checkrun.Step {
 	if !c.asked {
 		c.asked = true
-		c.harness, c.ladder, c.note = checkrun.AskLadder()
+		c.ladders, c.note = checkrun.AskLadders()
+		if len(c.ladders) > 0 {
+			c.harness, c.ladder = c.ladders[0].Name, c.ladders[0].Steps
+		}
 	}
 	return c.ladder
+}
+
+func (c *shipCarrier) Ladders() []checkrun.Ladder {
+	c.Ladder()
+	return c.ladders
 }
 
 // Raise поднимает голову проверки командой taskctl run. Модель называется
@@ -99,8 +108,12 @@ func (c *shipCarrier) Raise(p checkrun.Plan) checkrun.Report {
 	}
 	args := []string{"run", id, "-C", c.root, "--model", p.Choice.Model,
 		"--order", p.Order, "--again", p.Again, "--hidden"}
-	if c.harness != "" {
-		args = append(args, "--harness", c.harness)
+	harness := p.Choice.Harness
+	if harness == "" {
+		harness = c.harness
+	}
+	if harness != "" {
+		args = append(args, "--harness", harness)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), checkRunTimeout)
 	defer cancel()

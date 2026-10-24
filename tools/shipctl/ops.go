@@ -182,8 +182,8 @@ func mainBranch(root string) (string, error) {
 
 // preflightMain проверяет то, без чего нельзя начинать ни одну команду ship:
 // доску двигает taskctl, ветка main или master должна найтись. Чистоту
-// дерева проверяет отдельно вызывающий: ship, push и revert требуют её по
-// всему чекауту (preflight), а merge и smoke сужают её до файлов задачи,
+// дерева проверяет отдельно вызывающий: push и revert требуют её по
+// всему чекауту (preflight), ship допускает чужие карточки задач, а merge и smoke сужают её до файлов задачи,
 // которые известны только позже, когда определена ветка (DK-720).
 func preflightMain(root string) (string, error) {
 	if _, err := exec.LookPath("taskctl"); err != nil {
@@ -193,7 +193,7 @@ func preflightMain(root string) (string, error) {
 }
 
 // requireClean отказывает на любом незакоммиченном в root (untracked не
-// мешают). Ship, push и revert требуют её как предусловие.
+// мешают). Push и revert требуют её как предусловие.
 func requireClean(root string) error {
 	st, err := git(root, "status", "--porcelain", "--untracked-files=no")
 	if err != nil {
@@ -296,6 +296,25 @@ func dirtyPaths(root string) ([]string, error) {
 		return nil, err
 	}
 	return append(pathLines(unstaged), pathLines(staged)...), nil
+}
+
+func requireCleanShip(root string, protectedIDs []string) error {
+	dirty, err := dirtyPaths(root)
+	if err != nil {
+		return err
+	}
+	protected := make(map[string]bool, len(protectedIDs))
+	for _, id := range protectedIDs {
+		protected["docs/tasks/"+id+".md"] = true
+	}
+	for _, path := range dirty {
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "docs/tasks/"), ".md")
+		if path != "docs/tasks/"+id+".md" || !touchIDRe.MatchString(id) || protected[path] {
+			return fmt.Errorf("в рабочем дереве незакоммиченное по файлам выката, сначала закоммить:\n%s",
+				cmdoutFrame(root, "git-status", path))
+		}
+	}
+	return nil
 }
 
 // requireCleanScoped сужает требование чистоты до файлов задачи: несколько
@@ -1561,8 +1580,11 @@ func cmdShip(root string, p ShipParams) (string, error) {
 		return "", err
 	}
 	defer unlock()
-	main, err := preflight(root)
+	main, err := preflightMain(root)
 	if err != nil {
+		return "", err
+	}
+	if err := requireCleanShip(root, nil); err != nil {
 		return "", err
 	}
 	// Тег точки выката подтягивается до расчёта очереди и состава поезда,
@@ -1576,6 +1598,22 @@ func cmdShip(root string, p ShipParams) (string, error) {
 	}
 	b, err := loadBoard(root)
 	if err != nil {
+		return "", err
+	}
+	protected, _, err := trainTasks(root, main, b)
+	if err != nil {
+		return "", err
+	}
+	for _, row := range b.sects["in-progress"] {
+		_, pending, err := movePending(root, row.ID)
+		if err != nil {
+			return "", err
+		}
+		if pending {
+			protected = append(protected, row.ID)
+		}
+	}
+	if err := requireCleanShip(root, protected); err != nil {
 		return "", err
 	}
 	var msg []string

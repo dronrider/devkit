@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -571,5 +572,102 @@ func TestQueueRetryWithoutDevkit(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, mergeQueuePath)); !os.IsNotExist(err) {
 		t.Fatalf("наклейки не должны писаться без .devkit: %v", err)
+	}
+}
+
+func queueJSONItems(t *testing.T, root string, p QueueParams) []queueReport {
+	t.Helper()
+	raw, err := cmdQueueJSON(root, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Items []queueReport `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Items == nil {
+		t.Fatalf("items должны быть массивом: %s", raw)
+	}
+	return got.Items
+}
+
+func TestQueueJSONDirtyWorktreeReportsEveryTask(t *testing.T) {
+	root := queueSetup(t)
+	for _, item := range []struct{ id, file string }{{"XR-001", "code.txt"}, {"XR-007", "small.txt"}} {
+		wt := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-"+strings.ToLower(item.id))
+		write(t, wt, item.file, "unfinished\n")
+	}
+	items := queueJSONItems(t, root, QueueParams{Drain: true, Test: "true"})
+	if len(items) != 2 {
+		t.Fatalf("отказы обеих веток не выданы: %+v", items)
+	}
+	for i, id := range []string{"XR-001", "XR-007"} {
+		if items[i].ID != id || !items[i].Failed || items[i].Waiting || !strings.Contains(items[i].Line, "незакоммиченное") {
+			t.Fatalf("отказ должен иметь адрес и причину: %+v", items[i])
+		}
+	}
+}
+
+func TestQueueJSONLockIsWaiting(t *testing.T) {
+	root := queueSetup(t)
+	unlock, err := acquireLock(root, "стенд")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	items := queueJSONItems(t, root, QueueParams{Drain: true, Test: "true"})
+	if len(items) != 1 || !items[0].Waiting || items[0].Failed {
+		t.Fatalf("занятый замок это ожидание: %+v", items)
+	}
+}
+
+func TestQueueJSONEmptyAndBrokenProdHaveNoIncidents(t *testing.T) {
+	for _, rows := range []string{"", rowFailed} {
+		root, _ := setup(t, rows, "")
+		devkitDir(t, root)
+		items := queueJSONItems(t, root, QueueParams{Drain: true, Test: "true"})
+		if len(items) != 0 {
+			t.Fatalf("пустой разлив не несёт отказов: %+v", items)
+		}
+	}
+}
+
+func TestQueueJSONReportsMergedTask(t *testing.T) {
+	root := queueSetup(t)
+	items := queueJSONItems(t, root, QueueParams{Drain: true, Test: "true"})
+	if len(items) != 1 || items[0].ID != "XR-001" || !items[0].Merged || items[0].Failed {
+		t.Fatalf("слияние не названо: %+v", items)
+	}
+}
+
+func TestQueueJSONDependencyIsWaiting(t *testing.T) {
+	root, _ := setup(t, rowInProgAfter, "")
+	devkitDir(t, root)
+	queueBranch(t, root, "XR-001", "xr-001-fix", "code.txt")
+	items := queueJSONItems(t, root, QueueParams{Drain: true, Test: "true"})
+	if len(items) != 1 || !items[0].Waiting || items[0].Failed || !strings.Contains(items[0].Line, "предпосылку") {
+		t.Fatalf("неснятое ребро это ожидание: %+v", items)
+	}
+}
+
+func TestQueueJSONRootErrorHasNoInventedTask(t *testing.T) {
+	root := t.TempDir()
+	items := queueJSONItems(t, root, QueueParams{Drain: true, Test: "true"})
+	if len(items) != 1 || items[0].ID != "" || !items[0].Failed || items[0].Line == "" {
+		t.Fatalf("ошибка запуска без задачи: %+v", items)
+	}
+}
+
+func TestQueueJSONDependencyDoesNotHideEarlierFailure(t *testing.T) {
+	root, _ := setup(t, rowInProgAfter, "")
+	devkitDir(t, root)
+	queueBranch(t, root, "XR-001", "xr-001-fix", "code.txt")
+	wt := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-xr-001")
+	write(t, wt, "code.txt", "unfinished\n")
+	items := queueJSONItems(t, root, QueueParams{Drain: true, Test: "true"})
+	if len(items) != 1 || !items[0].Failed || items[0].Waiting || !strings.Contains(items[0].Line, "незакоммиченное") {
+		t.Fatalf("ожидание предпосылки скрыло независимый отказ: %+v", items)
 	}
 }

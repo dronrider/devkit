@@ -256,6 +256,7 @@ func main() {
 		fs := flag.NewFlagSet("queue", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		p := QueueParams{Say: sayNow}
+		asJSON := fs.Bool("json", false, "машинный исход очереди")
 		fs.BoolVar(&p.Drain, "drain", false, "слить одну готовую ветку из головы очереди")
 		fs.StringVar(&p.Hold, "hold", "", "снять строку с очереди: ID задачи")
 		fs.StringVar(&p.Free, "free", "", "вернуть строку в очередь и обнулить повторы: ID задачи")
@@ -263,7 +264,14 @@ func main() {
 		fs.StringVar(&p.Test, "test", "", "команда тестов проекта (sh -c)")
 		fs.BoolVar(&p.Push, "push", false, "запушить main и доску после слияния")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "queue [--drain] [--hold ID --reason \"...\"] [--free ID]")
-		msg, err = cmdQueue(root(*dir), p)
+		if *asJSON {
+			if !p.Drain || p.Hold != "" || p.Free != "" {
+				fail(fmt.Errorf("--json требует queue --drain"))
+			}
+			msg, err = cmdQueueJSON(root(*dir), p)
+		} else {
+			msg, err = cmdQueue(root(*dir), p)
+		}
 	case "ship":
 		fs := flag.NewFlagSet("ship", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

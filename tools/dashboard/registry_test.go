@@ -80,7 +80,7 @@ func TestParseBindLine(t *testing.T) {
 	want := sessionBind{Task: "DK-430", Source: bindOrder, Project: "devkit",
 		Tree:       "/Users/r/projects/devkit-dk-430",
 		Transcript: "/Users/r/.claude/projects/-p/0f2c-e91.jsonl",
-		Tmux:       "chat-DK-430-1", Time: "2026-08-18T12:03:11"}
+		Tmux:       "chat-DK-430-1", Time: "2026-08-18T12:03:11", Reason: "startup"}
 	if !reflect.DeepEqual(b, want) {
 		t.Errorf("запись:\n%+v\nожидал:\n%+v", b, want)
 	}

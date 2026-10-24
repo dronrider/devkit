@@ -141,7 +141,12 @@ class DutyAgentTest(unittest.TestCase):
         self.task_file([self.WHY])
         for _ in range(duty.SPAWN_TRIES):
             call = Fake(code=2, out="лестница отказала")
-            lines = self.duty_lines(call=call)
+            def invoke(argv, **kw):
+                result = call(argv, **kw)
+                if len(argv) > 1 and "notify.py" in str(argv[1]):
+                    result.returncode = 0
+                return result
+            lines = self.duty_lines(call=invoke)
         self.assertEqual(len(self.notifies(call)), 1,
                          "на потолке подъёмов человека не позвали: %s" % call.calls)
         self.assertIn("громкий зов человеку ушёл", " ".join(lines))
@@ -149,6 +154,37 @@ class DutyAgentTest(unittest.TestCase):
         call2 = Fake(code=2)
         self.duty_lines(call=call2)
         self.assertEqual(self.runs(call2), [], "после потолка поднимают снова")
+
+    def test_busy_is_waiting_without_failed_attempts_or_consumed_signature(self):
+        self.task_file([self.WHY])
+        call = Fake(code=3, out="голова занята, замок")
+        for _ in range(duty.SPAWN_TRIES + 2):
+            lines = self.duty_lines(call=call)
+        self.assertEqual(duty.read_fails(home=self.home), {})
+        self.assertEqual(duty.read_state(home=self.home), set())
+        self.assertEqual(self.notifies(call), [])
+        self.assertIn("исход записи", " ".join(lines))
+        self.assertIn("запуск: голова занята", " ".join(lines))
+        self.duty_lines()
+        self.assertEqual(len(self.runs()), 1)
+        self.assertIn(duty.signature(self.WHY), duty.read_state(home=self.home))
+
+    def test_undelivered_ceiling_notification_retries(self):
+        self.task_file([self.WHY])
+        failed = Fake(code=2, out="запуск и доставка отказали")
+        for _ in range(duty.SPAWN_TRIES):
+            lines = self.duty_lines(call=failed)
+        self.assertEqual(duty.read_state(home=self.home), set())
+        self.assertIn("не доставлено", " ".join(lines))
+        class Deliver(Fake):
+            def __call__(inner, argv, **kw):
+                inner.calls.append(list(argv))
+                code = 0 if len(argv) > 1 and "notify.py" in str(argv[1]) else 2
+                return subprocess.CompletedProcess(argv, code, "доставка", None)
+        delivered = Deliver()
+        self.duty_lines(call=delivered)
+        self.assertEqual(len(self.notifies(delivered)), 1)
+        self.assertIn(duty.signature(self.WHY), duty.read_state(home=self.home))
 
     # Шаг 4: одинаковые отказы в разбор не входят (граница DK-1115).
 

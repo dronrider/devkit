@@ -248,6 +248,11 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True):
             lines.append("корень %s: дежурный поднят по %s, отказ «%s»; %s"
                          % (root, task, sig, said))
             continue
+        if code == 3:
+            lines.append("корень %s: дежурный по %s ждёт свободного замка; "
+                         "исход записи «%s»; запуск: %s; повтор тиком"
+                         % (root, task, sig, said))
+            continue
         # Разбор не начался. Подпись не пишется: повтор идёт ближайшим тиком
         # и исход не виснет (замечание ревью). Постоянный сбой добивается
         # потолком попыток с реальным зовом, и только тогда подпись занимает
@@ -259,14 +264,17 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True):
                          "(попытка %d из %d), повтор тиком; %s"
                          % (root, task, sig, n, SPAWN_TRIES, said))
             continue
-        note = shout("разбор дежурного не поднять",
-                     "Задача %s: дежурный не поднялся %d раз, отказ «%s». %s. "
+        note, delivered = shout("разбор дежурного не поднять",
+                     "Задача %s: дежурный не поднялся %d раз. Исход записи «%s». Отказ запуска: %s. "
                      "Громкий зов это хвост неудавшегося подъёма."
                      % (task, n, sig, said),
                      root, call=call, task=task)
-        fresh.add(sig)
-        lines.append("корень %s: дежурного по %s не поднять %d раз, отказ «%s»; "
-                     "%s; громкий зов человеку ушёл" % (root, task, n, sig, note))
+        if delivered:
+            fresh.add(sig)
+        lines.append("корень %s: дежурного по %s не поднять %d раз, исход записи «%s»; "
+                     "запуск: %s; %s; %s" % (root, task, n, sig, said, note,
+                     "громкий зов человеку ушёл" if delivered else
+                     "уведомление не доставлено, повтор тиком"))
     if fresh:
         remember_many(fresh, home=home)
     return lines
@@ -310,8 +318,9 @@ def shout(title, body, root, call=None, task=None):
         p = call(argv + [title, body], cwd=str(root),
                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     except OSError as e:
-        return str(e)
-    return (p.stdout or "").strip() or "отправлено"
+        return str(e), False
+    return ((p.stdout or "").strip() or ("отправлено" if p.returncode == 0
+            else "код %d" % p.returncode)), p.returncode == 0
 
 
 def which(name):

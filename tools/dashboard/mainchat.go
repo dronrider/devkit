@@ -37,7 +37,40 @@ func (s *server) handleTaskChat(w http.ResponseWriter, r *http.Request) {
 		resp["source"] = recs[n-1].Source
 		resp["since"] = recs[n-1].Time
 	}
+	// Переход между целью и её задачами это навигация, а не перенос
+	// назначения (LLD DK-1422, решение 6): ручка называет обе стороны, и панель
+	// ведёт из чата задачи в чат цели и обратно, не трогая журналы.
+	if goal := s.goalRowOf(found.Path, id); goal != "" {
+		resp["goal"] = goal
+	} else if s.rowIsGoal(found.Path, id) {
+		if view, err := s.boardViewOf(found.Path); err == nil {
+			if tasks := s.goalTaskIDs(found.Path, id, view.Prefix); len(tasks) > 0 {
+				resp["tasks"] = tasks
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// rowIsGoal узнаёт строку цели по заголовку доски: назначение у цели и задачи
+// общее по журналу, а вид записи решает, какая сторона связи кому едет.
+func (s *server) rowIsGoal(projectPath, id string) bool {
+	raw, err := s.projectBoard(projectPath)
+	if err != nil {
+		return false
+	}
+	row, ok := findRow(raw, id)
+	return ok && isGoalTitle(row.Title)
+}
+
+// boardViewOf читает вид доски с префиксом: состав цели режется по префиксу
+// своей доски, и второй читатель формата не нужен.
+func (s *server) boardViewOf(projectPath string) (boardView, error) {
+	raw, err := s.projectBoard(projectPath)
+	if err != nil {
+		return boardView{}, err
+	}
+	return parseBoardView(raw)
 }
 
 // mainChatSegment это отрезок основной ленты с подписью роли и этапа. Отрезок

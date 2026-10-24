@@ -185,18 +185,21 @@ func TestRunStartAssignsMainChat(t *testing.T) {
 	if !strings.Contains(data, want) {
 		t.Fatalf("строка назначения не легла в журнал:\n%s\nждал вхождение %q", data, want)
 	}
-	// Запуск цели журнала не трогает: носителем у цели становится виток, и
-	// строку его положит свой писатель (DK-1431).
+	// Старт цели пишет свою строку той же правкой: ступень чата подняла окно
+	// goal-<ID>, и оно стало носителем записи, а строку витка headless-ступени
+	// кладёт сама оболочка при подъёме (LLD DK-1422, DK-1431).
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-100"}`)
 	text = body(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("запуск цели: %d %s", resp.StatusCode, text)
 	}
-	if strings.Contains(readFile(t, mainchat.Path(e.home)), "XR-100") {
-		t.Fatalf("запуск цели записал назначение витка:\n%s", readFile(t, mainchat.Path(e.home)))
+	data = readFile(t, mainchat.Path(e.home))
+	goalWant := " назначение XR-100 разговор tmux-goal-XR-100 проект demo источник работа прежде -"
+	if !strings.Contains(data, goalWant) {
+		t.Fatalf("строка назначения цели не легла в журнал:\n%s\nждал вхождение %q", data, goalWant)
 	}
-	if n := strings.Count(readFile(t, mainchat.Path(e.home)), "\n"); n != 1 {
-		t.Fatalf("в журнале строк %d, жду одну", n)
+	if n := strings.Count(data, "\n"); n != 2 {
+		t.Fatalf("в журнале строк %d, жду две", n)
 	}
 }
 

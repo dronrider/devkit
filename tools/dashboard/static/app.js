@@ -9635,12 +9635,19 @@ async function chatState(project, addr, board, works) {
   // открывается разговор, назначенный записи, а не тот, что открывали последним
   // (LLD DK-1422). Поднимающаяся сессия конвейера равна носителю: реплика туда
   // ушла бы вторым агентом, и панель ждёт её рождения плашкой подъёма, а не
-  // объявляет адрес протухшим из-за транскрипта, которого ещё нет. Цель журнал
-  // пока не называет, и она открывается своей дорогой ниже, а строку её
-  // носителя положит свой писатель (DK-1431). Назначения нет, а строка стоит на
-  // доске и работы за ней нет: панель показывает состояние записи без
-  // разговора, а не первый чат задачи из памяти вкладки.
-  if (st.main && !st.fresh && !isGoalRow(board, st.task)) {
+  // объявляет адрес протухшим из-за транскрипта, которого ещё нет. У цели
+  // назначение живёт, пока идёт цикл: строка журнала переживает стоп-маркер и
+  // называет кончившийся виток, а дверь стоящей цели поднимает свою сессию
+  // первой репликой (DK-1009), поэтому цель берёт носителя только при живой
+  // работе. Назначения нет, а строка стоит на доске и работы за ней нет: панель
+  // показывает состояние записи без разговора, а не первый чат задачи из
+  // памяти вкладки. Стоящей цели это не говорится: её дверь действует и без
+  // назначения.
+  const goalHere = isGoalRow(board, st.task);
+  const shell = goalHere && !st.fresh ? goalShell(st.task, works) : null;
+  const goalRuns = Boolean(shell) ||
+    (goalHere && workOnRun((works || []).find((x) => x.id === st.task)));
+  if (st.main && !st.fresh && (!goalHere || (st.main.chat && goalRuns))) {
     const rise = chatLiftOf(project, CHAT_NEW + ":" + st.task) ||
       workSession(st.task, works);
     if (st.main.chat) {
@@ -9658,7 +9665,7 @@ async function chatState(project, addr, board, works) {
           st.sid = "";
         } else st.sid = st.main.chat;
       }
-    } else if (!rise && boardRow(board, st.task)) {
+    } else if (!rise && boardRow(board, st.task) && !goalHere) {
       st.unassigned = true;
     }
   }
@@ -9692,9 +9699,9 @@ async function chatState(project, addr, board, works) {
   // открывает её виток по имени из замка, и реплика уходит ручкой цели. Виток
   // между ходами мёртв, в список живых он не попадает, и без этой ветки панель
   // шла дальше дорогой задачи: второй сессией рядом с циклом либо вечной
-  // плашкой подъёма над запертым полем (DK-1009, замечание ревью).
-  const shell = goalAddr && !st.sid ? goalShell(st.task, works) : null;
-  if (shell && shell.session) st.sid = shell.session;
+  // плашкой подъёма над запертым полем (DK-1009, замечание ревью). Носитель из
+  // журнала называет тот же виток, и названная им панель остаётся у ручки цели.
+  if (shell && shell.session && !st.sid) st.sid = shell.session;
   // Память подъёма живёт не только у адреса new: разбор записи накопителя
   // поднимают кнопкой её строки, а чат по ней открывают тем же ID, каким
   // открывают чат задачи. Панель с привязкой и без диалога ждёт ровно ту же
@@ -9770,10 +9777,14 @@ async function chatState(project, addr, board, works) {
     // chat-in.py из «Входящих» файла цели, а /say поднял бы рядом второго
     // агента. Идёт она или нет, говорит работа цели, а не живость витка:
     // адрес цели при живом замке ведёт той же ручкой, даже когда виток между
-    // ходами кончился. Всё прочее у цели идёт дорогой задачи: живой разговор
-    // открывается, а без него первая реплика поднимает сессию с привязкой к
-    // цели.
-    st.goal = turn || shell ? st.task : "";
+    // ходами кончился. Ручке принадлежит и панель на носителе из журнала,
+    // пока тот называет виток, а не tmux-окно ступени чата: строка с именем
+    // окна доезжает голове безадресно, вход записи ей роднее. Всё прочее у
+    // цели идёт дорогой задачи: живой разговор открывается, а без него первая
+    // реплика поднимает сессию с привязкой к цели.
+    st.goal = turn || (shell && shell.session === st.sid) ||
+      (goalRuns && st.main && st.main.chat === st.sid &&
+        !st.main.chat.startsWith("tmux-")) ? st.task : "";
     const row = boardRow(board, st.task);
     st.title = row ? row.title : "";
     // Ожидание человека едет в панель вместе с задачей: пока строка стоит с
@@ -11183,6 +11194,30 @@ function chatHead(project, st) {
       goFromChat(project + "/" + st.task);
     });
     pick.append(lab);
+  }
+  // Переход между целью и её задачами это навигация по записям, а не перенос
+  // назначения (LLD DK-1422, решение 6): чип называет другую сторону связи и
+  // открывает основной чат той записи на той же доске.
+  if (st.main && st.main.goal && st.main.goal !== st.task) {
+    const lab = withFull(el("span", "cdtask", "цель " + st.main.goal),
+      "основной чат цели " + st.main.goal);
+    lab.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      openChat(st.main.goal);
+    });
+    pick.append(lab);
+  }
+  if (st.main && st.main.tasks) {
+    const many = st.main.tasks.filter((t) => t !== st.task);
+    for (const t of many.slice(0, 3)) {
+      const lab = withFull(el("span", "cdtask", t), "основной чат задачи " + t);
+      lab.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        openChat(t);
+      });
+      pick.append(lab);
+    }
+    if (many.length > 3) pick.append(el("span", "cdtask", "+" + (many.length - 3)));
   }
   // У каждого состояния панели своё имя, «чата нет» не говорит ни одно: у
   // нового чата диалога ещё нет по замыслу, протухший адрес назван находкой
@@ -13363,6 +13398,38 @@ const ECHO_WAIT_MS = 60000;
 // снять её руками стало честнее, чем держать вечно (DK-1379, решение человека).
 const ECHO_STUCK_MS = 60000;
 
+// Строка действия записи под лентой: одно поле и кнопка, ответ ручки печатается
+// рядом же. Решение цели задачам и строка диспетчеру цели это служебные ручки,
+// а не реплики разговора, и в поле ввода они не смешиваются.
+function chatActionRow(label, hint, send) {
+  const box = el("div", "cnote");
+  const field = el("input", "cbindin");
+  field.type = "text";
+  field.placeholder = hint;
+  field.setAttribute("aria-label", label);
+  const say = el("span", "", "");
+  const go = el("button", "btn btn-sm btn-acc", label);
+  go.addEventListener("click", async () => {
+    const text = field.value.trim();
+    if (!text) return;
+    go.disabled = true;
+    try {
+      const r = await send(text);
+      say.textContent = r;
+      if (r) field.value = "";
+    } catch (err) {
+      say.textContent = "не уехало: " + (err && err.message ? err.message : "связи нет");
+    } finally {
+      go.disabled = false;
+    }
+  });
+  field.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") go.click();
+  });
+  box.append(field, go, say);
+  return box;
+}
+
 // Тело окна: лента, свои неотражённые реплики, подпись про доставку, индикатор
 // работы и поле ввода.
 function chatPanel(project, st) {
@@ -13424,6 +13491,31 @@ function chatPanel(project, st) {
       note.append(go);
     }
     wrap.append(note);
+  }
+  // Решение цели её задачам: строка ложится во входы записей задач, и панель
+  // цели держит действие при себе, каким бы ни был способ её собственного
+  // разговора (LLD DK-1422). Проект у ручки записи, а не у открытого разговора:
+  // доска цели и живой чат бывают в разных проектах списка.
+  if (st.isGoal && st.main && st.main.tasks) {
+    const base = "/api/projects/" + encodeURIComponent(st.main.project) +
+      "/goals/" + encodeURIComponent(st.task) + "/decide";
+    wrap.append(chatActionRow("Довести задачам", "решение цели одной строкой",
+      async (text) => {
+        const r = await api(base, { method: "POST", body: { text } });
+        return r.body.message || r.body.error || "";
+      }));
+  }
+  // Строка диспетчеру задачи у диспетчера цели: подтверждение решения, вопрос
+  // о составе. Живёт у панели задачи с целью, прямые вопросы остаются в её
+  // собственном поле ввода.
+  if (!st.isGoal && st.main && st.main.goal) {
+    const base = "/api/projects/" + encodeURIComponent(st.main.project) +
+      "/tasks/" + encodeURIComponent(st.task) + "/relay";
+    wrap.append(chatActionRow("Диспетчеру цели", "вопрос или подтверждение одной строкой",
+      async (text) => {
+        const r = await api(base, { method: "POST", body: { text } });
+        return r.body.message || r.body.error || "";
+      }));
   }
   const busy = makeBusy(project, wrap);
   // Клин лечится сам и молча. Плашки над полем ввода тут больше нет: разговор

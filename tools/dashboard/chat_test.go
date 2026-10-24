@@ -2938,6 +2938,24 @@ func TestStaticChatListFresh(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Строки записей и фильтры списка по разметке: строка записи стоит с видом,
+// стадией и целью и без кнопок, чип цели открывает чат самой цели, носитель
+// отрезка не рисуется ни видом, ни поиском, а кнопка вида даёт три набора
+// и переживает перезагрузку (стенд testdata/poc_chatmain.mjs, LLD DK-1422,
+// решение 6). Без node шаг пропускается: узел стенда, а не рабочей части.
+func TestStaticChatMainRows(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд строк записей пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatmain.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("строки записей в списке: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Прогрев списка разговоров на возврате из пула: возврат в открытый разговор
 // перечитывает перечень в фон, и первый взгляд на список видит настоящий
 // состав, а не память прошлой сборки панели. Перечитка самого открытия, пока

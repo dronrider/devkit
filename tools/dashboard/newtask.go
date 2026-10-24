@@ -64,6 +64,11 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 		Title string `json:"title"`
 		Body  string `json:"body"`
 		Prio  string `json:"prio"`
+		// Chat это разговор панели, из которого черновик оформили: свободная
+		// беседа становится основным чатом записи источником «оформление»
+		// (LLD DK-1422). Пустое поле значит, что беседы не было, и назначение
+		// не пишется.
+		Chat string `json:"chat"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, draftTextLimit)).Decode(&body); err != nil {
 		var mbe *http.MaxBytesError
@@ -130,6 +135,15 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 	if note := commitDocs(found.Path, boardCommitMsg(id, "черновик записан с дашборда"), rel); note != "" {
 		resp["note"] = note
 		s.logf("черновик %s в %s: %s", id, found.Name, note)
+	}
+	// Назначение основного чата стоит после коммита: запись уже существует,
+	// и разговор, из которого её оформили, привязывается к настоящему ID.
+	if note := s.draftDecorChat(found, id, body.Chat, title); note != "" {
+		if had := resp["note"]; had != "" {
+			resp["note"] = had + "; " + note
+		} else {
+			resp["note"] = note
+		}
 	}
 	s.logf("черновик %s в %s: %s", id, found.Name, out)
 	writeJSON(w, http.StatusOK, resp)

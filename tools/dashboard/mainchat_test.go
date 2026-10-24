@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -311,5 +312,203 @@ func TestTaskChatSegmentUnknownRole(t *testing.T) {
 	got := segmentsLabeled(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-005/chat")
 	if len(got) != 1 || got[0].Role != "роль неясна" || got[0].Stage != "" {
 		t.Fatalf("отрезок без роли не подписан словами: %+v", got)
+	}
+}
+
+// Оформление черновика из свободного разговора назначает ему основной чат
+// источником «оформление»: строка ложится в журнал, разговор открывается
+// кнопкой записи, пока та лежит в накопителе без строки доски, и разработку
+// ничего не поднимает (LLD DK-1422, решение 1).
+func TestDraftDecorAssignsFreeChat(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	writeBinds(t, e.home, bindRecord(e.home, "2026-10-24T10:00:00", "free-1", "-", "рука"))
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"title": "Мысль из обсуждения", "prio": "mid", "chat": "free-1"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("черновик из разговора: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "разговор стал основным чатом записи") {
+		t.Errorf("оформление молчит о назначении: %s", text)
+	}
+	data := readFile(t, mainchat.Path(e.home))
+	want := " назначение XR-005 разговор free-1 проект demo источник оформление прежде -"
+	if !strings.Contains(data, want) {
+		t.Fatalf("строка источника «оформление» не легла в журнал:\n%s\nждал вхождение %q", data, want)
+	}
+	// Создание черновика разработку не запускает: журнал держит одну строку
+	// и конвейер не называет.
+	if n := strings.Count(data, "\n"); n != 1 {
+		t.Fatalf("в журнале строк %d, жду одну", n)
+	}
+	code, got := taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-005/chat")
+	if code != http.StatusOK || got.Chat != "free-1" || got.Source != mainchat.ByDecor {
+		t.Fatalf("адрес записи накопителя не решил в разговор: %d %+v", code, got)
+	}
+}
+
+// Вторая запись из того же обсуждения получает свой основной чат: разговор
+// служит основной лентой только одной записи, первое назначение сохраняется,
+// а второй записи заводится незачатый разговор с итогом постановки и ссылкой
+// на источник.
+func TestDraftDecorSecondRecordGetsOwnChat(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	writeBinds(t, e.home, bindRecord(e.home, "2026-10-24T10:00:00", "free-1", "-", "рука"))
+
+	for _, title := range []string{"Первая мысль", "Вторая мысль"} {
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+			fmt.Sprintf(`{"title": %q, "prio": "mid", "chat": "free-1"}`, title))
+		if text := body(t, resp); resp.StatusCode != http.StatusOK {
+			t.Fatalf("черновик %s: %d %s", title, resp.StatusCode, text)
+		}
+	}
+	binds := mainchat.Load(e.home)
+	if first := binds["XR-005"]; first.Chat != "free-1" || first.Source != mainchat.ByDecor {
+		t.Fatalf("первое назначение не сохранилось: %+v", first)
+	}
+	second := binds["XR-006"]
+	if !strings.HasPrefix(second.Chat, "blank-") || second.Source != mainchat.ByDecor {
+		t.Fatalf("у второй записи нет своего чата: %+v", second)
+	}
+	// Свой чат несёт итог постановки и ссылку на общее обсуждение, а сессии
+	// за ним нет: разработку запись не запускает.
+	store := readFile(t, filepath.Join(chatStoreDir(e.home), second.Chat+".json"))
+	for _, want := range []string{"Вторая мысль",
+		"Постановка выделена из общего обсуждения: #demo/chat/free-1",
+		`"task":"XR-006"`, `"blank":true`} {
+		if !strings.Contains(store, want) {
+			t.Errorf("в своём чате второй записи нет %q: %s", want, store)
+		}
+	}
+	// Кнопка каждой записи открывает её носителя.
+	code, got := taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-005/chat")
+	if code != http.StatusOK || got.Chat != "free-1" {
+		t.Fatalf("первая запись потеряла разговор: %d %+v", code, got)
+	}
+	code, got = taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-006/chat")
+	if code != http.StatusOK || got.Chat != second.Chat {
+		t.Fatalf("вторая запись не получила свой чат адресом: %d %+v", code, got)
+	}
+}
+
+// Не всякий разговор панели становится основным чатом: беседа чужой записи
+// и посторонний ключ журналом не завладевают, а черновик записывается всё равно.
+func TestDraftDecorSkipsNotFreeChat(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	writeBinds(t, e.home,
+		bindRecord(e.home, "2026-10-24T10:00:00", "groom-1", "XR-001", "заказ"),
+		bindRecord(e.home, "2026-10-24T10:01:00", "free-1", "-", "рука"))
+
+	for _, chat := range []string{"groom-1", "no-such"} {
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+			fmt.Sprintf(`{"title": "Мысль", "prio": "mid", "chat": %q}`, chat))
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("черновик с разговором %s: %d %s", chat, resp.StatusCode, text)
+		}
+		if !strings.Contains(text, "основным чатом черновика он не стал") {
+			t.Errorf("отказ разговора %s молчит: %s", chat, text)
+		}
+	}
+	if _, err := os.Stat(mainchat.Path(e.home)); !os.IsNotExist(err) {
+		t.Fatalf("несвободный разговор завёл журнал:\n%s", readFile(t, mainchat.Path(e.home)))
+	}
+	for _, id := range []string{"XR-005", "XR-006"} {
+		if !isFile(filepath.Join(e.proj, "docs", "tasks", "drafts", id+".md")) {
+			t.Errorf("черновик %s не записался", id)
+		}
+	}
+}
+
+// Назначение переживает смену вида записи: черновик, оформленный в задачу тем
+// же ID, держит свой разговор, а начало работы называет носителем конвейер
+// и оставляет отрезок оформления в истории ленты.
+func TestDraftDecorSurvivesPromoteAndWork(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	writeBinds(t, e.home, bindRecord(e.home, "2026-10-24T10:00:00", "free-1", "-", "рука"))
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"title": "Мысль из обсуждения", "prio": "mid", "chat": "free-1"}`).Body.Close()
+
+	// Ворота add спрашивают у черновика раздел DoD: грумминг дописывает его
+	// раньше оформления, и тест делает то же.
+	draft := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")
+	if err := os.WriteFile(draft, []byte("# Мысль из обсуждения\n\n## DoD\n\n- сделано\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Оформление в задачу: грумминг доводит taskctl add --id, ID не меняется.
+	runTaskctl(t, e.proj, "add", "--id", "XR-005", "--title", "Мысль из обсуждения",
+		"--rank", "25+1+1+0+0", "--accept", "agent")
+	code, got := taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-005/chat")
+	if code != http.StatusOK || got.Chat != "free-1" || got.Source != mainchat.ByDecor {
+		t.Fatalf("оформление в задачу потеряло назначение: %d %+v", code, got)
+	}
+
+	// Начало работы пишет свою строку тем же писателем, каким пишет старт
+	// конвейера: адрес остаётся у записи, отрезок оформления закрывается
+	// отрезком работы.
+	if err := mainchat.Put(e.home, mainchat.Bind{
+		Record: "XR-005", Chat: "tmux-task-XR-005", Project: "demo", Source: mainchat.ByWork}); err != nil {
+		t.Fatal(err)
+	}
+	code, got = taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-005/chat")
+	if code != http.StatusOK || got.Chat != "tmux-task-XR-005" || got.Source != mainchat.ByWork {
+		t.Fatalf("начало работы не сменило носителя: %d %+v", code, got)
+	}
+	if len(got.Segments) != 2 || got.Segments[0].Chat != "free-1" ||
+		got.Segments[0].Source != mainchat.ByDecor || got.Segments[0].Until == "" {
+		t.Fatalf("отрезок оформления не сохранился: %+v", got.Segments)
+	}
+}
+
+// Незачатый носитель вырастает в сессию первой репликой, и адрес следует
+// за ростом: строка журнала называет прежний ключ, а ручка отдаёт сессию.
+func TestTaskChatFollowsGrownSeed(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"title": "Мысль", "prio": "mid"}`).Body.Close()
+	seed := chatBlankID()
+	st := chatStore{Blank: true, Born: time.Now().Unix(), Project: "demo", Task: "XR-005"}
+	if err := e.s.chatStoreWrite(seed, st); err != nil {
+		t.Fatal(err)
+	}
+	writeMainChat(t, e.home, mainchat.Line(time.Date(2026, 10, 24, 10, 0, 0, 0, time.UTC),
+		mainchat.Bind{Record: "XR-005", Chat: seed, Project: "demo", Source: mainchat.ByDecor}))
+	code, got := taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-005/chat")
+	if code != http.StatusOK || got.Chat != seed {
+		t.Fatalf("незачатый носитель не прошёл адресом: %d %+v", code, got)
+	}
+
+	// Сессия выросла: адрес отдаёт её, а строка журнала остаётся как была.
+	st.Grown = "sess-9"
+	if err := e.s.chatStoreWrite(seed, st); err != nil {
+		t.Fatal(err)
+	}
+	code, got = taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-005/chat")
+	if code != http.StatusOK || got.Chat != "sess-9" {
+		t.Fatalf("выросший носитель не отдался сессией: %d %+v", code, got)
+	}
+	if data := readFile(t, mainchat.Path(e.home)); !strings.Contains(data, seed) {
+		t.Fatalf("ручка адреса переписала журнал:\n%s", data)
+	}
+}
+
+// Клиентская сторона оформления: форма черновика передаёт свободный разговор
+// панели, и носитель-заготовка открывается экраном нового чата с итогом
+// постановки, а не пустой лентой. Строки клиента сторожат сам экран.
+func TestStaticDecorWay(t *testing.T) {
+	app, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"chatDecorSource()",
+		`chat: chatDecorSource()`,
+		`c.id === st.main.chat && c.blank`,
+	} {
+		if !strings.Contains(string(app), want) {
+			t.Errorf("в app.js нет %s", want)
+		}
 	}
 }

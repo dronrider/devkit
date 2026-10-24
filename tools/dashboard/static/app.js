@@ -9645,7 +9645,19 @@ async function chatState(project, addr, board, works) {
       workSession(st.task, works);
     if (st.main.chat) {
       if (rise && st.main.chat === "tmux-" + rise) st.lift = rise;
-      else st.sid = st.main.chat;
+      else {
+        // Носителем оформления второй записи из одного обсуждения бывает
+        // незачатый разговор с готовым итогом постановки: он открывается
+        // экраном нового чата с этим текстом, а не пустой лентой адреса
+        // чужого вида (LLD DK-1422).
+        const seeded = st.chats.find((c) => c.id === st.main.chat && c.blank);
+        if (seeded) {
+          st.blank = st.main.chat;
+          st.entry = seeded;
+          st.fresh = true;
+          st.sid = "";
+        } else st.sid = st.main.chat;
+      }
     } else if (!rise && boardRow(board, st.task)) {
       st.unassigned = true;
     }
@@ -16273,8 +16285,23 @@ async function makeNew(project, tail, body, btns, saying) {
   });
 }
 
+// Разговор, из которого оформляют черновик: свободная беседа панели без
+// привязки к записи становится основным чатом новой записи, и журнал
+// назначений получает строку с источником «оформление» (LLD DK-1422).
+// Адрес называет сам разговор, а состояние панели подтверждает его свободу:
+// чат задачи, конвейер и общий чат доски записью не завладевают, и чужая
+// вкладка без панели своей беседы не дарит.
+function chatDecorSource() {
+  const addr = route().chat || "";
+  if (!addr || chatIsNew(addr) || chatIsTask(addr) || addr === CHAT_BOARD) return "";
+  const sid = addr.includes(CHAT_PROJ_SEP) ? chatAddrParts("", addr).addr : addr;
+  if (chatShown.sid !== sid || chatShown.task) return "";
+  return sid;
+}
+
 function makeDraft(project, title, draftBody, prio, btns) {
-  return makeNew(project, "/drafts", { title, body: draftBody, prio }, btns, "запись черновика...");
+  return makeNew(project, "/drafts",
+    { title, body: draftBody, prio, chat: chatDecorSource() }, btns, "запись черновика...");
 }
 
 function makeTask(project, body, btns) {

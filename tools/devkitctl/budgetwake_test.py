@@ -75,6 +75,16 @@ class BudgetWakeTest(unittest.TestCase):
                         next(i for i, c in enumerate(self.calls) if "wake" in c))
         self.assertIn("цикл поднят", " ".join(lines))
 
+    def test_exec_diagnostic_before_machine_gate_does_not_block_resume(self):
+        self.gate = "exec: харнес glm-code-2, команда agentctl\n" + self.gate
+        self.assertIn("цикл поднят", " ".join(self.run_wake()))
+        self.assertEqual(len(self.launched()), 1)
+
+    def test_conflicting_machine_gates_keep_parking(self):
+        self.gate += "\ngate: over\n"
+        self.assertIn("парковка по бюджету сохранена", " ".join(self.run_wake()))
+        self.assertFalse(self.launched())
+
     def test_cumulative_over_and_unknown_snapshot_keep_parking(self):
         for gate in ("gate: over\nwindow5h_all: потрачено 158 из 100, исчерпан",
                      "gate: over\nweek_all: потрачено 101 из 100, исчерпан",

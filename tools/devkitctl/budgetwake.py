@@ -37,8 +37,9 @@ def live_lock(root, tid, home):
 
 def fresh_gate(text):
     """Зелёный гейт при неизвестном или старом снимке не разрешает подъём."""
-    lines = text.strip().splitlines()
-    if not lines or lines[0] != "gate: ok":
+    lines = [line.strip() for line in text.splitlines()
+             if line.strip().startswith("gate:")]
+    if lines != ["gate: ok"]:
         return False
     if any(mark in text for mark in ("протух", "по журналу", "неизвестен",
                                       "из будущего", "нет снимка", "снимка квоты нет")):

@@ -160,6 +160,46 @@ func TestGoalDecideDeliversToTaskInputs(t *testing.T) {
 	}
 }
 
+// Повтор того же решения не помечает задачу отсутствующей: строка уже лежит
+// во входе записи, второй раз она не заводится, и подхват заберёт одну. Это
+// дедуп-успех, как у relay и ручек чата, а не отказ дерева.
+func TestGoalDecideRepeatMarksDup(t *testing.T) {
+	e, c, _ := messagesEnv(t, "")
+	goalWithTasks(t, e)
+	ask := `{"text": "первая задача закрывается нарезкой"}`
+	first := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/goals/XR-100/decide", ask)
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("первая доставка: %d %s", first.StatusCode, body(t, first))
+	}
+	second := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/goals/XR-100/decide", ask)
+	text := body(t, second)
+	if second.StatusCode != http.StatusOK {
+		t.Fatalf("повтор доставки: %d %s", second.StatusCode, text)
+	}
+	var out struct {
+		Sent []map[string]any `json:"sent"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Sent) != 2 {
+		t.Fatalf("повтор не назвал обе задачи: %s", text)
+	}
+	for _, item := range out.Sent {
+		if item["dup"] != true {
+			t.Fatalf("повтор не назван дедупом у задачи %v: %s", item["id"], text)
+		}
+		if _, has := item["note"]; has {
+			t.Fatalf("лежащая строка помечена отказом дерева у задачи %v: %s", item["id"], text)
+		}
+	}
+	for _, id := range []string{"XR-004", "XR-003"} {
+		if lines := taskInbox(t, e, id); len(lines) != 1 {
+			t.Fatalf("повтор завёл вторую строку у %s: %q", id, lines)
+		}
+	}
+}
+
 // Названная вручную задача проверяется членством: решение чужой задаче везла бы
 // связь, которой нет, и человек узнал бы об этом молчанием.
 func TestGoalDecideRefusesForeignTask(t *testing.T) {

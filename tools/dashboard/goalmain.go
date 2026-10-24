@@ -173,11 +173,14 @@ func (s *server) handleGoalDecide(w http.ResponseWriter, r *http.Request) {
 	line := "решение цели " + id + ": " + text
 	sent := []map[string]any{}
 	for _, tid := range want {
-		delivered, note := s.decideDeliver(found.Path, tid, line)
+		delivered, dup, note := s.decideDeliver(found.Path, tid, line)
 		item := map[string]any{"id": tid}
-		if note != "" {
+		switch {
+		case note != "":
 			item["note"] = note
-		} else {
+		case dup && len(delivered) == 0:
+			item["dup"] = true
+		default:
 			item["trees"] = decideTreeNames(delivered)
 		}
 		sent = append(sent, item)
@@ -194,29 +197,33 @@ func (s *server) handleGoalDecide(w http.ResponseWriter, r *http.Request) {
 }
 
 // decideDeliver кладёт строку решения во вход записи задачи обоих её деревьев.
-// Возвращаются деревья, куда строка легла, и причина отказа, когда не легла
-// никуда. Боковое дерево спрашивается по имени: дерево задачи это
+// Возвращаются деревья, куда строка легла, признак уже лежащей строки и
+// причина отказа, когда строка не легла нигде. Уже лежащая строка это
+// дедуп-успех, как у ручек чата: второй раз строка не заводится, а подхват
+// заберёт одну. Боковое дерево спрашивается по имени: дерево задачи это
 // <проект>-<id>, и без него строка лежит в основном чекауте, где её читает
 // голова, поднятая панелью.
-func (s *server) decideDeliver(projectPath, id, text string) ([]string, string) {
+func (s *server) decideDeliver(projectPath, id, text string) ([]string, bool, string) {
 	var put []string
+	dup := false
 	for _, tree := range askTrees(projectPath, id) {
 		if fi, err := os.Stat(tree); err != nil || !fi.IsDir() {
 			continue
 		}
 		lying, _, err := putChat(tree, chat.TaskName(id), text, chat.TaskLine(s.now(), text))
 		if err != nil {
-			return nil, fmt.Sprintf("вход записи в %s не взял строку: %v", tree, err)
+			return nil, false, fmt.Sprintf("вход записи в %s не взял строку: %v", tree, err)
 		}
 		if lying != "" {
+			dup = true
 			continue
 		}
 		put = append(put, tree)
 	}
-	if len(put) == 0 {
-		return nil, "дерева задачи нет: строки ждать некому"
+	if len(put) == 0 && !dup {
+		return nil, false, "дерева задачи нет: строки ждать некому"
 	}
-	return put, ""
+	return put, dup, ""
 }
 
 func wantHas(list []string, id string) bool {

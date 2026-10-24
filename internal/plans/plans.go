@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/subtoml"
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // DirName это имя каталога набора в обоих слоях.
@@ -173,6 +174,10 @@ func checkStage(file string, s Stage) error {
 	}
 	if s.Trace == "" {
 		return fmt.Errorf("%s нет trace: этап без следа пишется trace = \"слово\"", where)
+	}
+	if !trace.Known(s.Trace) {
+		return fmt.Errorf("%s trace = %s, следы известны эти: %s", where, subtoml.Quote(s.Trace),
+			strings.Join(trace.Words(), ", "))
 	}
 	for _, g := range s.Gate {
 		if !inList(knownGates, g) {

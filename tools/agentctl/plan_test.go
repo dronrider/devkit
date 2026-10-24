@@ -14,18 +14,18 @@ func planEnv(pairs map[string]string) func(string) string {
 	return func(name string) string { return pairs[name] }
 }
 
-// planFile читает файл плана из подставного дома.
-func planFile(t *testing.T, home, name string) []planItem {
+// readPlanFile читает файл плана из подставного дома и отдаёт пункты.
+func readPlanFile(t *testing.T, home, name string) []planItem {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(home, ".devkit", "plans", name))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []planItem
+	var out planFile
 	if err := json.Unmarshal(data, &out); err != nil {
 		t.Fatalf("файл плана не разобран: %v", err)
 	}
-	return out
+	return out.Items
 }
 
 func TestPlanSetAndStep(t *testing.T) {
@@ -35,7 +35,7 @@ func TestPlanSetAndStep(t *testing.T) {
 	if _, err := cmdPlan(home, "set", []string{"дерево\nскилл\nтесты"}, "", "", env); err != nil {
 		t.Fatal(err)
 	}
-	plan := planFile(t, home, "s1.json")
+	plan := readPlanFile(t, home, "s1.json")
 	if len(plan) != 3 {
 		t.Fatalf("пунктов %d, ждали три: %v", len(plan), plan)
 	}
@@ -48,7 +48,7 @@ func TestPlanSetAndStep(t *testing.T) {
 	if _, err := cmdPlan(home, "step", nil, "", "", env); err != nil {
 		t.Fatal(err)
 	}
-	if got := planFile(t, home, "s1.json")[0].State; got != "in_progress" {
+	if got := readPlanFile(t, home, "s1.json")[0].State; got != "in_progress" {
 		t.Fatalf("первый пункт в состоянии %q, ждали in_progress", got)
 	}
 
@@ -57,7 +57,7 @@ func TestPlanSetAndStep(t *testing.T) {
 	if _, err := cmdPlan(home, "step", []string{"скилл"}, "", "", env); err != nil {
 		t.Fatal(err)
 	}
-	plan = planFile(t, home, "s1.json")
+	plan = readPlanFile(t, home, "s1.json")
 	if plan[0].State != "completed" || plan[1].State != "in_progress" {
 		t.Fatalf("после шага состояния %q и %q, ждали completed и in_progress", plan[0].State, plan[1].State)
 	}
@@ -65,7 +65,7 @@ func TestPlanSetAndStep(t *testing.T) {
 	if _, err := cmdPlan(home, "done", nil, "", "", env); err != nil {
 		t.Fatal(err)
 	}
-	if got := planFile(t, home, "s1.json")[1].State; got != "completed" {
+	if got := readPlanFile(t, home, "s1.json")[1].State; got != "completed" {
 		t.Fatalf("закрытый пункт в состоянии %q, ждали completed", got)
 	}
 }
@@ -224,7 +224,7 @@ func TestPlanSetCarriesStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := planFile(t, home, "s1.json")
+	plan := readPlanFile(t, home, "s1.json")
 	want := []planItem{
 		{Text: "разведка", State: "completed"},
 		{Text: "правка", State: "in_progress"},
@@ -259,7 +259,7 @@ func TestPlanSetCarryIgnoresCase(t *testing.T) {
 	if _, err := cmdPlan(home, "set", []string{"  разведка  \nправка"}, "", "", env); err != nil {
 		t.Fatal(err)
 	}
-	if got := planFile(t, home, "s1.json")[0].State; got != "completed" {
+	if got := readPlanFile(t, home, "s1.json")[0].State; got != "completed" {
 		t.Fatalf("пункт после перекладки в состоянии %q, ждали completed", got)
 	}
 }
@@ -279,7 +279,7 @@ func TestPlanSetCarryOnlyOnce(t *testing.T) {
 	if _, err := cmdPlan(home, "set", []string{"прогон\nправка\nпрогон"}, "", "", env); err != nil {
 		t.Fatal(err)
 	}
-	plan := planFile(t, home, "s1.json")
+	plan := readPlanFile(t, home, "s1.json")
 	if plan[0].State != "completed" {
 		t.Fatalf("первый прогон в состоянии %q, ждали completed", plan[0].State)
 	}
@@ -297,7 +297,7 @@ func TestPlanSetFreshOnEmpty(t *testing.T) {
 	if _, err := cmdPlan(home, "set", []string{"разведка\nправка"}, "", "", env); err != nil {
 		t.Fatal(err)
 	}
-	for _, it := range planFile(t, home, "s1.json") {
+	for _, it := range readPlanFile(t, home, "s1.json") {
 		if it.State != "pending" {
 			t.Fatalf("пункт первого плана в состоянии %q, ждали pending", it.State)
 		}
@@ -330,7 +330,7 @@ func TestPlanSetRefusesReviewerOverExecutor(t *testing.T) {
 			t.Errorf("в отказе нет %q: %v", want, err)
 		}
 	}
-	got := planFile(t, home, "s1-sub-DK-888.json")
+	got := readPlanFile(t, home, "s1-sub-DK-888.json")
 	if len(got) != 3 || got[0].Text != "разведка" || got[0].State != "completed" {
 		t.Fatalf("план исполнителя после отказа не цел: %+v", got)
 	}
@@ -354,7 +354,7 @@ func TestPlanSetRefusesUnlabelledOverHead(t *testing.T) {
 	if !strings.Contains(err.Error(), "s1.json") || !strings.Contains(err.Error(), "--label") {
 		t.Errorf("отказ не называет файл головы и выход через метку: %v", err)
 	}
-	got := planFile(t, home, "s1.json")
+	got := readPlanFile(t, home, "s1.json")
 	if len(got) != 3 || got[0].State != "in_progress" {
 		t.Fatalf("план головы после отказа не цел: %+v", got)
 	}
@@ -382,11 +382,11 @@ func TestPlanDoneWithoutLabelHitsHeadPlan(t *testing.T) {
 	if _, err := cmdPlan(home, "done", nil, "", "DK-467-exec", env); err != nil {
 		t.Fatal(err)
 	}
-	head := planFile(t, home, "s1.json")
+	head := readPlanFile(t, home, "s1.json")
 	if head[0].State != "in_progress" {
 		t.Fatalf("закрытие с меткой задело план головы: %+v", head)
 	}
-	own := planFile(t, home, "s1-sub-DK-467-exec.json")
+	own := readPlanFile(t, home, "s1-sub-DK-467-exec.json")
 	if own[0].State != "completed" {
 		t.Fatalf("закрытие с меткой не дошло до своего плана: %+v", own)
 	}
@@ -395,7 +395,7 @@ func TestPlanDoneWithoutLabelHitsHeadPlan(t *testing.T) {
 	if _, err := cmdPlan(home, "done", nil, "", "", env); err != nil {
 		t.Fatal(err)
 	}
-	if head = planFile(t, home, "s1.json"); head[0].State != "completed" {
+	if head = readPlanFile(t, home, "s1.json"); head[0].State != "completed" {
 		t.Fatalf("done без метки не дошёл до плана головы: %+v", head)
 	}
 }
@@ -463,7 +463,7 @@ func TestPlanSetOverFinishedPlan(t *testing.T) {
 	if _, err := cmdPlan(home, "set", []string{"вычитка"}, "", "", envSid); err == nil {
 		t.Fatal("чужой набор лёг поверх доделанного плана сессии без отказа")
 	}
-	if got := planFile(t, home, "s1.json"); len(got) != 2 || got[1].State != "completed" {
+	if got := readPlanFile(t, home, "s1.json"); len(got) != 2 || got[1].State != "completed" {
 		t.Fatalf("доделанный план сессии после отказа не цел: %+v", got)
 	}
 }

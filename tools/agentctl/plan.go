@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // План работ сессии живёт файлом ~/.devkit/plans/<ID сессии>.json, и читает
@@ -17,10 +19,24 @@ import (
 // утилита: агент называет пункты словами, а имя файла, состояния и запись
 // целиком считает команда.
 
-// planItem это пункт плана в том виде, в каком он лежит в файле.
+// planItem это пункт плана в том виде, в каком он лежит в файле. У пункта,
+// собранного из шаблона, есть этап (ключ секции шаблона) и слово следа, свои
+// пункты агента наследуют оба у этапа-слота, куда легли (LLD DK-972, решение
+// 5). Пункты «без шаблона» и файлы прежнего формата живут без этапа и следа.
 type planItem struct {
 	Text  string `json:"text"`
 	State string `json:"state"`
+	Stage string `json:"stage,omitempty"`
+	Trace string `json:"trace,omitempty"`
+}
+
+// planFile это файл плана с шапкой: имя шаблона, из которого план собран, либо
+// слово «без шаблона» (LLD DK-972, решение 4). Файлы прежнего формата, массив
+// пунктов без шапки, читаются как есть: шапки у них нет, и о шаблоне они
+// молчат.
+type planFile struct {
+	Template string     `json:"template,omitempty"`
+	Items    []planItem `json:"items"`
 }
 
 // planEnvSession, planEnvTmux и planEnvLabel это окружение, из которого
@@ -106,35 +122,40 @@ func planResolve(home, sid, label string, env func(string) string) (planAddr, er
 }
 
 // planRead читает план из файла. Пропавший файл это пустой план, а не ошибка:
-// первая команда сессии кладёт план на пустое место.
-func planRead(file string) ([]planItem, error) {
+// первая команда сессии кладёт план на пустое место. Массив пунктов без шапки
+// это прежний формат, он читается как план без шаблона.
+func planRead(file string) (planFile, error) {
 	data, err := os.ReadFile(file)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return planFile{}, nil
 		}
-		return nil, err
+		return planFile{}, err
 	}
-	var out []planItem
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("файл плана %s не разобран: %v", file, err)
+	var p planFile
+	if err := json.Unmarshal(data, &p); err != nil {
+		var arr []planItem
+		if err2 := json.Unmarshal(data, &arr); err2 != nil {
+			return planFile{}, fmt.Errorf("файл плана %s не разобран: %v", file, err)
+		}
+		p = planFile{Items: arr}
 	}
-	for i := range out {
-		if out[i].State == "" {
-			out[i].State = "pending"
+	for i := range p.Items {
+		if p.Items[i].State == "" {
+			p.Items[i].State = "pending"
 		}
 	}
-	return out, nil
+	return p, nil
 }
 
 // planWrite кладёт план целиком. Запись идёт через временный файл: дашборд
 // читает каталог каждым тиком, и половина записи попадалась бы ему нечитаемым
 // файлом.
-func planWrite(file string, plan []planItem) error {
-	if plan == nil {
-		plan = []planItem{}
+func planWrite(file string, p planFile) error {
+	if p.Items == nil {
+		p.Items = []planItem{}
 	}
-	data, err := json.MarshalIndent(plan, "", " ")
+	data, err := json.MarshalIndent(p, "", " ")
 	if err != nil {
 		return err
 	}
@@ -280,11 +301,13 @@ func planMark(state string) string {
 }
 
 // planPrint печатает план человеку: тем же видом, что и файл, но читаемым.
-func planPrint(head string, plan []planItem) string {
+// Шапка называет шаблон, из которого план собран, этап на слове агента помечен
+// честной надписью, а не тишиной (LLD DK-972, решение 6).
+func planPrint(head string, p planFile) string {
 	var b strings.Builder
 	running := 0
 	done := 0
-	for i, it := range plan {
+	for i, it := range p.Items {
 		if it.State == "in_progress" {
 			running = i + 1
 		}
@@ -292,12 +315,22 @@ func planPrint(head string, plan []planItem) string {
 			done++
 		}
 	}
-	fmt.Fprintf(&b, "%s: пунктов %d, закрыто %d", head, len(plan), done)
+	from := ""
+	switch {
+	case p.Template == planNoTemplate:
+		from = ", без шаблона"
+	case p.Template != "":
+		from = ", шаблон " + p.Template
+	}
+	fmt.Fprintf(&b, "%s: пунктов %d, закрыто %d%s", head, len(p.Items), done, from)
 	if running > 0 {
 		fmt.Fprintf(&b, ", идёт %d", running)
 	}
-	for i, it := range plan {
+	for i, it := range p.Items {
 		fmt.Fprintf(&b, "\n %2d %s %s", i+1, planMark(it.State), it.Text)
+		if it.Trace == trace.WordWord {
+			b.WriteString(" (на слове агента)")
+		}
 	}
 	return b.String()
 }
@@ -325,17 +358,18 @@ func planSubFiles(home, sid string) []string {
 	sort.Strings(out)
 	return out
 }
-
 // cmdPlan это все четыре действия над планом одной командой: положить, начать
-// пункт, закрыть пункт, показать. Ключ --force живёт у planCmd: без него
-// команда бережёт лежащий план от чужого набора.
+// пункт, закрыть пункт, показать. Ключи --force и --template со стартовой
+// точкой живут у planRun: без них команда работает планом «без шаблона» там,
+// где ни доски, ни набора шаблонов не видно.
 func cmdPlan(home, op string, args []string, sid, label string, env func(string) string) (string, error) {
-	return planCmd(home, op, args, sid, label, false, env)
+	return planRun(home, op, args, sid, label, false, "", "", env)
 }
 
-// planCmd это cmdPlan с ключом force: set поверх плана, с которым новый набор
-// не совпал ни одним пунктом, без него отказывает.
-func planCmd(home, op string, args []string, sid, label string, force bool, env func(string) string) (string, error) {
+// planRun это cmdPlan с ключом force, точкой старта (от неё ищутся доска и
+// набор шаблонов) и именем шаблона из флага --template. set поверх плана, с
+// которым новый набор не совпал ни одним пунктом, без force отказывает.
+func planRun(home, op string, args []string, sid, label string, force bool, start, tplName string, env func(string) string) (string, error) {
 	a, err := planResolve(home, sid, label, env)
 	if err != nil {
 		return "", err
@@ -354,57 +388,81 @@ func planCmd(home, op string, args []string, sid, label string, force bool, env 
 		if a.label == "" {
 			for _, f := range planSubFiles(home, a.sid) {
 				sub, err := planRead(f)
-				if err != nil || len(sub) == 0 {
+				if err != nil || len(sub.Items) == 0 {
 					continue
 				}
 				mark := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), a.sid+"-sub-"), ".json")
 				out += "\n" + planPrint("план субагента "+mark, sub)
 			}
 		}
-		if len(plan) == 0 {
+		if len(plan.Items) == 0 {
 			out += "\nплана нет, положи его командой agentctl plan set"
 		}
 		return out, nil
 	case "set":
-		items := planItems(args)
-		if len(items) == 0 {
-			return "", fmt.Errorf("жду пункты плана: plan set <пункт> [<пункт>...]")
+		own := planItems(args)
+		task := planTask(start, home, a)
+		name, tpl, err := planChoose(start, tplName, task)
+		if err != nil {
+			return "", err
+		}
+		if tpl == nil && len(own) == 0 {
+			return "", fmt.Errorf("жду пункты плана: plan set <пункт> [<пункт>...] либо шаблон флагом --template, набор печатает agentctl plan templates")
+		}
+		items := own
+		if tpl != nil {
+			items = planAssemble(tpl, own)
 		}
 		if !force {
-			if err := planForeign(a, plan, items); err != nil {
+			if err := planForeign(a, plan.Items, items); err != nil {
 				return "", err
 			}
 		}
-		items = planCarry(plan, items)
-		if err := planWrite(a.file, items); err != nil {
+		fresh := planFile{Template: name, Items: planCarry(plan.Items, items)}
+		if err := planWrite(a.file, fresh); err != nil {
 			return "", err
 		}
-		return planPrint(head, items), nil
+		return planPrint(head, fresh), nil
 	case "step", "done":
-		if len(plan) == 0 {
+		if len(plan.Items) == 0 {
 			return "", fmt.Errorf("плана нет, класть его команде нечем: сперва plan set")
 		}
-		if err := planStep(plan, op, args); err != nil {
+		idx, err := planStep(plan.Items, op, args)
+		if err != nil {
 			return "", err
+		}
+		note := ""
+		if op == "done" {
+			note, err = planDoneTrace(&plan, idx, start, home, a)
+			if err != nil {
+				return "", err
+			}
+		} else {
+			plan.Items[idx].State = "in_progress"
 		}
 		if err := planWrite(a.file, plan); err != nil {
 			return "", err
 		}
-		return planPrint(head, plan), nil
+		out := planPrint(head, plan)
+		if note != "" {
+			out += "\n" + note
+		}
+		return out, nil
 	}
 	return "", fmt.Errorf("неизвестное действие %q, жду set, step, done или show", op)
 }
 
-// planStep двигает состояния на месте. Начатый пункт закрывает предыдущий
-// идущий: план ведётся по одному шагу, и два идущих пункта в кольце
-// неотличимы от плана, который забыли закрыть.
-func planStep(plan []planItem, op string, args []string) error {
+// planStep выбирает пункт хода и отвечает его номером. Начатый пункт закрывает
+// прежний идущий: план ведётся по одному шагу, и два идущих пункта в кольце
+// неотличимы от плана, который забыли закрыть. Состояния двигает вызывающий:
+// у done между выбором пункта и закрытием спрашивается след.
+func planStep(plan []planItem, op string, args []string) (int, error) {
 	idx := -1
 	switch {
 	case len(args) > 0:
 		n, err := planPick(plan, args[0])
 		if err != nil {
-			return err
+			return 0, err
 		}
 		idx = n
 	case op == "done":
@@ -414,7 +472,7 @@ func planStep(plan []planItem, op string, args []string) error {
 			}
 		}
 		if idx < 0 {
-			return fmt.Errorf("идущего пункта в плане нет, назови номером или текстом")
+			return 0, fmt.Errorf("идущего пункта в плане нет, назови номером или текстом")
 		}
 	default:
 		for i, it := range plan {
@@ -424,18 +482,16 @@ func planStep(plan []planItem, op string, args []string) error {
 			}
 		}
 		if idx < 0 {
-			return fmt.Errorf("ждущих пунктов в плане не осталось")
+			return 0, fmt.Errorf("ждущих пунктов в плане не осталось")
 		}
 	}
 	if op == "done" {
-		plan[idx].State = "completed"
-		return nil
+		return idx, nil
 	}
 	for i := range plan {
 		if plan[i].State == "in_progress" {
 			plan[i].State = "completed"
 		}
 	}
-	plan[idx].State = "in_progress"
-	return nil
+	return idx, nil
 }

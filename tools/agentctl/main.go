@@ -514,7 +514,7 @@ func main() {
 		if herr != nil {
 			fail(fmt.Errorf("не видно дома пользователя, плану некуда лечь: %v", herr))
 		}
-		msg, err = planCmd(home, pos[0], pos[1:], *sid, *label, *force, os.Getenv)
+		msg, err = planRun(home, pos[0], pos[1:], *sid, *label, *force, *dir, *tpl, os.Getenv)
 	case "wait":
 		fs := flag.NewFlagSet("wait", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

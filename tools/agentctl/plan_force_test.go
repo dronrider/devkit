@@ -10,10 +10,10 @@ func TestPlanSetForceReplacesForeign(t *testing.T) {
 	if _, err := cmdPlan(home, "set", []string{"разведка\nправка"}, "", "", env); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := planCmd(home, "set", []string{"вычитка"}, "", "", true, env); err != nil {
+	if _, err := planRun(home, "set", []string{"вычитка"}, "", "", true, "", "", env); err != nil {
 		t.Fatalf("set с --force получил отказ: %v", err)
 	}
-	got := planFile(t, home, "s1.json")
+	got := readPlanFile(t, home, "s1.json")
 	if len(got) != 1 || got[0].Text != "вычитка" {
 		t.Fatalf("--force не положил план: %+v", got)
 	}

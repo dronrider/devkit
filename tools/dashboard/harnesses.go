@@ -32,7 +32,12 @@ var agentctlBin = "agentctl"
 type Harness struct {
 	Name    string `json:"name"`
 	Default bool   `json:"default"`
-	Bin     string `json:"bin,omitempty"`
+	// Auto это допуск подписки к автоматическим назначениям (ключ auto
+	// машинного конфига, DK-1453). Ручной выбор строки подписки признак не
+	// ограничивает: по нему отбираются только подъёмы без человека, созванные
+	// самим конвейером.
+	Auto  bool   `json:"auto"`
+	Bin   string `json:"bin,omitempty"`
 	// Home это каталог хозяйства подписки. По нему ищутся транскрипты её
 	// разговоров: клиент второй подписки поднимается со своим каталогом
 	// конфигурации, и журнал он пишет туда, а не в ~/.claude (DK-362).
@@ -84,6 +89,7 @@ type agentctlHarnesses struct {
 		Name    string   `json:"name"`
 		Enabled bool     `json:"enabled"`
 		Default bool     `json:"default"`
+		Auto    *bool    `json:"auto"`
 		Bin     string   `json:"bin"`
 		Home    string   `json:"home"`
 		Env     []string `json:"env"`
@@ -99,6 +105,17 @@ type agentctlHarnesses struct {
 	ExecRotateTokens int      `json:"exec_rotate_tokens"`
 	Note             string   `json:"note"`
 	Warns            []string `json:"warns"`
+}
+
+// autoAdmitted переносит допуск из машинного вида. Старый agentctl поля auto
+// не печатает, и тогда допущена подписка по умолчанию, как велит политика без
+// настройки: пара бинарей, обновившихся вразнобой, не должна вырубать подъём
+// проверки целиком.
+func autoAdmitted(flag *bool, def bool) bool {
+	if flag == nil {
+		return def
+	}
+	return *flag
 }
 
 // execRotateFallback это запасное число на случай, когда agentctl не нашёлся
@@ -146,7 +163,7 @@ func readHarnesses() HarnessView {
 		if !h.Enabled || h.Bin == "" {
 			continue
 		}
-		hh := Harness{Name: h.Name, Default: h.Default, Bin: h.Bin, Home: h.Home, Env: h.Env, HooksGap: h.HooksGap}
+		hh := Harness{Name: h.Name, Default: h.Default, Auto: autoAdmitted(h.Auto, h.Default), Bin: h.Bin, Home: h.Home, Env: h.Env, HooksGap: h.HooksGap}
 		for _, m := range h.Models {
 			if m.Model != "" {
 				hh.Models = append(hh.Models, HarnessModel{Tier: m.Tier, Model: m.Model, Via: m.Via})

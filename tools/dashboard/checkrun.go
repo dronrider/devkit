@@ -140,10 +140,16 @@ func (c *dashCarrier) Ladders() []checkrun.Ladder {
 		}
 		out = append(out, checkrun.Ladder{Name: h.Name, Steps: steps, Via: via})
 	}
-	if c.own != nil {
+	// Допуск фильтрует состав до отбора: включённая без разрешения подписка
+	// остаётся ручной, и подъём без человека её не поднимает, даже когда она
+	// активная (DK-1453).
+	if c.own != nil && c.own.Auto {
 		add(*c.own)
 	}
 	for _, h := range c.available {
+		if !h.Auto {
+			continue
+		}
 		if c.own == nil || h.Name != c.own.Name {
 			add(h)
 		}

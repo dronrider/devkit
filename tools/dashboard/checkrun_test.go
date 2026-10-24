@@ -260,13 +260,58 @@ func TestCheckRunStepsUpOverDeveloperModel(t *testing.T) {
 	}
 }
 
+// TestTaskHarnessPolicy это допуск подписок к автоматическим назначениям
+// (DK-1453). Включённая вторая подписка без разрешения остаётся ручной:
+// прогон сценария её не поднимает даже там, где только она независима, а
+// отказ называет причину словами. Явное разрешение возвращает её в отбор.
+func TestTaskHarnessPolicy(t *testing.T) {
+	layout := func(auto string) string {
+		return `{"harnesses":[
+	{"name":"перваяtest","default":true,"enabled":true,"bin":"клиент-1",
+	 "models":[{"tier":"base","model":"модель-base"},{"tier":"max","model":"модель-base"}]},
+	{"name":"втораяtest","enabled":true,` + auto + `"bin":"клиент-2",
+	 "models":[{"tier":"base","model":"вторая-base"},{"tier":"max","model":"вторая-max"}]}]}`
+	}
+	doc := checkTaskDoc + "\n## Ход работы\n\n- Разработка: субагент модель-base/high по вердикту pick, 2026-09-02 10:00-11:00.\n"
+
+	t.Run("запрещённая не поднимается ради независимости", func(t *testing.T) {
+		e, tmuxLog := checkEnv(t, "")
+		writeScript(t, e.bin, "клиент-2", "exit 0")
+		writeAgentctlPick(t, e.bin, layout(``), "max")
+		writeCheckTask(t, e.proj, "XR-003", doc)
+		rep := checkRunOne(t, e, "XR-003")
+		if rep.Raised || !rep.Failed {
+			t.Fatalf("подъём обязан отказать: %+v", rep)
+		}
+		if !strings.Contains(rep.Line, "прогон не поднят") || !strings.Contains(rep.Line, "вела разработку") {
+			t.Errorf("отказ не называет причину: %q", rep.Line)
+		}
+		if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") || strings.Contains(got, "втораяtest") {
+			t.Errorf("запрещённая подписка поднята: %s", got)
+		}
+	})
+	t.Run("после явного разрешения участвует", func(t *testing.T) {
+		e, tmuxLog := checkEnv(t, "")
+		writeScript(t, e.bin, "клиент-2", "exit 0")
+		writeAgentctlPick(t, e.bin, layout(`"auto":true,`), "max")
+		writeCheckTask(t, e.proj, "XR-003", doc)
+		rep := checkRunOne(t, e, "XR-003")
+		if !rep.Raised || rep.Failed {
+			t.Fatalf("разрешённая подписка не поднята: %+v", rep)
+		}
+		if got := readFile(t, tmuxLog); !strings.Contains(got, "--harness 'втораяtest'") || !strings.Contains(got, "--model 'вторая-max'") {
+			t.Errorf("носитель не получил разрешённую подписку: %s", got)
+		}
+	})
+}
+
 func TestCheckRunPassesIndependentHarnessToCarrier(t *testing.T) {
 	e, tmuxLog := checkEnv(t, "")
 	writeScript(t, e.bin, "клиент-2", "exit 0")
 	layout := `{"harnesses":[
 	{"name":"перваяtest","default":true,"enabled":true,"bin":"клиент-1",
 	 "models":[{"tier":"pro","model":"glm-5.3"},{"tier":"max","model":"glm-5.3"}]},
-	{"name":"втораяtest","enabled":true,"bin":"клиент-2",
+	{"name":"втораяtest","enabled":true,"auto":true,"bin":"клиент-2",
 	 "models":[{"tier":"base","model":"z-ai/glm-5.3"},{"tier":"pro","model":"sonnet"}]}]}`
 	writeAgentctlPick(t, e.bin, layout, "pro")
 	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc+

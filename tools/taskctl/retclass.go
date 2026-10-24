@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Класс причины возврата это машинная часть ответа на вопрос, почему работа
@@ -216,7 +218,7 @@ func goalMembership(root, goal string) func(id string, lines []string) bool {
 		for _, ln := range lines {
 			s := strings.TrimSpace(ln)
 			if strings.HasPrefix(s, "Цель:") {
-				return goalKey(s) == goal
+				return taskform.GoalKey(s) == goal
 			}
 			if strings.HasPrefix(s, "## ") {
 				return false

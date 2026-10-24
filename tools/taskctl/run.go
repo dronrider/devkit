@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dronrider/devkit/internal/taskform"
 	"github.com/dronrider/devkit/internal/taskhead"
 )
 
@@ -102,31 +103,14 @@ func askPick(root, id, harness string) (string, error) {
 }
 
 // taskGoal это путь файла цели от корня, когда шапка файла задачи несёт строку
-// «Цель: ...». Пусто, когда строки нет или файла цели нет на месте.
+// «Цель: ...». Разбор шапки общий с дашбордом и живёт в internal/taskform,
+// пусто, когда строки нет или файла цели нет на месте.
 func taskGoal(root, id string) string {
-	data, err := os.ReadFile(taskFilePath(root, id))
-	if err != nil {
+	key := taskform.TaskGoalKey(root, id)
+	if key == "" {
 		return ""
 	}
-	for _, ln := range strings.Split(string(data), "\n") {
-		s := strings.TrimSpace(ln)
-		if strings.HasPrefix(s, "## ") {
-			return ""
-		}
-		if !strings.HasPrefix(s, "Цель:") {
-			continue
-		}
-		key := goalKey(s)
-		if key == "" {
-			return ""
-		}
-		rel := filepath.Join("docs", "tasks", key+".md")
-		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
-			return ""
-		}
-		return rel
-	}
-	return ""
+	return filepath.Join("docs", "tasks", key+".md")
 }
 
 // cmdRun поднимает голову и отдаёт вывод с кодом выхода. Ошибка это сломанная

@@ -324,3 +324,33 @@ func TestRunPickRefusalStartsWithoutModel(t *testing.T) {
 		t.Fatalf("журнал молчит про agentctl вне PATH")
 	}
 }
+
+// Цель задачи читается из шапки её файла общим разбором internal/taskform
+// (замечание ревью DK-1430: копия разбора в дашборде расходилась бы с taskctl
+// молча). Путь возвращается, когда файл цели на месте, и пуст, когда строка
+// уехала за шапку либо записи нет.
+func TestTaskGoal(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "docs", "tasks")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("XR-100.md", "# XR-100: цикл\n")
+	write("XR-4.md", "# XR-4: задача\n\nЦель: [tasks/XR-100.md](tasks/XR-100.md)\n\n## Ход работы\n")
+	write("XR-5.md", "# XR-5: цель уехала\n\n## Ход работы\nЦель: [tasks/XR-100.md](tasks/XR-100.md)\n")
+	if got := taskGoal(root, "XR-4"); got != filepath.Join("docs", "tasks", "XR-100.md") {
+		t.Errorf("цель задачи не прочиталась: %q", got)
+	}
+	if got := taskGoal(root, "XR-5"); got != "" {
+		t.Errorf("цель ниже шапки прочиталась: %q", got)
+	}
+	if got := taskGoal(root, "XR-нет"); got != "" {
+		t.Errorf("несуществующая задача отдала цель: %q", got)
+	}
+}

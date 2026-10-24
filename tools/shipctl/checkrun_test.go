@@ -303,7 +303,7 @@ func TestCheckRunPassesSelectedIndependentHarnessToTaskctl(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := `{"harnesses":[
-	{"name":"glm","enabled":true,"models":[{"tier":"pro","model":"glm-5.3"},{"tier":"max","model":"glm-5.3"}]},
+	{"name":"glm","enabled":true,"auto":true,"models":[{"tier":"pro","model":"glm-5.3"},{"tier":"max","model":"glm-5.3"}]},
 	{"name":"router","enabled":true,"default":true,"models":[{"tier":"pro","model":"sonnet"}]}]}`
 	if err := os.WriteFile(path, []byte(strings.Replace(string(body), ladderFixture, raw, 1)), 0o755); err != nil {
 		t.Fatal(err)
@@ -333,6 +333,63 @@ func TestCheckRunNoteWithoutTasks(t *testing.T) {
 	}
 }
 
+// TestTaskHarnessPolicy это допуск подписок к автоматическим назначениям
+// (DK-1453): подъём проверяющего после выката не берёт включённую подписку
+// без разрешения, даже когда независимая модель есть только у неё, и отказ
+// зовёт человека словами, а не головой на чужой квоте.
+func TestTaskHarnessPolicy(t *testing.T) {
+	layout := func(auto string) string {
+		return `{"harnesses":[
+	{"name":"стенд","enabled":true,"default":true,"bin":"клиент",
+	 "models":[{"tier":"base","model":"модель-base"},{"tier":"pro","model":"модель-pro"},{"tier":"max","model":"модель-max"}]},
+	{"name":"router","enabled":true,` + auto + `"models":[{"tier":"max","model":"route-max"}]}]}`
+	}
+	stand := func(t *testing.T, auto string) (string, string) {
+		t.Helper()
+		root, callLog := checkStand(t)
+		bin := t.TempDir()
+		writeAgentctlFake(t, bin, "max")
+		path := filepath.Join(bin, "agentctl")
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(strings.Replace(string(body), ladderFixture, layout(auto), 1)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		write(t, root, "docs/tasks/XR-001.md", "# XR-001\n\n## Ход работы\n\n- Разработка: субагент модель-max/high по вердикту pick, 2026-09-11.\n")
+		return root, callLog
+	}
+
+	t.Run("запрещённая не поднимается ради независимости", func(t *testing.T) {
+		root, callLog := stand(t, ``)
+		out, failed, _ := cmdCheckRun(root, nil, false)
+		if !failed || !strings.Contains(out, "вела разработку") {
+			t.Fatalf("запрет обязан кончаться отказом: %v %s", failed, out)
+		}
+		if calls := readCalls(t, callLog); strings.Contains(calls, "run XR-") || strings.Contains(calls, "router") {
+			t.Fatalf("запрещённая подписка поднята: %q", calls)
+		}
+	})
+	t.Run("после явного разрешения участвует", func(t *testing.T) {
+		root, callLog := stand(t, `"auto":true,`)
+		out, failed, err := cmdCheckRun(root, nil, false)
+		if err != nil || failed {
+			t.Fatalf("%s: %v", out, err)
+		}
+		calls := readCalls(t, callLog)
+		for _, want := range []string{"--harness router", "--model route-max"} {
+			if !strings.Contains(calls, want) {
+				t.Fatalf("носитель не получил %s: %s", want, calls)
+			}
+		}
+		if !strings.Contains(out, "подписка router") {
+			t.Fatalf("выбор не виден: %s", out)
+		}
+	})
+}
+
 func readCalls(t *testing.T, callLog string) string {
 	t.Helper()
 	data, err := os.ReadFile(callLog)
@@ -352,9 +409,9 @@ func TestCheckRunPassesActualViaToTaskctl(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := `{"harnesses":[
-	{"name":"glm","enabled":true,"models":[{"tier":"pro","model":"glm-5.3"},{"tier":"max","model":"glm-5.3"}]},
+	{"name":"glm","enabled":true,"auto":true,"models":[{"tier":"pro","model":"glm-5.3"},{"tier":"max","model":"glm-5.3"}]},
 	{"name":"router","enabled":true,"default":true,"models":[{"tier":"pro","model":"sonnet","via":"owner"}]},
-	{"name":"owner","enabled":true,"models":[]}]}`
+	{"name":"owner","enabled":true,"auto":true,"models":[]}]}`
 	if err := os.WriteFile(path, []byte(strings.Replace(string(body), ladderFixture, raw, 1)), 0o755); err != nil {
 		t.Fatal(err)
 	}

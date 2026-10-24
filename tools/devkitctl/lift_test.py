@@ -63,6 +63,40 @@ class OrphanRowsCase(unittest.TestCase):
         rows = [row("DK-1", "слияние", "сессии нет, брошена")]
         self.assertEqual([r["id"] for r in lift.orphan_rows(rows)], ["DK-1"])
 
+    def test_closed_work_without_head(self):
+        rows = [{"id": "DK-489", "stage": "слияние", "stage_state": "закрыт",
+                 "stage_head": "головы нет", "stage_end": since(),
+                 "stage_round": 234}]
+        self.assertEqual(lift.orphan_rows(rows), rows)
+        self.assertIn("головы нет", lift.row_why(rows[0]))
+
+    def test_closed_work_with_head_or_unknown_liveness(self):
+        for head in ("голова жива", "голова молчит 3 часа", ""):
+            with self.subTest(head=head):
+                rows = [{"id": "DK-1", "stage": "ревью", "stage_state": "закрыт",
+                         "stage_head": head}]
+                self.assertEqual(lift.orphan_rows(rows), [])
+
+    def test_closed_waits_and_human_check_left_alone(self):
+        rows = [{"id": "DK-1", "stage": stage, "stage_state": "закрыт",
+                 "stage_head": "головы нет"}
+                for stage in ("ждёт очереди", "ждёт человека", "ждёт события")]
+        rows += [{"id": "DK-2", "stage": "проверка", "stage_state": "закрыт",
+                  "stage_head": "головы нет", "_section": "check", "accept": accept}
+                 for accept in ("mixed", "user")]
+        self.assertEqual(lift.orphan_rows(rows), [])
+
+    def test_open_stage_does_not_use_stale_head(self):
+        rows = [{"id": "DK-1", "stage": "разработка", "stage_state": "идёт",
+                 "stage_head": "головы нет", "stage_session": "сессия жива"}]
+        self.assertEqual(lift.orphan_rows(rows), [])
+
+    def test_live_head_counts_as_busy(self):
+        rows = [{"id": "DK-1", "stage_state": "закрыт", "stage_head": "голова жива"},
+                row("DK-2", "разработка", "сессия жива"),
+                {"id": "DK-3", "stage_state": "закрыт", "stage_head": "головы нет"}]
+        self.assertEqual(lift.busy_count(rows), 2)
+
     def test_wait_stages_left_alone(self):
         rows = [row("DK-2", "ждёт очереди", "сессии нет, брошена"),
                 row("DK-3", "ждёт человека", "сессии нет, брошена"),
@@ -267,6 +301,26 @@ class LiftRowsCase(unittest.TestCase):
         said = " ".join(lines)
         self.assertIn("уведомление о подъёме", said)
         self.assertIn("запись подъёма в", said)
+
+    def test_closed_work_resumes_existing_tree(self):
+        call = self.stand(
+            [{"id": "DK-7", "stage": "слияние", "stage_state": "закрыт",
+              "stage_head": "головы нет"}],
+            "# DK-7: строка\n\n## Ревью\n\n- блокирует: исправить выбор документа\n")
+        unfinished = self.root / "unfinished.py"
+        unfinished.write_text("unfinished work\n", encoding="utf-8")
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 1)
+        orders = [a for a in call.calls if "run" in a]
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0][:5], ["taskctl", "-C", str(self.root), "run", "DK-7"])
+        self.assertIn("существующем дереве", orders[0][-1])
+        self.assertIn("незакоммиченные", orders[0][-1])
+        self.assertEqual(unfinished.read_text(encoding="utf-8"), "unfinished work\n")
+        self.assertFalse(any("reset" in a or "clean" in a or "worktree" in a and "add" in a
+                             for a in call.calls))
+        self.assertIn("головы нет", " ".join(lines))
 
     def test_lift_without_assignment_keeps_plain_order(self):
         """Строка без поручения поднимается обычным заказом, без чужих слов."""

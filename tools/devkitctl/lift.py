@@ -82,7 +82,9 @@ WORK_SECTIONS = ("in-progress", "check")
 # нуля сессия контекста не имеет и на общей доске берёт что угодно, включая
 # строку, которую прямо сейчас ведёт человек. Поэтому реплика называет строку
 # и запрещает брать другую работу.
-ORDER = "продолжай %s, эту строку ты уже вёл. Другую работу с доски не бери"
+ORDER = ("продолжай %s, эту строку ты уже вёл. Другую работу с доски не бери. "
+         "Продолжай в существующем дереве задачи, сохрани незакоммиченные правки, "
+         "проверь их и доведи незавершённый этап")
 
 # Поручение в файле задачи. Очередь слияний кладёт его строкой записи при
 # снятии (shipctl queueTrace), и подъём передаёт его исполнителю в заказе:
@@ -287,6 +289,8 @@ def orphan_rows(rows):
     сессию говорит, что её нет, либо что она молчит дольше рубежа. Мёртвый
     процесс и долгое молчание ведут себя одинаково: и то и другое говорит,
     что за строкой никого нет, и доска различает их только словами.
+    Закрытый этап без головы задачи тоже требует продолжения. Его живость
+    приходит полем stage_head, сессии закрытого этапа в ответе доски нет.
 
     Строка в Check с приёмкой человека сюда не идёт. Её проверка это дело
     человека, и голова задачи на такой строке останавливается сама, едва
@@ -298,7 +302,9 @@ def orphan_rows(rows):
         stage = (row.get("stage") or "").strip()
         note = (row.get("stage_session") or "").strip()
         silent = (silence_of(row) or 0) > SILENT_AFTER and stage_touch(row)
-        if stage not in WORK_STAGES or not (note.startswith(GONE) or silent):
+        headless = (row.get("stage_state") == "закрыт"
+                    and row.get("stage_head") == "головы нет")
+        if stage not in WORK_STAGES or not (note.startswith(GONE) or silent or headless):
             continue
         if row.get("_section") == "check" and (row.get("accept") or "agent") != "agent":
             continue
@@ -310,6 +316,8 @@ def row_why(row):
     """Слова причины находки: брошенная строка либо молчащая дольше рубежа.
     Слова молчания берутся у доски готовыми: возраст уже напечатан минутами."""
     stage = row.get("stage") or ""
+    if row.get("stage_state") == "закрыт":
+        return "этап «%s» закрыт, %s" % (stage, row.get("stage_head") or "головы нет")
     note = (row.get("stage_session") or "").strip()
     if note.startswith(SILENT):
         return "этап «%s», %s" % (stage, note)
@@ -421,7 +429,8 @@ def reply_age(line, now=None):
 
 def busy_count(rows):
     """Сколько строк корня ведёт живая сессия."""
-    return sum(1 for r in rows if (r.get("stage_session") or "").startswith(ALIVE))
+    return sum(1 for r in rows if (r.get("stage_session") or "").startswith(ALIVE)
+               or r.get("stage_head") == "голова жива")
 
 
 def which(name):

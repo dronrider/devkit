@@ -714,3 +714,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1422 | LLD: основной чат диспетчера для задачи и цели | LLD | P1 | 2026-10-24 | [tasks/archive/2026/DK-1422.md](tasks/archive/2026/DK-1422.md) |
 | DK-1413 | Постановка проверена на трёх задачах, выводы внесены в DK-1318 | task | P1 | 2026-10-24 | [tasks/archive/2026/DK-1413.md](tasks/archive/2026/DK-1413.md) |
 | DK-1424 | close не требует smoke у слияния документации без выката | bug | P1 | 2026-10-24 | [tasks/archive/2026/DK-1424.md](tasks/archive/2026/DK-1424.md) |
+| DK-1251 | Отставший тег deployed роняет слияние на второй машине | bug | P1 | 2026-10-24 | [tasks/archive/2026/DK-1251.md](tasks/archive/2026/DK-1251.md) |

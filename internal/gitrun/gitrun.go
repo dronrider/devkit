@@ -62,6 +62,10 @@ func Timeout() (time.Duration, error) {
 // разрешают пуш доске и автономному режиму, а рубеж отличает их от
 // самовольного пуша агента только по этой переменной.
 func Env(args []string) []string {
+	return sshEnv(args, "")
+}
+
+func sshEnv(args []string, configured string) []string {
 	drop := map[string]bool{
 		"GIT_ASKPASS": true, "SSH_ASKPASS": true, "GIT_TERMINAL_PROMPT": true,
 		"SSH_ASKPASS_REQUIRE": true,
@@ -70,14 +74,19 @@ func Env(args []string) []string {
 	ssh := "ssh"
 	for _, kv := range os.Environ() {
 		name, val, _ := strings.Cut(kv, "=")
-		if name == "GIT_SSH_COMMAND" && strings.TrimSpace(val) != "" {
-			ssh = val
+		if name == "GIT_SSH_COMMAND" {
+			if strings.TrimSpace(val) != "" {
+				ssh = val
+			}
 			continue
 		}
 		if drop[name] {
 			continue
 		}
 		out = append(out, kv)
+	}
+	if configured != "" {
+		ssh = configured
 	}
 	out = append(out,
 		"GIT_TERMINAL_PROMPT=0",
@@ -110,7 +119,18 @@ func RunContext(ctx context.Context, root string, args []string, limit time.Dura
 		full = append([]string{"-C", root}, args...)
 	}
 	cmd := exec.Command("git", full...)
-	cmd.Env = Env(args)
+	ssh := ""
+	if remoteCmds[args[0]] {
+		configArgs := []string{"config", "--get", "core.sshCommand"}
+		if root != "" {
+			configArgs = append([]string{"-C", root}, configArgs...)
+		}
+		out, err := exec.CommandContext(ctx, "git", configArgs...).Output()
+		if err == nil {
+			ssh = strings.TrimSpace(string(out))
+		}
+	}
+	cmd.Env = sshEnv(args, ssh)
 	// Убивается вся группа процессов, а не один git: помощник учётки это его
 	// потомок, и смерть одного git оставила бы висеть спящий помощник вместе с
 	// диалогом связки ключей.

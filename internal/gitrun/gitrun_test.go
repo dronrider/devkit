@@ -58,6 +58,39 @@ func TestEnvKeepsSSHCommand(t *testing.T) {
 	}
 }
 
+func TestRunKeepsRepoSSHCommand(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		t.Run(fmt.Sprintf("repo=%t", configured), func(t *testing.T) {
+			root := initRepo(t)
+			trace := filepath.Join(t.TempDir(), "ssh-args")
+			ssh := filepath.Join(t.TempDir(), "ssh command")
+			write(t, ssh, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SSH_TRACE\"\nexit 1\n")
+			if err := os.Chmod(ssh, 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("SSH_TRACE", trace)
+			t.Setenv("GIT_SSH_VARIANT", "ssh")
+			t.Setenv("GIT_SSH_COMMAND", "'"+ssh+"' --key environment")
+			want := "environment"
+			if configured {
+				gitT(t, root, "config", "core.sshCommand", "'"+ssh+"' --key repository")
+				want = "repository"
+			}
+			_, err := Run(root, []string{"ls-remote", "ssh://git@example.invalid/repo.git"}, time.Second)
+			if err == nil {
+				t.Fatal("подставной ssh должен отказать")
+			}
+			got, err := os.ReadFile(trace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(got), "--key\n"+want+"\n-o\nBatchMode=yes\n") {
+				t.Fatalf("ключ или пакетный режим потерялись: %s", got)
+			}
+		})
+	}
+}
+
 // TestTimeout: без переменной действует умолчание, кривое значение это громкая
 // ошибка, а не молчаливый возврат к умолчанию.
 func TestTimeout(t *testing.T) {

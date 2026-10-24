@@ -70,6 +70,11 @@ class OrphanRowsCase(unittest.TestCase):
         self.assertEqual(lift.orphan_rows(rows), rows)
         self.assertIn("головы нет", lift.row_why(rows[0]))
 
+    def test_goal_is_not_resumed_as_an_ordinary_task(self):
+        rows = [{"id": "DK-1", "title": "Цель: продолжить работу", "stage": "слияние",
+                 "stage_state": "закрыт", "stage_head": "головы нет"}]
+        self.assertEqual(lift.orphan_rows(rows), [])
+
     def test_closed_work_with_head_or_unknown_liveness(self):
         for head in ("голова жива", "голова молчит 3 часа", ""):
             with self.subTest(head=head):
@@ -513,6 +518,77 @@ class DutyCase(unittest.TestCase):
         self.assertEqual(len(shouts), 1)
         self.assertEqual(self.task_file.read_text(encoding="utf-8").count(
             "эскалация дежурному"), 1)
+
+    def test_missing_stage_with_dependency_escalates_without_starting(self):
+        waiting = {"id": "DK-21", "held_by": ["DK-543"], "accept": "mixed"}
+        call = Fake(board([waiting]))
+        for _ in range(2):
+            lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                           home=str(self.home))
+            self.assertEqual(raised, 0)
+            self.assertIn("DK-543", " ".join(lines))
+            self.assertIn("исход дежурному", " ".join(lines))
+        self.assertFalse(any("run" in a for a in call.calls))
+        doc = self.task_file.read_text(encoding="utf-8")
+        self.assertEqual(doc.count("эскалация дежурному"), 1)
+        self.assertIn("состояние исполнителя неизвестно", doc)
+        self.assertIn("запуск работы запрещён", doc)
+        self.assertIn("без разработки и снятия зависимостей", doc)
+        self.assertEqual(waiting["held_by"], ["DK-543"])
+
+    def test_missing_stage_without_dependency_also_needs_diagnosis(self):
+        call = Fake(board([{"id": "DK-21"}]))
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home), act=False)
+        self.assertEqual(raised, 0)
+        self.assertIn("без записи этапа", " ".join(lines))
+        self.assertIn("передалась бы дежурному", " ".join(lines))
+        self.assertNotIn("эскалация дежурному", self.task_file.read_text(encoding="utf-8"))
+        self.assertFalse(any("run" in a for a in call.calls))
+
+    def test_dependency_blocks_resume_of_known_orphan(self):
+        waiting = dict(row("DK-21", "разработка", "сессии нет, брошена"),
+                       held_by=["DK-543"])
+        call = Fake(board([waiting]))
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 0)
+        self.assertIn("запуск работы запрещён", " ".join(lines))
+        self.assertFalse(any("run" in a for a in call.calls))
+
+    def test_missing_stage_live_owner_or_session_is_left_alone(self):
+        lock = self.home / "task-DK-21.lock"
+        lock.mkdir()
+        (lock / "pid").write_text(str(os.getpid()), encoding="utf-8")
+        for extra in ({}, {"stage_head": "голова жива"},
+                      {"stage_session": "сессия жива"}):
+            with self.subTest(extra=extra):
+                call = Fake(board([dict({"id": "DK-21"}, **extra)]))
+                lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                               home=str(self.home))
+                self.assertEqual(raised, 0)
+                self.assertNotIn("исход дежурному", " ".join(lines))
+            if not extra:
+                (lock / "pid").unlink()
+                lock.rmdir()
+        import watch
+        with unittest.mock.patch.object(watch, "session_rows", return_value=[
+                {"задача": "DK-21", "сессия": "live"}]), \
+                unittest.mock.patch.object(watch, "session_alive", return_value=True):
+            call = Fake(board([{"id": "DK-21"}]))
+            lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                           home=str(self.home))
+        self.assertEqual(raised, 0)
+        self.assertNotIn("исход дежурному", " ".join(lines))
+
+    def test_missing_stage_does_not_diagnose_goals_or_check(self):
+        for waiting, section in (({"id": "DK-21", "title": "Цель: работа"}, "in-progress"),
+                                 ({"id": "DK-21", "accept": "mixed"}, "check")):
+            call = Fake(board([waiting], key=section))
+            lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                           home=str(self.home))
+            self.assertEqual(raised, 0)
+            self.assertNotIn("исход дежурному", " ".join(lines))
 
 
 class TickCase(unittest.TestCase):

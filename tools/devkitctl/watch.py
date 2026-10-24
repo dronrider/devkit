@@ -1088,7 +1088,7 @@ def run_head(root, task, call=None, taskctl=None):
     return p.returncode, " ".join((p.stdout or "").split())
 
 
-def lift_rows(root, call=None, taskctl=None, home=None):
+def lift_rows(root, call=None, taskctl=None, home=None, remaining=None):
     """Подъём строк, оставшихся в работе без живой сессии (DK-1157). Возврат это
     строки отчёта, как у пробуждения и страховки.
 
@@ -1097,7 +1097,12 @@ def lift_rows(root, call=None, taskctl=None, home=None):
     модуль lift, тик только зовёт её по корню."""
     import lift
     try:
-        lines, _ = lift.lift_root(root, call=call, taskctl=taskctl, home=home)
+        state_home = str(home_path(default_home() if home is None else home, "~/.devkit"))
+        lines, raised = lift.lift_root(
+            root, call=call, taskctl=taskctl, home=state_home,
+            left=None if remaining is None else remaining[0])
+        if remaining is not None:
+            remaining[0] = max(0, remaining[0] - raised)
         return lines
     except Exception as e:
         return ["корень %s: подъём осиротевших строк не отработал, %s" % (root, e)]
@@ -1266,7 +1271,69 @@ def resume_failed(now, call=None, home=None, tmux=None, probe=None, taskctl=None
 
 # -- закрытие агентской задачи из Check ---------------------------------------
 
-def close_agent(root, call=None, taskctl=None):
+PIPELINE_STATE = "~/.devkit/watch.pipeline"
+
+
+def pipeline_incidents(root, operation, failures, home=None, call=None, taskctl=None):
+    """Первый отказ остаётся в журнале, второй одинаковый уходит дежурному.
+    Успех и штатное ожидание снимают память повтора. За живой головой или
+    сессией задачи разбирается её исполнитель, нового разбора не поднимаем."""
+    if home is None:
+        return list(failures.values())
+    path = home_path(home, PIPELINE_STATE)
+    try:
+        memory = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(memory, dict):
+            memory = {}
+    except (OSError, ValueError):
+        memory = {}
+    key = root + ":" + operation
+    previous = memory.get(key) or {}
+    if not isinstance(previous, dict):
+        previous = {}
+    import lift
+    rows, _ = lift.board_rows(root, call=call, taskctl=taskctl) if any(t != "*" for t in failures) else ([], "")
+    active = {r.get("id") for r in rows
+              if (r.get("stage_session") or "").startswith(lift.ALIVE)
+              or r.get("stage_head") == "голова жива"}
+    current, lines = {}, []
+    for task, line in failures.items():
+        if task != "*" and (task in active or lift.head_up(task, home_path(home, "~/.devkit"))):
+            continue
+        prev = previous.get(task) or {}
+        same = isinstance(prev, dict) and prev.get("line") == line
+        entry = {"line": line, "sent": same and prev.get("sent", False)}
+        current[task] = entry
+        if not same:
+            lines.append(line)
+        elif not entry["sent"]:
+            why = "%s: %s" % (operation, line)
+            recorded = task_record(root, task if task != "*" else None, why)
+            if recorded.startswith("запись в "):
+                entry["sent"] = True
+                lines.append("%s; %s, %s" % (line, DUTY_MARK, recorded))
+            else:
+                diagnostic = ("shipctl -C %s queue --drain --json" % root if operation == "слияние"
+                              else "shipctl -C %s ship --drain" % root if operation == "выкат"
+                              else "taskctl -C %s closable" % root)
+                said, delivered = shout_result("конвейер стоит: " + operation,
+                                               why + "; " + recorded + "; диагностика: " + diagnostic,
+                                               root, call, task=None if task == "*" else task)
+                entry["sent"] = delivered
+                lines.append("%s; %s; уведомление: %s" % (line, recorded, said))
+    if current:
+        memory[key] = current
+    else:
+        memory.pop(key, None)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(memory, ensure_ascii=False), encoding="utf-8")
+    except OSError as e:
+        lines.append("память отказов конвейера не записана: %s" % e)
+    return lines
+
+
+def close_agent(root, call=None, taskctl=None, home=None):
     """Закрывает строки Check, которые вправе закрыть автоматика. Возврат это
     строки отчёта, как у пробуждения и страховки.
 
@@ -1279,27 +1346,36 @@ def close_agent(root, call=None, taskctl=None):
     Кого закрывать, отвечает `taskctl closable`, а не разбор доски тут:
     вид приёмки, форма файла задачи и рубеж непустой «Проверки» живут у
     taskctl, и вторая копия этих правил в питоне разошлась бы с первой на
-    первой же правке. Без бинаря тик молчит: спросить некого, а закрывать
-    вслепую нельзя.
+    первой же правке. Повтор отказа закрытия уходит дежурному; без бинаря
+    остаётся уведомление по корню: задачи для адресного разбора нет.
 
     Закрытие идёт `taskctl -C <корень> close <ID> -m ... --push`, как парковка
     идёт своим move: за тиком никого нет, и правка доски, оставленная грязной
-    в основном чекауте, отбила бы следующий merge предполётом. Громкого зова
-    на закрытие нет намеренно: смысл тика в том, чтобы человека не дёргать.
+    в основном чекауте, отбила бы следующий merge предполётом. Успешное
+    закрытие видно журналом, уведомление остаётся повтору общего сбоя.
     """
     call = subprocess.run if call is None else call
     bin = taskctl_bin() if taskctl is None else taskctl
-    if not bin or not section_rows(root, CHECK):
-        return []
+    if not section_rows(root, CHECK):
+        return pipeline_incidents(root, "закрытие Check", {}, home, call, bin)
+    if not bin:
+        if home is None:
+            return []
+        return pipeline_incidents(root, "закрытие Check",
+                                  {"*": "бинаря taskctl нет: закрытие Check стоит"}, home, call, bin)
     try:
         p = call([bin, "-C", root, "closable"], stdout=subprocess.PIPE,
                  stderr=subprocess.STDOUT, text=True)
     except OSError as e:
-        return ["корень %s: спросить taskctl closable не вышло, %s" % (root, e)]
+        return pipeline_incidents(root, "закрытие Check",
+                                  {"*": "корень %s: спросить taskctl closable не вышло, %s" % (root, e)},
+                                  home, call, bin)
     if p.returncode != 0:
-        return ["корень %s: taskctl closable отказал с кодом %d: %s"
-                % (root, p.returncode, (p.stdout or "").strip())]
-    lines = []
+        return pipeline_incidents(root, "закрытие Check",
+                                  {"*": "корень %s: taskctl closable отказал с кодом %d: %s"
+                                   % (root, p.returncode, " ".join((p.stdout or "").split()))},
+                                  home, call, bin)
+    lines, failures = [], {}
     for ln in (p.stdout or "").splitlines():
         tid = ln.strip()
         if not CLOSABLE_ID.match(tid):
@@ -1309,11 +1385,11 @@ def close_agent(root, call=None, taskctl=None):
                       "-m", "docs(tasks): %s закрыта тиком сторожка" % tid, "--push"],
                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         except OSError as e:
-            lines.append("задача %s в %s: закрыть не вышло, %s" % (tid, root, e))
+            failures[tid] = "задача %s в %s: закрыть не вышло, %s" % (tid, root, e)
             continue
         if r.returncode != 0 and tid in section_rows(root, CHECK):
-            lines.append("задача %s в %s: taskctl отказал с кодом %d: %s"
-                         % (tid, root, r.returncode, (r.stdout or "").strip()))
+            failures[tid] = ("задача %s в %s: taskctl отказал с кодом %d: %s"
+                             % (tid, root, r.returncode, " ".join((r.stdout or "").split())))
             continue
         if r.returncode != 0:
             # Строка из Check ушла, значит закрытие отработало, а споткнулся
@@ -1324,7 +1400,7 @@ def close_agent(root, call=None, taskctl=None):
             continue
         lines.append("задача %s в %s закрыта тиком: вид agent, smoke прогнан, "
                      "раздел «Проверка» непуст" % (tid, root))
-    return lines
+    return lines + pipeline_incidents(root, "закрытие Check", failures, home, call, bin)
 
 
 # -- опрос тредов чужого ревью ------------------------------------------------
@@ -1642,7 +1718,7 @@ def cache_keep(root, call=None, devkitctl=None):
     return ("корень %s: %s" % (name, text if text else "продлений не нужно")), False
 
 
-def drain(root, call=None, shipctl=None):
+def drain(root, call=None, shipctl=None, home=None, taskctl=None):
     """Разлив поезда корня (LLD DK-306, решения 2 и 4): тик зовёт
     `shipctl -C <корень> ship --drain`, чтобы поезд, оставшийся без получателя
     после перезагрузки или падения сессий, не стоял до ручного ship. Разлив
@@ -1654,28 +1730,35 @@ def drain(root, call=None, shipctl=None):
 
     Провал вызова не поднимает код тика и не глушит остальные корни:
     уведомление на провал деплоя шлёт сам shipctl через признак провала и
-    taskctl fail, и повторять его из сторожка значило бы звонить дважды."""
+    taskctl fail. Повтор одного отказа на следующем тике уходит уведомлением
+    по корню один раз до успеха или смены причины."""
     call = subprocess.run if call is None else call
     bin = devkit_bin("shipctl") if shipctl is None else shipctl
     name = os.path.basename(root.rstrip("/"))
     if not bin:
-        return ("корень %s: бинаря shipctl нет ни в PATH, ни в каталогах релиза: "
-                "поезд стоит до ручного ship" % name), True
+        line = ("корень %s: бинаря shipctl нет ни в PATH, ни в каталогах релиза: "
+                "поезд стоит до ручного ship" % name)
+        return line, bool(pipeline_incidents(root, "выкат", {"*": line}, home, call, taskctl))
     try:
         p = call([bin, "-C", root, "ship", "--drain"],
                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     except OSError as e:
-        return ("корень %s: разлив не вышел, %s" % (name, e)), True
+        line = "корень %s: разлив не вышел, %s" % (name, e)
+        entries = pipeline_incidents(root, "выкат", {"*": line}, home, call, taskctl)
+        return line, bool(entries)
     text = " ".join((p.stdout or "").split())
     if p.returncode != 0:
-        return ("корень %s: разлив упал с кодом %d: %s" % (name, p.returncode, text)), True
+        line = "корень %s: разлив упал с кодом %d: %s" % (name, p.returncode, text)
+        entries = pipeline_incidents(root, "выкат", {"*": line}, home, call, taskctl)
+        return line, bool(entries)
+    pipeline_incidents(root, "выкат", {}, home, call, taskctl)
     return ("корень %s: %s" % (name, text)), NO_DRAIN not in (p.stdout or "")
 
 
 NO_QUEUE = "очередь слияний пуста"
 
 
-def merge_queue(root, call=None, shipctl=None):
+def merge_queue(root, call=None, shipctl=None, home=None, taskctl=None):
     """Разлив очереди слияний (DK-1218): тик зовёт
     `shipctl -C <корень> queue --drain`, и одна готовая ветка уходит в main.
     Одна за заход, а не все: слияние с полным прогоном в свежем дереве идёт
@@ -1687,19 +1770,46 @@ def merge_queue(root, call=None, shipctl=None):
 
     Пустая очередь, сломанный прод и занятый конвейер выходят нулём со
     строкой «очередь слияний пуста», и такой исход значимым не считается:
-    иначе журнал сторожка тонул бы в ней каждые пять минут. Возврат тот же,
+    иначе журнал сторожка тонул бы в ней каждые пять минут. Машинный исход
+    --json отличает такой заход от отказа ворот по каждой задаче. Второй
+    одинаковый отказ без живого исполнителя уходит дежурному. Возврат тот же,
     что у разлива поезда: строка отчёта и признак значимости."""
     call = subprocess.run if call is None else call
     bin = devkit_bin("shipctl") if shipctl is None else shipctl
     name = os.path.basename(root.rstrip("/"))
     if not bin:
-        return ("корень %s: бинаря shipctl нет ни в PATH, ни в каталогах релиза: "
-                "очередь слияний стоит до ручного merge" % name), True
+        line = ("корень %s: бинаря shipctl нет ни в PATH, ни в каталогах релиза: "
+                "очередь слияний стоит до ручного merge" % name)
+        return line, bool(pipeline_incidents(root, "слияние", {"*": line}, home, call, taskctl))
     try:
-        p = call([bin, "-C", root, "queue", "--drain"],
+        p = call([bin, "-C", root, "queue", "--drain"] + (["--json"] if home is not None else []),
                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     except OSError as e:
-        return ("корень %s: очередь не разлилась, %s" % (name, e)), True
+        line = "корень %s: очередь не разлилась, %s" % (name, e)
+        return line, bool(pipeline_incidents(root, "слияние", {"*": line}, home, call, taskctl))
+    if home is not None:
+        try:
+            report = json.loads(p.stdout or "")
+            if not isinstance(report, dict) or not isinstance(report.get("items"), list):
+                raise ValueError("ожидался объект с items")
+        except ValueError:
+            line = "корень %s: разлив очереди упал с кодом %d: %s" % (
+                name, p.returncode, " ".join((p.stdout or "").split()))
+            entries = pipeline_incidents(root, "слияние", {"*": line}, home, call, taskctl)
+            return line, bool(entries)
+        failures = {}
+        for item in report["items"]:
+            if isinstance(item, dict) and item.get("failed"):
+                task = item.get("id") or "*"
+                failures[task] = " ".join(str(item.get("line") or "отказ без причины").split())
+        entries = pipeline_incidents(root, "слияние", failures, home, call, taskctl)
+        line = "корень %s: %s" % (name, " ".join(str(report.get("line") or "").split()))
+        if p.returncode != 0:
+            line = "корень %s: разлив очереди упал с кодом %d: %s" % (name, p.returncode, line)
+        if entries:
+            line += "; " + "; ".join(entries)
+        return line, bool(entries) or any(isinstance(i, dict) and i.get("merged")
+                                         for i in report["items"])
     text = " ".join((p.stdout or "").split())
     if p.returncode != 0:
         return ("корень %s: разлив очереди упал с кодом %d: %s" % (name, p.returncode, text)), True
@@ -1846,6 +1956,11 @@ def shout(title, body, root, call=None, task=None, quiet=False):
     ключом `--task`: по полю события лента дашборда ведёт от вставшего цикла к
     строке цели (DK-323). Фоновый уровень идёт исходу дежурному (DK-1323):
     громкий зов там остаётся хвостом разбора."""
+    return shout_result(title, body, root, call, task, quiet)[0]
+
+
+def shout_result(title, body, root, call=None, task=None, quiet=False):
+    """Слова уведомителя и подтверждение успешного завершения вызова."""
     call = subprocess.run if call is None else call
     argv = [sys.executable, str(NOTIFIER)]
     if quiet:
@@ -1856,9 +1971,9 @@ def shout(title, body, root, call=None, task=None, quiet=False):
         p = call(argv + [title, body], cwd=root,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     except OSError as e:
-        return str(e)
+        return str(e), False
     out = (p.stdout or "").strip()
-    return out or "отправлено"
+    return out or ("отправлено" if p.returncode == 0 else "код %d" % p.returncode), p.returncode == 0
 
 
 # Маркеры вердикта витка, при которых цикл стоит осознанно: он позвал человека
@@ -2120,6 +2235,20 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
     out.write(qreport + "\n")
     if qnote:
         log_line(qnote, home)
+    import budgetwake
+    import lift
+    budget_roots = set(run_roots(home))
+    budget_roots.update(read_entry(path).get("root") for path in entries(home))
+    budget_left = lift.MACHINE_LIMIT
+    for root in sorted(r for r in budget_roots if r and os.path.isdir(r)):
+        lines, attempted = budgetwake.wake(
+            root, now, call=timed(root), taskctl=taskctl,
+            agentctl=agentctl, home=home, left=budget_left)
+        budget_left -= attempted
+        for line in lines:
+            out.write(line + "\n")
+            log_line(line, home)
+    lift_left = [budget_left]
     # Подъём упавшего хода идёт там же, до обхода реестра: падение случается и в
     # разговоре, за которым нет ни цели, ни строки доски, а журнал уведомителя и
     # реестр чатов лежат на уровне машины (DK-510).
@@ -2147,13 +2276,13 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
             for pline in park_stale(root, now, timed(root), taskctl, home=home):
                 out.write(pline + "\n")
                 log_line(pline, home)
-            for lline in lift_rows(root, timed(root), taskctl, home=home):
+            for lline in lift_rows(root, timed(root), taskctl, home=home, remaining=lift_left):
                 out.write(lline + "\n")
                 log_line(lline, home)
             for dline in duty_rows(root, timed(root), taskctl, home=home):
                 out.write(dline + "\n")
                 log_line(dline, home)
-            for cline in close_agent(root, timed(root), taskctl):
+            for cline in close_agent(root, timed(root), taskctl, home=home):
                 out.write(cline + "\n")
                 log_line(cline, home)
             for rline in review_poll(root, now, timed(root), taskctl, dashboard):
@@ -2169,9 +2298,9 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         for line in (wake(root, now, timed(root), taskctl=taskctl)
                      + waiters(root, timed(root), taskctl)
                      + park_stale(root, now, timed(root), taskctl, home=home)
-                     + lift_rows(root, timed(root), taskctl, home=home)
+                     + lift_rows(root, timed(root), taskctl, home=home, remaining=lift_left)
                      + duty_rows(root, timed(root), taskctl, home=home)
-                     + close_agent(root, timed(root), taskctl)
+                     + close_agent(root, timed(root), taskctl, home=home)
                      + review_poll(root, now, timed(root), taskctl, dashboard)):
             out.write(line + "\n")
             log_line(line, home)
@@ -2190,11 +2319,11 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
             log_line(line, home)
         if not board_present(root):
             continue
-        line, notable = merge_queue(root, timed(root), shipctl)
+        line, notable = merge_queue(root, timed(root), shipctl, home=home, taskctl=taskctl)
         out.write(line + "\n")
         if notable:
             log_line(line, home)
-        line, notable = drain(root, timed(root), shipctl)
+        line, notable = drain(root, timed(root), shipctl, home=home, taskctl=taskctl)
         out.write(line + "\n")
         if notable:
             log_line(line, home)

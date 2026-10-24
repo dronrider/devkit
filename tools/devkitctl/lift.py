@@ -32,6 +32,8 @@ import re
 import shutil
 import subprocess
 import time
+from datetime import datetime
+from pathlib import Path
 
 # Этапы работы из словаря internal/stage: за ними стоит живой исполнитель, и
 # строка без сессии на таком этапе это работа, которую никто не ведёт. Этапы
@@ -299,6 +301,8 @@ def orphan_rows(rows):
     Живой прогон 25 сентября это показал на DK-937."""
     out = []
     for row in rows:
+        if (row.get("title") or "").startswith(GOAL_TITLE):
+            continue
         stage = (row.get("stage") or "").strip()
         note = (row.get("stage_session") or "").strip()
         silent = (silence_of(row) or 0) > SILENT_AFTER and stage_touch(row)
@@ -322,6 +326,74 @@ def row_why(row):
     if note.startswith(SILENT):
         return "этап «%s», %s" % (stage, note)
     return "этап «%s» без сессии" % stage
+
+
+def diagnostic_rows(rows, home=None):
+    """Рассогласованные строки требуют разбора, а не слепого продолжения.
+    Отсутствие этапа не доказывает обрыв исполнителя. Неснятые зависимости
+    запрещают продолжение даже тогда, когда последний этап известен."""
+    import watch
+    orphans = {r.get("id") for r in orphan_rows(rows)}
+    candidates = [r for r in rows
+                  if (not (r.get("stage") or "").strip()
+                      and r.get("_section") == "in-progress")
+                  or (r.get("held_by") and r.get("id") in orphans)]
+    if not candidates:
+        return []
+    ids = {r.get("id") for r in candidates}
+    devhome = home or os.path.expanduser("~/.devkit")
+    userhome = os.path.dirname(os.path.abspath(devhome))
+    active = set()
+    now = datetime.now()
+    seen = set()
+    for vals in watch.session_rows(userhome):
+        tid = vals.get("задача", "")
+        sid = vals.get("сессия")
+        if tid.upper() not in ids or (tid, sid) in seen:
+            continue
+        seen.add((tid, sid))
+        if watch.session_alive(sid, now, userhome):
+            active.add(tid.upper())
+    out = []
+    for r in candidates:
+        tid = r.get("id") or ""
+        missing = not (r.get("stage") or "").strip()
+        if not tid or (r.get("title") or "").startswith(GOAL_TITLE):
+            continue
+        if head_up(tid, devhome) or tid.upper() in active:
+            continue
+        if r.get("stage_head") not in (None, "", "головы нет"):
+            continue
+        note = (r.get("stage_session") or "").strip()
+        if note and not note.startswith(GONE):
+            continue
+        why = ("строка In progress без записи этапа; состояние исполнителя неизвестно"
+               if missing else row_why(r))
+        if r.get("held_by"):
+            why += "; неснятые зависимости %s, запуск работы запрещён" % ", ".join(r["held_by"])
+        why += "; нужен разбор состояния задачи без разработки и снятия зависимостей"
+        out.append((r, why))
+    return out
+
+
+def report_diagnostic(root, tid, why, call=None, act=True):
+    """Запись исхода служит и адресом дежурного, и памятью повторного тика."""
+    import duty
+    import watch
+    words = "задача %s в %s: %s" % (tid, root, why)
+    if not act:
+        return words + "; передалась бы дежурному"
+    path = Path(root, "docs", "tasks", tid + ".md")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    if any(duty.parse_mark(ln) == why for ln in duty.stage_lines(text)):
+        return words + "; исход дежурному уже записан"
+    note = watch.task_record(root, tid, why)
+    said = watch.shout("нужен разбор состояния: задача %s" % tid, why,
+                       root, call=call, task=tid, quiet=True)
+    return words + "; исход дежурному, %s; %s" % (note, said)
 
 
 def head_up(tid, home=None):
@@ -483,18 +555,24 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
     if err:
         return ["корень %s: доска не прочиталась, %s" % (root, err)], 0
     replied, stale = split_reply_rows(root, rows, home=home)
+    diagnostics = diagnostic_rows(rows, home=home)
+    diagnosed = {r.get("id") for r, _ in diagnostics}
+    diagnostic_words = [report_diagnostic(root, r["id"], why, call=call, act=act)
+                        for r, why in diagnostics]
     found = [Find(r.get("id") or "", "", "во входе чата лежит реплика человека", True)
              for r in replied]
     said = {f.id for f in found}
     found += [Find(r.get("id") or "", ORDER % (r.get("id") or ""), row_why(r), False)
-              for r in orphan_rows(rows) if (r.get("id") or "") not in said]
+              for r in orphan_rows(rows)
+              if (r.get("id") or "") not in said and not r.get("held_by")
+              and r.get("id") not in diagnosed]
     fresh = recent(home)
     tried = marks(home)
     held = [f for f in found if root + "\t" + f.id in fresh]
     found = [f for f in found if root + "\t" + f.id not in fresh]
     spent = [f for f in found if tried.get(root + "\t" + f.id, (0, 0))[1] >= LIFT_TRIES]
     found = [f for f in found if f not in spent]
-    spent_words = ["задача %s в %s: поднималась %d раза подряд, сессия не удержалась"
+    spent_words = diagnostic_words + ["задача %s в %s: поднималась %d раза подряд, сессия не удержалась"
                    % (f.id, root, LIFT_TRIES) for f in spent]
     if stale:
         spent_words.append("корень %s: реплики старше суток лежат во входах %s, подъём по ним не "

@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -1025,6 +1026,27 @@ class RunRootsTest(Stand):
             "# этапы задачи %s\nid = %s\nroot = %s\nэтап = уточнение | %s | вопрос: как быть\n"
             % (tid, tid, root, stamp(self.now)), encoding="utf-8")
 
+    def test_budget_wake_without_a_goal_registry(self):
+        import budgetwake
+        self.stage_record("DK-902", str(self.proj))
+        with patch.object(budgetwake, "wake", return_value=(["бюджетная цель проверена"], 1)) as wake:
+            out = io.StringIO()
+            watch.run(self.now, 45 * 60, self.home, out, self.call, TASKCTL, SHIPCTL)
+        wake.assert_called_once()
+        self.assertEqual(wake.call_args.args[0], str(self.proj))
+        self.assertIn("бюджетная цель проверена", out.getvalue())
+
+    def test_budget_and_task_lifts_share_machine_limit_and_memory(self):
+        import budgetwake
+        import lift
+        self.stage_record("DK-902", str(self.proj))
+        with patch.object(budgetwake, "wake", return_value=([], lift.MACHINE_LIMIT)), \
+                patch.object(lift, "lift_root", return_value=([], 0)) as resume:
+            watch.run(self.now, 45 * 60, self.home, io.StringIO(), self.call, TASKCTL, SHIPCTL)
+        resume.assert_called_once()
+        self.assertEqual(resume.call_args.kwargs["left"], 0)
+        self.assertEqual(resume.call_args.kwargs["home"], str(self.home / ".devkit"))
+
     def test_root_without_a_goal_is_swept(self):
         # DoD: убитый ход не оставляет строку в In progress. Записи цели у
         # обычной задачи нет вовсе, и без второго источника корней страховка
@@ -1069,6 +1091,10 @@ class DrainFake(Fake):
         self.calls.append(list(argv))
         self.kwargs.append(dict(kw))
         out = self.queue if "queue" in argv else self.ship
+        if "queue" in argv and "--json" in argv:
+            out = json.dumps({"line": out, "items": [] if watch.NO_QUEUE in out else
+                              [{"line": out, "merged": self.code == 0,
+                                "failed": self.code != 0}]})
         return subprocess.CompletedProcess(argv, self.code, out, None)
 
 
@@ -1129,9 +1155,9 @@ class DrainTest(Stand):
         rc, out = self.sweep()
         self.assertEqual(rc, 0, out)
         self.assertEqual(self.queued(), [
-            [SHIPCTL, "-C", str(self.proj), "queue", "--drain"],
-            [SHIPCTL, "-C", str(solo), "queue", "--drain"]], self.call.calls)
-        first = self.call.calls.index([SHIPCTL, "-C", str(self.proj), "queue", "--drain"])
+            [SHIPCTL, "-C", str(self.proj), "queue", "--drain", "--json"],
+            [SHIPCTL, "-C", str(solo), "queue", "--drain", "--json"]], self.call.calls)
+        first = self.call.calls.index([SHIPCTL, "-C", str(self.proj), "queue", "--drain", "--json"])
         after = self.call.calls.index([SHIPCTL, "-C", str(self.proj), "ship", "--drain"])
         self.assertLess(first, after, self.call.calls)
 
@@ -1225,6 +1251,8 @@ class CheckFake(Fake):
         if "check-run" in argv:
             text = self.out if self.out is not None else json.dumps(self.reps, ensure_ascii=False)
             return subprocess.CompletedProcess(argv, self.code, text, None)
+        if "queue" in argv and "--json" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"line": watch.NO_QUEUE, "items": []}), None)
         if "closable" in argv:
             return subprocess.CompletedProcess(argv, 0, "закрывать автоматике нечего", None)
         return subprocess.CompletedProcess(argv, 0, "разлив не нужен: поезд пуст", None)
@@ -1654,6 +1682,164 @@ class CloseAgentTest(Stand):
         journal = (self.home / ".devkit" / "goal-watch.log").read_text(encoding="utf-8")
         self.assertIn("DK-902", journal)
         self.assertIn("закрыта тиком", journal)
+
+
+class PipelineIncidentTest(Stand):
+    def setUp(self):
+        super().setUp()
+        self.task = self.proj / "docs" / "tasks" / "DK-902.md"
+        self.task.write_text("# DK-902\n\n## Ход работы\n", encoding="utf-8")
+        self.items = [{"id": "DK-902", "line": "незакоммиченные правки", "failed": True}]
+        self.rows = []
+        self.calls = []
+
+    def call(self, argv, **kwargs):
+        self.calls.append(argv)
+        if "queue" in argv:
+            out = json.dumps({"line": "очередь слияний пуста: готовых веток нет",
+                              "items": self.items})
+        elif "list" in argv:
+            out = json.dumps({"sections": [{"key": getattr(self, "section", "in-progress"), "rows": self.rows}]})
+        elif "closable" in argv:
+            out = "DK-902\n"
+        elif "close" in argv:
+            return subprocess.CompletedProcess(argv, 1, "хвост долга не разобран", None)
+        elif "ship" in argv:
+            out = watch.NO_DRAIN
+        else:
+            out = ""
+        return subprocess.CompletedProcess(argv, 0, out, None)
+
+    def sweep(self):
+        self.entry(seen_minutes=1)
+        return watch.run(now=self.now, idle=45 * 60, home=self.home,
+                         out=io.StringIO(), call=self.call, taskctl=TASKCTL,
+                         shipctl=SHIPCTL, dashboard=DASHBOARD, devkitctl="")
+
+    def marks(self):
+        import duty
+        return duty.task_marks(str(self.proj))
+
+    def test_merge_skip_reaches_duty_on_second_tick_without_duplicates(self):
+        self.sweep()
+        self.assertEqual(self.marks(), [])
+        self.sweep()
+        marks = self.marks()
+        self.assertEqual(len(marks), 1)
+        self.assertEqual(marks[0][0], "DK-902")
+        self.assertIn("незакоммиченные правки", marks[0][1])
+        for _ in range(3):
+            self.sweep()
+        self.assertEqual(self.marks(), marks)
+
+    def test_close_failure_reaches_duty_on_second_tick(self):
+        self.items = []
+        self.board(in_progress=False, goal="DK-902")
+        self.sweep()
+        self.sweep()
+        marks = self.marks()
+        self.assertEqual(len(marks), 1)
+        self.assertIn("закрытие Check", marks[0][1])
+        self.assertIn("хвост долга не разобран", marks[0][1])
+        self.sweep()
+        self.assertEqual(self.marks(), marks)
+
+    def test_agent_wait_stage_does_not_suppress_close_failure(self):
+        self.items = []
+        self.board(in_progress=False, goal="DK-902")
+        self.section = "check"
+        self.rows = [{"id": "DK-902", "stage": "ждёт человека", "accept": "agent",
+                      "stage_session": "сессии нет", "stage_head": "головы нет"}]
+        self.sweep()
+        self.sweep()
+        marks = self.marks()
+        self.assertEqual(len(marks), 1)
+        self.assertIn("закрытие Check", marks[0][1])
+        self.assertIn("хвост долга не разобран", marks[0][1])
+
+    def test_live_executor_and_waiting_events_do_not_reach_duty(self):
+        for alive in ({"stage_session": "сессия жива 5м"},
+                      {"stage_head": "голова жива"}):
+            self.rows = [{"id": "DK-902", **alive}]
+            self.sweep()
+            self.sweep()
+            self.assertEqual(self.marks(), [])
+        self.rows = []
+        self.items = [{"id": "DK-902", "line": "занят замок", "waiting": True}]
+        self.sweep()
+        self.sweep()
+        self.assertEqual(self.marks(), [])
+
+    def test_live_task_lock_suppresses_incident_before_stage_is_published(self):
+        lock = self.home / ".devkit" / "task-DK-902.lock"
+        lock.mkdir()
+        (lock / "pid").write_text(str(os.getpid()), encoding="utf-8")
+        self.sweep()
+        self.sweep()
+        self.assertEqual(self.marks(), [])
+
+    def test_success_and_new_reason_restart_repeat_detection(self):
+        self.sweep()
+        self.sweep()
+        self.items = []
+        self.sweep()
+        self.items = [{"id": "DK-902", "line": "незакоммиченные правки", "failed": True}]
+        self.sweep()
+        self.assertEqual(len(self.marks()), 1)
+        self.sweep()
+        self.assertEqual(len(self.marks()), 2)
+        self.items[0]["line"] = "нет сценария проверки"
+        self.sweep()
+        self.assertEqual(len(self.marks()), 2)
+        self.sweep()
+        self.assertEqual(len(self.marks()), 3)
+
+    def test_failed_root_notification_is_retried_until_delivery(self):
+        for failure in (1, OSError("уведомитель временно недоступен")):
+            with self.subTest(failure=str(failure)):
+                notifications = []
+                outcome = [failure]
+
+                def call(argv, **kwargs):
+                    if str(watch.NOTIFIER) in argv:
+                        notifications.append(argv)
+                        if isinstance(outcome[0], OSError):
+                            raise outcome[0]
+                        return subprocess.CompletedProcess(argv, outcome[0], "", None)
+                    return subprocess.CompletedProcess(argv, 1, "не прочиталась доска", None)
+
+                watch.drain(str(self.proj), call, SHIPCTL, home=self.home)
+                watch.drain(str(self.proj), call, SHIPCTL, home=self.home)
+                self.assertEqual(len(notifications), 1)
+                memory = json.loads(watch.home_path(self.home, watch.PIPELINE_STATE).read_text())
+                self.assertFalse(memory[str(self.proj) + ":выкат"]["*"]["sent"])
+                outcome[0] = 0
+                watch.drain(str(self.proj), call, SHIPCTL, home=self.home)
+                self.assertEqual(len(notifications), 2)
+                watch.drain(str(self.proj), call, SHIPCTL, home=self.home)
+                self.assertEqual(len(notifications), 2)
+                watch.pipeline_incidents(str(self.proj), "выкат", {}, home=self.home)
+
+    def test_root_failure_notifies_once_and_recovers_without_fake_task(self):
+        def run(code):
+            def call(argv, **kwargs):
+                self.calls.append(argv)
+                result = 0 if str(watch.NOTIFIER) in argv else code
+                return subprocess.CompletedProcess(argv, result, "не прочиталась доска", None)
+            return watch.drain(str(self.proj), call, SHIPCTL, home=self.home, taskctl=TASKCTL)
+        self.assertTrue(run(1)[1])
+        run(1)
+        for _ in range(3):
+            self.assertFalse(run(1)[1])
+        notifications = [a for a in self.calls if str(watch.NOTIFIER) in a]
+        self.assertEqual(len(notifications), 1)
+        self.assertNotIn("--task", notifications[0])
+        self.assertIn("не прочиталась доска", notifications[0][-1])
+        self.assertEqual(self.marks(), [])
+        run(0)
+        run(1)
+        run(1)
+        self.assertEqual(len([a for a in self.calls if str(watch.NOTIFIER) in a]), 2)
 
 
 class ConfigTest(Stand):

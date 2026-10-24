@@ -271,7 +271,9 @@ func planTraceRoot(start string) (string, error) {
 	if err == nil {
 		return root, nil
 	}
-	out, gerr := exec.Command("git", "-C", start, "rev-parse", "--show-toplevel").Output()
+	cmd := exec.Command("git", "-C", start, "rev-parse", "--show-toplevel")
+	cmd.Dir = start
+	out, gerr := cmd.Output()
 	if gerr != nil {
 		return "", err
 	}

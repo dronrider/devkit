@@ -52,7 +52,7 @@ func TestChooseAvailableKeepsPrimaryWhenItCanChoose(t *testing.T) {
 func TestParseLaddersUsesEnabledCurrentHarnessBeforeDefault(t *testing.T) {
 	raw := []byte(`{"harnesses":[{"name":"off","enabled":false,"default":true},
 	{"name":"default","enabled":true,"default":true},
-	{"name":"current","enabled":true}]}`)
+	{"name":"current","enabled":true,"auto":true}]}`)
 	for _, preferred := range []string{"current", "off", ""} {
 		got, note := ParseLadders(raw, preferred)
 		want := "default"
@@ -347,8 +347,8 @@ func TestRunOutcomes(t *testing.T) {
 func TestChooseAvailableUsesActualEnabledOwnerAndPartialLadder(t *testing.T) {
 	raw := []byte(`{"harnesses":[
 	{"name":"glm","enabled":true,"default":true,"models":[{"tier":"pro","model":"glm"},{"tier":"max","model":"glm"}]},
-	{"name":"route","enabled":true,"models":[{"tier":"base","model":"too-small"},{"tier":"max","model":"sonnet","via":"owner"}]},
-	{"name":"owner","enabled":true,"models":[]}]}`)
+	{"name":"route","enabled":true,"auto":true,"models":[{"tier":"base","model":"too-small"},{"tier":"max","model":"sonnet","via":"owner"}]},
+	{"name":"owner","enabled":true,"auto":true,"models":[]}]}`)
 	ladders, note := ParseLadders(raw, "glm")
 	if note != "" {
 		t.Fatal(note)
@@ -361,6 +361,81 @@ func TestChooseAvailableUsesActualEnabledOwnerAndPartialLadder(t *testing.T) {
 	if ch := ChooseAvailable("pro", ladders, "glm", true); ch.Refusal == "" {
 		t.Fatalf("выключенный владелец ступени принят: %+v", ch)
 	}
+}
+
+// TestTaskHarnessPolicy это допуск подписок к автоматическим назначениям
+// (DK-1453): включённость и разрешённость расходятся, и вторичной подписке
+// мало стоять в enabled. Без явного auto независимый выбор её не видит,
+// предпочтение текущей подписки запрет не снимает, уехавшая ступень не
+// поднимается с запрещённого владельца, а ответ старого agentctl без флага
+// держит подписку по умолчанию.
+func TestTaskHarnessPolicy(t *testing.T) {
+	primary := `{"name":"glm","enabled":true,"default":true,` +
+		`"models":[{"tier":"base","model":"glm-5.3"},{"tier":"pro","model":"glm-5.3"},{"tier":"max","model":"glm-5.3"}]}`
+	secondary := func(auto string) string {
+		flag := ""
+		if auto != "" {
+			flag = `,"auto":` + auto
+		}
+		return `{"name":"router","enabled":true` + flag +
+			`,"models":[{"tier":"base","model":"route-base"},{"tier":"pro","model":"route-pro"},{"tier":"max","model":"route-max"}]}`
+	}
+	t.Run("включённая без разрешения не участвует", func(t *testing.T) {
+		got, note := ParseLadders([]byte(`{"harnesses":[`+primary+`,`+secondary("")+`]}`), "")
+		if note != "" || len(got) != 1 || got[0].Name != "glm" {
+			t.Fatalf("вторичная подписка без auto прошла в отбор: %+v, %s", got, note)
+		}
+	})
+	t.Run("после явного разрешения участвует", func(t *testing.T) {
+		got, note := ParseLadders([]byte(`{"harnesses":[`+primary+`,`+secondary("true")+`]}`), "")
+		if note != "" || len(got) != 2 || got[1].Name != "router" {
+			t.Fatalf("разрешённая подписка не участвует: %+v, %s", got, note)
+		}
+	})
+	t.Run("предпочтение текущей не снимает запрет", func(t *testing.T) {
+		got, note := ParseLadders([]byte(`{"harnesses":[`+primary+`,`+secondary("")+`]}`), "router")
+		if note != "" || len(got) != 1 || got[0].Name != "glm" {
+			t.Fatalf("запрещённая подписка прошла предпочтением: %+v, %s", got, note)
+		}
+	})
+	t.Run("запрет всех отвечает словами", func(t *testing.T) {
+		got, note := ParseLadders([]byte(`{"harnesses":[`+secondary("false")+`]}`), "")
+		if got != nil || !strings.Contains(note, "автоматическим назначениям не разрешены") {
+			t.Fatalf("запрет всех не назван словами: %+v, %s", got, note)
+		}
+	})
+	t.Run("старый ответ без флага держит подписку по умолчанию", func(t *testing.T) {
+		got, note := ParseLadders([]byte(`{"harnesses":[`+primary+`]}`), "")
+		if note != "" || len(got) != 1 || got[0].Name != "glm" {
+			t.Fatalf("без флага auto подписка по умолчанию потеряна: %+v, %s", got, note)
+		}
+	})
+	t.Run("ступень запрещённого владельца не поднимается", func(t *testing.T) {
+		base := `{"name":"glm","enabled":true,"default":true,` +
+			`"models":[{"tier":"base","model":"glm-5.3"},{"tier":"max","model":"sonnet","via":"router"}]}`
+		for _, tc := range []struct {
+			auto, wantModel, wantHarness string
+			refuse                       bool
+		}{
+			{auto: "", refuse: true},
+			{auto: "true", wantModel: "sonnet", wantHarness: "router"},
+		} {
+			ladders, note := ParseLadders([]byte(`{"harnesses":[`+base+`,`+secondary(tc.auto)+`]}`), "")
+			if note != "" {
+				t.Fatal(note)
+			}
+			ch := ChooseAvailable("base", ladders, "glm-5.3", true)
+			if tc.refuse {
+				if ch.Refusal == "" {
+					t.Fatalf("ступень запрещённого владельца поднята: %+v", ch)
+				}
+				continue
+			}
+			if ch.Refusal != "" || ch.Model != tc.wantModel || ch.Harness != tc.wantHarness {
+				t.Fatalf("разрешённый владелец не поднят: %+v", ch)
+			}
+		}
+	})
 }
 
 func TestChooseAvailableSearchesIncompletePrimary(t *testing.T) {

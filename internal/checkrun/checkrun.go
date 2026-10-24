@@ -225,15 +225,15 @@ func ChooseAvailable(tier string, ladders []Ladder, dev string, known bool) Choi
 	if len(ladders) == 0 {
 		return Choose(tier, nil, dev, known)
 	}
-	enabled := map[string]bool{}
+	admitted := map[string]bool{}
 	for _, ladder := range ladders {
-		enabled[ladder.Name] = true
+		admitted[ladder.Name] = true
 	}
 	selectFrom := func(tier string, ladder Ladder) Choice {
 		steps := make([]Step, 0, len(ladder.Steps))
 		for _, step := range ladder.Steps {
 			owner := ladder.Via[step.Tier]
-			if owner == "" || enabled[owner] {
+			if owner == "" || admitted[owner] {
 				steps = append(steps, step)
 			}
 		}
@@ -464,12 +464,27 @@ type harnessView struct {
 		Name    string `json:"name"`
 		Enabled bool   `json:"enabled"`
 		Default bool   `json:"default"`
-		Models  []struct {
+		// Auto это допуск к автоматическим назначениям: печатает agentctl из
+		// ключа auto машинного конфига (DK-1453). Старый бинарь поля не знает,
+		// и пустой указатель значит допуск подписки по умолчанию, как в
+		// политике без настройки.
+		Auto   *bool `json:"auto"`
+		Models []struct {
 			Tier  string `json:"tier"`
 			Model string `json:"model"`
 			Via   string `json:"via"`
 		} `json:"models"`
 	} `json:"harnesses"`
+}
+
+// admitted это допуск подписки к автоматическим назначениям. Пустой флаг
+// значит ответ старого agentctl без ключа auto: допущена подписка по
+// умолчанию, как велит политика без настройки.
+func admitted(auto *bool, def bool) bool {
+	if auto == nil {
+		return def
+	}
+	return *auto
 }
 
 // AskLadder называет подписку по умолчанию и её лестницу ярусов. Третья
@@ -487,7 +502,8 @@ func AskLadder() (string, []Step, string) {
 	return ParseLadder(out)
 }
 
-// AskLadders отдаёт включённые лестницы, начиная с текущей подписки либо default.
+// AskLadders отдаёт лестницы, допущенные автоматическим назначениям, начиная
+// с текущей подписки либо default.
 func AskLadders() ([]Ladder, string) {
 	bin, err := exec.LookPath("agentctl")
 	if err != nil {
@@ -500,7 +516,8 @@ func AskLadders() ([]Ladder, string) {
 	return ParseLadders(out, os.Getenv("DEVKIT_HARNESS"))
 }
 
-// ParseLadders оставляет только enabled; preferred меняет порядок, но не состав.
+// ParseLadders оставляет только включённые и допущенные автоматике (ключ auto
+// машинного конфига, DK-1453); preferred меняет порядок, но не состав.
 func ParseLadders(raw []byte, preferred string) ([]Ladder, string) {
 	var v harnessView
 	if err := json.Unmarshal(raw, &v); err != nil {
@@ -508,20 +525,29 @@ func ParseLadders(raw []byte, preferred string) ([]Ladder, string) {
 	}
 	var out []Ladder
 	primary := ""
+	enabledSeen := false
 	for _, h := range v.Harnesses {
-		if h.Enabled {
-			ladder := Ladder{Name: h.Name, Via: map[string]string{}}
-			for _, m := range h.Models {
-				ladder.Steps = append(ladder.Steps, Step{Tier: m.Tier, Model: m.Model})
-				ladder.Via[m.Tier] = m.Via
-			}
-			out = append(out, ladder)
-			if h.Default {
-				primary = h.Name
-			}
+		if !h.Enabled {
+			continue
+		}
+		enabledSeen = true
+		if !admitted(h.Auto, h.Default) {
+			continue
+		}
+		ladder := Ladder{Name: h.Name, Via: map[string]string{}}
+		for _, m := range h.Models {
+			ladder.Steps = append(ladder.Steps, Step{Tier: m.Tier, Model: m.Model})
+			ladder.Via[m.Tier] = m.Via
+		}
+		out = append(out, ladder)
+		if h.Default {
+			primary = h.Name
 		}
 	}
 	if len(out) == 0 {
+		if enabledSeen {
+			return nil, "включённые подписки автоматическим назначениям не разрешены (ключ auto машинного конфига)"
+		}
 		return nil, "включённых подписок agentctl не назвал"
 	}
 	for _, h := range out {

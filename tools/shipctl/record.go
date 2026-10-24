@@ -161,7 +161,7 @@ func movePending(root, id string) (reason string, pending bool, err error) {
 		}
 		return "", false, err
 	}
-	for _, ln := range sectionLines(string(data), mergedSection) {
+	for _, ln := range taskform.SectionLines(string(data), mergedSection) {
 		t := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ln), "- "))
 		switch {
 		case strings.Contains(t, movePendingNote):

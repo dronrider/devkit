@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/taskform"
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // branchCodeOnly заводит фичеветку с одним коммитом кода и без тестового файла:
@@ -144,8 +147,8 @@ func TestIsTestFile(t *testing.T) {
 		{"", false},
 	}
 	for _, c := range cases {
-		if got := isTestFile(c.path); got != c.want {
-			t.Errorf("isTestFile(%q) = %v, want %v", c.path, got, c.want)
+		if got := trace.IsTestFile(c.path); got != c.want {
+			t.Errorf("trace.IsTestFile(%q) = %v, want %v", c.path, got, c.want)
 		}
 	}
 }
@@ -155,28 +158,28 @@ func TestIsTestFile(t *testing.T) {
 // отбрасывается. Цитата в ограждённом блоке и голая проза без маркера ворот не
 // гасят. Регистр нестрогий, ворота независимы.
 func TestHasException(t *testing.T) {
-	if !hasException("- Исключение: тесты (правка доки)\n", "тесты") {
+	if !taskform.Exception("- Исключение: тесты (правка доки)\n", "тесты") {
 		t.Error("пометка не найдена")
 	}
-	if !hasException("- Исключение: Тесты\n", "тесты") {
+	if !taskform.Exception("- Исключение: Тесты\n", "тесты") {
 		t.Error("регистр должен быть нестрогим")
 	}
-	if !hasException("- Исключение: regcheck\n", "regcheck") {
+	if !taskform.Exception("- Исключение: regcheck\n", "regcheck") {
 		t.Error("пометка без скобок должна работать")
 	}
-	if hasException("- Исключение: тесты (причина)\n", "сценарий") {
+	if taskform.Exception("- Исключение: тесты (причина)\n", "сценарий") {
 		t.Error("пометка одного ворот не должна гасить другой")
 	}
-	if hasException("```\n- Исключение: тесты (цитата)\n```\n", "тесты") {
+	if taskform.Exception("```\n- Исключение: тесты (цитата)\n```\n", "тесты") {
 		t.Error("цитата в ограждении не должна гасить ворот")
 	}
-	if hasException("Исключение: тесты (в прозе)\n", "тесты") {
+	if taskform.Exception("Исключение: тесты (в прозе)\n", "тесты") {
 		t.Error("проза без маркера не должна гасить ворот")
 	}
 	// Пояснение без скобок после имени ворот не подхватывается: имя ворот это
 	// первое слово, остальное должно идти в скобках. Так «тесты» и «тесты в
 	// другом репо» не расходятся в написании.
-	if hasException("- Исключение: тесты в другом репо\n", "тесты") {
+	if taskform.Exception("- Исключение: тесты в другом репо\n", "тесты") {
 		t.Error("хвост без скобок не должен подходить под имя ворот")
 	}
 }

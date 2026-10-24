@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/reviewnote"
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // PushParams это параметры команды push.
@@ -263,7 +264,7 @@ func reviewTraceGate(root, remoteSHA, localSHA string) error {
 	}
 	seen := "заметки ревью на HEAD нет"
 	if id := branchTaskID(root); id != "" {
-		if hasReviewLevel(readTaskDoc(root, id)) {
+		if trace.HasReviewLevel(readTaskDoc(root, id)) {
 			return nil
 		}
 		seen = fmt.Sprintf("заметки ревью на HEAD нет, строки уровня в docs/tasks/%s.md тоже", id)

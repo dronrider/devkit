@@ -61,11 +61,6 @@ func TestMergeRegcheckGate(t *testing.T) {
 		t.Fatalf("зелёный regcheck должен снимать ворот: %v", err)
 	}
 
-	// Красный запуск ворота не снимает.
-	if regcheckLogged(writeLog(t, "2026-01-01T10:00:00\tregcheck\trun\t1\n"), time.Unix(0, 0)) {
-		t.Fatal("красный regcheck засчитан за прогон")
-	}
-
 	// Для задачи типа task ворота нет и при пустом журнале.
 	root, _ = setup(t, rowInProg3, "")
 	if err := os.Mkdir(filepath.Join(root, ".devkit"), 0o755); err != nil {

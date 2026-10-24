@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/trace"
 	"time"
 
 	"github.com/dronrider/devkit/internal/obey"
@@ -22,7 +24,7 @@ const standSkillText = "# prose\n\n## Кто зовёт\n\nСкилл зовут
 func standSeed(t *testing.T, root, subject string) {
 	t.Helper()
 	write(t, root, standSkill, standSkillText)
-	write(t, root, scenarioDir+"/14-prose-sample.md",
+	write(t, root, trace.ScenarioDir+"/14-prose-sample.md",
 		"# выборка эталонов\n\nконец: любой\nпредмет: "+subject+"\n\n## Промпт\n\nНапиши абзац.\n\n## Проверка\n\n```sh\ntrue\n```\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "seed: скилл и сценарий стенда")
@@ -58,7 +60,7 @@ func standPrint(t *testing.T, root, branch, subject string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	print, err := obey.PrintFrom(treeReader(root, branch), subs)
+	print, err := obey.PrintFrom(trace.TreeReader(root, branch), subs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,9 +274,9 @@ func TestStandGateMultiScenarioMark(t *testing.T) {
 	secondText := "# review\n\n## Как читать\n\nЧитают дифф целиком.\n"
 	write(t, root, standSkill, standSkillText)
 	write(t, root, second, secondText)
-	write(t, root, scenarioDir+"/14-prose-sample.md",
+	write(t, root, trace.ScenarioDir+"/14-prose-sample.md",
 		"# выборка эталонов\n\nконец: любой\nпредмет: "+standSkill+" «Как звать»\n\n## Промпт\n\nНапиши абзац.\n\n## Проверка\n\n```sh\ntrue\n```\n")
-	write(t, root, scenarioDir+"/15-review-order.md",
+	write(t, root, trace.ScenarioDir+"/15-review-order.md",
 		"# порядок ревью\n\nконец: любой\nпредмет: "+second+" «Как читать»\n\n## Промпт\n\nПрочитай дифф.\n\n## Проверка\n\n```sh\ntrue\n```\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "seed: два скилла и два сценария")
@@ -296,7 +298,7 @@ func TestStandGateMultiScenarioMark(t *testing.T) {
 	}
 	// Объединение предметов идёт по пути, и здесь оно совпадает с порядком
 	// сценариев: prose раньше review.
-	print, err := obey.PrintFrom(treeReader(root, "xr-001-fix"), append(subsA, subsB...))
+	print, err := obey.PrintFrom(trace.TreeReader(root, "xr-001-fix"), append(subsA, subsB...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +335,7 @@ func TestStandGateRenamedFile(t *testing.T) {
 	gitT(t, root, "checkout", "-qb", "xr-001-fix")
 	gitT(t, root, "rm", "-q", standSkill)
 	write(t, root, renamed, standSkillText)
-	write(t, root, scenarioDir+"/14-prose-sample.md",
+	write(t, root, trace.ScenarioDir+"/14-prose-sample.md",
 		"# выборка эталонов\n\nконец: любой\nпредмет: "+renamed+"\n\n## Промпт\n\nНапиши абзац.\n\n## Проверка\n\n```sh\ntrue\n```\n")
 	write(t, root, "fix_test.go", "package main\n")
 	gitT(t, root, "add", ".")

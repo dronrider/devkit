@@ -17,6 +17,7 @@ import (
 	"github.com/dronrider/devkit/internal/gitrun"
 	"github.com/dronrider/devkit/internal/merged"
 	"github.com/dronrider/devkit/internal/stage"
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // git это единственная дорога к git из shipctl: закрытый запрос учётки и
@@ -1168,7 +1169,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if at := cutTaskFile(reviewRoot, p.ID); at > 0 {
 		return "", fmt.Errorf("%s; закрыть ограждение и повторить, иначе запись слияния уйдёт туда же и очередь её не увидит", cutTaskFileNote(p.ID, at))
 	}
-	open, err := openReviewNotes(reviewRoot, p.ID)
+	open, err := trace.OpenReviewNotes(reviewRoot, p.ID)
 	if err != nil {
 		return "", err
 	}
@@ -1207,19 +1208,19 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := regcheckGate(root, reviewRoot, main, branch, b.rowOf(p.ID).Type, taskDoc); err != nil {
+	if err := trace.Regcheck(root, reviewRoot, main, branch, b.rowOf(p.ID).Type, taskDoc); err != nil {
 		return "", err
 	}
-	if err := testsGate(root, main, branch, docsBranch, taskDoc); err != nil {
+	if err := trace.Tests(root, main, branch, docsBranch, taskDoc); err != nil {
 		return "", err
 	}
 	if err := scenarioGate(p.ID, docsBranch, taskDoc); err != nil {
 		return "", err
 	}
-	if err := reviewLevelGate(p.ID, taskDoc); err != nil {
+	if err := trace.ReviewLevel(p.ID, taskDoc); err != nil {
 		return "", err
 	}
-	if err := standGate(root, main, branch, p.ID, taskDoc); err != nil {
+	if err := trace.Stand(root, main, branch, p.ID, taskDoc); err != nil {
 		return "", err
 	}
 	// Обкатка спрашивается в дереве ветки: HEAD там это её вершина, и отметка

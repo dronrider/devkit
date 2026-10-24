@@ -3,11 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/stage"
-	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // В файл задачи по RULES.board.md вкладывается реальный вывод команд, а вывод
@@ -53,117 +51,6 @@ func cutTaskFileNote(id string, at int) string {
 		id, at)
 }
 
-// hasHeading говорит, есть ли в файле заголовок любого уровня с заданным
-// текстом. Заголовок внутри ограждённого блока не считается: это чужой вывод,
-// а не раздел нашего файла.
-func hasHeading(doc, name string) bool {
-	lines := strings.Split(doc, "\n")
-	mask, _ := fenceMask(lines)
-	for i, ln := range lines {
-		if !mask[i] && strings.HasPrefix(ln, "#") && strings.Contains(ln, name) {
-			return true
-		}
-	}
-	return false
-}
-
-// sectionLines возвращает строки раздела с заданным заголовком, пропуская
-// ограждённые блоки. Заголовок сравнивается по префиксу: у разделов в файлах
-// задач встречается хвост вроде «## Ревью (второй круг)».
-func sectionLines(doc, heading string) []string {
-	lines := strings.Split(doc, "\n")
-	mask, _ := fenceMask(lines)
-	var out []string
-	in := false
-	for i, ln := range lines {
-		if mask[i] {
-			continue
-		}
-		if strings.HasPrefix(ln, "## ") {
-			in = strings.HasPrefix(ln, heading)
-			continue
-		}
-		if in {
-			out = append(out, ln)
-		}
-	}
-	return out
-}
-
-// reviewItems собирает элементы списка раздела: маркерная строка вместе со
-// строками продолжения (до пустой или следующей маркерной) составляет один
-// элемент целиком. Абзац без маркера элементом не считается, поэтому чистый
-// вердикт абзацем парсер не видит вовсе, а замечание, перенесённое на несколько
-// строк, судится по всему тексту, и исход на строке переноса закрывает его.
-func reviewItems(doc, heading string) []string {
-	var items []string
-	var cur []string
-	flush := func() {
-		if len(cur) > 0 {
-			items = append(items, strings.Join(cur, " "))
-			cur = nil
-		}
-	}
-	for _, ln := range sectionLines(doc, heading) {
-		t := strings.TrimSpace(ln)
-		switch {
-		case strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* "):
-			flush()
-			cur = append(cur, t)
-		case t == "":
-			flush()
-		case len(cur) > 0:
-			cur = append(cur, t)
-		}
-	}
-	flush()
-	return items
-}
-
-// resolvedTailRe узнаёт исход по месту, где его пишет taskctl review resolve
-// ("<текст>: исправлено" либо "<текст>: отклонено, причина"), а не по факту
-// появления слова где-то в тексте: цитата замечания, пересказывающая формат
-// команды, этому хвосту не соответствует и замечание не закрывает (DK-514).
-// Копия того же критерия, что в taskctl outcome, иначе merge и review show
-// разойдутся на одной строке.
-var resolvedTailRe = regexp.MustCompile(`: (исправлено|отклонено)(,.*)?$`)
-
-// cleanVerdictRe узнаёт чистый вердикт по голове элемента, куда его пишет
-// ревьювер («Вердикт: без замечаний. пояснение» либо «замечаний нет» без
-// пояснения), а не по факту оборота где-то в тексте: суть замечания,
-// кончающаяся словами «про вердикт без замечаний нет ничего», голове не
-// соответствует и замечание не закрывает (DK-469). За фразой идёт точка,
-// двоеточие, необязательный хвост «до <sha>» второго и следующих кругов
-// (taskctl cmdReviewClean, DK-812) или конец текста, поэтому «замечаний
-// неточностей» и продолжение фразы перечислением вердиктом не считаются.
-// Маркер списка терпится потому, что reviewItems отдаёт элементы вместе с
-// маркером. Копия того же критерия, что в taskctl outcome, иначе merge и
-// review show разойдутся на одной строке.
-var cleanVerdictRe = regexp.MustCompile(`^(?:[-*] )?(?:(?:вердикт|ревью):\s*)?(?:без замечаний|замечаний нет)(?:\s+до\s+[0-9a-f]{4,40})?(?:[.:]|$)`)
-
-// reviewOutcome возвращает исход элемента раздела «Ревью»: «исправлено»,
-// «отклонено», «чисто» (вердикт без замечаний) или пусто у открытого заме-
-// чания. Порядок проверок исход -> чистый итог -> открыто тот же, что в taskctl
-// outcome: «гибрид: исправлено, теперь без замечаний» остаётся закрытым.
-func reviewOutcome(item string) string {
-	low := strings.ToLower(item)
-	if m := resolvedTailRe.FindStringSubmatch(low); m != nil {
-		return m[1]
-	}
-	if cleanVerdictRe.MatchString(low) {
-		return "чисто"
-	}
-	return ""
-}
-
-// Имена ворот готовности и разбор пометки-исключения общие с воротами перевода
-// в Check (internal/taskform): пометку пишет один человек в один файл.
-const (
-	gateRegcheck = taskform.GateRegcheck
-	gateTests    = taskform.GateTests
-	gateScenario = taskform.GateScenario
-	gateReview   = taskform.GateReview
-	gateStand    = taskform.GateStand
-)
-
-func hasException(doc, gate string) bool { return taskform.Exception(doc, gate) }
+// Разбор пометки-исключения и имена ворот готовности живут в internal/taskform:
+// пометку пишет один человек в один файл, и тот же разбор спрашивает след
+// этапа плана (LLD DK-972, решение 6).

@@ -237,25 +237,6 @@ func (b *board) rowOf(id string) *row {
 	return nil
 }
 
-// openReviewNotes возвращает замечания раздела «Ревью» файла задачи без
-// зафиксированного исхода: по RULES.board.md у каждого элемента списка должен
-// стоять итог «исправлено» либо «отклонено» с причиной. Замечанием считается
-// элемент списка целиком (маркерная строка вместе со строками продолжения), а
-// вердикт без замечаний замечанием не считается. Критерий тот же, каким судит
-// taskctl outcome, иначе merge и review show разойдутся на одной строке.
-func openReviewNotes(root, id string) ([]string, error) {
-	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", id+".md"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var open []string
-	for _, item := range reviewItems(string(data), "## Ревью") {
-		if reviewOutcome(item) == "" {
-			open = append(open, strings.TrimSpace(item))
-		}
-	}
-	return open, nil
-}
+// openReviewNotes переехал в internal/trace: тот же перечень открытых
+// замечаний спрашивает след слова «review» у этапа плана (LLD DK-972,
+// решение 6), и копия разошлась бы с merge на первой же правке разбора.

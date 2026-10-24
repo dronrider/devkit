@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // gitT форсирует commit.gpgsign и tag.gpgsign в false флагом -c: подпись
@@ -432,7 +434,7 @@ func TestReviewNotesMarkup(t *testing.T) {
 			"- ещё одно, без исхода\n"+
 			"- открытое с пояснением\n\n"+
 			"исправлено в коммите abc\n")
-	open, err := openReviewNotes(root, "XR-001")
+	open, err := trace.OpenReviewNotes(root, "XR-001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +464,7 @@ func TestReviewNotesQuotedWord(t *testing.T) {
 		"# XR-001: починка бага\n\n"+
 			"## Ревью\n\n"+
 			"- замечание 18 цитировало текст сценария со словами «остаются закрытыми исходом «исправлено»»\n")
-	open, err := openReviewNotes(root, "XR-001")
+	open, err := trace.OpenReviewNotes(root, "XR-001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +491,7 @@ func TestReviewNotesVerdictPhrase(t *testing.T) {
 			"## Ревью\n\n"+
 			"- Строка 1 плана меняет поведение merge раньше, чем процедура учится писать запись, а порядок относительно строки 5 объявлен свободным («5 в любой момент», при том что сама строка 5 обещает увести третий разряд в редкий случай). В составе строки 1 названы RULES.board.md п. 2 и tools/shipctl/README.md, но не скилл board-ship, а именно его читает диспетчер в момент ревью: в разделе «Ревью» пп. 5-6 (SKILL.md:91-95) сказано только «строка на замечание, суть и исход», про вердикт без замечаний нет ничего. В промежутке между строками 1 и 5 отказ merge будет приходить на честной работе, а где брать запись, не написано нигде.\n"+
 			"- Вердикт: без замечаний. Путь от симптома пройден по ops.go.\n")
-	open, err := openReviewNotes(root, "XR-001")
+	open, err := trace.OpenReviewNotes(root, "XR-001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +520,7 @@ func TestReviewNotesSecondRoundVerdict(t *testing.T) {
 			"- Вердикт: без замечаний до a1b2c3d. Второй круг после красного слияния.\n")
 	gitT(t, root, "add", ".")
 	gitT(t, root, "commit", "-qm", "docs(tasks): XR-001 второй круг ревью")
-	open, err := openReviewNotes(root, "XR-001")
+	open, err := trace.OpenReviewNotes(root, "XR-001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1165,11 +1167,11 @@ func TestLoadBoardAndReview(t *testing.T) {
 	if b.sectOf("XR-001") != "in-progress" || b.sectOf("XR-002") != "backlog" || b.sectOf("XR-404") != "" {
 		t.Fatalf("секции разобраны неверно: %+v", b.sects)
 	}
-	open, err := openReviewNotes(root, "XR-001")
+	open, err := trace.OpenReviewNotes(root, "XR-001")
 	if err != nil || len(open) != 0 {
 		t.Fatalf("закрытое ревью считается открытым: %v %v", open, err)
 	}
-	if open, _ := openReviewNotes(root, "XR-404"); open != nil {
+	if open, _ := trace.OpenReviewNotes(root, "XR-404"); open != nil {
 		t.Fatal("отсутствующий файл задачи не должен давать замечаний")
 	}
 }

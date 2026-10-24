@@ -421,6 +421,32 @@ func TestDraftDecorSkipsNotFreeChat(t *testing.T) {
 	}
 }
 
+// Разговор чужого проекта основной лентой не становится: кнопка записи не
+// открывает чужое обсуждение, журнал молчит, а черновик записывается всё равно.
+func TestDraftDecorSkipsForeignProjectChat(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	foreign := fmt.Sprintf("2026-10-24T10:00:00 сессия free-2 задача - проект other "+
+		"дерево /tmp/other транскрипт %s источник рука повод startup tmux -\n",
+		standTranscript(e.home, "free-2"))
+	writeBinds(t, e.home, foreign)
+
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+		`{"title": "Мысль", "prio": "mid", "chat": "free-2"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("черновик с чужим разговором: %d %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "разговор free-2 из проекта other, основным чатом черновика он не стал") {
+		t.Errorf("отказ чужому разговору молчит: %s", text)
+	}
+	if _, err := os.Stat(mainchat.Path(e.home)); !os.IsNotExist(err) {
+		t.Fatalf("чужой разговор завёл журнал:\n%s", readFile(t, mainchat.Path(e.home)))
+	}
+	if !isFile(filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")) {
+		t.Errorf("черновик XR-005 не записался")
+	}
+}
+
 // Назначение переживает смену вида записи: черновик, оформленный в задачу тем
 // же ID, держит свой разговор, а начало работы называет носителем конвейер
 // и оставляет отрезок оформления в истории ленты.

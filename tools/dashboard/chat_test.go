@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/taskhead"
 )
 
 // Разговор с любой живой сессией (DK-345): реплика уходит во вход
@@ -3368,6 +3370,35 @@ func TestTaskMessageRaisesDespiteReleasedBind(t *testing.T) {
 	}
 	if got := readFile(t, tmuxLog); !strings.Contains(got, "new-session -d -s task-XR-9") {
 		t.Fatalf("снятая привязка сошла за ведущую, голова не поднята: %q", got)
+	}
+}
+
+// Замерзшее окно с живым pid задачу не ведёт (DK-1454): занятость замка
+// держит свежая отметка жизни, и реплика человека должна поднять новую
+// голову, а не лежать в очереди у молчащего окна. Прежде мера была живым
+// pid, и застрявшее на паузе окно глушило запуск навсегда.
+func TestTaskMessageIgnoresFrozenHeadLock(t *testing.T) {
+	e, c, tmuxLog := replyEnv(t)
+	useHeadHome(t, e)
+	holdHeadLock(t, e.home, "XR-9")
+	// Отметку жизни состарить руками: оболочка конвейера касалась её давно,
+	// и живой владелец с такой отметкой это замерзшее окно.
+	beat := filepath.Join(taskhead.LockPath(e.home, "XR-9"), "beat")
+	old := time.Now().Add(-3 * time.Hour)
+	if err := os.Chtimes(beat, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if head := e.s.taskHead(e.proj, "XR-9"); head != "" {
+		t.Fatalf("замерзший замок назван ведущей головой: %q", head)
+	}
+
+	resp := postTaskMessage(t, c, e, "XR-9", "что со строкой")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("отправка: %d %s", resp.StatusCode, text)
+	}
+	if got := readFile(t, tmuxLog); !strings.Contains(got, "new-session -d -s task-XR-9") {
+		t.Fatalf("замерзший замок заглушил подъём новой головы: %q", got)
 	}
 }
 

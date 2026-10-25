@@ -63,6 +63,59 @@ func TestTakeRetakesDeadOwner(t *testing.T) {
 	}
 }
 
+func TestTakeRetakesFrozenOwner(t *testing.T) {
+	// Живой pid сам по себе работой не считается (DK-1454): замерзшее окно
+	// держит pid годами, и пока живость меряет один pid, замок занят вечно.
+	// Признак жизни это отметка beat, и замок без неё снимается как брошенный.
+	path := LockPath(t.TempDir(), "DK-1")
+	owner := liveProc(t)
+	if err := Take(path, owner); err != nil {
+		t.Fatal(err)
+	}
+	staleBeat(t, path, -3*time.Hour)
+	if err := Take(path, os.Getpid()); err != nil {
+		t.Fatalf("замок замерзшего владельца не взят заново: %v", err)
+	}
+	if Owner(path) != os.Getpid() {
+		t.Fatalf("владелец %d, жду свой pid", Owner(path))
+	}
+}
+
+func TestTakeKeepsWorkingOwner(t *testing.T) {
+	// Обратная сторона того же правила: живой владелец со свежей отметкой
+	// работы занят по-настоящему, и второй головы поверх него не встаёт.
+	path := LockPath(t.TempDir(), "DK-1")
+	owner := liveProc(t)
+	if err := Take(path, owner); err != nil {
+		t.Fatal(err)
+	}
+	freshBeat(t, path)
+	if _, ok := Take(path, os.Getpid()).(*BusyError); !ok {
+		t.Fatal("замок работающего владельца снят как брошенный")
+	}
+}
+
+// freshBeat заявляет признак жизни замка руками теста: пишет отметку beat.
+func freshBeat(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(path, "beat"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// staleBeat состаривает признак жизни замка на age: замерзший владелец.
+func staleBeat(t *testing.T, path string, age time.Duration) {
+	t.Helper()
+	name := filepath.Join(path, "beat")
+	if err := os.WriteFile(name, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(age)
+	if err := os.Chtimes(name, old, old); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTakeRefusesYoungEmptyLock(t *testing.T) {
 	// Соседний подъём успел завести каталог, а pid ещё не вписал.
 	path := LockPath(t.TempDir(), "DK-1")

@@ -29,7 +29,7 @@ func writeDraftFile(t *testing.T, root, id, body string) {
 func setupDraft(t *testing.T) string {
 	t.Helper()
 	root := setup(t)
-	body := "# XR-005\n\n## Что происходит\n\nЧужой тикет.\n\nMR: https://gl.example.com/group/proj/-/merge_requests/42\n" +
+	body := "# XR-005\n" + fixtureTaskBody + "\nMR: https://gl.example.com/group/proj/-/merge_requests/42\n" +
 		fixtureScenario + fixtureVerification +
 		"\n## Ревью\n\nУровень 2 до a1b2c3d: неопределённость 1, тронут tools/shipctl.\n"
 	if err := os.WriteFile(taskFileAbs(root, "XR-005"), []byte(body), 0o644); err != nil {

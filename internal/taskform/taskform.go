@@ -104,6 +104,7 @@ func SectionAt(lines []string, heading string) int {
 	if rank < 0 {
 		return -1
 	}
+	lines = strings.Split(VisibleText(strings.Join(lines, "\n")), "\n")
 	mask, _ := FenceMask(lines)
 	for i, ln := range lines {
 		if mask[i] || !strings.HasPrefix(ln, "## ") {
@@ -158,9 +159,10 @@ func InsertIntoSection(content, heading string, lines ...string) string {
 	content = strings.TrimRight(content, "\n") + "\n"
 	body := strings.Join(lines, "\n")
 	rows := strings.Split(content, "\n")
-	mask, _ := FenceMask(rows)
+	visible := strings.Split(VisibleText(content), "\n")
+	mask, _ := FenceMask(visible)
 	head := -1
-	for i, ln := range rows {
+	for i, ln := range visible {
 		if !mask[i] && strings.HasPrefix(ln, heading) {
 			head = i
 			break
@@ -171,7 +173,7 @@ func InsertIntoSection(content, heading string, lines ...string) string {
 	}
 	end := len(rows)
 	for i := head + 1; i < len(rows); i++ {
-		if !mask[i] && strings.HasPrefix(rows[i], "## ") {
+		if !mask[i] && strings.HasPrefix(visible[i], "## ") {
 			end = i
 			break
 		}
@@ -260,7 +262,7 @@ func SectionLines(doc, heading string) []string { return sectionLines(doc, headi
 
 // sectionLines это строки названного раздела вне ограждённых блоков.
 func sectionLines(doc, heading string) []string {
-	lines := strings.Split(doc, "\n")
+	lines := strings.Split(VisibleText(doc), "\n")
 	mask, _ := FenceMask(lines)
 	var out []string
 	in := false

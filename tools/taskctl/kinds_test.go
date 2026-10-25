@@ -23,7 +23,7 @@ func writeKindsTask(t *testing.T, root, id, body string) {
 // пять строк (XR-001..XR-005), новые идут следом и в счёт попадают все.
 func addKindsRow(t *testing.T, root, id, title, accept, barrier string) {
 	t.Helper()
-	if _, err := cmdAdd(root, AddParams{ID: id, Title: title, Type: "task", Rank: "0+1+1+0+1", Accept: accept, Barrier: barrier}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, id), ID: id, Title: title, Type: "task", Rank: "0+1+1+0+1", Accept: accept, Barrier: barrier}); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -26,15 +26,15 @@ func setup(t *testing.T) string {
 	files := map[string]string{
 		boardPath(root):                   fixtureBoard,
 		archivePath(root):                 fixtureArchive,
-		filepath.Join(tasks, "XR-005.md"): "# XR-005\n" + fixtureScenario + fixtureVerification,
-		filepath.Join(tasks, "XR-002.md"): "# XR-002\n" + fixtureScenario + fixtureVerification,
+		filepath.Join(tasks, "XR-005.md"): "# XR-005\n" + fixtureTaskBody + fixtureScenario + fixtureVerification,
+		filepath.Join(tasks, "XR-002.md"): "# XR-002\n" + fixtureTaskBody + fixtureScenario + fixtureVerification,
 		// Файлы остальных строк фикстуры: с DK-394 изменяющие команды
 		// отказывают строке без файла задачи, а большинству тестов нужна
 		// живая доска, а не переход на старом запасе. Тесты, которым нужна
 		// строка без файла, снимают его сами.
-		filepath.Join(tasks, "XR-001.md"): "# XR-001\n" + fixtureScenario + fixtureVerification,
-		filepath.Join(tasks, "XR-003.md"): "# XR-003\n" + fixtureScenario + fixtureVerification,
-		filepath.Join(tasks, "XR-004.md"): "# XR-004\n" + fixtureScenario + fixtureVerification,
+		filepath.Join(tasks, "XR-001.md"): "# XR-001\n" + fixtureTaskBody + fixtureScenario + fixtureVerification,
+		filepath.Join(tasks, "XR-003.md"): "# XR-003\n" + fixtureTaskBody + fixtureScenario + fixtureVerification,
+		filepath.Join(tasks, "XR-004.md"): "# XR-004\n" + fixtureTaskBody + fixtureScenario + fixtureVerification,
 	}
 	for p, content := range files {
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
@@ -124,7 +124,7 @@ func verificationFor(doc string) string {
 func giveScenario(t *testing.T, root, id string) {
 	t.Helper()
 	p := filepath.Join(root, "docs", "tasks", id+".md")
-	if err := os.WriteFile(p, []byte("# "+id+"\n"+fixtureScenario+fixtureVerification), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("# "+id+"\n"+fixtureTaskBody+fixtureScenario+fixtureVerification), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -138,15 +138,23 @@ func dropTaskFile(t *testing.T, root, id string) {
 	}
 }
 
-// giveDraftDoD дописывает черновику пустой «## DoD»: с DK-394 оформление
-// черновика task/bug через add --id требует раздела в переносимом файле.
+// giveDraftDoD доводит тестовый черновик до заполненной постановки.
 func giveDraftDoD(t *testing.T, root, id string) {
 	t.Helper()
 	body, err := os.ReadFile(draftPath(root, id))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(draftPath(root, id), appendSection(body, dodHeading+"\n"), 0o644); err != nil {
+	rendered := renderTaskFromDraft(id, "Тестовая", "", string(body), "2026-01-01")
+	extra := ""
+	if strings.TrimSpace(strings.Join(taskform.SectionLines(rendered, taskform.Situation), "\n")) == "" {
+		extra += "## Что происходит\n\nТестовый запуск обнаружил пропуск проверки.\n\n"
+	}
+	if strings.TrimSpace(strings.Join(taskform.SectionLines(rendered, taskform.Want), "\n")) == "" {
+		extra += "## Чего хотим\n\nПроверка выполняется до записи.\n\n"
+	}
+	extra += dodHeading + "\n\n- Неполная запись отклоняется.\n\n## Ранг\n\n" + fixtureRankReasons
+	if err := os.WriteFile(draftPath(root, id), appendSection(body, extra), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -178,14 +186,14 @@ func TestNextID(t *testing.T) {
 func TestAddSorted(t *testing.T) {
 	root := setup(t)
 	// Равный R с XR-002: новая строка с большим номером встаёт ниже.
-	if _, err := cmdAdd(root, AddParams{Title: "Равный ранг", Type: "bug", Rank: "50+0+0+5+0", Link: "x", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Равный ранг", Type: "bug", Rank: "50+0+0+5+0", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	// Максимальный ранг встаёт первым, минимальный последним.
-	if _, err := cmdAdd(root, AddParams{ID: "XR-020", Title: "Наверх", Type: "task", Rank: "75+0+1+0+0", Link: "x", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-020"), ID: "XR-020", Title: "Наверх", Type: "task", Rank: "75+0+1+0+0", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdAdd(root, AddParams{ID: "XR-021", Title: "В хвост", Type: "task", Rank: "0+0+1+0+0", Link: "x", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-021"), ID: "XR-021", Title: "В хвост", Type: "task", Rank: "0+0+1+0+0", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	got := strings.Join(backlogIDs(t, root), " ")
@@ -217,7 +225,7 @@ func TestAddValidation(t *testing.T) {
 // в болванку под заголовок, потому что ячейку занимает файл задачи.
 func TestAddCreatesTaskFile(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{Title: "Однострочник", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Однострочник", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	board, _ := os.ReadFile(boardPath(root))
@@ -228,12 +236,12 @@ func TestAddCreatesTaskFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("файл задачи не создан: %v", err)
 	}
-	if got := string(data); got != "# XR-008: Однострочник"+"\n"+taskFormSkeleton() {
+	if got := string(data); got != "# XR-008: Однострочник\n"+fixtureTaskBody+"\n## Ход работы\n" {
 		t.Fatalf("болванка не по форме: %q", got)
 	}
 	// Голый путь в --link оборачивается в markdown-ссылку и уезжает в болванку
 	// файла, ячейку занимает файл задачи.
-	if _, err := cmdAdd(root, AddParams{Title: "Голый путь", Type: "bug", Rank: "0+1+1+0+1", Link: "tasks/XR-002.md", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Голый путь", Type: "bug", Rank: "0+1+1+0+1", Link: "tasks/XR-002.md", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	board, _ = os.ReadFile(boardPath(root))
@@ -269,7 +277,7 @@ func TestAddGoalRowSkipsDoD(t *testing.T) {
 
 func TestAddWithCost(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{Title: "Оценённая", Type: "task", Rank: "0+1+1+0+1", Cost: "M", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Оценённая", Type: "task", Rank: "0+1+1+0+1", Cost: "M", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	board, _ := os.ReadFile(boardPath(root))
@@ -280,7 +288,7 @@ func TestAddWithCost(t *testing.T) {
 
 func TestStatusAliases(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{Title: "Алиас", Type: "task", Rank: "0+1+1+0+1", Status: "In progress", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Алиас", Type: "task", Rank: "0+1+1+0+1", Status: "In progress", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	giveScenario(t, root, "XR-008")
@@ -618,7 +626,7 @@ func TestSetLinkFromRepoRootIsNormalized(t *testing.T) {
 // --link команды add, где он уезжает в болванку файла задачи строкой «Цель:».
 func TestAddLinkFromRepoRootIsNormalized(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{ID: "XR-100", Title: "Путь от корня", Type: "bug", Rank: "0+1+1+0+1", Link: "docs/tasks/XR-002.md", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-100"), ID: "XR-100", Title: "Путь от корня", Type: "bug", Rank: "0+1+1+0+1", Link: "docs/tasks/XR-002.md", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-100.md"))
@@ -681,8 +689,8 @@ func TestAddDraftWithoutDoDRefused(t *testing.T) {
 	if _, err := cmdDraft(root, "разобрать, но не до конца", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Оформляемая", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"})
-	if err == nil || !strings.Contains(err.Error(), "## DoD") {
+	_, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-008"), ID: "XR-008", Title: "Оформляемая", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"})
+	if err == nil || !strings.Contains(err.Error(), "DoD") {
 		t.Fatalf("отказ не называет причину: %v", err)
 	}
 	// У LLD-заголовка требования нет: файл завёлся, DoD болванка не несёт.
@@ -720,6 +728,12 @@ func TestMutatingCommandsNeedTaskFile(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-004.md"))
 	if err != nil || !strings.Contains(string(data), "## DoD") {
 		t.Fatalf("болванка перехода без DoD: %q, %v", data, err)
+	}
+	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err == nil {
+		t.Fatal("пустая болванка прошла старт")
+	}
+	if err := os.WriteFile(taskFileAbs(root, "XR-004"), []byte("# XR-004\n"+fixtureTaskBody), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-004", SectInProgress, "", CommitOpts{}); err != nil {
 		t.Fatalf("move после файла не прошёл: %v", err)
@@ -768,7 +782,7 @@ func TestList(t *testing.T) {
 	}
 	// Разросшийся Backlog обрезается с подсказкой, list backlog отдаёт целиком.
 	for i := 0; i < listBacklogTop; i++ {
-		p := AddParams{ID: fmt.Sprintf("XR-%03d", 20+i), Title: "Наполнение", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}
+		p := AddParams{BodyFile: fixtureAddBody(t, root, ""), ID: fmt.Sprintf("XR-%03d", 20+i), Title: "Наполнение", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}
 		if _, err := cmdAdd(root, p); err != nil {
 			t.Fatal(err)
 		}
@@ -1061,13 +1075,13 @@ func TestLintTaskFiles(t *testing.T) {
 		t.Fatalf("нет находки про файл задачи в работе: %v", finds)
 	}
 
-	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-005.md"), []byte("# XR-005\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-005.md"), []byte("# XR-005\n"+fixtureTaskBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// Строка в Check без файла и со ссылкой-прочерк теперь заводится только
 	// правкой доски: add кладёт файл сам, а set без файла отказывает. Так
 	// выглядит старый запас, и lint его находит.
-	if _, err := cmdAdd(root, AddParams{Title: "Готова, некуда смотреть", Type: "task", Rank: "0+3+0+0+0", Status: "check", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Готова, некуда смотреть", Type: "task", Rank: "0+3+0+0+0", Status: "check", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	board, _ := os.ReadFile(boardPath(root))
@@ -1096,8 +1110,15 @@ func TestLintTaskFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(finds) != 0 {
-		t.Fatalf("после ссылки на сценарий находки остались: %v", finds)
+	if len(finds) != 1 || !strings.Contains(finds[0], "XR-008: постановка:") {
+		t.Fatalf("ссылка не заменяет постановку: %v", finds)
+	}
+	if err := os.WriteFile(taskFileAbs(root, "XR-008"), []byte("# XR-008\n"+fixtureTaskBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	finds, err = cmdLint(root)
+	if err != nil || len(finds) != 0 {
+		t.Fatalf("готовая постановка: %v, %v", finds, err)
 	}
 }
 
@@ -1119,11 +1140,11 @@ func TestLintFlagsLegacyBoard(t *testing.T) {
 // байтам, задача остаётся только в архиве.
 func TestCycle(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{Title: "Временная", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Временная", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-008.md"),
-		[]byte("# XR-008: Временная\n"+fixtureScenario+fixtureVerification), 0o644); err != nil {
+		[]byte("# XR-008: Временная\n"+fixtureTaskBody+fixtureScenario+fixtureVerification), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-008", SectInProgress, "", CommitOpts{}); err != nil {
@@ -1251,7 +1272,7 @@ func TestCloseWithLinks(t *testing.T) {
 	root := setup(t)
 
 	// Добавить новую задачу в работу
-	if _, err := cmdAdd(root, AddParams{ID: "XR-099", Title: "С ссылками", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-099"), ID: "XR-099", Title: "С ссылками", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-099", SectInProgress, "", CommitOpts{}); err != nil {
@@ -1268,7 +1289,7 @@ func TestCloseWithLinks(t *testing.T) {
 
 Описание:
 - [LLD](../lld/XR-099.md)
-` + fixtureScenario + fixtureVerification
+` + fixtureTaskBody + fixtureScenario + fixtureVerification
 	taskPath := filepath.Join(root, "docs", "tasks", "XR-099.md")
 	os.WriteFile(taskPath, []byte(taskContent), 0o644)
 
@@ -1304,7 +1325,7 @@ func TestCloseWithLinks(t *testing.T) {
 func TestCloseRewritesIncomingLinks(t *testing.T) {
 	root := setup(t)
 
-	if _, err := cmdAdd(root, AddParams{ID: "XR-077", Title: "С ссылками", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-077"), ID: "XR-077", Title: "С ссылками", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-077", SectInProgress, "", CommitOpts{}); err != nil {
@@ -1312,7 +1333,7 @@ func TestCloseRewritesIncomingLinks(t *testing.T) {
 	}
 	os.WriteFile(
 		filepath.Join(root, "docs", "tasks", "XR-077.md"),
-		[]byte("# XR-077\nTask\n"+fixtureScenario+fixtureVerification),
+		[]byte("# XR-077\nTask\n"+fixtureTaskBody+fixtureScenario+fixtureVerification),
 		0o644,
 	)
 	os.WriteFile(
@@ -1534,7 +1555,7 @@ func TestMoveBlockedQuestionFromBacklog(t *testing.T) {
 // каким его обходил move из Backlog.
 func TestAddBlockedRejected(t *testing.T) {
 	root := setup(t)
-	_, err := cmdAdd(root, AddParams{
+	_, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""),
 		Title: "Сразу на блокере", Type: "task", Rank: "0+1+1+0+1", Link: "x",
 		Status: "blocked",
 		Accept: "agent",

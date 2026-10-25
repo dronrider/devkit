@@ -51,7 +51,7 @@ func refreshRehearse(t *testing.T, root, id string) {
 		t.Fatal(err)
 	}
 	sha := strings.TrimSpace(string(out))[:12]
-	doc := "# " + id + "\n" + fixtureScenario
+	doc := "# " + id + "\n" + fixtureTaskBody + fixtureScenario
 	body := doc + "\n## Проверка\n\n- Обкатка: 2026-01-01 10:00, свежее дерево " + sha +
 		", сценарий " + taskform.ScenarioPrint(doc) + ", шагов 1, все зелёные.\n- прогон пройден, вывод вложен.\n"
 	if err := os.WriteFile(taskFilePath(root, id), []byte(body), 0o644); err != nil {

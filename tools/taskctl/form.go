@@ -160,11 +160,12 @@ type docSection struct {
 // заголовка, с пустым heading.
 func splitSections(text, prefix string) []docSection {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	mask, _ := taskform.FenceMask(lines)
+	visible := strings.Split(taskform.VisibleText(strings.Join(lines, "\n")), "\n")
+	mask, _ := taskform.FenceMask(visible)
 	out := []docSection{{}}
 	for i, ln := range lines {
-		if !mask[i] && strings.HasPrefix(ln, prefix) {
-			out = append(out, docSection{heading: strings.TrimSpace(ln)})
+		if !mask[i] && strings.HasPrefix(visible[i], prefix) {
+			out = append(out, docSection{heading: strings.TrimSpace(visible[i])})
 			continue
 		}
 		out[len(out)-1].body = append(out[len(out)-1].body, ln)

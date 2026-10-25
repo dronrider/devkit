@@ -51,7 +51,7 @@ func TestDebtMarkAndClear(t *testing.T) {
 // приёмки.
 func TestDebtAddFlag(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""),
 		Title: "Стенд без драйвера", Type: "task", Rank: "0+3+0+0+4",
 		Accept: acceptUser, Barrier: "глаза", Debt: true,
 	}); err != nil {

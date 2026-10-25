@@ -67,7 +67,7 @@ func TestEdgeLifecycleOnBoard(t *testing.T) {
 	mustDep(t, root, "XR-004", "XR-001")
 	startRefused(t, root, "XR-004", "XR-001 не слита")
 	edgeCommit(t, root, "docs(tasks): XR-001 в работу", map[string]string{
-		"docs/tasks/XR-001.md": "# XR-001\n" + fixtureScenario + fixtureVerification + "ход работы\n",
+		"docs/tasks/XR-001.md": "# XR-001\n" + fixtureTaskBody + fixtureScenario + fixtureVerification + "ход работы\n",
 	})
 	startRefused(t, root, "XR-004", "XR-001 не слита")
 	edgeCommit(t, root, "feat(x): XR-001 правка", map[string]string{"x/code.go": "package x\n"})
@@ -124,7 +124,7 @@ func TestEdgeStartedRow(t *testing.T) {
 	}
 	// Отметка обкатки фикстуры стоит на чужом коммите, а HEAD стенда свой:
 	// ворота обкатки тут не предмет, их гасит штатная пометка.
-	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-004.md"), []byte("# XR-004\n"+fixtureScenario+fixtureVerification+
+	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-004.md"), []byte("# XR-004\n"+fixtureTaskBody+fixtureScenario+fixtureVerification+
 		"\n- Исключение: обкатка (стенд ребра, HEAD не совпадает с отметкой фикстуры)\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

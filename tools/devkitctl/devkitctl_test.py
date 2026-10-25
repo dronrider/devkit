@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 import devkitctl
+import selfcheck
 from testenv import (BINARY_STUB, BREW_STUB, GO_STUB, SandboxCase, build, executable,
                      fake_home, git, git_init, go_cache_env, harness, read, rules, run,
                      stub_release, taken_at, update, write)
@@ -2172,10 +2173,14 @@ class FreshConnectTest(SandboxCase):
             rc, out = run(["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
                           home=self.box.home, path=realpath)
             self.assertEqual(rc, 0, "после new у проекта нет ни одного коммита (%s): %s" % (case, out))
-            rc, out = run(["taskctl", "-C", str(root), "add", "--title", "первая задача",
-                           "--type", "task", "--rank", "25+5+1+0+0", "--cost", "S",
-                           "--accept", "agent"],
-                          home=self.box.home, path=realpath)
+            with selfcheck.task_description(
+                    "Проверяется первый запуск shipctl в только что подключённом проекте.",
+                    "Создать первую задачу и отдельную рабочую ветку через shipctl start.",
+                    "После start существуют дерево задачи и ветка с её ID.") as body_file:
+                rc, out = run(["taskctl", "-C", str(root), "add", "--title", "первая задача",
+                               "--type", "task", "--rank", "25+5+1+0+0", "--cost", "S",
+                               "--body-file", body_file, "--accept", "agent"],
+                              home=self.box.home, path=realpath)
             self.assertEqual(rc, 0, "taskctl add после new не прошёл (%s): %s" % (case, out))
             task = "%s-001" % prefix
             rc, out = run(["shipctl", "-C", str(root), "start", task],

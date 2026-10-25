@@ -407,34 +407,3 @@ func draftsLine(drafts []Draft) string {
 	}
 	return fmt.Sprintf("Черновики (%d, целиком: taskctl draft list): %s", len(drafts), strings.Join(parts, ", "))
 }
-
-// promoteDraft переносит черновик в docs/tasks/<ID>.md: грумминг доводит
-// taskctl add --id, отдельной команды на промоушен нет, иначе черновик можно
-// потерять, забыв её позвать. Перенос через git mv, как в close. Возвращаемое
-// staged=true значит, что перенос шёл через git mv (git знал исходный путь):
-// только тогда исходный путь уместен в pathspec коммита. На неотслеживаемом
-// черновике git mv отбивается, срабатывает rename, и возвращается staged=false.
-func promoteDraft(root, id, title, rank string) (promoted, staged bool, err error) {
-	from := draftPath(root, id)
-	data, err := os.ReadFile(from)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, false, nil
-		}
-		return false, false, err
-	}
-	to := filepath.Join(root, "docs", "tasks", id+".md")
-	staged, err = gitMv(root, from, to)
-	if err != nil {
-		return false, false, err
-	}
-	// Файл задачи собирается по форме, а не переезжает как есть: шапка
-	// черновика (метка разбора, дата записи) и подразделы SCQA раскладываются
-	// по разделам TASKFORM.md, а метаданные в файле задачи не дублируются
-	// (RULES.board.md, «Трекинг задач» п. 3).
-	body := renderTaskFromDraft(id, title, rank, string(data), time.Now().Format(draftDateLayout))
-	if err := os.WriteFile(to, []byte(body), 0o644); err != nil {
-		return false, false, err
-	}
-	return true, staged, nil
-}

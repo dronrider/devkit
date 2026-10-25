@@ -1455,7 +1455,7 @@ func TestDraftOfTaskIDNamesTask(t *testing.T) {
 	if err := os.Remove(filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")); err != nil {
 		t.Fatal(err)
 	}
-	runTaskctl(t, e.proj, "add", "--id", "XR-005", "--title", "Заведённая грумингом",
+	runTaskctl(t, e.proj, "add", "--body-file", taskBodyFixture(t), "--id", "XR-005", "--title", "Заведённая грумингом",
 		"--rank", "25+1+1+0+1", "--accept", "agent")
 
 	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")

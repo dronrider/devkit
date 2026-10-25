@@ -308,7 +308,7 @@ func TestCloseAgentGateIgnoresFencedVerification(t *testing.T) {
 // раздела «Проверка» закрывается, как и раньше.
 func TestCloseNonAgentSkipsVerificationGate(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{ID: "XR-100", Title: "Пользовательская", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "событие"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-100"), ID: "XR-100", Title: "Пользовательская", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "событие"}); err != nil {
 		t.Fatal(err)
 	}
 	acceptanceBody := "# XR-100: Пользовательская\n" + fixtureScenario +

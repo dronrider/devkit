@@ -112,6 +112,11 @@ func cmdLint(root string) ([]string, error) {
 	finds = append(finds, lintPlanNames(root, b, bp)...)
 	finds = append(finds, lintAcceptance(root, b, bp)...)
 	finds = append(finds, lintFormOrder(root, b)...)
+	for _, row := range b.Rows {
+		if err := taskReady(root, row); err != nil {
+			finds = append(finds, err.Error())
+		}
+	}
 	finds = append(finds, lintForks(root, b)...)
 	finds = append(finds, mainAheadFinds(root)...)
 	return finds, nil

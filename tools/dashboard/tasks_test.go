@@ -172,7 +172,7 @@ func tasksEnv(t *testing.T) (*testEnv, *http.Client, string) {
 		{"--id", "XR-003", "--title", "Третья", "--rank", "25+0+0+0+0", "--accept", "agent"},
 		{"--id", "XR-004", "--title", "Четвёртая", "--rank", "0+1+0+0+0", "--accept", "agent"},
 	} {
-		runTaskctl(t, e.proj, append([]string{"add"}, row...)...)
+		runTaskctl(t, e.proj, append([]string{"add", "--body-file", taskBodyFixture(t)}, row...)...)
 	}
 	runTaskctl(t, e.proj, "dep", "add", "XR-002", "XR-001")
 	runTaskctl(t, e.proj, "dep", "add", "XR-003", "XR-002")

@@ -34,7 +34,7 @@ func TestRejectedMoveLeavesRegistryAlone(t *testing.T) {
 
 	// Без раздела «Сценарий проверки» ворота move check отбивают строку.
 	scenarioFile := filepath.Join(root, "docs", "tasks", "XR-004.md")
-	if err := os.WriteFile(scenarioFile, []byte("# XR-004\n"), 0o644); err != nil {
+	if err := os.WriteFile(scenarioFile, []byte("# XR-004\n"+fixtureTaskBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -98,7 +98,7 @@ func TestGroomingCommandsLeaveRegistryAlone(t *testing.T) {
 	sess := "dddd4444-4444-4444-8444-444444444444"
 
 	out, err := runTaskctlSession(t, bin, root, home, sess, "add", "--id", "XR-777",
-		"--title", "Из чата груминга", "--type", "task", "--rank", "0+1+1+0+1", "--accept", "agent")
+		"--body-file", fixtureAddBody(t, root, "XR-777"), "--title", "Из чата груминга", "--type", "task", "--rank", "0+1+1+0+1", "--accept", "agent")
 	if err != nil {
 		t.Fatalf("add --id должен пройти: %v\n%s", err, out)
 	}

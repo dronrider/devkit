@@ -16,7 +16,7 @@ func TestTaskRowCarriesRankAdjustments(t *testing.T) {
 	// Подтяжка: держатель не может стоять в очереди ниже того, кого он держит,
 	// и итог дорогой задачи переезжает на него целиком (DK-428). XR-004 держит
 	// свежую XR-005, та дороже, и её 55 становятся итогом держателя.
-	runTaskctl(t, e.proj, "add", "--id", "XR-005", "--title", "Дорогая",
+	runTaskctl(t, e.proj, "add", "--body-file", taskBodyFixture(t), "--id", "XR-005", "--title", "Дорогая",
 		"--rank", "50+5+0+0+0", "--cost", "L", "--accept", "agent")
 	runTaskctl(t, e.proj, "dep", "add", "XR-005", "XR-004")
 

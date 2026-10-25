@@ -12,7 +12,7 @@ import (
 // (раздел «Выкат», его кладёт shipctl).
 func withSections(t *testing.T, root, id string, sections ...string) {
 	t.Helper()
-	body := "# " + id + "\n" + fixtureScenario + fixtureVerification
+	body := "# " + id + "\n" + fixtureTaskBody + fixtureScenario + fixtureVerification
 	for _, s := range sections {
 		body += "\n## " + s + "\n\n- запись раздела\n"
 	}
@@ -60,7 +60,7 @@ func TestProgressMarks(t *testing.T) {
 // врал бы «слито» задаче, которая ничего не выкатывала.
 func TestProgressIgnoresFenced(t *testing.T) {
 	root := setup(t)
-	doc := "# XR-005\n" + fixtureScenario + "\n## Прогон\n\n```\n## Выкат\n\n- слито\n```\n"
+	doc := "# XR-005\n" + fixtureTaskBody + fixtureScenario + "\n## Прогон\n\n```\n## Выкат\n\n- слито\n```\n"
 	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-005.md"), []byte(doc), 0o644); err != nil {
 		t.Fatal(err)
 	}

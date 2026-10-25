@@ -315,7 +315,7 @@ func wrapLink(link string) string {
 }
 
 type AddParams struct {
-	ID, Title, Type, Rank, Cost, Link, Status, Accept, Barrier string
+	ID, Title, Type, Rank, Cost, Link, Status, Accept, Barrier, BodyFile string
 	// Debt это метка технического долга (DK-624): её ставит груминг, когда
 	// заводит строку, после которой пользователь снаружи ничего не замечает.
 	Debt   bool
@@ -418,25 +418,25 @@ func cmdAdd(root string, p AddParams) (string, error) {
 		// отсюда ушла вместе со статусом, скобки в ней проверяет move.
 		return "", fmt.Errorf("новую задачу в blocked не заводят: блокировать нечего, пока её не взяли в работу; строка ждёт в Backlog, а зависимость от своей задачи ставится через taskctl dep add")
 	}
-	// Отказ по DoD стоит до переноса: черновик task/bug обязан нести «## DoD»
-	// к моменту оформления (LLD DK-133, решение 4), и упавшая на кривом ранге
-	// или без DoD команда не оставляет файл на новом месте без строки на доске.
-	if p.ID != "" && needsDoD(p.Type, p.Title) {
-		if _, found, ok := readSectionFromPath(draftPath(root, p.ID), dodHeading); ok && !found {
-			return "", fmt.Errorf("у черновика %s нет заголовка «## DoD»: ворота заведения спрашивают, чем кончается работа, допишите раздел в черновик", p.ID)
-		}
-	}
 	rankLine := fmt.Sprintf("`%d+%d+%d+%d+%d = %d`, %s.", parts[0], parts[1], parts[2], parts[3], parts[4], total, bucket(total))
-	promoted, staged, err := promoteDraft(root, id, p.Title, rankLine)
+	body, promoted, err := prepareTaskBody(root, id, p, rankLine)
 	if err != nil {
 		return "", err
 	}
-	// Файл задачи заводит сам add (LLD DK-133, решение 4): однострочного
-	// бэклога не остаётся, ячейка строки ссылается на файл с минуты заведения.
-	row := &Row{ID: id, Num: mustNum(id), Title: title, Type: p.Type, P: bucket(total), RTotal: total, RParts: parts, Cost: cost}
-	if _, err := ensureTaskFile(root, id, row); err != nil {
+	staged := false
+	if promoted {
+		staged, err = gitMv(root, draftPath(root, id), taskFileAbs(root, id))
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(taskFileAbs(root, id)), 0o755); err != nil {
 		return "", err
 	}
+	if err := os.WriteFile(taskFileAbs(root, id), []byte(body), 0o644); err != nil {
+		return "", err
+	}
+	row := &Row{ID: id, Num: mustNum(id), Title: title, Type: p.Type, P: bucket(total), RTotal: total, RParts: parts, Cost: cost}
 	rel := fmt.Sprintf("tasks/%s.md", id)
 	taskFile := filepath.Join("docs", rel)
 	link := fmt.Sprintf("[%s](%s)", rel, rel)
@@ -542,6 +542,11 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	}
 	if err := needTaskFile(root, id); err != nil {
 		return "", err
+	}
+	if target == SectInProgress {
+		if err := taskReady(root, row); err != nil {
+			return "", err
+		}
 	}
 	if row.Sect == target {
 		return "", fmt.Errorf("%s уже в %s", id, target)

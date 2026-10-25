@@ -6,8 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // cmdReview заводит на боковой доске зеркальную строку ревью чужого тикета:
@@ -40,14 +38,14 @@ func cmdReview(root, arg, mrFlag string) (string, error) {
 	rank, rankLine := reviewRank(t)
 	title := reviewTitle(key, t.Title)
 
-	id, addOut, err := addReviewRow(root, reviewRowParams{title: title, rank: rank, cost: cost})
+	id, addOut, err := addReviewRow(root, reviewRowParams{title: title, rank: rank, cost: cost, body: reviewBody(t, mrLink, rank)})
 	if err != nil {
 		return "", err
 	}
 	if err := setRowLink(root, id, ticketLinkCell(t)); err != nil {
 		return "", err
 	}
-	if err := fillReviewFile(root, id, t, mrLink); err != nil {
+	if err := fillReviewFile(root, id); err != nil {
 		return "", err
 	}
 	lines := []string{addOut, costLine, rankLine, mrLine, fmt.Sprintf("файл задачи: docs/tasks/%s.md", id)}
@@ -189,7 +187,7 @@ func ticketLinkCell(t ticket) string {
 // reviewRowParams это вход addReviewRow, отдельным типом ради читаемого
 // вызова без длинного списка позиционных строк.
 type reviewRowParams struct {
-	title, rank, cost string
+	title, rank, cost, body string
 }
 
 // addReviewRow заводит строку доски командой её утилиты: доску правит
@@ -200,8 +198,21 @@ type reviewRowParams struct {
 // человека может не быть, а «доступ» из шести барьеров (ACCEPTANCE.md)
 // это ровно про такую невозможность прогнать сценарий без обвязки машины.
 var addReviewRow = func(root string, p reviewRowParams) (id, msg string, err error) {
+	bodyFile, err := os.CreateTemp("", "trackctl-review-*.md")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(bodyFile.Name())
+	if _, err := bodyFile.WriteString(p.body); err != nil {
+		bodyFile.Close()
+		return "", "", err
+	}
+	if err := bodyFile.Close(); err != nil {
+		return "", "", err
+	}
 	cmd := exec.Command("taskctl", "-C", root, "add",
 		"--title", p.title,
+		"--body-file", bodyFile.Name(),
 		"--type", "task",
 		"--rank", p.rank,
 		"--cost", p.cost,
@@ -243,31 +254,58 @@ const reviewBarrierLine = "- барьер «доступ»:"
 // автоматика до конца не доводит.
 const reviewBarrierReason = "публикация в живой трекер требует токена"
 
-// fillReviewFile дописывает в свежий файл задачи то, чего болванка add не
-// знает: постановку тикета в «Что происходит» (решение 1 LLD DK-756 велит
-// копировать её сюда, в отличие от обычной зеркальной строки, у которой файл
-// держит только ссылку) и ссылку на MR, если она нашлась. Причину барьера
-// «доступ» add оставляет пустой, эту строку дописывает fillReviewFile тоже.
-func fillReviewFile(root, id string, t ticket, mrLink string) error {
+func reviewBody(t ticket, mrLink, rank string) string {
+	desc := strings.TrimSpace(t.Description)
+	if desc == "" {
+		desc = fmt.Sprintf("В тикете %s нет описания. Перед ревью уточнить ожидаемое поведение по тикету и MR.", t.Key)
+	}
+	// Заголовки исходного тикета остаются цитатой, не разделами нашей задачи.
+	desc = "> " + strings.ReplaceAll(desc, "\n", "\n> ")
+	mr := "Ссылка на MR не указана; получить её перед чтением диффа."
+	if mrLink != "" {
+		mr = "MR: " + mrLink
+	}
+	bug, bugReason := 0, "тип исходного тикета не содержит bug"
+	if strings.Contains(strings.ToLower(t.Type), "bug") {
+		bug, bugReason = 5, "исходный тикет имеет тип bug"
+	}
+	return fmt.Sprintf(`## Что происходит
+
+Требуется ревью тикета [%s](%s) «%s». Постановка из трекера:
+
+%s
+
+%s
+
+## Чего хотим
+
+Проверить изменения MR по постановке тикета, описать подтверждённые дефекты и вынести вердикт по ревью.
+
+## DoD
+
+- Уточнены ссылка на MR и ожидаемое поведение по тикету; прочитан весь дифф.
+- Проверены затронутые сценарии и тесты; у замечаний есть место в коде, последствия и способ проверки.
+- Вердикт и замечания записаны в задаче и опубликованы в MR при наличии доступа.
+
+## Ранг
+
+%s = %d, P3.
+
+- Серьёзность 0: подтверждённый дефект пока не найден, задача посвящена ревью.
+- Ценность 0: данных о частоте затронутого сценария в полученных полях тикета нет.
+- Неопределённость 1: предмет ревью задан тикетом; детали проверяются по MR.
+- Поправка на баг %d: %s.
+- Рычаг 2: результат ревью используется при принятии изменений MR.
+`, t.Key, t.URL, t.Title, desc, mr, rank, 3+bug, bug, bugReason)
+}
+
+func fillReviewFile(root, id string) error {
 	abs := filepath.Join(root, "docs", "tasks", id+".md")
 	data, err := os.ReadFile(abs)
 	if err != nil {
 		return err
 	}
-	body := string(data)
-
-	desc := strings.TrimSpace(t.Description)
-	if desc == "" {
-		desc = fmt.Sprintf("тикет %s не дал описания, постановку взять из него самому.", t.Key)
-	}
-	lines := []string{desc}
-	if mrLink != "" {
-		lines = append(lines, "", "MR: "+mrLink)
-	}
-	body = taskform.InsertIntoSection(body, taskform.Situation, lines...)
-
-	body = fillBarrierReason(body, reviewBarrierReason)
-
+	body := fillBarrierReason(string(data), reviewBarrierReason)
 	return os.WriteFile(abs, []byte(body), 0o644)
 }
 

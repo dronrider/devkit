@@ -81,14 +81,14 @@ func TestAcceptSuffix(t *testing.T) {
 // --barrier у агентского и --barrier без --accept лишние.
 func TestAddAcceptRequired(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{Title: "Без вида", Type: "task", Rank: "0+1+1+0+1", Link: "x"}); err == nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Без вида", Type: "task", Rank: "0+1+1+0+1", Link: "x"}); err == nil {
 		t.Fatal("add без --accept должен отбиваться")
 	}
-	if _, err := cmdAdd(root, AddParams{Title: "Барьер без вида", Type: "task", Rank: "0+1+1+0+1", Barrier: "глаза"}); err == nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Барьер без вида", Type: "task", Rank: "0+1+1+0+1", Barrier: "глаза"}); err == nil {
 		t.Fatal("--barrier без --accept должен отбиваться")
 	}
 	// Агентский без барьера проходит, суффикса в заголовке нет.
-	if _, err := cmdAdd(root, AddParams{Title: "Агентская", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Агентская", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"}); err != nil {
 		t.Fatalf("agent add: %v", err)
 	}
 	b, _ := LoadBoard(boardPath(root))
@@ -96,7 +96,7 @@ func TestAddAcceptRequired(t *testing.T) {
 		t.Fatalf("агентский вид не вешает суффикс: %q", got)
 	}
 	// --barrier у агентского лишний.
-	if _, err := cmdAdd(root, AddParams{Title: "С барьером", Type: "task", Rank: "0+1+1+0+1", Accept: "agent", Barrier: "глаза"}); err == nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "С барьером", Type: "task", Rank: "0+1+1+0+1", Accept: "agent", Barrier: "глаза"}); err == nil {
 		t.Fatal("agent с --barrier должен отбиваться")
 	}
 }
@@ -107,18 +107,18 @@ func TestAddAcceptRequired(t *testing.T) {
 func TestAddNonAgentRequiresBarrier(t *testing.T) {
 	root := setup(t)
 	// Без барьера user и mixed отбиваются.
-	if _, err := cmdAdd(root, AddParams{Title: "Юзер", Type: "task", Rank: "0+1+1+0+1", Accept: "user"}); err == nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Юзер", Type: "task", Rank: "0+1+1+0+1", Accept: "user"}); err == nil {
 		t.Fatal("user без --barrier должен отбиваться")
 	}
-	if _, err := cmdAdd(root, AddParams{Title: "Микс", Type: "task", Rank: "0+1+1+0+1", Accept: "mixed"}); err == nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Микс", Type: "task", Rank: "0+1+1+0+1", Accept: "mixed"}); err == nil {
 		t.Fatal("mixed без --barrier должен отбиваться")
 	}
 	// Барьер не из шести.
-	if _, err := cmdAdd(root, AddParams{Title: "Чужой", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "чего"}); err == nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Чужой", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "чего"}); err == nil {
 		t.Fatal("чужой барьер должен отбиваться")
 	}
 	// user с барьером «глаза» проходит: суффикс в заголовке, файл задачи создан.
-	if _, err := cmdAdd(root, AddParams{ID: "XR-100", Title: "С видом", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-100"), ID: "XR-100", Title: "С видом", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза"}); err != nil {
 		t.Fatalf("user с барьером глаза: %v", err)
 	}
 	b, _ := LoadBoard(boardPath(root))
@@ -159,7 +159,7 @@ func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 	giveDraftDoD(t, root, "XR-008")
 	// Оформление со ссылкой на файл цели: штатный виток нарезки, у LLD-строк
 	// вид user.
-	p := AddParams{
+	p := AddParams{BodyFile: fixtureAddBody(t, root, "XR-008"),
 		ID: "XR-008", Title: "Из черновика со ссылкой", Type: "task",
 		Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза",
 		Link: "tasks/XR-005.md",
@@ -199,7 +199,7 @@ func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-009")
-	if _, err := cmdAdd(root, AddParams{
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-009"),
 		ID: "XR-009", Title: "Из черновика без ссылки", Type: "task",
 		Rank: "0+1+1+0+1", Accept: "mixed", Barrier: "глаза",
 	}); err != nil {
@@ -220,11 +220,11 @@ func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 	}
 	// Файл без раздела и без замыкающего перевода строки: раздел дописывается
 	// с отделяющей пустой строкой, ожидание выведено руками.
-	manual := "# XR-010: Ручной файл без раздела\n"
+	manual := "# XR-010: Ручной файл без раздела\n" + fixtureTaskBody
 	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-010.md"), []byte(manual), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdAdd(root, AddParams{
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-010"),
 		ID: "XR-010", Title: "Ручной файл без раздела", Type: "task",
 		Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза",
 	}); err != nil {
@@ -234,17 +234,17 @@ func TestAddNonAgentAppendsAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "# XR-010: Ручной файл без раздела\n\n## Приёмка\n\n- вид: user\n- барьер «глаза»:\n"
+	want := "# XR-010: Ручной файл без раздела\n" + fixtureTaskBody + "\n## Приёмка\n\n- вид: user\n- барьер «глаза»:\n\n## Ход работы\n"
 	if string(data) != want {
 		t.Fatalf("файл после дописывания:\n%s\nожидал:\n%s", data, want)
 	}
 	// Файл с уже стоящим разделом не получает второй: такой файл остаётся от
 	// add, упавшего после записи до правки доски.
-	withSect := "# XR-011: Ручной файл с разделом\n\n## Приёмка\n\n- вид: user\n- барьер «глаза»:\n"
+	withSect := "# XR-011: Ручной файл с разделом\n" + fixtureTaskBody + "\n## Приёмка\n\n- вид: user\n- барьер «глаза»:\n\n## Ход работы\n"
 	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "XR-011.md"), []byte(withSect), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdAdd(root, AddParams{
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-011"),
 		ID: "XR-011", Title: "Ручной файл с разделом", Type: "task",
 		Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза",
 	}); err != nil {
@@ -272,7 +272,7 @@ func TestAddAppendsAcceptancePastFencedQuote(t *testing.T) {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-008")
-	if _, err := cmdAdd(root, AddParams{
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-008"),
 		ID: "XR-008", Title: "Цитата в блоке кода", Type: "task",
 		Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза",
 	}); err != nil {
@@ -306,7 +306,7 @@ func TestMoveCheckGateRejectsNonAgentWithoutBypasses(t *testing.T) {
 	root := setup(t)
 	// user-задача с барьером «глаза» (3 обхода): раздел стоит, но обходов
 	// меньше, чем нужно, move в Check обязан отбиться.
-	if _, err := cmdAdd(root, AddParams{ID: "XR-100", Title: "С видом", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-100"), ID: "XR-100", Title: "С видом", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-100", SectInProgress, "", CommitOpts{}); err != nil {
@@ -334,7 +334,7 @@ func TestMoveCheckGateRejectsNonAgentWithoutBypasses(t *testing.T) {
 // «Приёмка» не требует, для него довольно сценария проверки и слитого кода.
 func TestMoveCheckGateAgentSkipsAcceptance(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{ID: "XR-100", Title: "Агентская", Type: "task", Rank: "0+1+1+0+1", Accept: "agent", Link: "x"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-100"), ID: "XR-100", Title: "Агентская", Type: "task", Rank: "0+1+1+0+1", Accept: "agent", Link: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cmdMove(root, "XR-100", SectInProgress, "", CommitOpts{}); err != nil {
@@ -353,7 +353,7 @@ func TestMoveCheckGateAgentSkipsAcceptance(t *testing.T) {
 func TestClosePreservesAcceptSuffix(t *testing.T) {
 	root := setup(t)
 	// user-задача с барьером «событие» (3 обхода), перебор заполнен.
-	if _, err := cmdAdd(root, AddParams{ID: "XR-100", Title: "С видом", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "событие"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-100"), ID: "XR-100", Title: "С видом", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "событие"}); err != nil {
 		t.Fatal(err)
 	}
 	acceptanceBody := "# XR-100: С видом\n" + fixtureScenario +
@@ -389,7 +389,7 @@ func TestClosePreservesAcceptSuffix(t *testing.T) {
 func TestSetAcceptRevision(t *testing.T) {
 	root := setup(t)
 	// Агентскую повышать до согласия нельзя: у согласия нет обхода.
-	if _, err := cmdAdd(root, AddParams{ID: "XR-100", Title: "Согласие", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "согласие"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-100"), ID: "XR-100", Title: "Согласие", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "согласие"}); err != nil {
 		t.Fatal(err)
 	}
 	acceptanceBody := "# XR-100: Согласие\n" +
@@ -402,7 +402,7 @@ func TestSetAcceptRevision(t *testing.T) {
 		t.Fatal("повышение через «согласие» должно отбиваться")
 	}
 	// Понижение agent -> user возможно.
-	if _, err := cmdAdd(root, AddParams{ID: "XR-101", Title: "Вид", Type: "task", Rank: "0+1+1+0+1", Accept: "agent", Link: "x"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-101"), ID: "XR-101", Title: "Вид", Type: "task", Rank: "0+1+1+0+1", Accept: "agent", Link: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	msg, err := cmdSet(root, SetParams{ID: "XR-101", Accept: "user"})
@@ -524,7 +524,7 @@ func TestAcceptanceSectionHonoursFences(t *testing.T) {
 func TestLintAcceptanceIgnoresBypassCount(t *testing.T) {
 	root := setup(t)
 	// Свежий скелет: барьер есть, обходов ноль. lint молчит.
-	if _, err := cmdAdd(root, AddParams{ID: "XR-100", Title: "С видом", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-100"), ID: "XR-100", Title: "С видом", Type: "task", Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза"}); err != nil {
 		t.Fatal(err)
 	}
 	finds, err := cmdLint(root)

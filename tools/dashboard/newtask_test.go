@@ -182,7 +182,7 @@ func TestTaskCreateRow(t *testing.T) {
 	e, c, gitLog := tasksEnv(t)
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks",
-		`{"title": "Пятая, с дашборда", "type": "task", "cost": "S", "r_parts": [50, 4, 2, 0, 1]}`)
+		taskCreateJSON(t, `{"title": "Пятая, с дашборда", "type": "task", "cost": "S", "r_parts": [50, 4, 2, 0, 1]}`))
 	got := newResp(t, resp, "заведение строки")
 	id, _ := got["id"].(string)
 	if id != "XR-005" {
@@ -230,7 +230,7 @@ func TestTaskCreateRowAlwaysWithFile(t *testing.T) {
 	e, c, gitLog := tasksEnv(t)
 
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks",
-		`{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0]}`)
+		taskCreateJSON(t, `{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0]}`))
 	got := newResp(t, resp, "заведение строки с файлом")
 	if file, _ := got["file"].(string); file != "docs/tasks/XR-005.md" {
 		t.Errorf("файл задачи не назван в ответе: %v", got)
@@ -263,15 +263,15 @@ func TestTaskCreateRefusals(t *testing.T) {
 	cases := []struct {
 		name, body, want string
 	}{
-		{"кривая серьёзность", `{"title": "Пятая", "r_parts": [3, 1, 1, 0, 0]}`, "серьёзность"},
-		{"без ранга", `{"title": "Пятая"}`, "разбивке ранга"},
+		{"кривая серьёзность", taskCreateJSON(t, `{"title": "Пятая", "r_parts": [3, 1, 1, 0, 0]}`), "серьёзность"},
+		{"без ранга", taskCreateJSON(t, `{"title": "Пятая"}`), "разбивке ранга"},
 		{"без заголовка", `{"r_parts": [25, 1, 1, 0, 0]}`, "нужен --title"},
-		{"слагаемых не пять", `{"title": "Пятая", "r_parts": [25, 1]}`, "жду 5 по RANKING.md"},
-		{"поправка на баг у task", `{"title": "Пятая", "r_parts": [25, 1, 1, 5, 0]}`,
+		{"слагаемых не пять", taskCreateJSON(t, `{"title": "Пятая", "r_parts": [25, 1]}`), "жду 5 по RANKING.md"},
+		{"поправка на баг у task", taskCreateJSON(t, `{"title": "Пятая", "r_parts": [25, 1, 1, 5, 0]}`),
 			"поправка на баг у типа task не ставится"},
-		{"ранг и слагаемые разом", `{"title": "Пятая", "rank": "25+1+1+0+0", "r_parts": [25, 1, 1, 0, 0]}`,
+		{"ранг и слагаемые разом", taskCreateJSON(t, `{"title": "Пятая", "rank": "25+1+1+0+0", "r_parts": [25, 1, 1, 0, 0]}`),
 			"но не оба сразу"},
-		{"незнакомый тип", `{"title": "Пятая", "type": "story", "r_parts": [25, 1, 1, 0, 0]}`, "тип"},
+		{"незнакомый тип", taskCreateJSON(t, `{"title": "Пятая", "type": "story", "r_parts": [25, 1, 1, 0, 0]}`), "тип"},
 	}
 	for _, tc := range cases {
 		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks", tc.body)
@@ -283,7 +283,7 @@ func TestTaskCreateRefusals(t *testing.T) {
 	// Черновик без уровня разбора отбивается на сервере, не доходя до утилиты:
 	// уровень спрашивается на записи (DK-520), и отказ говорит про шкалу, а не
 	// про форму команды taskctl.
-	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"title": "мысль без уровня"}`)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", taskCreateJSON(t, `{"title": "мысль без уровня"}`))
 	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
 		!strings.Contains(text, "уровень разбора") {
 		t.Errorf("черновик без уровня: %d %s, ожидал 400 со словами про уровень", resp.StatusCode, text)
@@ -291,7 +291,7 @@ func TestTaskCreateRefusals(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.proj, "docs", "tasks", "drafts")); !os.IsNotExist(err) {
 		t.Errorf("черновик без уровня завёл накопитель: %v", err)
 	}
-	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"title": "мысль", "prio": "срочно"}`)
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", taskCreateJSON(t, `{"title": "мысль", "prio": "срочно"}`))
 	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
 		!strings.Contains(text, "уровень разбора") {
 		t.Errorf("уровень мимо шкалы: %d %s, ожидал 400", resp.StatusCode, text)
@@ -299,7 +299,7 @@ func TestTaskCreateRefusals(t *testing.T) {
 
 	// Пустой черновик отбивается там же и не заводит файла. Фраза отказа та
 	// же, что подсвечивает форма на обязательном поле (макет DK-447).
-	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"title": "   ", "prio": "mid"}`)
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", taskCreateJSON(t, `{"title": "   ", "prio": "mid"}`))
 	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
 		!strings.Contains(text, "поле обязательно для заполнения") {
 		t.Errorf("пустой черновик: %d %s", resp.StatusCode, text)
@@ -313,7 +313,7 @@ func TestTaskCreateRefusals(t *testing.T) {
 	// У поправки на баг тот же отказ и у типа bug её принимают: рубеж про тип,
 	// а не про само слагаемое.
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks",
-		`{"title": "Пятая, дефект", "type": "bug", "r_parts": [25, 1, 1, 5, 0]}`)
+		taskCreateJSON(t, `{"title": "Пятая, дефект", "type": "bug", "r_parts": [25, 1, 1, 5, 0]}`))
 	if text := body(t, resp); resp.StatusCode != http.StatusOK {
 		t.Fatalf("поправка на баг у типа bug: %d %s", resp.StatusCode, text)
 	}
@@ -327,7 +327,7 @@ func TestTaskCreateAcceptKinds(t *testing.T) {
 
 	// Умолчание: без поля accept строка агентская, суффикса вида нет.
 	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks",
-		`{"title": "Пятая, агентская по умолчанию", "r_parts": [25, 1, 1, 0, 0]}`)
+		taskCreateJSON(t, `{"title": "Пятая, агентская по умолчанию", "r_parts": [25, 1, 1, 0, 0]}`))
 	newResp(t, resp, "заведение агентской строки")
 	if title, _ := taskRowField(t, getTask(t, c, e, "XR-005"), "title").(string); strings.Contains(title, "[приёмка:") {
 		t.Errorf("агентское умолчание повесило суффикс: %v", title)
@@ -335,7 +335,7 @@ func TestTaskCreateAcceptKinds(t *testing.T) {
 
 	// Смешанный вид: суффикс на доске, барьер и причина в разделе приёмки.
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks",
-		`{"title": "Шестая, смешанная", "r_parts": [25, 1, 1, 0, 0], "accept": "mixed", "barrier": "глаза", "reason": "вид экрана на телефоне"}`)
+		taskCreateJSON(t, `{"title": "Шестая, смешанная", "r_parts": [25, 1, 1, 0, 0], "accept": "mixed", "barrier": "глаза", "reason": "вид экрана на телефоне"}`))
 	newResp(t, resp, "заведение смешанной строки")
 	if kind := taskRowField(t, getTask(t, c, e, "XR-006"), "accept"); kind != "mixed" {
 		t.Errorf("вид смешанной строки не доехал: %v", kind)
@@ -353,7 +353,7 @@ func TestTaskCreateAcceptKinds(t *testing.T) {
 	// Пользовательский вид с барьером «согласие» и пустой причиной: строка
 	// заводится, скелет приёмки без причины.
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks",
-		`{"title": "Седьмая, согласие", "r_parts": [25, 1, 1, 0, 0], "accept": "user", "barrier": "согласие"}`)
+		taskCreateJSON(t, `{"title": "Седьмая, согласие", "r_parts": [25, 1, 1, 0, 0], "accept": "user", "barrier": "согласие"}`))
 	newResp(t, resp, "заведение пользовательской строки")
 	if kind := taskRowField(t, getTask(t, c, e, "XR-007"), "accept"); kind != "user" {
 		t.Errorf("вид пользовательской строки не доехал: %v", kind)
@@ -378,9 +378,9 @@ func TestTaskCreateAcceptRefusals(t *testing.T) {
 	cases := []struct {
 		name, body, want string
 	}{
-		{"без барьера", `{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0], "accept": "user"}`, "нужен --barrier"},
-		{"чужой барьер", `{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0], "accept": "user", "barrier": "чего"}`, "закрытого списка"},
-		{"чужой вид", `{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0], "accept": "robot"}`, "не из {agent, mixed, user}"},
+		{"без барьера", taskCreateJSON(t, `{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0], "accept": "user"}`), "нужен --barrier"},
+		{"чужой барьер", taskCreateJSON(t, `{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0], "accept": "user", "barrier": "чего"}`), "закрытого списка"},
+		{"чужой вид", taskCreateJSON(t, `{"title": "Пятая", "r_parts": [25, 1, 1, 0, 0], "accept": "robot"}`), "не из {agent, mixed, user}"},
 	}
 	for _, tc := range cases {
 		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks", tc.body)
@@ -644,10 +644,10 @@ func TestStaticDraftTemplateForm(t *testing.T) {
 	// Шаблон кладётся в описание один раз за заход: перерисовка по фокусу окна
 	// не должна возвращать его в очищенное рукой поле, а наименование шаблоном
 	// не затрагивается вовсе.
-	for _, want := range []string{"const seeded = draft && !newForm.seeded && !newForm.body.trim();",
-		"if (seeded) newForm.body = DRAFT_TEMPLATE;",
+	for _, want := range []string{"const seeded = !newForm.seeded && !newForm.body.trim();",
+		"if (seeded) newForm.body = draft ? DRAFT_TEMPLATE : TASK_TEMPLATE;",
 		"const title = newForm.title.trim();",
-		`bodyArea.setAttribute("aria-label", "описание черновика");`,
+		`bodyArea.setAttribute("aria-label", draft ? "описание черновика" : "описание задачи");`,
 		`bodyField.append(el("legend", "", DRAFT_BODY_LABEL));`,
 		`titleLegend: draft ? DRAFT_TITLE_LABEL : ""`,
 		`titleLabel: draft ? "наименование черновика" : "заголовок задачи"`} {

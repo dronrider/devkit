@@ -150,6 +150,11 @@ func cmdMoveDry(root, id, target string) (string, error) {
 	if err := needTaskFile(root, id); err != nil {
 		return "", err
 	}
+	if target == SectInProgress {
+		if err := taskReady(root, row); err != nil {
+			return "", err
+		}
+	}
 	if target == SectCheck {
 		if err := checkGate(root, row); err != nil {
 			return "", err

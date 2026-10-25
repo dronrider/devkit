@@ -123,8 +123,10 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   add --title "..." --type bug|task|LLD --rank "а+б+в+г+д" --accept agent|mixed|user
       [--cost S|M|L|XL] [--link "..."] [--status ...] [--id XR-NNN] [--reason "..."]
       [--barrier глаза|доступ|необратимость|секрет|согласие|событие] [--debt]
+      [--body-file путь|-]                     готовая постановка; без флага только
+                                              оформление черновика через --id
                                               завести задачу (по умолчанию в Backlog;
-                                              без --link и файла в ячейке будет «-»)
+                                              в ячейке ссылка на файл задачи)
   move <ID> <статус> [--reason "..."]         перевести между статусами
       [--dry-run]                             прогнать ворота перевода и
                                               оставить строку на месте: так
@@ -364,6 +366,7 @@ func commitFlags(fs *flag.FlagSet, c *CommitOpts) {
 // тест мог сверить шапку usageText с тем же набором, что видит команда.
 func addFlags(fs *flag.FlagSet, p *AddParams) {
 	fs.StringVar(&p.ID, "id", "", "ID задачи, по умолчанию следующий свободный")
+	fs.StringVar(&p.BodyFile, "body-file", "", "готовая постановка по TASKFORM.md, - читает stdin")
 	fs.StringVar(&p.Title, "title", "", "заголовок строки")
 	fs.StringVar(&p.Type, "type", "task", "тип: bug / task / LLD")
 	fs.StringVar(&p.Rank, "rank", "", "разбивка ранга «а+б+в+г+д»")

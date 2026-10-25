@@ -22,7 +22,7 @@ import (
 func searchEnv(t *testing.T) (*testEnv, *http.Client) {
 	t.Helper()
 	e, c, _ := tasksEnv(t)
-	runTaskctl(t, e.proj, "add", "--id", "XR-010", "--title", "Поиск задач по доске и архиву",
+	runTaskctl(t, e.proj, "add", "--body-file", taskBodyFixture(t), "--id", "XR-010", "--title", "Поиск задач по доске и архиву",
 		"--rank", "25+7+3+0+2", "--cost", "M", "--accept", "agent")
 	runTaskctl(t, e.proj, "draft", "--prio", "mid", "поиск с телефона: лупа рядом с колокольчиком")
 	arch := "# Архив (префикс XR)\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
@@ -36,7 +36,7 @@ func searchEnv(t *testing.T) (*testEnv, *http.Client) {
 	writeAt(t, filepath.Join(e.proj, "docs", "tasks", "archive", "2026", "XR-900.md"),
 		"# XR-900: Поиск по архиву\n\nЗакрытая задача, колокольчик тут же.\n")
 	writeAt(t, filepath.Join(e.proj, "docs", "tasks", "XR-002.md"),
-		"# XR-002: Вторая\n\nРанг 25+7+3+0+2, слагаемые по RANKING.md.\n")
+		"# XR-002: Вторая\n\nРанг 25+8+3+0+2, слагаемые по RANKING.md.\n")
 	return e, c
 }
 
@@ -220,9 +220,9 @@ func TestSearchSpecialChars(t *testing.T) {
 	}
 	// Плюс в запросе это плюс, а не повтор предыдущего символа: слагаемые ранга
 	// в тексте задачи ищутся ровно так.
-	got := searched(t, c, e, "25+7+3")
+	got := searched(t, c, e, "25+8+3")
 	if ids := rowIDs(group(t, got, "text")); strings.Join(ids, ",") != "XR-002" {
-		t.Errorf("поиск «25+7+3» в тексте: %v, ждал XR-002", ids)
+		t.Errorf("поиск «25+8+3» в тексте: %v, ждал XR-002", ids)
 	}
 }
 
@@ -232,7 +232,7 @@ func TestSearchLimits(t *testing.T) {
 	e, c := searchEnv(t)
 	for i := 1; i <= searchRowsMax+3; i++ {
 		id := fmt.Sprintf("XR-1%02d", i)
-		runTaskctl(t, e.proj, "add", "--id", id, "--title", "Широкая строка доски",
+		runTaskctl(t, e.proj, "add", "--body-file", taskBodyFixture(t), "--id", id, "--title", "Широкая строка доски",
 			"--rank", "25+1+0+0+0", "--accept", "agent")
 	}
 	for i := 1; i <= searchTextMax+2; i++ {

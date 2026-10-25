@@ -44,6 +44,21 @@ const (
 	// chatTailWidth режет длинную строку: панель терминала бывает широкой, а
 	// пузырь ленты узкий.
 	chatTailWidth = 200
+	// chatMovedLived это порог мгновенной смерти переведённого резюма
+	// (DK-1455). Клиент, не прочитавший перенесённый транскрипт, выходит за
+	// секунды, а шаг обхода добавляет свою задержку опроса. Резюм, проживший
+	// дольше, успел прочесть историю и поработать, и его смерть живёт обычной
+	// строкой сторожа.
+	chatMovedLived = time.Minute
+)
+
+// Дороги переведённого резюма (DK-1455): значение записи чата в поле moved.
+// Реплика кончившегося разговора и «Продолжить работу» поднимают резюм после
+// перевода транскрипта, и смерть такого окна в первую минуту поднимает смену
+// словами своей дороги.
+const (
+	movedRoadSay  = "say"
+	movedRoadCont = "cont"
 )
 
 // chatTail это снимок панели живой сессии и время снятия. Живёт он в памяти
@@ -92,6 +107,9 @@ func (s *server) chatRaised(sess, sid, task, proj string) {
 	if sid != "" && chatKeyRe.MatchString(sid) {
 		st.From = sid
 	}
+	// Перевод резюма тоже принадлежит жильцу имени: новый заход, поднялся без
+	// перевода или вовсе конвейером, чужой смерти не наследует.
+	st.Moved = ""
 	if task != "" {
 		st.Task = task
 	}
@@ -370,7 +388,13 @@ func (s *server) chatDeathSay(name string, st chatStore) chatStore {
 	}
 	why := chatDeathWord(name, st.Task, lived, named)
 	tail := s.chatTailOf(name)
-	st.Raised, st.Dead, st.DeadWhy, st.Tail = 0, now.Unix(), why, tail
+	// Смерть переведённого резюма в первую минуту это отказ целевого клиента
+	// читать перенесённый транскрипт, и разговор поднимается сменой (DK-1455).
+	// Признак снимается со смертью: одна смерть одну смену и поднимает, а
+	// смена, умершая тоже, живёт обычной строкой сторожа.
+	road := st.Moved
+	relift := road != "" && sid != "" && lived > 0 && lived <= chatMovedLived
+	st.Raised, st.Dead, st.DeadWhy, st.Tail, st.Moved = 0, now.Unix(), why, tail, ""
 	if err := s.chatStoreWrite("tmux-"+name, st); err != nil {
 		s.logf("смерть сессии %s не запомнилась: %v", name, err)
 	}
@@ -406,7 +430,125 @@ func (s *server) chatDeathSay(name string, st chatStore) chatStore {
 	// оборванная работа ждать не должна: задачу, оставшуюся без ведущей
 	// сессии, уведомитель доносит до человека сам (nolead.go, DK-660).
 	s.noLeadSay(st.Task, st.Project, why)
+	// Смена зовётся последней и только с записанной смертью: до этого момента
+	// подъём мог споткнуться выше, и поднимать второе окно рядом с несмертью
+	// было бы враньём.
+	if relift {
+		s.chatMovedRelift(road, st, sid)
+	}
 	return st
+}
+
+// chatMovedArm помечает поднятый резюм как переведённый (DK-1455): зовут его
+// подъёмы после переноса транскрипта, а стирает новый жилец имени в
+// chatRaised, поэтому метка ложится отдельной записью уже после него.
+func (s *server) chatMovedArm(sess, road string) {
+	st := s.chatStoreRead("tmux-" + sess)
+	if st.Raised == 0 {
+		return
+	}
+	st.Moved = road
+	if err := s.chatStoreWrite("tmux-"+sess, st); err != nil {
+		s.logf("перевод резюма сессии %s не запомнился: %v", sess, err)
+	}
+}
+
+// chatMovedRelift поднимает смену умершему переведённому резюму (DK-1455):
+// целевой клиент вышел, не прочитав перенесённый транскрипт, и разговор
+// продолжается свежей сессией с подкладкой состояния записи (LLD DK-1422,
+// решение 5). Реплика человека, уехавшая вводной в умерший резюм, читается из
+// журнала разговора и уезжает в смену снова, а продолжение работы поднимается
+// своим заказом. Отказы в смене роняют разговор до строки в ленте с причиной:
+// вторая попытка тут уже была, и молчать о неудаче нельзя.
+func (s *server) chatMovedRelift(road string, st chatStore, sid string) {
+	task, proj := st.Task, st.Project
+	fail := func(why string) {
+		line := "переведённый резюм умер, смену поднять не удалось: " + why
+		s.saidMark(saidSessionKey(sid), line)
+		s.logf("%s", line)
+	}
+	recs := s.bindsAll()
+	last := sessions.Last(recs[sid])
+	dir := last.Tree
+	if dir == "" {
+		if p, ok := s.projectByName(proj); ok {
+			dir = p.Path
+		}
+	}
+	if dir == "" {
+		fail("дерева у разговора нет")
+		return
+	}
+	model, harness := st.Model, st.Harness
+	if m := s.chatHooksGap(model, harness); m != "" {
+		fail(m)
+		return
+	}
+	if m := s.chatClientMissing(model, harness); m != "" {
+		fail(m)
+		return
+	}
+	alive := tmuxAliveFn()
+	sess := liftWindow(task, last.Tmux, alive)
+	order, liftName := s.chatStateLine(task), ""
+	if road == movedRoadCont {
+		goal := false
+		if p, ok := s.projectByName(proj); ok {
+			if rows, err := s.boardRowsOf(p.Path); err == nil {
+				goal = isGoalTitle(rows[task].Title)
+			}
+		}
+		if goal {
+			order += goalContinuePrompt(task, sess)
+			liftName = task + " цель"
+		} else {
+			order += continuePrompt(task, sess)
+			liftName = task + " работа"
+		}
+	} else if said, ok := lastUserSay(s.cfg.Home, sid, time.Unix(st.Since, 0)); ok {
+		order += said
+	}
+	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
+		s.logf("настройки чата %s не записались: %v", sess, err)
+	}
+	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
+		chatCmd(s.launchEnv(task, sess, sid), model, "", order, liftName, s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
+		fail("tmux не поднял смену: " + procErr(err))
+		return
+	}
+	sessions.Append(sessions.Path(s.cfg.Home),
+		sessions.Line(s.now(), sid, sessions.Bind{Task: task, Source: "заказ",
+			Project: proj, Tree: dir, Tmux: sess}, "свежая сессия чата"))
+	s.chatRaised(sess, sid, task, proj)
+	if road == movedRoadCont {
+		s.mainChatFollow(task, "tmux-"+sess, proj)
+	}
+	line := "резюм умер, не прочитав перенесённый транскрипт: разговор поднят свежей сессией с подкладкой состояния"
+	if road == movedRoadCont {
+		line = "резюм умер, не прочитав перенесённый транскрипт: продолжение поднято свежей сессией с подкладкой состояния"
+	}
+	s.saidMark(saidSessionKey(sid), line)
+	s.logf("чат %s после смерти переведённого резюма поднят сменой в tmux-сессии %s", sid, sess)
+}
+
+// lastUserSay достаёт последнюю реплику человека из журнала разговора, если она
+// уехала не раньше названного момента. Резюм, унесший реплику вводной, пишет её
+// в журнал при подъёме, и свежая реплика это ровно она; старшие строки
+// воскресить в смене нельзя, они отвечали на другой ход.
+func lastUserSay(home, sid string, since time.Time) (string, bool) {
+	items := saidLoad(home, saidSessionKey(sid))
+	for i := len(items) - 1; i >= 0; i-- {
+		it := items[i]
+		if it.Role != "user" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, it.Time)
+		if err != nil || t.Before(since.Add(-2*time.Second)) {
+			return "", false
+		}
+		return it.Text, true
+	}
+	return "", false
 }
 
 // chatDeathWord это слова смерти. Немой подъём и смерть после хода лечатся

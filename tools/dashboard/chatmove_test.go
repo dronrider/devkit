@@ -220,3 +220,150 @@ func TestContinueMovesTranscriptToTargetHarness(t *testing.T) {
 		t.Fatalf("продолжение поднято не подпиской выбора и не резюмом: %s", said)
 	}
 }
+
+// tmuxDeadFake это tmux после смерти переведённого резюма: опрос сервера
+// успешен и пуст, сессий нет, панель мёртвого окна не отдаёт. Все вызовы
+// пишутся в журнал, и смена видна в нём целиком.
+func tmuxDeadFake(t *testing.T, e *testEnv, log string) {
+	t.Helper()
+	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+log+`"
+case "$1" in
+capture-pane) exit 1;;
+esac
+exit 0`)
+}
+
+// newSessionLines собирает из журнала tmux вызовы подъёма окон: их число
+// отличает смену умершего резюма от повторного резюма.
+func newSessionLines(t *testing.T, log string) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(readFile(t, log), "\n") {
+		if strings.Contains(line, "new-session") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// movedMarks считает в ленте разговора строки о поднятии смены.
+func movedMarks(t *testing.T, home, key, word string) int {
+	t.Helper()
+	n := 0
+	for _, m := range saidMarks(t, home, key) {
+		if strings.Contains(m, word) {
+			n++
+		}
+	}
+	return n
+}
+
+// Мгновенная смерть переведённого резюма поднимает смену (DoD): целевой клиент
+// не прочитал перенесённый транскрипт и вышел, а разговор продолжается свежей
+// сессией, и реплика человека уезжает в неё снова. Смена, умершая тоже,
+// второй смены не поднимает: одна смерть одну смену и зовёт.
+func TestChatMovedResumeDeathLiftsFresh(t *testing.T) {
+	e, c, tmuxLog, h3root := moveEnv(t)
+	sid := "dead1455-1111-4111-8111-111111111111"
+	src := moveCase(t, e, sid, "-")
+	switchModel(t, c, e, sid)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text": "продолжай с места обрыва"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика в переведённый разговор: %d %s", resp.StatusCode, body(t, resp))
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatalf("оригинал транскрипта остался в дереве писателя: %v", err)
+	}
+	tmuxDeadFake(t, e, tmuxLog)
+	e.s.chatWatchTick()
+	if n := movedMarks(t, e.home, "sess-"+sid, "резюм умер, не прочитав перенесённый транскрипт"); n != 1 {
+		t.Fatalf("смена после смерти переведённого резюма не названа в ленте: %q",
+			saidMarks(t, e.home, "sess-"+sid))
+	}
+	lines := newSessionLines(t, tmuxLog)
+	if len(lines) != 2 {
+		t.Fatalf("окон поднято не два: %q", lines)
+	}
+	if strings.Contains(lines[1], "--resume") || !strings.Contains(lines[1], "продолжай с места обрыва") {
+		t.Fatalf("смена поднята не свежей сессией с репликой человека: %s", lines[1])
+	}
+	if _, err := os.Stat(filepath.Join(h3root, claudeDirName(e.proj), sid+".jsonl")); err != nil {
+		t.Fatalf("смерть тронула перенесённый транскрипт: %v", err)
+	}
+	e.s.chatWatchTick()
+	if got := newSessionLines(t, tmuxLog); len(got) != 2 {
+		t.Fatalf("смерть смены подняла вторую смену: %q", got)
+	}
+	if n := movedMarks(t, e.home, "sess-"+sid, "поднят свежей сессией"); n != 1 {
+		t.Fatalf("лента повторила смену: %q", saidMarks(t, e.home, "sess-"+sid))
+	}
+}
+
+// Сорванная смена не молчит: tmux, не поднявший окно, отдаёт причину строкой
+// в ленту разговора, и человек знает, почему разговор стоит.
+func TestMovedReliftFailureSaysWhy(t *testing.T) {
+	e, c, tmuxLog, _ := moveEnv(t)
+	sid := "fail1455-1111-4111-8111-111111111111"
+	moveCase(t, e, sid, "-")
+	switchModel(t, c, e, sid)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say",
+		`{"text": "продолжай"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("реплика в переведённый разговор: %d %s", resp.StatusCode, body(t, resp))
+	}
+	writeScript(t, e.bin, "tmux", `echo "$@" >> "`+tmuxLog+`"
+case "$1" in
+new-session) exit 1;;
+capture-pane) exit 1;;
+esac
+exit 0`)
+	e.s.chatWatchTick()
+	found := false
+	for _, m := range saidMarks(t, e.home, "sess-"+sid) {
+		if strings.Contains(m, "переведённый резюм умер, смену поднять не удалось") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("сорванная смена не назвала причину: %q", saidMarks(t, e.home, "sess-"+sid))
+	}
+}
+
+// Продолжение работы умирает той же смертью, и смену ему поднимает заказ
+// продолжения: свежая сессия с подкладкой состояния, без резюма.
+func TestContinueMovedDeathLiftsFresh(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	tmuxLog := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, tmuxLog, "")
+	writeClientFakes(t, e.bin, "клиент-1", "клиент-3")
+	writeAgentctlFake(t, e.bin, moveLayout(e.home))
+	writeTaskRunFake(t, filepath.Dir(e.proj))
+	useHeadHome(t, e)
+	sid := "cead1455-1111-4111-8111-111111111111"
+	src := moveCase(t, e, sid, "XR-004")
+	switchModel(t, c, e, sid)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks/XR-004/continue", ``)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body(t, resp), `"way":"resume"`) {
+		t.Fatalf("продолжение переведённого разговора: %d %s", resp.StatusCode, body(t, resp))
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatalf("оригинал транскрипта остался в дереве писателя: %v", err)
+	}
+	tmuxDeadFake(t, e, tmuxLog)
+	e.s.chatWatchTick()
+	if n := movedMarks(t, e.home, "sess-"+sid, "продолжение поднято свежей сессией"); n != 1 {
+		t.Fatalf("смена продолжения не названа в ленте: %q", saidMarks(t, e.home, "sess-"+sid))
+	}
+	lines := newSessionLines(t, tmuxLog)
+	if len(lines) != 2 {
+		t.Fatalf("окон поднято не два: %q", lines)
+	}
+	if strings.Contains(lines[1], "--resume") || !strings.Contains(lines[1], "Продолжай работу по XR-004") {
+		t.Fatalf("смена продолжения поднята не своим заказом: %s", lines[1])
+	}
+	h3root := filepath.Join(e.home, "h3", "projects")
+	if _, err := os.Stat(filepath.Join(h3root, claudeDirName(e.proj), sid+".jsonl")); err != nil {
+		t.Fatalf("смерть тронула перенесённый транскрипт: %v", err)
+	}
+}

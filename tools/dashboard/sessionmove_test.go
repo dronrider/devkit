@@ -88,3 +88,79 @@ func TestTranslateSessionRules(t *testing.T) {
 		}
 	})
 }
+
+// Правила смены умершему переведённому резюму (DK-1455): порог мгновенной
+// смерти, снятие признака самой смертью и чтение реплики человека из журнала
+// только свежей.
+func TestMovedDeathRules(t *testing.T) {
+	t.Run("медленная смерть смену не поднимает", func(t *testing.T) {
+		e, _, tmuxLog, _ := moveEnv(t)
+		sid := "slow1455-1111-4111-8111-111111111111"
+		st := e.s.chatDeathSay("chat-77", chatStore{From: sid, Project: "demo",
+			Raised: time.Now().Add(-2 * time.Minute).Unix(), Moved: movedRoadSay})
+		if st.Dead == 0 {
+			t.Fatal("медленная смерть не записалась")
+		}
+		if got := newSessionLines(t, tmuxLog); len(got) != 0 {
+			t.Fatalf("проживший резюм поднял смену: %q", got)
+		}
+	})
+
+	t.Run("признак снят смертью", func(t *testing.T) {
+		e, _, _, _ := moveEnv(t)
+		sid := "gone1455-1111-4111-8111-111111111111"
+		e.s.chatDeathSay("chat-78", chatStore{From: sid, Project: "demo",
+			Raised: time.Now().Unix(), Moved: movedRoadSay})
+		if st := e.s.chatStoreRead("tmux-chat-78"); st.Moved != "" {
+			t.Fatalf("смерть оставила признак перевода: %q", st.Moved)
+		}
+	})
+
+	t.Run("вооружение без подъёма не пишет", func(t *testing.T) {
+		e, _, _, _ := moveEnv(t)
+		e.s.chatMovedArm("chat-79", movedRoadSay)
+		if st := e.s.chatStoreRead("tmux-chat-79"); st.Moved != "" || st.Raised != 0 {
+			t.Fatalf("вооружение завело запись из ничего: %+v", st)
+		}
+	})
+
+	t.Run("новый жилец имени снимает признак", func(t *testing.T) {
+		e, _, _, _ := moveEnv(t)
+		sid := "next1455-1111-4111-8111-111111111111"
+		if err := e.s.chatStoreWrite("tmux-chat-80", chatStore{From: sid,
+			Raised: time.Now().Unix(), Moved: movedRoadSay}); err != nil {
+			t.Fatal(err)
+		}
+		e.s.chatRaised("chat-80", sid, "", "demo")
+		if st := e.s.chatStoreRead("tmux-chat-80"); st.Moved != "" {
+			t.Fatalf("новый жилец имени унаследовал признак перевода: %q", st.Moved)
+		}
+	})
+
+	t.Run("свежая реплика читается, старая нет", func(t *testing.T) {
+		e, _, _, _ := moveEnv(t)
+		sid := "said1455-1111-4111-8111-111111111111"
+		now := time.Now().UTC()
+		put := func(text string, at time.Time) {
+			t.Helper()
+			if err := e.s.saidPut(saidSessionKey(sid), saidRec{Text: text, Time: at.Format(time.RFC3339)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		put("старые слова", now.Add(-time.Hour))
+		put("продолжай с места обрыва", now)
+		if err := e.s.saidPut(saidSessionKey(sid), saidRec{Kind: saidKindMark, Text: "разделитель"}); err != nil {
+			t.Fatal(err)
+		}
+		text, ok := lastUserSay(e.home, sid, now)
+		if !ok || text != "продолжай с места обрыва" {
+			t.Fatalf("свежая реплика не прочитана: %q %v", text, ok)
+		}
+		if _, ok := lastUserSay(e.home, sid, now.Add(time.Minute)); ok {
+			t.Fatal("старшая реплика воскресла в смену")
+		}
+		if _, ok := lastUserSay(e.home, "nosuch-1111-2222-3333", now); ok {
+			t.Fatal("пустой журнал отдал реплику")
+		}
+	})
+}

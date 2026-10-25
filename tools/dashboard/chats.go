@@ -766,6 +766,14 @@ type chatStore struct {
 	Since   int64  `json:"since,omitempty"`
 	DeadWhy string `json:"deadWhy,omitempty"`
 	Tail    string `json:"tail,omitempty"`
+	// Moved называет дорогу переведённого резюма (DK-1455): "say" либо
+	// "cont". Подъём продолжил разговор чужой подпиской переносом транскрипта,
+	// и смерть такого окна в первую минуту это отказ целевого клиента читать
+	// перенесённое. По дороге смерть знает, какими словами поднять смену:
+	// репликой человека из журнала разговора либо заказом продолжения.
+	// Стирают её новый жилец имени (chatRaised) и сама смерть, второй раз
+	// одна смерть смену не поднимает.
+	Moved string `json:"moved,omitempty"`
 	// Заказ дожима стопа (stopwait.go). StopAt это время последнего нажатия в
 	// unix-секундах, и пока оно стоит, стоп не кончен: работа сессии живёт
 	// дольше прерванного хода. StopFrom это первое нажатие, от него считается
@@ -3429,7 +3437,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// лежит в дереве подписки-писателя, и целевой клиент без переноса его не
 	// найдёт. Неудача перевода откатывается на ту же свежую сессию с подкладкой,
 	// а не на смерть резюма.
-	way, resumeSid := "resume", sid
+	way, resumeSid, moved := "resume", sid, ""
 	if s.resumeWay(model, harness) {
 		note, err := s.translateChat(info, model, harness)
 		if err != nil {
@@ -3439,6 +3447,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			s.saidMark(saidSessionKey(sid), line)
 			s.logf("%s", line)
 		} else if note != "" {
+			moved = movedRoadSay
 			s.logf("чат %s переведён в дерево подписки подъёма: %s", sid, note)
 		}
 	} else {
@@ -3471,6 +3480,9 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		sessions.Line(s.now(), sid, sessions.Bind{Task: task, Source: "заказ",
 			Project: found.Name, Tree: dir, Tmux: sess}, reason))
 	s.chatRaised(sess, sid, task, found.Name)
+	if moved != "" {
+		s.chatMovedArm(sess, moved)
+	}
 	// Резюм увёз реплику вводной: дожимать её после этого нечем, иначе тот же
 	// текст приедет и вводной, и повтором.
 	s.chatSayDone(sid, claim, way)
@@ -4444,7 +4456,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	// лежит в дереве подписки-писателя, и целевой клиент без переноса его не
 	// найдёт. Неудача перевода откатывается на ту же свежую сессию с подкладкой,
 	// а не на смерть резюма.
-	resume := s.resumeWay(model, harness)
+	resume, moved := s.resumeWay(model, harness), ""
 	if resume {
 		note, err := s.translateChat(info, model, harness)
 		if err != nil {
@@ -4453,6 +4465,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 			s.saidMark(saidSessionKey(sid), line)
 			s.logf("%s", line)
 		} else if note != "" {
+			moved = movedRoadCont
 			s.logf("чат %s переведён в дерево подписки подъёма: %s", sid, note)
 		}
 	}
@@ -4479,6 +4492,9 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 		sessions.Line(s.now(), sid, sessions.Bind{Task: id, Source: "заказ",
 			Project: found.Name, Tree: dir, Tmux: sess}, reason))
 	s.chatRaised(sess, sid, id, found.Name)
+	if moved != "" {
+		s.chatMovedArm(sess, moved)
+	}
 	// Назначение ведётся за поднятым заходом: носителем записи становится окно
 	// нового захода, и адрес записи открывает его (LLD DK-1422, решение 3).
 	s.mainChatFollow(id, "tmux-"+sess, found.Name)

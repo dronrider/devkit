@@ -236,6 +236,35 @@ func TestTaskHarnessPolicy(t *testing.T) {
 		}
 	})
 
+	t.Run("ступени запрещённого via без модели отдают отказ", func(t *testing.T) {
+		setupLadder(t, `default = "claude-code"
+enabled = ["claude-code", "routerai"]
+[claude-code]
+mini = "routerai:route-mini"
+base = "routerai:route-base"
+pro = "routerai:route-pro"
+max = "routerai:route-max"
+[routerai]
+mini = "route-mini"
+base = "route-base"
+pro = "route-pro"
+max = "route-max"
+`)
+		copyProfile(t, "routerai.toml")
+		root := writeBoard(t)
+		// Записи разработки нет, яруса не разворачивает ни одна допущенная
+		// ступень: отказ обязан назвать допуск, а не прочерк с чужой подпиской.
+		_, err := cmdCheck(root, "T-007")
+		if err == nil {
+			t.Fatal("ступени запрещённого via обязаны отказывать")
+		}
+		for _, want := range []string{"прогонять некем", "автоматическим назначениям"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("в отказе нет %q: %v", want, err)
+			}
+		}
+	})
+
 	t.Run("машинный вид печатает допуск, ручной выбор не трогая", func(t *testing.T) {
 		setupPolicy(t, "auto = [\"routerai\"]\n")
 		out, err := cmdHarnessJSON(".")

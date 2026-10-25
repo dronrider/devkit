@@ -45,9 +45,6 @@ func cmdCheck(root, id string) (string, error) {
 		return "", fmt.Errorf("%s: прогонять некем, %s", id, ch.Refusal)
 	}
 	model := ch.Model
-	if model == "" {
-		model = unmappedModel
-	}
 	var says []string
 	via := ch.Harness
 	if ch.Harness != p.HC.Name {

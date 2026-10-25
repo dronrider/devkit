@@ -111,7 +111,7 @@ func TestTaskRowCarriesMovedDate(t *testing.T) {
 	runTaskctl(t, e.proj, "init", "--prefix", "XR", "--name", "demo")
 	git("add", "-A")
 	git("commit", "-q", "-m", "init")
-	runTaskctl(t, e.proj, "add", "--id", "XR-001", "--title", "Первая",
+	runTaskctl(t, e.proj, "add", "--body-file", taskBodyFixture(t), "--id", "XR-001", "--title", "Первая",
 		"--rank", "25+1+0+0+0", "--cost", "M", "--accept", "agent")
 	git("add", "-A")
 	git("commit", "-q", "-m", "add")
@@ -174,11 +174,11 @@ func rowFieldsBoard(t *testing.T) string {
 	runTaskctl(t, proj, "init", "--prefix", "XR", "--name", "demo")
 	commit("init")
 
-	runTaskctl(t, proj, "add", "--id", "XR-001", "--title", "Первая",
+	runTaskctl(t, proj, "add", "--body-file", taskBodyFixture(t), "--id", "XR-001", "--title", "Первая",
 		"--rank", "50+3+1+0+1", "--cost", "L", "--accept", "agent")
-	runTaskctl(t, proj, "add", "--id", "XR-002", "--title", "Вторая",
+	runTaskctl(t, proj, "add", "--body-file", taskBodyFixture(t), "--id", "XR-002", "--title", "Вторая",
 		"--rank", "25+2+1+0+2", "--cost", "M", "--accept", "mixed", "--barrier", "секрет")
-	runTaskctl(t, proj, "add", "--id", "XR-003", "--title", "Третья",
+	runTaskctl(t, proj, "add", "--body-file", taskBodyFixture(t), "--id", "XR-003", "--title", "Третья",
 		"--rank", "0+1+0+0+0", "--cost", "S", "--accept", "agent")
 	commit("add")
 

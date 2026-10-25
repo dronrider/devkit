@@ -14,18 +14,18 @@ import (
 // файла за «Ходом работы».
 func TestAddPutsFormSkeleton(t *testing.T) {
 	root := setup(t)
-	if _, err := cmdAdd(root, AddParams{Title: "Форменная", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "Форменная", Type: "task", Rank: "0+1+1+0+1", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-008.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "# XR-008: Форменная\n\n## Что происходит\n\n## Чего хотим\n\n## DoD\n\n## Ранг\n\n## Ход работы\n"
+	want := "# XR-008: Форменная\n" + fixtureTaskBody + "\n## Ход работы\n"
 	if string(data) != want {
 		t.Fatalf("болванка не по форме:\n%s", data)
 	}
-	if _, err := cmdAdd(root, AddParams{Title: "С барьером", Type: "bug", Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, ""), Title: "С барьером", Type: "bug", Rank: "0+1+1+0+1", Accept: "user", Barrier: "глаза"}); err != nil {
 		t.Fatal(err)
 	}
 	data, err = os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-009.md"))
@@ -133,7 +133,7 @@ func TestDraftPromotedByForm(t *testing.T) {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-008")
-	if _, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Оформленная", Type: "bug", Rank: "25+4+2+5+2", Cost: "S", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-008"), ID: "XR-008", Title: "Оформленная", Type: "bug", Rank: "25+4+2+5+2", Cost: "S", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "docs", "tasks", "XR-008.md")
@@ -146,7 +146,7 @@ func TestDraftPromotedByForm(t *testing.T) {
 		"## Что происходит\n\nхук старта берёт адрес чата из окружения.\n\nвторая сессия перебивает первую.\n\n" +
 		"## Чего хотим\n\nадрес берётся из реестра чатов, там он лежит с признаком живости.\n\n" +
 		"## Развилки\n\nбрать адрес из реестра чатов или из tmux?\n\n" +
-		"## DoD\n\n## Ранг\n\n`25+4+2+5+2 = 38`, P2.\n\n## Ход работы\n\n- Из черновика XR-008 «уведомитель шумит из песочницы»: записан " + today() + ", оформлен " + today() + ".\n"
+		"## DoD\n\n- Неполная запись отклоняется.\n\n## Ранг\n\n`25+4+2+5+2 = 38`, P2.\n\n" + fixtureRankReasons + "\n## Ход работы\n\n- Из черновика XR-008 «уведомитель шумит из песочницы»: записан " + today() + ", оформлен " + today() + ".\n"
 	if body != want {
 		t.Fatalf("файл из черновика не по форме:\n%s\nждал:\n%s", body, want)
 	}
@@ -188,18 +188,18 @@ func TestDraftWithoutSubsectionsGoesToSituation(t *testing.T) {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-008")
-	old := "# XR-008: уведомитель шумит из песочницы\n\nзаписан 2026-08-01\n\n## Черновик\n\nуведомитель шумит из песочницы\n\nстарая запись одним абзацем.\n\n## Смежное\n\nDK-430 про реестр.\n\n## DoD\n\nшум ушёл.\n\n## Ранг\n\n- Серьёзность 25: шум.\n"
+	old := "# XR-008: уведомитель шумит из песочницы\n\nзаписан 2026-08-01\n\n## Черновик\n\nуведомитель шумит из песочницы\n\nстарая запись одним абзацем.\n\n## Чего хотим\n\nшум прекращается.\n\n## Смежное\n\nDK-430 про реестр.\n\n## DoD\n\nшум ушёл.\n\n## Ранг\n\n" + fixtureRankReasons
 	if err := os.WriteFile(draftFile(root, "XR-008"), []byte(old), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Тихий уведомитель", Type: "bug", Rank: "25+4+2+5+2", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-008"), ID: "XR-008", Title: "Тихий уведомитель", Type: "bug", Rank: "25+4+2+5+2", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-008.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "# XR-008: Тихий уведомитель\n\n## Что происходит\n\nстарая запись одним абзацем.\n\n## Чего хотим\n\n## DoD\n\nшум ушёл.\n\n## Ранг\n\n`25+4+2+5+2 = 38`, P2.\n\n- Серьёзность 25: шум.\n\n## Смежное\n\nDK-430 про реестр.\n\n## Ход работы\n\n- Из черновика XR-008 «уведомитель шумит из песочницы»: записан 2026-08-01, оформлен " + today() + ".\n"
+	want := "# XR-008: Тихий уведомитель\n\n## Что происходит\n\nстарая запись одним абзацем.\n\n## Чего хотим\n\nшум прекращается.\n\n## DoD\n\nшум ушёл.\n\n## Ранг\n\n`25+4+2+5+2 = 38`, P2.\n\n" + fixtureRankReasons + "\n## Смежное\n\nDK-430 про реестр.\n\n## Ход работы\n\n- Из черновика XR-008 «уведомитель шумит из песочницы»: записан 2026-08-01, оформлен " + today() + ".\n"
 	if string(data) != want {
 		t.Fatalf("старый черновик не по форме:\n%s\nждал:\n%s", data, want)
 	}
@@ -212,7 +212,7 @@ func TestMoveStagesGoByForm(t *testing.T) {
 	stageHome(t)
 	root := setup(t)
 	path := taskFilePath(root, "XR-002")
-	if err := os.WriteFile(path, []byte("# XR-002: Без хода работы\n\n## DoD\n\nсделано.\n"+fixtureScenario), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("# XR-002: Без хода работы\n"+fixtureTaskBody+fixtureScenario), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	openStages(t, root, "XR-002", stage.Dev)
@@ -223,7 +223,7 @@ func TestMoveStagesGoByForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(data), "# XR-002: Без хода работы\n\n## DoD\n\nсделано.\n\n## Ход работы\n\n- Разработка: ") {
+	if !strings.HasPrefix(string(data), "# XR-002: Без хода работы\n"+fixtureTaskBody+"\n## Ход работы\n\n- Разработка: ") {
 		t.Fatalf("«Ход работы» не по форме:\n%s", data)
 	}
 	finds, err := cmdLint(root)

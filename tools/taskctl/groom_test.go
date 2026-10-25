@@ -506,7 +506,7 @@ func TestAddPromotionDropsPrio(t *testing.T) {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, "XR-008")
-	if _, err := cmdAdd(root, AddParams{ID: "XR-008", Title: "Оформленная", Type: "task", Rank: "25+4+2+0+2", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-008"), ID: "XR-008", Title: "Оформленная", Type: "task", Rank: "25+4+2+0+2", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-008.md"))
@@ -701,8 +701,8 @@ func TestDraftAttachCreatesTaskFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(finds) != 0 {
-		t.Fatalf("после attach lint должен быть зелёным: %v", finds)
+	if len(finds) != 1 || !strings.Contains(finds[0], "XR-004: не заполнены") {
+		t.Fatalf("attach сохраняет старую пустую постановку: %v", finds)
 	}
 }
 
@@ -824,7 +824,7 @@ func TestDraftPromoteKeepsGroom(t *testing.T) {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, id)
-	if _, err := cmdAdd(root, AddParams{ID: id, Title: "Оформленная", Type: "bug", Rank: "25+4+2+5+2", Cost: "S", Accept: "agent"}); err != nil {
+	if _, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, id), ID: id, Title: "Оформленная", Type: "bug", Rank: "25+4+2+5+2", Cost: "S", Accept: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", id+".md"))

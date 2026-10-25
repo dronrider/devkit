@@ -760,7 +760,7 @@ func TestDraftDecorSurvivesPromoteAndWork(t *testing.T) {
 	// Ворота add спрашивают у черновика раздел DoD: грумминг дописывает его
 	// раньше оформления, и тест делает то же.
 	draft := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")
-	if err := os.WriteFile(draft, []byte("# Мысль из обсуждения\n\n## DoD\n\n- сделано\n"), 0o644); err != nil {
+	if err := os.WriteFile(draft, []byte("# Мысль из обсуждения\n\n" + readyTaskBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

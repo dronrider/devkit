@@ -87,7 +87,7 @@ func TestReviewAddAndResolve(t *testing.T) {
 	}
 	// Раздел встаёт на своё место по форме (TASKFORM.md), выше сценария
 	// проверки, а не в хвост файла.
-	want := "# XR-005\n\n## Ревью\n\n- гонка в close\n- нейминг\n" + fixtureScenario + fixtureVerification
+	want := "# XR-005\n" + fixtureTaskBody + "\n## Ревью\n\n- гонка в close\n- нейминг\n" + fixtureScenario + fixtureVerification
 	if got := readTaskFile(t, root, "XR-005"); got != want {
 		t.Fatalf("файл задачи:\n%q\nожидал:\n%q", got, want)
 	}
@@ -362,7 +362,9 @@ func TestReviewStats(t *testing.T) {
 		func() (string, error) { return cmdReviewAdd(root, "XR-005", "раз", "", CommitOpts{}) },
 		func() (string, error) { return cmdReviewAdd(root, "XR-005", "два", "", CommitOpts{}) },
 		func() (string, error) { return cmdReviewResolve(root, "XR-005", 1, "fixed", "", CommitOpts{}) },
-		func() (string, error) { return cmdReviewResolve(root, "XR-005", 2, "rejected", "мелочь", CommitOpts{}) },
+		func() (string, error) {
+			return cmdReviewResolve(root, "XR-005", 2, "rejected", "мелочь", CommitOpts{})
+		},
 		func() (string, error) { return cmdReviewAdd(root, "XR-002", "открытое", "", CommitOpts{}) },
 	} {
 		if _, err := step(); err != nil {
@@ -496,7 +498,7 @@ func TestReviewCleanWritesVerdict(t *testing.T) {
 	if !strings.Contains(msg, "вердикт без замечаний записан") {
 		t.Fatalf("сообщение: %q", msg)
 	}
-	want := "# XR-005\n\n## Ревью\n\n- Вердикт: без замечаний. Путь от симптома пройден по ops.go.\n" +
+	want := "# XR-005\n" + fixtureTaskBody + "\n## Ревью\n\n- Вердикт: без замечаний. Путь от симптома пройден по ops.go.\n" +
 		fixtureScenario + fixtureVerification
 	if got := readTaskFile(t, root, "XR-005"); got != want {
 		t.Fatalf("файл задачи:\n%q\nожидал:\n%q", got, want)

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -159,27 +158,28 @@ func writeAcceptReason(proj, id, reason string) error {
 	if err != nil {
 		return fmt.Errorf("файл задачи не читается, причина приёмки не записана: %w", err)
 	}
-	at := bytes.Index(data, []byte("## Приёмка"))
-	if at < 0 {
+	lines := strings.Split(string(data), "\n")
+	visible := strings.Split(taskform.VisibleText(string(data)), "\n")
+	mask, _ := taskform.FenceMask(visible)
+	in, found := false, false
+	for i, line := range visible {
+		if mask[i] {
+			continue
+		}
+		if strings.HasPrefix(line, "## ") {
+			in = strings.TrimSpace(line) == taskform.Acceptance
+			found = found || in
+			continue
+		}
+		if in && strings.HasPrefix(line, "- барьер «") {
+			lines[i] += " " + reason
+			return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+		}
+	}
+	if !found {
 		return errors.New("в файле задачи нет раздела «Приёмка»: причина не записана")
 	}
-	// Ищется строка барьера после заголовка раздела, а не с начала файла:
-	// слово «барьер» в постановке задачи встречается и раньше приёмки.
-	lineAt := bytes.Index(data[at:], []byte("- барьер «"))
-	if lineAt < 0 {
-		return errors.New("в разделе «Приёмка» нет строки барьера: причина не записана")
-	}
-	line := at + lineAt
-	rest := data[line:]
-	end := bytes.IndexByte(rest, '\n')
-	if end < 0 {
-		end = len(rest)
-	}
-	updated := append([]byte{}, data[:line]...)
-	updated = append(updated, rest[:end]...)
-	updated = append(updated, []byte(" "+reason)...)
-	updated = append(updated, data[line+end:]...)
-	return os.WriteFile(path, updated, 0o644)
+	return errors.New("в разделе «Приёмка» нет строки барьера: причина не записана")
 }
 
 // handleTaskCreate заводит полную строку доски: заголовок, тип, цена и
@@ -197,6 +197,7 @@ func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Title   string `json:"title"`
+		Body    string `json:"body"`
 		Type    string `json:"type"`
 		Rank    string `json:"rank"`
 		RParts  []*int `json:"r_parts"`
@@ -205,9 +206,9 @@ func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 		Barrier string `json:"barrier"`
 		Reason  string `json:"reason"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, draftTextLimit)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "жду JSON с полями title, type, r_parts (или rank), cost"})
+			"error": "жду JSON с полями title, body, type, r_parts (или rank), cost"})
 		return
 	}
 	rank := body.Rank
@@ -250,7 +251,10 @@ func (s *server) handleTaskCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// Кривой ранг, пустой заголовок и незнакомый тип отбивает утилита своими
 	// словами: правду про формат строки держит она.
-	out, code, err := s.taskctlWrite(found.Path, args...)
+	if strings.TrimSpace(body.Body) != "" {
+		args = append(args, "--body-file", "-")
+	}
+	out, code, err := s.taskctlWriteIn(found.Path, body.Body, args...)
 	if err != nil {
 		s.logf("строка в %s не завелась: %v", found.Name, err)
 		writeJSON(w, code, map[string]string{"error": err.Error()})

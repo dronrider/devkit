@@ -326,7 +326,19 @@ def add_row(cmd_run, proj, task, title, status=""):
             "--id", task, "-m", "docs(tasks): %s строка заведена" % task]
     if status:
         args += ["--status", status]
-    return cmd_run(args)
+    outcomes = {
+        FUNNEL: "Четыре прохода с отметкой ожидания сохранены; после пятого строка припаркована.",
+        DEP: "Слияние предпосылки подняло взведённую строку, закрытие подняло припаркованную.",
+        PARKED: "После закрытия предпосылки ожидающая строка вернулась к исполнению.",
+        ARMED: "После слияния предпосылки зависимая строка запущена автоматически.",
+        HAND: "Предпосылка слита напрямую через git, без уведомления от shipctl.",
+        MISSED: "Тик обнаружил слияние, пропущенное утилитами, и поднял ожидающую строку.",
+    }
+    with selfcheck.task_description(
+            "Стенд waitcheck проверяет ожидания во временном проекте. Роль строки: " + title + ".",
+            "Выполнить сценарий ожидания для строки " + task + " и проверить переходы соседних строк.",
+            outcomes[task]) as body_file:
+        return cmd_run(args + ["--body-file", body_file])
 
 
 def funnel_wait(cmd_run, proj, devkit, mode_file, client, heads_log):

@@ -28,6 +28,7 @@ origin круг падал бы на первом же переводе доск
 пойдёт; код 1 с находками это живой доктор, назвавший проблемы раскладки, им
 посвящена отдельная строка в конце отчёта).
 """
+import contextlib
 import os
 import re
 import shutil
@@ -52,6 +53,36 @@ GIT_ENV = {
 SCENARIO_HEADER = "## Сценарий проверки"
 VERIFY_HEADER = "## Проверка"
 TIMEOUT = 900
+
+
+@contextlib.contextmanager
+def task_description(situation, desired, dod):
+    body = """## Что происходит
+
+%s
+
+## Чего хотим
+
+%s
+
+## DoD
+
+- %s
+
+## Ранг
+
+25+5+1+0+0 = 31, P2.
+
+- Серьёзность 25: отказ проверяемой связки мешает вести работу через devkit.
+- Ценность 5: сценарий проверяет повседневные переходы задачи.
+- Неопределённость 1: последовательность шагов задана стендом.
+- Поправка на баг 0: это синтетическая задача проверки, дефект не заявлен.
+- Рычаг 0: дополнительных изменений за пределами стенда нет.
+""" % (situation, desired, dod)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", encoding="utf-8") as body_file:
+        body_file.write(body)
+        body_file.flush()
+        yield body_file.name
 
 
 def run(args, cwd=None, env=None, timeout=TIMEOUT, home=None):
@@ -260,12 +291,16 @@ def circle(cmd_run, proj, log):
     # Коммит с -m берёт доску вместе с файлом задачи: без него файл оставался
     # бы untracked в основном дереве, и слияние отказывалось затирать его
     # версией из ветки.
-    if go("строка на доске", ["taskctl", "-C", str(proj), "add",
-                              "--title", "проверка связки", "--type", "task",
-                              "--rank", "25+5+1+0+0", "--cost", "S",
-                              "--accept", "agent",
-                              "-m", "docs(tasks): %s проверка связки заведена" % TASK]) != 0:
-        return steps
+    with task_description(
+            "Проверяется установленная связка devkit во временном проекте с подставным выкатом.",
+            "Провести задачу от создания строки через отдельную ветку до слияния, выката и закрытия.",
+            "Все шаги selfcheck завершились успешно, метка выката создана, временные файлы удалены.") as body_file:
+        if go("строка на доске", ["taskctl", "-C", str(proj), "add",
+                                  "--title", "проверка связки", "--type", "task",
+                                  "--rank", "25+5+1+0+0", "--cost", "S",
+                                  "--body-file", body_file, "--accept", "agent",
+                                  "-m", "docs(tasks): %s проверка связки заведена" % TASK]) != 0:
+            return steps
     if go("вердикт pick", ["agentctl", "-C", str(proj), "pick", TASK]) != 0:
         return steps
     verdict = steps[-1]

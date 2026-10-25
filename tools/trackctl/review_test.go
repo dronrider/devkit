@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // reviewCalls это след вызовов addReviewRow и setRowLink: подмена вместо
@@ -17,19 +19,11 @@ type reviewCalls struct {
 	links []string
 }
 
-// reviewSkeleton это болванка файла задачи, какой её кладёт настоящий
-// `taskctl add --type task --accept mixed --barrier доступ`: заголовки формы
-// и пустая причина барьера, которую дописывает fillReviewFile.
-func reviewSkeleton(id, title string) string {
+// reviewSkeleton воспроизводит add с готовым описанием и пустой причиной барьера.
+func reviewSkeleton(id, title, body string) string {
 	return fmt.Sprintf(`# %s: %s
 
-## Что происходит
-
-## Чего хотим
-
-## DoD
-
-## Ранг
+%s
 
 ## Приёмка
 
@@ -37,7 +31,7 @@ func reviewSkeleton(id, title string) string {
 - барьер «доступ»:
 
 ## Ход работы
-`, id, title)
+`, id, title, body)
 }
 
 // captureReviewAdd подменяет addReviewRow и setRowLink записью вызовов:
@@ -54,7 +48,7 @@ func captureReviewAdd(t *testing.T, nextID string) *reviewCalls {
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(abs, []byte(reviewSkeleton(nextID, p.title)), 0o644); err != nil {
+		if err := os.WriteFile(abs, []byte(reviewSkeleton(nextID, p.title, p.body)), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return nextID, fmt.Sprintf("%s заведена в Backlog: P3, R=3", nextID), nil
@@ -101,6 +95,14 @@ func TestReviewCreatesRowAndFile(t *testing.T) {
 	wantLink := "XR-777 [ABC-12](https://tracker.example/browse/ABC-12)"
 	if len(calls.links) != 1 || calls.links[0] != wantLink {
 		t.Fatalf("ссылка строки не на тикет:\nхочу %q\nимею %v", wantLink, calls.links)
+	}
+	for _, section := range []string{"## Что происходит", "## Чего хотим", "## DoD", "## Ранг"} {
+		if !strings.Contains(calls.adds[0].body, section) {
+			t.Fatalf("до add нет раздела %s: %s", section, calls.adds[0].body)
+		}
+	}
+	if !strings.Contains(calls.adds[0].body, "нужно поправить импорт") {
+		t.Fatal("постановка должна передаваться до создания строки")
 	}
 	text := reviewFile(t, root, "XR-777")
 	if !strings.Contains(text, "нужно поправить импорт") {
@@ -320,5 +322,70 @@ func TestSyncDoesNotMoveReviewRow(t *testing.T) {
 	}
 	if len(*moves) != 0 {
 		t.Fatalf("sync подвинул строку ревью: %v", *moves)
+	}
+}
+
+func TestReviewBodyKeepsTicketHeadingsInsideQuote(t *testing.T) {
+	body := reviewBody(ticket{Key: "ABC-12", Title: "Импорт", Type: "Bug",
+		Description: "## DoD\nНе терять строки"}, "https://gitlab.example/mr/1", "0+0+1+5+2")
+	if err := taskform.ValidateTask(body); err != nil {
+		t.Fatalf("постановка ревью не проходит общий валидатор: %v", err)
+	}
+	if strings.Count(body, "\n## DoD\n") != 1 || !strings.Contains(body, "> ## DoD\n> Не терять строки") {
+		t.Fatalf("заголовки тикета подменили форму: %s", body)
+	}
+	for _, want := range []string{"MR: https://gitlab.example/mr/1", "Поправка на баг 5:", "0+0+1+5+2 = 8"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в постановке нет %q: %s", want, body)
+		}
+	}
+}
+
+func TestReviewAddSuppliesBodyFileAndRemovesIt(t *testing.T) {
+	root := t.TempDir()
+	capture := filepath.Join(root, "body")
+	pathCapture := filepath.Join(root, "path")
+	t.Setenv("REVIEW_BODY_CAPTURE", capture)
+	t.Setenv("REVIEW_PATH_CAPTURE", pathCapture)
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	script := `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--body-file" ]; then
+    shift
+    cat "$1" > "$REVIEW_BODY_CAPTURE" || exit 1
+    printf '%s' "$1" > "$REVIEW_PATH_CAPTURE"
+  fi
+  shift
+done
+[ -s "$REVIEW_BODY_CAPTURE" ] || exit 1
+printf 'XR-777 заведена\n'
+exit "$REVIEW_ADD_EXIT"
+`
+	if err := os.WriteFile(filepath.Join(root, "taskctl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := reviewBody(ticket{Key: "ABC-12", Title: "Импорт"}, "", "0+0+1+0+2")
+	for _, code := range []string{"0", "7"} {
+		t.Run("exit-"+code, func(t *testing.T) {
+			t.Setenv("REVIEW_ADD_EXIT", code)
+			id, _, err := addReviewRow(root, reviewRowParams{title: "Ревью ABC-12", rank: "0+0+1+0+2", cost: "S", body: body})
+			if code == "0" && (err != nil || id != "XR-777") {
+				t.Fatalf("add: %s, %v", id, err)
+			}
+			if code != "0" && err == nil {
+				t.Fatal("ошибка add потеряна")
+			}
+			got, err := os.ReadFile(capture)
+			if err != nil || string(got) != body {
+				t.Fatalf("описание не дошло до add: %q, %v", got, err)
+			}
+			bodyPath, err := os.ReadFile(pathCapture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(string(bodyPath)); !os.IsNotExist(err) {
+				t.Fatalf("временное описание осталось после add: %s, %v", bodyPath, err)
+			}
+		})
 	}
 }

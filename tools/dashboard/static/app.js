@@ -16444,6 +16444,9 @@ const DRAFT_TEMPLATE = ["### Ситуация", "", "", "### Осложнени�
   "### Вопрос", "", "", "### Гипотеза", ""].join("\n");
 // Подписи полей черновика стоят на верхней границе рамки самих полей (макет
 // DK-447): подсказки внутри полей сняты, рамка отличает поле от фона и без них.
+const TASK_TEMPLATE = ["## Что происходит", "", "", "## Чего хотим", "", "",
+  "## DoD", "", "- ", "", "## Ранг", "", "- Серьёзность: ",
+  "- Ценность: ", "- Неопределённость: ", "- Поправка на баг: ", "- Рычаг: "].join("\n");
 const DRAFT_TITLE_LABEL = "Наименование черновика";
 const DRAFT_BODY_LABEL = "Описание";
 // Порог наименования держит и утилита записи (TASKFORM.md, раздел «Первая
@@ -16527,7 +16530,7 @@ function newFormFilled() {
     return title !== "" || (body.trim() !== "" && body !== DRAFT_TEMPLATE);
   }
   const text = String(newForm.title || "");
-  if (text.trim()) return true;
+  if (text.trim() || (newForm.body.trim() && newForm.body !== TASK_TEMPLATE)) return true;
   return newForm.type !== "task" || newForm.cost !== "-" ||
     newForm.parts.some((n) => Number(n) !== 0) ||
     newForm.accept !== "agent" || Boolean(newForm.barrier) ||
@@ -16595,9 +16598,9 @@ function renderNew(project, kind) {
   // перечитывается по фокусу окна, и класть шаблон каждой перерисовкой значило
   // бы возвращать его в очищенное рукой поле, споря с человеком. Наименование
   // шаблоном не затрагивается: оно остаётся отдельным коротким полем.
-  const seeded = draft && !newForm.seeded && !newForm.body.trim();
-  if (draft && !newForm.seeded) {
-    if (seeded) newForm.body = DRAFT_TEMPLATE;
+  const seeded = !newForm.seeded && !newForm.body.trim();
+  if (!newForm.seeded) {
+    if (seeded) newForm.body = draft ? DRAFT_TEMPLATE : TASK_TEMPLATE;
     newForm.seeded = true;
   }
 
@@ -16688,7 +16691,7 @@ function renderNew(project, kind) {
   const bodyArea = el("textarea", "tbig");
   bodyArea.rows = 1;
   bodyArea.value = newForm.body || "";
-  bodyArea.setAttribute("aria-label", "описание черновика");
+  bodyArea.setAttribute("aria-label", draft ? "описание черновика" : "описание задачи");
   const fitBody = () => {
     bodyArea.style.height = "auto";
     if (bodyArea.scrollHeight) bodyArea.style.height = bodyArea.scrollHeight + "px";
@@ -16814,7 +16817,7 @@ function renderNew(project, kind) {
     lead: draft ? draftLead : [], extra: draft ? [] : [card],
     // Описание черновика встаёт сразу под наименованием, отдельным полем
     // формы в такой же рамке, а не общим текстом с ним (DK-1252, макет DK-447).
-    afterChips: draft ? [bodyField] : [],
+    afterChips: [bodyField],
     // Форма заведения это та же правка задачи с пустыми полями: правка тут
     // включена всегда, и выключать её нечем, экран для неё и открыт.
     has: draft ? { title: true } : { title: true, type: true, cost: true, rank: true },
@@ -16884,6 +16887,7 @@ function renderNew(project, kind) {
       const send = view.save;
       const body = {
         title: text,
+        body: newForm.body,
         type: newForm.type,
         cost: newForm.cost,
         r_parts: newForm.parts.map(Number),
@@ -16896,10 +16900,8 @@ function renderNew(project, kind) {
       makeTask(project, body, [send]).then(async (done) => {
         if (!done) return;
         resetNewForm(project);
-        // Заведённая строка открывается сразу: с телефона следующий шаг это
-        // дописать постановку, а искать её глазами по Backlog неудобно. На
-        // доске она при этом уже стоит помеченной: возврат туда рисует список
-        // свежим ответом, а не тем, что дашборд помнил до заведения.
+        // Заведённая строка открывается с сохранённой постановкой. Возврат
+        // на доску получает свежий список с этой строкой.
         freshRow = done.id || "";
         if (!done.id) {
           renderNew(project);

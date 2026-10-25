@@ -47,7 +47,7 @@ func TestBoardGuardRefusesFromWorktree(t *testing.T) {
 		run  func() (string, error)
 	}{
 		{"add", func() (string, error) {
-			return cmdAdd(wt, AddParams{Title: "Из worktree", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"})
+			return cmdAdd(wt, AddParams{BodyFile: fixtureAddBody(t, wt, ""), Title: "Из worktree", Type: "task", Rank: "0+1+1+0+1", Link: "x", Accept: "agent"})
 		}},
 		{"move", func() (string, error) {
 			return cmdMove(wt, "XR-004", SectInProgress, "", CommitOpts{})

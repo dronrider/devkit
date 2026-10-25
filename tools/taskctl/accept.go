@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/accept"
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 // Вид приёмки задачи живёт суффиксом заголовка строки доски, а причина
@@ -92,7 +93,7 @@ func readSectionFromPath(path, heading string) (text string, found, ok bool) {
 	if err != nil {
 		return "", false, false
 	}
-	lines := strings.Split(string(data), "\n")
+	lines := strings.Split(taskform.VisibleText(string(data)), "\n")
 	// Ограждение, не закрытое до конца файла, ограждением не считается:
 	// иначе раздел с забытым ``` тянется за все заголовки до последней строки
 	// (DK-820, обкатка гоняла прозу шагами).

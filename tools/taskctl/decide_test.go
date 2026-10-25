@@ -252,7 +252,7 @@ func TestAddLinkPrintsGoalForks(t *testing.T) {
 	if err := os.WriteFile(taskFilePath(root, "XR-002"), []byte(goal), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := cmdAdd(root, AddParams{ID: "XR-051", Title: "Наследная", Type: "task", Rank: "25+2+1+0+2", Link: "tasks/XR-002.md", Accept: "agent"})
+	msg, err := cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-051"), ID: "XR-051", Title: "Наследная", Type: "task", Rank: "25+2+1+0+2", Link: "tasks/XR-002.md", Accept: "agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestAddLinkPrintsGoalForks(t *testing.T) {
 		t.Fatalf("печать не сказала, чем переносить:\n%s", msg)
 	}
 	// Строка без цели печать не заводит, и своих развилок у неё пока нет.
-	msg, err = cmdAdd(root, AddParams{ID: "XR-052", Title: "Сама по себе", Type: "task", Rank: "25+2+1+0+2", Accept: "agent"})
+	msg, err = cmdAdd(root, AddParams{BodyFile: fixtureAddBody(t, root, "XR-052"), ID: "XR-052", Title: "Сама по себе", Type: "task", Rank: "25+2+1+0+2", Accept: "agent"})
 	if err != nil {
 		t.Fatal(err)
 	}

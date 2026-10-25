@@ -13,6 +13,7 @@
 ## Проверка
 
 ```sh
+set -eu
 python3 - <<'PY'
 from pathlib import Path
 import re

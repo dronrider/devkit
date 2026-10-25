@@ -368,6 +368,10 @@ SESSION_WAIT = 180
 # молчать не может, отметка «начат» приходит сразу за заказом. Поэтому такая
 # тишина значит неподключённую отметку хода либо замёрзшее окно.
 MUTE_SECONDS = 1800
+# Сколько ждать первого «начат» после заказа. Отметка приходит первой же
+# секундой живого хода, и две минуты тут с запасом на холодный старт клиента.
+STARTUP_ENV = "DEVKIT_TASK_STARTUP"
+STARTUP_SECONDS = 120
 # Пауза между текстом реплики и переводом строки при подаче в живой процесс.
 # Клиент читает ввод построчно и рисует его в поле; Enter, пришедший в том же
 # пакете, обгоняет отрисовку, и в поле остаётся половина заказа (chats.go).
@@ -378,6 +382,18 @@ SEND_PAUSE = 0.25
 # LOCK_YOUNG секунд ещё занят: каталог и pid пишутся двумя шагами.
 LOCK_FROM_ENV = "DEVKIT_TASK_LOCK_FROM"
 LOCK_YOUNG = 5
+# Порог замерзания замка (DK-1454). Живой pid сам по себе работой не
+# считается: признак жизни замка это отметка BEAT_NAME, которой оболочка
+# касается на отметке хода, вопросе человеку и подтверждённом ожидании.
+# Живой владелец без свежей отметки замерз, и замок снимается как брошенный.
+# Значение стоит с запасом к собственным срокам оболочки: молчащее окно она
+# снимает сама двумя окнами молчания, а этот рубеж подхватывает замерзшую саму
+# оболочку. Одно число с taskhead (lockStale) и lift (STALE_AFTER) держат
+# сторожа пары.
+STALE_AFTER = 7200
+BEAT_NAME = "beat"
+# Как часто печатная оболочка касается beat в ожидании живого клиента.
+BEAT_STEP = 300
 BUSY = 3
 # Жизнь записи реестра чужой сессии: дольше этого срока работа уже не живая,
 # хотя state остался running (ребут, kill -9). Порог тот же, что в sweep
@@ -615,6 +631,19 @@ def young(path):
         return False
 
 
+def beat_age(lock):
+    """Возраст последнего признака жизни замка, секунды. Отметка это файл
+    BEAT_NAME, а замкам, поднятым до его появления, последним признаком жизни
+    был сам pid: время его записи и меряется. Замка без обоих файлов не
+    бывает, ноль значит свежий подъём."""
+    for name in (BEAT_NAME, "pid"):
+        try:
+            return time.time() - os.path.getmtime(os.path.join(lock, name))
+        except OSError:
+            continue
+    return 0.0
+
+
 def parse_args(argv):
     """Разбор своими руками, а не argparse: хвост после `--` это чужая команда
     целиком, включая её собственные `--`, и отдавать её разбор библиотеке
@@ -727,8 +756,10 @@ class Pipeline:
 
     def take_lock(self):
         """Замок на задачу до разговора с доской. Вторая голова по той же
-        задаче заказывала бы проходы поверх первой, и занятый живым владельцем
-        замок это стоп кодом 3."""
+        задаче заказывала бы проходы поверх первой, и занятый работающим
+        владельцем замок это стоп кодом 3. Живой pid сам по себе работой не
+        считается (DK-1454): владелец без свежей отметки жизни замерз, и замок
+        снимается как брошенный."""
         lock = os.path.join(HOME_DIR, "task-%s.lock" % self.id.upper())
         pidfile = os.path.join(lock, "pid")
         handed = (os.environ.get(LOCK_FROM_ENV) or "").strip()
@@ -744,7 +775,8 @@ class Pipeline:
                 if handed and owner == handed:
                     took = True
                     break
-                if pid_alive(owner) or (not owner and young(lock)):
+                working = pid_alive(owner) and beat_age(lock) < STALE_AFTER
+                if working or (not owner and young(lock)):
                     die("голова %s уже поднята: замок %s держит pid %s"
                         % (self.id, lock, owner or "без записи"), BUSY)
                 shutil.rmtree(lock, ignore_errors=True)
@@ -754,6 +786,22 @@ class Pipeline:
             f.write("%d\n" % os.getpid())
         os.replace(pidfile + ".tmp", pidfile)
         self.lock = lock
+        self.beat()
+
+    def beat(self):
+        """Отметка жизни замка. Оболочка касается её на каждом признаке жизни:
+        отметке хода, вопросе человеку и подтверждённом ожидании. Живой pid
+        без отметки держал бы замок вечно (DK-1454), поэтому признак жизни
+        пишет тот, кто его видит."""
+        if not self.lock:
+            return
+        path = os.path.join(self.lock, BEAT_NAME)
+        now = time.time()
+        try:
+            open(path, "a", encoding="utf-8").close()
+            os.utime(path, (now, now))
+        except OSError:
+            pass
 
     def drop_lock(self):
         """Снять свой замок на выходе. Чужой, перехваченный после ребута, не
@@ -1312,6 +1360,8 @@ class Pipeline:
         ожидания."""
         lines, self.turns_seen = self.fresh(self.log_path(TURNS_ENV, TURNS_LOG),
                                             self.turns_seen, self.own_mark)
+        if lines:
+            self.beat()
         for line in lines:
             got = self.fields(line, TURN_KEYS)
             self.pending.append((got.get("ход", ""), got.get("повод", "-"),
@@ -1324,6 +1374,8 @@ class Pipeline:
         по точности, а это запасной канал. Он держится на другом хуке и
         переживает то, чего не переживает первый."""
         lines, self.note_seen = self.fresh(NOTIFY_LOG, self.note_seen, self.own_note)
+        if lines:
+            self.beat()
         return [(self.fields(line, NOTE_KEYS).get("повод", "-"), self.when(line))
                 for line in lines]
 
@@ -1556,9 +1608,11 @@ class Pipeline:
     def hold(self, mark):
         """Ждать события или срока. Живая голова при этом стоит в своём окне и
         никуда не девается, а реплика человека обрывает ожидание: заказ поверх
-        начатого хода оболочка не шлёт."""
+        начатого хода оболочка не шлёт. Ожидание подтверждено самой доской, и
+        замок живёт его срок: тишина окна здесь не замерзание (DK-1454)."""
         until = self.when(mark.get("until"))
         while True:
+            self.beat()
             self.poll_handoff()
             now = time.time()
             if self.wait_done(mark, now):
@@ -1582,22 +1636,36 @@ class Pipeline:
         отвечает второй репликой, и ход кончается ещё раз, а «начат» у него
         один. Лишняя отметка доставалась следующему проходу, закрывала его за
         ноль секунд и вела в воронку холостых (DK-966). Ход, начатый репликой
-        человека, пару имеет и проход кончает по-прежнему."""
+        человека, пару имеет и проход кончает по-прежнему.
+
+        Тишина не держит окно вечно (DK-1454). Ход, не начавшийся за свой
+        срок, и молчание отметок после начатого это не работа: первая такая
+        тишина зовёт человека и даёт ещё одно такое же окно на отметку, а
+        вторая подряд снимает окно и освобождает замок, строку поднимет тик.
+        Стоящий вопрос человека этому не помеха: ожидание подтверждено и
+        зависанием не объявляется, замок в нём жив."""
         started, mute, said = time.time(), time.time(), False
-        begun, late = False, ""
+        begun, late, due = False, "", {}
+        standing = False
         while True:
             # Запасной канал читается первым. Конец хода в той же пачке
             # отметок обрывает разбор возвратом, и строка уведомителя досталась
             # бы следующему проходу, у которого память зова уже чиста.
             for why, when in self.notes():
                 # Отметки хода у сессии может не быть вовсе, а вопрос она
-                # задала. Значит, человека зовём по строке уведомителя. Тишину
-                # журнала это не отменяет, её называет mute.
+                # задала. Значит, человека зовём по строке уведомителя.
                 if why in STANDING:
                     self.stuck(n, why, when)
+                    standing = True
             got = self.marks()
             for i, (word, why, when) in enumerate(got):
-                mute = time.time()
+                # Любая отметка это признак жизни: тишина, которой она
+                # кончилась, закрыта, и новый её эпизод зовёт заново. Ход,
+                # начатый либо конченный, стоячего вопроса больше не держит.
+                mute, said = time.time(), False
+                due.pop("mute", None)
+                if word in TURN_OVER or word == TURN_STARTED:
+                    standing = False
                 if word in TURN_OVER:
                     if not begun:
                         late = word
@@ -1620,8 +1688,10 @@ class Pipeline:
                     if begun:
                         self.said_stuck = {}
                     begun, said = True, False
+                    due.pop("startup", None)
                 if word == TURN_WAITS and why in STANDING:
                     self.stuck(n, why, when)
+                    standing = True
             if not self.head_alive():
                 # Отметка конца хода и выход клиента приходят почти разом, и
                 # порядок их не обещан. Последние строки журнала дочитываются
@@ -1634,21 +1704,33 @@ class Pipeline:
                 return ""
             if not begun or late or self.wait_mark(consume=False):
                 self.poll_handoff()
+            if standing:
+                # Подтверждённое ожидание человека: тишина отметок тут законна,
+                # ни работой, ни зависанием она не объявляется, а замок живёт.
+                self.beat()
+            else:
+                quiet = time.time() - mute > self.secs(MUTE_ENV, MUTE_SECONDS)
+                startup = not begun and time.time() - started > self.secs(
+                    STARTUP_ENV, STARTUP_SECONDS)
+                if not said and startup:
+                    self.say("проход %d не начался: проверь запрос доверия каталогу, "
+                             "авторизацию и хук turn-mark.py; живой процесс не "
+                             "подтверждает работу" % n)
+                    self.log("запуск без начатого хода, %s, проход %d" % (self.id, n), 0)
+                    self.shout("run_stop", "%s: %s ход не начался" % (self.project, self.id),
+                               "проверь запрос доверия каталогу, авторизацию и хук "
+                               "turn-mark.py; клиенту дано ещё одно окно на отметку хода")
+                    said, due["startup"] = True, time.time() + self.secs(
+                        STARTUP_ENV, STARTUP_SECONDS)
+                elif due.get("startup") and time.time() >= due["startup"]:
+                    self.unhang(n, "ход так и не начался")
+                if not said and quiet:
+                    self.mute(n, int(time.time() - started))
+                    said, due["mute"] = True, mute + 2 * self.secs(
+                        MUTE_ENV, MUTE_SECONDS)
+                elif due.get("mute") and time.time() >= due["mute"]:
+                    self.unhang(n, "молчание отметок хода не кончилось")
             quiet = time.time() - mute > self.secs(MUTE_ENV, MUTE_SECONDS)
-            startup = not begun and time.time() - started > self.secs(
-                "DEVKIT_TASK_STARTUP", 120)
-            if not said and startup:
-                self.say("проход %d не начался: проверь запрос доверия каталогу, "
-                         "авторизацию и хук turn-mark.py; живой процесс не "
-                         "подтверждает работу" % n)
-                self.log("запуск без начатого хода, %s, проход %d" % (self.id, n), 0)
-                self.shout("run_stop", "%s: %s ход не начался" % (self.project, self.id),
-                           "проверь запрос доверия каталогу, авторизацию и хук turn-mark.py; "
-                           "клиент оставлен работающим")
-                said = True
-            if not said and quiet:
-                self.mute(n, int(time.time() - started))
-                said = True
             if late and quiet:
                 # Непарная отметка да получас тишины за нею. Пары у отметки нет
                 # не потому, что ход был лишний, а потому, что «начат» пропал
@@ -1661,6 +1743,15 @@ class Pipeline:
                 self.said_stuck = {}
                 return late
             time.sleep(self.secs(WATCH_ENV, WATCH_STEP))
+
+    def unhang(self, n, what):
+        """Снять молчащее окно и уйти (DK-1454). Второе окно тишины подряд
+        значит, что клиента не разбудить, и живой процесс без признаков работы
+        это не работа. Конвейер останавливается, окно и замок освобождаются, а
+        строку поднимет тик: разбор затора живой головы не требует."""
+        after = self.status(self.show()) or "конвейер"
+        self.stop(1, after, "%s второе окно подряд: окно снято, замок освобождён; "
+                           "строку поднимет тик" % what)
 
     def spare(self, n, word):
         """Отметка конца без парного «начат». Такую пишет вторая реплика головы
@@ -1691,13 +1782,15 @@ class Pipeline:
     def mute(self, n, spent):
         """Полчаса без единой отметки. Отметка «начат» приходит сразу за
         заказом. Поэтому такая тишина значит неподключённый хук отметки хода
-        либо замёрзшее окно, а не долгий ход."""
-        self.say("проход %d молчит %d с: ни одной отметки хода" % (n, spent))
+        либо замёрзшее окно, а не долгий ход. Зов даёт ещё одно окно на
+        отметку, а вторая тишина подряд снимает окно (unhang)."""
+        self.say("проход %d молчит %d с: ни одной отметки хода, ещё одно окно и "
+                 "молчащее окно снимется" % (n, spent))
         self.log("живая голова %s молчит %d с без отметок хода, %s"
                  % (self.sess, spent, self.id), 0)
         self.shout("run_stop", "%s: %s конвейер молчит" % (self.project, self.id),
                    "живая сессия не отмечает ходы: хук turn-mark.py не подключён "
-                   "либо окно замёрзло")
+                   "либо окно замёрзло; ещё одно окно тишины, и окно снимется")
 
     def drop_head(self):
         """Снять живую голову на выходе оболочки. Окно закрывается вместе с
@@ -1981,14 +2074,26 @@ class Pipeline:
     def run_pass(self, order):
         """Один подъём головы. Вывод клиента идёт в панель как есть, не через
         оболочку: панель сессии читают глазами, и прятать ход работы в буфер
-        оболочки значило бы гасить экран на всё время прохода."""
+        оболочки значило бы гасить экран на всё время прохода.
+
+        Оболочка при этом ждёт клиента с своей стороны и держит замок живым,
+        пока клиент жив: печатный проход идёт часами без отметок хода в общем
+        журнале, и без касаний beat сторонний подъём снял бы замок под
+        работающим проходом (DK-1454)."""
         cmd = self.head_cmd(order, live=False)
         self.say("проход поднят: %s" % " ".join(shlex.quote(c) for c in cmd[:-1]))
         started = time.time()
         try:
-            p = subprocess.run(cmd, cwd=self.proj, env=self.head_env(live=False))
+            p = subprocess.Popen(cmd, cwd=self.proj, env=self.head_env(live=False))
         except OSError as e:
             die("клиент не поднялся (%s): %s" % (e, " ".join(self.client)))
+        while True:
+            try:
+                p.wait(timeout=BEAT_STEP)
+            except subprocess.TimeoutExpired:
+                self.beat()
+                continue
+            break
         return p.returncode, time.time() - started
 
     def secs(self, name, default):

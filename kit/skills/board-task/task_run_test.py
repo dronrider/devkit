@@ -317,7 +317,11 @@ if "ротация" in plan:
 # стаб берёт по размеру файла на старте, иначе ротация дала бы новой голове
 # чужой остовор заказом.
 at = os.path.getsize(inbox) if os.path.exists(inbox) else 0
-order, argv_live = sys.argv[-1], True
+order = sys.argv[-1]
+# Первый заказ живой головы приходит аргументом и отмечается хуком как всякий
+# ход. Стенду «немого старта» отметку отключает DEVKIT_TEST_NO_START: сессия
+# поднялась, а хука отметки хода в её настройках нет (DK-1454).
+argv_live = os.environ.get("DEVKIT_TEST_NO_START", "") == ""
 while True:
     with open(calls, "a", encoding="utf-8") as f:
         f.write(order + "\n")
@@ -371,6 +375,11 @@ while True:
     elif step == "вопрос":
         mark("ждёт", "permission_prompt")
         time.sleep(0.3)
+    elif step == "долгий вопрос":
+        # Стоящий вопрос дольше срока тишины: подтверждённое ожидание человека
+        # зависанием не объявляется, и окно за него не снимается (DK-1454).
+        mark("ждёт", "permission_prompt")
+        time.sleep(2.5)
     elif step == "немой вопрос":
         # Сессия поднята до того, как хук отметки хода лёг в настройки харнеса:
         # вопрос разрешения есть, отметки нет ни одной. Так простоял конвейер
@@ -414,10 +423,12 @@ while True:
             f.writelines(tail)
         time.sleep(1)
     elif step == "потеря":
-        # Журнал отметок пропал целиком: снят руками, стёрт уборкой дома.
+        # Журнал отметок пропал целиком: снят руками, стёрт уборкой дома. Сон
+        # дольше двух окон тишины стенда: окно должно успеть сняться раньше
+        # отметки конца, которой взяться из пустого журнала неоткуда.
         if os.path.exists(turns):
             os.remove(turns)
-        time.sleep(2)
+        time.sleep(3)
     elif step == "фон":
         subprocess.Popen([sys.executable, "-c",
                           "import sys,time;time.sleep(1);"
@@ -1215,10 +1226,51 @@ class TestLiveHead(unittest.TestCase):
     def test_mute_session_is_named_aloud(self):
         # Ни одной отметки за срок: хук отметки хода не подключён либо окно
         # замёрзло. Молчание тут неотличимо от работы, и назвать его надо вслух.
-        s = self.stand(plan="молчит|закрой", mute="1")
+        # Срок вдвое длиннее тишины шага: зов обязан успеть раньше отметки
+        # конца, иначе проход кончился бы снятием окна.
+        s = self.stand(plan="молчит|закрой", mute="2")
         got = s.run()
         self.assertEqual(got.returncode, 0, s.why(got))
         self.assertTrue([l for l in s.journal() if "молчит" in l], s.journal())
+
+    def test_mute_window_is_taken_down(self):
+        # Предмет DK-1454: молчание не держит окно вечно. Первый зов даёт ещё
+        # одно такое же окно на отметку, а вторая тишина подряд снимает окно и
+        # освобождает замок. Живой процесс без признаков работы это не работа.
+        s = self.stand(plan="молчит", mute="1")
+        got = s.run()
+        self.assertEqual(got.returncode, 1, s.why(got))
+        self.assertTrue([l for l in s.journal() if "молчит" in l], s.journal())
+        down = [l for l in s.journal() if "окно снято, замок освобождён" in l]
+        self.assertTrue(down, s.journal())
+        self.assertIn("строку поднимет тик", down[0])
+        self.assertFalse(os.path.exists(os.path.join(s.root, ".devkit",
+                                                    "task-DK-1.lock")),
+                         "замок остался у снятого окна")
+
+    def test_startup_window_is_taken_down(self):
+        # Ход, не начавшийся за свой срок, тоже не работа: хук отметки хода не
+        # лежит в настройках сессии, и два окна без «начат» кончаются тем же
+        # снятием окна.
+        s = self.stand(plan="молчит", mute="5")
+        got = s.run(extra={"DEVKIT_TEST_NO_START": "1",
+                          "DEVKIT_TASK_STARTUP": "1"})
+        self.assertEqual(got.returncode, 1, s.why(got))
+        said = [l for l in s.journal() if "не начался" in l]
+        self.assertTrue(said, s.journal())
+        self.assertTrue([l for l in s.journal() if "окно снято, замок освобождён" in l],
+                        s.journal())
+
+    def test_confirmed_wait_is_not_named_mute(self):
+        # Стоящий вопрос дольше срока тишины: ожидание человека подтверждено и
+        # зависанием не объявляется (DK-1454). Ни зова «молчит», ни снятия окна,
+        # а замок в ожидании жив.
+        s = self.stand(plan="долгий вопрос|закрой", mute="1")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual([l for l in s.journal() if "молчит" in l], [], s.journal())
+        said = [l for l in s.journal() if "ждёт человека" in l]
+        self.assertTrue(said, s.journal())
 
     def test_human_reply_holds_the_order(self):
         # Реплику человека панель подаёт в это же окно, и свой заказ поверх неё
@@ -1352,14 +1404,17 @@ class TestLiveHead(unittest.TestCase):
         ends = [l for l in s.journal() if "конец прохода живой головы" in l]
         self.assertEqual(len(ends), 3, ends)
 
-    def test_lost_journal_calls_the_human(self):
-        # Журнала отметок нет вовсе: снят руками, стёрт уборкой дома. Ждать
-        # конца прохода тут можно до скончания века, и молчать об этом нельзя.
-        s = self.stand(plan="работа|потеря|закрой", mute="1")
+    def test_lost_journal_names_the_human_and_takes_the_window_down(self):
+        # Журнала отметок нет вовсе: снят руками, стёрт уборкой дома. Конца
+        # прохода по нему не узнать никогда: зов человека назван вслух, а после
+        # второго окна тишины окно снимается, строку поднимет тик (DK-1454).
+        s = self.stand(plan="работа|потеря", mute="1")
         got = s.run()
-        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual(got.returncode, 1, s.why(got))
         self.assertTrue([l for l in s.journal() if "молчит" in l], s.journal())
-        self.assertEqual(len(s.orders()), 3, s.orders())
+        down = [l for l in s.journal() if "окно снято, замок освобождён" in l]
+        self.assertTrue(down, s.journal())
+        self.assertIn("строку поднимет тик", down[0])
 
     def test_dead_head_stops_the_pipeline(self):
         # Клиент вышел раньше задачи: окно закрывается, и с экрана дашборда это
@@ -2333,6 +2388,26 @@ class TestLock(unittest.TestCase):
         self.assertEqual(got.returncode, 0, got.stderr)
         self.assertFalse(os.path.exists(self.lock))
 
+    def test_frozen_owner_is_retaken(self):
+        # Живой pid без признаков жизни держал бы замок вечно (DK-1454):
+        # замерзшего владельца замок не защищает, и вторая голова встаёт.
+        self.hold(self.live())
+        old = time.time() - 3 * 60 * 60
+        os.utime(os.path.join(self.lock, "pid"), (old, old))
+        got = self.stand.run()
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertFalse(os.path.exists(self.lock))
+
+    def test_working_beat_keeps_the_lock(self):
+        # Обратная сторона того же правила: владелец со свежей отметкой жизни
+        # занят по-настоящему, и поверх него вторая голова не встаёт.
+        self.hold(self.live())
+        open(os.path.join(self.lock, task_run.BEAT_NAME), "w",
+             encoding="utf-8").close()
+        got = self.stand.run()
+        self.assertEqual(got.returncode, 3, got.stderr)
+        self.assertTrue(os.path.isdir(self.lock), "чужой замок снят")
+
     def test_own_lock_is_released(self):
         got = self.stand.run()
         self.assertEqual(got.returncode, 0, got.stderr)
@@ -2708,12 +2783,15 @@ class TestCheckHandoff(WaitStand):
         p = self.prepared()
         p.show = lambda: "DK-1 в in-progress"
         p.notes, p.marks = lambda: [], lambda: []
-        p.head_alive = unittest.mock.Mock(side_effect=[True, True, True, False])
+        p.head_alive = unittest.mock.Mock(side_effect=[True, False])
         p.shout, p.drop_head = unittest.mock.Mock(), unittest.mock.Mock()
         p.say, p.log = unittest.mock.Mock(), unittest.mock.Mock()
-        os.environ["DEVKIT_TASK_STARTUP"] = "0"
-        with unittest.mock.patch.object(task_run.time, "sleep"):
-            self.assertEqual(p.wait_turn(1), "")
+        # Голова умирает раньше срока второго окна: проверяется сам зов, один
+        # на проход, а снятие окна по истечению срока живой стенд уже показал
+        # (test_startup_window_is_taken_down).
+        with unittest.mock.patch.dict(os.environ, {"DEVKIT_TASK_STARTUP": "0"}):
+            with unittest.mock.patch.object(task_run.time, "sleep"):
+                self.assertEqual(p.wait_turn(1), "")
         p.shout.assert_called_once()
         self.assertIn("доверия", p.shout.call_args.args[2])
         p.drop_head.assert_not_called()

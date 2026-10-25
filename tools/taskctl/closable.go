@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // Вопрос «кого из Check вправе закрыть автоматика» задаёт тик сторожка
@@ -59,9 +62,39 @@ func closable(root string, b *Board) []closableRow {
 			out = append(out, closableRow{r.ID, "сценарий прогнал исполнитель разработки: нужен прогон другой моделью"})
 			continue
 		}
+		// Этапы закрытия сверх встроенных троих держат автозакрытие тем же
+		// воротом, что и ручной close: добавленный организацией этап с
+		// gate = close не обходится тиком стороной (DK-1144).
+		if reason := closeTemplateLack(root, r); reason != "" {
+			out = append(out, closableRow{r.ID, reason})
+			continue
+		}
 		out = append(out, closableRow{ID: r.ID})
 	}
 	return out
+}
+
+// closeTemplateLack спрашивает этапы шаблона закрытия сверх встроенных троих:
+// сценарий, обкатка и проверка уже спросили своё выше, а след этапа с другой
+// работой (trace вне словаря троих) здесь неоткуда взять, и ворота считают
+// его непройденным тем же обходом, что у ручного close (DK-1144). Пустая
+// строка значит, держать нечего.
+func closeTemplateLack(root string, r *Row) string {
+	tpl, ok := templateOf(root, r)
+	if !ok {
+		return ""
+	}
+	c := gateCtx(root, r, taskDocOf(root, r.ID), trace.GateClose, "закрытие")
+	for _, st := range gateStages(tpl, trace.GateClose, r, c) {
+		switch st.Trace {
+		case "", trace.WordScenario, trace.WordRehearsal, trace.WordVerify:
+			continue
+		}
+		if v, why := trace.Check(st.Trace, c); v == trace.Lack {
+			return fmt.Sprintf("этап «%s» без следа (шаблон %s): %s", st.Title, tpl.Name, why)
+		}
+	}
+	return ""
 }
 
 // cmdClosable печатает готовых к закрытию по одному ID в строке, а отказы

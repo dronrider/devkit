@@ -36,6 +36,28 @@ func planNameOf(planSuf string) string {
 	return strings.TrimSpace(m[1])
 }
 
+// templateOf называет шаблон плана строки: суффикс [план: имя], а без него
+// выбор по типу строки (LLD DK-972, решение 4). Второй ответ ложный, когда
+// набора не видно вовсе или шаблона для строки в нём нет: перечень этапов
+// читается из файла, и держать строку неоткуда.
+func templateOf(root string, row *Row) (*plans.Template, bool) {
+	set, err := planSetLoad(root)
+	if err != nil {
+		return nil, false
+	}
+	_, _, _, _, planSuf, _, _, _ := splitTitle(row.Title)
+	if name := planNameOf(planSuf); name != "" {
+		return set.Get(name)
+	}
+	for _, name := range set.Names {
+		t, ok := set.Get(name)
+		if ok && amongStr(t.Types, row.Type) {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
 // cmdPlan ставит и снимает суффикс шаблона плана. Имя сверяется с набором тут
 // же: суффикс с чужим именем собрал бы агентctl отказ на каждом plan set, и
 // находить это лучше в момент правки строки, а не в работе исполнителя.

@@ -4,15 +4,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
 	"sort"
 	"strings"
 
-	"github.com/dronrider/devkit/internal/checkrun"
-	"github.com/dronrider/devkit/internal/merged"
 	"github.com/dronrider/devkit/internal/obey"
-	"github.com/dronrider/devkit/internal/rehearsal"
-	"github.com/dronrider/devkit/internal/stage"
+	"github.com/dronrider/devkit/internal/plans"
 	"github.com/dronrider/devkit/internal/taskform"
 	"github.com/dronrider/devkit/internal/trace"
 )
@@ -37,94 +33,137 @@ func gitMainBranch(root string) string {
 	return ""
 }
 
-// scenarioElsewhere отвечает, ведёт ли ссылка строки не в файл задачи, а в
-// другой документ: LLD-задача описывает проверку прямо в дизайне
-// (RULES.board.md, «Трекинг задач» п. 6), и файла задачи у неё может не быть.
-// Заглушка вида «(LLD позже)» ссылкой не считается: смотреть по ней некуда.
-func scenarioElsewhere(link, id string) bool {
-	m := linkRe.FindStringSubmatch(link)
-	if m == nil {
-		return false
-	}
-	return path.Base(m[1]) != id+".md"
-}
-
-// checkGate держит рубежи перевода в Check: готовый сценарий проверки,
-// обкатка, слитый код и перебор обходов приёмки. Нарушения приходят от слабой
-// модели, которая прозу правил не держит, а через move ходит обязательно,
-// поэтому отказ называет причину и следующий шаг.
+// checkGate держит рубеж перевода в Check: этапы шаблона строки, у которых в
+// gate стоит check и сошлось условие (LLD DK-972, решение 7). У встроенного
+// шаблона это сценарий с перебором обходов приёмки, обкатка агентского вида и
+// слитый код; перечень читается из файла, и добавленный организацией этап
+// ворота спрашивают наравне со встроенными. Отказ называет каждый этап без
+// следа и пометку, которой его гасят.
 func checkGate(root string, row *Row) error {
-	id := row.ID
-	if err := scenarioGate(root, row, "move", true); err != nil {
-		return err
-	}
-	// Обкатка спрашивается у агентского вида: там каждый шаг выполним с машины
-	// агента, и прогнать сценарий до Check ничего не стоит. У mixed и user
-	// часть шагов держит человек, требовать от них машинную отметку не о чем.
-	if acceptOf(row.Title) == acceptAgent {
-		if err := rehearsalGate(root, id); err != nil {
-			return err
-		}
-	}
-	if br, ahead := trace.UnmergedTaskBranch(root, id); br != "" {
-		return fmt.Errorf("%s: ветка %s не слита, впереди main её коммитов %d, а Check значит, что код уже доехал до пользователя: сначала «shipctl merge %s», он и переведёт строку", id, br, ahead, id)
-	}
-	// Не агентский вид требует раздел «Приёмка» с перебором обходов
-	// (LLD DK-292, решение 4): машина считает строки, ревьювер судит причины.
-	if kind := acceptOf(row.Title); kind != acceptAgent {
-		if err := acceptGate(root, id, kind, "move"); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err := gatePass(root, row, trace.GateCheck, "move")
+	return err
 }
 
-// closeGate держит на закрытии строки те же рубежи, что checkGate держит на
-// переводе в Check, кроме слитого кода: закрывают и минуя Check, прямо из In
-// progress, и так в архив уезжали задачи без сценария, без обкатки и без
-// перебора обходов приёмки (DK-685). Проверки те же самые, а не их копия:
-// разойдись они, закрытие снова стало бы дверью без замка. Слитость ветки
-// здесь не спрашивается, её держит сам выход в Check.
+// closeGate держит рубеж закрытия: этапы с gate = close, у встроенного
+// шаблона те же сценарий и обкатка, что у перевода в Check (DK-685), плюс
+// проверка чужими руками со сверкой выката. Слитость ветки закрытие не
+// спрашивает, её держит сам выход в Check.
 func closeGate(root string, row *Row) error {
-	if err := scenarioGate(root, row, "закрытие", false); err != nil {
-		return err
-	}
-	kind := acceptOf(row.Title)
-	if kind == acceptAgent {
-		// Агентский вид требует непустого раздела «Проверка» в файле задачи
-		// (LLD DK-292, решение 4): пустое закрытие агентской задачи запрещено,
-		// и это машинный рубеж против фиктивного сценария из повтора тестов
-		// ветки.
-		if err := closeAgentGate(root, row.ID); err != nil {
-			return err
-		}
-		return closeRehearsalGate(root, row.ID)
-	}
-	return acceptGate(root, row.ID, kind, "закрытие")
+	_, err := gatePass(root, row, trace.GateClose, "закрытие")
+	return err
 }
 
-// scenarioGate требует готовый сценарий проверки: без него задача уходит с
-// доски без способа себя проверить. Сценарий, живущий в другом документе
-// (LLD), ворот проходит по ссылке строки. Ключ needFile говорит, спрашивать ли
-// сам файл задачи: перевод в Check его требует, а закрытие нет, потому что
-// строки старого запаса заводились без файла и закрыть их иначе было бы
-// нечем.
-func scenarioGate(root string, row *Row, again string, needFile bool) error {
-	id := row.ID
-	if scenarioElsewhere(row.Link, id) {
-		return nil
+// stageVerdict это ответ одного этапа шаблона: след на месте либо причина, по
+// которой ворота считают этап непройденным. Список с вердиктами печатает
+// сухой прогон.
+type stageVerdict struct {
+	st   plans.Stage
+	have bool
+	why  string
+}
+
+// gatePass спрашивает след каждого этапа шаблона строки с названной точкой
+// ворот. Пометка «- Исключение: <title>» этап гасит (решение 7), этап со
+// словом «слово» закрыт на слове агента. Ошибка перечисляет непройденные
+// одним списком: чинить их лучше за один проход.
+func gatePass(root string, row *Row, gate, again string) ([]stageVerdict, error) {
+	tpl, ok := templateOf(root, row)
+	if !ok {
+		// Шаблона у строки нет: перечень этапов читается из файла, и
+		// спрашивать нечего. Набор, которого не видно вовсе, линт прощает
+		// молча тем же порядком (lintPlanNames).
+		return nil, nil
 	}
-	has, hasFile := trace.HasScenario(root, id)
-	rel := "docs/tasks/" + id + ".md"
-	switch {
-	case !hasFile && !needFile:
-		return nil
-	case !hasFile:
-		return fmt.Errorf("%s: без готового сценария проверки задачу не выпускают, а файла %s нет: завести «taskctl file %s», описать шаги и ожидаемый итог разделом «Сценарий проверки» и повторить %s", id, rel, id, again)
-	case !has:
-		return fmt.Errorf("%s: в %s нет раздела «Сценарий проверки», без него задачу не выпускают: описать шаги и ожидаемый итог (RULES.board.md, «Трекинг задач» п. 6) и повторить %s", id, rel, again)
+	c := gateCtx(root, row, taskDocOf(root, row.ID), gate, again)
+	whence := "Check"
+	if gate == trace.GateClose {
+		whence = "закрытию"
 	}
-	return nil
+	var out []stageVerdict
+	var lacking []string
+	for _, st := range gateStages(tpl, gate, row, c) {
+		v := stageVerdict{st: st, have: true}
+		if st.Trace != "" {
+			verdict, why := trace.Check(st.Trace, c)
+			v.have, v.why = verdict != trace.Lack, why
+		}
+		out = append(out, v)
+		if !v.have {
+			lacking = append(lacking, fmt.Sprintf("этап «%s» без следа (шаблон %s): %s; снимается пометкой «- Исключение: %s (причина)»", st.Title, tpl.Name, v.why, st.Title))
+		}
+	}
+	if len(lacking) > 0 {
+		return out, fmt.Errorf("не готово к %s: %s", whence, strings.Join(lacking, "; "))
+	}
+	return out, nil
+}
+
+// gateStages отбирает этапы шаблона под точку ворот: gate в списке, условие
+// сошлось (LLD DK-972, решение 8). Маска путей считается по диффу ветки, и
+// там, где диффа уже нет (код слит), этап остаётся: незнание его не снимает,
+// гасят его след либо пометка-исключение.
+func gateStages(tpl *plans.Template, gate string, row *Row, c trace.Ctx) []plans.Stage {
+	kind := acceptOf(row.Title)
+	var out []plans.Stage
+	for _, st := range tpl.Stages {
+		if !amongStr(st.Gate, gate) {
+			continue
+		}
+		if len(st.Types) > 0 && !amongStr(st.Types, row.Type) {
+			continue
+		}
+		if len(st.Accept) > 0 && !amongStr(st.Accept, kind) {
+			continue
+		}
+		if len(st.Paths) > 0 {
+			if touched, known := trace.PathsTouched(c.Root, c.Main, c.Branch, st.Paths); known && !touched {
+				continue
+			}
+		}
+		if st.Trace != "" && taskform.Exception(c.Doc, st.Title) {
+			continue
+		}
+		out = append(out, st)
+	}
+	return out
+}
+
+// gateCtx собирает контекст следов для ворот: тот же, что у плана на done
+// (planTraceCtx в agentctl), но от строки доски, с её файлом и ссылкой.
+func gateCtx(root string, row *Row, doc, gate, again string) trace.Ctx {
+	c := trace.Ctx{
+		Root:     root,
+		LogRoot:  root,
+		ID:       row.ID,
+		Doc:      doc,
+		Gate:     gate,
+		Again:    again,
+		Link:     row.Link,
+		TaskType: row.Type,
+		Accept:   acceptOf(row.Title),
+	}
+	c.Main = trace.GitMainBranch(root)
+	c.Branch, _ = trace.UnmergedTaskBranch(root, row.ID)
+	return c
+}
+
+// taskDocOf читает текст файла задачи, отсутствие файла пустой строкой.
+func taskDocOf(root, id string) string {
+	data, err := os.ReadFile(taskFilePath(root, id))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// amongStr отвечает, есть ли значение в списке.
+func amongStr(list []string, v string) bool {
+	for _, s := range list {
+		if s == v {
+			return true
+		}
+	}
+	return false
 }
 
 // cmdMoveDry прогоняет ворота перевода, не трогая доску: строка остаётся на
@@ -151,11 +190,30 @@ func cmdMoveDry(root, id, target string) (string, error) {
 		return "", err
 	}
 	if target == SectCheck {
-		if err := checkGate(root, row); err != nil {
+		stages, err := gatePass(root, row, trace.GateCheck, "move")
+		if err != nil {
 			return "", err
 		}
+		return fmt.Sprintf("%s: ворота перевода в %s пройдены, строка не двигалась%s", id, target, stageReport(stages)), nil
 	}
 	return fmt.Sprintf("%s: ворота перевода в %s пройдены, строка не двигалась", id, target), nil
+}
+
+// stageReport печатает этапы со следами, по которым ворота решили, что они
+// пройдены: сухой прогон отвечает и отказом, и полным списком (DK-1144).
+func stageReport(stages []stageVerdict) string {
+	if len(stages) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(stages))
+	for _, v := range stages {
+		verdict := v.why
+		if verdict == "" {
+			verdict = "след на месте"
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s): %s", v.st.Title, v.st.Trace, verdict))
+	}
+	return "\nэтапы: " + strings.Join(parts, "; ")
 }
 
 // acceptGate проверяет, что у не агентского вида в файле задачи стоит раздел
@@ -185,130 +243,22 @@ func acceptGate(root, id, kind, again string) error {
 	return nil
 }
 
-// closeAgentGate требует у агентского вида непустой раздел «Проверка» в файле
-// задачи (LLD DK-292, решение 4, рубеж против фиктивного агентского сценария).
-// Проверяется наличие, а не честность: пустое закрытие агентской задачи
-// становится невозможным, и это ровно та работа, которую машина может сделать,
-// не берясь судить содержание. Не агентский вид воротами close не трогается:
-// его перебор обходов держат ворота move check (acceptGate). Исключений нет:
-// агентского LLD не бывает (решение 1), поэтому у агентского вида файла нет
-// только в вырожденном случае (сценарий живёт по ссылке в другом документе),
-// и ворота его пропускают молча. Файл есть значит обязан быть непустой раздел
-// «Проверка» с реальным выводом прогона.
-func closeAgentGate(root, id string) error {
-	text, found, ok := verificationSection(root, id)
-	if !ok {
-		// Файла нет: сценарий живёт в другом документе (LLD) или ссылки на
-		// файл не стоит. Агентского LLD не бывает, и ворота этот случай не
-		// судят: им не о чём спорить без файла.
-		return nil
-	}
-	if !found || strings.TrimSpace(text) == "" {
-		rel := "docs/tasks/" + id + ".md"
-		return fmt.Errorf("%s: вид agent требует непустой раздел «Проверка» в %s: выкатить код и вложить туда реальный вывод прогона (RULES.board.md, «Трекинг задач» п. 6), пустое закрытие агентской задачи запрещено", id, rel)
-	}
-	return nil
-}
-
 // closeVerifyGate сверяет прогонявшего сценарий с исполнителем последнего
-// этапа работы над кодом (DK-642): в цикле DK-138 три дефекта проехали ревью, и
-// поймал их только прогон сценария чужими руками, поэтому прогон под тем же
-// именем закрытия не даёт. Задача без записи прогона проходит молча: на этом
-// держатся автозакрытие тиком (DK-516) и задачи, закрытые до записи
-// прогонявшего. Оба имени ищутся в двух местах: в разделе «Ход работы» файла
-// задачи, куда этапы уносит смена статуса, и в незакрытом пакете этапов, где
-// запись прогона лежит до самого закрытия.
+// этапа работы над кодом (DK-642). Проверка переехала в internal/trace
+// (VerifyRunner, DK-1144), отсюда её зовёт отбор closable; ворота close
+// спрашивают её этапом шаблона с gate = close.
 func closeVerifyGate(root, id string) error {
-	lines, pending := trace.StageSources(root, id)
-	runner, ok := stage.LastVerifyRunner(lines, pending)
-	if !ok {
-		return nil
-	}
-	if note, missing := stage.ExecutorMissing(lines, pending); missing {
-		return fmt.Errorf("%s: у последнего этапа работы над кодом исполнитель не назван («%s»): субагент поднят без параметра model, и модель сессии в запись не легла, сверить прогонявшего сценарий не с кем; впиши модель в текст этой строки «Хода работы», например «субагент opus/high по определению exec-high», и повтори закрытие",
-			id, note)
-	}
-	dev, ok := stage.LastExecutor(lines, pending)
-	if !ok {
-		return nil
-	}
-	// Сверка без регистра: --by принимает любой текст, и «Opus» против «opus»
-	// в точной сверке проходил бы за чужой прогон.
-	if strings.EqualFold(runner, dev) {
-		return fmt.Errorf("%s: сценарий прогнал %s, он же исполнитель последнего этапа работы над кодом: сценарий прогоняет не автор правки, повторить прогон и отметить «agentctl stage %s %s --by %s»",
-			id, runner, id, stage.Verify, repeatModel(root, id))
-	}
-	return nil
-}
-
-// closeSmokeGate не даёт закрыть строку с непроверенным выкатом (DK-1363):
-// отбор closable сверяет отметку smoke с последним слиянием, а ручной close
-// той сверки не делал, и выкаченная строка уезжала в архив без прогона
-// сценария, сломанный прод оставался за закрытой строкой. Сверка та же, что у
-// closable и у очереди выката (LLD DK-400, решение 7: непроверенный выкат это
-// выкат без smoke), а не её копия. Записи слияния нет, значит выката нет
-// (LLD, дока, разбор), и ворота молчат. Слияние одной документации прод не
-// меняет и выкатом не считается тем же признаком, каким его не видит очередь
-// (DK-1424): строка с проверенной агентской докой закрывается без отметки.
-// Круг доработки дописывает в «Выкат» новую строку слияния, и отметка
-// прошлого круга новый выкат не прикрывает: вернувшаяся из Check строка
-// закрывается только после новой отметки.
-func closeSmokeGate(root, id string) error {
-	data, err := os.ReadFile(taskFilePath(root, id))
-	if err != nil {
-		return nil
-	}
-	if !uncheckedDeploy(root, data) {
-		return nil
-	}
-	return fmt.Errorf("%s: в «Выкате» есть слияние, а отметки smoke на последний выкат нет: сценарий после выката не прогнан; прогнать его на выкаченном коде, вывод вложить в раздел «Проверка», прогонявшего отметить «agentctl stage %s проверка --by %s», выкат «shipctl smoke %s» и повторить закрытие",
-		id, id, repeatModel(root, id), id)
+	return trace.VerifyRunner(root, id)
 }
 
 // uncheckedDeploy отвечает, стоит ли в файле задачи настоящий непроверенный
 // выкат: слияние с кодом за пределами docs/ без действующей на него отметки
-// smoke. Читают его ворота close и отбор closable, чтобы ответ у ручного и
-// автоматического закрытия не разошёлся. Не удалось разобрать состав
-// коммитов значит выкат: ошибиться в сторону требования smoke дешевле, чем
-// в сторону пропуска.
+// smoke. Проверка переехала в internal/trace (DeployUnchecked, DK-1144),
+// отсюда её зовёт отбор closable; ворота close спрашивают её этапом шаблона
+// с gate = close.
 func uncheckedDeploy(root string, data []byte) bool {
-	if taskform.SmokeCovers(string(data)) {
-		return false
-	}
-	shas := taskform.MergedShas(string(data))
-	if len(shas) == 0 {
-		return false
-	}
-	docs, err := merged.CommitsDocsOnly(root, shas)
-	return err != nil || !docs
+	return trace.DeployUnchecked(root, string(data))
 }
-
-// repeatModel это модель для повторного прогона в тексте отказа (DK-1116).
-// Считает её `agentctl check`, та же дорога, какой ярус проверяющего берёт
-// автономный выкат: ярус вердиктом роли ревью, а совпавшую с разработкой
-// модель заменяет ступень выше. Позвать некем или отказ, значит отказ close
-// остаётся с прочерком вместо модели: подсказка тут не главное, а
-// разваливаться из-за неё воротам незачем.
-func repeatModel(root, id string) string {
-	bin, err := exec.LookPath("agentctl")
-	if err != nil {
-		return checkModelUnknown
-	}
-	cmd := exec.Command(bin, "check", id)
-	cmd.Dir = root
-	out, err := cmd.Output()
-	if err != nil {
-		return checkModelUnknown
-	}
-	if m := checkrun.ParseModel(string(out)); m != "" {
-		return m
-	}
-	return checkModelUnknown
-}
-
-// checkModelUnknown стоит в отказе там, где модель назвать нечем: вместо
-// готового имени остаётся прежняя рамка под руку человека.
-const checkModelUnknown = "<модель>"
 
 // lintUnmerged ловит обратную сторону того же рубежа: строка уже в Check, а
 // ветка с её ID живёт с неслитыми коммитами. Так выглядит перевод в обход
@@ -381,14 +331,18 @@ func taskPromptFiles(root, id string) []string {
 	return paths
 }
 
-// promptHint печатает одну строку про стенд, когда задача правила промпты.
-// Отказа тут нет: к переводу в Check слияние уже прошло, и отказывать поздно, а
+// promptHint печатает строку про стенд, когда задача правила промпты. Отказа
+// тут нет: к переводу в Check слияние уже прошло, и отказывать поздно, а
 // ворота стенда стоят на самом слиянии (LLD DK-805, решение 2). Подсказка
 // называет команду прогона: след в файл задачи кладёт сам стенд, вкладывать
-// таблицу руками не надо.
-func promptHint(root, id string) string {
+// таблицу руками не надо. Стоит ли в плане строки стенд со своими воротами,
+// решает шаблон: этапа со следом стенда нет, и повода для подсказки тоже нет.
+func promptHint(root, id string, tpl *plans.Template) string {
 	paths := taskPromptFiles(root, id)
 	if len(paths) == 0 {
+		return ""
+	}
+	if tpl != nil && !templateHasStand(tpl) {
 		return ""
 	}
 	shown := paths
@@ -400,34 +354,14 @@ func promptHint(root, id string) string {
 		strings.Join(shown, ", "), tail, id, strings.Join(shown, ","))
 }
 
-// rehearsalGate держит третий рубеж перевода в Check: сценарий обкатан до
-// того, как задача уехала на проверку. Прогон на месте, в прогретом чекауте с
-// живым HOME и PATH, зеленеет там, где на чужой машине красно, и находится это
-// уже после слияния (RULES.board.md, «Трекинг задач» п. 6; повод из цикла
-// DK-138). Сам разбор отметки лежит в internal/rehearsal: тот же ворот стоит
-// на закрытии строки и на слиянии ветки, и своей копии у каждого выхода нет
-// намеренно. Файла задачи нет значит и отметке негде стоять: рубеж выше уже
-// отказал за сценарий, второй раз ронять не о чем.
-func rehearsalGate(root, id string) error {
-	data, err := os.ReadFile(taskFilePath(root, id))
-	if err != nil {
-		return nil
+// templateHasStand отвечает, спрашивает ли шаблон след стенда на слиянии.
+func templateHasStand(tpl *plans.Template) bool {
+	for _, st := range tpl.Stages {
+		if st.Trace == trace.WordStand && amongStr(st.Gate, trace.GateMerge) {
+			return true
+		}
 	}
-	return rehearsal.Fresh(root, id, string(data), "move")
-}
-
-// closeRehearsalGate спрашивает обкатку на втором выходе задачи, закрытии
-// строки. Ворот move check закрытие обходит стороной: строку закрывают и прямо
-// из In progress, и архив принимал задачу, чей сценарий никто не гонял
-// (DK-685). Свежесть отметки тут не сверяется: закрытие идёт после Check, HEAD
-// к тому часу уехал чужими слияниями, и сверка коммита требовала бы обкатки
-// кода, которого задача не писала.
-func closeRehearsalGate(root, id string) error {
-	data, err := os.ReadFile(taskFilePath(root, id))
-	if err != nil {
-		return nil
-	}
-	return rehearsal.Mark(id, string(data), "закрытие")
+	return false
 }
 
 // closeForkGate не даёт закрыть задачу, пока в перечне развилок её файла стоит

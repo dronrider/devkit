@@ -675,7 +675,8 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	// виду, и без отказа.
 	hint := ""
 	if target == SectCheck {
-		if h := promptHint(root, id); h != "" {
+		tpl, _ := templateOf(root, row)
+		if h := promptHint(root, id, tpl); h != "" {
 			hint = h + "\n"
 		}
 	}
@@ -882,21 +883,12 @@ func cmdClose(root string, p CloseParams) (string, error) {
 			p.ID, failSuf, p.ID, p.ID, p.ID)
 	}
 	// Выход через закрытие спрашивает то же, что выход в Check: сценарий,
-	// обкатку у агентского вида и перебор обходов у остальных. Раньше close
-	// звал одни ворота агентского вида, и строка, закрытая из In progress,
-	// уезжала в архив мимо всего остального (DK-685).
+	// обкатку у агентского вида и перебор обходов у остальных, а сверх того
+	// проверку чужими руками со сверкой выката (DK-1363, DK-642). Все они
+	// этапы шаблона с gate = close (DK-1144), и ворота closeGate держит их
+	// одним обходом. Раньше close звал одни ворота агентского вида, и строка,
+	// закрытая из In progress, уезжала в архив мимо всего остального (DK-685).
 	if err := closeGate(root, row); err != nil {
-		return "", err
-	}
-	// Непроверенный выкат не уезжает в архив молча (DK-1363): close сверяет
-	// отметку smoke с последним слиянием той же сверкой, что и отбор closable,
-	// а строка без выката закрывается как раньше.
-	if err := closeSmokeGate(root, p.ID); err != nil {
-		return "", err
-	}
-	// Сценарий прогоняет не автор правки (DK-642): прогон под именем
-	// исполнителя разработки закрытия не даёт, отказ называет имя.
-	if err := closeVerifyGate(root, p.ID); err != nil {
 		return "", err
 	}
 	// Открытая человеческая развилка держит и закрытие, тем же чтением

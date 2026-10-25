@@ -165,7 +165,8 @@ type Ladder struct {
 }
 
 // Choice это исход выбора модели проверяющего. Model пуста, когда лестница
-// яруса не назвала: зовущий решает сам, поднимать ли тогда вовсе.
+// яруса не назвала: у одиночной лестницы решение за зовущим, а отбор
+// допущенных подписок отвечает отказом, чтобы подписку не выбирал носитель.
 type Choice struct {
 	Tier, Model string
 	Harness     string
@@ -173,7 +174,8 @@ type Choice struct {
 	From    string
 	Stepped bool
 	// Refusal непуст, когда поднять некем: модель яруса вела разработку, а
-	// выше по лестнице другой модели нет.
+	// выше по лестнице другой модели нет, либо разрешённым автоматике
+	// подпискам модели яруса и выше не досталось.
 	Refusal string
 }
 
@@ -220,10 +222,13 @@ func sameModel(a, b string) bool {
 }
 
 // ChooseAvailable меняет целую лестницу лишь при отказе независимости.
-// В каждой следующей лестнице поиск начинается с исходного яруса.
+// В каждой следующей лестнице поиск начинается с исходного яруса. Без
+// разрешённой модели ответ отказ, а не пустой выбор: пустой выбор оставлял
+// носителю подписку исходного via, и подъём шёл мимо запрета (DK-1453).
 func ChooseAvailable(tier string, ladders []Ladder, dev string, known bool) Choice {
 	if len(ladders) == 0 {
-		return Choose(tier, nil, dev, known)
+		return Choice{Tier: tier, Refusal: "в раскладке машины нет подписок, разрешённых" +
+			" автоматическим назначениям (ключ auto машинного конфига)"}
 	}
 	admitted := map[string]bool{}
 	for _, ladder := range ladders {
@@ -249,25 +254,30 @@ func ChooseAvailable(tier string, ladders []Ladder, dev string, known bool) Choi
 		return first
 	}
 	ranks := map[string]int{"mini": 0, "base": 1, "pro": 2, "max": 3}
-	minimum, valid := ranks[tier]
-	if !valid {
-		return first
-	}
-	for _, ladder := range ladders {
-		for _, candidate := range []string{"mini", "base", "pro", "max"} {
-			if ranks[candidate] < minimum {
-				continue
-			}
-			ch := selectFrom(candidate, ladder)
-			if ch.Refusal == "" && ch.Model != "" {
-				if ch.Tier != tier {
-					ch.From, ch.Stepped = tier, true
+	if minimum, valid := ranks[tier]; valid {
+		for _, ladder := range ladders {
+			for _, candidate := range []string{"mini", "base", "pro", "max"} {
+				if ranks[candidate] < minimum {
+					continue
 				}
-				return ch
+				ch := selectFrom(candidate, ladder)
+				if ch.Refusal == "" && ch.Model != "" {
+					if ch.Tier != tier {
+						ch.From, ch.Stepped = tier, true
+					}
+					return ch
+				}
 			}
 		}
 	}
-	return first
+	if first.Refusal != "" {
+		return first
+	}
+	return Choice{Tier: tier, Refusal: fmt.Sprintf(
+		"среди подписок, разрешённых автоматическим назначениям, нет модели яруса %s и ступеней"+
+			" выше: ступени запрещённых подписок отбор снял, а разрешённым раскладка модели не"+
+			" назвала; разрешить подписку ключом auto машинного конфига либо назвать модель"+
+			" яруса в раскладке машины", tier)}
 }
 
 // ParseTier достаёт ярус из машинных строк вердикта `agentctl pick`.

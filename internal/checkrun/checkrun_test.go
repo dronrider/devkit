@@ -436,6 +436,33 @@ func TestTaskHarnessPolicy(t *testing.T) {
 			}
 		}
 	})
+	t.Run("пустая модель после фильтрации via отдаёт отказ", func(t *testing.T) {
+		base := `{"name":"glm","enabled":true,"default":true,` +
+			`"models":[{"tier":"max","model":"route-max","via":"router"}]}`
+		ladders, note := ParseLadders([]byte(`{"harnesses":[`+base+`,`+secondary("false")+`]}`), "")
+		if note != "" {
+			t.Fatal(note)
+		}
+		// Исполнителя разработки запись не назвала: независимость сверять не с
+		// кем, и отказ держит только допуск.
+		ch := ChooseAvailable("max", ladders, "", false)
+		if ch.Refusal == "" || ch.Model != "" || ch.Harness != "" {
+			t.Fatalf("пустая модель без отказа уехала бы запрещённому владельцу: %+v", ch)
+		}
+	})
+	t.Run("пустые лестницы и ступени отдают отказ", func(t *testing.T) {
+		if ch := ChooseAvailable("max", nil, "glm-5.3", true); ch.Refusal == "" {
+			t.Fatalf("без допущенных подписок отказа нет: %+v", ch)
+		}
+		empty := `{"name":"glm","enabled":true,"default":true,"models":[]}`
+		ladders, note := ParseLadders([]byte(`{"harnesses":[`+empty+`]}`), "")
+		if note != "" {
+			t.Fatal(note)
+		}
+		if ch := ChooseAvailable("max", ladders, "glm-5.3", true); ch.Refusal == "" {
+			t.Fatalf("допущенная подписка без ступеней не отказала: %+v", ch)
+		}
+	})
 }
 
 func TestChooseAvailableSearchesIncompletePrimary(t *testing.T) {

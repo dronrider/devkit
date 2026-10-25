@@ -388,6 +388,40 @@ func TestTaskHarnessPolicy(t *testing.T) {
 			t.Fatalf("выбор не виден: %s", out)
 		}
 	})
+
+	t.Run("ступень запрещённого via без модели отдаёт отказ", func(t *testing.T) {
+		root, callLog := checkStand(t)
+		bin := t.TempDir()
+		writeAgentctlFake(t, bin, "max")
+		path := filepath.Join(bin, "agentctl")
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw := `{"harnesses":[
+		{"name":"стенд","enabled":true,"default":true,"bin":"клиент",
+		 "models":[{"tier":"max","model":"route-max","via":"router"}]},
+		{"name":"router","enabled":true,"auto":false,"bin":"клиент",
+		 "models":[{"tier":"max","model":"route-max"}]}]}`
+		if err := os.WriteFile(path, []byte(strings.Replace(string(body), ladderFixture, raw, 1)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		// Записи разработки нет: отбор держит только допуск, и ярус не
+		// разворачивает ни одна допущенная ступень.
+		out, failed, _ := cmdCheckRun(root, nil, false)
+		if !failed {
+			t.Fatalf("отсутствие разрешённой модели обязано отказать: %s", out)
+		}
+		for _, want := range []string{"прогон не поднят", "автоматическим назначениям"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("в отказе нет %q: %s", want, out)
+			}
+		}
+		if calls := readCalls(t, callLog); strings.Contains(calls, "run XR-") || strings.Contains(calls, "router") {
+			t.Fatalf("запрещённая подписка поднята: %q", calls)
+		}
+	})
 }
 
 func readCalls(t *testing.T, callLog string) string {

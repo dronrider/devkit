@@ -303,8 +303,10 @@ func Verify(c Ctx) error {
 // mixed его может не быть, TestCloseNonAgentSkipsVerificationGate), сверка
 // smoke держит исключение docs-слияния (DK-1424), а запись прогона
 // необязательна: на этом держатся автозакрытие тиком (DK-516) и задачи,
-// закрытые до записи прогонявшего. Порядок проверок тот, что был у ворот
-// close: раздел, выкат, прогонявший.
+// закрытые до записи прогонявшего. Независимость прогона сверяет та же
+// stage.VerifyIndependence, что и планскую мерку (DK-1360): сессия прогона
+// не из круга разработки, имена моделей в сверке не участвуют. Порядок
+// проверок тот, что был у ворот close: раздел, выкат, прогонявший.
 func verifyClose(c Ctx) error {
 	rel := "docs/tasks/" + c.ID + ".md"
 	if c.Doc != "" {
@@ -319,34 +321,9 @@ func verifyClose(c Ctx) error {
 				c.ID, c.ID, RepeatModel(c.Root, c.ID), c.ID)
 		}
 	}
-	return VerifyRunner(c.Root, c.ID)
-}
-
-// VerifyRunner сверяет прогонявшего сценарий с исполнителем последнего этапа
-// работы над кодом (DK-642). Оба имени ищутся в двух местах: в разделе «Ход
-// работы» файла задачи, куда этапы уносит смена статуса, и в незакрытом
-// пакете этапов, где запись прогона лежит до самого закрытия. Задача без
-// записи прогона проходит молча: на этом держатся автозакрытие тиком (DK-516)
-// и задачи, закрытые до записи прогонявшего.
-func VerifyRunner(root, id string) error {
-	lines, pending := StageSources(root, id)
-	runner, ok := stage.LastVerifyRunner(lines, pending)
-	if !ok {
-		return nil
-	}
-	if note, missing := stage.ExecutorMissing(lines, pending); missing {
-		return fmt.Errorf("%s: у последнего этапа работы над кодом исполнитель не назван («%s»): субагент поднят без параметра model, и модель сессии в запись не легла, сверить прогонявшего сценарий не с кем; впиши модель в текст этой строки «Хода работы», например «субагент opus/high по определению exec-high», и повтори закрытие",
-			id, note)
-	}
-	dev, ok := stage.LastExecutor(lines, pending)
-	if !ok {
-		return nil
-	}
-	// Сверка без регистра: --by принимает любой текст, и «Opus» против «opus»
-	// в точной сверке проходил бы за чужой прогон.
-	if strings.EqualFold(runner, dev) {
-		return fmt.Errorf("%s: сценарий прогнал %s, он же исполнитель последнего этапа работы над кодом: сценарий прогоняет не автор правки, повторить прогон и отметить «agentctl stage %s %s --by %s»",
-			id, runner, id, stage.Verify, RepeatModel(root, id))
+	lines, pending := StageSources(c.Root, c.ID)
+	if _, _, err := stage.VerifyIndependence(c.ID, lines, pending); err != nil {
+		return err
 	}
 	return nil
 }

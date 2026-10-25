@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -19,6 +20,7 @@ func setup(t *testing.T) string {
 	// перебивается ещё раз.
 	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
+	layKit(t, root)
 	tasks := filepath.Join(root, "docs", "tasks")
 	if err := os.MkdirAll(tasks, 0o755); err != nil {
 		t.Fatal(err)
@@ -42,6 +44,47 @@ func setup(t *testing.T) string {
 		}
 	}
 	return root
+}
+
+// layKit кладёт в корень тестового дерева копию настоящих kit/plans. Набор
+// шаблонов читается от корня доски (plans.KitDir), и без него templateOf
+// отвечает «шаблона нет», а ворота на это молчат; с копией ворота держат строки
+// этапами живых шаблонов, а не отдельной фейкстурой, с которой те разъехались
+// бы на первой правке (DK-1144).
+func layKit(t *testing.T, root string) {
+	t.Helper()
+	dst := filepath.Join(root, "kit", "plans")
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(repoKitPlans(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".toml" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(repoKitPlans(t), e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// repoKitPlans называет каталог kit/plans этого репозитория. Тест лежит в
+// tools/taskctl, и путь считается от собственного файла, а не от рабочего
+// каталога прогона.
+func repoKitPlans(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("не вижу собственного файла")
+	}
+	return filepath.Join(filepath.Dir(file), "..", "..", "kit", "plans")
 }
 
 // regcheck:test-begin

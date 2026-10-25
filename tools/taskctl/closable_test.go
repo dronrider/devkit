@@ -19,10 +19,13 @@ var closableIDRe = regexp.MustCompile(`^[A-Z][A-Z0-9]*-\d+$`)
 // «Проверка». Тик сторожка спрашивает вердикт этой командой, и всё, чего в
 // готовых нет, остаётся человеку.
 
-// closableBoard кладёт доску, где перечисленные строки стоят в Check.
+// closableBoard кладёт доску, где перечисленные строки стоят в Check. Шаблоны
+// кладутся те же, что в setup: тик сторожка спрашивает вердикт в живом
+// чекауте, где набор шаблонов есть, и отбор без него судил бы другую машину.
 func closableBoard(t *testing.T, rows ...string) string {
 	t.Helper()
 	root := t.TempDir()
+	layKit(t, root)
 	tasks := filepath.Join(root, "docs", "tasks")
 	if err := os.MkdirAll(tasks, 0o755); err != nil {
 		t.Fatal(err)

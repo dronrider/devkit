@@ -88,7 +88,9 @@ func TestPlanUnknownName(t *testing.T) {
 	root := setup(t)
 	planKit(t, root)
 	_, err := cmdPlan(root, "XR-004", PlanParams{Name: "нетакого"})
-	if err == nil || !strings.Contains(err.Error(), "есть poc") {
+	// Набор теперь полный (layKit в setup), и перечень имён в отказе шире
+	// одного poc; отказ обязан назвать чужое имя и существующие.
+	if err == nil || !strings.Contains(err.Error(), "нетакого") || !strings.Contains(err.Error(), "в наборе нет") {
 		t.Fatalf("чужое имя прошло молча: %v", err)
 	}
 	if _, err := cmdPlan(root, "XR-004", PlanParams{}); err == nil {

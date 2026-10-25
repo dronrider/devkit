@@ -2598,29 +2598,37 @@ function phoneScreen() {
   return Boolean(window.matchMedia && window.matchMedia("(max-width:520px)").matches);
 }
 
-// Табы экрана доски: задачи, сессии проекта и накопитель черновиков. Три их на
-// любой ширине. Раздела «Агенты» с обзором всех досок сразу больше нет:
-// сессии это работа проекта, и место им на его доске, а сквозной обзор машины
-// живёт общим списком разговоров в панели (решение пользователя). У каждого
-// таба свой адрес: таб переживает обновление, кнопку «назад» и ссылку.
+// Табы экрана доски: задачи, сессии проекта, накопитель черновиков и список
+// LLD. Четыре их на любой ширине. Раздела «Агенты» с обзором всех досок сразу
+// больше нет: сессии это работа проекта, и место им на его доске, а сквозной
+// обзор машины живёт общим списком разговоров в панели (решение пользователя).
+// Список LLD переехал туда же: решения по docs/lld это раздел проекта, а
+// группа «Разделы» в колонке держала из трёх строк одну рабочую (DK-1456).
+// У каждого таба свой адрес: таб переживает обновление, кнопку «назад» и
+// ссылку.
 function boardKinds() {
-  return [["tasks", "Задачи"], ["sess", "Сессии"], ["drafts", "Черновики"]];
+  return [["tasks", "Задачи"], ["sess", "Сессии"], ["drafts", "Черновики"],
+    ["lld", "LLD"]];
 }
 
 // Адрес таба: у задач это сама доска, у остальных её хвост.
 function boardKindHash(project, key) {
   if (key === "drafts") return project + "/drafts";
   if (key === "sess") return project + "/sess";
+  if (key === "lld") return project + "/lld";
   return project;
 }
 
 function boardKindNow(kind) {
-  return kind === "drafts" || kind === "sess" ? kind : "tasks";
+  return kind === "drafts" || kind === "sess" || kind === "lld"
+    ? kind : "tasks";
 }
 
 // Числа на табах доски: задачи считает доска, сессии список работ, черновики
 // сервер чтением накопителя. Держатся они одним местом, потому что показать их
-// надо на любом из трёх экранов, а знает каждый экран только своё.
+// надо на любом из четырёх экранов, а знает каждый экран только своё. У LLD
+// числа нет вовсе: счётчик документов ни к какому действию не ведёт, а полоса
+// табов на телефоне и так впритык.
 let shownCounts = { tasks: 0, sess: 0, drafts: 0 };
 
 function countsSet(part) {
@@ -3164,8 +3172,8 @@ function boardKindBar(project, kind) {
     const btn = el("button", "ktab" + (key === now ? " onktab" : ""), label);
     btn.type = "button";
     btn.dataset.kind = key;
-    // Число стоит баджем у каждого таба, а не у одного: вид один на все три,
-    // иначе счётчик читается как признак самого таба (замечание пользователя).
+    // Число стоит баджем у каждого счётного таба, а не у одного, иначе
+    // счётчик читается как признак самого таба (замечание пользователя).
     const n = shownCounts[key] || 0;
     if (n) btn.append(el("span", "n", String(n)));
     btn.addEventListener("click", (ev) => {
@@ -15991,16 +15999,13 @@ function lldType(project, value) {
 
 async function renderLld(project, q) {
   const groups = document.getElementById("groups");
+  // Полоса табов доски стоит вместо крошки «Доска проект»: список LLD это
+  // четвёртый таб, и дорогу на доску ему показывает сама полоса. Крошка со
+  // ссылкой на список остаётся у открытого документа.
   const head = [{
-    key: "lld-crumb",
+    key: "lld-bar",
     sign: project,
-    make: () => {
-      const crumb = el("div", "crumb");
-      const back = el("span", "crumb-back", "Доска " + project);
-      back.addEventListener("click", () => { goKeepingChat(project); });
-      crumb.append(back);
-      return crumb;
-    },
+    make: () => boardKindBar(project, "lld"),
   }, {
     key: "lld-q",
     sign: project,
@@ -19396,10 +19401,9 @@ function plural(n, one, few, many) {
   return many;
 }
 
-// Разделы боковой колонки и нижних вкладок: главная ведёт на список проектов,
-// доска на свой экран текущего проекта, открытый раздел подсвечен. Лента
-// разделом больше не стоит, вход в неё это колокольчик в шапке, и открытая
-// лента подсвечивает его.
+// Нижние вкладки телефона: главная ведёт на список проектов, доска на свой
+// экран текущего проекта, открытый раздел подсвечен. Лента разделом не стоит,
+// вход в неё это колокольчик в шапке, и открытая лента подсвечивает его.
 // Значок чатов в шапке моргает рамкой, когда у открытой задачи идёт работа: на
 // её форме своей кнопки чата нет, вход в разговор тут один, и след запуска
 // человек ищет глазами именно здесь.
@@ -19423,13 +19427,13 @@ function markNav(rt) {
   // экранов она убирается вместе с ними.
   if (!rt.home) document.getElementById("hlegend").replaceChildren();
   // Накопитель это таб доски, а не раздел: открытые черновики подсвечивают
-  // «Доску», как её подсвечивает и экран записи.
+  // «Доску», как её подсвечивает и экран записи. Список LLD и документ
+  // подсвечивают её же: у списка горит свой таб полосы, у документа крошка
+  // «LLD» ведёт обратно к списку.
   const on = rt.home ? "home" : rt.feed ? "feed"
-    : rt.find ? "find" : rt.make ? "make"
-    : rt.lldList || rt.doc ? "lld" : "board";
-  for (const [name, ids] of [["home", ["nav-home", "tab-home"]],
-    ["board", ["nav-board", "tab-board"]],
-    ["lld", ["nav-lld"]],
+    : rt.find ? "find" : rt.make ? "make" : "board";
+  for (const [name, ids] of [["home", ["tab-home"]],
+    ["board", ["tab-board"]],
     ["make", ["make-btn"]],
     ["feed", ["bell"]],
     ["find", ["find-btn"]]]) {
@@ -19483,8 +19487,8 @@ document.getElementById("make-btn").addEventListener("click", (ev) => {
   if (project) makeMenuAt(btn, project, btn);
 });
 
-for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
-  ["nav-lld", "/lld"], ["bell", "/feed"], ["find-btn", "/find/"]]) {
+for (const [id, tail] of [["tab-board", ""], ["bell", "/feed"],
+  ["find-btn", "/find/"]]) {
   document.getElementById(id).addEventListener("click", () => {
     // Имя проекта берётся то, что показано: на главной хэш пуст, и раздел без
     // имени увёл бы на "#/feed". Открытый разговор переезжает вместе с
@@ -19496,7 +19500,7 @@ for (const [id, tail] of [["nav-board", ""], ["tab-board", ""],
 // Переход на главную это логотип в левом верхнем углу: на ноутбуке он стоит
 // вверху боковой колонки, на телефоне слева в шапке, кнопки «На главную» нет
 // нигде. На телефоне то же место занимает и первая нижняя вкладка.
-for (const id of ["logo-side", "logo-top", "nav-home", "tab-home"]) {
+for (const id of ["logo-side", "logo-top", "tab-home"]) {
   document.getElementById(id).addEventListener("click", () => {
     // Пустой хэш это главная. Пустая строка оставила бы в адресе прежний "#x",
     // поэтому решётка ставится явно. Открытая панель переезжает вместе с

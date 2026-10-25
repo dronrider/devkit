@@ -158,7 +158,6 @@ a:hover{text-decoration:underline}
 .lrings .arc.d{stroke:var(--block)}
 .brand h1{margin:0;font:600 15px var(--sans);color:var(--tx)}
 .brand p{margin:3px 0 0;font:400 11.5px var(--mono);color:var(--tx3)}
-.sgroup{font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;color:var(--tx3);padding:12px 10px 7px}
 /* сворачиваемые разделы колонки (DK-1388): шапка раздела это кнопка с той же
    подписью, что была у заголовка группы, каретка на её правом краю. Тело
    прячется классом, состояние помнится между заходами. Класс шапки свой, а не
@@ -915,7 +914,10 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
    во всю ширину */
 .grun{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .grun .btn{width:auto}
-.srow .st,.dsrow .st{font:var(--rowfw) var(--rowfs) var(--sans);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Длинное слово в заголовке строки разрывается по месту, а не уносит строку
+   вбок: у списка LLD это путь из заголовка решения, у прочих списков тот же
+   случай (правило общее, держит замер TestBoardNarrowNoSideScroll) */
+.srow .st,.dsrow .st{font:var(--rowfw) var(--rowfs) var(--sans);color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:anywhere}
 .srow.done .st{color:var(--tx3)}
 .srow .sm{display:flex;align-items:center;gap:9px;justify-content:flex-end;flex-wrap:wrap}
 /* экран выдачи поиска (#проект/find/<запрос>): поле во всю ширину стоит на
@@ -2378,7 +2380,7 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 .alink{padding:0;border:none;background:none;color:var(--acc);font:400 12px var(--sans);cursor:pointer}
 .alink:hover{text-decoration:underline}
 
-/* два таба экрана доски: задачи и накопитель черновиков */
+/* табы экрана доски */
 /* Пометка догона доски из origin: строка над табами, слова той же кладки, что
    и прочие второстепенные пометки экрана. */
 .blag{display:flex;justify-content:center;padding:var(--sp2) 0 0}
@@ -2389,9 +2391,9 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 /* Счётчик строк таба стоит отдельным словом, а не хвостом подписи: без отступа
    и своего цвета читалось «Дашборд5» (замечание пользователя). Вид тот же, что
    у счётчика раздела в боковой колонке. */
-/* бадж таба: одно и то же число одного вида у всех трёх табов доски. Прежде
-   число стояло голой цифрой и только у сессий, и читалось признаком самого
-   таба (замечание пользователя) */
+/* бадж таба: одно и то же число одного вида у всех счётных табов доски,
+   у LLD числа нет вовсе. Прежде число стояло голой цифрой и только у сессий,
+   и читалось признаком самого таба (замечание пользователя) */
 .ktab .n{margin-left:7px;padding:1px 7px;border-radius:9px;background:var(--bg3);font:600 10.5px var(--mono);color:var(--tx2);white-space:nowrap;vertical-align:1px}
 .ktab.onktab .n{background:color-mix(in oklab,var(--acc) 22%,transparent);color:var(--tx)}
 
@@ -2469,7 +2471,18 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
    проекта в первой, кнопки-действия во второй, а поиск и так живёт лупой среди
    кнопок. Разрыв делает ::after во всю ширину: он встаёт флекс-элементом между
    селектом и кнопками, и разметка не трогается */
+@media (max-width:360px){
+  /* На узком экране в 320 точек зазора и полей баджа уже не хватает: подписи
+     табов стоят ниже кеглем и без боковых полей (DK-1456) */
+  .ktabs{gap:var(--sp1)}
+  .ktab{padding-left:0;padding-right:0;font-size:12.5px}
+  .ktab .n{font-size:10px}
+}
 @media (max-width:520px){
+  /* Полоса четырёх табов доски на телефоне впритык: зазор табов и поля
+     баджа сжаты, иначе полоса уезжает за край карточки (DK-1456) */
+  .ktabs{gap:var(--sp2)}
+  .ktab .n{margin-left:var(--sp1);padding:1px var(--sp1)}
   .bhead{flex-wrap:wrap;row-gap:8px}
   .bhead::after{content:"";width:100%;order:1}
   /* легенда уезжает во вторую строку к кнопкам: первую делят имя и выбор

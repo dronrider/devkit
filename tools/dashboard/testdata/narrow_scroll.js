@@ -172,17 +172,36 @@ const CHAT_HEAD = `
     </div>
   </div>`;
 
+// Полоса табов доски: LLD четвёртым, без баджа, как на живой доске (DK-1456).
+// На любой ширине полоса умещается в раздел, замер этого стоит в out.
 const TABS = `
   <div class="ktabs">
     <button class="ktab onktab">Задачи<span class="n">128</span></button>
     <button class="ktab">Сессии<span class="n">12</span></button>
     <button class="ktab">Черновики<span class="n">81</span></button>
+    <button class="ktab">LLD</button>
   </div>`;
+
+// Поле поиска списка LLD: запрос стоит длинный нарочно, ввод живой ширины.
+const FQ = `
+  <div class="fqbar"><span class="fico"><svg data-ico="i-find" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"></svg></span>
+    <input type="text" placeholder="Поиск LLD" aria-label="Поиск LLD по названию и тексту"
+      value="ворота слияния длинный запрос по тексту заметки"></div>`;
+
+// Строки списка LLD те же, что собирает app.js: имя решения, длинный заголовок
+// и путь с датой.
+const LLD_ROWS = `
+  <div class="srow clicky"><span class="id">DK-1318</span>
+    <span class="st fst">Постановка задачи: интервью, развилки и обход до первого вопроса ${SOLID}</span>
+    <span class="sm"><span class="stale">docs/lld/1318-interview.md:12</span><span class="chip">2026-10-24</span></span></div>
+  <div class="srow clicky"><span class="id">DK-354</span>
+    <span class="st fst">${LONG} ${SOLID}</span>
+    <span class="sm"><span class="stale">docs/lld/354-chat.md:3</span><span class="chip">2026-09-30</span></span></div>`;
 
 const parts = new URLSearchParams(location.search).get("bar") || "tasks";
 const body = { tasks: TABS + TASK_ROWS, sess: TABS + SESS_ROWS,
   drafts: TABS + GROOM_BAR + DRAFT_ROWS, ask: TABS + ASK,
-  chat: TABS + CHAT_HEAD }[parts] || TABS + TASK_ROWS;
+  chat: TABS + CHAT_HEAD, lld: TABS + FQ + LLD_ROWS }[parts] || TABS + TASK_ROWS;
 document.getElementById("groups").innerHTML = body;
 // Шапка страницы заполняется вместе с разделом: тело вбок не ездит никогда, а
 // уносить его умеет и она. Имя проекта берётся длинное нарочно: в выпадашке
@@ -274,8 +293,12 @@ function tapWide() {
   }
   return best;
 }
+// Полоса табов доски едет вбок сама по себе, без широких строк: ktabs это
+// флекс без переноса, и разъезд меряется против ширины самой полосы.
+const bar = document.querySelector("#groups .ktabs");
 const out = [
   "screen=" + screen,
+  "barover=" + Math.max(0, Math.round(bar.scrollWidth - bar.clientWidth)),
   "doc=" + Math.round(document.documentElement.scrollWidth),
   "body=" + Math.round(document.body.scrollWidth),
   // Раздел это свой скроллер: .groups просит overflow-y, а браузер делает

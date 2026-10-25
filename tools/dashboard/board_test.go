@@ -252,10 +252,12 @@ func TestStaticBoardMovedDate(t *testing.T) {
 
 // Уйти на главную можно с любого экрана: переход держит логотип в левом
 // верхнем углу (на телефоне он же стоит слева в шапке), на телефоне то же
-// место занимает нижняя вкладка, а сама главная это список проектов.
+// место занимает нижняя вкладка, а сама главная это список проектов. Группы
+// «Разделы» в колонке больше нет: список LLD стал четвёртым табом доски
+// (DK-1456), и её узлы из разметки убраны вместе с группой.
 func TestStaticHomeFromEveryScreen(t *testing.T) {
 	html := readFile(t, filepath.Join("static", "index.html"))
-	for _, want := range []string{`id="logo-side"`, `id="logo-top"`, `id="nav-home"`, `id="tab-home"`, "На главную", "Главная"} {
+	for _, want := range []string{`id="logo-side"`, `id="logo-top"`, `id="tab-home"`, "На главную", "Главная"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("в static/index.html нет %q: перехода на главную с экрана нет", want)
 		}
@@ -263,14 +265,44 @@ func TestStaticHomeFromEveryScreen(t *testing.T) {
 	if strings.Contains(html, `id="gohome"`) {
 		t.Error("в static/index.html осталась кнопка «На главную»: её место занял логотип")
 	}
+	for _, gone := range []string{"Разделы", `id="nav-home"`, `id="nav-board"`, `id="nav-lld"`} {
+		if strings.Contains(html, gone) {
+			t.Errorf("в static/index.html остался %q: группу «Разделы» убрали, список LLD стал табом доски", gone)
+		}
+	}
 	text := readFile(t, filepath.Join("static", "app.js"))
-	for _, want := range []string{`"logo-side", "logo-top", "nav-home", "tab-home"`, "function renderHome(", "home: true"} {
+	for _, want := range []string{`"logo-side", "logo-top", "tab-home"`, "function renderHome(", "home: true"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("в static/app.js нет %q: главная не собрана", want)
 		}
 	}
-	if !strings.Contains(funcBody(t, text, "function markNav("), `["home", ["nav-home", "tab-home"]]`) {
+	if !strings.Contains(funcBody(t, text, "function markNav("), `["home", ["tab-home"]]`) {
 		t.Error("раздел главной не подсвечивается: открытый экран неотличим от доски")
+	}
+}
+
+// Список LLD это четвёртый таб доски: полоса его рисует тем же boardKindBar,
+// активный таб подсвечивает onktab, баджа у таба нет. Крошки «Доска проект»
+// на списке больше нет: её место заняла полоса.
+func TestStaticLldTab(t *testing.T) {
+	text := readFile(t, filepath.Join("static", "app.js"))
+	for _, want := range []string{`["lld", "LLD"]`, `"lld"`} {
+		if !strings.Contains(funcBody(t, text, "function boardKinds("), want) {
+			t.Errorf("в static/app.js boardKinds нет %q: таба LLD на доске нет", want)
+		}
+	}
+	if !strings.Contains(funcBody(t, text, "function boardKindNow("), `"lld"`) {
+		t.Error("в static/app.js boardKindNow не знает lld: активный таб списка LLD не подсветится")
+	}
+	if !strings.Contains(funcBody(t, text, "function boardKindHash("), `project + "/lld"`) {
+		t.Error("в static/app.js boardKindHash не ведёт на #проект/lld: таб пережить обновление не сможет")
+	}
+	body := funcBody(t, text, "function renderLld(")
+	if !strings.Contains(body, `boardKindBar(project, "lld")`) {
+		t.Error("в static/app.js renderLld не рисует полосу табов: с телефона список LLD не открыть")
+	}
+	if strings.Contains(body, "lld-crumb") {
+		t.Error("в static/app.js renderLld держит крошку «Доска проект»: её место заняла полоса табов")
 	}
 }
 
@@ -1040,12 +1072,14 @@ func TestStaticBoardNarrowRow(t *testing.T) {
 func TestStaticBoardTabsAndHomePlus(t *testing.T) {
 	heads := []string{"function boardKinds(", "function boardKindHash(", "function boardKindNow("}
 	cases := []struct{ expr, want string }{
-		{`boardKinds().map((k) => k[1]).join(",")`, "Задачи,Сессии,Черновики"},
+		{`boardKinds().map((k) => k[1]).join(",")`, "Задачи,Сессии,Черновики,LLD"},
 		{`boardKindHash("demo", "tasks")`, "demo"},
 		{`boardKindHash("demo", "sess")`, "demo/sess"},
 		{`boardKindHash("demo", "drafts")`, "demo/drafts"},
+		{`boardKindHash("demo", "lld")`, "demo/lld"},
 		{`boardKindNow("sess")`, "sess"},
 		{`boardKindNow("tasks")`, "tasks"},
+		{`boardKindNow("lld")`, "lld"},
 	}
 	for _, c := range cases {
 		if got := jsEval(t, heads, c.expr); got != c.want {
@@ -1670,12 +1704,18 @@ func TestBoardNarrowNoSideScroll(t *testing.T) {
 	dir, page := chromeStand(t, "narrow_scroll.js", tblColsJSON(t))
 	for _, tab := range []struct{ key, word string }{
 		{"tasks", "задачи"}, {"sess", "сессии"}, {"drafts", "черновики"},
+		{"lld", "список LLD"},
 		{"ask", "вопрос клиента"}, {"chat", "шапка разговора"},
 	} {
-		for _, win := range []string{"390,844", "430,932"} {
+		for _, win := range []string{"320,568", "360,740", "390,844", "430,932"} {
 			got := chromeMeasure(t, chrome, dir, page, win, tab.key)
 			if got["gclient"] <= 0 {
 				t.Fatalf("замер %s на %s не собрался: %v", tab.word, win, got)
+			}
+			if got["barover"] > 0 {
+				t.Errorf("на экране %s полоса четырёх табов доски шире раздела на %d точек: "+
+					"на узкой ширине сужается зазор табов и поля баджа",
+					win, got["barover"])
 			}
 			if got["over"] > 0 {
 				// widest это на сколько дальше правой кромки раздела уехала

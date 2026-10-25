@@ -303,6 +303,31 @@ func TestTaskHarnessPolicy(t *testing.T) {
 			t.Errorf("носитель не получил разрешённую подписку: %s", got)
 		}
 	})
+	t.Run("запрещённый via без разрешённой модели не поднимается", func(t *testing.T) {
+		e, tmuxLog := checkEnv(t, "")
+		writeScript(t, e.bin, "клиент-2", "exit 0")
+		via := `{"harnesses":[
+		{"name":"перваяtest","default":true,"enabled":true,"bin":"клиент-1",
+		 "models":[{"tier":"max","model":"route-max","via":"втораяtest"}]},
+		{"name":"втораяtest","enabled":true,"auto":false,"bin":"клиент-2",
+		 "models":[{"tier":"max","model":"route-max"}]}]}`
+		writeAgentctlPick(t, e.bin, via, "max")
+		// Исполнителя разработки запись не назвала: отбор держит только допуск,
+		// а ярус разворачивается лишь ступенью запрещённого владельца.
+		writeCheckTask(t, e.proj, "XR-003", checkTaskDoc)
+		rep := checkRunOne(t, e, "XR-003")
+		if rep.Raised || !rep.Failed {
+			t.Fatalf("отсутствие разрешённой модели обязано отказать: %+v", rep)
+		}
+		for _, want := range []string{"прогон не поднят", "автоматическим назначениям"} {
+			if !strings.Contains(rep.Line, want) {
+				t.Errorf("отказ не называет %q: %s", want, rep.Line)
+			}
+		}
+		if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") || strings.Contains(got, "втораяtest") {
+			t.Errorf("запрещённая подписка поднята: %s", got)
+		}
+	})
 }
 
 func TestCheckRunPassesIndependentHarnessToCarrier(t *testing.T) {

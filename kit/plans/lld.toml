@@ -62,7 +62,7 @@ title = "сценарий"
 skill = "board-task"
 by = "сам"
 trace = "scenario"
-gate = ["check", "merge"]
+gate = ["check", "close", "merge"]
 
 [review]
 title = "ревью"

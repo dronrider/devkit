@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/dronrider/devkit/internal/checkrun"
+	"github.com/dronrider/devkit/internal/merged"
 	"github.com/dronrider/devkit/internal/rehearsal"
 	"github.com/dronrider/devkit/internal/reviewnote"
 	"github.com/dronrider/devkit/internal/stage"
@@ -38,7 +41,25 @@ type Ctx struct {
 	// LogRoot это дерево, где лежит журнал .devkit/log: при работе через
 	// worktree прогоны оседают в дереве задачи.
 	LogRoot string
+	// Gate называет точку, из которой спросили след: check, close, merge,
+	// ready, push (решение 7). Пустая строка значит, что след спрашивает план
+	// на done. У close у сценария, обкатки и проверки своя мерка: файл задачи
+	// может не существовать, отметка обкатки сверяется без свежести, а запись
+	// прогона необязательна.
+	Gate string
+	// Link это ссылка строки доски. Сценарий, живущий в другом документе
+	// (LLD), ворота узнают по ней и раздел в файле задачи не ищут.
+	Link string
 }
+
+// Имена точек ворот (решение 7). Их же называет поле gate в шаблоне этапа.
+const (
+	GateCheck = "check"
+	GateClose = "close"
+	GateMerge = "merge"
+	GateReady = "ready"
+	GatePush  = "push"
+)
 
 // Verdict это итог вопроса о следе этапа.
 type Verdict int
@@ -78,7 +99,7 @@ func Check(word string, c Ctx) (Verdict, string) {
 	case word == WordScenario:
 		err = Scenario(c)
 	case word == WordRehearsal:
-		err = rehearsal.Fresh(c.Root, c.ID, c.Doc, c.Again)
+		err = Rehearsal(c)
 	case word == WordReview:
 		if c.ID == "" {
 			err = reviewNoteTrace(c)
@@ -108,6 +129,15 @@ func Check(word string, c Ctx) (Verdict, string) {
 // Погашение живёт пометкой «- Исключение: сценарий (причина)».
 func Scenario(c Ctx) error {
 	rel := "docs/tasks/" + c.ID + ".md"
+	if scenarioElsewhere(c.Link, c.ID) {
+		return nil
+	}
+	// Файла задачи нет, значит и разделу в нём негде стоять. Закрытие такие
+	// строки пропускает молча (строки старого запаса), а на переводе в Check
+	// изменяющий move отказывает раньше ворот, и сюда дело не доходит.
+	if c.Doc == "" && c.Gate == GateClose {
+		return nil
+	}
 	if !HasHeading(c.Doc, "Сценарий проверки") {
 		if !taskform.Exception(c.Doc, taskform.GateScenario) {
 			return fmt.Errorf("в %s нет раздела «Сценарий проверки», а без него задачу не выпускают: описать шаги и ожидаемый итог (RULES.board.md, «Трекинг задач» п. 6); если сценарий неприменим (бескодовая правка, проверяется вместе с другой задачей), загасить этап пометкой «- Исключение: сценарий (причина)»", rel)
@@ -135,6 +165,21 @@ func Scenario(c Ctx) error {
 		return fmt.Errorf("у барьера «%s» обходов %d, а перебор в «Приёмка» %s имеет строк %d (нужно столько же, по строке на обход с исходом)", barrier, want, rel, bypasses)
 	}
 	return nil
+}
+
+// linkRe разбирает markdown-ссылку вида [текст](путь).
+var linkRe = regexp.MustCompile(`\]\(([^)]+)\)`)
+
+// scenarioElsewhere отвечает, ведёт ли ссылка строки не в файл задачи, а в
+// другой документ: LLD-задача описывает проверку прямо в дизайне
+// (RULES.board.md, «Трекинг задач» п. 6), и файла задачи у неё может не быть.
+// Заглушка вида «(LLD позже)» ссылкой не считается: смотреть по ней некуда.
+func scenarioElsewhere(link, id string) bool {
+	m := linkRe.FindStringSubmatch(link)
+	if m == nil {
+		return false
+	}
+	return path.Base(m[1]) != id+".md"
 }
 
 // Merged проверяет, что код задачи доехал до main: в файле задачи стоит
@@ -207,6 +252,23 @@ func gitAhead(root, main, branch string) int {
 	return n
 }
 
+// Rehearsal проверяет отметку обкатки. На переводе в Check и на слиянии
+// сверяется свежесть (Fresh): рубеж переходный, и вчерашняя отметка ручалась
+// бы за сегодняшний код. Закрытие идёт после Check, HEAD к тому часу уезжает
+// чужими слияниями, и сверка коммита отбивала бы закрытие на ровном месте,
+// поэтому там спрашивается одно наличие отметки (Mark, DK-685). Файла задачи
+// нет, значит и отметке негде стоять: рубеж сценария выше уже отказал там,
+// где файл нужен, второй раз ронять не о чем.
+func Rehearsal(c Ctx) error {
+	if c.Doc == "" {
+		return nil
+	}
+	if c.Gate == GateClose {
+		return rehearsal.Mark(c.ID, c.Doc, c.Again)
+	}
+	return rehearsal.Fresh(c.Root, c.ID, c.Doc, c.Again)
+}
+
 // Verify проверяет прогон сценария чужими руками (DK-642): запись этапа
 // «проверка» с именем прогонявшего, непустой раздел «Проверка» с реальным
 // выводом, а у выкаченной задачи ещё и отметка smoke на последний выкат
@@ -214,6 +276,9 @@ func gitAhead(root, main, branch string) int {
 // под тем же именем, что писал код, не зачитывается: в цикле DK-138 три
 // дефекта проехали ревью, и поймал их только прогон чужими руками.
 func Verify(c Ctx) error {
+	if c.Gate == GateClose {
+		return verifyClose(c)
+	}
 	rel := "docs/tasks/" + c.ID + ".md"
 	text, found := sectionOf(c.Doc, taskform.Verification)
 	if !found || strings.TrimSpace(text) == "" {
@@ -236,6 +301,104 @@ func Verify(c Ctx) error {
 	}
 	return nil
 }
+
+// verifyClose это мерка проверки на закрытии строки (DK-1144). Три отличия от
+// планской: раздел «Проверка» требуется только агентскому виду (у user и
+// mixed его может не быть, TestCloseNonAgentSkipsVerificationGate), сверка
+// smoke держит исключение docs-слияния (DK-1424), а запись прогона
+// необязательна: на этом держатся автозакрытие тиком (DK-516) и задачи,
+// закрытые до записи прогонявшего. Порядок проверок тот, что был у ворот
+// close: раздел, выкат, прогонявший.
+func verifyClose(c Ctx) error {
+	rel := "docs/tasks/" + c.ID + ".md"
+	if c.Doc != "" {
+		if c.Accept == "agent" {
+			text, found := sectionOf(c.Doc, taskform.Verification)
+			if !found || strings.TrimSpace(text) == "" {
+				return fmt.Errorf("%s: вид agent требует непустой раздел «Проверка» в %s: выкатить код и вложить туда реальный вывод прогона (RULES.board.md, «Трекинг задач» п. 6), пустое закрытие агентской задачи запрещено", c.ID, rel)
+			}
+		}
+		if DeployUnchecked(c.Root, c.Doc) {
+			return fmt.Errorf("%s: в «Выкате» есть слияние, а отметки smoke на последний выкат нет: сценарий после выката не прогнан; прогнать его на выкаченном коде, вывод вложить в раздел «Проверка», прогонявшего отметить «agentctl stage %s проверка --by %s», выкат «shipctl smoke %s» и повторить закрытие",
+				c.ID, c.ID, RepeatModel(c.Root, c.ID), c.ID)
+		}
+	}
+	return VerifyRunner(c.Root, c.ID)
+}
+
+// VerifyRunner сверяет прогонявшего сценарий с исполнителем последнего этапа
+// работы над кодом (DK-642). Оба имени ищутся в двух местах: в разделе «Ход
+// работы» файла задачи, куда этапы уносит смена статуса, и в незакрытом
+// пакете этапов, где запись прогона лежит до самого закрытия. Задача без
+// записи прогона проходит молча: на этом держатся автозакрытие тиком (DK-516)
+// и задачи, закрытые до записи прогонявшего.
+func VerifyRunner(root, id string) error {
+	lines, pending := StageSources(root, id)
+	runner, ok := stage.LastVerifyRunner(lines, pending)
+	if !ok {
+		return nil
+	}
+	if note, missing := stage.ExecutorMissing(lines, pending); missing {
+		return fmt.Errorf("%s: у последнего этапа работы над кодом исполнитель не назван («%s»): субагент поднят без параметра model, и модель сессии в запись не легла, сверить прогонявшего сценарий не с кем; впиши модель в текст этой строки «Хода работы», например «субагент opus/high по определению exec-high», и повтори закрытие",
+			id, note)
+	}
+	dev, ok := stage.LastExecutor(lines, pending)
+	if !ok {
+		return nil
+	}
+	// Сверка без регистра: --by принимает любой текст, и «Opus» против «opus»
+	// в точной сверке проходил бы за чужой прогон.
+	if strings.EqualFold(runner, dev) {
+		return fmt.Errorf("%s: сценарий прогнал %s, он же исполнитель последнего этапа работы над кодом: сценарий прогоняет не автор правки, повторить прогон и отметить «agentctl stage %s %s --by %s»",
+			id, runner, id, stage.Verify, RepeatModel(root, id))
+	}
+	return nil
+}
+
+// DeployUnchecked отвечает, стоит ли в файле задачи настоящий непроверенный
+// выкат: слияние с кодом за пределами docs/ без действующей на него отметки
+// smoke. Читают его ворота закрытия и отбор closable, чтобы ответ у ручного и
+// автоматического закрытия не разошёлся. Не удалось разобрать состав коммитов
+// значит выкат: ошибиться в сторону требования smoke дешевле, чем в сторону
+// пропуска.
+func DeployUnchecked(root, doc string) bool {
+	if taskform.SmokeCovers(doc) {
+		return false
+	}
+	shas := taskform.MergedShas(doc)
+	if len(shas) == 0 {
+		return false
+	}
+	docs, err := merged.CommitsDocsOnly(root, shas)
+	return err != nil || !docs
+}
+
+// RepeatModel это модель для повторного прогона в тексте отказа (DK-1116).
+// Считает её `agentctl check`, та же дорога, какой ярус проверяющего берёт
+// автономный выкат: ярус вердиктом роли ревью, а совпавшую с разработкой
+// модель заменяет ступень выше. Позвать некем или отказ, значит отказ остаётся
+// с прочерком вместо модели: подсказка тут не главное, а разваливаться из-за
+// неё воротам незачем.
+func RepeatModel(root, id string) string {
+	bin, err := exec.LookPath("agentctl")
+	if err != nil {
+		return checkModelUnknown
+	}
+	cmd := exec.Command(bin, "check", id)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return checkModelUnknown
+	}
+	if m := checkrun.ParseModel(string(out)); m != "" {
+		return m
+	}
+	return checkModelUnknown
+}
+
+// checkModelUnknown стоит в отказе там, где модель назвать нечем: вместо
+// готового имени остаётся прежняя рамка под руку человека.
+const checkModelUnknown = "<модель>"
 
 // stageTrace проверяет след семейства stage:<вид>: строка этапа с этим видом в
 // «Ходе работы» файла задачи либо в незакрытом пакете ~/.devkit/runs. Запись

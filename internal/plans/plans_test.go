@@ -26,8 +26,8 @@ func TestBuiltinTask(t *testing.T) {
 	gates := map[string]string{
 		"tests":     "merge",
 		"stand":     "merge",
-		"scenario":  "check,merge",
-		"rehearsal": "check",
+		"scenario":  "check,close,merge",
+		"rehearsal": "check,close",
 		"review":    "merge",
 		"ship":      "check",
 		"verify":    "close",

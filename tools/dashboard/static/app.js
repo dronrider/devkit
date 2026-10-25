@@ -10566,30 +10566,19 @@ function modelPick(project, st) {
       ? shown.model + ": ярус " + why.tier + ", подписка " + why.harness
       : shown.model + ": сверх лестницы, подписка " + why.harness)
     : (st.modelsNote || "Модель агента");
-  const harnessOf = (name) => (((st.models || []).find((m) => m.model === name) || {}).harness) || "";
-  const mainHarness = (((st.models || []).find((m) => m.default) || {}).harness) || "";
-  // Живой разговор на второй подписке моделью отсюда не переубедить: смена
-  // модели это рамка devkit-remodel, а она поднимает резюм в каталоге
-  // первой подписки, история же разговора живёт в каталоге второй, и на
-  // другой подписке её не продолжить. Селектор там не действие, а честный
-  // текст: подписку называет и текст строки, и подсказка.
-  const own = shown.harness || harnessOf(shown.model);
-  const second = Boolean(isLive && own && mainHarness && own !== mainHarness);
+  // Смена модели живого разговора идёт на любую подписку: резюм поднимается
+  // целевой подпиской, а сервер перед подъёмом переносит транскрипт и
+  // сайдкары в её каталог (DK-1455), история продолжается целиком.
   if (alien) {
     model.disabled = true;
     model.title = "Модель выбрана в самом vscode: с дашборда она сменится только на резюме этого чата.";
-  } else if (second) {
-    model.disabled = true;
-    model.title = "Разговор идёт на подписке " + own + ": сменить модель живого разговора " +
-      "панель не может, история живёт в каталоге этой подписки. Нужная модель выбирается " +
-      "подъёмом нового чата.";
   }
   const box = el("div", "cmodel");
   box.append(model);
   model.addEventListener("change", () => {
-    // Запертый список это текст, а не действие: у чужого окна и у второй
-    // подписки менять отсюда нечего, и молча писать выбор в память диалога
-    // значило бы обещать смену, которой не будет.
+    // Запертый список это текст, а не действие: у чужого окна менять отсюда
+    // нечего, и молча писать выбор в память диалога значило бы обещать
+    // смену, которой не будет.
     if (model.disabled) return;
     const sel = model.selectedOptions[0];
     const pick = {
@@ -10614,7 +10603,7 @@ function modelPick(project, st) {
       }
       return;
     }
-    modelSwitch(project, st, pick, isLive && !alien && !second).catch(console.error);
+    modelSwitch(project, st, pick, isLive && !alien).catch(console.error);
   });
   return box;
 }

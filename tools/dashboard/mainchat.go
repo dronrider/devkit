@@ -38,25 +38,24 @@ func (s *server) handleTaskChat(w http.ResponseWriter, r *http.Request) {
 		resp["chat"] = s.mainChatCarrier(recs[n-1].Chat)
 		resp["source"] = recs[n-1].Source
 		resp["since"] = recs[n-1].Time
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
-	// Записи без строки в журнале разбирает миграция (DK-1432): однозначный
-	// разговор подключается на месте, спорный и общий открывают экран выбора,
-	// без транскрипта и без разговоров называются словами. Запись со снятым
-	// назначением сюда не попадает: рука уже сказала своё слово, и автоматика
-	// его не возвращает.
-	c, bound := s.migResolve(found, id)
-	if bound {
-		resp["chat"] = s.mainChatCarrier(c.Auto)
-		resp["source"] = mainchat.ByMigrate
-	} else if c.Kind != "" {
-		resp["kind"] = c.Kind
-		if c.Note != "" {
-			resp["note"] = c.Note
-		}
-		if len(c.Cands) > 0 {
-			resp["candidates"] = c.Cands
+	} else {
+		// Записи без строки в журнале разбирает миграция (DK-1432): однозначный
+		// разговор подключается на месте, спорный и общий открывают экран
+		// выбора, без транскрипта и без разговоров называются словами. Запись
+		// со снятым назначением сюда не попадает: рука уже сказала своё слово,
+		// и автоматика его не возвращает.
+		c, bound := s.migResolve(found, id)
+		if bound {
+			resp["chat"] = s.mainChatCarrier(c.Auto)
+			resp["source"] = mainchat.ByMigrate
+		} else if c.Kind != "" {
+			resp["kind"] = c.Kind
+			if c.Note != "" {
+				resp["note"] = c.Note
+			}
+			if len(c.Cands) > 0 {
+				resp["candidates"] = c.Cands
+			}
 		}
 	}
 	// Переход между целью и её задачами это навигация, а не перенос

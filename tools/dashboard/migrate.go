@@ -50,6 +50,10 @@ type migSource struct {
 	// цели» в записях реестра говорят ими одно и то же, чьей работе служит
 	// сессия.
 	GoalTurns map[string][]string
+	// Running называет записи с идущим циклом цели: живой замок оболочки сам
+	// ведёт носителя записи, и автоназначение идущей цели не соперник
+	// (DK-1009).
+	Running map[string]bool
 	// Born называет разговор, из которого запись оформлена (П3, источник
 	// «оформление» в журнале назначений).
 	Born map[string]string
@@ -467,22 +471,23 @@ func migCaseFor(src migSource, talks []migTalk, rec string) migCase {
 		c.Kind = migNoTalks
 		return c
 	}
-	// Автоназначение: единственный подтверждённый и не живой носитель
-	// действующей работы. Занятость другой записью видна только всем разбором
-	// сразу, её достраивает migScan.
-	if len(proven) == 1 && !migBusy(src, migTalkOf(talks, proven[0].Key)) {
-		c.Kind, c.Auto = migClear, proven[0].Key
-		return c
-	}
-	c.Kind = migDisputed
+	// Автоназначение: единственный подтверждённый, не живой носитель
+	// действующей работы и не идущая цель. Занятость другой записью видна
+	// только всем разбором сразу, её достраивает migScan.
 	switch {
 	case len(proven) > 1:
 		c.Note = fmt.Sprintf("подтверждённых кандидатов %d", len(proven))
-	case len(proven) == 1:
+	case len(proven) == 1 && src.Running[rec]:
+		c.Note = "идущий цикл цели ведёт носителя сам"
+	case len(proven) == 1 && migBusy(src, migTalkOf(talks, proven[0].Key)):
 		c.Note = "кандидат это живой носитель действующей работы"
+	case len(proven) == 1:
+		c.Kind, c.Auto = migClear, proven[0].Key
+		return c
 	default:
 		c.Note = "подтверждений не набралось"
 	}
+	c.Kind = migDisputed
 	// Раздел, когда весь спор в самом разговоре: общий либо без ленты.
 	// Причину этих разделов называют сам раздел и строка кандидата, а примечание
 	// о неподтверждённости спорило бы с доказательствами той же строки.
@@ -621,6 +626,7 @@ func (s *server) migSnapshot(recs []migRecord) migSource {
 		HeadLock:  map[string]bool{},
 		Runs:      map[string]bool{},
 		GoalTurns: map[string][]string{},
+		Running:   map[string]bool{},
 		Born:      map[string]string{},
 		Drafts:    map[string]bool{},
 		Feeds:     map[string]string{},
@@ -687,8 +693,11 @@ func (s *server) migSnapshot(recs []migRecord) migSource {
 		if paths, _ := filepath.Glob(filepath.Join(stage.Dir(s.cfg.Home), r.ID+"-*.run")); len(paths) > 0 {
 			src.Runs[r.ID] = true
 		}
-		if turn := goalTurn(r.Path, r.ID); turn != "" && !hasRow(src.GoalTurns[r.ID], turn) {
-			src.GoalTurns[r.ID] = append(src.GoalTurns[r.ID], turn)
+		if turn := goalTurn(r.Path, r.ID); turn != "" {
+			src.Running[r.ID] = true
+			if !hasRow(src.GoalTurns[r.ID], turn) {
+				src.GoalTurns[r.ID] = append(src.GoalTurns[r.ID], turn)
+			}
 		}
 	}
 	// Рождение записи: журнал назначений знает разговоры, из которых записи

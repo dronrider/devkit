@@ -26,9 +26,10 @@ func migFix(t *testing.T, sids map[string][]sessionBind, extra func(*migSource))
 	src := migSource{
 		Sessions: sids, Store: map[string]chatStore{}, Inbox: map[string]bool{},
 		HeadLock: map[string]bool{}, Runs: map[string]bool{},
-		GoalTurns: map[string][]string{}, Born: map[string]string{},
-		Drafts: map[string]bool{}, Feeds: map[string]string{},
-		Busy: map[string]bool{}, Heads: map[string]sessionHead{},
+		GoalTurns: map[string][]string{}, Running: map[string]bool{},
+		Born: map[string]string{}, Drafts: map[string]bool{},
+		Feeds: map[string]string{}, Busy: map[string]bool{},
+		Heads: map[string]sessionHead{},
 	}
 	for sid := range sids {
 		src.Feeds[sid] = migFeedLive
@@ -346,6 +347,49 @@ func TestMigClosedRowConnectedByAddress(t *testing.T) {
 	data := readFile(t, mainchat.Path(e.home))
 	if n := strings.Count(data, "источник миграция"); n != 1 {
 		t.Fatalf("строк миграции %d, жду одну:\n%s", n, data)
+	}
+}
+
+// Идущая цель не получает автоназначения: живой замок оболочки сам ведёт
+// носителя записи, и назначение прежнего груминга спорило бы с витком
+// (DK-1009). Кончившийся цикл назначения не держит, и запись разбирается по
+// общим пунктам.
+func TestMigRunningGoalKeepsCarrier(t *testing.T) {
+	src := migFix(t, map[string][]sessionBind{
+		"gro-1": {{Task: "XR-6", Source: sessions.ByOrder, Project: "demo",
+			Time: "2026-10-01T10:00:00"}},
+	}, func(s *migSource) { s.Running["XR-6"] = true })
+	got := migOne(src, "XR-6")
+	if got.Kind != migDisputed || got.Auto != "" || got.Note == "" {
+		t.Fatalf("идущая цель получила автоназначение: %+v", got)
+	}
+	delete(src.Running, "XR-6")
+	if got := migOne(src, "XR-6"); got.Kind != migClear || got.Auto != "gro-1" {
+		t.Fatalf("кончившийся цикл держит назначение: %+v", got)
+	}
+}
+
+// Ручка адреса идущей цели не подключает старый разговор: груминг цели
+// подтверждён привязкой, но живой виток ведёт носителя сам, и журнал
+// назначений остаётся нетронутым (браузерный случай цели без chrome).
+func TestMigRunningGoalAddressKeepsHandsOff(t *testing.T) {
+	e, c := migEnv(t)
+	if err := os.MkdirAll(filepath.Join(e.proj, "docs", "tasks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goalWithTasks(t, e)
+	writeSession(t, e.home, e.proj, "", "gro-2",
+		sessionLine("груминг цели", "main"),
+		time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC))
+	writeBinds(t, e.home, bindRecord(e.home, "2026-10-01T10:01:00", "gro-2", "XR-100", sessions.ByOrder))
+	goalLock(t, e.proj, "XR-100", os.Getpid(), "abab1212-1212-4212-8212-121212121212")
+	_, got := taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-100/chat")
+	if got.Chat != "" || got.Source != "" {
+		t.Fatalf("идущая цель получила назначение адресом: %+v", got)
+	}
+	data, err := os.ReadFile(mainchat.Path(e.home))
+	if err == nil && strings.Contains(string(data), "миграция") {
+		t.Fatalf("ручка адреса идущей цели записала назначение: %s", data)
 	}
 }
 

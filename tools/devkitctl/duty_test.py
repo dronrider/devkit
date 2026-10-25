@@ -5,6 +5,7 @@
 разбора, одинаковые отказы в разбор не входят. Тихий исход самого подъёма
 проверяет ResumeFailedTest в watch_test.py.
 """
+import json
 import re
 import shutil
 import subprocess
@@ -80,7 +81,7 @@ class DutyAgentTest(unittest.TestCase):
         ran = self.runs()
         self.assertEqual(len(ran), 1, self.call.calls)
         self.assertEqual(ran[0][:5], [self.bin, "-C", str(self.proj), "run", self.TASK])
-        self.assertIn("дежурный поднят", " ".join(lines))
+        self.assertIn("дежурный по %s" % self.TASK, " ".join(lines))
 
     def test_marker_outside_stage_is_not_a_duty_address(self):
         # Метка в другом разделе это цитата или сценарий, а не адрес дежурного.
@@ -137,54 +138,62 @@ class DutyAgentTest(unittest.TestCase):
     def test_spawn_ceiling_shouts_and_stops_retry(self):
         # Постоянный сбой подъёма добивается потолком попыток: человеку идёт
         # реальный громкий зов, подпись занимает запись и наружу больше не
-        # долбят (замечание ревью).
+        # долбят (замечание ревью). Зов уходит тиком за последней попыткой:
+        # пока попытки идут, хвостом им не стать.
         self.task_file([self.WHY])
-        for _ in range(duty.SPAWN_TRIES):
-            call = Fake(code=2, out="лестница отказала")
-            def invoke(argv, **kw):
-                result = call(argv, **kw)
-                if len(argv) > 1 and "notify.py" in str(argv[1]):
-                    result.returncode = 0
-                return result
+        notify = Fake(out="доставлено")
+
+        def invoke(argv, **kw):
+            notify.calls.append(list(argv))
+            code = 0 if len(argv) > 1 and "notify.py" in str(argv[1]) else 2
+            return subprocess.CompletedProcess(argv, code, "лестница отказала", None)
+
+        for i in range(duty.SPAWN_TRIES):
             lines = self.duty_lines(call=invoke)
-        self.assertEqual(len(self.notifies(call)), 1,
-                         "на потолке подъёмов человека не позвали: %s" % call.calls)
+            text = " ".join(lines)
+            self.assertIn("попытка %d из %d" % (i + 1, duty.SPAWN_TRIES), text)
+            if i + 1 < duty.SPAWN_TRIES:
+                self.assertIn("повтор тиком", text)
+            else:
+                self.assertIn("следующим тиком потолок", text)
+            self.assertEqual(self.notifies(notify), [], "зов ушёл раньше потолка")
+        lines = self.duty_lines(call=invoke)
+        self.assertEqual(len(self.notifies(notify)), 1,
+                         "на потолке подъёмов человека не позвали: %s" % notify.calls)
         self.assertIn("громкий зов человеку ушёл", " ".join(lines))
+        self.assertIn("закрыта потолком", " ".join(lines))
         self.assertIn(duty.signature(self.WHY), duty.read_state(home=self.home))
         call2 = Fake(code=2)
         self.duty_lines(call=call2)
         self.assertEqual(self.runs(call2), [], "после потолка поднимают снова")
 
-    def test_busy_is_waiting_without_failed_attempts_or_consumed_signature(self):
+    def test_busy_is_waiting_without_attempts_or_signature(self):
         self.task_file([self.WHY])
         call = Fake(code=3, out="голова занята, замок")
         for _ in range(duty.SPAWN_TRIES + 2):
             lines = self.duty_lines(call=call)
-        self.assertEqual(duty.read_fails(home=self.home), {})
+        self.assertEqual(duty.read_tries(home=self.home), {})
         self.assertEqual(duty.read_state(home=self.home), set())
         self.assertEqual(self.notifies(call), [])
         self.assertIn("исход записи", " ".join(lines))
         self.assertIn("запуск: голова занята", " ".join(lines))
-        self.duty_lines()
-        self.assertEqual(len(self.runs()), 1)
-        self.assertIn(duty.signature(self.WHY), duty.read_state(home=self.home))
 
-    def test_undelivered_ceiling_notification_retries(self):
+    def test_undelivered_ceiling_notification_closes_the_signature(self):
+        # Зов не доставился, а подпись всё равно закрывается: молча долбить
+        # подъёмами вечно хуже одного недоставленного зова, и повтор зова лёг
+        # бы в тот же канал, который молчит.
         self.task_file([self.WHY])
         failed = Fake(code=2, out="запуск и доставка отказали")
         for _ in range(duty.SPAWN_TRIES):
             lines = self.duty_lines(call=failed)
+            self.assertTrue(lines, "попытка ушла без строки отчёта")
         self.assertEqual(duty.read_state(home=self.home), set())
+        lines = self.duty_lines(call=failed)
         self.assertIn("не доставлено", " ".join(lines))
-        class Deliver(Fake):
-            def __call__(inner, argv, **kw):
-                inner.calls.append(list(argv))
-                code = 0 if len(argv) > 1 and "notify.py" in str(argv[1]) else 2
-                return subprocess.CompletedProcess(argv, code, "доставка", None)
-        delivered = Deliver()
-        self.duty_lines(call=delivered)
-        self.assertEqual(len(self.notifies(delivered)), 1)
         self.assertIn(duty.signature(self.WHY), duty.read_state(home=self.home))
+        call2 = Fake(code=2)
+        self.duty_lines(call=call2)
+        self.assertEqual(self.runs(call2), [], "после потолка поднимают снова")
 
     # Шаг 4: одинаковые отказы в разбор не входят (граница DK-1115).
 
@@ -198,19 +207,106 @@ class DutyAgentTest(unittest.TestCase):
 
     def test_new_signature_still_rises(self):
         # Новая причина это снова неизвестный исход, она в разбор входит.
+        # Прежняя при этом закрыта вопросом человеку, и повторного подъёма
+        # по ней нет.
         self.task_file([self.WHY])
+        ask = self.proj / ".devkit" / "chat" / ("task-%s.ask" % self.TASK)
+        ask.parent.mkdir(parents=True, exist_ok=True)
+        ask.write_text("вопрос человеку\n", encoding="utf-8")
         self.duty_lines()
-        self.task_file([self.WHY, "402 Insufficient balance: резюмом не лечится, сессия x"])
+        self.assertEqual(len(self.runs()), 0, self.call.calls)
+        other = self.proj / "docs" / "tasks" / "DK-902.md"
+        other.write_text("# DK-902\n\n## Ход работы\n\n- 2026-10-10 %s: "
+                         "402 Insufficient balance: резюмом не лечится, сессия x.\n"
+                         % duty.DUTY_MARK, encoding="utf-8")
         call2 = Fake(out="ступень: поднято, код 0")
         self.duty_lines(call=call2)
-        self.assertEqual(len(self.runs(call2)), 1, call2.calls)
+        ran = self.runs(call2)
+        self.assertEqual(len(ran), 1, call2.calls)
+        self.assertIn("DK-902", " ".join(str(x) for x in ran[0]))
 
     def test_picked_marker_is_not_picked_again(self):
+        # После вопроса человеку подпись занята: повторных подъёмов по той же
+        # записи нет, граница DK-1115.
         self.task_file([self.WHY])
         self.duty_lines()
         self.assertEqual(len(self.runs()), 1)
-        self.duty_lines()
+        ask = self.proj / ".devkit" / "chat" / ("task-%s.ask" % self.TASK)
+        ask.parent.mkdir(parents=True, exist_ok=True)
+        ask.write_text("вопрос человеку\n", encoding="utf-8")
+        lines = self.duty_lines()
         self.assertEqual(len(self.runs()), 1, "дежурного подняли дважды: %s" % self.call.calls)
+        self.assertIn("закрыт этим вопросом", " ".join(lines))
+
+    # Шаг 3а: подпись занимает результат разбора, а не запуск (DK-1454).
+
+    def test_run_without_result_is_retried(self):
+        # Успешный запуск это не результат разбора. Дежурный, прошедший без
+        # вопроса и без черновика, поднимается заново, попытка за попыткой, и
+        # подпись занимает только исход.
+        self.task_file([self.WHY])
+        self.duty_lines()
+        self.assertEqual(duty.read_state(home=self.home), set(),
+                         "запуск без исхода занял подпись, повтора не будет")
+        call2 = Fake(out="прошёл молча")
+        self.duty_lines(call=call2)
+        self.assertEqual(len(self.runs(call2)), 1,
+                         "запуск без исхода погасил повтор: %s" % call2.calls)
+
+    def test_ask_after_run_takes_the_signature(self):
+        # Дежурный кончился вопросом человеку: признак вопроса в корне
+        # занимает подпись, и повторов больше нет.
+        self.task_file([self.WHY])
+        ask = self.proj / ".devkit" / "chat" / ("task-%s.ask" % self.TASK)
+
+        class Asks(Fake):
+            def __call__(inner, argv, **kw):
+                res = super().__call__(argv, **kw)
+                ask.parent.mkdir(parents=True, exist_ok=True)
+                ask.write_text("вопрос человеку\n", encoding="utf-8")
+                return res
+
+        lines = self.duty_lines(call=Asks(out="спросил"))
+        self.assertIn("закрыт вопросом", " ".join(lines))
+        self.assertIn(duty.signature(self.WHY), duty.read_state(home=self.home))
+        call2 = Fake(out="тихо")
+        self.duty_lines(call=call2)
+        self.assertEqual(self.runs(call2), [])
+
+    def test_draft_after_run_takes_the_signature(self):
+        # Дежурный кончился черновиком задачи: новый файл в docs/tasks/drafts
+        # занимает подпись, повторных подъёмов нет.
+        self.task_file([self.WHY])
+        drafts = self.proj / "docs" / "tasks" / "drafts"
+
+        class Drafts(Fake):
+            def __call__(inner, argv, **kw):
+                res = super().__call__(argv, **kw)
+                drafts.mkdir(parents=True, exist_ok=True)
+                (drafts / "DK-9999.md").write_text("# DK-9999\n", encoding="utf-8")
+                return res
+
+        lines = self.duty_lines(call=Drafts(out="черновик готов"))
+        self.assertIn("закрыт черновиком", " ".join(lines))
+        self.assertIn(duty.signature(self.WHY), duty.read_state(home=self.home))
+        call2 = Fake(out="тихо")
+        self.duty_lines(call=call2)
+        self.assertEqual(self.runs(call2), [])
+
+    def test_old_memory_does_not_kill_the_repeat(self):
+        # Записи памяти до DK-1454 занимали подпись самим запуском.
+        # Обновление не чистит память руками: старая запись считается
+        # попыткой, и неразобранный исход поднимается снова.
+        self.task_file([self.WHY])
+        sig = duty.signature(self.WHY)
+        state = self.home / ".devkit" / "watch.duty"
+        state.write_text(json.dumps({"when": "2026-10-24T10:00:00",
+                                     "sig": sig}, ensure_ascii=False) + "\n",
+                         encoding="utf-8")
+        lines = self.duty_lines()
+        self.assertEqual(len(self.runs()), 1,
+                         "старая запись погасила повтор: %s" % self.call.calls)
+        self.assertIn("попытка 2 из %d" % duty.SPAWN_TRIES, " ".join(lines))
 
     def test_signature_strips_session(self):
         self.assertEqual(duty.signature(self.WHY), "подъём не помог 3 раз подряд")
@@ -251,7 +347,7 @@ class DutyAgentTest(unittest.TestCase):
         lines = watch.duty_rows(self.proj, call=self.call, taskctl=self.bin,
                                 home=self.home)
         self.assertEqual(len(self.runs()), 1, self.call.calls)
-        self.assertIn("дежурный поднят", " ".join(lines))
+        self.assertIn("дежурный по %s" % self.TASK, " ".join(lines))
 
     def test_dry_run_sees_the_decision_without_touching_state(self):
         # Без act подъём гаснет, память не пишется: стенд смотрит решение

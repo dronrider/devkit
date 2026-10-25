@@ -63,6 +63,17 @@ SILENT_RE = re.compile("^" + SILENT + " (\\d+) ")
 # и инцидент, который сторожок обязан снять сам.
 SILENT_AFTER = 2 * 60 * 60
 
+# Возраст замка без признаков жизни, после которого живой владелец считается
+# замерзшим (DK-1454). Признак жизни это отметка beat, которой оболочка
+# касается на отметке хода и подтверждённом ожидании; живой pid сам по себе
+# работой не считается. Одно число с замком internal/taskhead (lockStale) и
+# оболочкой kit/skills/board-task/task-run.py (STALE_AFTER) держат сторожа
+# пары в тестах обоих.
+STALE_AFTER = 2 * 60 * 60
+
+# Имя файла-отметки жизни в замке, то же, что lockBeat у internal/taskhead.
+BEAT_NAME = "beat"
+
 # Грация касания к открытию этапа, секунды. Молчание доказывает смерть
 # исполнителя, только когда началось на самом этапе: касание реестра за час до
 # открытия считается касанием этапа. Окно, молчавшее до перевода строки, этап
@@ -397,19 +408,35 @@ def report_diagnostic(root, tid, why, call=None, act=True):
 
 
 def head_up(tid, home=None):
-    """Держит ли голову задачи живой процесс. Замок это каталог
+    """Держит ли голову задачи работающий процесс. Замок это каталог
     ~/.devkit/task-<ID>.lock с pid внутри, общий у команды подъёма и у оболочки
     конвейера (internal/taskhead). Замок точнее выдержки: панель поднимает голову
     по реплике сразу и следа подъёма тут не оставляет, а живой замок виден и ей,
-    и этому заходу."""
+    и этому заходу. Живого pid мало (DK-1454): работой замок доказывает свежая
+    отметка жизни, а замерзшее окно с живым pid головой не считается, и подъём
+    либо разбор идут мимо него."""
     home = home or os.path.expanduser("~/.devkit")
-    path = os.path.join(home, "task-%s.lock" % tid.upper(), "pid")
+    lock = os.path.join(home, "task-%s.lock" % tid.upper())
     try:
-        with open(path, encoding="utf-8") as fh:
+        with open(os.path.join(lock, "pid"), encoding="utf-8") as fh:
             pid = int(fh.read().strip() or 0)
     except (OSError, ValueError):
         return False
-    return pid > 0 and not dead_pid(pid)
+    if pid <= 0 or dead_pid(pid):
+        return False
+    return beat_age(lock) < STALE_AFTER
+
+
+def beat_age(lock):
+    """Возраст отметки жизни замка, секунды. Отметка это файл beat, а замкам,
+    поднятым до его появления, последним признаком жизни был сам pid: его время
+    и меряется. Замка без обоих файлов не бывает, ноль значит свежий подъём."""
+    for name in (BEAT_NAME, "pid"):
+        try:
+            return time.time() - os.path.getmtime(os.path.join(lock, name))
+        except OSError:
+            continue
+    return 0.0
 
 
 def chat_hook():
@@ -844,8 +871,10 @@ def dead_pid(pid):
 
 
 def stale_locks(home, act=True):
-    """Замки задач, чей владелец умер. Взятие задачи снимает такой замок само,
-    а строке, которую никто не берёт, это не помогает."""
+    """Замки задач, чей владелец умер либо замерз. Взятие задачи снимает такой
+    замок само, а строке, которую никто не берёт, это не помогает. Замерзший
+    владелец это живой pid без признаков жизни (DK-1454): такой замок держала
+    бы вечно стоящая строка, и убирает его тот же обход."""
     lines = []
     try:
         names = sorted(os.listdir(home))
@@ -861,14 +890,18 @@ def stale_locks(home, act=True):
                 pid = int(fh.read().strip() or 0)
         except (OSError, ValueError):
             continue
-        if not dead_pid(pid):
+        dead = dead_pid(pid)
+        frozen = not dead and beat_age(path) >= STALE_AFTER
+        if not (dead or frozen):
             continue
+        why = ("владельца %d нет" % pid) if dead else \
+              ("владелец %d жив, но признаков жизни нет" % pid)
         if not act:
-            lines.append("замок %s: владелец %d мёртв, снялся бы" % (name, pid))
+            lines.append("замок %s: %s, снялся бы" % (name, why))
             continue
         try:
             shutil.rmtree(path)
-            lines.append("замок %s снят: владельца %d нет" % (name, pid))
+            lines.append("замок %s снят: %s" % (name, why))
         except OSError as e:
             lines.append("замок %s снять не вышло, %s" % (name, e))
     return lines

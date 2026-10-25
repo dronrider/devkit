@@ -10,9 +10,11 @@ draft`). Громкий зов человеку остаётся хвостом 
 Очередь дежурства это сами записи в файлах задач (решение «очередь
 дежурства»). Отдельного файла очереди нет: исход уже лежит там, куда его
 положила механика, и вторая копия разошлась бы с первой. Память подъёма
-держит ~/.devkit/watch.duty: по ней тик не зовёт дежурного второй раз по той
-же записи и не входит в разбор отказа, который уже известен (граница DK-1115:
-одинаковые отказы это шум того захода, неизвестный исход это предмет здесь).
+держит ~/.devkit/watch.duty: подпись отказа в ней занимает только
+зафиксированный результат разбора (DK-1454), а запуск без результата это
+попытка с повтором тиком. По той же памяти тик не входит в разбор отказа,
+который уже закрыт (граница DK-1115: одинаковые отказы это шум того
+захода, неизвестный исход это предмет здесь).
 """
 import json
 import os
@@ -48,8 +50,13 @@ DUTY_MARK = "эскалация дежурному"
 # Раздел файла задачи, где лежат записи исхода.
 STAGE_SECTION = "Ход работы"
 
-# Память подъёма: JSON-строки двух видов. {"when", "sig"} на взятую запись,
-# {"when", "sig", "fail": true} на неудачный подъём (подпись ещё не занята).
+# Память подъёма: JSON-строки трёх видов. {"when", "sig", "run": true,
+# "drafts": [...]} на запуск без исхода (попытка), {"when", "sig", "fail":
+# true} на неудачный подъём, {"when", "sig", "done": "..."} на занятую
+# подпись: результат разбора зафиксирован либо добит потолком попыток.
+# Записи старого формата, {"when", "sig"}, это запуски без исхода: до DK-1454
+# подпись занимал сам запуск, и в новом цикле такие записи не гасят повтор,
+# а считаются попыткой. Ручная чистка памяти при обновлении не нужна.
 DUTY_STATE = "~/.devkit/watch.duty"
 
 # Потолок неудачных подъёмов одной записи. Ниже его подпись не пишется и
@@ -142,27 +149,32 @@ def state_path(home=None):
 
 
 def read_state(home=None):
-    """Память подъёма: множество подписей, уже взятых дежурным.
+    """Память подъёма: множество подписей, чей исход зафиксирован.
 
-    Строки неудачных подъёма сюда не входят: подпись на отказе ещё не
-    занята, и запись ждёт повтора.
+    Занятость это результат разбора, а не его запуск (DK-1454): вопрос
+    человеку, черновик задачи либо потолок попыток. Записи попыток сюда не
+    входят, и незакрытый исход поднимается снова.
     """
     sigs = set()
     for rec in _read_records(home):
         sig = rec.get("sig")
-        if sig and not rec.get("fail"):
+        if sig and rec.get("done"):
             sigs.add(sig)
     return sigs
 
 
-def read_fails(home=None):
-    """Счёт неудачных подъёмов по подписям: {sig: сколько раз отказали}."""
-    fails = {}
+def read_tries(home=None):
+    """Число попыток по подписям: {sig: сколько раз поднимали без исхода}.
+
+    Попытка это запуск без результата либо отказ запуска. Записи старого
+    формата тоже попытки: в них лежат запуски, подписи не занимавшие.
+    """
+    tries = {}
     for rec in _read_records(home):
         sig = rec.get("sig")
-        if sig and rec.get("fail"):
-            fails[sig] = fails.get(sig, 0) + 1
-    return fails
+        if sig and not rec.get("done"):
+            tries[sig] = tries.get(sig, 0) + 1
+    return tries
 
 
 def _read_records(home=None):
@@ -182,28 +194,92 @@ def _read_records(home=None):
 
 
 def write_state(sigs, home=None):
-    """Дописывает новые подписи в память подъёма, старые не переписывает."""
+    """Дописывает занятые подписи в память подъёма, старые не переписывает."""
     path = state_path(home)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(str(path), "a", encoding="utf-8") as f:
             for sig in sorted(sigs):
                 f.write(json.dumps({"when": datetime.now().isoformat(timespec="seconds"),
-                                    "sig": sig}, ensure_ascii=False) + "\n")
+                                    "sig": sig, "done": "исход зафиксирован"},
+                                   ensure_ascii=False) + "\n")
     except OSError:
         pass
 
 
-def write_fail(sig, home=None):
-    """Пишет неудачный подъём: подпись остаётся незанятой."""
+def write_try(sig, drafts=None, home=None):
+    """Пишет попытку подъёма: запуск без исхода (снимок черновиков при нём)
+    либо отказ запуска. Подпись остаётся незанятой, повтор идёт тиком."""
+    rec = {"when": datetime.now().isoformat(timespec="seconds"), "sig": sig}
+    if drafts is None:
+        rec["fail"] = True
+    else:
+        rec["run"] = True
+        rec["drafts"] = sorted(drafts)
     path = state_path(home)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(str(path), "a", encoding="utf-8") as f:
-            f.write(json.dumps({"when": datetime.now().isoformat(timespec="seconds"),
-                                "sig": sig, "fail": True}, ensure_ascii=False) + "\n")
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except OSError:
         pass
+
+
+def ask_flag(root, task):
+    """Лежит ли признак вопроса задачи: исход «вопрос человеку» зафиксирован
+    тем, кто его задал, и дежурному тут разбирать нечего."""
+    return os.path.isfile(os.path.join(str(root), ".devkit", "chat",
+                                       "task-%s.ask" % str(task).upper()))
+
+
+def draft_names(root):
+    """Имена черновиков корня на сейчас."""
+    try:
+        return sorted(p.name for p in
+                      (Path(root) / "docs" / "tasks" / "drafts").glob("*.md"))
+    except OSError:
+        return []
+
+
+def fresh_draft(root, known, since):
+    """Имя нового черновика в корне либо пусто. Известные по снимку
+    пропускаются; записи без снимка, старого формата, границей имеют время
+    своей попытки. Без границы вовсе черновик не узнаётся: старые черновики
+    чужих задач не должны закрывать чужую подпись."""
+    now = draft_names(root)
+    if known is not None:
+        for name in now:
+            if name not in known:
+                return name
+        return ""
+    if since is None:
+        return ""
+    try:
+        edge = datetime.fromisoformat(since)
+    except ValueError:
+        return ""
+    drafts = Path(root) / "docs" / "tasks" / "drafts"
+    for name in now:
+        try:
+            if datetime.fromtimestamp((drafts / name).stat().st_mtime) > edge:
+                return name
+        except OSError:
+            continue
+    return ""
+
+
+def draft_base(sig, home=None):
+    """Граница черновиков подписи: (снимок имён, время попытки) последней
+    записи. Снимок точнее времени: черновик, созданный между попытками чужим
+    заходом, временем закрыл бы подпись зря."""
+    names, when = None, None
+    for rec in _read_records(home):
+        if rec.get("sig") != sig or rec.get("done"):
+            continue
+        if "drafts" in rec:
+            names = rec["drafts"]
+        when = rec.get("when", when)
+    return names, when
 
 
 def remember(sig, home=None):
@@ -214,9 +290,15 @@ def remember(sig, home=None):
 def duty_root(root, call=None, taskctl=None, home=None, act=True):
     """Поднимает дежурного по неразобранным записям исхода корня.
 
+    Подпись отказа занимает зафиксированный результат разбора, а не запуск
+    (DK-1454): вопрос человеку либо черновик задачи. Запуск без исхода это
+    попытка, и повтор идёт ближайшим тиком до результата либо до потолка
+    попыток; потолок добивается громким зовом, чтобы не долбить наружу
+    вечно.
+
     Возврат это строки отчёта, как у пробуждения и страховки. `act` гасит
-    сам подъём и оставляет разбор записей: так стенд смотрит решение захода,
-    не трогая наружу.
+    сам подъём и запись памяти: так стенд смотрит решение захода, не трогая
+    наружу.
     """
     call = subprocess.run if call is None else call
     lines = []
@@ -224,58 +306,96 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True):
     if not marks:
         return lines
     known = read_state(home=home)
-    fails = read_fails(home=home)
+    tries = read_tries(home=home)
     fresh = set()
     seen = set()
     for task, why, raw in marks:
         sig = signature(why)
         if sig in known or sig in seen:
-            # Отказ уже известен дежурному либо уже взят в этом заходе:
-            # граница DK-1115, одинаковые отказы в разбор не входят.
+            # Отказ уже разобран либо уже взят в этом заходе: граница DK-1115,
+            # одинаковые отказы в разбор не входят.
             lines.append("корень %s: отказ «%s» уже известен, мимо разбора "
                          "дежурного (DK-1115)" % (root, sig))
             continue
         seen.add(sig)
+        if ask_flag(root, task):
+            fresh.add(sig)
+            lines.append("корень %s: по %s лежит вопрос человеку, отказ «%s» "
+                         "закрыт этим вопросом" % (root, task, sig))
+            continue
+        base, since = draft_base(sig, home=home)
+        draft = fresh_draft(root, base, since)
+        if draft:
+            fresh.add(sig)
+            lines.append("корень %s: по %s появился черновик %s, отказ «%s» "
+                         "закрыт черновиком" % (root, task, draft, sig))
+            continue
         if not act:
             # Разбор без подъёма не трогает наружу и память тоже: подпись
             # остаётся незанятой, и следующий заход смотрит то же решение.
             lines.append("корень %s: задача %s ждёт дежурного, отказ «%s»"
                          % (root, task, sig))
             continue
-        said, code = spawn(root, task, why, call=call, taskctl=taskctl)
-        if code == 0:
+        if tries.get(sig, 0) >= SPAWN_TRIES:
+            # Потолок попыток: повтор дальше жёг бы бюджет тем же отказом, и
+            # исход добивается громким зовом (DK-1454).
+            note, delivered = shout("разбор дежурного не поднять",
+                         "Задача %s: дежурный не оставил исхода за %d попыток. "
+                         "Исход записи «%s». Громкий зов это хвост исчерпанного "
+                         "повтора." % (task, tries[sig], sig),
+                         root, call=call, task=task)
             fresh.add(sig)
-            lines.append("корень %s: дежурный поднят по %s, отказ «%s»; %s"
-                         % (root, task, sig, said))
+            lines.append("корень %s: дежурный по %s не оставил исхода за %d попыток, "
+                         "подпись «%s» закрыта потолком; %s; %s"
+                         % (root, task, tries[sig], sig, note,
+                            "громкий зов человеку ушёл" if delivered else
+                            "уведомление не доставлено"))
             continue
+        before = draft_names(root)
+        said, code = spawn(root, task, why, call=call, taskctl=taskctl)
         if code == 3:
             lines.append("корень %s: дежурный по %s ждёт свободного замка; "
                          "исход записи «%s»; запуск: %s; повтор тиком"
                          % (root, task, sig, said))
             continue
+        if code == 0:
+            # Запуск кончился сам: исход обязан лежать в корне, вопросом либо
+            # черновиком. Лежит и не лежит, разбирать некому: попытка пишется,
+            # и повтор поднял бы дежурного заново (DK-1454).
+            if ask_flag(root, task):
+                fresh.add(sig)
+                lines.append("корень %s: дежурный по %s кончился вопросом "
+                             "человеку, отказ «%s» закрыт вопросом; %s"
+                             % (root, task, sig, said))
+                continue
+            draft = fresh_draft(root, before, None)
+            if draft:
+                fresh.add(sig)
+                lines.append("корень %s: дежурный по %s кончился черновиком %s, "
+                             "отказ «%s» закрыт черновиком; %s"
+                             % (root, task, draft, sig, said))
+                continue
+            write_try(sig, drafts=before, home=home)
+            lines.append("корень %s: дежурный по %s прошёл без исхода, отказ «%s» "
+                         "(попытка %d из %d), повтор тиком; %s"
+                         % (root, task, sig, tries.get(sig, 0) + 1,
+                            SPAWN_TRIES, said))
+            continue
         # Разбор не начался. Подпись не пишется: повтор идёт ближайшим тиком
         # и исход не виснет (замечание ревью). Постоянный сбой добивается
-        # потолком попыток с реальным зовом, и только тогда подпись занимает
-        # запись, чтобы не долбить наружу вечно.
-        n = fails.get(sig, 0) + 1
-        write_fail(sig, home=home)
+        # потолком попыток с реальным зовом.
+        n = tries.get(sig, 0) + 1
+        write_try(sig, home=home)
         if n < SPAWN_TRIES:
             lines.append("корень %s: дежурного по %s не поднять, отказ «%s» "
                          "(попытка %d из %d), повтор тиком; %s"
                          % (root, task, sig, n, SPAWN_TRIES, said))
-            continue
-        note, delivered = shout("разбор дежурного не поднять",
-                     "Задача %s: дежурный не поднялся %d раз. Исход записи «%s». Отказ запуска: %s. "
-                     "Громкий зов это хвост неудавшегося подъёма."
-                     % (task, n, sig, said),
-                     root, call=call, task=task)
-        if delivered:
-            fresh.add(sig)
-        lines.append("корень %s: дежурного по %s не поднять %d раз, исход записи «%s»; "
-                     "запуск: %s; %s; %s" % (root, task, n, sig, said, note,
-                     "громкий зов человеку ушёл" if delivered else
-                     "уведомление не доставлено, повтор тиком"))
-    if fresh:
+        else:
+            lines.append("корень %s: дежурного по %s не поднять, отказ «%s» "
+                         "(попытка %d из %d), следующим тиком потолок добивается "
+                         "громким зовом; %s"
+                         % (root, task, sig, n, SPAWN_TRIES, said))
+    if fresh and act:
         remember_many(fresh, home=home)
     return lines
 

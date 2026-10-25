@@ -8,6 +8,7 @@
 """
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -422,6 +423,54 @@ class LocksCase(unittest.TestCase):
         lines = lift.stale_locks(str(self.home), act=False)
         self.assertTrue(d.exists())
         self.assertIn("снялся бы", " ".join(lines))
+
+    def test_frozen_owner_lock_dropped(self):
+        # Живой pid без признаков жизни держал бы замок вечно (DK-1454): замок
+        # замерзшего владельца снимается тем же обходом, что и мёртвого.
+        # Порог тут литералом, а не константой lift: тест обязан падать на
+        # старом коде самим фактом живого замка, а не отсутствием имени.
+        d = self.lock("DK-18", os.getpid())
+        old = time.time() - 3 * 60 * 60
+        os.utime(d / "pid", (old, old))
+        lines = lift.stale_locks(str(self.home))
+        self.assertFalse(d.exists())
+        self.assertIn("признаков жизни нет", " ".join(lines))
+
+    def test_fresh_beat_keeps_lock(self):
+        d = self.lock("DK-19", os.getpid())
+        (d / "beat").write_text("", encoding="utf-8")
+        lift.stale_locks(str(self.home))
+        self.assertTrue(d.exists())
+
+    def test_head_up_reads_beat_not_pid(self):
+        # Голова вверх это работа со свежей отметкой жизни, а не живой pid:
+        # замерзшее окно головой не считается.
+        d = self.lock("DK-20", os.getpid())
+        self.assertTrue(lift.head_up("DK-20", str(self.home)))
+        (d / "beat").write_text("", encoding="utf-8")
+        old = time.time() - 3 * 60 * 60
+        os.utime(d / "beat", (old, old))
+        self.assertFalse(lift.head_up("DK-20", str(self.home)))
+
+
+class StalePairCase(unittest.TestCase):
+    """Одно число порога замерзания у замка, сторожа и оболочки."""
+
+    def test_stale_after_matches_lock_and_shell(self):
+        root = Path(__file__).resolve().parents[2]
+        go = (root / "internal" / "taskhead" / "lock.go").read_text(
+            encoding="utf-8")
+        m = re.search(r"lockStale = (\d+) \* time\.(Hour|Minute)", go)
+        self.assertIsNotNone(m, "в lock.go нет lockStale, с кем сверяться")
+        secs = int(m.group(1)) * (3600 if m.group(2) == "Hour" else 60)
+        self.assertEqual(lift.STALE_AFTER, secs,
+                         "порог сторожа разошёлся с замком taskhead")
+        shell = (root / "kit" / "skills" / "board-task" /
+                 "task-run.py").read_text(encoding="utf-8")
+        s = re.search(r"(?m)^STALE_AFTER = (\d+)", shell)
+        self.assertIsNotNone(s, "у оболочки конвейера нет порога замерзания")
+        self.assertEqual(lift.STALE_AFTER, int(s.group(1)),
+                         "порог сторожа разошёлся с оболочкой конвейера")
 
 
 class OrphanProcCase(unittest.TestCase):

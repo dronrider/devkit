@@ -3425,8 +3425,23 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// Способ продолжения тот же, что у «Продолжить работу» (LLD DK-1422,
 	// решение 5): харнес без продолжения поднимает свежую сессию того же
 	// разговора, и реплика едет в неё вводной с подкладкой состояния записи.
+	// Резюм чужой подписке перед подъёмом переводится (DK-1455): транскрипт
+	// лежит в дереве подписки-писателя, и целевой клиент без переноса его не
+	// найдёт. Неудача перевода откатывается на ту же свежую сессию с подкладкой,
+	// а не на смерть резюма.
 	way, resumeSid := "resume", sid
-	if !s.resumeWay(model, harness) {
+	if s.resumeWay(model, harness) {
+		note, err := s.translateChat(info, model, harness)
+		if err != nil {
+			way, resumeSid = "fresh", ""
+			text = s.chatStateLine(task) + text
+			line := "перевод разговора в дерево подписки подъёма не удался, сессия поднята свежей с подкладкой состояния: " + err.Error()
+			s.saidMark(saidSessionKey(sid), line)
+			s.logf("%s", line)
+		} else if note != "" {
+			s.logf("чат %s переведён в дерево подписки подъёма: %s", sid, note)
+		}
+	} else {
 		way, resumeSid = "fresh", ""
 		text = s.chatStateLine(task) + text
 	}
@@ -4425,7 +4440,22 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	// окна, From-цепочка продолжается. На харнесе без продолжения поднимается
 	// свежая сессия того же разговора, и в её первую реплику подкладывается
 	// доступное состояние записи со ссылками на прежние отрезки.
+	// Резюм чужой подписке перед подъёмом переводится (DK-1455): транскрипт
+	// лежит в дереве подписки-писателя, и целевой клиент без переноса его не
+	// найдёт. Неудача перевода откатывается на ту же свежую сессию с подкладкой,
+	// а не на смерть резюма.
 	resume := s.resumeWay(model, harness)
+	if resume {
+		note, err := s.translateChat(info, model, harness)
+		if err != nil {
+			resume = false
+			line := "перевод разговора в дерево подписки подъёма не удался, продолжение поднято свежей сессией с подкладкой состояния: " + err.Error()
+			s.saidMark(saidSessionKey(sid), line)
+			s.logf("%s", line)
+		} else if note != "" {
+			s.logf("чат %s переведён в дерево подписки подъёма: %s", sid, note)
+		}
+	}
 	sess := liftWindow(id, e.Tmux, tmuxAliveFn())
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
 		s.logf("настройки чата %s не записались: %v", sess, err)

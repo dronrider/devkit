@@ -2885,6 +2885,89 @@ func findSession(roots []string, projPath, sid string) (sessionInfo, bool) {
 	return sessionInfo{}, false
 }
 
+// harnessTranscriptRoot называет корень журналов подписки: клиент ищет
+// продолжение в своём дереве, у подписки со своим хозяйством это projects её
+// дома, а без него общий ~/.claude, как их перечисляет transcriptRoots.
+func (s *server) harnessTranscriptRoot(h *Harness) string {
+	if h != nil && h.Home != "" {
+		return filepath.Join(h.Home, "projects")
+	}
+	return filepath.Join(s.cfg.Home, ".claude", "projects")
+}
+
+// translateChat переносит транскрипт разговора в дерево подписки, которой он
+// продолжается (DK-1455): смена модели живого чата на чужую подписку оставляла
+// транскрипт в дереве писателя, резюм целевым клиентом его не находил, и
+// разговор умирал молча. Отказ это причина словами, а пустой след значит, что
+// перевод не понадобился.
+func (s *server) translateChat(info sessionInfo, model, harness string) (string, error) {
+	return translateSession(info, s.harnessTranscriptRoot(s.chatHarnessOf(model, harness)))
+}
+
+// translateSession переносит транскрипт и его сайдкары из корня пишущей
+// подписки в названный корень. Переезд, а не копия: оставленный оригинал
+// остаётся второй строкой разговора в списке, свёртки по id у sessionFiles нет.
+// Сайдкары лежат каталогом <sid>/ рядом с транскриптом и едут вместе с ним:
+// там держит своё хозяйство субагент (DK-900). Коллизия с копией, оставленной
+// ручным обходом, решается свежестью: разговор остаётся тот, что новее, а
+// устаревшая сторона снимается.
+func translateSession(info sessionInfo, targetRoot string) (string, error) {
+	if info.root == targetRoot || info.path == "" {
+		return "", nil
+	}
+	rel, err := filepath.Rel(info.root, filepath.Dir(info.path))
+	if err != nil {
+		return "", err
+	}
+	srcDir := filepath.Dir(info.path)
+	dstDir := filepath.Join(targetRoot, rel)
+	dst := filepath.Join(dstDir, info.ID+".jsonl")
+	if src, err := os.Stat(info.path); err == nil {
+		if old, err := os.Stat(dst); err == nil && !src.ModTime().After(old.ModTime()) {
+			// Цель уже держит разговор не старее источника: источник это дубль
+			// ручного обхода, и снимается он, а не цель.
+			if err := os.Remove(info.path); err != nil {
+				return "", err
+			}
+			if err := os.RemoveAll(filepath.Join(srcDir, info.ID)); err != nil {
+				return "", err
+			}
+			return "дубль " + info.path + " снят: разговор уже лежит в " + dstDir, nil
+		}
+	}
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return "", err
+	}
+	if err := movePath(filepath.Join(srcDir, info.ID), filepath.Join(dstDir, info.ID)); err != nil {
+		return "", err
+	}
+	if err := movePath(info.path, dst); err != nil {
+		return "", err
+	}
+	return srcDir + " -> " + dstDir, nil
+}
+
+// movePath переносит файл или каталог со всем содержимым переездом. Занятое
+// место в цели снимается: разговор один, и переносимая сторона свежее той, что
+// там лежала. Отсутствующий источник это не отказ: сайдкаров у разговора может
+// не быть вовсе. Через границу файловых систем rename отказывает, и отказ
+// уезжает вызывающему: деревья подписок лежат в одном доме, а чужой случай
+// зовущего обходится свежей сессией с подкладкой состояния.
+func movePath(src, dst string) error {
+	if _, err := os.Lstat(src); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if _, err := os.Lstat(dst); err == nil {
+		if err := os.RemoveAll(dst); err != nil {
+			return err
+		}
+	}
+	return os.Rename(src, dst)
+}
+
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	found := s.findProject(w, r, "сессия")
 	if found == nil {

@@ -61,6 +61,14 @@ var (
 	loginPollEvery  = 500 * time.Millisecond
 )
 
+// loginWhySteady это сколько опросов подряд должна держаться одна и та же
+// причина отказа разбора, чтобы отказ уехал человеку, не дожидаясь конца
+// loginLinkWait. Ссылку клиент печатает в панель одним махом, и картина,
+// повторившаяся полторы секунды подряд, это нарисованная панель, а не
+// промежуточный кадр. Человеку отказ разбора нужен сразу: нажать «Войти»
+// заново он может и без двадцати секунд ожидания (DK-1152).
+const loginWhySteady = 3
+
 // loginLinkRe узнаёт первую строку ссылки авторизации: строка, где кроме ссылки
 // нет ничего. Первой такой строкой в одноразовой сессии бывает именно она:
 // панели больше нечего показывать.
@@ -922,13 +930,21 @@ func (s *server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 // ответа о доверии клиент поднимает REPL заново и вычищает ввод, поэтому команда
 // повторяется с отступом, пока панель не отзовётся виджетом выбора способа.
 // Пустая вторая строка значит успех.
+//
+// Отказ тут двух видов, и тексты у них разные. Отказ разбора уезжает по факту:
+// одна и та же причина держится loginWhySteady опросов подряд. Отказ по сроку
+// отдельно называется временем и не перекладывает иссякшее терпение на смену
+// вида панели: под нагрузкой машины срок кончается и у честно разгоняющегося
+// клиента (DK-1152).
 func (s *server) loginAwaitLink(way *loginWay, sess string) (string, string) {
 	deadline := s.now().Add(loginLinkWait)
 	chosen, trusted := false, false
 	var sent time.Time
-	// Последняя причина отказа разбора и кадр панели при ней: если ссылки так
-	// и не вышло, человеку едут они, а не общие слова про сменившийся вид.
+	// Последняя причина отказа разбора, кадр панели при ней и сколько опросов
+	// подряд она держится: если ссылки так и не вышло, человеку едут они,
+	// а не общие слова про сменившийся вид.
 	var whyLast, frame string
+	whySteady := 0
 	for {
 		pane, err := loginPane(sess)
 		if err != nil {
@@ -936,10 +952,19 @@ func (s *server) loginAwaitLink(way *loginWay, sess string) (string, string) {
 		}
 		url, why := loginLinkOf(pane)
 		if why != "" {
-			whyLast, frame = why, loginFrame(pane)
+			if why == whyLast {
+				whySteady++
+			} else {
+				whyLast, frame = why, loginFrame(pane)
+				whySteady = 1
+			}
 		}
 		if url != "" {
 			return url, ""
+		}
+		if whyLast != "" && whySteady >= loginWhySteady {
+			return "", fmt.Sprintf("ссылку разобрать не вышло: %s. Вот кадр панели входа: %s",
+				whyLast, frame)
 		}
 		ask := tmuxAskOf(sess)
 		switch {
@@ -955,7 +980,9 @@ func (s *server) loginAwaitLink(way *loginWay, sess string) (string, string) {
 			chosen = true
 		case strings.TrimSpace(pane) == "":
 			// Клиент ещё не нарисовал панель: нажатия вслепую не подаются.
-		case len(ask.Options) == 0 && (sent.IsZero() || s.now().Sub(sent) >= 2*loginPollEvery):
+		case len(ask.Options) == 0 && why == "" && (sent.IsZero() || s.now().Sub(sent) >= 2*loginPollEvery):
+			// След ссылки на панели значит, что вид ссылки уже стоит, и подача
+			// команды туда не нужна: она подаётся лишь в REPL без входа.
 			if err := tmuxAnswerText("="+sess+":", way.Cmd); err != nil {
 				return "", fmt.Sprintf("команда %s не подалась в сессию входа: %s", way.Cmd, procErr(err))
 			}
@@ -966,8 +993,10 @@ func (s *server) loginAwaitLink(way *loginWay, sess string) (string, string) {
 				return "", fmt.Sprintf("ссылку разобрать не вышло: %s. Вот кадр панели входа: %s",
 					whyLast, frame)
 			}
-			return "", fmt.Sprintf("клиент не напечатал ссылку авторизации за %s: "+
-				"вид панели входа, видимо, сменился, разбор надо чинить", loginLinkWait)
+			if loginWantsCode(pane) {
+				return "", "вид панели входа сменился: клиент просит код авторизации, не напечатав ссылки, разбор надо чинить"
+			}
+			return "", fmt.Sprintf("клиент не напечатал ссылку авторизации за %s: срок ожидания ссылки вышел", loginLinkWait)
 		}
 		time.Sleep(loginPollEvery)
 	}

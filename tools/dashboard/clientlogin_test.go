@@ -238,13 +238,25 @@ func slowDownTmuxOnce(t *testing.T, e *testEnv, d string, delay time.Duration) {
 	writeScript(t, e.bin, "tmux", guard+body)
 }
 
-// fastLoginWait сжимает ожидания входа до тестовых. Прогон со стендом занимает
-// миллисекунды, а боевые двадцать секунд превращали бы отказ в вечность.
+// loginTestWait это срок ожидания ссылки в тестах. Срок тут не мера, а
+// страховка на случай поломки: стенд отвечает за миллисекунды, и в честном
+// прогоне дедлайн не наступает. Двух секунд страховке не хватало под
+// наложением двух полных прогонов (DK-1152): сосед забирал процессор, и
+// подъём входа, которому в одиночку хватало долей секунды, не укладывался
+// в срок. Минута нагрузку не пробивает, а отказ разбора со своей стороны
+// приходит по событию, а не по дедлайну, и тесты на отказную панель не
+// тянут срок целиком.
+const loginTestWait = time.Minute
+
+// fastLoginWait сжимает шаг опроса до тестового и ставит сроки ожидания
+// страховочными. Прогон со стендом занимает миллисекунды, и боевые двадцать
+// секунд превращали бы падение в вечность, а короткий срок падал бы от
+// соседней нагрузки.
 func fastLoginWait(t *testing.T, link time.Duration) {
 	t.Helper()
 	was := []time.Duration{loginPollEvery, loginSettleWait, loginLinkWait, loginCodeWait}
 	loginPollEvery, loginSettleWait = 3*time.Millisecond, 3*time.Millisecond
-	loginLinkWait, loginCodeWait = link, 2*time.Second
+	loginLinkWait, loginCodeWait = link, loginTestWait
 	t.Cleanup(func() {
 		loginPollEvery, loginSettleWait, loginLinkWait, loginCodeWait =
 			was[0], was[1], was[2], was[3]
@@ -290,7 +302,7 @@ func loginCalls(t *testing.T, d, name string) func(string) int {
 func TestClientLoginStartGivesLink(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	sent := loginCalls(t, d, "calls")
 	c := e.loggedClient(t)
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
@@ -321,7 +333,7 @@ func TestClientLoginStartGivesLink(t *testing.T) {
 func TestClientLoginCodeAccepted(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	var journal strings.Builder
 	e.s.logf = func(format string, args ...any) { journal.WriteString(fmt.Sprintf(format, args...) + "\n") }
 	sent := loginCalls(t, d, "calls")
@@ -361,7 +373,7 @@ func TestClientLoginTrustAskedAndPassed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(d, "first"), []byte("trust"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	c := e.loggedClient(t)
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	if resp.StatusCode != http.StatusOK {
@@ -382,7 +394,7 @@ func TestClientLoginNoKeysIntoBlankPane(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(d, "first"), []byte("boot"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	c := e.loggedClient(t)
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	if resp.StatusCode != http.StatusOK || !strings.Contains(text, "https://") {
@@ -397,7 +409,7 @@ func TestClientLoginNoKeysIntoBlankPane(t *testing.T) {
 func TestClientLoginCodeRejected(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	sent := loginCalls(t, d, "calls")
 	c := e.loggedClient(t)
 	loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
@@ -417,7 +429,10 @@ func TestClientLoginCodeRejected(t *testing.T) {
 	}
 }
 
-// Ссылка не нашлась: отказ назван словами, сессия снята.
+// Ссылка не нашлась: отказ назван словами, сессия снята. Отказ по истёкшему
+// сроку называется временем и не врёт про смену вида панели: под нагрузкой
+// соседнего прогона срок кончается и у честно поднимающегося клиента, и
+// гонять человека чинить разбор по этой причине нельзя (DK-1152).
 func TestClientLoginLinkMissingSaysWords(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
@@ -434,8 +449,46 @@ func TestClientLoginLinkMissingSaysWords(t *testing.T) {
 	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(text, "не напечатал ссылку") {
 		t.Fatalf("пропажа ссылки не названа словами: %d, %s", resp.StatusCode, text)
 	}
+	if !strings.Contains(text, "за 40ms") {
+		t.Fatalf("отказ по сроку не назвал время: %s", text)
+	}
+	if strings.Contains(text, "сменился") {
+		t.Fatalf("отказ по сроку валит на смену вида панели: %s", text)
+	}
 	if got := sent("kill-session"); got != 1 {
 		t.Fatalf("сессия без ссылки не снята: kill-session %d", got)
+	}
+}
+
+// Отказ разбора приходит по событию, а не по дедлайну: одна и та же причина
+// держится несколько опросов подряд, и ждать из-за неё весь срок незачем.
+// Человеку отказ нужен сразу, а тестам событие снимает зависимость от
+// занятости машины: ответ приезжает за миллисекунды при любой соседней
+// нагрузке (DK-1152).
+func TestClientLoginLinkRefusalComesBeforeDeadline(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	first := "https://claude.ai/oauth/authorize?client_id=test&state=abc123"
+	pane := strings.Join([]string{
+		"Please visit the following URL to log in:", "",
+		first,
+		strings.Repeat("7", len(first)),
+		"",
+		"Paste code here if prompted >", "", paneCursor + " ",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(pane), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fastLoginWait(t, loginTestWait)
+	c := e.loggedClient(t)
+	// Половина срока: дожить до дедлайна это и есть та болезнь, что лечится.
+	c.Timeout = loginTestWait / 2
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("каша отдана за ссылку: %d, %s", resp.StatusCode, text)
+	}
+	if !strings.Contains(text, "разобрать не вышло") {
+		t.Fatalf("отказ разбора не назван словами: %s", text)
 	}
 }
 
@@ -444,7 +497,7 @@ func TestClientLoginLinkMissingSaysWords(t *testing.T) {
 func TestClientLoginGoneMidWay(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	c := e.loggedClient(t)
 	loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	// Сессия умирает между ссылкой и кодом: файл стадии исчезает, снимок
@@ -463,7 +516,7 @@ func TestClientLoginGoneMidWay(t *testing.T) {
 func TestClientLoginEmptyCode(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	sent := loginCalls(t, d, "calls")
 	c := e.loggedClient(t)
 	loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
@@ -496,7 +549,7 @@ func TestClientLoginWrappedLinkJoins(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(wrapped), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	c := e.loggedClient(t)
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	if resp.StatusCode != http.StatusOK {
@@ -541,7 +594,7 @@ func TestClientLoginHardWrappedLinkJoins(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(torn), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	c := e.loggedClient(t)
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	if resp.StatusCode != http.StatusOK {
@@ -564,7 +617,7 @@ func TestClientLoginHardWrappedLinkJoins(t *testing.T) {
 func TestClientLoginSweepDropsExpired(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	sent := loginCalls(t, d, "calls")
 	c := e.loggedClient(t)
 	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
@@ -606,7 +659,7 @@ func TestClientLoginSiblingLinkNotGlued(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(pane), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	c := e.loggedClient(t)
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	if resp.StatusCode != http.StatusOK {
@@ -642,10 +695,12 @@ func TestClientLoginHashAfterLinkNotGlued(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(pane), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Деадлайн тот же, что у соседних тестов входа (DK-677): 300ms не
-	// переживали разбор под живой нагрузкой прогона слияния, цепочка
-	// send-keys/capture-pane фикстуры не успевала дойти до стадии url.
-	fastLoginWait(t, 2*time.Second)
+	// Срок страховочный, отказ приходит по событию. Прежняя короткая рамка
+	// сама была болезнью: 300ms не переживали разбор под живой нагрузкой
+	// прогона слияния (DK-677), а две секунды падали под наложением двух
+	// полных прогонов (DK-1152), цепочка send-keys/capture-pane фикстуры не
+	// успевала дойти до стадии url.
+	fastLoginWait(t, loginTestWait)
 	c := e.loggedClient(t)
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	if resp.StatusCode == http.StatusOK {
@@ -667,7 +722,7 @@ func TestClientLoginHashAfterLinkNotGlued(t *testing.T) {
 func TestClientLoginSurvivesMobileOAuth(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	sent := loginCalls(t, d, "calls")
 	c := e.loggedClient(t)
 	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
@@ -695,7 +750,7 @@ func TestClientLoginSurvivesMobileOAuth(t *testing.T) {
 func TestClientLoginAliveFromLastTouch(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	sent := loginCalls(t, d, "calls")
 	c := e.loggedClient(t)
 	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
@@ -730,7 +785,7 @@ func TestClientLoginAliveFromLastTouch(t *testing.T) {
 func TestClientLoginAdoptedAfterRestart(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	sent := loginCalls(t, d, "calls")
 	c := e.loggedClient(t)
 	_, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
@@ -765,7 +820,7 @@ func TestClientLoginAdoptedAfterRestart(t *testing.T) {
 func TestClientLoginOrphanSweptAfterRestart(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	sent := loginCalls(t, d, "calls")
 	c := e.loggedClient(t)
 	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
@@ -855,9 +910,8 @@ func TestClientLoginLinkRefusalSaysFrame(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(pane), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Деадлайн тот же, что у соседних тестов входа (DK-677): см. комментарий
-	// у TestClientLoginHashAfterLinkNotGlued.
-	fastLoginWait(t, 2*time.Second)
+	// Срок страховочный: см. комментарий у TestClientLoginHashAfterLinkNotGlued.
+	fastLoginWait(t, loginTestWait)
 	c := e.loggedClient(t)
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	if resp.StatusCode == http.StatusOK {
@@ -891,7 +945,7 @@ func TestClientLoginLinkRefusalSurvivesASlowTmuxCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	slowDownTmuxOnce(t, e, d, 500*time.Millisecond)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	c := e.loggedClient(t)
 	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
 	if resp.StatusCode == http.StatusOK {
@@ -910,7 +964,7 @@ func TestClientLoginLinkRefusalSurvivesASlowTmuxCall(t *testing.T) {
 func TestClientLoginStrangerNotAdopted(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	sent := loginCalls(t, d, "calls")
 	c := e.loggedClient(t)
 	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, `"tmux":"login-1"`) {
@@ -965,7 +1019,7 @@ func TestClientLoginStrangerNotAdopted(t *testing.T) {
 func TestClientLoginCodeRefusedToStranger(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	sent := loginCalls(t, d, "calls")
 	c := e.loggedClient(t)
 	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, `"tmux":"login-1"`) {
@@ -1005,7 +1059,7 @@ func TestClientLoginCodeRefusedToStranger(t *testing.T) {
 func TestClientLoginCodeErrorNotSuccess(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	c := e.loggedClient(t)
 	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
 		t.Fatalf("вход не поднялся: %s", text)
@@ -1032,7 +1086,7 @@ func TestClientLoginCodeErrorNotSuccess(t *testing.T) {
 func TestClientLoginCodeExpiredLinkNotRetry(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	c := e.loggedClient(t)
 	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
 		t.Fatalf("вход не поднялся: %s", text)
@@ -1066,7 +1120,7 @@ func TestClientLoginCodeExpiredLinkNotRetry(t *testing.T) {
 func TestClientLoginCodeStuckNotSuccess(t *testing.T) {
 	e := newTestEnv(t)
 	d := fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	c := e.loggedClient(t)
 	if _, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}"); !strings.Contains(text, "https://") {
 		t.Fatalf("вход не поднялся: %s", text)
@@ -1159,7 +1213,7 @@ func TestLoginLoopURL(t *testing.T) {
 func TestClientLoginLocalWayNoCode(t *testing.T) {
 	e := newTestEnv(t)
 	fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	was := loginLsof
 	loginLsof = []string{"lsof"}
 	t.Cleanup(func() { loginLsof = was })
@@ -1194,7 +1248,7 @@ echo "2.1.251 4242 rider 19u IPv4 0x1b31 0t0 TCP 127.0.0.1:53535 (LISTEN)"`)
 func TestClientLoginProxiedWayKeepsCode(t *testing.T) {
 	e := newTestEnv(t)
 	fakeTmuxLogin(t, e)
-	fastLoginWait(t, 2*time.Second)
+	fastLoginWait(t, loginTestWait)
 	was := loginLsof
 	loginLsof = []string{"lsof"}
 	t.Cleanup(func() { loginLsof = was })

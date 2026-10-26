@@ -10,10 +10,10 @@
 //   а не резюмом витка (LLD DK-1422, DK-938);
 //   строка журнала кончившегося витка дверь цели не запирает: стоящая цель
 //   поднимает сессию первой репликой, как у задачи (DK-1009);
-//   шапка чата задачи несёт чип цели, шапка цели чипы задач, и нажатие
-//   открывает основной чат той записи (решение 6);
-//   строка «Диспетчеру цели» шлёт /tasks/<ID>/relay, строка «Довести задачам»
-//   шлёт /goals/<ID>/decide, прямая реплика остаётся в поле разговора.
+//   шапка чата задачи несёт чип цели, и нажатие открывает основной чат той
+//   записи (решение 6). Шапка цели задачи не перечисляет: поверхность чата
+//   несёт только разговор, у служебных ручек записей нет в нём плашек и
+//   полей, прямая реплика остаётся в поле разговора (DK-1484).
 //
 // Зовётся: node testdata/poc_goalmain.mjs static/app.js
 
@@ -48,14 +48,6 @@ const { sandbox } = makeSandbox(app, (path, init) => {
   const way = init && init.method ? init.method : "GET";
   if (way === "POST") {
     posts.push({ path: p, body: init.body ? JSON.parse(init.body) : null });
-    if (p.endsWith("/decide")) {
-      return { goal: "XR-100", sent: [{ id: "XR-004" }, { id: "XR-003" }],
-        message: "решение легло во входы записей XR-004, XR-003" };
-    }
-    if (p.endsWith("/relay")) {
-      return { task: "XR-004", goal: "XR-100", way: "turn", session: turn,
-        message: "строка легла адресно во вход витка цели XR-100" };
-    }
     if (p.includes("/goals/")) {
       const text = init.body ? JSON.parse(init.body).text : "";
       return { id: "XR-100", line: "- 2026-09-11 12:00, из дашборда: " + text,
@@ -84,10 +76,6 @@ const text = (node) => JSON.stringify(dump(node));
 const say = (panel, words) => {
   tag(panel, "TEXTAREA").value = words;
   deepBtn(panel, "Отправить").handlers.click({ stopPropagation: () => {} });
-};
-const act = (panel, label, words) => {
-  byClass(panel, "cbindin").value = words;
-  deepBtn(panel, label).handlers.click({ stopPropagation: () => {} });
 };
 const sent = (from) => posts.slice(from);
 
@@ -131,55 +119,31 @@ if (!got.some((p) => p.path === "/api/projects/demo/chats")) {
   fail("первая реплика стоящей цели не подняла сессию: " + JSON.stringify(got));
 }
 
-// --- чипы перехода в обе стороны ---
-// Шапка чата цели несёт задачи, шапка чата задачи несёт цель: переход это
-// навигация по записям, а не перенос назначения (решение 6).
+// --- шапка называет одну запись, в чате только разговор ---
+// Переход к цели это навигация по записям, а не перенос назначения (решение 6):
+// шапка чата задачи несёт чип цели. Шапка цели задачи не перечисляет, состав
+// виден на экране цели. Служебным ручкам записей в разговоре места нет, прямая
+// реплика остаётся в поле разговора (DK-1484).
+from = posts.length;
 let head = text(sandbox.chatHead("demo", st));
-if (!head.includes("XR-004") || !head.includes("XR-003")) {
-  fail("шапка цели не назвала задачи: " + head);
+if (head.includes("XR-004") || head.includes("XR-003")) {
+  fail("шапка цели перечисляет задачи: " + head);
 }
+panel = sandbox.chatPanel("demo", st);
+await settle();
+if (!st.isGoal) fail("запись цели не узналась целью: " + JSON.stringify(st.isGoal));
+if (byClass(panel, "cbindin")) fail("в панели цели появилось служебное поле ввода");
+if (deepBtn(panel, "Довести задачам")) fail("в панели цели стоит плашка решения задачам");
 setMain("XR-004", { id: "XR-004", project: "demo", chat: taskChat, source: "работа",
   since: "2026-09-11 12:00", goal: "XR-100" });
 st = await sandbox.chatState("demo", "XR-004", board, []);
 head = text(sandbox.chatHead("demo", st));
 if (!head.includes("цель XR-100")) fail("шапка задачи не назвала цель: " + head);
-
-// --- строка диспетчеру цели из чата задачи ---
-// Прямая реплика остаётся в поле разговора, а строка «Диспетчеру цели» уезжает
-// ручкой задачи: вопрос о составе и подтверждение решения едут в один адрес.
 panel = sandbox.chatPanel("demo", st);
 await settle();
-from = posts.length;
-act(panel, "Диспетчеру цели", "подтверждаю получение решения");
-await settle();
-got = sent(from);
-const relay = got.find((p) => p.path === "/api/projects/demo/tasks/XR-004/relay");
-if (!relay || relay.body.text !== "подтверждаю получение решения") {
-  fail("строка диспетчеру цели не уехала ручкой задачи: " + JSON.stringify(got));
-}
-if (!text(panel).includes("вход витка цели XR-100")) {
-  fail("панель не назвала судьбу строки диспетчеру цели: " + text(panel));
-}
-
-// --- строка решения задачам из чата цели ---
-// У цели со стоящим циклом решение задачам всё равно доезжает: строка ложится
-// во входы записей задач, каких бы ни был способ разговора самой цели.
-setMain("XR-100", { id: "XR-100", project: "demo", chat: "", source: "",
-  since: "", tasks: ["XR-004", "XR-003"] });
-st = await sandbox.chatState("demo", "XR-100", board, []);
-if (!st.isGoal) fail("запись цели не узналась целью: панель не собрала бы строку решения");
-panel = sandbox.chatPanel("demo", st);
-await settle();
-from = posts.length;
-act(panel, "Довести задачам", "первая задача закрывается нарезкой");
-await settle();
-got = sent(from);
-const decide = got.find((p) => p.path === "/api/projects/demo/goals/XR-100/decide");
-if (!decide || decide.body.text !== "первая задача закрывается нарезкой") {
-  fail("решение задачам не уехало ручкой цели: " + JSON.stringify(got));
-}
-if (!text(panel).includes("входы записей XR-004, XR-003")) {
-  fail("панель не назвала задачи, получившие решение: " + text(panel));
-}
+if (byClass(panel, "cbindin")) fail("в панели задачи появилось служебное поле ввода");
+if (deepBtn(panel, "Диспетчеру цели")) fail("в панели задачи стоит плашка строки диспетчеру цели");
+const extra = sent(from).filter((p) => p.path.endsWith("/decide") || p.path.endsWith("/relay"));
+if (extra.length) fail("служебные ручки получили вызов из панели: " + JSON.stringify(extra));
 
 console.log("poc_goalmain: ok");

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -4812,8 +4813,23 @@ func (s *server) uploadName(dir, ext string) (string, string) {
 // всё, что больше, в реплику по ошибке.
 const shotLimit = 12 << 20
 
-var shotKind = map[string]string{
-	"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp",
+// shotExt узнаёт картинку по сигнатуре первых байтов и отдаёт расширение
+// файла. Ручка вложения судит по байтам, а не по заявленному полю kind:
+// клиент после DK-1403 заявляет вид служебным словом "image" либо пустотой,
+// заявление ненадёжно, а байты честны. Вне png, jpeg, gif и webp вложений
+// нет: svg в реплику не попадает.
+func shotExt(raw []byte) string {
+	switch {
+	case bytes.HasPrefix(raw, []byte("\x89PNG\r\n\x1a\n")):
+		return ".png"
+	case bytes.HasPrefix(raw, []byte("\xff\xd8\xff")):
+		return ".jpg"
+	case bytes.HasPrefix(raw, []byte("GIF87a")), bytes.HasPrefix(raw, []byte("GIF89a")):
+		return ".gif"
+	case len(raw) >= 12 && bytes.Equal(raw[:4], []byte("RIFF")) && bytes.Equal(raw[8:12], []byte("WEBP")):
+		return ".webp"
+	}
+	return ""
 }
 
 func (s *server) handleChatShot(w http.ResponseWriter, r *http.Request) {
@@ -4840,12 +4856,6 @@ func (s *server) handleChatShot(w http.ResponseWriter, r *http.Request) {
 			"error": "жду JSON {\"kind\": \"image/png\", \"data\": \"<base64>\"}"})
 		return
 	}
-	ext, ok := shotKind[strings.TrimSpace(body.Kind)]
-	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("вид %q не картинка: беру png, jpeg, gif, webp", body.Kind)})
-		return
-	}
 	raw, err := base64.StdEncoding.DecodeString(body.Data)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "данные не разобрались как base64"})
@@ -4854,6 +4864,12 @@ func (s *server) handleChatShot(w http.ResponseWriter, r *http.Request) {
 	if len(raw) == 0 || len(raw) > shotLimit {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": fmt.Sprintf("картинка пустая или длиннее предела %d МБ", shotLimit>>20)})
+		return
+	}
+	ext := shotExt(raw)
+	if ext == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("байты не png, jpeg, gif и webp, а заявлен вид %q", body.Kind)})
 		return
 	}
 	dir := s.shotDir(sid)

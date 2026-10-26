@@ -492,6 +492,40 @@ func TestClientLoginLinkRefusalComesBeforeDeadline(t *testing.T) {
 	}
 }
 
+// След ссылки на панели не получает команды вида: экран со следом это уже
+// экран ссылки, и повторный «/login» уходил бы в поле кода, мешая разбору
+// обрывков (замечание ревью DK-1152).
+func TestClientLoginRefusalPaneGetsNoWayCmd(t *testing.T) {
+	e := newTestEnv(t)
+	d := fakeTmuxLogin(t, e)
+	// Сессия поднимается сразу на экран ссылки, минуя REPL: первый же кадр
+	// несёт след, который не разбирается.
+	if err := os.WriteFile(filepath.Join(d, "first"), []byte("url"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first := "https://claude.ai/oauth/authorize?client_id=test&state=abc123"
+	pane := strings.Join([]string{
+		"Please visit the following URL to log in:", "",
+		first,
+		strings.Repeat("7", len(first)),
+		"",
+		"Paste code here if prompted >", "", paneCursor + " ",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(d, "pane-url"), []byte(pane), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fastLoginWait(t, loginTestWait)
+	sent := loginCalls(t, d, "calls")
+	c := e.loggedClient(t)
+	resp, text := loginPost(t, c, e.srv.URL, "/api/projects/demo/chats/login", "{}")
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(text, "разобрать не вышло") {
+		t.Fatalf("отказ разбора не назван словами: %d, %s", resp.StatusCode, text)
+	}
+	if got := sent("send-keys"); got != 0 {
+		t.Fatalf("команда вида подана при следе ссылки: send-keys %d", got)
+	}
+}
+
 // Сессия входа умерла на середине: отказ назван словами и не считается
 // принятым кодом.
 func TestClientLoginGoneMidWay(t *testing.T) {

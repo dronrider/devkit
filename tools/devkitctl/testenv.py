@@ -399,6 +399,8 @@ class Sandbox:
 
     def __init__(self, home=True):
         self.root = Path(tempfile.mkdtemp(prefix="devkitctl-test-"))
+        self.temp = self.root / "tmp"
+        self.temp.mkdir()
         self.dk = self.root / "devkit"
         self.dk.mkdir()
         # internal копируется за tools: с DK-237 это общий go-модуль, на который
@@ -581,6 +583,7 @@ class Sandbox:
         kw.setdefault("home", self.home)
         kw.setdefault("path", self.cleanpath)
         env = dict(kw.pop("env", None) or {})
+        env.setdefault("TMPDIR", str(self.temp))
         env.setdefault("DEVKIT_NOTIFY_BACKEND", str(self.notify_stub))
         env.setdefault(update.BIN_ENV, str(self.dkbin))
         answers = kw.pop("answers", None)

@@ -7,9 +7,12 @@
 могло не быть: на свежем worktree сторож краснел десятком тестов подряд, а на
 машине, где кеш уже прогрет, тот же код был зелёным.
 """
+import os
+import subprocess
 import unittest
+from unittest import mock
 
-from testenv import SandboxCase, build, run, write
+from testenv import PY, SandboxCase, build, git, run, write
 
 
 class FingerprintTest(SandboxCase):
@@ -80,6 +83,34 @@ class StubDispatcherTest(SandboxCase):
             self.assertEqual(rc, 0, "%s не отвечает нулём" % name)
             self.assertEqual(out.strip(), self.box.version_line(name),
                              "%s отвечает чужой строкой версии" % name)
+
+
+
+class TempContourTest(SandboxCase):
+
+    def test_doctor_isolates_temp_and_honors_explicit_override(self):
+        project = self.box.project("temp-project")
+        rc, out = self.box.dkctl_run("new", "--no-board", "-C", str(project))
+        self.assertEqual(rc, 0, out)
+        outside = self.box.root / "outside"
+        outside.mkdir()
+        abandoned = outside / "shipctl-merge-other"
+        abandoned.mkdir()
+        tree = abandoned / "tree"
+        rc, out = git(self.box.dk, "worktree", "add", "--detach", str(tree), "HEAD")
+        self.assertEqual(rc, 0, out)
+        self.addCleanup(git, self.box.dk, "worktree", "remove", "--force", str(tree))
+        owner = subprocess.Popen([PY, "-c", "pass"])
+        owner.wait()
+        write(abandoned / "owner", "pid = %s\nroot = %s\ntree = %s\n"
+              % (owner.pid, self.box.dk, tree))
+        rc, out = self.box.doctor(project, env={"TMPDIR": str(outside)})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("временных деревьев от упавших прогонов: 1 дерево", out)
+        with mock.patch.dict(os.environ, {"TMPDIR": str(outside)}):
+            rc, out = self.box.doctor(project)
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(tree.is_dir(), "doctor без --fix не должен удалять дерево")
 
 
 if __name__ == "__main__":

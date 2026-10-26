@@ -83,3 +83,64 @@ func TestChatShotJudgedByBytes(t *testing.T) {
 		t.Fatalf("svg не отклонён отказом про содержимое: %d %s", resp.StatusCode, got)
 	}
 }
+
+// Поле data разбирается по трём известным вкусам мусора (DK-1481): переводы
+// строк и пробелы внутри base64, алфавит base64url с минусом и подчёркиванием
+// и необрезанный префикс data-URL прямо в поле. Мусор четвёртого вида
+// отказывает, а отказ кладёт в журнал вид, длину и голову поля: точный вкус
+// виден по следу, без повторного отказа у пользователя.
+func TestChatShotDirtyData(t *testing.T) {
+	e, c := chatEnv(t)
+	var lines []string
+	e.s.logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	png := base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00"))
+
+	resp := shotPut(t, e, c, "blank-shot2", "image", png[:6]+"\n"+png[6:10]+" "+png[10:])
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("переводы строк и пробелы внутри base64 не приняты: %d %s", resp.StatusCode, body(t, resp))
+	}
+	if name := shotName(t, resp); !strings.HasSuffix(name, ".png") {
+		t.Fatalf("расширение легло не по байтам png: %s", name)
+	}
+
+	// Слэш внутри base64 переведён в подчёркивание: алфавит base64url.
+	url64 := strings.NewReplacer("+", "-", "/", "_").Replace(
+		base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\xfb\xff")))
+	resp = shotPut(t, e, c, "blank-shot2", "image", url64)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("алфавит base64url не принят: %d %s", resp.StatusCode, body(t, resp))
+	}
+	if name := shotName(t, resp); !strings.HasSuffix(name, ".png") {
+		t.Fatalf("расширение легло не по байтам png: %s", name)
+	}
+
+	resp = shotPut(t, e, c, "blank-shot2", "image/png", "data:image/png;base64,"+png)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("необрезанный префикс data-URL не принят: %d %s", resp.StatusCode, body(t, resp))
+	}
+	if name := shotName(t, resp); !strings.HasSuffix(name, ".png") {
+		t.Fatalf("расширение легло не по байтам png: %s", name)
+	}
+
+	junk := "четвёртый вкус: не base64"
+	resp = shotPut(t, e, c, "blank-shot2", "image", junk)
+	got := body(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(got, "base64") {
+		t.Fatalf("мусор вне известных видов не отклонён: %d %s", resp.StatusCode, got)
+	}
+	var noted string
+	for _, line := range lines {
+		if strings.Contains(line, "не разобралось как base64") {
+			noted = line
+		}
+	}
+	if noted == "" {
+		t.Fatalf("отказ не оставил следа в журнале: %q", lines)
+	}
+	for _, want := range []string{"blank-shot2", `вид "image"`,
+		fmt.Sprintf("длиной %d", len(junk)), fmt.Sprintf("%q", junk)} {
+		if !strings.Contains(noted, want) {
+			t.Errorf("строка журнала без %q: %s", want, noted)
+		}
+	}
+}

@@ -4832,6 +4832,27 @@ func shotExt(raw []byte) string {
 	return ""
 }
 
+// shotData разбирает поле data вложения чата. Вставки с чужих машин приходят
+// с одним из трёх известных вкусов мусора: необрезанный префикс
+// «data:...;base64,» прямо в поле, переводы строк и пробелы внутри base64 и
+// алфавит base64url с минусом и подчёркиванием (DK-1481). Отказ значит, что
+// вкус четвёртый и по следу журнала его надо разобрать отдельно.
+func shotData(field string) ([]byte, bool) {
+	data := field
+	if head, rest, found := strings.Cut(data, ","); found && strings.HasPrefix(head, "data:") {
+		data = rest
+	}
+	data = strings.Join(strings.Fields(data), "")
+	if raw, err := base64.StdEncoding.DecodeString(data); err == nil {
+		return raw, true
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.NewReplacer("-", "+", "_", "/").Replace(data))
+	if err != nil {
+		return nil, false
+	}
+	return raw, true
+}
+
 func (s *server) handleChatShot(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
@@ -4856,8 +4877,14 @@ func (s *server) handleChatShot(w http.ResponseWriter, r *http.Request) {
 			"error": "жду JSON {\"kind\": \"image/png\", \"data\": \"<base64>\"}"})
 		return
 	}
-	raw, err := base64.StdEncoding.DecodeString(body.Data)
-	if err != nil {
+	raw, ok := shotData(body.Data)
+	if !ok {
+		head := body.Data
+		if len(head) > 48 {
+			head = head[:48]
+		}
+		s.logf("вложение чата %s не разобралось как base64: вид %q, поле длиной %d, начало %q",
+			sid, body.Kind, len(body.Data), head)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "данные не разобрались как base64"})
 		return
 	}

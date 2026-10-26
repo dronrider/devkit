@@ -939,6 +939,50 @@ func TestDraftDropWarnsAboutMentions(t *testing.T) {
 	}
 }
 
+// TestDraftAttachWarnsAboutMentions: приписка снимает черновик тем же правом,
+// что и drop, и оставшиеся в чужих текстах ссылки ведут в никуда, поэтому
+// предупреждает тот же хвост. Приёмник в места не попадает: раздел «Из черновика
+// <ID>» пишет сама приписка, и ID в нём ожидаем, а не потерян (DK-994).
+func TestDraftAttachWarnsAboutMentions(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	id := newDraft(t, root, "своя репродукция упоминалась соседом")
+	full := filepath.Join(root, "docs", "tasks", "XR-003.md")
+	if err := os.WriteFile(full, []byte("# XR-003\n\nждёт разбор черновика "+id+", предмет общий\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", ".")
+	gitOut(t, root, "commit", "-q", "-m", "черновик и сосед")
+
+	msg, err := cmdDraftAttach(root, id, "XR-002", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "на "+id+" ещё ссылаются: docs/tasks/XR-003.md") {
+		t.Fatalf("приписка не сказала, где ещё живёт снятый ID: %q", msg)
+	}
+	if strings.Contains(msg, "docs/tasks/XR-002.md") {
+		t.Fatalf("приёмник попал в места, а раздел с ID пишет сама приписка: %q", msg)
+	}
+
+	// Ссылок нет, и хвост молчит: без этого приписка шумела бы на каждый вызов.
+	// Ссылка на снятый ID убирается из соседа руками: освободившийся номер
+	// достаётся следующей записи, и без уборки она нашла бы упоминание сама себя.
+	if err := os.WriteFile(full, []byte("# XR-003\n\nсосед разобран\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	quiet := newDraft(t, root, "про эту запись никто не вспоминал")
+	gitOut(t, root, "add", ".")
+	gitOut(t, root, "commit", "-q", "-m", "вторая запись")
+	msg, err = cmdDraftAttach(root, quiet, "XR-002", CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(msg, "ещё ссылаются") {
+		t.Fatalf("предупреждение выдумано на пустом месте: %q", msg)
+	}
+}
+
 // TestMentionsOfWholeWord: ID ищется целым словом, иначе снятый XR-48 находился
 // бы в каждом упоминании XR-483, и предупреждение врало бы о местах.
 func TestMentionsOfWholeWord(t *testing.T) {

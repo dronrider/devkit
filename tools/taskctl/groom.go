@@ -450,6 +450,13 @@ func cmdDraftAttach(root, id, taskID string, c CommitOpts) (string, error) {
 	if created {
 		msg += fmt.Sprintf(", файл docs/tasks/%s.md создан и ссылка в строке обновлена", taskID)
 	}
+	// Снятый ID остаётся в чужих текстах теми же мёртвыми ссылками, что и у
+	// drop, поэтому приписка зовёт тот же хвост. Приёмник исключается: раздел
+	// с его ID пишет сама команда, и уехавший текст черновика в приёмнике
+	// законен, а не потерян.
+	if note := mentionsNote(root, id, filepath.Join("docs", "tasks", taskID+".md")); note != "" {
+		msg += "\n" + note
+	}
 	return msg + tail, nil
 }
 
@@ -503,9 +510,11 @@ const mentionsCap = 5
 // постановки, и удалённая запись оставляет за собой ссылки, которые ведут в
 // никуда. Переписать чужую постановку команда не берётся, упоминание живёт
 // текстом, а не полем, поэтому она называет места и оставляет решение человеку.
-// Пустая строка это молчание: ссылок нет, и говорить не о чем.
-func mentionsNote(root, id string) string {
-	hits := mentionsOf(root, id)
+// skip называет файлы, где ID ожидаем и предупреждением не станет: у приписки
+// это файл приёмника, раздел «Из черновика <ID>» пишет сама команда. Пустая
+// строка это молчание: ссылок нет, и говорить не о чем.
+func mentionsNote(root, id string, skip ...string) string {
+	hits := mentionsOf(root, id, skip...)
 	if len(hits) == 0 {
 		return ""
 	}
@@ -521,9 +530,14 @@ func mentionsNote(root, id string) string {
 // mentionsOf собирает файлы docs, где ID помянут прозой. Архив не смотрится:
 // закрытую работу править никто не пойдёт, и её упоминания сделали бы
 // предупреждение шумом. Ищется ID целым словом, иначе снятый XR-48 находился бы
-// в каждом упоминании XR-483.
-func mentionsOf(root, id string) []string {
+// в каждом упоминании XR-483. skip выкидывает файлы, где ID ожидаем: файл
+// приёмника приписки сам несёт заголовок раздела со снятым ID.
+func mentionsOf(root, id string, skip ...string) []string {
 	re := regexp.MustCompile(`(?m)(^|[^0-9A-Za-z_-])` + regexp.QuoteMeta(id) + `([^0-9A-Za-z_-]|$)`)
+	quiet := make(map[string]bool, len(skip))
+	for _, s := range skip {
+		quiet[filepath.ToSlash(s)] = true
+	}
 	var hits []string
 	filepath.Walk(filepath.Join(root, "docs"), func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -542,7 +556,7 @@ func mentionsOf(root, id string) []string {
 		if err != nil || !re.Match(text) {
 			return nil
 		}
-		if rel, err := filepath.Rel(root, path); err == nil {
+		if rel, err := filepath.Rel(root, path); err == nil && !quiet[filepath.ToSlash(rel)] {
 			hits = append(hits, filepath.ToSlash(rel))
 		}
 		return nil

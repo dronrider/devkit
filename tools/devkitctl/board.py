@@ -6,6 +6,13 @@
 назвал входом DK-117, связь появилась на доске только со второй попытки).
 Доктор закрывает дыру находкой: вход назван, а маркера нет ни у одной
 из двух строк.
+
+Второй рубеж про состав цели (DK-994): приписка и удаление снимают черновик,
+а упомянутый в чужих текстах ID остаётся и в разделе «Задачи цели» читается
+членом состава, которого нет. Экран цели подписывает его незаведённой
+строкой, а прогресс цели занижен. Членом считается ID со скобкой судьбы,
+как в разборе дашборда, и находка зовётся на члена без строки доски, строки
+архива и файла черновика.
 """
 
 import re
@@ -38,6 +45,10 @@ ID_RE = re.compile(r"\b[A-Z]+-\d+\b")
 # (находки doctor, разборы), и маска внутри цитаты бьёт файл задачи по нему
 # самому. Настоящие формулировки в корпусе стоят вне кавычек.
 QUOTE_RE = re.compile(r"«[^«»]*»")
+
+# Раздел состава живёт в файле цели, и находка про фантома читает его тем же
+# заголовком, что дашборд и журнал витка.
+GOAL_TASKS_HEADER = "## Задачи цели"
 
 
 def row_deps(title):
@@ -77,13 +88,97 @@ def named_inputs(text, own, rows):
     return named
 
 
+def goal_units(text):
+    """Юниты раздела «Задачи цели»: пункт списка со своими переносами и
+    отдельный абзац прозы. Состав пишется и списком, и абзацем, и построчный
+    разбор терял бы половину членов на переносах, поэтому строки склеиваются.
+    """
+    units, cur = [], []
+    for ln in text.splitlines():
+        t = ln.strip()
+        if not t:
+            if cur:
+                units.append(" ".join(cur))
+                cur = []
+            continue
+        if t.startswith("- "):
+            if cur:
+                units.append(" ".join(cur))
+                cur = []
+        cur.append(t)
+    if cur:
+        units.append(" ".join(cur))
+    return units
+
+
+def goal_members(text, own):
+    """ID-члены состава из текста файла цели по правилу дашборда: член это ID,
+    открывающий пункт списка либо названный со скобкой судьбы, включая
+    перечисление через запятую перед общими скобками. Упомянутые вскользь ID
+    («ждёт BD-7», «остаётся черновиком BD-8 вне цели») не члены, и фантомом
+    они не становятся. ID самой цели пропускается: раздел ссылается и на неё.
+    """
+    members = set()
+    for unit in goal_units(text):
+        hits = [(m.start(), m.end()) for m in ID_RE.finditer(unit)]
+        member = [False] * len(hits)
+        # Справа налево: перечисление узнаёт членство у правого соседа.
+        for i in range(len(hits) - 1, -1, -1):
+            start, end = hits[i]
+            tail = unit[end:].lstrip()
+            if (unit.startswith("- ") and start == 2) or tail.startswith("("):
+                member[i] = True
+            elif tail.startswith(",") and i + 1 < len(hits) and member[i + 1]:
+                member[i] = True
+        for (start, end), is_member in zip(hits, member):
+            if is_member and unit[start:end] != own:
+                members.add(unit[start:end])
+    return members
+
+
+def goal_findings(root, rows):
+    """Находки doctor: член состава цели, под которым нет ни строки доски, ни
+    строки архива, ни файла черновика (DK-994). Приписанный или удалённый
+    черновик оставляет ID в разделе «Задачи цели», экран цели читает его
+    задачей и прогресс врёт, а без находки мёртвая ссылка живёт, сколько
+    живёт файл цели.
+    """
+    tasks_dir = Path(root) / "docs" / "tasks"
+    archived = set()
+    archive_path = Path(root) / "docs" / "TASKS-archive.md"
+    if archive_path.is_file():
+        for ln in archive_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            m = ROW_RE.match(ln)
+            if m:
+                archived.add(m.group(1))
+    drafts = {p.stem for p in (tasks_dir / "drafts").glob("*.md")}
+    findings = []
+    for path in sorted(tasks_dir.glob("*.md")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        head, _, body = text.partition("\n" + GOAL_TASKS_HEADER + "\n")
+        if not _:
+            continue
+        section = body.split("\n## ", 1)[0]
+        for tid in sorted(goal_members(section, path.stem)):
+            if tid in rows or tid in archived or tid in drafts:
+                continue
+            findings.append("docs/tasks/%s.md: %s названа в составе цели, а строки нет "
+                            "ни на доске, ни в архиве, ни в накопителе; переписать "
+                            "упоминание на новый адрес либо снять его"
+                            % (path.stem, tid))
+    return findings
+
+
 def check(root):
-    """Находки doctor: вход назван, а маркера «после» нет ни у одной строки.
+    """Находки doctor: вход назван, а маркера «после» нет ни у одной строки;
+    член состава цели без строки, архива и черновика.
 
     Ребро проверяется в обе стороны: фраза называет входом как чужой результат
     («её результат нужен как вход», маркер у своей строки), так и свой чужой
     задаче («читает как вход», маркер у названной), и правильная сторона
-    выбирается по смыслу фразы, а не по маске.
+    выбирается по смыслу фразы, а не по маске. Состав цели проверяется тем же
+    списком находок: переписывать его команда не берётся, места и члены
+    называются, а правит текст грумер.
     """
     board_path = Path(root) / "docs" / "TASKS.md"
     if not board_path.is_file():
@@ -102,4 +197,5 @@ def check(root):
             findings.append("docs/tasks/%s.md: %s названа входом, а маркера «после» нет "
                             "ни у одной из строк; поставить связь taskctl dep add"
                             % (own, other))
+    findings += goal_findings(root, rows)
     return findings

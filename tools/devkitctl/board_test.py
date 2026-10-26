@@ -150,6 +150,88 @@ class DepFindingsTest(unittest.TestCase):
                          "фраза вне кавычек потерялась за цитатой")
 
 
+class GoalMemberFindingsTest(unittest.TestCase):
+    """Член состава цели без doctor: скобка судьбы делает ID членом, пункты и
+    перечисления читаются, а живым членом считается строка доски, строка
+    архива или черновик накопителя (DK-994).
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def check(self, rows, files, archive=None):
+        make_project(self.root, rows, files)
+        if archive is not None:
+            write(self.root / "docs" / "TASKS-archive.md", archive)
+        return board.check(self.root)
+
+    def goal(self, body):
+        """Файл цели с разделом «Задачи цели» из переданного тела."""
+        return "# BD-10: Цель\n\n## Задачи цели\n\n%s\n\n## Журнал\n\n- строка.\n" % body
+
+    def test_member_without_row_is_a_finding(self):
+        # Снятый черновик оставил ID со скобкой в составе: экран цели читает
+        # его задачей, а строки нет, и прогресс врёт.
+        got = self.check(
+            [("BD-10", "Цель")],
+            {"BD-10.md": self.goal("Нарезка из черновиков: BD-77 (виджет состава) "
+                                   "приписан к строке, BD-78 (прогресс) остаётся.\n")},
+        )
+        self.assertEqual(got, ["docs/tasks/BD-10.md: BD-77 названа в составе цели, а строки нет "
+                               "ни на доске, ни в архиве, ни в накопителе; переписать "
+                               "упоминание на новый адрес либо снять его",
+                               "docs/tasks/BD-10.md: BD-78 названа в составе цели, а строки нет "
+                               "ни на доске, ни в архиве, ни в накопителе; переписать "
+                               "упоминание на новый адрес либо снять его"],
+                         "члены без строк не дали находок")
+
+    def test_row_board_archive_and_draft_close_the_finding(self):
+        # Живой член стоит строкой на доске, закрытый строкой в архиве,
+        # а ненарезанный лежит черновиком накопителя: все три не фантомы.
+        got = self.check(
+            [("BD-10", "Цель"), ("BD-20", "Строка")],
+            {"BD-10.md": self.goal("Состав: BD-20 (первая, на доске), BD-30 (в архиве), "
+                                   "BD-40 (черновик) и BD-50 вскользь.\n"),
+             "drafts/BD-40.md": "# BD-40: Черновик\n"},
+            archive="| ID | Задача | Тип | P | Закрыто | Ссылка |\n"
+                    "|--------|--------|-----|---|---------|--------|\n"
+                    "| BD-30 | Закрытая | task | P2 | 2026-10-01 | - |\n",
+        )
+        self.assertEqual(got, [], "живой, архивный и черновик дали находки")
+
+    def test_bare_mention_is_not_a_member(self):
+        # ID без скобки судьбы это упоминание соседа, а не член: фантомом
+        # он не становится, иначе находка била бы по каждой ссылке прозы.
+        got = self.check(
+            [("BD-10", "Цель")],
+            {"BD-10.md": self.goal("Состав держит BD-20, а вход ждёт от BD-21 "
+                                   "и остаётся черновиком BD-22 вне цели.\n")},
+        )
+        self.assertEqual(got, [], "упоминание без скобки стало членом состава")
+
+    def test_comma_list_shares_the_fate_brackets(self):
+        # Перечисление через запятую несёт общие скобки у последнего ID:
+        # члены все, и находка зовётся на каждого.
+        got = self.check(
+            [("BD-10", "Цель")],
+            {"BD-10.md": self.goal("Дорезка вторая: BD-61, BD-62, BD-63 (task, M, R=34).\n")},
+        )
+        self.assertEqual([f.split()[1] for f in got], ["BD-61", "BD-62", "BD-63"],
+                         "перечисление через запятую не собралось в члены")
+
+    def test_goal_id_is_not_own_member(self):
+        # Раздел ссылается и на саму цель: её ID не фантом самого себя.
+        got = self.check(
+            [("BD-10", "Цель")],
+            {"BD-10.md": self.goal("Про BD-10 (саму цель) напоминание, состав ниже пуст.\n")},
+        )
+        self.assertEqual(got, [], "цель стала фантомом собственного состава")
+
+
 class DoctorDepsTest(SandboxCase):
     """Прогон doctor на проекте с доской: находка кодом возврата и строкой,
     погашение маркером в обе стороны. Шаги цепочкой на одном проекте.

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -143,4 +145,23 @@ func TestChatShotDirtyData(t *testing.T) {
 			t.Errorf("строка журнала без %q: %s", want, noted)
 		}
 	}
+}
+
+// Стенд testdata/poc_shot_send.mjs гоняет вставку снимка в реплику целиком:
+// файл ложится под свежим ключом, путь приклеивается к реплике, отказ читается
+// словами. Сюда же смотрит тело самого вложения (живой случай DK-1483):
+// провод ужимки отдавал на сервер поле со словом undefined вместо base64, и
+// стенд держит тело годным, чтобы провод не разъезжался тихо. Без node шаг
+// пропускается: узел стенда, а не рабочей части.
+func TestStaticShotSend(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд вложения пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_shot_send.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("вложение не уезжает годным телом: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }

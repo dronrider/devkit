@@ -75,6 +75,19 @@ const paste = (ta, dataURL) => {
   if (!up.includes("/chats/new-")) {
     fail("вложение без сессии легло не под свежим ключом: " + up);
   }
+  // Тело вложения обязано быть чистым base64, а вид обязан приехать из самого
+  // dataURL. Живой провал DK-1483: shrinkShot получал строку вместо клипа,
+  // возвращал её нетронутой, и на сервер уезжало поле со словом undefined.
+  const shotWire = bodies[asked.indexOf(up)] || {};
+  if (shotWire.data === "undefined" || String(shotWire.data).startsWith("data:")) {
+    fail("тело вложения уехало неразобранным: " + JSON.stringify(shotWire));
+  }
+  if (!/^[A-Za-z0-9+/=]+$/.test(String(shotWire.data))) {
+    fail("тело вложения не base64: " + JSON.stringify(shotWire));
+  }
+  if (shotWire.kind !== "image/png") {
+    fail("вид вложения приехал не из dataURL: " + JSON.stringify(shotWire));
+  }
   const raise = asked.findIndex((p) => p.endsWith("/chats"));
   if (raise < 0) fail("сессия не поднялась: " + JSON.stringify(asked));
   if (asked.indexOf(up) > raise) fail("картинка ушла позже реплики, которая её называет");
@@ -126,7 +139,7 @@ const paste = (ta, dataURL) => {
     fail("реплика ушла без картинки, о которой человек говорит: " + JSON.stringify(asked));
   }
   const said = dump(sandbox.document.getElementById("flashes"));
-  if (!said.includes("картинка не ушла")) {
+  if (!said.includes("вложение не ушло")) {
     fail("неудача вложения смолчала: " + said);
   }
   const pend = byClass(panel, "mlocal");

@@ -127,17 +127,7 @@ func planChoose(start, tplName, task string) (string, *plans.Template, error) {
 		}
 		return name, t, nil
 	}
-	// Тип пишется в строке с большой буквы («LLD»), а набор называет его
-	// строчными, поэтому сначала точное совпадение, затем строчное.
-	if t, ok := set.ByType(row.Type); ok {
-		return t.Name, t, nil
-	}
-	if t, ok := set.ByType(strings.ToLower(row.Type)); ok {
-		return t.Name, t, nil
-	}
-	// Составной и незнакомый тип падает на task: обычный порядок работы у
-	// задачи без особенностей честнее «без шаблона» без всяких этапов.
-	if t, ok := set.Get("task"); ok {
+	if t, ok := set.ForType(row.Type); ok {
 		return t.Name, t, nil
 	}
 	return planNoTemplate, nil, nil

@@ -102,7 +102,6 @@ for line in raw.splitlines():
         if obj.get("type") == "agent_message" and isinstance(obj.get("text"), str):
             finals.append(obj["text"])
 need(finals and finals[-1].strip(), "нет итоговой реплики агента")
-final = finals[-1]
 record = "OB-042"
 paths = [pathlib.Path("docs/tasks/drafts/OB-042.md"), pathlib.Path("docs/tasks/OB-042.md")]
 found = [p for p in paths if p.exists() and "выбор: сценарии/1" in p.read_text()]
@@ -131,9 +130,21 @@ card_bodies(snapshot["cards"], [id])
 need(snapshot["cards"] == prepared_cards, "карточка подготовлена после снимка переноса")
 need(any(record in c and "--given" in c and "--said" in c for c in commands), "перенос --given с основанием не выполнялся")
 need(not any(record in c and "--chat" in c for c in commands), "заданный сценарий повторно спрошен")
-need(id in final and "None" in final, "итог не назвал сохранённый сценарий и его основание")
 shown = subprocess.check_output(["taskctl", "decide", record, "--open"], text=True)
 need("выбрано: " + id in shown and "«сценарии» (решена)" in shown, "новый процесс не прочитал заданный состав")
 print("заданный сценарий сохранён с основанием без повторного вопроса")
 PY
 ```
+
+## Судья
+
+вход: ответ
+критерий: В итоговой реплике агент подтверждает сохранение прямо заданного сценария OB-042. В этом сценарии total считает None нулём. Достаточно назвать поведение, ID сценария или сослаться на заданный сценарий. Буквальные OB-042, СЦ-1 и None в итоговой реплике не обязательны.
+
+да: Сохранён заданный сценарий: total считает None нулём.
+да: Заданный сценарий сохранён в записи.
+да: СЦ-1 сохранён в записи.
+нет: Падение воспроизведено, дублей нет.
+нет: Сохранён сценарий ночного запуска отчёта.
+нет: Заданный сценарий пока не сохранён.
+нет: Сохранён заданный сценарий: total возвращает None вместо числа.

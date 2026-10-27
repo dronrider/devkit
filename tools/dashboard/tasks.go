@@ -56,6 +56,11 @@ type boardRow struct {
 	// назначается на доске, и своего признака дашборд не заводит. Пусто у
 	// агентского вида, он умолчание и суффикса не носит.
 	Accept string `json:"accept,omitempty"`
+	// Due это срок строки доски датой 2006-01-02 из суффикса заголовка
+	// «[срок: ...]» (DK-1464). Его отдаёт taskctl, разобрав суффикс, пусто у
+	// строки без срока. Просрочку панель считает на клиенте по сегодняшней
+	// дате и подсвечивает чипом красным.
+	Due string `json:"due,omitempty"`
 	// Order это заказ headless-сессии дословно, той же строкой, что уйдёт
 	// агенту (rowOrder, tools/dashboard/runs.go): подсказка кнопки читает
 	// готовое поле, а не собирает заказ второй раз. Пусто у строки цели (её
@@ -1093,6 +1098,9 @@ func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {
 		RParts []*int `json:"r_parts"`
 		Cost   string `json:"cost"`
 		Link   string `json:"link"`
+		// Due это срок строки датой YYYY-MM-DD, прочерк «-» снимает срок.
+		// Значение проверяет taskctl, дашборд только передаёт его.
+		Due string `json:"due"`
 		// Expect это разбивка, которую отправитель считает сегодняшней. С ней
 		// едет откат жеста перетаскивания: пока человек читал строку
 		// результата, строку могли поправить из соседней сессии, и молча
@@ -1102,7 +1110,7 @@ func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "жду JSON с полями title, type, r_parts (или rank), cost, link"})
+			"error": "жду JSON с полями title, type, r_parts (или rank), cost, link, due"})
 		return
 	}
 	if body.Expect != nil && !slices.Equal(body.Expect, row.RParts) {
@@ -1128,7 +1136,7 @@ func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {
 	args := []string{"set", id}
 	for _, f := range []struct{ flag, val string }{
 		{"--title", body.Title}, {"--type", body.Type}, {"--rank", rank},
-		{"--cost", body.Cost}, {"--link", body.Link},
+		{"--cost", body.Cost}, {"--link", body.Link}, {"--due", body.Due},
 	} {
 		if f.val != "" {
 			args = append(args, f.flag, f.val)

@@ -61,7 +61,7 @@ func TestBoardRowCarriesEveryJSONField(t *testing.T) {
 
 	// Проверка самой фикстуры: если какое-то из необязательных полей
 	// перестало приходить, сторож молча проверяет пустое множество.
-	for _, k := range []string{"after", "held_by", "accept", "adjustments", "moved", "notes", "block", "fail"} {
+	for _, k := range []string{"after", "held_by", "accept", "adjustments", "moved", "notes", "block", "fail", "due"} {
 		if !seen[k] {
 			t.Fatalf("фикстура не подняла поле %q ответа list --json: сторож ничего не проверит", k)
 		}
@@ -147,9 +147,10 @@ func boardRowJSONFields() map[string]bool {
 // (armed/arm, см. jsonRowFieldExceptions, тот канал проверяет chain_test.go):
 // после (after) и держащее ребро (held_by) даёт dep add, вид приёмки
 // (accept) - mixed с барьером, поправку к рангу (adjustments) - цена M,
-// провал (fail) и блокировку (block) - move и fail из in-progress. Дата
-// правки (moved) и заметка о возрасте строки (notes) приходят сами, пока
-// дерево доски чистое, поэтому каждый шаг коммитится настоящим git тут же.
+// провал (fail) и блокировку (block) - move и fail из in-progress, срок
+// (due) - set --due. Дата правки (moved) и заметка о возрасте строки (notes)
+// приходят сами, пока дерево доски чистое, поэтому каждый шаг коммитится
+// настоящим git тут же.
 func rowFieldsBoard(t *testing.T) string {
 	t.Helper()
 	buildTaskctl(t)
@@ -184,6 +185,9 @@ func rowFieldsBoard(t *testing.T) string {
 
 	runTaskctl(t, proj, "dep", "add", "XR-002", "XR-001")
 	commit("dep")
+
+	runTaskctl(t, proj, "set", "XR-002", "--due", "2026-11-05")
+	commit("due-XR-002")
 
 	runTaskctl(t, proj, "move", "XR-001", "in-progress")
 	commit("move-XR-001")

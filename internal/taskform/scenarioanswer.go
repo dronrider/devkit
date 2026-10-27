@@ -57,6 +57,10 @@ func scenarioReference(text string, snapshot ScenarioSnapshot) (string, bool, er
 	}
 	n, err := strconv.Atoi(strings.TrimPrefix(text, "№"))
 	if err != nil {
+		number := strings.TrimPrefix(text, "№")
+		if number != "" && strings.Trim(number, "0123456789+-") == "" {
+			return "", true, fmt.Errorf("позиция %s вне допустимого числового диапазона", text)
+		}
 		return "", false, nil
 	}
 	if n < 1 || n > len(snapshot.Scenarios) {

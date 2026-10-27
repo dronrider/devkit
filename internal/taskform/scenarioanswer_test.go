@@ -35,7 +35,7 @@ func TestScenarioAnswerSelection(t *testing.T) {
 			}
 		})
 	}
-	for _, text := range []string{"", " ", "сценарии 1, 99, плюс новый", "СЦ-9", `плюс "незакрыто`} {
+	for _, text := range []string{"", " ", "сценарии 1, 99, плюс новый", "СЦ-9", "плюс 9999999999999999999999999999999", `плюс "незакрыто`} {
 		if _, err := ParseScenarioAnswer(f, snapshot, text); err == nil {
 			t.Errorf("принят плохой ответ %q", text)
 		}

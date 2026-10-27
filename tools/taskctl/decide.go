@@ -406,6 +406,20 @@ func decideSetWho(doc, name, who string) string {
 // прямо: молчание неотличимо от «команда не нашла раздел».
 func decideShow(doc string, p DecideParams) string {
 	forks := taskform.ParseForks(doc)
+	if p.Open {
+		ordered := make([]taskform.Fork, 0, len(forks))
+		for _, f := range forks {
+			if f.Mode != "" {
+				ordered = append(ordered, f)
+			}
+		}
+		for _, f := range forks {
+			if f.Mode == "" {
+				ordered = append(ordered, f)
+			}
+		}
+		forks = ordered
+	}
 	var out []string
 	for _, f := range forks {
 		if p.Name != "" && f.Name != decideName(p.Name) {
@@ -437,7 +451,7 @@ func decideShow(doc string, p DecideParams) string {
 		if f.Review != "" {
 			line += "\n  " + f.Review
 		}
-		if f.By != "" && f.Answer != "" {
+		if f.By != "" && f.Answer != "" && !(f.Mode != "" && f.Reconsidered) {
 			line += fmt.Sprintf("\n  решено %s %s: %s", f.By, f.Date, f.Answer)
 		}
 		if p.Name != "" {

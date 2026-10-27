@@ -20,6 +20,7 @@ import threading
 import time
 import unittest
 import unittest.mock
+from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RUN = os.path.join(HERE, "task-run.py")
@@ -451,23 +452,35 @@ while True:
     if step == "субагенты":
         # Заказа на этот проход оболочка подать не должна: голову будит конец
         # субагента. Ждём её строку об этом, потом играем сам конец работы,
-        # ход по его вести и обычный конец хода.
+        # ход по его вести и обычный конец хода. Работа при этом идёт дольше
+        # двух окон тишины: срок задаёт DEVKIT_TEST_WORK_LAP, и без него конец
+        # приходит сразу. DEVKIT_TEST_WORK_WAKE=0 отличает беззвучный конец
+        # работы: реестр закрывается, а отметок хода нет (DK-1463).
         until = time.time() + 10
         while time.time() < until and hits("живых субагентах") <= seen:
             time.sleep(0.05)
+        lap = float(os.environ.get("DEVKIT_TEST_WORK_LAP") or 0)
+        if lap:
+            time.sleep(lap)
         watch("done")
-        mark("начат")
-        mark("кончен")
+        if os.environ.get("DEVKIT_TEST_WORK_WAKE", "1") != "0":
+            mark("начат")
+            mark("кончен")
     if step == "фоновая команда":
         # Заказа на этот проход оболочка подать не должна: ход головы поднимает
         # конец команды. Ждём её строку об этом, потом играем сам конец
-        # команды, ход по её вести и обычный конец хода.
+        # команды, ход по её вести и обычный конец хода. Команда при этом идёт
+        # дольше двух окон тишины тем же сроком DEVKIT_TEST_WORK_LAP.
         until = time.time() + 10
         while time.time() < until and hits("живой фоновой команде") <= seen:
             time.sleep(0.05)
+        lap = float(os.environ.get("DEVKIT_TEST_WORK_LAP") or 0)
+        if lap:
+            time.sleep(lap)
         shell("done")
-        mark("начат")
-        mark("кончен")
+        if os.environ.get("DEVKIT_TEST_WORK_WAKE", "1") != "0":
+            mark("начат")
+            mark("кончен")
     if step == "лишний конец":
         # Стоп-хук сторожа фоновых работ пожаловался на непрочитанный отчёт,
         # голова ответила второй репликой, и ход кончился ещё раз: на один
@@ -1324,6 +1337,53 @@ class TestLiveHead(unittest.TestCase):
         self.assertEqual(got.returncode, 0, s.why(got))
         self.assertEqual([l for l in s.journal() if "вхолостую" in l], [], s.journal())
         self.assertEqual(len(s.orders()), 4, s.orders())
+
+    def test_live_agents_outlast_the_silence_windows(self):
+        # Предмет DK-1463, ночь 26.10: проход кончился при живом субагенте, и
+        # голова молчит дольше двух окон тишины, пока работа идёт. Молчание
+        # такой головы законно, ход поднимет конец работы, и ни «не начался»,
+        # ни снятия окна тишина не объявляет.
+        s = self.stand(plan="субагенты|закрой", pause="1")
+        got = s.run(extra={"DEVKIT_TASK_STARTUP": "1",
+                           "DEVKIT_TEST_WORK_LAP": "4"})
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual([l for l in s.journal() if "не начался" in l], [], s.journal())
+        self.assertEqual([l for l in s.journal() if "окно снято" in l], [], s.journal())
+        self.assertEqual(len(s.orders()), 2, s.orders())
+
+    def test_live_command_outlasts_the_silence_windows(self):
+        # Та же ночь вторым корнем: вложенный agentctl run ушёл в фон, голова
+        # кончила ход и молчит дольше двух окон тишины. Живая команда держит
+        # окно, а конец её поднимает ход.
+        s = self.stand(plan="фоновая команда|закрой", pause="1")
+        got = s.run(extra={"DEVKIT_TASK_STARTUP": "1",
+                           "DEVKIT_TEST_WORK_LAP": "4"})
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertEqual([l for l in s.journal() if "не начался" in l], [], s.journal())
+        self.assertEqual([l for l in s.journal() if "окно снято" in l], [], s.journal())
+        self.assertEqual(len(s.orders()), 2, s.orders())
+
+    def test_silence_after_the_work_end_keeps_both_windows(self):
+        # Довооружение DK-1454: работа кончилась, а голову конец её не
+        # разбудил. Окна тишины считаются от конца работы, и такой клиент
+        # получает оба окна, как и не поднявшийся вовсе: зов был после конца
+        # работы, окна прошли, окно снято.
+        s = self.stand(plan="субагенты", pause="1")
+        got = s.run(extra={"DEVKIT_TASK_STARTUP": "1",
+                           "DEVKIT_TEST_WORK_LAP": "3",
+                           "DEVKIT_TEST_WORK_WAKE": "0"})
+        self.assertEqual(got.returncode, 1, s.why(got))
+        said = [l for l in s.journal() if "не начался" in l]
+        self.assertTrue(said, s.journal())
+        self.assertTrue([l for l in s.journal() if "окно снято, замок освобождён" in l],
+                        s.journal())
+        # Зов тишины стоит после конца работы, а не в её середине: окна
+        # считаются от конца работы.
+        work = [l for l in s.journal() if "живых субагентах" in l][0]
+        wake = datetime.strptime(said[0].split("\t", 1)[0], task_run.STAMP)
+        gone = datetime.strptime(work.split("\t", 1)[0], task_run.STAMP)
+        self.assertGreaterEqual((wake - gone).total_seconds(), 3.0,
+                                "зов тишины пришёл раньше конца работы")
 
     def test_waiting_head_lives_three_passes(self):
         # Предмет DK-899. Ход кончился отчётом об ожидании машинного события,

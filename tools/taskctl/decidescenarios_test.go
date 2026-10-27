@@ -46,7 +46,7 @@ func TestScenariosCLI(t *testing.T) {
 		}
 	}
 	read := func() string { return readTask(t, root, "XR-005") }
-	write(read() + "\n## Пользовательские сценарии\n\n### СЦ-1\nситуация: выбор\nдействие: назвать пункты\nрезультат: выбранные ID\n\n### СЦ-2\nситуация: пример\n\n### СЦ-3\nситуация: перерыв\n")
+	write(read() + scenarioTestCards("СЦ-1", "СЦ-2", "СЦ-3"))
 	run(true, "XR-005", "--ask", "сценарии", "--scenarios", "--hint", "СЦ-1, СЦ-3: выбор и продолжение",
 		"--option", "СЦ-1 (слово пользователя): выбрать", "--option", "СЦ-2 (вывод из примера): собрать", "--option", "СЦ-3 (предложение агента): продолжить", "что включаем?")
 	keyRe := regexp.MustCompile(`снимок сценариев: (sc1-[a-f0-9]{64})`)
@@ -119,6 +119,7 @@ func TestScenariosCLI(t *testing.T) {
 	if answer(key, own) != result || read() != before {
 		t.Fatal("дополнение карточки сломало повтор доставки")
 	}
+	write(read() + "\n" + scenarioTestCard("СЦ-4", "свой сценарий"))
 	key, _ = chat()
 	empty := answer(key, "ничего")
 	mustContain(empty, "прежний состав отменён", "выбор открыт")
@@ -177,6 +178,7 @@ func TestScenariosCLI(t *testing.T) {
 	}
 	key, _ = chat()
 	mustContain(answer(key, "плюс новый сценарий"), "добавлено: СЦ-5")
+	write(read() + "\n" + scenarioTestCard("СЦ-5", "свой сценарий"))
 	// По старому снимку не принимаются новые команды после изменения карточки или довода.
 	key, _ = chat()
 	write(strings.Replace(read(), "\nситуация: пример\n", "\nситуация: другой пример\n", 1))
@@ -192,6 +194,7 @@ func TestScenariosCLI(t *testing.T) {
 	write(goodSnapshotDoc)
 	// Ключ из другой записи нельзя перенести вместе с JSON.
 	run(true, "XR-002", "--ask", "сценарии", "--scenarios", "--hint", "СЦ-1: нужен", "--option", "СЦ-1 (слово пользователя): другое", "что включаем?")
+	addScenarioTestCards(t, root, "XR-002", "СЦ-1")
 	foreign := run(true, "XR-002", "сценарии", "--chat")
 	foreignKey := keyRe.FindStringSubmatch(foreign)[1]
 	foreignDoc := readTask(t, root, "XR-002")
@@ -208,6 +211,7 @@ func TestScenariosCLI(t *testing.T) {
 	write(doc)
 	failUnchanged(foreignKey, "сценарии 1", "другой записи")
 	// Прямо заданный состав создаётся без вопроса и содержит исходные слова.
+	addScenarioTestCards(t, root, "XR-003", "СЦ-1")
 	run(true, "XR-003", "--ask", "сценарии", "--scenarios", "--hint", "СЦ-1: нужен", "--option", "СЦ-1 (слово пользователя): задано", "--given", "СЦ-1", "--said", "берём только заданный сценарий", "что включаем?")
 	given, _ := taskform.FindFork(readTask(t, root, "XR-003"), "сценарии")
 	if !given.Decided() || given.Answer != "СЦ-1" || given.ChoiceEvent != 1 {
@@ -264,6 +268,7 @@ func TestScenarioWriteDetectsConcurrentEdit(t *testing.T) {
 
 func TestScenarioRetryKeepsWaitingAndByUsesSnapshot(t *testing.T) {
 	root := setup(t)
+	addScenarioTestCards(t, root, "XR-005", "СЦ-1", "СЦ-2")
 	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "сценарии", Scenarios: true, Hint: "СЦ-1: нужен", Opts: []string{"СЦ-1 (слово пользователя): выбрать", "СЦ-2 (предложение агента): продолжить"}, Text: "что включаем?"})
 	block := chatRun(t, root, DecideParams{ID: "XR-005", Name: "сценарии", Chat: true}, &askDeps{}, botEnv)
 	key := regexp.MustCompile(`снимок сценариев: (sc1-[a-f0-9]{64})`).FindStringSubmatch(block)[1]
@@ -288,6 +293,7 @@ func TestScenarioRetryKeepsWaitingAndByUsesSnapshot(t *testing.T) {
 	if got := decideRun(t, root, p); got != result || !askStands(askPath) || readTask(t, root, "XR-005") != before {
 		t.Fatal("повтор изменил результат, файл или новое ожидание")
 	}
+	addScenarioTestCards(t, root, "XR-005", "СЦ-3")
 	block = chatRun(t, root, DecideParams{ID: "XR-005", Name: "сценарии", Chat: true}, &askDeps{}, botEnv)
 	freshKey := regexp.MustCompile(`снимок сценариев: (sc1-[a-f0-9]{64})`).FindStringSubmatch(block)[1]
 	decideRun(t, root, DecideParams{ID: "XR-005", Name: "сценарии", Snapshot: freshKey, By: "человек", Text: "СЦ-2"})
@@ -304,6 +310,7 @@ func TestScenarioRetryKeepsWaitingAndByUsesSnapshot(t *testing.T) {
 
 func TestScenarioOpenShowsChoiceBeforeQuestions(t *testing.T) {
 	root := setup(t)
+	addScenarioTestCards(t, root, "XR-005", "СЦ-1")
 	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "доступ", Hint: "есть", Text: "есть доступ?"})
 	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "сценарии", Scenarios: true, Hint: "СЦ-1: путь задан", Opts: []string{"СЦ-1 (слово пользователя): выбрать"}, Given: "СЦ-1", Said: "берём выбор", Text: "что включаем?"})
 	out := decideRun(t, root, DecideParams{ID: "XR-005", Open: true})

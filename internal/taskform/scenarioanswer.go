@@ -69,6 +69,31 @@ func scenarioReference(text string, snapshot ScenarioSnapshot) (string, bool, er
 	return snapshot.Scenarios[n-1].ID, true, nil
 }
 
+func scenarioQuotedTitle(text string) (string, error) {
+	if len(text) < 2 || text[0] != '"' || text[len(text)-1] != '"' {
+		return "", fmt.Errorf("текст сценария требует парных двойных кавычек")
+	}
+	var out strings.Builder
+	for i := 1; i < len(text)-1; i++ {
+		c := text[i]
+		if c == '"' {
+			return "", fmt.Errorf("кавычка внутри сценария должна быть экранирована")
+		}
+		if c == '\\' {
+			i++
+			if i >= len(text)-1 {
+				return "", fmt.Errorf("незавершённое экранирование сценария")
+			}
+			c = text[i]
+			if c != '"' && c != '\\' {
+				return "", fmt.Errorf("неподдержанное экранирование \\%c: разрешены только кавычка и обратный слеш", c)
+			}
+		}
+		out.WriteByte(c)
+	}
+	return out.String(), nil
+}
+
 func ParseScenarioAnswer(f Fork, snapshot ScenarioSnapshot, text string) (ScenarioSelection, error) {
 	result := ScenarioSelection{NextID: f.NextID}
 	if strings.TrimSpace(text) == "" {
@@ -131,7 +156,7 @@ func ParseScenarioAnswer(f Fork, snapshot ScenarioSnapshot, text string) (Scenar
 				return result, fmt.Errorf("у правки сценариев нет пункта")
 			}
 			if strings.HasPrefix(tail, "\"") {
-				title, err := strconv.Unquote(tail)
+				title, err := scenarioQuotedTitle(tail)
 				if err != nil {
 					return result, fmt.Errorf("текст сценария в кавычках: %w", err)
 				}
@@ -208,7 +233,11 @@ func ParseScenarioAnswer(f Fork, snapshot ScenarioSnapshot, text string) (Scenar
 		id := e.id
 		if e.title != "" {
 			id = fmt.Sprintf("СЦ-%d", result.NextID)
-			result.NextID++
+			next, err := NextScenarioNumber(result.NextID)
+			if err != nil {
+				return result, err
+			}
+			result.NextID = next
 			result.Added = append(result.Added, UserScenario{ID: id, Origin: "слово пользователя", Title: e.title})
 		}
 		if e.add {

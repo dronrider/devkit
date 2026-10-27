@@ -24,6 +24,58 @@ def need(ok, text):
     if not ok:
         raise SystemExit(text)
 
+def visible_lines(text):
+    fence = ""
+    for i, line in enumerate(text.splitlines()):
+        stripped = line.lstrip(" \t")
+        match = re.match(r"(`{3,}|~{3,})", stripped)
+        token = match[0] if match else ""
+        if fence:
+            if token and token[0] == fence[0] and len(token) >= len(fence) and not stripped[len(token):].strip():
+                fence = ""
+            continue
+        if token:
+            fence = token
+            continue
+        yield i, line
+
+def section_body(text, title):
+    lines = text.splitlines()
+    start = None
+    for i, line in visible_lines(text):
+        if line == "## " + title:
+            need(start is None, "повтор раздела " + title)
+            start = i + 1
+        elif start is not None and line.startswith("## "):
+            return "\n".join(lines[start:i]).strip()
+    return "\n".join(lines[start:]).strip() if start is not None else ""
+
+def card_bodies(cards, ids):
+    lines, bodies = cards.splitlines(), {}
+    current, start = None, 0
+    for i, line in visible_lines(cards):
+        if not re.match(r"^#{1,6}\s+", line):
+            continue
+        if current is not None:
+            bodies[current] = "\n".join(lines[start:i]).strip()
+        current = None
+        head = re.fullmatch(r"### (СЦ-[1-9][0-9]*)\s*", line)
+        if head:
+            current, start = head[1], i + 1
+            need(current not in bodies, "повтор карточки " + current)
+    if current is not None:
+        bodies[current] = "\n".join(lines[start:]).strip()
+    for id in ids:
+        need(id in bodies, "нет карточки " + id)
+        fields = {}
+        for _, line in visible_lines(bodies[id]):
+            label, sep, value = line.strip().partition(":")
+            if sep and value.strip():
+                fields[label.casefold()] = value.strip()
+        for label in ("ситуация", "действие", "результат", "польза", "рекомендация", "ограничение", "источник"):
+            need(label in fields, "карточка " + id + " не содержит непустого поля " + label)
+    return bodies
+
 def walk(value):
     if isinstance(value, dict):
         yield value
@@ -70,11 +122,11 @@ need(hint, "нет отдельного рекомендованного наб�
 need(all(x.strip() in {o[0] for o in options} for x in hint[1].split(",")), "рекомендация содержит посторонний ID")
 next_id = re.search(r"следующий ID: СЦ-([1-9][0-9]*)", block)
 need(next_id and int(next_id[1]) > max(int(o[0][3:]) for o in options), "нет следующего свободного ID")
+prepared_cards = section_body(doc, "Пользовательские сценарии")
+bodies = card_bodies(prepared_cards, [o[0] for o in options])
+delivered = card_bodies(section_body(final[:final.find("снимок сценариев:")], "Пользовательские сценарии"), [o[0] for o in options])
 for id, origin, title in options:
-    card = re.search(r"(?ms)^### " + re.escape(id) + r"\s*\n(.*?)(?=^### |^## |\Z)", doc)
-    need(card, "нет карточки " + id)
-    for word in ("ситуац", "действ", "результат", "польз", "огранич"):
-        need(word in card[1].lower(), "карточка " + id + " не содержит " + word)
+    need(bodies[id] in delivered[id], "тело карточки " + id + " не доставлено перед выбором")
     need(id in final and origin in final, "карточки с происхождением не доставлены в реплику")
     need(0 <= final.find("### " + id) < final.find("снимок сценариев:"), "карточка стоит после блока выбора")
     need(f"{options.index((id, origin, title))+1}. {id}. {title}" in final, "строка списка изменена при доставке")
@@ -87,6 +139,8 @@ matched = [text for k, text in snapshots if k == key]
 need(len(matched) == 1 and "sc1-" + hashlib.sha256(matched[0].encode()).hexdigest() == key, "показанный снимок не сохранён или повреждён")
 snapshot = json.loads(matched[0])
 need(snapshot["record"] == record and snapshot["name"] == "сценарии" and snapshot["choiceEvent"] == 0, "снимок не относится к первому выбору")
+card_bodies(snapshot["cards"], [o[0] for o in options])
+need(snapshot["cards"] == prepared_cards, "карточки показанного списка отсутствуют в снимке")
 need(any(record in c and "--scenarios" in c for c in commands) and any(record in c and "--chat" in c for c in commands), "создание и печать списка не выполнялись")
 answer = "сценарии 1, 3"
 result = subprocess.check_output(["taskctl", "decide", record, "сценарии", "--snapshot", key, "--answer", answer], text=True)

@@ -267,7 +267,11 @@ func decideAsk(doc string, p DecideParams) (string, error) {
 			}
 			n, _ := taskform.ScenarioNumber(sc.ID)
 			if n >= spec.NextID {
-				spec.NextID = n + 1
+				next, err := taskform.NextScenarioNumber(n)
+				if err != nil {
+					return "", err
+				}
+				spec.NextID = next
 			}
 		}
 	}

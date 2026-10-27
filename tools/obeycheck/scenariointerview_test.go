@@ -1,11 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -39,9 +41,9 @@ func TestInterviewScenarioChecks(t *testing.T) {
 		if !support {
 			t.Fatalf("%s не покрывает раздел вспомогательного файла «%s»", s.ID, section)
 		}
-		states := []string{"исходная", "пустая", "работает", "без реплики", "старые составы"}
+		states := []string{"исходная", "пустая", "работает", "без реплики", "старые составы", "потеряно поле", "поле снаружи", "чужая карточка", "поле в примере", "пустые cards"}
 		if strings.HasPrefix(s.ID, "43-") {
-			states = append(states, "карточки не доставлены")
+			states = append(states, "карточки не доставлены", "тело не доставлено")
 		}
 		for _, state := range states {
 			t.Run(s.ID+"/"+state, func(t *testing.T) {
@@ -81,7 +83,7 @@ func TestInterviewScenarioChecks(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if state == "работает" || state == "без реплики" || state == "старые составы" || state == "карточки не доставлены" {
+				if state != "исходная" && state != "пустая" {
 					doc, err := os.ReadFile(path)
 					if err != nil {
 						t.Fatal(err)
@@ -93,7 +95,7 @@ func TestInterviewScenarioChecks(t *testing.T) {
 						titles[0] = "человек читает доли в терминале"
 					}
 					for i := 0; i < count; i++ {
-						cards += fmt.Sprintf("### СЦ-%d\nСитуация: нужен результат.\nДействие: получить доли.\nРезультат: видны числа.\nПольза: сверить расчёт.\nРекомендую: нужен путь.\nОграничение: один потребитель.\nИсточник: запись.\n\n", i+1)
+						cards += fmt.Sprintf("### СЦ-%d\nСитуация: нужен результат.\nДействие: получить доли.\nРезультат: видны числа.\nПольза: сверить расчёт.\nРекомендация: нужен путь.\nОграничение: один потребитель.\nИсточник: запись.\n\n", i+1)
 					}
 					if err := os.WriteFile(path, append(doc, []byte(cards)...), 0o644); err != nil {
 						t.Fatal(err)
@@ -122,6 +124,67 @@ func TestInterviewScenarioChecks(t *testing.T) {
 						}
 					}
 				}
+				expectedReason := ""
+				if state == "потеряно поле" || state == "поле снаружи" || state == "поле в примере" || state == "чужая карточка" {
+					data, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					doc := string(data)
+					switch state {
+					case "потеряно поле":
+						doc = strings.Replace(doc, "Польза: сверить расчёт.\n", "", 1)
+						expectedReason = "польза"
+					case "поле снаружи":
+						doc = strings.Replace(doc, "Польза: сверить расчёт.\n", "", 1) + "\n## Другое\nПольза: сверить расчёт.\n"
+						expectedReason = "польза"
+					case "поле в примере":
+						doc = strings.Replace(doc, "Польза: сверить расчёт.\n", "```text\nПольза: сверить расчёт.\n```\n", 1)
+						expectedReason = "польза"
+					case "чужая карточка":
+						cardRe := regexp.MustCompile(`(?ms)^### СЦ-1\n.*?(?:\n\n|$)`)
+						card := cardRe.FindString(doc)
+						if card == "" {
+							t.Fatal("нет исходной карточки фикстуры")
+						}
+						doc = strings.Replace(doc, card, "", 1) + "\n## Другое\n" + card
+						expectedReason = "нет карточки СЦ-1"
+					}
+					if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if state == "пустые cards" {
+					data, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					doc := string(data)
+					snapshotRe := regexp.MustCompile(`(?m)^  - снимок: (sc1-[a-f0-9]{64}) (.+)$`)
+					match := snapshotRe.FindStringSubmatch(doc)
+					if match == nil {
+						t.Fatal("нет исходного снимка фикстуры")
+					}
+					var snapshot map[string]any
+					if err := json.Unmarshal([]byte(match[2]), &snapshot); err != nil {
+						t.Fatal(err)
+					}
+					snapshot["cards"] = ""
+					raw, _ := json.Marshal(snapshot)
+					sum := sha256.Sum256(raw)
+					key := fmt.Sprintf("sc1-%x", sum)
+					doc = strings.Replace(doc, match[0], "  - снимок: "+match[1]+" "+string(raw), 1)
+					doc = strings.ReplaceAll(doc, match[1], key)
+					final = strings.ReplaceAll(final, match[1], key)
+					if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					expectedReason = "нет карточки СЦ-1"
+				}
+				if state == "тело не доставлено" {
+					final = strings.Replace(final, "Польза: сверить расчёт.\n", "", 1)
+					expectedReason = "польза"
+				}
 				if state == "карточки не доставлены" {
 					final = strings.ReplaceAll(final, "### СЦ-", "Карточка СЦ-")
 				}
@@ -146,6 +209,9 @@ func TestInterviewScenarioChecks(t *testing.T) {
 				out, err := check.CombinedOutput()
 				if (err == nil) != (state == "работает") {
 					t.Fatalf("состояние %s: %v\n%s", state, err, out)
+				}
+				if err != nil && expectedReason != "" && !strings.Contains(string(out), expectedReason) {
+					t.Fatalf("отказ не проверил нужную причину %q: %s", expectedReason, out)
 				}
 				if err == nil && !strings.Contains(string(out), "сохран") {
 					t.Fatalf("успех без положительного результата: %s", out)

@@ -82,6 +82,13 @@ esac`, filepath.Join(e.home, "projects", "other"), otherBoard, ovBoardDemo)
 		"| XR-001 | Закрытая на неделе | task | P2 | 2026-10-26 | - |\n" +
 		"| XR-000 | Закрытая давно | task | P3 | 2026-09-01 | - |\n"
 	ovWrite(t, filepath.Join(e.proj, "docs", "TASKS-archive.md"), archive)
+	// Свой архив у второго проекта: сделанное за неделю собирается по всей
+	// машине, и без соседа порядок слияния был бы нечем проверить.
+	otherArchive := "# Архив other\n\n" +
+		"| ID | Задача | Тип | P | Закрыто | Ссылка |\n" +
+		"|--------|--------|-----|---|---------|--------|\n" +
+		"| OR-302 | Закрытая сегодня | task | P1 | 2026-10-27 | - |\n"
+	ovWrite(t, filepath.Join(e.home, "projects", "other", "docs", "TASKS-archive.md"), otherArchive)
 	return e, e.loggedClient(t)
 }
 
@@ -165,8 +172,16 @@ func (d ovDone) id() string  { return d.ID }
 // цель несёт прогресс состава, накопитель и архив отдают свои порции.
 func TestOverviewWidgets(t *testing.T) {
 	e, c := ovEnv(t, ovBoardOther)
-	ovWriteDraft(t, e.proj, "XR-009", "старая запись", ovDate.Add(-48*time.Hour))
+	other := filepath.Join(e.home, "projects", "other")
+	// Шесть записей накопителя на двух проектах: пятёрка виджета режет общий
+	// список после слияния, и соседняя запись встаёт между своими по дате,
+	// а не после всей чужой пачки.
 	ovWriteDraft(t, e.proj, "XR-010", "свежая запись", ovDate.Add(-1*time.Hour))
+	ovWriteDraft(t, other, "OR-301", "запись соседа", ovDate.Add(-25*time.Hour))
+	ovWriteDraft(t, e.proj, "XR-011", "третья свежесть", ovDate.Add(-49*time.Hour))
+	ovWriteDraft(t, e.proj, "XR-012", "четвёртая свежесть", ovDate.Add(-73*time.Hour))
+	ovWriteDraft(t, e.proj, "XR-013", "пятая свежесть", ovDate.Add(-97*time.Hour))
+	ovWriteDraft(t, e.proj, "XR-009", "старая запись", ovDate.Add(-120*time.Hour))
 
 	got := getOverview(t, e, c)
 	if len(got.Errors) != 0 {
@@ -185,14 +200,14 @@ func TestOverviewWidgets(t *testing.T) {
 	if ids := ovIDs(got.Milestones); ids != "XR-103,XR-104" {
 		t.Errorf("вехи %s, ожидал XR-103,XR-104 по датам", ids)
 	}
-	if ids := ovIDs(got.Drafts); ids != "XR-010,XR-009" {
-		t.Errorf("накопитель %s, ожидал свежую запись первой", ids)
+	if ids := ovIDs(got.Drafts); ids != "XR-010,OR-301,XR-011,XR-012,XR-013" {
+		t.Errorf("накопитель %s, ожидал свежие записи двух проектов порцией пяти", ids)
 	}
-	if len(got.Drafts) == 2 && got.Drafts[0].Title != "свежая запись" {
+	if len(got.Drafts) > 0 && got.Drafts[0].Title != "свежая запись" {
 		t.Errorf("заголовок записи накопителя не прочитался: %+v", got.Drafts[0])
 	}
-	if ids := ovIDs(got.Done); ids != "XR-001" {
-		t.Errorf("сделанное за неделю %s, ожидал одну закрытую на неделе строку", ids)
+	if ids := ovIDs(got.Done); ids != "OR-302,XR-001" {
+		t.Errorf("сделанное за неделю %s, ожидал закрытое двух проектов по дате", ids)
 	}
 	if len(got.Goals) != 1 {
 		t.Fatalf("целей в работе %d, ожидал одну: %+v", len(got.Goals), got.Goals)

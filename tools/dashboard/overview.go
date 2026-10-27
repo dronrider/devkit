@@ -317,6 +317,34 @@ func (s *server) overview() overviewView {
 	if len(view.Milestones) > overviewMilestoneLimit {
 		view.Milestones = view.Milestones[:overviewMilestoneLimit]
 	}
+	// Накопитель и сделанное сортируются и режутся после слияния: порция на
+	// проект это только глубина чтения, а виджет держит порцию по всей машине.
+	// Без общего реза десяток проектов растягивал бы оба списка во столько же
+	// раз, и «новое без разбора» переставало быть одним взглядом.
+	sort.SliceStable(view.Drafts, func(i, j int) bool {
+		if view.Drafts[i].Moved != view.Drafts[j].Moved {
+			return view.Drafts[i].Moved > view.Drafts[j].Moved
+		}
+		if view.Drafts[i].Project != view.Drafts[j].Project {
+			return view.Drafts[i].Project < view.Drafts[j].Project
+		}
+		return view.Drafts[i].ID < view.Drafts[j].ID
+	})
+	if len(view.Drafts) > overviewDraftLimit {
+		view.Drafts = view.Drafts[:overviewDraftLimit]
+	}
+	sort.SliceStable(view.Done, func(i, j int) bool {
+		if view.Done[i].Closed != view.Done[j].Closed {
+			return view.Done[i].Closed > view.Done[j].Closed
+		}
+		if view.Done[i].Project != view.Done[j].Project {
+			return view.Done[i].Project < view.Done[j].Project
+		}
+		return view.Done[i].ID < view.Done[j].ID
+	})
+	if len(view.Done) > overviewDoneLimit {
+		view.Done = view.Done[:overviewDoneLimit]
+	}
 	return view
 }
 

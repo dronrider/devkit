@@ -17896,10 +17896,15 @@ async function renderHome(projects) {
   // Форма записи стоит первой: главную открывают с телефона мыслью в голове,
   // и прокрутка до формы стоила бы записи дороже, чем обзору его место.
   if (projects.length) groups.append(quickCard(projects));
-  await refreshOverview();
+  // Обзор догружается вторым кадром: первый показ главной не стоит обхода всех
+  // досок, и пока сбор идёт, место виджетов держит заглушка тем же приёмом,
+  // что полка ждущих в шапке.
   const ovCard = el("div", "card ovcard");
-  ovCard.append(ovGrid(overviewData || { errors: ["обзор ещё не собран"] }));
+  ovCard.append(ovGrid({ errors: ["обзор ещё не собран"] }));
   groups.append(ovCard);
+  refreshOverview().then(() => {
+    ovCard.replaceChildren(ovGrid(overviewData || { errors: ["обзор не собрался"] }));
+  }).catch(console.error);
   const card = el("div", "card");
   if (!projects.length) card.append(el("div", "empty", "Проектов нет."));
   for (const p of projects) {

@@ -1049,6 +1049,10 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .dfield.err legend{color:var(--block)}
 .dmsg{font:400 11.5px/1.5 var(--sans);color:var(--block);padding:0 2px 14px}
 .dmsg:empty{display:none}
+.duebox{display:none;align-items:center;gap:10px;padding:6px 12px}
+.duebox.on{display:flex}
+.duebox .duein{all:unset;font:400 14px/1.4 var(--sans);color:var(--tx);min-width:0}
+.duebox .duereset{height:28px;padding:0 12px}
 .xscrim{position:absolute;inset:0;background:rgba(0,0,0,0.6);z-index:4;display:flex;justify-content:flex-end;align-items:flex-start;padding:44px 16px 0 0}
 .xscrim[hidden]{display:none}
 .xask{width:218px;background:var(--bg2);border:1px solid var(--line2);border-radius:12px;box-shadow:0 22px 54px rgba(0,0,0,0.55);padding:12px}

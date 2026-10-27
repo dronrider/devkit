@@ -1386,6 +1386,8 @@ function rowChips(project, row) {
   if (row.type && row.type !== "task") chips.push(el("span", "chip", row.type));
   if (row.p === "P0" || row.p === "P1") chips.push(el("span", "chip c-p1", row.p));
   if (row.cost && row.cost !== "-") chips.push(el("span", "chip", row.cost));
+  const due = dueChip(row);
+  if (due) chips.push(due);
   // Маркер [после ...] со строки доски назван теми же словами, что и блок
   // зависимостей: «после DK-248» требовало достроить, кто кого ждёт.
   // Держащая задача это дорога до неё, а не подпись: строка стоит в Blocked
@@ -1436,6 +1438,26 @@ function acceptChip(row) {
     if (/^код слит/.test(note) || /^без выката/.test(note)) bits.push(note);
   }
   return withTip(el("span", "chip", said), bits.join(", ") + ".");
+}
+
+// Чип срока строки доски: дата приезжает полем due из суффикса заголовка
+// «[срок: ...]» (DK-1464). Просроченный срок стоит красным, как провал
+// проверки, сегодняшний жёлтым: горящая строка видна с одного взгляда, до
+// этого даты жили в стороннем планировщике. Срок не трогает ранг и порядок
+// строк, он только группирует и подсвечивает (развилка «срок-ранг»).
+function dueChip(row, now) {
+  const due = row.due || "";
+  if (!due) return null;
+  const t = new Date(now || Date.now());
+  const pad = (n) => String(n).padStart(2, "0");
+  const iso = t.getFullYear() + "-" + pad(t.getMonth() + 1) + "-" + pad(t.getDate());
+  const cls = due < iso ? " c-block" : (due === iso ? " c-wait" : "");
+  const chip = el("span", "chip" + cls, "до " + due.slice(8, 10) + "." + due.slice(5, 7));
+  const days = Math.round((Date.parse(due) - Date.parse(iso)) / 86400000);
+  const left = days > 0 ? "осталось " + days + " " + plural(days, "день", "дня", "дней")
+    : (days === 0 ? "срок сегодня"
+      : "просрочен на " + (-days) + " " + plural(-days, "день", "дня", "дней"));
+  return withTip(chip, "Срок строки " + due + ", " + left + ". Правится на экране задачи.");
 }
 
 // Разбор ранга строки парами «имя, значение»: пять показателей по RANKING.md,
@@ -5152,8 +5174,11 @@ function formPage(cfg) {
 
   // Блоки сразу под полосой чипов и до описания: сюда встают шапка и степпер
   // этапа задачи (DK-1119), а не в конец страницы, где сидит cfg.extra после
-  // ранга, файла и зависимостей.
-  for (const node of cfg.afterChips || []) page.append(node);
+  // ранга, файла и зависимостей. Элемент может прийти списком, и список
+  // разворачивается: прикладной узел отдельно от составного блока.
+  for (const node of cfg.afterChips || []) {
+    page.append(...(Array.isArray(node) ? node : [node]));
+  }
 
   let file = null;
   let edit = Boolean(cfg.edit);
@@ -5681,6 +5706,7 @@ async function renderTask(project, works, id, pre) {
     type: row.type || "task",
     cost: row.cost || "-",
     parts: base.slice(),
+    due: row.due || "",
     text: detail.text || "",
   };
   const isGoal = /^Цель:/.test(row.title || "");
@@ -5705,6 +5731,8 @@ async function renderTask(project, works, id, pre) {
   if (row.block) tail.push(withFull(el("span", "chip c-block cwhy", "блок: " + row.block), row.block));
   const accept = acceptChip(row);
   if (accept) tail.push(accept);
+  const due = dueChip(row);
+  if (due) tail.push(due);
   for (const chip of stateChips) tail.push(chip);
 
   const patchBody = () => {
@@ -5714,6 +5742,9 @@ async function renderTask(project, works, id, pre) {
     if (form.cost !== (row.cost || "-")) out.cost = form.cost;
     const parts = RANK_PARTS.map((_, i) => (form.parts[i] === base[i] ? null : form.parts[i]));
     if (parts.some((v) => v !== null)) out.r_parts = parts;
+    // Срок едет прочерком снятия, а не пустой строкой: пустое поле значит
+    // «не трогать», и иначе снятый срок не отличался бы от нетронутого.
+    if (form.due !== (row.due || "")) out.due = form.due || "-";
     return out;
   };
   // Текст файла едет, только когда он вправду изменён: PUT переписывает
@@ -5730,12 +5761,40 @@ async function renderTask(project, works, id, pre) {
     goalComposition(project, id, comp).catch(console.error);
   }
 
+  // Поле срока стоит над описанием рядом с шапкой этапа и появляется
+  // карандашом вместе с остальной правкой (DK-1464). Рядом с карточкой ранга
+  // оно не живёт: порядок строк держит ранг, а срок только группирует и
+  // подсвечивает, и соседство связывало бы их зря.
+  const dueBox = el("fieldset", "dfield duebox");
+  dueBox.append(el("legend", "", "срок"));
+  const dueInput = el("input", "duein");
+  dueInput.type = "date";
+  dueInput.value = form.due;
+  dueInput.setAttribute("aria-label", "срок задачи " + id + ", дата");
+  const dueClear = el("button", "btn duereset", "Снять");
+  dueClear.type = "button";
+  dueClear.title = "Убрать срок со строки";
+  const dueNow = () => {
+    form.due = dueInput.value || "";
+    dueClear.hidden = !form.due;
+    view.touch();
+  };
+  dueInput.addEventListener("change", dueNow);
+  dueInput.addEventListener("input", dueNow);
+  dueClear.addEventListener("click", () => {
+    dueInput.value = "";
+    dueNow();
+  });
+  dueClear.hidden = !form.due;
+  dueBox.append(dueInput, dueClear);
+
   const view = formPage({
     key: "task", project, id, detail, chatRow: row, rankRow: row,
     num: row.id, titleLabel: "заголовок задачи " + id, form, chips, tailChips: tail, top,
     // Шапка и степпер этапа (DK-1119, макет 2b) встают между полосой чипов и
-    // описанием: то же место, где раньше читался чип stageChip.
-    afterChips: stageFormBlocks(row),
+    // описанием: то же место, где раньше читался чип stageChip. Поле срока
+    // встаёт туда же.
+    afterChips: [stageFormBlocks(row), dueBox],
     links: detail.links || null,
     has: { title: true, type: true, cost: true, rank: true, deps: true, chat: true,
       file: true, make: true, pencil: true, read: true },
@@ -5750,6 +5809,7 @@ async function renderTask(project, works, id, pre) {
     onEdit: (on) => {
       taskDraft.id = id;
       taskDraft.edit = on;
+      dueBox.classList.toggle("on", on);
     },
     check: () => {
       const patch = patchBody();

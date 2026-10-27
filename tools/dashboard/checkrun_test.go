@@ -217,10 +217,10 @@ func TestCheckRunOrderNamesDeveloper(t *testing.T) {
 	}
 }
 
-// Прогон исполнителю разработки не отдаётся: ярус проверяющего развернулся в ту
-// же модель, что вела разработку, и подъём отказывает словами, а не жжёт квоту
-// на прогон, который ворота закрытия всё равно не примут.
-func TestCheckRunRefusesDeveloperModel(t *testing.T) {
+// Ярус проверяющего развернулся в ту же модель, что вела разработку: это не
+// помеха (DK-1360), прогон встаёт, и отчёт называет обе модели, чтобы заказ
+// напомнил проверяющему про свежую сессию.
+func TestCheckRunRaisesDeveloperModel(t *testing.T) {
 	e, tmuxLog := checkEnv(t, "")
 	writeAgentctlPick(t, e.bin, strings.Replace(harnessTiersFixture,
 		`"name": "втораяtest", "enabled": true`, `"name": "втораяtest", "enabled": false`, 1), "pro")
@@ -228,53 +228,54 @@ func TestCheckRunRefusesDeveloperModel(t *testing.T) {
 		"\n## Ход работы\n\n- Разработка: субагент модель-pro/high по вердикту pick, 2026-09-02 10:00-11:00.\n")
 
 	rep := checkRunOne(t, e, "XR-003")
-	if rep.Raised || !rep.Failed {
-		t.Fatalf("подъём прогона исполнителю разработки должен быть отказан: %+v", rep)
+	if !rep.Raised || rep.Failed {
+		t.Fatalf("совпадение с моделью разработки обязано подниматься: %+v", rep)
 	}
-	if !strings.Contains(rep.Line, "модель-pro") || !strings.Contains(rep.Line, "вела разработку") {
-		t.Errorf("отказ не называет причину: %q", rep.Line)
+	if !strings.Contains(rep.Line, "модель модель-pro, разработку вёл модель-pro; независимость несёт отдельная сессия прогона, не имя модели") {
+		t.Errorf("отчёт не называет обе модели: %q", rep.Line)
 	}
-	if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") {
-		t.Errorf("сессия не должна подниматься при отказе: %s", got)
+	if got := readFile(t, tmuxLog); !strings.Contains(got, "--model 'модель-pro'") {
+		t.Errorf("голова поднята не моделью раскладки: %s", got)
 	}
 }
 
-// Кейс 2 DK-947 на экранном носителе: вердикт ревью дал base, а base в
-// раскладке это та же модель, что вела разработку. Раньше тут был отказ и
-// строка стояла до человека, теперь ярус берётся ступенью выше.
-func TestCheckRunStepsUpOverDeveloperModel(t *testing.T) {
-	e, tmuxLog := checkEnv(t, "")
+// Тот же прогон на нижнем ярусе: совпадение имён ярус не двигает (DK-1360),
+// и ступени в отчёте нет.
+func TestCheckRunKeepsTierOnDeveloperModel(t *testing.T) {
+	e, _ := checkEnv(t, "")
 	writeAgentctlPick(t, e.bin, harnessTiersFixture, "base")
 	writeCheckTask(t, e.proj, "XR-003", checkTaskDoc+
 		"\n## Ход работы\n\n- Разработка: субагент модель-base/high по вердикту pick, 2026-09-02 10:00-11:00.\n")
 
 	rep := checkRunOne(t, e, "XR-003")
 	if !rep.Raised || rep.Failed {
-		t.Fatalf("столкновение ярусов должно подниматься ступенью, а не отказом: %+v", rep)
+		t.Fatalf("совпадение моделей сорвало подъём: %+v", rep)
 	}
-	if !strings.Contains(rep.Line, "поднят ступенью до pro") || !strings.Contains(rep.Line, "модель модель-pro") {
-		t.Errorf("отчёт не называет ступень: %q", rep.Line)
+	if !strings.Contains(rep.Line, "модель модель-base, разработку вёл модель-base") {
+		t.Errorf("отчёт не называет обе модели: %q", rep.Line)
 	}
-	if got := readFile(t, tmuxLog); !strings.Contains(got, "модель-pro") {
-		t.Errorf("голова поднята не моделью ступени выше: %s", got)
+	if strings.Contains(rep.Line, "ступенью") {
+		t.Errorf("совпадение моделей подняло ступень: %q", rep.Line)
 	}
 }
 
 // TestTaskHarnessPolicy это допуск подписок к автоматическим назначениям
 // (DK-1453). Включённая вторая подписка без разрешения остаётся ручной:
-// прогон сценария её не поднимает даже там, где только она независима, а
-// отказ называет причину словами. Явное разрешение возвращает её в отбор.
+// прогон сценария её не поднимает даже там, где у допущенных модели яруса
+// нет, а отказ называет причину словами. Явное разрешение возвращает её в
+// отбор; имя модели выбор не режет (DK-1360), подписка нужна только когда
+// без неё модель яруса не достаётся.
 func TestTaskHarnessPolicy(t *testing.T) {
 	layout := func(auto string) string {
 		return `{"harnesses":[
 	{"name":"перваяtest","default":true,"enabled":true,"bin":"клиент-1",
-	 "models":[{"tier":"base","model":"модель-base"},{"tier":"max","model":"модель-base"}]},
+	 "models":[{"tier":"base","model":"модель-base"}]},
 	{"name":"втораяtest","enabled":true,` + auto + `"bin":"клиент-2",
 	 "models":[{"tier":"base","model":"вторая-base"},{"tier":"max","model":"вторая-max"}]}]}`
 	}
 	doc := checkTaskDoc + "\n## Ход работы\n\n- Разработка: субагент модель-base/high по вердикту pick, 2026-09-02 10:00-11:00.\n"
 
-	t.Run("запрещённая не поднимается ради независимости", func(t *testing.T) {
+	t.Run("запрещённая не выручает, когда у допущенных модели нет", func(t *testing.T) {
 		e, tmuxLog := checkEnv(t, "")
 		writeScript(t, e.bin, "клиент-2", "exit 0")
 		writeAgentctlPick(t, e.bin, layout(``), "max")
@@ -283,7 +284,7 @@ func TestTaskHarnessPolicy(t *testing.T) {
 		if rep.Raised || !rep.Failed {
 			t.Fatalf("подъём обязан отказать: %+v", rep)
 		}
-		if !strings.Contains(rep.Line, "прогон не поднят") || !strings.Contains(rep.Line, "вела разработку") {
+		if !strings.Contains(rep.Line, "прогон не поднят") || !strings.Contains(rep.Line, "яруса max") {
 			t.Errorf("отказ не называет причину: %q", rep.Line)
 		}
 		if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") || strings.Contains(got, "втораяtest") {
@@ -330,12 +331,15 @@ func TestTaskHarnessPolicy(t *testing.T) {
 	})
 }
 
+// Модель яруса живёт во второй подписке, и носитель получает её окружение
+// окна целиком: и --harness с --model, и DEVKIT_HARNESS, чтобы голова встала
+// на чужой подписке, а не на активной, где модели яруса нет.
 func TestCheckRunPassesIndependentHarnessToCarrier(t *testing.T) {
 	e, tmuxLog := checkEnv(t, "")
 	writeScript(t, e.bin, "клиент-2", "exit 0")
 	layout := `{"harnesses":[
 	{"name":"перваяtest","default":true,"enabled":true,"bin":"клиент-1",
-	 "models":[{"tier":"pro","model":"glm-5.3"},{"tier":"max","model":"glm-5.3"}]},
+	 "models":[{"tier":"max","model":"glm-5.3"}]},
 	{"name":"втораяtest","enabled":true,"auto":true,"bin":"клиент-2",
 	 "models":[{"tier":"base","model":"z-ai/glm-5.3"},{"tier":"pro","model":"sonnet"}]}]}`
 	writeAgentctlPick(t, e.bin, layout, "pro")

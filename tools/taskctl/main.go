@@ -653,6 +653,10 @@ func main() {
 		fs := flag.NewFlagSet("decide", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		var p DecideParams
+		fs.BoolVar(&p.Scenarios, "scenarios", false, "создать явный список сценариев с устойчивыми ID")
+		fs.StringVar(&p.Snapshot, "snapshot", "", "ключ снимка показанного списка сценариев")
+		fs.StringVar(&p.Given, "given", "", "ID прямо заданного человеком состава при создании")
+		fs.StringVar(&p.Said, "said", "", "дословный ответ человека или ссылка на решение для --given")
 		fs.StringVar(&p.Ask, "ask", "", "завести развилку с этим именем")
 		fs.StringVar(&p.Who, "who", "", "кто решает: человек (по умолчанию) либо исполнитель")
 		fs.StringVar(&p.Hint, "hint", "", "рекомендация: ответ по умолчанию с доводом, без неё --ask отказывает")
@@ -665,13 +669,24 @@ func main() {
 		fs.BoolVar(&p.Open, "open", false, "печатать только открытые развилки")
 		commitFlags(fs, &p.Commit)
 		pos := frame.ParseArgs(fs, args[1:])
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "answer" {
+				p.AnswerSet = true
+			}
+		})
 		switch {
 		case p.Chat:
-			needArgs(pos, 1, 1, "decide <ID> --chat")
+			needArgs(pos, 1, 2, "decide <ID> [«имя»] --chat")
 			p.ID = pos[0]
-		case p.Answer != "":
-			needArgs(pos, 1, 1, "decide <ID> --answer \"имя 1, имя 2\"")
+			if len(pos) == 2 {
+				p.Name = pos[1]
+			}
+		case p.AnswerSet:
+			needArgs(pos, 1, 2, "decide <ID> [«имя»] --answer \"имя 1, имя 2\"")
 			p.ID = pos[0]
+			if len(pos) == 2 {
+				p.Name = pos[1]
+			}
 		case p.Ask != "":
 			needArgs(pos, 2, 2, "decide <ID> --ask «имя» [--who ...] --hint \"...\"|--tie \"...\" [--option \"...\"] \"вопрос\"")
 			p.ID, p.Text = pos[0], pos[1]
@@ -685,8 +700,11 @@ func main() {
 				p.Text = pos[2]
 			}
 		default:
-			needArgs(pos, 1, 1, "decide <ID> [--open]")
+			needArgs(pos, 1, 2, "decide <ID> [«имя»] [--open]")
 			p.ID = pos[0]
+			if len(pos) == 2 {
+				p.Name = pos[1]
+			}
 		}
 		msg, err = cmdDecide(root(*dir), p)
 	case "fail":

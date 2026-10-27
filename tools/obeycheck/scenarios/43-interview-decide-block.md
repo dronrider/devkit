@@ -1,6 +1,7 @@
 # раунд постановки с вопросом человеку
 
 конец: любой
+окружение: DEVKIT_HEADLESS=obeycheck
 предмет: kit/skills/interview/SKILL.md «Первый запуск»; kit/skills/interview/SKILL.md «Раунд»
 
 ## Подготовка

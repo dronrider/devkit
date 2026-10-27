@@ -56,10 +56,11 @@ func TestMergeAutonomousRaisesCheckRun(t *testing.T) {
 	}
 }
 
-// Кейс 2 DK-947: вердикт ревью дал base, а base в раскладке это модель,
-// которая вела разработку. Выкат поднимает проверяющего ступенью выше, а не
-// отказом «поднять другой моделью руками».
-func TestMergeRaisesCheckerAboveAuthor(t *testing.T) {
+// Кейс 2 DK-947 в редакции DK-1360: вердикт ревью дал base, и base в
+// раскладке это модель, которая вела разработку. Совпадение имён прогон не
+// режет: выкат поднимает проверяющего той же моделью, независимость несёт
+// отдельная сессия, и отчёт называет обе модели для сведения.
+func TestMergeRaisesCheckerOnAuthorModel(t *testing.T) {
 	root, callLog := setup(t, rowMixed, "")
 	writeDeployCfg(t, root, autonomousCfg(root))
 	addRemote(t, root)
@@ -76,13 +77,18 @@ func TestMergeRaisesCheckerAboveAuthor(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := readCalls(t, callLog)
-	if !strings.Contains(calls, "--model модель-pro") || strings.Contains(calls, "--model модель-base") {
-		t.Fatalf("проверяющий поднят не ступенью выше автора: %q", calls)
+	if !strings.Contains(calls, "--model модель-base") || strings.Contains(calls, "--model модель-pro") {
+		t.Fatalf("совпадение с моделью разработки сорвало подъём: %q", calls)
 	}
-	for _, want := range []string{"поднят ступенью до pro", "разработку вёл модель-base"} {
+	for _, want := range []string{
+		"модель модель-base, разработку вёл модель-base; независимость несёт отдельная сессия прогона, не имя модели",
+	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("отчёт не называет %q: %q", want, msg)
 		}
+	}
+	if strings.Contains(msg, "ступенью") {
+		t.Errorf("совпадение моделей подняло ступень: %q", msg)
 	}
 }
 
@@ -276,24 +282,33 @@ func TestCheckRunRefusesWithoutPerms(t *testing.T) {
 	}
 }
 
-// Вверху лестницы модель автора: поднять некем, и это отказ со словами, а не
-// прогон, который ворота закрытия всё равно не примут.
-func TestCheckRunRefusesAtTopOfLadder(t *testing.T) {
+// Вверху лестницы модель автора: совпадение имён прогон не режет (DK-1360),
+// отказ тут не нужен, прогон встаёт той же моделью.
+func TestCheckRunRaisesSameModelAtTopOfLadder(t *testing.T) {
 	root, callLog := checkStand(t)
 	bin := t.TempDir()
 	writeAgentctlFake(t, bin, "max")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	write(t, root, "docs/tasks/XR-001.md", "# XR-001\n\n## Ход работы\n\n- Разработка: субагент модель-max/high по вердикту pick, 2026-09-11.\n")
-	out, failed, _ := cmdCheckRun(root, nil, false)
-	if !failed || !strings.Contains(out, "вела разработку") {
-		t.Fatalf("столкновение наверху лестницы: %v %s", failed, out)
+	out, failed, err := cmdCheckRun(root, nil, false)
+	if err != nil || failed {
+		t.Fatalf("%s: %v", out, err)
 	}
-	if calls := readCalls(t, callLog); strings.Contains(calls, "run XR-") {
-		t.Fatalf("при отказе голова подниматься не должна: %q", calls)
+	calls := readCalls(t, callLog)
+	for _, want := range []string{"run XR-001", "--model модель-max"} {
+		if !strings.Contains(calls, want) {
+			t.Fatalf("носитель не получил %s: %s", want, calls)
+		}
+	}
+	if !strings.Contains(out, "модель модель-max, разработку вёл модель-max") {
+		t.Fatalf("в отчёте нет прогона моделью автора: %s", out)
 	}
 }
 
-func TestCheckRunPassesSelectedIndependentHarnessToTaskctl(t *testing.T) {
+// TestCheckRunStaysOnActiveHarnessWithSameModel: модель яруса есть в активной
+// подписке, и совпадение её с моделью разработки подписку не меняет
+// (DK-1360): прогон встаёт там же, независимость несёт сессия прогона.
+func TestCheckRunStaysOnActiveHarnessWithSameModel(t *testing.T) {
 	root, callLog := checkStand(t)
 	bin := t.TempDir()
 	writeAgentctlFake(t, bin, "pro")
@@ -316,12 +331,12 @@ func TestCheckRunPassesSelectedIndependentHarnessToTaskctl(t *testing.T) {
 		t.Fatalf("%s: %v", out, err)
 	}
 	calls := readCalls(t, callLog)
-	for _, want := range []string{"--harness router", "--model sonnet"} {
+	for _, want := range []string{"--harness glm", "--model glm-5.3"} {
 		if !strings.Contains(calls, want) {
 			t.Fatalf("носитель не получил %s: %s", want, calls)
 		}
 	}
-	if !strings.Contains(out, "подписка router") {
+	if !strings.Contains(out, "подписка glm") {
 		t.Fatalf("выбор не виден: %s", out)
 	}
 }
@@ -335,13 +350,16 @@ func TestCheckRunNoteWithoutTasks(t *testing.T) {
 
 // TestTaskHarnessPolicy это допуск подписок к автоматическим назначениям
 // (DK-1453): подъём проверяющего после выката не берёт включённую подписку
-// без разрешения, даже когда независимая модель есть только у неё, и отказ
-// зовёт человека словами, а не головой на чужой квоте.
+// без разрешения. У допущенной раскладки модели яруса нет, и отказ зовёт
+// человека словами, а не головой на чужой квоте; явное разрешение возвращает
+// подписку в отбор. Имя модели выбор не режет (DK-1360): независимость несёт
+// сессия прогона, поэтому подписка участвует, только когда без неё модели
+// яруса не достаётся.
 func TestTaskHarnessPolicy(t *testing.T) {
 	layout := func(auto string) string {
 		return `{"harnesses":[
 	{"name":"стенд","enabled":true,"default":true,"bin":"клиент",
-	 "models":[{"tier":"base","model":"модель-base"},{"tier":"pro","model":"модель-pro"},{"tier":"max","model":"модель-max"}]},
+	 "models":[{"tier":"base","model":"модель-base"},{"tier":"pro","model":"модель-pro"}]},
 	{"name":"router","enabled":true,` + auto + `"models":[{"tier":"max","model":"route-max"}]}]}`
 	}
 	stand := func(t *testing.T, auto string) (string, string) {
@@ -362,11 +380,16 @@ func TestTaskHarnessPolicy(t *testing.T) {
 		return root, callLog
 	}
 
-	t.Run("запрещённая не поднимается ради независимости", func(t *testing.T) {
+	t.Run("запрещённая не выручает, когда у допущенных модели нет", func(t *testing.T) {
 		root, callLog := stand(t, ``)
 		out, failed, _ := cmdCheckRun(root, nil, false)
-		if !failed || !strings.Contains(out, "вела разработку") {
+		if !failed || !strings.Contains(out, "прогон не поднят") {
 			t.Fatalf("запрет обязан кончаться отказом: %v %s", failed, out)
+		}
+		for _, want := range []string{"автоматическим назначениям", "яруса max"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("в отказе нет %q: %s", want, out)
+			}
 		}
 		if calls := readCalls(t, callLog); strings.Contains(calls, "run XR-") || strings.Contains(calls, "router") {
 			t.Fatalf("запрещённая подписка поднята: %q", calls)
@@ -443,7 +466,7 @@ func TestCheckRunPassesActualViaToTaskctl(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := `{"harnesses":[
-	{"name":"glm","enabled":true,"auto":true,"models":[{"tier":"pro","model":"glm-5.3"},{"tier":"max","model":"glm-5.3"}]},
+	{"name":"glm","enabled":true,"auto":true,"models":[{"tier":"max","model":"glm-5.3"}]},
 	{"name":"router","enabled":true,"default":true,"models":[{"tier":"pro","model":"sonnet","via":"owner"}]},
 	{"name":"owner","enabled":true,"auto":true,"models":[]}]}`
 	if err := os.WriteFile(path, []byte(strings.Replace(string(body), ladderFixture, raw, 1)), 0o755); err != nil {

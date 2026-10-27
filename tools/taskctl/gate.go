@@ -231,33 +231,6 @@ func stageReport(stages []stageVerdict) string {
 	return "\nэтапы: " + strings.Join(parts, "; ")
 }
 
-// acceptGate проверяет, что у не агентского вида в файле задачи стоит раздел
-// «Приёмка» с ключом барьера из шести и строкой перебора на каждый обход этого
-// барьера. Судить убедительность причины обхода машина не берётся, это работа
-// ревьювера; здесь только счёт по закрытому списку.
-func acceptGate(root, id, kind, again string) error {
-	rel := "docs/tasks/" + id + ".md"
-	text, found, ok := acceptanceSection(root, id)
-	if !ok {
-		return fmt.Errorf("%s: вид приёмки %s, а файла %s нет: вид с барьером требует раздел «Приёмка» в файле задачи (LLD DK-292, решение 3)", id, kind, rel)
-	}
-	if !found {
-		return fmt.Errorf("%s: вид приёмки %s, а раздела «Приёмка» в %s нет: назвать барьер и перебрать обходы (LLD DK-292, решение 1) и повторить %s", id, kind, rel, again)
-	}
-	barrier, bypasses := trace.Acceptance(text)
-	if barrier == "" {
-		return fmt.Errorf("%s: в разделе «Приёмка» нет строки «- барьер «<ключ>»:», а вид %s её требует", id, kind)
-	}
-	want, known := trace.BarrierWanted[barrier]
-	if !known {
-		return fmt.Errorf("%s: барьер «%s» в разделе «Приёмка» не из закрытого списка (глаза, доступ, необратимость, секрет, согласие, событие)", id, barrier)
-	}
-	if bypasses != want {
-		return fmt.Errorf("%s: у барьера «%s» обходов %d, а перебор в «Приёмка» имеет строк %d (нужно столько же, по строке на обход с исходом)", id, barrier, want, bypasses)
-	}
-	return nil
-}
-
 // closeVerifyGate сверяет прогон сценария с участниками текущего круга
 // (DK-1360): независимость несёт отдельная сессия со свежим контекстом, и
 // совпадение сессии прогона с любой сессией, ведшей разработку или доработку

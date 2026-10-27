@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dronrider/devkit/internal/sessions"
 	"github.com/dronrider/devkit/internal/stage"
 )
 
@@ -396,10 +397,11 @@ func TestMoveToCheckIgnoresLongerTaskID(t *testing.T) {
 	}
 }
 
-// Прогон сценария чужими руками (DK-642): closeVerifyGate сверяет прогонявшего
-// с исполнителем последнего этапа «разработка», и совпадение имён закрытия не
-// даёт. Задача без записи прогона проходит молча, на этом держится
-// автозакрытие тиком (DK-516).
+// Прогон сценария чужими руками (DK-642): closeVerifyGate сверяет сессию
+// прогона с сессиями участников круга разработки и доработки, и совпадение
+// закрытия не даёт, а совпадение имён моделей помехой не служит (DK-1360).
+// Задача без записи прогона проходит молча, на этом держится автозакрытие
+// тиком (DK-516).
 
 // stagedDoc кладёт файл задачи с разделом «Ход работы» из данных строк, дальше
 // сценарий и непустая «Проверка», чтобы ворота агентского вида не мешали.
@@ -420,33 +422,50 @@ func verifyStageLine(model string) string {
 	return "- Проверка: сценарий прогнал " + model + ", 2026-08-31 12:00."
 }
 
-func TestCloseRefusesAuthorVerifyRun(t *testing.T) {
+// devSessionLine и verifySessionLine несут ID сессии харнеса (DK-1360): хвост
+// «сессия <ID>,» перед датой ставит хук смены статуса, и по нему ворота
+// узнают сессию участника круга и прогона.
+func devSessionLine(model, session string) string {
+	return "- Разработка: субагент " + model + "/high по вердикту pick, сессия " + session + ", 2026-08-30 10:00-11:00."
+}
+
+func verifySessionLine(model, session string) string {
+	return "- Проверка: сценарий прогнал " + model + ", сессия " + session + ", 2026-08-31 12:00."
+}
+
+func TestCloseRefusesSameSessionVerifyRun(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := setup(t)
-	stagedDoc(t, root, "XR-005", devStageLine("opus"), verifyStageLine("opus"))
+	stagedDoc(t, root, "XR-005",
+		devSessionLine("opus", "ses-dev-1"),
+		verifySessionLine("opus", "ses-dev-1"))
 	_, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-07-08"})
 	if err == nil {
-		t.Fatal("закрытие с прогоном под исполнителем разработки прошло")
+		t.Fatal("закрытие с прогоном из сессии разработки прошло")
 	}
-	for _, want := range []string{"opus", "не автор"} {
+	for _, want := range []string{"та же сессия", "разработка"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("в отказе нет %q: %v", want, err)
 		}
 	}
 }
 
+// Та же модель из другой сессии проходит: независимость несёт сессия, а не
+// имя (DK-1360).
 func TestClosePassesForeignVerifyRun(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := setup(t)
-	stagedDoc(t, root, "XR-005", devStageLine("opus"), verifyStageLine("sonnet"))
+	stagedDoc(t, root, "XR-005",
+		devSessionLine("opus", "ses-dev-1"),
+		verifySessionLine("opus", "ses-ver-2"))
 	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-07-08"}); err != nil {
-		t.Fatalf("закрытие с чужим прогоном: %v", err)
+		t.Fatalf("закрытие с прогоном чужой сессией: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "archive", "2026", "XR-005.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "сценарий прогнал sonnet") {
+	if !strings.Contains(string(data), "сценарий прогнал opus") {
 		t.Fatal("строка прогона не доехала до архивного файла задачи")
 	}
 }
@@ -463,75 +482,73 @@ func TestCloseVerifyGateSilentWithoutRecord(t *testing.T) {
 func TestCloseVerifyGateReadsPendingStage(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := setup(t)
-	stagedDoc(t, root, "XR-005", devStageLine("opus"))
+	stagedDoc(t, root, "XR-005", devSessionLine("opus", "ses-dev-1"))
+	t.Setenv(sessions.SessionEnv, "ses-dev-1")
 	if err := stage.Open(stage.Home(), root, "XR-005", stage.Verify, stage.VerifyNote("opus"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	err := closeVerifyGate(root, "XR-005")
-	if err == nil || !strings.Contains(err.Error(), "opus") {
-		t.Fatalf("незакрытый пакет с прогоном автора не остановил ворота: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "та же сессия") {
+		t.Fatalf("незакрытый пакет из сессии разработки не остановил ворота: %v", err)
 	}
-	// Чужое имя в том же пакете свежее записи автора: закрытие проходит.
-	if err := stage.Open(stage.Home(), root, "XR-005", stage.Verify, stage.VerifyNote("sonnet"), time.Now()); err != nil {
+	// Свежий прогон чужой сессией в том же пакете: закрытие проходит.
+	t.Setenv(sessions.SessionEnv, "ses-ver-2")
+	if err := stage.Open(stage.Home(), root, "XR-005", stage.Verify, stage.VerifyNote("opus"), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := closeVerifyGate(root, "XR-005"); err != nil {
-		t.Fatalf("свежий чужой прогон обязан открывать ворота: %v", err)
+		t.Fatalf("свежий прогон чужой сессией обязан открывать ворота: %v", err)
 	}
 }
 
-// TestCloseRefusalNamesRepeatModel: отказ закрытия несёт готовую команду с
-// моделью для повторного прогона, и называет её `agentctl check` (DK-1116).
-// Без модели проверяющий уходил гадать, чем поднимать второй прогон, и ловил
-// тот же отказ.
-func TestCloseRefusalNamesRepeatModel(t *testing.T) {
+// Отказ закрытия несёт готовую команду отметки прогона (DK-1116). Под
+// сессионной сверкой (DK-1360) место модели для повтора занимает рамка:
+// повторный прогон идёт моделью самого проверяющего из его сессии, и ворота
+// сессию знать не могут.
+func TestCloseRefusalCarriesStageCommand(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := setup(t)
-	stubCheck(t, "#!/bin/sh\nprintf 'model: opus\\neffort: high\\ntier: pro\\n'\n")
-	stagedDoc(t, root, "XR-005", devStageLine("sonnet"), verifyStageLine("sonnet"))
+	stagedDoc(t, root, "XR-005",
+		devSessionLine("sonnet", "ses-dev-1"),
+		verifySessionLine("sonnet", "ses-dev-1"))
 	err := closeVerifyGate(root, "XR-005")
 	if err == nil {
-		t.Fatal("прогон под исполнителем разработки ворота не остановил")
+		t.Fatal("прогон из сессии разработки ворота не остановили")
 	}
-	if !strings.Contains(err.Error(), "--by opus") {
-		t.Fatalf("в отказе нет модели для повтора: %v", err)
+	if !strings.Contains(err.Error(), "agentctl stage XR-005 проверка --by <модель>") {
+		t.Fatalf("в отказе нет готовой команды: %v", err)
 	}
 }
 
-// Позвать расчёт нечем: в команде остаётся рамка под руку человека, а ворота
-// работают по-прежнему.
+// Утилиту расчёта ворота не зовут: отказ зависит только от записей этапов,
+// и голый PATH ему не помеха.
 func TestCloseRefusalWithoutAgentctl(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := setup(t)
 	t.Setenv("PATH", t.TempDir())
-	stagedDoc(t, root, "XR-005", devStageLine("sonnet"), verifyStageLine("sonnet"))
+	stagedDoc(t, root, "XR-005",
+		devSessionLine("sonnet", "ses-dev-1"),
+		verifySessionLine("sonnet", "ses-dev-1"))
 	err := closeVerifyGate(root, "XR-005")
 	if err == nil {
-		t.Fatal("прогон под исполнителем разработки ворота не остановил")
+		t.Fatal("прогон из сессии разработки ворота не остановили")
 	}
 	if !strings.Contains(err.Error(), "--by <модель>") {
 		t.Fatalf("рамка модели не удержана: %v", err)
 	}
 }
 
-// stubCheck кладёт в PATH заглушку agentctl: расчёт проверяющего зовётся
-// подпроцессом, и живой утилиты у теста быть не должно.
-func stubCheck(t *testing.T, body string) {
-	t.Helper()
-	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "agentctl"), []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin)
-}
-
+// Другое написание имени модели ту же сессию не спасает: сверка идёт по
+// сессиям, имена в суде не участвуют (DK-1360).
 func TestCloseVerifyGateCaseInsensitive(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := setup(t)
-	stagedDoc(t, root, "XR-005", devStageLine("opus"), verifyStageLine("Opus"))
+	stagedDoc(t, root, "XR-005",
+		devSessionLine("opus", "ses-dev-1"),
+		verifySessionLine("Opus", "ses-dev-1"))
 	err := closeVerifyGate(root, "XR-005")
-	if err == nil || !strings.Contains(err.Error(), "Opus") {
-		t.Fatalf("«Opus» против «opus» прошёл за чужой прогон: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "та же сессия") {
+		t.Fatalf("другое написание имени не выдало прогон за чужой: %v", err)
 	}
 }
 
@@ -725,20 +742,20 @@ func TestMoveDryRunKeepsRow(t *testing.T) {
 	}
 }
 
-// TestCloseRefusesNamelessExecutor (DK-911, замечание ревью): запись хука без
-// модели (спавн без параметра model и без транскрипта сессии) не даёт сверить
-// прогонявшего с автором, и ворота отказывают с причиной, а не молчат.
-func TestCloseRefusesNamelessExecutor(t *testing.T) {
+// Участник круга без ID сессии: этап открыт вне живой сессии харнеса, и
+// независимость против него не доказать (DK-1360). Фиктивных ID ворота не
+// создают и отказывают с причиной.
+func TestCloseRefusesNamelessCircle(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := setup(t)
 	stagedDoc(t, root, "XR-005",
-		"- Разработка: субагент по определению exec-high, работа d1, 2026-08-30 10:00-11:00.",
-		verifyStageLine("sonnet"))
+		devStageLine("opus"),
+		verifySessionLine("sonnet", "ses-ver-2"))
 	err := closeVerifyGate(root, "XR-005")
 	if err == nil {
-		t.Fatal("ворота промолчали по этапу без исполнителя")
+		t.Fatal("ворота промолчали по участнику круга без сессии")
 	}
-	for _, want := range []string{"исполнитель не назван", "без параметра model", "впиши модель"} {
+	for _, want := range []string{"нет ID сессии", "разработка"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("в отказе нет %q: %v", want, err)
 		}
@@ -746,14 +763,15 @@ func TestCloseRefusesNamelessExecutor(t *testing.T) {
 }
 
 // DK-1081: проверяющего на строке в Check хук спавна кладёт этапом «проверка»,
-// и запись его несёт модель с определением, как у исполнителя. Ворота закрытия
-// ищут автора правки среди этапов разработки и доработки, поэтому запись
-// проверяющего за автора не сходит и честный прогон закрытию не мешает.
+// и запись его несёт модель с определением, как у исполнителя. Ворота
+// закрытия судят по сессиям (DK-1360), и записи самого проверяющего за круг
+// разработки не сходят: честный прогон чужой сессией закрытию не мешает.
 func TestCloseVerifyGateIgnoresVerifierStage(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := setup(t)
-	stagedDoc(t, root, "XR-005", devStageLine("fable"))
+	stagedDoc(t, root, "XR-005", devSessionLine("fable", "ses-dev-1"))
 	now := time.Now()
+	t.Setenv(sessions.SessionEnv, "ses-ver-2")
 	hookNote := "субагент opus/medium по определению exec-medium, работа ae65e3b8a"
 	if err := stage.Open(stage.Home(), root, "XR-005", stage.Verify, hookNote, now); err != nil {
 		t.Fatal(err)
@@ -762,22 +780,23 @@ func TestCloseVerifyGateIgnoresVerifierStage(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := closeVerifyGate(root, "XR-005"); err != nil {
-		t.Fatalf("прогон чужими руками отбит записью самого проверяющего: %v", err)
+		t.Fatalf("прогон чужой сессией отбит записью самого проверяющего: %v", err)
 	}
 }
 
-// Та же запись проверяющего, но разработку вёл он сам: ворота обязаны отказать
-// по этапу разработки, а не промолчать.
+// Та же сессия писала и код, и прогон: ворота обязаны отказать по совпадению
+// с сессией разработки круга, а не промолчать (DK-1360).
 func TestCloseVerifyGateRefusesWhenVerifierWroteTheCode(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := setup(t)
-	stagedDoc(t, root, "XR-005", devStageLine("opus"))
+	stagedDoc(t, root, "XR-005", devSessionLine("opus", "ses-ver-2"))
 	now := time.Now()
+	t.Setenv(sessions.SessionEnv, "ses-ver-2")
 	if err := stage.Open(stage.Home(), root, "XR-005", stage.Verify, stage.VerifyNote("opus"), now); err != nil {
 		t.Fatal(err)
 	}
 	err := closeVerifyGate(root, "XR-005")
-	if err == nil || !strings.Contains(err.Error(), "не автор") {
-		t.Fatalf("прогон автором правки прошёл ворота: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "та же сессия") {
+		t.Fatalf("прогон сессией разработки прошёл ворота: %v", err)
 	}
 }

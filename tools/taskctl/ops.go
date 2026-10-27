@@ -894,8 +894,8 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	if err := closeSmokeGate(root, p.ID); err != nil {
 		return "", err
 	}
-	// Сценарий прогоняет не автор правки (DK-642): прогон под именем
-	// исполнителя разработки закрытия не даёт, отказ называет имя.
+	// Сценарий прогоняет отдельная сессия (DK-642, DK-1360): прогон из
+	// сессии, ведшей код круга, закрытия не даёт, отказ называет причину.
 	if err := closeVerifyGate(root, p.ID); err != nil {
 		return "", err
 	}

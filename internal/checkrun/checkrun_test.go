@@ -7,45 +7,34 @@ import (
 	"testing"
 )
 
-func TestChooseAvailableChangesWholeLadderWithoutLoweringTier(t *testing.T) {
+// Модель, которой нет в первой лестнице, берётся из следующей, и ниже
+// исходного яруса отбор не опускается. Совпадение модели с моделью разработки
+// выбор не режет: независимость несёт отдельная сессия (DK-1360).
+func TestChooseAvailableTakesNextLadderWithoutLoweringTier(t *testing.T) {
 	ladders := []Ladder{
-		{Name: "glm", Steps: []Step{{"base", "glm-5.3"}, {"pro", "glm-5.3"}, {"max", "glm-5.3"}}},
+		{Name: "glm", Steps: []Step{{"max", "glm-5.3"}}},
 		{Name: "router", Steps: []Step{{"base", "z-ai/glm-5.3"}, {"pro", "anthropic/sonnet"}, {"max", "anthropic/opus"}}},
 	}
-	for _, tier := range []string{"base", "pro"} {
-		ch := ChooseAvailable(tier, ladders, "glm-5.3", true)
-		if ch.Refusal != "" || ch.Harness != "router" || ch.Tier != "pro" || ch.Model != "anthropic/sonnet" {
-			t.Fatalf("%s: %+v", tier, ch)
-		}
+	// Точного яруса у первой лестницы нет, и отбор берёт его у соседней, а не
+	// ступенью вверх по первой: ярус вердикта это требование достаточности.
+	ch := ChooseAvailable("base", ladders)
+	if ch.Refusal != "" || ch.Harness != "router" || ch.Tier != "base" || ch.Model != "z-ai/glm-5.3" || ch.Stepped {
+		t.Fatalf("base: %+v", ch)
 	}
-	ch := ChooseAvailable("max", ladders, "glm-5.3", true)
-	if ch.Tier != "max" || ch.Model != "anthropic/opus" {
-		t.Fatalf("ярус понижен: %+v", ch)
+	ch = ChooseAvailable("max", ladders)
+	if ch.Harness != "glm" || ch.Tier != "max" || ch.Model != "glm-5.3" || ch.Stepped {
+		t.Fatalf("max: %+v", ch)
 	}
-	ladders[1].Steps = []Step{{"base", "sonnet"}, {"pro", "z-ai/glm-5.3"}, {"max", "z-ai/glm-5.3"}}
-	if ch := ChooseAvailable("pro", ladders, "glm-5.3", true); ch.Refusal == "" {
-		t.Fatalf("провайдерный префикс выдал ту же модель за независимую: %+v", ch)
-	}
-}
-
-func TestChooseProviderPrefixDoesNotMakeAuthorIndependent(t *testing.T) {
-	ch := Choose("base", []Step{{"base", "z-ai/glm-5.3"}, {"pro", "sonnet"}}, "glm-5.3", true)
-	if ch.Model != "sonnet" || !ch.Stepped {
-		t.Fatalf("провайдерный префикс выдал автора за независимого проверяющего: %+v", ch)
+	if ch := ChooseAvailable("ultra", ladders); ch.Refusal == "" {
+		t.Fatalf("незнакомый ярус: %+v", ch)
 	}
 }
 
 func TestChooseAvailableKeepsPrimaryWhenItCanChoose(t *testing.T) {
 	ladders := []Ladder{{Name: "first", Steps: ladder}, {Name: "second", Steps: []Step{{"base", "other"}}}}
-	ch := ChooseAvailable("base", ladders, "sonnet", true)
-	if ch.Harness != "first" || ch.Tier != "pro" {
-		t.Fatalf("пропущена своя ступень: %+v", ch)
-	}
-	for _, known := range []bool{false, true} {
-		ch := ChooseAvailable("base", ladders, "other", known)
-		if ch.Harness != "first" || ch.Tier != "base" {
-			t.Fatalf("ненужная смена: %+v", ch)
-		}
+	ch := ChooseAvailable("base", ladders)
+	if ch.Harness != "first" || ch.Tier != "base" || ch.Model != "sonnet" {
+		t.Fatalf("своя ступень пропущена: %+v", ch)
 	}
 }
 
@@ -68,68 +57,22 @@ func TestParseLaddersUsesEnabledCurrentHarnessBeforeDefault(t *testing.T) {
 // Лестница подписки как на машине: снизу вверх, у каждой ступени своя модель.
 var ladder = []Step{{"mini", "haiku"}, {"base", "sonnet"}, {"pro", "opus"}, {"max", "fable"}}
 
-// Кейс 2 DK-947: модель яруса ревью совпала с моделью разработки. Раньше тут
-// был отказ «поднять другой моделью руками», и тик повторял его каждые пять
-// минут; теперь ярус берётся ступенью выше, и прогон идёт независимым
-// проверяющим.
-func TestChooseStepsUpOnCollision(t *testing.T) {
-	ch := Choose("base", ladder, "sonnet", true)
-	if ch.Refusal != "" || !ch.Stepped || ch.Tier != "pro" || ch.Model != "opus" || ch.From != "base" {
-		t.Fatalf("ждал ступень base -> pro с моделью opus: %+v", ch)
-	}
-}
-
-// Совпадения нет, значит и ступени нет: ярус вердикта остаётся как есть.
-func TestChooseKeepsTierWithoutCollision(t *testing.T) {
-	for _, tc := range []struct {
-		name, dev string
-		known     bool
-	}{{"автор другой модели", "opus", true}, {"автор неизвестен", "", false}} {
-		t.Run(tc.name, func(t *testing.T) {
-			ch := Choose("base", ladder, tc.dev, tc.known)
-			if ch.Stepped || ch.Tier != "base" || ch.Model != "sonnet" || ch.Refusal != "" {
-				t.Fatalf("ярус без столкновения не держится: %+v", ch)
-			}
-		})
-	}
-}
-
-// Регистр в имени модели разницы не делает: ворота закрытия сравнивают так же.
-func TestChooseIgnoresCase(t *testing.T) {
-	if ch := Choose("base", ladder, "Sonnet", true); !ch.Stepped {
-		t.Fatalf("Sonnet и sonnet это одна модель: %+v", ch)
-	}
-}
-
-// Ступень выше с той же моделью пропускается: у второй подписки ярусы бывают
-// разведены по одной модели, и ступень ради ступени независимости не даёт.
-func TestChooseSkipsSameModelSteps(t *testing.T) {
-	second := []Step{{"mini", "flash"}, {"base", "glm"}, {"pro", "glm"}, {"max", "opus"}}
-	ch := Choose("base", second, "glm", true)
-	if !ch.Stepped || ch.Tier != "max" || ch.Model != "opus" {
-		t.Fatalf("ждал ступень до max мимо pro той же модели: %+v", ch)
-	}
-}
-
-// Выше модели, отличной от автора, нет: отказ словами, в них ярус и модель.
-func TestChooseRefusesAtTop(t *testing.T) {
-	ch := Choose("max", ladder, "fable", true)
-	if ch.Refusal == "" {
-		t.Fatalf("на верхней ступени с моделью автора ждал отказ: %+v", ch)
-	}
-	for _, want := range []string{"max", "fable", "вела разработку"} {
-		if !strings.Contains(ch.Refusal, want) {
-			t.Errorf("отказ не называет %q: %s", want, ch.Refusal)
-		}
+// Кейс 2 DK-947 в редакции DK-1360: модель яруса ревью совпала с моделью
+// разработки. Ступень не нужна: независимость несёт отдельная сессия прогона,
+// и сценарий идёт той же моделью на своём ярусе.
+func TestChooseKeepsSameModelAsDeveloper(t *testing.T) {
+	ch := Choose("base", ladder)
+	if ch.Refusal != "" || ch.Stepped || ch.Tier != "base" || ch.Model != "sonnet" {
+		t.Fatalf("та же модель на своём ярусе: %+v", ch)
 	}
 }
 
 // Яруса в лестнице нет: модель пуста, решение за носителем.
 func TestChooseUnknownTier(t *testing.T) {
-	if ch := Choose("ultra", ladder, "sonnet", true); ch.Model != "" || ch.Refusal != "" {
+	if ch := Choose("ultra", ladder); ch.Model != "" || ch.Refusal != "" {
 		t.Fatalf("незнакомый ярус: %+v", ch)
 	}
-	if ch := Choose("base", nil, "sonnet", true); ch.Model != "" || ch.Refusal != "" {
+	if ch := Choose("base", nil); ch.Model != "" || ch.Refusal != "" {
 		t.Fatalf("пустая лестница: %+v", ch)
 	}
 }
@@ -286,9 +229,10 @@ func (f *fake) Raise(p Plan) Report {
 	return Report{Line: p.Raised("стендом"), Raised: true}
 }
 
-// Кейс 2 целиком: строка mixed выкачена, разработку вёл sonnet, вердикт ревью
-// дал base той же модели. Прогон уходит носителю моделью opus, отчёт называет
-// ступень, а заказ оставляет закрытие человеку.
+// Кейс 2 целиком в редакции DK-1360: строка mixed выкачена, разработку вёл
+// sonnet, вердикт ревью дал base той же модели. Прогон уходит носителю той же
+// моделью на своём ярусе, отчёт называет модель и автора, а заказ оставляет
+// закрытие человеку.
 func TestRunRaisesSteppedChecker(t *testing.T) {
 	root := project(t, autonomous, map[string]string{"XR-3": doc + devSonnet})
 	f := &fake{tier: "base", ladder: ladder}
@@ -300,10 +244,10 @@ func TestRunRaisesSteppedChecker(t *testing.T) {
 	if len(reps) != 1 || !reps[0].Raised || reps[0].Failed || reps[0].ID != "XR-3" {
 		t.Fatalf("ждал один поднятый прогон по секции Check: %+v", reps)
 	}
-	if len(f.planned) != 1 || f.planned[0].Choice.Model != "opus" {
+	if len(f.planned) != 1 || f.planned[0].Choice.Model != "sonnet" {
 		t.Fatalf("носителю ушла не та модель: %+v", f.planned)
 	}
-	for _, want := range []string{"поднят ступенью до pro", "модель opus", "разработку вёл sonnet"} {
+	for _, want := range []string{"модель sonnet", "разработку вёл sonnet", "независимость несёт отдельная сессия"} {
 		if !strings.Contains(reps[0].Line, want) {
 			t.Errorf("отчёт не называет %q: %s", want, reps[0].Line)
 		}
@@ -313,15 +257,17 @@ func TestRunRaisesSteppedChecker(t *testing.T) {
 	}
 }
 
-// Отказ носителя и отказ ступени это поломки со словами, «не нужно» это норма,
-// а пустая секция отвечает одной строкой.
+// Отказ носителя и отказ предполёта это поломки со словами, «не нужно» это
+// норма, а пустая секция отвечает одной строкой. Модель яруса, совпавшая с
+// моделью разработки, подъёмом больше не мешает (DK-1360).
 func TestRunOutcomes(t *testing.T) {
 	root := project(t, autonomous, map[string]string{"XR-3": doc + "\n## Ход работы\n\n- Разработка: субагент fable/high по вердикту pick, 2026-09-11.\n"})
 	rows := map[string]Row{"XR-3": {ID: "XR-3", Sect: "check"}}
 
 	reps := Run(&fake{tier: "max", ladder: ladder}, root, rows, nil)
-	if !Failed(reps) || !strings.Contains(reps[0].Line, NotRaised) {
-		t.Fatalf("верхняя ступень с моделью автора: %+v", reps)
+	if Failed(reps) || !strings.Contains(reps[0].Line, "модель fable") ||
+		!strings.Contains(reps[0].Line, "разработку вёл fable") {
+		t.Fatalf("та же модель на верхнем ярусе: %+v", reps)
 	}
 	reps = Run(&fake{ready: "tmux нет", failed: true, tier: "base", ladder: ladder}, root, rows, nil)
 	if !Failed(reps) || !strings.Contains(reps[0].Line, "tmux нет") {
@@ -346,19 +292,23 @@ func TestRunOutcomes(t *testing.T) {
 
 func TestChooseAvailableUsesActualEnabledOwnerAndPartialLadder(t *testing.T) {
 	raw := []byte(`{"harnesses":[
-	{"name":"glm","enabled":true,"default":true,"models":[{"tier":"pro","model":"glm"},{"tier":"max","model":"glm"}]},
+	{"name":"glm","enabled":true,"default":true,"models":[{"tier":"pro","model":"glm"},{"tier":"max","model":"glm","via":"owner"}]},
 	{"name":"route","enabled":true,"auto":true,"models":[{"tier":"base","model":"too-small"},{"tier":"max","model":"sonnet","via":"owner"}]},
 	{"name":"owner","enabled":true,"auto":true,"models":[]}]}`)
 	ladders, note := ParseLadders(raw, "glm")
 	if note != "" {
 		t.Fatal(note)
 	}
-	ch := ChooseAvailable("pro", ladders, "glm", true)
-	if ch.Harness != "owner" || ch.Tier != "max" || ch.Model != "sonnet" || ch.Refusal != "" {
-		t.Fatalf("выбрана неверная подписка или ярус: %+v", ch)
+	ch := ChooseAvailable("pro", ladders)
+	if ch.Harness != "glm" || ch.Tier != "pro" || ch.Model != "glm" || ch.Refusal != "" {
+		t.Fatalf("обслуженный ярус первой лестницы пропущен: %+v", ch)
+	}
+	ch = ChooseAvailable("max", ladders)
+	if ch.Harness != "owner" || ch.Tier != "max" || ch.Model != "glm" || ch.Refusal != "" {
+		t.Fatalf("фактический владелец ступени не назван: %+v", ch)
 	}
 	ladders = ladders[:2]
-	if ch := ChooseAvailable("pro", ladders, "glm", true); ch.Refusal == "" {
+	if ch := ChooseAvailable("max", ladders); ch.Refusal == "" {
 		t.Fatalf("выключенный владелец ступени принят: %+v", ch)
 	}
 }
@@ -412,19 +362,21 @@ func TestTaskHarnessPolicy(t *testing.T) {
 	})
 	t.Run("ступень запрещённого владельца не поднимается", func(t *testing.T) {
 		base := `{"name":"glm","enabled":true,"default":true,` +
-			`"models":[{"tier":"base","model":"glm-5.3"},{"tier":"max","model":"sonnet","via":"router"}]}`
+			`"models":[{"tier":"max","model":"sonnet","via":"router"}]}`
 		for _, tc := range []struct {
 			auto, wantModel, wantHarness string
 			refuse                       bool
 		}{
 			{auto: "", refuse: true},
-			{auto: "true", wantModel: "sonnet", wantHarness: "router"},
+			// Разрешение владельцу включает его лестницу в отбор, и точный
+			// ярус владельца дешевле ступени вверх по via (DK-1360).
+			{auto: "true", wantModel: "route-base", wantHarness: "router"},
 		} {
 			ladders, note := ParseLadders([]byte(`{"harnesses":[`+base+`,`+secondary(tc.auto)+`]}`), "")
 			if note != "" {
 				t.Fatal(note)
 			}
-			ch := ChooseAvailable("base", ladders, "glm-5.3", true)
+			ch := ChooseAvailable("base", ladders)
 			if tc.refuse {
 				if ch.Refusal == "" {
 					t.Fatalf("ступень запрещённого владельца поднята: %+v", ch)
@@ -443,15 +395,15 @@ func TestTaskHarnessPolicy(t *testing.T) {
 		if note != "" {
 			t.Fatal(note)
 		}
-		// Исполнителя разработки запись не назвала: независимость сверять не с
-		// кем, и отказ держит только допуск.
-		ch := ChooseAvailable("max", ladders, "", false)
+		// Допуск держится и без имени исполнителя: модель яруса фильтр via
+		// снял, и отказ держит только допуск.
+		ch := ChooseAvailable("max", ladders)
 		if ch.Refusal == "" || ch.Model != "" || ch.Harness != "" {
 			t.Fatalf("пустая модель без отказа уехала бы запрещённому владельцу: %+v", ch)
 		}
 	})
 	t.Run("пустые лестницы и ступени отдают отказ", func(t *testing.T) {
-		if ch := ChooseAvailable("max", nil, "glm-5.3", true); ch.Refusal == "" {
+		if ch := ChooseAvailable("max", nil); ch.Refusal == "" {
 			t.Fatalf("без допущенных подписок отказа нет: %+v", ch)
 		}
 		empty := `{"name":"glm","enabled":true,"default":true,"models":[]}`
@@ -459,7 +411,7 @@ func TestTaskHarnessPolicy(t *testing.T) {
 		if note != "" {
 			t.Fatal(note)
 		}
-		if ch := ChooseAvailable("max", ladders, "glm-5.3", true); ch.Refusal == "" {
+		if ch := ChooseAvailable("max", ladders); ch.Refusal == "" {
 			t.Fatalf("допущенная подписка без ступеней не отказала: %+v", ch)
 		}
 	})
@@ -470,13 +422,17 @@ func TestChooseAvailableSearchesIncompletePrimary(t *testing.T) {
 		{Name: "primary", Steps: []Step{{"pro", "sonnet"}}},
 		{Name: "secondary", Steps: []Step{{"base", "opus"}}},
 	}
-	ch := ChooseAvailable("base", ladders, "glm", true)
-	if ch.Model != "sonnet" || ch.Tier != "pro" || ch.Harness != "primary" {
-		t.Fatalf("пропущен доступный старший ярус: %+v", ch)
-	}
-	ladders[0].Via = map[string]string{"pro": "disabled"}
-	ch = ChooseAvailable("base", ladders, "glm", true)
+	// Точного яруса у первой лестницы нет, и отбор берёт его у соседней, а не
+	// ступенью вверх по первой (DK-1360).
+	ch := ChooseAvailable("base", ladders)
 	if ch.Model != "opus" || ch.Tier != "base" || ch.Harness != "secondary" {
-		t.Fatalf("пустая основная лестница скрыла доступную подписку: %+v", ch)
+		t.Fatalf("точный ярус соседней лестницы скрыт ступенью первой: %+v", ch)
+	}
+	// Когда точного яруса нет ни у кого, отбор поднимается ступенью, и первая
+	// лестница дешевле соседней.
+	ladders[1].Steps = []Step{{"pro", "opus"}}
+	ch = ChooseAvailable("base", ladders)
+	if ch.Model != "sonnet" || ch.Tier != "pro" || ch.Harness != "primary" || !ch.Stepped {
+		t.Fatalf("пропущен доступный старший ярус: %+v", ch)
 	}
 }

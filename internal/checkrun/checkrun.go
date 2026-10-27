@@ -10,14 +10,16 @@
 // дашборд ту же лестницу internal/taskhead своим окружением окна. До DK-947
 // правила жили в дашборде, и без его бинаря подъёма не было вовсе.
 //
-// Независимость проверяющего держит ступень яруса. Ярус даёт вердикт
+// Независимость проверяющего несёт отдельная сессия (DK-1360): прогон идёт в
+// свежем разговоре, не участвовавшем в круге разработки, и совпадение модели
+// с моделью разработки помехой не служит. Ярус даёт вердикт
 // `agentctl pick --role review`, у роли ревью пол base, а разработку задач
-// ценой M ведёт тот же base. Когда модель яруса совпала с моделью разработки,
-// ярус берётся ступенью выше по лестнице подписки. Правило «сценарий
-// прогоняет не автор правки» и ворота taskctl close сравнивают имена моделей,
-// и ступень держит их без правки. Если лестница исчерпана, отбор пробует
-// другие включённые лестницы с того же яруса. Отказ остаётся, когда ни одна
-// из них не даёт независимой модели.
+// ценой M ведёт тот же base. Ступень вверх по лестнице подписки отбор берёт
+// только когда модель яруса недоступна: раскладка её не назвала либо подписку
+// снял отбор допущенных. Сессии участников круга и прогона хранит запись
+// этапов, а сверяет их ворота taskctl close. Если первая лестница не дала
+// модели, отбор пробует другие включённые лестницы с того же яруса. Отказ
+// остаётся, когда ни одна из них модели яруса не дала.
 package checkrun
 
 import (
@@ -108,8 +110,8 @@ func Need(root string, row Row) string {
 
 // DevExecutor называет модель, которая вела разработку задачи: незакрытый
 // пакет этапов и раздел «Ход работы» файла задачи, оба разбирает
-// internal/stage, тот же код, которым ворота закрытия ловят прогон под именем
-// автора правки.
+// internal/stage, тот же код, которым ворота закрытия узнают модель участника
+// круга. Имя едет в заказе и отчёте, а независимость по нему не судится.
 func DevExecutor(root, id string) (string, bool) {
 	var lines []string
 	if doc, err := os.ReadFile(DocPath(root, id)); err == nil {
@@ -125,11 +127,12 @@ func DevExecutor(root, id string) (string, bool) {
 // Order это заказ поднятой сессии: прогнать агентскую часть сценария на
 // выкаченном коде и довести строку, насколько её вид позволяет. Слова тут
 // дословные, как у заказов экрана: по ним скиллы доски разводят работу. Имя
-// исполнителя разработки едет в заказе потому, что ворота закрытия сверяют его
-// с прогонявшим и на совпадении отказывают: сказать это до прогона дешевле,
-// чем получить отказ после. Хвост долга сдачи ложится в тот же заказ (DK-1356):
-// проверяющего поднимают все конвейерные маршруты, и разбор долга уезжает с
-// ним, а не отдельным маршрутом.
+// исполнителя разработки едет в заказе для сведения: независимость несёт
+// сама свежесть сессии проверяющего, а ворота закрытия сверяют сессии, и
+// сказать это до прогона дешевле, чем получить отказ после. Хвост долга
+// сдачи ложится в тот же заказ (DK-1356): проверяющего поднимают все
+// конвейерные маршруты, и разбор долга уезжает с ним, а не отдельным
+// маршрутом.
 func Order(id, dev, accept string) string {
 	out := OrderHead + id +
 		" на выкаченном коде: вывод прогона в раздел «Проверка» файла задачи," +
@@ -148,7 +151,8 @@ func Order(id, dev, accept string) string {
 	out += " Хвост долга этой сдачи: пройди скилл board-debt по диффу круга и закрой" +
 		" отметку `taskctl debt-done " + id + " \"пересечений нет\"` либо \"взята <ID долга>\"."
 	if dev != "" {
-		out += " Разработку вёл " + dev + ", ему прогон не отдавай: ворота закрытия сверяют имена."
+		out += " Разработку вёл " + dev + ": прогон веди в этой отдельной сессии," +
+			" ворота закрытия сверяют сессии, и совпадение модели помехой не служит."
 	}
 	out += " Сценарий провалился, значит прод сломан: `taskctl fail " + id +
 		" --reason \"чем сломан прод\"` и разбор по скиллу board-ship, а не закрытие."
@@ -180,59 +184,38 @@ type Choice struct {
 	// From это ярус вердикта, когда модель взята ступенью выше.
 	From    string
 	Stepped bool
-	// Refusal непуст, когда поднять некем: модель яруса вела разработку, а
-	// выше по лестнице другой модели нет, либо разрешённым автоматике
-	// подпискам модели яруса и выше не досталось.
+	// Refusal непуст, когда поднять некем: разрешённым автоматике подпискам
+	// модели яруса и выше не досталось, либо ярус раскладкой не назван.
+	// Модель разработки выбор не режет: независимость несёт отдельная сессия
+	// прогона, и та же модель разрешена (DK-1360).
 	Refusal string
 }
 
-// Choose разворачивает ярус вердикта в модель по лестнице подписки и держит
-// независимость ступенью: модель, совпавшая с моделью разработки, заменяется
-// первой ступенью выше с другой моделью. Лестница идёт в порядке раскладки
-// машины, снизу вверх (agentctl harness --json отдаёт её так же).
-func Choose(tier string, ladder []Step, dev string, known bool) Choice {
-	at := -1
-	for i, s := range ladder {
-		if s.Tier == tier {
-			at = i
-			break
+// Choose разворачивает ярус вердикта в модель по лестнице подписки. Лестница
+// идёт в порядке раскладки машины, снизу вверх (agentctl harness --json отдаёт
+// её так же).
+func Choose(tier string, ladder []Step) Choice {
+	for _, s := range ladder {
+		if s.Tier != tier {
+			continue
 		}
-	}
-	if at < 0 || ladder[at].Model == "" {
-		return Choice{Tier: tier}
-	}
-	model := ladder[at].Model
-	if !known || !sameModel(model, dev) {
-		return Choice{Tier: tier, Model: model}
-	}
-	for _, s := range ladder[at+1:] {
-		if s.Model != "" && !sameModel(s.Model, dev) {
-			return Choice{Tier: s.Tier, Model: s.Model, From: tier, Stepped: true}
+		if s.Model == "" {
+			return Choice{Tier: tier}
 		}
+		return Choice{Tier: tier, Model: s.Model}
 	}
-	return Choice{Tier: tier, Model: model, Refusal: fmt.Sprintf(
-		"ярусом %s он достался бы модели %s, а она вела разработку, и ступени выше с другой моделью"+
-			" в раскладке машины нет; сценарий прогоняет не автор правки, поднять другой моделью руками"+
-			" либо развести ярусы в раскладке машины", tier, model)}
+	return Choice{Tier: tier}
 }
 
-func sameModel(a, b string) bool {
-	// Имя у маршрутизатора несёт префикс провайдера, но модель та же.
-	name := func(s string) string {
-		s = strings.TrimSpace(s)
-		if at := strings.LastIndex(s, "/"); at >= 0 {
-			s = s[at+1:]
-		}
-		return s
-	}
-	return strings.EqualFold(name(a), name(b))
-}
-
-// ChooseAvailable меняет целую лестницу лишь при отказе независимости.
-// В каждой следующей лестнице поиск начинается с исходного яруса. Без
-// разрешённой модели ответ отказ, а не пустой выбор: пустой выбор оставлял
-// носителю подписку исходного via, и подъём шёл мимо запрета (DK-1453).
-func ChooseAvailable(tier string, ladders []Ladder, dev string, known bool) Choice {
+// ChooseAvailable меняет целую лестницу лишь когда модель яруса недоступна:
+// раскладка её не назвала либо подписку снял отбор допущенных. Поиск идёт
+// ярусами снаружи: сперва точный ярус по всем лестницам, и соседняя допущенная
+// подписка дешевле ступени вверх, потому что ярус вердикта это требование
+// достаточности, а не нижняя граница. Ступени выше обходят тем же порядком,
+// от яруса к ярусу. Без разрешённой модели ответ отказ, а не пустой выбор:
+// пустой выбор оставлял носителю подписку исходного via, и подъём шёл мимо
+// запрета (DK-1453).
+func ChooseAvailable(tier string, ladders []Ladder) Choice {
 	if len(ladders) == 0 {
 		return Choice{Tier: tier, Refusal: "в раскладке машины нет подписок, разрешённых" +
 			" автоматическим назначениям (ключ auto машинного конфига)"}
@@ -249,7 +232,7 @@ func ChooseAvailable(tier string, ladders []Ladder, dev string, known bool) Choi
 				steps = append(steps, step)
 			}
 		}
-		ch := Choose(tier, steps, dev, known)
+		ch := Choose(tier, steps)
 		ch.Harness = ladder.Via[ch.Tier]
 		if ch.Harness == "" {
 			ch.Harness = ladder.Name
@@ -262,11 +245,11 @@ func ChooseAvailable(tier string, ladders []Ladder, dev string, known bool) Choi
 	}
 	ranks := map[string]int{"mini": 0, "base": 1, "pro": 2, "max": 3}
 	if minimum, valid := ranks[tier]; valid {
-		for _, ladder := range ladders {
-			for _, candidate := range []string{"mini", "base", "pro", "max"} {
-				if ranks[candidate] < minimum {
-					continue
-				}
+		for _, candidate := range []string{"mini", "base", "pro", "max"} {
+			if ranks[candidate] < minimum {
+				continue
+			}
+			for _, ladder := range ladders {
 				ch := selectFrom(candidate, ladder)
 				if ch.Refusal == "" && ch.Model != "" {
 					if ch.Tier != tier {
@@ -331,12 +314,12 @@ func (p Plan) Raised(where string) string {
 		line += ", подписка " + p.Choice.Harness
 	}
 	if p.Choice.Stepped {
-		line += fmt.Sprintf(", ярус %s поднят ступенью до %s: модель яруса %s вела разработку",
-			p.Choice.From, p.Choice.Tier, p.Choice.From)
+		line += fmt.Sprintf(", ярус %s поднят ступенью до %s: модель яруса недоступна",
+			p.Choice.From, p.Choice.Tier)
 	}
 	switch {
 	case p.DevKnown && p.Choice.Model != "":
-		line += fmt.Sprintf(", модель %s, разработку вёл %s", p.Choice.Model, p.Dev)
+		line += fmt.Sprintf(", модель %s, разработку вёл %s; независимость несёт отдельная сессия прогона, не имя модели", p.Choice.Model, p.Dev)
 	case p.DevKnown:
 		line += fmt.Sprintf(", разработку вёл %s (модель яруса раскладка не назвала, независимость сторожат ворота закрытия)", p.Dev)
 	default:
@@ -412,9 +395,9 @@ func one(c Carrier, root string, rows map[string]Row, id string) Report {
 	}
 	tier, why := c.Tier(id)
 	dev, known := DevExecutor(root, id)
-	ch := Choose(tier, c.Ladder(), dev, known)
+	ch := Choose(tier, c.Ladder())
 	if multi, ok := c.(interface{ Ladders() []Ladder }); ok {
-		ch = ChooseAvailable(tier, multi.Ladders(), dev, known)
+		ch = ChooseAvailable(tier, multi.Ladders())
 	}
 	if ch.Refusal != "" {
 		return Report{ID: id, Line: id + ": " + NotRaised + ", " + ch.Refusal, Failed: true}

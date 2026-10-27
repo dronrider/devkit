@@ -246,51 +246,155 @@ func LastExecutor(lines []string, pending []Stage) (string, bool) {
 	return "", false
 }
 
-// namelessRe узнаёт запись хука о субагенте, поднятом без параметра model:
-// слово «субагент» стоит впритык к определению, имени модели между ними нет.
-var namelessRe = regexp.MustCompile(`субагент по определению`)
-
-// ExecutorMissing находит последний этап работы над кодом, у которого хук
-// спавна не назвал модели: ни параметра model у спавна, ни модели сессии из
-// транскрипта. Возврат это текст такого этапа и true. Рукописная строка без
-// определения сюда не попадает, за ней нет писателя, которому было что
-// записать. Ворота закрытия по такому этапу не молчат, а отказывают: сверить
-// прогонявшего сценарий не с кем.
-func ExecutorMissing(lines []string, pending []Stage) (string, bool) {
-	for i := len(pending) - 1; i >= 0; i-- {
-		if !IsExec(pending[i].Kind) {
-			continue
-		}
-		_, named := Executor(pending[i].Note)
-		return pending[i].Note, !named && namelessRe.MatchString(pending[i].Note)
-	}
-	for i := len(lines) - 1; i >= 0; i-- {
-		if !execLine(lines[i]) {
-			continue
-		}
-		_, named := Executor(lines[i])
-		return strings.TrimSpace(lines[i]), !named && namelessRe.MatchString(lines[i])
-	}
-	return "", false
-}
-
-// LastVerifyRunner находит последнюю запись прогона сценария теми же двумя
-// источниками и в том же порядке.
-func LastVerifyRunner(lines []string, pending []Stage) (string, bool) {
+// LastVerifyStage находит последний этап прогона теми же двумя источниками и
+// в том же порядке, что LastExecutor, но целиком: воротам закрытия нужна
+// сессия прогонявшего, а не только имя (DK-1360). У пакета сессия стоит полем,
+// у сброшенной строки её отдаёт хвост «сессия <ID>».
+func LastVerifyStage(lines []string, pending []Stage) (Stage, bool) {
 	for i := len(pending) - 1; i >= 0; i-- {
 		if pending[i].Kind != Verify {
 			continue
 		}
-		if name, ok := VerifyRunner(pending[i].Note); ok {
-			return name, true
+		if _, ok := VerifyRunner(pending[i].Note); ok {
+			return pending[i], true
 		}
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
-		if name, ok := VerifyRunner(lines[i]); ok {
-			return name, true
+		if _, ok := VerifyRunner(lines[i]); ok {
+			return Stage{Kind: Verify, Session: LineSession(lines[i])}, true
 		}
 	}
-	return "", false
+	return Stage{}, false
+}
+
+// lineSessionRe ловит ID сессии в строке «Хода работы». Хвост сидит перед
+// датой, которую ставит Lines, и о дату же якорится: слово «сессия» в заметке
+// этапа за ID не сойдётся.
+var lineSessionRe = regexp.MustCompile(`сессия (\S+), \d{4}-\d{2}-\d{2}`)
+
+// LineSession достаёт ID сессии из строки «Хода работы». Пусто, когда строка
+// писалась до учёта сессий либо этап открыли вне харнеса.
+func LineSession(ln string) string {
+	m := lineSessionRe.FindStringSubmatch(ln)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// sessionWord это метка ID сессии в строке «Хода работы». Хвост ставит Lines,
+// снимает LineSession: пакет при сбросе едет строками, и без хвоста ворота
+// закрытия после сброса сверяли бы прогон вслепую (DK-1360).
+const sessionWord = "сессия "
+
+// Author это участник круга работы над кодом: сессия, которая вела этап, и
+// имя её модели отдельно. Сессия пуста у этапов, открытых вне харнеса, и у
+// строк, записанных до учёта сессий: ворота закрытия недостаток диагностируют,
+// а независимость по именам моделей не выдают (DK-1360).
+type Author struct {
+	Kind    string
+	Session string
+	Model   string
+}
+
+// lineKind это обратная карта ярлыков строк «Хода работы» в виды: круг
+// собирается из строк, у которых от этапа остались слова. Слова прежнего
+// словаря в карту не едут: ожидания круг не режут и участниками не бывают.
+var lineKind = func() map[string]string {
+	m := make(map[string]string, len(Kinds))
+	for _, k := range Kinds {
+		m[Label(k)] = k
+	}
+	return m
+}()
+
+// lineKindOf читает вид этапа из строки «Хода работы». Пусто на неэтапной
+// строке.
+func lineKindOf(ln string) string {
+	t, ok := strings.CutPrefix(strings.TrimSpace(ln), "- ")
+	if !ok {
+		return ""
+	}
+	label, _, _ := strings.Cut(t, ":")
+	return lineKind[strings.TrimSpace(label)]
+}
+
+// CircleAuthors собирает участников текущего круга работы над кодом: этапы
+// разработки и доработки после последнего слияния или выката. Источники те же
+// два, что у LastVerifyStage: сброшенные строки «Хода работы» под ним,
+// незакрытый пакет поверх. Возобновлённая сессия и вложенные исполнители
+// сходятся в одну запись по ID, а этап без ID остаётся отдельным участником:
+// его воротам видно, и они говорят об этом вслух.
+func CircleAuthors(lines []string, pending []Stage) []Author {
+	type item struct {
+		kind, session, model string
+	}
+	items := make([]item, 0, len(lines)+len(pending))
+	for _, ln := range lines {
+		kind := lineKindOf(ln)
+		if kind == "" {
+			continue
+		}
+		model, _ := Executor(ln)
+		items = append(items, item{kind, LineSession(ln), model})
+	}
+	for _, s := range pending {
+		model, _ := Executor(s.Note)
+		items = append(items, item{s.Kind, s.Session, model})
+	}
+	start := 0
+	for i, it := range items {
+		if it.kind == Merge || it.kind == Deploy {
+			start = i + 1
+		}
+	}
+	var out []Author
+	seen := map[string]bool{}
+	for _, it := range items[start:] {
+		if it.kind != Dev && it.kind != Rework {
+			continue
+		}
+		if it.session != "" {
+			if seen[it.session] {
+				continue
+			}
+			seen[it.session] = true
+		}
+		out = append(out, Author{Kind: it.kind, Session: it.session, Model: it.model})
+	}
+	return out
+}
+
+// VerifyIndependence судит независимость прогона (DK-1360): сессия последнего
+// этапа проверки не совпадает ни с одной сессией участников текущего круга,
+// и у обеих сторон ID есть. Имена моделей в суде не участвуют: совпадение или
+// различие имён независимость не доказывает, имя хранится отдельно. found
+// ложен, когда записи прогона нет вовсе: требовать её или нет, решает зовущий.
+func VerifyIndependence(id string, lines []string, pending []Stage) (verify Stage, found bool, err error) {
+	verify, found = LastVerifyStage(lines, pending)
+	if !found {
+		return Stage{}, false, nil
+	}
+	if verify.Session == "" {
+		return verify, true, fmt.Errorf("%s: запись прогона без сессии: отметка поставлена вне живой сессии харнеса, и независимость не доказать ни совпадением, ни различием имён моделей; прогнать сценарий в сессии проверяющего и отметить «agentctl stage %s %s --by <модель>» заново",
+			id, id, Verify)
+	}
+	var nameless []string
+	for _, a := range CircleAuthors(lines, pending) {
+		if a.Session == "" {
+			nameless = append(nameless, a.Kind)
+			continue
+		}
+		if a.Session == verify.Session {
+			return verify, true, fmt.Errorf("%s: прогон отметила та же сессия, что вела %s текущего круга: сценарий прогоняет отдельная сессия со свежим контекстом; поднять проверяющего заново и отметить «agentctl stage %s %s --by <модель>» из его сессии",
+				id, a.Kind, id, Verify)
+		}
+	}
+	if len(nameless) > 0 {
+		return verify, true, fmt.Errorf("%s: у участника текущего круга (%s) в записи нет ID сессии: этап открыт вне живой сессии харнеса, и независимость против него не доказать; повторить этап в живой сессии либо принять задачу руками",
+			id, strings.Join(nameless, ", "))
+	}
+	return verify, true, nil
 }
 
 // NeedsSession отвечает, обязана ли за этапом стоять живая сессия агента.
@@ -743,6 +847,9 @@ func Lines(stages []Stage, end time.Time) []string {
 		note := ""
 		if s.Note != "" {
 			note = s.Note + ", "
+		}
+		if s.Session != "" {
+			note += sessionWord + s.Session + ", "
 		}
 		out = append(out, fmt.Sprintf("- %s: %s%s %s.", label, note, s.Start.Format("2006-01-02"), span))
 	}

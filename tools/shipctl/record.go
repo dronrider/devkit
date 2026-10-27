@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/merged"
+	"github.com/dronrider/devkit/internal/sessions"
 	"github.com/dronrider/devkit/internal/taskform"
 )
 
@@ -290,6 +291,13 @@ func cmdSmoke(root string, p SmokeParams) (string, error) {
 		data = []byte("# " + p.ID + "\n")
 	}
 	line := "- " + smokeNote + ", " + time.Now().Format("2006-01-02")
+	// Сессия прогонявшего едет в отметке хвостом: smoke и этап проверки
+	// связываются с фактической сессией проверяющего (DK-1360), и судить
+	// отметку по сессии ворота не судят, но след у неё есть. Вне харнеса хвоста
+	// нет, и отметка выглядит по-старому.
+	if sid := sessions.Own(); sid != "" {
+		line += ", сессия " + sid
+	}
 	if err := os.WriteFile(path, []byte(appendToSection(string(data), line)), 0o644); err != nil {
 		return "", err
 	}

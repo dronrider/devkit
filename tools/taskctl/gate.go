@@ -119,7 +119,10 @@ func gateStages(tpl *plans.Template, gate string, row *Row, c trace.Ctx) []plans
 		if !amongStr(st.Gate, gate) {
 			continue
 		}
-		if len(st.Types) > 0 && !amongStr(st.Types, row.Type) {
+		// Тип строки пишется на доске с большой буквы, а условие этапа
+		// называет его строчными: сравнение сводит регистр тем же порядком,
+		// что и выбор шаблона (Set.ForType).
+		if len(st.Types) > 0 && !amongStr(st.Types, row.Type) && !amongStr(st.Types, strings.ToLower(row.Type)) {
 			continue
 		}
 		if len(st.Accept) > 0 && !amongStr(st.Accept, kind) {

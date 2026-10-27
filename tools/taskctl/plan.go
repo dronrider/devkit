@@ -37,9 +37,11 @@ func planNameOf(planSuf string) string {
 }
 
 // templateOf называет шаблон плана строки: суффикс [план: имя], а без него
-// выбор по типу строки (LLD DK-972, решение 4). Второй ответ ложный, когда
-// набора не видно вовсе или шаблона для строки в нём нет: перечень этапов
-// читается из файла, и держать строку неоткуда.
+// выбор по типу строки тем же порядком, что у сборки плана в agentctl
+// (LLD DK-972, решение 4): ForType сводит регистр и падает на task, поэтому
+// строка типа LLD находит lld-шаблон, а незнакомый тип держат этапы task.
+// Второй ответ ложный, когда набора не видно вовсе или шаблона для строки в
+// нём нет: перечень этапов читается из файла, и держать строку неоткуда.
 func templateOf(root string, row *Row) (*plans.Template, bool) {
 	set, err := planSetLoad(root)
 	if err != nil {
@@ -49,13 +51,7 @@ func templateOf(root string, row *Row) (*plans.Template, bool) {
 	if name := planNameOf(planSuf); name != "" {
 		return set.Get(name)
 	}
-	for _, name := range set.Names {
-		t, ok := set.Get(name)
-		if ok && amongStr(t.Types, row.Type) {
-			return t, true
-		}
-	}
-	return nil, false
+	return set.ForType(row.Type)
 }
 
 // cmdPlan ставит и снимает суффикс шаблона плана. Имя сверяется с набором тут

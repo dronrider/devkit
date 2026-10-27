@@ -367,6 +367,9 @@ func (s *server) handler() http.Handler {
 	// Полка ждущих машинная, а не проектная: место ждущих одно на дашборд, и
 	// открывается оно с любого экрана, в том числе с главной (DK-696).
 	mux.HandleFunc("GET /api/waiting", s.auth(s.handleWaitShelf))
+	// Обзор главной машинная ручка по той же причине: у главной нет своего
+	// проекта, а собирает она все доски машины (DK-1465).
+	mux.HandleFunc("GET /api/overview", s.auth(s.handleOverview))
 	mux.HandleFunc("GET /api/quota", s.auth(s.handleQuota))
 	mux.HandleFunc("GET /api/resources", s.auth(s.handleResources))
 	mux.HandleFunc("GET /api/harnesses", s.auth(s.handleHarnesses))

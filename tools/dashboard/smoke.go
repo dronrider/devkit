@@ -281,6 +281,20 @@ case "$1 $2" in
   printf '%%s удалён как протухший: %%s\n' "$3" "$5"
   exit 0
   ;;
+"draft --prio")
+  # Быстрая запись с главной (DK-1465): текст приходит стандартным входом, а
+  # файл ложится в накопитель тем же видом, что у живой утилиты, заголовком
+  # строкой с ID. Ответ начинается с ID, из него дашборд берёт номер записи.
+  n=$(ls "$drafts" 2>/dev/null | sed 's/\.md$//' | awk -F- '{print $NF}' | sort -n | tail -1)
+  n=$(( ${n:-0} + 1 ))
+  new=$(printf 'XR-%%03d' "$n")
+  text=$(cat)
+  title=$(printf '%%s\n' "$text" | head -1)
+  printf '# %%s: %%s\n\n' "$new" "$title" > "$drafts/$new.md"
+  printf '%%s\n' "$text" | tail -n +2 >> "$drafts/$new.md"
+  printf '%%s: черновик записан\n' "$new"
+  exit 0
+  ;;
 esac
 case "$1" in
 set)
@@ -1927,6 +1941,98 @@ func (s *smoke) stepNoLead() (string, error) {
 	}
 }
 
+// stepOverview поднимает главную дашборда целиком (DK-1465): обзор собирается по
+// доске стенда с живым часом, поэтому сроки строк считает сам прогон от
+// сегодняшнего дня, а не держит их константами. Той же строкой проверяется
+// быстрая запись: первый абзац мысли становится заголовком черновика, второй
+// телом, и свежая запись встаёт первой в накопителе обзора.
+func (s *smoke) stepOverview() (string, error) {
+	now := time.Now()
+	day := func(d int) string { return now.AddDate(0, 0, d).Format("2006-01-02") }
+	board := `{"prefix":"XR","sections":[` +
+		`{"key":"in-progress","title":"In progress","rows":[` +
+		`{"id":"XR-100","title":"Цель: пробный цикл smoke","type":"task","p":"P2","r":41,"r_parts":[25,9,3,0,4],"cost":"XL","link":"[tasks/XR-100.md](tasks/XR-100.md)"},` +
+		`{"id":"XR-021","title":"Горящая строка обзора","type":"task","p":"P1","r":44,"due":"` + day(-1) + `","r_parts":[40,2,1,0,1],"cost":"M","link":"-"}]},` +
+		`{"key":"check","title":"Check","rows":[` +
+		`{"id":"XR-022","title":"Сдача сегодня","type":"task","p":"P2","r":33,"due":"` + day(0) + `","r_parts":[25,3,1,0,2],"cost":"S","link":"-"}]},` +
+		`{"key":"backlog","title":"Backlog","rows":[` +
+		`{"id":"XR-023","title":"Веха обзора","type":"task","p":"P2","r":30,"due":"` + day(3) + `","r_parts":[25,2,1,0,2],"cost":"S","link":"-"}]},` +
+		`{"key":"blocked","title":"Blocked","rows":[]}]}`
+	if err := smokeWrite(s.boardFile(), board+"\n", 0o644); err != nil {
+		return "", err
+	}
+	archive := smokeArchiveDoc + "| XR-024 | Закрытая на неделе | task | P2 | " + day(-2) + " | - |\n"
+	if err := smokeWrite(s.archiveDoc(), archive, 0o644); err != nil {
+		return "", err
+	}
+	// Быстрая запись с главной: одной кнопкой, без полей заголовка.
+	text := "Мысль главной одним абзацем\n\nВторой абзац уходит телом записи."
+	var made map[string]string
+	if err := s.call("POST", "/api/projects/demo/drafts",
+		fmt.Sprintf(`{"text": %q}`, text), http.StatusOK, &made); err != nil {
+		return "", err
+	}
+	id := made["id"]
+	if id == "" {
+		return "", fmt.Errorf("быстрая запись не отдала ID: %v", made)
+	}
+	raw, err := os.ReadFile(filepath.Join(s.draftsDir(), id+".md"))
+	if err != nil {
+		return "", fmt.Errorf("файл записи %s не появился: %v", id, err)
+	}
+	if want := "# " + id + ": Мысль главной одним абзацем"; !strings.HasPrefix(string(raw), want) {
+		return "", fmt.Errorf("заголовок записи не собрался из первого абзаца: %q", string(raw))
+	}
+	if !strings.Contains(string(raw), "Второй абзац уходит телом записи.") {
+		return "", fmt.Errorf("тело записи пропало: %q", string(raw))
+	}
+	var ov overviewView
+	if err := s.call("GET", "/api/overview", "", http.StatusOK, &ov); err != nil {
+		return "", err
+	}
+	if len(ov.Errors) != 0 {
+		return "", fmt.Errorf("обзор пожаловался на живую доску стенда: %v", ov.Errors)
+	}
+	// Сверка по ID одним списком: пропуск строки виден сразу, лишняя тоже.
+	has := func(rows []overviewRow, id string) bool {
+		for _, row := range rows {
+			if row.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	for _, check := range []struct {
+		name string
+		ok   bool
+	}{
+		{"просроченное", has(ov.Overdue, "XR-021")},
+		{"сегодня", has(ov.Today, "XR-022")},
+		{"вехи", has(ov.Milestones, "XR-023")},
+		{"вершина без цели", has(ov.Top, "XR-021") && !has(ov.Top, "XR-100")},
+	} {
+		if !check.ok {
+			return "", fmt.Errorf("виджет «%s» не собрался: %+v", check.name, ov)
+		}
+	}
+	if len(ov.Goals) != 1 || ov.Goals[0].ID != smokeGoal || ov.Goals[0].Total != 2 || ov.Goals[0].Closed != 1 {
+		return "", fmt.Errorf("цель в работе без прогресса состава: %+v", ov.Goals)
+	}
+	if len(ov.Drafts) == 0 || ov.Drafts[0].ID != id || ov.Drafts[0].Title != "Мысль главной одним абзацем" {
+		return "", fmt.Errorf("свежая запись не встала первой в накопителе обзора: %+v", ov.Drafts)
+	}
+	found := false
+	for _, done := range ov.Done {
+		if done.ID == "XR-024" && done.Closed == day(-2) {
+			found = true
+		}
+	}
+	if !found {
+		return "", fmt.Errorf("закрытая на неделе строка не попала в сделанное: %+v", ov.Done)
+	}
+	return fmt.Sprintf("семь виджетов с доски %s и записью %s", "demo", id), nil
+}
+
 // tmuxDrop убирает имя из списка живых сессий фикстуры: так выглядит клиент,
 // вышедший сам, без kill-session от дашборда.
 func (s *smoke) tmuxDrop(name string) error {
@@ -2411,6 +2517,7 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"пересчёт ранга перетаскиванием доехал до доски", s.stepDragRank},
 		{"смерть поднятой сессии названа исходом", s.stepRaiseDeath},
 		{"оборванный конвейер зовёт человека", s.stepNoLead},
+		{"главная собирает обзор и быструю запись", s.stepOverview},
 	}
 	for i, st := range steps {
 		note, err := st.run()

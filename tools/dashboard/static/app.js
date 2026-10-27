@@ -17671,13 +17671,235 @@ function makePlus(project) {
   return btn;
 }
 
-function renderHome(projects) {
+// Главная это обзор поверх досок (DK-1465). Прежде она была списком проектов
+// с карточкой квоты, и вопрос «что сейчас горит» собирался по вкладкам:
+// просроченное ищется на доске каждого проекта, ждущие держатся в полке
+// шапки, сделанное сверяется с архивом. Обзор собирает всё это одной
+// машинной ручкой, как полка ждущих: у главной своего проекта нет.
+let overviewData = null;
+
+async function refreshOverview() {
+  const r = await api("/api/overview");
+  if (r.ok) {
+    overviewData = r.body;
+    return;
+  }
+  // Отказ обзора не оставляет виджеты молчанием: причина стоит на их месте
+  // словами, потому что пустые списки при сломанном обходе читались бы как
+  // «всё в порядке».
+  overviewData = { errors: [apiSaid(r)] };
+}
+
+// Шапка виджета: название и счётчик. Счётчик стоит и при нуле, а не
+// появляется с первой строкой: место, приходящее и уходящее, глаз не держит.
+function ovHead(w, title, n) {
+  const head = el("div", "ovwh");
+  head.append(el("h3", "", title));
+  head.append(el("span", "n", String(n)));
+  w.append(head);
+}
+
+// Общий каркас виджета: шапка со счётчиком, строки и слова на пустоте. Пустота
+// называется словами, молчащий виджет неотличим от не съехавшего ответа.
+// rowOf рисует строку, своя у ждущих, целей и записей накопителя.
+function ovWidget(title, items, emptySay, rowOf) {
+  const w = el("section", "ovw");
+  ovHead(w, title, items.length);
+  const rows = el("div", "ovrows");
+  if (!items.length) {
+    rows.append(el("div", "hint", emptySay));
+  } else {
+    for (const it of items) rows.append(rowOf ? rowOf(it) : ovRow(it));
+  }
+  w.append(rows);
+  return w;
+}
+
+// Строка обзора с дороги на экран задачи своего проекта: обзор отвечает на
+// вопрос «заглянуть или пройти мимо», и щелчок по строке этот взгляд и делает.
+function ovRow(item) {
+  const row = el("div", "ovr");
+  row.append(el("span", "chip c-proj", item.project));
+  row.append(el("b", "", item.id));
+  if (item.title) row.append(withFull(el("span", "ovt", item.title), item.title));
+  const sect = SECT_WORD[item.sect];
+  if (sect) row.append(el("span", "chip c-run", sect));
+  const due = dueChip(item);
+  if (due) row.append(due);
+  if (item.r) row.append(el("span", "chip", "R" + item.r));
+  row.addEventListener("click", () => { goKeepingChat(item.project + "/" + item.id); });
+  return row;
+}
+
+// Виджет целей: строка с прогрессом состава. Прогресс это доля закрытых задач
+// цели тем же счётом, что кольцо разговора, и словами он здесь: главная
+// отвечает «как продвигается», а не рисует второе кольцо.
+function ovGoalRow(g) {
+  const row = el("div", "ovr");
+  row.append(el("span", "chip c-proj", g.project));
+  row.append(el("b", "", g.id));
+  const title = g.title.replace(/^Цель:\s*/, "");
+  if (title) row.append(withFull(el("span", "ovt", title), title));
+  const done = g.closed || 0;
+  const total = g.total || 0;
+  const bar = el("span", "ovbar");
+  const fill = el("i", "ovfill");
+  if (total) fill.style.width = Math.round((done / total) * 100) + "%";
+  bar.append(fill);
+  row.append(bar, el("span", "ovnum", done + "/" + total + " " +
+    plural(total, "задача", "задачи", "задач")));
+  row.addEventListener("click", () => { goKeepingChat(g.project + "/" + g.id); });
+  return row;
+}
+
+// Виджет ждущих собирается из уже опрошенной полки: главная и шапка держат
+// один список, и второй опрос гонял бы те же доски ещё раз. Порядок полки
+// (дольше всех ждущий первым) здесь тот же: вопрос «кому отвечать сейчас»
+// виджету и шапке задают одинаковый.
+const OV_WAIT_LIMIT = 5;
+
+function ovWaitWidget() {
+  const all = waitList.items || [];
+  const items = all.slice(0, OV_WAIT_LIMIT);
+  const now = Date.now();
+  const w = ovWidget("Ждут ответа", items, "никто не ждёт ответа", (it) => waitRow(it, now));
+  const rows = w.querySelector(".ovrows");
+  if (all.length > OV_WAIT_LIMIT) {
+    rows.append(el("div", "hint", "и ещё " + (all.length - OV_WAIT_LIMIT) +
+      ", вся полка у часов в шапке"));
+  }
+  for (const why of waitList.errors || []) {
+    rows.append(el("div", "hint", "доска не прочиталась, " + why));
+  }
+  return w;
+}
+
+// Каркас обзора: сетка виджетов. Сегодня и просроченное идут первым блоком,
+// потому что главная отвечает на вопрос «что горит»; дальше вершина очереди,
+// ждущие, вехи, цели, новое накопителя и сделанное за неделю.
+function ovGrid(ov) {
+  const grid = el("div", "ovgrid");
+  // Просроченное и сегодня один виджет: это один вопрос «что горит», и деля
+  // его на два, экран заставлял бы сопоставлять два счётчика.
+  const burning = [].concat(ov.overdue || [], ov.today || []);
+  grid.append(ovWidget("Сегодня и просроченное", burning, "просроченного и сегодняшнего нет"));
+
+  grid.append(ovWidget("Верх по рангу", ov.top || [], "очередь пуста"));
+
+  grid.append(ovWaitWidget());
+
+  grid.append(ovWidget("Ближайшие вехи", ov.milestones || [], "сроков впереди нет"));
+
+  grid.append(ovWidget("Цели в работе", ov.goals || [], "целей в работе нет", ovGoalRow));
+
+  grid.append(ovWidget("Новое без разбора", ov.drafts || [], "накопитель пуст", (d) => {
+    const row = el("div", "ovr");
+    row.append(el("span", "chip c-proj", d.project));
+    row.append(el("b", "", d.id));
+    if (d.title) row.append(withFull(el("span", "ovt", d.title), d.title));
+    if (d.moved) row.append(el("span", "chip", d.moved.slice(8, 10) + "." + d.moved.slice(5, 7)));
+    row.addEventListener("click", () => { goKeepingChat(d.project + "/draft/" + d.id); });
+    return row;
+  }));
+
+  grid.append(ovWidget("Сделанное за неделю", ov.done || [], "за неделю закрытого нет", (d) => {
+    const row = el("div", "ovr");
+    row.append(el("span", "chip c-proj", d.project));
+    row.append(el("b", "", d.id));
+    if (d.title) row.append(withFull(el("span", "ovt", d.title), d.title));
+    row.append(el("span", "chip c-run", "закрыто " + d.closed.slice(8, 10) + "." + d.closed.slice(5, 7)));
+    return row;
+  }));
+
+  for (const why of ov.errors || []) grid.append(el("div", "hint", "обзор не собрался: " + why));
+  return grid;
+}
+
+// Форма быстрой записи: выбор проекта, один текст и две кнопки. «В накопитель»
+// кладёт мысль как есть, «с разбором сразу» кладёт и поднимает груминг тем же
+// заказом, что кнопка «Грумить» экрана записи. Заголовок собирает сервер из
+// первого абзаца (развилка «заголовок-записи»), и поля заголовка с порогом
+// здесь нет вовсе: с телефона мысль приходит одним куском, и порог первой
+// строки терял запись целиком (DK-447, кейс 10 DK-1198).
+function quickCard(projects) {
+  const card = el("div", "card quickcard");
+  card.append(el("div", "chead", "Быстрая запись"));
+  const pick = el("select", "qpick");
+  pick.setAttribute("aria-label", "Проект записи");
+  for (const p of projects) {
+    const opt = el("option", "", p.name);
+    opt.value = p.name;
+    pick.append(opt);
+  }
+  // Выбор живёт дольше экрана: следующая мысль чаще всего идёт в тот же
+  // проект, и тот же принцип держит выбор доски на главной (lastProject).
+  const kept = projects.find((p) => p.name === lastProject());
+  if (kept) pick.value = kept.name;
+  const text = el("textarea", "qtext");
+  text.placeholder = "Мысль одним абзацем: первой фразой станет заголовок, остальное телом";
+  text.setAttribute("aria-label", "Текст быстрой записи");
+  const bar = el("div", "abar");
+  const save = el("button", "btn", "Записать в накопитель");
+  save.type = "button";
+  const groom = el("button", "btn btn-acc", "Записать с разбором");
+  groom.type = "button";
+  bar.append(save, groom);
+  card.append(pick, text, bar);
+
+  // Обе кнопки ходят одной ручкой и расходятся дорогой после неё, как кнопки
+  // формы заведения: запись обязана лечь в накопитель в обоих случаях, а
+  // разбор это продолжение, а не второй путь записи.
+  const put = async () => {
+    const value = text.value.trim();
+    if (!value) {
+      sayResult("поле обязательно для заполнения", true);
+      text.focus();
+      return null;
+    }
+    save.disabled = true;
+    groom.disabled = true;
+    sayResult("запись черновика...");
+    try {
+      const r = await api("/api/projects/" + encodeURIComponent(pick.value) + "/drafts",
+        { method: "POST", body: { text: value } });
+      sayResult(apiSaid(r), !r.ok);
+      if (!r.ok) return null;
+      text.value = "";
+      return r.body || {};
+    } finally {
+      save.disabled = false;
+      groom.disabled = false;
+    }
+  };
+  save.addEventListener("click", () => {
+    put().then((done) => {
+      if (done && done.id) freshRow = done.id;
+      if (done) refresh().catch(console.error);
+    }).catch(console.error);
+  });
+  groom.addEventListener("click", () => {
+    put().then(async (done) => {
+      if (!done || !done.id) return;
+      await groomDraft(pick.value, done.id, pick.value + "/draft/" + done.id);
+    }).catch(console.error);
+  });
+  return card;
+}
+
+async function renderHome(projects) {
   homeMenuShut();
   const groups = document.getElementById("groups");
   groups.replaceChildren();
   // Легенда стоит у заголовка шапки, а не отдельной строкой списка: заголовок
   // экрана шапка и рисует.
   document.getElementById("hlegend").replaceChildren(dotLegend());
+  // Форма записи стоит первой: главную открывают с телефона мыслью в голове,
+  // и прокрутка до формы стоила бы записи дороже, чем обзору его место.
+  if (projects.length) groups.append(quickCard(projects));
+  await refreshOverview();
+  const ovCard = el("div", "card ovcard");
+  ovCard.append(ovGrid(overviewData || { errors: ["обзор ещё не собран"] }));
+  groups.append(ovCard);
   const card = el("div", "card");
   if (!projects.length) card.append(el("div", "empty", "Проектов нет."));
   for (const p of projects) {
@@ -19214,7 +19436,7 @@ async function paint() {
   if (rt.home) {
     headName("Проекты");
     markNav(rt);
-    renderHome(projects);
+    await renderHome(projects);
     return;
   }
   if (!current) {

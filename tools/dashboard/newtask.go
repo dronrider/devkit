@@ -35,6 +35,59 @@ var newIDRe = regexp.MustCompile(`^[A-Za-z]+-[0-9]+`)
 // draftTitleGuard) берёт заголовком текст только до первого \n.
 var titleNewlineRe = regexp.MustCompile(`\r\n|\r|\n`)
 
+// paraSplitRe режет текст на абзацы по пустой строке: пробелы и табуляция в
+// строке-разделителе не мешают, телефон оставляет их на концах строк.
+var paraSplitRe = regexp.MustCompile(`\n[ \t]*\n`)
+
+// quickEntrySplit режет сырой текст быстрой записи на заголовок и тело.
+// Заголовок это первый абзац: мысль с телефона приходит одним куском, и
+// спрашивать у неё отдельное поле заголовка значило терять запись на пороге
+// первой строки (находка DK-447). Абзац длиннее потолка не отбивается, а
+// режется: концом предложения, если оно уместилось, иначе краем слова, иначе
+// потолком, и отрезанное остаётся телом. Так запись проходит целиком, а
+// утилита записи получает заголовок в её собственном потолке
+// (taskform.DraftTitleLimit).
+func quickEntrySplit(text string) (title, body string) {
+	text = strings.TrimSpace(titleNewlineRe.ReplaceAllString(text, "\n"))
+	if text == "" {
+		return "", ""
+	}
+	paras := paraSplitRe.Split(text, -1)
+	first := strings.Join(strings.Fields(strings.ReplaceAll(paras[0], "\n", " ")), " ")
+	rest := strings.TrimSpace(strings.Join(paras[1:], "\n\n"))
+	runes := []rune(first)
+	if len(runes) <= taskform.DraftTitleLimit {
+		return first, rest
+	}
+	limit := runes[:taskform.DraftTitleLimit]
+	cut := -1
+	for i, r := range limit {
+		if r == '.' || r == '!' || r == '?' {
+			cut = i + 1
+		}
+	}
+	if cut <= 0 {
+		for i := len(limit) - 1; i > 0; i-- {
+			if limit[i] == ' ' {
+				cut = i
+				break
+			}
+		}
+	}
+	if cut <= 0 {
+		cut = taskform.DraftTitleLimit
+	}
+	title = strings.TrimSpace(string(runes[:cut]))
+	tail := strings.TrimSpace(string(runes[cut:]))
+	if tail == "" {
+		return title, rest
+	}
+	if rest == "" {
+		return title, tail
+	}
+	return title, tail + "\n\n" + rest
+}
+
 func draftFileRel(id string) string {
 	return filepath.ToSlash(filepath.Join("docs", "tasks", "drafts", id+".md"))
 }
@@ -63,6 +116,13 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 		Title string `json:"title"`
 		Body  string `json:"body"`
 		Prio  string `json:"prio"`
+		// Text это сырой текст быстрой записи с главной (DK-1465): один
+		// абзац мысли без полей. Заголовок и тело собираются из него самим
+		// сервером (quickEntrySplit), и порог первой строки запись не
+		// отбивает: с телефона мысль приходит одним куском, и требование
+		// уложить её в строку заголовка теряло запись целиком (DK-447,
+		// находка из макета). Пусто у формы экрана заведения.
+		Text string `json:"text"`
 		// Chat это разговор панели, из которого черновик оформили: свободная
 		// беседа становится основным чатом записи источником «оформление»
 		// (LLD DK-1422). Пустое поле значит, что беседы не было, и назначение
@@ -78,6 +138,16 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"title\": \"...\", \"body\": \"...\"}"})
 		return
+	}
+	// Быстрая запись собирается в заголовок с телом до всех проверок ниже.
+	// Уровень разбора она не спрашивает вовсе: вопрос «разбирать ли сегодня»
+	// решает вторая кнопка формы, а без ответа уровень середина, та же, что
+	// умолчание формы заведения.
+	if strings.TrimSpace(body.Text) != "" {
+		body.Title, body.Body = quickEntrySplit(body.Text)
+		if body.Prio == "" {
+			body.Prio = "mid"
+		}
 	}
 	// Перенос строки внутри заголовка схлопывается в пробел тут же, до всех
 	// проверок ниже: заголовок остаётся одной строкой и не роняет хвост в

@@ -916,3 +916,95 @@ func TestStaticRunModeGroup(t *testing.T) {
 		}
 	}
 }
+
+// Быстрая запись с главной (DK-1465). Развилку «заголовок-записи» закрыл
+// исполнитель: заголовок живёт в первом абзаце сырого текста, порог первой
+// строки запись не отбивает, а режет заголовок по себе, и отрезанное остаётся
+// телом. Мысль одним абзацем с телефона проходит целиком (кейс 10 DK-1198).
+// Случаи идут через ручку и файл накопителя, а не вызовом разбора напрямую:
+// регчек гоняет этот файл на старом коде, где разбора ещё нет, и краснота
+// обязана выйти отказом записи, а не отсутствием символа.
+
+// quickTitle это абзац без переносов, ровно вдвое длиннее потолка заголовка:
+// в нём есть и точка до потолка, и слова за ней, оба пути реза проверяются
+// одним текстом.
+func quickTitle() string {
+	return strings.Repeat("а", 40) + ". " + strings.Repeat("б", 40) + " хвост."
+}
+
+// Запись одним абзацем длиннее потолка проходит в накопитель без отказа:
+// утилита записи получает заголовок в своём потолке, отрезанное ложится
+// телом, уровень разбора не спрашивается и стоит серединой. Проверяется
+// файлом, а не ответом ручки: быстрая запись обязана доехать до накопителя.
+func TestDraftQuickEntry(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	for _, tc := range []struct {
+		name, text, wantTitle string
+		wantBody              []string
+	}{
+		{
+			name:      "короткий абзац целиком заголовок",
+			text:      "мысль одной строкой",
+			wantTitle: "мысль одной строкой",
+		},
+		{
+			name:      "переносы внутри абзаца схлопываются",
+			text:      "первая строка\nвторая строка",
+			wantTitle: "первая строка вторая строка",
+		},
+		{
+			name:      "остальные абзацы телом",
+			text:      "заголовок записи\n\nподробности письма\n\nи ещё абзац",
+			wantTitle: "заголовок записи",
+			wantBody:  []string{"подробности письма", "и ещё абзац"},
+		},
+		{
+			name:      "длинный абзац режется концом предложения",
+			text:      quickTitle() + "\n\nподробности ниже.",
+			wantTitle: strings.Repeat("а", 40) + ".",
+			wantBody:  []string{strings.Repeat("б", 40) + " хвост.", "подробности ниже."},
+		},
+		{
+			name:      "длинный абзац без точки режется краем слова",
+			text:      strings.Repeat("слово ", 30),
+			wantTitle: strings.TrimSpace(strings.Repeat("слово ", 12)),
+			wantBody:  []string{strings.TrimSpace(strings.Repeat("слово ", 18))},
+		},
+	} {
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts",
+			`{"text": `+strconv.Quote(tc.text)+`}`)
+		got := newResp(t, resp, "быстрая запись: "+tc.name)
+		id, _ := got["id"].(string)
+		if id == "" {
+			t.Fatalf("%s: быстрая запись не завелась: %v", tc.name, got)
+		}
+		doc := readFile(t, filepath.Join(e.proj, "docs", "tasks", "drafts", id+".md"))
+		if head := "# " + id + ": " + tc.wantTitle; !strings.HasPrefix(doc, head) {
+			t.Errorf("%s: заголовок не собрался из первого абзаца:\n%s", tc.name, doc)
+		}
+		if n := len([]rune(tc.wantTitle)); n > 72 {
+			t.Errorf("%s: заголовок из %d знаков перерос потолок утилиты", tc.name, n)
+		}
+		for _, part := range tc.wantBody {
+			if !strings.Contains(doc, part) {
+				t.Errorf("%s: кусок тела не доехал до записи: %q\n%s", tc.name, part, doc)
+			}
+		}
+		if !strings.Contains(doc, "приоритет: средний") {
+			t.Errorf("%s: уровень разбора по умолчанию не встал в шапку:\n%s", tc.name, doc)
+		}
+	}
+}
+
+// Пустой текст быстрой записи отбит теми же словами, что пустое наименование
+// формы: рубеж один, и читать его человек должен одним способом.
+func TestDraftQuickEmpty(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"text": "  "}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("пустая быстрая запись не отбитa: %d", resp.StatusCode)
+	}
+	if text := body(t, resp); !strings.Contains(text, "поле обязательно для заполнения") {
+		t.Errorf("отказ пустой записи не теми словами: %s", text)
+	}
+}

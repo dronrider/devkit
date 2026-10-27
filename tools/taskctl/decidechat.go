@@ -219,7 +219,7 @@ func chatQuestions(forks []taskform.Fork) []chat.Question {
 		if roll := chatLineupRoll(f); roll != "" {
 			text += "\n\n" + roll
 		}
-		q := chat.Question{Text: text}
+		q := chat.Question{Text: text, Multi: f.Mode == taskform.ScenarioMode}
 		lineups, short := f.Lineups()
 		for i, c := range f.Choices() {
 			if short {
@@ -254,7 +254,10 @@ func decideOpen(doc string) []taskform.Fork {
 // экране, и парковать строку под уже прочитанный вопрос значит гонять доску
 // впустую.
 func decideChat(root, doc string, p DecideParams, d askDeps, env func(string) string) (string, error) {
-	open := decideOpen(doc)
+	open, err := decidePack(doc, p)
+	if err != nil {
+		return "", err
+	}
 	if len(open) == 0 {
 		return fmt.Sprintf("%s: открытых развилок нет, спрашивать нечего", p.ID), nil
 	}
@@ -266,6 +269,11 @@ func decideChat(root, doc string, p DecideParams, d askDeps, env func(string) st
 	more := ""
 	if rest > 0 {
 		more = fmt.Sprintf("; ещё %d уйдут следующей пачкой", rest)
+	}
+	for _, f := range pack {
+		if f.Mode != "" {
+			return decideScenarioChat(root, pack, p, d, env, more)
+		}
 	}
 	panel, sign := AskPanel(env), headlessSign(env)
 	if panel {
@@ -535,7 +543,7 @@ func decideAnswer(doc string, p DecideParams) (string, string, error) {
 	forks := taskform.ParseForks(doc)
 	var live []taskform.Fork
 	for _, f := range forks {
-		if !f.Decided() {
+		if !f.Decided() && f.Mode == "" {
 			live = append(live, f)
 		}
 	}

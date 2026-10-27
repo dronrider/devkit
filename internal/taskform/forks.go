@@ -35,31 +35,43 @@ const (
 	StateOpen    = "открыта"
 	StateLeft    = "оставлена"
 	StateDecided = "решена"
+	StateReview  = "требует сверки"
 )
 
 // Fork это разобранная развилка перечня.
 type Fork struct {
-	Name     string   // имя между «ёлочками», уникальное в файле
-	Question string   // вопрос после двоеточия в голове
-	Who      string   // значение поля «решает»
-	Hint     string   // рекомендация, она же ответ по умолчанию у оставленной
-	Tie      string   // довод равенства вариантов, когда рекомендации нет честно
-	Options  []string // варианты ответа, кроме рекомендованного, в порядке записи
-	Answer   string   // текст последней строки «решено»
-	By       string   // автор последнего решения
-	Date     string   // дата последнего решения
-	Left     string   // причина последней строки «оставлена»
-	Line     int      // номер строки головы в файле, с единицы
+	Mode         string
+	NextID       int
+	ChoiceEvent  int
+	Review       string
+	Reconsidered bool
+	Cards        string
+	Sub          []string
+	Name         string   // имя между «ёлочками», уникальное в файле
+	Question     string   // вопрос после двоеточия в голове
+	Who          string   // значение поля «решает»
+	Hint         string   // рекомендация, она же ответ по умолчанию у оставленной
+	Tie          string   // довод равенства вариантов, когда рекомендации нет честно
+	Options      []string // варианты ответа, кроме рекомендованного, в порядке записи
+	Answer       string   // текст последней строки «решено»
+	By           string   // автор последнего решения
+	Date         string   // дата последнего решения
+	Left         string   // причина последней строки «оставлена»
+	Line         int      // номер строки головы в файле, с единицы
 }
 
 // Decided говорит, что под головой стоит хотя бы одна строка «решено».
 // Второе «решено» законно: решение поменялось после приёмки, побеждает
 // последнее, а прежнее остаётся следом.
-func (f Fork) Decided() bool { return f.By != "" && f.Answer != "" }
+func (f Fork) Decided() bool {
+	return f.By != "" && f.Answer != "" && f.Review == "" && !f.Reconsidered
+}
 
 // State называет состояние развилки одним словом.
 func (f Fork) State() string {
 	switch {
+	case f.Review != "":
+		return StateReview
 	case f.Decided():
 		return StateDecided
 	case f.Who == ForkExecutor:
@@ -90,7 +102,7 @@ var (
 // начатая таким словом и не подошедшая под форму, это опечатка формы, и её
 // называет lint. Подстрока без этих слов это проза при развилке (довод,
 // ссылка на документ): разбор её пропускает, а писатель сохраняет.
-var forkWords = []string{"решает", "рекомендация", "равенство", "решено", "оставлена", "вариант"}
+var forkWords = []string{"решает", "рекомендация", "равенство", "решено", "оставлена", "вариант", "выбор", "следующий ID", "снимок", "ответ", "пересмотр", "требует сверки"}
 
 // ParseForks читает перечень развилок файла. Читается только тело раздела
 // «## Развилки» и только вне ограждённых блоков: голова вида «- «имя»:» в
@@ -120,6 +132,9 @@ func ParseForks(doc string) []Fork {
 			}
 			applyForkSub(&f, strings.TrimSpace(sub[1]))
 		}
+		if f.Mode == ScenarioMode {
+			f.Cards = ScenarioCards(doc)
+		}
 		out = append(out, f)
 	}
 	return out
@@ -128,7 +143,17 @@ func ParseForks(doc string) []Fork {
 // applyForkSub кладёт подстроку в поле развилки. Последняя строка своей формы
 // побеждает: так второе «решено» отменяет первое, оставляя его следом в файле.
 func applyForkSub(f *Fork, text string) {
+	f.Sub = append(f.Sub, text)
 	switch {
+	case strings.HasPrefix(text, "выбор: "):
+		f.Mode = strings.TrimPrefix(text, "выбор: ")
+	case strings.HasPrefix(text, "следующий ID: "):
+		f.NextID, _ = ScenarioNumber(strings.TrimPrefix(text, "следующий ID: "))
+	case scenarioReviewRe.MatchString(text):
+		f.ChoiceEvent++
+		f.Reconsidered = true
+	case forkReviewRe.MatchString(text):
+		f.Review = text
 	case forkWhoRe.MatchString(text):
 		f.Who = forkWhoRe.FindStringSubmatch(text)[1]
 	case forkHintRe.MatchString(text):
@@ -140,6 +165,11 @@ func applyForkSub(f *Fork, text string) {
 	case forkDoneRe.MatchString(text):
 		m := forkDoneRe.FindStringSubmatch(text)
 		f.By, f.Date, f.Answer = m[1], m[2], m[3]
+		f.Review = ""
+		f.Reconsidered = false
+		if f.Mode == ScenarioMode {
+			f.ChoiceEvent++
+		}
 	case forkLeaveRe.MatchString(text):
 		f.Left = strings.TrimSpace(forkLeaveRe.FindStringSubmatch(text)[3])
 		if f.Left == "" {
@@ -217,8 +247,25 @@ func ForkFinds(doc string) []ForkFind {
 			}
 			applyForkSub(&f, text)
 		}
+		if f.Mode != "" {
+			if _, _, err := f.Scenarios(); err != nil {
+				finds = append(finds, ForkFind{i + 1, err.Error()})
+			}
+			if _, err := f.ScenarioReplies(); err != nil {
+				finds = append(finds, ForkFind{i + 1, err.Error()})
+			}
+		}
 		if f.Left != "" && f.Who == ForkHuman {
 			finds = append(finds, ForkFind{i + 1, fmt.Sprintf("развилка «%s» оставлена исполнителю, а поле держит «решает: человек»: передача правит и поле", name)})
+		}
+	}
+	lists := 0
+	for _, f := range ParseForks(doc) {
+		if f.Mode != "" {
+			lists++
+			if lists > 1 {
+				finds = append(finds, ForkFind{f.Line, "в записи допускается один список сценариев"})
+			}
 		}
 	}
 	return finds
@@ -233,7 +280,10 @@ func forkOffForm(text string) (string, bool) {
 		switch {
 		case forkWhoRe.MatchString(text), forkHintRe.MatchString(text),
 			forkTieRe.MatchString(text), forkOptRe.MatchString(text),
-			forkDoneRe.MatchString(text), forkLeaveRe.MatchString(text):
+			forkDoneRe.MatchString(text), forkLeaveRe.MatchString(text),
+			scenarioReviewRe.MatchString(text), forkReviewRe.MatchString(text),
+			text == "выбор: "+ScenarioMode, strings.HasPrefix(text, "следующий ID: СЦ-"),
+			strings.HasPrefix(text, "снимок: sc1-"), strings.HasPrefix(text, "ответ: {"):
 			return w, false
 		}
 		return w, true
@@ -354,6 +404,18 @@ func AddForkSpec(doc string, spec Fork) (string, error) {
 		return "", fmt.Errorf("развилку «%s» с равенством исполнителю не оставляют: ответа по умолчанию у неё нет, решает человек", name)
 	}
 	lines := []string{ForkHead(name, question), ForkWhoLine(who)}
+	if spec.Mode != "" {
+		for _, f := range ParseForks(doc) {
+			if f.Mode != "" {
+				return "", fmt.Errorf("в записи уже есть список сценариев «%s»", f.Name)
+			}
+		}
+		spec.Options = live
+		if _, _, err := spec.Scenarios(); err != nil {
+			return "", err
+		}
+		lines = append(lines, forkIndent+"выбор: "+spec.Mode, fmt.Sprintf("%sследующий ID: СЦ-%d", forkIndent, spec.NextID))
+	}
 	if strings.TrimSpace(hint) != "" {
 		lines = append(lines, ForkHintLine(hint))
 	}
@@ -435,8 +497,14 @@ func ForkGateNote(id, what string, forks []Fork) string {
 			b.WriteString("\n  равенство: " + f.Tie)
 		}
 	}
-	fmt.Fprintf(&b, "\nответ снимает развилку: taskctl decide %s «%s» --by человек \"ответ и довод\"", id, forks[0].Name)
-	fmt.Fprintf(&b, "\nвопрос, на который отвечает исполнитель, передаётся ему: taskctl decide %s «%s» --leave", id, forks[0].Name)
+	if forks[0].Mode == ScenarioMode {
+		fmt.Fprintf(&b, "\nнапечатать список и ключ снимка: taskctl decide %s «%s» --chat", id, forks[0].Name)
+		fmt.Fprintf(&b, "\nответ по показанному блоку: taskctl decide %s «%s» --snapshot '<ключ>' --answer '<слова человека>'", id, forks[0].Name)
+	} else {
+		fmt.Fprintf(&b, "\nответ снимает развилку: taskctl decide %s «%s» --by человек \"ответ и довод\"", id, forks[0].Name)
+		fmt.Fprintf(&b, "\nвопрос, на который отвечает исполнитель, передаётся ему: taskctl decide %s «%s» --leave", id, forks[0].Name)
+	}
+
 	return b.String()
 }
 
@@ -453,7 +521,7 @@ type ForkChoice struct {
 // нумеруется с первого «варианта», и рекомендованного среди них нет.
 func (f Fork) Choices() []ForkChoice {
 	var out []ForkChoice
-	if hint := strings.TrimSpace(f.Hint); hint != "" {
+	if hint := strings.TrimSpace(f.Hint); hint != "" && f.Mode == "" {
 		out = append(out, ForkChoice{Text: hint, Recommended: true})
 	}
 	for _, o := range f.Options {

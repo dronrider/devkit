@@ -18,21 +18,26 @@ import (
 
 // DecideParams это разобранные аргументы команды.
 type DecideParams struct {
-	ID     string
-	Name   string   // имя развилки, «ёлочки» вокруг него необязательны
-	Ask    string   // вопрос заведения
-	Who    string   // значение поля «решает» при заведении
-	Hint   string   // рекомендация
-	Tie    string   // довод равенства вариантов вместо рекомендации
-	Opts   []string // варианты ответа, кроме рекомендованного
-	By     string   // автор решения или передачи
-	Text   string   // ответ с доводом либо причина передачи
-	Leave  bool     // передать развилку исполнителю
-	Open   bool     // печатать только открытые
-	Chat   bool     // напечатать блок вопроса для реплики в чат
-	Answer string   // ответ человека на блок вопроса
-	Now    time.Time
-	Commit CommitOpts
+	Scenarios bool
+	Snapshot  string
+	Given     string
+	Said      string
+	AnswerSet bool
+	ID        string
+	Name      string   // имя развилки, «ёлочки» вокруг него необязательны
+	Ask       string   // вопрос заведения
+	Who       string   // значение поля «решает» при заведении
+	Hint      string   // рекомендация
+	Tie       string   // довод равенства вариантов вместо рекомендации
+	Opts      []string // варианты ответа, кроме рекомендованного
+	By        string   // автор решения или передачи
+	Text      string   // ответ с доводом либо причина передачи
+	Leave     bool     // передать развилку исполнителю
+	Open      bool     // печатать только открытые
+	Chat      bool     // напечатать блок вопроса для реплики в чат
+	Answer    string   // ответ человека на блок вопроса
+	Now       time.Time
+	Commit    CommitOpts
 }
 
 // decideAuthors переводит значение --by в слово строки записи.
@@ -107,16 +112,48 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	// срабатывало и на --leave с --by человек, где развилка оставлена
 	// исполнителю и вопрос человеку не отвечен (ревью DK-1204).
 	answered := false
+	scenarioAnswer := false
+	if p.By == "человек" && !p.Leave {
+		if f, ok := taskform.FindFork(doc, name); ok && f.Mode != "" {
+			p.Answer = p.Text
+			p.AnswerSet = true
+			p.By = ""
+		}
+	}
+	if (p.Given != "" || p.Said != "") && (!p.Scenarios || p.Ask == "") {
+		return "", fmt.Errorf("--given и --said применяются при создании --scenarios --ask")
+	}
+	if p.Scenarios && p.Ask == "" {
+		return "", fmt.Errorf("--scenarios применяется при создании --ask")
+	}
 	switch {
 	case p.Chat:
+		doc, err = prepareScenarioChat(doc, p)
+		if err != nil {
+			return "", err
+		}
+		if doc != orig {
+			if err := decideWrite(path, orig, doc); err != nil {
+				return "", err
+			}
+		}
 		if d == nil {
 			live := liveDeps(root)
 			d = &live
 		}
 		return decideChat(root, doc, p, *d, env)
-	case p.Answer != "":
-		doc, note, err = decideAnswer(doc, p)
-		answered = true
+	case p.AnswerSet || p.Answer != "":
+		f, isScenario, ferr := scenarioAnswerFork(doc, p)
+		if ferr != nil {
+			return "", ferr
+		}
+		scenarioAnswer = isScenario
+		if isScenario {
+			doc, note, err = decideScenarioAnswer(doc, f, p)
+		} else {
+			doc, note, err = decideAnswer(doc, p)
+		}
+		answered = doc != orig
 	case p.Ask != "":
 		doc, err = decideAsk(doc, p)
 	case len(p.Opts) > 0:
@@ -127,6 +164,14 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 		doc, err = decideClose(doc, name, p)
 		answered = decideAuthors[p.By] == taskform.ByHuman
 	default:
+		if p.Snapshot != "" {
+			return decideScenarioShow(doc, p)
+		}
+		if name != "" {
+			if _, ok := taskform.FindFork(doc, name); !ok {
+				return "", fmt.Errorf("развилки «%s» нет", name)
+			}
+		}
 		return decideShow(doc, p), nil
 	}
 	if err != nil {
@@ -135,10 +180,13 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	// Дописывание, где все варианты оказались дублями, файла не трогает.
 	// Записать его тем же текстом мало: следом идёт коммит, а git на пустом
 	// диффе падает вместо внятного «новых вариантов нет» (ревью DK-882).
+	if scenarioAnswer && doc == orig {
+		return note, nil
+	}
 	if len(p.Opts) > 0 && doc == orig {
 		return fmt.Sprintf("%s (%s): %s", p.ID, kind, note), nil
 	}
-	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+	if err := decideWrite(path, orig, doc); err != nil {
 		return "", err
 	}
 	// Ответ человека снимает признак ожидания того же захода, и снимает уже
@@ -146,7 +194,7 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	// строку без ответа. Прежде признак снимали только панель и wake, а ответ
 	// из окна или головой сессии оставлял его на месте, и плашка «Заход ждёт
 	// ответа» стояла на решённой развилке до перезапуска захода (DK-1204).
-	if answered && dropTaskAsks(root, p.ID) > 0 {
+	if answered && dropTaskAsks(root, p.ID) > 0 && !scenarioAnswer {
 		note += "\n" + askDroppedNote
 	}
 	rel, rerr := filepath.Rel(root, path)
@@ -159,7 +207,10 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	}
 	head := fmt.Sprintf("%s (%s): ", p.ID, kind)
 	switch {
-	case p.Answer != "":
+	case p.AnswerSet || p.Answer != "":
+		if scenarioAnswer {
+			return note + tail, nil
+		}
 		head = note + "\n"
 		return head + decideShow(doc, DecideParams{ID: p.ID}) + tail, nil
 	case p.Ask != "":
@@ -205,7 +256,29 @@ func decideAsk(doc string, p DecideParams) (string, error) {
 		return "", fmt.Errorf("у развилки «%s» нет рекомендации: сначала обход развилки (interview, «Обход до первого вопроса»), потом taskctl decide %s --ask «%s» --hint \"ответ, довод\" \"вопрос\"; равный счёт двух вариантов называется --tie \"довод равенства\" с двумя --option",
 			decideName(p.Ask), p.ID, decideName(p.Ask))
 	}
-	return taskform.AddForkSpec(doc, taskform.Fork{Name: decideName(p.Ask), Question: p.Text, Who: who, Hint: p.Hint, Tie: p.Tie, Options: p.Opts})
+	spec := taskform.Fork{Name: decideName(p.Ask), Question: p.Text, Who: who, Hint: p.Hint, Tie: p.Tie, Options: p.Opts}
+	if p.Scenarios {
+		spec.Mode = taskform.ScenarioMode
+		spec.NextID = 1
+		for _, o := range p.Opts {
+			sc, err := taskform.ParseScenario(o)
+			if err != nil {
+				return "", err
+			}
+			n, _ := taskform.ScenarioNumber(sc.ID)
+			if n >= spec.NextID {
+				spec.NextID = n + 1
+			}
+		}
+	}
+	updated, err := taskform.AddForkSpec(doc, spec)
+	if err != nil {
+		return "", err
+	}
+	if p.Given != "" {
+		return decideScenarioGiven(updated, p)
+	}
+	return updated, nil
 }
 
 // decideOption дописывает варианты ответа к заведённой развилке. Вариантами
@@ -219,6 +292,9 @@ func decideOption(doc, name string, p DecideParams) (string, string, error) {
 	f, ok := taskform.FindFork(doc, name)
 	if !ok {
 		return "", "", fmt.Errorf("развилки «%s» в перечне нет: завести её через --ask", name)
+	}
+	if f.Mode != "" {
+		return decideScenarioOptions(doc, f, p)
 	}
 	if f.Decided() {
 		return "", "", fmt.Errorf("развилка «%s» решена (%s %s), вариант ей уже не нужен: пересмотр это второе решение под той же головой", name, f.By, f.Date)
@@ -268,6 +344,9 @@ func decideClose(doc, name string, p DecideParams) (string, error) {
 	if strings.TrimSpace(p.Text) == "" {
 		return "", fmt.Errorf("у решения нет ответа: taskctl decide %s «%s» --by %s \"ответ и довод\"", p.ID, name, p.By)
 	}
+	if f, ok := taskform.FindFork(doc, name); ok && f.Mode != "" {
+		return "", fmt.Errorf("список сценариев принимает человеческий ответ по --snapshot")
+	}
 	return taskform.AppendToFork(doc, name, taskform.ForkDecisionLine(by, p.Now.Format("2006-01-02"), p.Text))
 }
 
@@ -286,6 +365,9 @@ func decideLeave(doc, name string, p DecideParams) (string, error) {
 	f, ok := taskform.FindFork(doc, name)
 	if !ok {
 		return "", fmt.Errorf("развилки «%s» в перечне нет: завести её через --ask", name)
+	}
+	if f.Mode != "" {
+		return "", fmt.Errorf("список сценариев не передаётся исполнителю")
 	}
 	if f.Decided() {
 		return "", fmt.Errorf("развилка «%s» уже решена (%s %s), оставлять нечего", name, f.By, f.Date)
@@ -326,7 +408,10 @@ func decideShow(doc string, p DecideParams) string {
 	forks := taskform.ParseForks(doc)
 	var out []string
 	for _, f := range forks {
-		if p.Open && f.Decided() {
+		if p.Name != "" && f.Name != decideName(p.Name) {
+			continue
+		}
+		if p.Open && f.Decided() && f.Mode == "" {
 			continue
 		}
 		line := fmt.Sprintf("- «%s» (%s): %s", f.Name, decideState(f), f.Question)
@@ -339,8 +424,28 @@ func decideShow(doc string, p DecideParams) string {
 		for _, o := range f.Options {
 			line += "\n  вариант: " + o
 		}
-		if f.Decided() {
+		if f.Mode != "" {
+			if f.Decided() {
+				line += "\n  выбрано: " + f.Answer
+			} else if f.Reconsidered {
+				line += "\n  прежний состав отменён; требуется пересмотр границ"
+			} else {
+				line += "\n  выбор ещё не сделан"
+			}
+			line += "\n  " + scenarioRecheckNote
+		}
+		if f.Review != "" {
+			line += "\n  " + f.Review
+		}
+		if f.By != "" && f.Answer != "" {
 			line += fmt.Sprintf("\n  решено %s %s: %s", f.By, f.Date, f.Answer)
+		}
+		if p.Name != "" {
+			for _, sub := range f.Sub {
+				if strings.HasPrefix(sub, "решено ") || strings.HasPrefix(sub, "пересмотр ") || strings.HasPrefix(sub, "снимок: ") || strings.HasPrefix(sub, "ответ: ") {
+					line += "\n  история: " + sub
+				}
+			}
 		}
 		out = append(out, line)
 	}
@@ -357,6 +462,8 @@ func decideShow(doc string, p DecideParams) string {
 // что она держит старт: ровно это увидит тот, кому откажут ворота.
 func decideState(f taskform.Fork) string {
 	switch f.State() {
+	case taskform.StateReview:
+		return taskform.StateReview
 	case taskform.StateDecided:
 		return taskform.StateDecided
 	case taskform.StateLeft:

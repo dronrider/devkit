@@ -884,6 +884,15 @@ class WaitersTest(Stand):
         watch.waiters(str(self.proj), self.call, TASKCTL)
         self.assertEqual(self.call.calls, [self.sweep()])
 
+    def test_hourly_armed_backlog_row_calls_the_sweep(self):
+        # DK-1466: часовая форма взвода несёт аргумент времени, и тик обязан
+        # видеть строку обеими формами суффикса: час держит taskctl, а сторожок
+        # будит обход по самому взводу, иначе строка стояла бы до чужого тика.
+        self.board_backlog([PARK_ROW % ("DK-902", "Взведённая к часу [после DK-901] [взвод: 2026-10-28 02:00]",
+                                        "DK-902", "DK-902")])
+        watch.waiters(str(self.proj), self.call, TASKCTL)
+        self.assertEqual(self.call.calls, [self.sweep()])
+
     def test_backlog_row_without_arm_does_not_call(self):
         self.board_backlog([PARK_ROW % ("DK-902", "Ждёт руки [после DK-901]", "DK-902", "DK-902")])
         self.assertEqual(watch.waiters(str(self.proj), self.call, TASKCTL), [])

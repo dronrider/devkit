@@ -31,7 +31,7 @@ SUFFIX_RES = (
     re.compile(r"\s*\[провал: [^|\[]*\]\s*$"),
     re.compile(r"\s*\[приёмка: (agent|mixed|user)\]\s*$"),
     re.compile(r"\s*\[срок: [0-9]{4}-[0-9]{2}-[0-9]{2}\]\s*$"),
-    re.compile(r"\s*\[взвод\]\s*$"),
+    re.compile(r"\s*\[взвод(?:: [^|\][]+)?\]\s*$"),
     re.compile(r"\s*\[долг\]\s*$"),
 )
 

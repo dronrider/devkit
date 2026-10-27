@@ -24,6 +24,58 @@ def need(ok, text):
     if not ok:
         raise SystemExit(text)
 
+def visible_lines(text):
+    fence = ""
+    for i, line in enumerate(text.splitlines()):
+        stripped = line.lstrip(" \t")
+        match = re.match(r"(`{3,}|~{3,})", stripped)
+        token = match[0] if match else ""
+        if fence:
+            if token and token[0] == fence[0] and len(token) >= len(fence) and not stripped[len(token):].strip():
+                fence = ""
+            continue
+        if token:
+            fence = token
+            continue
+        yield i, line
+
+def section_body(text, title):
+    lines = text.splitlines()
+    start = None
+    for i, line in visible_lines(text):
+        if line == "## " + title:
+            need(start is None, "повтор раздела " + title)
+            start = i + 1
+        elif start is not None and line.startswith("## "):
+            return "\n".join(lines[start:i]).strip()
+    return "\n".join(lines[start:]).strip() if start is not None else ""
+
+def card_bodies(cards, ids):
+    lines, bodies = cards.splitlines(), {}
+    current, start = None, 0
+    for i, line in visible_lines(cards):
+        if not re.match(r"^#{1,6}\s+", line):
+            continue
+        if current is not None:
+            bodies[current] = "\n".join(lines[start:i]).strip()
+        current = None
+        head = re.fullmatch(r"### (СЦ-[1-9][0-9]*)\s*", line)
+        if head:
+            current, start = head[1], i + 1
+            need(current not in bodies, "повтор карточки " + current)
+    if current is not None:
+        bodies[current] = "\n".join(lines[start:]).strip()
+    for id in ids:
+        need(id in bodies, "нет карточки " + id)
+        fields = {}
+        for _, line in visible_lines(bodies[id]):
+            label, sep, value = line.strip().partition(":")
+            if sep and value.strip():
+                fields[label.casefold()] = value.strip()
+        for label in ("ситуация", "действие", "результат", "польза", "рекомендация", "ограничение", "источник"):
+            need(label in fields, "карточка " + id + " не содержит непустого поля " + label)
+    return bodies
+
 def walk(value):
     if isinstance(value, dict):
         yield value
@@ -64,13 +116,19 @@ block = block[0]
 options = re.findall(r"(?m)^  - вариант: (СЦ-[1-9][0-9]*) \((слово пользователя|вывод из примера|предложение агента)\): (.+)$", block)
 need(len(options) == 1 and "None" in options[0][2], "один путь бага заменён искусственным выбором")
 id = options[0][0]
-need(re.search(r"(?m)^### " + re.escape(id) + r"\s*$", doc), "нет карточки заданного сценария")
-for word in ("ситуац", "действ", "результат", "польз", "огранич"):
-    need(word in doc.lower(), "карточка не содержит " + word)
+prepared_cards = section_body(doc, "Пользовательские сценарии")
+card_bodies(prepared_cards, [id])
 decisions = re.findall(r"(?m)^  - решено человеком \d{4}-\d{2}-\d{2}: (.+)$", block)
 need(decisions == [id], "заданный путь не сохранён одним человеческим решением")
 replies = [json.loads(x) for x in re.findall(r"(?m)^  - ответ: (.+)$", block)]
 need(len(replies) == 1 and replies[0]["event"] == 1 and "None" in replies[0]["text"], "нет дословного основания человека")
+key = replies[0]["snapshot"]
+matched = [text for k, text in re.findall(r"(?m)^  - снимок: (sc1-[a-f0-9]{64}) (.+)$", block) if k == key]
+need(len(matched) == 1 and "sc1-" + hashlib.sha256(matched[0].encode()).hexdigest() == key, "снимок заданного состава повреждён")
+snapshot = json.loads(matched[0])
+need(snapshot["record"] == record and snapshot["name"] == "сценарии" and snapshot["choiceEvent"] == 0, "снимок не относится к переносу")
+card_bodies(snapshot["cards"], [id])
+need(snapshot["cards"] == prepared_cards, "карточка подготовлена после снимка переноса")
 need(any(record in c and "--given" in c and "--said" in c for c in commands), "перенос --given с основанием не выполнялся")
 need(not any(record in c and "--chat" in c for c in commands), "заданный сценарий повторно спрошен")
 need(id in final and "None" in final, "итог не назвал сохранённый сценарий и его основание")

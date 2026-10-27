@@ -55,3 +55,17 @@ func TestScenarioAnswerSelection(t *testing.T) {
 		t.Fatalf("свободный остаток: %+v %v", got, err)
 	}
 }
+
+func TestScenarioTitleOnlyAllowsQuoteAndSlashEscapes(t *testing.T) {
+	_, f := scenarioFixture(t)
+	snapshot, _ := NewScenarioSnapshot("XR-1", f)
+	for _, text := range []string{`плюс "проверить путь C:\tmp"`, `плюс "буква \u0041"`, `плюс "буква \x41"`} {
+		if _, err := ParseScenarioAnswer(f, snapshot, text); err == nil {
+			t.Fatalf("неразрешённый escape принят: %s", text)
+		}
+	}
+	got, err := ParseScenarioAnswer(f, snapshot, `плюс "проверить C:\\tmp и \"кавычку\""`)
+	if err != nil || got.Added[0].Title != `проверить C:\tmp и "кавычку"` {
+		t.Fatalf("разрешённые escape: %+v %v", got, err)
+	}
+}

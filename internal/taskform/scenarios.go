@@ -60,6 +60,13 @@ func ScenarioNumber(id string) (int, error) {
 	return n, nil
 }
 
+func NextScenarioNumber(n int) (int, error) {
+	if n < 1 || n >= int(^uint(0)>>1)-1 {
+		return 0, fmt.Errorf("после СЦ-%d нет допустимого следующего ID: диапазон исчерпан", n)
+	}
+	return n + 1, nil
+}
+
 func ParseScenario(text string) (UserScenario, error) {
 	m := scenarioRe.FindStringSubmatch(strings.TrimSpace(text))
 	if m == nil {
@@ -146,6 +153,9 @@ func (f Fork) Scenarios() ([]UserScenario, ScenarioRecommendation, error) {
 				}
 			}
 		}
+	}
+	if f.NextID <= 0 || f.NextID == int(^uint(0)>>1) {
+		return nil, ScenarioRecommendation{}, fmt.Errorf("недопустимый следующий ID СЦ-%d", f.NextID)
 	}
 	if f.NextID <= max {
 		return nil, ScenarioRecommendation{}, fmt.Errorf("следующий ID СЦ-%d должен быть больше СЦ-%d", f.NextID, max)

@@ -51,6 +51,9 @@ func prepareScenarioChat(doc string, p DecideParams) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if err := taskform.ValidateScenarioCards(snapshot.Cards, snapshot.Scenarios); err != nil {
+			return "", err
+		}
 		key, raw := snapshot.Encoded()
 		found := false
 		for _, sub := range f.Sub {
@@ -183,7 +186,14 @@ func decideScenarioAnswer(doc string, f taskform.Fork, p DecideParams) (string, 
 	}
 	result += "\n" + scenarioRecheckNote
 	doc, err = taskform.AppendToFork(doc, f.Name, line+"\n"+taskform.ScenarioReplyLine(taskform.ScenarioReply{Text: p.Answer, Snapshot: p.Snapshot, Event: f.ChoiceEvent + 1, Result: result}))
-	return doc, result, err
+	if err != nil {
+		return "", "", err
+	}
+	updated, _ := taskform.FindFork(doc, f.Name)
+	if _, _, err := updated.Scenarios(); err != nil {
+		return "", "", err
+	}
+	return doc, result, nil
 }
 
 func scenarioBlock(f taskform.Fork, id string) (string, error) {
@@ -253,6 +263,9 @@ func decideScenarioGiven(doc string, p DecideParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := taskform.ValidateScenarioCards(s.Cards, s.Scenarios); err != nil {
+		return "", err
+	}
 	for _, id := range ids {
 		found := false
 		for _, c := range s.Scenarios {
@@ -310,7 +323,10 @@ func decideScenarioOptions(doc string, f taskform.Fork, p DecideParams) (string,
 		if n < next {
 			return "", "", fmt.Errorf("ID %s уже выдан: следующий свободный СЦ-%d", s.ID, next)
 		}
-		next = n + 1
+		next, err = taskform.NextScenarioNumber(n)
+		if err != nil {
+			return "", "", err
+		}
 		doc, err = taskform.AddForkOption(doc, f.Name, s.String())
 		if err != nil {
 			return "", "", err

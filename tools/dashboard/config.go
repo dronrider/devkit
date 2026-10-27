@@ -24,6 +24,13 @@ const (
 	// котором ход не шёл трое суток, дашборд снимает сам (chatidle.go). Умолчание
 	// названо в README, раздел «Конфиг».
 	chatIdleDefault = 72 * time.Hour
+	// Умолчания напоминания по сроку (remind.go): девятый час это уже не
+	// утренняя свалка и ещё не полдень, окно двух дней даёт «завтра» и «сегодня»,
+	// а дальше строка висит просроченной и напоминает о себе каждым кругом.
+	// Умолчания называются здесь, а не в напоминании: конфиг собирается с ними,
+	// и читатель поля видит число сразу.
+	defaultRemindHour = 9
+	defaultRemindDays = 2
 )
 
 type Config struct {
@@ -41,6 +48,14 @@ type Config struct {
 	// catchup_interval, catchup.go). Ноль значит «ключа не было», и работает
 	// умолчание.
 	CatchupInterval time.Duration
+	// RemindHour это час дневного напоминания по сроку (ключ remind_hour,
+	// remind.go). Собирается с умолчанием, поэтому в поле лежит рабочее
+	// значение, а не признак отсутствия ключа.
+	RemindHour int
+	// RemindDays это окно напоминания в днях до срока (ключ remind_days,
+	// remind.go), включая просроченные. Ноль осмыслен: напоминать только в сам
+	// день срока.
+	RemindDays int
 	// Ошибки наполнения, с которыми сервер живёт: их называют старт в журнале
 	// и /healthz, потому что молчание тут неотличимо от «проектов нет».
 	Errs []string
@@ -65,7 +80,8 @@ func expandHome(home, p string) string {
 // секрет родится сам, а пустой список корней уже назван в Errs. Файл с
 // правами шире 600 это ошибка: в нём секрет входа.
 func LoadConfig(home string) (*Config, error) {
-	cfg := &Config{Path: confPath(home), Home: home, Port: defaultPort}
+	cfg := &Config{Path: confPath(home), Home: home, Port: defaultPort,
+		RemindHour: defaultRemindHour, RemindDays: defaultRemindDays}
 	data, err := os.ReadFile(cfg.Path)
 	if os.IsNotExist(err) {
 		cfg.noRoots()
@@ -116,8 +132,20 @@ func LoadConfig(home string) (*Config, error) {
 				return nil, fmt.Errorf("%s:%d: ключ catchup_interval: %v", cfg.Path, i+1, err)
 			}
 			cfg.CatchupInterval = d
+		case "remind_hour":
+			h, err := strconv.Atoi(val)
+			if err != nil || h < 0 || h > 23 {
+				return nil, fmt.Errorf("%s:%d: ключ remind_hour: час %q не число 0..23", cfg.Path, i+1, val)
+			}
+			cfg.RemindHour = h
+		case "remind_days":
+			n, err := strconv.Atoi(val)
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("%s:%d: ключ remind_days: число дней %q не читается либо отрицательно, жду 0 и больше", cfg.Path, i+1, val)
+			}
+			cfg.RemindDays = n
 		default:
-			return nil, fmt.Errorf("%s:%d: незнакомый ключ %q, жду root / addr / port / token / chat_idle / catchup_interval", cfg.Path, i+1, key)
+			return nil, fmt.Errorf("%s:%d: незнакомый ключ %q, жду root / addr / port / token / chat_idle / catchup_interval / remind_hour / remind_days", cfg.Path, i+1, key)
 		}
 	}
 	if len(cfg.Roots) == 0 {

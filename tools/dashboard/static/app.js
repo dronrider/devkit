@@ -15447,7 +15447,11 @@ function draftRow(project, d) {
   const { cell: ttc, box: tt } = tblCell("dtt");
   tt.append(withFull(el("span", "st", d.title || ""), d.title || ""));
   const chips = [];
-  if (d.deferred) chips.push(el("span", "chip", "отложен " + d.deferred));
+  // Дата возврата стоит в той же приписке: пометка в файле одна, и вилкой
+  // «отложен» с датой и «отложен» без неё список разбирался бы хуже, чем файл.
+  if (d.deferred) {
+    chips.push(el("span", "chip", "отложен " + d.deferred + (d.deferred_until ? " до " + d.deferred_until : "")));
+  }
   // Разбор спросил и ждёт ответа: признак тот же и теми же словами, что у
   // строки доски, своего у накопителя нет.
   const waits = waitChip(d);
@@ -17439,6 +17443,42 @@ function flashWorthy(n, since, onFeed) {
     && n.sent && n.level === "громкий";
 }
 
+// Браузерное уведомление о сроке (DK-1466): напоминание по сроку ложится в
+// ленту фоновым уровнем, и системного баннера у него нет, а срок имеет смысл
+// и из другого окна. Поэтому свежее событие task_due дублируется уведомлением
+// самого браузера, включается оно вручную на экране ленты: запрос разрешения
+// со старта страницы браузеры бракуют, и человек сам решает, что дашборд
+// может звать его мимо вкладки. Выбор живёт в localStorage тем же порядком,
+// что остальные переключатели страницы.
+const BELL_DUE_KEY = "bell.due";
+
+function bellDueOn() {
+  return localStorage.getItem(BELL_DUE_KEY) === "1";
+}
+
+// Показ идёт только на фоне: окно в фокусе уже несёт всплывающую карточку и
+// строку ленты, вторая копия у системной панели была бы спамом. Окно другой
+// вкладки фокуса не имеет, и уведомление доходит именно туда.
+function bellDueShow(n) {
+  if (!bellDueOn() || !n || n.reason !== "task_due") return;
+  if (document.hasFocus()) return;
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    const note = new Notification(n.title || "срок строки доски", { body: n.body || "", tag: "task-due" });
+    // Тап возвращает на ленту проекта, чей срок прозвенел: адрес тот же, что у
+    // карточки, второй маршрут заводить незачем.
+    note.addEventListener("click", () => {
+      window.focus();
+      goKeepingChat((n.project || route().proj) + "/feed");
+      note.close();
+    });
+  } catch (err) {
+    // Встроенные окна и просмотрщики без полного Notification падают на
+    // конструкторе: уведомление там не состоится, лента остаётся строками.
+    console.warn("браузерное уведомление не поднялось", err);
+  }
+}
+
 // Событие уведомителя это и повод перечитать открытый список задач: статус
 // строки двигает агент у себя, и до списка это доезжало только по фокусу окна,
 // то есть после ухода из окна и обратно. Постоянного опроса при этом не
@@ -17465,7 +17505,10 @@ function wireFlash() {
     // Хвост журнала, который сервер отдаёт при подключении, доску не дёргает:
     // перечитывать её на каждое вчерашнее событие значило бы гонять taskctl
     // пачкой на ровном месте.
-    if (Boolean(n && n.time) && n.time > flashSince) boardEcho(n);
+    if (Boolean(n && n.time) && n.time > flashSince) {
+      boardEcho(n);
+      bellDueShow(n);
+    }
     if (!Boolean(n && n.time) || n.time <= flashSince) return;
     // Отбор карточки идёт до движения курсора потока: курсор и точка
     // колокольчика идут любым свежим событием, а не только всплывшим, иначе
@@ -17497,6 +17540,31 @@ function renderFeed(project) {
   knob.addEventListener("click", () => { info.classList.toggle("on"); });
   info.append(knob, el("div", "tipbox", "На этом экране отображаются все уведомления от агентов"));
   head.append(info);
+  // Переключатель браузерных уведомлений о сроке стоит здесь же: экран ленты
+  // это то место, где человек видит, какие события приходят, и решает, какие
+  // из них должны догонять его мимо вкладки.
+  const bell = el("button", "btn btn-sm");
+  const bellWord = () => (bellDueOn() ? "срок в браузере: вкл" : "срок в браузере: выкл");
+  bell.textContent = bellWord();
+  bell.addEventListener("click", async () => {
+    if (bellDueOn()) {
+      localStorage.setItem(BELL_DUE_KEY, "0");
+      bell.textContent = bellWord();
+      return;
+    }
+    if (!("Notification" in window)) {
+      bell.textContent = "браузер не умеет уведомления";
+      return;
+    }
+    const verdict = await Notification.requestPermission();
+    if (verdict !== "granted") {
+      bell.textContent = "браузер запретил уведомления";
+      return;
+    }
+    localStorage.setItem(BELL_DUE_KEY, "1");
+    bell.textContent = bellWord();
+  });
+  head.append(bell);
   const chips = el("div", "filters");
   const list = el("div", "ngroups");
   groups.append(head, chips, list);

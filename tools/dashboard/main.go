@@ -341,6 +341,9 @@ func cmdServe(home, staticDir string) error {
 	// Догон досок из origin (catchup.go): правки доски с другой машины видны
 	// без ручного git pull, гарды держат локальную работу (DK-1414).
 	go srv.boardCatchupKeeper(keeperStop)
+	// Напоминание по сроку (remind.go): раз в день демон кладёт в ленту
+	// уведомлений строки со сроком на ближайшие дни (DK-1466).
+	go srv.dueRemindKeeper(keeperStop)
 	for _, e := range cfg.Errs {
 		logf("конфиг: %s", e)
 	}

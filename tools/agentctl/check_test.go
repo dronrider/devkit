@@ -29,12 +29,11 @@ func devStage(t *testing.T, root, id, model string) {
 	}
 }
 
-// TestCmdCheckStepsOverDevModel: сценарий прогоняет не автор правки, и на
-// задаче ценой M вердикт роли ревью приходит тем же ярусом base, каким шла
-// разработка. Расчёт проверяющего обязан поднять ступень, иначе поднятый по
-// нему субагент отработает впустую, а taskctl close его прогон отобьёт
-// (DK-1116).
-func TestCmdCheckStepsOverDevModel(t *testing.T) {
+// TestCmdCheckKeepsTierOnSameDevModel: совпадение с моделью разработки ярус
+// не двигает (DK-1360): независимость несёт отдельная сессия прогона, и та же
+// модель разрешена. Расчёт называет модель разработки для сведения, а заказ
+// проверяющему напоминает про свежий разговор.
+func TestCmdCheckKeepsTierOnSameDevModel(t *testing.T) {
 	isolateQuota(t)
 	root := writeBoard(t)
 	devStage(t, root, "T-007", "sonnet")
@@ -42,10 +41,13 @@ func TestCmdCheckStepsOverDevModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check T-007: %v", err)
 	}
-	for _, want := range []string{"model: opus", "tier: pro", "ярус base поднят ступенью до pro", "разработку вёл sonnet"} {
+	for _, want := range []string{"model: sonnet", "tier: base", "разработку вёл sonnet"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("в расчёте нет %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "ступенью") {
+		t.Fatalf("совпадение моделей подняло ступень:\n%s", out)
 	}
 }
 
@@ -81,10 +83,26 @@ func TestCmdCheckWithoutDevRecord(t *testing.T) {
 	}
 }
 
-// Лестница исчерпана: разработку вела модель верхнего яруса, поднимать другой
-// некем, и команда отказывает вместо того, чтобы назвать автора правки.
-func TestCmdCheckRefusesOnExhaustedLadder(t *testing.T) {
+// Машинный конфиг называет все четыре яруса, и «модели яруса нет» выражается
+// via-ступенью недопущенного владельца: отбор снимает её, и ярус в лестнице
+// недоступен (DK-1453). Ни одной допущенной модели яруса и выше не осталось:
+// расчёт отказывает словами, а не выбором мимо допуска.
+func TestCmdCheckRefusesWhenAdmittedLadderExhausted(t *testing.T) {
 	isolateQuota(t)
+	setupLadder(t, `default = "claude-code"
+enabled = ["claude-code", "routerai"]
+[claude-code]
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "routerai:route-max"
+[routerai]
+mini = "route-mini"
+base = "route-base"
+pro = "route-pro"
+max = "route-max"
+`)
+	copyProfile(t, "routerai.toml")
 	root := writeBoard(t)
 	devStage(t, root, "T-007", "fable")
 	doc := "# T-007\n\nМодель: max\n\n## Ход работы\n\n"
@@ -93,41 +111,59 @@ func TestCmdCheckRefusesOnExhaustedLadder(t *testing.T) {
 	}
 	_, err := cmdCheck(root, "T-007")
 	if err == nil {
-		t.Fatal("расчёт на исчерпанной лестнице обязан отказывать")
+		t.Fatal("исчерпанная лестница обязана отказывать")
 	}
-	for _, want := range []string{"прогонять некем", "fable", "ступени выше"} {
+	for _, want := range []string{"прогонять некем", "яруса max", "ключом auto"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("в отказе нет %q: %v", want, err)
 		}
 	}
+	if strings.Contains(err.Error(), "routerai") {
+		t.Fatalf("отказ обошёлся запрещённой подпиской: %v", err)
+	}
 }
 
-func TestCmdCheckChangesEnabledHarnessForIndependence(t *testing.T) {
-	setupLadder(t, `default = "claude-code"
-enabled = ["glm-code", "claude-code"]
-auto = ["glm-code"]
+// TestCmdCheckTakesNextLadderOnMissingTierModel: ярус base активной подписки
+// это via-ступень недопущенного владельца, и отбор снимает её; модель яруса
+// берётся из следующей допущенной подписки тем же ярусом, без ступени вверх.
+// Совпадение с моделью разработки здесь ни при чём: дорога одна и без него
+// (DK-1360).
+func TestCmdCheckTakesNextLadderOnMissingTierModel(t *testing.T) {
+	setupLadder(t, `default = "glm-code"
+enabled = ["glm-code", "claude-code", "routerai"]
+auto = ["glm-code", "claude-code"]
 [glm-code]
 mini = "glm-5.3"
-base = "glm-5.3"
+base = "routerai:route-base"
 pro = "glm-5.3"
 max = "glm-5.3"
 [claude-code]
-mini = "z-ai/glm-5.3"
-base = "z-ai/glm-5.3"
-pro = "sonnet"
-max = "opus"
+mini = "haiku"
+base = "sonnet"
+pro = "opus"
+max = "fable"
+[routerai]
+mini = "route-mini"
+base = "route-base"
+pro = "route-pro"
+max = "route-max"
 `)
+	copyProfile(t, "routerai.toml")
 	t.Setenv("DEVKIT_HARNESS", "glm-code")
 	root := writeBoard(t)
-	devStage(t, root, "T-007", "glm-5.3")
+	devStage(t, root, "T-007", "sonnet")
 	out, err := cmdCheck(root, "T-007")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"model: sonnet", "tier: pro", "harness: claude-code", "подписка claude-code"} {
+	for _, want := range []string{"model: sonnet", "tier: base", "harness: claude-code",
+		"модель яруса в текущей лестнице недоступна", "разработку вёл sonnet"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("нет %s: %s", want, out)
 		}
+	}
+	if strings.Contains(out, "ступенью") {
+		t.Fatalf("переход между лестницами поднял ступень:\n%s", out)
 	}
 }
 
@@ -191,9 +227,10 @@ func TestTaskHarnessPolicy(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Ярус вердикта base у claude-code это sonnet, он же вёл разработку:
-		// ступень до pro, а routerai в отборе нет вовсе.
-		for _, want := range []string{"model: opus", "tier: pro", "harness: claude-code"} {
+		// Активная routerai в отбор допуска не входит: носителем встаёт первая
+		// допущенная лестница. Совпадение с моделью разработки ярус не
+		// двигает (DK-1360): независимость несёт сессия прогона.
+		for _, want := range []string{"model: sonnet", "tier: base", "harness: claude-code"} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("нет %s: %s", want, out)
 			}
@@ -220,7 +257,26 @@ func TestTaskHarnessPolicy(t *testing.T) {
 	})
 
 	t.Run("исчерпанные допущенные дают отказ, а не обход запрета", func(t *testing.T) {
-		setupPolicy(t, "")
+		setupLadder(t, `default = "claude-code"
+enabled = ["glm-code", "claude-code", "routerai"]
+auto = ["glm-code", "claude-code"]
+[glm-code]
+mini = "glm-5.3"
+base = "glm-5.3"
+pro = "glm-5.3"
+max = "routerai:route-max"
+[claude-code]
+mini = "sonnet"
+base = "sonnet"
+pro = "opus"
+max = "routerai:route-max"
+[routerai]
+mini = "route-mini"
+base = "route-base"
+pro = "route-pro"
+max = "route-max"
+`)
+		copyProfile(t, "routerai.toml")
 		root := writeBoard(t)
 		devStage(t, root, "T-007", "fable")
 		doc := "# T-007\n\nМодель: max\n\n## Ход работы\n\n"
@@ -231,7 +287,12 @@ func TestTaskHarnessPolicy(t *testing.T) {
 		if err == nil {
 			t.Fatal("исчерпанная лестница обязана отказывать")
 		}
-		if !strings.Contains(err.Error(), "прогонять некем") || strings.Contains(err.Error(), "routerai") {
+		for _, want := range []string{"прогонять некем", "яруса max"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("в отказе нет %q: %v", want, err)
+			}
+		}
+		if strings.Contains(err.Error(), "routerai") {
 			t.Fatalf("отказ обошёлся запрещённой подпиской: %v", err)
 		}
 	})

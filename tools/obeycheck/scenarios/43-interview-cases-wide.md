@@ -1,7 +1,7 @@
 # сценарии с разными потребителями выбираются единым списком
 
 конец: любой
-предмет: kit/skills/interview/SKILL.md «Первый раунд: сценарии»; kit/skills/interview/SKILL.md «Раунд»; TASKFORM.md «Файл задачи»
+предмет: kit/skills/interview/SKILL.md «Первый раунд: сценарии»; kit/skills/interview/SKILL.md «Раунд»; kit/skills/interview/scenarios.md «Создание и ответ»; TASKFORM.md «Файл задачи»
 
 ## Подготовка
 

@@ -463,6 +463,18 @@ while True:
         if lap:
             time.sleep(lap)
         watch("done")
+        gap = float(os.environ.get("DEVKIT_TEST_WORK_SECOND_GAP") or 0)
+        if gap:
+            # Работа вернулась из другого окна сессии позже своего конца и
+            # позже зова тишины. Второй её срок задаёт
+            # DEVKIT_TEST_WORK_SECOND_LAP, и конца второго голова отметкой
+            # тоже не ждёт (DK-1463, замечание ревью).
+            time.sleep(gap)
+            watch("running")
+            lap2 = float(os.environ.get("DEVKIT_TEST_WORK_SECOND_LAP") or 0)
+            if lap2:
+                time.sleep(lap2)
+            watch("done")
         if os.environ.get("DEVKIT_TEST_WORK_WAKE", "1") != "0":
             mark("начат")
             mark("кончен")
@@ -1384,6 +1396,24 @@ class TestLiveHead(unittest.TestCase):
         gone = datetime.strptime(work.split("\t", 1)[0], task_run.STAMP)
         self.assertGreaterEqual((wake - gone).total_seconds(), 3.0,
                                 "зов тишины пришёл раньше конца работы")
+
+    def test_silence_before_late_work_keeps_both_windows(self):
+        # Довооружение DK-1463 по ревью: зов тишины сработал до появления
+        # работы, а работа пришла из другого окна сессии, простояла дольше
+        # срока того зова и кончилась без зова головы. Оба окна считаются от
+        # конца этой работы: зов повторяется заново, а срок, данный до
+        # работы, до её конца не доживает.
+        s = self.stand(plan="субагенты", pause="1")
+        got = s.run(extra={"DEVKIT_TASK_STARTUP": "2",
+                           "DEVKIT_TEST_WORK_LAP": "1",
+                           "DEVKIT_TEST_WORK_WAKE": "0",
+                           "DEVKIT_TEST_WORK_SECOND_GAP": "3",
+                           "DEVKIT_TEST_WORK_SECOND_LAP": "4"})
+        self.assertEqual(got.returncode, 1, s.why(got))
+        said = [l for l in s.journal() if "не начался: проверь" in l]
+        self.assertEqual(len(said), 2, s.journal())
+        self.assertTrue([l for l in s.journal() if "окно снято, замок освобождён" in l],
+                        s.journal())
 
     def test_waiting_head_lives_three_passes(self):
         # Предмет DK-899. Ход кончился отчётом об ожидании машинного события,

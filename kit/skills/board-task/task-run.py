@@ -1715,10 +1715,15 @@ class Pipeline:
                 # субагент и фоновая команда идут дольше окна тишины, и молчание
                 # при них не замерзание. Окна тишины считаются от конца работы:
                 # не разбудившийся после неё клиент получает оба окна, как и не
-                # поднявшийся вовсе (DK-1463).
+                # поднявшийся вовсе (DK-1463). Зов и срок, сработавшие до
+                # появления работы, работа снимает: оба окна стартуют от её
+                # конца, а не доживают свой старый срок.
                 self.beat()
                 if work:
                     started = mute = time.time()
+                    said = False
+                    due.pop("startup", None)
+                    due.pop("mute", None)
             else:
                 quiet = time.time() - mute > self.secs(MUTE_ENV, MUTE_SECONDS)
                 startup = not begun and time.time() - started > self.secs(

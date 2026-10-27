@@ -237,3 +237,62 @@ func TestInterviewScenarioChecks(t *testing.T) {
 		}
 	}
 }
+
+func TestInterviewDecideBlockHeadless(t *testing.T) {
+	devkit := devkitRoot(t)
+	list, err := loadScenarios(filepath.Join(devkit, "tools", "obeycheck", "scenarios"), devkit, []string{"43-interview-decide-block"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := list[0]
+	for _, name := range []string{"DEVKIT_HEADLESS", "DEVKIT_RUN_DEPTH", "DEVKIT_TMUX"} {
+		t.Setenv(name, "parent-session")
+	}
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "sdk-py")
+	e := &runEnv{Home: t.TempDir(), Project: t.TempDir()}
+	env := append(e.environ(devkit, "fixture", s.ID, 1), s.Env...)
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "taskctl")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Dir = filepath.Join(devkit, "tools", "taskctl")
+	build.Env = append(os.Environ(), "GOWORK=off")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("taskctl: %v\n%s", err, out)
+	}
+	env = append(env, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Dir, cmd.Env = e.Project, env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	run("init", "--prefix", "OB")
+	setup := exec.Command("sh", "-eu", "-c", s.Setup)
+	setup.Dir, setup.Env = e.Project, env
+	if out, err := setup.CombinedOutput(); err != nil {
+		t.Fatalf("подготовка: %v\n%s", err, out)
+	}
+	out := run("decide", "OB-004", "--chat")
+	for _, want := range []string{
+		"заход поднят автоматикой, DEVKIT_HEADLESS=obeycheck",
+		"«формат»: Каким форматом уходит отчёт смежнику?",
+		"«срок»: Когда отчёт уходит?",
+		"ответ строкой:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("нет %q в печатном блоке:\n%s", want, out)
+		}
+	}
+	for _, n := range []string{"1. ", "2. ", "3. "} {
+		if count := strings.Count(out, "\n"+n); count != 2 {
+			t.Errorf("позиция %s встретилась %d раз вместо двух:\n%s", n, count, out)
+		}
+	}
+	if strings.Contains(out, "у экрана человек") || strings.Contains(out, "те же варианты идут диалогом") {
+		t.Fatalf("сценарий запросил диалог вместо печатного блока:\n%s", out)
+	}
+}

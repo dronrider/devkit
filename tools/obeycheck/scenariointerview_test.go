@@ -26,6 +26,19 @@ func TestInterviewScenarioChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, s := range list {
+		section := "Заданный состав и продолжение"
+		if strings.HasPrefix(s.ID, "43-") {
+			section = "Создание и ответ"
+		}
+		support := false
+		for _, subject := range s.Subjects {
+			if subject.Path == "kit/skills/interview/scenarios.md" && subject.Section == section {
+				support = true
+			}
+		}
+		if !support {
+			t.Fatalf("%s не покрывает раздел вспомогательного файла «%s»", s.ID, section)
+		}
 		states := []string{"исходная", "пустая", "работает", "без реплики", "старые составы"}
 		if strings.HasPrefix(s.ID, "43-") {
 			states = append(states, "карточки не доставлены")

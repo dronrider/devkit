@@ -1,7 +1,7 @@
 # заданный путь бага сохраняется без повторного выбора
 
 конец: любой
-предмет: kit/skills/interview/SKILL.md «Первый раунд: сценарии»; kit/skills/interview/SKILL.md «Кто спрашивает: человек или исполнитель»; TASKFORM.md «Файл задачи»
+предмет: kit/skills/interview/SKILL.md «Первый раунд: сценарии»; kit/skills/interview/SKILL.md «Кто спрашивает: человек или исполнитель»; kit/skills/interview/scenarios.md «Заданный состав и продолжение»; TASKFORM.md «Файл задачи»
 
 ## Подготовка
 

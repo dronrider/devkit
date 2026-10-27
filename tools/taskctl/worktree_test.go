@@ -74,7 +74,7 @@ func TestBoardGuardRefusesFromWorktree(t *testing.T) {
 		// накопитель общий и живёт в основном чекауте, а пометка, поставленная
 		// на фичеветке, основному чекауту не видна до слияния.
 		{"draft defer", func() (string, error) {
-			return cmdDraftDefer(wt, "XR-008", "причина из worktree", false, CommitOpts{})
+			return cmdDraftDefer(wt, "XR-008", "причина из worktree", "", false, CommitOpts{})
 		}},
 		{"draft attach", func() (string, error) { return cmdDraftAttach(wt, "XR-008", "XR-002", CommitOpts{}) }},
 		{"draft drop", func() (string, error) { return cmdDraftDrop(wt, "XR-008", "причина", CommitOpts{}) }},

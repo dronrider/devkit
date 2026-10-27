@@ -205,8 +205,10 @@ func findDraftFor(root, id string) (*Draft, error) {
 // cmdDraftDefer помечает черновик отложенным с причиной либо снимает пометку.
 // Живёт она в самом файле черновика: так она едет с ним в гит, видна человеку
 // без утилиты, а при оформлении переезжает в docs/tasks/<ID>.md вместе с
-// остальным текстом и остаётся историей разбора.
-func cmdDraftDefer(root, id, reason string, clear bool, c CommitOpts) (string, error) {
+// остальным текстом и остаётся историей разбора. Дата возврата --until ставит
+// пометке срок: в названный день черновик возвращается в очередь разбора сам,
+// и держать его отложенным дальше некому (DK-1466).
+func cmdDraftDefer(root, id, reason, until string, clear bool, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
 	}
@@ -217,8 +219,21 @@ func cmdDraftDefer(root, id, reason string, clear bool, c CommitOpts) (string, e
 	switch {
 	case clear && reason != "":
 		return "", fmt.Errorf("--clear снимает пометку целиком, причина ему не нужна")
+	case clear && until != "":
+		return "", fmt.Errorf("--clear снимает пометку целиком, --until ему не нужен")
 	case !clear && reason == "":
-		return "", fmt.Errorf("жду причину: taskctl draft defer %s \"чего ждём\" либо taskctl draft defer %s --clear", id, id)
+		return "", fmt.Errorf("жду причину: taskctl draft defer %s \"чего ждём\" [--until 2026-11-05] либо taskctl draft defer %s --clear", id, id)
+	}
+	if until != "" {
+		back, err := time.ParseInLocation(draftDateLayout, until, time.Local)
+		if err != nil {
+			return "", fmt.Errorf("--until %q не читается, жду дату YYYY-MM-DD", until)
+		}
+		n := timeNow()
+		today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, n.Location())
+		if back.Before(today) {
+			return "", fmt.Errorf("--until %s в прошлом: возврат работает вперёд, прошедшая дата вернула бы черновик в очередь сразу", until)
+		}
 	}
 	d, err := findDraftFor(root, id)
 	if err != nil {
@@ -243,8 +258,12 @@ func cmdDraftDefer(root, id, reason string, clear bool, c CommitOpts) (string, e
 		return fmt.Sprintf("%s: пометка снята%s", id, tail), nil
 	}
 	stamped := t.ensureWritten(d.Mod)
-	date := time.Now().Format(draftDateLayout)
-	t.setDefer(fmt.Sprintf("- %s, отложен: %s", date, reason))
+	date := timeNow().Format(draftDateLayout)
+	note := fmt.Sprintf("- %s, отложен", date)
+	if until != "" {
+		note += " до " + until
+	}
+	t.setDefer(note + ": " + reason)
 	if err := t.save(); err != nil {
 		return "", err
 	}
@@ -252,7 +271,11 @@ func cmdDraftDefer(root, id, reason string, clear bool, c CommitOpts) (string, e
 	if err != nil {
 		return "", err
 	}
-	msg := fmt.Sprintf("%s: отложен %s, причина в разделе «Грумминг» файла %s", id, date, filepath.ToSlash(rel))
+	msg := fmt.Sprintf("%s: отложен %s", id, date)
+	if until != "" {
+		msg += ", возвращается " + until
+	}
+	msg += fmt.Sprintf(", причина в разделе «Грумминг» файла %s", filepath.ToSlash(rel))
 	if stamped {
 		msg += fmt.Sprintf(", дата записи проставлена (%s)", d.Mod.Format(draftDateLayout))
 	}

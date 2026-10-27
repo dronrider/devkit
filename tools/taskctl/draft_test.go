@@ -301,7 +301,7 @@ func TestDraftListJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	ageDraft(t, root, "XR-008", 3)
-	if _, err := cmdDraftDefer(root, "XR-009", "ждёт решения по каналу", false, CommitOpts{}); err != nil {
+	if _, err := cmdDraftDefer(root, "XR-009", "ждёт решения по каналу", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	out, err = cmdDraftListJSON(root)

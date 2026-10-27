@@ -66,6 +66,9 @@ type jsonArm struct {
 	// State это разряд: «ждёт», «готова», «отказ», «рукой».
 	State string `json:"state"`
 	Note  string `json:"note"`
+	// At это назначенный час взвода форматом заголовка (решение 6 LLD
+	// DK-933): пусто у взвода без часового условия.
+	At string `json:"at,omitempty"`
 }
 
 func jsonArmOf(root string, ed *edges, r *Row) *jsonArm {
@@ -73,7 +76,7 @@ func jsonArmOf(root string, ed *edges, r *Row) *jsonArm {
 	if v == nil {
 		return nil
 	}
-	return &jsonArm{State: v.State, Note: v.Note}
+	return &jsonArm{State: v.State, Note: v.Note, At: v.At}
 }
 
 // jsonAdj это одна поправка машинным видом: имя с дельтой либо ссылка «от».
@@ -260,7 +263,10 @@ type jsonDraft struct {
 	AgeDays  int    `json:"age_days"`
 	AgeWords string `json:"age_words"`
 	Deferred string `json:"deferred,omitempty"`
-	Prio     string `json:"prio,omitempty"`
+	// DeferredUntil это дата возврата отложенного черновика (DK-1466): пусто
+	// у неотложенного и у отложенного без срока.
+	DeferredUntil string `json:"deferred_until,omitempty"`
+	Prio          string `json:"prio,omitempty"`
 }
 
 // cmdDraftListJSON печатает накопитель одним объектом JSON. Пустой накопитель
@@ -278,7 +284,7 @@ func cmdDraftListJSON(root string) (string, error) {
 		item := jsonDraft{
 			ID: d.ID, Title: d.Title, File: filepath.ToSlash(draftRel(d.ID)),
 			AgeDays: int(d.Age.Hours() / 24), AgeWords: ageWords(d.Age), Deferred: d.Deferred,
-			Prio: d.Prio,
+			DeferredUntil: d.Until, Prio: d.Prio,
 		}
 		if !d.Written.IsZero() {
 			item.Written = d.Written.Format(draftDateLayout)

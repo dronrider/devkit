@@ -10,24 +10,57 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dronrider/devkit/internal/attime"
 	"github.com/dronrider/devkit/internal/taskform"
 	"github.com/dronrider/devkit/internal/works"
 )
 
-// Взвод строки (LLD DK-933, решения 1, 3 и 5). Взвод это согласие человека на
+// Взвод строки (LLD DK-933, решения 1, 3, 5 и 6). Взвод это согласие человека на
 // то, что строка стартует сама, как только с неё сняты все рёбра «после».
 // Хранится согласие суффиксом «[взвод]» в заголовке, сразу за «[после ...]» и
 // до «[приёмка: ...]»: это такое же постоянное свойство строки, как ребро.
+// Часовая форма «[взвод: <время>]» добавляет к согласию срок: раньше
+// назначенного часа обход строку не поднимает.
 // Состояние взведённой строки не хранится нигде, его считают по требованию
 // `list`, `show` и хвост обхода ждущих: рёбра снимает та же функция, что у
 // ворот старта, а отказ ворот ёмкости лежит файлом в .devkit/arm.
 
-// armSufRe разбирает суффикс «[взвод]». Аргумент часа (решение 6, строка
-// DK-538) встанет сюда же, и до него суффикс идёт без содержимого.
-var armSufRe = regexp.MustCompile(`\s*\[взвод\]\s*$`)
+// armSufRe разбирает суффикс «[взвод]» и его часовую форму «[взвод: 2026-09-12
+// 02:00]» (решение 6). Час лежит в суффиксе абсолютным местным временем без
+// секунд: короткую форму «02:00» arm превращает в ближайший такой момент до
+// записи, и на доске стоит время, не зависящее от минуты чтения.
+var armSufRe = regexp.MustCompile(`\s*\[взвод(?:: ([^\]]+))?\]\s*$`)
 
 // armSuffix это сам суффикс с ведущим пробелом, как он ложится в заголовок.
 const armSuffix = " [взвод]"
+
+// armAtLayout это запись часа в суффиксе и в печати.
+const armAtLayout = "2006-01-02 15:04"
+
+// armSuffixAt собирает суффикс с часовым условием.
+func armSuffixAt(at time.Time) string {
+	return " [взвод: " + at.Format(armAtLayout) + "]"
+}
+
+// armHour это час взвода строки. Пустой суффикс и суффикс без часа дают нулевое
+// время, а час, который не разбирается, даёт ошибку: такой час в суффиксе
+// оказывается только правкой заголовка руками, и обход с печатью зовут её
+// словами, а не молчанием.
+func armHour(title string) (time.Time, bool, error) {
+	_, _, _, armSuf, _, _, _, _, _ := splitTitle(title)
+	if armSuf == "" {
+		return time.Time{}, false, nil
+	}
+	m := armSufRe.FindStringSubmatch(armSuf)
+	if m == nil || m[1] == "" {
+		return time.Time{}, false, nil
+	}
+	at, err := time.ParseInLocation(armAtLayout, m[1], time.Local)
+	if err != nil {
+		return time.Time{}, true, fmt.Errorf("час взвода %q не разобран, жду 2026-09-12 02:00", m[1])
+	}
+	return at, true, nil
+}
 
 // classArm это вид ждущих «взвод» в хвосте обхода (решение 5): строка Backlog,
 // которой человек разрешил стартовать самой.
@@ -221,6 +254,20 @@ func armedWaiters(root string, b *Board, arch *Archive) ([]waiter, []string) {
 			continue
 		}
 		live[r.ID] = true
+		// Часовое условие стоит раньше рёбер и ворот (решение 6): строка ждёт
+		// назначенного часа безусловно, и звонить по ней воротам ёмкости, пока
+		// он не наступил, незачем. Машина, проспавшая час, стреляет первым
+		// обходом после пробуждения: условие значит «не раньше», а не «ровно в».
+		at, hasAt, err := armHour(r.Title)
+		if err != nil {
+			out = append(out, waiter{ID: r.ID, Class: classArm, Said: err.Error()})
+			continue
+		}
+		if hasAt && timeNow().Before(at) {
+			out = append(out, waiter{ID: r.ID, Class: classArm,
+				Said: "ждёт часа " + at.Format(armAtLayout)})
+			continue
+		}
 		if ed == nil {
 			ed = newEdges(root, b, arch)
 		}
@@ -268,6 +315,10 @@ const (
 type armView struct {
 	State string
 	Note  string
+	// At это назначенный час взвода тем же форматом, каким он лежит в
+	// заголовке: машинному читателю он нужен для сортировки и подсветки, а
+	// словами его называет пометка.
+	At string
 }
 
 // armNote это пометка строки про взвод, какой её печатают `list` и `show`.
@@ -296,23 +347,43 @@ func armState(root string, ed *edges, r *Row) *armView {
 		}
 		return &armView{State: armHand, Note: "свободна, старт рукой"}
 	}
+	// Строка ждёт и рёбер, и назначенного часа: пометка называет оба, а разряд
+	// у ожидания один, человеку всё равно чего именно ждать.
+	var waits []string
+	var atSay string
 	if held := ed.held(r); len(held) > 0 {
-		return &armView{State: armWaits, Note: "взвод: " + armWaits + ", " + edgeWords(held)}
+		waits = append(waits, edgeWords(held))
+	}
+	at, hasAt, err := armHour(r.Title)
+	if err != nil {
+		waits = append(waits, err.Error())
+	} else if hasAt {
+		atSay = at.Format(armAtLayout)
+		if timeNow().Before(at) {
+			waits = append(waits, "час "+atSay)
+		}
+	}
+	if len(waits) > 0 {
+		return &armView{State: armWaits, Note: "взвод: " + armWaits + ", " + strings.Join(waits, ", "), At: atSay}
 	}
 	if ref, ok := readArmRefusal(root, r.ID); ok {
-		return &armView{State: armRefused, Note: fmt.Sprintf("взвод: %s, отказ %s, %s",
+		return &armView{State: armRefused, At: atSay, Note: fmt.Sprintf("взвод: %s, отказ %s, %s",
 			armReady, ref.When.Format("15:04"), ref.Why)}
 	}
-	return &armView{State: armReady, Note: "взвод: " + armReady}
+	return &armView{State: armReady, Note: "взвод: " + armReady, At: atSay}
 }
 
 // cmdArm ставит и снимает взвод. Взводится только строка Backlog, и только та,
 // которую без человека исполнителю отдать можно: открытая человеческая
 // развилка, грумминговый вердикт (неопределённость 4-5 либо цена XL) и состав
-// незакрытой цели взвод не получают (решение 1).
-func cmdArm(root, id string, off bool, c CommitOpts) (string, error) {
+// незакрытой цели взвод не получают (решение 1). Аргумент --at ставит часовое
+// условие (решение 6): строка стартует не раньше назначенного местного часа.
+func cmdArm(root, id, at string, off bool, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
+	}
+	if off && at != "" {
+		return "", fmt.Errorf("--at не сочетается с --off: снятие взвода убирает и час, ставьте взвод заново")
 	}
 	if err := boardGuard(root, "arm"); err != nil {
 		return "", err
@@ -341,7 +412,17 @@ func cmdArm(root, id string, off bool, c CommitOpts) (string, error) {
 		if err := armReadiness(root, b, row); err != nil {
 			return "", err
 		}
-		armSuf = armSuffix
+		// Короткая форма «02:00» разбирается общим с `agentctl wait час`
+		// пакетом attime и ложится на доску абсолютным временем (решение 6).
+		if at != "" {
+			t, err := attime.Parse(at, timeNow())
+			if err != nil {
+				return "", fmt.Errorf("--at: %v", err)
+			}
+			armSuf = armSuffixAt(t)
+		} else {
+			armSuf = armSuffix
+		}
 	}
 	row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, dueSuf, acceptSuf, failSuf, blockSuf)
 	b.updateLine(row.LineIdx, formatRow(row))
@@ -360,9 +441,20 @@ func cmdArm(root, id string, off bool, c CommitOpts) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	held := newEdges(root, b, arch).held(row)
-	if len(held) > 0 {
+	ed := newEdges(root, b, arch)
+	hourAt, hasAt, err := armHour(row.Title)
+	hourWord := ""
+	if err == nil && hasAt && timeNow().Before(hourAt) {
+		hourWord = hourAt.Format(armAtLayout)
+	}
+	held := ed.held(row)
+	switch {
+	case len(held) > 0 && hourWord != "":
+		return fmt.Sprintf("%s: взвод стоит, ждёт %s, час %s%s", id, edgeWords(held), hourWord, tail), nil
+	case len(held) > 0:
 		return fmt.Sprintf("%s: взвод стоит, ждёт %s%s", id, edgeWords(held), tail), nil
+	case hourWord != "":
+		return fmt.Sprintf("%s: взвод стоит, рёбра сняты, ждёт часа %s%s", id, hourWord, tail), nil
 	}
 	return fmt.Sprintf("%s: взвод стоит, рёбра сняты, поднимет ближайший обход%s", id, tail), nil
 }

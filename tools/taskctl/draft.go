@@ -30,7 +30,11 @@ type Draft struct {
 	Written  time.Time
 	Mod      time.Time
 	Deferred string // дата пометки «отложен», пусто у неотложенного
-	Prio     string // уровень разбора high / mid / low, пусто у немаркированного
+	// Until это дата возврата из пометки «отложен до ...», пусто у отложенного
+	// без срока. Наступившая дата возврата в loadDrafts снимает пометку с
+	// черновика целиком: он возвращается в очередь разбора тем же днём.
+	Until string
+	Prio  string // уровень разбора high / mid / low, пусто у немаркированного
 }
 
 const (
@@ -89,8 +93,11 @@ func draftTextGuard(text string) error {
 		"  записать идею: taskctl draft \"текст идеи\"; если слово и есть весь текст, передай его на stdin", word)
 }
 
-// deferRe находит строку пометки в разделе «Грумминг»: «- 2026-08-05, отложен: ...»
-var deferRe = regexp.MustCompile(`^-\s*(\d{4}-\d{2}-\d{2}),\s*отложен`)
+// deferRe находит строку пометки в разделе «Грумминг»: «- 2026-08-05, отложен:
+// ...» без срока возврата и «- 2026-08-05, отложен до 2026-09-01: ...» с ним
+// (DK-1466). Дата возврата это часть пометки, а не отдельная строка: пометка
+// одна, и раздел «Грумминг» остаётся журналом одного откладывания.
+var deferRe = regexp.MustCompile(`^-\s*(\d{4}-\d{2}-\d{2}),\s*отложен(?:\s+до\s+(\d{4}-\d{2}-\d{2}))?`)
 
 func draftsDir(root string) string     { return filepath.Join(root, "docs", "tasks", "drafts") }
 func draftPath(root, id string) string { return filepath.Join(draftsDir(root), id+".md") }
@@ -106,7 +113,7 @@ func loadDrafts(root string) ([]Draft, error) {
 		}
 		return nil, err
 	}
-	now := time.Now()
+	now := timeNow()
 	var out []Draft
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
@@ -123,7 +130,14 @@ func loadDrafts(root string) ([]Draft, error) {
 			d.Mod = info.ModTime()
 		}
 		meta := parseDraftFile(d.Path)
-		d.Title, d.Written, d.Deferred, d.Prio = meta.Title, meta.Written, meta.Deferred, meta.Prio
+		d.Title, d.Written, d.Deferred, d.Until, d.Prio = meta.Title, meta.Written, meta.Deferred, meta.Until, meta.Prio
+		// Отложенный до даты возвращается тем же днём: пометка больше не
+		// держит очередь, и накопитель видит черновик как неотложенный. День
+		// сравнивается, а не мгновение: «до 2026-09-01» значит весь этот день.
+		if back, err := time.ParseInLocation(draftDateLayout, d.Until, now.Location()); err == nil &&
+			!now.Before(back) {
+			d.Deferred, d.Until = "", ""
+		}
 		// Возраст от времени правки сбивает любая запись в файл, начиная с
 		// первой же пометки, а заодно свежий клон и shipctl start со своим
 		// worktree. Строка «записан» этого не боится, и фолбэк остаётся только
@@ -174,11 +188,12 @@ func findDraft(drafts []Draft, id string) *Draft {
 }
 
 // draftMeta это то, что читается из самого файла черновика: заголовок, дата
-// записи, дата пометки об отложенном и уровень разбора.
+// записи, даты пометки об отложенном и уровень разбора.
 type draftMeta struct {
 	Title    string
 	Written  time.Time
 	Deferred string
+	Until    string
 	Prio     string
 }
 
@@ -212,6 +227,7 @@ func parseDraftFile(path string) draftMeta {
 		case groom && m.Deferred == "":
 			if g := deferRe.FindStringSubmatch(ln); g != nil {
 				m.Deferred = g[1]
+				m.Until = g[2]
 			}
 		case intro && m.Prio == "" && strings.HasPrefix(ln, draftPrioPrefix):
 			m.Prio = draftPrioKeys[strings.TrimSpace(strings.TrimPrefix(ln, draftPrioPrefix))]
@@ -379,8 +395,8 @@ func cmdDraftList(root string) (string, error) {
 
 // draftAgeWords собирает пометки в скобках строки накопителя: возраст, уровень
 // разбора и «отложен». Печатают их draft list и хвост list одними и теми же
-// словами, чтобы заход по накопителю не расходился сам с собой; дата у
-// «отложен» едет только в полный список, хвосту хватает слова.
+// словами, чтобы заход по накопителю не расходился сам с собой; даты у
+// «отложен» едут только в полный список, хвосту хватает слова.
 func draftAgeWords(d Draft, withDate bool) string {
 	age := ageWords(d.Age)
 	if p := draftPrioWords[d.Prio]; p != "" {
@@ -390,6 +406,9 @@ func draftAgeWords(d Draft, withDate bool) string {
 		age += ", отложен"
 		if withDate {
 			age += " " + d.Deferred
+			if d.Until != "" {
+				age += " до " + d.Until
+			}
 		}
 	}
 	return age

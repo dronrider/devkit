@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dronrider/devkit/internal/taskform"
 )
@@ -82,7 +83,7 @@ func TestArmPutsSuffixInItsPlace(t *testing.T) {
 	if _, err := cmdSet(root, SetParams{ID: "XR-003", Accept: acceptUser}); err != nil {
 		t.Fatal(err)
 	}
-	msg, err := cmdArm(root, "XR-003", false, CommitOpts{})
+	msg, err := cmdArm(root, "XR-003", "", false, CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,16 +94,16 @@ func TestArmPutsSuffixInItsPlace(t *testing.T) {
 	if got := armTitle(t, root, "XR-003"); !strings.Contains(got, want) {
 		t.Fatalf("суффикс встал не на своё место: %q, жду %q", got, want)
 	}
-	if _, err := cmdArm(root, "XR-003", false, CommitOpts{}); err == nil {
+	if _, err := cmdArm(root, "XR-003", "", false, CommitOpts{}); err == nil {
 		t.Fatal("второй взвод подряд должен падать")
 	}
-	if _, err := cmdArm(root, "XR-003", true, CommitOpts{}); err != nil {
+	if _, err := cmdArm(root, "XR-003", "", true, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := armTitle(t, root, "XR-003"); strings.Contains(got, "[взвод]") {
 		t.Fatalf("--off не снял взвод: %q", got)
 	}
-	if _, err := cmdArm(root, "XR-003", true, CommitOpts{}); err == nil {
+	if _, err := cmdArm(root, "XR-003", "", true, CommitOpts{}); err == nil {
 		t.Fatal("снятие взвода с невзведённой строки должно падать")
 	}
 }
@@ -112,21 +113,21 @@ func TestArmPutsSuffixInItsPlace(t *testing.T) {
 // XL) и строка из состава незакрытой цели.
 func TestArmRefusesWhatExecutorCannotTake(t *testing.T) {
 	root := armStand(t, 3)
-	if _, err := cmdArm(root, "XR-005", false, CommitOpts{}); err == nil ||
+	if _, err := cmdArm(root, "XR-005", "", false, CommitOpts{}); err == nil ||
 		!strings.Contains(err.Error(), "взводится только строка Backlog") {
 		t.Fatalf("строка In progress взведена: %v", err)
 	}
 	if _, err := cmdSet(root, SetParams{ID: "XR-001", Rank: "25+2+4+0+2"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdArm(root, "XR-001", false, CommitOpts{}); err == nil ||
+	if _, err := cmdArm(root, "XR-001", "", false, CommitOpts{}); err == nil ||
 		!strings.Contains(err.Error(), "неопределённостью 4") {
 		t.Fatalf("строка с неопределённостью 4 взведена: %v", err)
 	}
 	if _, err := cmdSet(root, SetParams{ID: "XR-002", Cost: "XL"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdArm(root, "XR-002", false, CommitOpts{}); err == nil ||
+	if _, err := cmdArm(root, "XR-002", "", false, CommitOpts{}); err == nil ||
 		!strings.Contains(err.Error(), "ценой XL") {
 		t.Fatalf("строка ценой XL взведена: %v", err)
 	}
@@ -134,7 +135,7 @@ func TestArmRefusesWhatExecutorCannotTake(t *testing.T) {
 	if err := os.WriteFile(taskFilePath(root, "XR-003"), []byte(fork), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdArm(root, "XR-003", false, CommitOpts{}); err == nil ||
+	if _, err := cmdArm(root, "XR-003", "", false, CommitOpts{}); err == nil ||
 		!strings.Contains(err.Error(), "открытых развилок 1") {
 		t.Fatalf("строка с человеческой развилкой взведена: %v", err)
 	}
@@ -148,7 +149,7 @@ func TestArmRefusesWhatExecutorCannotTake(t *testing.T) {
 		[]byte("# XR-004\n\nЦель: [tasks/XR-002.md](tasks/XR-002.md)\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdArm(root, "XR-004", false, CommitOpts{}); err == nil ||
+	if _, err := cmdArm(root, "XR-004", "", false, CommitOpts{}); err == nil ||
 		!strings.Contains(err.Error(), "из состава незакрытой цели XR-002") {
 		t.Fatalf("строка цели взведена: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestArmedChainStartsByMerges(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"XR-003", "XR-004"} {
-		if _, err := cmdArm(root, id, false, CommitOpts{}); err != nil {
+		if _, err := cmdArm(root, id, "", false, CommitOpts{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -227,7 +228,7 @@ func TestArmedRowWaitsRevertAndFail(t *testing.T) {
 	if _, err := cmdDepAdd(root, DepParams{ID: "XR-003", DepID: "XR-005"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdArm(root, "XR-003", false, CommitOpts{}); err != nil {
+	if _, err := cmdArm(root, "XR-003", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	mergeWork(t, root, "XR-005")
@@ -272,7 +273,7 @@ func TestArmedRowStartsWhilePrereqReturnedFromCheck(t *testing.T) {
 	if _, err := cmdDepAdd(root, DepParams{ID: "XR-003", DepID: "XR-005"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdArm(root, "XR-003", false, CommitOpts{}); err != nil {
+	if _, err := cmdArm(root, "XR-003", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	mergeWork(t, root, "XR-005")
@@ -301,7 +302,7 @@ func TestListTellsArmedFromIdle(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := cmdArm(root, "XR-003", false, CommitOpts{}); err != nil {
+	if _, err := cmdArm(root, "XR-003", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	out, err := cmdList(root, SectBacklog, false)
@@ -338,7 +339,7 @@ func TestArmCapacityRefusalCallsOnce(t *testing.T) {
 	root := armStand(t, 0)
 	callLog := writeNotifyStub(t, root, 0)
 	calls := recordRaise(t)
-	if _, err := cmdArm(root, "XR-003", false, CommitOpts{}); err != nil {
+	if _, err := cmdArm(root, "XR-003", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	out, _, err := cmdWake(root, nil, wakeOpts{})
@@ -409,7 +410,7 @@ func notifyCalls(t *testing.T, callLog string) []string {
 // Backlog строка по старому согласию сама не стартует.
 func TestMoveOutOfBacklogDisarms(t *testing.T) {
 	root := armStand(t, 0)
-	if _, err := cmdArm(root, "XR-003", false, CommitOpts{}); err != nil {
+	if _, err := cmdArm(root, "XR-003", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := cmdWake(root, nil, wakeOpts{}); err != nil {
@@ -546,7 +547,7 @@ func TestArmStateRidesJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := cmdArm(root, "XR-003", false, CommitOpts{}); err != nil {
+	if _, err := cmdArm(root, "XR-003", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -589,7 +590,7 @@ func TestArmStateRidesJSON(t *testing.T) {
 
 	// Снятый взвод оставляет строку со снятыми рёбрами свободной, и снаружи
 	// это видно тем же полем.
-	if _, err := cmdArm(root, "XR-003", true, CommitOpts{}); err != nil {
+	if _, err := cmdArm(root, "XR-003", "", true, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if d := depJSON(t, root, "XR-003"); d.Arm == nil || d.Arm.State != armHand {
@@ -647,5 +648,73 @@ func TestArmGatesHoldOnBareTmuxExit(t *testing.T) {
 	}
 	if why := newArmGates(root, b).pass("XR-003"); !strings.Contains(why, "опрос tmux сорван") {
 		t.Fatalf("ворота на коде без слов ответили %q", why)
+	}
+}
+
+// DoD DK-1466 по решению 6 LLD DK-933: часовой аргумент --at держит взведённую
+// строку до назначенного часа. Короткая форма «02:00» ложится на доску
+// абсолютным временем, до часа обход строку не поднимает и не зовёт по ней
+// человека, а час, наступивший без обхода, стреляет первым же проходом.
+func TestArmHourHoldsRowUntilTime(t *testing.T) {
+	root := armStand(t, 3)
+	calls := recordRaise(t)
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.Local)
+	old := timeNow
+	timeNow = func() time.Time { return now }
+	t.Cleanup(func() { timeNow = old })
+	if _, err := cmdArm(root, "XR-003", "02:00", true, CommitOpts{}); err == nil {
+		t.Fatal("--at вместе с --off должны отказывать")
+	}
+	if _, err := cmdArm(root, "XR-003", "завтра в два", false, CommitOpts{}); err == nil ||
+		!strings.Contains(err.Error(), "--at") {
+		t.Fatalf("неразобранный час не отказал: %v", err)
+	}
+	msg, err := cmdArm(root, "XR-003", "02:00", false, CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Полдень 27-го уже прошёл, и короткая форма уезжает на завтра.
+	if !strings.Contains(msg, "ждёт часа 2026-10-28 02:00") {
+		t.Fatalf("arm не назвал час ожидания: %s", msg)
+	}
+	if got := armTitle(t, root, "XR-003"); !strings.Contains(got, "[взвод: 2026-10-28 02:00]") {
+		t.Fatalf("час лёг в заголовок не абсолютным временем: %q", got)
+	}
+	out, _, err := cmdWake(root, nil, wakeOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("обход поднял строку до часа: %+v\n%s", *calls, out)
+	}
+	if !strings.Contains(out, "ждут событием 1, событие случилось у 0") {
+		t.Fatalf("обход не посчитал строку ждущей:\n%s", out)
+	}
+	if _, ok := readArmRefusal(root, "XR-003"); ok {
+		t.Fatal("ожидание часа записалось отказом ворот")
+	}
+	list, err := cmdList(root, SectBacklog, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(list, "взвод: ждёт, час 2026-10-28 02:00") {
+		t.Fatalf("list не назвал час ожидания:\n%s", list)
+	}
+	raw, err := cmdListJSON(root, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, `"at":"2026-10-28 02:00"`) {
+		t.Fatalf("list --json не отдал час взвода:\n%s", raw)
+	}
+	// Час наступил: строка стартует первым же обходом, час в ожидании ей больше
+	// не мешает.
+	now = now.Add(14 * time.Hour)
+	out, _, err = cmdWake(root, nil, wakeOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 || (*calls)[0].ID != "XR-003" {
+		t.Fatalf("взвод не выстрелил по часу: %+v\n%s", *calls, out)
 	}
 }

@@ -48,7 +48,7 @@ func TestDraftDeferWritesMark(t *testing.T) {
 	root := setup(t)
 	id := newDraft(t, root, "уведомитель шумит из песочницы\n\nхук берёт адрес из окружения")
 
-	msg, err := cmdDraftDefer(root, id, "ждём повторного случая с git status", false, CommitOpts{})
+	msg, err := cmdDraftDefer(root, id, "ждём повторного случая с git status", "", false, CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestDraftDeferWritesMark(t *testing.T) {
 		t.Fatalf("пометка съела текст черновика:\n%s", body)
 	}
 
-	if _, err := cmdDraftDefer(root, id, "ждём ответа смежника", false, CommitOpts{}); err != nil {
+	if _, err := cmdDraftDefer(root, id, "ждём ответа смежника", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	body = draftBody(t, root, id)
@@ -78,10 +78,10 @@ func TestDraftDeferWritesMark(t *testing.T) {
 		t.Fatalf("заголовков раздела %d:\n%s", n, body)
 	}
 
-	if _, err := cmdDraftDefer(root, id, "", false, CommitOpts{}); err == nil {
+	if _, err := cmdDraftDefer(root, id, "", "", false, CommitOpts{}); err == nil {
 		t.Fatal("defer без причины должен отказывать")
 	}
-	if _, err := cmdDraftDefer(root, "XR-404", "причина", false, CommitOpts{}); err == nil {
+	if _, err := cmdDraftDefer(root, "XR-404", "причина", "", false, CommitOpts{}); err == nil {
 		t.Fatal("defer по чужому ID должен отказывать")
 	}
 }
@@ -95,7 +95,7 @@ func TestDraftDeferCommitsOnlyDraft(t *testing.T) {
 	gitOut(t, root, "add", ".")
 	gitOut(t, root, "commit", "-q", "-m", "черновик")
 
-	msg, err := cmdDraftDefer(root, id, "ждём релиза смежника", false, CommitOpts{Msg: "docs(tasks): " + id + " отложен"})
+	msg, err := cmdDraftDefer(root, id, "ждём релиза смежника", "", false, CommitOpts{Msg: "docs(tasks): " + id + " отложен"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestDraftDeferClear(t *testing.T) {
 	id := newDraft(t, root, "уведомитель шумит из песочницы")
 	before := draftBody(t, root, id)
 
-	msg, err := cmdDraftDefer(root, id, "", true, CommitOpts{})
+	msg, err := cmdDraftDefer(root, id, "", "", true, CommitOpts{})
 	if err != nil {
 		t.Fatalf("--clear без пометки не должен падать: %v", err)
 	}
@@ -125,10 +125,10 @@ func TestDraftDeferClear(t *testing.T) {
 		t.Fatalf("холостой --clear тронул файл:\n%s", body)
 	}
 
-	if _, err := cmdDraftDefer(root, id, "ждём повода", false, CommitOpts{}); err != nil {
+	if _, err := cmdDraftDefer(root, id, "ждём повода", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdDraftDefer(root, id, "", true, CommitOpts{}); err != nil {
+	if _, err := cmdDraftDefer(root, id, "", "", true, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	body := draftBody(t, root, id)
@@ -138,7 +138,7 @@ func TestDraftDeferClear(t *testing.T) {
 	if !strings.Contains(body, "уведомитель шумит из песочницы") {
 		t.Fatalf("--clear унёс текст черновика:\n%s", body)
 	}
-	if _, err := cmdDraftDefer(root, id, "причина", true, CommitOpts{}); err == nil {
+	if _, err := cmdDraftDefer(root, id, "причина", "", true, CommitOpts{}); err == nil {
 		t.Fatal("--clear с причиной должен отказывать")
 	}
 }
@@ -151,7 +151,7 @@ func TestDraftListShowsDeferMark(t *testing.T) {
 	first := newDraft(t, root, "первая идея")
 	second := newDraft(t, root, "вторая идея")
 	ageDraft(t, root, first, 3)
-	if _, err := cmdDraftDefer(root, first, "ждём повторного случая", false, CommitOpts{}); err != nil {
+	if _, err := cmdDraftDefer(root, first, "ждём повторного случая", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,7 +184,7 @@ func TestDraftAgeSurvivesDefer(t *testing.T) {
 	id := newDraft(t, root, "старая идея")
 	ageDraft(t, root, id, 5)
 
-	if _, err := cmdDraftDefer(root, id, "ждём повода", false, CommitOpts{}); err != nil {
+	if _, err := cmdDraftDefer(root, id, "ждём повода", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	out, err := cmdDraftList(root)
@@ -292,7 +292,7 @@ func TestDraftPrioSortsList(t *testing.T) {
 	if _, err := cmdDraftPrio(root, plain, "", true, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdDraftDefer(root, wait, "ждём повода", false, CommitOpts{}); err != nil {
+	if _, err := cmdDraftDefer(root, wait, "ждём повода", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -356,7 +356,7 @@ func TestDraftPrioAndDefer(t *testing.T) {
 	if _, err := cmdDraftPrio(root, marked, "high", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cmdDraftDefer(root, marked, "ждём повода", false, CommitOpts{}); err != nil {
+	if _, err := cmdDraftDefer(root, marked, "ждём повода", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	body := draftBody(t, root, marked)
@@ -374,7 +374,7 @@ func TestDraftPrioAndDefer(t *testing.T) {
 		t.Fatalf("отложенный с меткой стоит раньше немаркированного:\n%s", out)
 	}
 
-	if _, err := cmdDraftDefer(root, marked, "", true, CommitOpts{}); err != nil {
+	if _, err := cmdDraftDefer(root, marked, "", "", true, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	out, err = cmdDraftList(root)
@@ -568,7 +568,7 @@ func TestDraftAgeFallsBackToModTime(t *testing.T) {
 		t.Fatalf("фолбэк на время правки не сработал:\n%s", out)
 	}
 
-	msg, err := cmdDraftDefer(root, id, "ждём повода", false, CommitOpts{})
+	msg, err := cmdDraftDefer(root, id, "ждём повода", "", false, CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -593,7 +593,7 @@ func TestDraftAttachToTaskWithFile(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
 	id := newDraft(t, root, "своя репродукция через -m")
-	if _, err := cmdDraftDefer(root, id, "ждём разбора", false, CommitOpts{}); err != nil {
+	if _, err := cmdDraftDefer(root, id, "ждём разбора", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	gitOut(t, root, "add", ".")
@@ -820,7 +820,7 @@ func TestDraftUncommittedRemoved(t *testing.T) {
 func TestDraftPromoteKeepsGroom(t *testing.T) {
 	root := setup(t)
 	id := newDraft(t, root, "уведомитель шумит из песочницы")
-	if _, err := cmdDraftDefer(root, id, "ждём повторного случая", false, CommitOpts{}); err != nil {
+	if _, err := cmdDraftDefer(root, id, "ждём повторного случая", "", false, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	giveDraftDoD(t, root, id)
@@ -999,5 +999,64 @@ func TestMentionsOfWholeWord(t *testing.T) {
 	}
 	if hits := mentionsOf(root, "XR-483"); len(hits) != 1 || hits[0] != "docs/tasks/XR-002.md" {
 		t.Fatalf("целое упоминание не нашлось: %v", hits)
+	}
+}
+
+// TestDraftDeferUntilReturnsDraft: дата возврата возвращает черновик в очередь
+// разбора тем же днём (DK-1466). До даты пометка держит очередь как раньше, а
+// наступившая снимается чтением накопителя сама, без второй команды.
+func TestDraftDeferUntilReturnsDraft(t *testing.T) {
+	root := setup(t)
+	id := newDraft(t, root, "идея про напоминания по времени")
+	now := time.Now()
+	old := timeNow
+	timeNow = func() time.Time { return now }
+	t.Cleanup(func() { timeNow = old })
+	back := now.AddDate(0, 0, 3).Format(draftDateLayout)
+	if _, err := cmdDraftDefer(root, id, "ждём решения по каналу",
+		now.AddDate(0, 0, -1).Format(draftDateLayout), false, CommitOpts{}); err == nil {
+		t.Fatal("--until в прошлом должен отказывать")
+	}
+	if _, err := cmdDraftDefer(root, id, "ждём решения по каналу", "2026-13-01", false, CommitOpts{}); err == nil {
+		t.Fatal("неразобранная дата должна отказывать")
+	}
+	if _, err := cmdDraftDefer(root, id, "ждём решения по каналу", back, true, CommitOpts{}); err == nil {
+		t.Fatal("--until вместе с --clear должны отказывать")
+	}
+	msg, err := cmdDraftDefer(root, id, "ждём решения по каналу", back, false, CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "возвращается "+back) {
+		t.Fatalf("сообщение не назвало дату возврата: %q", msg)
+	}
+	if body := draftBody(t, root, id); !strings.Contains(body,
+		"- "+today()+", отложен до "+back+": ждём решения по каналу\n") {
+		t.Fatalf("строка пометки не о том:\n%s", body)
+	}
+	raw, err := cmdDraftListJSON(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, `"deferred":"`+today()+`"`) ||
+		!strings.Contains(raw, `"deferred_until":"`+back+`"`) {
+		t.Fatalf("json не отдал пометку и дату возврата:\n%s", raw)
+	}
+	drafts, err := loadDrafts(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := findDraft(drafts, id); d == nil || d.Deferred == "" {
+		t.Fatalf("до даты пометка снялась: %+v", d)
+	}
+	// День возврата наступил: накопитель видит черновик неотложенным, пометка
+	// больше не держит очередь разбора.
+	now = now.AddDate(0, 0, 3)
+	raw, err = cmdDraftListJSON(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "deferred") {
+		t.Fatalf("после даты возврата пометка осталась в json:\n%s", raw)
 	}
 }

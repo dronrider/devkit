@@ -102,8 +102,11 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               оформляет черновик потом add --id
                                               <ID> (файл переезжает в docs/tasks
                                               сам)
-  draft defer <ID> "причина"                  отложить разобранный черновик:
-                                              раздел «Грумминг» в его файле
+  draft defer <ID> "причина" [--until 2026-11-05]
+                                              отложить разобранный черновик:
+                                              раздел «Грумминг» в его файле,
+                                              --until называет день возврата
+                                              в очередь разбора
   draft defer <ID> --clear                    снять пометку об отложенном
   draft prio <ID> high|mid|low                пересмотреть уровень разбора
                                               записанного черновика: строка в
@@ -215,9 +218,12 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               board-debt при сдаче соседней
                                               задачи с тем же диффом, --off
                                               снимает метку
-  arm <ID> [--off]                            взвод строки Backlog: со снятыми
+  arm <ID> [--at <время>] [--off]             взвод строки Backlog: со снятыми
                                               рёбрами она стартует сама ближайшим
-                                              обходом ждущих, --off снимает взвод
+                                              обходом ждущих; --at 02:00 либо
+                                              2026-09-12 02:00 держит старт до
+                                              назначенного часа, --off снимает
+                                              взвод
   plan <ID> [<имя>] [--off]                   суффикс [план: имя]: план строки
                                               собирается из названного шаблона,
                                               минуя выбор по типу; --off снимает,
@@ -529,15 +535,16 @@ func main() {
 			fs := flag.NewFlagSet("draft defer", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			clear := fs.Bool("clear", false, "снять пометку об отложенном")
+			until := fs.String("until", "", "дата возврата в очередь разбора YYYY-MM-DD")
 			var c CommitOpts
 			commitFlags(fs, &c)
 			pos := frame.ParseArgs(fs, args[2:])
-			needArgs(pos, 1, 2, "draft defer <ID> \"причина\" либо draft defer <ID> --clear")
+			needArgs(pos, 1, 2, "draft defer <ID> \"причина\" [--until YYYY-MM-DD] либо draft defer <ID> --clear")
 			reason := ""
 			if len(pos) > 1 {
 				reason = pos[1]
 			}
-			msg, err = cmdDraftDefer(root(*dir), pos[0], reason, *clear, c)
+			msg, err = cmdDraftDefer(root(*dir), pos[0], reason, *until, *clear, c)
 		case "prio":
 			fs := flag.NewFlagSet("draft prio", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
@@ -703,11 +710,12 @@ func main() {
 		fs := flag.NewFlagSet("arm", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		off := fs.Bool("off", false, "снять взвод: строка снова ждёт руки человека")
+		at := fs.String("at", "", "часовое условие: 02:00 либо 2026-09-12 02:00, строка стартует не раньше этого времени")
 		var c CommitOpts
 		commitFlags(fs, &c)
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, "arm <ID> [--off] [-m ... --push]")
-		msg, err = cmdArm(root(*dir), pos[0], *off, c)
+		needArgs(pos, 1, 1, "arm <ID> [--at <время>] [--off] [-m ... --push]")
+		msg, err = cmdArm(root(*dir), pos[0], *at, *off, c)
 	case "plan":
 		fs := flag.NewFlagSet("plan", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

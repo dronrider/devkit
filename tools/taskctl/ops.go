@@ -129,7 +129,7 @@ func parkedQuestions(b *Board, root, goal string) []string {
 		if r.Sect != SectBlocked {
 			continue
 		}
-		_, _, _, _, _, _, _, blockSuf := splitTitle(r.Title)
+		_, _, _, _, _, _, _, _, blockSuf := splitTitle(r.Title)
 		if !strings.HasPrefix(blockReason(blockSuf), "вопрос:") {
 			continue
 		}
@@ -614,8 +614,8 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	// в Backlog, по старому согласию сама уже не стартует. Вместе со взводом
 	// уходит и файл последнего отказа ворот ёмкости.
 	disarmed := ""
-	if base, deps, debtSuf, armSuf, planSuf, acceptSuf, failSuf, blockSuf := splitTitle(moved.Title); row.Sect == SectBacklog && armSuf != "" {
-		moved.Title = joinTitle(base, deps, debtSuf, "", planSuf, acceptSuf, failSuf, blockSuf)
+	if base, deps, debtSuf, armSuf, planSuf, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(moved.Title); row.Sect == SectBacklog && armSuf != "" {
+		moved.Title = joinTitle(base, deps, debtSuf, "", planSuf, dueSuf, acceptSuf, failSuf, blockSuf)
 		dropArmRefusal(root, id)
 		disarmed = ", взвод снят"
 	}
@@ -624,8 +624,8 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	// shipctl merge и ship после удачного выката, поэтому дочищать признак
 	// руками после починки не приходится.
 	quenched := ""
-	if base, deps, debtSuf, armSuf, planSuf, acceptSuf, failSuf, blockSuf := splitTitle(moved.Title); target == SectCheck && failSuf != "" {
-		moved.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, acceptSuf, "", blockSuf)
+	if base, deps, debtSuf, armSuf, planSuf, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(moved.Title); target == SectCheck && failSuf != "" {
+		moved.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, dueSuf, acceptSuf, "", blockSuf)
 		quenched = ", признак провала снят"
 	}
 	if moved.Title != row.Title {
@@ -642,7 +642,7 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	// он тут же, где меняется статус, а не в shipctl или где-то ещё, кто бы
 	// move ни позвал (RULES.board.md, «Ветки, ревью и деплой» п. 8).
 	var note string
-	base, _, _, _, _, _, _, _ := splitTitle(row.Title)
+	base, _, _, _, _, _, _, _, _ := splitTitle(row.Title)
 	switch target {
 	case SectCheck:
 		note = notify(root, reasonCheck, id, fmt.Sprintf("%s: %s в Check", filepath.Base(root), id), base)
@@ -703,16 +703,16 @@ func relocate(b *Board, row *Row, target string, moved *Row, line string) (*Boar
 }
 
 type SetParams struct {
-	ID, Title, Type, Rank, Cost, Link, Accept string
-	Commit                                    CommitOpts
+	ID, Title, Type, Rank, Cost, Link, Accept, Due string
+	Commit                                         CommitOpts
 }
 
 func cmdSet(root string, p SetParams) (string, error) {
 	if err := p.Commit.validate(); err != nil {
 		return "", err
 	}
-	if p.Title == "" && p.Type == "" && p.Rank == "" && p.Cost == "" && p.Link == "" && p.Accept == "" {
-		return "", fmt.Errorf("нечего менять, жду --title, --type, --rank, --cost, --link и/или --accept")
+	if p.Title == "" && p.Type == "" && p.Rank == "" && p.Cost == "" && p.Link == "" && p.Accept == "" && p.Due == "" {
+		return "", fmt.Errorf("нечего менять, жду --title, --type, --rank, --cost, --link, --accept и/или --due")
 	}
 	if err := boardGuard(root, "set"); err != nil {
 		return "", err
@@ -737,10 +737,10 @@ func cmdSet(root string, p SetParams) (string, error) {
 		// У строки с зависимостью, меткой долга, взводом, приёмкой, провалом
 		// проверки и/или причиной блокировки эти хвосты живут в заголовке, при
 		// замене текста они переносятся в новый (в исходном порядке: «после»,
-		// «долг», «взвод», «приёмка», «провал», «блок»).
-		_, deps, debtSuf, armSuf, planSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
+		// «долг», «взвод», «план», «срок», «приёмка», «провал», «блок»).
+		_, deps, debtSuf, armSuf, planSuf, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 		if len(deps) > 0 && !strings.Contains(title, "[после") {
-			title = joinTitle(title, deps, "", "", "", "", "", "")
+			title = joinTitle(title, deps, "", "", "", "", "", "", "")
 		}
 		if debtSuf != "" && !strings.Contains(title, "[долг]") {
 			title += debtSuf
@@ -750,6 +750,9 @@ func cmdSet(root string, p SetParams) (string, error) {
 		}
 		if planSuf != "" && !strings.Contains(title, "[план:") {
 			title += planSuf
+		}
+		if dueSuf != "" && !strings.Contains(title, "[срок:") {
+			title += dueSuf
 		}
 		if acceptSuf != "" && !strings.Contains(title, "[приёмка:") {
 			title += acceptSuf
@@ -785,9 +788,28 @@ func cmdSet(root string, p SetParams) (string, error) {
 			}
 		}
 		if p.Accept != old {
-			base, deps, debtSuf, armSuf, planSuf, _, failSuf, blockSuf := splitTitle(row.Title)
-			row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, acceptSuffix(p.Accept), failSuf, blockSuf)
+			base, deps, debtSuf, armSuf, planSuf, dueSuf, _, failSuf, blockSuf := splitTitle(row.Title)
+			row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, dueSuf, acceptSuffix(p.Accept), failSuf, blockSuf)
 			changes = append(changes, fmt.Sprintf("вид %s -> %s", old, p.Accept))
+		}
+	}
+	if p.Due != "" {
+		// Срок ставится абсолютной датой и живёт суффиксом заголовка рядом с
+		// приёмкой: постоянное свойство строки, порядок держит ранг, а срок
+		// группирует и подсвечивает (DK-1464). Прочерк снимает срок, «назначить
+		// срок» значением не бывает: пустое поле значит «не трогать».
+		date, err := parseDue(p.Due)
+		if err != nil {
+			return "", err
+		}
+		if old := dueOf(row.Title); date != old {
+			base, deps, debtSuf, armSuf, planSuf, _, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
+			row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, dueSuffix(date), acceptSuf, failSuf, blockSuf)
+			if date == "" {
+				changes = append(changes, "срок снят")
+			} else {
+				changes = append(changes, fmt.Sprintf("срок %s -> %s", noDue(old), date))
+			}
 		}
 	}
 	if p.Type != "" {
@@ -882,7 +904,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	}
 	// Закрыть задачу с непогашенным провалом значит увезти в архив сломанный
 	// прод: строка с доски уйдёт, и очередь выката отпустит его молча.
-	if _, _, _, _, _, _, failSuf, _ := splitTitle(row.Title); failSuf != "" {
+	if _, _, _, _, _, _, _, failSuf, _ := splitTitle(row.Title); failSuf != "" {
 		return "", fmt.Errorf("у %s непогашенный провал проверки%s: сначала починить прод (shipctl revert %s либо форвард-фикс и shipctl merge %s), а если он уже починен мимо shipctl, снять признак: taskctl fail %s --clear",
 			p.ID, failSuf, p.ID, p.ID, p.ID)
 	}
@@ -1009,8 +1031,10 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	// саму себя ждать больше не заставит. Суффикс приёмки переживает закрытие
 	// наравне с «[блок: ...]» (LLD DK-292, решение 3): вид это свойство самой
 	// задачи, а не её положения в очереди, и без него сводке нечего считать.
-	archBase, _, archDebtSuf, _, _, archAcceptSuf, _, archBlockSuf := splitTitle(row.Title)
-	cells := []string{p.ID, joinTitle(archBase, nil, archDebtSuf, "", "", archAcceptSuf, "", archBlockSuf), row.Type, row.P, date, linkCell}
+	// Срок переживает закрытие тем же правилом: дата это свойство задачи, и
+	// по архивной строке видно, укладывалась ли она в срок.
+	archBase, _, archDebtSuf, _, _, archDueSuf, archAcceptSuf, _, archBlockSuf := splitTitle(row.Title)
+	cells := []string{p.ID, joinTitle(archBase, nil, archDebtSuf, "", "", archDueSuf, archAcceptSuf, "", archBlockSuf), row.Type, row.P, date, linkCell}
 	if err := appendArchiveRow(archivePath(root), cells); err != nil {
 		return "", err
 	}
@@ -1021,7 +1045,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 		if r.ID == p.ID {
 			continue
 		}
-		base, deps, debtSuf, armSuf, planSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
+		base, deps, debtSuf, armSuf, planSuf, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
 		idx := -1
 		for i, d := range deps {
 			if d == p.ID {
@@ -1033,7 +1057,7 @@ func cmdClose(root string, p CloseParams) (string, error) {
 			continue
 		}
 		deps = append(deps[:idx], deps[idx+1:]...)
-		r.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, acceptSuf, failSuf, blockSuf)
+		r.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, dueSuf, acceptSuf, failSuf, blockSuf)
 		b.updateLine(r.LineIdx, formatRow(r))
 		depTouched = append(depTouched, r.ID)
 	}

@@ -193,7 +193,7 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   fail <ID> --clear                           прод починен, признак снят (сами
                                               его гасят shipctl merge, ship, revert)
   set <ID> [--title "..."] [--type ...] [--rank "..."] [--cost ...] [--link "..."]
-      [--accept agent|mixed|user]             поправить ячейки строки
+      [--accept agent|mixed|user] [--due YYYY-MM-DD]  поправить ячейки строки
   file <ID>                                   создать docs/tasks/<ID>.md и ссылку в строке
   rehearse <ID> [--step "команда"] [--timeout 10m]
                                               обкатать сценарий до Check: шаги из
@@ -395,6 +395,7 @@ func setFlags(fs *flag.FlagSet, p *SetParams) {
 	fs.StringVar(&p.Cost, "cost", "", "новая цена исполнения S / M / L / XL («-» = не оценено)")
 	fs.StringVar(&p.Link, "link", "", "новая ячейка ссылки")
 	fs.StringVar(&p.Accept, "accept", "", "новый вид приёмки: agent / mixed / user")
+	fs.StringVar(&p.Due, "due", "", "новый срок строки YYYY-MM-DD, «-» снимает срок")
 	commitFlags(fs, &p.Commit)
 }
 
@@ -743,7 +744,7 @@ func main() {
 		var p SetParams
 		setFlags(fs, &p)
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, "set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...] [--accept ...]")
+		needArgs(pos, 1, 1, "set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...] [--accept ...] [--due YYYY-MM-DD]")
 		p.ID = pos[0]
 		msg, err = cmdSet(root(*dir), p)
 	case "rehearse":

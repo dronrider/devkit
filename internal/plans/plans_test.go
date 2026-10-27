@@ -247,6 +247,25 @@ func TestByTypeFromLayers(t *testing.T) {
 	}
 }
 
+// TestForType: выбор шаблона по типу строки сводит регистр и падает на task:
+// тип пишется на доске с большой буквы («LLD»), набор называет его строчными,
+// а составной и незнакомый тип без фолбэка оставался бы вовсе без этапов.
+func TestForType(t *testing.T) {
+	kit := t.TempDir()
+	write(t, filepath.Join(kit, "task.toml"), "title = \"задача\"\ntypes = [\"task\"]\n[work]\ntitle = \"разработка\"\nby = \"сам\"\ntrace = \"слово\"\n")
+	write(t, filepath.Join(kit, "lld.toml"), "title = \"проектирование\"\ntypes = [\"lld\"]\n[work]\ntitle = \"разработка\"\nby = \"сам\"\ntrace = \"слово\"\n")
+	set, err := Load(kit, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tpl, ok := set.ForType("LLD"); !ok || tpl.Name != "lld" {
+		t.Fatalf("тип с большой буквы не нашёл lld-шаблон: ok=%v name=%s", ok, tpl.Name)
+	}
+	if tpl, ok := set.ForType("task/LLD"); !ok || tpl.Name != "task" {
+		t.Fatalf("составной тип не упал на task: ok=%v name=%s", ok, tpl.Name)
+	}
+}
+
 // TestFindingsStaleCopy: копия проекта, отставшая от встроенного шаблона, это
 // находка доктора; снятие с причиной проходит молча.
 func TestFindingsStaleCopy(t *testing.T) {

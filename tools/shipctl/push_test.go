@@ -637,9 +637,8 @@ func TestPushGateAutonomousNewTaskBranchWithoutAutonomyRefused(t *testing.T) {
 	}
 }
 
-// TestPushRuleCarriesAutonomyException: DK-1324, правило Git в RULES.core.md
-// несёт второе исключение про автономный режим shipctl, иначе агент в
-// автономном проекте стоял бы на рядовом пуше ветки задачи, прочитав запрет.
+// Оба разрешённых случая проверяются в резидентном разделе Git, который
+// читает агент.
 func TestPushRuleCarriesAutonomyException(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "RULES.core.md"))
 	if err != nil {
@@ -653,10 +652,12 @@ func TestPushRuleCarriesAutonomyException(t *testing.T) {
 	if idx := strings.Index(gitSec, "\n## "); idx >= 0 {
 		gitSec = gitSec[:idx]
 	}
-	if !strings.Contains(gitSec, "автономный режим shipctl") {
-		t.Fatal("раздел Git не несёт второго исключения про автономный режим shipctl")
+	gitSec = strings.Join(strings.Fields(gitSec), " ")
+	if !strings.Contains(gitSec, "автономный режим shipctl") ||
+		!strings.Contains(gitSec, "В автономном режиме пуш ветки задач идёт без него") {
+		t.Fatal("в разделе Git нет правила автономного пуша ветки задачи")
 	}
-	if !strings.Contains(gitSec, "Исключений два") {
-		t.Fatal("раздел Git не называет число исключений")
+	if !strings.Contains(gitSec, "Коммит доски пушится сразу") {
+		t.Fatal("в разделе Git нет правила немедленного пуша коммита доски")
 	}
 }

@@ -965,7 +965,6 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
    на главную заходят с телефона мыслью в голове, и прокрутка до формы стоила
    бы записи дороже, чем обзору его место */
 .quickcard{display:flex;flex-direction:column;gap:10px;padding:14px 16px}
-.qhead{font:600 11px var(--sans);color:var(--tx3);text-transform:uppercase;letter-spacing:0.04em}
 .qpick{align-self:flex-start;background:var(--bg2);color:var(--tx);border:1px solid var(--line2);border-radius:9px;font:500 13px var(--sans);padding:7px 10px}
 .qtext{display:block;width:100%;box-sizing:border-box;min-height:72px;padding:10px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:400 13.5px/1.55 var(--sans);resize:vertical}
 .qtext:focus{outline:1px solid var(--acc);outline-offset:1px}

@@ -653,10 +653,14 @@ func TestPushRuleCarriesAutonomyException(t *testing.T) {
 	if idx := strings.Index(gitSec, "\n## "); idx >= 0 {
 		gitSec = gitSec[:idx]
 	}
+	gitSec = strings.Join(strings.Fields(gitSec), " ")
 	if !strings.Contains(gitSec, "автономный режим shipctl") {
 		t.Fatal("раздел Git не несёт исключения про автономный режим shipctl")
 	}
 	if !strings.Contains(gitSec, "В автономном режиме пуш ветки задач идёт без него") {
 		t.Fatal("раздел Git не несёт исключения ревью для автономного режима")
+	}
+	if !strings.Contains(gitSec, "Коммит доски пушится сразу") {
+		t.Fatal("в разделе Git нет правила немедленного пуша коммита доски")
 	}
 }

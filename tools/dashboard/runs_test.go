@@ -1528,7 +1528,7 @@ func TestRunStartUserAcceptClosesLLDThroughCutGate(t *testing.T) {
 	writeTmuxFake(t, e.bin, tmuxLog, "")
 	runTaskctl(t, e.proj, "add", "--id", "XR-010", "--title", "LLD: дизайн с нарезкой",
 		"--type", "LLD", "--rank", "50+8+1+0+4", "--accept", "user", "--barrier", "согласие")
-	runTaskctl(t, e.proj, "add", "--id", "XR-011", "--title", "Первая строка нарезки",
+	runTaskctl(t, e.proj, "add", "--body-file", taskBodyFixture(t), "--id", "XR-011", "--title", "Первая строка нарезки",
 		"--type", "task", "--rank", "50+8+1+0+4", "--accept", "agent")
 	goalDoc(t, e, "XR-010", lldUserDoc)
 	if err := os.MkdirAll(filepath.Join(e.proj, "docs", "lld"), 0o755); err != nil {
@@ -1560,7 +1560,7 @@ func TestRunStartUserAcceptClosesLLDThroughCutGate(t *testing.T) {
 	if err := os.WriteFile(design, []byte(fixed), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	runTaskctl(t, e.proj, "add", "--id", "XR-012", "--title", "Вторая строка нарезки",
+	runTaskctl(t, e.proj, "add", "--body-file", taskBodyFixture(t), "--id", "XR-012", "--title", "Вторая строка нарезки",
 		"--type", "task", "--rank", "25+5+1+0+2", "--accept", "agent")
 
 	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/runs", `{"id": "XR-010"}`)

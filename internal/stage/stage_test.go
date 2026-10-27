@@ -262,9 +262,9 @@ func TestExecutorFromPickNote(t *testing.T) {
 	}
 }
 
-// Исполнителя разработки спрашивают двое: ворота закрытия сверяют с ним
-// прогонявшего сценарий, а подъём прогона после выката решает, кому прогон не
-// отдавать. Ищется он в двух местах, и незакрытый пакет этапов свежее файла.
+// Исполнителя разработки спрашивает заказ прогона: имя едет в заказе
+// проверяющего и в отчёте, а независимость по нему не судится (DK-1360).
+// Ищется он в двух местах, и незакрытый пакет этапов свежее файла.
 func TestLastExecutorPrefersPendingRecord(t *testing.T) {
 	lines := []string{
 		"- Разработка: субагент haiku/low по вердикту pick, 2026-09-01 10:00-10:20.",
@@ -286,18 +286,100 @@ func TestLastExecutorPrefersPendingRecord(t *testing.T) {
 	}
 }
 
-// Прогонявший сценарий ищется теми же двумя источниками и тем же порядком.
-func TestLastVerifyRunnerPrefersPendingRecord(t *testing.T) {
-	lines := []string{"- Проверка: сценарий прогнал haiku, 2026-09-01 11:00-11:05."}
-	if got, ok := LastVerifyRunner(lines, nil); !ok || got != "haiku" {
-		t.Fatalf("из «Хода работы» прогонявший не достался: %q, %v", got, ok)
+// Прогонявший сценарий как целый этап ищется теми же двумя источниками и в
+// том же порядке: воротам нужна сессия прогонявшего, у пакета она стоит
+// полем, у строки её отдаёт хвост «сессия <ID>» (DK-1360).
+func TestLastVerifyStagePrefersPendingRecord(t *testing.T) {
+	lines := []string{"- Проверка: сценарий прогнал haiku, сессия aaa, 2026-09-01 11:00-11:05."}
+	got, ok := LastVerifyStage(lines, nil)
+	if !ok || got.Session != "aaa" {
+		t.Fatalf("из «Хода работы» этап прогона не достался: %+v, %v", got, ok)
 	}
-	pending := []Stage{{Kind: Verify, Note: VerifyNote("sonnet")}}
-	if got, ok := LastVerifyRunner(lines, pending); !ok || got != "sonnet" {
-		t.Fatalf("незакрытый пакет свежее файла: %q, %v", got, ok)
+	pending := []Stage{{Kind: Verify, Note: VerifyNote("sonnet"), Session: "bbb"}}
+	if got, ok = LastVerifyStage(lines, pending); !ok || got.Session != "bbb" {
+		t.Fatalf("незакрытый пакет свежее файла: %+v, %v", got, ok)
 	}
-	if _, ok := LastVerifyRunner(nil, nil); ok {
-		t.Fatal("без записей прогонявший взяться неоткуда")
+	if _, ok := LastVerifyStage(nil, nil); ok {
+		t.Fatal("без записей этап прогона взяться неоткуда")
+	}
+}
+
+// Хвост сессии в строке «Хода работы» ставит Lines и снимает LineSession:
+// после сброса пакета ворота закрытия сверяют прогон с кругом по строкам, и
+// без хвоста сверять было бы нечем (DK-1360). Этап вне харнеса едет без
+// хвоста и за сессию не сойдётся.
+func TestLinesCarrySession(t *testing.T) {
+	stages := []Stage{
+		{Kind: Dev, Start: time.Date(2026, 9, 1, 10, 0, 0, 0, time.Local),
+			Note: "субагент opus/high по определению exec-high", Session: "sess-1"},
+		{Kind: Verify, Start: time.Date(2026, 9, 1, 11, 0, 0, 0, time.Local),
+			Note: VerifyNote("opus")},
+	}
+	lines := Lines(stages, time.Date(2026, 9, 1, 11, 5, 0, 0, time.Local))
+	if got := LineSession(lines[0]); got != "sess-1" {
+		t.Fatalf("хвост сессии не доехал до строки: %q", lines[0])
+	}
+	if got := LineSession(lines[1]); got != "" {
+		t.Fatalf("этап без сессии получил хвост: %q", lines[1])
+	}
+}
+
+// Участники круга собираются из двух источников, режутся последним слиянием
+// и сходятся по ID возобновлённой сессии; этап без сессии остаётся участником
+// без ID, чтобы ворота сказали об этом вслух (DK-1360).
+func TestCircleAuthors(t *testing.T) {
+	dev := "- Разработка: субагент opus/high по вердикту pick, сессия aaa, 2026-09-01 10:00-10:20."
+	lines := []string{
+		dev,
+		"- Слияние: a1b2c3d, e4f5a6b, 2026-09-01 10:30-10:40.",
+		"- Доработка: субагент opus/high по вердикту pick, сессия bbb, 2026-09-02 12:00-12:10.",
+		"- Доработка: субагент opus/high по вердикту pick, сессия bbb, 2026-09-02 13:00-13:10.",
+	}
+	pending := []Stage{{Kind: Rework, Note: "субагент sonnet/high по вердикту pick", Session: "ccc"}}
+	authors := CircleAuthors(lines, pending)
+	if len(authors) != 2 {
+		t.Fatalf("участников круга %d, хочу две сессии: %+v", len(authors), authors)
+	}
+	if authors[0].Session != "bbb" || authors[0].Kind != Rework {
+		t.Fatalf("первый участник не доработка bbb: %+v", authors[0])
+	}
+	if authors[1].Session != "ccc" || authors[1].Model != "sonnet" {
+		t.Fatalf("второй участник не из пакета: %+v", authors[1])
+	}
+	hand := "- Доработка: правил сам, 2026-09-02 12:00-12:10."
+	authors = CircleAuthors([]string{dev, hand}, nil)
+	if len(authors) != 2 || authors[0].Session != "aaa" || authors[1].Session != "" {
+		t.Fatalf("этап без сессии потерян или лишний: %+v", authors)
+	}
+}
+
+// Независимость прогона: сессия из круга отказана, свежая сессия той же
+// модели проходит, обе стороны без ID отказаны с причиной, а без записи
+// прогона found ложен и решение за зовущим (DK-1360).
+func TestVerifyIndependence(t *testing.T) {
+	dev := []string{"- Разработка: субагент opus/high по вердикту pick, сессия aaa, 2026-09-01 10:00-10:20."}
+	if _, found, err := VerifyIndependence("DK-0", dev, nil); found || err != nil {
+		t.Fatalf("без записи прогона found=%v, err=%v, хочу тишину", found, err)
+	}
+	self := []string{"- Проверка: сценарий прогнал opus, сессия aaa, 2026-09-01 11:00-11:05."}
+	if _, found, err := VerifyIndependence("DK-0", append(dev, self...), nil); err == nil || !found {
+		t.Fatalf("самопрогон не отказан: found=%v err=%v", found, err)
+	}
+	other := []string{"- Проверка: сценарий прогнал opus, сессия zzz, 2026-09-01 11:00-11:05."}
+	if _, found, err := VerifyIndependence("DK-0", append(dev, other...), nil); err != nil || !found {
+		t.Fatalf("свежая сессия той же модели не прошла: found=%v err=%v", found, err)
+	}
+	silent := []string{"- Проверка: сценарий прогнал opus, 2026-09-01 11:00-11:05."}
+	_, found, err := VerifyIndependence("DK-0", append(dev, silent...), nil)
+	if !found || err == nil {
+		t.Fatalf("прогон без сессии не отказан: found=%v err=%v", found, err)
+	}
+	unknown := []string{
+		"- Разработка: субагент по определению exec-high, 2026-09-01 10:00-10:20.",
+		other[0],
+	}
+	if _, _, err := VerifyIndependence("DK-0", unknown, nil); err == nil {
+		t.Fatal("круг с участником без сессии прошёл молча")
 	}
 }
 

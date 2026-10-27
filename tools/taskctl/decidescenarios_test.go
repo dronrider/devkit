@@ -84,6 +84,7 @@ func TestScenariosCLI(t *testing.T) {
 	mustContain(run(true, "XR-005", "сценарии", "--snapshot", key), "1=СЦ-1", "choiceEvent")
 	failUnchanged(key, "сценарии 1, 99, плюс новый", "позиция 99")
 	failUnchanged(key, "сценарии СЦ-9", "СЦ-9")
+	failUnchanged(key, "плюс 9999999999999999999999999999999", "позиция")
 	failUnchanged("sc1-unknown", "сценарии 1", "неизвестен")
 	failUnchanged(key, "", "ответ пуст")
 	before = read()
@@ -129,6 +130,11 @@ func TestScenariosCLI(t *testing.T) {
 	if !f.HoldsStart() || f.Decided() {
 		t.Fatal("отказ от всех закрыл выбор")
 	}
+	afterEmpty := run(true, "XR-005", "--open")
+	if strings.Contains(afterEmpty, "решено человеком") || strings.Contains(afterEmpty, "выбрано:") {
+		t.Fatal("прежний состав показан действующим после отказа")
+	}
+	mustContain(run(true, "XR-005", "сценарии"), "история: решено человеком")
 	key, _ = chat()
 	failUnchanged(key, "плюс 2", "нужна основа")
 	mustContain(answer(key, "по рекомендации; плюс 2"), "выбрано: СЦ-1, СЦ-2, СЦ-3")
@@ -293,5 +299,20 @@ func TestScenarioRetryKeepsWaitingAndByUsesSnapshot(t *testing.T) {
 	before = readTask(t, root, "XR-005")
 	if _, err := cmdDecide(root, p); err == nil || !askStands(askPath) || readTask(t, root, "XR-005") != before {
 		t.Fatal("устаревшая повторная доставка изменила запись или ожидание")
+	}
+}
+
+func TestScenarioOpenShowsChoiceBeforeQuestions(t *testing.T) {
+	root := setup(t)
+	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "доступ", Hint: "есть", Text: "есть доступ?"})
+	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "сценарии", Scenarios: true, Hint: "СЦ-1: путь задан", Opts: []string{"СЦ-1 (слово пользователя): выбрать"}, Given: "СЦ-1", Said: "берём выбор", Text: "что включаем?"})
+	out := decideRun(t, root, DecideParams{ID: "XR-005", Open: true})
+	if strings.Index(out, "«сценарии»") > strings.Index(out, "«доступ»") {
+		t.Fatal("при продолжении вопросы предшествуют текущему составу")
+	}
+	before := readTask(t, root, "XR-005")
+	_, err := cmdDecide(root, DecideParams{ID: "XR-005", Answer: "сценарии 1", Now: decideDay})
+	if err == nil || !strings.Contains(err.Error(), "--snapshot") || readTask(t, root, "XR-005") != before {
+		t.Fatal("повторный именованный ответ без снимка не отклонён")
 	}
 }

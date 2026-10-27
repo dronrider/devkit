@@ -112,7 +112,7 @@ func scenarioAnswerFork(doc string, p DecideParams) (taskform.Fork, bool, error)
 		text := strings.ToLower(strings.TrimSpace(p.Answer))
 		named := strings.HasPrefix(text, strings.ToLower(f.Name)+" ") || strings.HasPrefix(text, "«"+strings.ToLower(f.Name)+"» ")
 		special := text == "ничего" || text == "по рекомендации" || strings.HasPrefix(text, "плюс ") || strings.HasPrefix(text, "минус ")
-		if f.Mode != "" && (p.Snapshot != "" || (f.HoldsStart() && (named || special))) {
+		if f.Mode != "" && (p.Snapshot != "" || named || (f.HoldsStart() && special)) {
 			return f, true, nil
 		}
 	}

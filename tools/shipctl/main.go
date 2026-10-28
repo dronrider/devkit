@@ -68,6 +68,12 @@ const usageText = `shipctl: слияние и откат задач по пра�
                                   голова командой taskctl run; зовёт тик
                                   devkitctl watch, --json для него, выход 1
                                   на отказе нужного подъёма
+  control-run [ID...] [--json]    поднять инспектора контроля по строкам
+                                  работы с контролем в окне срока (все, когда
+                                  ID не названы): риски срыва кладутся
+                                  черновиком, зовёт тик devkitctl watch,
+                                  --json для него, выход 1 на отказе нужного
+                                  подъёма
   smoke <ID> [--push]             отметить прогон агентской части сценария
                                   после выката: строка «smoke прогнан, <дата>»
                                   в разделе «Выкат» файла задачи; с отметкой
@@ -281,6 +287,22 @@ func main() {
 		fs.BoolVar(&p.Drain, "drain", false, "разлив: пустой поезд, занятая очередь, занятый конвейер и сломанный прод молчат нулём, провал деплоя ставит признак провала")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "ship [--deploy \"cmd\"] [--push] [--drain]")
 		msg, err = cmdShip(root(*dir), p)
+	case "control-run":
+		fs := flag.NewFlagSet("control-run", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		asJSON := fs.Bool("json", false, "машинный вид: исход по строкам")
+		pos := frame.ParseArgs(fs, args[1:])
+		out, failed, cerr := cmdControlRun(root(*dir), pos, *asJSON)
+		if cerr != nil {
+			fail(cerr)
+		}
+		fmt.Println(out)
+		if failed {
+			logRun(1)
+			os.Exit(1)
+		}
+		logRun(0)
+		return
 	case "check-run":
 		fs := flag.NewFlagSet("check-run", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

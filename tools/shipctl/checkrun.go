@@ -13,6 +13,7 @@ import (
 
 	"github.com/dronrider/devkit/internal/accept"
 	"github.com/dronrider/devkit/internal/checkrun"
+	"github.com/dronrider/devkit/internal/control"
 	"github.com/dronrider/devkit/internal/taskhead"
 )
 
@@ -166,7 +167,8 @@ func rungWords(out string) string {
 }
 
 // boardCheckRows переводит доску в строки отбора: вид приёмки из суффикса
-// заголовка, провал из пометки taskctl fail.
+// заголовка, провал из пометки taskctl fail, контроль и срок из суффиксов
+// заголовка (DK-1470): здесь строка ещё с хвостами, отбор читает готовые поля.
 func boardCheckRows(b *board) map[string]checkrun.Row {
 	titles := map[string]string{}
 	for _, sp := range sectByPrefix {
@@ -175,8 +177,13 @@ func boardCheckRows(b *board) map[string]checkrun.Row {
 	rows := map[string]checkrun.Row{}
 	for sect, rs := range b.sects {
 		for _, r := range rs {
+			days := -1
+			if d, ok := control.Of(r.Title); ok {
+				days = d
+			}
 			rows[r.ID] = checkrun.Row{ID: r.ID, Title: r.Title, Sect: sect, Section: titles[sect],
-				Accept: accept.KindOf(r.Title), Fail: failedOf(b, r.ID)}
+				Accept: accept.KindOf(r.Title), Fail: failedOf(b, r.ID),
+				Control: days, Due: control.DueOf(r.Title)}
 		}
 	}
 	return rows

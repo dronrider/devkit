@@ -200,7 +200,7 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
       [--accept agent|mixed|user] [--due YYYY-MM-DD] [--assign имя]
                                               поправить ячейки строки
   file <ID>                                   создать docs/tasks/<ID>.md и ссылку в строке
-  team add <имя> --kind human|agent [--role exec] [--tier ярус] [--model m]
+  team add <имя> --kind human|agent [--role exec|review|check|inspect]
                                               [--channel ...]
                                               завести участника команды (повторный add
                                               перезаписывает запись), team rm убирает,

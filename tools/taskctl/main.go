@@ -200,6 +200,15 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
       [--accept agent|mixed|user] [--due YYYY-MM-DD] [--assign имя]
                                               поправить ячейки строки
   file <ID>                                   создать docs/tasks/<ID>.md и ссылку в строке
+  team add <имя> --kind human|agent [--role exec] [--tier ярус] [--model m]
+                                              [--channel ...]
+                                              завести участника команды (повторный add
+                                              перезаписывает запись), team rm убирает,
+                                              team list печатает состав, team show
+                                              показывает профиль срезом review stats
+  remind <ID> [--to имя] [--note "..."]         напоминание в канал участника,
+                                              назначенного на строку (--to зовёт
+                                              любого, --note заменяет собранный текст)
   rehearse <ID> [--step "команда"] [--timeout 10m]
                                               обкатать сценарий до Check: шаги из
                                               ограждённых блоков раздела «Сценарий

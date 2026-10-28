@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/dronrider/devkit/internal/sessions"
 )
@@ -4627,6 +4628,11 @@ const titleWords = 7
 // и без них заголовок теряет смысл.
 var titleDropRe = regexp.MustCompile(`^(?i)(привет|здравствуй\S*|слушай|окей|ок)[,!.\s]+`)
 
+// titleNumRe срезает ведущую нумерацию реплики: заказ работы начинается с
+// «1.», и первое предложение нумерованного списка без среза оставляло
+// заголовком голую цифру (DK-1497).
+var titleNumRe = regexp.MustCompile(`^\d+[.)]\s*`)
+
 func titleTrim(text string) string {
 	t := strings.TrimSpace(text)
 	if t == "" {
@@ -4639,6 +4645,7 @@ func titleTrim(text string) string {
 	}
 	for {
 		cut := titleDropRe.ReplaceAllString(t, "")
+		cut = titleNumRe.ReplaceAllString(cut, "")
 		if cut == t {
 			break
 		}
@@ -4649,11 +4656,19 @@ func titleTrim(text string) string {
 		t = strings.TrimSpace(t[:i])
 	}
 	words := strings.Fields(t)
+	tail := ""
 	if len(words) > titleWords {
 		words = words[:titleWords]
-		return strings.Join(words, " ") + "..."
+		tail = "..."
 	}
-	return strings.Join(words, " ")
+	title := strings.Join(words, " ") + tail
+	// Остаток без единой буквы заголовком не годится: дата и чистое число
+	// после среза предложения оставались цифрой, и разговор в списке звало
+	// «1». Ниже по лестнице остаётся подпись «чат <id8>» фронтенда.
+	if !strings.ContainsFunc(title, unicode.IsLetter) {
+		return ""
+	}
+	return title
 }
 
 // probeMark помечает пробный чат, поднятый ради проверки самого дашборда.

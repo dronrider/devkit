@@ -533,6 +533,18 @@ func bigTranscript(order string) string {
 	return sessionLine(order, "main") + strings.Repeat(pad, metaScanLimit/len(pad)+2)
 }
 
+// awayTitleTalk это транскрипт, чья запись ai-title легла за окно чтения
+// шапки: харнес glm пишет её после результатов инструментов первого хода
+// (DK-1497), в живом случае на смещении 415985 при файле в полтора мегабайта.
+// Набивка служебными записями та же, что у bigTranscript, а метка файла
+// ставится при записи свежей: содержательных реплик в хвосте нет, и список
+// чатов меряет разговор временем правки файла.
+func awayTitleTalk(order, title string) string {
+	pad := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-08-10T10:00:02.000Z"}` + "\n"
+	away := fmt.Sprintf(`{"type":"ai-title","aiTitle":%q}`, title) + "\n"
+	return sessionLine(order, "main") + strings.Repeat(pad, metaScanLimit/len(pad)+2) + away
+}
+
 // Голова, дочитанная до предела, переживает дописывание: jsonl только растёт,
 // и перечитывать первую четверть мегабайта на каждый запрос незачем, хотя
 // отпечаток файла сменился. Живая сессия пишется в транскрипт постоянно,
@@ -560,6 +572,44 @@ func TestSessionHeadCachedWhenFull(t *testing.T) {
 	}
 	if _, list, _ := getSessions(t, e, c, ""); len(list) != 1 || list[0].First != said {
 		t.Errorf("дочитанная голова перечитана после дописывания: %+v", list)
+	}
+}
+
+// Голова, у которой запись ai-title легла за окно, дочитывает её вторым
+// проходом (DK-1497): допущение «сразу после первой реплики» (DK-879) на
+// харнесе glm не держится, запись приходит после результатов инструментов
+// первого хода, и полный транскрипт обязан отдать заголовок, которого не
+// дало окно.
+func TestSessionHeadTitleBeyondWindow(t *testing.T) {
+	e := newTestEnv(t)
+	path := writeSession(t, e.home, e.proj, "", "away-1",
+		awayTitleTalk("1. Нашёл баг в списке чатов", "Баги главной страницы"),
+		time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
+	head, full := readSessionHead(path)
+	if !full {
+		t.Fatal("синтетика короче окна чтения шапки: набивка не доросла")
+	}
+	if head.AITitle != "Баги главной страницы" {
+		t.Errorf("заголовок за окном шапки не дочитан: %+v", head)
+	}
+}
+
+// Живой транскрипт харнеса glm (DK-1497, сессия 9cf1c43a от 2026-10-28):
+// запись ai-title на смещении 415985 при файле в полтора мегабайта. Файл
+// лежит на машине вне репозитория, путь приносит переменная LIVE_JSONL, без
+// неё шаг пропускается: синтетика того же случая ездит постоянным тестом
+// выше, а этот стоит на живом формате записи.
+func TestLiveTranscriptAITitle(t *testing.T) {
+	path := os.Getenv("LIVE_JSONL")
+	if path == "" {
+		t.Skip("LIVE_JSONL не задан")
+	}
+	head, full := readSessionHead(path)
+	if !full {
+		t.Fatalf("живой транскрипт короче окна шапки: %s", path)
+	}
+	if head.AITitle != "Баги главной страницы" {
+		t.Fatalf("живой транскрипт без заголовка харнеса: %+v", head)
 	}
 }
 

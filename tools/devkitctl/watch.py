@@ -1863,6 +1863,22 @@ def check_run_repeat(seen, key, line):
     return "quiet"
 
 
+def refuse_repeat(seen, marks, key, line, title, body, root, call, task=None):
+    """Отказ подъёма с судьбой прошлого тика: строки для отчёта и журнала.
+
+    Общая часть прогона сценария и контроля (DK-1470): судьбу решает
+    check_run_repeat, а различаются у кругов только слова зова человеку.
+    Возврат это пара (отчёт, журнал), журнал None значит «мимо журнала»."""
+    fate = check_run_repeat(seen, key, line)
+    marks[key] = seen[key]
+    if fate == "journal":
+        return line, line
+    if fate == "call":
+        said = shout(title, body, root, call, task=task)
+        return "%s (повтор отказа, человек позван: %s)" % (line, said), None
+    return "%s (повтор отказа, человек уже позван)" % line, None
+
+
 def check_run(root, call=None, shipctl=None, home=None):
     """Страховка подъёма прогона сценария (DK-718, DK-947): по строкам Check
     корня тик зовёт `shipctl -C <корень> check-run --json`, и строка,
@@ -1890,21 +1906,16 @@ def check_run(root, call=None, shipctl=None, home=None):
     lines, journal, now = [], [], {}
 
     def refused(key, line, task=None):
-        fate = check_run_repeat(seen, key, line)
-        now[key] = seen[key]
-        if fate == "journal":
-            journal.append("корень %s: %s" % (name, line))
-            lines.append(line)
-            return
-        if fate == "call":
-            said = shout("%s: проверяющий не поднимается" % name,
-                         "%s. Отказ повторился на тике сторожка, журнал про него молчит до "
-                         "смены состояния строки; разобрать и поднять руками: "
-                         "shipctl -C %s check-run %s" % (line, root, task or ""),
-                         root, call, task=task)
-            lines.append("%s (повтор отказа, человек позван: %s)" % (line, said))
-            return
-        lines.append("%s (повтор отказа, человек уже позван)" % line)
+        rep, jour = refuse_repeat(
+            seen, now, key, line,
+            "%s: проверяющий не поднимается" % name,
+            "%s. Отказ повторился на тике сторожка, журнал про него молчит до "
+            "смены состояния строки; разобрать и поднять руками: "
+            "shipctl -C %s check-run %s" % (line, root, task or ""),
+            root, call, task)
+        lines.append(rep)
+        if jour:
+            journal.append("корень %s: %s" % (name, jour))
 
     if not section_rows(root, CHECK):
         lines.append("в Check пусто, %s" % NO_CHECK_RUN)
@@ -1947,6 +1958,127 @@ def check_run(root, call=None, shipctl=None, home=None):
         memory.pop(root, None)
     if json.dumps(memory.get(root), sort_keys=True) != was:
         check_run_remember(home, memory)
+    return ("корень %s: %s" % (name, "; ".join(lines))), journal
+
+
+CONTROL_STATE = "~/.devkit/watch.control"
+# Маркер суффикса контроля в строке доски: кандидат контрольного подъёма.
+CONTROL_SUF = "[контроль: "
+
+
+def control_memory(home):
+    if not home:
+        return {}
+    try:
+        got = json.loads(home_path(home, CONTROL_STATE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+def control_remember(home, memory):
+    if not home:
+        return
+    path = home_path(home, CONTROL_STATE)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(memory, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def control_run(root, now, call=None, shipctl=None, home=None):
+    """Контроль задачи по сроку (DK-1470): по строкам работы с суффиксом
+    «[контроль: N]» тик зовет `shipctl -C <корень> control-run --json`, и строка
+    в окне срока получает сессию инспектора. Отбор и окно решает общий
+    internal/checkrun, тик решает только повторяемость: один подъём на строку в
+    день, поднятое отмечается в памяти и в журнале, дежурному уходит тихий зов.
+    Отказ живёт судьбой повтора из check_run_repeat: первый идёт в журнал,
+    второй одинаковый зовёт человека, дальше тик молчит до смены слов.
+
+    Кандидаты читаются из секций работы без разбора окна: окно решает отбор
+    корабля, и вторая копия правила здесь разошлась бы с первой на первой
+    правке. Контрольные строки вне окна каждые пять минут отвечают «поднимать
+    нечего», и эта строка идёт только в отчёт, не в журнал."""
+    call = subprocess.run if call is None else call
+    name = os.path.basename(root.rstrip("/"))
+    day = now.strftime("%Y-%m-%d")
+    memory = control_memory(home)
+    state = memory.get(root) if isinstance(memory.get(root), dict) else {}
+    was = json.dumps(memory.get(root), sort_keys=True)
+    lifted = state.get("lifted") if isinstance(state.get("lifted"), dict) else {}
+    seen = state.get("refused") if isinstance(state.get("refused"), dict) else {}
+    # Свежие отметки отказа копятся отдельно от прочитанных: ключ, чей отказ
+    # ушёл, из памяти выпадает, как у прогона сценария.
+    marks = {}
+    lines, journal = [], []
+
+    def refused(key, line, task=None):
+        rep, jour = refuse_repeat(
+            seen, marks, key, line,
+            "%s: инспектор контроля не поднимается" % name,
+            "%s. Отказ повторился на тике сторожка, журнал про него молчит до "
+            "смены состояния строки; поднять руками: "
+            "shipctl -C %s control-run %s" % (line, root, task or ""),
+            root, call, task)
+        lines.append(rep)
+        if jour:
+            journal.append("корень %s: %s" % (name, jour))
+
+    # Подъём одного дня: вчерашние отметки чистятся, завтра окно зовёт заново.
+    lifted = {tid: d for tid, d in lifted.items() if d == day}
+    ids = [tid for tid in section_rows(root, IN_PROGRESS, CONTROL_SUF)
+           + section_rows(root, BACKLOG, CONTROL_SUF)
+           if lifted.get(tid) != day]
+    if not ids:
+        if lifted:
+            lines.append("подъёмы контроля на %s уже сделаны" % day)
+        else:
+            lines.append("строк с контролем нет, подъём не нужен")
+    else:
+        bin = devkit_bin("shipctl") if shipctl is None else shipctl
+        reps = None
+        if not bin:
+            refused(CHECK_RUN_ROOT, "бинаря shipctl нет ни в PATH, ни в каталогах релиза: "
+                                    "инспектора контроля поднимать нечем, строки контроля ждут человека")
+        else:
+            try:
+                p = call([bin, "-C", root, "control-run"] + ids + ["--json"],
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            except OSError as e:
+                refused(CHECK_RUN_ROOT, "подъём контроля не вышел, %s" % e)
+            else:
+                try:
+                    reps = json.loads(p.stdout or "")
+                except ValueError:
+                    reps = None
+                if not isinstance(reps, list):
+                    reps = None
+                    text = " ".join((p.stdout or "").split())
+                    refused(CHECK_RUN_ROOT, "подъём контроля отказал с кодом %d: %s"
+                            % (p.returncode, text))
+        for rep in reps or []:
+            if not isinstance(rep, dict):
+                continue
+            line, task = str(rep.get("line") or ""), str(rep.get("id") or "")
+            if rep.get("failed"):
+                refused(task or line, line, task or None)
+            elif rep.get("raised"):
+                lifted[task] = day
+                journal.append("корень %s: %s" % (name, line))
+                lines.append(line)
+                said = shout("%s: контроль %s" % (name, task or name),
+                             "%s. Инспектор контроля поднят тиком сторожка; исход дежурному"
+                             % line, root, call, task=task or None, quiet=True)
+                lines.append("исход дежурному, %s" % said)
+            else:
+                lines.append(line)
+    if lifted or marks:
+        memory[root] = {"lifted": lifted, "refused": marks}
+    else:
+        memory.pop(root, None)
+    if json.dumps(memory.get(root), sort_keys=True) != was:
+        control_remember(home, memory)
     return ("корень %s: %s" % (name, "; ".join(lines))), journal
 
 
@@ -2333,6 +2465,12 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         # что увёл в Check, свой прогон уже получили от самого ship, и тик
         # доберёт остальные.
         line, journal = check_run(root, timed(root), shipctl, home=home)
+        out.write(line + "\n")
+        for entry in journal:
+            log_line(entry, home)
+        # Контроль срока идет тем же проходом: повод у него не выкат, а окно
+        # у срока строки работы, и очереди слияний он не касается.
+        line, journal = control_run(root, now, timed(root), shipctl, home=home)
         out.write(line + "\n")
         for entry in journal:
             log_line(entry, home)

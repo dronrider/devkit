@@ -1244,6 +1244,131 @@ class DrainTest(Stand):
             [SHIPCTL, "-C", str(self.proj), "ship", "--drain"]], self.call.calls)
 
 
+class ControlFake(DrainFake):
+    """Ответ контрольного круга поверх тихих ответов конвейера: control-run
+    получает список исходов построчно, остальным кругам обычная тишина."""
+
+    def __init__(self, reps):
+        super().__init__()
+        self.reps = reps
+
+    def __call__(self, argv, **kw):
+        self.calls.append(list(argv))
+        self.kwargs.append(dict(kw))
+        if "control-run" in argv:
+            out = json.dumps(self.reps)
+        elif "queue" in argv and "--json" in argv:
+            out = json.dumps({"line": QUIET_QUEUE, "items": []})
+        else:
+            out = ""
+        return subprocess.CompletedProcess(argv, 0, out, None)
+
+
+class ControlTickTest(Stand):
+    """Тик ведёт контроль срока (DK-1470): строка работы с суффиксом контроля
+    получает инспектора раз в день, отказ зовёт человека один раз, тишина вне
+    окна не тонет в журнале и не плодит память."""
+
+    DAY = "2026-08-07"
+
+    def setUp(self):
+        super().setUp()
+        self.entry(seen_minutes=1)
+        self.control_board()
+
+    def control_board(self):
+        goal = ROW % (GOAL, GOAL, GOAL)
+        row = ("| DK-901 | Цель: стенд [срок: 2026-08-08] [контроль: 2] | task | P1"
+               " | 60 | XL | [tasks/DK-901.md](tasks/DK-901.md) |")
+        (self.proj / "docs" / "TASKS.md").write_text(
+            BOARD % (goal + "\n" + row, ""), encoding="utf-8")
+
+    def sweep(self, call, now=None):
+        out = io.StringIO()
+        rc = watch.run(now=now or self.now, idle=45 * 60, home=self.home,
+                       out=out, call=call, taskctl=TASKCTL, shipctl=SHIPCTL)
+        return rc, out.getvalue()
+
+    def journal(self):
+        path = self.home / ".devkit" / "goal-watch.log"
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def state(self):
+        path = self.home / ".devkit" / "watch.control"
+        if not path.exists():
+            return {}
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def lifts(self, call):
+        return call.argv_with("control-run")
+
+    def test_lifted_once_a_day(self):
+        # Подъём отмечается днём: повторные тики того же дня инспектора не
+        # зовут, а новый день зовёт снова, окно контроля живёт до срока.
+        line = "DK-901: инспектор контроля поднят, сессия task-DK-901"
+        call = ControlFake([{"id": "DK-901", "line": line, "raised": True}])
+        rc, out = self.sweep(call)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(len(self.lifts(call)), 1, call.calls)
+        self.assertIn("DK-901", self.lifts(call)[0], "подъём зовётся по строке контроля")
+        self.assertNotIn(GOAL, " ".join(str(x) for x in self.lifts(call)[0]),
+                         "строка без контроля не зовёт подъём")
+        self.assertIn(line, self.journal(), "поднятое не дошло до журнала")
+        quiet = [a for a in call.argv_with("notify.py") if "--quiet" in a]
+        self.assertEqual(len(quiet), 1, "исход дежурному не ушёл: %s" % call.calls)
+        self.assertEqual(self.state()[str(self.proj)]["lifted"], {"DK-901": self.DAY})
+        rc, out = self.sweep(call)
+        self.assertEqual(len(self.lifts(call)), 1, "второй тик дня поднял заново")
+        self.assertIn("подъёмы контроля на %s уже сделаны" % self.DAY, out)
+        self.assertEqual(len(quiet), 1, "тихий зов уехал повторно")
+        rc, out = self.sweep(call, now=self.now + timedelta(days=1))
+        self.assertEqual(len(self.lifts(call)), 2, "новый день не поднял контроль")
+
+    def test_out_of_window_stays_out_of_journal(self):
+        # Строка контроля вне окна отвечает «поднимать нечего» каждые пять
+        # минут: строка идёт в отчёт, но не в журнал и не в память.
+        line = "DK-901: поднимать нечего, окно контроля ещё не настало"
+        call = ControlFake([{"id": "DK-901", "line": line}])
+        rc, out = self.sweep(call)
+        self.assertEqual(rc, 0, out)
+        self.assertIn(line, out)
+        self.assertNotIn("окно контроля", self.journal())
+        self.assertEqual(self.state(), {}, "тишина вне окна не пишется в память")
+
+    def test_refusal_calls_human_once(self):
+        # Отказ подъёма идёт судьбой повтора: первый в журнал, второй одинаковый
+        # зовёт человека громко, дальше тик молчит до смены слов.
+        line = "DK-901: проверка контроля не поднята, лестница пуста"
+        call = ControlFake([{"id": "DK-901", "line": line, "failed": True}])
+        rc, out = self.sweep(call)
+        self.assertEqual(rc, 0, out)
+        self.assertIn(line, self.journal())
+        self.assertEqual(call.argv_with("notify.py"), [],
+                         "первый отказ идёт в журнал, а не человеку")
+        rc, out = self.sweep(call)
+        loud = [a for a in call.argv_with("notify.py") if "--quiet" not in a]
+        self.assertEqual(len(loud), 1, "повтор отказа не позвал человека: %s" % call.calls)
+        self.assertIn("control-run", " ".join(str(x) for x in loud[0]),
+                      "зов не назвал команду подъёма")
+        self.assertEqual(self.journal().count(line), 1,
+                         "повтор отказа дублируется в журнале")
+        rc, out = self.sweep(call)
+        self.assertIn("человек уже позван", out)
+        self.assertEqual(len([a for a in call.argv_with("notify.py")
+                              if "--quiet" not in a]), 1,
+                         "третий тик зовёт человека заново")
+
+    def test_board_without_control_stays_silent(self):
+        # Доска без суффиксов контроля круга не касается: ни вызова, ни памяти.
+        self.board()
+        call = ControlFake([])
+        rc, out = self.sweep(call)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.lifts(call), [], call.calls)
+        self.assertIn("строк с контролем нет", out)
+        self.assertEqual(self.state(), {})
+
+
 class CheckFake(Fake):
     """Запускатель, отвечающий по команде: подъёму своё, соседям по тику
     штатную тишину. Один ответ на все вызовы путал бы источник строки в

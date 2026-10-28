@@ -13,7 +13,7 @@ type ScenarioSelection struct {
 	NextID   int
 }
 
-func scenarioPieces(text string) ([]string, error) {
+func ScenarioAnswerParts(text string) ([]string, error) {
 	var parts []string
 	start := 0
 	quoted, escaped := false, false
@@ -99,7 +99,7 @@ func ParseScenarioAnswer(f Fork, snapshot ScenarioSnapshot, text string) (Scenar
 	if strings.TrimSpace(text) == "" {
 		return result, fmt.Errorf("ответ пуст: явный отказ от всех называется «ничего»")
 	}
-	parts, err := scenarioPieces(text)
+	parts, err := ScenarioAnswerParts(text)
 	if err != nil {
 		return result, err
 	}

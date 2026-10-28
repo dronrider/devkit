@@ -3150,7 +3150,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		Text string `json:"text"`
 		// MsgID это ключ записи в очереди исходящих панели: один и тот же у
 		// первой отправки и у всех её повторов.
-		MsgID string `json:"msg_id"`
+		MsgID    string          `json:"msg_id"`
+		Scenario *scenarioAnswer `json:"scenario,omitempty"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
 		// Тело сверх предела это своя причина, а не «жду JSON»: длинная вставка
@@ -3167,7 +3168,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	text := chatText(body.Text)
-	if text == "" {
+	if body.Scenario != nil {
+		text = body.Text
+	}
+	if strings.TrimSpace(text) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустая реплика никуда не едет"})
 		return
 	}
@@ -3188,6 +3192,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		// Незакрытая попытка ключ отпускает: отказ доставки это повод повторить,
 		// и держать запись занятой после него значило бы хоронить реплику.
 		defer s.chatSayRelease(sid, claim)
+	}
+	if body.Scenario != nil {
+		s.handleScenarioSay(w, found, sid, claim, text, *body.Scenario)
+		return
 	}
 	info, ok := findSession(s.transcriptRoots(), found.Path, sid)
 	if !ok {
@@ -3709,6 +3717,7 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	continuation := s.scenarioContinuation(found.Path, sid)
 	// Вопрос помощника пароля (askpass.go, DK-772) идёт раньше вопроса
 	// клиента: sudo или ssh без терминала висит на отдельном канале ожидания,
 	// а не на диалоге виджета, и снимка панели тут вовсе не стоит.
@@ -3721,7 +3730,7 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	// же и ждёт ответа, значит клиент занят нашим инструментом, а не своим
 	// вопросом, и разбирать его панель незачем.
 	if agent, ok := s.agentAsk(sid); ok {
-		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "task": agent.Task, "ask": agent})
+		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "task": agent.Task, "ask": agent, "continuation": continuation})
 		return
 	}
 	name, _ := s.chatWinOf(sid, s.bindsAll(), s.peers(), s.chatWinMemory())
@@ -3730,7 +3739,7 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		// панель спрашивает всякий открытый разговор, и «ни на чём не стоит»
 		// такой же ответ, как сам вопрос. Отказом тут стоял 409, и панель
 		// получала его по кругу каждые несколько секунд (DK-652).
-		writeJSON(w, http.StatusOK, map[string]any{"session": sid,
+		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "continuation": continuation,
 			"note": fmt.Sprintf("разговор %s не живёт в нашей tmux и вопросов агента за ним нет", sid)})
 		return
 	}
@@ -3774,7 +3783,7 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		// признак журнала едет в ответ, и панель показывает плашку состояния
 		// вместо тишины, неотличимой от штатной работы.
 		s.askQuietLog(sid, name, echo)
-		out := map[string]any{"session": sid, "tmux": name}
+		out := map[string]any{"session": sid, "tmux": name, "continuation": continuation}
 		if stuck != "" {
 			out["stuck"] = stuck
 		} else {
@@ -3783,7 +3792,7 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
-	out := map[string]any{"session": sid, "tmux": name, "ask": ask}
+	out := map[string]any{"session": sid, "tmux": name, "ask": ask, "continuation": continuation}
 	if stuck != "" {
 		out["stuck"] = stuck
 	}

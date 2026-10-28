@@ -13122,7 +13122,7 @@ function echoRead(project, addr) {
     // tmux это имя сессии, которую подняла эта реплика: по нему панель,
     // вернувшаяся на адрес new, пришивает себя к родившемуся диалогу.
     return raw.filter((m) => m && m.text).map((m) => ({
-      text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(),
+      text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(), scenario: m.scenario || null,
       state: m.state === "held" || m.state === "wait" ? m.state : "bad",
       why: m.why ? String(m.why) : "",
       tmux: m.tmux ? String(m.tmux) : "",
@@ -13177,7 +13177,7 @@ function echoWrite(project, addr, list) {
     // после перерисовки, пока эхо их не сняло (первая реплика нового чата
     // пропадала с экрана ровно из-за того, что жил только bad).
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait")
-      .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state,
+      .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, scenario: m.scenario,
         why: m.why || "", tmux: m.tmux || "", id: m.id || "",
         queue: Boolean(m.queue), task: m.task || "", since: m.since || m.born }));
     if (keep.length) {
@@ -13244,7 +13244,7 @@ function echoSweep(project, door, chats) {
       let was = [];
       try { was = JSON.parse(localStorage.getItem(key + hit.id) || "[]"); } catch (err) {}
       if (!Array.isArray(was)) was = [];
-      was.push({ text: rec.text, wire: rec.wire, born: rec.born, state: rec.state,
+      was.push({ text: rec.text, wire: rec.wire, born: rec.born, state: rec.state, scenario: rec.scenario,
         why: rec.why || "", tmux: rec.tmux || "", id: rec.id || "",
         queue: Boolean(rec.queue), task: rec.task || "", since: rec.since || rec.born });
       localStorage.setItem(key + hit.id, JSON.stringify(was));
@@ -13466,7 +13466,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
         state: rec.state, why: rec.why, born: rec.born, since: rec.since,
         tmux: rec.tmux, queue: rec.queue, task: rec.task,
-        retry: (again) => resend(again, rec.id, rec.wire) });
+        scenario: rec.scenario, retry: (again) => resend(again, rec.id, rec.wire, rec.scenario) });
     }
     // Снятые с дверного ключа показываются один раз: в персист их пишет разбор
     // echoSweep и там же снимает ключ, а тут они только стоят в ленте до
@@ -13514,7 +13514,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     // wire это то, что ушло агенту (с префиксами вложений и выделения), и
     // сверка эха идёт по нему: в транскрипте лежит именно он. text это слова
     // человека, их и видно в пузыре, а вложения стоят при них своими блоками.
-    add(text, retry, wire, sel, clips, id) {
+    add(text, retry, wire, sel, clips, id, scenario) {
       seq += 1;
       // Ключ записи держится за саму запись: повтор той же реплики едет с тем
       // же ключом, иначе сервер видит не повтор, а новую реплику. Простой
@@ -13522,7 +13522,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       // новая, и порог снятия не должен обнуляться каждой попыткой.
       const key = id || msgKey();
       const m = { key: "local-" + seq, id: key, text, wire: wire || text, sel, clips,
-        state: "wait", born: Date.now(), since: sinceOf.get(key) || Date.now(), retry };
+        state: "wait", born: Date.now(), since: sinceOf.get(key) || Date.now(), retry, scenario };
       sinceOf.set(key, m.since);
       mine.push(m);
       // Запись сразу: перерисовка панели во время отправки съедала пузырь
@@ -13822,7 +13822,8 @@ function chatPanel(project, st) {
   // признаку ожидания вешает галочки при строках вариантов (DK-864). Тут
   // помнится, ждут ли ответа и что галочки уже дописали в поле ввода: строку
   // ответа надо не только собрать, но и убрать со снятой отметки.
-  const askPick = { on: false, put: "", ask: null };
+  const askPick = Object.assign({ on: false, put: "", ask: null }, askPickRead(st.addr));
+  askPick.addr = st.addr;
   // Разговор без процесса красит общий индикатор остановкой вместо отдельной
   // строки с кнопкой (DK-701). Кнопки «Поднять» тут больше нет: молчание не
   // отличалось от живого разговора, и человек нажимал её не зная, поднимется
@@ -13877,6 +13878,8 @@ function chatPanel(project, st) {
   if (savedHeight > 0) ta.style.height = savedHeight + "px";
   let draftTimer = null;
   ta.addEventListener("input", () => {
+    askPickInput(askPick, ta.value);
+    askPickSave(st.addr, ta.value ? askPick : null);
     if (draftTimer) clearTimeout(draftTimer);
     draftTimer = setTimeout(() => { draftSave(ta.value); }, CHAT_DRAFT_WAIT);
   });
@@ -14166,7 +14169,7 @@ function chatPanel(project, st) {
     putClip(clip).then(drawClips);
   };
 
-  const post = (text, sel, withClips, key, took, wireHint) => {
+  const post = (text, sel, withClips, key, took, wireHint, scenario) => {
     // Пузырь встаёт в ленту до похода на сервер, как в мессенджерах: ждать
     // ответа ручки, а потом ещё и записи в транскрипт, значит показывать
     // человеку пустоту в ответ на нажатие.
@@ -14177,8 +14180,8 @@ function chatPanel(project, st) {
     // Повтор восстановленной записи едет с тем же проводом: вложения той
     // реплики уже лежат на сервере, и строить провод заново значило бы
     // перечитать их в панель, которой их уже не принадлежит.
-    const m = echo.add(text, (again, id) => post(again, sel, withClips, id, took, wireHint),
-      wire0, sel, withClips, key);
+    const m = echo.add(text, (again, id) => post(again, sel, withClips, id, took, wireHint, scenario),
+      wire0, sel, withClips, key, scenario);
     send.disabled = true;
     const done = () => { send.disabled = Boolean(way.off); };
     // Подъём сессии первой репликой. Умершая сессия подъёма это повод поднять
@@ -14219,6 +14222,20 @@ function chatPanel(project, st) {
     // Дорога реплики выбрана заранее, а путь вложения приклеивается к ней
     // первой строкой: у всех дорог он один и тот же.
     const go = (wire) => {
+      if (scenario) {
+        api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say", {
+          method: "POST", body: { text, msg_id: m.id, scenario },
+        }).then((r) => {
+          if (!r.ok) {
+            echo.held(m, r.body.error || "ответ не принят");
+            sayResult(r.body.error || "ответ не принят", true);
+          } else {
+            echo.sent(m);
+            if (r.body.message) sayResult(r.body.message, false);
+          }
+        }).catch((err) => { echo.bad(m); console.error(err); }).finally(done);
+        return;
+      }
       if (way.kind === "task") {
         // Реплика ждущей задаче: ручка кладёт её безадресной строкой во вход.
         // Ленты у такой строки нет, и пузырь тут единственный след ответа,
@@ -14358,8 +14375,9 @@ function chatPanel(project, st) {
   };
 
   const fire = () => {
-    const text = ta.value.trim();
-    if (!text || send.disabled) return;
+    const scenario = askPick.answer || null;
+    const text = scenario ? ta.value : ta.value.trim();
+    if (!text.trim() || send.disabled) return;
     ta.value = "";
     // Реплика циклу цели уходит очередью «Входящих», пузырь ей рисует сама
     // очередь. Эхо транскрипта ей не положено: в ленту витка она попадёт
@@ -14372,6 +14390,11 @@ function chatPanel(project, st) {
     // Собранная галочками строка уехала вместе с репликой, и помнить её
     // больше незачем: следующая отметка дописывает своё в пустое поле.
     askPick.put = "";
+    askPick.answer = null;
+    askPick.selected = null;
+    askPick.ordinary = null;
+    askPick.touched = false;
+    askPickSave(st.addr, null);
     if (draftTimer) clearTimeout(draftTimer);
     chatDraftWrite(st.addr, "");
     // Отправка уносит и высоту: поле возвращается к своему обычному росту,
@@ -14382,7 +14405,7 @@ function chatPanel(project, st) {
     // выделяет абзац, пишет «поправь этот текст», и агент получает и слова, и
     // сам текст (замечание 3 девятого круга POC). Вложения уезжают списком:
     // снимки и фрагменты одной реплики едут вместе, сколько бы их ни было.
-    post(text, pinnedSel || grabSelection(), attach, null, picks);
+    post(text, pinnedSel || grabSelection(), attach, null, picks, null, scenario);
     pinnedSel = null;
     attach = [];
     picks = [];
@@ -14478,7 +14501,7 @@ function chatPanel(project, st) {
     const legacy = st.sid && st.addr && st.addr !== st.sid
       ? echoSweep(project, st.addr, st.chats) : [];
     echo = makeEcho(project, pend, feed, st.sid || st.addr,
-      (more, id, wire) => post(more, null, null, id, null, wire), legacy);
+      (more, id, wire, scenario) => post(more, null, null, id, null, wire, scenario), legacy);
     chatLive.push(echo.clear, echo.stop);
     // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
     // работе поверх причины значило бы врать.
@@ -14604,7 +14627,15 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
     try {
       const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
       if (stop) return;
-      const ask = (r.ok && r.body.ask) || null;
+      let ask = (r.ok && r.body.ask) || null;
+      if (pick.answer && (ta.value || pick.touched)) ask = pick.ask;
+      else if (JSON.stringify(pick.ask) !== JSON.stringify(ask)) {
+        pick.selected = null;
+        pick.ordinary = null;
+        pick.answer = null;
+      }
+      const continuation = (r.ok && r.body.continuation) || "";
+      pick.continuation = continuation;
       // Запертость журнала приходит тем же ответом и без разобранного вопроса:
       // плашка состояния стоит в том же боксе, что и блок (DK-1300, случай 03).
       const stuck = (r.ok && r.body.stuck) || "";
@@ -14721,7 +14752,7 @@ function paintAskpassAsk(project, st, box, ask) {
 function askCardSteps(ask) {
   const steps = (ask.steps || []).filter((step) => step && (step.text || (step.options || []).length));
   if (steps.length) return steps;
-  return [{ fork: ask.fork, text: ask.text, options: ask.options }];
+  return [{ fork: ask.fork, text: ask.text, options: ask.options, multi: ask.multi, scenario: ask.scenario }];
 }
 
 // Галочки при строках вариантов в ленте (DK-864, форма DK-1374). Вопрос идёт
@@ -14771,7 +14802,9 @@ function askPickWanted(ask) {
     const fork = step.fork || "";
     if (!fork) continue;
     (step.options || []).forEach((opt, i) => {
-      out.push({ fork, num: i + 1, label: askPickLabel(opt.text) });
+      const scenario = step.scenario;
+      out.push({ fork, num: i + 1, label: askPickLabel(opt.text), scenario,
+        id: scenario && scenario.ids[i] });
     });
   }
   return out;
@@ -14788,7 +14821,8 @@ function askPickMatch(root, wanted) {
   for (const li of root.querySelectorAll("li")) {
     const label = askPickLabel(askPickText(li));
     for (let i = 0; i < wanted.length; i++) {
-      if (used.has(i) || !wanted[i].label || wanted[i].label !== label) continue;
+      const same = wanted[i].id ? label.startsWith(wanted[i].id + ". ") : wanted[i].label === label;
+      if (used.has(i) || !wanted[i].label || !same) continue;
       used.add(i);
       out.push({ li, pick: wanted[i] });
       break;
@@ -14800,7 +14834,7 @@ function askPickMatch(root, wanted) {
 // askPickHeads собирает головы вопроса. По ним панель находит свою реплику
 // среди чужих списков с теми же словами вариантов.
 function askPickHeads(steps) {
-  return steps.map((step) => String(step.text || "").split("\n")[0].trim())
+  return steps.map((step) => step.scenario ? "снимок сценариев: " + step.scenario.snapshot : String(step.text || "").split("\n")[0].trim())
     .filter(Boolean);
 }
 
@@ -14845,6 +14879,10 @@ function askPickMeta(ask) {
 function askSameFormText(steps, ask) {
   const parts = [askPickMeta(ask)];
   for (const step of steps) {
+    if (step.scenario) {
+      parts.push(step.scenario.block);
+      continue;
+    }
     const lines = [step.text || "заход спросил и ждёт"];
     (step.options || []).forEach((opt, i) => {
       const rec = /советует агент/.test(opt.desc || "");
@@ -14872,12 +14910,26 @@ function askPickFallback(steps, ask) {
 // её строки списка; иначе панель дописывает строки той же формы и вешает
 // галочки на них. Частичный набор на чужом списке не считается находкой.
 function askPickWire(feed, ta, pick) {
+  let resume = feed.querySelector(".askresume");
+  if (pick.continuation) {
+    if (!resume) { resume = el("div", "msg askresume"); feed.append(resume); }
+    if (resume.dataset.text !== pick.continuation) {
+      const bb = el("div", "bb");
+      bb.append(mdRender(pick.continuation, chatFeedAt()));
+      resume.replaceChildren(bb);
+      resume.dataset.text = pick.continuation;
+    }
+  } else if (resume) resume.remove();
   for (const old of feed.querySelectorAll(".caskpick")) old.remove();
   for (const li of feed.querySelectorAll(".casklit")) li.classList.remove("casklit");
   const oldFb = feed.querySelector(".askfb");
   if (oldFb) oldFb.remove();
   if (!pick.on || !pick.ask) return;
+  pick.draft = String(ta.value || "");
   const steps = askCardSteps(pick.ask);
+  const scenario = steps.find((step) => step.scenario);
+  if (scenario) pick.answer = { task: pick.ask.task, tree: scenario.scenario.tree || pick.ask.tree, fork: scenario.scenario.fork,
+    snapshot: scenario.scenario.snapshot };
   const wanted = askPickWanted(pick.ask);
   const heads = askPickHeads(steps);
   let host = askPickHost(feed, heads);
@@ -14906,12 +14958,19 @@ function askPickWire(feed, ta, pick) {
     mark.type = "button";
     mark.setAttribute("role", "checkbox");
     mark.setAttribute("aria-label", "Ответить «" + said + "»");
-    askPickMark(mark, (pick.put || "").split(", ").includes(said));
+    const current = hit.pick.scenario && (hit.pick.scenario.current || []);
+    const selected = pick.selected || current;
+    askPickMark(mark, hit.pick.scenario ? selected.includes(hit.pick.id) : (pick.ordinary || (pick.put || "").split(", ")).includes(said));
     mark.append(el("span", "caskbox"));
     mark.addEventListener("click", (ev) => {
       ev.stopPropagation();
       askPickMark(mark, !mark.classList.contains("on"));
-      askPickPut(ta, pick, askPickSaid(marks));
+      if (hit.pick.scenario) {
+        pick.touched = true;
+        pick.selected = marks.filter((own) => own.pick.scenario && own.mark.classList.contains("on")).map((own) => own.pick.id);
+      }
+      if (scenario) pick.ordinary = marks.filter((own) => !own.pick.scenario && own.mark.classList.contains("on")).map((own) => askPickWord(own.pick));
+      askPickPut(ta, pick, askPickSaid(marks, Boolean(pick.touched)));
     });
     hit.li.prepend(mark);
     marks.push({ mark, pick: hit.pick });
@@ -15033,14 +15092,23 @@ function paintClientAsk(project, st, box, ask, again, ta, pick, stuck) {
 
 // askPickSaid собирает строку ответа из отмеченного: «печать 1, ответ 3». Тот
 // же вид разбирает taskctl decide --answer.
-function askPickSaid(marks) {
-  return marks.filter((own) => own.mark.classList.contains("on"))
-    .map((own) => askPickWord(own.pick)).join(", ");
+function askPickSaid(marks, touched) {
+  const parts = [];
+  const groups = new Map();
+  for (const own of marks) {
+    if (own.pick.scenario && touched === false) continue;
+    if (own.pick.scenario && !groups.has(own.pick.fork)) groups.set(own.pick.fork, []);
+    if (!own.mark.classList.contains("on")) continue;
+    if (own.pick.scenario) groups.get(own.pick.fork).push(own.pick.id);
+    else parts.push(askPickWord(own.pick));
+  }
+  for (const [fork, ids] of groups) parts.push(ids.length ? fork + " " + ids.join(", ") : "ничего");
+  return parts.join(groups.size ? "; " : ", ");
 }
 
 // askPickWord это кусок ответа про одну развилку: её имя и номер варианта.
 function askPickWord(pick) {
-  return pick.fork + " " + pick.num;
+  return pick.fork + " " + (pick.id || pick.num);
 }
 
 // askPickPut держит строку ответа в поле ввода рядом с тем, что человек
@@ -15050,10 +15118,50 @@ function askPickPut(ta, state, said) {
   const had = state.put || "";
   if (had === said) return;
   let text = String(ta.value || "");
-  if (had && text.includes(had)) text = text.split(had).join(said);
-  else if (said) text = text.trim() ? text.trim() + " " + said : said;
-  ta.value = text.trim();
+  if (state.answer) {
+    if (had && text.slice(state.putStart, state.putStart + had.length) === had) {
+      text = text.slice(0, state.putStart) + said + text.slice(state.putStart + had.length);
+    } else if (said) {
+      state.putStart = 0;
+      text = said + (text ? "; " + text : "");
+    }
+    ta.value = text;
+  } else {
+    if (had && text.includes(had)) text = text.split(had).join(said);
+    else if (said) text = text.trim() ? text.trim() + " " + said : said;
+    ta.value = text.trim();
+  }
   state.put = said;
+  state.draft = ta.value;
+  if (state.addr) askPickSave(state.addr, state);
+  if (typeof ta.dispatchEvent === "function") ta.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function askPickInput(state, text) {
+  const before = state.draft || "";
+  if (state.answer && state.put && before !== text) {
+    let start = 0;
+    while (start < before.length && start < text.length && before[start] === text[start]) start++;
+    let end = before.length, after = text.length;
+    while (end > start && after > start && before[end - 1] === text[after - 1]) { end--; after--; }
+    if (end <= state.putStart) state.putStart += after - end;
+    else if (start < state.putStart + state.put.length) state.put = "";
+  }
+  state.draft = text;
+}
+
+function askPickRead(addr) {
+  try { return JSON.parse(localStorage.getItem("devkit.askdraft." + addr) || "null") || {}; }
+  catch (err) { return {}; }
+}
+
+function askPickSave(addr, pick) {
+  const key = "devkit.askdraft." + addr;
+  try {
+    if (!pick || !pick.answer) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify({ on: pick.on, ask: pick.ask, answer: pick.answer,
+      put: pick.put, putStart: pick.putStart, selected: pick.selected, ordinary: pick.ordinary, touched: pick.touched }));
+  } catch (err) {}
 }
 
 // askPickMark ставит и снимает саму отметку: вид её и слово для чтения с

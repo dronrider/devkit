@@ -34,7 +34,15 @@ func TestTeamAddListRm(t *testing.T) {
 			t.Fatalf("состав не несёт строку %q:\n%s", part, out)
 		}
 	}
-	// Повторный add с тем же handle перезаписывает запись целиком.
+	// Повторный add с тем же handle перезаписывает запись целиком и признаётся
+	// в унесённых полях: молча потерянная роль exec отказала бы назначениям.
+	out2, err := cmdTeamAdd(home, "rider", TeamParams{Kind: team.Human, Roles: []string{team.RoleExec}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out2, "утрачено: роли инспектор, канал telegram:@rider") {
+		t.Fatalf("замена не назвала потери: %s", out)
+	}
 	if _, err := cmdTeamAdd(home, "glm53", TeamParams{Kind: team.Agent, Model: "glm-5.3", Tier: "base", Roles: []string{team.RoleReview}}); err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +50,14 @@ func TestTeamAddListRm(t *testing.T) {
 	p, _ := team.Find(list, "glm53")
 	if p.Tier != "base" || p.HasRole(team.RoleExec) {
 		t.Fatalf("перезапись не заменила запись: %+v", p)
+	}
+	// Замена без потерь слово «утрачено» не печатает.
+	out, err = cmdTeamAdd(home, "glm53", TeamParams{Kind: team.Agent, Model: "glm-5.3", Tier: "base", Roles: []string{team.RoleReview, team.RoleExec}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "утрачено") {
+		t.Fatalf("замена без потерь напечатала утраты: %s", out)
 	}
 	if _, err := cmdTeamRm(home, "rider"); err != nil {
 		t.Fatal(err)

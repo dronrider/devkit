@@ -49,9 +49,11 @@ func cmdTeamAdd(home, handle string, p TeamParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	var old team.Participant
 	replaced := false
 	for i := range list {
 		if list[i].Handle == handle {
+			old = list[i]
 			list[i] = np
 			replaced = true
 			break
@@ -64,10 +66,37 @@ func cmdTeamAdd(home, handle string, p TeamParams) (string, error) {
 		return "", err
 	}
 	verb := "добавлен"
+	lost := ""
 	if replaced {
 		verb = "заменён"
+		lost = lostFields(old, np)
 	}
-	return fmt.Sprintf("%s %s: %s", handle, verb, teamLine(np)), nil
+	out := fmt.Sprintf("%s %s", handle, verb)
+	if lost != "" {
+		out += "; утрачено: " + lost
+	}
+	return out + ": " + teamLine(np), nil
+}
+
+// lostFields называет то, что перезапись команды унесла из прежней записи:
+// роли, которых больше нет, и канал без замены. Перезапись целиком это
+// заявленное поведение, но молча потерянная роль exec отказывает потомкам
+// set --assign и remind, и замена обязана признаться в потерях на месте.
+func lostFields(old, np team.Participant) string {
+	var parts []string
+	var roles []string
+	for _, r := range old.Roles {
+		if !np.HasRole(r) {
+			roles = append(roles, team.RoleName(r))
+		}
+	}
+	if len(roles) > 0 {
+		parts = append(parts, "роли "+strings.Join(roles, ", "))
+	}
+	if old.Channel != "" && np.Channel == "" {
+		parts = append(parts, "канал "+old.Channel)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // cmdTeamRm убирает участника из команды. Назначения на строках при этом

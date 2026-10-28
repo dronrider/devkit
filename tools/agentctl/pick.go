@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/stage"
+	"github.com/dronrider/devkit/internal/team"
 )
 
 type verdict struct {
@@ -299,6 +300,15 @@ func pickVerdict(root, id, role, goal string) (pickResult, error) {
 	now := timeNow()
 	v := pickTier(*r)
 	v.Effort = pickEffort(*r)
+	// Назначение строки (DK-1468) сужает вердикт до состава команды: строка
+	// с суффиксом «[исп: имя]» ведётся участником из ~/.devkit/team.toml.
+	// Чтение команды не валит вердикт: битый файл и уехавший участник уходят
+	// предупреждением, и вердикт считается по метаданным строки, как считал
+	// бы без команды вовсе.
+	assigned, teamNote := assignmentOf(*r)
+	if teamNote != "" {
+		v.Reason += "; " + teamNote
+	}
 	var qf quotaFacts
 	// Контур харнеса резолвится один раз: из него берётся и объявление квоты
 	// (какие бакеты бывают, из каких тратит ярус, где лежит снимок), и маппинг
@@ -313,7 +323,26 @@ func pickVerdict(root, id, role, goal string) (pickResult, error) {
 	// квоты тогда не повторяется, предупреждение говорит то же самое и вдобавок
 	// несёт команду починки.
 	warned := false
-	if ov.Tier != "" {
+	if assigned != nil && assigned.Kind == team.Agent {
+		// Назначенный агентский участник сильнее override-строки: назначение
+		// пишут на доску по составу команды и позже, а override остаётся
+		// решением о ярусе без имени. Фиксированного участника корректор не
+		// двигает: сдвиг вниз подменял бы участника, не снимая назначения.
+		// Грумминговый вердикт назначением ниже pro не опускается по той же
+		// причине, что и потолком цели: дешёвая нарезка цели разорила бы
+		// бюджет на переделку.
+		tier := assigned.Tier
+		reason := fmt.Sprintf("строка назначена участнику команды %s, ярус %s", team.TitleHandle(r.Title), tier)
+		if ov.Tier != "" {
+			reason += ", перебивает override-строку файла задачи"
+		}
+		if v.Groom && tierIndex(tier) < tierIndex(tierPro) {
+			tier = tierPro
+			reason += ", грумминговый вердикт ниже pro не опускается"
+		}
+		v = verdict{Tier: tier, Effort: v.Effort, Reason: reason, Groom: v.Groom}
+		qf = quotaFacts{Off: "не смотрели, ярус задан назначением строки"}
+	} else if ov.Tier != "" {
 		// Ручное решение сильнее автоматики: override корректор не двигает,
 		// иначе указанный руками ярус пришлось бы отстаивать повторно на
 		// каждый снимок квоты.
@@ -360,6 +389,13 @@ func pickVerdict(root, id, role, goal string) (pickResult, error) {
 			qf = quotaFactsOf(hc.Quota, s, c, v.Groom, now, tm.Active)
 			qf.Warned = warned
 		}
+	}
+	// Человек в назначении не останавливает агентскую работу по строке:
+	// ведёт её назначенный, а вердикт считает подсобные подъёмы. Пометка
+	// стоит после цепочки, чтобы уйти в причину при любом исходе выбора
+	// яруса.
+	if assigned != nil && assigned.Kind == team.Human {
+		v.Reason += fmt.Sprintf("; строка назначена участнику-человеку %s, вердикт для подсобных подъёмов", team.TitleHandle(r.Title))
 	}
 	// Роль ревью применяется последней по ярусной оси: пол base считается от
 	// того, что осталось после override и корректора, иначе корректор увёл бы

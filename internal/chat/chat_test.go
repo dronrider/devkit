@@ -2,10 +2,23 @@ package chat
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestScenarioQuestionSurvivesAsk(t *testing.T) {
+	root := t.TempDir()
+	want := Ask{Task: "XR-4", Questions: []Question{{Text: "что включаем?", Multi: true, Options: []Option{{Label: "СЦ-3. продолжить"}}, Scenario: &ScenarioQuestion{Tree: "/tmp/project-branch", Snapshot: "sc1-" + strings.Repeat("a", 64), Fork: "сценарии", IDs: []string{"СЦ-3"}, Current: []string{"СЦ-3"}, Block: "карточка\nснимок сценариев: sc1-" + strings.Repeat("a", 64)}}}}
+	if err := WriteAsk(root, "task-XR-4", want); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ReadAsk(AskPath(root, "task-XR-4"))
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("вопрос потерял снимок/ID: %+v", got)
+	}
+}
 
 func at() time.Time { return time.Date(2026, 8, 19, 12, 30, 0, 0, time.Local) }
 

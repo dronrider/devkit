@@ -5,6 +5,18 @@ import (
 	"testing"
 )
 
+func TestScenarioAnswerPartsPreserveQuotedText(t *testing.T) {
+	text := `срок 1; сценарии СЦ-3, СЦ-1; плюс "свой, с \"кавычкой\" и \\ путём"`
+	got, err := ScenarioAnswerParts(text)
+	want := []string{"срок 1", "сценарии СЦ-3", "СЦ-1", `плюс "свой, с \"кавычкой\" и \\ путём"`}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("части ответа изменились: %q, %v", got, err)
+	}
+	if _, err := ScenarioAnswerParts(`плюс "незакрытый`); err == nil {
+		t.Fatal("непарная кавычка принята")
+	}
+}
+
 func TestScenarioAnswerSelection(t *testing.T) {
 	_, f := scenarioFixture(t)
 	snapshot, _ := NewScenarioSnapshot("XR-1", f)

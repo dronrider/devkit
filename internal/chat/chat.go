@@ -307,9 +307,19 @@ func Take(tree, name, sid string) ([]string, error) {
 // инструмента ожидания и оттуда же читается экраном, и разбора разметки
 // финального слова нет вовсе.
 type Question struct {
-	Text    string   `json:"text"`
-	Multi   bool     `json:"multi,omitempty"`
-	Options []Option `json:"options,omitempty"`
+	Text     string            `json:"text"`
+	Multi    bool              `json:"multi,omitempty"`
+	Options  []Option          `json:"options,omitempty"`
+	Scenario *ScenarioQuestion `json:"scenario,omitempty"`
+}
+
+type ScenarioQuestion struct {
+	Tree     string   `json:"tree,omitempty"`
+	Snapshot string   `json:"snapshot"`
+	Fork     string   `json:"fork"`
+	IDs      []string `json:"ids"`
+	Current  []string `json:"current,omitempty"`
+	Block    string   `json:"block"`
 }
 
 // Option это вариант ответа: подпись, пояснение и пометка рекомендации.

@@ -47,7 +47,7 @@ func armSuffixAt(at time.Time) string {
 // оказывается только правкой заголовка руками, и обход с печатью зовут её
 // словами, а не молчанием.
 func armHour(title string) (time.Time, bool, error) {
-	_, _, _, armSuf, _, _, _, _, _ := splitTitle(title)
+	_, _, _, armSuf, _, _, _, _, _, _ := splitTitle(title)
 	if armSuf == "" {
 		return time.Time{}, false, nil
 	}
@@ -73,7 +73,7 @@ const armDefaultLimit = 3
 
 // armed говорит, взведена ли строка.
 func armed(title string) bool {
-	_, _, _, armSuf, _, _, _, _, _ := splitTitle(title)
+	_, _, _, armSuf, _, _, _, _, _, _ := splitTitle(title)
 	return armSuf != ""
 }
 
@@ -340,7 +340,7 @@ func armState(root string, ed *edges, r *Row) *armView {
 	if r.Sect != SectBacklog {
 		return nil
 	}
-	_, deps, _, armSuf, _, _, _, _, _ := splitTitle(r.Title)
+	_, deps, _, armSuf, _, _, _, _, _, _ := splitTitle(r.Title)
 	if armSuf == "" {
 		if len(deps) == 0 || len(ed.held(r)) > 0 {
 			return nil
@@ -399,7 +399,7 @@ func cmdArm(root, id, at string, off bool, c CommitOpts) (string, error) {
 	if err := needTaskFile(root, id); err != nil {
 		return "", err
 	}
-	base, deps, debtSuf, armSuf, planSuf, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
+	base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 	if off {
 		if armSuf == "" {
 			return "", fmt.Errorf("%s и так без взвода", id)
@@ -424,7 +424,7 @@ func cmdArm(root, id, at string, off bool, c CommitOpts) (string, error) {
 			armSuf = armSuffix
 		}
 	}
-	row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, dueSuf, acceptSuf, failSuf, blockSuf)
+	row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf)
 	b.updateLine(row.LineIdx, formatRow(row))
 	if err := b.Save(); err != nil {
 		return "", err

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/frame"
+	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskhead"
 )
 
@@ -196,7 +197,8 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   fail <ID> --clear                           прод починен, признак снят (сами
                                               его гасят shipctl merge, ship, revert)
   set <ID> [--title "..."] [--type ...] [--rank "..."] [--cost ...] [--link "..."]
-      [--accept agent|mixed|user] [--due YYYY-MM-DD]  поправить ячейки строки
+      [--accept agent|mixed|user] [--due YYYY-MM-DD] [--assign имя]
+                                              поправить ячейки строки
   file <ID>                                   создать docs/tasks/<ID>.md и ссылку в строке
   rehearse <ID> [--step "команда"] [--timeout 10m]
                                               обкатать сценарий до Check: шаги из
@@ -402,6 +404,7 @@ func setFlags(fs *flag.FlagSet, p *SetParams) {
 	fs.StringVar(&p.Link, "link", "", "новая ячейка ссылки")
 	fs.StringVar(&p.Accept, "accept", "", "новый вид приёмки: agent / mixed / user")
 	fs.StringVar(&p.Due, "due", "", "новый срок строки YYYY-MM-DD, «-» снимает срок")
+	fs.StringVar(&p.Assign, "assign", "", "назначить участника команды на строку, «-» снимает назначение")
 	commitFlags(fs, &p.Commit)
 }
 
@@ -752,7 +755,7 @@ func main() {
 		var p SetParams
 		setFlags(fs, &p)
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, "set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...] [--accept ...] [--due YYYY-MM-DD]")
+		needArgs(pos, 1, 1, "set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...] [--accept ...] [--due YYYY-MM-DD] [--assign имя]")
 		p.ID = pos[0]
 		msg, err = cmdSet(root(*dir), p)
 	case "rehearse":
@@ -1137,6 +1140,53 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "kinds")
 		msg, err = cmdKinds(root(*dir))
+	case "team":
+		fs := flag.NewFlagSet("team", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		sub := frame.ParseArgs(fs, args[1:])
+		if len(sub) == 0 {
+			err = fmt.Errorf("team add <имя> | team rm <имя> | team list | team show <имя>")
+			break
+		}
+		switch sub[0] {
+		case "add":
+			af := flag.NewFlagSet("team add", flag.ExitOnError)
+			var p TeamParams
+			af.StringVar(&p.Kind, "kind", "", "вид участника: human или agent")
+			af.StringVar(&p.Name, "name", "", "имя для печати, любое")
+			af.StringVar(&p.Model, "model", "", "модель агентского участника, по её меткам считается профиль")
+			af.StringVar(&p.Tier, "tier", "", "ярус агентского участника: mini / base / pro / max")
+			af.Var((*strList)(&p.Roles), "role", "роль из exec/review/check/inspect; ключ повторяется")
+			af.StringVar(&p.Channel, "channel", "", "канал человека для напоминаний, например telegram:@ivan")
+			pos := frame.ParseArgs(af, sub[1:])
+			needArgs(pos, 1, 1, "team add <имя> --kind human|agent [--role exec] [--tier ...] [--model ...] [--channel ...]")
+			msg, err = cmdTeamAdd(stage.Home(), pos[0], p)
+		case "rm":
+			rf := flag.NewFlagSet("team rm", flag.ExitOnError)
+			pos := frame.ParseArgs(rf, sub[1:])
+			needArgs(pos, 1, 1, "team rm <имя>")
+			msg, err = cmdTeamRm(stage.Home(), pos[0])
+		case "list":
+			lf := flag.NewFlagSet("team list", flag.ExitOnError)
+			needArgs(frame.ParseArgs(lf, sub[1:]), 0, 0, "team list")
+			msg, err = cmdTeamList(stage.Home())
+		case "show":
+			sf := flag.NewFlagSet("team show", flag.ExitOnError)
+			pos := frame.ParseArgs(sf, sub[1:])
+			needArgs(pos, 1, 1, "team show <имя>")
+			msg, err = cmdTeamShow(root(*dir), stage.Home(), pos[0])
+		default:
+			err = fmt.Errorf("team не знает %q, жду add, rm, list или show", sub[0])
+		}
+	case "remind":
+		fs := flag.NewFlagSet("remind", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		var p RemindParams
+		fs.StringVar(&p.To, "to", "", "участник команды, кому напомнить; по умолчанию назначенный строкой")
+		fs.StringVar(&p.Note, "note", "", "свой текст напоминания; без него текст собирается из состояния строки")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "remind <ID> [--to имя] [--note \"...\"]")
+		msg, err = cmdRemind(root(*dir), pos[0], p)
 	case "pilot":
 		fs := flag.NewFlagSet("pilot", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

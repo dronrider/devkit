@@ -236,7 +236,7 @@ func lintFailed(b *Board, bp string) []string {
 	var finds []string
 	for _, key := range []string{SectBacklog, SectCheck} {
 		for _, r := range b.Sects[key].Rows {
-			if _, _, _, _, _, _, _, failSuf, _ := splitTitle(r.Title); failSuf != "" {
+			if _, _, _, _, _, _, _, _, failSuf, _ := splitTitle(r.Title); failSuf != "" {
 				finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с признаком провала проверки%s: он ставится задаче в работе, снять: taskctl fail %s --clear",
 					bp, r.LineIdx+1, r.ID, sectTitles[key], failSuf, r.ID))
 			}
@@ -284,7 +284,7 @@ func lintDeps(root string, b *Board, arch *Archive, bp string) []string {
 	var finds []string
 	for _, r := range b.Rows {
 		where := fmt.Sprintf("%s:%d: %s", bp, r.LineIdx+1, r.ID)
-		_, deps, _, _, _, _, _, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _, _, _, _, _, _ := splitTitle(r.Title)
 		seen := map[string]bool{}
 		for _, d := range deps {
 			switch {
@@ -301,7 +301,7 @@ func lintDeps(root string, b *Board, arch *Archive, bp string) []string {
 	ed := newEdges(root, b, arch)
 	for _, key := range []string{SectInProgress, SectCheck, SectBlocked} {
 		for _, r := range b.Sects[key].Rows {
-			_, deps, _, _, _, _, _, _, _ := splitTitle(r.Title)
+			_, deps, _, _, _, _, _, _, _, _ := splitTitle(r.Title)
 			for _, d := range deps {
 				if ok, why := ed.startable(d); !ok {
 					finds = append(finds, fmt.Sprintf("%s:%d: %s в %s с неснятым ребром на %s (%s), вернуть в Backlog",
@@ -322,7 +322,7 @@ func lintDepCycles(rows []*Row, bp string) []string {
 	line := map[string]int{}
 	for _, r := range rows {
 		line[r.ID] = r.LineIdx
-		_, deps, _, _, _, _, _, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _, _, _, _, _, _ := splitTitle(r.Title)
 		// Ссылку на себя уже ловит отдельная проверка в lintDeps, вторым
 		// циклом в две строки её дублировать незачем.
 		for _, d := range deps {

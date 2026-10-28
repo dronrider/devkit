@@ -54,7 +54,7 @@ func cmdPlan(root, id string, p PlanParams) (string, error) {
 	if row == nil {
 		return "", fmt.Errorf("%s нет на доске", id)
 	}
-	base, deps, debtSuf, armSuf, planSuf, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
+	base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 	if p.Off {
 		if planSuf == "" {
 			return "", fmt.Errorf("%s и так без шаблона плана", id)
@@ -80,7 +80,7 @@ func cmdPlan(root, id string, p PlanParams) (string, error) {
 		}
 		planSuf = " [план: " + name + "]"
 	}
-	row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, dueSuf, acceptSuf, failSuf, blockSuf)
+	row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf)
 	b.updateLine(row.LineIdx, formatRow(row))
 	if err := b.Save(); err != nil {
 		return "", err
@@ -101,7 +101,7 @@ func cmdPlan(root, id string, p PlanParams) (string, error) {
 func lintPlanNames(root string, b *Board, bp string) []string {
 	var withSuffix []*Row
 	for _, r := range b.Rows {
-		if _, _, _, _, planSuf, _, _, _, _ := splitTitle(r.Title); planSuf != "" {
+		if _, _, _, _, planSuf, _, _, _, _, _ := splitTitle(r.Title); planSuf != "" {
 			withSuffix = append(withSuffix, r)
 		}
 	}
@@ -116,7 +116,7 @@ func lintPlanNames(root string, b *Board, bp string) []string {
 	}
 	var finds []string
 	for _, r := range withSuffix {
-		_, _, _, _, planSuf, _, _, _, _ := splitTitle(r.Title)
+		_, _, _, _, planSuf, _, _, _, _, _ := splitTitle(r.Title)
 		name := planNameOf(planSuf)
 		if _, ok := set.Get(name); ok {
 			continue

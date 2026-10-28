@@ -37,14 +37,18 @@ type jsonRow struct {
 	Accept string   `json:"accept,omitempty"`
 	// Due это срок строки доски датой 2006-01-02 из суффикса заголовка
 	// «[срок: ...]» (DK-1464). Пусто у строки без срока.
-	Due    string   `json:"due,omitempty"`
-	Fail   string   `json:"fail,omitempty"`
-	Block  string   `json:"block,omitempty"`
-	Type   string   `json:"type"`
-	P      string   `json:"p"`
-	R      int      `json:"r"`
-	ROwn   int      `json:"r_own"`
-	RParts [5]int   `json:"r_parts"`
+	Due string `json:"due,omitempty"`
+	// Assign это назначенный участник команды из суффикса «[исп: ...]»
+	// (DK-1468): handle из ~/.devkit/team.toml. Пусто у строки без
+	// назначения.
+	Assign string `json:"assign,omitempty"`
+	Fail   string `json:"fail,omitempty"`
+	Block  string `json:"block,omitempty"`
+	Type   string `json:"type"`
+	P      string `json:"p"`
+	R      int    `json:"r"`
+	ROwn   int    `json:"r_own"`
+	RParts [5]int `json:"r_parts"`
 	// Поправки к рангу списком: у аддитивной имя и дельта, у подтягивающей
 	// задача, от которой подтянут итог (DK-428). Своего счёта поправок у
 	// читателя нет: дашборд правит ручкой пять слагаемых, а итог, свою сумму и
@@ -114,7 +118,7 @@ func sufText(suf, label string) string {
 }
 
 func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, sv *stageView) jsonRow {
-	base, deps, debtSuf, armSuf, _, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
+	base, deps, debtSuf, armSuf, _, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
 	return jsonRow{
 		ID:     r.ID,
 		Title:  strings.TrimSpace(base),
@@ -125,6 +129,7 @@ func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, sv *stageV
 		Arm:    jsonArmOf(root, ed, r),
 		Accept: sufText(acceptSuf, "приёмка"),
 		Due:    sufText(dueSuf, "срок"),
+		Assign: sufText(assignSuf, "исп"),
 		Fail:   sufText(failSuf, "провал"),
 		Block:  sufText(blockSuf, "блок"),
 		Type:   r.Type, P: r.P, R: r.RTotal, ROwn: r.ROwn, RParts: r.RParts,

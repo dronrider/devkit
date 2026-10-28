@@ -324,9 +324,9 @@ func TestLinesCarrySession(t *testing.T) {
 	}
 }
 
-// Участники круга собираются из двух источников, режутся последним слиянием
-// и сходятся по ID возобновлённой сессии; этап без сессии остаётся участником
-// без ID, чтобы ворота сказали об этом вслух (DK-1360).
+// Участники круга собираются из двух источников, выкатом не выметаются,
+// слиянием не режутся и сходятся по ID возобновлённой сессии; этап без сессии
+// остаётся участником без ID, чтобы ворота сказали об этом вслух (DK-1360).
 func TestCircleAuthors(t *testing.T) {
 	dev := "- Разработка: субагент opus/high по вердикту pick, сессия aaa, 2026-09-01 10:00-10:20."
 	lines := []string{
@@ -337,19 +337,50 @@ func TestCircleAuthors(t *testing.T) {
 	}
 	pending := []Stage{{Kind: Rework, Note: "субагент sonnet/high по вердикту pick", Session: "ccc"}}
 	authors := CircleAuthors(lines, pending)
-	if len(authors) != 2 {
-		t.Fatalf("участников круга %d, хочу две сессии: %+v", len(authors), authors)
+	if len(authors) != 3 {
+		t.Fatalf("участников круга %d, хочу три сессии: %+v", len(authors), authors)
 	}
-	if authors[0].Session != "bbb" || authors[0].Kind != Rework {
-		t.Fatalf("первый участник не доработка bbb: %+v", authors[0])
+	if authors[0].Session != "aaa" || authors[0].Kind != Dev {
+		t.Fatalf("первый участник не разработка aaa: %+v", authors[0])
 	}
-	if authors[1].Session != "ccc" || authors[1].Model != "sonnet" {
-		t.Fatalf("второй участник не из пакета: %+v", authors[1])
+	if authors[1].Session != "bbb" || authors[1].Kind != Rework {
+		t.Fatalf("второй участник не доработка bbb: %+v", authors[1])
+	}
+	if authors[2].Session != "ccc" || authors[2].Model != "sonnet" {
+		t.Fatalf("третий участник не из пакета: %+v", authors[2])
 	}
 	hand := "- Доработка: правил сам, 2026-09-02 12:00-12:10."
 	authors = CircleAuthors([]string{dev, hand}, nil)
 	if len(authors) != 2 || authors[0].Session != "aaa" || authors[1].Session != "" {
 		t.Fatalf("этап без сессии потерян или лишний: %+v", authors)
+	}
+}
+
+// Выкат не выметает автора из круга: код последнего выката писала его
+// сессия, и самопроверка после выката запрещена тем же порядком, что и до
+// него (DK-1360). Слияние круг не режет: слитый код ещё не выехал.
+func TestCircleAuthorsKeepsShippedCodeAuthors(t *testing.T) {
+	lines := []string{
+		"- Разработка: субагент opus/high по вердикту pick, сессия aaa, 2026-09-01 10:00-10:20.",
+		"- Слияние: a1b2c3d, 2026-09-01 10:30-10:40.",
+		"- Выкат: задача выкачена, 2026-09-01 11:00-11:05.",
+	}
+	authors := CircleAuthors(lines, nil)
+	if len(authors) != 1 || authors[0].Session != "aaa" {
+		t.Fatalf("выкат вымел автора кода из круга: %+v", authors)
+	}
+	lines = append(lines, "- Доработка: субагент opus/high, сессия bbb, 2026-09-01 12:00-12:10.")
+	authors = CircleAuthors(lines, nil)
+	if len(authors) != 2 || authors[0].Session != "aaa" || authors[1].Session != "bbb" {
+		t.Fatalf("круг после выката не собрал автора кода и доработку: %+v", authors)
+	}
+	prev := []string{
+		"- Разработка: субагент opus/high, сессия old, 2026-09-01 09:00-09:20.",
+		"- Выкат: задача выкачена, 2026-09-01 09:30-09:35.",
+	}
+	authors = CircleAuthors(append(prev, lines...), nil)
+	if len(authors) != 2 || authors[0].Session != "aaa" || authors[1].Session != "bbb" {
+		t.Fatalf("автор кода прежнего выката остался в круге: %+v", authors)
 	}
 }
 
@@ -380,6 +411,19 @@ func TestVerifyIndependence(t *testing.T) {
 	}
 	if _, _, err := VerifyIndependence("DK-0", unknown, nil); err == nil {
 		t.Fatal("круг с участником без сессии прошёл молча")
+	}
+	shipped := []string{
+		dev[0],
+		"- Слияние: a1b2c3d, 2026-09-01 10:30-10:40.",
+		"- Выкат: задача выкачена, 2026-09-01 11:00-11:05.",
+		self[0],
+	}
+	if _, found, err := VerifyIndependence("DK-0", shipped, nil); err == nil || !found {
+		t.Fatalf("самопрогон автора выкаченного кода не отказан: found=%v err=%v", found, err)
+	}
+	shippedOther := append(shipped[:len(shipped)-1:len(shipped)-1], other[0])
+	if _, found, err := VerifyIndependence("DK-0", shippedOther, nil); err != nil || !found {
+		t.Fatalf("прогон чужой сессией после выката не принят: found=%v err=%v", found, err)
 	}
 }
 

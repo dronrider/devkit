@@ -319,12 +319,15 @@ func lineKindOf(ln string) string {
 	return lineKind[strings.TrimSpace(label)]
 }
 
-// CircleAuthors собирает участников текущего круга работы над кодом: этапы
-// разработки и доработки после последнего слияния или выката. Источники те же
-// два, что у LastVerifyStage: сброшенные строки «Хода работы» под ним,
-// незакрытый пакет поверх. Возобновлённая сессия и вложенные исполнители
-// сходятся в одну запись по ID, а этап без ID остаётся отдельным участником:
-// его воротам видно, и они говорят об этом вслух.
+// CircleAuthors собирает участников текущего круга работы над кодом: авторов
+// этапов, код которых ушёл в последний выкат, и авторов позднейших разработки
+// и доработки. Выкат режет круг, слияние нет: слитый код ещё не выехал, и его
+// автор остаётся под запретом самопроверки, а штатный прогон сценария идёт
+// после выката, и пустой круг закрыл бы самопроверку молча (DK-1360).
+// Источники те же два, что у LastVerifyStage: сброшенные строки «Хода работы»
+// под ним, незакрытый пакет поверх. Возобновлённая сессия и вложенные
+// исполнители сходятся в одну запись по ID, а этап без ID остаётся отдельным
+// участником: его воротам видно, и они говорят об этом вслух.
 func CircleAuthors(lines []string, pending []Stage) []Author {
 	type item struct {
 		kind, session, model string
@@ -342,18 +345,20 @@ func CircleAuthors(lines []string, pending []Stage) []Author {
 		model, _ := Executor(s.Note)
 		items = append(items, item{s.Kind, s.Session, model})
 	}
-	start := 0
-	for i, it := range items {
-		if it.kind == Merge || it.kind == Deploy {
-			start = i + 1
+	var shipped, later []item
+	for _, it := range items {
+		if it.kind == Deploy {
+			shipped = later
+			later = nil
+			continue
+		}
+		if it.kind == Dev || it.kind == Rework {
+			later = append(later, it)
 		}
 	}
 	var out []Author
 	seen := map[string]bool{}
-	for _, it := range items[start:] {
-		if it.kind != Dev && it.kind != Rework {
-			continue
-		}
+	for _, it := range append(shipped, later...) {
 		if it.session != "" {
 			if seen[it.session] {
 				continue
@@ -391,7 +396,7 @@ func VerifyIndependence(id string, lines []string, pending []Stage) (verify Stag
 		}
 	}
 	if len(nameless) > 0 {
-		return verify, true, fmt.Errorf("%s: у участника текущего круга (%s) в записи нет ID сессии: этап открыт вне живой сессии харнеса, и независимость против него не доказать; повторить этап в живой сессии либо принять задачу руками",
+		return verify, true, fmt.Errorf("%s: у участника текущего круга (%s) в записи нет ID сессии: этап открыт вне живой сессии харнеса, и независимость против него не доказать; повторить этап в живой сессии, вписать в строку этапа хвост «сессия <ID>» с настоящим ID либо принять задачу человеку, убрав отметку прогона",
 			id, strings.Join(nameless, ", "))
 	}
 	return verify, true, nil

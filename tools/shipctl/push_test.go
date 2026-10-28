@@ -638,8 +638,8 @@ func TestPushGateAutonomousNewTaskBranchWithoutAutonomyRefused(t *testing.T) {
 }
 
 // TestPushRuleCarriesAutonomyException: DK-1324, правило Git в RULES.core.md
-// несёт второе исключение про автономный режим shipctl, иначе агент в
-// автономном проекте стоял бы на рядовом пуше ветки задачи, прочитав запрет.
+// несёт исключение про автономный режим shipctl, иначе агент в автономном
+// проекте стоял бы на рядовом пуше ветки задачи, прочитав запрет.
 func TestPushRuleCarriesAutonomyException(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "RULES.core.md"))
 	if err != nil {
@@ -654,9 +654,9 @@ func TestPushRuleCarriesAutonomyException(t *testing.T) {
 		gitSec = gitSec[:idx]
 	}
 	if !strings.Contains(gitSec, "автономный режим shipctl") {
-		t.Fatal("раздел Git не несёт второго исключения про автономный режим shipctl")
+		t.Fatal("раздел Git не несёт исключения про автономный режим shipctl")
 	}
-	if !strings.Contains(gitSec, "Исключений два") {
-		t.Fatal("раздел Git не называет число исключений")
+	if !strings.Contains(gitSec, "В автономном режиме пуш ветки задач идёт без него") {
+		t.Fatal("раздел Git не несёт исключения ревью для автономного режима")
 	}
 }

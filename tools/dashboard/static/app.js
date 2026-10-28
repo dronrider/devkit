@@ -1467,9 +1467,9 @@ function dueChip(row, now) {
 // значит «в сам день срока». Просроченный контроль стоит красным рядом с
 // красным сроком: у горящей строки с контролем на экране задачи кнопка
 // «дожать».
-function controlChip(row, now) {
+function controlChip(row) {
   if (row.control == null) return null;
-  const overdue = row.due && row.due < isoDay(new Date(now || Date.now()));
+  const overdue = row.due && row.due < isoDay(new Date());
   const chip = el("span", "chip" + (overdue ? " c-block" : ""), "контроль: " + row.control);
   return withTip(chip, "Проверка работ за " + row.control + " " +
     plural(row.control, "день", "дня", "дней") + " до срока" +
@@ -1480,10 +1480,10 @@ function controlChip(row, now) {
 // Просроченный контроль строки в работе: только у него стоит кнопка «дожать»,
 // контроль до окна тика поднимает сторожок сам, а Check и Blocked живут своей
 // механикой.
-function controlOverdue(row, now) {
+function controlOverdue(row) {
   if (row.control == null || !row.due) return false;
   if (row.sect !== "in-progress" && row.sect !== "backlog") return false;
-  return row.due < isoDay(new Date(now || Date.now()));
+  return row.due < isoDay(new Date());
 }
 
 // Разбор ранга строки парами «имя, значение»: пять показателей по RANKING.md,

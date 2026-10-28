@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -138,4 +139,23 @@ func TestTaskPressLiftsInspector(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "не на контроле") {
 		t.Fatalf("дожим строки без контроля: %d %s", resp.StatusCode, text)
 	}
+}
+
+// TestControlChipStend: чип контроля на доске и правило «дожать» живут в
+// статике, и меряются стендом node (testdata/board_control.mjs), который
+// поднимает настоящий static/app.js на игрушечном DOM. Предмет это собранная
+// разметка: красный чип у просрочки, тихий до окна, согласование дней в
+// подсказке и края правила дожима по секторам. Без node шаг пропускается:
+// узел стенда, а не рабочей части.
+func TestControlChipStend(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд контроля строки пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "board_control.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("чип контроля на доске: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }

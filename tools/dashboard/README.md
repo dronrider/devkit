@@ -48,14 +48,14 @@ Go-сервер с вшитой статикой: доска и текущие �
 агент сверит изменения и опубликует свежий блок.
 
 Для первого прогона на временной записи есть исполнимый
-[сценарий DK-1446](../../docs/tasks/DK-1446-check.sh). Нужны `node`, пакет
+[сценарий DK-1446](../../docs/tasks/archive/2026/DK-1446-check.sh). Нужны `node`, пакет
 `playwright`, Chrome для стенда и исходники devkit для запуска проверки.
 Укажите пакет через `NODE_PATH`, если он не установлен в обычном пути Node:
 
 ```sh
 export NODE_PATH=/путь/к/node_modules
 export DASHBOARD_CHROME='/путь/к/Chrome'
-docs/tasks/DK-1446-check.sh
+docs/tasks/archive/2026/DK-1446-check.sh
 ```
 
 Сценарий берёт установленные `dashboard` и `taskctl` из PATH. Другую пару

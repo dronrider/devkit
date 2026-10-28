@@ -116,8 +116,14 @@ func TestControlOrder(t *testing.T) {
 	if strings.Contains(order, "просрочен") {
 		t.Errorf("непросроченный заказ несёт дожим: %s", order)
 	}
-	if order = ControlOrder("XR-3", "", 2); !strings.Contains(order, "просрочен на 2 дней") {
-		t.Errorf("заказ дожима без просрочки: %s", order)
+	if order = ControlOrder("XR-3", "", 1); !strings.Contains(order, "просрочен на 1 день") {
+		t.Errorf("дожим одного дня без согласования: %s", order)
+	}
+	if order = ControlOrder("XR-3", "", 2); !strings.Contains(order, "просрочен на 2 дня") {
+		t.Errorf("заказ дожима без согласования числа: %s", order)
+	}
+	if order = ControlOrder("XR-3", "", 5); !strings.Contains(order, "просрочен на 5 дней") {
+		t.Errorf("дожим пяти дней без согласования: %s", order)
 	}
 }
 

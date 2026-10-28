@@ -106,10 +106,10 @@ func TestProfileCodex(t *testing.T) {
 		{"detect", "bin", "codex"},
 		{"rules", "mode", "embed"},
 		{"delegate", "mode", "cli"},
-		{"delegate", "map_mini", "gpt-6.1-sol"},
-		{"delegate", "map_base", "gpt-6.1-sol"},
+		{"delegate", "map_mini", "gpt-6-luna"},
+		{"delegate", "map_base", "gpt-6.1-terra"},
 		{"delegate", "map_pro", "gpt-6.1-sol"},
-		{"delegate", "map_max", "gpt-6.1-sol"},
+		{"delegate", "map_max", "gpt-6-astra"},
 		{"skills", "dir", "~/.agents/skills"},
 		{"skills", "discovery", "auto"},
 	}

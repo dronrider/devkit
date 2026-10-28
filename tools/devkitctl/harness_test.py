@@ -230,9 +230,11 @@ class CodexProfileTest(unittest.TestCase):
         for outsider in ("dangerously", "{session}"):
             self.assertNotIn(outsider, joined,
                              "в команде делегирования %s, а клиенту его не положено" % outsider)
-        for tier in ("mini", "base", "pro", "max"):
-            self.assertEqual(self.prof.str_of("delegate", "map_" + tier), "gpt-6.1-sol",
-                             "ярус %s маппится не в модель каталога клиента" % tier)
+        models = {"mini": "gpt-6-luna", "base": "gpt-6.1-terra",
+                  "pro": "gpt-6.1-sol", "max": "gpt-6-astra"}
+        for tier, model in models.items():
+            self.assertEqual(self.prof.str_of("delegate", "map_" + tier), model,
+                             "ярус %s маппится не в назначенную модель" % tier)
 
     def test_skills_lay_into_client_dir(self):
         self.assertEqual(self.prof.str_of("skills", "dir"), "~/.agents/skills",

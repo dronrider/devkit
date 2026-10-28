@@ -3175,6 +3175,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустая реплика никуда не едет"})
 		return
 	}
+	if body.Scenario == nil && s.scenarioContextRequired(found, sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "для ответа на сценарии нужны контекст и снимок показанного блока; обновите вопрос и сверьте ответ"})
+		return
+	}
 	// Повтор той же записи дальше не едет. Отправитель повторяет её, когда не
 	// увидел ответа ручки, а не увидеть его он может и после доставки: связь
 	// рвётся на обратном пути, панель считает реплику неушедшей и шлёт снова.

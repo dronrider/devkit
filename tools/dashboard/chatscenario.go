@@ -21,6 +21,30 @@ type scenarioAnswer struct {
 	Tree     string `json:"tree,omitempty"`
 }
 
+func (s *server) scenarioContextRequired(p *Project, sid string) bool {
+	asks := s.handedAsks(sid, s.binds(), s.now())
+	if len(asks) == 0 {
+		return false
+	}
+	active := asks[0].Ask
+	if info, ok := findSession(s.transcriptRoots(), p.Path, sid); ok {
+		head := s.sessionHeadCached(info.path, info.stamp)
+		name, _ := s.sessionChatName(info, head)
+		for _, h := range asks {
+			if h.Tree == p.Path && h.Name == name && h.Ask.Session == sid {
+				active = h.Ask
+				break
+			}
+		}
+	}
+	for _, q := range active.Questions {
+		if q.Scenario != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *server) handleScenarioSay(w http.ResponseWriter, p *Project, sid, claim, text string, answer scenarioAnswer) {
 	if !goalIDRe.MatchString(answer.Task) || answer.Fork == "" || answer.Snapshot == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ответу сценариев нужны ID задачи, имя и снимок"})

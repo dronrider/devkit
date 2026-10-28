@@ -1,0 +1,76 @@
+import { createRequire } from "node:module";
+import assert from "node:assert/strict";
+const { chromium } = createRequire(import.meta.url)("playwright");
+const [base, executablePath, token] = process.argv.slice(2);
+const browser = await chromium.launch({ executablePath, headless: true });
+const context = await browser.newContext();
+try {
+  const login = await context.request.post(base + "/api/login", { data: { token } });
+  assert.equal(login.status(), 200);
+  const page = await context.newPage();
+  const sent = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/say")) sent.push(request.postDataJSON());
+  });
+  const url = base + "/#demo/chat/aa144600-1111-4111-8111-111111111111";
+  await page.goto(url);
+  const boxes = page.locator(".caskpick");
+  await boxes.first().waitFor();
+  assert.equal(await boxes.count(), 3);
+  const ta = page.locator("textarea.csay");
+  const own = String.raw`плюс "свой, с \"кавычкой\" и \\ путём"`;
+  await ta.fill(own);
+  await boxes.nth(0).click();
+  await boxes.nth(2).click();
+  await boxes.nth(0).click();
+  assert.equal(await ta.inputValue(), "сценарии СЦ-3; " + own);
+  assert.equal(sent.length, 0);
+  const first = await page.locator(".askfb").innerText();
+  const snapshot = first.match(/sc1-[a-f0-9]{64}/)[0];
+  const accepted = page.waitForResponse((response) => response.url().endsWith("/say") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Отправить", exact: true }).click();
+  assert.equal((await accepted).status(), 200);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].scenario.snapshot, snapshot);
+  let state = await (await context.request.get(base + "/__scenario")).json();
+  assert.match(state.doc, /решено человеком [\d-]+: СЦ-3, СЦ-4/);
+  assert.equal(JSON.parse(state.doc.match(/  - ответ: (.+)/)[1]).text, sent[0].text);
+  assert.equal(state.waiting, "");
+  await context.request.get(base + "/__scenario?do=resume");
+  await page.reload();
+  await page.locator(".askresume").getByText(/выбрано: СЦ-3, СЦ-4/).waitFor();
+  const continuation = await page.locator(".askresume").innerText();
+  assert.match(continuation, /требует сверки/);
+  assert.match(continuation, /сверить после перерыва/);
+  await boxes.nth(0).waitFor();
+  assert.equal(await boxes.count(), 4);
+  assert.equal(await boxes.nth(2).getAttribute("aria-checked"), "true");
+  assert.equal(await boxes.nth(3).getAttribute("aria-checked"), "true");
+  await ta.fill("сценарии СЦ-1");
+  await context.request.get(base + "/__scenario?do=reorder");
+  state = await (await context.request.get(base + "/__scenario")).json();
+  const before = JSON.stringify(state);
+  const response = page.waitForResponse((r) => r.url().endsWith("/say") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Отправить", exact: true }).click();
+  assert.equal((await response).status(), 400);
+  await page.getByText(/снимок .* устарел/).first().waitFor();
+  state = await (await context.request.get(base + "/__scenario")).json();
+  assert.equal(JSON.stringify(state), before);
+  await context.request.get(base + "/__scenario?do=fresh");
+  await page.reload();
+  await boxes.first().waitFor();
+  for (let i = 0; i < await boxes.count(); i++) {
+    if (await boxes.nth(i).getAttribute("aria-checked") === "true") await boxes.nth(i).click();
+  }
+  assert.equal(await ta.inputValue(), "ничего");
+  const decline = page.waitForResponse((r) => r.url().endsWith("/say") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Отправить", exact: true }).click();
+  assert.equal((await decline).status(), 200);
+  state = await (await context.request.get(base + "/__scenario")).json();
+  assert.match(state.doc, /пересмотр человеком [\d-]+: отказ от всех/);
+  assert.equal(state.waiting, "");
+  console.log(JSON.stringify({ sent: sent.length, selected: ["СЦ-3", "СЦ-4"], stale: 400, refusal: "open", continuation: true, embedded: true }));
+} finally {
+  await context.close();
+  await browser.close();
+}

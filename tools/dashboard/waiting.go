@@ -268,15 +268,18 @@ const askStepCut = 28
 // ответа: галочка собирает «имя номер», и разбирать его дальше будет
 // taskctl decide --answer.
 type agentAsk struct {
-	Kind    string      `json:"kind"`
-	Task    string      `json:"task,omitempty"`
-	Since   int64       `json:"since,omitempty"`
-	Until   int64       `json:"until,omitempty"`
-	Rest    []string    `json:"rest,omitempty"`
-	Fork    string      `json:"fork,omitempty"`
-	Text    string      `json:"text,omitempty"`
-	Options []tmuxPick  `json:"options,omitempty"`
-	Steps   []agentStep `json:"steps,omitempty"`
+	Kind     string                 `json:"kind"`
+	Task     string                 `json:"task,omitempty"`
+	Tree     string                 `json:"tree,omitempty"`
+	Since    int64                  `json:"since,omitempty"`
+	Until    int64                  `json:"until,omitempty"`
+	Rest     []string               `json:"rest,omitempty"`
+	Fork     string                 `json:"fork,omitempty"`
+	Text     string                 `json:"text,omitempty"`
+	Options  []tmuxPick             `json:"options,omitempty"`
+	Steps    []agentStep            `json:"steps,omitempty"`
+	Multi    bool                   `json:"multi,omitempty"`
+	Scenario *chat.ScenarioQuestion `json:"scenario,omitempty"`
 }
 
 // agentStep это один вопрос пачки. Вопросы едут на экран все разом, а не по
@@ -285,11 +288,13 @@ type agentAsk struct {
 // называет развилку из головы вопроса («имя»: ...); у свободного вопроса
 // `taskctl ask --question` его нет, и галочки там не собирают строку ответа.
 type agentStep struct {
-	Name    string     `json:"name"`
-	Now     bool       `json:"now,omitempty"`
-	Fork    string     `json:"fork,omitempty"`
-	Text    string     `json:"text,omitempty"`
-	Options []tmuxPick `json:"options,omitempty"`
+	Name     string                 `json:"name"`
+	Now      bool                   `json:"now,omitempty"`
+	Fork     string                 `json:"fork,omitempty"`
+	Text     string                 `json:"text,omitempty"`
+	Options  []tmuxPick             `json:"options,omitempty"`
+	Multi    bool                   `json:"multi,omitempty"`
+	Scenario *chat.ScenarioQuestion `json:"scenario,omitempty"`
 }
 
 // askForkHeadRe узнаёт имя развилки в голове вопроса: «имя»: вопрос. Имя
@@ -309,14 +314,17 @@ func askForkName(text string) string {
 // agentAskOf собирает виджет из признака ожидания. Пустой вид значит, что
 // показывать нечего: вопрос без текста и без вариантов рисовать не на чем.
 func agentAskOf(h handedAsk) agentAsk {
-	out := agentAsk{Kind: askKindAgent, Task: h.Ask.Task, Since: h.Since, Until: h.Ask.UnixUntil()}
+	out := agentAsk{Kind: askKindAgent, Task: h.Ask.Task, Tree: h.Tree, Since: h.Since, Until: h.Ask.UnixUntil()}
 	for i, q := range h.Ask.Questions {
+		if q.Scenario != nil && q.Scenario.Tree != "" {
+			out.Tree = q.Scenario.Tree
+		}
 		text := strings.TrimSpace(q.Text)
 		if text == "" {
 			continue
 		}
 		step := agentStep{Name: fmt.Sprintf("%d. %s", i+1, truncate(text, askStepCut)),
-			Fork: askForkName(text), Text: text, Options: agentPicks(q.Options)}
+			Fork: askForkName(text), Text: text, Options: agentPicks(q.Options), Multi: q.Multi, Scenario: q.Scenario}
 		out.Steps = append(out.Steps, step)
 	}
 	if len(out.Steps) == 0 {
@@ -325,6 +333,7 @@ func agentAskOf(h handedAsk) agentAsk {
 	out.Steps[0].Now = true
 	out.Fork = out.Steps[0].Fork
 	out.Text, out.Options = out.Steps[0].Text, out.Steps[0].Options
+	out.Multi, out.Scenario = out.Steps[0].Multi, out.Steps[0].Scenario
 	if len(out.Steps) == 1 {
 		out.Steps = nil
 	}

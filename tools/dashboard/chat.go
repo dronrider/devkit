@@ -104,21 +104,18 @@ func (s *server) sayToAsk(p *Project, info sessionInfo, sid, text string, recs m
 	hasTerm := s.sayTermOf(sid, recs) != ""
 	head := s.sessionHeadCached(info.path, info.stamp)
 	name, _ := s.sessionChatName(info, head)
-	if done, ok := s.ownAskReply(p, info, sid, name, text, hasTerm); ok {
-		return done, true
+	if ask, ok := chat.ReadAsk(chat.AskPath(p.Path, name)); ok && ask.Live(s.now()) && ask.Session == sid {
+		return s.ownAskReply(p, info, sid, name, text, ask, hasTerm)
 	}
 	return s.handedAskReply(p.Path, sid, text, hasTerm)
 }
 
 // ownAskReply отвечает на вопрос, который задан в разговоре этой же задачи:
-// признак лежит под именем разговора сессии, и ждёт ровно она.
+// признак лежит под именем разговора сессии, и ждёт ровно она. Адресат уже
+// выбран: переход на обычную доставку не должен отвечать соседнему вопросу.
 // Признак лежит во входе основного чекаута: туда его кладёт taskctl ask,
 // какое бы дерево ни было у самого хода.
-func (s *server) ownAskReply(p *Project, info sessionInfo, sid, name, text string, hasTerm bool) (map[string]any, bool) {
-	ask, has := chat.ReadAsk(chat.AskPath(p.Path, name))
-	if !has || !ask.Live(s.now()) || ask.Session != sid {
-		return nil, false
-	}
+func (s *server) ownAskReply(p *Project, info sessionInfo, sid, name, text string, ask chat.Ask, hasTerm bool) (map[string]any, bool) {
 	if hasTerm {
 		// Текст едет клавишами дорогой ниже: тут только снимается признак и
 		// возвращается строка, чтобы доска не осталась висеть «ждёт ответа» у

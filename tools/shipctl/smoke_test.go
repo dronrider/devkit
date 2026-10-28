@@ -27,6 +27,38 @@ func deployedCheckTask(t *testing.T, root, id, smoke string) {
 	gitT(t, root, "commit", "-qm", "docs(tasks): "+id+" файл задачи")
 }
 
+// Сессия прогонявшего едет в отметке smoke хвостом (DK-1360): в харнесе это
+// хвост «сессия <ID>» из окружения сессии, вне харнеса отметка остаётся без
+// хвоста, как прежде.
+func TestSmokeMarkCarriesSessionTail(t *testing.T) {
+	root, _ := setup(t, rowInProg, rowCheck)
+	deployedCheckTask(t, root, "XR-009", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "ses-smoke-1")
+	if _, err := cmdSmoke(root, SmokeParams{ID: "XR-009"}); err != nil {
+		t.Fatalf("smoke в живой сессии не отметился: %v", err)
+	}
+	doc, err := os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-009.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doc), ", сессия ses-smoke-1") {
+		t.Fatalf("отметка smoke не несёт хвост сессии:\n%s", doc)
+	}
+	root, _ = setup(t, rowInProg, "| XR-010 | Ждёт проверки | task | P2 | 30 (25+5+0+0+0) |  |\n")
+	deployedCheckTask(t, root, "XR-010", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	if _, err := cmdSmoke(root, SmokeParams{ID: "XR-010"}); err != nil {
+		t.Fatalf("smoke вне харнеса не отметился: %v", err)
+	}
+	doc, err = os.ReadFile(filepath.Join(root, "docs", "tasks", "XR-010.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(doc), ", сессия ") {
+		t.Fatalf("вне харнеса у отметки появился хвост сессии:\n%s", doc)
+	}
+}
+
 // TestSmokeMarkFreesQueue: выкат с отметкой smoke освобождает очередь до
 // закрытия строки пользователем. Следующее слияние едет одиночным выкатом, а
 // не поездом, и status называет очередь свободной, видя приёмку глазами за

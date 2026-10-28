@@ -168,6 +168,31 @@ func TestLintTails(t *testing.T) {
 	}
 }
 
+// TestLintTailsSeesHourlyArm: часовая форма взвода, застрявшая в основе
+// заголовка, тоже зовёт находку порядка, а не молчит: игла без закрывающей
+// скобки ловит обе формы (DK-1466).
+func TestLintTailsSeesHourlyArm(t *testing.T) {
+	root := setup(t)
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := b.find("XR-004")
+	row.Title = "Взвод в основе [взвод: 2026-10-28 02:00] [долг]"
+	b.updateLine(row.LineIdx, formatRow(row))
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+	b, err = LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finds := lintTails(b, "docs/TASKS.md")
+	if len(finds) != 1 || !strings.Contains(finds[0], "взвод") {
+		t.Fatalf("часовая форма взвода в основе заголовка не нашлась: %v", finds)
+	}
+}
+
 // TestDebtKeepsDepAndArmTails: метка стоит между «[после ...]» и «[взвод]», и
 // разбор хвостов её переживает. Зависимости, взвод, провал и блокировка читаются
 // при метке так же, как без неё, а сборка заголовка обратно даёт тот же текст.

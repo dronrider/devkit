@@ -169,7 +169,7 @@ func lintTails(b *Board, bp string) []string {
 	var finds []string
 	for _, r := range b.Rows {
 		base, _, _, _, _, _, _, _, _ := splitTitle(r.Title)
-		for _, t := range []string{"[долг]", "[взвод]", "[план: ", "[срок: ", "[приёмка: ", "[провал: ", "[блок: ", "[после "} {
+		for _, t := range []string{"[долг]", "[взвод", "[план: ", "[срок: ", "[приёмка: ", "[провал: ", "[блок: ", "[после "} {
 			if strings.Contains(base, t) {
 				finds = append(finds, fmt.Sprintf("%s:%d: %s: хвост «%s» стоит не на своём месте, порядок такой: [после ...] [долг] [взвод] [план: ...] [срок: ...] [приёмка: ...] [провал: ...] [блок: ...]",
 					bp, r.LineIdx+1, r.ID, strings.TrimSuffix(t, " ")))

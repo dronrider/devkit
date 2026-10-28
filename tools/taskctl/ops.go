@@ -745,7 +745,7 @@ func cmdSet(root string, p SetParams) (string, error) {
 		if debtSuf != "" && !strings.Contains(title, "[долг]") {
 			title += debtSuf
 		}
-		if armSuf != "" && !strings.Contains(title, "[взвод]") {
+		if armSuf != "" && !strings.Contains(title, "[взвод") {
 			title += armSuf
 		}
 		if planSuf != "" && !strings.Contains(title, "[план:") {

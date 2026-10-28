@@ -600,6 +600,28 @@ func TestSetTitleAndLink(t *testing.T) {
 	}
 }
 
+// TestSetTitleKeepsHourlyArmOnce: у замены заголовка переносимый взвод не
+// должен задваиваться, когда часовая форма уже вписана в новый заголовок
+// руками. Игла ищет «[взвод» без закрывающей скобки и ловит обе формы,
+// простую и часовую.
+func TestSetTitleKeepsHourlyArmOnce(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdArm(root, "XR-001", "", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdSet(root, SetParams{ID: "XR-001", Title: "Новый заголовок [взвод: 2026-10-28 02:00]"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := b.find("XR-001").Title
+	if strings.Count(title, "[взвод") != 1 {
+		t.Fatalf("взвод задвоился при замене заголовка: %q", title)
+	}
+}
+
 // TestSetLinkFromRepoRootIsNormalized: DK-176. Путь, переданный в --link
 // естественно от корня репозитория (docs/tasks/XR-002.md), не должен
 // оборачиваться голым, иначе ссылка резолвится в docs/ дважды и lint находит

@@ -94,6 +94,25 @@ roles = ["inspect"]
 	if ch := inspectorChoice("flash", false); ch.Model != "flash" {
 		t.Fatalf("без известного исполнителя инспектор обязан подняться: %+v", ch)
 	}
+	teamOf(t, os.Getenv("HOME"), `
+[rider]
+kind = "human"
+name = "Всадник"
+roles = ["inspect"]
+
+[insp]
+kind = "agent"
+name = "Инспектор"
+model = "router/flash"
+tier = "base"
+roles = ["inspect"]
+`)
+	if ch := inspectorChoice("flash", true); ch.Model != "" {
+		t.Fatalf("инспектор-исполнитель за префиксом провайдера не сменён: %+v", ch)
+	}
+	if ch := inspectorChoice("sonnet", true); ch.Model != "router/flash" {
+		t.Fatalf("инспектор за префиксом провайдера не выбран: %+v", ch)
+	}
 }
 
 // TestControlOrder: заказ называет черновик рисков, напоминание и потолки

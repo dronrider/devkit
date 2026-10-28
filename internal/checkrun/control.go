@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/dronrider/devkit/internal/control"
@@ -52,6 +53,21 @@ func ControlNeed(now time.Time, row Row) string {
 // значит «срок не просрочен», и дожимать в заказе нечего.
 func ControlOverdue(now time.Time, row Row) int {
 	return control.Overdue(row.Due, now.Format(time.DateOnly))
+}
+
+// sameModel сравнивает имена моделей без учёта провайдера и регистра. Отбор
+// прогона сценария сверяет сессии, а не модели (DK-1360), и сравнение имён
+// осталось нуждой одного контроля: инспектор не встаёт на работу, которую вёл
+// сам. Имя у маршрутизатора несёт префикс провайдера, но модель та же.
+func sameModel(a, b string) bool {
+	name := func(s string) string {
+		s = strings.TrimSpace(s)
+		if at := strings.LastIndex(s, "/"); at >= 0 {
+			s = s[at+1:]
+		}
+		return s
+	}
+	return strings.EqualFold(name(a), name(b))
 }
 
 // inspectorChoice решает модель проверяющего контроля. Инспектор это участник
@@ -156,9 +172,9 @@ func controlOne(c Carrier, root string, rows map[string]Row, id string, now time
 	dev, known := DevExecutor(root, id)
 	var ch Choice
 	if multi, ok := c.(interface{ Ladders() []Ladder }); ok {
-		ch = ChooseAvailable(tier, multi.Ladders(), dev, known)
+		ch = ChooseAvailable(tier, multi.Ladders())
 	} else {
-		ch = Choose(tier, c.Ladder(), dev, known)
+		ch = Choose(tier, c.Ladder())
 	}
 	// Инспектор команды сильнее лестницы, но не сильнее независимости: он
 	// смотрит работу со стороны, и инспектор, совпавший с исполнителем

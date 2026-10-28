@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dronrider/devkit/internal/checkrun"
 )
@@ -76,10 +78,16 @@ func (s *server) permsRefusal() string {
 	return "перечень прав " + p + " не ответил: " + procErr(err)
 }
 
-// checkRow переводит строку ответа taskctl в строку отбора.
+// checkRow переводит строку ответа taskctl в строку отбора. Заголовок у
+// boardRow уже снят taskctl до основы, поэтому контроль и срок едут полями
+// (DK-1470), а не разбором заголовка.
 func checkRow(row boardRow) checkrun.Row {
+	days := -1
+	if row.Control != nil {
+		days = *row.Control
+	}
 	return checkrun.Row{ID: row.ID, Title: row.Title, Sect: row.Sect, Section: row.Section,
-		Accept: row.Accept, Fail: row.Fail}
+		Accept: row.Accept, Fail: row.Fail, Control: days, Due: row.Due}
 }
 
 // dashCarrier это носитель дашборда: окно tmux task-<ID> с его окружением.
@@ -196,6 +204,15 @@ func (s *server) checkRunsOf(proj *Project, rows map[string]boardRow, ids []stri
 	for id, row := range rows {
 		conv[id] = checkRow(row)
 	}
+	c := s.liftCarrier(proj)
+	return checkrun.Run(c, proj.Path, conv, ids)
+}
+
+// liftCarrier собирает носитель подъёма дашборда по проекту: та же подписка и
+// то же окружение, что у запуска работы, плюс подписки на выбор для ступени
+// независимости. Носитель один у прогона сценария и контроля (DK-1470), своим
+// у них только повод.
+func (s *server) liftCarrier(proj *Project) *dashCarrier {
 	view := s.harnesses()
 	own := view.byDefault()
 	for i := range view.Harnesses {
@@ -204,8 +221,18 @@ func (s *server) checkRunsOf(proj *Project, rows map[string]boardRow, ids []stri
 			break
 		}
 	}
-	c := &dashCarrier{s: s, proj: proj, own: own, available: view.Harnesses}
-	return checkrun.Run(c, proj.Path, conv, ids)
+	return &dashCarrier{s: s, proj: proj, own: own, available: view.Harnesses}
+}
+
+// controlRunsOf поднимает инспектора контроля по названным строкам: отбор тот
+// же internal/checkrun, что у тика сторожка, своим носителем окна.
+func (s *server) controlRunsOf(proj *Project, rows map[string]boardRow, ids []string) []checkrun.Report {
+	conv := map[string]checkrun.Row{}
+	for id, row := range rows {
+		conv[id] = checkRow(row)
+	}
+	c := s.liftCarrier(proj)
+	return checkrun.ControlRun(c, proj.Path, conv, ids, time.Now())
 }
 
 // checkRuns проходит по названным строкам, а без имён по всей секции Check.
@@ -230,6 +257,32 @@ func (s *server) checkRuns(proj *Project, ids []string) (lines []string, raised 
 		}
 	}
 	return lines, raised, failed
+}
+
+// handleTaskPress это кнопка «дожать» у просроченного контроля (DK-1470):
+// человек давит, инспектор поднимается тем же отбором и носителем, что у тика
+// сторожка, без ожидания окна тика. Ответ несёт строку отчёта подъёма.
+func (s *server) handleTaskPress(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found, id, row, rows, ok := s.taskRow(w, r)
+	if !ok {
+		return
+	}
+	if row.Control == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "строка не на контроле: дожать можно строку с суффиксом [контроль: N]"})
+		return
+	}
+	rep := s.controlRunsOf(found, rows, []string{id})[0]
+	status := http.StatusOK
+	if rep.Failed {
+		status = http.StatusConflict
+	}
+	s.logf("дожим контроля %s в %s: %s", id, found.Name, rep.Line)
+	writeJSON(w, status, map[string]any{"id": id, "raised": rep.Raised, "message": rep.Line})
 }
 
 // cmdCheck это вход команды `dashboard check`: подъём прогона сценария по

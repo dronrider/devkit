@@ -1388,6 +1388,8 @@ function rowChips(project, row) {
   if (row.cost && row.cost !== "-") chips.push(el("span", "chip", row.cost));
   const due = dueChip(row);
   if (due) chips.push(due);
+  const ctl = controlChip(row);
+  if (ctl) chips.push(ctl);
   // Маркер [после ...] со строки доски назван теми же словами, что и блок
   // зависимостей: «после DK-248» требовало достроить, кто кого ждёт.
   // Держащая задача это дорога до неё, а не подпись: строка стоит в Blocked
@@ -1458,6 +1460,30 @@ function dueChip(row, now) {
     : (days === 0 ? "срок сегодня"
       : "просрочен на " + (-days) + " " + plural(-days, "день", "дня", "дней"));
   return withTip(chip, "Срок строки " + due + ", " + left + ". Правится на экране задачи.");
+}
+
+// Чип контроля строки: за сколько дней до срока поднимается проверка работ
+// (DK-1470). Число приезжает полем control из суффикса «[контроль: N]», ноль
+// значит «в сам день срока». Просроченный контроль стоит красным рядом с
+// красным сроком: у горящей строки с контролем на экране задачи кнопка
+// «дожать».
+function controlChip(row, now) {
+  if (row.control == null) return null;
+  const overdue = row.due && row.due < isoDay(new Date(now || Date.now()));
+  const chip = el("span", "chip" + (overdue ? " c-block" : ""), "контроль: " + row.control);
+  return withTip(chip, "Проверка работ за " + row.control + " " +
+    plural(row.control, "день", "дня", "дней") + " до срока" +
+    (overdue ? ", срок вышел: на экране задачи кнопка «дожать»" : "") +
+    ". Правится на экране задачи.");
+}
+
+// Просроченный контроль строки в работе: только у него стоит кнопка «дожать»,
+// контроль до окна тика поднимает сторожок сам, а Check и Blocked живут своей
+// механикой.
+function controlOverdue(row, now) {
+  if (row.control == null || !row.due) return false;
+  if (row.sect !== "in-progress" && row.sect !== "backlog") return false;
+  return row.due < isoDay(new Date(now || Date.now()));
 }
 
 // Разбор ранга строки парами «имя, значение»: пять показателей по RANKING.md,
@@ -4826,12 +4852,41 @@ async function handoverTask(project, id) {
   await refresh();
 }
 
+// Дожим контроля (DK-1470): кнопка у просроченного контроля поднимает
+// инспектора тем же отбором, что тик сторожка, не дожидаясь окна тика. Инспектор
+// кладёт риски срыва черновиком и собирает напоминание исполнителю, строку
+// доски кнопка не двигает.
+async function pressTask(project, id) {
+  const r = await api("/api/projects/" + encodeURIComponent(project) +
+    "/tasks/" + encodeURIComponent(id) + "/press", { method: "POST", body: {} });
+  if (!r.ok) {
+    sayResult(r.body.error || "дожать не вышло", true);
+    return;
+  }
+  if (r.body.message) sayResult(r.body.message);
+  markRunLive(project, id, r.body.session || "");
+  await refresh();
+}
+
 // Полоса собирается по самой строке, а не по списку работ: признаки идущего
 // хода приезжают со строкой и с формы, и с доски (tasks.go, handleTask), и
 // кнопку тут выбирает то же правило, что в строке доски.
 function taskActions(project, id, row) {
   const out = [];
   const isGoal = /^Цель:/.test(row.title);
+  // Дожим контроля (DK-1470): у просроченного контроля кнопка стоит при любом
+  // состоянии работы строки, дожим и есть разговор с идущей работой, а не второй
+  // исполнитель рядом с первым.
+  if (!isGoal && controlOverdue(row)) {
+    const press = barBtn("btn", "Дожать", "i-pulse");
+    withTip(press, "Поднять инспектора контроля: риски срыва лягут черновиком, " +
+      "исполнителю уйдёт напоминание");
+    press.addEventListener("click", () => {
+      press.disabled = true;
+      pressTask(project, id).catch(console.error).finally(() => { press.disabled = false; });
+    });
+    out.push(press);
+  }
   // Входа в разговор с экрана задачи больше нет (POC ветки poc-chat): окно
   // чатов открывает один значок в шапке дашборда, и открытое с задачи оно
   // фильтрует список по ней. Кнопка рядом с действиями строки заводила ещё
@@ -5707,6 +5762,7 @@ async function renderTask(project, works, id, pre) {
     cost: row.cost || "-",
     parts: base.slice(),
     due: row.due || "",
+    control: row.control == null ? "" : String(row.control),
     text: detail.text || "",
   };
   const isGoal = /^Цель:/.test(row.title || "");
@@ -5733,6 +5789,8 @@ async function renderTask(project, works, id, pre) {
   if (accept) tail.push(accept);
   const due = dueChip(row);
   if (due) tail.push(due);
+  const ctl = controlChip(row);
+  if (ctl) tail.push(ctl);
   for (const chip of stateChips) tail.push(chip);
 
   const patchBody = () => {
@@ -5745,6 +5803,10 @@ async function renderTask(project, works, id, pre) {
     // Срок едет прочерком снятия, а не пустой строкой: пустое поле значит
     // «не трогать», и иначе снятый срок не отличался бы от нетронутого.
     if (form.due !== (row.due || "")) out.due = form.due || "-";
+    // Контроль едет тем же правилом: прочерк снимает, пустое поле не трогает.
+    // Значение проверяет taskctl, клиент гонять его не обязан.
+    const hadControl = row.control == null ? "" : String(row.control);
+    if (form.control !== hadControl) out.control = form.control === "" ? "-" : form.control;
     return out;
   };
   // Текст файла едет, только когда он вправду изменён: PUT переписывает
@@ -5788,13 +5850,42 @@ async function renderTask(project, works, id, pre) {
   dueClear.hidden = !form.due;
   dueBox.append(dueInput, dueClear);
 
+  // Поле контроля стоит рядом со сроком: контроль считается от срока, и без
+  // срока его не ставит taskctl. Снятие контроля срок не трогает, а снятие
+  // срока при живом контроле taskctl отбивает сам, словами в ответе правки.
+  const controlBox = el("fieldset", "dfield controlbox");
+  controlBox.append(el("legend", "", "контроль"));
+  const controlInput = el("input", "controlin");
+  controlInput.type = "number";
+  controlInput.min = "0";
+  controlInput.max = "365";
+  controlInput.placeholder = "дней до срока";
+  controlInput.value = form.control;
+  controlInput.setAttribute("aria-label", "контроль задачи " + id + ", за сколько дней до срока проверка работ");
+  const controlClear = el("button", "btn duereset", "Снять");
+  controlClear.type = "button";
+  controlClear.title = "Убрать контроль со строки";
+  const controlNow = () => {
+    form.control = controlInput.value;
+    controlClear.hidden = form.control === "";
+    view.touch();
+  };
+  controlInput.addEventListener("change", controlNow);
+  controlInput.addEventListener("input", controlNow);
+  controlClear.addEventListener("click", () => {
+    controlInput.value = "";
+    controlNow();
+  });
+  controlClear.hidden = form.control === "";
+  controlBox.append(controlInput, controlClear);
+
   const view = formPage({
     key: "task", project, id, detail, chatRow: row, rankRow: row,
     num: row.id, titleLabel: "заголовок задачи " + id, form, chips, tailChips: tail, top,
     // Шапка и степпер этапа (DK-1119, макет 2b) встают между полосой чипов и
-    // описанием: то же место, где раньше читался чип stageChip. Поле срока
-    // встаёт туда же.
-    afterChips: [stageFormBlocks(row), dueBox],
+    // описанием: то же место, где раньше читался чип stageChip. Поля срока и
+    // контроля встают туда же.
+    afterChips: [stageFormBlocks(row), dueBox, controlBox],
     links: detail.links || null,
     has: { title: true, type: true, cost: true, rank: true, deps: true, chat: true,
       file: true, make: true, pencil: true, read: true },
@@ -5810,6 +5901,7 @@ async function renderTask(project, works, id, pre) {
       taskDraft.id = id;
       taskDraft.edit = on;
       dueBox.classList.toggle("on", on);
+      controlBox.classList.toggle("on", on);
     },
     check: () => {
       const patch = patchBody();
@@ -17794,6 +17886,21 @@ function ovRow(item) {
   if (sect) row.append(el("span", "chip c-run", sect));
   const due = dueChip(item);
   if (due) row.append(due);
+  // Дожим контроля (DK-1470): у горящей строки с просроченным контролем кнопка
+  // стоит в самой строке, дорога на экран задачи не обязательна. Клик по кнопке
+  // не открывает задачу: нажатие и ответ на него это один жест.
+  if (controlOverdue(item)) {
+    const press = el("button", "chip clicky c-block", "дожать");
+    press.type = "button";
+    press.setAttribute("aria-label", "дожать контроль " + item.id);
+    withTip(press, "Поднять инспектора контроля: риски срыва черновиком, " +
+      "исполнителю напоминание");
+    press.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      pressTask(item.project, item.id).catch(console.error);
+    });
+    row.append(press);
+  }
   if (item.r) row.append(el("span", "chip", "R" + item.r));
   row.addEventListener("click", () => { goKeepingChat(item.project + "/" + item.id); });
   return row;

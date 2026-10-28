@@ -61,6 +61,11 @@ type boardRow struct {
 	// строки без срока. Просрочку панель считает на клиенте по сегодняшней
 	// дате и подсвечивает чипом красным.
 	Due string `json:"due,omitempty"`
+	// Control это контроль строки (DK-1470): за сколько дней до срока
+	// поднимается проверка работ. nil у строки без контроля, ноль значит
+	// «в сам день срока» и обязан выживать, поэтому поле указателем. Его
+	// отдаёт taskctl list --json, разобрав суффикс «[контроль: N]».
+	Control *int `json:"control,omitempty"`
 	// Order это заказ headless-сессии дословно, той же строкой, что уйдёт
 	// агенту (rowOrder, tools/dashboard/runs.go): подсказка кнопки читает
 	// готовое поле, а не собирает заказ второй раз. Пусто у строки цели (её
@@ -1101,6 +1106,10 @@ func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {
 		// Due это срок строки датой YYYY-MM-DD, прочерк «-» снимает срок.
 		// Значение проверяет taskctl, дашборд только передаёт его.
 		Due string `json:"due"`
+		// Control это контроль строки числом дней до срока, прочерк «-»
+		// снимает контроль (DK-1470). Срок ставится тем же запросом, его
+		// проверяет taskctl.
+		Control string `json:"control"`
 		// Expect это разбивка, которую отправитель считает сегодняшней. С ней
 		// едет откат жеста перетаскивания: пока человек читал строку
 		// результата, строку могли поправить из соседней сессии, и молча
@@ -1110,7 +1119,7 @@ func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "жду JSON с полями title, type, r_parts (или rank), cost, link, due"})
+			"error": "жду JSON с полями title, type, r_parts (или rank), cost, link, due, control"})
 		return
 	}
 	if body.Expect != nil && !slices.Equal(body.Expect, row.RParts) {
@@ -1137,6 +1146,7 @@ func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {
 	for _, f := range []struct{ flag, val string }{
 		{"--title", body.Title}, {"--type", body.Type}, {"--rank", rank},
 		{"--cost", body.Cost}, {"--link", body.Link}, {"--due", body.Due},
+		{"--control", body.Control},
 	} {
 		if f.val != "" {
 			args = append(args, f.flag, f.val)
@@ -1146,7 +1156,7 @@ func (s *server) handleTaskPatch(w http.ResponseWriter, r *http.Request) {
 		// Порядок строк выводится из ранга, и ручки «поставить строку на место
 		// N» тут нет: менять нечего это менять нечего.
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "нечего менять, жду title, type, r_parts (или rank), cost или link; " +
+			"error": "нечего менять, жду title, type, r_parts (или rank), cost, link, due или control; " +
 				"порядок строк на доске выводится из ранга, ставить строку на место N нечем"})
 		return
 	}

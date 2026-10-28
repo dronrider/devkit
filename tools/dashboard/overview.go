@@ -48,6 +48,10 @@ type overviewRow struct {
 	// Due это срок строки датой 2006-01-02, тем же полем, что у доски
 	// (DK-1464). Пусто у строки без срока.
 	Due string `json:"due,omitempty"`
+	// Control это контроль строки (DK-1470): за сколько дней до срока
+	// поднимается проверка работ. nil у строки без контроля. Просроченная
+	// строка с контролем получает кнопку «дожать» у виджета главной.
+	Control *int `json:"control,omitempty"`
 }
 
 // overviewGoal это цель в работе с прогрессом состава: доля закрытых задач
@@ -123,7 +127,7 @@ func (s *server) overviewProject(p Project, now time.Time) (overviewBundle, erro
 	for _, sec := range sects {
 		for _, row := range sec.Rows {
 			item := overviewRow{Project: p.Name, ID: row.ID, Title: row.Title,
-				Sect: sec.Key, P: row.P, R: row.R, Due: row.Due}
+				Sect: sec.Key, P: row.P, R: row.R, Due: row.Due, Control: row.Control}
 			switch {
 			case row.Due != "" && row.Due < today:
 				out.overdue = append(out.overdue, item)

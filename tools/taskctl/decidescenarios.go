@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/taskform"
 )
 
@@ -109,6 +110,9 @@ func scenarioAnswerFork(doc string, p DecideParams) (taskform.Fork, bool, error)
 		if !ok {
 			return f, false, fmt.Errorf("развилки «%s» нет", decideName(p.Name))
 		}
+		if p.Snapshot != "" && f.Mode != taskform.ScenarioMode {
+			return f, false, fmt.Errorf("снимок сценариев не применяется: развилка «%s» больше не в режиме сценарии/1", f.Name)
+		}
 		return f, f.Mode != "", nil
 	}
 	for _, f := range taskform.ParseForks(doc) {
@@ -118,6 +122,9 @@ func scenarioAnswerFork(doc string, p DecideParams) (taskform.Fork, bool, error)
 		if f.Mode != "" && (p.Snapshot != "" || named || (f.HoldsStart() && special)) {
 			return f, true, nil
 		}
+	}
+	if p.Snapshot != "" {
+		return taskform.Fork{}, false, fmt.Errorf("снимок сценариев не применяется: список сценарии/1 отсутствует")
 	}
 	return taskform.Fork{}, false, nil
 }
@@ -156,8 +163,51 @@ func decideScenarioAnswer(doc string, f taskform.Fork, p DecideParams) (string, 
 	if err != nil {
 		return "", "", err
 	}
+	var ordinary []chatDecision
 	if len(selection.Unparsed) > 0 {
-		return doc, "не разобрано словами: " + strings.Join(selection.Unparsed, "; ") + "; список не закрыт, нужен разбор агента", nil
+		var forks []taskform.Fork
+		for _, candidate := range taskform.ParseForks(doc) {
+			if candidate.Mode == "" && candidate.HoldsStart() {
+				forks = append(forks, candidate)
+			}
+		}
+		var left []string
+		ordinary, left, err = parseAnswer(strings.Join(selection.Unparsed, "; "), forks)
+		if err != nil {
+			return "", "", err
+		}
+		if len(left) > 0 || len(ordinary) == 0 {
+			return doc, "не разобрано словами: " + strings.Join(selection.Unparsed, "; ") + "; список не закрыт, нужен разбор агента", nil
+		}
+		parts, err := taskform.ScenarioAnswerParts(p.Answer)
+		if err != nil {
+			return "", "", err
+		}
+		skip := map[string]bool{}
+		for _, piece := range selection.Unparsed {
+			skip[piece] = true
+		}
+		var scenarioParts []string
+		for _, piece := range parts {
+			if !skip[piece] {
+				scenarioParts = append(scenarioParts, piece)
+			}
+		}
+		if strings.TrimSpace(strings.Join(scenarioParts, "")) == "" {
+			var result []string
+			for _, decision := range ordinary {
+				doc, err = taskform.AppendToFork(doc, decision.Fork.Name, taskform.ForkDecisionLine(taskform.ByHuman, p.Now.Format("2006-01-02"), decision.Text))
+				if err != nil {
+					return "", "", err
+				}
+				result = append(result, "решено: «"+decision.Fork.Name+"» "+decision.Text)
+			}
+			return doc, strings.Join(result, "\n"), nil
+		}
+		selection, err = taskform.ParseScenarioAnswer(f, snapshot, strings.Join(scenarioParts, "; "))
+		if err != nil {
+			return "", "", err
+		}
 	}
 	for _, added := range selection.Added {
 		doc, err = taskform.AddForkOption(doc, f.Name, added.String())
@@ -185,9 +235,18 @@ func decideScenarioAnswer(doc string, f taskform.Fork, p DecideParams) (string, 
 		result += "\nдобавлено: " + strings.Join(ids, ", ") + "; дополнить карточки словами пользователя"
 	}
 	result += "\n" + scenarioRecheckNote
+	for _, decision := range ordinary {
+		result += "\nрешено: «" + decision.Fork.Name + "» " + decision.Text
+	}
 	doc, err = taskform.AppendToFork(doc, f.Name, line+"\n"+taskform.ScenarioReplyLine(taskform.ScenarioReply{Text: p.Answer, Snapshot: p.Snapshot, Event: f.ChoiceEvent + 1, Result: result}))
 	if err != nil {
 		return "", "", err
+	}
+	for _, decision := range ordinary {
+		doc, err = taskform.AppendToFork(doc, decision.Fork.Name, taskform.ForkDecisionLine(taskform.ByHuman, p.Now.Format("2006-01-02"), decision.Text))
+		if err != nil {
+			return "", "", err
+		}
 	}
 	updated, _ := taskform.FindFork(doc, f.Name)
 	if _, _, err := updated.Scenarios(); err != nil {
@@ -358,9 +417,39 @@ func decideScenarioChat(root string, pack []taskform.Fork, p DecideParams, d ask
 		}
 	}
 	if AskPanel(env) {
-		if _, err := runAsk(root, AskParams{ID: p.ID, Pack: chatQuestions(pack), Quiet: true}, d, env); err != nil {
+		questions, err := scenarioChatQuestions(root, p.ID, pack)
+		if err != nil {
+			return "", err
+		}
+		if _, err := runAsk(root, AskParams{ID: p.ID, Pack: questions, Quiet: true}, d, env); err != nil {
 			return "", err
 		}
 	}
 	return fmt.Sprintf("%s: в пачке развилок %d%s, блок ниже идёт в реплику как есть\n%s\n\n%s", p.ID, len(pack), more, chatFormatWarn, strings.Join(blocks, "\n\n")), nil
+}
+
+func scenarioChatQuestions(root, id string, pack []taskform.Fork) ([]chat.Question, error) {
+	questions := chatQuestions(pack)
+	for i, f := range pack {
+		if f.Mode == "" {
+			continue
+		}
+		snapshot, err := taskform.NewScenarioSnapshot(id, f)
+		if err != nil {
+			return nil, err
+		}
+		key, _ := snapshot.Encoded()
+		block, err := scenarioBlock(f, id)
+		if err != nil {
+			return nil, err
+		}
+		q := &chat.ScenarioQuestion{Tree: root, Snapshot: key, Fork: f.Name, Current: snapshot.Current, Block: block}
+		questions[i].Options = nil
+		for _, scenario := range snapshot.Scenarios {
+			q.IDs = append(q.IDs, scenario.ID)
+			questions[i].Options = append(questions[i].Options, chat.Option{Label: scenario.ID + ". " + scenario.Title})
+		}
+		questions[i].Scenario = q
+	}
+	return questions, nil
 }

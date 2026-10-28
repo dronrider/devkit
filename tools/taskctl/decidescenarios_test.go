@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,46 @@ import (
 
 	"github.com/dronrider/devkit/internal/taskform"
 )
+
+func TestScenarioPanelQuestionsAndMixedAnswer(t *testing.T) {
+	root := setup(t)
+	addScenarioTestCards(t, root, "XR-005", "СЦ-1", "СЦ-2")
+	decideRun(t, root, DecideParams{ID: "XR-005", Ask: "сценарии", Scenarios: true, Hint: "СЦ-1: нужен", Opts: []string{"СЦ-1 (слово пользователя): выбрать", "СЦ-2 (предложение агента): продолжить"}, Text: "что включаем?"})
+	askForks(t, root, "XR-005", [][]string{{"срок", "30 дней: достаточно", "сколько хранить?", "7 дней"}})
+	block := chatRun(t, root, DecideParams{ID: "XR-005", Chat: true}, &askDeps{}, botEnv)
+	key := regexp.MustCompile(`снимок сценариев: (sc1-[a-f0-9]{64})`).FindStringSubmatch(block)[1]
+	pack, err := scenarioChatQuestions(root, "XR-005", taskform.ParseForks(readTask(t, root, "XR-005")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(pack)
+	if len(pack) != 2 || !pack[0].Multi || pack[0].Scenario.Tree != root || pack[0].Scenario.Snapshot != key || pack[0].Options[0].Label != "СЦ-1. выбрать" || pack[1].Scenario != nil || pack[1].Multi || !strings.Contains(string(data), "снимок сценариев") {
+		t.Fatalf("вопросы панели: %s", data)
+	}
+	wait := askInMain(t, root, "XR-005")
+	before := readTask(t, root, "XR-005")
+	p := DecideParams{ID: "XR-005", Name: "сценарии", Snapshot: key, Answer: "сценарии 2; срок 9", Now: decideDay}
+	if _, err := cmdDecide(root, p); err == nil || readTask(t, root, "XR-005") != before || !askStands(wait) {
+		t.Fatal("плохой mixed частично применён")
+	}
+	p.Answer = "сценарии 2; срок 1; свои слова"
+	if _, err := cmdDecide(root, p); err != nil || readTask(t, root, "XR-005") != before || !askStands(wait) {
+		t.Fatal("raw mixed не оставлен агенту")
+	}
+	p.Answer = "сценарии 2; срок 1; плюс \"свой, с \\\"кавычкой\\\"\""
+	decideRun(t, root, p)
+	f, _ := taskform.FindFork(readTask(t, root, "XR-005"), "сценарии")
+	ordinary, _ := taskform.FindFork(readTask(t, root, "XR-005"), "срок")
+	if f.Answer != "СЦ-2, СЦ-3" || ordinary.Answer != "30 дней: достаточно" || askStands(wait) {
+		t.Fatalf("mixed: %+v %+v", f, ordinary)
+	}
+	before = readTask(t, root, "XR-005")
+	askInMain(t, root, "XR-005")
+	decideRun(t, root, p)
+	if readTask(t, root, "XR-005") != before || !askStands(wait) {
+		t.Fatal("mixed retry изменил запись или ожидание")
+	}
+}
 
 func TestScenariosCLI(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "taskctl")

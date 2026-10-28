@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -83,8 +84,13 @@ func TestStaticChatClipsFoldDedupAndOrder(t *testing.T) {
 	if !strings.Contains(keep, `lean === "[]" && !attachPushed`) {
 		t.Fatal("первое касание панели проталкивает пустой список вложений на сервер")
 	}
-	if !strings.Contains(text, "resend(again, rec.id, rec.wire)") {
-		t.Fatal("повтор восстановленной записи едет без своего провода")
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: проверка восстановления провода пропущена")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_clipretry.mjs"), filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("повтор восстановленной записи потерял провод или ключ: %v\n%s", err, out)
 	}
 }
 

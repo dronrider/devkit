@@ -450,6 +450,30 @@ func TestCloseRefusesSameSessionVerifyRun(t *testing.T) {
 	}
 }
 
+// Штатный порядок доходит до прогона после слияния и выката, и круг обязан
+// удержать автора выкаченного кода: пустой круг закрыл бы самопроверку молча
+// (DK-1360).
+func TestCloseRefusesAuthorOfShippedCode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := setup(t)
+	stagedDoc(t, root, "XR-005",
+		devSessionLine("opus", "ses-dev-1"),
+		"- Слияние: a1b2c3d, 2026-08-31 10:00-10:10.",
+		"- Выкат: задача выкачена, 2026-08-31 11:00-11:05.",
+		verifySessionLine("opus", "ses-dev-1"))
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-07-08"}); err == nil {
+		t.Fatal("закрытие с прогоном из сессии автора выкаченного кода прошло")
+	}
+	stagedDoc(t, root, "XR-005",
+		devSessionLine("opus", "ses-dev-1"),
+		"- Слияние: a1b2c3d, 2026-08-31 10:00-10:10.",
+		"- Выкат: задача выкачена, 2026-08-31 11:00-11:05.",
+		verifySessionLine("opus", "ses-ver-2"))
+	if _, err := cmdClose(root, CloseParams{ID: "XR-005", Date: "2026-07-08"}); err != nil {
+		t.Fatalf("закрытие с прогоном чужой сессией после выката: %v", err)
+	}
+}
+
 // Та же модель из другой сессии проходит: независимость несёт сессия, а не
 // имя (DK-1360).
 func TestClosePassesForeignVerifyRun(t *testing.T) {

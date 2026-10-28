@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dronrider/devkit/internal/control"
 	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskform"
 	"github.com/dronrider/devkit/internal/trace"
@@ -126,10 +127,14 @@ func cmdLint(root string) ([]string, error) {
 // lintControl ловит контроль без срока (DK-1470): окно проверки считается от
 // даты, и строка с контролем, но без срока, стоит на карандаше вслепую.
 // Воронка команд такой строки не пускает, сюда попадает ручная правка доски.
+// Срок читается разбором каркаса control.DueOf, а не своим dueOf: в
+// каноническом порядке за сроком стоит сам контроль, и якорный к концу
+// заголовка dueOf строки, собранной самим set --control, срока не видит и
+// давал находку на валидной строке.
 func lintControl(b *Board, bp string) []string {
 	var finds []string
 	for _, r := range b.Rows {
-		if _, has := controlOf(r.Title); has && dueOf(r.Title) == "" {
+		if _, has := controlOf(r.Title); has && control.DueOf(r.Title) == "" {
 			finds = append(finds, fmt.Sprintf("%s:%d: %s: контроль без срока, поставь срок (set %s --due YYYY-MM-DD) либо сними контроль (set %s --control -)",
 				bp, r.LineIdx+1, r.ID, r.ID, r.ID))
 		}

@@ -865,11 +865,11 @@ func cmdSet(root string, p SetParams) (string, error) {
 		case days >= 0 && !had:
 			base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, _, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 			row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, control.Suffix(days), acceptSuf, failSuf, blockSuf)
-			changes = append(changes, fmt.Sprintf("контроль взят: проверка за %d дней до срока", days))
+			changes = append(changes, fmt.Sprintf("контроль взят: проверка за %d %s до срока", days, pluralDays(days)))
 		case days >= 0 && had && days != old:
 			base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, _, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 			row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, control.Suffix(days), acceptSuf, failSuf, blockSuf)
-			changes = append(changes, fmt.Sprintf("контроль %d -> %d дней до срока", old, days))
+			changes = append(changes, fmt.Sprintf("контроль %d -> %d %s до срока", old, days, pluralDays(days)))
 		}
 	}
 	if p.Assign != "" {

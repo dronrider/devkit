@@ -19,7 +19,7 @@ func TestSetControl(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if msg != "XR-004: контроль взят: проверка за 3 дней до срока" {
+	if msg != "XR-004: контроль взят: проверка за 3 дня до срока" {
 		t.Fatalf("сообщение: %q", msg)
 	}
 	b, _ := LoadBoard(boardPath(root))
@@ -134,7 +134,9 @@ func TestSetControlKeepsOtherTails(t *testing.T) {
 }
 
 // TestLintControlWithoutDue: контроль без срока это находка линтера, воронка
-// команд такую строку не пускает, сюда попадает ручная правка доски.
+// команд такую строку не пускает, сюда попадает ручная правка доски. Строка
+// со сроком и контролем находкой не становится, хотя за сроком в заголовке
+// стоит сам контроль и якорный разбор срока его не пробивает.
 func TestLintControlWithoutDue(t *testing.T) {
 	root := setup(t)
 	b, err := LoadBoard(boardPath(root))
@@ -150,6 +152,14 @@ func TestLintControlWithoutDue(t *testing.T) {
 	finds := lintControl(b, boardPath(root))
 	if len(finds) != 1 || !strings.Contains(finds[0], "контроль без срока") {
 		t.Fatalf("находка контроля без срока не поднялась: %v", finds)
+	}
+	row.Title = "Хвост [срок: 2026-11-05] [контроль: 2]"
+	b.Lines[row.LineIdx] = formatRow(row)
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if finds := lintControl(b, boardPath(root)); len(finds) != 0 {
+		t.Fatalf("срок с контролем дал ложную находку: %v", finds)
 	}
 }
 

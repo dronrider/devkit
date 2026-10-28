@@ -1150,14 +1150,14 @@ func main() {
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "kinds")
 		msg, err = cmdKinds(root(*dir))
 	case "team":
-		fs := flag.NewFlagSet("team", flag.ExitOnError)
-		dir := fs.String("C", gdir, "стартовая директория")
-		sub := frame.ParseArgs(fs, args[1:])
-		if len(sub) == 0 {
+		// Подкоманда срезается по сырой строке, флаги разбирает своя ветка:
+		// общий разбор не знает --kind и --role, а переносить их наверх
+		// значило бы раздуть шапку команды ради одной подкоманды.
+		if len(args) < 2 {
 			err = fmt.Errorf("team add <имя> | team rm <имя> | team list | team show <имя>")
 			break
 		}
-		switch sub[0] {
+		switch args[1] {
 		case "add":
 			af := flag.NewFlagSet("team add", flag.ExitOnError)
 			var p TeamParams
@@ -1167,25 +1167,26 @@ func main() {
 			af.StringVar(&p.Tier, "tier", "", "ярус агентского участника: mini / base / pro / max")
 			af.Var((*strList)(&p.Roles), "role", "роль из exec/review/check/inspect; ключ повторяется")
 			af.StringVar(&p.Channel, "channel", "", "канал человека для напоминаний, например telegram:@ivan")
-			pos := frame.ParseArgs(af, sub[1:])
+			pos := frame.ParseArgs(af, args[2:])
 			needArgs(pos, 1, 1, "team add <имя> --kind human|agent [--role exec] [--tier ...] [--model ...] [--channel ...]")
 			msg, err = cmdTeamAdd(stage.Home(), pos[0], p)
 		case "rm":
 			rf := flag.NewFlagSet("team rm", flag.ExitOnError)
-			pos := frame.ParseArgs(rf, sub[1:])
+			pos := frame.ParseArgs(rf, args[2:])
 			needArgs(pos, 1, 1, "team rm <имя>")
 			msg, err = cmdTeamRm(stage.Home(), pos[0])
 		case "list":
 			lf := flag.NewFlagSet("team list", flag.ExitOnError)
-			needArgs(frame.ParseArgs(lf, sub[1:]), 0, 0, "team list")
+			needArgs(frame.ParseArgs(lf, args[2:]), 0, 0, "team list")
 			msg, err = cmdTeamList(stage.Home())
 		case "show":
 			sf := flag.NewFlagSet("team show", flag.ExitOnError)
-			pos := frame.ParseArgs(sf, sub[1:])
+			dir := sf.String("C", gdir, "стартовая директория")
+			pos := frame.ParseArgs(sf, args[2:])
 			needArgs(pos, 1, 1, "team show <имя>")
 			msg, err = cmdTeamShow(root(*dir), stage.Home(), pos[0])
 		default:
-			err = fmt.Errorf("team не знает %q, жду add, rm, list или show", sub[0])
+			err = fmt.Errorf("team не знает %q, жду add, rm, list или show", args[1])
 		}
 	case "remind":
 		fs := flag.NewFlagSet("remind", flag.ExitOnError)

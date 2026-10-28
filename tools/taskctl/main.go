@@ -197,7 +197,7 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
   fail <ID> --clear                           прод починен, признак снят (сами
                                               его гасят shipctl merge, ship, revert)
   set <ID> [--title "..."] [--type ...] [--rank "..."] [--cost ...] [--link "..."]
-      [--accept agent|mixed|user] [--due YYYY-MM-DD] [--assign имя]
+      [--accept agent|mixed|user] [--due YYYY-MM-DD] [--control N] [--assign имя]
                                               поправить ячейки строки
   file <ID>                                   создать docs/tasks/<ID>.md и ссылку в строке
   team add <имя> --kind human|agent [--role exec|review|check|inspect]
@@ -413,6 +413,7 @@ func setFlags(fs *flag.FlagSet, p *SetParams) {
 	fs.StringVar(&p.Link, "link", "", "новая ячейка ссылки")
 	fs.StringVar(&p.Accept, "accept", "", "новый вид приёмки: agent / mixed / user")
 	fs.StringVar(&p.Due, "due", "", "новый срок строки YYYY-MM-DD, «-» снимает срок")
+	fs.StringVar(&p.Control, "control", "", "взять задачу на контроль: проверка за N дней до срока, «-» снимает контроль")
 	fs.StringVar(&p.Assign, "assign", "", "назначить участника команды на строку, «-» снимает назначение")
 	commitFlags(fs, &p.Commit)
 }
@@ -764,7 +765,7 @@ func main() {
 		var p SetParams
 		setFlags(fs, &p)
 		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, "set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...] [--accept ...] [--due YYYY-MM-DD] [--assign имя]")
+		needArgs(pos, 1, 1, "set <ID> [--title ...] [--type ...] [--rank ...] [--cost ...] [--link ...] [--accept ...] [--due YYYY-MM-DD] [--control N] [--assign имя]")
 		p.ID = pos[0]
 		msg, err = cmdSet(root(*dir), p)
 	case "rehearse":

@@ -38,6 +38,11 @@ type jsonRow struct {
 	// Due это срок строки доски датой 2006-01-02 из суффикса заголовка
 	// «[срок: ...]» (DK-1464). Пусто у строки без срока.
 	Due string `json:"due,omitempty"`
+	// Control это контроль задачи из суффикса «[контроль: ...]» (DK-1470):
+	// за сколько дней до срока контроль поднимает проверку работ. Nil у строки
+	// без контроля, ноль значит «в сам день срока» и обязан выживать в json,
+	// поэтому поле указателем.
+	Control *int `json:"control,omitempty"`
 	// Assign это назначенный участник команды из суффикса «[исп: ...]»
 	// (DK-1468): handle из ~/.devkit/team.toml. Пусто у строки без
 	// назначения.
@@ -117,22 +122,33 @@ func sufText(suf, label string) string {
 	return strings.TrimSpace(strings.TrimSuffix(s, "]"))
 }
 
+// jsonControlOf переводит хвост контроля в поле json: пустой хвост это nil,
+// и ноль дней остаётся нулём, а не исчезает.
+func jsonControlOf(suf string) *int {
+	if days, ok := controlDays(suf); ok {
+		return &days
+	}
+	return nil
+}
+
 func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, sv *stageView) jsonRow {
-	base, deps, debtSuf, armSuf, _, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
+	base, deps, debtSuf, armSuf, _, assignSuf, dueSuf, controlSuf, acceptSuf, failSuf, blockSuf := splitTitle(r.Title)
+	control := jsonControlOf(controlSuf)
 	return jsonRow{
-		ID:     r.ID,
-		Title:  strings.TrimSpace(base),
-		After:  deps,
-		HeldBy: ed.heldIDs(r),
-		Debt:   debtSuf != "",
-		Armed:  armSuf != "",
-		Arm:    jsonArmOf(root, ed, r),
-		Accept: sufText(acceptSuf, "приёмка"),
-		Due:    sufText(dueSuf, "срок"),
-		Assign: sufText(assignSuf, "исп"),
-		Fail:   sufText(failSuf, "провал"),
-		Block:  sufText(blockSuf, "блок"),
-		Type:   r.Type, P: r.P, R: r.RTotal, ROwn: r.ROwn, RParts: r.RParts,
+		ID:      r.ID,
+		Title:   strings.TrimSpace(base),
+		After:   deps,
+		HeldBy:  ed.heldIDs(r),
+		Debt:    debtSuf != "",
+		Armed:   armSuf != "",
+		Arm:     jsonArmOf(root, ed, r),
+		Accept:  sufText(acceptSuf, "приёмка"),
+		Due:     sufText(dueSuf, "срок"),
+		Control: control,
+		Assign:  sufText(assignSuf, "исп"),
+		Fail:    sufText(failSuf, "провал"),
+		Block:   sufText(blockSuf, "блок"),
+		Type:    r.Type, P: r.P, R: r.RTotal, ROwn: r.ROwn, RParts: r.RParts,
 		Adjustments: jsonAdjs(r.RAdj),
 		Cost:        r.Cost, Link: r.Link,
 		// Дата последней правки строки: перевод в статус двигает строку между

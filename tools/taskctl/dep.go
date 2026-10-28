@@ -29,9 +29,10 @@ var assignSufRe = regexp.MustCompile(`\s*\[исп: ([A-Za-z0-9_-]+)\]\s*$`)
 
 // splitTitle разбирает полный текст заголовка строки на основу, список
 // зависимостей из «[после ...]» и хвосты «[долг]», «[взвод]», «[план: ...]»,
-// «[исп: ...]», «[срок: ...]», «[приёмка: ...]», «[провал: ...]» и
-// «[блок: ...]» как есть (с ведущим пробелом) либо пустые строки.
-func splitTitle(title string) (base string, deps []string, debtSuf, armSuf, planSuf, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf string) {
+// «[исп: ...]», «[срок: ...]», «[контроль: ...]», «[приёмка: ...]»,
+// «[провал: ...]» и «[блок: ...]» как есть (с ведущим пробелом) либо пустые
+// строки.
+func splitTitle(title string) (base string, deps []string, debtSuf, armSuf, planSuf, assignSuf, dueSuf, controlSuf, acceptSuf, failSuf, blockSuf string) {
 	rest := title
 	if m := blockSufRe.FindString(rest); m != "" {
 		rest = strings.TrimSuffix(rest, m)
@@ -44,6 +45,10 @@ func splitTitle(title string) (base string, deps []string, debtSuf, armSuf, plan
 	if m := acceptSufRe.FindString(rest); m != "" {
 		rest = strings.TrimSuffix(rest, m)
 		acceptSuf = m
+	}
+	if m := controlSufRe.FindString(rest); m != "" {
+		rest = strings.TrimSuffix(rest, m)
+		controlSuf = m
 	}
 	if m := dueSufRe.FindString(rest); m != "" {
 		rest = strings.TrimSuffix(rest, m)
@@ -73,9 +78,9 @@ func splitTitle(title string) (base string, deps []string, debtSuf, armSuf, plan
 				deps = append(deps, id)
 			}
 		}
-		return base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf
+		return base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, controlSuf, acceptSuf, failSuf, blockSuf
 	}
-	return rest, nil, debtSuf, armSuf, planSuf, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf
+	return rest, nil, debtSuf, armSuf, planSuf, assignSuf, dueSuf, controlSuf, acceptSuf, failSuf, blockSuf
 }
 
 // joinTitle собирает заголовок обратно: основа, затем «[после ...]» (если
@@ -83,12 +88,12 @@ func splitTitle(title string) (base string, deps []string, debtSuf, armSuf, plan
 // приёмки, провала и блокировки как есть. Срок стоит до приёмки: регулярки
 // вида приёмки привязаны к концу строки (internal/accept), и суффикс после
 // «[приёмка: ...]» скрыл бы вид от читателей вне taskctl.
-func joinTitle(base string, deps []string, debtSuf, armSuf, planSuf, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf string) string {
+func joinTitle(base string, deps []string, debtSuf, armSuf, planSuf, assignSuf, dueSuf, controlSuf, acceptSuf, failSuf, blockSuf string) string {
 	t := base
 	if len(deps) > 0 {
 		t += " [после " + strings.Join(deps, ", ") + "]"
 	}
-	return t + debtSuf + armSuf + planSuf + assignSuf + dueSuf + acceptSuf + failSuf + blockSuf
+	return t + debtSuf + armSuf + planSuf + assignSuf + dueSuf + controlSuf + acceptSuf + failSuf + blockSuf
 }
 
 func joinOrDash(xs []string) string {
@@ -105,7 +110,7 @@ func joinOrDash(xs []string) string {
 func reachable(rows []*Row, from, to string) bool {
 	adj := map[string][]string{}
 	for _, r := range rows {
-		_, deps, _, _, _, _, _, _, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _, _, _, _, _, _, _ := splitTitle(r.Title)
 		adj[r.ID] = deps
 	}
 	visited := map[string]bool{}
@@ -173,7 +178,7 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 			return "", fmt.Errorf("%s уже в %s, нельзя добавить неснятое ребро на %s: %s", p.ID, sectTitles[row.Sect], p.DepID, ed.Why)
 		}
 	}
-	base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
+	base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, controlSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 	for _, d := range deps {
 		if d == p.DepID {
 			return "", fmt.Errorf("%s уже после %s", p.ID, p.DepID)
@@ -183,7 +188,7 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 		return "", fmt.Errorf("%s после %s замкнёт цикл зависимостей", p.ID, p.DepID)
 	}
 	deps = append(deps, p.DepID)
-	row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf)
+	row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, controlSuf, acceptSuf, failSuf, blockSuf)
 	b.updateLine(row.LineIdx, formatRow(row))
 	// Свежее ребро тянет ранг предпосылки вверх по инварианту зависимости, и
 	// строки затронутых задач переезжают тут же (DK-428).
@@ -218,7 +223,7 @@ func cmdDepRm(root string, p DepParams) (string, error) {
 	if row == nil {
 		return "", fmt.Errorf("%s нет на доске", p.ID)
 	}
-	base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
+	base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, controlSuf, acceptSuf, failSuf, blockSuf := splitTitle(row.Title)
 	idx := -1
 	for i, d := range deps {
 		if d == p.DepID {
@@ -230,7 +235,7 @@ func cmdDepRm(root string, p DepParams) (string, error) {
 		return "", fmt.Errorf("%s не зависит от %s", p.ID, p.DepID)
 	}
 	deps = append(deps[:idx], deps[idx+1:]...)
-	row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, acceptSuf, failSuf, blockSuf)
+	row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, controlSuf, acceptSuf, failSuf, blockSuf)
 	b.updateLine(row.LineIdx, formatRow(row))
 	moves, b, err := rehydrate(b)
 	if err != nil {
@@ -261,7 +266,7 @@ func depSides(b *Board) map[string]*struct{ after, blocks []string } {
 		return all[id]
 	}
 	for _, r := range b.Rows {
-		_, deps, _, _, _, _, _, _, _, _ := splitTitle(r.Title)
+		_, deps, _, _, _, _, _, _, _, _, _ := splitTitle(r.Title)
 		if len(deps) == 0 {
 			continue
 		}

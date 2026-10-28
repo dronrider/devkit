@@ -198,7 +198,7 @@ func TestLintTailsSeesHourlyArm(t *testing.T) {
 // при метке так же, как без неё, а сборка заголовка обратно даёт тот же текст.
 func TestDebtKeepsDepAndArmTails(t *testing.T) {
 	title := "Долг [после XR-001, XR-002] [долг] [взвод] [план: poc] [приёмка: mixed] [провал: 500] [блок: ждём железо]"
-	base, deps, debtSuf, armSuf, planSuf, _, _, acceptSuf, failSuf, blockSuf := splitTitle(title)
+	base, deps, debtSuf, armSuf, planSuf, _, _, _, acceptSuf, failSuf, blockSuf := splitTitle(title)
 	if base != "Долг" {
 		t.Fatalf("основа заголовка = %q, ожидал «Долг»", base)
 	}
@@ -217,7 +217,7 @@ func TestDebtKeepsDepAndArmTails(t *testing.T) {
 	if failSuf != " [провал: 500]" || blockSuf != " [блок: ждём железо]" {
 		t.Fatalf("провал = %q, блок = %q", failSuf, blockSuf)
 	}
-	if got := joinTitle(base, deps, debtSuf, armSuf, planSuf, "", "", acceptSuf, failSuf, blockSuf); got != title {
+	if got := joinTitle(base, deps, debtSuf, armSuf, planSuf, "", "", "", acceptSuf, failSuf, blockSuf); got != title {
 		t.Fatalf("сборка обратно дала %q, ожидал %q", got, title)
 	}
 	if !armed(title) {

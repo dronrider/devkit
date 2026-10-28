@@ -63,7 +63,7 @@ func cmdRemind(root string, id string, p RemindParams) (string, error) {
 			return "", fmt.Errorf("%s: %v (свой текст задаётся ключом --note)", id, err)
 		}
 	}
-	base, _, _, _, _, _, _, _, _, _ := splitTitle(row.Title)
+	base, _, _, _, _, _, _, _, _, _, _ := splitTitle(row.Title)
 	title := strings.TrimSpace(base)
 	if title == "" {
 		title = row.ID
@@ -76,15 +76,20 @@ func cmdRemind(root string, id string, p RemindParams) (string, error) {
 // другого напоминание не строится: выдумывать повод модель бы не могла, а
 // утилите тем более нечем.
 func rowStateNote(title string) (string, error) {
-	_, _, _, _, _, _, _, _, _, blockSuf := splitTitle(title)
+	// Срок и контроль читаются разбором заголовка: за сроком могут стоять
+	// контроль и приёмка, и якорные регулярки на такой строке молчат.
+	_, _, _, _, _, _, dueSuf, controlSuf, _, _, blockSuf := splitTitle(title)
 	if blockSuf != "" {
 		return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(blockSuf), "[блок:"), "]")), nil
 	}
-	if d := dueOf(title); d != "" {
+	if d := sufText(dueSuf, "срок"); d != "" {
 		note := "срок " + d
 		today := time.Now().Format(time.DateOnly)
 		if d < today {
 			note += ", просрочен"
+		}
+		if controlSuf != "" && d < today {
+			note = fmt.Sprintf("контроль просрочен: %s, работы не сданы, дожми (проверка работ и инспектор по кнопке «дожать» на главной)", note)
 		}
 		return note, nil
 	}

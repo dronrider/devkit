@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,9 +30,10 @@ type plan struct {
 	Changes []Change `json:"changes"`
 }
 type Lock struct {
-	file *os.File
-	dir  string
-	root string
+	file   *os.File
+	dir    string
+	common string
+	root   string
 }
 
 func serviceDir(root string) string {
@@ -84,7 +86,7 @@ func Acquire(root string) (*Lock, error) {
 		f.Close()
 		return nil, err
 	}
-	l := &Lock{file: f, dir: dir, root: root}
+	l := &Lock{file: f, dir: dir, common: common, root: root}
 	if err = l.Recover(); err != nil {
 		l.Close()
 		return nil, err
@@ -166,16 +168,21 @@ func full(root, rel string) (string, error) {
 	}
 	return filepath.Join(root, rel), nil
 }
-func (l *Lock) install(p plan, afterEach func(int) error) error {
+func (l *Lock) install(p plan, pending string, afterEach func(int) error) error {
 	if p.Version != 1 || p.Root != l.root {
 		return fmt.Errorf("неверный план транзакции")
 	}
 	// Check the entire plan before installing any remaining image.
+	seen := map[string]bool{}
 	for _, c := range p.Changes {
 		path, err := full(p.Root, c.Path)
 		if err != nil {
 			return err
 		}
+		if seen[path] {
+			return fmt.Errorf("повтор пути %s", path)
+		}
+		seen[path] = true
 		current, err := Read(path)
 		if err != nil {
 			return err
@@ -208,10 +215,10 @@ func (l *Lock) install(p plan, afterEach func(int) error) error {
 			}
 		}
 	}
-	if err := os.Remove(filepath.Join(l.dir, "pending.json")); err != nil {
+	if err := os.Remove(pending); err != nil {
 		return err
 	}
-	return syncDir(l.dir)
+	return syncDir(filepath.Dir(pending))
 }
 
 // Apply saves the plan durably, then installs its images. Caller holds the lock.
@@ -259,10 +266,27 @@ func (l *Lock) apply(root string, changes []Change, afterEach func(int) error) e
 	if err = atomic(filepath.Join(l.dir, "pending.json"), Image{Exists: true, Data: data, Mode: 0600}); err != nil {
 		return err
 	}
-	return l.install(p, afterEach)
+	return l.install(p, filepath.Join(l.dir, "pending.json"), afterEach)
 }
 func (l *Lock) Recover() error {
-	path := filepath.Join(l.dir, "pending.json")
+	legacy := filepath.Join(l.common, "pending.json")
+	current := filepath.Join(l.dir, "pending.json")
+	if _, err := os.Stat(legacy); err == nil {
+		if _, currentErr := os.Stat(current); currentErr == nil {
+			return fmt.Errorf("обнаружены два незавершённых плана: %s и %s", legacy, current)
+		} else if !os.IsNotExist(currentErr) {
+			return currentErr
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := l.recoverFile(legacy); err != nil {
+		return err
+	}
+	return l.recoverFile(current)
+}
+
+func (l *Lock) recoverFile(path string) error {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -271,8 +295,19 @@ func (l *Lock) Recover() error {
 		return err
 	}
 	var p plan
-	if err = json.Unmarshal(data, &p); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err = dec.Decode(&p); err != nil {
 		return fmt.Errorf("план %s: %w", path, err)
 	}
-	return l.install(p, nil)
+	var extra any
+	if dec.Decode(&extra) != io.EOF || p.Version != 1 || !filepath.IsAbs(p.Root) || len(p.Changes) == 0 {
+		return fmt.Errorf("план %s: неверный формат", path)
+	}
+	canonical, err := filepath.EvalSymlinks(p.Root)
+	if err != nil || canonical != l.root {
+		return fmt.Errorf("план %s принадлежит корню %q: откройте этот корень для восстановления", path, p.Root)
+	}
+	p.Root = canonical
+	return l.install(p, path, nil)
 }

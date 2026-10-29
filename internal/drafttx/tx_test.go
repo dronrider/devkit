@@ -251,3 +251,60 @@ func TestRecoveryRejectsForeignRoot(t *testing.T) {
 		t.Fatal("foreign plan accepted")
 	}
 }
+
+func TestLegacyPlanFailsClosedOrRecoversOwnRoot(t *testing.T) {
+	root, other := t.TempDir(), t.TempDir()
+	l, err := Acquire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "item")
+	if err = os.WriteFile(path, []byte("before"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(serviceDir(root), "pending.json")
+	p := plan{Version: 1, Root: other, Changes: []Change{{Path: "item", Before: before, After: Image{Exists: true, Data: []byte("after"), Mode: 0600}}}}
+	data, _ := json.Marshal(p)
+	if err = os.WriteFile(legacy, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	if _, err = Acquire(root); err == nil || !strings.Contains(err.Error(), other) {
+		t.Fatalf("foreign root: %v", err)
+	}
+	got, _ := os.ReadFile(legacy)
+	if string(got) != string(data) {
+		t.Fatal("foreign journal changed")
+	}
+	if err = os.WriteFile(legacy, []byte("bad"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Acquire(root); err == nil {
+		t.Fatal("bad journal accepted")
+	}
+	got, _ = os.ReadFile(legacy)
+	if string(got) != "bad" {
+		t.Fatal("bad journal changed")
+	}
+	p.Root = root
+	data, _ = json.Marshal(p)
+	if err = os.WriteFile(legacy, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	l, err = Acquire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	got, _ = os.ReadFile(path)
+	if string(got) != "after" {
+		t.Fatalf("recovery: %q", got)
+	}
+	if _, err = os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("journal remains: %v", err)
+	}
+}

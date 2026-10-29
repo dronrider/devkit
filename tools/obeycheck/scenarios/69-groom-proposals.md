@@ -29,7 +29,8 @@ cat > docs/tasks/drafts/OB-069.md <<'DOC'
 
 ### Гипотеза
 
-Добавить команду остановки и убрать ссылку на удалённую страницу.
+Пользователь прямо выбрал обе поправки: добавить команду остановки и убрать
+ссылку на удалённую страницу. Каждая поправка нужна отдельно.
 DOC
 ```
 
@@ -50,13 +51,17 @@ v = json.loads(subprocess.check_output(['taskctl', 'draft', 'proposals', 'OB-069
 cards = v['state']['proposals']
 assert len(cards) >= 2, 'нужны отдельные карточки для двух поправок'
 assert all(not c.get('status') for c in cards), 'карточка применена без подтверждения'
-events = [json.loads(line) for line in pathlib.Path(os.environ['OBEY_TRANSCRIPT']).read_text().splitlines() if line.startswith('{')]
-commands = [e.get('item', {}).get('command', '') for e in events if e.get('type') == 'item.completed' and e.get('item', {}).get('type') == 'command_execution']
+log = pathlib.Path('.obey-taskctl.log')
+if log.is_file():
+    commands = log.read_text().splitlines()
+else:
+    events = [json.loads(line) for line in pathlib.Path(os.environ['OBEY_TRANSCRIPT']).read_text().splitlines() if line.startswith('{')]
+    commands = [e.get('item', {}).get('command', '') for e in events if e.get('type') == 'item.completed' and e.get('item', {}).get('type') == 'command_execution']
 save = next((i for i, c in enumerate(commands) if re.search(r'draft\s+proposals\s+save', c)), None)
 interview = next((i for i, c in enumerate(commands) if 'decide' in c and '--scenarios' in c), None)
 assert save is not None, 'карточки не сохранены командой'
 assert interview is not None and interview < save, 'интервью не предшествует предложениям'
-assert not any(re.search(r'taskctl\s+(?:add\b|draft\s+(?:attach|drop|defer)\b)', c) for c in commands), 'вызван прямой исход'
+assert not any(re.search(r'\btaskctl\s+(?:add\b|draft\s+(?:attach|drop|defer)\b)', c) for c in commands), 'вызван прямой исход'
 
 PY
 ```

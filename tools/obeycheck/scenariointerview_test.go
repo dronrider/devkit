@@ -50,7 +50,7 @@ func TestInterviewScenarioChecks(t *testing.T) {
 		if !support {
 			t.Fatalf("%s не покрывает раздел вспомогательного файла «%s»", s.ID, section)
 		}
-		states := []string{"исходная", "пустая", "работает", "без реплики", "старые составы", "потеряно поле", "поле снаружи", "чужая карточка", "поле в примере", "пустые cards"}
+		states := []string{"исходная", "пустая", "работает", "журнал", "без команд", "без реплики", "старые составы", "потеряно поле", "поле снаружи", "чужая карточка", "поле в примере", "пустые cards"}
 		if strings.HasPrefix(s.ID, "43-") {
 			states = append(states, "карточки не доставлены", "тело не доставлено")
 		} else {
@@ -209,6 +209,14 @@ func TestInterviewScenarioChecks(t *testing.T) {
 					final = ""
 				}
 				var trace strings.Builder
+				if state == "журнал" {
+					if err := os.WriteFile(filepath.Join(project, ".obey-taskctl.log"), []byte(strings.Join(commands, "\n")+"\n"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if state == "журнал" || state == "без команд" {
+					commands = nil
+				}
 				for _, command := range commands {
 					data, _ := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]any{"type": "command_execution", "command": command}})
 					trace.Write(data)
@@ -224,7 +232,7 @@ func TestInterviewScenarioChecks(t *testing.T) {
 				check.Dir = project
 				check.Env = env
 				out, err := check.CombinedOutput()
-				if (err == nil) != (state == "работает" || state == "итог без ID" || state == "итог без None") {
+				if (err == nil) != (state == "работает" || state == "журнал" || state == "итог без ID" || state == "итог без None") {
 					t.Fatalf("состояние %s: %v\n%s", state, err, out)
 				}
 				if err != nil && expectedReason != "" && !strings.Contains(string(out), expectedReason) {
@@ -294,5 +302,48 @@ func TestInterviewDecideBlockHeadless(t *testing.T) {
 	}
 	if strings.Contains(out, "у экрана человек") || strings.Contains(out, "те же варианты идут диалогом") {
 		t.Fatalf("сценарий запросил диалог вместо печатного блока:\n%s", out)
+	}
+}
+
+func TestGroomProposalScenarioChecks(t *testing.T) {
+	devkit := devkitRoot(t)
+	list, err := loadScenarios(filepath.Join(devkit, "tools", "obeycheck", "scenarios"), devkit, []string{"69-groom-proposals"}, nil)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("сценарий: %v, найдено %d", err, len(list))
+	}
+	for _, tc := range []struct {
+		name, log, proposals string
+		pass                 bool
+	}{
+		{"порядок", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069\n", `[{"id":"p1"},{"id":"p2"}]`, true},
+		{"наоборот", "taskctl draft proposals save OB-069\ntaskctl decide OB-069 --scenarios\n", `[{"id":"p1"},{"id":"p2"}]`, false},
+		{"нет вызовов", "", `[{"id":"p1"},{"id":"p2"}]`, false},
+		{"прямое применение", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069\ntaskctl draft drop OB-069\n", `[{"id":"p1"},{"id":"p2"}]`, false},
+		{"применённая карточка", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069\n", `[{"id":"p1","status":"accepted"},{"id":"p2"}]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project := t.TempDir()
+			binDir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(project, "docs", "tasks", "drafts"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(project, "docs", "tasks", "drafts", "OB-069.md"), []byte("выбор: сценарии/1\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(project, ".obey-taskctl.log"), []byte(tc.log), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			fake := "#!/bin/sh\nprintf '%s\\n' '{\"state\":{\"proposals\":" + tc.proposals + "}}'\n"
+			if err := os.WriteFile(filepath.Join(binDir, "taskctl"), []byte(fake), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			check := exec.Command("sh", "-eu", "-c", list[0].Check)
+			check.Dir = project
+			check.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			out, err := check.CombinedOutput()
+			if (err == nil) != tc.pass {
+				t.Fatalf("проверка: %v\n%s", err, out)
+			}
+		})
 	}
 }

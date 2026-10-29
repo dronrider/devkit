@@ -512,6 +512,8 @@ func cmdWake(root string, ids []string, o wakeOpts) (string, bool, error) {
 	if len(ids) == 0 {
 		// Событие соседа будит строку без человека в окне.
 		o.hidden = true
+		var effects []func() string
+		armSelectionEffects = &effects
 		lock, err = draftReadOutside(root, main, lock, func() error {
 			for _, src := range waiterSources {
 				got, notes := src(root, b, arch)
@@ -526,9 +528,30 @@ func cmdWake(root string, ids []string, o wakeOpts) (string, bool, error) {
 			}
 			return nil
 		})
+		armSelectionEffects = nil
 		if err != nil {
 			return "", false, err
 		}
+		cliTx = lock
+		for _, effect := range effects {
+			if note := effect(); note != "" {
+				lines = append(lines, note)
+			}
+		}
+		tail, finishErr := cliFinishDraftLock(true)
+		lock = nil
+		if finishErr != nil {
+			return "", false, finishErr
+		}
+		if tail != "" {
+			lines = append(lines, tail)
+		}
+		lock, err = drafttx.Acquire(root)
+		if err != nil {
+			return "", false, err
+		}
+		// Each selected row and its event is checked again in wakeRow after
+		// notifications have had a chance to invoke nested writers.
 	} else {
 		for _, id := range ids {
 			todo = append(todo, namedWaiter(b, id))

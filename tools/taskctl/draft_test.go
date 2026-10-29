@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/dronrider/devkit/internal/draftproposal"
@@ -634,5 +635,28 @@ func TestDraftListSafeHidesProtectedTitle(t *testing.T) {
 	out, err := runCLI(t, "-C", root, "draft", "list", "--json")
 	if err != nil || !strings.Contains(out, "закрытый") {
 		t.Fatalf("local list: %v %s", err, out)
+	}
+}
+
+func TestSafeListDoesNotExposeMalformedMetadata(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "секретный заголовок", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	path := draftPath(root, "XR-008")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = bytes.Replace(data, []byte("## "), []byte("замок: секретная строка\n\n## "), 1)
+	if err = os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, flags := range [][]string{{"--safe"}, {"--safe", "--json"}} {
+		args := append([]string{"-C", root, "draft", "list"}, flags...)
+		out, err := runCLI(t, args...)
+		if err == nil || strings.Contains(out, "секрет") {
+			t.Fatalf("unsafe error: %v %s", err, out)
+		}
 	}
 }

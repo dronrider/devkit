@@ -418,6 +418,9 @@ func cmdDraftList(root string) (string, error) { return cmdDraftListSafe(root, f
 func cmdDraftListSafe(root string, safe bool) (string, error) {
 	drafts, err := loadDrafts(root)
 	if err != nil {
+		if safe {
+			return "", fmt.Errorf("не удалось безопасно прочитать накопитель; проверьте метаданные локально")
+		}
 		return "", err
 	}
 	if len(drafts) == 0 {

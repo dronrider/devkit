@@ -13,6 +13,7 @@ import (
 
 	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/stage"
+	"github.com/dronrider/devkit/internal/taskhead"
 
 	"github.com/dronrider/devkit/internal/subtoml"
 )
@@ -289,6 +290,13 @@ func runChild(cmd *exec.Cmd, errw io.Writer, what string) (int, error) {
 func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, error) {
 	if err := runDepthRefusal(os.Getenv(runDepthEnv), id); err != nil {
 		return 0, err
+	}
+	// The source itself can still be delegated for analysis. A different task
+	// can be delegated from a groomer only after its add receipt is saved.
+	if source := os.Getenv("DEVKIT_GROOM_SOURCE"); source != "" && !strings.EqualFold(strings.TrimSpace(source), strings.TrimSpace(id)) {
+		if err := taskhead.GuardGroomRun(root, source, os.Getenv("DEVKIT_GROOM_MODE"), strings.ToUpper(strings.TrimSpace(id))); err != nil {
+			return 0, err
+		}
 	}
 	if workdir == "" {
 		workdir = root

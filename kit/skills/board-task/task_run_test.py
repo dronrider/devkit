@@ -356,6 +356,18 @@ while True:
         open(state, "w", encoding="utf-8").write("архиве\n")
     elif step == "паркуй":
         open(state, "w", encoding="utf-8").write("blocked\n")
+    elif step == "паркуй с субагентом":
+        # Голова запарковала строку и тем же ходом ушла в другую задачу окна,
+        # оставив живого субагента: конец хода застал парковку с работой
+        # (DK-898).
+        open(state, "w", encoding="utf-8").write("blocked\n")
+        watch("running")
+        seen = hits("при живой работе")
+    elif step == "паркуй с командой":
+        # То же самое с фоновой командой оболочки вместо субагента.
+        open(state, "w", encoding="utf-8").write("blocked\n")
+        shell("running")
+        seen = hits("при живой работе")
     elif step == "падение":
         sys.exit(1)
     elif step == "субагенты":
@@ -494,6 +506,25 @@ while True:
         if os.environ.get("DEVKIT_TEST_WORK_WAKE", "1") != "0":
             mark("начат")
             mark("кончен")
+    if step in ("паркуй с субагентом", "паркуй с командой"):
+        # Заказа на этот проход оболочка подать не должна: парковка при живой
+        # работе передаёт окно сторожу (DK-898), и конец работы поднимает ход
+        # сам. Дальше заказа не будет вовсе: конвейер по запаркованной кончен,
+        # и окно кончается выходом головы, оставшейся без ввода; срок того
+        # выхода стенд сокращает DEVKIT_TEST_IDLE_QUIT.
+        until = time.time() + 10
+        while time.time() < until and hits("при живой работе") <= seen:
+            time.sleep(0.05)
+        lap = float(os.environ.get("DEVKIT_TEST_WORK_LAP") or 0)
+        if lap:
+            time.sleep(lap)
+        if step == "паркуй с субагентом":
+            watch("done")
+        else:
+            shell("done")
+        if os.environ.get("DEVKIT_TEST_WORK_WAKE", "1") != "0":
+            mark("начат")
+            mark("кончен")
     if step == "лишний конец":
         # Стоп-хук сторожа фоновых работ пожаловался на непрочитанный отчёт,
         # голова ответила второй репликой, и ход кончился ещё раз: на один
@@ -508,7 +539,7 @@ while True:
         mark("кончен")
     # Заказа нет и нет: живой голове его подают клавиатурой окна, а печатная
     # череда ждёт выхода процесса, и висеть в ней вечно клиент не должен.
-    until = time.time() + 10
+    until = time.time() + float(os.environ.get("DEVKIT_TEST_IDLE_QUIT") or 10)
     while time.time() < until:
         if os.path.exists(inbox):
             with open(inbox, encoding="utf-8") as f:
@@ -1187,6 +1218,16 @@ class TestLiveHead(unittest.TestCase):
         self.assertEqual(got.returncode, 0, s.why(got))
         self.assertEqual(s.orders(), ["Выполни DK-1", "Продолжай DK-1"], s.orders())
 
+    def test_headless_parking_stops_as_before(self):
+        # Печатной череде парковка кончает конвейер как и прежде: своей
+        # сессии у неё нет, страж живости пуст, и стоп зовёт человека (DK-898).
+        s = Stand(plan="паркуй")
+        self.stands.append(s)
+        got = s.run("--headless")
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertTrue([l for l in s.journal() if "запаркована и ждёт человека" in l],
+                        s.journal())
+
     def test_no_live_window_returns_the_passes(self):
         # Машина без tmux и окно, которого нет: живую голову вести негде.
         s = Stand(plan="работа|закрой")
@@ -1350,6 +1391,49 @@ class TestLiveHead(unittest.TestCase):
         self.assertEqual(got.returncode, 0, s.why(got))
         self.assertEqual([l for l in s.journal() if "вхолостую" in l], [], s.journal())
         self.assertEqual(len(s.orders()), 4, s.orders())
+
+    def test_parking_with_live_subagent_keeps_the_window(self):
+        # Предмет DK-898. Голова запарковала DK-1 и тем же ходом ушла в другую
+        # задачу окна, оставив живого субагента; так встал конвейер
+        # task-DK-880, и субагент DK-888 прожил 12 секунд. Страж живости стоит
+        # раньше стопа: конвейер по запаркованной кончается, окно живёт до
+        # конца головы, и ход по концу субагента доходит до сторожа.
+        s = self.stand(plan="паркуй с субагентом")
+        got = s.run(extra={"DEVKIT_TEST_IDLE_QUIT": "2"})
+        self.assertEqual(got.returncode, 1, s.why(got))
+        self.assertTrue([l for l in s.journal() if "при живой работе" in l], s.journal())
+        keeper = [l for l in s.journal() if "конец хода при стороже окна" in l]
+        self.assertEqual(len(keeper), 2, s.journal())
+        self.assertIn("(кончен)", keeper[0])
+        self.assertIn("(голова вышла)", keeper[1])
+        self.assertEqual([l for l in s.journal() if "запаркована и ждёт человека" in l],
+                         [], s.journal())
+        self.assertEqual(s.orders(), ["Продолжай выполнение DK-1"], s.orders())
+        self.assertEqual(len(set(s.lines("pids"))), 1, s.lines("pids"))
+
+    def test_parking_with_live_command_keeps_the_window(self):
+        # Та же передача окна с фоновой командой оболочки (DK-941): страж
+        # держит окно и за неё, и голова доживает до конца команды.
+        s = self.stand(plan="паркуй с командой")
+        got = s.run(extra={"DEVKIT_TEST_IDLE_QUIT": "2"})
+        self.assertEqual(got.returncode, 1, s.why(got))
+        told = [l for l in s.journal() if "при живой работе" in l]
+        self.assertTrue([l for l in told if "shipctl merge DK-1" in l], s.journal())
+        keeper = [l for l in s.journal() if "конец хода при стороже окна" in l]
+        self.assertEqual(len(keeper), 2, s.journal())
+        self.assertIn("(кончен)", keeper[0])
+        self.assertEqual([l for l in s.journal() if "запаркована и ждёт человека" in l],
+                         [], s.journal())
+        self.assertEqual(s.orders(), ["Продолжай выполнение DK-1"], s.orders())
+
+    def test_parking_without_live_work_stops_as_before(self):
+        # Парковка без живой работы кончает конвейер по-старому: строка ждёт
+        # человека, окно снимается, ответ поднимет её тиком.
+        s = self.stand(plan="паркуй")
+        got = s.run()
+        self.assertEqual(got.returncode, 0, s.why(got))
+        self.assertTrue([l for l in s.journal() if "запаркована и ждёт человека" in l],
+                        s.journal())
 
     def test_live_agents_outlast_the_silence_windows(self):
         # Предмет DK-1463, ночь 26.10: проход кончился при живом субагенте, и

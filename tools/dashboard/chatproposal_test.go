@@ -244,6 +244,20 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 	if !ok || len(newAsk.Questions) != 1 || newAsk.Questions[0].Text != "новый вопрос" {
 		t.Fatal("replacement Ask removed")
 	}
+	writeBinds(t, st.e.home, "2026-10-30T12:00:00 сессия "+scenarioPanelSID+" задача XR-100 проект demo дерево "+st.e.proj+" транскрипт "+standTranscript(st.e.home, "t")+" источник заказ повод startup tmux -\n")
+	req, _ = json.Marshal(map[string]any{"text": "отклонить после переназначения", "msg_id": "apply-retry-rebound", "proposal": answer})
+	resp = doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/say", string(req))
+	msg = body(t, resp)
+	if resp.StatusCode != 200 || readFile(t, st.path) != applied {
+		t.Fatalf("rebound retry %d %s", resp.StatusCode, msg)
+	}
+	oldLines := chat.ReadLines(carrier)
+	if len(oldLines) < 2 || !strings.Contains(oldLines[len(oldLines)-1], "отклонить после переназначения") {
+		t.Fatalf("old destination: %v", oldLines)
+	}
+	if lines := chat.ReadLines(chat.Path(st.e.proj, chat.TaskName("XR-100"))); len(lines) != 0 {
+		t.Fatalf("old reply reached new task: %v", lines)
+	}
 	var result struct {
 		State draftproposal.State `json:"state"`
 	}

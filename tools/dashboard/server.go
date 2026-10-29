@@ -43,6 +43,12 @@ type server struct {
 	// Идущие опросы досок: дерево -> полёт (cache.go). По одному дереву летит
 	// один taskctl, остальные запросы ждут его или берут устаревший ответ.
 	flights map[string]*boardFlight
+	// Собранный обзор главной и идущий пересбор (overview.go): ответ стоит
+	// обхода всех досок машины, и живёт в памяти теми же дорогами, что доска.
+	ovCache  overviewView
+	ovFresh  bool
+	ovBorn   time.Time
+	ovFlight *overviewFlight
 	// Сколько запросов ждёт чужого полёта прямо сейчас: число едет в /healthz,
 	// иначе отставание опроса видно только по нагрузке машины.
 	boardWaiting int

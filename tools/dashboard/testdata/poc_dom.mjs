@@ -387,6 +387,11 @@ export function makeSandbox(appPath, reply, opts) {
     document: {
       handlers: {},
       visibilityState: "visible",
+      // Фокус документа читается из журнала фокуса: у мока нет своего дерева,
+      // и последний взявший фокус узел стоит активным, пока другой его не
+      // возьмёт. Экраны, возвращающие фокус после перерисовки, проверяются как
+      // живые.
+      get activeElement() { return focusLog.node; },
       createElement: (tag) => {
         const node = makeNode(tag);
         // Холст в стенде рисует не картинку, а её длину: предмет проверки это

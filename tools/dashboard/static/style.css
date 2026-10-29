@@ -964,6 +964,11 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 /* главная: быстрая запись и обзор поверх досок (DK-1465). Форма стоит первой:
    на главную заходят с телефона мыслью в голове, и прокрутка до формы стоила
    бы записи дороже, чем обзору его место */
+/* Карточки главной несут вертикальный воздух классом колонки (находка 3
+   DK-1503): без него форма записи и обзор склеивались с соседями в одну
+   простыню, а список проектов прилипал к обзору сверху */
+.groups.home{padding-top:var(--sp3)}
+.groups.home > .card + .card{margin-top:var(--fgap)}
 .quickcard{display:flex;flex-direction:column;gap:10px;padding:14px 16px}
 .qpick{align-self:flex-start;background:var(--bg2);color:var(--tx);border:1px solid var(--line2);border-radius:9px;font:500 13px var(--sans);padding:7px 10px}
 .qtext{display:block;width:100%;box-sizing:border-box;min-height:72px;padding:10px 12px;border-radius:10px;border:1px solid var(--line2);background:var(--bg0);color:var(--tx);font:400 13.5px/1.55 var(--sans);resize:vertical}
@@ -1077,9 +1082,16 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .dfield.err legend{color:var(--block)}
 .dmsg{font:400 11.5px/1.5 var(--sans);color:var(--block);padding:0 2px 14px}
 .dmsg:empty{display:none}
-.duebox{display:none;align-items:center;gap:10px;padding:6px 12px}
-.duebox.on{display:flex}
+/* срок и контроль одним блоком, открытым сразу (находки 4-6 DK-1503): блок
+   больше не прячется за режим правки, контроль числом дней стоит в том же
+   поле тем же стилем, что дата */
+.duebox{display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:6px 12px}
 .duebox .duein{all:unset;font:400 14px/1.4 var(--sans);color:var(--tx);min-width:0}
+/* значок календаря пикера: all:unset гасит его подачу в WebKit, и поле даты
+   выглядело текстом без дороги к календарю (находка 4 DK-1503) */
+.duebox .duein::-webkit-calendar-picker-indicator{display:block;cursor:pointer;opacity:.6}
+.duebox .ctrl{width:6ch}
+.duebox .ctrlword{font:500 11.5px var(--sans);color:var(--tx3)}
 .duebox .duereset{height:28px;padding:0 12px}
 .xscrim{position:absolute;inset:0;background:rgba(0,0,0,0.6);z-index:4;display:flex;justify-content:flex-end;align-items:flex-start;padding:44px 16px 0 0}
 .xscrim[hidden]{display:none}

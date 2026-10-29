@@ -235,3 +235,46 @@ func TestOverviewNamesBrokenBoard(t *testing.T) {
 		t.Errorf("вершина %s, ожидал тройку живой доски по рангу", ids)
 	}
 }
+
+// Обзор живёт в памяти процесса и пересобирается фоном (находка 2 DK-1503):
+// сбор стоит обхода всех досок машины, и каждый заход главной ждал его
+// пустыми виджетами. Память различается по источнику, которого нет у кеша
+// доски: запись накопителя читается каталогом, пишется мимо taskctl, и
+// устаревший ответ обязан отдавать прежний состав, а фон приносить свежий.
+func TestOverviewServesCache(t *testing.T) {
+	e, c := ovEnv(t, ovBoardOther)
+	// Свой ход часов: срок памяти считается от подвижного времени,
+	// фиксированное время стенда не стареет и не доказывает ничего.
+	now := ovDate
+	e.s.now = func() time.Time { return now }
+
+	first := getOverview(t, e, c)
+	if ids := ovIDs(first.Drafts); ids != "" {
+		t.Fatalf("первый обзор пришёл с записями накопителя, которых не было: %s", ids)
+	}
+	ovWriteDraft(t, e.proj, "XR-070", "запись мимо кеша", ovDate.Add(-time.Hour))
+
+	// Внутри срока ответ отдаётся памятью: свежая запись не видна.
+	if ids := ovIDs(getOverview(t, e, c).Drafts); ids != "" {
+		t.Fatalf("обзор в сроке памяти увидел запись, которой в нём не было: %s", ids)
+	}
+
+	// За сроком прежний состав уезжает сразу, пересбор идёт фоном и доезжает
+	// следующим ответом. Порог берётся от boardTTL, а не от overviewTTL:
+	// у памяти обзора тот же потолок, и регчеку нужен символ, который есть
+	// и в базе без правки.
+	now = ovDate.Add(3 * boardTTL)
+	if ids := ovIDs(getOverview(t, e, c).Drafts); ids != "" {
+		t.Fatalf("устаревший ответ ушёл свежее памяти: %s", ids)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if ids := ovIDs(getOverview(t, e, c).Drafts); ids == "XR-070" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("фоновый пересбор обзора не дошёл до новой записи накопителя")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

@@ -1,0 +1,35 @@
+import { createRequire } from "node:module";
+import assert from "node:assert/strict";
+const { chromium } = createRequire(import.meta.url)("playwright");
+const [base, executablePath, token] = process.argv.slice(2);
+const browser = await chromium.launch({ executablePath, headless: true });
+const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+try {
+  assert.equal((await context.request.post(base + "/api/login", { data: { token } })).status(), 200);
+  const page = await context.newPage();
+  await page.goto(base + "/#demo/draft/XR-005");
+  await page.getByRole("button", { name: "Принять предложение", exact: true }).first().waitFor();
+  const one = page.waitForResponse((r) => r.url().endsWith("/drafts/proposals/confirm") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Принять предложение", exact: true }).first().click();
+  assert.equal((await one).status(), 200);
+  await page.getByText("Принято", { exact: true }).waitFor();
+  const record = page.waitForResponse((r) => r.url().endsWith("/drafts/proposals/confirm") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Принять все предложения записи", exact: true }).click();
+  assert.equal((await record).status(), 200);
+  await page.goto(base + "/#demo/drafts");
+  const allButton = page.getByRole("button", { name: "Принять все показанные предложения", exact: true });
+  await allButton.waitFor();
+  await page.getByText("XR-006", { exact: true }).first().waitFor();
+  const all = page.waitForResponse((r) => r.url().endsWith("/drafts/proposals/confirm") && r.request().method() === "POST");
+  await allButton.click();
+  assert.equal((await all).status(), 200);
+  const result = await (await all).json();
+  assert.equal(result.results.length, 2);
+  await page.getByRole("heading", { name: "История разбора" }).waitFor();
+  await page.getByRole("button", { name: /^XR-005:/ }).click();
+  await page.getByText("первая карточка", { exact: true }).first().waitFor();
+  await page.getByText("Принято", { exact: true }).first().waitFor();
+  assert.equal(await page.getByText("Принято", { exact: true }).count(), 2);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  console.log(JSON.stringify({ one: true, allRecord: true, allShown: true, mobile: true, results: result.results.length }));
+} finally { await context.close(); await browser.close(); }

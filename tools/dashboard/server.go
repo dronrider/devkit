@@ -317,6 +317,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{p}/drafts/{id}", s.auth(s.handleDraft))
 	mux.HandleFunc("PUT /api/projects/{p}/drafts/{id}", s.auth(s.handleDraftPut))
 	mux.HandleFunc("PUT /api/projects/{p}/drafts/{id}/meta", s.auth(s.handleDraftMeta))
+	mux.HandleFunc("POST /api/projects/{p}/drafts/proposals/confirm", s.auth(s.handleDraftProposalConfirm))
 	mux.HandleFunc("GET /api/projects/{p}/drafts/{id}/proposals", s.auth(s.handleDraftProposals))
 	mux.HandleFunc("PUT /api/projects/{p}/drafts/{id}/proposals", s.auth(s.handleDraftProposalSave))
 	mux.HandleFunc("POST /api/projects/{p}/drafts/{id}/proposals/reject", s.auth(s.handleDraftProposalReject))

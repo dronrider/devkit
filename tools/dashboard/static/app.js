@@ -15737,6 +15737,32 @@ async function renderDrafts(project, works) {
     return;
   }
   const drafts = r.body.drafts || [];
+  const projectBase = "/api/projects/" + encodeURIComponent(project);
+  const proposalViews = await Promise.all(drafts.map((d) => api(projectBase + "/drafts/" + encodeURIComponent(d.id) + "/proposals")));
+  const shownViews = proposalViews.filter((v) => v.ok && (v.body.state.proposals || []).some((p) => !p.status)).map((v) => v.body);
+  if (proposalViews.some((v) => !v.ok)) {
+    items.push({ key: "draft-proposal-error", sign: "error", make: () => el("div", "error", "Не удалось загрузить все предложения") });
+  }
+  if (shownViews.length) {
+    items.push({ key: "draft-proposal-shown", sign: JSON.stringify(shownViews), make: () => {
+      const box = el("section", "card");
+      box.append(el("h2", "", "Предложения накопителя"));
+      if (proposalViews.every((v) => v.ok)) {
+        const all = el("button", "btn", "Принять все показанные предложения");
+        all.type = "button";
+        all.addEventListener("click", async () => {
+          if (shownViews.some((v) => draftProposalDirty.has(projectBase + "/drafts/" + encodeURIComponent(v.id)))) { sayResult("Сначала сохраните правки предложений", true); return; }
+          await confirmDraftProposals(projectBase, shownViews);
+        });
+        box.append(all);
+      }
+      for (const view of shownViews) {
+        box.append(el("h3", "", view.id));
+        box.append(draftProposalCards(projectBase + "/drafts/" + encodeURIComponent(view.id), view));
+      }
+      return box;
+    } });
+  }
   // Выбор живёт этим экраном и этим списком: записи, которой больше нет в
   // накопителе (её разобрали), в выборе тоже быть не должно.
   const here = new Set(drafts.map((d) => d.id));
@@ -15831,6 +15857,23 @@ async function renderDrafts(project, works) {
         return foot;
       },
     });
+  }
+  const historyResult = await api(projectBase + "/drafts?history=1");
+  if (historyResult.ok && (historyResult.body.drafts || []).length) {
+    const historyDrafts = historyResult.body.drafts;
+    items.push({ key: "draft-history", sign: JSON.stringify(historyDrafts), make: () => {
+      const section = el("section", "card");
+      section.append(el("h2", "", "История разбора"));
+      for (const draft of historyDrafts) {
+        const button = el("button", "btn", draft.id + ": " + (draft.title || ""));
+        button.type = "button";
+        button.addEventListener("click", () => goKeepingChat(project + "/draft/" + draft.id));
+        section.append(button);
+      }
+      return section;
+    } });
+  } else if (!historyResult.ok) {
+    items.push({ key: "draft-history-error", sign: "error", make: () => el("div", "error", "История разбора не загрузилась") });
   }
   sync(groups, items);
 }
@@ -16454,6 +16497,22 @@ function watchRunning() {
 
 const draftProposalDirty = new Set();
 
+async function confirmDraftProposals(projectBase, views, selection) {
+  const snapshots = [];
+  const decisions = [];
+  for (const view of views) {
+    const cards = (view.state && view.state.proposals || []).filter((p) => !p.status && (!selection || selection(view, p)));
+    if (!cards.length) continue;
+    snapshots.push({ source: view.id, digest: view.basis });
+    for (const p of cards) decisions.push({ source: view.id, proposal: p.id, revision: p.revision, action: "accept" });
+  }
+  if (!decisions.length) { sayResult("Нет предложений для приёма", true); return; }
+  const result = await api(projectBase + "/drafts/proposals/confirm", { method: "POST", body: { snapshots, decisions } });
+  const ids = result.ok ? (result.body.results || []).flatMap((r) => r.ids || []).join(", ") : "";
+  sayResult(apiSaid(result) + (ids ? ": " + ids : ""), !result.ok);
+  if (result.ok) await refresh();
+}
+
 function draftProposalCards(base, view) {
   const section = el("section", "draft-proposals");
   section.append(el("h2", "", "Предложения разбора"));
@@ -16466,6 +16525,16 @@ function draftProposalCards(base, view) {
     return section;
   }
   const outcomes = { add: "Новая строка", attach: "Приписка", defer: "Отложить", drop: "Удалить" };
+  const projectBase = base.slice(0, base.indexOf("/drafts/"));
+  if (cards.some((p) => !p.status)) {
+    const acceptAll = el("button", "btn", "Принять все предложения записи");
+    acceptAll.type = "button";
+    acceptAll.addEventListener("click", async () => {
+      if (draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку предложения", true); return; }
+      await confirmDraftProposals(projectBase, [view]);
+    });
+    section.append(acceptAll);
+  }
   for (const proposal of cards) {
     const card = el("article", "draft-proposal");
     card.append(el("h3", "", outcomes[proposal.outcome] || "Предложение"));
@@ -16529,7 +16598,12 @@ function draftProposalCards(base, view) {
       sayResult(apiSaid(result), !result.ok);
       if (result.ok) { draftProposalDirty.delete(base); await refresh(); }
     });
-    card.append(save, cancel, rejectLabel, reject); section.append(card);
+    const accept = el("button", "btn", "Принять предложение"); accept.type = "button";
+    accept.addEventListener("click", async () => {
+      if (draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку предложения", true); return; }
+      await confirmDraftProposals(projectBase, [view], (_, p) => p.id === proposal.id);
+    });
+    card.append(save, cancel, accept, rejectLabel, reject); section.append(card);
   }
   return section;
 }

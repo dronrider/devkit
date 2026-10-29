@@ -92,7 +92,7 @@ func (s *server) handleGoalDecide(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found, id, path, _, ok := s.goalFile(w, r)
+	found, id, path, rel, proof, ok := s.goalFile(w, r)
 	if !ok {
 		return
 	}
@@ -126,7 +126,18 @@ func (s *server) handleGoalDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view, _ := parseBoardView(raw)
+	tx, err := drafttx.Acquire(found.Path)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	if !goalFileStillSelected(found.Path, id, rel, proof) {
+		tx.Close()
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "путь цели изменился, откройте запись снова"})
+		return
+	}
 	data, err := os.ReadFile(path)
+	tx.Close()
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл цели не прочитался: %v", err)})
 		return

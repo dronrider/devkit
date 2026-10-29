@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/chat"
 )
 
 func TestProposalBrowserRealProcesses(t *testing.T) {
@@ -62,14 +64,30 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(raw, err)
 	}
-	publish := func() error {
-		out, err := cli("", "draft", "proposals", "ask", "XR-4")
+	putDoc(t, st.e.proj, "docs/tasks/drafts/XR-5.md", "# XR-5: другая запись\n")
+	raw, err = cli("", "draft", "proposals", "XR-5")
+	if err != nil || json.Unmarshal([]byte(raw), &view) != nil {
+		t.Fatalf("second source: %s %v", raw, err)
+	}
+	raw, err = cli(`{"proposals":[{"id":"p3","revision":1,"outcome":"drop","text":"карточка третья","reason":"лишнее"}]}`, "draft", "proposals", "save", "XR-5", "--base", view.Snapshot)
+	if err != nil {
+		t.Fatal(raw, err)
+	}
+	publish := func(which string) error {
+		args := []string{"draft", "proposals", "ask", "XR-4"}
+		if which == "both" {
+			args = append(args, "--also", "XR-5")
+		}
+		if which == "second" {
+			args[3] = "XR-5"
+		}
+		out, err := cli("", args...)
 		if err != nil {
 			return fmt.Errorf("%s: %w", out, err)
 		}
 		return nil
 	}
-	if err = publish(); err != nil {
+	if err = publish("first"); err != nil {
 		t.Fatal(err)
 	}
 	bin := os.Getenv("DASHBOARD_ACCEPT_BIN")
@@ -123,14 +141,47 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	target, _ := url.Parse(base)
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	mux := http.NewServeMux()
+	mux.HandleFunc("/__delivery", func(w http.ResponseWriter, r *http.Request) {
+		path := chat.Path(st.e.proj, chat.TaskName("XR-4"))
+		switch r.URL.Query().Get("mode") {
+		case "break":
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			if err := os.Mkdir(path, 0700); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+		case "restore":
+			if err := os.Remove(path); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			if err := os.Remove(chat.AskPath(st.e.proj, chat.TaskName("XR-4"))); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+		default:
+			http.Error(w, "mode", 400)
+		}
+	})
 	mux.HandleFunc("/__proposal", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("fresh") == "1" {
-			if err := publish(); err != nil {
+		if which := r.URL.Query().Get("fresh"); which != "" {
+			if err := publish(which); err != nil {
 				http.Error(w, err.Error(), 500)
 				return
 			}
 		}
-		out, err := cli("", "draft", "proposals", "XR-4")
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			id = "XR-4"
+		}
+		if id != "XR-4" && id != "XR-5" {
+			http.Error(w, "id", 400)
+			return
+		}
+		out, err := cli("", "draft", "proposals", id)
 		if err != nil {
 			http.Error(w, out, 500)
 			return

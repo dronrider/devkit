@@ -18,11 +18,21 @@ try {
   let view=await (await context.request.get(base+'/__proposal')).json(); assert.equal(view.state.proposals[0].status,undefined);
   const select=page.getByLabel('Решение XR-4 p1'); await select.selectOption('reject'); await page.getByLabel('Причина отказа XR-4 p1').fill('не нужно');
   await page.reload(); await page.locator('.askproposal').waitFor(); assert.equal(await page.getByLabel('Решение XR-4 p1').inputValue(),'reject'); assert.equal(await page.getByLabel('Причина отказа XR-4 p1').inputValue(),'не нужно');
-  response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST'); await page.getByRole('button',{name:'Отправить',exact:true}).click(); assert.equal((await response).status(),200);
+  assert.equal((await context.request.get(base+'/__delivery?mode=break')).status(),200);
+  response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST'); await page.getByRole('button',{name:'Отправить',exact:true}).click(); assert.equal((await response).status(),502);
   view=await (await context.request.get(base+'/__proposal')).json(); assert.equal(view.state.proposals[0].status,'rejected'); assert.equal(view.state.proposals[1].status,undefined);
-  assert.equal((await context.request.get(base+'/__proposal?fresh=1')).status(),200); await page.reload(); await page.getByRole('button',{name:'Принять все показанные'}).waitFor();
+  assert.equal((await context.request.get(base+'/__delivery?mode=restore')).status(),200);
+  await page.reload(); await page.locator('textarea.csay').waitFor();
+  response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST' && r.status()===200);
+  await page.evaluate(()=>window.dispatchEvent(new Event('online'))); await response;
+  view=await (await context.request.get(base+'/__proposal')).json(); assert.equal(view.state.proposals[0].status,'rejected'); assert.equal(view.state.proposals[1].status,undefined);
+  assert.equal((await context.request.get(base+'/__proposal?fresh=both')).status(),200); await page.reload();
+  await page.getByRole('button',{name:'Принять все предложения XR-4'}).click(); response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST'); await page.getByRole('button',{name:'Отправить',exact:true}).click(); assert.equal((await response).status(),200);
+  view=await (await context.request.get(base+'/__proposal?id=XR-5')).json(); assert.equal(view.state.proposals[0].status,undefined);
+  assert.equal((await context.request.get(base+'/__proposal?fresh=second')).status(),200); await page.reload(); await page.getByRole('button',{name:'Принять все показанные'}).waitFor();
   await page.getByRole('button',{name:'Принять все показанные'}).click(); response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST'); await page.getByRole('button',{name:'Отправить',exact:true}).click(); assert.equal((await response).status(),200);
   view=await (await context.request.get(base+'/__proposal')).json(); assert.equal(view.state.state,'history'); assert.equal(view.state.proposals[1].status,'accepted');
+  view=await (await context.request.get(base+'/__proposal?id=XR-5')).json(); assert.equal(view.state.proposals[0].status,'accepted');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   console.log(JSON.stringify({comment:true,refresh:true,reject:true,all:true,mobile:390}));
 } finally { await context.close(); await browser.close(); }

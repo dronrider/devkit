@@ -54,3 +54,11 @@ func TestRecordProtectionSurvivesSourceChange(t *testing.T) {
 		t.Fatalf("guard %v", err)
 	}
 }
+
+func TestRecordProtectionRejectsMalformedAndDuplicates(t *testing.T) {
+	for _, text := range []string{"# задача\nзащита: broken\n", "# задача\nзащита=locked\n", "# задача\nзащита: locked\nзащита: locked\n"} {
+		if _, err := RecordProtected([]byte(text)); err == nil {
+			t.Fatalf("invalid protection accepted: %s", text)
+		}
+	}
+}

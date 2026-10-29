@@ -1,7 +1,7 @@
 # поиск дублей при закрытых задачах
 
 конец: любой
-предмет: kit/skills/board-groom/SKILL.md «Процедура»; kit/skills/interview/SKILL.md «Обход до первого вопроса»
+предмет: kit/skills/board-groom/SKILL.md; kit/skills/interview/SKILL.md
 
 ## Подготовка
 

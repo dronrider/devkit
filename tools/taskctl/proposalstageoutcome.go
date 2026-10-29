@@ -24,7 +24,7 @@ func (s *stagingBoard) projection(sourceID string, h draftmeta.Header, p draftpr
 	if text == "" {
 		return "", fmt.Errorf("%s: текст результата пуст", p.ID)
 	}
-	text += "\n\nИсточник: " + sourceID
+	text += fmt.Sprintf("\n\nИсточник: [черновик %s](/docs/tasks/drafts/%s.md)", sourceID, sourceID)
 	if _, err = cmdDraft(s.root, text, h.Priority, CommitOpts{}); err != nil {
 		return "", err
 	}
@@ -93,7 +93,7 @@ func (s *stagingBoard) stageOutcome(sourceID string, h draftmeta.Header, p draft
 		if err != nil {
 			return stagedResult{}, err
 		}
-		provenance := fmt.Sprintf("\n\n## Происхождение\n\nЧерновик %s, тип %s, источник %s.\n", sourceID, h.Type, h.Source)
+		provenance := fmt.Sprintf("\n\n## Происхождение\n\n[Черновик %s](/docs/tasks/drafts/%s.md), тип %s, источник %s.\n", sourceID, sourceID, h.Type, h.Source)
 		if err = os.WriteFile(path, append([]byte(strings.TrimRight(string(data), "\n")), []byte(provenance)...), 0644); err != nil {
 			return stagedResult{}, err
 		}

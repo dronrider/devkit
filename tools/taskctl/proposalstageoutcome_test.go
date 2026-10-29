@@ -50,9 +50,15 @@ func TestStagingFourOutcomesDoNotConsumeSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, word := range []string{"источник: meeting", "замок: locked", "Источник: XR-008", "ждём ответа"} {
+	for _, word := range []string{"источник: meeting", "замок: locked", "/docs/tasks/drafts/XR-008.md", "ждём ответа"} {
 		if !strings.Contains(string(fragment), word) {
 			t.Errorf("нет %s: %s", word, fragment)
+		}
+	}
+	for _, id := range []string{ids[0], "XR-001"} {
+		data, err := os.ReadFile(taskFileAbs(s.root, id))
+		if err != nil || !strings.Contains(string(data), "](/docs/tasks/drafts/XR-008.md)") {
+			t.Fatalf("%s: нет перехода к исходнику: %v\n%s", id, err, data)
 		}
 	}
 	staged, err := os.ReadFile(draftPath(s.root, "XR-008"))

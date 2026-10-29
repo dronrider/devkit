@@ -10,9 +10,9 @@ import (
 	"github.com/dronrider/devkit/internal/drafttx"
 )
 
-// groomRunGuard restricts a groomer's task launches to saved add receipts.
+// GuardGroomRun restricts a groomer's task launches to saved add receipts.
 // It uses source state, never the client's displayed payload.
-func groomRunGuard(root, source, mode, target string) error {
+func GuardGroomRun(root, source, mode, target string) error {
 	if source == "" {
 		return nil
 	}

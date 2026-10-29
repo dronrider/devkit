@@ -99,7 +99,16 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "показанный вопрос предложений не найден"})
 		return
 	}
-	for _, snap := range answer.Snapshots {
+	deliverySources := answer.Snapshots
+	if match != nil {
+		if shown := proposalFromAsk(match.Ask); shown != nil {
+			deliverySources = make([]draftproposal.Snapshot, 0, len(shown.Sources))
+			for _, source := range shown.Sources {
+				deliverySources = append(deliverySources, draftproposal.Snapshot{Source: source.Source, Digest: source.Basis})
+			}
+		}
+	}
+	for _, snap := range deliverySources {
 		if !goalIDRe.MatchString(snap.Source) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный источник"})
 			return
@@ -110,7 +119,7 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 		}
 	}
 	if answer.Mode == "comment" {
-		release, err := proposalDeliveryReservation(answer.Tree, answer.Snapshots)
+		release, err := proposalDeliveryReservation(answer.Tree, deliverySources)
 		if err != nil {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return
@@ -155,7 +164,7 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
 	}
-	release, err := proposalDeliveryReservation(answer.Tree, answer.Snapshots)
+	release, err := proposalDeliveryReservation(answer.Tree, deliverySources)
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return

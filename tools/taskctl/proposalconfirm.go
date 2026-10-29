@@ -12,7 +12,6 @@ import (
 	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/draftproposal"
 	"github.com/dronrider/devkit/internal/drafttx"
-	"github.com/dronrider/devkit/internal/stage"
 )
 
 type confirmationPlan struct {
@@ -268,7 +267,7 @@ func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (strin
 	plan, err := prepareConfirmation(root, request)
 	var cloudLocks []*draftmeta.CloudLock
 	if err == nil && !plan.Repeated {
-		cloudLocks, err = confirmationCloudLocks(root, request)
+		cloudLocks, err = confirmationCloudLocks(root, lock.ServiceDir(), request)
 	}
 	if err == nil && !plan.Repeated {
 		err = lock.Apply(root, plan.Changes)
@@ -296,7 +295,7 @@ func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (strin
 	return marshal(result)
 }
 
-func confirmationCloudLocks(root string, request draftproposal.ConfirmRequest) ([]*draftmeta.CloudLock, error) {
+func confirmationCloudLocks(root, serviceDir string, request draftproposal.ConfirmRequest) ([]*draftmeta.CloudLock, error) {
 	targets := map[string]bool{}
 	for _, decision := range request.Decisions {
 		if decision.Action != "accept" {
@@ -330,7 +329,7 @@ func confirmationCloudLocks(root string, request draftproposal.ConfirmRequest) (
 	sort.Strings(names)
 	var locks []*draftmeta.CloudLock
 	for _, name := range names {
-		l, err := draftmeta.CloudExclusive(stage.Home(), name)
+		l, err := draftmeta.CloudExclusiveIn(serviceDir, name)
 		if err == nil {
 			err = lockedAttachGuard(name)
 		}

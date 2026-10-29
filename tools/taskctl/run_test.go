@@ -23,6 +23,12 @@ func runDevkit(t *testing.T) (root, home, dk string) {
 			t.Fatal(err)
 		}
 	}
+	if err := os.MkdirAll(filepath.Join(root, "docs", "tasks"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "tasks", "DK-7.md"), []byte("# DK-7: стенд\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	os.WriteFile(filepath.Join(dk, filepath.FromSlash(taskhead.TaskRunRel)), []byte(""), 0o644)
 	os.WriteFile(taskhead.ProfilePath(dk, "claude-code"), []byte("[head]\nclient = [\"claude\"]\n"), 0o644)
 	// Дерево стенда несёт один профиль, и харнес берётся умолчанием: выбор из
@@ -45,6 +51,7 @@ func TestRunDevkitPinsHarnessEnv(t *testing.T) {
 		t.Fatalf("раскладка не заперла %s: %q", taskhead.HarnessEnv, got)
 	}
 }
+
 // regcheck:test-end
 
 func TestRunRequestPicksHarness(t *testing.T) {

@@ -87,7 +87,7 @@ type askDeps struct {
 // liveDeps собирает боевой набор: уведомитель taskctl, запись этапа и
 // парковка через тот же cmdMove, каким паркуют руками.
 func liveDeps(root string) askDeps {
-	main := stage.MainRoot(root)
+	main := taskMainRoot(root)
 	return askDeps{
 		Notify: func(reason, id, title, body string) string {
 			return notify(main, reason, id, title, body)
@@ -189,7 +189,7 @@ func runAsk(root string, p AskParams, d askDeps, env func(string) string) (strin
 	}
 	main := d.Main
 	if main == "" {
-		main = stage.MainRoot(root)
+		main = taskMainRoot(root)
 	}
 	// Черновик узнаётся сам, а не по флагу: заказ груминга зовёт писателя тем
 	// же ID, что и задача, и требовать от хука помнить про вид записи значит
@@ -289,7 +289,7 @@ func askPark(p AskParams, d askDeps, out []string, text string) (string, error) 
 // (DK-839, замечание 2). Существующий признак переписывается заменой, вопросы
 // и сессия остаются.
 func rememberAskFrom(root, id, from, reason string) error {
-	main := stage.MainRoot(root)
+	main := taskMainRoot(root)
 	name := chat.TaskName(id)
 	a, ok := chat.ReadAsk(chat.AskPath(main, name))
 	if !ok {

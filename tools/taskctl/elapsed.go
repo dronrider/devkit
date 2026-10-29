@@ -59,7 +59,7 @@ func pluralMinutes(n int) string {
 // закрыт его писателем) команда честно говорит об этом и не падает: отсутствие
 // данных не повод рвать заход, а минуты закрытого этапа лимитом не считаются.
 func cmdElapsed(root, id string) (string, error) {
-	rec, err := stage.Load(stage.Path(stage.Home(), stage.MainRoot(root), id))
+	rec, err := stage.Load(stage.Path(stage.Home(), taskMainRoot(root), id))
 	if err != nil {
 		return "", err
 	}

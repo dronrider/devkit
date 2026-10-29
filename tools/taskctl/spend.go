@@ -202,7 +202,7 @@ func spendSpan(st spendStage) string {
 // же заходе (развилка «хранение свода» цели DK-909). В файл задачи ложится
 // одна строка итога, и кладёт её закрытие.
 func cmdSpend(root, id string) (string, error) {
-	main := stage.MainRoot(root)
+	main := taskMainRoot(root)
 	stages, src := spendStages(root, main, id)
 	home := stage.Home()
 	crew := newSpendCrew(home, main)
@@ -310,7 +310,7 @@ func spendKidLines(n spend.Node, pad string) []string {
 // говорит, есть ли что записывать: у задачи без сведённых этапов строка была
 // бы нулями и врала бы про расход.
 func spendTotalLine(root, id string, now time.Time) (string, bool) {
-	main := stage.MainRoot(root)
+	main := taskMainRoot(root)
 	home := stage.Home()
 	stages, _ := spendStages(root, main, id)
 	crew := newSpendCrew(home, main)
@@ -447,7 +447,7 @@ func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
 	// Корень основного чекаута спрашивается у git, и на каждую задачу это был
 	// бы свой подпроцесс: у боевой доски их под тысячу (замечание ревью
 	// DK-912). Считается он один раз на весь срез.
-	main := stage.MainRoot(root)
+	main := taskMainRoot(root)
 	crew := newSpendCrew(home, main)
 	works, stageCount, blind, setupBlind := spendWorkMap(root, main, look, p)
 

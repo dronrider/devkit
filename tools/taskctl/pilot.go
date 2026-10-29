@@ -309,7 +309,7 @@ func collectPilotTasks(root string) ([]pilotTask, error) {
 // «Хода работы» несут только день, и сравнение с днём слияния идёт по тем же
 // весам.
 func attachLiveStages(tasks []pilotTask, root, runsDir string) {
-	suffix := "-" + stage.Slug(stage.MainRoot(root)) + ".run"
+	suffix := "-" + stage.Slug(taskMainRoot(root)) + ".run"
 	for i := range tasks {
 		rec, err := stage.Load(filepath.Join(runsDir, tasks[i].id+suffix))
 		if err != nil {

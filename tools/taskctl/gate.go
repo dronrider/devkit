@@ -67,7 +67,15 @@ func checkGate(root string, row *Row) error {
 			return err
 		}
 	}
-	if br, ahead := trace.UnmergedTaskBranch(root, id); br != "" {
+	var br string
+	var ahead int
+	if err := cliReadOutside(root, func() error {
+		br, ahead = trace.UnmergedTaskBranch(root, id)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if br != "" {
 		return fmt.Errorf("%s: ветка %s не слита, впереди main её коммитов %d, а Check значит, что код уже доехал до пользователя: сначала «shipctl merge %s», он и переведёт строку", id, br, ahead, id)
 	}
 	// Не агентский вид требует раздел «Приёмка» с перебором обходов
@@ -250,11 +258,19 @@ func closeSmokeGate(root, id string) error {
 	if err != nil {
 		return nil
 	}
-	if !uncheckedDeploy(root, data) {
+	var unchecked bool
+	if err := cliReadOutside(root, func() error { unchecked = uncheckedDeploy(root, data); return nil }); err != nil {
+		return err
+	}
+	if !unchecked {
 		return nil
 	}
+	var model string
+	if err := cliReadOutside(root, func() error { model = repeatModel(root, id); return nil }); err != nil {
+		return err
+	}
 	return fmt.Errorf("%s: в «Выкате» есть слияние, а отметки smoke на последний выкат нет: сценарий после выката не прогнан; прогнать его на выкаченном коде, вывод вложить в раздел «Проверка», прогонявшего отметить «agentctl stage %s проверка --by %s», выкат «shipctl smoke %s» и повторить закрытие",
-		id, id, repeatModel(root, id), id)
+		id, id, model, id)
 }
 
 // uncheckedDeploy отвечает, стоит ли в файле задачи настоящий непроверенный
@@ -406,7 +422,7 @@ func rehearsalGate(root, id string) error {
 	if err != nil {
 		return nil
 	}
-	return rehearsal.Fresh(root, id, string(data), "move")
+	return cliReadOutside(root, func() error { return rehearsal.Fresh(root, id, string(data), "move") })
 }
 
 // closeRehearsalGate спрашивает обкатку на втором выходе задачи, закрытии

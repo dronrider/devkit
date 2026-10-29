@@ -34,10 +34,16 @@ func TestProposalChatReceiptRecoveryCannotApply(t *testing.T) {
 	if err != nil || !strings.Contains(out, `"repeated":true`) {
 		t.Fatalf("%s %v", out, err)
 	}
+	if out, err = cmdProposalChatReplay(root, "XR-001", input); err != nil || !strings.Contains(out, `"repeated":true`) {
+		t.Fatalf("receipt-only replay %s %v", out, err)
+	}
 	answer.Decisions[0].Reason = "другая"
 	input, _ = json.Marshal(answer)
 	if _, err = cmdProposalChatAnswer(root, "XR-001", input, CommitOpts{}); err == nil {
 		t.Fatal("new request accepted without Ask")
+	}
+	if _, err = cmdProposalChatReplay(root, "XR-001", input); err == nil {
+		t.Fatal("receipt-only accepted new request")
 	}
 	after, err := os.ReadFile(path)
 	if err != nil || string(after) != string(data) {

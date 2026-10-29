@@ -1,0 +1,238 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+
+	"github.com/dronrider/devkit/internal/draftmeta"
+	"github.com/dronrider/devkit/internal/draftproposal"
+	"github.com/dronrider/devkit/internal/drafttx"
+)
+
+type confirmationPlan struct {
+	Key      string
+	Results  []draftproposal.Receipt
+	Changes  []drafttx.Change
+	Repeated bool
+}
+
+// prepareConfirmation builds all images before a caller performs live writes.
+// Caller must hold the shared lock throughout validation and installation.
+func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (confirmationPlan, error) {
+	var out confirmationPlan
+	if len(request.Decisions) == 0 {
+		return out, fmt.Errorf("не выбрано ни одно предложение")
+	}
+	sort.Slice(request.Snapshots, func(i, j int) bool { return request.Snapshots[i].Source < request.Snapshots[j].Source })
+	sort.Slice(request.Decisions, func(i, j int) bool {
+		a, b := request.Decisions[i], request.Decisions[j]
+		if a.Source != b.Source {
+			return a.Source < b.Source
+		}
+		return a.Proposal < b.Proposal
+	})
+	keyBytes, err := json.Marshal(request)
+	if err != nil {
+		return out, err
+	}
+	out.Key = draftproposal.Digest(keyBytes)
+	snapshots := map[string]string{}
+	for _, s := range request.Snapshots {
+		if !idRe.MatchString(s.Source) || s.Digest == "" || snapshots[s.Source] != "" {
+			return out, fmt.Errorf("неверный снимок %s", s.Source)
+		}
+		snapshots[s.Source] = s.Digest
+	}
+	decisions := map[string][]draftproposal.Decision{}
+	seen := map[string]bool{}
+	for _, d := range request.Decisions {
+		key := d.Source + "\x00" + d.Proposal
+		if !idRe.MatchString(d.Source) || d.Proposal == "" || d.Revision < 1 || seen[key] || snapshots[d.Source] == "" {
+			return out, fmt.Errorf("неверное решение %s/%s", d.Source, d.Proposal)
+		}
+		seen[key] = true
+		if d.Action != "accept" && d.Action != "reject" {
+			return out, fmt.Errorf("%s: неизвестное решение", d.Proposal)
+		}
+		if d.Action == "reject" && strings.TrimSpace(d.Reason) == "" {
+			return out, fmt.Errorf("%s: нужна причина отказа", d.Proposal)
+		}
+		decisions[d.Source] = append(decisions[d.Source], d)
+	}
+	if len(decisions) != len(snapshots) {
+		return out, fmt.Errorf("снимок не совпадает с выбранными записями")
+	}
+	type record struct {
+		data   []byte
+		state  draftproposal.State
+		header draftmeta.Header
+	}
+	records := map[string]record{}
+	allRepeated := true
+	for _, snap := range request.Snapshots {
+		data, err := os.ReadFile(draftPath(root, snap.Source))
+		if err != nil {
+			return out, err
+		}
+		state, err := draftproposal.Parse(data)
+		if err != nil {
+			return out, err
+		}
+		header, err := draftmeta.Parse(data)
+		if err != nil {
+			return out, err
+		}
+		records[snap.Source] = record{data, state, header}
+		for _, d := range decisions[snap.Source] {
+			matched := false
+			for _, r := range state.Receipts {
+				if r.Key == out.Key && r.Proposal == d.Proposal && r.Revision == d.Revision {
+					out.Results = append(out.Results, r)
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				allRepeated = false
+			}
+		}
+	}
+	if allRepeated {
+		sortReceipts(out.Results)
+		out.Repeated = true
+		return out, nil
+	}
+	out.Results = nil
+	for _, snap := range request.Snapshots {
+		rec := records[snap.Source]
+		basis, err := proposalBasis(root, rec.data, rec.state)
+		if err != nil {
+			return out, err
+		}
+		if basis != snap.Digest {
+			return out, fmt.Errorf("%s: показанный снимок устарел", snap.Source)
+		}
+		for _, d := range decisions[snap.Source] {
+			found := false
+			for _, p := range rec.state.Proposals {
+				if p.ID == d.Proposal {
+					found = true
+					if p.Status != "" || p.Revision != d.Revision {
+						return out, fmt.Errorf("%s: решение уже принято или редакция изменилась", p.ID)
+					}
+					break
+				}
+			}
+			if !found {
+				return out, fmt.Errorf("%s: предложение %s не найдено", snap.Source, d.Proposal)
+			}
+		}
+	}
+	staged, err := newStagingBoard(root)
+	if err != nil {
+		return out, err
+	}
+	defer staged.Close()
+	set, err := draftTypeSet(root)
+	if err != nil {
+		return out, err
+	}
+	sourcePaths := map[string]bool{}
+	for _, snap := range request.Snapshots {
+		rec := records[snap.Source]
+		stageSource := draftPath(staged.root, snap.Source)
+		data, err := os.ReadFile(stageSource)
+		if err != nil || !bytes.Equal(data, rec.data) {
+			return out, fmt.Errorf("%s: исходник изменился при подготовке", snap.Source)
+		}
+		def, ok := set.Types[rec.header.Type]
+		if !ok {
+			return out, fmt.Errorf("тип %s не найден", rec.header.Type)
+		}
+		var selected []string
+		for _, d := range decisions[snap.Source] {
+			if d.Action == "accept" {
+				selected = append(selected, d.Proposal)
+			}
+		}
+		receipts, err := staged.planProposals(snap.Source, rec.header, def, rec.state, selected)
+		if err != nil {
+			return out, err
+		}
+		byID := map[string]draftproposal.Receipt{}
+		for _, r := range receipts {
+			r.Key = out.Key
+			r.Source = snap.Source
+			byID[r.Proposal] = r
+		}
+		for _, d := range decisions[snap.Source] {
+			if d.Action == "reject" {
+				byID[d.Proposal] = draftproposal.Receipt{Key: out.Key, Source: snap.Source, Proposal: d.Proposal, Revision: d.Revision, Result: "отклонено", Reason: strings.TrimSpace(d.Reason)}
+			}
+		}
+		done := len(rec.state.Proposals) > 0
+		for i := range rec.state.Proposals {
+			p := &rec.state.Proposals[i]
+			if r, ok := byID[p.ID]; ok {
+				if r.Outcome == "" {
+					r.Outcome = p.Outcome
+				}
+				p.Result = &r
+				if r.Result == "отклонено" {
+					p.Status = "rejected"
+				} else {
+					p.Status = "accepted"
+				}
+				rec.state.Receipts = append(rec.state.Receipts, r)
+				out.Results = append(out.Results, r)
+			}
+			if p.Status == "" {
+				done = false
+			}
+		}
+		if done {
+			rec.state.State = "history"
+		}
+		updated, err := draftproposal.Replace(rec.data, rec.state)
+		if err != nil {
+			return out, err
+		}
+		if err = os.WriteFile(stageSource, updated, 0644); err != nil {
+			return out, err
+		}
+		sourcePaths[draftRel(snap.Source)] = true
+	}
+	out.Changes, err = staged.changes(sourcePaths)
+	if err != nil {
+		return out, err
+	}
+	for _, snap := range request.Snapshots {
+		rec := records[snap.Source]
+		current, err := os.ReadFile(draftPath(root, snap.Source))
+		if err != nil {
+			return out, err
+		}
+		basis, err := proposalBasis(root, current, rec.state)
+		if err != nil {
+			return out, err
+		}
+		if basis != snap.Digest {
+			return out, fmt.Errorf("%s: снимок изменился при подготовке", snap.Source)
+		}
+	}
+	sortReceipts(out.Results)
+	return out, nil
+}
+
+func sortReceipts(receipts []draftproposal.Receipt) {
+	sort.Slice(receipts, func(i, j int) bool {
+		if receipts[i].Source != receipts[j].Source {
+			return receipts[i].Source < receipts[j].Source
+		}
+		return receipts[i].Proposal < receipts[j].Proposal
+	})
+}

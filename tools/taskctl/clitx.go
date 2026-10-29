@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/drafttx"
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 type deferredPublication struct {
@@ -22,6 +24,7 @@ var cliSkipRunLog bool
 var cliTx *drafttx.Lock
 var cliWorktreeRoot string
 var cliIsLinkedWorktree bool
+var cliMainRoot string
 var cliPublications []deferredPublication
 var cliAfterUnlock []func() string
 
@@ -31,6 +34,41 @@ type deferredRemoval struct {
 }
 
 var cliRemovals []deferredRemoval
+
+// cliReadOutside runs a read-only external check without the board lock and
+// refuses to continue when a writer changed its inputs in the meantime.
+func cliReadOutside(root string, check func() error) error {
+	if cliTx == nil {
+		return check()
+	}
+	before, err := collectDocs(root)
+	if err != nil {
+		return err
+	}
+	lock := cliTx
+	cliTx = nil
+	if err = lock.Close(); err != nil {
+		return err
+	}
+	if err = check(); err != nil {
+		return err
+	}
+	lock, err = drafttx.Acquire(root)
+	if err != nil {
+		return err
+	}
+	after, err := collectDocs(root)
+	if err != nil {
+		lock.Close()
+		return err
+	}
+	if !reflect.DeepEqual(before, after) {
+		lock.Close()
+		return fmt.Errorf("материал изменился при внешней проверке; повторите команду")
+	}
+	cliTx = lock
+	return nil
+}
 
 func cliIndexAction(root, path, destination string) {
 	canonical, err := filepath.EvalSymlinks(root)
@@ -81,12 +119,23 @@ func cliTakeDraftLock(root string) error {
 	}
 	cliWorktreeRoot = root
 	cliIsLinkedWorktree = linkedWorktree(root)
+	cliMainRoot = stage.MainRoot(root)
 	l, err := drafttx.Acquire(root)
 	if err != nil {
 		return err
 	}
 	cliTx = l
 	return nil
+}
+
+func taskMainRoot(root string) string {
+	if isStagingBoard(root) {
+		return root
+	}
+	if cliTx != nil && root == cliWorktreeRoot {
+		return cliMainRoot
+	}
+	return stage.MainRoot(root)
 }
 func cliQueuePublication(root string, paths []string, c CommitOpts) bool {
 	if cliTx == nil || c.Msg == "" {

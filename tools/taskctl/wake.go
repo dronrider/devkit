@@ -9,7 +9,6 @@ import (
 	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/drafttx"
 	"github.com/dronrider/devkit/internal/merged"
-	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskhead"
 )
 
@@ -263,7 +262,7 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 	// возвращает строку в In progress, как и было.
 	to := SectInProgress
 	if w.Class == classAsk {
-		if a, ok := chat.ReadAsk(chat.AskPath(stage.MainRoot(root), chat.TaskName(w.ID))); ok && a.From != "" {
+		if a, ok := chat.ReadAsk(chat.AskPath(taskMainRoot(root), chat.TaskName(w.ID))); ok && a.From != "" {
 			to = a.From
 		}
 		dropTaskAsks(root, w.ID)
@@ -332,7 +331,7 @@ func logWake(root string, w waiter, code int) {
 // встаёт строка о снятом вопросе, а не одинаковое молчание при живом
 // признаке и без него.
 func dropTaskAsks(root, id string) int {
-	top := filepath.Clean(stage.MainRoot(root))
+	top := filepath.Clean(taskMainRoot(root))
 	tree := filepath.Join(filepath.Dir(top), filepath.Base(top)+"-"+strings.ToLower(id))
 	n := 0
 	for _, dir := range []string{top, tree} {

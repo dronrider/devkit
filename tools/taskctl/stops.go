@@ -125,7 +125,7 @@ func collectFlushedStops(root string) ([]stopEvent, error) {
 // незакрытой остановки читается тем же разбором `stage.ParseLine`, что и у
 // закрытых, без второй копии форматирования дат.
 func collectLiveStops(root, runsDir string, b *Board, now time.Time) []stopEvent {
-	suffix := "-" + stage.Slug(stage.MainRoot(root)) + ".run"
+	suffix := "-" + stage.Slug(taskMainRoot(root)) + ".run"
 	var events []stopEvent
 	for _, r := range b.Rows {
 		rec, err := stage.Load(filepath.Join(runsDir, r.ID+suffix))

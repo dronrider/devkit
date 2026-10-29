@@ -87,6 +87,9 @@ func branchWorktree(root, branch string) string {
 // копия в другом дереве отстаёт и до исполнителя не доедет. У задачи без ветки
 // и у слитой законное дерево то, где стоит вызов, и отказа нет, как вне git.
 func reviewTreeGuard(root, id string) error {
+	if cliTx != nil {
+		return cliReadOutside(root, func() error { return reviewTreeGuard(root, id) })
+	}
 	br, _ := trace.UnmergedTaskBranch(root, id)
 	if br == "" || branchOfTask(headBranch(root), id) {
 		return nil

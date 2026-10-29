@@ -370,7 +370,12 @@ func cmdReviewLevel(root, start, id string, level int, reason string, c CommitOp
 	if strings.Contains(reason, "\n") {
 		return "", fmt.Errorf("причина пишется одной строкой")
 	}
-	sha, err := headSha(reviewCodeDir(root, start))
+	var sha string
+	err := cliReadOutside(root, func() error {
+		var err error
+		sha, err = headSha(reviewCodeDir(root, start))
+		return err
+	})
 	if err != nil {
 		return "", err
 	}
@@ -465,7 +470,14 @@ func cmdReviewClean(root, id, note string, newRound bool, c CommitOpts) (string,
 			case "":
 				return "", fmt.Errorf("замечание %d в ревью %s открыто, чистый вердикт ему противоречит: закрой его через review resolve", i+1, id)
 			case "чисто":
-				same, comparable, cause := cleanVerdictSameCode(root, id, n)
+				var same, comparable bool
+				var cause string
+				if err := cliReadOutside(root, func() error {
+					same, comparable, cause = cleanVerdictSameCode(root, id, n)
+					return nil
+				}); err != nil {
+					return "", err
+				}
 				if !comparable {
 					if !newRound {
 						return "", fmt.Errorf("чистый вердикт в ревью %s сравнить нечем (%s): заяви новый круг явно ключом --new-round, иначе он остаётся дублем", id, cause)
@@ -482,8 +494,14 @@ func cmdReviewClean(root, id, note string, newRound bool, c CommitOpts) (string,
 	}
 	line := "- " + cleanVerdictHead
 	sha := ""
-	if s, err := headSha(root); err == nil {
-		sha = s
+	var headErr error
+	if err := cliReadOutside(root, func() error {
+		sha, headErr = headSha(root)
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	if headErr == nil {
 		line = "- " + fmt.Sprintf(cleanVerdictHeadFmt, sha)
 	}
 	if note != "" {

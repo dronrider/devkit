@@ -21,7 +21,7 @@ const stageSection = "## Ход работы"
 // Возврат: относительный путь файла задачи, если он изменился, и хвост для
 // сообщения команды.
 func flushStages(root, id string, now time.Time) (string, string) {
-	stages, err := stage.Flush(stage.Home(), stage.MainRoot(root), id)
+	stages, err := stage.Flush(stage.Home(), taskMainRoot(root), id)
 	if err != nil || len(stages) == 0 {
 		return "", ""
 	}
@@ -61,5 +61,5 @@ func openWait(root, id, target, reason string, now time.Time) {
 	default:
 		return
 	}
-	stage.Open(stage.Home(), stage.MainRoot(root), id, kind, note, now)
+	stage.Open(stage.Home(), taskMainRoot(root), id, kind, note, now)
 }

@@ -162,6 +162,142 @@ func TestCLIBoardGuardDoesNotCallGitUnderLock(t *testing.T) {
 	}
 }
 
+func TestCLIShowResolvesMainRootBeforeLock(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindir := t.TempDir()
+	marker := filepath.Join(bindir, "nested")
+	script := "#!/bin/sh\ncase \" $* \" in *\" --path-format=absolute \"*) if [ \"$IN_GIT_PROBE\" != 1 ]; then IN_GIT_PROBE=1 " + shQuote(bin) + " -C " + shQuote(root) + " id >/dev/null || exit 2; touch " + shQuote(marker) + "; fi;; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bindir, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "-C", root, "show", "XR-001")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatal("main root git lookup deadlocked on nested taskctl")
+	}
+	if err != nil {
+		t.Fatalf("show: %v %s", err, out)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("nested taskctl did not run: %v", err)
+	}
+}
+
+func TestCLIReviewLevelRejectsEditDuringGit(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindir := t.TempDir()
+	script := "#!/bin/sh\ncase \" $* \" in *\" --short=7 HEAD \"*) " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; printf '\\nconcurrent review edit\\n' >> " + shQuote(taskFileAbs(root, "XR-001")) + ";; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bindir, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "-C", root, "review", "level", "XR-001", "2", "проверка")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatal("nested taskctl deadlocked during review git")
+	}
+	if err == nil || !strings.Contains(string(out), "изменился") {
+		t.Fatalf("expected conflict: %v %s", err, out)
+	}
+	data, err := os.ReadFile(taskFileAbs(root, "XR-001"))
+	if err != nil || !strings.Contains(string(data), "concurrent review edit") || strings.Contains(string(data), "Уровень 2 до") {
+		t.Fatalf("review edit: %v %s", err, data)
+	}
+}
+
+func TestCLIReviewAddRejectsEditDuringTreeCheck(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindir := t.TempDir()
+	script := "#!/bin/sh\ncase \" $* \" in *\" --verify main \"*) " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; printf '\\nconcurrent tree edit\\n' >> " + shQuote(taskFileAbs(root, "XR-001")) + ";; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bindir, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "-C", root, "review", "add", "XR-001", "новое замечание")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatal("nested taskctl deadlocked during tree check")
+	}
+	if err == nil || !strings.Contains(string(out), "изменился") {
+		t.Fatalf("expected conflict: %v %s", err, out)
+	}
+	data, err := os.ReadFile(taskFileAbs(root, "XR-001"))
+	if err != nil || !strings.Contains(string(data), "concurrent tree edit") || strings.Contains(string(data), "новое замечание") {
+		t.Fatalf("tree edit: %v %s", err, data)
+	}
+}
+
+func TestCLIMoveRejectsEditDuringBranchGate(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	markRehearsed(t, root)
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindir := t.TempDir()
+	script := "#!/bin/sh\ncase \" $* \" in *\" --verify main \"*) " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; printf '\\nconcurrent gate edit\\n' >> " + shQuote(taskFileAbs(root, "XR-005")) + ";; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bindir, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "-C", root, "move", "XR-005", "check")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatal("nested taskctl deadlocked during branch gate")
+	}
+	if err == nil || !strings.Contains(string(out), "изменился") {
+		t.Fatalf("expected conflict: %v %s", err, out)
+	}
+	if got := sect(t, root, "XR-005"); got != SectInProgress {
+		t.Fatalf("row moved to %s", got)
+	}
+	data, err := os.ReadFile(taskFileAbs(root, "XR-005"))
+	if err != nil || !strings.Contains(string(data), "concurrent gate edit") {
+		t.Fatalf("edit lost: %v %s", err, data)
+	}
+}
+
 func TestCLIAddMovesTrackedDraftAfterUnlock(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)

@@ -43,7 +43,7 @@ func loadStageView(root string) *stageView {
 	if home == "" {
 		return nil
 	}
-	v := &stageView{main: stage.MainRoot(root), recs: map[string]stage.Record{}, files: map[string]*stage.Record{}, now: timeNow()}
+	v := &stageView{main: taskMainRoot(root), recs: map[string]stage.Record{}, files: map[string]*stage.Record{}, now: timeNow()}
 	for _, rec := range stage.List(home, v.main) {
 		if len(rec.Stages) > 0 {
 			v.recs[rec.ID] = rec

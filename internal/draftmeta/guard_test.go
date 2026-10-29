@@ -13,7 +13,7 @@ import (
 func TestGuardDraft(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "docs", "tasks", "drafts", "XR-1.md")
-	if err := GuardDraft(root, "XR-1"); err != nil {
+	if err := GuardRecord(root, "XR-1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -26,7 +26,7 @@ func TestGuardDraft(t *testing.T) {
 		if err := os.WriteFile(path, []byte(tc.content), 0600); err != nil {
 			t.Fatal(err)
 		}
-		err := GuardDraft(root, "XR-1")
+		err := GuardRecord(root, "XR-1")
 		if (err != nil) != tc.blocked {
 			t.Fatalf("%s: %v", tc.content, err)
 		}
@@ -101,5 +101,21 @@ func TestGuardReadsAfterPendingTransaction(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("guard stayed blocked")
+	}
+}
+
+func TestGuardArchivedProtection(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "docs", "tasks", "archive", "2026", "XR-2.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, content := range []string{"# XR-2\nзащита: locked\n", "# XR-2\nзащита: broken\n"} {
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := GuardRecord(root, "XR-2"); err == nil {
+			t.Fatalf("archive accepted: %q", content)
+		}
 	}
 }

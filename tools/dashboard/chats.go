@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/sessions"
 )
@@ -805,6 +806,12 @@ type chatStore struct {
 	// вставка бывает в мегабайты, и ей место в файле, а не в памяти записи.
 	// Список говорит уборке то же, что и текст: запись человеку нужна.
 	Files []chatUpload `json:"files,omitempty"`
+	// ProposalContexts stores delivery addresses and shown source IDs, while
+	// decisions and results remain in the source records.
+	ProposalContexts []proposalDeliveryContext `json:"proposalContexts,omitempty"`
+	GroomSource      string                    `json:"groomSource,omitempty"`
+	GroomMode        string                    `json:"groomMode,omitempty"`
+	GroomTree        string                    `json:"groomTree,omitempty"`
 }
 
 // chatUpload это ссылка на вложение черновика: вид, имя и путь файла в каталоге
@@ -832,11 +839,36 @@ func (s *server) chatStoreWrite(key string, st chatStore) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	lock, err := chat.Lock(filepath.Join(dir, key+".lock"))
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	previous := s.chatStoreRead(key)
+	st.ProposalContexts = mergeProposalContexts(previous.ProposalContexts, st.ProposalContexts)
+	if !strings.HasPrefix(key, "tmux-") && st.GroomSource == "" {
+		st.GroomSource, st.GroomMode, st.GroomTree = previous.GroomSource, previous.GroomMode, previous.GroomTree
+	}
 	data, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, key+".json"), data, 0o644)
+	f, err := os.CreateTemp(dir, ".chat-store-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	if err = f.Chmod(0644); err == nil {
+		_, err = f.Write(data)
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(name, filepath.Join(dir, key+".json"))
 }
 
 // chatSeenStep это шаг отметки показа: панель перечитывает ленту каждые
@@ -2148,6 +2180,11 @@ func dropForeign() string {
 func (s *server) launchEnv(id, sess, sid string) string {
 	env := "DEVKIT_TMUX=" + shQuote(sess) + " "
 	if sid != "" {
+		if source, mode := s.inheritedGroomContext(sid, id); source != "" {
+			env += "DEVKIT_GROOM_SOURCE=" + shQuote(source) + " DEVKIT_GROOM_MODE=" + shQuote(mode) + " "
+		}
+	}
+	if sid != "" {
 		env = "DEVKIT_CHAT=" + shQuote(sid) + " " + env
 	}
 	if id != "" {
@@ -3178,18 +3215,6 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			taskIDs = append(taskIDs, headTasks(guardLast, filepath.Base(info.Tree))...)
 		}
 	}
-	for _, root := range roots {
-		for _, id := range taskIDs {
-			if !goalIDRe.MatchString(id) {
-				continue
-			}
-			if err := draftmeta.GuardRecord(root, id); err != nil {
-				writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
-				return
-			}
-		}
-	}
-
 	var body struct {
 		Text string `json:"text"`
 		// MsgID это ключ записи в очереди исходящих панели: один и тот же у
@@ -3223,6 +3248,22 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	if body.Scenario != nil && body.Proposal != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "нельзя смешивать ответы на сценарии и предложения"})
 		return
+	}
+	// Proposal replies carry their own shown tree and source set. Their handler
+	// guards that original destination; current bindings may already point at a
+	// different project and must not redirect or veto an exact receipt retry.
+	if body.Proposal == nil {
+		for _, root := range roots {
+			for _, id := range taskIDs {
+				if !goalIDRe.MatchString(id) {
+					continue
+				}
+				if err := draftmeta.GuardRecord(root, id); err != nil {
+					writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+					return
+				}
+			}
+		}
 	}
 	if body.Proposal == nil && s.proposalContextRequired(found, sid) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "для ответа нужны показанные предложения и их снимок"})
@@ -3526,6 +3567,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		text = s.chatStateLine(task) + text
 	}
 	sess := liftWindow(task, last.Tmux, alive)
+	if err := s.preserveGroomContext(sid, task); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "режим разбора не сохранён: " + err.Error()})
+		return
+	}
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
@@ -3793,6 +3838,21 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	// же и ждёт ответа, значит клиент занят нашим инструментом, а не своим
 	// вопросом, и разбирать его панель незачем.
 	if agent, ok := s.agentAsk(sid); ok {
+		shown := agent.Proposal
+		if shown == nil {
+			for _, step := range agent.Steps {
+				if step.Proposal != nil {
+					shown = step.Proposal
+					break
+				}
+			}
+		}
+		if shown != nil {
+			if err := s.rememberProposalShown(sid, *shown); err != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]string{"error": "показанный контекст не сохранён: " + err.Error()})
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"session": sid, "task": agent.Task, "ask": agent, "continuation": continuation})
 		return
 	}
@@ -4153,6 +4213,10 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		return
 	}
 	sess := chatNewName(task, tmuxAliveFn())
+	if err := s.preserveGroomContext(sid, task); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "режим разбора не сохранён: " + err.Error()})
+		return
+	}
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
@@ -4549,6 +4613,10 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sess := liftWindow(id, e.Tmux, tmuxAliveFn())
+	if err := s.preserveGroomContext(sid, id); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "режим разбора не сохранён: " + err.Error()})
+		return
+	}
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}

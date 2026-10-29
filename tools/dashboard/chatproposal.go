@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/chat"
@@ -106,6 +107,34 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 			for _, source := range shown.Sources {
 				deliverySources = append(deliverySources, draftproposal.Snapshot{Source: source.Source, Digest: source.Basis})
 			}
+			if answer.Mode != "comment" {
+				if err := s.rememberProposalContext(sid, *shown, answer); err != nil {
+					writeJSON(w, http.StatusBadGateway, map[string]string{"error": "контекст доставки не сохранён: " + err.Error()})
+					return
+				}
+			}
+		}
+	} else {
+		key, err := proposalContextKey(answer)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		var found bool
+		for _, context := range s.proposalContexts(sid) {
+			if context.Key != key || context.Tree != answer.Tree || context.Anchor != answer.Anchor {
+				continue
+			}
+			deliverySources = nil
+			for _, source := range context.Sources {
+				deliverySources = append(deliverySources, draftproposal.Snapshot{Source: source})
+			}
+			found = len(deliverySources) > 0
+			break
+		}
+		if !found {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "показанный контекст доставки не найден"})
+			return
 		}
 	}
 	for _, snap := range deliverySources {
@@ -276,6 +305,21 @@ func (s *server) proposalContinuation(root, sid string) string {
 		}
 	}
 	last := sessions.Last(s.bindsAll()[sid])
+	for _, context := range s.proposalContexts(sid) {
+		if last.Task != "" && last.Task != context.Anchor {
+			continue
+		}
+		if last.Tree != "" {
+			current, currentErr := os.Stat(stage.MainRoot(last.Tree))
+			original, originalErr := os.Stat(stage.MainRoot(context.Tree))
+			if currentErr != nil || originalErr != nil || !os.SameFile(current, original) {
+				continue
+			}
+		}
+		for _, source := range context.Sources {
+			items = append(items, item{context.Tree, source})
+		}
+	}
 	if last.Tree != "" {
 		root = last.Tree
 	}

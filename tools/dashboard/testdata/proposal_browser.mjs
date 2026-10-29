@@ -26,6 +26,8 @@ try {
   response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST' && r.status()===200);
   await page.evaluate(()=>window.dispatchEvent(new Event('online'))); await response;
   view=await (await context.request.get(base+'/__proposal')).json(); assert.equal(view.state.proposals[0].status,'rejected'); assert.equal(view.state.proposals[1].status,undefined);
+  await page.reload(); await page.locator('.askresume').getByText('Предложения XR-4',{exact:false}).waitFor();
+  await page.locator('.askresume').getByText('Предложения XR-5',{exact:false}).waitFor();
   assert.equal((await context.request.get(base+'/__proposal?fresh=both')).status(),200); await page.reload();
   await page.getByRole('button',{name:'Принять все предложения XR-4'}).click(); response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST'); await page.getByRole('button',{name:'Отправить',exact:true}).click(); assert.equal((await response).status(),200);
   view=await (await context.request.get(base+'/__proposal?id=XR-5')).json(); assert.equal(view.state.proposals[0].status,undefined);

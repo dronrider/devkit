@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1939,6 +1942,15 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("DEVKIT_HOME", kit)
+	archiveTarget := filepath.Join(e.proj, "docs/tasks/XR-001.md")
+	f, err := os.OpenFile(archiveTarget, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.WriteString("\n## Сценарий проверки\n\n1. Проверить синтетический результат.\n\n## Проверка\n\n- Результат проверен.\n\n## Ход работы\n\n- Исключение: обкатка (синтетическая задача стенда, прогонять нечего)\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
 	for _, title := range []string{"первая", "вторая", "третья", "ручная запись", "ошибка разбора"} {
 		runTaskctl(t, e.proj, "draft", title)
 	}
@@ -1958,7 +1970,7 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 	}
 	for id, proposals := range map[string][]draftproposal.Proposal{
 		"XR-005": {{ID: "p1", Revision: 1, Outcome: "drop", Text: "первая карточка", Reason: "устарело"}, {ID: "p2", Revision: 1, Outcome: "drop", Text: "вторая карточка", Reason: "устарело"}},
-		"XR-006": {{ID: "p3", Revision: 1, Outcome: "attach", Target: "XR-001", Text: "третья карточка"}},
+		"XR-006": {{ID: "p3", Revision: 1, Outcome: "attach", Target: "XR-001", Text: "третья карточка"}, {ID: "p3b", Revision: 1, Outcome: "drop", Text: "ещё не решено", Reason: "устарело"}},
 		"XR-007": {{ID: "p4", Revision: 1, Outcome: "drop", Text: "четвёртая карточка", Reason: "устарело"}},
 	} {
 		path := filepath.Join(e.proj, "docs/tasks/drafts", id+".md")
@@ -2012,7 +2024,22 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 		}
 		time.Sleep(30 * time.Millisecond)
 	}
-	probe := exec.Command(node, "testdata/draftconfirm_browser.mjs", base, chrome, "test-token")
+	target, _ := url.Parse(base)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/__archive", func(w http.ResponseWriter, r *http.Request) {
+		cmd := exec.Command(filepath.Join(e.bin, "taskctl"), "-C", e.proj, "close", "XR-001", "--date", "2026-07-08")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			http.Error(w, string(out), 500)
+			return
+		}
+		fmt.Fprint(w, string(out))
+	})
+	mux.HandleFunc("/", proxy.ServeHTTP)
+	px := httptest.NewServer(mux)
+	defer px.Close()
+	probe := exec.Command(node, "testdata/draftconfirm_browser.mjs", px.URL, chrome, "test-token")
 	probe.Env = os.Environ()
 	if out, err := probe.CombinedOutput(); err != nil {
 		t.Fatalf("browser: %v\n%s\nserver: %s", err, out, readFile(t, log.Name()))

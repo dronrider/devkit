@@ -7,6 +7,17 @@
 
 ```sh
 mkdir -p docs/tasks/drafts docs/tasks/archive/2026
+cat >> README.md <<'DOC'
+
+## Локальный сервер
+
+Запуск: `python3 server.py`. Справка: [old-help](old-help).
+DOC
+cat > server.py <<'PYCODE'
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+
+HTTPServer(("127.0.0.1", 8000), SimpleHTTPRequestHandler).serve_forever()
+PYCODE
 cat > docs/tasks/drafts/OB-069.md <<'DOC'
 # OB-069: Две поправки к справке
 
@@ -57,7 +68,7 @@ PY
 
 ```sh
 python3 - <<'PY'
-import json, os, pathlib, subprocess
+import json, os, pathlib, re, subprocess
 root = pathlib.Path('.')
 trace = pathlib.Path(os.environ['OBEY_TRANSCRIPT'])
 lines = trace.read_text().splitlines()
@@ -84,6 +95,26 @@ assert any(c.startswith('taskctl draft list ') and '--safe' in c for c in comman
 assert any(c.startswith('taskctl guard OB-069') for c in commands), 'публичная запись не проверена'
 view = json.loads(subprocess.check_output(['taskctl', 'draft', 'proposals', 'OB-069'], text=True))
 assert view['state']['proposals'], 'публичный разбор не сохранил предложений'
+assert all(not c.get('status') for c in view['state']['proposals']), 'карточка применена без подтверждения'
+save = next((i for i, c in enumerate(commands) if re.search(r'draft\s+proposals\s+save', c) and '--base' in c and '--help' not in c), None)
+ask_index = next((i for i, c in enumerate(commands) if re.search(r'draft\s+proposals\s+ask\s+OB-069', c) and '--help' not in c), None)
+assert save is not None and ask_index is not None and save < ask_index, 'вопрос не опубликован после сохранения'
+assert not any(re.search(r'draft\s+proposals\s+(?:answer|confirm|reject)\b|\btaskctl\s+(?:add\b|draft\s+(?:attach|drop|defer)\b)', c) for c in commands), 'исход применён без ответа человека'
+ask = pathlib.Path('.devkit/chat/task-OB-069.ask')
+assert ask.is_file(), 'вопрос предложений не опубликован'
+parts = [line for line in ask.read_text().splitlines() if line.startswith('{')]
+assert len(parts) == 1, 'неверный сохранённый вопрос'
+questions = json.loads(parts[0]).get('questions', [])
+shown = [q.get('proposal') for q in questions if q.get('proposal')]
+assert len(shown) == 1, 'нет отдельного вопроса предложений'
+question = shown[0]
+assert question.get('version') == 1 and question.get('tree') == os.path.realpath('.') and question.get('anchor') == 'OB-069', 'неверный адрес показанного вопроса'
+sources = question.get('sources', [])
+assert len(sources) == 1 and sources[0].get('source') == 'OB-069', 'источник вопроса не совпал'
+assert view.get('basis') and sources[0].get('basis') == view['basis'], 'показанный basis не совпал'
+assert all(c.get('id') and isinstance(c.get('revision'), int) and c['revision'] > 0 for c in view['state']['proposals']), 'у карточки нет ID или редакции'
+assert sources[0].get('proposals') == [c for c in view['state']['proposals'] if not c.get('status')], 'показанные карточки или редакции не совпали'
+
 assert (root / 'docs/tasks/drafts/OB-069.md').is_file(), 'исходник исчез'
 markers = ('PRIVATE_ACTIVE_TITLE_70', 'PRIVATE_ACTIVE_BODY_70', 'PRIVATE_ARCHIVE_TITLE_71', 'PRIVATE_ARCHIVE_BODY_71')
 observed = trace.read_text()

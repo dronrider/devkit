@@ -51,13 +51,26 @@ v = json.loads(subprocess.check_output(['taskctl', 'draft', 'proposals', 'OB-069
 cards = v['state']['proposals']
 assert len(cards) >= 2, 'нужны отдельные карточки для двух поправок'
 assert all(not c.get('status') for c in cards), 'карточка применена без подтверждения'
+def recorded_commands(path):
+    starts, success = [], set()
+    for line in path.read_text().splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        kind, ident, value = parts
+        if kind == "start":
+            starts.append((ident, value))
+        elif kind == "end" and value == "0":
+            success.add(ident)
+    return [command for ident, command in starts if ident in success]
+
 log = pathlib.Path('.obey-taskctl.log')
 if log.is_file():
-    commands = log.read_text().splitlines()
+    commands = recorded_commands(log)
 else:
     events = [json.loads(line) for line in pathlib.Path(os.environ['OBEY_TRANSCRIPT']).read_text().splitlines() if line.startswith('{')]
-    commands = [e.get('item', {}).get('command', '') for e in events if e.get('type') == 'item.completed' and e.get('item', {}).get('type') == 'command_execution']
-save = next((i for i, c in enumerate(commands) if re.search(r'draft\s+proposals\s+save', c)), None)
+    commands = [e.get('item', {}).get('command', '') for e in events if e.get('type') == 'item.completed' and e.get('item', {}).get('type') == 'command_execution' and e.get('item', {}).get('exit_code') == 0]
+save = next((i for i, c in enumerate(commands) if re.search(r'draft\s+proposals\s+save', c) and '--base' in c and '--help' not in c), None)
 interview = next((i for i, c in enumerate(commands) if 'decide' in c and '--scenarios' in c), None)
 assert save is not None, 'карточки не сохранены командой'
 assert interview is not None and interview < save, 'интервью не предшествует предложениям'

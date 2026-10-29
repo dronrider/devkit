@@ -44,6 +44,9 @@ TASKCTL_STUB = r'''#!/usr/bin/env python3
 import os
 import sys
 
+if sys.argv[1:3] == ["file", "tail"] and os.environ.get("DEVKIT_TEST_REAL_TASKCTL"):
+    binary = os.environ["DEVKIT_TEST_REAL_TASKCTL"]
+    os.execv(binary, [binary] + sys.argv[1:])
 state = os.environ["DEVKIT_TEST_STATE"]
 with open(state, encoding="utf-8") as f:
     sect = f.read().strip()
@@ -2743,7 +2746,20 @@ class StopTailsTest(unittest.TestCase):
     отложенная реплика умирают вместе с окном без записи и уведомления. Каждый
     хвост обязан получить и то, и другое, и гаснуть вслух."""
 
+    @classmethod
+    def setUpClass(cls):
+        cls.bin = tempfile.mkdtemp(prefix="task-run-tail-bin-")
+        src = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "taskctl"))
+        subprocess.run(["go", "build", "-o", os.path.join(cls.bin, "taskctl"), "."], cwd=src, check=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.bin, ignore_errors=True)
+
     def setUp(self):
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = self.bin + os.pathsep + old_path
+        self.addCleanup(os.environ.__setitem__, "PATH", old_path)
         self.root = tempfile.mkdtemp(prefix="task-run-tails-")
         os.makedirs(os.path.join(self.root, ".devkit"))
         self.addCleanup(shutil.rmtree, self.root, True)
@@ -2754,6 +2770,24 @@ class StopTailsTest(unittest.TestCase):
         self.pipe.sid = SID
         self.pipe.shout = unittest.mock.Mock()
         self.task_file()
+        with open(os.path.join(self.root, "docs", "TASKS.md"), "w", encoding="utf-8") as f:
+            f.write("# Доска стенда\n")
+
+    def test_locked_guard_blocks_launch_and_continuation(self):
+        path = self.task_file()
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("# DK-1\nзащита: locked\n")
+        marker = os.path.join(self.root, "cloud-starts")
+        fake = os.path.join(self.root, "fake-cloud")
+        write_stub(fake, "#!/bin/sh\necho started >> " + marker + "\n")
+        self.pipe.client = [fake]
+        for call in (lambda: self.pipe.raise_head("разобрать"),
+                     lambda: self.pipe.run_pass("разобрать"),
+                     lambda: self.pipe.send_order("продолжай")):
+            with unittest.mock.patch("sys.stderr", new_callable=io.StringIO):
+                with self.assertRaises(SystemExit):
+                    call()
+            self.assertFalse(os.path.exists(marker), "облачный клиент запущен")
 
     def registry(self, agents):
         with open(os.path.join(self.root, SID + ".json"), "w", encoding="utf-8") as f:
@@ -2837,8 +2871,10 @@ class StopTailsTest(unittest.TestCase):
         s = Stand(sect="in-progress", plan="хвосты и закрой", live=True, pause="0")
         self.addCleanup(s.drop)
         s.task_file()
+        with open(os.path.join(s.root, "docs", "TASKS.md"), "w", encoding="utf-8") as f:
+            f.write("# Доска стенда\n")
         s.reply("продолжай работу")
-        got = s.run()
+        got = s.run(extra={"DEVKIT_TEST_REAL_TASKCTL": os.path.join(self.bin, "taskctl")})
         self.assertEqual(got.returncode, 0, s.why(got))
         tails = s.tails()
         self.assertEqual(len(tails), 3, tails)

@@ -280,6 +280,7 @@ type agentAsk struct {
 	Steps    []agentStep            `json:"steps,omitempty"`
 	Multi    bool                   `json:"multi,omitempty"`
 	Scenario *chat.ScenarioQuestion `json:"scenario,omitempty"`
+	Proposal *chat.ProposalQuestion `json:"proposal,omitempty"`
 }
 
 // agentStep это один вопрос пачки. Вопросы едут на экран все разом, а не по
@@ -295,6 +296,7 @@ type agentStep struct {
 	Options  []tmuxPick             `json:"options,omitempty"`
 	Multi    bool                   `json:"multi,omitempty"`
 	Scenario *chat.ScenarioQuestion `json:"scenario,omitempty"`
+	Proposal *chat.ProposalQuestion `json:"proposal,omitempty"`
 }
 
 // askForkHeadRe узнаёт имя развилки в голове вопроса: «имя»: вопрос. Имя
@@ -319,12 +321,15 @@ func agentAskOf(h handedAsk) agentAsk {
 		if q.Scenario != nil && q.Scenario.Tree != "" {
 			out.Tree = q.Scenario.Tree
 		}
+		if q.Proposal != nil && q.Proposal.Tree != "" {
+			out.Tree = q.Proposal.Tree
+		}
 		text := strings.TrimSpace(q.Text)
 		if text == "" {
 			continue
 		}
 		step := agentStep{Name: fmt.Sprintf("%d. %s", i+1, truncate(text, askStepCut)),
-			Fork: askForkName(text), Text: text, Options: agentPicks(q.Options), Multi: q.Multi, Scenario: q.Scenario}
+			Fork: askForkName(text), Text: text, Options: agentPicks(q.Options), Multi: q.Multi, Scenario: q.Scenario, Proposal: q.Proposal}
 		out.Steps = append(out.Steps, step)
 	}
 	if len(out.Steps) == 0 {
@@ -334,6 +339,7 @@ func agentAskOf(h handedAsk) agentAsk {
 	out.Fork = out.Steps[0].Fork
 	out.Text, out.Options = out.Steps[0].Text, out.Steps[0].Options
 	out.Multi, out.Scenario = out.Steps[0].Multi, out.Steps[0].Scenario
+	out.Proposal = out.Steps[0].Proposal
 	if len(out.Steps) == 1 {
 		out.Steps = nil
 	}

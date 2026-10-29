@@ -13122,7 +13122,7 @@ function echoRead(project, addr) {
     // tmux это имя сессии, которую подняла эта реплика: по нему панель,
     // вернувшаяся на адрес new, пришивает себя к родившемуся диалогу.
     return raw.filter((m) => m && m.text).map((m) => ({
-      text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(), scenario: m.scenario || null,
+      text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(), scenario: m.scenario || null, proposal: m.proposal || null,
       state: m.state === "held" || m.state === "wait" ? m.state : "bad",
       why: m.why ? String(m.why) : "",
       tmux: m.tmux ? String(m.tmux) : "",
@@ -13177,7 +13177,7 @@ function echoWrite(project, addr, list) {
     // после перерисовки, пока эхо их не сняло (первая реплика нового чата
     // пропадала с экрана ровно из-за того, что жил только bad).
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait")
-      .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, scenario: m.scenario,
+      .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, scenario: m.scenario, proposal: m.proposal,
         why: m.why || "", tmux: m.tmux || "", id: m.id || "",
         queue: Boolean(m.queue), task: m.task || "", since: m.since || m.born }));
     if (keep.length) {
@@ -13244,7 +13244,7 @@ function echoSweep(project, door, chats) {
       let was = [];
       try { was = JSON.parse(localStorage.getItem(key + hit.id) || "[]"); } catch (err) {}
       if (!Array.isArray(was)) was = [];
-      was.push({ text: rec.text, wire: rec.wire, born: rec.born, state: rec.state, scenario: rec.scenario,
+      was.push({ text: rec.text, wire: rec.wire, born: rec.born, state: rec.state, scenario: rec.scenario, proposal: rec.proposal,
         why: rec.why || "", tmux: rec.tmux || "", id: rec.id || "",
         queue: Boolean(rec.queue), task: rec.task || "", since: rec.since || rec.born });
       localStorage.setItem(key + hit.id, JSON.stringify(was));
@@ -13466,7 +13466,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
         state: rec.state, why: rec.why, born: rec.born, since: rec.since,
         tmux: rec.tmux, queue: rec.queue, task: rec.task,
-        scenario: rec.scenario, retry: (again) => resend(again, rec.id, rec.wire, rec.scenario) });
+        scenario: rec.scenario, proposal: rec.proposal, retry: (again) => resend(again, rec.id, rec.wire, rec.scenario, rec.proposal) });
     }
     // Снятые с дверного ключа показываются один раз: в персист их пишет разбор
     // echoSweep и там же снимает ключ, а тут они только стоят в ленте до
@@ -13514,7 +13514,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     // wire это то, что ушло агенту (с префиксами вложений и выделения), и
     // сверка эха идёт по нему: в транскрипте лежит именно он. text это слова
     // человека, их и видно в пузыре, а вложения стоят при них своими блоками.
-    add(text, retry, wire, sel, clips, id, scenario) {
+    add(text, retry, wire, sel, clips, id, scenario, proposal) {
       seq += 1;
       // Ключ записи держится за саму запись: повтор той же реплики едет с тем
       // же ключом, иначе сервер видит не повтор, а новую реплику. Простой
@@ -13522,7 +13522,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       // новая, и порог снятия не должен обнуляться каждой попыткой.
       const key = id || msgKey();
       const m = { key: "local-" + seq, id: key, text, wire: wire || text, sel, clips,
-        state: "wait", born: Date.now(), since: sinceOf.get(key) || Date.now(), retry, scenario };
+        state: "wait", born: Date.now(), since: sinceOf.get(key) || Date.now(), retry, scenario, proposal };
       sinceOf.set(key, m.since);
       mine.push(m);
       // Запись сразу: перерисовка панели во время отправки съедала пузырь
@@ -13879,7 +13879,7 @@ function chatPanel(project, st) {
   let draftTimer = null;
   ta.addEventListener("input", () => {
     askPickInput(askPick, ta.value);
-    askPickSave(st.addr, ta.value ? askPick : null);
+    askPickSave(st.addr, ta.value || askPick.proposalDraft ? askPick : null);
     if (draftTimer) clearTimeout(draftTimer);
     draftTimer = setTimeout(() => { draftSave(ta.value); }, CHAT_DRAFT_WAIT);
   });
@@ -14169,7 +14169,7 @@ function chatPanel(project, st) {
     putClip(clip).then(drawClips);
   };
 
-  const post = (text, sel, withClips, key, took, wireHint, scenario) => {
+  const post = (text, sel, withClips, key, took, wireHint, scenario, proposal) => {
     // Пузырь встаёт в ленту до похода на сервер, как в мессенджерах: ждать
     // ответа ручки, а потом ещё и записи в транскрипт, значит показывать
     // человеку пустоту в ответ на нажатие.
@@ -14180,8 +14180,8 @@ function chatPanel(project, st) {
     // Повтор восстановленной записи едет с тем же проводом: вложения той
     // реплики уже лежат на сервере, и строить провод заново значило бы
     // перечитать их в панель, которой их уже не принадлежит.
-    const m = echo.add(text, (again, id) => post(again, sel, withClips, id, took, wireHint, scenario),
-      wire0, sel, withClips, key, scenario);
+    const m = echo.add(text, (again, id) => post(again, sel, withClips, id, took, wireHint, scenario, proposal),
+      wire0, sel, withClips, key, scenario, proposal);
     send.disabled = true;
     const done = () => { send.disabled = Boolean(way.off); };
     // Подъём сессии первой репликой. Умершая сессия подъёма это повод поднять
@@ -14222,12 +14222,13 @@ function chatPanel(project, st) {
     // Дорога реплики выбрана заранее, а путь вложения приклеивается к ней
     // первой строкой: у всех дорог он один и тот же.
     const go = (wire) => {
-      if (scenario) {
+      if (scenario || proposal) {
         api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say", {
-          method: "POST", body: { text, msg_id: m.id, scenario },
+          method: "POST", body: { text, msg_id: m.id, ...(scenario ? { scenario } : { proposal }) },
         }).then((r) => {
           if (!r.ok) {
-            echo.held(m, r.body.error || "ответ не принят");
+            if (proposal && r.status >= 500) echo.bad(m);
+            else echo.held(m, r.body.error || "ответ не принят");
             sayResult(r.body.error || "ответ не принят", true);
           } else {
             echo.sent(m);
@@ -14376,7 +14377,12 @@ function chatPanel(project, st) {
 
   const fire = () => {
     const scenario = askPick.answer || null;
-    const text = scenario ? ta.value : ta.value.trim();
+    let proposal = null;
+    if (askPick.proposalDraft) {
+      try { proposal = proposalAnswer(askPick.proposalDraft); }
+      catch (err) { sayResult(err.message, true); return; }
+    }
+    const text = scenario || proposal ? ta.value : ta.value.trim();
     if (!text.trim() || send.disabled) return;
     ta.value = "";
     // Реплика циклу цели уходит очередью «Входящих», пузырь ей рисует сама
@@ -14391,6 +14397,7 @@ function chatPanel(project, st) {
     // больше незачем: следующая отметка дописывает своё в пустое поле.
     askPick.put = "";
     askPick.answer = null;
+    askPick.proposalDraft = null;
     askPick.selected = null;
     askPick.ordinary = null;
     askPick.touched = false;
@@ -14405,7 +14412,7 @@ function chatPanel(project, st) {
     // выделяет абзац, пишет «поправь этот текст», и агент получает и слова, и
     // сам текст (замечание 3 девятого круга POC). Вложения уезжают списком:
     // снимки и фрагменты одной реплики едут вместе, сколько бы их ни было.
-    post(text, pinnedSel || grabSelection(), attach, null, picks, null, scenario);
+    post(text, pinnedSel || grabSelection(), attach, null, picks, null, scenario, proposal);
     pinnedSel = null;
     attach = [];
     picks = [];
@@ -14501,7 +14508,7 @@ function chatPanel(project, st) {
     const legacy = st.sid && st.addr && st.addr !== st.sid
       ? echoSweep(project, st.addr, st.chats) : [];
     echo = makeEcho(project, pend, feed, st.sid || st.addr,
-      (more, id, wire, scenario) => post(more, null, null, id, null, wire, scenario), legacy);
+      (more, id, wire, scenario, proposal) => post(more, null, null, id, null, wire, scenario, proposal), legacy);
     chatLive.push(echo.clear, echo.stop);
     // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
     // работе поверх причины значило бы врать.
@@ -14628,11 +14635,12 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
       const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
       if (stop) return;
       let ask = (r.ok && r.body.ask) || null;
-      if (pick.answer && (ta.value || pick.touched)) ask = pick.ask;
+      if ((pick.answer && (ta.value || pick.touched)) || (pick.proposalDraft && (ta.value || pick.proposalDraft.decisions.length))) ask = pick.ask;
       else if (JSON.stringify(pick.ask) !== JSON.stringify(ask)) {
         pick.selected = null;
         pick.ordinary = null;
         pick.answer = null;
+        pick.proposalDraft = null;
       }
       const continuation = (r.ok && r.body.continuation) || "";
       pick.continuation = continuation;
@@ -14752,7 +14760,7 @@ function paintAskpassAsk(project, st, box, ask) {
 function askCardSteps(ask) {
   const steps = (ask.steps || []).filter((step) => step && (step.text || (step.options || []).length));
   if (steps.length) return steps;
-  return [{ fork: ask.fork, text: ask.text, options: ask.options, multi: ask.multi, scenario: ask.scenario }];
+  return [{ fork: ask.fork, text: ask.text, options: ask.options, multi: ask.multi, scenario: ask.scenario, proposal: ask.proposal }];
 }
 
 // Галочки при строках вариантов в ленте (DK-864, форма DK-1374). Вопрос идёт
@@ -14922,11 +14930,14 @@ function askPickWire(feed, ta, pick) {
   } else if (resume) resume.remove();
   for (const old of feed.querySelectorAll(".caskpick")) old.remove();
   for (const li of feed.querySelectorAll(".casklit")) li.classList.remove("casklit");
+  if (!pick.on || !pick.ask || !askCardSteps(pick.ask).some((step) => step.proposal)) { const oldProposal = feed.querySelector(".askproposal"); if (oldProposal) oldProposal.remove(); }
   const oldFb = feed.querySelector(".askfb");
   if (oldFb) oldFb.remove();
   if (!pick.on || !pick.ask) return;
   pick.draft = String(ta.value || "");
   const steps = askCardSteps(pick.ask);
+  const proposal = steps.find((step) => step.proposal);
+  if (proposal) { proposalPickWire(feed, ta, pick, proposal.proposal); return; }
   const scenario = steps.find((step) => step.scenario);
   if (scenario) pick.answer = { task: pick.ask.task, tree: scenario.scenario.tree || pick.ask.tree, fork: scenario.scenario.fork,
     snapshot: scenario.scenario.snapshot };
@@ -15158,9 +15169,9 @@ function askPickRead(addr) {
 function askPickSave(addr, pick) {
   const key = "devkit.askdraft." + addr;
   try {
-    if (!pick || !pick.answer) localStorage.removeItem(key);
+    if (!pick || (!pick.answer && !pick.proposalDraft)) localStorage.removeItem(key);
     else localStorage.setItem(key, JSON.stringify({ on: pick.on, ask: pick.ask, answer: pick.answer,
-      put: pick.put, putStart: pick.putStart, selected: pick.selected, ordinary: pick.ordinary, touched: pick.touched }));
+      put: pick.put, putStart: pick.putStart, selected: pick.selected, ordinary: pick.ordinary, touched: pick.touched, proposalDraft: pick.proposalDraft }));
   } catch (err) {}
 }
 
@@ -15739,7 +15750,7 @@ async function renderDrafts(project, works) {
   const drafts = r.body.drafts || [];
   const projectBase = "/api/projects/" + encodeURIComponent(project);
   const proposalViews = await Promise.all(drafts.map((d) => api(projectBase + "/drafts/" + encodeURIComponent(d.id) + "/proposals")));
-  const shownViews = proposalViews.filter((v) => v.ok && (v.body.state.proposals || []).some((p) => !p.status)).map((v) => v.body);
+  const shownViews = proposalViews.filter((v) => v.ok && v.body.state && (v.body.state.proposals || []).some((p) => !p.status)).map((v) => v.body);
   if (proposalViews.some((v) => !v.ok)) {
     items.push({ key: "draft-proposal-error", sign: "error", make: () => el("div", "error", "Не удалось загрузить все предложения") });
   }
@@ -16522,10 +16533,20 @@ function draftProposalCards(base, view) {
     const message = state.analysis === "error" ? "Не удалось разобрать запись. Можно повторить разбор." :
       state.analysis === "empty" ? "Предложений нет. Можно оформить запись вручную." : "Предложений пока нет.";
     section.append(el("p", "", message));
-    return section;
   }
   const outcomes = { add: "Новая строка", attach: "Приписка", defer: "Отложить", drop: "Удалить" };
   const projectBase = base.slice(0, base.indexOf("/drafts/"));
+  const project = decodeURIComponent(projectBase.split("/").pop());
+  if (!cards.some((p) => p.__new)) {
+    const create = el("button", "btn", "Оформить предложение вручную"); create.type = "button";
+    create.addEventListener("click", () => {
+      if (draftProposalDirty.has(base)) { sayResult("Сначала сохраните правки", true); return; }
+      draftProposalDirty.add(base);
+      const fresh = { ...view, state: { ...state, proposals: cards.concat([{ id: "manual-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10), revision: 0, outcome: "add", __new: true }]) } };
+      section.replaceWith(draftProposalCards(base, fresh));
+    });
+    section.append(create);
+  }
   if (cards.some((p) => !p.status)) {
     const acceptAll = el("button", "btn", "Принять все предложения записи");
     acceptAll.type = "button";
@@ -16540,8 +16561,14 @@ function draftProposalCards(base, view) {
     card.append(el("h3", "", outcomes[proposal.outcome] || "Предложение"));
     if (proposal.status) {
       const receipt = proposal.result || {};
-      const ids = Array.isArray(receipt.ids) ? receipt.ids.join(", ") : "";
-      card.append(el("p", "", (proposal.status === "accepted" ? "Принято" : "Отклонено") + (ids ? ": " + ids : "")));
+      const ids = Array.isArray(receipt.ids) ? receipt.ids : [];
+      const result = el("p", "", proposal.status === "accepted" ? "Принято" : "Отклонено");
+      for (const id of ids) {
+        const link = el("button", "link", id); link.type = "button";
+        link.addEventListener("click", () => goKeepingChat(project + (receipt.outcome === "defer" ? "/draft/" : "/") + id));
+        result.append(document.createTextNode(" "), link);
+      }
+      card.append(result);
       if (proposal.title) card.append(el("p", "", proposal.title));
       if (proposal.text) card.append(el("p", "", proposal.text));
       if (proposal.rationale) card.append(el("p", "", proposal.rationale));
@@ -16583,7 +16610,8 @@ function draftProposalCards(base, view) {
     showFields();
     const save = el("button", "btn", "Сохранить предложение"); save.type = "button";
     save.addEventListener("click", async () => {
-      const edited = { ...value, revision: proposal.revision + 1, after: value.after.split(",").map((s) => s.trim()).filter(Boolean) };
+      const { __new, ...fields } = value;
+      const edited = { ...fields, revision: proposal.revision + 1, after: value.after.split(",").map((s) => s.trim()).filter(Boolean) };
       const result = await api(base + "/proposals", { method: "PUT", body: { base: view.snapshot, proposal: edited } });
       sayResult(apiSaid(result), !result.ok);
       if (result.ok) { draftProposalDirty.delete(base); await refresh(); }
@@ -16603,7 +16631,9 @@ function draftProposalCards(base, view) {
       if (draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку предложения", true); return; }
       await confirmDraftProposals(projectBase, [view], (_, p) => p.id === proposal.id);
     });
-    card.append(save, cancel, accept, rejectLabel, reject); section.append(card);
+    card.append(save, cancel);
+    if (!proposal.__new) card.append(accept, rejectLabel, reject);
+    section.append(card);
   }
   return section;
 }
@@ -20384,4 +20414,55 @@ function proposalSelect(shown, source, action, reason = "") {
     for (const p of s.proposals || []) decisions.push({ source: s.source, proposal: p.id, revision: p.revision, action, ...(reason ? { reason } : {}) });
   }
   return decisions;
+}
+
+function proposalPickWire(feed, ta, pick, shown) {
+  if (!pick.proposalDraft) pick.proposalDraft = proposalDraft(shown, ta.value);
+  const draft = pick.proposalDraft;
+  let box = feed.querySelector('.askproposal');
+  if (box && box.dataset.shown === JSON.stringify(draft.shown)) return;
+  if (box) box.remove();
+  box = el('div', 'msg askproposal');
+  box.dataset.shown = JSON.stringify(draft.shown);
+  const body = el('div', 'bb');
+  body.append(el('p', '', 'Предложения разбора. Выберите решения и отправьте ответ обычной кнопкой чата.'));
+  const save = () => {
+    askPickSave(pick.addr, pick);
+    if (!ta.value.trim() && draft.decisions.length) {
+      ta.value = 'Решение по предложениям';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  };
+  const all = el('button', 'btn', 'Принять все показанные'); all.type = 'button';
+  all.addEventListener('click', () => { draft.decisions = proposalSelect(draft.shown, null, 'accept'); save(); box.remove(); proposalPickWire(feed, ta, pick, shown); });
+  body.append(all);
+  for (const source of draft.shown.sources) {
+    body.append(el('h3', '', 'Запись ' + source.source));
+    body.append(el('p', '', 'Показанный снимок: ' + source.basis));
+    const oneAll = el('button', 'btn', 'Принять все предложения ' + source.source); oneAll.type = 'button';
+    oneAll.addEventListener('click', () => {
+      draft.decisions = draft.decisions.filter((d) => d.source !== source.source).concat(proposalSelect(draft.shown, source.source, 'accept'));
+      save(); box.remove(); proposalPickWire(feed, ta, pick, shown);
+    });
+    body.append(oneAll);
+    for (const card of source.proposals) {
+      const section = el('section', 'draft-proposal');
+      section.append(el('h3', '', card.id + ', редакция ' + card.revision + ', ' + card.outcome));
+      for (const [key, label] of Object.entries({ title:'Название', text:'Текст результата', rationale:'Довод', board_type:'Тип строки', rank:'Ранг', size:'Цена', accept:'Приёмка', barrier:'Барьер', assignee:'Ответственный', due:'Срок', control:'Контроль', target:'Куда приписать', reason:'Причина', until:'Вернуться до', after:'После' })) {
+        if (card[key] && (!Array.isArray(card[key]) || card[key].length)) section.append(el('p', '', label + ': ' + (Array.isArray(card[key]) ? card[key].join(', ') : card[key])));
+      }
+      let current = draft.decisions.find((d) => d.source === source.source && d.proposal === card.id);
+      const choose = el('select'); choose.setAttribute('aria-label', 'Решение ' + source.source + ' ' + card.id);
+      for (const [value, title] of [['','Не выбрано'],['accept','Принять'],['reject','Отклонить']]) { const o=el('option','',title); o.value=value; o.selected=(current ? current.action : '') === value; choose.append(o); }
+      const reason = el('input'); reason.placeholder='Причина отказа'; reason.setAttribute('aria-label', 'Причина отказа ' + source.source + ' ' + card.id); reason.value=current && current.reason || '';
+      const update = () => {
+        draft.decisions = draft.decisions.filter((d) => d.source !== source.source || d.proposal !== card.id);
+        if (choose.value) draft.decisions.push({ source:source.source, proposal:card.id, revision:card.revision, action:choose.value, ...(reason.value ? {reason:reason.value} : {}) });
+        save();
+      };
+      choose.addEventListener('change', update); reason.addEventListener('input', update);
+      section.append(choose, reason); body.append(section);
+    }
+  }
+  box.append(body); feed.append(box); save();
 }

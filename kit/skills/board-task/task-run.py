@@ -165,6 +165,9 @@ NOTIFIER = os.path.join(HOOKS, "notify.py")
 # Подхват реплики: у него же спрашивается адресат строки входа. Дефис в имени
 # файла не годится для import, поэтому модуль грузится по пути.
 CHAT_IN = os.path.join(HOOKS, "chat-in.py")
+# Журнал инцидентов (DK-1415): та же дорога по пути. Формат записи один на
+# оболочку, тик и дежурного, и второй копии его тут не заводится.
+INCIDENTS = os.path.join(HOOKS, "incidents.py")
 # Проходов подряд, после которых оболочка встаёт сама. Потолок нужен не от
 # осторожности: голова, которая выходит и не двигает строку, крутила бы цикл до
 # конца квоты, а разбирать такое человеку надо со свежей задачей, а не с сотней
@@ -217,6 +220,15 @@ REPLY_ORDER = "Реплика человека лежит в чате задач
 # и следующий проход пошёл бы мимо разбора, в правки, которых дежурному не
 # положено.
 DUTY_ORDER = "Разбери неизвестный отказ конвейера "
+# Коды причин нештатной остановки (DK-1415). Строки те же, что константы
+# hooks/incidents.py, и парный тест держит равенство: код устойчив для сводки
+# остановок, и расхождение двух мест молчанием переименовало бы его.
+IDLE_REASON = "воронка"
+PASSES_REASON = "проходы исчерпаны"
+EXIT_REASON = "голова вышла"
+ORDER_REASON = "заказ не дошёл"
+SILENT_REASON = "тишина головы"
+BROKEN_REASON = "ошибка конвейера"
 # Начало ротационного заказа (DK-662): голова с прошедшим порог контекстом
 # дописывает сводку хвоста файлом и завершает ход, а сессия снимается и
 # поднимается новая с вводной хвоста. Строка одна на двоих: по ней же стенд
@@ -438,6 +450,28 @@ def chat_hook():
     finally:
         sys.path.pop(0)
     return _chat_hook
+
+
+_incidents = ""
+
+
+def incidents_hook():
+    """Модуль журнала инцидентов hooks/incidents.py либо None. Тот же импорт
+    по пути держат тик и дежурный (lift.py, duty.py в tools/devkitctl): запись
+    остановки и её исход живут в одном формате, и второй копии его тут нет."""
+    global _incidents
+    if _incidents != "":
+        return _incidents
+    _incidents = None
+    try:
+        spec = importlib.util.spec_from_file_location("devkit_incidents", INCIDENTS)
+        if spec is not None and spec.loader is not None:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _incidents = mod
+    except (OSError, ImportError, SyntaxError):
+        _incidents = None
+    return _incidents
 
 
 def die(text, code=2):
@@ -1003,6 +1037,31 @@ class Pipeline:
         except OSError as e:
             self.say("уведомление не отправлено (%s)" % e)
 
+    def incident(self, kind, why):
+        """Записать нештатную остановку в журнал инцидентов (DK-1415). Возврат
+        это ID записи либо пустая строка. Штатные стопы сюда не доезживают:
+        закрытая задача, ожидание человека и предусмотренного события записей
+        не дают, а дежурного по ним не поднимают. Служебные головы тоже мимо:
+        у проверяющего своя память повторов, а падение дежурного считается
+        попыткой самого дежурного, и инцидент о нём плодил бы цепочку."""
+        hook = incidents_hook()
+        if hook is None:
+            self.say("модуль инцидентов не нашёлся (%s), остановка осталась без записи" % INCIDENTS)
+            return ""
+        run = self.sess if not self.sid else "%s, сессия %s" % (self.sess, self.sid)
+        ident = hook.report(self.id, kind, why, run=run, root=self.proj,
+                            logs=[os.path.join(self.proj, ".devkit", "log")])
+        if ident:
+            self.log("инцидент %s, %s, %s" % (ident, kind, self.id), 0)
+        return ident
+
+    def broken(self, text, code=2):
+        """Ошибка окружения конвейера на работающей строке: запись инцидента
+        и выход. До взятия замка отказы настройки видит сам зовущий, и записи
+        на них нет."""
+        self.incident(BROKEN_REASON, text)
+        die(text, code)
+
     def account_tails(self, why):
         """Живые хвосты на стопе: каждый получает запись в задаче и уведомление.
         Штатный стоп закрытой задачи молчалив, и молчал вместе с ним и учёт
@@ -1127,8 +1186,12 @@ class Pipeline:
                 found.append("%s (%s)" % (what, sid[:8]))
         return found
 
-    def stop(self, code, sect, why, reason="", loud=True):
+    def stop(self, code, sect, why, reason="", loud=True, kind=""):
         self.say("стоп: %s (задача в %s)" % (why, sect or "неизвестно где"))
+        if kind and not self.duty() and not self.checker():
+            # Нештатная остановка при живой строке: дежурного поднимет тик по
+            # записи, автоматический подъём строки до разбора стоит (DK-1415).
+            self.incident(kind, why)
         self.account_tails(why)
         self.drop_head()
         self.log("конвейер %s встал: %s, %s в %s" % (self.sess, why, self.id, sect or "неизвестно где"), code)
@@ -1266,14 +1329,14 @@ class Pipeline:
             p = subprocess.run([AGENTCTL, "harness", "--json"],
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         except OSError as e:
-            die("раскладка подписок не прочиталась (%s harness --json): %s" % (AGENTCTL, e))
+            self.broken("раскладка подписок не прочиталась (%s harness --json): %s" % (AGENTCTL, e))
         if p.returncode != 0:
-            die("раскладка подписок не прочиталась (%s harness --json): %s"
-                % (AGENTCTL, " ".join((p.stdout or "").split())[:200]))
+            self.broken("раскладка подписок не прочиталась (%s harness --json): %s"
+                        % (AGENTCTL, " ".join((p.stdout or "").split())[:200]))
         try:
             data = json.loads(p.stdout or "{}")
         except ValueError as e:
-            die("раскладка подписок не разобралась: %s" % e)
+            self.broken("раскладка подписок не разобралась: %s" % e)
         want = (os.environ.get(HARNESS_ENV) or "").strip() or data.get("default") or ""
         for h in data.get("harnesses", []):
             if h.get("name") != want:
@@ -1282,8 +1345,8 @@ class Pipeline:
                 if m.get("tier") == self.tier:
                     return m.get("model") or ""
             names = ", ".join(m.get("tier", "") for m in h.get("models", []))
-            die("яруса %s у подписки %s нет%s"
-                % (self.tier, want, (", ярусы подписки: " + names) if names else ""))
+            self.broken("яруса %s у подписки %s нет%s"
+                        % (self.tier, want, (", ярусы подписки: " + names) if names else ""))
         return ""
 
     def head_cmd(self, order, live=True):
@@ -1312,7 +1375,7 @@ class Pipeline:
         try:
             self.head = subprocess.Popen(cmd, cwd=self.proj, env=env)
         except OSError as e:
-            die("клиент не поднялся (%s): %s" % (e, " ".join(self.client)))
+            self.broken("клиент не поднялся (%s): %s" % (e, " ".join(self.client)))
 
     def wait_session(self):
         """ID сессии живой головы из реестра чатов. Пустая строка значит, что
@@ -1767,7 +1830,7 @@ class Pipeline:
         строку поднимет тик: разбор затора живой головы не требует."""
         after = self.status(self.show()) or "конвейер"
         self.stop(1, after, "%s второе окно подряд: окно снято, замок освобождён; "
-                           "строку поднимет тик" % what)
+                           "строку поднимет тик" % what, kind=SILENT_REASON)
 
     def spare(self, n, word):
         """Отметка конца без парного «начат». Такую пишет вторая реплика головы
@@ -1996,7 +2059,8 @@ class Pipeline:
             if self.hands_over(told, after):
                 self.hand_over(after)
             if not word:
-                self.stop(1, after, "живая голова вышла на проходе %d, задача не закрыта" % n)
+                self.stop(1, after, "живая голова вышла на проходе %d, задача не закрыта" % n,
+                          kind=EXIT_REASON)
             # Голова раздала работу фоновым субагентам и ждёт их конца. Ход её
             # при этом короток, строка стоит, и воронка сняла бы окно вместе с
             # субагентами, потеряв их работу (так погиб исполнитель DK-864).
@@ -2065,12 +2129,14 @@ class Pipeline:
                 self.say("проход %d прошёл вхолостую (%d с, строка на месте), подряд таких %d из %d"
                          % (n, int(spent), idle, IDLE_LIMIT))
                 if idle >= IDLE_LIMIT:
-                    self.stop(1, after, "%d прохода подряд вхолостую, конвейер жжёт бюджет" % idle)
+                    self.stop(1, after, "%d прохода подряд вхолостую, конвейер жжёт бюджет" % idle,
+                              kind=IDLE_REASON)
             elif mine:
                 idle = 0
             sect = after
             if n - holds >= self.passes:
-                self.stop(1, after, "проходы исчерпаны (%d), задача не закрыта" % self.passes)
+                self.stop(1, after, "проходы исчерпаны (%d), задача не закрыта" % self.passes,
+                          kind=PASSES_REASON)
             time.sleep(self.pause())
             if self.taken():
                 self.say("заказ прохода %d не послан: ход уже начат репликой человека" % (n + 1))
@@ -2082,7 +2148,8 @@ class Pipeline:
             if rot:
                 order, fresh = self.rotate_order_text(), False
             if not self.send_order(order):
-                self.stop(1, after, "заказ прохода %d не дошёл до окна %s" % (n + 1, self.sess))
+                self.stop(1, after, "заказ прохода %d не дошёл до окна %s" % (n + 1, self.sess),
+                          kind=ORDER_REASON)
             n, mine = n + 1, fresh
 
     # -- проход -------------------------------------------------------------
@@ -2102,7 +2169,7 @@ class Pipeline:
         try:
             p = subprocess.Popen(cmd, cwd=self.proj, env=self.head_env(live=False))
         except OSError as e:
-            die("клиент не поднялся (%s): %s" % (e, " ".join(self.client)))
+            self.broken("клиент не поднялся (%s): %s" % (e, " ".join(self.client)))
         while True:
             try:
                 p.wait(timeout=BEAT_STEP)
@@ -2135,8 +2202,8 @@ class Pipeline:
             self.model = self.tier_model()
         said = self.show()
         if not said:
-            die("taskctl не сказал про %s ничего: доски тут нет либо строка "
-                "пропала, поднимать голову вслепую нельзя" % self.id)
+            self.broken("taskctl не сказал про %s ничего: доски тут нет либо строка "
+                        "пропала, поднимать голову вслепую нельзя" % self.id)
         sect = self.status(said)
         if sect == DONE:
             self.stop(0, sect, "задача закрыта", loud=False)
@@ -2226,14 +2293,16 @@ class Pipeline:
                 self.say("проход %d прошёл вхолостую (%d с, строка на месте), подряд таких %d из %d"
                          % (n, int(spent), idle, IDLE_LIMIT))
                 if idle >= IDLE_LIMIT:
-                    self.stop(1, after, "%d прохода подряд вхолостую, конвейер жжёт бюджет" % idle)
+                    self.stop(1, after, "%d прохода подряд вхолостую, конвейер жжёт бюджет" % idle,
+                              kind=IDLE_REASON)
             else:
                 idle = 0
             if n - holds >= self.passes:
                 break
             n += 1
             time.sleep(self.pause())
-        self.stop(1, self.status(self.show()), "проходы исчерпаны (%d), задача не закрыта" % self.passes)
+        self.stop(1, self.status(self.show()), "проходы исчерпаны (%d), задача не закрыта" % self.passes,
+                  kind=PASSES_REASON)
 
 
 def main(argv):

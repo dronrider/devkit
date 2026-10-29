@@ -9,6 +9,7 @@
 """
 import glob
 import importlib
+import importlib.util
 import io
 import json
 import os
@@ -2819,6 +2820,78 @@ class OneEntryTest(unittest.TestCase):
 
 def s_orders(s):
     return "заказы: %s, журнал:\n%s" % (s.orders(), "\n".join(s.journal()))
+
+
+class StopIncidentTest(unittest.TestCase):
+    """Нештатная остановка конвейера пишет инцидент (DK-1415). Запись получает
+    любая остановка работающей строки с кодом причины, а штатный стоп, служебная
+    голова дежурного и проверяющего записей не дают: иначе дежурный плодил бы
+    цепочку инцидентов о себе самом."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="task-run-incidents-")
+        os.makedirs(os.path.join(self.root, ".devkit"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.journal = os.path.join(self.root, "incidents.jsonl")
+        os.environ["DEVKIT_INCIDENTS_LOG"] = self.journal
+        self.addCleanup(os.environ.pop, "DEVKIT_INCIDENTS_LOG", None)
+        os.environ[task_run.AGENTS_ENV] = self.root
+        self.addCleanup(os.environ.pop, task_run.AGENTS_ENV, None)
+        self.pipe = task_run.Pipeline(task_run.parse_args(
+            ["DK-1", "-C", self.root, "--", "claude"]))
+        self.pipe.sid = SID
+        self.pipe.shout = unittest.mock.Mock()
+        self.pipe.drop_head = unittest.mock.Mock()
+        self.pipe.say = unittest.mock.Mock()
+        self.pipe.log = unittest.mock.Mock()
+
+    def journal_records(self):
+        if not os.path.isfile(self.journal):
+            return []
+        with open(self.journal, encoding="utf-8") as f:
+            return [json.loads(ln) for ln in f if ln.strip()]
+
+    def test_unplanned_stop_writes_incident(self):
+        with self.assertRaises(SystemExit):
+            self.pipe.stop(1, "ход", "живая голова вышла", kind=task_run.EXIT_REASON)
+        recs = self.journal_records()
+        self.assertEqual(len(recs), 1, recs)
+        self.assertEqual(recs[0]["task"], "DK-1")
+        self.assertEqual(recs[0]["reason"], task_run.EXIT_REASON)
+        self.assertFalse(recs[0]["outcome"])
+
+    def test_plain_stop_writes_nothing(self):
+        with self.assertRaises(SystemExit):
+            self.pipe.stop(0, "ход", "задача закрыта")
+        self.assertEqual(self.journal_records(), [])
+
+    def test_duty_head_writes_nothing(self):
+        self.pipe.order = task_run.DUTY_ORDER + "DK-1: отказ конвейера"
+        with self.assertRaises(SystemExit):
+            self.pipe.stop(1, "ход", "воронка", kind=task_run.IDLE_REASON)
+        self.assertEqual(self.journal_records(), [])
+
+    def test_checker_head_writes_nothing(self):
+        self.pipe.order = task_run.CHECK_ORDER + "DK-1"
+        with self.assertRaises(SystemExit):
+            self.pipe.stop(1, "ход", "воронка", kind=task_run.IDLE_REASON)
+        self.assertEqual(self.journal_records(), [])
+
+    def test_reason_codes_match_the_journal(self):
+        """Оболочка и журнал живут в разных деревьях, а код причины обязан
+        совпадать: по нему дежурный находит запись и сводка считает
+        остановки, и расхождение молчало бы до первого живого сбоя."""
+        spec = importlib.util.spec_from_file_location(
+            "journal", os.path.join(task_run.HOOKS, "incidents.py"))
+        journal = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(journal)
+        for own, shared in ((task_run.IDLE_REASON, journal.IDLE_RUNS),
+                            (task_run.PASSES_REASON, journal.PASSES_OUT),
+                            (task_run.EXIT_REASON, journal.HEAD_EXIT),
+                            (task_run.ORDER_REASON, journal.ORDER_LOST),
+                            (task_run.SILENT_REASON, journal.HEAD_SILENT),
+                            (task_run.BROKEN_REASON, journal.BROKEN)):
+            self.assertEqual(own, shared)
 
 
 if __name__ == "__main__":

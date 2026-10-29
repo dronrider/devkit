@@ -480,6 +480,9 @@ func root(dir string) string {
 	if err != nil {
 		fail(err)
 	}
+	if err := cliTakeDraftLock(r); err != nil {
+		fail(err)
+	}
 	return r
 }
 
@@ -502,6 +505,7 @@ func main() {
 		fmt.Print(usageText)
 		return
 	}
+	cliTxEnabled = cliNeedsDraftLock(args)
 	logStart, logCmd = gdir, args[0]
 	if args[0] == "draft" && len(args) > 1 && draftSubs[args[1]] {
 		logCmd += " " + args[1]
@@ -1310,6 +1314,11 @@ func main() {
 		logRun(2)
 		os.Exit(2)
 	}
+	tail, finishErr := cliFinishDraftLock(err == nil)
+	if err == nil && finishErr != nil {
+		err = finishErr
+	}
+	msg += tail
 	touchWork(args, err)
 	if err != nil {
 		fail(err)

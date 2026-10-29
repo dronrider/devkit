@@ -834,7 +834,7 @@ func TestDraftPromoteKeepsGroom(t *testing.T) {
 	if strings.Contains(string(data), draftGroomHeading) {
 		t.Fatalf("раздел «Грумминг» переехал в файл задачи как есть:\n%s", data)
 	}
-	want := "## Ход работы\n\n- Из черновика " + id + " «уведомитель шумит из песочницы»: записан " + today() + ", оформлен " + today() + ".\n- " + today() + ", отложен: ждём повторного случая\n"
+	want := "## Ход работы\n\n- Из черновика " + id + " «уведомитель шумит из песочницы»: записан " + today() + ", оформлен " + today() + ". Тип task, источник thought.\n- " + today() + ", отложен: ждём повторного случая\n"
 	if !strings.Contains(string(data), want) {
 		t.Fatalf("пометка не переехала в «Ход работы»:\n%s\nждал:\n%s", data, want)
 	}

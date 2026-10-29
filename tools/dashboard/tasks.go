@@ -13,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dronrider/devkit/internal/draftmeta"
-	"github.com/dronrider/devkit/internal/drafttx"
 	"github.com/dronrider/devkit/internal/taskform"
 )
 
@@ -1304,8 +1302,13 @@ func (s *server) handleTaskFilePut(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found, id, _, _, ok := s.taskRow(w, r)
-	if !ok {
+	found := s.findProject(w, r, "правка файла задачи")
+	if found == nil {
+		return
+	}
+	id := r.PathValue("id")
+	if !goalIDRe.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на ID задачи", id)})
 		return
 	}
 	var body struct {
@@ -1321,59 +1324,22 @@ func (s *server) handleTaskFilePut(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
 		return
 	}
-	lock, err := drafttx.Acquire(found.Path)
-	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
-		return
-	}
-	defer func() {
-		if lock != nil {
-			lock.Close()
-		}
-	}()
-	rel := taskFileRel(id)
-	path := filepath.Join(found.Path, filepath.FromSlash(rel))
-	if !isFile(path) {
-		writeJSON(w, http.StatusNotFound, map[string]string{
-			"error": fmt.Sprintf("файла задачи %s нет: сначала заведи его кнопкой «Завести файл» (taskctl file), она же чинит ссылку в строке", rel)})
-		return
-	}
 	if strings.TrimSpace(body.Text) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "пустой текст затёр бы постановку: жду JSON {\"text\": \"...\"}"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустой текст затёр бы постановку"})
 		return
 	}
-	old, err := os.ReadFile(path)
+	rel := taskFileRel(id)
+	out, code, err := s.taskctlWriteIn(found.Path, body.Text, "file", "put", id)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		return
-	}
-	protected, err := draftmeta.RecordProtected(old)
-	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
-		return
-	}
-	text := strings.TrimRight(body.Text, "\n") + "\n"
-	if protected {
-		updated, err := draftmeta.ProtectRecord([]byte(text))
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
+		if strings.Contains(err.Error(), "нет на доске") || strings.Contains(err.Error(), "не найден") {
+			code = http.StatusNotFound
 		}
-		text = string(updated)
-	}
-	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл задачи не записался: %v", err)})
+		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := lock.Close(); err != nil {
-		lock = nil
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		return
-	}
-	lock = nil
+
 	resp := map[string]string{"id": id, "file": rel,
-		"message": fmt.Sprintf("текст %s записан", rel)}
+		"message": out}
 	if note := commitDocs(found.Path, boardCommitMsg(id, "правка файла задачи с дашборда"), rel); note != "" {
 		resp["note"] = note
 		s.logf("правка файла %s в %s: %s", id, found.Name, note)

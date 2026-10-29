@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/draftmeta"
+	"github.com/dronrider/devkit/internal/draftproposal"
 	"github.com/dronrider/devkit/internal/drafttx"
 )
 
@@ -306,6 +307,16 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, груминг мог уже завести по нему задачу", id, found.Name, rel)})
 		return
 	}
+	material, _, err := draftproposal.Material(text)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	material, _, err = draftmeta.Material(material)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
 	header, err := draftmeta.Parse(text)
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
@@ -317,7 +328,7 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 	// (DK-1043): список исхода на экране переключает подсказку без похода на
 	// сервер за вторым заказом.
 	out := map[string]any{
-		"id": id, "file": rel, "text": string(text), "type": header.Type, "source": header.Source, "lock": header.Lock,
+		"id": id, "file": rel, "text": string(material), "type": header.Type, "source": header.Source, "lock": header.Lock,
 		"order":    groomPrompt(id, "", draftModeGroom),
 		"orderRun": groomPrompt(id, "", draftModeRun),
 		// База правки едет вместе с текстом: экран вернёт её при сохранении, и
@@ -412,11 +423,51 @@ func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 			why = fmt.Sprintf("правка записи %s пришла без базы: сверять её не с чем, а писателей у записи двое, экран и разбор", id)
 		}
 		s.logf("правка черновика %s в %s отклонена: база разошлась", id, found.Name)
+		material, _, err := draftproposal.Material(was)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		material, _, err = draftmeta.Material(material)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
 		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": why, "text": string(was), "hash": now})
+			"error": why, "text": string(material), "hash": now})
 		return
 	}
 	text := strings.TrimRight(body.Text, "\n") + "\n"
+	_, incomingSection, err := draftproposal.Material([]byte(text))
+	if err != nil || incomingSection {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "раздел предложений изменяется через карточки"})
+		return
+	}
+	restored, err := draftmeta.Restore([]byte(text), was)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	text = string(restored)
+	_, hadSection, err := draftproposal.Material(was)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	if hadSection {
+		state, err := draftproposal.Parse(was)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		updated, err := draftproposal.Replace([]byte(text), state)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		text = string(updated)
+	}
+
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("черновик не записался: %v", err)})
 		return

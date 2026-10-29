@@ -16446,6 +16446,50 @@ function watchRunning() {
   }, true);
 }
 
+function draftMetadataEditor(base, meta, types, disabled) {
+  const box = el("div", "draft-meta");
+  const row = el("div", "pickrow");
+  function field(label, options, value) {
+    const wrap = el("label", "pick");
+    wrap.append(el("span", "pl", label));
+    const select = el("select");
+    select.disabled = disabled;
+    for (const item of options) {
+      const option = el("option", "", item.title);
+      option.value = item.value;
+      option.selected = item.value === value;
+      select.append(option);
+    }
+    wrap.append(select);
+    row.append(wrap);
+    return select;
+  }
+  const kind = field("тип", types.map((t) => ({ value: t.name, title: t.title })), meta.type);
+  const source = field("источник", [
+    { value: "thought", title: "мысль" }, { value: "meeting", title: "встреча" },
+    { value: "mail", title: "почта" }, { value: "messenger", title: "мессенджер" },
+    { value: "link", title: "ссылка" },
+  ], meta.source);
+  const lock = field("доступ", [
+    { value: "unlocked", title: "обычный" }, { value: "locked", title: "закрытый" },
+  ], meta.lock);
+  const save = el("button", "btn", "Сохранить поля");
+  save.type = "button";
+  save.disabled = disabled || types.length === 0;
+  save.addEventListener("click", async () => {
+    if (taskDraft.dirty) { sayResult("Сначала сохраните текст записи", true); return; }
+    save.disabled = true;
+    const result = await api(base + "/meta", { method: "PUT", body: {
+      type: kind.value, source: source.value, lock: lock.value,
+    } });
+    sayResult(apiSaid(result), !result.ok);
+    if (result.ok) await refresh(); else save.disabled = false;
+  });
+  row.append(save);
+  box.append(row);
+  return box;
+}
+
 async function renderDraft(project, works, id) {
   const groups = document.getElementById("groups");
   const base = "/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id);
@@ -16454,6 +16498,8 @@ async function renderDraft(project, works, id) {
   // него ранг, зависимости и поля строки доски: их запись получит только от
   // груминга, и показывать их пустыми не за чем.
   const text = await api(base);
+  const typeResult = await api("/api/projects/" + encodeURIComponent(project) + "/drafts/types");
+  const draftTypes = typeResult.ok && Array.isArray(typeResult.body.types) ? typeResult.body.types : [];
   // Груминг кончился заведением задачи, пока форма была открыта: записи в
   // накопителе больше нет, и формы черновика для этого ID тоже. Экран уходит на
   // форму задачи, как экран задачи уходит на запись в обратную сторону. Правка
@@ -16488,7 +16534,7 @@ async function renderDraft(project, works, id) {
   const locked = running && !waiting;
   sync(groups, [{
     key: "draft-page",
-    sign: [id, said, hash, running, locked, text.body.error || "", JSON.stringify(waiting)].join("|"),
+    sign: [id, said, hash, running, locked, text.body.error || "", JSON.stringify(waiting), JSON.stringify(draftTypes)].join("|"),
     make: () => {
       const form = { text: said };
       const chips = [el("span", "chip", "черновик")];
@@ -16577,6 +16623,9 @@ async function renderDraft(project, works, id) {
         detail: { file: text.ok ? text.body.file || "" : "", text: said,
           note: text.ok ? "запись пуста" : text.body.error || "текст записи не прочитался" },
         form, chips, actions,
+        afterChips: text.ok ? [draftMetadataEditor(base, {
+          type: text.body.type || "task", source: text.body.source || "thought", lock: text.body.lock || "unlocked",
+        }, draftTypes, locked)] : [],
         has: { file: true, pencil: !locked, read: true, chat: true },
         penLabel: "Править запись",
         // Причина замка живёт подсказкой погашенного карандаша: пропавшая

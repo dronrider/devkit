@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/draftproposal"
 	"github.com/dronrider/devkit/internal/drafttx"
 )
 
@@ -1628,6 +1629,29 @@ func TestDraftMetadataThroughTaskctl(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(text, `"source":"meeting"`) || !strings.Contains(text, `"lock":"locked"`) {
 		t.Fatalf("read %d %s", resp.StatusCode, text)
 	}
+	var shown struct {
+		Text string `json:"text"`
+		Hash string `json:"hash"`
+	}
+	if err := json.Unmarshal([]byte(text), &shown); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(shown.Text, "замок: locked") || strings.Contains(shown.Text, "источник: meeting") {
+		t.Fatalf("machine metadata shown: %s", shown.Text)
+	}
+	edit, err := json.Marshal(map[string]string{"text": shown.Text + "\nдополнение", "base": shown.Hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp = doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/XR-005", string(edit))
+	editText := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("edit material %d %s", resp.StatusCode, editText)
+	}
+	kept := readFile(t, filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md"))
+	if !strings.Contains(kept, "замок: locked") || !strings.Contains(kept, "источник: meeting") {
+		t.Fatalf("metadata lost: %s", kept)
+	}
 	resp = doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/XR-005/meta", `{"type":"task","source":"mail","lock":"unlocked"}`)
 	text = body(t, resp)
 	if resp.StatusCode != http.StatusOK {
@@ -1636,5 +1660,60 @@ func TestDraftMetadataThroughTaskctl(t *testing.T) {
 	data := readFile(t, filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md"))
 	if !strings.Contains(data, "источник: mail") || !strings.Contains(data, "замок: unlocked") {
 		t.Fatalf("metadata: %s", data)
+	}
+}
+
+func TestDraftEditorPreservesProposalsWithoutShowingJSON(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"title":"исходник","prio":"mid"}`).Body.Close()
+	path := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := draftproposal.State{Version: 1, State: "active", Proposals: []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Reason: "лишнее"}}}
+	data, err = draftproposal.Replace(data, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
+	var got struct {
+		Text string `json:"text"`
+		Hash string `json:"hash"`
+	}
+	if err = json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if strings.Contains(got.Text, "```json") || strings.Contains(got.Text, "Предложения разбора") {
+		t.Fatalf("machine section shown: %s", got.Text)
+	}
+	req, _ := json.Marshal(map[string]string{"text": got.Text + "\nправка пользователя", "base": got.Hash})
+	resp = doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/XR-005", string(req))
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("save %d %s", resp.StatusCode, text)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := draftproposal.Parse(data)
+	if err != nil || len(saved.Proposals) != 1 || saved.Proposals[0].Reason != "лишнее" || !strings.Contains(string(data), "правка пользователя") {
+		t.Fatalf("saved %s %v", data, err)
+	}
+}
+
+func TestStaticDraftMetadataFields(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_draftmeta.mjs"), filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("поля записи: %v\n%s", err, out)
 	}
 }

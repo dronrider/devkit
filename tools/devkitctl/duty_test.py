@@ -6,6 +6,7 @@
 проверяет ResumeFailedTest в watch_test.py.
 """
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -361,6 +362,141 @@ class DutyAgentTest(unittest.TestCase):
         # Второй заход с act видит ту же запись как неразобранную.
         self.duty_lines()
         self.assertEqual(len(self.runs()), 1, self.call.calls)
+
+
+class IncidentDutyTest(unittest.TestCase):
+    """Дежурный по открытым инцидентам конвейера (DK-1415).
+
+    Инцидент это тот же адрес дежурного, что метка в файле задачи, но исходы
+    у него дописываются в запись: вопрос, черновик, возобновление либо
+    потолок попыток.
+    """
+
+    TASK = "DK-901"
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="duty-incident-"))
+        self.addCleanup(shutil.rmtree, str(self.dir), True)
+        self.home = self.dir / "home"
+        (self.home / ".devkit").mkdir(parents=True)
+        self.proj = self.dir / "proj"
+        (self.proj / "docs" / "tasks").mkdir(parents=True)
+        self.call = Fake(out="ступень: поднято, код 0")
+        self.bin = "/bin/подставной-taskctl"
+        self.hook = duty.incidents_mod()
+        self.ident = self.hook.report(self.TASK, self.hook.IDLE_RUNS,
+                                      "3 прохода подряд вхолостую",
+                                      run="окно dk-901", root=str(self.proj),
+                                      home=self.home)
+
+    def task_file(self, extra=""):
+        path = self.proj / "docs" / "tasks" / ("%s.md" % self.TASK)
+        path.write_text("# %s\n\n## Ход работы\n\n%s\n" % (self.TASK, extra),
+                        encoding="utf-8")
+        return path
+
+    def duty_lines(self, call=None):
+        return duty.duty_root(self.proj, call=call or self.call, taskctl=self.bin,
+                              home=self.home)
+
+    def runs(self, call=None):
+        call = call or self.call
+        return [a for a in call.calls if a and a[0] == self.bin and "run" in a]
+
+    def settled(self):
+        rec = [r for r in self.hook.read(home=self.home)
+               if r.get("id") == self.ident][0]
+        return rec.get("outcome")
+
+    def notifies(self, call=None):
+        call = call or self.call
+        return [a for a in call.calls if len(a) > 1 and "notify.py" in str(a[1])]
+
+    def test_tick_rises_duty_by_open_incident(self):
+        lines = self.duty_lines()
+        ran = self.runs()
+        self.assertEqual(len(ran), 1, self.call.calls)
+        self.assertEqual(ran[0][4], self.TASK)
+        self.assertIn("дежурный по инциденту %s" % self.ident, " ".join(lines))
+        order = ran[0][ran[0].index("--order") + 1]
+        self.assertIn("возобновление", order.lower())
+        self.assertIn("не обходи без разрешения", order)
+
+    def test_incident_of_other_root_is_silent(self):
+        other = self.hook.report("DK-902", self.hook.IDLE_RUNS, "воронка",
+                                 root="/чужой-корень", home=self.home)
+        self.hook.settle(self.ident, self.hook.RESUMED, home=self.home)
+        lines = self.duty_lines()
+        self.assertEqual(self.runs(), [], self.call.calls)
+        self.assertNotIn(other, " ".join(lines))
+
+    def test_ask_closes_incident(self):
+        ask = self.proj / ".devkit" / "chat" / ("task-%s.ask" % self.TASK)
+        ask.parent.mkdir(parents=True)
+        ask.write_text("вопрос лежит", encoding="utf-8")
+        lines = self.duty_lines()
+        self.assertEqual(self.runs(), [], self.call.calls)
+        self.assertEqual(self.settled(), self.hook.ASK_HUMAN)
+        self.assertIn("закрыт вопросом", " ".join(lines))
+
+    def test_draft_closes_incident(self):
+        drafts = self.proj / "docs" / "tasks" / "drafts"
+        drafts.mkdir(parents=True)
+        self.duty_lines()
+        (drafts / "DK-999.md").write_text("# DK-999: черновик разбора\n",
+                                          encoding="utf-8")
+        lines = self.duty_lines()
+        self.assertEqual(self.settled(), self.hook.DRAFT_MADE)
+        self.assertIn("закрыт черновиком", " ".join(lines))
+
+    def test_resume_mark_raises_the_head(self):
+        self.task_file("- Возобновление: причина устранена, лимиты целы.")
+        lines = self.duty_lines()
+        ran = self.runs()
+        self.assertEqual(len(ran), 1, self.call.calls)
+        self.assertEqual(ran[0][4], self.TASK)
+        order = ran[0][ran[0].index("--order") + 1]
+        self.assertIn("продолжай %s" % self.TASK, order)
+        self.assertEqual(self.settled(), self.hook.RESUMED)
+        self.assertIn("закрыт возобновлением", " ".join(lines))
+
+    def test_live_head_closes_incident(self):
+        lock = self.home / ".devkit" / ("task-%s.lock" % self.TASK)
+        lock.mkdir(parents=True)
+        (lock / "pid").write_text("%d\n" % os.getpid(), encoding="utf-8")
+        lines = self.duty_lines()
+        self.assertEqual(self.runs(), [], self.call.calls)
+        self.assertEqual(self.settled(), self.hook.RESUMED)
+        self.assertIn("снова поднят", " ".join(lines))
+
+    def test_ceiling_shouts_and_settles(self):
+        for _ in range(duty.SPAWN_TRIES):
+            duty.write_try(duty.signature("воронка: 3 прохода подряд вхолостую"),
+                           home=self.home)
+        call = Fake(code=2, out="лестница отказала")
+        lines = duty.duty_root(self.proj, call=call, taskctl=self.bin,
+                               home=self.home)
+        self.assertEqual(self.settled(), self.hook.TRIES_OUT)
+        joined = " ".join(lines)
+        self.assertIn("потолком", joined)
+        self.assertTrue(self.notifies(call=call), "громкий зов не ушёл")
+        noted = [r for r in self.hook.read(home=self.home)
+                 if r.get("id") == self.ident][0].get("notes") or []
+        self.assertTrue(noted, "попытки не дополнили запись инцидента")
+
+    def test_spawn_attempt_is_noted(self):
+        self.duty_lines()
+        noted = [r for r in self.hook.read(home=self.home)
+                 if r.get("id") == self.ident][0].get("notes") or []
+        self.assertTrue(any("запуск дежурного" in ln for ln in noted), noted)
+
+    def test_report_lists_open_incidents(self):
+        words = " ".join(duty.incident_report(only_open=True, home=self.home))
+        self.assertIn(self.ident, words)
+        self.assertIn(self.TASK, words)
+        self.assertIn(self.hook.IDLE_RUNS, words)
+        full = duty.incident_report(one=self.ident, home=self.home)
+        self.assertTrue(any("диагностика" in ln for ln in full), full)
 
 
 if __name__ == "__main__":

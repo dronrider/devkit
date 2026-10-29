@@ -17,6 +17,7 @@ draft`). Громкий зов человеку остаётся хвостом 
 захода, неизвестный исход это предмет здесь).
 """
 import json
+import importlib.util
 import os
 import re
 import shutil
@@ -67,6 +68,43 @@ SPAWN_TRIES = 3
 # Суффикс причины с ID сессии. Он различает два падения одного и того же
 # отказа, а для границы DK-1115 нужна сама причина, без адреса сессии.
 SESSION_TAIL = re.compile(r",\s*сессия\s+\S+\s*$")
+
+# Правило возобновления для инцидентов конвейера (DK-1415). Едет в заказ
+# дежурного хвостом причины: остановка известна, и разбор обязан сказать, чем
+# кончился, а не только спросить. Замок задачи занят самим дежурным, и
+# возобновление ложится записью в файл задачи, а подъём делает тик. Явная
+# остановка человеком и исчерпанный бюджет дежурному не подчинены, и обходить
+# их он не вправе.
+RESUME_RULE = ("Возобновление: если причина понятна, живая работа цела и лимиты "
+               "проходов не исчерпаны, допиши в «Ход работы» файла задачи строку "
+               "«- Возобновление: <чем причина устранена>.» и заверши ход: замок "
+               "задачи занят твоим подъёмом, и конвейер поднимет сам тик командой "
+               "`taskctl run`. Исчерпанные лимиты и явную остановку человеком не "
+               "обходи без разрешения.")
+
+# Начало записи возобновления в «Ходе работы» файла задачи. Её пишет сам
+# дежурный, а исполняет тик: вторая голова по живому замку не встанет.
+RESUME_MARK = "- Возобновление:"
+
+_incidents = None
+
+
+def incidents_mod():
+    """Модуль журнала инцидентов hooks/incidents.py либо None. Тот же импорт
+    по пути держит оболочка конвейера (task-run.py в kit/skills): формат
+    записи один, и второй копии его тут нет."""
+    global _incidents
+    if _incidents is None:
+        spec = importlib.util.spec_from_file_location(
+            "devkit_incidents",
+            str(Path(__file__).resolve().parents[2] / "hooks" / "incidents.py"))
+        try:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        except (OSError, ImportError, SyntaxError, AttributeError):
+            return None
+        _incidents = mod
+    return _incidents
 
 
 def duty_order(task, why):
@@ -139,6 +177,86 @@ def task_marks(root):
             if why is not None:
                 found.append((task, why, ln.strip()))
     return found
+
+
+def incident_marks(root, home=None):
+    """Открытые инциденты корня: [(задача, причина, запись), ...]. Записи
+    чужих корней молчат: дежурного по ним поднимает обход своего корня.
+    Возврат это пары и сам модуль журнала либо None, когда журнала нет."""
+    hook = incidents_mod()
+    if hook is None:
+        return [], None
+    out = []
+    mine = os.path.normpath(str(root))
+    for rec in hook.open_list(home=home):
+        task = str(rec.get("task") or "").upper()
+        if not task:
+            continue
+        rec_root = str(rec.get("root") or "")
+        if rec_root and os.path.normpath(rec_root) != mine:
+            continue
+        why = "%s: %s" % (rec.get("reason") or "остановка", rec.get("why") or "")
+        out.append((task, why, rec))
+    return out, hook
+
+
+def resume_mark(root, task, since=None):
+    """Свежая запись возобновления в «Ходе работы» файла задачи либо пусто.
+    Свежесть меряется по времени инцидента: запись старше него это хвост
+    прошлого разбора, и возобновлением нового инцидента она не считается."""
+    path = Path(root) / "docs" / "tasks" / ("%s.md" % task)
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if since is not None and path.stat().st_mtime < since:
+            return ""
+    except OSError:
+        return ""
+    for ln in stage_lines(text):
+        if ln.strip().startswith(RESUME_MARK):
+            return ln.strip()
+    return ""
+
+
+def _incident_when(rec):
+    """Время записи инцидента в секундах либо None."""
+    try:
+        return datetime.strptime(str(rec.get("when") or ""), "%Y-%m-%dT%H:%M:%S").timestamp()
+    except ValueError:
+        return None
+
+
+def incident_report(one="", only_open=False, home=None):
+    """Сводка по журналу инцидентов для команды человеку: одна запись целиком,
+    перечень открытых либо счёт остановок по причинам и исходам."""
+    hook = incidents_mod()
+    if hook is None:
+        return ["модуль инцидентов не нашёлся: журнала нет"]
+    if one:
+        for rec in hook.read(home=home):
+            if rec.get("id") == one:
+                out = ["%s: задача %s, %s" % (rec.get("id"), rec.get("task"),
+                                              rec.get("reason")),
+                       "остановка %s, запуск %s, обнаружений %d"
+                       % (rec.get("when"), rec.get("run") or "-",
+                          int(rec.get("seen") or 1)),
+                       "диагностика: %s" % (rec.get("why") or "-"),
+                       "исход: %s" % (rec.get("outcome") or "открыт")]
+                notes = rec.get("notes") or []
+                out += ["попытки:"] + ["  " + ln for ln in notes] if notes else []
+                logs = rec.get("logs") or []
+                if logs:
+                    out.append("журналы: %s" % ", ".join(str(p) for p in logs))
+                return out
+        return ["инцидента %s в журнале нет" % one]
+    if only_open:
+        rows = hook.open_list(home=home)
+        if not rows:
+            return ["открытых инцидентов нет"]
+        return ["%s: задача %s, %s, %s, обнаружений %d"
+                % (rec.get("id"), rec.get("task"), rec.get("reason"),
+                   rec.get("when"), int(rec.get("seen") or 1))
+                for rec in rows]
+    return hook.summary(home=home)
 
 
 def state_path(home=None):
@@ -303,7 +421,8 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True):
     call = subprocess.run if call is None else call
     lines = []
     marks = task_marks(root)
-    if not marks:
+    incidents, hook = incident_marks(root, home=home)
+    if not marks and not incidents:
         return lines
     known = read_state(home=home)
     tries = read_tries(home=home)
@@ -395,9 +514,108 @@ def duty_root(root, call=None, taskctl=None, home=None, act=True):
                          "(попытка %d из %d), следующим тиком потолок добивается "
                          "громким зовом; %s"
                          % (root, task, sig, n, SPAWN_TRIES, said))
+    # Открытые инциденты конвейера (DK-1415): тот же разбор, но исходы у него
+    # свои, и каждый дописывается в запись инцидента. Очередь общая с метками
+    # файлов задач: подпись одна, и дежурный по ней тоже один.
+    for task, why, rec in incidents:
+        sig = signature(why)
+        ident = rec.get("id") or ""
+        if sig in known or sig in seen:
+            continue
+        seen.add(sig)
+        if ask_flag(root, task):
+            fresh.add(sig)
+            _settle(hook, ident, hook.ASK_HUMAN, home)
+            lines.append("корень %s: по %s лежит вопрос человеку, инцидент %s "
+                         "закрыт вопросом" % (root, task, ident))
+            continue
+        base, since = draft_base(sig, home=home)
+        draft = fresh_draft(root, base, since)
+        if draft:
+            fresh.add(sig)
+            _settle(hook, ident, hook.DRAFT_MADE, home)
+            lines.append("корень %s: по %s появился черновик %s, инцидент %s "
+                         "закрыт черновиком" % (root, task, draft, ident))
+            continue
+        import lift
+        devhome = (Path(home) / ".devkit") if home else Path(os.path.expanduser("~/.devkit"))
+        if lift.head_up(task, str(devhome)):
+            fresh.add(sig)
+            _settle(hook, ident, hook.RESUMED, home)
+            lines.append("корень %s: конвейер по %s снова поднят, инцидент %s "
+                         "закрыт возобновлением" % (root, task, ident))
+            continue
+        line = resume_mark(root, task, since=_incident_when(rec))
+        if line:
+            # Дежурный сказал возобновлять: замок занят его ходом, и подъём
+            # делает тик тем же заказом продолжения, каким поднимает брошенные
+            # строки. Отбитый подъём остаётся попыткой и повторится тиком.
+            code, words = lift.run_order(root, task, lift.ORDER % task,
+                                         call=call, taskctl=taskctl)
+            _note(hook, ident, "подъём по записи возобновления: код %d" % code, home)
+            if code == 0:
+                fresh.add(sig)
+                _settle(hook, ident, hook.RESUMED, home)
+                lines.append("корень %s: %s, инцидент %s закрыт возобновлением: %s"
+                             % (root, line, ident, words))
+            else:
+                lines.append("корень %s: %s, подъём по инциденту %s отбит кодом %d: %s"
+                             % (root, line, ident, code, words))
+            continue
+        if not act:
+            lines.append("корень %s: задача %s ждёт дежурного по инциденту %s, «%s»"
+                         % (root, task, ident, sig))
+            continue
+        if tries.get(sig, 0) >= SPAWN_TRIES:
+            note, delivered = shout("разбор дежурного не поднять",
+                         "Задача %s: дежурный не оставил исхода за %d попыток. "
+                         "Инцидент %s, причина «%s». Громкий зов это хвост "
+                         "исчерпанного повтора." % (task, tries[sig], ident, sig),
+                         root, call=call, task=task)
+            fresh.add(sig)
+            _settle(hook, ident, hook.TRIES_OUT, home)
+            _note(hook, ident, "потолок попыток, громкий зов человеку", home)
+            lines.append("корень %s: дежурный по инциденту %s не оставил исхода за "
+                         "%d попыток, подпись «%s» закрыта потолком; %s; %s"
+                         % (root, ident, tries[sig], sig, note,
+                            "громкий зов человеку ушёл" if delivered else
+                            "уведомление не доставлено"))
+            continue
+        before = draft_names(root)
+        said, code = spawn(root, task, "%s. %s" % (why, RESUME_RULE),
+                           call=call, taskctl=taskctl)
+        _note(hook, ident, "запуск дежурного: код %d" % code, home)
+        if code == 3:
+            lines.append("корень %s: дежурный по инциденту %s ждёт свободного "
+                         "замка; запуск: %s; повтор тиком" % (root, ident, said))
+            continue
+        if code == 0:
+            write_try(sig, drafts=before, home=home)
+            lines.append("корень %s: дежурный по инциденту %s прошёл без исхода, "
+                         "подпись «%s» (попытка %d из %d), повтор тиком; %s"
+                         % (root, ident, sig, tries.get(sig, 0) + 1,
+                            SPAWN_TRIES, said))
+            continue
+        n = tries.get(sig, 0) + 1
+        write_try(sig, home=home)
+        lines.append("корень %s: дежурного по инциденту %s не поднять, подпись «%s» "
+                     "(попытка %d из %d), повтор тиком; %s"
+                     % (root, ident, sig, n, SPAWN_TRIES, said))
     if fresh and act:
         remember_many(fresh, home=home)
     return lines
+
+
+def _settle(hook, ident, outcome, home):
+    """Закрыть инцидент исходом, если журнал доступен."""
+    if hook is not None and ident:
+        hook.settle(ident, outcome, home=home)
+
+
+def _note(hook, ident, line, home):
+    """Дополнить инцидент строкой попытки, если журнал доступен."""
+    if hook is not None and ident:
+        hook.note(ident, line, home=home)
 
 
 def remember_many(sigs, home=None):

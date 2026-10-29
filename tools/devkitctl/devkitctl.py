@@ -3968,6 +3968,12 @@ def main(argv):
                    help="живой круг связки во временном проекте, с уборкой за собой")
     sub.add_parser("waitcheck",
                    help="стенд трёх ожиданий конвейера во временном проекте")
+    inc = sub.add_parser("incidents",
+                         help="остановки конвейера: сводка по причинам и исходам")
+    inc.add_argument("--open", action="store_true",
+                     help="перечень открытых инцидентов вместо сводки")
+    inc.add_argument("--id", dest="one", default="",
+                     help="одна запись инцидента целиком")
     a = ap.parse_args(argv)
     if a.cmd == "doctor":
         # Один прогон спрашивает у git одно и то же по многу раз (сводка режима,
@@ -4005,6 +4011,11 @@ def main(argv):
         rc = selfcheck.main()
     elif a.cmd == "waitcheck":
         rc = waitcheck.main()
+    elif a.cmd == "incidents":
+        import duty
+        for ln in duty.incident_report(one=a.one, only_open=a.open):
+            print(ln)
+        rc = 0
     elif a.cmd == "drain":
         rc = drain_run(a.dir, a.all)
     elif a.cmd == "cachekeep":

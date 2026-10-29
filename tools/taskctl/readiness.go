@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/taskform"
 )
 
@@ -27,7 +28,18 @@ func prepareTaskBody(root, id string, p AddParams, rank string) (string, bool, e
 	body := fmt.Sprintf("# %s: %s\n", id, p.Title)
 	switch {
 	case promoted:
+		header, err := draftmeta.Parse(draft)
+		if err != nil {
+			return "", false, fmt.Errorf("%s: %w", draftPath(root, id), err)
+		}
 		body = renderTaskFromDraft(id, p.Title, rank, string(draft), time.Now().Format(draftDateLayout))
+		if header.Lock == "locked" {
+			protected, err := draftmeta.ProtectRecord([]byte(body))
+			if err != nil {
+				return "", false, err
+			}
+			body = string(protected)
+		}
 	case p.BodyFile != "":
 		var data []byte
 		if p.BodyFile == "-" {

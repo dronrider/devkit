@@ -2,12 +2,18 @@ package main
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestProposalsSaveAndStale(t *testing.T) {
 	root := setup(t)
+	kit, err := filepath.Abs("../../kit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", filepath.Dir(kit))
 	if _, err := cmdDraft(root, "исходный материал", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -45,6 +51,11 @@ func TestProposalsSaveAndStale(t *testing.T) {
 
 func TestProposalRejectPartialAndHistory(t *testing.T) {
 	root := setup(t)
+	kit, err := filepath.Abs("../../kit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", filepath.Dir(kit))
 	if _, err := cmdDraft(root, "исходный материал", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}

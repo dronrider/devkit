@@ -5823,17 +5823,20 @@ async function renderTask(project, works, id, pre) {
     goalComposition(project, id, comp).catch(console.error);
   }
 
-  // Поле срока стоит над описанием рядом с шапкой этапа и появляется
-  // карандашом вместе с остальной правкой (DK-1464). Рядом с карточкой ранга
-  // оно не живёт: порядок строк держит ранг, а срок только группирует и
-  // подсвечивает, и соседство связывало бы их зря.
+  // Срок и контроль стоят одним блоком над описанием и открыты сразу, без
+  // карандаша (находки 4 и 6 DK-1503): срок это часть строки, которую читают
+  // на каждом заходе, и прятать его за режимом правки значило прятать половину
+  // смысла строки. Дата выбирается пикером поля, а контроль считается от срока
+  // и потому живёт рядом, а не отдельной карточкой: без срока его не ставит
+  // taskctl, снятие контроля срок не трогает, а снятие срока при живом
+  // контроле taskctl отбивает сам, словами в ответе правки.
   const dueBox = el("fieldset", "dfield duebox");
-  dueBox.append(el("legend", "", "срок"));
+  dueBox.append(el("legend", "", "срок и контроль"));
   const dueInput = el("input", "duein");
   dueInput.type = "date";
   dueInput.value = form.due;
   dueInput.setAttribute("aria-label", "срок задачи " + id + ", дата");
-  const dueClear = el("button", "btn duereset", "Снять");
+  const dueClear = el("button", "btn duereset", "Снять срок");
   dueClear.type = "button";
   dueClear.title = "Убрать срок со строки";
   const dueNow = () => {
@@ -5848,21 +5851,14 @@ async function renderTask(project, works, id, pre) {
     dueNow();
   });
   dueClear.hidden = !form.due;
-  dueBox.append(dueInput, dueClear);
-
-  // Поле контроля стоит рядом со сроком: контроль считается от срока, и без
-  // срока его не ставит taskctl. Снятие контроля срок не трогает, а снятие
-  // срока при живом контроле taskctl отбивает сам, словами в ответе правки.
-  const controlBox = el("fieldset", "dfield controlbox");
-  controlBox.append(el("legend", "", "контроль"));
-  const controlInput = el("input", "controlin");
+  const controlInput = el("input", "duein ctrl");
   controlInput.type = "number";
   controlInput.min = "0";
   controlInput.max = "365";
   controlInput.placeholder = "дней до срока";
   controlInput.value = form.control;
   controlInput.setAttribute("aria-label", "контроль задачи " + id + ", за сколько дней до срока проверка работ");
-  const controlClear = el("button", "btn duereset", "Снять");
+  const controlClear = el("button", "btn duereset", "Снять контроль");
   controlClear.type = "button";
   controlClear.title = "Убрать контроль со строки";
   const controlNow = () => {
@@ -5877,15 +5873,15 @@ async function renderTask(project, works, id, pre) {
     controlNow();
   });
   controlClear.hidden = form.control === "";
-  controlBox.append(controlInput, controlClear);
+  dueBox.append(dueInput, dueClear, el("span", "ctrlword", "контроль"), controlInput, controlClear);
 
   const view = formPage({
     key: "task", project, id, detail, chatRow: row, rankRow: row,
     num: row.id, titleLabel: "заголовок задачи " + id, form, chips, tailChips: tail, top,
     // Шапка и степпер этапа (DK-1119, макет 2b) встают между полосой чипов и
-    // описанием: то же место, где раньше читался чип stageChip. Поля срока и
-    // контроля встают туда же.
-    afterChips: [stageFormBlocks(row), dueBox, controlBox],
+    // описанием: то же место, где раньше читался чип stageChip. Блок срока и
+    // контроля встаёт туда же.
+    afterChips: [stageFormBlocks(row), dueBox],
     links: detail.links || null,
     has: { title: true, type: true, cost: true, rank: true, deps: true, chat: true,
       file: true, make: true, pencil: true, read: true },
@@ -5900,8 +5896,6 @@ async function renderTask(project, works, id, pre) {
     onEdit: (on) => {
       taskDraft.id = id;
       taskDraft.edit = on;
-      dueBox.classList.toggle("on", on);
-      controlBox.classList.toggle("on", on);
     },
     check: () => {
       const patch = patchBody();
@@ -18098,6 +18092,29 @@ function ovGrid(ov) {
   return grid;
 }
 
+// Набранная мысль быстрой записи живёт в localStorage, как черновик реплики:
+// главная перерисовывается на каждом возврате к вкладке, и поле, собранное
+// заново, очищалось вместе с ней, а обновление страницы уносило мысль целиком
+// (находка 1 DK-1503). Удачная запись стирает и память.
+const QUICK_DRAFT_KEY = "devkit.quick.draft";
+
+function quickDraftRead() {
+  try {
+    return localStorage.getItem(QUICK_DRAFT_KEY) || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+function quickDraftWrite(text) {
+  try {
+    if (text) localStorage.setItem(QUICK_DRAFT_KEY, text);
+    else localStorage.removeItem(QUICK_DRAFT_KEY);
+  } catch (err) {
+    // приватный режим браузера: мысль живёт до перезагрузки
+  }
+}
+
 // Форма быстрой записи: выбор проекта, один текст и две кнопки. «В накопитель»
 // кладёт мысль как есть, «с разбором сразу» кладёт и поднимает груминг тем же
 // заказом, что кнопка «Грумить» экрана записи. Заголовок собирает сервер из
@@ -18121,6 +18138,9 @@ function quickCard(projects) {
   const text = el("textarea", "qtext");
   text.placeholder = "Мысль одним абзацем: первой фразой станет заголовок, остальное телом";
   text.setAttribute("aria-label", "Текст быстрой записи");
+  // Мысль возвращается в поле сама, откуда бы экран ни собрался заново.
+  text.value = quickDraftRead();
+  text.addEventListener("input", () => { quickDraftWrite(text.value); });
   const bar = el("div", "abar");
   const save = el("button", "btn", "Записать в накопитель");
   save.type = "button";
@@ -18148,6 +18168,7 @@ function quickCard(projects) {
       sayResult(apiSaid(r), !r.ok);
       if (!r.ok) return null;
       text.value = "";
+      quickDraftWrite("");
       return r.body || {};
     } finally {
       save.disabled = false;
@@ -18172,20 +18193,41 @@ function quickCard(projects) {
 async function renderHome(projects) {
   homeMenuShut();
   const groups = document.getElementById("groups");
+  // Фокус поля записи помечается до сборки: снятый с дерева узел теряет его, и
+  // после сборки возвращать было бы нечего. Возврат фокуса держит набор
+  // непрерывным сквозь перерисовку, какую бы она ни пришла.
+  const wasTyping = document.activeElement && document.activeElement.classList &&
+    document.activeElement.classList.contains("qtext");
+  // Своя раскладка главной держится классом колонки: карточки главной несут
+  // вертикальные отступы, прочие экраны раскладываются своими правилами
+  // (находка 3 DK-1503).
+  groups.className = "groups home";
   groups.replaceChildren();
   // Легенда стоит у заголовка шапки, а не отдельной строкой списка: заголовок
   // экрана шапка и рисует.
   document.getElementById("hlegend").replaceChildren(dotLegend());
   // Форма записи стоит первой: главную открывают с телефона мыслью в голове,
   // и прокрутка до формы стоила бы записи дороже, чем обзору его место.
-  if (projects.length) groups.append(quickCard(projects));
+  if (projects.length) {
+    groups.append(quickCard(projects));
+    if (wasTyping) {
+      const field = groups.querySelector(".qtext");
+      if (field) field.focus();
+    }
+  }
   // Обзор догружается вторым кадром: первый показ главной не стоит обхода всех
-  // досок, и пока сбор идёт, место виджетов держит заглушка тем же приёмом,
-  // что полка ждущих в шапке.
+  // досок. Прежний ответ живёт в памяти страницы, и возврат на главную рисует
+  // его сразу, а не заглушку на время нового сбора (находка 2 DK-1503).
+  // Заглушка на самый первый заход честна словами: виджеты с пустыми списками
+  // читались бы как «очередь пуста» и «сроков нет», пока сбор идёт.
   const ovCard = el("div", "card ovcard");
-  ovCard.append(ovGrid({ errors: ["обзор ещё не собран"] }));
+  ovCard.append(overviewData ? ovGrid(overviewData)
+    : el("div", "hint", "обзор собирается"));
   groups.append(ovCard);
   refreshOverview().then(() => {
+    // Ответ мог прийти после ухода с главной: отцеплённую карточку он не
+    // трогает, следующая сборка главной нарисует его сама.
+    if (!ovCard.parentNode) return;
     ovCard.replaceChildren(ovGrid(overviewData || { errors: ["обзор не собрался"] }));
   }).catch(console.error);
   const card = el("div", "card");
@@ -19620,6 +19662,10 @@ async function paint() {
   // помнить набранное всё равно надо: по нему обновление отличает «сменился
   // один хвост разговора» от «человек набрал следующую букву».
   shownQuery = rt.q || "";
+  // Колонка возвращается к общему виду до развёртки экрана: класс «home»
+  // вешает только главная, и оставшийся на чужом экране он растягивал бы
+  // отступы его карточек.
+  document.getElementById("groups").className = "groups";
   // Поле шапки всегда отражает адрес экрана: запрос живёт в адресе (образец
   // раздела «Агенты»), переживает переход на форму и возврат кнопкой «назад»,
   // а у экранов без запроса поле пустеет. Прежде после возврата с формы в поле

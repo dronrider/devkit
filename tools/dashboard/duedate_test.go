@@ -2,6 +2,9 @@ package main
 
 import (
 	"net/http"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -34,4 +37,22 @@ func TestTaskPatchDue(t *testing.T) {
 	if got := taskRowField(t, task, "due"); got != nil {
 		t.Errorf("срок не снялся: %v", got)
 	}
+}
+
+// Блок срока и контроля открыт на форме задачи сразу, без карандаша: срок,
+// спрятанный за режимом правки, и контроль отдельной карточкой без стиля
+// нашёл человек на свежем выкате (DK-1503, находки 4-6). Стенд поднимает
+// статику в node с игрушечным DOM (testdata/poc_taskdue.mjs) и держит блок
+// одним, с пикером даты, общим стилем полей и правкой без входа в правку.
+func TestTaskDueBlockOpen(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд блока срока пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_taskdue.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("блок срока и контроля: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
 }

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -247,11 +248,91 @@ func overviewDoneWeekRows(name string, arch map[string]archiveRow, now time.Time
 	return out
 }
 
+// overviewTTL это потолок памяти на собранный обзор. Сбор стоит обхода всех
+// досок машины, а спрашивает его каждый возврат к вкладке с главной, и без
+// памяти главная стояла с пустыми виджетами дольше, чем человек готов ждать
+// (находка 2 DK-1503). Потолок тот же, что у доски: свежесть обзора не может
+// обогнать свежесть его источников.
+const overviewTTL = boardTTL
+
+// overviewFlight это идущий пересбор обзора. Пока он летит, свой обход никто
+// больше не поднимает, а запросы берут устаревший ответ из памяти.
+type overviewFlight struct {
+	done chan struct{}
+	view overviewView
+}
+
 // handleOverview отдаёт обзор целиком. Ручка машинная, как полка ждущих:
-// место одно на дашборд и своего проекта у него нет.
+// место одно на дашборд и своего проекта у него нет. Собранный ответ живёт
+// в памяти процесса (overviewCached), и сбор всех досок не идёт на каждый
+// запрос главной.
 func (s *server) handleOverview(w http.ResponseWriter, r *http.Request) {
-	resp := s.overview()
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, s.overviewCached())
+}
+
+// overviewCached отдаёт обзор теми же тремя дорогами, что доска
+// (projectBoard): свежий ответ уезжает как есть, устаревший уезжает сразу, а
+// пересбор поднимается один раз в фоне. Первого ответа нет вовсе, и его ждут
+// все, кто пришёл следом, вместо того чтобы поднимать свой обход.
+func (s *server) overviewCached() overviewView {
+	now := s.now()
+	s.mu.Lock()
+	if s.ovFresh && now.Sub(s.ovBorn) < overviewTTL {
+		view := s.ovCache
+		s.mu.Unlock()
+		return view
+	}
+	if fl := s.ovFlight; fl != nil {
+		if s.ovFresh {
+			view := s.ovCache
+			s.mu.Unlock()
+			return view
+		}
+		s.mu.Unlock()
+		<-fl.done
+		return fl.view
+	}
+	fl := &overviewFlight{done: make(chan struct{})}
+	s.ovFlight = fl
+	stale := s.ovFresh
+	s.mu.Unlock()
+	if stale {
+		view := s.ovCache
+		go s.overviewFly(fl)
+		return view
+	}
+	s.overviewFly(fl)
+	return fl.view
+}
+
+// overviewFly это один сбор обзора: он ложится в память и будит ждущих. Паника
+// ловится тут по тем же причинам, что у опроса доски (fly): в фоновой
+// горутине она уносила бы процесс целиком, а в горутине запроса оставила бы
+// полёт и ждущих без ответа. Отказавшие проекты уже названы в errors самого
+// ответа, и паника это единственный путь, которым сбор падает мимо них.
+func (s *server) overviewFly(fl *overviewFlight) {
+	var view overviewView
+	ok := true
+	func() {
+		defer func() {
+			if v := recover(); v != nil {
+				ok = false
+				view = overviewView{Errors: []string{s.notePanic("обзор",
+					&recovered{val: v, stack: debug.Stack()})}}
+			}
+		}()
+		view = s.overview()
+	}()
+	s.mu.Lock()
+	if ok {
+		s.ovCache = view
+		s.ovFresh = true
+		s.ovBorn = s.now()
+	}
+	fl.view = view
+	s.ovFlight = nil
+	s.mu.Unlock()
+	close(fl.done)
 }
 
 // overview собирает ответ по всем проектам машины. Доски читаются параллельно

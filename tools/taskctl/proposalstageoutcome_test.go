@@ -2,6 +2,8 @@ package main
 
 import (
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -50,14 +52,14 @@ func TestStagingFourOutcomesDoNotConsumeSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, word := range []string{"источник: meeting", "замок: locked", "/docs/tasks/drafts/XR-008.md", "ждём ответа"} {
+	for _, word := range []string{"источник: meeting", "замок: locked", "XR-008.md", "ждём ответа"} {
 		if !strings.Contains(string(fragment), word) {
 			t.Errorf("нет %s: %s", word, fragment)
 		}
 	}
 	for _, id := range []string{ids[0], "XR-001"} {
 		data, err := os.ReadFile(taskFileAbs(s.root, id))
-		if err != nil || !strings.Contains(string(data), "](/docs/tasks/drafts/XR-008.md)") {
+		if err != nil || !strings.Contains(string(data), "](drafts/XR-008.md)") {
 			t.Fatalf("%s: нет перехода к исходнику: %v\n%s", id, err, data)
 		}
 	}
@@ -69,4 +71,53 @@ func TestStagingFourOutcomesDoNotConsumeSource(t *testing.T) {
 	if err != nil || string(live) != string(before) {
 		t.Fatalf("live changed: %v", err)
 	}
+}
+
+func TestProposalProvenanceResolvesAfterArchive(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "исходный материал", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := newStagingBoard(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_, err = s.stageOutcome("XR-008", draftmeta.Header{Type: "task", Source: "thought", Priority: "mid"}, draftproposal.Proposal{ID: "p1", Outcome: "attach", Target: "XR-005", Text: "материал"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(taskPath string) {
+		t.Helper()
+		data, err := os.ReadFile(taskPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := regexp.MustCompile(`\[черновик XR-008\]\(([^)]+)\)`).FindSubmatch(data)
+		if len(m) != 2 {
+			t.Fatalf("нет ссылки: %s", data)
+		}
+		source, err := os.ReadFile(filepath.Join(filepath.Dir(taskPath), string(m[1])))
+		if err != nil || !strings.Contains(string(source), "исходный материал") {
+			t.Fatalf("ссылка не открывает источник: %v %s", err, source)
+		}
+	}
+	check(taskFileAbs(s.root, "XR-005"))
+	path := draftPath(s.root, "XR-008")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = draftproposal.Replace(data, draftproposal.State{Version: 1, State: "history", Proposals: []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "attach", Status: "rejected"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	check(taskFileAbs(s.root, "XR-005"))
+	if _, err = cmdClose(s.root, CloseParams{ID: "XR-005", Date: "2026-07-08"}); err != nil {
+		t.Fatal(err)
+	}
+	check(filepath.Join(s.root, "docs", "tasks", "archive", "2026", "XR-005.md"))
 }

@@ -40,6 +40,7 @@ func writeCheckTask(t *testing.T, proj, id, doc string) {
 func checkEnv(t *testing.T, sessions string) (*testEnv, string) {
 	t.Helper()
 	e, _, tmuxLog := runsEnv(t, sessions)
+	putDoc(t, e.proj, "docs/tasks/XR-004.md", "# XR-004: тест\n")
 	writeDeployLocal(t, e.proj, "deploy = true\nautonomous = true\n")
 	// Перечень прав спрашивается перед каждым подъёмом, и без него стенд
 	// упирался бы в отказ раньше всякого своего барьера. Фикстура отвечает

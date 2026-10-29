@@ -222,6 +222,9 @@ print("цикл цели %%s поднят в tmux-сессии goal-%%s" %% (sys
 func runsEnv(t *testing.T, sessions string) (*testEnv, *http.Client, string) {
 	t.Helper()
 	e := newTestEnv(t)
+	for _, id := range []string{"XR-002", "XR-003", "XR-004", "XR-005", "XR-006", "XR-007"} {
+		putDoc(t, e.proj, "docs/tasks/"+id+".md", "# "+id+": тест\n")
+	}
 	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", runsBoardJSON))
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeTmuxFake(t, e.bin, tmuxLog, sessions)
@@ -1588,6 +1591,7 @@ func TestRunStartKeepsSessionBesidesUserCheck(t *testing.T) {
 	} {
 		t.Run(tc.id, func(t *testing.T) {
 			e := newTestEnv(t)
+			putDoc(t, e.proj, "docs/tasks/"+tc.id+".md", "# "+tc.id+": тест\n")
 			writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", acceptBoardJSON))
 			tmuxLog := filepath.Join(e.home, "tmux.log")
 			writeTmuxFake(t, e.bin, tmuxLog, "")

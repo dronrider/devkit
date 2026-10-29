@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,6 +67,7 @@ func newScenarioStand(t *testing.T) *scenarioStand {
 	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	putDoc(t, e.proj, "docs/tasks/XR-100.md", "# XR-100: тест\n")
 	st := &scenarioStand{e: e, c: c, path: path, bin: bin}
 	st.run(t, "--ask", "сценарии", "--scenarios", "--hint", "СЦ-1, СЦ-3: выбор и продолжение", "--option", "СЦ-1 (слово пользователя): выбрать", "--option", "СЦ-2 (вывод из примера): собрать", "--option", "СЦ-3 (предложение агента): **продолжить**", "что включаем?")
 	writeSession(t, e.home, e.proj, "", scenarioPanelSID, plainTalk, time.Now())
@@ -268,6 +270,8 @@ func TestScenarioPanelWorktreeSource(t *testing.T) {
 	git("worktree", "add", "-b", "stand", tree)
 	other := filepath.Join(filepath.Dir(st.e.proj), "other")
 	mkProject(t, other)
+	putDoc(t, other, "docs/tasks/XR-100.md", "# XR-100: тест\n")
+	putDoc(t, other, "docs/tasks/XR-4.md", "# XR-4: тест\n")
 	before := readFile(t, st.path)
 	linked := *st.e
 	linked.proj = tree
@@ -365,5 +369,23 @@ func TestScenarioPanelGoJSONToJS(t *testing.T) {
 				t.Fatal("mixed/single retry создал новое событие")
 			}
 		})
+	}
+}
+
+func TestScenarioSayRefusesProtectedSourceBeforeDecision(t *testing.T) {
+	st := newScenarioStand(t)
+	ask := st.ask(t)
+	before := readFile(t, st.path)
+	protected := strings.Replace(before, "\n", "\nзамок: locked\n", 1)
+	if err := os.WriteFile(st.path, []byte(protected), 0644); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	st.e.s.handleScenarioSay(w, &Project{Name: "demo", Path: st.e.proj}, scenarioPanelSID, "claim", "сценарии 1", scenarioAnswer{Task: "XR-4", Tree: ask.Tree, Fork: ask.Fork, Snapshot: ask.Scenario.Snapshot})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("response: %d %s", w.Code, w.Body.String())
+	}
+	if got := readFile(t, st.path); got != protected {
+		t.Fatal("decision mutated protected source")
 	}
 }

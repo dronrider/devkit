@@ -338,6 +338,7 @@ func TestHoldInboxSharesGoalSectionPlace(t *testing.T) {
 func TestAskAnswerStaysForLiveRow(t *testing.T) {
 	sid := "dddd4444-4444-4444-8444-444444444444"
 	e, _ := holdEnv(t)
+	holdTaskFile(t, e.proj, "XR-4")
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
 	writeBinds(t, e.home, fmt.Sprintf("2026-08-28T12:00:00 сессия %s задача XR-4 проект demo "+
 		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux -\n", sid, e.proj))

@@ -959,9 +959,9 @@ func TestDraftWaitingFromAsk(t *testing.T) {
 		`{"title": "ссылка на черновик из чата не открывается", "prio": "mid"}`).Body.Close()
 
 	order := draftsResp(t, c, e)["drafts"].([]any)[0].(map[string]any)["order"]
-	if said, _ := order.(string); !strings.Contains(said, "decide") ||
-		!strings.Contains(said, "--chat") {
-		t.Errorf("заказ груминга не велит спрашивать блоком decide --chat: %v", order)
+	if said, _ := order.(string); !strings.Contains(said, "предложения") ||
+		!strings.Contains(said, "применении") {
+		t.Errorf("заказ груминга не велит спросить о применении предложений: %v", order)
 	}
 
 	// Признак кладёт печать блока вопроса; тут он пишется тем же пакетом, что

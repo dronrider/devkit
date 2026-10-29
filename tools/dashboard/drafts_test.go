@@ -1531,3 +1531,23 @@ func TestDraftGroomLockedDoesNotStart(t *testing.T) {
 		t.Fatalf("cloud launched: %s", calls)
 	}
 }
+
+func TestLockedDraftBlocksChatContinuation(t *testing.T) {
+	sid := "dddd4444-4444-4444-8444-444444444444"
+	e, c, frames := askSayEnvNoTerm(t, sid)
+	path := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-4.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# XR-4: запись\nзамок: locked\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", sayBody("продолжай", "locked-1"))
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "ждёт локальную модель") {
+		t.Fatalf("response: %d %s", resp.StatusCode, text)
+	}
+	if got := frames(); len(got) != 0 {
+		t.Fatalf("continuation sent: %v", got)
+	}
+}

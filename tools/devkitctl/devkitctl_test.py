@@ -2280,20 +2280,49 @@ class HarnessHooksTest(SandboxCase):
         rc, out = self.box.doctor(self.proj, home=home)
         self.assertEqual(rc, 1, "доктор не заметил сторожа на чужом матчере: %s" % out)
         self.assertIn_("agent-watch.py", out, "находка не называет сторожа")
-        self.assertIn_("с матчером «Agent» вместо «Bash|Agent»", out,
+        self.assertIn_("с матчером «Agent» вместо «%s»" % devkitctl.WATCH_MATCHER, out,
                        "находка не называет ни нынешний матчер, ни нужный")
-        self.assertIn_("до сторожа не доходит", out,
+        self.assertIn_("до сторожа не доходят", out,
                        "находка не говорит, что ломается от чужого матчера")
         _, out = self.box.doctor(self.proj, "--fix", home=home)
         self.assertIn_("перевешен agent-watch.py", out, "--fix не перевесил сторожа")
         post = json.loads(read(settings))["hooks"]["PostToolUse"]
         spots = [((g.get("matcher") or ""), h["command"]) for g in post for h in g["hooks"]]
-        self.assertEqual([m for m, c in spots if "agent-watch.py" in c], ["Bash|Agent"],
+        self.assertEqual([m for m, c in spots if "agent-watch.py" in c],
+                         [devkitctl.WATCH_MATCHER],
                          "сторож не оказался на матчере раскладки ровно один раз: %s" % post)
         # Чужие записи в перевешенной группе и в соседней с ещё одним матчером
         # остаются на месте: доктор снимает строку своего хука, а не группу.
         self.assertEqual(sorted(m for m, c in spots if c == mine), ["Agent", "Grep"],
                          "перевешивание задело чужие записи: %s" % post)
+        # Повторный доктор про матчер молчит: перевешивать больше нечего.
+        _, out = self.box.doctor(self.proj, home=home)
+        self.assertNotIn_("с матчером", out, "повторный доктор всё ещё правит матчер сторожа")
+
+    def test_send_matcher_drift_is_rehung(self):
+        # DK-1415: на машине, подключённой раскладкой до задачи, сторож стоит
+        # на «Bash|Agent», и возобновление SendMessage до него не доходит.
+        # Запись возобновлённого субагента остаётся в done, и конвейер гасит
+        # окно вместе с живой работой. События у раскладок совпадают, поэтому
+        # доктор сверяет матчер, а --fix перевешивает запись.
+        home = self.box.make_home(self.box.root / "home-watch-send")
+        settings = home / ".claude" / "settings.json"
+        data = json.loads(read(settings))
+        for group in data["hooks"]["PostToolUse"]:
+            if any("agent-watch.py" in h["command"] for h in group["hooks"]):
+                group["matcher"] = "Bash|Agent"
+        write(settings, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+        rc, out = self.box.doctor(self.proj, home=home)
+        self.assertEqual(rc, 1, "доктор не заметил сторожа без SendMessage: %s" % out)
+        self.assertIn_("возобновление SendMessage", out,
+                       "находка не называет возобновление, которое теряется")
+        _, out = self.box.doctor(self.proj, "--fix", home=home)
+        self.assertIn_("перевешен agent-watch.py", out, "--fix не перевесил сторожа")
+        post = json.loads(read(settings))["hooks"]["PostToolUse"]
+        spots = [((g.get("matcher") or ""), h["command"]) for g in post for h in g["hooks"]]
+        self.assertIn(devkitctl.WATCH_MATCHER,
+                      [m for m, c in spots if "agent-watch.py" in c],
+                      "сторож остался без SendMessage в матчере: %s" % post)
         # Повторный доктор про матчер молчит: перевешивать больше нечего.
         _, out = self.box.doctor(self.proj, home=home)
         self.assertNotIn_("с матчером", out, "повторный доктор всё ещё правит матчер сторожа")
@@ -2320,7 +2349,8 @@ class HarnessHooksTest(SandboxCase):
         self.assertNotIn("Agent", [g.get("matcher") for g in post],
                          "группа с прежним матчером осталась в настройках: %s" % post)
         spots = [((g.get("matcher") or ""), h["command"]) for g in post for h in g["hooks"]]
-        self.assertEqual([m for m, c in spots if "agent-watch.py" in c], ["Bash|Agent"],
+        self.assertEqual([m for m, c in spots if "agent-watch.py" in c],
+                         [devkitctl.WATCH_MATCHER],
                          "сторож не оказался на матчере раскладки ровно один раз: %s" % post)
         # Ключ события на живой раскладке держит и другие группы, поэтому уборка
         # опустевшего ключа проверяется вызовом.
@@ -2448,11 +2478,13 @@ class HarnessHooksTest(SandboxCase):
         # реплику надо доставлять на любом ходе идущего витка, а не на записи
         # файла, и отметку работы (DK-539) режет своим списком WORK_TOOLS сам
         # скрипт, а не матчер. Сторож стоит на Bash вместе с делегированием
-        # (DK-571): фоном уходит и субагент, и команда оболочки.
+        # (DK-571): фоном уходит и субагент, и команда оболочки. SendMessage
+        # приехал позже (DK-1415): сообщением харнес будит завершённого
+        # субагента, и без сторожа на этом ходе запись остаётся в done.
         # Четвёртая группа это сторожок стыка фаз (DK-803) на Bash: переход
         # задачи по доске это команда taskctl, и ловится он на её ходе.
         self.assertEqual([g.get("matcher") for g in hooks["PostToolUse"]],
-                         ["Edit|Write|NotebookEdit", None, "Bash|Agent", "Bash"],
+                         ["Edit|Write|NotebookEdit", None, devkitctl.WATCH_MATCHER, "Bash"],
                          hooks["PostToolUse"])
         self.assertEqual(len([c for c in post if "agent-watch.py" in c]), 1, post)
         self.assertEqual(len([c for c in post if "phase-budget.py" in c]), 1, post)

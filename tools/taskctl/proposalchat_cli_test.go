@@ -60,6 +60,16 @@ func TestProposalChatActualCLI(t *testing.T) {
 	}
 	a := proposalChatAnswer{Tree: root, Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: q.Proposal.Sources[0].Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "reject", Reason: "не нужно"}}}
 	input, _ := json.Marshal(a)
+	jq := exec.Command("jq", `{tree: .proposal.tree, snapshots: [{source: .proposal.sources[0].source, digest: .proposal.sources[0].basis}], decisions: [{source: .proposal.sources[0].source, proposal: .proposal.sources[0].proposals[0].id, revision: .proposal.sources[0].proposals[0].revision, action: "reject", reason: "не нужно"}]}`)
+	jq.Stdin = strings.NewReader(out)
+	docInput, err := jq.Output()
+	if err != nil {
+		t.Fatalf("README jq: %v", err)
+	}
+	var fromDocs proposalChatAnswer
+	if err := json.Unmarshal(docInput, &fromDocs); err != nil || fromDocs.Tree != a.Tree || len(fromDocs.Decisions) != 1 || fromDocs.Decisions[0] != a.Decisions[0] || len(fromDocs.Snapshots) != 1 || fromDocs.Snapshots[0] != a.Snapshots[0] {
+		t.Fatalf("README answer: %s %v", docInput, err)
+	}
 	out, err = run(input, "draft", "proposals", "answer", "XR-008")
 	if err != nil || !strings.Contains(out, `"repeated":false`) {
 		t.Fatalf("answer %s %v", out, err)

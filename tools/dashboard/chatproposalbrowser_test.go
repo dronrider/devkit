@@ -87,7 +87,7 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 		}
 		return nil
 	}
-	if err = publish("first"); err != nil {
+	if err = publish("both"); err != nil {
 		t.Fatal(err)
 	}
 	bin := os.Getenv("DASHBOARD_ACCEPT_BIN")

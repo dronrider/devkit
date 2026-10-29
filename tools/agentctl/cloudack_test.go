@@ -16,6 +16,8 @@ func TestExecCloudAckTransfersReservation(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
 	t.Setenv("DEVKIT_TASK", "XR-1")
+	t.Setenv("DEVKIT_GROOM_SOURCE", "XR-1")
+	t.Setenv("DEVKIT_GROOM_MODE", "run")
 	path := filepath.Join(root, "docs", "tasks", "XR-1.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
@@ -48,6 +50,9 @@ func TestExecCloudAckTransfersReservation(t *testing.T) {
 	env, err := os.ReadFile(dump)
 	if err != nil || strings.Contains(string(env), "DEVKIT_CLOUD_ACK=") {
 		t.Fatal("ack leaked into client", err)
+	}
+	if !strings.Contains(string(env), "DEVKIT_GROOM_SOURCE=XR-1") || !strings.Contains(string(env), "DEVKIT_GROOM_MODE=run") {
+		t.Fatal("groom guard context did not reach client")
 	}
 	if lock, err := draftmeta.CloudExclusive(root, "XR-1"); err == nil {
 		lock.Close()

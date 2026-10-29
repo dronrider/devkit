@@ -183,15 +183,40 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	cli(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"первое","reason":"лишнее"}]}`, "draft", "proposals", "save", "XR-4", "--base", view.Snapshot)
+	secondPath := filepath.Join(st.e.proj, "docs", "tasks", "drafts", "XR-5.md")
+	putDoc(t, st.e.proj, "docs/tasks/drafts/XR-5.md", "# XR-5: второй исходник\n")
+	if err = json.Unmarshal([]byte(cli("", "draft", "proposals", "XR-5")), &view); err != nil {
+		t.Fatal(err)
+	}
+	cli(`{"proposals":[{"id":"p2","revision":1,"outcome":"drop","text":"второе","reason":"лишнее"}]}`, "draft", "proposals", "save", "XR-5", "--base", view.Snapshot)
 	var q chat.Question
-	raw := cli("", "draft", "proposals", "ask", "XR-4")
+	raw := cli("", "draft", "proposals", "ask", "XR-4", "--also", "XR-5")
 	if err = json.Unmarshal([]byte(raw), &q); err != nil || q.Proposal == nil {
 		t.Fatalf("ask %s %v", raw, err)
 	}
-	answer := proposalAnswer{Mode: "comment", Anchor: "XR-4", Tree: st.e.proj, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Digest: q.Proposal.Sources[0].Basis}}}
+	answer := proposalAnswer{Mode: "comment", Anchor: "XR-4", Tree: st.e.proj, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Digest: q.Proposal.Sources[0].Basis}, {Source: "XR-5", Digest: q.Proposal.Sources[1].Basis}}}
 	before := readFile(t, st.path)
 	askPath := chat.AskPath(st.e.proj, chat.TaskName("XR-4"))
 	askBefore := readFile(t, askPath)
+	shownAsk, ok := chat.ReadAsk(askPath)
+	if !ok {
+		t.Fatal("ask missing")
+	}
+	shownResp := doReq(t, st.c, "GET", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/ask", "")
+	if shownResp.StatusCode != 200 {
+		t.Fatalf("show ask: %s", body(t, shownResp))
+	}
+	shownResp.Body.Close()
+	if err := chat.DropAsk(st.e.proj, chat.TaskName("XR-4")); err != nil {
+		t.Fatal(err)
+	}
+	unanswered := st.e.s.proposalContinuation(st.e.proj, scenarioPanelSID)
+	if !strings.Contains(unanswered, "XR-4") || !strings.Contains(unanswered, "XR-5") || !strings.Contains(unanswered, "ждёт решения") {
+		t.Fatalf("unanswered context lost: %s", unanswered)
+	}
+	if err := chat.WriteAsk(st.e.proj, chat.TaskName("XR-4"), shownAsk); err != nil {
+		t.Fatal(err)
+	}
 	req, _ := json.Marshal(map[string]any{"text": "почему этот исход?", "msg_id": "comment-one", "proposal": answer})
 	resp := doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/say", string(req))
 	msg := body(t, resp)
@@ -206,6 +231,7 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 		t.Fatalf("delivery %v", lines)
 	}
 	answer.Mode = "apply"
+	answer.Snapshots = answer.Snapshots[:1]
 	answer.Decisions = []draftproposal.Decision{{Source: "XR-4", Proposal: "p1", Revision: 1, Action: "reject", Reason: "не нужно"}}
 	for _, wrong := range []proposalAnswer{
 		{Mode: "apply", Anchor: answer.Anchor, Tree: answer.Tree, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Digest: "stale"}}, Decisions: answer.Decisions},
@@ -241,6 +267,18 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 	if err := os.Remove(askPath); err != nil {
 		t.Fatal(err)
 	}
+	second := readFile(t, secondPath)
+	if err := os.WriteFile(secondPath, []byte(strings.Replace(second, "\n", "\nзамок: locked\n", 1)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	resp = doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/say", string(req))
+	msg = body(t, resp)
+	if resp.StatusCode != 409 || readFile(t, st.path) != applied {
+		t.Fatalf("private shown source in retry %d %s", resp.StatusCode, msg)
+	}
+	if err := os.WriteFile(secondPath, []byte(second), 0600); err != nil {
+		t.Fatal(err)
+	}
 	resp = doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/say", string(req))
 	msg = body(t, resp)
 	if resp.StatusCode != 200 || readFile(t, st.path) != applied {
@@ -249,6 +287,10 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 	lines = chat.ReadLines(carrier)
 	if len(lines) != 1 || !strings.Contains(lines[0], `"repeated":true`) {
 		t.Fatalf("retry delivery %v", lines)
+	}
+	continued := st.e.s.proposalContinuation(st.e.proj, scenarioPanelSID)
+	if !strings.Contains(continued, "XR-4") || !strings.Contains(continued, "XR-5") || !strings.Contains(continued, "второе") || !strings.Contains(continued, "отклонено") || !strings.Contains(continued, "ждёт решения") || !strings.Contains(continued, "не нужно") {
+		t.Fatalf("multi-source continuation: %s", continued)
 	}
 	replacement := chat.Ask{Task: "XR-4", Session: scenarioPanelSID, Questions: []chat.Question{{Text: "новый вопрос"}}}
 	if err := chat.WriteAsk(st.e.proj, chat.TaskName("XR-4"), replacement); err != nil {
@@ -277,6 +319,50 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 	}
 	if lines := chat.ReadLines(chat.Path(st.e.proj, chat.TaskName("XR-100"))); len(lines) != 0 {
 		t.Fatalf("old reply reached new task: %v", lines)
+	}
+	newSID := "bb144600-1111-4111-8111-111111111111"
+	if err := st.e.s.chatStoreWrite("tmux-chat-new", chatStore{From: scenarioPanelSID}); err != nil {
+		t.Fatal(err)
+	}
+	writeBinds(t, st.e.home, "2026-10-30T12:01:00 сессия "+newSID+" задача XR-4 проект demo дерево "+st.e.proj+" транскрипт "+standTranscript(st.e.home, "t")+" источник заказ повод startup tmux chat-new\n")
+	continued = st.e.s.proposalContinuation(st.e.proj, newSID)
+	if !strings.Contains(continued, "XR-4") || !strings.Contains(continued, "XR-5") || !strings.Contains(continued, "второе") {
+		t.Fatalf("new session continuation: %s", continued)
+	}
+	resp = doReq(t, st.c, "GET", st.e.srv.URL+"/api/projects/demo/chats/"+newSID+"/ask", "")
+	msg = body(t, resp)
+	if resp.StatusCode != 200 || !strings.Contains(msg, "XR-4") || !strings.Contains(msg, "XR-5") {
+		t.Fatalf("new session /ask %d %s", resp.StatusCode, msg)
+	}
+	req, _ = json.Marshal(map[string]any{"text": "повтор в новом заходе", "msg_id": "apply-new-session", "proposal": answer})
+	resp = doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+newSID+"/say", string(req))
+	msg = body(t, resp)
+	if resp.StatusCode != 200 || readFile(t, st.path) != applied {
+		t.Fatalf("new session receipt retry %d %s", resp.StatusCode, msg)
+	}
+	oldLines = chat.ReadLines(carrier)
+	if len(oldLines) < 3 || !strings.Contains(oldLines[len(oldLines)-1], "повтор в новом заходе") {
+		t.Fatalf("new session destination: %v", oldLines)
+	}
+	otherRoot := filepath.Join(filepath.Dir(st.e.proj), "other")
+	mkProject(t, otherRoot)
+	putDoc(t, otherRoot, "docs/tasks/XR-4.md", "# XR-4: другая задача\n")
+	writeBinds(t, st.e.home, "2026-10-30T12:02:00 сессия "+newSID+" задача XR-4 проект other дерево "+otherRoot+" транскрипт "+standTranscript(st.e.home, "t")+" источник заказ повод startup tmux chat-new\n")
+	if wrong := st.e.s.proposalContinuation(otherRoot, newSID); strings.Contains(wrong, "второе") || strings.Contains(wrong, "XR-5") {
+		t.Fatalf("old context crossed root: %s", wrong)
+	}
+	req, _ = json.Marshal(map[string]any{"text": "повтор после смены проекта", "msg_id": "apply-new-root", "proposal": answer})
+	resp = doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+newSID+"/say", string(req))
+	msg = body(t, resp)
+	if resp.StatusCode != 200 || readFile(t, st.path) != applied {
+		t.Fatalf("cross-root retry %d %s", resp.StatusCode, msg)
+	}
+	oldLines = chat.ReadLines(carrier)
+	if len(oldLines) < 4 || !strings.Contains(oldLines[len(oldLines)-1], "повтор после смены проекта") {
+		t.Fatalf("old root delivery: %v", oldLines)
+	}
+	if lines := chat.ReadLines(chat.Path(otherRoot, chat.TaskName("XR-4"))); len(lines) != 0 {
+		t.Fatalf("retry reached new root: %v", lines)
 	}
 	var result struct {
 		State draftproposal.State `json:"state"`

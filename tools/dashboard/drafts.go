@@ -649,6 +649,10 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// двенадцатого круга POC): человек смотрит на разбор в той же панели, где
 	// разговаривает со всеми, а сессия называет себя в реестре записью
 	// накопителя, и найти её потом можно тем же списком чатов.
+	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: own.Name, GroomSource: id, GroomMode: mode, GroomTree: found.Path}); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "режим разбора не сохранён: " + err.Error()})
+		return
+	}
 	if err := startManaged(found.Path, found.Path, id, sess, func(ack string) string {
 		return groomCmd(s.launchEnv(id, sess, "")+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" DEVKIT_GROOM_SOURCE="+shQuote(id)+" DEVKIT_GROOM_MODE="+shQuote(mode)+" ", order, own, model, id+" груминг")
 	}); err != nil {

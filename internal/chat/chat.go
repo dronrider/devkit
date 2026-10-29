@@ -311,6 +311,7 @@ type Question struct {
 	Multi    bool              `json:"multi,omitempty"`
 	Options  []Option          `json:"options,omitempty"`
 	Scenario *ScenarioQuestion `json:"scenario,omitempty"`
+	Proposal *ProposalQuestion `json:"proposal,omitempty"`
 }
 
 type ScenarioQuestion struct {
@@ -358,6 +359,14 @@ func ParsePack(data []byte) ([]Question, error) {
 	for _, q := range pack.Questions {
 		if strings.TrimSpace(q.Text) == "" {
 			return nil, errors.New("у вопроса пустой текст: человеку показывать нечего")
+		}
+		if q.Proposal != nil {
+			if q.Scenario != nil {
+				return nil, errors.New("вопрос предложений нельзя смешивать со сценариями")
+			}
+			if err := q.Proposal.Validate(); err != nil {
+				return nil, err
+			}
 		}
 		out = append(out, q)
 	}

@@ -111,3 +111,26 @@ func TestAddIgnoresCommentedSections(t *testing.T) {
 		})
 	}
 }
+
+func TestPromotedDraftPreservesProtection(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "материал", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	path := draftPath(root, "XR-008")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), "## ", "тип: task\nисточник: mail\nзамок: locked\n\n## ", 1) + fixtureTaskBody)
+	if err = os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	body, _, err := prepareTaskBody(root, "XR-008", AddParams{Title: "Задача", Type: "task"}, "`0+1+1+0+1 = 3`, P3.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "защита: locked") || !strings.Contains(body, "Тип task, источник mail") {
+		t.Fatalf("provenance: %s", body)
+	}
+}

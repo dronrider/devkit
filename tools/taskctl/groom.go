@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/draftmeta"
 )
 
 // Исходов у разобранного черновика четыре (docs/lld/DK-129-groom-process.md,
@@ -427,6 +429,11 @@ func cmdDraftAttach(root, id, taskID string, c CommitOpts) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if d.Lock == "locked" {
+		if err := lockedAttachGuard(taskID); err != nil {
+			return "", err
+		}
+	}
 	text, err := os.ReadFile(d.Path)
 	if err != nil {
 		return "", err
@@ -455,6 +462,13 @@ func cmdDraftAttach(root, id, taskID string, c CommitOpts) (string, error) {
 		return "", err
 	}
 	body := strings.TrimRight(string(old), "\n") + "\n\n" + draftSection(id, string(text))
+	if d.Lock == "locked" {
+		protected, err := draftmeta.ProtectRecord([]byte(body))
+		if err != nil {
+			return "", err
+		}
+		body = string(protected)
+	}
 	if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
 		return "", err
 	}

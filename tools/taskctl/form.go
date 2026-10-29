@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/dronrider/devkit/internal/draftmeta"
 	"strings"
 
 	"github.com/dronrider/devkit/internal/taskform"
@@ -253,6 +254,7 @@ func renderTaskFromDraft(id, title, rank, draft, today string) string {
 			extra = append(extra, s)
 		}
 	}
+	header, _ := draftmeta.Parse([]byte(draft))
 	trace := draftPromotedPrefix + " " + id
 	if draftTitle != "" {
 		trace += " «" + draftTitle + "»"
@@ -263,6 +265,7 @@ func renderTaskFromDraft(id, title, rank, draft, today string) string {
 		trace += ":"
 	}
 	trace += " оформлен " + today + "."
+	trace += fmt.Sprintf(" Тип %s, источник %s.", header.Type, header.Source)
 	add(stageSection, append([]string{trace}, groom...))
 
 	var b strings.Builder

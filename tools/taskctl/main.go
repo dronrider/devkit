@@ -93,17 +93,21 @@ const usageText = `taskctl: механика канбан-доски docs/TASKS.
                                               с причиной
 
 Менять доску:
-  draft --prio high|mid|low ["текст"]         записать сырую идею мимо доски:
+  draft [--prio high|mid|low] ["текст"]       записать сырую идею мимо доски:
                                               файл docs/tasks/drafts/<ID>.md,
                                               ID берётся сам, без текста читается
                                               stdin; первая строка идёт
                                               заголовком, её потолок 72 символа
                                               (форма в TASKFORM.md); уровень
-                                              разбора обязателен и ставится на
-                                              глаз, дальше его правит draft prio;
+                                              разбора необязателен, его можно
+                                              изменить через draft prio;
                                               оформляет черновик потом add --id
                                               <ID> (файл переезжает в docs/tasks
                                               сам)
+  draft types [--json | --dump <тип>]           список типов или файл определения
+  draft meta <ID> [--type <тип>] [--source <источник>] [--lock locked|unlocked]
+                                              изменить поля записи
+  draft list --history [--json]               показать историю разбора
   draft defer <ID> "причина" [--until 2026-11-05]
                                               отложить разобранный черновик:
                                               раздел «Грумминг» в его файле,
@@ -669,7 +673,7 @@ func main() {
 					fail(gerr)
 				}
 			}
-			needArgs(pos, 0, 1, "draft --prio high|mid|low [\"текст\"]")
+			needArgs(pos, 0, 1, "draft [--prio high|mid|low] [\"текст\"]")
 			text, viaStdin := "", false
 			if len(pos) == 1 {
 				text = pos[0]

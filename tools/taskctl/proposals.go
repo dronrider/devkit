@@ -16,6 +16,7 @@ import (
 type proposalView struct {
 	ID       string              `json:"id"`
 	Snapshot string              `json:"snapshot"`
+	Basis    string              `json:"basis"`
 	State    draftproposal.State `json:"state"`
 }
 
@@ -41,7 +42,11 @@ func cmdDraftProposals(root, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return marshal(proposalView{ID: id, Snapshot: draftproposal.Digest(data), State: state})
+	basis, err := proposalBasis(root, data, state)
+	if err != nil {
+		return "", err
+	}
+	return marshal(proposalView{ID: id, Snapshot: draftproposal.Digest(data), Basis: basis, State: state})
 }
 
 func cmdDraftProposalsSave(root, id, base string, input []byte) (string, error) {
@@ -122,10 +127,14 @@ func cmdDraftProposalsSave(root, id, base string, input []byte) (string, error) 
 	if !bytes.Equal(before.Data, data) {
 		return "", fmt.Errorf("%s: запись изменилась, откройте её снова", id)
 	}
+	basis, err := proposalBasis(root, out, old)
+	if err != nil {
+		return "", err
+	}
 	if err = l.Apply(root, []drafttx.Change{{Path: draftRel(id), Before: before, After: drafttx.Image{Exists: true, Data: out, Mode: before.Mode}}}); err != nil {
 		return "", err
 	}
-	return marshal(proposalView{ID: id, Snapshot: draftproposal.Digest(out), State: old})
+	return marshal(proposalView{ID: id, Snapshot: draftproposal.Digest(out), Basis: basis, State: old})
 }
 
 func cmdDraftProposalReject(root, id, proposal, base, reason string) (string, error) {
@@ -185,8 +194,12 @@ func cmdDraftProposalReject(root, id, proposal, base, reason string) (string, er
 	if !bytes.Equal(before.Data, data) {
 		return "", fmt.Errorf("%s: запись изменилась", id)
 	}
+	basis, err := proposalBasis(root, out, state)
+	if err != nil {
+		return "", err
+	}
 	if err = l.Apply(root, []drafttx.Change{{Path: draftRel(id), Before: before, After: drafttx.Image{Exists: true, Data: out, Mode: before.Mode}}}); err != nil {
 		return "", err
 	}
-	return marshal(proposalView{ID: id, Snapshot: draftproposal.Digest(out), State: state})
+	return marshal(proposalView{ID: id, Snapshot: draftproposal.Digest(out), Basis: basis, State: state})
 }

@@ -101,6 +101,9 @@ for line in raw.splitlines():
             finals.append(obj["result"])
         if obj.get("type") == "agent_message" and isinstance(obj.get("text"), str):
             finals.append(obj["text"])
+log = pathlib.Path('.obey-taskctl.log')
+if log.is_file():
+    commands.extend(log.read_text().splitlines())
 need(finals and finals[-1].strip(), "нет итоговой реплики агента")
 final = finals[-1]
 record = "OB-043"

@@ -127,7 +127,7 @@ func TestEnvValuesNotPrinted(t *testing.T) {
 	kit := fakeKit(t)
 	writeProfile(t, kit, "quietcli", `[delegate]
 mode = "cli"
-command = ["/bin/sh", "-c", "exit 0"]
+command = ["/bin/sh", "-c", "printf started > runner-started"]
 
 [hooks]
 
@@ -145,9 +145,44 @@ home = "~/.claude-glm"
 env = ["SECRET_TOKEN=`+marker+`"]
 `)
 	root := writeBoard(t)
-	var out, errw bytes.Buffer
-	if _, err := cmdRun(root, "T-001", roleExec, "", root, &out, &errw); err != nil {
+	path := filepath.Join(root, "docs", "tasks", "T-001.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
+	}
+	material := `# T-001: проверка вывода окружения
+
+## Что происходит
+
+Значения окружения могут попасть в вывод команды.
+
+## Чего хотим
+
+В выводе остаются только имена переменных.
+
+## DoD
+
+- Значения окружения не попадают в вывод.
+
+## Ранг
+
+` + "`0+3+0+0+2 = 5`, P3." + `
+
+- Серьёзность 0: работа продолжается.
+- Ценность 3: вывод читают несколько команд.
+- Неопределённость 0: место проверки известно.
+- Поправка на баг 0: синтетический пример.
+- Рычаг 2: проверка покрывает общий вывод.
+`
+	if err := os.WriteFile(path, []byte(material), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errw bytes.Buffer
+	code, err := cmdRun(root, "T-001", roleExec, "", root, &out, &errw)
+	if err != nil || code != 0 {
+		t.Fatalf("запуск: код %d, ошибка %v", code, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "runner-started")); err != nil || string(data) != "started" {
+		t.Fatalf("подпроцесс не запустился: %q, %v", data, err)
 	}
 	texts := map[string]string{"run": out.String() + errw.String()}
 	harness, err := cmdHarness(root, "")

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/draftmeta"
+	"github.com/dronrider/devkit/internal/draftproposal"
 )
 
 // Черновик это записанная на ходу идея, которой ещё не выдали метаданные:
@@ -35,11 +36,12 @@ type Draft struct {
 	// Until это дата возврата из пометки «отложен до ...», пусто у отложенного
 	// без срока. Наступившая дата возврата в loadDrafts снимает пометку с
 	// черновика целиком: он возвращается в очередь разбора тем же днём.
-	Until  string
-	Prio   string // уровень разбора high / mid / low, пусто у немаркированного
-	Type   string
-	Source string
-	Lock   string
+	Until   string
+	Prio    string // уровень разбора high / mid / low, пусто у немаркированного
+	Type    string
+	Source  string
+	Lock    string
+	History bool
 }
 
 const (
@@ -77,7 +79,7 @@ func draftPrioWord(prio string) (string, error) {
 // текст черновика. Черновика из одного такого слова не записать, но ограничение
 // это давно действует для list и стоит того: без узнавания «draft defer DK-116
 // причина» молча завёл бы черновик с текстом «defer».
-var draftSubs = map[string]bool{"list": true, "defer": true, "prio": true, "attach": true, "drop": true, "ask": true}
+var draftSubs = map[string]bool{"list": true, "defer": true, "prio": true, "attach": true, "drop": true, "ask": true, "types": true, "meta": true}
 
 // draftWordRe узнаёт одно слово латиницей: имя подкоманды и ID задачи выглядят
 // ровно так, а записанная на ходу идея так не выглядит никогда.
@@ -110,7 +112,9 @@ func draftRel(id string) string        { return filepath.Join("docs", "tasks", "
 
 // loadDrafts читает накопитель. Каталога нет, значит черновиков нет: заводится
 // он первой командой draft, и на проекте без черновиков его быть не должно.
-func loadDrafts(root string) ([]Draft, error) {
+func loadDrafts(root string) ([]Draft, error) { return loadDraftsWithHistory(root, false) }
+
+func loadDraftsWithHistory(root string, includeHistory bool) ([]Draft, error) {
 	entries, err := os.ReadDir(draftsDir(root))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -139,6 +143,10 @@ func loadDrafts(root string) ([]Draft, error) {
 			return nil, err
 		}
 		d.Type, d.Source, d.Lock = meta.Header.Type, meta.Header.Source, meta.Header.Lock
+		d.History = meta.History
+		if d.History && !includeHistory {
+			continue
+		}
 		d.Title, d.Written, d.Deferred, d.Until, d.Prio = meta.Title, meta.Written, meta.Deferred, meta.Until, meta.Prio
 		// Отложенный до даты возвращается тем же днём: пометка больше не
 		// держит очередь, и накопитель видит черновик как неотложенный. День
@@ -200,6 +208,7 @@ func findDraft(drafts []Draft, id string) *Draft {
 // записи, даты пометки об отложенном и уровень разбора.
 type draftMeta struct {
 	Header   draftmeta.Header
+	History  bool
 	Title    string
 	Written  time.Time
 	Deferred string
@@ -222,6 +231,11 @@ func parseDraftFile(path string) (draftMeta, error) {
 	}
 	var m draftMeta
 	m.Header = header
+	state, err := draftproposal.Parse(data)
+	if err != nil {
+		return draftMeta{}, fmt.Errorf("%s: %w", path, err)
+	}
+	m.History = state.State == "history"
 	m.Written, m.Prio = header.Written, header.Priority
 	head, groom := true, false
 	for _, raw := range strings.Split(string(data), "\n") {
@@ -320,11 +334,22 @@ func cmdDraft(root, text, prio string, c CommitOpts) (string, error) {
 // cmdDraftFrom это cmdDraft со знанием, откуда пришёл текст: отказ по первой
 // строке советует stdin только тому, кто пришёл аргументом.
 func cmdDraftFrom(root, text, prio string, viaStdin bool, c CommitOpts) (string, error) {
+	return cmdDraftWithMeta(root, text, prio, viaStdin, "", "", "", c)
+}
+
+func cmdDraftWithMeta(root, text, prio string, viaStdin bool, kind, source, lock string, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
 	}
-	word, err := draftPrioWord(prio)
-	if err != nil {
+	word := ""
+	var err error
+	if prio != "" {
+		word, err = draftPrioWord(prio)
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := validateDraftMeta(root, kind, source, lock); err != nil {
 		return "", err
 	}
 	// Номер черновика это та же сквозная нумерация, что у доски, поэтому
@@ -348,7 +373,7 @@ func cmdDraftFrom(root, text, prio string, viaStdin bool, c CommitOpts) (string,
 	if err != nil {
 		return "", err
 	}
-	drafts, err := loadDrafts(root)
+	drafts, err := loadDraftsWithHistory(root, true)
 	if err != nil {
 		return "", err
 	}
@@ -368,7 +393,10 @@ func cmdDraftFrom(root, text, prio string, viaStdin bool, c CommitOpts) (string,
 	// Метку кладёт та же setPrio, что и draft prio: место строки в шапке
 	// описано в одном месте, и запись с пересмотром не расходятся.
 	t := &draftText{path: abs, lines: strings.Split(body, "\n")}
-	t.setPrio(word)
+	if word != "" {
+		t.setPrio(word)
+	}
+	setDraftMeta(t, kind, source, lock)
 	body = strings.Join(t.lines, "\n")
 	if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
 		return "", err
@@ -433,4 +461,21 @@ func draftsLine(drafts []Draft) string {
 		parts = append(parts, fmt.Sprintf("%s (%s)", d.ID, draftAgeWords(d, false)))
 	}
 	return fmt.Sprintf("Черновики (%d, целиком: taskctl draft list): %s", len(drafts), strings.Join(parts, ", "))
+}
+
+func cmdDraftHistory(root string) (string, error) {
+	drafts, err := loadDraftsWithHistory(root, true)
+	if err != nil {
+		return "", err
+	}
+	var out []string
+	for _, d := range drafts {
+		if d.History {
+			out = append(out, fmt.Sprintf("%s: %s", d.ID, clipTitle(d.Title)))
+		}
+	}
+	if len(out) == 0 {
+		return "история разбора пуста", nil
+	}
+	return strings.Join(out, "\n"), nil
 }

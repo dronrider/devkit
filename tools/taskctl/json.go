@@ -296,8 +296,10 @@ type jsonDraft struct {
 // cmdDraftListJSON печатает накопитель одним объектом JSON. Пустой накопитель
 // это пустой список, а не отсутствие поля: «черновиков нет» читатель обязан
 // отличать от «список не приехал».
-func cmdDraftListJSON(root string) (string, error) {
-	drafts, err := loadDrafts(root)
+func cmdDraftListJSON(root string) (string, error) { return cmdDraftListJSONHistory(root, false) }
+
+func cmdDraftListJSONHistory(root string, history bool) (string, error) {
+	drafts, err := loadDraftsWithHistory(root, history)
 	if err != nil {
 		return "", err
 	}
@@ -305,6 +307,9 @@ func cmdDraftListJSON(root string) (string, error) {
 		Drafts []jsonDraft `json:"drafts"`
 	}{Drafts: []jsonDraft{}}
 	for _, d := range drafts {
+		if history && !d.History {
+			continue
+		}
 		item := jsonDraft{
 			ID: d.ID, Title: d.Title, File: filepath.ToSlash(draftRel(d.ID)),
 			AgeDays: int(d.Age.Hours() / 24), AgeWords: ageWords(d.Age), Deferred: d.Deferred,

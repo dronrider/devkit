@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/dronrider/devkit/internal/draftproposal"
 	"os"
 	"path/filepath"
 	"strings"
@@ -465,28 +466,17 @@ func TestDraftListJSONKeepsFullTitle(t *testing.T) {
 	}
 }
 
-// TestDraftDemandsPrio: запись без уровня разбора отказывает и учит форме
-// команды, а сам черновик не заводится. Метка задаёт очередь разбора, и
-// поставленная грумингом она появлялась тогда, когда разбор уже шёл (DK-520).
-func TestDraftDemandsPrio(t *testing.T) {
+func TestDraftOptionalPrio(t *testing.T) {
 	root := setup(t)
-	_, err := cmdDraft(root, "идея без уровня", "", CommitOpts{})
-	if err == nil {
-		t.Fatal("запись без --prio должна отбиваться")
-	}
-	if !strings.Contains(err.Error(), "taskctl draft --prio high|mid|low") {
-		t.Fatalf("подсказка не про форму команды: %v", err)
-	}
-	if _, err := cmdDraft(root, "идея с уровнем не из шкалы", "срочно", CommitOpts{}); err == nil ||
-		!strings.Contains(err.Error(), "не из шкалы") {
-		t.Fatalf("уровень мимо шкалы: %v", err)
-	}
-	drafts, err := loadDrafts(root)
-	if err != nil {
+	if _, err := cmdDraft(root, "идея без уровня", "", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if len(drafts) != 0 {
-		t.Fatalf("отказавшая запись завела черновик: %+v", drafts)
+	drafts, err := loadDrafts(root)
+	if err != nil || len(drafts) != 1 || drafts[0].Prio != "" {
+		t.Fatalf("drafts: %+v %v", drafts, err)
+	}
+	if _, err := cmdDraft(root, "идея с неверным уровнем", "срочно", CommitOpts{}); err == nil {
+		t.Fatal("неверный уровень принят")
 	}
 }
 
@@ -585,5 +575,40 @@ func TestDraftListJSONMetadata(t *testing.T) {
 	}
 	if _, err := cmdDraftListJSON(root); err == nil || !strings.Contains(err.Error(), path) {
 		t.Fatalf("invalid lock: %v", err)
+	}
+}
+
+func TestDraftHistoryReservesID(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "завершённый материал", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	path := draftPath(root, "XR-008")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := draftproposal.State{Version: 1, State: "history", Proposals: []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Status: "rejected"}}}
+	data, err = draftproposal.Replace(data, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	active, err := cmdDraftListJSON(root)
+	if err != nil || strings.Contains(active, "XR-008") {
+		t.Fatalf("active: %s %v", active, err)
+	}
+	history, err := cmdDraftListJSONHistory(root, true)
+	if err != nil || !strings.Contains(history, "XR-008") {
+		t.Fatalf("history: %s %v", history, err)
+	}
+	id, err := cmdID(root)
+	if err != nil || id != "XR-009" {
+		t.Fatalf("next id %s %v", id, err)
+	}
+	if _, err = cmdAdd(root, AddParams{ID: "XR-008"}); err == nil || !strings.Contains(err.Error(), "историей") {
+		t.Fatalf("reused history: %v", err)
 	}
 }

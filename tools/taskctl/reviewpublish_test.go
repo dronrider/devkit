@@ -337,7 +337,7 @@ func TestPublishFailureKeepsRest(t *testing.T) {
 	sleepPublish = func(time.Duration) {}
 	t.Cleanup(func() { runPublish, sleepPublish = old, oldSleep })
 	_, err := cmdReviewPublish(root, "XR-005", CommitOpts{})
-	if err == nil || !strings.Contains(err.Error(), "не ушло в MR") {
+	if err == nil || !strings.Contains(err.Error(), "исход отправки не подтверждён") {
 		t.Fatalf("отказ API: %v", err)
 	}
 	got := draftStates(t, root, "XR-005")

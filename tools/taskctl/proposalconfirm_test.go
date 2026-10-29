@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -332,5 +333,123 @@ func TestConfirmLockedAttachRejectsCloudWithoutWrites(t *testing.T) {
 	cloud.Close()
 	if _, err = cmdDraftProposalsConfirm(root, request, CommitOpts{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestProposalHistoryNewAnalysisAndOldRetry(t *testing.T) {
+	root := setup(t)
+	kit, _ := filepath.Abs("../..")
+	t.Setenv("DEVKIT_HOME", kit)
+	if _, err := cmdDraft(root, "исходник", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := cmdDraftProposals(root, "XR-008")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view proposalView
+	if err = json.Unmarshal([]byte(raw), &view); err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Первый результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
+	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal([]byte(raw), &view); err != nil {
+		t.Fatal(err)
+	}
+	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "accept"}}}
+	input, _ := json.Marshal(req)
+	first, err := cmdDraftProposalsConfirm(root, input, CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = cmdDraftProposals(root, "XR-008")
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw), &view)
+	if view.State.State != "history" || len(view.State.Receipts) != 1 || len(view.State.Receipts[0].IDs) == 0 {
+		t.Fatalf("state: %+v", view.State)
+	}
+	old := view.State
+	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p2","revision":1,"outcome":"drop","text":"второй","reason":"устарело"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw), &view)
+	if view.State.State != "active" || len(view.State.Proposals) != 2 || !reflect.DeepEqual(view.State.Proposals[0], old.Proposals[0]) || !reflect.DeepEqual(view.State.Receipts, old.Receipts) {
+		t.Fatalf("new state: %+v", view.State)
+	}
+	before, _ := os.ReadFile(draftPath(root, "XR-008"))
+	repeat, err := cmdDraftProposalsConfirm(root, input, CommitOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(draftPath(root, "XR-008"))
+	var a, b confirmationResult
+	json.Unmarshal([]byte(first), &a)
+	json.Unmarshal([]byte(repeat), &b)
+	if !b.Repeated || !reflect.DeepEqual(a.Results, b.Results) || !bytes.Equal(before, after) {
+		t.Fatalf("retry: %s", repeat)
+	}
+	next, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p2", Revision: 1, Action: "accept"}}})
+	if _, err = cmdDraftProposalsConfirm(root, next, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = cmdDraftProposals(root, "XR-008")
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw), &view)
+	if view.State.State != "history" || len(view.State.Receipts) != 2 {
+		t.Fatalf("final: %+v", view.State)
+	}
+}
+
+func TestProposalConfirmLinkedWorktreeRejectsBoardMutation(t *testing.T) {
+	root := setup(t)
+	kit, _ := filepath.Abs("../..")
+	t.Setenv("DEVKIT_HOME", kit)
+	if _, err := cmdDraft(root, "исходник", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git: %s %v", out, err)
+		}
+	}
+	git("init")
+	git("add", "docs")
+	git("commit", "-m", "fixture")
+	tree := filepath.Join(t.TempDir(), "worktree")
+	git("worktree", "add", "-b", "test", tree)
+	raw, err := cmdDraftProposals(tree, "XR-008")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view proposalView
+	json.Unmarshal([]byte(raw), &view)
+	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
+	raw, err = cmdDraftProposalsSave(tree, "XR-008", view.Snapshot, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw), &view)
+	input, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "accept"}}})
+	source, _ := os.ReadFile(draftPath(tree, "XR-008"))
+	board, _ := os.ReadFile(boardPath(tree))
+	mainBoard, _ := os.ReadFile(boardPath(root))
+	if _, err = cmdDraftProposalsConfirm(tree, input, CommitOpts{}); err == nil || !strings.Contains(err.Error(), "линкованный worktree") {
+		t.Fatalf("expected refusal: %v", err)
+	}
+	sourceAfter, _ := os.ReadFile(draftPath(tree, "XR-008"))
+	boardAfter, _ := os.ReadFile(boardPath(tree))
+	mainAfter, _ := os.ReadFile(boardPath(root))
+	if !bytes.Equal(source, sourceAfter) || !bytes.Equal(board, boardAfter) || !bytes.Equal(mainBoard, mainAfter) {
+		t.Fatal("refusal changed files")
 	}
 }

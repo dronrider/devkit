@@ -258,6 +258,18 @@ func armSweep(root string, live map[string]bool) {
 	}
 }
 
+// armSelectionEffects holds changes until the wake selection's inputs have
+// been checked again under the board lock.
+var armSelectionEffects *[]func() string
+
+func armSelectionEffect(f func() string) string {
+	if armSelectionEffects != nil {
+		*armSelectionEffects = append(*armSelectionEffects, f)
+		return ""
+	}
+	return f()
+}
+
 // armedWaiters это вид ждущих «взвод» в хвосте обхода (решение 5). Строки
 // Backlog со взводом идут по одному правилу с парковкой: снятость рёбер
 // считает та же функция, что у ворот старта, а поднимает прошедшую ворота
@@ -303,7 +315,8 @@ func armedWaiters(root string, b *Board, arch *Archive) ([]waiter, []string) {
 			gates = newArmGates(root, b)
 		}
 		if why := gates.pass(r.ID); why != "" {
-			if note := armRefuse(root, r.ID, why); note != "" {
+			id := r.ID
+			if note := armSelectionEffect(func() string { return armRefuse(root, id, why) }); note != "" {
 				notes = append(notes, note)
 			}
 			out = append(out, waiter{ID: r.ID, Class: classArm, Said: why})
@@ -311,10 +324,11 @@ func armedWaiters(root string, b *Board, arch *Archive) ([]waiter, []string) {
 		}
 		// Ворота пропустили: прошлый отказ больше не правда, и файл уходит,
 		// не дожидаясь старта строки.
-		dropArmRefusal(root, r.ID)
+		id := r.ID
+		armSelectionEffect(func() string { dropArmRefusal(root, id); return "" })
 		out = append(out, waiter{ID: r.ID, Class: classArm, Said: "рёбра сняты", Met: true})
 	}
-	armSweep(root, live)
+	armSelectionEffect(func() string { armSweep(root, live); return "" })
 	return out, notes
 }
 

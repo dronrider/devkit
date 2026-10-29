@@ -470,6 +470,32 @@ func TestWakeSelectionReleasesLockAndRejectsConcurrentEdit(t *testing.T) {
 	}
 }
 
+func TestWakeDoesNotRecordRefusalFromStaleSelection(t *testing.T) {
+	root := armStand(t, 0)
+	if _, err := cmdArm(root, "XR-003", "", false, CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	old := waiterSources
+	t.Cleanup(func() { waiterSources = old })
+	waiterSources = []waiterSource{armedWaiters, func(root string, _ *Board, _ *Archive) ([]waiter, []string) {
+		f, err := os.OpenFile(taskFileAbs(root, "XR-003"), os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("\nconcurrent change\n"); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		return nil, nil
+	}}
+	if _, _, err := cmdWake(root, nil, wakeOpts{}); err == nil || !strings.Contains(err.Error(), "изменился") {
+		t.Fatalf("expected stale selection: %v", err)
+	}
+	if refusal, ok := readArmRefusal(root, "XR-003"); ok {
+		t.Fatalf("stale refusal was saved: %+v", refusal)
+	}
+}
+
 func TestCLIMoveRejectsEditDuringBranchGate(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -92,5 +93,35 @@ func TestCLIDraftLocksBeforeAllocatingID(t *testing.T) {
 	}
 	if err = <-done; err != nil || !strings.Contains(output.String(), "XR-021") {
 		t.Fatalf("allocation: %v %s", err, output.String())
+	}
+}
+
+func TestCLINotifyCanCallTaskctl(t *testing.T) {
+	root := setup(t)
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	dk := t.TempDir()
+	hooks := filepath.Join(dk, "hooks")
+	if err := os.MkdirAll(hooks, 0755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := "import subprocess\nsubprocess.run([" + strconv.Quote(bin) + ", '-C', " + strconv.Quote(root) + ", 'show', 'XR-005'], check=True, timeout=5)\nopen(" + strconv.Quote(marker) + ", 'w').write('ok')\n"
+	if err := os.WriteFile(filepath.Join(hooks, "notify.py"), []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", dk)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "-C", root, "move", "XR-005", "blocked", "--reason", "проверка")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("move: %v %s", err, out)
+	}
+	if _, err = os.Stat(marker); err != nil {
+		t.Fatalf("notify: %v %s", err, out)
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -398,5 +399,31 @@ func TestRehearseHintsOnMultilineScripts(t *testing.T) {
 				t.Fatalf("подсказка не должна быть в отказе: %v", err)
 			}
 		})
+	}
+}
+
+func TestRehearseDoesNotOverwriteConcurrentEdit(t *testing.T) {
+	root := setupRehearse(t, "echo test")
+	path := filepath.Join(root, "docs", "tasks", "XR-005.md")
+	_, err := cmdRehearse(root, "XR-005", RehearseParams{Steps: []string{"printf foreign > " + shQuote(path)}, Now: rehearseAt})
+	if err == nil || !strings.Contains(err.Error(), "изменился") {
+		t.Fatalf("stale result: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "foreign" {
+		t.Fatalf("edit overwritten: %q %v", data, err)
+	}
+}
+
+func TestRehearseAllowsNestedTaskctl(t *testing.T) {
+	root := setupRehearse(t, "echo test")
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	msg, err := cmdRehearse(root, "XR-005", RehearseParams{Steps: []string{shQuote(bin) + " -C " + shQuote(root) + " show XR-005"}, Timeout: 5 * time.Second, Now: rehearseAt})
+	if err != nil {
+		t.Fatalf("nested taskctl: %v %s", err, msg)
 	}
 }

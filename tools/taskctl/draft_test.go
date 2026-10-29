@@ -551,3 +551,39 @@ func TestDraftPrioOnTitleOnly(t *testing.T) {
 		t.Fatalf("пересмотр уровня копит строки:\n%s", data)
 	}
 }
+
+func TestDraftListJSONMetadata(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "текст записи", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	path := draftPath(root, "XR-008")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), "## ", "тип: agreement\nисточник: meeting\nзамок: locked\n\n## ", 1))
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmdDraftListJSON(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Drafts []jsonDraft `json:"drafts"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Drafts) != 1 || got.Drafts[0].Type != "agreement" || got.Drafts[0].Source != "meeting" || got.Drafts[0].Lock != "locked" {
+		t.Fatalf("metadata: %s", out)
+	}
+	data = []byte(strings.Replace(string(data), "замок: locked", "замок: typo", 1))
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDraftListJSON(root); err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("invalid lock: %v", err)
+	}
+}

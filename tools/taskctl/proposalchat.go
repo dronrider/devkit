@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/draftproposal"
 	"github.com/dronrider/devkit/internal/drafttx"
 	"github.com/dronrider/devkit/internal/stage"
@@ -63,6 +64,35 @@ func proposalChatQuestion(root, anchor string, also []string) (chat.Question, er
 }
 
 func cmdProposalChatAsk(root, anchor string, also []string, d askDeps, env func(string) string) (string, error) {
+	// This JSON goes back to the asking agent. Guard every shown source under
+	// the same reservation as a cloud client, including the main worktree.
+	var locks []*draftmeta.CloudLock
+	defer func() {
+		for _, lock := range locks {
+			lock.Close()
+		}
+	}()
+	roots := []string{root}
+	if main := stage.MainRoot(root); main != root {
+		roots = append(roots, main)
+	}
+	ids := append([]string{anchor}, also...)
+	for _, tree := range roots {
+		for _, id := range ids {
+			lock, err := draftmeta.CloudShared(tree, id)
+			if err != nil {
+				return "", err
+			}
+			locks = append(locks, lock)
+		}
+	}
+	for _, tree := range roots {
+		for _, id := range ids {
+			if err := draftmeta.GuardRecord(tree, id); err != nil {
+				return "", err
+			}
+		}
+	}
 	q, err := proposalChatQuestion(root, anchor, also)
 	if err != nil {
 		return "", err

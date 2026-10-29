@@ -60,6 +60,24 @@ func TestProposalChatActualCLI(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
+	second := draftPath(root, "XR-009")
+	public, err := os.ReadFile(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected := strings.Replace(string(public), "\n", "\nзамок: locked\n", 1)
+	if err = os.WriteFile(second, []byte(protected), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if leaked, err := run(nil, "draft", "proposals", "ask", "XR-008", "--also", "XR-009"); err == nil || strings.Contains(leaked, "предложение") {
+		t.Fatalf("locked shown source reached agent: %s %v", leaked, err)
+	}
+	if _, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName("XR-008"))); ok {
+		t.Fatal("private question was published")
+	}
+	if err = os.WriteFile(second, public, 0600); err != nil {
+		t.Fatal(err)
+	}
 	out, err := run(nil, "draft", "proposals", "ask", "XR-008", "--also", "XR-009")
 	if err != nil {
 		t.Fatalf("ask: %s %v", out, err)
@@ -89,6 +107,16 @@ func TestProposalChatActualCLI(t *testing.T) {
 	after, err := os.ReadFile(draftPath(root, "XR-008"))
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("hidden predecessor changed source")
+	}
+	bad = a
+	bad.Tree = t.TempDir()
+	badInput, _ = json.Marshal(bad)
+	if got, err := run(badInput, "draft", "proposals", "answer", "XR-008"); err == nil {
+		t.Fatalf("wrong tree accepted: %s", got)
+	}
+	after, err = os.ReadFile(draftPath(root, "XR-008"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("wrong tree changed source")
 	}
 	input, _ := json.Marshal(a)
 	jq := exec.Command("jq", `{tree: .proposal.tree, snapshots: [{source: .proposal.sources[0].source, digest: .proposal.sources[0].basis}], decisions: [{source: .proposal.sources[0].source, proposal: .proposal.sources[0].proposals[0].id, revision: .proposal.sources[0].proposals[0].revision, action: "reject", reason: "не нужно"}]}`)

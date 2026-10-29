@@ -2789,6 +2789,32 @@ class StopTailsTest(unittest.TestCase):
                     call()
             self.assertFalse(os.path.exists(marker), "облачный клиент запущен")
 
+    def test_stale_worktree_cannot_launch_private_main(self):
+        def git(*args):
+            p = subprocess.run(["git", "-C", self.root, "-c", "user.name=stand",
+                                "-c", "user.email=stand@example.invalid", *args],
+                               capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+        git("init", "-q")
+        git("add", "docs")
+        git("commit", "-qm", "fixture")
+        tree = os.path.join(self.root, "linked")
+        git("worktree", "add", "-qb", "fixture-tree", tree)
+        with open(self.task_file(), "w", encoding="utf-8") as f:
+            f.write("# DK-1\nзащита: locked\n")
+        self.pipe.proj = tree
+        marker = os.path.join(self.root, "cloud-starts")
+        fake = os.path.join(self.root, "fake-cloud")
+        write_stub(fake, "#!/bin/sh\necho started >> " + marker + "\n")
+        self.pipe.client = [fake]
+        for call in (lambda: self.pipe.raise_head("разобрать"),
+                     lambda: self.pipe.run_pass("разобрать"),
+                     lambda: self.pipe.send_order("продолжай")):
+            with unittest.mock.patch("sys.stderr", new_callable=io.StringIO):
+                with self.assertRaises(SystemExit):
+                    call()
+            self.assertFalse(os.path.exists(marker), "облачный клиент запущен")
+
     def registry(self, agents):
         with open(os.path.join(self.root, SID + ".json"), "w", encoding="utf-8") as f:
             json.dump({"session": SID, "updated": 0, "agents": agents}, f, ensure_ascii=False)

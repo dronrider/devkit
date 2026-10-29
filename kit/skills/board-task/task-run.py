@@ -1335,13 +1335,18 @@ class Pipeline:
         return cmd + ["-p", order]
 
     def guard_material(self):
-        try:
-            p = subprocess.run(["taskctl", "guard", self.id], cwd=self.proj,
-                               capture_output=True, text=True, timeout=10)
-        except (OSError, subprocess.TimeoutExpired) as e:
-            die("материал перед запуском не проверен: %s" % e)
-        if p.returncode:
-            die((p.stderr or p.stdout or "материал перед запуском не проверен").strip())
+        roots = [self.proj]
+        main = self.main_root()
+        if os.path.realpath(main) != os.path.realpath(self.proj):
+            roots.append(main)
+        for root in roots:
+            try:
+                p = subprocess.run(["taskctl", "guard", self.id], cwd=root,
+                                   capture_output=True, text=True, timeout=10)
+            except (OSError, subprocess.TimeoutExpired) as e:
+                die("материал перед запуском не проверен: %s" % e)
+            if p.returncode:
+                die((p.stderr or p.stdout or "материал перед запуском не проверен").strip())
 
     def raise_head(self, order):
         """Подъём живой головы в своей же панели. Клиент забирает терминал

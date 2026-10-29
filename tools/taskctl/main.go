@@ -926,13 +926,16 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		jsonOut := fs.Bool("json", false, "машинный вывод JSON, Backlog целиком")
 		debtOnly := fs.Bool("debt", false, "только строки с меткой технического долга, Backlog целиком")
+		safe := fs.Bool("safe", false, "скрыть защищённые названия")
 		pos := frame.ParseArgs(fs, args[1:])
 		needArgs(pos, 0, 1, "list [backlog|in-progress|check|blocked] [--debt] [--json]")
 		sect := ""
 		if len(pos) == 1 {
 			sect = pos[0]
 		}
-		if *jsonOut {
+		if *safe {
+			msg, err = cmdSafeBoardList(root(*dir), sect, *debtOnly, *jsonOut)
+		} else if *jsonOut {
 			msg, err = cmdListJSON(root(*dir), sect, *debtOnly)
 		} else {
 			msg, err = cmdList(root(*dir), sect, *debtOnly)

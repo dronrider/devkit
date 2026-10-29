@@ -223,15 +223,17 @@ var runTrackctl = func(root string, args ...string) ([]byte, error) {
 // DK-756, решение 8). Ключ `worklog = off` по умолчанию, и без него команда
 // не зовётся вовсе. Провал записи не держит закрытие: строка ревью уже
 // доработана, а неуехавшее время видно строкой отчёта.
-func reviewWorklog(root, title string) string {
+func reviewWorklog(root, id, title, identity string) string {
 	m := reviewTicketRe.FindStringSubmatch(strings.TrimSpace(title))
 	if m == nil {
 		return "ворклог не пишу: в заголовке строки нет ключа тикета"
 	}
-	out, err := runTrackctl(root, "submit", m[1], "--log-only")
+	out, err := reviewOnce(root, id, "worklog-"+m[1]+"-"+identity, "", func() ([]byte, error) {
+		return runTrackctl(root, "submit", m[1], "--log-only")
+	})
 	text := strings.TrimSpace(string(out))
 	if err != nil {
-		return fmt.Sprintf("ворклог %s не ушёл: %v (%s)", m[1], err, text)
+		return fmt.Sprintf("ворклог %s: %v (%s)", m[1], err, text)
 	}
 	return fmt.Sprintf("ворклог %s: %s", m[1], strings.Join(strings.Fields(text), " "))
 }
@@ -269,7 +271,7 @@ func closeReviewRow(root string, d *reviewDraft, row *Row, fate string, v *revie
 		return err
 	}
 	if err := appendReviewStage(root, d.id, note); err != nil {
-		return err
+		return fmt.Errorf("журнал ревью сохранён, ход работы не записан: %w", err)
 	}
 	v.Fate = fate
 	v.Lines = append(v.Lines, fmt.Sprintf("%s: %s, строка ревью закрывается, блоков снято %d", d.id, note, len(d.Blocks)))
@@ -278,11 +280,16 @@ func closeReviewRow(root string, d *reviewDraft, row *Row, fate string, v *revie
 		v.Lines = append(v.Lines, fmt.Sprintf("%s: MR слит, а блокирующих замечаний открыто %d: разбирается человек", d.id, open))
 	}
 	if worklog {
-		v.Lines = append(v.Lines, reviewWorklog(root, row.Title))
+		identity := d.MR + "\x00" + d.Sha + "\x00" + fate
+		if cliTx != nil {
+			cliAfterUnlock = append(cliAfterUnlock, func() string { return "\n" + reviewWorklog(root, d.id, row.Title, identity) })
+		} else {
+			v.Lines = append(v.Lines, reviewWorklog(root, d.id, row.Title, identity))
+		}
 	}
 	out, err := cmdClose(root, CloseParams{ID: d.id, Commit: c})
 	if err != nil {
-		return err
+		return fmt.Errorf("журнал и ход работы сохранены, закрытие не завершено: %w", err)
 	}
 	v.Lines = append(v.Lines, strings.Split(strings.TrimSpace(out), "\n")...)
 	return nil
@@ -306,21 +313,30 @@ func cmdReviewPoll(root, id string, now time.Time, home string, asJSON bool, c C
 	if err := c.validate(); err != nil {
 		return "", err
 	}
-	conf, err := loadReviewConf(root)
+	pollLock, err := reviewPollLock(root, id)
 	if err != nil {
 		return "", err
 	}
-	b, err := LoadBoard(boardPath(root))
+	defer pollLock.Close()
+	if home == "" {
+		home = stage.Home()
+	}
+	statePath := reviewStatePath(home, root, id)
+	conf, d, basis, err := openRemoteReview(root, id)
+	if err != nil {
+		return "", err
+	}
+	board := basis.docs[filepath.Join("docs", "TASKS.md")]
+	if !board.Exists {
+		return "", fmt.Errorf("доска не найдена")
+	}
+	b, err := parseLines(boardPath(root), strings.Split(string(board.Data), "\n"))
 	if err != nil {
 		return "", err
 	}
 	row := b.find(id)
 	if row == nil {
 		return "", fmt.Errorf("%s нет на доске", id)
-	}
-	d, err := openReviewDraft(root, id, false)
-	if err != nil {
-		return "", err
 	}
 	if d.MR == "" {
 		return "", fmt.Errorf("в шапке %s нет ссылки на MR, опрашивать нечего", reviewDraftRel(id))
@@ -329,10 +345,7 @@ func cmdReviewPoll(root, id string, now time.Time, home string, asJSON bool, c C
 	if err != nil {
 		return "", err
 	}
-	if home == "" {
-		home = stage.Home()
-	}
-	st := loadReviewState(reviewStatePath(home, root, id))
+	st := loadReviewState(statePath)
 	v := reviewPollVerdict{ID: id}
 	if last, ok := reviewTime(st.Polled); ok && now.Sub(last) < conf.Poll {
 		v.Skipped = true
@@ -340,7 +353,7 @@ func cmdReviewPoll(root, id string, now time.Time, home string, asJSON bool, c C
 			id, humanSpan(now.Sub(last)), humanSpan(conf.Poll)))
 		return renderReviewPoll(v, asJSON)
 	}
-	changed, err := pollReviewRow(root, target, d, row, st, conf, now, &v, c)
+	changed, err := pollReviewRow(root, target, d, row, st, conf, now, &v, c, basis)
 	if err != nil {
 		return "", err
 	}
@@ -357,13 +370,17 @@ func cmdReviewPoll(root, id string, now time.Time, home string, asJSON bool, c C
 // pollReviewRow ходит в трекер и разбирает ответ. Возврат говорит, тронуто ли
 // что-нибудь на доске или в журнале ревью.
 func pollReviewRow(root string, target mrTarget, d *reviewDraft, row *Row, st *reviewState,
-	conf reviewConf, now time.Time, v *reviewPollVerdict, c CommitOpts) (bool, error) {
+	conf reviewConf, now time.Time, v *reviewPollVerdict, c CommitOpts, basis *reviewBasis) (bool, error) {
 	mr, err := fetchMR(target)
 	if err != nil {
 		return false, reviewFinding(st, v, err)
 	}
 	if fate := mr.fate(); fate != "" {
-		if err := closeReviewRow(root, d, row, fate, v, conf.Worklog, c); err != nil {
+		tail, err := basis.apply(func() error { return closeReviewRow(root, d, row, fate, v, conf.Worklog, c) })
+		if tail != "" {
+			v.Lines = append(v.Lines, strings.TrimSpace(tail))
+		}
+		if err != nil {
 			return true, err
 		}
 		st.Fail = ""
@@ -405,9 +422,22 @@ func pollReviewRow(root string, target mrTarget, d *reviewDraft, row *Row, st *r
 	}
 	st.Fail = ""
 	if len(events) > 0 {
-		return true, wakeReviewRow(root, d, row, events, st, v, c)
+		tail, err := basis.apply(func() error { return wakeReviewRow(root, d, row, events, st, v, c) })
+		if tail != "" {
+			v.Lines = append(v.Lines, strings.TrimSpace(tail))
+		}
+		return true, err
 	}
-	return silenceReviewRow(root, d, st, conf, now, v, c)
+	var changed bool
+	tail, err := basis.apply(func() error {
+		var err error
+		changed, err = silenceReviewRow(root, d, st, conf, now, v, c)
+		return err
+	})
+	if tail != "" {
+		v.Lines = append(v.Lines, strings.TrimSpace(tail))
+	}
+	return changed, err
 }
 
 // wakeReviewRow снимает парковку и ставит пометку: второй круг дальше
@@ -423,7 +453,7 @@ func wakeReviewRow(root string, d *reviewDraft, row *Row, events []string, st *r
 	paths := []string{reviewDraftRel(d.id)}
 	if row.Sect == SectBlocked {
 		if _, err := cmdMove(root, d.id, SectInProgress, "", CommitOpts{}); err != nil {
-			return err
+			return fmt.Errorf("пометка ревью сохранена, строка не переведена: %w", err)
 		}
 		paths = append(paths, filepath.Join("docs", "TASKS.md"))
 		v.Lines = append(v.Lines, fmt.Sprintf("%s: парковка снята, строка вернулась в In progress", d.id))

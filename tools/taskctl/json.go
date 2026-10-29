@@ -182,8 +182,14 @@ func cmdListJSON(root, sect string, debtOnly bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ed := newEdges(root, b, arch)
-	times := boardTimes(root)
+	ed, err := newEdgesChecked(root, b, arch)
+	if err != nil {
+		return "", err
+	}
+	times, err := boardTimesChecked(root)
+	if err != nil {
+		return "", err
+	}
 	sv := loadStageView(root)
 	keys := []string{SectInProgress, SectCheck, SectBacklog, SectBlocked}
 	if sect != "" {
@@ -229,8 +235,16 @@ func cmdShowJSON(root, id string) (string, error) {
 		return "", err
 	}
 	if row := b.find(id); row != nil {
+		ed, err := newEdgesChecked(root, b, arch)
+		if err != nil {
+			return "", err
+		}
+		times, err := boardTimesChecked(root)
+		if err != nil {
+			return "", err
+		}
 		out := jsonShow{
-			jsonRow: makeJSONRow(root, row, newEdges(root, b, arch), boardTimes(root), loadStageView(root)),
+			jsonRow: makeJSONRow(root, row, ed, times, loadStageView(root)),
 			Sect:    row.Sect,
 		}
 		if s := sides[id]; s != nil {
@@ -378,7 +392,10 @@ func cmdDepListJSON(root, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ed := newEdges(root, b, arch)
+	ed, err := newEdgesChecked(root, b, arch)
+	if err != nil {
+		return "", err
+	}
 	sides := depSides(b)
 	if id != "" {
 		d := jsonDep{ID: id}

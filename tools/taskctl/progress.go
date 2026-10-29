@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"github.com/dronrider/devkit/internal/trace"
+	"os"
 )
 
 // Пять рубежей F из замера цели DK-395: доли активного времени задачи по
@@ -81,7 +81,12 @@ func progressOfBoard(root, id string, b *Board, arch *Archive) (*taskProgress, e
 		return &taskProgress{ID: id, F: progressReady,
 			Mark: "код и тесты готовы", Sign: "раздел «Ревью» в " + rel}, nil
 	}
-	if br, ahead := trace.UnmergedTaskBranch(root, id); br != "" {
+	var br string
+	var ahead int
+	if err := cliReadOutside(root, func() error { br, ahead = trace.UnmergedTaskBranch(root, id); return nil }); err != nil {
+		return nil, err
+	}
+	if br != "" {
 		return &taskProgress{ID: id, F: progressCommit,
 			Mark: "первый коммит кода",
 			Sign: fmt.Sprintf("ветка %s не слита, коммитов впереди main %d", br, ahead)}, nil

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -34,6 +35,7 @@ type deferredRemoval struct {
 }
 
 var cliRemovals []deferredRemoval
+var errDraftChanged = errors.New("материал изменился при внешней проверке; повторите команду")
 
 // cliReadOutside runs a read-only external check without the board lock and
 // refuses to continue when a writer changed its inputs in the meantime.
@@ -44,11 +46,11 @@ func cliReadOutside(root string, check func() error) error {
 	lock := cliTx
 	cliTx = nil
 	var err error
-	cliTx, err = draftReadOutside(root, lock, check)
+	cliTx, err = draftReadOutside(root, cliMainRoot, lock, check)
 	return err
 }
 
-func draftReadOutside(root string, lock *drafttx.Lock, check func() error) (*drafttx.Lock, error) {
+func draftReadOutside(root, main string, lock *drafttx.Lock, check func() error) (*drafttx.Lock, error) {
 	canonical, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		lock.Close()
@@ -58,6 +60,22 @@ func draftReadOutside(root string, lock *drafttx.Lock, check func() error) (*dra
 	if err != nil {
 		lock.Close()
 		return nil, err
+	}
+	var mainCanonical string
+	var mainBefore map[string]drafttx.Image
+	if main != "" {
+		mainCanonical, err = filepath.EvalSymlinks(main)
+		if err != nil {
+			lock.Close()
+			return nil, err
+		}
+		if mainCanonical != canonical {
+			mainBefore, err = collectDocs(main)
+			if err != nil {
+				lock.Close()
+				return nil, err
+			}
+		}
 	}
 	if err = lock.Close(); err != nil {
 		return nil, err
@@ -72,7 +90,23 @@ func draftReadOutside(root string, lock *drafttx.Lock, check func() error) (*dra
 	currentRoot, err := filepath.EvalSymlinks(root)
 	if err != nil || currentRoot != canonical {
 		lock.Close()
-		return nil, fmt.Errorf("путь проекта изменился при внешней проверке; повторите команду")
+		return nil, fmt.Errorf("%w: путь проекта изменился", errDraftChanged)
+	}
+	if mainBefore != nil {
+		currentMain, mainErr := filepath.EvalSymlinks(main)
+		if mainErr != nil || currentMain != mainCanonical {
+			lock.Close()
+			return nil, fmt.Errorf("%w: путь основного дерева изменился", errDraftChanged)
+		}
+		mainAfter, mainErr := collectDocs(main)
+		if mainErr != nil {
+			lock.Close()
+			return nil, mainErr
+		}
+		if !reflect.DeepEqual(mainBefore, mainAfter) {
+			lock.Close()
+			return nil, errDraftChanged
+		}
 	}
 	after, err := collectDocs(root)
 	if err != nil {
@@ -81,7 +115,7 @@ func draftReadOutside(root string, lock *drafttx.Lock, check func() error) (*dra
 	}
 	if !reflect.DeepEqual(before, after) {
 		lock.Close()
-		return nil, fmt.Errorf("материал изменился при внешней проверке; повторите команду")
+		return nil, errDraftChanged
 	}
 	return lock, nil
 }
@@ -116,8 +150,10 @@ func cliNeedsDraftLock(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "add", "set", "dep", "sort", "list", "show", "id", "move", "ask", "decide", "fail", "debt", "debt-done", "arm", "plan", "chain", "file", "progress", "elapsed", "lint", "closable", "close":
+	case "add", "set", "dep", "sort", "list", "show", "id", "move", "ask", "decide", "fail", "debt", "debt-done", "arm", "plan", "chain", "file", "progress", "elapsed", "lint", "closable", "close", "batch", "slot", "pilot", "stops", "kinds", "remind":
 		return true
+	case "team":
+		return len(args) > 1 && args[1] == "show"
 	case "review":
 		return len(args) > 1 && args[1] != "publish" && args[1] != "poll" && args[1] != "approve-mr"
 	case "draft":
@@ -160,8 +196,43 @@ func cliQueuePublication(root string, paths []string, c CommitOpts) bool {
 	cliPublications = append(cliPublications, deferredPublication{root: root, paths: append([]string(nil), paths...), opts: c})
 	return true
 }
-func cliFinishDraftLock(success bool) (string, error) {
+func cliFinishDraftLock(success bool) (result string, finalErr error) {
+	var publication string
+	publicationRoot := cliWorktreeRoot
+	finishPublication := func() error {
+		if publication == "" {
+			return nil
+		}
+		err := drafttx.FinishPublication(publicationRoot, publication)
+		if err == nil {
+			publication = ""
+		}
+		return err
+	}
+	defer func() {
+		if err := finishPublication(); err != nil {
+			if finalErr != nil {
+				finalErr = fmt.Errorf("%v; журнал публикации не снят: %w", finalErr, err)
+			} else {
+				finalErr = fmt.Errorf("применено, журнал публикации не снят: %w", err)
+			}
+		}
+		if finalErr != nil {
+			cliRemovals = nil
+			cliPublications = nil
+			cliAfterUnlock = nil
+		}
+	}()
 	if cliTx != nil {
+		if len(cliRemovals) > 0 || (success && len(cliPublications) > 0) {
+			var err error
+			publication, err = cliTx.BeginPublication()
+			if err != nil {
+				cliTx.Close()
+				cliTx = nil
+				return "", fmt.Errorf("применено, публикация не начата: %w", err)
+			}
+		}
 		err := cliTx.Close()
 		cliTx = nil
 		if err != nil {
@@ -171,7 +242,9 @@ func cliFinishDraftLock(success bool) (string, error) {
 	// The file was already removed under the board lock. Git's index is
 	// updated only after releasing it, so hooks and wrappers may call taskctl.
 	untracked := map[string]bool{}
-	for _, r := range cliRemovals {
+	removals := cliRemovals
+	cliRemovals = nil
+	for _, r := range removals {
 		rel, err := filepath.Rel(r.root, r.path)
 		if err != nil {
 			return "", fmt.Errorf("применено, индекс не обновлён: %w", err)
@@ -224,14 +297,15 @@ func cliFinishDraftLock(success bool) (string, error) {
 			return "", fmt.Errorf("применено, индекс не обновлён: %v (%s)", err, out)
 		}
 	}
-	cliRemovals = nil
 	if !success {
 		cliPublications = nil
 		cliAfterUnlock = nil
 		return "", nil
 	}
 	var tails string
-	for _, p := range cliPublications {
+	publications := cliPublications
+	cliPublications = nil
+	for _, p := range publications {
 		var paths []string
 		for _, path := range p.paths {
 			if !untracked[filepath.Clean(path)] {
@@ -243,11 +317,14 @@ func cliFinishDraftLock(success bool) (string, error) {
 		}
 		tail, err := p.opts.apply(p.root, paths)
 		if err != nil {
+			cliAfterUnlock = nil
 			return tails, fmt.Errorf("применено, публикация не завершена: %w", err)
 		}
 		tails += tail
 	}
-	cliPublications = nil
+	if err := finishPublication(); err != nil {
+		return tails, fmt.Errorf("применено, журнал публикации не снят: %w", err)
+	}
 	callbacks := cliAfterUnlock
 	cliAfterUnlock = nil
 	for _, f := range callbacks {

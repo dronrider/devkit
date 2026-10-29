@@ -22,6 +22,24 @@ func newEdges(root string, b *Board, arch *Archive) *edges {
 	return e
 }
 
+// newEdgesChecked resolves the book outside the global lock. Its answers are
+// warmed for every row and dependency before the snapshot is revalidated.
+func newEdgesChecked(root string, b *Board, arch *Archive) (*edges, error) {
+	if cliTx == nil {
+		return newEdges(root, b, arch), nil
+	}
+	var e *edges
+	err := cliReadOutside(root, func() error {
+		e = newEdges(root, b, arch)
+		for _, id := range boardIDs(b) {
+			e.of(id)
+			e.book.Ever(id)
+		}
+		return nil
+	})
+	return e, err
+}
+
 // boardIDs это ID, про которые обход доски спросит признак «слита»: сами строки
 // и предпосылки их рёбер. Книга читает их пакетом, и обход доски обходится
 // десятком подпроцессов git вместо восьмидесяти с лишним. Это считается не

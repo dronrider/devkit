@@ -2,11 +2,28 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dronrider/devkit/internal/chat"
 )
+
+func TestDecideKeepsBusyQuestionAfterSavingAnswer(t *testing.T) {
+	root := setup(t)
+	askForks(t, root, "XR-005", dropForks)
+	path := askInMain(t, root, "XR-005")
+	name := chat.TaskName("XR-005")
+	lock, err := chat.Lock(filepath.Join(chat.Root(root), name+chat.LockSuffix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	got := chatRun(t, root, DecideParams{ID: "XR-005", Answer: "выкат 2"}, nil, nil)
+	if !askStands(path) || !strings.Contains(got, "ответ сохранён") {
+		t.Fatalf("busy question lost or outcome hidden: %s", got)
+	}
+}
 
 // Ответ человека снимает признак ожидания того же захода. До DK-1204 признак
 // снимали только панель и wake, а decide --answer из окна tmux и решение

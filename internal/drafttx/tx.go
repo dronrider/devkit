@@ -3,7 +3,9 @@ package drafttx
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -64,6 +66,10 @@ func ServiceDir(root string) (string, error) {
 
 // Acquire takes the common exclusive lock and recovers a pending transaction.
 func Acquire(root string) (*Lock, error) {
+	return acquire(root, false)
+}
+
+func acquire(root string, allowExternal bool) (*Lock, error) {
 	if root == "" {
 		return nil, fmt.Errorf("пустой корень проекта")
 	}
@@ -100,11 +106,179 @@ func Acquire(root string) (*Lock, error) {
 		return nil, err
 	}
 	l := &Lock{file: f, dir: dir, common: common, root: root}
+	_, markerErr := os.Lstat(filepath.Join(dir, "external.json"))
+	if markerErr == nil {
+		if !allowExternal {
+			l.Close()
+			return nil, fmt.Errorf("%s: внешнее обновление дерева не завершено; проверьте состояние checkout и журнал %s", root, filepath.Join(dir, "external.json"))
+		}
+		return l, nil
+	} else if !os.IsNotExist(markerErr) {
+		l.Close()
+		return nil, markerErr
+	}
 	if err = l.Recover(); err != nil {
 		l.Close()
 		return nil, err
 	}
 	return l, nil
+}
+
+type externalIntent struct {
+	Version int    `json:"version"`
+	Root    string `json:"root"`
+	Kind    string `json:"kind"`
+	Token   string `json:"token"`
+	Owner   int    `json:"owner"`
+}
+
+// BeginExternal installs a durable, root-bound barrier while the caller holds
+// the common lock. Other managed operations fail closed instead of waiting on
+// an external process which might itself invoke taskctl.
+func (l *Lock) BeginExternal(kind string) (string, *os.File, error) {
+	if kind == "" {
+		return "", nil, fmt.Errorf("не названо внешнее обновление")
+	}
+	entries, err := os.ReadDir(filepath.Join(l.dir, "publications"))
+	if err != nil && !os.IsNotExist(err) {
+		return "", nil, err
+	}
+	if len(entries) != 0 {
+		return "", nil, fmt.Errorf("публикация Git не завершена; checkout остановлен, журналы %s", filepath.Join(l.dir, "publications"))
+	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", nil, err
+	}
+	token := fmt.Sprintf("%x", nonce)
+	data, err := json.Marshal(externalIntent{Version: 1, Root: l.root, Kind: kind, Token: token, Owner: os.Getpid()})
+	if err != nil {
+		return "", nil, err
+	}
+	path := filepath.Join(l.dir, "external.json")
+	if _, err := os.Lstat(path); err == nil {
+		return "", nil, fmt.Errorf("внешнее обновление уже зарегистрировано: %s", path)
+	} else if !os.IsNotExist(err) {
+		return "", nil, err
+	}
+	lease, err := os.OpenFile(filepath.Join(l.dir, "external.lease"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := syscall.Flock(int(lease.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lease.Close()
+		return "", nil, err
+	}
+	if err := atomic(path, Image{Exists: true, Mode: 0600, Data: data}); err != nil {
+		lease.Close()
+		return "", nil, err
+	}
+	return token, lease, nil
+}
+
+// BeginPublication records an outstanding Git index/publication action before
+// releasing the board lock. A crash leaves evidence that blocks checkout.
+func (l *Lock) BeginPublication() (string, error) {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", err
+	}
+	token := fmt.Sprintf("%x", nonce)
+	data, err := json.Marshal(externalIntent{Version: 1, Root: l.root, Kind: "publication", Token: token, Owner: os.Getpid()})
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(l.dir, "publications")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	if err := syncDir(l.dir); err != nil {
+		return "", err
+	}
+	if err := atomic(filepath.Join(dir, token+".json"), Image{Exists: true, Mode: 0600, Data: data}); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func FinishPublication(root, token string) error {
+	if len(token) != 32 {
+		return fmt.Errorf("неверный ключ публикации")
+	}
+	if _, err := hex.DecodeString(token); err != nil {
+		return fmt.Errorf("неверный ключ публикации")
+	}
+	l, err := Acquire(root)
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+	dir := filepath.Join(l.dir, "publications")
+	path := filepath.Join(dir, token+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var intent externalIntent
+	if json.Unmarshal(data, &intent) != nil || intent.Version != 1 || intent.Root != l.root || intent.Kind != "publication" || intent.Token != token {
+		return fmt.Errorf("неверный журнал публикации %s; он сохранён", path)
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	return syncDir(dir)
+}
+
+// FinishExternal removes only the caller's barrier after a verified outcome.
+func FinishExternal(root, token string) error {
+	l, err := acquire(root, true)
+	if err != nil {
+		return err
+	}
+	defer l.Close()
+	path := filepath.Join(l.dir, "external.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var intent externalIntent
+	if json.Unmarshal(data, &intent) != nil || intent.Version != 1 || intent.Root != l.root || intent.Token == "" || intent.Token != token {
+		return fmt.Errorf("неверный журнал внешнего обновления %s; он сохранён", path)
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	return syncDir(l.dir)
+}
+
+// PendingExternal returns the root-bound intent without clearing it.
+func PendingExternal(root string) (kind, token string, lease *os.File, exists bool, err error) {
+	l, err := acquire(root, true)
+	if err != nil {
+		return "", "", nil, false, err
+	}
+	defer l.Close()
+	path := filepath.Join(l.dir, "external.json")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", "", nil, false, nil
+	}
+	if err != nil {
+		return "", "", nil, false, err
+	}
+	var intent externalIntent
+	if json.Unmarshal(data, &intent) != nil || intent.Version != 1 || intent.Root != l.root || intent.Kind == "" || intent.Token == "" || intent.Owner <= 0 {
+		return "", "", nil, false, fmt.Errorf("неверный журнал внешнего обновления %s; он сохранён", path)
+	}
+	lease, err = os.OpenFile(filepath.Join(l.dir, "external.lease"), os.O_RDWR, 0600)
+	if err != nil {
+		return "", "", nil, false, err
+	}
+	if err := syscall.Flock(int(lease.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lease.Close()
+		return "", "", nil, false, fmt.Errorf("внешнее обновление ещё выполняется: %w", err)
+	}
+	return intent.Kind, intent.Token, lease, true, nil
 }
 
 // ServiceDir returns the common service directory protected by this lock.

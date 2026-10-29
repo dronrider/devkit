@@ -164,6 +164,11 @@ func revertCount(tasks []pilotTask) int {
 // границе. История зеркальна окну по числу задач: сравнивать доли на выборках
 // разного размера значило бы мерить разом и полосу, и глубину архива.
 func cmdPilot(root, sinceArg, runsArg string) (string, error) {
+	if cliTx != nil {
+		var out string
+		err := cliReadOutside(root, func() error { var err error; out, err = cmdPilot(root, sinceArg, runsArg); return err })
+		return out, err
+	}
 	since, err := time.Parse(pilotDateLayout, sinceArg)
 	if err != nil {
 		return "", fmt.Errorf("--since ждёт дату вида 2026-09-01: %v", err)

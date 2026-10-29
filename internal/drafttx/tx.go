@@ -39,7 +39,7 @@ type Lock struct {
 func serviceDir(root string) string {
 	cmd := exec.Command("git", "-C", root, "rev-parse", "--git-common-dir")
 	out, err := cmd.Output()
-	if err == nil {
+	if err == nil && strings.TrimSpace(string(out)) != "" {
 		dir := strings.TrimSpace(string(out))
 		if !filepath.IsAbs(dir) {
 			dir = filepath.Join(root, dir)
@@ -47,6 +47,19 @@ func serviceDir(root string) string {
 		return filepath.Join(dir, "devkit", "draft-tx")
 	}
 	return filepath.Join(root, ".devkit", "draft-tx")
+}
+
+// ServiceDir identifies the shared service directory of linked worktrees.
+func ServiceDir(root string) (string, error) {
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	canonical, err = filepath.Abs(canonical)
+	if err != nil {
+		return "", err
+	}
+	return serviceDir(canonical), nil
 }
 
 // Acquire takes the common exclusive lock and recovers a pending transaction.
@@ -93,6 +106,10 @@ func Acquire(root string) (*Lock, error) {
 	}
 	return l, nil
 }
+
+// ServiceDir returns the common service directory protected by this lock.
+func (l *Lock) ServiceDir() string { return l.common }
+
 func (l *Lock) Close() error {
 	err := syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
 	e := l.file.Close()

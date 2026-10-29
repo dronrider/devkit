@@ -686,6 +686,7 @@ class DoctorResidencyTest(SandboxCase):
             rel = md.relative_to(cls.rdk).parts
             if rel[:2] not in (("kit", "skills"), ("kit", "agents"), ("kit", "templates")):
                 md.unlink()
+        shutil.rmtree(str(cls.rdk / "kit" / "draft-types"))
         shutil.rmtree(str(cls.rdk / "kit" / "skills"))
         write(cls.rdk / "kit" / "skills" / "tiny-skill" / "SKILL.md", cls.SKILL + "т" * 200)
         write(cls.rdk / "RULES.core.md", "# ядро\n\nтекст ядра.\n")

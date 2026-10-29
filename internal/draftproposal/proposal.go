@@ -21,6 +21,7 @@ type Proposal struct {
 	Outcome   string   `json:"outcome"`
 	Text      string   `json:"text"`
 	Reason    string   `json:"reason"`
+	Rationale string   `json:"rationale,omitempty"`
 	Title     string   `json:"title,omitempty"`
 	BoardType string   `json:"board_type,omitempty"`
 	Rank      string   `json:"rank,omitempty"`

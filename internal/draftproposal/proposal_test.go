@@ -72,7 +72,7 @@ func TestDecisionAndReceiptKeepSourceAndReason(t *testing.T) {
 }
 
 func TestMaterialHidesStateAndRestoresIt(t *testing.T) {
-	state := State{Version: 1, State: "active", Proposals: []Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Reason: "лишнее"}}}
+	state := State{Version: 1, State: "active", Proposals: []Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Reason: "лишнее", Rationale: "дубликат"}}}
 	original, err := Replace([]byte("# запись\n\n## Текст\nданные\n"), state)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestMaterialHidesStateAndRestoresIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	parsed, err := Parse(restored)
-	if err != nil || len(parsed.Proposals) != 1 || parsed.Proposals[0].Reason != "лишнее" || !bytes.Contains(restored, []byte("новая строка")) {
+	if err != nil || len(parsed.Proposals) != 1 || parsed.Proposals[0].Reason != "лишнее" || parsed.Proposals[0].Rationale != "дубликат" || !bytes.Contains(restored, []byte("новая строка")) {
 		t.Fatalf("restored %s %v", restored, err)
 	}
 }

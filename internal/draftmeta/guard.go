@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 // GuardDraft prevents a managed cloud launch for locked or unreadable drafts.
@@ -33,6 +35,14 @@ func GuardDraft(root, id string) error {
 
 // GuardRecord checks both a draft and the persistent protection of a task.
 func GuardRecord(root, id string) error {
+	if id == "" || filepath.Base(id) != id || id == "." || id == ".." {
+		return fmt.Errorf("неверный ID записи %q", id)
+	}
+	lock, err := drafttx.Acquire(root)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	if err := GuardDraft(root, id); err != nil {
 		return err
 	}

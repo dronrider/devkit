@@ -157,3 +157,13 @@ func TestInterruptedPlanCannotBeReplaced(t *testing.T) {
 		t.Fatalf("result %q %v", got, err)
 	}
 }
+
+func TestAcquireDoesNotCreateMissingProject(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	if _, err := Acquire(root); err == nil {
+		t.Fatal("missing project accepted")
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("project created: %v", err)
+	}
+}

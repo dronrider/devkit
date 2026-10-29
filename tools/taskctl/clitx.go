@@ -150,7 +150,7 @@ func cliNeedsDraftLock(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "add", "set", "dep", "sort", "list", "show", "id", "move", "ask", "decide", "fail", "debt", "debt-done", "arm", "plan", "chain", "file", "progress", "elapsed", "lint", "closable", "close", "batch", "slot", "pilot", "stops", "kinds", "remind":
+	case "add", "set", "dep", "sort", "list", "show", "id", "move", "ask", "decide", "fail", "debt", "debt-done", "arm", "plan", "chain", "file", "progress", "elapsed", "spend", "lint", "closable", "close", "batch", "slot", "pilot", "stops", "kinds", "remind":
 		return true
 	case "team":
 		return len(args) > 1 && args[1] == "show"

@@ -3333,6 +3333,7 @@ const replyBoard = `{"prefix":"XR","sections":[` +
 func replyEnv(t *testing.T) (*testEnv, *http.Client, string) {
 	t.Helper()
 	e := newTestEnv(t)
+	putDoc(t, e.proj, "docs/tasks/XR-9.md", "# XR-9: проверенная задача\n")
 	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", replyBoard))
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	writeTmuxFake(t, e.bin, tmuxLog, `чужая-сессия\n`)

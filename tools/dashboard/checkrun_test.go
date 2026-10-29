@@ -374,6 +374,8 @@ func TestCheckRunSkipsWhatNeedsNoRun(t *testing.T) {
 			e, tmuxLog := checkEnv(t, "")
 			if tc.doc != "" {
 				writeCheckTask(t, e.proj, tc.id, tc.doc)
+			} else if err := os.Remove(filepath.Join(e.proj, "docs", "tasks", tc.id+".md")); err != nil {
+				t.Fatal(err)
 			}
 			rep := checkRunOne(t, e, tc.id)
 			if rep.Raised || rep.Failed {

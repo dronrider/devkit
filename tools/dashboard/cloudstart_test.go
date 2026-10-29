@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -235,5 +238,92 @@ func TestCloudStartSurvivesLauncherExit(t *testing.T) {
 			t.Fatal("reservation not released after session death")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestCloudStartGuardianDeathKeepsLiveTmuxPrivate(t *testing.T) {
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	putDoc(t, root, "docs/TASKS.md", "# Тест: доска (префикс XR)\n\n## In progress\n\nНет.\n\n## Check\n\nНет.\n\n## Blocked\n\nНет.\n\n## Backlog\n\n| ID | Задача | Тип | P | R | Цена | Ссылка |\n|---|---|---|---|---|---|---|\n| XR-001 | Цель | task | P3 | 3 (0+1+1+0+1) | M | [tasks/XR-001.md](tasks/XR-001.md) |\n")
+	putDoc(t, root, "docs/TASKS-archive.md", "# Архив\n\n| ID | Задача | Тип | P | Закрыто | Ссылка |\n|---|---|---|---|---|---|\n")
+	putDoc(t, root, "docs/tasks/XR-001.md", "# XR-001: цель\n")
+	taskctl := buildTaskctl(t)
+	run := func(args ...string) ([]byte, error) {
+		t.Helper()
+		cmd := exec.Command(taskctl, append([]string{"-C", root}, args...)...)
+		return cmd.CombinedOutput()
+	}
+	if out, err := run("draft", "--prio", "mid", "частный материал"); err != nil {
+		t.Fatalf("draft: %s %v", out, err)
+	}
+	if out, err := run("draft", "meta", "XR-002", "--lock", "locked"); err != nil {
+		t.Fatalf("meta: %s %v", out, err)
+	}
+	bin, alive, pidfile := t.TempDir(), filepath.Join(t.TempDir(), "alive"), filepath.Join(t.TempDir(), "guardian")
+	writeScript(t, bin, "tmux", `case "$1" in new-session) echo "$PPID" > '`+pidfile+`'; touch '`+alive+`';; has-session) test -f '`+alive+`';; list-sessions) echo task-XR-001;; esac`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := startReserved(root, root, "XR-001", "task-XR-001", func(string) string { return "fakeclient" }); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(pidfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = proc.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		lock, e := draftmeta.CloudExclusive(root, "XR-001")
+		if e == nil {
+			lock.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("guardian retained lock")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	before, _ := os.ReadFile(filepath.Join(root, "docs/tasks/XR-001.md"))
+	out, err := run("draft", "attach", "XR-002", "XR-001")
+	if err == nil || !strings.Contains(string(out), "разговор ещё открыт") {
+		t.Fatalf("attach: %s %v", out, err)
+	}
+	after, _ := os.ReadFile(filepath.Join(root, "docs/tasks/XR-001.md"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("target changed")
+	}
+	os.Remove(alive)
+	if out, err = run("draft", "attach", "XR-002", "XR-001"); err != nil {
+		t.Fatalf("attach after session death: %s %v", out, err)
+	}
+	kit := t.TempDir()
+	putDoc(t, kit, "kit/harness/fake.toml", "[detect]\n\n[rules]\nmode = \"embed\"\n\n[delegate]\nmode = \"none\"\n\n[hooks]\n\n[quota]\n")
+	putDoc(t, home, ".devkit/harness.local", "enabled = [\"fake\"]\ndefault = \"fake\"\n\n[fake]\nenv = [\"FAKE=1\"]\n")
+	agent := filepath.Join(t.TempDir(), "agentctl")
+	build := exec.Command("go", "build", "-o", agent, ".")
+	build.Dir = "../agentctl"
+	if out, err = build.CombinedOutput(); err != nil {
+		t.Fatalf("agentctl build: %s %v", out, err)
+	}
+	starts := filepath.Join(root, "fakeclient-starts")
+	cmd := exec.Command(agent, "exec", "--harness", "fake", "--", "/bin/sh", "-c", `echo start >> "$1"`, "sh", starts)
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "DEVKIT_HOME="+kit, "DEVKIT_TASK=XR-001")
+	out, err = cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "ждёт локальную модель") {
+		t.Fatalf("client guard: %s %v", out, err)
+	}
+	if _, err = os.Stat(starts); !os.IsNotExist(err) {
+		t.Fatalf("fakeclient launched: %v", err)
 	}
 }

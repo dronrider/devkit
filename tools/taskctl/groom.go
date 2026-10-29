@@ -411,6 +411,24 @@ func draftSection(id, text string) string {
 // бывает своя репродукция, которой в задаче нет), а ссылка «уехал в <TASK-ID>»
 // живёт сообщением коммита.
 func cmdDraftAttach(root, id, taskID string, c CommitOpts) (string, error) {
+	if cliTx != nil {
+		d, err := findDraftFor(root, id)
+		if err != nil {
+			return "", err
+		}
+		if d.Lock == "locked" {
+			cloud, err := draftmeta.CloudExclusiveIn(cliTx.ServiceDir(), taskID)
+			if err != nil {
+				return "", err
+			}
+			defer cloud.Close()
+			cliTx, err = guardOutsideLock(root, cliTx, []string{taskID})
+			if err != nil {
+				return "", err
+			}
+			return cmdDraftAttachStage(root, id, taskID, c, true)
+		}
+	}
 	return cmdDraftAttachStage(root, id, taskID, c, false)
 }
 
@@ -447,8 +465,10 @@ func cmdDraftAttachStage(root, id, taskID string, c CommitOpts, planned bool) (s
 			}
 			defer cloud.Close()
 		}
-		if err := lockedAttachGuard(taskID); err != nil {
-			return "", err
+		if !planned {
+			if err := lockedAttachGuard(taskID); err != nil {
+				return "", err
+			}
 		}
 	}
 	text, err := os.ReadFile(d.Path)
@@ -624,6 +644,16 @@ func mentionsOf(root, id string, skip ...string) []string {
 // в pathspec коммита ронял бы всю команду: он удаляется обычным rm и в коммит
 // не едет.
 func removeDraft(root, path string) (bool, error) {
+	if isStagingBoard(root) {
+		return false, os.Remove(path)
+	}
+	if cliTx != nil {
+		if err := os.Remove(path); err != nil {
+			return false, err
+		}
+		cliIndexAction(root, path, "")
+		return true, nil
+	}
 	cmd := exec.Command("git", "-C", root, "rm", "-q", "-f", "--", path)
 	if _, err := cmd.CombinedOutput(); err == nil {
 		return true, nil

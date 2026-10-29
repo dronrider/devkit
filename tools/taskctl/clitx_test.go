@@ -42,6 +42,185 @@ func TestCLIPublicationReleasesLockBeforeHook(t *testing.T) {
 	}
 }
 
+func TestCLIDraftDropStagesAfterUnlock(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdDraft(root, "старый черновик", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", "--", draftRel("XR-008"))
+	gitOut(t, root, "commit", "-m", "fixture")
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindir := t.TempDir()
+	marker := filepath.Join(bindir, "nested")
+	script := "#!/bin/sh\ncase \" $* \" in *\" rm \"*) " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; touch " + shQuote(marker) + ";; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bindir, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "-C", root, "draft", "drop", "XR-008", "--reason", "устарел")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatal("git wrapper deadlocked on nested taskctl")
+	}
+	if err != nil {
+		t.Fatalf("drop: %v %s", err, out)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("nested taskctl did not run: %v", err)
+	}
+	if got := gitOut(t, root, "diff", "--cached", "--name-status"); !strings.Contains(got, "D\t"+draftRel("XR-008")) {
+		t.Fatalf("index: %s", got)
+	}
+}
+
+func TestCLIDraftDropReportsIndexFailureAfterRemoval(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdDraft(root, "старый черновик", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", "--", draftRel("XR-008"))
+	gitOut(t, root, "commit", "-m", "fixture")
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindir := t.TempDir()
+	script := "#!/bin/sh\ncase \" $* \" in *\" rm \"*) echo broken >&2; exit 3;; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bindir, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, err := runCLI(t, "-C", root, "draft", "drop", "XR-008", "--reason", "устарел")
+	if err == nil || !strings.Contains(out, "применено, индекс не обновлён") {
+		t.Fatalf("missing index error: %v %s", err, out)
+	}
+	if _, err := os.Stat(draftPath(root, "XR-008")); !os.IsNotExist(err) {
+		t.Fatalf("removal not applied: %v", err)
+	}
+}
+
+func TestCLIDropUntrackedDoesNotPublish(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdDraft(root, "новый черновик", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	head := gitOut(t, root, "rev-parse", "HEAD")
+	out, err := runCLI(t, "-C", root, "draft", "drop", "XR-008", "--reason", "устарел", "-m", "docs(tasks): XR-008 удалён")
+	if err != nil {
+		t.Fatalf("drop: %v %s", err, out)
+	}
+	if got := gitOut(t, root, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("untracked removal committed: %s", got)
+	}
+	if _, err := os.Stat(draftPath(root, "XR-008")); !os.IsNotExist(err) {
+		t.Fatalf("draft still exists: %v", err)
+	}
+}
+
+func TestCLIBoardGuardDoesNotCallGitUnderLock(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindir := t.TempDir()
+	marker := filepath.Join(bindir, "nested")
+	script := "#!/bin/sh\ncase \" $* \" in *\" rev-parse \"*) if [ \"$IN_GIT_PROBE\" != 1 ]; then IN_GIT_PROBE=1 " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; touch " + shQuote(marker) + "; fi;; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bindir, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "-C", root, "draft", "--prio", "mid", "идея")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatal("git rev-parse deadlocked on nested taskctl")
+	}
+	if err != nil {
+		t.Fatalf("draft: %v %s", err, out)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("nested taskctl did not run: %v", err)
+	}
+}
+
+func TestCLIAddMovesTrackedDraftAfterUnlock(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdDraft(root, "исходный черновик", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, root, "add", "--", draftRel("XR-008"))
+	gitOut(t, root, "commit", "-m", "fixture")
+	giveDraftDoD(t, root, "XR-008")
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindir := t.TempDir()
+	marker := filepath.Join(bindir, "nested")
+	script := "#!/bin/sh\ncase \" $* \" in *\" update-index \"*|*\" mv \"*) " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; touch " + shQuote(marker) + ";; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bindir, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "-C", root, "add", "--id", "XR-008", "--title", "Оформленная", "--type", "bug", "--rank", "25+4+2+5+2", "--cost", "S", "--accept", "agent")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatal("git wrapper deadlocked on nested taskctl")
+	}
+	if err != nil {
+		t.Fatalf("add: %v %s", err, out)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("nested taskctl did not run: %v", err)
+	}
+	if got := gitOut(t, root, "diff", "--cached", "--name-status", "--no-renames"); !strings.Contains(got, "D\t"+draftRel("XR-008")) || !strings.Contains(got, "A\tdocs/tasks/XR-008.md") {
+		t.Fatalf("index: %s", got)
+	}
+}
+
+func TestCLIAddPromotesUntrackedDraftWithCommit(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	if _, err := cmdDraft(root, "черновик", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	giveDraftDoD(t, root, "XR-008")
+	out, err := runCLI(t, "-C", root, "add", "--id", "XR-008", "--title", "Оформленная", "--type", "bug", "--rank", "25+4+2+5+2", "--cost", "S", "--accept", "agent", "-m", "docs(tasks): XR-008 оформлена")
+	if err != nil {
+		t.Fatalf("add: %v %s", err, out)
+	}
+	files := gitOut(t, root, "show", "--name-only", "--pretty=")
+	if !strings.Contains(files, "docs/tasks/XR-008.md") || strings.Contains(files, draftRel("XR-008")) {
+		t.Fatalf("commit files: %s", files)
+	}
+}
+
 func TestCLIPublicationFailureKeepsAppliedDraft(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)

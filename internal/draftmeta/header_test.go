@@ -22,7 +22,7 @@ func TestHeaderExplicitAndInvalidLock(t *testing.T) {
 	if err != nil || h.Type != "agreement" || h.Source != "meeting" || h.Lock != "locked" {
 		t.Fatalf("header: %+v, %v", h, err)
 	}
-	for _, input := range []string{"замок locked", "замок: неизвестно", "замок:", "замок: locked\nзамок: unlocked", "источник: unknown"} {
+	for _, input := range []string{"замок locked", "замок=locked", "замок: неизвестно", "замок:", "замок: locked\nзамок: unlocked", "источник: unknown"} {
 		if _, err := Parse([]byte("# Запись\n" + input)); err == nil {
 			t.Errorf("accepted %q", input)
 		}

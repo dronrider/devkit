@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -124,7 +125,16 @@ func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		lock.Close()
+		return "", err
+	}
 	data, err := os.ReadFile(path)
+	var canonicalPath string
+	if err == nil {
+		canonicalPath, err = filepath.EvalSymlinks(path)
+	}
 	closeErr := lock.Close()
 	if err != nil {
 		return "", fmt.Errorf("%s: файла задачи нет (%s): завести «taskctl file %s» и описать сценарий", id, path, id)
@@ -192,6 +202,11 @@ func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 		return "", err
 	}
 	defer lock.Close()
+	currentRoot, rootErr := filepath.EvalSymlinks(root)
+	currentPath, pathErr := filepath.EvalSymlinks(path)
+	if rootErr != nil || pathErr != nil || currentRoot != canonicalRoot || currentPath != canonicalPath {
+		return "", fmt.Errorf("%s: путь файла изменился во время обкатки; повторите её", id)
+	}
 	current, err := os.ReadFile(path)
 	if err != nil {
 		return "", err

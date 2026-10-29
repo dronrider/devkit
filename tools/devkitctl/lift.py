@@ -407,6 +407,69 @@ def report_diagnostic(root, tid, why, call=None, act=True):
     return words + "; исход дежурному, %s; %s" % (note, said)
 
 
+def incident_rows(rows, root="", home=None, act=True):
+    """Открытые инциденты конвейера по строкам корня (DK-1415). Возврат это
+    (строки отчёта, ID приостановленных строк).
+
+    Мёртвый замок при строке в работе значит погибший процесс конвейера:
+    оболочка снимает замок на штатном выходе, и остаётся он только у убитого.
+    Такая остановка получает запись инцидента, дежурного по ней поднимет тик,
+    а автоматический подъём строки стоит до исхода разбора. Открытый инцидент
+    любой причины держит ту же приостановку: повторные подъёмы жгли бы попытки,
+    которые расходовать обязан дежурный. Ответ человеку приостановка не трогает:
+    реплика поднимается своей очередью, а замок у лестницы свой, и дежурному
+    подъём не запрещён."""
+    import duty
+    hook = duty.incidents_mod()
+    if hook is None:
+        return [], set()
+    devhome = home or os.path.expanduser("~/.devkit")
+    userhome = os.path.dirname(os.path.abspath(devhome))
+    lines, halted = [], set()
+    for r in rows:
+        tid = str(r.get("id") or "").upper()
+        if not tid or (r.get("title") or "").startswith(GOAL_TITLE):
+            continue
+        if r.get("_section") != "in-progress" or r.get("held_by"):
+            continue
+        rec = hook.open_for(tid, home=userhome)
+        pidfile = os.path.join(devhome, "task-%s.lock" % tid, "pid")
+        try:
+            with open(pidfile, encoding="utf-8") as fh:
+                pid = int(fh.read().strip() or 0)
+        except (OSError, ValueError):
+            pid = 0
+        gone = pid > 0 and dead_pid(pid)
+        if rec is None:
+            if not gone:
+                continue
+            why = "замок задачи держит мёртвый процесс %d, конвейер исчез без стопа" % pid
+            if not act:
+                lines.append("задача %s: %s, записался бы инцидент" % (tid, why))
+                halted.add(tid)
+                continue
+            ident = hook.report(tid, hook.PROC_GONE, why, root=str(root),
+                                home=userhome)
+            if not ident:
+                # Журнал не записался: молча гасить обнаружение нельзя, но и
+                # держать строку без записи некому, она идёт обычным порядком.
+                lines.append("задача %s: %s, инцидент не записался" % (tid, why))
+                continue
+            lines.append("задача %s: %s, инцидент %s, автоматический подъём "
+                         "приостановлен до разбора дежурным" % (tid, why, ident))
+            halted.add(tid)
+            continue
+        if gone and act:
+            # Мёртвый замок стоит и после записи: повторное обнаружение той же
+            # остановки дополняет её счётчиком, а не плодит записи.
+            hook.report(tid, rec.get("reason") or hook.PROC_GONE,
+                        rec.get("why") or "", root=str(root), home=userhome)
+        halted.add(tid)
+        lines.append("задача %s: открыт инцидент %s (%s), автоматический подъём "
+                     "приостановлен" % (tid, rec.get("id"), rec.get("reason")))
+    return lines, halted
+
+
 def head_up(tid, home=None):
     """Держит ли голову задачи работающий процесс. Замок это каталог
     ~/.devkit/task-<ID>.lock с pid внутри, общий у команды подъёма и у оболочки
@@ -581,8 +644,10 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
     rows, err = board_rows(root, call=call, taskctl=taskctl)
     if err:
         return ["корень %s: доска не прочиталась, %s" % (root, err)], 0
+    incident_words, halted = incident_rows(rows, root=root, home=home, act=act)
     replied, stale = split_reply_rows(root, rows, home=home)
-    diagnostics = diagnostic_rows(rows, home=home)
+    diagnostics = [(r, why) for r, why in diagnostic_rows(rows, home=home)
+                   if str(r.get("id") or "").upper() not in halted]
     diagnosed = {r.get("id") for r, _ in diagnostics}
     diagnostic_words = [report_diagnostic(root, r["id"], why, call=call, act=act)
                         for r, why in diagnostics]
@@ -592,15 +657,17 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
     found += [Find(r.get("id") or "", ORDER % (r.get("id") or ""), row_why(r), False)
               for r in orphan_rows(rows)
               if (r.get("id") or "") not in said and not r.get("held_by")
-              and r.get("id") not in diagnosed]
+              and r.get("id") not in diagnosed
+              and str(r.get("id") or "").upper() not in halted]
     fresh = recent(home)
     tried = marks(home)
     held = [f for f in found if root + "\t" + f.id in fresh]
     found = [f for f in found if root + "\t" + f.id not in fresh]
     spent = [f for f in found if tried.get(root + "\t" + f.id, (0, 0))[1] >= LIFT_TRIES]
     found = [f for f in found if f not in spent]
-    spent_words = diagnostic_words + ["задача %s в %s: поднималась %d раза подряд, сессия не удержалась"
-                   % (f.id, root, LIFT_TRIES) for f in spent]
+    spent_words = incident_words + diagnostic_words + [
+        "задача %s в %s: поднималась %d раза подряд, сессия не удержалась"
+        % (f.id, root, LIFT_TRIES) for f in spent]
     if stale:
         spent_words.append("корень %s: реплики старше суток лежат во входах %s, подъём по ним не "
                            "идёт, поднять руками: %s"

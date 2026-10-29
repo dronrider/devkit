@@ -962,5 +962,103 @@ class ReplyRefusalCase(unittest.TestCase):
         self.assertIn("человек позван к лежащей реплике", " ".join(lines))
 
 
+class IncidentLiftCase(unittest.TestCase):
+    """Приостановка автоматического подъёма по открытым инцидентам (DK-1415).
+
+    Мёртвый замок при строке в работе значит погибший процесс конвейера:
+    остановка получает запись инцидента, а строка стоит до разбора дежурным.
+    Ответ человеку приостановка не трогает.
+    """
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.home)]))
+        import duty
+        self.hook = duty.incidents_mod()
+        os.environ[self.hook.LOG_ENV] = str(self.home / "incidents.jsonl")
+        self.addCleanup(os.environ.pop, self.hook.LOG_ENV, None)
+
+    def dead_lock(self, tid):
+        gone = subprocess.Popen(["/usr/bin/true"])
+        gone.wait()
+        lock = self.home / ("task-%s.lock" % tid)
+        lock.mkdir()
+        (lock / "pid").write_text("%d\n" % gone.pid, encoding="utf-8")
+
+    def test_dead_lock_opens_incident_and_holds_the_row(self):
+        self.dead_lock("DK-77")
+        call = Fake(board([row("DK-77", "разработка", "сессии нет, брошена")]))
+        lines, raised = lift.lift_root("/root", call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 0)
+        self.assertEqual([a for a in call.calls if "run" in a], [],
+                         "строка с инцидентом поднялась: %s" % call.calls)
+        joined = " ".join(lines)
+        self.assertIn("конвейер исчез без стопа", joined)
+        self.assertIn("приостановлен", joined)
+        rec = self.hook.open_for("DK-77")
+        self.assertTrue(rec, "инцидент не записался")
+        self.assertEqual(rec.get("reason"), self.hook.PROC_GONE)
+
+    def test_repeat_of_dead_lock_grows_the_same_incident(self):
+        self.dead_lock("DK-78")
+        rows = board([row("DK-78", "разработка", "сессии нет, брошена")])
+        first = lift.lift_root("/root", call=Fake(rows), taskctl="taskctl",
+                               home=str(self.home))
+        second = lift.lift_root("/root", call=Fake(rows), taskctl="taskctl",
+                                home=str(self.home))
+        records = self.hook.read()
+        self.assertEqual(len(records), 1, records)
+        self.assertGreater(records[0].get("seen"), 1)
+        self.assertIn("приостановлен", " ".join(first[0] + second[0]))
+
+    def test_open_incident_of_any_reason_holds_the_row(self):
+        ident = self.hook.report("DK-79", self.hook.PASSES_OUT, "проходы исчерпаны",
+                                 root="/root")
+        self.assertTrue(ident)
+        call = Fake(board([row("DK-79", "разработка", "сессии нет, брошена")]))
+        lines, raised = lift.lift_root("/root", call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 0)
+        self.assertEqual([a for a in call.calls if "run" in a], [],
+                         "строка с открытым инцидентом поднялась: %s" % call.calls)
+        self.assertIn("автоматический подъём приостановлен", " ".join(lines))
+
+    def test_reply_is_still_answered(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(root)]))
+        self.hook.report("DK-80", self.hook.HEAD_EXIT, "голова вышла", root=str(root))
+        call = Fake(board([row("DK-80", "разработка", "сессии нет, брошена")]))
+        d = root / ".devkit" / "chat"
+        d.mkdir(parents=True)
+        (d / "task-DK-80.in").write_text(
+            "%s, из дашборда: что там со слиянием\n" % stamp(), encoding="utf-8")
+        lines, raised = lift.lift_root(str(root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        orders = [a for a in call.calls if "run" in a]
+        self.assertEqual(len(orders), 1, call.calls)
+        self.assertIn("--reply", orders[0])
+        self.assertIn("приостановлен", " ".join(lines))
+
+    def test_live_lock_keeps_the_usual_lift(self):
+        lock = self.home / "task-DK-81.lock"
+        lock.mkdir()
+        (lock / "pid").write_text("%d\n" % os.getpid(), encoding="utf-8")
+        call = Fake(board([row("DK-81", "разработка", "сессии нет, брошена")]))
+        lines, raised = lift.lift_root("/root", call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 1)
+        self.assertTrue([a for a in call.calls if "run" in a], "заказа не было")
+        self.assertEqual(self.hook.read(), [], "живой замок дал запись инцидента")
+
+    def test_dry_run_reports_without_writing(self):
+        self.dead_lock("DK-82")
+        call = Fake(board([row("DK-82", "разработка", "сессии нет, брошена")]))
+        lines, raised = lift.lift_root("/root", call=call, taskctl="taskctl",
+                                       home=str(self.home), act=False)
+        self.assertEqual(self.hook.read(), [], "dry-run записал инцидент")
+        self.assertIn("записался бы инцидент", " ".join(lines))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -210,7 +210,11 @@ func TestInterviewScenarioChecks(t *testing.T) {
 				}
 				var trace strings.Builder
 				if state == "журнал" {
-					if err := os.WriteFile(filepath.Join(project, ".obey-taskctl.log"), []byte(strings.Join(commands, "\n")+"\n"), 0o644); err != nil {
+					var log strings.Builder
+					for i, command := range commands {
+						fmt.Fprintf(&log, "start\t%d\t%s\nend\t%d\t0\n", i, command, i)
+					}
+					if err := os.WriteFile(filepath.Join(project, ".obey-taskctl.log"), []byte(log.String()), 0o644); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -315,11 +319,13 @@ func TestGroomProposalScenarioChecks(t *testing.T) {
 		name, log, proposals string
 		pass                 bool
 	}{
-		{"порядок", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069\n", `[{"id":"p1"},{"id":"p2"}]`, true},
-		{"наоборот", "taskctl draft proposals save OB-069\ntaskctl decide OB-069 --scenarios\n", `[{"id":"p1"},{"id":"p2"}]`, false},
+		{"порядок", "taskctl draft proposals save --help\ntaskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1"},{"id":"p2"}]`, true},
+		{"ошибка до интервью", "taskctl draft proposals save OB-069 --base abc [exit=1]\ntaskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1"},{"id":"p2"}]`, true},
+		{"только ошибка", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc [exit=1]\n", `[{"id":"p1"},{"id":"p2"}]`, false},
+		{"наоборот", "taskctl draft proposals save OB-069 --base abc\ntaskctl decide OB-069 --scenarios\n", `[{"id":"p1"},{"id":"p2"}]`, false},
 		{"нет вызовов", "", `[{"id":"p1"},{"id":"p2"}]`, false},
-		{"прямое применение", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069\ntaskctl draft drop OB-069\n", `[{"id":"p1"},{"id":"p2"}]`, false},
-		{"применённая карточка", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069\n", `[{"id":"p1","status":"accepted"},{"id":"p2"}]`, false},
+		{"прямое применение", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\ntaskctl draft drop OB-069\n", `[{"id":"p1"},{"id":"p2"}]`, false},
+		{"применённая карточка", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","status":"accepted"},{"id":"p2"}]`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			project := t.TempDir()
@@ -330,7 +336,18 @@ func TestGroomProposalScenarioChecks(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(project, "docs", "tasks", "drafts", "OB-069.md"), []byte("выбор: сценарии/1\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(project, ".obey-taskctl.log"), []byte(tc.log), 0o644); err != nil {
+			var log strings.Builder
+			for i, command := range strings.Split(strings.TrimSpace(tc.log), "\n") {
+				if command != "" {
+					status := 0
+					if strings.HasSuffix(command, " [exit=1]") {
+						status = 1
+						command = strings.TrimSuffix(command, " [exit=1]")
+					}
+					fmt.Fprintf(&log, "start\t%d\t%s\nend\t%d\t%d\n", i, command, i, status)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(project, ".obey-taskctl.log"), []byte(log.String()), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			fake := "#!/bin/sh\nprintf '%s\\n' '{\"state\":{\"proposals\":" + tc.proposals + "}}'\n"

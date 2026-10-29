@@ -44,6 +44,37 @@ func GuardRecord(root, id string) error {
 	if err != nil {
 		return err
 	}
+	protected, err := RecordProtected(data)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if protected {
+		return fmt.Errorf("%s: ждёт локальную модель", id)
+	}
+
+	return nil
+}
+
+// ProtectRecord adds a durable marker without changing existing material.
+func ProtectRecord(data []byte) ([]byte, error) {
+	protected, err := RecordProtected(data)
+	if err != nil {
+		return nil, err
+	}
+	if protected {
+		return data, nil
+	}
+	lines := strings.Split(string(data), "\n")
+
+	if len(lines) == 0 || !strings.HasPrefix(strings.TrimSpace(lines[0]), "# ") {
+		return nil, fmt.Errorf("нет заголовка материала")
+	}
+	return []byte(lines[0] + "\nзащита: locked\n" + strings.Join(lines[1:], "\n")), nil
+}
+
+// RecordProtected reads the machine protection marker in a task header.
+func RecordProtected(data []byte) (bool, error) {
+	found := false
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "## ") {
@@ -51,33 +82,11 @@ func GuardRecord(root, id string) error {
 		}
 		if strings.HasPrefix(line, "защита") {
 			key, value, ok := strings.Cut(line, ":")
-			if !ok || strings.TrimSpace(key) != "защита" || strings.TrimSpace(value) != "locked" {
-				return fmt.Errorf("%s: неверная защита материала", path)
+			if !ok || strings.TrimSpace(key) != "защита" || strings.TrimSpace(value) != "locked" || found {
+				return false, fmt.Errorf("неверная защита материала")
 			}
-			return fmt.Errorf("%s: ждёт локальную модель", id)
+			found = true
 		}
 	}
-	return nil
-}
-
-// ProtectRecord adds a durable marker without changing existing material.
-func ProtectRecord(data []byte) ([]byte, error) {
-	text := string(data)
-	lines := strings.Split(text, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "## ") {
-			break
-		}
-		if strings.HasPrefix(line, "защита") {
-			if line == "защита: locked" {
-				return data, nil
-			}
-			return nil, fmt.Errorf("неверная защита материала")
-		}
-	}
-	if len(lines) == 0 || !strings.HasPrefix(strings.TrimSpace(lines[0]), "# ") {
-		return nil, fmt.Errorf("нет заголовка материала")
-	}
-	return []byte(lines[0] + "\nзащита: locked\n" + strings.Join(lines[1:], "\n")), nil
+	return found, nil
 }

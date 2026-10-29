@@ -24,6 +24,7 @@ DEVKITCTL = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "devk
 sys.path.insert(0, HOOKS)
 sys.path.insert(0, DEVKITCTL)
 import loadmark  # noqa: E402
+import stagerun  # noqa: E402
 # Носитель цели у ключа --ask общий с подхватом реплики, и форматы сверяются с
 # ним самим. Дефис в имени файла хука не годится для import, поэтому модуль
 # грузится по пути, как его грузит и сама оболочка.
@@ -1586,6 +1587,127 @@ class CycleRotationTests(Stand, unittest.TestCase):
         self.assertEqual([c for c in calls if "--mark" in c], [], calls)
         self.assertEqual(self.shell_log(root).count("мерка ротации не посчиталась"), 1,
                          self.shell_log(root))
+
+
+class WorkKeyTests(Stand, unittest.TestCase):
+    """Ключ --work: этап разработки задачи цели в записи runs (DK-1442).
+    Виток поднимает исполнителей синхронными субагентами, и хук спавна пишет
+    этап такому задним числом, по концу хода инструмента. Живой этап в записи
+    конвейер и доска видят сразу, и второго исполнителя никто не поднимает.
+    Стенд тот же, что у цикла, но витков не поднимается: ключ пишет запись и
+    выходит."""
+
+    TURN = "goal-DK-100-turn3"
+    TASK = "# DK-101: строка\n\n## Ход работы\n"
+
+    def task_in(self, root, text=TASK):
+        with open(os.path.join(root, "proj", "docs", "tasks", "DK-101.md"), "w",
+                  encoding="utf-8") as f:
+            f.write(text)
+
+    def turn_in(self, root):
+        """Замок витка с именем: виток, отдающий задачу исполнителю, жив и
+        держит замок, имя витка читается из него же."""
+        lock = os.path.join(root, "proj", ".devkit", "goal-DK-100.lock")
+        os.makedirs(lock, exist_ok=True)
+        with open(os.path.join(lock, "session"), "w", encoding="utf-8") as f:
+            f.write(self.TURN)
+
+    def runs(self, root):
+        runs = os.path.join(root, "home", ".devkit", "runs")
+        try:
+            names = os.listdir(runs)
+        except OSError:
+            return ""
+        for name in names:
+            if name.startswith("DK-101-"):
+                with open(os.path.join(runs, name), encoding="utf-8") as f:
+                    return f.read()
+        return ""
+
+    def work(self, root, *args):
+        return self.goal_run(root, "DK-100", "--work", "DK-101", *args)
+
+    def test_work_opens_live_dev_stage(self):
+        root = self.stand()
+        self.task_in(root)
+        self.turn_in(root)
+        p = self.work(root, "--by", "glm-5.3/high")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertIn("этап «разработка» задачи DK-101 открыт", p.stdout)
+        self.assertIn("этап = разработка | %s" % time.strftime("%Y-%m-%dT"),
+                      self.runs(root))
+        self.assertIn("| субагент glm-5.3/high по вердикту pick, виток цели DK-100"
+                      " | %s |  | " % self.TURN, self.runs(root))
+
+    def test_work_done_closes_the_stage(self):
+        root = self.stand()
+        self.task_in(root)
+        self.turn_in(root)
+        self.assertEqual(self.work(root).returncode, 0)
+        p = self.work(root, "--done")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertIn("этап «разработка» задачи DK-101 закрыт, минут", p.stdout)
+        # У закрытого этапа заполнен конец: живой записи конвейер больше не
+        # видит и строку задачи цели считает свободной.
+        self.assertIn("минут 0", self.runs(root))
+        line = [l for l in self.runs(root).split("\n") if l.startswith("этап")][0]
+        fields = [p.strip() for p in line.split("|")]
+        self.assertTrue(fields[4], "конец этапа не записан")
+        p = self.work(root, "--done")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertIn("незакрытого этапа исполнителя у задачи DK-101 нет", p.stdout)
+
+    def test_work_refuses_invented_task(self):
+        root = self.stand()
+        self.turn_in(root)
+        p = self.work(root)
+        self.assertEqual(p.returncode, 2, p.stdout)
+        self.assertIn("файла задачи", p.stdout)
+        self.assertEqual(self.runs(root), "", "запись легла в выдуманную задачу")
+
+    def test_work_refuses_second_executor(self):
+        root = self.stand()
+        self.task_in(root)
+        self.turn_in(root)
+        self.assertEqual(self.work(root).returncode, 0)
+        p = self.work(root)
+        self.assertEqual(p.returncode, 2, p.stdout)
+        self.assertIn("уже открыт этап «разработка»", p.stdout)
+
+    def test_work_after_review_opens_rework(self):
+        # Правило то же, что у конвейера: за ревью исполнителю идёт доработка,
+        # а не новая разработка.
+        root = self.stand()
+        self.task_in(root)
+        self.turn_in(root)
+        home = os.path.join(root, "home")
+        stagerun.put(home, os.path.join(root, "proj"), "DK-101", "ревью",
+                     "субагент по определению review", "", time.time() - 7200,
+                     time.time() - 3600)
+        p = self.work(root)
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertIn("этап «доработка» задачи DK-101 открыт", p.stdout)
+        self.assertIn("этап = доработка", self.runs(root))
+
+    def test_work_does_not_raise_the_loop(self):
+        root = self.stand("done запись")
+        self.task_in(root)
+        self.turn_in(root)
+        p = self.work(root, "--by", "glm-5.3/low")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertFalse(os.path.isfile(os.path.join(root, "calls")),
+                         "этап исполнителя поднял виток")
+        self.assertIn("этап = разработка", self.runs(root))
+
+    def test_done_without_work_refused(self):
+        root = self.stand()
+        p = self.goal_run(root, "DK-100", "--work", "DK-101", "--done", "--by", "glm-5.3/high")
+        self.assertEqual(p.returncode, 2, p.stdout)
+        self.assertIn("--by называет исполнителя открываемого этапа", p.stdout)
+        p = self.goal_run(root, "DK-100", "--done")
+        self.assertEqual(p.returncode, 2, p.stdout)
+        self.assertIn("--done и --by ходят только с --work", p.stdout)
 
 
 if __name__ == "__main__":

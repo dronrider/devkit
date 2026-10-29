@@ -9,6 +9,8 @@ headless-сессиями, пока виток отвечает маркером
                    [--foreground]
   goal-run.py <ID> [-C <корень проекта>] --say <строка хода>
   goal-run.py <ID> [-C <корень проекта>] --ask <вопрос человеку>
+  goal-run.py <ID> [-C <корень проекта>] --work <ID задачи> [--by <модель/усилие>]
+  goal-run.py <ID> [-C <корень проекта>] --work <ID задачи> --done
 
 Без --foreground цикл уходит в свою tmux-сессию goal-<ID>, как съёмщик панели
 /usage поднимает клиента в одноразовой сессии, и оболочка возвращается сразу.
@@ -23,6 +25,14 @@ headless-сессиями, пока виток отвечает маркером
 ответа во «Входящих» файла цели, до срока. Дождавшись, он отмечает съеденную
 строку во входе цели и печатает её витку, не дождавшись, печатает «ответа
 нет»; истёкшее ожидание это не авария, а обычный возврат.
+
+Ключ --work открывает и закрывает этап разработки задачи цели в записи
+~/.devkit/runs. Виток поднимает исполнителей синхронными субагентами, и хук
+спавна пишет их этап задним числом, по концу хода инструмента. Всё время
+работы исполнителя задача выглядит брошенной, и конвейер поднимал второго
+исполнителя в то же дерево (DK-1442). Ключ кладёт живой этап тем же порядком,
+каким его кладёт спавн конвейера. Виток зовёт ключ при отдаче задачи
+исполнителю, а с --done по возврату отчёта.
 
 Коды возврата: 0 штатный стоп по маркеру витка, 1 цикл остановила сама
 оболочка (исчерпанные попытки поднять вставший виток, воронка), 2 ошибка вызова
@@ -106,7 +116,7 @@ OWN_TMUX_ENV = "DEVKIT_GOAL_TMUX"
 WAIT_CAP = 2 * 60 * 60
 
 USAGE = """\
-goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <строка> | --ask <вопрос>]
+goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <строка> | --ask <вопрос> | --work <ID задачи>]
 
 Витки цели <ID> одноразовыми сессиями, пока виток отвечает marker: continue.
 Любой другой маркер завершает цикл и зовёт уведомитель громким поводом.
@@ -127,6 +137,11 @@ goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <ст�
   --foreground   держать цикл в этом процессе, а не в tmux-сессии goal-<ID>
   --say <строка> дописать строку хода в журнал цели и выйти, цикла не поднимая
   --ask <вопрос> задать вопрос человеку и ждать ответа во «Входящих» цели
+  --work <ID>    открыть задаче цели живой этап разработки в записи runs и выйти;
+                 зовёт виток при отдаче задачи исполнителю (DK-1442)
+  --by <слово>   исполнитель из вердикта pick вида «модель/усилие», едет в текст
+                 записи этапа
+  --done         с --work: закрыть этап, зовёт виток по возврату отчёта исполнителя
 
 Вопрос уезжает громким уведомлением и ложится строкой хода в журнал цели, а
 ключ ждёт ответа 300 секунд (перебивает DEVKIT_GOAL_ASK_WAIT, это для стендов).
@@ -165,6 +180,9 @@ def parse_args(argv):
     fg = False
     note = None
     question = None
+    work = None
+    by = ""
+    done = False
     harness = ""
     tier = ""
     i = 0
@@ -192,6 +210,23 @@ def parse_args(argv):
             if question.strip() == "":
                 die("вопрос пустой, отвечать человеку не на что")
             i += 2
+        elif arg == "--work":
+            if i + 1 >= len(argv):
+                die("у --work нет значения: ID задачи это его аргумент")
+            work = argv[i + 1]
+            if work.strip() == "":
+                die("ID задачи пустой, этап открывать не на что")
+            i += 2
+        elif arg == "--by":
+            if i + 1 >= len(argv):
+                die("у --by нет значения: исполнитель это его аргумент")
+            by = argv[i + 1]
+            if by.strip() == "":
+                die("исполнитель пустой, в записи этапа его не назвать")
+            i += 2
+        elif arg == "--done":
+            done = True
+            i += 1
         elif arg == "--harness":
             if i + 1 >= len(argv):
                 die("у --harness нет значения: имя подписки это его аргумент")
@@ -226,7 +261,14 @@ def parse_args(argv):
         die("--ask и --foreground вместе не ходят: вопрос человеку цикла не поднимает")
     if note is not None and question is not None:
         die("--say и --ask вместе не ходят: вопрос и так пишет свою строку хода")
-    return goal_id, proj, fg, note, question, harness, tier
+    if work is not None:
+        if note is not None or question is not None or fg:
+            die("--work идёт сам: цикл, вопрос и строка хода с этапом не смешиваются")
+        if done and by:
+            die("--by называет исполнителя открываемого этапа, при закрытии он не нужен")
+    elif done or by:
+        die("--done и --by ходят только с --work: без задачи им нет адресата")
+    return goal_id, proj, fg, note, question, harness, tier, work, by, done
 
 
 def resolve_proj(proj):
@@ -641,6 +683,92 @@ class Loop:
             # всё это время пишет витку в пустоту.
             self.drop_hold()
 
+    # -- ключ --work: этап разработки задачи цели ----------------------------
+
+    def stages(self):
+        """Модуль записи этапов hooks/stagerun.py. Формат runs-файла один на
+        конвейер и хуки, и вторая копия его на python разъехалась бы с первой
+        на первой же правке формата: грузится сам модуль хуков, как грузит его
+        и хук спавна."""
+        path = os.path.join(HOOKS, "stagerun.py")
+        sys.path.insert(0, HOOKS)
+        try:
+            spec = importlib.util.spec_from_file_location("devkit_stagerun", path)
+            if spec is None or spec.loader is None:
+                raise ImportError("модуль не собрался из %s" % path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        except (OSError, ImportError, SyntaxError) as e:
+            die("запись этапов в %s не прочитать: %s; без неё конвейер видит "
+                "задачу цели брошенной" % (HOOKS, e))
+        finally:
+            sys.path.pop(0)
+
+    def work_kind(self, stage, root, work_id):
+        """Вид открываемого этапа: разработка, а на записи, где последним
+        этапом работы стоит ревью либо доработка, доработка. Правило то же, что
+        у хука спавна и у agentctl run: исполнитель после ревью чинит
+        замечания, а не начинает заново."""
+        last = stage.last_work(os.path.expanduser("~"), root, work_id)
+        if last and last["kind"] in (stage.REVIEW, stage.REWORK):
+            return stage.REWORK
+        return stage.DEV
+
+    def work_open(self, work_id, by):
+        """Открыть задаче цели живой этап разработки. Виток поднимает
+        исполнителей синхронными субагентами. Хук спавна узнаёт о таком по
+        концу хода инструмента и пишет этап задним числом, закрытым. Всё
+        время работы исполнителя задача на доске выглядит брошенной. Живой
+        этап с именем витка закрывает эту дыру: по нему конвейер видит работу
+        и второго исполнителя не поднимает (DK-1442)."""
+        if not os.path.isfile(self.goal):
+            die("файла цели %s нет: этап задачи открывает виток своей цели" % self.goal)
+        task = os.path.join(self.proj, "docs", "tasks", work_id + ".md")
+        if not os.path.isfile(task):
+            die("файла задачи %s нет: этап не пишется в выдуманную задачу" % task)
+        stage = self.stages()
+        home = os.path.expanduser("~")
+        # Запись лежит по основному чекауту, как у хука спавна и у agentctl
+        # run: закрывают этап они же из основного чекаута, и без приведения
+        # это были бы две разные записи одной задачи.
+        root = stage.main_root(self.proj)
+        live = stage.live(home, root, work_id)
+        if live and live["kind"] in (stage.DEV, stage.REWORK):
+            die("у задачи %s уже открыт этап «%s», второй исполнитель не нужен"
+                % (work_id, live["kind"]))
+        who = ("субагент %s по вердикту pick, " % by if by else "") + "виток цели %s" % self.id
+        kind = self.work_kind(stage, root, work_id)
+        path = stage.put(home, root, work_id, kind, who, self.turn_name(),
+                         time.time())
+        print("этап «%s» задачи %s открыт, запись %s" % (kind, work_id, path))
+        return 0
+
+    def work_done(self, work_id):
+        """Закрыть задаче цели этап, открытый ключом --work. Ищется последний
+        незакрытый этап исполнителя: поверх него виток успевает поднять и
+        закрыть ревью, и закрытие разработки приходится на этот этап. Хвост
+        записи несёт минуты работы, тем же каноном, что и конец субагента."""
+        stage = self.stages()
+        home = os.path.expanduser("~")
+        root = stage.main_root(self.proj)
+        own = None
+        for s in reversed(stage.load(stage.path(home, root, work_id))["stages"]):
+            if not s["end"] and s["kind"] in (stage.DEV, stage.REWORK):
+                own = s
+                break
+        if own is None:
+            print("незакрытого этапа исполнителя у задачи %s нет" % work_id)
+            return 0
+        began = time.mktime(time.strptime(own["start"], stage.STAMP))
+        extra = stage.work_note("", max(0.0, time.time() - began))
+        if not stage.close(home, root, work_id, own["kind"], time.time(), extra):
+            print("этап «%s» задачи %s закрыть не вышло, запись осталась открытой"
+                  % (own["kind"], work_id))
+            return 0
+        print("этап «%s» задачи %s закрыт, %s" % (own["kind"], work_id, extra))
+        return 0
+
     # -- «Журнал» файла цели -------------------------------------------------
 
     def journal_entries(self):
@@ -1011,7 +1139,7 @@ def ask_wait():
 
 
 def main(argv):
-    goal_id, proj, fg, note, question, harness, tier = parse_args(argv)
+    goal_id, proj, fg, note, question, harness, tier, work, by, done = parse_args(argv)
     proj = resolve_proj(proj)
     loop = Loop(goal_id, proj, harness, tier)
     if question is not None:
@@ -1024,6 +1152,10 @@ def main(argv):
         # PATH оболочку не касаются.
         loop.note(note)
         return 0
+    if work is not None:
+        # Этапу исполнителя тоже: его открывает идущий виток, в том числе виток
+        # живого чата, и раскладка подписки тут ни при чём.
+        return loop.work_done(work) if done else loop.work_open(work, by)
     loop.preflight()
     if not fg:
         loop.launch_tmux()

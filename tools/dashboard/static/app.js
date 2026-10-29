@@ -20394,3 +20394,40 @@ wireFlash();
   }
 })();
 refresh().catch(console.error);
+
+// A proposal choice retains the shown cards and basis until explicit sending.
+function proposalDraft(shown, text = "", decisions = []) {
+  return { shown: JSON.parse(JSON.stringify(shown)), text: String(text), decisions: JSON.parse(JSON.stringify(decisions)) };
+}
+
+function proposalAnswer(draft) {
+  const shown = draft && draft.shown;
+  if (!shown || shown.version !== 1 || !shown.tree || !shown.anchor || !Array.isArray(shown.sources)) throw new Error("Нет показанного вопроса предложений");
+  const sources = new Map(shown.sources.map((s) => [s.source, s]));
+  if (sources.size !== shown.sources.length) throw new Error("Повтор источника");
+  const used = new Set(), seen = new Set(), decisions = [];
+  for (const d of draft.decisions || []) {
+    const source = sources.get(d.source);
+    const card = source && (source.proposals || []).find((p) => p.id === d.proposal && p.revision === d.revision);
+    const key = JSON.stringify([d.source, d.proposal]);
+    if (!card || seen.has(key) || !["accept", "reject"].includes(d.action)) throw new Error("Предложение не показано или выбрано повторно");
+    if (d.action === "reject" && !String(d.reason || "").trim()) throw new Error("Укажите причину отказа");
+    seen.add(key); used.add(d.source);
+    const decision = { source: d.source, proposal: d.proposal, revision: d.revision, action: d.action };
+    if (d.reason) decision.reason = d.reason;
+    decisions.push(decision);
+  }
+  if (!decisions.length) throw new Error("Выберите предложения");
+  const snapshots = shown.sources.filter((s) => used.has(s.source)).map((s) => ({ source: s.source, digest: s.basis }));
+  if (snapshots.some((s) => !s.digest)) throw new Error("Нет показанного снимка");
+  return { anchor: shown.anchor, tree: shown.tree, snapshots, decisions };
+}
+
+function proposalSelect(shown, source, action, reason = "") {
+  const decisions = [];
+  for (const s of shown.sources || []) {
+    if (source && s.source !== source) continue;
+    for (const p of s.proposals || []) decisions.push({ source: s.source, proposal: p.id, revision: p.revision, action, ...(reason ? { reason } : {}) });
+  }
+  return decisions;
+}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/stage"
 
 	"github.com/dronrider/devkit/internal/subtoml"
@@ -299,6 +300,14 @@ func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, err
 	workdir = abs
 	if fi, err := os.Stat(workdir); err != nil || !fi.IsDir() {
 		return 0, fmt.Errorf("рабочей директории %s нет: дерево задачи заводит shipctl start, а путь к нему run принимает флагом --workdir", workdir)
+	}
+	if err := draftmeta.GuardRecord(root, id); err != nil {
+		return 0, err
+	}
+	if workdir != root {
+		if err := draftmeta.GuardRecord(workdir, id); err != nil {
+			return 0, err
+		}
 	}
 	p, err := pickVerdict(root, id, role, goal)
 	if err != nil {

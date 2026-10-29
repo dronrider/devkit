@@ -588,3 +588,25 @@ func TestDelegateReturnQuota(t *testing.T) {
 		t.Fatalf("харнес без объявления квоты снимка не имеет: %s", delegateReturn("T-001", "echocli", 1, nil))
 	}
 }
+
+func TestRunBlocksProtectedRecordBeforeClient(t *testing.T) {
+	kit := fakeKit(t)
+	writeProfile(t, kit, "echocli", echoProfile)
+	writeMachine(t, kit, "enabled = [\"echocli\"]\ndefault = \"echocli\"\n\n[echocli]\nmini = \"cheap\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
+	root := writeBoard(t)
+	work := t.TempDir()
+	path := filepath.Join(root, "docs", "tasks", "T-001.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# T-001\nзащита: locked\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errout bytes.Buffer
+	if _, err := cmdRun(root, "T-001", roleExec, "", work, &out, &errout); err == nil || !strings.Contains(err.Error(), "ждёт локальную модель") {
+		t.Fatalf("guard: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(work, "prompt.txt")); !os.IsNotExist(err) {
+		t.Fatalf("client started: %v", err)
+	}
+}

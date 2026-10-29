@@ -14,6 +14,7 @@ import (
 	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/draftproposal"
 	"github.com/dronrider/devkit/internal/drafttx"
+	"github.com/dronrider/devkit/internal/drafttypes"
 )
 
 // Раздел «Черновики»: список накопителя, текст записи, груминг, его исход и
@@ -39,10 +40,7 @@ import (
 // mode называет исход записи (DK-1043): "groom" оставляет заказ прежним, а
 // "run" дописывает хвост про продолжение выполнением, groomRunTail.
 func groomPrompt(id, ask, mode string) string {
-	prompt := "Проведи груминг " + id +
-		". Вопросы задавай текстом в этом же разговоре: блок печатает " +
-		"taskctl decide " + id + " --chat, он же кладёт признак и паркует запись, " +
-		"а вопрос с прошлого разбора без ответа не повторяй, отложи запись с причиной"
+	prompt := "Проведи груминг " + id + ". Следуй действующему определению типа записи, сохрани предложения и спроси человека об их применении в этом разговоре. Сценарии интервью не подтверждают применение предложений"
 	if mode == draftModeRun {
 		prompt += groomRunTail(id)
 	}
@@ -80,9 +78,43 @@ func draftMode(v string) (string, bool) {
 // строкой на доске. Три других исхода (приписка, отложен, удалён) заказ
 // останавливает: строки нет, и продолжать нечем.
 func groomRunTail(id string) string {
-	return ". Когда разбор кончится строкой " + id + " на доске, продолжай тем " +
-		"же разговором: " + runPrompt("", id) + ". На трёх других исходах " +
-		"(приписка, отложен, удалён) скажи об этом в чате и останови работу"
+	return ". До подтверждения предложений не начинай выполнение. После подтверждения прочитай сохранённые результаты " + id + " через taskctl draft proposals и продолжай только принятые исходы add по их ID результата. Для attach, defer и drop выполнение не запускай"
+}
+
+func groomTypedPrompt(root, id, ask, mode string) (string, error) {
+	path, _ := draftPathOf(root, id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	header, err := draftmeta.Parse(data)
+	if err != nil {
+		return "", err
+	}
+	out, _, err := taskctlDo(root, "draft", "types", "--json")
+	if err != nil {
+		return "", err
+	}
+	var defs struct {
+		Types []drafttypes.Definition `json:"types"`
+	}
+	if err := json.Unmarshal([]byte(out), &defs); err != nil {
+		return "", err
+	}
+	for _, d := range defs.Types {
+		if d.Name != header.Type {
+			continue
+		}
+		order := groomPrompt(id, ask, mode)
+		if d.Skill != "" {
+			return order + ". Используй скилл " + d.Skill, nil
+		}
+		if d.Prompt != "" {
+			return order + ". Правило типа: " + d.Prompt, nil
+		}
+		return "", fmt.Errorf("тип %s не содержит правила разбора", d.Name)
+	}
+	return "", fmt.Errorf("тип %s не найден в словаре", header.Type)
 }
 
 // draftAskLimit ограничивает уточнение: это фраза в заказ груминга, а не
@@ -582,6 +614,11 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
+	order, err := groomTypedPrompt(found.Path, id, ask, mode)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	sess := draftSession(id)
 	// Живой разбор спрашивается тем же вопросом, что и правка текста: разойтись
 	// этим двум местам нельзя, иначе экран запирал бы редактор там, где второй
@@ -613,7 +650,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// разговаривает со всеми, а сессия называет себя в реестре записью
 	// накопителя, и найти её потом можно тем же списком чатов.
 	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		groomCmd(s.launchEnv(id, sess, ""), groomPrompt(id, ask, mode),
+		groomCmd(s.launchEnv(id, sess, ""), order,
 			own, model, id+" груминг")); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("груминг %s в %s не удался: %s", id, found.Name, text)
@@ -636,7 +673,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		message = fmt.Sprintf("груминг %s поднят заново в tmux-сессии %s, уточнение уехало в заказ: агент перечитает черновик и пойдёт с начала%s", id, sess, tail)
 	}
 	out := map[string]string{
-		"id": id, "kind": "task", "session": sess, "prompt": groomPrompt(id, ask, mode),
+		"id": id, "kind": "task", "session": sess, "prompt": order,
 		"message": message, "tier": tier, "mode": mode,
 	}
 	if model != "" {

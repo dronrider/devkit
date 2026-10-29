@@ -30,6 +30,27 @@ try {
   await page.getByText("первая карточка", { exact: true }).first().waitFor();
   await page.getByText("Принято", { exact: true }).first().waitFor();
   assert.equal(await page.getByText("Принято", { exact: true }).count(), 2);
+  await page.goto(base + "/#demo/draft/XR-006");
+  await page.getByRole("button", { name: "XR-001", exact: true }).click();
+  await page.waitForURL(/#demo\/XR-001/);
+  await page.getByText("третья карточка", { exact: false }).first().waitFor();
+  await page.goto(base + "/#demo/draft/XR-008");
+  await page.getByText("Предложений нет. Можно оформить запись вручную.", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Оформить предложение вручную" }).click();
+  const card = page.locator(".draft-proposal").last();
+  await card.locator("select").selectOption("drop");
+  await card.locator("label").filter({ hasText: "Текст результата" }).locator("textarea").fill("ручной исход");
+  await card.locator("label").filter({ hasText: /^Причина/ }).locator("textarea").fill("неактуально");
+  const saved = page.waitForResponse((r) => r.url().endsWith("/XR-008/proposals") && r.request().method() === "PUT");
+  await page.getByRole("button", { name: "Сохранить предложение" }).click();
+  assert.equal((await saved).status(), 200);
+  const manual = page.waitForResponse((r) => r.url().endsWith("/drafts/proposals/confirm") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Принять предложение", exact: true }).click();
+  assert.equal((await manual).status(), 200);
+  await page.getByText("Принято", { exact: true }).waitFor();
+  await page.goto(base + "/#demo/draft/XR-009");
+  await page.getByText("Не удалось разобрать запись. Можно повторить разбор.", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Оформить предложение вручную" }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   console.log(JSON.stringify({ one: true, allRecord: true, allShown: true, mobile: true, results: result.results.length }));
 } finally { await context.close(); await browser.close(); }

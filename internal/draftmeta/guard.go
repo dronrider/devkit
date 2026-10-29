@@ -9,9 +9,9 @@ import (
 	"github.com/dronrider/devkit/internal/drafttx"
 )
 
-// GuardDraft prevents a managed cloud launch for locked or unreadable drafts.
+// guardDraft checks a draft while the project lock is held.
 // It returns nil for an absent draft so callers can also handle board tasks.
-func GuardDraft(root, id string) error {
+func guardDraft(root, id string) error {
 	if id == "" || filepath.Base(id) != id || id == "." || id == ".." {
 		return fmt.Errorf("неверный ID записи %q", id)
 	}
@@ -43,13 +43,37 @@ func GuardRecord(root, id string) error {
 		return err
 	}
 	defer lock.Close()
-	if err := GuardDraft(root, id); err != nil {
+	if err := guardDraft(root, id); err != nil {
 		return err
 	}
 	path := filepath.Join(root, "docs", "tasks", id+".md")
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return nil
+		archive := filepath.Join(root, "docs", "tasks", "archive")
+		years, readErr := os.ReadDir(archive)
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return readErr
+		}
+		var paths []string
+		for _, year := range years {
+			if !year.IsDir() {
+				continue
+			}
+			candidate := filepath.Join(archive, year.Name(), id+".md")
+			if _, statErr := os.Stat(candidate); statErr == nil {
+				paths = append(paths, candidate)
+			} else if !os.IsNotExist(statErr) {
+				return statErr
+			}
+		}
+		if len(paths) == 0 {
+			return nil
+		}
+		if len(paths) != 1 {
+			return fmt.Errorf("%s: несколько архивных записей", id)
+		}
+		path = paths[0]
+		data, err = os.ReadFile(path)
 	}
 	if err != nil {
 		return err

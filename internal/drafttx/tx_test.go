@@ -73,7 +73,11 @@ func TestRecoveryConflictKeepsForeignEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A durable plan with no installed files models a crash before first rename.
-	p := plan{Version: 1, Root: root, Changes: changes}
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := plan{Version: 1, Root: canonicalRoot, Changes: changes}
 	data, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
@@ -165,5 +169,85 @@ func TestAcquireDoesNotCreateMissingProject(t *testing.T) {
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("project created: %v", err)
+	}
+}
+
+func TestWorktreesKeepRecoveryInTheirOwnRoot(t *testing.T) {
+	base := t.TempDir()
+	common := filepath.Join(base, "common")
+	bin := filepath.Join(base, "bin")
+	for _, dir := range []string{common, bin} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git := filepath.Join(bin, "git")
+	if err := os.WriteFile(git, []byte("#!/bin/sh\nprintf '%s\\n' '"+common+"'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	a, b := filepath.Join(base, "a"), filepath.Join(base, "b")
+	for _, dir := range []string{a, b} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "source"), []byte("before"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l, err := Acquire(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := Read(filepath.Join(a, "source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	change := Change{Path: "source", Before: before, After: Image{Exists: true, Data: []byte("after"), Mode: 0600}}
+	if err = l.apply(a, []Change{change}, func(int) error { return errors.New("crash") }); err == nil {
+		t.Fatal("no crash")
+	}
+	if err = l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	other, err := Acquire(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = other.Apply(a, nil); err == nil {
+		t.Fatal("foreign root accepted")
+	}
+	other.Close()
+	got, err := os.ReadFile(filepath.Join(b, "source"))
+	if err != nil || string(got) != "before" {
+		t.Fatalf("other worktree: %q %v", got, err)
+	}
+	l, err = Acquire(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	got, err = os.ReadFile(filepath.Join(a, "source"))
+	if err != nil || string(got) != "after" {
+		t.Fatalf("recovery: %q %v", got, err)
+	}
+}
+
+func TestRecoveryRejectsForeignRoot(t *testing.T) {
+	root, foreign := t.TempDir(), t.TempDir()
+	l, err := Acquire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(plan{Version: 1, Root: foreign})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = atomic(filepath.Join(l.dir, "pending.json"), Image{Exists: true, Data: data, Mode: 0600}); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	if _, err = Acquire(root); err == nil {
+		t.Fatal("foreign plan accepted")
 	}
 }

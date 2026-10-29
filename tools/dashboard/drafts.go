@@ -105,7 +105,12 @@ func (s *server) handleDrafts(w http.ResponseWriter, r *http.Request) {
 	if found == nil {
 		return
 	}
-	out, code, err := taskctlDo(found.Path, "draft", "list", "--json")
+	args := []string{"draft", "list", "--json"}
+	history := r.URL.Query().Get("history") == "1"
+	if history {
+		args = append(args, "--history")
+	}
+	out, code, err := taskctlDo(found.Path, args...)
 	if err != nil {
 		s.logf("накопитель черновиков %s: %v", found.Name, err)
 		writeJSON(w, code, map[string]string{"error": err.Error()})
@@ -122,7 +127,9 @@ func (s *server) handleDrafts(w http.ResponseWriter, r *http.Request) {
 	// Разобранные черновики оставляют за собой мёртвые разговоры, и уборка идёт
 	// отсюда: экран накопителя это то место, где груминг заказывают и где
 	// смотрят на его исход.
-	s.groomSweep(found.Path)
+	if !history {
+		s.groomSweep(found.Path)
+	}
 	resp := map[string]any{"project": found.Name, "drafts": s.draftsWithOrder(found.Path, v.Drafts)}
 	if len(v.Drafts) == 0 {
 		// Пустой список без слов неотличим от неотрисованного раздела.
@@ -961,4 +968,54 @@ func (s *server) handleDraftProposalReject(w http.ResponseWriter, r *http.Reques
 		result["note"] = note
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *server) handleDraftProposalConfirm(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "подтверждение предложений")
+	if found == nil {
+		return
+	}
+	var request draftproposal.ConfirmRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, taskTextLimit))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверное подтверждение"})
+		return
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "лишние данные подтверждения"})
+		return
+	}
+	data, err := json.Marshal(request)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	out, code, err := s.taskctlWriteIn(found.Path, string(data), "draft", "proposals", "confirm")
+	if err != nil {
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	var result struct {
+		Key      string                  `json:"key"`
+		Results  []draftproposal.Receipt `json:"results"`
+		Paths    []string                `json:"paths"`
+		Repeated bool                    `json:"repeated"`
+	}
+	if err = json.Unmarshal([]byte(out), &result); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "результат подтверждения не прочитался"})
+		return
+	}
+	response := map[string]any{"key": result.Key, "results": result.Results, "repeated": result.Repeated, "message": "предложения применены"}
+	if !result.Repeated && len(result.Paths) > 0 {
+		if note := commitDocs(found.Path, "docs(tasks): применение предложений разбора", result.Paths...); note != "" {
+			response["note"] = "применено, публикация не завершена: " + note
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }

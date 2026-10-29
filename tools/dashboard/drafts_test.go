@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -1791,5 +1792,224 @@ func TestStaticDraftProposalEditingAndReject(t *testing.T) {
 	out, err := exec.Command(node, filepath.Join("testdata", "poc_draftproposal.mjs"), filepath.Join("static", "app.js")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("карточки разбора: %v\n%s", err, out)
+	}
+}
+
+func TestDraftConfirmThroughRealTaskctl(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	kit, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", kit)
+	for _, title := range []string{"первая запись", "вторая запись"} {
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", fmt.Sprintf(`{"title":%q,"prio":"mid"}`, title))
+		body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("draft: %d", resp.StatusCode)
+		}
+	}
+	taskBody, err := os.ReadFile(taskBodyFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cards := map[string][]draftproposal.Proposal{
+		"XR-005": {{ID: "p1", Revision: 1, Outcome: "attach", Target: "XR-001", Text: "уникальная приписка"}, {ID: "p2", Revision: 1, Outcome: "drop", Text: "лишнее", Reason: "устарело"}},
+		"XR-006": {{ID: "a", Revision: 1, Outcome: "add", Title: "Первый результат", Text: string(taskBody), BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}, {ID: "b", Revision: 1, Outcome: "add", Title: "Второй результат", Text: string(taskBody), BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent", After: []string{"a"}}},
+	}
+	for id, proposals := range cards {
+		path := filepath.Join(e.proj, "docs/tasks/drafts", id+".md")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err = draftproposal.Replace(data, draftproposal.State{Version: 1, State: "active", Proposals: proposals})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(path, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type view struct {
+		ID       string              `json:"id"`
+		Snapshot string              `json:"snapshot"`
+		Basis    string              `json:"basis"`
+		State    draftproposal.State `json:"state"`
+	}
+	getView := func(id string) view {
+		t.Helper()
+		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/"+id+"/proposals", "")
+		defer resp.Body.Close()
+		var v view
+		if err := json.NewDecoder(resp.Body).Decode(&v); err != nil || resp.StatusCode != 200 {
+			t.Fatalf("view %s: %d %v", id, resp.StatusCode, err)
+		}
+		return v
+	}
+	send := func(req draftproposal.ConfirmRequest) (int, string) {
+		t.Helper()
+		data, _ := json.Marshal(req)
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/proposals/confirm", string(data))
+		return resp.StatusCode, body(t, resp)
+	}
+	v1, v2 := getView("XR-005"), getView("XR-006")
+	one := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: v1.ID, Digest: v1.Basis}}, Decisions: []draftproposal.Decision{{Source: v1.ID, Proposal: "p1", Revision: 1, Action: "accept"}}}
+	writeScript(t, e.bin, "git", "exit 1")
+	if code, text := send(one); code != 200 || !strings.Contains(text, "публикация не завершена") {
+		t.Fatalf("one with failed publication %d %s", code, text)
+	}
+	if code, text := send(one); code != 200 || !strings.Contains(text, `"repeated":true`) {
+		t.Fatalf("retry %d %s", code, text)
+	}
+	if code, _ := send(draftproposal.ConfirmRequest{Snapshots: one.Snapshots, Decisions: []draftproposal.Decision{{Source: v1.ID, Proposal: "p2", Revision: 1, Action: "accept"}}}); code == 200 {
+		t.Fatal("stale accepted")
+	}
+	v1 = getView("XR-005")
+	already := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: v1.ID, Digest: v1.Basis}}, Decisions: []draftproposal.Decision{{Source: v1.ID, Proposal: "p1", Revision: 1, Action: "accept"}, {Source: v1.ID, Proposal: "p2", Revision: 1, Action: "accept"}}}
+	if code, _ := send(already); code == 200 {
+		t.Fatal("accepted card ran in another batch")
+	}
+	bad := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: v1.ID, Digest: v1.Basis}}, Decisions: []draftproposal.Decision{{Source: v1.ID, Proposal: "missing", Revision: 1, Action: "accept"}}}
+	before, _ := os.ReadFile(filepath.Join(e.proj, "docs/TASKS.md"))
+	if code, _ := send(bad); code == 200 {
+		t.Fatal("unknown accepted")
+	}
+	after, _ := os.ReadFile(filepath.Join(e.proj, "docs/TASKS.md"))
+	if string(before) != string(after) {
+		t.Fatal("invalid request wrote board")
+	}
+	dependent := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: v2.ID, Digest: v2.Basis}}, Decisions: []draftproposal.Decision{{Source: v2.ID, Proposal: "b", Revision: 1, Action: "accept"}}}
+	if code, _ := send(dependent); code == 200 {
+		t.Fatal("unselected predecessor accepted")
+	}
+	unchanged, _ := os.ReadFile(filepath.Join(e.proj, "docs/TASKS.md"))
+	if string(before) != string(unchanged) {
+		t.Fatal("dependent request wrote board")
+	}
+	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: v1.ID, Digest: v1.Basis}, {Source: v2.ID, Digest: v2.Basis}}, Decisions: []draftproposal.Decision{{Source: v1.ID, Proposal: "p2", Revision: 1, Action: "reject", Reason: "отказ"}, {Source: v2.ID, Proposal: "a", Revision: 1, Action: "accept"}, {Source: v2.ID, Proposal: "b", Revision: 1, Action: "accept"}}}
+	if code, text := send(req); code != 200 {
+		t.Fatalf("batch %d %s", code, text)
+	}
+	if code, text := send(req); code != 200 || !strings.Contains(text, `"repeated":true`) {
+		t.Fatalf("batch retry %d %s", code, text)
+	}
+	for _, id := range []string{"XR-005", "XR-006"} {
+		v := getView(id)
+		if v.State.State != "history" {
+			t.Fatalf("%s not historical: %+v", id, v.State)
+		}
+	}
+	target, err := os.ReadFile(filepath.Join(e.proj, "docs/tasks/XR-001.md"))
+	if err != nil || strings.Count(string(target), "уникальная приписка") != 1 {
+		t.Fatalf("target: %s %v", target, err)
+	}
+}
+
+func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
+	chrome := findChrome()
+	if chrome == "" {
+		if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" {
+			t.Fatal("браузер стенда не найден")
+		}
+		t.Skip("браузер стенда не найден; задать DASHBOARD_CHROME")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, "-e", "require.resolve('playwright')").CombinedOutput(); err != nil {
+		if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" {
+			t.Fatalf("playwright: %v %s", err, out)
+		}
+		t.Skip("playwright недоступен; задать NODE_PATH")
+	}
+	bin := filepath.Join(t.TempDir(), "dashboard")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Env = append(os.Environ(), "GOWORK=off")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	e, _, _ := tasksEnv(t)
+	kit, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", kit)
+	for _, title := range []string{"первая", "вторая", "третья"} {
+		runTaskctl(t, e.proj, "draft", title)
+	}
+	for id, proposals := range map[string][]draftproposal.Proposal{
+		"XR-005": {{ID: "p1", Revision: 1, Outcome: "drop", Text: "первая карточка", Reason: "устарело"}, {ID: "p2", Revision: 1, Outcome: "drop", Text: "вторая карточка", Reason: "устарело"}},
+		"XR-006": {{ID: "p3", Revision: 1, Outcome: "drop", Text: "третья карточка", Reason: "устарело"}},
+		"XR-007": {{ID: "p4", Revision: 1, Outcome: "drop", Text: "четвёртая карточка", Reason: "устарело"}},
+	} {
+		path := filepath.Join(e.proj, "docs/tasks/drafts", id+".md")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err = draftproposal.Replace(data, draftproposal.State{Version: 1, State: "active", Proposals: proposals})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(path, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	_, port, _ := net.SplitHostPort(addr)
+	listener.Close()
+	config := "root = " + filepath.Dir(e.proj) + "\naddr = 127.0.0.1\nport = " + port + "\ntoken = test-token\n"
+	if err = os.WriteFile(filepath.Join(e.home, ".devkit/dashboard.local"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	log, err := os.Create(filepath.Join(t.TempDir(), "dashboard.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	server := exec.Command(bin, "serve")
+	server.Dir = e.proj
+	server.Env = os.Environ()
+	server.Stdout = log
+	server.Stderr = log
+	if err = server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { server.Process.Kill(); server.Wait() })
+	base := "http://" + addr
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		resp, err := http.Get(base + "/healthz")
+		if err == nil {
+			resp.Body.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server: %s", readFile(t, log.Name()))
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	probe := exec.Command(node, "testdata/draftconfirm_browser.mjs", base, chrome, "test-token")
+	probe.Env = os.Environ()
+	if out, err := probe.CombinedOutput(); err != nil {
+		t.Fatalf("browser: %v\n%s\nserver: %s", err, out, readFile(t, log.Name()))
+	} else {
+		t.Logf("browser: %s", out)
+	}
+	for _, id := range []string{"XR-005", "XR-006", "XR-007"} {
+		data, err := os.ReadFile(filepath.Join(e.proj, "docs/tasks/drafts", id+".md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, err := draftproposal.Parse(data)
+		if err != nil || state.State != "history" {
+			t.Fatalf("%s %+v %v", id, state, err)
+		}
 	}
 }

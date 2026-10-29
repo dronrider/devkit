@@ -63,3 +63,29 @@ func TestExecCloudAckTransfersReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestExecRechecksPrivateTargetBeforeClient(t *testing.T) {
+	kit := execKit(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("DEVKIT_TASK", "XR-1")
+	path := filepath.Join(root, "docs", "tasks", "XR-1.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := draftmeta.ProtectRecord([]byte("# XR-1: закрытый материал\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	started := filepath.Join(root, "client-started")
+	var out, errout bytes.Buffer
+	if _, err = cmdExec(kit, "secondcli", []string{"/bin/sh", "-c", `touch "$1"`, "sh", started}, &out, &errout); err == nil {
+		t.Fatal("private target started")
+	}
+	if _, err = os.Stat(started); !os.IsNotExist(err) {
+		t.Fatalf("client launched: %v", err)
+	}
+}

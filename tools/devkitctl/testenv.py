@@ -521,6 +521,7 @@ class Sandbox:
             "ANTHROPIC_BASE_URL": "https://endpoint.example/anthropic",
             "ANTHROPIC_AUTH_TOKEN": "токен-стенда",
             "ANTHROPIC_MODEL": "модель-стенда",
+            "CLAUDE_CODE_AUTO_MODE_SERVER": "0",
         }}, ensure_ascii=False, indent=2) + "\n")
         conf.parent.chmod(0o700)
         conf.chmod(0o600)

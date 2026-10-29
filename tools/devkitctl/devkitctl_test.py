@@ -1098,11 +1098,14 @@ class MachineContourTest(SandboxCase):
                        "--fix не снимает квоту, находка должна остаться")
         # Каталог конфига подписки раскладывает --fix, а значения в него
         # вписывает пользователь: endpoint и токен берутся в кабинете подписки.
+        # Переменная отключения классификатора вписывается сама: значение ей
+        # известно автоматике (DK-1319).
         conf = self.mhome / ".devkit" / "claude-glm" / "settings.json"
         self.assertIn_("разложена болванка конфига подписки", out,
                        "--fix не разложил каталог конфига подписки")
         self.assertEqual(json.loads(read(conf))["env"],
-                         {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "", "ANTHROPIC_MODEL": ""},
+                         {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": "",
+                          "ANTHROPIC_MODEL": "", "CLAUDE_CODE_AUTO_MODE_SERVER": "0"},
                          "болванка подписки разложена не теми ключами")
         self.assertEqual(conf.stat().st_mode & 0o777, 0o600,
                          "болванка с токеном разложена с широкими правами")
@@ -1455,10 +1458,12 @@ class MachineContourTest(SandboxCase):
 
     def test_15_alt_subscription_filled_in(self):
         # Заполненный конфиг второй подписки доктор не трогает и не поминает:
-        # это рабочее состояние, а не пробел. Подстановки алиасов входят в
-        # заполненное состояние: без них алиас из параметра модели уходит на
-        # провод как есть (DK-751). Токен из него в вывод не едет ни при каком
-        # раскладе, у него есть только признак «есть» или «нет».
+        # это рабочее состояние, а не пробел. Подстановки алиасов и переменная
+        # отключения классификатора входят в заполненное состояние: без первых
+        # алиас из параметра модели уходит на провод как есть (DK-751), без
+        # второй чат встаёт диалогом о смене оплаты (DK-1319). Токен из него в
+        # вывод не едет ни при каком раскладе, у него есть только признак
+        # «есть» или «нет».
         conf = self.mhome / ".devkit" / "claude-glm" / "settings.json"
         write(conf, json.dumps({"env": {
             "ANTHROPIC_BASE_URL": "https://endpoint.example/anthropic",
@@ -1469,6 +1474,7 @@ class MachineContourTest(SandboxCase):
             "ANTHROPIC_DEFAULT_OPUS_MODEL": "модель-подписки",
             "ANTHROPIC_DEFAULT_FABLE_MODEL": "модель-подписки",
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": "лёгкая-модель",
+            "CLAUDE_CODE_AUTO_MODE_SERVER": "0",
         }}, ensure_ascii=False) + "\n")
         conf.chmod(0o600)
         _, out = self.docm()
@@ -1527,6 +1533,26 @@ class MachineContourTest(SandboxCase):
         doc = json.loads(read(conf))
         self.assertEqual(doc["env"].get("ANTHROPIC_DEFAULT_HAIKU_MODEL"), "лёгкая-модель",
                          "--fix не разложил подстановку лёгкого алиаса")
+
+    def test_19_alt_subscription_no_classifier_off(self):
+        # Дом без переменной отключения классификатора это находка доктора, и
+        # в ней имя дома и имя переменной (DK-1319): без переменной чат через
+        # сторонний шлюз встаёт диалогом о смене оплаты и ждёт Enter. Значение
+        # автоматике известно, и --fix прописывает его сам.
+        conf = self.mhome / ".devkit" / "claude-glm" / "settings.json"
+        doc = json.loads(read(conf))
+        doc["env"].pop("CLAUDE_CODE_AUTO_MODE_SERVER", None)
+        write(conf, json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+        _, out = self.docm()
+        loud = [ln for ln in out.splitlines() if "CLAUDE_CODE_AUTO_MODE_SERVER" in ln]
+        self.assertEqual(len(loud), 1, "находка про переменную не одна или её нет: %s" % out)
+        self.assertIn_("claude-glm", loud[0], "находка не назвала дом: %s" % loud[0])
+        _, out = self.docm("--fix")
+        self.assertEqual(json.loads(read(conf))["env"].get("CLAUDE_CODE_AUTO_MODE_SERVER"), "0",
+                         "--fix не прописал переменную отключения классификатора")
+        _, out = self.docm()
+        self.assertNotIn_("CLAUDE_CODE_AUTO_MODE_SERVER", out,
+                          "находка не ушла после прописки переменной")
 
 
 class PackagesTest(SandboxCase):
@@ -2780,7 +2806,8 @@ class AltSubDirTest(unittest.TestCase):
         conf = home / "своя-вторая-подписка" / "settings.json"
         self.assertTrue(conf.is_file(), "болванка не разложена по машинному ключу: %s" % (findings,))
         self.assertEqual(json.loads(read(conf))["env"],
-                         {k: "" for k in devkitctl.ALT_SUB_KEYS},
+                         dict({k: "" for k in devkitctl.ALT_SUB_KEYS},
+                              **{devkitctl.ALT_SUB_AUTO_OFF: devkitctl.ALT_SUB_AUTO_OFF_VALUE}),
                          "болванка разложена не теми ключами")
         self.assertTrue([f for f in fixed if "своя-вторая-подписка" in f],
                         "отчёт не назвал каталог, в который разложена болванка: %s" % (fixed,))
@@ -2852,6 +2879,58 @@ class AltSubDirTest(unittest.TestCase):
                         "находка не назвала, откуда чинить: %s" % (findings,))
         self.assertNotIn("ANTHROPIC_DEFAULT_FABLE_MODEL", json.loads(read(conf))["env"])
 
+    def test_classifier_off_is_laid_by_the_fix(self):
+        # Дом без переменной отключения классификатора это находка с именем
+        # дома и переменной (DK-1319): без неё чат через сторонний шлюз встаёт
+        # диалогом о смене оплаты и ждёт Enter. Значение автоматике известно,
+        # и --fix прописывает его сам, на повторном прогоне дом молчит.
+        home, conf = self.stand(dict(self.LIVE))
+        with fake_home(home):
+            findings, fixed = devkitctl.check_alt_sub(False)
+        self.assertFalse(fixed, "доктор без --fix что-то починил: %s" % (fixed,))
+        loud = [f for f in findings if devkitctl.ALT_SUB_AUTO_OFF in f]
+        self.assertTrue(loud, "дом без переменной отключения классификатора не назван находкой: %s"
+                        % (findings,))
+        self.assertIn("claude-glm", loud[0], "находка не назвала дом: %s" % loud[0])
+        with fake_home(home):
+            findings, fixed = devkitctl.check_alt_sub(True)
+        self.assertTrue([f for f in fixed if devkitctl.ALT_SUB_AUTO_OFF in f],
+                        "прописка переменной прошла молча: %s" % (fixed,))
+        self.assertEqual(json.loads(read(conf))["env"].get(devkitctl.ALT_SUB_AUTO_OFF),
+                         devkitctl.ALT_SUB_AUTO_OFF_VALUE, "--fix не прописал переменную")
+        with fake_home(home):
+            self.assertEqual(devkitctl.check_alt_sub(False), ([], []),
+                             "после прописки дом всё ещё стоит находкой")
+
+    def test_classifier_left_on_is_the_same_finding(self):
+        # Переменная с чужим значением проверок не отключает, и находка звучит
+        # так же, как при отсутствующей: рабочее значение одно, и --fix
+        # переводит его в отключающее.
+        home, conf = self.stand(dict(self.LIVE,
+                                     **{devkitctl.ALT_SUB_AUTO_OFF: "1"}))
+        with fake_home(home):
+            findings, _ = devkitctl.check_alt_sub(False)
+        self.assertTrue([f for f in findings if devkitctl.ALT_SUB_AUTO_OFF in f],
+                        "включённая переменная не названа находкой: %s" % (findings,))
+        with fake_home(home):
+            devkitctl.check_alt_sub(True)
+        self.assertEqual(json.loads(read(conf))["env"].get(devkitctl.ALT_SUB_AUTO_OFF),
+                         devkitctl.ALT_SUB_AUTO_OFF_VALUE, "--fix оставил включённое значение")
+
+    def test_classifier_off_from_a_worktree_is_finding_only(self):
+        # Переменная видна каждой сессии подписки сразу, и с непроверенной
+        # ветки на машину она не едет: находка называет основной чекаут.
+        home, conf = self.stand(dict(self.LIVE))
+        main = home / "projects" / "devkit"
+        with fake_home(home):
+            findings, fixed = devkitctl.check_alt_sub(True, main, False)
+        self.assertFalse([f for f in fixed if devkitctl.ALT_SUB_AUTO_OFF in f],
+                         "переменная уехала на машину с непроверенной ветки: %s" % (fixed,))
+        self.assertTrue([f for f in findings if devkitctl.ALT_SUB_AUTO_OFF in f
+                         and "основного чекаута" in f],
+                        "находка не назвала, откуда чинить: %s" % (findings,))
+        self.assertNotIn(devkitctl.ALT_SUB_AUTO_OFF, json.loads(read(conf))["env"])
+
     def ladder(self, tiers):
         # Стенд с полной лестницей ярусов в машинном слое: якоря подстановок
         # читаются из неё, а не из пары ключей env.
@@ -2913,7 +2992,8 @@ class AltSubDirTest(unittest.TestCase):
             conf = home / ".devkit" / sub / "settings.json"
             self.assertTrue(conf.is_file(), "болванка не разложена подписке %s: %s" % (sub, fixed))
             self.assertEqual(json.loads(read(conf))["env"],
-                             {k: "" for k in devkitctl.ALT_SUB_KEYS},
+                             dict({k: "" for k in devkitctl.ALT_SUB_KEYS},
+                                  **{devkitctl.ALT_SUB_AUTO_OFF: devkitctl.ALT_SUB_AUTO_OFF_VALUE}),
                              "болванка %s разложена не теми ключами" % sub)
             self.assertTrue([f for f in findings if str(conf) in f and "пустые ключи" in f],
                             "пустые ключи %s не названы находкой: %s" % (sub, findings))

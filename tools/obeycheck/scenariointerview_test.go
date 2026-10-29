@@ -309,6 +309,43 @@ func TestInterviewDecideBlockHeadless(t *testing.T) {
 	}
 }
 
+func writeShownProposal(t *testing.T, project, rawCards, mode string) {
+	t.Helper()
+	var cards []map[string]any
+	if err := json.Unmarshal([]byte(rawCards), &cards); err != nil {
+		t.Fatal(err)
+	}
+	var active []map[string]any
+	for _, card := range cards {
+		if card["status"] == nil || card["status"] == "" {
+			active = append(active, card)
+		}
+	}
+	basis := "basis-shown"
+	tree, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode == "устаревший basis" {
+		basis = "other"
+	}
+	if mode == "другая редакция" && len(active) > 0 {
+		active[0]["revision"] = 99
+	}
+	question := map[string]any{"questions": []any{map[string]any{"text": "выбор", "proposal": map[string]any{"version": 1, "tree": tree, "anchor": "OB-069", "sources": []any{map[string]any{"source": "OB-069", "basis": basis, "proposals": active}}}}}}
+	data, err := json.Marshal(question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(project, ".devkit", "chat")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "task-OB-069.ask"), append([]byte("-\nзадача OB-069\n"), append(data, '\n')...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGroomProposalScenarioChecks(t *testing.T) {
 	devkit := devkitRoot(t)
 	list, err := loadScenarios(filepath.Join(devkit, "tools", "obeycheck", "scenarios"), devkit, []string{"69-groom-proposals"}, nil)
@@ -319,13 +356,20 @@ func TestGroomProposalScenarioChecks(t *testing.T) {
 		name, log, proposals string
 		pass                 bool
 	}{
-		{"порядок", "taskctl draft proposals save --help\ntaskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1"},{"id":"p2"}]`, true},
-		{"ошибка до интервью", "taskctl draft proposals save OB-069 --base abc [exit=1]\ntaskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1"},{"id":"p2"}]`, true},
-		{"только ошибка", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc [exit=1]\n", `[{"id":"p1"},{"id":"p2"}]`, false},
-		{"наоборот", "taskctl draft proposals save OB-069 --base abc\ntaskctl decide OB-069 --scenarios\n", `[{"id":"p1"},{"id":"p2"}]`, false},
-		{"нет вызовов", "", `[{"id":"p1"},{"id":"p2"}]`, false},
-		{"прямое применение", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\ntaskctl draft drop OB-069\n", `[{"id":"p1"},{"id":"p2"}]`, false},
-		{"применённая карточка", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","status":"accepted"},{"id":"p2"}]`, false},
+		{"порядок", "taskctl draft proposals save --help\ntaskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, true},
+		{"ошибка до интервью", "taskctl draft proposals save OB-069 --base abc [exit=1]\ntaskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, true},
+		{"только ошибка", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc [exit=1]\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"наоборот", "taskctl draft proposals save OB-069 --base abc\ntaskctl decide OB-069 --scenarios\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"нет вызовов", "", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"нет редакции", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1"},{"id":"p2","revision":1}]`, false},
+		{"нет вопроса", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"нет ask вызова", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"устаревший basis", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"другая редакция", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"без сессии", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"применение answer", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\ntaskctl draft proposals answer OB-069\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"прямое применение", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\ntaskctl draft drop OB-069\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"применённая карточка", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1,"status":"accepted"},{"id":"p2","revision":1}]`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			project := t.TempDir()
@@ -336,8 +380,23 @@ func TestGroomProposalScenarioChecks(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(project, "docs", "tasks", "drafts", "OB-069.md"), []byte("выбор: сценарии/1\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			logText := tc.log
+			if tc.name != "нет ask вызова" {
+				logText += "taskctl draft proposals ask OB-069\n"
+			}
+			if tc.name != "нет вопроса" {
+				writeShownProposal(t, project, tc.proposals, tc.name)
+			}
+			transcript := filepath.Join(project, "transcript")
+			trace := "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"готово\"}}\n{\"type\":\"turn.completed\"}\n"
+			if tc.name == "без сессии" {
+				trace = ""
+			}
+			if err := os.WriteFile(transcript, []byte(trace), 0o644); err != nil {
+				t.Fatal(err)
+			}
 			var log strings.Builder
-			for i, command := range strings.Split(strings.TrimSpace(tc.log), "\n") {
+			for i, command := range strings.Split(strings.TrimSpace(logText), "\n") {
 				if command != "" {
 					status := 0
 					if strings.HasSuffix(command, " [exit=1]") {
@@ -350,13 +409,13 @@ func TestGroomProposalScenarioChecks(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(project, ".obey-taskctl.log"), []byte(log.String()), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			fake := "#!/bin/sh\nprintf '%s\\n' '{\"state\":{\"proposals\":" + tc.proposals + "}}'\n"
+			fake := "#!/bin/sh\nprintf '%s\\n' '{\"basis\":\"basis-shown\",\"state\":{\"proposals\":" + tc.proposals + "}}'\n"
 			if err := os.WriteFile(filepath.Join(binDir, "taskctl"), []byte(fake), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			check := exec.Command("sh", "-eu", "-c", list[0].Check)
 			check.Dir = project
-			check.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			check.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"), "OBEY_TRANSCRIPT="+transcript)
 			out, err := check.CombinedOutput()
 			if (err == nil) != tc.pass {
 				t.Fatalf("проверка: %v\n%s", err, out)
@@ -375,12 +434,17 @@ func TestGroomPrivateDuplicateScenarioChecks(t *testing.T) {
 		name, trace, output, log, proposals string
 		pass                                bool
 	}{
-		{"работает", "session", "обычный вывод", "safe", `[{"id":"p1"}]`, true},
-		{"нет сессии", "empty", "обычный вывод", "safe", `[{"id":"p1"}]`, false},
-		{"закрытый активный заголовок", "session", "PRIVATE_ACTIVE_TITLE_70", "safe", `[{"id":"p1"}]`, false},
-		{"закрытое архивное тело", "session", "PRIVATE_ARCHIVE_BODY_71", "safe", `[{"id":"p1"}]`, false},
-		{"нет безопасного списка", "session", "обычный вывод", "missing", `[{"id":"p1"}]`, false},
+		{"работает", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, true},
+		{"нет сессии", "empty", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, false},
+		{"закрытый активный заголовок", "session", "PRIVATE_ACTIVE_TITLE_70", "safe", `[{"id":"p1","revision":1}]`, false},
+		{"закрытое архивное тело", "session", "PRIVATE_ARCHIVE_BODY_71", "safe", `[{"id":"p1","revision":1}]`, false},
+		{"нет безопасного списка", "session", "обычный вывод", "missing", `[{"id":"p1","revision":1}]`, false},
 		{"нет публичного результата", "session", "обычный вывод", "safe", `[]`, false},
+		{"нет вопроса", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, false},
+		{"устаревший basis", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, false},
+		{"другая редакция", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, false},
+		{"нет ask вызова", "session", "обычный вывод", "noask", `[{"id":"p1","revision":1}]`, false},
+		{"применение answer", "session", "обычный вывод", "answer", `[{"id":"p1","revision":1}]`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			project, home, binDir := t.TempDir(), t.TempDir(), t.TempDir()
@@ -390,9 +454,18 @@ func TestGroomPrivateDuplicateScenarioChecks(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(project, "docs", "tasks", "drafts", "OB-069.md"), []byte("публичная запись\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			log := "start\t1\ttaskctl guard OB-069\nend\t1\t0\nstart\t2\ttaskctl list --safe\nend\t2\t0\nstart\t3\ttaskctl draft list --safe\nend\t3\t0\n"
+			log := "start\t1\ttaskctl guard OB-069\nend\t1\t0\nstart\t2\ttaskctl list --safe\nend\t2\t0\nstart\t3\ttaskctl draft list --safe\nend\t3\t0\nstart\t4\ttaskctl draft proposals save OB-069 --base abc\nend\t4\t0\nstart\t5\ttaskctl draft proposals ask OB-069\nend\t5\t0\n"
 			if tc.log == "missing" {
 				log = "start\t1\ttaskctl guard OB-069\nend\t1\t0\n"
+			}
+			if tc.log == "noask" {
+				log = strings.Replace(log, "start\t5\ttaskctl draft proposals ask OB-069\nend\t5\t0\n", "", 1)
+			}
+			if tc.log == "answer" {
+				log += "start\t6\ttaskctl draft proposals answer OB-069\nend\t6\t0\n"
+			}
+			if tc.name != "нет вопроса" {
+				writeShownProposal(t, project, tc.proposals, tc.name)
 			}
 			if err := os.WriteFile(filepath.Join(project, ".obey-taskctl.log"), []byte(log), 0o644); err != nil {
 				t.Fatal(err)
@@ -413,7 +486,7 @@ func TestGroomPrivateDuplicateScenarioChecks(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(sessions, "rollout-test.jsonl"), append(entry, '\n'), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			fake := "#!/bin/sh\nprintf '%s\\n' '{\"state\":{\"proposals\":" + tc.proposals + "}}'\n"
+			fake := "#!/bin/sh\nprintf '%s\\n' '{\"basis\":\"basis-shown\",\"state\":{\"proposals\":" + tc.proposals + "}}'\n"
 			if err := os.WriteFile(filepath.Join(binDir, "taskctl"), []byte(fake), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -425,5 +498,48 @@ func TestGroomPrivateDuplicateScenarioChecks(t *testing.T) {
 				t.Fatalf("проверка: %v\n%s", err, out)
 			}
 		})
+	}
+}
+
+func TestGroomPrivateDuplicateFixture(t *testing.T) {
+	devkit := devkitRoot(t)
+	list, err := loadScenarios(filepath.Join(devkit, "tools", "obeycheck", "scenarios"), devkit, []string{"70-groom-private-duplicates"}, nil)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("сценарий: %v, найдено %d", err, len(list))
+	}
+	project := t.TempDir()
+	for _, name := range []string{"README.md", "docs/TASKS.md", "docs/TASKS-archive.md"} {
+		data, err := os.ReadFile(filepath.Join(devkit, "tools", "obeycheck", "testdata", "project", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(project, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setup := exec.Command("sh", "-eu", "-c", list[0].Setup)
+	setup.Dir = project
+	if out, err := setup.CombinedOutput(); err != nil {
+		t.Fatalf("подготовка: %v\n%s", err, out)
+	}
+	for name, needles := range map[string][]string{
+		"README.md":                         {"python3 server.py", "old-help"},
+		"server.py":                         {"HTTPServer", "serve_forever"},
+		"docs/tasks/OB-070.md":              {"защита: locked", "PRIVATE_ACTIVE_BODY_70"},
+		"docs/tasks/archive/2026/OB-071.md": {"защита: locked", "PRIVATE_ARCHIVE_BODY_71"},
+	} {
+		data, err := os.ReadFile(filepath.Join(project, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, needle := range needles {
+			if !strings.Contains(string(data), needle) {
+				t.Errorf("%s: нет %q", name, needle)
+			}
+		}
 	}
 }

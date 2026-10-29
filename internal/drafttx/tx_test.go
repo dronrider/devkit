@@ -308,3 +308,25 @@ func TestLegacyPlanFailsClosedOrRecoversOwnRoot(t *testing.T) {
 		t.Fatalf("journal remains: %v", err)
 	}
 }
+
+func TestEmptyGitCommonDirUsesProjectService(t *testing.T) {
+	root := t.TempDir()
+	bin := t.TempDir()
+	git := filepath.Join(bin, "git")
+	if err := os.WriteFile(git, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	l, err := Acquire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	dir, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(l.dir) != filepath.Join(dir, ".devkit", "draft-tx") {
+		t.Fatalf("unexpected service directory: %s", filepath.Dir(l.dir))
+	}
+}

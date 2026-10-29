@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/draftmeta"
 )
 
 // Черновик это записанная на ходу идея, которой ещё не выдали метаданные:
@@ -33,8 +35,11 @@ type Draft struct {
 	// Until это дата возврата из пометки «отложен до ...», пусто у отложенного
 	// без срока. Наступившая дата возврата в loadDrafts снимает пометку с
 	// черновика целиком: он возвращается в очередь разбора тем же днём.
-	Until string
-	Prio  string // уровень разбора high / mid / low, пусто у немаркированного
+	Until  string
+	Prio   string // уровень разбора high / mid / low, пусто у немаркированного
+	Type   string
+	Source string
+	Lock   string
 }
 
 const (
@@ -129,7 +134,11 @@ func loadDrafts(root string) ([]Draft, error) {
 		if info, err := e.Info(); err == nil {
 			d.Mod = info.ModTime()
 		}
-		meta := parseDraftFile(d.Path)
+		meta, err := parseDraftFile(d.Path)
+		if err != nil {
+			return nil, err
+		}
+		d.Type, d.Source, d.Lock = meta.Header.Type, meta.Header.Source, meta.Header.Lock
 		d.Title, d.Written, d.Deferred, d.Until, d.Prio = meta.Title, meta.Written, meta.Deferred, meta.Until, meta.Prio
 		// Отложенный до даты возвращается тем же днём: пометка больше не
 		// держит очередь, и накопитель видит черновик как неотложенный. День
@@ -190,6 +199,7 @@ func findDraft(drafts []Draft, id string) *Draft {
 // draftMeta это то, что читается из самого файла черновика: заголовок, дата
 // записи, даты пометки об отложенном и уровень разбора.
 type draftMeta struct {
+	Header   draftmeta.Header
 	Title    string
 	Written  time.Time
 	Deferred string
@@ -201,13 +211,19 @@ type draftMeta struct {
 // того же файла, и второй его читатель платил бы за то же самое дважды на
 // каждую строку накопителя. Уровень разбора читается только из шапки до
 // первого «## »: строка «приоритет:» в теле идеи это текст, а не метка.
-func parseDraftFile(path string) draftMeta {
+func parseDraftFile(path string) (draftMeta, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return draftMeta{}
+		return draftMeta{}, err
+	}
+	header, err := draftmeta.Parse(data)
+	if err != nil {
+		return draftMeta{}, fmt.Errorf("%s: %w", path, err)
 	}
 	var m draftMeta
-	head, intro, groom := true, true, false
+	m.Header = header
+	m.Written, m.Prio = header.Written, header.Priority
+	head, groom := true, false
 	for _, raw := range strings.Split(string(data), "\n") {
 		ln := strings.TrimSpace(raw)
 		if ln == "" {
@@ -219,7 +235,6 @@ func parseDraftFile(path string) draftMeta {
 			continue
 		}
 		if strings.HasPrefix(ln, "## ") {
-			intro = false
 			groom = ln == draftGroomHeading
 			continue
 		}
@@ -229,16 +244,9 @@ func parseDraftFile(path string) draftMeta {
 				m.Deferred = g[1]
 				m.Until = g[2]
 			}
-		case intro && m.Prio == "" && strings.HasPrefix(ln, draftPrioPrefix):
-			m.Prio = draftPrioKeys[strings.TrimSpace(strings.TrimPrefix(ln, draftPrioPrefix))]
-		case m.Written.IsZero() && strings.HasPrefix(ln, draftWrittenPrefix):
-			date := strings.TrimSpace(strings.TrimPrefix(ln, draftWrittenPrefix))
-			if t, err := time.ParseInLocation(draftDateLayout, date, time.Local); err == nil {
-				m.Written = t
-			}
 		}
 	}
-	return m
+	return m, nil
 }
 
 // draftTitleLine чистит первую строку файла: решётка заголовка и свой же ID

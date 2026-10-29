@@ -181,12 +181,16 @@ func TestScenarioPanelRetryKeepsHandedRoute(t *testing.T) {
 	if readFile(t, st.path) != before {
 		t.Fatal("постороннее дерево изменило запись")
 	}
-	lock, err := chat.Lock(filepath.Join(chat.Root(st.e.proj), chat.TaskName("XR-4")+chat.LockSuffix))
-	if err != nil {
+	// The CLI now locks the Ask while applying the decision. Break the carrier
+	// itself so the real CLI succeeds before delivery fails.
+	carrier := chat.Path(st.e.proj, chat.TaskName("XR-4"))
+	if err := os.Mkdir(carrier, 0700); err != nil {
 		t.Fatal(err)
 	}
 	st.send(t, "сценарии 3", ask, http.StatusBadGateway)
-	lock.Close()
+	if err := os.Remove(carrier); err != nil {
+		t.Fatal(err)
+	}
 	before = readFile(t, st.path)
 	if _, ok := chat.ReadAsk(chat.AskPath(st.e.proj, chat.TaskName("XR-4"))); ok {
 		t.Fatal("CLI не применил ответ до сбоя доставки")

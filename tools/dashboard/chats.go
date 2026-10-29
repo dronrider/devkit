@@ -3150,10 +3150,20 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	records := s.bindsAll()[sid]
 	guardLast := sessions.Last(records)
 	taskIDs := sessions.Works(records)
+	stored := s.chatStoreRead(sid)
+	if stored.Blank && stored.Task != "" {
+		taskIDs = append(taskIDs, stored.Task)
+	}
 	if id := sessions.LastTask(records); id != "" {
 		taskIDs = append(taskIDs, id)
 	}
 	roots := []string{found.Path}
+	if stored.Blank && stored.Task != "" {
+		tree := chatTree(found.Path, stored.Task)
+		if tree != found.Path {
+			roots = append(roots, tree)
+		}
+	}
 	if filepath.IsAbs(guardLast.Tree) && isFile(filepath.Join(guardLast.Tree, "docs", "TASKS.md")) {
 		roots = append(roots, guardLast.Tree)
 		taskIDs = append(taskIDs, headTasks(guardLast, filepath.Base(guardLast.Tree))...)

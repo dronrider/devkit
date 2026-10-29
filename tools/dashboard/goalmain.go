@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/chat"
+
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 // Разговор цели с её задачами поверх основных чатов (LLD DK-1422, стык
@@ -315,6 +317,16 @@ func (s *server) handleTaskRelay(w http.ResponseWriter, r *http.Request) {
 	lock := s.inboxLock(found.Path)
 	lock.Lock()
 	defer lock.Unlock()
+	tx, err := drafttx.Acquire(found.Path)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	defer func() {
+		if tx != nil {
+			tx.Close()
+		}
+	}()
 	data, err := os.ReadFile(doc.path)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл цели не прочитался: %v", err)})
@@ -332,6 +344,12 @@ func (s *server) handleTaskRelay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл цели не записался: %v", err)})
 		return
 	}
+	if err := tx.Close(); err != nil {
+		tx = nil
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	tx = nil
 	resp := map[string]any{"task": id, "goal": goal, "way": "inbox", "line": line,
 		"message": fmt.Sprintf("строка легла во «Входящие» файла цели %s: её прочитает следующий виток", goal)}
 	if s.goalIdle(found.Path, goal) {

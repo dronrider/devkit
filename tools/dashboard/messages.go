@@ -8,6 +8,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 // Переписка с агентом через состояние цели (LLD DK-112, «Переписка»): POST
@@ -268,6 +270,16 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 	lock := s.inboxLock(found.Path)
 	lock.Lock()
 	defer lock.Unlock()
+	tx, err := drafttx.Acquire(found.Path)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	defer func() {
+		if tx != nil {
+			tx.Close()
+		}
+	}()
 	doc, err := os.ReadFile(path)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл цели не прочитался: %v", err)})
@@ -298,6 +310,12 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл цели не записался: %v", err)})
 		return
 	}
+	if err := tx.Close(); err != nil {
+		tx = nil
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	tx = nil
 	resp := map[string]any{
 		"id": id, "line": line,
 		"message": fmt.Sprintf("сообщение легло во «Входящие» файла цели %s: его прочитает следующий виток, идущий не увидит", id),

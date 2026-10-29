@@ -54,7 +54,7 @@ func TestInterviewScenarioChecks(t *testing.T) {
 		if strings.HasPrefix(s.ID, "43-") {
 			states = append(states, "карточки не доставлены", "тело не доставлено")
 		} else {
-			states = append(states, "итог без ID", "итог без None")
+			states = append(states, "итог без ID", "итог без None", "другой вопрос", "сценарий открыт", "сценарий изменён")
 		}
 		for _, state := range states {
 			t.Run(s.ID+"/"+state, func(t *testing.T) {
@@ -130,12 +130,46 @@ func TestInterviewScenarioChecks(t *testing.T) {
 						run(args...)
 						if count == 1 {
 							final = "СЦ-1 сохранён в записи. Основание: прямой текст записи OB-042, total считает None нулём."
+							if state == "другой вопрос" {
+								run("decide", record, "--ask", "обход", "--hint", "уточнить обход", "как обходят ошибку?")
+								final = run("decide", record, "--chat")
+								if !strings.Contains(final, "«обход»") || strings.Contains(final, "«сценарии»") {
+									t.Fatalf("неверный состав открытых вопросов: %s", final)
+								}
+							}
 						} else {
 							final = run("decide", record, "сценарии", "--chat")
 						}
 					}
 				}
 				expectedReason := ""
+				if state == "сценарий открыт" || state == "сценарий изменён" {
+					data, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					doc := string(data)
+					before := doc
+					if state == "сценарий открыт" {
+						doc = regexp.MustCompile(`(?m)^(  - ответ: [^\n]*\n)`).ReplaceAllString(doc, "${1}  - пересмотр человеком 2026-10-30: состав нужно выбрать заново\n")
+						expectedReason = "новый процесс не прочитал заданный состав"
+					} else {
+						doc = strings.Replace(doc, "СЦ-1 (слово пользователя): total считает None нулём", "СЦ-1 (слово пользователя): total пропускает None", 1)
+						expectedReason = "состав изменён после переноса"
+					}
+					if doc == before {
+						t.Fatal("фикстура не изменила развилку")
+					}
+					if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					if state == "сценарий открыт" {
+						final = run("decide", record, "--chat")
+						if !strings.Contains(final, "«сценарии»") {
+							t.Fatalf("открытый сценарий не показан: %s", final)
+						}
+					}
+				}
 				if state == "потеряно поле" || state == "поле снаружи" || state == "поле в примере" || state == "чужая карточка" {
 					data, err := os.ReadFile(path)
 					if err != nil {
@@ -236,7 +270,7 @@ func TestInterviewScenarioChecks(t *testing.T) {
 				check.Dir = project
 				check.Env = env
 				out, err := check.CombinedOutput()
-				if (err == nil) != (state == "работает" || state == "журнал" || state == "итог без ID" || state == "итог без None") {
+				if (err == nil) != (state == "работает" || state == "журнал" || state == "итог без ID" || state == "итог без None" || state == "другой вопрос") {
 					t.Fatalf("состояние %s: %v\n%s", state, err, out)
 				}
 				if err != nil && expectedReason != "" && !strings.Contains(string(out), expectedReason) {

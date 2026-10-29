@@ -49,4 +49,16 @@ func TestProposalBasisChangesWithTargetAndType(t *testing.T) {
 	if err != nil || replaced == changed {
 		t.Fatalf("type: %s %s %v", changed, replaced, err)
 	}
+	teamPath := filepath.Join(home, ".devkit", "team.toml")
+	if err := os.MkdirAll(filepath.Dir(teamPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(teamPath, []byte("# команда\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	changedTeam, err := proposalBasis(root, source, state)
+	if err != nil || changedTeam == replaced {
+		t.Fatalf("team: %s %s %v", replaced, changedTeam, err)
+	}
+
 }

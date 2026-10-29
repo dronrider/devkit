@@ -91,3 +91,47 @@ func TestProposalRejectPartialAndHistory(t *testing.T) {
 		t.Fatalf("history read: %s %v", raw, err)
 	}
 }
+
+func TestEmptyAnalysisAndReanalysisPreserveDecisions(t *testing.T) {
+	root := setup(t)
+	kit, err := filepath.Abs("../../kit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", filepath.Dir(kit))
+	if _, err = cmdDraft(root, "исходный материал", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := cmdDraftProposals(root, "XR-008")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view proposalView
+	json.Unmarshal([]byte(raw), &view)
+	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[],"analysis":"empty"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw), &view)
+	if view.State.State != "active" || len(view.State.Proposals) != 0 || view.State.Analysis != "empty" {
+		t.Fatalf("empty: %s", raw)
+	}
+	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"старое","reason":"нет нужды"},{"id":"p2","revision":1,"outcome":"drop","text":"второе","reason":"нет нужды"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw), &view)
+	raw, err = cmdDraftProposalReject(root, "XR-008", "p1", view.Snapshot, "отклонено человеком")
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw), &view)
+	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p3","revision":1,"outcome":"drop","text":"новое","reason":"нет нужды"}],"analysis":"ok"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal([]byte(raw), &view)
+	if len(view.State.Proposals) != 3 || view.State.Proposals[0].Status != "rejected" || view.State.Proposals[0].Result.Reason != "отклонено человеком" {
+		t.Fatalf("reanalysis: %s", raw)
+	}
+}

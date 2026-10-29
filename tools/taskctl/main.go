@@ -549,16 +549,21 @@ func main() {
 			dir := fs.String("C", gdir, "стартовая директория")
 			jsonOut := fs.Bool("json", false, "машинный вывод JSON")
 			history := fs.Bool("history", false, "история разбора")
+			safe := fs.Bool("safe", false, "скрыть заголовки защищённых записей")
 			needArgs(frame.ParseArgs(fs, args[2:]), 0, 0, "draft list [--json] [--history]")
 			if *jsonOut {
-				msg, err = cmdDraftListJSONHistory(root(*dir), *history)
+				msg, err = cmdDraftListJSONSafe(root(*dir), *history, *safe)
 				break
 			}
 			if *history {
+				if *safe {
+					err = fmt.Errorf("для безопасного списка истории используйте --json --history --safe")
+					break
+				}
 				msg, err = cmdDraftHistory(root(*dir))
 				break
 			}
-			msg, err = cmdDraftList(root(*dir))
+			msg, err = cmdDraftListSafe(root(*dir), *safe)
 		case "types":
 			fs := flag.NewFlagSet("draft types", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")

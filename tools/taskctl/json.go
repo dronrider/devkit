@@ -305,6 +305,9 @@ func cmdDraftListJSONHistory(root string, history bool) (string, error) {
 func cmdDraftListJSONSafe(root string, history, safe bool) (string, error) {
 	drafts, err := loadDraftsWithHistory(root, history)
 	if err != nil {
+		if safe {
+			return "", fmt.Errorf("не удалось безопасно прочитать накопитель; проверьте метаданные локально")
+		}
 		return "", err
 	}
 	out := struct {

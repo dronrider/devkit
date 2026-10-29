@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRecoveryAfterEveryFile(t *testing.T) {
@@ -90,5 +91,69 @@ func TestRecoveryConflictKeepsForeignEdit(t *testing.T) {
 	got, err := os.ReadFile(path)
 	if err != nil || string(got) != "foreign" {
 		t.Fatalf("foreign overwritten: %q %v", got, err)
+	}
+}
+
+func TestLockSerializesTransactions(t *testing.T) {
+	root := t.TempDir()
+	first, err := Acquire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := make(chan error, 1)
+	go func() {
+		second, err := Acquire(root)
+		if err == nil {
+			err = second.Close()
+		}
+		ready <- err
+	}()
+	select {
+	case err := <-ready:
+		t.Fatalf("second lock entered early: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err = first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("second lock did not proceed")
+	}
+}
+
+func TestInterruptedPlanCannotBeReplaced(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "one")
+	if err := os.WriteFile(path, []byte("a"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := Read(path)
+	change := Change{Path: "one", Before: before, After: Image{Exists: true, Data: []byte("b"), Mode: 0600}}
+	l, err := Acquire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = l.apply(root, []Change{change}, func(int) error { return errors.New("crash") }); err == nil {
+		t.Fatal("no crash")
+	}
+	if err = l.Apply(root, nil); err == nil {
+		t.Fatal("pending plan replaced")
+	}
+	if err = l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	l, err = Acquire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "b" {
+		t.Fatalf("result %q %v", got, err)
 	}
 }

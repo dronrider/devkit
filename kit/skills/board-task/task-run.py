@@ -1034,39 +1034,12 @@ class Pipeline:
         """Запись хвоста в раздел «Ход работы» файла задачи, тем же местом, куда
         уезжает возврат проверки. Файла может не быть (черновик, архив), и
         запись тогда пропускается: уведомление и журнал строки уже ушли."""
-        line = "- Хвост: %s, снят стопом конвейера, %s." % (what, time.strftime("%Y-%m-%d"))
-        path = os.path.join(self.proj, "docs", "tasks", self.id + ".md")
         try:
-            with open(path, encoding="utf-8") as f:
-                body = f.read()
-        except OSError:
-            self.say("файла задачи нет (%s), запись хвоста некуда" % path)
-            return
-        lines = body.splitlines()
-        start, end = None, len(lines)
-        for i, ln in enumerate(lines):
-            if not ln.startswith("## "):
-                continue
-            if start is not None:
-                end = i
-                break
-            if ln.strip() == TASK_SECTION:
-                start = i
-        if start is None:
-            if lines and lines[-1].strip():
-                lines.append("")
-            lines.append(TASK_SECTION)
-            lines.append("")
-            lines.append(line)
-        else:
-            at = end
-            while at > start + 1 and not lines[at - 1].strip():
-                at -= 1
-            lines.insert(at, line)
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines) + "\n")
-        except OSError as e:
+            p = subprocess.run(["taskctl", "file", "tail", self.id], cwd=self.proj,
+                               input=what, capture_output=True, text=True, timeout=10)
+            if p.returncode:
+                self.say("запись хвоста в файл задачи не ушла (%s)" % (p.stderr or p.stdout).strip())
+        except (OSError, subprocess.TimeoutExpired) as e:
             self.say("запись хвоста в файл задачи не ушла (%s)" % e)
 
     def foreign_entry(self):
@@ -1297,11 +1270,21 @@ class Pipeline:
             return cmd + [order]
         return cmd + ["-p", order]
 
+    def guard_material(self):
+        try:
+            p = subprocess.run(["taskctl", "guard", self.id], cwd=self.proj,
+                               capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            die("материал перед запуском не проверен: %s" % e)
+        if p.returncode:
+            die((p.stderr or p.stdout or "материал перед запуском не проверен").strip())
+
     def raise_head(self, order):
         """Подъём живой головы в своей же панели. Клиент забирает терминал
         окна и рисует в нём свой TUI, оболочка остаётся его родителем и дальше
         только смотрит за отметками. Заказ едет первым аргументом. Интерактивный
         клиент берёт его как первый вопрос и остаётся стоять."""
+        self.guard_material()
         env = self.head_env()
         cmd = self.head_cmd(order)
         # Память реестра набирается до подъёма. Прошлый запуск конвейера
@@ -1339,6 +1322,7 @@ class Pipeline:
         едет в скобках вставки. Без них перенос строки читается как Enter, и
         клиент отправляет первую строку, а остальные разбирает отдельными
         репликами."""
+        self.guard_material()
         body = "\033[200~" + text + "\033[201~" if "\n" in text else text
         target = "=" + self.name + ":"
         try:
@@ -2096,6 +2080,7 @@ class Pipeline:
         пока клиент жив: печатный проход идёт часами без отметок хода в общем
         журнале, и без касаний beat сторонний подъём снял бы замок под
         работающим проходом (DK-1454)."""
+        self.guard_material()
         cmd = self.head_cmd(order, live=False)
         self.say("проход поднят: %s" % " ".join(shlex.quote(c) for c in cmd[:-1]))
         started = time.time()

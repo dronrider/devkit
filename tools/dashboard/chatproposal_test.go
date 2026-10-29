@@ -113,6 +113,26 @@ func TestProposalSayRequiresTypedContext(t *testing.T) {
 	}
 }
 
+func TestProposalSayGuardsUnselectedShownSource(t *testing.T) {
+	st := newScenarioStand(t)
+	putDoc(t, st.e.proj, "docs/tasks/drafts/XR-5.md", "# XR-5: закрытая запись\nзамок: locked\n")
+	q := &chat.ProposalQuestion{Version: 1, Tree: st.e.proj, Anchor: "XR-4", Sources: []chat.ProposalSource{
+		{Source: "XR-4", Basis: "a", Proposals: []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Text: "первое"}}},
+		{Source: "XR-5", Basis: "b", Proposals: []draftproposal.Proposal{{ID: "p2", Revision: 1, Outcome: "drop", Text: "второе"}}},
+	}}
+	if err := chat.WriteAsk(st.e.proj, chat.TaskName("XR-4"), chat.Ask{Task: "XR-4", Session: scenarioPanelSID, Questions: []chat.Question{{Text: "вопрос", Proposal: q}}}); err != nil {
+		t.Fatal(err)
+	}
+	answer := proposalAnswer{Anchor: "XR-4", Tree: st.e.proj, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Digest: "a"}}, Decisions: []draftproposal.Decision{{Source: "XR-4", Proposal: "p1", Revision: 1, Action: "accept"}}}
+	data, _ := json.Marshal(map[string]any{"text": "принять первое", "proposal": answer})
+	before := readFile(t, st.path)
+	resp := doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/say", string(data))
+	msg := body(t, resp)
+	if resp.StatusCode != 409 || readFile(t, st.path) != before {
+		t.Fatalf("unselected private source: %d %s", resp.StatusCode, msg)
+	}
+}
+
 func TestGroomTypedPromptUsesProjectDefinition(t *testing.T) {
 	e, _, _ := tasksEnv(t)
 	runTaskctl(t, e.proj, "draft", "синтетическая запись")

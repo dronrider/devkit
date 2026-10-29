@@ -364,3 +364,66 @@ func TestGroomProposalScenarioChecks(t *testing.T) {
 		})
 	}
 }
+
+func TestGroomPrivateDuplicateScenarioChecks(t *testing.T) {
+	devkit := devkitRoot(t)
+	list, err := loadScenarios(filepath.Join(devkit, "tools", "obeycheck", "scenarios"), devkit, []string{"70-groom-private-duplicates"}, nil)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("сценарий: %v, найдено %d", err, len(list))
+	}
+	for _, tc := range []struct {
+		name, trace, output, log, proposals string
+		pass                                bool
+	}{
+		{"работает", "session", "обычный вывод", "safe", `[{"id":"p1"}]`, true},
+		{"нет сессии", "empty", "обычный вывод", "safe", `[{"id":"p1"}]`, false},
+		{"закрытый активный заголовок", "session", "PRIVATE_ACTIVE_TITLE_70", "safe", `[{"id":"p1"}]`, false},
+		{"закрытое архивное тело", "session", "PRIVATE_ARCHIVE_BODY_71", "safe", `[{"id":"p1"}]`, false},
+		{"нет безопасного списка", "session", "обычный вывод", "missing", `[{"id":"p1"}]`, false},
+		{"нет публичного результата", "session", "обычный вывод", "safe", `[]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project, home, binDir := t.TempDir(), t.TempDir(), t.TempDir()
+			if err := os.MkdirAll(filepath.Join(project, "docs", "tasks", "drafts"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(project, "docs", "tasks", "drafts", "OB-069.md"), []byte("публичная запись\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			log := "start\t1\ttaskctl guard OB-069\nend\t1\t0\nstart\t2\ttaskctl list --safe\nend\t2\t0\nstart\t3\ttaskctl draft list --safe\nend\t3\t0\n"
+			if tc.log == "missing" {
+				log = "start\t1\ttaskctl guard OB-069\nend\t1\t0\n"
+			}
+			if err := os.WriteFile(filepath.Join(project, ".obey-taskctl.log"), []byte(log), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			transcript := filepath.Join(project, "transcript")
+			trace := ""
+			if tc.trace == "session" {
+				trace = "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"готово\"}}\n{\"type\":\"turn.completed\"}\n"
+			}
+			if err := os.WriteFile(transcript, []byte(trace), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sessions := filepath.Join(home, ".codex", "sessions")
+			if err := os.MkdirAll(sessions, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			entry, _ := json.Marshal(map[string]any{"payload": map[string]any{"type": "custom_tool_call_output", "output": tc.output}})
+			if err := os.WriteFile(filepath.Join(sessions, "rollout-test.jsonl"), append(entry, '\n'), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			fake := "#!/bin/sh\nprintf '%s\\n' '{\"state\":{\"proposals\":" + tc.proposals + "}}'\n"
+			if err := os.WriteFile(filepath.Join(binDir, "taskctl"), []byte(fake), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			check := exec.Command("sh", "-eu", "-c", list[0].Check)
+			check.Dir = project
+			check.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"), "OBEY_HOME="+home, "OBEY_TRANSCRIPT="+transcript)
+			out, err := check.CombinedOutput()
+			if (err == nil) != tc.pass {
+				t.Fatalf("проверка: %v\n%s", err, out)
+			}
+		})
+	}
+}

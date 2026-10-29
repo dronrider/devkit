@@ -6,7 +6,39 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dronrider/devkit/internal/drafttx"
 )
+
+func TestInitWaitsForBoardLock(t *testing.T) {
+	dir := t.TempDir()
+	lock, err := drafttx.Acquire(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() { _, err := cmdInit(dir, InitParams{Prefix: "AB", Here: true}); result <- err }()
+	select {
+	case err := <-result:
+		lock.Close()
+		t.Fatalf("init ignored held lock: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, err := os.Stat(boardPath(dir)); !os.IsNotExist(err) {
+		lock.Close()
+		t.Fatalf("board appeared under lock: %v", err)
+	}
+	lock.Close()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("init did not resume after lock release")
+	}
+}
 
 func TestInitAndFirstTask(t *testing.T) {
 	dir := t.TempDir()

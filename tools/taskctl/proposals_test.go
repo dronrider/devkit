@@ -41,7 +41,7 @@ func TestProposalsSaveAndStale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = json.Unmarshal([]byte(saved), &view); err != nil || len(view.State.Proposals) != 2 || view.State.Proposals[0].Text != "правка" {
+	if err = json.Unmarshal([]byte(saved), &view); err != nil || len(view.State.Proposals) != 2 || view.State.Proposals[0].Text != "правка" || view.State.Analysis != "готово" {
 		t.Fatalf("%s: %v", saved, err)
 	}
 	if _, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p3","revision":1,"outcome":"drop","status":"accepted"}]}`)); err == nil {

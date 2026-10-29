@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/frame"
 	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskhead"
@@ -860,8 +861,27 @@ func main() {
 		pos := frame.ParseArgs(fs, args[1:])
 		needArgs(pos, 1, 1, "rehearse <ID> [--step \"команда\"] [--timeout 10m]")
 		msg, err = cmdRehearse(root(*dir), pos[0], p)
+	case "guard":
+		fs := flag.NewFlagSet("guard", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		pos := frame.ParseArgs(fs, args[1:])
+		needArgs(pos, 1, 1, "guard <ID>")
+		err = draftmeta.GuardRecord(root(*dir), pos[0])
+		if err == nil {
+			msg = "материал доступен для запуска"
+		}
 	case "file":
-		if len(args) > 1 && args[1] == "put" {
+		if len(args) > 1 && args[1] == "tail" {
+			fs := flag.NewFlagSet("file tail", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "file tail <ID>")
+			var data []byte
+			data, err = io.ReadAll(os.Stdin)
+			if err == nil {
+				msg, err = cmdFileTail(root(*dir), pos[0], string(data))
+			}
+		} else if len(args) > 1 && args[1] == "put" {
 			fs := flag.NewFlagSet("file put", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			var c CommitOpts

@@ -70,3 +70,36 @@ func TestDecisionAndReceiptKeepSourceAndReason(t *testing.T) {
 		t.Fatalf("receipt %+v %v", parsed, err)
 	}
 }
+
+func TestMaterialHidesStateAndRestoresIt(t *testing.T) {
+	state := State{Version: 1, State: "active", Proposals: []Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Reason: "лишнее"}}}
+	original, err := Replace([]byte("# запись\n\n## Текст\nданные\n"), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, found, err := Material(original)
+	if err != nil || !found || bytes.Contains(material, []byte("```json")) {
+		t.Fatalf("material %s %v", material, err)
+	}
+	edited := append(material, []byte("\nновая строка\n")...)
+	restored, err := Replace(edited, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Parse(restored)
+	if err != nil || len(parsed.Proposals) != 1 || parsed.Proposals[0].Reason != "лишнее" || !bytes.Contains(restored, []byte("новая строка")) {
+		t.Fatalf("restored %s %v", restored, err)
+	}
+}
+
+func TestQuotedProposalHeadingIsNotState(t *testing.T) {
+	data := []byte("# запись\n\n## Текст\n\n```md\n## Предложения разбора\nпример\n```\n")
+	state, err := Parse(data)
+	if err != nil || state.State != "active" || len(state.Proposals) != 0 {
+		t.Fatalf("quoted heading: %+v %v", state, err)
+	}
+	_, found, err := Material(data)
+	if err != nil || found {
+		t.Fatalf("quoted section: %v %v", found, err)
+	}
+}

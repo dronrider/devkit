@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/taskform"
 )
 
 const heading = "## Предложения разбора"
@@ -68,48 +70,24 @@ type ConfirmRequest struct {
 }
 
 func rangeOf(text string) (int, int, bool, error) {
-	start := 0
-	for start < len(text) {
-		end := strings.IndexByte(text[start:], '\n')
-		if end < 0 {
-			end = len(text)
-		} else {
-			end += start
-		}
-		if strings.TrimSpace(text[start:end]) == heading {
-			next := end
-			if next < len(text) {
-				next++
-			}
-			stop := len(text)
-			offset := next
-			for offset < len(text) {
-				n := strings.IndexByte(text[offset:], '\n')
-				if n < 0 {
-					n = len(text)
-				} else {
-					n += offset
-				}
-				if strings.HasPrefix(strings.TrimSpace(text[offset:n]), "## ") {
-					stop = offset
-					break
-				}
-				if n == len(text) {
-					break
-				}
-				offset = n + 1
-			}
-			if stop < len(text) && (strings.HasPrefix(text[stop:], heading+"\n") || strings.Contains(text[stop:], "\n"+heading+"\n")) {
+	lines := strings.Split(text, "\n")
+	mask, _ := taskform.FenceMask(lines)
+	start, end, offset := -1, len(text), 0
+	for i, line := range lines {
+		if !mask[i] && strings.TrimSpace(line) == heading {
+			if start >= 0 {
 				return 0, 0, false, fmt.Errorf("повтор раздела предложений")
 			}
-			return start, stop, true, nil
+			start = offset
+		} else if start >= 0 && end == len(text) && !mask[i] && strings.HasPrefix(strings.TrimSpace(line), "## ") {
+			end = offset
 		}
-		if end == len(text) {
-			break
-		}
-		start = end + 1
+		offset += len(line) + 1
 	}
-	return 0, 0, false, nil
+	if start < 0 {
+		return 0, 0, false, nil
+	}
+	return start, end, true, nil
 }
 
 func Parse(data []byte) (State, error) {
@@ -202,4 +180,21 @@ func Digest(parts ...[]byte) string {
 	}
 	h := sha256.Sum256(b.Bytes())
 	return hex.EncodeToString(h[:])
+}
+
+// Material removes the machine section for an editor; the caller keeps the
+// original state and restores it when saving the edited material.
+func Material(data []byte) ([]byte, bool, error) {
+	text := string(data)
+	start, end, ok, err := rangeOf(text)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
+		return data, false, nil
+	}
+	if _, err = Parse(data); err != nil {
+		return nil, false, err
+	}
+	return []byte(strings.TrimRight(text[:start], "\n") + "\n\n" + strings.TrimLeft(text[end:], "\n")), true, nil
 }

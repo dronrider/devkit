@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -570,6 +571,33 @@ func main() {
 			pos := frame.ParseArgs(fs, args[2:])
 			needArgs(pos, 1, 1, "draft meta <ID> [--type <тип>] [--source <источник>] [--lock locked|unlocked]")
 			msg, err = cmdDraftMeta(root(*dir), pos[0], *kind, *source, *lock, c)
+		case "proposals":
+			if len(args) > 2 && args[2] == "reject" {
+				fs := flag.NewFlagSet("draft proposals reject", flag.ExitOnError)
+				dir := fs.String("C", gdir, "стартовая директория")
+				base := fs.String("base", "", "снимок исходника")
+				reason := fs.String("reason", "", "причина отказа")
+				pos := frame.ParseArgs(fs, args[3:])
+				needArgs(pos, 2, 2, "draft proposals reject <ID> <карточка> --base <снимок> --reason <причина>")
+				msg, err = cmdDraftProposalReject(root(*dir), pos[0], pos[1], *base, *reason)
+			} else if len(args) > 2 && args[2] == "save" {
+				fs := flag.NewFlagSet("draft proposals save", flag.ExitOnError)
+				dir := fs.String("C", gdir, "стартовая директория")
+				base := fs.String("base", "", "снимок исходника")
+				pos := frame.ParseArgs(fs, args[3:])
+				needArgs(pos, 1, 1, "draft proposals save <ID> --base <снимок>")
+				var data []byte
+				data, err = io.ReadAll(os.Stdin)
+				if err == nil {
+					msg, err = cmdDraftProposalsSave(root(*dir), pos[0], *base, data)
+				}
+			} else {
+				fs := flag.NewFlagSet("draft proposals", flag.ExitOnError)
+				dir := fs.String("C", gdir, "стартовая директория")
+				pos := frame.ParseArgs(fs, args[2:])
+				needArgs(pos, 1, 1, "draft proposals <ID>")
+				msg, err = cmdDraftProposals(root(*dir), pos[0])
+			}
 		case "defer":
 			fs := flag.NewFlagSet("draft defer", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")

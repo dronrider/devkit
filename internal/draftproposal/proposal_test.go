@@ -2,6 +2,7 @@ package draftproposal
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -46,5 +47,26 @@ func TestInvalidStateAndDigest(t *testing.T) {
 	}
 	if Digest([]byte("ab"), []byte("c")) == Digest([]byte("a"), []byte("bc")) {
 		t.Fatal("ambiguous digest")
+	}
+}
+
+func TestDecisionAndReceiptKeepSourceAndReason(t *testing.T) {
+	original := ConfirmRequest{Snapshots: []Snapshot{{Source: "XR-1", Digest: "snapshot"}}, Decisions: []Decision{{Source: "XR-1", Proposal: "p1", Revision: 2, Action: "reject", Reason: "лишнее"}}}
+	raw, err := json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got ConfirmRequest
+	if err = json.Unmarshal(raw, &got); err != nil || got.Decisions[0].Reason != "лишнее" || got.Decisions[0].Source != "XR-1" {
+		t.Fatalf("request %s %v", raw, err)
+	}
+	s := State{Version: 1, State: "history", Proposals: []Proposal{{ID: "p1", Revision: 2, Outcome: "drop", Status: "rejected", Result: &Receipt{Source: "XR-1", Proposal: "p1", Revision: 2, Reason: "лишнее"}}}}
+	data, err := Replace([]byte("# запись\n"), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Parse(data)
+	if err != nil || parsed.Proposals[0].Result.Source != "XR-1" || parsed.Proposals[0].Result.Reason != "лишнее" {
+		t.Fatalf("receipt %+v %v", parsed, err)
 	}
 }

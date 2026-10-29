@@ -35,6 +35,7 @@ type Proposal struct {
 	Result    *Receipt `json:"result,omitempty"`
 }
 type Receipt struct {
+	Source   string   `json:"source,omitempty"`
 	Key      string   `json:"key"`
 	Proposal string   `json:"proposal"`
 	Revision int      `json:"revision"`
@@ -55,6 +56,7 @@ type Decision struct {
 	Proposal string `json:"proposal"`
 	Revision int    `json:"revision"`
 	Action   string `json:"action"`
+	Reason   string `json:"reason,omitempty"`
 }
 type Snapshot struct {
 	Source string `json:"source"`

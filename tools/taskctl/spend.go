@@ -202,6 +202,16 @@ func spendSpan(st spendStage) string {
 // же заходе (развилка «хранение свода» цели DK-909). В файл задачи ложится
 // одна строка итога, и кладёт её закрытие.
 func cmdSpend(root, id string) (string, error) {
+	var out string
+	err := cliReadOutside(root, func() error {
+		var err error
+		out, err = spendTaskReport(root, id)
+		return err
+	})
+	return out, err
+}
+
+func spendTaskReport(root, id string) (string, error) {
 	main := taskMainRoot(root)
 	stages, src := spendStages(root, main, id)
 	home := stage.Home()
@@ -442,6 +452,16 @@ type spendTask struct {
 // статьи, стоит строкой «вне статей», и сумма сходится с расходом всех
 // транскриптов среза.
 func cmdSpendPeriod(root string, p spendPeriod) (string, error) {
+	var out string
+	err := cliReadOutside(root, func() error {
+		var err error
+		out, err = spendPeriodReport(root, p)
+		return err
+	})
+	return out, err
+}
+
+func spendPeriodReport(root string, p spendPeriod) (string, error) {
 	home := stage.Home()
 	look := spend.NewLookup(home)
 	// Корень основного чекаута спрашивается у git, и на каждую задачу это был

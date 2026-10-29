@@ -282,6 +282,40 @@ func TestCLIShowRejectsMainTreeEditFromLinkedWorktree(t *testing.T) {
 	}
 }
 
+func TestCLISpendRejectsEditDuringCalculation(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "started")
+	script := "#!/bin/sh\ncase \" $* \" in *\" --git-common-dir \"*) if [ \"$IN_GIT_PROBE\" != 1 ]; then if [ -f " + shQuote(marker) + " ]; then IN_GIT_PROBE=1 " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; printf '\\nconcurrent spend edit\\n' >> " + shQuote(taskFileAbs(root, "XR-001")) + "; else touch " + shQuote(marker) + "; fi; fi;; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HOME", t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "-C", root, "spend", "XR-001").CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatal("nested taskctl deadlocked during spend")
+	}
+	if err == nil || !strings.Contains(string(out), "изменился") {
+		t.Fatalf("expected conflict: %v %s", err, out)
+	}
+	data, err := os.ReadFile(taskFileAbs(root, "XR-001"))
+	if err != nil || !strings.Contains(string(data), "concurrent spend edit") {
+		t.Fatalf("edit lost: %v %s", err, data)
+	}
+}
+
 func TestCLIReviewLevelRejectsEditDuringGit(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)

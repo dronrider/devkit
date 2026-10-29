@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 var prefixArgRe = regexp.MustCompile(`^[A-ZА-Я]+$`)
@@ -92,6 +94,11 @@ func cmdInit(dir string, p InitParams) (string, error) {
 	if err := boardGuard(root, "init"); err != nil {
 		return "", err
 	}
+	lock, err := drafttx.Acquire(root)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
 	name := p.Name
 	if name == "" {
 		name = filepath.Base(root)

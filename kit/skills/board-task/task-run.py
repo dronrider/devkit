@@ -335,6 +335,7 @@ NOTE_KEYS = ("сессия", "повод", "уровень", "бэкенд", "ц
 TURN_OVER = ("кончен", "упал")
 TURN_STARTED = "начат"
 TURN_WAITS = "ждёт"
+KEEPER_QUIET = "тишина переданного окна"
 # Поводы вопроса, на которых сессия стоит намертво. Ожидание ввода (idle_prompt)
 # сюда не идёт. Харнес присылает его через минуту после конца хода, и это
 # штатная тишина, а не остановка.
@@ -1696,9 +1697,12 @@ class Pipeline:
                     return WAIT_TAKEN
             time.sleep(self.secs(WATCH_ENV, WATCH_STEP))
 
-    def wait_turn(self, n):
+    def wait_turn(self, n, keeper=False):
         """Ждать конца прохода. Возврат это слово отметки («кончен», «упал») или
-        пустая строка, когда живая голова вышла раньше.
+        пустая строка, когда живая голова вышла раньше. Сторожу переданного
+        окна (DK-898) возвращается слово KEEPER_QUIET, когда голова молчит
+        без живой работы два окна тишины подряд: заказов конвейера там больше
+        не будет, и снимает окно сам сторож, а не unhang.
 
         Проход кончает только та отметка конца, перед которой в очереди лежал
         «начат». Пара эта и отличает конец заказанного хода от лишней отметки:
@@ -1796,7 +1800,7 @@ class Pipeline:
                     due.pop("mute", None)
             else:
                 quiet = time.time() - mute > self.secs(MUTE_ENV, MUTE_SECONDS)
-                startup = not begun and time.time() - started > self.secs(
+                startup = not keeper and not begun and time.time() - started > self.secs(
                     STARTUP_ENV, STARTUP_SECONDS)
                 if not said and startup:
                     self.say("проход %d не начался: проверь запрос доверия каталогу, "
@@ -1810,7 +1814,29 @@ class Pipeline:
                         STARTUP_ENV, STARTUP_SECONDS)
                 elif due.get("startup") and time.time() >= due["startup"]:
                     self.unhang(n, "ход так и не начался")
-                if not said and quiet:
+                if keeper:
+                    # Сторож переданного окна (DK-898): заказов конвейера тут
+                    # больше не будет, и тишина без живой работы это не
+                    # сломанные хуки, а законный простой. Ритм тишины тот же,
+                    # слова свои, а снимает окно сам сторож честным стопом:
+                    # зов запуска и unhang объявили бы штатный конец
+                    # переданного окна замерзанием.
+                    if not said and quiet:
+                        self.say("переданное окно %s молчит без живой работы %d с, "
+                                 "конвейер по %s кончен: ещё одно окно тишины, и "
+                                 "окно закроется"
+                                 % (self.sess, int(time.time() - started), self.id))
+                        self.log("переданное окно %s молчит без живой работы, %s"
+                                 % (self.sess, self.id), 0)
+                        self.shout("run_stop", "%s: %s переданное окно молчит"
+                                   % (self.project, self.id),
+                                   "голова в переданном окне молчит без живой "
+                                   "работы: ещё одно окно тишины, и окно закроется")
+                        said, due["mute"] = True, mute + 2 * self.secs(
+                            MUTE_ENV, MUTE_SECONDS)
+                    elif due.get("mute") and time.time() >= due["mute"]:
+                        return KEEPER_QUIET
+                elif not said and quiet:
                     self.mute(n, int(time.time() - started))
                     said, due["mute"] = True, mute + 2 * self.secs(
                         MUTE_ENV, MUTE_SECONDS)
@@ -2179,14 +2205,22 @@ class Pipeline:
         кончен: заказов больше не будет, и статусы её строки оболочку больше
         не касаются. Окно тем не менее живёт: голова в нём довозит другую
         задачу того же окна, и снятие вместе с нею потеряло бы её работу.
-        Живёт оно до конца головы: выход закрывает опустевшее окно, а молчание
-        без отметок снимает его тот же сторож тишины, что и у конвейера."""
+        Кончается сторож тремя дорогами. Выход головы закрывает опустевшее
+        окно. Молчание без живой работы два окна тишины подряд закрывает окно
+        сам сторож с честной формулировкой, иначе штатный конец переданного
+        окна выглядел бы замерзанием: зов запуска и unhang объявили бы хуки
+        сломанными. Отметки хода и живая работа держат окно сколько нужно."""
         while True:
             begun = time.time()
-            word = self.wait_turn(n)
+            word = self.wait_turn(n, keeper=True)
             spent = time.time() - begun
             self.log("конец хода при стороже окна %s (%s), конвейер по %s кончен, %d с"
                      % (self.sess, word or "голова вышла", self.id, int(spent)), 0)
+            if word == KEEPER_QUIET:
+                self.stop(1, self.status(self.show()) or after,
+                          "голова в переданном окне %s молчит без живой работы два "
+                          "окна тишины, конвейер по %s кончен, окно снято"
+                          % (self.sess, self.id))
             if not word:
                 self.stop(1, self.status(self.show()) or after,
                           "живая голова вышла, окно %s было передано другой задаче, "

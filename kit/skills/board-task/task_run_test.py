@@ -1426,6 +1426,29 @@ class TestLiveHead(unittest.TestCase):
                          [], s.journal())
         self.assertEqual(s.orders(), ["Продолжай выполнение DK-1"], s.orders())
 
+    def test_parking_silence_closes_the_window_honestly(self):
+        # Замечание ревью DK-898: обычный конец переданного окна это тишина
+        # головы без живой работы, а не замерзание. Сторож закрывает окно сам
+        # с честной формулировкой по тому же ритму в два окна тишины, и зов
+        # запуска с unhang на этой дороге не звучат вовсе.
+        s = self.stand(plan="паркуй с субагентом")
+        got = s.run(extra={"DEVKIT_TEST_IDLE_QUIT": "30",
+                           "DEVKIT_TASK_MUTE": "2"})
+        self.assertEqual(got.returncode, 1, s.why(got))
+        keeper = [l for l in s.journal() if "конец хода при стороже окна" in l]
+        self.assertEqual(len(keeper), 2, s.journal())
+        self.assertIn("(тишина переданного окна)", keeper[1])
+        told = [l for l in s.journal() if "молчит без живой работы" in l]
+        self.assertTrue([l for l in told if "ещё одно окно тишины" in l], s.journal())
+        self.assertTrue([l for l in s.journal() if "окно снято" in l], s.journal())
+        self.assertEqual([l for l in s.journal() if "запрос доверия" in l],
+                         [], s.journal())
+        self.assertEqual([l for l in s.journal() if "не начался" in l], [], s.journal())
+        self.assertEqual([l for l in s.journal() if "ни одной отметки хода" in l],
+                         [], s.journal())
+        self.assertEqual([l for l in s.journal() if "запаркована и ждёт человека" in l],
+                         [], s.journal())
+
     def test_parking_without_live_work_stops_as_before(self):
         # Парковка без живой работы кончает конвейер по-старому: строка ждёт
         # человека, окно снимается, ответ поднимет её тиком.

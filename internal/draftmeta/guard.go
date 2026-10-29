@@ -10,27 +10,27 @@ import (
 )
 
 // guardDraft checks a draft while the project lock is held.
-// It returns nil for an absent draft so callers can also handle board tasks.
-func guardDraft(root, id string) error {
+// It reports whether a draft exists so callers can also handle board tasks.
+func guardDraft(root, id string) (bool, error) {
 	if id == "" || filepath.Base(id) != id || id == "." || id == ".." {
-		return fmt.Errorf("неверный ID записи %q", id)
+		return false, fmt.Errorf("неверный ID записи %q", id)
 	}
 	path := filepath.Join(root, "docs", "tasks", "drafts", id+".md")
 	_, err := os.Stat(path)
 	if os.IsNotExist(err) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	h, err := Read(path)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if h.Lock == "locked" {
-		return fmt.Errorf("%s: ждёт локальную модель", id)
+		return false, fmt.Errorf("%s: ждёт локальную модель", id)
 	}
-	return nil
+	return true, nil
 }
 
 // GuardRecord checks both a draft and the persistent protection of a task.
@@ -43,7 +43,16 @@ func GuardRecord(root, id string) error {
 		return err
 	}
 	defer lock.Close()
-	if err := guardDraft(root, id); err != nil {
+	return GuardRecordLocked(root, id)
+}
+
+// GuardRecordLocked requires the shared project lock, including recovery.
+func GuardRecordLocked(root, id string) error {
+	if id == "" || filepath.Base(id) != id || id == "." || id == ".." {
+		return fmt.Errorf("неверный ID записи %q", id)
+	}
+	found, err := guardDraft(root, id)
+	if err != nil {
 		return err
 	}
 	path := filepath.Join(root, "docs", "tasks", id+".md")
@@ -67,7 +76,10 @@ func GuardRecord(root, id string) error {
 			}
 		}
 		if len(paths) == 0 {
-			return nil
+			if found {
+				return nil
+			}
+			return fmt.Errorf("%s: файл материала отсутствует, запуск остановлен", id)
 		}
 		if len(paths) != 1 {
 			return fmt.Errorf("%s: несколько архивных записей", id)

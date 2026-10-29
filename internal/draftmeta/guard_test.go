@@ -13,8 +13,8 @@ import (
 func TestGuardDraft(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "docs", "tasks", "drafts", "XR-1.md")
-	if err := GuardRecord(root, "XR-1"); err != nil {
-		t.Fatal(err)
+	if err := GuardRecord(root, "XR-1"); err == nil {
+		t.Fatal("missing source accepted")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
@@ -117,5 +117,12 @@ func TestGuardArchivedProtection(t *testing.T) {
 		if err := GuardRecord(root, "XR-2"); err == nil {
 			t.Fatalf("archive accepted: %q", content)
 		}
+	}
+}
+
+func TestGuardMissingSourceFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	if err := GuardRecord(root, "XR-404"); err == nil || !strings.Contains(err.Error(), "отсутствует") {
+		t.Fatalf("missing accepted: %v", err)
 	}
 }

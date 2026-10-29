@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -235,4 +236,54 @@ func sortReceipts(receipts []draftproposal.Receipt) {
 		}
 		return receipts[i].Proposal < receipts[j].Proposal
 	})
+}
+
+type confirmationResult struct {
+	Key         string                  `json:"key"`
+	Results     []draftproposal.Receipt `json:"results"`
+	Paths       []string                `json:"paths,omitempty"`
+	Repeated    bool                    `json:"repeated"`
+	Publication string                  `json:"publication,omitempty"`
+}
+
+func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (string, error) {
+	if err := opts.validate(); err != nil {
+		return "", err
+	}
+	var request draftproposal.ConfirmRequest
+	dec := json.NewDecoder(bytes.NewReader(input))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&request); err != nil {
+		return "", fmt.Errorf("неверное подтверждение: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return "", fmt.Errorf("лишние данные после подтверждения")
+	}
+	lock, err := drafttx.Acquire(root)
+	if err != nil {
+		return "", err
+	}
+	plan, err := prepareConfirmation(root, request)
+	if err == nil && !plan.Repeated {
+		err = lock.Apply(root, plan.Changes)
+	}
+	closeErr := lock.Close()
+	if err != nil {
+		return "", err
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("применено, замок не освобождён: %w", closeErr)
+	}
+	result := confirmationResult{Key: plan.Key, Results: plan.Results, Repeated: plan.Repeated}
+	for _, change := range plan.Changes {
+		result.Paths = append(result.Paths, change.Path)
+	}
+	if !plan.Repeated && len(result.Paths) > 0 {
+		result.Publication, err = opts.apply(root, result.Paths)
+		if err != nil {
+			return "", fmt.Errorf("применено, публикация не завершена: %w", err)
+		}
+	}
+	return marshal(result)
 }

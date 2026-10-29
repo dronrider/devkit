@@ -24,6 +24,8 @@ type Proposal struct {
 	Rank      string   `json:"rank,omitempty"`
 	Size      string   `json:"size,omitempty"`
 	Accept    string   `json:"accept,omitempty"`
+	Barrier   string   `json:"barrier,omitempty"`
+	Control   string   `json:"control,omitempty"`
 	Assignee  string   `json:"assignee,omitempty"`
 	Due       string   `json:"due,omitempty"`
 	Target    string   `json:"target,omitempty"`

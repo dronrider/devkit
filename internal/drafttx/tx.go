@@ -195,6 +195,11 @@ func (l *Lock) install(p plan, afterEach func(int) error) error {
 // Apply saves the plan durably, then installs its images. Caller holds the lock.
 func (l *Lock) Apply(root string, changes []Change) error { return l.apply(root, changes, nil) }
 func (l *Lock) apply(root string, changes []Change, afterEach func(int) error) error {
+	if _, err := os.Stat(filepath.Join(l.dir, "pending.json")); err == nil {
+		return fmt.Errorf("есть незавершённая транзакция; сначала восстановите её")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return err

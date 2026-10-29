@@ -159,7 +159,7 @@ func (q *Request) pickModel(res *Result) {
 // Result.
 func Raise(q Request) (Result, error) {
 	var res Result
-	if err := draftmeta.GuardDraft(q.Root, q.ID); err != nil {
+	if err := draftmeta.GuardRecord(q.Root, q.ID); err != nil {
 		return res, err
 	}
 	head, err := ReadHead(ProfilePath(q.Devkit, q.Harness))

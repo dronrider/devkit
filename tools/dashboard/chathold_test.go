@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 // Доставка в мёртвое окно (DK-1399). Отправитель не кладёт строку в доставку
@@ -358,5 +359,40 @@ func TestAskAnswerStaysForLiveRow(t *testing.T) {
 	lines := chatLines(t, e.proj, "task-XR-4")
 	if len(lines) != 1 || chat.Said(lines[0]) != "режем по шву" {
 		t.Fatalf("во входе разговора не тот ответ: %q", lines)
+	}
+}
+
+func TestChatHoldSelectsFileUnderDraftLock(t *testing.T) {
+	e, _ := holdEnv(t)
+	lock, err := drafttx.Acquire(e.proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan bool, 1)
+	go func() {
+		filed, ok := e.s.chatHoldWrite(&Project{Path: e.proj, Name: "test"}, "XR-2", []string{chat.TaskLine(time.Now(), "текст")}, "окно закрыто")
+		done <- filed && ok
+	}()
+	select {
+	case <-done:
+		lock.Close()
+		t.Fatal("writer passed lock")
+	case <-time.After(100 * time.Millisecond):
+	}
+	path := holdTaskFile(t, e.proj, "XR-2")
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("new file was not selected")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("writer blocked")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), "текст") {
+		t.Fatalf("file: %s %v", data, err)
 	}
 }

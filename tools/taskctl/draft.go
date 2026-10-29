@@ -413,7 +413,9 @@ func cmdDraftWithMeta(root, text, prio string, viaStdin bool, kind, source, lock
 // это заголовок черновика, тело остаётся в файле и читается через
 // taskctl show <ID>: накопитель просматривают целиком, и разбор десятка
 // черновиков телами стоит дороже самого разбора.
-func cmdDraftList(root string) (string, error) {
+func cmdDraftList(root string) (string, error) { return cmdDraftListSafe(root, false) }
+
+func cmdDraftListSafe(root string, safe bool) (string, error) {
 	drafts, err := loadDrafts(root)
 	if err != nil {
 		return "", err
@@ -424,7 +426,11 @@ func cmdDraftList(root string) (string, error) {
 	out := make([]string, 0, len(drafts))
 	for _, d := range drafts {
 		age := draftAgeWords(d, true)
-		out = append(out, fmt.Sprintf("%s (%s): %s", d.ID, age, clipTitle(d.Title)))
+		title := d.Title
+		if safe && d.Lock == "locked" {
+			title = "ждёт локальную модель"
+		}
+		out = append(out, fmt.Sprintf("%s (%s): %s", d.ID, age, clipTitle(title)))
 	}
 	return strings.Join(out, "\n"), nil
 }

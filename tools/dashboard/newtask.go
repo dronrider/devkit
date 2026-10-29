@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/dronrider/devkit/internal/drafttx"
 	"github.com/dronrider/devkit/internal/taskform"
 )
 
@@ -113,9 +114,12 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Title string `json:"title"`
-		Body  string `json:"body"`
-		Prio  string `json:"prio"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+		Prio   string `json:"prio"`
+		Type   string `json:"type"`
+		Source string `json:"source"`
+		Lock   string `json:"lock"`
 		// Text это сырой текст быстрой записи с главной (DK-1465): один
 		// абзац мысли без полей. Заголовок и тело собираются из него самим
 		// сервером (quickEntrySplit), и порог первой строки запись не
@@ -171,7 +175,7 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 	// него taskctl отказал бы уже из подпроцесса, и отказ пришёл бы на экран
 	// строкой про форму команды, которую с дашборда никто не набирает.
 	prio := strings.TrimSpace(body.Prio)
-	if !draftPrios[prio] {
+	if prio != "" && !draftPrios[prio] {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "жду уровень разбора: prio high|mid|low, оценка грубая и на глаз"})
 		return
@@ -183,7 +187,20 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 	// Текст едет на вход подпроцесса, а не аргументом: аргумент проходит разбор
 	// флагов и стража подкоманд taskctl, и мысль из одного слова латиницей либо
 	// начатая с дефиса потерялась бы там целиком.
-	out, code, err := s.taskctlWriteIn(found.Path, text, "draft", "--prio", prio)
+	args := []string{"draft"}
+	if prio != "" {
+		args = append(args, "--prio", prio)
+	}
+	if body.Type != "" {
+		args = append(args, "--type", body.Type)
+	}
+	if body.Source != "" {
+		args = append(args, "--source", body.Source)
+	}
+	if body.Lock != "" {
+		args = append(args, "--lock", body.Lock)
+	}
+	out, code, err := s.taskctlWriteIn(found.Path, text, args...)
 	if err != nil {
 		s.logf("черновик в %s не записался: %v", found.Name, err)
 		writeJSON(w, code, map[string]string{"error": err.Error()})
@@ -223,6 +240,11 @@ func (s *server) handleDraftPost(w http.ResponseWriter, r *http.Request) {
 // Файл с разделом заводит taskctl add для не агентского вида, и без него
 // вписывать нечего.
 func writeAcceptReason(proj, id, reason string) error {
+	lock, err := drafttx.Acquire(proj)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	path := filepath.Join(proj, "docs", "tasks", id+".md")
 	data, err := os.ReadFile(path)
 	if err != nil {

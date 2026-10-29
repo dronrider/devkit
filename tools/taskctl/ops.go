@@ -687,7 +687,14 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 	// виду, и без отказа.
 	hint := ""
 	if target == SectCheck {
-		if h := promptHint(root, id); h != "" {
+		if cliTx != nil {
+			cliAfterUnlock = append(cliAfterUnlock, func() string {
+				if h := promptHint(root, id); h != "" {
+					return "\n" + h
+				}
+				return ""
+			})
+		} else if h := promptHint(root, id); h != "" {
 			hint = h + "\n"
 		}
 	}
@@ -1224,6 +1231,16 @@ func shipDrainNote(root string) string {
 func gitMv(root, from, to string) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 		return false, err
+	}
+	if isStagingBoard(root) {
+		return false, os.Rename(from, to)
+	}
+	if cliTx != nil {
+		if err := os.Rename(from, to); err != nil {
+			return false, err
+		}
+		cliIndexAction(root, from, to)
+		return true, nil
 	}
 	cmd := exec.Command("git", "-C", root, "mv", from, to)
 	if out, err := cmd.CombinedOutput(); err != nil {

@@ -266,8 +266,12 @@ func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (strin
 	}
 	plan, err := prepareConfirmation(root, request)
 	var cloudLocks []*draftmeta.CloudLock
+	var targets []string
 	if err == nil && !plan.Repeated {
-		cloudLocks, err = confirmationCloudLocks(root, lock.ServiceDir(), request)
+		cloudLocks, targets, err = confirmationCloudLocks(root, lock.ServiceDir(), request)
+	}
+	if err == nil && len(targets) > 0 {
+		lock, err = guardOutsideLock(root, lock, targets)
 	}
 	if err == nil && !plan.Repeated {
 		err = lock.Apply(root, plan.Changes)
@@ -275,7 +279,10 @@ func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (strin
 	for i := len(cloudLocks) - 1; i >= 0; i-- {
 		cloudLocks[i].Close()
 	}
-	closeErr := lock.Close()
+	var closeErr error
+	if lock != nil {
+		closeErr = lock.Close()
+	}
 	if err != nil {
 		return "", err
 	}
@@ -295,7 +302,7 @@ func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (strin
 	return marshal(result)
 }
 
-func confirmationCloudLocks(root, serviceDir string, request draftproposal.ConfirmRequest) ([]*draftmeta.CloudLock, error) {
+func confirmationCloudLocks(root, serviceDir string, request draftproposal.ConfirmRequest) ([]*draftmeta.CloudLock, []string, error) {
 	targets := map[string]bool{}
 	for _, decision := range request.Decisions {
 		if decision.Action != "accept" {
@@ -303,18 +310,18 @@ func confirmationCloudLocks(root, serviceDir string, request draftproposal.Confi
 		}
 		data, err := os.ReadFile(draftPath(root, decision.Source))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		header, err := draftmeta.Parse(data)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if header.Lock != "locked" {
 			continue
 		}
 		state, err := draftproposal.Parse(data)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, p := range state.Proposals {
 			if p.ID == decision.Proposal && p.Outcome == "attach" {
@@ -330,9 +337,6 @@ func confirmationCloudLocks(root, serviceDir string, request draftproposal.Confi
 	var locks []*draftmeta.CloudLock
 	for _, name := range names {
 		l, err := draftmeta.CloudExclusiveIn(serviceDir, name)
-		if err == nil {
-			err = lockedAttachGuard(name)
-		}
 		if err != nil {
 			if l != nil {
 				l.Close()
@@ -340,9 +344,9 @@ func confirmationCloudLocks(root, serviceDir string, request draftproposal.Confi
 			for _, held := range locks {
 				held.Close()
 			}
-			return nil, err
+			return nil, nil, err
 		}
 		locks = append(locks, l)
 	}
-	return locks, nil
+	return locks, names, nil
 }

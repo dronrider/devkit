@@ -39,3 +39,30 @@ func TestStagingImagesLeaveSourceLast(t *testing.T) {
 		t.Fatalf("live source changed: %v", err)
 	}
 }
+
+func TestStagingMovesAndRemovesWithoutGit(t *testing.T) {
+	root := setup(t)
+	s, err := newStagingBoard(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	bin := t.TempDir()
+	called := filepath.Join(bin, "called")
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\ntouch \"$CALLED\"\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CALLED", called)
+	from := filepath.Join(s.root, "docs", "tasks", "XR-001.md")
+	to := filepath.Join(s.root, "docs", "tasks", "archive", "XR-001.md")
+	if staged, err := gitMv(s.root, from, to); err != nil || staged {
+		t.Fatalf("move staged=%v: %v", staged, err)
+	}
+	if staged, err := removeDraft(s.root, to); err != nil || staged {
+		t.Fatalf("remove staged=%v: %v", staged, err)
+	}
+	if _, err := os.Stat(called); !os.IsNotExist(err) {
+		t.Fatalf("staging invoked git: %v", err)
+	}
+}

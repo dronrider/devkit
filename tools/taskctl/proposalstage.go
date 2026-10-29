@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/dronrider/devkit/internal/drafttx"
 )
@@ -16,6 +17,13 @@ import (
 type stagingBoard struct {
 	root   string
 	before map[string]drafttx.Image
+}
+
+var stagingRoots sync.Map
+
+func isStagingBoard(root string) bool {
+	_, ok := stagingRoots.Load(root)
+	return ok
 }
 
 func collectDocs(root string) (map[string]drafttx.Image, error) {
@@ -69,9 +77,13 @@ func newStagingBoard(root string) (*stagingBoard, error) {
 			return fail(err)
 		}
 	}
+	stagingRoots.Store(dir, true)
 	return &stagingBoard{root: dir, before: before}, nil
 }
-func (s *stagingBoard) Close() error { return os.RemoveAll(s.root) }
+func (s *stagingBoard) Close() error {
+	stagingRoots.Delete(s.root)
+	return os.RemoveAll(s.root)
+}
 
 // changes returns complete before/after images, placing source files last.
 func (s *stagingBoard) changes(sources map[string]bool) ([]drafttx.Change, error) {

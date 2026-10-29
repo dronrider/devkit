@@ -1,14 +1,66 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
+	"github.com/dronrider/devkit/internal/sessions"
 	"github.com/dronrider/devkit/internal/taskhead"
 )
+
+func TestAttachGuardReleasesLockAndRejectsConcurrentEdit(t *testing.T) {
+	root := setup(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if _, err := cmdDraft(root, "частный материал", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDraftMeta(root, "XR-008", "", "", "locked", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	registry := sessions.Path(home)
+	if err := os.MkdirAll(filepath.Dir(registry), 0755); err != nil {
+		t.Fatal(err)
+	}
+	line := sessions.Line(time.Now(), "test-session", sessions.Bind{Task: "XR-001", Tmux: "test-tmux"}, "startup")
+	if err := os.WriteFile(registry, []byte(line), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bindir := t.TempDir()
+	script := "#!/bin/sh\n" + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2\nprintf '\\nconcurrent edit\\n' >> " + shQuote(taskFileAbs(root, "XR-001")) + "\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bindir, "tmux"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "-C", root, "draft", "attach", "XR-008", "XR-001")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatal("nested taskctl deadlocked under tmux")
+	}
+	if err == nil || !strings.Contains(string(out), "изменился") {
+		t.Fatalf("expected conflict: %v %s", err, out)
+	}
+	data, err := os.ReadFile(taskFileAbs(root, "XR-001"))
+	if err != nil || !strings.Contains(string(data), "concurrent edit") {
+		t.Fatalf("edit lost: %v %s", err, data)
+	}
+	if _, err := os.Stat(draftPath(root, "XR-008")); err != nil {
+		t.Fatalf("source consumed: %v", err)
+	}
+}
 
 func TestLockedAttachRejectsLiveTargetBeforeWrite(t *testing.T) {
 	root := setup(t)

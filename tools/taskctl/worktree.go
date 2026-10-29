@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/dronrider/devkit/internal/trace"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"github.com/dronrider/devkit/internal/trace"
 )
 
 // gitRevParse запускает «git -C root rev-parse <args>» и возвращает вывод без
@@ -23,6 +23,12 @@ func gitRevParse(root string, args ...string) (string, error) {
 // и при недоступном git отвечает false, иначе доски на временных директориях
 // без git (а таких большинство тестов) ловили бы отказ на ровном месте.
 func linkedWorktree(root string) bool {
+	if isStagingBoard(root) {
+		return false
+	}
+	if cliTx != nil && root == cliWorktreeRoot {
+		return cliIsLinkedWorktree
+	}
 	gitDir, err := gitDirAbs(root, "--git-dir")
 	if err != nil {
 		return false

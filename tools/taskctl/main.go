@@ -1371,8 +1371,12 @@ func main() {
 		os.Exit(2)
 	}
 	tail, finishErr := cliFinishDraftLock(err == nil)
-	if err == nil && finishErr != nil {
-		err = finishErr
+	if finishErr != nil {
+		if err != nil {
+			err = fmt.Errorf("%v; %w", err, finishErr)
+		} else {
+			err = finishErr
+		}
 	}
 	msg += tail
 	touchWork(args, err)

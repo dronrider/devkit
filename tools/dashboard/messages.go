@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -150,38 +152,75 @@ func pendingSame(doc, text string) (string, bool) {
 // склейки docs/tasks/<ID>.md здесь нет, и путь не может разойтись с
 // журналом. Отказы называются словами и пишутся здесь же: строка не на
 // доске, строка не цель (заголовок не от «Цель:»), файла цели нет.
-func (s *server) goalFile(w http.ResponseWriter, r *http.Request) (found *Project, id, path, rel string, ok bool) {
+type goalFileProof struct {
+	board  []byte
+	linked string
+}
+
+func (s *server) goalFile(w http.ResponseWriter, r *http.Request) (found *Project, id, path, rel string, proof goalFileProof, ok bool) {
 	found = s.findProject(w, r, "сообщения цели")
 	if found == nil {
-		return nil, "", "", "", false
+		return nil, "", "", "", proof, false
 	}
 	id = r.PathValue("id")
 	if !goalIDRe.MatchString(id) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на ID задачи", id)})
-		return nil, "", "", "", false
+		return nil, "", "", "", proof, false
 	}
-	raw, err := s.projectBoard(found.Path)
+	tx, err := drafttx.Acquire(found.Path)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return nil, "", "", "", proof, false
+	}
+	defer tx.Close()
+	board, err := os.ReadFile(filepath.Join(found.Path, "docs", "TASKS.md"))
+	proof.board = board
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return nil, "", "", "", proof, false
+	}
+	raw, err := boardJSON(s.cfg.Home, found.Path)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		return nil, "", "", "", false
+		return nil, "", "", "", proof, false
 	}
 	row, rowOK := findRow(raw, id)
 	if !rowOK {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("на доске %s нет строки %s", found.Name, id)})
-		return nil, "", "", "", false
+		return nil, "", "", "", proof, false
 	}
 	if !isGoalTitle(row.Title) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": fmt.Sprintf("%s не цель: заголовок не начинается с «Цель:», а сообщение кладётся только в файл цели", id)})
-		return nil, "", "", "", false
+		return nil, "", "", "", proof, false
 	}
-	doc := s.goalDocPath(found.Path, id)
+	if target := linkPath(row.Link); target != "" {
+		proof.linked = filepath.ToSlash(filepath.Join("docs", target))
+	}
+	rel = taskFileRel(id)
+	if proof.linked != "" && isFile(filepath.Join(found.Path, filepath.FromSlash(proof.linked))) {
+		rel = proof.linked
+	}
+	doc := journalDoc{rel: rel, path: filepath.Join(found.Path, filepath.FromSlash(rel))}
+	doc.seen = isFile(doc.path)
 	if !doc.seen {
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("файла цели %s в %s нет: класть сообщение некуда", doc.rel, found.Name)})
-		return nil, "", "", "", false
+		return nil, "", "", "", proof, false
 	}
-	return found, id, doc.path, doc.rel, true
+	return found, id, doc.path, doc.rel, proof, true
+}
+
+func goalFileStillSelected(root, id, rel string, proof goalFileProof) bool {
+	board, err := os.ReadFile(filepath.Join(root, "docs", "TASKS.md"))
+	if err != nil || !bytes.Equal(board, proof.board) {
+		return false
+	}
+	selected := taskFileRel(id)
+	if proof.linked != "" && isFile(filepath.Join(root, filepath.FromSlash(proof.linked))) {
+		selected = proof.linked
+	}
+	return selected == rel && isFile(filepath.Join(root, filepath.FromSlash(rel)))
 }
 
 // goalIdle отвечает, стоит ли цикл цели: среди живых работ проекта (сессия
@@ -227,7 +266,7 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found, id, path, rel, ok := s.goalFile(w, r)
+	found, id, path, rel, proof, ok := s.goalFile(w, r)
 	if !ok {
 		return
 	}
@@ -280,6 +319,10 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 			tx.Close()
 		}
 	}()
+	if !goalFileStillSelected(found.Path, id, rel, proof) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "путь цели изменился, откройте запись снова"})
+		return
+	}
 	doc, err := os.ReadFile(path)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл цели не прочитался: %v", err)})
@@ -337,8 +380,18 @@ func (s *server) handleGoalMessagePost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGoalMessageGet(w http.ResponseWriter, r *http.Request) {
-	found, id, path, _, ok := s.goalFile(w, r)
+	found, id, path, rel, proof, ok := s.goalFile(w, r)
 	if !ok {
+		return
+	}
+	tx, err := drafttx.Acquire(found.Path)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	defer tx.Close()
+	if !goalFileStillSelected(found.Path, id, rel, proof) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "путь цели изменился, откройте запись снова"})
 		return
 	}
 	doc, err := os.ReadFile(path)

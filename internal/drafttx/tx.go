@@ -3,6 +3,7 @@ package drafttx
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -30,6 +31,7 @@ type plan struct {
 type Lock struct {
 	file *os.File
 	dir  string
+	root string
 }
 
 func serviceDir(root string) string {
@@ -57,14 +59,24 @@ func Acquire(root string) (*Lock, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("%s не каталог", root)
 	}
-	dir := serviceDir(root)
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, err
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	common := serviceDir(root)
+	digest := sha256.Sum256([]byte(root))
+	dir := filepath.Join(common, fmt.Sprintf("%x", digest))
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
 	if err := os.Chmod(dir, 0700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_CREATE|os.O_RDWR, 0600)
+	f, err := os.OpenFile(filepath.Join(common, "lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +84,7 @@ func Acquire(root string) (*Lock, error) {
 		f.Close()
 		return nil, err
 	}
-	l := &Lock{file: f, dir: dir}
+	l := &Lock{file: f, dir: dir, root: root}
 	if err = l.Recover(); err != nil {
 		l.Close()
 		return nil, err
@@ -155,7 +167,7 @@ func full(root, rel string) (string, error) {
 	return filepath.Join(root, rel), nil
 }
 func (l *Lock) install(p plan, afterEach func(int) error) error {
-	if p.Version != 1 || !filepath.IsAbs(p.Root) {
+	if p.Version != 1 || p.Root != l.root {
 		return fmt.Errorf("неверный план транзакции")
 	}
 	// Check the entire plan before installing any remaining image.
@@ -210,9 +222,16 @@ func (l *Lock) apply(root string, changes []Change, afterEach func(int) error) e
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	root, err := filepath.Abs(root)
+	root, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return err
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	if root != l.root {
+		return fmt.Errorf("корень транзакции не совпадает с замком")
 	}
 	seen := map[string]bool{}
 	for _, c := range changes {

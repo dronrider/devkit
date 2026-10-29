@@ -9,6 +9,7 @@ import (
 	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/drafttx"
 	"github.com/dronrider/devkit/internal/merged"
+	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskhead"
 )
 
@@ -128,6 +129,7 @@ func checkWaitReason(b *Board, root, id, reason string) error {
 type waiter struct {
 	ID, Class, Dep, Said string
 	Met                  bool
+	rowLine, rowSection  string
 }
 
 // waiterSource отдаёт ждущих своего вида и строки отчёта про тех, чьё событие
@@ -228,13 +230,17 @@ func wakeWords(class string) string {
 // секцию возврата, подъём и строка журнала. Второй возврат ложный, когда строка
 // осталась стоять там, где стояла.
 func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
+	cliWorktreeRoot = root
+	cliIsLinkedWorktree = linkedWorktree(root)
+	cliMainRoot = stage.MainRoot(root)
 	lock, err := drafttx.Acquire(root)
 	if err != nil {
 		return fmt.Sprintf("%s: %v", w.ID, err), false
 	}
+	cliTx = lock
 	defer func() {
-		if lock != nil {
-			lock.Close()
+		if cliTx != nil {
+			cliFinishDraftLock(false)
 		}
 	}()
 	b, err := LoadBoard(boardPath(root))
@@ -245,6 +251,9 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 	if row == nil {
 		return w.ID + ": строки нет на доске", false
 	}
+	if w.rowLine != "" && (row.Sect != w.rowSection || b.Lines[row.LineIdx] != w.rowLine) {
+		return w.ID + ": строка изменилась после выбора, повторите обход", false
+	}
 	if !wakeFrom(w.Class, row.Sect) {
 		return fmt.Sprintf("%s: подъём не нужен, строка в %s", w.ID, row.Sect), true
 	}
@@ -253,7 +262,8 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 	// надо, а голову задачи поверх цикла поднимать нельзя.
 	goal := goalRow(row.Title)
 	if !goal {
-		if err := wakePreflight(root, w.ID, ro); err != nil {
+		err = cliReadOutside(root, func() error { return wakePreflight(root, w.ID, ro) })
+		if err != nil {
 			return fmt.Sprintf("%s: %s, а голову поднять нечем, строка стоит в %s: %v", w.ID, w.cause(), row.Sect, err), false
 		}
 	}
@@ -273,11 +283,10 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 			return fmt.Sprintf("%s: %s, а строка из %s не вышла: %v", w.ID, w.cause(), row.Sect, err), false
 		}
 	}
-	if err := lock.Close(); err != nil {
-		lock = nil
+	tail, err := cliFinishDraftLock(true)
+	if err != nil {
 		return fmt.Sprintf("%s: %v", w.ID, err), false
 	}
-	lock = nil
 	if moved && o.commit {
 		c := CommitOpts{Msg: fmt.Sprintf("docs(tasks): %s %s", w.ID, wakeWords(w.Class)), Push: o.push}
 		if _, err := c.apply(root, []string{filepath.Join("docs", "TASKS.md")}); err != nil {
@@ -287,7 +296,7 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 
 	if goal {
 		logWake(root, w, 0)
-		return fmt.Sprintf("%s: %s, строка в %s; голову не поднимаю, это цель: её цикл переживает ожидание сам", w.ID, w.cause(), to), true
+		return fmt.Sprintf("%s: %s, строка в %s; голову не поднимаю, это цель: её цикл переживает ожидание сам%s", w.ID, w.cause(), to, tail), true
 	}
 	// Голова поднимается только у продолжаемой работы. Строка, вернувшаяся в
 	// Backlog, не начата, и конвейер её не трогает: подъём работал бы
@@ -299,7 +308,7 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 		if to == SectCheck {
 			why = "строка ждёт приёмки"
 		}
-		return fmt.Sprintf("%s: %s, строка в %s; голову не поднимаю: %s", w.ID, w.cause(), to, why), true
+		return fmt.Sprintf("%s: %s, строка в %s; голову не поднимаю: %s%s", w.ID, w.cause(), to, why, tail), true
 	}
 	out, code, err := raiseHead(root, w.ID, ro)
 	logWake(root, w, code)
@@ -307,7 +316,7 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 	if err != nil {
 		return fmt.Sprintf("%s: %s, строка в %s, а подъём отказал: %v", w.ID, w.cause(), to, err), false
 	}
-	return fmt.Sprintf("%s: %s, строка в %s; %s", w.ID, w.cause(), to, said), true
+	return fmt.Sprintf("%s: %s, строка в %s; %s%s", w.ID, w.cause(), to, said, tail), true
 }
 
 // logWake пишет подъём в журнал .devkit/log проекта: разряд и ID предпосылки
@@ -382,6 +391,12 @@ func namedWaiter(b *Board, id string) waiter {
 // сторожке, он читает вход разговора). Третий возврат это признак, что
 // какая-то строка осталась стоять.
 func cmdWake(root string, ids []string, o wakeOpts) (string, bool, error) {
+	if o.push && !o.commit {
+		return "", false, fmt.Errorf("--push без коммита не имеет смысла")
+	}
+	if err := boardGuard(root, "wake"); err != nil {
+		return "", false, err
+	}
 	lock, err := drafttx.Acquire(root)
 	if err != nil {
 		return "", false, err
@@ -391,12 +406,6 @@ func cmdWake(root string, ids []string, o wakeOpts) (string, bool, error) {
 			lock.Close()
 		}
 	}()
-	if o.push && !o.commit {
-		return "", false, fmt.Errorf("--push без коммита не имеет смысла")
-	}
-	if err := boardGuard(root, "wake"); err != nil {
-		return "", false, err
-	}
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return "", false, err
@@ -411,19 +420,30 @@ func cmdWake(root string, ids []string, o wakeOpts) (string, bool, error) {
 	if len(ids) == 0 {
 		// Событие соседа будит строку без человека в окне.
 		o.hidden = true
-		for _, src := range waiterSources {
-			got, notes := src(root, b, arch)
-			lines = append(lines, notes...)
-			for _, w := range got {
-				waiting++
-				if w.Met {
-					todo = append(todo, w)
+		lock, err = draftReadOutside(root, lock, func() error {
+			for _, src := range waiterSources {
+				got, notes := src(root, b, arch)
+				lines = append(lines, notes...)
+				for _, w := range got {
+					waiting++
+					if w.Met {
+						todo = append(todo, w)
+					}
 				}
 			}
+			return nil
+		})
+		if err != nil {
+			return "", false, err
 		}
 	} else {
 		for _, id := range ids {
 			todo = append(todo, namedWaiter(b, id))
+		}
+	}
+	for i := range todo {
+		if row := b.find(todo[i].ID); row != nil {
+			todo[i].rowLine, todo[i].rowSection = b.Lines[row.LineIdx], row.Sect
 		}
 	}
 	if err := lock.Close(); err != nil {

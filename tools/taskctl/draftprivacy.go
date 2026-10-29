@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 
 	"github.com/dronrider/devkit/internal/drafttx"
@@ -15,6 +16,11 @@ import (
 // guardOutsideLock keeps cloud reservations while tmux is queried. Reacquire
 // and compare all source material and the session registry before any writes.
 func guardOutsideLock(root string, lock *drafttx.Lock, ids []string) (*drafttx.Lock, error) {
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		lock.Close()
+		return nil, err
+	}
 	before, err := collectDocs(root)
 	if err != nil {
 		lock.Close()
@@ -38,6 +44,10 @@ func guardOutsideLock(root string, lock *drafttx.Lock, ids []string) (*drafttx.L
 		return nil, err
 	}
 	fail := func(err error) (*drafttx.Lock, error) { lock.Close(); return nil, err }
+	currentRoot, err := filepath.EvalSymlinks(root)
+	if err != nil || currentRoot != canonical {
+		return fail(fmt.Errorf("путь проекта изменился при проверке; повторите операцию"))
+	}
 	after, err := collectDocs(root)
 	if err != nil {
 		return fail(err)

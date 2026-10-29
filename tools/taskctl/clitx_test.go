@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -258,6 +259,128 @@ func TestCLIReviewAddRejectsEditDuringTreeCheck(t *testing.T) {
 	data, err := os.ReadFile(taskFileAbs(root, "XR-001"))
 	if err != nil || !strings.Contains(string(data), "concurrent tree edit") || strings.Contains(string(data), "новое замечание") {
 		t.Fatalf("tree edit: %v %s", err, data)
+	}
+}
+
+func TestCLIReviewLevelRejectsChangedProjectPath(t *testing.T) {
+	first := setup(t)
+	gitSetup(t, first)
+	second := setup(t)
+	gitSetup(t, second)
+	link := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(first, link); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindir := t.TempDir()
+	script := "#!/bin/sh\ncase \" $* \" in *\" --short=7 HEAD \"*) rm " + shQuote(link) + " && ln -s " + shQuote(second) + " " + shQuote(link) + " || exit 2;; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bindir, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, err := exec.Command(bin, "-C", link, "review", "level", "XR-001", "2", "проверка").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "путь проекта изменился") {
+		t.Fatalf("changed path accepted: %v %s", err, out)
+	}
+	for _, root := range []string{first, second} {
+		data, err := os.ReadFile(taskFileAbs(root, "XR-001"))
+		if err != nil || strings.Contains(string(data), "Уровень 2 до") {
+			t.Fatalf("unexpected write in %s: %v", root, err)
+		}
+	}
+}
+
+func TestWakePreflightReleasesLockAndRejectsStaleRow(t *testing.T) {
+	root := setup(t)
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	old := wakePreflight
+	t.Cleanup(func() { wakePreflight = old })
+	wakePreflight = func(root, id string, _ runOpts) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, bin, "-C", root, "show", id).CombinedOutput()
+		if ctx.Err() != nil {
+			return fmt.Errorf("nested taskctl deadlocked")
+		}
+		if err != nil {
+			return fmt.Errorf("nested taskctl: %v %s", err, out)
+		}
+		f, err := os.OpenFile(taskFileAbs(root, id), os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = f.WriteString("\nconcurrent wake edit\n")
+		return err
+	}
+	before := sect(t, root, "XR-003")
+	msg, ok := wakeRow(root, waiter{ID: "XR-003", Class: classArm}, wakeOpts{})
+	if ok || !strings.Contains(msg, "изменился") {
+		t.Fatalf("expected conflict: %v %s", ok, msg)
+	}
+	if got := sect(t, root, "XR-003"); got != before {
+		t.Fatalf("stale row moved: %s -> %s", before, got)
+	}
+	data, err := os.ReadFile(taskFileAbs(root, "XR-003"))
+	if err != nil || !strings.Contains(string(data), "concurrent wake edit") {
+		t.Fatalf("edit lost: %v %s", err, data)
+	}
+}
+
+func TestWakeSelectionReleasesLockAndRejectsConcurrentEdit(t *testing.T) {
+	root := setup(t)
+	bin := filepath.Join(t.TempDir(), "taskctl")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, out)
+	}
+	old := waiterSources
+	t.Cleanup(func() { waiterSources = old })
+	var probeErr error
+	waiterSources = []waiterSource{func(root string, _ *Board, _ *Archive) ([]waiter, []string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, bin, "-C", root, "show", "XR-003").CombinedOutput()
+		if ctx.Err() != nil {
+			probeErr = fmt.Errorf("nested taskctl deadlocked")
+			return nil, nil
+		}
+		if err != nil {
+			probeErr = fmt.Errorf("nested taskctl: %v %s", err, out)
+			return nil, nil
+		}
+		f, err := os.OpenFile(taskFileAbs(root, "XR-003"), os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			probeErr = err
+			return nil, nil
+		}
+		_, probeErr = f.WriteString("\nconcurrent selection edit\n")
+		f.Close()
+		return []waiter{{ID: "XR-003", Class: classArm, Met: true}}, nil
+	}}
+	before := sect(t, root, "XR-003")
+	_, _, err := cmdWake(root, nil, wakeOpts{})
+	if probeErr != nil {
+		t.Fatal(probeErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "изменился") {
+		t.Fatalf("expected conflict: %v", err)
+	}
+	if got := sect(t, root, "XR-003"); got != before {
+		t.Fatalf("stale row moved: %s -> %s", before, got)
+	}
+	data, err := os.ReadFile(taskFileAbs(root, "XR-003"))
+	if err != nil || !strings.Contains(string(data), "concurrent selection edit") {
+		t.Fatalf("edit lost: %v %s", err, data)
 	}
 }
 

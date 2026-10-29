@@ -1,7 +1,12 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"time"
+
+	"github.com/dronrider/devkit/internal/drafttx"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -226,4 +231,39 @@ func TestStaticTaskLinksGoneRow(t *testing.T) {
 		t.Fatalf("мёртвые и черновые связи: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+func TestDocPutReadsUnderDraftLock(t *testing.T) {
+	e := newTestEnv(t)
+	lock, err := drafttx.Acquire(e.proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("PUT", "/?path=lld/XR-1.md", strings.NewReader(`{"text":"новый текст"}`))
+	req.SetPathValue("p", "demo")
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { e.s.handleDocPut(response, req); close(done) }()
+	select {
+	case <-done:
+		lock.Close()
+		t.Fatal("writer passed lock")
+	case <-time.After(100 * time.Millisecond):
+	}
+	putDoc(t, e.proj, "docs/lld/XR-1.md", "старый текст\n")
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("writer blocked")
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("response: %d %s", response.Code, response.Body.String())
+	}
+	data, err := os.ReadFile(filepath.Join(e.proj, "docs/lld/XR-1.md"))
+	if err != nil || string(data) != "новый текст\n" {
+		t.Fatalf("file: %q %v", data, err)
+	}
 }

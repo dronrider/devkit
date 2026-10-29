@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 // Реплика в мёртвое окно (DK-1399). Разговор задачи переживает сессию, и
@@ -202,12 +203,23 @@ func holdInbox(path string, lines []string, why string, now time.Time) error {
 // остаётся строкой журнала; файл был, а записи не вышло, и строки из входа
 // убирать нельзя, они остались единственной копией сказанного.
 func (s *server) chatHoldWrite(p *Project, id string, lines []string, why string) (filed, ok bool) {
+	lock, err := drafttx.Acquire(p.Path)
+	if err != nil {
+		s.logf("реплики задачи %s: %v", id, err)
+		return false, false
+	}
 	abs, rel, has := s.holdFile(p.Path, id)
 	if !has {
+		lock.Close()
 		return false, true
 	}
 	if err := holdInbox(abs, lines, why, s.now()); err != nil {
+		lock.Close()
 		s.logf("реплики задачи %s в %s не отложились в файл: %v", id, p.Name, err)
+		return false, false
+	}
+	if err := lock.Close(); err != nil {
+		s.logf("реплики задачи %s: %v", id, err)
 		return false, false
 	}
 	if note := commitDocs(p.Path, boardCommitMsg(id, "реплики мёртвого окна отложены в файл задачи"), rel); note != "" {

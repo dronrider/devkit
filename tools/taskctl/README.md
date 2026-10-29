@@ -67,6 +67,32 @@ taskctl draft proposals XR-001
 накопителе. Карточку можно дополнить на экране записи в dashboard, сохранить
 и затем принять или отклонить с причиной.
 
+Чтобы показать сохранённые карточки в чате агента, опубликуйте вопрос из
+сессии, привязанной к записи. Для нескольких записей добавьте `--also`:
+
+```sh
+taskctl draft proposals ask XR-001 --also XR-002 > /tmp/proposal-question.json
+```
+
+Команда возвращает JSON показанного вопроса и сохраняет Ask для панели. Для
+машинного ответа передайте `tree`, снимки выбранных источников и решения с
+ID и ревизией именно из этого вопроса в stdin команды
+`taskctl draft proposals answer XR-001`. Поле решения `action` принимает
+`accept` или `reject`; для `reject` нужна непустая `reason`. Например, этот
+ответ отклоняет первую показанную карточку первой записи:
+
+```sh
+jq '{tree: .proposal.tree, snapshots: [{source: .proposal.sources[0].source, digest: .proposal.sources[0].basis}], decisions: [{source: .proposal.sources[0].source, proposal: .proposal.sources[0].proposals[0].id, revision: .proposal.sources[0].proposals[0].revision, action: "reject", reason: "Не подходит"}]}' /tmp/proposal-question.json > /tmp/proposal-answer.json
+taskctl draft proposals answer XR-001 < /tmp/proposal-answer.json
+```
+
+Ответ возвращает ключ и сохранённые результаты. Точный повтор с теми же
+снимками и решениями возвращает `repeated: true`; после удаления Ask можно
+использовать `answer XR-001 --repeat-only` для восстановления квитанций без
+нового применения. Изменившийся снимок или непоказанная карточка не дают
+права на новое решение. Панель собирает этот ответ из обычных полей, вручную
+готовить JSON человеку не требуется.
+
 ## Команды
 
 ```

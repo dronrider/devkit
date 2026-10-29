@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -367,11 +368,7 @@ func cmdReviewPublish(root, id string, c CommitOpts) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
 	}
-	conf, err := loadReviewConf(root)
-	if err != nil {
-		return "", err
-	}
-	d, err := openReviewDraft(root, id, false)
+	conf, d, basis, err := openRemoteReview(root, id)
 	if err != nil {
 		return "", err
 	}
@@ -401,7 +398,7 @@ func cmdReviewPublish(root, id string, c CommitOpts) (string, error) {
 		dropped++
 	}
 	if dropped > 0 {
-		if err := d.save(); err != nil {
+		if err := basis.save(d); err != nil {
 			return "", err
 		}
 		out = append(out, fmt.Sprintf("итог в MR не публикуется, блоков снято %d", dropped))
@@ -415,7 +412,7 @@ func cmdReviewPublish(root, id string, c CommitOpts) (string, error) {
 			}
 		}
 		if n > 0 {
-			if err := d.save(); err != nil {
+			if err := basis.save(d); err != nil {
 				return "", err
 			}
 			out = append(out, fmt.Sprintf("publish = auto: черновиков одобрено %d", n))
@@ -435,6 +432,17 @@ func cmdReviewPublish(root, id string, c CommitOpts) (string, error) {
 			return "", fmt.Errorf("публиковать нечего: в %s нет ни черновика, ни одобренного замечания", reviewDraftRel(id))
 		}
 		return "", fmt.Errorf("публиковать нечего: в %s нет одобренных замечаний, а publish = confirm черновики сам не одобряет (review approve %s <N> после слова человека)", reviewDraftRel(id), id)
+	}
+	identities := make(map[string]bool, len(todo))
+	for _, i := range todo {
+		key, err := reviewSendIdentity(d, d.Blocks[i])
+		if err != nil {
+			return "", err
+		}
+		if identities[key] {
+			return "", fmt.Errorf("одинаковые замечания в одном MR неоднозначны: различите их перед публикацией")
+		}
+		identities[key] = true
 	}
 	var refs diffRefs
 	positioned := false
@@ -461,9 +469,16 @@ func cmdReviewPublish(root, id string, c CommitOpts) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		raw, err := runPublish(script)
+		if err := basis.check(); err != nil {
+			return strings.Join(out, "\n"), err
+		}
+		identity, err := reviewSendIdentity(d, d.Blocks[i])
 		if err != nil {
-			return strings.Join(out, "\n"), fmt.Errorf("замечание %d не ушло в MR: %v (опубликовано до него %d)", i+1, err, published)
+			return "", err
+		}
+		raw, err := reviewSendOnce(basis.canonical, id, "publish-"+identity, "", script)
+		if err != nil {
+			return strings.Join(out, "\n"), fmt.Errorf("замечание %d: %v (опубликовано до него %d)", i+1, err, published)
 		}
 		thread, err := threadID(raw)
 		if err != nil {
@@ -471,16 +486,25 @@ func cmdReviewPublish(root, id string, c CommitOpts) (string, error) {
 		}
 		d.Blocks[i].State = reviewStatePublished
 		d.Blocks[i].Thread = thread
-		if err := d.save(); err != nil {
-			return "", err
+		if err := basis.save(d); err != nil {
+			return "", fmt.Errorf("замечание %d отправлено, тред %s; %w", i+1, thread, err)
 		}
 		published++
 		out = append(out, fmt.Sprintf("замечание %d опубликовано, тред %s", i+1, thread))
 	}
 	tail, err := c.apply(root, []string{reviewDraftRel(id)})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("замечания отправлены и сохранены, публикация в git не завершена: %w", err)
 	}
 	out = append(out, fmt.Sprintf("%s: в %s ушло замечаний %d", id, target.Kind, published))
 	return strings.Join(out, "\n") + tail, nil
+}
+
+func reviewSendIdentity(d *reviewDraft, bl reviewBlock) (string, error) {
+	identity, err := json.Marshal([]string{d.MR, d.Sha, bl.File, bl.Line, bl.Label, bl.Text})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(identity)
+	return fmt.Sprintf("%x", digest), nil
 }

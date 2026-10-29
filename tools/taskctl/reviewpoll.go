@@ -531,16 +531,15 @@ func cmdReviewApproveMR(root, id string, yes bool, c CommitOpts) (string, error)
 	if err := c.validate(); err != nil {
 		return "", err
 	}
-	conf, err := loadReviewConf(root)
-	if err != nil {
-		return "", err
-	}
-	d, err := openReviewDraft(root, id, false)
+	conf, d, basis, err := openRemoteReview(root, id)
 	if err != nil {
 		return "", err
 	}
 	if d.MR == "" {
 		return "", fmt.Errorf("в шапке %s нет ссылки на MR, апрув ставить негде", reviewDraftRel(id))
+	}
+	if d.Mark == reviewMarkApproved {
+		return fmt.Sprintf("%s: апрув уже поставлен (%s)", id, d.MR), nil
 	}
 	if open := d.openIssues(); open > 0 {
 		return "", fmt.Errorf("у %s открытых блокирующих замечаний %d: апрув при них не ставится ни при каком publish, сперва разбор с автором", id, open)
@@ -556,16 +555,19 @@ func cmdReviewApproveMR(root, id string, yes bool, c CommitOpts) (string, error)
 	if err != nil {
 		return "", err
 	}
-	if _, err := runPublish(script); err != nil {
-		return "", fmt.Errorf("апрув не ушёл в MR: %v", err)
+	if err := basis.check(); err != nil {
+		return "", err
+	}
+	if _, err := reviewSendOnce(basis.canonical, id, "approve-"+d.MR, d.Mark, script); err != nil {
+		return "", fmt.Errorf("апрув: %v", err)
 	}
 	d.Mark = reviewMarkApproved
-	if err := d.save(); err != nil {
-		return "", err
+	if err := basis.save(d); err != nil {
+		return "", fmt.Errorf("апрув отправлен; %w", err)
 	}
 	tail, err := c.apply(root, []string{reviewDraftRel(id)})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("апрув отправлен и сохранён, публикация в git не завершена: %w", err)
 	}
 	return fmt.Sprintf("%s: апрув поставлен в %s (%s)", id, target.Kind, d.MR) + tail, nil
 }

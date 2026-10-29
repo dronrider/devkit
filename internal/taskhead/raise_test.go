@@ -704,3 +704,14 @@ func TestExitClass(t *testing.T) {
 		}
 	}
 }
+
+func TestRaiseLockedDraftBeforeLaunch(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "docs", "tasks", "drafts", "XR-1.md")
+	put(t, path, "# запись\nзамок: locked\n", 0600)
+	called := false
+	_, err := Raise(Request{Root: root, ID: "XR-1", Pick: func() (string, error) { called = true; return "", nil }})
+	if err == nil || !strings.Contains(err.Error(), "ждёт локальную модель") || called {
+		t.Fatalf("error %v, picked %v", err, called)
+	}
+}

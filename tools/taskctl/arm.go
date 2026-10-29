@@ -169,6 +169,30 @@ func newArmGates(root string, b *Board) *armGates {
 		live: liveTrees(root, b), ceiling: treeCeiling(limit)}
 }
 
+// armStillReady repeats the read-only gates just before an automatic wake.
+func armStillReady(root string, b *Board, arch *Archive, row *Row) error {
+	if row.Sect != SectBacklog || !armed(row.Title) {
+		return fmt.Errorf("взвод уже снят")
+	}
+	if goal := goalOfTask(root, row.ID); goal != "" && b.find(goal) != nil {
+		return fmt.Errorf("задача передана цели %s", goal)
+	}
+	at, hasAt, err := armHour(row.Title)
+	if err != nil {
+		return err
+	}
+	if hasAt && timeNow().Before(at) {
+		return fmt.Errorf("час взвода ещё не наступил")
+	}
+	if held := newEdges(root, b, arch).held(row); len(held) > 0 {
+		return fmt.Errorf("предпосылки изменились: %s", edgeWords(held))
+	}
+	if why := newArmGates(root, b).pass(row.ID); why != "" {
+		return fmt.Errorf("ворота взвода изменились: %s", why)
+	}
+	return nil
+}
+
 // pass отвечает словами, чем ворота ёмкости отказали строке. Пустой ответ это
 // проход. Ворота выбора из `slot` (неопределённость, цена, вид user при
 // недоступном человеке) тут не стоят: они служат машинному выбору среди
@@ -425,6 +449,17 @@ func cmdArm(root, id, at string, off bool, c CommitOpts) (string, error) {
 		}
 	}
 	row.Title = joinTitle(base, deps, debtSuf, armSuf, planSuf, assignSuf, dueSuf, controlSuf, acceptSuf, failSuf, blockSuf)
+	var ed *edges
+	if !off {
+		arch, err := LoadArchive(archivePath(root))
+		if err != nil {
+			return "", err
+		}
+		ed, err = newEdgesChecked(root, b, arch)
+		if err != nil {
+			return "", err
+		}
+	}
 	b.updateLine(row.LineIdx, formatRow(row))
 	if err := b.Save(); err != nil {
 		return "", err
@@ -437,11 +472,6 @@ func cmdArm(root, id, at string, off bool, c CommitOpts) (string, error) {
 		dropArmRefusal(root, id)
 		return fmt.Sprintf("%s: взвод снят, старт рукой%s", id, tail), nil
 	}
-	arch, err := LoadArchive(archivePath(root))
-	if err != nil {
-		return "", err
-	}
-	ed := newEdges(root, b, arch)
 	hourAt, hasAt, err := armHour(row.Title)
 	hourWord := ""
 	if err == nil && hasAt && timeNow().Before(hourAt) {

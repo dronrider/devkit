@@ -186,6 +186,13 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	if len(p.Opts) > 0 && doc == orig {
 		return fmt.Sprintf("%s (%s): %s", p.ID, kind, note), nil
 	}
+	var asks []wakeAskSnapshot
+	if answered {
+		asks, err = captureWakeAsks(root, p.ID)
+		if err != nil {
+			return "", fmt.Errorf("вопрос не прочитан: %w", err)
+		}
+	}
 	if err := decideWrite(path, orig, doc); err != nil {
 		return "", err
 	}
@@ -194,8 +201,17 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	// строку без ответа. Прежде признак снимали только панель и wake, а ответ
 	// из окна или головой сессии оставлял его на месте, и плашка «Заход ждёт
 	// ответа» стояла на решённой развилке до перезапуска захода (DK-1204).
-	if answered && dropTaskAsks(root, p.ID) > 0 && !scenarioAnswer {
-		note += "\n" + askDroppedNote
+	if answered {
+		if err := dropWakeAsks(p.ID, asks); err != nil {
+			note += "\nответ сохранён, изменившийся вопрос не снят: " + err.Error()
+		} else if !scenarioAnswer {
+			for _, ask := range asks {
+				if ask.raw != nil {
+					note += "\n" + askDroppedNote
+					break
+				}
+			}
+		}
 	}
 	rel, rerr := filepath.Rel(root, path)
 	if rerr != nil {

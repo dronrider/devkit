@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // Вопрос «кого из Check вправе закрыть автоматика» задаёт тик сторожка
@@ -31,7 +33,7 @@ type closableRow struct {
 // те пропускают безфайловую задачу молча (сценарий живёт в другом документе),
 // а автоматике нечего читать, и молчаливое закрытие вслепую хуже строки,
 // дождавшейся живой сессии.
-func closable(root string, b *Board) []closableRow {
+func closable(root string, b *Board) ([]closableRow, error) {
 	var out []closableRow
 	for _, r := range b.Sects[SectCheck].Rows {
 		if kind := acceptOf(r.Title); kind != acceptAgent {
@@ -47,7 +49,11 @@ func closable(root string, b *Board) []closableRow {
 			out = append(out, closableRow{r.ID, "файла задачи нет: закрывать вслепую нечем"})
 			continue
 		}
-		if uncheckedDeploy(root, data) {
+		var unchecked bool
+		if err := cliReadOutside(root, func() error { unchecked = uncheckedDeploy(root, data); return nil }); err != nil {
+			return nil, err
+		}
+		if unchecked {
 			out = append(out, closableRow{r.ID, "отметки smoke на последний выкат нет: сценарий после выката не прогнан"})
 			continue
 		}
@@ -55,13 +61,17 @@ func closable(root string, b *Board) []closableRow {
 			out = append(out, closableRow{r.ID, "раздел «Проверка» пуст: вывода прогона в файле задачи нет"})
 			continue
 		}
-		if err := closeVerifyGate(root, r.ID); err != nil {
+		lines, pending, err := checkedStageSources(root, r.ID)
+		if err != nil {
+			return nil, err
+		}
+		if _, _, err := stage.VerifyIndependence(r.ID, lines, pending); err != nil {
 			out = append(out, closableRow{r.ID, "сценарий прогнал исполнитель разработки: нужен прогон другой моделью"})
 			continue
 		}
 		out = append(out, closableRow{ID: r.ID})
 	}
-	return out
+	return out, nil
 }
 
 // cmdClosable печатает готовых к закрытию по одному ID в строке, а отказы
@@ -74,7 +84,10 @@ func cmdClosable(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rows := closable(root, b)
+	rows, err := closable(root, b)
+	if err != nil {
+		return "", err
+	}
 	var ready, refused []string
 	for _, r := range rows {
 		if r.Reason == "" {

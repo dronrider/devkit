@@ -433,17 +433,6 @@ func cmdReviewPublish(root, id string, c CommitOpts) (string, error) {
 		}
 		return "", fmt.Errorf("публиковать нечего: в %s нет одобренных замечаний, а publish = confirm черновики сам не одобряет (review approve %s <N> после слова человека)", reviewDraftRel(id), id)
 	}
-	identities := make(map[string]bool, len(todo))
-	for _, i := range todo {
-		key, err := reviewSendIdentity(d, d.Blocks[i])
-		if err != nil {
-			return "", err
-		}
-		if identities[key] {
-			return "", fmt.Errorf("одинаковые замечания в одном MR неоднозначны: различите их перед публикацией")
-		}
-		identities[key] = true
-	}
 	var refs diffRefs
 	positioned := false
 	for _, i := range todo {
@@ -476,7 +465,21 @@ func cmdReviewPublish(root, id string, c CommitOpts) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		raw, err := reviewSendOnce(basis.canonical, id, "publish-"+identity, "", script)
+		ordinal := 1
+		total := 0
+		for j := range d.Blocks {
+			prior, err := reviewSendIdentity(d, d.Blocks[j])
+			if err != nil {
+				return "", err
+			}
+			if prior == identity {
+				total++
+				if j < i {
+					ordinal++
+				}
+			}
+		}
+		raw, err := reviewSendOnce(basis.canonical, id, fmt.Sprintf("publish-%s-%d", identity, ordinal), fmt.Sprintf("count:%d", total), script)
 		if err != nil {
 			return strings.Join(out, "\n"), fmt.Errorf("замечание %d: %v (опубликовано до него %d)", i+1, err, published)
 		}

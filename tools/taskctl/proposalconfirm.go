@@ -246,7 +246,7 @@ type confirmationResult struct {
 	Publication string                  `json:"publication,omitempty"`
 }
 
-func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (string, error) {
+func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (resultText string, finalErr error) {
 	if err := opts.validate(); err != nil {
 		return "", err
 	}
@@ -276,6 +276,13 @@ func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (strin
 	if err == nil && !plan.Repeated {
 		err = lock.Apply(root, plan.Changes)
 	}
+	publication := ""
+	if err == nil && !plan.Repeated && len(plan.Changes) > 0 && opts.Msg != "" {
+		publication, err = lock.BeginPublication()
+		if err != nil {
+			err = fmt.Errorf("применено, публикация не начата: %w", err)
+		}
+	}
 	for i := len(cloudLocks) - 1; i >= 0; i-- {
 		cloudLocks[i].Close()
 	}
@@ -288,6 +295,17 @@ func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (strin
 	}
 	if closeErr != nil {
 		return "", fmt.Errorf("применено, замок не освобождён: %w", closeErr)
+	}
+	if publication != "" {
+		defer func() {
+			if err := drafttx.FinishPublication(root, publication); err != nil {
+				if finalErr != nil {
+					finalErr = fmt.Errorf("%v; журнал публикации не снят: %w", finalErr, err)
+				} else {
+					finalErr = fmt.Errorf("применено, журнал публикации не снят: %w", err)
+				}
+			}
+		}()
 	}
 	result := confirmationResult{Key: plan.Key, Results: plan.Results, Repeated: plan.Repeated}
 	for _, change := range plan.Changes {

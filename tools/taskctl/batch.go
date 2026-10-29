@@ -53,7 +53,10 @@ func cmdBatch(root string, limit int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ed := newEdges(root, b, arch)
+	ed, err := newEdgesChecked(root, b, arch)
+	if err != nil {
+		return "", err
+	}
 	var taken, takenIDs []string
 	byLink := map[string]string{}
 	g := &batchGroups{}

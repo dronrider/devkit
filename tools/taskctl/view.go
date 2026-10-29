@@ -189,11 +189,21 @@ func cmdList(root, sect string, debtOnly bool) (string, error) {
 	// без архива ребро на закрытую строку читается неснятым, а сама доска
 	// печатается как прежде.
 	arch, _ := LoadArchive(archivePath(root))
-	ed := newEdges(root, b, arch)
-	times := boardTimes(root)
+	ed, err := newEdgesChecked(root, b, arch)
+	if err != nil {
+		return "", err
+	}
+	times, err := boardTimesChecked(root)
+	if err != nil {
+		return "", err
+	}
 	sv := loadStageView(root)
 	var out []string
-	if note := staleBoardNote(root); note != "" {
+	note, err := staleBoardNoteChecked(root)
+	if err != nil {
+		return "", err
+	}
+	if note != "" {
 		out = append(out, note)
 	}
 	section := func(key string, limit int) {
@@ -307,7 +317,10 @@ func cmdShow(root, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	note := staleBoardNote(root)
+	note, err := staleBoardNoteChecked(root)
+	if err != nil {
+		return "", err
+	}
 	sides := depSides(b)
 	if row := b.find(id); row != nil {
 		// Живой строке архив нужен только пометкой взвода, и отсутствие архива
@@ -317,7 +330,15 @@ func cmdShow(root, id string) (string, error) {
 		if note != "" {
 			out = append([]string{note}, out...)
 		}
-		out = append(out, rowNotes(root, newEdges(root, b, arch), row.Sect, row, boardTimes(root), loadStageView(root))...)
+		ed, err := newEdgesChecked(root, b, arch)
+		if err != nil {
+			return "", err
+		}
+		times, err := boardTimesChecked(root)
+		if err != nil {
+			return "", err
+		}
+		out = append(out, rowNotes(root, ed, row.Sect, row, times, loadStageView(root))...)
 		s := sides[id]
 		if s == nil {
 			s = &struct{ after, blocks []string }{}

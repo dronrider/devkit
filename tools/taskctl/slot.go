@@ -245,6 +245,11 @@ func rowIdleHours(root string, r *Row, times map[int]int64) float64 {
 // Ворота булевы, порядок фиксированный (LLD DK-400, решение 3), строка идёт
 // в отказ по первой непройденной и ровно в одну группу, как у batch.
 func cmdSlot(root string, limit int, resource string) (string, error) {
+	if cliTx != nil {
+		var out string
+		err := cliReadOutside(root, func() error { var err error; out, err = cmdSlot(root, limit, resource); return err })
+		return out, err
+	}
 	rates, ok := slotRates[resource]
 	if !ok {
 		return "", fmt.Errorf("ресурс %q не известен, жду slot или quota", resource)

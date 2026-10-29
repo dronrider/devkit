@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"syscall"
 
 	"github.com/dronrider/devkit/internal/drafttx"
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // reviewBasis protects the source and configuration across remote calls.
@@ -94,15 +96,90 @@ func (b *reviewBasis) check() error {
 	return nil
 }
 
+func (b *reviewBasis) apply(change func() error) (string, error) {
+	if cliTx != nil {
+		return "", fmt.Errorf("ревью нельзя применять внутри другой транзакции")
+	}
+	cliWorktreeRoot = b.root
+	cliIsLinkedWorktree = linkedWorktree(b.root)
+	cliMainRoot = stage.MainRoot(b.root)
+	lock, err := drafttx.Acquire(b.root)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := filepath.EvalSymlinks(b.root)
+	if err != nil || canonical != b.canonical {
+		lock.Close()
+		return "", fmt.Errorf("путь проекта изменился")
+	}
+	docs, err := collectDocs(b.root)
+	if err != nil {
+		lock.Close()
+		return "", err
+	}
+	conf, err := drafttx.Read(filepath.Join(b.root, filepath.FromSlash(reviewConfRel)))
+	if err != nil {
+		lock.Close()
+		return "", err
+	}
+	if !reflect.DeepEqual(docs, b.docs) || !reflect.DeepEqual(conf, b.conf) {
+		lock.Close()
+		return "", fmt.Errorf("материал ревью или настройки изменились; применение остановлено")
+	}
+	cliTx = lock
+	err = change()
+	if err != nil && cliTx != nil {
+		if after, readErr := collectDocs(b.root); readErr == nil && !reflect.DeepEqual(after, b.docs) {
+			err = fmt.Errorf("часть изменений сохранена: %w", err)
+		}
+	}
+	tail, finishErr := cliFinishDraftLock(err == nil)
+	if err != nil && finishErr != nil {
+		return tail, fmt.Errorf("%v; %w", err, finishErr)
+	}
+	if err != nil {
+		return tail, err
+	}
+	return tail, finishErr
+}
+
 type reviewSendReceipt struct {
 	State string `json:"state"`
 	Reply []byte `json:"reply,omitempty"`
 	Basis string `json:"basis,omitempty"`
 }
 
+func reviewPollLock(root, id string) (*os.File, error) {
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, err
+	}
+	service, err := drafttx.ServiceDir(root)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(service, 0700); err != nil {
+		return nil, err
+	}
+	key := sha256.Sum256([]byte(canonical + "\x00" + id))
+	f, err := os.OpenFile(filepath.Join(service, fmt.Sprintf("poll-%x.lock", key)), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("опрос %s уже идёт: %w", id, err)
+	}
+	return f, nil
+}
+
 // reviewSendOnce persists an intent before a mutating tracker call. An
 // interrupted or ambiguous call remains pending and cannot be sent again.
 func reviewSendOnce(root, id, operation, basis, script string) ([]byte, error) {
+	return reviewOnce(root, id, operation, basis, func() ([]byte, error) { return runPublish(script) })
+}
+
+func reviewOnce(root, id, operation, basis string, send func() ([]byte, error)) ([]byte, error) {
 	canonical, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, err
@@ -154,7 +231,7 @@ func reviewSendOnce(root, id, operation, basis, script string) ([]byte, error) {
 	if err := syncReviewDir(dir); err != nil {
 		return nil, err
 	}
-	out, err := runPublish(script)
+	out, err := send()
 	if err != nil {
 		return nil, fmt.Errorf("исход отправки не подтверждён, повтор остановлен: %w", err)
 	}

@@ -176,6 +176,12 @@ func boardTimes(root string) map[int]int64 {
 	return byLine
 }
 
+func boardTimesChecked(root string) (map[int]int64, error) {
+	var times map[int]int64
+	err := cliReadOutside(root, func() error { times = boardTimes(root); return nil })
+	return times, err
+}
+
 // isHex отличает заголовок порции blame от полей: у заголовка первым идёт sha.
 func isHex(s string) bool {
 	for i := 0; i < len(s); i++ {

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/dronrider/devkit/internal/chat"
 	"github.com/dronrider/devkit/internal/drafttx"
@@ -118,7 +120,13 @@ func checkWaitReason(b *Board, root, id, reason string) error {
 	}
 	// Спросить признак не вышло (нет git, нет main): парковку это не держит,
 	// тот же вопрос задаст обход.
-	if met, said, err := condMet(root, arch, c); err == nil && met {
+	var met bool
+	var said string
+	var probeErr error
+	if err := cliReadOutside(root, func() error { met, said, probeErr = condMet(root, arch, c); return nil }); err != nil {
+		return err
+	}
+	if probeErr == nil && met {
 		return fmt.Errorf("событие уже случилось (%s): ждать нечего, работа продолжается без парковки", said)
 	}
 	return nil
@@ -130,6 +138,7 @@ type waiter struct {
 	ID, Class, Dep, Said string
 	Met                  bool
 	rowLine, rowSection  string
+	verifyEvent          bool
 }
 
 // waiterSource отдаёт ждущих своего вида и строки отчёта про тех, чьё событие
@@ -261,8 +270,43 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 	// У цели своя оболочка, и ожидание она переживает сама: парковку снять
 	// надо, а голову задачи поверх цикла поднимать нельзя.
 	goal := goalRow(row.Title)
-	if !goal {
-		err = cliReadOutside(root, func() error { return wakePreflight(root, w.ID, ro) })
+	var arch *Archive
+	if w.verifyEvent {
+		arch, err = LoadArchive(archivePath(root))
+		if err != nil {
+			return fmt.Sprintf("%s: архив не прочитан: %v", w.ID, err), false
+		}
+	}
+	var asks []wakeAskSnapshot
+	if w.Class == classAsk {
+		asks, err = captureWakeAsks(root, w.ID)
+		if err != nil {
+			return fmt.Sprintf("%s: вопрос не прочитан: %v", w.ID, err), false
+		}
+	}
+	if !goal || w.verifyEvent {
+		err = cliReadOutside(root, func() error {
+			if w.verifyEvent {
+				switch w.Class {
+				case classClose, classMerge:
+					met, _, err := condMet(root, arch, waitCond{Class: w.Class, Dep: w.Dep})
+					if err != nil {
+						return err
+					}
+					if !met {
+						return fmt.Errorf("событие предпосылки больше не выполнено")
+					}
+				case classArm:
+					if err := armStillReady(root, b, arch, row); err != nil {
+						return err
+					}
+				}
+			}
+			if !goal {
+				return wakePreflight(root, w.ID, ro)
+			}
+			return nil
+		})
 		if err != nil {
 			return fmt.Sprintf("%s: %s, а голову поднять нечем, строка стоит в %s: %v", w.ID, w.cause(), row.Sect, err), false
 		}
@@ -275,7 +319,9 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 		if a, ok := chat.ReadAsk(chat.AskPath(taskMainRoot(root), chat.TaskName(w.ID))); ok && a.From != "" {
 			to = a.From
 		}
-		dropTaskAsks(root, w.ID)
+		if err := dropWakeAsks(w.ID, asks); err != nil {
+			return fmt.Sprintf("%s: вопрос изменился при подъёме: %v", w.ID, err), false
+		}
 	}
 	moved := row.Sect != to
 	if moved {
@@ -319,6 +365,77 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 	return fmt.Sprintf("%s: %s, строка в %s; %s%s", w.ID, w.cause(), to, said, tail), true
 }
 
+type wakeAskSnapshot struct {
+	tree string
+	raw  []byte
+}
+
+func captureWakeAsks(root, id string) ([]wakeAskSnapshot, error) {
+	top := filepath.Clean(taskMainRoot(root))
+	tree := filepath.Join(filepath.Dir(top), filepath.Base(top)+"-"+strings.ToLower(id))
+	var out []wakeAskSnapshot
+	for _, dir := range []string{top, tree} {
+		data, err := os.ReadFile(chat.AskPath(dir, chat.TaskName(id)))
+		if os.IsNotExist(err) {
+			out = append(out, wakeAskSnapshot{tree: dir})
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		_, ok := chat.ParseAsk(string(data))
+		if !ok {
+			return nil, fmt.Errorf("не удалось точно прочитать вопрос в %s", dir)
+		}
+		out = append(out, wakeAskSnapshot{tree: dir, raw: data})
+	}
+	return out, nil
+}
+
+func dropWakeAsks(id string, asks []wakeAskSnapshot) error {
+	name := chat.TaskName(id)
+	var locks []*os.File
+	defer func() {
+		for _, lock := range locks {
+			lock.Close()
+		}
+	}()
+	for _, a := range asks {
+		if _, err := os.Stat(chat.Root(a.tree)); os.IsNotExist(err) && a.raw == nil {
+			continue
+		} else if err != nil {
+			return err
+		}
+		lock, err := os.OpenFile(filepath.Join(chat.Root(a.tree), name+chat.LockSuffix), os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return err
+		}
+		locks = append(locks, lock)
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			return fmt.Errorf("вопрос занят: %w", err)
+		}
+	}
+	for _, a := range asks {
+		data, err := os.ReadFile(chat.AskPath(a.tree, name))
+		if os.IsNotExist(err) {
+			data, err = nil, nil
+		}
+		if err != nil || !bytes.Equal(data, a.raw) {
+			return fmt.Errorf("признак изменён в %s", a.tree)
+		}
+	}
+	for _, a := range asks {
+		if a.raw == nil {
+			continue
+		}
+		err := os.Remove(chat.AskPath(a.tree, name))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // logWake пишет подъём в журнал .devkit/log проекта: разряд и ID предпосылки
 // стоят в ячейке команды, код это код лестницы подъёма.
 func logWake(root string, w waiter, code int) {
@@ -327,32 +444,6 @@ func logWake(root string, w waiter, code int) {
 		what += ": " + w.Dep
 	}
 	logLine(root, what, code)
-}
-
-// dropTaskAsks снимает признак ожидания вопроса. Писатель признака кладёт его
-// в основной чекаут, каким бы деревом ни звали (runAsk, stage.MainRoot), а
-// отвечают и будят строку хоть из основного чекаута, хоть из дерева задачи:
-// корень тут приводится к основному тем же MainRoot, иначе ответ из дерева
-// задачи искал бы признак в каталоге, которого там не бывает (ревью DK-1204).
-// Дерево задачи рядом с чекаутом обходится следом: признак старого образца
-// мог лечь и туда, а переживший ответ признак рисовал бы в панели вопрос уже
-// не ждущей строке. Возврат это число снятых файлов: по нему в ответ команды
-// встаёт строка о снятом вопросе, а не одинаковое молчание при живом
-// признаке и без него.
-func dropTaskAsks(root, id string) int {
-	top := filepath.Clean(taskMainRoot(root))
-	tree := filepath.Join(filepath.Dir(top), filepath.Base(top)+"-"+strings.ToLower(id))
-	n := 0
-	for _, dir := range []string{top, tree} {
-		name := chat.TaskName(id)
-		if _, err := os.Stat(chat.AskPath(dir, name)); err != nil {
-			continue
-		}
-		if chat.DropAsk(dir, name) == nil {
-			n++
-		}
-	}
-	return n
 }
 
 // namedWaiter собирает подъём по названному ID: строка в Blocked с любой
@@ -397,6 +488,7 @@ func cmdWake(root string, ids []string, o wakeOpts) (string, bool, error) {
 	if err := boardGuard(root, "wake"); err != nil {
 		return "", false, err
 	}
+	main := stage.MainRoot(root)
 	lock, err := drafttx.Acquire(root)
 	if err != nil {
 		return "", false, err
@@ -420,13 +512,14 @@ func cmdWake(root string, ids []string, o wakeOpts) (string, bool, error) {
 	if len(ids) == 0 {
 		// Событие соседа будит строку без человека в окне.
 		o.hidden = true
-		lock, err = draftReadOutside(root, lock, func() error {
+		lock, err = draftReadOutside(root, main, lock, func() error {
 			for _, src := range waiterSources {
 				got, notes := src(root, b, arch)
 				lines = append(lines, notes...)
 				for _, w := range got {
 					waiting++
 					if w.Met {
+						w.verifyEvent = true
 						todo = append(todo, w)
 					}
 				}

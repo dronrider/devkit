@@ -96,7 +96,11 @@ func cmdLint(root string) ([]string, error) {
 				bp, r.LineIdx+1, r.ID))
 		}
 	}
-	finds = append(finds, lintUnmerged(root, b, bp)...)
+	var unmerged []string
+	if err := cliReadOutside(root, func() error { unmerged = lintUnmerged(root, b, bp); return nil }); err != nil {
+		return nil, err
+	}
+	finds = append(finds, unmerged...)
 	finds = append(finds, lintOrphanTaskFiles(root, b, arch, bp)...)
 
 	for _, r := range arch.Rows {
@@ -106,7 +110,11 @@ func cmdLint(root string) ([]string, error) {
 		}
 		finds = append(finds, checkLinks(root, ap, r.LineIdx, arch.Lines[r.LineIdx])...)
 	}
-	finds = append(finds, lintDeps(root, b, arch, bp)...)
+	ed, err := newEdgesChecked(root, b, arch)
+	if err != nil {
+		return nil, err
+	}
+	finds = append(finds, lintDeps(root, b, arch, bp, ed)...)
 	finds = append(finds, lintFailed(b, bp)...)
 	finds = append(finds, lintArmed(root, b, bp)...)
 	finds = append(finds, lintTails(b, bp)...)
@@ -120,7 +128,11 @@ func cmdLint(root string) ([]string, error) {
 		}
 	}
 	finds = append(finds, lintForks(root, b)...)
-	finds = append(finds, mainAheadFinds(root)...)
+	var ahead []string
+	if err := cliReadOutside(root, func() error { ahead = mainAheadFinds(root); return nil }); err != nil {
+		return nil, err
+	}
+	finds = append(finds, ahead...)
 	return finds, nil
 }
 
@@ -300,7 +312,7 @@ func lintArmed(root string, b *Board, bp string) []string {
 // провалом предпосылки, находкой не считается: такую строку держат ворота
 // слияния, а вернуть её в Backlog значило бы потерять начатую работу (решение
 // 2 LLD DK-933).
-func lintDeps(root string, b *Board, arch *Archive, bp string) []string {
+func lintDeps(root string, b *Board, arch *Archive, bp string, ed *edges) []string {
 	var finds []string
 	for _, r := range b.Rows {
 		where := fmt.Sprintf("%s:%d: %s", bp, r.LineIdx+1, r.ID)
@@ -318,7 +330,6 @@ func lintDeps(root string, b *Board, arch *Archive, bp string) []string {
 			seen[d] = true
 		}
 	}
-	ed := newEdges(root, b, arch)
 	for _, key := range []string{SectInProgress, SectCheck, SectBlocked} {
 		for _, r := range b.Sects[key].Rows {
 			_, deps, _, _, _, _, _, _, _, _, _ := splitTitle(r.Title)

@@ -7,7 +7,6 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskhead"
 )
 
@@ -70,7 +69,7 @@ func TestLockedAttachRejectsActiveCloudReservation(t *testing.T) {
 	source, target := draftPath(root, "XR-008"), taskFileAbs(root, "XR-001")
 	beforeSource, _ := os.ReadFile(source)
 	beforeTarget, _ := os.ReadFile(target)
-	active, err := testCloudShared(stage.Home(), "XR-001")
+	active, err := testCloudShared(root, "XR-001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,8 +91,8 @@ func TestLockedAttachRejectsActiveCloudReservation(t *testing.T) {
 	}
 }
 
-func testCloudShared(home, id string) (*os.File, error) {
-	path := filepath.Join(home, ".devkit", "cloud-locks", id)
+func testCloudShared(root, id string) (*os.File, error) {
+	path := filepath.Join(root, ".devkit", "draft-tx", "cloud-locks", id)
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}

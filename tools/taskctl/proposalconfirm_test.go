@@ -11,7 +11,6 @@ import (
 
 	"github.com/dronrider/devkit/internal/draftproposal"
 	"github.com/dronrider/devkit/internal/drafttx"
-	"github.com/dronrider/devkit/internal/stage"
 )
 
 func TestPrepareConfirmationAllOutcomesAndReplay(t *testing.T) {
@@ -316,7 +315,7 @@ func TestConfirmLockedAttachRejectsCloudWithoutWrites(t *testing.T) {
 	source, target := draftPath(root, "XR-008"), taskFileAbs(root, "XR-001")
 	a, _ := os.ReadFile(source)
 	b, _ := os.ReadFile(target)
-	cloud, err := testCloudShared(stage.Home(), "XR-001")
+	cloud, err := testCloudShared(root, "XR-001")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -32,15 +32,25 @@ func TestProposalChatActualCLI(t *testing.T) {
 		if err = json.Unmarshal([]byte(raw), &view); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = cmdDraftProposalsSave(root, id, view.Snapshot, []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"предложение","reason":"лишнее"}]}`)); err != nil {
+		cards := []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Text: "предложение", Reason: "лишнее"}}
+		if id == "XR-008" {
+			cards = append(cards, draftproposal.Proposal{ID: "p2", Revision: 1, Outcome: "add", Title: "Результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent", After: []string{"p1"}})
+		}
+		save, _ := json.Marshal(struct {
+			Proposals []draftproposal.Proposal `json:"proposals"`
+		}{cards})
+		if _, err = cmdDraftProposalsSave(root, id, view.Snapshot, save); err != nil {
 			t.Fatal(err)
 		}
 	}
-	bin := filepath.Join(t.TempDir(), "taskctl")
-	build := exec.Command("go", "build", "-o", bin, ".")
-	build.Env = append(os.Environ(), "GOWORK=off")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, out)
+	bin := os.Getenv("TASKCTL_ACCEPT_BIN")
+	if bin == "" {
+		bin = filepath.Join(t.TempDir(), "taskctl")
+		build := exec.Command("go", "build", "-o", bin, ".")
+		build.Env = append(os.Environ(), "GOWORK=off")
+		if out, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build: %v %s", err, out)
+		}
 	}
 	run := func(input []byte, args ...string) (string, error) {
 		t.Helper()
@@ -58,7 +68,28 @@ func TestProposalChatActualCLI(t *testing.T) {
 	if err = json.Unmarshal([]byte(out), &q); err != nil || q.Proposal == nil || len(q.Proposal.Sources) != 2 {
 		t.Fatalf("question: %s %v", out, err)
 	}
+	t.Setenv("DEVKIT_GROOM_SOURCE", "XR-008")
+	t.Setenv("DEVKIT_GROOM_MODE", "run")
+	if denied, err := run(nil, "run", "XR-001"); err == nil || !strings.Contains(denied, "только принятым результатам add") {
+		t.Fatalf("run before confirmation: %s %v", denied, err)
+	}
+	t.Setenv("DEVKIT_GROOM_SOURCE", "")
+	t.Setenv("DEVKIT_GROOM_MODE", "")
 	a := proposalChatAnswer{Tree: root, Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: q.Proposal.Sources[0].Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "reject", Reason: "не нужно"}}}
+	bad := a
+	bad.Decisions = []draftproposal.Decision{{Source: "XR-008", Proposal: "p2", Revision: 1, Action: "accept"}}
+	badInput, _ := json.Marshal(bad)
+	before, err := os.ReadFile(draftPath(root, "XR-008"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := run(badInput, "draft", "proposals", "answer", "XR-008"); err == nil {
+		t.Fatalf("hidden predecessor accepted: %s", got)
+	}
+	after, err := os.ReadFile(draftPath(root, "XR-008"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("hidden predecessor changed source")
+	}
 	input, _ := json.Marshal(a)
 	jq := exec.Command("jq", `{tree: .proposal.tree, snapshots: [{source: .proposal.sources[0].source, digest: .proposal.sources[0].basis}], decisions: [{source: .proposal.sources[0].source, proposal: .proposal.sources[0].proposals[0].id, revision: .proposal.sources[0].proposals[0].revision, action: "reject", reason: "не нужно"}]}`)
 	jq.Stdin = strings.NewReader(out)

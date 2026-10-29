@@ -121,6 +121,14 @@ type testEnv struct {
 // newTestEnv поднимает сервер на временном доме с синтетическим проектом;
 // taskctl и tmux подменены исполняемыми фикстурами в PATH.
 func newTestEnv(t *testing.T) *testEnv {
+	oldReserved := startReservedFn
+	if os.Getenv("DEVKIT_TEST_CLOUD_REAL") == "" {
+		startReservedFn = func(root, tree, id, sess string, command func(string) string) error {
+			_, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", tree, command(""))
+			return err
+		}
+	}
+	t.Cleanup(func() { startReservedFn = oldReserved })
 	t.Helper()
 	loginPause = 0
 	home := t.TempDir()

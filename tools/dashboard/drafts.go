@@ -649,9 +649,9 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 	// двенадцатого круга POC): человек смотрит на разбор в той же панели, где
 	// разговаривает со всеми, а сессия называет себя в реестре записью
 	// накопителя, и найти её потом можно тем же списком чатов.
-	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", found.Path,
-		groomCmd(s.launchEnv(id, sess, ""), order,
-			own, model, id+" груминг")); err != nil {
+	if err := startManaged(found.Path, found.Path, id, sess, func(ack string) string {
+		return groomCmd(s.launchEnv(id, sess, "")+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", order, own, model, id+" груминг")
+	}); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("груминг %s в %s не удался: %s", id, found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})

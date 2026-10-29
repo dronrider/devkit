@@ -41,33 +41,49 @@ func cliReadOutside(root string, check func() error) error {
 	if cliTx == nil {
 		return check()
 	}
-	before, err := collectDocs(root)
-	if err != nil {
-		return err
-	}
 	lock := cliTx
 	cliTx = nil
+	var err error
+	cliTx, err = draftReadOutside(root, lock, check)
+	return err
+}
+
+func draftReadOutside(root string, lock *drafttx.Lock, check func() error) (*drafttx.Lock, error) {
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		lock.Close()
+		return nil, err
+	}
+	before, err := collectDocs(root)
+	if err != nil {
+		lock.Close()
+		return nil, err
+	}
 	if err = lock.Close(); err != nil {
-		return err
+		return nil, err
 	}
 	if err = check(); err != nil {
-		return err
+		return nil, err
 	}
 	lock, err = drafttx.Acquire(root)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	currentRoot, err := filepath.EvalSymlinks(root)
+	if err != nil || currentRoot != canonical {
+		lock.Close()
+		return nil, fmt.Errorf("путь проекта изменился при внешней проверке; повторите команду")
 	}
 	after, err := collectDocs(root)
 	if err != nil {
 		lock.Close()
-		return err
+		return nil, err
 	}
 	if !reflect.DeepEqual(before, after) {
 		lock.Close()
-		return fmt.Errorf("материал изменился при внешней проверке; повторите команду")
+		return nil, fmt.Errorf("материал изменился при внешней проверке; повторите команду")
 	}
-	cliTx = lock
-	return nil
+	return lock, nil
 }
 
 func cliIndexAction(root, path, destination string) {
@@ -232,9 +248,10 @@ func cliFinishDraftLock(success bool) (string, error) {
 		tails += tail
 	}
 	cliPublications = nil
-	for _, f := range cliAfterUnlock {
+	callbacks := cliAfterUnlock
+	cliAfterUnlock = nil
+	for _, f := range callbacks {
 		tails += f()
 	}
-	cliAfterUnlock = nil
 	return tails, nil
 }

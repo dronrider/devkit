@@ -319,10 +319,10 @@ func (s *server) handleTaskRelay(w http.ResponseWriter, r *http.Request) {
 			"message": fmt.Sprintf("строка легла адресно во вход витка цели %s: её возьмёт виток %s, и только он", goal, turn)})
 		return
 	}
-	doc := s.goalDocPath(found.Path, goal)
-	if !doc.seen {
-		writeJSON(w, http.StatusNotFound, map[string]string{
-			"error": fmt.Sprintf("файла цели %s в %s нет: строке диспетчера задачи некуда лечь", doc.rel, found.Name)})
+	r.SetPathValue("id", goal)
+	_, _, goalPath, goalRel, proof, ok := s.goalFile(w, r)
+	r.SetPathValue("id", id)
+	if !ok {
 		return
 	}
 	lock := s.inboxLock(found.Path)
@@ -338,7 +338,11 @@ func (s *server) handleTaskRelay(w http.ResponseWriter, r *http.Request) {
 			tx.Close()
 		}
 	}()
-	data, err := os.ReadFile(doc.path)
+	if !goalFileStillSelected(found.Path, goal, goalRel, proof) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "путь цели изменился, откройте запись снова"})
+		return
+	}
+	data, err := os.ReadFile(goalPath)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл цели не прочитался: %v", err)})
 		return
@@ -351,7 +355,7 @@ func (s *server) handleTaskRelay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := os.WriteFile(doc.path, []byte(addInboxLine(string(data), line)), 0o644); err != nil {
+	if err := os.WriteFile(goalPath, []byte(addInboxLine(string(data), line)), 0o644); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл цели не записался: %v", err)})
 		return
 	}
@@ -368,7 +372,7 @@ func (s *server) handleTaskRelay(w http.ResponseWriter, r *http.Request) {
 		resp["message"] = idlePut(goal)
 	}
 	if note := commitDocs(found.Path,
-		fmt.Sprintf("docs(tasks): %s строка от задачи %s во «Входящие»", goal, id), doc.rel); note != "" {
+		fmt.Sprintf("docs(tasks): %s строка от задачи %s во «Входящие»", goal, id), goalRel); note != "" {
 		resp["note"] = note
 		s.logf("строка от задачи %s к цели %s: %s", id, goal, note)
 	}

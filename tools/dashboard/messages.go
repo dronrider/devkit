@@ -167,12 +167,6 @@ func (s *server) goalFile(w http.ResponseWriter, r *http.Request) (found *Projec
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на ID задачи", id)})
 		return nil, "", "", "", proof, false
 	}
-	tx, err := drafttx.Acquire(found.Path)
-	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
-		return nil, "", "", "", proof, false
-	}
-	defer tx.Close()
 	board, err := os.ReadFile(filepath.Join(found.Path, "docs", "TASKS.md"))
 	proof.board = board
 	if err != nil {
@@ -182,6 +176,20 @@ func (s *server) goalFile(w http.ResponseWriter, r *http.Request) (found *Projec
 	raw, err := boardJSON(s.cfg.Home, found.Path)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return nil, "", "", "", proof, false
+	}
+	// taskctl list takes the same project lock, so call it before acquiring our
+	// own. Its answer is usable only if the board still has the exact bytes it
+	// had before the call, checked under the lock used to select the file.
+	tx, err := drafttx.Acquire(found.Path)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return nil, "", "", "", proof, false
+	}
+	defer tx.Close()
+	current, err := os.ReadFile(filepath.Join(found.Path, "docs", "TASKS.md"))
+	if err != nil || !bytes.Equal(current, proof.board) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "доска изменилась, откройте запись снова"})
 		return nil, "", "", "", proof, false
 	}
 	row, rowOK := findRow(raw, id)

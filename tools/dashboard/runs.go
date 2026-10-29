@@ -576,9 +576,9 @@ func (s *server) startGoalChat(proj *Project, id, sess, model string, h *Harness
 	// Имя головы это ID и роль словом, как у кнопки «Продолжить» (DK-879):
 	// предмет известен до первого токена, и заказывать заголовок у модели
 	// незачем.
-	cmd := chatCmd(s.launchEnv(id, sess, ""), model, "", goalContinuePrompt(id, ""), id+" цель",
-		h, binPath(agentctlBin))
-	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", chatTree(proj.Path, id), cmd); err != nil {
+	if err := startManaged(proj.Path, chatTree(proj.Path, id), id, sess, func(ack string) string {
+		return chatCmd(s.launchEnv(id, sess, "")+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, "", goalContinuePrompt(id, ""), id+" цель", h, binPath(agentctlBin))
+	}); err != nil {
 		return fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 	}
 	// Сессия встаёт под того же сторожа, что и разговор (chatwatch.go): без

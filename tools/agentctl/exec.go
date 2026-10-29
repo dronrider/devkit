@@ -99,6 +99,14 @@ func cmdExec(start, name string, argv []string, out, errw io.Writer) (int, error
 			}
 		}
 	}
+	if ack := os.Getenv("DEVKIT_CLOUD_ACK"); ack != "" {
+		if len(cloud) == 0 {
+			return 0, fmt.Errorf("нет резерва для подтверждения запуска")
+		}
+		if err := os.WriteFile(ack, []byte("ready"), 0600); err != nil {
+			return 0, fmt.Errorf("подтверждение резерва: %w", err)
+		}
+	}
 	fmt.Fprintf(errw, "exec: харнес %s, команда %s, каталог %s%s\n", name, argv[0], workdir, tail)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	if cloud != nil {
@@ -108,6 +116,15 @@ func cmdExec(start, name string, argv []string, out, errw io.Writer) (int, error
 	// Ограничитель вложенности exec не ставит: команда тут это не делегированный
 	// исполнитель, а сессия-диспетчер, и делегировать дальше ей и положено.
 	cmd.Env = harnessEnviron(os.Environ(), pairs, name)
+	if os.Getenv("DEVKIT_CLOUD_ACK") != "" {
+		filtered := cmd.Env[:0]
+		for _, pair := range cmd.Env {
+			if !strings.HasPrefix(pair, "DEVKIT_CLOUD_ACK=") {
+				filtered = append(filtered, pair)
+			}
+		}
+		cmd.Env = filtered
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout, cmd.Stderr = out, errw
 	return runChild(cmd, errw, "команду выбирает тот, кто зовёт exec")

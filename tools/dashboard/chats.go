@@ -2385,8 +2385,9 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness}); err != nil {
 		s.logf("модель чата %s не записалась: %v", sess, err)
 	}
-	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, ""), model, "", text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
+	if err := startManaged(found.Path, dir, id, sess, func(ack string) string {
+		return chatCmd(s.launchEnv(id, sess, "")+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, "", text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))
+	}); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("подъём чата в %s не удался: %s", found.Name, text)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": text})
@@ -3532,8 +3533,9 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
 	}
-	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(task, sess, sid), model, resumeSid, text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
+	if err := startManaged(found.Path, dir, task, sess, func(ack string) string {
+		return chatCmd(s.launchEnv(task, sess, sid)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, resumeSid, text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))
+	}); err != nil {
 		msg := fmt.Sprintf("tmux не поднял продолжение чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -4154,8 +4156,9 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
-	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", chatTree(found.Path, task),
-		chatCmd(s.launchEnv(task, sess, sid), model, "", text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
+	if err := startManaged(found.Path, chatTree(found.Path, task), task, sess, func(ack string) string {
+		return chatCmd(s.launchEnv(task, sess, sid)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, "", text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))
+	}); err != nil {
 		msg := fmt.Sprintf("tmux не поднял сессию чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
@@ -4558,8 +4561,9 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 		liftName = name
 		order = s.chatStateLine(id) + order
 	}
-	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, sid), model, resumeSid, order, liftName, s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
+	if err := startManaged(found.Path, dir, id, sess, func(ack string) string {
+		return chatCmd(s.launchEnv(id, sess, sid)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, resumeSid, order, liftName, s.chatHarnessOf(model, harness), binPath(agentctlBin))
+	}); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял продолжение работы %s: %s", id, procErr(err))})
 		return
@@ -5142,8 +5146,9 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text, nam
 	}
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model})
-	if _, err := runProc("tmux", "new-session", "-d", "-s", sess, "-c", dir,
-		chatCmd(s.launchEnv(id, sess, ""), model, "", text, name, s.chatHarnessOf(model, harness), binPath(agentctlBin))); err != nil {
+	if err := startManaged(found.Path, dir, id, sess, func(ack string) string {
+		return chatCmd(s.launchEnv(id, sess, "")+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, "", text, name, s.chatHarnessOf(model, harness), binPath(agentctlBin))
+	}); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял новый чат %s: %s", id, procErr(err))})
 		return

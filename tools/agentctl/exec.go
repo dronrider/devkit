@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/clientdir"
+	"github.com/dronrider/devkit/internal/draftmeta"
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // agentctl exec это запуск чужой команды на выбранной подписке: пары окружения
@@ -80,8 +82,28 @@ func cmdExec(start, name string, argv []string, out, errw io.Writer) (int, error
 	if err != nil {
 		return 0, err
 	}
+	var cloud []*draftmeta.CloudLock
+	if id := os.Getenv("DEVKIT_TASK"); id != "" {
+		main := stage.MainRoot(workdir)
+		cloud, err = cloudForRoots(id, workdir, main)
+		if err != nil {
+			return 0, err
+		}
+		defer closeCloud(cloud)
+		if err = draftmeta.GuardRecord(workdir, id); err != nil {
+			return 0, err
+		}
+		if main != workdir {
+			if err = draftmeta.GuardRecord(main, id); err != nil {
+				return 0, err
+			}
+		}
+	}
 	fmt.Fprintf(errw, "exec: харнес %s, команда %s, каталог %s%s\n", name, argv[0], workdir, tail)
 	cmd := exec.Command(argv[0], argv[1:]...)
+	if cloud != nil {
+		cmd.ExtraFiles = cloudFiles(cloud)
+	}
 	cmd.Dir = workdir
 	// Ограничитель вложенности exec не ставит: команда тут это не делегированный
 	// исполнитель, а сессия-диспетчер, и делегировать дальше ей и положено.

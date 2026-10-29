@@ -680,7 +680,7 @@ func TestRunHoldsCloudLockUntilClientExits(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	lockPath := filepath.Join(kit, ".devkit", "cloud-locks", "T-001")
+	lockPath := filepath.Join(root, ".devkit", "draft-tx", "cloud-locks", "T-001")
 	f, err := os.OpenFile(lockPath, os.O_RDWR, 0600)
 	if err != nil {
 		t.Fatal(err)

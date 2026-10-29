@@ -301,11 +301,11 @@ func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, err
 	if fi, err := os.Stat(workdir); err != nil || !fi.IsDir() {
 		return 0, fmt.Errorf("рабочей директории %s нет: дерево задачи заводит shipctl start, а путь к нему run принимает флагом --workdir", workdir)
 	}
-	cloud, err := draftmeta.CloudShared(stage.Home(), id)
+	cloud, err := cloudForRoots(id, root, workdir)
 	if err != nil {
 		return 0, err
 	}
-	defer cloud.Close()
+	defer closeCloud(cloud)
 	if err := draftmeta.GuardRecord(root, id); err != nil {
 		return 0, err
 	}
@@ -423,6 +423,7 @@ func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, err
 		fmt.Fprintf(errw, "этап не отмечен: %v\n", serr)
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.ExtraFiles = cloudFiles(cloud)
 	cmd.Dir = workdir
 	// Ограничитель вложенности идёт после общей сборки окружения: делегированная
 	// сессия делегировать дальше не вправе, иначе выйдет воронка сессий. Рядом

@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/dronrider/devkit/internal/clientdir"
 )
@@ -321,5 +324,179 @@ func TestExecStdoutPassesThrough(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "слово команды") {
 		t.Fatalf("вывод команды до вызывающего не доехал: %q", out.String())
+	}
+}
+
+func TestExecBlocksProtectedManagedTask(t *testing.T) {
+	kit := execKit(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("DEVKIT_TASK", "XR-1")
+	path := filepath.Join(root, "docs", "tasks", "XR-1.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# XR-1\nзащита: locked\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "started")
+	var out, errout bytes.Buffer
+	_, err := cmdExec(kit, "secondcli", []string{"/bin/sh", "-c", `touch "$1"`, "sh", marker}, &out, &errout)
+	if err == nil {
+		t.Fatal("protected task launched")
+	}
+	if _, err = os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("client started: %v", err)
+	}
+}
+
+func TestExecKeepsManagedCloudLockThroughClient(t *testing.T) {
+	kit := execKit(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("DEVKIT_TASK", "XR-1")
+	path := filepath.Join(root, "docs", "tasks", "XR-1.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# XR-1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	marker, stop := filepath.Join(root, "started"), filepath.Join(root, "stop")
+	script := `touch "$1"; while [ ! -e "$2" ]; do sleep 0.05; done`
+	done := make(chan error, 1)
+	go func() {
+		var out, errout bytes.Buffer
+		_, err := cmdExec(kit, "secondcli", []string{"/bin/sh", "-c", script, "sh", marker, stop}, &out, &errout)
+		done <- err
+	}()
+	t.Cleanup(func() { os.WriteFile(stop, []byte("stop"), 0600) })
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("client did not start")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	f, err := os.OpenFile(filepath.Join(root, ".devkit", "draft-tx", "cloud-locks", "XR-1"), os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		t.Fatal("private attach can enter")
+	}
+	if err = os.WriteFile(stop, []byte("stop"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("client stuck")
+	}
+	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("lock remained: %v", err)
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+}
+
+func TestExecBlocksProtectedMainFromStaleWorktree(t *testing.T) {
+	kit := execKit(t)
+	root := t.TempDir()
+	t.Setenv("DEVKIT_TASK", "XR-1")
+	path := filepath.Join(root, "docs", "tasks", "XR-1.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# XR-1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root, "-c", "user.name=stand", "-c", "user.email=stand@example.invalid"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git: %v %s", err, out)
+		}
+	}
+	git("init", "-q")
+	git("add", "docs")
+	git("commit", "-qm", "fixture")
+	tree := filepath.Join(t.TempDir(), "tree")
+	git("worktree", "add", "-qb", "fixture-tree", tree)
+	if err := os.WriteFile(path, []byte("# XR-1\nзащита: locked\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(tree)
+	marker := filepath.Join(tree, "started")
+	var out, errout bytes.Buffer
+	_, err := cmdExec(kit, "secondcli", []string{"/bin/sh", "-c", `touch "$1"`, "sh", marker}, &out, &errout)
+	if err == nil {
+		t.Fatal("protected primary ignored")
+	}
+	if _, err = os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("client started: %v", err)
+	}
+}
+
+func TestExecWaitsForPrivateAttachThenRefuses(t *testing.T) {
+	kit := execKit(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("DEVKIT_TASK", "XR-1")
+	path := filepath.Join(root, "docs", "tasks", "XR-1.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# XR-1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, ".devkit", "draft-tx", "cloud-locks", "XR-1")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "started")
+	done := make(chan error, 1)
+	go func() {
+		var out, errout bytes.Buffer
+		_, err := cmdExec(kit, "secondcli", []string{"/bin/sh", "-c", `touch "$1"`, "sh", marker}, &out, &errout)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		t.Fatalf("launch passed reservation: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err = os.WriteFile(path, []byte("# XR-1\nзащита: locked\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("protected material launched")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("launch stuck")
+	}
+	if _, err = os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("client started: %v", err)
 	}
 }

@@ -16446,6 +16446,88 @@ function watchRunning() {
   }, true);
 }
 
+const draftProposalDirty = new Set();
+
+function draftProposalCards(base, view) {
+  const section = el("section", "draft-proposals");
+  section.append(el("h2", "", "Предложения разбора"));
+  const state = view && view.state || {};
+  const cards = Array.isArray(state.proposals) ? state.proposals : [];
+  if (!cards.length) {
+    const message = state.analysis === "error" ? "Не удалось разобрать запись. Можно повторить разбор." :
+      state.analysis === "empty" ? "Предложений нет. Можно оформить запись вручную." : "Предложений пока нет.";
+    section.append(el("p", "", message));
+    return section;
+  }
+  const outcomes = { add: "Новая строка", attach: "Приписка", defer: "Отложить", drop: "Удалить" };
+  for (const proposal of cards) {
+    const card = el("article", "draft-proposal");
+    card.append(el("h3", "", outcomes[proposal.outcome] || "Предложение"));
+    if (proposal.status) {
+      const receipt = proposal.result || {};
+      const ids = Array.isArray(receipt.ids) ? receipt.ids.join(", ") : "";
+      card.append(el("p", "", (proposal.status === "accepted" ? "Принято" : "Отклонено") + (ids ? ": " + ids : "")));
+      if (proposal.title) card.append(el("p", "", proposal.title));
+      if (proposal.text) card.append(el("p", "", proposal.text));
+      if (proposal.rationale) card.append(el("p", "", proposal.rationale));
+      if (receipt.reason) card.append(el("p", "", receipt.reason));
+      section.append(card);
+      continue;
+    }
+    const value = { ...proposal, after: Array.isArray(proposal.after) ? proposal.after.join(", ") : "" };
+    const fieldRows = [];
+    function textField(label, key, kinds, multiline) {
+      const wrap = el("label", "dfield");
+      wrap.append(el("span", "", label));
+      const input = el(multiline ? "textarea" : "input");
+      input.value = value[key] || "";
+      input.addEventListener("input", () => { value[key] = input.value; draftProposalDirty.add(base); });
+      wrap.append(input); card.append(wrap); fieldRows.push({ wrap, kinds });
+    }
+    const kindLabel = el("label", "pick"); kindLabel.append(el("span", "pl", "Исход"));
+    const kind = el("select");
+    for (const [key, title] of Object.entries(outcomes)) { const o = el("option", "", title); o.value = key; o.selected = key === value.outcome; kind.append(o); }
+    kindLabel.append(kind); card.append(kindLabel);
+    textField("Название", "title", ["add"], false);
+    textField("Тип строки", "board_type", ["add"], false);
+    textField("Ранг", "rank", ["add"], false);
+    textField("Цена", "size", ["add"], false);
+    textField("Приёмка", "accept", ["add"], false);
+    textField("Барьер", "barrier", ["add"], false);
+    textField("Ответственный", "assignee", ["add"], false);
+    textField("Срок", "due", ["add"], false);
+    textField("Контроль", "control", ["add"], false);
+    textField("После", "after", ["add"], false);
+    textField("Куда приписать", "target", ["attach"], false);
+    textField("Текст результата", "text", ["add", "attach", "defer", "drop"], true);
+    textField("Довод разбора", "rationale", ["add", "attach", "defer", "drop"], true);
+    textField("Причина", "reason", ["defer", "drop"], true);
+    textField("Вернуться до", "until", ["defer"], false);
+    const showFields = () => { for (const item of fieldRows) item.wrap.hidden = !item.kinds.includes(value.outcome); };
+    kind.addEventListener("change", () => { value.outcome = kind.value; draftProposalDirty.add(base); showFields(); });
+    showFields();
+    const save = el("button", "btn", "Сохранить предложение"); save.type = "button";
+    save.addEventListener("click", async () => {
+      const edited = { ...value, revision: proposal.revision + 1, after: value.after.split(",").map((s) => s.trim()).filter(Boolean) };
+      const result = await api(base + "/proposals", { method: "PUT", body: { base: view.snapshot, proposal: edited } });
+      sayResult(apiSaid(result), !result.ok);
+      if (result.ok) { draftProposalDirty.delete(base); await refresh(); }
+    });
+    const cancel = el("button", "btn", "Отмена"); cancel.type = "button";
+    cancel.addEventListener("click", async () => { draftProposalDirty.delete(base); const shown = findKey(document.getElementById("groups"), "draft-page"); if (shown) shown.dataset.psign = ""; await refresh(); });
+    const rejectLabel = el("label", "dfield"); rejectLabel.append(el("span", "", "Причина отказа"));
+    const rejectReason = el("input"); rejectReason.addEventListener("input", () => draftProposalDirty.add(base)); rejectLabel.append(rejectReason);
+    const reject = el("button", "btn", "Отклонить"); reject.type = "button";
+    reject.addEventListener("click", async () => {
+      const result = await api(base + "/proposals/reject", { method: "POST", body: { base: view.snapshot, proposal: proposal.id, reason: rejectReason.value } });
+      sayResult(apiSaid(result), !result.ok);
+      if (result.ok) { draftProposalDirty.delete(base); await refresh(); }
+    });
+    card.append(save, cancel, rejectLabel, reject); section.append(card);
+  }
+  return section;
+}
+
 function draftMetadataEditor(base, meta, types, disabled) {
   const box = el("div", "draft-meta");
   const row = el("div", "pickrow");
@@ -16477,7 +16559,7 @@ function draftMetadataEditor(base, meta, types, disabled) {
   save.type = "button";
   save.disabled = disabled || types.length === 0;
   save.addEventListener("click", async () => {
-    if (taskDraft.dirty) { sayResult("Сначала сохраните текст записи", true); return; }
+    if (taskDraft.dirty || draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку записи или предложения", true); return; }
     save.disabled = true;
     const result = await api(base + "/meta", { method: "PUT", body: {
       type: kind.value, source: source.value, lock: lock.value,
@@ -16498,6 +16580,7 @@ async function renderDraft(project, works, id) {
   // него ранг, зависимости и поля строки доски: их запись получит только от
   // груминга, и показывать их пустыми не за чем.
   const text = await api(base);
+  const proposalResult = await api(base + "/proposals");
   const typeResult = await api("/api/projects/" + encodeURIComponent(project) + "/drafts/types");
   const draftTypes = typeResult.ok && Array.isArray(typeResult.body.types) ? typeResult.body.types : [];
   // Груминг кончился заведением задачи, пока форма была открыта: записи в
@@ -16517,7 +16600,7 @@ async function renderDraft(project, works, id) {
   if (running) watchRunning();
   // В поле лежит правка: перерисовка по фокусу окна стёрла бы её, и экран
   // остаётся как есть.
-  if (taskDraft.id === id && taskDraft.dirty) return;
+  if ((taskDraft.id === id && taskDraft.dirty) || draftProposalDirty.has(base)) return;
   const said = text.ok ? String(text.body.text || "") : "";
   // База правки приезжает тем же ответом, что и текст: она уедет обратно с
   // сохранением, и разошедшуюся ручка отобьёт вместо тихого затирания.
@@ -16534,7 +16617,7 @@ async function renderDraft(project, works, id) {
   const locked = running && !waiting;
   sync(groups, [{
     key: "draft-page",
-    sign: [id, said, hash, running, locked, text.body.error || "", JSON.stringify(waiting), JSON.stringify(draftTypes)].join("|"),
+    sign: [id, said, hash, running, locked, text.body.error || "", JSON.stringify(waiting), JSON.stringify(draftTypes), JSON.stringify(proposalResult.body)].join("|"),
     make: () => {
       const form = { text: said };
       const chips = [el("span", "chip", "черновик")];
@@ -16625,7 +16708,7 @@ async function renderDraft(project, works, id) {
         form, chips, actions,
         afterChips: text.ok ? [draftMetadataEditor(base, {
           type: text.body.type || "task", source: text.body.source || "thought", lock: text.body.lock || "unlocked",
-        }, draftTypes, locked)] : [],
+        }, draftTypes, locked), ...(proposalResult.ok ? [draftProposalCards(base, proposalResult.body)] : [])] : [],
         has: { file: true, pencil: !locked, read: true, chat: true },
         penLabel: "Править запись",
         // Причина замка живёт подсказкой погашенного карандаша: пропавшая

@@ -3148,22 +3148,37 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	records := s.bindsAll()[sid]
+	guardLast := sessions.Last(records)
 	taskIDs := sessions.Works(records)
-	if last := sessions.LastTask(records); last != "" {
-		taskIDs = append(taskIDs, last)
+	if id := sessions.LastTask(records); id != "" {
+		taskIDs = append(taskIDs, id)
 	}
-	if info, ok := findSession(s.transcriptRoots(), found.Path, sid); ok && info.Task != "" {
-		taskIDs = append(taskIDs, info.Task)
+	roots := []string{found.Path}
+	if filepath.IsAbs(guardLast.Tree) && isFile(filepath.Join(guardLast.Tree, "docs", "TASKS.md")) {
+		roots = append(roots, guardLast.Tree)
+		taskIDs = append(taskIDs, headTasks(guardLast, filepath.Base(guardLast.Tree))...)
 	}
-	for _, id := range taskIDs {
-		if !goalIDRe.MatchString(id) {
-			continue
+	if info, ok := findSession(s.transcriptRoots(), found.Path, sid); ok {
+		if info.Task != "" {
+			taskIDs = append(taskIDs, info.Task)
 		}
-		if err := draftmeta.GuardRecord(found.Path, id); err != nil {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
-			return
+		if filepath.IsAbs(info.Tree) && isFile(filepath.Join(info.Tree, "docs", "TASKS.md")) {
+			roots = append(roots, info.Tree)
+			taskIDs = append(taskIDs, headTasks(guardLast, filepath.Base(info.Tree))...)
 		}
 	}
+	for _, root := range roots {
+		for _, id := range taskIDs {
+			if !goalIDRe.MatchString(id) {
+				continue
+			}
+			if err := draftmeta.GuardRecord(root, id); err != nil {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+	}
+
 	var body struct {
 		Text string `json:"text"`
 		// MsgID это ключ записи в очереди исходящих панели: один и тот же у

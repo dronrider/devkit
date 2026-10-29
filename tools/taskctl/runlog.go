@@ -17,7 +17,7 @@ var logStart, logCmd string
 // реально гоняются и как часто падают. Журнал ведётся только там, где есть
 // .devkit (обвязку заводит devkitctl), провал записи работу не ломает.
 func logRun(code int) {
-	if logCmd == "" {
+	if logCmd == "" || cliSkipRunLog {
 		return
 	}
 	root, err := findRoot(logStart)

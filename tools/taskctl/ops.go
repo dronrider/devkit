@@ -232,6 +232,9 @@ func (c CommitOpts) apply(root string, paths []string) (string, error) {
 	if c.Msg == "" {
 		return "", nil
 	}
+	if cliQueuePublication(root, paths, c) {
+		return "", nil
+	}
 	git := func(args ...string) (string, error) {
 		out, err := gitRun(root, args...)
 		if err != nil {
@@ -1186,6 +1189,10 @@ func cmdClose(root string, p CloseParams) (string, error) {
 	msg += movesTail(moves)
 	// Обход ждущих идёт раньше разлива: разлив может катить поезд минутами, а
 	// строке, ждавшей закрытия, голова нужна сразу (DK-932).
+	if cliTx != nil {
+		cliAfterUnlock = append(cliAfterUnlock, func() string { return wakeNote(root, p.Commit) + shipDrainNote(root) + "\n" + nextAfterClose() })
+		return msg + tail, nil
+	}
 	return msg + tail + wakeNote(root, p.Commit) + shipDrainNote(root) + "\n" + nextAfterClose(), nil
 }
 

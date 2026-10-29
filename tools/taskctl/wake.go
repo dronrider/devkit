@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/drafttx"
 	"github.com/dronrider/devkit/internal/merged"
 	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskhead"
@@ -228,6 +229,15 @@ func wakeWords(class string) string {
 // секцию возврата, подъём и строка журнала. Второй возврат ложный, когда строка
 // осталась стоять там, где стояла.
 func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
+	lock, err := drafttx.Acquire(root)
+	if err != nil {
+		return fmt.Sprintf("%s: %v", w.ID, err), false
+	}
+	defer func() {
+		if lock != nil {
+			lock.Close()
+		}
+	}()
 	b, err := LoadBoard(boardPath(root))
 	if err != nil {
 		return fmt.Sprintf("%s: доска не прочиталась: %v", w.ID, err), false
@@ -258,15 +268,24 @@ func wakeRow(root string, w waiter, o wakeOpts) (string, bool) {
 		}
 		dropTaskAsks(root, w.ID)
 	}
-	if row.Sect != to {
-		var c CommitOpts
-		if o.commit {
-			c = CommitOpts{Msg: fmt.Sprintf("docs(tasks): %s %s", w.ID, wakeWords(w.Class)), Push: o.push}
-		}
-		if _, err := cmdMove(root, w.ID, to, "", c); err != nil {
+	moved := row.Sect != to
+	if moved {
+		if _, err := cmdMove(root, w.ID, to, "", CommitOpts{}); err != nil {
 			return fmt.Sprintf("%s: %s, а строка из %s не вышла: %v", w.ID, w.cause(), row.Sect, err), false
 		}
 	}
+	if err := lock.Close(); err != nil {
+		lock = nil
+		return fmt.Sprintf("%s: %v", w.ID, err), false
+	}
+	lock = nil
+	if moved && o.commit {
+		c := CommitOpts{Msg: fmt.Sprintf("docs(tasks): %s %s", w.ID, wakeWords(w.Class)), Push: o.push}
+		if _, err := c.apply(root, []string{filepath.Join("docs", "TASKS.md")}); err != nil {
+			return fmt.Sprintf("%s: применено, публикация не завершена: %v", w.ID, err), false
+		}
+	}
+
 	if goal {
 		logWake(root, w, 0)
 		return fmt.Sprintf("%s: %s, строка в %s; голову не поднимаю, это цель: её цикл переживает ожидание сам", w.ID, w.cause(), to), true
@@ -364,6 +383,15 @@ func namedWaiter(b *Board, id string) waiter {
 // сторожке, он читает вход разговора). Третий возврат это признак, что
 // какая-то строка осталась стоять.
 func cmdWake(root string, ids []string, o wakeOpts) (string, bool, error) {
+	lock, err := drafttx.Acquire(root)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() {
+		if lock != nil {
+			lock.Close()
+		}
+	}()
 	if o.push && !o.commit {
 		return "", false, fmt.Errorf("--push без коммита не имеет смысла")
 	}
@@ -399,6 +427,11 @@ func cmdWake(root string, ids []string, o wakeOpts) (string, bool, error) {
 			todo = append(todo, namedWaiter(b, id))
 		}
 	}
+	if err := lock.Close(); err != nil {
+		lock = nil
+		return "", false, err
+	}
+	lock = nil
 	failed, raised := false, 0
 	for _, w := range todo {
 		line, ok := wakeRow(root, w, o)

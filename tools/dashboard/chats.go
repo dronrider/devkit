@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/sessions"
 )
 
@@ -3146,6 +3147,23 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на id сессии", sid)})
 		return
 	}
+	records := s.bindsAll()[sid]
+	taskIDs := sessions.Works(records)
+	if last := sessions.LastTask(records); last != "" {
+		taskIDs = append(taskIDs, last)
+	}
+	if info, ok := findSession(s.transcriptRoots(), found.Path, sid); ok && info.Task != "" {
+		taskIDs = append(taskIDs, info.Task)
+	}
+	for _, id := range taskIDs {
+		if !goalIDRe.MatchString(id) {
+			continue
+		}
+		if err := draftmeta.GuardRecord(found.Path, id); err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 	var body struct {
 		Text string `json:"text"`
 		// MsgID это ключ записи в очереди исходящих панели: один и тот же у
@@ -4384,6 +4402,10 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	}
 	found, id, row, _, ok := s.taskRow(w, r)
 	if !ok {
+		return
+	}
+	if err := draftmeta.GuardRecord(found.Path, id); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
 	// Цель продолжается так же, как задача, только правило про живую сессию у

@@ -581,7 +581,21 @@ func main() {
 			needArgs(pos, 1, 1, "draft meta <ID> [--type <тип>] [--source <источник>] [--lock locked|unlocked]")
 			msg, err = cmdDraftMeta(root(*dir), pos[0], *kind, *source, *lock, c)
 		case "proposals":
-			if len(args) > 2 && args[2] == "reject" {
+			if len(args) > 2 && args[2] == "confirm" {
+				fs := flag.NewFlagSet("draft proposals confirm", flag.ExitOnError)
+				dir := fs.String("C", gdir, "стартовая директория")
+				var c CommitOpts
+				commitFlags(fs, &c)
+				needArgs(frame.ParseArgs(fs, args[3:]), 0, 0, "draft proposals confirm < JSON")
+				var data []byte
+				data, err = io.ReadAll(io.LimitReader(os.Stdin, 1024*1024+1))
+				if err == nil && len(data) > 1024*1024 {
+					err = fmt.Errorf("подтверждение слишком велико")
+				}
+				if err == nil {
+					msg, err = cmdDraftProposalsConfirm(root(*dir), data, c)
+				}
+			} else if len(args) > 2 && args[2] == "reject" {
 				fs := flag.NewFlagSet("draft proposals reject", flag.ExitOnError)
 				dir := fs.String("C", gdir, "стартовая директория")
 				base := fs.String("base", "", "снимок исходника")

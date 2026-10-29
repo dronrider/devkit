@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dronrider/devkit/internal/draftproposal"
@@ -217,5 +220,61 @@ func TestPartialConfirmationCannotRepeatInDifferentBatch(t *testing.T) {
 	l.Close()
 	if err == nil {
 		t.Fatal("accepted card ran in a different batch")
+	}
+}
+
+func TestCLIConfirmPublicationFailureAndRetry(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	kit, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", kit)
+	if _, err = cmdDraft(root, "исходник", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := cmdDraftProposals(root, "XR-008")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view proposalView
+	if err = json.Unmarshal([]byte(raw), &view); err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(struct {
+		Proposals []draftproposal.Proposal `json:"proposals"`
+	}{[]draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Text: "материал", Reason: "устарело"}}})
+	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal([]byte(raw), &view); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "accept"}}})
+	writeHook(t, root, "pre-commit", "#!/bin/sh\nexit 1\n")
+	run := func(args ...string) (string, error) {
+		t.Helper()
+		cmd := exec.Command("go", append([]string{"run", ".", "-C", root, "draft", "proposals", "confirm"}, args...)...)
+		cmd.Stdin = bytes.NewReader(req)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	out, err := run("-m", "docs(tasks): XR подтверждение")
+	if err == nil || !strings.Contains(out, "применено, публикация не завершена") {
+		t.Fatalf("publication: %v %s", err, out)
+	}
+	out, err = run()
+	if err != nil || !strings.Contains(out, `"repeated":true`) {
+		t.Fatalf("retry: %v %s", err, out)
+	}
+	data, err := os.ReadFile(draftPath(root, "XR-008"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := draftproposal.Parse(data)
+	if err != nil || state.State != "history" || len(state.Receipts) != 1 {
+		t.Fatalf("state %+v %v", state, err)
 	}
 }

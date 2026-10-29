@@ -101,9 +101,22 @@ for line in raw.splitlines():
             finals.append(obj["result"])
         if obj.get("type") == "agent_message" and isinstance(obj.get("text"), str):
             finals.append(obj["text"])
+def recorded_commands(path):
+    starts, success = [], set()
+    for line in path.read_text().splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        kind, ident, value = parts
+        if kind == "start":
+            starts.append((ident, value))
+        elif kind == "end" and value == "0":
+            success.add(ident)
+    return [command for ident, command in starts if ident in success]
+
 log = pathlib.Path('.obey-taskctl.log')
 if log.is_file():
-    commands.extend(log.read_text().splitlines())
+    commands.extend(recorded_commands(log))
 need(finals and finals[-1].strip(), "нет итоговой реплики агента")
 final = finals[-1]
 record = "OB-043"

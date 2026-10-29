@@ -72,7 +72,7 @@ func cmdDraftProposalsSave(root, id, base string, input []byte) (string, error) 
 	}
 	var incoming struct {
 		Proposals []draftproposal.Proposal `json:"proposals"`
-		Analysis  string                   `json:"analysis"`
+		Analysis  *string                  `json:"analysis"`
 	}
 	dec := json.NewDecoder(strings.NewReader(string(input)))
 	dec.DisallowUnknownFields()
@@ -115,7 +115,9 @@ func cmdDraftProposalsSave(root, id, base string, input []byte) (string, error) 
 			old.Proposals = append(old.Proposals, p)
 		}
 	}
-	old.Analysis = incoming.Analysis
+	if incoming.Analysis != nil {
+		old.Analysis = *incoming.Analysis
+	}
 	out, err := draftproposal.Replace(data, old)
 	if err != nil {
 		return "", err

@@ -299,6 +299,10 @@ type jsonDraft struct {
 func cmdDraftListJSON(root string) (string, error) { return cmdDraftListJSONHistory(root, false) }
 
 func cmdDraftListJSONHistory(root string, history bool) (string, error) {
+	return cmdDraftListJSONSafe(root, history, false)
+}
+
+func cmdDraftListJSONSafe(root string, history, safe bool) (string, error) {
 	drafts, err := loadDraftsWithHistory(root, history)
 	if err != nil {
 		return "", err
@@ -314,6 +318,9 @@ func cmdDraftListJSONHistory(root string, history bool) (string, error) {
 			ID: d.ID, Title: d.Title, File: filepath.ToSlash(draftRel(d.ID)),
 			AgeDays: int(d.Age.Hours() / 24), AgeWords: ageWords(d.Age), Deferred: d.Deferred,
 			DeferredUntil: d.Until, Prio: d.Prio, Type: d.Type, Source: d.Source, Lock: d.Lock,
+		}
+		if safe && d.Lock == "locked" {
+			item.Title = "ждёт локальную модель"
 		}
 		if !d.Written.IsZero() {
 			item.Written = d.Written.Format(draftDateLayout)

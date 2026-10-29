@@ -612,3 +612,27 @@ func TestDraftHistoryReservesID(t *testing.T) {
 		t.Fatalf("reused history: %v", err)
 	}
 }
+
+func TestDraftListSafeHidesProtectedTitle(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "закрытый заголовок и тело", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDraftMeta(root, "XR-008", "", "", "locked", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, flags := range [][]string{{"--safe"}, {"--safe", "--json"}} {
+		args := append([]string{"-C", root, "draft", "list"}, flags...)
+		out, err := runCLI(t, args...)
+		if err != nil {
+			t.Fatalf("list: %v %s", err, out)
+		}
+		if strings.Contains(out, "закрытый") || strings.Contains(out, "тело") || !strings.Contains(out, "ждёт локальную модель") {
+			t.Fatalf("unsafe: %s", out)
+		}
+	}
+	out, err := runCLI(t, "-C", root, "draft", "list", "--json")
+	if err != nil || !strings.Contains(out, "закрытый") {
+		t.Fatalf("local list: %v %s", err, out)
+	}
+}

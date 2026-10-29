@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 func TestGuardDraft(t *testing.T) {
@@ -60,5 +63,43 @@ func TestRecordProtectionRejectsMalformedAndDuplicates(t *testing.T) {
 		if _, err := RecordProtected([]byte(text)); err == nil {
 			t.Fatalf("invalid protection accepted: %s", text)
 		}
+	}
+}
+
+func TestGuardReadsAfterPendingTransaction(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "docs", "tasks", "drafts", "XR-1.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# запись\nзамок: unlocked\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := drafttx.Acquire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- GuardRecord(root, "XR-1") }()
+	select {
+	case err := <-done:
+		lock.Close()
+		t.Fatalf("guard read before transaction: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err = os.WriteFile(path, []byte("# запись\nзамок: locked\n"), 0600); err != nil {
+		lock.Close()
+		t.Fatal(err)
+	}
+	if err = lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "ждёт локальную модель") {
+			t.Fatalf("guard %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("guard stayed blocked")
 	}
 }

@@ -181,6 +181,9 @@ func Raise(q Request) (Result, error) {
 	// Замок, переданный оболочке, команде уже не принадлежит, и Release его не
 	// тронет. Снимается он тут только на ступенях без подъёма.
 	defer Release(lock, me)
+	if err := draftmeta.GuardRecord(q.Root, q.ID); err != nil {
+		return res, err
+	}
 
 	tmux, _ := exec.LookPath("tmux")
 	if tmux == "" {

@@ -47,6 +47,16 @@ func serviceDir(root string) string {
 
 // Acquire takes the common exclusive lock and recovers a pending transaction.
 func Acquire(root string) (*Lock, error) {
+	if root == "" {
+		return nil, fmt.Errorf("пустой корень проекта")
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%s не каталог", root)
+	}
 	dir := serviceDir(root)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err

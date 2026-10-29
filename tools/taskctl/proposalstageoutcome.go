@@ -72,7 +72,7 @@ func (s *stagingBoard) stageOutcome(sourceID string, h draftmeta.Header, p draft
 		var msg string
 		switch p.Outcome {
 		case "attach":
-			msg, err = cmdDraftAttach(s.root, id, p.Target, CommitOpts{})
+			msg, err = cmdDraftAttachStage(s.root, id, p.Target, CommitOpts{}, true)
 			result.ID = p.Target
 		case "defer":
 			msg, err = cmdDraftDefer(s.root, id, p.Reason, p.Until, false, CommitOpts{})

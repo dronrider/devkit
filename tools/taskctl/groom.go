@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/draftmeta"
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 // Исходов у разобранного черновика четыре (docs/lld/DK-129-groom-process.md,
@@ -411,6 +412,10 @@ func draftSection(id, text string) string {
 // бывает своя репродукция, которой в задаче нет), а ссылка «уехал в <TASK-ID>»
 // живёт сообщением коммита.
 func cmdDraftAttach(root, id, taskID string, c CommitOpts) (string, error) {
+	return cmdDraftAttachStage(root, id, taskID, c, false)
+}
+
+func cmdDraftAttachStage(root, id, taskID string, c CommitOpts, planned bool) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
 	}
@@ -430,6 +435,13 @@ func cmdDraftAttach(root, id, taskID string, c CommitOpts) (string, error) {
 		return "", err
 	}
 	if d.Lock == "locked" {
+		if !planned {
+			cloud, err := draftmeta.CloudExclusive(stage.Home(), taskID)
+			if err != nil {
+				return "", err
+			}
+			defer cloud.Close()
+		}
 		if err := lockedAttachGuard(taskID); err != nil {
 			return "", err
 		}

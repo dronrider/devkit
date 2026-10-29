@@ -12,6 +12,7 @@ import (
 	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/draftproposal"
 	"github.com/dronrider/devkit/internal/drafttx"
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 type confirmationPlan struct {
@@ -265,8 +266,15 @@ func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (strin
 		return "", err
 	}
 	plan, err := prepareConfirmation(root, request)
+	var cloudLocks []*draftmeta.CloudLock
+	if err == nil && !plan.Repeated {
+		cloudLocks, err = confirmationCloudLocks(root, request)
+	}
 	if err == nil && !plan.Repeated {
 		err = lock.Apply(root, plan.Changes)
+	}
+	for i := len(cloudLocks) - 1; i >= 0; i-- {
+		cloudLocks[i].Close()
 	}
 	closeErr := lock.Close()
 	if err != nil {
@@ -286,4 +294,56 @@ func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (strin
 		}
 	}
 	return marshal(result)
+}
+
+func confirmationCloudLocks(root string, request draftproposal.ConfirmRequest) ([]*draftmeta.CloudLock, error) {
+	targets := map[string]bool{}
+	for _, decision := range request.Decisions {
+		if decision.Action != "accept" {
+			continue
+		}
+		data, err := os.ReadFile(draftPath(root, decision.Source))
+		if err != nil {
+			return nil, err
+		}
+		header, err := draftmeta.Parse(data)
+		if err != nil {
+			return nil, err
+		}
+		if header.Lock != "locked" {
+			continue
+		}
+		state, err := draftproposal.Parse(data)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range state.Proposals {
+			if p.ID == decision.Proposal && p.Outcome == "attach" {
+				targets[p.Target] = true
+			}
+		}
+	}
+	names := make([]string, 0, len(targets))
+	for name := range targets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var locks []*draftmeta.CloudLock
+	for _, name := range names {
+		l, err := draftmeta.CloudExclusive(stage.Home(), name)
+		if err == nil {
+			err = lockedAttachGuard(name)
+		}
+		if err != nil {
+			if l != nil {
+				l.Close()
+			}
+			for _, held := range locks {
+				held.Close()
+			}
+			return nil, err
+		}
+		locks = append(locks, l)
+	}
+	return locks, nil
 }

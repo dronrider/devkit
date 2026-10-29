@@ -20446,7 +20446,6 @@ function proposalPickWire(feed, ta, pick, shown) {
   body.append(all);
   for (const source of draft.shown.sources) {
     body.append(el('h3', '', 'Запись ' + source.source));
-    body.append(el('p', '', 'Показанный снимок: ' + source.basis));
     const oneAll = el('button', 'btn', 'Принять все предложения ' + source.source); oneAll.type = 'button';
     oneAll.addEventListener('click', () => {
       draft.decisions = draft.decisions.filter((d) => d.source !== source.source).concat(proposalSelect(draft.shown, source.source, 'accept'));
@@ -20455,9 +20454,10 @@ function proposalPickWire(feed, ta, pick, shown) {
     body.append(oneAll);
     for (const card of source.proposals) {
       const section = el('section', 'draft-proposal');
-      section.append(el('h3', '', card.id + ', редакция ' + card.revision + ', ' + card.outcome));
+      const outcomes = { add: 'Новая строка', attach: 'Приписка', defer: 'Отложить', drop: 'Удалить' };
+      section.append(el('h3', '', card.id + ', редакция ' + card.revision + ', ' + (outcomes[card.outcome] || 'Предложение')));
       for (const [key, label] of Object.entries({ title:'Название', text:'Текст результата', rationale:'Довод', board_type:'Тип строки', rank:'Ранг', size:'Цена', accept:'Приёмка', barrier:'Барьер', assignee:'Ответственный', due:'Срок', control:'Контроль', target:'Куда приписать', reason:'Причина', until:'Вернуться до', after:'После' })) {
-        if (card[key] && (!Array.isArray(card[key]) || card[key].length)) section.append(el('p', '', label + ': ' + (Array.isArray(card[key]) ? card[key].join(', ') : card[key])));
+        if (card[key] && (!Array.isArray(card[key]) || card[key].length)) section.append(el('p', 'proposal-material', label + ': ' + (Array.isArray(card[key]) ? card[key].join(', ') : card[key])));
       }
       let current = draft.decisions.find((d) => d.source === source.source && d.proposal === card.id);
       const choose = el('select'); choose.setAttribute('aria-label', 'Решение ' + source.source + ' ' + card.id);

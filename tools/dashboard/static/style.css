@@ -2805,3 +2805,5 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 .wsfoot{display:flex;align-items:baseline;gap:6px;min-width:0}
 .wsq{flex:1 1 auto;min-width:0;font:400 12px/1.4 var(--sans);color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wsmore,.wsnote{flex:none;font:400 10.5px var(--sans);color:var(--tx3)}
+
+.proposal-material{white-space:pre-wrap;overflow-wrap:anywhere}

@@ -20,6 +20,11 @@ import (
 )
 
 func TestProposalWorktreeBrowserRealProcesses(t *testing.T) {
+	t.Run("linked_refusal", func(t *testing.T) { proposalWorktreeBrowser(t, true) })
+	t.Run("primary_retry", func(t *testing.T) { proposalWorktreeBrowser(t, false) })
+}
+
+func proposalWorktreeBrowser(t *testing.T, linked bool) {
 	chrome := findChrome()
 	if chrome == "" {
 		if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" || os.Getenv("TASKCTL_ACCEPT_BIN") != "" {
@@ -58,8 +63,12 @@ func TestProposalWorktreeBrowserRealProcesses(t *testing.T) {
 	tree := filepath.Join(filepath.Dir(st.e.proj), "demo-branch")
 	git("worktree", "add", "-b", "stand", tree)
 	before := readFile(t, st.path)
+	root := st.e.proj
+	if linked {
+		root = tree
+	}
 	cli := func(input string, args ...string) (string, error) {
-		cmd := exec.Command(st.bin, append([]string{"-C", tree}, args...)...)
+		cmd := exec.Command(st.bin, append([]string{"-C", root}, args...)...)
 		cmd.Env = append(os.Environ(), "CLAUDE_CODE_SESSION_ID="+scenarioPanelSID, "DEVKIT_TMUX=task-test")
 		cmd.Stdin = strings.NewReader(input)
 		out, err := cmd.CombinedOutput()
@@ -75,7 +84,9 @@ func TestProposalWorktreeBrowserRealProcesses(t *testing.T) {
 	if err = json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
-	raw, err = cli(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"веточный результат","reason":"устарело"}]}`, "draft", "proposals", "save", "XR-4", "--base", view.Snapshot)
+	material := "## Что происходит\n\nветочный результат\n\n## Чего хотим\n\nПроверка выполняется до записи.\n\n## DoD\n\n- Неполная запись отклоняется.\n\n## Ранг\n\n`0+1+1+0+1 = 3`, P3.\n\n- Серьёзность 0: работа продолжается.\n- Ценность 1: касается одного сценария.\n- Неопределённость 1: место правки известно.\n- Поправка на баг 0: новая работа.\n- Рычаг 1: убирает повторный разбор.\n"
+	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Результат", Text: material, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
+	raw, err = cli(string(payload), "draft", "proposals", "save", "XR-4", "--base", view.Snapshot)
 	if err != nil {
 		t.Fatal(raw, err)
 	}
@@ -161,7 +172,7 @@ func TestProposalWorktreeBrowserRealProcesses(t *testing.T) {
 				return
 			}
 		case "state":
-			source := filepath.Join(tree, "docs", "tasks", "drafts", "XR-4.md")
+			source := filepath.Join(root, "docs", "tasks", "drafts", "XR-4.md")
 			body, err := os.ReadFile(source)
 			if err != nil {
 				http.Error(w, err.Error(), 500)
@@ -176,8 +187,13 @@ func TestProposalWorktreeBrowserRealProcesses(t *testing.T) {
 			lines := chat.ReadLines(carrier)
 			old := len(lines) > 0 && strings.Contains(lines[len(lines)-1], "Решение по предложениям")
 			otherLines := chat.ReadLines(chat.Path(other, chat.TaskName("XR-4")))
+			rows := 0
+			if receipt := state.Proposals[0].Result; receipt != nil && len(receipt.IDs) == 1 {
+				board, _ := os.ReadFile(filepath.Join(root, "docs", "TASKS.md"))
+				rows = strings.Count(string(board), "| "+receipt.IDs[0]+" |")
+			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{"status": state.Proposals[0].Status, "mainUnchanged": string(main) == before, "oldCarrier": old, "otherCarrier": len(otherLines) > 0})
+			json.NewEncoder(w).Encode(map[string]any{"status": state.Proposals[0].Status, "mainUnchanged": string(main) == before, "oldCarrier": old, "otherCarrier": len(otherLines) > 0, "rows": rows})
 		default:
 			http.Error(w, "mode", 400)
 		}
@@ -191,7 +207,11 @@ func TestProposalWorktreeBrowserRealProcesses(t *testing.T) {
 	})
 	px := httptest.NewServer(mux)
 	defer px.Close()
-	probe := exec.Command(node, "testdata/proposal_worktree_browser.mjs", px.URL, chrome, "test-token", scenarioPanelSID)
+	mode := "primary"
+	if linked {
+		mode = "linked"
+	}
+	probe := exec.Command(node, "testdata/proposal_worktree_browser.mjs", px.URL, chrome, "test-token", scenarioPanelSID, mode)
 	probe.Env = os.Environ()
 	if out, err := probe.CombinedOutput(); err != nil {
 		t.Fatalf("browser: %v\n%s\nserver: %s", err, out, readFile(t, log.Name()))

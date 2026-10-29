@@ -6,6 +6,8 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/draftmeta"
 )
 
 // Второй круг чужого ревью (LLD DK-756, решение 5, задача DK-759). Тик
@@ -31,6 +33,9 @@ func roundOrder(id string) string {
 func (s *server) reviewRound(proj *Project, id string, rows map[string]boardRow) checkRunReport {
 	if _, ok := rows[id]; !ok {
 		return checkRunReport{Line: id + ": строки нет на доске проекта " + proj.Name, Failed: true}
+	}
+	if err := draftmeta.GuardRecord(proj.Path, id); err != nil {
+		return checkRunReport{Line: id + ": второй круг не начат, " + err.Error(), Failed: true}
 	}
 	if m := tmuxMissingCheck(); m != "" {
 		return checkRunReport{Line: id + ": второй круг не начат, " + m, Failed: true}

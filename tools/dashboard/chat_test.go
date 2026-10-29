@@ -38,6 +38,7 @@ const chatBoardJSON = `{"prefix":"XR","sections":[` +
 func chatEnv(t *testing.T) (*testEnv, *http.Client) {
 	t.Helper()
 	e := newTestEnv(t)
+	putDoc(t, e.proj, "docs/tasks/XR-4.md", "# XR-4: тест\n")
 	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", chatBoardJSON))
 	// Клиент подписки по умолчанию ложится в PATH: подъём чата смотрит bin
 	// харнеса раскладки, а не голое имя (DK-1271), и без болванки стенд

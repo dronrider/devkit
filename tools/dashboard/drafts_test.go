@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 // Раздел «Черновики»: список накопителя, текст записи, груминг с его исходом и
@@ -1549,5 +1550,91 @@ func TestLockedDraftBlocksChatContinuation(t *testing.T) {
 	}
 	if got := frames(); len(got) != 0 {
 		t.Fatalf("continuation sent: %v", got)
+	}
+}
+
+func TestDraftPutWaitsForTransactionAndRechecksBase(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"title":"исходная запись","prio":"mid"}`).Body.Close()
+	base := draftBase(t, c, e, "XR-005")
+	lock, err := drafttx.Acquire(e.proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan *http.Response, 1)
+	go func() {
+		req, _ := http.NewRequest("PUT", e.srv.URL+"/api/projects/demo/drafts/XR-005", strings.NewReader(`{"text":"чужая правка","base":`+strconv.Quote(base)+`}`))
+		resp, err := c.Do(req)
+		if err != nil {
+			result <- nil
+			return
+		}
+		result <- resp
+	}()
+	select {
+	case resp := <-result:
+		lock.Close()
+		if resp != nil {
+			resp.Body.Close()
+		}
+		t.Fatal("writer passed held lock")
+	case <-time.After(100 * time.Millisecond):
+	}
+	path := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")
+	if err = os.WriteFile(path, []byte("# XR-005: новая редакция\n"), 0644); err != nil {
+		lock.Close()
+		t.Fatal(err)
+	}
+	if err = lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case resp := <-result:
+		if resp == nil {
+			t.Fatal("request failed")
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("status %d", resp.StatusCode)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("writer stayed blocked")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), "новая редакция") {
+		t.Fatalf("foreign edit lost: %s %v", data, err)
+	}
+}
+
+func TestDraftMetadataThroughTaskctl(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	kit, err := filepath.Abs("../../kit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", filepath.Dir(kit))
+	resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/types", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(text, "milestone") {
+		t.Fatalf("types %d %s", resp.StatusCode, text)
+	}
+	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"text":"идея без обязательных полей","type":"milestone","source":"meeting","lock":"locked"}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create %d %s", resp.StatusCode, text)
+	}
+	resp = doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(text, `"source":"meeting"`) || !strings.Contains(text, `"lock":"locked"`) {
+		t.Fatalf("read %d %s", resp.StatusCode, text)
+	}
+	resp = doReq(t, c, "PUT", e.srv.URL+"/api/projects/demo/drafts/XR-005/meta", `{"type":"task","source":"mail","lock":"unlocked"}`)
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("edit %d %s", resp.StatusCode, text)
+	}
+	data := readFile(t, filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md"))
+	if !strings.Contains(data, "источник: mail") || !strings.Contains(data, "замок: unlocked") {
+		t.Fatalf("metadata: %s", data)
 	}
 }

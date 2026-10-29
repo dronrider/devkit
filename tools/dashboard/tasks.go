@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dronrider/devkit/internal/draftmeta"
+	"github.com/dronrider/devkit/internal/drafttx"
 	"github.com/dronrider/devkit/internal/taskform"
 )
 
@@ -1319,6 +1321,16 @@ func (s *server) handleTaskFilePut(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
 		return
 	}
+	lock, err := drafttx.Acquire(found.Path)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	defer func() {
+		if lock != nil {
+			lock.Close()
+		}
+	}()
 	rel := taskFileRel(id)
 	path := filepath.Join(found.Path, filepath.FromSlash(rel))
 	if !isFile(path) {
@@ -1331,11 +1343,35 @@ func (s *server) handleTaskFilePut(w http.ResponseWriter, r *http.Request) {
 			"error": "пустой текст затёр бы постановку: жду JSON {\"text\": \"...\"}"})
 		return
 	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	protected, err := draftmeta.RecordProtected(old)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
 	text := strings.TrimRight(body.Text, "\n") + "\n"
+	if protected {
+		updated, err := draftmeta.ProtectRecord([]byte(text))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		text = string(updated)
+	}
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("файл задачи не записался: %v", err)})
 		return
 	}
+	if err := lock.Close(); err != nil {
+		lock = nil
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	lock = nil
 	resp := map[string]string{"id": id, "file": rel,
 		"message": fmt.Sprintf("текст %s записан", rel)}
 	if note := commitDocs(found.Path, boardCommitMsg(id, "правка файла задачи с дашборда"), rel); note != "" {

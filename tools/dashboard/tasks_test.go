@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/dronrider/devkit/internal/draftmeta"
 	"net/http"
 	"os"
 	"os/exec"
@@ -2105,4 +2106,34 @@ func TestStaticTaskClosedScreen(t *testing.T) {
 func wallClock(t *testing.T) {
 	t.Helper()
 	t.Log(loadfail.Mark)
+}
+
+func TestTaskFileEditKeepsMaterialProtection(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	runTaskctl(t, e.proj, "file", "XR-002")
+	path := filepath.Join(e.proj, "docs", "tasks", "XR-002.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected, err := draftmeta.ProtectRecord(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, protected, 0644); err != nil {
+		t.Fatal(err)
+	}
+	resp := doReq(t, c, "PUT", taskURL(e, "XR-002", "/file"), `{"text":"# XR-002: новое описание\n\n## Что происходит\n\nТекст"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("edit %d %s", resp.StatusCode, text)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := draftmeta.RecordProtected(after)
+	if err != nil || !ok {
+		t.Fatalf("protection lost: %s %v", after, err)
+	}
 }

@@ -586,7 +586,36 @@ func main() {
 			needArgs(pos, 1, 1, "draft meta <ID> [--type <тип>] [--source <источник>] [--lock locked|unlocked]")
 			msg, err = cmdDraftMeta(root(*dir), pos[0], *kind, *source, *lock, c)
 		case "proposals":
-			if len(args) > 2 && args[2] == "confirm" {
+			if len(args) > 2 && args[2] == "ask" {
+				fs := flag.NewFlagSet("draft proposals ask", flag.ExitOnError)
+				dir := fs.String("C", gdir, "стартовая директория")
+				var also []string
+				fs.Var((*strList)(&also), "also", "ещё один показанный источник")
+				pos := frame.ParseArgs(fs, args[3:])
+				needArgs(pos, 1, 1, "draft proposals ask <ID> [--also <ID> ...]")
+				tree := root(*dir)
+				msg, err = cmdProposalChatAsk(tree, pos[0], also, liveDeps(tree), os.Getenv)
+			} else if len(args) > 2 && args[2] == "answer" {
+				fs := flag.NewFlagSet("draft proposals answer", flag.ExitOnError)
+				dir := fs.String("C", gdir, "стартовая директория")
+				replay := fs.Bool("repeat-only", false, "только восстановить сохранённые результаты")
+				var c CommitOpts
+				commitFlags(fs, &c)
+				pos := frame.ParseArgs(fs, args[3:])
+				needArgs(pos, 1, 1, "draft proposals answer <ID> [--repeat-only] < JSON")
+				var data []byte
+				data, err = io.ReadAll(io.LimitReader(os.Stdin, 1024*1024+1))
+				if err == nil && len(data) > 1024*1024 {
+					err = fmt.Errorf("ответ слишком велик")
+				}
+				if err == nil {
+					if *replay {
+						msg, err = cmdProposalChatReplay(root(*dir), pos[0], data)
+					} else {
+						msg, err = cmdProposalChatAnswer(root(*dir), pos[0], data, c)
+					}
+				}
+			} else if len(args) > 2 && args[2] == "confirm" {
 				fs := flag.NewFlagSet("draft proposals confirm", flag.ExitOnError)
 				dir := fs.String("C", gdir, "стартовая директория")
 				var c CommitOpts

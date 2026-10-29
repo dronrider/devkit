@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/draftmeta"
-	"github.com/dronrider/devkit/internal/stage"
 )
 
 // Исходов у разобранного черновика четыре (docs/lld/DK-129-groom-process.md,
@@ -436,7 +435,13 @@ func cmdDraftAttachStage(root, id, taskID string, c CommitOpts, planned bool) (s
 	}
 	if d.Lock == "locked" {
 		if !planned {
-			cloud, err := draftmeta.CloudExclusive(stage.Home(), taskID)
+			var cloud *draftmeta.CloudLock
+			var err error
+			if cliTx != nil {
+				cloud, err = draftmeta.CloudExclusiveIn(cliTx.ServiceDir(), taskID)
+			} else {
+				cloud, err = draftmeta.CloudExclusive(root, taskID)
+			}
 			if err != nil {
 				return "", err
 			}

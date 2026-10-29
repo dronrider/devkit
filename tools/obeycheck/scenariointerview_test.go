@@ -436,10 +436,15 @@ func TestGroomPrivateDuplicateScenarioChecks(t *testing.T) {
 	}{
 		{"работает", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, true},
 		{"нет сессии", "empty", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, false},
-		{"закрытый активный заголовок", "session", "PRIVATE_ACTIVE_TITLE_70", "safe", `[{"id":"p1","revision":1}]`, false},
-		{"закрытое архивное тело", "session", "PRIVATE_ARCHIVE_BODY_71", "safe", `[{"id":"p1","revision":1}]`, false},
+		{"закрытый активный заголовок", "session", "active-title", "safe", `[{"id":"p1","revision":1}]`, false},
+		{"закрытое архивное тело", "session", "archive-body", "safe", `[{"id":"p1","revision":1}]`, false},
 		{"нет безопасного списка", "session", "обычный вывод", "missing", `[{"id":"p1","revision":1}]`, false},
+		{"нет интервью", "session", "обычный вывод", "nointerview", `[{"id":"p1","revision":1}]`, false},
+		{"нет сценариев", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, false},
+		{"save параллельно интервью", "session", "обычный вывод", "parallel-save", `[{"id":"p1","revision":1}]`, false},
+		{"ask параллельно save", "session", "обычный вывод", "parallel-ask", `[{"id":"p1","revision":1}]`, false},
 		{"нет публичного результата", "session", "обычный вывод", "safe", `[]`, false},
+		{"совпадение маркеров", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, false},
 		{"нет вопроса", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, false},
 		{"устаревший basis", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, false},
 		{"другая редакция", "session", "обычный вывод", "safe", `[{"id":"p1","revision":1}]`, false},
@@ -448,15 +453,49 @@ func TestGroomPrivateDuplicateScenarioChecks(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			project, home, binDir := t.TempDir(), t.TempDir(), t.TempDir()
+			markers := []string{"fixture-" + strings.Repeat("a", 24), "fixture-" + strings.Repeat("b", 24), "fixture-" + strings.Repeat("c", 24), "fixture-" + strings.Repeat("d", 24)}
+			if tc.name == "совпадение маркеров" {
+				markers[1] = markers[0]
+			}
+			data, err := json.Marshal(markers)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, ".obey-private-markers.json"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			files := map[string]string{"docs/TASKS.md": markers[0], "docs/TASKS-archive.md": markers[2], "docs/tasks/OB-070.md": markers[0] + "\n" + markers[1], "docs/tasks/archive/2026/OB-071.md": markers[2] + "\n" + markers[3]}
+			for name, content := range files {
+				path := filepath.Join(project, name)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if err := os.MkdirAll(filepath.Join(project, "docs", "tasks", "drafts"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(project, "docs", "tasks", "drafts", "OB-069.md"), []byte("публичная запись\n"), 0o644); err != nil {
+			source := "публичная запись\nвыбор: сценарии/1\n"
+			if tc.name == "нет сценариев" {
+				source = "публичная запись\n"
+			}
+			if err := os.WriteFile(filepath.Join(project, "docs", "tasks", "drafts", "OB-069.md"), []byte(source), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			log := "start\t1\ttaskctl guard OB-069\nend\t1\t0\nstart\t2\ttaskctl list --safe\nend\t2\t0\nstart\t3\ttaskctl draft list --safe\nend\t3\t0\nstart\t4\ttaskctl draft proposals save OB-069 --base abc\nend\t4\t0\nstart\t5\ttaskctl draft proposals ask OB-069\nend\t5\t0\n"
+			log := "start\t1\ttaskctl guard OB-069\nend\t1\t0\nstart\t2\ttaskctl list --safe\nend\t2\t0\nstart\t3\ttaskctl draft list --safe\nend\t3\t0\nstart\t9\ttaskctl decide OB-069 --scenarios\nend\t9\t0\nstart\t4\ttaskctl draft proposals save OB-069 --base abc\nend\t4\t0\nstart\t5\ttaskctl draft proposals ask OB-069\nend\t5\t0\n"
 			if tc.log == "missing" {
 				log = "start\t1\ttaskctl guard OB-069\nend\t1\t0\n"
+			}
+			if tc.log == "nointerview" {
+				log = strings.Replace(log, "start\t9\ttaskctl decide OB-069 --scenarios\nend\t9\t0\n", "", 1)
+			}
+			if tc.log == "parallel-save" {
+				log = strings.Replace(log, "end\t9\t0\nstart\t4\ttaskctl draft proposals save OB-069 --base abc\n", "start\t4\ttaskctl draft proposals save OB-069 --base abc\nend\t9\t0\n", 1)
+			}
+			if tc.log == "parallel-ask" {
+				log = strings.Replace(log, "end\t4\t0\nstart\t5\ttaskctl draft proposals ask OB-069\n", "start\t5\ttaskctl draft proposals ask OB-069\nend\t4\t0\n", 1)
 			}
 			if tc.log == "noask" {
 				log = strings.Replace(log, "start\t5\ttaskctl draft proposals ask OB-069\nend\t5\t0\n", "", 1)
@@ -482,7 +521,14 @@ func TestGroomPrivateDuplicateScenarioChecks(t *testing.T) {
 			if err := os.MkdirAll(sessions, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			entry, _ := json.Marshal(map[string]any{"payload": map[string]any{"type": "custom_tool_call_output", "output": tc.output}})
+			output := tc.output
+			if output == "active-title" {
+				output = markers[0]
+			}
+			if output == "archive-body" {
+				output = markers[3]
+			}
+			entry, _ := json.Marshal(map[string]any{"payload": map[string]any{"type": "custom_tool_call_output", "output": output}})
 			if err := os.WriteFile(filepath.Join(sessions, "rollout-test.jsonl"), append(entry, '\n'), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -523,14 +569,25 @@ func TestGroomPrivateDuplicateFixture(t *testing.T) {
 	}
 	setup := exec.Command("sh", "-eu", "-c", list[0].Setup)
 	setup.Dir = project
+	home := t.TempDir()
+	setup.Env = append(os.Environ(), "OBEY_HOME="+home)
 	if out, err := setup.CombinedOutput(); err != nil {
 		t.Fatalf("подготовка: %v\n%s", err, out)
+	}
+	var markers []string
+	data, err := os.ReadFile(filepath.Join(home, ".obey-private-markers.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &markers); err != nil || len(markers) != 4 {
+		t.Fatalf("маркеры: %v, %v", markers, err)
 	}
 	for name, needles := range map[string][]string{
 		"README.md":                         {"python3 server.py", "old-help"},
 		"server.py":                         {"HTTPServer", "serve_forever"},
-		"docs/tasks/OB-070.md":              {"защита: locked", "PRIVATE_ACTIVE_BODY_70"},
-		"docs/tasks/archive/2026/OB-071.md": {"защита: locked", "PRIVATE_ARCHIVE_BODY_71"},
+		"docs/tasks/OB-070.md":              {"защита: locked", markers[0], markers[1]},
+		"docs/tasks/archive/2026/OB-071.md": {"защита: locked", markers[2], markers[3]},
+		"docs/TASKS.md":                     {markers[0]}, "docs/TASKS-archive.md": {markers[2]},
 	} {
 		data, err := os.ReadFile(filepath.Join(project, name))
 		if err != nil {

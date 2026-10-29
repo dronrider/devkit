@@ -93,7 +93,11 @@ func readSectionFromPath(path, heading string) (text string, found, ok bool) {
 	if err != nil {
 		return "", false, false
 	}
-	lines := strings.Split(taskform.VisibleText(string(data)), "\n")
+	return readSectionFromText(string(data), heading)
+}
+
+func readSectionFromText(data, heading string) (text string, found, ok bool) {
+	lines := strings.Split(taskform.VisibleText(data), "\n")
 	// Ограждение, не закрытое до конца файла, ограждением не считается:
 	// иначе раздел с забытым ``` тянется за все заголовки до последней строки
 	// (DK-820, обкатка гоняла прозу шагами).

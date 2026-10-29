@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dronrider/devkit/internal/drafttx"
 	"github.com/dronrider/devkit/internal/freshtree"
 	"github.com/dronrider/devkit/internal/taskform"
 )
@@ -118,9 +120,17 @@ const stepLimit = 10 * time.Minute
 // пересказу.
 func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 	path := taskFilePath(root, id)
+	lock, err := drafttx.Acquire(root)
+	if err != nil {
+		return "", err
+	}
 	data, err := os.ReadFile(path)
+	closeErr := lock.Close()
 	if err != nil {
 		return "", fmt.Errorf("%s: файла задачи нет (%s): завести «taskctl file %s» и описать сценарий", id, path, id)
+	}
+	if closeErr != nil {
+		return "", closeErr
 	}
 	doc := string(data)
 	// Незакрытое ограждение сценария валит обкатку до свежего дерева: раздел
@@ -133,7 +143,7 @@ func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 	}
 	steps := p.Steps
 	if len(steps) == 0 {
-		text, found, _ := readSectionFromPath(path, scenarioSection)
+		text, found, _ := readSectionFromText(doc, scenarioSection)
 		if !found {
 			return "", fmt.Errorf("%s: в docs/tasks/%s.md нет раздела «Сценарий проверки», обкатывать нечего: описать шаги (%s) и повторить", id, id, taskform.Doc)
 		}
@@ -177,6 +187,18 @@ func cmdRehearse(root, id string, p RehearseParams) (string, error) {
 	// блоки шагов и отметки, и какая из них относится к нынешнему коммиту,
 	// глазами уже не видно.
 	body := taskform.InsertIntoSection(dropRehearsal(doc), taskform.Verification, block...)
+	lock, err = drafttx.Acquire(root)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if !bytes.Equal(current, data) {
+		return "", fmt.Errorf("%s: файл изменился во время обкатки; повторите её", id)
+	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return "", fmt.Errorf("%s: вывод обкатки не записан в %s: %v", id, path, err)
 	}

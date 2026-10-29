@@ -566,7 +566,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, оформлять нечего", id, found.Name, rel)})
 		return
 	}
-	if err := draftmeta.GuardDraft(found.Path, id); err != nil {
+	if err := draftmeta.GuardRecord(found.Path, id); err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
@@ -852,6 +852,113 @@ func (s *server) handleDraftTypes(w http.ResponseWriter, r *http.Request) {
 	if err = json.Unmarshal([]byte(out), &result); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "типы черновиков не прочитались"})
 		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *server) handleDraftProposals(w http.ResponseWriter, r *http.Request) {
+	found := s.findProject(w, r, "предложения черновика")
+	if found == nil {
+		return
+	}
+	id := r.PathValue("id")
+	if !goalIDRe.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный ID записи"})
+		return
+	}
+	out, code, err := taskctlDo(found.Path, "draft", "proposals", id)
+	if err != nil {
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	var result json.RawMessage
+	if err = json.Unmarshal([]byte(out), &result); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "предложения не прочитались"})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+func (s *server) handleDraftProposalSave(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "правка предложения")
+	if found == nil {
+		return
+	}
+	id := r.PathValue("id")
+	if !goalIDRe.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный ID записи"})
+		return
+	}
+	var body struct {
+		Base     string                 `json:"base"`
+		Proposal draftproposal.Proposal `json:"proposal"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, taskTextLimit)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверные поля предложения"})
+		return
+	}
+	data, err := json.Marshal(struct {
+		Proposals []draftproposal.Proposal `json:"proposals"`
+	}{[]draftproposal.Proposal{body.Proposal}})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	out, code, err := s.taskctlWriteIn(found.Path, string(data), "draft", "proposals", "save", id, "--base", body.Base)
+	if err != nil {
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	var result map[string]any
+	if err = json.Unmarshal([]byte(out), &result); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "ответ не прочитался"})
+		return
+	}
+	result["message"] = "предложение сохранено"
+	if note := commitDocs(found.Path, boardCommitMsg(id, "правка предложения"), draftFileRel(id)); note != "" {
+		result["note"] = note
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+func (s *server) handleDraftProposalReject(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "отказ предложения")
+	if found == nil {
+		return
+	}
+	id := r.PathValue("id")
+	if !goalIDRe.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный ID записи"})
+		return
+	}
+	var body struct {
+		Base     string `json:"base"`
+		Proposal string `json:"proposal"`
+		Reason   string `json:"reason"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверное решение"})
+		return
+	}
+	out, code, err := s.taskctlWrite(found.Path, "draft", "proposals", "reject", id, body.Proposal, "--base", body.Base, "--reason", body.Reason)
+	if err != nil {
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	var result map[string]any
+	if err = json.Unmarshal([]byte(out), &result); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "ответ не прочитался"})
+		return
+	}
+	result["message"] = "предложение отклонено"
+	if note := commitDocs(found.Path, boardCommitMsg(id, "отказ предложения"), draftFileRel(id)); note != "" {
+		result["note"] = note
 	}
 	writeJSON(w, http.StatusOK, result)
 }

@@ -415,6 +415,25 @@ func TestRehearseDoesNotOverwriteConcurrentEdit(t *testing.T) {
 	}
 }
 
+func TestRehearseRejectsReplacedPathWithSameContents(t *testing.T) {
+	root := setupRehearse(t, "echo test")
+	path := filepath.Join(root, "docs", "tasks", "XR-005.md")
+	alternate := filepath.Join(root, "docs", "tasks", "alternate.md")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := "cp " + shQuote(path) + " " + shQuote(alternate) + " && rm " + shQuote(path) + " && ln -s " + shQuote(alternate) + " " + shQuote(path)
+	_, err = cmdRehearse(root, "XR-005", RehearseParams{Steps: []string{step}, Now: rehearseAt})
+	if err == nil || !strings.Contains(err.Error(), "путь файла изменился") {
+		t.Fatalf("changed path accepted: %v", err)
+	}
+	after, err := os.ReadFile(alternate)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("alternate overwritten: %v", err)
+	}
+}
+
 func TestRehearseAllowsNestedTaskctl(t *testing.T) {
 	root := setupRehearse(t, "echo test")
 	bin := filepath.Join(t.TempDir(), "taskctl")

@@ -55,9 +55,13 @@ func cmdDraftProposalsSave(root, id, base string, input []byte) (string, error) 
 		return "", err
 	}
 	defer l.Close()
-	d, err := findDraftFor(root, id)
+	drafts, err := loadDraftsWithHistory(root, true)
 	if err != nil {
 		return "", err
+	}
+	d := findDraft(drafts, id)
+	if d == nil {
+		return "", fmt.Errorf("%s: черновик не найден", id)
 	}
 	data, err := os.ReadFile(d.Path)
 	if err != nil {
@@ -114,6 +118,9 @@ func cmdDraftProposalsSave(root, id, base string, input []byte) (string, error) 
 			index[p.ID] = len(old.Proposals)
 			old.Proposals = append(old.Proposals, p)
 		}
+	}
+	if len(incoming.Proposals) > 0 {
+		old.State = "active"
 	}
 	if incoming.Analysis != nil {
 		old.Analysis = *incoming.Analysis

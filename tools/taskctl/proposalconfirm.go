@@ -108,6 +108,14 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 		return out, nil
 	}
 	out.Results = nil
+	for _, d := range request.Decisions {
+		if d.Action == "accept" {
+			if err := boardGuard(root, "draft proposals confirm"); err != nil {
+				return out, err
+			}
+			break
+		}
+	}
 	for _, snap := range request.Snapshots {
 		rec := records[snap.Source]
 		basis, err := proposalBasis(root, rec.data, rec.state)

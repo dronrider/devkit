@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/draftmeta"
+	"github.com/dronrider/devkit/internal/drafttx"
 	"github.com/dronrider/devkit/internal/sessions"
 )
 
@@ -170,7 +171,16 @@ func Raise(q Request) (Result, error) {
 		q.Adopt = DefaultAdopt
 	}
 	lock, me := LockPath(q.Home, q.ID), os.Getpid()
+	tx, err := drafttx.Acquire(q.Root)
+	if err != nil {
+		return res, err
+	}
+	if err = draftmeta.GuardRecordLocked(q.Root, q.ID); err != nil {
+		tx.Close()
+		return res, err
+	}
 	if err := Take(lock, me); err != nil {
+		tx.Close()
 		if busy, ok := err.(*BusyError); ok {
 			res.Code, res.Rung = CodeBusy, RungLock
 			res.say("%s: %s", q.ID, busy.Error())
@@ -181,7 +191,7 @@ func Raise(q Request) (Result, error) {
 	// Замок, переданный оболочке, команде уже не принадлежит, и Release его не
 	// тронет. Снимается он тут только на ступенях без подъёма.
 	defer Release(lock, me)
-	if err := draftmeta.GuardRecord(q.Root, q.ID); err != nil {
+	if err := tx.Close(); err != nil {
 		return res, err
 	}
 

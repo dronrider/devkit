@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 // Стенд лестницы. Настоящих tmux, клиента и оболочки тут нет: tmux играет
@@ -113,6 +115,7 @@ func newStand(t *testing.T, tmux, client bool) *stand {
 			t.Fatal(err)
 		}
 	}
+	put(t, filepath.Join(s.root, "docs", "tasks", "DK-1.md"), "# DK-1: тест\n", 0o644)
 	put(t, filepath.Join(s.bin, "python3"), "#!/bin/sh\nexec "+shQuote(py)+" \"$@\"\n", 0o755)
 	if tmux {
 		put(t, filepath.Join(s.bin, "tmux"), tmuxStub, 0o755)
@@ -713,5 +716,40 @@ func TestRaiseLockedDraftBeforeLaunch(t *testing.T) {
 	_, err := Raise(Request{Root: root, ID: "XR-1", Pick: func() (string, error) { called = true; return "", nil }})
 	if err == nil || !strings.Contains(err.Error(), "ждёт локальную модель") || called {
 		t.Fatalf("error %v, picked %v", err, called)
+	}
+}
+
+func TestRaiseReservesBeforeClientStart(t *testing.T) {
+	s := newStand(t, true, true)
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	q := s.req()
+	q.Pick = func() (string, error) { close(reached); <-release; return "", nil }
+	done := make(chan error, 1)
+	go func() { _, err := Raise(q); done <- err }()
+	select {
+	case <-reached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("start did not reach pick")
+	}
+	lock, err := drafttx.Acquire(s.root)
+	if err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(LockPath(s.home, q.ID)); err != nil {
+		lock.Close()
+		close(release)
+		t.Fatalf("starting marker missing: %v", err)
+	}
+	lock.Close()
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("start stuck")
 	}
 }

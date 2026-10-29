@@ -595,6 +595,9 @@ func newSmoke(dir string) (*smoke, error) {
 	if err := smokeWrite(filepath.Join(s.proj, "docs", "tasks", smokeGoal+".md"), smokeGoalDoc, 0o644); err != nil {
 		return nil, err
 	}
+	if err := smokeWrite(filepath.Join(s.proj, "docs", "tasks", smokeTask+".md"), "# "+smokeTask+": Соседка по доске\n", 0o644); err != nil {
+		return nil, err
+	}
 	if err := smokeWrite(filepath.Join(s.proj, "docs", "TASKS-archive.md"), smokeArchiveDoc, 0o644); err != nil {
 		return nil, err
 	}

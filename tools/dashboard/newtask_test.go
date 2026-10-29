@@ -280,18 +280,8 @@ func TestTaskCreateRefusals(t *testing.T) {
 			t.Errorf("%s: %d %s, ожидал 400 со словами %q", tc.name, resp.StatusCode, text, tc.want)
 		}
 	}
-	// Черновик без уровня разбора отбивается на сервере, не доходя до утилиты:
-	// уровень спрашивается на записи (DK-520), и отказ говорит про шкалу, а не
-	// про форму команды taskctl.
-	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", taskCreateJSON(t, `{"title": "мысль без уровня"}`))
-	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
-		!strings.Contains(text, "уровень разбора") {
-		t.Errorf("черновик без уровня: %d %s, ожидал 400 со словами про уровень", resp.StatusCode, text)
-	}
-	if _, err := os.Stat(filepath.Join(e.proj, "docs", "tasks", "drafts")); !os.IsNotExist(err) {
-		t.Errorf("черновик без уровня завёл накопитель: %v", err)
-	}
-	resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", taskCreateJSON(t, `{"title": "мысль", "prio": "срочно"}`))
+	// Уровень можно не задавать, но введённое значение проверяется.
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", taskCreateJSON(t, `{"title": "мысль", "prio": "срочно"}`))
 	if text := body(t, resp); resp.StatusCode != http.StatusBadRequest ||
 		!strings.Contains(text, "уровень разбора") {
 		t.Errorf("уровень мимо шкалы: %d %s, ожидал 400", resp.StatusCode, text)

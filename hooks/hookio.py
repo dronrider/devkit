@@ -73,6 +73,13 @@ AGENT_RETURNED = "agent-returned"
 # Имя инструмента делегирования и признак фонового запуска в его ответе.
 AGENT_TOOL = "Agent"
 AGENT_ASYNC = "async_launched"
+# Имя инструмента сообщений агентам и ось его завершённого хода. Сообщением
+# харнес будит завершённого субагента, и для сторожа это возможное
+# возобновление: до DK-1415 такой ход до хука не доходил вовсе, запись
+# возобновлённого оставалась в done, и конвейер гасил окно вместе с живой
+# работой.
+SEND_TOOL = "SendMessage"
+MESSAGE_SENT = "message-sent"
 # Имя инструмента оболочки и поле его ответа с ID фоновой команды. Своего
 # статуса у фонового запуска Bash нет, и отличает его именно это поле: у
 # синхронного хода его в ответе не бывает.
@@ -118,12 +125,13 @@ Job = collections.namedtuple("Job", "id kind status description command")
 # только по концу. Транскрипт субагента (agent_transcript_path у SubagentStop)
 # это отдельное поле: transcript остаётся транскриптом сессии, по нему сторож
 # ищет весть о конце работы, а по транскрипту субагента конец этапа дописывает
-# модель, когда спавн её не назвал. Все поля с умолчанием, событие без них
-# читается по-старому.
+# модель, когда спавн её не назвал. Признак неудачной отправки приехал
+# с DK-1415: ошибка SendMessage не должна выглядеть возобновлением. Все поля
+# с умолчанием, событие без них читается по-старому.
 Agent = collections.namedtuple(
     "Agent", "kind session cwd transcript agent_id owner job agent_type description command "
-             "output message jobs active model duration report agent_transcript",
-    defaults=("", 0.0, "", ""))
+             "output message jobs active model duration report agent_transcript failed",
+    defaults=("", 0.0, "", "", False))
 
 
 class Unknown(Exception):
@@ -311,6 +319,19 @@ def response_field(response, key):
     return m.group(1) if m else ""
 
 
+def send_failed(response):
+    """Неудачная отправка из ответа инструмента. Форма ответа у харнеса не
+    описана, поэтому берутся только явные знаки: словарь называет ошибку
+    ключом error либо признаком isError, строка начинается словом Error.
+    Нераспознанная ошибка дешевле ложного молчания: не заметив её, сторож
+    лишний раз сочтёт работу живой, а пропущенное возобновление гасило бы
+    живую работу (DK-1415)."""
+    if isinstance(response, dict):
+        return bool(response.get("error") or response.get("isError")
+                    or response.get("is_error"))
+    return isinstance(response, str) and response.strip().lower().startswith("error")
+
+
 def claude_code_jobs(event):
     """Фоновые работы сессии из события: субагенты и команды оболочки, которые
     харнес считает незакрытыми."""
@@ -357,9 +378,12 @@ def claude_code_agent(event):
                 # уже прочитала.
                 return None
             job, command = SHELL_JOB, text_of(ti.get("command"))
+        elif tool == SEND_TOOL:
+            kind = MESSAGE_SENT
         else:
             return None
-        kind = AGENT_LAUNCHED
+        if kind != MESSAGE_SENT:
+            kind = AGENT_LAUNCHED
     elif kind is None:
         return None
     # ID работы это её собственный номер: у команды оболочки номер фоновой
@@ -368,7 +392,15 @@ def claude_code_agent(event):
     # его номер работе нельзя: фоновая команда исполнителя ложилась в реестр
     # тем же ключом, что и сам исполнитель, и затирала его запись (DK-966).
     own = text_of(event.get("agent_id"))
-    work = (task or response_field(response, "agentId")) if kind == AGENT_LAUNCHED else own
+    if kind == MESSAGE_SENT:
+        # Адрес получателя из входа, а при ответе с номером работы из ответа:
+        # составной адрес («имя [номер]») харнес разбирает сам, и его ответ
+        # точнее собственных догадок.
+        work = response_field(response, "agentId") or text_of(ti.get("to"))
+    elif kind == AGENT_LAUNCHED:
+        work = task or response_field(response, "agentId")
+    else:
+        work = own
     if returned:
         kind = AGENT_RETURNED
         work = response_field(response, "agentId") or text_of(event.get("tool_use_id"))
@@ -380,7 +412,9 @@ def claude_code_agent(event):
                  owner=own if kind == AGENT_LAUNCHED and work != own else "",
                  job=job,
                  agent_type=text_of(event.get("agent_type")) or text_of(ti.get("subagent_type")),
-                 description=text_of(ti.get("description")) or response_field(response, "description"),
+                 description=(text_of(ti.get("summary")) or text_of(ti.get("message")))
+                 if kind == MESSAGE_SENT
+                 else (text_of(ti.get("description")) or response_field(response, "description")),
                  report=response_text(response) if returned else "",
                  command=command,
                  output=response_field(response, "outputFile"),
@@ -393,7 +427,8 @@ def claude_code_agent(event):
                  active=bool(event.get("stop_hook_active")),
                  model=text_of(ti.get("model")) or response_field(response, "resolvedModel"),
                  duration=number_of(event.get("duration_ms")) / 1000.0,
-                 agent_transcript=text_of(event.get("agent_transcript_path")))
+                 agent_transcript=text_of(event.get("agent_transcript_path")),
+                 failed=send_failed(response) if kind == MESSAGE_SENT else False)
 
 
 # Таблица разборщиков: протокол, разбор записи, разбор события сессии, разбор

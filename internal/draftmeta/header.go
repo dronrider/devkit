@@ -30,7 +30,7 @@ func Parse(data []byte) (Header, error) {
 		}
 		key, value, ok := strings.Cut(line, ":")
 		if !ok {
-			if line == "замок" || strings.HasPrefix(line, "замок ") {
+			if strings.HasPrefix(line, "замок") {
 				return Header{}, fmt.Errorf("неверная строка замка %q", line)
 			}
 			if strings.HasPrefix(line, "записан ") {
@@ -43,6 +43,9 @@ func Parse(data []byte) (Header, error) {
 			continue
 		}
 		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if strings.HasPrefix(key, "замок") && key != "замок" {
+			return Header{}, fmt.Errorf("неверная строка замка %q", line)
+		}
 		if key != "тип" && key != "источник" && key != "замок" && key != "приоритет" {
 			continue
 		}

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -79,5 +81,23 @@ func TestRoundRefusesUnknownRow(t *testing.T) {
 	}
 	if !strings.Contains(rep.Line, "строки нет на доске") {
 		t.Errorf("отчёт не назвал причину: %q", rep.Line)
+	}
+}
+
+func TestRoundRefusesProtectedLiveSession(t *testing.T) {
+	e, log := checkEnv(t, "task-XR-004\\n")
+	path := filepath.Join(e.proj, "docs", "tasks", "XR-004.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# XR-004\nзащита: locked\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rep := roundOne(t, e, "XR-004")
+	if !rep.Failed || rep.Raised {
+		t.Fatalf("protected: %+v", rep)
+	}
+	if got := readFile(t, log); strings.Contains(got, "send-keys") || strings.Contains(got, "new-session") {
+		t.Fatalf("cloud started: %s", got)
 	}
 }

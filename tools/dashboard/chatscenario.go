@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/sessions"
 	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskform"
@@ -85,6 +86,10 @@ func (s *server) handleScenarioSay(w http.ResponseWriter, p *Project, sid, claim
 	}
 	if root == "" || !s.scenarioTree(root, answer.Task) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ответу сценариев нужен показанный блок этой задачи, имя и снимок"})
+		return
+	}
+	if err := draftmeta.GuardRecord(root, answer.Task); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
 	term := s.sayTermOf(sid, recs)

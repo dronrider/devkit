@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -286,4 +287,46 @@ exit 0`, tmuxLog, tmuxLog+".out"))
 		t.Errorf("подъём пошёл не резюмом того же разговора: %s", said)
 	}
 	t.Logf("smoke: живой сервер %s, реплика доехала резюмом и ответ агента пришёл в ту же ленту", url)
+}
+
+func TestChatSayBlankTaskRejectsProtectedBeforeLaunch(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "aaaa1111-2222-4333-8444-555555555555"
+	if err := e.s.chatStoreWrite(sid, chatStore{Blank: true, Project: "demo", Task: "XR-4"}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(e.proj, "docs", "tasks", "XR-4.md")
+	if err := os.WriteFile(path, []byte("# XR-4\nзащита: locked\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, log, "")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"продолжай"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("protected chat: %d %s", resp.StatusCode, text)
+	}
+	if data, err := os.ReadFile(log); err == nil && strings.Contains(string(data), "new-session") {
+		t.Fatalf("cloud started: %s", data)
+	}
+}
+
+func TestChatSayBlankTaskChecksWorktree(t *testing.T) {
+	e, c := chatEnv(t)
+	sid := "aaaa1111-2222-4333-8444-555555555555"
+	if err := e.s.chatStoreWrite(sid, chatStore{Blank: true, Project: "demo", Task: "XR-4"}); err != nil {
+		t.Fatal(err)
+	}
+	tree := filepath.Join(filepath.Dir(e.proj), "demo-xr-4")
+	putDoc(t, tree, "docs/tasks/XR-4.md", "# XR-4\nзащита: locked\n")
+	log := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, log, "")
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/"+sid+"/say", `{"text":"продолжай"}`)
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("protected worktree: %d %s", resp.StatusCode, text)
+	}
+	if data, err := os.ReadFile(log); err == nil && strings.Contains(string(data), "new-session") {
+		t.Fatalf("cloud started: %s", data)
+	}
 }

@@ -121,6 +121,12 @@ VERIFY = "## Проверка"
 # поднимать нельзя (та же проверка у подъёма в taskctl и у панели).
 GOAL_TITLE = "Цель:"
 
+# Строка связи с целью в шапке файла задачи: «Цель: [tasks/DK-1.md](...)».
+# Приведение к ключу то же, что у taskform.GoalKey на go: имя файла ссылки без
+# каталога и суффикса. Грубая копия на python тут дешевле зависимости, как и
+# копия порядка разделов у insert_into.
+GOAL_LINK = "Цель:"
+
 # Коды выхода `taskctl run`, по которым решается зов человеку. Единицей лестница
 # говорит, что голову поднять нечем и человека она позвала сама
 # (taskhead.CodeCalled). Двойкой она отказывает на раскладке, и о таком отказе
@@ -337,6 +343,55 @@ def row_why(row):
     if note.startswith(SILENT):
         return "этап «%s», %s" % (stage, note)
     return "этап «%s» без сессии" % stage
+
+
+def goal_of(root, tid):
+    """ID цели, в состав которой входит задача, либо пустая строка. Строка
+    «Цель: ...» шапки файла задачи, шапкой считается всё до первого «## ».
+    Цели нет на месте, значит связи нет. Ссылка ведёт в пустоту."""
+    try:
+        with open(os.path.join(root, "docs", "tasks", tid + ".md"),
+                  encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().split("\n")
+    except OSError:
+        return ""
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("## "):
+            return ""
+        if not s.startswith(GOAL_LINK):
+            continue
+        key = s[len(GOAL_LINK):].strip()
+        i = key.find("[")
+        if i >= 0:
+            j = key.find("]", i)
+            if j > i:
+                key = key[i + 1:j]
+        key = key.rsplit("/", 1)[-1]
+        key = key[:-3] if key.endswith(".md") else key
+        if key and os.path.isfile(os.path.join(root, "docs", "tasks", key + ".md")):
+            return key
+        return ""
+    return ""
+
+
+def cycle_alive(root, tid):
+    """Ведёт ли задачу живой цикл цели: ID цели при живой оболочке либо пусто.
+    Замок цели это каталог <корень>/.devkit/goal-<ID>.lock с pid оболочки
+    goal-run.py. Цикл поднимает исполнителей своих задач сам, и голова
+    конвейера рядом была бы вторым исполнителем одного дерева (DK-1442).
+    Мёртвый pid замка не в счёт: убитая оболочка никого не поднимет, и строка
+    дальше идёт обычным порядком."""
+    goal = goal_of(root, tid)
+    if not goal:
+        return ""
+    try:
+        with open(os.path.join(root, ".devkit", "goal-%s.lock" % goal, "pid"),
+                  encoding="utf-8") as fh:
+            pid = int(fh.read().strip() or 0)
+    except (OSError, ValueError):
+        return ""
+    return goal if pid > 0 and not dead_pid(pid) else ""
 
 
 def diagnostic_rows(rows, home=None):
@@ -646,27 +701,49 @@ def lift_root(root, call=None, taskctl=None, agentctl=None, act=True, home=None,
         return ["корень %s: доска не прочиталась, %s" % (root, err)], 0
     incident_words, halted = incident_rows(rows, root=root, home=home, act=act)
     replied, stale = split_reply_rows(root, rows, home=home)
-    diagnostics = [(r, why) for r, why in diagnostic_rows(rows, home=home)
-                   if str(r.get("id") or "").upper() not in halted]
+    # Строку живого цикла цели конвейер не трогает (DK-1442): исполнителя ей
+    # поднимает сам цикл, и второе окно той же задачи вело бы правку одного
+    # дерева двумя руками. Отчёт говорит об этом словами. Тишина неотличима
+    # от поднятого окна. Реплика человека остаётся вне ограждения,
+    # её поднимает taskctl run --reply, а не исполнитель.
+    led = {}
+    diagnostics = []
+    for r, why in diagnostic_rows(rows, home=home):
+        if str(r.get("id") or "").upper() in halted:
+            continue
+        goal = cycle_alive(root, r.get("id") or "")
+        if goal:
+            led[r.get("id") or "?"] = goal
+        else:
+            diagnostics.append((r, why))
     diagnosed = {r.get("id") for r, _ in diagnostics}
     diagnostic_words = [report_diagnostic(root, r["id"], why, call=call, act=act)
                         for r, why in diagnostics]
     found = [Find(r.get("id") or "", "", "во входе чата лежит реплика человека", True)
              for r in replied]
     said = {f.id for f in found}
-    found += [Find(r.get("id") or "", ORDER % (r.get("id") or ""), row_why(r), False)
+    kept = []
+    for f in [Find(r.get("id") or "", ORDER % (r.get("id") or ""), row_why(r), False)
               for r in orphan_rows(rows)
               if (r.get("id") or "") not in said and not r.get("held_by")
               and r.get("id") not in diagnosed
-              and str(r.get("id") or "").upper() not in halted]
+              and str(r.get("id") or "").upper() not in halted]:
+        goal = cycle_alive(root, f.id)
+        if goal:
+            led.setdefault(f.id, goal)
+        else:
+            kept.append(f)
+    found += kept
     fresh = recent(home)
     tried = marks(home)
     held = [f for f in found if root + "\t" + f.id in fresh]
     found = [f for f in found if root + "\t" + f.id not in fresh]
     spent = [f for f in found if tried.get(root + "\t" + f.id, (0, 0))[1] >= LIFT_TRIES]
     found = [f for f in found if f not in spent]
-    spent_words = incident_words + diagnostic_words + [
-        "задача %s в %s: поднималась %d раза подряд, сессия не удержалась"
+    spent_words = incident_words + [
+        "задача %s в %s: работу ведёт цикл цели %s, второе окно не поднимается"
+        % (tid, root, goal) for tid, goal in sorted(led.items())] \
+        + diagnostic_words + ["задача %s в %s: поднималась %d раза подряд, сессия не удержалась"
         % (f.id, root, LIFT_TRIES) for f in spent]
     if stale:
         spent_words.append("корень %s: реплики старше суток лежат во входах %s, подъём по ним не "

@@ -657,6 +657,100 @@ class DutyCase(unittest.TestCase):
             self.assertNotIn("исход дежурному", " ".join(lines))
 
 
+class GoalCycleCase(unittest.TestCase):
+    """Строка живого цикла цели не поднимается вторым окном (DK-1442):
+    исполнителя ей поднимает сам цикл, и конвейер отказывается поднимать
+    соседа в то же дерево. Мера живости цикла это pid замка цели."""
+
+    GOAL_TASK = ("# DK-7: строка\n\n"
+                 "Цель: [tasks/DK-900.md](../../tasks/DK-900.md)\n\n"
+                 "## Ход работы\n")
+    PLAIN_TASK = "# DK-7: строка\n\n## Ход работы\n"
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.home)]))
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.root)]))
+        tasks = self.root / "docs" / "tasks"
+        tasks.mkdir(parents=True)
+        self.task_file = tasks / "DK-7.md"
+        (tasks / "DK-900.md").write_text("# DK-900: цель\n", encoding="utf-8")
+
+    def stand(self, rows, text=GOAL_TASK):
+        self.task_file.write_text(text, encoding="utf-8")
+        trees = "worktree %s\nbranch refs/heads/dk-7-fix\n" % self.root
+        return LiftCall(board(rows), trees)
+
+    def cycle(self, pid):
+        lock = self.root / ".devkit" / "goal-DK-900.lock"
+        lock.mkdir(parents=True)
+        (lock / "pid").write_text(str(pid), encoding="utf-8")
+
+    def dead_pid(self):
+        gone = subprocess.Popen(["true"])
+        gone.wait()
+        return gone.pid
+
+    def test_live_cycle_keeps_orphan_row_down(self):
+        """Брошенная на вид строка с живым циклом цели не поднимается, а
+        говорится словами: молчание было бы неотличимо от поднятого окна."""
+        self.cycle(os.getpid())
+        call = self.stand([row("DK-7", "разработка", "сессии нет, брошена")])
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 0)
+        self.assertIn("цикл цели DK-900", " ".join(lines))
+        self.assertIn("второе окно не поднимается", " ".join(lines))
+        self.assertFalse(any("run" in a for a in call.calls))
+
+    def test_dead_cycle_releases_row(self):
+        """Мёртвый pid замка цикла никого не держит: строка поднимается."""
+        self.cycle(self.dead_pid())
+        call = self.stand([row("DK-7", "разработка", "сессии нет, брошена")])
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 1)
+        self.assertFalse(any("цикл цели" in ln for ln in lines))
+
+    def test_row_without_goal_link_lifts(self):
+        """Без строки связи с целью ограждение не работает: обычный подъём."""
+        call = self.stand([row("DK-7", "разработка", "сессии нет, брошена")],
+                          text=self.PLAIN_TASK)
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 1)
+
+    def test_live_cycle_saves_missing_stage_from_duty(self):
+        """Строка без записи этапа с живым циклом не уходит дежурному: работа
+        идёт у цикла, и диагностика подняла бы второго исполнителя."""
+        self.cycle(os.getpid())
+        call = self.stand([{"id": "DK-7"}])
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 0)
+        said = " ".join(lines)
+        self.assertIn("цикл цели DK-900", said)
+        self.assertNotIn("исход дежурному", said)
+        self.assertNotIn("эскалация дежурному",
+                         self.task_file.read_text(encoding="utf-8"))
+
+    def test_goal_of_reads_header_until_section(self):
+        """Ключ цели берётся из шапки: строка ниже раздела и ссылка в пустоту
+        связи не делают."""
+        self.task_file.write_text(self.GOAL_TASK, encoding="utf-8")
+        self.assertEqual(lift.goal_of(str(self.root), "DK-7"), "DK-900")
+        self.task_file.write_text(
+            "# DK-7: строка\n\n## Ход работы\n\nЦель: [tasks/DK-900.md]"
+            "(../../tasks/DK-900.md)\n", encoding="utf-8")
+        self.assertEqual(lift.goal_of(str(self.root), "DK-7"), "")
+        self.task_file.write_text(
+            "# DK-7: строка\n\nЦель: [tasks/DK-404.md](../../tasks/DK-404.md)\n\n"
+            "## Ход работы\n", encoding="utf-8")
+        self.assertEqual(lift.goal_of(str(self.root), "DK-7"), "")
+        self.assertEqual(lift.goal_of(str(self.root), "DK-404"), "")
+
+
 class TickCase(unittest.TestCase):
     """Врезка в тик сторожка отдаёт строки отчёта, а не пару.
 

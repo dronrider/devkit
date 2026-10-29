@@ -301,6 +301,11 @@ func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, err
 	if fi, err := os.Stat(workdir); err != nil || !fi.IsDir() {
 		return 0, fmt.Errorf("рабочей директории %s нет: дерево задачи заводит shipctl start, а путь к нему run принимает флагом --workdir", workdir)
 	}
+	cloud, err := draftmeta.CloudShared(stage.Home(), id)
+	if err != nil {
+		return 0, err
+	}
+	defer cloud.Close()
 	if err := draftmeta.GuardRecord(root, id); err != nil {
 		return 0, err
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -645,4 +646,63 @@ func TestRunBlocksMissingWorktreeMaterial(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(work, "prompt.txt")); !os.IsNotExist(err) {
 		t.Fatalf("client started: %v", err)
 	}
+}
+
+func TestRunHoldsCloudLockUntilClientExits(t *testing.T) {
+	kit := fakeKit(t)
+	marker := filepath.Join(kit, "started")
+	stop := filepath.Join(kit, "stop")
+	profile := "[delegate]\nmode = \"cli\"\ncommand = [\"/bin/sh\", \"-c\", \"touch '" + marker + "'; while [ ! -e '" + stop + "' ]; do sleep 0.05; done\"]\n\n[hooks]\n\n[quota]\n"
+	writeProfile(t, kit, "echocli", profile)
+	writeMachine(t, kit, "enabled = [\"echocli\"]\ndefault = \"echocli\"\n\n[echocli]\nmini = \"cheap\"\nbase = \"cheap\"\npro = \"strong\"\nmax = \"strong\"\n")
+	root := writeBoard(t)
+	path := filepath.Join(root, "docs", "tasks", "T-001.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# T-001\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		var out, errout bytes.Buffer
+		_, err := cmdRun(root, "T-001", roleExec, "", root, &out, &errout)
+		done <- err
+	}()
+	t.Cleanup(func() { os.WriteFile(stop, []byte("stop"), 0600) })
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("client did not start")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	lockPath := filepath.Join(kit, ".devkit", "cloud-locks", "T-001")
+	f, err := os.OpenFile(lockPath, os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		t.Fatal("exclusive entered during cloud run")
+	}
+	if err = os.WriteFile(stop, []byte("stop"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("client stuck")
+	}
+	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("lock remained: %v", err)
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }

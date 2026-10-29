@@ -27,9 +27,10 @@ import (
 // исполняемая фикстура, коммитов и пушей тесты не делают.
 
 var (
-	realTaskctlOnce sync.Once
-	realTaskctlPath string
-	realTaskctlErr  error
+	realTaskctlOnce     sync.Once
+	realTaskctlPath     string
+	realTaskctlErr      error
+	realTaskctlBuildDir string
 )
 
 // buildTaskctl собирает соседний инструмент один раз на прогон пакета:
@@ -37,12 +38,23 @@ var (
 // интеграционных тестах самого taskctl.
 func buildTaskctl(t *testing.T) string {
 	t.Helper()
+	if bin := os.Getenv("TASKCTL_ACCEPT_BIN"); bin != "" {
+		if !filepath.IsAbs(bin) {
+			t.Fatal("TASKCTL_ACCEPT_BIN должен быть абсолютным путём")
+		}
+		if _, err := os.Stat(bin); err != nil {
+			t.Fatal(err)
+		}
+		realTaskctlPath = bin
+		return bin
+	}
 	realTaskctlOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "dashboard-taskctl")
 		if err != nil {
 			realTaskctlErr = err
 			return
 		}
+		realTaskctlBuildDir = dir
 		realTaskctlPath = filepath.Join(dir, "taskctl")
 		cmd := exec.Command("go", "build", "-o", realTaskctlPath, ".")
 		cmd.Dir = filepath.Join("..", "taskctl")
@@ -100,8 +112,8 @@ func TestMain(m *testing.M) {
 		code = 1
 	}
 	os.RemoveAll(spare)
-	if realTaskctlPath != "" {
-		os.RemoveAll(filepath.Dir(realTaskctlPath))
+	if realTaskctlBuildDir != "" {
+		os.RemoveAll(realTaskctlBuildDir)
 	}
 	os.Exit(code)
 }
@@ -156,7 +168,12 @@ func runTaskctl(t *testing.T, dir string, args ...string) string {
 // на первой же правке.
 func tasksEnv(t *testing.T) (*testEnv, *http.Client, string) {
 	t.Helper()
+	kit, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
 	e := newTestEnv(t)
+	t.Setenv("DEVKIT_HOME", kit)
 	taskctlFixture(t, e.bin)
 	sandboxRealNotifier(t, e)
 	if err := os.Remove(filepath.Join(e.proj, "docs", "TASKS.md")); err != nil {

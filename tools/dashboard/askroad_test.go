@@ -476,6 +476,7 @@ func TestChatAskStuckSignWithoutPane(t *testing.T) {
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.Local)
 	sid := "eeee5555-5555-4555-8555-555555555555"
 	e, c, _ := askRoadEnv(t, sid, "XR-1", now)
+	putDoc(t, e.proj, "docs/tasks/XR-1.md", "# XR-1: синтетическая запись\n")
 	askRoadPane(t, e, " Разбор снимка не собрал вопроса.\n\n\u276f \n")
 
 	at := e.srv.URL + "/api/projects/demo/chats/" + sid + "/ask"

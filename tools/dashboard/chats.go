@@ -3195,6 +3195,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		// первой отправки и у всех её повторов.
 		MsgID    string          `json:"msg_id"`
 		Scenario *scenarioAnswer `json:"scenario,omitempty"`
+		Proposal *proposalAnswer `json:"proposal,omitempty"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
 		// Тело сверх предела это своя причина, а не «жду JSON»: длинная вставка
@@ -3211,14 +3212,22 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	text := chatText(body.Text)
-	if body.Scenario != nil {
+	if body.Scenario != nil || body.Proposal != nil {
 		text = body.Text
 	}
 	if strings.TrimSpace(text) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустая реплика никуда не едет"})
 		return
 	}
-	if body.Scenario == nil && s.scenarioContextRequired(found, sid) {
+	if body.Scenario != nil && body.Proposal != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "нельзя смешивать ответы на сценарии и предложения"})
+		return
+	}
+	if body.Proposal == nil && s.proposalContextRequired(found, sid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "для ответа нужны показанные предложения и их снимок"})
+		return
+	}
+	if body.Scenario == nil && body.Proposal == nil && s.scenarioContextRequired(found, sid) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "для ответа на сценарии нужны контекст и снимок показанного блока; обновите вопрос и сверьте ответ"})
 		return
 	}
@@ -3242,6 +3251,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Scenario != nil {
 		s.handleScenarioSay(w, found, sid, claim, text, *body.Scenario)
+		return
+	}
+	if body.Proposal != nil {
+		s.handleProposalSay(w, found, sid, claim, text, *body.Proposal)
 		return
 	}
 	info, ok := findSession(s.transcriptRoots(), found.Path, sid)
@@ -3764,7 +3777,8 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	continuation := s.scenarioContinuation(found.Path, sid)
+	continuation := strings.Join([]string{s.scenarioContinuation(found.Path, sid), s.proposalContinuation(found.Path, sid)}, "\n\n")
+	continuation = strings.TrimSpace(continuation)
 	// Вопрос помощника пароля (askpass.go, DK-772) идёт раньше вопроса
 	// клиента: sudo или ssh без терминала висит на отдельном канале ожидания,
 	// а не на диалоге виджета, и снимка панели тут вовсе не стоит.

@@ -266,7 +266,7 @@ func TestDraftGroomPrompt(t *testing.T) {
 		// тоже, поднимается обвязкой agentctl exec (DK-1271).
 		"DEVKIT_TASK='XR-005' DEVKIT_TMUX='task-XR-005' ",
 		"' exec --harness 'перваяtest' -- 'клиент-1' --model 'модель-pro' --name 'XR-005 груминг' '" +
-			groomPrompt("XR-005", "", draftModeGroom) + "'",
+			groomPrompt("XR-005", "", draftModeGroom) + ". Используй скилл board-groom'",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("сессия груминга поднята не так:\n%s\nжду %q", got, want)
@@ -559,7 +559,7 @@ func TestDraftGroomAsk(t *testing.T) {
 		t.Errorf("ответ не говорит, что уточнение уехало новой ходкой: %s", text)
 	}
 	want := "' exec --harness 'перваяtest' -- 'клиент-1' --model 'модель-pro' --name '" + id + " груминг' '" +
-		groomPrompt(id, "оставить эту, вторую снять", draftModeGroom) + "'"
+		groomPrompt(id, "оставить эту, вторую снять", draftModeGroom) + ". Используй скилл board-groom'"
 	if got := readFile(t, tmuxLog); !strings.Contains(got, want) {
 		t.Errorf("уточнение не доехало до заказа сессии:\n%s\nжду %q", got, want)
 	}
@@ -643,7 +643,7 @@ func TestDraftGroomAskQuoting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("заказ с кавычками не разобрался шеллом: %v\n%s", err, quoted)
 	}
-	want := groomPrompt(id, ask, draftModeGroom)
+	want := groomPrompt(id, ask, draftModeGroom) + ". Используй скилл board-groom"
 	if string(out) != want {
 		t.Errorf("заказ доехал до шелла не тем текстом:\n%s\nжду\n%s", out, want)
 	}
@@ -1909,7 +1909,7 @@ func TestDraftConfirmThroughRealTaskctl(t *testing.T) {
 func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 	chrome := findChrome()
 	if chrome == "" {
-		if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" {
+		if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" || os.Getenv("TASKCTL_ACCEPT_BIN") != "" {
 			t.Fatal("браузер стенда не найден")
 		}
 		t.Skip("браузер стенда не найден; задать DASHBOARD_CHROME")
@@ -1919,16 +1919,19 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out, err := exec.Command(node, "-e", "require.resolve('playwright')").CombinedOutput(); err != nil {
-		if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" {
+		if os.Getenv("DASHBOARD_ACCEPT_BIN") != "" || os.Getenv("TASKCTL_ACCEPT_BIN") != "" {
 			t.Fatalf("playwright: %v %s", err, out)
 		}
 		t.Skip("playwright недоступен; задать NODE_PATH")
 	}
-	bin := filepath.Join(t.TempDir(), "dashboard")
-	build := exec.Command("go", "build", "-o", bin, ".")
-	build.Env = append(os.Environ(), "GOWORK=off")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, out)
+	bin := os.Getenv("DASHBOARD_ACCEPT_BIN")
+	if bin == "" {
+		bin = filepath.Join(t.TempDir(), "dashboard")
+		build := exec.Command("go", "build", "-o", bin, ".")
+		build.Env = append(os.Environ(), "GOWORK=off")
+		if out, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build: %v %s", err, out)
+		}
 	}
 	e, _, _ := tasksEnv(t)
 	kit, err := filepath.Abs("../..")
@@ -1936,12 +1939,26 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("DEVKIT_HOME", kit)
-	for _, title := range []string{"первая", "вторая", "третья"} {
+	for _, title := range []string{"первая", "вторая", "третья", "ручная запись", "ошибка разбора"} {
 		runTaskctl(t, e.proj, "draft", title)
+	}
+	for id, analysis := range map[string]string{"XR-008": "empty", "XR-009": "error"} {
+		path := filepath.Join(e.proj, "docs/tasks/drafts", id+".md")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err = draftproposal.Replace(data, draftproposal.State{Version: 1, State: "active", Analysis: analysis})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(path, data, 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for id, proposals := range map[string][]draftproposal.Proposal{
 		"XR-005": {{ID: "p1", Revision: 1, Outcome: "drop", Text: "первая карточка", Reason: "устарело"}, {ID: "p2", Revision: 1, Outcome: "drop", Text: "вторая карточка", Reason: "устарело"}},
-		"XR-006": {{ID: "p3", Revision: 1, Outcome: "drop", Text: "третья карточка", Reason: "устарело"}},
+		"XR-006": {{ID: "p3", Revision: 1, Outcome: "attach", Target: "XR-001", Text: "третья карточка"}},
 		"XR-007": {{ID: "p4", Revision: 1, Outcome: "drop", Text: "четвёртая карточка", Reason: "устарело"}},
 	} {
 		path := filepath.Join(e.proj, "docs/tasks/drafts", id+".md")
@@ -2011,5 +2028,13 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 		if err != nil || state.State != "history" {
 			t.Fatalf("%s %+v %v", id, state, err)
 		}
+	}
+	data, err := os.ReadFile(filepath.Join(e.proj, "docs/tasks/drafts/XR-009.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := draftproposal.Parse(data)
+	if err != nil || state.State != "active" || state.Analysis != "error" {
+		t.Fatalf("error source: %+v %v", state, err)
 	}
 }

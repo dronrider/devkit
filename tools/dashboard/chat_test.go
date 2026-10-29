@@ -389,6 +389,9 @@ func parkedEnv(t *testing.T) (*testEnv, *http.Client) {
 func parkedRaiseEnv(t *testing.T) (*testEnv, string) {
 	t.Helper()
 	e := newTestEnv(t)
+	for _, id := range []string{"XR-4", "XR-7", "XR-100"} {
+		putDoc(t, e.proj, "docs/tasks/"+id+".md", "# "+id+": синтетическая запись\n")
+	}
 	writeScript(t, e.bin, "taskctl", fmt.Sprintf("echo '%s'", chatParkedBoard))
 	tmuxLog := filepath.Join(e.home, "tmux.log")
 	// Список сессий тот же, что у общего стенда: разговоры этих тестов меряются

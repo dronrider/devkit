@@ -249,6 +249,7 @@ const parkedGoalBoardJSON = `{"prefix":"DK","sections":[` +
 func TestMorningCaseGoalAskReachesLiveSession(t *testing.T) {
 	sid := "dddd0713-0713-4713-8713-071307130713"
 	e, c := chatEnv(t)
+	putDoc(t, e.proj, "docs/tasks/DK-713.md", "# DK-713: синтетическая запись\n")
 	writeSession(t, e.home, e.proj, "", sid, plainTalk, time.Now())
 	writeBinds(t, e.home, fmt.Sprintf("2026-09-04T09:59:00 сессия %s задача DK-713 проект demo "+
 		"дерево %s транскрипт "+standTranscript(e.home, "t")+" источник заказ повод startup tmux chat-DK-713-1\n", sid, e.proj))

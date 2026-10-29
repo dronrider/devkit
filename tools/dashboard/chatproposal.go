@@ -14,6 +14,7 @@ import (
 )
 
 type proposalAnswer struct {
+	Mode      string                   `json:"mode,omitempty"`
 	Anchor    string                   `json:"anchor"`
 	Tree      string                   `json:"tree"`
 	Snapshots []draftproposal.Snapshot `json:"snapshots"`
@@ -74,19 +75,29 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "нужно показанное дерево и адрес вопроса"})
 		return
 	}
-	data, err := proposalAnswerInput(answer)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	if answer.Mode != "" && answer.Mode != "apply" && answer.Mode != "comment" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный вид ответа"})
 		return
 	}
 	var match *handedAsk
 	for _, h := range s.handedAsks(sid, s.binds(), s.now()) {
 		q := proposalFromAsk(h.Ask)
-		if q != nil && q.Anchor == answer.Anchor && q.Tree == answer.Tree && chat.CheckProposalAnswer(*q, answer.Tree, draftproposal.ConfirmRequest{Snapshots: answer.Snapshots, Decisions: answer.Decisions}) == nil {
+		valid := false
+		if q != nil && answer.Mode == "comment" {
+			valid = proposalCommentMatches(*q, answer)
+		}
+		if q != nil && answer.Mode != "comment" {
+			valid = chat.CheckProposalAnswer(*q, answer.Tree, draftproposal.ConfirmRequest{Snapshots: answer.Snapshots, Decisions: answer.Decisions}) == nil
+		}
+		if q != nil && q.Anchor == answer.Anchor && q.Tree == answer.Tree && valid {
 			own := h
 			match = &own
 			break
 		}
+	}
+	if answer.Mode == "comment" && match == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "показанный вопрос предложений не найден"})
+		return
 	}
 	for _, snap := range answer.Snapshots {
 		if !goalIDRe.MatchString(snap.Source) {
@@ -98,6 +109,43 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 			return
 		}
 	}
+	if answer.Mode == "comment" {
+		release, err := proposalDeliveryReservation(answer.Tree, answer.Snapshots)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		defer release()
+		binds := s.bindsAll()
+		last := sessions.Last(binds[sid])
+		term := ""
+		if last.Task == answer.Anchor && (last.Tree == answer.Tree || (last.Tree == "" && p.Path == answer.Tree)) {
+			term = s.sayTermOf(sid, binds)
+		}
+		err = nil
+		if term != "" {
+			err = chatSend(term, text)
+		} else {
+			line := chat.TaskLine(s.now(), text)
+			if match.Ask.Session != "" {
+				line = chat.Line(s.now(), match.Ask.Session, text)
+			}
+			_, _, err = putChat(stage.MainRoot(answer.Tree), chat.TaskName(answer.Anchor), text, line)
+		}
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "доставка вопроса: " + procErr(err)})
+			return
+		}
+		s.chatSayDone(sid, claim, "ask")
+		s.saidSay(saidSessionKey(sid), text, "ask")
+		writeJSON(w, http.StatusOK, map[string]any{"way": "ask", "task": answer.Anchor})
+		return
+	}
+	data, err := proposalAnswerInput(answer)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	args := []string{"draft", "proposals", "answer", answer.Anchor}
 	if match == nil {
 		args = append(args, "--repeat-only")
@@ -107,25 +155,27 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
 	}
-	for _, snap := range answer.Snapshots {
-		if err := draftmeta.GuardRecord(answer.Tree, snap.Source); err != nil {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
-			return
-		}
+	release, err := proposalDeliveryReservation(answer.Tree, answer.Snapshots)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
 	}
+	defer release()
 	var canonical struct {
-		Key     string                  `json:"key"`
-		Results []draftproposal.Receipt `json:"results"`
+		Key      string                  `json:"key"`
+		Results  []draftproposal.Receipt `json:"results"`
+		Repeated bool                    `json:"repeated"`
 	}
 	if err := json.Unmarshal([]byte(result), &canonical); err != nil || canonical.Key == "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "ответ taskctl не разобран"})
 		return
 	}
 	payload, _ := json.Marshal(struct {
-		Text    string                  `json:"text"`
-		Key     string                  `json:"key"`
-		Results []draftproposal.Receipt `json:"results"`
-	}{text, canonical.Key, canonical.Results})
+		Text     string                  `json:"text"`
+		Key      string                  `json:"key"`
+		Results  []draftproposal.Receipt `json:"results"`
+		Repeated bool                    `json:"repeated"`
+	}{text, canonical.Key, canonical.Results, canonical.Repeated})
 	wire := "Ответ панели обработан taskctl: " + string(payload)
 	// The shown tree and anchor remain the address even after a session rebind.
 	tree := stage.MainRoot(answer.Tree)
@@ -160,6 +210,52 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 	writeJSON(w, http.StatusOK, map[string]any{"way": "ask", "task": answer.Anchor, "message": result})
 }
 
+// Hold the same per-record cloud reservation as managed clients while the
+// reply is handed off. An attach which won the race is observed by the guard;
+// one which loses cannot change the source between that guard and delivery.
+func proposalDeliveryReservation(root string, snapshots []draftproposal.Snapshot) (func(), error) {
+	var locks []*draftmeta.CloudLock
+	release := func() {
+		for _, lock := range locks {
+			lock.Close()
+		}
+	}
+	for _, snap := range snapshots {
+		lock, err := draftmeta.CloudShared(root, snap.Source)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		locks = append(locks, lock)
+	}
+	for _, snap := range snapshots {
+		if err := draftmeta.GuardRecord(root, snap.Source); err != nil {
+			release()
+			return nil, err
+		}
+	}
+	return release, nil
+}
+
+func proposalCommentMatches(q chat.ProposalQuestion, a proposalAnswer) bool {
+	if q.Validate() != nil || a.Anchor != q.Anchor || a.Tree != q.Tree || len(a.Decisions) != 0 || len(a.Snapshots) != len(q.Sources) {
+		return false
+	}
+	seen := map[string]string{}
+	for _, snap := range a.Snapshots {
+		if snap.Source == "" || snap.Digest == "" || seen[snap.Source] != "" {
+			return false
+		}
+		seen[snap.Source] = snap.Digest
+	}
+	for _, source := range q.Sources {
+		if seen[source.Source] != source.Basis {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *server) proposalContinuation(root, sid string) string {
 	type item struct{ tree, id string }
 	var items []item
@@ -184,6 +280,9 @@ func (s *server) proposalContinuation(root, sid string) string {
 			continue
 		}
 		seen[one] = true
+		if err := draftmeta.GuardRecord(one.tree, one.id); err != nil {
+			continue
+		}
 		out, _, err := taskctlDo(one.tree, "draft", "proposals", one.id)
 		if err != nil {
 			continue

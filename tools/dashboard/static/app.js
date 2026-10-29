@@ -6179,7 +6179,7 @@ function chatFeedAt() {
 // «COVID-19») остаётся текстом. Путь документа ведёт на его экран, а файл
 // задачи на ту же форму, что и ID.
 function mentionAddr(where, text) {
-  const path = String(text || "").replace(/^(?:\.{1,2}\/)+/, "");
+  const path = String(text || "").replace(/^\/+/, "").replace(/^(?:\.{1,2}\/)+/, "");
   if (/\.md$/i.test(path)) {
     const doc = path.replace(/^docs\//, "");
     const draft = doc.match(/^tasks\/drafts\/(.+)\.md$/);
@@ -13874,6 +13874,7 @@ function chatPanel(project, st) {
   ta.addEventListener("input", () => {
     askPickInput(askPick, ta.value);
     askPickSave(st.addr, ta.value || askPick.proposalDraft ? askPick : null);
+    chatDraftWrite(st.addr, ta.value);
     if (draftTimer) clearTimeout(draftTimer);
     draftTimer = setTimeout(() => { draftSave(ta.value); }, CHAT_DRAFT_WAIT);
   });
@@ -14373,7 +14374,7 @@ function chatPanel(project, st) {
     const scenario = askPick.answer || null;
     let proposal = null;
     if (askPick.proposalDraft) {
-      try { proposal = proposalAnswer(askPick.proposalDraft); }
+      try { proposal = askPick.proposalDraft.decisions.length ? proposalAnswer(askPick.proposalDraft) : proposalComment(askPick.proposalDraft); }
       catch (err) { sayResult(err.message, true); return; }
     }
     const text = scenario || proposal ? ta.value : ta.value.trim();
@@ -14391,11 +14392,11 @@ function chatPanel(project, st) {
     // больше незачем: следующая отметка дописывает своё в пустое поле.
     askPick.put = "";
     askPick.answer = null;
-    askPick.proposalDraft = null;
+    if (!proposal || proposal.mode !== "comment") askPick.proposalDraft = null;
     askPick.selected = null;
     askPick.ordinary = null;
     askPick.touched = false;
-    askPickSave(st.addr, null);
+    askPickSave(st.addr, askPick.proposalDraft ? askPick : null);
     if (draftTimer) clearTimeout(draftTimer);
     chatDraftWrite(st.addr, "");
     // Отправка уносит и высоту: поле возвращается к своему обычному росту,
@@ -20451,6 +20452,13 @@ function proposalAnswer(draft) {
   const snapshots = shown.sources.filter((s) => used.has(s.source)).map((s) => ({ source: s.source, digest: s.basis }));
   if (snapshots.some((s) => !s.digest)) throw new Error("Нет показанного снимка");
   return { anchor: shown.anchor, tree: shown.tree, snapshots, decisions };
+}
+
+function proposalComment(draft) {
+  const shown = draft && draft.shown;
+  if (!shown || shown.version !== 1 || !shown.tree || !shown.anchor || !Array.isArray(shown.sources) || !shown.sources.length) throw new Error("Нет показанного вопроса предложений");
+  return { mode: "comment", anchor: shown.anchor, tree: shown.tree,
+    snapshots: shown.sources.map((s) => ({ source: s.source, digest: s.basis })), decisions: [] };
 }
 
 function proposalSelect(shown, source, action, reason = "") {

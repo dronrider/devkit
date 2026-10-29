@@ -19,6 +19,10 @@
 
   запуск (ход делегирования с фоновым ответом, ход Bash с ID фоновой команды)
       запись в реестр: ID работы, разряд, чем названа, куда сложен отчёт
+  сообщение завершённому субагенту (ход SendMessage)
+      запись вернулась в running с временем возобновления: голова будит
+      законченного исполнителя сообщением, и конвейер ждёт его конца, как
+      ждёт запущенного, вместо трёх пустых проходов и гашения окна (DK-1415)
   конец субагента (SubagentStop)
       отметка в реестре и первая строка отчёта
   конец хода сессии (Stop)
@@ -497,6 +501,51 @@ def finished(agents, event, now):
     return entry
 
 
+def recipient(agents, to):
+    """Запись получателя сообщения по адресу из входа: точный номер работы либо
+    номер внутри составного адреса («имя [номер]»), каким харнес разбирает имена.
+    None значит, что адресован не нашей фоновой работе: чужая сессия и опечатка
+    сторожа не касаются."""
+    if not to:
+        return None
+    entry = agents.get(to)
+    if isinstance(entry, dict):
+        return (to, entry)
+    for job_id, entry in agents.items():
+        if job_id and isinstance(entry, dict) and job_id in to:
+            return (job_id, entry)
+    return None
+
+
+def resumed(agents, event, now):
+    """Возобновление завершённого субагента сообщением (DK-1415): голова будит
+    законченного исполнителя SendMessage'ом, и запись обязана вернуться
+    в running. Оставшись в done, она читается конвейером пустым реестром,
+    три пустых прохода гасят окно вместе с живой работой. Сообщение
+    работающему, ошибка отправки и незнакомый адрес ложного запуска
+    не создают, повторное событие ничего не меняет: работа уже числится
+    живой. Возвращаются номер и запись для журнала вызывающего."""
+    if event.failed:
+        return None
+    found = recipient(agents, event.agent_id)
+    if found is None:
+        return None
+    job_id, entry = found
+    if entry.get("state") != DONE or job_of(entry) != SUBAGENT_JOB:
+        return None
+    entry["state"] = RUNNING
+    entry["resumed"] = now
+    entry["done"] = 0
+    entry["message"] = ""
+    # Сдача конца ставится заново: о первом завершении сессии уже знает,
+    # а конец возобновлённой работы ей ещё скажут.
+    entry["told"] = False
+    entry["warned"] = False
+    # Этап того спавна закрыт первым концом, второй раз его закрывать нечем.
+    entry.pop("stage", None)
+    return job_id, entry
+
+
 def notice(transcript, job_id, tail=TAIL):
     """Весть харнеса о конце работы из хвоста транскрипта. Весть едет через
     очередь, и запись очереди несёт `<task-id>` до того, как реплика доедет до
@@ -748,6 +797,12 @@ def handle(event, env=None, now=None, sleep=time.sleep, stream=None):
         if entry is not None:
             log(event.session, event.agent_id, "конец", entry["message"], env)
             stage_close(entry, event, env, now)
+        return 0
+    if event.kind == hookio.MESSAGE_SENT:
+        back = update(path, event.session, lambda a: resumed(a, event, now), now, sleep)
+        if back is not None:
+            log(event.session, back[0], "запуск",
+                "возобновление сообщением: %s" % (short(event.description) or "-"), env)
         return 0
     if event.kind != hookio.TURN_DONE or event.active:
         # Сторож пропускает ход, продолженный стоп-хуком: второй заход закрутил

@@ -44,12 +44,13 @@ def sample(name):
 def event(kind, session=SID, transcript="", agent_id="", agent_type="general-purpose",
           description="", output="", message="", jobs=(), active=False,
           job_kind="subagent", command="", owner="", model="", duration=0.0, report="",
-          cwd="/tmp/work", agent_transcript=""):
+          cwd="/tmp/work", agent_transcript="", failed=False):
     return hookio.Agent(kind=kind, session=session, cwd=cwd, transcript=transcript,
                         agent_id=agent_id, owner=owner, job=job_kind, agent_type=agent_type,
                         description=description, command=command, output=output,
                         message=message, jobs=jobs, active=active, model=model,
-                        duration=duration, report=report, agent_transcript=agent_transcript)
+                        duration=duration, report=report, agent_transcript=agent_transcript,
+                        failed=failed)
 
 
 def job(agent_id=AID, kind="subagent", status="running", description="разбор", command=""):
@@ -111,6 +112,11 @@ class Watch(unittest.TestCase):
         return self.handle(event(hookio.AGENT_LAUNCHED, agent_id=job_id, agent_type="",
                                  job_kind="shell", command=command,
                                  description=description), now=now)
+
+    def send(self, agent_id=AID, description="Замечания ревью", failed=False,
+             now=NOW + 30):
+        return self.handle(event(hookio.MESSAGE_SENT, agent_id=agent_id,
+                                 description=description, failed=failed), now=now)
 
     def journal(self):
         with open(os.path.join(self.dir, "agents.log"), encoding="utf-8") as f:
@@ -251,6 +257,81 @@ class Watch(unittest.TestCase):
         said = self.handle(event(hookio.TURN_DONE, transcript=path,
                                  jobs=(job(kind="shell"),)), now=NOW + 60)
         self.assertIsNotNone(said)
+
+    # Возобновление сообщением (DK-1415). Образцы хода SendMessage собраны
+    # по форме входа инструмента, живого снимка на машине не было: свидетельства
+    # ночной остановки лежат на другой машине, и разбор ответа оборонителен.
+
+    def test_send_sample_is_a_message_to_the_agent(self):
+        ev = hookio.parse_agent("claude-code", sample("tool-done-send-message"))
+        self.assertEqual(ev.kind, hookio.MESSAGE_SENT)
+        self.assertEqual(ev.agent_id, AID)
+        self.assertEqual(ev.description, "Замечания ревью DK-1415")
+        self.assertFalse(ev.failed)
+
+    def test_send_error_sample_is_a_failed_message(self):
+        ev = hookio.parse_agent("claude-code", sample("tool-done-send-error"))
+        self.assertEqual(ev.kind, hookio.MESSAGE_SENT)
+        self.assertTrue(ev.failed)
+
+    def test_message_returns_the_finished_agent_to_running(self):
+        # Регрессия DK-1415: голова возобновила завершённого исполнителя
+        # SendMessage'ом, реестр остался в done, конвейер трижды посчитал
+        # проход пустым и погасил окно вместе с живой работой.
+        self.launch()
+        self.finish()
+        self.send()
+        entry = self.registry()[AID]
+        self.assertEqual(entry["state"], watch.RUNNING)
+        self.assertEqual(entry["resumed"], NOW + 30)
+        self.assertFalse(entry["told"])
+        self.assertEqual(entry["message"], "")
+        self.assertIn("возобновление сообщением", self.journal())
+
+    def test_composite_address_finds_the_agent(self):
+        self.launch()
+        self.finish()
+        self.send(agent_id="worker [%s]" % AID)
+        self.assertEqual(self.registry()[AID]["state"], watch.RUNNING)
+
+    def test_repeat_message_does_not_duplicate_the_launch(self):
+        self.launch()
+        self.finish()
+        self.send()
+        self.send(now=NOW + 40)
+        self.assertEqual(self.journal().count("возобновление сообщением"), 1)
+        self.assertEqual(self.registry()[AID]["resumed"], NOW + 30)
+
+    def test_message_to_a_running_agent_is_not_a_launch(self):
+        # Сообщение работающему это разговор с живой работой, а не запуск.
+        self.launch()
+        self.send()
+        self.assertNotIn("resumed", self.registry()[AID])
+        self.assertNotIn("возобновление", self.journal())
+
+    def test_message_to_a_stranger_is_not_a_launch(self):
+        self.send(agent_id="deadbeef")
+        self.assertEqual(self.registry(), {})
+
+    def test_failed_send_does_not_resume(self):
+        self.launch()
+        self.finish()
+        self.send(failed=True)
+        self.assertEqual(self.registry()[AID]["state"], watch.DONE)
+
+    def test_resumed_agent_finishes_and_hands_over_again(self):
+        # Сдача конца ставится заново: первое завершение сессии уже узнала,
+        # а конец возобновлённой работы должен поднять ей ход.
+        path = self.transcript("")
+        self.launch()
+        self.finish()
+        self.handle(event(hookio.TURN_DONE, transcript=path), now=NOW + 60)
+        self.send(now=NOW + 90)
+        self.finish(message="замечания исправлены", now=NOW + 120)
+        said = self.handle(event(hookio.TURN_DONE, transcript=path), now=NOW + 180)
+        self.assertIsNotNone(said)
+        self.assertEqual(said["decision"], "block")
+        self.assertIn("замечания исправлены", said["reason"])
 
     # Разряд команд оболочки (DK-571)
 

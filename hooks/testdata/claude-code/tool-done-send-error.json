@@ -1,0 +1,19 @@
+{
+ "session_id": "99def3df-f874-4267-937c-6414e2928ac0",
+ "transcript_path": "/Users/rider/.claude/projects/-private-tmp-dk1415/99def3df-f874-4267-937c-6414e2928ac0.jsonl",
+ "cwd": "/private/tmp/dk1415",
+ "prompt_id": "31809a73-0946-4d6f-a570-a3af889d6981",
+ "permission_mode": "default",
+ "hook_event_name": "PostToolUse",
+ "tool_name": "SendMessage",
+ "tool_input": {
+  "to": "worker",
+  "summary": "Замечания ревью DK-1415",
+  "message": "Исправь замечания ревью по файлу задачи и закоммить правки."
+ },
+ "tool_response": {
+  "error": "no agent found: worker"
+ },
+ "tool_use_id": "toolu_01DKSENDMESSAGE0002",
+ "duration_ms": 6
+}

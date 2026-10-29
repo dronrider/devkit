@@ -1,0 +1,6 @@
+name = "milestone"
+title = "Веха"
+version = 1
+skill = "board-groom"
+default_type = "task"
+required = ["title", "body", "type", "rank", "size", "accept", "due"]

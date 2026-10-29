@@ -46,3 +46,27 @@ func TestProposalQuestionRoundTripAndAnswer(t *testing.T) {
 		t.Fatal("mixed accepted")
 	}
 }
+
+func TestDropAskIfKeepsReplacement(t *testing.T) {
+	root := t.TempDir()
+	first := Ask{Task: "XR-1", Questions: []Question{{Text: "первый"}}}
+	next := Ask{Task: "XR-1", Questions: []Question{{Text: "второй"}}}
+	if err := WriteAsk(root, TaskName("XR-1"), first); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAsk(root, TaskName("XR-1"), next); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := DropAskIf(root, TaskName("XR-1"), first)
+	if err != nil || removed {
+		t.Fatalf("replacement removed: %v %v", removed, err)
+	}
+	got, ok := ReadAsk(AskPath(root, TaskName("XR-1")))
+	if !ok || got.Questions[0].Text != "второй" {
+		t.Fatal(got)
+	}
+	removed, err = DropAskIf(root, TaskName("XR-1"), next)
+	if err != nil || !removed {
+		t.Fatal(removed, err)
+	}
+}

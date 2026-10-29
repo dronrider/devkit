@@ -509,12 +509,42 @@ func WriteAsk(tree, name string, a Ask) error {
 	if err := os.MkdirAll(Root(tree), 0o755); err != nil {
 		return fmt.Errorf("каталог разговоров не создался: %v", err)
 	}
+	lock, err := Lock(filepath.Join(Root(tree), name+LockSuffix))
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	path := AskPath(tree, name)
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, []byte(a.Text()), 0o644); err != nil {
 		return fmt.Errorf("признак ожидания не записался: %v", err)
 	}
 	return os.Rename(tmp, path)
+}
+
+// DropAskIf removes only the question which was delivered, under the same lock
+// used by WriteAsk, so a replacement question is not erased.
+func DropAskIf(tree, name string, expected Ask) (bool, error) {
+	lock, err := Lock(filepath.Join(Root(tree), name+LockSuffix))
+	if err != nil {
+		return false, err
+	}
+	defer lock.Close()
+	path := AskPath(tree, name)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if string(data) != expected.Text() {
+		return false, nil
+	}
+	if err := os.Remove(path); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // DropAsk снимает признак ожидания. Отсутствие файла это тот же снятый признак,

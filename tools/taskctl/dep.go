@@ -174,7 +174,11 @@ func cmdDepAdd(root string, p DepParams) (string, error) {
 	// остальными: ждать своей же задачи и обстоятельства снаружи разом это
 	// ровно та путаница, которую развели в RULES.board.md, «Трекинг задач» п. 4.
 	if row.Sect == SectInProgress || row.Sect == SectCheck || row.Sect == SectBlocked {
-		if ed := newEdges(root, b, arch).of(p.DepID); !ed.Lifted() {
+		book, err := newEdgesChecked(root, b, arch)
+		if err != nil {
+			return "", err
+		}
+		if ed := book.of(p.DepID); !ed.Lifted() {
 			return "", fmt.Errorf("%s уже в %s, нельзя добавить неснятое ребро на %s: %s", p.ID, sectTitles[row.Sect], p.DepID, ed.Why)
 		}
 	}

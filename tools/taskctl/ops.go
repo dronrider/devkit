@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/control"
+	"github.com/dronrider/devkit/internal/drafttx"
 	"github.com/dronrider/devkit/internal/gitrun"
 	"github.com/dronrider/devkit/internal/taskform"
 	"github.com/dronrider/devkit/internal/trace"
@@ -225,7 +226,7 @@ func (c CommitOpts) validate() error {
 
 // apply возвращает хвост для сообщения команды («, коммит abc1234») либо
 // пустую строку, когда -m не передан.
-func (c CommitOpts) apply(root string, paths []string) (string, error) {
+func (c CommitOpts) apply(root string, paths []string) (result string, finalErr error) {
 	if err := c.validate(); err != nil {
 		return "", err
 	}
@@ -235,6 +236,27 @@ func (c CommitOpts) apply(root string, paths []string) (string, error) {
 	if cliQueuePublication(root, paths, c) {
 		return "", nil
 	}
+	lock, err := drafttx.Acquire(root)
+	if err != nil {
+		return "", err
+	}
+	token, err := lock.BeginPublication()
+	closeErr := lock.Close()
+	if err != nil {
+		return "", err
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	defer func() {
+		if err := drafttx.FinishPublication(root, token); err != nil {
+			if finalErr != nil {
+				finalErr = fmt.Errorf("%v; журнал публикации не снят: %w", finalErr, err)
+			} else {
+				finalErr = fmt.Errorf("публикация завершена, журнал не снят: %w", err)
+			}
+		}
+	}()
 	git := func(args ...string) (string, error) {
 		out, err := gitRun(root, args...)
 		if err != nil {
@@ -568,7 +590,11 @@ func cmdMove(root, id, target, reason string, c CommitOpts) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if held := newEdges(root, b, arch).held(row); len(held) > 0 {
+		ed, err := newEdgesChecked(root, b, arch)
+		if err != nil {
+			return "", err
+		}
+		if held := ed.held(row); len(held) > 0 {
 			return "", fmt.Errorf("%s ждёт предпосылку: %s; ребро «после» снимает слияние её работы в main либо закрытие, нельзя перевести в in-progress", id, edgeWords(held))
 		}
 	}

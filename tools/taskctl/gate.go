@@ -236,9 +236,24 @@ func closeAgentGate(root, id string) error {
 // сессия стоит полем. Прогон без сессии и круг с участником без сессии дают
 // отказ с причиной: фиктивных ID ворота не создают.
 func closeVerifyGate(root, id string) error {
-	lines, pending := trace.StageSources(root, id)
-	_, _, err := stage.VerifyIndependence(id, lines, pending)
+	lines, pending, err := checkedStageSources(root, id)
+	if err != nil {
+		return err
+	}
+	_, _, err = stage.VerifyIndependence(id, lines, pending)
 	return err
+}
+
+func checkedStageSources(root, id string) ([]string, []stage.Stage, error) {
+	var lines []string
+	var pending []stage.Stage
+	if err := cliReadOutside(root, func() error {
+		lines, pending = trace.StageSources(root, id)
+		return nil
+	}); err != nil {
+		return nil, nil, err
+	}
+	return lines, pending, nil
 }
 
 // closeSmokeGate не даёт закрыть строку с непроверенным выкатом (DK-1363):

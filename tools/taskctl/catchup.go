@@ -1,12 +1,17 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 // Отставание бокового дерева (DK-269): дерево харнеса живёт в detached HEAD,
@@ -132,6 +137,12 @@ func staleBoardNote(root string) string {
 	return fmt.Sprintf("доска позади %s на %d %s, догнать: %s", ref, n, pluralCommits(n), how)
 }
 
+func staleBoardNoteChecked(root string) (string, error) {
+	var note string
+	err := cliReadOutside(root, func() error { note = staleBoardNote(root); return nil })
+	return note, err
+}
+
 // cmdCatchup догоняет detached-дерево до свежего указателя чекаутом на sha.
 // Гард «не на ветке, без идущей операции, чистое, позади» из постановки, отказ
 // называет причину. Режим --hook зовёт SessionStart-хук: хук стоит у всех
@@ -140,6 +151,29 @@ func staleBoardNote(root string) string {
 // указателя), catchup молчит, а сделанный подтяг и отказ с причиной наоборот
 // печатаются: сессия обязана знать, что доска под ней могла остаться старой.
 func cmdCatchup(root string, hook bool) (string, error) {
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	root, err = filepath.Abs(canonical)
+	if err != nil {
+		return "", err
+	}
+	if err := recoverCatchup(root); err != nil {
+		return hookSay(hook, err.Error())
+	}
+	lock, err := drafttx.Acquire(root)
+	if err != nil {
+		return "", err
+	}
+	before, err := catchupDocsDigest(root)
+	closeErr := lock.Close()
+	if err != nil {
+		return "", err
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
 	if hook && !linkedWorktree(root) {
 		return "", nil
 	}
@@ -180,13 +214,115 @@ func cmdCatchup(root string, hook bool) (string, error) {
 	if err != nil {
 		return hookSay(hook, "не смог снять sha с "+ref)
 	}
-	if out, err := exec.Command("git", "-C", root, "checkout", "-q", sha).CombinedOutput(); err != nil {
-		return hookSay(hook, fmt.Sprintf("checkout на %s не прошёл: %v\n%s", ref, err, out))
+	head, err := gitRevParse(root, "HEAD")
+	if err != nil {
+		return hookSay(hook, "не смог снять исходный HEAD")
+	}
+	lock, err = drafttx.Acquire(root)
+	if err != nil {
+		return "", err
+	}
+	current, err := catchupDocsDigest(root)
+	if err != nil || current != before {
+		lock.Close()
+		if err != nil {
+			return "", err
+		}
+		return hookSay(hook, "материал изменился при проверке catchup; повторите команду")
+	}
+	token, lease, err := lock.BeginExternal("catchup:" + head + ":" + sha + ":" + before)
+	closeErr = lock.Close()
+	if err != nil {
+		return "", err
+	}
+	if closeErr != nil {
+		lease.Close()
+		return "", closeErr
+	}
+	currentHead, checkErr := gitRevParse(root, "HEAD")
+	currentTarget, targetErr := gitRevParse(root, ref)
+	if checkErr != nil || targetErr != nil || currentHead != head || currentTarget != sha || gitBusy(root) || !treeClean(root) {
+		finishErr := drafttx.FinishExternal(root, token)
+		lease.Close()
+		if finishErr != nil {
+			return hookSay(hook, "состояние Git изменилось; защитный журнал не снят: "+finishErr.Error())
+		}
+		return hookSay(hook, "состояние Git изменилось при подготовке catchup; повторите команду")
+	}
+	cmd := exec.Command("git", "-C", root, "checkout", "-q", sha)
+	cmd.ExtraFiles = []*os.File{lease}
+	out, checkoutErr := cmd.CombinedOutput()
+	if checkoutErr != nil {
+		lease.Close()
+		observed, _ := gitRevParse(root, "HEAD")
+		if recoverErr := recoverCatchup(root); recoverErr != nil {
+			return hookSay(hook, fmt.Sprintf("checkout на %s завершился ошибкой: %v\n%s\nзащитный журнал сохранён: %v", ref, checkoutErr, out, recoverErr))
+		}
+		if observed == sha {
+			return hookSay(hook, fmt.Sprintf("checkout применён, но Git или hook завершился ошибкой: %v\n%s", checkoutErr, out))
+		}
+		return hookSay(hook, fmt.Sprintf("checkout на %s не прошёл: %v\n%s", ref, checkoutErr, out))
+	}
+	actual, headErr := gitRevParse(root, "HEAD")
+	if headErr != nil || actual != sha || !treeClean(root) {
+		lease.Close()
+		return hookSay(hook, "checkout вернул успех, но HEAD или дерево не совпали; защитный журнал сохранён")
+	}
+	err = drafttx.FinishExternal(root, token)
+	lease.Close()
+	if err != nil {
+		return hookSay(hook, "checkout выполнен, защитный журнал не снят: "+err.Error())
 	}
 	if len(sha) > 7 {
 		sha = sha[:7]
 	}
 	return fmt.Sprintf("дерево догнано до %s (%s), приехало %d %s", sha, ref, n, pluralCommits(n)), nil
+}
+
+func catchupDocsDigest(root string) (string, error) {
+	docs, err := collectDocs(root)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(docs)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(data)
+	return fmt.Sprintf("%x", digest), nil
+}
+
+func recoverCatchup(root string) error {
+	kind, token, lease, exists, err := drafttx.PendingExternal(root)
+	if err != nil || !exists {
+		return err
+	}
+	defer lease.Close()
+	parts := strings.Split(kind, ":")
+	if len(parts) != 4 || parts[0] != "catchup" || !fullGitHash(parts[1]) || !fullGitHash(parts[2]) || len(parts[3]) != 64 {
+		return fmt.Errorf("неизвестный журнал внешнего обновления; он сохранён")
+	}
+	head, err := gitRevParse(root, "HEAD")
+	if err != nil || !treeClean(root) {
+		return fmt.Errorf("после прерванного checkout состояние дерева неизвестно; защитный журнал сохранён")
+	}
+	if head == parts[1] {
+		digest, err := catchupDocsDigest(root)
+		if err != nil || digest != parts[3] {
+			return fmt.Errorf("после прерванного checkout исходные документы изменены; защитный журнал сохранён")
+		}
+	} else if head != parts[2] {
+		return fmt.Errorf("после прерванного checkout HEAD не совпадает с исходным или целевым; защитный журнал сохранён")
+	}
+	return drafttx.FinishExternal(root, token)
+}
+
+func fullGitHash(hash string) bool {
+	if len(hash) != 40 && len(hash) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(hash)
+	return err == nil && hash == strings.ToLower(hash)
 }
 
 // hookSay печатает отказ в одной из двух форм: человек получает ошибку с кодом

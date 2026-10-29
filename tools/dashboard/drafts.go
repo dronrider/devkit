@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dronrider/devkit/internal/draftmeta"
 	"io"
 	"net/http"
 	"os"
@@ -480,6 +481,10 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		s.logf("груминг %s в %s отклонён: файл черновика не найден 404", id, found.Name)
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, оформлять нечего", id, found.Name, rel)})
+		return
+	}
+	if err := draftmeta.GuardDraft(found.Path, id); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
 	if m := tmuxMissingCheck(); m != "" {

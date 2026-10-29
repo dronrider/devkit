@@ -1504,3 +1504,30 @@ func TestStaticDraftGoesToTask(t *testing.T) {
 	}
 	t.Log(strings.TrimSpace(string(out)))
 }
+
+func TestDraftGroomLockedDoesNotStart(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	log := filepath.Join(e.home, "tmux.log")
+	writeTmuxFake(t, e.bin, log, "")
+	writeScript(t, e.bin, "claude", "exit 0")
+	writeAgentctlFake(t, e.bin, harnessTiersFixture)
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"title":"частная запись","prio":"mid"}`).Body.Close()
+	path := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), "## ", "замок: locked\n\n## ", 1))
+	if err = os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "ждёт локальную модель") {
+		t.Fatalf("response %d %s", resp.StatusCode, text)
+	}
+	calls, _ := os.ReadFile(log)
+	if strings.Contains(string(calls), "new-session") {
+		t.Fatalf("cloud launched: %s", calls)
+	}
+}

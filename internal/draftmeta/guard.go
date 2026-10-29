@@ -25,7 +25,7 @@ func guardDraft(root, id string) (bool, error) {
 	}
 	h, err := Read(path)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("%s: не удалось проверить метаданные материала", id)
 	}
 	if h.Lock == "locked" {
 		return false, fmt.Errorf("%s: ждёт локальную модель", id)

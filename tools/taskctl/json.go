@@ -288,6 +288,9 @@ type jsonDraft struct {
 	// у неотложенного и у отложенного без срока.
 	DeferredUntil string `json:"deferred_until,omitempty"`
 	Prio          string `json:"prio,omitempty"`
+	Type          string `json:"type"`
+	Source        string `json:"source"`
+	Lock          string `json:"lock"`
 }
 
 // cmdDraftListJSON печатает накопитель одним объектом JSON. Пустой накопитель
@@ -305,7 +308,7 @@ func cmdDraftListJSON(root string) (string, error) {
 		item := jsonDraft{
 			ID: d.ID, Title: d.Title, File: filepath.ToSlash(draftRel(d.ID)),
 			AgeDays: int(d.Age.Hours() / 24), AgeWords: ageWords(d.Age), Deferred: d.Deferred,
-			DeferredUntil: d.Until, Prio: d.Prio,
+			DeferredUntil: d.Until, Prio: d.Prio, Type: d.Type, Source: d.Source, Lock: d.Lock,
 		}
 		if !d.Written.IsZero() {
 			item.Written = d.Written.Format(draftDateLayout)

@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/draftproposal"
 )
 
 // Разбор десяти черновиков оставляет десять мёртвых разговоров, и человек
@@ -179,5 +182,54 @@ exit 0`)
 	}
 	if killed != "" {
 		t.Fatalf("уборка разбора сняла сессию конвейера %q: работа задачи погибла на середине хода", killed)
+	}
+}
+
+func TestGroomSweepHistoryAndActive(t *testing.T) {
+	e, _ := chatEnv(t)
+	sid := "aaaa8888-8888-4888-8888-888888888888"
+	id := "XR-77"
+	groomChat(t, e, sid, id, time.Now().Add(-2*time.Hour))
+	e.s.chatSeenMark(sid)
+	writeDraft(t, e.proj, id)
+	path, _ := draftPathOf(e.proj, id)
+	receipt := draftproposal.Receipt{Source: id, Key: "k", Proposal: "p1", Revision: 1, Outcome: "add", IDs: []string{"XR-99"}, Result: "создано"}
+	state := draftproposal.State{Version: 1, State: "active", Analysis: "empty", Proposals: []draftproposal.Proposal{}}
+	write := func() {
+		t.Helper()
+		data, err := draftproposal.Replace([]byte("# исходник\n"), state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(path, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, analysis := range []string{"empty", "error"} {
+		state.Analysis = analysis
+		write()
+		if e.s.groomDone(e.proj, id) {
+			t.Fatalf("%s считается завершённым", analysis)
+		}
+	}
+	state.Analysis = ""
+	state.Proposals = []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Status: "accepted", Result: &receipt}, {ID: "p2", Revision: 1, Outcome: "drop"}}
+	state.Receipts = []draftproposal.Receipt{receipt}
+	write()
+	if e.s.groomDone(e.proj, id) {
+		t.Fatal("частичный разбор завершён")
+	}
+	state.Proposals = state.Proposals[:1]
+	state.State = "history"
+	write()
+	writeAsk(t, e.proj, id, time.Now().Add(10*time.Minute), sid, "вопрос")
+	e.s.groomSweep(e.proj)
+	if archived(t, e.s, sid) {
+		t.Fatal("история с вопросом убрана")
+	}
+	os.Remove(chat.AskPath(e.proj, chat.TaskName(id)))
+	e.s.groomSweep(e.proj)
+	if !archived(t, e.s, sid) {
+		t.Fatal("прочитанная история не убрана")
 	}
 }

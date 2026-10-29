@@ -1,9 +1,12 @@
 package main
 
 import (
+	"os"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/dronrider/devkit/internal/draftproposal"
 )
 
 // Уборка чатов груминга. Разбор десяти черновиков оставляет десять мёртвых
@@ -33,16 +36,26 @@ func groomChatID(e chatEntry) string {
 
 var groomIDRe = regexp.MustCompile(`^[A-Za-z]+-[0-9]+`)
 
-// groomDone отвечает, оставил ли разбор твёрдый след на диске. Твёрдых исходов
-// три: строка заведена, приписка сделана, черновик удалён. Все три уносят файл
-// записи из накопителя, а первый ставит строку на доску. Отложенный с вопросом
-// исходом не считается: файл его остаётся лежать.
-//
-// Смотрим по факту, а не по словам агента: сказать «завёл строку» он может и
-// не заведя её.
+// groomDone проверяет сохранённую историю и прежние исходы без файла.
 func (s *server) groomDone(projPath, id string) bool {
 	if !draftHere(projPath, id) {
 		return true
+	}
+	path, _ := draftPathOf(projPath, id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	state, err := draftproposal.Parse(data)
+	if err != nil {
+		return false
+	}
+	if state.State == "history" {
+		return true
+	}
+	_, hasProposals, err := draftproposal.Material(data)
+	if err != nil || hasProposals {
+		return false
 	}
 	return s.rowHere(projPath, id)
 }

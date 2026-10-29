@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
+	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskhead"
 )
 
@@ -55,4 +57,53 @@ func TestLockedAttachRejectsLiveTargetBeforeWrite(t *testing.T) {
 	if err != nil || !strings.Contains(string(after), "защита: locked") {
 		t.Fatalf("target not protected: %v", err)
 	}
+}
+
+func TestLockedAttachRejectsActiveCloudReservation(t *testing.T) {
+	root := setup(t)
+	if _, err := cmdDraft(root, "частный материал", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDraftMeta(root, "XR-008", "", "", "locked", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	source, target := draftPath(root, "XR-008"), taskFileAbs(root, "XR-001")
+	beforeSource, _ := os.ReadFile(source)
+	beforeTarget, _ := os.ReadFile(target)
+	active, err := testCloudShared(stage.Home(), "XR-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = cmdDraftAttach(root, "XR-008", "XR-001", CommitOpts{}); err == nil {
+		active.Close()
+		t.Fatal("active cloud accepted private material")
+	}
+	a, _ := os.ReadFile(source)
+	b, _ := os.ReadFile(target)
+	if string(a) != string(beforeSource) || string(b) != string(beforeTarget) {
+		active.Close()
+		t.Fatal("partial write")
+	}
+	if err = active.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = cmdDraftAttach(root, "XR-008", "XR-001", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testCloudShared(home, id string) (*os.File, error) {
+	path := filepath.Join(home, ".devkit", "cloud-locks", id)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_SH); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
 }

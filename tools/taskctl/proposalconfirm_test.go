@@ -11,6 +11,7 @@ import (
 
 	"github.com/dronrider/devkit/internal/draftproposal"
 	"github.com/dronrider/devkit/internal/drafttx"
+	"github.com/dronrider/devkit/internal/stage"
 )
 
 func TestPrepareConfirmationAllOutcomesAndReplay(t *testing.T) {
@@ -276,5 +277,61 @@ func TestCLIConfirmPublicationFailureAndRetry(t *testing.T) {
 	state, err := draftproposal.Parse(data)
 	if err != nil || state.State != "history" || len(state.Receipts) != 1 {
 		t.Fatalf("state %+v %v", state, err)
+	}
+}
+
+func TestConfirmLockedAttachRejectsCloudWithoutWrites(t *testing.T) {
+	root := setup(t)
+	kit, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", kit)
+	if _, err = cmdDraft(root, "частный источник", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = cmdDraftMeta(root, "XR-008", "", "", "locked", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := cmdDraftProposals(root, "XR-008")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v proposalView
+	if err = json.Unmarshal([]byte(raw), &v); err != nil {
+		t.Fatal(err)
+	}
+	card := draftproposal.Proposal{ID: "p1", Revision: 1, Outcome: "attach", Target: "XR-001", Text: "частный фрагмент"}
+	in, _ := json.Marshal(struct {
+		Proposals []draftproposal.Proposal `json:"proposals"`
+	}{[]draftproposal.Proposal{card}})
+	raw, err = cmdDraftProposalsSave(root, "XR-008", v.Snapshot, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal([]byte(raw), &v); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: v.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "accept"}}})
+	source, target := draftPath(root, "XR-008"), taskFileAbs(root, "XR-001")
+	a, _ := os.ReadFile(source)
+	b, _ := os.ReadFile(target)
+	cloud, err := testCloudShared(stage.Home(), "XR-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = cmdDraftProposalsConfirm(root, request, CommitOpts{}); err == nil {
+		cloud.Close()
+		t.Fatal("cloud active")
+	}
+	aa, _ := os.ReadFile(source)
+	bb, _ := os.ReadFile(target)
+	if !bytes.Equal(a, aa) || !bytes.Equal(b, bb) {
+		cloud.Close()
+		t.Fatal("partial write")
+	}
+	cloud.Close()
+	if _, err = cmdDraftProposalsConfirm(root, request, CommitOpts{}); err != nil {
+		t.Fatal(err)
 	}
 }

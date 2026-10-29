@@ -861,13 +861,27 @@ func main() {
 		needArgs(pos, 1, 1, "rehearse <ID> [--step \"команда\"] [--timeout 10m]")
 		msg, err = cmdRehearse(root(*dir), pos[0], p)
 	case "file":
-		fs := flag.NewFlagSet("file", flag.ExitOnError)
-		dir := fs.String("C", gdir, "стартовая директория")
-		var c CommitOpts
-		commitFlags(fs, &c)
-		pos := frame.ParseArgs(fs, args[1:])
-		needArgs(pos, 1, 1, "file <ID>")
-		msg, err = cmdFile(root(*dir), pos[0], c)
+		if len(args) > 1 && args[1] == "put" {
+			fs := flag.NewFlagSet("file put", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "file put <ID>")
+			var data []byte
+			data, err = io.ReadAll(os.Stdin)
+			if err == nil {
+				msg, err = cmdFilePut(root(*dir), pos[0], string(data), c)
+			}
+		} else {
+			fs := flag.NewFlagSet("file", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			pos := frame.ParseArgs(fs, args[1:])
+			needArgs(pos, 1, 1, "file <ID>")
+			msg, err = cmdFile(root(*dir), pos[0], c)
+		}
 	case "list":
 		fs := flag.NewFlagSet("list", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

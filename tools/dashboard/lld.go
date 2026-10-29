@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 // Раздел LLD (круг 2 POC DK-470): дизайны это отдельная сущность со своим
@@ -95,6 +97,16 @@ func (s *server) handleDocPut(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустой текст затёр бы документ"})
 		return
 	}
+	lock, err := drafttx.Acquire(found.Path)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	defer func() {
+		if lock != nil {
+			lock.Close()
+		}
+	}()
 	full := filepath.Join(found.Path, "docs", filepath.FromSlash(rel))
 	if !isFile(full) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "документа docs/" + rel + " нет, новые LLD заводятся в репозитории"})
@@ -105,6 +117,12 @@ func (s *server) handleDocPut(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("документ не записался: %v", err)})
 		return
 	}
+	if err := lock.Close(); err != nil {
+		lock = nil
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	lock = nil
 	relRepo := "docs/" + rel
 	subj := "правка " + path.Base(rel) + " с дашборда"
 	if id := docIDRe.FindString(path.Base(rel)); id != "" {

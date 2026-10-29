@@ -1717,3 +1717,79 @@ func TestStaticDraftMetadataFields(t *testing.T) {
 		t.Fatalf("поля записи: %v\n%s", err, out)
 	}
 }
+
+func TestDraftProposalEditingAndRejectThroughTaskctl(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	kit, err := filepath.Abs("../../kit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", filepath.Dir(kit))
+	doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"title":"исходник","prio":"mid"}`).Body.Close()
+	path := filepath.Join(e.proj, "docs", "tasks", "drafts", "XR-005.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := draftproposal.State{Version: 1, State: "active", Analysis: "ok", Proposals: []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "attach", Target: "XR-001", Text: "первое"}, {ID: "p2", Revision: 1, Outcome: "drop", Text: "второе", Reason: "не нужно"}}}
+	data, err = draftproposal.Replace(data, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	base := e.srv.URL + "/api/projects/demo/drafts/XR-005/proposals"
+	resp := doReq(t, c, "GET", base, "")
+	var view struct {
+		Snapshot string              `json:"snapshot"`
+		State    draftproposal.State `json:"state"`
+	}
+	if err = json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	edited := view.State.Proposals[0]
+	edited.Revision++
+	edited.Text = "исправленная приписка"
+	payload, err := json.Marshal(map[string]any{"base": view.Snapshot, "proposal": edited})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp = doReq(t, c, "PUT", base, string(payload))
+	text := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("edit %d %s", resp.StatusCode, text)
+	}
+	if err = json.Unmarshal([]byte(text), &view); err != nil {
+		t.Fatal(err)
+	}
+	payload, err = json.Marshal(map[string]string{"base": view.Snapshot, "proposal": "p2", "reason": "не относится"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp = doReq(t, c, "POST", base+"/reject", string(payload))
+	text = body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reject %d %s", resp.StatusCode, text)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := draftproposal.Parse(data)
+	if err != nil || saved.Analysis != "ok" || saved.Proposals[0].Text != "исправленная приписка" || saved.Proposals[1].Status != "rejected" {
+		t.Fatalf("saved %+v %v", saved, err)
+	}
+}
+
+func TestStaticDraftProposalEditingAndReject(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_draftproposal.mjs"), filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("карточки разбора: %v\n%s", err, out)
+	}
+}

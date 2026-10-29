@@ -77,6 +77,15 @@ func lockedAttachGuard(id string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
+	bin, err := exec.LookPath("tmux")
+	if err != nil {
+		return fmt.Errorf("%s: состояние запуска неизвестно: %w", id, err)
+	}
+	if err = exec.Command(bin, "has-session", "-t", "=task-"+id).Run(); err == nil {
+		return fmt.Errorf("%s: разговор ещё открыт, закрытый материал нельзя приписать", id)
+	} else if e, ok := err.(*exec.ExitError); !ok || e.ExitCode() != 1 {
+		return fmt.Errorf("%s: состояние запуска неизвестно: %v", id, err)
+	}
 	data, err := os.ReadFile(sessions.Path(home))
 	if os.IsNotExist(err) {
 		return nil

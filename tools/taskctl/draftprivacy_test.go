@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -157,4 +158,28 @@ func testCloudShared(root, id string) (*os.File, error) {
 		return nil, err
 	}
 	return f, nil
+}
+
+func TestLockedAttachRejectsStartingTmuxWithoutRegistry(t *testing.T) {
+	root := setup(t)
+	t.Setenv("HOME", t.TempDir())
+	if _, err := cmdDraft(root, "частный материал", "mid", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDraftMeta(root, "XR-008", "", "", "locked", CommitOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\n[ \"$1\" = has-session ] && [ \"$3\" = =task-XR-001 ]\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	before, _ := os.ReadFile(taskFileAbs(root, "XR-001"))
+	if _, err := cmdDraftAttach(root, "XR-008", "XR-001", CommitOpts{}); err == nil {
+		t.Fatal("starting tmux accepted without registry")
+	}
+	after, _ := os.ReadFile(taskFileAbs(root, "XR-001"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("target changed")
+	}
 }

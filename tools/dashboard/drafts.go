@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/dronrider/devkit/internal/draftmeta"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/dronrider/devkit/internal/draftmeta"
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 // Раздел «Черновики»: список накопителя, текст записи, груминг, его исход и
@@ -277,8 +279,17 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на ID задачи", id)})
 		return
 	}
+	lock, err := drafttx.Acquire(found.Path)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
 	path, rel := draftPathOf(found.Path, id)
 	text, err := os.ReadFile(path)
+	if closeErr := lock.Close(); closeErr != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": closeErr.Error()})
+		return
+	}
 	if err != nil {
 		// Файла нет, а строка с тем же ID стоит на доске: разбор кончился
 		// заведением задачи, и открытая форма записи по этому слову уходит на
@@ -295,13 +306,18 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 			"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно, груминг мог уже завести по нему задачу", id, found.Name, rel)})
 		return
 	}
+	header, err := draftmeta.Parse(text)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
 	// Заказ едет и сюда, дословно: экран записи держит свою кнопку «Грумить»,
 	// и подсказка на ней читает то же поле, что и строка накопителя. Оба
 	// исхода едут сразу, order на «грумить» и orderRun на «выполнить»
 	// (DK-1043): список исхода на экране переключает подсказку без похода на
 	// сервер за вторым заказом.
 	out := map[string]any{
-		"id": id, "file": rel, "text": string(text),
+		"id": id, "file": rel, "text": string(text), "type": header.Type, "source": header.Source, "lock": header.Lock,
 		"order":    groomPrompt(id, "", draftModeGroom),
 		"orderRun": groomPrompt(id, "", draftModeRun),
 		// База правки едет вместе с текстом: экран вернёт её при сохранении, и
@@ -351,6 +367,16 @@ func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
 		return
 	}
+	lock, err := drafttx.Acquire(found.Path)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	defer func() {
+		if lock != nil {
+			lock.Close()
+		}
+	}()
 	path, rel := draftPathOf(found.Path, id)
 	was, err := os.ReadFile(path)
 	if err != nil {
@@ -395,6 +421,12 @@ func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("черновик не записался: %v", err)})
 		return
 	}
+	if err := lock.Close(); err != nil {
+		lock = nil
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	lock = nil
 	resp := map[string]string{"id": id, "file": rel, "hash": draftHash([]byte(text)),
 		"message": fmt.Sprintf("текст %s записан", rel)}
 	if note := commitDocs(found.Path, boardCommitMsg(id, "правка черновика с дашборда"), rel); note != "" {
@@ -709,3 +741,66 @@ func (s *server) handleDraftDrop(w http.ResponseWriter, r *http.Request) {
 // отсутствием (решение пользователя). Прежде тут жила ручка, собиравшая исход
 // по следам на диске, и форма записи пересказывала его шестью состояниями
 // вместо самой записи.
+
+func (s *server) handleDraftMeta(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "поля черновика")
+	if found == nil {
+		return
+	}
+	id := r.PathValue("id")
+	if !goalIDRe.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный ID записи"})
+		return
+	}
+	var body struct {
+		Type   string `json:"type"`
+		Source string `json:"source"`
+		Lock   string `json:"lock"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверные поля записи"})
+		return
+	}
+	args := []string{"draft", "meta", id}
+	if body.Type != "" {
+		args = append(args, "--type", body.Type)
+	}
+	if body.Source != "" {
+		args = append(args, "--source", body.Source)
+	}
+	if body.Lock != "" {
+		args = append(args, "--lock", body.Lock)
+	}
+	out, code, err := s.taskctlWrite(found.Path, args...)
+	if err != nil {
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	resp := map[string]string{"message": out}
+	if note := commitDocs(found.Path, boardCommitMsg(id, "поля черновика с дашборда"), draftFileRel(id)); note != "" {
+		resp["note"] = note
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *server) handleDraftTypes(w http.ResponseWriter, r *http.Request) {
+	found := s.findProject(w, r, "типы черновиков")
+	if found == nil {
+		return
+	}
+	out, code, err := taskctlDo(found.Path, "draft", "types", "--json")
+	if err != nil {
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	var result json.RawMessage
+	if err = json.Unmarshal([]byte(out), &result); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "типы черновиков не прочитались"})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}

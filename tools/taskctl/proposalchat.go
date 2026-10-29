@@ -158,6 +158,22 @@ func cmdProposalChatAnswer(root, anchor string, input []byte, opts CommitOpts) (
 	return proposalChatRepeated(root, req)
 }
 
+func cmdProposalChatReplay(root, anchor string, input []byte) (string, error) {
+	a, err := parseProposalChatAnswer(input)
+	if err != nil {
+		return "", err
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	root = filepath.Clean(root)
+	if !idRe.MatchString(anchor) || a.Tree != root {
+		return "", fmt.Errorf("неверное дерево или адрес вопроса")
+	}
+	return proposalChatRepeated(root, draftproposal.ConfirmRequest{Snapshots: a.Snapshots, Decisions: a.Decisions})
+}
+
 // A missing Ask permits receipt recovery only; it never invokes the writer.
 func proposalChatRepeated(root string, req draftproposal.ConfirmRequest) (string, error) {
 	if len(req.Decisions) == 0 || len(req.Snapshots) == 0 {

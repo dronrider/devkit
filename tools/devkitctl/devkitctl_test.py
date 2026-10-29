@@ -3089,6 +3089,32 @@ class WindowCopyTest(unittest.TestCase):
             self.assertEqual(devkitctl.check_window_copy(root, False), ([], []),
                              "после синка копия всё ещё расходится с машинным слоем")
 
+    def test_auto_off_rides_to_the_window_copy(self):
+        # Окно, открытое без CLAUDE_CONFIG_DIR, берёт env из настроек самой
+        # директории, и переменная отключения классификатора обязана ехать в
+        # копию вместе с ключами подписки: без неё первый чувствительный вызов
+        # встаёт диалогом о смене оплаты, и чат снаружи выглядит зависшим
+        # (DK-1319).
+        home, root, copy = self.stand(copy_env={
+            "env": {"ANTHROPIC_BASE_URL": "https://новый.example",
+                    "ANTHROPIC_AUTH_TOKEN": "токен-новый",
+                    "ANTHROPIC_MODEL": "glm-4.6",
+                    "DEVKIT_HARNESS": "glm-code"},
+        })
+        with fake_home(home):
+            findings, _ = devkitctl.check_window_copy(root, False)
+        self.assertTrue([f for f in findings if devkitctl.ALT_SUB_AUTO_OFF in f],
+                        "копия окна без переменной отключения классификатора прошла молча: %s"
+                        % (findings,))
+        with fake_home(home):
+            devkitctl.check_window_copy(root, True)
+        doc = json.loads(read(copy / devkitctl.WINDOW_ENV_FILE))["env"]
+        self.assertEqual(doc.get(devkitctl.ALT_SUB_AUTO_OFF), devkitctl.ALT_SUB_AUTO_OFF_VALUE,
+                         "переменная отключения классификатора не прописана в копии окна")
+        with fake_home(home):
+            self.assertEqual(devkitctl.check_window_copy(root, False), ([], []),
+                             "после синка копия всё ещё расходится с машинным слоем")
+
     def test_doctor_from_the_copy_checks_the_copy(self):
         # Доктора зовут и из самого окна: проверять он обязан ту копию, в
         # которой стоит, а не искать соседа с ещё одним суффиксом.

@@ -2671,6 +2671,11 @@ def check_window_copy(root, fix):
     # CLAUDE_CONFIG_DIR, берёт env из настроек самой директории, и без подстановок
     # алиас из параметра модели уходил бы на провод как есть (DK-751).
     want.update(alias_folding(machine_env))
+    # Переменная отключения классификатора едет туда же и тем же известным
+    # значением, а не зеркалом машинного слоя: значение автоматике известно, и
+    # окно не ходит без защиты, пока у машинного слоя открыта своя находка
+    # (DK-1319).
+    want[ALT_SUB_AUTO_OFF] = ALT_SUB_AUTO_OFF_VALUE
     settings = copy / WINDOW_ENV_FILE
     doc, env, broken = window_env(settings)
     if broken:

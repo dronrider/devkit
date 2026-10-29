@@ -7,6 +7,10 @@ const feed=makeNode('div'), ta=makeNode('textarea'); ta.value='свои слов
 const pick={addr:'synthetic',on:true,ask:{kind:'agent',task:'XR-1',text:'вопрос',proposal:shown}};
 sandbox.proposalPickWire(feed,ta,pick,shown);
 assert.equal(allByClass(feed,'draft-proposal').length,3);
+const comment = sandbox.proposalComment(pick.proposalDraft);
+assert.equal(comment.mode, 'comment');
+assert.equal(comment.snapshots.length, 2);
+assert.equal(comment.decisions.length, 0);
 const first=allByClass(feed,'draft-proposal')[0];
 const select=first.querySelector('select'), reason=first.querySelector('input');
 select.value='reject'; select.handlers.change(); reason.value='не подходит'; reason.handlers.input();

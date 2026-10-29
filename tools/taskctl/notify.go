@@ -56,6 +56,10 @@ const (
 // задачи он от имени проекта отличает, а `taskctl -C` двигает доску и из
 // бокового дерева.
 func notify(root, reason, id, title, body string) string {
+	if cliTx != nil {
+		cliAfterUnlock = append(cliAfterUnlock, func() string { return notify(root, reason, id, title, body) })
+		return ""
+	}
 	script, err := notifyScript(root)
 	if err != nil {
 		return "\nуведомление не отправлено: " + err.Error()

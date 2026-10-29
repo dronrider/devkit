@@ -338,7 +338,7 @@ func cmdAdd(root string, p AddParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	drafts, err := loadDrafts(root)
+	drafts, err := loadDraftsWithHistory(root, true)
 	if err != nil {
 		return "", err
 	}
@@ -349,6 +349,9 @@ func cmdAdd(root string, p AddParams) (string, error) {
 		}
 	} else if !idRe.MatchString(id) {
 		return "", fmt.Errorf("ID %q не вида PREFIX-NNN", id)
+	}
+	if d := findDraft(drafts, id); d != nil && d.History {
+		return "", fmt.Errorf("ID %s занят историей черновика", id)
 	}
 	if b.find(id) != nil || arch.has(id) {
 		return "", fmt.Errorf("ID %s уже занят", id)
@@ -1478,7 +1481,7 @@ func cmdID(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	drafts, err := loadDrafts(root)
+	drafts, err := loadDraftsWithHistory(root, true)
 	if err != nil {
 		return "", err
 	}

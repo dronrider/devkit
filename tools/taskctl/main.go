@@ -538,12 +538,38 @@ func main() {
 			fs := flag.NewFlagSet("draft list", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
 			jsonOut := fs.Bool("json", false, "машинный вывод JSON")
-			needArgs(frame.ParseArgs(fs, args[2:]), 0, 0, "draft list [--json]")
+			history := fs.Bool("history", false, "история разбора")
+			needArgs(frame.ParseArgs(fs, args[2:]), 0, 0, "draft list [--json] [--history]")
 			if *jsonOut {
-				msg, err = cmdDraftListJSON(root(*dir))
+				msg, err = cmdDraftListJSONHistory(root(*dir), *history)
+				break
+			}
+			if *history {
+				msg, err = cmdDraftHistory(root(*dir))
 				break
 			}
 			msg, err = cmdDraftList(root(*dir))
+		case "types":
+			fs := flag.NewFlagSet("draft types", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			dump := fs.String("dump", "", "выгрузить определение")
+			jsonOut := fs.Bool("json", false, "машинный вывод JSON")
+			needArgs(frame.ParseArgs(fs, args[2:]), 0, 0, "draft types [--json | --dump <тип>]")
+			if *dump != "" && *jsonOut {
+				fail(fmt.Errorf("--dump и --json несовместимы"))
+			}
+			msg, err = cmdDraftTypes(root(*dir), *dump, *jsonOut)
+		case "meta":
+			fs := flag.NewFlagSet("draft meta", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			kind := fs.String("type", "", "тип черновика")
+			source := fs.String("source", "", "источник")
+			lock := fs.String("lock", "", "locked или unlocked")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 1, 1, "draft meta <ID> [--type <тип>] [--source <источник>] [--lock locked|unlocked]")
+			msg, err = cmdDraftMeta(root(*dir), pos[0], *kind, *source, *lock, c)
 		case "defer":
 			fs := flag.NewFlagSet("draft defer", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
@@ -600,7 +626,10 @@ func main() {
 		default:
 			fs := flag.NewFlagSet("draft", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")
-			prio := fs.String("prio", "", "уровень разбора high|mid|low, обязателен")
+			prio := fs.String("prio", "", "уровень разбора high|mid|low")
+			kind := fs.String("type", "", "тип черновика")
+			source := fs.String("source", "", "источник")
+			lock := fs.String("lock", "", "locked или unlocked")
 			var c CommitOpts
 			commitFlags(fs, &c)
 			pos := frame.ParseArgs(fs, args[1:])
@@ -624,7 +653,7 @@ func main() {
 				}
 				viaStdin = true
 			}
-			msg, err = cmdDraftFrom(root(*dir), text, *prio, viaStdin, c)
+			msg, err = cmdDraftWithMeta(root(*dir), text, *prio, viaStdin, *kind, *source, *lock, c)
 		}
 	case "move":
 		fs := flag.NewFlagSet("move", flag.ExitOnError)

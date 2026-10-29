@@ -16,11 +16,16 @@
 
 Журнал это строки JSON в ~/.devkit/incidents.jsonl. Перезапись строчная:
 запись находит себя по ID, каталог подменяется ключом DEVKIT_INCIDENTS_LOG,
-поэтому стенд разводит журнал мимо машинного. Чувствительного в записи нет:
-только ID, коды, пути журналов и слова диагностики, без адресов и доступов.
+поэтому стенд разводит журнал мимо машинного. Пара чтение-запись идёт под
+файловым замком: писатели трое и из разных процессов, и одновременная
+перезапись от своего снимка теряла чужую строку. Чувствительного в записи
+нет: только ID, коды, пути журналов и слова диагностики, без адресов
+и доступов.
 """
+import fcntl
 import json
 import os
+from contextlib import contextmanager
 from datetime import datetime
 
 # Полный путь журнала для стенда. Настоящий общий на машину, и самопроверке
@@ -100,6 +105,26 @@ def _write(records, home=None):
     return True
 
 
+@contextmanager
+def _guard(home=None):
+    """Замок на пару чтение-запись журнала. Держится отдельным файлом рядом:
+    сам журнал перезаписывается целиком, и замок на нём жил бы на дескрипторе,
+    который писатели открывают заново. Недоступный замок не блокирует запись:
+    её исход и так виден возвратом report."""
+    path = log_path(home) + ".lock"
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        f = open(path, "a", encoding="utf-8")
+    except OSError:
+        yield
+        return
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        f.close()
+
+
 def _stamp(now=None):
     return (now or datetime.now()).strftime(STAMP)
 
@@ -112,24 +137,26 @@ def report(task, reason, why, run="", root="", logs=(), home=None, now=None):
     значит, что журнал не записался: остановка названа вслух журналами
     утилит, и молча терять её повтором нельзя."""
     when = _stamp(now)
-    records = read(home)
-    for rec in reversed(records):
-        if rec.get("task") != task or rec.get("reason") != reason:
-            continue
-        if rec.get("outcome") == RESUMED_OUTCOME:
-            break
-        rec["seen"] = int(rec.get("seen") or 1) + 1
-        _write(records, home)
-        return rec["id"]
-    day = when[:10].replace("-", "")
-    alike = sum(1 for rec in records if str(rec.get("id", "")).startswith("INC-%s" % day))
-    ident = "INC-%s-%d" % (day, alike + 1)
-    records.append({
-        "id": ident, "task": task, "run": run, "when": when, "reason": reason,
-        "why": why, "root": root, "logs": list(logs), "seen": 1, "notes": [],
-        "outcome": "",
-    })
-    return ident if _write(records, home) else ""
+    with _guard(home):
+        records = read(home)
+        for rec in reversed(records):
+            if rec.get("task") != task or rec.get("reason") != reason:
+                continue
+            if rec.get("outcome") == RESUMED_OUTCOME:
+                break
+            rec["seen"] = int(rec.get("seen") or 1) + 1
+            _write(records, home)
+            return rec["id"]
+        day = when[:10].replace("-", "")
+        alike = sum(1 for rec in records
+                    if str(rec.get("id", "")).startswith("INC-%s" % day))
+        ident = "INC-%s-%d" % (day, alike + 1)
+        records.append({
+            "id": ident, "task": task, "run": run, "when": when,
+            "reason": reason, "why": why, "root": root, "logs": list(logs),
+            "seen": 1, "notes": [], "outcome": "",
+        })
+        return ident if _write(records, home) else ""
 
 
 def open_for(task, home=None):
@@ -150,13 +177,14 @@ def open_list(home=None):
 def _touch(ident, home, change):
     """Найти запись по ID и переписать её change(rec). Возврат это найденная
     запись либо None."""
-    records = read(home)
-    for rec in records:
-        if rec.get("id") != ident:
-            continue
-        change(rec)
-        _write(records, home)
-        return rec
+    with _guard(home):
+        records = read(home)
+        for rec in records:
+            if rec.get("id") != ident:
+                continue
+            change(rec)
+            _write(records, home)
+            return rec
     return None
 
 

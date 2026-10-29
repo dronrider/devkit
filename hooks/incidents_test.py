@@ -7,6 +7,7 @@
 """
 import os
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -135,6 +136,48 @@ class IncidentsTest(unittest.TestCase):
         self.assertIn(ident, text)
         for word in ("token", "secret", "password", "http://", "https://"):
             self.assertNotIn(word, text)
+
+    def test_concurrent_writers_keep_every_record(self):
+        """Стоп конвейера, тик подъёма и дежурный пишут в один журнал из
+        разных процессов. Каждый перезаписывает журнал от прочитанного
+        снимка, и без замка одновременная запись теряет чужую строку.
+        Замок в тесте проверяется на писателях за общим барьером: пауза
+        в записи разводит снимки, и в журнале обязаны остаться все строки."""
+        writers, rounds = 4, 3
+        start = self.dir / "start"
+        plain = incidents._write
+
+        def slowed(records, home=None):
+            time.sleep(0.05)
+            return plain(records, home)
+
+        pids = []
+        for n in range(writers):
+            pid = os.fork()
+            if pid == 0:
+                status = 1
+                try:
+                    incidents._write = slowed
+                    while not start.exists():
+                        time.sleep(0.01)
+                    for i in range(rounds):
+                        incidents.report("DK-race-%d-%d" % (n, i),
+                                         incidents.PROC_GONE, "гонка писателей",
+                                         home=self.home)
+                    status = 0
+                finally:
+                    os._exit(status)
+            pids.append(pid)
+        time.sleep(0.3)
+        start.write_text("", encoding="utf-8")
+        for pid in pids:
+            _, status = os.waitpid(pid, 0)
+            self.assertEqual(os.waitstatus_to_exitcode(status), 0,
+                             "писатель %d упал" % pid)
+        records = incidents.read(home=self.home)
+        self.assertEqual(len(records), writers * rounds,
+                         "журнал потерял строки: %d из %d"
+                         % (len(records), writers * rounds))
 
 
 if __name__ == "__main__":

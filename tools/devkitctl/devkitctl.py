@@ -198,6 +198,7 @@ import onboard
 import os
 import perms
 import plans
+import drafttypes
 import re
 import rules
 import runtrees
@@ -3108,6 +3109,9 @@ def doctor(start, fix=False):
     # слой доктор не должен, набор без него это набор встроенный.
     findings += plans.check_plans(str(DEVKIT / "kit" / "plans"),
                                   str(Path(root) / ".devkit" / "plans"))
+    findings += drafttypes.check(str(DEVKIT / "kit" / "draft-types"),
+                                 str(Path(root) / ".devkit" / "draft-types"),
+                                 str(DEVKIT / "kit" / "skills"))
     # Конфиг порогов прозы того же формата и той же судьбы: чинится он правкой
     # в devkit, а не автоматикой, поэтому идёт находкой рядом с профилями.
     # Локальные правила контура против коммитимого образца. Спрашивается не у

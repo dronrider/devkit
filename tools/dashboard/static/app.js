@@ -4591,12 +4591,12 @@ function lineWord(n) {
 // умолчанию развёрнут: свёртка не должна прятать неизвестное молча. Тело
 // свёрнутого рендерится лениво, первым разворотом: журнал в полторы сотни
 // строк не стоит разметки, пока на него не смотрят.
-function mdRenderSections(text) {
+function mdRenderSections(text, project) {
   const box = el("div", "fsecs");
   let plain = [];
   const flushPlain = () => {
     if (!plain.length) return;
-    box.append(mdRender(plain.join("\n")));
+    box.append(mdRender(plain.join("\n"), project));
     plain = [];
   };
   for (const sec of mdSections(text)) {
@@ -4614,7 +4614,7 @@ function mdRenderSections(text) {
     let drawn = false;
     top.addEventListener("click", () => {
       if (!drawn) {
-        bodyEl.append(mdRender(sec.lines.join("\n")));
+        bodyEl.append(mdRender(sec.lines.join("\n"), project));
         drawn = true;
       }
       bodyEl.hidden = !bodyEl.hidden;
@@ -4672,7 +4672,7 @@ function filePanel(project, id, detail, form, touch, edit, canMake) {
       // такой документ на своей форме, файл задачи заводится той же кнопкой.
       const view = el("div", "fview");
       view.dataset.file = "docs/" + detail.doc;
-      view.replaceChildren(mdRender(detail.docText || ""));
+      view.replaceChildren(mdRender(detail.docText || "", project));
       body.append(view);
     } else {
       body.append(el("div", "empty", detail.note || "файла задачи нет"));
@@ -4709,7 +4709,7 @@ function filePanel(project, id, detail, form, touch, edit, canMake) {
   const view = el("div", "fview");
   view.dataset.file = detail.file || "docs/tasks/" + id + ".md";
   const paint = () => {
-    if (String(form.text || "").trim()) view.replaceChildren(mdRenderSections(mdDropTitle(form.text)));
+    if (String(form.text || "").trim()) view.replaceChildren(mdRenderSections(mdDropTitle(form.text), project));
     else view.replaceChildren(el("div", "empty", "файл задачи пуст"));
   };
   paint();
@@ -6182,7 +6182,7 @@ function mentionAddr(where, text) {
   const path = String(text || "").replace(/^\/+/, "").replace(/^(?:\.{1,2}\/)+/, "");
   if (/\.md$/i.test(path)) {
     const doc = path.replace(/^docs\//, "");
-    const draft = doc.match(/^tasks\/drafts\/(.+)\.md$/);
+    const draft = doc.match(/^(?:tasks\/)?drafts\/(.+)\.md$/);
     if (draft) return where + "/draft/" + draft[1];
     const task = doc.match(/^tasks\/([A-Za-z][A-Za-z0-9]*-\d+)\.md$/);
     if (task) return where + "/" + task[1].toUpperCase();

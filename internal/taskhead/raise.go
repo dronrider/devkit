@@ -160,6 +160,9 @@ func (q *Request) pickModel(res *Result) {
 // Result.
 func Raise(q Request) (Result, error) {
 	var res Result
+	if err := groomRunGuard(q.Root, os.Getenv("DEVKIT_GROOM_SOURCE"), os.Getenv("DEVKIT_GROOM_MODE"), q.ID); err != nil {
+		return res, err
+	}
 	if err := draftmeta.GuardRecord(q.Root, q.ID); err != nil {
 		return res, err
 	}

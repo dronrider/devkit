@@ -9845,7 +9845,8 @@ async function chatState(project, addr, board, works) {
   // жилец открывает ленту и в поднимающей вкладке: разговор, рождённый этим
   // подъёмом, снимает память и замок, а прежний жилец окна держит плашку над
   // лентой, потому что реплика в него ушла бы вторым агентом рядом с
-  // поднимающимся (DK-1523). У цели
+  // поднимающимся (DK-1523). Идущая работа без памяти подъёма держит замок тем
+  // же полем окна. У цели
   // назначение живёт, пока идёт цикл: строка журнала переживает стоп-маркер и
   // называет кончившийся виток, а дверь стоящей цели поднимает свою сессию
   // первой репликой (DK-1009), поэтому цель берёт носителя только при живой
@@ -9863,9 +9864,9 @@ async function chatState(project, addr, board, works) {
       workSession(st.task, works);
     if (st.main.chat) {
       if (rise && st.main.chat === "tmux-" + rise) st.lift = rise;
-      else if (liftRec && rise && st.main.window === rise) {
+      else if (rise && st.main.window === rise) {
         st.sid = st.main.chat;
-        const grown = chatBornOf(st.chats, rise, liftRec.born);
+        const grown = liftRec ? chatBornOf(st.chats, rise, liftRec.born) : null;
         if (grown && grown.id === st.main.chat) chatLiftDrop(project, liftAddr);
         else st.lift = rise;
       }

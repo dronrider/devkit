@@ -4,11 +4,12 @@
 // Журнал назначений пишет носителем ключ tmux-<имя окна>, а ленту держит сессия,
 // чей хук старта записался в реестр с транскриптом. До правки ручка адреса
 // отдавала сам ключ, и панель задачи встречала человека пустой лентой с
-// обрубком «чат tmux-tas» в заголовке. Стенд проходит дверь задачи четыре
-// раза: поднимающая вкладка ждёт на сыром ключе плашкой подъёма; жилец,
+// обрубком «чат tmux-tas» в заголовке. Стенд проходит дверь задачи пять
+// раз: поднимающая вкладка ждёт на сыром ключе плашкой подъёма; жилец,
 // рождённый этим подъёмом, открывает ленту и снимает ожидание со вводом;
 // прежний жилец окна держит плашку и замок над открытой лентой; свежая вкладка
-// без памяти подъёма открывает ленту и заголовок разговора сразу.
+// без памяти подъёма открывает ленту и заголовок разговора сразу; свежая
+// вкладка при идущей работе держит замок над лентой названного жильца.
 //
 // Зовётся: node testdata/poc_chatresident.mjs static/app.js
 
@@ -32,6 +33,8 @@ const harnesses = [{ name: "claude-code", bin: "claude", default: true,
 const hand = { chat: KEY, window: "" };
 // Список разговоров машины оживает вместе с жильцом.
 const chats = { list: [] };
+// Работы доски: пусты, пока задача не запущена.
+const works = { list: [] };
 
 const { sandbox, store } = makeSandbox(app, (path, init) => {
   if (path.includes("/tasks/XR-002/chat")) {
@@ -45,7 +48,7 @@ const { sandbox, store } = makeSandbox(app, (path, init) => {
   if (path === "/api/projects") return { projects: [{ name: "demo", prefix: "XR", works: [] }] };
   if (path === "/api/quota") return { harnesses: [] };
   if (path === "/api/notifications") return { items: [] };
-  if (path.endsWith("/board")) return { board, works: [] };
+  if (path.endsWith("/board")) return { board, works: works.list };
   // Разговора с ключом окна не существует: до правки панель стояла на самом
   // ключе, и точечная проба ленты находила именно этот отказ.
   if (path.includes("/sessions/" + encodeURIComponent(KEY))) {
@@ -193,6 +196,33 @@ const buildPanel = async (st) => {
   const ta = findTa(panel);
   if (!ta) fail("в панели жильца нет поля ввода");
   if (ta.disabled) fail("поле ввода заперто чужим подъёмом: " + ta.placeholder);
+}
+
+// --- свежая вкладка при идущей работе: замок над лентой названного жильца ---
+{
+  // Памяти подъёма у вкладки нет, а работа задачи идёт: доска видит занятое
+  // окно, и ручка адреса называет жильца, чей транскрипт свежее всех. В
+  // секунды перед первой записью нового транскрипта это прежний разговор, и
+  // реплика ушла бы в него резюмом вторым агентом, поэтому лента жильца
+  // открыта, а плашка подъёма и замок ввода держатся (DK-1523).
+  works.list = [{ id: "XR-002", live: "busy", session: WIN }];
+  const st = await sandbox.chatState("demo", "XR-002", board, works.list);
+  if (st.sid !== SID) fail("идущая работа не открыла ленту жильца: " + JSON.stringify(st.sid));
+  if (st.lift !== WIN) {
+    fail("замок идущей работы не встал над жильцом: " + JSON.stringify(st.lift));
+  }
+  const head = headOf(st);
+  if (!head.includes("Сессия поднимается")) {
+    fail("шапка молчит о занятом окне: " + head.slice(0, 200));
+  }
+  const panel = await buildPanel(st);
+  const said = dump(panel).replace(/\s+/g, " ");
+  if (!said.includes("лента жильца окна жива")) {
+    fail("лента жильца не открылась при идущей работе: " + said.slice(0, 300));
+  }
+  const ta = findTa(panel);
+  if (!ta) fail("в панели занятой работы нет поля ввода");
+  if (!ta.disabled) fail("поле ввода открыто при идущей работе окна");
 }
 
 console.log("poc_chatresident: ok");

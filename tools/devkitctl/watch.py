@@ -55,6 +55,14 @@ DK-932).
 значит убитой сессии, окно в vscode работает дальше, и парковка встала бы под
 руками исполнителя. Живая сессия значит страховка молчит.
 
+Тем же тиком идёт возврат брошенных строк (DK-1417). Долг, взятый у диффа на
+сдаче, умирает вместе со взявшей сессией, и строка стоит в In progress без
+ветки, сессии и записи хода, а очередь и повторный pick читают только Backlog.
+Кого возвращать, отвечает `taskctl -C <корень> abandoned`: следы работы и
+возраст строки живут у taskctl, и вторая копия этих правил в питоне разошлась
+бы с первой. Возвращённая строка уезжает в Backlog, и следующий проход очереди
+берёт её заново; строка со следом работы тиком не трогается.
+
 Тем же тиком сторожок ведёт оба конца конвейера. Сначала очередь слияний
 (DK-1218): по каждому корню обхода он зовёт `shipctl -C <корень> queue
 --drain`, и одна готовая ветка уходит в main. Замок конвейера один, слияние
@@ -171,9 +179,9 @@ IN_PROGRESS = "In progress"
 CHECK = "Check"
 BLOCKED = "Blocked"
 BACKLOG = "Backlog"
-# Строка ответа `taskctl closable`: голый ID значит «закрывать можно», проза и
-# перечень отказов идут ниже и под этот вид не подходят.
-CLOSABLE_ID = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
+# Строка ответа вердикт-команды taskctl (closable, abandoned): голый ID значит
+# «делать можно», проза и перечень отказов идут ниже и под этот вид не подходят.
+VERDICT_ID = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
 # Причина блока с машинным префиксом «вопрос:» паркует задачу вопросом человека
 # (LLD DK-400, решение 2): только такую строку будит лежащий в разговоре ответ,
 # «окружение:» и проза ждут своего молча.
@@ -810,6 +818,65 @@ def park_stale(root, now, call=None, taskctl=None, hook=LOAD_HOOK, home=None):
     return lines
 
 
+# -- возврат брошенных строк ---------------------------------------------------
+
+def return_abandoned(root, call=None, taskctl=None):
+    """Возврат брошенных строк: долг, взятый у диффа на сдаче, попадает на
+    конец жизни исполнителя, и строка стоит в In progress без ветки и сессии,
+    которых не видит ни очередь, ни повторный pick (DK-1417). Возврат это
+    строки отчёта, как у страховки ожидания.
+
+    Кого возвращать, отвечает `taskctl abandoned`, а не разбор доски тут:
+    следы работы и возраст строки живут у taskctl, и вторая копия этих правил
+    в питоне разошлась бы с первой. Возвращённая строка уезжает в Backlog
+    командой move, как парковка идёт своим move: за тиком никого нет, и доска,
+    оставленная грязной, отбила бы следующий merge предполётом. Живая строка
+    тиком не трогается вовсе: у неё есть след, и отказ вердикта молчит."""
+    call = subprocess.run if call is None else call
+    bin = taskctl_bin() if taskctl is None else taskctl
+    lines = []
+    if not progress_rows(root):
+        return lines
+    if not bin:
+        lines.append("корень %s: строка в In progress без следов работы, а бинаря taskctl "
+                     "нет ни в PATH, ни в каталогах релиза: возврат стоит" % root)
+        return lines
+    try:
+        p = call([bin, "-C", root, "abandoned"], stdout=subprocess.PIPE,
+                 stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        return ["корень %s: спросить taskctl abandoned не вышло, %s" % (root, e)]
+    if p.returncode != 0:
+        return ["корень %s: taskctl abandoned отказал с кодом %d: %s"
+                % (root, p.returncode, " ".join((p.stdout or "").split()))]
+    for ln in (p.stdout or "").splitlines():
+        tid = ln.strip()
+        if not VERDICT_ID.match(tid):
+            break
+        try:
+            r = call([bin, "-C", root, "move", tid, "backlog",
+                      "-m", "docs(tasks): %s возвращена тиком, работы за строкой нет" % tid,
+                      "--push"],
+                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        except OSError as e:
+            lines.append("задача %s в %s: вернуть не вышло, %s" % (tid, root, e))
+            continue
+        if r.returncode != 0 and tid in progress_rows(root):
+            lines.append("задача %s в %s: taskctl отказал с кодом %d: %s"
+                         % (tid, root, r.returncode, " ".join((r.stdout or "").split())))
+            continue
+        if r.returncode != 0:
+            # Строка из In progress ушла, значит возврат отработал, а споткнулся
+            # его хвост: доска не уехала в origin. Чинит её человек, следующий
+            # тик к возвращённой строке не возвращается.
+            lines.append("задача %s в %s возвращена тиком, но доска не уехала в origin: %s"
+                         % (tid, root, (r.stdout or "").strip()))
+            continue
+        lines.append("задача %s в %s возвращена тиком: работы за строкой нет, "
+                     "очередь берёт её заново" % (tid, root))
+    return lines
+
+
 # -- подъём упавшего хода -----------------------------------------------------
 
 def notify_events(home=None, tail=TAIL):
@@ -1380,7 +1447,7 @@ def close_agent(root, call=None, taskctl=None, home=None):
     lines, failures = [], {}
     for ln in (p.stdout or "").splitlines():
         tid = ln.strip()
-        if not CLOSABLE_ID.match(tid):
+        if not VERDICT_ID.match(tid):
             break
         try:
             r = call([bin, "-C", root, "close", tid,
@@ -2410,6 +2477,9 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
             for pline in park_stale(root, now, timed(root), taskctl, home=home):
                 out.write(pline + "\n")
                 log_line(pline, home)
+            for aline in return_abandoned(root, timed(root), taskctl):
+                out.write(aline + "\n")
+                log_line(aline, home)
             for lline in lift_rows(root, timed(root), taskctl, home=home, remaining=lift_left):
                 out.write(lline + "\n")
                 log_line(lline, home)
@@ -2432,6 +2502,7 @@ def run(now=None, idle=None, home=None, out=None, call=None, taskctl=None, shipc
         for line in (wake(root, now, timed(root), taskctl=taskctl)
                      + waiters(root, timed(root), taskctl)
                      + park_stale(root, now, timed(root), taskctl, home=home)
+                     + return_abandoned(root, timed(root), taskctl)
                      + lift_rows(root, timed(root), taskctl, home=home, remaining=lift_left)
                      + duty_rows(root, timed(root), taskctl, home=home)
                      + close_agent(root, timed(root), taskctl, home=home)

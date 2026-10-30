@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dronrider/devkit/internal/mainchat"
+	"github.com/dronrider/devkit/internal/sessions"
 )
 
 // writeMainChat кладёт журнал назначений в дом стенда: ручка читает то, что
@@ -31,6 +32,7 @@ func taskChatGet(t *testing.T, c *http.Client, url string) (int, struct {
 	ID       string             `json:"id"`
 	Project  string             `json:"project"`
 	Chat     string             `json:"chat"`
+	Window   string             `json:"window"`
 	Source   string             `json:"source"`
 	Since    string             `json:"since"`
 	Segments []mainchat.Segment `json:"segments"`
@@ -42,6 +44,7 @@ func taskChatGet(t *testing.T, c *http.Client, url string) (int, struct {
 		ID       string             `json:"id"`
 		Project  string             `json:"project"`
 		Chat     string             `json:"chat"`
+		Window   string             `json:"window"`
 		Source   string             `json:"source"`
 		Since    string             `json:"since"`
 		Segments []mainchat.Segment `json:"segments"`
@@ -817,6 +820,44 @@ func TestTaskChatFollowsGrownSeed(t *testing.T) {
 		t.Fatalf("выросший носитель не отдался сессией: %d %+v", code, got)
 	}
 	if data := readFile(t, mainchat.Path(e.home)); !strings.Contains(data, seed) {
+		t.Fatalf("ручка адреса переписала журнал:\n%s", data)
+	}
+}
+
+// Ручка адреса разрешает ключ окна конвейера в разговор жильца окна (LLD
+// DK-1422, решение 2): журнал называет носителем tmux-<имя окна>, а ленту
+// держит сессия, чей хук старта записался в реестр с транскриптом. Заказ
+// подъёма занимает окно раньше клиента, транскрипта не имеет и жильцом не
+// считается: адрес остаётся самим ключом, а имя окна едет отдельным полем
+// для плашки подъёма поднимающей вкладки (DK-1521).
+func TestTaskChatResolvesPipelineWindow(t *testing.T) {
+	e, c, _ := tasksEnv(t)
+	const key = "tmux-task-XR-002"
+	writeMainChat(t, e.home, mainchat.Line(time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC),
+		mainchat.Bind{Record: "XR-002", Chat: key, Project: "demo", Source: mainchat.ByWork}))
+	order := sessions.Line(time.Date(2026, 10, 30, 9, 0, 5, 0, time.UTC), "b1f0-1111",
+		sessionBind{Task: "XR-002", Source: bindOrder, Project: "demo", Tmux: "task-XR-002"},
+		"taskctl run")
+	writeBindsAt(t, e.home, order)
+	code, got := taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-002/chat")
+	if code != http.StatusOK || got.Chat != key || got.Window != "task-XR-002" {
+		t.Fatalf("заказ без транскрипта закрыл ключ окна: %d %+v", code, got)
+	}
+
+	// Хук старта назвал жильца с транскриптом: адрес открывает его разговор.
+	const resident = "c2d1-2222"
+	writeBindsAt(t, e.home, order+
+		sessions.Line(time.Date(2026, 10, 30, 9, 0, 9, 0, time.UTC), resident,
+			sessionBind{Task: "XR-002", Source: bindOrder, Project: "demo",
+				Tmux: "task-XR-002", Transcript: standTranscript(e.home, resident)}, "startup"))
+	code, got = taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-002/chat")
+	if code != http.StatusOK || got.Chat != resident {
+		t.Fatalf("жилец окна не стал носителем адреса: %d %+v", code, got)
+	}
+	if got.Window != "task-XR-002" {
+		t.Fatalf("имя окна потерялось при разрешении ключа: %+v", got)
+	}
+	if data := readFile(t, mainchat.Path(e.home)); !strings.Contains(data, key) {
 		t.Fatalf("ручка адреса переписала журнал:\n%s", data)
 	}
 }

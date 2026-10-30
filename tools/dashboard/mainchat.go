@@ -36,6 +36,7 @@ func (s *server) handleTaskChat(w http.ResponseWriter, r *http.Request) {
 		"segments": s.mainChatSegments(recs)}
 	if n := len(recs); n > 0 {
 		resp["chat"] = s.mainChatCarrier(recs[n-1].Chat)
+		mainChatWindow(resp, recs[n-1].Chat)
 		resp["source"] = recs[n-1].Source
 		resp["since"] = recs[n-1].Time
 	} else {
@@ -47,6 +48,7 @@ func (s *server) handleTaskChat(w http.ResponseWriter, r *http.Request) {
 		c, bound := s.migResolve(found, id)
 		if bound {
 			resp["chat"] = s.mainChatCarrier(c.Auto)
+			mainChatWindow(resp, c.Auto)
 			resp["source"] = mainchat.ByMigrate
 		} else if c.Kind != "" {
 			resp["kind"] = c.Kind
@@ -283,12 +285,30 @@ func (s *server) taskChatRow(w http.ResponseWriter, r *http.Request) (*Project, 
 	return nil, "", false
 }
 
+// mainChatWindow кладёт в ответ ручки имя окна конвейера, когда носителем
+// журнала стоит ключ tmux-<имя>. Ручка разрешает ключ в разговор жильца, вид
+// ключа из ответа пропадает, а поднимающей вкладке окно нужно и после
+// разрешения: по нему она узнаёт свой подъём и держит плашку (DK-1521).
+func mainChatWindow(resp map[string]any, chat string) {
+	if name, ok := strings.CutPrefix(chat, tmuxChatKey); ok {
+		resp["window"] = name
+	}
+}
+
 // mainChatCarrier называет действующего носителя записи. Незачатый разговор,
 // посаженный оформлением второй записи из одного обсуждения, вырастает
 // в сессию первой репликой, а строка журнала называет прежний ключ, и адрес
-// следует за ростом сам. Прочие ключи возвращаются как есть: их переезды
-// пишут свои писатели, передача и продолжение (DK-1428).
+// следует за ростом сам. Ключ окна конвейера tmux-<имя> сам ленты не адресует
+// и разрешается в разговор свежего жильца окна с транскриптом (DK-1521).
+// Прочие ключи возвращаются как есть: их переезды пишут свои писатели,
+// передача и продолжение (DK-1428).
 func (s *server) mainChatCarrier(chat string) string {
+	if name, ok := strings.CutPrefix(chat, tmuxChatKey); ok {
+		if resident := sessions.TmuxResident(s.bindsAll(), name); resident != "" {
+			return resident
+		}
+		return chat
+	}
 	if !strings.HasPrefix(chat, chatBlankMark) {
 		return chat
 	}

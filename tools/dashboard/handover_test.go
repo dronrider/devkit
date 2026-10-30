@@ -295,9 +295,12 @@ func TestContinueChoosesLiftWay(t *testing.T) {
 			t.Fatalf("в первую реплику не подложено состояние записи:\n%s", said)
 		}
 		// Назначение ведётся за заходом: носителем становится окно свежей
-		// сессии, прежний конвейер уезжает полем «прежде».
+		// сессии, прежний конвейер уезжает полем «прежде». Ключ окна ручка
+		// разрешает в разговор жильца: свежая сессия того же разговора ещё
+		// не назвалась в реестре, и адрес держит прежнюю ленту окна (DK-1521).
 		code, got := taskChatGet(t, c, e.srv.URL+"/api/projects/demo/tasks/XR-004/chat")
-		if code != http.StatusOK || got.Chat != "tmux-chat-7" || got.Source != mainchat.ByMove {
+		if code != http.StatusOK || got.Chat != sid || got.Window != "chat-7" ||
+			got.Source != mainchat.ByMove {
 			t.Fatalf("назначение не ушло за поднятым заходом: %d %+v", code, got)
 		}
 		data := readFile(t, mainchat.Path(e.home))

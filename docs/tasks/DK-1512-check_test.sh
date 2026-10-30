@@ -1,4 +1,6 @@
-#!/usr/bin/env python3
+#!/bin/sh
+set -eu
+python3 - "$@" <<'PY'
 """Проверка установленного guard и восстановления без платного клиента."""
 import argparse
 import importlib.util
@@ -63,3 +65,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+PY

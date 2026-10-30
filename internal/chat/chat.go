@@ -320,6 +320,7 @@ type ScenarioQuestion struct {
 	Fork     string   `json:"fork"`
 	IDs      []string `json:"ids"`
 	Current  []string `json:"current,omitempty"`
+	Explicit bool     `json:"explicit,omitempty"`
 	Block    string   `json:"block"`
 }
 

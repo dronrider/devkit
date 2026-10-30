@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"github.com/dronrider/devkit/internal/draftproposal"
 	"net/http"
 	"reflect"
@@ -101,19 +102,28 @@ func selectionIdentity(a chat.Selection) chat.Selection {
 	return a
 }
 
+func (s *server) selectionTextKey(sid, claim, text string, answer chat.Selection) (string, error) {
+	sum := sha256.Sum256([]byte(text))
+	key := hex.EncodeToString(sum[:])
+	for _, old := range s.chatStoreRead(sid).SelectionContexts {
+		if old.Reply == claim && (!reflect.DeepEqual(selectionIdentity(old.Selection), selectionIdentity(answer)) || old.TextKey != key) {
+			return "", fmt.Errorf("ключ сообщения уже использован для другого ответа")
+		}
+	}
+	return key, nil
+}
+
 func (s *server) handleSelectionSay(w http.ResponseWriter, p *Project, sid, claim, text string, answer chat.Selection) {
 	if claim == "" || !goalIDRe.MatchString(answer.Task) || !s.scenarioTree(answer.Tree, answer.Task) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "нужны дерево и задача показанного вопроса"})
 		return
 	}
-	sum := sha256.Sum256([]byte(text))
-	textKey := hex.EncodeToString(sum[:])
-	for _, old := range s.chatStoreRead(sid).SelectionContexts {
-		if old.Reply == claim && (!reflect.DeepEqual(selectionIdentity(old.Selection), selectionIdentity(answer)) || old.TextKey != textKey) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ключ сообщения уже использован для другого ответа"})
-			return
-		}
+	textKey, err := s.selectionTextKey(sid, claim, text, answer)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
+
 	context := selectionDeliveryContext{}
 	matched := false
 	for _, h := range s.handedAsks(sid, s.binds(), s.now()) {

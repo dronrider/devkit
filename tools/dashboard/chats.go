@@ -808,10 +808,11 @@ type chatStore struct {
 	Files []chatUpload `json:"files,omitempty"`
 	// ProposalContexts stores delivery addresses and shown source IDs, while
 	// decisions and results remain in the source records.
-	ProposalContexts []proposalDeliveryContext `json:"proposalContexts,omitempty"`
-	GroomSource      string                    `json:"groomSource,omitempty"`
-	GroomMode        string                    `json:"groomMode,omitempty"`
-	GroomTree        string                    `json:"groomTree,omitempty"`
+	SelectionContexts []selectionDeliveryContext `json:"selectionContexts,omitempty"`
+	ProposalContexts  []proposalDeliveryContext  `json:"proposalContexts,omitempty"`
+	GroomSource       string                     `json:"groomSource,omitempty"`
+	GroomMode         string                     `json:"groomMode,omitempty"`
+	GroomTree         string                     `json:"groomTree,omitempty"`
 }
 
 // chatUpload это ссылка на вложение черновика: вид, имя и путь файла в каталоге
@@ -846,6 +847,7 @@ func (s *server) chatStoreWrite(key string, st chatStore) error {
 	defer lock.Close()
 	previous := s.chatStoreRead(key)
 	st.ProposalContexts = mergeProposalContexts(previous.ProposalContexts, st.ProposalContexts)
+	st.SelectionContexts = mergeSelectionContexts(previous.SelectionContexts, st.SelectionContexts)
 	if !strings.HasPrefix(key, "tmux-") && st.GroomSource == "" {
 		st.GroomSource, st.GroomMode, st.GroomTree = previous.GroomSource, previous.GroomMode, previous.GroomTree
 	}
@@ -3219,9 +3221,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		Text string `json:"text"`
 		// MsgID это ключ записи в очереди исходящих панели: один и тот же у
 		// первой отправки и у всех её повторов.
-		MsgID    string          `json:"msg_id"`
-		Scenario *scenarioAnswer `json:"scenario,omitempty"`
-		Proposal *proposalAnswer `json:"proposal,omitempty"`
+		MsgID     string          `json:"msg_id"`
+		Selection *chat.Selection `json:"selection,omitempty"`
+		Scenario  *scenarioAnswer `json:"scenario,omitempty"`
+		Proposal  *proposalAnswer `json:"proposal,omitempty"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
 		// Тело сверх предела это своя причина, а не «жду JSON»: длинная вставка
@@ -3238,14 +3241,14 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	text := chatText(body.Text)
-	if body.Scenario != nil || body.Proposal != nil {
+	if body.Selection != nil || body.Scenario != nil || body.Proposal != nil || s.scenarioContextRequired(found, sid) {
 		text = body.Text
 	}
-	if strings.TrimSpace(text) == "" {
+	if strings.TrimSpace(text) == "" && body.Selection == nil && body.Proposal == nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "пустая реплика никуда не едет"})
 		return
 	}
-	if body.Scenario != nil && body.Proposal != nil {
+	if (body.Scenario != nil && body.Proposal != nil) || (body.Selection != nil && (body.Proposal != nil || body.Scenario != nil)) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "нельзя смешивать ответы на сценарии и предложения"})
 		return
 	}
@@ -3265,14 +3268,11 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if body.Proposal == nil && s.proposalContextRequired(found, sid) {
+	if body.Proposal == nil && body.Selection == nil && s.proposalContextRequired(found, sid) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "для ответа нужны показанные предложения и их снимок"})
 		return
 	}
-	if body.Scenario == nil && body.Proposal == nil && s.scenarioContextRequired(found, sid) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "для ответа на сценарии нужны контекст и снимок показанного блока; обновите вопрос и сверьте ответ"})
-		return
-	}
+
 	// Повтор той же записи дальше не едет. Отправитель повторяет её, когда не
 	// увидел ответа ручки, а не увидеть его он может и после доставки: связь
 	// рвётся на обратном пути, панель считает реплику неушедшей и шлёт снова.
@@ -3290,6 +3290,14 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		// Незакрытая попытка ключ отпускает: отказ доставки это повод повторить,
 		// и держать запись занятой после него значило бы хоронить реплику.
 		defer s.chatSayRelease(sid, claim)
+	}
+	if body.Selection != nil {
+		s.handleSelectionSay(w, found, sid, claim, text, *body.Selection)
+		return
+	}
+	if body.Scenario == nil && body.Proposal == nil && s.scenarioContextRequired(found, sid) {
+		s.handleScenarioCommentSay(w, found, sid, claim, text)
+		return
 	}
 	if body.Scenario != nil {
 		s.handleScenarioSay(w, found, sid, claim, text, *body.Scenario)
@@ -3729,7 +3737,7 @@ func (s *server) lostSaid(sid string, mod time.Time) []string {
 		if err != nil || !at.After(mod) {
 			continue
 		}
-		if t := strings.TrimSpace(r.Text); t != "" {
+		if t := strings.TrimSpace(replyWire(r)); t != "" {
 			out = append(out, t)
 		}
 	}

@@ -111,6 +111,10 @@ func TestScenarioBrowserEmbedded(t *testing.T) {
 			doc = strings.Replace(doc, b, a, 1)
 			doc = strings.Replace(doc, "вариант: СЦ-99 (слово пользователя): временно", b, 1)
 			err = os.WriteFile(st.path, []byte(doc), 0o644)
+		case "ordinary":
+			st.run(t, "--ask", "срок", "--hint", "30 дней: достаточно", "--option", "7 дней", "сколько хранить?")
+			st.run(t, "--ask", "вывод", "--hint", "полный: нужен", "--option", "краткий", "какой вывод?")
+			st.publish(t, false)
 		case "fresh":
 			st.ask(t)
 		}

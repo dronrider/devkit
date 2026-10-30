@@ -42,9 +42,9 @@ type saidRec struct {
 	// Shot это путь картинки в старой записи журнала, одной на реплику:
 	// вложения стали списком, а строки, лежащие в файле, перезаписи не
 	// подлежат, и старое поле читается наравне с новым.
-	Shot    string   `json:"shot,omitempty"`
-	Shots   []string `json:"shots,omitempty"`
-	Frags   []string `json:"frags,omitempty"`
+	Shot  string   `json:"shot,omitempty"`
+	Shots []string `json:"shots,omitempty"`
+	Frags []string `json:"frags,omitempty"`
 }
 
 // saidSrc это приставка источника в ключах записей журнала: ключ выходит
@@ -135,11 +135,13 @@ func saidReplies(lines []string, src string, from int) ([]reply, int) {
 		if rec.Shot != "" {
 			shots = append([]string{rec.Shot}, shots...)
 		}
-		out = append(out, reply{
+		item := reply{
 			Role: role, Time: rec.Time, Text: rec.Text,
 			Sel: rec.Sel, SelFile: rec.SelFile, Shots: shots, Frags: rec.Frags,
 			Key: src + ":" + strconv.Itoa(idx),
-		})
+		}
+		projectPanelReply(&item)
+		out = append(out, item)
 	}
 	return out, from
 }
@@ -227,7 +229,7 @@ func saidMerge(items []reply, said []reply) []reply {
 		// Эхом вытесняется только реплика человека: пометка в транскрипт не
 		// попадает вовсе, и сверять её там не с чем, а совпадение текста с
 		// чьей-то репликой стёрло бы разделитель из ленты.
-		if it.Role != "user" || !saidEcho(items, it.Text) {
+		if it.Role != "user" || !saidEcho(items, replyWire(it)) {
 			fresh = append(fresh, it)
 		}
 	}
@@ -271,7 +273,7 @@ func saidEcho(items []reply, text string) bool {
 		if it.Role != "user" {
 			continue
 		}
-		if strings.TrimSpace(it.Text) == want || strings.HasSuffix(strings.TrimSpace(it.Text), want) {
+		if strings.TrimSpace(replyWire(it)) == want || strings.HasSuffix(strings.TrimSpace(replyWire(it)), want) {
 			return true
 		}
 	}

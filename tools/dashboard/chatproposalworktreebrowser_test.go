@@ -185,7 +185,7 @@ func proposalWorktreeBrowser(t *testing.T, linked bool) {
 			}
 			main, _ := os.ReadFile(st.path)
 			lines := chat.ReadLines(carrier)
-			old := len(lines) > 0 && strings.Contains(lines[len(lines)-1], "Решение по предложениям")
+			old := len(lines) > 0 && strings.Contains(lines[len(lines)-1], `"results":`)
 			otherLines := chat.ReadLines(chat.Path(other, chat.TaskName("XR-4")))
 			rows := 0
 			if receipt := state.Proposals[0].Result; receipt != nil && len(receipt.IDs) == 1 {

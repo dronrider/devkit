@@ -16,6 +16,7 @@ try {
   assert.ok((await material.innerText()).includes('## DoD'));
   assert.equal(await material.evaluate(e=>getComputedStyle(e).whiteSpace),'pre-wrap');
   await page.getByLabel('Решение XR-4 p1').selectOption('accept');
+  assert.equal(await page.locator('textarea.csay').inputValue(),'');
   if (mode === 'linked') {
     const response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST');
     await page.getByRole('button',{name:'Отправить',exact:true}).click();

@@ -24,26 +24,14 @@ const marks = () => allByClass(byClass(panel, "chatfeed"), "caskpick");
 const click = (n) => n.handlers.click({ stopPropagation() {} });
 if (marks().length < 3) fail("нет галочек нового списка: " + marks().length);
 if (sent.length || ta.value) fail("показ рекомендации отправил или подставил ответ");
-if (marks().length > 3) {
-  click(marks()[3]);
-  if (ta.value !== "срок 1") fail("обычная отметка ответила за сценарии: " + ta.value);
-  click(marks()[3]);
-  if (ta.value) fail("обычная снятая отметка оставила ответ: " + ta.value);
-}
-const own = String.raw`плюс "свой, с \"кавычкой\" и \\ путём"`;
+if (marks().slice(0, 3).some((mark) => mark.attrs["aria-checked"] !== "true")) fail("новый список не выбран целиком");
+const own = '  Дополню ещё один СЦ:\nплюс, минус; "свои слова"\n\n';
 ta.value = own;
 ta.handlers.input();
-click(marks()[0]);
-click(marks()[2]);
-click(marks()[0]);
-if (ta.value !== "сценарии СЦ-3; " + own) fail("свой текст/ID потерян: " + ta.value);
-ta.value = "  " + ta.value;
-ta.handlers.input();
-click(marks()[0]);
-click(marks()[0]);
-if (ta.value !== "  сценарии СЦ-3; " + own) fail("правка перед машинной частью потеряла текст: " + ta.value);
-if (sent.length) fail("галочка отправила ответ");
+click(marks()[1]);
+if (ta.value !== own) fail("галочка изменила слова человека: " + ta.value);
 if (marks().length > 3) click(marks()[3]);
+if (sent.length) fail("галочка отправила ответ");
 const draft = ta.value;
 ask = structuredClone(wire);
 const next = ask.scenario || ask.steps.find((s) => s.scenario).scenario;
@@ -54,7 +42,7 @@ poll.fn();
 await settle();
 if (ta.value !== draft) fail("опрос изменил черновик");
 const saved = JSON.parse(store.get("devkit.askdraft." + sid));
-if (saved.answer.snapshot !== scenario.snapshot) fail("черновик получил новый снимок");
+if (saved.selection.questions[0].snapshot !== scenario.snapshot) fail("черновик получил новый снимок");
 const originalFetch = sandbox.fetch;
 let lost = true;
 sandbox.fetch = (path, init) => {
@@ -67,9 +55,9 @@ sandbox.fetch = (path, init) => {
 };
 click(deepBtn(panel, "Отправить"));
 await settle();
-if (sent.length !== 1 || sent[0].text !== draft || sent[0].scenario.snapshot !== scenario.snapshot || sent[0].scenario.tree !== wire.tree) fail("отправка потеряла raw/снимок/маршрут: " + JSON.stringify(sent));
+if (sent.length !== 1 || sent[0].text !== draft || sent[0].selection.questions[0].snapshot !== scenario.snapshot || sent[0].selection.tree !== wire.tree) fail("отправка потеряла raw/снимок/маршрут: " + JSON.stringify(sent));
 const loaded = sandbox.echoRead("demo", sid);
-if (loaded.length !== 1 || loaded[0].scenario.snapshot !== scenario.snapshot || loaded[0].text !== draft) fail("очередь потеряла снимок/raw");
+if (loaded.length !== 1 || loaded[0].selection.questions[0].snapshot !== scenario.snapshot || loaded[0].text !== draft) fail("очередь потеряла снимок/raw");
 const resent = [];
 const again = makeSandbox(process.argv[2], (path, init) => {
   if (path.endsWith("/say") && init?.method === "POST") { resent.push(JSON.parse(init.body)); return { way: "ask" }; }
@@ -85,7 +73,5 @@ const retry = again.timers.find((timer) => timer.ms === 2000);
 if (!retry) fail("после перезагрузки нет повтора");
 retry.fn();
 await settle();
-if (resent.length !== 1 || resent[0].scenario.snapshot !== scenario.snapshot || resent[0].scenario.tree !== wire.tree || resent[0].text !== draft || resent[0].msg_id !== sent[0].msg_id) fail("повтор получил новый снимок/raw/маршрут/ключ: " + JSON.stringify(resent));
-const fake = { classList: { contains: () => false } };
-if (sandbox.askPickSaid([{ mark: fake, pick: { fork: "сценарии", id: "СЦ-1", scenario } }]) !== "ничего") fail("снятие всех не стало отказом");
+if (resent.length !== 1 || resent[0].selection.questions[0].snapshot !== scenario.snapshot || resent[0].selection.tree !== wire.tree || resent[0].text !== draft || resent[0].msg_id !== sent[0].msg_id) fail("повтор получил новый снимок/raw/маршрут/ключ: " + JSON.stringify(resent));
 process.stdout.write(JSON.stringify(sent[0]));

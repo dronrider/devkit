@@ -15,8 +15,6 @@ func TestScenarioSayRequiresShownContext(t *testing.T) {
 	path := chat.AskPath(st.e.proj, chat.TaskName("XR-4"))
 	doc, waiting := readFile(t, st.path), readFile(t, path)
 	for _, one := range []struct{ name, context string }{
-		{"absent", ""},
-		{"null", `,"scenario":null`},
 		{"empty", `,"scenario":{}`},
 		{"no-snapshot", `,"scenario":{"task":"XR-4","fork":"сценарии"}`},
 		{"no-task", `,"scenario":{"fork":"сценарии","snapshot":"sc1-missing"}`},

@@ -1856,7 +1856,7 @@ class ReturnAbandonedTest(Stand):
 
     def debt_rows(self, ids):
         """Доска стенда с долгами в In progress рядом с целью: взявший их
-        носитель умер, и возвращение решает вердикт."""
+        носитель умер, и возврат идёт вердиктом abandoned."""
         rows = "".join(PARK_ROW % (i, "Хвост сдачи", i, i) + "\n" for i in ids)
         goal_row = ROW % (GOAL, GOAL, GOAL)
         head, _, tail = (PARK_HEAD % (goal_row, "")).partition(goal_row)

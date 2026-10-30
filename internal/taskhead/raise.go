@@ -3,6 +3,7 @@ package taskhead
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -388,7 +389,10 @@ func (q Request) newWindow(tmux, runner string, head Head, lock string, me int, 
 	if prefix != "" {
 		prefix += " "
 	}
-	cmd := envJoin(q.env(me, name)) + " " + prefix +
+	identity, _ := json.Marshal(append([]string{}, head.Session...))
+	pairs := append(q.env(me, name), "DEVKIT_TASK_HEAD_SESSION="+sid,
+		"DEVKIT_TASK_HEAD_SESSION_ARGS="+string(identity))
+	cmd := envJoin(pairs) + " " + prefix +
 		shellJoin(append(append(q.runnerArgs(runner, head.TurnEnd == TurnExit), "--"), head.Command(q.Model, sid, q.Name)...))
 	out, err := exec.Command(tmux, "new-session", "-d", "-s", name, "-c", q.Root,
 		"-P", "-F", "#{pane_id}", cmd).CombinedOutput()

@@ -1772,6 +1772,7 @@ class TestRotateHandoff(unittest.TestCase):
         self.pipe.drop_head = unittest.mock.Mock()
         self.pipe.raise_head = unittest.mock.Mock()
         self.pipe.wait_session = lambda: ""
+        self.pipe.head_alive = lambda: True
         self.pipe.rotate_note = unittest.mock.Mock()
         self.pipe.say = unittest.mock.Mock()
         self.assertEqual(self.pipe.rotate(), "без адреса")
@@ -1792,6 +1793,7 @@ class TestRotateHandoff(unittest.TestCase):
         self.pipe.preflight = lambda: "in-progress"
         self.pipe.raise_head = unittest.mock.Mock()
         self.pipe.wait_session = unittest.mock.Mock(side_effect=[SID, ""])
+        self.pipe.head_alive = lambda: True
         self.pipe.wait_turn = unittest.mock.Mock(side_effect=["конец", SystemExit(0)])
         self.pipe.show = lambda: "in-progress\n"
         self.pipe.status = lambda said: "in-progress"
@@ -3063,8 +3065,6 @@ class StopIncidentTest(unittest.TestCase):
             self.assertEqual(own, shared)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=0)
 
 
 class TestCheckHandoff(WaitStand):
@@ -3127,3 +3127,103 @@ class TestCheckHandoff(WaitStand):
         p.shout.assert_called_once()
         self.assertIn("доверия", p.shout.call_args.args[2])
         p.drop_head.assert_not_called()
+
+
+class TestStartupRecovery(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="task-start-recovery-")
+        self.addCleanup(self.tmp.cleanup)
+        self.env = unittest.mock.patch.dict(os.environ, {
+            "HOME": self.tmp.name, "DEVKIT_TASK_HEAD_SESSION": SID,
+            "DEVKIT_TASK_HEAD_SESSION_ARGS": json.dumps(["--session-id", "{session}"]),
+        })
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.pipe = task_run.Pipeline(task_run.parse_args(
+            ["DK-1", "-C", self.tmp.name, "--", "client", "--session-id", SID]))
+        self.pipe.sid = SID
+        self.pipe.say = self.pipe.log = self.pipe.incident = unittest.mock.Mock()
+
+    def tail(self):
+        path = self.pipe.rotate_tail()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("сохранённый результат и следующий шаг\n")
+        return path
+
+    def rotate(self, sid=SID2):
+        self.tail()
+        self.pipe.rotate_ask = time.time() - 1
+        self.pipe.drop_head = unittest.mock.Mock()
+        self.pipe.raise_head = unittest.mock.Mock()
+        self.pipe.wait_session = lambda: sid
+        self.pipe.rotate_note = unittest.mock.Mock()
+        return self.pipe.rotate()
+
+    def test_rotation_replaces_only_profile_session(self):
+        self.pipe.client += ["--name", SID]
+        self.pipe.model = "test-model"
+        self.rotate()
+        self.assertNotEqual(self.pipe.client[2], SID)
+        self.assertEqual(self.pipe.client[3:], ["--name", SID])
+        self.assertIn("test-model", self.pipe.head_cmd("next"))
+
+    def test_embedded_session_template(self):
+        self.pipe.client = ["client", "--conversation=" + SID]
+        self.pipe.session_template = json.dumps(["--conversation={session}"])
+        self.rotate()
+        self.assertNotEqual(self.pipe.client[1], "--conversation=" + SID)
+        self.assertTrue(self.pipe.client[1].startswith("--conversation="))
+
+    def test_dead_rotation_is_not_unnamed_live_client(self):
+        self.pipe.head = unittest.mock.Mock()
+        self.pipe.head.poll.return_value = 17
+        with self.assertRaises(SystemExit) as got:
+            self.rotate(sid="")
+        self.assertEqual(got.exception.code, 17)
+        self.pipe.rotate_note.assert_not_called()
+        self.assertTrue(os.path.exists(self.pipe.rotate_tail()))
+        with open(self.pipe.startup_log(), encoding="utf-8") as f:
+            self.assertIn("17", f.read())
+
+    def test_restarted_live_head_receives_tail(self):
+        path = self.tail()
+        self.pipe.preflight = lambda: "in-progress"
+        self.pipe.raise_head = unittest.mock.Mock(side_effect=SystemExit(0))
+        with self.assertRaises(SystemExit):
+            self.pipe.run_live()
+        self.assertIn(path, self.pipe.raise_head.call_args.args[0])
+        self.assertTrue(os.path.isfile(path))
+
+    def test_guard_refusal_is_durable_and_does_not_launch(self):
+        self.pipe.main_root = lambda: self.tmp.name
+        refused = subprocess.CompletedProcess([], 2, "", 'неизвестная команда "guard"')
+        with unittest.mock.patch.object(task_run.subprocess, "run", return_value=refused), \
+                unittest.mock.patch.object(task_run.subprocess, "Popen") as launch:
+            with self.assertRaises(SystemExit):
+                self.pipe.raise_head("next")
+        launch.assert_not_called()
+        self.pipe.incident.assert_called()
+        path = self.pipe.startup_log()
+        with open(path, encoding="utf-8") as f:
+            self.assertIn('неизвестная команда "guard"', f.read())
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
+    def test_dead_initial_client_keeps_terminal_output(self):
+        self.pipe.preflight = lambda: "in-progress"
+        self.pipe.raise_head = unittest.mock.Mock()
+        self.pipe.wait_session = lambda: ""
+        self.pipe.head = unittest.mock.Mock()
+        self.pipe.head.poll.return_value = 23
+        self.pipe.name = "task-DK-1"
+        pane = subprocess.CompletedProcess([], 0, "CLIENT_START_ERROR\n", "")
+        with unittest.mock.patch.object(task_run.subprocess, "run", return_value=pane):
+            with self.assertRaises(SystemExit) as got:
+                self.pipe.run_live()
+        self.assertEqual(got.exception.code, 23)
+        with open(self.pipe.startup_log(), encoding="utf-8") as f:
+            self.assertIn("CLIENT_START_ERROR", f.read())
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=0)

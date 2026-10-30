@@ -299,6 +299,11 @@ func TestNewWindowRaisesShell(t *testing.T) {
 	}
 	reg := s.read(".devkit/sessions.log")
 	sid := run[0][strings.Index(run[0], "--session-id ")+len("--session-id "):]
+	command := s.tmux("calls.log")
+	if !strings.Contains(command, "DEVKIT_TASK_HEAD_SESSION="+sid) ||
+		!strings.Contains(command, `DEVKIT_TASK_HEAD_SESSION_ARGS='["--session-id","{session}"]'`) {
+		t.Fatalf("оболочка не получила контракт смены идентичности:\n%s", command)
+	}
 	if !strings.Contains(reg, "сессия "+sid+" задача DK-1 ") || !strings.Contains(reg, "tmux task-DK-1 панель %9") {
 		t.Fatalf("реестр чатов без адреса поднятой сессии %s:\n%s", sid, reg)
 	}

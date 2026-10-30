@@ -30,6 +30,9 @@
 поверх него. На пороге оболочка заказывает голове хвост файлом
 `.devkit/task-<ID>.tail`, конец прохода за заказом сводится к свежести файла,
 и после успешной записи сессия снимается и поднимается новая с вводной хвоста.
+После отказа запуска диагностика остаётся в `.devkit/task-<ID>.start.log`.
+Восстановление описано в docs/head-recovery.md.
+
 Строку журнала о ротации (`agentctl rotate --mark`) оболочка дописывает, когда
 новый адрес сессии известен. Обрыв между хвостом и строкой теряет отметку
 журнала, а не дела: хвост уже лежит на диске. При живых субагентах и живом
@@ -158,6 +161,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOKS = os.path.normpath(os.path.join(HERE, "..", "..", "..", "hooks"))
@@ -740,6 +744,8 @@ class Pipeline:
         self.again = opts["again"]
         self.passes = opts["passes"]
         self.client = opts["client"]
+        self.client_session = os.environ.get("DEVKIT_TASK_HEAD_SESSION", "")
+        self.session_template = os.environ.get("DEVKIT_TASK_HEAD_SESSION_ARGS", "")
         self.headless = opts["headless"]
         # Ярус модели проходов (DK-662). Пусто значит «как звался клиент»,
         # а имя яруса разворачивается в модель раскладкой машины один раз на
@@ -1050,8 +1056,10 @@ class Pipeline:
             self.say("модуль инцидентов не нашёлся (%s), остановка осталась без записи" % INCIDENTS)
             return ""
         run = self.sess if not self.sid else "%s, сессия %s" % (self.sess, self.sid)
-        ident = hook.report(self.id, kind, why, run=run, root=self.proj,
-                            logs=[os.path.join(self.proj, ".devkit", "log")])
+        logs = [os.path.join(self.proj, ".devkit", "log")]
+        if os.path.isfile(self.startup_log()):
+            logs.append(self.startup_log())
+        ident = hook.report(self.id, kind, why, run=run, root=self.proj, logs=logs)
         if ident:
             self.log("инцидент %s, %s, %s" % (ident, kind, self.id), 0)
         return ident
@@ -1334,6 +1342,84 @@ class Pipeline:
             return cmd + [order]
         return cmd + ["-p", order]
 
+    def renew_session(self):
+        old = self.client_session or self.sid
+        if not old:
+            return
+        if self.session_template:
+            try:
+                template = json.loads(self.session_template)
+            except ValueError:
+                self.startup_failure("неверный контракт идентичности головы")
+            if not isinstance(template, list) or not all(isinstance(s, str) for s in template):
+                self.startup_failure("неверный контракт идентичности головы")
+            if not template:
+                return
+            if not any("{session}" in s for s in template):
+                self.startup_failure("контракт головы не содержит {session}")
+        else:
+            # При ручном запуске без профиля меняется только отдельный
+            # аргумент, совпадающий с фактическим адресом прежней сессии.
+            if old not in self.client:
+                return
+            template = ["{session}"]
+        previous = [s.replace("{session}", old) for s in template]
+        positions = [i for i in range(len(self.client) - len(previous) + 1)
+                     if self.client[i:i + len(previous)] == previous]
+        if len(positions) != 1:
+            self.startup_failure("контракт идентичности не совпал с командой головы")
+        new = str(uuid.uuid4())
+        at = positions[0]
+        self.client[at:at + len(previous)] = [s.replace("{session}", new) for s in template]
+        self.client_session = new
+
+    def startup_log(self):
+        return os.path.join(self.proj, ".devkit", "task-%s.start.log" % self.id)
+
+    def save_startup(self, why, code=2, pane=False):
+        detail = why[:16000]
+        if pane and self.name:
+            try:
+                p = subprocess.run(["tmux", "capture-pane", "-p", "-S", "-100",
+                                    "-t", "=" + self.name + ":"],
+                                   capture_output=True, text=True, timeout=5)
+                if p.returncode == 0 and p.stdout.strip():
+                    detail += "\n" + p.stdout[-16000:]
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        path = self.startup_log()
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                os.fchmod(f.fileno(), 0o600)
+                f.write("%s %s\n" % (time.strftime(STAMP), detail))
+        except OSError as e:
+            path = "журнал не записан (%s)" % e
+        self.log("запуск головы: %s; диагностика %s" % (" ".join(why.split())[:500], path), code)
+        return path
+
+    def startup_failure(self, why, code=2, pane=False):
+        path = self.save_startup(why, code, pane)
+        self.broken("%s; диагностика %s" % (why.splitlines()[0][:1000], path), code)
+
+    def check_started(self):
+        if not self.head_alive():
+            code = self.head.poll() if self.head is not None else 1
+            self.startup_failure("клиент завершился до регистрации сессии, код %s" % code,
+                                 code if code and code > 0 else 1, pane=True)
+
+    def initial_order(self):
+        path = self.rotate_tail()
+        if os.path.isfile(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    if f.read(1):
+                        return self.rotate_restart_text()
+            except (OSError, UnicodeError) as e:
+                self.startup_failure("хвост восстановления недоступен (%s): %s" % (path, e))
+        return self.order
+
     def guard_material(self):
         roots = [self.proj]
         main = self.main_root()
@@ -1344,9 +1430,13 @@ class Pipeline:
                 p = subprocess.run(["taskctl", "guard", self.id], cwd=root,
                                    capture_output=True, text=True, timeout=10)
             except (OSError, subprocess.TimeoutExpired) as e:
-                die("материал перед запуском не проверен: %s" % e)
+                self.startup_failure("материал перед запуском не проверен: %s" % e)
             if p.returncode:
-                die((p.stderr or p.stdout or "материал перед запуском не проверен").strip())
+                binary = shutil.which("taskctl") or "taskctl"
+                self.startup_failure("%s guard, код %s: %s. Проверьте версию и выполните "
+                                     "штатное обновление devkitctl update" %
+                                     (binary, p.returncode,
+                                      (p.stderr or p.stdout or "материал не проверен").strip()))
 
     def raise_head(self, order):
         """Подъём живой головы в своей же панели. Клиент забирает терминал
@@ -1364,7 +1454,7 @@ class Pipeline:
         try:
             self.head = subprocess.Popen(cmd, cwd=self.proj, env=env)
         except OSError as e:
-            self.broken("клиент не поднялся (%s): %s" % (e, " ".join(self.client)))
+            self.startup_failure("клиент не поднялся (%s): %s" % (e, self.client[0]))
 
     def wait_session(self):
         """ID сессии живой головы из реестра чатов. Пустая строка значит, что
@@ -2004,11 +2094,13 @@ class Pipeline:
                 return None
             old = self.sid
             self.say("хвост ротации дописан: сессия %s пересоздаётся" % old)
+            self.renew_session()
             self.drop_head()
             self.raise_head(self.rotate_restart_text())
             new = self.wait_session()
             self.rotate_ask = 0.0
             if not new:
+                self.check_started()
                 # Реестр промолчал: голова уже поднята с вводной хвоста, и
                 # повторный заказ поверх неё слать нельзя. Адрес прежней
                 # сессии обнуляется, он мёртв. По нему не свести отметки новой
@@ -2034,9 +2126,10 @@ class Pipeline:
         """Конвейер одной живой сессией: первый заказ аргументом, следующие
         клавиатурой окна, конец прохода отметкой хука."""
         sect = self.preflight()
-        self.raise_head(self.order)
+        self.raise_head(self.initial_order())
         self.sid = self.wait_session()
         if not self.sid:
+            self.check_started()
             # Без ID сессии отметки не свести с окном, и подпинывать голову
             # оболочке нечем. Работу это не отменяет. Живая сессия доводит
             # первый проход сама, а молчание после него будет названо вслух.
@@ -2096,8 +2189,11 @@ class Pipeline:
             if self.hands_over(told, after):
                 self.hand_over(after)
             if not word:
-                self.stop(1, after, "живая голова вышла на проходе %d, задача не закрыта" % n,
-                          kind=EXIT_REASON)
+                code = self.head.poll() if self.head is not None else 1
+                path = self.save_startup("голова вышла на проходе %d, код %s" % (n, code),
+                                         code or 1, pane=True)
+                self.stop(1, after, "живая голова вышла на проходе %d, задача не закрыта; "
+                          "диагностика %s" % (n, path), kind=EXIT_REASON)
             # Голова раздала работу фоновым субагентам и ждёт их конца. Ход её
             # при этом короток, строка стоит, и воронка сняла бы окно вместе с
             # субагентами, потеряв их работу (так погиб исполнитель DK-864).
@@ -2318,7 +2414,7 @@ class Pipeline:
         idle, holds, n = 0, 0, 1
         while True:
             sect = self.preflight()
-            code, spent = self.run_pass(self.order if n == 1 else self.again)
+            code, spent = self.run_pass(self.initial_order() if n == 1 else self.again)
             told = self.show()
             after = self.status(told) or sect
             # Строка о выходе головы пишется всегда, а не только на аварии: до

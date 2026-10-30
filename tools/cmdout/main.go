@@ -24,15 +24,22 @@ const usageText = `cmdout: вывод команды -> файлу, агенту
 каркаса в docs/lld/DK-237-shared-go-module.md.
 
   cmdout [--version] <команда ...>
+  cmdout --detach <команда ...>
   cmdout clean [--days N] [--dry-run]
   cmdout digest [слово]
 
   --version    печатает строку версии и выходит, до разбора команды
+  --detach     поднять команду переживающим шагом и вернуться сразу (DK-722)
 
 Команда ставится как есть, без разделителя «--». Имя каталога вывода (slug)
 берётся от первой лексемы команды, например «git diff» даёт «git».
 
 Код возврата cmdout совпадает с кодом возврата команды.
+
+Режим --detach нужен голове конвейера без окна. Команда там идёт минутами и не
+должна гибнуть вместе с выходом головы: шаг уходит в свой сеанс, вывод копится
+файлом out по мере хода, код возврата ложится в exit, а pid шага в одноимённый
+файл. По этой метке task-run.py ждёт конца шага перед следующим проходом.
 
 Подкоманда clean удаляет каталоги .devkit/cmdout старше порога возраста (по
 умолчанию 7 дней, перекрывается --days). Порог и правило живут в internal/frame,
@@ -67,6 +74,12 @@ func main() {
 // подпроцесса: на собранном бинаре проверяется разбор аргументов и печать, а не
 // внутренний вызов frame.Capture.
 func run(args []string) int {
+	if len(args) > 0 && args[0] == "--detach" {
+		return runDetach(args[1:])
+	}
+	if len(args) > 0 && args[0] == frame.DetachRunFlag {
+		return runDetachRun(args[1:])
+	}
 	if len(args) > 0 && args[0] == "clean" {
 		return runClean(args[1:])
 	}
@@ -86,6 +99,47 @@ func run(args []string) int {
 	}
 	logRun(".", summary.Exit)
 	return summary.Exit
+}
+
+// runDetach поднимает команду переживающим шагом (DK-722) и выходит нулём.
+// Выход не ноль значит, что шаг не поднялся и его некому ждать: голова обязана
+// увидеть отказ, а не считать шаг идущим. Свой бинарь шаг берёт через
+// os.Executable, а не поиском по PATH: потомок обязан быть тем же cmdout, имя
+// процесса у метки жизни сверяется.
+func runDetach(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "ошибка: --detach ждёт команду")
+		return 2
+	}
+	self, err := os.Executable()
+	if err != nil {
+		logRun(".", 1)
+		fmt.Fprintln(os.Stderr, "ошибка:", err)
+		return 1
+	}
+	step, err := frame.Detach(".", self, args)
+	if err != nil {
+		logRun(".", 1)
+		fmt.Fprintln(os.Stderr, "ошибка:", err)
+		return 1
+	}
+	fmt.Printf("pid: %d\ndir: %s\nвывод копится в out, код возврата ляжет в exit\n",
+		step.Pid, step.Dir)
+	return 0
+}
+
+// runDetachRun это режим шага. Вызывает его сам бинарь, поднятый runDetach,
+// и больше никто: флаг скрыт из подсказки не случайно, каталог вывода и метки
+// это договор frame с конвейером. Код возврата совпадает с кодом команды и
+// ложится в exit файлом, ждущим следующий проход.
+func runDetachRun(args []string) int {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "ошибка: шагу нужны каталог и команда")
+		return 2
+	}
+	code := frame.RunInto(args[0], args[1:])
+	logRun(args[0], code)
+	return code
 }
 
 // runClean разбирает флаги чистки и зовёт frame.Clean из того же модуля, где

@@ -511,3 +511,30 @@ func TestCarrierReadAndCarried(t *testing.T) {
 		t.Fatalf("своя же строка не прочиталась: %s", line)
 	}
 }
+
+// Alive меряет живость сессии свежестью её транскрипта: страховкам гейта
+// бюджета нужен живой собеседник, а не запись о нём (DK-1226). Незнакомая
+// сессия и остывший транскрипт это «не идёт».
+func TestAliveByTranscript(t *testing.T) {
+	tr := filepath.Join(t.TempDir(), "chat.jsonl")
+	if err := os.WriteFile(tr, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binds := Parse([]byte(fmt.Sprintf(
+		"2026-10-30T12:00:00 сессия chat-1 задача DK-100 транскрипт %s источник заказ повод startup",
+		tr)))
+	now := time.Now()
+	if !binds.Alive("chat-1", now) {
+		t.Fatal("свежий транскрипт не признан живым")
+	}
+	stale := now.Add(-2 * SessionLive)
+	if err := os.Chtimes(tr, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	if binds.Alive("chat-1", now) {
+		t.Fatal("остывший транскрипт прочитан живым")
+	}
+	if binds.Alive("chat-2", now) {
+		t.Fatal("сессии без записи прочитана живой")
+	}
+}

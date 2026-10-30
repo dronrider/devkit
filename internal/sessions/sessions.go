@@ -185,6 +185,27 @@ func Load(home string) Binds {
 	return Parse(data)
 }
 
+// SessionLive это окно живости сессии по транскрипту. Число то же, что
+// SESSION_LIVE у сторожка цикла (tools/devkitctl/watch.py): живость тут
+// страховочная мера, и расходиться её окнам в двух утилитах нельзя.
+const SessionLive = 12 * time.Minute
+
+// Alive отвечает, идёт ли сессия sid прямо сейчас. Мера та же, что session_alive
+// у сторожка цикла: свежесть транскрипта, путь к которому лежит полем в реестре.
+// Незнакомая сессия и пустой транскрипт это «не идёт»: страховке нужен живой
+// собеседник, а не запись о нём (DK-1226).
+func (b Binds) Alive(sid string, now time.Time) bool {
+	rec, ok := b[sid]
+	if !ok || rec.Transcript == "" {
+		return false
+	}
+	st, err := os.Stat(rec.Transcript)
+	if err != nil {
+		return false
+	}
+	return now.Sub(st.ModTime()) < SessionLive
+}
+
 // Leads называет сессию, которая ведёт задачу id, и её запись. Выигрывает
 // свежайшая: у задачи бывает несколько заходов подряд, и говорить надо с
 // последним. Пустое имя значит, что реестр про задачу ничего не знает.

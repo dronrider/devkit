@@ -369,25 +369,50 @@ class TestGroom(SkillTree):
         with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
             f.write("---\nname: board-groom\ndescription: Звать, при разборе.\n---\n\n%s\n" % body)
 
-    def test_full_groom_passes(self):
-        self.write_groom(
-            "## Входы\n\n- `/board-groom` один\n- `/board-groom` список\n- `/board-groom` весь\n\n"
-            "## Исходы разбора\n\ntaskctl add --id, draft attach, draft defer, draft drop\n")
-        fails = check_skills.check_groom(self.here)
-        self.assertEqual(fails, [])
+    CONTRACT = ("## Входы\n\nВход по одному ID, по нескольким ID или без аргументов.\n\n"
+                "## Процедура\n\n"
+                "Получить `taskctl draft proposals <ID>`.\n"
+                "Сохранить `taskctl draft proposals save <ID> --base <snapshot>`.\n"
+                "Дождаться успешного завершения `save` и только затем "
+                "вызвать `taskctl draft proposals ask <ID>`.\n"
+                "Применить только явное решение человека через "
+                "`taskctl draft proposals answer <ID>`.\n"
+                "Прямыми командами обходить подтверждение нельзя.\n\n"
+                "## Исходы разбора\n\n`add`, `attach`, `defer`, `drop`.\n")
 
-    def test_wrong_number_of_entries(self):
-        self.write_groom("## Входы\n\n- `/board-groom` один\n\n## Исходы разбора\n\n"
-                         "add --id, draft attach, draft defer, draft drop\n")
-        fails = check_skills.check_groom(self.here)
-        self.assertTrue(any("входов названо 1" in f for f in fails), fails)
+    def test_typed_proposals_contract_passes(self):
+        self.write_groom(self.CONTRACT)
+        self.assertEqual(check_skills.check_groom(self.here), [])
 
-    def test_missing_outcome_command(self):
-        self.write_groom(
-            "## Входы\n\n- `/board-groom` один\n- `/board-groom` список\n- `/board-groom` весь\n\n"
-            "## Исходы разбора\n\nadd --id, draft attach, draft defer\n")
-        fails = check_skills.check_groom(self.here)
-        self.assertTrue(any("нет taskctl draft drop" in f for f in fails), fails)
+    def test_missing_contract_parts_fail(self):
+        markers = ("по одному ID", "по нескольким ID", "без аргументов",
+                   "`add`", "`attach`", "`defer`", "`drop`",
+                   "taskctl draft proposals <ID>",
+                   "taskctl draft proposals save <ID> --base <snapshot>",
+                   "taskctl draft proposals ask <ID>",
+                   "taskctl draft proposals answer <ID>",
+                   "Дождаться успешного завершения `save` и только затем",
+                   "Применить только явное решение человека",
+                   "обходить подтверждение нельзя")
+        for marker in markers:
+            with self.subTest(marker=marker):
+                self.write_groom(self.CONTRACT.replace(marker, ""))
+                self.assertTrue(check_skills.check_groom(self.here), marker)
+                shutil.rmtree(os.path.join(self.here, "board-groom"))
+
+    def test_ask_before_save_fails(self):
+        save = "taskctl draft proposals save <ID> --base <snapshot>"
+        ask = "taskctl draft proposals ask <ID>"
+        self.write_groom(self.CONTRACT.replace(save, "PLACEHOLDER").replace(ask, save)
+                         .replace("PLACEHOLDER", ask))
+        self.assertTrue(any("порядок proposals" in f
+                            for f in check_skills.check_groom(self.here)))
+
+    def test_direct_mutators_are_not_a_proposals_protocol(self):
+        self.write_groom("## Входы\n\nВход по одному ID, по нескольким ID или без аргументов.\n\n"
+                         "## Процедура\n\ntaskctl add --id, draft attach, draft defer, draft drop\n\n"
+                         "## Исходы разбора\n\n`add`, `attach`, `defer`, `drop`.\n")
+        self.assertTrue(any("proposals" in f for f in check_skills.check_groom(self.here)))
 
     def test_groom_not_set_up(self):
         fails = check_skills.check_groom(self.here)

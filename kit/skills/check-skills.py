@@ -196,28 +196,37 @@ def check_goal_cut(here):
 
 
 def check_groom(here):
-    # Грумминг разрезан на фазу разбора и фазу оформления (DK-129): у захода
-    # три входа, а у разобранного черновика четыре исхода, и под каждый исход
-    # своя команда taskctl. Выпавший из текста вход или исход это ветка
-    # разбора, которую сессия молча не пройдёт, и заметить пропажу на живом
-    # заходе некому.
     fails = []
     groom = os.path.join(here, "board-groom", "SKILL.md")
     text = read(groom)
     if text is None:
-        fails.append("board-groom: скилл грумминга не заведён")
-        return fails
-    body = "\n" + text
-    if "\n## Входы" not in body:
-        fails.append("board-groom: нет раздела про входы, откуда берётся список черновиков не сказано")
-    n_in = body.count("\n- `/board-groom")
-    if n_in != 3:
-        fails.append("board-groom: входов названо %d, а их три (один ID, список ID, весь накопитель)" % n_in)
-    if "\n## Исходы разбора" not in body:
-        fails.append("board-groom: нет раздела про исходы, разобранный черновик остаётся без следа")
-    for cmd in ("add --id", "draft attach", "draft defer", "draft drop"):
-        if cmd not in text:
-            fails.append("board-groom: исход без команды, в процедуре нет taskctl %s" % cmd)
+        return ["board-groom: скилл грумминга не заведён"]
+    for title, markers in (
+        ("## Входы", ("по одному ID", "по нескольким ID", "без аргументов")),
+        ("## Исходы разбора", ("`add`", "`attach`", "`defer`", "`drop`")),
+    ):
+        body = section(text, title)
+        if not body:
+            fails.append("board-groom: нет раздела %s" % title)
+        for marker in markers:
+            if marker not in body:
+                fails.append("board-groom: в разделе %s нет %s" % (title, marker))
+    procedure = section(text, "## Процедура")
+    commands = ("taskctl draft proposals <ID>",
+                "taskctl draft proposals save <ID> --base <snapshot>",
+                "taskctl draft proposals ask <ID>",
+                "taskctl draft proposals answer <ID>")
+    positions = [procedure.find(cmd) for cmd in commands]
+    for cmd, pos in zip(commands, positions):
+        if pos < 0:
+            fails.append("board-groom: в процедуре нет %s" % cmd)
+    if all(pos >= 0 for pos in positions) and positions != sorted(positions):
+        fails.append("board-groom: порядок proposals должен быть получение, save, ask, answer")
+    for marker in ("Дождаться успешного завершения `save` и только затем",
+                   "Применить только явное решение человека",
+                   "обходить подтверждение нельзя"):
+        if marker not in procedure:
+            fails.append("board-groom: в процедуре нет условия %s" % marker)
     return fails
 
 

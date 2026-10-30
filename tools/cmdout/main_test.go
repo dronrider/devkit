@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -487,5 +489,96 @@ func TestBinaryDigestEmptyStdin(t *testing.T) {
 	out, code := digest(t, bin, root, "")
 	if code != 0 || out != "" {
 		t.Fatalf("пустой stdin: exit %d, вывод %q; хотели 0 и пусто", code, out)
+	}
+}
+
+// TestBinaryDetachSurvivesParentExit, предмет DK-722. Переживаемый шаг обязан
+// пережить выход обёртки: родитель уже вышел, а шаг ещё пишет вывод и код
+// возврата. Каталог вывода при этом несёт метку pid, по которой конвейер ждёт
+// конца шага, и команды шага в файле cmd.
+func TestBinaryDetachSurvivesParentExit(t *testing.T) {
+	bin := buildBinary(t)
+	root := setupRepo(t)
+	cmd := exec.Command(bin, "--detach", "sh", "-c", "sleep 1; echo дело шага; exit 3")
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("--detach не вышел нулём: %v\n%s", err, out)
+	}
+	body := string(out)
+	if !strings.Contains(body, "pid: ") || !strings.Contains(body, "dir: ") {
+		t.Fatalf("ответ --detach без pid или dir: %q", body)
+	}
+	var dir string
+	for _, l := range strings.Split(body, "\n") {
+		if strings.HasPrefix(l, "dir: ") {
+			dir = strings.TrimPrefix(l, "dir: ")
+		}
+	}
+	if dir == "" {
+		t.Fatal("dir строка не найдена")
+	}
+	pidRaw, err := os.ReadFile(filepath.Join(dir, "pid"))
+	if err != nil {
+		t.Fatalf("метка pid не лежит: %v", err)
+	}
+	pid := strings.TrimSpace(string(pidRaw))
+	cmdFile, _ := os.ReadFile(filepath.Join(dir, "cmd"))
+	if !strings.Contains(string(cmdFile), "sh -c") {
+		t.Errorf("файл cmd не называет команду: %q", string(cmdFile))
+	}
+	// Шаг ещё жив: он спит секунду, а родитель уже вышел.
+	pidNum, err := strconv.Atoi(pid)
+	if err != nil {
+		t.Fatalf("метка pid не число: %q", pid)
+	}
+	p, _ := os.FindProcess(pidNum)
+	if err := p.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("шаг pid %s не пережил выход обёртки: %v", pid, err)
+	}
+	// Итог шага: код возврата в exit, вывод в out. Шаг спит секунду, ждём с
+	// запасом, а не на глаз.
+	until := time.Now().Add(10 * time.Second)
+	exitRaw, err := os.ReadFile(filepath.Join(dir, "exit"))
+	for ; err != nil && time.Now().Before(until); exitRaw, err = os.ReadFile(filepath.Join(dir, "exit")) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("файл exit так и не лёг: %v", err)
+	}
+	if strings.TrimSpace(string(exitRaw)) != "3" {
+		t.Errorf("exit шага: %q, хотели 3", string(exitRaw))
+	}
+	full, err := os.ReadFile(filepath.Join(dir, "out"))
+	if err != nil || !strings.Contains(string(full), "дело шага") {
+		t.Errorf("вывод шага не скопился файлом: %q (err=%v)", string(full), err)
+	}
+}
+
+// TestBinaryDetachOutsideGit: без корня репозитория шагу некуда писать вывод,
+// и отказ обязан выйти сразу и громко, а не поднимать команду без следа.
+func TestBinaryDetachOutsideGit(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	cmd := exec.Command(bin, "--detach", "sh", "-c", "echo дело")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("--detach вне git вышел нулём: %q", out)
+	}
+	if !strings.Contains(string(out), "ошибка") {
+		t.Errorf("отказ не назван: %q", string(out))
+	}
+}
+
+// TestBinaryDetachNoCommand: пустой --detach это ошибка разбора, exit 2.
+func TestBinaryDetachNoCommand(t *testing.T) {
+	bin := buildBinary(t)
+	cmd := exec.Command(bin, "--detach")
+	cmd.Dir = t.TempDir()
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("--detach без команды вышел нулём: %q", out)
+	} else if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 {
+		t.Fatalf("exit --detach без команды: %v, хотели 2", err)
 	}
 }

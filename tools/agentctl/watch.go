@@ -19,7 +19,8 @@ import (
 //
 // Свои поля гейт на каждом витке переписывает, вместе с отметкой stopped,
 // которую ставит сам сторожок: вызов гейта это и есть движение цикла, и держать
-// после него отметку прошлого стопа не за чем. Чужие ключи записи при этом
+// после него отметку прошлого стопа не за чем. Исключение это живая запись
+// чужого чата: её гейт не забирает (DK-1226). Чужие ключи записи при этом
 // переносятся как есть: в ней живёт не только гейт, и счётчик попыток
 // перезапуска (DK-169) не должен пропадать на первом же витке.
 const (
@@ -30,7 +31,7 @@ const (
 // Порядок известных ключей записи, тот же, что у сторожка (watch.py, KEYS):
 // сначала поля гейта, следом отметки сторожка, а незнакомое дописывается в
 // хвост по алфавиту.
-var watchKeys = []string{"goal", "root", "file", "session", "carrier", "seen", "marker", "stopped"}
+var watchKeys = []string{"goal", "root", "file", "session", "carrier", "seen", "marker", "marker_by", "stopped"}
 
 // Носители цикла в записи. Чат это живая сессия человека, оболочка это
 // goal-run.py, и она называет себя сама переменной окружения дочернему клиенту.
@@ -88,19 +89,31 @@ func watchRegister(root, goalPath string, now time.Time) {
 	}
 	entry := filepath.Join(dir, id+"-"+watchSlug(root)+".watch")
 	data := watchRead(entry)
-	delete(data, "stopped")
-	// Маркер стопа снимает тот же гейт: цикл, дошедший до гейта снова, кончился
-	// не насовсем, и держатель хода обязан судить по нынешнему заходу, а не по
-	// прошлому стопу.
-	delete(data, "marker")
+	// Живую запись чата гейт не забирает: чужие сессию, носителя, маркер и
+	// отметку стопа он не трогает, иначе ночная оболочка отнимала бы у цели
+	// держателя хода первым же гейтом (DK-1226). Живость меряется тем же окном
+	// по транскрипту, каким меряет её сторожок. Осиротевшая запись берётся как
+	// раньше: подъём осиротевшего цикла это путь тика, и перезапись записи его
+	// первый шаг.
+	own := sessions.Own()
+	held := data["carrier"] == carrierChat && data["session"] != "" &&
+		data["session"] != own && sessions.Load(home).Alive(data["session"], now)
+	if !held {
+		delete(data, "stopped")
+		// Маркер стопа снимает тот же гейт: цикл, дошедший до гейта снова,
+		// кончился не насовсем, и держатель хода обязан судить по нынешнему
+		// заходу, а не по прошлому стопу.
+		delete(data, "marker")
+		delete(data, "marker_by")
+		data["session"] = own
+		data["carrier"] = carrierChat
+		if strings.TrimSpace(os.Getenv(shellEnv)) != "" {
+			data["carrier"] = carrierShell
+		}
+	}
 	data["goal"] = id
 	data["root"] = root
 	data["file"] = abs
-	data["session"] = sessions.Own()
-	data["carrier"] = carrierChat
-	if strings.TrimSpace(os.Getenv(shellEnv)) != "" {
-		data["carrier"] = carrierShell
-	}
 	data["seen"] = now.Format(watchStamp)
 	os.WriteFile(entry, []byte(watchBody(data)), 0o644)
 }
@@ -126,8 +139,18 @@ func watchMarker(root, goalPath, marker string) {
 	}
 	if marker == goalGoOn {
 		delete(data, "marker")
+		delete(data, "marker_by")
 	} else {
 		data["marker"] = marker
+		// Признак носителя ложится рядом с маркером, а текст маркера не
+		// меняется: печать маркера это протокол headless-витка перед оболочкой,
+		// и для двух носителей его менять дорого (DK-1226). По признаку
+		// держатель хода отличает свой стоп от стопа витка оболочки: чужой стоп
+		// работу чата не кончает.
+		data["marker_by"] = carrierChat
+		if strings.TrimSpace(os.Getenv(shellEnv)) != "" {
+			data["marker_by"] = carrierShell
+		}
 	}
 	os.WriteFile(entry, []byte(watchBody(data)), 0o644)
 }

@@ -166,6 +166,106 @@ func TestWatchSlugKeepsProjectsApart(t *testing.T) {
 	}
 }
 
+// liveChat пишет в подставной дом живую сессию чата: строку в реестре чатов
+// со свежим транскриптом. Возврат это её sid и путь транскрипта.
+func liveChat(t *testing.T, home string) (string, string) {
+	t.Helper()
+	sid := "chat-1"
+	tr := filepath.Join(t.TempDir(), "chat.jsonl")
+	if err := os.WriteFile(tr, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".devkit"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := "2026-10-30T12:00:00 сессия " + sid + " задача T-100 транскрипт " + tr + "\n"
+	if err := os.WriteFile(filepath.Join(home, ".devkit", "sessions.log"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return sid, tr
+}
+
+// TestWatchRegisterKeepsLiveChatEntry: живой чат ведёт запись реестра сам, и
+// гейт чужого витка её не забирает: сессия, носитель и маркер остаются у чата,
+// а движение цели отмечается своим полем seen (DK-1226).
+func TestWatchRegisterKeepsLiveChatEntry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(sessions.SessionEnv, "turn-9")
+	t.Setenv(shellEnv, "T-100")
+	root := t.TempDir()
+	goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+	sid, _ := liveChat(t, home)
+	dir := filepath.Join(home, ".devkit", "goals")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(dir, "T-100-"+watchSlug(root)+".watch")
+	foreign := "goal = T-100\nroot = " + root + "\nsession = " + sid +
+		"\ncarrier = chat\nmarker = wait-human\nmarker_by = chat\nstopped = 2026-10-29T23:00:00\n"
+	if err := os.WriteFile(entry, []byte(foreign), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	watchRegister(root, "docs/tasks/T-100.md", now)
+	body, err := os.ReadFile(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		"session = " + sid,
+		"carrier = chat",
+		"marker = wait-human",
+		"stopped = 2026-10-29T23:00:00",
+		"seen = " + now.Format(watchStamp),
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("в записи нет строки %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(text, "turn-9") || strings.Contains(text, carrierShell) {
+		t.Errorf("гейт вписал в чужую живую запись свою сессию или носителя:\n%s", body)
+	}
+}
+
+// TestWatchRegisterTakesOrphanChatEntry: осиротевшая запись, чья сессия умерла,
+// берётся гейтом как раньше: подъём осиротевшего цикла это путь тика, и запись
+// обязана перейти новому носителю.
+func TestWatchRegisterTakesOrphanChatEntry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(sessions.SessionEnv, "turn-9")
+	t.Setenv(shellEnv, "T-100")
+	root := t.TempDir()
+	goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+	sid, tr := liveChat(t, home)
+	// Транскрипт остыл за пределы окна живости, и страховки не видят чата.
+	stale := time.Now().Add(-2 * sessions.SessionLive)
+	if err := os.Chtimes(tr, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(home, ".devkit", "goals", "T-100-"+watchSlug(root)+".watch")
+	if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(entry, []byte("goal = T-100\nsession = "+sid+"\ncarrier = chat\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	watchRegister(root, "docs/tasks/T-100.md", time.Now())
+	body, err := os.ReadFile(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"session = turn-9", "carrier = shell"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("осиротевшая запись не перешла витку, нет строки %q:\n%s", want, body)
+		}
+	}
+}
+
 // TestWatchRegisterNamesSessionAndCarrier: запись называет сессию цикла и его
 // носителя. По ним держатель хода (hooks/goal-hold.py) отличает свою сессию от
 // соседних, а цикл в чате от витка оболочки, которому ход отдавать положено.
@@ -235,6 +335,43 @@ func TestWatchMarkerWritesStop(t *testing.T) {
 	}
 	if strings.Contains(string(body), "marker") {
 		t.Errorf("маркер стопа пережил продолжение цикла:\n%s", body)
+	}
+}
+
+// TestWatchMarkerNamesItsCarrier: стоп-маркер ложится с признаком носителя,
+// а текст маркера не меняется: печать маркера это протокол headless-витка
+// (DK-1226). По признаку держатель хода отличает свой стоп от стопа витка
+// оболочки.
+func TestWatchMarkerNamesItsCarrier(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n", ""))
+	watchRegister(root, "docs/tasks/T-100.md", time.Now())
+	name := watchEntries(t, home)[0]
+
+	t.Setenv(shellEnv, "T-100")
+	watchMarker(root, "docs/tasks/T-100.md", "wait-human")
+	body, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"marker = wait-human", "marker_by = shell"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("в записи витка оболочки нет строки %q:\n%s", want, body)
+		}
+	}
+
+	t.Setenv(shellEnv, "")
+	watchMarker(root, "docs/tasks/T-100.md", "done")
+	body, err = os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"marker = done", "marker_by = chat"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("в записи витка чата нет строки %q:\n%s", want, body)
+		}
 	}
 }
 

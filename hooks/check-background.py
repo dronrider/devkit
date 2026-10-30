@@ -26,6 +26,17 @@
 делегирование в headless поэтому зовётся с `run_in_background: false` явно, чего
 скиллы `board-batch` и `board-ship` и требуют.
 
+Вторая дыра закрывалась тем же рубежом (DK-722). Синхронный вызов долгой
+команды конвейера поля фона не ставит, а харнес сам уводит его в фон по своим
+120 секундам, и вместе с выходом головы команда гибнет: шесть проходов DK-720
+умерли на `shipctl merge`, в файлах вывода только пометка `[killed]`. Поэтому
+в headless-сессии рубеж отбивает и голый вызов долгой команды из списка ниже,
+а отказ называет переживаемый шаг `cmdout --detach`. Список это команды,
+минутные по природе: слияние, выкат и откат с полным прогоном тестов, обкатка,
+стенд и двойной прогон регрессии. Голый `go test` в списке нет, его уже держит
+рубеж прямого прогона (check-bare-test.py, DK-1219), и его замена
+`devkitctl test` остаётся законным синхронным вызовом ниже потолка Bash.
+
 Вида сессии в событии хука нет, и считается он по окружению клиента, которое
 хук наследует:
 
@@ -81,6 +92,14 @@ RUN_DEPTH = "DEVKIT_RUN_DEPTH"
 # значением называет себя («дашборд»), чтобы отказ говорил, откуда сессия.
 HEADLESS_MARK = "DEVKIT_HEADLESS"
 BACKGROUND = "run_in_background"
+# Долгие команды конвейера (DK-722): минуты по природе, и в headless они
+# доезжают до конца только переживающим шагом. Пары слов, а не подстроки:
+# короткие подкоманды тех же утилит (shipctl status) остаются синхронными.
+# Список живёт тут же, где и отказ о нём, и пополняется правкой одного модуля.
+LONG_STEPS = (("shipctl", "merge"), ("shipctl", "ship"), ("shipctl", "revert"),
+              ("taskctl", "rehearse"), ("obeycheck",), ("regcheck",))
+# Слово переживаемого шага: `cmdout --detach` перед командой снимает отказ.
+DETACH_MARK = "--detach"
 
 
 def headless(env):
@@ -121,6 +140,21 @@ def called_with(tool_input):
     return "с %s: true" % BACKGROUND
 
 
+def bare_long_step(command):
+    """Голый ли вызов долгой команды конвейера, и какой. Слова сравниваются по
+    разбиению по пробелам, и пара ловится в любом сегменте составной команды:
+    `cd X && shipctl merge` гибнет той же смертью. Слово переживаемого шага
+    снимает отказ: под `cmdout --detach` команда и должна пережить голову."""
+    words = command.split()
+    if DETACH_MARK in words:
+        return ""
+    for i in range(len(words)):
+        for step in LONG_STEPS:
+            if words[i:i + len(step)] == list(step):
+                return " ".join(step)
+    return ""
+
+
 def advice(tool):
     if tool == hookio.AGENT_TOOL:
         return ("Работай синхронно. Субагента зови с `%s: false` явно: вызов "
@@ -128,6 +162,18 @@ def advice(tool):
     return ("Работай синхронно. Bash зови без %s и с timeout по размеру прогона "
             "(потолок харнеса 600000 мс, прогон длиннее дробится на куски), "
             "субагента с `%s: false`." % (BACKGROUND, BACKGROUND))
+
+
+def long_report(step, sign):
+    return "\n".join([
+        "долгий шаг отбит рубежом синхронности DK-722: «%s» зван без переживаемого шага," % step,
+        "а сессия эта headless (%s)." % sign,
+        "Ход такой сессии кончается выходом процесса, и команда гибнет по потолку Bash молча.",
+        "Зови переживающим шагом: cmdout --detach %s." % step,
+        "Обёртка вернёт ход сразу, вывод будет копиться файлом .devkit/cmdout, код возврата ляжет в exit,",
+        "а конвейер перед следующим проходом дождётся конца шага.",
+        "Команды короче потолка Bash (600000 мс с явным timeout) рубеж не трогает.",
+    ]) + "\n"
 
 
 def report(tool, sign, called):
@@ -153,12 +199,18 @@ def run_hook(protocol):
     if not isinstance(ti, dict):
         return 0
     tool = hookio.text_of(event.get("tool_name")) or "без имени"
-    if not wants_background(tool, ti):
-        return 0
     sign = headless(os.environ)
-    if not sign:
+    if wants_background(tool, ti):
+        if sign:
+            return hookio.reply(protocol).found(report(tool, sign, called_with(ti)))
         return 0
-    return hookio.reply(protocol).found(report(tool, sign, called_with(ti)))
+    # Долгий шаг без поля фона гибнет той же смертью, и ловится отдельным
+    # списком, только в Bash и только в headless (DK-722).
+    if tool == hookio.BASH_TOOL and sign:
+        step = bare_long_step(hookio.text_of(ti.get("command")))
+        if step:
+            return hookio.reply(protocol).found(long_report(step, sign))
+    return 0
 
 
 def run_why(env, out):
@@ -166,8 +218,8 @@ def run_why(env, out):
     нечем отличить живое окно от headless без фонового вызова наугад."""
     sign = headless(env)
     if sign:
-        out.write("сессия headless (%s): фоновый запуск отбивается, "
-                  "работать надо синхронно\n" % sign)
+        out.write("сессия headless (%s): фоновый запуск и голый долгий шаг "
+                  "конвейера отбиваются, долгий шаг зовётся cmdout --detach\n" % sign)
         return 0
     out.write("сессия живая (%s=%s): фоновый запуск проходит, ребёнок "
               "переживает конец хода\n" % (ENTRYPOINT, env.get(ENTRYPOINT) or "пусто"))

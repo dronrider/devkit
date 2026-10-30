@@ -198,6 +198,78 @@ class TestHookRefusal(unittest.TestCase):
         self.assertIn("не заведён", r.stderr)
 
 
+class TestLongStep(unittest.TestCase):
+    """Долгий шаг конвейера без переживаемого процесса (DK-722). Синхронный
+    вызов поля фона не ставит, харнес сам уводит его в фон по своим 120 секундам,
+    и вместе с выходом головы команда гибнет: шесть проходов DK-720 умерли на
+    `shipctl merge` с пометкой [killed] в файлах вывода."""
+
+    def test_bare_merge_is_refused_in_headless(self):
+        r = run("--hook", env=HEADLESS, input=event("Bash", command="shipctl merge DK-1"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("DK-722", r.stderr)
+        self.assertIn("shipctl merge", r.stderr)
+        self.assertIn("cmdout --detach", r.stderr)
+
+    def test_detached_merge_passes_in_headless(self):
+        r = run("--hook", env=HEADLESS,
+                input=event("Bash", command="cmdout --detach shipctl merge DK-1"))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stderr, "")
+
+    def test_bare_merge_passes_in_live_session(self):
+        r = run("--hook", env=LIVE, input=event("Bash", command="shipctl merge DK-1"))
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stderr, "")
+
+    def test_pipeline_window_refuses_the_bare_step(self):
+        # Канал DK-720: окно конвейера с меткой подъёмщика и чужим наследством
+        # tmux. Сессия опознана headless, и шаг обязан идти переживающим.
+        r = run("--hook", env=PIPELINE, input=event("Bash", command="shipctl merge DK-1"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("DEVKIT_HEADLESS", r.stderr)
+
+    def test_every_listed_step_is_refused(self):
+        for command in ("shipctl ship", "shipctl revert DK-1",
+                        "taskctl rehearse DK-1", "obeycheck --task DK-1 -k 3",
+                        "regcheck -- devkitctl test hooks"):
+            r = run("--hook", env=HEADLESS, input=event("Bash", command=command))
+            self.assertEqual(r.returncode, 2, command)
+            self.assertIn("cmdout --detach", r.stderr, command)
+
+    def test_short_neighbours_stay_synchronous(self):
+        # Короткие подкоманды тех же утилит и прогон одного пакета ниже потолка
+        # Bash остаются законным синхронным вызовом: дев-цикл головы не должен
+        # уезжать в файл ради трёх секунд.
+        for command in ("shipctl status", "shipctl ready DK-1",
+                        "devkitctl test hooks -v", "go build ./..."):
+            r = run("--hook", env=HEADLESS, input=event("Bash", command=command))
+            self.assertEqual(r.returncode, 0, command)
+            self.assertEqual(r.stderr, "", command)
+
+    def test_wrapped_sync_step_is_refused_too(self):
+        # Обёртка без переживаемости не спасает: синхронный cmdout гибнет
+        # вместе с головой так же, как и команда без обёртки.
+        r = run("--hook", env=HEADLESS,
+                input=event("Bash", command="cmdout shipctl merge DK-1"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("cmdout --detach", r.stderr)
+
+    def test_compound_command_is_caught_in_any_segment(self):
+        r = run("--hook", env=HEADLESS,
+                input=event("Bash", command="git -C ../x pull && shipctl merge DK-1"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("shipctl merge", r.stderr)
+
+    def test_bare_step_with_background_flag_names_both_rules(self):
+        # Фон и долгий шаг в одном вызове: отказ фона первый, он строже и
+        # называет общую замену.
+        r = run("--hook", env=HEADLESS,
+                input=event("Bash", command="shipctl merge DK-1", run_in_background=True))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("DK-678", r.stderr)
+
+
 class TestSampleEvents(unittest.TestCase):
     """Живые снимки событий: форма входа лежит на стороне харнеса, и признак
     фона в ней фиксирует образец, снятый с работающего клиента, а не память."""

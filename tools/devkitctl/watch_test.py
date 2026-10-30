@@ -1818,6 +1818,129 @@ class CloseAgentTest(Stand):
         self.assertIn("закрыта тиком", journal)
 
 
+class ReturnAbandonedTest(Stand):
+    """Тик возвращает брошенную строку In progress (DK-1417): кого возвращать,
+    отвечает `taskctl abandoned`, возврат идёт `taskctl move` с коммитом и
+    пушем доски."""
+
+    class Answers:
+        """Подставной запускатель с ответом на каждую команду taskctl. Вердикт
+        отбора приходит первым вызовом, исход возврата вторым."""
+
+        def __init__(self, verdict="", verdict_code=0, move_code=0, move_out="", board=None):
+            self.calls = []
+            self.verdict = verdict
+            self.verdict_code = verdict_code
+            self.move_code = move_code
+            self.move_out = move_out
+            self.board = board  # доска стенда: возврат уносит с неё строку
+
+        def __call__(self, argv, **kw):
+            self.calls.append(list(argv))
+            if "abandoned" in argv:
+                return subprocess.CompletedProcess(argv, self.verdict_code, self.verdict, None)
+            if self.board is not None and "move" in argv:
+                tid = argv[argv.index("move") + 1]
+                text = self.board.read_text(encoding="utf-8")
+                self.board.write_text(
+                    "\n".join(l for l in text.splitlines() if not l.startswith("| " + tid)) + "\n",
+                    encoding="utf-8")
+            return subprocess.CompletedProcess(argv, self.move_code, self.move_out, None)
+
+        def argv_with(self, needle):
+            return [a for a in self.calls if needle in a]
+
+    def setUp(self):
+        super().setUp()
+        self.debt_rows(["DK-901", "DK-903"])
+
+    def debt_rows(self, ids):
+        """Доска стенда с долгами в In progress рядом с целью: взявший их
+        носитель умер, и возвращение решает вердикт."""
+        rows = "".join(PARK_ROW % (i, "Хвост сдачи", i, i) + "\n" for i in ids)
+        goal_row = ROW % (GOAL, GOAL, GOAL)
+        head, _, tail = (PARK_HEAD % (goal_row, "")).partition(goal_row)
+        (self.proj / "docs" / "TASKS.md").write_text(
+            head + goal_row + "\n" + rows + tail, encoding="utf-8")
+
+    def returns(self, answers):
+        return watch.return_abandoned(str(self.proj), answers, TASKCTL)
+
+    def test_abandoned_row_is_returned_with_push(self):
+        # Вердикт назвал строку брошенной: тик зовёт move тем же порядком, что
+        # страховка парковки, с сообщением коммита и пушем доски.
+        a = self.Answers(verdict="DK-901\n")
+        lines = self.returns(a)
+        moved = a.argv_with("backlog")
+        self.assertEqual(len(moved), 1, "брошенная строка не возвращена: %s" % a.calls)
+        self.assertEqual(moved[0][moved[0].index("move"):moved[0].index("-m")],
+                         ["move", "DK-901", "backlog"])
+        self.assertIn("--push", moved[0])
+        self.assertIn("возвращена тиком", lines[0])
+
+    def test_refused_rows_stay(self):
+        # Вердикт отказал всем: возвращать тик не пробует и молчит. Так стоят
+        # строки с деревом, живой сессией и слитой работой.
+        a = self.Answers(verdict="возвращать нечего\nотказано:\n"
+                                 "  DK-901: дерево задачи\n"
+                                 "  DK-903: простой меньше срока\n")
+        self.assertEqual(self.returns(a), [])
+        self.assertEqual(a.argv_with("backlog"), [], "тик полез возвращать отказ: %s" % a.calls)
+
+    def test_ready_list_stops_at_refusals(self):
+        # Перечень отказов идёт следом за готовыми, и разбор ответа обязан
+        # кончиться на первой строке прозы: иначе тик вернул бы чужую строку.
+        a = self.Answers(verdict="DK-901\nотказано:\n  DK-903: дерево задачи\n")
+        self.returns(a)
+        moved = a.argv_with("backlog")
+        self.assertEqual([c[c.index("move") + 1] for c in moved], ["DK-901"],
+                         "возвращено не то, что назвал вердикт: %s" % a.calls)
+
+    def test_without_binary_return_is_reported(self):
+        # Спросить вердикт нечем, а возвращать вслепую нельзя: тик называет
+        # вставший возврат строкой отчёта, строка дождётся бинаря.
+        a = self.Answers(verdict="DK-901\n")
+        lines = watch.return_abandoned(str(self.proj), a, "")
+        self.assertEqual(len(lines), 1, "вставший возврат не назван: %s" % lines)
+        self.assertEqual(a.calls, [])
+
+    def test_empty_progress_asks_nobody(self):
+        # Пустой In progress это самый частый случай тика, и лишний запуск
+        # бинаря каждые пять минут ему не нужен.
+        self.board(in_progress=False)
+        a = self.Answers(verdict="")
+        self.assertEqual(self.returns(a), [])
+        self.assertEqual(a.calls, [])
+
+    def test_refusal_of_move_is_reported(self):
+        # Строка осталась в In progress, а move отказал: тик говорит об этом
+        # строкой отчёта и вернётся к ней следующим тиком.
+        a = self.Answers(verdict="DK-901\n", move_code=1, move_out="XR-1: ребро не снято")
+        lines = self.returns(a)
+        self.assertIn("taskctl отказал", lines[0])
+        self.assertIn("ребро не снято", lines[0])
+
+    def test_unpushed_board_is_named(self):
+        # Возврат прошёл, а пуш нет: строка с доски ушла, и отчёт называет
+        # неуехавшую доску, чтобы её починил человек.
+        a = self.Answers(verdict="DK-901\n", move_code=1, move_out="пуш доски не прошёл",
+                        board=self.proj / "docs" / "TASKS.md")
+        lines = self.returns(a)
+        self.assertIn("доска не уехала в origin", lines[0])
+
+    def test_tick_writes_the_return_to_journal(self):
+        # Возврат виден снаружи журналом сторожка: громкого зова нет
+        # намеренно, и журнал остаётся единственным следом.
+        self.entry(seen_minutes=1)
+        self.runlog(1)
+        a = self.Answers(verdict="DK-901\n")
+        out = io.StringIO()
+        watch.run(now=self.now, idle=None, home=self.home, out=out, call=a, taskctl=TASKCTL)
+        journal = (self.home / ".devkit" / "goal-watch.log").read_text(encoding="utf-8")
+        self.assertIn("DK-901", journal)
+        self.assertIn("возвращена тиком", journal)
+
+
 class PipelineIncidentTest(Stand):
     def setUp(self):
         super().setUp()

@@ -172,6 +172,21 @@ class HoldTest(Stand):
         self.assertIsNone(decision, "ход держится после стоп-маркера: %s" % decision)
         self.assertIn("wait-human", self.journal())
 
+    def test_shell_stop_marker_keeps_holding(self):
+        # Стоп-маркер витка оболочки чужую работу чата не кончает: признак
+        # носителя у маркера отличает свой стоп от чужого, и ход у чата
+        # держится дальше (DK-1226). Снимет маркер гейт следующего витка чата.
+        self.entry(marker="wait-human", marker_by="shell")
+        decision, _ = self.stop()
+        self.assertIsNotNone(decision, "ход отдан по чужому стоп-маркеру: %s" % decision)
+        self.assertEqual(decision["decision"], "block")
+
+    def test_chat_stop_marker_releases_the_turn(self):
+        # Своим признаком носителя стоп-маркер работает как раньше.
+        self.entry(marker="wait-human", marker_by="chat")
+        decision, _ = self.stop()
+        self.assertIsNone(decision, "ход держится после своего стоп-маркера: %s" % decision)
+
     def test_continue_marker_keeps_holding(self):
         # Маркер продолжения работу не кончает: цикл едет дальше.
         self.entry(marker="continue")

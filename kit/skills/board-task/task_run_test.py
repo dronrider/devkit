@@ -70,12 +70,14 @@ if tail:
 # Стаб головы: играет очередную строку сценария и записывает заказ, с которым
 # его подняли. Строки сценария: «работа» ничего не делает, «закрой» уводит
 # строку в архив, «паркуй» в blocked, «падение» выходит ненулевым кодом,
-# «вопрос» кладёт признак ожидания .ask. Сценарий кончился, значит повторяется
+# «вопрос» кладёт признак ожидания .ask, «переживаемый шаг» оставляет живой
+# долгий шаг с меткой cmdout. Сценарий кончился, значит повторяется
 # последняя строка: голова, которая не двигает строку, так и не двигает её до
 # конца.
 CLAUDE_STUB = r'''#!/usr/bin/env python3
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -134,6 +136,33 @@ elif step == "вопрос":
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "task-DK-1.ask"), "w", encoding="utf-8") as f:
         f.write("-\nзадача DK-1\n")
+elif step == "переживаемый шаг":
+    # Долгий шаг конвейера переживает выход головы (DK-722). Голова кладёт
+    # метку cmdout и кончает ход сразу, а живой потомок живёт срок
+    # DEVKIT_TEST_STEP_LAP и умирает. Слово режима шага едет аргументом shell,
+    # и опознаёт потомка по нему же та же оболочка конвейера. Гибель потомка
+    # вместе с головой это и есть баг задачи, стенд играет живой след шага, а
+    # файлы итога не пишет: их пишет свой прогон cmdout. Голова ждёт, пока
+    # потомок доедет до exec, по слову режима в командной строке, а не паузой:
+    # между spawn и exec строка ещё чужая, и оболочка в эту щель шаг не
+    # опознала бы.
+    base = os.path.join(os.environ["HOME"], ".devkit", "cmdout")
+    d = os.path.join(base, "20261030T151203-shipctl")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "cmd"), "w", encoding="utf-8") as f:
+        f.write("shipctl merge DK-1\n")
+    lap = os.environ.get("DEVKIT_TEST_STEP_LAP") or "1"
+    child = subprocess.Popen(["/bin/sh", "-c", 'sleep "$1"; : # --detach-run',
+                              "шаг", lap])
+    with open(os.path.join(d, "pid"), "w", encoding="utf-8") as f:
+        f.write("%d\n" % child.pid)
+    until = time.time() + 10
+    while time.time() < until:
+        p = subprocess.run(["ps", "-o", "command=", "-p", str(child.pid)],
+                           capture_output=True, text=True)
+        if "--detach-run" in p.stdout:
+            break
+        time.sleep(0.05)
 '''
 
 
@@ -659,6 +688,10 @@ class Stand:
             "DEVKIT_TEST_TMUX": "живая" if self.live else "нет",
             "DEVKIT_TASK_PASS_PAUSE": self.pause,
             "DEVKIT_TASK_WATCH_STEP": "0",
+            # Ожидание переживающего шага (DK-722) тоже не должно стоять свои
+            # пять секунд на стенде: проверяется поведение, а не срок. Ноль
+            # значит короткий шаг цикла у самой оболочки.
+            "DEVKIT_TASK_SURVIVOR_STEP": "0",
             # Срок ожидания записи реестра стенд не подрезает. Ждёт оболочка по
             # признаку, появлению записи, и короткий срок под нагрузкой истекал
             # раньше, чем стаб успевал завестись: заказы дальше первого тогда
@@ -1040,6 +1073,34 @@ class TestPasses(unittest.TestCase):
         self.assertEqual([l for l in s.journal() if "жжёт бюджет" in l], [], s.journal())
         self.assertEqual(len(s.orders()), 6, s.orders())
 
+    def test_surviving_step_is_waited_and_not_idle(self):
+        # Предмет DK-722. Долгий шаг печатной головы переживает её выход:
+        # голова кладёт метку cmdout и выходит, а оболочка обязана ждать конца
+        # шага перед следующим проходом и не считать такой проход воронкой. До
+        # правки оболочка поднимала проход поверх идущего слияния, и три
+        # быстрых выхода без движения строки гасили конвейер воронкой, а шаг
+        # гиб вместе с головой.
+        s = self.stand(plan="переживаемый шаг|переживаемый шаг|переживаемый шаг|закрой")
+        r = s.run("--passes", "6", extra={"DEVKIT_TEST_STEP_LAP": "1"})
+        self.assertEqual(r.returncode, 0, s.why(r))
+        self.assertEqual([l for l in s.journal() if "вхолостую" in l], [], s.journal())
+        waits = [l for l in s.journal() if "переживающий шаг жив" in l]
+        self.assertEqual(len(waits), 3, s.journal())
+        self.assertEqual(len(s.orders()), 4, s.orders())
+
+    def test_stale_survivor_mark_is_not_waited(self):
+        # Метка с чужим живым pid это не шаг: оболочка сверяет имя процесса, а
+        # не одно существование pid, и pid теста под именем cmdout не ходит.
+        s = self.stand(plan="работа|закрой")
+        d = os.path.join(s.root, ".devkit", "cmdout", "20260101T000000-shipctl")
+        os.makedirs(d)
+        with open(os.path.join(d, "pid"), "w", encoding="utf-8") as f:
+            f.write("%d\n" % os.getpid())
+        r = s.run("--passes", "3")
+        self.assertEqual(r.returncode, 0, s.why(r))
+        self.assertEqual([l for l in s.journal() if "переживающий шаг жив" in l], [], s.journal())
+        self.assertEqual(len(s.orders()), 2, s.orders())
+
     def test_head_crash_does_not_stop_the_pipeline(self):
         # Код возврата головы тут не вердикт: вердикт это статус строки, и
         # упавший проход поднимается следующим.
@@ -1154,9 +1215,14 @@ class TestLiveHead(unittest.TestCase):
         self.assertEqual(s.lines("headless"), [], s.lines("headless"))
 
     def test_headless_pass_keeps_the_mark(self):
+        # Печатной голове метку ставит сама оболочка и своим именем (DK-722):
+        # конвейер, поднятый с --headless из живого терминала, наследует
+        # entrypoint того окна (замер DK-691), и без метки рубеж синхронности
+        # считал бы проход живым окном, а долгий шаг конвейера гиб вместе с
+        # головой.
         s = self.stand(plan="закрой")
         s.run("--headless")
-        self.assertEqual(s.lines("headless"), ["дашборд"], s.lines("headless"))
+        self.assertEqual(s.lines("headless"), ["task-run"], s.lines("headless"))
 
     # Наследство чужой агентской сессии, каким его видит окно конвейера:
     # tmux-сервер раздаёт окружение той сессии, из которой его завели, а клиент
@@ -2752,7 +2818,11 @@ class StopTailsTest(unittest.TestCase):
     def setUpClass(cls):
         cls.bin = tempfile.mkdtemp(prefix="task-run-tail-bin-")
         src = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "taskctl"))
-        subprocess.run(["go", "build", "-o", os.path.join(cls.bin, "taskctl"), "."], cwd=src, check=True)
+        # GOWORK снимается тем же порядком, каким его снимает сборка agentctl
+        # выше: чужой go.work выше по дереву (например, ~/go.work) не видит
+        # модуля утилиты и валит сборку прямо на стенде.
+        subprocess.run(["go", "build", "-o", os.path.join(cls.bin, "taskctl"), "."],
+                       cwd=src, env=dict(os.environ, GOWORK="off"), check=True)
 
     @classmethod
     def tearDownClass(cls):

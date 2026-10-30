@@ -18,26 +18,29 @@ import (
 
 // DecideParams это разобранные аргументы команды.
 type DecideParams struct {
-	Scenarios bool
-	Snapshot  string
-	Given     string
-	Said      string
-	AnswerSet bool
-	ID        string
-	Name      string   // имя развилки, «ёлочки» вокруг него необязательны
-	Ask       string   // вопрос заведения
-	Who       string   // значение поля «решает» при заведении
-	Hint      string   // рекомендация
-	Tie       string   // довод равенства вариантов вместо рекомендации
-	Opts      []string // варианты ответа, кроме рекомендованного
-	By        string   // автор решения или передачи
-	Text      string   // ответ с доводом либо причина передачи
-	Leave     bool     // передать развилку исполнителю
-	Open      bool     // печатать только открытые
-	Chat      bool     // напечатать блок вопроса для реплики в чат
-	Answer    string   // ответ человека на блок вопроса
-	Now       time.Time
-	Commit    CommitOpts
+	SelectionReply      string
+	SelectionRepeatOnly bool
+	Selection           string
+	Scenarios           bool
+	Snapshot            string
+	Given               string
+	Said                string
+	AnswerSet           bool
+	ID                  string
+	Name                string   // имя развилки, «ёлочки» вокруг него необязательны
+	Ask                 string   // вопрос заведения
+	Who                 string   // значение поля «решает» при заведении
+	Hint                string   // рекомендация
+	Tie                 string   // довод равенства вариантов вместо рекомендации
+	Opts                []string // варианты ответа, кроме рекомендованного
+	By                  string   // автор решения или передачи
+	Text                string   // ответ с доводом либо причина передачи
+	Leave               bool     // передать развилку исполнителю
+	Open                bool     // печатать только открытые
+	Chat                bool     // напечатать блок вопроса для реплики в чат
+	Answer              string   // ответ человека на блок вопроса
+	Now                 time.Time
+	Commit              CommitOpts
 }
 
 // decideAuthors переводит значение --by в слово строки записи.
@@ -127,6 +130,10 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 		return "", fmt.Errorf("--scenarios применяется при создании --ask")
 	}
 	switch {
+	case p.Selection != "":
+		doc, note, err = decideSelection(doc, p)
+		scenarioAnswer = true
+		answered = doc != orig
 	case p.Chat:
 		doc, err = prepareScenarioChat(doc, p)
 		if err != nil {
@@ -223,7 +230,7 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 	}
 	head := fmt.Sprintf("%s (%s): ", p.ID, kind)
 	switch {
-	case p.AnswerSet || p.Answer != "":
+	case p.Selection != "", p.AnswerSet || p.Answer != "":
 		if scenarioAnswer {
 			return note + tail, nil
 		}

@@ -443,7 +443,7 @@ func scenarioChatQuestions(root, id string, pack []taskform.Fork) ([]chat.Questi
 		if err != nil {
 			return nil, err
 		}
-		q := &chat.ScenarioQuestion{Tree: root, Snapshot: key, Fork: f.Name, Current: snapshot.Current, Block: block}
+		q := &chat.ScenarioQuestion{Tree: root, Snapshot: key, Fork: f.Name, Current: snapshot.Current, Explicit: f.ChoiceEvent > 0 || f.Decided() || f.Reconsidered, Block: block}
 		questions[i].Options = nil
 		for _, scenario := range snapshot.Scenarios {
 			q.IDs = append(q.IDs, scenario.ID)

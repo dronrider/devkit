@@ -767,6 +767,9 @@ func main() {
 		fs := flag.NewFlagSet("decide", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")
 		var p DecideParams
+		fs.StringVar(&p.SelectionReply, "selection-reply", "", "ключ сообщения с машинным выбором")
+		fs.BoolVar(&p.SelectionRepeatOnly, "selection-repeat-only", false, "только точный повтор принятого вложения")
+		fs.StringVar(&p.Selection, "selection", "", "машинный выбор вариантов JSON, отдельно от слов человека")
 		fs.BoolVar(&p.Scenarios, "scenarios", false, "создать явный список сценариев с устойчивыми ID")
 		fs.StringVar(&p.Snapshot, "snapshot", "", "ключ снимка показанного списка сценариев")
 		fs.StringVar(&p.Given, "given", "", "ID прямо заданного человеком состава при создании")
@@ -789,6 +792,9 @@ func main() {
 			}
 		})
 		switch {
+		case p.Selection != "":
+			needArgs(pos, 1, 1, "decide <ID> --selection JSON")
+			p.ID = pos[0]
 		case p.Chat:
 			needArgs(pos, 1, 2, "decide <ID> [«имя»] --chat")
 			p.ID = pos[0]

@@ -9841,7 +9841,11 @@ async function chatState(project, addr, board, works) {
   // ушла бы вторым агентом, и панель ждёт её рождения плашкой подъёма, а не
   // объявляет адрес протухшим из-за транскрипта, которого ещё нет. Сервер
   // разрешает ключ окна в разговор жильца, и свой подъём вкладка узнаёт по имени
-  // окна отдельным полем ручки, а не по виду самого ключа (DK-1521). У цели
+  // окна отдельным полем ручки, а не по виду самого ключа (DK-1521). Разрешённый
+  // жилец открывает ленту и в поднимающей вкладке: разговор, рождённый этим
+  // подъёмом, снимает память и замок, а прежний жилец окна держит плашку над
+  // лентой, потому что реплика в него ушла бы вторым агентом рядом с
+  // поднимающимся (DK-1523). У цели
   // назначение живёт, пока идёт цикл: строка журнала переживает стоп-маркер и
   // называет кончившийся виток, а дверь стоящей цели поднимает свою сессию
   // первой репликой (DK-1009), поэтому цель берёт носителя только при живой
@@ -9853,10 +9857,18 @@ async function chatState(project, addr, board, works) {
   const goalRuns = Boolean(shell) ||
     (goalHere && workOnRun((works || []).find((x) => x.id === st.task)));
   if (st.main && !st.fresh && (!goalHere || (st.main.chat && goalRuns))) {
-    const rise = chatLiftOf(project, CHAT_NEW + ":" + st.task) ||
+    const liftAddr = CHAT_NEW + ":" + st.task;
+    const liftRec = chatLiftRec(project, liftAddr);
+    const rise = (liftRec ? String(liftRec.tmux) : "") ||
       workSession(st.task, works);
     if (st.main.chat) {
-      if (rise && (st.main.chat === "tmux-" + rise || st.main.window === rise)) st.lift = rise;
+      if (rise && st.main.chat === "tmux-" + rise) st.lift = rise;
+      else if (liftRec && rise && st.main.window === rise) {
+        st.sid = st.main.chat;
+        const grown = chatBornOf(st.chats, rise, liftRec.born);
+        if (grown && grown.id === st.main.chat) chatLiftDrop(project, liftAddr);
+        else st.lift = rise;
+      }
       else {
         // Носителем оформления второй записи из одного обсуждения бывает
         // незачатый разговор с готовым итогом постановки: он открывается

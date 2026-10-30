@@ -115,34 +115,44 @@ func OverThreshold(out []byte) bool {
 	return utf8.RuneCount(out) >= thresholdRunes || len(splitLines(string(out))) >= thresholdLines
 }
 
+// outDir заводит каталог .devkit/cmdout/<timestamp>-<slug> корня репозитория
+// под новый прогон. Два прогона в одну секунду с одним slug не должны бить друг
+// друга: для занятого имени добавляется порядковый суффикс. Цикл ограничен,
+// чтобы при чужой поломке (каталог существует и не наш) не крутиться бесконечно.
+// Пользуются ею оба писателя, writeFull и переживаемый шаг Detach, и имя
+// каталога у них не разъезжается.
+func outDir(dir string, argv []string) (string, error) {
+	root, err := gitRoot(dir)
+	if err != nil {
+		return "", err
+	}
+	base := filepath.Join(root, ".devkit", "cmdout")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return "", err
+	}
+	s := slug(argv)
+	stamp := time.Now().Format("20060102T150405")
+	name := fmt.Sprintf("%s-%s", stamp, s)
+	full := filepath.Join(base, name)
+	for i := 0; i < 1000; i++ {
+		if err := os.Mkdir(full, 0o755); err == nil {
+			return full, nil
+		} else if !os.IsExist(err) {
+			return "", err
+		}
+		name = fmt.Sprintf("%s-%d-%s", stamp, i+1, s)
+		full = filepath.Join(base, name)
+	}
+	return "", fmt.Errorf("каталог вывода %s занят тысячей прогонов", base)
+}
+
 // writeFull кладёт полный вывод файлом в .devkit/cmdout/<timestamp>-<slug>/out
 // корня репозитория и возвращает абсолютный путь. Не git или нет прав на запись
 // не смертельны: возвращается пустой путь, выжимка строится без файла.
 func writeFull(dir string, argv []string, out []byte) string {
-	root, err := gitRoot(dir)
+	dir2, err := outDir(dir, argv)
 	if err != nil {
 		return ""
-	}
-	base := filepath.Join(root, ".devkit", "cmdout")
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		return ""
-	}
-	slug := slug(argv)
-	now := time.Now()
-	stamp := now.Format("20060102T150405")
-	name := fmt.Sprintf("%s-%s", stamp, slug)
-	dir2 := filepath.Join(base, name)
-	// Два прогона в одну секунду с одним slug не должны бить друг друга: для
-	// занятого имени добавляем порядковый суффикс. Цикл ограничен, чтобы при
-	// чужой поломке (каталог существует и не наш) не крутиться бесконечно.
-	for i := 0; i < 1000; i++ {
-		if err := os.Mkdir(dir2, 0o755); err == nil {
-			break
-		} else if !os.IsExist(err) {
-			return ""
-		}
-		name = fmt.Sprintf("%s-%d-%s", stamp, i+1, slug)
-		dir2 = filepath.Join(base, name)
 	}
 	path := filepath.Join(dir2, "out")
 	if err := os.WriteFile(path, out, 0o644); err != nil {

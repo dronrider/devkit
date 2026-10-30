@@ -304,6 +304,8 @@ class LiftRowsCase(unittest.TestCase):
         self.assertIn("строка поднята тиком", doc)
         tail = doc.split("строка поднята тиком", 1)[1]
         self.assertIn("поручение: разобрать снятие", tail)
+        self.assertRegex(doc, r"- \d{4}-\d{2}-\d{2} \d{2}:\d{2} строка поднята тиком, "
+                              r"поручение: разобрать снятие")
         said = " ".join(lines)
         self.assertIn("уведомление о подъёме", said)
         self.assertIn("запись подъёма в", said)
@@ -363,6 +365,21 @@ class LiftRowsCase(unittest.TestCase):
         said = " ".join(lines)
         self.assertIn("уведомление о подъёме", said)
         self.assertIn("запись подъёма в", said)
+
+    def test_lift_record_carries_time_and_reason(self):
+        """Строка подъёма несёт время до минуты и повод из того же места, что
+        и уведомление: повторы одного дня различимы без журнала тика
+        (DK-1449)."""
+        call = self.stand(
+            [row("DK-7", "разработка", "сессии нет, брошена")],
+            "# DK-7: строка\n\n## Выкат\n\n- 2026-10-09 строка поднята тиком\n")
+        lines, raised = lift.lift_root(str(self.root), call=call, taskctl="taskctl",
+                                       home=str(self.home))
+        self.assertEqual(raised, 1)
+        doc = self.task_file.read_text(encoding="utf-8")
+        self.assertRegex(doc, r"(?m)^- \d{4}-\d{2}-\d{2} \d{2}:\d{2} "
+                              r"строка поднята тиком, задание: продолжать строку$")
+        self.assertIn("- 2026-10-09 строка поднята тиком\n", doc)
 
 
 class CapacityCase(unittest.TestCase):

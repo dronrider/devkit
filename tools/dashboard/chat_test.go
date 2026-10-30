@@ -2930,6 +2930,24 @@ func TestStaticChatSew(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Дверь задачи с назначением-окном конвейера: поднимающая вкладка ждёт на
+// сыром ключе, после разрешения ключа в жильца узнаёт свой подъём по полю
+// окна и держит ожидание над открывшейся лентой, а свежая вкладка без памяти
+// подъёма открывает ленту и заголовок жильца сразу (DK-1521). Без node шаг
+// пропускается: узел стенда, а не рабочей части.
+func TestStaticChatResident(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд жильца окна пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatresident.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("панель жильца окна: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Свежесть списка разговоров: открытие спрашивает перечень заново, поэтому в
 // нём виден и свой новый чат, и заведённый на стороне, и свежий заголовок, а
 // закрытая крестиком запись уходит сразу. Шаги пользователя: завести чат,

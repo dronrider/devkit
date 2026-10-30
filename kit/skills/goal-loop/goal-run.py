@@ -108,6 +108,19 @@ WAIT_STEP_ENV = "DEVKIT_GOAL_WAIT_STEP"
 # Метка носителя цикла для дочернего клиента и его хуков: непустое значение
 # значит виток оболочки, а не сессию живого чата (DK-971).
 SHELL_ENV = "DEVKIT_GOAL_SHELL"
+# Реестр целей сторожка и реестр чатов машины: по ним предполёт узнаёт цель,
+# которую ведёт живой чат. Оба формата чужие, запись «ключ = значение» кладёт
+# гейт бюджета (tools/agentctl/watch.go), а строку реестра чатов пишут хуки
+# сессий, поэтому разбор тут свой и минимальный.
+GOALS_DIR = os.path.join(os.path.expanduser("~"), ".devkit", "goals")
+CHAT_LOG = os.path.join(os.path.expanduser("~"), ".devkit", "sessions.log")
+# Ключевые слова полей строки реестра чатов, те же, что internal/sessions.
+CHAT_KEYS = ("сессия", "задача", "проект", "дерево", "транскрипт", "источник",
+             "повод", "tmux", "панель", "родитель", "носитель")
+# Окно живости чата по транскрипту в секундах. Число то же, что SESSION_LIVE у
+# сторожка (tools/devkitctl/watch.py) и SessionLive у internal/sessions: мера
+# одна на всех читателей, и расходиться ей нельзя.
+CHAT_LIVE = 12 * 60
 # Имя окна, внутри которого оболочку и подняли: его ставит launch_tmux своему
 # же дочернему прогону. По нему ветка --foreground отличает своё окно от
 # чужого и не отбивает саму себя (DK-1009).
@@ -400,6 +413,76 @@ class Loop:
         return [AGENTCTL, "exec", "--harness", self.harness, "--", client,
                 "--permission-mode", "auto"] + turn
 
+    def watch_entry(self):
+        """Запись реестра сторожка для этой цели либо пустой словарь. Запись
+        кладёт гейт бюджета (tools/agentctl/watch.go), и ищется она по самой
+        цели, а не по имени файла: имя строится из корня проекта, а корень у
+        оболочки и у гейта бывает записан по-разному, два чекаута одного
+        проекта и вовсе дают две записи."""
+        try:
+            names = sorted(os.listdir(GOALS_DIR))
+        except OSError:
+            return {}
+        for name in names:
+            if not name.endswith(".watch"):
+                continue
+            data = {}
+            try:
+                with open(os.path.join(GOALS_DIR, name), encoding="utf-8",
+                          errors="replace") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            for ln in text.splitlines():
+                key, sep, val = ln.partition("=")
+                if sep:
+                    data[key.strip()] = val.strip()
+            if data.get("goal") == self.id and data.get("root") == self.proj:
+                return data
+        return {}
+
+    def chat_alive(self, sid):
+        """Идёт ли сессия чата sid прямо сейчас: свежестью её транскрипта в
+        реестре чатов. Мера и окно те же, что у сторожка целей и гейта бюджета,
+        свежей считается последняя запись о сессии."""
+        if not sid:
+            return False
+        try:
+            with open(CHAT_LOG, encoding="utf-8", errors="replace") as f:
+                rows = f.read().split("\n")
+        except OSError:
+            return False
+        transcript = ""
+        for row in rows:
+            words = row.strip().split()
+            if len(words) < 3 or words[1] != "сессия":
+                continue
+            vals, key = {}, ""
+            for tok in words[1:]:
+                if tok in CHAT_KEYS and vals.get(key):
+                    key = tok
+                    continue
+                if not key:
+                    key = tok
+                    continue
+                vals[key] = (vals.get(key, "") + " " + tok).strip()
+            if vals.get("сессия") == sid:
+                transcript = vals.get("транскрипт", "") or transcript
+        if not transcript or transcript == "-":
+            return False
+        try:
+            return time.time() - os.path.getmtime(transcript) < CHAT_LIVE
+        except OSError:
+            return False
+
+    def leading_chat(self):
+        """Сессия живого чата, ведущая эту цель, либо пустая строка."""
+        data = self.watch_entry()
+        sid = data.get("session") or ""
+        if data.get("carrier") != "chat" or not self.chat_alive(sid):
+            return ""
+        return sid
+
     def preflight(self):
         # Витку оболочки ход держать нельзя: он кончается маркером, и решение
         # block держателя (hooks/goal-hold.py) закрутило бы клиента в цикле.
@@ -411,6 +494,17 @@ class Loop:
             die("доски %s/docs/TASKS.md нет, режим цели живёт только в проекте с доской" % self.proj)
         if not os.path.isfile(self.goal):
             die("файла цели %s нет: цель ставит скилл goal-start, оболочка её не заводит" % self.goal)
+        # Цель, которую ведёт живой чат, оболочкой не поднимается: запись
+        # реестра у цели одна, и виток бок о бок с чатом то отбирал бы у цели
+        # держателя хода, то ложил бы в запись свой стоп. Отказ тихий, строкой
+        # журнала цикла: предполётная проверка, клиента и окна tmux она не
+        # поднимает. Осиротевшая запись, чья сессия умерла, отказом не
+        # считается: подъём осиротевшего цикла это путь тика (DK-1226).
+        sid = self.leading_chat()
+        if sid:
+            self.say("цель %s ведёт сессия чата %s, виток оболочки не поднимается"
+                     % (self.id, sid))
+            sys.exit(0)
         # Флаг автономии оболочка читает, но не поднимает: при autonomous = false
         # слияние не пушит и не катит, и цикл проверял бы агентские сценарии
         # против старого прода, считая задачи выкаченными.

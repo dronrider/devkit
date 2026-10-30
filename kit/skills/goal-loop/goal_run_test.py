@@ -873,6 +873,63 @@ class GoalRunTests(Stand, unittest.TestCase):
         self.assertFalse(os.path.isfile(os.path.join(root, "calls")),
                          "оболочка с неполными правами успела поднять виток")
 
+    # -- живой чат цели ------------------------------------------------------
+
+    def live_chat(self, root, stale=False):
+        """Живой чат у стенда: запись в реестре целей сторожка с носителем chat
+        и строка в реестре чатов с транскриптом. stale состаривает транскрипт:
+        так выглядит осиротевшая запись, чья сессия умерла."""
+        import time as clock
+        home = os.path.join(root, "home")
+        goals = os.path.join(home, ".devkit", "goals")
+        os.makedirs(goals, exist_ok=True)
+        transcript = os.path.join(home, "chat.jsonl")
+        with open(transcript, "w", encoding="utf-8") as f:
+            f.write("{}\n")
+        if stale:
+            was = clock.time() - 2 * 12 * 60
+            os.utime(transcript, (was, was))
+        with open(os.path.join(home, ".devkit", "sessions.log"), "w", encoding="utf-8") as f:
+            f.write("2026-10-30T12:00:00 сессия chat-1 задача DK-100 "
+                    "транскрипт %s\n" % transcript)
+        proj = os.path.join(root, "proj")
+        with open(os.path.join(goals, "DK-100-stand.watch"), "w", encoding="utf-8") as f:
+            f.write("goal = DK-100\nroot = %s\nsession = chat-1\ncarrier = chat\n" % proj)
+        return os.path.join(goals, "DK-100-stand.watch")
+
+    def test_refuses_beside_a_live_chat(self):
+        # Цель ведёт живой чат, и оболочка её не поднимает: запись реестра у
+        # цели одна, и виток бок о бок с чатом отбирал бы у неё держателя хода
+        # (DK-1226). Отказ тихий: строка в журнале цикла, ни витка, ни окна.
+        root = self.stand("done запись")
+        self.live_chat(root)
+        p = self.goal_run(root, "DK-100")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertIn("цель DK-100 ведёт сессия чата chat-1", self.shell_log(root))
+        self.assertIn("цель DK-100 ведёт сессия чата chat-1", p.stdout)
+        self.assertFalse(os.path.isfile(os.path.join(root, "calls")),
+                         "оболочка рядом с живым чатом успела поднять виток")
+        self.assertFalse(os.path.isfile(os.path.join(root, "tmux-calls")),
+                         "оболочка рядом с живым чатом успела поднять окно")
+
+    def test_dead_chat_entry_still_raises_the_loop(self):
+        # Осиротевшая запись, чья сессия умерла, отказом не считается: подъём
+        # осиротевшего цикла это путь тика, и цикл поднимается как раньше.
+        root = self.stand("done запись")
+        self.live_chat(root, stale=True)
+        p = self.goal_run(root, "DK-100", "--foreground")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertTrue(os.path.isfile(os.path.join(root, "calls")),
+                        "цикл не поднялся при осиротевшей записи")
+
+    def test_say_stands_a_live_chat(self):
+        # Пути --say живой чат не рвёт: строку хода пишет и сам виток чата.
+        root = self.stand()
+        self.live_chat(root)
+        p = self.goal_run(root, "DK-100", "--say", "виток чата: нарезка начата")
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertIn("виток чата: нарезка начата", self.shell_log(root))
+
     # -- tmux ------------------------------------------------------------
 
     def test_without_foreground_goes_into_its_own_tmux_session(self):

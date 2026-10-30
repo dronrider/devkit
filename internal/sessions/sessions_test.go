@@ -400,6 +400,27 @@ func TestTmuxOwnerSinceSkipsRecordsBeforeRaise(t *testing.T) {
 const workRecord = "%s сессия %s задача %s проект devkit дерево /Users/r/projects/devkit-dk-826 " +
 	"транскрипт - источник работа повод правка файла tmux - панель - родитель -\n"
 
+// Жилец окна с транскриптом: заказ подъёма занимает имя раньше клиента, и его
+// строка без транскрипта не считается жильцом, иначе подъём, умерший на взлёте,
+// прятал бы последнюю живую ленту окна за собой (DK-1521).
+func TestTmuxResidentSkipsOrderWithoutTranscript(t *testing.T) {
+	recs := map[string][]Bind{
+		"live":   {{Tmux: "task-XR-1", Transcript: "/p/live.jsonl", Time: "2026-10-30T09:00:09"}},
+		"raised": {{Tmux: "task-XR-1", Time: "2026-10-30T09:05:00"}},
+	}
+	if got := TmuxResident(recs, "task-XR-1"); got != "live" {
+		t.Fatalf("заказ без транскрипта назван жильцом %q, ждал live", got)
+	}
+	if got := TmuxResident(recs, "task-XR-2"); got != "" {
+		t.Fatalf("чужое имя назвало жильца %q, ждал пустое", got)
+	}
+	recs["born"] = []Bind{{Tmux: "task-XR-1", Transcript: "/p/born.jsonl", Time: "2026-10-30T09:05:03"}}
+	if got := TmuxResident(recs, "task-XR-1"); got != "born" {
+		t.Fatalf("свежий жилец с транскриптом %q, ждал born", got)
+	}
+}
+
+
 // Записи работы кормят реестр до потолка, а запись рождения живой сессии
 // остаётся: хук --touch и утилиты доски кладут работу на каждую сессию и
 // задачу заново, и хвостовая обрезка вымывала ею имя tmux живого разговора

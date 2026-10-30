@@ -638,6 +638,31 @@ func TmuxOwnerSince(recs map[string][]Bind, name, since string) string {
 	return best
 }
 
+// TmuxResident называет разговор свежего жильца tmux-сессии name среди записей
+// с транскриптом. Хозяин имени (TmuxOwner) таким не годится: заказ подъёма
+// занимает имя раньше клиента и транскрипта не имеет, а жилец это сессия,
+// чей хук старта назвал транскрипт. Свежий заказ без транскрипта пропускается
+// нарочно: подъём, умерший на взлёте, не прячет последнюю живую ленту окна
+// (DK-1521).
+func TmuxResident(recs map[string][]Bind, name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	best, at := "", ""
+	for sid, rs := range recs {
+		for _, r := range rs {
+			if r.Tmux != name || r.Transcript == "" {
+				continue
+			}
+			if best == "" || r.Time > at {
+				best, at = sid, r.Time
+			}
+		}
+	}
+	return best
+}
+
 // PaneOwner называет разговор, которому сейчас принадлежит панель tmux pane:
 // сессию из свежайшей записи реестра, назвавшей этот адрес. Номера панелей
 // tmux раздаёт заново после перезапуска своего сервера, и %3 вчерашней записи

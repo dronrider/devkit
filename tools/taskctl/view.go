@@ -269,7 +269,7 @@ func cmdList(root, sect string, debtOnly bool) (string, error) {
 // тоже стоят на этапах, и их простой как раз надо видеть.
 func rowNotes(root string, ed *edges, sect string, r *Row, times map[int]int64, sv *stageView) []string {
 	var out []string
-	if notes := rowNoteParts(root, ed, sect, r, times); len(notes) > 0 {
+	if notes := rowNoteParts(root, ed, sect, r, times, sv); len(notes) > 0 {
 		out = append(out, "  "+strings.Join(notes, ", "))
 	}
 	if n := sv.note(r.ID); n != "" {
@@ -280,7 +280,7 @@ func rowNotes(root string, ed *edges, sect string, r *Row, times map[int]int64, 
 
 // rowNoteParts отдаёт те же пометки списком без вёрстки: печать склеивает их
 // в строку с отступом, --json кладёт как есть.
-func rowNoteParts(root string, ed *edges, sect string, r *Row, times map[int]int64) []string {
+func rowNoteParts(root string, ed *edges, sect string, r *Row, times map[int]int64, sv *stageView) []string {
 	var notes []string
 	kind := acceptOf(r.Title)
 	// Взвод и его три состояния идут первыми: это ответ на вопрос «стартует ли
@@ -300,6 +300,17 @@ func rowNoteParts(root string, ed *edges, sect string, r *Row, times map[int]int
 	}
 	if a := ageLabel(times, r.LineIdx); a != "" {
 		notes = append(notes, a)
+	}
+	// Пометка брошенной строки (DK-1417): взявший долг умирает вместе со
+	// сессией, и без пометки простой в In progress виден одному возрасту. До
+	// срока пометка называет простой, после срока обещает возврат тиком, а у
+	// строки со следом работы пометки нет: место занимает сам след.
+	if sect == SectInProgress && !goalRow(r.Title) && holdsRow(root, r, sv) == "" {
+		note := "работы за строкой нет"
+		if abandonedOverdue(times, r.LineIdx) {
+			note += ", тик вернёт её в очередь"
+		}
+		notes = append(notes, note)
 	}
 	// Пометка строки ревью чужого MR: её ведёт опрос тредов, и без неё
 	// «автор ответил» и «MR закрыт» видны только тому, кто откроет журнал

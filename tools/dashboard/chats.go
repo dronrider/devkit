@@ -3252,10 +3252,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "нельзя смешивать ответы на сценарии и предложения"})
 		return
 	}
-	// Proposal replies carry their own shown tree and source set. Their handler
+	// Typed replies carry their own shown tree and source set. Their handler
 	// guards that original destination; current bindings may already point at a
 	// different project and must not redirect or veto an exact receipt retry.
-	if body.Proposal == nil {
+	if body.Proposal == nil && body.Selection == nil {
 		for _, root := range roots {
 			for _, id := range taskIDs {
 				if !goalIDRe.MatchString(id) {
@@ -3282,6 +3282,12 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	claim := body.MsgID
 	if claim != "" {
 		if prev, taken := s.chatSayStart(sid, claim); !taken {
+			if body.Selection != nil {
+				if _, err := s.selectionTextKey(sid, claim, text, *body.Selection); err != nil {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+					return
+				}
+			}
 			s.logf("повтор реплики чата %s отброшен: та же запись отправителя уже %s", sid, prevWord(prev))
 			writeJSON(w, http.StatusOK, map[string]any{"way": "dup", "was": prev.way,
 				"message": "эта реплика уже " + prevWord(prev) + ", повтор никуда не поехал"})

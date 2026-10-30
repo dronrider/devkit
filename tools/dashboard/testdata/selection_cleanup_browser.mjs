@@ -1,0 +1,33 @@
+import {createRequire} from 'node:module';
+import assert from 'node:assert/strict';
+const {chromium}=createRequire(import.meta.url)('playwright');
+const [base,executablePath,token]=process.argv.slice(2);
+const browser=await chromium.launch({executablePath,headless:true});
+const context=await browser.newContext();
+try {
+ assert.equal((await context.request.post(base+'/api/login',{data:{token}})).status(),200);
+ const page=await context.newPage();
+ const errors=[]; page.on('pageerror',(e)=>errors.push(String(e)));
+ await page.goto(base+'/#demo/chat/aa144600-1111-4111-8111-111111111111');
+ await page.locator('.caskpick').first().waitFor();
+ assert.equal(await page.locator('.askfb').count(),0,'вопрос должен быть настоящей репликой');
+ assert.equal(await page.locator('.attach-selection').count(),1);
+ await page.getByRole('button',{name:'Прикрепить выбор «сценарии»',exact:true}).click();
+ const sent=page.waitForResponse((r)=>r.url().endsWith('/say')&&r.request().method()==='POST');
+ await page.getByRole('button',{name:'Отправить',exact:true}).click();
+ assert.equal((await sent).status(),200);
+ await page.locator('.caskpick').first().waitFor({state:'detached'});
+ const left=await page.locator('.attach-selection').count();
+ if (left) await page.locator('.attach-selection').first().click();
+ assert.equal(left,0,'после снятия Ask осталась кнопка прежнего вопроса');
+ assert.deepEqual(errors,[]);
+ assert.equal((await context.request.get(base+'/__scenario?do=fresh')).status(),200);
+ await page.locator('.attach-selection').waitFor();
+ assert.equal(await page.locator('.askfb').count(),0,'повторный вопрос должен быть настоящей репликой');
+ assert.equal((await context.request.get(base+'/__scenario?do=next-real')).status(),200);
+ await page.locator('.caskpick[aria-label="Ответить «доставка 1»"]').waitFor();
+ assert.equal(await page.locator('.askfb').count(),0,'следующий вопрос должен быть настоящей репликой');
+ assert.equal(await page.locator('.attach-selection').count(),0,'кнопка прежнего вопроса пережила смену вопроса');
+ assert.deepEqual(errors,[]);
+ console.log(JSON.stringify({realQuestion:true,closedCleanup:true,nextQuestion:true,errors}));
+} finally {await context.close(); await browser.close();}

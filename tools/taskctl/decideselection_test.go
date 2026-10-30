@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -83,5 +85,64 @@ func TestSelectionExplicitEmptyIDs(t *testing.T) {
 	qs, err = scenarioChatQuestions(root, "XR-005", []taskform.Fork{f})
 	if err != nil || !qs[0].Scenario.Explicit || len(qs[0].Scenario.Current) != 0 {
 		t.Fatalf("отказ не отличим от нового списка: %+v %v", qs, err)
+	}
+}
+
+func TestSelectionArchiveReceipt(t *testing.T) {
+	root := setup(t)
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	askForks(t, root, "XR-005", [][]string{{"срок", "30 дней: достаточно", "сколько хранить?", "7 дней"}})
+	f, _ := taskform.FindFork(readTask(t, root, "XR-005"), "срок")
+	q := chatQuestions([]taskform.Fork{f})[0]
+	selection := chat.Selection{Task: "XR-005", Questions: []chat.SelectedQuestion{{Fork: "срок", Snapshot: chat.QuestionSnapshot(q), IDs: []string{"2"}}}}
+	data, _ := json.Marshal(selection)
+	params := DecideParams{ID: "XR-005", Selection: string(data), SelectionReply: "archived-one", Now: decideDay}
+	result := decideRun(t, root, params)
+	archive := filepath.Join(root, "docs/tasks/archive/2026/XR-005.md")
+	if err := os.MkdirAll(filepath.Dir(archive), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(taskFilePath(root, "XR-005"), archive); err != nil {
+		t.Fatal(err)
+	}
+	before, board := read(archive), read(filepath.Join(root, "docs/TASKS.md"))
+	if _, err := cmdDecide(root, params); err == nil {
+		t.Fatal("новая операция разрешена в архиве")
+	}
+	params.SelectionRepeatOnly = true
+	if got := decideRun(t, root, params); got != result {
+		t.Fatalf("архивная квитанция изменилась: %q", got)
+	}
+	params.SelectionReply = "archived-new"
+	if _, err := cmdDecide(root, params); err == nil {
+		t.Fatal("новый ключ сообщения получил архивную квитанцию")
+	}
+	params.SelectionReply = "archived-one"
+	selection.Questions[0].IDs = []string{"1"}
+	changed, _ := json.Marshal(selection)
+	params.Selection = string(changed)
+	if _, err := cmdDecide(root, params); err == nil {
+		t.Fatal("изменённый выбор получил архивную квитанцию")
+	}
+	params.Selection = string(data)
+	second := filepath.Join(root, "docs/tasks/archive/2025/XR-005.md")
+	if err := os.MkdirAll(filepath.Dir(second), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte(before), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cmdDecide(root, params); err == nil {
+		t.Fatal("неоднозначный архив получил квитанцию")
+	}
+	if read(archive) != before || read(second) != before || read(filepath.Join(root, "docs/TASKS.md")) != board {
+		t.Fatal("чтение архивной квитанции изменило файлы или доску")
 	}
 }

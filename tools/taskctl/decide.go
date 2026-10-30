@@ -99,6 +99,12 @@ func runDecide(root string, p DecideParams, d *askDeps, env func(string) string)
 		p.Now = time.Now()
 	}
 	path, kind, err := decideRecord(root, p.ID)
+	if err != nil && p.SelectionRepeatOnly && p.Selection != "" && idRe.MatchString(p.ID) {
+		archived, globErr := filepath.Glob(filepath.Join(root, "docs", "tasks", "archive", "*", p.ID+".md"))
+		if globErr == nil && len(archived) == 1 {
+			path, kind, err = archived[0], "архивная квитанция", nil
+		}
+	}
 	if err != nil {
 		return "", err
 	}

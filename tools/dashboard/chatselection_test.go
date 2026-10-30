@@ -328,3 +328,90 @@ print(json.dumps({"first":first,"second":second},ensure_ascii=False))`
 		})
 	}
 }
+
+func TestSelectionRetryAfterRebind(t *testing.T) {
+	for _, archived := range []bool{false, true} {
+		t.Run(map[bool]string{false: "open", true: "archived"}[archived], func(t *testing.T) {
+			st := newScenarioStand(t)
+			ask := st.ask(t)
+			waiting := readFile(t, chat.AskPath(st.e.proj, chat.TaskName("XR-4")))
+			carrier := chat.Path(st.e.proj, chat.TaskName("XR-4"))
+			if err := os.Mkdir(carrier, 0700); err != nil {
+				t.Fatal(err)
+			}
+			raw := "  дополнение после выбора\n\n"
+			request := selectionTestBody(t, ask, raw, "accepted-rebind", map[string][]string{"сценарии": {"СЦ-1"}})
+			st.sendSelection(t, request, http.StatusBadGateway)
+			original := st.path
+			if archived {
+				if err := os.Remove(filepath.Join(st.e.proj, "docs/tasks/XR-4.md")); err != nil {
+					t.Fatal(err)
+				}
+				original = filepath.Join(st.e.proj, "docs/tasks/archive/2026/XR-4.md")
+				if err := os.MkdirAll(filepath.Dir(original), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(st.path, original); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, board := readFile(t, original), readFile(t, filepath.Join(st.e.proj, "docs/TASKS.md"))
+			if err := os.Remove(carrier); err != nil {
+				t.Fatal(err)
+			}
+			other := t.TempDir()
+			putDoc(t, other, "docs/TASKS.md", "# другая доска\n")
+			putDoc(t, other, "docs/tasks/XR-4.md", "# XR-4: другая запись\nзащита: locked\n")
+			protected := readFile(t, filepath.Join(other, "docs/tasks/XR-4.md"))
+			writeBinds(t, st.e.home, "2026-10-30T12:01:00 сессия "+scenarioPanelSID+" задача XR-4 проект other дерево "+other+" транскрипт "+standTranscript(st.e.home, "t")+" источник заказ повод startup tmux -\n")
+			st.sendSelection(t, request, http.StatusOK)
+			st.sendSelection(t, request, http.StatusOK)
+			lines := chatLines(t, st.e.proj, chat.TaskName("XR-4"))
+			if len(lines) != 1 || chat.Addressee(lines[0]) != "" || len(chatLines(t, other, chat.TaskName("XR-4"))) != 0 {
+				t.Fatalf("повтор сменил адрес или размножил доставку: %q", lines)
+			}
+			var message struct {
+				Text      string `json:"text"`
+				Selection struct {
+					Task string `json:"task"`
+					Tree string `json:"tree"`
+				} `json:"selection"`
+			}
+			if json.Unmarshal([]byte(strings.TrimPrefix(chat.Said(lines[0]), "Ответ с вложением панели: ")), &message) != nil || message.Text != raw || message.Selection.Tree != st.e.proj || message.Selection.Task != "XR-4" {
+				t.Fatalf("повтор потерял исходный ответ: %q", lines)
+			}
+			if readFile(t, original) != before || readFile(t, filepath.Join(st.e.proj, "docs/TASKS.md")) != board || readFile(t, filepath.Join(other, "docs/tasks/XR-4.md")) != protected {
+				t.Fatal("доставка изменила исходную или чужую запись/доску")
+			}
+			if archived {
+				changedText := selectionTestBody(t, ask, raw+"другие слова", "accepted-rebind", map[string][]string{"сценарии": {"СЦ-1"}})
+				st.sendSelection(t, changedText, http.StatusBadRequest)
+				changedIDs := selectionTestBody(t, ask, raw, "accepted-rebind", map[string][]string{"сценарии": {"СЦ-2"}})
+				st.sendSelection(t, changedIDs, http.StatusBadRequest)
+			}
+			if archived {
+				// An old shown Ask cannot authorize a new mutation in the archive.
+				putDoc(t, st.e.proj, ".devkit/chat/task-XR-4.ask", waiting)
+				fresh := selectionTestBody(t, ask, raw, "new-after-close", map[string][]string{"сценарии": {"СЦ-1"}})
+				st.sendSelection(t, fresh, http.StatusBadRequest)
+				if readFile(t, original) != before || len(chatLines(t, st.e.proj, chat.TaskName("XR-4"))) != 1 {
+					t.Fatal("новый ответ изменил закрытую запись")
+				}
+			}
+		})
+	}
+}
+
+func TestSelectionOriginalProtectionStillApplies(t *testing.T) {
+	st := newScenarioStand(t)
+	ask := st.ask(t)
+	doc := strings.Replace(readFile(t, st.path), "\n", "\nзамок: locked\n", 1)
+	if err := os.WriteFile(st.path, []byte(doc), 0644); err != nil {
+		t.Fatal(err)
+	}
+	request := selectionTestBody(t, ask, "новые слова", "protected-original", map[string][]string{"сценарии": {"СЦ-2"}})
+	st.sendSelection(t, request, http.StatusConflict)
+	if readFile(t, st.path) != doc || len(chatLines(t, st.e.proj, chat.TaskName("XR-4"))) != 0 {
+		t.Fatal("защищённый исходный адрес изменён")
+	}
+}

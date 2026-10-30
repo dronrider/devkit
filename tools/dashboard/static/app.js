@@ -14940,6 +14940,7 @@ function askPickWire(feed, ta, pick) {
   const resume = feed.querySelector(".askresume");
   if (resume) resume.remove();
   for (const old of feed.querySelectorAll(".caskpick")) old.remove();
+  for (const old of feed.querySelectorAll(".attach-selection")) old.remove();
   for (const li of feed.querySelectorAll(".casklit")) li.classList.remove("casklit");
   if (!pick.on || !pick.ask || !askCardSteps(pick.ask).some((step) => step.proposal)) { const oldProposal = feed.querySelector(".askproposal"); if (oldProposal) oldProposal.remove(); }
   const oldFb = feed.querySelector(".askfb");
@@ -14996,7 +14997,6 @@ function askPickWire(feed, ta, pick) {
     hit.li.prepend(mark);
     marks.push({ mark, pick: hit.pick });
   }
-  for (const old of feed.querySelectorAll(".attach-selection")) old.remove();
   for (const step of steps.filter((step) => step.scenario)) {
     const attach = el("button", "btn attach-selection", "Прикрепить выбор «" + step.fork + "»");
     attach.type = "button";

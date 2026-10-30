@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,15 @@ import (
 )
 
 func TestScenarioBrowserEmbedded(t *testing.T) {
+	scenarioBrowser(t, "testdata/scenario_browser.mjs", false)
+}
+
+func TestSelectionRealQuestionCleanup(t *testing.T) {
+	scenarioBrowser(t, "testdata/selection_cleanup_browser.mjs", true)
+}
+
+func scenarioBrowser(t *testing.T, script string, realQuestion bool) {
+	t.Helper()
 	chrome := findChrome()
 	if chrome == "" {
 		t.Skip("браузер стенда не найден; задать DASHBOARD_CHROME")
@@ -32,7 +42,24 @@ func TestScenarioBrowserEmbedded(t *testing.T) {
 		t.Skip("playwright недоступен; задать NODE_PATH")
 	}
 	st := newScenarioStand(t)
-	st.ask(t)
+	shown := st.ask(t)
+	transcript := plainTalk
+	writeQuestion := func(ask agentAsk) {
+		block := ask.Text + "\n"
+		if ask.Scenario != nil {
+			block = ask.Scenario.Block
+		} else {
+			for i, option := range ask.Options {
+				block += fmt.Sprintf("%d. %s\n", i+1, option.Text)
+			}
+		}
+		data, _ := json.Marshal(map[string]any{"type": "assistant", "timestamp": time.Now().UTC().Format(time.RFC3339Nano), "message": map[string]any{"role": "assistant", "content": block}})
+		transcript += string(data) + "\n"
+		writeSession(t, st.e.home, st.e.proj, "", scenarioPanelSID, transcript, time.Now())
+	}
+	if realQuestion {
+		writeQuestion(shown)
+	}
 	bin := os.Getenv("DASHBOARD_ACCEPT_BIN")
 	if bin == "" {
 		bin = filepath.Join(filepath.Dir(st.bin), "dashboard")
@@ -115,8 +142,14 @@ func TestScenarioBrowserEmbedded(t *testing.T) {
 			st.run(t, "--ask", "срок", "--hint", "30 дней: достаточно", "--option", "7 дней", "сколько хранить?")
 			st.run(t, "--ask", "вывод", "--hint", "полный: нужен", "--option", "краткий", "какой вывод?")
 			st.publish(t, false)
+		case "next-real":
+			st.run(t, "--ask", "доставка", "--hint", "сокет: основной", "--option", "очередь", "куда отправлять?")
+			writeQuestion(st.publish(t, false))
 		case "fresh":
-			st.ask(t)
+			ask := st.ask(t)
+			if realQuestion {
+				writeQuestion(ask)
+			}
 		}
 		if err != nil {
 			http.Error(w, err.Error(), 500)
@@ -134,7 +167,7 @@ func TestScenarioBrowserEmbedded(t *testing.T) {
 	})
 	px := httptest.NewServer(mux)
 	defer px.Close()
-	probe := exec.Command(node, "testdata/scenario_browser.mjs", px.URL, chrome, st.e.cfg.Token)
+	probe := exec.Command(node, script, px.URL, chrome, st.e.cfg.Token)
 	probe.Dir = "."
 	probe.Env = os.Environ()
 	out, err := probe.CombinedOutput()

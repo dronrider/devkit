@@ -1319,6 +1319,11 @@ func main() {
 		dir := fs.String("C", gdir, "стартовая директория")
 		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "closable")
 		msg, err = cmdClosable(root(*dir))
+	case "abandoned":
+		fs := flag.NewFlagSet("abandoned", flag.ExitOnError)
+		dir := fs.String("C", gdir, "стартовая директория")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "abandoned")
+		msg, err = cmdAbandoned(root(*dir))
 	case "kinds":
 		fs := flag.NewFlagSet("kinds", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

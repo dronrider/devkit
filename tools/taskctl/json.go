@@ -155,7 +155,7 @@ func makeJSONRow(root string, r *Row, ed *edges, times map[int]int64, sv *stageV
 		// секциями доски, то есть правит её, и отдельной даты перевода в доске
 		// нет. Возраст днями остаётся в notes, дашборд показывает дату.
 		Moved:     lineDate(times, r.LineIdx),
-		Notes:     rowNoteParts(root, ed, r.Sect, r, times),
+		Notes:     rowNoteParts(root, ed, r.Sect, r, times, sv),
 		jsonStage: sv.mark(r.ID),
 	}
 }

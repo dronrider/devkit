@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/dronrider/devkit/internal/chat"
+
 	"bufio"
 	"bytes"
 	"encoding/json"
@@ -969,12 +971,15 @@ func contentTexts(raw json.RawMessage) []string {
 // в одну строку, тянуть их содержимое на телефон незачем (LLD); размышления
 // сворачиваются в пометку без текста.
 type reply struct {
-	Seq  int    `json:"seq"`
-	Role string `json:"role"` // user | assistant | thinking | tool | toolout
-	Time string `json:"time,omitempty"`
-	Text string `json:"text,omitempty"`
-	Tool string `json:"tool,omitempty"`
-	Note string `json:"note,omitempty"`
+	Proposal  *proposalAttachment `json:"proposal,omitempty"`
+	Selection *chat.Selection     `json:"selection,omitempty"`
+	Wire      string              `json:"wire,omitempty"`
+	Seq       int                 `json:"seq"`
+	Role      string              `json:"role"` // user | assistant | thinking | tool | toolout
+	Time      string              `json:"time,omitempty"`
+	Text      string              `json:"text,omitempty"`
+	Tool      string              `json:"tool,omitempty"`
+	Note      string              `json:"note,omitempty"`
 	// Who это автор реплики словом, когда он не тот, о ком говорит роль:
 	// каналом живых сессий в ленту приходят слова другого агента, а роль у
 	// такой записи всё равно user, и панель подписывала их «вы».
@@ -1784,6 +1789,7 @@ func parseRepliesSpan(data []byte, startSeq int, sp parseSpan) []reply {
 	// следующей реплики человека.
 	muteAfterKeepalive := sp.mute
 	add := func(item reply) {
+		projectPanelReply(&item)
 		if item.Role == roleThink {
 			if at, err := time.Parse(time.RFC3339, item.Time); err == nil && !prev.IsZero() {
 				if d := at.Sub(prev); d > 0 && d < time.Hour {

@@ -6945,9 +6945,9 @@ async function wireFeed(project, sid, opts) {
   // транскрипте нет.
   const isSaid = (item) => String((item && item.key) || "").startsWith("said-");
   const dropSaid = (item) => {
-    if (!item || item.role !== "user" || !item.text || isSaid(item)) return;
+    if (!item || item.role !== "user" || (!item.text && !item.selection && !item.proposal) || isSaid(item)) return;
     for (let i = talk.length - 1; i >= 0; i--) {
-      if (isSaid(talk[i]) && sameSay(talk[i].text, item.text)) talk.splice(i, 1);
+      if (isSaid(talk[i]) && sameSay(talk[i].wire || talk[i].text, item.wire || item.text)) talk.splice(i, 1);
     }
   };
   // Запись журнала, уже стоящая в ленте, второй раз не встаёт. Дорог у неё
@@ -6962,10 +6962,10 @@ async function wireFeed(project, sid, opts) {
     for (const it of talk) {
       if (it.role !== item.role) continue;
       if (isSaid(it)) {
-        if (String(it.time || "") === at && sayNorm(it.text) === sayNorm(item.text)) return true;
+        if (String(it.time || "") === at && sayNorm(it.wire || it.text) === sayNorm(item.wire || item.text)) return true;
         continue;
       }
-      if (item.role === "user" && sameSay(it.text, item.text)) return true;
+      if (item.role === "user" && sameSay(it.wire || it.text, item.wire || item.text)) return true;
     }
     return false;
   };
@@ -7467,6 +7467,8 @@ function stateMark(kind, word) {
 // круга POC). Пустая подпись не рисуется вовсе. Состояние доставки стоит
 // отметкой с иконкой, а причина её живёт подсказкой подписи.
 function chatBubble(who, text, meta, tip, quote, mark, extra) {
+  const answer = selectionMessage(text);
+  if (answer) text = answer.text;
   const wrap = el("div", "msg" + (who === "вы" ? " me" : ""));
   const bb = el("div", "bb");
   // Цитата стоит первой строкой пузыря, над словами: так её ставят
@@ -7475,6 +7477,7 @@ function chatBubble(who, text, meta, tip, quote, mark, extra) {
   // Упоминания задач и документов в реплике становятся ссылками, и ведут они в
   // проект этой ленты: разговор бывает чужой, а адрес на доске свой.
   bb.append(mdRender(text, chatFeedAt()));
+  if (answer && answer.selection) bb.append(selectionCard(answer.selection));
   const said = meta ? who + ", " + meta : who;
   const foot = el("div", "mm", said);
   if (mark) foot.append(mark);
@@ -8074,7 +8077,7 @@ function chatItem(item) {
   // сервер видел закрытый вызов.
   if (item.role === "toolout" && !item.text) return el("span", "");
   if (item.role === "note") return replyEl(item);
-  if ((item.role === "user" || item.role === "assistant") && item.text) {
+  if ((item.role === "user" || item.role === "assistant") && (item.text || item.selection || item.proposal)) {
     // Реплика, пришедшая каналом живых сессий, подписана источником: «с
     // дашборда» это реплика самого человека, он её и написал, а дашборд только
     // донёс. Обёртку канала сервер уже снял, тут остаётся чистый текст.
@@ -8094,6 +8097,8 @@ function chatItem(item) {
     if ((item.shots || []).length) bits.push("с картинкой");
     if ((item.frags || []).length) bits.push("с фрагментом");
     const wrap = chatBubble(who, item.text, bits.join(", "), "", item.quote ? quoteEl(item) : null);
+    if (item.selection) wrap.append(selectionCard(item.selection));
+    if (item.proposal) wrap.append(proposalAttachment(item.proposal));
     if (item.sel) wrap.append(selFold(item.selFile || "постановка", item.sel));
     // Места экрана стоят при пузыре своим свёрнутым блоком: в самой реплике им
     // места нет, а терять описатель незачем, по нему находят место в коде.
@@ -13118,8 +13123,8 @@ function echoRead(project, addr) {
     // отправки срок, и считает его makeEcho от born из персиста.
     // tmux это имя сессии, которую подняла эта реплика: по нему панель,
     // вернувшаяся на адрес new, пришивает себя к родившемуся диалогу.
-    return raw.filter((m) => m && m.text).map((m) => ({
-      text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(), scenario: m.scenario || null, proposal: m.proposal || null,
+    return raw.filter((m) => m && (m.text || m.selection || m.proposal)).map((m) => ({
+      text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(), scenario: m.scenario || null, proposal: m.proposal || null, selection: m.selection || null,
       state: m.state === "held" || m.state === "wait" ? m.state : "bad",
       why: m.why ? String(m.why) : "",
       tmux: m.tmux ? String(m.tmux) : "",
@@ -13174,7 +13179,7 @@ function echoWrite(project, addr, list) {
     // после перерисовки, пока эхо их не сняло (первая реплика нового чата
     // пропадала с экрана ровно из-за того, что жил только bad).
     const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait")
-      .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, scenario: m.scenario, proposal: m.proposal,
+      .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, scenario: m.scenario, proposal: m.proposal, selection: m.selection,
         why: m.why || "", tmux: m.tmux || "", id: m.id || "",
         queue: Boolean(m.queue), task: m.task || "", since: m.since || m.born }));
     if (keep.length) {
@@ -13241,7 +13246,7 @@ function echoSweep(project, door, chats) {
       let was = [];
       try { was = JSON.parse(localStorage.getItem(key + hit.id) || "[]"); } catch (err) {}
       if (!Array.isArray(was)) was = [];
-      was.push({ text: rec.text, wire: rec.wire, born: rec.born, state: rec.state, scenario: rec.scenario, proposal: rec.proposal,
+      was.push({ text: rec.text, wire: rec.wire, born: rec.born, state: rec.state, scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection,
         why: rec.why || "", tmux: rec.tmux || "", id: rec.id || "",
         queue: Boolean(rec.queue), task: rec.task || "", since: rec.since || rec.born });
       localStorage.setItem(key + hit.id, JSON.stringify(was));
@@ -13343,6 +13348,8 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       }
       const wrap = chatBubble("вы", m.text, m.sel ? "с выделением" : "", why, null, mark, off);
       wrap.classList.add("m-local", "m-" + m.state);
+      if (m.selection) wrap.append(selectionCard(m.selection));
+      if (m.proposal && m.proposal.mode !== "comment") wrap.append(proposalAttachment(m.proposal));
       if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
       for (const c of m.clips || []) {
         if (c.kind === "image" && c.path) wrap.append(shotThumb(shotURL(c.path), c.name || "снимок"));
@@ -13463,7 +13470,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       mine.push({ key: "local-" + seq, id: rec.id, text: rec.text, wire: rec.wire,
         state: rec.state, why: rec.why, born: rec.born, since: rec.since,
         tmux: rec.tmux, queue: rec.queue, task: rec.task,
-        scenario: rec.scenario, proposal: rec.proposal, retry: (again) => resend(again, rec.id, rec.wire, rec.scenario, rec.proposal) });
+        scenario: rec.scenario, proposal: rec.proposal, selection: rec.selection, retry: (again) => resend(again, rec.id, rec.wire, rec.scenario, rec.proposal, rec.selection) });
     }
     // Снятые с дверного ключа показываются один раз: в персист их пишет разбор
     // echoSweep и там же снимает ключ, а тут они только стоят в ленте до
@@ -13511,7 +13518,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
     // wire это то, что ушло агенту (с префиксами вложений и выделения), и
     // сверка эха идёт по нему: в транскрипте лежит именно он. text это слова
     // человека, их и видно в пузыре, а вложения стоят при них своими блоками.
-    add(text, retry, wire, sel, clips, id, scenario, proposal) {
+    add(text, retry, wire, sel, clips, id, scenario, proposal, selection) {
       seq += 1;
       // Ключ записи держится за саму запись: повтор той же реплики едет с тем
       // же ключом, иначе сервер видит не повтор, а новую реплику. Простой
@@ -13519,7 +13526,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       // новая, и порог снятия не должен обнуляться каждой попыткой.
       const key = id || msgKey();
       const m = { key: "local-" + seq, id: key, text, wire: wire || text, sel, clips,
-        state: "wait", born: Date.now(), since: sinceOf.get(key) || Date.now(), retry, scenario, proposal };
+        state: "wait", born: Date.now(), since: sinceOf.get(key) || Date.now(), retry, scenario, proposal, selection };
       sinceOf.set(key, m.since);
       mine.push(m);
       // Запись сразу: перерисовка панели во время отправки съедала пузырь
@@ -13618,8 +13625,8 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       for (const m of mine.slice()) {
         // Одна запись ленты снимает не больше одного пузыря: две одинаковые
         // реплики подряд это две реплики, а не дубль.
-        const hit = list.find((it) => it && it.role === "user" && !it.who && it.text &&
-          !claimed.has(itemKey(it)) && (sameSay(it.text, m.text) || sameSay(it.text, m.wire)));
+        const hit = list.find((it) => it && it.role === "user" && !it.who && (it.text || it.selection || it.proposal) &&
+          !claimed.has(itemKey(it)) && (m.selection ? (sameSay(it.wire || it.text, m.wire) || sameSelection(it.selection, m.selection) && it.text === m.text) : (sameSay(it.wire || it.text, m.wire) || !it.selection && sameSay(it.text, m.text))));
         if (!hit) continue;
         claimed.add(itemKey(hit));
         const at = mine.indexOf(m);
@@ -13876,7 +13883,7 @@ function chatPanel(project, st) {
   let draftTimer = null;
   ta.addEventListener("input", () => {
     askPickInput(askPick, ta.value);
-    askPickSave(st.addr, ta.value || askPick.proposalDraft ? askPick : null);
+    askPickSave(st.addr, askPick);
     chatDraftWrite(st.addr, ta.value);
     if (draftTimer) clearTimeout(draftTimer);
     draftTimer = setTimeout(() => { draftSave(ta.value); }, CHAT_DRAFT_WAIT);
@@ -13894,6 +13901,9 @@ function chatPanel(project, st) {
   // ли выделение.
   const clips = el("div", "cclips");
   row.append(clips);
+  askPick.preview = el("div", "selection-preview");
+  row.append(askPick.preview);
+  askPickRender(askPick);
   let pinnedSel = null;
   // Вложения реплики лежат списком: снимков и фрагментов бывает по несколько,
   // и каждое добавляется и снимается само по себе. После отправки список
@@ -14167,7 +14177,7 @@ function chatPanel(project, st) {
     putClip(clip).then(drawClips);
   };
 
-  const post = (text, sel, withClips, key, took, wireHint, scenario, proposal) => {
+  const post = (text, sel, withClips, key, took, wireHint, scenario, proposal, selection) => {
     // Пузырь встаёт в ленту до похода на сервер, как в мессенджерах: ждать
     // ответа ручки, а потом ещё и записи в транскрипт, значит показывать
     // человеку пустоту в ответ на нажатие.
@@ -14178,8 +14188,8 @@ function chatPanel(project, st) {
     // Повтор восстановленной записи едет с тем же проводом: вложения той
     // реплики уже лежат на сервере, и строить провод заново значило бы
     // перечитать их в панель, которой их уже не принадлежит.
-    const m = echo.add(text, (again, id) => post(again, sel, withClips, id, took, wireHint, scenario, proposal),
-      wire0, sel, withClips, key, scenario, proposal);
+    const m = echo.add(text, (again, id) => post(again, sel, withClips, id, took, wireHint, scenario, proposal, selection),
+      wire0, sel, withClips, key, scenario, proposal, selection);
     send.disabled = true;
     const done = () => { send.disabled = Boolean(way.off); };
     // Подъём сессии первой репликой. Умершая сессия подъёма это повод поднять
@@ -14220,15 +14230,16 @@ function chatPanel(project, st) {
     // Дорога реплики выбрана заранее, а путь вложения приклеивается к ней
     // первой строкой: у всех дорог он один и тот же.
     const go = (wire) => {
-      if (scenario || proposal) {
+      if (selection || scenario || proposal) {
         api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say", {
-          method: "POST", body: { text, msg_id: m.id, ...(scenario ? { scenario } : { proposal }) },
+          method: "POST", body: { text, msg_id: m.id, ...(selection ? { selection } : scenario ? { scenario } : { proposal }) },
         }).then((r) => {
           if (!r.ok) {
-            if (proposal && r.status >= 500) echo.bad(m);
+            if (r.status >= 500) echo.bad(m);
             else echo.held(m, r.body.error || "ответ не принят");
             sayResult(r.body.error || "ответ не принят", true);
           } else {
+            if (r.body.wire) m.wire = r.body.wire;
             echo.sent(m);
             if (r.body.message) sayResult(r.body.message, false);
           }
@@ -14315,6 +14326,7 @@ function chatPanel(project, st) {
           // очереди, которые разберут без человека (очередь харнеса на сбросе
           // подписки, очередь вставшего клиента), и пузырь называет их.
           if (r.body.way === "ask") {
+            if (r.body.wire) m.wire = r.body.wire;
             if (r.body.message) sayResult(r.body.message, Boolean(r.body.refused));
             if (r.body.refused) echo.held(m, r.body.refused);
             else if (r.body.held) echo.queued(m, r.body.why || "реплика отложена в файл задачи", r.body.task);
@@ -14374,14 +14386,15 @@ function chatPanel(project, st) {
   };
 
   const fire = () => {
-    const scenario = askPick.answer || null;
+    const scenario = null;
+    const selection = askPick.selection || null;
     let proposal = null;
     if (askPick.proposalDraft) {
       try { proposal = askPick.proposalDraft.decisions.length ? proposalAnswer(askPick.proposalDraft) : proposalComment(askPick.proposalDraft); }
       catch (err) { sayResult(err.message, true); return; }
     }
-    const text = scenario || proposal ? ta.value : ta.value.trim();
-    if (!text.trim() || send.disabled) return;
+    const text = ta.value;
+    if ((!text.trim() && !selection && !(proposal && proposal.mode !== "comment")) || send.disabled) return;
     ta.value = "";
     // Реплика циклу цели уходит очередью «Входящих», пузырь ей рисует сама
     // очередь. Эхо транскрипта ей не положено: в ленту витка она попадёт
@@ -14395,6 +14408,10 @@ function chatPanel(project, st) {
     // больше незачем: следующая отметка дописывает своё в пустое поле.
     askPick.put = "";
     askPick.answer = null;
+    askPick.selection = null;
+    askPick.choices = {};
+    askPick.attached = {};
+    askPickRender(askPick);
     if (!proposal || proposal.mode !== "comment") askPick.proposalDraft = null;
     askPick.selected = null;
     askPick.ordinary = null;
@@ -14410,7 +14427,7 @@ function chatPanel(project, st) {
     // выделяет абзац, пишет «поправь этот текст», и агент получает и слова, и
     // сам текст (замечание 3 девятого круга POC). Вложения уезжают списком:
     // снимки и фрагменты одной реплики едут вместе, сколько бы их ни было.
-    post(text, pinnedSel || grabSelection(), attach, null, picks, null, scenario, proposal);
+    post(text, pinnedSel || grabSelection(), attach, null, picks, null, scenario, proposal, selection);
     pinnedSel = null;
     attach = [];
     picks = [];
@@ -14506,7 +14523,7 @@ function chatPanel(project, st) {
     const legacy = st.sid && st.addr && st.addr !== st.sid
       ? echoSweep(project, st.addr, st.chats) : [];
     echo = makeEcho(project, pend, feed, st.sid || st.addr,
-      (more, id, wire, scenario, proposal) => post(more, null, null, id, null, wire, scenario, proposal), legacy);
+      (more, id, wire, scenario, proposal, selection) => post(more, null, null, id, null, wire, scenario, proposal, selection), legacy);
     chatLive.push(echo.clear, echo.stop);
     // Причина на пузыре гасит плашку работы: агент не работает, и мигать о
     // работе поверх причины значило бы врать.
@@ -14633,11 +14650,15 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
       const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
       if (stop) return;
       let ask = (r.ok && r.body.ask) || null;
-      if ((pick.answer && (ta.value || pick.touched)) || (pick.proposalDraft && (ta.value || pick.proposalDraft.decisions.length))) ask = pick.ask;
+      if (pick.selection || (pick.proposalDraft && (ta.value || pick.proposalDraft.decisions.length))) ask = pick.ask;
       else if (JSON.stringify(pick.ask) !== JSON.stringify(ask)) {
         pick.selected = null;
         pick.ordinary = null;
         pick.answer = null;
+        pick.selection = null;
+        pick.choices = {};
+        pick.attached = {};
+        askPickRender(pick);
         pick.proposalDraft = null;
       }
       const continuation = (r.ok && r.body.continuation) || "";
@@ -14758,7 +14779,7 @@ function paintAskpassAsk(project, st, box, ask) {
 function askCardSteps(ask) {
   const steps = (ask.steps || []).filter((step) => step && (step.text || (step.options || []).length));
   if (steps.length) return steps;
-  return [{ fork: ask.fork, text: ask.text, options: ask.options, multi: ask.multi, scenario: ask.scenario, proposal: ask.proposal }];
+  return [{ snapshot: ask.snapshot, fork: ask.fork, text: ask.text, options: ask.options, multi: ask.multi, scenario: ask.scenario, proposal: ask.proposal }];
 }
 
 // Галочки при строках вариантов в ленте (DK-864, форма DK-1374). Вопрос идёт
@@ -14809,7 +14830,7 @@ function askPickWanted(ask) {
     if (!fork) continue;
     (step.options || []).forEach((opt, i) => {
       const scenario = step.scenario;
-      out.push({ fork, num: i + 1, label: askPickLabel(opt.text), scenario,
+      out.push({ fork, multi: step.multi, snapshot: scenario ? scenario.snapshot : step.snapshot, num: i + 1, label: askPickLabel(opt.text), scenario,
         id: scenario && scenario.ids[i] });
     });
   }
@@ -14916,16 +14937,8 @@ function askPickFallback(steps, ask) {
 // её строки списка; иначе панель дописывает строки той же формы и вешает
 // галочки на них. Частичный набор на чужом списке не считается находкой.
 function askPickWire(feed, ta, pick) {
-  let resume = feed.querySelector(".askresume");
-  if (pick.continuation) {
-    if (!resume) { resume = el("div", "msg askresume"); feed.append(resume); }
-    if (resume.dataset.text !== pick.continuation) {
-      const bb = el("div", "bb");
-      bb.append(mdRender(pick.continuation, chatFeedAt()));
-      resume.replaceChildren(bb);
-      resume.dataset.text = pick.continuation;
-    }
-  } else if (resume) resume.remove();
+  const resume = feed.querySelector(".askresume");
+  if (resume) resume.remove();
   for (const old of feed.querySelectorAll(".caskpick")) old.remove();
   for (const li of feed.querySelectorAll(".casklit")) li.classList.remove("casklit");
   if (!pick.on || !pick.ask || !askCardSteps(pick.ask).some((step) => step.proposal)) { const oldProposal = feed.querySelector(".askproposal"); if (oldProposal) oldProposal.remove(); }
@@ -14937,8 +14950,8 @@ function askPickWire(feed, ta, pick) {
   const proposal = steps.find((step) => step.proposal);
   if (proposal) { proposalPickWire(feed, ta, pick, proposal.proposal); return; }
   const scenario = steps.find((step) => step.scenario);
-  if (scenario) pick.answer = { task: pick.ask.task, tree: scenario.scenario.tree || pick.ask.tree, fork: scenario.scenario.fork,
-    snapshot: scenario.scenario.snapshot };
+  pick.choices = pick.choices || {};
+  pick.attached = pick.attached || {};
   const wanted = askPickWanted(pick.ask);
   const heads = askPickHeads(steps);
   let host = askPickHost(feed, heads);
@@ -14967,23 +14980,31 @@ function askPickWire(feed, ta, pick) {
     mark.type = "button";
     mark.setAttribute("role", "checkbox");
     mark.setAttribute("aria-label", "Ответить «" + said + "»");
-    const current = hit.pick.scenario && (hit.pick.scenario.current || []);
-    const selected = pick.selected || current;
-    askPickMark(mark, hit.pick.scenario ? selected.includes(hit.pick.id) : (pick.ordinary || (pick.put || "").split(", ")).includes(said));
-    mark.append(el("span", "caskbox"));
+    const fork = hit.pick.fork;
+    const defaults = hit.pick.scenario ? (hit.pick.scenario.explicit ? hit.pick.scenario.current || [] : hit.pick.scenario.ids) : [];
+    const selected = Object.hasOwn(pick.choices, fork) ? pick.choices[fork] : defaults;
+    askPickMark(mark, selected.includes(hit.pick.id || String(hit.pick.num)));
     mark.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      askPickMark(mark, !mark.classList.contains("on"));
-      if (hit.pick.scenario) {
-        pick.touched = true;
-        pick.selected = marks.filter((own) => own.pick.scenario && own.mark.classList.contains("on")).map((own) => own.pick.id);
-      }
-      if (scenario) pick.ordinary = marks.filter((own) => !own.pick.scenario && own.mark.classList.contains("on")).map((own) => askPickWord(own.pick));
-      askPickPut(ta, pick, askPickSaid(marks, Boolean(pick.touched)));
+      const on = !mark.classList.contains("on");
+      if (!hit.pick.multi) for (const own of marks) if (own.pick.fork === fork) askPickMark(own.mark, false);
+      askPickMark(mark, on);
+      pick.choices[fork] = marks.filter((own) => own.pick.fork === fork && own.mark.classList.contains("on")).map((own) => own.pick.id || String(own.pick.num));
+      pick.attached[fork] = true;
+      askPickBuild(pick, marks);
     });
     hit.li.prepend(mark);
     marks.push({ mark, pick: hit.pick });
   }
+  for (const old of feed.querySelectorAll(".attach-selection")) old.remove();
+  for (const step of steps.filter((step) => step.scenario)) {
+    const attach = el("button", "btn attach-selection", "Прикрепить выбор «" + step.fork + "»");
+    attach.type = "button";
+    attach.addEventListener("click", () => { pick.attached[step.fork] = true; askPickBuild(pick, marks); });
+    host.append(attach);
+  }
+  askPickBuild(pick, marks);
+
 }
 
 // Плашка запертого вопроса (DK-1300, случай 03): журнал уведомителя запер
@@ -15124,39 +15145,55 @@ function askPickWord(pick) {
 // написал сам: отметка её дописывает, снятая убирает. Своей отправки у галочек
 // нет, реплику шлёт обычная кнопка чата.
 function askPickPut(ta, state, said) {
-  const had = state.put || "";
-  if (had === said) return;
-  let text = String(ta.value || "");
-  if (state.answer) {
-    if (had && text.slice(state.putStart, state.putStart + had.length) === had) {
-      text = text.slice(0, state.putStart) + said + text.slice(state.putStart + had.length);
-    } else if (said) {
-      state.putStart = 0;
-      text = said + (text ? "; " + text : "");
-    }
-    ta.value = text;
-  } else {
-    if (had && text.includes(had)) text = text.split(had).join(said);
-    else if (said) text = text.trim() ? text.trim() + " " + said : said;
-    ta.value = text.trim();
-  }
-  state.put = said;
+  state.put = "";
   state.draft = ta.value;
-  if (state.addr) askPickSave(state.addr, state);
-  if (typeof ta.dispatchEvent === "function") ta.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-function askPickInput(state, text) {
-  const before = state.draft || "";
-  if (state.answer && state.put && before !== text) {
-    let start = 0;
-    while (start < before.length && start < text.length && before[start] === text[start]) start++;
-    let end = before.length, after = text.length;
-    while (end > start && after > start && before[end - 1] === text[after - 1]) { end--; after--; }
-    if (end <= state.putStart) state.putStart += after - end;
-    else if (start < state.putStart + state.put.length) state.put = "";
+function askPickInput(state, text) { state.draft = text; }
+
+function askPickBuild(pick, marks) {
+  const questions = [];
+  for (const step of askCardSteps(pick.ask)) {
+    if (!pick.attached[step.fork]) continue;
+    const selected = marks.filter((own) => own.pick.fork === step.fork && own.mark.classList.contains("on"));
+    if (!step.scenario && !selected.length) continue;
+    questions.push({ fork: step.fork, snapshot: step.scenario ? step.scenario.snapshot : step.snapshot,
+      ids: selected.map((own) => own.pick.id || String(own.pick.num)), labels: selected.map((own) => own.pick.label) });
   }
-  state.draft = text;
+  pick.selection = questions.length ? { task: pick.ask.task, tree: pick.ask.tree, questions } : null;
+  askPickSave(pick.addr, pick);
+  askPickRender(pick);
+}
+
+function askPickRender(pick) {
+  if (!pick.preview) return;
+  pick.preview.replaceChildren();
+  if (!pick.selection) return;
+  const card = selectionCard(pick.selection);
+  const remove = el("button", "btn", "Убрать выбор из сообщения");
+  remove.type = "button";
+  remove.addEventListener("click", () => { pick.selection = null; pick.attached = {}; askPickSave(pick.addr, pick); askPickRender(pick); });
+  pick.preview.append(card, remove);
+}
+
+function selectionCard(selection) {
+  const card = el("details", "selection-attachment");
+  card.open = true;
+  card.append(el("summary", "", "Выбор: " + selection.task));
+  for (const q of selection.questions || []) {
+    card.append(el("p", "", "«" + q.fork + "»: " + (q.ids.length ? (q.labels && q.labels.length ? q.labels : q.ids).join(", ") : "отказ от всех")));
+  }
+  return card;
+}
+
+function selectionMessage(text) {
+  const prefix = "Ответ с вложением панели: ";
+  if (!String(text).startsWith(prefix)) return null;
+  try {
+    const value = JSON.parse(String(text).slice(prefix.length));
+    if (value.version === 1 && typeof value.text === "string" && (!value.selection || Array.isArray(value.selection.questions))) return value;
+  } catch (err) {}
+  return null;
 }
 
 function askPickRead(addr) {
@@ -15167,8 +15204,8 @@ function askPickRead(addr) {
 function askPickSave(addr, pick) {
   const key = "devkit.askdraft." + addr;
   try {
-    if (!pick || (!pick.answer && !pick.proposalDraft)) localStorage.removeItem(key);
-    else localStorage.setItem(key, JSON.stringify({ on: pick.on, ask: pick.ask, answer: pick.answer,
+    if (!pick || (!pick.selection && !pick.proposalDraft && !Object.keys(pick.choices || {}).length)) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify({ on: pick.on, ask: pick.ask, selection: pick.selection, choices: pick.choices, attached: pick.attached,
       put: pick.put, putStart: pick.putStart, selected: pick.selected, ordinary: pick.ordinary, touched: pick.touched, proposalDraft: pick.proposalDraft }));
   } catch (err) {}
 }
@@ -20485,10 +20522,7 @@ function proposalPickWire(feed, ta, pick, shown) {
   body.append(el('p', '', 'Предложения разбора. Выберите решения и отправьте ответ обычной кнопкой чата.'));
   const save = () => {
     askPickSave(pick.addr, pick);
-    if (!ta.value.trim() && draft.decisions.length) {
-      ta.value = 'Решение по предложениям';
-      ta.dispatchEvent(new Event('input', { bubbles: true }));
-    }
+
   };
   const all = el('button', 'btn', 'Принять все показанные'); all.type = 'button';
   all.addEventListener('click', () => { draft.decisions = proposalSelect(draft.shown, null, 'accept'); save(); box.remove(); proposalPickWire(feed, ta, pick, shown); });
@@ -20522,4 +20556,22 @@ function proposalPickWire(feed, ta, pick, shown) {
     }
   }
   box.append(body); feed.append(box); save();
+}
+
+function sameSelection(a, b) {
+  const identity = (selection) => selection && JSON.stringify({ task: selection.task, tree: selection.tree,
+    questions: (selection.questions || []).map((q) => ({ fork:q.fork, snapshot:q.snapshot, ids:q.ids })) });
+  return Boolean(a && b && identity(a) === identity(b));
+}
+
+function proposalAttachment(proposal) {
+  const card = el("details", "selection-attachment proposal-attachment");
+  card.open = true;
+  card.append(el("summary", "", "Решения по предложениям"));
+  const entries = proposal.results || proposal.decisions || [];
+  for (const d of entries) {
+    const action = d.result || (d.action === "accept" ? "принять" : "отклонить");
+    card.append(el("p", "", [d.source, d.proposal, action, d.reason].filter(Boolean).join(": ")));
+  }
+  return card;
 }

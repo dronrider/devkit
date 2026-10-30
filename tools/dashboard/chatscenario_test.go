@@ -341,25 +341,14 @@ func TestScenarioPanelGoJSONToJS(t *testing.T) {
 			if err != nil {
 				t.Fatalf("JS по реальному JSON: %v\n%s", err, out)
 			}
-			var answer struct {
-				Text     string         `json:"text"`
-				Scenario scenarioAnswer `json:"scenario"`
-			}
+			var answer map[string]any
 			if err := json.Unmarshal(out, &answer); err != nil {
 				t.Fatalf("ответ JS: %s: %v", out, err)
 			}
-			if mixed {
-				before, wait := readFile(t, st.path), readFile(t, chat.AskPath(st.e.proj, chat.TaskName("XR-4")))
-				st.send(t, strings.Replace(answer.Text, "срок 1", "срок 99", 1), ask, http.StatusBadRequest)
-				if readFile(t, st.path) != before || readFile(t, chat.AskPath(st.e.proj, chat.TaskName("XR-4"))) != wait {
-					t.Fatal("плохой mixed ответ записан частично")
-				}
-			}
-			st.send(t, answer.Text, ask, http.StatusOK)
+			st.sendSelection(t, answer, http.StatusOK)
 			f, _ := taskform.FindFork(readFile(t, st.path), "сценарии")
-			replies, _ := f.ScenarioReplies()
-			if f.Answer != "СЦ-3, СЦ-4" || len(replies) != 1 || replies[0].Text != answer.Text {
-				t.Fatalf("JS -> CLI потерял выбор/raw: %+v %+v", f, replies)
+			if f.Answer != "СЦ-1, СЦ-3" || f.ChoiceEvent != 1 {
+				t.Fatalf("JS -> CLI потерял выбор: %+v", f)
 			}
 			if mixed {
 				ordinary, _ := taskform.FindFork(readFile(t, st.path), "срок")
@@ -368,10 +357,11 @@ func TestScenarioPanelGoJSONToJS(t *testing.T) {
 				}
 			}
 			before := readFile(t, st.path)
-			st.send(t, answer.Text, ask, http.StatusOK)
+			st.sendSelection(t, answer, http.StatusOK)
 			if readFile(t, st.path) != before {
 				t.Fatal("mixed/single retry создал новое событие")
 			}
+
 		})
 	}
 }

@@ -14,6 +14,11 @@ import (
 	"github.com/dronrider/devkit/internal/stage"
 )
 
+type proposalAttachment struct {
+	Decisions []draftproposal.Decision `json:"decisions,omitempty"`
+	Results   []draftproposal.Receipt  `json:"results,omitempty"`
+}
+
 type proposalAnswer struct {
 	Mode      string                   `json:"mode,omitempty"`
 	Anchor    string                   `json:"anchor"`
@@ -213,7 +218,8 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 		Key      string                  `json:"key"`
 		Results  []draftproposal.Receipt `json:"results"`
 		Repeated bool                    `json:"repeated"`
-	}{text, canonical.Key, canonical.Results, canonical.Repeated})
+		Proposal proposalAnswer          `json:"proposal"`
+	}{text, canonical.Key, canonical.Results, canonical.Repeated, answer})
 	wire := "Ответ панели обработан taskctl: " + string(payload)
 	// The shown tree and anchor remain the address even after a session rebind.
 	tree := stage.MainRoot(answer.Tree)
@@ -244,8 +250,8 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 		}
 	}
 	s.chatSayDone(sid, claim, "ask")
-	s.saidSay(saidSessionKey(sid), text, "ask")
-	writeJSON(w, http.StatusOK, map[string]any{"way": "ask", "task": answer.Anchor, "message": result})
+	s.saidSay(saidSessionKey(sid), wire, "ask")
+	writeJSON(w, http.StatusOK, map[string]any{"way": "ask", "task": answer.Anchor, "wire": wire})
 }
 
 // Hold the same per-record cloud reservation as managed clients while the

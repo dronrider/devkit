@@ -83,6 +83,7 @@ const askOf = (...qs) => {
     name: i + 1 + ". " + text.slice(0, 28),
     now: i === 0,
     fork: fork || "",
+    snapshot: "q1-" + (i+1),
     text,
     options: opts.map((opt, j) => ({
       text: opt,
@@ -92,6 +93,8 @@ const askOf = (...qs) => {
   const out = {
     kind: "agent",
     task: "DK-1374",
+    tree: "/stand/demo",
+    snapshot: steps[0].snapshot,
     since,
     until,
     fork: steps[0].fork,
@@ -157,7 +160,7 @@ const now = { ask, items: [], said: [] };
 const { sandbox, timers, streams } = makeSandbox(app, (path, init) => {
   const post = init && init.method === "POST";
   if (post && path.includes("/say")) {
-    now.said.push(JSON.parse(init.body).text);
+    now.said.push(JSON.parse(init.body));
     return { way: "ask", chat: "task-DK-1374" };
   }
   if (path.includes("/ask")) {
@@ -178,6 +181,8 @@ const liveSt = () => ({
 });
 
 const panelWith = async (items) => {
+  sandbox.localStorage.removeItem("devkit.askdraft." + SID);
+  sandbox.chatDraftWrite(SID, "");
   now.items = items;
   sandbox.location.hash = "#demo/chat/" + SID;
   const panel = sandbox.chatPanel("demo", liveSt());
@@ -287,17 +292,17 @@ const settleMove = async () => {
   const ta = sayOf(panel);
   const picks = picksOf(panel);
   click(picks[0]);
-  if (ta.value !== "печать 1") {
+  if (ta.value !== "") {
     fail("отметка собрала строку ответа не так: " + JSON.stringify(ta.value));
   }
   if (!String(picks[0].className).split(" ").includes("on")) fail("отмеченная галочка не помечена");
   if (picks[0].attrs["aria-checked"] !== "true") fail("отметка не названа для чтения с экрана");
   click(picks[4]);
-  if (ta.value !== "печать 1, ответ 3") {
+  if (ta.value !== "") {
     fail("вторая отметка легла в строку ответа не так: " + JSON.stringify(ta.value));
   }
   click(picks[0]);
-  if (ta.value !== "ответ 3") {
+  if (ta.value !== "") {
     fail("снятая отметка не убралась из поля ввода: " + JSON.stringify(ta.value));
   }
   click(picks[4]);
@@ -305,7 +310,7 @@ const settleMove = async () => {
 
   ta.value = "сначала поясню";
   click(picks[1]);
-  if (ta.value !== "сначала поясню печать 2") {
+  if (ta.value !== "сначала поясню") {
     fail("строка ответа затёрла написанное человеком: " + JSON.stringify(ta.value));
   }
   click(picks[1]);
@@ -319,10 +324,10 @@ const settleMove = async () => {
   const panel = await panelWith([answer(1, withBlock)]);
   const ta = sayOf(panel);
   click(picksOf(panel)[3]);
-  if (ta.value !== "ответ 2") fail("строка ответа не собралась: " + JSON.stringify(ta.value));
+  if (ta.value !== "") fail("строка ответа не собралась: " + JSON.stringify(ta.value));
   deepBtn(byClass(panel, "crow"), "Отправить").handlers.click({});
   await settle();
-  if (JSON.stringify(now.said) !== JSON.stringify(["ответ 2"])) {
+  if (now.said.length !== 1 || now.said[0].text !== "" || now.said[0].selection.questions[0].fork !== "ответ" || now.said[0].selection.questions[0].ids[0] !== "2") {
     fail("ответ уехал не обычной репликой чата: " + JSON.stringify(now.said));
   }
   if (ta.value !== "") fail("поле ввода не опустело после отправки: " + JSON.stringify(ta.value));
@@ -344,7 +349,8 @@ const settleMove = async () => {
   const panel = await panelWith([answer(1, withBlock)]);
   const ta = sayOf(panel);
   click(picksOf(panel)[0]);
-  if (ta.value !== "печать 1") fail("строка ответа не собралась перед снятием признака");
+  if (ta.value !== "") fail("строка ответа не собралась перед снятием признака");
+  click(deepBtn(panel, "Убрать выбор из сообщения"));
   now.ask = null;
   await settleMove();
   if (picksOf(panel).length) fail("галочки остались после снятого признака");
@@ -393,7 +399,7 @@ const settleMove = async () => {
   const picks = picksOf(panel);
   if (picks.length !== 2) fail("у одной развилки не две галочки, а " + picks.length);
   click(picks[1]);
-  if (ta.value !== "печать 2") {
+  if (ta.value !== "") {
     fail("ответ одиночного вопроса собрался не так: " + JSON.stringify(ta.value));
   }
   now.ask = ask;
@@ -437,7 +443,7 @@ const settleMove = async () => {
   }
   const ta = sayOf(panel);
   click(picksOf(panel)[1]);
-  if (ta.value !== "кейсы 2") {
+  if (ta.value !== "") {
     fail("отметка состава собрала не ту строку ответа: " + JSON.stringify(ta.value));
   }
   now.ask = ask;

@@ -268,6 +268,7 @@ const askStepCut = 28
 // ответа: галочка собирает «имя номер», и разбирать его дальше будет
 // taskctl decide --answer.
 type agentAsk struct {
+	Snapshot string                 `json:"snapshot,omitempty"`
 	Kind     string                 `json:"kind"`
 	Task     string                 `json:"task,omitempty"`
 	Tree     string                 `json:"tree,omitempty"`
@@ -289,6 +290,7 @@ type agentAsk struct {
 // называет развилку из головы вопроса («имя»: ...); у свободного вопроса
 // `taskctl ask --question` его нет, и галочки там не собирают строку ответа.
 type agentStep struct {
+	Snapshot string                 `json:"snapshot,omitempty"`
 	Name     string                 `json:"name"`
 	Now      bool                   `json:"now,omitempty"`
 	Fork     string                 `json:"fork,omitempty"`
@@ -329,7 +331,7 @@ func agentAskOf(h handedAsk) agentAsk {
 			continue
 		}
 		step := agentStep{Name: fmt.Sprintf("%d. %s", i+1, truncate(text, askStepCut)),
-			Fork: askForkName(text), Text: text, Options: agentPicks(q.Options), Multi: q.Multi, Scenario: q.Scenario, Proposal: q.Proposal}
+			Fork: askForkName(text), Snapshot: chat.QuestionSnapshot(q), Text: text, Options: agentPicks(q.Options), Multi: q.Multi, Scenario: q.Scenario, Proposal: q.Proposal}
 		out.Steps = append(out.Steps, step)
 	}
 	if len(out.Steps) == 0 {
@@ -337,6 +339,7 @@ func agentAskOf(h handedAsk) agentAsk {
 	}
 	out.Steps[0].Now = true
 	out.Fork = out.Steps[0].Fork
+	out.Snapshot = out.Steps[0].Snapshot
 	out.Text, out.Options = out.Steps[0].Text, out.Steps[0].Options
 	out.Multi, out.Scenario = out.Steps[0].Multi, out.Steps[0].Scenario
 	out.Proposal = out.Steps[0].Proposal

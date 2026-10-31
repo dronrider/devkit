@@ -24,7 +24,7 @@ func TestScenarioPanelQuestionsAndMixedAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := json.Marshal(pack)
-	if len(pack) != 2 || !pack[0].Multi || pack[0].Scenario.Tree != root || pack[0].Scenario.Snapshot != key || pack[0].Options[0].Label != "СЦ-1. выбрать" || pack[1].Scenario != nil || pack[1].Multi || !strings.Contains(string(data), "снимок сценариев") {
+	if len(pack) != 2 || !pack[0].Multi || pack[0].Scenario.Tree != root || pack[0].Scenario.Snapshot != key || pack[0].Options[0].Label != "СЦ-1. выбрать" || !pack[0].Options[0].Recommended || pack[0].Options[1].Recommended || pack[1].Scenario != nil || pack[1].Multi || !strings.Contains(string(data), "снимок сценариев") {
 		t.Fatalf("вопросы панели: %s", data)
 	}
 	wait := askInMain(t, root, "XR-005")

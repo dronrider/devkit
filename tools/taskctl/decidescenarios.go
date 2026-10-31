@@ -445,9 +445,13 @@ func scenarioChatQuestions(root, id string, pack []taskform.Fork) ([]chat.Questi
 		}
 		q := &chat.ScenarioQuestion{Tree: root, Snapshot: key, Fork: f.Name, Current: snapshot.Current, Explicit: f.ChoiceEvent > 0 || f.Decided() || f.Reconsidered, Block: block}
 		questions[i].Options = nil
+		recommended := map[string]bool{}
+		for _, id := range snapshot.Recommendation.IDs {
+			recommended[id] = true
+		}
 		for _, scenario := range snapshot.Scenarios {
 			q.IDs = append(q.IDs, scenario.ID)
-			questions[i].Options = append(questions[i].Options, chat.Option{Label: scenario.ID + ". " + scenario.Title})
+			questions[i].Options = append(questions[i].Options, chat.Option{Label: scenario.ID + ". " + scenario.Title, Recommended: recommended[scenario.ID]})
 		}
 		questions[i].Scenario = q
 	}

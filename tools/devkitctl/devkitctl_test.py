@@ -1181,9 +1181,10 @@ class MachineContourTest(SandboxCase):
         _, out = self.docm("--fix")
         self.assertNotIn_("починено", out, "повторный --fix после спутника не должен менять")
 
-    def snap(self, taken):
+    def snap(self, *takens):
         write(self.mhome / ".devkit" / "quota" / "claude-code.local",
-              "taken = %s\nweek_all = 40%% сброс 2030-01-01T00:00\n" % taken)
+              "".join("taken = %s\n" % t for t in takens)
+              + "week_all = 40% сброс 2030-01-01T00:00\n")
 
     def test_05_quota_snapshot_age(self):
         # Возраст берётся из строки taken, порог 45 минут (тот же, что у
@@ -1216,6 +1217,37 @@ class MachineContourTest(SandboxCase):
               "week_all = 40% сброс 2030-01-01T00:00\n")
         _, out = self.docm()
         self.assertIn_("не разобран момент снятия", out, "нет находки про снимок без taken")
+
+    def test_07b_taken_lines_race(self):
+        # Строк taken бывает несколько: writer перезаписывает свой момент,
+        # снимок правят и руками. Разбор как у agentctl: побеждает последняя
+        # разобранная строка, а не первая встреченная.
+        self.snap("вчера", taken_at(0.5))
+        _, out = self.docm()
+        self.assertNotIn_("claude-code.local", out,
+                          "неразобранная строка выше заглушила разобранную ниже")
+        self.snap(taken_at(0.5), "вчера")
+        _, out = self.docm()
+        self.assertNotIn_("не разобран момент снятия", out,
+                          "неразобранная строка ниже отобрала момент у разобранной выше")
+        self.assertNotIn_("claude-code.local", out, "разобранная строка выше потеряна")
+        # Победа нижней проверяется насквозь: если бы разбор взял неразобранную
+        # верхнюю и встал, возраст бы не посчитался и протух не всплыл.
+        self.snap("вчера", taken_at(1))
+        _, out = self.docm()
+        self.assertIn_("claude-code.local протух (возраст", out,
+                       "возраст не посчитан по последней разобранной строке")
+
+    def test_07c_snapshot_from_the_future(self):
+        # Часы разошлись: момент снятия позже текущего времени даёт
+        # отрицательный возраст, и порог протухания его не ловит. Молча
+        # пройти такой снимок не должен.
+        self.snap(taken_at(-0.5))
+        _, out = self.docm()
+        self.assertIn_("часы разошлись", out, "снимок из будущего не дал находки")
+        self.assertIn_("claude-code.local снят", out, "находка не назвала снимок")
+        self.assertNotIn_("claude-code.local протух", out,
+                          "снимок из будущего принят за протухший")
 
     def test_08_snapshot_moves_to_the_directory(self):
         # Одиночный quota.local это как было до DK-038, и читатель его ещё

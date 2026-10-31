@@ -1042,8 +1042,13 @@ def connect_git_hooks(root):
 
 
 def quota_taken(path):
-    # Момент снятия из снимка. None и когда строки taken нет, и когда она не
-    # разобрана: для доктора это один случай, снимку нельзя верить по возрасту.
+    # Момент снятия из снимка. Строк taken бывает несколько: снимки заполняют
+    # и руками, а writer agentctl кладёт свой момент на каждой перезаписи.
+    # Разбор как у agentctl (quota.go): побеждает последняя разобранная строка,
+    # неразобранная выше разобранной её не глушит. None и когда строк taken нет
+    # вовсе, и когда не разобралась ни одна: для доктора это один случай,
+    # снимку нельзя верить по возрасту.
+    taken = None
     for ln in path.read_text(encoding="utf-8", errors="replace").splitlines():
         key, sep, val = ln.partition("=")
         if not sep or key.strip() != "taken":
@@ -1051,11 +1056,11 @@ def quota_taken(path):
         val = val.strip()
         for fmt in QUOTA_TIME_FORMATS:
             try:
-                return datetime.strptime(val, fmt)
+                taken = datetime.strptime(val, fmt)
+                break
             except ValueError:
                 pass
-        return None
-    return None
+    return taken
 
 
 def devkit_checkout():
@@ -2392,7 +2397,13 @@ def check_quota(fix, blocked=""):
                             "возраст не проверить; переснять: agentctl quota refresh" % quota)
             continue
         age = (datetime.now() - taken).total_seconds()
-        if age > QUOTA_MAX_AGE:
+        if age < 0:
+            # Момент снятия позже текущего времени: часы разошлись, и
+            # отрицательный возраст порог протухания не ловит.
+            findings.append("снимок квоты %s снят %s, это позже текущего времени: часы разошлись, "
+                            "возраст не проверить; переснять: agentctl quota refresh"
+                            % (quota, taken.strftime("%Y-%m-%dT%H:%M:%S")))
+        elif age > QUOTA_MAX_AGE:
             findings.append("снимок квоты %s протух (возраст %s при пороге %s): профицит по нему уже не считается, "
                             "сдвиг вверх потерян; переснять: agentctl quota refresh"
                             % (quota, human_age(age), human_age(QUOTA_MAX_AGE)))

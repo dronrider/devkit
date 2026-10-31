@@ -7477,7 +7477,6 @@ function chatBubble(who, text, meta, tip, quote, mark, extra) {
   // Упоминания задач и документов в реплике становятся ссылками, и ведут они в
   // проект этой ленты: разговор бывает чужой, а адрес на доске свой.
   bb.append(mdRender(text, chatFeedAt()));
-  if (answer && answer.selection) bb.append(selectionCard(answer.selection));
   const said = meta ? who + ", " + meta : who;
   const foot = el("div", "mm", said);
   if (mark) foot.append(mark);
@@ -8097,7 +8096,7 @@ function chatItem(item) {
     if ((item.shots || []).length) bits.push("с картинкой");
     if ((item.frags || []).length) bits.push("с фрагментом");
     const wrap = chatBubble(who, item.text, bits.join(", "), "", item.quote ? quoteEl(item) : null);
-    if (item.selection) wrap.append(selectionCard(item.selection));
+    wrap.dataset.messageKey = item.key || "";
     if (item.proposal) wrap.append(proposalAttachment(item.proposal));
     if (item.sel) wrap.append(selFold(item.selFile || "постановка", item.sel));
     // Места экрана стоят при пузыре своим свёрнутым блоком: в самой реплике им
@@ -13361,7 +13360,6 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       }
       const wrap = chatBubble("вы", m.text, m.sel ? "с выделением" : "", why, null, mark, off);
       wrap.classList.add("m-local", "m-" + m.state);
-      if (m.selection) wrap.append(selectionCard(m.selection));
       if (m.proposal && m.proposal.mode !== "comment") wrap.append(proposalAttachment(m.proposal));
       if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
       for (const c of m.clips || []) {
@@ -13914,9 +13912,6 @@ function chatPanel(project, st) {
   // ли выделение.
   const clips = el("div", "cclips");
   row.append(clips);
-  askPick.preview = el("div", "selection-preview");
-  row.append(askPick.preview);
-  askPickRender(askPick);
   let pinnedSel = null;
   // Вложения реплики лежат списком: снимков и фрагментов бывает по несколько,
   // и каждое добавляется и снимается само по себе. После отправки список
@@ -14101,7 +14096,10 @@ function chatPanel(project, st) {
     });
     row.append(go);
   }
-  const send = el("button", "btn btn-acc", "Отправить");
+  const send = el("button", "btn btn-acc csend", "Отправить");
+  askPick.send = send;
+  askPick.draft = ta.value;
+  askPickRender(askPick);
   send.disabled = Boolean(way.off);
   // Вложение уезжает на сервер раньше самой реплики: агенту нужен путь, а он
   // рождается только после записи файла. Сессии у чата к этому моменту может и
@@ -14244,8 +14242,9 @@ function chatPanel(project, st) {
     // первой строкой: у всех дорог он один и тот же.
     const go = (wire) => {
       if (selection || scenario || proposal) {
+        if (selection) m.wire = wire;
         api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say", {
-          method: "POST", body: { text, msg_id: m.id, ...(selection ? { selection } : scenario ? { scenario } : { proposal }) },
+          method: "POST", body: { text: selection ? wire : text, msg_id: m.id, ...(selection ? { selection } : scenario ? { scenario } : { proposal }) },
         }).then((r) => {
           if (!r.ok) {
             if (r.status >= 500) echo.bad(m);
@@ -14254,6 +14253,10 @@ function chatPanel(project, st) {
           } else {
             if (r.body.wire) m.wire = r.body.wire;
             echo.sent(m);
+            if (selection) {
+              askPickConfirm(askPick, selection);
+              askPickWire(feed, ta, askPick);
+            }
             if (r.body.message) sayResult(r.body.message, false);
           }
         }).catch((err) => { echo.bad(m); console.error(err); }).finally(done);
@@ -14417,19 +14420,15 @@ function chatPanel(project, st) {
       goalOut.send(text).catch(console.error);
       return;
     }
-    // Собранная галочками строка уехала вместе с репликой, и помнить её
-    // больше незачем: следующая отметка дописывает своё в пустое поле.
+    if (selection) askPickRemember(askPick, selection);
     askPick.put = "";
-    askPick.answer = null;
-    askPick.selection = null;
-    askPick.choices = {};
-    askPick.attached = {};
-    askPickRender(askPick);
+    askPick.draft = "";
     if (!proposal || proposal.mode !== "comment") askPick.proposalDraft = null;
     askPick.selected = null;
     askPick.ordinary = null;
     askPick.touched = false;
-    askPickSave(st.addr, askPick.proposalDraft ? askPick : null);
+    askPickSave(st.addr, askPick);
+    askPickRender(askPick);
     if (draftTimer) clearTimeout(draftTimer);
     chatDraftWrite(st.addr, "");
     // Отправка уносит и высоту: поле возвращается к своему обычному росту,
@@ -14663,8 +14662,8 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
       const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
       if (stop) return;
       let ask = (r.ok && r.body.ask) || null;
-      if (pick.selection || (pick.proposalDraft && (ta.value || pick.proposalDraft.decisions.length))) ask = pick.ask;
-      else if (JSON.stringify(pick.ask) !== JSON.stringify(ask)) {
+      if (pick.proposalDraft && (ta.value || pick.proposalDraft.decisions.length)) ask = pick.ask;
+      else if (askPickKey(pick.ask) !== askPickKey(ask)) {
         pick.selected = null;
         pick.ordinary = null;
         pick.answer = null;
@@ -14683,8 +14682,8 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
       // на строки вариантов в ленте: заход спросил человека и стоит, пока
       // ответа нет (DK-864, форма DK-1374). Слова реплики для этого не
       // разбираются: набор галочек держит признак.
-      pick.on = Boolean(ask && ask.kind === "agent");
-      pick.ask = pick.on ? ask : null;
+      pick.ask = ask && ask.kind === "agent" ? ask : null;
+      pick.on = Boolean(pick.ask && !(pick.history || []).some((record) => record.confirmed && askPickKey(record.ask) === askPickKey(pick.ask)));
       if (!pick.on && pick.put) askPickPut(ta, pick, "");
       paintClientAsk(project, st, box, ask, tick, ta, pick, stuck);
       askPickWire(feed, ta, pick);
@@ -14881,10 +14880,11 @@ function askPickHeads(steps) {
 // askPickHost ищет реплику с головами текущего вопроса. Список вариантов из
 // прошлого вопроса или из плана с теми же словами не подходит: галочки должны
 // стоять на своём вопросе.
-function askPickHost(feed, heads) {
+function askPickHost(feed, heads, key) {
   if (!heads.length) return null;
   const msgs = feed.querySelectorAll(".msg");
   for (let i = msgs.length - 1; i >= 0; i--) {
+    if (key && msgs[i].dataset.choiceKey && msgs[i].dataset.choiceKey !== key) continue;
     const text = askPickText(msgs[i]);
     if (heads.every((head) => text.includes(head))) return msgs[i];
   }
@@ -14950,74 +14950,122 @@ function askPickFallback(steps, ask) {
 // её строки списка; иначе панель дописывает строки той же формы и вешает
 // галочки на них. Частичный набор на чужом списке не считается находкой.
 function askPickWire(feed, ta, pick) {
-  const resume = feed.querySelector(".askresume");
-  if (resume) resume.remove();
-  for (const old of feed.querySelectorAll(".caskpick")) old.remove();
-  for (const old of feed.querySelectorAll(".attach-selection")) old.remove();
-  for (const li of feed.querySelectorAll(".casklit")) li.classList.remove("casklit");
-  if (!pick.on || !pick.ask || !askCardSteps(pick.ask).some((step) => step.proposal)) { const oldProposal = feed.querySelector(".askproposal"); if (oldProposal) oldProposal.remove(); }
-  const oldFb = feed.querySelector(".askfb");
-  if (oldFb) oldFb.remove();
-  if (!pick.on || !pick.ask) return;
+  for (const selector of [".askresume", ".caskpick", ".attach-selection", ".askfb"]) {
+    for (const old of feed.querySelectorAll(selector)) old.remove();
+  }
+  for (const li of feed.querySelectorAll(".casklit")) {
+    li.classList.remove("casklit");
+    li.onclick = null;
+  }
+  for (const host of feed.querySelectorAll(".msg")) {
+    delete host.dataset.choiceKey;
+    const record = (pick.history || []).find((record) => record.confirmed && record.hostKey && record.hostKey === host.dataset.messageKey);
+    if (record) host.dataset.choiceKey = askPickKey(record.ask);
+  }
+  if (!pick.on || !pick.ask || !askCardSteps(pick.ask).some((step) => step.proposal)) {
+    const old = feed.querySelector(".askproposal");
+    if (old) old.remove();
+  }
   pick.draft = String(ta.value || "");
-  const steps = askCardSteps(pick.ask);
-  const proposal = steps.find((step) => step.proposal);
-  if (proposal) { proposalPickWire(feed, ta, pick, proposal.proposal); return; }
-  const scenario = steps.find((step) => step.scenario);
-  pick.choices = pick.choices || {};
-  pick.attached = pick.attached || {};
-  const wanted = askPickWanted(pick.ask);
-  const heads = askPickHeads(steps);
-  let host = askPickHost(feed, heads);
+  if (pick.on && pick.ask) {
+    const proposal = askCardSteps(pick.ask).find((step) => step.proposal);
+    if (proposal) proposalPickWire(feed, ta, pick, proposal.proposal);
+    else askPickBuild(pick, askPickQuestion(feed, pick, pick.ask));
+  }
+  for (const record of (pick.history || []).slice().reverse()) {
+    if (record.confirmed) askPickQuestion(feed, pick, record.ask, record.selection);
+  }
+  askPickRender(pick);
+}
+
+function askPickRecommended(step) {
+  const ids = (step.options || []).flatMap((opt, i) => /советует агент/.test(opt.desc || "") ? [step.scenario ? step.scenario.ids[i] : String(i + 1)] : []);
+  if (!step.scenario) return step.multi ? ids : ids.slice(0, 1);
+  if (ids.length) return ids;
+  const block = step.scenario.block || "";
+  const head = block.slice(block.lastIndexOf("«" + step.fork + "»:"));
+  const legacy = head.match(/;\s*рекомендую\s+(\d+(?:\s*,\s*\d+)*)\s*:/);
+  return legacy ? legacy[1].split(",").map((pos) => step.scenario.ids[Number(pos.trim()) - 1]).filter(Boolean) : [];
+}
+
+function askPickDefaults(step) {
+  return step.scenario && step.scenario.explicit ? step.scenario.current || [] : askPickRecommended(step);
+}
+
+function askPickKey(ask) {
+  return ask ? JSON.stringify([ask.task, ask.tree, ask.since, askCardSteps(ask).map((step) => [step.fork, step.scenario ? step.scenario.snapshot : step.snapshot])]) : "";
+}
+
+function askPickQuestion(feed, pick, ask, confirmed) {
+  const steps = askCardSteps(ask);
+  const wanted = askPickWanted(ask);
+  const key = askPickKey(ask);
+  let host = askPickHost(feed, askPickHeads(steps), key);
   let hits = host && wanted.length ? askPickMatch(host, wanted) : [];
-  const needCopy = !host || (wanted.length > 0 && !hits.length);
-  if (needCopy) {
-    const fb = askPickFallback(steps, pick.ask);
-    feed.append(fb);
-    host = fb;
-    hits = wanted.length ? askPickMatch(fb, wanted) : [];
-  } else if (host) {
-    // Строка с задачей и временем стоит у вопроса текстом, а не шапкой.
-    const meta = askPickMeta(pick.ask);
+  if (!host || (wanted.length && !hits.length)) {
+    host = askPickFallback(steps, ask);
+    feed.append(host);
+    hits = wanted.length ? askPickMatch(host, wanted) : [];
+  } else {
+    const meta = askPickMeta(ask);
     if (!askPickText(host).includes(meta)) {
       const line = el("div", "askmeta");
       line.append(mdRender(meta, chatFeedAt()));
-      const bb = host.querySelector && host.querySelector(".bb");
-      (bb || host).append(line);
+      (host.querySelector(".bb") || host).append(line);
     }
   }
+  host.dataset.choiceKey = key;
+  if (!confirmed) pick.hostKey = host.dataset.messageKey || "";
   const marks = [];
+  pick.choices = pick.choices || {};
   for (const hit of hits) {
-    hit.li.classList.add("casklit");
-    const said = askPickWord(hit.pick);
-    const mark = el("button", "caskpick");
-    mark.type = "button";
-    mark.setAttribute("role", "checkbox");
-    mark.setAttribute("aria-label", "Ответить «" + said + "»");
+    const step = steps.find((step) => step.fork === hit.pick.fork);
     const fork = hit.pick.fork;
-    const defaults = hit.pick.scenario ? (hit.pick.scenario.explicit ? hit.pick.scenario.current || [] : hit.pick.scenario.ids) : [];
-    const selected = Object.hasOwn(pick.choices, fork) ? pick.choices[fork] : defaults;
+    const selected = confirmed ? ((confirmed.questions || []).find((q) => q.fork === fork) || {}).ids || []
+      : Object.hasOwn(pick.choices, fork) ? pick.choices[fork] : askPickDefaults(step);
+    const mark = el("input", "caskpick");
+    mark.type = step.multi ? "checkbox" : "radio";
+    mark.name = "chat-choice-" + key + "-" + fork;
+    mark.disabled = Boolean(confirmed);
+    mark.setAttribute("aria-label", "Ответить «" + askPickWord(hit.pick) + "»");
     askPickMark(mark, selected.includes(hit.pick.id || String(hit.pick.num)));
-    mark.addEventListener("click", (ev) => {
+    if (!confirmed) mark.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      const on = !mark.classList.contains("on");
-      if (!hit.pick.multi) for (const own of marks) if (own.pick.fork === fork) askPickMark(own.mark, false);
+      const on = step.multi ? !mark.classList.contains("on") : true;
+      if (!step.multi) for (const own of marks) if (own.pick.fork === fork) askPickMark(own.mark, false);
       askPickMark(mark, on);
       pick.choices[fork] = marks.filter((own) => own.pick.fork === fork && own.mark.classList.contains("on")).map((own) => own.pick.id || String(own.pick.num));
-      pick.attached[fork] = true;
       askPickBuild(pick, marks);
     });
+    hit.li.classList.add("casklit");
+    hit.li.onclick = confirmed ? null : (ev) => {
+      if (ev.target.closest("a,button,input")) return;
+      mark.click();
+    };
     hit.li.prepend(mark);
     marks.push({ mark, pick: hit.pick });
   }
-  for (const step of steps.filter((step) => step.scenario)) {
-    const attach = el("button", "btn attach-selection", "Прикрепить выбор «" + step.fork + "»");
-    attach.type = "button";
-    attach.addEventListener("click", () => { pick.attached[step.fork] = true; askPickBuild(pick, marks); });
-    host.append(attach);
-  }
-  askPickBuild(pick, marks);
+  return marks;
+}
 
+function askPickRemember(pick, selection) {
+  if (!pick.ask) return;
+  const key = askPickKey(pick.ask);
+  pick.history = (pick.history || []).filter((record) => askPickKey(record.ask) !== key);
+  pick.history.push({ ask: pick.ask, selection, hostKey: pick.hostKey, confirmed: false });
+  askPickSave(pick.addr, pick);
+}
+
+function askPickConfirm(pick, selection) {
+  const record = (pick.history || []).slice().reverse().find((record) => sameSelection(record.selection, selection));
+  if (!record) return;
+  record.confirmed = true;
+  if (askPickKey(record.ask) === askPickKey(pick.ask)) {
+    pick.on = false;
+    pick.selection = null;
+    pick.choices = {};
+  }
+  askPickSave(pick.addr, pick);
 }
 
 // Плашка запертого вопроса (DK-1300, случай 03): журнал уведомителя запер
@@ -15162,41 +15210,34 @@ function askPickPut(ta, state, said) {
   state.draft = ta.value;
 }
 
-function askPickInput(state, text) { state.draft = text; }
+function askPickInput(state, text) { state.draft = text; askPickRender(state); }
 
 function askPickBuild(pick, marks) {
   const questions = [];
+  let recommended = true;
   for (const step of askCardSteps(pick.ask)) {
-    if (!pick.attached[step.fork]) continue;
+    if (!step.fork || !(step.options || []).length) continue;
     const selected = marks.filter((own) => own.pick.fork === step.fork && own.mark.classList.contains("on"));
     if (!step.scenario && !selected.length) continue;
+    const ids = selected.map((own) => own.pick.id || String(own.pick.num));
+    const defaults = askPickRecommended(step);
+    if (ids.length !== defaults.length || ids.some((id) => !defaults.includes(id))) recommended = false;
     questions.push({ fork: step.fork, snapshot: step.scenario ? step.scenario.snapshot : step.snapshot,
-      ids: selected.map((own) => own.pick.id || String(own.pick.num)), labels: selected.map((own) => own.pick.label) });
+      ids, labels: selected.map((own) => own.pick.label) });
   }
   pick.selection = questions.length ? { task: pick.ask.task, tree: pick.ask.tree, questions } : null;
+  pick.recommended = recommended;
   askPickSave(pick.addr, pick);
   askPickRender(pick);
 }
 
 function askPickRender(pick) {
-  if (!pick.preview) return;
-  pick.preview.replaceChildren();
-  if (!pick.selection) return;
-  const card = selectionCard(pick.selection);
-  const remove = el("button", "btn", "Убрать выбор из сообщения");
-  remove.type = "button";
-  remove.addEventListener("click", () => { pick.selection = null; pick.attached = {}; askPickSave(pick.addr, pick); askPickRender(pick); });
-  pick.preview.append(card, remove);
-}
-
-function selectionCard(selection) {
-  const card = el("details", "selection-attachment");
-  card.open = true;
-  card.append(el("summary", "", "Выбор: " + selection.task));
-  for (const q of selection.questions || []) {
-    card.append(el("p", "", "«" + q.fork + "»: " + (q.ids.length ? (q.labels && q.labels.length ? q.labels : q.ids).join(", ") : "отказ от всех")));
-  }
-  return card;
+  if (!pick.send) return;
+  const choosing = Boolean(pick.on && pick.selection);
+  const recommendation = choosing && !String(pick.draft || "").trim() && pick.recommended;
+  pick.send.textContent = choosing ? String(pick.draft || "").trim() ? "Выбрать и обсудить" : recommendation ? "По рекомендации" : "Мой вариант" : "Отправить";
+  pick.send.classList.toggle("choice-send", choosing);
+  pick.send.classList.toggle("choice-recommended", recommendation);
 }
 
 function selectionMessage(text) {
@@ -15217,8 +15258,8 @@ function askPickRead(addr) {
 function askPickSave(addr, pick) {
   const key = "devkit.askdraft." + addr;
   try {
-    if (!pick || (!pick.selection && !pick.proposalDraft && !Object.keys(pick.choices || {}).length)) localStorage.removeItem(key);
-    else localStorage.setItem(key, JSON.stringify({ on: pick.on, ask: pick.ask, selection: pick.selection, choices: pick.choices, attached: pick.attached,
+    if (!pick || (!pick.selection && !pick.proposalDraft && !(pick.history || []).length && !Object.keys(pick.choices || {}).length)) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify({ on: pick.on, ask: pick.ask, selection: pick.selection, choices: pick.choices, history: pick.history, recommended: pick.recommended,
       put: pick.put, putStart: pick.putStart, selected: pick.selected, ordinary: pick.ordinary, touched: pick.touched, proposalDraft: pick.proposalDraft }));
   } catch (err) {}
 }
@@ -15227,6 +15268,7 @@ function askPickSave(addr, pick) {
 // экрана меняются вместе, порознь они разошлись бы.
 function askPickMark(mark, on) {
   mark.classList.toggle("on", on);
+  mark.checked = Boolean(on);
   mark.setAttribute("aria-checked", on ? "true" : "false");
 }
 

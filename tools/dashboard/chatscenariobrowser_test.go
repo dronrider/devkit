@@ -17,6 +17,10 @@ import (
 	"time"
 )
 
+func TestChatChoiceComposer(t *testing.T) {
+	scenarioBrowser(t, "testdata/chat_choice_browser.mjs", true)
+}
+
 func TestScenarioBrowserEmbedded(t *testing.T) {
 	scenarioBrowser(t, "testdata/scenario_browser.mjs", false)
 }
@@ -42,6 +46,7 @@ func scenarioBrowser(t *testing.T, script string, realQuestion bool) {
 		t.Skip("playwright недоступен; задать NODE_PATH")
 	}
 	st := newScenarioStand(t)
+	putDoc(t, st.e.proj, "docs/TASKS-archive.md", "# Архив задач\n")
 	shown := st.ask(t)
 	transcript := plainTalk
 	writeQuestion := func(ask agentAsk) {

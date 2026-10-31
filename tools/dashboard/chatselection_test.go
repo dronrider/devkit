@@ -415,3 +415,13 @@ func TestSelectionOriginalProtectionStillApplies(t *testing.T) {
 		t.Fatal("защищённый исходный адрес изменён")
 	}
 }
+
+func TestSelectionReplyKeepsOtherAttachments(t *testing.T) {
+	text := "<screenshot file=\"/tmp/choice.png\">\nвставлен снимок экрана\n</screenshot>\n<fragment file=\"/tmp/choice.txt\">\nвставлен фрагмент 5 КБ\n</fragment>\nпояснение"
+	wire := (chat.SelectionMessage{Version: 1, Text: text, Selection: &chat.Selection{Task: "XR-4", Questions: []chat.SelectedQuestion{{Fork: "сценарии", Snapshot: "sc1-test", IDs: []string{"СЦ-1"}}}}}).Wire()
+	item := reply{Role: "user", Text: wire}
+	projectPanelReply(&item)
+	if item.Text != "пояснение" || item.Wire != wire || item.Selection == nil || len(item.Shots) != 1 || item.Shots[0] != "/tmp/choice.png" || len(item.Frags) != 1 || item.Frags[0] != "/tmp/choice.txt" {
+		t.Fatalf("выбор потерял прочие вложения: %+v", item)
+	}
+}

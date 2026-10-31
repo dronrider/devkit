@@ -325,9 +325,9 @@ const settleMove = async () => {
   const ta = sayOf(panel);
   click(picksOf(panel)[3]);
   if (ta.value !== "") fail("строка ответа не собралась: " + JSON.stringify(ta.value));
-  deepBtn(byClass(panel, "crow"), "Отправить").handlers.click({});
+  deepBtn(byClass(panel, "crow"), "Мой вариант").handlers.click({});
   await settle();
-  if (now.said.length !== 1 || now.said[0].text !== "" || now.said[0].selection.questions[0].fork !== "ответ" || now.said[0].selection.questions[0].ids[0] !== "2") {
+  if (now.said.length !== 1 || now.said[0].text !== "" || now.said[0].selection.questions.find((q) => q.fork === "ответ")?.ids[0] !== "2") {
     fail("ответ уехал не обычной репликой чата: " + JSON.stringify(now.said));
   }
   if (ta.value !== "") fail("поле ввода не опустело после отправки: " + JSON.stringify(ta.value));
@@ -350,7 +350,6 @@ const settleMove = async () => {
   const ta = sayOf(panel);
   click(picksOf(panel)[0]);
   if (ta.value !== "") fail("строка ответа не собралась перед снятием признака");
-  click(deepBtn(panel, "Убрать выбор из сообщения"));
   now.ask = null;
   await settleMove();
   if (picksOf(panel).length) fail("галочки остались после снятого признака");

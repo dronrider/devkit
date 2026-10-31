@@ -233,6 +233,13 @@ func projectPanelReply(item *reply) {
 	}
 	if message, ok := chat.ReadSelectionMessage(item.Text); ok {
 		item.Wire, item.Text, item.Selection = item.Text, message.Text, message.Selection
+		if w := cutWraps(message.Text); len(w.shots) > 0 || len(w.frags) > 0 || w.pick != "" || w.sel != "" {
+			item.Text = w.rest
+			item.Shots = append(item.Shots, w.shots...)
+			item.Frags = append(item.Frags, w.frags...)
+			item.Pick, item.PickScreen = w.pick, w.screen
+			item.Sel, item.SelFile = w.sel, w.file
+		}
 		return
 	}
 	const prefix = "Ответ панели обработан taskctl: "

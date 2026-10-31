@@ -15235,7 +15235,18 @@ function askPickRender(pick) {
   if (!pick.send) return;
   const choosing = Boolean(pick.on && pick.selection);
   const recommendation = choosing && !String(pick.draft || "").trim() && pick.recommended;
-  pick.send.textContent = choosing ? String(pick.draft || "").trim() ? "Выбрать и обсудить" : recommendation ? "По рекомендации" : "Мой вариант" : "Отправить";
+  let caption = pick.send.querySelector(".choice-caption");
+  if (!caption) {
+    caption = el("span", "choice-caption");
+    pick.send.replaceChildren(caption);
+  }
+  caption.textContent = choosing ? String(pick.draft || "").trim() ? "Выбрать и обсудить" : recommendation ? "По рекомендации" : "Мой вариант" : "Отправить";
+  const border = pick.send.querySelector(".choice-border");
+  if (choosing && !border) {
+    const ring = el("span", "choice-border");
+    ring.setAttribute("aria-hidden", "true");
+    pick.send.append(ring);
+  } else if (!choosing && border) border.remove();
   pick.send.classList.toggle("choice-send", choosing);
   pick.send.classList.toggle("choice-recommended", recommendation);
 }

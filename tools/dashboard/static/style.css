@@ -1228,12 +1228,14 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .cbox textarea{display:block;width:100%;min-height:44px;background:none;border:none;color:var(--tx);font:400 13.5px/1.5 var(--sans);resize:vertical;outline:none}
 .cbox .crow{display:flex;align-items:center;gap:10px;margin-top:8px;justify-content:flex-end;flex-wrap:wrap;min-width:0}
 .csend{max-width:100%;white-space:normal}
-@property --choice-angle{syntax:"<angle>";initial-value:0deg;inherits:false}
-.choice-send{--choice-base:oklch(0.505 0.145 258);--choice-light:oklch(0.83 0.085 245);border:3px solid transparent;background:linear-gradient(var(--acc),var(--acc)) padding-box,conic-gradient(from var(--choice-angle),var(--choice-base) 0deg 240deg,var(--choice-light) 275deg 315deg,var(--choice-base) 350deg 360deg) border-box;animation:choice-border 2.8s linear infinite}
+.choice-send{--choice-base:oklch(0.505 0.145 258);--choice-light:oklch(0.83 0.085 245);position:relative;isolation:isolate;border:3px solid transparent;background:var(--acc)}
 .choice-recommended{--choice-base:oklch(0.53 0.17 25);--choice-light:oklch(0.86 0.075 25)}
 .choice-send:hover{border-color:transparent}
-@keyframes choice-border{to{--choice-angle:360deg}}
-@media (prefers-reduced-motion:reduce){.choice-send{animation:none;background:linear-gradient(var(--acc),var(--acc)) padding-box,linear-gradient(var(--choice-base),var(--choice-base)) border-box}}
+.choice-border{position:absolute;inset:-3px;z-index:-1;overflow:hidden;border-radius:inherit;background:var(--choice-base);pointer-events:none}
+.choice-border::before{content:"";position:absolute;left:50%;top:50%;width:200%;aspect-ratio:1;background:conic-gradient(var(--choice-base) 0deg 240deg,var(--choice-light) 275deg 315deg,var(--choice-base) 350deg 360deg);transform:translate(-50%,-50%) rotate(0turn);animation:choice-border 2.8s linear infinite;will-change:transform}
+.choice-border::after{content:"";position:absolute;inset:3px;border-radius:6px;background:var(--acc)}
+@keyframes choice-border{to{transform:translate(-50%,-50%) rotate(1turn)}}
+@media (prefers-reduced-motion:reduce){.choice-border::before{display:none;animation:none}}
 .cbox .cmodel{flex:1 1 0;max-width:100%}
 .cbox .cdsel{flex:1 1 auto;width:100%;min-width:0;max-width:100%}
 .cbox .cclips:empty{display:none}

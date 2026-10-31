@@ -34,10 +34,14 @@ try {
     await page.screenshot({ path: process.env.DASHBOARD_CHOICE_SCREENSHOT });
     await page.setViewportSize({ width: 1280, height: 720 });
   }
-  const style = await send.evaluate((n) => { const s = getComputedStyle(n); return [s.borderTopWidth, s.animationDuration, s.animationTimingFunction, s.animationIterationCount]; });
+  assert.equal(await send.locator(".choice-border").count(), 1, "у рамки есть отдельный слой бегунка");
+  const style = await send.evaluate((n) => { const s = getComputedStyle(n); const a = getComputedStyle(n.querySelector(".choice-border"), "::before"); return [s.borderTopWidth, a.animationDuration, a.animationTimingFunction, a.animationIterationCount]; });
   assert.deepEqual(style, ["3px", "2.8s", "linear", "infinite"]);
+  const frameProperties = await send.evaluate((n) => n.getAnimations({ subtree: true }).flatMap((a) => a.effect.getKeyframes()).flatMap(Object.keys));
+  assert.ok(frameProperties.includes("transform"), "бегунок вращается отдельным слоем");
+  assert.ok(frameProperties.every((name) => ["offset", "computedOffset", "easing", "composite", "transform", "opacity"].includes(name)), "анимация меняет только свойства композитора");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  assert.equal(await send.evaluate((n) => getComputedStyle(n).animationName), "none");
+  assert.equal(await send.evaluate((n) => getComputedStyle(n.querySelector(".choice-border"), "::before").animationName), "none");
   await page.emulateMedia({ reducedMotion: "no-preference" });
   const submit = async (name, status = 200) => {
     const response = page.waitForResponse((r) => r.url().endsWith("/say") && r.request().method() === "POST");

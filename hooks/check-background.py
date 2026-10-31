@@ -79,6 +79,7 @@ CLAUDE_CODE_SESSION_ID чужой сессии. Своего значения к
                           чем рубеж считает эту сессию и что из этого следует
 """
 import os
+import re
 import sys
 
 import hookio
@@ -98,7 +99,7 @@ BACKGROUND = "run_in_background"
 # Список живёт тут же, где и отказ о нём, и пополняется правкой одного модуля.
 LONG_STEPS = (("shipctl", "merge"), ("shipctl", "ship"), ("shipctl", "revert"),
               ("taskctl", "rehearse"), ("obeycheck",), ("regcheck",))
-# Слово переживаемого шага: `cmdout --detach` перед командой снимает отказ.
+# Слово переживаемого шага: `cmdout --detach` снимает отказ со своего сегмента.
 DETACH_MARK = "--detach"
 
 
@@ -141,17 +142,49 @@ def called_with(tool_input):
 
 
 def bare_long_step(command):
-    """Голый ли вызов долгой команды конвейера, и какой. Слова сравниваются по
-    разбиению по пробелам, и пара ловится в любом сегменте составной команды:
-    `cd X && shipctl merge` гибнет той же смертью. Слово переживаемого шага
-    снимает отказ: под `cmdout --detach` команда и должна пережить голову."""
-    words = command.split()
+    """Голый ли вызов долгой команды конвейера, и какой. Команда режется на
+    сегменты по переводам строк и операторам && ; | и $(, и пара ловится
+    только в позиции команды сегмента: первые слова после начала строки,
+    оператора или присваиваний окружения. Без этого отбит безобидный текст,
+    `echo план: shipctl merge` и heredoc с той же строкой. Слово переживаемого
+    шага снимает отказ с одного сегмента: соседний сегмент составной команды
+    гибнет той же смертью и проверяется как обычно."""
+    for line in command.split("\n"):
+        for part in split_ops(line):
+            step = step_of(part)
+            if step:
+                return step
+    return ""
+
+
+def split_ops(text):
+    parts = [text]
+    for sep in ("&&", ";", "|", "$("):
+        parts = [piece for part in parts for piece in part.split(sep)]
+    return parts
+
+
+ASSIGN_RE = re.compile(r"^[A-Za-z_]\w*=")
+
+
+def step_of(part):
+    """Голый ли долгий шаг в одном сегменте. Позиция команды стоит после
+    присваиваний окружения (`GOWORK=off regcheck ...`), а у обёртки cmdout
+    после её имени и ключей: синхронный `cmdout shipctl merge` гибнет той же
+    смертью, и отказ про него не меняется."""
+    words = part.split()
     if DETACH_MARK in words:
         return ""
-    for i in range(len(words)):
-        for step in LONG_STEPS:
-            if words[i:i + len(step)] == list(step):
-                return " ".join(step)
+    i = 0
+    while i < len(words) and ASSIGN_RE.match(words[i]):
+        i += 1
+    if i < len(words) and words[i] == "cmdout":
+        i += 1
+        while i < len(words) and words[i].startswith("-"):
+            i += 1
+    for step in LONG_STEPS:
+        if words[i:i + len(step)] == list(step):
+            return " ".join(step)
     return ""
 
 

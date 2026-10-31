@@ -261,6 +261,35 @@ class TestLongStep(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("shipctl merge", r.stderr)
 
+    def test_step_words_in_text_are_not_refused(self):
+        # Замечание ревью: пара ловится только в позиции команды сегмента.
+        # Иначе голова в headless тратит круг на перекладку безобидного текста,
+        # а regcheck в аргументе digest это слово словаря, а не команда.
+        for command in ("echo план: shipctl merge DK-1",
+                        "cat <<'EOF'\nплан: shipctl merge DK-1\nEOF",
+                        "cmdout digest regcheck"):
+            r = run("--hook", env=HEADLESS, input=event("Bash", command=command))
+            self.assertEqual(r.returncode, 0, command)
+            self.assertEqual(r.stderr, "", command)
+
+    def test_detach_covers_only_its_segment(self):
+        # Замечание ревью: слово переживаемого шага снимает отказ с одного
+        # сегмента, а соседний голый regcheck гибнет по потолку Bash той же
+        # смертью, которую задача и закрывает.
+        r = run("--hook", env=HEADLESS,
+                input=event("Bash", command="cmdout --detach shipctl merge DK-1"
+                                      " && regcheck -- devkitctl test hooks"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("cmdout --detach regcheck", r.stderr)
+
+    def test_env_assignment_keeps_step_in_command_position(self):
+        # Присваивание окружения перед командой позицией команды не считается:
+        # шаг под ним остаётся голым и обязан идти переживающим.
+        r = run("--hook", env=HEADLESS,
+                input=event("Bash", command="GOWORK=off regcheck -- devkitctl test hooks"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("cmdout --detach regcheck", r.stderr)
+
     def test_bare_step_with_background_flag_names_both_rules(self):
         # Фон и долгий шаг в одном вызове: отказ фона первый, он строже и
         # называет общую замену.

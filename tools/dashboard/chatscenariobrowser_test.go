@@ -21,6 +21,10 @@ func TestChatChoiceComposer(t *testing.T) {
 	scenarioBrowser(t, "testdata/chat_choice_browser.mjs", true)
 }
 
+func TestChatChoiceComposerPollRecovery(t *testing.T) {
+	scenarioBrowser(t, "testdata/chat_choice_poll_browser.mjs", true)
+}
+
 func TestScenarioBrowserEmbedded(t *testing.T) {
 	scenarioBrowser(t, "testdata/scenario_browser.mjs", false)
 }

@@ -14660,8 +14660,8 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
     // (живой случай DK-964). Индикатор занятости рядом переживает то же самое.
     try {
       const r = await api(chatsURL(st.project || project) + "/" + encodeURIComponent(sid) + "/ask");
-      if (stop) return;
-      let ask = (r.ok && r.body.ask) || null;
+      if (stop || !r.ok) return;
+      let ask = r.body.ask || null;
       if (pick.proposalDraft && (ta.value || pick.proposalDraft.decisions.length)) ask = pick.ask;
       else if (askPickKey(pick.ask) !== askPickKey(ask)) {
         pick.selected = null;
@@ -14673,11 +14673,11 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
         askPickRender(pick);
         pick.proposalDraft = null;
       }
-      const continuation = (r.ok && r.body.continuation) || "";
+      const continuation = r.body.continuation || "";
       pick.continuation = continuation;
       // Запертость журнала приходит тем же ответом и без разобранного вопроса:
       // плашка состояния стоит в том же боксе, что и блок (DK-1300, случай 03).
-      const stuck = (r.ok && r.body.stuck) || "";
+      const stuck = r.body.stuck || "";
       // Признак ожидания и есть тот повод, по которому панель вешает галочки
       // на строки вариантов в ленте: заход спросил человека и стоит, пока
       // ответа нет (DK-864, форма DK-1374). Слова реплики для этого не
@@ -14693,9 +14693,9 @@ function watchClientAsk(project, st, box, feed, ta, pick) {
     } catch (err) {
       // Молчим: следующий шаг всё равно планируется ниже, а строка в консоли
       // на каждый обрыв связи только шумела бы.
+    } finally {
+      if (!stop) next = pollOnce(ASK_POLL, () => { next = null; tick().catch(console.error); });
     }
-    if (stop) return;
-    next = pollOnce(ASK_POLL, () => { next = null; tick().catch(console.error); });
   };
   tick().catch(console.error);
 }

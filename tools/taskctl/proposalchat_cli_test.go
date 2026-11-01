@@ -86,6 +86,9 @@ func TestProposalChatActualCLI(t *testing.T) {
 	if err = json.Unmarshal([]byte(out), &q); err != nil || q.Proposal == nil || len(q.Proposal.Sources) != 2 {
 		t.Fatalf("question: %s %v", out, err)
 	}
+	if !strings.Contains(q.Text, "подготовлена") || !strings.Contains(q.Text, "подтвердите") {
+		t.Fatalf("вопрос не называет задачу подготовленной: %s", q.Text)
+	}
 	t.Setenv("DEVKIT_GROOM_SOURCE", "XR-008")
 	t.Setenv("DEVKIT_GROOM_MODE", "run")
 	if denied, err := run(nil, "run", "XR-001"); err == nil || !strings.Contains(denied, "только принятым результатам add") {

@@ -53,14 +53,17 @@ func proposalChatQuestion(root, anchor string, also []string) (chat.Question, er
 			}
 		}
 		if len(s.Proposals) == 0 {
-			return chat.Question{}, fmt.Errorf("%s: нет нерешённых предложений", id)
+			return chat.Question{}, fmt.Errorf("%s: нет неподтверждённых карточек", id)
 		}
 		shown.Sources = append(shown.Sources, s)
 	}
 	if err := shown.Validate(); err != nil {
 		return chat.Question{}, err
 	}
-	return chat.Question{Text: "Какие предложения принять или отклонить?", Multi: true, Proposal: &shown}, nil
+	// Витрина называет карточку add подготовленной задачей (DK-1545):
+	// подтверждение проверяет описание заранее, чтобы исполнение шло без
+	// вопросов к человеку.
+	return chat.Question{Text: "Задача подготовлена. Проверьте описание и подтвердите или отклоните.", Multi: true, Proposal: &shown}, nil
 }
 
 func cmdProposalChatAsk(root, anchor string, also []string, d askDeps, env func(string) string) (string, error) {
@@ -176,7 +179,7 @@ func cmdProposalChatAnswer(root, anchor string, input []byte, opts CommitOpts) (
 				}
 			}
 			if view.Basis != source.Basis || !reflect.DeepEqual(cards, source.Proposals) {
-				return "", fmt.Errorf("%s: показанные предложения изменились", source.Source)
+				return "", fmt.Errorf("%s: показанные карточки изменились", source.Source)
 			}
 		}
 		data, err := json.Marshal(req)

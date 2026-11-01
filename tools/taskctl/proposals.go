@@ -96,7 +96,7 @@ func cmdDraftProposalsSave(root, id, base string, input []byte) (string, error) 
 	seen := map[string]bool{}
 	for _, p := range incoming.Proposals {
 		if seen[p.ID] {
-			return "", fmt.Errorf("повтор предложения %s", p.ID)
+			return "", fmt.Errorf("повтор карточки %s", p.ID)
 		}
 		seen[p.ID] = true
 		if p.Status != "" || p.Result != nil {
@@ -105,7 +105,7 @@ func cmdDraftProposalsSave(root, id, base string, input []byte) (string, error) 
 		if i, ok := index[p.ID]; ok {
 			previous := old.Proposals[i]
 			if previous.Status != "" {
-				return "", fmt.Errorf("%s: решённое предложение изменить нельзя", p.ID)
+				return "", fmt.Errorf("%s: решённую карточку изменить нельзя", p.ID)
 			}
 			if p.Revision != previous.Revision+1 || reflect.DeepEqual(p, previous) {
 				return "", fmt.Errorf("%s: нужна следующая редакция", p.ID)
@@ -187,7 +187,7 @@ func cmdDraftProposalReject(root, id, proposal, base, reason string) (string, er
 		}
 	}
 	if !found {
-		return "", fmt.Errorf("предложение %s не найдено", proposal)
+		return "", fmt.Errorf("карточка %s не найдена", proposal)
 	}
 	if allDone {
 		state.State = "history"

@@ -62,8 +62,21 @@ func proposalChatQuestion(root, anchor string, also []string) (chat.Question, er
 	}
 	// Витрина называет карточку add подготовленной задачей (DK-1545):
 	// подтверждение проверяет описание заранее, чтобы исполнение шло без
-	// вопросов к человеку.
-	return chat.Question{Text: "Задача подготовлена. Проверьте описание и подтвердите или отклоните.", Multi: true, Proposal: &shown}, nil
+	// вопросов к человеку. Без карточки add вопрос говорит о карточках
+	// во множественном числе, задачу он не называет.
+	addCard := false
+	for _, s := range shown.Sources {
+		for _, p := range s.Proposals {
+			if p.Outcome == "add" {
+				addCard = true
+			}
+		}
+	}
+	text := "Карточки подготовлены. Проверьте описания и подтвердите или отклоните их."
+	if addCard {
+		text = "Задача подготовлена. Проверьте описание и подтвердите или отклоните."
+	}
+	return chat.Question{Text: text, Multi: true, Proposal: &shown}, nil
 }
 
 func cmdProposalChatAsk(root, anchor string, also []string, d askDeps, env func(string) string) (string, error) {

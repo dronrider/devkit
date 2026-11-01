@@ -26,7 +26,7 @@ type confirmationPlan struct {
 func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (confirmationPlan, error) {
 	var out confirmationPlan
 	if len(request.Decisions) == 0 {
-		return out, fmt.Errorf("не выбрано ни одно предложение")
+		return out, fmt.Errorf("не выбрана ни одна карточка")
 	}
 	sort.Slice(request.Snapshots, func(i, j int) bool { return request.Snapshots[i].Source < request.Snapshots[j].Source })
 	sort.Slice(request.Decisions, func(i, j int) bool {
@@ -137,7 +137,7 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 				}
 			}
 			if !found {
-				return out, fmt.Errorf("%s: предложение %s не найдено", snap.Source, d.Proposal)
+				return out, fmt.Errorf("%s: карточка %s не найдена", snap.Source, d.Proposal)
 			}
 		}
 	}

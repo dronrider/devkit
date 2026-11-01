@@ -89,9 +89,22 @@ func TestProposalChatActualCLI(t *testing.T) {
 	if !strings.Contains(q.Text, "подготовлена") || !strings.Contains(q.Text, "подтвердите") {
 		t.Fatalf("вопрос не называет задачу подготовленной: %s", q.Text)
 	}
+	// XR-009 несёт только удаление, и вопрос о нём говорит о карточках,
+	// а не о задаче (DK-1545, замечание ревью 3).
+	dropOut, err := run(nil, "draft", "proposals", "ask", "XR-009")
+	if err != nil {
+		t.Fatalf("ask без add: %s %v", dropOut, err)
+	}
+	var dropOnly chat.Question
+	if err = json.Unmarshal([]byte(dropOut), &dropOnly); err != nil || dropOnly.Proposal == nil {
+		t.Fatalf("question без add: %s %v", dropOut, err)
+	}
+	if !strings.Contains(dropOnly.Text, "Карточки подготовлены") || strings.Contains(dropOnly.Text, "Задача") {
+		t.Fatalf("вопрос без карточки add называет задачу: %s", dropOnly.Text)
+	}
 	t.Setenv("DEVKIT_GROOM_SOURCE", "XR-008")
 	t.Setenv("DEVKIT_GROOM_MODE", "run")
-	if denied, err := run(nil, "run", "XR-001"); err == nil || !strings.Contains(denied, "только принятым результатам add") {
+	if denied, err := run(nil, "run", "XR-001"); err == nil || !strings.Contains(denied, "только подтверждённым результатам add") {
 		t.Fatalf("run before confirmation: %s %v", denied, err)
 	}
 	t.Setenv("DEVKIT_GROOM_SOURCE", "")

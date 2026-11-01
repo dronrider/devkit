@@ -28,6 +28,13 @@ await sandbox.refresh(); await settle();
 const groups = byId.get("groups");
 let cards = allByClass(groups, "draft-proposal");
 if (cards.length !== 2) fail("две карточки не показаны");
+function cardText(node) {
+  let out = typeof node.textContent === "string" ? node.textContent : "";
+  for (const kid of node.children || []) out += "\n" + cardText(kid);
+  return out;
+}
+if (!cardText(cards[0]).includes("Подготовлена")) fail("приписка до решения не названа подготовленной");
+if (!cardText(cards[1]).includes("Подготовлено")) fail("удаление до решения не названо подготовленным");
 function field(card, label) {
   const wrap = allByClass(card, "dfield").find((n) => n.children[0] && n.children[0].textContent === label);
   if (!wrap) fail("нет поля " + label);
@@ -35,7 +42,7 @@ function field(card, label) {
 }
 const text = field(cards[0], "Текст результата");
 text.value = "поправленная приписка"; text.handlers.input({});
-const save = deepBtn(cards[0], "Сохранить предложение"); if (!save) fail("нет сохранения");
+const save = deepBtn(cards[0], "Сохранить карточку"); if (!save) fail("нет сохранения");
 save.handlers.click({}); await settle();
 if (writes.length !== 1 || writes[0].base !== "s1" || writes[0].proposal.text !== "поправленная приписка" || writes[0].proposal.revision !== 2) fail("правка не доехала");
 cards = allByClass(groups, "draft-proposal");
@@ -43,4 +50,6 @@ const reason = field(cards[1], "Причина отказа"); reason.value = "�
 const reject = deepBtn(cards[1], "Отклонить"); if (!reject) fail("нет отказа");
 reject.handlers.click({}); await settle();
 if (writes.length !== 2 || writes[1].base !== "s2" || writes[1].proposal !== "p2" || writes[1].reason !== "не относится") fail("отказ не доехал");
+cards = allByClass(groups, "draft-proposal");
+if (!cardText(cards[1]).includes("Отклонено")) fail("отклонённое удаление не названо отклонённым");
 console.log("карточки правятся и отклоняются");

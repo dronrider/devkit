@@ -40,7 +40,7 @@ import (
 // mode называет исход записи (DK-1043): "groom" оставляет заказ прежним, а
 // "run" дописывает хвост про продолжение выполнением, groomRunTail.
 func groomPrompt(id, ask, mode string) string {
-	prompt := "Проведи груминг " + id + ". Следуй действующему определению типа записи, сохрани предложения и спроси человека об их применении в этом разговоре. Сценарии интервью не подтверждают применение предложений"
+	prompt := "Проведи груминг " + id + ". Следуй действующему определению типа записи, сохрани подготовленные карточки и спроси человека об их применении в этом разговоре. Сценарии интервью не подтверждают применение карточек"
 	if mode == draftModeRun {
 		prompt += groomRunTail(id)
 	}
@@ -78,7 +78,7 @@ func draftMode(v string) (string, bool) {
 // строкой на доске. Три других исхода (приписка, отложен, удалён) заказ
 // останавливает: строки нет, и продолжать нечем.
 func groomRunTail(id string) string {
-	return ". До подтверждения предложений не начинай выполнение. После подтверждения прочитай сохранённые результаты " + id + " через taskctl draft proposals и продолжай только принятые исходы add по их ID результата. Для attach, defer и drop выполнение не запускай"
+	return ". До подтверждения карточек не начинай выполнение. После подтверждения прочитай сохранённые результаты " + id + " через taskctl draft proposals и продолжай только подтверждённые исходы add по их ID результата. Для attach, defer и drop выполнение не запускай"
 }
 
 func groomTypedPrompt(root, id, ask, mode string) (string, error) {
@@ -479,7 +479,7 @@ func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 	text := strings.TrimRight(body.Text, "\n") + "\n"
 	_, incomingSection, err := draftproposal.Material([]byte(text))
 	if err != nil || incomingSection {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "раздел предложений изменяется через карточки"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "подготовленное изменяется через карточки"})
 		return
 	}
 	restored, err := draftmeta.Restore([]byte(text), was)
@@ -905,7 +905,7 @@ func (s *server) handleDraftTypes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleDraftProposals(w http.ResponseWriter, r *http.Request) {
-	found := s.findProject(w, r, "предложения черновика")
+	found := s.findProject(w, r, "карточки черновика")
 	if found == nil {
 		return
 	}
@@ -921,7 +921,7 @@ func (s *server) handleDraftProposals(w http.ResponseWriter, r *http.Request) {
 	}
 	var result json.RawMessage
 	if err = json.Unmarshal([]byte(out), &result); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "предложения не прочитались"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "карточки не прочитались"})
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -931,7 +931,7 @@ func (s *server) handleDraftProposalSave(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r, "правка предложения")
+	found := s.findProject(w, r, "правка карточки")
 	if found == nil {
 		return
 	}
@@ -945,7 +945,7 @@ func (s *server) handleDraftProposalSave(w http.ResponseWriter, r *http.Request)
 		Proposal draftproposal.Proposal `json:"proposal"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, taskTextLimit)).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверные поля предложения"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверные поля карточки"})
 		return
 	}
 	data, err := json.Marshal(struct {
@@ -965,8 +965,8 @@ func (s *server) handleDraftProposalSave(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "ответ не прочитался"})
 		return
 	}
-	result["message"] = "предложение сохранено"
-	if note := commitDocs(found.Path, boardCommitMsg(id, "правка предложения"), draftFileRel(id)); note != "" {
+	result["message"] = "карточка сохранена"
+	if note := commitDocs(found.Path, boardCommitMsg(id, "правка карточки"), draftFileRel(id)); note != "" {
 		result["note"] = note
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -976,7 +976,7 @@ func (s *server) handleDraftProposalReject(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r, "отказ предложения")
+	found := s.findProject(w, r, "отказ карточки")
 	if found == nil {
 		return
 	}
@@ -1004,8 +1004,8 @@ func (s *server) handleDraftProposalReject(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "ответ не прочитался"})
 		return
 	}
-	result["message"] = "предложение отклонено"
-	if note := commitDocs(found.Path, boardCommitMsg(id, "отказ предложения"), draftFileRel(id)); note != "" {
+	result["message"] = "карточка отклонена"
+	if note := commitDocs(found.Path, boardCommitMsg(id, "отказ карточки"), draftFileRel(id)); note != "" {
 		result["note"] = note
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -1016,7 +1016,7 @@ func (s *server) handleDraftProposalConfirm(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r, "подтверждение предложений")
+	found := s.findProject(w, r, "подтверждение карточек")
 	if found == nil {
 		return
 	}
@@ -1052,9 +1052,9 @@ func (s *server) handleDraftProposalConfirm(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "результат подтверждения не прочитался"})
 		return
 	}
-	response := map[string]any{"key": result.Key, "results": result.Results, "repeated": result.Repeated, "message": "предложения применены"}
+	response := map[string]any{"key": result.Key, "results": result.Results, "repeated": result.Repeated, "message": "карточки подтверждены и применены"}
 	if !result.Repeated && len(result.Paths) > 0 {
-		if note := commitDocs(found.Path, "docs(tasks): применение предложений разбора", result.Paths...); note != "" {
+		if note := commitDocs(found.Path, "docs(tasks): применение подтверждённых карточек", result.Paths...); note != "" {
 			response["note"] = "применено, публикация не завершена: " + note
 		}
 	}

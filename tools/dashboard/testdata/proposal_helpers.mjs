@@ -25,5 +25,5 @@ assert.throws(() => proposalAnswer(restored), /причину/);
 restored.decisions = proposalSelect(restored.shown, 'XR-1', 'reject', 'лишнее');
 assert.equal(proposalAnswer(restored).decisions.length,2);
 restored.decisions.push({source:'XR-1',proposal:'new',revision:1,action:'accept'});
-assert.throws(() => proposalAnswer(restored), /не показано/);
+assert.throws(() => proposalAnswer(restored), /не показана/);
 console.log('proposal helpers: ok');

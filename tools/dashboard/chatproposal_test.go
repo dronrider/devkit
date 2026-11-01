@@ -146,7 +146,7 @@ func TestGroomTypedPromptUsesProjectDefinition(t *testing.T) {
 	}
 	runTaskctl(t, e.proj, "draft", "meta", "XR-005", "--type", "custom")
 	prompt, err := groomTypedPrompt(e.proj, "XR-005", "", draftModeRun)
-	if err != nil || !strings.Contains(prompt, "Собери особые поля") || !strings.Contains(prompt, "принятые исходы add") {
+	if err != nil || !strings.Contains(prompt, "Собери особые поля") || !strings.Contains(prompt, "подтверждённые исходы add") {
 		t.Fatalf("%s %v", prompt, err)
 	}
 	if err = os.WriteFile(filepath.Join(dir, "custom.toml"), []byte("broken"), 0644); err != nil {
@@ -211,7 +211,7 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	unanswered := st.e.s.proposalContinuation(st.e.proj, scenarioPanelSID)
-	if !strings.Contains(unanswered, "XR-4") || !strings.Contains(unanswered, "XR-5") || !strings.Contains(unanswered, "ждёт решения") {
+	if !strings.Contains(unanswered, "XR-4") || !strings.Contains(unanswered, "XR-5") || !strings.Contains(unanswered, "подготовлено") {
 		t.Fatalf("unanswered context lost: %s", unanswered)
 	}
 	if err := chat.WriteAsk(st.e.proj, chat.TaskName("XR-4"), shownAsk); err != nil {
@@ -289,7 +289,7 @@ func TestProposalCommentThenActualApply(t *testing.T) {
 		t.Fatalf("retry delivery %v", lines)
 	}
 	continued := st.e.s.proposalContinuation(st.e.proj, scenarioPanelSID)
-	if !strings.Contains(continued, "XR-4") || !strings.Contains(continued, "XR-5") || !strings.Contains(continued, "второе") || !strings.Contains(continued, "отклонено") || !strings.Contains(continued, "ждёт решения") || !strings.Contains(continued, "не нужно") {
+	if !strings.Contains(continued, "XR-4") || !strings.Contains(continued, "XR-5") || !strings.Contains(continued, "второе") || !strings.Contains(continued, "отклонено") || !strings.Contains(continued, "подготовлено") || !strings.Contains(continued, "не нужно") {
 		t.Fatalf("multi-source continuation: %s", continued)
 	}
 	replacement := chat.Ask{Task: "XR-4", Session: scenarioPanelSID, Questions: []chat.Question{{Text: "новый вопрос"}}}

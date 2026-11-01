@@ -15853,17 +15853,17 @@ async function renderDrafts(project, works) {
   const proposalViews = await Promise.all(drafts.map((d) => api(projectBase + "/drafts/" + encodeURIComponent(d.id) + "/proposals")));
   const shownViews = proposalViews.filter((v) => v.ok && v.body.state && (v.body.state.proposals || []).some((p) => !p.status)).map((v) => v.body);
   if (proposalViews.some((v) => !v.ok)) {
-    items.push({ key: "draft-proposal-error", sign: "error", make: () => el("div", "error", "Не удалось загрузить все предложения") });
+    items.push({ key: "draft-proposal-error", sign: "error", make: () => el("div", "error", "Не удалось загрузить всё подготовленное") });
   }
   if (shownViews.length) {
     items.push({ key: "draft-proposal-shown", sign: JSON.stringify(shownViews), make: () => {
       const box = el("section", "card");
-      box.append(el("h2", "", "Предложения накопителя"));
+      box.append(el("h2", "", "Подготовленное в накопителе"));
       if (proposalViews.every((v) => v.ok)) {
-        const all = el("button", "btn", "Принять все показанные предложения");
+        const all = el("button", "btn", "Подтвердить все показанные карточки");
         all.type = "button";
         all.addEventListener("click", async () => {
-          if (shownViews.some((v) => draftProposalDirty.has(projectBase + "/drafts/" + encodeURIComponent(v.id)))) { sayResult("Сначала сохраните правки предложений", true); return; }
+          if (shownViews.some((v) => draftProposalDirty.has(projectBase + "/drafts/" + encodeURIComponent(v.id)))) { sayResult("Сначала сохраните правки карточек", true); return; }
           await confirmDraftProposals(projectBase, shownViews);
         });
         box.append(all);
@@ -16609,6 +16609,17 @@ function watchRunning() {
 
 const draftProposalDirty = new Set();
 
+// Витрина подтверждения называет карточку add подготовленной задачей (DK-1545):
+// до решения человека статус «подготовлена», после решения «подтверждена» или
+// «отклонена». Удаление говорит в среднем роде, неизвестный исход тоже.
+const draftOutcomeTitles = { add: "Задача", attach: "Приписка", defer: "Отсрочка", drop: "Удаление" };
+function draftCardStatus(outcome, status) {
+  const feminine = outcome === "add" || outcome === "attach" || outcome === "defer";
+  if (status === "accepted") return feminine ? "Подтверждена" : "Подтверждено";
+  if (status === "rejected") return feminine ? "Отклонена" : "Отклонено";
+  return feminine ? "Подготовлена" : "Подготовлено";
+}
+
 async function confirmDraftProposals(projectBase, views, selection) {
   const snapshots = [];
   const decisions = [];
@@ -16618,7 +16629,7 @@ async function confirmDraftProposals(projectBase, views, selection) {
     snapshots.push({ source: view.id, digest: view.basis });
     for (const p of cards) decisions.push({ source: view.id, proposal: p.id, revision: p.revision, action: "accept" });
   }
-  if (!decisions.length) { sayResult("Нет предложений для приёма", true); return; }
+  if (!decisions.length) { sayResult("Нет карточек для подтверждения", true); return; }
   const result = await api(projectBase + "/drafts/proposals/confirm", { method: "POST", body: { snapshots, decisions } });
   const ids = result.ok ? (result.body.results || []).flatMap((r) => r.ids || []).join(", ") : "";
   sayResult(apiSaid(result) + (ids ? ": " + ids : ""), !result.ok);
@@ -16627,19 +16638,19 @@ async function confirmDraftProposals(projectBase, views, selection) {
 
 function draftProposalCards(base, view) {
   const section = el("section", "draft-proposals");
-  section.append(el("h2", "", "Предложения разбора"));
+  section.append(el("h2", "", "Подготовленное разбором"));
   const state = view && view.state || {};
   const cards = Array.isArray(state.proposals) ? state.proposals : [];
   if (!cards.length) {
     const message = state.analysis === "error" ? "Не удалось разобрать запись. Можно повторить разбор." :
-      state.analysis === "empty" ? "Предложений нет. Можно оформить запись вручную." : "Предложений пока нет.";
+      state.analysis === "empty" ? "Разбор ничего не подготовил. Можно подготовить задачу вручную." : "Подготовленного пока нет.";
     section.append(el("p", "", message));
   }
-  const outcomes = { add: "Новая строка", attach: "Приписка", defer: "Отложить", drop: "Удалить" };
+  const outcomes = draftOutcomeTitles;
   const projectBase = base.slice(0, base.indexOf("/drafts/"));
   const project = decodeURIComponent(projectBase.split("/").pop());
   if (!cards.some((p) => p.__new)) {
-    const create = el("button", "btn", "Оформить предложение вручную"); create.type = "button";
+    const create = el("button", "btn", "Подготовить задачу вручную"); create.type = "button";
     create.addEventListener("click", () => {
       if (draftProposalDirty.has(base)) { sayResult("Сначала сохраните правки", true); return; }
       draftProposalDirty.add(base);
@@ -16649,27 +16660,27 @@ function draftProposalCards(base, view) {
     section.append(create);
   }
   if (cards.some((p) => !p.status)) {
-    const acceptAll = el("button", "btn", "Принять все предложения записи");
+    const acceptAll = el("button", "btn", "Подтвердить все карточки записи");
     acceptAll.type = "button";
     acceptAll.addEventListener("click", async () => {
-      if (draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку предложения", true); return; }
+      if (draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку карточки", true); return; }
       await confirmDraftProposals(projectBase, [view]);
     });
     section.append(acceptAll);
   }
   for (const proposal of cards) {
     const card = el("article", "draft-proposal");
-    card.append(el("h3", "", outcomes[proposal.outcome] || "Предложение"));
+    card.append(el("h3", "", outcomes[proposal.outcome] || "Подготовленное"));
+    const statusLine = el("p", "", draftCardStatus(proposal.outcome, proposal.status));
+    card.append(statusLine);
     if (proposal.status) {
       const receipt = proposal.result || {};
       const ids = Array.isArray(receipt.ids) ? receipt.ids : [];
-      const result = el("p", "", proposal.status === "accepted" ? "Принято" : "Отклонено");
       for (const id of ids) {
         const link = el("button", "link", id); link.type = "button";
         link.addEventListener("click", () => goKeepingChat(project + (receipt.outcome === "defer" ? "/draft/" : "/") + id));
-        result.append(document.createTextNode(" "), link);
+        statusLine.append(document.createTextNode(" "), link);
       }
-      card.append(result);
       if (proposal.title) card.append(el("p", "", proposal.title));
       if (proposal.text) card.append(el("p", "", proposal.text));
       if (proposal.rationale) card.append(el("p", "", proposal.rationale));
@@ -16709,7 +16720,7 @@ function draftProposalCards(base, view) {
     const showFields = () => { for (const item of fieldRows) item.wrap.hidden = !item.kinds.includes(value.outcome); };
     kind.addEventListener("change", () => { value.outcome = kind.value; draftProposalDirty.add(base); showFields(); });
     showFields();
-    const save = el("button", "btn", "Сохранить предложение"); save.type = "button";
+    const save = el("button", "btn", "Сохранить карточку"); save.type = "button";
     save.addEventListener("click", async () => {
       const { __new, ...fields } = value;
       const edited = { ...fields, revision: proposal.revision + 1, after: value.after.split(",").map((s) => s.trim()).filter(Boolean) };
@@ -16727,9 +16738,9 @@ function draftProposalCards(base, view) {
       sayResult(apiSaid(result), !result.ok);
       if (result.ok) { draftProposalDirty.delete(base); await refresh(); }
     });
-    const accept = el("button", "btn", "Принять предложение"); accept.type = "button";
+    const accept = el("button", "btn", "Подтвердить"); accept.type = "button";
     accept.addEventListener("click", async () => {
-      if (draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку предложения", true); return; }
+      if (draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку карточки", true); return; }
       await confirmDraftProposals(projectBase, [view], (_, p) => p.id === proposal.id);
     });
     card.append(save, cancel);
@@ -16770,7 +16781,7 @@ function draftMetadataEditor(base, meta, types, disabled) {
   save.type = "button";
   save.disabled = disabled || types.length === 0;
   save.addEventListener("click", async () => {
-    if (taskDraft.dirty || draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку записи или предложения", true); return; }
+    if (taskDraft.dirty || draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку записи или карточки", true); return; }
     save.disabled = true;
     const result = await api(base + "/meta", { method: "PUT", body: {
       type: kind.value, source: source.value, lock: lock.value,
@@ -20539,7 +20550,7 @@ function proposalDraft(shown, text = "", decisions = []) {
 
 function proposalAnswer(draft) {
   const shown = draft && draft.shown;
-  if (!shown || shown.version !== 1 || !shown.tree || !shown.anchor || !Array.isArray(shown.sources)) throw new Error("Нет показанного вопроса предложений");
+  if (!shown || shown.version !== 1 || !shown.tree || !shown.anchor || !Array.isArray(shown.sources)) throw new Error("Нет показанного вопроса");
   const sources = new Map(shown.sources.map((s) => [s.source, s]));
   if (sources.size !== shown.sources.length) throw new Error("Повтор источника");
   const used = new Set(), seen = new Set(), decisions = [];
@@ -20547,14 +20558,14 @@ function proposalAnswer(draft) {
     const source = sources.get(d.source);
     const card = source && (source.proposals || []).find((p) => p.id === d.proposal && p.revision === d.revision);
     const key = JSON.stringify([d.source, d.proposal]);
-    if (!card || seen.has(key) || !["accept", "reject"].includes(d.action)) throw new Error("Предложение не показано или выбрано повторно");
+    if (!card || seen.has(key) || !["accept", "reject"].includes(d.action)) throw new Error("Карточка не показана или выбрана повторно");
     if (d.action === "reject" && !String(d.reason || "").trim()) throw new Error("Укажите причину отказа");
     seen.add(key); used.add(d.source);
     const decision = { source: d.source, proposal: d.proposal, revision: d.revision, action: d.action };
     if (d.reason) decision.reason = d.reason;
     decisions.push(decision);
   }
-  if (!decisions.length) throw new Error("Выберите предложения");
+  if (!decisions.length) throw new Error("Выберите карточки");
   const snapshots = shown.sources.filter((s) => used.has(s.source)).map((s) => ({ source: s.source, digest: s.basis }));
   if (snapshots.some((s) => !s.digest)) throw new Error("Нет показанного снимка");
   return { anchor: shown.anchor, tree: shown.tree, snapshots, decisions };
@@ -20562,7 +20573,7 @@ function proposalAnswer(draft) {
 
 function proposalComment(draft) {
   const shown = draft && draft.shown;
-  if (!shown || shown.version !== 1 || !shown.tree || !shown.anchor || !Array.isArray(shown.sources) || !shown.sources.length) throw new Error("Нет показанного вопроса предложений");
+  if (!shown || shown.version !== 1 || !shown.tree || !shown.anchor || !Array.isArray(shown.sources) || !shown.sources.length) throw new Error("Нет показанного вопроса");
   return { mode: "comment", anchor: shown.anchor, tree: shown.tree,
     snapshots: shown.sources.map((s) => ({ source: s.source, digest: s.basis })), decisions: [] };
 }
@@ -20585,17 +20596,17 @@ function proposalPickWire(feed, ta, pick, shown) {
   box = el('div', 'msg askproposal');
   box.dataset.shown = JSON.stringify(draft.shown);
   const body = el('div', 'bb');
-  body.append(el('p', '', 'Предложения разбора. Выберите решения и отправьте ответ обычной кнопкой чата.'));
+  body.append(el('p', '', 'Задача подготовлена. Проверьте описания, отметьте решения и отправьте ответ обычной кнопкой чата.'));
   const save = () => {
     askPickSave(pick.addr, pick);
 
   };
-  const all = el('button', 'btn', 'Принять все показанные'); all.type = 'button';
+  const all = el('button', 'btn', 'Подтвердить все показанные'); all.type = 'button';
   all.addEventListener('click', () => { draft.decisions = proposalSelect(draft.shown, null, 'accept'); save(); box.remove(); proposalPickWire(feed, ta, pick, shown); });
   body.append(all);
   for (const source of draft.shown.sources) {
     body.append(el('h3', '', 'Запись ' + source.source));
-    const oneAll = el('button', 'btn', 'Принять все предложения ' + source.source); oneAll.type = 'button';
+    const oneAll = el('button', 'btn', 'Подтвердить все карточки ' + source.source); oneAll.type = 'button';
     oneAll.addEventListener('click', () => {
       draft.decisions = draft.decisions.filter((d) => d.source !== source.source).concat(proposalSelect(draft.shown, source.source, 'accept'));
       save(); box.remove(); proposalPickWire(feed, ta, pick, shown);
@@ -20603,14 +20614,15 @@ function proposalPickWire(feed, ta, pick, shown) {
     body.append(oneAll);
     for (const card of source.proposals) {
       const section = el('section', 'draft-proposal');
-      const outcomes = { add: 'Новая строка', attach: 'Приписка', defer: 'Отложить', drop: 'Удалить' };
-      section.append(el('h3', '', card.id + ', редакция ' + card.revision + ', ' + (outcomes[card.outcome] || 'Предложение')));
+      const outcomes = draftOutcomeTitles;
+      section.append(el('h3', '', card.id + ', редакция ' + card.revision + ', ' + (outcomes[card.outcome] || 'Подготовленное')));
+      section.append(el('p', '', draftCardStatus(card.outcome, '')));
       for (const [key, label] of Object.entries({ title:'Название', text:'Текст результата', rationale:'Довод', board_type:'Тип строки', rank:'Ранг', size:'Цена', accept:'Приёмка', barrier:'Барьер', assignee:'Ответственный', due:'Срок', control:'Контроль', target:'Куда приписать', reason:'Причина', until:'Вернуться до', after:'После' })) {
         if (card[key] && (!Array.isArray(card[key]) || card[key].length)) section.append(el('p', 'proposal-material', label + ': ' + (Array.isArray(card[key]) ? card[key].join(', ') : card[key])));
       }
       let current = draft.decisions.find((d) => d.source === source.source && d.proposal === card.id);
       const choose = el('select'); choose.setAttribute('aria-label', 'Решение ' + source.source + ' ' + card.id);
-      for (const [value, title] of [['','Не выбрано'],['accept','Принять'],['reject','Отклонить']]) { const o=el('option','',title); o.value=value; o.selected=(current ? current.action : '') === value; choose.append(o); }
+      for (const [value, title] of [['','Не выбрано'],['accept','Подтвердить'],['reject','Отклонить']]) { const o=el('option','',title); o.value=value; o.selected=(current ? current.action : '') === value; choose.append(o); }
       const reason = el('input'); reason.placeholder='Причина отказа'; reason.setAttribute('aria-label', 'Причина отказа ' + source.source + ' ' + card.id); reason.value=current && current.reason || '';
       const update = () => {
         draft.decisions = draft.decisions.filter((d) => d.source !== source.source || d.proposal !== card.id);
@@ -20633,10 +20645,10 @@ function sameSelection(a, b) {
 function proposalAttachment(proposal) {
   const card = el("details", "selection-attachment proposal-attachment");
   card.open = true;
-  card.append(el("summary", "", "Решения по предложениям"));
+  card.append(el("summary", "", "Решения по карточкам"));
   const entries = proposal.results || proposal.decisions || [];
   for (const d of entries) {
-    const action = d.result || (d.action === "accept" ? "принять" : "отклонить");
+    const action = d.result || (d.action === "accept" ? "подтвердить" : "отклонить");
     card.append(el("p", "", [d.source, d.proposal, action, d.reason].filter(Boolean).join(": ")));
   }
   return card;

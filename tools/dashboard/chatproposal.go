@@ -29,13 +29,36 @@ type proposalAnswer struct {
 
 func proposalAnswerInput(a proposalAnswer) ([]byte, error) {
 	if a.Anchor == "" || a.Tree == "" || len(a.Snapshots) == 0 || len(a.Decisions) == 0 {
-		return nil, fmt.Errorf("нужен контекст показанных предложений")
+		return nil, fmt.Errorf("нужен контекст показанных карточек")
 	}
 	return json.Marshal(struct {
 		Tree      string                   `json:"tree"`
 		Snapshots []draftproposal.Snapshot `json:"snapshots"`
 		Decisions []draftproposal.Decision `json:"decisions"`
 	}{a.Tree, a.Snapshots, a.Decisions})
+}
+
+// cardStatus переводит состояние карточки в слова витрины (DK-1545): до
+// решения человека задача «подготовлена», после решения «подтверждена» или
+// «отклонена». Средний род у удаления, остальные исходы женского.
+func cardStatus(outcome, status string) string {
+	feminine := outcome == "add" || outcome == "attach" || outcome == "defer"
+	switch status {
+	case "accepted":
+		if feminine {
+			return "подтверждена"
+		}
+		return "подтверждено"
+	case "rejected":
+		if feminine {
+			return "отклонена"
+		}
+		return "отклонено"
+	}
+	if feminine {
+		return "подготовлена"
+	}
+	return "подготовлено"
 }
 
 func proposalFromAsk(a chat.Ask) *chat.ProposalQuestion {
@@ -102,7 +125,7 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 		}
 	}
 	if answer.Mode == "comment" && match == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "показанный вопрос предложений не найден"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "показанный вопрос карточек не найден"})
 		return
 	}
 	deliverySources := answer.Snapshots
@@ -354,14 +377,7 @@ func (s *server) proposalContinuation(root, sid string) string {
 		}
 		var lines []string
 		for _, p := range view.State.Proposals {
-			status := "ждёт решения"
-			if p.Status == "accepted" {
-				status = "принято"
-			}
-			if p.Status == "rejected" {
-				status = "отклонено"
-			}
-			line := fmt.Sprintf("- %s, редакция %d: %s", p.ID, p.Revision, status)
+			line := fmt.Sprintf("- %s, редакция %d: %s", p.ID, p.Revision, cardStatus(p.Outcome, p.Status))
 			if p.Title != "" {
 				line += "; " + p.Title
 			}
@@ -378,7 +394,7 @@ func (s *server) proposalContinuation(root, sid string) string {
 			}
 			lines = append(lines, line)
 		}
-		blocks = append(blocks, "Предложения "+one.id+"\n\n"+strings.Join(lines, "\n"))
+		blocks = append(blocks, "Карточки "+one.id+"\n\n"+strings.Join(lines, "\n"))
 	}
 	return strings.Join(blocks, "\n\n")
 }

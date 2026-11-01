@@ -3249,7 +3249,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if (body.Scenario != nil && body.Proposal != nil) || (body.Selection != nil && (body.Proposal != nil || body.Scenario != nil)) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "нельзя смешивать ответы на сценарии и предложения"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "нельзя смешивать ответы на сценарии и карточки"})
 		return
 	}
 	// Typed replies carry their own shown tree and source set. Their handler
@@ -3269,7 +3269,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.Proposal == nil && body.Selection == nil && s.proposalContextRequired(found, sid) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "для ответа нужны показанные предложения и их снимок"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "для ответа нужны показанные карточки и их снимок"})
 		return
 	}
 

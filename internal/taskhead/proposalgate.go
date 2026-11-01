@@ -50,5 +50,5 @@ func GuardGroomRun(root, source, mode, target string) error {
 			}
 		}
 	}
-	return fmt.Errorf("%s: выполнение разрешено только принятым результатам add разбора %s", target, source)
+	return fmt.Errorf("%s: выполнение разрешено только подтверждённым результатам add разбора %s", target, source)
 }

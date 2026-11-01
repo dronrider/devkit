@@ -59,8 +59,8 @@ format = "claude-code"
 discovery = "auto"
 
 # Голова задачи (DK-931), ключи те же, что у claude-code.toml. Клиент идёт
-# через agentctl exec: пары окружения подписки кладёт он, как и в окне
-# дашборда. bin называет сам клиент, его подъём и ищет в PATH.
+# через agentctl exec: пары окружения подписки кладёт он при любом подъёме
+# клиента. bin называет сам клиент, его подъём и ищет в PATH.
 [head]
 client = ["agentctl", "exec", "--harness", "glm-code", "--", "claude", "--permission-mode", "auto"]
 bin = "claude"

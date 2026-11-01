@@ -13,6 +13,33 @@ import (
 	"github.com/dronrider/devkit/internal/draftproposal"
 )
 
+func TestCardStatus(t *testing.T) {
+	cases := []struct {
+		outcome, status, want string
+	}{
+		{"add", "", "подготовлена"},
+		{"add", "accepted", "подтверждена"},
+		{"add", "rejected", "отклонена"},
+		{"attach", "", "подготовлена"},
+		{"attach", "accepted", "подтверждена"},
+		{"attach", "rejected", "отклонена"},
+		{"defer", "", "подготовлена"},
+		{"defer", "accepted", "подтверждена"},
+		{"defer", "rejected", "отклонена"},
+		{"drop", "", "подготовлено"},
+		{"drop", "accepted", "подтверждено"},
+		{"drop", "rejected", "отклонено"},
+		{"", "", "подготовлено"},
+		{"", "accepted", "подтверждено"},
+		{"", "rejected", "отклонено"},
+	}
+	for _, c := range cases {
+		if got := cardStatus(c.outcome, c.status); got != c.want {
+			t.Errorf("cardStatus(%q, %q) = %q, хочу %q", c.outcome, c.status, got, c.want)
+		}
+	}
+}
+
 func TestProposalDeliveryReservationFencesPrivateAttach(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "docs", "tasks", "XR-1.md")

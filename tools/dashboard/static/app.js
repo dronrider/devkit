@@ -20587,6 +20587,15 @@ function proposalSelect(shown, source, action, reason = "") {
   return decisions;
 }
 
+// Вопрос о карточках называет подготовленную задачу задачей, когда в наборе
+// есть карточка add, и карточками, когда наборы без неё (DK-1545).
+function draftIntroText(sources) {
+  const hasAdd = (sources || []).some((s) => (s.proposals || []).some((p) => p.outcome === 'add'));
+  return hasAdd
+    ? 'Задача подготовлена. Проверьте описания, отметьте решения и отправьте ответ обычной кнопкой чата.'
+    : 'Карточки подготовлены. Проверьте описания, отметьте решения и отправьте ответ обычной кнопкой чата.';
+}
+
 function proposalPickWire(feed, ta, pick, shown) {
   if (!pick.proposalDraft) pick.proposalDraft = proposalDraft(shown, ta.value);
   const draft = pick.proposalDraft;
@@ -20596,7 +20605,7 @@ function proposalPickWire(feed, ta, pick, shown) {
   box = el('div', 'msg askproposal');
   box.dataset.shown = JSON.stringify(draft.shown);
   const body = el('div', 'bb');
-  body.append(el('p', '', 'Задача подготовлена. Проверьте описания, отметьте решения и отправьте ответ обычной кнопкой чата.'));
+  body.append(el('p', '', draftIntroText(draft.shown.sources)));
   const save = () => {
     askPickSave(pick.addr, pick);
 

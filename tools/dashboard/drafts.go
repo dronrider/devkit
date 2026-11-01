@@ -479,7 +479,7 @@ func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 	text := strings.TrimRight(body.Text, "\n") + "\n"
 	_, incomingSection, err := draftproposal.Material([]byte(text))
 	if err != nil || incomingSection {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "подготовленное изменяется через карточки"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "раздел «Предложения разбора» изменяется через карточки"})
 		return
 	}
 	restored, err := draftmeta.Restore([]byte(text), was)

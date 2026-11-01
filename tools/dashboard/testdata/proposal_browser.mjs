@@ -9,7 +9,7 @@ try {
   const page=await context.newPage(); const sent=[];
   page.on('request',(r)=>{ if(r.method()==='POST' && r.url().endsWith('/say')) sent.push(r.postDataJSON()); });
   await page.goto(base+'/#demo/chat/'+sid);
-  await page.locator('.askproposal').getByText('Задача подготовлена',{exact:false}).waitFor();
+  await page.locator('.askproposal').getByText('Карточки подготовлены',{exact:false}).waitFor();
   await page.locator('.askproposal').getByText('подготовлено',{exact:true}).first().waitFor();
   await page.locator('.askproposal').getByText('карточка один',{exact:false}).waitFor();
   const ta=page.locator('textarea.csay'); await ta.fill('почему такой исход?');

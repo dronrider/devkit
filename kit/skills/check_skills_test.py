@@ -910,6 +910,109 @@ class TestSyncSpawn(SkillTree):
         self.assertTrue(any("спавн субагента не назван синхронным" in f for f in fails), fails)
 
 
+class TestHarnessWords(SkillTree):
+    """DK-993: слова «дашборд», «панель», «кнопка» и латинское dashboard не
+    едут в скиллы, определения агентов, харнесы и страницы-контракты, печатный
+    вход читает отсылку к экрану как «не про себя». Исключения из
+    HARNESS_WORDS_ALLOW покрывают фразы, где слово стоит предметом, CONNECT.md
+    освобождён целиком: он инструкции о самом инструменте."""
+
+    def add_file(self, rel, text):
+        path = os.path.join(self.root, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def check(self):
+        return check_skills.check_harness_words(self.here, self.root)
+
+    def test_clean_tree_passes(self):
+        self.add_skill("board-task")
+        self.add_file("kit/agents/exec-low.md", "исполнитель без слов про экран")
+        self.add_file("kit/harness/glm-code.toml", "# комментарий про клиент")
+        self.assertEqual(self.check(), [])
+
+    def test_skill_word_fails(self):
+        self.add_skill("work-plan",
+                       body="\n".join(["тело"] * 12) + "\nплан читает дашборд")
+        fails = self.check()
+        self.assertEqual(len(fails), 1)
+        self.assertIn("kit/skills/work-plan/SKILL.md: слово «дашборд»", fails[0])
+
+    def test_agent_toml_and_page_words_fail(self):
+        self.add_file("kit/agents/exec-low.md", "план читает дашборд")
+        self.add_file("kit/harness/glm-code.toml", "# окно Dashboard поднимает голову")
+        self.append("RULES.board.md", "Закрытие дашборда идёт через те же ворота")
+        fails = self.check()
+        self.assertEqual(len(fails), 3)
+        self.assertTrue(any(f.startswith("kit/agents/exec-low.md:") for f in fails), fails)
+        self.assertTrue(any(f.startswith("kit/harness/glm-code.toml:") for f in fails), fails)
+        self.assertTrue(any(f.startswith("RULES.board.md:") for f in fails), fails)
+
+    def test_capitalized_word_fails(self):
+        # Заглавная «Панель» ловится тем же рубежом: падеж и регистр не
+        # выводят слово из-под правила.
+        self.add_file("kit/agents/exec-high.md", "Панель вешает галочки на варианты")
+        fails = self.check()
+        self.assertEqual(len(fails), 1)
+        self.assertIn("слово «Панель»", fails[0])
+
+    def test_exception_phrase_passes(self):
+        # Фраза исключения стоит в правиле предметом, и её же видит страница.
+        self.append("RULES.md",
+                    "Образец чужого вывода (панель, ответ сервиса, чужой формат) "
+                    "снимается живьём в testdata.")
+        self.assertEqual(self.check(), [])
+
+    def test_word_beside_exception_fails(self):
+        # Исключение покрыто фразой, а не файлом: новое слово рядом с ней
+        # сторож видит.
+        self.append("RULES.md",
+                    "Образец чужого вывода (панель, ответ сервиса, чужой формат) "
+                    "снимается живьём. Кнопка «Выполнить» поднимает задачу.")
+        fails = self.check()
+        self.assertEqual(len(fails), 1)
+        self.assertIn("RULES.md: слово «Кнопка»", fails[0])
+
+    def test_inbox_literal_passes(self):
+        # Формат строки «Входящих» строит internal/chat и разбирает
+        # hooks/chat-in.py, скилл называет литерал как есть, и слово в нём
+        # стоит предметом.
+        self.add_skill("goal-loop",
+                       body="\n".join(["тело"] * 12)
+                            + "\nстроки «- дата, из дашборда: текст» "
+                              "дописывает человек снаружи")
+        self.assertEqual(self.check(), [])
+
+    def test_word_beside_inbox_literal_fails(self):
+        # Литерал закрыт фразой целиком: слово, дописанное рядом с ним,
+        # сторож видит.
+        self.add_skill("goal-loop",
+                       body="\n".join(["тело"] * 12)
+                            + "\nстроки «- дата, из дашборда: текст» "
+                              "дописывает человек снаружи, кнопка рядом")
+        fails = self.check()
+        self.assertEqual(len(fails), 1)
+        self.assertIn("kit/skills/goal-loop/SKILL.md: слово «кнопка»", fails[0])
+
+    def test_connect_page_is_free(self):
+        # CONNECT.md инструкции о самом инструменте: имя команды и пути
+        # стоят там предметом.
+        self.add_file("CONNECT.md",
+                      "Строка поднимает и веб-дашборд: `dashboard serve` читает "
+                      "`~/.devkit/dashboard.local`.")
+        self.assertEqual(self.check(), [])
+
+    def test_missing_pages_are_silent(self):
+        # Страниц, которых в проекте нет, сторож не требует.
+        self.assertEqual(self.check(), [])
+
+    def test_run_reports_harness_words(self):
+        self.add_file("kit/agents/review-low.md", "план читает дашборд")
+        fails, _ = check_skills.run(self.here, self.root)
+        self.assertTrue(any("слово «дашборд»" in f for f in fails), fails)
+
+
 class TestProofreadSpawn(SkillTree):
     """DK-548: вычитку делает субагент, и поднимает его тот, кто позвал скилл.
     Без этих слов сессия принимает скилл за фоновую задачу, отвечает «вычитка

@@ -28,7 +28,7 @@ func TestAgentRunRefusesUnconfirmedGroomResult(t *testing.T) {
 	t.Setenv("DEVKIT_GROOM_MODE", "run")
 	var out, errout bytes.Buffer
 	_, err := cmdRun(root, "XR-2", "exec", "", root, &out, &errout)
-	if err == nil || !strings.Contains(err.Error(), "только принятым результатам add") {
+	if err == nil || !strings.Contains(err.Error(), "только подтверждённым результатам add") {
 		t.Fatalf("unconfirmed agent run: %v %s %s", err, out.String(), errout.String())
 	}
 }

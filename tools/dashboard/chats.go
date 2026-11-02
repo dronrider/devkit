@@ -806,6 +806,11 @@ type chatStore struct {
 	// вставка бывает в мегабайты, и ей место в файле, а не в памяти записи.
 	// Список говорит уборке то же, что и текст: запись человеку нужна.
 	Files []chatUpload `json:"files,omitempty"`
+	// DraftAt это момент последней записи черновика в unix-секундах. Набор
+	// текста это та же активность, что и реплика, а реплик у записи нет, и
+	// список стоит её по этому моменту: без него разговор, в который человек
+	// сейчас пишет, тонул бы под сегодняшними (DK-1547).
+	DraftAt int64 `json:"draftAt,omitempty"`
 	// ProposalContexts stores delivery addresses and shown source IDs, while
 	// decisions and results remain in the source records.
 	SelectionContexts []selectionDeliveryContext `json:"selectionContexts,omitempty"`
@@ -1698,8 +1703,16 @@ func (s *server) chatBlankList(proj string) []chatEntry {
 		if st.Task != "" {
 			e.Tasks = []string{st.Task}
 		}
-		if st.Born > 0 {
-			e.Mtime = time.Unix(st.Born, 0).UTC().Format(time.RFC3339)
+		// Набор черновика двигает строку так же, как реплика двигает разговор:
+		// временем записи становится позднейший из момента заведения и
+		// момента последней буквы, и чат, в который человек сейчас пишет,
+		// не тонет под сегодняшними (DK-1547).
+		fresh := st.Born
+		if st.DraftAt > fresh {
+			fresh = st.DraftAt
+		}
+		if fresh > 0 {
+			e.Mtime = time.Unix(fresh, 0).UTC().Format(time.RFC3339)
 		}
 		out = append(out, e)
 	}
@@ -1961,6 +1974,7 @@ func (s *server) handleChatDraft(w http.ResponseWriter, r *http.Request) {
 	if body.Files != nil {
 		st.Files = *body.Files
 	}
+	st.DraftAt = s.now().Unix()
 	if err := s.chatStoreWrite(sid, st); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("черновик не записался: %v", err)})
@@ -1984,8 +1998,9 @@ func (s *server) chatBlankLift(sid, sess, model, harness string) {
 	}
 	// Черновик и его вложения отработали: файлы остались лежать под своим
 	// ключом, но принадлежат теперь разговору, и держать ссылки в записи
-	// незачем.
-	st.Tmux, st.Draft, st.Files, st.Lifted = sess, "", nil, s.now().Unix()
+	// незачем. Момент последней буквы уходит вместе с ними: дальше запись
+	// дорожный знак, а не разговор, в который пишут.
+	st.Tmux, st.Draft, st.Files, st.DraftAt, st.Lifted = sess, "", nil, 0, s.now().Unix()
 	if model != "" {
 		st.Model, st.Harness = model, harness
 	}

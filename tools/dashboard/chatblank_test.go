@@ -159,6 +159,70 @@ func TestChatBlankKeepsOwnDraft(t *testing.T) {
 	}
 }
 
+// Набор черновика это активность не хуже реплики: запись, заведённая утром
+// и тронутая вечером, стоит вечером, а не утром. До правки временем строки
+// был момент заведения, и чат, в который человек сейчас пишет, тонул под
+// сегодняшними разговорами (DK-1547).
+func TestChatBlankDraftMovesRow(t *testing.T) {
+	e, c := chatEnv(t)
+	base := time.Now()
+	e.s.now = func() time.Time { return base }
+	put := func(id string, st chatStore) {
+		t.Helper()
+		data, err := json.Marshal(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(chatStoreDir(e.home), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(blankPath(e.home, id), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Утренняя запись держится уборкой недописанным текстом, а свежая пустая
+	// стоит выше лишь потому, что заведена позже.
+	put("blank-morning", chatStore{Blank: true, Born: base.Add(-3 * time.Hour).Unix(),
+		Project: "demo", Draft: "недописанное"})
+	put("blank-recent", chatStore{Blank: true, Born: base.Add(-10 * time.Minute).Unix(),
+		Project: "demo"})
+	pos := func(list []chatEntry, id string) int {
+		for i := range list {
+			if list[i].ID == id {
+				return i
+			}
+		}
+		return -1
+	}
+	list := blankList(t, e, c, "?all=1")
+	morning, recent := pos(list, "blank-morning"), pos(list, "blank-recent")
+	if morning < 0 || recent < 0 {
+		t.Fatalf("записей нет в списке: утренняя %d, свежая %d", morning, recent)
+	}
+	if morning < recent {
+		t.Fatalf("утренняя запись и без правки стоит выше свежей: %d против %d", morning, recent)
+	}
+
+	// Человек вернулся к утренней записи и дописывает: ручка черновика
+	// запоминает момент буквы, и строка приезжает наверх по нему.
+	resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/chats/blank-morning/draft",
+		`{"text": "недописанное почти дописано"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("черновик не записался: %d %s", resp.StatusCode, body(t, resp))
+	}
+	list = blankList(t, e, c, "?all=1")
+	morning, recent = pos(list, "blank-morning"), pos(list, "blank-recent")
+	if morning < 0 || recent < 0 {
+		t.Fatalf("записи пропали из списка после дописывания: %+v", list)
+	}
+	if morning > recent {
+		t.Errorf("дописываемый чат утонул под свежей пустой записью: места %d и %d", morning, recent)
+	}
+	if row := blankRow(list, "blank-morning"); row.Mtime != base.UTC().Format(time.RFC3339) {
+		t.Errorf("время строки не момент последней буквы: %s", row.Mtime)
+	}
+}
+
 // Первая реплика поднимает сессию, и запись помнит, какую: сначала имя
 // tmux-сессии, а как клиент назовётся в реестре, так и её ID. По этому полю
 // панель, стоящая на старом адресе, переезжает на живой разговор.
@@ -199,6 +263,19 @@ exit 0`)
 	}
 	if st.Draft != "" {
 		t.Errorf("отправленная реплика осталась черновиком: %q", st.Draft)
+	}
+	// Момент последней буквы уходит вместе с черновиком: запись стала дорожным
+	// знаком при живом разговоре, и списку незачем считать её писаной.
+	data, err := os.ReadFile(blankPath(e.home, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["draftAt"]; ok {
+		t.Errorf("отправленная реплика оставила время черновика в памяти диалога")
 	}
 	if st.Grown != "" {
 		t.Errorf("сессия ещё не назвалась в реестре, а запись уже пришита: %+v", st)

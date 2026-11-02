@@ -13137,7 +13137,7 @@ function echoRead(project, addr) {
     // вернувшаяся на адрес new, пришивает себя к родившемуся диалогу.
     return raw.filter((m) => m && (m.text || m.selection || m.proposal)).map((m) => ({
       text: String(m.text), wire: String(m.wire || m.text), born: m.born || Date.now(), scenario: m.scenario || null, proposal: m.proposal || null, selection: m.selection || null,
-      state: m.state === "held" || m.state === "wait" ? m.state : "bad",
+      state: m.state === "held" || m.state === "wait" || m.state === "sent" ? m.state : "bad",
       why: m.why ? String(m.why) : "",
       tmux: m.tmux ? String(m.tmux) : "",
       // Простой реплики считается с первой попытки: дожим заводит новую запись
@@ -13187,10 +13187,13 @@ const CHAT_LIFT_DEAD_WHY = "сессия подъёма умерла дважд�
 function echoWrite(project, addr, list) {
   try {
     // Переживают выгрузку панели не только неушедшие: held ждёт эха из
-    // транскрипта, wait это отправка в полёте, и оба обязаны стоять в ленте
-    // после перерисовки, пока эхо их не сняло (первая реплика нового чата
-    // пропадала с экрана ровно из-за того, что жил только bad).
-    const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait")
+    // транскрипта, wait это отправка в полёте, sent ушла и ждёт своего эха,
+    // и все обязаны стоять в ленте после перерисовки, пока эхо их не сняло
+    // (первая реплика нового чата пропадала с экрана ровно из-за того, что
+    // жил только bad). Sent жил в персисте ради переезда панели к родившемуся
+    // разговору: без него реплика в чат с умершей сессией пропадала с экрана
+    // на всё ожидание транскрипта.
+    const keep = list.filter((m) => m.state === "bad" || m.state === "held" || m.state === "wait" || m.state === "sent")
       .map((m) => ({ text: m.text, wire: m.wire, born: m.born, state: m.state, scenario: m.scenario, proposal: m.proposal, selection: m.selection,
         why: m.why || "", tmux: m.tmux || "", id: m.id || "",
         queue: Boolean(m.queue), task: m.task || "", since: m.since || m.born }));
@@ -13288,6 +13291,10 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
   const sinceOf = new Map();
   const save = () => {
     if (!addr) return;
+    // Панель после ушедшей реплики сменила адрес: писать в персист старого
+    // адреса значило бы воскресить пузыри, которые echoMove уже перевёз к
+    // родившемуся разговору.
+    if (stopped) return;
     echoWrite(project, addr, mine.filter((m) => !m.once));
   };
 
@@ -13458,7 +13465,12 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
   const ripen = (m) => {
     const left = (m.born || 0) + ECHO_WAIT_MS - Date.now();
     const flip = () => {
-      if (!mine.includes(m) || m.state !== "wait") return;
+      // Отправка (wait) и доставленное без эха (sent) зреют одинаково: нет
+      // эха и через срок, значит, судьба реплики неизвестна, и человек
+      // читает это словами причины. Прежде sent снимался вслепую десятью
+      // секундами позже и из персиста исчезал: переезд панели к родившемуся
+      // разговору оставлял ленту пустой до приезда транскрипта.
+      if (!mine.includes(m) || (m.state !== "wait" && m.state !== "sent")) return;
       m.state = "held";
       m.why = chatIsNew(addr) ? CHAT_WAIT_WHY : ECHO_LOST_WHY;
       save();
@@ -13499,7 +13511,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       // самим значило бы дублировать реплику, которую клиент уже держит.
       if (mine.some((m) => m.state === "bad" && !m.once)) plan();
       for (const m of mine) {
-        if (m.state === "wait") ripen(m);
+        if (m.state === "wait" || m.state === "sent") ripen(m);
       }
     }
   }
@@ -13547,15 +13559,17 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
       return m;
     },
     // Ручка ответила удачей: реплика ушла, но эха из транскрипта ещё нет.
-    // Пометка снимается по сроку, чтобы часики не висели вечно там, где эхо не
-    // придёт вовсе (клиент старой версии, чужой формат записи).
+    // Снятия по слепому сроку больше нет: пузырь живёт до эха, а стареет тем
+    // же сторожем, что и «отправляется», и тогда же получает причину. Вслепую
+    // снятый пузырь исчезал из персиста, и переезд панели к родившемуся
+    // разговору оставлял ленту без единой реплики до приезда транскрипта.
     sent(m) {
       if (!mine.includes(m)) return;
       m.state = "sent";
       wait = ECHO_FIRST;
       save();
       draw();
-      setTimeout(() => { drop(m); }, ECHO_HOLD);
+      ripen(m);
     },
     bad(m) {
       if (!mine.includes(m)) return;
@@ -13663,14 +13677,9 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
   return out;
 }
 
-// Сколько местный пузырь держится после удачной отправки, не дождавшись эха.
-// Клиент пишет реплику в транскрипт своим ходом, и десяти секунд на это с
-// запасом хватает; дальше пузырь снимается, чтобы часики не висели вечно.
-const ECHO_HOLD = 10000;
-
-// Срок, после которого «отправляется» без подтверждения получает причину:
-// столько же длится быстрая фаза опроса реестра в chatWait (40 заходов по
-// полторы секунды), и оба ожидания кончаются одним словом.
+// Срок, после которого «отправляется» и «доставлено» без эха получает
+// причину: столько же длится быстрая фаза опроса реестра в chatWait (40
+// заходов по полторы секунды), и оба ожидания кончаются одним словом.
 const ECHO_WAIT_MS = 60000;
 
 // Порог простоя, после которого у недоставленной реплики появляется кнопка
@@ -14353,7 +14362,10 @@ function chatPanel(project, st) {
           // Реплика подняла сессию сама (чата без сессии не бывает после первой
           // же реплики): дальше разговор идёт в ней, и панель переезжает туда.
           if (r.body.way === "start") {
-            chatWait(project, r.body.tmux).catch(console.error);
+            // Адрес едет с вызовом: echoMove перевезёт персист отправки к
+            // родившемуся разговору, и пузырь встанет в ленту нового sid
+            // раньше транскрипта, а не исчезнет вместе с переездом.
+            chatWait(project, r.body.tmux, st.sid).catch(console.error);
             return;
           }
           // Резюм поднимает новую tmux-сессию, и состояние диалога меняется:

@@ -64,6 +64,28 @@ func TestPreparedRoundTrip(t *testing.T) {
 	if parsed.Proposals[0].Result == nil || parsed.Proposals[0].Result.IDs[0] != "XR-9" || parsed.Proposals[1].Result == nil || parsed.Proposals[1].Result.Result != "отклонено" {
 		t.Fatalf("результаты из журнала: %+v", parsed.Proposals)
 	}
+	// Тело с переводом строки в начале и своим заголовком внутри: перевод
+	// принадлежит телу, а не формату, иначе круг рендер-разбор менял бы
+	// канонический вид и снимок показанного расходился после сохранения.
+	bodies := State{Version: 1, State: "active", Proposals: []Proposal{
+		{ID: "p1", Revision: 1, Outcome: "add", Title: "С переносом", Text: "\n## Что происходит\n\nтело начинается строкой ниже"},
+		{ID: "p2", Revision: 1, Outcome: "drop", Reason: "лишнее"},
+	}}
+	data, err = RenderPrepared(bodies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err = ParsePrepared(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Proposals[0].Text != bodies.Proposals[0].Text || parsed.Proposals[1].Text != "" {
+		t.Fatalf("тела задач: %q", parsed.Proposals[0].Text)
+	}
+	again, err = RenderPrepared(parsed)
+	if err != nil || !bytes.Equal(data, again) {
+		t.Fatalf("вид с переносами не канонический: %q против %q (%v)", data, again, err)
+	}
 }
 
 func TestPreparedEmptyHistory(t *testing.T) {

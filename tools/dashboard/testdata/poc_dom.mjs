@@ -490,7 +490,15 @@ export function makeSandbox(appPath, reply, opts) {
       },
       innerWidth: 1400,
       innerHeight: 900,
-      matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
+      // Узкий экран стенду говорит opts.narrow: окно в пределах 900 точек, и
+      // пороги уже его (520) не спрашиваются. Смена ответа по ходу стенда
+      // остаётся за самим стендом: подмена matchMedia после загрузки проверяет
+      // поведение, а до загрузки решает вот это поле.
+      matchMedia: (q) => ({
+        matches: Boolean(opts && opts.narrow) && String(q).includes("max-width:900px"),
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }),
       prompt: () => null,
       getSelection: () => null,
       navigator: { clipboard: { writeText: () => Promise.resolve() } },

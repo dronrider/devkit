@@ -1,4 +1,6 @@
-// Package draftproposal stores grooming proposals in their source Markdown file.
+// Package draftproposal хранит подготовленные задачи груминга. Носитель это
+// prepared-файл записи (prepared.go), старый блок «Предложения разбора» в самой
+// записи читается ридером совместимости до миграции записи.
 package draftproposal
 
 import (
@@ -77,7 +79,7 @@ func rangeOf(text string) (int, int, bool, error) {
 	for i, line := range lines {
 		if !mask[i] && strings.TrimSpace(line) == heading {
 			if start >= 0 {
-				return 0, 0, false, fmt.Errorf("повтор раздела предложений")
+				return 0, 0, false, fmt.Errorf("повтор раздела карточек")
 			}
 			start = offset
 		} else if start >= 0 && end == len(text) && !mask[i] && strings.HasPrefix(strings.TrimSpace(line), "## ") {
@@ -103,34 +105,40 @@ func Parse(data []byte) (State, error) {
 	}
 	body := strings.TrimSpace(strings.TrimPrefix(text[start:end], heading))
 	if !strings.HasPrefix(body, "```json\n") || !strings.HasSuffix(body, "\n```") {
-		return state, fmt.Errorf("раздел предложений должен содержать один блок JSON")
+		return state, fmt.Errorf("раздел карточек должен содержать один блок JSON")
 	}
 	body = strings.TrimSuffix(strings.TrimPrefix(body, "```json\n"), "\n```")
 	dec := json.NewDecoder(strings.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err = dec.Decode(&state); err != nil {
-		return State{}, fmt.Errorf("раздел предложений: %w", err)
+		return State{}, fmt.Errorf("раздел карточек: %w", err)
 	}
 	var extra any
 	if err = dec.Decode(&extra); err != io.EOF {
-		return State{}, fmt.Errorf("лишние данные после предложений")
+		return State{}, fmt.Errorf("лишние данные после карточек")
 	}
 	if err = state.Validate(); err != nil {
 		return State{}, err
 	}
 	return state, nil
 }
-func (s State) Validate() error {
+func (s State) Validate() error { return s.validate(false) }
+
+// validatePrepared разрешает пустой набор задач с state=history: закончившийся
+// разбор без задач пишется именно так (DK-1469, решение 1).
+func (s State) validatePrepared() error { return s.validate(true) }
+
+func (s State) validate(emptyHistory bool) error {
 	if s.Version != 1 || (s.State != "active" && s.State != "history") {
 		return fmt.Errorf("неверная версия или состояние разбора")
 	}
-	if s.State == "history" && len(s.Proposals) == 0 {
+	if s.State == "history" && len(s.Proposals) == 0 && !emptyHistory {
 		return fmt.Errorf("пустой разбор остаётся активным")
 	}
 	ids := map[string]bool{}
 	for _, p := range s.Proposals {
 		if p.ID == "" || ids[p.ID] || p.Revision < 1 {
-			return fmt.Errorf("неверный или повторный ID предложения %q", p.ID)
+			return fmt.Errorf("неверный или повторный ID карточки %q", p.ID)
 		}
 		ids[p.ID] = true
 		switch p.Outcome {
@@ -144,13 +152,28 @@ func (s State) Validate() error {
 			return fmt.Errorf("%s: неизвестное решение %q", p.ID, p.Status)
 		}
 		if s.State == "history" && p.Status == "" {
-			return fmt.Errorf("%s: предложение без решения в истории", p.ID)
+			return fmt.Errorf("%s: карточка без решения в истории", p.ID)
 		}
-		if p.Status == "accepted" && (p.Result == nil || p.Result.Proposal != p.ID || p.Result.Revision != p.Revision) {
+		if p.Status == "accepted" && !acceptedResult(s, p) {
 			return fmt.Errorf("%s: нет результата принятой редакции", p.ID)
 		}
 	}
 	return nil
+}
+
+// acceptedResult признаёт результат принятой редакции: старая схема держала
+// его в самой карточке, prepared-файл восстанавливает его из журнала receipts
+// по ключу и редакции.
+func acceptedResult(s State, p Proposal) bool {
+	if p.Result != nil && p.Result.Proposal == p.ID && p.Result.Revision == p.Revision {
+		return true
+	}
+	for _, r := range s.Receipts {
+		if r.Proposal == p.ID && r.Revision == p.Revision {
+			return true
+		}
+	}
+	return false
 }
 func Replace(data []byte, state State) ([]byte, error) {
 	if err := state.Validate(); err != nil {

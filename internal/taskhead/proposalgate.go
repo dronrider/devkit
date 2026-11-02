@@ -31,7 +31,7 @@ func GuardGroomRun(root, source, mode, target string) error {
 	if err != nil {
 		return fmt.Errorf("источник разбора %s не прочитан: %w", source, err)
 	}
-	state, err := draftproposal.Parse(data)
+	state, err := draftproposal.Load(root, source, data)
 	if err != nil {
 		return err
 	}

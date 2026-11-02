@@ -13,13 +13,13 @@ func Order(state State, selected []string, exists func(string) bool) ([]Proposal
 	for _, id := range selected {
 		p, ok := cards[id]
 		if !ok {
-			return nil, fmt.Errorf("предложение %s не найдено", id)
+			return nil, fmt.Errorf("карточка %s не найдена", id)
 		}
 		if p.Status != "" {
 			return nil, fmt.Errorf("%s: решение уже принято", id)
 		}
 		if chosen[id] {
-			return nil, fmt.Errorf("%s: предложение выбрано дважды", id)
+			return nil, fmt.Errorf("%s: карточка выбрана дважды", id)
 		}
 		chosen[id] = true
 	}

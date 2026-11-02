@@ -60,3 +60,23 @@ func TestGroomRunOnlyAcceptedAddReceipt(t *testing.T) {
 		t.Fatalf("accepted add not raised: %+v %v", res, err)
 	}
 }
+
+func TestGroomRunReadsPreparedFile(t *testing.T) {
+	s := newStand(t, true, true)
+	t.Setenv("DEVKIT_GROOM_SOURCE", "DK-8")
+	t.Setenv("DEVKIT_GROOM_MODE", "run")
+	path := filepath.Join(s.root, "docs", "tasks", "drafts", "DK-8.md")
+	put(t, path, "# DK-8: источник\n", 0644)
+	receipt := draftproposal.Receipt{Key: "receipt", Source: "DK-8", Proposal: "p1", Revision: 1, Outcome: "add", IDs: []string{"DK-1"}, Result: "создано"}
+	state := draftproposal.State{Version: 1, State: "active",
+		Proposals: []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Status: "accepted"}},
+		Receipts:  []draftproposal.Receipt{receipt},
+	}
+	if err := draftproposal.SavePrepared(s.root, "DK-8", state); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Raise(s.req())
+	if err != nil || res.Code != CodeRaised {
+		t.Fatalf("receipt из prepared-файла не поднял строку: %+v %v", res, err)
+	}
+}

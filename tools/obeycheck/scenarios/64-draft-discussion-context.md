@@ -17,6 +17,33 @@
 Ты предложил registry-v2, но я его не выбирала: это пока предположение агента,
 сравнение вариантов оставляем на грумминг. Кроме этого вопросов не обсуждали.
 
+Твоё предложение registry-v2 из предыдущего ответа:
+
+Хранить записи в docs/notify/registry.json. Команда notifyctl prepare
+собирает неизменяемый пакет с bundle_id, notifyctl deliver доставляет пакет,
+notifyctl confirm записывает подтверждение именно этого bundle_id. После
+изменения содержимого нужен новый пакет, чтобы подтверждение не относилось
+к другой версии. Порядок работы: prepare -> deliver -> confirm.
+Состояния пакета: prepared -> delivered -> confirmed; при неудачной доставке
+остаётся prepared.
+
+```text
+docs/notify/
+  registry.json
+  bundles/
+    b001/
+      payload.json
+      receipt.json
+```
+
+| Окружение | Доставка |
+|---|---|
+| Локальная консоль | Файл пакета |
+| Удалённая консоль | Скачивание пакета или туннель |
+
+Нужен просмотр и подтверждение без дашборда. Отдельный сервер пока не
+предлагается. Это всё ещё твоё предложение, решение по нему я не принимала.
+
 ## Проверка
 
 ```sh
@@ -32,7 +59,7 @@ import sys
 text = Path(sys.argv[1]).read_text()
 headings = re.findall(r'^### (.+)$', text, re.M)
 required = ['Ситуация', 'Осложнение', 'Вопрос', 'Гипотеза']
-assert headings == required, f'неполная форма или неверный порядок: {headings}'
+assert headings[:4] == required, f'неполная форма или неверный порядок: {headings}'
 for name in required:
     part = re.search(r'^### ' + re.escape(name) + r'\n(.*?)(?=^##?\s|^###\s|\Z)', text, re.M | re.S)
     assert part and part.group(1).strip(), f'пустой подраздел {name}'
@@ -42,5 +69,14 @@ for token in ['manual-switch', 'телефон', 'csv-v1', 'монитор', 're
     assert token in body, f'потеряна фактура обсуждения: {token}'
 assert re.search(r'исключ|отказ|отмен|отверг', body), 'не сохранён отказ от варианта'
 assert re.search(r'предполож|гипотез|не (выбра|утверж|приня)|пока.*агент', body), 'не сохранена неопределённость предложения агента'
+context = re.search(r'^## Контекст обсуждения\n(.*?)(?=^## |\Z)', text, re.M | re.S)
+assert context, 'нет контекста обсуждения'
+concept = context.group(1)
+for token in ['registry.json', 'bundle_id', 'notifyctl prepare', 'notifyctl deliver', 'notifyctl confirm', 'prepared', 'delivered', 'confirmed', 'payload.json', 'receipt.json']:
+    assert token in concept, f'потеряна часть концепта: {token}'
+assert re.search(r'```(?:text)?\n[^`]*bundles/[^`]*b001/[^`]*```', concept), 'потерян пример структуры каталогов'
+assert re.search(r'^\|.*[Лл]окальн', concept, re.M), 'потерян локальный способ доставки в таблице'
+assert re.search(r'^\|.*[Уу]дал[её]нн.*[Тт]уннел', concept, re.M), 'потерян удалённый способ доставки в таблице'
+assert re.search(r'неудач|ошиб|сбо|неуспеш', concept.lower()), 'потерян сценарий неудачной доставки'
 PY
 ```

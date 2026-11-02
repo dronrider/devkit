@@ -36,7 +36,7 @@ func preparedQuestionShape(tree string, shown chat.PreparedQuestion) (string, []
 			if title == "" {
 				title = p.ID
 			}
-			text += fmt.Sprintf("\n%s: #%s/draft/%s/prepared/%s", title, project, s.Source, p.ID)
+			text += fmt.Sprintf("\n\n%s: #%s/draft/%s/prepared/%s", title, project, s.Source, p.ID)
 			options = append(options, chat.Option{Label: "Подтвердить " + title})
 		}
 	}
@@ -85,8 +85,9 @@ func preparedChatQuestion(root, anchor string, also []string) (chat.Question, er
 }
 
 func cmdPreparedChatAsk(root, anchor string, also []string, d askDeps, env func(string) string) (string, error) {
-	// This JSON goes back to the asking agent. Guard every shown source under
-	// the same reservation as a cloud client, including the main worktree.
+	// Этот JSON уезжает спрашивающему агенту. Каждый показанный источник
+	// держится под тем же резервированием, что и клиент облака, включая
+	// основное дерево.
 	var locks []*draftmeta.CloudLock
 	defer func() {
 		for _, lock := range locks {

@@ -64,7 +64,9 @@ func TestPrepareConfirmationAllOutcomesAndReplay(t *testing.T) {
 		l.Close()
 		t.Fatal(err)
 	}
-	if len(plan.Results) != 4 || len(plan.Changes) < 3 || plan.Changes[len(plan.Changes)-1].Path != draftRel("XR-008") {
+	// Состояние уже живёт prepared-файлом, запись блока не несёт: разбор
+	// трогает только файл-носитель, а не запись (DK-1469, решение 1).
+	if len(plan.Results) != 4 || len(plan.Changes) < 3 || plan.Changes[len(plan.Changes)-1].Path != draftproposal.PreparedRel("XR-008") {
 		l.Close()
 		t.Fatalf("plan %+v", plan)
 	}

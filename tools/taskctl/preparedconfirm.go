@@ -141,6 +141,13 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 			}
 		}
 	}
+	// Состояние до применения решений: финальная сверка снимка обязана
+	// смотреть на тот же исходник, что видел спрашиваемый, а не на уже
+	// изменённое нами состояние с квитками и статусами.
+	prior := map[string]draftproposal.State{}
+	for _, snap := range request.Snapshots {
+		prior[snap.Source] = copyState(records[snap.Source].state)
+	}
 	staged, err := newStagingBoard(root)
 	if err != nil {
 		return out, err
@@ -225,12 +232,11 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 		return out, err
 	}
 	for _, snap := range request.Snapshots {
-		rec := records[snap.Source]
 		current, err := os.ReadFile(draftPath(root, snap.Source))
 		if err != nil {
 			return out, err
 		}
-		basis, err := preparedBasis(root, current, rec.state)
+		basis, err := preparedBasis(root, current, prior[snap.Source])
 		if err != nil {
 			return out, err
 		}
@@ -240,6 +246,23 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 	}
 	sortReceipts(out.Results)
 	return out, nil
+}
+
+// copyState снимает копию состояния с глубоким переносом задач и квитков:
+// карточки правятся на месте через срез, и мелкая копия делила бы массив
+// с оригиналом.
+func copyState(s draftproposal.State) draftproposal.State {
+	out := s
+	out.Proposals = append([]draftproposal.Proposal(nil), s.Proposals...)
+	for i := range out.Proposals {
+		if s.Proposals[i].Result != nil {
+			r := *s.Proposals[i].Result
+			out.Proposals[i].Result = &r
+		}
+		out.Proposals[i].After = append([]string(nil), s.Proposals[i].After...)
+	}
+	out.Receipts = append([]draftproposal.Receipt(nil), s.Receipts...)
+	return out
 }
 
 func sortReceipts(receipts []draftproposal.Receipt) {

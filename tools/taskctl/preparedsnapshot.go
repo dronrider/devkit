@@ -71,11 +71,16 @@ func preparedBasis(root string, source []byte, state draftproposal.State) (strin
 
 // preparedSnapshot это снимок исходника для команд save и reject: он меняется
 // при правке записи и при правке prepared-файла, потому что решение опирается
-// на оба.
+// на оба. Digest берёт материал записи без машинного блока: миграция переносит
+// блок в prepared-файл, и снимок висящего согласования обязан её пережить.
 func preparedSnapshot(state draftproposal.State, record []byte) (string, error) {
 	render, err := draftproposal.RenderPrepared(state)
 	if err != nil {
 		return "", err
 	}
-	return draftproposal.Digest(record, render), nil
+	material, _, err := draftproposal.Material(record)
+	if err != nil {
+		return "", err
+	}
+	return draftproposal.Digest(material, render), nil
 }

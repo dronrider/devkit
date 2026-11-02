@@ -71,51 +71,53 @@ taskctl draft list
 выданный ID вместо `XR-001`:
 
 ```sh
-taskctl draft proposals XR-001
+taskctl draft prepared XR-001
 ```
 
-Команда показывает сохранённые карточки, их состояние и снимки. Карточка
-новой строки это подготовленная задача. До решения человека она
-«подготовлена», после принятия «подтверждена», после отказа «отклонена».
-Описание проверяется до применения. Исполнение идёт без вопросов
-к человеку. При пустом разборе запись остаётся в накопителе. Карточку можно
-дополнить на экране записи в dashboard, сохранить и затем подтвердить или
-отклонить с причиной.
+Команда показывает сохранённые подготовленные задачи, их состояние и снимки.
+Задача новой строки до решения человека «подготовлена», после принятия
+«подтверждена», после отказа «отклонена». Описание проверяется до применения.
+Исполнение идёт без вопросов к человеку. При пустом разборе запись остаётся
+в накопителе. Задачу можно дополнить на экране записи в dashboard,
+сохранить и затем подтвердить или отклонить с причиной. Попутная мысль по
+записи дописывается командой `taskctl draft idea XR-001 "текст"`.
 
 Для сохранения из командной строки возьмите поле `snapshot` из вывода
-`taskctl draft proposals XR-001` и передайте его в `--base` команды
-`taskctl draft proposals save XR-001`. На stdin передайте JSON с массивом
-`proposals`. В карточке новой строки укажите `id`, `revision` (для первой
-редакции 1) и `outcome` со значением `add`. Заголовок идёт в `title`, тип
-`bug`, `task` или `LLD` в `board_type`, постановка в `text`. Укажите
-также `rank`, `size` и `accept`. Список обязательных полей для своего типа
-записи можно получить через `taskctl draft types --json`.
+`taskctl draft prepared XR-001` и передайте его в `--base` команды
+`taskctl draft prepared save XR-001`. На stdin передайте JSON с массивом
+задач в ключе proposals. В карточке новой строки укажите `id`, `revision`
+(для первой редакции 1) и `outcome` со значением `add`. Заголовок идёт
+в `title`, тип `bug`, `task` или `LLD` в `board_type`, постановка в `text`.
+Укажите также `rank`, `size` и `accept`. Список обязательных полей для
+своего типа записи можно получить через `taskctl draft types --json`.
 
-Чтобы показать сохранённые карточки в чате агента, опубликуйте вопрос из
-сессии, привязанной к записи. Для нескольких записей добавьте `--also`:
+Чтобы показать задачи в чате агента, опубликуйте вопрос из сессии,
+привязанной к записи. Для нескольких записей добавьте `--also`:
 
 ```sh
-taskctl draft proposals ask XR-001 --also XR-002 > /tmp/proposal-question.json
+taskctl draft prepared ask XR-001 --also XR-002 > /tmp/prepared-question.json
 ```
 
 Команда возвращает JSON показанного вопроса и сохраняет Ask для панели.
-Закрытый источник не публикуется. Его содержимое остаётся доступным на
-локальном экране записи. Для машинного ответа передайте `tree`, снимки
-выбранных источников и решения с
-ID и ревизией именно из этого вопроса в stdin команды
-`taskctl draft proposals answer XR-001`. Поле решения `action` принимает
-`accept` или `reject`; для `reject` нужна непустая `reason`. Например, этот
-ответ отклоняет первую показанную карточку первой записи:
+Тел задач в вопросе нет. Строка на задачу вида «<заголовок>: <ссылка>»
+ведёт на экран задачи в dashboard, а отмеченная галкой задача
+подтверждается. Закрытый источник не публикуется. Его содержимое остаётся
+доступным на локальном экране записи. Для машинного ответа передайте `tree`,
+снимки выбранных источников и решения с ID и ревизией именно из этого
+вопроса в stdin команды `taskctl draft prepared answer XR-001`. Поле
+решения `action` принимает `accept` или `reject`; для `reject` нужна
+непустая `reason`. Например, этот ответ отклоняет первую показанную задачу
+первой записи:
 
 ```sh
-jq '{tree: .proposal.tree, snapshots: [{source: .proposal.sources[0].source, digest: .proposal.sources[0].basis}], decisions: [{source: .proposal.sources[0].source, proposal: .proposal.sources[0].proposals[0].id, revision: .proposal.sources[0].proposals[0].revision, action: "reject", reason: "Не подходит"}]}' /tmp/proposal-question.json > /tmp/proposal-answer.json
-taskctl draft proposals answer XR-001 < /tmp/proposal-answer.json
+jq '{tree: .prepared.tree, snapshots: [{source: .prepared.sources[0].source, digest: .prepared.sources[0].basis}], decisions: [{source: .prepared.sources[0].source, proposal: .prepared.sources[0].proposals[0].id, revision: .prepared.sources[0].proposals[0].revision, action: "reject", reason: "Не подходит"}]}' /tmp/prepared-question.json > /tmp/prepared-answer.json
+taskctl draft prepared answer XR-001 < /tmp/prepared-answer.json
 ```
 
 Ответ возвращает ключ и сохранённые результаты. Точный повтор с теми же
 снимками и решениями возвращает `repeated: true`; после удаления Ask можно
 использовать `answer XR-001 --repeat-only` для восстановления квитанций без
-нового применения. Изменившийся снимок или непоказанная карточка не дают
+нового применения. Изменившийся снимок или непоказанная задача не дают
 права на новое решение. Панель собирает этот ответ из обычных полей, вручную
 готовить JSON человеку не требуется.
 
@@ -163,10 +165,16 @@ draft list --history [--json]               история разбора
 draft types [--json | --dump <тип>]         список типов или файл определения
 draft meta <ID> [--type <тип>] [--source <источник>] [--lock locked|unlocked]
                                             изменить поля записи
-draft proposals <ID>                        показать карточки разбора
-draft proposals save <ID> --base <снимок>  сохранить карточки из JSON в stdin
-draft proposals ask <ID> [--also <ID> ...]  показать карточки в чате
-draft proposals answer <ID> [--repeat-only] ответ из JSON в stdin
+draft prepared <ID>                        показать подготовленные задачи
+draft prepared save <ID> --base <снимок>   сохранить задачи из JSON в stdin
+draft prepared ask <ID> [--also <ID> ...]  показать задачи в чате
+draft prepared answer <ID> [--repeat-only] ответ из JSON в stdin
+draft prepared confirm                     применить решения из JSON в stdin
+draft prepared reject <ID> <задача> --base <снимок> --reason <причина>
+                                            отклонить задачу с причиной
+draft prepared migrate                     перенести прежние блоки записей
+                                            в prepared-файлы
+draft idea <ID> "текст"                    дописать попутную мысль в запись
 draft defer <ID> "причина" [--until ГГГГ-ММ-ДД]
                                             отложить черновик: раздел
                                             «Грумминг» в его файле, --until

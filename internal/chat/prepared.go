@@ -8,28 +8,39 @@ import (
 	"github.com/dronrider/devkit/internal/draftproposal"
 )
 
-type ProposalQuestion struct {
+// PreparedQuestion это машинная часть вопроса согласования подготовленных
+// задач (DK-1469, решение 4): текст и опции у вопроса обычные, а здесь лежат
+// снимки и показанный список задач, по которому проверяется ответ.
+type PreparedQuestion struct {
 	Version int              `json:"version"`
 	Tree    string           `json:"tree"`
 	Anchor  string           `json:"anchor"`
-	Sources []ProposalSource `json:"sources"`
+	Sources []PreparedSource `json:"sources"`
 }
 
-type ProposalSource struct {
+type PreparedSource struct {
 	Source    string                   `json:"source"`
 	Basis     string                   `json:"basis"`
 	Proposals []draftproposal.Proposal `json:"proposals"`
 }
 
-func (q ProposalQuestion) Validate() error {
+// Прежние имена до этапа перестройки дашборда (DK-1564): витрина старой схемы
+// собирается этими типами, следующий этап переводит её на prepared-словарь и
+// алиасы убирает.
+type (
+	ProposalQuestion = PreparedQuestion
+	ProposalSource   = PreparedSource
+)
+
+func (q PreparedQuestion) Validate() error {
 	if q.Version != 1 || !filepath.IsAbs(q.Tree) || filepath.Clean(q.Tree) != q.Tree || strings.TrimSpace(q.Anchor) == "" || len(q.Sources) == 0 {
-		return fmt.Errorf("неверный вопрос предложений")
+		return fmt.Errorf("неверный вопрос согласования задач")
 	}
 	seen := map[string]bool{}
 	anchor := false
 	for _, s := range q.Sources {
 		if strings.TrimSpace(s.Source) == "" || strings.TrimSpace(s.Basis) == "" || seen[s.Source] || len(s.Proposals) == 0 {
-			return fmt.Errorf("неверный источник предложений %q", s.Source)
+			return fmt.Errorf("неверный источник подготовленных задач %q", s.Source)
 		}
 		seen[s.Source] = true
 		if s.Source == q.Anchor {
@@ -38,7 +49,10 @@ func (q ProposalQuestion) Validate() error {
 		ids := map[string]bool{}
 		for _, p := range s.Proposals {
 			if strings.TrimSpace(p.ID) == "" || p.Revision < 1 || ids[p.ID] || p.Status != "" || p.Result != nil {
-				return fmt.Errorf("неверное показанное предложение %q", p.ID)
+				return fmt.Errorf("неверная показанная задача %q", p.ID)
+			}
+			if strings.TrimSpace(p.Text) != "" {
+				return fmt.Errorf("тело задачи %s не входит в вопрос", p.ID)
 			}
 			switch p.Outcome {
 			case "add", "attach", "defer", "drop":
@@ -54,15 +68,15 @@ func (q ProposalQuestion) Validate() error {
 	return nil
 }
 
-// CheckProposalAnswer compares the request to the question, never to a fresh view.
-func CheckProposalAnswer(q ProposalQuestion, tree string, r draftproposal.ConfirmRequest) error {
+// CheckPreparedAnswer compares the request to the question, never to a fresh view.
+func CheckPreparedAnswer(q PreparedQuestion, tree string, r draftproposal.ConfirmRequest) error {
 	if err := q.Validate(); err != nil {
 		return err
 	}
 	if tree != q.Tree || len(r.Decisions) == 0 {
-		return fmt.Errorf("нет показанного контекста предложений")
+		return fmt.Errorf("нет показанного контекста подготовленных задач")
 	}
-	sources := map[string]ProposalSource{}
+	sources := map[string]PreparedSource{}
 	for _, s := range q.Sources {
 		sources[s.Source] = s
 	}
@@ -109,3 +123,7 @@ func CheckProposalAnswer(q ProposalQuestion, tree string, r draftproposal.Confir
 	}
 	return nil
 }
+
+// CheckProposalAnswer это прежнее имя проверки ответа для витрины дашборда
+// (DK-1564): следующий этап переводит её на prepared-словарь и имя уходит.
+var CheckProposalAnswer = CheckPreparedAnswer

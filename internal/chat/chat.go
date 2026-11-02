@@ -311,7 +311,11 @@ type Question struct {
 	Multi    bool              `json:"multi,omitempty"`
 	Options  []Option          `json:"options,omitempty"`
 	Scenario *ScenarioQuestion `json:"scenario,omitempty"`
-	Proposal *ProposalQuestion `json:"proposal,omitempty"`
+	Prepared *PreparedQuestion `json:"prepared,omitempty"`
+	// Proposal это прежнее поле вопроса согласования до DK-1564: витрина
+	// дашборда читает его, следующий этап переводит её на prepared и поле
+	// уходит.
+	Proposal *PreparedQuestion `json:"proposal,omitempty"`
 }
 
 type ScenarioQuestion struct {
@@ -361,11 +365,15 @@ func ParsePack(data []byte) ([]Question, error) {
 		if strings.TrimSpace(q.Text) == "" {
 			return nil, errors.New("у вопроса пустой текст: человеку показывать нечего")
 		}
-		if q.Proposal != nil {
+		if q.Prepared != nil || q.Proposal != nil {
 			if q.Scenario != nil {
-				return nil, errors.New("вопрос предложений нельзя смешивать со сценариями")
+				return nil, errors.New("вопрос согласования задач нельзя смешивать со сценариями")
 			}
-			if err := q.Proposal.Validate(); err != nil {
+			prep := q.Prepared
+			if prep == nil {
+				prep = q.Proposal
+			}
+			if err := prep.Validate(); err != nil {
 				return nil, err
 			}
 		}

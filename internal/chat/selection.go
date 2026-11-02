@@ -21,7 +21,7 @@ type SelectedQuestion struct {
 }
 
 func QuestionSnapshot(q Question) string {
-	q.Scenario, q.Proposal = nil, nil
+	q.Scenario, q.Prepared, q.Proposal = nil, nil, nil
 	data, _ := json.Marshal(q)
 	sum := sha256.Sum256(data)
 	return "q1-" + hex.EncodeToString(sum[:])

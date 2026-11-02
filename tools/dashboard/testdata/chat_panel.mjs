@@ -22,6 +22,8 @@ const fail = (msg) => { console.error(msg); process.exit(1); };
 let offline = false;
 // Задача, приехавшая ручкой привязки: по ней видно, что уехало с экрана.
 let bound = null;
+// Открытые потоки ленты: эхо транскрипта подаётся стендом в них руками.
+const sockets = [];
 
 function makeNode(tag) {
   const node = {
@@ -255,6 +257,7 @@ const sandbox = {
     constructor(url) {
       this.url = url;
       this.closed = false;
+      sockets.push(this);
     }
     addEventListener() {}
     close() { this.closed = true; }
@@ -689,8 +692,27 @@ const bindTip = (head) => {
   if (!posted.some((path) => path.includes("/chats/" + mine.id + "/say"))) {
     fail("по возвращении связи реплика не ушла сама: " + JSON.stringify(posted));
   }
-  if (store.get("devkit.chat.pend.demo/" + mine.id)) {
-    fail("ушедшая реплика осталась в очереди: " + store.get("devkit.chat.pend.demo/" + mine.id));
+  // Ушедшее вычистки сразу не получает: реплика ждёт эха из транскрипта.
+  // Чистка по факту отправки оставляла переезд панели к родившемуся разговору
+  // с пустым ключом, и лента до приезда реплики пустела (живой случай стенда
+  // poc_chatsewn).
+  const kept = JSON.parse(store.get("devkit.chat.pend.demo/" + mine.id) || "[]");
+  const stuck = kept.filter((m) => m.state !== "sent");
+  if (stuck.length || !kept.some((m) => m.text === "дожми это")) {
+    fail("ушедшая реплика не встала в ожидание эха: " + JSON.stringify(kept));
+  }
+
+  // Эхо из ленты: транскрипт подтвердил реплику, очередь чистится сама.
+  const es = sockets.filter((s) => !s.closed).pop();
+  if (!es || !es.onmessage) fail("живой поток ленты не открыт");
+  es.onmessage({ data: JSON.stringify({ key: "tr-1", role: "user",
+    time: "2026-11-02T21:00:00+03:00", text: "дожми это", wire: "дожми это" }) });
+  await settle();
+  // «Посмотри тесты» своего эха в мире стенда не видела и ждёт дальше: чистка
+  // идёт по сверенной реплике, а не по всему ключу.
+  const left = JSON.parse(store.get("devkit.chat.pend.demo/" + mine.id) || "[]");
+  if (left.some((m) => m.text === "дожми это")) {
+    fail("сверенная эхом реплика осталась в очереди: " + JSON.stringify(left));
   }
 }
 

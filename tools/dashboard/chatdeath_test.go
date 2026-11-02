@@ -257,6 +257,27 @@ func TestStaticChatDeadRaiseTellsThePanel(t *testing.T) {
 	t.Log(strings.TrimSpace(string(out)))
 }
 
+// Переезд панели к родившемуся разговору (первая реплика в чат с умершей
+// сессией). Реплика уходит ручкой /say, сервер поднимает продолжение, и панель
+// пересобирается на новом sid: пузырь отправки к этому моменту должен уже
+// лежать в персисте и переехать вместе с панелью, иначе до приезда реплики в
+// транскрипт человек смотрит на пустую ленту. Сторожит стенд
+// testdata/poc_chatsewn.mjs: настоящий static/app.js поднимается в node с
+// заглушкой DOM, и проверяется собранная разметка. Без node шаг пропускается,
+// как у остальных стендов статики.
+func TestStaticChatSewnCarriesSentBubble(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node не найден: стенд переезда панели пропущен")
+	}
+	out, err := exec.Command(node, filepath.Join("testdata", "poc_chatsewn.mjs"),
+		filepath.Join("static", "app.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("переезд панели потерял отправленную реплику: %v\n%s", err, out)
+	}
+	t.Log(strings.TrimSpace(string(out)))
+}
+
 // Смерть сессии после хода. Лента разговора получает одну строку словами, а
 // снимок панели остаётся в записи (DK-863). Прежде хвост дописывался к словам
 // безусловно, и человек читал посреди разговора повтор последнего ответа

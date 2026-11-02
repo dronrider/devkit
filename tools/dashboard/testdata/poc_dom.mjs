@@ -333,7 +333,9 @@ export function deepBtn(node, what) {
 // opts.realTimers переводит песочницу на настоящие таймеры и настоящую
 // задержку ответов (opts.latency, миллисекунды): замеру отзывчивости нужны
 // часы, а стендам поведения они только мешают, там время идёт оборотами
-// микрозадач.
+// микрозадач. opts.hash кладёт стартовый адрес: человек приходит по ссылке
+// на открытый разговор, и панель у него собирается самой первой загрузкой,
+// а не сборкой в отрыве от экрана.
 export function makeSandbox(appPath, reply, opts) {
   const byId = new Map();
   const moves = [];
@@ -503,7 +505,8 @@ export function makeSandbox(appPath, reply, opts) {
       getSelection: () => null,
       navigator: { clipboard: { writeText: () => Promise.resolve() } },
     },
-    location: { hash: "", href: "", replace: (h) => { sandbox.location.hash = h; } },
+    location: { hash: (opts && opts.hash) || "", href: "",
+      replace: (h) => { sandbox.location.hash = h; } },
     history: {
       pushState: (state, title, url) => { moves.push(["push", url]); sandbox.location.hash = url; },
       replaceState: (state, title, url) => { moves.push(["replace", url]); sandbox.location.hash = url; },

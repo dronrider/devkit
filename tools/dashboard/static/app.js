@@ -8095,7 +8095,7 @@ function chatItem(item) {
     if (item.pick) bits.push("с местом экрана");
     if ((item.shots || []).length) bits.push("с картинкой");
     if ((item.frags || []).length) bits.push("с фрагментом");
-    const wrap = chatBubble(who, item.text, bits.join(", "), "", item.quote ? quoteEl(item) : null);
+    const wrap = chatBubble(who, selectionWords(item.text, item.selection), bits.join(", "), "", item.quote ? quoteEl(item) : null);
     wrap.dataset.messageKey = item.key || "";
     if (item.proposal) wrap.append(proposalAttachment(item.proposal));
     if (item.sel) wrap.append(selFold(item.selFile || "постановка", item.sel));
@@ -13358,7 +13358,7 @@ function makeEcho(project, box, feedBox, addr, resend, once) {
           drop(m);
         });
       }
-      const wrap = chatBubble("вы", m.text, m.sel ? "с выделением" : "", why, null, mark, off);
+      const wrap = chatBubble("вы", selectionWords(m.text, m.selection), m.sel ? "с выделением" : "", why, null, mark, off);
       wrap.classList.add("m-local", "m-" + m.state);
       if (m.proposal && m.proposal.mode !== "comment") wrap.append(proposalAttachment(m.proposal));
       if (m.sel) wrap.append(selFold(m.sel.file, m.sel.text));
@@ -14420,7 +14420,10 @@ function chatPanel(project, st) {
       goalOut.send(text).catch(console.error);
       return;
     }
-    if (selection) askPickRemember(askPick, selection);
+    if (selection) {
+      askPickRemember(askPick, selection);
+      if (!text.trim() && askPick.recommended) selectionSaidWrite(selection, "По рекомендации");
+    }
     askPick.put = "";
     askPick.draft = "";
     if (!proposal || proposal.mode !== "comment") askPick.proposalDraft = null;
@@ -15259,6 +15262,54 @@ function selectionMessage(text) {
     if (value.version === 1 && typeof value.text === "string" && (!value.selection || Array.isArray(value.selection.questions))) return value;
   } catch (err) {}
   return null;
+}
+
+// Ответ с выбором и без слов рисуется в ленте пузырём со словами, а не пустотой
+// (DK-1565): пустой пузырь с одной подписью доставки читался потерей ответа.
+// Провод по-прежнему уходит с пустым text, и слова живут только на рисовании:
+// свой вариант перечисляется отметками той же формы, какой их собирает
+// askPickSaid, а у рекомендации слово кнопки вспоминается по самому выбору.
+
+const SELECTION_SAID_STORE = "devkit.selectionsaid";
+
+function selectionSay(selection) {
+  const parts = [];
+  for (const q of (selection && selection.questions) || []) {
+    parts.push((q.ids || []).length ? q.fork + " " + q.ids.join(", ") : "ничего");
+  }
+  return parts.join("; ");
+}
+
+// Слово кнопки рекомендации не восстановить по самому выбору: рекомендованность
+// в провод не едет, а снимок вопроса после ответа закрыт. Поэтому нажатая
+// кнопка запоминается в местном хранилище тем же ключом, каким сверяется
+// выбор, и перезагрузка страницы слов в ленте не меняет.
+function selectionSaidRead(selection) {
+  try {
+    const said = JSON.parse(localStorage.getItem(SELECTION_SAID_STORE) || "[]");
+    const key = selectionIdentity(selection);
+    const hit = said.find((row) => row && row[0] === key);
+    return hit ? hit[1] : "";
+  } catch (err) {}
+  return "";
+}
+
+function selectionSaidWrite(selection, words) {
+  const key = selectionIdentity(selection);
+  if (!key || !words) return;
+  let said;
+  try { said = JSON.parse(localStorage.getItem(SELECTION_SAID_STORE) || "[]"); } catch (err) { said = []; }
+  if (!Array.isArray(said)) said = [];
+  said = said.filter((row) => row && row[0] !== key);
+  said.unshift([key, words]);
+  try { localStorage.setItem(SELECTION_SAID_STORE, JSON.stringify(said.slice(0, 50))); } catch (err) {}
+}
+
+// Слова пузыря для реплики с выбором: пустой text заменяется следом ответа,
+// непустый остаётся собой.
+function selectionWords(text, selection) {
+  if (String(text || "").trim() || !selection) return text;
+  return selectionSaidRead(selection) || selectionSay(selection);
 }
 
 function askPickRead(addr) {
@@ -20645,10 +20696,14 @@ function proposalPickWire(feed, ta, pick, shown) {
   box.append(body); feed.append(box); save();
 }
 
-function sameSelection(a, b) {
-  const identity = (selection) => selection && JSON.stringify({ task: selection.task, tree: selection.tree,
+function selectionIdentity(selection) {
+  if (!selection) return "";
+  return JSON.stringify({ task: selection.task, tree: selection.tree,
     questions: (selection.questions || []).map((q) => ({ fork:q.fork, snapshot:q.snapshot, ids:q.ids })) });
-  return Boolean(a && b && identity(a) === identity(b));
+}
+
+function sameSelection(a, b) {
+  return Boolean(a && b && selectionIdentity(a) === selectionIdentity(b));
 }
 
 function proposalAttachment(proposal) {

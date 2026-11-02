@@ -320,7 +320,11 @@ func parseSection(key, nextKey, text string) (Proposal, string, error) {
 	if p.After, err = wantArr(key, "after", t); err != nil {
 		return p, "", err
 	}
-	p.Text = strings.TrimSpace(tail)
+	// Тело возвращается без форматных переводов: один перед телом и один в
+	// конце принадлежат виду файла, а не тексту задачи. Собственные переводы
+	// строки в начале тела переживают круг рендер-разбор, иначе снимок
+	// показанного расходился бы после первого же сохранения.
+	p.Text = strings.TrimSuffix(strings.TrimPrefix(tail, "\n"), "\n")
 	return p, strings.Join(lines[end:], "\n"), nil
 }
 

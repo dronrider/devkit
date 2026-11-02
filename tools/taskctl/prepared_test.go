@@ -44,7 +44,7 @@ func TestPreparedSaveAndStale(t *testing.T) {
 		t.Fatalf("машинный блок остался в записи: %s", record)
 	}
 	prepared, err := os.ReadFile(draftproposal.PreparedPath(root, "XR-008"))
-	if err != nil || !strings.Contains(string(prepared), "## p1 - ") || !strings.Contains(string(prepared), "первая") {
+	if err != nil || !strings.Contains(string(prepared), "## p1\n") || !strings.Contains(string(prepared), "первая") {
 		t.Fatalf("prepared-файл: %s %v", prepared, err)
 	}
 	if _, err = cmdDraftPreparedSave(root, "XR-008", "stale", input); err == nil || !strings.Contains(err.Error(), "изменилась") {

@@ -142,8 +142,8 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 	if err = dec.Decode(&extra); err != io.EOF {
 		return "", fmt.Errorf("лишние данные после JSON")
 	}
-	// A new analysis adds tasks; existing tasks are preserved. Undecided tasks
-	// can be edited only by supplying their next revision, decided ones cannot.
+	// Новый разбор дописывает задачи, прежние сохраняются. Нерешённую задачу
+	// можно править только следующей редакцией, решённую нельзя.
 	index := map[string]int{}
 	for i, p := range old.Proposals {
 		index[p.ID] = i
@@ -230,7 +230,10 @@ func cmdDraftPreparedReject(root, id, task, base, reason string) (string, error)
 				return "", fmt.Errorf("%s: решение уже принято", p.ID)
 			}
 			p.Status = "rejected"
-			p.Result = &draftproposal.Receipt{Proposal: p.ID, Revision: p.Revision, Outcome: p.Outcome, Result: "отклонено", Reason: strings.TrimSpace(reason)}
+			// Квиток уходит и в журнал receipts: по нему результат
+			// переживает следующий заход, а не только текущий ответ команды.
+			p.Result = &draftproposal.Receipt{Source: id, Proposal: p.ID, Revision: p.Revision, Outcome: p.Outcome, Result: "отклонено", Reason: strings.TrimSpace(reason)}
+			state.Receipts = append(state.Receipts, *p.Result)
 			found = true
 		}
 		if p.Status == "" {

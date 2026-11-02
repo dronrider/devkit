@@ -157,8 +157,9 @@ func cliNeedsDraftLock(args []string) bool {
 	case "review":
 		return len(args) > 1 && args[1] != "publish" && args[1] != "poll" && args[1] != "approve-mr"
 	case "draft":
-		// Proposals currently acquire their own lock; do not recursively flock.
-		return len(args) < 2 || args[1] != "proposals"
+		// Группа prepared берёт замок конвейера сама: обёртка уже держала бы
+		// его, а второй flock того же файла из одного процесса висит намертво.
+		return len(args) < 2 || args[1] != "prepared"
 	}
 	return false
 }

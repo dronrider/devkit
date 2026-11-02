@@ -51,22 +51,27 @@ try {
   await submit("По рекомендации");
   assert.equal(sent.at(-1).text, "");
   assert.deepEqual(sent.at(-1).selection.questions[0].ids, ["СЦ-1", "СЦ-3"]);
+  await page.locator(".chatfeed .msg.me .bb .md p", { hasText: "По рекомендации" }).first().waitFor();
+  assert.equal(await page.locator(".chatfeed .msg.me .bb .md").filter({ hasText: /^\s*$/ }).count(), 0, "пустых пузырей ответа нет");
   await readonly.first().waitFor();
   assert.equal(await active.count(), 0);
   await page.reload();
   await readonly.first().waitFor();
   assert.equal(await readonly.count(), 3);
   assert.equal(await readonly.nth(1).isChecked(), false);
+  await page.locator(".chatfeed .msg.me .bb .md p", { hasText: "По рекомендации" }).first().waitFor();
   await noPin();
   await context.request.get(base + "/__scenario?do=fresh");
   await active.first().waitFor();
   for (let i = 0; i < 3; i++) await active.nth(i).uncheck();
   await submit("Мой вариант");
   assert.deepEqual(sent.at(-1).selection.questions[0].ids, []);
+  await page.locator(".chatfeed .msg.me .bb .md p", { hasText: "ничего" }).first().waitFor();
   await page.reload();
   await readonly.first().waitFor();
   assert.ok(await readonly.count() >= 3);
   assert.ok(await page.locator(".caskpick:disabled:not(:checked)").count() >= 3);
+  await page.locator(".chatfeed .msg.me .bb .md p", { hasText: "ничего" }).first().waitFor();
   await context.request.get(base + "/__scenario?do=fresh");
   await active.first().waitFor();
   await active.first().check();
@@ -88,6 +93,7 @@ try {
   assert.equal((await retried).status(), 200);
   assert.deepEqual(sent.at(-1), attempted);
   await readonly.first().waitFor();
+  await page.locator(".chatfeed .msg.me .bb .md p", { hasText: "пояснение" }).first().waitFor();
   await noPin();
   await context.request.get(base + "/__scenario?do=next-real");
   const radio = page.locator("input.caskpick[type=radio]:not(:disabled)");
@@ -184,5 +190,5 @@ try {
   assert.match(state.doc, /решено человеком [\d-]+: полный: нужен/);
   await noPin();
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ sent: sent.length, native: true, emptyChoice: true, retry: true, readonlyReload: true, mobile: true, noPin: true }));
+  console.log(JSON.stringify({ sent: sent.length, native: true, emptyChoice: true, bubbleWords: true, retry: true, readonlyReload: true, mobile: true, noPin: true }));
 } finally { await context.close(); await browser.close(); }

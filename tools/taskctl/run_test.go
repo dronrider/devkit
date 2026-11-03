@@ -61,8 +61,10 @@ func TestRunRequestPicksHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Метку Wanted ставит сам вход команды: run зовут осознанно, и headless
+	// без окна ему разрешён даже в голом окружении (DK-1562).
 	if q.ID != "DK-7" || q.Harness != taskhead.DefaultHarness || q.Devkit != dk || q.Project != "proj" ||
-		q.Model != "opus" || !q.Hidden {
+		q.Model != "opus" || !q.Hidden || !q.Wanted {
 		t.Fatalf("заказ %+v", q)
 	}
 	t.Setenv(taskhead.HarnessEnv, "glm-code")

@@ -3457,6 +3457,11 @@ func marshalReply(item reply) string {
 // ради одного поля незачем.
 const modelTailLimit = 256 * 1024
 
+// turnTokLimit это потолок чтения назад ради счёта токенов хода: реплику
+// человека, начавшую ход, ищем и за границей окна модели, но не дальше двух
+// мегабайт, иначе молчащий часами журнал считался бы целиком на каждом опросе.
+const turnTokLimit = 2 * 1024 * 1024
+
 // readSessionModel достаёт модель из последней записи ответа. Пусто значит,
 // что ответов в хвосте нет вовсе (свежая сессия, один вопрос человека) либо
 // харнес поля не пишет.
@@ -3543,16 +3548,20 @@ const busyFresh = 20 * time.Second
 // журнал писался только что, либо в хвосте висит вызов инструмента без ответа,
 // то есть агент сейчас в ходе (долгий ход не пишет в журнал минутами).
 // busyEntry это разбор хвоста транскрипта, запомненный под отпечатком файла:
-// время последней записи и число незакрытых вызовов. Ответ «работает ли
-// сессия» считается уже из них и текущего времени, поэтому память не устаревает
-// от одного лишь хода часов, а сам разбор (чтение хвоста и парсинг json) не
-// повторяется, пока файл не двинулся. Считалось это по десятку раз на сборку
-// работ и по разу в несколько секунд на живой опрос таба сессий: без памяти
-// живой список стоил бы тех самых тормозов, которые лечила правка ленты.
+// время последней записи, число незакрытых вызовов и выходные токены нынешнего
+// хода. Ответ «работает ли сессия» считается уже из них и текущего времени,
+// поэтому память не устаревает от одного лишь хода часов, а сам разбор (чтение
+// хвоста и парсинг json) не повторяется, пока файл не двинулся. Считалось это
+// по десятку раз на сборку работ и по разу в несколько секунд на живой опрос
+// таба сессий: без памяти живой список стоил бы тех самых тормозов, которые
+// лечила правка ленты.
 type busyEntry struct {
 	stamp string
 	last  time.Time
 	open  int
+	// tok это выходные токены с начала хода (DK-919): сумма output_tokens
+	// ассистентских записей после последней реплики человека.
+	tok int
 }
 
 // busyEntryOf отдаёт разбор хвоста журнала из памяти процесса, а при первом
@@ -3570,8 +3579,8 @@ func (s *server) busyEntryOf(path string) busyEntry {
 	if hit && stamp != "" && e.stamp == stamp {
 		return e
 	}
-	last, open := sessionBusyTail(path)
-	e = busyEntry{stamp: stamp, last: last, open: open}
+	last, open, tok := sessionBusyTail(path)
+	e = busyEntry{stamp: stamp, last: last, open: open, tok: tok}
 	if stamp != "" {
 		s.mu.Lock()
 		s.busy[path] = e
@@ -3600,46 +3609,77 @@ func busyNow(last time.Time, open int, now time.Time) bool {
 	return open > 0 && now.Sub(last) < 30*time.Minute
 }
 
-// sessionBusyTail читает хвост транскрипта и отдаёт из него две меры: время
-// последней записи и число незакрытых вызовов инструмента.
-func sessionBusyTail(path string) (time.Time, int) {
+// sessionBusyTail читает хвост транскрипта и отдаёт из него три меры: время
+// последней записи, число незакрытых вызовов инструмента и выходные токены
+// нынешнего хода. Ход длиннее окна модели ронял счёт двумя путями: записи,
+// не уместившиеся в окно, выпадали из суммы при пересчёте, а уехавшая за
+// границу реплика человека переставала обнулять счётчик, и он подтягивал
+// прошлый ход. Поэтому чтение расширяется назад до отдельного потолка, пока
+// старт хода в прочитанном куске не нашёлся.
+func sessionBusyTail(path string) (time.Time, int, int) {
 	f, err := os.Open(path)
 	if err != nil {
-		return time.Time{}, 0
+		return time.Time{}, 0, 0
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return time.Time{}, 0
+		return time.Time{}, 0, 0
 	}
-	from := int64(0)
-	if fi.Size() > modelTailLimit {
-		from = fi.Size() - modelTailLimit
+	read := func(limit int64) []byte {
+		from := int64(0)
+		if fi.Size() > limit {
+			from = fi.Size() - limit
+		}
+		if _, err := f.Seek(from, 0); err != nil {
+			return nil
+		}
+		data, err := io.ReadAll(f)
+		if err != nil {
+			return nil
+		}
+		return data
 	}
-	if _, err := f.Seek(from, 0); err != nil {
-		return time.Time{}, 0
+	last, open, tok, started := scanBusyTail(read(modelTailLimit))
+	if !started && fi.Size() > modelTailLimit {
+		last, open, tok, _ = scanBusyTail(read(turnTokLimit))
 	}
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return time.Time{}, 0
-	}
-	open := map[string]bool{}
-	last := time.Time{}
+	return last, open, tok
+}
+
+// scanBusyTail разбирает кусок журнала и отдаёт те же три меры. started
+// говорит, встретилась ли реплика человека, начавшая ход: без неё счёт идёт
+// от начала куска, и за границей чтения он приблизителен.
+func scanBusyTail(data []byte) (last time.Time, open int, tok int, started bool) {
+	openIDs := map[string]bool{}
+	var prevUse [4]int
+	var prevAt time.Time
 	for _, ln := range strings.Split(string(data), "\n") {
 		if strings.TrimSpace(ln) == "" {
 			continue
 		}
 		var rec struct {
 			Timestamp string `json:"timestamp"`
+			Type      string `json:"type"`
 			Message   struct {
 				Content json.RawMessage `json:"content"`
+				Usage   struct {
+					Input         int `json:"input_tokens"`
+					CacheCreation int `json:"cache_creation_input_tokens"`
+					CacheRead     int `json:"cache_read_input_tokens"`
+					Output        int `json:"output_tokens"`
+				} `json:"usage"`
 			} `json:"message"`
 		}
 		if json.Unmarshal([]byte(ln), &rec) != nil {
 			continue
 		}
-		if at, err := time.Parse(time.RFC3339, rec.Timestamp); err == nil && at.After(last) {
-			last = at
+		at := time.Time{}
+		if t, err := time.Parse(time.RFC3339, rec.Timestamp); err == nil {
+			at = t
+			if at.After(last) {
+				last = at
+			}
 		}
 		var blocks []struct {
 			Type      string `json:"type"`
@@ -3647,20 +3687,65 @@ func sessionBusyTail(path string) (time.Time, int) {
 			ToolUseID string `json:"tool_use_id"`
 		}
 		if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+			// Реплика человека строкой: новым ходом её считает turnStarts, а
+			// всё служебное ход продолжающий счётчик обнулять не должно.
+			if rec.Type == "user" {
+				var said string
+				if json.Unmarshal(rec.Message.Content, &said) == nil && turnStarts(said) {
+					tok = 0
+					prevUse, prevAt = [4]int{}, time.Time{}
+					started = true
+				}
+			}
 			continue
 		}
 		for _, b := range blocks {
 			switch b.Type {
 			case "tool_use":
 				if b.ID != "" {
-					open[b.ID] = true
+					openIDs[b.ID] = true
 				}
 			case "tool_result":
-				delete(open, b.ToolUseID)
+				delete(openIDs, b.ToolUseID)
 			}
 		}
+		if rec.Type != "assistant" {
+			continue
+		}
+		use := [4]int{rec.Message.Usage.Input, rec.Message.Usage.CacheCreation,
+			rec.Message.Usage.CacheRead, rec.Message.Usage.Output}
+		// Ответ пишется в журнал по записи на блок, и каждая несёт usage всего
+		// ответа: размышление и вызов инструмента одного ответа приходят двумя
+		// записями с одними числами, и без отсева счётчик удваивался бы на
+		// каждом думающем ответе. Отсев тот же, что у разбора объёма в
+		// python-половине (context.py, DK-1390): соседняя запись с теми же
+		// числами в окне десяти секунд это копия, и окно меряется от соседней
+		// записи, а не от первой копии.
+		if use == prevUse && !prevAt.IsZero() && !at.IsZero() &&
+			at.Sub(prevAt) >= 0 && at.Sub(prevAt) <= 10*time.Second {
+			prevAt = at
+			continue
+		}
+		prevUse, prevAt = use, at
+		tok += use[3]
 	}
-	return last, len(open)
+	return last, len(openIDs), tok, started
+}
+
+// turnStarts решает по реплике человека, начинает ли она новый ход: после
+// снятия служебных рамок в ней должны остаться человеческие слова. Служебные
+// вставки (продление кеша, уведомление о субагенте, замечание стоп-хука) идут
+// внутри хода и счётчик не обнуляют, а реплика диспетчера субагенту обёрнута
+// рамкой и ходом тоже не считается: работа шла и продолжается.
+func turnStarts(text string) bool {
+	if cachekeepOnly(text) {
+		return false
+	}
+	if _, _, wrapped := unwrapDispatch(text); wrapped {
+		return false
+	}
+	said, _ := splitService(text)
+	return said != ""
 }
 
 // Боковые журналы субагентов (находка тринадцатого круга POC). Когда сессия

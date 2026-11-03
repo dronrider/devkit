@@ -49,9 +49,11 @@ func runRequest(root, home, id string, o runOpts) (taskhead.Request, error) {
 		}
 		order = taskhead.ReplyOrder(id)
 	}
+	// Метка явного заказа: команду позвали, и headless-спавн без окна ей
+	// разрешён даже в голом окружении (DK-1562).
 	return taskhead.Request{ID: id, Root: root, Project: filepath.Base(root), Home: home, Devkit: dk,
-		Harness: harness, Model: o.model, Order: order, Again: o.again, Hidden: o.hidden, Adopt: adopt,
-		Pick: func() (string, error) { return runPick(root, id, harness) }}, nil
+		Harness: harness, Model: o.model, Order: order, Again: o.again, Hidden: o.hidden, Wanted: true,
+		Adopt: adopt, Pick: func() (string, error) { return runPick(root, id, harness) }}, nil
 }
 
 // runPickWait ограничивает вопрос вердикту: подъём не должен висеть на agentctl.

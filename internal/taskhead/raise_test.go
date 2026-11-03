@@ -357,12 +357,19 @@ func TestHeadlessPrefixFollowsPairs(t *testing.T) {
 	}
 }
 
-// Без приставки headless-голова тоже не несёт чужого имени окна.
+// Без приставки headless-голова тоже не несёт чужого имени окна. Носителем
+// головы здесь явный заказ: без метки подъём в голом окружении отступил бы
+// раньше спавна (DK-1562).
 func TestHeadlessDropsCallerWindow(t *testing.T) {
 	s := newStand(t, true, true)
 	put(t, filepath.Join(s.d, "newfail"), "", 0o644)
 	t.Setenv("DEVKIT_TMUX", "окно-зовущего")
-	res := s.raise()
+	q := s.req()
+	q.Wanted = true
+	res, err := Raise(q)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if res.Rung != RungHeadless {
 		t.Fatal(s.why(res))
 	}
@@ -424,10 +431,17 @@ func TestBusyLockRefusesSecondHead(t *testing.T) {
 	}
 }
 
-// Ступень 3: без tmux голова поднимается headless той же оболочкой.
+// Ступень 3: без tmux голова поднимается headless той же оболочкой. Носитель
+// головы здесь явный заказ команды run: без метки в окружении без tmux
+// лестница отступает к зову человека (DK-1562).
 func TestNoTmuxGoesHeadless(t *testing.T) {
 	s := newStand(t, false, true)
-	res := s.raise()
+	q := s.req()
+	q.Wanted = true
+	res, err := Raise(q)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if res.Code != CodeRaised || res.Rung != RungHeadless {
 		t.Fatal(s.why(res))
 	}
@@ -441,13 +455,38 @@ func TestNoTmuxGoesHeadless(t *testing.T) {
 	}
 }
 
-// Окно не поднялось, и лестница спускается на headless.
+// Окно не поднялось, и лестница спускается на headless. Носитель головы
+// явный заказ, без него спавна бы не было (DK-1562).
 func TestWindowFailureFallsToHeadless(t *testing.T) {
 	s := newStand(t, true, true)
 	put(t, filepath.Join(s.d, "newfail"), "", 0o644)
-	res := s.raise()
+	q := s.req()
+	q.Wanted = true
+	res, err := Raise(q)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if res.Rung != RungHeadless || !strings.Contains(strings.Join(res.Lines, "\n"), "tmux не поднял окно task-DK-1") {
 		t.Fatal(s.why(res))
+	}
+}
+
+// Явный заказ открывает headless и в голом окружении: метка Wanted поднимает
+// голову без окна и без сессии зовущего (DK-1562).
+func TestHeadlessCarriedByExplicitOrder(t *testing.T) {
+	s := newStand(t, false, true)
+	q := s.req()
+	q.Adopt = 10 * time.Second
+	q.Wanted = true
+	res, err := Raise(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Code != CodeRaised || res.Rung != RungHeadless {
+		t.Fatalf("голова по явному заказу не поднялась:\n%s", s.why(res))
+	}
+	if run := s.lines("runner.log"); len(run) < 1 || !strings.Contains(run[0], "--headless") {
+		t.Fatalf("оболочка headless не запущена:\n%s", s.why(res))
 	}
 }
 

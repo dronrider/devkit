@@ -327,7 +327,9 @@ export function deepBtn(node, what) {
 
 // makeSandbox поднимает окружение и выполняет в нём app.js. Ответы сервера
 // задаёт стенд функцией reply(path, init): вернула она объект, значит это тело
-// удачного ответа, вернула null, значит ручка стенду не интересна.
+// удачного ответа, вернула null, значит ручка стенду не интересна, а промис
+// значит тело ещё не готово, и панель разбирает его, когда стенд промис
+// разрешит.
 // opts.realTimers переводит песочницу на настоящие таймеры и настоящую
 // задержку ответов (opts.latency, миллисекунды): замеру отзывчивости нужны
 // часы, а стендам поведения они только мешают, там время идёт оборотами
@@ -488,7 +490,15 @@ export function makeSandbox(appPath, reply, opts) {
       },
       innerWidth: 1400,
       innerHeight: 900,
-      matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
+      // Узкий экран стенду говорит opts.narrow: окно в пределах 900 точек, и
+      // пороги уже его (520) не спрашиваются. Смена ответа по ходу стенда
+      // остаётся за самим стендом: подмена matchMedia после загрузки проверяет
+      // поведение, а до загрузки решает вот это поле.
+      matchMedia: (q) => ({
+        matches: Boolean(opts && opts.narrow) && String(q).includes("max-width:900px"),
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }),
       prompt: () => null,
       getSelection: () => null,
       navigator: { clipboard: { writeText: () => Promise.resolve() } },
@@ -554,14 +564,18 @@ export function makeSandbox(appPath, reply, opts) {
     fetch: (path, init) => {
       asked.push(path);
       if (init && init.method === "POST") posted.push(path);
-      const body = reply(path, init);
-      const answer = () => ok(body === null || body === undefined ? {} : body);
+      const give = (body) => ok(body === null || body === undefined ? {} : body);
       const wait = opts && opts.latency;
-      if (!wait) return answer();
+      // Ответ может застрять в сети: если reply вернул промис, тело приедет,
+      // когда стенд его разрешит. Так проигрывается порядок, в котором один
+      // ответ панели разбирается раньше другого.
+      const body = reply(path, init);
+      if (body && typeof body.then === "function") return body.then(give);
+      if (!wait) return give(body);
       // Задержка сети моделируется настоящим ожиданием: замер отвечает на
       // вопрос «через сколько человек увидит отклик», а не «сколько оборотов
       // сделал движок».
-      return new Promise((go) => { setTimeout(() => { go(answer()); }, wait); });
+      return new Promise((go) => { setTimeout(() => { go(give(body)); }, wait); });
     },
   };
   sandbox.globalThis = sandbox;

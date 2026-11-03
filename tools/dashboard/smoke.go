@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,12 +13,16 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/dronrider/devkit/internal/chat"
+	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/sessions"
 	"github.com/dronrider/devkit/internal/stage"
 )
@@ -171,16 +176,99 @@ type smoke struct {
 	dir, home, root, proj, bin string
 	url                        string
 	client                     *http.Client
+	ctx                        context.Context
 	restore                    []func()
 	items                      chan Notification
 	notes                      chan string
 	feedErr                    chan error
+	guardianMu                 sync.Mutex
+	guardians                  []smokeGuardian
+	cancel                     context.CancelFunc
+	stopServer                 func()
+	closeOnce                  sync.Once
+	closeErr                   error
 }
 
-func (s *smoke) close() {
-	for i := len(s.restore) - 1; i >= 0; i-- {
-		s.restore[i]()
-	}
+type smokeGuardian struct {
+	dir  string
+	cmd  *exec.Cmd
+	id   string
+	root string
+}
+
+func (s *smoke) close() error {
+	s.closeOnce.Do(func() {
+		s.cancel()
+		if s.stopServer != nil {
+			s.stopServer()
+		}
+		s.guardianMu.Lock()
+		pending := append([]smokeGuardian(nil), s.guardians...)
+		s.guardianMu.Unlock()
+		// All clients are synthetic; new-session runs them synchronously.
+		// Explicit teardown owns these Cmd objects, including a broken fake tmux.
+		// No Wait has reaped these leaders, so their group IDs cannot be reused.
+		for _, guardian := range pending {
+			syscall.Kill(-guardian.cmd.Process.Pid, syscall.SIGTERM)
+		}
+		if len(pending) > 0 {
+			time.Sleep(100 * time.Millisecond)
+		}
+		for _, guardian := range pending {
+			syscall.Kill(-guardian.cmd.Process.Pid, syscall.SIGKILL)
+		}
+		for _, guardian := range pending {
+			guardian.cmd.Wait()
+		}
+		checked := map[string]bool{}
+		for _, guardian := range pending {
+			key := guardian.root + "\x00" + guardian.id
+			if checked[key] {
+				continue
+			}
+			checked[key] = true
+			deadline := time.Now().Add(time.Second)
+			for {
+				lock, err := draftmeta.CloudExclusive(guardian.root, guardian.id)
+				if err == nil {
+					lock.Close()
+					break
+				}
+				if time.Now().After(deadline) {
+					s.closeErr = fmt.Errorf("synthetic reservation %s still held: %w", guardian.id, err)
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
+
+		if s.closeErr == nil {
+			for _, guardian := range pending {
+				os.RemoveAll(guardian.dir)
+			}
+		}
+		entries, _ := filepath.Glob(filepath.Join(s.dir, "holders", "*"))
+		for _, entry := range entries {
+			raw, err := os.ReadFile(entry)
+			if err != nil {
+				continue
+			}
+			pid := strings.TrimSpace(string(raw))
+			for {
+				cmd := exec.Command("/bin/ps", "-p", pid, "-o", "command=")
+				cmd.Dir = s.dir
+				out, err := cmd.Output()
+				if err != nil || !strings.Contains(string(out), entry) {
+					break
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}
+		for i := len(s.restore) - 1; i >= 0; i-- {
+			s.restore[i]()
+		}
+	})
+	return s.closeErr
 }
 
 func smokeWrite(path, body string, mode os.FileMode) error {
@@ -338,6 +426,13 @@ esac
 		"tmux": fmt.Sprintf(`list=%s
 runs=%s
 case "$1" in
+has-session)
+  grep -Fx -- "${3#=}" "$list" >/dev/null
+  exit $?
+  ;;
+list-sessions)
+  cat "$list"
+  ;;
 ls)
   [ -s "$list" ] || exit 1
   cat "$list"
@@ -385,6 +480,7 @@ JSON
   name=$3
   shift 4
   printf 'exec: подписка %%s, команда %%s\n' "$name" "$*" >> "$runs"
+  [ -z "$DEVKIT_CLOUD_ACK" ] || printf ready > "$DEVKIT_CLOUD_ACK"
   DEVKIT_HARNESS="$name" "$@"
   ;;
 esac
@@ -453,8 +549,15 @@ try:
 except OSError:
     owner = ""
 if owner and owner == os.environ.get("DEVKIT_TASK_LOCK_FROM"):
-    holder = subprocess.Popen(["sleep", "2"], start_new_session=True, stdin=subprocess.DEVNULL,
+    import tempfile
+    holders = os.environ["DEVKIT_SMOKE_HOLDERS"]
+    os.makedirs(holders, exist_ok=True)
+    fd, nonce = tempfile.mkstemp(dir=holders)
+    holder = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2)", nonce],
+                              stdin=subprocess.DEVNULL,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    with os.fdopen(fd, "w") as f:
+        f.write(str(holder.pid))
     with open(pid + ".tmp", "w") as f:
         f.write("%d\n" % holder.pid)
     os.replace(pid + ".tmp", pid)
@@ -581,12 +684,44 @@ func pyQuote(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 }
 
-func newSmoke(dir string) (*smoke, error) {
+func newSmoke(dir string) (_ *smoke, resultErr error) {
 	s := &smoke{
 		dir:  dir,
+		ctx:  context.Background(),
 		home: filepath.Join(dir, "home"),
 		bin:  filepath.Join(dir, "bin"),
 	}
+	defer func() {
+		if resultErr != nil {
+			s.close()
+		}
+	}()
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	oldStart := startReservedFn
+	startReservedFn = func(root, tree, id, sess string, command func(string) string) error {
+		return startReservedContext(s.ctx, root, tree, id, sess, command)
+	}
+	s.restore = append(s.restore, func() { startReservedFn = oldStart })
+	oldWatch := cloudStartWatch
+	cloudStartWatch = func(dir string, cmd *exec.Cmd) func() {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		raw, _ := os.ReadFile(filepath.Join(dir, "owner"))
+		id, root := "", ""
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(line, "root=") {
+				root = strings.TrimPrefix(line, "root=")
+			}
+			if strings.HasPrefix(line, "task=") {
+				id = strings.TrimPrefix(line, "task=")
+			}
+		}
+		return func() {
+			s.guardianMu.Lock()
+			s.guardians = append(s.guardians, smokeGuardian{dir: dir, cmd: cmd, id: id, root: root})
+			s.guardianMu.Unlock()
+		}
+	}
+	s.restore = append(s.restore, func() { cloudStartWatch = oldWatch })
 	s.root = filepath.Join(s.home, "projects")
 	s.proj = filepath.Join(s.root, "demo")
 	if err := smokeWrite(filepath.Join(s.proj, "docs", "TASKS.md"), smokeBoardDoc, 0o644); err != nil {
@@ -622,8 +757,9 @@ func newSmoke(dir string) (*smoke, error) {
 		return nil, err
 	}
 	s.restore = append(s.restore, setEnv(map[string]string{
-		"HOME": s.home,
-		"PATH": s.bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"HOME":                 s.home,
+		"DEVKIT_SMOKE_HOLDERS": filepath.Join(s.dir, "holders"),
+		"PATH":                 s.bin + string(os.PathListSeparator) + os.Getenv("PATH"),
 		// Своё дерево devkit у прогона синтетическое: оболочка цикла лежит
 		// фикстурой в его корне, и переменная разработчика тут увела бы сервер
 		// к настоящей оболочке машины. Чекаут для уведомителя смок нашёл
@@ -662,13 +798,30 @@ func newSmoke(dir string) (*smoke, error) {
 	if err != nil {
 		return nil, err
 	}
-	srv := httpServer(newServer(cfg, static, nil).handler())
+	var requests sync.WaitGroup
+	var requestMu sync.Mutex
+	closing := false
+	handler := newServer(cfg, static, nil).handler()
+	srv := httpServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestMu.Lock()
+		if closing {
+			requestMu.Unlock()
+			http.Error(w, "closing", http.StatusServiceUnavailable)
+			return
+		}
+		requests.Add(1)
+		requestMu.Unlock()
+		defer requests.Done()
+		handler.ServeHTTP(w, r)
+	}))
 	go srv.Serve(ln)
-	s.restore = append(s.restore, func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		srv.Shutdown(ctx)
-	})
+	s.stopServer = func() {
+		requestMu.Lock()
+		closing = true
+		requestMu.Unlock()
+		srv.Close()
+		requests.Wait()
+	}
 	s.url = "http://" + ln.Addr().String()
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -685,7 +838,7 @@ func (s *smoke) call(method, path, body string, want int, v any) error {
 	if body != "" {
 		rdr = strings.NewReader(body)
 	}
-	req, err := http.NewRequest(method, s.url+path, rdr)
+	req, err := http.NewRequestWithContext(s.ctx, method, s.url+path, rdr)
 	if err != nil {
 		return err
 	}
@@ -2471,6 +2624,12 @@ func smokeBase() (string, error) {
 // cmdSmoke проходит цепочку DoD и печатает ход по шагам: провалившийся шаг
 // называет себя и причину, а не оставляет один ненулевой код.
 func cmdSmoke(out io.Writer, keep bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	return cmdSmokeContext(ctx, out, keep)
+}
+
+func cmdSmokeContext(ctx context.Context, out io.Writer, keep bool) (resultErr error) {
 	base, err := smokeBase()
 	if err != nil {
 		return err
@@ -2479,16 +2638,27 @@ func cmdSmoke(out io.Writer, keep bool) error {
 	if err != nil {
 		return err
 	}
+	remove := !keep
+	defer func() {
+		if remove {
+			os.RemoveAll(dir)
+		}
+	}()
 	if keep {
 		fmt.Fprintf(out, "окружение прогона остаётся в %s\n", dir)
-	} else {
-		defer os.RemoveAll(dir)
 	}
 	s, err := newSmoke(dir)
 	if err != nil {
 		return err
 	}
-	defer s.close()
+	defer func() {
+		if err := s.close(); err != nil {
+			remove = false
+			resultErr = errors.Join(resultErr, fmt.Errorf("cleanup %s: %w", dir, err))
+		}
+	}()
+	stopCancel := context.AfterFunc(ctx, s.cancel)
+	defer stopCancel()
 	if err := s.login(); err != nil {
 		return fmt.Errorf("вход: %v", err)
 	}
@@ -2523,6 +2693,9 @@ func cmdSmoke(out io.Writer, keep bool) error {
 		{"главная собирает обзор и быструю запись", s.stepOverview},
 	}
 	for i, st := range steps {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		note, err := st.run()
 		if err != nil {
 			return fmt.Errorf("шаг %d (%s): %v", i+1, st.name, err)

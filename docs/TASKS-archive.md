@@ -769,3 +769,8 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1144 | Ворота taskctl move check и close читают этапы шаблона | task | P1 | 2026-11-01 | [tasks/archive/2026/DK-1144.md](tasks/archive/2026/DK-1144.md) |
 | DK-1547 | [dashboard] Незачатый чат с черновиком тонет в списке | task | P2 | 2026-11-02 | [tasks/archive/2026/DK-1547.md](tasks/archive/2026/DK-1547.md) |
 | DK-1545 | Подтверждение груминга показывает подготовленную задачу [приёмка: mixed] | task | P2 | 2026-11-02 | [tasks/archive/2026/DK-1545.md](tasks/archive/2026/DK-1545.md) |
+| DK-1582 | Запуск облачного чата не оставляет процессы после проверки | bug | P1 | 2026-11-03 | [tasks/archive/2026/DK-1582.md](tasks/archive/2026/DK-1582.md) |
+| DK-919 | Плашка работы гаснет посреди хода, строку активности чата рисуем заново [срок: 2026-11-03] | bug | P1 | 2026-11-03 | [tasks/archive/2026/DK-919.md](tasks/archive/2026/DK-919.md) |
+| DK-1562 | Тест taskctl зависает в голом окружении из-за headless-подъёма головы | bug | P1 | 2026-11-03 | [tasks/archive/2026/DK-1562.md](tasks/archive/2026/DK-1562.md) |
+| DK-1546 | [dashboard] Возврат в последний разговор с телефона [приёмка: mixed] | task | P2 | 2026-11-03 | [tasks/archive/2026/DK-1546.md](tasks/archive/2026/DK-1546.md) |
+| DK-1581 | Подписка OpenCode Go доступна через Claude Code | task | P2 | 2026-11-04 | [tasks/archive/2026/DK-1581.md](tasks/archive/2026/DK-1581.md) |

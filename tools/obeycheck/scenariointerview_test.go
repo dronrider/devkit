@@ -366,7 +366,7 @@ func writeShownProposal(t *testing.T, project, rawCards, mode string) {
 	if mode == "другая редакция" && len(active) > 0 {
 		active[0]["revision"] = 99
 	}
-	question := map[string]any{"questions": []any{map[string]any{"text": "выбор", "proposal": map[string]any{"version": 1, "tree": tree, "anchor": "OB-069", "sources": []any{map[string]any{"source": "OB-069", "basis": basis, "proposals": active}}}}}}
+	question := map[string]any{"questions": []any{map[string]any{"text": "выбор", "prepared": map[string]any{"version": 1, "tree": tree, "anchor": "OB-069", "sources": []any{map[string]any{"source": "OB-069", "basis": basis, "proposals": active}}}}}}
 	data, err := json.Marshal(question)
 	if err != nil {
 		t.Fatal(err)
@@ -390,20 +390,20 @@ func TestGroomProposalScenarioChecks(t *testing.T) {
 		name, log, proposals string
 		pass                 bool
 	}{
-		{"порядок", "taskctl draft proposals save --help\ntaskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, true},
-		{"ошибка до интервью", "taskctl draft proposals save OB-069 --base abc [exit=1]\ntaskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, true},
-		{"только ошибка", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc [exit=1]\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
-		{"наоборот", "taskctl draft proposals save OB-069 --base abc\ntaskctl decide OB-069 --scenarios\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"порядок", "taskctl draft prepared save --help\ntaskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, true},
+		{"ошибка до интервью", "taskctl draft prepared save OB-069 --base abc [exit=1]\ntaskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, true},
+		{"только ошибка", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc [exit=1]\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"наоборот", "taskctl draft prepared save OB-069 --base abc\ntaskctl decide OB-069 --scenarios\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
 		{"нет вызовов", "", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
-		{"нет редакции", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1"},{"id":"p2","revision":1}]`, false},
-		{"нет вопроса", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
-		{"нет ask вызова", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
-		{"устаревший basis", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
-		{"другая редакция", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
-		{"без сессии", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
-		{"применение answer", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\ntaskctl draft proposals answer OB-069\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
-		{"прямое применение", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\ntaskctl draft drop OB-069\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
-		{"применённая карточка", "taskctl decide OB-069 --scenarios\ntaskctl draft proposals save OB-069 --base abc\n", `[{"id":"p1","revision":1,"status":"accepted"},{"id":"p2","revision":1}]`, false},
+		{"нет редакции", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1"},{"id":"p2","revision":1}]`, false},
+		{"нет вопроса", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"нет ask вызова", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"устаревший basis", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"другая редакция", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"без сессии", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"применение answer", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\ntaskctl draft prepared answer OB-069\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"прямое применение", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\ntaskctl draft drop OB-069\n", `[{"id":"p1","revision":1},{"id":"p2","revision":1}]`, false},
+		{"применённая карточка", "taskctl decide OB-069 --scenarios\ntaskctl draft prepared save OB-069 --base abc\n", `[{"id":"p1","revision":1,"status":"accepted"},{"id":"p2","revision":1}]`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			project := t.TempDir()
@@ -416,7 +416,7 @@ func TestGroomProposalScenarioChecks(t *testing.T) {
 			}
 			logText := tc.log
 			if tc.name != "нет ask вызова" {
-				logText += "taskctl draft proposals ask OB-069\n"
+				logText += "taskctl draft prepared ask OB-069\n"
 			}
 			if tc.name != "нет вопроса" {
 				writeShownProposal(t, project, tc.proposals, tc.name)
@@ -518,7 +518,7 @@ func TestGroomPrivateDuplicateScenarioChecks(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(project, "docs", "tasks", "drafts", "OB-069.md"), []byte(source), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			log := "start\t1\ttaskctl guard OB-069\nend\t1\t0\nstart\t2\ttaskctl list --safe\nend\t2\t0\nstart\t3\ttaskctl draft list --safe\nend\t3\t0\nstart\t9\ttaskctl decide OB-069 --scenarios\nend\t9\t0\nstart\t4\ttaskctl draft proposals save OB-069 --base abc\nend\t4\t0\nstart\t5\ttaskctl draft proposals ask OB-069\nend\t5\t0\n"
+			log := "start\t1\ttaskctl guard OB-069\nend\t1\t0\nstart\t2\ttaskctl list --safe\nend\t2\t0\nstart\t3\ttaskctl draft list --safe\nend\t3\t0\nstart\t9\ttaskctl decide OB-069 --scenarios\nend\t9\t0\nstart\t4\ttaskctl draft prepared save OB-069 --base abc\nend\t4\t0\nstart\t5\ttaskctl draft prepared ask OB-069\nend\t5\t0\n"
 			if tc.log == "missing" {
 				log = "start\t1\ttaskctl guard OB-069\nend\t1\t0\n"
 			}
@@ -526,16 +526,16 @@ func TestGroomPrivateDuplicateScenarioChecks(t *testing.T) {
 				log = strings.Replace(log, "start\t9\ttaskctl decide OB-069 --scenarios\nend\t9\t0\n", "", 1)
 			}
 			if tc.log == "parallel-save" {
-				log = strings.Replace(log, "end\t9\t0\nstart\t4\ttaskctl draft proposals save OB-069 --base abc\n", "start\t4\ttaskctl draft proposals save OB-069 --base abc\nend\t9\t0\n", 1)
+				log = strings.Replace(log, "end\t9\t0\nstart\t4\ttaskctl draft prepared save OB-069 --base abc\n", "start\t4\ttaskctl draft prepared save OB-069 --base abc\nend\t9\t0\n", 1)
 			}
 			if tc.log == "parallel-ask" {
-				log = strings.Replace(log, "end\t4\t0\nstart\t5\ttaskctl draft proposals ask OB-069\n", "start\t5\ttaskctl draft proposals ask OB-069\nend\t4\t0\n", 1)
+				log = strings.Replace(log, "end\t4\t0\nstart\t5\ttaskctl draft prepared ask OB-069\n", "start\t5\ttaskctl draft prepared ask OB-069\nend\t4\t0\n", 1)
 			}
 			if tc.log == "noask" {
-				log = strings.Replace(log, "start\t5\ttaskctl draft proposals ask OB-069\nend\t5\t0\n", "", 1)
+				log = strings.Replace(log, "start\t5\ttaskctl draft prepared ask OB-069\nend\t5\t0\n", "", 1)
 			}
 			if tc.log == "answer" {
-				log += "start\t6\ttaskctl draft proposals answer OB-069\nend\t6\t0\n"
+				log += "start\t6\ttaskctl draft prepared answer OB-069\nend\t6\t0\n"
 			}
 			if tc.name != "нет вопроса" {
 				writeShownProposal(t, project, tc.proposals, tc.name)

@@ -768,3 +768,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1537 | Выбор ответа в чате виден и отправляется без закрепа | bug | P2 | 2026-11-01 | [tasks/archive/2026/DK-1537.md](tasks/archive/2026/DK-1537.md) |
 | DK-1144 | Ворота taskctl move check и close читают этапы шаблона | task | P1 | 2026-11-01 | [tasks/archive/2026/DK-1144.md](tasks/archive/2026/DK-1144.md) |
 | DK-1547 | [dashboard] Незачатый чат с черновиком тонет в списке | task | P2 | 2026-11-02 | [tasks/archive/2026/DK-1547.md](tasks/archive/2026/DK-1547.md) |
+| DK-1545 | Подтверждение груминга показывает подготовленную задачу [приёмка: mixed] | task | P2 | 2026-11-02 | [tasks/archive/2026/DK-1545.md](tasks/archive/2026/DK-1545.md) |

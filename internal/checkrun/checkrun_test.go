@@ -63,7 +63,7 @@ var ladder = []Step{{"mini", "haiku"}, {"base", "sonnet"}, {"pro", "opus"}, {"ma
 func TestChooseKeepsSameModelAsDeveloper(t *testing.T) {
 	ch := Choose("base", ladder)
 	if ch.Refusal != "" || ch.Stepped || ch.Tier != "base" || ch.Model != "sonnet" {
-		t.Fatalf("та же модель на своём ярусе: %+v", ch)
+		t.Fatalf("та же модель на своём уровенье: %+v", ch)
 	}
 }
 
@@ -82,7 +82,7 @@ func TestParseTier(t *testing.T) {
 		t.Fatalf("ярус: %q", got)
 	}
 	if got := ParseTier("model: sonnet\n"); got != "" {
-		t.Fatalf("без строки tier ярус пуст: %q", got)
+		t.Fatalf("без строки tier уровень пуст: %q", got)
 	}
 }
 
@@ -221,7 +221,7 @@ type fake struct {
 
 func (f *fake) Ready(string) (string, bool) { return f.ready, f.failed }
 func (f *fake) Tier(string) (string, string) {
-	return f.tier, "ярус " + f.tier + " по вердикту стенда"
+	return f.tier, "уровень " + f.tier + " по вердикту стенда"
 }
 func (f *fake) Ladder() []Step { return f.ladder }
 func (f *fake) Raise(p Plan) Report {
@@ -267,7 +267,7 @@ func TestRunOutcomes(t *testing.T) {
 	reps := Run(&fake{tier: "max", ladder: ladder}, root, rows, nil)
 	if Failed(reps) || !strings.Contains(reps[0].Line, "модель fable") ||
 		!strings.Contains(reps[0].Line, "разработку вёл fable") {
-		t.Fatalf("та же модель на верхнем ярусе: %+v", reps)
+		t.Fatalf("та же модель на верхнем уровенье: %+v", reps)
 	}
 	reps = Run(&fake{ready: "tmux нет", failed: true, tier: "base", ladder: ladder}, root, rows, nil)
 	if !Failed(reps) || !strings.Contains(reps[0].Line, "tmux нет") {
@@ -301,7 +301,7 @@ func TestChooseAvailableUsesActualEnabledOwnerAndPartialLadder(t *testing.T) {
 	}
 	ch := ChooseAvailable("pro", ladders)
 	if ch.Harness != "glm" || ch.Tier != "pro" || ch.Model != "glm" || ch.Refusal != "" {
-		t.Fatalf("обслуженный ярус первой лестницы пропущен: %+v", ch)
+		t.Fatalf("обслуженный уровень первой лестницы пропущен: %+v", ch)
 	}
 	ch = ChooseAvailable("max", ladders)
 	if ch.Harness != "owner" || ch.Tier != "max" || ch.Model != "glm" || ch.Refusal != "" {
@@ -426,7 +426,7 @@ func TestChooseAvailableSearchesIncompletePrimary(t *testing.T) {
 	// ступенью вверх по первой (DK-1360).
 	ch := ChooseAvailable("base", ladders)
 	if ch.Model != "opus" || ch.Tier != "base" || ch.Harness != "secondary" {
-		t.Fatalf("точный ярус соседней лестницы скрыт ступенью первой: %+v", ch)
+		t.Fatalf("точный уровень соседней лестницы скрыт ступенью первой: %+v", ch)
 	}
 	// Когда точного яруса нет ни у кого, отбор поднимается ступенью, и первая
 	// лестница дешевле соседней.

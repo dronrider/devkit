@@ -190,9 +190,10 @@ type smoke struct {
 }
 
 type smokeGuardian struct {
-	dir string
-	cmd *exec.Cmd
-	id  string
+	dir  string
+	cmd  *exec.Cmd
+	id   string
+	root string
 }
 
 func (s *smoke) close() error {
@@ -215,13 +216,22 @@ func (s *smoke) close() error {
 		}
 		for _, guardian := range pending {
 			syscall.Kill(-guardian.cmd.Process.Pid, syscall.SIGKILL)
+		}
+		for _, guardian := range pending {
 			guardian.cmd.Wait()
+		}
+		checked := map[string]bool{}
+		for _, guardian := range pending {
+			key := guardian.root + "\x00" + guardian.id
+			if checked[key] {
+				continue
+			}
+			checked[key] = true
 			deadline := time.Now().Add(time.Second)
 			for {
-				lock, err := draftmeta.CloudExclusive(s.proj, guardian.id)
+				lock, err := draftmeta.CloudExclusive(guardian.root, guardian.id)
 				if err == nil {
 					lock.Close()
-					os.RemoveAll(guardian.dir)
 					break
 				}
 				if time.Now().After(deadline) {
@@ -232,6 +242,11 @@ func (s *smoke) close() error {
 			}
 		}
 
+		if s.closeErr == nil {
+			for _, guardian := range pending {
+				os.RemoveAll(guardian.dir)
+			}
+		}
 		entries, _ := filepath.Glob(filepath.Join(s.dir, "holders", "*"))
 		for _, entry := range entries {
 			raw, err := os.ReadFile(entry)
@@ -690,16 +705,19 @@ func newSmoke(dir string) (_ *smoke, resultErr error) {
 	oldWatch := cloudStartWatch
 	cloudStartWatch = func(dir string, cmd *exec.Cmd) func() {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		raw, _ := os.ReadFile(filepath.Join(dir, "owner"))
+		id, root := "", ""
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(line, "root=") {
+				root = strings.TrimPrefix(line, "root=")
+			}
+			if strings.HasPrefix(line, "task=") {
+				id = strings.TrimPrefix(line, "task=")
+			}
+		}
 		return func() {
 			s.guardianMu.Lock()
-			raw, _ := os.ReadFile(filepath.Join(dir, "owner"))
-			id := ""
-			for _, line := range strings.Split(string(raw), "\n") {
-				if strings.HasPrefix(line, "task=") {
-					id = strings.TrimPrefix(line, "task=")
-				}
-			}
-			s.guardians = append(s.guardians, smokeGuardian{dir: dir, cmd: cmd, id: id})
+			s.guardians = append(s.guardians, smokeGuardian{dir: dir, cmd: cmd, id: id, root: root})
 			s.guardianMu.Unlock()
 		}
 	}

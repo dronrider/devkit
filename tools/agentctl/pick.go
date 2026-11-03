@@ -420,7 +420,18 @@ func pickVerdict(root, id, role, goal string) (pickResult, error) {
 	// override и от сдвига корректора зависит, к какому ярусу его применять; а
 	// явный override effort должен пол перебить целиком, поэтому если он есть,
 	// пол не трогаем.
-	if ov.Effort != "" {
+	//
+	// Ручной выбор из панели едет окружением запуска (DEVKIT_EFFORT, DK-1570) и
+	// сильнее строки файла: человек приложил руку в момент запуска, а строка
+	// держит постоянный уровень задачи. Кривое значение это громкая ошибка, а не
+	// игнор: тихий съезд на вердикт подменял бы ручной выбор незамеченно.
+	if env := os.Getenv("DEVKIT_EFFORT"); env != "" {
+		if !validEfforts[env] {
+			return res, fmt.Errorf("окружение запуска задаёт неизвестный effort %q, допустимы low, medium, high, xhigh, max", env)
+		}
+		v.Effort = env
+		v.Reason += ", effort задан ручным выбором запуска"
+	} else if ov.Effort != "" {
 		v.Effort = ov.Effort
 		v.Reason += ", effort задан override-строкой"
 	} else {

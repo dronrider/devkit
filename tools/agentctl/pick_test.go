@@ -456,6 +456,65 @@ func TestCmdPickOverride(t *testing.T) {
 		}
 	})
 
+	t.Run("ручной выбор запуска перебивает override-строку", func(t *testing.T) {
+		// Панель везёт уровень ползунка окружением запуска (DK-1570), и он сильнее
+		// строки файла: рука приложена в момент запуска, а строка держит
+		// постоянный уровень задачи.
+		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
+		content := "# T-001\n\nЭффорт: max (домен требует)\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("DEVKIT_EFFORT", "low")
+		out, err := cmdPick(root, "T-001", roleExec, "")
+		if err != nil {
+			t.Fatalf("pick T-001: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: haiku\neffort: low\n") {
+			t.Fatalf("жду low из окружения запуска, получил %q", out)
+		}
+		if !strings.Contains(out, "ручным выбором запуска") {
+			t.Fatalf("в причине нет упоминания ручного выбора: %q", out)
+		}
+		if strings.Contains(out, "effort задан override-строкой") {
+			t.Fatalf("строка файла не должна была победить окружение: %q", out)
+		}
+	})
+
+	t.Run("ручной выбор запуска снимает пол base", func(t *testing.T) {
+		// T-005 маппингом sonnet с effort medium, пол base поднял бы его до high.
+		// Ручной low это осознанная экономия, и подтягивать его полом нельзя.
+		taskFile := filepath.Join(root, "docs", "tasks", "T-005.md")
+		content := "# T-005\n\nОписание.\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("DEVKIT_EFFORT", "low")
+		out, err := cmdPick(root, "T-005", roleExec, "")
+		if err != nil {
+			t.Fatalf("pick T-005: %v", err)
+		}
+		if !strings.HasPrefix(out, "model: sonnet\neffort: low\n") {
+			t.Fatalf("жду low из окружения без подтяжки полом, получил %q", out)
+		}
+		if strings.Contains(out, "экономить глубину смысла нет") {
+			t.Fatalf("пол не должен был сработать при ручном выборе: %q", out)
+		}
+	})
+
+	t.Run("кривой ручной выбор это ошибка", func(t *testing.T) {
+		taskFile := filepath.Join(root, "docs", "tasks", "T-001.md")
+		content := "# T-001\n\nОписание.\n"
+		if err := os.WriteFile(taskFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("DEVKIT_EFFORT", "highest")
+		_, err := cmdPick(root, "T-001", roleExec, "")
+		if err == nil || !strings.Contains(err.Error(), "неизвестный effort") {
+			t.Fatalf("жду ошибку про неизвестный effort из окружения, получил %v", err)
+		}
+	})
+
 	t.Run("вариант пунктом списка", func(t *testing.T) {
 		taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
 		content := "# T-002\n\n- Модель: haiku\n"

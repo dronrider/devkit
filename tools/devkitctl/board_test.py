@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 import board
-from testenv import SandboxCase, executable, write
+from testenv import PY, SandboxCase, executable, write
 
 BOARD_HEAD = """# Задачи проекта (префикс BD)
 
@@ -333,6 +333,168 @@ class DoctorDepsTest(SandboxCase):
                      .replace("| BD-2 | Вторая |", "| BD-2 | Вторая [после BD-1] |"))
         rc, out = self.box.doctor(self.proj, path=self.path)
         self.assertEqual(rc, 0, "doctor нашёл находки при маркере у названной строки: %s" % out)
+
+
+OLD_BLOCK_DRAFT = """# BD-3: материал
+
+## Текст
+
+материал записи
+
+## Предложения разбора
+
+```json
+{"version":1,"state":"active","proposals":[]}
+```
+"""
+
+
+class LegacyBlockFindingsTest(unittest.TestCase):
+    """Разбор старых блоков без doctor: заголовок в записи находится, а
+    черновик без блока и заголовок внутри забора кода находкой не становятся.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def legacy(self, name, text):
+        write(self.root / "docs" / "tasks" / "drafts" / name, text)
+        return board.legacy_proposal_drafts(self.root)
+
+    def test_block_in_record_is_found(self):
+        got = self.legacy("BD-3.md", OLD_BLOCK_DRAFT)
+        self.assertEqual(got, ["BD-3"], "старый блок в записи не найден")
+
+    def test_plain_draft_is_not_found(self):
+        got = self.legacy("BD-3.md", "# BD-3: материал\n\n## Текст\n\nмысль\n")
+        self.assertEqual(got, [], "черновик без блока стал находкой")
+
+    def test_quoted_heading_is_not_found(self):
+        got = self.legacy("BD-3.md",
+                          "# BD-3: материал\n\n```\n## Предложения разбора\n```\n")
+        self.assertEqual(got, [], "заголовок в заборе кода принят за блок")
+
+    def test_project_without_drafts_is_silent(self):
+        self.assertEqual(board.legacy_proposal_drafts(self.root), [],
+                         "проект без накопителя черновиков дал находку")
+
+
+# Заглушка taskctl для прогона переноса: --version и init взяты по образцу
+# заглушки доски из testenv, а «draft prepared migrate» срезает старый блок из
+# записей черновиков, как его срезает настоящий бинарь.
+MIGRATE_TASKCTL = '''#!%s
+import json
+import os
+import sys
+
+argv, root = sys.argv[1:], "."
+if argv[:1] == ["--version"]:
+    print("%s")
+    sys.exit(0)
+if argv[:1] == ["-C"]:
+    root, argv = argv[1], argv[2:]
+if argv[:1] == ["init"]:
+    os.makedirs(os.path.join(root, "docs", "tasks"), exist_ok=True)
+    with open(os.path.join(root, "docs", "TASKS.md"), "w", encoding="utf-8") as f:
+        f.write("# Задачи проекта\\n")
+    print("доска создана")
+    sys.exit(0)
+if argv == ["draft", "prepared", "migrate"]:
+    if os.environ.get("MIGRATE_FAIL"):
+        sys.stderr.write(os.environ["MIGRATE_FAIL"] + "\\n")
+        sys.exit(1)
+    moved = []
+    drafts = os.path.join(root, "docs", "tasks", "drafts")
+    if os.path.isdir(drafts):
+        for name in sorted(os.listdir(drafts)):
+            if not name.endswith(".md"):
+                continue
+            path = os.path.join(drafts, name)
+            with open(path, encoding="utf-8") as f:
+                lines = f.read().split("\\n")
+            if "## Предложения разбора" not in lines:
+                continue
+            cut = lines.index("## Предложения разбора")
+            close = next(i for i in range(cut + 3, len(lines))
+                         if lines[i].strip() == "```")
+            del lines[cut:close + 1]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\\n".join(lines).rstrip("\\n") + "\\n")
+            moved.append(name[:-3])
+    print(json.dumps({"records": moved, "asks": []}, ensure_ascii=False))
+    sys.exit(0)
+sys.exit(0)
+'''
+
+
+class DoctorPreparedMigrateTest(SandboxCase):
+    """Старые блоки разбора задач в черновиках (DK-1564): находка doctor
+    называет перенос утилитой, --fix зовёт бинарь, отказ утилиты и машина без
+    бинаря остаются находками с адресом сборки и ручного вызова.
+    """
+
+    CHAIN = True
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.proj = cls.box.project("prepared")
+        binroot = cls.box.root / "preparedbin"
+        binroot.mkdir()
+        executable(binroot / "taskctl",
+                   MIGRATE_TASKCTL % (PY, cls.box.version_line("taskctl")))
+        cls.path = "%s:%s" % (binroot, cls.box.cleanpath)
+        cls.box.dkctl_run("new", "--prefix", "PD", "-C", str(cls.proj), path=cls.path)
+        # Пустые ключи болванки выката дали бы свои находки, а тут проверяется
+        # только перенос старых блоков.
+        write(cls.proj / ".devkit" / "deploy.local",
+              "deploy = echo deploy\ntest = echo test\n")
+        cls.drafts = cls.proj / "docs" / "tasks" / "drafts"
+        write(cls.drafts / "PD-3.md", OLD_BLOCK_DRAFT.replace("BD-3", "PD-3"))
+        write(cls.drafts / "PD-4.md", "# PD-4: без разбора\n\n## Текст\n\nматериал записи\n")
+
+    def test_01_block_is_a_finding_with_manual_call(self):
+        rc, out = self.box.doctor(self.proj, path=self.path)
+        self.assertEqual(rc, 1, "doctor не увидел старый блок: %s" % out)
+        self.assertIn("docs/tasks/drafts/PD-3.md: разбор задач лежит старым блоком в записи",
+                      out, "нет находки про старый блок")
+        self.assertIn("taskctl -C %s draft prepared migrate" % self.proj, out,
+                      "находка не называет ручной вызов")
+        self.assertNotIn("drafts/PD-4.md", out, "черновик без блока стал находкой")
+
+    def test_02_fix_runs_taskctl_and_closes(self):
+        rc, out = self.box.doctor(self.proj, "--fix", path=self.path)
+        self.assertEqual(rc, 0, "перенос не закрыл находки: %s" % out)
+        self.assertIn("починено: старые блоки разбора перенесены в prepared-файлы: PD-3",
+                      out, "--fix не сказал про перенос")
+        body = (self.drafts / "PD-3.md").read_text(encoding="utf-8")
+        self.assertNotIn("Предложения разбора", body, "блок остался в записи")
+        rc, out = self.box.doctor(self.proj, path=self.path)
+        self.assertEqual(rc, 0, "перенесённый блок всё ещё находка: %s" % out)
+
+    def test_03_failing_migrate_stays_a_finding(self):
+        write(self.drafts / "PD-3.md", OLD_BLOCK_DRAFT.replace("BD-3", "PD-3"))
+        rc, out = self.box.doctor(self.proj, "--fix", path=self.path,
+                                  env={"MIGRATE_FAIL": "отказ стенда"})
+        self.assertEqual(rc, 1, "провалившийся перенос закрыл doctor: %s" % out)
+        self.assertIn("taskctl draft prepared migrate: отказ стенда", out,
+                      "отказ утилиты не назван находкой")
+
+    def test_04_without_binary_names_build(self):
+        # Блок остался после отказа в предыдущем шаге: цепочка стоит на нём.
+        rc, out = self.box.doctor(self.proj,
+                                  path="%s:%s" % (self.box.dkbin, self.box.sys))
+        self.assertEqual(rc, 1, "машина без бинаря чистой быть не может: %s" % out)
+        self.assertIn("разбор задач лежит старым блоком в записи", out,
+                      "без бинаря находка пропала")
+        self.assertIn("taskctl не в PATH, сперва сборка python3", out,
+                      "находка без бинаря не называет сборку")
+        self.assertIn("taskctl -C %s draft prepared migrate" % self.proj, out,
+                      "находка без бинаря не называет ручной вызов")
 
 
 if __name__ == "__main__":

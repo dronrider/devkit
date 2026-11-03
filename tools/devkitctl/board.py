@@ -13,6 +13,10 @@
 строкой, а прогресс цели занижен. Членом считается ID со скобкой судьбы,
 как в разборе дашборда, и находка зовётся на члена без строки доски, строки
 архива и файла черновика.
+
+Третий рубеж про носитель разбора задач (DK-1564): подготовленные задачи
+живут prepared-файлом, а старый блок в записи черновика называется находкой
+своим разбором, без бинаря taskctl.
 """
 
 import re
@@ -170,6 +174,35 @@ def goal_findings(root, rows):
                             "упоминание на новый адрес либо снять его"
                             % (path.stem, tid))
     return findings
+
+
+# Заголовок старого блока разбора задач в записи черновика (DK-1564): носитель
+# разбора теперь prepared-файл, а блок в записи читают только прежние версии
+# утилит. Текст повторяет константу ридера taskctl, переименовывать её нельзя.
+LEGACY_PROPOSALS_HEADER = "## Предложения разбора"
+
+
+def legacy_proposal_drafts(root):
+    """Черновики, где разбор задач лежит старым блоком в самой записи (DK-1564).
+
+    Список нужен doctor на любой машине, включая машины без бинаря taskctl,
+    поэтому блок ищется своим разбором, а не вызовом утилиты. Заголовок внутри
+    забора кода не считается: цитата команды или журнала блоком не владеет.
+    """
+    drafts = Path(root) / "docs" / "tasks" / "drafts"
+    if not drafts.is_dir():
+        return []
+    found = []
+    for path in sorted(drafts.glob("*.md")):
+        fence = False
+        for ln in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if ln.lstrip().startswith("```"):
+                fence = not fence
+                continue
+            if not fence and ln.strip() == LEGACY_PROPOSALS_HEADER:
+                found.append(path.stem)
+                break
+    return found
 
 
 def check(root):

@@ -3457,6 +3457,11 @@ func marshalReply(item reply) string {
 // ради одного поля незачем.
 const modelTailLimit = 256 * 1024
 
+// turnTokLimit это потолок чтения назад ради счёта токенов хода: реплику
+// человека, начавшую ход, ищем и за границей окна модели, но не дальше двух
+// мегабайт, иначе молчащий часами журнал считался бы целиком на каждом опросе.
+const turnTokLimit = 2 * 1024 * 1024
+
 // readSessionModel достаёт модель из последней записи ответа. Пусто значит,
 // что ответов в хвосте нет вовсе (свежая сессия, один вопрос человека) либо
 // харнес поля не пишет.
@@ -3606,7 +3611,11 @@ func busyNow(last time.Time, open int, now time.Time) bool {
 
 // sessionBusyTail читает хвост транскрипта и отдаёт из него три меры: время
 // последней записи, число незакрытых вызовов инструмента и выходные токены
-// нынешнего хода.
+// нынешнего хода. Ход длиннее окна модели ронял счёт двумя путями: записи,
+// не уместившиеся в окно, выпадали из суммы при пересчёте, а уехавшая за
+// границу реплика человека переставала обнулять счётчик, и он подтягивал
+// прошлый ход. Поэтому чтение расширяется назад до отдельного потолка, пока
+// старт хода в прочитанном куске не нашёлся.
 func sessionBusyTail(path string) (time.Time, int, int) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -3617,20 +3626,32 @@ func sessionBusyTail(path string) (time.Time, int, int) {
 	if err != nil {
 		return time.Time{}, 0, 0
 	}
-	from := int64(0)
-	if fi.Size() > modelTailLimit {
-		from = fi.Size() - modelTailLimit
+	read := func(limit int64) []byte {
+		from := int64(0)
+		if fi.Size() > limit {
+			from = fi.Size() - limit
+		}
+		if _, err := f.Seek(from, 0); err != nil {
+			return nil
+		}
+		data, err := io.ReadAll(f)
+		if err != nil {
+			return nil
+		}
+		return data
 	}
-	if _, err := f.Seek(from, 0); err != nil {
-		return time.Time{}, 0, 0
+	last, open, tok, started := scanBusyTail(read(modelTailLimit))
+	if !started && fi.Size() > modelTailLimit {
+		last, open, tok, _ = scanBusyTail(read(turnTokLimit))
 	}
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return time.Time{}, 0, 0
-	}
-	open := map[string]bool{}
-	last := time.Time{}
-	tok := 0
+	return last, open, tok
+}
+
+// scanBusyTail разбирает кусок журнала и отдаёт те же три меры. started
+// говорит, встретилась ли реплика человека, начавшая ход: без неё счёт идёт
+// от начала куска, и за границей чтения он приблизителен.
+func scanBusyTail(data []byte) (last time.Time, open int, tok int, started bool) {
+	openIDs := map[string]bool{}
 	var prevUse [4]int
 	var prevAt time.Time
 	for _, ln := range strings.Split(string(data), "\n") {
@@ -3673,6 +3694,7 @@ func sessionBusyTail(path string) (time.Time, int, int) {
 				if json.Unmarshal(rec.Message.Content, &said) == nil && turnStarts(said) {
 					tok = 0
 					prevUse, prevAt = [4]int{}, time.Time{}
+					started = true
 				}
 			}
 			continue
@@ -3681,10 +3703,10 @@ func sessionBusyTail(path string) (time.Time, int, int) {
 			switch b.Type {
 			case "tool_use":
 				if b.ID != "" {
-					open[b.ID] = true
+					openIDs[b.ID] = true
 				}
 			case "tool_result":
-				delete(open, b.ToolUseID)
+				delete(openIDs, b.ToolUseID)
 			}
 		}
 		if rec.Type != "assistant" {
@@ -3707,7 +3729,7 @@ func sessionBusyTail(path string) (time.Time, int, int) {
 		prevUse, prevAt = use, at
 		tok += use[3]
 	}
-	return last, len(open), tok
+	return last, len(openIDs), tok, started
 }
 
 // turnStarts решает по реплике человека, начинает ли она новый ход: после

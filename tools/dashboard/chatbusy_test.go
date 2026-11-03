@@ -206,6 +206,47 @@ func TestChatStatusCountsTurnTokens(t *testing.T) {
 	}
 }
 
+// Ход длиннее окна модели (DK-919): реплика человека уезжает за границу
+// чтения, и счёт без расширения терял ранние записи, а то и подтягивал прошлый
+// ход. Чтение расширяется назад до отдельного потолка, и сумма ходит целиком.
+func TestChatStatusCountsLongTurnTokens(t *testing.T) {
+	now := time.Date(2026, 9, 9, 23, 45, 0, 0, time.UTC)
+	e := newTestEnv(t)
+	e.s.now = func() time.Time { return now }
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "chat-XR-1\n")
+	sid := "aaaa1111-1111-4111-8111-111111111111"
+	use := func(at string, out, cache int) string {
+		return fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+			`[{"type":"thinking","thinking":"иду"}],"usage":{"input_tokens":2,`+
+			`"cache_creation_input_tokens":%d,"cache_read_input_tokens":300,`+
+			`"output_tokens":%d}},"timestamp":%q}`, cache, out, at) + "\n"
+	}
+	journal := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},"timestamp":%q}`,
+		"долгий заход, разбери архив целиком", "2026-09-09T23:00:00Z") + "\n"
+	// Полторы тысячи записей переваливают за окно модели в 256 КБ, и старт
+	// хода в это окно уже не попадает.
+	at := time.Date(2026, 9, 9, 23, 0, 30, 0, time.UTC)
+	want := 0
+	for i := 0; i < 1500; i++ {
+		at = at.Add(time.Second)
+		journal += use(at.Format(time.RFC3339), 5, 3000+i)
+		want += 5
+	}
+	writeSession(t, e.home, e.proj, "", sid, sessionLine("поговорим", "main")+journal,
+		now.Add(-time.Minute))
+	writeBinds(t, e.home, listedBind(e.home, sid, "XR-1", "chat-XR-1"))
+	began := now.Add(-30 * time.Minute)
+	writePeerAged(t, e.home, sid, "chat-XR-1:@1.%1", "busy", began.UnixMilli())
+
+	got := chatStatus(t, e, sid)
+	if !got.Busy {
+		t.Fatalf("идущий ход не назван занятым: %+v", got)
+	}
+	if got.Tok != want {
+		t.Errorf("токены длинного хода приехали как %d, ждал %d: %+v", got.Tok, want, got)
+	}
+}
+
 // Возраст хода в строке списка чатов (DK-893): занятый разговор видно и не
 // открывая его, а без минут «активна» одинаково выглядит и у хода, начатого
 // секунду назад, и у получасового.

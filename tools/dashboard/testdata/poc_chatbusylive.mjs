@@ -26,9 +26,18 @@ let status = { live: true, busy: true, sec: 372, since: Date.now() - 372000 };
 // иное.
 let tailItems = [];
 
+// Задержанный ответ состояния: пока holdStatus держит, ручка состояния
+// отвечает промисом без тела, и стенд разрешает его сам. Так проигрывается
+// порядок, в котором лента разговора разбирается раньше состояния.
+let holdStatus = false;
+let statusGo = null;
+
 const { sandbox, timers, streams } = makeSandbox(app, (path) => {
   if (path === "/api/projects") return { projects: [{ name: "demo", works: [] }] };
-  if (path.includes("/chats") && path.endsWith("/status")) return status;
+  if (path.includes("/chats") && path.endsWith("/status")) {
+    if (holdStatus) return new Promise((go) => { statusGo = go; });
+    return status;
+  }
   if (path.includes("/chats") && path.endsWith("/say")) return { ok: true };
   if (path.includes("/chats")) {
     return { chats: [{ id: SID, state: "live", tmux: "chat-XR-1:@1.%1", idle: false,
@@ -195,10 +204,6 @@ const streamItem = (item) => {
   const panel = await freshPanel();
   const plate = byClass(panel, "busyrow");
   if (!plate || plate.hidden) fail("плашка не встала перед проверкой текста: " + dump(panel).slice(0, 400));
-  // Токены хода стоят рядом со временем тем же спокойным счётчиком строки.
-  if (!dump(plate).includes("11,8k ток")) {
-    fail("токены хода не приехали в строку активности: " + dump(plate));
-  }
   // Размышление сменило слово, ход идёт.
   streamItem({ key: "live-1", role: "thinking", text: "смотрю задачу",
     time: new RealDate(RealDate.now()).toISOString() });
@@ -211,7 +216,9 @@ const streamItem = (item) => {
     fail("текст ассистента между инструментами погасил строку активности: " + dump(plate));
   }
   // Слово и счётчики после текста живы: следом идёт инструмент, и строка
-  // называет его, а не молчит.
+  // называет его, а не молчит. Токены проверяются в конце, а не при подъёме:
+  // на старом коде ранняя проверка убивала стенд до баговых утверждений, и
+  // краснота доказывала отсутствие поля, а не воспроизведение бага.
   streamItem({ key: "live-3", role: "tool", tool: "Read", text: "",
     time: new RealDate(RealDate.now()).toISOString() });
   if (plate.hidden) fail("вызов инструмента не вернул строку активности: " + dump(plate));
@@ -234,12 +241,10 @@ const streamItem = (item) => {
   const panel = await freshPanel();
   const plate = byClass(panel, "busyrow");
   if (!plate || plate.hidden) fail("плашка не встала поверх старого хвоста: " + dump(panel).slice(0, 400));
-  if (!dump(plate).includes("830 ток")) {
-    fail("токены хода не приехали в строку над старым хвостом: " + dump(plate));
-  }
 
   // Порядок второй: строка уже стоит, старая запись приезжает потоком поверх
-  // неё, например повтором своего хвоста после обрыва связи.
+  // неё, например повтором своего хвоста после обрыва связи. Токены снова
+  // проверяются в конце: сначала баговое поведение, потом счётчики.
   const stale = new RealDate(RealDate.now() - 372000 - 60000).toISOString();
   streamItem({ key: "old-1", role: "assistant", text: "вчерашний ответ", time: stale });
   if (plate.hidden) {
@@ -263,6 +268,35 @@ const streamItem = (item) => {
   }
   if (!dump(plate2).includes("6 мин")) {
     fail("счётчик хода потерялся над старым хвостом: " + dump(plate2));
+  }
+}
+
+// --- порядок третий: хвост разобрался раньше статуса (DK-919) ---
+{
+  skew = 0;
+  tailItems = [{ key: "old-3", role: "assistant", text: "прошлый ответ",
+    time: new RealDate(RealDate.now() - 3600000).toISOString() }];
+  status = { live: true, busy: true, sec: 372, since: RealDate.now() - 372000, tok: 830 };
+  holdStatus = true;
+  const panel = await freshPanel();
+  const plate = byClass(panel, "busyrow");
+  // Состояние ещё в сети, а лента уже разобрана, и старая запись приезжает
+  // потоком до всякого ответа о занятости.
+  const stale = new RealDate(RealDate.now() - 372000 - 60000).toISOString();
+  streamItem({ key: "old-4", role: "assistant", text: "вчерашний повтор", time: stale });
+  holdStatus = false;
+  statusGo(status);
+  await settle();
+  if (!plate) fail("строка активности не построена вовсе");
+  if (plate.hidden) {
+    fail("статус, приехавший после хвоста, не поднял строку активности: " + dump(panel).slice(0, 400));
+  }
+  const said = dump(plate);
+  if (!said.includes("думает")) {
+    fail("хвост, разобранный раньше статуса, перетянул слово действия: " + said);
+  }
+  if (!said.includes("6 мин") || !said.includes("830 ток")) {
+    fail("хвост, разобранный раньше статуса, стёр счётчики хода: " + said);
   }
 }
 

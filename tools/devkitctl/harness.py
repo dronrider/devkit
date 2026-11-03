@@ -381,7 +381,7 @@ def validate_quota(d):
         require_key(d.name, "quota", t, key, "секция непуста")
     spend = ["spend_" + tier for tier in TIERS]
     for key in spend:
-        require_key(d.name, "quota", t, key, "секция непуста, ярусы объявляются все четыре")
+        require_key(d.name, "quota", t, key, "секция непуста, уровни объявляются все четыре")
     buckets = d.arr_of("quota", "buckets")
     # Окно бакета берётся из префикса имени, и имя без известного префикса молча
     # считалось бы недельным: у месячного бюджета pace тогда врёт всемеро.

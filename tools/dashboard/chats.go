@@ -2162,13 +2162,16 @@ const hiddenEnv = "DEVKIT_HIDDEN=1"
 // Наследуется она тем же каналом: сессия конвейера метку несёт, а всё, что из
 // неё заведено, донесёт её до себя. Снимает её тут подъёмщик, и потому живое
 // окно, поднятое с экрана, метку получить не может ниоткуда, кроме как от
-// headlessEnv.
+// headlessEnv. Ручной уровень глубины DEVKIT_EFFORT (DK-1570) вычищается той же
+// головой: выбор человека живёт один запуск, и сессия, поднятая из
+// сессии-носителя, не наследует чужую руку как свою.
 var foreignVars = []string{
 	"CLAUDE_CODE_ENTRYPOINT", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID",
 	"CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_MESSAGING_SOCKET",
 	"CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_ENV_FILE",
 	"CLAUDE_PROJECT_DIR", "AI_AGENT", "CLAUDE_CONFIG_DIR", "DEVKIT_HEADLESS",
 	"DEVKIT_HIDDEN", "DEVKIT_CLOUD_ACK", "DEVKIT_GROOM_SOURCE", "DEVKIT_GROOM_MODE",
+	"DEVKIT_EFFORT",
 }
 
 // dropForeign это голова команды, вычищающая чужое наследство. Пары окружения
@@ -2385,9 +2388,16 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		// пришьёт к ней поднятую сессию, и разговор останется той же строкой
 		// списка, на которой он начался.
 		Chat string `json:"chat"`
+		// Effort это ручной уровень глубины размышления из ползунка меню модели
+		// (DK-1570): едет парой окружения в поднятую сессию и живёт этот подъём.
+		Effort string `json:"effort"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	if msg := effortBad(body.Effort); msg != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 	id := strings.ToUpper(strings.TrimSpace(body.ID))
@@ -2440,7 +2450,7 @@ func (s *server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		s.logf("модель чата %s не записалась: %v", sess, err)
 	}
 	if err := startManaged(found.Path, dir, id, sess, func(ack string) string {
-		return chatCmd(s.launchEnv(id, sess, "")+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, "", text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))
+		return chatCmd(s.launchEnv(id, sess, "")+effortPair(body.Effort)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, "", text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))
 	}); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("подъём чата в %s не удался: %s", found.Name, text)
@@ -3240,6 +3250,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		Selection *chat.Selection `json:"selection,omitempty"`
 		Scenario  *scenarioAnswer `json:"scenario,omitempty"`
 		Proposal  *proposalAnswer `json:"proposal,omitempty"`
+		// Effort это ручной уровень глубины из ползунка меню модели (DK-1570).
+		// Едет он только с репликой, которая поднимает сессию: живому процессу
+		// уровень не доставить, и выбор ждёт следующего подъёма.
+		Effort string `json:"effort"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body); err != nil {
 		// Тело сверх предела это своя причина, а не «жду JSON»: длинная вставка
@@ -3253,6 +3267,10 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	if msg := effortBad(body.Effort); msg != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 	text := chatText(body.Text)
@@ -3335,7 +3353,7 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 		// ронял реплику в никуда, и человек писал в пустой чат по разу в день,
 		// не получая ответа (жалоба пользователя). Реплика человека и есть
 		// начало разговора: она поднимает сессию заказом.
-		s.chatRaiseSay(w, found, sid, text, claim)
+		s.chatRaiseSay(w, found, sid, text, claim, body.Effort)
 		return
 	}
 	recs := s.bindsAll()
@@ -3560,7 +3578,8 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	// решение 5), и сама последовательность подъёма живёт общим помощником.
 	lifted, err := s.liftChat(liftOrder{
 		found: found, info: info, sid: sid, task: task, tmux: last.Tmux, text: text,
-		road: movedRoadSay, reason: "резюм чата", reasonNew: "свежая сессия чата",
+		effort: body.Effort,
+		road:   movedRoadSay, reason: "резюм чата", reasonNew: "свежая сессия чата",
 	})
 	if err != nil {
 		msg := err.Error()
@@ -4161,8 +4180,9 @@ func (s *server) chatTmuxOf(w http.ResponseWriter, r *http.Request) (*Project, s
 // без задачи, и до этой ветки реплика в нём ложилась в журнал отправленного
 // без адресата: агент не поднимался, ответа не приходило, и молчание было
 // неотличимо от работы. Дерево тут корень проекта, задача пустая, правило
-// плана приезжает заказом, как у любого подъёма.
-func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, claim string) {
+// плана приезжает заказом, как у любого подъёма. Effort едет парой окружения,
+// когда человек взвёл ползунок глубины в меню модели (DK-1570).
+func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, claim, effort string) {
 	if m := tmuxMissingCheck(); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
@@ -4196,7 +4216,7 @@ func (s *server) chatRaiseSay(w http.ResponseWriter, found *Project, sid, text, 
 		s.logf("настройки чата %s не записались: %v", sess, err)
 	}
 	if err := startManaged(found.Path, chatTree(found.Path, task), task, sess, func(ack string) string {
-		return chatCmd(s.launchEnv(task, sess, sid)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, "", text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))
+		return chatCmd(s.launchEnv(task, sess, sid)+effortPair(effort)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, "", text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))
 	}); err != nil {
 		msg := fmt.Sprintf("tmux не поднял сессию чата %s: %s", sid, procErr(err))
 		s.logf("%s", msg)
@@ -4485,6 +4505,18 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Ручной уровень глубины из меню модели (DK-1570) едет только с подъёмом:
+	// разбудить им живой процесс нельзя, и выбор ждёт ступени, которая
+	// поднимает. Тело читается мягко: прежние экраны продолжения шлют пустой
+	// JSON, и отказывать им из-за нового поля незачем.
+	var body struct {
+		Effort string `json:"effort"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, msgBodyLimit)).Decode(&body)
+	if msg := effortBad(body.Effort); msg != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		return
+	}
 	if err := draftmeta.GuardRecord(found.Path, id); err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
@@ -4513,7 +4545,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 		// Чата нет ни одного: поднимается новый, с той же репликой. Раньше тут
 		// экран откатывался на подъём конвейера, и у цели это был не тот
 		// механизм вовсе.
-		s.startFresh(w, found, id, prompt(""), name)
+		s.startFresh(w, found, id, prompt(""), name, body.Effort)
 		return
 	}
 	if e.Sock != "" {
@@ -4549,7 +4581,7 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	sid := e.ID
 	info, okS := findSession(s.transcriptRoots(), found.Path, sid)
 	if !okS {
-		s.startFresh(w, found, id, prompt(""), name)
+		s.startFresh(w, found, id, prompt(""), name, body.Effort)
 		return
 	}
 	// Выбор способа подъёма (LLD DK-1422, решение 5): транскрипт у головы есть,
@@ -4560,7 +4592,8 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 	// последовательность подъёма живёт общим помощником liftChat.
 	lifted, err := s.liftChat(liftOrder{
 		found: found, info: info, sid: sid, task: id, tmux: e.Tmux, text: prompt(e.Tmux),
-		name: name, road: movedRoadCont, reason: "продолжение работы", reasonNew: "свежая сессия продолжения",
+		effort: body.Effort,
+		name:   name, road: movedRoadCont, reason: "продолжение работы", reasonNew: "свежая сессия продолжения",
 	})
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
@@ -5125,7 +5158,9 @@ func (s *server) handleChatClipGet(w http.ResponseWriter, r *http.Request) {
 // нужен адрес, куда идти смотреть. name это детерминированное имя головы
 // («DK-1120 работа», «DK-1120 цель»), которым клиент подпишет свежую сессию
 // (DK-879): резюма тут не бывает, и передавать его пустым незачем.
-func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text, name string) {
+// startFresh поднимает работе первый разговор, когда чата за ней не было вовсе.
+// Effort едет парой окружения тем же порядком, что у прочих подъёмов (DK-1570).
+func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text, name, effort string) {
 	if m := tmuxMissingCheck(); m != "" {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
 		return
@@ -5146,7 +5181,7 @@ func (s *server) startFresh(w http.ResponseWriter, found *Project, id, text, nam
 	sess := chatNewName(id, tmuxAliveFn())
 	s.chatStoreWrite("tmux-"+sess, chatStore{Model: model})
 	if err := startManaged(found.Path, dir, id, sess, func(ack string) string {
-		return chatCmd(s.launchEnv(id, sess, "")+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, "", text, name, s.chatHarnessOf(model, harness), binPath(agentctlBin))
+		return chatCmd(s.launchEnv(id, sess, "")+effortPair(effort)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, "", text, name, s.chatHarnessOf(model, harness), binPath(agentctlBin))
 	}); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": fmt.Sprintf("tmux не поднял новый чат %s: %s", id, procErr(err))})

@@ -17,9 +17,10 @@ type liftOrder struct {
 	tmux      string      // прежнее имя окна разговора
 	text      string      // реплика, уезжающая вводной резюма
 	name      string      // имя головы свежей сессии, у резюма пустое
-	road      string      // метка переведённого резюма (DK-1455)
-	reason    string      // повод записи реестра у резюма
-	reasonNew string      // повод записи реестра у свежей сессии
+	effort    string
+	road      string // метка переведённого резюма (DK-1455)
+	reason    string // повод записи реестра у резюма
+	reasonNew string // повод записи реестра у свежей сессии
 }
 
 // liftDone это итог подъёма: способ, имя поднятого окна, вводная, которой
@@ -81,7 +82,7 @@ func (s *server) liftChat(o liftOrder) (liftDone, error) {
 		return liftDone{}, errors.New(m)
 	}
 	if err := startManaged(o.found.Path, dir, o.task, sess, func(ack string) string {
-		return chatCmd(s.launchEnv(o.task, sess, o.sid)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, resumeSid, o.text, o.name, s.chatHarnessOf(model, harness), binPath(agentctlBin))
+		return chatCmd(s.launchEnv(o.task, sess, o.sid)+effortPair(o.effort)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, resumeSid, o.text, o.name, s.chatHarnessOf(model, harness), binPath(agentctlBin))
 	}); err != nil {
 		return liftDone{}, fmt.Errorf("tmux не поднял продолжение чата %s: %s", o.sid, procErr(err))
 	}

@@ -332,6 +332,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /api/projects/{p}/drafts/{id}", s.auth(s.handleDraftDrop))
 	mux.HandleFunc("POST /api/projects/{p}/drafts/{id}/groom", s.auth(s.handleDraftGroom))
 	mux.HandleFunc("GET /api/projects/{p}/tasks/{id}", s.auth(s.handleTask))
+	mux.HandleFunc("GET /api/projects/{p}/tasks/{id}/pick", s.auth(s.handleTaskPick))
 	mux.HandleFunc("GET /api/projects/{p}/tasks/{id}/chat", s.auth(s.handleTaskChat))
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/chat/bind", s.auth(s.handleTaskChatBind))
 	mux.HandleFunc("POST /api/projects/{p}/tasks/{id}/chat/new", s.auth(s.handleTaskChatNew))

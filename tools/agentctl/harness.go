@@ -868,7 +868,7 @@ func unmapHint(l *layers, name string) string {
 			missing = append(missing, tier)
 		}
 	}
-	return fmt.Sprintf("в секции [%s] файла %s нет уровеньов: %s", name, machineConfigPath(), strings.Join(missing, ", "))
+	return fmt.Sprintf("в секции [%s] файла %s нет уровней: %s", name, machineConfigPath(), strings.Join(missing, ", "))
 }
 
 // checkAssignments дочитывает профили, названные секцией машинного слоя или
@@ -1560,7 +1560,7 @@ func cmdHarness(start, want string) (string, error) {
 					src = fmt.Sprintf("предложение профиля, в секции [%s] уровней нет", r.Name)
 				}
 			}
-			fmt.Fprintf(&b, "маппинг уровеньов: %s (%s)\n", strings.Join(parts, ", "), src)
+			fmt.Fprintf(&b, "маппинг уровней: %s (%s)\n", strings.Join(parts, ", "), src)
 			// Уехавшая ступень называется отдельной строкой: подписку перепутать
 			// легко, а замечается это по счёту, то есть поздно.
 			for _, tier := range tierNames {
@@ -1578,7 +1578,7 @@ func cmdHarness(start, want string) (string, error) {
 				fmt.Fprintf(&b, "%s\n", line)
 			}
 		} else {
-			fmt.Fprintf(&b, "маппинг уровеньов: не задан, харнес ненастроен; %s\n", unmapHint(l, r.Name))
+			fmt.Fprintf(&b, "маппинг уровней: не задан, харнес ненастроен; %s\n", unmapHint(l, r.Name))
 		}
 		if p := l.Profiles[r.Name]; p != nil {
 			mode := p.section("delegate").Str("mode")

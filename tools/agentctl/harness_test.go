@@ -425,7 +425,7 @@ func TestUnmapHintNamesTiers(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := unmapHint(l, "glm-code")
-	for _, part := range []string{"в секции [glm-code]", "нет уровеньов: mini, base, pro, max"} {
+	for _, part := range []string{"в секции [glm-code]", "нет уровней: mini, base, pro, max"} {
 		if !strings.Contains(got, part) {
 			t.Fatalf("хинт %q, жду в нём %q", got, part)
 		}
@@ -619,7 +619,7 @@ func TestCmdHarness(t *testing.T) {
 	for _, part := range []string{
 		"харнес: claude-code (детект по переменной CLAUDECODE)",
 		"включены: claude-code (машинного конфига ",
-		"маппинг уровеньов: mini = haiku, base = sonnet, pro = opus, max = fable (предложение профиля",
+		"маппинг уровней: mini = haiku, base = sonnet, pro = opus, max = fable (предложение профиля",
 		"делегирование: native",
 		"снимка нет",
 		filepath.Join(".devkit", "quota", "claude-code.local"),

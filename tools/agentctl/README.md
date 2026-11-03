@@ -1593,7 +1593,7 @@ agentctl harness
 ```text
 харнес: claude-code (детект по переменной CLAUDECODE)
 включены: claude-code, glm-code (/Users/me/.devkit/harness.local)
-маппинг уровеньов: mini = haiku, base = glm-code:glm-5.2, pro = opus, max = fable (машинный конфиг)
+маппинг уровней: mini = haiku, base = glm-code:glm-5.2, pro = opus, max = fable (машинный конфиг)
 назначение: уровень base уезжает в glm-code, поднимается командой [delegate] его профиля
 делегирование: native (профиль /Users/me/projects/devkit/kit/harness/claude-code.toml)
 машинное хозяйство glm-code: каталог /Users/me/.devkit/claude-glm, env: CLAUDE_CONFIG_DIR

@@ -321,7 +321,7 @@ home = "`+home+`"
 		t.Fatalf("harness: %v", err)
 	}
 	for _, part := range []string{
-		"маппинг уровеньов: mini = glm-5.3-flash, base = glm-5.3, pro = glm-5.3, max = glm-5.3",
+		"маппинг уровней: mini = glm-5.3-flash, base = glm-5.3, pro = glm-5.3, max = glm-5.3",
 		"предложение профиля, в секции [glm-code] уровней нет",
 	} {
 		if !strings.Contains(shown, part) {
@@ -477,7 +477,7 @@ func TestCmdHarnessAssignments(t *testing.T) {
 		if err != nil {
 			t.Fatalf("harness: %v", err)
 		}
-		if !strings.Contains(out, "маппинг уровеньов: mini = haiku, base = glm-code:glm-5.2, pro = opus, max = fable") {
+		if !strings.Contains(out, "маппинг уровней: mini = haiku, base = glm-code:glm-5.2, pro = opus, max = fable") {
 			t.Fatalf("маппинг без назначений: %q", out)
 		}
 		if !strings.Contains(out, "назначение: уровень base уезжает в glm-code, поднимается командой [delegate] его профиля\n") {

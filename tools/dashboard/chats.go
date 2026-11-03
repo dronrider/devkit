@@ -3867,9 +3867,16 @@ func (s *server) handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	// же и ждёт ответа, значит клиент занят нашим инструментом, а не своим
 	// вопросом, и разбирать его панель незачем.
 	if agent, ok := s.agentAsk(sid); ok {
-		shown := agent.Proposal
+		shown := agent.Prepared
+		if shown == nil {
+			shown = agent.Proposal
+		}
 		if shown == nil {
 			for _, step := range agent.Steps {
+				if step.Prepared != nil {
+					shown = step.Prepared
+					break
+				}
 				if step.Proposal != nil {
 					shown = step.Proposal
 					break

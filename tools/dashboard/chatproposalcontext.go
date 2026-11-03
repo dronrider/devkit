@@ -125,7 +125,7 @@ func mergeProposalContexts(groups ...[]proposalDeliveryContext) []proposalDelive
 	return result
 }
 
-func (s *server) rememberProposalContext(sid string, q chat.ProposalQuestion, a proposalAnswer) error {
+func (s *server) rememberProposalContext(sid string, q chat.PreparedQuestion, a proposalAnswer) error {
 	if !chatKeyRe.MatchString(sid) {
 		return fmt.Errorf("неверная сессия")
 	}
@@ -145,7 +145,7 @@ func (s *server) rememberProposalContext(sid string, q chat.ProposalQuestion, a 
 	return s.chatStoreWrite(sid, st)
 }
 
-func (s *server) rememberProposalShown(sid string, q chat.ProposalQuestion) error {
+func (s *server) rememberProposalShown(sid string, q chat.PreparedQuestion) error {
 	if !chatKeyRe.MatchString(sid) || q.Validate() != nil {
 		return fmt.Errorf("неверный показанный вопрос")
 	}

@@ -281,7 +281,8 @@ type agentAsk struct {
 	Steps    []agentStep            `json:"steps,omitempty"`
 	Multi    bool                   `json:"multi,omitempty"`
 	Scenario *chat.ScenarioQuestion `json:"scenario,omitempty"`
-	Proposal *chat.ProposalQuestion `json:"proposal,omitempty"`
+	Proposal *chat.PreparedQuestion `json:"proposal,omitempty"`
+	Prepared *chat.PreparedQuestion `json:"prepared,omitempty"`
 }
 
 // agentStep это один вопрос пачки. Вопросы едут на экран все разом, а не по
@@ -298,7 +299,8 @@ type agentStep struct {
 	Options  []tmuxPick             `json:"options,omitempty"`
 	Multi    bool                   `json:"multi,omitempty"`
 	Scenario *chat.ScenarioQuestion `json:"scenario,omitempty"`
-	Proposal *chat.ProposalQuestion `json:"proposal,omitempty"`
+	Proposal *chat.PreparedQuestion `json:"proposal,omitempty"`
+	Prepared *chat.PreparedQuestion `json:"prepared,omitempty"`
 }
 
 // askForkHeadRe узнаёт имя развилки в голове вопроса: «имя»: вопрос. Имя
@@ -323,15 +325,21 @@ func agentAskOf(h handedAsk) agentAsk {
 		if q.Scenario != nil && q.Scenario.Tree != "" {
 			out.Tree = q.Scenario.Tree
 		}
-		if q.Proposal != nil && q.Proposal.Tree != "" {
-			out.Tree = q.Proposal.Tree
+		// Вопрос согласования читается из поля prepared, а висящий со старых
+		// времён из proposal: обе формы отвечают одинаково (DK-1564, решение 2).
+		shown := q.Prepared
+		if shown == nil {
+			shown = q.Proposal
+		}
+		if shown != nil && shown.Tree != "" {
+			out.Tree = shown.Tree
 		}
 		text := strings.TrimSpace(q.Text)
 		if text == "" {
 			continue
 		}
 		step := agentStep{Name: fmt.Sprintf("%d. %s", i+1, truncate(text, askStepCut)),
-			Fork: askForkName(text), Snapshot: chat.QuestionSnapshot(q), Text: text, Options: agentPicks(q.Options), Multi: q.Multi, Scenario: q.Scenario, Proposal: q.Proposal}
+			Fork: askForkName(text), Snapshot: chat.QuestionSnapshot(q), Text: text, Options: agentPicks(q.Options), Multi: q.Multi, Scenario: q.Scenario, Proposal: q.Proposal, Prepared: q.Prepared}
 		out.Steps = append(out.Steps, step)
 	}
 	if len(out.Steps) == 0 {
@@ -343,6 +351,7 @@ func agentAskOf(h handedAsk) agentAsk {
 	out.Text, out.Options = out.Steps[0].Text, out.Steps[0].Options
 	out.Multi, out.Scenario = out.Steps[0].Multi, out.Steps[0].Scenario
 	out.Proposal = out.Steps[0].Proposal
+	out.Prepared = out.Steps[0].Prepared
 	if len(out.Steps) == 1 {
 		out.Steps = nil
 	}

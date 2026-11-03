@@ -516,6 +516,12 @@ function routeScreen(h) {
     return { proj: parts[0], id: "", find: true, q: parts.slice(2).join("/") };
   }
   if (parts.length >= 3 && parts[1] === "draft") {
+    // Экран подготовленной задачи это хвост адреса записи: ссылка на задачу
+    // из чата ведёт внутрь её записи (DK-1564, решение 4), а крошки адреса
+    // возвращают на саму запись.
+    if (parts.length >= 5 && parts[3] === "prepared") {
+      return { proj: parts[0], id: parts[2], draft: true, prepared: parts.slice(4).join("/") };
+    }
     return { proj: parts[0], id: parts[2], draft: true };
   }
   // Путь документа относителен docs/, как в колонке «Ссылка» доски: хвост
@@ -6180,6 +6186,10 @@ function chatFeedAt() {
 // задачи на ту же форму, что и ID.
 function mentionAddr(where, text) {
   const path = String(text || "").replace(/^\/+/, "").replace(/^(?:\.{1,2}\/)+/, "");
+  if (path.startsWith("#")) {
+    const inner = path.slice(1);
+    return /^[\w.-]+\/draft\/[A-Za-zА-Я][A-Za-zА-Я0-9]*-\d+(?:\/prepared\/[\w-]+)?$/.test(inner) ? inner : "";
+  }
   if (/\.md$/i.test(path)) {
     const doc = path.replace(/^docs\//, "");
     const draft = doc.match(/^(?:tasks\/)?drafts\/(.+)\.md$/);
@@ -6219,7 +6229,9 @@ function mdGo(what, addr) {
 // Упоминание задачи или документа в обычном тексте реплики. Разбор идёт только
 // по тому, что осталось от строчной разметки текстом: ID в обратных кавычках и
 // в блоке кода сюда не попадает вовсе, и команда с путём остаётся командой.
-const MD_MENTION = /(^|[^\w/.-])((?:docs\/)?(?:tasks|lld)\/[\w./-]+\.md|[A-Za-z][A-Za-z0-9]{0,7}-\d+)(?![\w-])/;
+// Адрес экрана с решёткой открывает экран задачи разбора или записи черновика
+// тем же кликом (DK-1469, решение 4).
+const MD_MENTION = /(^|[^\w/.-])(#[\w.-]+\/draft\/[A-Za-zА-Я][A-Za-zА-Я0-9]*-\d+(?:\/prepared\/[\w-]+)?|(?:docs\/)?(?:tasks|lld)\/[\w./-]+\.md|[A-Za-z][A-Za-z0-9]{0,7}-\d+)(?![\w-])/;
 
 function mdText(text, into, where) {
   let rest = String(text);
@@ -14946,7 +14958,7 @@ function paintAskpassAsk(project, st, box, ask) {
 function askCardSteps(ask) {
   const steps = (ask.steps || []).filter((step) => step && (step.text || (step.options || []).length));
   if (steps.length) return steps;
-  return [{ snapshot: ask.snapshot, fork: ask.fork, text: ask.text, options: ask.options, multi: ask.multi, scenario: ask.scenario, proposal: ask.proposal }];
+  return [{ snapshot: ask.snapshot, fork: ask.fork, text: ask.text, options: ask.options, multi: ask.multi, scenario: ask.scenario, proposal: ask.proposal, prepared: ask.prepared }];
 }
 
 // Галочки при строках вариантов в ленте (DK-864, форма DK-1374). Вопрос идёт
@@ -15117,14 +15129,10 @@ function askPickWire(feed, ta, pick) {
     const record = (pick.history || []).find((record) => record.confirmed && record.hostKey && record.hostKey === host.dataset.messageKey);
     if (record) host.dataset.choiceKey = askPickKey(record.ask);
   }
-  if (!pick.on || !pick.ask || !askCardSteps(pick.ask).some((step) => step.proposal)) {
-    const old = feed.querySelector(".askproposal");
-    if (old) old.remove();
-  }
   pick.draft = String(ta.value || "");
   if (pick.on && pick.ask) {
-    const proposal = askCardSteps(pick.ask).find((step) => step.proposal);
-    if (proposal) proposalPickWire(feed, ta, pick, proposal.proposal);
+    const prepared = askCardSteps(pick.ask).find((step) => step.prepared || step.proposal);
+    if (prepared) preparedPickWire(feed, pick, prepared.prepared || prepared.proposal);
     else askPickBuild(pick, askPickQuestion(feed, pick, pick.ask));
   }
   for (const record of (pick.history || []).slice().reverse()) {
@@ -16053,27 +16061,27 @@ async function renderDrafts(project, works) {
   }
   const drafts = r.body.drafts || [];
   const projectBase = "/api/projects/" + encodeURIComponent(project);
-  const proposalViews = await Promise.all(drafts.map((d) => api(projectBase + "/drafts/" + encodeURIComponent(d.id) + "/proposals")));
-  const shownViews = proposalViews.filter((v) => v.ok && v.body.state && (v.body.state.proposals || []).some((p) => !p.status)).map((v) => v.body);
-  if (proposalViews.some((v) => !v.ok)) {
-    items.push({ key: "draft-proposal-error", sign: "error", make: () => el("div", "error", "Не удалось загрузить всё подготовленное") });
+  const preparedViews = await Promise.all(drafts.map((d) => api(projectBase + "/drafts/" + encodeURIComponent(d.id) + "/prepared")));
+  const shownViews = preparedViews.filter((v) => v.ok && v.body.state && (v.body.state.proposals || []).some((p) => !p.status)).map((v) => v.body);
+  if (preparedViews.some((v) => !v.ok)) {
+    items.push({ key: "draft-prepared-error", sign: "error", make: () => el("div", "error", "Не удалось загрузить всё подготовленное") });
   }
   if (shownViews.length) {
-    items.push({ key: "draft-proposal-shown", sign: JSON.stringify(shownViews), make: () => {
+    items.push({ key: "draft-prepared-shown", sign: JSON.stringify(shownViews), make: () => {
       const box = el("section", "card");
       box.append(el("h2", "", "Подготовленное в накопителе"));
-      if (proposalViews.every((v) => v.ok)) {
-        const all = el("button", "btn", "Подтвердить все показанные карточки");
+      if (preparedViews.every((v) => v.ok)) {
+        const all = el("button", "btn", "Подтвердить все показанные задачи");
         all.type = "button";
         all.addEventListener("click", async () => {
-          if (shownViews.some((v) => draftProposalDirty.has(projectBase + "/drafts/" + encodeURIComponent(v.id)))) { sayResult("Сначала сохраните правки карточек", true); return; }
-          await confirmDraftProposals(projectBase, shownViews);
+          if (shownViews.some((v) => draftPreparedDirty.has(v.id))) { sayResult("Сначала сохраните правки задач", true); return; }
+          await confirmDraftPrepared(projectBase, shownViews);
         });
         box.append(all);
       }
       for (const view of shownViews) {
         box.append(el("h3", "", view.id));
-        box.append(draftProposalCards(projectBase + "/drafts/" + encodeURIComponent(view.id), view));
+        box.append(draftPreparedList(projectBase + "/drafts/" + encodeURIComponent(view.id), view, false));
       }
       return box;
     } });
@@ -16810,11 +16818,12 @@ function watchRunning() {
   }, true);
 }
 
-const draftProposalDirty = new Set();
+const draftPreparedDirty = new Set();
 
-// Витрина подтверждения называет карточку add подготовленной задачей (DK-1545):
-// до решения человека статус «подготовлена», после решения «подтверждена» или
-// «отклонена». Удаление говорит в среднем роде, неизвестный исход тоже.
+// Экран согласования называет подготовленный исход add подготовленной задачей
+// (DK-1545): до решения человека статус «подготовлена», после решения
+// «подтверждена» или «отклонена». Удаление говорит в среднем роде,
+// неизвестный исход тоже.
 const draftOutcomeTitles = { add: "Задача", attach: "Приписка", defer: "Отсрочка", drop: "Удаление" };
 function draftCardStatus(outcome, status) {
   const feminine = outcome === "add" || outcome === "attach" || outcome === "defer";
@@ -16823,28 +16832,60 @@ function draftCardStatus(outcome, status) {
   return feminine ? "Подготовлена" : "Подготовлено";
 }
 
-async function confirmDraftProposals(projectBase, views, selection) {
+async function confirmDraftPrepared(projectBase, views, selection) {
   const snapshots = [];
   const decisions = [];
   for (const view of views) {
-    const cards = (view.state && view.state.proposals || []).filter((p) => !p.status && (!selection || selection(view, p)));
-    if (!cards.length) continue;
+    const tasks = (view.state && view.state.proposals || []).filter((p) => !p.status && (!selection || selection(view, p)));
+    if (!tasks.length) continue;
     snapshots.push({ source: view.id, digest: view.basis });
-    for (const p of cards) decisions.push({ source: view.id, proposal: p.id, revision: p.revision, action: "accept" });
+    for (const p of tasks) decisions.push({ source: view.id, proposal: p.id, revision: p.revision, action: "accept" });
   }
-  if (!decisions.length) { sayResult("Нет карточек для подтверждения", true); return; }
-  const result = await api(projectBase + "/drafts/proposals/confirm", { method: "POST", body: { snapshots, decisions } });
+  if (!decisions.length) { sayResult("Нет подготовленных задач для подтверждения", true); return; }
+  const result = await api(projectBase + "/drafts/prepared/confirm", { method: "POST", body: { snapshots, decisions } });
   const ids = result.ok ? (result.body.results || []).flatMap((r) => r.ids || []).join(", ") : "";
   sayResult(apiSaid(result) + (ids ? ": " + ids : ""), !result.ok);
   if (result.ok) await refresh();
 }
 
-function draftProposalCards(base, view) {
-  const section = el("section", "draft-proposals");
-  section.append(el("h2", "", "Подготовленное разбором"));
+// draftIdeaBox это кнопка «Оставить мысль» на экране записи (DK-1469, решение
+// 3): человек пишет текстом мысль, она ложится датированным пунктом в раздел
+// «Идеи» записи, а судьбу пункту приписывает грумер на разборе.
+function draftIdeaBox(project, id, locked) {
+  const box = el("section", "draft-idea");
+  const input = el("input");
+  input.placeholder = "Мысль по записи";
+  input.disabled = locked;
+  const send = el("button", "btn", "Оставить мысль");
+  send.type = "button";
+  send.disabled = locked;
+  const put = async () => {
+    const thought = input.value.trim();
+    if (!thought) { sayResult("Мысль пуста: напишите, что приписать в запись", true); return; }
+    send.disabled = true;
+    const result = await api("/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id) + "/ideas",
+      { method: "POST", body: { text: thought } });
+    sayResult(apiSaid(result), !result.ok);
+    if (result.ok) { input.value = ""; await refresh(); }
+    send.disabled = locked;
+  };
+  send.addEventListener("click", () => { put().catch(console.error); });
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); put().catch(console.error); }
+  });
+  box.append(input, send);
+  return box;
+}
+
+// draftPreparedList это раздел подготовленных задач на экране записи: список
+// строк-ссылок без тел, тело читается на экране самой задачи (DK-1564, решение
+// 4). Портянка полей на экране записи ушла вместе с выносом носителя.
+function draftPreparedList(base, view, heading = true) {
+  const section = el("section", "draft-prepared");
+  if (heading) section.append(el("h2", "", "Подготовленное разбором"));
   const state = view && view.state || {};
-  const cards = Array.isArray(state.proposals) ? state.proposals : [];
-  if (!cards.length) {
+  const tasks = Array.isArray(state.proposals) ? state.proposals : [];
+  if (!tasks.length) {
     const message = state.analysis === "error" ? "Не удалось разобрать запись. Можно повторить разбор." :
       state.analysis === "empty" ? "Разбор ничего не подготовил. Можно подготовить задачу вручную." : "Подготовленного пока нет.";
     section.append(el("p", "", message));
@@ -16852,108 +16893,190 @@ function draftProposalCards(base, view) {
   const outcomes = draftOutcomeTitles;
   const projectBase = base.slice(0, base.indexOf("/drafts/"));
   const project = decodeURIComponent(projectBase.split("/").pop());
-  if (!cards.some((p) => p.__new)) {
-    const create = el("button", "btn", "Подготовить задачу вручную"); create.type = "button";
-    create.addEventListener("click", () => {
-      if (draftProposalDirty.has(base)) { sayResult("Сначала сохраните правки", true); return; }
-      draftProposalDirty.add(base);
-      const fresh = { ...view, state: { ...state, proposals: cards.concat([{ id: "manual-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10), revision: 0, outcome: "add", __new: true }]) } };
-      section.replaceWith(draftProposalCards(base, fresh));
-    });
-    section.append(create);
-  }
-  if (cards.some((p) => !p.status)) {
-    const acceptAll = el("button", "btn", "Подтвердить все карточки записи");
+  const id = view && view.id || "";
+  const create = el("button", "btn", "Подготовить задачу вручную"); create.type = "button";
+  create.addEventListener("click", () => { goKeepingChat(project + "/draft/" + id + "/prepared/new"); });
+  section.append(create);
+  if (tasks.some((p) => !p.status)) {
+    const acceptAll = el("button", "btn", "Подтвердить все задачи записи");
     acceptAll.type = "button";
     acceptAll.addEventListener("click", async () => {
-      if (draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку карточки", true); return; }
-      await confirmDraftProposals(projectBase, [view]);
+      if (draftPreparedDirty.has(id)) { sayResult("Сначала сохраните правку задачи", true); return; }
+      await confirmDraftPrepared(projectBase, [view]);
     });
     section.append(acceptAll);
   }
-  for (const proposal of cards) {
-    const card = el("article", "draft-proposal");
-    card.append(el("h3", "", outcomes[proposal.outcome] || "Подготовленное"));
-    const statusLine = el("p", "", draftCardStatus(proposal.outcome, proposal.status));
+  for (const task of tasks) {
+    const card = el("article", "draft-prepared-task");
+    const statusLine = el("p", "", draftCardStatus(task.outcome, task.status));
     card.append(statusLine);
-    if (proposal.status) {
-      const receipt = proposal.result || {};
+    if (task.status) {
+      const receipt = task.result || {};
       const ids = Array.isArray(receipt.ids) ? receipt.ids : [];
-      for (const id of ids) {
-        const link = el("button", "link", id); link.type = "button";
-        link.addEventListener("click", () => goKeepingChat(project + (receipt.outcome === "defer" ? "/draft/" : "/") + id));
+      for (const got of ids) {
+        const link = el("button", "link", got); link.type = "button";
+        link.addEventListener("click", () => goKeepingChat(project + (receipt.outcome === "defer" ? "/draft/" : "/") + got));
         statusLine.append(document.createTextNode(" "), link);
       }
-      if (proposal.title) card.append(el("p", "", proposal.title));
-      if (proposal.text) card.append(el("p", "", proposal.text));
-      if (proposal.rationale) card.append(el("p", "", proposal.rationale));
-      if (receipt.reason) card.append(el("p", "", receipt.reason));
-      section.append(card);
-      continue;
     }
-    const value = { ...proposal, after: Array.isArray(proposal.after) ? proposal.after.join(", ") : "" };
-    const fieldRows = [];
-    function textField(label, key, kinds, multiline) {
-      const wrap = el("label", "dfield");
-      wrap.append(el("span", "", label));
-      const input = el(multiline ? "textarea" : "input");
-      input.value = value[key] || "";
-      input.addEventListener("input", () => { value[key] = input.value; draftProposalDirty.add(base); });
-      wrap.append(input); card.append(wrap); fieldRows.push({ wrap, kinds });
-    }
-    const kindLabel = el("label", "pick"); kindLabel.append(el("span", "pl", "Исход"));
-    const kind = el("select");
-    for (const [key, title] of Object.entries(outcomes)) { const o = el("option", "", title); o.value = key; o.selected = key === value.outcome; kind.append(o); }
-    kindLabel.append(kind); card.append(kindLabel);
-    textField("Название", "title", ["add"], false);
-    textField("Тип строки", "board_type", ["add"], false);
-    textField("Ранг", "rank", ["add"], false);
-    textField("Цена", "size", ["add"], false);
-    textField("Приёмка", "accept", ["add"], false);
-    textField("Барьер", "barrier", ["add"], false);
-    textField("Ответственный", "assignee", ["add"], false);
-    textField("Срок", "due", ["add"], false);
-    textField("Контроль", "control", ["add"], false);
-    textField("После", "after", ["add"], false);
-    textField("Куда приписать", "target", ["attach"], false);
-    textField("Текст результата", "text", ["add", "attach", "defer", "drop"], true);
-    textField("Довод разбора", "rationale", ["add", "attach", "defer", "drop"], true);
-    textField("Причина", "reason", ["defer", "drop"], true);
-    textField("Вернуться до", "until", ["defer"], false);
-    const showFields = () => { for (const item of fieldRows) item.wrap.hidden = !item.kinds.includes(value.outcome); };
-    kind.addEventListener("change", () => { value.outcome = kind.value; draftProposalDirty.add(base); showFields(); });
-    showFields();
-    const save = el("button", "btn", "Сохранить карточку"); save.type = "button";
-    save.addEventListener("click", async () => {
-      const { __new, ...fields } = value;
-      const edited = { ...fields, revision: proposal.revision + 1, after: value.after.split(",").map((s) => s.trim()).filter(Boolean) };
-      const result = await api(base + "/proposals", { method: "PUT", body: { base: view.snapshot, proposal: edited } });
-      sayResult(apiSaid(result), !result.ok);
-      if (result.ok) { draftProposalDirty.delete(base); await refresh(); }
-    });
-    const cancel = el("button", "btn", "Отмена"); cancel.type = "button";
-    cancel.addEventListener("click", async () => { draftProposalDirty.delete(base); const shown = findKey(document.getElementById("groups"), "draft-page"); if (shown) shown.dataset.psign = ""; await refresh(); });
-    const rejectLabel = el("label", "dfield"); rejectLabel.append(el("span", "", "Причина отказа"));
-    const rejectReason = el("input"); rejectReason.addEventListener("input", () => draftProposalDirty.add(base)); rejectLabel.append(rejectReason);
-    const reject = el("button", "btn", "Отклонить"); reject.type = "button";
-    reject.addEventListener("click", async () => {
-      const result = await api(base + "/proposals/reject", { method: "POST", body: { base: view.snapshot, proposal: proposal.id, reason: rejectReason.value } });
-      sayResult(apiSaid(result), !result.ok);
-      if (result.ok) { draftProposalDirty.delete(base); await refresh(); }
-    });
-    const accept = el("button", "btn", "Подтвердить"); accept.type = "button";
-    accept.addEventListener("click", async () => {
-      if (draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку карточки", true); return; }
-      await confirmDraftProposals(projectBase, [view], (_, p) => p.id === proposal.id);
-    });
-    card.append(save, cancel);
-    if (!proposal.__new) card.append(accept, rejectLabel, reject);
+    const open = el("button", "link", task.title || task.id); open.type = "button";
+    open.addEventListener("click", () => { goKeepingChat(project + "/draft/" + id + "/prepared/" + task.id); });
+    card.append(open, document.createTextNode(" (" + (outcomes[task.outcome] || "Подготовленное") + ")"));
+    if (task.rationale) card.append(el("p", "", "Довод: " + task.rationale));
     section.append(card);
   }
   return section;
 }
 
-function draftMetadataEditor(base, meta, types, disabled) {
+// preparedTaskFields это общий набор полей формы подготовленной задачи: та же
+// четвёрка исходов, те же поля по исходу, что были у формы на экране записи.
+// Правка живёт на экране самой задачи, запись остаётся списком ссылок.
+const preparedFieldRows = [
+  ["Название", "title", ["add"], false],
+  ["Тип строки", "board_type", ["add"], false],
+  ["Ранг", "rank", ["add"], false],
+  ["Цена", "size", ["add"], false],
+  ["Приёмка", "accept", ["add"], false],
+  ["Барьер", "barrier", ["add"], false],
+  ["Ответственный", "assignee", ["add"], false],
+  ["Срок", "due", ["add"], false],
+  ["Контроль", "control", ["add"], false],
+  ["После", "after", ["add"], false],
+  ["Куда приписать", "target", ["attach"], false],
+  ["Описание", "text", ["add", "attach", "defer", "drop"], true],
+  ["Довод разбора", "rationale", ["add", "attach", "defer", "drop"], true],
+  ["Причина", "reason", ["defer", "drop"], true],
+  ["Вернуться до", "until", ["defer"], false],
+];
+
+function draftPreparedForm(project, id, view, task, isNew) {
+  const outcomes = draftOutcomeTitles;
+  const value = { ...task, after: Array.isArray(task.after) ? task.after.join(", ") : "" };
+  const box = el("div");
+  const fieldRows = [];
+  function textField(label, key, kinds, multiline) {
+    const wrap = el("label", "dfield");
+    wrap.append(el("span", "", label));
+    const input = el(multiline ? "textarea" : "input");
+    input.value = value[key] || "";
+    input.addEventListener("input", () => { value[key] = input.value; draftPreparedDirty.add(id); });
+    wrap.append(input); box.append(wrap); fieldRows.push({ wrap, kinds });
+  }
+  const kindLabel = el("label", "pick"); kindLabel.append(el("span", "pl", "Исход"));
+  const kind = el("select");
+  for (const [key, title] of Object.entries(outcomes)) { const o = el("option", "", title); o.value = key; o.selected = key === value.outcome; kind.append(o); }
+  kindLabel.append(kind); box.append(kindLabel);
+  for (const [label, key, kinds, multiline] of preparedFieldRows) textField(label, key, kinds, multiline);
+  const showFields = () => { for (const item of fieldRows) item.wrap.hidden = !item.kinds.includes(value.outcome); };
+  kind.addEventListener("change", () => { value.outcome = kind.value; draftPreparedDirty.add(id); showFields(); });
+  showFields();
+  const save = el("button", "btn btn-acc", "Сохранить"); save.type = "button";
+  save.addEventListener("click", async () => {
+    const { __new, ...fields } = value;
+    const edited = { ...fields, revision: task.revision + (isNew ? 0 : 1), after: value.after.split(",").map((s) => s.trim()).filter(Boolean) };
+    const result = await api("/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id) + "/prepared",
+      { method: "PUT", body: { base: view.snapshot, proposal: edited } });
+    sayResult(apiSaid(result), !result.ok);
+    if (result.ok) {
+      draftPreparedDirty.delete(id);
+      goKeepingChat(project + "/draft/" + id + "/prepared/" + edited.id);
+      await refresh();
+    }
+  });
+  box.append(save);
+  if (!isNew) {
+    const accept = el("button", "btn", "Подтвердить"); accept.type = "button";
+    accept.addEventListener("click", async () => {
+      if (draftPreparedDirty.has(id)) { sayResult("Сначала сохраните правку", true); return; }
+      await confirmDraftPrepared("/api/projects/" + encodeURIComponent(project), [view], (_, p) => p.id === task.id);
+      goKeepingChat(project + "/draft/" + id);
+    });
+    const rejectLabel = el("label", "dfield"); rejectLabel.append(el("span", "", "Причина отказа"));
+    const rejectReason = el("input"); rejectReason.addEventListener("input", () => draftPreparedDirty.add(id)); rejectLabel.append(rejectReason);
+    const reject = el("button", "btn", "Отклонить"); reject.type = "button";
+    reject.addEventListener("click", async () => {
+      const result = await api("/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id) + "/prepared/reject",
+        { method: "POST", body: { base: view.snapshot, proposal: task.id, reason: rejectReason.value } });
+      sayResult(apiSaid(result), !result.ok);
+      if (result.ok) { draftPreparedDirty.delete(id); await refresh(); goKeepingChat(project + "/draft/" + id); }
+    });
+    box.append(accept, rejectLabel, reject);
+  }
+  return box;
+}
+
+// renderDraftPrepared это экран подготовленной задачи (DK-1564, решение 4):
+// сюда ведёт ссылка из реплики согласования, здесь читается описание и здесь
+// же задача правится, подтверждается или отклоняется. Ключ new открывает
+// пустую форму ручной подготовки.
+async function renderDraftPrepared(project, id, key) {
+  const groups = document.getElementById("groups");
+  const base = "/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id);
+  const result = await api(base + "/prepared");
+  if (!result.ok) {
+    sync(groups, [{ key: "draft-prepared-page", sign: "miss " + id + " " + key + " " + (result.body && result.body.error || ""),
+      make: () => formPage({
+        key: "draft-prepared", project, id, num: id,
+        crumb: [
+          { text: "Доска " + project, go: () => { goKeepingChat(project); } },
+          { text: "Черновики", go: () => { goKeepingChat(project + "/drafts"); } },
+          { text: id, go: () => { goKeepingChat(project + "/draft/" + id); } },
+        ],
+        titleText: id, detail: { note: (result.body && result.body.error) || "запись не прочиталась" },
+      }).page }]);
+    return;
+  }
+  const view = result.body;
+  const tasks = view.state && Array.isArray(view.state.proposals) ? view.state.proposals : [];
+  const isNew = key === "new";
+  const task = isNew
+    ? { id: "manual-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10), revision: 0, outcome: "add" }
+    : tasks.find((p) => p.id === key);
+  sync(groups, [{
+    key: "draft-prepared-page",
+    sign: [id, key, JSON.stringify(task)].join("|"),
+    make: () => {
+      if (!task) {
+        return formPage({
+          key: "draft-prepared", project, id, num: id,
+          crumb: [
+            { text: "Доска " + project, go: () => { goKeepingChat(project); } },
+            { text: "Черновики", go: () => { goKeepingChat(project + "/drafts"); } },
+            { text: id, go: () => { goKeepingChat(project + "/draft/" + id); } },
+          ],
+          titleText: key, detail: { note: "задача " + key + " в записи " + id + " не найдена" },
+        }).page;
+      }
+      const chips = [el("span", "chip", draftCardStatus(task.outcome, task.status))];
+      const decided = Boolean(task.status);
+      const body = el("div");
+      if (decided) {
+        const receipt = task.result || {};
+        for (const [label, fld] of [["Заголовок", "title"], ["Описание", "text"], ["Довод разбора", "rationale"], ["Причина", "reason"]]) {
+          if (task[fld]) body.append(el("p", "", label + ": " + task[fld]));
+        }
+        if (receipt.reason) body.append(el("p", "", "Итог: " + receipt.reason));
+      } else {
+        body.append(draftPreparedForm(project, id, view, task, isNew));
+      }
+      return formPage({
+        key: "draft-prepared", project, id, num: id,
+        crumb: [
+          { text: "Доска " + project, go: () => { goKeepingChat(project); } },
+          { text: "Черновики", go: () => { goKeepingChat(project + "/drafts"); } },
+          { text: id, go: () => { goKeepingChat(project + "/draft/" + id); } },
+        ],
+        num: id,
+        titleText: task.title || (draftOutcomeTitles[task.outcome] || "Задача") + " " + task.id,
+        chips,
+        afterChips: [body],
+        has: { read: true },
+      }).page;
+    },
+  }]);
+}
+
+function draftMetadataEditor(base, id, meta, types, disabled) {
   const box = el("div", "draft-meta");
   const row = el("div", "pickrow");
   function field(label, options, value) {
@@ -16984,7 +17107,7 @@ function draftMetadataEditor(base, meta, types, disabled) {
   save.type = "button";
   save.disabled = disabled || types.length === 0;
   save.addEventListener("click", async () => {
-    if (taskDraft.dirty || draftProposalDirty.has(base)) { sayResult("Сначала сохраните правку записи или карточки", true); return; }
+    if (taskDraft.dirty || draftPreparedDirty.has(id)) { sayResult("Сначала сохраните правку записи или задачи", true); return; }
     save.disabled = true;
     const result = await api(base + "/meta", { method: "PUT", body: {
       type: kind.value, source: source.value, lock: lock.value,
@@ -17005,7 +17128,7 @@ async function renderDraft(project, works, id) {
   // него ранг, зависимости и поля строки доски: их запись получит только от
   // груминга, и показывать их пустыми не за чем.
   const text = await api(base);
-  const proposalResult = await api(base + "/proposals");
+  const preparedResult = await api(base + "/prepared");
   const typeResult = await api("/api/projects/" + encodeURIComponent(project) + "/drafts/types");
   const draftTypes = typeResult.ok && Array.isArray(typeResult.body.types) ? typeResult.body.types : [];
   // Груминг кончился заведением задачи, пока форма была открыта: записи в
@@ -17025,7 +17148,7 @@ async function renderDraft(project, works, id) {
   if (running) watchRunning();
   // В поле лежит правка: перерисовка по фокусу окна стёрла бы её, и экран
   // остаётся как есть.
-  if ((taskDraft.id === id && taskDraft.dirty) || draftProposalDirty.has(base)) return;
+  if ((taskDraft.id === id && taskDraft.dirty) || draftPreparedDirty.has(id)) return;
   const said = text.ok ? String(text.body.text || "") : "";
   // База правки приезжает тем же ответом, что и текст: она уедет обратно с
   // сохранением, и разошедшуюся ручка отобьёт вместо тихого затирания.
@@ -17042,7 +17165,7 @@ async function renderDraft(project, works, id) {
   const locked = running && !waiting;
   sync(groups, [{
     key: "draft-page",
-    sign: [id, said, hash, running, locked, text.body.error || "", JSON.stringify(waiting), JSON.stringify(draftTypes), JSON.stringify(proposalResult.body)].join("|"),
+    sign: [id, said, hash, running, locked, text.body.error || "", JSON.stringify(waiting), JSON.stringify(draftTypes), JSON.stringify(preparedResult.body)].join("|"),
     make: () => {
       const form = { text: said };
       const chips = [el("span", "chip", "черновик")];
@@ -17131,9 +17254,9 @@ async function renderDraft(project, works, id) {
         detail: { file: text.ok ? text.body.file || "" : "", text: said,
           note: text.ok ? "запись пуста" : text.body.error || "текст записи не прочитался" },
         form, chips, actions,
-        afterChips: text.ok ? [draftMetadataEditor(base, {
+        afterChips: text.ok ? [draftMetadataEditor(base, id, {
           type: text.body.type || "task", source: text.body.source || "thought", lock: text.body.lock || "unlocked",
-        }, draftTypes, locked), ...(proposalResult.ok ? [draftProposalCards(base, proposalResult.body)] : [])] : [],
+        }, draftTypes, locked), draftIdeaBox(project, id, locked), ...(preparedResult.ok ? [draftPreparedList(base, preparedResult.body)] : [])] : [],
         has: { file: true, pencil: !locked, read: true, chat: true },
         penLabel: "Править запись",
         // Причина замка живёт подсказкой погашенного карандаша: пропавшая
@@ -20393,6 +20516,10 @@ async function paint() {
     // Экрану записи доска тоже не нужна: идущий груминг виден среди живых
     // работ проекта, а исход разбора читает своей ручкой сервер.
     markNav(rt);
+    if (rt.prepared) {
+      await renderDraftPrepared(current.name, rt.id, rt.prepared);
+      return;
+    }
     await renderDraft(current.name, current.works, rt.id);
     return;
   }
@@ -20788,71 +20915,100 @@ function proposalComment(draft) {
     snapshots: shown.sources.map((s) => ({ source: s.source, digest: s.basis })), decisions: [] };
 }
 
-function proposalSelect(shown, source, action, reason = "") {
-  const decisions = [];
-  for (const s of shown.sources || []) {
-    if (source && s.source !== source) continue;
-    for (const p of s.proposals || []) decisions.push({ source: s.source, proposal: p.id, revision: p.revision, action, ...(reason ? { reason } : {}) });
+// preparedPickWire вешает галки подтверждения на строки-ссылки реплики
+// вопроса (DK-1469, решение 4): отмеченная задача подтверждается, неотмеченная
+// остаётся подготовленной, а поправка уходит свободным текстом рядом с
+// отметками. Тел задач в чате нет, строка ведёт на экран подготовленной задачи.
+function preparedFlat(shown) {
+  const out = [];
+  for (const source of shown.sources || []) {
+    for (const p of source.proposals || []) out.push({ source: source.source, task: p, title: p.title || p.id });
   }
-  return decisions;
+  return out;
 }
 
-// Вопрос о карточках называет подготовленную задачу задачей, когда в наборе
-// есть карточка add, и карточками, когда наборы без неё (DK-1545).
-function draftIntroText(sources) {
-  const hasAdd = (sources || []).some((s) => (s.proposals || []).some((p) => p.outcome === 'add'));
-  return hasAdd
-    ? 'Задача подготовлена. Проверьте описания, отметьте решения и отправьте ответ обычной кнопкой чата.'
-    : 'Карточки подготовлены. Проверьте описания, отметьте решения и отправьте ответ обычной кнопкой чата.';
+function preparedLineText(item, project) {
+  return item.title + ": #" + project + "/draft/" + item.source + "/prepared/" + item.task.id;
 }
 
-function proposalPickWire(feed, ta, pick, shown) {
-  if (!pick.proposalDraft) pick.proposalDraft = proposalDraft(shown, ta.value);
+function preparedPickWire(feed, pick, shown) {
+  if (!shown || shown.version !== 1 || !Array.isArray(shown.sources)) return;
+  if (!pick.proposalDraft || JSON.stringify(pick.proposalDraft.shown) !== JSON.stringify(shown)) {
+    pick.proposalDraft = proposalDraft(shown, "");
+  }
   const draft = pick.proposalDraft;
-  let box = feed.querySelector('.askproposal');
-  if (box && box.dataset.shown === JSON.stringify(draft.shown)) return;
-  if (box) box.remove();
-  box = el('div', 'msg askproposal');
-  box.dataset.shown = JSON.stringify(draft.shown);
-  const body = el('div', 'bb');
-  body.append(el('p', '', draftIntroText(draft.shown.sources)));
-  const save = () => {
-    askPickSave(pick.addr, pick);
-
-  };
-  const all = el('button', 'btn', 'Подтвердить все показанные'); all.type = 'button';
-  all.addEventListener('click', () => { draft.decisions = proposalSelect(draft.shown, null, 'accept'); save(); box.remove(); proposalPickWire(feed, ta, pick, shown); });
-  body.append(all);
-  for (const source of draft.shown.sources) {
-    body.append(el('h3', '', 'Запись ' + source.source));
-    const oneAll = el('button', 'btn', 'Подтвердить все карточки ' + source.source); oneAll.type = 'button';
-    oneAll.addEventListener('click', () => {
-      draft.decisions = draft.decisions.filter((d) => d.source !== source.source).concat(proposalSelect(draft.shown, source.source, 'accept'));
-      save(); box.remove(); proposalPickWire(feed, ta, pick, shown);
-    });
-    body.append(oneAll);
-    for (const card of source.proposals) {
-      const section = el('section', 'draft-proposal');
-      const outcomes = draftOutcomeTitles;
-      section.append(el('h3', '', card.id + ', редакция ' + card.revision + ', ' + (outcomes[card.outcome] || 'Подготовленное')));
-      section.append(el('p', '', draftCardStatus(card.outcome, '')));
-      for (const [key, label] of Object.entries({ title:'Название', text:'Текст результата', rationale:'Довод', board_type:'Тип строки', rank:'Ранг', size:'Цена', accept:'Приёмка', barrier:'Барьер', assignee:'Ответственный', due:'Срок', control:'Контроль', target:'Куда приписать', reason:'Причина', until:'Вернуться до', after:'После' })) {
-        if (card[key] && (!Array.isArray(card[key]) || card[key].length)) section.append(el('p', 'proposal-material', label + ': ' + (Array.isArray(card[key]) ? card[key].join(', ') : card[key])));
-      }
-      let current = draft.decisions.find((d) => d.source === source.source && d.proposal === card.id);
-      const choose = el('select'); choose.setAttribute('aria-label', 'Решение ' + source.source + ' ' + card.id);
-      for (const [value, title] of [['','Не выбрано'],['accept','Подтвердить'],['reject','Отклонить']]) { const o=el('option','',title); o.value=value; o.selected=(current ? current.action : '') === value; choose.append(o); }
-      const reason = el('input'); reason.placeholder='Причина отказа'; reason.setAttribute('aria-label', 'Причина отказа ' + source.source + ' ' + card.id); reason.value=current && current.reason || '';
-      const update = () => {
-        draft.decisions = draft.decisions.filter((d) => d.source !== source.source || d.proposal !== card.id);
-        if (choose.value) draft.decisions.push({ source:source.source, proposal:card.id, revision:card.revision, action:choose.value, ...(reason.value ? {reason:reason.value} : {}) });
-        save();
-      };
-      choose.addEventListener('change', update); reason.addEventListener('input', update);
-      section.append(choose, reason); body.append(section);
+  const flat = preparedFlat(shown);
+  const project = String(shown.tree || "").split("/").filter(Boolean).pop();
+  const head = askPickHeads(askCardSteps(pick.ask))[0] || "";
+  let host = head ? askPickHost(feed, [head], "") : null;
+  let lines = host ? preparedMatchLines(host, flat) : [];
+  if (lines.length !== flat.length) {
+    host = askPickFallback([preparedQuestionBlock(flat, project)], pick.ask);
+    feed.append(host);
+    lines = preparedMatchLines(host, flat);
+    if (lines.length !== flat.length) return;
+  } else {
+    const meta = askPickMeta(pick.ask);
+    if (!askPickText(host).includes(meta)) {
+      const line = el("div", "askmeta");
+      line.append(mdRender(meta, chatFeedAt()));
+      (host.querySelector(".bb") || host).append(line);
     }
   }
-  box.append(body); feed.append(box); save();
+  for (const one of lines) one.line.classList.add("casklit");
+  const decided = (d) => draft.decisions.some((x) => x.source === d.source && x.proposal === d.task.id);
+  for (const one of lines) {
+    const mark = el("input", "caskpick");
+    mark.type = "checkbox";
+    mark.setAttribute("aria-label", "Подтвердить " + one.item.title);
+    askPickMark(mark, decided(one.item));
+    mark.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      askPickMark(mark, !mark.classList.contains("on"));
+      draft.decisions = lines.filter((own) => own.mark.classList.contains("on"))
+        .map((own) => ({ source: own.item.source, proposal: own.item.task.id, revision: own.item.task.revision, action: "accept" }));
+      askPickSave(pick.addr, pick);
+    });
+    one.line.onclick = (ev) => {
+      if (ev.target.closest("a,button,input")) return;
+      mark.click();
+    };
+    one.line.prepend(mark);
+    one.mark = mark;
+  }
+  askPickSave(pick.addr, pick);
+}
+
+// preparedQuestionBlock собирает строки вопроса той же формы для дописи в
+// конец ленты при промахе реплики: голова и строка-ссылка на каждую задачу.
+function preparedQuestionBlock(flat, project) {
+  const lines = ["Подготовил задачи, согласуй их описание."];
+  for (const item of flat) lines.push(preparedLineText(item, project));
+  return { text: lines.join("\n\n"), options: [] };
+}
+
+// preparedMatchLines находит в реплике строки-ссылки задач. Строка узнаётся по
+// заголовку с двоеточием, ссылка в ней ведёт на экран задачи; полного текста
+// у абзаца может не быть из-за свёртки, поэтому сверяется начало строки.
+function preparedMatchLines(host, flat) {
+  // Строка задачи бывает абзацем или пунктом списка, но выборка идёт двумя
+  // звеньями порознь: селектор с перечислением не везде поддержан, и часть
+  // экранов на нём молча теряет абзацы.
+  const nodes = [...host.querySelectorAll("p"), ...host.querySelectorAll("li")];
+  const used = new Set();
+  const out = [];
+  for (const item of flat) {
+    const want = item.title + ":";
+    for (const node of nodes) {
+      if (used.has(node)) continue;
+      const text = askPickText(node).replace(/\s+/g, " ").trim();
+      if (!text.startsWith(want)) continue;
+      used.add(node);
+      out.push({ line: node, item });
+      break;
+    }
+  }
+  return out;
 }
 
 function selectionIdentity(selection) {
@@ -20868,7 +21024,7 @@ function sameSelection(a, b) {
 function proposalAttachment(proposal) {
   const card = el("details", "selection-attachment proposal-attachment");
   card.open = true;
-  card.append(el("summary", "", "Решения по карточкам"));
+  card.append(el("summary", "", "Решения по подготовленным задачам"));
   const entries = proposal.results || proposal.decisions || [];
   for (const d of entries) {
     const action = d.result || (d.action === "accept" ? "подтвердить" : "отклонить");

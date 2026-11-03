@@ -47,7 +47,9 @@ func TestGroomContextSurvivesResumeWithoutLeakingToAnotherTask(t *testing.T) {
 	if err := e.s.chatStoreWrite("tmux-draft-XR-4", chatStore{Model: "new occupant"}); err != nil {
 		t.Fatal(err)
 	}
-	q := chat.ProposalQuestion{Version: 1, Tree: e.proj, Anchor: "XR-4", Sources: []chat.ProposalSource{{Source: "XR-4", Basis: "basis", Proposals: []draftproposal.Proposal{{ID: "p", Revision: 1, Outcome: "drop", Text: "карточка"}}}}}
+	// Тела задач в показанном вопросе нет (DK-1469, решение 4): вопрос несёт
+	// ссылки, а описание читается на экране задачи.
+	q := chat.PreparedQuestion{Version: 1, Tree: e.proj, Anchor: "XR-4", Sources: []chat.PreparedSource{{Source: "XR-4", Basis: "basis", Proposals: []draftproposal.Proposal{{ID: "p", Revision: 1, Outcome: "drop"}}}}}
 	if err := e.s.rememberProposalShown(sid, q); err != nil {
 		t.Fatal(err)
 	}

@@ -951,6 +951,20 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
    строкой во всю ширину, кнопки под ней справа, как в макетном .dconf */
 .dwhyin{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line2);border-radius:9px;background:var(--bg0);color:var(--tx);font:400 13px var(--sans)}
 
+/* подготовленные задачи записи и мысль по записи (DK-1564): секции под
+   текстом записи, задача строкой с рамкой и дорогой на свой экран, мысль
+   полем с кнопкой в один ряд */
+.draft-prepared,.draft-idea{margin-top:14px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.draft-prepared h2,.draft-idea h2{margin:0;font:600 11px var(--sans);color:var(--tx3);text-transform:uppercase;letter-spacing:0.04em}
+.draft-prepared > p,.draft-idea > p{margin:0;font:400 12.5px/1.5 var(--sans);color:var(--tx2)}
+.draft-prepared-task{display:flex;flex-direction:column;gap:6px;align-items:flex-start;width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line2);border-radius:10px;background:var(--bg1)}
+.draft-prepared-task p{margin:0;font:400 12.5px/1.5 var(--sans);color:var(--tx2)}
+.draft-idea{flex-direction:row;flex-wrap:wrap}
+.draft-idea .dfield{flex:1 1 240px;display:block;padding:0 12px}
+.draft-idea .dfield span{display:block;padding:9px 0 2px;font:500 11.5px var(--sans);color:var(--tx3)}
+.draft-idea .dfield input,.dfield input{all:unset;display:block;width:100%;color:var(--tx);font:400 14px/1.5 var(--sans)}
+.draft-idea .btn{flex:0 0 auto}
+
 /* главная: список проектов карточкой */
 .prow{display:flex;align-items:center;gap:10px;padding:13px 16px;border-top:1px solid var(--line);cursor:pointer}
 .prow:first-child{border-top:none}
@@ -2909,5 +2923,3 @@ button.pmrow{display:block;width:100%;text-align:left;border:none;background:non
 .wsfoot{display:flex;align-items:baseline;gap:6px;min-width:0}
 .wsq{flex:1 1 auto;min-width:0;font:400 12px/1.4 var(--sans);color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wsmore,.wsnote{flex:none;font:400 10.5px var(--sans);color:var(--tx3)}
-
-.proposal-material{white-space:pre-wrap;overflow-wrap:anywhere}

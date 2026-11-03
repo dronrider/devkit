@@ -1743,7 +1743,7 @@ func TestDraftProposalEditingAndRejectThroughTaskctl(t *testing.T) {
 	if err = os.WriteFile(path, data, 0644); err != nil {
 		t.Fatal(err)
 	}
-	base := e.srv.URL + "/api/projects/demo/drafts/XR-005/proposals"
+	base := e.srv.URL + "/api/projects/demo/drafts/XR-005/prepared"
 	resp := doReq(t, c, "GET", base, "")
 	var view struct {
 		Snapshot string              `json:"snapshot"`
@@ -1777,11 +1777,9 @@ func TestDraftProposalEditingAndRejectThroughTaskctl(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("reject %d %s", resp.StatusCode, text)
 	}
-	data, err = os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	saved, err := draftproposal.Parse(data)
+	// Фикстура легла старым блоком в запись, первое же сохранение унесло
+	// состояние в prepared-файл и срезало блок из записи (DK-1469, решение 2).
+	saved, err := draftproposal.ParsePrepared([]byte(readFile(t, draftproposal.PreparedPath(e.proj, "XR-005"))))
 	if err != nil || saved.Analysis != "ok" || saved.Proposals[0].Text != "исправленная приписка" || saved.Proposals[1].Status != "rejected" {
 		t.Fatalf("saved %+v %v", saved, err)
 	}
@@ -1842,7 +1840,7 @@ func TestDraftConfirmThroughRealTaskctl(t *testing.T) {
 	}
 	getView := func(id string) view {
 		t.Helper()
-		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/"+id+"/proposals", "")
+		resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/"+id+"/prepared", "")
 		defer resp.Body.Close()
 		var v view
 		if err := json.NewDecoder(resp.Body).Decode(&v); err != nil || resp.StatusCode != 200 {
@@ -1853,7 +1851,7 @@ func TestDraftConfirmThroughRealTaskctl(t *testing.T) {
 	send := func(req draftproposal.ConfirmRequest) (int, string) {
 		t.Helper()
 		data, _ := json.Marshal(req)
-		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/proposals/confirm", string(data))
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/prepared/confirm", string(data))
 		return resp.StatusCode, body(t, resp)
 	}
 	v1, v2 := getView("XR-005"), getView("XR-006")
@@ -2046,12 +2044,11 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 	} else {
 		t.Logf("browser: %s", out)
 	}
+	// Фикстуры легли старыми блоками в записи, подтверждение унесло решённое
+	// в prepared-файлы (DK-1469, решение 2). Неразобранная запись осталась
+	// со старым блоком: prepared-файла у неё нет.
 	for _, id := range []string{"XR-005", "XR-006", "XR-007"} {
-		data, err := os.ReadFile(filepath.Join(e.proj, "docs/tasks/drafts", id+".md"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		state, err := draftproposal.Parse(data)
+		state, err := draftproposal.ParsePrepared([]byte(readFile(t, draftproposal.PreparedPath(e.proj, id))))
 		if err != nil || state.State != "history" {
 			t.Fatalf("%s %+v %v", id, state, err)
 		}
@@ -2060,7 +2057,7 @@ func TestDraftConfirmBrowserRealProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := draftproposal.Parse(data)
+	state, err := draftproposal.Load(e.proj, "XR-009", data)
 	if err != nil || state.State != "active" || state.Analysis != "error" {
 		t.Fatalf("error source: %+v %v", state, err)
 	}

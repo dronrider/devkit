@@ -74,7 +74,7 @@ func proposalWorktreeBrowser(t *testing.T, linked bool) {
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
-	raw, err := cli("", "draft", "proposals", "XR-4")
+	raw, err := cli("", "draft", "prepared", "XR-4")
 	if err != nil {
 		t.Fatal(raw, err)
 	}
@@ -86,11 +86,11 @@ func proposalWorktreeBrowser(t *testing.T, linked bool) {
 	}
 	material := "## Что происходит\n\nветочный результат\n\n## Чего хотим\n\nПроверка выполняется до записи.\n\n## DoD\n\n- Неполная запись отклоняется.\n\n## Ранг\n\n`0+1+1+0+1 = 3`, P3.\n\n- Серьёзность 0: работа продолжается.\n- Ценность 1: касается одного сценария.\n- Неопределённость 1: место правки известно.\n- Поправка на баг 0: новая работа.\n- Рычаг 1: убирает повторный разбор.\n"
 	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Результат", Text: material, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
-	raw, err = cli(string(payload), "draft", "proposals", "save", "XR-4", "--base", view.Snapshot)
+	raw, err = cli(string(payload), "draft", "prepared", "save", "XR-4", "--base", view.Snapshot)
 	if err != nil {
 		t.Fatal(raw, err)
 	}
-	raw, err = cli("", "draft", "proposals", "ask", "XR-4")
+	raw, err = cli("", "draft", "prepared", "ask", "XR-4")
 	if err != nil {
 		t.Fatal(raw, err)
 	}
@@ -172,13 +172,13 @@ func proposalWorktreeBrowser(t *testing.T, linked bool) {
 				return
 			}
 		case "state":
-			source := filepath.Join(root, "docs", "tasks", "drafts", "XR-4.md")
+			source := draftproposal.PreparedPath(root, "XR-4")
 			body, err := os.ReadFile(source)
 			if err != nil {
 				http.Error(w, err.Error(), 500)
 				return
 			}
-			state, err := draftproposal.Parse(body)
+			state, err := draftproposal.ParsePrepared(body)
 			if err != nil || len(state.Proposals) == 0 {
 				http.Error(w, "state", 500)
 				return

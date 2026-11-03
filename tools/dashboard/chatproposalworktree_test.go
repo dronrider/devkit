@@ -39,7 +39,7 @@ func TestProposalWorktreeHandoffRealCLI(t *testing.T) {
 	if mainErr != nil || projErr != nil || !os.SameFile(mainInfo, projInfo) {
 		t.Fatalf("wrong main root: %s", stage.MainRoot(tree))
 	}
-	source := filepath.Join(tree, "docs", "tasks", "drafts", "XR-4.md")
+	preparedPath := draftproposal.PreparedPath(tree, "XR-4")
 	mainBefore := readFile(t, st.path)
 	cli := func(input string, args ...string) string {
 		t.Helper()
@@ -55,27 +55,27 @@ func TestProposalWorktreeHandoffRealCLI(t *testing.T) {
 	var view struct {
 		Snapshot string `json:"snapshot"`
 	}
-	if err := json.Unmarshal([]byte(cli("", "draft", "proposals", "XR-4")), &view); err != nil {
+	if err := json.Unmarshal([]byte(cli("", "draft", "prepared", "XR-4")), &view); err != nil {
 		t.Fatal(err)
 	}
-	cli(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"веточный результат","reason":"устарело"}]}`, "draft", "proposals", "save", "XR-4", "--base", view.Snapshot)
+	cli(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"веточный результат","reason":"устарело"}]}`, "draft", "prepared", "save", "XR-4", "--base", view.Snapshot)
 	var question chat.Question
-	if err := json.Unmarshal([]byte(cli("", "draft", "proposals", "ask", "XR-4")), &question); err != nil || question.Proposal == nil {
+	if err := json.Unmarshal([]byte(cli("", "draft", "prepared", "ask", "XR-4")), &question); err != nil || question.Prepared == nil {
 		t.Fatalf("question: %+v %v", question, err)
 	}
 	writeBinds(t, st.e.home, "2026-10-30T12:00:00 сессия "+scenarioPanelSID+" задача XR-4 проект demo дерево "+tree+" транскрипт "+standTranscript(st.e.home, "t")+" источник заказ повод startup tmux -\n")
-	answer := proposalAnswer{Anchor: "XR-4", Tree: tree, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Digest: question.Proposal.Sources[0].Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-4", Proposal: "p1", Revision: 1, Action: "reject", Reason: "не нужно"}}}
+	answer := proposalAnswer{Anchor: "XR-4", Tree: tree, Snapshots: []draftproposal.Snapshot{{Source: "XR-4", Digest: question.Prepared.Sources[0].Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-4", Proposal: "p1", Revision: 1, Action: "reject", Reason: "не нужно"}}}
 	data, _ := json.Marshal(map[string]any{"text": "отклонить веточный результат", "msg_id": "tree-answer", "proposal": answer})
 	resp := doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/say", string(data))
 	got := body(t, resp)
 	if resp.StatusCode != 200 {
 		t.Fatalf("worktree answer: %d %s", resp.StatusCode, got)
 	}
-	state, err := draftproposal.Parse([]byte(readFile(t, source)))
+	state, err := draftproposal.ParsePrepared([]byte(readFile(t, preparedPath)))
 	if err != nil || state.Proposals[0].Status != "rejected" || readFile(t, st.path) != mainBefore {
 		t.Fatalf("wrong source: %+v %v", state, err)
 	}
-	applied := readFile(t, source)
+	applied := readFile(t, preparedPath)
 	carrier := chat.Path(st.e.proj, chat.TaskName("XR-4"))
 	lines := chat.ReadLines(carrier)
 	if len(lines) != 1 || !strings.Contains(lines[0], "веточный результат") {
@@ -88,7 +88,7 @@ func TestProposalWorktreeHandoffRealCLI(t *testing.T) {
 	data, _ = json.Marshal(map[string]any{"text": "повтор после смены дерева", "msg_id": "tree-retry", "proposal": answer})
 	resp = doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/chats/"+scenarioPanelSID+"/say", string(data))
 	got = body(t, resp)
-	if resp.StatusCode != 200 || readFile(t, source) != applied || readFile(t, st.path) != mainBefore {
+	if resp.StatusCode != 200 || readFile(t, preparedPath) != applied || readFile(t, st.path) != mainBefore {
 		t.Fatalf("worktree retry: %d %s", resp.StatusCode, got)
 	}
 	lines = chat.ReadLines(carrier)

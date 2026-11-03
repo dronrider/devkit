@@ -24,14 +24,6 @@ type PreparedSource struct {
 	Proposals []draftproposal.Proposal `json:"proposals"`
 }
 
-// Прежние имена до этапа перестройки дашборда (DK-1564): витрина старой схемы
-// собирается этими типами, следующий этап переводит её на prepared-словарь и
-// алиасы убирает.
-type (
-	ProposalQuestion = PreparedQuestion
-	ProposalSource   = PreparedSource
-)
-
 func (q PreparedQuestion) Validate() error {
 	if q.Version != 1 || !filepath.IsAbs(q.Tree) || filepath.Clean(q.Tree) != q.Tree || strings.TrimSpace(q.Anchor) == "" || len(q.Sources) == 0 {
 		return fmt.Errorf("неверный вопрос согласования задач")
@@ -123,7 +115,3 @@ func CheckPreparedAnswer(q PreparedQuestion, tree string, r draftproposal.Confir
 	}
 	return nil
 }
-
-// CheckProposalAnswer это прежнее имя проверки ответа для витрины дашборда
-// (DK-1564): следующий этап переводит её на prepared-словарь и имя уходит.
-var CheckProposalAnswer = CheckPreparedAnswer

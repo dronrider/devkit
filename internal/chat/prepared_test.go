@@ -54,6 +54,24 @@ func TestPreparedQuestionRejectsBodies(t *testing.T) {
 	}
 }
 
+// Старые ask-файлы несут вопрос согласования полем proposal, новые пишутся
+// полем prepared. Поле остаётся ридером прежних записей (DK-1564).
+func TestPreparedQuestionReadsLegacyProposalField(t *testing.T) {
+	q := PreparedQuestion{Version: 1, Tree: "/tmp/tree", Anchor: "XR-1", Sources: []PreparedSource{{Source: "XR-1", Basis: "shown", Proposals: []draftproposal.Proposal{{ID: "a", Revision: 1, Outcome: "add"}}}}}
+	data, err := json.Marshal(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"questions":[{"text":"выбор","proposal":` + string(data) + `}]}`
+	questions, err := ParsePack([]byte(legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if questions[0].Proposal == nil || questions[0].Prepared != nil {
+		t.Fatal("старое поле не прочиталось")
+	}
+}
+
 func TestDropAskIfKeepsReplacement(t *testing.T) {
 	root := t.TempDir()
 	first := Ask{Task: "XR-1", Questions: []Question{{Text: "первый"}}}

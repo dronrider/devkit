@@ -1,8 +1,8 @@
-# Профиль подписки opencode GO: тот же клиент Claude Code на собственном
+# Профиль подписки OpenCode Go: тот же клиент Claude Code на собственном
 # каталоге конфигурации, близнец glm-code.toml и routerai.toml. Служба это
-# inference opencode GO, клиент говорит с ней Anthropic-совместимым API по
+# inference OpenCode Go, клиент говорит с ней Anthropic-совместимым API по
 # адресу https://opencode.ai/inference/go/anthropic из официальной документации
-# opencode. Адрес и ключ лежат в машинном слое, в settings.json каталога
+# OpenCode. Адрес и ключ лежат в машинном слое, в settings.json каталога
 # подписки, в коммитируемый файл им места нет. Сам каталог объявлен ключом home
 # секции [opencode-go] файла ~/.devkit/harness.local.
 

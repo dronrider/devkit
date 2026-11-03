@@ -1446,10 +1446,10 @@ Base URL и токен devkit не держит вовсе: их клиент в
 
 ### Профиль opencode-go
 
-`kit/harness/opencode-go.toml` описывает подписку opencode GO. Строение то же,
+`kit/harness/opencode-go.toml` описывает подписку OpenCode Go. Строение то же,
 что у второй подписки. Клиент это Claude Code на собственном каталоге
-конфигурации, служба это inference opencode GO с Anthropic-совместимым API.
-Адрес подписки берётся из официальной документации opencode,
+конфигурации, служба это inference OpenCode Go с Anthropic-совместимым API.
+Адрес подписки берётся из официальной документации OpenCode,
 `https://opencode.ai/inference/go/anthropic`.
 
 - `[detect]` пуст. Изнутри сессии подписка от первой переменными неотличима,
@@ -1460,11 +1460,17 @@ Base URL и токен devkit не держит вовсе: их клиент в
   скрипт обещал бы снимок, которого нечем снимать. Корректор для подписки
   выключен, её квота не меряется ни в чужих сессиях, ни в панели.
 
-Машинный слой заводит подписку ключом `home` и лестницей ярусов.
+В Console создайте личный API-ключ из workspace с подпиской Go. Для ключа
+нужно разрешение `Restricted -> Models: Request`. Для DeepSeek в
+`Settings -> Privacy -> Regions` разрешите `Global`. Подробности в
+[документации OpenCode](https://opencode.ai/v2/docs/console/api#restricted-keys).
+
+В `enabled` файла `~/.devkit/harness.local` добавьте `opencode-go`, сохранив
+остальные подписки, `default` и допуск `auto`. В том же файле добавьте секцию:
 
 ```toml
 [opencode-go]
-home = "~/.devkit/opencode-go"
+home = "~/.devkit/claude-opencode-go"
 env = ["CLAUDE_CONFIG_DIR={home}"]
 mini = "deepseek-v4.1-flash"
 base = "deepseek-v4.1-flash"
@@ -1472,7 +1478,7 @@ pro = "deepseek-v4-pro"
 max = "deepseek-v4-pro"
 ```
 
-По каталогу `devkitctl doctor --fix` раскладывает болванку `settings.json` с
+Запустите `devkitctl doctor --fix`. По каталогу команда раскладывает болванку `settings.json` с
 пустыми `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` и `ANTHROPIC_MODEL`.
 Права сужаются той же командой, в файле будет лежать токен.
 
@@ -1482,28 +1488,38 @@ max = "deepseek-v4-pro"
 хранилища в окружение подпроцесса и из него в файл. Мимо argv, истории
 оболочки и контекста сессии.
 
-Лёгкий якорь `ANTHROPIC_SMALL_FAST_MODEL` болванка не раскладывает, он
-вписывается той же командой. Doctor после неё молчит.
+Скопируйте ключ в буфер обмена на машине дашборда. Команды ниже сохранят
+его в secretctl и заполнят настройки клиента. Если настройка идёт по SSH,
+а Keychain недоступен, добавьте `SECRETCTL_BACKEND=file` перед `secretctl`
+в обеих командах. Файловый бэкенд сохраняет секрет с правами 0600.
+Лёгкий алиас `ANTHROPIC_SMALL_FAST_MODEL` записывается вместе с ключом.
 
 ```
-printf 'sk-...' | secretctl set opencode-go-token
+pbpaste | secretctl set opencode-go-token
 secretctl exec opencode-go-token -- python3 - <<'PY'
 import json, os, pathlib
-p = pathlib.Path("~/.devkit/opencode-go/settings.json").expanduser()
+p = pathlib.Path("~/.devkit/claude-opencode-go/settings.json").expanduser()
 d = json.loads(p.read_text(encoding="utf-8"))
 env = d.setdefault("env", {})
 env["ANTHROPIC_BASE_URL"] = "https://opencode.ai/inference/go/anthropic"
 env["ANTHROPIC_AUTH_TOKEN"] = os.environ["opencode-go-token"]
-env["ANTHROPIC_MODEL"] = "deepseek-v4-pro"
+env["ANTHROPIC_MODEL"] = "deepseek-v4.1-flash"
 env["ANTHROPIC_SMALL_FAST_MODEL"] = "deepseek-v4.1-flash"
 p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 ```
 
-Подстановки алиасов первой лестницы доктор раскладывает сам из лестницы
-машинного слоя. Живой подъём проверяется командой `agentctl exec --harness
-opencode-go -- claude --version`. Теми же словами начинается клиент головы в
-профиле.
+Повторите `devkitctl doctor --fix`. Подстановки алиасов первой лестницы
+команда раскладывает из машинного слоя. Первый интерактивный запуск
+`agentctl exec --harness opencode-go -- claude` может показать выбор темы
+и информационный экран безопасности. Завершите начальную настройку, после
+этого в списке моделей дашборда доступны обе модели OpenCode Go.
+Проверьте ответ Flash, смену подписки и продолжение того же разговора.
+
+Формат истории, хуки и запуск головы остаются форматом Claude Code.
+Публичного съёмщика остатка Go в профиле нет; оставшийся бюджет смотрят
+в Console. `Extra Usage` можно оставить выключенным, чтобы запросы сверх
+лимита подписки блокировались.
 
 ### Профиль Codex
 

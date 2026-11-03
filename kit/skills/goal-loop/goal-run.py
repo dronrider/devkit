@@ -128,6 +128,10 @@ OWN_TMUX_ENV = "DEVKIT_GOAL_TMUX"
 # Потолок ожидания цикла: дольше этого виток не ждёт даже со сроком в отметке.
 WAIT_CAP = 2 * 60 * 60
 
+# Допустимые уровни глубины размышления для --effort. Список общий с agentctl
+# pick, где уровни живут своим словарём.
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
 USAGE = """\
 goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <строка> | --ask <вопрос> | --work <ID задачи>]
 
@@ -147,6 +151,11 @@ goal-run.py <ID> [-C <корень проекта>] [--foreground | --say <ст�
                  В модель ярус разворачивает раскладка машины (agentctl
                  harness --json), и второй подписке модель не называется:
                  её профиль называет её сам
+  --effort <уровень>
+                 глубина размышления витков (low, medium, high, xhigh, max);
+                 без флага её выбирает вердикт pick как было. Уровень едет
+                 парой DEVKIT_EFFORT в окружение витка и перебивает строку
+                 «Эффорт:» файла задачи и вердикт
   --foreground   держать цикл в этом процессе, а не в tmux-сессии goal-<ID>
   --say <строка> дописать строку хода в журнал цели и выйти, цикла не поднимая
   --ask <вопрос> задать вопрос человеку и ждать ответа во «Входящих» цели
@@ -198,6 +207,7 @@ def parse_args(argv):
     done = False
     harness = ""
     tier = ""
+    effort = ""
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -254,6 +264,13 @@ def parse_args(argv):
             if tier.strip() == "":
                 die("имя яруса пустое, разворачивать в модель нечего")
             i += 2
+        elif arg == "--effort":
+            if i + 1 >= len(argv):
+                die("у --effort нет значения: уровень глубины это его аргумент")
+            effort = argv[i + 1]
+            if effort not in EFFORTS:
+                die("уровень %s не из low, medium, high, xhigh, max" % effort)
+            i += 2
         elif arg in ("-h", "--help"):
             sys.stdout.write(USAGE)
             sys.exit(0)
@@ -281,7 +298,7 @@ def parse_args(argv):
             die("--by называет исполнителя открываемого этапа, при закрытии он не нужен")
     elif done or by:
         die("--done и --by ходят только с --work: без задачи им нет адресата")
-    return goal_id, proj, fg, note, question, harness, tier, work, by, done
+    return goal_id, proj, fg, note, question, harness, tier, effort, work, by, done
 
 
 def resolve_proj(proj):
@@ -351,7 +368,7 @@ class Loop:
     только группирует то, что в sh было переменными верхнего уровня, своей
     логики сверх методов ниже у него нет."""
 
-    def __init__(self, goal_id, proj, harness="", tier=""):
+    def __init__(self, goal_id, proj, harness="", tier="", effort=""):
         self.id = goal_id
         self.proj = proj
         # Подписка, чьей квотой платятся витки. Пусто это подписка по
@@ -363,6 +380,11 @@ class Loop:
         # витки цели идут одним весом, и решать это заново каждому витку не за
         # чем.
         self.tier = tier
+        # Глубина размышления витков, выбранная рукой при запуске. Пусто
+        # значит «как решит вердикт», ровно то, что цикл делал всегда. Уровень
+        # живёт весь прогон по той же причине, что и ярус: витки цели идут
+        # одним весом.
+        self.effort = effort
         self.model = ""
         self.devdir = os.path.join(proj, ".devkit")
         self.deploy = os.path.join(self.devdir, "deploy.local")
@@ -490,6 +512,12 @@ class Loop:
         # уносит её и в свои хуки, и в гейт бюджета, который пишет носителя в
         # запись реестра (DK-971).
         os.environ[SHELL_ENV] = self.id
+        # Ручная глубина размышления едет витку парой окружения: pick внутри
+        # сессии читает её поверх строки «Эффорт:» файла задачи и вердикта.
+        # Кладётся один раз на цикл, витки наследуют её обычным путём
+        # процесса. Пустая строка пару не пишет, и глубину выбирает вердикт.
+        if self.effort:
+            os.environ["DEVKIT_EFFORT"] = self.effort
         if not os.path.isfile(os.path.join(self.proj, "docs", "TASKS.md")):
             die("доски %s/docs/TASKS.md нет, режим цели живёт только в проекте с доской" % self.proj)
         if not os.path.isfile(self.goal):
@@ -913,6 +941,11 @@ class Loop:
         # витки сам, и без флага виток пошёл бы дефолтом клиента.
         if self.tier:
             args += ["--tier", self.tier]
+        # Глубина размышления едет туда же: tmux-сервер окружение поднявшего
+        # не наследует, и без флага цикл в своей сессии потерял бы ручной
+        # выбор уже на первом витке.
+        if self.effort:
+            args += ["--effort", self.effort]
         args.append("--foreground")
         # DEVKIT_HIDDEN метит весь цикл сразу в шапке команды, а не отдельным
         # витком (DK-847): цикл живёт своей строкой на доске, и захламлять
@@ -1233,9 +1266,9 @@ def ask_wait():
 
 
 def main(argv):
-    goal_id, proj, fg, note, question, harness, tier, work, by, done = parse_args(argv)
+    goal_id, proj, fg, note, question, harness, tier, effort, work, by, done = parse_args(argv)
     proj = resolve_proj(proj)
-    loop = Loop(goal_id, proj, harness, tier)
+    loop = Loop(goal_id, proj, harness, tier, effort)
     if question is not None:
         # Предполётной проверки вопросу не нужно по той же причине, что и
         # строке хода: его задаёт уже идущий виток, в том числе виток чата.

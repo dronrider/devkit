@@ -199,12 +199,15 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 		err = nil
 		if term != "" {
 			err = chatSend(term, text)
+		} else if match.Ask.Session != "" && s.deliverToCarrier(p, match.Ask.Session, answer.Anchor, text) {
+			// Живого терминала у носителя нет: ответ доезжает сокетом либо
+			// подъёмом продолжения той же сессии (DK-1569), адресная строка в
+			// мёртвый вход больше не пишется.
+			err = nil
 		} else {
-			line := chat.TaskLine(s.now(), text)
-			if match.Ask.Session != "" {
-				line = chat.Line(s.now(), match.Ask.Session, text)
-			}
-			_, _, err = putChat(stage.MainRoot(answer.Tree), chat.TaskName(answer.Anchor), text, line)
+			// Безадресная строка достанется той сессии, что задачу продолжит, и
+			// сторожок считает её ответом припаркованной строке.
+			_, _, err = putChat(stage.MainRoot(answer.Tree), chat.TaskName(answer.Anchor), text, chat.TaskLine(s.now(), text))
 		}
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "доставка вопроса: " + procErr(err)})

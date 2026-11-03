@@ -44,7 +44,11 @@ func newScenarioStand(t *testing.T) *scenarioStand {
 	t.Setenv("DEVKIT_TMUX", "")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("DEVKIT_HEADLESS", "1")
-	writeScript(t, e.bin, "tmux", "exit 0")
+	// Носитель стенда мёртв: tmux отвечает на всё, кроме подъёма окна. Ответы
+	// панели с носителем без терминала идут сокетом либо подъёмом продолжения
+	// (DK-1569), и существующие стенды ниже проверяют запасную безадресную
+	// дорогу, а подъём заказывают своей фикстурой с журналом вызовов.
+	writeScript(t, e.bin, "tmux", "case \"$1\" in new-session) exit 1;; esac\nexit 0")
 	if err := os.MkdirAll(filepath.Join(e.proj, "hooks"), 0o755); err != nil {
 		t.Fatal(err)
 	}

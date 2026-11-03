@@ -103,12 +103,15 @@ func (s *server) handleScenarioSay(w http.ResponseWriter, p *Project, sid, claim
 	wire := "Ответ панели обработан taskctl decide: " + string(payload)
 	if term != "" {
 		err = chatSend(term, wire)
+	} else if who != "" && s.deliverToCarrier(p, who, answer.Task, wire) {
+		// Живого терминала у носителя нет: ответ доезжает сокетом либо подъёмом
+		// продолжения той же сессии (DK-1569), адресная строка в мёртвый вход
+		// больше не пишется.
+		err = nil
 	} else {
-		line := chat.TaskLine(s.now(), wire)
-		if who != "" {
-			line = chat.Line(s.now(), who, wire)
-		}
-		_, _, err = putChat(root, name, wire, line)
+		// Безадресная строка достанется той сессии, что задачу продолжит, и
+		// сторожок считает её ответом припаркованной строке.
+		_, _, err = putChat(root, name, wire, chat.TaskLine(s.now(), wire))
 	}
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "CLI принял ответ; доставка агенту: " + procErr(err)})

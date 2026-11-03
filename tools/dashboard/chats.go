@@ -3536,11 +3536,6 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 			"stuck": stuckAskSayWord})
 		return
 	}
-	alive := tmuxAliveFn()
-	if m := tmuxMissingCheck(); m != "" {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
-		return
-	}
 	// Отказа «разговор идёт в vscode» тут больше нет: канал клиента достаёт
 	// любое живое окно, и раз до сюда дошло, живого процесса у диалога нет ни в
 	// реестре, ни в tmux. Свежий транскрипт без сокета значит клиента старой
@@ -3556,96 +3551,40 @@ func (s *server) handleChatSay(w http.ResponseWriter, r *http.Request) {
 	if id := taskIDInName(info.suffix); id != "" {
 		task = id
 	}
-	dir, okTree := sessionTree(found.Path, info.suffix)
-	if !okTree {
-		dir = found.Path
-	}
-	model, harness := s.chatChoice(sid, last.Tmux)
-	if m := s.chatHooksGap(model, harness); m != "" {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
-		return
-	}
-
 	// Реплики, которые агент так и не прочитал, едут вводной резюма. Клин берёт
 	// их сокетом и складывает в свою очередь, а та умирает вместе с процессом:
 	// без этого человек пишет три реплики, снимает клин и получает ответ только
 	// на последнюю (инцидент с чатом DK-460).
 	text = withLost(s.lostSaid(sid, info.mod), text)
 	// Способ продолжения тот же, что у «Продолжить работу» (LLD DK-1422,
-	// решение 5): харнес без продолжения поднимает свежую сессию того же
-	// разговора, и реплика едет в неё вводной с подкладкой состояния записи.
-	// Резюм чужой подписке перед подъёмом переводится (DK-1455): транскрипт
-	// лежит в дереве подписки-писателя, и целевой клиент без переноса его не
-	// найдёт. Неудача перевода откатывается на ту же свежую сессию с подкладкой,
-	// а не на смерть резюма.
-	way, resumeSid, moved := "resume", sid, ""
-	if s.resumeWay(model, harness) {
-		note, err := s.translateChat(info, model, harness)
-		if err != nil {
-			way, resumeSid = "fresh", ""
-			text = s.chatStateLine(task) + text
-			line := "перевод разговора в дерево подписки подъёма не удался, сессия поднята свежей с подкладкой состояния: " + err.Error()
-			s.saidMark(saidSessionKey(sid), line)
-			s.logf("%s", line)
-		} else if note != "" {
-			moved = movedRoadSay
-			s.logf("чат %s переведён в дерево подписки подъёма: %s", sid, note)
-		}
-	} else {
-		way, resumeSid = "fresh", ""
-		text = s.chatStateLine(task) + text
-	}
-	sess := liftWindow(task, last.Tmux, alive)
-	if err := s.preserveGroomContext(sid, task); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "режим разбора не сохранён: " + err.Error()})
-		return
-	}
-	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
-		s.logf("настройки чата %s не записались: %v", sess, err)
-	}
-	if m := s.chatClientMissing(model, harness); m != "" {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
-		return
-	}
-	if err := startManaged(found.Path, dir, task, sess, func(ack string) string {
-		return chatCmd(s.launchEnv(task, sess, sid)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, resumeSid, text, "", s.chatHarnessOf(model, harness), binPath(agentctlBin))
-	}); err != nil {
-		msg := fmt.Sprintf("tmux не поднял продолжение чата %s: %s", sid, procErr(err))
+	// решение 5), и сама последовательность подъёма живёт общим помощником.
+	lifted, err := s.liftChat(liftOrder{
+		found: found, info: info, sid: sid, task: task, tmux: last.Tmux, text: text,
+		road: movedRoadSay, reason: "резюм чата", reasonNew: "свежая сессия чата",
+	})
+	if err != nil {
+		msg := err.Error()
 		s.logf("%s", msg)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
 		return
 	}
-	// Имя tmux-сессии ложится в реестр на старый ID сразу: хук старта запишет
-	// свою строку, когда клиент родится, а до того мера живости диалога уже
-	// обязана работать, иначе вторая реплика подряд подняла бы второй резюм.
-	reason := "резюм чата"
-	if way != "resume" {
-		reason = "свежая сессия чата"
-	}
-	sessions.Append(sessions.Path(s.cfg.Home),
-		sessions.Line(s.now(), sid, sessions.Bind{Task: task, Source: "заказ",
-			Project: found.Name, Tree: dir, Tmux: sess}, reason))
-	s.chatRaised(sess, sid, task, found.Name)
-	if moved != "" {
-		s.chatMovedArm(sess, moved)
-	}
 	// Резюм увёз реплику вводной: дожимать её после этого нечем, иначе тот же
 	// текст приедет и вводной, и повтором.
-	s.chatSayDone(sid, claim, way)
-	s.saidSay(saidSessionKey(sid), text, way)
+	s.chatSayDone(sid, claim, lifted.way)
+	s.saidSay(saidSessionKey(sid), lifted.text, lifted.way)
 	liftWord := "резюмом"
-	if way != "resume" {
+	if lifted.way != "resume" {
 		liftWord = "свежей сессией с подкладкой состояния"
 	}
-	s.logf("чат %s продолжен %s в tmux-сессии %s (модель %s)", sid, liftWord, sess, model)
-	out := map[string]any{"way": way, "tmux": sess, "model": model,
+	s.logf("чат %s продолжен %s в tmux-сессии %s (модель %s)", sid, liftWord, lifted.sess, lifted.model)
+	out := map[string]any{"way": lifted.way, "tmux": lifted.sess, "model": lifted.model,
 		"message": fmt.Sprintf(
-			"процесса у чата не было: поднят %s в tmux-сессии %s, история продолжена", liftWord, sess)}
+			"процесса у чата не было: поднят %s в tmux-сессии %s, история продолжена", liftWord, lifted.sess)}
 	if sendGone {
 		out["message"] = fmt.Sprintf(
-			"сессия вышла посреди подачи реплики: поднят %s в tmux-сессии %s, реплика уехала вводной", liftWord, sess)
+			"сессия вышла посреди подачи реплики: поднят %s в tmux-сессии %s, реплика уехала вводной", liftWord, lifted.sess)
 	}
-	if bangLine(text) {
+	if bangLine(lifted.text) {
 		out["note"] = "живого терминала у сессии не было: строка с ! уехала вводной резюма текстом, терминал её не исполнит"
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -4613,82 +4552,30 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 		s.startFresh(w, found, id, prompt(""), name)
 		return
 	}
-	if m := tmuxMissingCheck(); m != "" {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
-		return
-	}
-	dir, okTree := sessionTree(found.Path, info.suffix)
-	if !okTree {
-		dir = found.Path
-	}
-	model, harness := s.chatChoice(sid, e.Tmux)
-	if m := s.chatHooksGap(model, harness); m != "" {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": m})
-		return
-	}
 	// Выбор способа подъёма (LLD DK-1422, решение 5): транскрипт у головы есть,
 	// и если харнес носителя умеет продолжение, подъём идёт резюмом в то же имя
 	// окна, From-цепочка продолжается. На харнесе без продолжения поднимается
 	// свежая сессия того же разговора, и в её первую реплику подкладывается
-	// доступное состояние записи со ссылками на прежние отрезки.
-	// Резюм чужой подписке перед подъёмом переводится (DK-1455): транскрипт
-	// лежит в дереве подписки-писателя, и целевой клиент без переноса его не
-	// найдёт. Неудача перевода откатывается на ту же свежую сессию с подкладкой,
-	// а не на смерть резюма.
-	resume, moved := s.resumeWay(model, harness), ""
-	if resume {
-		note, err := s.translateChat(info, model, harness)
-		if err != nil {
-			resume = false
-			line := "перевод разговора в дерево подписки подъёма не удался, продолжение поднято свежей сессией с подкладкой состояния: " + err.Error()
-			s.saidMark(saidSessionKey(sid), line)
-			s.logf("%s", line)
-		} else if note != "" {
-			moved = movedRoadCont
-			s.logf("чат %s переведён в дерево подписки подъёма: %s", sid, note)
-		}
-	}
-	sess := liftWindow(id, e.Tmux, tmuxAliveFn())
-	if err := s.preserveGroomContext(sid, id); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "режим разбора не сохранён: " + err.Error()})
+	// доступное состояние записи со ссылками на прежние отрезки. Сама
+	// последовательность подъёма живёт общим помощником liftChat.
+	lifted, err := s.liftChat(liftOrder{
+		found: found, info: info, sid: sid, task: id, tmux: e.Tmux, text: prompt(e.Tmux),
+		name: name, road: movedRoadCont, reason: "продолжение работы", reasonNew: "свежая сессия продолжения",
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
-	}
-	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model, Harness: harness, From: sid}); err != nil {
-		s.logf("настройки чата %s не записались: %v", sess, err)
-	}
-	resumeSid, liftName, order := "", "", prompt(sess)
-	way, reason := "resume", "продолжение работы"
-	if resume {
-		resumeSid = sid
-	} else {
-		way, reason = "fresh", "свежая сессия продолжения"
-		liftName = name
-		order = s.chatStateLine(id) + order
-	}
-	if err := startManaged(found.Path, dir, id, sess, func(ack string) string {
-		return chatCmd(s.launchEnv(id, sess, sid)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, resumeSid, order, liftName, s.chatHarnessOf(model, harness), binPath(agentctlBin))
-	}); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{
-			"error": fmt.Sprintf("tmux не поднял продолжение работы %s: %s", id, procErr(err))})
-		return
-	}
-	sessions.Append(sessions.Path(s.cfg.Home),
-		sessions.Line(s.now(), sid, sessions.Bind{Task: id, Source: "заказ",
-			Project: found.Name, Tree: dir, Tmux: sess}, reason))
-	s.chatRaised(sess, sid, id, found.Name)
-	if moved != "" {
-		s.chatMovedArm(sess, moved)
 	}
 	// Назначение ведётся за поднятым заходом: носителем записи становится окно
 	// нового захода, и адрес записи открывает его (LLD DK-1422, решение 3).
-	s.mainChatFollow(id, "tmux-"+sess, found.Name)
+	s.mainChatFollow(id, "tmux-"+lifted.sess, found.Name)
 	how := "резюмом"
-	if !resume {
+	if lifted.way != "resume" {
 		how = "свежей сессией"
 	}
-	s.logf("работа %s продолжена %s чата %s в tmux-сессии %s", id, how, sid, sess)
-	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": way,
-		"session": sid, "tmux": sess})
+	s.logf("работа %s продолжена %s чата %s в tmux-сессии %s", id, how, sid, lifted.sess)
+	writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": lifted.way,
+		"session": sid, "tmux": lifted.sess})
 }
 
 // Живая работа агента (замечание третьего круга POC). После отправки реплики в

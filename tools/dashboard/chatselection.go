@@ -189,16 +189,22 @@ func (s *server) deliverSelection(p *Project, sid string, context selectionDeliv
 	answer := context.Selection
 	recs := s.bindsAll()
 	last := sessions.Last(recs[sid])
-	if last.Task == answer.Task && (last.Tree == answer.Tree || last.Tree == "" && p.Path == answer.Tree) {
+	own := last.Task == answer.Task && (last.Tree == answer.Tree || last.Tree == "" && p.Path == answer.Tree)
+	if own {
 		if term := s.sayTermOf(sid, recs); term != "" {
 			return chatSend(term, wire)
 		}
+		// Носитель записи это сам разговор, и живого терминала у него нет:
+		// ответ доезжает сокетом либо подъёмом продолжения (DK-1569), а адресная
+		// строка в мёртвый вход больше не пишется.
+		if context.Session != "" && s.deliverToCarrier(p, context.Session, answer.Task, wire) {
+			return nil
+		}
 	}
-	line := chat.TaskLine(s.now(), wire)
-	if last.Task == answer.Task && (last.Tree == answer.Tree || last.Tree == "" && p.Path == answer.Tree) && context.Session != "" {
-		line = chat.Line(s.now(), context.Session, wire)
-	}
-	_, _, err := putChat(answer.Tree, context.Name, wire, line)
+	// Запасной путь безадресен: безадресную строку сторожок считает ответом и
+	// будит припаркованную строку тиком, адресная в мёртвом входе лежала бы
+	// молча (DK-1569).
+	_, _, err := putChat(answer.Tree, context.Name, wire, chat.TaskLine(s.now(), wire))
 	return err
 }
 

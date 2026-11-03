@@ -371,12 +371,12 @@ class TestGroom(SkillTree):
 
     CONTRACT = ("## Входы\n\nВход по одному ID, по нескольким ID или без аргументов.\n\n"
                 "## Процедура\n\n"
-                "Получить `taskctl draft proposals <ID>`.\n"
-                "Сохранить `taskctl draft proposals save <ID> --base <snapshot>`.\n"
+                "Получить `taskctl draft prepared <ID>`.\n"
+                "Сохранить `taskctl draft prepared save <ID> --base <snapshot>`.\n"
                 "Дождаться успешного завершения `save` и только затем "
-                "вызвать `taskctl draft proposals ask <ID>`.\n"
+                "вызвать `taskctl draft prepared ask <ID>`.\n"
                 "Применить только явное решение человека через "
-                "`taskctl draft proposals answer <ID>`.\n"
+                "`taskctl draft prepared answer <ID>`.\n"
                 "Прямыми командами обходить подтверждение нельзя.\n\n"
                 "## Исходы разбора\n\n`add`, `attach`, `defer`, `drop`.\n")
 
@@ -387,10 +387,10 @@ class TestGroom(SkillTree):
     def test_missing_contract_parts_fail(self):
         markers = ("по одному ID", "по нескольким ID", "без аргументов",
                    "`add`", "`attach`", "`defer`", "`drop`",
-                   "taskctl draft proposals <ID>",
-                   "taskctl draft proposals save <ID> --base <snapshot>",
-                   "taskctl draft proposals ask <ID>",
-                   "taskctl draft proposals answer <ID>",
+                   "taskctl draft prepared <ID>",
+                   "taskctl draft prepared save <ID> --base <snapshot>",
+                   "taskctl draft prepared ask <ID>",
+                   "taskctl draft prepared answer <ID>",
                    "Дождаться успешного завершения `save` и только затем",
                    "Применить только явное решение человека",
                    "обходить подтверждение нельзя")
@@ -401,18 +401,18 @@ class TestGroom(SkillTree):
                 shutil.rmtree(os.path.join(self.here, "board-groom"))
 
     def test_ask_before_save_fails(self):
-        save = "taskctl draft proposals save <ID> --base <snapshot>"
-        ask = "taskctl draft proposals ask <ID>"
+        save = "taskctl draft prepared save <ID> --base <snapshot>"
+        ask = "taskctl draft prepared ask <ID>"
         self.write_groom(self.CONTRACT.replace(save, "PLACEHOLDER").replace(ask, save)
                          .replace("PLACEHOLDER", ask))
-        self.assertTrue(any("порядок proposals" in f
+        self.assertTrue(any("порядок prepared" in f
                             for f in check_skills.check_groom(self.here)))
 
     def test_direct_mutators_are_not_a_proposals_protocol(self):
         self.write_groom("## Входы\n\nВход по одному ID, по нескольким ID или без аргументов.\n\n"
                          "## Процедура\n\ntaskctl add --id, draft attach, draft defer, draft drop\n\n"
                          "## Исходы разбора\n\n`add`, `attach`, `defer`, `drop`.\n")
-        self.assertTrue(any("proposals" in f for f in check_skills.check_groom(self.here)))
+        self.assertTrue(any("prepared" in f for f in check_skills.check_groom(self.here)))
 
     def test_groom_not_set_up(self):
         fails = check_skills.check_groom(self.here)

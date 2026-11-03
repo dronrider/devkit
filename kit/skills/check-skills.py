@@ -212,16 +212,16 @@ def check_groom(here):
             if marker not in body:
                 fails.append("board-groom: в разделе %s нет %s" % (title, marker))
     procedure = section(text, "## Процедура")
-    commands = ("taskctl draft proposals <ID>",
-                "taskctl draft proposals save <ID> --base <snapshot>",
-                "taskctl draft proposals ask <ID>",
-                "taskctl draft proposals answer <ID>")
+    commands = ("taskctl draft prepared <ID>",
+                "taskctl draft prepared save <ID> --base <snapshot>",
+                "taskctl draft prepared ask <ID>",
+                "taskctl draft prepared answer <ID>")
     positions = [procedure.find(cmd) for cmd in commands]
     for cmd, pos in zip(commands, positions):
         if pos < 0:
             fails.append("board-groom: в процедуре нет %s" % cmd)
     if all(pos >= 0 for pos in positions) and positions != sorted(positions):
-        fails.append("board-groom: порядок proposals должен быть получение, save, ask, answer")
+        fails.append("board-groom: порядок prepared должен быть получение, save, ask, answer")
     for marker in ("Дождаться успешного завершения `save` и только затем",
                    "Применить только явное решение человека",
                    "обходить подтверждение нельзя"):

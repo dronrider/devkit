@@ -181,7 +181,7 @@ func controlOne(c Carrier, root string, rows map[string]Row, id string, now time
 	// разработки, сменяется лестницей.
 	if insp := inspectorChoice(dev, known); insp.Model != "" {
 		ch = insp
-		why = "инспектор контроля из команды, ярус " + insp.Tier
+		why = "инспектор контроля из команды, уровень " + insp.Tier
 	}
 	if ch.Refusal != "" {
 		return Report{ID: id, Line: id + ": " + ControlNoLift + ", " + ch.Refusal, Failed: true}

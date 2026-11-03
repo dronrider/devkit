@@ -26,7 +26,7 @@ func TestChooseAvailableTakesNextLadderWithoutLoweringTier(t *testing.T) {
 		t.Fatalf("max: %+v", ch)
 	}
 	if ch := ChooseAvailable("ultra", ladders); ch.Refusal == "" {
-		t.Fatalf("незнакомый ярус: %+v", ch)
+		t.Fatalf("незнакомый уровень: %+v", ch)
 	}
 }
 
@@ -63,14 +63,14 @@ var ladder = []Step{{"mini", "haiku"}, {"base", "sonnet"}, {"pro", "opus"}, {"ma
 func TestChooseKeepsSameModelAsDeveloper(t *testing.T) {
 	ch := Choose("base", ladder)
 	if ch.Refusal != "" || ch.Stepped || ch.Tier != "base" || ch.Model != "sonnet" {
-		t.Fatalf("та же модель на своём уровенье: %+v", ch)
+		t.Fatalf("та же модель на своём уровне: %+v", ch)
 	}
 }
 
 // Яруса в лестнице нет: модель пуста, решение за носителем.
 func TestChooseUnknownTier(t *testing.T) {
 	if ch := Choose("ultra", ladder); ch.Model != "" || ch.Refusal != "" {
-		t.Fatalf("незнакомый ярус: %+v", ch)
+		t.Fatalf("незнакомый уровень: %+v", ch)
 	}
 	if ch := Choose("base", nil); ch.Model != "" || ch.Refusal != "" {
 		t.Fatalf("пустая лестница: %+v", ch)
@@ -79,7 +79,7 @@ func TestChooseUnknownTier(t *testing.T) {
 
 func TestParseTier(t *testing.T) {
 	if got := ParseTier("model: sonnet\neffort: high\ntier: base\nvia: x\n"); got != "base" {
-		t.Fatalf("ярус: %q", got)
+		t.Fatalf("уровень: %q", got)
 	}
 	if got := ParseTier("model: sonnet\n"); got != "" {
 		t.Fatalf("без строки tier уровень пуст: %q", got)
@@ -267,7 +267,7 @@ func TestRunOutcomes(t *testing.T) {
 	reps := Run(&fake{tier: "max", ladder: ladder}, root, rows, nil)
 	if Failed(reps) || !strings.Contains(reps[0].Line, "модель fable") ||
 		!strings.Contains(reps[0].Line, "разработку вёл fable") {
-		t.Fatalf("та же модель на верхнем уровенье: %+v", reps)
+		t.Fatalf("та же модель на верхнем уровне: %+v", reps)
 	}
 	reps = Run(&fake{ready: "tmux нет", failed: true, tier: "base", ladder: ladder}, root, rows, nil)
 	if !Failed(reps) || !strings.Contains(reps[0].Line, "tmux нет") {
@@ -433,6 +433,6 @@ func TestChooseAvailableSearchesIncompletePrimary(t *testing.T) {
 	ladders[1].Steps = []Step{{"pro", "opus"}}
 	ch = ChooseAvailable("base", ladders)
 	if ch.Model != "sonnet" || ch.Tier != "pro" || ch.Harness != "primary" || !ch.Stepped {
-		t.Fatalf("пропущен доступный старший ярус: %+v", ch)
+		t.Fatalf("пропущен доступный старший уровень: %+v", ch)
 	}
 }

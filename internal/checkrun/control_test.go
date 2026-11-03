@@ -208,7 +208,7 @@ roles = ["inspect"]
 	if !reps[0].Raised {
 		t.Fatalf("контроль не поднят: %+v", reps)
 	}
-	if f.planned[0].Choice.Model != "flash" || !strings.Contains(f.planned[0].TierWhy, "инспектор контроля из команды") {
+	if f.planned[0].Choice.Model != "flash" || !strings.Contains(f.planned[0].TierWhy, "инспектор контроля из команды, уровень ") {
 		t.Fatalf("заказ ушёл не инспектору: %+v", f.planned[0])
 	}
 	// Разработку вёл sonnet, инспектор flash: совпадения нет, инспектор остаётся.

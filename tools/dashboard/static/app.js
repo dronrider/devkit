@@ -12618,9 +12618,10 @@ function chatModelKeep(project, id, model, harness) {
 async function chatRaise(project, st, text, pick, onTmux) {
   const body = { text, model: pick.model, harness: pick.harness };
   if (st.task) body.id = st.task;
-  // Ручная глубина едет подъёмом и тратится им. Слова уровня в самой реплике
-  // сильнее меню, и их разбирает уже сам агент.
-  const armEffort = chatEffortSpend(project, st.task || st.addr);
+  // Ручная глубина едет подъёмом, а тратится его успехом: неудачный подъём
+  // запуска не поднял, и выбор человека ждёт следующей попытки. Слова уровня
+  // в самой реплике сильнее меню, и их разбирает уже сам агент.
+  const armEffort = chatEffortOf(project, st.task || st.addr);
   if (armEffort) body.effort = armEffort;
   // Подъём из записи пришивается к ней: разговор останется той же строкой
   // списка, на которой он начался, и адрес панели переедет на живую сессию сам.
@@ -12630,6 +12631,12 @@ async function chatRaise(project, st, text, pick, onTmux) {
     sayResult(r.body.error || "чат не поднялся", true);
     return false;
   }
+  // Слово way из ответа говорит, доехал ли выбор до агента: только тогда
+  // ручная глубина считается потраченной, тем же правилом, что у реплики
+  // и продолжения работы.
+  const liftWay = String(r.body.way || "");
+  if (liftWay === "start" || liftWay === "new" || liftWay === "resume" ||
+      liftWay === "fresh") chatEffortSpend(project, st.task || st.addr);
   // Имя tmux уезжает вызвавшему сразу: он кладёт его в персист реплики, и
   // дорога к родившемуся диалогу переживает закрытие вкладки.
   if (onTmux) onTmux(r.body.tmux);

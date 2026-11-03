@@ -5,7 +5,8 @@
 // общее меню модели и глубины: у кнопки пуска, у трёх точек строки и у выбора
 // модели в разговоре. Предмет стенда это состав того меню и проезд выбора:
 // уровень доехал до заказа запуска и до тела реплики, а пустой выбор оставил
-// заказ вердикту. Выбор живёт один запуск, слова в команде остаются сильнее.
+// заказ вердикту. Выбор живёт один запуск, слова в команде остаются сильнее,
+// а неудачный подъём выбор не съедает.
 //
 // Зовётся: node testdata/poc_effmenu.mjs static/app.js
 
@@ -30,6 +31,9 @@ const quota = { harnesses: [
 const chats = [
   { id: "bbbb2222-2222", title: "Верни XR-1 на доработку", mtime: "2026-08-12T09:00:00+03:00",
     tasks: ["XR-1"], model: "opus", state: "dead" },
+  // Незачатый разговор: сессии за ним нет, и поднимет его первая реплика.
+  { id: "blank-eff", project: "demo", blank: true, state: "not-started", idle: true,
+    model: "opus", pickHarness: "claude-code", mtime: "2026-08-12T09:30:00+03:00", tasks: [] },
 ];
 const chatModels = tiers.map((m) => ({ model: m.model, tier: m.tier, harness: "claude-code" }));
 const board = { sections: [{ key: "in-progress", rows: [
@@ -37,11 +41,19 @@ const board = { sections: [{ key: "in-progress", rows: [
 ] }] };
 
 const posted = [];
+let raiseFail = false;
 const { sandbox } = makeSandbox(app, (path, init) => {
   if (init && init.method === "POST") {
     posted.push({ path, body: init.body ? JSON.parse(init.body) : null });
     if (path.endsWith("/runs")) return { id: "XR-1", session: "task-XR-1", message: "конвейер поднят" };
     if (path.includes("/say")) return { way: "resume", tmux: "chat-XR-1-2" };
+    // Подъём незачатого разговора падает по желанию стенда: неудачная дорога
+    // тут предмет проверки, а не помеха прогону.
+    if (path.endsWith("/chats")) {
+      if (raiseFail) return { raw: { status: 502, statusText: "Bad Gateway",
+        text: JSON.stringify({ error: "чат не поднялся" }) } };
+      return { way: "new", tmux: "chat-eff-1" };
+    }
     return {};
   }
   if (path === "/api/harnesses") return { harnesses };
@@ -212,6 +224,44 @@ const markOn = (pop) => allByClass(pop, "effmark")
   const plain = posted.filter((p) => p.path.includes("/say")).pop();
   if (plain.body.effort) {
     fail("выбор глубины пережил свой запуск в разговоре: " + JSON.stringify(plain.body));
+  }
+}
+
+// --- неудачный подъём не съедает ручную глубину ---
+{
+  // Отказ ручки подъёма не поднял запуска, и выбор человека обязан пережить
+  // его: следующая попытка едет тем же уровнем, а тратит выбор только
+  // удалась попытка (слово way из ответа).
+  const st = await sandbox.chatState("demo", "blank-eff", board);
+  const panel = sandbox.chatPanel("demo", st);
+  const sel = tag(panel, "SELECT");
+  const menu = byClass(panel, "menu");
+  if (!menu) fail("у незачатого разговора нет меню модели и глубины");
+  sel.handlers.mousedown({ preventDefault() {}, stopPropagation() {} });
+  allByClass(menu, "effmark").find((b) => dump(b).trim() === "max")
+    .handlers.click({ stopPropagation: () => {} });
+  const raises = () => posted.filter((p) => p.path.endsWith("/chats"));
+  const say = (text) => {
+    sandbox.chatRaise("demo", st, text, { model: "opus", harness: "claude-code" }, () => {})
+      .catch(() => {});
+  };
+  raiseFail = true;
+  say("поднимись с глубиной");
+  await settle();
+  if (!raises().length || raises()[0].body.effort !== "max") {
+    fail("ручная глубина не уехала с попыткой подъёма: " + JSON.stringify(raises()));
+  }
+  raiseFail = false;
+  say("ещё раз с глубиной");
+  await settle();
+  const retry = raises()[1];
+  if (!retry || retry.body.effort !== "max") {
+    fail("неудачный подъём съел ручную глубину: " + JSON.stringify(raises()));
+  }
+  say("третья реплика");
+  await settle();
+  if (raises()[2] && raises()[2].body.effort) {
+    fail("удачный подъём не потратил выбор: " + JSON.stringify(raises()[2].body));
   }
 }
 

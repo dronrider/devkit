@@ -10929,12 +10929,7 @@ function modelPick(project, st) {
     model.focus();
     // Кольцо вердикта спрашивается открытием меню, ведь вердикт зависит от
     // строки задачи, а не от разговора. У разговора без задачи кольца нет.
-    if (st.task) {
-      api("/api/projects/" + encodeURIComponent(project) + "/tasks/" +
-        encodeURIComponent(st.task) + "/pick")
-        .then((r) => { if (r.ok) pickMenu.setVerdict(r.body.effort || ""); })
-        .catch(() => {});
-    }
+    if (st.task) armPickRing(project, st.task, pickMenu);
   });
   return box;
 }

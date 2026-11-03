@@ -543,7 +543,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q не похоже на ID задачи", id)})
 		return
 	}
-	ask, want, wantTier, mode, ok := s.draftAsk(w, r, id)
+	ask, want, wantTier, mode, wantEffort, ok := s.draftAsk(w, r, id)
 	if !ok {
 		return
 	}
@@ -654,7 +654,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := startManaged(found.Path, found.Path, id, sess, func(ack string) string {
-		return groomCmd(s.launchEnv(id, sess, "")+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" DEVKIT_GROOM_SOURCE="+shQuote(id)+" DEVKIT_GROOM_MODE="+shQuote(mode)+" ", order, own, model, id+" груминг")
+		return groomCmd(s.launchEnv(id, sess, "")+effortPair(wantEffort)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" DEVKIT_GROOM_SOURCE="+shQuote(id)+" DEVKIT_GROOM_MODE="+shQuote(mode)+" ", order, own, model, id+" груминг")
 	}); err != nil {
 		text := fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 		s.logf("груминг %s в %s не удался: %s", id, found.Name, text)
@@ -741,7 +741,7 @@ func groomCmd(env, prompt string, h *Harness, model, name string) string {
 // draftAsk достаёт уточнение из тела запроса. Тело бывает и пустым: кнопка
 // «Грумить» шлёт заказ без слов, а уточнение приходит только с поля
 // повторной ходки.
-func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (ask, harness, tier, mode string, ok bool) {
+func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (ask, harness, tier, mode, effort string, ok bool) {
 	var body struct {
 		Ask string `json:"ask"`
 		// Подписка выбирается при запуске, как у конвейера задачи: разбор
@@ -754,11 +754,14 @@ func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (as
 		// Исход записи (DK-1043): пустое поле и "groom" оставляют заказ
 		// прежним, "run" дописывает хвост про продолжение выполнением.
 		Mode string `json:"mode"`
+		// Effort это ручной уровень глубины из ползунка меню у кнопки груминга
+		// (DK-1570): едет парой окружения и живёт этот разбор.
+		Effort string `json:"effort"`
 	}
 	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, draftAskLimit)).Decode(&body)
 	switch {
 	case errors.Is(err, io.EOF):
-		return "", "", "", draftModeGroom, true
+		return "", "", "", draftModeGroom, "", true
 	case err != nil:
 		var mbe *http.MaxBytesError
 		text := "жду JSON {\"ask\": \"...\"} либо пустое тело"
@@ -767,16 +770,21 @@ func (s *server) draftAsk(w http.ResponseWriter, r *http.Request, id string) (as
 		}
 		s.logf("груминг %s отклонён: тело запроса не разобралось 400", id)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": text})
-		return "", "", "", "", false
+		return "", "", "", "", "", false
 	}
 	got, modeOK := draftMode(body.Mode)
 	if !modeOK {
 		text := fmt.Sprintf("%q не похоже на исход записи: жду groom либо run", body.Mode)
 		s.logf("груминг %s отклонён: %s 400", id, text)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": text})
-		return "", "", "", "", false
+		return "", "", "", "", "", false
 	}
-	return strings.Join(strings.Fields(body.Ask), " "), body.Harness, strings.TrimSpace(body.Tier), got, true
+	if msg := effortBad(body.Effort); msg != "" {
+		s.logf("груминг %s отклонён: %s 400", id, msg)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		return "", "", "", "", "", false
+	}
+	return strings.Join(strings.Fields(body.Ask), " "), body.Harness, strings.TrimSpace(body.Tier), got, strings.TrimSpace(body.Effort), true
 }
 
 // handleDraftDrop удаляет черновик. Причина обязательна, как и у самой

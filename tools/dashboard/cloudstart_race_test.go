@@ -27,7 +27,7 @@ exit 0`
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		w := httptest.NewRecorder()
-		e.s.startFresh(w, &Project{Name: "demo", Path: e.proj}, "XR-7", "продолжить", "XR-7 работа")
+		e.s.startFresh(w, &Project{Name: "demo", Path: e.proj}, "XR-7", "продолжить", "XR-7 работа", "")
 		done <- w
 	}()
 	t.Cleanup(func() { os.WriteFile(release, []byte("release"), 0600); os.Remove(alive) })

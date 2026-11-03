@@ -183,7 +183,7 @@ func (c *dashCarrier) Raise(p checkrun.Plan) checkrun.Report {
 			return checkrun.Report{Failed: true, Line: id + ": " + checkrun.NotRaised + ", выбранная подписка больше не включена"}
 		}
 	}
-	res, err := c.s.startTaskSession(c.proj, id, sess, own, p.Choice.Model, p.Order, p.Again, "проверка", true)
+	res, err := c.s.startTaskSession(c.proj, id, sess, own, p.Choice.Model, p.Order, p.Again, "проверка", true, "")
 	if err != nil {
 		// Занятый замок это живая голова, поднятая мимо дашборда, и поломкой он
 		// не считается, как и живая tmux-сессия в предполёте.

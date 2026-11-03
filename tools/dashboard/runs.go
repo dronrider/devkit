@@ -255,10 +255,42 @@ const defaultClient = "claude"
 // нижний не тянет работу конвейера.
 const fallbackTier = "pro"
 
-// pickLines разбирает машинные строки вердикта: ярус и подписку (via). Пустое
-// значение значит, что вердикт этого не назвал; via у битого назначения
-// печатается прочерком, и прочерк читается тем же пустым словом.
-func pickLines(out []byte) (tier, via string) {
+// effortLevels это пять уровней глубины размышления, те же, что у маппинга
+// agentctl pick (DK-1570). Список нужен дашборду для проверки ручного выбора:
+// кривое слово из старого экрана обязано отбиться словами, а не уехать в
+// окружение сессии.
+var effortLevels = []string{"low", "medium", "high", "xhigh", "max"}
+
+// effortBad называет кривой ручной уровень словами. Пусто значит, что уровень
+// назван верно либо его не выбирали вовсе.
+func effortBad(effort string) string {
+	if effort == "" {
+		return ""
+	}
+	for _, v := range effortLevels {
+		if v == effort {
+			return ""
+		}
+	}
+	return fmt.Sprintf("неизвестный effort %q, допустимы %s", effort, strings.Join(effortLevels, ", "))
+}
+
+// effortPair это пара окружения ручного выбора глубины (DK-1570): уровень
+// ползунка меню едет в окружение поднимаемой сессии, и там его читает agentctl
+// pick поверх строки «Эффорт:» файла задачи и вердикта. Выбор действует один
+// запуск ровно потому, что живёт он в окружении одной сессии. Пусто, когда
+// уровня не выбирали.
+func effortPair(effort string) string {
+	if effort == "" {
+		return ""
+	}
+	return "DEVKIT_EFFORT=" + shQuote(effort) + " "
+}
+
+// pickLines разбирает машинные строки вердикта: ярус, подписку (via) и уровень
+// глубины. Пустое значение значит, что вердикт этого не назвал; via у битого
+// назначения печатается прочерком, и прочерк читается тем же пустым словом.
+func pickLines(out []byte) (tier, via, effort string) {
 	for _, ln := range strings.Split(string(out), "\n") {
 		ln = strings.TrimSpace(ln)
 		if rest, ok := strings.CutPrefix(ln, "tier:"); ok {
@@ -267,11 +299,14 @@ func pickLines(out []byte) (tier, via string) {
 		if rest, ok := strings.CutPrefix(ln, "via:"); ok {
 			via = strings.TrimSpace(rest)
 		}
+		if rest, ok := strings.CutPrefix(ln, "effort:"); ok {
+			effort = strings.TrimSpace(rest)
+		}
 	}
 	if via == "-" {
 		via = ""
 	}
-	return tier, via
+	return tier, via, effort
 }
 
 // pickTier спрашивает у вердикта, каким ярусом закрывать задачу. Назначающий
@@ -289,11 +324,40 @@ func (s *server) pickTier(dir, id, role string) (string, string) {
 		return fallbackTier, fmt.Sprintf("вердикт agentctl pick не ответил (%s): ярус %s",
 			procErr(err), fallbackTier)
 	}
-	tier, _ := pickLines(out)
+	tier, _, _ := pickLines(out)
 	if tier == "" {
 		return fallbackTier, fmt.Sprintf("вердикт agentctl pick яруса не назвал: ярус %s", fallbackTier)
 	}
 	return tier, "ярус " + tier + " по вердикту agentctl pick"
+}
+
+// handleTaskPick отдаёт вердикт agentctl pick по строке: панель рисует по нему
+// кольцо на шкале глубины и подсвечивает строку модели, которая поедет без
+// выбора человека (DK-1570). Читается вердикт при открытии меню, а не при
+// каждой перерисовке доски: pick это подпроцесс, а доска перерисовывается
+// опросом. Отказ вердикта не роняет ручку: без кольца меню остаётся рабочим, и
+// причина названа полем note.
+func (s *server) handleTaskPick(w http.ResponseWriter, r *http.Request) {
+	found, id, _, _, ok := s.taskRow(w, r)
+	if !ok {
+		return
+	}
+	out := map[string]string{"tier": "", "via": "", "effort": ""}
+	raw, err := runProcQuiet(found.Path, true, binPath(agentctlBin), "pick", id)
+	if err != nil {
+		out["note"] = "вердикт agentctl pick не ответил (" + procErr(err) + ")"
+		s.logf("меню запуска %s: %s", id, out["note"])
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	tier, via, effort := pickLines(raw)
+	if tier == "" {
+		out["note"] = "вердикт agentctl pick яруса не назвал"
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	out["tier"], out["via"], out["effort"] = tier, via, effort
+	writeJSON(w, http.StatusOK, out)
 }
 
 // runAssign решает, какой подпиской и ярусом поднимается запуск. Голоса о
@@ -318,7 +382,7 @@ func (s *server) runAssign(dir, id, wantTier, wantHarness string, goal bool) (*H
 			said = fmt.Sprintf("вердикт agentctl pick не ответил (%s): ярус %s",
 				procErr(err), fallbackTier)
 		} else {
-			vtTier, vtVia = pickLines(out)
+			vtTier, vtVia, _ = pickLines(out)
 		}
 	}
 	var harness *Harness
@@ -476,7 +540,7 @@ func taskRunPath(roots []string) string {
 // приставки стоят после пар taskhead и перекрывают их. Дом замка и реестра
 // тоже настоящий, машинный: `taskctl run` из тика смотрит туда же, и замок у
 // всех дорог выходит один.
-func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, order, again, role string, hidden bool) (taskhead.Request, error) {
+func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, order, again, role string, hidden bool, effort string) (taskhead.Request, error) {
 	tr := taskRunPath(s.cfg.Roots)
 	if tr == "" {
 		return taskhead.Request{}, errors.New(taskRunMissing)
@@ -506,7 +570,8 @@ func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, 
 	}
 	return taskhead.Request{ID: id, Root: proj.Path, Project: proj.Name, Home: home, Devkit: dk,
 		Harness: taskhead.HarnessName(name), Model: model, Order: order, Again: again,
-		Hidden: hidden, Adopt: adopt, Prefix: s.headlessEnv(id, sess, hidden), Name: chatName}, nil
+		Hidden: hidden, Adopt: adopt,
+		Prefix: s.headlessEnv(id, sess, hidden) + effortPair(effort), Name: chatName}, nil
 }
 
 // startTaskSession поднимает голову задачи общим подъёмом taskhead.Raise: та
@@ -529,8 +594,12 @@ func (s *server) headRequest(proj *Project, id, sess string, h *Harness, model, 
 // Занятый замок это *headBusy: голову уже поднял кто-то другой, чаще всего тик
 // командой `taskctl run`. Лестница, которой поднять голову нечем, зовёт
 // человека сама, а сюда приходит ошибкой со своими строками.
-func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again, role string, hidden bool) (taskhead.Result, error) {
-	q, err := s.headRequest(proj, id, sess, h, model, order, again, role, hidden)
+//
+// effort это ручной уровень глубины размышления из меню запуска (DK-1570):
+// пусто у всех дорог, кроме кнопки, где человек подвинул ползунок. Едет он
+// парой окружения в приставку головы, и живёт ровно этот подъём.
+func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, model, order, again, role string, hidden bool, effort string) (taskhead.Result, error) {
+	q, err := s.headRequest(proj, id, sess, h, model, order, again, role, hidden, effort)
 	if err != nil {
 		return taskhead.Result{}, err
 	}
@@ -569,7 +638,10 @@ func (s *server) startTaskSession(proj *Project, id, sess string, h *Harness, mo
 //
 // Возврат это причина словами, пустая значит, что сессия встала. Причину
 // зовущий кладёт в журнал и уходит ступенью ниже, к headless-оболочке.
-func (s *server) startGoalChat(proj *Project, id, sess, model string, h *Harness) string {
+//
+// effort это ручной уровень глубины из меню запуска (DK-1570): он едет парой
+// окружения в сессию цикла, и вердикты pick внутри цикла держат его один подъём.
+func (s *server) startGoalChat(proj *Project, id, sess, model string, h *Harness, effort string) string {
 	if err := s.chatStoreWrite("tmux-"+sess, chatStore{Model: model}); err != nil {
 		s.logf("модель сессии цели %s не записалась: %v", sess, err)
 	}
@@ -577,7 +649,7 @@ func (s *server) startGoalChat(proj *Project, id, sess, model string, h *Harness
 	// предмет известен до первого токена, и заказывать заголовок у модели
 	// незачем.
 	if err := startManaged(proj.Path, chatTree(proj.Path, id), id, sess, func(ack string) string {
-		return chatCmd(s.launchEnv(id, sess, "")+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, "", goalContinuePrompt(id, ""), id+" цель", h, binPath(agentctlBin))
+		return chatCmd(s.launchEnv(id, sess, "")+effortPair(effort)+"DEVKIT_CLOUD_ACK="+shQuote(ack)+" ", model, "", goalContinuePrompt(id, ""), id+" цель", h, binPath(agentctlBin))
 	}); err != nil {
 		return fmt.Sprintf("tmux не поднял сессию %s: %s", sess, procErr(err))
 	}
@@ -634,10 +706,19 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		// Tier это выбранный человеком ярус. Пусто значит «как назначено»: у
 		// задачи ярус называет вердикт agentctl pick, у цели это pro.
 		Tier string `json:"tier"`
+		// Effort это ручной уровень глубины размышления из ползунка меню
+		// (DK-1570). Пусто значит «как назначено»: уровень называет вердикт
+		// agentctl pick с учётом строки «Эффорт:» файла задачи.
+		Effort string `json:"effort"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil || body.ID == "" {
 		s.logf("запуск отклонён: битое тело запроса 400")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"id\": \"DK-NNN\"}"})
+		return
+	}
+	if msg := effortBad(body.Effort); msg != "" {
+		s.logf("запуск %s отклонён: %s", body.ID, msg)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 	id := body.ID
@@ -787,7 +868,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		}
 		rung := clientMissing(client)
 		if rung == "" {
-			rung = s.startGoalChat(found, id, sess, model, own)
+			rung = s.startGoalChat(found, id, sess, model, own, body.Effort)
 		}
 		if rung == "" {
 			s.logf("цель %s поднята в %s ступенью чата (tmux-сессия %s%s), %s",
@@ -800,6 +881,9 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 				chatOut["harness"] = harness.Name
 				chatOut["message"] = fmt.Sprintf("цель %s поднята сессией на подписке %s (tmux-сессия %s)",
 					id, harness.Name, sess)
+			}
+			if body.Effort != "" {
+				chatOut["message"] += ", effort " + body.Effort + " выбран рукой"
 			}
 			chatOut["message"] += ", " + tierWhy
 			writeJSON(w, http.StatusOK, chatOut)
@@ -825,6 +909,12 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		// у цикла много и подписка между ними меняется.
 		if tier != "" {
 			args = append(args, "--tier", tier)
+		}
+		// Ручной уровень глубины едет оболочке цели тем же флагом, что и ярус:
+		// подъёмов у цикла много, и уровень обязан дожить до каждого витка,
+		// а пары окружения tmux-сервер не наследует.
+		if body.Effort != "" {
+			args = append(args, "--effort", body.Effort)
 		}
 		out, err := runProc("python3", args...)
 		if err != nil {
@@ -852,6 +942,9 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		if harness != nil {
 			goalOut["harness"] = harness.Name
 			goalOut["message"] = fmt.Sprintf("цикл цели %s поднят на подписке %s (tmux-сессия %s)", id, harness.Name, sess)
+		}
+		if body.Effort != "" {
+			goalOut["message"] += ", effort " + body.Effort + " выбран рукой"
 		}
 		goalOut["message"] = strings.TrimSpace(goalOut["message"]) + ", " + tierWhy
 		writeJSON(w, http.StatusOK, goalOut)
@@ -886,7 +979,7 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		model = own.tierModel(tier)
 	}
 	res, err := s.startTaskSession(found, id, sess, own, model,
-		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false)
+		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false, body.Effort)
 	if err != nil {
 		// Замок держит голова, поднятая мимо кнопки (тик командой `taskctl
 		// run`, человек из терминала). Для экрана это та же живая работа, что
@@ -922,7 +1015,12 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		resp["model"] = model
 	}
 	// Откуда взялся ярус, сказано словами и в ответе, и в журнале: молчащий
-	// вердикт подменяет назначение, и человеку это видно.
+	// вердикт подменяет назначение, и человеку это видно. Ручной уровень
+	// глубины называется той же строкой: ползунок в меню молчит, и подмена
+	// вердикта была бы незамеченной.
+	if body.Effort != "" {
+		resp["message"] += ", effort " + body.Effort + " выбран рукой"
+	}
 	resp["message"] += ", " + tierWhy
 	s.logf("задача %s поднята в %s (%s%s), %s", id, found.Name, where, harnessTail(harness), tierWhy)
 	writeJSON(w, http.StatusOK, resp)

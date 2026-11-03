@@ -134,7 +134,7 @@ func (s *server) handleTaskHandover(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	res, err := s.startTaskSession(found, id, "task-"+id, own, model,
-		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false)
+		runPrompt(row.Sect, id), runPrompt("in-progress", id), "работа", false, "")
 	if err != nil {
 		var busy *headBusy
 		if errors.As(err, &busy) {

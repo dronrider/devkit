@@ -60,7 +60,7 @@ func budgetLimit(q *quotaSpec, c correction, s snapshot, now time.Time) (int, st
 	case c.Down:
 		return 1, fmt.Sprintf("корректор сдвигает opus вниз (%s), потолок 1: пачку не собирать, работать по одной", c.Note)
 	case c.shifted():
-		return 3, fmt.Sprintf("корректор поднимает opus до fable (%s), потолок 3: верхний ярус дорогой, впятером его не тратим", c.Note)
+		return 3, fmt.Sprintf("корректор поднимает opus до fable (%s), потолок 3: верхний уровень дорогой, впятером его не тратим", c.Note)
 	case freshSurplus(q, s, now, tierPro):
 		return 5, fmt.Sprintf("корректор вердикт не двигает, %s в профиците на свежем снимке, потолок 5%s",
 			strings.Join(q.Spend[tierPro], ", "), batchPairTail)

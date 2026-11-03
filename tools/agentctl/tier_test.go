@@ -59,7 +59,7 @@ func TestOverrideTierAliases(t *testing.T) {
 				t.Fatalf("модель разошлась с ожидаемой: %q", out)
 			}
 			if !strings.Contains(out, "\ntier: "+c.tier+"\n") {
-				t.Fatalf("ярус разошёлся с ожидаемым: %q", out)
+				t.Fatalf("уровень разошёлся с ожидаемым: %q", out)
 			}
 		})
 	}
@@ -72,7 +72,7 @@ func TestOverrideTierAliases(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := cmdPick(root, "T-002", roleExec, "")
-		if err == nil || !strings.Contains(err.Error(), "неизвестный ярус") {
+		if err == nil || !strings.Contains(err.Error(), "неизвестный уровень") {
 			t.Fatalf("жду отказ на имя модели инструмента, получил %v", err)
 		}
 	})
@@ -122,14 +122,14 @@ func TestCmdPickUnmappedHarness(t *testing.T) {
 			t.Fatalf("pick: %v", err)
 		}
 		if !strings.HasPrefix(out, "model: -\neffort: medium\ntier: pro\n") {
-			t.Fatalf("жду прочерк модели при полном ярусе, получил %q", out)
+			t.Fatalf("жду прочерк модели при полном уровне, получил %q", out)
 		}
 		if !strings.Contains(out, "харнес claude-code не настроен") || !strings.Contains(out, machine) {
 			t.Fatalf("в причине нет ни находки, ни файла, которым она чинится: %q", out)
 		}
 	})
 
-	t.Run("строка записи несёт ярус, когда модели нет", func(t *testing.T) {
+	t.Run("строка записи несёт уровень, когда модели нет", func(t *testing.T) {
 		setupHarness(t, "default = \"claude-code\"\nenabled = [\"claude-code\"]\n")
 		taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
 		if err := os.WriteFile(taskFile, []byte("# T-002\n"), 0o644); err != nil {
@@ -172,7 +172,7 @@ func TestCmdPickUnmappedHarness(t *testing.T) {
 			t.Fatalf("pick: %v", err)
 		}
 		if !strings.HasPrefix(out, "model: -\neffort: low\ntier: mini\n") {
-			t.Fatalf("жду прочерк модели при полном ярусе, получил %q", out)
+			t.Fatalf("жду прочерк модели при полном уровне, получил %q", out)
 		}
 		if !strings.Contains(out, "харнес не определён") || !strings.Contains(out, machine) {
 			t.Fatalf("в причине нет ни находки, ни файла, которым она чинится: %q", out)
@@ -202,7 +202,7 @@ max = "big"
 		t.Fatalf("pick: %v", err)
 	}
 	if !strings.HasPrefix(out, "model: workhorse\neffort: high\ntier: base\n") {
-		t.Fatalf("жду сдвинутый ярус при той же модели, получил %q", out)
+		t.Fatalf("жду сдвинутый уровень при той же модели, получил %q", out)
 	}
 	if !strings.Contains(out, "корректор: дефицит week_all, сдвиг pro -> base, модель та же") {
 		t.Fatalf("холостой сдвиг прошёл молча: %q", out)

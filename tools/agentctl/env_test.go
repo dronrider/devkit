@@ -294,7 +294,7 @@ env = ["CLAUDE_CONFIG_DIR={home}"]
 	}
 	s := l.Setup["glm-code"]
 	if s.mapped() {
-		t.Fatal("секция без ярусов не должна считаться настроенной")
+		t.Fatal("секция без уровней не должна считаться настроенной")
 	}
 	if s.Home != filepath.Join(home, ".claude-glm") {
 		t.Fatalf("каталог %q, жду развёрнутую тильду", s.Home)

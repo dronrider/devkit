@@ -866,7 +866,7 @@ func correctTier(q *quotaSpec, tier string, groom bool, s snapshot, now time.Tim
 	if name := firstWithStatus(s, q.Spend[tier], statusDeficit, now); name != "" {
 		c.Note = statusDeficit + " " + name
 		if i == 0 {
-			c.Warn = "ниже mini ярусов нет"
+			c.Warn = "ниже mini уровней нет"
 			return c
 		}
 		c.Tier, c.Down = tierNames[i-1], true

@@ -23,12 +23,14 @@ const (
 )
 
 // Префиксы машинных строк файла цели. Строка бюджета это «бюджет: week_all <=
-// 25», потолок моделей «ярус: pro», снимок витка «снимок 2026-08-03T12:00:
-// week_all 12%, week_max 4%».
+// 25», потолок моделей «уровень: pro», снимок витка «снимок 2026-08-03T12:00:
+// week_all 12%, week_max 4%». Прежняя запись потолка «ярус: pro» читается
+// псевдонимом, как старые имена бакетов.
 const (
-	goalLimitPrefix = "бюджет:"
-	goalTierPrefix  = "ярус:"
-	goalSnapPrefix  = "снимок "
+	goalLimitPrefix     = "бюджет:"
+	goalTierPrefix      = "уровень:"
+	goalTierAliasPrefix = "ярус:"
+	goalSnapPrefix      = "снимок "
 )
 
 // goalLimit это потолок расхода по одному бакету в процентных пунктах. Токены и
@@ -112,11 +114,11 @@ func parseGoalBudget(lines []string, q *quotaSpec) (goalBudget, error) {
 			}
 			l.Bucket = canonBucket(l.Bucket)
 			b.Limits = append(b.Limits, l)
-		case strings.HasPrefix(t, goalTierPrefix):
-			name := strings.TrimSpace(strings.TrimPrefix(t, goalTierPrefix))
+		case strings.HasPrefix(t, goalTierPrefix), strings.HasPrefix(t, goalTierAliasPrefix):
+			name := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, goalTierPrefix), goalTierAliasPrefix))
 			tier, ok := overrideTiers[name]
 			if !ok {
-				return b, fmt.Errorf("строка бюджета %q: неизвестный ярус %q, допустимы mini, base, pro, max и старые имена haiku, sonnet, opus, fable", t, name)
+				return b, fmt.Errorf("строка бюджета %q: неизвестный уровень %q, допустимы mini, base, pro, max и старые имена haiku, sonnet, opus, fable", t, name)
 			}
 			b.Tier = tier
 		}
@@ -691,7 +693,7 @@ func cmdSpend(root, goalPath string, record bool, now time.Time) (string, error)
 		parts = append(parts, part)
 	}
 	if budget.Tier != "" {
-		parts = append(parts, "потолок яруса "+budget.Tier)
+		parts = append(parts, "потолок уровня "+budget.Tier)
 	}
 	parts = append(parts, fmt.Sprintf("точек расхода %d", len(chain)))
 	if len(fresh.Pct) > 0 {

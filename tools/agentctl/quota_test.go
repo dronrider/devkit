@@ -100,7 +100,7 @@ func TestGlmCodeQuotaProfile(t *testing.T) {
 	}
 	for _, tier := range tierNames {
 		if !contains(q.Spend[tier], "window5h_all") || !contains(q.Spend[tier], "week_all") {
-			t.Fatalf("ярус %s тратит не из обоих окон: %v", tier, q.Spend[tier])
+			t.Fatalf("уровень %s тратит не из обоих окон: %v", tier, q.Spend[tier])
 		}
 	}
 	if q.Home != home {
@@ -147,7 +147,7 @@ func TestMimoQuotaProfile(t *testing.T) {
 	}
 	for _, tier := range tierNames {
 		if !contains(q.Spend[tier], "month_plan") {
-			t.Fatalf("ярус %s тратит не из месячного пакета: %v", tier, q.Spend[tier])
+			t.Fatalf("уровень %s тратит не из месячного пакета: %v", tier, q.Spend[tier])
 		}
 	}
 	s := l.Setup["mimo"]
@@ -157,7 +157,7 @@ func TestMimoQuotaProfile(t *testing.T) {
 	for _, tier := range tierNames {
 		a := s.Map[tier]
 		if a.Harness != "mimo" || a.Model == "" {
-			t.Fatalf("ярус %s не домашняя ступень: %+v", tier, a)
+			t.Fatalf("уровень %s не домашняя ступень: %+v", tier, a)
 		}
 	}
 }
@@ -483,14 +483,14 @@ func TestQuotaSpendLadder(t *testing.T) {
 	for _, tier := range tierNames {
 		names := q.Spend[tier]
 		if len(names) == 0 {
-			t.Fatalf("ярус %s не тратит ни из чего", tier)
+			t.Fatalf("уровень %s не тратит ни из чего", tier)
 		}
 		if !contains(names, q.Required) {
-			t.Fatalf("ярус %s не тратит из обязательного бакета: %v", tier, names)
+			t.Fatalf("уровень %s не тратит из обязательного бакета: %v", tier, names)
 		}
 		for _, name := range names {
 			if !q.known(name) {
-				t.Fatalf("ярус %s тратит из бакета %s, а профиль такого не объявляет", tier, name)
+				t.Fatalf("уровень %s тратит из бакета %s, а профиль такого не объявляет", tier, name)
 			}
 		}
 	}
@@ -499,12 +499,12 @@ func TestQuotaSpendLadder(t *testing.T) {
 	// max наборы бакетов совпадают, различает их только взвешенная цена расхода.
 	for _, tier := range []string{tierPro, tierMax} {
 		if got := q.Spend[tier]; len(got) != 2 || !contains(got, "week_max") {
-			t.Fatalf("ярус %s тратит из %v, жду пару с week_max", tier, got)
+			t.Fatalf("уровень %s тратит из %v, жду пару с week_max", tier, got)
 		}
 	}
 	for _, tier := range []string{tierMini, tierBase} {
 		if got := q.Spend[tier]; len(got) != 1 || got[0] != q.Required {
-			t.Fatalf("ярус %s тратит из %v, а своего бакета у него нет", tier, got)
+			t.Fatalf("уровень %s тратит из %v, а своего бакета у него нет", tier, got)
 		}
 	}
 	// Известный бакет вне лестницы трат: снимок со старого клиента читается, но
@@ -650,7 +650,7 @@ func TestCorrectTier(t *testing.T) {
 		want  string
 		note  string
 	}{
-		{"дефицит общего бакета снимает pro на ярус вниз", "pro", false,
+		{"дефицит общего бакета снимает pro на уровень вниз", "pro", false,
 			snapOf(freshAge, deficitAll, normalFable), "base", "дефицит week_all"},
 		// pro расходует week_max (замер DK-089): дефицит этого бакета опускает
 		// его на base, иначе корректор не опускал бы никого, хотя pro сам бакет жжёт.
@@ -680,7 +680,7 @@ func TestCorrectTier(t *testing.T) {
 			snapOf(freshAge, surplusAll, surplusFable), "pro", "профицит week_all, week_max"},
 		{"профицита общего бакета для pro мало", "pro", false,
 			snapOf(freshAge, surplusAll, normalFable), "pro", ""},
-		{"выше max ярусов нет", "max", false,
+		{"выше max уровней нет", "max", false,
 			snapOf(freshAge, surplusAll, surplusFable), "max", ""},
 		{"дефицит валиден и по старому снимку", "pro", false,
 			snapOf(staleAge, deficitAll, normalFable), "base", "дефицит week_all"},
@@ -703,7 +703,7 @@ func TestCorrectTier(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			got := correctTier(specAt(t, ""), c.tier, c.groom, c.snap, testNow)
 			if got.Tier != c.want {
-				t.Fatalf("ярус %q, жду %q (причина %q)", got.Tier, c.want, got.Note)
+				t.Fatalf("уровень %q, жду %q (причина %q)", got.Tier, c.want, got.Note)
 			}
 			if got.Note != c.note {
 				t.Fatalf("причина %q, жду %q", got.Note, c.note)
@@ -719,7 +719,7 @@ func TestCorrectTierBottomWarning(t *testing.T) {
 	if c.shifted() {
 		t.Fatalf("сдвиг ниже mini: %+v", c)
 	}
-	if !strings.Contains(c.tail(), "ниже mini ярусов нет") {
+	if !strings.Contains(c.tail(), "ниже mini уровней нет") {
 		t.Fatalf("нет предупреждения в хвосте: %q", c.tail())
 	}
 }
@@ -749,7 +749,7 @@ func TestQuotaFacts(t *testing.T) {
 		{
 			// max платил из двух бакетов, pro платит из одного: пропади бакет
 			// исходного яруса, и причина сдвига в строке не сошлась бы с данными.
-			name: "сдвиг вниз несёт бакеты обоих ярусов",
+			name: "сдвиг вниз несёт бакеты обоих уровней",
 			snap: snapOf(freshAge, bucketAt("week_all", 50, halfWindow), bucketAt("week_max", 90, halfWindow)),
 			c:    correction{From: "max", Tier: "pro"},
 			want: "квота: week_all 50%, week_max 90% дефицит, снимок 22м назад",

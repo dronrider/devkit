@@ -320,7 +320,7 @@ func TestMergeWithoutMachineConfig(t *testing.T) {
 	}
 	for tier, want := range map[string]string{"mini": "haiku", "base": "sonnet", "pro": "opus", "max": "fable"} {
 		if s.Map[tier].Model != want || s.Map[tier].Harness != "claude-code" {
-			t.Fatalf("ярус %s развёрнут в %+v, жду модель %q дома", tier, s.Map[tier], want)
+			t.Fatalf("уровень %s развёрнут в %+v, жду модель %q дома", tier, s.Map[tier], want)
 		}
 	}
 	if len(l.Warns) != 0 {
@@ -395,11 +395,11 @@ home = "`+filepath.Join(home, ".glm")+`"
 	}
 	s := l.Setup["glm-code"]
 	if !s.mapped() || !s.Suggested {
-		t.Fatalf("секция без ярусов ждёт предложения из профиля, вышло %+v", s)
+		t.Fatalf("секция без уровней ждёт предложения из профиля, вышло %+v", s)
 	}
 	for tier, want := range map[string]string{"mini": "m1", "base": "m2", "pro": "m3", "max": "m4"} {
 		if s.Map[tier].Model != want || s.Map[tier].Harness != "glm-code" {
-			t.Fatalf("ярус %s развёрнут в %+v, жду модель %q дома", tier, s.Map[tier], want)
+			t.Fatalf("уровень %s развёрнут в %+v, жду модель %q дома", tier, s.Map[tier], want)
 		}
 	}
 	if s.Home != filepath.Join(home, ".glm") {
@@ -425,7 +425,7 @@ func TestUnmapHintNamesTiers(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := unmapHint(l, "glm-code")
-	for _, part := range []string{"в секции [glm-code]", "нет ярусов: mini, base, pro, max"} {
+	for _, part := range []string{"в секции [glm-code]", "нет уровеньов: mini, base, pro, max"} {
 		if !strings.Contains(got, part) {
 			t.Fatalf("хинт %q, жду в нём %q", got, part)
 		}
@@ -455,7 +455,7 @@ func TestMachineConfigTypes(t *testing.T) {
 	cases := []struct{ name, machine, project, want string }{
 		{"enabled строкой", "enabled = \"claude-code\"\n", "", "enabled: жду массив строк, вижу строку"},
 		{"default массивом", "default = [\"claude-code\"]\n", "", "default: жду строку, вижу массив строк"},
-		{"ярус целым", "enabled = [\"claude-code\"]\n\n[claude-code]\nmini = 1\nbase = \"s\"\npro = \"o\"\nmax = \"f\"\n", "",
+		{"уровень целым", "enabled = [\"claude-code\"]\n\n[claude-code]\nmini = 1\nbase = \"s\"\npro = \"o\"\nmax = \"f\"\n", "",
 			"mini: жду строку, вижу целое"},
 		{"бюджет строкой", "enabled = [\"claude-code\"]\n\n[claude-code]\nmini = \"h\"\nbase = \"s\"\npro = \"o\"\nmax = \"f\"\nbudget = \"200\"\n", "",
 			"budget: жду целое, вижу строку"},
@@ -619,7 +619,7 @@ func TestCmdHarness(t *testing.T) {
 	for _, part := range []string{
 		"харнес: claude-code (детект по переменной CLAUDECODE)",
 		"включены: claude-code (машинного конфига ",
-		"маппинг ярусов: mini = haiku, base = sonnet, pro = opus, max = fable (предложение профиля",
+		"маппинг уровеньов: mini = haiku, base = sonnet, pro = opus, max = fable (предложение профиля",
 		"делегирование: native",
 		"снимка нет",
 		filepath.Join(".devkit", "quota", "claude-code.local"),
@@ -849,7 +849,7 @@ chat = ["вторая-чата", ""]
 		chat[h.Name] = h.Chat
 	}
 	if list := chat["homecli"]; strings.Join(list, ",") != "модель-чата,вторая-чата" {
-		t.Fatalf("список чата домашней подписки %v, жду две строки без яруса", list)
+		t.Fatalf("список чата домашней подписки %v, жду две строки без уровня", list)
 	}
 	if list := chat["secondcli"]; strings.Join(list, ",") != "вторая-чата" {
 		t.Fatalf("список чата секции без лестницы %v, жду одну строку", list)

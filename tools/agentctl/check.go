@@ -48,7 +48,7 @@ func cmdCheck(root, id string) (string, error) {
 	var says []string
 	via := ch.Harness
 	if ch.Harness != p.HC.Name {
-		says = append(says, "подписка "+ch.Harness+": модель яруса в текущей лестнице недоступна")
+		says = append(says, "подписка "+ch.Harness+": модель уровня в текущей лестнице недоступна")
 	}
 	switch {
 	case known:

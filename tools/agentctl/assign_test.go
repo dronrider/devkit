@@ -127,7 +127,7 @@ func TestParseAssignment(t *testing.T) {
 func TestMachineTiersAllOrNone(t *testing.T) {
 	dir := filepath.Join(ladderProfiles(t), profileDirGroup, profileDirName)
 
-	t.Run("секция без ярусов", func(t *testing.T) {
+	t.Run("секция без уровней", func(t *testing.T) {
 		machine := writeFile(t, t.TempDir(), "harness.local", `enabled = ["claude-code", "glm-code"]
 
 [claude-code]
@@ -146,7 +146,7 @@ bin = "/opt/claude"
 		// DK-189: ярусов на машине нет, и лестница разворачивается предложением
 		// из профиля, а не остаётся пустой.
 		if s := l.Setup["glm-code"]; !s.mapped() || !s.Suggested {
-			t.Fatalf("секция без ярусов ждёт предложения из профиля, вышло %+v", s)
+			t.Fatalf("секция без уровней ждёт предложения из профиля, вышло %+v", s)
 		}
 		if l.Setup["glm-code"].Bin != "/opt/claude" {
 			t.Fatalf("машинная обвязка потерялась: %+v", l.Setup["glm-code"])
@@ -156,7 +156,7 @@ bin = "/opt/claude"
 		}
 	})
 
-	t.Run("три яруса из четырёх это отказ", func(t *testing.T) {
+	t.Run("три уровня из четырёх это отказ", func(t *testing.T) {
 		machine := writeFile(t, t.TempDir(), "harness.local", "enabled = [\"claude-code\"]\n\n[claude-code]\nmini = \"haiku\"\nbase = \"sonnet\"\npro = \"opus\"\n")
 		_, err := mergeLayers(dir, machine, "")
 		if err == nil || !strings.Contains(err.Error(), "нет ключа max") {
@@ -321,8 +321,8 @@ home = "`+home+`"
 		t.Fatalf("harness: %v", err)
 	}
 	for _, part := range []string{
-		"маппинг ярусов: mini = glm-5.3-flash, base = glm-5.3, pro = glm-5.3, max = glm-5.3",
-		"предложение профиля, в секции [glm-code] ярусов нет",
+		"маппинг уровеньов: mini = glm-5.3-flash, base = glm-5.3, pro = glm-5.3, max = glm-5.3",
+		"предложение профиля, в секции [glm-code] уровней нет",
 	} {
 		if !strings.Contains(shown, part) {
 			t.Fatalf("в выводе harness нет %q:\n%s", part, shown)
@@ -477,10 +477,10 @@ func TestCmdHarnessAssignments(t *testing.T) {
 		if err != nil {
 			t.Fatalf("harness: %v", err)
 		}
-		if !strings.Contains(out, "маппинг ярусов: mini = haiku, base = glm-code:glm-5.2, pro = opus, max = fable") {
+		if !strings.Contains(out, "маппинг уровеньов: mini = haiku, base = glm-code:glm-5.2, pro = opus, max = fable") {
 			t.Fatalf("маппинг без назначений: %q", out)
 		}
-		if !strings.Contains(out, "назначение: ярус base уезжает в glm-code, поднимается командой [delegate] его профиля\n") {
+		if !strings.Contains(out, "назначение: уровень base уезжает в glm-code, поднимается командой [delegate] его профиля\n") {
 			t.Fatalf("назначение не названо: %q", out)
 		}
 	})

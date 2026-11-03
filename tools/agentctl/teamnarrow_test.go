@@ -62,12 +62,12 @@ func TestPickAssignNarrowsTier(t *testing.T) {
 		t.Fatalf("pick: %v", err)
 	}
 	if !strings.Contains(out, "tier: mini") {
-		t.Fatalf("назначение не сузило ярус:\n%s", out)
+		t.Fatalf("назначение не сузило уровень:\n%s", out)
 	}
-	if !strings.Contains(out, "строка назначена участнику команды mini4, ярус mini") {
+	if !strings.Contains(out, "строка назначена участнику команды mini4, уровень mini") {
 		t.Fatalf("причина не называет назначение:\n%s", out)
 	}
-	if !strings.Contains(out, "не смотрели, ярус задан назначением строки") {
+	if !strings.Contains(out, "не смотрели, уровень задан назначением строки") {
 		t.Fatalf("корректор должен молчать при фиксированном участнике:\n%s", out)
 	}
 }
@@ -107,7 +107,7 @@ func TestPickAssignHumanKeepsVerdict(t *testing.T) {
 	}
 	// T-007 это task ценой M с неопределённостью 1: вердикт base как был.
 	if !strings.Contains(out, "tier: base") {
-		t.Fatalf("человеческое назначение двинуло ярус:\n%s", out)
+		t.Fatalf("человеческое назначение двинуло уровень:\n%s", out)
 	}
 	if !strings.Contains(out, "строка назначена участнику-человеку rider, вердикт для подсобных подъёмов") {
 		t.Fatalf("причина не помечает человеческое назначение:\n%s", out)

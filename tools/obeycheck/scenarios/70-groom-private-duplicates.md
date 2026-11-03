@@ -98,30 +98,31 @@ commands = [c for c, _, _ in success]
 assert any(c.startswith('taskctl list ') and '--safe' in c for c in commands), 'нет безопасного списка доски и архива'
 assert any(c.startswith('taskctl draft list ') and '--safe' in c for c in commands), 'нет безопасного списка накопителя'
 assert any(c.startswith('taskctl guard OB-069') for c in commands), 'публичная запись не проверена'
-view = json.loads(subprocess.check_output(['taskctl', 'draft', 'proposals', 'OB-069'], text=True))
-assert view['state']['proposals'], 'публичный разбор не сохранил предложений'
-assert all(not c.get('status') for c in view['state']['proposals']), 'карточка применена без подтверждения'
+view = json.loads(subprocess.check_output(['taskctl', 'draft', 'prepared', 'OB-069'], text=True))
+assert view['state']['proposals'], 'публичный разбор не сохранил задач'
+assert all(not c.get('status') for c in view['state']['proposals']), 'задача применена без подтверждения'
 source = root / 'docs/tasks/drafts/OB-069.md'
 assert source.is_file() and 'выбор: сценарии/1' in source.read_text(), 'сценарии не сохранены'
 interview = next(((start, end) for c, start, end in success if 'decide' in c and '--scenarios' in c), None)
-save = next(((start, end) for c, start, end in success if re.search(r'draft\s+proposals\s+save', c) and '--base' in c and '--help' not in c), None)
-ask = next(((start, end) for c, start, end in success if re.search(r'draft\s+proposals\s+ask\s+OB-069', c) and '--help' not in c), None)
+save = next(((start, end) for c, start, end in success if re.search(r'draft\s+prepared\s+save', c) and '--base' in c and '--help' not in c), None)
+ask = next(((start, end) for c, start, end in success if re.search(r'draft\s+prepared\s+ask\s+OB-069', c) and '--help' not in c), None)
 assert interview and save and ask and interview[1] < save[0] and save[1] < ask[0], 'интервью, сохранение и показ не завершены по порядку'
-assert not any(re.search(r'draft\s+proposals\s+(?:answer|confirm|reject)\b|\btaskctl\s+(?:add\b|draft\s+(?:attach|drop|defer)\b)', c) for c in commands), 'исход применён без ответа человека'
+assert not any(re.search(r'draft\s+prepared\s+(?:answer|confirm|reject)\b|\btaskctl\s+(?:add\b|draft\s+(?:attach|drop|defer)\b)', c) for c in commands), 'исход применён без ответа человека'
 ask = pathlib.Path('.devkit/chat/task-OB-069.ask')
-assert ask.is_file(), 'вопрос предложений не опубликован'
+assert ask.is_file(), 'вопрос согласования не опубликован'
 parts = [line for line in ask.read_text().splitlines() if line.startswith('{')]
 assert len(parts) == 1, 'неверный сохранённый вопрос'
 questions = json.loads(parts[0]).get('questions', [])
-shown = [q.get('proposal') for q in questions if q.get('proposal')]
-assert len(shown) == 1, 'нет отдельного вопроса предложений'
+shown = [q.get('prepared') for q in questions if q.get('prepared')]
+assert len(shown) == 1, 'нет отдельного вопроса согласования'
 question = shown[0]
 assert question.get('version') == 1 and question.get('tree') == os.path.realpath('.') and question.get('anchor') == 'OB-069', 'неверный адрес показанного вопроса'
 sources = question.get('sources', [])
 assert len(sources) == 1 and sources[0].get('source') == 'OB-069', 'источник вопроса не совпал'
 assert view.get('basis') and sources[0].get('basis') == view['basis'], 'показанный basis не совпал'
-assert all(c.get('id') and isinstance(c.get('revision'), int) and c['revision'] > 0 for c in view['state']['proposals']), 'у карточки нет ID или редакции'
-assert sources[0].get('proposals') == [c for c in view['state']['proposals'] if not c.get('status')], 'показанные карточки или редакции не совпали'
+assert all(c.get('id') and isinstance(c.get('revision'), int) and c['revision'] > 0 for c in view['state']['proposals']), 'у задачи нет ID или редакции'
+assert sources[0].get('proposals') == [c for c in view['state']['proposals'] if not c.get('status')], 'показанные задачи или редакции не совпали'
+assert all(not c.get('text') for c in sources[0]['proposals']), 'тело задачи въехало в вопрос'
 
 assert (root / 'docs/tasks/drafts/OB-069.md').is_file(), 'исходник исчез'
 markers = json.loads((pathlib.Path(os.environ['OBEY_HOME']) / '.obey-private-markers.json').read_text())

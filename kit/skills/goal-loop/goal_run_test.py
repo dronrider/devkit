@@ -83,6 +83,10 @@ with open(os.path.join(root, "calls"), "a", encoding="utf-8") as f:
 # Метка носителя цикла, которую оболочка выставляет дочернему клиенту (DK-971).
 with open(os.path.join(root, "shellenv"), "a", encoding="utf-8") as f:
     f.write(os.environ.get("DEVKIT_GOAL_SHELL", "-") + "\n")
+# Ручная глубина размышления едет витку той же парой окружения, и стаб снимает
+# её отдельно: у строки «Эффорт:» файла задачи и вердикта свои проверки.
+with open(os.path.join(root, "efforts"), "a", encoding="utf-8") as f:
+    f.write(os.environ.get("DEVKIT_EFFORT", "-") + "\n")
 # Имя витка снимается прямо во время витка: после цикла замка уже нет, а
 # вопрос теста именно в том, чьё имя лежало в замке, пока виток шёл.
 try:
@@ -1426,6 +1430,35 @@ class HarnessTests(Stand, unittest.TestCase):
         self.assertEqual(got[6], "base", "ярус не разобрался: %r" % (got,))
         self.assertEqual(mod.parse_args(["DK-100"])[6], "", "без флага ярус обязан быть пустым")
 
+    def test_parse_args_reads_effort(self):
+        """Глубина размышления приезжает флагом от ручного выбора в дашборде:
+        без него глубину выбирает вердикт pick по задаче."""
+        mod = load_goal_run()
+        got = mod.parse_args(["DK-100", "--effort", "xhigh"])
+        self.assertEqual(got[7], "xhigh", "уровень не разобрался: %r" % (got,))
+        self.assertEqual(mod.parse_args(["DK-100"])[7], "",
+                         "без флага уровень обязан быть пустым")
+
+    def test_unknown_effort_refused_before_turns(self):
+        """Список уровней короткий и общий с pick, и незнакомое слово это отказ
+        до первого витка, а не молчаливый дефолт посреди цикла."""
+        root = self.stand("continue", "done")
+        p = self.goal_run(root, "DK-100", "--effort", "highest", "--foreground")
+        self.assertNotEqual(p.returncode, 0, "незнакомый уровень прошёл: %s" % p.stdout)
+        self.assertIn("highest", p.stdout, "отказ не назвал уровень: %s" % p.stdout)
+        self.assertEqual(self.turns_done(root), 0, "витки пошли на незнакомом уровне")
+
+    def test_cycle_turn_carries_effort(self):
+        """Ручной уровень доезжает до витка парой окружения: pick внутри сессии
+        читает её поверх строки «Эффорт:» файла задачи и вердикта."""
+        root = self.stand("continue", "done")
+        p = self.goal_run(root, "DK-100", "--effort", "high", "--foreground")
+        self.assertEqual(p.returncode, 0, "цикл с уровнем не прошёл: %s" % p.stdout)
+        with open(os.path.join(root, "efforts"), encoding="utf-8") as f:
+            efforts = f.read().split()
+        self.assertEqual(efforts, ["high", "high"],
+                         "витки не увидели ручной уровень: %r" % efforts)
+
     def test_turn_cmd_names_tier_model(self):
         """Ярус разворачивается в модель раскладкой машины и называется витку
         флагом. Второй подписке модель не называется вовсе: её называет
@@ -1548,6 +1581,35 @@ class HarnessTests(Stand, unittest.TestCase):
         self.assertTrue(new, "tmux-сессию не поднимали: %r" % seen)
         self.assertIn("--harness", " ".join(new[-1]),
                        "своя tmux-сессия цикла потеряла подписку: %r" % new[-1])
+
+    def test_tmux_launch_carries_effort(self):
+        """tmux-сервер окружение поднявшего не наследует, и ручной уровень
+        обязан ехать флагом, иначе цикл потерял бы его на первом витке."""
+        mod = load_goal_run()
+        seen = {}
+
+        class FakeRun:
+            def __init__(self, code):
+                self.returncode = code
+
+        def fake_run(cmd, **kw):
+            seen.setdefault("calls", []).append(cmd)
+            return FakeRun(1 if "has-session" in cmd else 0)
+
+        loop = mod.Loop("DK-100", "/tmp", "", "", "xhigh")
+        loop.lock_busy = lambda: False
+        old_run, old_which = mod.subprocess.run, mod.shutil.which
+        mod.subprocess.run = fake_run
+        mod.shutil.which = lambda name: "/bin/" + name
+        try:
+            with self.assertRaises(SystemExit):
+                loop.launch_tmux()
+        finally:
+            mod.subprocess.run, mod.shutil.which = old_run, old_which
+        new = [c for c in seen.get("calls", []) if "new-session" in c]
+        self.assertTrue(new, "tmux-сессию не поднимали: %r" % seen)
+        self.assertIn("--effort", " ".join(new[-1]),
+                      "своя tmux-сессия цикла потеряла уровень: %r" % new[-1])
 
     def test_tmux_launch_names_dir(self):
         # Сессия поднимается с каталогом проекта: без «-c» оболочка внутри брала

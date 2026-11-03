@@ -105,6 +105,11 @@ type Request struct {
 	Order  string // заказ первого прохода, пусто значит умолчание оболочки
 	Again  string // заказ следующих проходов
 	Hidden bool   // поднято без человека (DK-847)
+	// Wanted значит явный заказ подъёма. Такую метку ставит команда run:
+	// её позвали руками, скриптом или обходом ждущих, и зовущий сам решил
+	// поднять голову. Спавн headless-оболочки без окна лестница делает
+	// только по заказу или с другим носителем (DK-1562).
+	Wanted bool
 	Adopt  time.Duration
 	// Prefix это готовая шелл-приставка зовущего перед оболочкой в новом окне:
 	// чистка унаследованного окружения и свои пары. Стоит она после пар
@@ -217,6 +222,10 @@ func Raise(q Request) (Result, error) {
 		if tmux != "" && q.newWindow(tmux, runner, head, lock, me, &res) {
 			res.Code, res.Rung = CodeRaised, RungWindow
 			return res, nil
+		}
+		if !q.carried() {
+			res.say("headless без носителя: ни заказа, ни адреса сессии, ни окна задачи в реестре, оболочку не спавню")
+			break
 		}
 		if q.headless(runner, head, lock, me, &res) {
 			res.Code, res.Rung = CodeRaised, RungHeadless
@@ -423,6 +432,25 @@ func (q Request) newWindow(tmux, runner string, head Head, lock string, me int, 
 	}
 	res.say("голова %s поднята в новом окне tmux %s (панель %s%s), оболочка pid %d", q.ID, name, pane, tail, owner)
 	return true
+}
+
+// carried отвечает, есть ли у headless-головы носитель: тот, кто её увидит и
+// кому она нужна. Окно лестница уже проверила выше, и без него голова видна
+// только журналом, поэтому спавн стоит лишь при явном заказе. Заказ это метка
+// Wanted команды run, приставка зовущего (дашборд поднимает так все свои
+// головы, DK-935) или заказ словами (--order, --reply). Либо голову видно:
+// живая сессия зовущего либо окно задачи в реестре, чью работу она продолжит.
+// В окружении без сессии харнеса и без реестра чатов посторонний спавн
+// оболочки ждал бы принятия замка впустую, и лестница отступает к зову
+// человека (DK-1562).
+func (q Request) carried() bool {
+	if q.Wanted || strings.TrimSpace(q.Prefix) != "" || q.Order != "" {
+		return true
+	}
+	if os.Getenv(sessions.SessionEnv) != "" || len(q.windows()) > 0 {
+		return true
+	}
+	return false
 }
 
 // headless поднимает оболочку отдельным процессом без окна: печатная череда,

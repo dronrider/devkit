@@ -3182,6 +3182,35 @@ def doctor(start, fix=False):
         # «после», иначе диспетчер их не видит (DK-168). Разбор свой, а не
         # через taskctl: находка нужна и там, где бинаря в PATH нет.
         findings += board.check(root)
+        # Старые блоки разбора задач переносятся в prepared-файлы самой
+        # утилитой (DK-1564): перенос атомарен и переписывает висящие ask,
+        # поэтому doctor только находит блоки своим разбором и при --fix зовёт
+        # бинарь, как зовёт lint. Без бинаря находка называет сборку и ручной
+        # вызов: миграция нужна и на машине, где taskctl в PATH ещё нет.
+        legacy = board.legacy_proposal_drafts(root)
+        if legacy:
+            tc = shutil.which("taskctl")
+            if tc and fix:
+                rc, out = run([tc, "-C", str(root), "draft", "prepared", "migrate"])
+                if rc == 0:
+                    fixed.append("старые блоки разбора перенесены в prepared-файлы: %s"
+                                 % ", ".join(legacy))
+                else:
+                    findings.append("taskctl draft prepared migrate: %s" % out)
+            elif tc:
+                for sid in legacy:
+                    findings.append(
+                        "docs/tasks/drafts/%s.md: разбор задач лежит старым блоком в записи, "
+                        "а носитель разбора теперь prepared-файл; перенести командой "
+                        "taskctl -C %s draft prepared migrate либо devkitctl doctor --fix"
+                        % (sid, root))
+            else:
+                for sid in legacy:
+                    findings.append(
+                        "docs/tasks/drafts/%s.md: разбор задач лежит старым блоком в записи, "
+                        "а носитель разбора теперь prepared-файл; taskctl не в PATH, сперва "
+                        "сборка python3 %s/tools/devkitctl/devkitctl.py build, затем "
+                        "taskctl -C %s draft prepared migrate" % (sid, DEVKIT, root))
         # Линкованное дерево (worktree от shipctl start) отличается тем же
         # способом, что check_agent_defs различает исполнение из ветки задачи:
         # main_checkout это родитель git-common-dir, from_main_checkout ложно,

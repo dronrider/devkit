@@ -79,7 +79,7 @@ func draftPrioWord(prio string) (string, error) {
 // текст черновика. Черновика из одного такого слова не записать, но ограничение
 // это давно действует для list и стоит того: без узнавания «draft defer DK-116
 // причина» молча завёл бы черновик с текстом «defer».
-var draftSubs = map[string]bool{"list": true, "defer": true, "prio": true, "attach": true, "drop": true, "ask": true, "types": true, "meta": true, "proposals": true}
+var draftSubs = map[string]bool{"list": true, "defer": true, "prio": true, "attach": true, "drop": true, "ask": true, "types": true, "meta": true, "prepared": true, "idea": true}
 
 // draftWordRe узнаёт одно слово латиницей: имя подкоманды и ID задачи выглядят
 // ровно так, а записанная на ходу идея так не выглядит никогда.
@@ -138,7 +138,7 @@ func loadDraftsWithHistory(root string, includeHistory bool) ([]Draft, error) {
 		if info, err := e.Info(); err == nil {
 			d.Mod = info.ModTime()
 		}
-		meta, err := parseDraftFile(d.Path)
+		meta, err := parseDraftFile(root, d.Path)
 		if err != nil {
 			return nil, err
 		}
@@ -220,7 +220,9 @@ type draftMeta struct {
 // того же файла, и второй его читатель платил бы за то же самое дважды на
 // каждую строку накопителя. Уровень разбора читается только из шапки до
 // первого «## »: строка «приоритет:» в теле идеи это текст, а не метка.
-func parseDraftFile(path string) (draftMeta, error) {
+// Признак разобранности живёт в prepared-файле записи, при его отсутствии в
+// старом блоке самой записи (DK-1469, решение 2).
+func parseDraftFile(root, path string) (draftMeta, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return draftMeta{}, err
@@ -231,7 +233,8 @@ func parseDraftFile(path string) (draftMeta, error) {
 	}
 	var m draftMeta
 	m.Header = header
-	state, err := draftproposal.Parse(data)
+	id := strings.TrimSuffix(filepath.Base(path), ".md")
+	state, err := draftproposal.Load(root, id, data)
 	if err != nil {
 		return draftMeta{}, fmt.Errorf("%s: %w", path, err)
 	}

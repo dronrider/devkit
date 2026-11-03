@@ -8,7 +8,7 @@ import (
 	"github.com/dronrider/devkit/internal/draftproposal"
 )
 
-func TestProposalBasisChangesWithTargetAndType(t *testing.T) {
+func TestPreparedBasisChangesWithTargetAndType(t *testing.T) {
 	root := setup(t)
 	kit, err := filepath.Abs("../../kit")
 	if err != nil {
@@ -19,7 +19,7 @@ func TestProposalBasisChangesWithTargetAndType(t *testing.T) {
 	t.Setenv("HOME", home)
 	source := []byte("# XR-8: исходник\n")
 	state := draftproposal.State{Version: 1, State: "active", Proposals: []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "attach", Target: "XR-001"}}}
-	initial, err := proposalBasis(root, source, state)
+	initial, err := preparedBasis(root, source, state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestProposalBasisChangesWithTargetAndType(t *testing.T) {
 	if err = os.WriteFile(path, []byte("target edit"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	changed, err := proposalBasis(root, source, state)
+	changed, err := preparedBasis(root, source, state)
 	if err != nil || initial == changed {
 		t.Fatalf("target: %s %s %v", initial, changed, err)
 	}
@@ -45,7 +45,7 @@ func TestProposalBasisChangesWithTargetAndType(t *testing.T) {
 	if err = os.WriteFile(project, data, 0644); err != nil {
 		t.Fatal(err)
 	}
-	replaced, err := proposalBasis(root, source, state)
+	replaced, err := preparedBasis(root, source, state)
 	if err != nil || replaced == changed {
 		t.Fatalf("type: %s %s %v", changed, replaced, err)
 	}
@@ -56,8 +56,8 @@ func TestProposalBasisChangesWithTargetAndType(t *testing.T) {
 	if err := os.WriteFile(teamPath, []byte("# команда\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	changedTeam, err := proposalBasis(root, source, state)
-	if err != nil || changedTeam != replaced {
+	changedTeam, err := preparedBasis(root, source, state)
+	if err != nil || changedTeam == replaced {
 		t.Fatalf("team: %s %s %v", replaced, changedTeam, err)
 	}
 	// Доска и архив ездят своими коммитами весь день, и вопрос предложений

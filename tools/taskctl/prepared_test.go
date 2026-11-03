@@ -2,12 +2,15 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dronrider/devkit/internal/draftproposal"
 )
 
-func TestProposalsSaveAndStale(t *testing.T) {
+func TestPreparedSaveAndStale(t *testing.T) {
 	root := setup(t)
 	kit, err := filepath.Abs("../../kit")
 	if err != nil {
@@ -17,39 +20,50 @@ func TestProposalsSaveAndStale(t *testing.T) {
 	if _, err := cmdDraft(root, "исходный материал", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := cmdDraftProposals(root, "XR-008")
+	raw, err := cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var view proposalView
+	var view preparedView
 	if err = json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
 	input := []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"add","text":"первая"},{"id":"p2","revision":1,"outcome":"drop","reason":"лишнее"}],"analysis":"готово"}`)
-	saved, err := cmdDraftProposalsSave(root, "XR-008", view.Snapshot, input)
+	saved, err := cmdDraftPreparedSave(root, "XR-008", view.Snapshot, input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = json.Unmarshal([]byte(saved), &view); err != nil || len(view.State.Proposals) != 2 {
 		t.Fatalf("%s: %v", saved, err)
 	}
-	if _, err = cmdDraftProposalsSave(root, "XR-008", "stale", input); err == nil || !strings.Contains(err.Error(), "изменилась") {
+	record, err := os.ReadFile(draftPath(root, "XR-008"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(record), "Предложения разбора") || strings.Contains(string(record), "```json") {
+		t.Fatalf("машинный блок остался в записи: %s", record)
+	}
+	prepared, err := os.ReadFile(draftproposal.PreparedPath(root, "XR-008"))
+	if err != nil || !strings.Contains(string(prepared), "## p1 - ") || !strings.Contains(string(prepared), "первая") {
+		t.Fatalf("prepared-файл: %s %v", prepared, err)
+	}
+	if _, err = cmdDraftPreparedSave(root, "XR-008", "stale", input); err == nil || !strings.Contains(err.Error(), "изменилась") {
 		t.Fatalf("stale: %v", err)
 	}
 	edit := []byte(`{"proposals":[{"id":"p1","revision":2,"outcome":"add","text":"правка"}]}`)
-	saved, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, edit)
+	saved, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, edit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = json.Unmarshal([]byte(saved), &view); err != nil || len(view.State.Proposals) != 2 || view.State.Proposals[0].Text != "правка" || view.State.Analysis != "готово" {
 		t.Fatalf("%s: %v", saved, err)
 	}
-	if _, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p3","revision":1,"outcome":"drop","status":"accepted"}]}`)); err == nil {
+	if _, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p3","revision":1,"outcome":"drop","status":"accepted"}]}`)); err == nil {
 		t.Fatal("forged decision")
 	}
 }
 
-func TestProposalRejectPartialAndHistory(t *testing.T) {
+func TestPreparedRejectPartialAndHistory(t *testing.T) {
 	root := setup(t)
 	kit, err := filepath.Abs("../../kit")
 	if err != nil {
@@ -59,18 +73,18 @@ func TestProposalRejectPartialAndHistory(t *testing.T) {
 	if _, err := cmdDraft(root, "исходный материал", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := cmdDraftProposals(root, "XR-008")
+	raw, err := cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var view proposalView
+	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
-	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop"},{"id":"p2","revision":1,"outcome":"drop"}]}`))
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop"},{"id":"p2","revision":1,"outcome":"drop"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	raw, err = cmdDraftProposalReject(root, "XR-008", "p1", view.Snapshot, "не нужно")
+	raw, err = cmdDraftPreparedReject(root, "XR-008", "p1", view.Snapshot, "не нужно")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +92,7 @@ func TestProposalRejectPartialAndHistory(t *testing.T) {
 	if view.State.State != "active" || view.State.Proposals[0].Result.Reason != "не нужно" {
 		t.Fatalf("partial: %s", raw)
 	}
-	raw, err = cmdDraftProposalReject(root, "XR-008", "p2", view.Snapshot, "лишнее")
+	raw, err = cmdDraftPreparedReject(root, "XR-008", "p2", view.Snapshot, "лишнее")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +100,7 @@ func TestProposalRejectPartialAndHistory(t *testing.T) {
 	if view.State.State != "history" {
 		t.Fatalf("history: %s", raw)
 	}
-	raw, err = cmdDraftProposals(root, "XR-008")
+	raw, err = cmdDraftPrepared(root, "XR-008")
 	if err != nil || !strings.Contains(raw, "не нужно") {
 		t.Fatalf("history read: %s %v", raw, err)
 	}
@@ -102,13 +116,13 @@ func TestEmptyAnalysisAndReanalysisPreserveDecisions(t *testing.T) {
 	if _, err = cmdDraft(root, "исходный материал", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := cmdDraftProposals(root, "XR-008")
+	raw, err := cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var view proposalView
+	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
-	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[],"analysis":"empty"}`))
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[],"analysis":"empty"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,17 +130,17 @@ func TestEmptyAnalysisAndReanalysisPreserveDecisions(t *testing.T) {
 	if view.State.State != "active" || len(view.State.Proposals) != 0 || view.State.Analysis != "empty" {
 		t.Fatalf("empty: %s", raw)
 	}
-	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"старое","reason":"нет нужды"},{"id":"p2","revision":1,"outcome":"drop","text":"второе","reason":"нет нужды"}]}`))
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"старое","reason":"нет нужды"},{"id":"p2","revision":1,"outcome":"drop","text":"второе","reason":"нет нужды"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	raw, err = cmdDraftProposalReject(root, "XR-008", "p1", view.Snapshot, "отклонено человеком")
+	raw, err = cmdDraftPreparedReject(root, "XR-008", "p1", view.Snapshot, "отклонено человеком")
 	if err != nil {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p3","revision":1,"outcome":"drop","text":"новое","reason":"нет нужды"}],"analysis":"ok"}`))
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p3","revision":1,"outcome":"drop","text":"новое","reason":"нет нужды"}],"analysis":"ok"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

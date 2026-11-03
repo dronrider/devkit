@@ -312,9 +312,9 @@ type Question struct {
 	Options  []Option          `json:"options,omitempty"`
 	Scenario *ScenarioQuestion `json:"scenario,omitempty"`
 	Prepared *PreparedQuestion `json:"prepared,omitempty"`
-	// Proposal это прежнее поле вопроса согласования до DK-1564: витрина
-	// дашборда читает его, следующий этап переводит её на prepared и поле
-	// уходит.
+	// Proposal это прежнее поле вопроса согласования до DK-1564: новые вопросы
+	// пишутся полем prepared, а это остаётся навсегда ридером ask-файлов,
+	// записанных старой схемой.
 	Proposal *PreparedQuestion `json:"proposal,omitempty"`
 }
 

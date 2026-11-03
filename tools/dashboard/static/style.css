@@ -1870,19 +1870,94 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .rrow .why{display:none}
 .rrow{padding:6px 12px}
 
-/* индикатор живой работы агента: стоит под лентой у самого поля ввода, где на
-   него и смотрят после отправки реплики. Модификатор .stop красит его же
-   остановкой вместо отдельной строки с кнопкой «Поднять» (DK-701): дот гаснет
-   без пульса, подпись краснеет тем же цветом, что и «Стоп» строки задачи. */
-.busyrow{display:flex;align-items:center;gap:9px;padding:7px 12px;margin:6px 0 0;border-radius:9px;background:var(--bg2);border:1px solid var(--line)}
+/* Индикатор живой работы агента (макет DK-919): стоит под лентой у самого поля
+   ввода и собирается из иконки рода действия, слова с блеском и спокойных
+   счётчиков. Узкий экран режет строку второй линией: счётчики уезжают под
+   слово, слово длинного имени режется многоточием. Модификатор .stop красит
+   строку остановкой (DK-701), .note оставляет от неё одно слово состояния без
+   иконки и счётчиков: подъём, лечение, стоп, пропажа. */
+.busyrow{display:flex;align-items:center;flex-wrap:wrap;gap:6px 9px;padding:7px 12px;margin:6px 0 0;border-radius:9px;background:var(--bg2);border:1px solid var(--line)}
 .busyrow[hidden]{display:none}
 .busyrow.stop{border-color:color-mix(in oklab,var(--block) 45%,transparent)}
-.busytext{font:400 12px var(--mono);color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.busyrow.stop .busytext{color:var(--block)}
-/* Ход прерван: кружок стоит тихо. Гасится тут вкладыш, а не сам кружок:
-   моргание живёт на нём (DK-986) */
-.busyrow.stop .dot{background:var(--block);animation:none}
-.busyrow.stop .dot::after{animation:none;opacity:0}
+/* Цвет рода действия живёт на строке, его берут иконка и блеск слова. */
+.busyrow{--act:var(--run)}
+.busyrow[data-cat="think"]{--act:oklch(0.74 0.13 300)}
+.busyrow[data-cat="bash"]{--act:oklch(0.74 0.11 150)}
+.busyrow[data-cat="read"]{--act:oklch(0.72 0.11 255)}
+.busyrow[data-cat="edit"]{--act:oklch(0.8 0.13 80)}
+.busyrow[data-cat="stream"]{--act:oklch(0.76 0.1 195)}
+.busyrow[data-cat="web"]{--act:oklch(0.72 0.12 350)}
+.busyrow[data-cat="tool"]{--act:oklch(0.66 0.014 85)}
+.bicon{width:18px;height:18px;flex:none;color:var(--act);display:inline-flex}
+.bicon svg{display:block}
+/* думает: извилины вспыхивают по кругу, центр пульсирует */
+.bicon .sg{opacity:.55;animation:sgp 2.4s ease-in-out infinite}
+@keyframes sgp{0%,100%{opacity:.55}50%{opacity:1}}
+.bicon .sy path{opacity:.22;animation:syn 1.8s ease-in-out infinite}
+.bicon .sy path:nth-child(2){animation-delay:.3s}
+.bicon .sy path:nth-child(3){animation-delay:.6s}
+.bicon .sy path:nth-child(4){animation-delay:.9s}
+.bicon .sy path:nth-child(5){animation-delay:1.2s}
+.bicon .sy path:nth-child(6){animation-delay:1.5s}
+@keyframes syn{0%,100%{opacity:.22}20%,55%{opacity:1}70%{opacity:.22}}
+/* Bash: курсор мигает резко, как в терминале */
+.bicon .cur{animation:blink 1.1s linear infinite}
+@keyframes blink{0%,54%{opacity:1}55%,100%{opacity:0}}
+/* Read: строки документа загораются по очереди */
+.bicon .ln{opacity:.28;animation:lnup 2.6s ease-in-out infinite}
+.bicon .ln2{animation-delay:.5s}
+.bicon .ln3{animation-delay:1s}
+@keyframes lnup{0%{opacity:.28}12%,72%{opacity:1}94%,100%{opacity:.28}}
+/* Edit: карандаш ведёт по строке, черта дописывается под ним. Черта растёт
+   превращением, а не разбивкой штриха: вечная анимация имеет право менять
+   только прозрачность и превращение, иначе строка работы перерисовывает кадр
+   и на приглушённой вкладке. */
+.bicon .pen{transform-origin:6px 16px;animation:penw 1.9s ease-in-out infinite}
+@keyframes penw{0%,100%{transform:rotate(0)}35%{transform:rotate(-7deg)}70%{transform:rotate(5deg)}}
+.bicon .dash{stroke-width:2.6;transform-origin:4.6px 21.5px;animation:pend 1.9s ease-in-out infinite}
+@keyframes pend{
+  0%{transform:scaleX(0);opacity:1}
+  75%{transform:scaleX(1);opacity:1}
+  92%,100%{transform:scaleX(1);opacity:0}}
+/* читает вывод: зрачок ходит по строке туда-сюда */
+.bicon .pup{animation:scanx 2.2s ease-in-out infinite}
+@keyframes scanx{0%,100%{transform:translateX(-3.4px)}50%{transform:translateX(3.4px)}}
+/* сеть: меридиан переливается с боку на бок, глобус крутится */
+.bicon .mer{transform-origin:12px 12px;animation:spinmer 2.8s linear infinite}
+@keyframes spinmer{0%{transform:scaleX(1)}50%{transform:scaleX(-1)}100%{transform:scaleX(1)}}
+/* прочее: шестерёнка крутится */
+.bicon .spin{animation:spin 2.8s linear infinite;transform-origin:12px 12px}
+@keyframes spin{to{transform:rotate(1turn)}}
+/* Слово действия окрашено цветом рода и дышит им. Пробег блеска по буквам
+   ходил бы сменой положения фона, а вечная анимация имеет право менять только
+   прозрачность и превращение, и живость слова живёт дыханием. Концы и пик
+   окраски едут от переменных темы: прибитая белая вспышка на светлой палитре
+   съедала бы буквы, и строка ломалась бы с той же вёрсткой. */
+.bword{font:400 12px var(--mono);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;min-width:0;flex:0 1 auto;
+  background-image:linear-gradient(100deg,var(--tx2) 18%,var(--act) 50%,
+    color-mix(in oklab,var(--tx) 55%,#fff) 62%,var(--act) 74%,var(--tx2) 92%);
+  background-size:100% 100%;background-repeat:no-repeat;
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:bshine 3.2s ease-in-out infinite}
+@keyframes bshine{0%,100%{opacity:.72}50%{opacity:1}}
+.bmeta{display:flex;gap:6px;margin-left:auto;white-space:nowrap;
+  font:400 12px var(--mono);color:var(--tx3)}
+/* Состояния без хода говорят одним словом: иконки и счётчиков тут нет, блеск
+   молчал бы о работе, которой не идёт. Остановленное красится цветом «Стопа»
+   строки задачи. */
+.busyrow.note .bicon,.busyrow.note .bmeta{display:none}
+.busyrow.note .bword{flex:1 1 auto;animation:none;background-image:none;color:var(--tx2)}
+.busyrow.stop .bword{animation:none;background-image:none;color:var(--block)}
+/* Без движения слово читается обычным цветом текста, иконки стоят спокойно */
+@media (prefers-reduced-motion:reduce){
+  .busyrow .bword{animation:none;background-image:none;color:var(--tx2)}
+  .busyrow.stop .bword{color:var(--block)}
+  .bicon [class],.bicon .sy path{animation:none!important}
+  .bicon .sy path{opacity:.7}
+  .bicon .ln{opacity:.7}
+  .bicon .dash{opacity:.9}
+}
 
 /* ---- шапки одной высоты и одной горизонтали (замечание 1) ----
    Прежде «выровнять» было понято как одна линия рамок, а элементы внутри

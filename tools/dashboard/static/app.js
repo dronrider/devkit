@@ -17030,7 +17030,7 @@ async function renderDraftPrepared(project, id, key) {
   const tasks = view.state && Array.isArray(view.state.proposals) ? view.state.proposals : [];
   const isNew = key === "new";
   const task = isNew
-    ? { id: "manual-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10), revision: 0, outcome: "add" }
+    ? { id: "manual-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10), revision: 1, outcome: "add" }
     : tasks.find((p) => p.id === key);
   sync(groups, [{
     key: "draft-prepared-page",

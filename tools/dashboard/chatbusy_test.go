@@ -18,6 +18,9 @@ type chatStatusView struct {
 	Gone  bool   `json:"gone"`
 	At    int64  `json:"at"`
 	Where string `json:"where"`
+	// Tok это выходные токены нынешнего хода (DK-919): рисуются в строке
+	// активности рядом со временем.
+	Tok int `json:"tok"`
 	// Признаки входа: по ним блок входа в ленте встаёт и при открытой панели
 	// (DK-920).
 	Login  bool `json:"login"`
@@ -131,6 +134,75 @@ func TestChatStatusTellsGoneMidTurn(t *testing.T) {
 	writePeerPID(t, e.home, pid, sid, "chat-XR-1:@1.%1", "busy", now.Add(-time.Hour).UnixMilli())
 	if got := chatStatus(t, e, sid); got.Gone {
 		t.Errorf("часовая запись мёртвого клиента выдана за свежую пропажу: %+v", got)
+	}
+}
+
+// Выходные токены хода в ответе ручки состояния (DK-919). Строка активности
+// чата несёт не только время хода, но и то, сколько агент за него сделал:
+// сумма output_tokens ассистентских записей с последней реплики человека.
+// Размышления лежат внутри выхода, копии одного ответа по записям блоков
+// отсеиваются, а служебные вставки внутри хода счётчик не обнуляют.
+func TestChatStatusCountsTurnTokens(t *testing.T) {
+	now := time.Date(2026, 9, 9, 23, 21, 0, 0, time.UTC)
+	e := newTestEnv(t)
+	e.s.now = func() time.Time { return now }
+	writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "chat-XR-1\n")
+	sid := "aaaa1111-1111-4111-8111-111111111111"
+	use := func(at string, out, cache int) string {
+		return fmt.Sprintf(`{"type":"assistant","message":{"role":"assistant","content":`+
+			`[{"type":"thinking","thinking":"иду"}],"usage":{"input_tokens":2,`+
+			`"cache_creation_input_tokens":%d,"cache_read_input_tokens":300,`+
+			`"output_tokens":%d}},"timestamp":%q}`, cache, out, at) + "\n"
+	}
+	say := func(at, text string) string {
+		return fmt.Sprintf(`{"type":"user","message":{"role":"user","content":%q},"timestamp":%q}`,
+			text, at) + "\n"
+	}
+	var journal string
+	// Прежний ход: его токены в новый счёт попасть не должны.
+	journal += say("2026-09-09T23:00:00Z", "первый вопрос")
+	journal += use("2026-09-09T23:01:00Z", 100, 1000)
+	journal += use("2026-09-09T23:01:02Z", 100, 1000) // копия по блокам
+	// Новый ход: реплика человека обнуляет счётчик.
+	journal += say("2026-09-09T23:09:00Z", "продолжай работу")
+	journal += use("2026-09-09T23:10:00Z", 360, 2000)
+	journal += use("2026-09-09T23:10:02Z", 360, 2000) // копия, не считается
+	// Замечание стоп-хука адресовано модели и ход продолжается.
+	journal += say("2026-09-09T23:12:00Z", "Stop hook feedback:\nпроверь тесты")
+	journal += use("2026-09-09T23:12:30Z", 86, 2100)
+	// Ответ инструмента не реплика человека: списком, без строки.
+	journal += fmt.Sprintf(`{"type":"user","message":{"role":"user","content":`+
+		`[{"type":"tool_result","tool_use_id":"t1","content":"ок"}]},"timestamp":%q}`,
+		"2026-09-09T23:13:00Z") + "\n"
+	journal += use("2026-09-09T23:13:30Z", 686, 2200)
+	// Продление кеша это служебный ход без диалога.
+	journal += say("2026-09-09T23:14:00Z", cachekeepBody)
+	journal += use("2026-09-09T23:14:30Z", 10, 2300)
+	// Реплика диспетчера субагенту обёрнута рамкой: работа шла и продолжается.
+	journal += say("2026-09-09T23:15:00Z",
+		"The coordinator sent a message while you were working:\nдержи контекст\n\n"+
+			"Address this before completing your current task.")
+	journal += use("2026-09-09T23:15:30Z", 50, 2400)
+	writeSession(t, e.home, e.proj, "", sid, sessionLine("поговорим", "main")+journal,
+		now.Add(-time.Minute))
+	writeBinds(t, e.home, listedBind(e.home, sid, "XR-1", "chat-XR-1"))
+	began := now.Add(-12 * time.Minute)
+	writePeerAged(t, e.home, sid, "chat-XR-1:@1.%1", "busy", began.UnixMilli())
+
+	got := chatStatus(t, e, sid)
+	if !got.Busy {
+		t.Fatalf("идущий ход не назван занятым: %+v", got)
+	}
+	// 360 + 86 + 686 + 10 + 50, копия 360 и токены прежнего хода не входят.
+	if got.Tok != 1192 {
+		t.Errorf("токены хода приехали как %d, ждал 1192: %+v", got.Tok, got)
+	}
+
+	// Простаивающей сессии счётчик не нужен: строки активности нет, и поле
+	// молчит, чтобы старое число не выдавало себя за живое.
+	writePeerAged(t, e.home, sid, "chat-XR-1:@1.%1", "idle", began.UnixMilli())
+	if got := chatStatus(t, e, sid); got.Tok != 0 {
+		t.Errorf("простой отдал токены хода: %+v", got)
 	}
 }
 

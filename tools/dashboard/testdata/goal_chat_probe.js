@@ -24,15 +24,18 @@
   const shown = (n) => Boolean(n && n.getClientRects().length > 0);
   const chatBtn = () => Array.from(document.querySelectorAll(
     'button[aria-label="Чат по задаче ' + want + '"]')).filter(shown).pop();
-  // Зелёный это цвет работы из переменной стилей, а не число в зонде: число
-  // разошлось бы со стилями молча.
-  const green = () => {
+  // Цвет работы зонд сверяет со стилями, а не держит числом в себе: число
+  // разошлось бы со стилями молча. У строки активности (DK-919) цвет рода
+  // действия живёт на самой строке, и иконка сверяется с ним.
+  const workColor = (row) => {
+    const icon = row.querySelector(".bicon");
+    if (!icon) return false;
     const probe = document.createElement("span");
-    probe.style.background = "var(--run)";
-    document.body.append(probe);
-    const color = getComputedStyle(probe).backgroundColor;
+    row.append(probe);
+    probe.style.background = "var(--act)";
+    const act = getComputedStyle(probe).backgroundColor;
     probe.remove();
-    return color;
+    return getComputedStyle(icon).color === act;
   };
   // Последнее, что зонд видел в панели: на сбое оно едет в итог, иначе
   // причину пришлось бы угадывать.
@@ -46,13 +49,14 @@
     const busy = shown(row);
     seen = location.hash + " шапка «" + title + "» индикатор " + (busy ? "есть" : "нет");
     if (!title || !busy) return null;
-    const dot = row.querySelector(".dot");
     const note = p.querySelector('[data-pkey="chat-note"]');
     return {
       title,
       busy,
       stop: row.classList.contains("stop"),
-      green: Boolean(dot && getComputedStyle(dot).backgroundColor === green()),
+      // Цвет работы у строки свой у каждого рода действия (DK-919), и сверяется
+      // иконка с цветом своей строки, а не с одной зелёной точкой прежней вёрстки.
+      green: workColor(row),
       note: note ? note.textContent.trim() : "",
     };
   };

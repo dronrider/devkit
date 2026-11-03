@@ -157,6 +157,66 @@ func TestProfileCodex(t *testing.T) {
 	}
 }
 
+// TestProfileOpencodeGo: профиль подписки opencode GO назван без предупреждений,
+// машинные пути считает от {home}, лестницу собирает из двух моделей deepseek,
+// а квоту оставляет пустой: съёмщика остатка у подписки нет, и выдуманного
+// профиль не называет.
+func TestProfileOpencodeGo(t *testing.T) {
+	p, err := loadProfile(filepath.Join("..", "..", "kit", "harness"), "opencode-go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Warns) != 0 {
+		t.Fatalf("предупреждения на своём же профиле: %v", p.Warns)
+	}
+	cases := []struct{ section, key, want string }{
+		{"rules", "mode", "import"},
+		{"rules", "file", "CLAUDE.md"},
+		{"rules", "global_file", "{home}/CLAUDE.md"},
+		{"delegate", "mode", "cli"},
+		{"delegate", "agents_dir", "{home}/agents"},
+		{"delegate", "map_mini", "deepseek-v4.1-flash"},
+		{"delegate", "map_base", "deepseek-v4.1-flash"},
+		{"delegate", "map_pro", "deepseek-v4-pro"},
+		{"delegate", "map_max", "deepseek-v4-pro"},
+		{"hooks", "protocol", "claude-code"},
+		{"hooks", "config", "{home}/settings.json"},
+		{"skills", "dir", "{home}/skills"},
+		{"skills", "discovery", "auto"},
+		{"head", "bin", "claude"},
+	}
+	for _, c := range cases {
+		if got := p.section(c.section).Str(c.key); got != c.want {
+			t.Fatalf("[%s] %s = %q, жду %q", c.section, c.key, got, c.want)
+		}
+	}
+	// Изнутри сессии подписка от первой неотличима, и детект дал бы
+	// неоднозначное совпадение сразу у нескольких харнесов.
+	if !p.section("detect").Empty() {
+		t.Fatalf("[detect] непуст, а подписка детектом неотличима от первой")
+	}
+	// Съёмщика остатка у подписки нет, секция честно пуста: заявленный без
+	// скрипта snap обещал бы снимок, которого нечем снимать.
+	if !p.section("quota").Empty() {
+		t.Fatalf("[quota] непуста, а съёмщика остатка у подписки нет")
+	}
+	// Команда делегирования та же, что у близнецов: промпт, модель, усилие и
+	// имя сессии едут плейсхолдерами, по имени run находит транскрипт делегата.
+	argv := p.section("delegate").Arr("command")
+	joined := strings.Join(argv, " ")
+	for _, mark := range []string{"{prompt}", "{model}", "{effort}", "{session}"} {
+		if !strings.Contains(joined, mark) {
+			t.Fatalf("в команде делегирования нет %s: %v", mark, argv)
+		}
+	}
+	// Голова поднимается через agentctl exec с явным именем подписки: без него
+	// exec поднял бы активный харнес, а подписка активной не объявляется.
+	head := strings.Join(p.section("head").Arr("client"), " ")
+	if !strings.Contains(head, "agentctl exec --harness opencode-go --") {
+		t.Fatalf("[head] клиент головы идёт мимо agentctl exec с именем подписки: %s", head)
+	}
+}
+
 // TestCodexDelegateCommand: плейсхолдеры профиля Codex подставляются в команду
 // так, как их прочитает клиент: усилие уезжает значением ключа конфига.
 func TestCodexDelegateCommand(t *testing.T) {

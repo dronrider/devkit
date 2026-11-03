@@ -126,6 +126,73 @@ class AltSubProfileTest(unittest.TestCase):
                          "у второй подписки объявлен детект, а он неоднозначен по построению")
 
 
+class OpencodeGoProfileTest(unittest.TestCase):
+    """Профиль подписки opencode GO валиден с обеих сторон и считает машинные
+    пути от {home} (питоновская половина пары, Go-половина в
+    TestProfileOpencodeGo). Квоту профиль не объявляет: съёмщика остатка у
+    подписки нет, а выдуманный скрипт обещал бы снимок, которого нечем снимать.
+    """
+
+    MACHINE_PATHS = (("rules", "global_file"), ("hooks", "config"),
+                     ("skills", "dir"), ("delegate", "agents_dir"))
+
+    @classmethod
+    def setUpClass(cls):
+        path = DEVKIT_SRC / "kit" / "harness" / "opencode-go.toml"
+        cls.prof = harness.parse(path.name, read(path))
+        harness.validate_profile(cls.prof)
+
+    def test_machine_paths_count_from_home(self):
+        for section, key in self.MACHINE_PATHS:
+            spec = self.prof.str_of(section, key)
+            self.assertTrue(spec, "профиль подписки не объявил [%s] %s" % (section, key))
+            self.assertTrue(spec.startswith(rules.HOME_MARK),
+                            "[%s] %s считается не от %s, а от %s: хозяйство уехало бы в чужой контур"
+                            % (section, key, rules.HOME_MARK, spec))
+            path, bad = rules.harness_path("opencode-go", spec, {"opencode-go": "/подписка"})
+            self.assertEqual(bad, "", "путь [%s] %s не подставился: %s" % (section, key, bad))
+            self.assertTrue(str(path).startswith("/подписка/"),
+                            "путь [%s] %s ушёл мимо машинного каталога: %s" % (section, key, path))
+
+    def test_ladder_is_two_deepseek(self):
+        # Подписка отдаёт лёгкую flash и тяжёлую pro: нижние ярусы идёт flash,
+        # верхние pro, и повторение значения это две модели, а не забытое.
+        for tier, want in (("mini", "deepseek-v4.1-flash"), ("base", "deepseek-v4.1-flash"),
+                           ("pro", "deepseek-v4-pro"), ("max", "deepseek-v4-pro")):
+            self.assertEqual(self.prof.str_of("delegate", "map_" + tier), want,
+                             "ярус %s маппится не в модель каталога подписки" % tier)
+
+    def test_subprocess_command_is_declared(self):
+        self.assertEqual(self.prof.str_of("delegate", "mode"), "cli",
+                         "подписка делегирует не командой")
+        argv = self.prof.arr_of("delegate", "command")
+        self.assertTrue(argv, "команда подпроцесса не объявлена")
+        joined = " ".join(argv)
+        for mark in ("{prompt}", "{model}", "{effort}", "{session}"):
+            self.assertIn(mark, joined, "в команде подпроцесса нет %s: %s" % (mark, argv))
+
+    def test_head_rides_through_exec(self):
+        # Голова поднимается через agentctl exec с явным именем подписки: без
+        # имени exec поднял бы активный харнес, а подписка активной не
+        # объявляется.
+        client = " ".join(self.prof.arr_of("head", "client"))
+        self.assertIn("agentctl exec --harness opencode-go", client,
+                      "голова подписки идёт мимо agentctl exec с именем подписки: %s" % client)
+        self.assertEqual(self.prof.str_of("head", "bin"), "claude",
+                         "бинарь головы называет сам клиент, а не обёртка")
+
+    def test_no_detect(self):
+        # Изнутри сессии подписка от первой переменными неотличима, и
+        # объявленный детект дал бы неоднозначное совпадение сразу у нескольких
+        # харнесов.
+        self.assertEqual(self.prof.table("detect"), {},
+                         "у подписки объявлен детект, а он неоднозначен по построению")
+
+    def test_quota_is_empty(self):
+        self.assertFalse(self.prof.table("quota"),
+                         "съёмщика остатка у подписки нет, выдуманного профилю не положено")
+
+
 class CodexProfileTest(unittest.TestCase):
     """Профиль Codex валиден с обеих сторон и носит те ключи, на которых стоит
     его механика: детект по непустой CODEX_THREAD_ID, вклейка правил в

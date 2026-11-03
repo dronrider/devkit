@@ -173,11 +173,12 @@ func TestHarnessNameTimesOutOnHungAgentctl(t *testing.T) {
 	}
 }
 
-// Настоящие профили обоих харнесов называют клиента и резюм: прибитой строки
-// клиента в коде больше нет, и профиль без них оставил бы подъём без головы.
+// Настоящие профили харнесов с головой называют клиента и резюм: прибитой
+// строки клиента в коде больше нет, и профиль без них оставил бы подъём без
+// головы.
 func TestRealProfilesNameTheHead(t *testing.T) {
 	devkit := filepath.Join("..", "..")
-	for _, name := range []string{"claude-code", "glm-code"} {
+	for _, name := range []string{"claude-code", "glm-code", "opencode-go"} {
 		h, err := ReadHead(ProfilePath(devkit, name))
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)

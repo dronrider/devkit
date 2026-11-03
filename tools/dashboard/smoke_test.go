@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,4 +83,47 @@ func smokeDirs(t *testing.T) map[string]bool {
 		set[d] = true
 	}
 	return set
+}
+
+func TestSmokeCloudCleanupBeforeFixtures(t *testing.T) {
+	for i := 0; i < 3; i++ {
+		dir := t.TempDir()
+		s, err := newSmoke(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ack := ""
+		err = startReserved(s.proj, s.proj, smokeTask, "smoke-reservation", func(p string) string { ack = p; return "true" })
+		if err != nil {
+			s.close()
+			t.Fatal(err)
+		}
+		reservation := filepath.Dir(ack)
+		s.close()
+		if _, err := os.Stat(reservation); !os.IsNotExist(err) {
+			os.WriteFile(ack, []byte("cleanup"), 0600)
+			t.Fatalf("guardian remains before fixture removal: %s (%v)", reservation, err)
+		}
+		if _, err := os.Stat(filepath.Join(s.bin, "tmux")); err != nil {
+			t.Fatal("fixtures removed before explicit removal")
+		}
+	}
+}
+
+func TestSmokeClientAcknowledgesReservation(t *testing.T) {
+	s, err := newSmoke(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	ack := filepath.Join(s.dir, "client-ack")
+	cmd := exec.Command(filepath.Join(s.bin, "agentctl"), "exec", "--harness", "synthetic", "--", "/usr/bin/true")
+	cmd.Dir = s.proj
+	cmd.Env = append(os.Environ(), "DEVKIT_CLOUD_ACK="+ack)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fake client: %s %v", out, err)
+	}
+	if _, err := os.Stat(ack); err != nil {
+		t.Fatalf("fake agentctl did not acknowledge reservation: %v", err)
+	}
 }

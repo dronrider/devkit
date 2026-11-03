@@ -327,3 +327,84 @@ func TestCloudStartGuardianDeathKeepsLiveTmuxPrivate(t *testing.T) {
 		t.Fatalf("fakeclient launched: %v", err)
 	}
 }
+
+func TestCloudStartFailedLaunchReleasesReservation(t *testing.T) {
+	root := t.TempDir()
+	putDoc(t, root, "docs/tasks/XR-1.md", "# XR-1: задача\n")
+	bin := t.TempDir()
+	writeScript(t, bin, "tmux", `case "$1" in new-session) echo failed >&2; exit 1;; *) echo unavailable >&2; exit 1;; esac`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ack := ""
+	err := startReserved(root, root, "XR-1", "task-XR-1", func(p string) string { ack = p; return "agent" })
+	defer os.WriteFile(ack, []byte("cleanup"), 0600)
+	if err == nil {
+		t.Fatal("failed launch accepted")
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		lock, e := draftmeta.CloudExclusive(root, "XR-1")
+		if e == nil {
+			lock.Close()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("failed new-session retained reservation")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func TestCloudStartMissingTmuxParksWithOwner(t *testing.T) {
+	root := t.TempDir()
+	putDoc(t, root, "docs/tasks/XR-1.md", "# XR-1: задача\n")
+	bin := t.TempDir()
+	writeScript(t, bin, "tmux", `exit 0`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ack := ""
+	if err := startReserved(root, root, "XR-1", "task-XR-1", func(p string) string { ack = p; return "agent" }); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(ack)
+	defer func() {
+		os.WriteFile(ack, []byte("cleanup"), 0600)
+		deadline := time.Now().Add(65 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(dir); os.IsNotExist(err) {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Error("guardian did not acknowledge cleanup")
+	}()
+	if err := os.Remove(filepath.Join(bin, "tmux")); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(34 * time.Second)
+	for {
+		state, _ := os.ReadFile(filepath.Join(dir, "state"))
+		if strings.HasPrefix(string(state), "unknown;") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("missing tmux did not park with observable state: %q", state)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	before, err := os.Stat(filepath.Join(dir, "probe-error"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1200 * time.Millisecond)
+	after, err := os.Stat(filepath.Join(dir, "probe-error"))
+	if err != nil || !before.ModTime().Equal(after.ModTime()) {
+		t.Fatal("unknown continued frequent probing")
+	}
+	owner, err := os.ReadFile(filepath.Join(dir, "owner"))
+	if err != nil || !strings.Contains(string(owner), "guardian=") || !strings.Contains(string(owner), "task=XR-1") {
+		t.Fatalf("owner: %s %v", owner, err)
+	}
+	if lock, err := draftmeta.CloudExclusive(root, "XR-1"); err == nil {
+		lock.Close()
+		t.Fatal("unknown released reservation")
+	}
+}

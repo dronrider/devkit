@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,8 @@ import (
 )
 
 var startReservedFn = startReserved
+
+var cloudStartWatch func(string, <-chan struct{})
 
 func startManaged(root, tree, id, sess string, command func(string) string) error {
 	if id == "" {
@@ -66,11 +69,23 @@ func startReserved(root, tree, id, sess string, command func(string) string) err
 		}
 		return err
 	}
+	if err := os.WriteFile(filepath.Join(dir, "owner"), []byte(fmt.Sprintf("task=%s\nroot=%s\nsession=%s\n", id, root, sess)), 0600); err != nil {
+		os.RemoveAll(dir)
+		for _, l := range locks {
+			l.Close()
+		}
+		return err
+	}
 	script := `d=$1; tmux=$2; sess=$3; shift 3
+printf 'guardian=%s\n' "$$" >>"$d/owner"
+printf 'starting\n' >"$d/state"
 "$tmux" "$@" >"$d/out" 2>&1
 rc=$?
 printf '%s' "$rc" >"$d/status.tmp"
 /bin/mv "$d/status.tmp" "$d/status"
+if [ "$rc" -eq 0 ]; then
+printf 'terminal-created; awaiting-ack\n' >"$d/state"
+n=0
 while [ ! -f "$d/ack" ]; do
   if ! "$tmux" has-session -t "=$sess" >/dev/null 2>&1; then
     # A failed probe is not evidence that the client died. Only a successful
@@ -83,8 +98,18 @@ while [ ! -f "$d/ack" ]; do
       esac
     fi
   fi
-  /bin/sleep 1
+  n=$((n+1))
+  if [ "$n" -ge 30 ]; then
+    printf 'unknown; reservation retained; owner in %s/owner; inspect tmux and probe-error before intervention\n' "$d" >"$d/state"
+    /bin/sleep 60
+  else
+    /bin/sleep 1
+  fi
 done
+fi
+if [ -f "$d/ack" ]; then printf 'acknowledged\n' >"$d/state";
+elif [ "$rc" -ne 0 ]; then printf 'launch-failed\n' >"$d/state";
+else printf 'session-absent\n' >"$d/state"; fi
 n=0
 while [ ! -f "$d/seen" ] && [ "$n" -lt 30 ]; do /bin/sleep 1; n=$((n+1)); done
 /bin/rm -rf "$d"`
@@ -106,7 +131,12 @@ while [ ! -f "$d/seen" ] && [ "$n" -lt 30 ]; do /bin/sleep 1; n=$((n+1)); done
 	for _, l := range locks {
 		l.File().Close()
 	}
-	go cmd.Wait()
+	log.Printf("cloud-start task=%s session=%s guardian=%d state=%s", id, sess, cmd.Process.Pid, filepath.Join(dir, "state"))
+	done := make(chan struct{})
+	if cloudStartWatch != nil {
+		cloudStartWatch(dir, done)
+	}
+	go func() { cmd.Wait(); close(done) }()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		data, err := os.ReadFile(filepath.Join(dir, "status"))

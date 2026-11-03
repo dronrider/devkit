@@ -152,7 +152,11 @@ func main() {
 		fs := flag.NewFlagSet("smoke", flag.ExitOnError)
 		keep := fs.Bool("keep", false, "оставить временное окружение прогона")
 		fs.Parse(args[1:])
-		if err := cmdSmoke(os.Stdout, *keep); err != nil {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		if err := cmdSmokeContext(ctx, os.Stdout, *keep); err != nil {
 			// Провал называет шаг и причину: код возврата без слов ничего не
 			// говорит тому, кто гонял прогон руками.
 			fmt.Fprintf(os.Stderr, "dashboard smoke: провал, %v\n", err)

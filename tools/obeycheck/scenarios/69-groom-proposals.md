@@ -47,10 +47,10 @@ p = pathlib.Path('docs/tasks/drafts/OB-069.md')
 assert p.exists(), 'исходник исчез'
 s = p.read_text()
 assert 'выбор: сценарии/1' in s, 'интервью не сохранило сценарии'
-view = json.loads(subprocess.check_output(['taskctl', 'draft', 'proposals', 'OB-069'], text=True))
+view = json.loads(subprocess.check_output(['taskctl', 'draft', 'prepared', 'OB-069'], text=True))
 cards = view['state']['proposals']
-assert len(cards) >= 2, 'нужны отдельные карточки для двух поправок'
-assert all(not c.get('status') for c in cards), 'карточка применена без подтверждения'
+assert len(cards) >= 2, 'нужны отдельные задачи для двух поправок'
+assert all(not c.get('status') for c in cards), 'задача применена без подтверждения'
 def recorded_commands(path):
     starts, success = [], set()
     for line in path.read_text().splitlines():
@@ -70,32 +70,33 @@ if log.is_file():
 else:
     events = [json.loads(line) for line in pathlib.Path(os.environ['OBEY_TRANSCRIPT']).read_text().splitlines() if line.startswith('{')]
     commands = [e.get('item', {}).get('command', '') for e in events if e.get('type') == 'item.completed' and e.get('item', {}).get('type') == 'command_execution' and e.get('item', {}).get('exit_code') == 0]
-save = next((i for i, c in enumerate(commands) if re.search(r'draft\s+proposals\s+save', c) and '--base' in c and '--help' not in c), None)
+save = next((i for i, c in enumerate(commands) if re.search(r'draft\s+prepared\s+save', c) and '--base' in c and '--help' not in c), None)
 interview = next((i for i, c in enumerate(commands) if 'decide' in c and '--scenarios' in c), None)
-assert save is not None, 'карточки не сохранены командой'
-ask_index = next((i for i, c in enumerate(commands) if re.search(r'draft\s+proposals\s+ask\s+OB-069', c) and '--help' not in c), None)
+assert save is not None, 'задачи не сохранены командой'
+ask_index = next((i for i, c in enumerate(commands) if re.search(r'draft\s+prepared\s+ask\s+OB-069', c) and '--help' not in c), None)
 assert ask_index is not None and save < ask_index, 'вопрос не опубликован после сохранения'
-assert not any(re.search(r'draft\s+proposals\s+(?:answer|confirm|reject)\b', c) for c in commands), 'решение применено без ответа человека'
+assert not any(re.search(r'draft\s+prepared\s+(?:answer|confirm|reject)\b', c) for c in commands), 'решение применено без ответа человека'
 trace = pathlib.Path(os.environ['OBEY_TRANSCRIPT']).read_text().splitlines()
 events = [json.loads(line) for line in trace if line.startswith('{')]
 assert any(e.get('type') == 'turn.completed' for e in events), 'сессия не завершилась'
 assert any(e.get('item', {}).get('type') == 'agent_message' and e['item'].get('text', '').strip() for e in events), 'нет реплики агента'
 ask = pathlib.Path('.devkit/chat/task-OB-069.ask')
-assert ask.is_file(), 'вопрос предложений не опубликован'
+assert ask.is_file(), 'вопрос согласования не опубликован'
 parts = [line for line in ask.read_text().splitlines() if line.startswith('{')]
 assert len(parts) == 1, 'неверный сохранённый вопрос'
 questions = json.loads(parts[0]).get('questions', [])
-shown = [q.get('proposal') for q in questions if q.get('proposal')]
-assert len(shown) == 1, 'нет отдельного вопроса предложений'
+shown = [q.get('prepared') for q in questions if q.get('prepared')]
+assert len(shown) == 1, 'нет отдельного вопроса согласования'
 question = shown[0]
 assert question.get('version') == 1 and question.get('tree') == os.path.realpath('.') and question.get('anchor') == 'OB-069', 'неверный адрес показанного вопроса'
 sources = question.get('sources', [])
 assert len(sources) == 1 and sources[0].get('source') == 'OB-069', 'источник вопроса не совпал'
 assert view.get('basis') and sources[0].get('basis') == view['basis'], 'показанный basis не совпал'
-assert all(c.get('id') and isinstance(c.get('revision'), int) and c['revision'] > 0 for c in view['state']['proposals']), 'у карточки нет ID или редакции'
-assert sources[0].get('proposals') == [c for c in view['state']['proposals'] if not c.get('status')], 'показанные карточки или редакции не совпали'
+assert all(c.get('id') and isinstance(c.get('revision'), int) and c['revision'] > 0 for c in view['state']['proposals']), 'у задачи нет ID или редакции'
+assert sources[0].get('proposals') == [c for c in view['state']['proposals'] if not c.get('status')], 'показанные задачи или редакции не совпали'
+assert all(not c.get('text') for c in sources[0]['proposals']), 'тело задачи въехало в вопрос'
 
-assert interview is not None and interview < save, 'интервью не предшествует предложениям'
+assert interview is not None and interview < save, 'интервью не предшествует подготовке задач'
 assert not any(re.search(r'\btaskctl\s+(?:add\b|draft\s+(?:attach|drop|defer)\b)', c) for c in commands), 'вызван прямой исход'
 
 PY

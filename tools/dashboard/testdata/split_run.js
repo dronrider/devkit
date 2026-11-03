@@ -14,25 +14,39 @@ const params = new URLSearchParams(location.search);
 // кнопкой есть место, вверх на телефоне, где под ней нижние вкладки.
 const up = params.get("bar") === "up";
 
-// Строка подписки это одна полоса: имя и два процента остатка. Полоски-
-// градусники, даты сброса, чип умолчания и возраст снимка со строки сняты, они
-// стоят подсказкой (замечание пользователя про жирный блок выбора).
+// Строка меню это модель с чипом яруса и подписки и двумя полосками остатка
+// (DK-1570): подписку выбирают по остатку, окно и неделя стоят в самой строке,
+// а возраст снимка подсказкой. Ниже ползунок глубины размышления.
 const POP = `
       <div class="hpop${up ? " up" : ""}">
-        <span class="hph">На какой подписке запустить</span>
-        <button class="hrow on" type="button" title="claude-code, подписка по умолчанию">
-          <b class="hname">claude-code</b>
-          <span class="hq"><em>week_all</em><b>52%</b></span>
-          <span class="hq"><em>week_max</em><b>50%</b></span>
-        </button>
-        <button class="hrow" type="button">
-          <b class="hname">glm-code</b>
-          <span class="hq hnote">снимка квоты нет</span>
-        </button>
-        <span class="hph">Уровень модели</span>
-        <div class="tbar"><button class="tpick on" type="button">вердикт</button>
-          <button class="tpick" type="button">base</button>
-          <button class="tpick" type="button">pro</button></div>
+        <span class="hph">Модель</span>
+        <div class="hrow mrow on" title="ярус base, подписка claude-code, снимок 2 ч назад">
+          <span class="hname">sonnet</span>
+          <span class="hchip">base, claude-code</span>
+          <span class="hmeters">
+            <span class="hmt">5ч<span class="meter"><i class="ok" style="width:38%"></i></span></span>
+            <span class="hmt">нед<span class="meter"><i class="ok" style="width:18%"></i></span></span>
+          </span>
+        </div>
+        <div class="hrow mrow">
+          <span class="hname">glm-5.3</span>
+          <span class="hchip">pro, glm-code</span>
+        </div>
+        <span class="hph gap">Глубина размышления</span>
+        <div class="eff">
+          <div class="effmarks">
+            <button class="effmark" type="button" style="--i:0">low</button>
+            <button class="effmark on" type="button" style="--i:1">medium</button>
+            <button class="effmark" type="button" style="--i:2">high</button>
+            <button class="effmark" type="button" style="--i:3">xhigh</button>
+            <button class="effmark" type="button" style="--i:4">max</button>
+          </div>
+          <div class="efftrack">
+            <span class="effrail"></span><span class="efffill" style="--sel:1"></span>
+            <span class="effdot verd" style="--i:1"></span>
+            <span class="effthumb" style="--sel:1"></span>
+          </div>
+        </div>
       </div>`;
 
 const PANEL = `

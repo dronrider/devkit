@@ -1996,7 +1996,7 @@ func TestStaticRunButtonsEmptyHarness(t *testing.T) {
 			t.Errorf("в static/app.js кнопка запуска подставляет подписку умолчания: %q", gone)
 		}
 	}
-	for _, want := range []string{"fire(wide, pinned)", "fire(pin)"} {
+	for _, want := range []string{"fire(wide)", `startRun(project, row.id, harness, "", said, depth)`} {
 		if !strings.Contains(js, want) {
 			t.Errorf("в static/app.js нет %q: без выбора человека подписка уйдёт непустой", want)
 		}

@@ -1,16 +1,18 @@
-// Стенд выбора модели у груминга (ветка poc-chat).
+// Стенд выбора модели и глубины у груминга (ветка poc-chat, пересобран в
+// DK-1570).
 //
 // Разбор черновика это такая же работа агента, как конвейер задачи, и платится
 // он той же квотой: выбор был только у задачи, а груминг всегда шёл подпиской
 // по умолчанию (замечание пользователя). Спрашивать про подписку с ярусом
-// человек не хочет: рядом с кнопкой ему надо видеть, чем будет разбираться,
-// то есть имя модели (решение пользователя). Предмет стенда это полоса запуска
-// над накопителем: кнопка «Грумить» и поле модели рядом, а в заказ с
-// поля уезжают подписка и ярус, потому что имени модели ручка разбора не знает.
+// человек не хочет: рядом с кнопкой ему надо видеть, чем будет разбираться
+// (решение пользователя). С DK-1570 рядом с кнопкой стоит стрелка того же
+// меню, что и у запуска задачи: строки моделей с подписками и ползунок глубины,
+// а в заказ с поля уезжают подписка, ярус и глубина, потому что имени модели
+// ручка разбора не знает.
 //
 // Зовётся: node testdata/poc_groomsub.mjs static/app.js
 
-import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, tag, fail, appPathArg }
+import { makeSandbox, settle, dump, byClass, allByClass, deepBtn, fail, appPathArg }
   from "./poc_dom.mjs";
 
 const app = appPathArg();
@@ -49,32 +51,43 @@ if (!byClass(row, "dpick")) fail("в строке накопителя нет о
 const bar = sandbox.draftRunBar("demo", []);
 const pickOne = () => {
   sandbox.draftPickSet("XR-D1", true);
-  return { btn: deepBtn(bar, "Грумить"), sel: tag(bar, "SELECT") };
+  return { btn: deepBtn(bar, "Грумить"), more: byClass(bar, "more2"), pop: byClass(bar, "hpop") };
 };
 if (!pickOne().btn) fail("кнопки разбора над списком нет вовсе: " + dump(bar));
-// Подтверждения между нажатием и подъёмом нет: выбор отметками это и есть
-// осознанное действие, а разбор поднимается прямо с нажатия.
 const confirm = async (node) => {
   node.handlers.click({ stopPropagation: () => {} });
   await settle();
 };
+const openMenu = () => {
+  const parts = pickOne();
+  if (!parts.more) fail("у кнопки разбора нет стрелки выбора: " + dump(bar));
+  parts.more.handlers.click({ stopPropagation: () => {} });
+  if (!parts.pop || parts.pop.hidden) fail("стрелка разбора не открыла меню: " + dump(bar));
+  return parts;
+};
 
-// --- рядом с кнопкой видно, чем будет разбираться ---
+// --- в меню разбора те же строки моделей и ползунок глубины ---
 {
-  const { sel } = pickOne();
-  if (!sel) fail("поля модели рядом с кнопкой разбора нет: " + dump(bar));
-  const names = (sel.children || []).map((o) => dump(o).trim());
-  for (const want of ["opus", "sonnet", "glm-5.3", "glm-5.4"]) {
-    if (!names.includes(want)) {
-      fail("в поле модели нет модели раскладки " + want + ": " + JSON.stringify(names));
-    }
+  const { pop } = openMenu();
+  const text = dump(pop).replace(/\s+/g, " ");
+  for (const want of ["Модель", "Глубина размышления",
+    "opus pro, claude-code", "glm-5.3 base, glm-code"]) {
+    if (!text.includes(want)) fail("в меню разбора нет «" + want + "»: " + text);
   }
-  // По умолчанию стоит модель подписки по умолчанию на ярусе разбора: верхний
-  // ярус клиента разбору не нужен (RUN_TIER).
-  if (sel.value !== "opus") fail("по умолчанию выбрана не модель разбора: " + sel.value);
+  const marks = allByClass(pop, "effmark").map((b) => dump(b).trim());
+  if (JSON.stringify(marks) !== JSON.stringify(["low", "medium", "high", "xhigh", "max"])) {
+    fail("шкала глубины разбора не из пяти ступеней: " + JSON.stringify(marks));
+  }
+  // Умолчание подсвечено: модель подписки по умолчанию на ярусе разбора,
+  // верхний ярус клиента разбору не нужен (RUN_TIER).
+  const on = allByClass(pop, "hrow")
+    .filter((h) => String(h.className).includes("on")).map((h) => dump(h).trim());
+  if (on.join(",") !== "opus pro, claude-code") {
+    fail("умолчание разбора не модель яруса RUN_TIER: " + on.join(","));
+  }
 }
 
-// --- кнопка поднимает разбор моделью, которая видна рядом ---
+// --- кнопка поднимает разбор тем, что подсвечено ---
 await confirm(pickOne().btn);
 if (!posted.length || !posted[0].path.includes("/groom")) {
   fail("кнопка не подняла разбор: " + JSON.stringify(posted));
@@ -84,18 +97,29 @@ if (!posted.length || !posted[0].path.includes("/groom")) {
 if (!posted[0].body || posted[0].body.harness !== "claude-code" || posted[0].body.tier !== "pro") {
   fail("модель по умолчанию не развернулась в подписку с ярусом: " + JSON.stringify(posted[0].body));
 }
+if (posted[0].body.effort) {
+  fail("без выбора человека глубина уехала в разбор: " + JSON.stringify(posted[0].body));
+}
 
-// --- выбранная модель уезжает своей подпиской и своим ярусом ---
+// --- выбранная строка уезжает своей подпиской и ярусом, глубина с ней ---
 {
-  const { sel } = pickOne();
-  sel.value = "glm-5.3";
-  sel.handlers.change({});
-  await settle();
+  const was = posted.length;
+  const { pop } = openMenu();
+  allByClass(pop, "hrow").find((h) => dump(h).includes("glm-5.3"))
+    .handlers.click({ stopPropagation: () => {} });
+  allByClass(pop, "effmark").find((b) => dump(b).trim() === "xhigh")
+    .handlers.click({ stopPropagation: () => {} });
+  if (posted.length !== was) {
+    fail("выбор в меню сам поднял разбор: " + JSON.stringify(posted.slice(was)));
+  }
   await confirm(pickOne().btn);
   const last = posted[posted.length - 1];
   if (!last.path.includes("/groom")) fail("выбор модели не поднял разбор: " + JSON.stringify(posted));
   if (!last.body || last.body.harness !== "glm-code" || last.body.tier !== "base") {
     fail("выбранная модель доехала до заказа не своей парой: " + JSON.stringify(last.body));
+  }
+  if (last.body.effort !== "xhigh") {
+    fail("выбранная глубина не доехала до заказа: " + JSON.stringify(last.body));
   }
 }
 
@@ -108,30 +132,33 @@ if (sandbox.location.hash !== "#demo/drafts") {
   fail("запуск разбора увёл с накопителя: " + sandbox.location.hash);
 }
 
-// --- у цели выбор подписки такой же, как у задачи ---
+// --- у цели выбор модели такой же, как у задачи ---
 // Витки цели платятся выбранной подпиской: имя едет оболочке цикла флагом.
 // Прежде выбора у цели не было вовсе, а сервер отвечал на него отказом
 // (замечание пользователя).
 {
   const goal = { id: "XR-7", title: "Цель: панель разговора", sect: "backlog" };
   const box = sandbox.rowAction("demo", goal, "backlog");
-  // Выбор подписки живёт всплывашкой кнопки запуска: подписку с ярусом человек
-  // выбирает раз в десяток запусков, и своей кнопки в строке ей не надо.
   byClass(box, "rmain").handlers.contextmenu({
     preventDefault: () => {}, stopPropagation: () => {} });
-  const split = byClass(box, "rmenu");
-  if (!split) fail("у строки цели нет выбора подписки: " + dump(box));
-  const list = allByClass(split, "hrow").map((h) => dump(h).trim().split(/\s+/)[0]);
-  if (!list.includes("glm-code")) {
-    fail("в списке подписок цели нет второй подписки машины: " + JSON.stringify(list));
+  const menu = byClass(box, "rmenu");
+  if (!menu) fail("у строки цели нет меню модели и глубины: " + dump(box));
+  const rows = allByClass(menu, "hrow").map((h) => dump(h).trim());
+  if (!rows.some((r) => r.includes("glm-code"))) {
+    fail("в меню цели нет второй подписки машины: " + JSON.stringify(rows));
   }
   const was = posted.length;
-  allByClass(split, "hrow").find((h) => dump(h).includes("glm-code"))
+  allByClass(menu, "hrow").find((h) => dump(h).includes("glm-code"))
     .handlers.click({ stopPropagation: () => {} });
   await settle();
+  if (posted.length !== was) {
+    fail("выбор строки в меню цели запустил работу сам: " + JSON.stringify(posted.slice(was)));
+  }
+  byClass(box, "rmain").handlers.click({ stopPropagation: () => {} });
+  await settle();
   const last = posted[posted.length - 1];
-  if (posted.length === was || !last.path.includes("/runs")) {
-    fail("выбор подписки не поднял цель: " + JSON.stringify(posted.slice(was)));
+  if (!last.path.includes("/runs")) {
+    fail("запуск цели не ушёл: " + JSON.stringify(posted.slice(was)));
   }
   if (!last.body || last.body.harness !== "glm-code" || last.body.id !== "XR-7") {
     fail("до запуска цели не доехали ни ID, ни подписка: " + JSON.stringify(last.body));

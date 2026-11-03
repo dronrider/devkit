@@ -50,7 +50,11 @@ export function makeNode(tag) {
     offsetHeight: 0,
     children: [],
     attrs: {},
-    style: {},
+    // style держит и строковые поля, и переменные через setProperty: ползунок
+    // глубины ставит ступень переменной --sel, и мок обязан её принять.
+    style: {
+      setProperty(name, value) { this[String(name)] = String(value); },
+    },
     dataset: {},
     handlers: {},
   };

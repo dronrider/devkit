@@ -132,31 +132,36 @@ function byTag(node) {
 
 // --- выбор подписки при запуске опирается на ту же картину ---
 {
-  const row = sandbox.harnessRow({ name: "glm-code" });
+  const row = sandbox.modelMenuRow({ model: "glm-5.3", tier: "pro", harness: "glm-code" });
   const text = dump(row).replace(/\s+/g, " ");
-  if (!text.includes("снимка")) {
-    fail("строка выбора подписки не говорит про снимок: " + text);
+  // Подписки без снимка полосок не рисует вовсе: пустая полоска читалась бы
+  // нулём, а ноль у остатка это «лимит исчерпан».
+  if (byClass(row, "meter")) fail("строка без снимка рисует полоски: " + text);
+  if (!String(row.title || "").includes("снимка нет")) {
+    fail("строка выбора подписки не говорит про снимок: " + row.title);
   }
-  if (!byClass(row, "stale")) fail("строка выбора не помечена как неизвестный остаток: " + text);
 
-  // В списке выбора та же мера: давность цифрой, слов о разъезде нет.
+  // В списке выбора та же мера: давность цифрой в подсказке, слов о разъезде нет.
   quota.harnesses = [quota.harnesses[0], { name: "glm-code", age: "3 ч", age_sec: 3 * 3600,
     buckets: [{ name: "window5h_all", used_pct: 7 }] }];
   await sandbox.refreshQuota();
   await settle();
-  const node = sandbox.harnessRow({ name: "glm-code" });
+  const node = sandbox.modelMenuRow({ model: "glm-5.3", tier: "pro", harness: "glm-code" });
   const second = dump(node).replace(/\s+/g, " ");
   if (second.includes("раньше остальных") || second.includes("разное время")) {
     fail("список выбора подписки заговорил о разъезде: " + second);
   }
-  // Возраст снимка со строки ушёл в подсказку: строка держит одну полосу, и
-  // место на ней занимают имя с остатком (замечание пользователя про жирный
-  // блок выбора). Пропасть возраст при этом не имеет права, подписку выбирают
-  // по свежему остатку.
+  // Возраст снимка стоит подсказкой строки, а не её текстом: строка держит
+  // имя, чип и полоски, и место на ней тратится на выбор. Пропасть возраст не
+  // имеет права, подписку выбирают по свежему остатку.
   if (!String(node.title || "").includes("снимок 3 ч назад")) {
     fail("возраст снимка в списке выбора пропал: " + node.title);
   }
-  if (!second.includes("7%")) fail("выбор подписки потерял остаток: " + second);
+  const fills = allByClass(node, "meter").map((m) => m.children[0]);
+  if (fills.length !== 1 || fills[0].style.width !== "7%") {
+    fail("выбор подписки потерял остаток: " +
+      JSON.stringify(fills.map((f) => f.style.width)));
+  }
 }
 
 console.log("poc_quotahonest: ok");

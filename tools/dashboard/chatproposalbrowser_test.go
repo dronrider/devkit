@@ -50,7 +50,7 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
-	raw, err := cli("", "draft", "proposals", "XR-4")
+	raw, err := cli("", "draft", "prepared", "XR-4")
 	if err != nil {
 		t.Fatal(raw, err)
 	}
@@ -60,21 +60,21 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 	if err = json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
-	raw, err = cli(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"карточка один","reason":"устарело"},{"id":"p2","revision":1,"outcome":"drop","text":"карточка два","reason":"лишнее"}]}`, "draft", "proposals", "save", "XR-4", "--base", view.Snapshot)
+	raw, err = cli(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"карточка один","reason":"устарело"},{"id":"p2","revision":1,"outcome":"drop","text":"карточка два","reason":"лишнее"}]}`, "draft", "prepared", "save", "XR-4", "--base", view.Snapshot)
 	if err != nil {
 		t.Fatal(raw, err)
 	}
 	putDoc(t, st.e.proj, "docs/tasks/drafts/XR-5.md", "# XR-5: другая запись\n")
-	raw, err = cli("", "draft", "proposals", "XR-5")
+	raw, err = cli("", "draft", "prepared", "XR-5")
 	if err != nil || json.Unmarshal([]byte(raw), &view) != nil {
 		t.Fatalf("second source: %s %v", raw, err)
 	}
-	raw, err = cli(`{"proposals":[{"id":"p3","revision":1,"outcome":"drop","text":"карточка третья","reason":"лишнее"}]}`, "draft", "proposals", "save", "XR-5", "--base", view.Snapshot)
+	raw, err = cli(`{"proposals":[{"id":"p3","revision":1,"outcome":"drop","text":"карточка третья","reason":"лишнее"}]}`, "draft", "prepared", "save", "XR-5", "--base", view.Snapshot)
 	if err != nil {
 		t.Fatal(raw, err)
 	}
 	publish := func(which string) error {
-		args := []string{"draft", "proposals", "ask", "XR-4"}
+		args := []string{"draft", "prepared", "ask", "XR-4"}
 		if which == "both" {
 			args = append(args, "--also", "XR-5")
 		}
@@ -181,7 +181,7 @@ func TestProposalBrowserRealProcesses(t *testing.T) {
 			http.Error(w, "id", 400)
 			return
 		}
-		out, err := cli("", "draft", "proposals", id)
+		out, err := cli("", "draft", "prepared", id)
 		if err != nil {
 			http.Error(w, out, 500)
 			return

@@ -8,14 +8,17 @@ try {
   assert.equal((await context.request.post(base+'/api/login',{data:{token}})).status(),200);
   const page = await context.newPage();
   await page.goto(base+'/#demo/chat/'+sid);
-  await page.locator('.askproposal').getByText('веточный результат',{exact:false}).waitFor();
-  const text = await page.locator('.askproposal').innerText();
+  // Вопрос согласования короткий: тел задач в чате нет, каждая задача это
+  // строка-ссылка на свой экран (DK-1469, решение 4). Снимок записи в чат
+  // не попадает и тут.
+  await page.locator('.askfb').getByText('Подготовил задачи',{exact:false}).waitFor();
+  const text = await page.locator('.askfb').innerText();
   assert.ok(!/Показанный снимок|[a-f0-9]{64}/.test(text));
-  assert.ok(text.includes('Новая строка'));
-  const material=page.locator('.askproposal .proposal-material').filter({hasText:'Что происходит'});
-  assert.ok((await material.innerText()).includes('## DoD'));
-  assert.equal(await material.evaluate(e=>getComputedStyle(e).whiteSpace),'pre-wrap');
-  await page.getByLabel('Решение XR-4 p1').selectOption('accept');
+  assert.ok(!text.includes('веточный результат'));
+  assert.ok(!text.includes('## DoD'));
+  assert.ok(text.includes('Результат'));
+  await page.locator('.askfb a[href$="/draft/XR-4/prepared/p1"]').waitFor();
+  await page.getByLabel('Подтвердить p1').check();
   assert.equal(await page.locator('textarea.csay').inputValue(),'');
   if (mode === 'linked') {
     const response=page.waitForResponse(r=>r.url().endsWith('/say') && r.request().method()==='POST');

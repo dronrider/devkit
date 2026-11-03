@@ -93,6 +93,12 @@ func draftFileRel(id string) string {
 	return filepath.ToSlash(filepath.Join("docs", "tasks", "drafts", id+".md"))
 }
 
+// preparedFileRel это prepared-файл записи: носитель подготовленных задач
+// лежит рядом с накопителем и едет в тот же коммит доски, что и запись.
+func preparedFileRel(id string) string {
+	return filepath.ToSlash(filepath.Join("docs", "tasks", "prepared", id+".md"))
+}
+
 // draftPrios это шкала уровня разбора черновика: латинские имена те же, что у
 // флага taskctl draft --prio, русские слова живут на экране накопителя.
 var draftPrios = map[string]bool{"high": true, "mid": true, "low": true}

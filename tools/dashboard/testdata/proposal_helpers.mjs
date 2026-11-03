@@ -5,8 +5,8 @@ const source = fs.readFileSync(process.argv[2], 'utf8');
 const start = source.indexOf('function proposalDraft(');
 assert(start >= 0);
 const context = vm.createContext({});
-vm.runInContext(source.slice(start) + '\nthis.helpers = {proposalDraft, proposalAnswer, proposalSelect};', context);
-const {proposalDraft, proposalAnswer, proposalSelect} = context.helpers;
+vm.runInContext(source.slice(start) + '\nthis.helpers = {proposalDraft, proposalAnswer};', context);
+const {proposalDraft, proposalAnswer} = context.helpers;
 const shown = JSON.parse(process.argv[3]);
 const draft = proposalDraft(shown, 'свои слова', [{source:'XR-1',proposal:'b',revision:2,action:'accept'}]);
 shown.sources[0].basis = 'new'; shown.sources[0].proposals.push({id:'new',revision:1});
@@ -16,14 +16,19 @@ let result = proposalAnswer(restored);
 assert.equal(result.snapshots[0].digest,'old');
 assert.equal(result.decisions.length,1);
 assert.equal(result.decisions[0].proposal,'b');
-restored.decisions = proposalSelect(restored.shown, null, 'accept');
+// Отмеченные галками задачи подтверждаются: решение про одну задачу несёт
+// снимок только её записи.
+restored.decisions = [
+  {source:'XR-1',proposal:'a',revision:1,action:'accept'},
+  {source:'XR-2',proposal:'c',revision:1,action:'accept'},
+];
 result = proposalAnswer(restored);
-assert.equal(result.decisions.length,3);
+assert.equal(result.decisions.length,2);
 assert.equal(result.snapshots.length,2);
-restored.decisions = proposalSelect(restored.shown, 'XR-1', 'reject');
+restored.decisions = [{source:'XR-1',proposal:'a',revision:1,action:'reject'}];
 assert.throws(() => proposalAnswer(restored), /причину/);
-restored.decisions = proposalSelect(restored.shown, 'XR-1', 'reject', 'лишнее');
-assert.equal(proposalAnswer(restored).decisions.length,2);
+restored.decisions = [{source:'XR-1',proposal:'a',revision:1,action:'reject',reason:'лишнее'}];
+assert.equal(proposalAnswer(restored).decisions.length,1);
 restored.decisions.push({source:'XR-1',proposal:'new',revision:1,action:'accept'});
 assert.throws(() => proposalAnswer(restored), /не показана/);
 const statusStart = source.indexOf('function draftCardStatus(');
@@ -41,13 +46,14 @@ for (const [outcome, status, want] of [
 ]) {
   assert.equal(statusCtx.card(outcome, status), want, outcome + ' ' + status);
 }
-const introStart = source.indexOf('function draftIntroText(');
-assert(introStart >= 0);
-const introEnd = source.indexOf('\n}', introStart);
-assert(introEnd > introStart);
-const introCtx = vm.createContext({});
-vm.runInContext(source.slice(introStart, introEnd + 2) + '\nthis.intro = draftIntroText;', introCtx);
-assert.match(introCtx.intro([{proposals:[{outcome:'add'},{outcome:'drop'}]}]), /^Задача подготовлена\./);
-assert.match(introCtx.intro([{proposals:[{outcome:'drop'}]}]), /^Карточки подготовлены\./);
-assert.match(introCtx.intro([]), /^Карточки подготовлены\./);
+// Строка-ссылка задачи ведёт на экран подготовленной задачи (DK-1469, решение 4):
+// заголовок задачи без названия это её ключ.
+const lineStart = source.indexOf('function preparedLineText(');
+assert(lineStart >= 0);
+const lineEnd = source.indexOf('\n}', lineStart);
+assert(lineEnd > lineStart);
+const lineCtx = vm.createContext({});
+vm.runInContext(source.slice(lineStart, lineEnd + 2) + '\nthis.line = preparedLineText;', lineCtx);
+assert.equal(lineCtx.line({source:'XR-1',task:{id:'b'},title:'Новая запись'}, 'demo'), 'Новая запись: #demo/draft/XR-1/prepared/b');
+assert.equal(lineCtx.line({source:'XR-1',task:{id:'x'},title:'x'} , 'demo'), 'x: #demo/draft/XR-1/prepared/x');
 console.log('proposal helpers: ok');

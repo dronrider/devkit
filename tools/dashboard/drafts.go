@@ -78,7 +78,7 @@ func draftMode(v string) (string, bool) {
 // строкой на доске. Три других исхода (приписка, отложен, удалён) заказ
 // останавливает: строки нет, и продолжать нечем.
 func groomRunTail(id string) string {
-	return ". До подтверждения карточек не начинай выполнение. После подтверждения прочитай сохранённые результаты " + id + " через taskctl draft proposals и продолжай только подтверждённые исходы add по их ID результата. Для attach, defer и drop выполнение не запускай"
+	return ". До подтверждения подготовленных задач не начинай выполнение. После подтверждения прочитай сохранённые результаты " + id + " через taskctl draft prepared и продолжай только подтверждённые исходы add по их ID результата. Для attach, defer и drop выполнение не запускай"
 }
 
 func groomTypedPrompt(root, id, ask, mode string) (string, error) {
@@ -479,7 +479,7 @@ func (s *server) handleDraftPut(w http.ResponseWriter, r *http.Request) {
 	text := strings.TrimRight(body.Text, "\n") + "\n"
 	_, incomingSection, err := draftproposal.Material([]byte(text))
 	if err != nil || incomingSection {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "раздел «Предложения разбора» изменяется через карточки"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "машинный раздел разбора не редактируется руками: подготовленные задачи меняются своим экраном"})
 		return
 	}
 	restored, err := draftmeta.Restore([]byte(text), was)
@@ -904,8 +904,8 @@ func (s *server) handleDraftTypes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (s *server) handleDraftProposals(w http.ResponseWriter, r *http.Request) {
-	found := s.findProject(w, r, "карточки черновика")
+func (s *server) handleDraftPrepared(w http.ResponseWriter, r *http.Request) {
+	found := s.findProject(w, r, "подготовленные задачи записи")
 	if found == nil {
 		return
 	}
@@ -914,24 +914,24 @@ func (s *server) handleDraftProposals(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный ID записи"})
 		return
 	}
-	out, code, err := taskctlDo(found.Path, "draft", "proposals", id)
+	out, code, err := taskctlDo(found.Path, "draft", "prepared", id)
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
 	}
 	var result json.RawMessage
 	if err = json.Unmarshal([]byte(out), &result); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "карточки не прочитались"})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "подготовленные задачи не прочитались"})
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
 }
-func (s *server) handleDraftProposalSave(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleDraftPreparedSave(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r, "правка карточки")
+	found := s.findProject(w, r, "правка подготовленной задачи")
 	if found == nil {
 		return
 	}
@@ -945,7 +945,7 @@ func (s *server) handleDraftProposalSave(w http.ResponseWriter, r *http.Request)
 		Proposal draftproposal.Proposal `json:"proposal"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, taskTextLimit)).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверные поля карточки"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверные поля задачи"})
 		return
 	}
 	data, err := json.Marshal(struct {
@@ -955,7 +955,7 @@ func (s *server) handleDraftProposalSave(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	out, code, err := s.taskctlWriteIn(found.Path, string(data), "draft", "proposals", "save", id, "--base", body.Base)
+	out, code, err := s.taskctlWriteIn(found.Path, string(data), "draft", "prepared", "save", id, "--base", body.Base)
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
@@ -965,18 +965,18 @@ func (s *server) handleDraftProposalSave(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "ответ не прочитался"})
 		return
 	}
-	result["message"] = "карточка сохранена"
-	if note := commitDocs(found.Path, boardCommitMsg(id, "правка карточки"), draftFileRel(id)); note != "" {
+	result["message"] = "задача сохранена"
+	if note := commitDocs(found.Path, boardCommitMsg(id, "правка подготовленной задачи"), draftFileRel(id), preparedFileRel(id)); note != "" {
 		result["note"] = note
 	}
 	writeJSON(w, http.StatusOK, result)
 }
-func (s *server) handleDraftProposalReject(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleDraftPreparedReject(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r, "отказ карточки")
+	found := s.findProject(w, r, "отказ подготовленной задачи")
 	if found == nil {
 		return
 	}
@@ -994,7 +994,7 @@ func (s *server) handleDraftProposalReject(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверное решение"})
 		return
 	}
-	out, code, err := s.taskctlWrite(found.Path, "draft", "proposals", "reject", id, body.Proposal, "--base", body.Base, "--reason", body.Reason)
+	out, code, err := s.taskctlWrite(found.Path, "draft", "prepared", "reject", id, body.Proposal, "--base", body.Base, "--reason", body.Reason)
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
@@ -1004,19 +1004,19 @@ func (s *server) handleDraftProposalReject(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "ответ не прочитался"})
 		return
 	}
-	result["message"] = "карточка отклонена"
-	if note := commitDocs(found.Path, boardCommitMsg(id, "отказ карточки"), draftFileRel(id)); note != "" {
+	result["message"] = "задача отклонена"
+	if note := commitDocs(found.Path, boardCommitMsg(id, "отказ подготовленной задачи"), draftFileRel(id), preparedFileRel(id)); note != "" {
 		result["note"] = note
 	}
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (s *server) handleDraftProposalConfirm(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleDraftPreparedConfirm(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
 		return
 	}
-	found := s.findProject(w, r, "подтверждение карточек")
+	found := s.findProject(w, r, "подтверждение подготовленных задач")
 	if found == nil {
 		return
 	}
@@ -1037,7 +1037,7 @@ func (s *server) handleDraftProposalConfirm(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	out, code, err := s.taskctlWriteIn(found.Path, string(data), "draft", "proposals", "confirm")
+	out, code, err := s.taskctlWriteIn(found.Path, string(data), "draft", "prepared", "confirm")
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
@@ -1052,11 +1052,101 @@ func (s *server) handleDraftProposalConfirm(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "результат подтверждения не прочитался"})
 		return
 	}
-	response := map[string]any{"key": result.Key, "results": result.Results, "repeated": result.Repeated, "message": "карточки подтверждены и применены"}
+	response := map[string]any{"key": result.Key, "results": result.Results, "repeated": result.Repeated, "message": "подтверждённые задачи применены"}
 	if !result.Repeated && len(result.Paths) > 0 {
-		if note := commitDocs(found.Path, "docs(tasks): применение подтверждённых карточек", result.Paths...); note != "" {
+		if note := commitDocs(found.Path, "docs(tasks): применение подтверждённых задач", result.Paths...); note != "" {
 			response["note"] = "применено, публикация не завершена: " + note
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// handleDraftPreparedTask отдаёт одну подготовленную задачу записи: экран
+// согласования читает её по ссылке из чата, и отдельной копии текста тут нет,
+// правда в prepared-файле через тот же taskctl-вид, что и списку записи.
+func (s *server) handleDraftPreparedTask(w http.ResponseWriter, r *http.Request) {
+	found := s.findProject(w, r, "подготовленная задача")
+	if found == nil {
+		return
+	}
+	id := r.PathValue("id")
+	if !goalIDRe.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный ID записи"})
+		return
+	}
+	key := r.PathValue("key")
+	if key == "" || strings.ContainsAny(key, " /\\") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный ключ задачи"})
+		return
+	}
+	out, code, err := taskctlDo(found.Path, "draft", "prepared", id)
+	if err != nil {
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	var view struct {
+		ID       string              `json:"id"`
+		Snapshot string              `json:"snapshot"`
+		Basis    string              `json:"basis"`
+		State    draftproposal.State `json:"state"`
+	}
+	if err = json.Unmarshal([]byte(out), &view); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "подготовленные задачи не прочитались"})
+		return
+	}
+	for _, p := range view.State.Proposals {
+		if p.ID != key {
+			continue
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": view.ID, "snapshot": view.Snapshot, "basis": view.Basis, "task": p})
+		return
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": "задача " + key + " в записи " + id + " не найдена"})
+}
+
+// handleDraftIdea приписывает мысль человека в раздел «Идеи» записи: кнопка
+// «Оставить мысль» на экране записи зовёт эту ручку, судьбу пункту приписывает
+// грумер на разборе (DK-1469, решение 3).
+func (s *server) handleDraftIdea(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "чужой Origin"})
+		return
+	}
+	found := s.findProject(w, r, "мысль в запись")
+	if found == nil {
+		return
+	}
+	id := r.PathValue("id")
+	if !goalIDRe.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "неверный ID записи"})
+		return
+	}
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "жду JSON {\"text\": \"...\"}"})
+		return
+	}
+	text := strings.Join(strings.Fields(body.Text), " ")
+	if text == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "текст мысли пуст"})
+		return
+	}
+	out, code, err := s.taskctlWrite(found.Path, "draft", "idea", id, text)
+	if err != nil {
+		writeJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	var result map[string]any
+	if err = json.Unmarshal([]byte(out), &result); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "ответ не прочитался"})
+		return
+	}
+	result["message"] = "мысль записана"
+	if note := commitDocs(found.Path, boardCommitMsg(id, "мысль в записи"), draftFileRel(id)); note != "" {
+		result["note"] = note
+	}
+	writeJSON(w, http.StatusOK, result)
 }

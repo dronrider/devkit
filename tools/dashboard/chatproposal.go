@@ -29,7 +29,7 @@ type proposalAnswer struct {
 
 func proposalAnswerInput(a proposalAnswer) ([]byte, error) {
 	if a.Anchor == "" || a.Tree == "" || len(a.Snapshots) == 0 || len(a.Decisions) == 0 {
-		return nil, fmt.Errorf("нужен контекст показанных карточек")
+		return nil, fmt.Errorf("нужен контекст показанных задач")
 	}
 	return json.Marshal(struct {
 		Tree      string                   `json:"tree"`
@@ -38,9 +38,10 @@ func proposalAnswerInput(a proposalAnswer) ([]byte, error) {
 	}{a.Tree, a.Snapshots, a.Decisions})
 }
 
-// cardStatus переводит состояние карточки в слова витрины (DK-1545): до
-// решения человека задача «подготовлена», после решения «подтверждена» или
-// «отклонена». Средний род у удаления, остальные исходы женского.
+// cardStatus переводит состояние подготовленной задачи в слова экрана
+// (DK-1545): до решения человека задача «подготовлена», после решения
+// «подтверждена» или «отклонена». Средний род у удаления, остальные исходы
+// женского.
 func cardStatus(outcome, status string) string {
 	feminine := outcome == "add" || outcome == "attach" || outcome == "defer"
 	switch status {
@@ -61,16 +62,23 @@ func cardStatus(outcome, status string) string {
 	return "подготовлено"
 }
 
-func proposalFromAsk(a chat.Ask) *chat.ProposalQuestion {
-	var found *chat.ProposalQuestion
+// preparedFromAsk достаёт вопрос согласования из ask-записи: новый вопрос
+// несёт поле prepared, у висящего со старых времён читается proposal, и обе
+// формы отвечают одинаково (ридер совместимости DK-1564, решение 2).
+func preparedFromAsk(a chat.Ask) *chat.PreparedQuestion {
+	var found *chat.PreparedQuestion
 	for _, q := range a.Questions {
-		if q.Proposal == nil {
+		shown := q.Prepared
+		if shown == nil {
+			shown = q.Proposal
+		}
+		if shown == nil {
 			continue
 		}
-		if found != nil || q.Scenario != nil || q.Proposal.Validate() != nil || q.Proposal.Anchor != a.Task {
+		if found != nil || q.Scenario != nil || shown.Validate() != nil || shown.Anchor != a.Task {
 			return nil
 		}
-		found = q.Proposal
+		found = shown
 	}
 	return found
 }
@@ -92,7 +100,7 @@ func (s *server) proposalContextRequired(p *Project, sid string) bool {
 		}
 	}
 	for _, q := range active.Questions {
-		if q.Proposal != nil {
+		if q.Prepared != nil || q.Proposal != nil {
 			return true
 		}
 	}
@@ -110,13 +118,13 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 	}
 	var match *handedAsk
 	for _, h := range s.handedAsks(sid, s.binds(), s.now()) {
-		q := proposalFromAsk(h.Ask)
+		q := preparedFromAsk(h.Ask)
 		valid := false
 		if q != nil && answer.Mode == "comment" {
 			valid = proposalCommentMatches(*q, answer)
 		}
 		if q != nil && answer.Mode != "comment" {
-			valid = chat.CheckProposalAnswer(*q, answer.Tree, draftproposal.ConfirmRequest{Snapshots: answer.Snapshots, Decisions: answer.Decisions}) == nil
+			valid = chat.CheckPreparedAnswer(*q, answer.Tree, draftproposal.ConfirmRequest{Snapshots: answer.Snapshots, Decisions: answer.Decisions}) == nil
 		}
 		if q != nil && q.Anchor == answer.Anchor && q.Tree == answer.Tree && valid {
 			own := h
@@ -125,12 +133,12 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 		}
 	}
 	if answer.Mode == "comment" && match == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "показанный вопрос карточек не найден"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "показанный вопрос согласования не найден"})
 		return
 	}
 	deliverySources := answer.Snapshots
 	if match != nil {
-		if shown := proposalFromAsk(match.Ask); shown != nil {
+		if shown := preparedFromAsk(match.Ask); shown != nil {
 			deliverySources = make([]draftproposal.Snapshot, 0, len(shown.Sources))
 			for _, source := range shown.Sources {
 				deliverySources = append(deliverySources, draftproposal.Snapshot{Source: source.Source, Digest: source.Basis})
@@ -212,7 +220,7 @@ func (s *server) handleProposalSay(w http.ResponseWriter, p *Project, sid, claim
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	args := []string{"draft", "proposals", "answer", answer.Anchor}
+	args := []string{"draft", "prepared", "answer", answer.Anchor}
 	if match == nil {
 		args = append(args, "--repeat-only")
 	}
@@ -304,7 +312,7 @@ func proposalDeliveryReservation(root string, snapshots []draftproposal.Snapshot
 	return release, nil
 }
 
-func proposalCommentMatches(q chat.ProposalQuestion, a proposalAnswer) bool {
+func proposalCommentMatches(q chat.PreparedQuestion, a proposalAnswer) bool {
 	if q.Validate() != nil || a.Anchor != q.Anchor || a.Tree != q.Tree || len(a.Decisions) != 0 || len(a.Snapshots) != len(q.Sources) {
 		return false
 	}
@@ -327,7 +335,7 @@ func (s *server) proposalContinuation(root, sid string) string {
 	type item struct{ tree, id string }
 	var items []item
 	for _, h := range s.handedAsks(sid, s.binds(), s.now()) {
-		if q := proposalFromAsk(h.Ask); q != nil {
+		if q := preparedFromAsk(h.Ask); q != nil {
 			for _, source := range q.Sources {
 				items = append(items, item{q.Tree, source.Source})
 			}
@@ -365,7 +373,7 @@ func (s *server) proposalContinuation(root, sid string) string {
 		if err := draftmeta.GuardRecord(one.tree, one.id); err != nil {
 			continue
 		}
-		out, _, err := taskctlDo(one.tree, "draft", "proposals", one.id)
+		out, _, err := taskctlDo(one.tree, "draft", "prepared", one.id)
 		if err != nil {
 			continue
 		}
@@ -381,9 +389,6 @@ func (s *server) proposalContinuation(root, sid string) string {
 			if p.Title != "" {
 				line += "; " + p.Title
 			}
-			if p.Text != "" {
-				line += "; " + p.Text
-			}
 			if p.Result != nil {
 				if len(p.Result.IDs) > 0 {
 					line += "; " + strings.Join(p.Result.IDs, ", ")
@@ -394,7 +399,7 @@ func (s *server) proposalContinuation(root, sid string) string {
 			}
 			lines = append(lines, line)
 		}
-		blocks = append(blocks, "Карточки "+one.id+"\n\n"+strings.Join(lines, "\n"))
+		blocks = append(blocks, "Подготовленные задачи "+one.id+"\n\n"+strings.Join(lines, "\n"))
 	}
 	return strings.Join(blocks, "\n\n")
 }

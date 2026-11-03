@@ -1,0 +1,372 @@
+<title>Ползунок глубины</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Хром страницы: светлая база, тёмная переопределяется токенами. Панели
+   макета внутри несут свою палитру продукта и от темы просмотра не зависят. */
+:root{
+  --bg:oklch(0.98 0.004 85); --fg:oklch(0.25 0.012 85); --mut:oklch(0.52 0.014 85);
+  --line:oklch(0.89 0.007 85);
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:oklch(0.16 0.007 85); --fg:oklch(0.92 0.006 85); --mut:oklch(0.68 0.012 85);
+    --line:oklch(0.28 0.01 85);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:oklch(0.16 0.007 85); --fg:oklch(0.92 0.006 85); --mut:oklch(0.68 0.012 85);
+  --line:oklch(0.28 0.01 85);
+}
+body{background:var(--bg);color:var(--fg);font:400 14px/1.6 var(--sans);
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));}
+.wrap{max-width:880px;margin:0 auto;padding-block:40px 56px}
+h1{font:600 26px/1.25 var(--sans);margin:6px 0 10px;text-wrap:balance}
+.eyebrow{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+.lead{color:var(--mut);max-width:64ch;margin:0}
+section{margin-top:36px}
+h2{font:600 17px var(--sans);margin:0 0 4px}
+.snote{color:var(--mut);font-size:13px;margin:0 0 14px;max-width:70ch}
+.cap{color:var(--mut);font-size:12.5px;margin:10px 0 0;max-width:70ch}
+
+/* Палитра продукта, копия :root из style.css панели. Тёмная, другой нет. */
+.dpanel{
+  --bg0:oklch(0.155 0.007 80); --bg1:oklch(0.19 0.008 80); --bg2:oklch(0.225 0.009 80);
+  --bg3:oklch(0.265 0.01 80); --line:oklch(0.29 0.01 80); --line2:oklch(0.36 0.012 80);
+  --tx:oklch(0.93 0.006 85); --tx2:oklch(0.72 0.012 85); --tx3:oklch(0.54 0.012 85);
+  --acc:oklch(0.8 0.13 80); --acc-ink:oklch(0.22 0.04 80);
+  --psans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --pmono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  background:var(--bg0);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  color-scheme:dark;
+}
+.chead{display:flex;align-items:center;gap:8px;min-height:34px;padding:0 12px;
+  background:var(--bg1);border-bottom:1px solid var(--line);
+  font:500 11px var(--pmono);letter-spacing:.05em;color:var(--tx3)}
+.cbody{padding:14px 16px}
+
+/* Лестница уровней: справочная таблица страницы. */
+.lgrid{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.lrow{display:flex;gap:14px;align-items:baseline;padding:9px 14px;border-top:1px solid var(--line)}
+.lrow:first-child{border-top:0}
+.lrow:nth-child(odd){background:color-mix(in oklab,var(--fg) 3%,transparent)}
+.lname{font:500 13px var(--mono);min-width:72px}
+.ldue{flex:1;min-width:0}
+.lmap{font:400 11.5px var(--mono);color:var(--mut);white-space:nowrap}
+
+/* Ползунок глубины: подписи над шкалой, весь блок около тридцати точек.
+   Точка вердикта помечена кольцом, клик ловит вся шкала и подпись тоже. */
+.eff{--sel:2;padding:0 4px;user-select:none}
+.effmarks{position:relative;height:15px}
+.effmark{position:absolute;left:calc(var(--i)*25%);transform:translateX(-50%);
+  border:0;background:none;padding:0 7px;line-height:15px;cursor:pointer;border-radius:5px;
+  font:500 10px var(--pmono);color:var(--tx3);white-space:nowrap}
+.effmark:hover{color:var(--tx2);background:var(--bg3)}
+.effmark.on{color:var(--tx);background:var(--bg3)}
+.effmark:focus-visible{outline:1px solid var(--acc);outline-offset:1px}
+.efftrack{position:relative;height:13px;margin-top:1px;cursor:pointer}
+.effrail{position:absolute;left:0;right:0;top:4px;height:3px;border-radius:2px;background:var(--bg3)}
+.efffill{position:absolute;left:0;top:4px;height:3px;border-radius:2px;background:var(--acc);opacity:.85;width:calc(var(--sel)*25%)}
+.effdot{position:absolute;top:5.5px;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;
+  background:var(--bg2);border:1px solid var(--line2);left:calc(var(--i)*25%)}
+.effdot.verd{border-color:var(--acc);box-shadow:0 0 0 2px color-mix(in oklab,var(--acc) 30%,transparent)}
+.effthumb{position:absolute;top:5.5px;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;border-radius:50%;
+  background:var(--acc);border:2px solid var(--bg0);box-shadow:0 0 0 1px var(--line2);
+  left:calc(var(--sel)*25%);transition:left .15s ease}
+@media (prefers-reduced-motion: reduce){.effthumb{transition:none}}
+
+/* Кнопки панели: жёлтый пуск с расщеплением, серая служебная. */
+.strip{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btnrun{display:inline-flex;height:36px;border-radius:9px;overflow:hidden;background:var(--acc);
+  color:var(--acc-ink);border:0;font:600 13px var(--psans);cursor:pointer}
+.btnrun:hover{filter:brightness(1.06)}
+.btnrun .wide{padding:0 15px;display:flex;align-items:center}
+.btnrun .narrow{padding:0 11px;display:flex;align-items:center;border-left:1px solid color-mix(in oklab,var(--acc-ink) 28%,transparent);font:600 11px var(--pmono)}
+.btngost{display:inline-flex;align-items:center;height:36px;padding:0 15px;border-radius:9px;
+  font:600 13px var(--psans);background:var(--bg3);color:var(--tx);border:1px solid var(--line2);cursor:pointer}
+.btngost:hover{background:color-mix(in oklab,var(--acc) 14%,var(--bg3))}
+
+/* Открытое меню под стрелкой: глубина сверху, подписка ниже. */
+.menu{margin-top:10px;width:min(360px,100%);background:var(--bg2);border:1px solid var(--line2);
+  border-radius:11px;box-shadow:0 16px 40px rgba(0,0,0,.5);padding:8px 10px}
+.mlabel{font:500 10px var(--pmono);letter-spacing:.07em;text-transform:uppercase;color:var(--tx3);margin:0 0 3px}
+.hrow{display:flex;align-items:center;gap:7px;padding:4px 0}
+.hname{font:500 12.5px var(--psans);color:var(--tx)}
+.hchip{font:500 10px var(--psans);background:var(--bg3);color:var(--tx2);border-radius:5px;padding:1px 6px;white-space:nowrap}
+.hmeters{flex:1;display:flex;gap:10px;align-items:center;min-width:0;padding-left:6px}
+.hmt{display:flex;flex:1;align-items:center;gap:5px;min-width:0;color:var(--tx3);font:400 10px var(--pmono);white-space:nowrap}
+.meter{flex:1;height:3px;border-radius:2px;background:var(--bg3);overflow:hidden;min-width:0}
+.meter span{display:block;height:100%;background:var(--tx2)}
+.mwhy{font:400 11.5px/1.5 var(--psans);color:var(--tx3);margin:9px 0 0}
+
+/* Лента чата: реплика человека и текстовый ответ агента, без плашек и кнопок. */
+.feed{display:flex;flex-direction:column;gap:10px}
+.ubub{align-self:flex-end;max-width:75%;background:var(--bg3);color:var(--tx);
+  border-radius:11px 11px 4px 11px;padding:8px 12px;font:400 13px var(--psans)}
+.arep{align-self:flex-start;max-width:85%;padding:2px 4px;font:400 13px/1.55 var(--psans);color:var(--tx2)}
+/* Строка ввода чата: живые классы .cbox панели (значения из style.css).
+   Меню привязано к рамке выбора модели и всплывает над строкой, как
+   нативный список, открывающийся вверх. */
+.cbox{margin-top:12px;background:var(--bg1);border:1px solid var(--line2);border-radius:12px;padding:12px 14px}
+.cbox.open,.cbox:focus-within{border-color:var(--acc)}
+.tagrip{height:9px;margin:-4px 0 3px;position:relative}
+.tagrip::before{content:"";position:absolute;left:50%;top:3px;width:34px;height:3px;margin-left:-17px;border-radius:2px;background:var(--line2)}
+.cbox textarea{display:block;width:100%;min-height:44px;background:none;border:none;color:var(--tx);
+  font:400 13.5px/1.5 var(--psans);resize:none;outline:none;padding:0}
+.cbox .crow{display:flex;align-items:center;gap:10px;margin-top:8px;min-width:0}
+.cdbtn{flex:none;width:32px;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);
+  color:var(--tx2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.cselwrap{position:relative;flex:1 1 auto;min-width:0;display:flex}
+.cdsel{flex:1 1 auto;width:100%;min-width:0;height:34px;border:1px solid var(--line2);border-radius:9px;
+  background:var(--bg1);color:var(--tx2);font:500 12.5px var(--psans);padding:0 8px;cursor:pointer;outline:none;color-scheme:dark}
+.cselwrap .menu{position:absolute;bottom:calc(100% + 6px);left:0;width:min(360px,100%);margin:0;z-index:5}
+.cgo{flex:none;width:32px;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);
+  color:var(--tx2);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.csend{height:36px;padding:0 16px;border-radius:9px;font:600 13px var(--psans);background:var(--acc);
+  color:var(--acc-ink);border:0;cursor:pointer;white-space:nowrap}
+
+/* Строки моделей в меню: клик выбирает модель, flash подписывает состояние. */
+.hrow[data-model]{cursor:pointer;padding:4px 7px;margin:0 -7px;border-radius:7px}
+.hrow[data-model] .hname{flex:0 0 94px}
+.hrow[data-model]:hover,.hrow.on{background:var(--bg3)}
+
+/* Правила для согласования. */
+.rules{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.rules li{position:relative;padding-left:20px;color:var(--fg);max-width:74ch}
+.rules li::before{content:"-";position:absolute;left:0;color:var(--mut)}
+.rules .rmono{font:500 12px var(--pmono)}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">макет для согласования</p>
+  <h1>Ползунок глубины</h1>
+  <p class="lead">Ручной выбор effort при запуске работы по задаче: в меню кнопки запуска и в вопросе чата. Уровни те же пять, что у маппинга <code style="font:500 12.5px var(--mono)">agentctl pick</code>, позиция по умолчанию всегда видна на шкале.</p>
+
+  <section>
+    <h2>Лестница уровней</h2>
+    <p class="snote">Имена уровней едут в клиент флагом, поэтому подписи держат латиницу флага, а довод несёт русская строка рядом.</p>
+    <div class="lgrid">
+      <div class="lrow"><span class="lname">low</span><span class="ldue">рутина: размышлять не над чем</span><span class="lmap">маппинг: неопределённость 0</span></div>
+      <div class="lrow"><span class="lname">medium</span><span class="ldue">подход выбран: открыты детали</span><span class="lmap">маппинг: неопределённость 1-2</span></div>
+      <div class="lrow"><span class="lname">high</span><span class="ldue">развилки в деталях, пол яруса base</span><span class="lmap">маппинг: неопределённость 3</span></div>
+      <div class="lrow"><span class="lname">xhigh</span><span class="ldue">проектирование: решение ещё не найдено</span><span class="lmap">маппинг: LLD, «исполнять рано», XL</span></div>
+      <div class="lrow"><span class="lname">max</span><span class="ldue">полная глубина</span><span class="lmap">маппингом не выдаётся, только рукой</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Меню модели и глубины</h2>
+    <p class="snote">Одно меню на оба места: его открывает стрелка у «Выполнить» и клик по выбору модели в шапке чата. Строки моделей и ползунок живые: выберите flash, и блок глубины назовёт состояние словами.</p>
+    <div class="dpanel">
+      <div class="chead">строка задачи: полоса действий</div>
+      <div class="cbody">
+        <div class="strip">
+          <span class="btnrun"><span class="wide">Выполнить</span><span class="narrow">&#9662;</span></span>
+          <span class="btngost">Чат</span>
+        </div>
+        <div class="menu">
+          <p class="mlabel">Модель</p>
+          <div class="hrow" data-model="flash"><span class="hname">glm-5.3-flash</span><span class="hchip">mini, glm-code-2</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:62%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:18%"></span></span></span></span>
+          </div>
+          <div class="hrow on" data-model="base"><span class="hname">glm-5.3</span><span class="hchip">base, glm-code-2</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:62%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:18%"></span></span></span></span>
+          </div>
+          <div class="hrow" data-model="pro"><span class="hname">glm-5.3</span><span class="hchip">pro, claude-code</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:41%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:7%"></span></span></span></span>
+          </div>
+          <p class="mlabel" style="margin-top:8px">Глубина размышления</p>
+          <div class="eff" data-verdict="high">
+            <div class="effmarks">
+              <button class="effmark" style="--i:0" data-level="low">low</button>
+              <button class="effmark" style="--i:1" data-level="medium">medium</button>
+              <button class="effmark" style="--i:2" data-level="high">high</button>
+              <button class="effmark" style="--i:3" data-level="xhigh">xhigh</button>
+              <button class="effmark" style="--i:4" data-level="max">max</button>
+            </div>
+            <div class="efftrack">
+              <span class="effrail"></span><span class="efffill"></span>
+              <span class="effdot" style="--i:0"></span><span class="effdot" style="--i:1"></span><span class="effdot verd" style="--i:2"></span><span class="effdot" style="--i:3"></span><span class="effdot" style="--i:4"></span>
+              <span class="effthumb"></span>
+            </div>
+          </div>
+          <p class="mwhy effnote" hidden>glm-5.3-flash про effort в API не знает: уровень поедет меткой, глубину размышления не меняет</p>
+        </div>
+        <p class="mwhy" style="margin-top:10px">Кольцо на точке шкалы показывает вердикт pick: ползунок стоит на ней, пока руку не приложили</p>
+      </div>
+    </div>
+    <p class="cap">Выбор модели и глубины действует на один запуск. Контрол один и тот же в строке списка, в полосе действий задачи и у кнопки груминга черновика. Кнопка пуска подписью не меняется: выбранную глубину держат подсветка подписи и сам ползунок.</p>
+  </section>
+
+  <section>
+    <h2>Две GLM подписки</h2>
+    <p class="snote">Строка несёт подписку целиком, поэтому вторая GLM подписка добавляет свои строки: модель повторяется, чип называет подписку, полоски показывают квоты именно её. Отдельного шага выбора подписки не появляется.</p>
+    <div class="dpanel">
+      <div class="chead">строка задачи: то же меню при двух GLM подписках</div>
+      <div class="cbody">
+        <div class="menu" style="margin-top:0">
+          <p class="mlabel">Модель</p>
+          <div class="hrow" data-model="flash"><span class="hname">glm-5.3-flash</span><span class="hchip">mini, glm-code-2</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:62%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:18%"></span></span></span></span>
+          </div>
+          <div class="hrow on" data-model="base"><span class="hname">glm-5.3</span><span class="hchip">base, glm-code-2</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:62%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:18%"></span></span></span></span>
+          </div>
+          <div class="hrow" data-model="flash"><span class="hname">glm-5.3-flash</span><span class="hchip">mini, glm-code-2b</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:84%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:41%"></span></span></span></span>
+          </div>
+          <div class="hrow" data-model="base"><span class="hname">glm-5.3</span><span class="hchip">base, glm-code-2b</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:84%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:41%"></span></span></span></span>
+          </div>
+          <div class="hrow" data-model="pro"><span class="hname">glm-5.3</span><span class="hchip">pro, claude-code</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:41%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:7%"></span></span></span></span>
+          </div>
+          <p class="mlabel" style="margin-top:8px">Глубина размышления</p>
+          <div class="eff" data-verdict="high">
+            <div class="effmarks">
+              <button class="effmark" style="--i:0" data-level="low">low</button>
+              <button class="effmark" style="--i:1" data-level="medium">medium</button>
+              <button class="effmark" style="--i:2" data-level="high">high</button>
+              <button class="effmark" style="--i:3" data-level="xhigh">xhigh</button>
+              <button class="effmark" style="--i:4" data-level="max">max</button>
+            </div>
+            <div class="efftrack">
+              <span class="effrail"></span><span class="efffill"></span>
+              <span class="effdot" style="--i:0"></span><span class="effdot" style="--i:1"></span><span class="effdot verd" style="--i:2"></span><span class="effdot" style="--i:3"></span><span class="effdot" style="--i:4"></span>
+              <span class="effthumb"></span>
+            </div>
+          </div>
+          <p class="mwhy effnote" hidden>glm-5.3-flash про effort в API не знает: уровень поедет меткой, глубину размышления не меняет</p>
+        </div>
+      </div>
+    </div>
+    <p class="cap">Строки одной подписки стоят рядом, квоты видны в обеих сразу, и выбор подписки с запасом делается тем же кликом, что и выбор модели.</p>
+  </section>
+
+  <section>
+    <h2>Единое меню в чате</h2>
+    <p class="snote">Выбора уровня в ленте нет: меню всплывает из выбора модели в строке ввода, прижатое к его рамке, как нативный список, открывающийся вверх. В кадре оно показано открытым, повторный клик по выбору модели или клик мимо его сворачивает. Лента без плашек и кнопок, уровень поехавшей работы агент называет текстом.</p>
+    <div class="dpanel">
+      <div class="chead"><span>панель чата: DK-1525</span></div>
+      <div class="cbody">
+        <div class="feed">
+          <div class="ubub">выполни DK-1525</div>
+          <div class="arep">взял DK-1525: поедет на high, уровень едет вердиктом pick</div>
+        </div>
+        <div class="cbox open">
+          <div class="tagrip"></div>
+          <textarea rows="2" placeholder="Написать агенту..." aria-label="Реплика в чат"></textarea>
+          <div class="crow">
+            <button class="cdbtn" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="9" cy="9" r="4.5"/><path d="M9 1.5v3M9 13.5v3M1.5 9h3M13.5 9h3"/></svg></button>
+            <div class="cselwrap">
+              <div class="menu" id="chatmenu">
+                <p class="mlabel">Модель</p>
+          <div class="hrow" data-model="flash"><span class="hname">glm-5.3-flash</span><span class="hchip">mini, glm-code-2</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:62%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:18%"></span></span></span></span>
+          </div>
+          <div class="hrow on" data-model="base"><span class="hname">glm-5.3</span><span class="hchip">base, glm-code-2</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:62%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:18%"></span></span></span></span>
+          </div>
+          <div class="hrow" data-model="pro"><span class="hname">glm-5.3</span><span class="hchip">pro, claude-code</span>
+            <span class="hmeters"><span class="hmt">5ч<span class="meter"><span style="width:41%"></span></span></span><span class="hmt">нед<span class="meter"><span style="width:7%"></span></span></span></span>
+          </div>
+          <p class="mlabel" style="margin-top:8px">Глубина размышления</p>
+          <div class="eff" data-verdict="high">
+            <div class="effmarks">
+              <button class="effmark" style="--i:0" data-level="low">low</button>
+              <button class="effmark" style="--i:1" data-level="medium">medium</button>
+              <button class="effmark" style="--i:2" data-level="high">high</button>
+              <button class="effmark" style="--i:3" data-level="xhigh">xhigh</button>
+              <button class="effmark" style="--i:4" data-level="max">max</button>
+            </div>
+            <div class="efftrack">
+              <span class="effrail"></span><span class="efffill"></span>
+              <span class="effdot" style="--i:0"></span><span class="effdot" style="--i:1"></span><span class="effdot verd" style="--i:2"></span><span class="effdot" style="--i:3"></span><span class="effdot" style="--i:4"></span>
+              <span class="effthumb"></span>
+            </div>
+          </div>
+          <p class="mwhy effnote" hidden>glm-5.3-flash про effort в API не знает: уровень поедет меткой, глубину размышления не меняет</p>
+              </div>
+              <select class="cdsel" id="chatpick" aria-label="Модель агента">
+                <option title="mini, glm-code-2">glm-5.3-flash (glm-code-2)</option>
+                <option title="base, glm-code-2" selected>glm-5.3 (glm-code-2)</option>
+                <option title="pro, claude-code">glm-5.3 (claude-code)</option>
+              </select>
+            </div>
+            <button class="cgo" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 15 15"><path d="M4 2.5v10l8-5z" fill="currentColor"/></svg></button>
+            <button class="csend">Отправить</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cap">Композер повторяет живую разметку панели: .cbox с ручкой хвата, полем реплики, кнопкой прицела, нативным выбором модели, кнопкой продолжения и «Отправить». Меню привязано к рамке выбора модели: левый край на его левом крае, нижняя грань над его верхом, ширина не шире его бокса, открывается вверх. По составу меню совпадает с меню у кнопки запуска, и выбор действует на следующий запуск из этого разговора; слова в команде остаются сильнее меню.</p>
+  </section>
+
+  <section>
+    <h2>Правила для согласования</h2>
+    <ul class="rules">
+      <li>Выбор действует на один запуск, как выбор подписки; настройкой на экране или на задаче он не становится.</li>
+      <li>Строка меню это подписка, модель и ярус целиком, как в лестнице <span class="rmono">agentctl harness</span>. Подписок одного вида может быть несколько: модель повторяется по строке на каждую подписку, полоски в строке показывают квоты именно её, и выбор строки выбирает подписку вместе с моделью.</li>
+      <li>Позиция по умолчанию это вердикт <span class="rmono">agentctl pick</span>, она отмечена кольцом на шкале, и частый путь не прибавляет нажатий.</li>
+      <li><span class="rmono">max</span> маппингом не выдаётся и сейчас, ползунок лишь даёт до него дотянуться рукой.</li>
+      <li>Приоритет на запуске: слова в команде и ручной выбор в меню сильнее строки <span class="rmono">«Эффорт:»</span> файла задачи, строка сильнее вердикта; без них едут строка, а дальше вердикт, как сегодня.</li>
+      <li>На ярусе, где модель про effort не знает, ползунок остаётся, а подпись называет это словами: уровень поедет меткой.</li>
+      <li>Меню моделей и глубины одно на оба места: стрелка у кнопки запуска и клик по полю модели в шапке чата. В чате выбор больше нигде не делается: меню всплывает из поля, лента остаётся чистой, без плашек и кнопок.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+(function(){
+  var LEVELS=["low","medium","high","xhigh","max"];
+  function init(root){
+    var verdict=root.dataset.verdict||"high";
+    var sel0=root.dataset.sel||verdict;
+    var marks=root.querySelectorAll(".effmark");
+    var track=root.querySelector(".efftrack");
+    function set(lv){
+      var i=LEVELS.indexOf(lv);
+      if(i<0)return;
+      root.style.setProperty("--sel",i);
+      marks.forEach(function(b){b.classList.toggle("on",b.dataset.level===lv)});
+    }
+    marks.forEach(function(b){b.addEventListener("click",function(){set(b.dataset.level)})});
+    if(track)track.addEventListener("click",function(e){
+      var r=track.getBoundingClientRect();
+      var i=Math.round((e.clientX-r.left)/r.width*(LEVELS.length-1));
+      set(LEVELS[Math.max(0,Math.min(LEVELS.length-1,i))]);
+    });
+    set(LEVELS.indexOf(sel0)<0?verdict:sel0);
+  }
+  document.querySelectorAll(".eff").forEach(init);
+  document.querySelectorAll(".menu").forEach(function(menu){
+    var rows=menu.querySelectorAll(".hrow[data-model]");
+    if(!rows.length)return;
+    var note=menu.querySelector(".effnote");
+    rows.forEach(function(r){r.addEventListener("click",function(){
+      rows.forEach(function(x){x.classList.toggle("on",x===r)});
+      if(note)note.hidden=(r.dataset.model!=="flash");
+    })});
+  });
+  var picker=document.getElementById("chatpick");
+  var chatmenu=document.getElementById("chatmenu");
+  var chatbox=picker?picker.closest(".cbox"):null;
+  if(picker&&chatmenu){
+    picker.addEventListener("mousedown",function(ev){
+      ev.preventDefault();
+      chatmenu.hidden=!chatmenu.hidden;
+      if(chatbox)chatbox.classList.toggle("open",!chatmenu.hidden);
+      if(!chatmenu.hidden)picker.focus();
+    });
+    document.addEventListener("mousedown",function(ev){
+      if(chatmenu.hidden)return;
+      if(chatmenu.contains(ev.target)||picker.contains(ev.target))return;
+      chatmenu.hidden=true;
+      if(chatbox)chatbox.classList.remove("open");
+    });
+  }
+})();
+</script>

@@ -18,6 +18,11 @@ func TestHeadlessBacksOffWithoutCarrier(t *testing.T) {
 	// Адрес сессии зовущего тут не при чём: стенд играет голое окружение,
 	// и переменная живой сессии машины в него протекать не должна.
 	t.Setenv(sessions.SessionEnv, "")
+	// Связка DEVKIT_GROOM_* режет подъём раньше лестницы (GuardGroomRun)
+	// и протекает в стенд из живой сессии машины. Без гашения вместо
+	// проверки носителя приходит ошибка разбора.
+	t.Setenv("DEVKIT_GROOM_SOURCE", "")
+	t.Setenv("DEVKIT_GROOM_MODE", "")
 	q := s.req()
 	q.Adopt = 500 * time.Millisecond
 	res, err := Raise(q)
@@ -28,7 +33,7 @@ func TestHeadlessBacksOffWithoutCarrier(t *testing.T) {
 		t.Fatalf("голова поднялась без носителя:\n%s", s.why(res))
 	}
 	if _, err := os.Stat(filepath.Join(s.home, "runner.log")); !os.IsNotExist(err) {
-		t.Fatalf("оболочка спавннулась без носителя:\n%s", s.why(res))
+		t.Fatalf("оболочка спавнулась без носителя:\n%s", s.why(res))
 	}
 	if !strings.Contains(strings.Join(res.Lines, "\n"), "headless без носителя") {
 		t.Fatalf("лестница не назвала отступ:\n%s", s.why(res))

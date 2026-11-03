@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -16,7 +17,7 @@ import (
 
 var startReservedFn = startReserved
 
-var cloudStartWatch func(string, <-chan struct{})
+var cloudStartWatch func(string, *exec.Cmd) func()
 
 func startManaged(root, tree, id, sess string, command func(string) string) error {
 	if id == "" {
@@ -29,6 +30,13 @@ func startManaged(root, tree, id, sess string, command func(string) string) erro
 // startReserved runs tmux in a guardian which retains the shared cloud locks
 // until agentctl takes its own locks or the new session disappears.
 func startReserved(root, tree, id, sess string, command func(string) string) error {
+	return startReservedContext(context.Background(), root, tree, id, sess, command)
+}
+
+func startReservedContext(ctx context.Context, root, tree, id, sess string, command func(string) string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	roots := []string{root, tree, stage.MainRoot(tree)}
 	seen := map[string]bool{}
 	var locks []*draftmeta.CloudLock
@@ -119,6 +127,10 @@ while [ ! -f "$d/seen" ] && [ "$n" -lt 30 ]; do /bin/sleep 1; n=$((n+1)); done
 	for _, l := range locks {
 		cmd.ExtraFiles = append(cmd.ExtraFiles, l.File())
 	}
+	var own func()
+	if cloudStartWatch != nil {
+		own = cloudStartWatch(dir, cmd)
+	}
 	if err = cmd.Start(); err != nil {
 		os.RemoveAll(dir)
 		for _, v := range locks {
@@ -132,13 +144,16 @@ while [ ! -f "$d/seen" ] && [ "$n" -lt 30 ]; do /bin/sleep 1; n=$((n+1)); done
 		l.File().Close()
 	}
 	log.Printf("cloud-start task=%s session=%s guardian=%d state=%s", id, sess, cmd.Process.Pid, filepath.Join(dir, "state"))
-	done := make(chan struct{})
-	if cloudStartWatch != nil {
-		cloudStartWatch(dir, done)
+	if own != nil {
+		own()
+	} else {
+		go cmd.Wait()
 	}
-	go func() { cmd.Wait(); close(done) }()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		data, err := os.ReadFile(filepath.Join(dir, "status"))
 		if err == nil {
 			code, e := strconv.Atoi(strings.TrimSpace(string(data)))

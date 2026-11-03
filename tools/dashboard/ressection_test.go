@@ -335,6 +335,12 @@ func TestStaticResBarsFollowQuotaRows(t *testing.T) {
 		if !cssSubject(rule[0], "meter") {
 			continue
 		}
+		// Полоска остатка в строке меню тоньше карточной нарочно (DK-1570):
+		// меню везёт модели, квоты и ползунок глубины, и карточная толщина
+		// тянула бы строку вниз мимо макета.
+		if rule[0] == ".hmt .meter" {
+			continue
+		}
 		if got := declOf(rule[1], "height"); got != "" && got != h {
 			t.Errorf("линия правила %s выше или ниже квотной подложки: %s против %s", rule[0], got, h)
 		}

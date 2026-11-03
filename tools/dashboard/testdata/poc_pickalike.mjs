@@ -1,14 +1,15 @@
-// Стенд единообразия выбора запуска (POC DK-397, ветка poc-chat).
+// Стенд единообразия выбора запуска (POC DK-397, ветка poc-chat, пересобран
+// в DK-1570).
 //
 // «Выбор яруса и подписки различается по секциям: у задач в Check только ярус,
 // у задач в работе ещё и подписка» (замечание пользователя). Разошлись они
 // из-за прикреплённой подписки: строку Check закрывают той, которой её вели, и
 // список подписок у неё снимался целиком. Прикрепление осталось, но правит оно
-// теперь умолчание, а не состав списка: вопросов в меню два и там, и там, а
-// подсвечена в списке та подписка, на которую уйдёт запуск от главной кнопки.
+// теперь умолчание, а не состав меню: разделы одни и те же и там, и там, а
+// подсвечена строка той подписки, на которую уйдёт запуск от главной кнопки.
 //
-// Заодно сторожится состав самой строки подписки: одна полоса, имя и два
-// процента остатка, и ничего больше.
+// Строка меню с DK-1570 называет модель, ярус и подписку разом, а глубина
+// размышления стоит ползунком ниже.
 //
 // Зовётся: node testdata/poc_pickalike.mjs static/app.js
 
@@ -18,13 +19,14 @@ import { makeSandbox, settle, dump, byClass, allByClass, fail, appPathArg }
 const app = appPathArg();
 
 const harnessOne = { name: "подписка-раз", default: true,
-  models: [{ tier: "base" }, { tier: "pro" }, { tier: "max" }] };
-const harnessTwo = { name: "подписка-два", models: [{ tier: "pro" }] };
+  models: [{ tier: "base", model: "sonnet" }, { tier: "pro", model: "opus" },
+    { tier: "max", model: "fable" }] };
+const harnessTwo = { name: "подписка-два", models: [{ tier: "pro", model: "glm-5.3" }] };
 
 const board = { prefix: "XR", sections: [
   { key: "check", title: "Check", rows: [
-    // Задачу вели второй подпиской: закрытие пойдёт ею же, и в списке
-    // подсвечена обязана быть она, а не машинное умолчание.
+    // Задачу вели второй подпиской: закрытие пойдёт ею же, и в меню подсвечена
+    // обязана быть её строка, а не машинное умолчание.
     { id: "XR-1", title: "на приёмке", sect: "check", harness: harnessTwo.name,
       accept: "human" }] },
   { key: "backlog", title: "Backlog", rows: [
@@ -69,40 +71,43 @@ const pickOf = (id) => {
 const check = pickOf("XR-1");
 const back = pickOf("XR-2");
 
-// --- вопросов в обоих меню поровну, и это те же вопросы ---
+// --- разделы в обоих меню одни и те же ---
 const asks = (box) => allByClass(box, "hph").map((n) => dump(n).trim());
 if (asks(check).join(" | ") !== asks(back).join(" | ")) {
-  fail("вопросы разные: Check спрашивает «" + asks(check).join(", ") +
+  fail("разделы разные: Check спрашивает «" + asks(check).join(", ") +
     "», очередь «" + asks(back).join(", ") + "»");
 }
-if (asks(check).length !== 2) {
-  fail("вопросов в меню не два: " + asks(check).join(", "));
-}
-if (!asks(check).includes("Уровень модели")) {
-  fail("подпись полосы моделей не «Уровень модели»: " + asks(check).join(", "));
+if (JSON.stringify(asks(check)) !== JSON.stringify(["Модель", "Глубина размышления"])) {
+  fail("разделы меню не «Модель» и «Глубина размышления»: " + asks(check).join(", "));
 }
 
-// --- список подписок стоит у обеих строк ---
+// --- строки подписок стоят у обеих строк, полоса уровней уехала в чипы ---
 for (const [id, box] of [["XR-1", check], ["XR-2", back]]) {
   const rows = allByClass(box, "hrow");
-  if (rows.length !== 2) {
-    fail("в меню строки " + id + " подписок " + rows.length + ", а на машине две");
+  if (rows.length !== 4) {
+    fail("в меню строки " + id + " строк лестницы " + rows.length + ", а на машине четыре");
   }
-  if (!allByClass(box, "tpick").length) {
-    fail("в меню строки " + id + " нет полосы уровней модели");
+  if (allByClass(box, "tpick").length) {
+    fail("в меню строки " + id + " осталась полоса отдельных уровней: " + dump(box));
+  }
+  const marks = allByClass(box, "effmark").map((b) => dump(b).trim());
+  if (marks.length !== 5) {
+    fail("в меню строки " + id + " шкала глубины не из пяти ступеней: " + JSON.stringify(marks));
   }
 }
 
 // --- подсвечена та подписка, на которую уйдёт запуск ---
 const lit = (box) => allByClass(box, "hrow")
   .filter((r) => String(r.className).split(" ").includes("on"))
-  .map((r) => dump(byClass(r, "hname")).trim());
-if (lit(check).join(",") !== harnessTwo.name) {
+  .map((r) => dump(r).replace(/\s+/g, " ").trim());
+if (lit(check).join(",") !== "glm-5.3 pro, подписка-два") {
   fail("у строки Check подсвечена не своя подписка: " + lit(check).join(",") +
     ", задачу вели на " + harnessTwo.name);
 }
-if (lit(back).join(",") !== harnessOne.name) {
-  fail("у строки очереди подсвечена не подписка по умолчанию: " + lit(back).join(","));
+// Очедь едет вердиктом: подсвеченной строки нет, выбор остаётся за агентом
+// назначения.
+if (lit(back).length) {
+  fail("у строки очереди подсвечена подписка без выбора человека: " + lit(back).join(","));
 }
 
 // --- приписки про раскладку машины нет ни в одном меню ---
@@ -116,25 +121,28 @@ for (const [id, box] of [["XR-1", check], ["XR-2", back]]) {
   }
 }
 
-// --- строка подписки это одна полоса: имя и два процента ---
+// --- строка модели: имя, чип и полоски остатка, возраст в подсказке ---
 {
   const first = allByClass(back, "hrow")[0];
-  if (byClass(first, "chip")) fail("чип вернулся в строку подписки: " + dump(first));
-  if (byClass(first, "meter") || byClass(first, "qrow")) {
-    fail("полоска-градусник вернулась в строку подписки: " + dump(first));
+  if (dump(first).replace(/\s+/g, " ").trim() !== "sonnet base, подписка-раз нед") {
+    fail("строка модели не «имя, чип и полоски»: " + dump(first));
   }
-  const nums = allByClass(first, "hq");
-  if (nums.length !== 2) fail("в строке подписки не два числа остатка: " + dump(first));
-  if (!dump(first).includes("52%") || !dump(first).includes("7%")) {
-    fail("строка подписки молчит про остаток: " + dump(first));
-  }
-  if (dump(first).includes("до 31") || dump(first).includes("снимок 3м назад")) {
-    fail("дата сброса или возраст снимка вернулись в строку: " + dump(first));
+  const widths = allByClass(first, "meter").map((m) => m.children[0].style.width);
+  if (JSON.stringify(widths) !== JSON.stringify(["52%"])) {
+    fail("недельная полоска не доехала до строки: " + JSON.stringify(widths));
   }
   if (!String(first.title || "").includes("снимок 3м назад")) {
     fail("подсказка строки потеряла возраст снимка: " + first.title);
   }
+  // Вторая подписка без снимка: полосок нет, а подсказка говорит почему.
+  const bare = allByClass(back, "hrow").find((r) => dump(r).includes("подписка-два"));
+  if (allByClass(bare, "meter").length) {
+    fail("подписка без снимка рисует полоски: " + dump(bare));
+  }
+  if (!String(bare.title || "").includes("снимка нет")) {
+    fail("подписка без снимка молчит о причине: " + bare.title);
+  }
 }
 
-console.log("выбор запуска: вопросы те же в Check и в очереди, подсвечена подписка запуска, " +
-  "строка подписки в одну полосу");
+console.log("выбор запуска: разделы те же в Check и в очереди, подсвечена подписка запуска, " +
+  "строка модели называет ярус и подписку");

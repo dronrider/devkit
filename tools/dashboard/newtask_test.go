@@ -814,7 +814,7 @@ func TestStaticDraftSaveButtons(t *testing.T) {
 		// ярусом выбирают там же, той же формой, что у экрана записи.
 		"tiers: harnessTiers(),",
 		`verb: (v) => "Сохранить и " + draftModeVerb(v)`,
-		"onSave: (harness, tier, mode) => { saveDraft(mode, harness, tier); }",
+		"onSave: (harness, tier, mode, effort) => { saveDraft(mode, harness, tier, effort); }",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("пара кнопок записи собрана не тем блоком: нет %q", want)
@@ -842,12 +842,13 @@ func TestStaticDraftSaveButtons(t *testing.T) {
 		}
 	}
 	// Разбор поднимается той же ручкой, что и с накопителя, уводит на экран
-	// записи с ходом разбора и уносит с собой выбранный исход, подписку и ярус.
+	// записи с ходом разбора и уносит с собой выбранный исход, подписку, ярус
+	// и глубину.
 	made := funcBody(t, text, "function renderNew(")
-	if !strings.Contains(made, `groomDraft(project, done.id, project + "/draft/" + done.id, harness || "", tier || "", mode)`) {
+	if !strings.Contains(made, `groomDraft(project, done.id, project + "/draft/" + done.id, harness || "", tier || "", mode, effort)`) {
 		t.Error("«Сохранить и ...» не поднимает разбор с переходом на экран записи и с выбранным исходом")
 	}
-	if !strings.Contains(made, "saveDraft(mode, harness, tier)") {
+	if !strings.Contains(made, "saveDraft(mode, harness, tier, effort)") {
 		t.Error("«Сохранить и ...» не передаёт выбранный исход, подписку и ярус")
 	}
 	// Подпись кнопки следует выбору меню без похода на сервер: рубеж живёт
@@ -869,7 +870,7 @@ func TestStaticDraftScreenModePick(t *testing.T) {
 	for _, want := range []string{
 		"let groomMode = DRAFT_MODE_GROOM;",
 		`verb: (v) => (v === DRAFT_MODE_RUN ? "Выполнить" : "Грумить")`,
-		"groomDraft(project, id, \"\", harness, tier, mode)",
+		"groomDraft(project, id, \"\", harness, tier, mode, effort)",
 		"text.body.orderRun",
 	} {
 		if !strings.Contains(made, want) {
@@ -879,17 +880,17 @@ func TestStaticDraftScreenModePick(t *testing.T) {
 }
 
 // Группа исхода записи это третья полоса меню составной кнопки, той же
-// формой, что и полоса ярусов: подпись меню не закрывает и работу не
+// формой, что и остальные полосы: подпись меню не закрывает и работу не
 // запускает, а руководит только переименованием широкой половины (DK-1043,
-// второй круг). Меню остаётся раскрываемым и тогда, когда выбирать подписку и
-// ярус не из чего, иначе выбор исхода было бы неоткуда сделать.
+// второй круг). Стрелка меню стоит у кнопки всегда: ползунок глубины есть
+// всякой работе, и вырожденного входа без выбора больше нет (DK-1570).
 func TestStaticRunModeGroup(t *testing.T) {
 	text := readFile(t, filepath.Join("static", "app.js"))
 	pick := funcBody(t, text, "function runPickBody(")
 	for _, want := range []string{
 		`el("span", "hph", "Что сделать с записью")`,
 		"opts.modes || []",
-		"opts.modeTell(value)",
+		"opts.modeTell(pair[0])",
 	} {
 		if !strings.Contains(pick, want) {
 			t.Errorf("группа исхода записи собрана не тем блоком: нет %q", want)
@@ -898,7 +899,7 @@ func TestStaticRunModeGroup(t *testing.T) {
 	ctl := funcBody(t, text, "function runControl(")
 	for _, want := range []string{
 		"const modeList = (modes && modes.list) || [];",
-		"!pickHarness && tierList.length < 2 && !modeList.length",
+		"modes: modeList,",
 		"wide.rename(modes.verb(value))",
 	} {
 		if !strings.Contains(ctl, want) {

@@ -93,7 +93,7 @@ const last = () => calls[calls.length - 1];
     if (box.children[2] !== more) {
       fail("три точки стоят не третьими: " + row.id + ", " + dump(box));
     }
-    if (!String(more.attrs["aria-label"] || "").includes("одписк")) {
+    if (!String(more.attrs["aria-label"] || "").includes("Модель и глубина")) {
       fail("три точки не называют выбор читалке экрана: " + more.attrs["aria-label"]);
     }
   }

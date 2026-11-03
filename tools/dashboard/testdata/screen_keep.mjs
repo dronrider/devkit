@@ -80,7 +80,7 @@ function makeNode(tag) {
     clientHeight: 0,
     children: [],
     parentElement: null,
-    style: {},
+    style: { setProperty(name, value) { this[String(name)] = String(value); } },
     dataset: {},
     handlers: {},
     listenOpts: {},
@@ -531,8 +531,10 @@ function works() {
 // Подписки машины и то, чем их назвали при запуске: выбор в кнопке проверяется
 // по телу запроса, а не по нарисованному, потому что ломается ровно оно.
 // Имена выдуманные: их в клиенте нет ни одного, они приходят ответом ручки.
-const harnessOne = { name: "подписка-раз", default: true, bin: "клиент-раз" };
-const harnessTwo = { name: "подписка-два", default: false, bin: "клиент-два" };
+const harnessOne = { name: "подписка-раз", default: true, bin: "клиент-раз",
+  models: [{ tier: "base", model: "модель-раз" }] };
+const harnessTwo = { name: "подписка-два", default: false, bin: "клиент-два",
+  models: [{ tier: "pro", model: "модель-два" }] };
 let harnessList = [harnessOne, harnessTwo];
 let harnessNote = "";
 const started = [];
@@ -552,8 +554,8 @@ function quotaBody() {
       age: "3м",
       stale: false,
       buckets: [
+        { name: "window5h", used_pct: 38 },
         { name: "week_all", used_pct: 52 },
-        { name: "week_max", used_pct: 50 },
       ],
     }],
   };
@@ -1109,10 +1111,11 @@ const pop = byClass(grp, "rmenu");
 if (!pop || !pop.hidden) fail("выбор подписки открыт до нажатия");
 more.handlers.click({ stopPropagation: () => {} });
 if (pop.hidden) fail("три точки не открыли выбор подписки");
-// Шапка и две подписки. Подвала под списком нет вовсе: он объяснял, откуда
+// Шапки моделей и глубины. Подвала под списком нет вовсе: он объяснял, откуда
 // список и надолго ли выбор, и пользователь забраковал его прямой оценкой.
-if (!dump(byClass(pop, "hph")).includes("На какой подписке запустить")) {
-  fail("у списка подписок нет шапки: " + dump(pop));
+const heads = dump(pop);
+if (!heads.includes("Модель") || !heads.includes("Глубина размышления")) {
+  fail("у меню запуска нет шапок модели и глубины: " + heads);
 }
 if (byClass(pop, "hfoot")) fail("подвал списка вернулся: " + dump(pop));
 if (dump(pop).includes("agentctl harness")) {
@@ -1120,73 +1123,95 @@ if (dump(pop).includes("agentctl harness")) {
 }
 const hrows = allByClass(pop, "hrow");
 if (hrows.length !== 2) {
-  fail("в списке подписок " + hrows.length + " строк, ждал две: " + dump(pop));
+  fail("в списке моделей " + hrows.length + " строк, ждал две: " + dump(pop));
 }
-if (!String(hrows[0].className).includes("on") || String(hrows[1].className).includes("on")) {
-  fail("подписка запуска в списке не подсвечена: " + hrows.map((r) => r.className).join(" | "));
+// Умолчание задачи называет вердикт, и строки стоят без подсветки: своя пара
+// подсвечивается только выбором человека (DK-1570).
+if (hrows.some((h) => String(h.className).includes("on"))) {
+  fail("без выбора человека подсвечена строка моделей: " + dump(pop));
 }
-// Строка подписки это одна полоса: имя и два процента остатка, и ничего
-// больше. Прежняя везла ещё чип «по умолчанию», две полоски-градусника с
-// датами сброса и возраст снимка, и меню от этого раздувалось вчетверо
-// (замечание пользователя). Признак умолчания остался подсветкой, а даты с
-// возрастом ушли в подсказку строки.
-if (byClass(hrows[0], "chip")) fail("чип вернулся в строку подписки: " + dump(hrows[0]));
-if (byClass(hrows[0], "qrow") || byClass(hrows[0], "meter")) {
-  fail("полоска-градусник вернулась в строку подписки: " + dump(hrows[0]));
+// Строка меню это модель, чип «ярус, подписка» и две полоски остатка, окна и
+// недели. Возраст снимка стоит подсказкой, а не текстом строки.
+if (!byClass(hrows[0], "hchip")) fail("у строки модели нет чипа яруса и подписки: " + dump(hrows[0]));
+const meters = allByClass(hrows[0], "hmt");
+if (meters.length !== 2) {
+  fail("в строке модели не две полоски остатка: " + dump(hrows[0]));
+}
+// Проценты со строки ушли в ширину полосок: текстом в строке только подписи
+// окон, а заполнение считается по данным снимка.
+for (const m of meters) {
+  const fill = byClass(m, "meter");
+  if (!fill || !fill.children.length) fail("полоска остатка без линии: " + dump(m));
+}
+const weekFill = meters[1] && byClass(meters[1], "meter");
+if (!weekFill || String(weekFill.children[0].style.width) !== "52%") {
+  fail("заполнение недели не приехало из снимка: " + dump(hrows[0]));
 }
 if (dump(hrows[0]).includes("снимок 3м назад")) {
-  fail("возраст снимка вернулся в строку подписки: " + dump(hrows[0]));
+  fail("возраст снимка вернулся текстом в строку: " + dump(hrows[0]));
 }
-const quotas = allByClass(hrows[0], "hq");
-if (quotas.length !== 2) {
-  fail("в строке подписки не два числа остатка: " + dump(hrows[0]));
-}
-if (!dump(hrows[0]).includes("52%") || !dump(hrows[0]).includes("week_all")) {
-  fail("строка подписки молчит про остаток: " + dump(hrows[0]));
-}
-// Подсказка везёт всё, что ушло со строки: возраст снимка и дату сброса.
+// Подсказка везёт то, что текстом в строку не идёт: возраст снимка и подписку.
 if (!String(hrows[0].title || "").includes("снимок 3м назад")) {
   fail("подсказка строки потеряла возраст снимка: " + hrows[0].title);
 }
-if (!dump(hrows[1]).includes("снимка нет")) {
-  fail("строка без снимка квоты об этом молчит: " + dump(hrows[1]));
+// Строка без снимка полосок не рисует, а причина стоит в подсказке словами.
+if (allByClass(hrows[1], "hmt").length) {
+  fail("без снимка строка рисует полоски остатка: " + dump(hrows[1]));
 }
-if (!dump(pop).includes(harnessTwo.name)) {
-  fail("список подписок не называет имён: " + dump(pop));
+if (!String(hrows[1].title || "").includes("снимка нет")) {
+  fail("строка без снимка квоты молчит о причине: " + hrows[1].title);
 }
+if (!dump(pop).includes("модель-раз") || !dump(pop).includes(harnessTwo.name)) {
+  fail("список не называет ни моделей, ни подписок: " + dump(pop));
+}
+// Выбор строки не запускает работу и не закрывает меню: следом выбирают
+// глубину, и только запуск тратит обе пары (DK-1570).
+const was = started.length;
 hrows[1].handlers.click({ stopPropagation: () => {} });
 await settle();
-if (started[started.length - 1].harness !== harnessTwo.name) {
-  fail("строка списка подняла работу не на своей подписке: " +
-    JSON.stringify(started[started.length - 1]));
+if (started.length !== was) {
+  fail("выбор строки сам поднял работу: " + JSON.stringify(started.slice(was)));
 }
-if (!pop.hidden) fail("список подписок остался открытым после выбора");
+if (pop.hidden) fail("меню закрылось после выбора модели: дальше выбирают глубину");
+allByClass(pop, "effmark").find((b) => dump(b).trim() === "xhigh")
+  .handlers.click({ stopPropagation: () => {} });
+byClass(grp, "rmain").handlers.click({ stopPropagation: () => {} });
+await settle();
+const picked = started[started.length - 1];
+if (picked.harness !== harnessTwo.name || picked.tier !== "pro") {
+  fail("выбранная модель подняла работу не своей парой: " + JSON.stringify(picked));
+}
+if (picked.effort !== "xhigh") {
+  fail("выбранная глубина не доехала до запуска: " + JSON.stringify(picked));
+}
 
-// Подписка на машине одна: стрелки нет вовсе, а причина висит подсказкой.
-// Список не прочитан: то же самое. Подписку в запрос не ставит ни тот, ни
-// другой случай: без выбора человека её называет вердикт запуска (DK-1292).
+// Одна подписка и непрочитанный список не прячут стрелку: ползунок глубины
+// есть всякой работе, и вход остаётся (DK-1570). Подписку в запрос не ставит
+// ни тот, ни другой случай: без выбора человека её называет вердикт запуска
+// (DK-1292), а причина пустого списка стоит словами в самом меню.
 running = false;
-for (const [list, note, why] of [
-  [[harnessOne], "", "подписка на машине одна"],
-  [[], "agentctl не нашёлся", "agentctl не нашёлся"],
+for (const [list, note, wantRows, why] of [
+  [[harnessOne], "", 1, "подписка на машине одна"],
+  [[], "agentctl не нашёлся", 0, "список подписок не прочитан"],
 ]) {
   harnessList = list;
   harnessNote = note;
   await sandbox.refresh();
   await settle();
   const one = find(groups, "XR-6");
-  if (byClass(one, "more2")) fail("при одной подписке в строке осталась стрелка выбора: " + dump(one));
-  if (byClass(one, "split")) fail("кнопка запуска при " + why + " обёрнута в split: " + dump(one));
-  // Выбирать нечего, и меню строке не нужно: под тремя точками остаётся один
-  // чат, а вот выбора подписки с ярусом там уже нет.
-  if (allByClass(one, "hrow").length) {
-    fail("при " + why + " в меню строки предложен выбор подписки: " + dump(one));
+  const dots = byClass(one, "rdots");
+  if (!dots) fail("при " + why + " три точки выбора пропали: " + dump(one));
+  dots.handlers.click({ stopPropagation: () => {} });
+  const sheet = byClass(one, "rmenu");
+  if (!sheet || sheet.hidden) fail("при " + why + " меню не открылось: " + dump(one));
+  if (allByClass(sheet, "hrow").length !== wantRows) {
+    fail("при " + why + " меню рисует не " + wantRows + " строк моделей: " + dump(sheet));
+  }
+  if (note && !dump(sheet).includes(note)) {
+    fail("меню молчит про причину пустого списка: " + dump(sheet));
   }
   const only = button(one, "Выполнить");
-  if (!only) fail("строка осталась без кнопки запуска: " + dump(one));
-  if (!String(only.title).includes(why)) {
-    fail("причина отсутствия выбора не названа: " + JSON.stringify(only.title) + ", ждал про " + why);
-  }
+  if (!only) fail("кнопка запуска пропала при " + why + ": " + dump(one));
   only.handlers.click({ stopPropagation: () => {} });
   await settle();
   const sent = started[started.length - 1];

@@ -714,13 +714,16 @@ function runCatchup() {
 // agentctl pick, а без вердикта подписку по умолчанию. afterOk это хэш
 // экрана этой работы: заполнен на экране задачи, пуст на строке списка,
 // где человек нарочно остаётся на доске (DK-316).
-async function startRun(project, id, harness, afterOk, tier) {
+async function startRun(project, id, harness, afterOk, tier, effort) {
   sayResult("запуск " + id + (harness ? " на подписке " + harness : "") + "...");
   const body = { id };
   if (harness) body.harness = harness;
   // Ярус едет только выбранный рукой: пустое поле это «как назначено», и ярус
   // тогда называет вердикт agentctl pick на стороне сервера.
   if (tier) body.tier = tier;
+  // Глубина размышления едет тем же правилом: пустое поле это вердикт, а
+  // выбранный рукой уровень перебивает и его, и строку «Эффорт:» файла задачи.
+  if (effort) body.effort = effort;
   const r = await api("/api/projects/" + encodeURIComponent(project) + "/runs",
     { method: "POST", body });
   const said = r.body.message || r.body.error || "";
@@ -1661,106 +1664,6 @@ function harnessDefault() {
   return ((list.find((h) => h.default) || list[0] || {}).name) || "";
 }
 
-// Куда поедет работа и есть ли из чего выбирать. Молчания тут нет ни в одном
-// случае: и подписка на машине одна, и непрочитанный список, и живой выбор
-// названы словами, потому что нажимают кнопку не глядя в список (макет «11
-// Подписка при запуске», фрейм состояний).
-function harnessWhy() {
-  const list = harnesses();
-  if (!list.length) {
-    return (harnessView && harnessView.note) || "список подписок не прочитан: запуск идёт как раньше";
-  }
-  if (list.length === 1) return "поедет на " + list[0].name + ", подписка на машине одна";
-  return "без выбора поедет на подписке вердикта запуска, подписок на машине " + numWord(list.length);
-}
-
-// Число подписок словом: «подписок на машине две» читается как речь, а цифра в
-// подписи рядом с кнопкой смотрится счётчиком.
-const NUM_WORDS = ["ноль", "одна", "две", "три", "четыре", "пять"];
-
-function numWord(n) {
-  return NUM_WORDS[n] || String(n);
-}
-
-// Строка списка подписок: одна полоса на подписку, и на ней имя с остатком
-// квоты двумя числами. Прежняя строка везла имя, чип «по умолчанию», две
-// полоски-градусника с датами сброса и возраст снимка, то есть четыре яруса на
-// каждую подписку: «блок выбора подписки в меню слишком жирный, дублирует блок
-// на главной странице» (замечание пользователя). Блок квоты в колонке никуда
-// не делся, и полное состояние читают там; тут выбирают, чем запустить, и для
-// этого хватает двух процентов.
-//
-// pin это подписка, на которой пойдёт запуск от главной кнопки. Подсвечена в
-// списке именно она, а не машинное умолчание: подсветка отвечает на вопрос
-// «что будет, если не выбирать», и у задачи Check ответ свой (её вели своей
-// подпиской). Всё, что ушло со строки (даты сброса, возраст снимка, признак
-// умолчания), осталось подсказкой по наведению: место оно не занимает.
-// harnessRowPlan ставит на полосу подписки с пакетом кредитов процент с темпом
-// и траты окна: два числа, как у процентов прочих подписок, только второе не
-// процент окна, а потраченное кредитами.
-function harnessRowPlan(row, said, p) {
-  const one = el("span", "hq");
-  one.append(el("em", "", "подписка"));
-  one.append(el("b", "", p.pct_text || (p.pct.toFixed(3) + "%")));
-  row.append(one);
-  said.push("подписка " + (p.pct_text || p.pct.toFixed(3) + "%") +
-    (p.tempo ? ", темп " + p.tempo : ""));
-  const two = el("span", "hq");
-  two.append(el("em", "", "за " + (p.window || "5ч")));
-  two.append(el("b", "", p.spent_text || fmtCred(p.spent_5h)));
-  row.append(two);
-  said.push("за " + (p.window || "5ч") + " " + (p.spent_text || fmtCred(p.spent_5h)) +
-    ", осталось " + (p.pair_text || fmtCred(p.left)));
-}
-
-function harnessRow(h, pin) {
-  const own = pin ? h.name === pin : Boolean(h.default);
-  const row = el("button", "hrow" + (own ? " on" : ""));
-  row.type = "button";
-  row.append(el("b", "hname", h.name));
-  const said = [h.name + (h.default ? ", подписка по умолчанию" : "")];
-  const snap = quotaEvery(quotaView).find((q) => q.name === h.name) || null;
-  if (snap && snap.plan) {
-    harnessRowPlan(row, said, snap.plan);
-    if (snap.age) said.push("снимок " + snap.age + " назад");
-    else if (snap.stale) said.push(snap.note || "возраст снимка неизвестен");
-    withTip(row, said.join("; "));
-    return row;
-  }
-  const buckets = snap ? quotaShowBuckets(snap).slice(0, 2) : [];
-  for (const b of buckets) {
-    const one = el("span", "hq");
-    if (b.is_rub) {
-      one.append(el("em", "", rubWord(b.name)));
-      one.append(el("b", "", (b.rub || 0) + " руб"));
-      row.append(one);
-      said.push(rubWord(b.name) + " " + (b.rub || 0) + " руб");
-      continue;
-    }
-    // Короткое имя бакета стоит у числа: без него два процента подряд не
-    // говорят, какой из них про общий лимит, а какой про окно.
-    one.append(el("em", "", bucketWord(b.name)));
-    one.append(el("b", "", b.used_pct + "%"));
-    row.append(one);
-    const when = quotaWhen(b.reset);
-    said.push(bucketWord(b.name) + " " + b.used_pct + "%" +
-      (when ? (b.expired ? ", окно сбросилось " : ", сброс ") + when : ""));
-  }
-  // Остатка нет вовсе: молчание тут неотличимо от нуля, и причина названа
-  // словами прямо в строке.
-  if (!buckets.length) {
-    // Пометка неизвестного остатка остаётся: нарисованный ноль читался бы как
-    // «квота цела», а её тут просто не снимали.
-    row.append(el("span", "hq hnote stale", (snap && snap.note) || "снимка квоты нет"));
-  } else if (snap && snap.age) {
-    said.push("снимок " + snap.age + " назад");
-  } else if (snap && snap.stale) {
-    said.push(snap.note || "возраст снимка неизвестен");
-  }
-  withTip(row, said.join("; "));
-  return row;
-}
-
 // Кнопка запуска с выбором подписки (макет «Кнопка запуска», LLD DK-328,
 // решение 3). Широкая часть поднимает работу на подписке по умолчанию, то есть
 // частый путь не подорожал ни на одно нажатие; узкая открывает список, и
@@ -1790,75 +1693,215 @@ function checkTip(row) {
   return how ? who + " " + how : who;
 }
 
-// Тело выбора запуска: строки подписок, полоса ярусов и подвал под ними. Живёт
-// оно в двух местах, во всплывашке составной кнопки и в меню строки доски, и
-// собрано одной функцией нарочно: разъехавшись, эти два выбора отвечали бы на
-// один вопрос по-разному.
+// Уровни глубины размышления: пять ступеней от low до max. Список общий с
+// agentctl pick, а max маппинг там не выдаётся вовсе, и дотягивается до него
+// только рука на ползунке.
+const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
+
+// Проценты окна и недели для строки модели, вместе со свежестью снимка. Число
+// в строку не идёт: подпись метра это окно, а точный процент и даты сброса
+// читаются в блоке квоты. Снимка нет, и метр не рисуется вовсе: пустая полоска
+// читалась бы нулём, а ноль у остатка это «лимит исчерпан».
+function modelMeterPcts(harnessName) {
+  const out = { win: null, week: null, age: "", stale: "" };
+  const snap = quotaEvery(quotaView).find((q) => q.name === harnessName) || null;
+  // Съёмщика у подписки нет, и молчать об этом значило бы показать строку без
+  // причины пустых полосок: подсказка называет это словами из блока квот.
+  if (!snap || snap.missing) {
+    out.stale = (snap && snap.note) || "снимка нет";
+    return out;
+  }
+  if (snap.plan) out.win = snap.plan.pct;
+  for (const b of snap.buckets || []) {
+    if (typeof b.used_pct !== "number") continue;
+    if (/^window5h/.test(b.name)) out.win = b.used_pct;
+    if (/^week_all/.test(b.name)) out.week = b.used_pct;
+  }
+  if (snap.age) out.age = "снимок " + snap.age + " назад";
+  else if (snap.stale) out.stale = snap.note || "возраст снимка неизвестен";
+  return out;
+}
+
+// Строка меню это подписка, модель и ярус целиком, как в лестнице agentctl
+// harness (DK-1570). Чип называет ярус и подписку: у двух подписок одного
+// вида модель повторяется, и различает строки именно чип. Полоски показывают
+// квоты этой подписки, окно 5ч и неделя, а свежесть снимка стоит подсказкой:
+// подписку выбирают по остатку, и его возраст со строки пропадать не должен.
+function modelMenuRow(m) {
+  const row = el("div", "hrow mrow");
+  row.dataset.model = m.model;
+  row.dataset.harness = m.harness || "";
+  row.append(el("span", "hname", m.model));
+  row.append(el("span", "hchip", [m.tier, m.harness].filter(Boolean).join(", ")));
+  const pcts = modelMeterPcts(m.harness);
+  const meters = el("span", "hmeters");
+  for (const pair of [["5ч", pcts.win], ["нед", pcts.week]]) {
+    if (pair[1] === null || pair[1] === undefined) continue;
+    const one = el("span", "hmt", pair[0]);
+    const meter = el("span", "meter");
+    const fill = el("i", meterClass(pair[1]));
+    fill.style.width = Math.max(0, Math.min(100, pair[1])) + "%";
+    meter.append(fill);
+    one.append(meter);
+    meters.append(one);
+  }
+  row.append(meters);
+  const said = [(m.tier ? "ярус " + m.tier : ""), "подписка " + m.harness,
+    pcts.age || pcts.stale].filter(Boolean).join(", ");
+  withTip(row, said);
+  return row;
+}
+
+// Ползунок глубины размышления (макет «Меню модели и глубины»). Пять меток
+// над шкалой, бегунок стоит на выбранной ступени, а кольцо на точке держит
+// вердикт pick: пока руку не приложили, бегунок стоит на самом вердикте.
+// Выбранное живёт у того, кто меню собрал, через get и set: пустой ответ get
+// значит «вердикт», и в заказ тогда едет пустое поле.
+function effSlider(opts) {
+  const root = el("div", "eff");
+  const marks = el("div", "effmarks");
+  const track = el("div", "efftrack");
+  const dots = [];
+  const btns = [];
+  let verdict = opts.verdict || "";
+  const chosen = () => opts.get() || verdict || "high";
+  const paint = () => {
+    const lv = chosen();
+    const i = Math.max(0, EFFORT_LEVELS.indexOf(lv));
+    root.style.setProperty("--sel", String(i));
+    for (const b of btns) b.classList.toggle("on", b.dataset.level === lv);
+    for (const d of dots) d.classList.toggle("verd", Boolean(verdict) && d.dataset.level === verdict);
+  };
+  EFFORT_LEVELS.forEach((lv, i) => {
+    const b = el("button", "effmark", lv);
+    b.type = "button";
+    b.style.setProperty("--i", String(i));
+    b.dataset.level = lv;
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      opts.set(lv);
+      paint();
+    });
+    btns.push(b);
+    marks.append(b);
+    const d = el("span", "effdot");
+    d.style.setProperty("--i", String(i));
+    d.dataset.level = lv;
+    dots.push(d);
+  });
+  track.append(el("span", "effrail"), el("span", "efffill"));
+  for (const d of dots) track.append(d);
+  track.append(el("span", "effthumb"));
+  track.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    // Клик по дорожке округляется до ближайшей ступени: попасть меткой не
+    // проще, чем пальцем в точку, и требовать точности незачем.
+    const box = track.getBoundingClientRect();
+    if (!box || !box.width) return;
+    const part = (ev.clientX - box.left) / box.width * (EFFORT_LEVELS.length - 1);
+    const i = Math.max(0, Math.min(EFFORT_LEVELS.length - 1, Math.round(part)));
+    opts.set(EFFORT_LEVELS[i]);
+    paint();
+  });
+  root.append(marks, track);
+  paint();
+  return {
+    root,
+    // Кольцо вердикта приезжает ответом ручки позже сборки меню.
+    setVerdict(lv) {
+      verdict = EFFORT_LEVELS.includes(lv) ? lv : "";
+      paint();
+    },
+    // Перерисовка по текущему выбору вызывающего: сброс после запуска возвращает
+    // бегунок на вердикт.
+    repaint: paint,
+  };
+}
+
+// Тело выбора запуска: строки моделей, ползунок глубины и полоса исхода
+// записи. Меню одно на все входы, стрелка у кнопки пуска, три точки строки,
+// выбор модели в чате и кнопка груминга черновика (DK-1570), и собрано оно
+// одной функцией нарочно: разъехавшись, входы отвечали бы на один вопрос
+// по-разному.
 //
-// into это коробка, куда всё кладётся, fire зовётся именем выбранной подписки,
-// а tell выбранным ярусом: ярус живёт у того, кто кнопку собрал, потому что
-// запускает работу и широкая половина кнопки, мимо этого списка.
+// into это коробка, куда всё кладётся. now это выбранная пара «модель и
+// подписка» для подсветки, пусто подсвечивает строку-умолчание лестницы.
+// onModel меняет пару у того, кто меню собрал, get и set держат глубину.
+// Вердикт это уровень из agentctl pick или пусто: пусто значит кольца нет, и
+// ползунок стоит на high.
 function runPickBody(into, opts) {
-  const list = opts.list || [];
-  const pickHarness = Boolean(opts.pickHarness);
-  const tierList = opts.tiers || [];
-  let tier = opts.tier || "";
-  if (pickHarness) {
-    into.append(el("span", "hph", "На какой подписке запустить"));
-    for (const h of list) {
-      const row = harnessRow(h, opts.pin || "");
-      row.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        opts.fire(h.name);
-      });
-      into.append(row);
-    }
+  const ladder = "ladder" in opts ? opts.ladder : modelLadder();
+  into.append(el("span", "hph", "Модель"));
+  // Лестница пуста, когда подписок на машине нет или список не прочитан:
+  // молчать значило бы показать меню с одинокой шапкой, и причина стоит в
+  // самом меню словами из того же ответа.
+  if (!ladder.length) {
+    into.append(el("span", "mwhy",
+      (harnessView && harnessView.note) || "подписок на машине нет"));
   }
-  // Полоса ярусов: выбор тут не запускает работу, а меняет вес модели, которым
-  // она поедет. Запускают её потом широкой половиной либо строкой подписки, и
-  // список от выбора яруса не закрывается: человек выбирает два ответа подряд.
-  //
-  // Подпись полосы зовётся «Уровень модели», а не прежним вопросом про ярус:
-  // слово это живёт в правилах доски, а в самой полосе на него отвечают
-  // именами моделей, и человек читал вопрос дважды (замечание пользователя).
-  // Подвала под полосой нет вовсе: он объяснял, откуда список и надолго ли
-  // выбор, и был забракован прямой оценкой пользователя.
-  if (tierList.length > 1) {
-    into.append(el("span", "hph", "Уровень модели"));
-    const bar = el("div", "tbar");
-    const marks = [];
-    for (const name of tierList) {
-      const btn = el("button", "tpick" + (name === tier ? " on" : ""), name);
-      btn.type = "button";
-      btn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        tier = name;
-        opts.tell(name);
-        for (const m of marks) m.classList.toggle("on", m === btn);
-      });
-      marks.push(btn);
-      bar.append(btn);
+  // Строка моделей не запускает работу, а называет подписку с моделью, которыми
+  // она поедет. Запускают широкой половиной кнопки, и меню от выбора строки не
+  // закрывается: дальше человек выбирает глубину.
+  const rows = [];
+  let picked = null;
+  // now с ключом это явный ответ вызывающего, и null тут значит «умолчание это
+  // вердикт, строки не подсвечены». Поле без ключа подсвечивает строку подписки
+  // по умолчанию.
+  const now = "now" in opts ? opts.now : (ladder.find((m) => m.pin) || ladder[0] || null);
+  const same = (m, pick) => m.model === pick.model && (m.harness || "") === (pick.harness || "");
+  for (const m of ladder) {
+    const row = modelMenuRow(m);
+    if (now && same(m, now)) {
+      row.classList.add("on");
+      picked = m;
     }
-    into.append(bar);
+    row.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      picked = m;
+      for (const r of rows) r.classList.toggle("on", r === row);
+      noteMini(m);
+      if (opts.onModel) opts.onModel(m);
+    });
+    rows.push(row);
+    into.append(row);
   }
-  // Полоса исхода записи (DK-1043): та же форма, что у полосы ярусов, и та же
-  // причина. Выбор тут не запускает работу и не закрывает меню, он лишь
-  // называет исход, а подпись широкой половины и сам запуск правит вызывающий
-  // код через modeTell. Отдельного селекта рядом с кнопкой больше нет: два
-  // органа управления на одно действие были отклонены приёмкой.
+  into.append(el("span", "hph gap", "Глубина размышления"));
+  const note = el("span", "mwhy effnote");
+  note.hidden = true;
+  // На ярусе, где модель про effort не знает, ползунок остаётся, а подпись
+  // называет судьбу уровня словами: уровень поедет меткой, глубину размышления
+  // она не меняет.
+  const noteMini = (m) => {
+    const mini = Boolean(m) && m.tier === "mini";
+    note.hidden = !mini;
+    if (mini) note.textContent = m.model +
+      " про effort в API не знает: уровень поедет меткой, глубину размышления не меняет";
+  };
+  noteMini(picked);
+  const slider = effSlider({
+    verdict: opts.verdict || "",
+    get: () => (opts.getEffort ? opts.getEffort() : ""),
+    set: (lv) => { if (opts.onEffort) opts.onEffort(lv); },
+  });
+  into.append(slider.root, note);
+  // Полоса исхода записи (DK-1043): та же форма, что и остальное меню. Выбор
+  // тут не запускает работу и не закрывает меню, он лишь называет исход, а
+  // подпись широкой половины и сам запуск правит вызывающий код через
+  // modeTell. Отдельного селекта рядом с кнопкой больше нет: два органа
+  // управления на одно действие были отклонены приёмкой.
   const modeList = opts.modes || [];
   let mode = opts.mode || "";
   if (modeList.length) {
     into.append(el("span", "hph", "Что сделать с записью"));
     const bar = el("div", "tbar");
     const marks = [];
-    for (const [value, name] of modeList) {
-      const btn = el("button", "tpick" + (value === mode ? " on" : ""), name);
+    for (const pair of modeList) {
+      const btn = el("button", "tpick" + (pair[0] === mode ? " on" : ""), pair[1]);
       btn.type = "button";
       btn.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        mode = value;
-        opts.modeTell(value);
+        mode = pair[0];
+        opts.modeTell(pair[0]);
         for (const m of marks) m.classList.toggle("on", m === btn);
       });
       marks.push(btn);
@@ -1866,7 +1909,28 @@ function runPickBody(into, opts) {
     }
     into.append(bar);
   }
+  return {
+    setVerdict: slider.setVerdict,
+    // Выбор модели и глубины жил один запуск (DK-1570): пуск возвращает меню к
+    // вердикту, и подсветка строки уходит вместе с выбором.
+    reset() {
+      for (const r of rows) r.classList.remove("on");
+      noteMini(null);
+      slider.repaint();
+    },
+  };
 }
+// Кольцо вердикта спрашивается открытием меню у обеих входов, поэтому чтение
+// стоит одной функцией: вердикт зависит от строки задачи, и рисовать его заранее
+// значило бы показать кольцо устаревшей правки. У цели вердикта на весь цикл
+// нет, кольца там не будет.
+function armPickRing(project, id, menu) {
+  api("/api/projects/" + encodeURIComponent(project) + "/tasks/" +
+    encodeURIComponent(id) + "/pick")
+    .then((r) => { if (r.ok && menu) menu.setVerdict(r.body.effort || ""); })
+    .catch(() => {});
+}
+
 // run это способ поднять работу выбранной подпиской. По умолчанию это конвейер
 // задачи, а груминг черновика поднимает себя сам: выбор подписки у него тот же,
 // потому что разбор это такая же работа агента (замечание пользователя).
@@ -1878,63 +1942,50 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
   // Кнопка гаснет до ответа: пока запуск идёт, строка выглядит прежней, и
   // второе нажатие уходило вторым запуском, а возвращалось отказом «работа уже
   // идёт».
-  // Ярус выбирается там же, где подписка: подписка это контур и квота, а ярус
-  // вес модели. Разбор черновика ходил дефолтом самого клиента, то есть верхним
-  // ярусом, которого никто не выбирал (замечание пользователя), и теперь ярус
-  // назван: pro по умолчанию, другой берут осознанно.
   // tiers это либо список ярусов, либо пара «список и выбранный по умолчанию»:
-  // у запуска задачи умолчание это вердикт, у цели и разбора pro.
+  // у запуска задачи умолчание это вердикт, у цели и разбора pro. Список больше
+  // не рисуется полосой: строка меню модели называет ярус вместе с подпиской
+  // (DK-1570), а умолчание подсвечивает строку лестницы.
   const tierList = (tiers && tiers.list) || tiers || [];
   let tier = (tiers && tiers.now) || (tierList.includes(RUN_TIER) ? RUN_TIER : (tierList[0] || ""));
-  // Наружу вердикт едет пустым полем: имени такого яруса в раскладке нет, его
-  // называет сервер.
-  const tierOut = () => (tier === TIER_VERDICT ? "" : tier);
+  // Строка лестницы, выбранная в меню: она называет подписку и ярус разом.
+  // Пусто значит «как решит вердикт», и ярус тогда едет пустым полем: имени
+  // такого яруса в раскладке нет, его называет сервер.
+  let model = null;
+  const tierOut = () => (model ? model.tier : (tier === TIER_VERDICT ? "" : tier));
+  const harnessOut = () => (model ? model.harness : pinned);
+  // Ручная глубина размышления: пусто едет вердиктом, выбор живёт один запуск.
+  let effort = "";
   // modes это исход записи (DK-1043): список пар «значение, подпись меню»,
   // умолчание грумить. Кнопка сама переименовывает широкую половину по
-  // ответу modes.verb, а run узнаёт исход третьим доводом.
+  // ответу modes.verb, а run узнаёт исход третьим доводом, глубину четвёртым.
   const modeList = (modes && modes.list) || [];
   let mode = (modes && modes.now) || (modeList[0] && modeList[0][0]) || "";
   const modeOut = () => mode;
-  const fire = (node, harness) => {
+  const fire = (node) => {
     node.disabled = true;
-    const going = run ? run(harness, tierOut(), modeOut())
-      : startRun(project, id, harness, afterOk, tierOut());
+    const harness = harnessOut();
+    const said = tierOut();
+    const depth = effort;
+    // Модель и глубина выбраны на один запуск: следующее нажатие едет вердиктом
+    // снова, а исход записи (mode) остаётся при строке как прежде.
+    model = null;
+    effort = "";
+    if (menu) menu.reset();
+    const going = run ? run(harness, said, modeOut(), depth)
+      : startRun(project, id, harness, afterOk, said, depth);
     Promise.resolve(going).catch(console.error).finally(() => { node.disabled = false; });
   };
   wide.addEventListener("click", (ev) => {
     ev.stopPropagation();
     // Без выбора человека подписка едет пустой: её называет вердикт
     // запуска, и подстановка умолчания здесь закрыла бы ему дорогу.
-    fire(wide, pinned);
+    fire(wide);
   });
-  const list = harnesses();
-  // Выбирать есть что, когда подписок на машине больше одной либо когда у
-  // кнопки свой выбор яруса: с одной подпиской и ярусом список отвечал бы на
-  // вопрос, которого никто не задавал.
-  //
-  // Прикреплённая подписка выбора больше не снимает, она им лишь правит
-  // умолчание. Прежде строка Check показывала один ярус, а строка в работе ярус
-  // с подписками, и человек видел два разных списка на один вопрос («выбор
-  // яруса и подписки различается по секциям», замечание пользователя). Теперь
-  // список один везде, а прикреплённая подписка стоит в нём подсвеченной: на
-  // неё и уйдёт запуск, если не выбирать.
-  // Выбирать нечего только когда пусты все три группы разом: подписка, ярус
-  // и исход записи. Заданная группа исхода держит меню развёрнутым даже с
-  // одной подпиской и одним ярусом на машине, иначе выбор «грумить/выполнить»
-  // было бы неоткуда сделать (DK-1043).
-  const pickHarness = list.length >= 2;
-  if (!pickHarness && tierList.length < 2 && !modeList.length) {
-    const why = pinned ? "" : harnessWhy();
-    if (why) withTip(wide, tip ? tip + " " + why : why);
-    // Кнопка без стрелки выбора тоже стоит в пустом span, а не голой: составная
-    // кнопка ниже держит span.split той же глубины, и rowAction для Стопа
-    // (DK-349) обёрнут так же. Разная глубина между вырожденным Run и Стоп на
-    // одной строке промахивала позиционный focusSnap/focusBack мимо кнопки
-    // (app.js:82-113, DK-316).
-    const solo = el("span");
-    solo.append(wide);
-    return wireDisabled(solo, wide, null);
-  }
+  // Стрелка стоит у кнопки всегда: ползунок глубины есть всякой работе, и
+  // входа без выбора больше нет (DK-1570). Прикреплённая подписка строки Check
+  // выбора не снимает, она правит умолчание: без выбора человека запуск едет
+  // ею, и строка лестницы с ней же стоит подсвеченной.
   const grp = el("span", "split");
   grp.append(wide);
   const pop = el("div", "hpop");
@@ -1942,25 +1993,20 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
   // Список подписок стоит на общем учёте всплывашек: закрывают его те же три
   // пути, что и список кольца.
   let held = null;
+  let menu = null;
   const shut = () => {
     pop.hidden = true;
     more.setAttribute("aria-expanded", "false");
     held = null;
   };
-  runPickBody(pop, {
-    list,
-    pickHarness,
-    pin: pinned || harnessDefault(),
-    tiers: tierList,
-    tier,
+  menu = runPickBody(pop, {
+    now: tier === TIER_VERDICT ? null
+      : modelLadder().find((m) => m.tier === tier && (!pinned || m.harness === pinned)) || null,
+    onModel: (m) => { model = m; },
+    getEffort: () => effort,
+    onEffort: (lv) => { effort = lv; },
     modes: modeList,
     mode,
-    fire: (name) => {
-      popupDrop(held);
-      shut();
-      fire(wide, name);
-    },
-    tell: (name) => { tier = name; },
     modeTell: (value) => {
       mode = value;
       if (modes && modes.verb) wide.rename(modes.verb(value));
@@ -1969,16 +2015,9 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
   });
   const more = el("button", wide.className + " more2");
   more.append(el("span", "car"));
-  // Подсказка называет то, что в меню и правда есть выбирать: с одной
-  // подпиской на машине список открывают только ради яруса или исхода
-  // записи, и говорить про подписку там было бы неправдой.
-  const chooseWhat = pickHarness ? "подписку"
-    : (modeList.length ? "исход записи" : "уровень модели");
-  more.setAttribute("aria-label", "Выбрать " + chooseWhat);
+  more.setAttribute("aria-label", "Выбрать модель и глубину");
   more.setAttribute("aria-expanded", "false");
-  withTip(more, pickHarness
-    ? "Выбрать подписку: " + list.map((h) => h.name).join(", ")
-    : "Выбрать " + chooseWhat);
+  withTip(more, "Выбрать модель и глубину размышления запуска");
   more.addEventListener("click", (ev) => {
     ev.stopPropagation();
     if (!pop.hidden) {
@@ -2000,6 +2039,10 @@ function runControl(project, id, make, label, isGoal, tip, afterOk, pinned, run,
       // кнопки, и справа, верной стороны нет вовсе.
       popFit(more, pop);
     }
+    // Кольцо вердикта спрашивается открытием меню: вердикт зависит от строки
+    // задачи, и стоять ему заранее значило бы показать кольцо устаревшей
+    // правки. У цели вердикта на весь цикл нет, кольца там не будет.
+    if (!isGoal && id && menu) armPickRing(project, id, menu);
   });
   grp.append(more, pop);
   return wireDisabled(grp, wide, more);
@@ -2275,6 +2318,9 @@ function rowAction(project, row, sect) {
   // Закрывалка меню объявлена раньше самого меню: зовёт её и строка подписки
   // внутри него, а собирается меню последним, когда известен весь состав.
   let shutMenu = () => {};
+  // Кольцо вердикта для меню строки спрашивается его открытием: ставит его
+  // тот, кто меню собрал, а пустая заглушка стоит у строк без меню.
+  let rowPickMenu = () => {};
   let main;
   if (ours) {
     main = el("button", "btn btn-sm btn-danger btn-ico rstop");
@@ -2331,61 +2377,62 @@ function rowAction(project, row, sect) {
       const goal = /^Цель:/.test(row.title);
       const hint = pin ? checkTip(Object.assign({ sect: sect }, row))
         : orderHint(row.order, row.accept, sect, row.id, goal);
-      // Уровень модели выбирается там же, где подписка. У задачи по умолчанию
+      // Уровень модели выбирается там же, где глубина. У задачи по умолчанию
       // стоит вердикт: назначает исполнителя и ярус agentctl pick, а не глаз
       // диспетчера, и человек его лишь переопределяет. У цели вердикта на весь
       // цикл нет, там умолчание pro.
-      const tierList = goal ? harnessTiers() : [TIER_VERDICT].concat(harnessTiers());
       let tier = goal ? RUN_TIER : TIER_VERDICT;
-      // Наружу вердикт едет пустым полем: имени такого яруса в раскладке нет,
-      // его называет сервер.
-      const tierOut = () => (tier === TIER_VERDICT ? "" : tier);
-      const list = harnesses();
-      // Прикреплённая подписка (строка Check идёт той, которой вели задачу)
-      // выбора не снимает: она правит умолчание, а список тот же, что у строки
-      // в работе.
-      const pickHarness = list.length >= 2;
+      // Строка лестницы из меню называет подписку и ярус разом; без неё ярус
+      // едет пустым полем, и его называет сервер.
+      let model = null;
+      const tierOut = () => (model ? model.tier : (tier === TIER_VERDICT ? "" : tier));
+      const harnessOut = () => (model ? model.harness : pin);
+      // Ручная глубина живёт один запуск, пустое поле едет вердиктом.
+      let effort = "";
       main = el("button", "btn btn-sm btn-acc btn-ico rmain");
       main.append(icon("i-play"));
       main.setAttribute("aria-label", label);
-      // Причина, по которой выбирать не из чего, стоит в подсказке самой
-      // кнопки: списка подписок у такой строки нет вовсе, и сказать об этом
-      // больше негде.
-      const why = pickHarness ? "" : harnessWhy();
-      // Дорога к выбору названа тут же: сам запуск идёт умолчанием, а подписку
-      // с уровнем выбирают под тремя точками рядом.
-      const more = (pickHarness || tierList.length > 1)
-        ? "Подписку и уровень модели выбирают под тремя точками."
-        : "";
-      withTip(main, [label + ".", hint, why, more, talkWarn(row)].filter(Boolean).join(" "));
-      const fire = (harness) => {
+      // Дорога к выбору названа тут же: сам запуск идёт умолчанием, а модель
+      // с глубиной выбирают под тремя точками рядом.
+      withTip(main, [label + ".", hint,
+        "Модель и глубину размышления выбирают под тремя точками.", talkWarn(row)]
+        .filter(Boolean).join(" "));
+      const fire = () => {
         main.disabled = true;
-        startRun(project, row.id, harness, "", tierOut())
+        const harness = harnessOut();
+        const depth = effort;
+        const said = tierOut();
+        // Выбор действовал на этот запуск: следующий уходит вердиктом снова.
+        model = null;
+        effort = "";
+        if (menu) menu.reset();
+        startRun(project, row.id, harness, "", said, depth)
           .catch(console.error).finally(() => { main.disabled = false; });
       };
       main.addEventListener("click", (ev) => {
         ev.stopPropagation();
         // Пустая подписка без выбора человека: её решает вердикт запуска.
-        fire(pin);
+        fire();
       });
-      // Выбирать есть что, когда подписок на машине больше одной либо когда у
-      // запуска свой выбор уровня модели: с одной подпиской и одним уровнем
-      // список отвечал бы на вопрос, которого никто не задавал.
-      if (pickHarness || tierList.length > 1) {
-        const box = el("span", "rpick");
-        runPickBody(box, {
-          list,
-          pickHarness,
-          pin: pin || harnessDefault(),
-          tiers: tierList,
-          tier,
-          fire: (name) => { shutMenu(); fire(name); },
-          tell: (name) => { tier = name; },
-        });
-        pick = box;
-      } else {
-        pickWhy = harnessWhy();
-      }
+      // Меню строки то же, что у кнопки пуска: строки моделей и ползунок
+      // глубины есть всякому запуску, и вырожденного входа больше нет (DK-1570).
+      const box = el("span", "rpick");
+      let menu = null;
+      menu = runPickBody(box, {
+        // Подсветка называет запуск по умолчанию: у Check это пара прикреплённой
+        // подписки на рабочем ярусе, у очереди вердикт, и строка не подсвечена.
+        now: tier === TIER_VERDICT
+          ? (pin ? (modelLadder().find((m) => m.harness === pin && m.tier === RUN_TIER) ||
+              modelLadder().find((m) => m.harness === pin) || null) : null)
+          : modelLadder().find((m) => m.tier === tier && (!pin || m.harness === pin)) || null,
+        onModel: (m) => { model = m; },
+        getEffort: () => effort,
+        onEffort: (lv) => { effort = lv; },
+      });
+      rowPickMenu = () => {
+        if (!goal && menu) armPickRing(project, row.id, menu);
+      };
+      pick = box;
     }
   }
   grp.append(main);
@@ -2404,11 +2451,11 @@ function rowAction(project, row, sect) {
   // ровно так же, как у погашенного запуска.
   const dots = el("button", "btn btn-sm btn-ico rdots");
   dots.append(icon("i-dots"));
-  dots.setAttribute("aria-label", "Подписка и уровень модели");
+  dots.setAttribute("aria-label", "Модель и глубина размышления");
   grp.append(dots);
   if (!pick) {
     dots.disabled = true;
-    withTip(dots, "Подписка и уровень модели: " + (pickWhy || "выбирать нечего"));
+    withTip(dots, "Модель и глубина размышления: " + (pickWhy || "выбирать нечего"));
     return grp;
   }
   let held = null;
@@ -2423,7 +2470,7 @@ function rowAction(project, row, sect) {
     held = null;
   };
   dots.setAttribute("aria-expanded", "false");
-  withTip(dots, "Подписка и уровень модели для запуска");
+  withTip(dots, "Модель и глубина размышления для запуска");
   const openPick = () => {
     if (!menu.hidden) {
       popupDrop(held);
@@ -2439,6 +2486,7 @@ function rowAction(project, row, sect) {
     // Вверх меню раскрывается там, где под кнопкой не хватает места: строка
     // стоит низко, и раскрытое вниз оно уезжает под нижние вкладки.
     menu.classList.toggle("up", noRoomBelow(dots));
+    rowPickMenu();
   };
   dots.addEventListener("click", (ev) => {
     ev.stopPropagation();
@@ -4826,12 +4874,13 @@ function barBtn(cls, label, ico) {
 // или поднимать резюм, а не нашедший разговора откатывается на прежний запуск
 // конвейера. Экран после удачи остаётся на месте, а кнопка чата задачи
 // помечается активностью.
-async function continueTask(project, id) {
+async function continueTask(project, id, effort) {
   const r = await api("/api/projects/" + encodeURIComponent(project) +
-    "/tasks/" + encodeURIComponent(id) + "/continue", { method: "POST", body: {} });
+    "/tasks/" + encodeURIComponent(id) + "/continue",
+    { method: "POST", body: effort ? { effort } : {} });
   if (!r.ok) {
     sayResult(r.body.error || "продолжить не вышло", true);
-    return;
+    return "";
   }
   // Сервер сам решил, что делать: разбудил живую сессию, поднял резюм или
   // завёл первый чат. Экрану остаётся сказать это словами и пометить, что у
@@ -4840,6 +4889,9 @@ async function continueTask(project, id) {
   if (r.body.message) sayResult(r.body.message);
   markRunLive(project, id, r.body.session || "");
   await refresh();
+  // Ручная глубина тратится теми дорогами, что подняли чат: слово way даёт
+  // вызывающему понять, доехал ли выбор до агента.
+  return String(r.body.way || "");
 }
 
 // Передача основного чата записи новому диспетчеру: строка передачи пишется
@@ -5338,7 +5390,7 @@ function formPage(cfg) {
   const more = cfg.saveMore
     ? runControl("", "", (label) => barBtn("btn btn-acc", label, cfg.saveMore.icon || "i-play"),
       cfg.saveMore.label, false, cfg.saveMore.tip || "", "", "",
-      (harness, tier, mode) => (cfg.saveMore.onSave ? cfg.saveMore.onSave(harness, tier, mode) : null),
+      (harness, tier, mode, effort) => (cfg.saveMore.onSave ? cfg.saveMore.onSave(harness, tier, mode, effort) : null),
       cfg.saveMore.tiers, cfg.saveMore.modes)
     : null;
   const drop = barBtn("btn", "Отменить правку", "close");
@@ -9737,6 +9789,36 @@ function chatModelSet(model, harness) {
   }
 }
 
+// Выбор глубины для разговора: уровень из меню модели живёт до ближайшего
+// подъёма, первая реплика, резюм или продолжение. Память в памяти панели, а не
+// в накопителе браузера: выбор действует на один запуск и настройки на экране
+// не образует. Ключом служит задача разговора, а без задачи его адрес: у
+// разговора задачи подъёмы ходят по её имени.
+const chatEffortArm = new Map();
+
+function chatEffortKey(project, addr) {
+  return String(project || "") + "/" + String(addr || "");
+}
+
+function chatEffortOf(project, addr) {
+  return chatEffortArm.get(chatEffortKey(project, addr)) || "";
+}
+
+function chatEffortSet(project, addr, lv) {
+  const key = chatEffortKey(project, addr);
+  if (lv) chatEffortArm.set(key, lv);
+  else chatEffortArm.delete(key);
+}
+
+// Подъём тратит выбор: дальше разговор идёт своей дорогой, и следующий подъём
+// без нового выбора едет вердиктом.
+function chatEffortSpend(project, addr) {
+  const key = chatEffortKey(project, addr);
+  const lv = chatEffortArm.get(key) || "";
+  chatEffortArm.delete(key);
+  return lv;
+}
+
 function chatsURL(project) {
   return "/api/projects/" + encodeURIComponent(project) + "/chats";
 }
@@ -10771,20 +10853,23 @@ function modelPick(project, st) {
     model.disabled = true;
     model.title = "Модель выбрана в самом vscode: с дашборда она сменится только на резюме этого чата.";
   }
-  const box = el("div", "cmodel");
-  box.append(model);
-  model.addEventListener("change", () => {
-    // Запертый список это текст, а не действие: у чужого окна менять отсюда
-    // нечего, и молча писать выбор в память диалога значило бы обещать
-    // смену, которой не будет.
-    if (model.disabled) return;
-    const sel = model.selectedOptions[0];
-    const pick = {
-      model: sel && sel.dataset.model ? sel.dataset.model : model.value,
-      harness: sel && sel.dataset.harness ? sel.dataset.harness : "",
-    };
+  const box = el("div", "cmodel cselwrap");
+  const menu = el("div", "menu");
+  menu.hidden = true;
+  const armKey = st.task || st.addr;
+  const showOnSelect = (pick) => {
+    for (const o of model.children) {
+      if (o.tagName !== "OPTION") continue;
+      if (o.dataset.model === pick.model && (o.dataset.harness || "") === (pick.harness || "")) {
+        o.selected = true;
+        return;
+      }
+    }
+  };
+  const applyPick = (pick) => {
     if (same(pick, shown)) return;
     chatModelSet(pick.model, pick.harness);
+    showOnSelect(pick);
     // Про удачную смену карточка не всплывает: выбранное имя стоит в самом
     // списке, а у заведённого разговора про смену говорит разделитель ленты.
     // Карточка поверх экрана повторяла это третий раз (замечание
@@ -10802,6 +10887,54 @@ function modelPick(project, st) {
       return;
     }
     modelSwitch(project, st, pick, isLive && !alien).catch(console.error);
+  };
+  box.append(menu, model);
+  // Меню модели и глубины (DK-1570). Состав тот же, что у стрелки кнопки
+  // пуска, и выбирает разговор ровно то же меню. Строка называет подписку с
+  // моделью и ярусом, ползунок глубину на один запуск.
+  const pickMenu = runPickBody(menu, {
+    ladder: opts,
+    now: opts.find((m) => same(m, shown)) || null,
+    onModel: (m) => applyPick({ model: m.model, harness: m.harness || "" }),
+    getEffort: () => chatEffortOf(project, armKey),
+    onEffort: (lv) => chatEffortSet(project, armKey, lv),
+  });
+  model.addEventListener("change", () => {
+    // Запертый список это текст, а не действие: у чужого окна менять отсюда
+    // нечего, и молча писать выбор в память диалога значило бы обещать
+    // смену, которой не будет.
+    if (model.disabled) return;
+    const sel = model.selectedOptions[0];
+    applyPick({
+      model: sel && sel.dataset.model ? sel.dataset.model : model.value,
+      harness: sel && sel.dataset.harness ? sel.dataset.harness : "",
+    });
+  });
+  // Клик по выбору модели открывает общее меню, а не нативный список. Меню
+  // стоит на общем учёте всплывашек, и клик мимо или Escape закрывает его теми
+  // же путями, что и остальные списки панели.
+  let held = null;
+  const shut = () => { menu.hidden = true; held = null; };
+  model.addEventListener("mousedown", (ev) => {
+    if (model.disabled) return;
+    ev.preventDefault();
+    if (!menu.hidden) {
+      popupDrop(held);
+      shut();
+      return;
+    }
+    popupsShut(null);
+    menu.hidden = false;
+    held = popupHold(menu, shut);
+    model.focus();
+    // Кольцо вердикта спрашивается открытием меню, ведь вердикт зависит от
+    // строки задачи, а не от разговора. У разговора без задачи кольца нет.
+    if (st.task) {
+      api("/api/projects/" + encodeURIComponent(project) + "/tasks/" +
+        encodeURIComponent(st.task) + "/pick")
+        .then((r) => { if (r.ok) pickMenu.setVerdict(r.body.effort || ""); })
+        .catch(() => {});
+    }
   });
   return box;
 }
@@ -12490,6 +12623,10 @@ function chatModelKeep(project, id, model, harness) {
 async function chatRaise(project, st, text, pick, onTmux) {
   const body = { text, model: pick.model, harness: pick.harness };
   if (st.task) body.id = st.task;
+  // Ручная глубина едет подъёмом и тратится им. Слова уровня в самой реплике
+  // сильнее меню, и их разбирает уже сам агент.
+  const armEffort = chatEffortSpend(project, st.task || st.addr);
+  if (armEffort) body.effort = armEffort;
   // Подъём из записи пришивается к ней: разговор останется той же строкой
   // списка, на которой он начался, и адрес панели переедет на живую сессию сам.
   if (st.blank) body.chat = st.blank;
@@ -14251,7 +14388,16 @@ function chatPanel(project, st) {
     go.append(icon("i-play-sm"));
     go.addEventListener("click", () => {
       go.disabled = true;
-      continueTask(project, st.task).catch(console.error).finally(() => { go.disabled = false; });
+      // Продолжение едет глубиной из меню модели, если та выбрана: ручка
+      // применяет её только на подъём, будильник живой сессии её не заметит.
+      // Слово way из ответа говорит, доехал ли выбор до агента: только тогда
+      // ручная глубина считается потраченной.
+      continueTask(project, st.task, chatEffortOf(project, st.task || st.addr))
+        .then((way) => {
+          if (way === "start" || way === "new" || way === "resume" ||
+              way === "fresh") chatEffortSpend(project, st.task || st.addr);
+        })
+        .catch(console.error).finally(() => { go.disabled = false; });
     });
     row.append(go);
   }
@@ -14454,10 +14600,15 @@ function chatPanel(project, st) {
       }
       busy.on(st.sid);
       // Ключ записи едет с каждой попыткой: по нему сервер отличает повтор от
-      // следующей реплики и второй раз ту же не доставляет.
+      // следующей реплики и второй раз ту же не доставляет. Глубина из меню
+      // едет рядом: ручка применяет её только на реплике, поднимающей сессию,
+      // а живому процессу она безразлична.
       m.flying = true;
+      const armEffort = chatEffortOf(project, st.task || st.addr);
+      const sayBody = { text: wire, msg_id: m.id };
+      if (armEffort) sayBody.effort = armEffort;
       api(chatsURL(project) + "/" + encodeURIComponent(st.sid) + "/say",
-        { method: "POST", body: { text: wire, msg_id: m.id } })
+        { method: "POST", body: sayBody })
         .then((r) => {
           if (!r.ok) {
             // Отказ ручки (сокет не отозвался, разговора нет): пузырь остаётся с
@@ -14511,6 +14662,10 @@ function chatPanel(project, st) {
           else echo.sent(m);
           // Реплика подняла сессию сама (чата без сессии не бывает после первой
           // же реплики): дальше разговор идёт в ней, и панель переезжает туда.
+          // Подъём тратит и ручную глубину: она уехала с этим подъёмом.
+          if (r.body.way === "start" || r.body.way === "resume" || r.body.way === "fresh") {
+            chatEffortSpend(project, st.task || st.addr);
+          }
           if (r.body.way === "start") {
             // Адрес едет с вызовом: echoMove перевезёт персист отправки к
             // родившемуся разговору, и пузырь встанет в ленту нового sid
@@ -15709,7 +15864,7 @@ function draftModeVerb(mode) {
 // нажатие там уводило на общий экран агента, у которого нет ни текста
 // записи, ни исхода разбора (LLD DK-328, «Отвергнутое»). С экрана самой
 // записи afterOk не передают, там уже стоит экран этой работы.
-async function groomDraft(project, id, afterOk, harness, tier, mode) {
+async function groomDraft(project, id, afterOk, harness, tier, mode, effort) {
   sayResult("подъём груминга " + id + "...");
   const order = {};
   // Подписка едет только выбранная: пустое поле это «как раньше», и сервер
@@ -15721,6 +15876,9 @@ async function groomDraft(project, id, afterOk, harness, tier, mode) {
   // Исход едет только на «выполнить»: пустое поле и «грумить» это прежнее
   // поведение, и сервер сам читает его как groom (DK-1043).
   if (mode === DRAFT_MODE_RUN) order.mode = mode;
+  // Глубина размышления едет тем же правилом, что у запуска задачи: пустое
+  // поле это вердикт, ручной выбор перебивает его на один подъём.
+  if (effort) order.effort = effort;
   const r = await api("/api/projects/" + encodeURIComponent(project) +
     "/drafts/" + encodeURIComponent(id) + "/groom",
     { method: "POST", body: order });
@@ -15788,6 +15946,9 @@ function draftRunBar(project, works) {
 // Модель разбора живёт экраном, а не полосой: полоса пересобирается на всякую
 // отметку в списке, и выбор возвращался бы к умолчанию на каждое нажатие.
 let draftModel = "";
+// Глубина разбора живёт рядом с моделью и едет всей пачке: пачка это один
+// запуск, и уровень у неё один. Пусто едет вердиктом, как было.
+let draftEffort = "";
 
 // Плоская лестница моделей машины: подписка с ярусом развёрнуты в имя модели.
 // Собирается она из той же раскладки (agentctl harness), которой живёт выбор
@@ -15817,33 +15978,6 @@ function modelLadderPick(name) {
   return list.find((m) => m.model === name) || list.find((m) => m.pin) || list[0] || null;
 }
 
-// Поле выбора модели рядом с кнопкой: человек спрашивает «чем будет
-// разбираться», и ответ на это ярусом с подпиской заставлял его держать в
-// голове их раскладку. Ярус с подпиской остались тем, что уезжает в заказ.
-function draftModelPick() {
-  const list = modelLadder();
-  if (!list.length) return null;
-  const now = modelLadderPick(draftModel);
-  const sel = el("select", "cdsel");
-  sel.setAttribute("aria-label", "Модель разбора");
-  for (const m of list) {
-    const o = el("option", "", m.model);
-    o.value = m.model;
-    o.title = m.tier ? "ярус " + m.tier + ", подписка " + m.harness : "подписка " + m.harness;
-    if (now && m.model === now.model) o.selected = true;
-    sel.append(o);
-  }
-  if (now) sel.value = now.model;
-  const why = (m) => (m ? m.model + ": ярус " + m.tier + ", подписка " + m.harness
-    + ". Список из раскладки машины, agentctl harness." : "Модель разбора");
-  withTip(sel, why(now));
-  sel.addEventListener("change", () => {
-    draftModel = sel.value;
-    withTip(sel, why(modelLadderPick(draftModel)));
-  });
-  return sel;
-}
-
 function draftRunBarFill(bar, project, works) {
   // Перерисовка полосы это её собственное дело: отметка в строке зовёт её через
   // draftBarPaint, не трогая список.
@@ -15859,20 +15993,67 @@ function draftRunBarFill(bar, project, works) {
   // сказать, сколько сессий встанет, надо на кнопке.
   const btn = el("button", "btn btn-sm btn-acc", "Грумить (" + picked.length + ")");
   withTip(btn, GROOM_HINT);
-  btn.addEventListener("click", (ev) => {
-    ev.stopPropagation();
+  const lift = () => {
     // Кнопка гаснет на время подъёма: пачка идёт по одной сессии, и второе
     // нажатие подняло бы их дважды. Прежде тут стояло подтверждение карточкой,
     // а исходная кнопка оставалась доступной поверх открытого вопроса
     // (замечание пользователя по снимку).
     btn.disabled = true;
     const now = modelLadderPick(draftModel);
-    Promise.resolve(draftGroomStart(project, works, now ? now.harness : "", now ? now.tier : ""))
+    const depth = draftEffort;
+    // Глубина разбора выбиралась на одну пачку: следующая едет вердиктом.
+    draftEffort = "";
+    Promise.resolve(draftGroomStart(project, works,
+      now ? now.harness : "", now ? now.tier : "", depth))
       .catch(console.error).finally(() => { btn.disabled = false; });
+  };
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    lift();
   });
   grp.append(btn);
-  const sel = draftModelPick();
-  if (sel) grp.append(sel);
+  // Меню модели и глубины у груминга то же, что у запуска задачи (DK-1570):
+  // стрелка открывает строки лестницы и ползунок, прежнего селекта модели
+  // рядом с кнопкой больше нет. Модель живёт экраном, как жила, а глубина
+  // едет всей пачке: пачка это один запуск, и уровень у неё один.
+  const wrap = el("span", "split");
+  wrap.append(btn);
+  const pop = el("div", "hpop");
+  pop.hidden = true;
+  let held = null;
+  let shut = () => {};
+  runPickBody(pop, {
+    now: modelLadderPick(draftModel),
+    onModel: (m) => { draftModel = m.model; },
+    getEffort: () => draftEffort,
+    onEffort: (lv) => { draftEffort = lv; },
+  });
+  const more = el("button", btn.className + " more2");
+  more.append(el("span", "car"));
+  more.setAttribute("aria-label", "Выбрать модель и глубину");
+  more.setAttribute("aria-expanded", "false");
+  withTip(more, "Выбрать модель и глубину размышления разбора");
+  shut = () => {
+    pop.hidden = true;
+    more.setAttribute("aria-expanded", "false");
+    held = null;
+  };
+  more.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (!pop.hidden) {
+      popupDrop(held);
+      shut();
+      return;
+    }
+    popupsShut(null);
+    pop.hidden = false;
+    more.setAttribute("aria-expanded", "true");
+    held = popupHold(pop, shut);
+    pop.classList.toggle("up", noRoomBelow(more));
+    popFit(more, pop);
+  });
+  wrap.append(more, pop);
+  grp.append(wrap);
   bar.replaceChildren(grp, el("span", "hint", "Выбрано " + picked.length + " " +
     plural(picked.length, "запись", "записи", "записей") +
     ", каждая пойдёт своим разговором."));
@@ -15882,7 +16063,7 @@ function draftRunBarFill(bar, project, works) {
 // отметками это и есть осознанное действие человека, а второй вопрос поверх
 // него он назвал лишним. Записи, у которых разбор уже идёт, пропускаются, а не
 // роняют пачку отказом, и сказано про них строкой итога.
-async function draftGroomStart(project, works, harness, tier) {
+async function draftGroomStart(project, works, harness, tier, effort) {
   const picked = [...draftPick];
   if (!picked.length) return 0;
   // Идущий разбор тут судится живой работой, а не памятью подъёма: память
@@ -15897,18 +16078,18 @@ async function draftGroomStart(project, works, harness, tier) {
       "): поднимать нечего", true);
     return 0;
   }
-  return draftGroomRun(project, todo, harness, tier, going);
+  return draftGroomRun(project, todo, harness, tier, effort, going);
 }
 
 // Подъём идёт по одной сессии: ручка разбора поднимает свою, и слать их разом
 // значило бы драться за один и тот же tmux-замок.
-async function draftGroomRun(project, ids, harness, tier, skipped) {
+async function draftGroomRun(project, ids, harness, tier, effort, skipped) {
   let done = 0;
   const bad = [];
   for (const id of ids) {
     // afterOk тут пустой: пачка остаётся на накопителе, уводить её на экран
     // одной записи некуда.
-    if (await groomDraft(project, id, "", harness, tier)) done += 1;
+    if (await groomDraft(project, id, "", harness, tier, "", effort)) done += 1;
     else bad.push(id);
   }
   draftPickClear();
@@ -17214,10 +17395,10 @@ async function renderDraft(project, works, id) {
           "", "",
           // Несохранённая правка уезжает на диск до подъёма разбора: иначе
           // агент прочитал бы старый текст, и потеря была бы молчаливой.
-          (harness, tier, mode) => (form.text !== said
+          (harness, tier, mode, effort) => (form.text !== said
             ? saveDraftText(project, id, form.text, hash)
             : Promise.resolve(true))
-            .then((ok) => ok && groomDraft(project, id, "", harness, tier, mode))
+            .then((ok) => ok && groomDraft(project, id, "", harness, tier, mode, effort))
             .then((ok) => {
               if (ok) refresh().catch(console.error);
               return ok;
@@ -17653,7 +17834,7 @@ function renderNew(project, kind) {
   // записи, где виден его ход. Исход, подписку и ярус называет меню составной
   // кнопки (DK-1043). У «Сохранить» mode это false, и подъёма он не просит
   // вовсе.
-  const saveDraft = (mode, harness, tier) => {
+  const saveDraft = (mode, harness, tier, effort) => {
     // Нажатая кнопка записи включает подсветку обязательного поля: до неё
     // пустое наименование молчит и только гасит кнопки (макет DK-447,
     // состояние 2).
@@ -17675,7 +17856,7 @@ function renderNew(project, kind) {
       // оказывается не там, куда человек смотрит.
       freshRow = done.id || "";
       if (mode && done.id) {
-        await groomDraft(project, done.id, project + "/draft/" + done.id, harness || "", tier || "", mode);
+        await groomDraft(project, done.id, project + "/draft/" + done.id, harness || "", tier || "", mode, effort);
         return;
       }
       goKeepingChat(project + "/drafts");
@@ -17724,7 +17905,7 @@ function renderNew(project, kind) {
           verb: (v) => "Сохранить и " + draftModeVerb(v),
           tell: (v) => { newForm.mode = v; },
         },
-        onSave: (harness, tier, mode) => { saveDraft(mode, harness, tier); },
+        onSave: (harness, tier, mode, effort) => { saveDraft(mode, harness, tier, effort); },
       }
       : null,
     // Кнопка «Не заводить» осталась только у задачи: у черновика выход это

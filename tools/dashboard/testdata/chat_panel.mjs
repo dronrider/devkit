@@ -40,7 +40,7 @@ function makeNode(tag) {
     clientHeight: 0,
     children: [],
     attrs: {},
-    style: {},
+    style: { setProperty(name, value) { this[String(name)] = String(value); } },
     dataset: {},
     handlers: {},
   };

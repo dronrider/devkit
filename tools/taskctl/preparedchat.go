@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -18,68 +17,74 @@ import (
 	"github.com/dronrider/devkit/internal/stage"
 )
 
-type proposalChatAnswer struct {
+type preparedChatAnswer struct {
 	Tree      string                   `json:"tree"`
 	Snapshots []draftproposal.Snapshot `json:"snapshots"`
 	Decisions []draftproposal.Decision `json:"decisions"`
 }
 
-func proposalChatQuestion(root, anchor string, also []string) (chat.Question, error) {
+// preparedQuestionShape собирает короткий вид вопроса согласования (DK-1469,
+// решение 4): реплика агента, строка-ссылка на каждую задачу и опция
+// подтверждения. Тела задач остаются в prepared-файле, чат их не носит.
+func preparedQuestionShape(tree string, shown chat.PreparedQuestion) (string, []chat.Option) {
+	project := filepath.Base(tree)
+	text := "Подготовил задачи, согласуй их описание."
+	var options []chat.Option
+	for _, s := range shown.Sources {
+		for _, p := range s.Proposals {
+			title := p.Title
+			if title == "" {
+				title = p.ID
+			}
+			text += fmt.Sprintf("\n%s: #%s/draft/%s/prepared/%s", title, project, s.Source, p.ID)
+			options = append(options, chat.Option{Label: "Подтвердить " + title})
+		}
+	}
+	return text, options
+}
+
+func preparedChatQuestion(root, anchor string, also []string) (chat.Question, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return chat.Question{}, err
 	}
 	root = filepath.Clean(root)
 	ids := append([]string{anchor}, also...)
-	shown := chat.ProposalQuestion{Version: 1, Tree: root, Anchor: anchor}
+	shown := chat.PreparedQuestion{Version: 1, Tree: root, Anchor: anchor}
 	seen := map[string]bool{}
 	for _, id := range ids {
 		if !idRe.MatchString(id) || seen[id] {
 			return chat.Question{}, fmt.Errorf("неверный или повторный ID %s", id)
 		}
 		seen[id] = true
-		raw, err := cmdDraftProposals(root, id)
+		raw, err := cmdDraftPrepared(root, id)
 		if err != nil {
 			return chat.Question{}, err
 		}
-		var view proposalView
+		var view preparedView
 		if err := json.Unmarshal([]byte(raw), &view); err != nil {
 			return chat.Question{}, err
 		}
-		s := chat.ProposalSource{Source: id, Basis: view.Basis}
+		s := chat.PreparedSource{Source: id, Basis: view.Basis}
 		for _, p := range view.State.Proposals {
 			if p.Status == "" {
+				p.Text = ""
 				s.Proposals = append(s.Proposals, p)
 			}
 		}
 		if len(s.Proposals) == 0 {
-			return chat.Question{}, fmt.Errorf("%s: нет неподтверждённых карточек", id)
+			return chat.Question{}, fmt.Errorf("%s: нет неподтверждённых задач", id)
 		}
 		shown.Sources = append(shown.Sources, s)
 	}
 	if err := shown.Validate(); err != nil {
 		return chat.Question{}, err
 	}
-	// Витрина называет карточку add подготовленной задачей (DK-1545):
-	// подтверждение проверяет описание заранее, чтобы исполнение шло без
-	// вопросов к человеку. Без карточки add вопрос говорит о карточках
-	// во множественном числе, задачу он не называет.
-	addCard := false
-	for _, s := range shown.Sources {
-		for _, p := range s.Proposals {
-			if p.Outcome == "add" {
-				addCard = true
-			}
-		}
-	}
-	text := "Карточки подготовлены. Проверьте описания и подтвердите или отклоните их."
-	if addCard {
-		text = "Задача подготовлена. Проверьте описание и подтвердите или отклоните."
-	}
-	return chat.Question{Text: text, Multi: true, Proposal: &shown}, nil
+	text, options := preparedQuestionShape(root, shown)
+	return chat.Question{Text: text, Multi: true, Options: options, Prepared: &shown}, nil
 }
 
-func cmdProposalChatAsk(root, anchor string, also []string, d askDeps, env func(string) string) (string, error) {
+func cmdPreparedChatAsk(root, anchor string, also []string, d askDeps, env func(string) string) (string, error) {
 	// This JSON goes back to the asking agent. Guard every shown source under
 	// the same reservation as a cloud client, including the main worktree.
 	var locks []*draftmeta.CloudLock
@@ -109,7 +114,7 @@ func cmdProposalChatAsk(root, anchor string, also []string, d askDeps, env func(
 			}
 		}
 	}
-	q, err := proposalChatQuestion(root, anchor, also)
+	q, err := preparedChatQuestion(root, anchor, also)
 	if err != nil {
 		return "", err
 	}
@@ -123,8 +128,8 @@ func cmdProposalChatAsk(root, anchor string, also []string, d askDeps, env func(
 	return string(data), nil
 }
 
-func parseProposalChatAnswer(input []byte) (proposalChatAnswer, error) {
-	var a proposalChatAnswer
+func parsePreparedChatAnswer(input []byte) (preparedChatAnswer, error) {
+	var a preparedChatAnswer
 	dec := json.NewDecoder(bytes.NewReader(input))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&a); err != nil {
@@ -137,8 +142,29 @@ func parseProposalChatAnswer(input []byte) (proposalChatAnswer, error) {
 	return a, nil
 }
 
-func cmdProposalChatAnswer(root, anchor string, input []byte, opts CommitOpts) (string, error) {
-	a, err := parseProposalChatAnswer(input)
+// shownPrepared достаёт из признака ожидания показанный вопрос согласования:
+// до миграции ask-файлы несут прежнее поле proposal, миграция переписывает их
+// на prepared.
+func shownPrepared(ask chat.Ask) *chat.PreparedQuestion {
+	var shown *chat.PreparedQuestion
+	for _, q := range ask.Questions {
+		if q.Prepared == nil && q.Proposal == nil {
+			continue
+		}
+		if shown != nil || q.Scenario != nil {
+			return nil
+		}
+		if q.Prepared != nil {
+			shown = q.Prepared
+		} else {
+			shown = q.Proposal
+		}
+	}
+	return shown
+}
+
+func cmdPreparedChatAnswer(root, anchor string, input []byte, opts CommitOpts) (string, error) {
+	a, err := parsePreparedChatAnswer(input)
 	if err != nil {
 		return "", err
 	}
@@ -153,59 +179,52 @@ func cmdProposalChatAnswer(root, anchor string, input []byte, opts CommitOpts) (
 	req := draftproposal.ConfirmRequest{Snapshots: a.Snapshots, Decisions: a.Decisions}
 	ask, ok := chat.ReadAsk(chat.AskPath(stage.MainRoot(root), chat.TaskName(anchor)))
 	if ok {
-		var shown *chat.ProposalQuestion
-		for _, q := range ask.Questions {
-			if q.Proposal != nil {
-				if shown != nil || q.Scenario != nil {
-					return "", fmt.Errorf("неверный вопрос")
-				}
-				shown = q.Proposal
-			}
-		}
+		shown := shownPrepared(ask)
 		if ask.Task != anchor || shown == nil || shown.Anchor != anchor {
-			return proposalChatRepeated(root, req)
+			return preparedChatRepeated(root, req)
 		}
-		if err := chat.CheckProposalAnswer(*shown, root, req); err != nil {
-			if repeated, retryErr := proposalChatRepeated(root, req); retryErr == nil {
+		if err := chat.CheckPreparedAnswer(*shown, root, req); err != nil {
+			if repeated, retryErr := preparedChatRepeated(root, req); retryErr == nil {
 				return repeated, nil
 			}
 			return "", err
 		}
-		// A generic Ask may contain a forged card. Verify the displayed fields
+		// A generic Ask may contain a forged task. Verify the displayed fields
 		// against the saved source without replacing the displayed snapshot.
-		if repeated, err := proposalChatRepeated(root, req); err == nil {
+		if repeated, err := preparedChatRepeated(root, req); err == nil {
 			return repeated, nil
 		}
 		for _, source := range shown.Sources {
-			raw, err := cmdDraftProposals(root, source.Source)
+			record, state, err := readPrepared(root, source.Source)
 			if err != nil {
 				return "", err
 			}
-			var view proposalView
-			if err = json.Unmarshal([]byte(raw), &view); err != nil {
+			basis, err := preparedBasis(root, record, state)
+			if err != nil {
 				return "", err
 			}
 			var cards []draftproposal.Proposal
-			for _, p := range view.State.Proposals {
+			for _, p := range state.Proposals {
 				if p.Status == "" {
+					p.Text = ""
 					cards = append(cards, p)
 				}
 			}
-			if view.Basis != source.Basis || !reflect.DeepEqual(cards, source.Proposals) {
-				return "", fmt.Errorf("%s: показанные карточки изменились", source.Source)
+			if basis != source.Basis || !reflect.DeepEqual(cards, source.Proposals) {
+				return "", fmt.Errorf("%s: показанные задачи изменились", source.Source)
 			}
 		}
 		data, err := json.Marshal(req)
 		if err != nil {
 			return "", err
 		}
-		return cmdDraftProposalsConfirm(root, data, opts)
+		return cmdDraftPreparedConfirm(root, data, opts)
 	}
-	return proposalChatRepeated(root, req)
+	return preparedChatRepeated(root, req)
 }
 
-func cmdProposalChatReplay(root, anchor string, input []byte) (string, error) {
-	a, err := parseProposalChatAnswer(input)
+func cmdPreparedChatReplay(root, anchor string, input []byte) (string, error) {
+	a, err := parsePreparedChatAnswer(input)
 	if err != nil {
 		return "", err
 	}
@@ -217,11 +236,11 @@ func cmdProposalChatReplay(root, anchor string, input []byte) (string, error) {
 	if !idRe.MatchString(anchor) || a.Tree != root {
 		return "", fmt.Errorf("неверное дерево или адрес вопроса")
 	}
-	return proposalChatRepeated(root, draftproposal.ConfirmRequest{Snapshots: a.Snapshots, Decisions: a.Decisions})
+	return preparedChatRepeated(root, draftproposal.ConfirmRequest{Snapshots: a.Snapshots, Decisions: a.Decisions})
 }
 
 // A missing Ask permits receipt recovery only; it never invokes the writer.
-func proposalChatRepeated(root string, req draftproposal.ConfirmRequest) (string, error) {
+func preparedChatRepeated(root string, req draftproposal.ConfirmRequest) (string, error) {
 	if len(req.Decisions) == 0 || len(req.Snapshots) == 0 {
 		return "", fmt.Errorf("показанный вопрос не найден")
 	}
@@ -265,11 +284,7 @@ func proposalChatRepeated(root string, req draftproposal.ConfirmRequest) (string
 	defer lock.Close()
 	var results []draftproposal.Receipt
 	for _, d := range req.Decisions {
-		data, err := os.ReadFile(draftPath(root, d.Source))
-		if err != nil {
-			return "", err
-		}
-		state, err := draftproposal.Parse(data)
+		_, state, err := readPrepared(root, d.Source)
 		if err != nil {
 			return "", err
 		}

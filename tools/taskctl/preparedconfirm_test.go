@@ -24,11 +24,11 @@ func TestPrepareConfirmationAllOutcomesAndReplay(t *testing.T) {
 	if _, err = cmdDraft(root, "исходник", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := cmdDraftProposals(root, "XR-008")
+	raw, err := cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var view proposalView
+	var view preparedView
 	if err = json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestPrepareConfirmationAllOutcomesAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, input)
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestPrepareConfirmationAllOutcomesAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := draftproposal.Parse(got)
+	state, err := draftproposal.Load(root, "XR-008", got)
 	if err != nil || state.State != "history" {
 		t.Fatalf("state %+v %v", state, err)
 	}
@@ -121,11 +121,11 @@ func TestConcurrentPreparedConfirmationReplays(t *testing.T) {
 	if _, err = cmdDraft(root, "исходник", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := cmdDraftProposals(root, "XR-008")
+	raw, err := cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var view proposalView
+	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
 	p := draftproposal.Proposal{ID: "p1", Revision: 1, Outcome: "add", Title: "Результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}
 	input, err := json.Marshal(struct {
@@ -134,7 +134,7 @@ func TestConcurrentPreparedConfirmationReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, input)
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,14 +179,14 @@ func TestPartialConfirmationCannotRepeatInDifferentBatch(t *testing.T) {
 	if _, err = cmdDraft(root, "материал", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := cmdDraftProposals(root, "XR-008")
+	raw, err := cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var view proposalView
+	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
 	input := []byte(`{"proposals":[{"id":"p1","revision":1,"outcome":"drop","text":"убрать","reason":"устарело"},{"id":"p2","revision":1,"outcome":"drop","text":"другое","reason":"лишнее"}]}`)
-	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, input)
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestPartialConfirmationCannotRepeatInDifferentBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = cmdDraftProposals(root, "XR-008")
+	raw, err = cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,18 +235,18 @@ func TestCLIConfirmPublicationFailureAndRetry(t *testing.T) {
 	if _, err = cmdDraft(root, "исходник", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := cmdDraftProposals(root, "XR-008")
+	raw, err := cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var view proposalView
+	var view preparedView
 	if err = json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
 	payload, _ := json.Marshal(struct {
 		Proposals []draftproposal.Proposal `json:"proposals"`
 	}{[]draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Text: "материал", Reason: "устарело"}}})
-	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, payload)
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestCLIConfirmPublicationFailureAndRetry(t *testing.T) {
 	writeHook(t, root, "pre-commit", "#!/bin/sh\nexit 1\n")
 	run := func(args ...string) (string, error) {
 		t.Helper()
-		cmd := exec.Command("go", append([]string{"run", ".", "-C", root, "draft", "proposals", "confirm"}, args...)...)
+		cmd := exec.Command("go", append([]string{"run", ".", "-C", root, "draft", "prepared", "confirm"}, args...)...)
 		cmd.Stdin = bytes.NewReader(req)
 		out, err := cmd.CombinedOutput()
 		return string(out), err
@@ -274,7 +274,7 @@ func TestCLIConfirmPublicationFailureAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := draftproposal.Parse(data)
+	state, err := draftproposal.Load(root, "XR-008", data)
 	if err != nil || state.State != "history" || len(state.Receipts) != 1 {
 		t.Fatalf("state %+v %v", state, err)
 	}
@@ -293,11 +293,11 @@ func TestConfirmLockedAttachRejectsCloudWithoutWrites(t *testing.T) {
 	if _, err = cmdDraftMeta(root, "XR-008", "", "", "locked", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := cmdDraftProposals(root, "XR-008")
+	raw, err := cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var v proposalView
+	var v preparedView
 	if err = json.Unmarshal([]byte(raw), &v); err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestConfirmLockedAttachRejectsCloudWithoutWrites(t *testing.T) {
 	in, _ := json.Marshal(struct {
 		Proposals []draftproposal.Proposal `json:"proposals"`
 	}{[]draftproposal.Proposal{card}})
-	raw, err = cmdDraftProposalsSave(root, "XR-008", v.Snapshot, in)
+	raw, err = cmdDraftPreparedSave(root, "XR-008", v.Snapshot, in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestConfirmLockedAttachRejectsCloudWithoutWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = cmdDraftProposalsConfirm(root, request, CommitOpts{}); err == nil {
+	if _, err = cmdDraftPreparedConfirm(root, request, CommitOpts{}); err == nil {
 		cloud.Close()
 		t.Fatal("cloud active")
 	}
@@ -331,28 +331,28 @@ func TestConfirmLockedAttachRejectsCloudWithoutWrites(t *testing.T) {
 		t.Fatal("partial write")
 	}
 	cloud.Close()
-	if _, err = cmdDraftProposalsConfirm(root, request, CommitOpts{}); err != nil {
+	if _, err = cmdDraftPreparedConfirm(root, request, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestProposalHistoryNewAnalysisAndOldRetry(t *testing.T) {
+func TestPreparedHistoryNewAnalysisAndOldRetry(t *testing.T) {
 	root := setup(t)
 	kit, _ := filepath.Abs("../..")
 	t.Setenv("DEVKIT_HOME", kit)
 	if _, err := cmdDraft(root, "исходник", "mid", CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := cmdDraftProposals(root, "XR-008")
+	raw, err := cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var view proposalView
+	var view preparedView
 	if err = json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
 	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Первый результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
-	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, payload)
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,11 +361,11 @@ func TestProposalHistoryNewAnalysisAndOldRetry(t *testing.T) {
 	}
 	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "accept"}}}
 	input, _ := json.Marshal(req)
-	first, err := cmdDraftProposalsConfirm(root, input, CommitOpts{})
+	first, err := cmdDraftPreparedConfirm(root, input, CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = cmdDraftProposals(root, "XR-008")
+	raw, err = cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +374,7 @@ func TestProposalHistoryNewAnalysisAndOldRetry(t *testing.T) {
 		t.Fatalf("state: %+v", view.State)
 	}
 	old := view.State
-	raw, err = cmdDraftProposalsSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p2","revision":1,"outcome":"drop","text":"второй","reason":"устарело"}]}`))
+	raw, err = cmdDraftPreparedSave(root, "XR-008", view.Snapshot, []byte(`{"proposals":[{"id":"p2","revision":1,"outcome":"drop","text":"второй","reason":"устарело"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func TestProposalHistoryNewAnalysisAndOldRetry(t *testing.T) {
 		t.Fatalf("new state: %+v", view.State)
 	}
 	before, _ := os.ReadFile(draftPath(root, "XR-008"))
-	repeat, err := cmdDraftProposalsConfirm(root, input, CommitOpts{})
+	repeat, err := cmdDraftPreparedConfirm(root, input, CommitOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,10 +395,10 @@ func TestProposalHistoryNewAnalysisAndOldRetry(t *testing.T) {
 		t.Fatalf("retry: %s", repeat)
 	}
 	next, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p2", Revision: 1, Action: "accept"}}})
-	if _, err = cmdDraftProposalsConfirm(root, next, CommitOpts{}); err != nil {
+	if _, err = cmdDraftPreparedConfirm(root, next, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err = cmdDraftProposals(root, "XR-008")
+	raw, err = cmdDraftPrepared(root, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,14 +427,14 @@ func TestProposalConfirmLinkedWorktreeRejectsBoardMutation(t *testing.T) {
 	git("commit", "-m", "fixture")
 	tree := filepath.Join(t.TempDir(), "worktree")
 	git("worktree", "add", "-b", "test", tree)
-	raw, err := cmdDraftProposals(tree, "XR-008")
+	raw, err := cmdDraftPrepared(tree, "XR-008")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var view proposalView
+	var view preparedView
 	json.Unmarshal([]byte(raw), &view)
 	payload, _ := json.Marshal(map[string]any{"proposals": []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "add", Title: "Результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent"}}})
-	raw, err = cmdDraftProposalsSave(tree, "XR-008", view.Snapshot, payload)
+	raw, err = cmdDraftPreparedSave(tree, "XR-008", view.Snapshot, payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +443,7 @@ func TestProposalConfirmLinkedWorktreeRejectsBoardMutation(t *testing.T) {
 	source, _ := os.ReadFile(draftPath(tree, "XR-008"))
 	board, _ := os.ReadFile(boardPath(tree))
 	mainBoard, _ := os.ReadFile(boardPath(root))
-	if _, err = cmdDraftProposalsConfirm(tree, input, CommitOpts{}); err == nil || !strings.Contains(err.Error(), "линкованный worktree") {
+	if _, err = cmdDraftPreparedConfirm(tree, input, CommitOpts{}); err == nil || !strings.Contains(err.Error(), "линкованный worktree") {
 		t.Fatalf("expected refusal: %v", err)
 	}
 	sourceAfter, _ := os.ReadFile(draftPath(tree, "XR-008"))

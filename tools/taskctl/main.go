@@ -585,24 +585,24 @@ func main() {
 			pos := frame.ParseArgs(fs, args[2:])
 			needArgs(pos, 1, 1, "draft meta <ID> [--type <тип>] [--source <источник>] [--lock locked|unlocked]")
 			msg, err = cmdDraftMeta(root(*dir), pos[0], *kind, *source, *lock, c)
-		case "proposals":
+		case "prepared":
 			if len(args) > 2 && args[2] == "ask" {
-				fs := flag.NewFlagSet("draft proposals ask", flag.ExitOnError)
+				fs := flag.NewFlagSet("draft prepared ask", flag.ExitOnError)
 				dir := fs.String("C", gdir, "стартовая директория")
 				var also []string
 				fs.Var((*strList)(&also), "also", "ещё один показанный источник")
 				pos := frame.ParseArgs(fs, args[3:])
-				needArgs(pos, 1, 1, "draft proposals ask <ID> [--also <ID> ...]")
+				needArgs(pos, 1, 1, "draft prepared ask <ID> [--also <ID> ...]")
 				tree := root(*dir)
-				msg, err = cmdProposalChatAsk(tree, pos[0], also, liveDeps(tree), os.Getenv)
+				msg, err = cmdPreparedChatAsk(tree, pos[0], also, liveDeps(tree), os.Getenv)
 			} else if len(args) > 2 && args[2] == "answer" {
-				fs := flag.NewFlagSet("draft proposals answer", flag.ExitOnError)
+				fs := flag.NewFlagSet("draft prepared answer", flag.ExitOnError)
 				dir := fs.String("C", gdir, "стартовая директория")
 				replay := fs.Bool("repeat-only", false, "только восстановить сохранённые результаты")
 				var c CommitOpts
 				commitFlags(fs, &c)
 				pos := frame.ParseArgs(fs, args[3:])
-				needArgs(pos, 1, 1, "draft proposals answer <ID> [--repeat-only] < JSON")
+				needArgs(pos, 1, 1, "draft prepared answer <ID> [--repeat-only] < JSON")
 				var data []byte
 				data, err = io.ReadAll(io.LimitReader(os.Stdin, 1024*1024+1))
 				if err == nil && len(data) > 1024*1024 {
@@ -610,51 +610,64 @@ func main() {
 				}
 				if err == nil {
 					if *replay {
-						msg, err = cmdProposalChatReplay(root(*dir), pos[0], data)
+						msg, err = cmdPreparedChatReplay(root(*dir), pos[0], data)
 					} else {
-						msg, err = cmdProposalChatAnswer(root(*dir), pos[0], data, c)
+						msg, err = cmdPreparedChatAnswer(root(*dir), pos[0], data, c)
 					}
 				}
 			} else if len(args) > 2 && args[2] == "confirm" {
-				fs := flag.NewFlagSet("draft proposals confirm", flag.ExitOnError)
+				fs := flag.NewFlagSet("draft prepared confirm", flag.ExitOnError)
 				dir := fs.String("C", gdir, "стартовая директория")
 				var c CommitOpts
 				commitFlags(fs, &c)
-				needArgs(frame.ParseArgs(fs, args[3:]), 0, 0, "draft proposals confirm < JSON")
+				needArgs(frame.ParseArgs(fs, args[3:]), 0, 0, "draft prepared confirm < JSON")
 				var data []byte
 				data, err = io.ReadAll(io.LimitReader(os.Stdin, 1024*1024+1))
 				if err == nil && len(data) > 1024*1024 {
 					err = fmt.Errorf("подтверждение слишком велико")
 				}
 				if err == nil {
-					msg, err = cmdDraftProposalsConfirm(root(*dir), data, c)
+					msg, err = cmdDraftPreparedConfirm(root(*dir), data, c)
 				}
 			} else if len(args) > 2 && args[2] == "reject" {
-				fs := flag.NewFlagSet("draft proposals reject", flag.ExitOnError)
+				fs := flag.NewFlagSet("draft prepared reject", flag.ExitOnError)
 				dir := fs.String("C", gdir, "стартовая директория")
 				base := fs.String("base", "", "снимок исходника")
 				reason := fs.String("reason", "", "причина отказа")
 				pos := frame.ParseArgs(fs, args[3:])
-				needArgs(pos, 2, 2, "draft proposals reject <ID> <карточка> --base <снимок> --reason <причина>")
-				msg, err = cmdDraftProposalReject(root(*dir), pos[0], pos[1], *base, *reason)
+				needArgs(pos, 2, 2, "draft prepared reject <ID> <задача> --base <снимок> --reason <причина>")
+				msg, err = cmdDraftPreparedReject(root(*dir), pos[0], pos[1], *base, *reason)
 			} else if len(args) > 2 && args[2] == "save" {
-				fs := flag.NewFlagSet("draft proposals save", flag.ExitOnError)
+				fs := flag.NewFlagSet("draft prepared save", flag.ExitOnError)
 				dir := fs.String("C", gdir, "стартовая директория")
 				base := fs.String("base", "", "снимок исходника")
 				pos := frame.ParseArgs(fs, args[3:])
-				needArgs(pos, 1, 1, "draft proposals save <ID> --base <снимок>")
+				needArgs(pos, 1, 1, "draft prepared save <ID> --base <снимок>")
 				var data []byte
 				data, err = io.ReadAll(os.Stdin)
 				if err == nil {
-					msg, err = cmdDraftProposalsSave(root(*dir), pos[0], *base, data)
+					msg, err = cmdDraftPreparedSave(root(*dir), pos[0], *base, data)
 				}
+			} else if len(args) > 2 && args[2] == "migrate" {
+				fs := flag.NewFlagSet("draft prepared migrate", flag.ExitOnError)
+				dir := fs.String("C", gdir, "стартовая директория")
+				needArgs(frame.ParseArgs(fs, args[3:]), 0, 0, "draft prepared migrate")
+				msg, err = cmdDraftPreparedMigrate(root(*dir))
 			} else {
-				fs := flag.NewFlagSet("draft proposals", flag.ExitOnError)
+				fs := flag.NewFlagSet("draft prepared", flag.ExitOnError)
 				dir := fs.String("C", gdir, "стартовая директория")
 				pos := frame.ParseArgs(fs, args[2:])
-				needArgs(pos, 1, 1, "draft proposals <ID>")
-				msg, err = cmdDraftProposals(root(*dir), pos[0])
+				needArgs(pos, 1, 1, "draft prepared <ID>")
+				msg, err = cmdDraftPrepared(root(*dir), pos[0])
 			}
+		case "idea":
+			fs := flag.NewFlagSet("draft idea", flag.ExitOnError)
+			dir := fs.String("C", gdir, "стартовая директория")
+			var c CommitOpts
+			commitFlags(fs, &c)
+			pos := frame.ParseArgs(fs, args[2:])
+			needArgs(pos, 2, 2, "draft idea <ID> \"текст мысли\"")
+			msg, err = cmdDraftIdea(root(*dir), pos[0], pos[1], c)
 		case "defer":
 			fs := flag.NewFlagSet("draft defer", flag.ExitOnError)
 			dir := fs.String("C", gdir, "стартовая директория")

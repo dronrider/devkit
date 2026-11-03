@@ -26,7 +26,7 @@ type confirmationPlan struct {
 func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (confirmationPlan, error) {
 	var out confirmationPlan
 	if len(request.Decisions) == 0 {
-		return out, fmt.Errorf("не выбрана ни одна карточка")
+		return out, fmt.Errorf("не выбрана ни одна задача")
 	}
 	sort.Slice(request.Snapshots, func(i, j int) bool { return request.Snapshots[i].Source < request.Snapshots[j].Source })
 	sort.Slice(request.Decisions, func(i, j int) bool {
@@ -79,7 +79,7 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 		if err != nil {
 			return out, err
 		}
-		state, err := draftproposal.Parse(data)
+		state, err := draftproposal.Load(root, snap.Source, data)
 		if err != nil {
 			return out, err
 		}
@@ -110,7 +110,7 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 	out.Results = nil
 	for _, d := range request.Decisions {
 		if d.Action == "accept" {
-			if err := boardGuard(root, "draft proposals confirm"); err != nil {
+			if err := boardGuard(root, "draft prepared confirm"); err != nil {
 				return out, err
 			}
 			break
@@ -118,7 +118,7 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 	}
 	for _, snap := range request.Snapshots {
 		rec := records[snap.Source]
-		basis, err := proposalBasis(root, rec.data, rec.state)
+		basis, err := preparedBasis(root, rec.data, rec.state)
 		if err != nil {
 			return out, err
 		}
@@ -137,7 +137,7 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 				}
 			}
 			if !found {
-				return out, fmt.Errorf("%s: карточка %s не найдена", snap.Source, d.Proposal)
+				return out, fmt.Errorf("%s: задача %s не найдена", snap.Source, d.Proposal)
 			}
 		}
 	}
@@ -206,12 +206,17 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 		if done {
 			rec.state.State = "history"
 		}
-		updated, err := draftproposal.Replace(rec.data, rec.state)
-		if err != nil {
+		// Состояние пишется в prepared-файл staging-дерева, а старый блок
+		// срезается из записи материала, если он там ещё был.
+		if err = draftproposal.SavePrepared(staged.root, snap.Source, rec.state); err != nil {
 			return out, err
 		}
-		if err = os.WriteFile(stageSource, updated, 0644); err != nil {
-			return out, err
+		if material, had, merr := draftproposal.Material(rec.data); merr != nil {
+			return out, merr
+		} else if had {
+			if err = os.WriteFile(stageSource, material, 0644); err != nil {
+				return out, err
+			}
 		}
 		sourcePaths[draftRel(snap.Source)] = true
 	}
@@ -225,7 +230,7 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 		if err != nil {
 			return out, err
 		}
-		basis, err := proposalBasis(root, current, rec.state)
+		basis, err := preparedBasis(root, current, rec.state)
 		if err != nil {
 			return out, err
 		}
@@ -254,7 +259,7 @@ type confirmationResult struct {
 	Publication string                  `json:"publication,omitempty"`
 }
 
-func cmdDraftProposalsConfirm(root string, input []byte, opts CommitOpts) (resultText string, finalErr error) {
+func cmdDraftPreparedConfirm(root string, input []byte, opts CommitOpts) (resultText string, finalErr error) {
 	if err := opts.validate(); err != nil {
 		return "", err
 	}
@@ -345,7 +350,7 @@ func confirmationCloudLocks(root, serviceDir string, request draftproposal.Confi
 		if header.Lock != "locked" {
 			continue
 		}
-		state, err := draftproposal.Parse(data)
+		state, err := draftproposal.Load(root, decision.Source, data)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -3,6 +3,7 @@
 doctor (DK-168). Разбор формул на синтетических досках и прогон doctor
 на проекте с доской.
 """
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -462,7 +463,9 @@ class DoctorPreparedMigrateTest(SandboxCase):
         self.assertEqual(rc, 1, "doctor не увидел старый блок: %s" % out)
         self.assertIn("docs/tasks/drafts/PD-3.md: разбор задач лежит старым блоком в записи",
                       out, "нет находки про старый блок")
-        self.assertIn("taskctl -C %s draft prepared migrate" % self.proj, out,
+        # ручной вызов печатается каноническим путём: /var на macOS живёт
+        # симлинком на /private/var, и сверяться надо с тем же разрешением
+        self.assertIn("taskctl -C %s draft prepared migrate" % os.path.realpath(self.proj), out,
                       "находка не называет ручной вызов")
         self.assertNotIn("drafts/PD-4.md", out, "черновик без блока стал находкой")
 
@@ -493,7 +496,7 @@ class DoctorPreparedMigrateTest(SandboxCase):
                       "без бинаря находка пропала")
         self.assertIn("taskctl не в PATH, сперва сборка python3", out,
                       "находка без бинаря не называет сборку")
-        self.assertIn("taskctl -C %s draft prepared migrate" % self.proj, out,
+        self.assertIn("taskctl -C %s draft prepared migrate" % os.path.realpath(self.proj), out,
                       "находка без бинаря не называет ручной вызов")
 
 

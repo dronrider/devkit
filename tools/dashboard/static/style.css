@@ -1946,7 +1946,7 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
   background-size:300% 100%;background-repeat:no-repeat;
   -webkit-background-clip:text;background-clip:text;color:transparent;
   animation:bshine 3.2s linear infinite}
-@keyframes bshine{from{background-position:0% 0}to{background-position:100% 0}}
+@keyframes bshine{from{background-position:100% 0}to{background-position:0% 0}}
 .bmeta{display:flex;gap:6px;margin-left:auto;white-space:nowrap;
   font:400 12px var(--mono);color:var(--tx3)}
 /* Состояния без хода говорят одним словом: иконки и счётчиков тут нет, блеск

@@ -774,3 +774,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1562 | Тест taskctl зависает в голом окружении из-за headless-подъёма головы | bug | P1 | 2026-11-03 | [tasks/archive/2026/DK-1562.md](tasks/archive/2026/DK-1562.md) |
 | DK-1546 | [dashboard] Возврат в последний разговор с телефона [приёмка: mixed] | task | P2 | 2026-11-03 | [tasks/archive/2026/DK-1546.md](tasks/archive/2026/DK-1546.md) |
 | DK-1581 | Подписка OpenCode Go доступна через Claude Code | task | P2 | 2026-11-04 | [tasks/archive/2026/DK-1581.md](tasks/archive/2026/DK-1581.md) |
+| DK-187 | Замена «ярус» на «уровень» в доке, выводе agentctl и промптах [долг] | task | P2 | 2026-11-04 | [tasks/archive/2026/DK-187.md](tasks/archive/2026/DK-187.md) |

@@ -667,7 +667,8 @@ class DeployTest(SandboxCase):
         write(nproj / "docs" / "TASKS.md", "# Задачи\n")
         write(nproj / ".devkit" / "deploy.local", "deploy = make deploy\nautonomous = false\n")
         _, out = self.sysdoctor(nproj)
-        self.assertIn_("не гитигнорнут", out, "нет находки про негитигнорнутый конфиг")
+        self.assertIn_(".devkit/deploy.local не гитигнорнут", out,
+                       "нет находки про негитигнорнутый конфиг выката")
 
     def test_07_fix_finishes_an_old_project(self):
         # doctor --fix доводит обвязку проекта, подключённого до появления

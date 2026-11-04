@@ -101,7 +101,7 @@ history = json.loads(subprocess.check_output(
     ['taskctl', 'draft', 'list', '--history', '--safe', '--json'], text=True))
 assert any(entry['id'] == 'OB-071' for entry in history['drafts']), 'нет истории оформления черновика'
 view = json.loads(subprocess.check_output(
-    ['taskctl', 'draft', 'proposals', 'OB-071'], text=True))
+    ['taskctl', 'draft', 'prepared', 'OB-071'], text=True))
 accepted = [p for p in view['state']['proposals'] if p['status'] == 'accepted']
 assert len(accepted) == 1 and accepted[0]['result']['ids'] == [task_id], 'нет подтверждённой карточки для строки'
 

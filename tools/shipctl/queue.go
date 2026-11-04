@@ -54,6 +54,7 @@ const queueRetryLimit = 3
 // последний раз и снята ли она с очереди.
 type queueMark struct {
 	Tries  int       `json:"tries"`
+	Code   string    `json:"code,omitempty"`
 	Last   string    `json:"last,omitempty"`
 	At     time.Time `json:"at,omitempty"`
 	Held   bool      `json:"held,omitempty"`
@@ -174,38 +175,74 @@ func queueRows(root string, b *board) ([]queueItem, error) {
 	if err != nil {
 		return nil, err
 	}
+	current, err := git(root, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return nil, err
+	}
 	st := loadQueue(root)
 	var items []queueItem
 	for _, r := range b.sects["in-progress"] {
-		has := false
-		for _, n := range branches {
-			if branchOfTask(strings.TrimSpace(n), r.ID) {
-				commits, err := git(root, "log", main+".."+strings.TrimSpace(n), "--format=%H")
+		var code string
+		for _, branch := range branches {
+			if !branchOfTask(branch, r.ID) {
+				continue
+			}
+			code, err = queueCode(root, main, branch)
+			if err != nil {
+				return nil, err
+			}
+			if code != "" {
+				break
+			}
+		}
+		if code == "" {
+			continue
+		}
+		mark := *st.mark(r.ID)
+		if mark.Code != "" {
+			branch := current
+			if current == main {
+				wt, err := taskWorktree(root, r.ID)
 				if err != nil {
 					return nil, err
 				}
-				for _, sha := range strings.Fields(commits) {
-					files, err := git(root, "show", "--name-only", "--pretty=", sha)
-					if err != nil {
-						return nil, err
-					}
-					if !boardOnly(root, files) {
-						has = true
-						break
-					}
+				branch = ""
+				if wt != nil {
+					branch = wt.Branch
 				}
-				if has {
-					break
+			}
+			if branchOfTask(branch, r.ID) {
+				code, err := queueCode(root, main, branch)
+				if err != nil {
+					return nil, err
+				}
+				if code != "" && code != mark.Code {
+					mark = queueMark{}
 				}
 			}
 		}
-		if !has {
-			continue
-		}
-		items = append(items, queueItem{ID: r.ID, Title: r.Title, Rank: r.Rank, Mark: *st.mark(r.ID)})
+		items = append(items, queueItem{ID: r.ID, Title: r.Title, Rank: r.Rank, Mark: mark})
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Rank > items[j].Rank })
 	return items, nil
+}
+
+// queueCode пропускает коммит с записью о снятии и другие коммиты доски.
+func queueCode(root, main, ref string) (string, error) {
+	commits, err := git(root, "log", main+".."+ref, "--format=%H")
+	if err != nil {
+		return "", err
+	}
+	for _, sha := range strings.Fields(commits) {
+		files, err := git(root, "show", "--name-only", "--pretty=", sha)
+		if err != nil {
+			return "", err
+		}
+		if !boardOnly(root, files) {
+			return sha, nil
+		}
+	}
+	return "", nil
 }
 
 // sinceWords складывает возраст одной строкой словами: минуты в первые часы,
@@ -255,19 +292,32 @@ func queueLines(items []queueItem) []string {
 // красноте: запись в файле задачи и уведомление. Без них автор узнавал бы про
 // отставленную ветку только грепом по журналу сторожка (замечание ревью круга
 // 1, DK-1218).
-func queueRetry(root, id, why string) (string, bool) {
+func queueRetry(root, id, why, before, code string) (string, bool) {
 	var m queueMark
+	var heldNow bool
 	queueMutate(root, func(st *queueState) {
 		mk := st.mark(id)
+		if mk.Held && (mk.Code == "" || mk.Code == before) {
+			m = *mk
+			return
+		}
+		if mk.Last != why || mk.Code != before {
+			*mk = queueMark{}
+		}
 		mk.Tries++
-		mk.Last, mk.At = why, time.Now()
+		mk.Last, mk.Code, mk.At = why, code, time.Now()
 		if mk.Tries >= queueRetryLimit {
+			heldNow = true
 			mk.Held, mk.Reason = true, fmt.Sprintf("повторов %d из %d, последний отказ: %s", mk.Tries, queueRetryLimit, why)
 		}
 		m = *mk
 	})
 	if m.Held {
-		return fmt.Sprintf("%s ушла из очереди слияний: %s", id, m.Reason) + queueTrace(root, id, m.Reason), false
+		line := fmt.Sprintf("%s ушла из очереди слияний: %s", id, m.Reason)
+		if heldNow {
+			line += queueTrace(root, id, m.Reason)
+		}
+		return line, false
 	}
 	return fmt.Sprintf("%s встала в хвост очереди слияний, повтор %d из %d: %s", id, m.Tries, queueRetryLimit, why), true
 }
@@ -277,7 +327,7 @@ func queueHold(root, id, why string) string {
 	queueMutate(root, func(st *queueState) {
 		mk := st.mark(id)
 		mk.Held, mk.Reason, mk.At = true, why, time.Now()
-		mk.Last = why
+		mk.Last, mk.Code = why, ""
 	})
 	return fmt.Sprintf("%s снята с очереди слияний: %s", id, why)
 }
@@ -287,8 +337,7 @@ func queueHold(root, id, why string) string {
 func queueFree(root, id string) string {
 	queueMutate(root, func(st *queueState) {
 		mk := st.mark(id)
-		mk.Held, mk.Reason, mk.Tries, mk.Last = false, "", 0, ""
-		mk.At = time.Now()
+		*mk = queueMark{At: time.Now()}
 	})
 	return fmt.Sprintf("%s вернулась в очередь слияний, повторы обнулены", id)
 }
@@ -404,6 +453,21 @@ func cmdQueue(root string, p QueueParams) (string, error) {
 //     остальные ветки незачем. Повтор считается, а проход останавливается:
 //     один прогон на тик вместо всего состава.
 func queueDrain(root string, p QueueParams) (string, error) {
+	// Два разлива не должны читать очередь между прогоном и записью отказа.
+	f, err := os.OpenFile(filepath.Join(root, lockPath+".queue"), os.O_CREATE|os.O_RDWR, 0o644)
+	switch {
+	case err == nil:
+		defer f.Close()
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return noQueue + ": другой разлив уже идёт", nil
+		}
+		if err != nil {
+			return "", err
+		}
+	case !os.IsNotExist(err):
+		return "", err
+	}
 	b, err := loadBoard(root)
 	if err != nil {
 		return "", err
@@ -491,18 +555,23 @@ func queueTry(root, id string, p QueueParams) (merged bool, note string, stop bo
 		return false, "", false, firstLine(mergeErr.Error())
 	case errors.As(mergeErr, &red) && red.Own:
 		return false, queueOutOfLine(root, id, red.Why), true, ""
-	case errors.As(mergeErr, &red) && red.Load:
-		// Нагрузочная краснота и есть признак загруженной машины, и добивать её
-		// полным прогоном по остальному составу значит давить ту же машину,
-		// от чего лечит цель DK-1084. Ветка уже в хвосте, повтор посчитан, и
-		// следующую возьмёт следующий тик через пять минут (замечание ревью
-		// круга 1, DK-1218).
-		note, _ = queueRetry(root, id, red.Why)
-		stageQueue(root, []string{id}, "очередь слияний: "+note)
-		return false, note + "; разлив остановлен: машина занята, следующую ветку возьмёт следующий заход", true, ""
 	case errors.As(mergeErr, &red):
-		note, _ = queueRetry(root, id, red.Why)
+		before, err := queueCode(root, red.base, red.before)
+		if err != nil {
+			return false, "", false, firstLine(err.Error())
+		}
+		code := before
+		if red.tested != red.before {
+			code, err = queueCode(root, red.base, red.tested)
+			if err != nil {
+				return false, "", false, firstLine(err.Error())
+			}
+		}
+		note, _ = queueRetry(root, id, red.Why, before, code)
 		stageQueue(root, []string{id}, "очередь слияний: "+note)
+		if red.Load {
+			return false, note + "; разлив остановлен: машина занята, следующую ветку возьмёт следующий заход", true, ""
+		}
 		return false, note + "; разлив остановлен: краснота вне диффа задачи это красный main, и гнать через него остальные ветки незачем", true, ""
 	case errors.Is(mergeErr, errRebaseConflict):
 		return false, queueOutOfLine(root, id, "конфликт ребейза, разводить руками"), true, ""

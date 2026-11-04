@@ -488,7 +488,7 @@ func TestQueueRetryRaceKeepsBothTries(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		queueRetry(root, "XR-001", "отказ конкурента")
+		queueRetry(root, "XR-001", "отказ конкурента", "", "")
 		close(done)
 	}()
 
@@ -510,7 +510,7 @@ func TestQueueRetryRaceKeepsBothTries(t *testing.T) {
 	// Первая наклейка легла с tries=1, пока замок снаружи держал тест.
 	// Второй, настоящий заход обязан увидеть её и досчитать до двух, а не
 	// потерять первую отметку.
-	msg, left := queueRetry(root, "XR-001", "отказ ещё раз")
+	msg, left := queueRetry(root, "XR-001", "отказ конкурента", "", "")
 	if !left || !strings.Contains(msg, "повтор 2 из 3") {
 		t.Fatalf("второй заход не досчитал повтор: %q", msg)
 	}
@@ -542,7 +542,7 @@ func TestQueueLockIndependentOfShipLock(t *testing.T) {
 	var msg string
 	var left bool
 	go func() {
-		msg, left = queueRetry(root, "XR-001", "нагрузочное падение")
+		msg, left = queueRetry(root, "XR-001", "нагрузочное падение", "", "")
 		close(done)
 	}()
 	select {
@@ -563,7 +563,7 @@ func TestQueueLockIndependentOfShipLock(t *testing.T) {
 // вовсе, как и раньше, а замок наклеек не заводится (DK-1229).
 func TestQueueRetryWithoutDevkit(t *testing.T) {
 	root, _ := setup(t, rowInProg, "")
-	msg, left := queueRetry(root, "XR-001", "провал")
+	msg, left := queueRetry(root, "XR-001", "провал", "", "")
 	if !left || !strings.Contains(msg, "повтор 1 из 3") {
 		t.Fatalf("отчёт без .devkit: %q", msg)
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -214,7 +215,9 @@ func redVerdict(rec testRunRecord) (own, load bool, why string) {
 		case c.Load:
 			at := c.Name
 			if len(c.Loaded) > 0 {
-				at += " (" + strings.Join(c.Loaded, ", ") + ")"
+				tests := slices.Clone(c.Loaded)
+				slices.Sort(tests)
+				at += " (" + strings.Join(tests, ", ") + ")"
 			}
 			loaded = append(loaded, at)
 		case c.Resolved && c.Own:
@@ -223,6 +226,9 @@ func redVerdict(rec testRunRecord) (own, load bool, why string) {
 			alien = append(alien, c.Name)
 		}
 	}
+	slices.Sort(mine)
+	slices.Sort(loaded)
+	slices.Sort(alien)
 	switch {
 	case len(mine) > 0:
 		return true, false, "краснота в диффе задачи: " + strings.Join(mine, ", ")

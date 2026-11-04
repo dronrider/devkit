@@ -273,7 +273,7 @@ func (s *server) chatHoldSweep() {
 			// (LLD DK-1469), и дозор правкой записи ломал бы показанный
 			// вопрос (инцидент DK-1531 от 2026-11-04). Снимается вопрос
 			// своим порядком: ответом, сроком или отказом мёртвого окна.
-			if _, asked := chat.ReadAsk(chat.AskPath(p.Path, chat.TaskName(id))); asked {
+			if a, asked := chat.ReadAsk(chat.AskPath(p.Path, chat.TaskName(id))); asked && a.Live(s.now()) {
 				continue
 			}
 			why := s.deadAddresseeWhy(p.Path, id, rows)

@@ -405,7 +405,8 @@ func TestChatHoldSelectsFileUnderDraftLock(t *testing.T) {
 // Запись под вопросом входит в снимок подтверждения, и правка её дозором
 // ломала бы показанный вопрос (инцидент DK-1531 от 2026-11-04). Ответ
 // заканчивает вопрос своим порядком, и после снятия признака дозор
-// подметает вход как обычно.
+// подметает вход как обычно. Просроченный вопрос живым ожиданием уже не
+// считается, и дозор подметает вход под ним как под снятым.
 func TestChatHoldSweepWaitsForPendingAsk(t *testing.T) {
 	e, _ := holdEnv(t)
 	draft := holdDraftFile(t, e.proj, "XR-5")
@@ -435,6 +436,31 @@ func TestChatHoldSweepWaitsForPendingAsk(t *testing.T) {
 	}
 	if note := readFile(t, draft); !strings.Contains(note, "жду подтверждения") {
 		t.Fatalf("после снятия вопроса реплика не легла в запись:\n%s", note)
+	}
+}
+
+// Просроченный признак ожидания не держит дозор: срок вопроса вышел, ответа
+// нет, и реплика мёртвого окна откладывается в запись, не ожидая страховки
+// срока. Живость признака меряется той же проверкой, что и в остальных
+// читателях признака (замечание ревью 1 по DK-1591).
+func TestChatHoldSweepIgnoresExpiredAsk(t *testing.T) {
+	e, _ := holdEnv(t)
+	draft := holdDraftFile(t, e.proj, "XR-5")
+	sid := "ffff6666-6666-6666-8666-666666666666"
+	if err := chat.WriteAsk(e.proj, "task-XR-5", chat.Ask{Session: sid, Task: "XR-5",
+		Until: time.Now().Add(-time.Hour),
+		Questions: []chat.Question{{Text: "подтвердите карточки"}}}); err != nil {
+		t.Fatal(err)
+	}
+	holdPutLine(t, e.proj, "XR-5", chat.TaskLine(time.Now(), "ответ просроченному"))
+
+	e.s.chatHoldSweep()
+
+	if lines := chatLines(t, e.proj, "task-XR-5"); len(lines) != 0 {
+		t.Fatalf("просроченный вопрос держит дозор: %q", lines)
+	}
+	if note := readFile(t, draft); !strings.Contains(note, "ответ просроченному") {
+		t.Fatalf("реплика под просроченным вопросом не легла в запись:\n%s", note)
 	}
 }
 

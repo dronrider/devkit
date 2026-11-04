@@ -417,6 +417,10 @@ func TestWaitLimitRejectsBadEnv(t *testing.T) {
 // Без авторизации UI security встаёт в ожидании диалога: короткий предел снимает
 // вызов, шаг пропускается с названной причиной, и полный прогон headless
 // остаётся зелёным.
+func headlessKeychainUnavailable(err error) bool {
+	return errors.Is(err, errSecurityTimeout)
+}
+
 func TestRealSecurityAddLongValueRoundTrip(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("живой Keychain есть только на macOS")
@@ -431,14 +435,14 @@ func TestRealSecurityAddLongValueRoundTrip(t *testing.T) {
 	}()
 	long := "api-platform_serviceToken=" + strings.Repeat("x", 300)
 	if err := r.Add(service, account, long); err != nil {
-		if errors.Is(err, errSecurityTimeout) {
+		if headlessKeychainUnavailable(err) {
 			t.Skip("авторизация Keychain недоступна: security снят по пределу ожидания")
 		}
 		t.Fatal(err)
 	}
 	got, err := r.Find(service, account)
 	if err != nil {
-		if errors.Is(err, errSecurityTimeout) {
+		if headlessKeychainUnavailable(err) {
 			t.Skip("авторизация Keychain недоступна: security снят по пределу ожидания")
 		}
 		t.Fatal(err)

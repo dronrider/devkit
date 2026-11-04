@@ -15,6 +15,48 @@ import (
 	"github.com/dronrider/devkit/internal/drafttx"
 )
 
+func TestCLIBoardUnavailableWithoutTransactionWriteAccess(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("режим каталога не запрещает запись суперпользователю")
+	}
+
+	root := setup(t)
+	gitSetup(t, root)
+	service, err := drafttx.ServiceDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(service, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(service, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(service, 0o700); err != nil {
+			t.Error(err)
+		}
+	})
+
+	for _, name := range []string{"guard", "show"} {
+		t.Run(name, func(t *testing.T) {
+			out, err := runCLI(t, "-C", root, name, "XR-001")
+			if err == nil {
+				t.Fatalf("command succeeded: %s", out)
+			}
+			for _, want := range []string{
+				"состояние доски недоступно",
+				"с правом записи в " + service,
+				os.ErrPermission.Error(),
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("output does not contain %q: %s", want, out)
+				}
+			}
+		})
+	}
+}
+
 func TestCLIPublicationReleasesLockBeforeHook(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)

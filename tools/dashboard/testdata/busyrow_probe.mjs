@@ -1,8 +1,9 @@
 // Замер строки активности чата живым браузером (DK-1586).
 // Зовётся: node testdata/busyrow_probe.mjs [путь к chrome] [ширина] [путь к style.css]
-// Печатает JSON с рамками строки, поля ввода и записи ленты и с положением
-// фона по фазам блеска. Код возврата 1, если края разошлись, полоса идёт
-// справа налево или фон уходит из слова.
+// Печатает JSON с рамками строки, поля ввода и записи ленты, зазором снизу и
+// с положением фона по фазам блеска. Фазы считаются от прочитанной длительности
+// анимации, а не от зашитого периода. Код возврата 1, если края разошлись,
+// зазор меньше 10 точек, полоса идёт справа налево или фон уходит из слова.
 
 import {spawn} from 'node:child_process';
 import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
@@ -84,22 +85,27 @@ try {
     const q = (s) => document.querySelector(s);
     const rect = (s) => {
       const b = q(s).getBoundingClientRect();
-      return {left: +b.left.toFixed(2), right: +b.right.toFixed(2), width: +b.width.toFixed(2)};
+      return {left: +b.left.toFixed(2), right: +b.right.toFixed(2), top: +b.top.toFixed(2),
+        bottom: +b.bottom.toFixed(2), width: +b.width.toFixed(2)};
     };
     const word = q('.bword');
     const anim = word.getAnimations().find((a) => a.animationName === 'bshine');
+    const cs = getComputedStyle(word);
+    const dur = parseFloat(cs.animationDuration) * 1000;
     const phases = [0, 0.25, 0.5, 0.75];
     const positions = [];
     anim.pause();
     for (const p of phases) {
-      anim.currentTime = 3200 * p;
+      anim.currentTime = dur * p;
       await new Promise((r) => requestAnimationFrame(r));
       positions.push(getComputedStyle(word).backgroundPosition.split(' ')[0]);
     }
-    const cs = getComputedStyle(word);
+    const edges = {row: rect('.busyrow'), cbox: rect('.cbox'), frow: rect('.frowb')};
     return {
-      edges: {row: rect('.busyrow'), cbox: rect('.cbox'), frow: rect('.frowb')},
+      edges,
+      gap: +(edges.cbox.top - edges.row.bottom).toFixed(2),
       phases, positions,
+      duration: cs.animationDuration,
       size: cs.backgroundSize, opacity: cs.opacity, animation: cs.animationName,
     };
   })()`;
@@ -114,6 +120,9 @@ try {
   }
   if (Math.abs(right('row') - right('cbox')) > 0.5 || Math.abs(right('row') - right('frow')) > 0.5) {
     problems.push(`правый край: строка ${right('row')}, поле ввода ${right('cbox')}, лента ${right('frow')}`);
+  }
+  if (m.gap < 10) {
+    problems.push(`зазор снизу: строка кончается на ${m.edges.row.bottom}, поле ввода начинается на ${m.edges.cbox.top}, зазор ${m.gap} против нужных 10`);
   }
   const pos = m.positions.map((v) => parseFloat(v));
   if (pos.some((v, i) => Math.abs(v - [100, 75, 50, 25][i]) > 1)) {

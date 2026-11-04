@@ -1880,8 +1880,9 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .busyrow[hidden]{display:none}
 /* Строка стоит в ленте тем же левым краем, что записи .frow (padding-left:17px)
    и поле ввода .cbox (margin-left:17px): без отступа её рамка торчала наружу
-   на эти точки, и левый край расходился с разговором. */
-.chatwrap .busyrow{margin-left:17px}
+   на эти точки, и левый край расходился с разговором. Снизу строка держит
+   12 точек до поля ввода: без них две рамки слипались в один блок. */
+.chatwrap .busyrow{margin:6px 0 12px 17px}
 .busyrow.stop{border-color:color-mix(in oklab,var(--block) 45%,transparent)}
 /* Цвет рода действия живёт на строке, его берут иконка и блеск слова. */
 .busyrow{--act:var(--run)}
@@ -1945,7 +1946,7 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
   background-image:linear-gradient(105deg,var(--tx2) 30%,var(--act) 46%,#fff 52%,var(--act) 58%,var(--tx2) 70%);
   background-size:300% 100%;background-repeat:no-repeat;
   -webkit-background-clip:text;background-clip:text;color:transparent;
-  animation:bshine 3.2s linear infinite}
+  animation:bshine 2s linear infinite}
 @keyframes bshine{from{background-position:100% 0}to{background-position:0% 0}}
 .bmeta{display:flex;gap:6px;margin-left:auto;white-space:nowrap;
   font:400 12px var(--mono);color:var(--tx3)}

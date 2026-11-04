@@ -27,7 +27,7 @@ func TestStaticBusyWordShineFollowsMockup(t *testing.T) {
 		"var(--act) 58%",
 		"var(--tx2) 70%",
 		"background-size:300% 100%",
-		"animation:bshine 3.2s linear infinite",
+		"animation:bshine 2s linear infinite",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("блеск слова не по макету: в .bword нет %q", want)
@@ -81,9 +81,10 @@ func TestStaticBusyWordShineFollowsMockup(t *testing.T) {
 }
 
 // Строка активности стоит тем же левым краем, что записи ленты и поле ввода
-// (DK-1586). Прежде у .busyrow стояло margin:6px 0 0, и рамка выступала влево
-// на 17 точек против .cbox и .frow. Тест краснеет на старом правиле: тогда у
-// строки в чате нет левого отступа, а опоры разговора стоят на 17 точках.
+// (DK-1586), и держит зазор снизу (DK-1594). Прежде у .busyrow стояло
+// margin:6px 0 0, и рамка выступала влево на 17 точек против .cbox и .frow.
+// Тест краснеет на старом правиле: тогда у строки в чате нет левого отступа,
+// а её нижняя рамка стоит вплотную к полю ввода.
 func TestStaticBusyRowAlignedWithChat(t *testing.T) {
 	css := readStatic(t, "style.css")
 	cbox := cssRuleText(css, ".cbox")
@@ -99,15 +100,25 @@ func TestStaticBusyRowAlignedWithChat(t *testing.T) {
 	}
 	row := cssRuleText(css, ".chatwrap .busyrow")
 	if row == "" {
-		t.Fatal("у строки активности нет левого отступа в чате: рамка торчит наружу против ленты и поля ввода")
+		t.Fatal("у строки активности нет отступов в чате: рамка торчит наружу и липнет к полю ввода")
 	}
-	if got := cssDecl(row, "margin-left"); got != cboxLeft {
+	sides := boxSides(row, "margin")
+	if got := sides["left"]; got != cboxLeft {
 		t.Errorf("левый край строки активности %q против %q у поля ввода", got, cboxLeft)
+	}
+	// Нижняя рамка строки стояла вплотную к верхней рамке поля ввода, и два
+	// блока читались одним слипшимся. Зазор берётся нижним отступом 12 точек
+	// при верхних 6, как в узкой раскладке макета.
+	if got := sides["bottom"]; got != "12px" {
+		t.Errorf("нижний отступ строки активности %q, а нужен зазор 12px до поля ввода", got)
+	}
+	if got := sides["top"]; got != "6px" {
+		t.Errorf("верхний отступ строки активности %q, а нужен 6px", got)
 	}
 	// Правый край совпадает сам: строка блочная и ширину берёт по контейнеру,
 	// как поле ввода, а правого отступа у обоих нет. Положительный отступ
 	// справа сдвинул бы её внутрь и порвал совпадение.
-	if got := cssDecl(row, "margin-right"); got != "" {
+	if got := sides["right"]; got != "" && got != "0" && got != "0px" {
 		t.Errorf("у строки появился правый отступ %q: её край разошёлся с полем ввода", got)
 	}
 	if base := cssRuleText(css, ".busyrow"); base != "" && strings.Contains(base, "margin-right") {
@@ -150,6 +161,33 @@ func cssDecl(rule, prop string) string {
 		return ""
 	}
 	return strings.TrimSpace(strings.TrimPrefix(v, prop+":"))
+}
+
+// boxSides разворачивает четыре стороны отступа из сокращённой записи и
+// longhand: правило задаёт зазор одной строкой margin, а проверяются стороны
+// по отдельности.
+func boxSides(rule, prop string) map[string]string {
+	sides := map[string]string{}
+	if v := cssDecl(rule, prop); v != "" {
+		f := strings.Fields(v)
+		switch len(f) {
+		case 1:
+			sides["top"], sides["right"], sides["bottom"], sides["left"] = f[0], f[0], f[0], f[0]
+		case 2:
+			sides["top"], sides["bottom"] = f[0], f[0]
+			sides["right"], sides["left"] = f[1], f[1]
+		case 3:
+			sides["top"], sides["right"], sides["left"], sides["bottom"] = f[0], f[1], f[1], f[2]
+		case 4:
+			sides["top"], sides["right"], sides["bottom"], sides["left"] = f[0], f[1], f[2], f[3]
+		}
+	}
+	for _, side := range []string{"top", "right", "bottom", "left"} {
+		if v := cssDecl(rule, prop+"-"+side); v != "" {
+			sides[side] = v
+		}
+	}
+	return sides
 }
 
 // shineSpan достаёт из дорожки блеска начало и конец хода в процентах.

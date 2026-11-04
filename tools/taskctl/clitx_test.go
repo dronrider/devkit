@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -194,6 +195,80 @@ func TestCLIDropUntrackedDoesNotPublish(t *testing.T) {
 	}
 }
 
+// Аварийный потолок снимает зависший стенд; инвариант замка проверяется
+// отдельным процессом до вложенного taskctl, без ожидания этого потолка.
+func awaitCLI(t *testing.T, name string, arg ...string) ([]byte, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, arg...).CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("стенд не завершился за аварийный потолок: %v\n%s", ctx.Err(), out)
+	}
+	return out, err
+}
+
+func TestCLIBoardLockProbeProcess(t *testing.T) {
+	path := os.Getenv("TASKCTL_TEST_BOARD_LOCK")
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		fmt.Fprintf(os.Stderr, "git вызван под живым замком доски: %v\n", err)
+		os.Exit(1)
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	fmt.Println("board lock released")
+}
+
+func boardLockProbe(t *testing.T, root string) string {
+	t.Helper()
+	service, err := drafttx.ServiceDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(service, 0700); err != nil {
+		t.Fatal(err)
+	}
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return "TASKCTL_TEST_BOARD_LOCK=" + shQuote(filepath.Join(service, "lock")) + " " + shQuote(bin) + " -test.run '^TestCLIBoardLockProbeProcess$' >/dev/null || exit 2; "
+}
+
+func TestCLIBoardLockProbeDetectsHeldLock(t *testing.T) {
+	root := setup(t)
+	gitSetup(t, root)
+	probe := boardLockProbe(t, root)
+	lock, err := drafttx.Acquire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if lock != nil {
+			lock.Close()
+		}
+	})
+	out, err := exec.Command("/bin/sh", "-c", probe).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "git вызван под живым замком доски") {
+		t.Fatalf("занятый замок не обнаружен: %v %s", err, out)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	lock = nil
+	out, err = exec.Command("/bin/sh", "-c", probe).CombinedOutput()
+	if err != nil {
+		t.Fatalf("освобождённый замок не подтверждён: %v %s", err, out)
+	}
+}
+
 func TestCLIBoardGuardDoesNotCallGitUnderLock(t *testing.T) {
 	root := setup(t)
 	gitSetup(t, root)
@@ -207,18 +282,13 @@ func TestCLIBoardGuardDoesNotCallGitUnderLock(t *testing.T) {
 	}
 	bindir := t.TempDir()
 	marker := filepath.Join(bindir, "nested")
-	script := "#!/bin/sh\ncase \" $* \" in *\" rev-parse \"*) if [ \"$IN_GIT_PROBE\" != 1 ]; then IN_GIT_PROBE=1 " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; touch " + shQuote(marker) + "; fi;; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	probe := boardLockProbe(t, root)
+	script := "#!/bin/sh\ncase \" $* \" in *\" rev-parse \"*) if [ \"$IN_GIT_PROBE\" != 1 ]; then " + probe + "IN_GIT_PROBE=1 " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; touch " + shQuote(marker) + "; fi;; esac\nexec " + shQuote(git) + " \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(bindir, "git"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "-C", root, "draft", "--prio", "mid", "идея")
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		t.Fatal("git rev-parse deadlocked on nested taskctl")
-	}
+	out, err := awaitCLI(t, bin, "-C", root, "draft", "--prio", "mid", "идея")
 	if err != nil {
 		t.Fatalf("draft: %v %s", err, out)
 	}
@@ -226,6 +296,32 @@ func TestCLIBoardGuardDoesNotCallGitUnderLock(t *testing.T) {
 		t.Fatalf("nested taskctl did not run: %v", err)
 	}
 }
+
+// regcheck:test-begin
+// Семь секунд задержки внутри вложенного запуска превышают прежние шесть.
+// Задержка подготовки репозитория или сборки сюда не засчитывается.
+func TestCLIGuardSurvivesDelayedGitProbe(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	slept := filepath.Join(dir, "slept")
+	probe := "#!/bin/sh\ncase \" $* \" in *\" rev-parse \"*) if [ \"$IN_GIT_PROBE\" = 1 ] && [ ! -f " + shQuote(slept) + " ]; then touch " + shQuote(slept) + "; sleep 7; fi;; esac\nexec " + shQuote(gitPath) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(probe), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Сборка без vcs-штампа сама не ходит в git: без этого первый rev-parse
+	// доставался бы сборке бинаря, а не запуску стенда.
+	t.Setenv("GOFLAGS", strings.TrimSpace(os.Getenv("GOFLAGS")+" -buildvcs=false"))
+	TestCLIBoardGuardDoesNotCallGitUnderLock(t)
+	if _, err := os.Stat(slept); err != nil {
+		t.Fatalf("пробка не сработала: %v", err)
+	}
+}
+
+// regcheck:test-end
 
 func TestCLIShowResolvesMainRootBeforeLock(t *testing.T) {
 	root := setup(t)
@@ -337,18 +433,14 @@ func TestCLISpendRejectsEditDuringCalculation(t *testing.T) {
 	}
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "started")
-	script := "#!/bin/sh\ncase \" $* \" in *\" --git-common-dir \"*) if [ \"$IN_GIT_PROBE\" != 1 ]; then if [ -f " + shQuote(marker) + " ]; then IN_GIT_PROBE=1 " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; printf '\\nconcurrent spend edit\\n' >> " + shQuote(taskFileAbs(root, "XR-001")) + "; else touch " + shQuote(marker) + "; fi; fi;; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	probe := boardLockProbe(t, root)
+	script := "#!/bin/sh\ncase \" $* \" in *\" --git-common-dir \"*) if [ \"$IN_GIT_PROBE\" != 1 ]; then if [ -f " + shQuote(marker) + " ]; then " + probe + "IN_GIT_PROBE=1 " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; printf '\\nconcurrent spend edit\\n' >> " + shQuote(taskFileAbs(root, "XR-001")) + "; else touch " + shQuote(marker) + "; fi; fi;; esac\nexec " + shQuote(git) + " \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HOME", t.TempDir())
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, bin, "-C", root, "spend", "XR-001").CombinedOutput()
-	if ctx.Err() != nil {
-		t.Fatal("nested taskctl deadlocked during spend")
-	}
+	out, err := awaitCLI(t, bin, "-C", root, "spend", "XR-001")
 	if err == nil || !strings.Contains(string(out), "изменился") {
 		t.Fatalf("expected conflict: %v %s", err, out)
 	}
@@ -585,18 +677,13 @@ func TestCLIMoveRejectsEditDuringBranchGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	bindir := t.TempDir()
-	script := "#!/bin/sh\ncase \" $* \" in *\" --verify main \"*) if [ \"$IN_GIT_PROBE\" != 1 ]; then IN_GIT_PROBE=1 " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; printf '\\nconcurrent gate edit\\n' >> " + shQuote(taskFileAbs(root, "XR-005")) + "; fi;; esac\nexec " + shQuote(git) + " \"$@\"\n"
+	probe := boardLockProbe(t, root)
+	script := "#!/bin/sh\ncase \" $* \" in *\" --verify main \"*) if [ \"$IN_GIT_PROBE\" != 1 ]; then " + probe + "IN_GIT_PROBE=1 " + shQuote(bin) + " -C " + shQuote(root) + " show XR-001 >/dev/null || exit 2; printf '\\nconcurrent gate edit\\n' >> " + shQuote(taskFileAbs(root, "XR-005")) + "; fi;; esac\nexec " + shQuote(git) + " \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(bindir, "git"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "-C", root, "move", "XR-005", "check")
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		t.Fatal("nested taskctl deadlocked during branch gate")
-	}
+	out, err := awaitCLI(t, bin, "-C", root, "move", "XR-005", "check")
 	if err == nil || !strings.Contains(string(out), "изменился") {
 		t.Fatalf("expected conflict: %v %s", err, out)
 	}

@@ -145,10 +145,12 @@ func (s *server) boardRowsOf(projectPath string) (map[string]boardRow, error) {
 // задачи, черновика или закрытой задачи в архиве, тем же порядком, каким их
 // находит экран задачи. Файла нет, и записи нет: исход остаётся строкой
 // журнала, потому что вносить текст задачи, у которой файла нет, некуда.
+// Относительный путь идёт от корня репозитория, коммит принимает его как
+// pathspec.
 func (s *server) holdFile(projectPath, id string) (abs, rel string, ok bool) {
 	for _, cand := range []struct{ abs, rel string }{
-		{filepath.Join(projectPath, "docs", "tasks", id+".md"), "tasks/" + id + ".md"},
-		{filepath.Join(projectPath, "docs", "tasks", "drafts", id+".md"), "tasks/drafts/" + id + ".md"},
+		{filepath.Join(projectPath, "docs", "tasks", id+".md"), "docs/tasks/" + id + ".md"},
+		{filepath.Join(projectPath, "docs", "tasks", "drafts", id+".md"), "docs/tasks/drafts/" + id + ".md"},
 	} {
 		if _, err := os.Stat(cand.abs); err == nil {
 			return cand.abs, cand.rel, true
@@ -157,7 +159,7 @@ func (s *server) holdFile(projectPath, id string) (abs, rel string, ok bool) {
 	if arch, closed := s.archiveRows(projectPath)[id]; closed && arch.Link != "" {
 		abs := filepath.Join(projectPath, "docs", filepath.FromSlash(arch.Link))
 		if _, err := os.Stat(abs); err == nil {
-			return abs, arch.Link, true
+			return abs, "docs/" + arch.Link, true
 		}
 	}
 	return "", "", false
@@ -263,6 +265,17 @@ func (s *server) chatHoldSweep() {
 			continue
 		}
 		for _, id := range order {
+			// Розданный вопрос это состояние «ждёт человека» (DK-430.4), и
+			// разговор с ним не мёртвое окно, какой бы ни казалась строка
+			// доски: вопрос предложений черновика задаёт сессия цели, и у
+			// самого черновика сессии нет. Ответ приедет репликой в этот же
+			// вход, а запись под вопросом входит в снимок подтверждения
+			// (LLD DK-1469), и дозор правкой записи ломал бы показанный
+			// вопрос (инцидент DK-1531 от 2026-11-04). Снимается вопрос
+			// своим порядком: ответом, сроком или отказом мёртвого окна.
+			if _, asked := chat.ReadAsk(chat.AskPath(p.Path, chat.TaskName(id))); asked {
+				continue
+			}
 			why := s.deadAddresseeWhy(p.Path, id, rows)
 			if why == "" {
 				continue

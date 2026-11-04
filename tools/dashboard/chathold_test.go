@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -395,5 +396,83 @@ func TestChatHoldSelectsFileUnderDraftLock(t *testing.T) {
 	data, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(data), "текст") {
 		t.Fatalf("file: %s %v", data, err)
+	}
+}
+
+// Разговор с розданным вопросом дозор не подметает, каким бы мёртвым окно ни
+// выглядело: вопрос предложений черновика задаёт сессия цели, у самого
+// черновика сессии нет, и ответ человека приедет репликой в этот же вход.
+// Запись под вопросом входит в снимок подтверждения, и правка её дозором
+// ломала бы показанный вопрос (инцидент DK-1531 от 2026-11-04). Ответ
+// заканчивает вопрос своим порядком, и после снятия признака дозор
+// подметает вход как обычно.
+func TestChatHoldSweepWaitsForPendingAsk(t *testing.T) {
+	e, _ := holdEnv(t)
+	draft := holdDraftFile(t, e.proj, "XR-5")
+	sid := "eeee5555-5555-5555-8555-555555555555"
+	if err := chat.WriteAsk(e.proj, "task-XR-5", chat.Ask{Session: sid, Task: "XR-5",
+		Questions: []chat.Question{{Text: "подтвердите карточки"}}}); err != nil {
+		t.Fatal(err)
+	}
+	holdPutLine(t, e.proj, "XR-5", chat.TaskLine(time.Now(), "жду подтверждения"))
+
+	e.s.chatHoldSweep()
+
+	if lines := chatLines(t, e.proj, "task-XR-5"); len(lines) != 1 {
+		t.Fatalf("дозор забрал строку из-под розданного вопроса: %q", lines)
+	}
+	if note := readFile(t, draft); strings.Contains(note, "Входящие") {
+		t.Fatalf("дозор правил запись под вопросом:\n%s", note)
+	}
+
+	if err := chat.DropAsk(e.proj, "task-XR-5"); err != nil {
+		t.Fatal(err)
+	}
+	e.s.chatHoldSweep()
+
+	if lines := chatLines(t, e.proj, "task-XR-5"); len(lines) != 0 {
+		t.Fatalf("после снятия вопроса строка осталась во входе: %q", lines)
+	}
+	if note := readFile(t, draft); !strings.Contains(note, "жду подтверждения") {
+		t.Fatalf("после снятия вопроса реплика не легла в запись:\n%s", note)
+	}
+}
+
+// Отложенная реплика коммитится путём от корня репозитория: относительный
+// путь из holdFile идёт в pathspec коммита, и путь без каталога docs ронял
+// коммит с 18 октября, правка оставалась некоммиченной. Стенд поднимает гит
+// с локальным origin, проход дозора заканчивается чистым деревом.
+func TestChatHoldCommitPathFromRepoRoot(t *testing.T) {
+	e, _ := holdEnv(t)
+	deadFile := holdTaskFile(t, e.proj, "XR-2")
+	origin := filepath.Join(e.home, "origin.git")
+	if out, err := exec.Command("git", "init", "--bare", "-q", "-b", "main", origin).CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+	runGitAt(t, e.proj, "init", "-q", "-b", "main")
+	// Служебный каталог чатов гитигнорится как в живом проекте, и проход
+	// дозора оставляет чистым именно рабочий материал.
+	if err := os.WriteFile(filepath.Join(e.proj, ".gitignore"), []byte(".devkit/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitAt(t, e.proj, "config", "user.email", "t@example.com")
+	runGitAt(t, e.proj, "config", "user.name", "t")
+	runGitAt(t, e.proj, "add", ".")
+	runGitAt(t, e.proj, "commit", "-q", "-m", "стенд")
+	runGitAt(t, e.proj, "remote", "add", "origin", origin)
+	runGitAt(t, e.proj, "push", "-q", "-u", "origin", "main")
+	holdPutLine(t, e.proj, "XR-2", chat.TaskLine(time.Now(), "возьми задачу"))
+
+	e.s.chatHoldSweep()
+
+	log := runGitAt(t, e.proj, "log", "-1", "--name-only", "--pretty=format:")
+	if !strings.Contains(log, "docs/tasks/XR-2.md") {
+		t.Fatalf("коммит отложенной реплики не называет docs/tasks/XR-2.md:\n%s", log)
+	}
+	if status := runGitAt(t, e.proj, "status", "--porcelain"); status != "" {
+		t.Fatalf("после прохода дерево не чистое:\n%s", status)
+	}
+	if _, err := os.Stat(deadFile); err != nil {
+		t.Fatal(err)
 	}
 }

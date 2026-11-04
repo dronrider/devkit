@@ -969,10 +969,13 @@ var errRebaseConflict = errors.New("конфликт ребейза")
 // слияние. Разбор считается один раз, в момент записи журнала, и очередь
 // читает его отсюда, а не по тексту отказа.
 type redError struct {
-	Own  bool // краснота в диффе задачи
-	Load bool // нагрузочное падение вне диффа
-	Why  string
-	err  error
+	Own    bool // краснота в диффе задачи
+	Load   bool // нагрузочное падение вне диффа
+	Why    string
+	base   string
+	before string
+	tested string
+	err    error
 }
 
 func (e *redError) Error() string { return e.err.Error() }
@@ -1272,6 +1275,10 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if wt != "" {
 		workDir = wt
 	}
+	before, err := git(workDir, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
 	// Ветка, уже вобравшая main слиянием, в ребейзе не нуждается: fast-forward
 	// у неё есть, а ребейз тут не бездействует, он расплющивает сшивку и
 	// возвращает разведённые конфликты по одному на коммит. На длинной ветке
@@ -1310,7 +1317,7 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		own, load, verdict := redVerdict(rec)
 		full := fmt.Errorf("тесты после ребейза красные в свежем дереве (чистый чекаут %s, без следов работы в worktree), ветка остаётся несшитой, %s:%s\n%s",
 			sha[:min(len(sha), 12)], verdict, why, cmdoutFrame(workDir, "test", out))
-		return "", &redError{Own: own, Load: load, Why: verdict, err: full}
+		return "", &redError{Own: own, Load: load, Why: verdict, base: main, before: before, tested: sha, err: full}
 	}
 	if wt == "" {
 		if _, err := git(root, "checkout", main); err != nil {

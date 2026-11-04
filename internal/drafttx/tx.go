@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -69,6 +70,13 @@ func Acquire(root string) (*Lock, error) {
 	return acquire(root, false)
 }
 
+func serviceAccessError(dir string, err error) error {
+	if errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EROFS) {
+		return fmt.Errorf("состояние доски недоступно (%w). Повторите команду в сессии с правом записи в %s", err, dir)
+	}
+	return err
+}
+
 func acquire(root string, allowExternal bool) (*Lock, error) {
 	if root == "" {
 		return nil, fmt.Errorf("пустой корень проекта")
@@ -92,14 +100,14 @@ func acquire(root string, allowExternal bool) (*Lock, error) {
 	digest := sha256.Sum256([]byte(root))
 	dir := filepath.Join(common, fmt.Sprintf("%x", digest))
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, err
+		return nil, serviceAccessError(common, err)
 	}
 	if err := os.Chmod(dir, 0700); err != nil {
-		return nil, err
+		return nil, serviceAccessError(common, err)
 	}
 	f, err := os.OpenFile(filepath.Join(common, "lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
-		return nil, err
+		return nil, serviceAccessError(common, err)
 	}
 	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		f.Close()

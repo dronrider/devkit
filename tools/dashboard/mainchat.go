@@ -534,6 +534,7 @@ func (s *server) chatMainRows(list []chatEntry, keepRaw string, found *Project, 
 			byWin[name] = i
 		}
 	}
+	var residents map[string][]sessions.Bind
 	carrier := map[int]string{}
 	carrierKey := map[int]string{}
 	agg := map[string]*mainAgg{}
@@ -552,7 +553,16 @@ func (s *server) chatMainRows(list []chatEntry, keepRaw string, found *Project, 
 				if !isWin {
 					continue
 				}
-				if i, ok = byWin[name]; !ok {
+				if residents == nil {
+					residents = s.bindsAll()
+				}
+				resolved := sessions.TmuxResident(residents, name)
+				if resolved != "" {
+					i, ok = byID[resolved]
+				} else {
+					i, ok = byWin[name]
+				}
+				if !ok {
 					continue
 				}
 			}

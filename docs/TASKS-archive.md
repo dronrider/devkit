@@ -775,3 +775,4 @@ Append-only журнал закрытых задач, растёт свобод�
 | DK-1546 | [dashboard] Возврат в последний разговор с телефона [приёмка: mixed] | task | P2 | 2026-11-03 | [tasks/archive/2026/DK-1546.md](tasks/archive/2026/DK-1546.md) |
 | DK-1581 | Подписка OpenCode Go доступна через Claude Code | task | P2 | 2026-11-04 | [tasks/archive/2026/DK-1581.md](tasks/archive/2026/DK-1581.md) |
 | DK-187 | Замена «ярус» на «уровень» в доке, выводе agentctl и промптах [долг] | task | P2 | 2026-11-04 | [tasks/archive/2026/DK-187.md](tasks/archive/2026/DK-187.md) |
+| DK-1565 | Ответ «По рекомендации» без текста кладёт в ленту пустое сообщение | bug | P2 | 2026-11-04 | [tasks/archive/2026/DK-1565.md](tasks/archive/2026/DK-1565.md) |

@@ -82,4 +82,12 @@ func TestProposalBasisChangesWithTargetAndType(t *testing.T) {
 	if err != nil || afterBoard != replaced {
 		t.Fatalf("board: %s %s %v", replaced, afterBoard, err)
 	}
+	// Сама запись черновика входит в дайджест первой частью: правка её
+	// под висящим вопросом ломает подтверждение так же, как и правка
+	// определения типа.
+	edited := append(append([]byte{}, source...), []byte("правка записи\n")...)
+	afterRecord, err := proposalBasis(root, edited, state)
+	if err != nil || afterRecord == afterBoard {
+		t.Fatalf("record: %s %s %v", afterBoard, afterRecord, err)
+	}
 }

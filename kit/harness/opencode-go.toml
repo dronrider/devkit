@@ -53,8 +53,8 @@ format = "claude-code"
 discovery = "auto"
 
 # Голова задачи (DK-931), ключи те же, что у glm-code.toml. Клиент идёт
-# через agentctl exec: пары окружения подписки кладёт он, как и в окне
-# дашборда. bin называет сам клиент, его подъём и ищет в PATH.
+# через agentctl exec: пары окружения подписки кладёт он, как и при подъёме
+# окна с экраном задач. bin называет сам клиент, его подъём и ищет в PATH.
 [head]
 client = ["agentctl", "exec", "--harness", "opencode-go", "--", "claude", "--permission-mode", "auto"]
 bin = "claude"

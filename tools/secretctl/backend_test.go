@@ -410,16 +410,19 @@ func TestWaitLimitRejectsBadEnv(t *testing.T) {
 	}
 }
 
+func headlessKeychainUnavailable(err error) bool {
+	if errors.Is(err, errSecurityTimeout) {
+		return true
+	}
+	return err != nil && err.Error() == "security: SecKeychainItemCreateFromContent (<default>): User interaction is not allowed.\nadd-generic-password: returned -25308: exit status 36"
+}
+
 // Живая проверка на настоящем Keychain: значение длиннее 128 байт сохраняется
 // целиком и обратно читается. Ровно это ломал старый stdin-вход бинаря security:
 // запись проходила с кодом 0, а в хранилище ложился короткий кусок. Заглушка
 // такое не воспроизводит, поэтому кейс и едет на настоящем бинаре, под macOS.
-// Без авторизации UI security встаёт в ожидании диалога: короткий предел снимает
-// вызов, шаг пропускается с названной причиной, и полный прогон headless
-// остаётся зелёным.
-func headlessKeychainUnavailable(err error) bool {
-	return errors.Is(err, errSecurityTimeout)
-}
+// Без авторизации UI security ждёт диалога либо сразу возвращает -25308.
+// Только эти отказы пропускают живой шаг, прочие ошибки роняют тест.
 
 func TestRealSecurityAddLongValueRoundTrip(t *testing.T) {
 	if runtime.GOOS != "darwin" {
@@ -436,14 +439,14 @@ func TestRealSecurityAddLongValueRoundTrip(t *testing.T) {
 	long := "api-platform_serviceToken=" + strings.Repeat("x", 300)
 	if err := r.Add(service, account, long); err != nil {
 		if headlessKeychainUnavailable(err) {
-			t.Skip("авторизация Keychain недоступна: security снят по пределу ожидания")
+			t.Skipf("авторизация Keychain недоступна: %v", err)
 		}
 		t.Fatal(err)
 	}
 	got, err := r.Find(service, account)
 	if err != nil {
 		if headlessKeychainUnavailable(err) {
-			t.Skip("авторизация Keychain недоступна: security снят по пределу ожидания")
+			t.Skipf("авторизация Keychain недоступна: %v", err)
 		}
 		t.Fatal(err)
 	}

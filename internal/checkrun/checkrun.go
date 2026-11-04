@@ -264,10 +264,10 @@ func ChooseAvailable(tier string, ladders []Ladder) Choice {
 		return first
 	}
 	return Choice{Tier: tier, Refusal: fmt.Sprintf(
-		"среди подписок, разрешённых автоматическим назначениям, нет модели яруса %s и ступеней"+
+		"среди подписок, разрешённых автоматическим назначениям, нет модели уровня %s и ступеней"+
 			" выше: ступени запрещённых подписок отбор снял, а разрешённым раскладка модели не"+
 			" назвала; разрешить подписку ключом auto машинного конфига либо назвать модель"+
-			" яруса в раскладке машины", tier)}
+			" уровня в раскладке машины", tier)}
 }
 
 // ParseTier достаёт ярус из машинных строк вердикта `agentctl pick`.
@@ -314,14 +314,14 @@ func (p Plan) Raised(where string) string {
 		line += ", подписка " + p.Choice.Harness
 	}
 	if p.Choice.Stepped {
-		line += fmt.Sprintf(", ярус %s поднят ступенью до %s: модель яруса недоступна",
+		line += fmt.Sprintf(", уровень %s поднят ступенью до %s: модель уровня недоступна",
 			p.Choice.From, p.Choice.Tier)
 	}
 	switch {
 	case p.DevKnown && p.Choice.Model != "":
 		line += fmt.Sprintf(", модель %s, разработку вёл %s; независимость несёт отдельная сессия прогона, не имя модели", p.Choice.Model, p.Dev)
 	case p.DevKnown:
-		line += fmt.Sprintf(", разработку вёл %s (модель яруса раскладка не назвала, независимость сторожат ворота закрытия)", p.Dev)
+		line += fmt.Sprintf(", разработку вёл %s (модель уровня раскладка не назвала, независимость сторожат ворота закрытия)", p.Dev)
 	default:
 		line += ", исполнителя разработки записи не назвали, независимость сторожат ворота закрытия"
 	}
@@ -446,16 +446,16 @@ func ask(dir string, bin string, args ...string) ([]byte, error) {
 func AskTier(root, id string) (string, string) {
 	bin, err := exec.LookPath("agentctl")
 	if err != nil {
-		return FallbackTier, "agentctl не нашёлся в PATH: ярус " + FallbackTier
+		return FallbackTier, "agentctl не нашёлся в PATH: уровень " + FallbackTier
 	}
 	out, err := ask(root, bin, "pick", id, "--role", RoleReview)
 	if err != nil {
-		return FallbackTier, fmt.Sprintf("вердикт agentctl pick не ответил (%v): ярус %s", err, FallbackTier)
+		return FallbackTier, fmt.Sprintf("вердикт agentctl pick не ответил (%v): уровень %s", err, FallbackTier)
 	}
 	if tier := ParseTier(string(out)); tier != "" {
-		return tier, "ярус " + tier + " по вердикту agentctl pick"
+		return tier, "уровень " + tier + " по вердикту agentctl pick"
 	}
-	return FallbackTier, "вердикт agentctl pick яруса не назвал: ярус " + FallbackTier
+	return FallbackTier, "вердикт agentctl pick уровня не назвал: уровень " + FallbackTier
 }
 
 // harnessView это машинный вид `agentctl harness --json`, нужные поля.

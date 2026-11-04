@@ -124,7 +124,7 @@ def narrow_warns(d, path, machine_names):
                          % (path, k))
     for sect in d.order:
         if sect:
-            warns.append("%s: секция [%s] проектному слою не положена, маппинг ярусов машинный"
+            warns.append("%s: секция [%s] проектному слою не положена, маппинг уровней машинный"
                          % (path, sect))
     for name in d.arr_of("", "enabled"):
         if name not in machine_names:

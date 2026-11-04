@@ -450,7 +450,7 @@ func validateQuota(d *subtoml.Doc) error {
 		spend = append(spend, "spend_"+tier)
 	}
 	for _, key := range spend {
-		if err := requireKey(d.Name, t, key, "секция непуста, ярусы объявляются все четыре"); err != nil {
+		if err := requireKey(d.Name, t, key, "секция непуста, уровни объявляются все четыре"); err != nil {
 			return err
 		}
 	}
@@ -745,7 +745,7 @@ func mergeLayers(dir, machinePath, projectPath string) (*layers, error) {
 			// разворачивает предложение из профиля (ниже, DK-189). Пропуск одного
 			// яруса из четырёх неотличим от забытого, и это ошибка.
 			if len(missing) > 0 && len(missing) < len(tierNames) {
-				return nil, fmt.Errorf("%s: [%s] нет ключа %s (ярусы задаются все четыре либо ни одного, сложенные соседние пишутся повторением модели)",
+				return nil, fmt.Errorf("%s: [%s] нет ключа %s (уровни задаются все четыре либо ни одного, сложенные соседние пишутся повторением модели)",
 					machinePath, name, missing[0])
 			}
 			if v, ok := t.Get("budget"); ok {
@@ -868,7 +868,7 @@ func unmapHint(l *layers, name string) string {
 			missing = append(missing, tier)
 		}
 	}
-	return fmt.Sprintf("в секции [%s] файла %s нет ярусов: %s", name, machineConfigPath(), strings.Join(missing, ", "))
+	return fmt.Sprintf("в секции [%s] файла %s нет уровней: %s", name, machineConfigPath(), strings.Join(missing, ", "))
 }
 
 // checkAssignments дочитывает профили, названные секцией машинного слоя или
@@ -950,7 +950,7 @@ func narrowByProject(l *layers, path string) error {
 	}
 	for _, name := range pdoc.Order {
 		if name != "" {
-			l.Warns = append(l.Warns, fmt.Sprintf("%s: секция [%s] проектному слою не положена, маппинг ярусов машинный", path, name))
+			l.Warns = append(l.Warns, fmt.Sprintf("%s: секция [%s] проектному слою не положена, маппинг уровней машинный", path, name))
 		}
 	}
 	if _, ok := root.Get("enabled"); !ok {
@@ -1135,7 +1135,7 @@ func (m tierModels) named(tier string) string {
 // а молчащий прочерк неотличим от ненастроенной машины.
 func (m tierModels) brokenWarn(tier string) string {
 	if a, ok := m.Map[tier]; ok && a.Broken {
-		return fmt.Sprintf("ярус %s назначен в %s, а профиля такого харнеса нет: ступень не разворачивается; разобраться: agentctl harness", tier, a.Harness)
+		return fmt.Sprintf("уровень %s назначен в %s, а профиля такого харнеса нет: ступень не разворачивается; разобраться: agentctl harness", tier, a.Harness)
 	}
 	return ""
 }
@@ -1233,18 +1233,18 @@ func resolveHarnessContext(start, want string) harnessContext {
 	off := func(note string) harnessContext { return harnessContext{Models: tierModels{Note: note}} }
 	dir, err := harnessDir(start)
 	if err != nil {
-		return off(fmt.Sprintf("ярус разворачивать нечем и остаток лимитов брать неоткуда: %v", err))
+		return off(fmt.Sprintf("уровень разворачивать нечем и остаток лимитов брать неоткуда: %v", err))
 	}
 	l, err := mergeLayers(dir, machineConfigPath(), projectConfigPath(start))
 	if err != nil {
-		return off(fmt.Sprintf("слои харнесов не прочитаны (%v), ярус разворачивать нечем и корректор без профиля выключен; разобраться: agentctl harness", err))
+		return off(fmt.Sprintf("слои харнесов не прочитаны (%v), уровень разворачивать нечем и корректор без профиля выключен; разобраться: agentctl harness", err))
 	}
 	r, err := resolveHarness(l, want, os.Getenv)
 	if err != nil {
-		return off(fmt.Sprintf("харнес не определился (%v), ярус разворачивать нечем и корректор без профиля выключен; разобраться: agentctl harness", err))
+		return off(fmt.Sprintf("харнес не определился (%v), уровень разворачивать нечем и корректор без профиля выключен; разобраться: agentctl harness", err))
 	}
 	if r.Name == "" {
-		return off(fmt.Sprintf("харнес не определён, ярус разворачивать нечем и корректор без профиля выключен; включить и смаппить: %s (разобраться: agentctl harness)", machineConfigPath()))
+		return off(fmt.Sprintf("харнес не определён, уровень разворачивать нечем и корректор без профиля выключен; включить и смаппить: %s (разобраться: agentctl harness)", machineConfigPath()))
 	}
 	hc := harnessContext{Name: r.Name, Quota: quotaSpecOf(l, r.Name), L: l}
 	if hc.Quota == nil {
@@ -1260,7 +1260,7 @@ func resolveHarnessContext(start, want string) harnessContext {
 		}
 		hc.Models = tierModels{Map: s.Map, Active: r.Name, Delegate: modes, Command: cmds}
 	} else {
-		hc.Models = tierModels{Note: fmt.Sprintf("харнес %s не настроен, маппинга ярусов нет; %s", r.Name, unmapHint(l, r.Name))}
+		hc.Models = tierModels{Note: fmt.Sprintf("харнес %s не настроен, маппинга уровней нет; %s", r.Name, unmapHint(l, r.Name))}
 	}
 	return hc
 }
@@ -1523,7 +1523,7 @@ func cmdHarness(start, want string) (string, error) {
 	}
 	var b strings.Builder
 	if r.Name == "" {
-		fmt.Fprintf(&b, "харнес: не определён; ярусная часть вердикта работает, модель разворачивать нечем (model: -)\n")
+		fmt.Fprintf(&b, "харнес: не определён; уровневая часть вердикта работает, модель разворачивать нечем (model: -)\n")
 	} else {
 		fmt.Fprintf(&b, "харнес: %s (%s)\n", r.Name, r.How)
 	}
@@ -1557,10 +1557,10 @@ func cmdHarness(start, want string) (string, error) {
 			if s.Suggested {
 				src = "предложение профиля, машина не настроена"
 				if s.Section {
-					src = fmt.Sprintf("предложение профиля, в секции [%s] ярусов нет", r.Name)
+					src = fmt.Sprintf("предложение профиля, в секции [%s] уровней нет", r.Name)
 				}
 			}
-			fmt.Fprintf(&b, "маппинг ярусов: %s (%s)\n", strings.Join(parts, ", "), src)
+			fmt.Fprintf(&b, "маппинг уровней: %s (%s)\n", strings.Join(parts, ", "), src)
 			// Уехавшая ступень называется отдельной строкой: подписку перепутать
 			// легко, а замечается это по счёту, то есть поздно.
 			for _, tier := range tierNames {
@@ -1568,7 +1568,7 @@ func cmdHarness(start, want string) (string, error) {
 				if !a.away(r.Name) {
 					continue
 				}
-				line := fmt.Sprintf("назначение: ярус %s уезжает в %s", tier, a.Harness)
+				line := fmt.Sprintf("назначение: уровень %s уезжает в %s", tier, a.Harness)
 				if !inList(l.Enabled, a.Harness) {
 					line += ", а он не в списке включённых: правила, хуки и скиллы devkit ему не раскладываются"
 				}
@@ -1578,7 +1578,7 @@ func cmdHarness(start, want string) (string, error) {
 				fmt.Fprintf(&b, "%s\n", line)
 			}
 		} else {
-			fmt.Fprintf(&b, "маппинг ярусов: не задан, харнес ненастроен; %s\n", unmapHint(l, r.Name))
+			fmt.Fprintf(&b, "маппинг уровней: не задан, харнес ненастроен; %s\n", unmapHint(l, r.Name))
 		}
 		if p := l.Profiles[r.Name]; p != nil {
 			mode := p.section("delegate").Str("mode")

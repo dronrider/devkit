@@ -62,7 +62,7 @@ func TestPick(t *testing.T) {
 			v.Effort = pickEffort(c.r)
 			floorBaseEffort(&v)
 			if v.Tier != c.tier {
-				t.Fatalf("ярус %q, жду %q", v.Tier, c.tier)
+				t.Fatalf("уровень %q, жду %q", v.Tier, c.tier)
 			}
 			if v.Effort != c.effort {
 				t.Fatalf("effort %q, жду %q", v.Effort, c.effort)
@@ -480,8 +480,8 @@ func TestCmdPickOverride(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := cmdPick(root, "T-001", roleExec, "")
-		if err == nil || !strings.Contains(err.Error(), "неизвестный ярус") {
-			t.Fatalf("жду ошибку про неизвестный ярус, получил %v", err)
+		if err == nil || !strings.Contains(err.Error(), "неизвестный уровень") {
+			t.Fatalf("жду ошибку про неизвестный уровень, получил %v", err)
 		}
 	})
 
@@ -862,8 +862,8 @@ func TestReviewShift(t *testing.T) {
 		tier string
 		part string
 	}{
-		{"pro остаётся pro", verdict{Tier: tierPro}, row{Type: "task", Cost: "M"}, tierPro, "ярусом исполнителя"},
-		{"max остаётся max", verdict{Tier: tierMax}, row{Type: "task", Cost: "L"}, tierMax, "ярусом исполнителя"},
+		{"pro остаётся pro", verdict{Tier: tierPro}, row{Type: "task", Cost: "M"}, tierPro, "уровнем исполнителя"},
+		{"max остаётся max", verdict{Tier: tierMax}, row{Type: "task", Cost: "L"}, tierMax, "уровнем исполнителя"},
 		{"base это пол, ниже не идём", verdict{Tier: tierBase}, row{Type: "task", Cost: "S"}, tierBase, "пол ревьювера"},
 		{"mini подтягивается до пола", verdict{Tier: tierMini}, row{Type: "task", Cost: "S"}, tierBase, "ниже base ревью не опускаем"},
 		{"дизайн читается тем же калибром", verdict{Tier: tierPro}, row{Type: "LLD", Cost: "S"}, tierPro, "спуска нет"},
@@ -875,7 +875,7 @@ func TestReviewShift(t *testing.T) {
 			v := c.v
 			reviewShift(&v, c.r)
 			if v.Tier != c.tier {
-				t.Fatalf("ярус %q, жду %q", v.Tier, c.tier)
+				t.Fatalf("уровень %q, жду %q", v.Tier, c.tier)
 			}
 			if !strings.Contains(v.Reason, c.part) {
 				t.Fatalf("причина %q без %q", v.Reason, c.part)
@@ -903,7 +903,7 @@ func TestCmdPickReview(t *testing.T) {
 			t.Fatalf("жду вердикт ревьювера opus/medium, получил %q", out)
 		}
 		if !strings.Contains(out, "роль ревью: pro остаётся") {
-			t.Fatalf("в причине не видно правила «ярусом исполнителя»: %q", out)
+			t.Fatalf("в причине не видно правила «уровнем исполнителя»: %q", out)
 		}
 	})
 
@@ -950,7 +950,7 @@ func TestCmdPickReview(t *testing.T) {
 			t.Fatalf("pick --role review: %v", err)
 		}
 		if !strings.HasPrefix(out, "model: fable") {
-			t.Fatalf("жду ярус заданной override модели без спуска, получил %q", out)
+			t.Fatalf("жду уровень заданной override модели без спуска, получил %q", out)
 		}
 	})
 

@@ -386,7 +386,7 @@ func TestTaskHarnessPolicy(t *testing.T) {
 		if !failed || !strings.Contains(out, "прогон не поднят") {
 			t.Fatalf("запрет обязан кончаться отказом: %v %s", failed, out)
 		}
-		for _, want := range []string{"автоматическим назначениям", "яруса max"} {
+		for _, want := range []string{"автоматическим назначениям", "уровня max"} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("в отказе нет %q: %s", want, out)
 			}

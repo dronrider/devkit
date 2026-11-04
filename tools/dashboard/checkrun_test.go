@@ -285,7 +285,7 @@ func TestTaskHarnessPolicy(t *testing.T) {
 		if rep.Raised || !rep.Failed {
 			t.Fatalf("подъём обязан отказать: %+v", rep)
 		}
-		if !strings.Contains(rep.Line, "прогон не поднят") || !strings.Contains(rep.Line, "яруса max") {
+		if !strings.Contains(rep.Line, "прогон не поднят") || !strings.Contains(rep.Line, "уровня max") {
 			t.Errorf("отказ не называет причину: %q", rep.Line)
 		}
 		if got := readFile(t, tmuxLog); strings.Contains(got, "new-session") || strings.Contains(got, "втораяtest") {

@@ -83,7 +83,7 @@ func reviewShift(v *verdict, r row) {
 		v.Reason += "; роль ревью: mini -> base, дифф надо читать внимательно, ниже base ревью не опускаем"
 		v.Tier = tierBase
 	default:
-		v.Reason += fmt.Sprintf("; роль ревью: %s остаётся, ревьювер идёт ярусом исполнителя, спуска на ступень нет", v.Tier)
+		v.Reason += fmt.Sprintf("; роль ревью: %s остаётся, ревьювер идёт уровнем исполнителя, спуска на ступень нет", v.Tier)
 	}
 }
 
@@ -182,7 +182,7 @@ func readOverrides(root, id string) (overrides, error) {
 			name := overrideValue(t, "Модель:")
 			tier, ok := overrideTiers[name]
 			if !ok {
-				return ov, fmt.Errorf("файл задачи %s: override-строка задаёт неизвестный ярус %q, допустимы mini, base, pro, max и старые имена haiku, sonnet, opus, fable; конкретную модель инструмента в override писать нельзя, она не переносима между харнесами", id, name)
+				return ov, fmt.Errorf("файл задачи %s: override-строка задаёт неизвестный уровень %q, допустимы mini, base, pro, max и старые имена haiku, sonnet, opus, fable; конкретную модель инструмента в override писать нельзя, она не переносима между харнесами", id, name)
 			}
 			ov.Tier = tier
 		case strings.HasPrefix(t, "Эффорт:") && ov.Effort == "":
@@ -332,7 +332,7 @@ func pickVerdict(root, id, role, goal string) (pickResult, error) {
 		// причине, что и потолком цели: дешёвая нарезка цели разорила бы
 		// бюджет на переделку.
 		tier := assigned.Tier
-		reason := fmt.Sprintf("строка назначена участнику команды %s, ярус %s", team.TitleHandle(r.Title), tier)
+		reason := fmt.Sprintf("строка назначена участнику команды %s, уровень %s", team.TitleHandle(r.Title), tier)
 		if ov.Tier != "" {
 			reason += ", перебивает override-строку файла задачи"
 		}
@@ -341,13 +341,13 @@ func pickVerdict(root, id, role, goal string) (pickResult, error) {
 			reason += ", грумминговый вердикт ниже pro не опускается"
 		}
 		v = verdict{Tier: tier, Effort: v.Effort, Reason: reason, Groom: v.Groom}
-		qf = quotaFacts{Off: "не смотрели, ярус задан назначением строки"}
+		qf = quotaFacts{Off: "не смотрели, уровень задан назначением строки"}
 	} else if ov.Tier != "" {
 		// Ручное решение сильнее автоматики: override корректор не двигает,
 		// иначе указанный руками ярус пришлось бы отстаивать повторно на
 		// каждый снимок квоты.
 		v = verdict{Tier: ov.Tier, Effort: v.Effort, Reason: "модель задана override-строкой файла задачи"}
-		qf = quotaFacts{Off: "не смотрели, ярус задан override-строкой"}
+		qf = quotaFacts{Off: "не смотрели, уровень задан override-строкой"}
 	} else if tm.away(v.Tier) {
 		// Корректор пока однохарнесный: бакеты он берёт из профиля активного
 		// харнеса, а снимок из его файла. Мерить этим дефицит уехавшей ступени

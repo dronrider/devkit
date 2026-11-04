@@ -62,7 +62,7 @@ func TestCmdCheckKeepsTierOnForeignDevModel(t *testing.T) {
 		t.Fatalf("check T-007: %v", err)
 	}
 	if !strings.Contains(out, "model: sonnet") || !strings.Contains(out, "tier: base") {
-		t.Fatalf("ярус вердикта не удержан:\n%s", out)
+		t.Fatalf("уровень вердикта не удержан:\n%s", out)
 	}
 	if strings.Contains(out, "ступенью") {
 		t.Fatalf("ступень поднята без совпадения моделей:\n%s", out)
@@ -113,7 +113,7 @@ max = "route-max"
 	if err == nil {
 		t.Fatal("исчерпанная лестница обязана отказывать")
 	}
-	for _, want := range []string{"прогонять некем", "яруса max", "ключом auto"} {
+	for _, want := range []string{"прогонять некем", "уровня max", "ключом auto"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("в отказе нет %q: %v", want, err)
 		}
@@ -157,7 +157,7 @@ max = "route-max"
 		t.Fatal(err)
 	}
 	for _, want := range []string{"model: sonnet", "tier: base", "harness: claude-code",
-		"модель яруса в текущей лестнице недоступна", "разработку вёл sonnet"} {
+		"модель уровня в текущей лестнице недоступна", "разработку вёл sonnet"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("нет %s: %s", want, out)
 		}
@@ -287,7 +287,7 @@ max = "route-max"
 		if err == nil {
 			t.Fatal("исчерпанная лестница обязана отказывать")
 		}
-		for _, want := range []string{"прогонять некем", "яруса max"} {
+		for _, want := range []string{"прогонять некем", "уровня max"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("в отказе нет %q: %v", want, err)
 			}

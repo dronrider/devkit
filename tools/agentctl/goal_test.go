@@ -45,15 +45,21 @@ func TestParseGoalBudget(t *testing.T) {
 	}{
 		{
 			name:   "строки пунктами списка",
-			text:   "- бюджет: week_all <= 25\n- бюджет: week_max <= 10\n- ярус: pro\n",
+			text:   "- бюджет: week_all <= 25\n- бюджет: week_max <= 10\n- уровень: pro\n",
 			limits: []goalLimit{{"week_all", 25}, {"week_max", 10}},
 			tier:   tierPro,
 		},
 		{
 			name:   "строки внутри ограды и с процентом",
-			text:   fence + "\nбюджет: week_all <= 25%\nярус: base\n" + "```" + "\n",
+			text:   fence + "\nбюджет: week_all <= 25%\nуровень: base\n" + "```" + "\n",
 			limits: []goalLimit{{"week_all", 25}},
 			tier:   tierBase,
+		},
+		{
+			name:   "прежняя запись потолка читается псевдонимом",
+			text:   "бюджет: week_all <= 25\nярус: pro\n",
+			limits: []goalLimit{{"week_all", 25}},
+			tier:   tierPro,
 		},
 		{
 			name:   "проза раздела разбором не считается",
@@ -66,7 +72,7 @@ func TestParseGoalBudget(t *testing.T) {
 			limits: []goalLimit{{"week_max", 3}},
 		},
 		{
-			name:   "ярус старым именем модели",
+			name:   "уровень старым именем модели",
 			text:   "бюджет: week_all <= 25\nярус: opus\n",
 			limits: []goalLimit{{"week_all", 25}},
 			tier:   tierPro,
@@ -87,9 +93,9 @@ func TestParseGoalBudget(t *testing.T) {
 			errPart: "не в диапазоне",
 		},
 		{
-			name:    "неизвестный ярус это ошибка",
-			text:    "бюджет: week_all <= 25\nярус: gpt-5\n",
-			errPart: "неизвестный ярус",
+			name:    "неизвестный уровень это ошибка",
+			text:    "бюджет: week_all <= 25\nуровень: gpt-5\n",
+			errPart: "неизвестный уровень",
 		},
 	}
 	for _, c := range cases {
@@ -113,7 +119,7 @@ func TestParseGoalBudget(t *testing.T) {
 				}
 			}
 			if b.Tier != c.tier {
-				t.Fatalf("потолок яруса %q, жду %q", b.Tier, c.tier)
+				t.Fatalf("потолок уровня %q, жду %q", b.Tier, c.tier)
 			}
 		})
 	}
@@ -228,7 +234,7 @@ func TestCmdSpendGate(t *testing.T) {
 func TestCmdSpendExplicitUnlimited(t *testing.T) {
 	quota := isolateQuota(t)
 	root := writeBoard(t)
-	goal := goalFile(t, root, "T-100", goalText("бюджет: без ограничений\nярус: pro\n",
+	goal := goalFile(t, root, "T-100", goalText("бюджет: без ограничений\nуровень: pro\n",
 		"- снимок "+at(testNow.Add(-4*time.Hour))+": week_all 10%\n"+
 			"- снимок "+at(testNow.Add(-3*time.Hour))+": week_all 99%\n"+
 			"- снимок "+at(testNow.Add(-2*time.Hour))+": week_all 5%\n"+
@@ -237,7 +243,7 @@ func TestCmdSpendExplicitUnlimited(t *testing.T) {
 	out, err := cmdSpend(root, goal, true, testNow)
 	if err != nil || !strings.HasPrefix(out, "gate: ok\n") ||
 		!strings.Contains(out, "бюджет цели без ограничений") ||
-		!strings.Contains(out, "потолок яруса pro") {
+		!strings.Contains(out, "потолок уровня pro") {
 		t.Fatalf("явно снятый бюджет остановил цель: %s (%v)", out, err)
 	}
 	data, err := os.ReadFile(goal)
@@ -491,7 +497,7 @@ func TestCapTier(t *testing.T) {
 			v := c.v
 			note := capTier(&v, c.cap)
 			if v.Tier != c.tier {
-				t.Fatalf("ярус %q, жду %q", v.Tier, c.tier)
+				t.Fatalf("уровень %q, жду %q", v.Tier, c.tier)
 			}
 			if v.Effort != c.v.Effort {
 				t.Fatalf("потолок сдвинул effort: %q вместо %q", v.Effort, c.v.Effort)
@@ -515,7 +521,7 @@ func TestCmdPickGoalCap(t *testing.T) {
 		t.Helper()
 		line := ""
 		if tier != "" {
-			line = "ярус: " + tier + "\n"
+			line = "уровень: " + tier + "\n"
 		}
 		goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\n"+line, ""))
 	}
@@ -565,7 +571,7 @@ func TestCmdPickGoalCap(t *testing.T) {
 			t.Fatalf("потолок не срезал подъём корректора:\n%s", out)
 		}
 		if !strings.Contains(out, "профицит") || !strings.Contains(out, "потолок цели: pro, max -> pro") {
-			t.Fatalf("в причине нет обоих шагов ярусной оси:\n%s", out)
+			t.Fatalf("в причине нет обоих шагов уровневой оси:\n%s", out)
 		}
 	})
 
@@ -603,7 +609,7 @@ func TestCmdPickGoalCap(t *testing.T) {
 		}
 	})
 
-	t.Run("без строки яруса вердикт работает как обычно", func(t *testing.T) {
+	t.Run("без строки уровня вердикт работает как обычно", func(t *testing.T) {
 		setGoal(t, "")
 		writeSnapshot(t, quota, testNow.Add(-freshAge), bucketAt("week_all", 50, halfWindow))
 		out, err := cmdPick(root, "T-002", roleExec, goal)
@@ -630,7 +636,7 @@ func TestCmdPickGoalCapRecord(t *testing.T) {
 	quota := isolateQuota(t)
 	fixNow(t, testNow)
 	root := writeBoard(t)
-	goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\nярус: base\n", ""))
+	goalFile(t, root, "T-100", goalText("бюджет: week_all <= 25\nуровень: base\n", ""))
 	writeSnapshot(t, quota, testNow.Add(-freshAge), bucketAt("week_all", 50, halfWindow))
 	taskFile := filepath.Join(root, "docs", "tasks", "T-002.md")
 	if err := os.WriteFile(taskFile, []byte("# T-002\n\n## Ход работы\n"), 0o644); err != nil {

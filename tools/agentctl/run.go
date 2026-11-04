@@ -330,7 +330,7 @@ func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, err
 	v, hc := p.V, p.HC
 	who := v.Via
 	if who == "" || who == unmappedModel {
-		fmt.Fprintf(errw, "делегировать нечем: ярус %s разворачивать нечем, исполнителя вердикт не назвал; разобраться: agentctl harness\n", v.Tier)
+		fmt.Fprintf(errw, "делегировать нечем: уровень %s разворачивать нечем, исполнителя вердикт не назвал; разобраться: agentctl harness\n", v.Tier)
 		return codeNothingToDelegate, nil
 	}
 	var prof *profile
@@ -338,7 +338,7 @@ func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, err
 		prof = hc.L.Profiles[who]
 	}
 	if prof == nil {
-		fmt.Fprintf(errw, "делегировать нечем: ярус %s назначен в %s, а профиля такого харнеса нет, и чем его поднимать, сказать некому; разобраться: agentctl harness\n", v.Tier, who)
+		fmt.Fprintf(errw, "делегировать нечем: уровень %s назначен в %s, а профиля такого харнеса нет, и чем его поднимать, сказать некому; разобраться: agentctl harness\n", v.Tier, who)
 		return codeNothingToDelegate, nil
 	}
 	del := prof.section("delegate")
@@ -358,7 +358,7 @@ func cmdRun(root, id, role, goal, workdir string, out, errw io.Writer) (int, err
 		// обе сразу. Не назвал команды, значит наружу инструмент не выходит и
 		// делегировать в него правда нечем.
 		if len(tmpl) == 0 {
-			fmt.Fprintf(errw, "делегировать нечем: ступень %s уезжает в %s, он делегирует режимом native, то есть спавном субагента внутри своей же сессии, а команды, которой его поднимают снаружи, профиль %s не назвал; либо вписать в него [delegate] command, либо сменить назначение яруса в %s, либо исполнять задачу сессией %s\n",
+			fmt.Fprintf(errw, "делегировать нечем: ступень %s уезжает в %s, он делегирует режимом native, то есть спавном субагента внутри своей же сессии, а команды, которой его поднимают снаружи, профиль %s не назвал; либо вписать в него [delegate] command, либо сменить назначение уровня в %s, либо исполнять задачу сессией %s\n",
 				v.Tier, who, prof.Path, machineConfigPath(), who)
 			return codeNothingToDelegate, nil
 		}

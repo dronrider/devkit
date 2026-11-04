@@ -35,7 +35,7 @@ func TestFitTightBucket(t *testing.T) {
 func TestFitExplicitUnlimited(t *testing.T) {
 	isolateQuota(t)
 	root := writeBoard(t)
-	goal := goalFile(t, root, "T-100", goalText("бюджет: без ограничений\nярус: pro\n", ""))
+	goal := goalFile(t, root, "T-100", goalText("бюджет: без ограничений\nуровень: pro\n", ""))
 	out, err := cmdFit(root, goal, testNow)
 	if err != nil || !strings.HasPrefix(out, "fit: ok\n") ||
 		!strings.Contains(out, "числовой потолок для сверки не задан") {

@@ -82,8 +82,8 @@ func TestSelectionAnswerLiftsDeadCarrier(t *testing.T) {
 // ответом вводной.
 func TestProposalCommentLiftsDeadCarrier(t *testing.T) {
 	st, log := liftStand(t)
-	q := &chat.ProposalQuestion{Version: 1, Tree: st.e.proj, Anchor: "XR-4",
-		Sources: []chat.ProposalSource{{Source: "XR-4", Basis: "basis",
+	q := &chat.PreparedQuestion{Version: 1, Tree: st.e.proj, Anchor: "XR-4",
+		Sources: []chat.PreparedSource{{Source: "XR-4", Basis: "basis",
 			Proposals: []draftproposal.Proposal{{ID: "p", Revision: 1, Outcome: "drop", Text: "показано"}}}}}
 	if err := chat.WriteAsk(st.e.proj, chat.TaskName("XR-4"), chat.Ask{Task: "XR-4", Session: scenarioPanelSID,
 		Questions: []chat.Question{{Text: "вопрос", Proposal: q}}}); err != nil {

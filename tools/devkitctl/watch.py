@@ -1875,9 +1875,18 @@ def merge_queue(root, call=None, shipctl=None, home=None, taskctl=None):
         line = "корень %s: %s" % (name, " ".join(str(report.get("line") or "").split()))
         if p.returncode != 0:
             line = "корень %s: разлив очереди упал с кодом %d: %s" % (name, p.returncode, line)
+        for item in report["items"]:
+            if not isinstance(item, dict) or not item.get("changed"):
+                continue
+            block = item.get("block")
+            task = item.get("id")
+            if task and isinstance(block, dict) and block.get("code") == "regcheck":
+                said, _ = shout_result("очередь слияний ждёт regcheck", str(item.get("line") or ""),
+                                       root, call, task=task)
+                entries.append("%s: %s" % (task, said))
         if entries:
             line += "; " + "; ".join(entries)
-        return line, bool(entries) or any(isinstance(i, dict) and i.get("merged")
+        return line, bool(entries) or any(isinstance(i, dict) and (i.get("merged") or i.get("changed"))
                                          for i in report["items"])
     text = " ".join((p.stdout or "").split())
     if p.returncode != 0:

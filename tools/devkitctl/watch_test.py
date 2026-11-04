@@ -1989,6 +1989,22 @@ class PipelineIncidentTest(Stand):
             self.sweep()
         self.assertEqual(self.marks(), marks)
 
+    def test_merge_regcheck_notifies_once_without_duty(self):
+        item = {"id": "DK-902", "waiting": True, "changed": True,
+                "block": {"code": "regcheck"}, "line": "нет зелёного regcheck"}
+        self.items = [item]
+        with patch.object(watch, "shout_result", return_value=("уведомление отправлено", True)) as notify:
+            _, notable = watch.merge_queue(str(self.proj), self.call, SHIPCTL, self.home, TASKCTL)
+            self.assertTrue(notable)
+            notify.assert_called_once_with("очередь слияний ждёт regcheck", item["line"],
+                                           str(self.proj), self.call, task="DK-902")
+            item["changed"] = False
+            for _ in range(3):
+                _, notable = watch.merge_queue(str(self.proj), self.call, SHIPCTL, self.home, TASKCTL)
+                self.assertFalse(notable)
+            notify.assert_called_once()
+        self.assertEqual(self.marks(), [])
+
     def test_close_failure_reaches_duty_on_second_tick(self):
         self.items = []
         self.board(in_progress=False, goal="DK-902")

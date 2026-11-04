@@ -952,13 +952,15 @@ func deployedIn(root, main string, b *board, sects ...string) ([]string, error) 
 }
 
 type MergeParams struct {
-	ID       string
-	Test     string // команда тестов, обязательна
-	Deploy   string // явная команда выката; пустую подхватывает .devkit/deploy.local
-	Train    bool   // слить в поезд: без выката и без перевода в Check
-	Push     bool
-	LockWait time.Duration // сколько ждать занятый замок, ноль это мгновенный отказ
-	Say      func(string)  // печать хода прямо сейчас: ожидание замка обязано быть слышно
+	ID            string
+	Test          string // команда тестов, обязательна
+	Deploy        string // явная команда выката; пустую подхватывает .devkit/deploy.local
+	Train         bool   // слить в поезд: без выката и без перевода в Check
+	Push          bool
+	LockWait      time.Duration // сколько ждать занятый замок, ноль это мгновенный отказ
+	Say           func(string)  // печать хода прямо сейчас: ожидание замка обязано быть слышно
+	queueStart    func()
+	retryRegcheck bool
 }
 
 // errRebaseConflict помечает отказ ребейза: ветку разводят руками, и очередь
@@ -1009,8 +1011,10 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 		return "", err
 	}
 	defer unlock()
-	stageOpen(root, p.ID, stage.Merge, "shipctl merge")
-	defer stageClose(root, p.ID, stage.Merge)
+	if p.queueStart == nil {
+		stageOpen(root, p.ID, stage.Merge, "shipctl merge")
+		defer stageClose(root, p.ID, stage.Merge)
+	}
 	// Перевод в поездной режим при занятой очереди помнит, откуда он: отчёт
 	// обязан объяснить отказ от выката, иначе тихое отсутствие выката
 	// неотличимо от забытья.
@@ -1031,8 +1035,10 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	// попадает в окно deployed..main и роняет слияние воротами strays (DK-1251).
 	// Слияние и так требует свежий origin (freshMain ниже), поэтому недоступный
 	// origin отказывает здесь честной ошибкой, а не неверным составом.
-	if err := syncDeployTag(root); err != nil {
-		return "", err
+	if !p.retryRegcheck {
+		if err := syncDeployTag(root); err != nil {
+			return "", err
+		}
 	}
 	branch, err := git(root, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
@@ -1144,6 +1150,19 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err := edgeGate(root, b, p.ID); err != nil {
 		return "", err
 	}
+	reviewRoot := root
+	if wt != "" {
+		reviewRoot = wt
+	}
+	if p.retryRegcheck {
+		// Повторная проверка читает журнал до обращения к origin.
+		if err := trace.RetryRegcheck(root, reviewRoot, main, branch, b.rowOf(p.ID).Type, readTaskDoc(reviewRoot, p.ID)); err != nil {
+			return "", err
+		}
+		if err := syncDeployTag(root); err != nil {
+			return "", err
+		}
+	}
 	// Занятая очередь держит выкат, а не main: инвариант «непроверенный выкат
 	// один» сказан про прод. Слияние на прод ничего не везёт, оно
 	// возвращается до блока выката, и очередь его не касается. Одиночный merge
@@ -1180,10 +1199,6 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	}
 	// Файл задачи с замечаниями ревью живёт на фичеветке: при слиянии из
 	// worktree читать его надо там, основной чекаут на main этих правок не видит.
-	reviewRoot := root
-	if wt != "" {
-		reviewRoot = wt
-	}
 	// Оборванный файл задачи проверяется до ревью: за незакрытым ограждением
 	// не видно ни замечаний, ни записи «Выкат», и слияние прошло бы «чисто»
 	// ровно потому, что читать было нечего. Отказ тут ничего не успел
@@ -1230,8 +1245,10 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := trace.Regcheck(root, reviewRoot, main, branch, b.rowOf(p.ID).Type, taskDoc); err != nil {
-		return "", err
+	if !p.retryRegcheck {
+		if err := trace.Regcheck(root, reviewRoot, main, branch, b.rowOf(p.ID).Type, taskDoc); err != nil {
+			return "", err
+		}
 	}
 	if err := trace.Tests(root, main, branch, docsBranch, taskDoc); err != nil {
 		return "", err
@@ -1278,6 +1295,11 @@ func cmdMerge(root string, p MergeParams) (string, error) {
 	before, err := git(workDir, "rev-parse", "HEAD")
 	if err != nil {
 		return "", err
+	}
+	if p.queueStart != nil {
+		p.queueStart()
+		stageOpen(root, p.ID, stage.Merge, "shipctl merge")
+		defer stageClose(root, p.ID, stage.Merge)
 	}
 	// Ветка, уже вобравшая main слиянием, в ребейзе не нуждается: fast-forward
 	// у неё есть, а ребейз тут не бездействует, он расплющивает сшивку и

@@ -57,10 +57,10 @@ func TestPreparedBasisChangesWithTargetAndType(t *testing.T) {
 		t.Fatal(err)
 	}
 	changedTeam, err := preparedBasis(root, source, state)
-	if err != nil || changedTeam == replaced {
+	if err != nil || changedTeam != replaced {
 		t.Fatalf("team: %s %s %v", replaced, changedTeam, err)
 	}
-	// Доска и архив ездят своими коммитами весь день, и вопрос предложений
+	// Доска и архив ездят своими коммитами весь день, и вопрос подготовки
 	// живёт часами: ход чужой задачи не должен ломать подтверждение
 	// (инцидент DK-1531 от 2026-11-04, отказ «показанные карточки
 	// изменились» после двух коммитов доски).
@@ -78,7 +78,7 @@ func TestPreparedBasisChangesWithTargetAndType(t *testing.T) {
 	if err := os.WriteFile(archivePath(root), append(archive, []byte("| XR-9 | Закрытая | task | P3 | 01.09 |\n")...), 0644); err != nil {
 		t.Fatal(err)
 	}
-	afterBoard, err := proposalBasis(root, source, state)
+	afterBoard, err := preparedBasis(root, source, state)
 	if err != nil || afterBoard != replaced {
 		t.Fatalf("board: %s %s %v", replaced, afterBoard, err)
 	}
@@ -86,7 +86,7 @@ func TestPreparedBasisChangesWithTargetAndType(t *testing.T) {
 	// под висящим вопросом ломает подтверждение так же, как и правка
 	// определения типа.
 	edited := append(append([]byte{}, source...), []byte("правка записи\n")...)
-	afterRecord, err := proposalBasis(root, edited, state)
+	afterRecord, err := preparedBasis(root, edited, state)
 	if err != nil || afterRecord == afterBoard {
 		t.Fatalf("record: %s %s %v", afterBoard, afterRecord, err)
 	}

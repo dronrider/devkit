@@ -26,6 +26,9 @@ const Stamp = "2006-01-02T15:04:05"
 // того, кто её поднял: вывести chat-<ID>-<n> из записи нечем, а живость этого
 // имени и есть мера кончившегося разговора.
 type Bind struct {
+	// lineOrder сохраняет порядок строк прочитанного журнала при равном Time.
+	// В сам журнал это поле не записывается.
+	lineOrder  int
 	Task       string
 	Source     string
 	Project    string
@@ -326,8 +329,9 @@ func WorksOn(recs []Bind, task string) bool {
 // All сворачивает журнал в список записей на сессию, порядком записи.
 func All(data []byte) map[string][]Bind {
 	out := map[string][]Bind{}
-	for _, ln := range strings.Split(string(data), "\n") {
+	for n, ln := range strings.Split(string(data), "\n") {
 		if sid, b, ok := ParseLine(ln); ok {
+			b.lineOrder = n + 1
 			out[sid] = append(out[sid], b)
 		}
 	}
@@ -670,14 +674,14 @@ func TmuxResident(recs map[string][]Bind, name string) string {
 	if name == "" {
 		return ""
 	}
-	best, at := "", ""
+	best, at, order := "", "", 0
 	for sid, rs := range recs {
 		for _, r := range rs {
 			if r.Tmux != name || r.Transcript == "" {
 				continue
 			}
-			if best == "" || r.Time > at {
-				best, at = sid, r.Time
+			if best == "" || r.Time > at || (r.Time == at && r.lineOrder > order) {
+				best, at, order = sid, r.Time, r.lineOrder
 			}
 		}
 	}

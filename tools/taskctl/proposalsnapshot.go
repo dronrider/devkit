@@ -7,12 +7,13 @@ import (
 
 	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/draftproposal"
-	"github.com/dronrider/devkit/internal/stage"
-	"github.com/dronrider/devkit/internal/team"
 )
 
-// proposalBasis includes the record, the effective definition, board, archive,
-// team and target files. Missing files are distinct from empty ones.
+// proposalBasis includes the record, the effective definition and target
+// files, the inputs the confirmation snapshot is designed over (LLD DK-1469).
+// The shown cards and their revisions are compared by value elsewhere, so a
+// board or team change between the question and the answer cannot invalidate
+// the question. Missing files are distinct from empty ones.
 func proposalBasis(root string, source []byte, state draftproposal.State) (string, error) {
 	h, err := draftmeta.Parse(source)
 	if err != nil {
@@ -26,7 +27,7 @@ func proposalBasis(root string, source []byte, state draftproposal.State) (strin
 	if !ok {
 		return "", fmt.Errorf("типа %q нет в словаре", h.Type)
 	}
-	paths := []string{boardPath(root), archivePath(root), team.Path(stage.Home()), def.File}
+	paths := []string{def.File}
 	seen := map[string]bool{}
 	for _, p := range state.Proposals {
 		if p.Target == "" {

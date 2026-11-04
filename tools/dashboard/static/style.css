@@ -1878,6 +1878,10 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
    иконки и счётчиков: подъём, лечение, стоп, пропажа. */
 .busyrow{display:flex;align-items:center;flex-wrap:wrap;gap:6px 9px;padding:7px 12px;margin:6px 0 0;border-radius:9px;background:var(--bg2);border:1px solid var(--line)}
 .busyrow[hidden]{display:none}
+/* Строка стоит в ленте тем же левым краем, что записи .frow (padding-left:17px)
+   и поле ввода .cbox (margin-left:17px): без отступа её рамка торчала наружу
+   на эти точки, и левый край расходился с разговором. */
+.chatwrap .busyrow{margin-left:17px}
 .busyrow.stop{border-color:color-mix(in oklab,var(--block) 45%,transparent)}
 /* Цвет рода действия живёт на строке, его берут иконка и блеск слова. */
 .busyrow{--act:var(--run)}
@@ -1928,19 +1932,21 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 /* прочее: шестерёнка крутится */
 .bicon .spin{animation:spin 2.8s linear infinite;transform-origin:12px 12px}
 @keyframes spin{to{transform:rotate(1turn)}}
-/* Слово действия окрашено цветом рода и дышит им. Пробег блеска по буквам
-   ходил бы сменой положения фона, а вечная анимация имеет право менять только
-   прозрачность и превращение, и живость слова живёт дыханием. Концы и пик
-   окраски едут от переменных темы: прибитая белая вспышка на светлой палитре
-   съедала бы буквы, и строка ломалась бы с той же вёрсткой. */
+/* Слово действия окрашено цветом рода, и по буквам бежит узкая светлая
+   полоса: основа в приглушённом цвете текста, середина в цвете рода, пик
+   белый, как в макете DK-919. Фон шириной 300% шире слова, поэтому ход
+   положения фона идёт от 0% до 100%: за этими пределами картинка уходит из
+   элемента, и слово остаётся без фона и пропадает. Строка активности на панели
+   одна и живёт только при идущем ходе: без хода она гаснет, на остановке тоже,
+   и перерисовка кадра одна на разговор. Слоями на прозрачности полоса шла бы
+   ступеньками, а макет требует ровного хода. */
 .bword{font:400 12px var(--mono);overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;min-width:0;flex:0 1 auto;
-  background-image:linear-gradient(100deg,var(--tx2) 18%,var(--act) 50%,
-    color-mix(in oklab,var(--tx) 55%,#fff) 62%,var(--act) 74%,var(--tx2) 92%);
-  background-size:100% 100%;background-repeat:no-repeat;
+  background-image:linear-gradient(105deg,var(--tx2) 30%,var(--act) 46%,#fff 52%,var(--act) 58%,var(--tx2) 70%);
+  background-size:300% 100%;background-repeat:no-repeat;
   -webkit-background-clip:text;background-clip:text;color:transparent;
-  animation:bshine 3.2s ease-in-out infinite}
-@keyframes bshine{0%,100%{opacity:.72}50%{opacity:1}}
+  animation:bshine 3.2s linear infinite}
+@keyframes bshine{from{background-position:0% 0}to{background-position:100% 0}}
 .bmeta{display:flex;gap:6px;margin-left:auto;white-space:nowrap;
   font:400 12px var(--mono);color:var(--tx3)}
 /* Состояния без хода говорят одним словом: иконки и счётчиков тут нет, блеск

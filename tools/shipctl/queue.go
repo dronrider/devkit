@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/dronrider/devkit/internal/trace"
 )
 
 // Очередь слияний (DK-1218, третья строка DoD цели DK-1084).
@@ -53,12 +55,61 @@ const queueRetryLimit = 3
 // queueMark это наклейка одной задачи: сколько раз её отбили, чем в
 // последний раз и снята ли она с очереди.
 type queueMark struct {
-	Tries  int       `json:"tries"`
-	Code   string    `json:"code,omitempty"`
-	Last   string    `json:"last,omitempty"`
-	At     time.Time `json:"at,omitempty"`
-	Held   bool      `json:"held,omitempty"`
-	Reason string    `json:"reason,omitempty"`
+	Tries           int         `json:"tries"`
+	Code            string      `json:"code,omitempty"`
+	Last            string      `json:"last,omitempty"`
+	At              time.Time   `json:"at,omitempty"`
+	Held            bool        `json:"held,omitempty"`
+	Reason          string      `json:"reason,omitempty"`
+	Block           *queueBlock `json:"block,omitempty"`
+	RegcheckPending bool        `json:"regcheck_pending,omitempty"`
+}
+
+const queueRegcheck = "regcheck"
+
+type queueBlock struct {
+	Code   string    `json:"code"`
+	Since  time.Time `json:"since"`
+	Reason string    `json:"reason"`
+	Owner  string    `json:"owner"`
+	Resume string    `json:"resume"`
+	Head   string    `json:"head,omitempty"`
+	Base   string    `json:"base,omitempty"`
+	Log    string    `json:"log,omitempty"`
+}
+
+func (b queueBlock) line() string {
+	return fmt.Sprintf("ожидает %s: %s. Ответственный: %s. Повтор: %s",
+		sinceWords(time.Since(b.Since)), b.Reason, b.Owner, b.Resume)
+}
+
+func queueSetBlock(root, id string, block queueBlock) (queueBlock, bool) {
+	changed := false
+	queueMutate(root, func(st *queueState) {
+		mark := st.mark(id)
+		if block.Code == queueRegcheck {
+			mark.RegcheckPending = true
+		}
+		if previous := mark.Block; previous != nil {
+			block.Since = previous.Since
+			if *previous == block {
+				return
+			}
+		}
+		block.Since = time.Now()
+		mark.Block = &block
+		changed = true
+	})
+	return block, changed
+}
+
+func queueClearBlock(root, id string) {
+	queueMutate(root, func(st *queueState) {
+		if mark := st.Tasks[id]; mark != nil {
+			mark.Block = nil
+			mark.RegcheckPending = false
+		}
+	})
 }
 
 // queueState это весь файл наклеек.
@@ -93,7 +144,16 @@ func saveQueue(root string, st *queueState) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(root, mergeQueuePath), append(data, '\n'), 0o644)
+	f, err := os.CreateTemp(dir, "ship.lock.queue-state-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, writeErr := f.Write(append(data, '\n'))
+	if err := errors.Join(writeErr, f.Close()); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), filepath.Join(root, mergeQueuePath))
 }
 
 // queueLockPath это короткий замок наклеек, свой и отдельный от замка
@@ -217,7 +277,7 @@ func queueRows(root string, b *board) ([]queueItem, error) {
 					return nil, err
 				}
 				if code != "" && code != mark.Code {
-					mark = queueMark{}
+					mark = queueMark{Block: mark.Block, RegcheckPending: mark.RegcheckPending}
 				}
 			}
 		}
@@ -281,6 +341,9 @@ func queueLines(items []queueItem) []string {
 		if it.Mark.Tries > 0 {
 			line += fmt.Sprintf(", повторов %d из %d: %s", it.Mark.Tries, queueRetryLimit, it.Mark.Last)
 		}
+		if it.Mark.Block != nil {
+			line += ", " + it.Mark.Block.line()
+		}
 		out = append(out, line)
 	}
 	return out
@@ -327,7 +390,7 @@ func queueHold(root, id, why string) string {
 	queueMutate(root, func(st *queueState) {
 		mk := st.mark(id)
 		mk.Held, mk.Reason, mk.At = true, why, time.Now()
-		mk.Last, mk.Code = why, ""
+		mk.Last, mk.Code, mk.Block = why, "", nil
 	})
 	return fmt.Sprintf("%s снята с очереди слияний: %s", id, why)
 }
@@ -337,7 +400,7 @@ func queueHold(root, id, why string) string {
 func queueFree(root, id string) string {
 	queueMutate(root, func(st *queueState) {
 		mk := st.mark(id)
-		*mk = queueMark{At: time.Now()}
+		*mk = queueMark{At: time.Now(), RegcheckPending: mk.RegcheckPending}
 	})
 	return fmt.Sprintf("%s вернулась в очередь слияний, повторы обнулены", id)
 }
@@ -354,11 +417,13 @@ func queueClear(root, id string) {
 }
 
 type queueReport struct {
-	ID      string `json:"id,omitempty"`
-	Line    string `json:"line"`
-	Failed  bool   `json:"failed,omitempty"`
-	Waiting bool   `json:"waiting,omitempty"`
-	Merged  bool   `json:"merged,omitempty"`
+	ID      string      `json:"id,omitempty"`
+	Line    string      `json:"line"`
+	Failed  bool        `json:"failed,omitempty"`
+	Waiting bool        `json:"waiting,omitempty"`
+	Merged  bool        `json:"merged,omitempty"`
+	Block   *queueBlock `json:"block,omitempty"`
+	Changed bool        `json:"changed,omitempty"`
 }
 
 func cmdQueueJSON(root string, p QueueParams) (string, error) {
@@ -486,16 +551,16 @@ func queueDrain(root string, p QueueParams) (string, error) {
 		if it.Mark.Held {
 			continue
 		}
-		merged, note, stop, skip := queueTry(root, it.ID, p)
+		merged, note, stop, skip := queueTry(root, it, p)
 		if note != "" {
 			notes = append(notes, note)
 		}
 		if merged {
 			queueClear(root, it.ID)
-			return strings.Join(notes, "\n"), nil
+			return strings.Join(append(notes, skipped...), "\n"), nil
 		}
 		if stop {
-			return strings.Join(notes, "\n"), nil
+			return strings.Join(append(notes, skipped...), "\n"), nil
 		}
 		if skip != "" {
 			skipped = append(skipped, it.ID+": "+skip)
@@ -515,7 +580,8 @@ func queueDrain(root string, p QueueParams) (string, error) {
 // проход, а skip это причина, по которой строка оказалась неготовой: она
 // печатается хвостом отчёта, иначе пустой заход выглядел бы бездействием без
 // повода.
-func queueTry(root, id string, p QueueParams) (merged bool, note string, stop bool, skip string) {
+func queueTry(root string, item queueItem, p QueueParams) (merged bool, note string, stop bool, skip string) {
+	id := item.ID
 	report := queueReport{ID: id, Failed: true}
 	defer func() {
 		if p.Report == nil {
@@ -534,7 +600,7 @@ func queueTry(root, id string, p QueueParams) (merged bool, note string, stop bo
 	if say == nil {
 		say = func(string) {}
 	}
-	say("очередь слияний: беру " + id)
+	started := false
 	// Ожидания замка тут нет нарочно. Тик сам и есть цикл повтора: он приходит
 	// раз в пять минут, а собственное предыдущее слияние держит замок десять
 	// или двадцать. Ожидание внутри захода копило бы ждущие shipctl, отодвигало
@@ -543,16 +609,40 @@ func queueTry(root, id string, p QueueParams) (merged bool, note string, stop bo
 	// fast-forward (замечание ревью круга 1, DK-1218).
 	out, mergeErr := cmdMerge(root, MergeParams{
 		ID: id, Test: p.Test, Train: true, Push: p.Push, Say: say,
+		retryRegcheck: item.Mark.RegcheckPending,
+		queueStart: func() {
+			started = true
+			if item.Mark.Block != nil || item.Mark.RegcheckPending {
+				queueClearBlock(root, id)
+			}
+			say("очередь слияний: беру " + id)
+		},
 	})
 	if mergeErr == nil {
 		return true, id + " слита очередью: " + firstLine(out), false, ""
 	}
 	var red *redError
 	var waiting *dependencyWait
+	var regcheck *trace.RegcheckPending
+	saveBlock := func(block queueBlock) {
+		block.Owner = "исполнитель " + id
+		block, report.Changed = queueSetBlock(root, id, block)
+		report.Block = &block
+	}
 	switch {
+	case errors.As(mergeErr, &regcheck):
+		report.Failed, report.Waiting = false, true
+		reason := "нет зелёного regcheck от " + regcheck.Since.Format(time.RFC3339)
+		saveBlock(queueBlock{
+			Code: queueRegcheck, Reason: reason, Head: regcheck.Head, Base: regcheck.Base, Log: regcheck.LogPath,
+			Resume: "успешный regcheck на актуальной базе в дереве задачи",
+		})
+		return false, "", false, report.Block.line()
 	case errors.As(mergeErr, &waiting):
 		report.Failed, report.Waiting = false, true
-		return false, "", false, firstLine(mergeErr.Error())
+		reason := firstLine(mergeErr.Error())
+		saveBlock(queueBlock{Code: "dependency", Reason: reason, Resume: "выполнена предпосылка"})
+		return false, "", false, reason
 	case errors.As(mergeErr, &red) && red.Own:
 		return false, queueOutOfLine(root, id, red.Why), true, ""
 	case errors.As(mergeErr, &red):
@@ -579,10 +669,11 @@ func queueTry(root, id string, p QueueParams) (merged bool, note string, stop bo
 		report.Failed, report.Waiting = false, true
 		return false, noQueue + ": " + mergeErr.Error(), true, ""
 	}
-	// Всё остальное это ворота готовности: строка ещё не доведена, и разлив
-	// идёт дальше по составу. Отказ ворот стоит дёшево (они проверяются до
-	// ребейза и до единого теста), а причина уезжает хвостом отчёта.
-	return false, "", false, firstLine(mergeErr.Error())
+	reason := firstLine(mergeErr.Error())
+	if !started {
+		saveBlock(queueBlock{Code: "preflight", Reason: reason, Resume: "после устранения причины на следующем тике"})
+	}
+	return false, "", false, reason
 }
 
 // queueOutOfLine выводит строку из очереди наклейкой и оставляет след.

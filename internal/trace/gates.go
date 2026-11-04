@@ -135,10 +135,20 @@ func inTestDir(path, base string) bool {
 // мимо правки или мимо тестов задачи, поэтому обещать «100% проверено» таким
 // следом нельзя.
 func Regcheck(root, logRoot, main, branch, taskType, doc string) error {
+	return checkRegcheck(root, logRoot, main, branch, taskType, doc, false)
+}
+
+// RetryRegcheck проверяет ожидающую ветку даже после исчезновения журнала.
+func RetryRegcheck(root, logRoot, main, branch, taskType, doc string) error {
+	return checkRegcheck(root, logRoot, main, branch, taskType, doc, true)
+}
+
+func checkRegcheck(root, logRoot, main, branch, taskType, doc string, requireLog bool) error {
 	if !strings.Contains(taskType, "bug") {
 		return nil
 	}
-	if _, err := os.Stat(filepath.Join(logRoot, RunLogPath)); err != nil {
+	logPath := filepath.Join(logRoot, RunLogPath)
+	if _, err := os.Stat(logPath); !requireLog && err != nil {
 		return nil
 	}
 	if taskform.Exception(doc, taskform.GateRegcheck) {
@@ -149,20 +159,43 @@ func Regcheck(root, logRoot, main, branch, taskType, doc string) error {
 	// merge-base новой ветки свежее того прогона.
 	base, err := git(root, "merge-base", main, branch)
 	if err != nil {
+		if requireLog {
+			return fmt.Errorf("найти базу regcheck: %w", err)
+		}
 		return nil
 	}
 	ctStr, err := git(root, "log", "-1", "--format=%ct", base)
 	if err != nil {
+		if requireLog {
+			return fmt.Errorf("прочитать время базы regcheck: %w", err)
+		}
 		return nil
 	}
 	ct, err := strconv.ParseInt(ctStr, 10, 64)
 	if err != nil {
+		if requireLog {
+			return fmt.Errorf("разобрать время базы regcheck: %w", err)
+		}
 		return nil
 	}
-	if regcheckLogged(filepath.Join(logRoot, RunLogPath), time.Unix(ct, 0)) {
+	since := time.Unix(ct, 0)
+	if regcheckLogged(logPath, since) {
 		return nil
 	}
-	return fmt.Errorf("задача типа bug, а в %s нет зелёного regcheck за время жизни ветки: регрессионный тест обязан краснеть на старом коде (RULES.md, «Тесты обязательны»); прогнать regcheck и повторить, а где он неприменим (правка и тест в одном файле, бескодовая правка) загасить ворот пометкой «- Исключение: regcheck (причина)» в docs/tasks/<ID>.md",
+	head, _ := git(root, "rev-parse", branch)
+	return &RegcheckPending{Head: head, Base: base, LogPath: logPath, Since: since}
+}
+
+// RegcheckPending сохраняет входы проверки для диагностики очереди.
+type RegcheckPending struct {
+	Head    string
+	Base    string
+	LogPath string
+	Since   time.Time
+}
+
+func (e *RegcheckPending) Error() string {
+	return fmt.Sprintf("задача типа bug, а в %s нет зелёного regcheck за время жизни ветки: регрессионный тест обязан краснеть на старом коде (RULES.md, «Тесты обязательны»); прогнать regcheck и повторить, а где он неприменим (правка и тест в одном файле, бескодовая правка) загасить ворот пометкой «- Исключение: regcheck (причина)» в docs/tasks/<ID>.md",
 		RunLogPath)
 }
 

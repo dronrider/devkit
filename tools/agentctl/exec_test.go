@@ -500,3 +500,29 @@ func TestExecWaitsForPrivateAttachThenRefuses(t *testing.T) {
 		t.Fatalf("client started: %v", err)
 	}
 }
+
+func TestExecBlocksPrivateSourcesWithoutLock(t *testing.T) {
+	for _, source := range []string{"meeting", "mail", "messenger", "unknown"} {
+		t.Run(source, func(t *testing.T) {
+			kit := execKit(t)
+			root := t.TempDir()
+			t.Chdir(root)
+			t.Setenv("DEVKIT_TASK", "XR-1")
+			path := filepath.Join(root, "docs", "tasks", "drafts", "XR-1.md")
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("# private\nисточник: "+source+"\nзамок: unlocked\n\n## Текст\ntripwire"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(root, "started")
+			var out, diag bytes.Buffer
+			if _, err := cmdExec(kit, "secondcli", []string{"/bin/sh", "-c", `touch "$1"`, "sh", marker}, &out, &diag); err == nil {
+				t.Fatal("private source launched cloud client")
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("client started: %v", err)
+			}
+		})
+	}
+}

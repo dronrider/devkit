@@ -306,6 +306,9 @@ func pickVerdict(root, id, role, goal string) (pickResult, error) {
 	// предупреждением, и вердикт считается по метаданным строки, как считал
 	// бы без команды вовсе.
 	assigned, teamNote := assignmentOf(*r)
+	if assigned != nil && assigned.Route == "local" {
+		return res, fmt.Errorf("участник %s работает локальным маршрутом записи: agentctl route --participant %s --record <файл>; запуск через облачную лестницу запрещён", assigned.Handle, assigned.Handle)
+	}
 	if teamNote != "" {
 		v.Reason += "; " + teamNote
 	}

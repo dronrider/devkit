@@ -22,6 +22,9 @@ const usageText = `agentctl: выбор исполнителя под задач
                           --role review отдаёт вердикт для агента-ревьювера
                           (уровень ниже исполнителя, пол base), --goal режет
                           вердикт потолком уровня из раздела «Бюджет» файла цели
+  route --participant <имя> --record <файл> [--mask <JSON-файл>]
+                          разовый разбор записи через маршрут участника;
+                          закрытый материал требует local, без fallback
   check <ID>              кем прогонять сценарий проверки: те же машинные
                           строки model, effort, tier и via, что у pick, и
                           причина хвостом. Уровень идёт вердиктом роли ревью,
@@ -276,6 +279,13 @@ func main() {
 	var msg string
 	var err error
 	switch args[0] {
+	case "route":
+		fs := flag.NewFlagSet("route", flag.ExitOnError)
+		participant := fs.String("participant", "", "участник команды")
+		record := fs.String("record", "", "файл записи")
+		mask := fs.String("mask", "", "JSON-массив точных строк для замены перед облаком")
+		needArgs(frame.ParseArgs(fs, args[1:]), 0, 0, "route --participant <имя> --record <файл> [--mask <файл>]")
+		err = cmdRoute(stage.Home(), *participant, *record, *mask, os.Stdout, os.Stderr)
 	case "pick":
 		fs := flag.NewFlagSet("pick", flag.ExitOnError)
 		dir := fs.String("C", gdir, "стартовая директория")

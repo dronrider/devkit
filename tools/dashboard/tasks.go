@@ -160,6 +160,12 @@ type boardRow struct {
 	StageState string `json:"stage_state,omitempty"`
 	StageEnd   int64  `json:"stage_end,omitempty"`
 	StageHead  string `json:"stage_head,omitempty"`
+	// Effort это уровень глубины текущей или последней работы строки, чип рядом
+	// с приоритетом (DK-1570, макет показа уровня). Источником служит запись
+	// этапа, а не доска: taskctl о глубине не знает, её пишет хук спавна в
+	// заметку этапа. Пусто у строки, чей этап исполнителя уровня не назвал, и
+	// чип тогда не рисуется.
+	Effort string `json:"effort,omitempty"`
 	// Waiting это состояние «ждёт человека»: кто кого ждёт, с какой точностью
 	// это известно и до какого срока (waiting.go, LLD DK-430, решение 4).
 	// Пусто, когда никто никого не ждёт; у непустого источник назван всегда.
@@ -859,6 +865,7 @@ func (s *server) handleTask(w http.ResponseWriter, r *http.Request) {
 	}
 	row.Order = rowOrder(row.Sect, id, row.Accept, row.Title)
 	row.Forks = openForks(found.Path, id)
+	row.Effort = s.taskEffort(found.Path, id)
 	resp := map[string]any{
 		"project": found.Name,
 		"id":      id,

@@ -47,6 +47,9 @@ type chatModelOpt struct {
 	Tier    string `json:"tier"`
 	Harness string `json:"harness"`
 	Default bool   `json:"default,omitempty"`
+	// Levels это набор ступеней глубины подписки на этом ярусе (DK-1570,
+	// макет шкалы v4). Пусто у строки сверх лестницы и у подписки без набора.
+	Levels []string `json:"levels,omitempty"`
 }
 
 // chatModelOpts разворачивает лестницы всех включённых подписок в плоский
@@ -86,7 +89,7 @@ func (s *server) chatModelOpts() []chatModelOpt {
 			}
 			seen[m.Model] = true
 			out = append(out, chatModelOpt{Model: m.Model, Tier: m.Tier,
-				Harness: h.Name, Default: h.Default && m.Tier == "pro"})
+				Harness: h.Name, Default: h.Default && m.Tier == "pro", Levels: m.Levels})
 		}
 		// Модели чата сверх лестницы идут следом строками без яруса. Свод с
 		// лестницей той же подписки ведёт один seen: модель, которая стоит и в

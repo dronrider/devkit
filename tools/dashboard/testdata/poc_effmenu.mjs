@@ -15,11 +15,13 @@ import { makeSandbox, settle, dump, tag, byClass, allByClass, deepBtn, fail, app
 
 const app = appPathArg();
 
-const tiers = [{ tier: "mini", model: "haiku" }, { tier: "base", model: "sonnet" },
-  { tier: "pro", model: "opus" }];
+const tiers = [{ tier: "mini", model: "haiku", levels: ["low", "medium", "high", "xhigh"] },
+  { tier: "base", model: "sonnet", levels: ["low", "medium", "high", "xhigh"] },
+  { tier: "pro", model: "opus", levels: ["low", "medium", "high", "xhigh"] }];
 const harnesses = [
   { name: "claude-code", bin: "claude", default: true, models: tiers },
-  { name: "glm-code", bin: "glm", models: [{ tier: "pro", model: "glm-5.3" }] },
+  { name: "glm-code", bin: "glm",
+    models: [{ tier: "pro", model: "glm-5.3", levels: ["low", "high", "max"] }] },
 ];
 const quota = { harnesses: [
   { name: "claude-code", age: "2 мин", age_sec: 120, buckets: [
@@ -84,7 +86,7 @@ const last = () => posted[posted.length - 1];
 const markOn = (pop) => allByClass(pop, "effmark")
   .filter((b) => String(b.className).includes("on")).map((b) => dump(b).trim());
 
-// --- состав меню: строки моделей с чипами и метрами, ползунок из пяти меток ---
+// --- состав меню: строки моделей с чипами и метрами, ползунок ступеней глубины ---
 {
   const { pop } = openRowMenu();
   if (!pop) fail("у строки нет меню модели и глубины");
@@ -111,20 +113,21 @@ const markOn = (pop) => allByClass(pop, "effmark")
   }
 }
 
-// --- подпись про ярус без effort появляется при выборе его строки ---
+// --- шкала следует за выбранной подпиской: у семей ступени свои (v4) ---
 {
   const { pop } = openRowMenu();
-  const note = byClass(pop, "effnote");
-  if (!note || !note.hidden) fail("подпись про mini стоит без выбора mini-строки");
-  allByClass(pop, "hrow").find((h) => dump(h).includes("haiku"))
+  allByClass(pop, "hrow").find((h) => dump(h).includes("glm"))
     .handlers.click({ stopPropagation: () => {} });
-  if (note.hidden) fail("выбор mini-строки не показал подпись: " + dump(pop));
-  if (!dump(note).includes("про effort в API не знает")) {
-    fail("подпись не называет судьбу уровня словами: " + dump(note));
+  const glm = allByClass(pop, "effmark").map((b) => dump(b).trim());
+  if (JSON.stringify(glm) !== JSON.stringify(["low", "high", "max"])) {
+    fail("шкала glm не из трёх ступеней: " + JSON.stringify(glm));
   }
   allByClass(pop, "hrow").find((h) => dump(h).includes("opus"))
     .handlers.click({ stopPropagation: () => {} });
-  if (!note.hidden) fail("подпись mini осталась после ухода с mini-строки: " + dump(note));
+  const ant = allByClass(pop, "effmark").map((b) => dump(b).trim());
+  if (JSON.stringify(ant) !== JSON.stringify(["low", "medium", "high", "xhigh"])) {
+    fail("шкала anthropic не из четырёх ступеней: " + JSON.stringify(ant));
+  }
 }
 
 // --- кольцо вердикта и бегунок на нём без выбора человека ---
@@ -262,6 +265,38 @@ const markOn = (pop) => allByClass(pop, "effmark")
   await settle();
   if (raises()[2] && raises()[2].body.effort) {
     fail("удачный подъём не потратил выбор: " + JSON.stringify(raises()[2].body));
+  }
+}
+
+// --- мини-полоска глубины в поле подписки показывает ручной выбор ---
+{
+  const st = await sandbox.chatState("demo", "bbbb2222-2222", board);
+  const panel = sandbox.chatPanel("demo", st);
+  const mbar = byClass(panel, "mbar");
+  if (!mbar) fail("у поля модели в разговоре нет мини-полоски глубины");
+  if (!mbar.hidden) fail("без ручного выбора мини-полоска не спрятана: " + dump(panel));
+  const sel = tag(panel, "SELECT");
+  const menu = byClass(panel, "menu");
+  sel.handlers.mousedown({ preventDefault() {}, stopPropagation() {} });
+  allByClass(menu, "effmark").find((b) => dump(b).trim() === "high")
+    .handlers.click({ stopPropagation: () => {} });
+  if (mbar.hidden) fail("выбор глубины не показал мини-полоску: " + dump(panel));
+  if (mbar.dataset.level !== "high") {
+    fail("мини-полоска называет не выбранный уровень: " + mbar.dataset.level);
+  }
+}
+
+// --- чип глубины рядом с приоритетом рисуется из записи этапа ---
+{
+  const chip = sandbox.effortChip({ effort: "high" });
+  if (!chip || !String(chip.className).includes("chip lvl")) {
+    fail("у строки с уровнем нет чипа глубины: " + dump(chip));
+  }
+  if (dump(chip).trim() !== "high") {
+    fail("чип глубины называет не уровень: " + dump(chip));
+  }
+  if (sandbox.effortChip({}) || sandbox.effortChip({ effort: "" })) {
+    fail("чип глубины нарисовался без записи уровня");
   }
 }
 

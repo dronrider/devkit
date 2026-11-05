@@ -336,6 +336,9 @@ a:hover{text-decoration:underline}
    не заявлено (DK-716) */
 .c-talk{background:color-mix(in oklab,var(--talk) 16%,transparent);color:var(--talk)}
 .c-p1{background:color-mix(in oklab,var(--block) 20%,transparent);color:var(--block);font-weight:600}
+/* чип глубины размышления рядом с приоритетом (DK-1570, макет показа уровня) */
+.chip.lvl{font:500 var(--chipfs) var(--mono);color:var(--acc);
+  background:color-mix(in oklab,var(--acc) 14%,transparent)}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--run);flex:none}
 /* кружок состояния проекта: серый работы нет, зелёный идёт работа, красный
    требуется внимание. Цветом одним причину не сказать, поэтому у зелёного и
@@ -541,28 +544,33 @@ a:hover{text-decoration:underline}
 .tpick.on{border-color:var(--acc);color:var(--acc)}
 /* отступ между разделами одного меню: модель сверху, глубина ниже */
 .hph.gap{padding-top:14px}
-/* Ползунок глубины размышления (DK-1570, макет «Меню модели и глубины»).
-   Пять меток над шкалой, бегунок стоит на выбранной ступени через --sel,
-   кольцо на точке -- вердикт pick. Шаг ступени 25%, точка ставится левым
-   краем и сдвигом влево встаёт центром на ступень. */
-.eff{display:block;padding:2px 11px 4px}
-.effmarks{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));height:15px}
-.effmark{min-width:0;
+/* Ползунок глубины размышления (DK-1570, макет «Меню модели и глубины»,
+   шкала v4). Набор ступеней задаёт выбранная строка: их число стоит в --n,
+   а шаг между соседними в --step. Метки и точки ставятся центром на ступень
+   сдвигом translateX(-50%), рамка точек и бегунка входит в размер, а не
+   прибавляется к нему. Бегунок стоит на выбранной ступени через --sel, кольцо
+   на точке -- вердикт pick. Дорожка кончается на последней ступени набора. */
+.eff{display:block;padding:2px 11px 4px;--n:5;--step:25%}
+.effmarks{position:relative;height:15px}
+.effmark{position:absolute;left:calc(var(--i)*var(--step));transform:translateX(-50%);
   border:0;background:none;padding:0 2px;line-height:15px;cursor:pointer;border-radius:5px;
-  font:500 10px var(--mono);color:var(--tx3);white-space:nowrap}
+  font:500 10px var(--mono);color:var(--tx3);white-space:nowrap;box-sizing:border-box}
 .effmark:hover{color:var(--tx2);background:var(--bg3)}
 .effmark.on{color:var(--tx);background:var(--bg3)}
 .effmark:focus-visible{outline:1px solid var(--acc);outline-offset:1px}
-.efftrack{position:relative;height:13px;margin:1px 10% 0;cursor:pointer}
-.effrail{position:absolute;left:0;right:0;top:4px;height:3px;border-radius:2px;background:var(--bg3)}
+.efftrack{position:relative;height:13px;margin-top:1px;cursor:pointer}
+.effrail{position:absolute;left:0;top:4px;height:3px;border-radius:2px;background:var(--bg3);
+  width:calc((var(--n) - 1)*var(--step))}
 .efffill{position:absolute;left:0;top:4px;height:3px;border-radius:2px;background:var(--acc);
-  opacity:.85;width:calc(var(--sel)*25%)}
-.effdot{position:absolute;top:5.5px;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;
-  background:var(--bg2);border:1px solid var(--line2);left:calc(var(--i)*25%)}
+  opacity:.85;width:calc(var(--sel)*var(--step))}
+.effdot{position:absolute;top:5.5px;width:7px;height:7px;margin-top:-3.5px;border-radius:50%;
+  background:var(--bg2);border:1px solid var(--line2);left:calc(var(--i)*var(--step));
+  transform:translateX(-50%);box-sizing:border-box}
 .effdot.verd{border-color:var(--acc);box-shadow:0 0 0 2px color-mix(in oklab,var(--acc) 30%,transparent)}
-.effthumb{position:absolute;top:5.5px;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;border-radius:50%;
+.effthumb{position:absolute;top:5.5px;width:13px;height:13px;margin-top:-6.5px;border-radius:50%;
   background:var(--acc);border:2px solid var(--bg0);box-shadow:0 0 0 1px var(--line2);
-  left:calc(var(--sel)*25%);transition:left .15s ease}
+  left:calc(var(--sel)*var(--step));transform:translateX(-50%);box-sizing:border-box;
+  transition:left .15s ease}
 @media (prefers-reduced-motion: reduce){.effthumb{transition:none}}
 
 .lcard.clicky{cursor:pointer}
@@ -1696,6 +1704,13 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 /* 14: выбор модели переехал в строку отправки, слева от кнопок. */
 .cmodel{display:flex;align-items:center;gap:6px;flex:none;min-width:0}
 .cdsel{flex:none;height:32px;border:1px solid var(--line2);border-radius:9px;background:var(--bg1);color:var(--tx2);font:500 12px var(--sans);padding:0 6px;cursor:pointer;outline:none}
+/* мини-полоска глубины в поле подписки чата (DK-1570, макет показа уровня):
+   ручной уровень виден без открытия меню, поле остаётся одной строкой */
+.mbar{flex:none;display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;
+  border-radius:6px;font:500 10px var(--mono);color:var(--acc);
+  background:color-mix(in oklab,var(--acc) 12%,transparent)}
+.mbar-dot{width:5px;height:5px;border-radius:50%;background:var(--acc);flex:none}
+.mbar[hidden]{display:none}
 /* сам выпадающий список: лежит под шапкой поверх ленты, потому что панель
    узкая и раздвигать её списком некуда */
 .cdrop{position:absolute;left:0;right:0;top:38px;z-index:5;display:flex;flex-direction:column;gap:6px;max-height:60vh;padding:8px;border:1px solid var(--line2);border-radius:11px;background:var(--bg0);box-shadow:0 12px 32px rgba(0,0,0,0.35);overflow:hidden}

@@ -1451,6 +1451,15 @@ function acceptChip(row) {
   return withTip(el("span", "chip", said), bits.join(", ") + ".");
 }
 
+// Чип глубины рядом с приоритетом (DK-1570, макет показа уровня): уровень
+// текущей или последней работы строки из записи этапа. Без записи уровня чипа
+// нет вовсе, молчание тут честнее пустой ступени.
+function effortChip(row) {
+  if (!row.effort) return null;
+  return withTip(el("span", "chip lvl", row.effort),
+    "Глубина размышления текущей или последней работы: " + row.effort + ".");
+}
+
 // Чип срока строки доски: дата приезжает полем due из суффикса заголовка
 // «[срок: ...]» (DK-1464). Просроченный срок стоит красным, как провал
 // проверки, сегодняшний жёлтым: горящая строка видна с одного взгляда, до
@@ -1731,6 +1740,9 @@ function modelMenuRow(m) {
   const row = el("div", "hrow mrow");
   row.dataset.model = m.model;
   row.dataset.harness = m.harness || "";
+  // Набор ступеней глубины строки едет атрибутом: по нему панель перерисовывает
+  // шкалу под выбранную строку и стенды сверяют состав (DK-1570, шкала v4).
+  row.dataset.levels = JSON.stringify(m.levels || []);
   row.append(el("span", "hname", m.model));
   row.append(el("span", "hchip", [m.tier, m.harness].filter(Boolean).join(", ")));
   const pcts = modelMeterPcts(m.harness);
@@ -1752,65 +1764,97 @@ function modelMenuRow(m) {
   return row;
 }
 
-// Ползунок глубины размышления (макет «Меню модели и глубины»). Пять меток
-// над шкалой, бегунок стоит на выбранной ступени, а кольцо на точке держит
-// вердикт pick: пока руку не приложили, бегунок стоит на самом вердикте.
-// Выбранное живёт у того, кто меню собрал, через get и set: пустой ответ get
-// значит «вердикт», и в заказ тогда едет пустое поле.
+// Ползунок глубины размышления (макет «Меню модели и глубины», шкала v4).
+// Ступени берёт у выбранной строки: семья модели называет свой набор, и шкала
+// рисуется по нему, а не по общему перечню пяти. Вердикт вне набора поднимается
+// до ближайшей ступени набора сверху по EFFORT_LEVELS, и кольцо стоит на этой
+// ступени. Бегунок стоит на выбранной ступени, а пока руку не приложили, на
+// самом вердикте. Выбранное живёт у того, кто меню собрал, через get и set:
+// пустой ответ get значит «вердикт», и в заказ тогда едет пустое поле.
 function effSlider(opts) {
   const root = el("div", "eff");
   const marks = el("div", "effmarks");
   const track = el("div", "efftrack");
-  const dots = [];
-  const btns = [];
+  let dots = [];
+  let btns = [];
   let verdict = opts.verdict || "";
-  const chosen = () => opts.get() || verdict || "high";
+  let levels = (opts.levels && opts.levels.length ? opts.levels : EFFORT_LEVELS).slice();
+  // Вердикт вне набора поднимается до ближайшей ступени набора сверху: medium
+  // на наборе low, high, max это high, xhigh на том же наборе это max.
+  const ring = () => {
+    if (!verdict) return "";
+    if (levels.includes(verdict)) return verdict;
+    const at = EFFORT_LEVELS.indexOf(verdict);
+    if (at < 0) return "";
+    for (let k = at + 1; k < EFFORT_LEVELS.length; k++) {
+      if (levels.includes(EFFORT_LEVELS[k])) return EFFORT_LEVELS[k];
+    }
+    return "";
+  };
+  const chosen = () => opts.get() || ring() ||
+    (levels.includes("high") ? "high" : levels[levels.length - 1] || "");
   const paint = () => {
     const lv = chosen();
-    const i = Math.max(0, EFFORT_LEVELS.indexOf(lv));
+    const i = Math.max(0, levels.indexOf(lv));
+    root.style.setProperty("--n", String(levels.length));
+    root.style.setProperty("--step",
+      levels.length > 1 ? (100 / (levels.length - 1)) + "%" : "0%");
     root.style.setProperty("--sel", String(i));
     for (const b of btns) b.classList.toggle("on", b.dataset.level === lv);
-    for (const d of dots) d.classList.toggle("verd", Boolean(verdict) && d.dataset.level === verdict);
+    const r = ring();
+    for (const d of dots) d.classList.toggle("verd", Boolean(r) && d.dataset.level === r);
   };
-  EFFORT_LEVELS.forEach((lv, i) => {
-    const b = el("button", "effmark", lv);
-    b.type = "button";
-    b.style.setProperty("--i", String(i));
-    b.dataset.level = lv;
-    b.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      opts.set(lv);
-      paint();
+  const rebuild = () => {
+    marks.replaceChildren();
+    track.replaceChildren(el("span", "effrail"), el("span", "efffill"));
+    dots = [];
+    btns = [];
+    levels.forEach((lv, i) => {
+      const b = el("button", "effmark", lv);
+      b.type = "button";
+      b.style.setProperty("--i", String(i));
+      b.dataset.level = lv;
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        opts.set(lv);
+        paint();
+      });
+      btns.push(b);
+      marks.append(b);
+      const d = el("span", "effdot");
+      d.style.setProperty("--i", String(i));
+      d.dataset.level = lv;
+      dots.push(d);
+      track.append(d);
     });
-    btns.push(b);
-    marks.append(b);
-    const d = el("span", "effdot");
-    d.style.setProperty("--i", String(i));
-    d.dataset.level = lv;
-    dots.push(d);
-  });
-  track.append(el("span", "effrail"), el("span", "efffill"));
-  for (const d of dots) track.append(d);
-  track.append(el("span", "effthumb"));
+    track.append(el("span", "effthumb"));
+    paint();
+  };
   track.addEventListener("click", (ev) => {
     ev.stopPropagation();
     // Клик по дорожке округляется до ближайшей ступени: попасть меткой не
-    // проще, чем пальцем в точку, и требовать точности незачем.
+    // проще, чем пальцем в точку. Дорожка кончается на последней ступени
+    // набора и за неё не тянется (макет шкалы v3).
     const box = track.getBoundingClientRect();
-    if (!box || !box.width) return;
-    const part = (ev.clientX - box.left) / box.width * (EFFORT_LEVELS.length - 1);
-    const i = Math.max(0, Math.min(EFFORT_LEVELS.length - 1, Math.round(part)));
-    opts.set(EFFORT_LEVELS[i]);
+    if (!box || !box.width || levels.length < 2) return;
+    const part = (ev.clientX - box.left) / box.width * (levels.length - 1);
+    const i = Math.max(0, Math.min(levels.length - 1, Math.round(part)));
+    opts.set(levels[i]);
     paint();
   });
   root.append(marks, track);
-  paint();
+  rebuild();
   return {
     root,
     // Кольцо вердикта приезжает ответом ручки позже сборки меню.
     setVerdict(lv) {
       verdict = EFFORT_LEVELS.includes(lv) ? lv : "";
       paint();
+    },
+    // Набор ступеней меняется строкой меню: шкала перерисовывается целиком.
+    setLevels(lv) {
+      levels = (lv && lv.length ? lv : EFFORT_LEVELS).slice();
+      rebuild();
     },
     // Перерисовка по текущему выбору вызывающего: сброс после запуска возвращает
     // бегунок на вердикт.
@@ -1826,9 +1870,9 @@ function effSlider(opts) {
 //
 // into это коробка, куда всё кладётся. now это выбранная пара «модель и
 // подписка» для подсветки, пусто подсвечивает строку-умолчание лестницы.
-// onModel меняет пару у того, кто меню собрал, get и set держат глубину.
-// Вердикт это уровень из agentctl pick или пусто: пусто значит кольца нет, и
-// ползунок стоит на high.
+// onModel меняет пару у того, кто меню собрал, getEffort и onEffort держат
+// глубину. Вердикт это уровень из agentctl pick или пусто: пусто значит кольца
+// нет, и ползунок стоит на high.
 function runPickBody(into, opts) {
   const ladder = "ladder" in opts ? opts.ladder : modelLadder();
   into.append(el("span", "hph", "Модель"));
@@ -1849,41 +1893,52 @@ function runPickBody(into, opts) {
   // по умолчанию.
   const now = "now" in opts ? opts.now : (ladder.find((m) => m.pin) || ladder[0] || null);
   const same = (m, pick) => m.model === pick.model && (m.harness || "") === (pick.harness || "");
+  const keyOf = (m) => (m ? (m.model || "") + "\u0000" + (m.harness || "") : "");
+  // Ручной выбор помнится строкой: ушёл на другую подписку и вернулся, бегунок
+  // стоит там, где его оставили, а не на вердикте (шкала v4).
+  const hand = new Map();
+  let curKey = "";
+  const slider = effSlider({
+    verdict: opts.verdict || "",
+    get: () => hand.get(curKey) || "",
+    set: (lv) => {
+      if (lv) hand.set(curKey, lv);
+      else hand.delete(curKey);
+      if (opts.onEffort) opts.onEffort(lv);
+    },
+  });
+  // Выбор строки пересобирает шкалу под её набор ступеней и возвращает бегунок
+  // на её ручной выбор либо вердикт. Вызывающий узнаёт новый уровень тут же:
+  // заказ запуска читает его по нажатию кнопки.
+  const pickRow = (m) => {
+    picked = m;
+    curKey = keyOf(m);
+    slider.setLevels((m && m.levels) || []);
+    if (opts.onEffort) opts.onEffort(hand.get(curKey) || "");
+  };
+  // Начальный ручной выбор вызывающего ложится на открытую строку: разговор
+  // помнит его между открытиями меню, и шкала обязана его показать.
+  if (opts.getEffort) {
+    const seed = opts.getEffort();
+    if (seed) hand.set(keyOf(now), seed);
+  }
   for (const m of ladder) {
     const row = modelMenuRow(m);
     if (now && same(m, now)) {
       row.classList.add("on");
-      picked = m;
+      pickRow(m);
     }
     row.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      picked = m;
+      pickRow(m);
       for (const r of rows) r.classList.toggle("on", r === row);
-      noteMini(m);
       if (opts.onModel) opts.onModel(m);
     });
     rows.push(row);
     into.append(row);
   }
   into.append(el("span", "hph gap", "Глубина размышления"));
-  const note = el("span", "mwhy effnote");
-  note.hidden = true;
-  // На ярусе, где модель про effort не знает, ползунок остаётся, а подпись
-  // называет судьбу уровня словами: уровень поедет меткой, глубину размышления
-  // она не меняет.
-  const noteMini = (m) => {
-    const mini = Boolean(m) && m.tier === "mini";
-    note.hidden = !mini;
-    if (mini) note.textContent = m.model +
-      " про effort в API не знает: уровень поедет меткой, глубину размышления не меняет";
-  };
-  noteMini(picked);
-  const slider = effSlider({
-    verdict: opts.verdict || "",
-    get: () => (opts.getEffort ? opts.getEffort() : ""),
-    set: (lv) => { if (opts.onEffort) opts.onEffort(lv); },
-  });
-  into.append(slider.root, note);
+  into.append(slider.root);
   // Полоса исхода записи (DK-1043): та же форма, что и остальное меню. Выбор
   // тут не запускает работу и не закрывает меню, он лишь называет исход, а
   // подпись широкой половины и сам запуск правит вызывающий код через
@@ -1915,7 +1970,7 @@ function runPickBody(into, opts) {
     // вердикту, и подсветка строки уходит вместе с выбором.
     reset() {
       for (const r of rows) r.classList.remove("on");
-      noteMini(null);
+      hand.clear();
       slider.repaint();
     },
   };
@@ -6053,6 +6108,10 @@ async function renderTask(project, works, id, pre) {
   // (замечание 9 приёмки).
   const tail = [withTip(el("span", "chip dashed" +
     (row.p === "P0" || row.p === "P1" ? " c-p1" : ""), row.p), P_HINT)];
+  // Глубина размышления стоит вторым чипом, сразу за приоритетом (DK-1570,
+  // макет показа уровня): рядом с ним человек ищет, чем сейчас живёт строка.
+  const lvl = effortChip(row);
+  if (lvl) tail.push(lvl);
   if (row.fail) tail.push(withFull(el("span", "chip c-block cwhy", "провал: " + row.fail), row.fail));
   if (row.block) tail.push(withFull(el("span", "chip c-block cwhy", "блок: " + row.block), row.block));
   const accept = acceptChip(row);
@@ -11013,7 +11072,21 @@ function modelPick(project, st) {
     }
     modelSwitch(project, st, pick, isLive && !alien).catch(console.error);
   };
-  box.append(menu, model);
+  // Мини-полоска глубины в самом поле подписки (DK-1570, макет показа уровня):
+  // ручной уровень виден без открытия меню. Без ручного выбора полоски нет,
+  // следующий запуск едет вердиктом, и показывать нечего.
+  const mbar = el("span", "mbar");
+  mbar.hidden = true;
+  const mbarPaint = () => {
+    const lv = chatEffortOf(project, armKey);
+    mbar.hidden = !lv;
+    if (!lv) return;
+    mbar.replaceChildren(el("i", "mbar-dot"), lv);
+    mbar.dataset.level = lv;
+    withTip(mbar, "Глубина размышления следующего запуска: " + lv + ".");
+  };
+  mbarPaint();
+  box.append(menu, model, mbar);
   // Меню модели и глубины (DK-1570). Состав тот же, что у стрелки кнопки
   // пуска, и выбирает разговор ровно то же меню. Строка называет подписку с
   // моделью и ярусом, ползунок глубину на один запуск.
@@ -11022,7 +11095,10 @@ function modelPick(project, st) {
     now: opts.find((m) => same(m, shown)) || null,
     onModel: (m) => applyPick({ model: m.model, harness: m.harness || "" }),
     getEffort: () => chatEffortOf(project, armKey),
-    onEffort: (lv) => chatEffortSet(project, armKey, lv),
+    onEffort: (lv) => {
+      chatEffortSet(project, armKey, lv);
+      mbarPaint();
+    },
   });
   model.addEventListener("change", () => {
     // Запертый список это текст, а не действие: у чужого окна менять отсюда
@@ -16110,7 +16186,7 @@ function modelLadder() {
       if (!m.model || seen.includes(m.model)) continue;
       seen.push(m.model);
       out.push({ model: m.model, tier: m.tier || "", harness: h.name,
-        pin: Boolean(h.default) && m.tier === RUN_TIER });
+        levels: m.levels || [], pin: Boolean(h.default) && m.tier === RUN_TIER });
     }
   }
   return out;

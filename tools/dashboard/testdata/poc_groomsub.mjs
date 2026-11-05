@@ -19,9 +19,11 @@ const app = appPathArg();
 
 const harnesses = [
   { name: "claude-code", bin: "claude", default: true,
-    models: [{ tier: "base", model: "sonnet" }, { tier: "pro", model: "opus" }] },
+    models: [{ tier: "base", model: "sonnet", levels: ["low", "medium", "high", "xhigh"] },
+      { tier: "pro", model: "opus", levels: ["low", "medium", "high", "xhigh"] }] },
   { name: "glm-code", bin: "glm",
-    models: [{ tier: "base", model: "glm-5.3" }, { tier: "pro", model: "glm-5.4" }] },
+    models: [{ tier: "base", model: "glm-5.3", levels: ["low", "high", "max"] },
+      { tier: "pro", model: "glm-5.4", levels: ["low", "high", "max"] }] },
 ];
 
 const posted = [];
@@ -75,8 +77,8 @@ const openMenu = () => {
     if (!text.includes(want)) fail("в меню разбора нет «" + want + "»: " + text);
   }
   const marks = allByClass(pop, "effmark").map((b) => dump(b).trim());
-  if (JSON.stringify(marks) !== JSON.stringify(["low", "medium", "high", "xhigh", "max"])) {
-    fail("шкала глубины разбора не из пяти ступеней: " + JSON.stringify(marks));
+  if (JSON.stringify(marks) !== JSON.stringify(["low", "medium", "high", "xhigh"])) {
+    fail("шкала глубины разбора не из четырёх ступеней anthropic: " + JSON.stringify(marks));
   }
   // Умолчание подсвечено: модель подписки по умолчанию на ярусе разбора,
   // верхний ярус клиента разбору не нужен (RUN_TIER).
@@ -107,7 +109,7 @@ if (posted[0].body.effort) {
   const { pop } = openMenu();
   allByClass(pop, "hrow").find((h) => dump(h).includes("glm-5.3"))
     .handlers.click({ stopPropagation: () => {} });
-  allByClass(pop, "effmark").find((b) => dump(b).trim() === "xhigh")
+  allByClass(pop, "effmark").find((b) => dump(b).trim() === "max")
     .handlers.click({ stopPropagation: () => {} });
   if (posted.length !== was) {
     fail("выбор в меню сам поднял разбор: " + JSON.stringify(posted.slice(was)));
@@ -118,7 +120,7 @@ if (posted[0].body.effort) {
   if (!last.body || last.body.harness !== "glm-code" || last.body.tier !== "base") {
     fail("выбранная модель доехала до заказа не своей парой: " + JSON.stringify(last.body));
   }
-  if (last.body.effort !== "xhigh") {
+  if (last.body.effort !== "max") {
     fail("выбранная глубина не доехала до заказа: " + JSON.stringify(last.body));
   }
 }

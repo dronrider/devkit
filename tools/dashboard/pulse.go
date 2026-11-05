@@ -279,6 +279,22 @@ func (s *server) taskStages(projectPath, id string) (map[string]bool, string) {
 	return seen, live
 }
 
+// taskEffort отдаёт уровень глубины текущей или последней работы строки из
+// записи этапа. Пусто у строки, чей этап исполнителя уровня не назвал: чип
+// рядом с приоритетом без записи не рисуется (DK-1570, макет показа уровня).
+func (s *server) taskEffort(projectPath, id string) string {
+	for _, rec := range stage.List(s.cfg.Home, projectPath) {
+		if rec.ID != id {
+			continue
+		}
+		if e, ok := stage.LastEffort(rec); ok {
+			return e
+		}
+		return ""
+	}
+	return ""
+}
+
 // Инструменты, чей вызов означает прогон тестов. Список грубый нарочно: цена
 // ошибки тут одна закрашенная секция кольца.
 var pulseTestWords = []string{"go test", "pytest", "npm test", "regcheck", "obeycheck", "make test"}

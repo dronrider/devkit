@@ -30,11 +30,14 @@ const runBtn = (box) => {
 
 const app = appPathArg();
 
-const tiers = [{ tier: "mini", model: "haiku" }, { tier: "base", model: "sonnet" },
-  { tier: "pro", model: "opus" }, { tier: "max", model: "fable" }];
+const tiers = [{ tier: "mini", model: "haiku", levels: ["low", "medium", "high", "xhigh"] },
+  { tier: "base", model: "sonnet", levels: ["low", "medium", "high", "xhigh"] },
+  { tier: "pro", model: "opus", levels: ["low", "medium", "high", "xhigh"] },
+  { tier: "max", model: "fable", levels: ["low", "medium", "high", "xhigh"] }];
 const harnesses = [
   { name: "claude-code", bin: "claude", default: true, models: tiers },
-  { name: "glm-code", bin: "glm", models: [{ tier: "pro", model: "glm-5.3" }] },
+  { name: "glm-code", bin: "glm",
+    models: [{ tier: "pro", model: "glm-5.3", levels: ["low", "high", "max"] }] },
 ];
 
 const posted = [];
@@ -71,6 +74,27 @@ const last = () => posted[posted.length - 1];
     .map((d) => d.dataset.level);
   if (JSON.stringify(verd) !== JSON.stringify(["medium"])) {
     fail("кольцо вердикта не приехало на шкалу: " + JSON.stringify(verd));
+  }
+}
+
+// --- вердикт вне набора ступеней поднимается до ближайшей сверху (шкала v4) ---
+{
+  const box = sandbox.rowAction("demo", task, "backlog");
+  const pop = openMenu(box);
+  await settle();
+  allByClass(pop, "hrow").find((h) => dump(h).includes("glm-code"))
+    .handlers.click({ stopPropagation: () => {} });
+  // У glm набора low, high, max, а вердикт medium: кольцо и бегунок встают на
+  // high, ближайшую ступень сверху по общему порядку уровней.
+  const verd = allByClass(pop, "effdot").filter((d) => String(d.className).includes("verd"))
+    .map((d) => d.dataset.level);
+  if (JSON.stringify(verd) !== JSON.stringify(["high"])) {
+    fail("вердикт medium на шкале glm не поднялся до high: " + JSON.stringify(verd));
+  }
+  const on = allByClass(pop, "effmark")
+    .filter((b) => String(b.className).includes("on")).map((b) => dump(b).trim());
+  if (JSON.stringify(on) !== JSON.stringify(["high"])) {
+    fail("бегунок на шкале glm не встал на high: " + JSON.stringify(on));
   }
 }
 

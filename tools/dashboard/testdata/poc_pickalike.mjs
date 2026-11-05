@@ -19,9 +19,11 @@ import { makeSandbox, settle, dump, byClass, allByClass, fail, appPathArg }
 const app = appPathArg();
 
 const harnessOne = { name: "подписка-раз", default: true,
-  models: [{ tier: "base", model: "sonnet" }, { tier: "pro", model: "opus" },
-    { tier: "max", model: "fable" }] };
-const harnessTwo = { name: "подписка-два", models: [{ tier: "pro", model: "glm-5.3" }] };
+  models: [{ tier: "base", model: "sonnet", levels: ["low", "medium", "high", "xhigh"] },
+    { tier: "pro", model: "opus", levels: ["low", "medium", "high", "xhigh"] },
+    { tier: "max", model: "fable", levels: ["low", "medium", "high", "xhigh"] }] };
+const harnessTwo = { name: "подписка-два",
+  models: [{ tier: "pro", model: "glm-5.3", levels: ["low", "high", "max"] }] };
 
 const board = { prefix: "XR", sections: [
   { key: "check", title: "Check", rows: [
@@ -90,10 +92,16 @@ for (const [id, box] of [["XR-1", check], ["XR-2", back]]) {
   if (allByClass(box, "tpick").length) {
     fail("в меню строки " + id + " осталась полоса отдельных уровней: " + dump(box));
   }
-  const marks = allByClass(box, "effmark").map((b) => dump(b).trim());
-  if (marks.length !== 5) {
-    fail("в меню строки " + id + " шкала глубины не из пяти ступеней: " + JSON.stringify(marks));
-  }
+}
+// Шкала следует за подсвеченной подпиской (шкала v4): у Check это glm с тремя
+// ступенями, у очереди без подсветки общий набор из пяти.
+const checkMarks = allByClass(check, "effmark").map((b) => dump(b).trim());
+if (JSON.stringify(checkMarks) !== JSON.stringify(["low", "high", "max"])) {
+  fail("у строки Check шкала не из трёх ступеней glm: " + JSON.stringify(checkMarks));
+}
+const backMarks = allByClass(back, "effmark").map((b) => dump(b).trim());
+if (JSON.stringify(backMarks) !== JSON.stringify(["low", "medium", "high", "xhigh", "max"])) {
+  fail("у строки очереди шкала не из пяти ступеней: " + JSON.stringify(backMarks));
 }
 
 // --- подсвечена та подписка, на которую уйдёт запуск ---

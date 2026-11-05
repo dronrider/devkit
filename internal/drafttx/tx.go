@@ -39,7 +39,10 @@ type Lock struct {
 	root   string
 }
 
-func serviceDir(root string) string {
+// commonDevkit находит каталог служебных данных, общий для основного дерева и
+// связанных worktree: у git-корня это git-common-dir, вне git своя копия в
+// .devkit корня.
+func commonDevkit(root string) string {
 	cmd := exec.Command("git", "-C", root, "rev-parse", "--git-common-dir")
 	out, err := cmd.Output()
 	if err == nil && strings.TrimSpace(string(out)) != "" {
@@ -47,9 +50,13 @@ func serviceDir(root string) string {
 		if !filepath.IsAbs(dir) {
 			dir = filepath.Join(root, dir)
 		}
-		return filepath.Join(dir, "devkit", "draft-tx")
+		return filepath.Join(dir, "devkit")
 	}
-	return filepath.Join(root, ".devkit", "draft-tx")
+	return filepath.Join(root, ".devkit")
+}
+
+func serviceDir(root string) string {
+	return filepath.Join(commonDevkit(root), "draft-tx")
 }
 
 // ServiceDir identifies the shared service directory of linked worktrees.

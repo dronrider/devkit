@@ -18,7 +18,7 @@ import (
 
 const (
 	preparedFence = "```toml"
-	cardFields    = "revision outcome reason rationale board_type rank size accept barrier control assignee due target until after status"
+	cardFields    = "board_id revision outcome reason rationale board_type rank size accept barrier control assignee due target until after status"
 	receiptFields = "source key proposal revision outcome ids result reason"
 )
 
@@ -28,6 +28,49 @@ func PreparedPath(root, id string) string {
 
 func PreparedRel(id string) string {
 	return filepath.Join("docs", "tasks", "prepared", id+".md")
+}
+
+// PreparedDir это каталог prepared-файлов проекта.
+func PreparedDir(root string) string {
+	return filepath.Join(root, "docs", "tasks", "prepared")
+}
+
+// ReservedIDs собирает ключи задач всех prepared-файлов проекта. Ключи полного
+// вида PREFIX-NNN и значения board_id это зарезервированные номера (DK-1564,
+// решение 6): номер закрепляется за задачей в подготовке и не выдаётся ни
+// строке, ни черновику до применения решения, а после отказа или заведения
+// остаётся занятым, чтобы прежняя ссылка не стала ссылкой на другую задачу.
+// Файл, который не разобрался, валит сбор целиком: молчаливый пропуск выдал бы
+// занятый номер второй раз.
+func ReservedIDs(root string) (map[string]bool, error) {
+	out := map[string]bool{}
+	entries, err := os.ReadDir(PreparedDir(root))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(PreparedDir(root), entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		state, err := ParsePrepared(data)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", entry.Name(), err)
+		}
+		for _, p := range state.Proposals {
+			out[p.ID] = true
+			if p.BoardID != "" {
+				out[p.BoardID] = true
+			}
+		}
+	}
+	return out, nil
 }
 
 // Load читает состояние разбора записи: сначала prepared-файл, при его
@@ -123,6 +166,7 @@ func RenderPrepared(s State) ([]byte, error) {
 			value string
 			set   bool
 		}{
+			{"board_id", p.BoardID, p.BoardID != ""},
 			{"reason", p.Reason, p.Reason != ""},
 			{"rationale", p.Rationale, p.Rationale != ""},
 			{"board_type", p.BoardType, p.BoardType != ""},
@@ -307,7 +351,7 @@ func parseSection(key, nextKey, text string) (Proposal, string, error) {
 		key string
 		dst *string
 	}{
-		{"outcome", &p.Outcome}, {"reason", &p.Reason}, {"rationale", &p.Rationale},
+		{"outcome", &p.Outcome}, {"board_id", &p.BoardID}, {"reason", &p.Reason}, {"rationale", &p.Rationale},
 		{"board_type", &p.BoardType}, {"rank", &p.Rank}, {"size", &p.Size}, {"accept", &p.Accept},
 		{"barrier", &p.Barrier}, {"control", &p.Control}, {"assignee", &p.Assignee}, {"due", &p.Due},
 		{"target", &p.Target}, {"until", &p.Until}, {"status", &p.Status},

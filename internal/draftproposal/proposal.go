@@ -18,7 +18,13 @@ import (
 const heading = "## Предложения разбора"
 
 type Proposal struct {
-	ID        string   `json:"id"`
+	ID string `json:"id"`
+	// BoardID это закреплённый за задачей номер доски (DK-1564, решение 6):
+	// выдаётся до применения решения, виден в списке и составе, а подтверждение
+	// заводит строку тем же номером. У новых задач совпадает с ключом, у
+	// унаследованных живёт рядом с прежним ключом, и старые ссылки продолжают
+	// открывать ту же задачу.
+	BoardID   string   `json:"board_id,omitempty"`
 	Revision  int      `json:"revision"`
 	Outcome   string   `json:"outcome"`
 	Text      string   `json:"text"`

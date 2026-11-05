@@ -27,6 +27,12 @@ map_mini = "haiku"
 map_base = "sonnet"
 map_pro = "opus"
 map_max = "fable"
+# Семья anthropic даёт четыре ступени клиента low, medium, high, xhigh
+# (DK-1570, макет шкалы v4).
+effort_mini = ["low", "medium", "high", "xhigh"]
+effort_base = ["low", "medium", "high", "xhigh"]
+effort_pro = ["low", "medium", "high", "xhigh"]
+effort_max = ["low", "medium", "high", "xhigh"]
 
 [hooks]
 protocol = "claude-code"

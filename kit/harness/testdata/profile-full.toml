@@ -21,6 +21,10 @@ map_mini = "st-mini"
 map_base = "st-base"
 map_pro = "st-pro"
 map_max = "st-max"
+effort_mini = ["low", "high", "max"]
+effort_base = ["low", "medium", "high", "xhigh"]
+effort_pro = ["low", "medium", "high", "xhigh"]
+effort_max = ["low", "medium", "high", "xhigh"]
 
 [hooks]
 protocol = "sometool"

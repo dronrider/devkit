@@ -123,6 +123,8 @@ func appendArchiveRow(path string, cells []string) error {
 				old = append(old, "R", "Цена", "Приёмка")
 			} else if strings.HasPrefix(old[0], "-") {
 				old = append(old, "---", "------", "---------")
+				lines[i] = "|" + strings.Join(old, "|") + "|"
+				continue
 			} else {
 				continue
 			}

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -27,5 +28,30 @@ func TestReopenCountIgnoresExamples(t *testing.T) {
 	}
 	if got := reopenCountFile(path); got != 1 {
 		t.Fatalf("возвратов %d вместо 1", got)
+	}
+}
+
+func TestAppendArchiveRowPreservesLegacyBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "archive.md")
+	if err := os.WriteFile(path, []byte(fixtureArchive), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cells := []string{"XR-010", "Новая", "task", "P2", "2026-11-05", "-", "25 (25+0+0+0+0)", "L", "agent"}
+	if err := appendArchiveRow(path, cells); err != nil {
+		t.Fatal(err)
+	}
+	a, err := LoadArchive(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Rows) != 2 || len(a.Rows[0].Cells) != 6 || len(a.Rows[1].Cells) != 9 {
+		t.Fatalf("%+v", a.Rows)
+	}
+	legacy := "| XR-007 | Закрытая | bug | P1 | 2026-06-12 | `abc1234` |"
+	if !strings.Contains(strings.Join(a.Lines, "\n"), legacy+"\n") {
+		t.Fatal("старая строка изменилась")
+	}
+	if !strings.HasPrefix(a.Lines[3], "|-") {
+		t.Fatalf("нечитаемый разделитель: %q", a.Lines[3])
 	}
 }

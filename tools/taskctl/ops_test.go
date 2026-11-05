@@ -945,7 +945,7 @@ func TestClose(t *testing.T) {
 		t.Fatalf("доска после close отличается не только строкой XR-005:\n%s", board)
 	}
 	arch, _ := os.ReadFile(archivePath(root))
-	wantRow := "| XR-005 | Задача в работе | task | P2 | 2026-07-08 | [tasks/archive/2026/XR-005.md](tasks/archive/2026/XR-005.md), `deadbee` |\n"
+	wantRow := "| XR-005 | Задача в работе | task | P2 | 2026-07-08 | [tasks/archive/2026/XR-005.md](tasks/archive/2026/XR-005.md), `deadbee` | 30 (25+2+1+0+2) | - | agent |\n"
 	if !strings.HasSuffix(string(arch), wantRow) {
 		t.Fatalf("хвост архива: %s", arch)
 	}
@@ -958,7 +958,7 @@ func TestCloseWithoutFileKeepsLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	arch, _ := os.ReadFile(archivePath(root))
-	if !strings.HasSuffix(string(arch), "| XR-001 | Средняя | task/LLD | P2 | 2026-07-08 | (LLD позже) |\n") {
+	if !strings.HasSuffix(string(arch), "| XR-001 | Средняя | task/LLD | P2 | 2026-07-08 | (LLD позже) | 30 (25+2+1+0+2) | - | agent |\n") {
 		t.Fatalf("хвост архива: %s", arch)
 	}
 }
@@ -1223,7 +1223,7 @@ func TestCycle(t *testing.T) {
 		t.Fatalf("доска после цикла не вернулась к исходной:\n%s", board)
 	}
 	arch, _ := os.ReadFile(archivePath(root))
-	if !strings.HasSuffix(string(arch), "| XR-008 | Временная | task | P3 | 2026-07-08 | [tasks/archive/2026/XR-008.md](tasks/archive/2026/XR-008.md) |\n") {
+	if !strings.HasSuffix(string(arch), "| XR-008 | Временная | task | P3 | 2026-07-08 | [tasks/archive/2026/XR-008.md](tasks/archive/2026/XR-008.md) | 3 (0+1+1+0+1) | - | agent |\n") {
 		t.Fatalf("хвост архива: %s", arch)
 	}
 }

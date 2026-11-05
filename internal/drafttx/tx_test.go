@@ -330,3 +330,35 @@ func TestEmptyGitCommonDirUsesProjectService(t *testing.T) {
 		t.Fatalf("unexpected service directory: %s", filepath.Dir(l.dir))
 	}
 }
+
+func TestNumberAdoptionLedger(t *testing.T) {
+	root := t.TempDir()
+	before, after := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	if err := RecordNumberAdoption(root, "XR-001", before, after); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordNumberAdoption(root, "XR-001", before, after); err != nil {
+		t.Fatal(err)
+	}
+	aliases, err := NumberAdoptions(root, "XR-001")
+	if err != nil || len(aliases) != 1 || aliases[0].Before != before || aliases[0].After != after {
+		t.Fatalf("переход: %v %v", aliases, err)
+	}
+	claims, err := ClaimedBoardIDs(root)
+	if err != nil || claims["adoptions"] {
+		t.Fatalf("каталог переходов принят за номер: %v %v", claims, err)
+	}
+	if err := RecordNumberAdoption(root, "../bad", before, after); err == nil {
+		t.Fatal("адрес вышел из реестра")
+	}
+	dir, err := numberAdoptionDir(root, "XR-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "corrupted"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NumberAdoptions(root, "XR-001"); err == nil {
+		t.Fatal("повреждение переходов не замечено")
+	}
+}

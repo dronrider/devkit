@@ -4578,6 +4578,47 @@ func (s *server) handleTaskContinue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Терминальная дорога перед подъёмом (блокер приёмки DK-1253): сокета у
+	// разговора может не быть вовсе, профиль клиента это допускает, и тогда
+	// живой носитель узнаётся по реестру и tmux. Голый подъём рядом с живым
+	// процессом того же SID заводил второго исполнителя: у установленного
+	// прогона оба процесса одновременно работали с одним --resume. Правило то
+	// же, что у реплики в панель: sayTermOf сверяет живость окна, владельца
+	// имени в реестре и конфликт живого peer, а чужое имя остаётся чужим.
+	recs := s.bindsAll()
+	if term := s.sayTermOf(e.ID, recs); term != "" {
+		if goal {
+			s.logf("цель %s уже идёт в живом окне %s (tmux-сессия %s), продолжение без реплики", id, e.ID, term)
+			writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "live",
+				"session": e.ID, "tmux": term,
+				"message": "цель " + id + " уже идёт: будить её нечем и незачем"})
+			return
+		}
+		// Продолжение это те же слова человека, что и реплика в панель, и
+		// заказ дожима снимается тут так же, как по сокету.
+		s.stopWaitOff(term)
+		err := chatSend(term, prompt(term))
+		if err == nil {
+			s.logf("работа %s продолжена клавишами в чате %s (tmux-сессия %s)", id, e.ID, term)
+			writeJSON(w, http.StatusOK, map[string]any{"task": id, "way": "send-keys",
+				"session": e.ID, "tmux": term,
+				"message": "продолжение подано прямо в процесс агента: ответ придёт в ленту"})
+			return
+		}
+		if errors.Is(err, errSendGone) {
+			// Носитель умер на подаче, и подъём ниже поднимает его штатным
+			// порядком: это дорога умершего процесса, а не второго рядом.
+			s.logf("окно %s разговора %s кончилось на подаче, продолжение идёт подъёмом: %s",
+				term, id, sendGoneWord(term))
+		} else {
+			// Живой процесс стоит рядом, и доставка в него не вышла: второй
+			// процесс эту поломку не лечит.
+			s.logf("продолжение %s не подалось в живое окно %s: %v", id, term, err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf(
+				"продолжение не подалось в tmux-сессию %s: %s", term, procErr(err))})
+			return
+		}
+	}
 	sid := e.ID
 	info, okS := findSession(s.transcriptRoots(), found.Path, sid)
 	if !okS {

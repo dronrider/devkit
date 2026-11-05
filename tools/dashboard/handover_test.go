@@ -310,6 +310,91 @@ func TestContinueChoosesLiftWay(t *testing.T) {
 	})
 }
 
+// Живое окно без peer-сокета (блокер приёмки DK-1253). Профиль клиента
+// допускает работу без сокета, и тогда продолжение обязано идти в живой
+// терминал того же SID, а не поднимать рядом второй процесс с тем же --resume:
+// у установленного прогона два исполнителя одновременно работали с одним
+// разговором. Дорога та же, что у реплики в панель: сверка владельца имени
+// стоит в sayTermOf, чужое окно клавишами не трогается.
+func TestContinueLiveTerminalWithoutPeer(t *testing.T) {
+	const sid = "bbbb1111-2222-4222-8222-333333333333"
+
+	setup := func(t *testing.T, task, tmux string) (*testEnv, *http.Client, string) {
+		e, c, _ := tasksEnv(t)
+		log := filepath.Join(e.home, "tmux.log")
+		writeTmuxFake(t, e.bin, log, tmux+"\t1\t1754770421\n")
+		writeClientFakes(t, e.bin, "клиент-1", "клиент-2")
+		writeAgentctlPick(t, e.bin, harnessTiersFixture, "pro")
+		writeTaskRunFake(t, filepath.Dir(e.proj))
+		t.Setenv("DEVKIT_HOME", filepath.Join(filepath.Dir(e.proj), "devkit"))
+		useHeadHome(t, e)
+		endedChat(t, e, sid, task, tmux)
+		storeModel(t, e, sid, "модель-pro")
+		return e, c, log
+	}
+
+	t.Run("работа получает клавиши, а не второго процесса", func(t *testing.T) {
+		e, c, log := setup(t, "XR-004", "chat-7")
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks/XR-004/continue", ``)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("продолжение не прошло: %d %s", resp.StatusCode, text)
+		}
+		if !strings.Contains(text, `"way":"send-keys"`) ||
+			!strings.Contains(text, `"session":"`+sid+`"`) ||
+			!strings.Contains(text, `"tmux":"chat-7"`) {
+			t.Fatalf("продолжение не назвало живое окно того же разговора: %s", text)
+		}
+		said := readFile(t, log)
+		if !strings.Contains(said, "send-keys") ||
+			!strings.Contains(said, "Продолжай работу по XR-004") {
+			t.Fatalf("заказ продолжения не ушёл клавишами в живое окно:\n%s", said)
+		}
+		if strings.Contains(said, "new-session") {
+			t.Fatalf("живому разговору поднят второй процесс того же SID:\n%s", said)
+		}
+	})
+
+	t.Run("цель остаётся live без подгоняющей реплики", func(t *testing.T) {
+		e, c, log := setup(t, "XR-100", "chat-goal")
+		runTaskctl(t, e.proj, "add", "--id", "XR-100", "--title", "Цель: пробный цикл",
+			"--rank", "25+9+3+0+4", "--cost", "XL", "--accept", "agent")
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks/XR-100/continue", ``)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("продолжение цели не прошло: %d %s", resp.StatusCode, text)
+		}
+		if !strings.Contains(text, `"way":"live"`) ||
+			!strings.Contains(text, `"session":"`+sid+`"`) ||
+			!strings.Contains(text, `"tmux":"chat-goal"`) {
+			t.Fatalf("живая цель не названа своим окном: %s", text)
+		}
+		said := readFile(t, log)
+		if strings.Contains(said, "send-keys") || strings.Contains(said, "new-session") {
+			t.Fatalf("живой цели досталась реплика или второй процесс:\n%s", said)
+		}
+	})
+
+	t.Run("чужой владелец имени не получает клавиш", func(t *testing.T) {
+		e, c, log := setup(t, "XR-004", "chat-7")
+		appendBinds(t, e.home, "2026-09-01T12:00:00 сессия cccc1111-2222-4222-8222-333333333333"+
+			" задача XR-2 проект demo дерево "+e.proj+" транскрипт "+
+			standTranscript(e.home, "u")+" источник заказ повод startup tmux chat-7\n")
+		resp := doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/tasks/XR-004/continue", ``)
+		text := body(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("продолжение мимо чужого окна не прошло: %d %s", resp.StatusCode, text)
+		}
+		said := readFile(t, log)
+		if strings.Contains(said, "send-keys") {
+			t.Fatalf("клавиши уехали в окно, занятое чужим разговором:\n%s", said)
+		}
+		if strings.Count(said, "new-session") != 1 || !strings.Contains(said, "--resume '"+sid+"'") {
+			t.Fatalf("продолжение не подняло свой разговор подъёмом:\n%s", said)
+		}
+	})
+}
+
 // Панель зовёт передачу с экрана записи: кнопка стоит в полосе действий
 // идущей работы, рядом со стопом. Ввод записи по мёртвой голове носителя не
 // гаснет: ключ носителя, не разрешавшийся разговором, остаётся адресом записи,

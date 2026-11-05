@@ -991,6 +991,25 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .draft-idea .dfield input,.dfield input{all:unset;display:block;width:100%;color:var(--tx);font:400 14px/1.5 var(--sans)}
 .draft-idea .btn{flex:0 0 auto}
 
+/* Экран подготовленной задачи (DK-1564, провал приёмки 2026-11-05): чтение по
+   стандарту форм DK-1438, правка отдельным режимом. Короткие свойства правки
+   идут одной рамкой в строку с переносом, тексты своей рамкой; в чтении
+   длинные тексты стоят блоками под описанием. Отступы и радиусы из общих
+   лестницы, новых промежутков нет. */
+.pedit{display:flex;flex-direction:column;gap:8px}
+.pedit[hidden],.pnotes[hidden],.preject[hidden],.pnote[hidden],.pinp[hidden]{display:none}
+.pshort{display:flex;flex-wrap:wrap;gap:8px 6px;padding:8px 0 2px}
+.pshort .pick{height:30px}
+.pinp{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 6px 0 9px;border-radius:7px;background:var(--bg3)}
+.pinp span{font:500 11.5px var(--sans);color:var(--tx3);flex:none}
+.pinp input{all:unset;font:500 12.5px var(--mono);color:var(--tx);min-width:10ch}
+.parea{min-height:64px}
+.preject-row{display:flex;gap:8px;padding-top:8px}
+.pnotes{display:flex;flex-direction:column;gap:6px;margin-top:2px}
+.pnote{display:flex;flex-direction:column;gap:3px;padding:9px 12px 10px;border:1px solid var(--line2);border-radius:10px;background:var(--bg1)}
+.pnote-l{font:600 11px var(--sans);color:var(--tx3);text-transform:uppercase;letter-spacing:0.04em}
+.pn-t{font:400 12.5px/1.5 var(--sans);color:var(--tx2);white-space:pre-wrap}
+
 /* главная: список проектов карточкой */
 .prow{display:flex;align-items:center;gap:10px;padding:13px 16px;border-top:1px solid var(--line);cursor:pointer}
 .prow:first-child{border-top:none}
@@ -2118,7 +2137,7 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 .tpen.off{opacity:.5;cursor:default}
 .tpen.off:hover{border-color:var(--line2);color:var(--tx2)}
 .tedit.tbig{min-height:96px}
-.tedit.ro{border-color:transparent;background:none;padding-left:0;cursor:default}
+.tedit.ro{border-color:transparent;background:none;padding-left:0;cursor:default;resize:none}
 /* разворот блока постановки на всю среднюю колонку */
 /* Заголовок закрытой задачи: правки у неё нет, и поля тут нет тоже. */
 .tro{flex:1;min-width:0;font:400 15px/1.4 var(--sans);color:var(--tx)}
@@ -2206,7 +2225,13 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 /* Телефон: номер задачи стоит слева в панели кнопок, где было пусто, а
    заголовок идёт под ней своей строкой во всю ширину (замечание 8 приёмки). */
 .thline.tnarrow{flex-direction:column;align-items:stretch;gap:8px}
-.tnumbar{display:flex;align-items:center;gap:6px;min-width:0}
+/* Колонка превращает flex-заголовок в вертикально сжимаемый: flex:1 писался
+   для строки ноутбука, а в колонке его basis 0 резал поле до служебных
+   пикселей вопреки подогнанной высоте. В колонке заголовок не гибкий. */
+.thline.tnarrow .tedit{flex:none}
+/* Панель кнопок переносится: без переноса видимые кнопки шире экрана, и
+   правый край уезжал за порт с отступом. */
+.tnumbar{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
 .tnumbar .tmodes{margin-left:auto}
 
 /* 8: у блока ранга не было отступа сверху, он слипался с полосой над ним */

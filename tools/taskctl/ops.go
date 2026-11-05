@@ -1,17 +1,21 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dronrider/devkit/internal/control"
+	"github.com/dronrider/devkit/internal/draftproposal"
 	"github.com/dronrider/devkit/internal/drafttx"
 	"github.com/dronrider/devkit/internal/gitrun"
+	"github.com/dronrider/devkit/internal/stage"
 	"github.com/dronrider/devkit/internal/taskform"
 	"github.com/dronrider/devkit/internal/trace"
 )
@@ -164,8 +168,10 @@ func checkQuestionCeiling(b *Board, root, id string) error {
 // «(префикс XX)», чтобы первая задача заводилась без --id. Черновики считаются
 // наравне с доской и архивом: ID выдаётся им при заведении, чтобы на черновик
 // можно было сослаться («оформи DK-073»), и занятый номер второй раз выдавать
-// нельзя.
-func nextID(b *Board, a *Archive, drafts []Draft) (string, error) {
+// нельзя. Зарезервированные номера подготовленных задач считаются тем же
+// счётом (DK-1564, решение 6): ключи полного вида в reserved заняты с
+// сохранения разбора и освобождаются только применением решения.
+func nextID(b *Board, a *Archive, drafts []Draft, reserved map[string]bool) (string, error) {
 	prefix := b.Prefix
 	max := 0
 	scan := func(id string, num int) error {
@@ -195,10 +201,110 @@ func nextID(b *Board, a *Archive, drafts []Draft) (string, error) {
 			return "", err
 		}
 	}
+	for id := range reserved {
+		m := idRe.FindStringSubmatch(id)
+		if m == nil {
+			continue
+		}
+		num, err := strconv.Atoi(m[2])
+		if err != nil {
+			continue
+		}
+		if err := scan(id, num); err != nil {
+			return "", err
+		}
+	}
 	if prefix == "" {
 		return "", fmt.Errorf("ни одной задачи и нет «(префикс XX)» в шапке доски, укажи --id явно")
 	}
 	return fmt.Sprintf("%s-%03d", prefix, max+1), nil
+}
+
+// reservedAll собирает занятые номера вокруг дерева: резервы prepared-файлов,
+// закрепления общей области распределения и текущие номера основного чекаута
+// (DK-1564). Локального снимка мало дважды: связанный worktree не видит
+// незафиксированных номеров соседа, а его собственный снимок доски снят с
+// прошлой точки ветки и не знает номеров, занятых в основном дереве после
+// ответвления. Общий ledger этому не помощник: номер, занятый до его заведения,
+// отметки не имеет. Авторитетно текущее состояние основного дерева.
+func reservedAll(root string) (map[string]bool, error) {
+	reserved, err := draftproposal.ReservedIDs(root)
+	if err != nil {
+		return nil, err
+	}
+	claimed, err := drafttx.ClaimedBoardIDs(root)
+	if err != nil {
+		return nil, err
+	}
+	for id := range claimed {
+		reserved[id] = true
+	}
+	if main := stage.MainRoot(root); main != root {
+		if err = mergeMainReserved(reserved, main); err != nil {
+			return nil, err
+		}
+	}
+	return reserved, nil
+}
+
+// mergeMainReserved дописывает номера, занятые текущим состоянием основного
+// чекаута: строки доски и архива, черновики и prepared-файлы.
+func mergeMainReserved(reserved map[string]bool, main string) error {
+	b, err := LoadBoard(boardPath(main))
+	if err != nil {
+		return err
+	}
+	for _, r := range b.Rows {
+		reserved[r.ID] = true
+	}
+	arch, err := LoadArchive(archivePath(main))
+	if err != nil {
+		return err
+	}
+	for _, r := range arch.Rows {
+		reserved[r.ID] = true
+	}
+	drafts, err := loadDraftsWithHistory(main, true)
+	if err != nil {
+		return err
+	}
+	for _, d := range drafts {
+		reserved[d.ID] = true
+	}
+	mainReserved, err := draftproposal.ReservedIDs(main)
+	if err != nil {
+		return err
+	}
+	for id := range mainReserved {
+		reserved[id] = true
+	}
+	return nil
+}
+
+// allocID выдаёт следующий свободный номер и закрепляет его в общей области
+// распределения. Закрепление атомарно захватом файла в общем каталоге git, без
+// опоры на lock вызывающего: осечка захвата означает чужой номер, и поиск идёт
+// дальше.
+func allocID(root string, b *Board, a *Archive, drafts []Draft) (string, error) {
+	reserved, err := reservedAll(root)
+	if err != nil {
+		return "", err
+	}
+	for n := 0; n < 1000; n++ {
+		id, err := nextID(b, a, drafts, reserved)
+		if err != nil {
+			return "", err
+		}
+		switch err := drafttx.ClaimBoardID(root, id); {
+		case err == nil:
+			return id, nil
+		case errors.Is(err, os.ErrExist):
+			reserved[id] = true
+		default:
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("общая область закрепления не дала свободного номера")
 }
 
 // CommitOpts это флаги -m/--push изменяющих команд: закоммитить (и запушить)
@@ -344,8 +450,12 @@ type AddParams struct {
 	ID, Title, Type, Rank, Cost, Link, Status, Accept, Barrier, BodyFile string
 	// Debt это метка технического долга (DK-624): её ставит груминг, когда
 	// заводит строку, после которой пользователь снаружи ничего не замечает.
-	Debt   bool
+	Debt bool
 	Commit CommitOpts
+	// OwnsReserve разрешает занять номер, закреплённый за подготовленной
+	// задачей: его ставит только подтверждение владельца резерва, явное
+	// заведение человека чужой резерв забрать не может (DK-1564, решение 6).
+	OwnsReserve bool
 }
 
 func cmdAdd(root string, p AddParams) (string, error) {
@@ -368,18 +478,30 @@ func cmdAdd(root string, p AddParams) (string, error) {
 		return "", err
 	}
 	id := p.ID
-	if id == "" {
-		if id, err = nextID(b, arch, drafts); err != nil {
-			return "", err
+	explicit := id != ""
+	if explicit {
+		if !idRe.MatchString(id) {
+			return "", fmt.Errorf("ID %q не вида PREFIX-NNN", id)
 		}
-	} else if !idRe.MatchString(id) {
-		return "", fmt.Errorf("ID %q не вида PREFIX-NNN", id)
-	}
-	if d := findDraft(drafts, id); d != nil && d.History {
-		return "", fmt.Errorf("ID %s занят историей черновика", id)
-	}
-	if b.find(id) != nil || arch.has(id) {
-		return "", fmt.Errorf("ID %s уже занят", id)
+		// Охрана чужого номера нужна явному ID: закрепление подготовленной
+		// задачи или выдача в другом дереве не должна обходиться ручным номером.
+		// Номер черновика, живого или исторического, разбирают свои проверки
+		// ниже.
+		if !p.OwnsReserve && findDraft(drafts, id) == nil {
+			reserved, err := reservedAll(root)
+			if err != nil {
+				return "", err
+			}
+			if reserved[id] {
+				return "", fmt.Errorf("ID %s закреплён за подготовленной задачей или выдан в другом дереве, подтверждение владельца заведёт строку этим номером", id)
+			}
+		}
+		if d := findDraft(drafts, id); d != nil && d.History {
+			return "", fmt.Errorf("ID %s занят историей черновика", id)
+		}
+		if b.find(id) != nil || arch.has(id) {
+			return "", fmt.Errorf("ID %s уже занят", id)
+		}
 	}
 	if strings.TrimSpace(p.Title) == "" {
 		return "", fmt.Errorf("нужен --title")
@@ -448,6 +570,14 @@ func cmdAdd(root string, p AddParams) (string, error) {
 		return "", fmt.Errorf("новую задачу в blocked не заводят: блокировать нечего, пока её не взяли в работу; строка ждёт в Backlog, а зависимость от своей задачи ставится через taskctl dep add")
 	}
 	rankLine := fmt.Sprintf("`%d+%d+%d+%d+%d = %d`, %s.", parts[0], parts[1], parts[2], parts[3], parts[4], total, bucket(total))
+	// Свой номер строка получает перед первой записью на диск, а не до
+	// валидации: отказ проверки не сжигает номер в общей области, и счёт доски
+	// не дырявит каждая неудачная попытка заведения.
+	if id == "" {
+		if id, err = allocID(root, b, arch, drafts); err != nil {
+			return "", err
+		}
+	}
 	body, promoted, err := prepareTaskBody(root, id, p, rankLine)
 	if err != nil {
 		return "", err
@@ -1530,5 +1660,9 @@ func cmdID(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return nextID(b, arch, drafts)
+	reserved, err := reservedAll(root)
+	if err != nil {
+		return "", err
+	}
+	return nextID(b, arch, drafts, reserved)
 }

@@ -52,7 +52,7 @@ func TestPrepareConfirmationAllOutcomesAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}}
-	for _, p := range cards {
+	for _, p := range view.State.Proposals {
 		req.Decisions = append(req.Decisions, draftproposal.Decision{Source: "XR-008", Proposal: p.ID, Revision: 1, Action: "accept"})
 	}
 	l, err := drafttx.Acquire(root)
@@ -141,7 +141,7 @@ func TestConcurrentPreparedConfirmationReplays(t *testing.T) {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "accept"}}}
+	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: assignedKey(view, "p1"), Revision: 1, Action: "accept"}}}
 	type answer struct {
 		plan confirmationPlan
 		err  error
@@ -193,7 +193,7 @@ func TestPartialConfirmationCannotRepeatInDifferentBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	first := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "accept"}}}
+	first := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: assignedKey(view, "p1"), Revision: 1, Action: "accept"}}}
 	l, err := drafttx.Acquire(root)
 	if err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestPartialConfirmationCannotRepeatInDifferentBatch(t *testing.T) {
 	if view.State.State != "active" || view.State.Proposals[0].Status != "accepted" || view.State.Proposals[1].Status != "" {
 		t.Fatalf("partial: %s", raw)
 	}
-	different := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "accept"}, {Source: "XR-008", Proposal: "p2", Revision: 1, Action: "accept"}}}
+	different := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: view.State.Proposals[0].ID, Revision: 1, Action: "accept"}, {Source: "XR-008", Proposal: view.State.Proposals[1].ID, Revision: 1, Action: "accept"}}}
 	l, err = drafttx.Acquire(root)
 	if err != nil {
 		t.Fatal(err)
@@ -255,7 +255,7 @@ func TestCLIConfirmPublicationFailureAndRetry(t *testing.T) {
 	if err = json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
-	req, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "accept"}}})
+	req, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: assignedKey(view, "p1"), Revision: 1, Action: "accept"}}})
 	writeHook(t, root, "pre-commit", "#!/bin/sh\nexit 1\n")
 	run := func(args ...string) (string, error) {
 		t.Helper()
@@ -314,7 +314,7 @@ func TestConfirmLockedAttachRejectsCloudWithoutWrites(t *testing.T) {
 	if err = json.Unmarshal([]byte(raw), &v); err != nil {
 		t.Fatal(err)
 	}
-	request, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: v.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "accept"}}})
+	request, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: v.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: assignedKey(v, "p1"), Revision: 1, Action: "accept"}}})
 	source, target := draftPath(root, "XR-008"), taskFileAbs(root, "XR-001")
 	a, _ := os.ReadFile(source)
 	b, _ := os.ReadFile(target)
@@ -361,7 +361,7 @@ func TestPreparedHistoryNewAnalysisAndOldRetry(t *testing.T) {
 	if err = json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
-	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "accept"}}}
+	req := draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: assignedKey(view, "p1"), Revision: 1, Action: "accept"}}}
 	input, _ := json.Marshal(req)
 	first, err := cmdDraftPreparedConfirm(root, input, CommitOpts{})
 	if err != nil {
@@ -396,7 +396,7 @@ func TestPreparedHistoryNewAnalysisAndOldRetry(t *testing.T) {
 	if !b.Repeated || !reflect.DeepEqual(a.Results, b.Results) || !bytes.Equal(before, after) {
 		t.Fatalf("retry: %s", repeat)
 	}
-	next, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p2", Revision: 1, Action: "accept"}}})
+	next, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: assignedKey(view, "p2"), Revision: 1, Action: "accept"}}})
 	if _, err = cmdDraftPreparedConfirm(root, next, CommitOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +441,7 @@ func TestProposalConfirmLinkedWorktreeRejectsBoardMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	json.Unmarshal([]byte(raw), &view)
-	input, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "accept"}}})
+	input, _ := json.Marshal(draftproposal.ConfirmRequest{Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: assignedKey(view, "p1"), Revision: 1, Action: "accept"}}})
 	source, _ := os.ReadFile(draftPath(tree, "XR-008"))
 	board, _ := os.ReadFile(boardPath(tree))
 	mainBoard, _ := os.ReadFile(boardPath(root))

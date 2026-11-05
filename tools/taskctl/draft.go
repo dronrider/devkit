@@ -380,7 +380,7 @@ func cmdDraftWithMeta(root, text, prio string, viaStdin bool, kind, source, lock
 	if err != nil {
 		return "", err
 	}
-	id, err := nextID(b, arch, drafts)
+	id, err := allocID(root, b, arch, drafts)
 	if err != nil {
 		return "", err
 	}

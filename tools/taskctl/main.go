@@ -653,6 +653,11 @@ func main() {
 				dir := fs.String("C", gdir, "стартовая директория")
 				needArgs(frame.ParseArgs(fs, args[3:]), 0, 0, "draft prepared migrate")
 				msg, err = cmdDraftPreparedMigrate(root(*dir))
+			} else if len(args) > 2 && args[2] == "adopt" {
+				fs := flag.NewFlagSet("draft prepared adopt", flag.ExitOnError)
+				dir := fs.String("C", gdir, "стартовая директория")
+				pos := frame.ParseArgs(fs, args[3:])
+				msg, err = cmdDraftPreparedAdopt(root(*dir), pos)
 			} else {
 				fs := flag.NewFlagSet("draft prepared", flag.ExitOnError)
 				dir := fs.String("C", gdir, "стартовая директория")

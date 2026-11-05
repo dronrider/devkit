@@ -24,6 +24,10 @@ type preparedView struct {
 	Snapshot string              `json:"snapshot"`
 	Basis    string              `json:"basis"`
 	State    draftproposal.State `json:"state"`
+	// Assigned несёт выданные номера новых задач этого сохранения: присланный
+	// ключ на зарезервированный номер (DK-1564, решение 6). Пустеет на чтении
+	// и правке прежних задач: их номер уже стоит в ключе.
+	Assigned map[string]string `json:"assigned,omitempty"`
 }
 
 // readPrepared читает запись и её prepared-состояние одним заходом: сначала
@@ -143,12 +147,25 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 		return "", fmt.Errorf("лишние данные после JSON")
 	}
 	// Новый разбор дописывает задачи, прежние сохраняются. Нерешённую задачу
-	// можно править только следующей редакцией, решённую нельзя.
+	// можно править только следующей редакцией, решённую нельзя. Новая задача
+	// получает полный номер доски сразу: он виден в списке и составе до
+	// подтверждения, подтверждение заводит строку тем же номером, а повторное
+	// сохранение номера не меняет (DK-1564, решение 6). Присланный ключ новой
+	// задачи только связывает вызов с ответом через assigned.
+	b, err := LoadBoard(boardPath(root))
+	if err != nil {
+		return "", err
+	}
+	arch, err := LoadArchive(archivePath(root))
+	if err != nil {
+		return "", err
+	}
 	index := map[string]int{}
 	for i, p := range old.Proposals {
 		index[p.ID] = i
 	}
 	seen := map[string]bool{}
+	assigned := map[string]string{}
 	for _, p := range incoming.Proposals {
 		if seen[p.ID] {
 			return "", fmt.Errorf("повтор задачи %s", p.ID)
@@ -165,13 +182,50 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 			if p.Revision != previous.Revision+1 || reflect.DeepEqual(p, previous) {
 				return "", fmt.Errorf("%s: нужна следующая редакция", p.ID)
 			}
+			if p.BoardID == "" {
+				p.BoardID = previous.BoardID
+			}
 			old.Proposals[i] = p
 		} else {
 			if p.Revision != 1 {
 				return "", fmt.Errorf("%s: первая редакция должна быть 1", p.ID)
 			}
+			sent := p.ID
+			id, err := allocID(root, b, arch, drafts)
+			if err != nil {
+				return "", err
+			}
+			p.ID = id
+			p.BoardID = id
+			assigned[sent] = id
 			index[p.ID] = len(old.Proposals)
 			old.Proposals = append(old.Proposals, p)
+		}
+	}
+	// Унаследованная нерешённая задача без номера получает его этим же
+	// сохранением: номер обязан стоять до применения решения, а не выдаваться
+	// подтверждением (DK-1564, решение 6). Решённые задачи не трогаются: их
+	// номер уже принадлежит строке или отказу. Закрепление идёт после проверки
+	// присланных задач: отказ валидации не сжигает номера в общей области.
+	for i := range old.Proposals {
+		p := &old.Proposals[i]
+		if p.BoardID != "" || p.Status != "" {
+			continue
+		}
+		id, err := allocID(root, b, arch, drafts)
+		if err != nil {
+			return "", err
+		}
+		p.BoardID = id
+	}
+	// Ссылка «после» приходит присланным ключом соседней задачи того же
+	// сохранения: выданный номер встаёт и в ссылку, иначе подтверждение не
+	// узнает ссылку при поиске предшественницы.
+	for i := range old.Proposals {
+		for j, ref := range old.Proposals[i].After {
+			if id, ok := assigned[ref]; ok {
+				old.Proposals[i].After[j] = id
+			}
 		}
 	}
 	if len(incoming.Proposals) > 0 {
@@ -195,6 +249,7 @@ func cmdDraftPreparedSave(root, id, base string, input []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	view.Assigned = assigned
 	return marshal(view)
 }
 
@@ -225,7 +280,7 @@ func cmdDraftPreparedReject(root, id, task, base, reason string) (string, error)
 	allDone := len(state.Proposals) > 0
 	for i := range state.Proposals {
 		p := &state.Proposals[i]
-		if p.ID == task {
+		if p.ID == task || p.BoardID == task {
 			if p.Status != "" {
 				return "", fmt.Errorf("%s: решение уже принято", p.ID)
 			}

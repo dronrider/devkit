@@ -20,9 +20,18 @@ func TestPreparedChatActualCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("DEVKIT_HOME", kit)
-	for _, id := range []string{"XR-008", "XR-009"} {
-		if _, err = cmdDraft(root, "материал "+id, "mid", CommitOpts{}); err != nil {
+	issued := map[string]string{}
+	var first, second string
+	for i, title := range []string{"материал один", "материал два"} {
+		msg, err := cmdDraft(root, title, "mid", CommitOpts{})
+		if err != nil {
 			t.Fatal(err)
+		}
+		id := draftIDFromMsg(msg)
+		if i == 0 {
+			first = id
+		} else {
+			second = id
 		}
 		raw, err := cmdDraftPrepared(root, id)
 		if err != nil {
@@ -33,14 +42,21 @@ func TestPreparedChatActualCLI(t *testing.T) {
 			t.Fatal(err)
 		}
 		cards := []draftproposal.Proposal{{ID: "p1", Revision: 1, Outcome: "drop", Text: "частная мысль", Reason: "лишнее"}}
-		if id == "XR-008" {
+		if i == 0 {
 			cards = append(cards, draftproposal.Proposal{ID: "p2", Revision: 1, Outcome: "add", Title: "Результат", Text: fixtureTaskBody, BoardType: "task", Rank: "0+1+1+0+1", Size: "M", Accept: "agent", After: []string{"p1"}})
 		}
 		save, _ := json.Marshal(struct {
 			Proposals []draftproposal.Proposal `json:"proposals"`
 		}{cards})
-		if _, err = cmdDraftPreparedSave(root, id, view.Snapshot, save); err != nil {
+		raw, err = cmdDraftPreparedSave(root, id, view.Snapshot, save)
+		if err != nil {
 			t.Fatal(err)
+		}
+		if err = json.Unmarshal([]byte(raw), &view); err != nil {
+			t.Fatal(err)
+		}
+		for sent, full := range view.Assigned {
+			issued[id+"/"+sent] = full
 		}
 	}
 	bin := os.Getenv("TASKCTL_ACCEPT_BIN")
@@ -60,25 +76,25 @@ func TestPreparedChatActualCLI(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
-	second := draftPath(root, "XR-009")
-	public, err := os.ReadFile(second)
+	secondPath := draftPath(root, second)
+	public, err := os.ReadFile(secondPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	protected := strings.Replace(string(public), "\n", "\nзамок: locked\n", 1)
-	if err = os.WriteFile(second, []byte(protected), 0600); err != nil {
+	if err = os.WriteFile(secondPath, []byte(protected), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if leaked, err := run(nil, "draft", "prepared", "ask", "XR-008", "--also", "XR-009"); err == nil || strings.Contains(leaked, "XR-009/prepared") {
+	if leaked, err := run(nil, "draft", "prepared", "ask", first, "--also", second); err == nil || strings.Contains(leaked, second+"/prepared") {
 		t.Fatalf("locked shown source reached agent: %s %v", leaked, err)
 	}
-	if _, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName("XR-008"))); ok {
+	if _, ok := chat.ReadAsk(chat.AskPath(root, chat.TaskName(first))); ok {
 		t.Fatal("private question was published")
 	}
-	if err = os.WriteFile(second, public, 0600); err != nil {
+	if err = os.WriteFile(secondPath, public, 0600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := run(nil, "draft", "prepared", "ask", "XR-008", "--also", "XR-009")
+	out, err := run(nil, "draft", "prepared", "ask", first, "--also", second)
 	if err != nil {
 		t.Fatalf("ask: %s %v", out, err)
 	}
@@ -87,14 +103,14 @@ func TestPreparedChatActualCLI(t *testing.T) {
 		t.Fatalf("question: %s %v", out, err)
 	}
 	if !strings.Contains(q.Text, "Подготовил задачи, согласуй их описание.") ||
-		!strings.Contains(q.Text, "#"+filepath.Base(root)+"/draft/XR-008/prepared/p2") ||
-		!strings.Contains(q.Text, "#"+filepath.Base(root)+"/draft/XR-009/prepared/p1") {
+		!strings.Contains(q.Text, "#"+filepath.Base(root)+"/draft/"+first+"/prepared/"+issued[first+"/p2"]) ||
+		!strings.Contains(q.Text, "#"+filepath.Base(root)+"/draft/"+second+"/prepared/"+issued[second+"/p1"]) {
 		t.Fatalf("вопрос без ссылок на задачи: %s", q.Text)
 	}
 	if strings.Contains(out, "Тестовый запуск обнаружил пропуск") || strings.Contains(out, "частная мысль") {
 		t.Fatalf("тела задач уехали в вопрос: %s", out)
 	}
-	dropOut, err := run(nil, "draft", "prepared", "ask", "XR-009")
+	dropOut, err := run(nil, "draft", "prepared", "ask", second)
 	if err != nil {
 		t.Fatalf("ask без add: %s %v", dropOut, err)
 	}
@@ -102,38 +118,38 @@ func TestPreparedChatActualCLI(t *testing.T) {
 	if err = json.Unmarshal([]byte(dropOut), &dropOnly); err != nil || dropOnly.Prepared == nil {
 		t.Fatalf("question без add: %s %v", dropOut, err)
 	}
-	if !strings.Contains(dropOnly.Text, "Подготовил задачи, согласуй их описание.") || !strings.Contains(dropOnly.Text, "/draft/XR-009/prepared/p1") {
+	if !strings.Contains(dropOnly.Text, "Подготовил задачи, согласуй их описание.") || !strings.Contains(dropOnly.Text, "/draft/"+second+"/prepared/"+issued[second+"/p1"]) {
 		t.Fatalf("вопрос без задачи add собран не тем текстом: %s", dropOnly.Text)
 	}
-	t.Setenv("DEVKIT_GROOM_SOURCE", "XR-008")
+	t.Setenv("DEVKIT_GROOM_SOURCE", first)
 	t.Setenv("DEVKIT_GROOM_MODE", "run")
 	if denied, err := run(nil, "run", "XR-001"); err == nil || !strings.Contains(denied, "только подтверждённым результатам add") {
 		t.Fatalf("run before confirmation: %s %v", denied, err)
 	}
 	t.Setenv("DEVKIT_GROOM_SOURCE", "")
 	t.Setenv("DEVKIT_GROOM_MODE", "")
-	a := preparedChatAnswer{Tree: root, Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: q.Prepared.Sources[0].Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "reject", Reason: "не нужно"}}}
+	a := preparedChatAnswer{Tree: root, Snapshots: []draftproposal.Snapshot{{Source: first, Digest: q.Prepared.Sources[0].Basis}}, Decisions: []draftproposal.Decision{{Source: first, Proposal: issued["XR-008/p1"], Revision: 1, Action: "reject", Reason: "не нужно"}}}
 	bad := a
-	bad.Decisions = []draftproposal.Decision{{Source: "XR-008", Proposal: "p2", Revision: 1, Action: "accept"}}
+	bad.Decisions = []draftproposal.Decision{{Source: first, Proposal: issued["XR-008/p2"], Revision: 1, Action: "accept"}}
 	badInput, _ := json.Marshal(bad)
-	before, err := os.ReadFile(draftPath(root, "XR-008"))
+	before, err := os.ReadFile(draftPath(root, first))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := run(badInput, "draft", "prepared", "answer", "XR-008"); err == nil {
+	if got, err := run(badInput, "draft", "prepared", "answer", first); err == nil {
 		t.Fatalf("hidden predecessor accepted: %s", got)
 	}
-	after, err := os.ReadFile(draftPath(root, "XR-008"))
+	after, err := os.ReadFile(draftPath(root, first))
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("hidden predecessor changed source")
 	}
 	bad = a
 	bad.Tree = t.TempDir()
 	badInput, _ = json.Marshal(bad)
-	if got, err := run(badInput, "draft", "prepared", "answer", "XR-008"); err == nil {
+	if got, err := run(badInput, "draft", "prepared", "answer", first); err == nil {
 		t.Fatalf("wrong tree accepted: %s", got)
 	}
-	after, err = os.ReadFile(draftPath(root, "XR-008"))
+	after, err = os.ReadFile(draftPath(root, first))
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("wrong tree changed source")
 	}
@@ -148,20 +164,20 @@ func TestPreparedChatActualCLI(t *testing.T) {
 	if err := json.Unmarshal(docInput, &fromDocs); err != nil || fromDocs.Tree != a.Tree || len(fromDocs.Decisions) != 1 || fromDocs.Decisions[0] != a.Decisions[0] || len(fromDocs.Snapshots) != 1 || fromDocs.Snapshots[0] != a.Snapshots[0] {
 		t.Fatalf("README answer: %s %v", docInput, err)
 	}
-	out, err = run(input, "draft", "prepared", "answer", "XR-008")
+	out, err = run(input, "draft", "prepared", "answer", first)
 	if err != nil || !strings.Contains(out, `"repeated":false`) {
 		t.Fatalf("answer %s %v", out, err)
 	}
-	if err = chat.DropAsk(root, chat.TaskName("XR-008")); err != nil {
+	if err = chat.DropAsk(root, chat.TaskName(first)); err != nil {
 		t.Fatal(err)
 	}
-	out, err = run(input, "draft", "prepared", "answer", "--repeat-only", "XR-008")
+	out, err = run(input, "draft", "prepared", "answer", "--repeat-only", first)
 	if err != nil || !strings.Contains(out, `"repeated":true`) {
 		t.Fatalf("replay %s %v", out, err)
 	}
 	a.Decisions[0].Reason = "новая причина"
 	input, _ = json.Marshal(a)
-	if out, err = run(input, "draft", "prepared", "answer", "XR-008", "--repeat-only"); err == nil {
+	if out, err = run(input, "draft", "prepared", "answer", first, "--repeat-only"); err == nil {
 		t.Fatalf("new mutation without Ask: %s", out)
 	}
 }

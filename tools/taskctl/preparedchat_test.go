@@ -94,8 +94,8 @@ func TestPreparedChatApplyAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(question.Text, "Подготовил задачи, согласуй их описание.") ||
-		!strings.Contains(question.Text, "#"+filepath.Base(root)+"/draft/XR-008/prepared/p1") ||
-		len(question.Options) != 2 || question.Options[0].Label != "Подтвердить p1" {
+		!strings.Contains(question.Text, "#"+filepath.Base(root)+"/draft/XR-008/prepared/"+assignedKey(view, "p1")) ||
+		len(question.Options) != 2 || question.Options[0].Label != "Подтвердить "+assignedKey(view, "p1") {
 		t.Fatalf("вопрос без ссылок: %s %+v", question.Text, question.Options)
 	}
 	printed, err := cmdPreparedChatAsk(root, "XR-008", nil, askDeps{Main: root}, func(string) string { return "" })
@@ -113,7 +113,7 @@ func TestPreparedChatApplyAndReplay(t *testing.T) {
 	if !ok || ask.Questions[0].Prepared == nil {
 		t.Fatal(err)
 	}
-	answer := preparedChatAnswer{Tree: root, Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: "p1", Revision: 1, Action: "reject", Reason: "не подходит"}}}
+	answer := preparedChatAnswer{Tree: root, Snapshots: []draftproposal.Snapshot{{Source: "XR-008", Digest: view.Basis}}, Decisions: []draftproposal.Decision{{Source: "XR-008", Proposal: assignedKey(view, "p1"), Revision: 1, Action: "reject", Reason: "не подходит"}}}
 	input, _ := json.Marshal(answer)
 	forged := ask
 	copyQ := *question.Prepared

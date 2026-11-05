@@ -49,8 +49,17 @@ func (s *stagingBoard) stageOutcome(sourceID string, h draftmeta.Header, p draft
 	var result stagedResult
 	switch p.Outcome {
 	case "add":
-		id, err := cmdID(s.root)
-		if err != nil {
+		// Номер задачи закреплён заранее: у новых стоит в ключе и board_id,
+		// у унаследованных в board_id, и строка заводится тем же номером без
+		// перенумерования (DK-1564, решение 6). Карточка вовсе без номера это
+		// глубокая старина: ей выделяется свежий номер прежним путём.
+		var id string
+		var err error
+		if p.BoardID != "" {
+			id = p.BoardID
+		} else if idRe.MatchString(p.ID) {
+			id = p.ID
+		} else if id, err = cmdID(s.root); err != nil {
 			return result, err
 		}
 		file := filepath.Join(s.root, "proposal-body.md")
@@ -58,7 +67,7 @@ func (s *stagingBoard) stageOutcome(sourceID string, h draftmeta.Header, p draft
 			return result, err
 		}
 		defer os.Remove(file)
-		msg, err := cmdAdd(s.root, AddParams{Title: p.Title, Type: p.BoardType, Rank: p.Rank, Cost: p.Size, Accept: p.Accept, Barrier: p.Barrier, BodyFile: file})
+		msg, err := cmdAdd(s.root, AddParams{ID: id, Title: p.Title, Type: p.BoardType, Rank: p.Rank, Cost: p.Size, Accept: p.Accept, Barrier: p.Barrier, BodyFile: file, OwnsReserve: true})
 		if err != nil {
 			return result, err
 		}

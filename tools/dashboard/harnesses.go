@@ -80,6 +80,10 @@ type HarnessModel struct {
 	Tier  string `json:"tier"`
 	Model string `json:"model"`
 	Via   string `json:"via,omitempty"`
+	// Levels это набор ступеней глубины, который клиент подписки принимает на
+	// этом ярусе (DK-1570, макет шкалы v4). Панель рисует шкалу меню по нему.
+	// Пусто у строки, которой подписка набора не назвала.
+	Levels []string `json:"levels,omitempty"`
 }
 
 // HarnessView это ответ ручки. Пустой список это не поломка запуска: работа
@@ -115,9 +119,10 @@ type agentctlHarnesses struct {
 		HooksGap string `json:"hooks_gap"`
 		Protocol string `json:"protocol"`
 		Models   []struct {
-			Tier  string `json:"tier"`
-			Model string `json:"model"`
-			Via   string `json:"via"`
+			Tier   string   `json:"tier"`
+			Model  string   `json:"model"`
+			Via    string   `json:"via"`
+			Levels []string `json:"levels"`
 		} `json:"models"`
 		Chat []string `json:"chat"`
 	} `json:"harnesses"`
@@ -192,7 +197,7 @@ func readHarnesses() HarnessView {
 		}
 		for _, m := range h.Models {
 			if m.Model != "" {
-				hh.Models = append(hh.Models, HarnessModel{Tier: m.Tier, Model: m.Model, Via: m.Via})
+				hh.Models = append(hh.Models, HarnessModel{Tier: m.Tier, Model: m.Model, Via: m.Via, Levels: m.Levels})
 			}
 		}
 		for _, c := range h.Chat {

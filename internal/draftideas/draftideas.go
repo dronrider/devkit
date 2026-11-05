@@ -179,29 +179,60 @@ func fateMarked(s string) bool {
 // интерфейса цитируется и прямыми кавычками, и кодовым спаном, и слово
 // судьбы внутри них остаётся цитатой, а не отметкой (замер QA 2026-11-06).
 func quotedFate(prefix string) bool {
-	return strings.Count(prefix, "«") > strings.Count(prefix, "»") ||
-		strings.Count(prefix, "\"")%2 == 1 ||
-		inlineCodeOpen(prefix)
-}
-
-func inlineCodeOpen(prefix string) bool {
-	delimiter := 0
+	delimiter, depth := 0, 0
+	ascii := false
 	for i := 0; i < len(prefix); {
-		if prefix[i] != '`' {
+		if delimiter > 0 {
+			if prefix[i] != '`' {
+				i++
+				continue
+			}
+			end := i + 1
+			for end < len(prefix) && prefix[end] == '`' {
+				end++
+			}
+			if end-i == delimiter {
+				delimiter = 0
+			}
+			i = end
+			continue
+		}
+		if ascii {
+			if prefix[i] == '"' {
+				ascii = false
+			}
 			i++
 			continue
 		}
-		end := i + 1
-		for end < len(prefix) && prefix[end] == '`' {
-			end++
+		if strings.HasPrefix(prefix[i:], "«") {
+			depth++
+			i += len("«")
+			continue
 		}
-		run := end - i
-		if delimiter == 0 {
-			delimiter = run
-		} else if run == delimiter {
-			delimiter = 0
+		if depth > 0 {
+			if strings.HasPrefix(prefix[i:], "»") {
+				depth--
+				i += len("»")
+			} else {
+				i++
+			}
+			continue
 		}
-		i = end
+		if prefix[i] == '"' {
+			ascii = true
+			i++
+			continue
+		}
+		if prefix[i] == '`' {
+			end := i + 1
+			for end < len(prefix) && prefix[end] == '`' {
+				end++
+			}
+			delimiter = end - i
+			i = end
+			continue
+		}
+		i++
 	}
-	return delimiter != 0
+	return delimiter > 0 || depth > 0 || ascii
 }

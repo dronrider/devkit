@@ -158,3 +158,28 @@ func TestInlineCodeDelimiterRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestQuoteAndCodeDelimitersStayIndependent(t *testing.T) {
+	for _, text := range []string{
+		"убрать шаблон `\"пример` -> отклонена: поздно",
+		"убрать шаблон ``«пример`` -> отклонена: поздно",
+		"убрать шаблон \"пример `\" -> отклонена: поздно",
+		"убрать шаблон «пример ``» -> отклонена: поздно",
+	} {
+		total, pending := Count([]byte("## Идеи\n- " + text + "\n"))
+		if total != 1 || pending != 0 {
+			t.Errorf("%q: total=%d pending=%d", text, total, pending)
+		}
+	}
+	for _, text := range []string{
+		"убрать шаблон `\"пример, отклонена: поздно`",
+		"убрать шаблон ``«пример -> отклонена: поздно``",
+		"убрать шаблон \"пример `, отклонена: поздно\"",
+		"убрать шаблон «пример `` -> отклонена: поздно»",
+	} {
+		total, pending := Count([]byte("## Идеи\n- " + text + "\n"))
+		if total != 1 || pending != 1 {
+			t.Errorf("%q: total=%d pending=%d", text, total, pending)
+		}
+	}
+}

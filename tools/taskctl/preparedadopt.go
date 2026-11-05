@@ -65,6 +65,14 @@ func cmdDraftPreparedAdopt(root string, ids []string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		inputs, err := preparedBasisInputs(root, record, state)
+		if err != nil {
+			return "", err
+		}
+		before, err := preparedBasisFromInputs(inputs, state)
+		if err != nil {
+			return "", err
+		}
 		e := entry{id: id, record: record, state: state}
 		for i := range state.Proposals {
 			p := &state.Proposals[i]
@@ -80,6 +88,13 @@ func cmdDraftPreparedAdopt(root string, ids []string) (string, error) {
 			out.Changed++
 		}
 		if e.adopted {
+			after, err := preparedBasisFromInputs(inputs, state)
+			if err != nil {
+				return "", err
+			}
+			if err = drafttx.RecordNumberAdoption(root, id, before, after); err != nil {
+				return "", err
+			}
 			ch, err := preparedChanges(root, id, record, state)
 			if err != nil {
 				return "", err

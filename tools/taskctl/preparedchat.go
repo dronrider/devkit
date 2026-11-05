@@ -204,14 +204,25 @@ func cmdPreparedChatAnswer(root, anchor string, input []byte, opts CommitOpts) (
 			if err != nil {
 				return "", err
 			}
+			matches, err := preparedBasisMatches(root, source.Source, basis, source.Basis)
+			if err != nil {
+				return "", err
+			}
 			var cards []draftproposal.Proposal
 			for _, p := range state.Proposals {
 				if p.Status == "" {
 					p.Text = ""
+					if matches && basis != source.Basis && !idRe.MatchString(p.ID) {
+						for _, old := range source.Proposals {
+							if old.ID == p.ID && old.BoardID == "" {
+								p.BoardID = ""
+							}
+						}
+					}
 					cards = append(cards, p)
 				}
 			}
-			if basis != source.Basis || !reflect.DeepEqual(cards, source.Proposals) {
+			if !matches || !reflect.DeepEqual(cards, source.Proposals) {
 				return "", fmt.Errorf("%s: показанные задачи изменились", source.Source)
 			}
 		}

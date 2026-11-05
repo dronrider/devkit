@@ -122,7 +122,11 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 		if err != nil {
 			return out, err
 		}
-		if basis != snap.Digest {
+		matches, err := preparedBasisMatches(root, snap.Source, basis, snap.Digest)
+		if err != nil {
+			return out, err
+		}
+		if !matches {
 			return out, fmt.Errorf("%s: показанный снимок устарел", snap.Source)
 		}
 		for _, d := range decisions[snap.Source] {
@@ -240,7 +244,11 @@ func prepareConfirmation(root string, request draftproposal.ConfirmRequest) (con
 		if err != nil {
 			return out, err
 		}
-		if basis != snap.Digest {
+		matches, err := preparedBasisMatches(root, snap.Source, basis, snap.Digest)
+		if err != nil {
+			return out, err
+		}
+		if !matches {
 			return out, fmt.Errorf("%s: снимок изменился при подготовке", snap.Source)
 		}
 	}

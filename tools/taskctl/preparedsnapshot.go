@@ -7,6 +7,7 @@ import (
 
 	"github.com/dronrider/devkit/internal/draftmeta"
 	"github.com/dronrider/devkit/internal/draftproposal"
+	"github.com/dronrider/devkit/internal/drafttx"
 )
 
 // preparedBasis закрывает показанное от чужих правок: в него входят материал
@@ -17,18 +18,18 @@ import (
 // отменяет. Оба первых слагаемых одинаковы до и после миграции записи, поэтому
 // висящий ask переживает перенос блока в prepared-файл. Отсутствующие файлы
 // отличимы от пустых.
-func preparedBasis(root string, source []byte, state draftproposal.State) (string, error) {
+func preparedBasisInputs(root string, source []byte, state draftproposal.State) ([][]byte, error) {
 	h, err := draftmeta.Parse(source)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	set, err := draftTypeSet(root)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	def, ok := set.Types[h.Type]
 	if !ok {
-		return "", fmt.Errorf("типа %q нет в словаре", h.Type)
+		return nil, fmt.Errorf("типа %q нет в словаре", h.Type)
 	}
 	paths := []string{def.File}
 	seen := map[string]bool{}
@@ -37,7 +38,7 @@ func preparedBasis(root string, source []byte, state draftproposal.State) (strin
 			continue
 		}
 		if !idRe.MatchString(p.Target) {
-			return "", fmt.Errorf("%s: неверное назначение %q", p.ID, p.Target)
+			return nil, fmt.Errorf("%s: неверное назначение %q", p.ID, p.Target)
 		}
 		path := taskFileAbs(root, p.Target)
 		if !seen[path] {
@@ -48,13 +49,9 @@ func preparedBasis(root string, source []byte, state draftproposal.State) (strin
 	sort.Strings(paths)
 	material, _, err := draftproposal.Material(source)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	render, err := draftproposal.RenderPrepared(state)
-	if err != nil {
-		return "", err
-	}
-	parts := [][]byte{material, render}
+	parts := [][]byte{material, nil}
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if os.IsNotExist(err) {
@@ -62,11 +59,29 @@ func preparedBasis(root string, source []byte, state draftproposal.State) (strin
 			continue
 		}
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		parts = append(parts, []byte(path), []byte("present"), data)
 	}
-	return draftproposal.Digest(parts...), nil
+	return parts, nil
+}
+
+func preparedBasisFromInputs(parts [][]byte, state draftproposal.State) (string, error) {
+	render, err := draftproposal.RenderPrepared(state)
+	if err != nil {
+		return "", err
+	}
+	captured := append([][]byte(nil), parts...)
+	captured[1] = render
+	return draftproposal.Digest(captured...), nil
+}
+
+func preparedBasis(root string, source []byte, state draftproposal.State) (string, error) {
+	parts, err := preparedBasisInputs(root, source, state)
+	if err != nil {
+		return "", err
+	}
+	return preparedBasisFromInputs(parts, state)
 }
 
 // preparedSnapshot это снимок исходника для команд save и reject: он меняется
@@ -83,4 +98,29 @@ func preparedSnapshot(state draftproposal.State, record []byte) (string, error) 
 		return "", err
 	}
 	return draftproposal.Digest(material, render), nil
+}
+
+func preparedBasisMatches(root, source, actual, shown string) (bool, error) {
+	if actual == shown {
+		return true, nil
+	}
+	aliases, err := drafttx.NumberAdoptions(root, source)
+	if err != nil {
+		return false, err
+	}
+	reached := map[string]bool{shown: true}
+	for changed := true; changed; {
+		changed = false
+		for _, alias := range aliases {
+			if !reached[alias.Before] || reached[alias.After] {
+				continue
+			}
+			if alias.After == actual {
+				return true, nil
+			}
+			reached[alias.After] = true
+			changed = true
+		}
+	}
+	return false, nil
 }

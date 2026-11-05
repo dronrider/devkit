@@ -260,3 +260,22 @@ func TestTeamShowProfile(t *testing.T) {
 		t.Fatal("профиль отсутствующего участника прошёл")
 	}
 }
+
+func TestTeamAddRouteRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	p := TeamParams{Kind: "agent", Model: "synthetic", Tier: "base", Roles: []string{"exec"}, Route: "local", Endpoint: "http://127.0.0.1:9292/v1"}
+	out, err := cmdTeamAdd(home, "local", p)
+	if err != nil || !strings.Contains(out, "маршрут local") {
+		t.Fatalf("add: %s %v", out, err)
+	}
+	list, err := team.Load(home)
+	if err != nil || len(list) != 1 || list[0].Route != p.Route || list[0].Endpoint != p.Endpoint {
+		t.Fatalf("route lost: %+v %v", list, err)
+	}
+	p.Route = ""
+	p.Endpoint = ""
+	out, err = cmdTeamAdd(home, "local", p)
+	if err != nil || !strings.Contains(out, "утрачено: маршрут local") {
+		t.Fatalf("replacement silent: %s %v", out, err)
+	}
+}

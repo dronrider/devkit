@@ -416,7 +416,7 @@ func cmdDraftAttach(root, id, taskID string, c CommitOpts) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if d.Lock == "locked" {
+		if d.localOnly() {
 			cloud, err := draftmeta.CloudExclusiveIn(cliTx.ServiceDir(), taskID)
 			if err != nil {
 				return "", err
@@ -451,7 +451,7 @@ func cmdDraftAttachStage(root, id, taskID string, c CommitOpts, planned bool) (s
 	if err != nil {
 		return "", err
 	}
-	if d.Lock == "locked" {
+	if d.localOnly() {
 		if !planned {
 			var cloud *draftmeta.CloudLock
 			var err error
@@ -499,7 +499,7 @@ func cmdDraftAttachStage(root, id, taskID string, c CommitOpts, planned bool) (s
 		return "", err
 	}
 	body := strings.TrimRight(string(old), "\n") + "\n\n" + draftSection(id, string(text))
-	if d.Lock == "locked" {
+	if d.localOnly() {
 		protected, err := draftmeta.ProtectRecord([]byte(body))
 		if err != nil {
 			return "", err

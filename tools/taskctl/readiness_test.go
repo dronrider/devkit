@@ -134,3 +134,30 @@ func TestPromotedDraftPreservesProtection(t *testing.T) {
 		t.Fatalf("provenance: %s", body)
 	}
 }
+
+func TestPromotedPrivateSourcePreservesProtectionWithoutLock(t *testing.T) {
+	for _, source := range []string{"meeting", "mail", "messenger"} {
+		t.Run(source, func(t *testing.T) {
+			root := setup(t)
+			if _, err := cmdDraft(root, "private", "mid", CommitOpts{}); err != nil {
+				t.Fatal(err)
+			}
+			path := draftPath(root, "XR-008")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = []byte(strings.Replace(string(data), "## ", "тип: task\nисточник: "+source+"\nзамок: unlocked\n\n## ", 1) + fixtureTaskBody)
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			body, _, err := prepareTaskBody(root, "XR-008", AddParams{Title: "Задача", Type: "task"}, "`0+1+1+0+1 = 3`, P3.")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(body, "защита: locked") {
+				t.Fatalf("source protection lost: %s", body)
+			}
+		})
+	}
+}

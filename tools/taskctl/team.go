@@ -17,8 +17,8 @@ import (
 
 // TeamParams это поля участника, которые задаёт team add.
 type TeamParams struct {
-	Kind, Name, Model, Tier, Channel string
-	Roles                            []string
+	Kind, Name, Model, Tier, Channel, Route, Endpoint string
+	Roles                                             []string
 }
 
 // cmdTeamAdd заводит участника или правит поля уже стоящего: повторный add
@@ -36,7 +36,7 @@ func cmdTeamAdd(home, handle string, p TeamParams) (string, error) {
 	if len(p.Roles) == 0 {
 		return "", fmt.Errorf("ролей нет, жду хотя бы одну из exec/review/check/inspect ключом --role")
 	}
-	np := team.Participant{Handle: handle, Kind: p.Kind, Name: p.Name, Model: p.Model, Tier: p.Tier, Roles: p.Roles, Channel: p.Channel}
+	np := team.Participant{Handle: handle, Kind: p.Kind, Name: p.Name, Model: p.Model, Tier: p.Tier, Roles: p.Roles, Channel: p.Channel, Route: p.Route, Endpoint: p.Endpoint}
 	if p.Kind == team.Agent {
 		if np.Tier == "" {
 			return "", fmt.Errorf("агентскому участнику %s нужен ярус mini/base/pro/max ключом --tier", handle)
@@ -96,6 +96,9 @@ func lostFields(old, np team.Participant) string {
 	if old.Channel != "" && np.Channel == "" {
 		parts = append(parts, "канал "+old.Channel)
 	}
+	if old.Route != "" && np.Route == "" {
+		parts = append(parts, "маршрут "+old.Route)
+	}
 	return strings.Join(parts, ", ")
 }
 
@@ -153,6 +156,9 @@ func teamLine(p team.Participant) string {
 			tier += ", модель " + p.Model
 		}
 		parts = append(parts, "ярус "+tier)
+	}
+	if p.Route != "" {
+		parts = append(parts, "маршрут "+p.Route)
 	}
 	if p.Name != "" {
 		parts = append(parts, "имя "+p.Name)

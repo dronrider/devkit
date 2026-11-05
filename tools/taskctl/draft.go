@@ -44,6 +44,10 @@ type Draft struct {
 	History bool
 }
 
+func (d Draft) localOnly() bool {
+	return draftmeta.RequiresLocal(draftmeta.Header{Source: d.Source, Lock: d.Lock})
+}
+
 const (
 	draftGroomHeading  = "## Грумминг"
 	draftWrittenPrefix = "записан "
@@ -433,7 +437,7 @@ func cmdDraftListSafe(root string, safe bool) (string, error) {
 	for _, d := range drafts {
 		age := draftAgeWords(d, true)
 		title := d.Title
-		if safe && d.Lock == "locked" {
+		if safe && d.localOnly() {
 			title = "ждёт локальную модель"
 		}
 		out = append(out, fmt.Sprintf("%s (%s): %s", d.ID, age, clipTitle(title)))

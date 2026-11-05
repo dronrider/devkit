@@ -102,7 +102,7 @@ func (s *stagingBoard) stageOutcome(sourceID string, h draftmeta.Header, p draft
 			return stagedResult{}, err
 		}
 	}
-	if h.Lock == "locked" && (p.Outcome == "add" || p.Outcome == "attach") {
+	if draftmeta.RequiresLocal(h) && (p.Outcome == "add" || p.Outcome == "attach") {
 		id := result.ID
 		if p.Outcome == "attach" {
 			id = p.Target

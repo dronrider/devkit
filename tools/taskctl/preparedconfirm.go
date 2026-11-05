@@ -370,7 +370,7 @@ func confirmationCloudLocks(root, serviceDir string, request draftproposal.Confi
 		if err != nil {
 			return nil, nil, err
 		}
-		if header.Lock != "locked" {
+		if !draftmeta.RequiresLocal(header) {
 			continue
 		}
 		state, err := draftproposal.Load(root, decision.Source, data)

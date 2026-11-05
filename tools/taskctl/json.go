@@ -336,7 +336,7 @@ func cmdDraftListJSONSafe(root string, history, safe bool) (string, error) {
 			AgeDays: int(d.Age.Hours() / 24), AgeWords: ageWords(d.Age), Deferred: d.Deferred,
 			DeferredUntil: d.Until, Prio: d.Prio, Type: d.Type, Source: d.Source, Lock: d.Lock,
 		}
-		if safe && d.Lock == "locked" {
+		if safe && d.localOnly() {
 			item.Title = "ждёт локальную модель"
 		}
 		if !d.Written.IsZero() {

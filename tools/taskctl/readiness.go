@@ -33,7 +33,7 @@ func prepareTaskBody(root, id string, p AddParams, rank string) (string, bool, e
 			return "", false, fmt.Errorf("%s: %w", draftPath(root, id), err)
 		}
 		body = renderTaskFromDraft(id, p.Title, rank, string(draft), time.Now().Format(draftDateLayout))
-		if header.Lock == "locked" {
+		if draftmeta.RequiresLocal(header) {
 			protected, err := draftmeta.ProtectRecord([]byte(body))
 			if err != nil {
 				return "", false, err

@@ -1357,6 +1357,8 @@ func main() {
 			af.StringVar(&p.Kind, "kind", "", "вид участника: human или agent")
 			af.StringVar(&p.Name, "name", "", "имя для печати, любое")
 			af.StringVar(&p.Model, "model", "", "модель агентского участника, по её меткам считается профиль")
+			af.StringVar(&p.Route, "route", "", "маршрут записи: local или cloud")
+			af.StringVar(&p.Endpoint, "endpoint", "", "OpenAI-compatible base URL")
 			af.StringVar(&p.Tier, "tier", "", "ярус агентского участника: mini / base / pro / max")
 			af.Var((*strList)(&p.Roles), "role", "роль из exec/review/check/inspect; ключ повторяется")
 			af.StringVar(&p.Channel, "channel", "", "канал человека для напоминаний, например telegram:@ivan")

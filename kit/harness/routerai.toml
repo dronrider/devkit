@@ -21,10 +21,9 @@ global_file = "{home}/CLAUDE.md"
 [delegate]
 # Спавна субагента снаружи у клиента нет, поэтому уехавшая ступень поднимается
 # командой. Шаблон тот же, что у glm-code.toml: промпт идёт позиционным
-# аргументом, effort у клиента свой флаг с теми же четырьмя уровнями, что у
-# маппинга devkit. Имя сессии подпроцессу даёт run: по нему он находит
-# транскрипт делегата под {home} и кладёт его боковым журналом в разговор,
-# раздавший работу (DK-581).
+# аргументом, effort у клиента свой флаг. Имя сессии подпроцессу даёт run: по
+# нему он находит транскрипт делегата под {home} и кладёт его боковым журналом в
+# разговор, раздавший работу (DK-581).
 mode = "cli"
 command = ["claude", "-p", "{prompt}", "--model", "{model}", "--effort", "{effort}", "--session-id", "{session}"]
 agents_dir = "{home}/agents"
@@ -39,6 +38,12 @@ map_mini = "deepseek/deepseek-v4-flash"
 map_base = "z-ai/glm-5.3"
 map_pro = "anthropic/claude-sonnet-5.5"
 map_max = "anthropic/claude-opus-5.5"
+# Роутер возит модели разных семей, и ступени у них свои: DeepSeek и GLM дают
+# low, high, max, anthropic четыре ступени клиента (DK-1570, макет шкалы v4).
+effort_mini = ["low", "high", "max"]
+effort_base = ["low", "high", "max"]
+effort_pro = ["low", "medium", "high", "xhigh"]
+effort_max = ["low", "medium", "high", "xhigh"]
 
 [hooks]
 protocol = "claude-code"

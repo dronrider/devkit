@@ -21,14 +21,18 @@ global_file = "{home}/CLAUDE.md"
 [delegate]
 # Спавна субагента снаружи у клиента нет. Уехавшая ступень поднимается
 # командой. Шаблон тот же, что у routerai.toml. Промпт идёт позиционным
-# аргументом, effort у клиента свой флаг с теми же четырьмя уровнями, что у
-# маппинга devkit. Имя сессии подпроцессу даёт run. По нему он находит
-# транскрипт делегата под {home} и пишет его боковым журналом в разговор,
-# раздавший работу (DK-581).
+# аргументом, effort у клиента свой флаг с четырьмя уровнями клиента
+# (DK-1570, макет шкалы v4). Имя сессии подпроцессу даёт run. По нему он
+# находит транскрипт делегата под {home} и пишет его боковым журналом в
+# разговор, раздавший работу (DK-581).
 mode = "cli"
 command = ["claude", "-p", "{prompt}", "--model", "{model}", "--effort", "{effort}", "--session-id", "{session}"]
 agents_dir = "{home}/agents"
 agents_format = "claude-code"
+effort_mini = ["low", "medium", "high", "xhigh"]
+effort_base = ["low", "medium", "high", "xhigh"]
+effort_pro = ["low", "medium", "high", "xhigh"]
+effort_max = ["low", "medium", "high", "xhigh"]
 # План отдаёт две текстовые модели серии V2.6: flash и pro. Каталожные
 # mimo-v2.6-pro[1m] и mimo-v2.6-pro-ultraspeed плану недоступны, и верхние
 # ярусы стоят на pro.

@@ -25,6 +25,12 @@ mode = "embed"
 # говорит, что ход работы делегата в ленте раздавшего разговора не покажется.
 mode = "cli"
 command = ["codex", "exec", "--sandbox", "workspace-write", "--model", "{model}", "-c", "model_reasoning_effort=\"{effort}\"", "{prompt}"]
+# Клиент Codex принимает четыре уровня low, medium, high, xhigh (DK-1570,
+# макет шкалы v4).
+effort_mini = ["low", "medium", "high", "xhigh"]
+effort_base = ["low", "medium", "high", "xhigh"]
+effort_pro = ["low", "medium", "high", "xhigh"]
+effort_max = ["low", "medium", "high", "xhigh"]
 # Маппинг-предложение: одну модель на все ярусы даёт каталог установленного
 # клиента (gpt-6.1-sol, это же имя показывает его живая сессия). Различаются
 # ярусы усилием, его в команду подставляет {effort}. Имена из каталога, но не

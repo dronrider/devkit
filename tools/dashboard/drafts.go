@@ -216,6 +216,7 @@ func (s *server) draftsWithOrder(projPath string, items []json.RawMessage) []jso
 				m["ideas_total"], _ = json.Marshal(total)
 				m["ideas_undecided"], _ = json.Marshal(pending)
 				m["groomed"], _ = json.Marshal(draftGroomed(projPath, id, text))
+				m["groom_error"], _ = json.Marshal(draftGroomError(projPath, id, text))
 			}
 			if mark, err := json.Marshal(groomPrompt(id, "", draftModeGroom)); err == nil {
 				m["order"] = mark
@@ -321,6 +322,11 @@ func draftGroomed(projPath, id string, text []byte) bool {
 // поверх работающего) и правка текста (пока разбор идёт, запись принадлежит
 // агенту, решение 3 LLD DK-354). Разговор про запись работой не считается: у
 // него та же tmux-сессия, а файла он не трогает.
+func draftGroomError(projPath, id string, text []byte) bool {
+	state, err := draftproposal.Load(projPath, id, text)
+	return err == nil && state.Analysis == "error"
+}
+
 func (s *server) draftBusy(projPath, id string) string {
 	talk := s.tmuxTalk(projPath)
 	for _, name := range tmuxSessions() {
@@ -405,7 +411,7 @@ func (s *server) handleDraft(w http.ResponseWriter, r *http.Request) {
 		"hash": draftHash(text),
 		// Мысли и разбор теми же полями, что и у отказа повтора: экрану
 		// достаточно пары чисел и признака, текст пунктов он уже вёз.
-		"ideas_total": ideasTotal, "ideas_undecided": ideasUndecided, "groomed": groomed}
+		"ideas_total": ideasTotal, "ideas_undecided": ideasUndecided, "groomed": groomed, "groom_error": draftGroomError(found.Path, id, text)}
 	// И ожидание разговора тем же полем: кнопка чата груминга на экране записи
 	// помечает его так же, как строка накопителя.
 	if wait, ok := askWaiting(found.Path, id, s.now()); ok {
@@ -657,7 +663,7 @@ func (s *server) handleDraftGroom(w http.ResponseWriter, r *http.Request) {
 				"error": fmt.Sprintf("черновика %s в %s нет: файла %s не видно", id, found.Name, rel)})
 			return
 		}
-		if _, undecided := draftideas.Count(data); undecided == 0 && draftGroomed(found.Path, id, data) {
+		if _, undecided := draftideas.Count(data); undecided == 0 && draftGroomed(found.Path, id, data) && !draftGroomError(found.Path, id, data) {
 			s.logf("груминг %s в %s отклонён: повторный разбор без неразобранных мыслей 409", id, found.Name)
 			writeJSON(w, http.StatusConflict, map[string]string{
 				"error": fmt.Sprintf("разбор %s уже шёл, неразобранных мыслей нет: продолжайте разговор разбора в чате записи, новая ходка не нужна", id)})

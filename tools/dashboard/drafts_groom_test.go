@@ -216,3 +216,46 @@ func TestDraftPreparedAdoptsLegacyOnRead(t *testing.T) {
 		t.Errorf("старый блок разбора остался в записи:\n%s", fresh)
 	}
 }
+
+func TestDraftFailedGroomStatusAndRetry(t *testing.T) {
+	for _, prepared := range []bool{false, true} {
+		t.Run(map[bool]string{false: "legacy", true: "prepared"}[prepared], func(t *testing.T) {
+			e, c, _ := tasksEnv(t)
+			writeTmuxFake(t, e.bin, filepath.Join(e.home, "tmux.log"), "")
+			writeScript(t, e.bin, "claude", "exit 0")
+			writeAgentctlFake(t, e.bin, harnessTiersFixture)
+			doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts", `{"title":"ошибка первого разбора","prio":"mid"}`).Body.Close()
+			path, _ := draftPathOf(e.proj, "XR-005")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := draftproposal.State{Version: 1, State: "active", Analysis: "error"}
+			if prepared {
+				err = draftproposal.SavePrepared(e.proj, "XR-005", state)
+			} else {
+				data, err = draftproposal.Replace(data, state)
+				if err == nil {
+					err = os.WriteFile(path, data, 0644)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp := doReq(t, c, "GET", e.srv.URL+"/api/projects/demo/drafts/XR-005", "")
+			var detail map[string]any
+			json.Unmarshal([]byte(body(t, resp)), &detail)
+			rows := draftsResp(t, c, e)["drafts"].([]any)
+			row := rows[0].(map[string]any)
+			for _, v := range []map[string]any{detail, row} {
+				if v["groom_error"] != true || v["groomed"] != true || v["ideas_undecided"] != float64(0) {
+					t.Fatalf("ошибка первого разбора не видна: %v", v)
+				}
+			}
+			resp = doReq(t, c, "POST", e.srv.URL+"/api/projects/demo/drafts/XR-005/groom", "")
+			if text := body(t, resp); resp.StatusCode != http.StatusOK {
+				t.Fatalf("повтор после ошибки: %d %s", resp.StatusCode, text)
+			}
+		})
+	}
+}

@@ -23,6 +23,7 @@ const drafts = {
   "XR-12": { id: "XR-12", groomed: true, ideas_total: 2, ideas_undecided: 0 },
   // XR-20 после разбора с неразобранными мыслями, XR-21 без них, XR-22 под идущим разбором.
   "XR-20": { id: "XR-20", groomed: true, ideas_total: 3, ideas_undecided: 2 },
+  "XR-23": { id: "XR-23", groomed: true, ideas_total: 0, ideas_undecided: 0, groom_error: true },
   "XR-21": { id: "XR-21", groomed: true, ideas_total: 2, ideas_undecided: 0 },
   "XR-22": { id: "XR-22", groomed: true, ideas_total: 3, ideas_undecided: 2 },
 };
@@ -148,6 +149,22 @@ const visibleSlot = () => allByClass(sandbox.document.getElementById("cpin"), "c
   const slot = visibleSlot();
   if (!slot) fail("чат записи с идущим разбором не открылся");
   if (deepBtn(slot, "Разобрать мысли")) fail("при идущем разборе чат предлагает второй запуск");
+}
+
+{
+ await go("#demo");
+ await go("#demo/draft/XR-23");
+ posts.length = 0;
+ const talk = deepBtn(byId.get("groups"), "Чат разбора");
+ if (!talk) fail("после ошибки нет входа в прежний чат");
+ talk.handlers.click({stopPropagation:()=>{}});
+ await go("#demo/chat/XR-23");
+ if (groomPosts().length) fail("вход в чат после ошибки поднял разбор");
+ const retry = deepBtn(visibleSlot(), "Повторить разбор");
+ if (!retry) fail("после ошибки нет явного повтора без новой мысли");
+ retry.handlers.click({stopPropagation:()=>{}});
+ await settle();
+ if (groomPosts().length !== 1 || !groomPosts()[0].path.includes("/XR-23/groom")) fail("повтор после ошибки не поднялся");
 }
 
 posts.length = 0;

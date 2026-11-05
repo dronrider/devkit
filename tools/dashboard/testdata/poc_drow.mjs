@@ -131,3 +131,7 @@ for (const [groomed, pending, want] of [[true,0,"разобран"],[true,1,"ж�
   const state = sandbox.draftRowState({...draft,groomed,ideas_undecided:pending},[]);
   if (state !== want) fail("состояние записи: " + state + ", жду " + want);
 }
+
+if (sandbox.draftRowState({...draft,groomed:true,ideas_undecided:0,groom_error:true},[]) !== "ошибка разбора") {
+ fail("ошибка разбора показана успешным разбором");
+}

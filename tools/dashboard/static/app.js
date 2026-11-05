@@ -14459,8 +14459,8 @@ function chatPanel(project, st) {
   // сам ходку не поднимает, а эта кнопка поднимает, не отходя от ленты
   // (DK-1564, утверждённая поправка). Под идущим разбором кнопки нет: работы
   // там уже идут, и тесный композер дорожает.
-  if (st.draft && st.draft.groomed && Number(st.draft.ideas_undecided) > 0 && !st.grooming) {
-    const more = barBtn("btn", "Разобрать мысли", "i-play");
+  if (st.draft && st.draft.groomed && (Number(st.draft.ideas_undecided) > 0 || st.draft.groom_error) && !st.grooming) {
+    const more = barBtn("btn", st.draft.groom_error ? "Повторить разбор" : "Разобрать мысли", "i-play");
     more.addEventListener("click", () => {
       more.disabled = true;
       groomDraft(st.project, st.task, "", "", "", "", "")
@@ -16223,7 +16223,7 @@ async function draftGroomStart(project, works, harness, tier, effort) {
   const going = picked.filter((id) => Boolean(workBusy(id, works)));
   const checked = await Promise.all(picked.filter((id) => !going.includes(id)).map(async (id) => {
     const r = await api("/api/projects/" + encodeURIComponent(project) + "/drafts/" + encodeURIComponent(id));
-    return { id, ready: r.ok && (!r.body.groomed || Number(r.body.ideas_undecided) > 0) };
+    return { id, ready: r.ok && (!r.body.groomed || r.body.groom_error || Number(r.body.ideas_undecided) > 0) };
   }));
   const todo = checked.filter((d) => d.ready).map((d) => d.id);
   const quiet = checked.filter((d) => !d.ready).map((d) => d.id);
@@ -16273,6 +16273,7 @@ const DRAFT_PRIO = { high: "высокий", mid: "средний", low: "низ
 function draftRowState(d, works) {
   if (draftGrooming(works, d.id)) return "в разборе";
   if (d.waiting) return "ждёт ответа";
+  if (d.groom_error) return "ошибка разбора";
   if (d.groomed && Number(d.ideas_undecided) === 0) return "разобран";
   return "ждёт разбора";
 }
@@ -17976,7 +17977,7 @@ async function renderDraft(project, works, id) {
   sync(groups, [{
     key: "draft-page",
     sign: [id, said, hash, running, locked, text.body.error || "", JSON.stringify(waiting), JSON.stringify(draftTypes), JSON.stringify(preparedResult.body),
-      text.ok ? [text.body.groomed, text.body.ideas_total, text.body.ideas_undecided].join(",") : ""].join("|"),
+      text.ok ? [text.body.groomed, text.body.groom_error, text.body.ideas_total, text.body.ideas_undecided].join(",") : ""].join("|"),
     make: () => {
       const form = { text: said };
       const chips = [el("span", "chip", "черновик")];
@@ -18040,7 +18041,9 @@ async function renderDraft(project, works, id) {
         // адреса не заводит.
         const pending = Number(text.body.ideas_undecided) > 0;
         const talk = barBtn("btn btn-acc", "Чат разбора", "i-chat");
-        withTip(talk, pending
+        withTip(talk, text.body.groom_error
+          ? "Разбор завершился ошибкой: повторить его можно в чате записи."
+          : pending
           ? "Разбор записи уже шёл: неразобранные мысли разбираются разговором в чате записи."
           : "Разбор записи уже шёл и неразобранных мыслей нет: продолжайте разговор в чате записи.");
         talk.addEventListener("click", () => { openChat(chatAddr(project, id)); });

@@ -1233,17 +1233,12 @@ func (s *server) handleDraftIdea(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "текст мысли пуст"})
 		return
 	}
-	out, code, err := s.taskctlWrite(found.Path, "draft", "idea", id, text)
+	_, code, err := s.taskctlWrite(found.Path, "draft", "idea", id, text)
 	if err != nil {
 		writeJSON(w, code, map[string]string{"error": err.Error()})
 		return
 	}
-	var result map[string]any
-	if err = json.Unmarshal([]byte(out), &result); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "ответ не прочитался"})
-		return
-	}
-	result["message"] = "мысль записана"
+	result := map[string]any{"message": "мысль записана"}
 	if note := commitDocs(found.Path, boardCommitMsg(id, "мысль в записи"), draftFileRel(id)); note != "" {
 		result["note"] = note
 	}

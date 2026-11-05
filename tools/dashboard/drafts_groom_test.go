@@ -269,3 +269,38 @@ func TestDraftFailedGroomStatusAndRetry(t *testing.T) {
 		})
 	}
 }
+
+func TestDraftIdeaThroughRealTaskctl(t *testing.T) {
+	st := newScenarioStand(t)
+	kit, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVKIT_HOME", kit)
+	if err = draftproposal.SavePrepared(st.e.proj, "XR-4", draftproposal.State{Version: 1, State: "active", Analysis: "empty"}); err != nil {
+		t.Fatal(err)
+	}
+	phrase := "После разбора добавить доступ к исходнику"
+	payload, _ := json.Marshal(map[string]string{"text": phrase})
+	resp := doReq(t, st.c, "POST", st.e.srv.URL+"/api/projects/demo/drafts/XR-4/ideas", string(payload))
+	output := body(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("CLI записал мысль, но API ответил ошибкой: %d %s", resp.StatusCode, output)
+	}
+	var result map[string]any
+	if err = json.Unmarshal([]byte(output), &result); err != nil || result["message"] != "мысль записана" {
+		t.Fatalf("ответ API: %s %v", output, err)
+	}
+	data, err := os.ReadFile(st.path)
+	if err != nil || strings.Count(string(data), phrase) != 1 {
+		t.Fatalf("мысль не записана ровно один раз: %s %v", data, err)
+	}
+	resp = doReq(t, st.c, "GET", st.e.srv.URL+"/api/projects/demo/drafts/XR-4", "")
+	var detail map[string]any
+	if err = json.Unmarshal([]byte(body(t, resp)), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail["ideas_undecided"] != float64(1) || detail["groomed"] != true {
+		t.Fatalf("новый повод после записи мысли не виден: %v", detail)
+	}
+}

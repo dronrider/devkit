@@ -1095,18 +1095,10 @@ func (s *server) chatEntriesFrom(files []chatFile, limit int, win chatWindow) ([
 	// проектами (живой случай chat-DK-397-2: старая сессия соседнего проекта
 	// держала имя живой tmux-сессии и выглядела живым разговором). Имя
 	// достаётся сессии, чья запись с ним свежее всех, у остальных снимается.
-	tmuxClaim := map[string]string{}
-	tmuxWhen := map[string]string{}
-	for sid, rs := range recs {
-		for _, rec := range rs {
-			if rec.Tmux == "" {
-				continue
-			}
-			if w, ok := tmuxWhen[rec.Tmux]; !ok || rec.Time > w {
-				tmuxClaim[rec.Tmux], tmuxWhen[rec.Tmux] = sid, rec.Time
-			}
-		}
-	}
+	// Спор равных секунд решает порядок строк журнала, не обход карты:
+	// передача в одну секунду оставляла живого носителя свёрнутым в past, и
+	// основная строка записи то стояла в списке, то пропадала (DK-1606).
+	tmuxClaim, tmuxWhen := sessions.TmuxClaims(recs)
 	// Имя, поднятое дашбордом заново, до записи хука старта ничьё: свежайшая
 	// запись с ним принадлежит прежнему жильцу, и панель, ждущая родившийся
 	// разговор поиском по имени, уезжала в него (DK-851). Момент подъёма

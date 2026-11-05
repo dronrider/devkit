@@ -10,7 +10,7 @@ import (
 func TestDeadChatLiftCarriesManualEffort(t *testing.T) {
 	const sid = "aaaa1111-2222-4222-8222-333333333333"
 	for _, route := range []string{"say", "continue"} {
-		for _, effort := range []string{"max", ""} {
+		for _, effort := range []string{"low", "medium", "high", "xhigh", "max", ""} {
 			t.Run(route+"/"+effort, func(t *testing.T) {
 				e, c, _ := tasksEnv(t)
 				log := filepath.Join(e.home, "tmux.log")
@@ -37,7 +37,7 @@ func TestDeadChatLiftCarriesManualEffort(t *testing.T) {
 				if !strings.Contains(command, "new-session -d -s chat-7 ") || !strings.Contains(command, "--resume '"+sid+"'") {
 					t.Fatalf("не поднят прежний разговор: %s", command)
 				}
-				if effort != "" && !strings.Contains(command, "DEVKIT_EFFORT='max'") {
+				if effort != "" && !strings.Contains(command, "DEVKIT_EFFORT='"+effort+"'") {
 					t.Fatalf("ручная глубина потеряна при подъёме: %s", command)
 				}
 				if effort == "" && strings.Contains(command, "DEVKIT_EFFORT='") {

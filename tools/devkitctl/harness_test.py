@@ -248,6 +248,25 @@ class CodexProfileTest(unittest.TestCase):
                           "интерактивной головы без хука конца хода профилю не положено")
 
 
+class EffortKeysTest(unittest.TestCase):
+    """Ключи effort_* секции [delegate] знает схема профиля. Без них валидация
+    отдавала бы предупреждение о незнакомом ключе, и питоновский парсер разошёлся
+    бы с Go-половиной на общих фикстурах (DK-1570, макет шкалы v4).
+    """
+
+    def test_family_steps_are_known_keys(self):
+        for name, want in (("glm-code.toml", ["low", "high", "max"]),
+                           ("claude-code.toml", ["low", "medium", "high", "xhigh"])):
+            path = DEVKIT_SRC / "kit" / "harness" / name
+            prof = harness.parse(path.name, read(path))
+            warns = harness.validate_profile(prof)
+            self.assertEqual([w for w in warns if "effort_" in w], [],
+                             "%s: ключи effort_* незнакомы схеме профиля" % name)
+            for tier in ("mini", "base", "pro", "max"):
+                self.assertEqual(prof.arr_of("delegate", "effort_" + tier), want,
+                                 "%s: ступени яруса %s не сошлись" % (name, tier))
+
+
 class ProjectNarrowingTest(SandboxCase):
     """Проектный слой только сужает машинный список: профиль embed-tool на
     месте, но в машинном слое его нет, и сужением его не включить. Остаться

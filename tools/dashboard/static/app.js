@@ -2079,6 +2079,30 @@ function noRoomBelow(node) {
 // решение о стороне принимается до неё, поэтому тут запас по макету.
 const HPOP_ROOM = 200;
 
+// Прокручиваемые предки и панель обрезают меню даже внутри окна браузера.
+// Границы берутся по каждой оси отдельно, без рамки и полосы прокрутки.
+function popBounds(pop) {
+  const bounds = { left: screenLeft(), right: screenRight(), top: 0, bottom: window.innerHeight || 0 };
+  if (!window.getComputedStyle) return bounds;
+  for (let at = pop.parentNode; at; at = at.parentNode) {
+    if (at.nodeType !== 1 || !at.getBoundingClientRect) continue;
+    const style = window.getComputedStyle(at);
+    const rect = at.getBoundingClientRect();
+    const clips = (value) => /^(auto|scroll|hidden|clip|overlay)$/.test(value);
+    if (clips(style.overflowX) && at.clientWidth > 0) {
+      const left = rect.left + at.clientLeft;
+      bounds.left = Math.max(bounds.left, left);
+      bounds.right = Math.min(bounds.right, left + at.clientWidth);
+    }
+    if (clips(style.overflowY) && at.clientHeight > 0) {
+      const top = rect.top + at.clientTop;
+      bounds.top = Math.max(bounds.top, top);
+      bounds.bottom = Math.min(bounds.bottom, top + at.clientHeight);
+    }
+  }
+  return bounds;
+}
+
 // Горизонталь раскрытого списка. Место ему называется числом, а не выбором
 // стороны: сторона отвечала на вопрос «влево от кнопки или вправо», а у
 // телефона верного ответа среди двух нет вовсе, потому что список шире свободного
@@ -2097,11 +2121,13 @@ function popFit(node, pop) {
   const host = pop.parentNode && pop.parentNode.getBoundingClientRect
     ? pop.parentNode.getBoundingClientRect() : null;
   const box = node.getBoundingClientRect();
+  const bounds = popBounds(pop);
+  pop.style.maxWidth = Math.max(0, bounds.right - bounds.left - 2 * HPOP_EDGE) + "px";
   const list = pop.getBoundingClientRect();
   const width = (list && list.width) || 0;
   if (!host || !box || !width) return;
-  const edgeL = screenLeft() + HPOP_EDGE;
-  const edgeR = screenRight() - HPOP_EDGE;
+  const edgeL = bounds.left + HPOP_EDGE;
+  const edgeR = bounds.right - HPOP_EDGE;
   let want = box.right - width;
   if (want + width > edgeR) want = edgeR - width;
   if (want < edgeL) want = edgeL;
@@ -2112,8 +2138,8 @@ function popFit(node, pop) {
   const height = window.innerHeight;
   if (!height || !Number.isFinite(box.top) || !Number.isFinite(box.bottom)) return;
   const gap = 6;
-  const above = Math.max(0, box.top - HPOP_EDGE - gap);
-  const below = Math.max(0, height - box.bottom - HPOP_EDGE - gap);
+  const above = Math.max(0, box.top - bounds.top - HPOP_EDGE - gap);
+  const below = Math.max(0, bounds.bottom - box.bottom - HPOP_EDGE - gap);
   const up = below < (pop.scrollHeight || list.height) && above > below;
   pop.style.maxHeight = Math.floor(up ? above : below) + "px";
   pop.style.top = up ? "auto" : Math.round(box.bottom - host.top + gap) + "px";

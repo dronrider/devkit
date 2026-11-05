@@ -697,10 +697,9 @@ func TestStaticChatMessageStates(t *testing.T) {
 	}
 	body := funcBody(t, text, "function makeOutbox(")
 	// Кнопки повтора на реплике нет: неушедшее дожимает сам дашборд (DK-287).
-	// Ищется она там, где реплика и рисуется: слово «Повторить» стоит и на
-	// других экранах (повторная ходка груминга, DK-321), и поиск по всей статике
-	// ловил бы их.
-	for _, part := range []string{body, funcBody(t, text, "function chatPanel(")} {
+	// Проверяются рендеры реплик. В composer той же панели отдельно стоит
+	// явный повтор разбора, который не относится к доставке сообщения.
+	for _, part := range []string{body, funcBody(t, text, "function makeEcho("), funcBody(t, text, "function chatBubble(")} {
 		if strings.Contains(part, "Повторить") {
 			t.Error("на реплике осталась кнопка «Повторить»: отправка снова уперлась в человека")
 		}

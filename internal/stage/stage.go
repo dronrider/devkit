@@ -202,6 +202,20 @@ func Executor(text string) (string, bool) {
 	return m[len(m)-1][1], true
 }
 
+// effortRe находит уровень глубины в тексте записи этапа: то же место, где
+// Executor ищет модель, но берётся слово после косой черты.
+var effortRe = regexp.MustCompile(`\S+/(\S+) по (?:вердикту pick|определению)`)
+
+// Effort достаёт уровень глубины из текста записи этапа. Второе значение false,
+// когда вердикта pick или определения в тексте нет.
+func Effort(text string) (string, bool) {
+	m := effortRe.FindAllStringSubmatch(text, -1)
+	if len(m) == 0 {
+		return "", false
+	}
+	return m[len(m)-1][1], true
+}
+
 // execLines это ярлыки строк «Хода работы» об этапах исполнителя. По ярлыку
 // этап и узнаётся: текст ревью тоже несёт определение и модель, и без ярлыка
 // ревьювер сошёл бы за исполнителя.
@@ -241,6 +255,27 @@ func LastExecutor(lines []string, pending []Stage) (string, bool) {
 		}
 		if name, ok := Executor(lines[i]); ok {
 			return name, true
+		}
+	}
+	return "", false
+}
+
+// LastEffort находит уровень глубины текущей или последней работы записи:
+// живой этап исполнителя спрашивается первым, за ним последний закрытый. Второе
+// значение false, когда ни один этап исполнителя уровня не назвал (DK-1570,
+// макет показа уровня).
+func LastEffort(rec Record) (string, bool) {
+	if live, ok := rec.Live(); ok && IsExec(live.Kind) {
+		if e, ok := Effort(live.Note); ok {
+			return e, true
+		}
+	}
+	for i := len(rec.Stages) - 1; i >= 0; i-- {
+		if !IsExec(rec.Stages[i].Kind) {
+			continue
+		}
+		if e, ok := Effort(rec.Stages[i].Note); ok {
+			return e, true
 		}
 	}
 	return "", false

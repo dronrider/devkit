@@ -262,6 +262,44 @@ func TestExecutorFromPickNote(t *testing.T) {
 	}
 }
 
+// TestEffortFromStageNote: уровень глубины достаётся из того же хвоста записи,
+// что и модель, и последняя запись побеждает, когда заметка несёт их несколько.
+func TestEffortFromStageNote(t *testing.T) {
+	cases := map[string]string{
+		"субагент opus/high по определению exec-high, работа a1b2c3": "high",
+		"субагент glm-5.2/low по вердикту pick (квота: week_all 93%)": "low",
+	}
+	for text, want := range cases {
+		got, ok := Effort(text)
+		if !ok || got != want {
+			t.Fatalf("из %q уровень не достался: %q, %v", text, got, ok)
+		}
+	}
+	if _, ok := Effort("- Разработка: руками, 2026-08-18 14:01."); ok {
+		t.Fatal("строка без вердикта pick отдала уровень")
+	}
+}
+
+// TestLastEffortPreferLiveWork: живой этап исполнителя спрашивается первым, за
+// ним последний закрытый, а ревью не считается уровнем работы исполнителя.
+func TestLastEffortPreferLiveWork(t *testing.T) {
+	rec := Record{Stages: []Stage{
+		{Kind: Dev, Start: at(9, 0), Note: "субагент opus/high по определению exec-high", End: at(9, 30)},
+		{Kind: Review, Start: at(10, 0), Note: "субагент sonnet/medium по определению review-medium"},
+	}}
+	got, ok := LastEffort(rec)
+	if !ok || got != "high" {
+		t.Fatalf("уровень закрытой разработки под живым ревью не найден: %q, ok=%v", got, ok)
+	}
+	rec.Stages = append(rec.Stages, Stage{Kind: Rework, Start: at(11, 0), Note: "субагент haiku/low по определению exec-low"})
+	if got, ok := LastEffort(rec); !ok || got != "low" {
+		t.Fatalf("уровень живой доработки не найден: %q, ok=%v", got, ok)
+	}
+	if _, ok := LastEffort(Record{Stages: []Stage{{Kind: Review, Note: "субагент sonnet/medium по определению review-medium"}}}); ok {
+		t.Fatal("ревью сошло за уровень работы")
+	}
+}
+
 // Исполнителя разработки спрашивает заказ прогона: имя едет в заказе
 // проверяющего и в отчёте, а независимость по нему не судится (DK-1360).
 // Ищется он в двух местах, и незакрытый пакет этапов свежее файла.

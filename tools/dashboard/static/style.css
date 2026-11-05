@@ -512,19 +512,19 @@ a:hover{text-decoration:underline}
 .hph{display:block;font:600 10.5px var(--sans);letter-spacing:0.09em;text-transform:uppercase;
   color:var(--tx3);padding:9px 11px 8px}
 /* Строка меню это подписка, модель и ярус целиком (DK-1570). Имя слева, чип
-   называет ярус и подписку, полоски остатка окна и недели справа. Подписок
+   называет ярус и подписку, полоски остатка окна и недели стоят ниже. Подписок
    одного вида может быть несколько, и различает строки чип, а не имя модели. */
-.hrow{display:flex;flex-direction:row;align-items:center;gap:7px;width:100%;padding:6px 11px;border:none;
-  border-radius:8px;min-height:34px;justify-content:center;text-align:left;background:none;
+.hrow{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:5px 7px;width:100%;padding:6px 11px;border:none;
+  border-radius:8px;min-height:34px;text-align:left;background:none;
   color:var(--tx);cursor:pointer}
 .hrow.on{background:var(--bg3)}
 .hrow:hover{background:var(--bg3)}
-.hrow .hname{flex:0 0 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+.hrow .hname{min-width:0;overflow-wrap:anywhere;
   font:600 12.5px var(--sans);color:var(--tx);text-align:left}
-.hrow .hchip{flex:none;font:500 10px var(--sans);background:var(--bg3);color:var(--tx2);
-  border-radius:5px;padding:1px 6px;white-space:nowrap}
+.hrow .hchip{min-width:0;max-width:160px;font:500 10px var(--sans);background:var(--bg3);color:var(--tx2);
+  border-radius:5px;padding:1px 6px;overflow-wrap:anywhere}
 .hrow.on .hchip{background:color-mix(in oklab,var(--acc) 18%,var(--bg3))}
-.hrow .hmeters{flex:1;display:flex;gap:10px;align-items:center;min-width:0;padding-left:6px}
+.hrow .hmeters{grid-column:1/-1;display:flex;gap:10px;align-items:center;min-width:0;width:100%}
 /* Полоска остатка в строке тоньше карточной и без своих фонов: цвет ей даёт
    тот же meterClass, что и карточкам квот. */
 .hmt{display:flex;flex:1;align-items:center;gap:5px;min-width:0;color:var(--tx3);
@@ -546,14 +546,14 @@ a:hover{text-decoration:underline}
    кольцо на точке -- вердикт pick. Шаг ступени 25%, точка ставится левым
    краем и сдвигом влево встаёт центром на ступень. */
 .eff{display:block;padding:2px 11px 4px}
-.effmarks{position:relative;height:15px}
-.effmark{position:absolute;left:calc(var(--i)*25%);transform:translateX(-50%);
-  border:0;background:none;padding:0 7px;line-height:15px;cursor:pointer;border-radius:5px;
+.effmarks{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));height:15px}
+.effmark{min-width:0;
+  border:0;background:none;padding:0 2px;line-height:15px;cursor:pointer;border-radius:5px;
   font:500 10px var(--mono);color:var(--tx3);white-space:nowrap}
 .effmark:hover{color:var(--tx2);background:var(--bg3)}
 .effmark.on{color:var(--tx);background:var(--bg3)}
 .effmark:focus-visible{outline:1px solid var(--acc);outline-offset:1px}
-.efftrack{position:relative;height:13px;margin-top:1px;cursor:pointer}
+.efftrack{position:relative;height:13px;margin:1px 10% 0;cursor:pointer}
 .effrail{position:absolute;left:0;right:0;top:4px;height:3px;border-radius:2px;background:var(--bg3)}
 .efffill{position:absolute;left:0;top:4px;height:3px;border-radius:2px;background:var(--acc);
   opacity:.85;width:calc(var(--sel)*25%)}
@@ -1281,12 +1281,14 @@ button.chip{border:none;font:500 var(--chipfs) var(--sans)}
 /* Общее меню модели и глубины всплывает из выбора модели в строке реплики
    (DK-1570): прижато к рамке списка и открывается вверх, как нативный список.
    Состав тот же, что у стрелки кнопки пуска, поэтому фон и рамка общие с
-   .hpop, а ширина не шире рамки самого выбора. */
+   .hpop, а ширина ограничена окном браузера. */
 .cmodel.cselwrap{position:relative}
-.cselwrap .menu{position:absolute;bottom:calc(100% + 6px);left:0;width:min(360px,100%);margin:0;
+.cselwrap .menu{position:absolute;bottom:calc(100% + 6px);left:0;width:340px;max-width:calc(100vw - 24px);margin:0;
   z-index:30;background:var(--bg2);border:1px solid var(--line2);border-radius:12px;
   box-shadow:0 22px 54px rgba(0,0,0,0.55);padding:6px}
 .cselwrap .menu[hidden]{display:none}
+.hpop,.cselwrap .menu{max-height:calc(100vh - 24px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+.hpop .mwhy,.cselwrap .menu .mwhy{overflow-wrap:anywhere}
 .cbox .cclips:empty{display:none}
 @media (max-width:520px){.cbox .csend{flex:1 0 100%;width:100%;order:2}.cbox .cclips{flex-wrap:wrap;min-width:0;max-width:100%}}
 .stopnote{font:400 11.5px/1.5 var(--sans);color:var(--tx3);margin-top:9px}

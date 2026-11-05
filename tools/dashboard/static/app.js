@@ -2109,6 +2109,15 @@ function popFit(node, pop) {
   // Правый край снимается вместе с постановкой левого: в стилях список висит
   // на правом крае кнопки, и оба края разом растянули бы его во всю ширину.
   pop.style.right = "auto";
+  const height = window.innerHeight;
+  if (!height || !Number.isFinite(box.top) || !Number.isFinite(box.bottom)) return;
+  const gap = 6;
+  const above = Math.max(0, box.top - HPOP_EDGE - gap);
+  const below = Math.max(0, height - box.bottom - HPOP_EDGE - gap);
+  const up = below < (pop.scrollHeight || list.height) && above > below;
+  pop.style.maxHeight = Math.floor(up ? above : below) + "px";
+  pop.style.top = up ? "auto" : Math.round(box.bottom - host.top + gap) + "px";
+  pop.style.bottom = up ? Math.round(host.bottom - box.top + gap) + "px" : "auto";
 }
 
 // Правый край места: у главной части экрана он совпадает с краем окна, и
@@ -10926,6 +10935,7 @@ function modelPick(project, st) {
     popupsShut(null);
     menu.hidden = false;
     held = popupHold(menu, shut);
+    popFit(model, menu);
     model.focus();
     // Кольцо вердикта спрашивается открытием меню, ведь вердикт зависит от
     // строки задачи, а не от разговора. У разговора без задачи кольца нет.

@@ -7,6 +7,28 @@ import (
 )
 
 func TestEffortMenuBrowserGeometry(t *testing.T) {
+	t.Setenv("DASHBOARD_EFFORT_CASE", "")
+	t.Setenv("DASHBOARD_EFFORT_LEVELS_ONLY", "")
+	effortMenuBrowser(t)
+}
+
+func TestEffortMenuClippingRegressions(t *testing.T) {
+	for _, tc := range []struct {
+		name, focus string
+	}{
+		{"DesktopChatLow", "1280/8/chat/bottom"},
+		{"MobileRunLow", "390/24/run/top"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DASHBOARD_EFFORT_CASE", tc.focus)
+			t.Setenv("DASHBOARD_EFFORT_LEVELS_ONLY", "1")
+			effortMenuBrowser(t)
+		})
+	}
+}
+
+func effortMenuBrowser(t *testing.T) {
+	t.Helper()
 	chrome := findChrome()
 	if chrome == "" {
 		if os.Getenv("DASHBOARD_EFFORT_REQUIRE_BROWSER") == "1" {
